@@ -17,6 +17,8 @@ pub struct KeyContext {
     pub app_mode: AppMode,
     pub view_mode: ViewMode,
     pub compose_focus: Option<ComposeFocus>,
+    /// Whether a window overlay is currently focused
+    pub window_focused: bool,
 }
 
 impl KeyMapper {
@@ -31,6 +33,13 @@ impl KeyMapper {
 
     /// Map a key event to a command with context for view-mode-aware behavior
     pub fn map_with_context(&mut self, key: KeyEvent, ctx: Option<&KeyContext>) -> Option<TreeCommand> {
+        // Handle window-focused mode - captures navigation input
+        if let Some(c) = ctx {
+            if c.window_focused {
+                return self.map_window(key);
+            }
+        }
+
         // Handle compose mode separately - it captures most input
         if let Some(c) = ctx {
             if c.app_mode == AppMode::Compose {
@@ -78,7 +87,7 @@ impl KeyMapper {
                 // l, right, or enter: expand/enter
                 Some(TreeCommand::Enter)
             }
-            KeyCode::Char(' ') => Some(TreeCommand::ToggleExpand),
+            KeyCode::Char(' ') => Some(TreeCommand::ShowCommandPalette),
             KeyCode::Char('g') => {
                 // Start g prefix
                 self.g_prefix = true;
@@ -230,6 +239,64 @@ impl KeyMapper {
         }
     }
 
+    /// Map keys when a window is focused
+    fn map_window(&mut self, key: KeyEvent) -> Option<TreeCommand> {
+        // Handle g prefix for gg
+        if self.g_prefix {
+            self.g_prefix = false;
+            if key.code == KeyCode::Char('g') {
+                return Some(TreeCommand::WindowScrollToTop);
+            }
+            return None;
+        }
+
+        match key.code {
+            // Scrolling
+            KeyCode::Char('j') | KeyCode::Down => Some(TreeCommand::WindowScrollDown),
+            KeyCode::Char('k') | KeyCode::Up => Some(TreeCommand::WindowScrollUp),
+            KeyCode::Char('g') => {
+                self.g_prefix = true;
+                None
+            }
+            KeyCode::Char('G') => Some(TreeCommand::WindowScrollToBottom),
+
+            // Page scrolling
+            KeyCode::PageDown | KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                Some(TreeCommand::WindowScrollDown) // Could be a larger scroll
+            }
+            KeyCode::PageUp | KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                Some(TreeCommand::WindowScrollUp)
+            }
+
+            // Window focus cycling
+            KeyCode::Tab => {
+                if key.modifiers.contains(KeyModifiers::SHIFT) {
+                    Some(TreeCommand::FocusPrevWindow)
+                } else {
+                    Some(TreeCommand::FocusNextWindow)
+                }
+            }
+            KeyCode::BackTab => Some(TreeCommand::FocusPrevWindow),
+
+            // Close window
+            KeyCode::Esc | KeyCode::Char('q') => Some(TreeCommand::CloseWindow),
+
+            // Command palette still accessible
+            KeyCode::Char(' ') => Some(TreeCommand::ShowCommandPalette),
+            KeyCode::Char('?') => Some(TreeCommand::ShowCommandPalette),
+            KeyCode::Char('x') if key.modifiers.contains(KeyModifiers::ALT) => {
+                Some(TreeCommand::ShowCommandPalette)
+            }
+
+            // Quit
+            KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                Some(TreeCommand::Quit)
+            }
+
+            _ => None,
+        }
+    }
+
     /// Reset any prefix state
     pub fn reset(&mut self) {
         self.g_prefix = false;
@@ -249,7 +316,7 @@ pub fn keybinding_help() -> Vec<(&'static str, &'static str)> {
         ("h/l", "Collapse/Expand (Tree mode)"),
         ("Enter", "Enter/Open/Load"),
         ("Esc/Backspace", "Back to feed"),
-        ("Space", "Toggle expand"),
+        ("SPC/M-x/?", "Command palette"),
         ("gg/G", "First/Last"),
         ("v", "Cycle view mode"),
         ("J/K", "Next/Prev section (Paginated) or Move section (Tree)"),
@@ -262,7 +329,6 @@ pub fn keybinding_help() -> Vec<(&'static str, &'static str)> {
         ("u/Ctrl+r", "Undo/Redo"),
         ("V/s", "Select/Select all"),
         (":", "Show relays"),
-        ("?/M-x", "Command palette"),
         ("R", "Refresh"),
         ("L", "Load visible"),
         ("q", "Quit"),

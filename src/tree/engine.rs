@@ -190,6 +190,21 @@ impl TreeEngine {
                 // These are only valid in compose mode
                 CommandResult::NoOp
             }
+
+            // Window management (handled by app.rs, not engine)
+            TreeCommand::ShowJson { .. }
+            | TreeCommand::CloseWindow
+            | TreeCommand::CloseAllWindows
+            | TreeCommand::FocusNextWindow
+            | TreeCommand::FocusPrevWindow
+            | TreeCommand::WindowScrollUp
+            | TreeCommand::WindowScrollDown
+            | TreeCommand::WindowScrollToTop
+            | TreeCommand::WindowScrollToBottom
+            | TreeCommand::ShowEventJson => {
+                // Window commands are handled directly in app.rs
+                CommandResult::NoOp
+            }
         }
     }
 
@@ -888,7 +903,12 @@ impl TreeEngine {
                 CommandResult::StateChanged
             }
             TreeCommand::CreateTags => {
-                state.compose.enter_tag_mode();
+                // Toggle tag mode - if in tag mode, exit; otherwise enter
+                if state.compose.is_in_tag_mode() {
+                    state.compose.exit_tag_mode();
+                } else {
+                    state.compose.enter_tag_mode();
+                }
                 CommandResult::StateChanged
             }
             TreeCommand::EndTags => {
@@ -912,28 +932,22 @@ impl TreeEngine {
                 CommandResult::StateChanged
             }
             TreeCommand::Publish => {
-                if !state.compose.has_content() {
-                    return CommandResult::Error("Nothing to publish".to_string());
+                use crate::tree::state::ComposeState;
+
+                if !state.compose.is_ready_to_publish() {
+                    return CommandResult::Error(
+                        "Need title and at least one section with title and content".to_string()
+                    );
                 }
 
-                let tags = state.compose.tags_to_nostr_format();
+                let tags = ComposeState::tags_to_nostr_format(&state.compose.tags);
 
-                if state.compose.sections.is_empty() {
-                    // Simple note publish
-                    let content = if state.compose.title.is_empty() {
-                        state.compose.content.clone()
-                    } else {
-                        format!("# {}\n\n{}", state.compose.title, state.compose.content)
-                    };
-                    CommandResult::NeedsAsync(AsyncRequest::PublishNote { content, tags })
-                } else {
-                    // Multi-section publication
-                    CommandResult::NeedsAsync(AsyncRequest::PublishPublication {
-                        title: state.compose.title.clone(),
-                        tags,
-                        sections: state.compose.sections.clone(),
-                    })
-                }
+                // NKBIP-01: Always create 30040 + 30041 events
+                CommandResult::NeedsAsync(AsyncRequest::PublishPublication {
+                    title: state.compose.title.clone(),
+                    tags,
+                    sections: state.compose.sections.clone(),
+                })
             }
             TreeCommand::Quit => CommandResult::Exit,
             // All other commands are no-ops in compose mode

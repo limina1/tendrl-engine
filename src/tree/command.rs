@@ -36,6 +36,7 @@ pub enum CommandCategory {
     Application,
     Configuration,
     Compose,
+    Window,
 }
 
 impl CommandCategory {
@@ -51,6 +52,7 @@ impl CommandCategory {
             CommandCategory::Application => "Application",
             CommandCategory::Configuration => "Configuration",
             CommandCategory::Compose => "Compose",
+            CommandCategory::Window => "Window",
         }
     }
 }
@@ -363,6 +365,70 @@ pub fn all_commands() -> Vec<CommandInfo> {
             category: CommandCategory::Compose,
             keybinding: Some("c"),
         },
+        // Window management
+        CommandInfo {
+            command: TreeCommand::CloseWindow,
+            name: "Close Window",
+            description: "Close the currently focused window",
+            category: CommandCategory::Window,
+            keybinding: Some("q / Esc"),
+        },
+        CommandInfo {
+            command: TreeCommand::CloseAllWindows,
+            name: "Close All Windows",
+            description: "Close all open windows",
+            category: CommandCategory::Window,
+            keybinding: None,
+        },
+        CommandInfo {
+            command: TreeCommand::FocusNextWindow,
+            name: "Focus Next Window",
+            description: "Focus the next window in the stack",
+            category: CommandCategory::Window,
+            keybinding: Some("Tab"),
+        },
+        CommandInfo {
+            command: TreeCommand::FocusPrevWindow,
+            name: "Focus Previous Window",
+            description: "Focus the previous window in the stack",
+            category: CommandCategory::Window,
+            keybinding: Some("Shift+Tab"),
+        },
+        CommandInfo {
+            command: TreeCommand::WindowScrollUp,
+            name: "Scroll Window Up",
+            description: "Scroll the focused window content up",
+            category: CommandCategory::Window,
+            keybinding: Some("k / ↑"),
+        },
+        CommandInfo {
+            command: TreeCommand::WindowScrollDown,
+            name: "Scroll Window Down",
+            description: "Scroll the focused window content down",
+            category: CommandCategory::Window,
+            keybinding: Some("j / ↓"),
+        },
+        CommandInfo {
+            command: TreeCommand::WindowScrollToTop,
+            name: "Scroll Window to Top",
+            description: "Scroll the focused window to the top",
+            category: CommandCategory::Window,
+            keybinding: Some("gg"),
+        },
+        CommandInfo {
+            command: TreeCommand::WindowScrollToBottom,
+            name: "Scroll Window to Bottom",
+            description: "Scroll the focused window to the bottom",
+            category: CommandCategory::Window,
+            keybinding: Some("G"),
+        },
+        CommandInfo {
+            command: TreeCommand::ShowEventJson,
+            name: "Show Event JSON",
+            description: "Show the raw JSON for the current selection in a window",
+            category: CommandCategory::View,
+            keybinding: None,
+        },
     ]
 }
 
@@ -508,6 +574,28 @@ pub enum TreeCommand {
     InsertNewline,
     /// Publish the composed content (Ctrl+Enter)
     Publish,
+
+    // Window management
+    /// Open a window with JSON content (e.g., raw event data)
+    ShowJson { title: String, content: String },
+    /// Close the currently focused window
+    CloseWindow,
+    /// Close all open windows
+    CloseAllWindows,
+    /// Focus the next window
+    FocusNextWindow,
+    /// Focus the previous window
+    FocusPrevWindow,
+    /// Scroll window content up
+    WindowScrollUp,
+    /// Scroll window content down
+    WindowScrollDown,
+    /// Scroll window to top
+    WindowScrollToTop,
+    /// Scroll window to bottom
+    WindowScrollToBottom,
+    /// Show event JSON for current selection (opens in a window)
+    ShowEventJson,
 }
 
 impl TreeCommand {

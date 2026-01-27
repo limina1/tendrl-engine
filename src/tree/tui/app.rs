@@ -13,11 +13,12 @@ use crate::tree::state::ViewMode;
 use crate::tree::tui::spinner::Spinner;
 use crate::tree::tui::widgets::{
     CommandPaletteWidget, ComposeWidget, ContentPreview, ContinuousWidget, FeedWidget, HelpBar,
-    OutlineWidget, PaginatedWidget, StatusBar, TreeWidget,
+    OutlineWidget, PaginatedWidget, StatusBar, TreeWidget, WindowWidget,
 };
 
 use crate::tree::command::TreeCommand;
 use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
+use crossterm::event::{DisableMouseCapture, EnableMouseCapture};
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen};
 use crossterm::ExecutableCommand;
 use ratatui::prelude::*;
@@ -201,11 +202,13 @@ impl TuiApp {
         // Setup terminal
         enable_raw_mode()?;
         stdout().execute(EnterAlternateScreen)?;
+        stdout().execute(EnableMouseCapture)?;
         let mut terminal = Terminal::new(CrosstermBackend::new(stdout()))?;
 
         let result = self.event_loop(&mut terminal).await;
 
         // Restore terminal
+        stdout().execute(DisableMouseCapture)?;
         disable_raw_mode()?;
         stdout().execute(LeaveAlternateScreen)?;
 
@@ -234,7 +237,31 @@ impl TuiApp {
 
             // Poll for events with timeout
             if event::poll(Duration::from_millis(100))? {
-                if let Event::Key(key) = event::read()? {
+                let event = event::read()?;
+                let term_size = terminal.size()?;
+
+                // Handle mouse scroll for windows
+                if let Event::Mouse(mouse) = &event {
+                    use crossterm::event::MouseEventKind;
+                    let viewport_height = term_size.height.saturating_sub(4) as usize;
+                    match mouse.kind {
+                        MouseEventKind::ScrollUp => {
+                            if self.state.windows.is_focused() {
+                                self.state.windows.scroll_up(3);
+                            }
+                            continue;
+                        }
+                        MouseEventKind::ScrollDown => {
+                            if self.state.windows.is_focused() {
+                                self.state.windows.scroll_down(3, viewport_height);
+                            }
+                            continue;
+                        }
+                        _ => {}
+                    }
+                }
+
+                if let Event::Key(key) = event {
                     // Only handle key press events (not release)
                     if key.kind != KeyEventKind::Press {
                         continue;
@@ -275,11 +302,17 @@ impl TuiApp {
                         } else {
                             None
                         },
+                        window_focused: self.state.windows.is_focused(),
                     };
                     if let Some(command) = self.key_mapper.map_with_context(key, Some(&ctx)) {
                         // Handle ShowCommandPalette specially
                         if matches!(command, TreeCommand::ShowCommandPalette) {
                             self.state.command_palette.open();
+                            continue;
+                        }
+
+                        // Handle window commands directly
+                        if self.handle_window_command(&command, term_size.height as usize) {
                             continue;
                         }
 
@@ -318,6 +351,139 @@ impl TuiApp {
             ConfigAction::ClearRelays => self.clear_relays(),
             ConfigAction::ShowRelays => self.show_relays(),
         }
+    }
+
+    /// Handle window commands directly (returns true if handled)
+    fn handle_window_command(&mut self, command: &TreeCommand, viewport_height: usize) -> bool {
+        // Calculate approximate viewport height for the window content
+        // (account for borders and help line)
+        let window_viewport = viewport_height.saturating_sub(4);
+
+        match command {
+            TreeCommand::ShowJson { title, content } => {
+                use crate::tree::state::WindowState;
+                let window = WindowState::json(
+                    format!("json-{}", self.state.windows.windows.len()),
+                    title,
+                    content,
+                );
+                self.state.windows.open(window);
+                true
+            }
+            TreeCommand::CloseWindow => {
+                self.state.windows.close_focused();
+                true
+            }
+            TreeCommand::CloseAllWindows => {
+                self.state.windows.close_all();
+                true
+            }
+            TreeCommand::FocusNextWindow => {
+                self.state.windows.focus_next();
+                true
+            }
+            TreeCommand::FocusPrevWindow => {
+                self.state.windows.focus_prev();
+                true
+            }
+            TreeCommand::WindowScrollUp => {
+                self.state.windows.scroll_up(1);
+                true
+            }
+            TreeCommand::WindowScrollDown => {
+                self.state.windows.scroll_down(1, window_viewport);
+                true
+            }
+            TreeCommand::WindowScrollToTop => {
+                self.state.windows.scroll_to_top();
+                true
+            }
+            TreeCommand::WindowScrollToBottom => {
+                self.state.windows.scroll_to_bottom(window_viewport);
+                true
+            }
+            TreeCommand::ShowEventJson => {
+                // Get the current node and show its JSON
+                let json = self.get_current_node_json();
+                if let Some((title, content)) = json {
+                    use crate::tree::state::WindowState;
+                    let window = WindowState::json("event-json", title, &content);
+                    self.state.windows.open(window);
+                }
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// Get JSON representation of the current node
+    fn get_current_node_json(&self) -> Option<(String, String)> {
+        // In compose mode, show the preview JSON
+        if self.state.is_compose_mode() {
+            let json = self.state.compose.preview_event_json();
+            return Some(("Event Preview".to_string(), json));
+        }
+
+        // In feed mode, show the current feed item
+        if self.state.is_feed_mode() {
+            if let Some(node) = self.state.roots.get(self.state.feed_cursor) {
+                if let Some(tree_node) = self.state.nodes.get(node) {
+                    let title = tree_node.title();
+                    let json = self.node_to_json(tree_node);
+                    return Some((title.to_string(), json));
+                }
+            }
+        }
+
+        // In reader mode, show the current cursor node
+        if let Some(node) = self.state.nodes.get(&self.state.cursor) {
+            let title = node.title();
+            let json = self.node_to_json(node);
+            return Some((title.to_string(), json));
+        }
+
+        None
+    }
+
+    /// Convert a tree node to JSON representation
+    fn node_to_json(&self, node: &TreeNode) -> String {
+        use serde_json::json;
+
+        let value = match node {
+            TreeNode::Publication(pub_node) => {
+                json!({
+                    "type": "publication",
+                    "addr": {
+                        "kind": pub_node.addr.kind,
+                        "pubkey": pub_node.addr.pubkey,
+                        "d_tag": pub_node.addr.d_tag,
+                    },
+                    "title": pub_node.title,
+                    "summary": pub_node.summary,
+                    "author_name": pub_node.author_name,
+                    "loaded": pub_node.loaded,
+                    "children_count": pub_node.children.len(),
+                })
+            }
+            TreeNode::Section(sec_node) => {
+                json!({
+                    "type": "section",
+                    "addr": {
+                        "kind": sec_node.addr.kind,
+                        "pubkey": sec_node.addr.pubkey,
+                        "d_tag": sec_node.addr.d_tag,
+                    },
+                    "title": sec_node.title,
+                    "content_preview": sec_node.content.as_ref().map(|c| {
+                        if c.len() > 200 { format!("{}...", &c[..200]) } else { c.clone() }
+                    }),
+                    "loaded": sec_node.loaded,
+                    "position": sec_node.position,
+                })
+            }
+        };
+
+        serde_json::to_string_pretty(&value).unwrap_or_else(|_| "{}".to_string())
     }
 
     /// Handle input when the command palette is open
@@ -443,7 +609,18 @@ impl TuiApp {
         };
         frame.render_widget(HelpBar::new(&self.state), help_area);
 
-        // Render command palette overlay if visible
+        // Render windows (rendered before command palette so palette is on top)
+        for (i, window) in self.state.windows.windows.iter().enumerate() {
+            let is_focused = self.state.windows.focused == Some(i);
+            let window_area = WindowWidget::calculate_area(
+                area,
+                window.width_percent,
+                window.height_percent,
+            );
+            frame.render_widget(WindowWidget::new(window, is_focused), window_area);
+        }
+
+        // Render command palette overlay if visible (on top of everything)
         if self.state.command_palette.visible {
             let palette_area = CommandPaletteWidget::calculate_area(area);
             frame.render_widget(

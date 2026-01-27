@@ -864,7 +864,7 @@ impl<'a> Widget for HelpBar<'a> {
             "↑/↓:Select  Enter:Execute  Esc:Close  Type to filter"
         } else if self.state.is_compose_mode() {
             if self.state.compose.tag_mode {
-                "Tab:Add Tag  Shift+Tab:Delete Tag  Ctrl+e:Exit Tags  Ctrl+p:Preview  Ctrl+Enter:Publish  Esc:Cancel"
+                "Tab:Add Tag  Shift+Tab:Delete Tag  Ctrl+t:Exit Tags  Ctrl+p:Preview  Ctrl+Enter:Publish  Esc:Cancel"
             } else {
                 "Tab:Next Field  Ctrl+t:Tags  Ctrl+s:Section  Ctrl+p:Preview  Ctrl+Enter:Publish  Esc:Cancel"
             }
@@ -923,6 +923,7 @@ impl<'a> CommandPaletteWidget<'a> {
             CommandCategory::Application => Style::default().fg(Color::White),
             CommandCategory::Configuration => Style::default().fg(Color::Gray),
             CommandCategory::Compose => Style::default().fg(Color::LightGreen),
+            CommandCategory::Window => Style::default().fg(Color::LightMagenta),
         }
     }
 
@@ -991,14 +992,14 @@ impl<'a> Widget for CommandPaletteWidget<'a> {
         // Calculate inner areas
         let inner = Block::default()
             .borders(Borders::ALL)
-            .title(" Commands (M-x) ")
+            .title(" Commands (SPC/M-x) ")
             .style(Style::default().bg(Color::Black))
             .inner(area);
 
         // Render border
         Block::default()
             .borders(Borders::ALL)
-            .title(" Commands (M-x) ")
+            .title(" Commands (SPC/M-x) ")
             .style(Style::default().bg(Color::Black))
             .render(area, buf);
 
@@ -1348,7 +1349,7 @@ impl<'a> ComposeWidget<'a> {
             y += 1;
         }
 
-        // Sections or Content
+        // Sections (NKBIP-01: 30040 has no content, only sections)
         if has_sections {
             // Render sections
             for (idx, section) in self.state.sections.iter().enumerate() {
@@ -1375,7 +1376,52 @@ impl<'a> ComposeWidget<'a> {
                 );
                 y += 1;
 
-                // Section content (abbreviated preview)
+                // Section tags (if any or in tag mode)
+                if !section.tags.is_empty() || section.tag_mode {
+                    let _max_tag_height = 3u16;
+                    // Render section tags inline
+                    let is_tag_name_focused = matches!(self.state.focus, ComposeFocus::SectionTagName(i) if i == idx);
+                    let is_tag_value_focused = matches!(self.state.focus, ComposeFocus::SectionTagValue(i) if i == idx);
+
+                    // Show existing tags
+                    if !section.tags.is_empty() {
+                        let tags_str = section.tags.iter()
+                            .map(|t| format!("[{}:{}]", t.name, t.value))
+                            .collect::<Vec<_>>()
+                            .join(" ");
+                        let tags_display: String = tags_str.chars().take(inner.width as usize).collect();
+                        buf.set_string(inner.x, y, &tags_display, Style::default().fg(Color::Yellow));
+                        y += 1;
+                    }
+
+                    // Show tag input if in tag mode
+                    if section.tag_mode && y < inner.y + inner.height - 2 {
+                        self.render_text_field(
+                            buf,
+                            Rect { x: inner.x, y, width: inner.width / 2, height: 1 },
+                            "Tag",
+                            &section.current_tag_name,
+                            is_tag_name_focused,
+                            if is_tag_name_focused { self.state.cursor_pos } else { 0 },
+                        );
+                        self.render_text_field(
+                            buf,
+                            Rect { x: inner.x + inner.width / 2, y, width: inner.width / 2, height: 1 },
+                            "Value",
+                            &section.current_tag_value,
+                            is_tag_value_focused,
+                            if is_tag_value_focused { self.state.cursor_pos } else { 0 },
+                        );
+                        y += 1;
+                    }
+
+                    // Divider
+                    let section_divider: String = "─".repeat(inner.width as usize);
+                    buf.set_string(inner.x, y, &section_divider, Style::default().fg(Color::DarkGray));
+                    y += 1;
+                }
+
+                // Section content
                 let is_sec_content_focused = matches!(self.state.focus, ComposeFocus::SectionContent(i) if i == idx);
                 let content_height = (inner.y + inner.height).saturating_sub(y).saturating_sub(1).min(4);
                 if content_height > 0 {
@@ -1397,18 +1443,13 @@ impl<'a> ComposeWidget<'a> {
                 buf.set_string(inner.x, y, hint, Style::default().fg(Color::DarkGray).italic());
             }
         } else {
-            // Main content area
-            let is_content_focused = matches!(self.state.focus, ComposeFocus::Content);
-            let content_height = (inner.y + inner.height).saturating_sub(y);
-            if content_height > 1 {
-                self.render_content_area(
-                    buf,
-                    Rect { x: inner.x, y, width: inner.width, height: content_height },
-                    "Content",
-                    &self.state.content,
-                    is_content_focused,
-                    if is_content_focused { self.state.cursor_pos } else { 0 },
-                );
+            // No sections yet - prompt to add one
+            let hint1 = "NKBIP-01 publications require at least one section.";
+            let hint2 = "Press Ctrl+s to add a section.";
+            buf.set_string(inner.x, y, hint1, Style::default().fg(Color::DarkGray));
+            y += 1;
+            if y < inner.y + inner.height {
+                buf.set_string(inner.x, y, hint2, Style::default().fg(Color::Yellow));
             }
         }
     }
@@ -1462,6 +1503,115 @@ impl<'a> ComposeWidget<'a> {
             let indicator = format!(" {}/{} ", scroll + 1, lines.len().saturating_sub(inner.height as usize) + 1);
             let indicator_x = area.x + area.width - indicator.len() as u16 - 1;
             buf.set_string(indicator_x, area.y, &indicator, Style::default().fg(Color::DarkGray));
+        }
+    }
+}
+
+/// Widget for rendering a window overlay
+pub struct WindowWidget<'a> {
+    window: &'a crate::tree::state::WindowState,
+    is_focused: bool,
+}
+
+impl<'a> WindowWidget<'a> {
+    pub fn new(window: &'a crate::tree::state::WindowState, is_focused: bool) -> Self {
+        WindowWidget { window, is_focused }
+    }
+
+    /// Calculate the area for a window based on its size hints
+    pub fn calculate_area(parent: Rect, width_percent: u16, height_percent: u16) -> Rect {
+        let width = (parent.width as u32 * width_percent as u32 / 100) as u16;
+        let height = (parent.height as u32 * height_percent as u32 / 100) as u16;
+        let width = width.max(20).min(parent.width);
+        let height = height.max(5).min(parent.height);
+        let x = (parent.width.saturating_sub(width)) / 2;
+        let y = (parent.height.saturating_sub(height)) / 2;
+        Rect::new(x, y, width, height)
+    }
+}
+
+impl Widget for WindowWidget<'_> {
+    fn render(self, area: Rect, buf: &mut Buffer) {
+        // Clear area
+        Clear.render(area, buf);
+
+        // Border style based on focus
+        let border_style = if self.is_focused {
+            Style::default().fg(Color::Yellow)
+        } else {
+            Style::default().fg(Color::DarkGray)
+        };
+
+        let title = format!(" {} ", self.window.title);
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(border_style)
+            .title(title.as_str())
+            .style(Style::default().bg(Color::Black));
+
+        let inner = block.inner(area);
+        block.render(area, buf);
+
+        if inner.height < 1 || inner.width < 1 {
+            return;
+        }
+
+        // Render content lines
+        let viewport_height = inner.height as usize;
+        let visible_lines = self.window.visible_lines(viewport_height);
+
+        for (i, line) in visible_lines.iter().enumerate() {
+            if i >= inner.height as usize {
+                break;
+            }
+            let y = inner.y + i as u16;
+
+            // Truncate line to fit width
+            let display_line: String = line.chars().take(inner.width as usize).collect();
+
+            // Simple syntax highlighting for JSON-like content
+            let style = if display_line.contains("\":") {
+                // Key
+                Style::default().fg(Color::Cyan)
+            } else if display_line.contains("\"") {
+                // String value
+                Style::default().fg(Color::Green)
+            } else if display_line.trim().starts_with('{')
+                || display_line.trim().starts_with('}')
+                || display_line.trim().starts_with('[')
+                || display_line.trim().starts_with(']')
+            {
+                // Braces
+                Style::default().fg(Color::White)
+            } else if display_line.trim().parse::<f64>().is_ok() {
+                // Number
+                Style::default().fg(Color::Magenta)
+            } else {
+                Style::default().fg(Color::White)
+            };
+
+            buf.set_string(inner.x, y, &display_line, style);
+        }
+
+        // Scroll indicator
+        let total = self.window.total_lines();
+        if total > viewport_height {
+            let scroll_info = format!(
+                " {}-{}/{} ",
+                self.window.scroll_offset + 1,
+                (self.window.scroll_offset + viewport_height).min(total),
+                total
+            );
+            let info_x = area.x + area.width - scroll_info.len() as u16 - 1;
+            buf.set_string(info_x, area.y, &scroll_info, Style::default().fg(Color::DarkGray));
+        }
+
+        // Help hint at bottom
+        let help = if self.is_focused { " j/k:scroll  gg/G:top/bottom  q:close " } else { " Tab:focus " };
+        let help_x = area.x + 1;
+        let help_y = area.y + area.height - 1;
+        if help.len() < area.width as usize - 2 {
+            buf.set_string(help_x, help_y, help, Style::default().fg(Color::DarkGray));
         }
     }
 }

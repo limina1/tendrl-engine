@@ -69,6 +69,8 @@ pub struct TreeState {
     pub command_palette: CommandPaletteState,
     /// Compose mode state
     pub compose: ComposeState,
+    /// Window manager for overlay windows
+    pub windows: WindowManager,
 }
 
 impl TreeState {
@@ -92,6 +94,7 @@ impl TreeState {
             feed_exhausted: false,
             command_palette: CommandPaletteState::new(),
             compose: ComposeState::new(),
+            windows: WindowManager::new(),
         }
     }
 
@@ -394,19 +397,43 @@ pub enum FilterMode {
 /// Focus position within compose mode
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum ComposeFocus {
-    /// Focused on the title field
+    /// Focused on the publication title field
     #[default]
     Title,
-    /// Focused on a tag name input
+    /// Focused on a tag name input (for publication tags)
     TagName,
-    /// Focused on a tag value input
+    /// Focused on a tag value input (for publication tags)
     TagValue,
-    /// Focused on the main content field
-    Content,
     /// Focused on a section title (index into sections vec)
     SectionTitle(usize),
+    /// Focused on section tags name input
+    SectionTagName(usize),
+    /// Focused on section tags value input
+    SectionTagValue(usize),
     /// Focused on a section content (index into sections vec)
     SectionContent(usize),
+}
+
+/// Auto-update mode for publications (NKBIP-01)
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum AutoUpdateMode {
+    /// Automatically update to newer versions
+    #[default]
+    Yes,
+    /// Ask user before updating
+    Ask,
+    /// Never auto-update
+    No,
+}
+
+impl AutoUpdateMode {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            AutoUpdateMode::Yes => "yes",
+            AutoUpdateMode::Ask => "ask",
+            AutoUpdateMode::No => "no",
+        }
+    }
 }
 
 /// A tag entry for compose mode
@@ -421,26 +448,34 @@ pub struct TagEntry {
 /// A section being composed (for 30041 events)
 #[derive(Debug, Clone, Default)]
 pub struct SectionCompose {
-    /// Section title
+    /// Section title (used to generate d-tag)
     pub title: String,
-    /// Section content
+    /// Section content (the actual text)
     pub content: String,
     /// Section-specific tags
     pub tags: Vec<TagEntry>,
+    /// Whether currently in tag creation mode for this section
+    pub tag_mode: bool,
+    /// Current tag name being typed
+    pub current_tag_name: String,
+    /// Current tag value being typed
+    pub current_tag_value: String,
 }
 
-/// State for compose mode
+/// State for compose mode (NKBIP-01 publications)
+///
+/// Creates kind 30040 (publication index) and kind 30041 (sections).
+/// The 30040 event has NO content - only title, tags, and `a` tag references.
+/// The 30041 events contain the actual content.
 #[derive(Debug, Clone, Default)]
 pub struct ComposeState {
     /// Current focus position
     pub focus: ComposeFocus,
-    /// Publication/note title
+    /// Publication title (used to generate d-tag)
     pub title: String,
-    /// Main content (for simple notes without sections)
-    pub content: String,
-    /// Tags for the publication
+    /// Tags for the publication (30040)
     pub tags: Vec<TagEntry>,
-    /// Sections (for multi-section publications)
+    /// Sections (30041 events)
     pub sections: Vec<SectionCompose>,
     /// Whether currently in tag creation mode
     pub tag_mode: bool,
@@ -454,6 +489,8 @@ pub struct ComposeState {
     pub content_scroll: usize,
     /// Whether to show the event preview panel
     pub show_preview: bool,
+    /// Auto-update preference for the publication
+    pub auto_update: AutoUpdateMode,
 }
 
 impl ComposeState {
@@ -478,9 +515,14 @@ impl ComposeState {
             ComposeFocus::Title => &self.title,
             ComposeFocus::TagName => &self.current_tag_name,
             ComposeFocus::TagValue => &self.current_tag_value,
-            ComposeFocus::Content => &self.content,
             ComposeFocus::SectionTitle(idx) => {
                 self.sections.get(idx).map(|s| s.title.as_str()).unwrap_or("")
+            }
+            ComposeFocus::SectionTagName(idx) => {
+                self.sections.get(idx).map(|s| s.current_tag_name.as_str()).unwrap_or("")
+            }
+            ComposeFocus::SectionTagValue(idx) => {
+                self.sections.get(idx).map(|s| s.current_tag_value.as_str()).unwrap_or("")
             }
             ComposeFocus::SectionContent(idx) => {
                 self.sections.get(idx).map(|s| s.content.as_str()).unwrap_or("")
@@ -494,14 +536,30 @@ impl ComposeState {
             ComposeFocus::Title => Some(&mut self.title),
             ComposeFocus::TagName => Some(&mut self.current_tag_name),
             ComposeFocus::TagValue => Some(&mut self.current_tag_value),
-            ComposeFocus::Content => Some(&mut self.content),
             ComposeFocus::SectionTitle(idx) => {
                 self.sections.get_mut(idx).map(|s| &mut s.title)
+            }
+            ComposeFocus::SectionTagName(idx) => {
+                self.sections.get_mut(idx).map(|s| &mut s.current_tag_name)
+            }
+            ComposeFocus::SectionTagValue(idx) => {
+                self.sections.get_mut(idx).map(|s| &mut s.current_tag_value)
             }
             ComposeFocus::SectionContent(idx) => {
                 self.sections.get_mut(idx).map(|s| &mut s.content)
             }
         }
+    }
+
+    /// Check if currently in any tag editing mode (publication or section tags)
+    pub fn is_in_tag_mode(&self) -> bool {
+        matches!(
+            self.focus,
+            ComposeFocus::TagName
+                | ComposeFocus::TagValue
+                | ComposeFocus::SectionTagName(_)
+                | ComposeFocus::SectionTagValue(_)
+        ) || self.tag_mode
     }
 
     /// Insert a character at the cursor position
@@ -565,6 +623,7 @@ impl ComposeState {
     }
 
     /// Move to next field
+    /// Flow: Title -> [Tags if tag_mode] -> Section Title -> [Section Tags if tag_mode] -> Section Content -> next section...
     pub fn next_field(&mut self) {
         match self.focus {
             ComposeFocus::Title => {
@@ -573,7 +632,8 @@ impl ComposeState {
                 } else if !self.sections.is_empty() {
                     self.focus = ComposeFocus::SectionTitle(0);
                 } else {
-                    self.focus = ComposeFocus::Content;
+                    // No sections yet, stay on title
+                    self.focus = ComposeFocus::Title;
                 }
             }
             ComposeFocus::TagName => {
@@ -591,12 +651,30 @@ impl ComposeState {
                 }
                 self.focus = ComposeFocus::TagName;
             }
-            ComposeFocus::Content => {
-                // Stay on content or cycle to title
-                self.focus = ComposeFocus::Title;
-            }
             ComposeFocus::SectionTitle(idx) => {
-                self.focus = ComposeFocus::SectionContent(idx);
+                // Check if this section has tag mode enabled
+                if self.sections.get(idx).map(|s| s.tag_mode).unwrap_or(false) {
+                    self.focus = ComposeFocus::SectionTagName(idx);
+                } else {
+                    self.focus = ComposeFocus::SectionContent(idx);
+                }
+            }
+            ComposeFocus::SectionTagName(idx) => {
+                self.focus = ComposeFocus::SectionTagValue(idx);
+            }
+            ComposeFocus::SectionTagValue(idx) => {
+                // Add the tag to the section
+                if let Some(section) = self.sections.get_mut(idx) {
+                    if !section.current_tag_name.is_empty() && !section.current_tag_value.is_empty() {
+                        section.tags.push(TagEntry {
+                            name: section.current_tag_name.clone(),
+                            value: section.current_tag_value.clone(),
+                        });
+                        section.current_tag_name.clear();
+                        section.current_tag_value.clear();
+                    }
+                }
+                self.focus = ComposeFocus::SectionTagName(idx);
             }
             ComposeFocus::SectionContent(idx) => {
                 if idx + 1 < self.sections.len() {
@@ -616,9 +694,8 @@ impl ComposeState {
                 if !self.sections.is_empty() {
                     let last_idx = self.sections.len() - 1;
                     self.focus = ComposeFocus::SectionContent(last_idx);
-                } else {
-                    self.focus = ComposeFocus::Content;
                 }
+                // No sections, stay on title
             }
             ComposeFocus::TagName => {
                 // In tag mode, Shift+Tab deletes last tag
@@ -632,13 +709,6 @@ impl ComposeState {
             ComposeFocus::TagValue => {
                 self.focus = ComposeFocus::TagName;
             }
-            ComposeFocus::Content => {
-                if self.tag_mode {
-                    self.focus = ComposeFocus::TagName;
-                } else {
-                    self.focus = ComposeFocus::Title;
-                }
-            }
             ComposeFocus::SectionTitle(idx) => {
                 if idx > 0 {
                     self.focus = ComposeFocus::SectionContent(idx - 1);
@@ -648,34 +718,88 @@ impl ComposeState {
                     self.focus = ComposeFocus::Title;
                 }
             }
+            ComposeFocus::SectionTagName(idx) => {
+                // Delete last section tag or exit section tag mode
+                if let Some(section) = self.sections.get_mut(idx) {
+                    if !section.tags.is_empty() {
+                        section.tags.pop();
+                    } else {
+                        section.tag_mode = false;
+                        self.focus = ComposeFocus::SectionTitle(idx);
+                    }
+                }
+            }
+            ComposeFocus::SectionTagValue(idx) => {
+                self.focus = ComposeFocus::SectionTagName(idx);
+            }
             ComposeFocus::SectionContent(idx) => {
-                self.focus = ComposeFocus::SectionTitle(idx);
+                // Check if section has tag mode
+                if self.sections.get(idx).map(|s| s.tag_mode).unwrap_or(false) {
+                    self.focus = ComposeFocus::SectionTagName(idx);
+                } else {
+                    self.focus = ComposeFocus::SectionTitle(idx);
+                }
             }
         }
         self.cursor_pos = self.current_text().len();
     }
 
-    /// Enter tag creation mode
+    /// Enter tag creation mode (for publication or current section)
     pub fn enter_tag_mode(&mut self) {
-        self.tag_mode = true;
-        self.focus = ComposeFocus::TagName;
+        match self.focus {
+            ComposeFocus::SectionTitle(idx) | ComposeFocus::SectionContent(idx) => {
+                // Enter section tag mode
+                if let Some(section) = self.sections.get_mut(idx) {
+                    section.tag_mode = true;
+                    self.focus = ComposeFocus::SectionTagName(idx);
+                }
+            }
+            _ => {
+                // Enter publication tag mode
+                self.tag_mode = true;
+                self.focus = ComposeFocus::TagName;
+            }
+        }
         self.cursor_pos = 0;
     }
 
     /// Exit tag creation mode
     pub fn exit_tag_mode(&mut self) {
-        // Save any pending tag
-        if !self.current_tag_name.is_empty() && !self.current_tag_value.is_empty() {
-            self.tags.push(TagEntry {
-                name: self.current_tag_name.clone(),
-                value: self.current_tag_value.clone(),
-            });
+        match self.focus {
+            ComposeFocus::SectionTagName(idx) | ComposeFocus::SectionTagValue(idx) => {
+                // Exit section tag mode
+                if let Some(section) = self.sections.get_mut(idx) {
+                    if !section.current_tag_name.is_empty() && !section.current_tag_value.is_empty() {
+                        section.tags.push(TagEntry {
+                            name: section.current_tag_name.clone(),
+                            value: section.current_tag_value.clone(),
+                        });
+                    }
+                    section.current_tag_name.clear();
+                    section.current_tag_value.clear();
+                    section.tag_mode = false;
+                }
+                self.focus = ComposeFocus::SectionContent(idx);
+            }
+            _ => {
+                // Exit publication tag mode
+                if !self.current_tag_name.is_empty() && !self.current_tag_value.is_empty() {
+                    self.tags.push(TagEntry {
+                        name: self.current_tag_name.clone(),
+                        value: self.current_tag_value.clone(),
+                    });
+                }
+                self.current_tag_name.clear();
+                self.current_tag_value.clear();
+                self.tag_mode = false;
+                // Go to first section, or create one if none exist
+                if self.sections.is_empty() {
+                    self.sections.push(SectionCompose::default());
+                }
+                self.focus = ComposeFocus::SectionTitle(0);
+            }
         }
-        self.current_tag_name.clear();
-        self.current_tag_value.clear();
-        self.tag_mode = false;
-        self.focus = ComposeFocus::Content;
-        self.cursor_pos = self.content.len();
+        self.cursor_pos = self.current_text().len();
     }
 
     /// Add a new section
@@ -692,10 +816,13 @@ impl ComposeState {
             self.sections.pop();
             // Adjust focus if needed
             match self.focus {
-                ComposeFocus::SectionTitle(idx) | ComposeFocus::SectionContent(idx) => {
+                ComposeFocus::SectionTitle(idx)
+                | ComposeFocus::SectionTagName(idx)
+                | ComposeFocus::SectionTagValue(idx)
+                | ComposeFocus::SectionContent(idx) => {
                     if idx >= self.sections.len() {
                         if self.sections.is_empty() {
-                            self.focus = ComposeFocus::Content;
+                            self.focus = ComposeFocus::Title;
                         } else {
                             self.focus = ComposeFocus::SectionContent(self.sections.len() - 1);
                         }
@@ -710,7 +837,7 @@ impl ComposeState {
     /// Insert a newline in content fields
     pub fn insert_newline(&mut self) {
         match self.focus {
-            ComposeFocus::Content | ComposeFocus::SectionContent(_) => {
+            ComposeFocus::SectionContent(_) => {
                 self.insert_char('\n');
             }
             _ => {
@@ -720,15 +847,76 @@ impl ComposeState {
         }
     }
 
+    /// Generate a d-tag from a title by normalizing it
+    /// - Lowercase
+    /// - Replace spaces with hyphens
+    /// - Remove non-alphanumeric characters (except hyphens)
+    /// - Collapse multiple hyphens
+    pub fn generate_d_tag(title: &str) -> String {
+        let normalized: String = title
+            .to_lowercase()
+            .chars()
+            .map(|c| {
+                if c.is_alphanumeric() {
+                    c
+                } else if c.is_whitespace() || c == '-' || c == '_' {
+                    '-'
+                } else {
+                    '-'
+                }
+            })
+            .collect();
+
+        // Collapse multiple hyphens and trim
+        let mut result = String::new();
+        let mut last_was_hyphen = false;
+        for c in normalized.chars() {
+            if c == '-' {
+                if !last_was_hyphen && !result.is_empty() {
+                    result.push(c);
+                    last_was_hyphen = true;
+                }
+            } else {
+                result.push(c);
+                last_was_hyphen = false;
+            }
+        }
+        // Trim trailing hyphen
+        result.trim_end_matches('-').to_string()
+    }
+
+    /// Get the d-tag for the publication
+    pub fn publication_d_tag(&self) -> String {
+        if self.title.is_empty() {
+            "untitled".to_string()
+        } else {
+            Self::generate_d_tag(&self.title)
+        }
+    }
+
+    /// Get the d-tag for a section
+    pub fn section_d_tag(&self, section_idx: usize) -> String {
+        let pub_d_tag = self.publication_d_tag();
+        if let Some(section) = self.sections.get(section_idx) {
+            if section.title.is_empty() {
+                format!("{}-section-{}", pub_d_tag, section_idx)
+            } else {
+                format!("{}-{}", pub_d_tag, Self::generate_d_tag(&section.title))
+            }
+        } else {
+            format!("{}-section-{}", pub_d_tag, section_idx)
+        }
+    }
+
     /// Convert tags to the format expected by Nostr events
     ///
     /// Syntax:
     /// - `[tags] [val1, val2]` → `["t", "val1"]`, `["t", "val2"]` (expands to multiple t tags)
     /// - `[name] [val1, val2, val3]` → `["name", "val1", "val2", "val3"]` (multi-value single tag)
     /// - `[name] [value]` → `["name", "value"]` (simple tag)
-    pub fn tags_to_nostr_format(&self) -> Vec<Vec<String>> {
+    pub fn tags_to_nostr_format(tags: &[TagEntry]) -> Vec<Vec<String>> {
         let mut result = Vec::new();
-        for tag in &self.tags {
+        for tag in tags {
             if tag.name == "tags" {
                 // Special case: "tags" expands comma-separated values into individual "t" tags
                 for t in tag.value.split(',') {
@@ -756,14 +944,23 @@ impl ComposeState {
     }
 
     /// Check if there's any content to publish
+    /// For NKBIP-01, we need at least a title and one section
     pub fn has_content(&self) -> bool {
-        !self.title.is_empty() || !self.content.is_empty() || !self.sections.is_empty()
+        !self.title.is_empty() && !self.sections.is_empty()
     }
 
-    /// Generate a preview of the event(s) that would be published
-    /// Returns JSON representation with placeholder id, pubkey, sig
+    /// Check if ready to publish (has title and at least one section with content)
+    pub fn is_ready_to_publish(&self) -> bool {
+        !self.title.is_empty()
+            && !self.sections.is_empty()
+            && self.sections.iter().all(|s| !s.title.is_empty() && !s.content.is_empty())
+    }
+
+    /// Generate a preview of the current event based on focus
+    /// - When focused on publication fields (Title, Tags) → shows 30040 event
+    /// - When focused on section fields → shows that section's 30041 event
     pub fn preview_event_json(&self) -> String {
-        use serde_json::{json, Value};
+        use serde_json::json;
         use std::time::{SystemTime, UNIX_EPOCH};
 
         let now = SystemTime::now()
@@ -771,99 +968,106 @@ impl ComposeState {
             .map(|d| d.as_secs())
             .unwrap_or(0);
 
-        if self.sections.is_empty() {
-            // Simple note (kind 1) or single content
-            let mut tags: Vec<Value> = self.tags_to_nostr_format()
-                .into_iter()
-                .map(|t| json!(t))
-                .collect();
+        // Determine which event to show based on focus
+        let section_idx = match self.focus {
+            ComposeFocus::SectionTitle(idx)
+            | ComposeFocus::SectionTagName(idx)
+            | ComposeFocus::SectionTagValue(idx)
+            | ComposeFocus::SectionContent(idx) => Some(idx),
+            _ => None,
+        };
 
-            // Add title tag if present
-            if !self.title.is_empty() {
-                tags.insert(0, json!(["title", &self.title]));
-            }
-
-            let event = json!({
-                "id": "<unsigned>",
-                "pubkey": "<not signed in>",
-                "created_at": now,
-                "kind": 1,
-                "tags": tags,
-                "content": &self.content,
-                "sig": "<unsigned>"
-            });
-
-            serde_json::to_string_pretty(&event).unwrap_or_else(|_| "{}".to_string())
+        if let Some(idx) = section_idx {
+            // Show the section's 30041 event
+            self.preview_section_json(idx, now)
         } else {
-            // Multi-section publication (kind 30040 + 30041)
-            let mut events: Vec<Value> = Vec::new();
-
-            // Generate section events first (30041)
-            let mut section_refs: Vec<Value> = Vec::new();
-            for (i, section) in self.sections.iter().enumerate() {
-                let d_tag = format!("section-{}", i);
-                let mut section_tags: Vec<Value> = vec![
-                    json!(["d", &d_tag]),
-                ];
-                if !section.title.is_empty() {
-                    section_tags.push(json!(["title", &section.title]));
-                }
-
-                section_refs.push(json!(["a", format!("30041:<pubkey>:{}", d_tag)]));
-
-                let section_event = json!({
-                    "id": "<unsigned>",
-                    "pubkey": "<not signed in>",
-                    "created_at": now,
-                    "kind": 30041,
-                    "tags": section_tags,
-                    "content": &section.content,
-                    "sig": "<unsigned>"
-                });
-                events.push(section_event);
-            }
-
-            // Generate publication event (30040)
-            let mut pub_tags: Vec<Value> = vec![
-                json!(["d", "publication"]),
-            ];
-            if !self.title.is_empty() {
-                pub_tags.push(json!(["title", &self.title]));
-            }
-
-            // Add custom tags
-            for tag in &self.tags {
-                if tag.name == "tags" {
-                    for t in tag.value.split(',') {
-                        let t = t.trim();
-                        if !t.is_empty() {
-                            pub_tags.push(json!(["t", t]));
-                        }
-                    }
-                } else {
-                    pub_tags.push(json!([&tag.name, &tag.value]));
-                }
-            }
-
-            // Add section references
-            pub_tags.extend(section_refs);
-
-            let pub_event = json!({
-                "id": "<unsigned>",
-                "pubkey": "<not signed in>",
-                "created_at": now,
-                "kind": 30040,
-                "tags": pub_tags,
-                "content": "",
-                "sig": "<unsigned>"
-            });
-
-            // Publication event first, then sections
-            let mut all_events = vec![pub_event];
-            all_events.extend(events);
-
-            serde_json::to_string_pretty(&all_events).unwrap_or_else(|_| "[]".to_string())
+            // Show the publication's 30040 event
+            self.preview_publication_json(now)
         }
+    }
+
+    /// Generate JSON for the 30040 publication event
+    fn preview_publication_json(&self, now: u64) -> String {
+        use serde_json::{json, Value};
+
+        let pub_d_tag = self.publication_d_tag();
+
+        // Build section `a` tag references
+        let mut section_a_tags: Vec<Value> = Vec::new();
+        for i in 0..self.sections.len() {
+            let section_d_tag = self.section_d_tag(i);
+            section_a_tags.push(json!(["a", format!("30041:<pubkey>:{}", section_d_tag), ""]));
+        }
+
+        // Build publication tags
+        let mut pub_tags: Vec<Value> = vec![
+            json!(["d", &pub_d_tag]),
+        ];
+
+        if !self.title.is_empty() {
+            pub_tags.push(json!(["title", &self.title]));
+        }
+
+        // Add custom tags
+        for tag_vec in Self::tags_to_nostr_format(&self.tags) {
+            pub_tags.push(json!(tag_vec));
+        }
+
+        // Add section references
+        pub_tags.extend(section_a_tags);
+
+        // Add auto-update tag
+        pub_tags.push(json!(["auto-update", self.auto_update.as_str()]));
+
+        let pub_event = json!({
+            "id": "<unsigned>",
+            "pubkey": "<not signed in>",
+            "created_at": now,
+            "kind": 30040,
+            "tags": pub_tags,
+            "content": "",  // MUST be empty for 30040
+            "sig": "<unsigned>"
+        });
+
+        serde_json::to_string_pretty(&pub_event).unwrap_or_else(|_| "{}".to_string())
+    }
+
+    /// Generate JSON for a section's 30041 event
+    fn preview_section_json(&self, idx: usize, now: u64) -> String {
+        use serde_json::{json, Value};
+
+        let section = match self.sections.get(idx) {
+            Some(s) => s,
+            None => return "{}".to_string(),
+        };
+
+        let section_d_tag = self.section_d_tag(idx);
+
+        // Build section tags
+        let mut section_tags: Vec<Value> = vec![
+            json!(["d", &section_d_tag]),
+        ];
+
+        if !section.title.is_empty() {
+            section_tags.push(json!(["title", &section.title]));
+        }
+
+        // Add section-specific tags
+        for tag_vec in Self::tags_to_nostr_format(&section.tags) {
+            section_tags.push(json!(tag_vec));
+        }
+
+        let section_event = json!({
+            "id": "<unsigned>",
+            "pubkey": "<not signed in>",
+            "created_at": now,
+            "kind": 30041,
+            "tags": section_tags,
+            "content": &section.content,
+            "sig": "<unsigned>"
+        });
+
+        serde_json::to_string_pretty(&section_event).unwrap_or_else(|_| "{}".to_string())
     }
 }
 
@@ -998,6 +1202,213 @@ impl Default for CommandPaletteState {
     }
 }
 
+/// A unique identifier for a window
+pub type WindowId = String;
+
+/// State for a single window overlay
+#[derive(Debug, Clone)]
+pub struct WindowState {
+    /// Unique identifier for this window
+    pub id: WindowId,
+    /// Window title displayed in the border
+    pub title: String,
+    /// Content to display (text lines)
+    pub content: Vec<String>,
+    /// Current scroll offset (line number at top of view)
+    pub scroll_offset: usize,
+    /// Whether the window is read-only (no editing, just viewing)
+    pub readonly: bool,
+    /// Window width as percentage of screen (0-100)
+    pub width_percent: u16,
+    /// Window height as percentage of screen (0-100)
+    pub height_percent: u16,
+}
+
+impl WindowState {
+    /// Create a new window with the given content
+    pub fn new(id: impl Into<String>, title: impl Into<String>, content: String) -> Self {
+        let lines: Vec<String> = content.lines().map(|s| s.to_string()).collect();
+        WindowState {
+            id: id.into(),
+            title: title.into(),
+            content: lines,
+            scroll_offset: 0,
+            readonly: true,
+            width_percent: 80,
+            height_percent: 80,
+        }
+    }
+
+    /// Create a window for displaying JSON
+    pub fn json(id: impl Into<String>, title: impl Into<String>, json: &str) -> Self {
+        Self::new(id, title, json.to_string())
+    }
+
+    /// Total number of lines in the content
+    pub fn total_lines(&self) -> usize {
+        self.content.len()
+    }
+
+    /// Scroll down by n lines
+    pub fn scroll_down(&mut self, n: usize, viewport_height: usize) {
+        let max_scroll = self.total_lines().saturating_sub(viewport_height);
+        self.scroll_offset = (self.scroll_offset + n).min(max_scroll);
+    }
+
+    /// Scroll up by n lines
+    pub fn scroll_up(&mut self, n: usize) {
+        self.scroll_offset = self.scroll_offset.saturating_sub(n);
+    }
+
+    /// Scroll to the top
+    pub fn scroll_to_top(&mut self) {
+        self.scroll_offset = 0;
+    }
+
+    /// Scroll to the bottom
+    pub fn scroll_to_bottom(&mut self, viewport_height: usize) {
+        self.scroll_offset = self.total_lines().saturating_sub(viewport_height);
+    }
+
+    /// Get visible lines for the current scroll position
+    pub fn visible_lines(&self, viewport_height: usize) -> &[String] {
+        let start = self.scroll_offset;
+        let end = (start + viewport_height).min(self.content.len());
+        &self.content[start..end]
+    }
+}
+
+/// Manages multiple windows as overlays
+#[derive(Debug, Clone, Default)]
+pub struct WindowManager {
+    /// Stack of open windows (last is on top)
+    pub windows: Vec<WindowState>,
+    /// Index of the currently focused window (if any)
+    pub focused: Option<usize>,
+}
+
+impl WindowManager {
+    pub fn new() -> Self {
+        WindowManager {
+            windows: Vec::new(),
+            focused: None,
+        }
+    }
+
+    /// Open a new window and focus it
+    pub fn open(&mut self, window: WindowState) {
+        self.windows.push(window);
+        self.focused = Some(self.windows.len() - 1);
+    }
+
+    /// Close the focused window
+    pub fn close_focused(&mut self) {
+        if let Some(idx) = self.focused {
+            if idx < self.windows.len() {
+                self.windows.remove(idx);
+                // Update focus
+                if self.windows.is_empty() {
+                    self.focused = None;
+                } else {
+                    self.focused = Some(idx.min(self.windows.len() - 1));
+                }
+            }
+        }
+    }
+
+    /// Close a window by ID
+    pub fn close_by_id(&mut self, id: &str) {
+        if let Some(pos) = self.windows.iter().position(|w| w.id == id) {
+            self.windows.remove(pos);
+            // Update focus
+            if self.windows.is_empty() {
+                self.focused = None;
+            } else if let Some(focused_idx) = self.focused {
+                if focused_idx >= self.windows.len() {
+                    self.focused = Some(self.windows.len() - 1);
+                } else if focused_idx > pos {
+                    self.focused = Some(focused_idx - 1);
+                }
+            }
+        }
+    }
+
+    /// Close all windows
+    pub fn close_all(&mut self) {
+        self.windows.clear();
+        self.focused = None;
+    }
+
+    /// Get the focused window
+    pub fn focused_window(&self) -> Option<&WindowState> {
+        self.focused.and_then(|idx| self.windows.get(idx))
+    }
+
+    /// Get the focused window mutably
+    pub fn focused_window_mut(&mut self) -> Option<&mut WindowState> {
+        self.focused.and_then(|idx| self.windows.get_mut(idx))
+    }
+
+    /// Check if any window is open
+    pub fn has_windows(&self) -> bool {
+        !self.windows.is_empty()
+    }
+
+    /// Check if a window is focused
+    pub fn is_focused(&self) -> bool {
+        self.focused.is_some() && !self.windows.is_empty()
+    }
+
+    /// Focus the next window (cycle through)
+    pub fn focus_next(&mut self) {
+        if !self.windows.is_empty() {
+            self.focused = Some(match self.focused {
+                Some(idx) => (idx + 1) % self.windows.len(),
+                None => 0,
+            });
+        }
+    }
+
+    /// Focus the previous window (cycle through)
+    pub fn focus_prev(&mut self) {
+        if !self.windows.is_empty() {
+            self.focused = Some(match self.focused {
+                Some(0) => self.windows.len() - 1,
+                Some(idx) => idx - 1,
+                None => self.windows.len() - 1,
+            });
+        }
+    }
+
+    /// Scroll the focused window down
+    pub fn scroll_down(&mut self, n: usize, viewport_height: usize) {
+        if let Some(window) = self.focused_window_mut() {
+            window.scroll_down(n, viewport_height);
+        }
+    }
+
+    /// Scroll the focused window up
+    pub fn scroll_up(&mut self, n: usize) {
+        if let Some(window) = self.focused_window_mut() {
+            window.scroll_up(n);
+        }
+    }
+
+    /// Scroll focused window to top
+    pub fn scroll_to_top(&mut self) {
+        if let Some(window) = self.focused_window_mut() {
+            window.scroll_to_top();
+        }
+    }
+
+    /// Scroll focused window to bottom
+    pub fn scroll_to_bottom(&mut self, viewport_height: usize) {
+        if let Some(window) = self.focused_window_mut() {
+            window.scroll_to_bottom(viewport_height);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1091,13 +1502,25 @@ mod tests {
         // Start on title
         assert!(matches!(compose.focus, ComposeFocus::Title));
 
-        // Tab to content
+        // Tab without sections stays on title
         compose.next_field();
-        assert!(matches!(compose.focus, ComposeFocus::Content));
-
-        // Back to title
-        compose.prev_field();
         assert!(matches!(compose.focus, ComposeFocus::Title));
+
+        // Add a section
+        compose.add_section();
+        assert!(matches!(compose.focus, ComposeFocus::SectionTitle(0)));
+
+        // Navigate to content
+        compose.next_field();
+        assert!(matches!(compose.focus, ComposeFocus::SectionContent(0)));
+
+        // Tab cycles back to title
+        compose.next_field();
+        assert!(matches!(compose.focus, ComposeFocus::Title));
+
+        // Back goes to last section content
+        compose.prev_field();
+        assert!(matches!(compose.focus, ComposeFocus::SectionContent(0)));
     }
 
     #[test]
@@ -1133,35 +1556,34 @@ mod tests {
         assert_eq!(compose.tags[0].name, "tags");
         assert_eq!(compose.tags[0].value, "rust");
 
-        // Exit tag mode
+        // Exit tag mode (creates a section if none exist, then goes to it)
         compose.exit_tag_mode();
         assert!(!compose.tag_mode);
-        assert!(matches!(compose.focus, ComposeFocus::Content));
+        assert_eq!(compose.sections.len(), 1); // Section was auto-created
+        assert!(matches!(compose.focus, ComposeFocus::SectionTitle(0)));
     }
 
     #[test]
     fn test_compose_state_tags_to_nostr_format() {
-        let mut compose = ComposeState::new();
+        let tags = vec![
+            // Add a "tags" entry (comma-separated) - expands to multiple t tags
+            TagEntry {
+                name: "tags".to_string(),
+                value: "rust, nostr, programming".to_string(),
+            },
+            // Add a simple single-value tag
+            TagEntry {
+                name: "author".to_string(),
+                value: "testuser".to_string(),
+            },
+            // Add a multi-value tag (comma-separated becomes single tag with multiple values)
+            TagEntry {
+                name: "relay".to_string(),
+                value: "wss://relay1.com, wss://relay2.com".to_string(),
+            },
+        ];
 
-        // Add a "tags" entry (comma-separated) - expands to multiple t tags
-        compose.tags.push(TagEntry {
-            name: "tags".to_string(),
-            value: "rust, nostr, programming".to_string(),
-        });
-
-        // Add a simple single-value tag
-        compose.tags.push(TagEntry {
-            name: "author".to_string(),
-            value: "testuser".to_string(),
-        });
-
-        // Add a multi-value tag (comma-separated becomes single tag with multiple values)
-        compose.tags.push(TagEntry {
-            name: "relay".to_string(),
-            value: "wss://relay1.com, wss://relay2.com".to_string(),
-        });
-
-        let nostr_tags = compose.tags_to_nostr_format();
+        let nostr_tags = ComposeState::tags_to_nostr_format(&tags);
 
         // "tags" should be expanded into multiple "t" tags
         assert_eq!(nostr_tags.len(), 5);
@@ -1196,71 +1618,96 @@ mod tests {
     fn test_compose_state_has_content() {
         let mut compose = ComposeState::new();
 
-        // Empty state has no content
+        // Empty state has no content (needs title AND sections for NKBIP-01)
         assert!(!compose.has_content());
 
-        // Title makes it have content
+        // Title alone is not enough
+        compose.title = "Test".to_string();
+        assert!(!compose.has_content());
+
+        // Sections alone is not enough
+        compose.title.clear();
+        compose.sections.push(SectionCompose::default());
+        assert!(!compose.has_content());
+
+        // Both title and sections is valid content
         compose.title = "Test".to_string();
         assert!(compose.has_content());
-
-        compose.title.clear();
-        assert!(!compose.has_content());
-
-        // Content makes it have content
-        compose.content = "Some content".to_string();
-        assert!(compose.has_content());
-
-        compose.content.clear();
-        assert!(!compose.has_content());
-
-        // Sections make it have content
-        compose.sections.push(SectionCompose::default());
-        assert!(compose.has_content());
-    }
-
-    #[test]
-    fn test_compose_state_preview_json_simple() {
-        let mut compose = ComposeState::new();
-        compose.title = "Test Note".to_string();
-        compose.content = "Hello world".to_string();
-
-        let json = compose.preview_event_json();
-
-        // Should be valid JSON
-        let parsed: serde_json::Value = serde_json::from_str(&json).expect("Should be valid JSON");
-
-        // Check structure
-        assert_eq!(parsed["kind"], 1);
-        assert_eq!(parsed["content"], "Hello world");
-        assert!(parsed["tags"].as_array().unwrap().iter().any(|t| {
-            t.as_array().map(|a| a[0] == "title" && a[1] == "Test Note").unwrap_or(false)
-        }));
     }
 
     #[test]
     fn test_compose_state_preview_json_publication() {
+        // Preview shows current event based on focus
+        let mut compose = ComposeState::new();
+        compose.title = "Test Note".to_string();
+        compose.sections.push(SectionCompose {
+            title: "Section 1".to_string(),
+            content: "Hello world".to_string(),
+            ..Default::default()
+        });
+
+        // Default focus is Title, so should show 30040 publication event
+        let json = compose.preview_event_json();
+        let parsed: serde_json::Value = serde_json::from_str(&json).expect("Should be valid JSON");
+
+        // Should be a single 30040 event (not an array)
+        assert_eq!(parsed["kind"], 30040);
+        assert_eq!(parsed["content"], ""); // MUST be empty
+        assert!(parsed["tags"].as_array().unwrap().iter().any(|t| {
+            t.as_array().map(|a| a[0] == "title" && a[1] == "Test Note").unwrap_or(false)
+        }));
+        // Should have auto-update tag
+        assert!(parsed["tags"].as_array().unwrap().iter().any(|t| {
+            t.as_array().map(|a| a[0] == "auto-update").unwrap_or(false)
+        }));
+        // Should have `a` tag referencing the section
+        assert!(parsed["tags"].as_array().unwrap().iter().any(|t| {
+            t.as_array().map(|a| a[0] == "a").unwrap_or(false)
+        }));
+    }
+
+    #[test]
+    fn test_compose_state_preview_json_section() {
         let mut compose = ComposeState::new();
         compose.title = "My Publication".to_string();
         compose.sections.push(SectionCompose {
             title: "Chapter 1".to_string(),
             content: "First chapter content".to_string(),
-            tags: vec![],
+            ..Default::default()
         });
 
+        // Focus on section content
+        compose.focus = ComposeFocus::SectionContent(0);
         let json = compose.preview_event_json();
-
-        // Should be valid JSON array
         let parsed: serde_json::Value = serde_json::from_str(&json).expect("Should be valid JSON");
-        let events = parsed.as_array().expect("Should be array of events");
 
-        // Should have 2 events: 1 publication (30040) + 1 section (30041)
-        assert_eq!(events.len(), 2);
+        // Should be a single 30041 section event
+        assert_eq!(parsed["kind"], 30041);
+        assert_eq!(parsed["content"], "First chapter content");
 
-        // First should be publication
-        assert_eq!(events[0]["kind"], 30040);
+        // Should have proper d-tag (publication-section)
+        assert!(parsed["tags"].as_array().unwrap().iter().any(|t| {
+            t.as_array().map(|a| a[0] == "d" && a[1] == "my-publication-chapter-1").unwrap_or(false)
+        }));
 
-        // Second should be section
-        assert_eq!(events[1]["kind"], 30041);
-        assert_eq!(events[1]["content"], "First chapter content");
+        // Should have title tag
+        assert!(parsed["tags"].as_array().unwrap().iter().any(|t| {
+            t.as_array().map(|a| a[0] == "title" && a[1] == "Chapter 1").unwrap_or(false)
+        }));
+    }
+
+    #[test]
+    fn test_d_tag_generation() {
+        // Normal title
+        assert_eq!(ComposeState::generate_d_tag("Hello World"), "hello-world");
+
+        // Special characters
+        assert_eq!(ComposeState::generate_d_tag("Aesop's Fables"), "aesop-s-fables");
+
+        // Multiple spaces and special chars
+        assert_eq!(ComposeState::generate_d_tag("The   Quick--Brown Fox!"), "the-quick-brown-fox");
+
+        // Unicode (accented characters are kept since is_alphanumeric() returns true)
+        assert_eq!(ComposeState::generate_d_tag("Café au Lait"), "café-au-lait");
     }
 }
