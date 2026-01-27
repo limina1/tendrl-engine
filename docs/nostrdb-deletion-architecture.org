@@ -1,0 +1,98 @@
+#+TITLE: nostrdb Deletion Architecture
+#+DATE: 2026-01-27
+#+AUTHOR: Investigation Notes
+
+* Overview
+
+This document describes the current state of event deletion in nostrdb and
+implications for nostr-engine's delete functionality.
+
+* NIP-09 Deletion Protocol
+
+NIP-09 defines deletion requests as kind 5 events:
+
+#+begin_src json
+{
+  "kind": 5,
+  "pubkey": "<author-pubkey>",
+  "tags": [
+    ["e", "<event-id-to-delete>"],
+    ["a", "<kind>:<pubkey>:<d-tag>"],
+    ["k", "<kind-of-deleted-event>"]
+  ],
+  "content": "reason for deletion"
+}
+#+end_src
+
+- For addressable events (30k+), use =a= tags: =["a", "30041:pubkey:d-tag"]=
+- Relays SHOULD delete referenced events with matching pubkey
+- Clients SHOULD hide or indicate deletion status
+
+* nostrdb Implementation Status
+
+** Defined But Unused Infrastructure
+
+nostrdb has deletion-related constants defined in =nostrdb.h=:
+
+#+begin_src c
+// Note flags (nostrdb.h:17)
+#define NDB_NOTE_FLAG_DELETED     (1 << 0)
+
+// Compact kind enum (nostrdb.h:263)
+NDB_CKIND_DELETE,  // maps to kind 5
+
+// Metadata flags (metadata.h:87)
+NDB_NOTE_META_FLAG_DELETED = 0,
+#+end_src
+
+** Current Behavior
+
+1. Kind 5 events are *stored* in the database (recognized as =NDB_CKIND_DELETE=)
+2. The =NDB_NOTE_FLAG_DELETED= flag is *not automatically set* on referenced events
+3. No Rust API exists to manually mark events as deleted
+4. No query filtering for deleted events is implemented
+
+** What This Means
+
+- nostrdb is append-only in practice
+- Deletion events are stored but don't affect other events
+- The infrastructure exists for future deletion support
+- No way to remove or hide events at the database level currently
+
+* Implications for nostr-engine
+
+** Delete Feature Options
+
+1. *Session-only delete*: Remove from TreeState, events remain in nostrdb
+   - Simplest implementation
+   - Events reappear on restart
+
+2. *Persisted hidden list*: Save deleted addresses to file, filter on load
+   - More complex
+   - Survives restarts
+   - Requires filter logic in queries
+
+3. *NIP-09 publishing*: Publish kind 5 deletion requests
+   - Only works for user's own events (pubkey must match)
+   - Signals deletion to relays/network
+   - Does NOT remove from local nostrdb
+
+** Recommended Approach
+
+For ranger-like delete in the TUI:
+
+1. Implement session-only deletion from TreeState (immediate)
+2. Optionally publish NIP-09 deletion for user-owned events
+3. Consider persisted hidden list for cross-session hiding
+
+* References
+
+- NIP-09: https://github.com/nostr-protocol/nips/blob/master/09.md
+- nostrdb-rs: https://github.com/damus-io/nostrdb-rs
+- nostrdb.h location: =~/.cargo/git/checkouts/nostrdb-rs-*/*/nostrdb/src/nostrdb.h=
+
+* Future Work
+
+- Monitor nostrdb for deletion API additions
+- Consider contributing deletion processing to nostrdb upstream
+- Implement hidden events persistence if needed

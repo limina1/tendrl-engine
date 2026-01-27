@@ -106,6 +106,18 @@ cargo test --features tui
 4. **Defensive**: Validate events, reject malformed data
 5. **Vim-style**: Familiar keybindings for navigation
 
+## Known Limitations
+
+### nostrdb Deletion
+nostrdb does not currently support deleting individual events. While it has
+infrastructure for deletion (flags like `NDB_NOTE_FLAG_DELETED`), these are
+not actively used. Kind 5 deletion events are stored but don't mark referenced
+events as deleted. See `docs/nostrdb-deletion-architecture.org` for details.
+
+For delete functionality in nostr-engine:
+- Session-only: Remove from TreeState (events remain in nostrdb)
+- NIP-09: Publish deletion requests for user-owned events (network signal only)
+
 ## File Structure
 
 ```
