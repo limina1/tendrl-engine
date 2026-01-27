@@ -1,0 +1,203 @@
+#+TITLE: Nostr Engine - Standalone Local Nostr Backend
+ #+DATE: 2026-01-26
+
+* Overview
+
+ Create a standalone Rust project =nostr-engine= at =/home/user/Documents/Programming/nostr-engine= that acts as a local Nostr backend with HTTP API. Other apps
+ (Flask/Jinja, Python scripts, any HTTP client) can use it to query and fetch Nostr events.
+
+ ** Key Features
+ - Query local nostrdb first, fetch from relays on miss
+ - Configurable fetch policies (local_only, local_first, fetch_always)
+ - Clean REST API for any language/framework
+ - Can be used as library (Rust) or standalone service (HTTP)
+
+ - Project Structure
+
+ #+begin_src
+ nostr-engine/
+ ├── Cargo.toml
+ ├── src/
+ │   ├── lib.rs          # Library entry point
+ │   ├── main.rs         # Binary entry point (HTTP server)
+ │   ├── engine.rs       # Core unified query engine
+ │   ├── query.rs        # nostrdb query interface
+ │   ├── relay.rs        # WebSocket relay fetching
+ │   ├── api.rs          # HTTP API handlers
+ │   ├── error.rs        # Error types
+ │   └── config.rs       # Configuration
+ ├── examples/
+ │   └── basic_query.rs  # Library usage example
+ └── README.org
+ #+end_src
+
+ - Core Components
+
+ ** 1. FetchPolicy Enum
+
+ #+begin_src rust
+ pub enum FetchPolicy {
+     LocalOnly,    // Only query nostrdb
+     LocalFirst,   // Try local, fetch if empty (default)
+     FetchAlways,  // Always fetch, merge with local
+ }
+ #+end_src
+
+ ** 2. Engine Struct
+
+ #+begin_src rust
+ pub struct Engine {
+     ndb: Ndb,
+     relays: Vec,
+     timeout_ms: u64,
+ }
+
+ impl Engine {
+     pub fn new(data_path: &Path) -> Result;
+     pub async fn get_events(&self, filter: Value, policy: FetchPolicy) -> Result;
+     pub async fn get_by_id(&self, id: &str, policy: FetchPolicy) -> Result<Option>;
+     pub async fn get_addressable(&self, kind: u64, pubkey: &str, d_tag: &str, policy: FetchPolicy) -> Result<Option>;
+ }
+ #+end_src
+
+ ** 3. HTTP API Endpoints
+
+ | Method | Route                              | Description                    |
+ |--------+------------------------------------+--------------------------------|
+ | POST   | /api/v1/query                      | Query with NIP-01 filters      |
+ | GET    | /api/v1/events/:id                 | Get event by ID                |
+ | GET    | /api/v1/addressable/:kind/:pk/:d   | Get addressable event          |
+ | GET    | /health                            | Health check                   |
+
+ ** 4. Request/Response Format
+
+ *** Query Request
+ #+begin_src json
+ {
+   "filters": [{ "kinds": [30040], "limit": 50 }],
+   "policy": "local_first",
+   "relays": ["wss://relay.damus.io"]
+ }
+ #+end_src
+
+ *** Response
+ #+begin_src json
+ {
+   "events": [...],
+   "count": 42,
+   "source": { "local_count": 40, "relay_count": 2 }
+ }
+ #+end_src
+
+ - Dependencies
+
+ #+begin_src toml
+ [dependencies]
+ nostrdb = { git = "https://github.com/damus-io/nostrdb-rs" }
+ axum = "0.7"
+ tokio = { version = "1", features = ["full"] }
+ tokio-tungstenite = "0.21"
+ serde = { version = "1", features = ["derive"] }
+ serde_json = "1"
+ anyhow = "1"
+ tracing = "0.1"
+ tracing-subscriber = "0.3"
+ hex = "0.4"
+ #+end_src
+
+ - Implementation Steps
+
+ ** Phase 1: Project Setup
+ - Create new cargo project: =cargo new nostr-engine --lib=
+ - Set up Cargo.toml with both lib and bin targets
+ - Copy and adapt query.rs from tendrl_ws
+ - Copy and adapt relay.rs from tendrl_ws
+
+ ** Phase 2: Core Engine
+ - Create error.rs with API error types
+ - Create engine.rs with FetchPolicy and Engine struct
+ - Implement query_local_only (simplest)
+ - Implement query_local_first (try local, fallback to relay)
+ - Implement query_fetch_always (always fetch, merge)
+
+ ** Phase 3: HTTP API
+ - Create api.rs with Axum handlers
+ - POST /api/v1/query handler
+ - GET /api/v1/events/:id handler
+ - GET /api/v1/addressable/:kind/:pubkey/:d_tag handler
+ - GET /health handler
+ - Create main.rs to run standalone server
+
+ ** Phase 4: Polish
+ - Add config.rs for TOML configuration
+ - Add CLI args (--port, --data-dir, --config)
+ - Write README.org with usage examples
+ - Add examples/basic_query.rs
+
+ - Usage Examples
+
+ ** As Standalone Service
+ #+begin_src bash
+ Install
+
+ cargo install --git https://github.com/youruser/nostr-engine
+
+ Run
+
+ nostr-engine --port 3030 --data-dir ~/.local/share/nostr-engine
+
+ Query from any app
+
+ curl -X POST http://localhost:3030/api/v1/query
+   -H "Content-Type: application/json"
+   -d '{"filters": [{"kinds": [30040], "limit": 10}]}'
+ #+end_src
+
+ ** As Rust Library
+ #+begin_src rust
+ use nostr_engine::{Engine, FetchPolicy};
+
+ let engine = Engine::new("~/.local/share/nostr-engine")?;
+ let events = engine.get_events(
+     json!({"kinds": [30040], "limit": 10}),
+     FetchPolicy::LocalFirst
+ ).await?;
+ #+end_src
+
+ ** From Python/Flask
+ #+begin_src python
+ import requests
+
+ resp = requests.post("http://localhost:3030/api/v1/query", json={
+     "filters": [{"kinds": [30040], "limit": 10}],
+     "policy": "local_first"
+ })
+ events = resp.json()["events"]
+ #+end_src
+
+ - Files to Create
+
+ | File                | Source                          | Notes                        |
+ |---------------------+---------------------------------+------------------------------|
+ | src/lib.rs          | New                             | Re-export public API         |
+ | src/main.rs         | New                             | CLI + HTTP server startup    |
+ | src/engine.rs       | New                             | Core unified engine          |
+ | src/query.rs        | Adapt from tendrl_ws/query.rs   | Local nostrdb queries        |
+ | src/relay.rs        | Adapt from tendrl_ws/relay.rs   | WebSocket relay fetching     |
+ | src/api.rs          | New                             | Axum HTTP handlers           |
+ | src/error.rs        | New                             | Error types                  |
+ | src/config.rs       | New                             | Configuration parsing        |
+
+ - Verification
+
+ 1. Run the server: =cargo run -- --port 3030=
+ 2. Test health: =curl http://localhost:3030/health=
+ 3. Test query:
+ #+begin_src bash
+ curl -X POST http://localhost:3030/api/v1/query
+   -H "Content-Type: application/json"
+   -d '{"filters": [{"kinds": [1], "limit": 5}], "policy": "fetch_always"}'
+ #+end_src
+ 4. Verify events are cached: repeat query with =policy: local_only=
+
+
