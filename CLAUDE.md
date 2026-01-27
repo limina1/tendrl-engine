@@ -2,6 +2,53 @@
 
 A Rust library and TUI for working with NKBIP-01 publications (kind 30040/30041) on Nostr.
 
+## External Dependencies & Reference Code
+
+### Dependencies (from external projects)
+
+| Library | Source | Purpose |
+|---------|--------|---------|
+| `nostrdb` | [damus-io/nostrdb-rs](https://github.com/damus-io/nostrdb-rs) | Local Nostr event database (LMDB-backed) |
+
+### Reference Repositories (in project directory)
+
+The following repositories are included locally for reference patterns. **Do not modify
+these directly** - they exist to show idiomatic usage of nostrdb and Nostr patterns.
+
+| Directory | Purpose |
+|-----------|---------|
+| `notedeck/` | Reference for nostrdb usage patterns, tag parsing, account management |
+| `notedeck-compose/` | Older version, less relevant |
+| `nips/` | NIP specifications for protocol reference |
+
+### When to Consult notedeck/
+
+**Before modifying nostrdb interaction code**, check how notedeck handles it:
+
+1. **Tag parsing** - notedeck works directly with `Note` objects, not JSON:
+   - Use `.variant().id()` for binary pubkeys/event IDs → `Option<&[u8; 32]>`
+   - Use `.variant().str()` for strings (relay URLs, hashtags, d-tags)
+   - See: `notedeck/crates/notedeck/src/filter.rs`, `notedeck/crates/notedeck/src/account/mute.rs`
+
+2. **NIP-51 lists** (mute, bookmarks, relays):
+   - See: `notedeck/crates/notedeck/src/account/mute.rs`
+   - See: `notedeck/crates/notedeck/src/account/relay.rs`
+
+3. **Follow list / contacts (kind 3)**:
+   - See: `notedeck/crates/notedeck/src/filter.rs:428-448`
+
+4. **Event building**:
+   - See: `notedeck/crates/notedeck_columns/src/profile.rs:165-167` for tag variant handling
+
+### Code Ownership
+
+| Path | Origin | Notes |
+|------|--------|-------|
+| `src/` | **tendrl-engine (original)** | Our code |
+| `notedeck/` | notedeck (reference only) | Do not modify |
+| `notedeck-compose/` | notedeck (reference only) | Do not modify |
+| `nips/` | nostr-protocol/nips (reference) | NIP specifications |
+
 ## Architecture
 
 ### Core Engine (`src/engine.rs`)
@@ -72,6 +119,7 @@ Feature-gated with `--features tui`:
 - `v` - Cycle view mode
 - `Tab` - Toggle preview panel
 - `i` - Login (open identity dialog)
+- `U` - User data menu (NIP-51 list selection)
 - `c` - Compose new publication
 - `:` - Show relay configuration
 - `q` - Quit

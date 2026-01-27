@@ -460,6 +460,13 @@ pub fn all_commands() -> Vec<CommandInfo> {
             category: CommandCategory::Application,
             keybinding: None,
         },
+        CommandInfo {
+            command: TreeCommand::ShowUserData,
+            name: "User Data Menu",
+            description: "Open menu to select and view NIP-51 lists",
+            category: CommandCategory::Application,
+            keybinding: Some("U"),
+        },
     ]
 }
 
@@ -649,6 +656,16 @@ pub enum TreeCommand {
     SubmitPassword { password: String },
     /// Logout from the current identity
     Logout,
+    /// Show user data menu (NIP-51 lists selection)
+    ShowUserData,
+    /// Close the user data menu
+    CloseUserDataMenu,
+    /// Navigate up in user data menu
+    UserDataMenuUp,
+    /// Navigate down in user data menu
+    UserDataMenuDown,
+    /// Select current item in user data menu
+    UserDataMenuSelect,
 }
 
 impl TreeCommand {

@@ -19,6 +19,8 @@ pub struct KeyContext {
     pub compose_focus: Option<ComposeFocus>,
     /// Whether a window overlay is currently focused
     pub window_focused: bool,
+    /// Whether the user data menu is open
+    pub user_data_menu_open: bool,
 }
 
 impl KeyMapper {
@@ -37,6 +39,13 @@ impl KeyMapper {
         if let Some(c) = ctx {
             if c.window_focused {
                 return self.map_window(key);
+            }
+        }
+
+        // Handle user data menu - captures navigation input
+        if let Some(c) = ctx {
+            if c.user_data_menu_open {
+                return self.map_user_data_menu(key);
             }
         }
 
@@ -178,6 +187,9 @@ impl KeyMapper {
             // Login (from feed mode)
             KeyCode::Char('i') => Some(TreeCommand::OpenLoginDialog),
 
+            // User data (show NIP-51 lists)
+            KeyCode::Char('U') => Some(TreeCommand::ShowUserData),
+
             _ => None,
         }
     }
@@ -307,6 +319,30 @@ impl KeyMapper {
         }
     }
 
+    /// Map keys when the user data menu is open
+    fn map_user_data_menu(&mut self, key: KeyEvent) -> Option<TreeCommand> {
+        match key.code {
+            // Navigation
+            KeyCode::Char('j') | KeyCode::Down => Some(TreeCommand::UserDataMenuDown),
+            KeyCode::Char('k') | KeyCode::Up => Some(TreeCommand::UserDataMenuUp),
+
+            // Selection
+            KeyCode::Enter | KeyCode::Char('l') => Some(TreeCommand::UserDataMenuSelect),
+
+            // Close menu
+            KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('h') => {
+                Some(TreeCommand::CloseUserDataMenu)
+            }
+
+            // Quit app
+            KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                Some(TreeCommand::Quit)
+            }
+
+            _ => None,
+        }
+    }
+
     /// Reset any prefix state
     pub fn reset(&mut self) {
         self.g_prefix = false;
@@ -342,6 +378,7 @@ pub fn keybinding_help() -> Vec<(&'static str, &'static str)> {
         ("V/s", "Select/Select all"),
         (":", "Show relays"),
         ("i", "Login"),
+        ("U", "User data menu (NIP-51)"),
         ("c", "Compose"),
         ("R", "Refresh"),
         ("L", "Load visible"),

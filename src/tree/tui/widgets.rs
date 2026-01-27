@@ -6,7 +6,7 @@ use crate::identity::LoginStatus;
 use crate::tree::command::CommandCategory;
 use crate::tree::node::{NodeId, TreeNode};
 use crate::tree::render::{visible_nodes, RenderOptions, VisibleNode};
-use crate::tree::state::{CommandPaletteState, ComposeFocus, ComposeState, LoginDialogState, TreeState};
+use crate::tree::state::{CommandPaletteState, ComposeFocus, ComposeState, LoginDialogState, TreeState, UserDataMenuState};
 use ratatui::prelude::*;
 use ratatui::layout::{Layout, Direction, Constraint};
 use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Wrap};
@@ -1836,6 +1836,85 @@ impl Widget for LoginDialogWidget<'_> {
             "Enter:Login  Esc:Cancel"
         };
         if y < inner.y + inner.height {
+            buf.set_string(inner.x, y, help, Style::default().fg(Color::DarkGray));
+        }
+    }
+}
+
+/// Widget for the user data menu (NIP-51 list selection)
+pub struct UserDataMenuWidget<'a> {
+    state: &'a UserDataMenuState,
+}
+
+impl<'a> UserDataMenuWidget<'a> {
+    pub fn new(state: &'a UserDataMenuState) -> Self {
+        UserDataMenuWidget { state }
+    }
+
+    /// Calculate the area for the menu (centered popup)
+    pub fn calculate_area(parent: Rect) -> Rect {
+        let width = parent.width.min(45).max(35);
+        let height = 12; // Title + 8 items + help + borders
+        let x = (parent.width.saturating_sub(width)) / 2;
+        let y = (parent.height.saturating_sub(height)) / 2;
+        Rect::new(x, y, width, height)
+    }
+}
+
+impl Widget for UserDataMenuWidget<'_> {
+    fn render(self, area: Rect, buf: &mut Buffer) {
+        // Clear the area first
+        Clear.render(area, buf);
+
+        // Dialog border and title
+        let border_style = Style::default().fg(Color::Cyan);
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(border_style)
+            .title(" User Data ")
+            .style(Style::default().bg(Color::Black));
+
+        let inner = block.inner(area);
+        block.render(area, buf);
+
+        if inner.height < 3 || inner.width < 10 {
+            return;
+        }
+
+        let mut y = inner.y;
+
+        // Render each item
+        for (i, item) in self.state.items.iter().enumerate() {
+            if y >= inner.y + inner.height - 1 {
+                break;
+            }
+
+            let is_selected = i == self.state.selected;
+            let style = if is_selected {
+                Style::default().bg(Color::Blue).fg(Color::White)
+            } else {
+                Style::default()
+            };
+
+            // Clear line
+            for x in inner.x..inner.x + inner.width {
+                buf[(x, y)].set_char(' ').set_style(style);
+            }
+
+            // Selection indicator
+            let prefix = if is_selected { "> " } else { "  " };
+
+            // Render item
+            let text = format!("{}{}", prefix, item.display_name());
+            let display: String = text.chars().take(inner.width as usize).collect();
+            buf.set_string(inner.x, y, &display, style);
+
+            y += 1;
+        }
+
+        // Help text at bottom
+        if y < inner.y + inner.height {
+            let help = "j/k:Navigate  Enter:Select  q:Close";
             buf.set_string(inner.x, y, help, Style::default().fg(Color::DarkGray));
         }
     }

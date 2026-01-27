@@ -14,7 +14,8 @@ use crate::tree::tui::input::{KeyContext, KeyMapper};
 use crate::tree::tui::spinner::Spinner;
 use crate::tree::tui::widgets::{
     CommandPaletteWidget, ComposeWidget, ContentPreview, ContinuousWidget, FeedWidget, HelpBar,
-    LoginDialogWidget, OutlineWidget, PaginatedWidget, StatusBar, TreeWidget, WindowWidget,
+    LoginDialogWidget, OutlineWidget, PaginatedWidget, StatusBar, TreeWidget, UserDataMenuWidget,
+    WindowWidget,
 };
 
 use crate::tree::command::TreeCommand;
@@ -459,6 +460,7 @@ impl TuiApp {
                             None
                         },
                         window_focused: self.state.windows.is_focused(),
+                        user_data_menu_open: self.state.user_data_menu.is_some(),
                     };
                     if let Some(command) = self.key_mapper.map_with_context(key, Some(&ctx)) {
                         // Handle ShowCommandPalette specially
@@ -570,6 +572,61 @@ impl TuiApp {
                     use crate::tree::state::WindowState;
                     let window = WindowState::json("event-json", title, &content);
                     self.state.windows.open(window);
+                }
+                true
+            }
+            TreeCommand::ShowUserData => {
+                // Open user data menu (NIP-51 list selection)
+                if self.state.identity.status.is_logged_in() {
+                    use crate::tree::state::UserDataMenuState;
+                    self.state.user_data_menu = Some(UserDataMenuState::new());
+                } else {
+                    self.status_message = Some("Not logged in. Press 'i' to login.".to_string());
+                }
+                true
+            }
+            TreeCommand::CloseUserDataMenu => {
+                self.state.user_data_menu = None;
+                true
+            }
+            TreeCommand::UserDataMenuUp => {
+                if let Some(ref mut menu) = self.state.user_data_menu {
+                    menu.select_prev();
+                }
+                true
+            }
+            TreeCommand::UserDataMenuDown => {
+                if let Some(ref mut menu) = self.state.user_data_menu {
+                    menu.select_next();
+                }
+                true
+            }
+            TreeCommand::UserDataMenuSelect => {
+                if let Some(ref menu) = self.state.user_data_menu {
+                    if let Some(list_type) = menu.selected_item() {
+                        use crate::tree::state::{UserDataListType, WindowState};
+                        let content = match list_type {
+                            UserDataListType::Profile => self.state.user_data.format_profile(),
+                            UserDataListType::FollowList => self.state.user_data.format_follow_list(),
+                            UserDataListType::FollowListJson => self.state.user_data.format_follow_list_json(),
+                            UserDataListType::MuteList => self.state.user_data.format_mute_list(),
+                            UserDataListType::RelayList => self.state.user_data.format_relay_list(),
+                            UserDataListType::Bookmarks => self.state.user_data.format_bookmarks(),
+                            UserDataListType::BlockedRelays => self.state.user_data.format_blocked_relays(),
+                            UserDataListType::SearchRelays => self.state.user_data.format_search_relays(),
+                            UserDataListType::RelaySets => self.state.user_data.format_relay_sets(),
+                        };
+                        let title = list_type.window_title();
+                        // Use JSON window for JSON views
+                        let window = if matches!(list_type, UserDataListType::FollowListJson) {
+                            WindowState::json("user-data-json", title, &content)
+                        } else {
+                            WindowState::new("user-data-detail", title, content)
+                        };
+                        self.state.windows.open(window);
+                        // Close the menu after selection
+                        self.state.user_data_menu = None;
+                    }
                 }
                 true
             }
@@ -922,6 +979,15 @@ impl TuiApp {
             frame.render_widget(
                 LoginDialogWidget::new(login_dialog),
                 dialog_area,
+            );
+        }
+
+        // Render user data menu if open
+        if let Some(ref user_data_menu) = self.state.user_data_menu {
+            let menu_area = UserDataMenuWidget::calculate_area(area);
+            frame.render_widget(
+                UserDataMenuWidget::new(user_data_menu),
+                menu_area,
             );
         }
 
@@ -1283,6 +1349,9 @@ async fn execute_async_request(
 }
 
 /// Load all user profile data for a given pubkey
+///
+/// This function queries nostrdb directly using the Note API, following notedeck patterns.
+/// See: notedeck/crates/notedeck/src/account/mute.rs, relay.rs
 async fn load_user_data(
     engine: &Engine,
     pubkey: &str,
@@ -1292,127 +1361,124 @@ async fn load_user_data(
         BlockedRelays, Bookmarks, FollowList, Metadata, MuteList, RelayList, RelaySet,
         SearchRelays, UserData, USER_DATA_ADDRESSABLE_KINDS, USER_DATA_KINDS,
     };
-    use serde_json::json;
+    use nostrdb::{Filter, Transaction};
 
     let mut user_data = UserData::new();
 
-    // Fetch standard list kinds (0, 3, 10000, 10002, 10003, 10006, 10007)
-    let filter = json!({
-        "kinds": USER_DATA_KINDS,
-        "authors": [pubkey],
-        "limit": USER_DATA_KINDS.len()
-    });
+    // Parse pubkey to bytes
+    let pubkey_bytes: [u8; 32] = hex::decode(pubkey)?
+        .try_into()
+        .map_err(|_| anyhow::anyhow!("Invalid pubkey length"))?;
 
-    let response = engine.get_events(vec![filter], policy, None).await?;
+    // If policy requires relay fetching, do that first to populate nostrdb
+    if policy != FetchPolicy::LocalOnly {
+        use serde_json::json;
+        // Fetch from relays to ensure data is in nostrdb
+        let filter = json!({
+            "kinds": USER_DATA_KINDS,
+            "authors": [pubkey],
+            "limit": USER_DATA_KINDS.len()
+        });
+        let _ = engine.get_events(vec![filter], policy, None).await;
 
-    for event in &response.events {
-        let kind = event.get("kind").and_then(|v| v.as_u64()).unwrap_or(0);
-        let content = event.get("content").and_then(|v| v.as_str()).unwrap_or("");
-        let created_at = event.get("created_at").and_then(|v| v.as_u64()).unwrap_or(0);
-        let tags: Vec<Vec<String>> = event
-            .get("tags")
-            .and_then(|v| v.as_array())
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|tag| {
-                        tag.as_array().map(|a| {
-                            a.iter()
-                                .filter_map(|v| v.as_str().map(String::from))
-                                .collect()
-                        })
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
-
-        match kind {
-            0 => {
-                // Only update if newer
-                if user_data.metadata.as_ref().map(|m| m.created_at).unwrap_or(0) < created_at {
-                    user_data.metadata = Metadata::from_event_content(content, created_at);
-                }
-            }
-            3 => {
-                if user_data.follows.as_ref().map(|f| f.created_at).unwrap_or(0) < created_at {
-                    user_data.follows = Some(FollowList::from_event_tags(&tags, created_at));
-                }
-            }
-            10000 => {
-                if user_data.mutes.as_ref().map(|m| m.created_at).unwrap_or(0) < created_at {
-                    user_data.mutes = Some(MuteList::from_event(
-                        &tags,
-                        content,
-                        created_at,
-                    ));
-                }
-            }
-            10002 => {
-                if user_data.relays.as_ref().map(|r| r.created_at).unwrap_or(0) < created_at {
-                    user_data.relays = Some(RelayList::from_event_tags(&tags, created_at));
-                }
-            }
-            10003 => {
-                if user_data.bookmarks.as_ref().map(|b| b.created_at).unwrap_or(0) < created_at {
-                    user_data.bookmarks = Some(Bookmarks::from_event(
-                        &tags,
-                        content,
-                        created_at,
-                    ));
-                }
-            }
-            10006 => {
-                if user_data.blocked_relays.as_ref().map(|b| b.created_at).unwrap_or(0) < created_at {
-                    user_data.blocked_relays = Some(BlockedRelays::from_event_tags(&tags, created_at));
-                }
-            }
-            10007 => {
-                if user_data.search_relays.as_ref().map(|s| s.created_at).unwrap_or(0) < created_at {
-                    user_data.search_relays = Some(SearchRelays::from_event_tags(&tags, created_at));
-                }
-            }
-            _ => {}
+        // Also fetch addressable kinds
+        for &kind in USER_DATA_ADDRESSABLE_KINDS {
+            let filter = json!({
+                "kinds": [kind],
+                "authors": [pubkey],
+                "limit": 100
+            });
+            let _ = engine.get_events(vec![filter], policy, None).await;
         }
     }
 
-    // Fetch addressable kinds (30002 relay sets)
+    // Now query nostrdb directly using Note API (following notedeck patterns)
+    let ndb = engine.ndb();
+    let txn = Transaction::new(ndb)
+        .map_err(|e| anyhow::anyhow!("Failed to create transaction: {}", e))?;
+
+    // Query standard list kinds (0, 3, 10000, 10002, 10003, 10006, 10007)
+    let filter = Filter::new()
+        .authors([&pubkey_bytes])
+        .kinds(USER_DATA_KINDS.iter().copied())
+        .limit(USER_DATA_KINDS.len() as u64)
+        .build();
+
+    let results = ndb
+        .query(&txn, &[filter], USER_DATA_KINDS.len() as i32)
+        .map_err(|e| anyhow::anyhow!("Query failed: {}", e))?;
+
+    for query_result in results {
+        if let Ok(note) = ndb.get_note_by_key(&txn, query_result.note_key) {
+            let kind = note.kind() as u64;
+            let created_at = note.created_at();
+
+            match kind {
+                0 => {
+                    if user_data.metadata.as_ref().map(|m| m.created_at).unwrap_or(0) < created_at {
+                        user_data.metadata = Metadata::from_note(&note);
+                    }
+                }
+                3 => {
+                    if user_data.follows.as_ref().map(|f| f.created_at).unwrap_or(0) < created_at {
+                        user_data.follows = Some(FollowList::from_note(&note));
+                    }
+                }
+                10000 => {
+                    if user_data.mutes.as_ref().map(|m| m.created_at).unwrap_or(0) < created_at {
+                        user_data.mutes = Some(MuteList::from_note(&note));
+                    }
+                }
+                10002 => {
+                    if user_data.relays.as_ref().map(|r| r.created_at).unwrap_or(0) < created_at {
+                        user_data.relays = Some(RelayList::from_note(&note));
+                    }
+                }
+                10003 => {
+                    if user_data.bookmarks.as_ref().map(|b| b.created_at).unwrap_or(0) < created_at {
+                        user_data.bookmarks = Some(Bookmarks::from_note(&note));
+                    }
+                }
+                10006 => {
+                    if user_data.blocked_relays.as_ref().map(|b| b.created_at).unwrap_or(0) < created_at {
+                        user_data.blocked_relays = Some(BlockedRelays::from_note(&note));
+                    }
+                }
+                10007 => {
+                    if user_data.search_relays.as_ref().map(|s| s.created_at).unwrap_or(0) < created_at {
+                        user_data.search_relays = Some(SearchRelays::from_note(&note));
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    // Query addressable kinds (30002 relay sets)
     for &kind in USER_DATA_ADDRESSABLE_KINDS {
-        let filter = json!({
-            "kinds": [kind],
-            "authors": [pubkey],
-            "limit": 100
-        });
+        let filter = Filter::new()
+            .authors([&pubkey_bytes])
+            .kinds([kind])
+            .limit(100)
+            .build();
 
-        let response = engine.get_events(vec![filter], policy, None).await?;
+        let results = ndb
+            .query(&txn, &[filter], 100)
+            .map_err(|e| anyhow::anyhow!("Query failed: {}", e))?;
 
-        for event in &response.events {
-            let created_at = event.get("created_at").and_then(|v| v.as_u64()).unwrap_or(0);
-            let tags: Vec<Vec<String>> = event
-                .get("tags")
-                .and_then(|v| v.as_array())
-                .map(|arr| {
-                    arr.iter()
-                        .filter_map(|tag| {
-                            tag.as_array().map(|a| {
-                                a.iter()
-                                    .filter_map(|v| v.as_str().map(String::from))
-                                    .collect()
-                            })
-                        })
-                        .collect()
-                })
-                .unwrap_or_default();
+        for query_result in results {
+            if let Ok(note) = ndb.get_note_by_key(&txn, query_result.note_key) {
+                if kind == 30002 {
+                    if let Some(relay_set) = RelaySet::from_note(&note) {
+                        let should_update = user_data
+                            .relay_sets
+                            .get(&relay_set.d_tag)
+                            .map(|existing| existing.created_at < relay_set.created_at)
+                            .unwrap_or(true);
 
-            if kind == 30002 {
-                if let Some(relay_set) = RelaySet::from_event(&tags, created_at) {
-                    // Only update if newer
-                    let should_update = user_data
-                        .relay_sets
-                        .get(&relay_set.d_tag)
-                        .map(|existing| existing.created_at < created_at)
-                        .unwrap_or(true);
-
-                    if should_update {
-                        user_data.relay_sets.insert(relay_set.d_tag.clone(), relay_set);
+                        if should_update {
+                            user_data.relay_sets.insert(relay_set.d_tag.clone(), relay_set);
+                        }
                     }
                 }
             }

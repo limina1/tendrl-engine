@@ -79,6 +79,8 @@ pub struct TreeState {
     pub login_dialog: Option<LoginDialogState>,
     /// User profile data (loaded after login)
     pub user_data: UserData,
+    /// User data menu state (if open)
+    pub user_data_menu: Option<UserDataMenuState>,
 }
 
 impl TreeState {
@@ -106,6 +108,7 @@ impl TreeState {
             identity: Identity::new(),
             login_dialog: None,
             user_data: UserData::new(),
+            user_data_menu: None,
         }
     }
 
@@ -1427,6 +1430,124 @@ impl WindowManager {
         if let Some(window) = self.focused_window_mut() {
             window.scroll_to_bottom(viewport_height);
         }
+    }
+}
+
+/// A user data list type (NIP-51)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UserDataListType {
+    /// Profile metadata (kind 0, NIP-01)
+    Profile,
+    /// Follow list (kind 3, NIP-02)
+    FollowList,
+    /// Follow list raw JSON (for debugging)
+    FollowListJson,
+    /// Mute list (kind 10000, NIP-51)
+    MuteList,
+    /// Read/write relays (kind 10002, NIP-65)
+    RelayList,
+    /// Bookmarks (kind 10003, NIP-51)
+    Bookmarks,
+    /// Blocked relays (kind 10006, NIP-51)
+    BlockedRelays,
+    /// Search relays (kind 10007, NIP-51)
+    SearchRelays,
+    /// Relay sets (kind 30002, NIP-51)
+    RelaySets,
+}
+
+impl UserDataListType {
+    /// Get all list types in display order
+    pub fn all() -> Vec<Self> {
+        vec![
+            Self::Profile,
+            Self::FollowList,
+            Self::FollowListJson,
+            Self::MuteList,
+            Self::RelayList,
+            Self::Bookmarks,
+            Self::BlockedRelays,
+            Self::SearchRelays,
+            Self::RelaySets,
+        ]
+    }
+
+    /// Get the display name with kind number
+    pub fn display_name(&self) -> &'static str {
+        match self {
+            Self::Profile => "Profile [kind:0]",
+            Self::FollowList => "Follow list [kind:3]",
+            Self::FollowListJson => "  -> Raw JSON (debug)",
+            Self::MuteList => "Mute list [kind:10000]",
+            Self::RelayList => "Read/write relays [kind:10002]",
+            Self::Bookmarks => "Bookmarks [kind:10003]",
+            Self::BlockedRelays => "Blocked relays [kind:10006]",
+            Self::SearchRelays => "Search relays [kind:10007]",
+            Self::RelaySets => "Relay sets [kind:30002]",
+        }
+    }
+
+    /// Get the window title for this list type
+    pub fn window_title(&self) -> &'static str {
+        match self {
+            Self::Profile => "Profile (NIP-01)",
+            Self::FollowList => "Follow list (NIP-02)",
+            Self::FollowListJson => "Follow list - Raw JSON",
+            Self::MuteList => "Mute list (NIP-51)",
+            Self::RelayList => "Read/write relays (NIP-65)",
+            Self::Bookmarks => "Bookmarks (NIP-51)",
+            Self::BlockedRelays => "Blocked relays (NIP-51)",
+            Self::SearchRelays => "Search relays (NIP-51)",
+            Self::RelaySets => "Relay sets (NIP-51)",
+        }
+    }
+}
+
+/// State for the user data menu (selection of NIP-51 lists)
+#[derive(Debug, Clone)]
+pub struct UserDataMenuState {
+    /// Currently selected index
+    pub selected: usize,
+    /// Available list types
+    pub items: Vec<UserDataListType>,
+}
+
+impl UserDataMenuState {
+    /// Create a new user data menu
+    pub fn new() -> Self {
+        UserDataMenuState {
+            selected: 0,
+            items: UserDataListType::all(),
+        }
+    }
+
+    /// Move selection up
+    pub fn select_prev(&mut self) {
+        if self.selected > 0 {
+            self.selected -= 1;
+        } else {
+            self.selected = self.items.len().saturating_sub(1);
+        }
+    }
+
+    /// Move selection down
+    pub fn select_next(&mut self) {
+        if self.selected < self.items.len().saturating_sub(1) {
+            self.selected += 1;
+        } else {
+            self.selected = 0;
+        }
+    }
+
+    /// Get the currently selected list type
+    pub fn selected_item(&self) -> Option<UserDataListType> {
+        self.items.get(self.selected).copied()
+    }
+}
+
+impl Default for UserDataMenuState {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

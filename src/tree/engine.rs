@@ -206,8 +206,13 @@ impl TreeEngine {
             | TreeCommand::WindowScrollDown
             | TreeCommand::WindowScrollToTop
             | TreeCommand::WindowScrollToBottom
-            | TreeCommand::ShowEventJson => {
-                // Window commands are handled directly in app.rs
+            | TreeCommand::ShowEventJson
+            | TreeCommand::ShowUserData
+            | TreeCommand::CloseUserDataMenu
+            | TreeCommand::UserDataMenuUp
+            | TreeCommand::UserDataMenuDown
+            | TreeCommand::UserDataMenuSelect => {
+                // Window and menu commands are handled directly in app.rs
                 CommandResult::NoOp
             }
 
