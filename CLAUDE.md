@@ -85,14 +85,41 @@ cargo run --features tui --bin nostr-tree
 # With custom relays
 cargo run --features tui --bin nostr-tree -- --relay wss://relay.example.com
 
-# Purge local database
+# Purge local database (events will be re-fetched from relays)
 cargo run --features tui --bin nostr-tree -- --purge-db -y
+
+# Purge and start with empty feed (no relay fetching)
+cargo run --features tui --bin nostr-tree -- --purge-db -y --policy local_only
+
+# Purge database AND clear identity from OS keyring
+cargo run --features tui --bin nostr-tree -- --purge-db --purge-identity -y
 ```
 
-## Default Relays
-- wss://theforest.nostr1.com
-- wss://thecitadel.nostr1.com
-- wss://relay.damus.io
+## Relay Configuration
+
+### Default Relays
+When no custom relays are specified via `--relay`, the default is:
+- ws://localhost:3334
+
+To change default relays, edit `src/relay.rs:DEFAULT_RELAYS`.
+
+### Custom Relays
+Override the default relay list with `--relay` (can be specified multiple times):
+```bash
+# Single relay
+cargo run --features tui --bin nostr-tree -- --relay wss://relay.example.com
+
+# Multiple relays
+cargo run --features tui --bin nostr-tree -- \
+    --relay wss://relay1.example.com \
+    --relay wss://relay2.example.com
+
+# Local relay only (for offline/testing)
+cargo run --features tui --bin nostr-tree -- --relay ws://localhost:3334
+```
+
+Note: When using `--relay`, the local relay auto-detection is skipped (only
+explicitly specified relays are used).
 
 ## Testing
 

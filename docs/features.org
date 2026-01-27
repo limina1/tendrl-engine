@@ -1,0 +1,271 @@
+#+TITLE: nostr-engine Features
+#+AUTHOR: nostr-engine contributors
+#+DATE: 2026-01-27
+
+* Overview
+
+nostr-engine is a Rust library and TUI application for working with NKBIP-01
+publications (kind 30040/30041) on the Nostr protocol. It provides a local-first
+experience with vim-style navigation.
+
+* Core Engine
+
+** nostrdb Integration
+- Local SQLite-based storage via nostrdb
+- Events are cached locally for offline access and fast retrieval
+
+** Relay Connections
+- Connects to multiple Nostr relays simultaneously
+- Local relay auto-detection: checks =ws://localhost:3334= on startup
+- If local relay is available, it's prepended to the relay list for faster access
+- Default relays: theforest.nostr1.com, thecitadel.nostr1.com, relay.damus.io
+- Custom relays can be specified via command line (=--relay=)
+
+** Fetch Policies
+Three fetch strategies to balance speed and freshness:
+- *LocalOnly*: Query local database only
+- *LocalFirst*: Check local DB first, fetch from relays only if insufficient results
+- *FetchAlways*: Always query relays (updates local cache)
+
+** NKBIP-01 Support
+- Full support for kind 30040 (publication index) and kind 30041 (sections)
+- Defensive validation: rejects malformed events (e.g., 30040 with non-empty content)
+- Proper d-tag handling for addressable events
+
+* TUI Application
+
+** Feed View
+- Card-based list of all available publications
+- Shows title, author, summary, and section count per publication
+- Infinite scroll with automatic loading (fetches 15 more when near bottom)
+- Visual indicators: "Loading more..." and "End of feed" states
+
+** Reader View Modes
+Four different ways to read a publication:
+
+| Mode       | Description                    | Primary Navigation     |
+|------------+--------------------------------+------------------------|
+| Tree       | Hierarchical expand/collapse   | j/k nav, h/l fold      |
+| Outline    | Sections displayed as cards    | j/k nav, preview panel |
+| Continuous | Scrollable full content        | j/k scroll             |
+| Paginated  | One section at a time          | j/k scroll, J/K section|
+
+Cycle between modes with =v= key.
+
+** Vim-Style Keybindings
+Navigation is optimized for keyboard-first usage:
+
+| Key     | Action                                    |
+|---------+-------------------------------------------|
+| j/k     | Navigate down/up or scroll                |
+| J/K     | Next/prev section (Paginated) or move     |
+| h/l     | Collapse/expand (Tree mode)               |
+| Enter   | Open publication / expand / load          |
+| Esc     | Back to feed                              |
+| v       | Cycle view mode                           |
+| Tab     | Toggle preview panel                      |
+| q       | Quit                                      |
+
+* Loading & Async Operations
+
+** Animated Loading Spinner
+Visual feedback for async operations with rotating spinner animation (◐◓◑◒):
+- Appears in status bar during global loading
+- Shows on individual tree nodes and feed cards when loading
+- Tracks pending request count to show/hide appropriately
+
+** Buffer Loading Commands
+Batch operations for efficient content loading:
+- =L= key: Load all visible unloaded items at once (LoadBufferEvents)
+- RefreshBuffer: Refresh all visible loaded items
+
+* Command Palette
+
+Emacs-style command palette accessible via =?= or =Alt+x= (or =Space= in Doom style):
+
+- Displays all 42+ available commands with metadata
+- Color-coded categories: Navigation, Manipulation, View, etc.
+- Fuzzy search filtering on command name, description, and category
+- Shows keybindings for each command
+- Keyboard navigation with arrows/Tab and execution with Enter
+- Centered popup overlay with scrollable list
+
+* Compose Mode
+
+Create new NKBIP-01 publications directly in the TUI:
+
+** Publication Creation
+- =c= key opens compose mode from Feed view
+- Edit title, content, and tags
+- Auto-generates d-tags from normalized titles
+- Sections automatically get publication d-tag prefix
+
+** Tag Editing
+- Multi-value tag syntax: =[name] [val1, val2]= → =["name", "val1", "val2"]=
+- =Ctrl+t= toggles tag editing mode
+- Section-level tag support
+
+** Event Preview
+- =Ctrl+p= toggles JSON preview panel
+- Shows current event structure (30040 or 30041 based on focus)
+- JSON syntax highlighting in preview window
+
+* Window System
+
+Overlay window system for displaying additional content:
+
+** Features
+- WindowWidget with JSON syntax highlighting
+- Scroll indicators for long content
+- j/k scrolling, gg/G for top/bottom navigation
+- Tab cycles focus between windows
+- q/Esc closes window
+- Mouse scroll support
+
+** Use Cases
+- ShowEventJson command: View any node as raw JSON
+- Event preview in compose mode
+
+* Sync Status Indicators
+
+Track where events originated:
+
+| Status    | Color  | Meaning                     |
+|-----------+--------+-----------------------------|
+| Remote    | Cyan   | Fetched from relay          |
+| LocalOnly | Yellow | Only in local database      |
+| Draft     | Red    | Unsigned local draft        |
+
+Displayed as colored vertical bars on the right edge of:
+- Feed cards
+- Tree nodes
+- Outline cards
+
+* Draft Storage
+
+"Dry publish" functionality for unsigned events:
+
+** Features
+- Store unsigned 30040/30041 events locally as JSON files
+- Drafts persist in =<data_dir>/drafts/= directory
+- Drafts automatically load on app startup
+- Display drafts in feed with red sync bar and "[DRAFT - Unsigned]" banner
+
+** Keybindings
+| Key     | Action                    |
+|---------+---------------------------|
+| Ctrl+d  | Save current as draft     |
+| Ctrl+u  | Filter to show only drafts|
+
+** Commands
+- SaveDraft: Save current composition as draft
+- LoadDraft: Load a draft into compose mode
+- DeleteDraft: Remove a draft from storage
+- FilterDrafts: Toggle draft-only view in feed
+
+* Identity System
+
+User authentication and key management:
+
+** Supported Key Formats
+- *npub*: Public key only (read-only mode)
+- *nsec*: Unencrypted secret key
+- *ncryptsec*: NIP-49 encrypted secret key (scrypt + XChaCha20-Poly1305)
+
+** Features
+- Login dialog widget with password entry for ncryptsec
+- OS keyring integration for secure secret storage
+- Session restoration on startup
+- Status bar shows identity indicator (right-justified)
+- =i= key opens login dialog in Feed mode
+
+** Security
+- Secrets stored in OS keyring (not plaintext)
+- NIP-49 decryption with configurable scrypt parameters
+- Tested with log_n=8 (fast) and log_n=16 (production strength)
+
+* UI Improvements
+
+** Shortened Addresses for Unloaded Sections
+Instead of "Untitled Section" or "Section N", shows:
+- Tree/Outline views: =kind:abcd...wxyz:d-tag= format
+- Continuous/Paginated views: Just the d-tag for cleaner reading
+
+** Relay Configuration
+=:= key opens relay configuration dialog
+
+* Technical Architecture
+
+** Interface-Agnostic Design
+The tree module is separated from the TUI:
+- =TreeState=: Pure state types (no IO)
+- =TreeEngine=: Synchronous command execution
+- =AsyncRequest/AsyncResult=: Bridge for IO operations
+
+This allows the core logic to work with any UI (TUI, GUI, web, etc.)
+
+** Module Structure
+#+BEGIN_SRC
+src/
+├── engine.rs        # Core nostr engine
+├── publication.rs   # NKBIP-01 types
+├── identity.rs      # Key management, NIP-49
+├── drafts.rs        # Draft storage
+├── relay.rs         # Relay connections
+├── query.rs         # nostrdb queries
+└── tree/
+    ├── state.rs     # TreeState, AppMode, ViewMode
+    ├── command.rs   # Commands, AsyncRequest/Result
+    ├── engine.rs    # TreeEngine
+    ├── node.rs      # Node types
+    ├── render.rs    # Text rendering
+    ├── content.rs   # Content detection
+    └── tui/         # TUI-specific code
+        ├── app.rs      # TuiApp
+        ├── input.rs    # KeyMapper
+        └── widgets.rs  # All widgets
+#+END_SRC
+
+* Known Limitations
+
+** nostrdb Deletion
+nostrdb does not support deleting individual events. While deletion flags exist
+in the codebase, they are not actively used. For delete functionality:
+- Session-only removal (events remain in local DB)
+- NIP-09 deletion requests (network signal only)
+
+See =docs/nostrdb-deletion-architecture.org= for details.
+
+** ncryptsec Compatibility
+NIP-49 decryption works with test vectors but may have compatibility issues
+with some external implementations.
+
+* Running the Application
+
+#+BEGIN_SRC bash
+# Run TUI (auto-detects local relay at ws://localhost:3334)
+cargo run --features tui --bin nostr-tree
+
+# With custom relays (disables local relay auto-detection)
+cargo run --features tui --bin nostr-tree -- --relay wss://relay.example.com
+
+# Multiple custom relays
+cargo run --features tui --bin nostr-tree -- \
+    --relay wss://relay1.example.com \
+    --relay wss://relay2.example.com
+
+# Local relay only (offline/testing mode)
+cargo run --features tui --bin nostr-tree -- --relay ws://localhost:3334
+
+# Purge local database (events will be re-fetched from relays)
+cargo run --features tui --bin nostr-tree -- --purge-db -y
+
+# Purge and start with empty feed (no relay fetching)
+cargo run --features tui --bin nostr-tree -- --purge-db -y --policy local_only
+
+# Purge database AND clear identity from OS keyring
+cargo run --features tui --bin nostr-tree -- --purge-db --purge-identity -y
+
+# Run tests
+cargo test --features tui
+#+END_SRC

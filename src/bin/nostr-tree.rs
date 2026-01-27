@@ -5,6 +5,8 @@
 
 use clap::Parser;
 use nostr_engine::engine::{Engine, FetchPolicy};
+use nostr_engine::identity::IdentityKeyring;
+use nostr_engine::relay;
 use nostr_engine::tree::tui::TuiApp;
 use std::io::{self, Write};
 use std::path::PathBuf;
@@ -35,6 +37,10 @@ struct Args {
     #[arg(long)]
     purge_db: bool,
 
+    /// Also clear identity from OS keyring when purging
+    #[arg(long)]
+    purge_identity: bool,
+
     /// Skip confirmation prompt for --purge-db
     #[arg(long, short = 'y')]
     yes: bool,
@@ -57,37 +63,62 @@ async fn main() -> anyhow::Result<()> {
     // Expand tilde in path
     let data_dir = expand_tilde(&args.data_dir);
 
+    // Parse fetch policy early (needed for purge warning)
+    let policy: FetchPolicy = args.policy.parse()?;
+
     // Handle --purge-db flag
     if args.purge_db {
-        if data_dir.exists() {
-            if !args.yes {
-                print!("This will delete all data in {:?}. Continue? [y/N] ", data_dir);
-                io::stdout().flush()?;
-                let mut input = String::new();
-                io::stdin().read_line(&mut input)?;
-                if !input.trim().eq_ignore_ascii_case("y") {
-                    println!("Aborted.");
-                    return Ok(());
-                }
+        let has_data = data_dir.exists();
+
+        if !args.yes {
+            print!("This will delete all cached data in {:?}", data_dir);
+            if args.purge_identity {
+                print!(" and clear identity from OS keyring");
             }
+            print!(". Continue? [y/N] ");
+            io::stdout().flush()?;
+            let mut input = String::new();
+            io::stdin().read_line(&mut input)?;
+            if !input.trim().eq_ignore_ascii_case("y") {
+                println!("Aborted.");
+                return Ok(());
+            }
+        }
+
+        if has_data {
             println!("Purging database at {:?}...", data_dir);
             std::fs::remove_dir_all(&data_dir)?;
             println!("Database purged.");
         } else {
             println!("Database directory does not exist, nothing to purge.");
         }
+
+        if args.purge_identity {
+            println!("Clearing identity from OS keyring...");
+            let keyring = IdentityKeyring::new();
+            let _ = keyring.clear_last_identity();
+            println!("Identity cleared.");
+        }
+
+        // Warn user if policy will re-fetch
+        if policy != FetchPolicy::LocalOnly {
+            println!();
+            println!("Note: Using '{}' policy - events will be re-fetched from relays.", args.policy);
+            println!("      Use '--policy local_only' to start with an empty feed.");
+        }
     }
 
-    // Parse fetch policy
-    let policy: FetchPolicy = args.policy.parse()?;
+    // Determine relays to use
+    let relays = if args.relay.is_empty() {
+        // Check for local relay and prepend if available
+        relay::get_relays_with_local().await
+    } else {
+        args.relay.clone()
+    };
 
     // Create engine
-    let engine = if args.relay.is_empty() {
-        Engine::new(&data_dir)?
-    } else {
-        let relays: Vec<&str> = args.relay.iter().map(|s| s.as_str()).collect();
-        Engine::with_config(&data_dir, &relays, 15000)?
-    };
+    let relay_refs: Vec<&str> = relays.iter().map(|s| s.as_str()).collect();
+    let engine = Engine::with_config(&data_dir, &relay_refs, 15000)?;
 
     let engine = Arc::new(engine);
 

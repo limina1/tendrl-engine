@@ -11,12 +11,37 @@ use tokio::time::timeout;
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 use tracing::{debug, info, warn};
 
+/// Local relay URL (checked at startup)
+pub const LOCAL_RELAY: &str = "ws://localhost:3334";
+
 /// Default relays to fetch from (focused on publication-supporting relays)
 pub const DEFAULT_RELAYS: &[&str] = &[
-    "wss://theforest.nostr1.com",
-    "wss://thecitadel.nostr1.com",
-    "wss://relay.damus.io",
+    "ws://localhost:3334",
 ];
+
+/// Check if a local relay is available at the given URL
+/// Returns true if the relay accepts a WebSocket connection within the timeout
+pub async fn check_relay_available(relay_url: &str) -> bool {
+    match timeout(Duration::from_millis(500), connect_async(relay_url)).await {
+        Ok(Ok(_)) => {
+            info!("Local relay available at {}", relay_url);
+            true
+        }
+        Ok(Err(e)) => {
+            debug!("Local relay not available at {}: {}", relay_url, e);
+            false
+        }
+        Err(_) => {
+            debug!("Timeout connecting to local relay at {}", relay_url);
+            false
+        }
+    }
+}
+
+/// Get the list of relays to use
+pub async fn get_relays_with_local() -> Vec<String> {
+    DEFAULT_RELAYS.iter().map(|s| s.to_string()).collect()
+}
 
 /// Fetch events using NIP-01 filters from a relay
 pub async fn fetch_with_filters(
