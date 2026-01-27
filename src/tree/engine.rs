@@ -149,6 +149,10 @@ impl TreeEngine {
             }
             TreeCommand::ClearRelays => CommandResult::ConfigChange(ConfigAction::ClearRelays),
             TreeCommand::ShowRelays => CommandResult::ConfigChange(ConfigAction::ShowRelays),
+
+            // Batch loading
+            TreeCommand::LoadBufferEvents => self.load_buffer_events(state),
+            TreeCommand::RefreshBuffer => self.refresh_buffer(state),
         }
     }
 
@@ -667,6 +671,118 @@ impl TreeEngine {
             return CommandResult::ModeChanged(AppMode::Reader);
         }
         CommandResult::NoOp
+    }
+
+    // --- Buffer loading commands ---
+
+    fn load_buffer_events(&self, state: &mut TreeState) -> CommandResult {
+        // Get visible nodes and filter to unloaded ones
+        let visible = visible_nodes(state);
+        let mut requests = Vec::new();
+
+        for node in visible {
+            if node.is_loaded || node.is_loading {
+                continue;
+            }
+
+            // Get the node to build the request
+            if let Some(tree_node) = state.nodes.get(&node.id) {
+                match tree_node {
+                    TreeNode::Publication(p) => {
+                        requests.push(AsyncRequest::LoadPublication {
+                            addr: p.addr.clone(),
+                            parent: p.parent,
+                        });
+                    }
+                    TreeNode::Section(s) => {
+                        requests.push(AsyncRequest::LoadSection {
+                            addr: s.addr.clone(),
+                            parent: s.parent.unwrap_or(NodeId::root()),
+                        });
+                    }
+                }
+            }
+        }
+
+        if requests.is_empty() {
+            return CommandResult::NoOp;
+        }
+
+        // Mark all nodes as loading
+        for req in &requests {
+            match req {
+                AsyncRequest::LoadPublication { addr, .. } => {
+                    let id = NodeId::from_addr(addr);
+                    if let Some(TreeNode::Publication(ref mut p)) = state.nodes.get_mut(&id) {
+                        p.loading = true;
+                    }
+                }
+                AsyncRequest::LoadSection { addr, .. } => {
+                    let id = NodeId::from_addr(addr);
+                    if let Some(TreeNode::Section(ref mut s)) = state.nodes.get_mut(&id) {
+                        s.loading = true;
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        CommandResult::NeedsAsync(AsyncRequest::LoadBatch { requests })
+    }
+
+    fn refresh_buffer(&self, state: &mut TreeState) -> CommandResult {
+        // Get visible nodes that are loaded (to refresh them)
+        let visible = visible_nodes(state);
+        let mut requests = Vec::new();
+
+        for node in visible {
+            if !node.is_loaded {
+                continue;
+            }
+
+            // Get the node to build the request
+            if let Some(tree_node) = state.nodes.get(&node.id) {
+                match tree_node {
+                    TreeNode::Publication(p) => {
+                        requests.push(AsyncRequest::LoadPublication {
+                            addr: p.addr.clone(),
+                            parent: p.parent,
+                        });
+                    }
+                    TreeNode::Section(s) => {
+                        requests.push(AsyncRequest::LoadSection {
+                            addr: s.addr.clone(),
+                            parent: s.parent.unwrap_or(NodeId::root()),
+                        });
+                    }
+                }
+            }
+        }
+
+        if requests.is_empty() {
+            return CommandResult::NoOp;
+        }
+
+        // Mark all nodes as loading
+        for req in &requests {
+            match req {
+                AsyncRequest::LoadPublication { addr, .. } => {
+                    let id = NodeId::from_addr(addr);
+                    if let Some(TreeNode::Publication(ref mut p)) = state.nodes.get_mut(&id) {
+                        p.loading = true;
+                    }
+                }
+                AsyncRequest::LoadSection { addr, .. } => {
+                    let id = NodeId::from_addr(addr);
+                    if let Some(TreeNode::Section(ref mut s)) = state.nodes.get_mut(&id) {
+                        s.loading = true;
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        CommandResult::NeedsAsync(AsyncRequest::LoadBatch { requests })
     }
 
     // --- Helper methods ---

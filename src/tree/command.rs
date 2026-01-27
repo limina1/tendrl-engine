@@ -103,6 +103,12 @@ pub enum TreeCommand {
     ClearRelays,
     /// Show relay configuration
     ShowRelays,
+
+    // Batch loading
+    /// Load all unloaded visible events in buffer
+    LoadBufferEvents,
+    /// Refresh all visible events to newest versions
+    RefreshBuffer,
 }
 
 impl TreeCommand {
@@ -115,6 +121,8 @@ impl TreeCommand {
                 | TreeCommand::Fork
                 | TreeCommand::ShowAlternates
                 | TreeCommand::SlotInVersion { .. }
+                | TreeCommand::LoadBufferEvents
+                | TreeCommand::RefreshBuffer
         )
     }
 
@@ -212,6 +220,10 @@ pub enum AsyncRequest {
         before_timestamp: u64,
         limit: usize,
     },
+    /// Batch load multiple items at once
+    LoadBatch {
+        requests: Vec<AsyncRequest>,
+    },
 }
 
 impl AsyncRequest {
@@ -233,6 +245,9 @@ impl AsyncRequest {
             AsyncRequest::LoadMorePublications { limit, .. } => {
                 format!("Loading {} more publications...", limit)
             }
+            AsyncRequest::LoadBatch { requests } => {
+                format!("Loading {} items...", requests.len())
+            }
         }
     }
 
@@ -245,7 +260,8 @@ impl AsyncRequest {
             AsyncRequest::FindAlternates { node_id, .. } => Some(*node_id),
             AsyncRequest::RefreshAll
             | AsyncRequest::Search { .. }
-            | AsyncRequest::LoadMorePublications { .. } => None,
+            | AsyncRequest::LoadMorePublications { .. }
+            | AsyncRequest::LoadBatch { .. } => None,
         }
     }
 }

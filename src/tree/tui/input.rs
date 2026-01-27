@@ -132,8 +132,9 @@ impl KeyMapper {
             KeyCode::Esc => Some(TreeCommand::Back),
             KeyCode::Backspace => Some(TreeCommand::Back),
 
-            // Refresh
+            // Refresh and batch loading
             KeyCode::Char('R') => Some(TreeCommand::Refresh),
+            KeyCode::Char('L') => Some(TreeCommand::LoadBufferEvents),
 
             // Relays
             KeyCode::Char(':') => Some(TreeCommand::ShowRelays),
@@ -181,6 +182,7 @@ pub fn keybinding_help() -> Vec<(&'static str, &'static str)> {
         ("V/s", "Select/Select all"),
         (":", "Show relays"),
         ("R", "Refresh"),
+        ("L", "Load visible"),
         ("q", "Quit"),
     ]
 }

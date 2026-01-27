@@ -10,6 +10,7 @@ use crate::tree::node::{NodeId, SectionNode, TreeNode};
 use crate::tree::state::TreeState;
 use crate::tree::tui::input::{KeyContext, KeyMapper};
 use crate::tree::state::ViewMode;
+use crate::tree::tui::spinner::Spinner;
 use crate::tree::tui::widgets::{
     ContentPreview, ContinuousWidget, FeedWidget, HelpBar, OutlineWidget, PaginatedWidget,
     StatusBar, TreeWidget,
@@ -48,6 +49,10 @@ pub struct TuiApp {
     /// Async message channel
     async_rx: mpsc::Receiver<AsyncMessage>,
     async_tx: mpsc::Sender<AsyncMessage>,
+    /// Animated spinner for loading indicators
+    spinner: Spinner,
+    /// Number of pending async requests (for showing spinner)
+    pending_count: usize,
 }
 
 impl TuiApp {
@@ -65,6 +70,8 @@ impl TuiApp {
             status_message: None,
             async_rx,
             async_tx,
+            spinner: Spinner::new(),
+            pending_count: 0,
         }
     }
 
@@ -206,16 +213,20 @@ impl TuiApp {
 
     async fn event_loop(&mut self, terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> anyhow::Result<()> {
         loop {
+            // Tick spinner for animation
+            self.spinner.tick();
+
             // Draw UI
             terminal.draw(|frame| self.draw(frame))?;
 
             // Check for async results
             while let Ok(msg) = self.async_rx.try_recv() {
                 let AsyncMessage::Result(result) = msg;
+                self.pending_count = self.pending_count.saturating_sub(1);
                 let cmd_result = self.engine.apply_async_result(&mut self.state, result);
                 if let CommandResult::Error(e) = cmd_result {
                     self.status_message = Some(format!("Error: {}", e));
-                } else {
+                } else if self.pending_count == 0 {
                     self.status_message = None;
                 }
             }
@@ -297,11 +308,14 @@ impl TuiApp {
             height: 1,
         };
 
-        if let Some(ref msg) = self.status_message {
-            frame.render_widget(StatusBar::new(&self.state).with_message(msg), status_area);
-        } else {
-            frame.render_widget(StatusBar::new(&self.state), status_area);
+        let mut status_bar = StatusBar::new(&self.state);
+        if self.pending_count > 0 {
+            status_bar = status_bar.with_spinner(self.spinner.frame());
         }
+        if let Some(ref msg) = self.status_message {
+            status_bar = status_bar.with_message(msg);
+        }
+        frame.render_widget(status_bar, status_area);
 
         // Render help bar
         let help_area = Rect {
@@ -315,6 +329,11 @@ impl TuiApp {
 
     fn draw_feed_mode(&self, frame: &mut Frame, area: Rect) {
         // Feed mode: list on left, preview on right (if enabled)
+        let mut feed_widget = FeedWidget::new(&self.state);
+        if self.pending_count > 0 {
+            feed_widget = feed_widget.with_spinner(self.spinner.frame());
+        }
+
         if self.state.view.show_preview {
             let chunks = Layout::default()
                 .direction(Direction::Horizontal)
@@ -322,13 +341,13 @@ impl TuiApp {
                 .split(area);
 
             // Render feed list
-            frame.render_widget(FeedWidget::new(&self.state), chunks[0]);
+            frame.render_widget(feed_widget, chunks[0]);
 
             // Render preview of selected publication
             frame.render_widget(ContentPreview::new(&self.state), chunks[1]);
         } else {
             // Full width feed list
-            frame.render_widget(FeedWidget::new(&self.state), area);
+            frame.render_widget(feed_widget, area);
         }
     }
 
@@ -343,16 +362,21 @@ impl TuiApp {
 
     fn draw_tree_view(&self, frame: &mut Frame, area: Rect) {
         // Tree mode: tree on left, preview on right (if enabled)
+        let mut tree_widget = TreeWidget::new(&self.state);
+        if self.pending_count > 0 {
+            tree_widget = tree_widget.with_spinner(self.spinner.frame());
+        }
+
         if self.state.view.show_preview {
             let chunks = Layout::default()
                 .direction(Direction::Horizontal)
                 .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
                 .split(area);
 
-            frame.render_widget(TreeWidget::new(&self.state), chunks[0]);
+            frame.render_widget(tree_widget, chunks[0]);
             frame.render_widget(ContentPreview::new(&self.state), chunks[1]);
         } else {
-            frame.render_widget(TreeWidget::new(&self.state), area);
+            frame.render_widget(tree_widget, area);
         }
     }
 
@@ -382,7 +406,21 @@ impl TuiApp {
         frame.render_widget(PaginatedWidget::new(&self.state), area);
     }
 
-    fn spawn_async_request(&self, request: AsyncRequest) {
+    fn spawn_async_request(&mut self, request: AsyncRequest) {
+        // Handle batch requests by spawning individual requests
+        if let AsyncRequest::LoadBatch { requests } = request {
+            for req in requests {
+                self.spawn_single_async_request(req);
+            }
+            return;
+        }
+
+        self.spawn_single_async_request(request);
+    }
+
+    fn spawn_single_async_request(&mut self, request: AsyncRequest) {
+        self.pending_count += 1;
+
         let tx = self.async_tx.clone();
         let engine = self.nostr_engine.clone();
         let policy = self.policy;
@@ -528,6 +566,11 @@ async fn execute_async_request(
                 .collect();
 
             Ok(AsyncResult::MorePublicationsLoaded { publications: loaded })
+        }
+
+        AsyncRequest::LoadBatch { .. } => {
+            // LoadBatch is handled by spawn_async_request, should never reach here
+            unreachable!("LoadBatch should be handled by spawn_async_request")
         }
     }
 }

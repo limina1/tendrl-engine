@@ -12,6 +12,7 @@ use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Scr
 pub struct TreeWidget<'a> {
     state: &'a TreeState,
     options: RenderOptions,
+    spinner_frame: Option<char>,
 }
 
 impl<'a> TreeWidget<'a> {
@@ -19,11 +20,17 @@ impl<'a> TreeWidget<'a> {
         TreeWidget {
             state,
             options: RenderOptions::tui(),
+            spinner_frame: None,
         }
     }
 
     pub fn with_options(mut self, options: RenderOptions) -> Self {
         self.options = options;
+        self
+    }
+
+    pub fn with_spinner(mut self, frame: char) -> Self {
+        self.spinner_frame = Some(frame);
         self
     }
 
@@ -64,7 +71,12 @@ impl<'a> TreeWidget<'a> {
         // Build status indicators
         let mut suffix = String::new();
         if node.is_loading {
-            suffix.push_str(" ...");
+            if let Some(frame) = self.spinner_frame {
+                suffix.push(' ');
+                suffix.push(frame);
+            } else {
+                suffix.push_str(" ...");
+            }
         }
         if node.alternate_count > 0 {
             suffix.push_str(&format!(" [{}v]", node.alternate_count));
@@ -122,11 +134,20 @@ impl<'a> Widget for TreeWidget<'a> {
 /// Widget for rendering the feed view (list of publications as cards)
 pub struct FeedWidget<'a> {
     state: &'a TreeState,
+    spinner_frame: Option<char>,
 }
 
 impl<'a> FeedWidget<'a> {
     pub fn new(state: &'a TreeState) -> Self {
-        FeedWidget { state }
+        FeedWidget {
+            state,
+            spinner_frame: None,
+        }
+    }
+
+    pub fn with_spinner(mut self, frame: char) -> Self {
+        self.spinner_frame = Some(frame);
+        self
     }
 
     /// Get the list state for the widget
@@ -147,8 +168,13 @@ impl<'a> FeedWidget<'a> {
 
         // Add loading indicator or end-of-feed message
         if self.state.loading_more {
+            let loading_text = if let Some(frame) = self.spinner_frame {
+                format!("{} Loading more...", frame)
+            } else {
+                "Loading more...".to_string()
+            };
             items.push(ListItem::new(Line::from(Span::styled(
-                "Loading more...",
+                loading_text,
                 Style::default().fg(Color::Yellow).italic(),
             ))));
         } else if self.state.feed_exhausted {
@@ -193,7 +219,11 @@ impl<'a> FeedWidget<'a> {
             let section_info = if p.loaded {
                 format!("{} sections", p.children.len())
             } else if p.loading {
-                "Loading...".to_string()
+                if let Some(frame) = self.spinner_frame {
+                    format!("{} Loading...", frame)
+                } else {
+                    "Loading...".to_string()
+                }
             } else {
                 "Not loaded".to_string()
             };
@@ -571,6 +601,7 @@ impl<'a> Widget for ContentPreview<'a> {
 pub struct StatusBar<'a> {
     state: &'a TreeState,
     message: Option<&'a str>,
+    spinner_frame: Option<char>,
 }
 
 impl<'a> StatusBar<'a> {
@@ -578,11 +609,17 @@ impl<'a> StatusBar<'a> {
         StatusBar {
             state,
             message: None,
+            spinner_frame: None,
         }
     }
 
     pub fn with_message(mut self, message: &'a str) -> Self {
         self.message = Some(message);
+        self
+    }
+
+    pub fn with_spinner(mut self, frame: char) -> Self {
+        self.spinner_frame = Some(frame);
         self
     }
 }
@@ -596,7 +633,11 @@ impl<'a> Widget for StatusBar<'a> {
             let cursor_info = format!("{}/{}", cursor_idx, total);
 
             let left = if let Some(msg) = self.message {
-                msg.to_string()
+                if let Some(frame) = self.spinner_frame {
+                    format!("{} {}", frame, msg)
+                } else {
+                    msg.to_string()
+                }
             } else if let Some(&node_id) = self.state.roots.get(self.state.feed_cursor) {
                 if let Some(node) = self.state.nodes.get(&node_id) {
                     node.addr().to_a_tag()
@@ -620,7 +661,11 @@ impl<'a> Widget for StatusBar<'a> {
             let cursor_info = format!("{}/{}", cursor_idx, total);
 
             let left = if let Some(msg) = self.message {
-                msg.to_string()
+                if let Some(frame) = self.spinner_frame {
+                    format!("{} {}", frame, msg)
+                } else {
+                    msg.to_string()
+                }
             } else if let Some(node) = self.state.cursor_node() {
                 node.addr().to_a_tag()
             } else {
