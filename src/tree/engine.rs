@@ -153,6 +153,12 @@ impl TreeEngine {
             // Batch loading
             TreeCommand::LoadBufferEvents => self.load_buffer_events(state),
             TreeCommand::RefreshBuffer => self.refresh_buffer(state),
+
+            // UI (handled by app, not engine)
+            TreeCommand::ShowCommandPalette => {
+                // This is handled directly in app.rs, but we need to have a match arm
+                CommandResult::NoOp
+            }
         }
     }
 

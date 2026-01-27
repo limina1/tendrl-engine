@@ -139,6 +139,12 @@ impl KeyMapper {
             // Relays
             KeyCode::Char(':') => Some(TreeCommand::ShowRelays),
 
+            // Command palette (M-x style)
+            KeyCode::Char('?') => Some(TreeCommand::ShowCommandPalette),
+            KeyCode::Char('x') if key.modifiers.contains(KeyModifiers::ALT) => {
+                Some(TreeCommand::ShowCommandPalette)
+            }
+
             // Quit
             KeyCode::Char('q') => Some(TreeCommand::Quit),
             KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
@@ -181,6 +187,7 @@ pub fn keybinding_help() -> Vec<(&'static str, &'static str)> {
         ("u/Ctrl+r", "Undo/Redo"),
         ("V/s", "Select/Select all"),
         (":", "Show relays"),
+        ("?/M-x", "Command palette"),
         ("R", "Refresh"),
         ("L", "Load visible"),
         ("q", "Quit"),

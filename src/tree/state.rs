@@ -3,6 +3,7 @@
 //! Contains the pure state types for the tree view, including cursor position,
 //! expanded nodes, selections, and view configuration.
 
+use super::command::{all_commands, CommandInfo};
 use super::node::{NodeId, TreeNode};
 use super::undo::UndoStack;
 use serde::{Deserialize, Serialize};
@@ -61,6 +62,8 @@ pub struct TreeState {
     pub loading_more: bool,
     /// Whether we've reached the end (no more publications to load)
     pub feed_exhausted: bool,
+    /// Command palette state
+    pub command_palette: CommandPaletteState,
 }
 
 impl TreeState {
@@ -82,6 +85,7 @@ impl TreeState {
             oldest_timestamp: None,
             loading_more: false,
             feed_exhausted: false,
+            command_palette: CommandPaletteState::new(),
         }
     }
 
@@ -378,6 +382,122 @@ pub enum ClipboardContent {
         content: String,
         addr: crate::publication::NAddr,
     },
+}
+
+/// State for the command palette (M-x style menu)
+#[derive(Debug, Clone)]
+pub struct CommandPaletteState {
+    /// Whether the command palette is visible
+    pub visible: bool,
+    /// Search/filter text
+    pub query: String,
+    /// Selected index in the filtered list
+    pub selected: usize,
+    /// Cached filtered commands
+    pub filtered_commands: Vec<CommandInfo>,
+}
+
+impl CommandPaletteState {
+    pub fn new() -> Self {
+        CommandPaletteState {
+            visible: false,
+            query: String::new(),
+            selected: 0,
+            filtered_commands: all_commands(),
+        }
+    }
+
+    /// Open the command palette
+    pub fn open(&mut self) {
+        self.visible = true;
+        self.query.clear();
+        self.selected = 0;
+        self.filtered_commands = all_commands();
+    }
+
+    /// Close the command palette
+    pub fn close(&mut self) {
+        self.visible = false;
+        self.query.clear();
+        self.selected = 0;
+    }
+
+    /// Update the search query and filter commands
+    pub fn set_query(&mut self, query: String) {
+        self.query = query;
+        self.filter_commands();
+        // Reset selection if it's out of bounds
+        if self.selected >= self.filtered_commands.len() {
+            self.selected = 0;
+        }
+    }
+
+    /// Add a character to the query
+    pub fn push_char(&mut self, c: char) {
+        self.query.push(c);
+        self.filter_commands();
+        if self.selected >= self.filtered_commands.len() {
+            self.selected = 0;
+        }
+    }
+
+    /// Remove last character from query
+    pub fn pop_char(&mut self) {
+        self.query.pop();
+        self.filter_commands();
+        if self.selected >= self.filtered_commands.len() {
+            self.selected = 0;
+        }
+    }
+
+    /// Filter commands based on query (fuzzy match on name and description)
+    fn filter_commands(&mut self) {
+        let all = all_commands();
+        if self.query.is_empty() {
+            self.filtered_commands = all;
+            return;
+        }
+
+        let query_lower = self.query.to_lowercase();
+        self.filtered_commands = all
+            .into_iter()
+            .filter(|cmd| {
+                let name_match = cmd.name.to_lowercase().contains(&query_lower);
+                let desc_match = cmd.description.to_lowercase().contains(&query_lower);
+                let cat_match = cmd.category.name().to_lowercase().contains(&query_lower);
+                name_match || desc_match || cat_match
+            })
+            .collect();
+    }
+
+    /// Move selection up
+    pub fn select_prev(&mut self) {
+        if !self.filtered_commands.is_empty() {
+            if self.selected == 0 {
+                self.selected = self.filtered_commands.len() - 1;
+            } else {
+                self.selected -= 1;
+            }
+        }
+    }
+
+    /// Move selection down
+    pub fn select_next(&mut self) {
+        if !self.filtered_commands.is_empty() {
+            self.selected = (self.selected + 1) % self.filtered_commands.len();
+        }
+    }
+
+    /// Get the currently selected command
+    pub fn selected_command(&self) -> Option<&CommandInfo> {
+        self.filtered_commands.get(self.selected)
+    }
+}
+
+impl Default for CommandPaletteState {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 #[cfg(test)]

@@ -7,6 +7,354 @@ use super::node::NodeId;
 use crate::publication::NAddr;
 use serde::{Deserialize, Serialize};
 
+/// Information about a command for the command palette
+#[derive(Debug, Clone)]
+pub struct CommandInfo {
+    /// The command variant
+    pub command: TreeCommand,
+    /// Human-readable display name
+    pub name: &'static str,
+    /// Description of what the command does
+    pub description: &'static str,
+    /// Category for grouping
+    pub category: CommandCategory,
+    /// Keybinding hint (if any)
+    pub keybinding: Option<&'static str>,
+}
+
+/// Command categories for grouping in the palette
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CommandCategory {
+    Navigation,
+    Selection,
+    Manipulation,
+    Versioning,
+    View,
+    UndoRedo,
+    Mode,
+    Application,
+    Configuration,
+}
+
+impl CommandCategory {
+    pub fn name(&self) -> &'static str {
+        match self {
+            CommandCategory::Navigation => "Navigation",
+            CommandCategory::Selection => "Selection",
+            CommandCategory::Manipulation => "Manipulation",
+            CommandCategory::Versioning => "Versioning",
+            CommandCategory::View => "View",
+            CommandCategory::UndoRedo => "Undo/Redo",
+            CommandCategory::Mode => "Mode",
+            CommandCategory::Application => "Application",
+            CommandCategory::Configuration => "Configuration",
+        }
+    }
+}
+
+/// Get all available commands with their metadata
+pub fn all_commands() -> Vec<CommandInfo> {
+    vec![
+        // Navigation
+        CommandInfo {
+            command: TreeCommand::MoveUp,
+            name: "Move Up",
+            description: "Move cursor up one visible node",
+            category: CommandCategory::Navigation,
+            keybinding: Some("k / ↑"),
+        },
+        CommandInfo {
+            command: TreeCommand::MoveDown,
+            name: "Move Down",
+            description: "Move cursor down one visible node",
+            category: CommandCategory::Navigation,
+            keybinding: Some("j / ↓"),
+        },
+        CommandInfo {
+            command: TreeCommand::MoveToFirst,
+            name: "Move to First",
+            description: "Move cursor to first visible node",
+            category: CommandCategory::Navigation,
+            keybinding: Some("gg"),
+        },
+        CommandInfo {
+            command: TreeCommand::MoveToLast,
+            name: "Move to Last",
+            description: "Move cursor to last visible node",
+            category: CommandCategory::Navigation,
+            keybinding: Some("G"),
+        },
+        CommandInfo {
+            command: TreeCommand::MoveToParent,
+            name: "Move to Parent",
+            description: "Move cursor to parent node",
+            category: CommandCategory::Navigation,
+            keybinding: None,
+        },
+        CommandInfo {
+            command: TreeCommand::Enter,
+            name: "Enter / Expand",
+            description: "Enter/expand current node or load content",
+            category: CommandCategory::Navigation,
+            keybinding: Some("Enter / l"),
+        },
+        CommandInfo {
+            command: TreeCommand::Collapse,
+            name: "Collapse",
+            description: "Collapse current node",
+            category: CommandCategory::Navigation,
+            keybinding: Some("h"),
+        },
+        CommandInfo {
+            command: TreeCommand::ToggleExpand,
+            name: "Toggle Expand",
+            description: "Toggle expand/collapse of current node",
+            category: CommandCategory::Navigation,
+            keybinding: Some("Space"),
+        },
+        // Selection
+        CommandInfo {
+            command: TreeCommand::ToggleSelect,
+            name: "Toggle Select",
+            description: "Toggle selection of current node",
+            category: CommandCategory::Selection,
+            keybinding: Some("V"),
+        },
+        CommandInfo {
+            command: TreeCommand::SelectAll,
+            name: "Select All",
+            description: "Select all visible nodes",
+            category: CommandCategory::Selection,
+            keybinding: Some("s"),
+        },
+        CommandInfo {
+            command: TreeCommand::ClearSelection,
+            name: "Clear Selection",
+            description: "Clear all selections",
+            category: CommandCategory::Selection,
+            keybinding: None,
+        },
+        // Manipulation
+        CommandInfo {
+            command: TreeCommand::MoveSectionUp,
+            name: "Move Section Up",
+            description: "Move section up within its parent",
+            category: CommandCategory::Manipulation,
+            keybinding: Some("K"),
+        },
+        CommandInfo {
+            command: TreeCommand::MoveSectionDown,
+            name: "Move Section Down",
+            description: "Move section down within its parent",
+            category: CommandCategory::Manipulation,
+            keybinding: Some("J"),
+        },
+        CommandInfo {
+            command: TreeCommand::Delete,
+            name: "Delete",
+            description: "Delete current node or selection",
+            category: CommandCategory::Manipulation,
+            keybinding: Some("d"),
+        },
+        CommandInfo {
+            command: TreeCommand::Yank,
+            name: "Yank (Copy)",
+            description: "Copy current node to clipboard",
+            category: CommandCategory::Manipulation,
+            keybinding: Some("y"),
+        },
+        CommandInfo {
+            command: TreeCommand::PasteAfter,
+            name: "Paste After",
+            description: "Paste after current node",
+            category: CommandCategory::Manipulation,
+            keybinding: Some("p"),
+        },
+        CommandInfo {
+            command: TreeCommand::PasteBefore,
+            name: "Paste Before",
+            description: "Paste before current node",
+            category: CommandCategory::Manipulation,
+            keybinding: Some("P"),
+        },
+        // Versioning
+        CommandInfo {
+            command: TreeCommand::Fork,
+            name: "Fork Section",
+            description: "Create new version of current section",
+            category: CommandCategory::Versioning,
+            keybinding: Some("f"),
+        },
+        CommandInfo {
+            command: TreeCommand::ShowAlternates,
+            name: "Show Alternates",
+            description: "Show alternate versions of current section",
+            category: CommandCategory::Versioning,
+            keybinding: Some("a"),
+        },
+        // View
+        CommandInfo {
+            command: TreeCommand::TogglePreview,
+            name: "Toggle Preview",
+            description: "Toggle content preview panel",
+            category: CommandCategory::View,
+            keybinding: Some("Tab"),
+        },
+        CommandInfo {
+            command: TreeCommand::ScrollPreviewUp,
+            name: "Scroll Preview Up",
+            description: "Scroll preview panel up",
+            category: CommandCategory::View,
+            keybinding: Some("PageUp"),
+        },
+        CommandInfo {
+            command: TreeCommand::ScrollPreviewDown,
+            name: "Scroll Preview Down",
+            description: "Scroll preview panel down",
+            category: CommandCategory::View,
+            keybinding: Some("PageDown"),
+        },
+        CommandInfo {
+            command: TreeCommand::ScrollContentUp,
+            name: "Scroll Content Up",
+            description: "Scroll content up (Continuous mode)",
+            category: CommandCategory::View,
+            keybinding: Some("k"),
+        },
+        CommandInfo {
+            command: TreeCommand::ScrollContentDown,
+            name: "Scroll Content Down",
+            description: "Scroll content down (Continuous mode)",
+            category: CommandCategory::View,
+            keybinding: Some("j"),
+        },
+        CommandInfo {
+            command: TreeCommand::NextPage,
+            name: "Next Page/Section",
+            description: "Go to next page or section (Paginated mode)",
+            category: CommandCategory::View,
+            keybinding: Some("J"),
+        },
+        CommandInfo {
+            command: TreeCommand::PrevPage,
+            name: "Previous Page/Section",
+            description: "Go to previous page or section (Paginated mode)",
+            category: CommandCategory::View,
+            keybinding: Some("K"),
+        },
+        CommandInfo {
+            command: TreeCommand::Refresh,
+            name: "Refresh",
+            description: "Refresh current view / reload data",
+            category: CommandCategory::View,
+            keybinding: Some("R"),
+        },
+        // Undo/Redo
+        CommandInfo {
+            command: TreeCommand::Undo,
+            name: "Undo",
+            description: "Undo last operation",
+            category: CommandCategory::UndoRedo,
+            keybinding: Some("u"),
+        },
+        CommandInfo {
+            command: TreeCommand::Redo,
+            name: "Redo",
+            description: "Redo last undone operation",
+            category: CommandCategory::UndoRedo,
+            keybinding: Some("Ctrl+r"),
+        },
+        // Mode
+        CommandInfo {
+            command: TreeCommand::Back,
+            name: "Back",
+            description: "Exit reader mode, return to feed",
+            category: CommandCategory::Mode,
+            keybinding: Some("Esc"),
+        },
+        CommandInfo {
+            command: TreeCommand::CycleViewMode,
+            name: "Cycle View Mode",
+            description: "Cycle through view modes (Tree → Outline → Continuous → Paginated)",
+            category: CommandCategory::Mode,
+            keybinding: Some("v"),
+        },
+        CommandInfo {
+            command: TreeCommand::SetViewMode { mode: crate::tree::state::ViewMode::Tree },
+            name: "Tree View",
+            description: "Switch to hierarchical tree view",
+            category: CommandCategory::Mode,
+            keybinding: None,
+        },
+        CommandInfo {
+            command: TreeCommand::SetViewMode { mode: crate::tree::state::ViewMode::Outline },
+            name: "Outline View",
+            description: "Switch to outline card view",
+            category: CommandCategory::Mode,
+            keybinding: None,
+        },
+        CommandInfo {
+            command: TreeCommand::SetViewMode { mode: crate::tree::state::ViewMode::Continuous },
+            name: "Continuous View",
+            description: "Switch to scrollable continuous view",
+            category: CommandCategory::Mode,
+            keybinding: None,
+        },
+        CommandInfo {
+            command: TreeCommand::SetViewMode { mode: crate::tree::state::ViewMode::Paginated },
+            name: "Paginated View",
+            description: "Switch to paginated view (one section at a time)",
+            category: CommandCategory::Mode,
+            keybinding: None,
+        },
+        // Application
+        CommandInfo {
+            command: TreeCommand::Quit,
+            name: "Quit",
+            description: "Quit the application",
+            category: CommandCategory::Application,
+            keybinding: Some("q / Ctrl+c"),
+        },
+        CommandInfo {
+            command: TreeCommand::LoadBufferEvents,
+            name: "Load Visible Events",
+            description: "Load all unloaded visible events in buffer",
+            category: CommandCategory::Application,
+            keybinding: Some("L"),
+        },
+        CommandInfo {
+            command: TreeCommand::RefreshBuffer,
+            name: "Refresh Buffer",
+            description: "Refresh all visible events to newest versions",
+            category: CommandCategory::Application,
+            keybinding: None,
+        },
+        // Configuration
+        CommandInfo {
+            command: TreeCommand::ShowRelays,
+            name: "Show Relays",
+            description: "Show relay configuration",
+            category: CommandCategory::Configuration,
+            keybinding: Some(":"),
+        },
+        CommandInfo {
+            command: TreeCommand::ClearRelays,
+            name: "Clear Relays",
+            description: "Clear custom relays (use defaults)",
+            category: CommandCategory::Configuration,
+            keybinding: None,
+        },
+        // Command Palette
+        CommandInfo {
+            command: TreeCommand::ShowCommandPalette,
+            name: "Command Palette",
+            description: "Show the command palette (M-x)",
+            category: CommandCategory::Application,
+            keybinding: Some("M-x / ?"),
+        },
+    ]
+}
+
 /// Commands that can be executed on the tree
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TreeCommand {
@@ -109,6 +457,10 @@ pub enum TreeCommand {
     LoadBufferEvents,
     /// Refresh all visible events to newest versions
     RefreshBuffer,
+
+    // UI
+    /// Show command palette (M-x style)
+    ShowCommandPalette,
 }
 
 impl TreeCommand {

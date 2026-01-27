@@ -2,11 +2,12 @@
 //!
 //! Provides ratatui widgets for rendering the tree view and content preview.
 
+use crate::tree::command::CommandCategory;
 use crate::tree::node::{NodeId, TreeNode};
 use crate::tree::render::{visible_nodes, RenderOptions, VisibleNode};
-use crate::tree::state::TreeState;
+use crate::tree::state::{CommandPaletteState, TreeState};
 use ratatui::prelude::*;
-use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Wrap};
+use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Wrap};
 
 /// Widget for rendering the tree view
 pub struct TreeWidget<'a> {
@@ -733,26 +734,188 @@ impl<'a> Widget for HelpBar<'a> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         use crate::tree::state::ViewMode;
 
-        let help = if self.state.is_feed_mode() {
-            "j/k:Nav  Enter:Open  Tab:Preview  v:ViewMode  ::Relays  q:Quit"
+        let help = if self.state.command_palette.visible {
+            "↑/↓:Select  Enter:Execute  Esc:Close  Type to filter"
+        } else if self.state.is_feed_mode() {
+            "j/k:Nav  Enter:Open  Tab:Preview  v:ViewMode  ?:Commands  q:Quit"
         } else {
             // View mode specific help
             match self.state.view.mode {
                 ViewMode::Tree => {
-                    "j/k:Nav  h/l:Collapse/Expand  Enter:Load  Esc:Back  Tab:Preview  v:ViewMode  q:Quit"
+                    "j/k:Nav  h/l:Collapse/Expand  Enter:Load  Esc:Back  ?:Commands  q:Quit"
                 }
                 ViewMode::Outline => {
-                    "j/k:Nav  Enter:Select  Esc:Back  Tab:Preview  v:ViewMode  q:Quit"
+                    "j/k:Nav  Enter:Select  Esc:Back  ?:Commands  q:Quit"
                 }
                 ViewMode::Continuous => {
-                    "j/k:Scroll  Esc:Back  v:ViewMode  q:Quit"
+                    "j/k:Scroll  Esc:Back  ?:Commands  q:Quit"
                 }
                 ViewMode::Paginated => {
-                    "j/k:Scroll  J/K:Next/Prev Section  Esc:Back  v:ViewMode  q:Quit"
+                    "j/k:Scroll  J/K:Next/Prev Section  Esc:Back  ?:Commands  q:Quit"
                 }
             }
         };
         let style = Style::default().fg(Color::DarkGray);
         buf.set_string(area.x, area.y, help, style);
+    }
+}
+
+/// Widget for the command palette (M-x style menu)
+pub struct CommandPaletteWidget<'a> {
+    state: &'a CommandPaletteState,
+}
+
+impl<'a> CommandPaletteWidget<'a> {
+    pub fn new(state: &'a CommandPaletteState) -> Self {
+        CommandPaletteWidget { state }
+    }
+
+    /// Calculate the area for the palette (centered popup)
+    pub fn calculate_area(parent: Rect) -> Rect {
+        let width = parent.width.min(70).max(40);
+        let height = parent.height.min(20).max(10);
+        let x = (parent.width.saturating_sub(width)) / 2;
+        let y = (parent.height.saturating_sub(height)) / 2;
+        Rect::new(x, y, width, height)
+    }
+
+    fn get_category_style(category: CommandCategory) -> Style {
+        match category {
+            CommandCategory::Navigation => Style::default().fg(Color::Blue),
+            CommandCategory::Selection => Style::default().fg(Color::Yellow),
+            CommandCategory::Manipulation => Style::default().fg(Color::Red),
+            CommandCategory::Versioning => Style::default().fg(Color::Magenta),
+            CommandCategory::View => Style::default().fg(Color::Cyan),
+            CommandCategory::UndoRedo => Style::default().fg(Color::Green),
+            CommandCategory::Mode => Style::default().fg(Color::LightBlue),
+            CommandCategory::Application => Style::default().fg(Color::White),
+            CommandCategory::Configuration => Style::default().fg(Color::Gray),
+        }
+    }
+
+    /// Render a single command line at the given position
+    fn render_command_line(&self, buf: &mut Buffer, cmd: &crate::tree::command::CommandInfo, y: u16, x_start: u16, max_width: u16, is_selected: bool) {
+        let mut x = x_start;
+        let x_end = x_start + max_width;
+
+        // Background for selected row
+        if is_selected {
+            for bx in x_start..x_end {
+                buf[(bx, y)].set_bg(Color::DarkGray);
+            }
+        }
+
+        // Category tag
+        let cat_text = format!("[{}]", cmd.category.name());
+        let cat_style = Self::get_category_style(cmd.category);
+        for c in cat_text.chars() {
+            if x >= x_end {
+                break;
+            }
+            buf[(x, y)].set_char(c).set_style(cat_style);
+            x += 1;
+        }
+
+        // Space
+        if x < x_end {
+            x += 1;
+        }
+
+        // Command name
+        let name_style = if is_selected {
+            Style::default().fg(Color::White).bold()
+        } else {
+            Style::default().fg(Color::White).bold()
+        };
+        for c in cmd.name.chars() {
+            if x >= x_end {
+                break;
+            }
+            buf[(x, y)].set_char(c).set_style(name_style);
+            x += 1;
+        }
+
+        // Keybinding (if any)
+        if let Some(key) = cmd.keybinding {
+            let key_text = format!("  ({})", key);
+            let key_style = Style::default().fg(Color::DarkGray);
+            for c in key_text.chars() {
+                if x >= x_end {
+                    break;
+                }
+                buf[(x, y)].set_char(c).set_style(key_style);
+                x += 1;
+            }
+        }
+    }
+}
+
+impl<'a> Widget for CommandPaletteWidget<'a> {
+    fn render(self, area: Rect, buf: &mut Buffer) {
+        // Clear the area first (for popup effect)
+        Clear.render(area, buf);
+
+        // Calculate inner areas
+        let inner = Block::default()
+            .borders(Borders::ALL)
+            .title(" Commands (M-x) ")
+            .style(Style::default().bg(Color::Black))
+            .inner(area);
+
+        // Render border
+        Block::default()
+            .borders(Borders::ALL)
+            .title(" Commands (M-x) ")
+            .style(Style::default().bg(Color::Black))
+            .render(area, buf);
+
+        if inner.height < 3 {
+            return;
+        }
+
+        // Search input area (1 line at top)
+        let search_text = format!("> {}_", self.state.query);
+        let search_style = Style::default().fg(Color::Yellow);
+        buf.set_string(inner.x, inner.y, &search_text, search_style);
+
+        // Divider
+        let divider: String = "─".repeat(inner.width as usize);
+        buf.set_string(inner.x, inner.y + 1, &divider, Style::default().fg(Color::DarkGray));
+
+        // Command list area
+        let list_height = inner.height.saturating_sub(2);
+        if list_height == 0 {
+            return;
+        }
+
+        let item_count = self.state.filtered_commands.len();
+        let visible_items = list_height as usize;
+
+        // Calculate scroll offset to keep selected item visible
+        let scroll_offset = if self.state.selected >= visible_items {
+            self.state.selected - visible_items + 1
+        } else {
+            0
+        };
+
+        // Render items with scroll offset
+        for (i, cmd) in self.state.filtered_commands.iter()
+            .skip(scroll_offset)
+            .take(visible_items)
+            .enumerate()
+        {
+            let y = inner.y + 2 + i as u16;
+            if y < inner.y + inner.height {
+                let is_selected = scroll_offset + i == self.state.selected;
+                self.render_command_line(buf, cmd, y, inner.x, inner.width, is_selected);
+            }
+        }
+
+        // Show count at bottom if there are more items
+        if item_count > visible_items {
+            let count_text = format!(" {}/{} ", self.state.selected + 1, item_count);
+            let count_x = area.x + area.width - count_text.len() as u16 - 1;
+            buf.set_string(count_x, area.y + area.height - 1, &count_text, Style::default().fg(Color::DarkGray));
+        }
     }
 }

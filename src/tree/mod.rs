@@ -45,10 +45,15 @@ pub mod undo;
 pub mod tui;
 
 // Re-export main types
-pub use command::{AsyncRequest, AsyncResult, CommandResult, ConfigAction, TreeCommand};
+pub use command::{
+    all_commands, AsyncRequest, AsyncResult, CommandCategory, CommandInfo, CommandResult,
+    ConfigAction, TreeCommand,
+};
 pub use content::ContentDetector;
 pub use engine::TreeEngine;
 pub use node::{ContentMode, NodeId, PublicationNode, SectionNode, TreeNode};
 pub use render::{RenderOptions, TreeRenderer, VisibleNode};
-pub use state::{AppMode, ClipboardContent, FilterMode, TreeState, ViewMode, ViewState};
+pub use state::{
+    AppMode, ClipboardContent, CommandPaletteState, FilterMode, TreeState, ViewMode, ViewState,
+};
 pub use undo::{Operation, UndoStack};

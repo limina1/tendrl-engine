@@ -12,11 +12,12 @@ use crate::tree::tui::input::{KeyContext, KeyMapper};
 use crate::tree::state::ViewMode;
 use crate::tree::tui::spinner::Spinner;
 use crate::tree::tui::widgets::{
-    ContentPreview, ContinuousWidget, FeedWidget, HelpBar, OutlineWidget, PaginatedWidget,
-    StatusBar, TreeWidget,
+    CommandPaletteWidget, ContentPreview, ContinuousWidget, FeedWidget, HelpBar, OutlineWidget,
+    PaginatedWidget, StatusBar, TreeWidget,
 };
 
-use crossterm::event::{self, Event, KeyEventKind};
+use crate::tree::command::TreeCommand;
+use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen};
 use crossterm::ExecutableCommand;
 use ratatui::prelude::*;
@@ -239,11 +240,44 @@ impl TuiApp {
                         continue;
                     }
 
+                    // Handle command palette input separately
+                    if self.state.command_palette.visible {
+                        if let Some(result) = self.handle_palette_input(key) {
+                            match result {
+                                CommandResult::Exit => break,
+                                CommandResult::NeedsAsync(request) => {
+                                    self.status_message = Some(request.description());
+                                    self.spawn_async_request(request);
+                                }
+                                CommandResult::Error(e) => {
+                                    self.status_message = Some(format!("Error: {}", e));
+                                }
+                                CommandResult::StateChanged => {
+                                    self.status_message = None;
+                                }
+                                CommandResult::ConfigChange(action) => {
+                                    self.handle_config_action(action);
+                                }
+                                CommandResult::ModeChanged(mode) => {
+                                    self.status_message = Some(format!("Switched to {} mode", mode.name()));
+                                }
+                                _ => {}
+                            }
+                        }
+                        continue;
+                    }
+
                     let ctx = KeyContext {
                         app_mode: self.state.mode,
                         view_mode: self.state.view.mode,
                     };
                     if let Some(command) = self.key_mapper.map_with_context(key, Some(&ctx)) {
+                        // Handle ShowCommandPalette specially
+                        if matches!(command, TreeCommand::ShowCommandPalette) {
+                            self.state.command_palette.open();
+                            continue;
+                        }
+
                         match self.engine.execute(&mut self.state, command) {
                             CommandResult::Exit => break,
                             CommandResult::NeedsAsync(request) => {
@@ -278,6 +312,82 @@ impl TuiApp {
             ConfigAction::RemoveRelay(url) => self.remove_relay(&url),
             ConfigAction::ClearRelays => self.clear_relays(),
             ConfigAction::ShowRelays => self.show_relays(),
+        }
+    }
+
+    /// Handle input when the command palette is open
+    fn handle_palette_input(&mut self, key: crossterm::event::KeyEvent) -> Option<CommandResult> {
+        match key.code {
+            // Close palette
+            KeyCode::Esc => {
+                self.state.command_palette.close();
+                None
+            }
+            // Execute selected command
+            KeyCode::Enter => {
+                if let Some(cmd_info) = self.state.command_palette.selected_command() {
+                    let command = cmd_info.command.clone();
+                    self.state.command_palette.close();
+
+                    // Handle ShowCommandPalette recursively (shouldn't happen but just in case)
+                    if matches!(command, TreeCommand::ShowCommandPalette) {
+                        self.state.command_palette.open();
+                        return None;
+                    }
+
+                    // Execute the command
+                    Some(self.engine.execute(&mut self.state, command))
+                } else {
+                    None
+                }
+            }
+            // Navigate up
+            KeyCode::Up | KeyCode::Char('k') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.state.command_palette.select_prev();
+                None
+            }
+            // Navigate down
+            KeyCode::Down | KeyCode::Char('j') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.state.command_palette.select_next();
+                None
+            }
+            // Also allow plain up/down
+            KeyCode::Up => {
+                self.state.command_palette.select_prev();
+                None
+            }
+            KeyCode::Down => {
+                self.state.command_palette.select_next();
+                None
+            }
+            // Tab to select next
+            KeyCode::Tab => {
+                if key.modifiers.contains(KeyModifiers::SHIFT) {
+                    self.state.command_palette.select_prev();
+                } else {
+                    self.state.command_palette.select_next();
+                }
+                None
+            }
+            // Backspace to delete character
+            KeyCode::Backspace => {
+                self.state.command_palette.pop_char();
+                None
+            }
+            // Type to filter
+            KeyCode::Char(c) => {
+                // Don't handle Ctrl+C as typing
+                if key.modifiers.contains(KeyModifiers::CONTROL) {
+                    if c == 'c' {
+                        self.state.command_palette.close();
+                        return Some(CommandResult::Exit);
+                    }
+                    return None;
+                }
+                self.state.command_palette.push_char(c);
+                None
+            }
+            _ => None,
         }
     }
 
@@ -325,6 +435,15 @@ impl TuiApp {
             height: 1,
         };
         frame.render_widget(HelpBar::new(&self.state), help_area);
+
+        // Render command palette overlay if visible
+        if self.state.command_palette.visible {
+            let palette_area = CommandPaletteWidget::calculate_area(area);
+            frame.render_widget(
+                CommandPaletteWidget::new(&self.state.command_palette),
+                palette_area,
+            );
+        }
     }
 
     fn draw_feed_mode(&self, frame: &mut Frame, area: Rect) {
