@@ -78,6 +78,16 @@ impl ContentMode {
     }
 }
 
+/// Sync status indicating whether an event exists on relays
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum SyncStatus {
+    /// Event was fetched from a relay (confirmed on network)
+    #[default]
+    Remote,
+    /// Event only exists locally (not yet sent to relays or unconfirmed)
+    LocalOnly,
+}
+
 /// A node in the publication tree
 #[derive(Debug, Clone)]
 pub enum TreeNode {
@@ -161,6 +171,14 @@ impl TreeNode {
             TreeNode::Section(s) => s.loading,
         }
     }
+
+    /// Get the sync status (Remote = fetched from relay, LocalOnly = local db only)
+    pub fn sync_status(&self) -> SyncStatus {
+        match self {
+            TreeNode::Publication(p) => p.sync_status,
+            TreeNode::Section(s) => s.sync_status,
+        }
+    }
 }
 
 /// A publication node in the tree
@@ -192,6 +210,8 @@ pub struct PublicationNode {
     pub loading: bool,
     /// Load error if any
     pub error: Option<String>,
+    /// Sync status - whether event was fetched from relay or is local-only
+    pub sync_status: SyncStatus,
 }
 
 impl PublicationNode {
@@ -219,6 +239,7 @@ impl PublicationNode {
             loaded: pub_.index.is_loaded(),
             loading: false,
             error: None,
+            sync_status: SyncStatus::Remote, // Fetched from relay
         }
     }
 
@@ -239,6 +260,7 @@ impl PublicationNode {
             loaded: false,
             loading: false,
             error: None,
+            sync_status: SyncStatus::default(),
         }
     }
 }
@@ -268,6 +290,8 @@ pub struct SectionNode {
     pub error: Option<String>,
     /// Number of alternate versions available
     pub alternate_count: usize,
+    /// Sync status - whether event was fetched from relay or is local-only
+    pub sync_status: SyncStatus,
 }
 
 impl SectionNode {
@@ -286,6 +310,7 @@ impl SectionNode {
             loading: false,
             error: None,
             alternate_count: section.alternates.len(),
+            sync_status: SyncStatus::Remote, // Fetched from relay
         }
     }
 
@@ -304,6 +329,7 @@ impl SectionNode {
             loading: false,
             error: None,
             alternate_count: 0,
+            sync_status: SyncStatus::default(),
         }
     }
 }

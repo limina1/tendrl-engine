@@ -12,8 +12,8 @@ use crate::tree::tui::input::{KeyContext, KeyMapper};
 use crate::tree::state::ViewMode;
 use crate::tree::tui::spinner::Spinner;
 use crate::tree::tui::widgets::{
-    CommandPaletteWidget, ContentPreview, ContinuousWidget, FeedWidget, HelpBar, OutlineWidget,
-    PaginatedWidget, StatusBar, TreeWidget,
+    CommandPaletteWidget, ComposeWidget, ContentPreview, ContinuousWidget, FeedWidget, HelpBar,
+    OutlineWidget, PaginatedWidget, StatusBar, TreeWidget,
 };
 
 use crate::tree::command::TreeCommand;
@@ -270,6 +270,11 @@ impl TuiApp {
                     let ctx = KeyContext {
                         app_mode: self.state.mode,
                         view_mode: self.state.view.mode,
+                        compose_focus: if self.state.is_compose_mode() {
+                            Some(self.state.compose.focus)
+                        } else {
+                            None
+                        },
                     };
                     if let Some(command) = self.key_mapper.map_with_context(key, Some(&ctx)) {
                         // Handle ShowCommandPalette specially
@@ -404,7 +409,9 @@ impl TuiApp {
         };
 
         // Render based on current mode
-        if self.state.is_feed_mode() {
+        if self.state.is_compose_mode() {
+            self.draw_compose_mode(frame, content_area);
+        } else if self.state.is_feed_mode() {
             self.draw_feed_mode(frame, content_area);
         } else {
             self.draw_reader_mode(frame, content_area);
@@ -523,6 +530,10 @@ impl TuiApp {
     fn draw_paginated_view(&self, frame: &mut Frame, area: Rect) {
         // Paginated mode: one section at a time, full width
         frame.render_widget(PaginatedWidget::new(&self.state), area);
+    }
+
+    fn draw_compose_mode(&self, frame: &mut Frame, area: Rect) {
+        frame.render_widget(ComposeWidget::new(&self.state.compose), area);
     }
 
     fn spawn_async_request(&mut self, request: AsyncRequest) {
@@ -690,6 +701,15 @@ async fn execute_async_request(
         AsyncRequest::LoadBatch { .. } => {
             // LoadBatch is handled by spawn_async_request, should never reach here
             unreachable!("LoadBatch should be handled by spawn_async_request")
+        }
+
+        AsyncRequest::PublishNote { .. } | AsyncRequest::PublishPublication { .. } => {
+            // Publishing is deferred for now - return a placeholder result
+            // TODO: Implement actual publishing via MCP or signing
+            Ok(AsyncResult::Error {
+                request,
+                error: "Publishing not yet implemented".to_string(),
+            })
         }
     }
 }

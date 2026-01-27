@@ -24,6 +24,11 @@ impl TreeEngine {
 
     /// Execute a command on the tree state
     pub fn execute(&self, state: &mut TreeState, command: TreeCommand) -> CommandResult {
+        // Handle compose mode commands
+        if state.is_compose_mode() {
+            return self.execute_compose(state, command);
+        }
+
         // Route navigation commands based on current mode
         if state.is_feed_mode() {
             match &command {
@@ -45,6 +50,7 @@ impl TreeEngine {
                     return CommandResult::NoOp;
                 }
                 TreeCommand::Enter => return self.feed_enter(state),
+                TreeCommand::EnterCompose => return self.enter_compose(state),
                 // Other commands fall through to normal handling
                 _ => {}
             }
@@ -157,6 +163,31 @@ impl TreeEngine {
             // UI (handled by app, not engine)
             TreeCommand::ShowCommandPalette => {
                 // This is handled directly in app.rs, but we need to have a match arm
+                CommandResult::NoOp
+            }
+
+            // Compose mode commands - only valid in compose mode, handled by execute_compose
+            TreeCommand::EnterCompose => {
+                // In feed mode, this is handled above; in other modes it's a no-op
+                CommandResult::NoOp
+            }
+            TreeCommand::ExitCompose
+            | TreeCommand::InsertChar { .. }
+            | TreeCommand::DeleteChar
+            | TreeCommand::DeleteCharForward
+            | TreeCommand::CursorLeft
+            | TreeCommand::CursorRight
+            | TreeCommand::CursorHome
+            | TreeCommand::CursorEnd
+            | TreeCommand::NextField
+            | TreeCommand::PrevField
+            | TreeCommand::CreateTags
+            | TreeCommand::EndTags
+            | TreeCommand::AddSection
+            | TreeCommand::RemoveSection
+            | TreeCommand::InsertNewline
+            | TreeCommand::Publish => {
+                // These are only valid in compose mode
                 CommandResult::NoOp
             }
         }
@@ -804,6 +835,109 @@ impl TreeEngine {
                 state.view.tree_scroll = cursor_idx.saturating_sub(MARGIN);
             }
             // Note: we can't adjust for bottom of viewport without knowing viewport height
+        }
+    }
+
+    // --- Compose mode commands ---
+
+    fn enter_compose(&self, state: &mut TreeState) -> CommandResult {
+        state.enter_compose();
+        CommandResult::ModeChanged(AppMode::Compose)
+    }
+
+    fn execute_compose(&self, state: &mut TreeState, command: TreeCommand) -> CommandResult {
+        match command {
+            TreeCommand::ExitCompose | TreeCommand::Back => {
+                state.exit_compose();
+                CommandResult::ModeChanged(AppMode::Feed)
+            }
+            TreeCommand::InsertChar { c } => {
+                state.compose.insert_char(c);
+                CommandResult::StateChanged
+            }
+            TreeCommand::DeleteChar => {
+                state.compose.delete_char();
+                CommandResult::StateChanged
+            }
+            TreeCommand::DeleteCharForward => {
+                state.compose.delete_char_forward();
+                CommandResult::StateChanged
+            }
+            TreeCommand::CursorLeft => {
+                state.compose.cursor_left();
+                CommandResult::StateChanged
+            }
+            TreeCommand::CursorRight => {
+                state.compose.cursor_right();
+                CommandResult::StateChanged
+            }
+            TreeCommand::CursorHome => {
+                state.compose.cursor_home();
+                CommandResult::StateChanged
+            }
+            TreeCommand::CursorEnd => {
+                state.compose.cursor_end();
+                CommandResult::StateChanged
+            }
+            TreeCommand::NextField => {
+                state.compose.next_field();
+                CommandResult::StateChanged
+            }
+            TreeCommand::PrevField => {
+                state.compose.prev_field();
+                CommandResult::StateChanged
+            }
+            TreeCommand::CreateTags => {
+                state.compose.enter_tag_mode();
+                CommandResult::StateChanged
+            }
+            TreeCommand::EndTags => {
+                state.compose.exit_tag_mode();
+                CommandResult::StateChanged
+            }
+            TreeCommand::AddSection => {
+                state.compose.add_section();
+                CommandResult::StateChanged
+            }
+            TreeCommand::RemoveSection => {
+                state.compose.remove_section();
+                CommandResult::StateChanged
+            }
+            TreeCommand::InsertNewline => {
+                state.compose.insert_newline();
+                CommandResult::StateChanged
+            }
+            TreeCommand::TogglePreview => {
+                state.compose.toggle_preview();
+                CommandResult::StateChanged
+            }
+            TreeCommand::Publish => {
+                if !state.compose.has_content() {
+                    return CommandResult::Error("Nothing to publish".to_string());
+                }
+
+                let tags = state.compose.tags_to_nostr_format();
+
+                if state.compose.sections.is_empty() {
+                    // Simple note publish
+                    let content = if state.compose.title.is_empty() {
+                        state.compose.content.clone()
+                    } else {
+                        format!("# {}\n\n{}", state.compose.title, state.compose.content)
+                    };
+                    CommandResult::NeedsAsync(AsyncRequest::PublishNote { content, tags })
+                } else {
+                    // Multi-section publication
+                    CommandResult::NeedsAsync(AsyncRequest::PublishPublication {
+                        title: state.compose.title.clone(),
+                        tags,
+                        sections: state.compose.sections.clone(),
+                    })
+                }
+            }
+            TreeCommand::Quit => CommandResult::Exit,
+            // All other commands are no-ops in compose mode
+            _ => CommandResult::NoOp,
         }
     }
 }

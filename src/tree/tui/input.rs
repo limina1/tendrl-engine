@@ -3,7 +3,7 @@
 //! Maps keyboard input to TreeCommands with vim-style keybindings.
 
 use crate::tree::command::TreeCommand;
-use crate::tree::state::{AppMode, ViewMode};
+use crate::tree::state::{AppMode, ComposeFocus, ViewMode};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 /// Maps key events to tree commands
@@ -16,6 +16,7 @@ pub struct KeyMapper {
 pub struct KeyContext {
     pub app_mode: AppMode,
     pub view_mode: ViewMode,
+    pub compose_focus: Option<ComposeFocus>,
 }
 
 impl KeyMapper {
@@ -30,6 +31,13 @@ impl KeyMapper {
 
     /// Map a key event to a command with context for view-mode-aware behavior
     pub fn map_with_context(&mut self, key: KeyEvent, ctx: Option<&KeyContext>) -> Option<TreeCommand> {
+        // Handle compose mode separately - it captures most input
+        if let Some(c) = ctx {
+            if c.app_mode == AppMode::Compose {
+                return self.map_compose(key);
+            }
+        }
+
         // Handle g prefix for gg
         if self.g_prefix {
             self.g_prefix = false;
@@ -150,6 +158,73 @@ impl KeyMapper {
             KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 Some(TreeCommand::Quit)
             }
+
+            // Compose (from feed mode)
+            KeyCode::Char('c') => Some(TreeCommand::EnterCompose),
+
+            _ => None,
+        }
+    }
+
+    /// Map keys in compose mode
+    fn map_compose(&mut self, key: KeyEvent) -> Option<TreeCommand> {
+        match key.code {
+            // Exit compose
+            KeyCode::Esc => Some(TreeCommand::ExitCompose),
+
+            // Navigation
+            KeyCode::Left => Some(TreeCommand::CursorLeft),
+            KeyCode::Right => Some(TreeCommand::CursorRight),
+            KeyCode::Home => Some(TreeCommand::CursorHome),
+            KeyCode::End => Some(TreeCommand::CursorEnd),
+
+            // Field navigation
+            KeyCode::Tab => {
+                if key.modifiers.contains(KeyModifiers::SHIFT) {
+                    Some(TreeCommand::PrevField)
+                } else {
+                    Some(TreeCommand::NextField)
+                }
+            }
+            KeyCode::BackTab => Some(TreeCommand::PrevField),
+
+            // Text editing
+            KeyCode::Backspace => Some(TreeCommand::DeleteChar),
+            KeyCode::Delete => Some(TreeCommand::DeleteCharForward),
+
+            // Enter - either newline or publish
+            KeyCode::Enter => {
+                if key.modifiers.contains(KeyModifiers::CONTROL) {
+                    Some(TreeCommand::Publish)
+                } else {
+                    Some(TreeCommand::InsertNewline)
+                }
+            }
+
+            // Control commands
+            KeyCode::Char('t') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                Some(TreeCommand::CreateTags)
+            }
+            KeyCode::Char('e') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                Some(TreeCommand::EndTags)
+            }
+            KeyCode::Char('s') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                Some(TreeCommand::AddSection)
+            }
+            KeyCode::Char('p') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                Some(TreeCommand::TogglePreview)
+            }
+            KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                Some(TreeCommand::Quit)
+            }
+
+            // Command palette - available in all modes
+            KeyCode::Char('x') if key.modifiers.contains(KeyModifiers::ALT) => {
+                Some(TreeCommand::ShowCommandPalette)
+            }
+
+            // Character input
+            KeyCode::Char(c) => Some(TreeCommand::InsertChar { c }),
 
             _ => None,
         }

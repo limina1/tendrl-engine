@@ -4,6 +4,7 @@
 //! requests that the engine returns when IO is needed.
 
 use super::node::NodeId;
+use super::state::SectionCompose;
 use crate::publication::NAddr;
 use serde::{Deserialize, Serialize};
 
@@ -34,6 +35,7 @@ pub enum CommandCategory {
     Mode,
     Application,
     Configuration,
+    Compose,
 }
 
 impl CommandCategory {
@@ -48,6 +50,7 @@ impl CommandCategory {
             CommandCategory::Mode => "Mode",
             CommandCategory::Application => "Application",
             CommandCategory::Configuration => "Configuration",
+            CommandCategory::Compose => "Compose",
         }
     }
 }
@@ -352,6 +355,14 @@ pub fn all_commands() -> Vec<CommandInfo> {
             category: CommandCategory::Application,
             keybinding: Some("M-x / ?"),
         },
+        // Compose
+        CommandInfo {
+            command: TreeCommand::EnterCompose,
+            name: "Compose",
+            description: "Create a new publication or note",
+            category: CommandCategory::Compose,
+            keybinding: Some("c"),
+        },
     ]
 }
 
@@ -461,6 +472,42 @@ pub enum TreeCommand {
     // UI
     /// Show command palette (M-x style)
     ShowCommandPalette,
+
+    // Compose mode
+    /// Enter compose mode
+    EnterCompose,
+    /// Exit compose mode (back to feed)
+    ExitCompose,
+    /// Insert a character at cursor
+    InsertChar { c: char },
+    /// Delete character before cursor (backspace)
+    DeleteChar,
+    /// Delete character at cursor (delete key)
+    DeleteCharForward,
+    /// Move cursor left
+    CursorLeft,
+    /// Move cursor right
+    CursorRight,
+    /// Move cursor to start of field
+    CursorHome,
+    /// Move cursor to end of field
+    CursorEnd,
+    /// Move to next field (Tab)
+    NextField,
+    /// Move to previous field (Shift+Tab, also deletes tags in tag mode)
+    PrevField,
+    /// Enter tag creation mode (Ctrl+t)
+    CreateTags,
+    /// Exit tag creation mode (Ctrl+e)
+    EndTags,
+    /// Add a new section (Ctrl+s)
+    AddSection,
+    /// Remove the last section
+    RemoveSection,
+    /// Insert newline in content field
+    InsertNewline,
+    /// Publish the composed content (Ctrl+Enter)
+    Publish,
 }
 
 impl TreeCommand {
@@ -475,6 +522,7 @@ impl TreeCommand {
                 | TreeCommand::SlotInVersion { .. }
                 | TreeCommand::LoadBufferEvents
                 | TreeCommand::RefreshBuffer
+                | TreeCommand::Publish
         )
     }
 
@@ -489,6 +537,12 @@ impl TreeCommand {
                 | TreeCommand::PasteBefore
                 | TreeCommand::Fork
                 | TreeCommand::SlotInVersion { .. }
+                | TreeCommand::InsertChar { .. }
+                | TreeCommand::DeleteChar
+                | TreeCommand::DeleteCharForward
+                | TreeCommand::InsertNewline
+                | TreeCommand::AddSection
+                | TreeCommand::RemoveSection
         )
     }
 }
@@ -576,6 +630,17 @@ pub enum AsyncRequest {
     LoadBatch {
         requests: Vec<AsyncRequest>,
     },
+    /// Publish a simple note
+    PublishNote {
+        content: String,
+        tags: Vec<Vec<String>>,
+    },
+    /// Publish a multi-section publication (30040 + 30041)
+    PublishPublication {
+        title: String,
+        tags: Vec<Vec<String>>,
+        sections: Vec<SectionCompose>,
+    },
 }
 
 impl AsyncRequest {
@@ -600,6 +665,10 @@ impl AsyncRequest {
             AsyncRequest::LoadBatch { requests } => {
                 format!("Loading {} items...", requests.len())
             }
+            AsyncRequest::PublishNote { .. } => "Publishing note...".to_string(),
+            AsyncRequest::PublishPublication { title, .. } => {
+                format!("Publishing {}...", title)
+            }
         }
     }
 
@@ -613,7 +682,9 @@ impl AsyncRequest {
             AsyncRequest::RefreshAll
             | AsyncRequest::Search { .. }
             | AsyncRequest::LoadMorePublications { .. }
-            | AsyncRequest::LoadBatch { .. } => None,
+            | AsyncRequest::LoadBatch { .. }
+            | AsyncRequest::PublishNote { .. }
+            | AsyncRequest::PublishPublication { .. } => None,
         }
     }
 }

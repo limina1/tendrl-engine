@@ -5,8 +5,9 @@
 use crate::tree::command::CommandCategory;
 use crate::tree::node::{NodeId, TreeNode};
 use crate::tree::render::{visible_nodes, RenderOptions, VisibleNode};
-use crate::tree::state::{CommandPaletteState, TreeState};
+use crate::tree::state::{CommandPaletteState, ComposeFocus, ComposeState, TreeState};
 use ratatui::prelude::*;
+use ratatui::layout::{Layout, Direction, Constraint};
 use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Wrap};
 
 /// Widget for rendering the tree view
@@ -117,11 +118,16 @@ impl<'a> TreeWidget<'a> {
 
 impl<'a> Widget for TreeWidget<'a> {
     fn render(self, area: Rect, buf: &mut Buffer) {
+        use crate::tree::node::SyncStatus;
+
+        let nodes = visible_nodes(self.state);
         let items = self.create_items();
 
         let block = Block::default()
             .borders(Borders::ALL)
             .title(" Tree ");
+
+        let inner = block.inner(area);
 
         let list = List::new(items)
             .block(block)
@@ -129,6 +135,19 @@ impl<'a> Widget for TreeWidget<'a> {
 
         let mut list_state = self.list_state();
         StatefulWidget::render(list, area, buf, &mut list_state);
+
+        // Draw sync status bars on the right edge
+        let bar_x = area.x + area.width - 2; // Inside the border
+        let scroll = self.state.view.tree_scroll;
+
+        for (i, node) in nodes.iter().skip(scroll).take(inner.height as usize).enumerate() {
+            let y = inner.y + i as u16;
+            let bar_color = match node.sync_status {
+                SyncStatus::Remote => Color::Cyan,
+                SyncStatus::LocalOnly => Color::Yellow,
+            };
+            buf[(bar_x, y)].set_char('▌').set_fg(bar_color);
+        }
     }
 }
 
@@ -229,20 +248,17 @@ impl<'a> FeedWidget<'a> {
                 "Not loaded".to_string()
             };
 
-            // Build multi-line card
+            // Build multi-line card (sync bar rendered separately on right edge)
             let mut lines = vec![
+                Line::from(Span::styled(title, Style::default().fg(Color::Cyan).bold())),
                 Line::from(Span::styled(
-                    title,
-                    Style::default().fg(Color::Cyan).bold(),
-                )),
-                Line::from(Span::styled(
-                    format!("by {} • {}", author, section_info),
+                    format!("  by {} • {}", author, section_info),
                     Style::default().fg(Color::DarkGray),
                 )),
             ];
 
             if !summary.is_empty() {
-                lines.push(Line::from(Span::styled(summary, Style::default().fg(Color::White))));
+                lines.push(Line::from(Span::styled(format!("  {}", summary), Style::default().fg(Color::White))));
             }
 
             // Add separator line
@@ -259,15 +275,37 @@ impl<'a> FeedWidget<'a> {
             ListItem::new(Line::from("[Unknown]"))
         }
     }
+
+    /// Get the number of lines each publication card uses
+    fn get_card_line_counts(&self) -> Vec<(crate::tree::node::NodeId, usize)> {
+        self.state
+            .roots
+            .iter()
+            .map(|&node_id| {
+                if let Some(TreeNode::Publication(p)) = self.state.nodes.get(&node_id) {
+                    // Title + author line + separator = 3, + summary if present = 4
+                    let lines = if p.summary.is_some() { 4 } else { 3 };
+                    (node_id, lines)
+                } else {
+                    (node_id, 1)
+                }
+            })
+            .collect()
+    }
 }
 
 impl<'a> Widget for FeedWidget<'a> {
     fn render(self, area: Rect, buf: &mut Buffer) {
+        use crate::tree::node::SyncStatus;
+
+        let card_lines = self.get_card_line_counts();
         let items = self.create_items();
 
         let block = Block::default()
             .borders(Borders::ALL)
             .title(" Publications ");
+
+        let inner = block.inner(area);
 
         let list = List::new(items)
             .block(block)
@@ -275,6 +313,38 @@ impl<'a> Widget for FeedWidget<'a> {
 
         let mut list_state = self.list_state();
         StatefulWidget::render(list, area, buf, &mut list_state);
+
+        // Draw sync status bars on the right edge
+        let bar_x = area.x + area.width - 2; // Inside the border
+
+        // Calculate which lines belong to which publications
+        // We need to track the scroll offset from the list state
+        let mut y = inner.y;
+        for (node_id, line_count) in &card_lines {
+            if y >= inner.y + inner.height {
+                break;
+            }
+
+            // Get sync status for this publication
+            let bar_color = if let Some(TreeNode::Publication(p)) = self.state.nodes.get(node_id) {
+                match p.sync_status {
+                    SyncStatus::Remote => Color::Cyan,
+                    SyncStatus::LocalOnly => Color::Yellow,
+                }
+            } else {
+                Color::DarkGray
+            };
+
+            // Draw bar for each line of this card
+            for line_offset in 0..*line_count {
+                let bar_y = y + line_offset as u16;
+                if bar_y < inner.y + inner.height {
+                    buf[(bar_x, bar_y)].set_char('▌').set_fg(bar_color);
+                }
+            }
+
+            y += *line_count as u16;
+        }
     }
 }
 
@@ -368,18 +438,49 @@ impl<'a> OutlineWidget<'a> {
     }
 }
 
+impl<'a> OutlineWidget<'a> {
+    /// Get the number of lines each section card uses along with sync status
+    fn get_section_info(&self) -> Vec<(NodeId, usize, crate::tree::node::SyncStatus)> {
+        use crate::tree::node::SyncStatus;
+
+        let pub_id = self.state.selected_publication.unwrap_or(self.state.cursor);
+
+        if let Some(TreeNode::Publication(p)) = self.state.nodes.get(&pub_id) {
+            p.children
+                .iter()
+                .map(|&child_id| {
+                    if let Some(TreeNode::Section(s)) = self.state.nodes.get(&child_id) {
+                        // Title + separator = 2, + preview if content exists = 3
+                        let lines = if s.content.is_some() { 3 } else { 2 };
+                        (child_id, lines, s.sync_status)
+                    } else {
+                        (child_id, 1, SyncStatus::default())
+                    }
+                })
+                .collect()
+        } else {
+            Vec::new()
+        }
+    }
+}
+
 impl<'a> Widget for OutlineWidget<'a> {
     fn render(self, area: Rect, buf: &mut Buffer) {
+        use crate::tree::node::SyncStatus;
+
         let pub_title = self.state.selected_publication
             .and_then(|id| self.state.nodes.get(&id))
             .map(|n| n.title().to_string())
             .unwrap_or_else(|| "Publication".to_string());
 
+        let section_info = self.get_section_info();
         let items = self.create_items();
 
         let block = Block::default()
             .borders(Borders::ALL)
             .title(format!(" {} - Outline ", pub_title));
+
+        let inner = block.inner(area);
 
         let list = List::new(items)
             .block(block)
@@ -387,6 +488,31 @@ impl<'a> Widget for OutlineWidget<'a> {
 
         let mut list_state = self.list_state();
         StatefulWidget::render(list, area, buf, &mut list_state);
+
+        // Draw sync status bars on the right edge
+        let bar_x = area.x + area.width - 2;
+
+        let mut y = inner.y;
+        for (_node_id, line_count, sync_status) in &section_info {
+            if y >= inner.y + inner.height {
+                break;
+            }
+
+            let bar_color = match sync_status {
+                SyncStatus::Remote => Color::Cyan,
+                SyncStatus::LocalOnly => Color::Yellow,
+            };
+
+            // Draw bar for each line of this section card
+            for line_offset in 0..*line_count {
+                let bar_y = y + line_offset as u16;
+                if bar_y < inner.y + inner.height {
+                    buf[(bar_x, bar_y)].set_char('▌').set_fg(bar_color);
+                }
+            }
+
+            y += *line_count as u16;
+        }
     }
 }
 
@@ -736,8 +862,14 @@ impl<'a> Widget for HelpBar<'a> {
 
         let help = if self.state.command_palette.visible {
             "↑/↓:Select  Enter:Execute  Esc:Close  Type to filter"
+        } else if self.state.is_compose_mode() {
+            if self.state.compose.tag_mode {
+                "Tab:Add Tag  Shift+Tab:Delete Tag  Ctrl+e:Exit Tags  Ctrl+p:Preview  Ctrl+Enter:Publish  Esc:Cancel"
+            } else {
+                "Tab:Next Field  Ctrl+t:Tags  Ctrl+s:Section  Ctrl+p:Preview  Ctrl+Enter:Publish  Esc:Cancel"
+            }
         } else if self.state.is_feed_mode() {
-            "j/k:Nav  Enter:Open  Tab:Preview  v:ViewMode  ?:Commands  q:Quit"
+            "j/k:Nav  Enter:Open  c:Compose  Tab:Preview  v:ViewMode  ?:Commands  q:Quit"
         } else {
             // View mode specific help
             match self.state.view.mode {
@@ -790,6 +922,7 @@ impl<'a> CommandPaletteWidget<'a> {
             CommandCategory::Mode => Style::default().fg(Color::LightBlue),
             CommandCategory::Application => Style::default().fg(Color::White),
             CommandCategory::Configuration => Style::default().fg(Color::Gray),
+            CommandCategory::Compose => Style::default().fg(Color::LightGreen),
         }
     }
 
@@ -916,6 +1049,419 @@ impl<'a> Widget for CommandPaletteWidget<'a> {
             let count_text = format!(" {}/{} ", self.state.selected + 1, item_count);
             let count_x = area.x + area.width - count_text.len() as u16 - 1;
             buf.set_string(count_x, area.y + area.height - 1, &count_text, Style::default().fg(Color::DarkGray));
+        }
+    }
+}
+
+/// Widget for rendering the compose view
+pub struct ComposeWidget<'a> {
+    state: &'a ComposeState,
+}
+
+impl<'a> ComposeWidget<'a> {
+    pub fn new(state: &'a ComposeState) -> Self {
+        ComposeWidget { state }
+    }
+
+    /// Render a text field with cursor
+    fn render_text_field(
+        &self,
+        buf: &mut Buffer,
+        area: Rect,
+        label: &str,
+        value: &str,
+        is_focused: bool,
+        cursor_pos: usize,
+    ) {
+        let label_width = label.len() as u16 + 1;
+
+        // Render label
+        let label_style = Style::default().fg(Color::Cyan);
+        buf.set_string(area.x, area.y, label, label_style);
+        buf.set_string(area.x + label.len() as u16, area.y, ":", label_style);
+
+        // Render input area
+        let input_x = area.x + label_width + 1;
+        let input_width = area.width.saturating_sub(label_width + 2);
+
+        // Calculate visible portion of text
+        let visible_start = if cursor_pos > input_width as usize {
+            cursor_pos - input_width as usize + 1
+        } else {
+            0
+        };
+
+        let visible_text: String = value.chars().skip(visible_start).take(input_width as usize).collect();
+
+        let input_style = if is_focused {
+            Style::default().bg(Color::DarkGray)
+        } else {
+            Style::default()
+        };
+
+        // Clear input area
+        for x in input_x..input_x + input_width {
+            buf[(x, area.y)].set_char(' ').set_style(input_style);
+        }
+
+        // Render text
+        buf.set_string(input_x, area.y, &visible_text, input_style);
+
+        // Render cursor if focused
+        if is_focused {
+            let cursor_screen_pos = cursor_pos.saturating_sub(visible_start);
+            let cursor_x = input_x + cursor_screen_pos as u16;
+            if cursor_x < input_x + input_width {
+                buf[(cursor_x, area.y)].set_style(
+                    Style::default().bg(Color::White).fg(Color::Black)
+                );
+            }
+        }
+    }
+
+    /// Render a multiline content area
+    fn render_content_area(
+        &self,
+        buf: &mut Buffer,
+        area: Rect,
+        label: &str,
+        value: &str,
+        is_focused: bool,
+        cursor_pos: usize,
+    ) {
+        // Render label
+        let label_style = Style::default().fg(Color::Cyan);
+        buf.set_string(area.x, area.y, label, label_style);
+
+        // Content area starts on next line
+        let content_area = Rect {
+            x: area.x,
+            y: area.y + 1,
+            width: area.width,
+            height: area.height.saturating_sub(1),
+        };
+
+        let border_style = if is_focused {
+            Style::default().fg(Color::Yellow)
+        } else {
+            Style::default().fg(Color::DarkGray)
+        };
+
+        // Draw border
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(border_style);
+
+        let inner = block.inner(content_area);
+        block.render(content_area, buf);
+
+        // Render content lines
+        let lines: Vec<&str> = value.split('\n').collect();
+
+        // Calculate cursor line and column
+        let mut char_count = 0;
+        let mut cursor_line = 0;
+        let mut cursor_col = 0;
+        for (i, line) in lines.iter().enumerate() {
+            let line_end = char_count + line.len() + 1; // +1 for newline
+            if cursor_pos <= line_end || i == lines.len() - 1 {
+                cursor_line = i;
+                cursor_col = cursor_pos.saturating_sub(char_count);
+                break;
+            }
+            char_count = line_end;
+        }
+
+        // Render visible lines
+        let scroll = self.state.content_scroll;
+        for (i, line) in lines.iter().skip(scroll).take(inner.height as usize).enumerate() {
+            let y = inner.y + i as u16;
+            let display_line: String = line.chars().take(inner.width as usize).collect();
+            buf.set_string(inner.x, y, &display_line, Style::default());
+        }
+
+        // Render cursor if focused
+        if is_focused {
+            let cursor_screen_line = cursor_line.saturating_sub(scroll);
+            if cursor_screen_line < inner.height as usize {
+                let cursor_y = inner.y + cursor_screen_line as u16;
+                let cursor_x = inner.x + (cursor_col.min(inner.width as usize)) as u16;
+                if cursor_x < inner.x + inner.width {
+                    buf[(cursor_x, cursor_y)].set_style(
+                        Style::default().bg(Color::White).fg(Color::Black)
+                    );
+                }
+            }
+        }
+    }
+
+    /// Render tags display (returns number of lines used)
+    fn render_tags(&self, buf: &mut Buffer, area: Rect) -> u16 {
+        let mut y = area.y;
+        let max_y = area.y + area.height;
+
+        // Render existing tags, one per line
+        for tag in &self.state.tags {
+            if y >= max_y {
+                break;
+            }
+            let tag_text = format!("[{}] [{}]", tag.name, tag.value);
+            let display: String = tag_text.chars().take(area.width as usize).collect();
+            buf.set_string(area.x, y, &display, Style::default().fg(Color::Green));
+            y += 1;
+        }
+
+        // Show tag input if in tag mode
+        if self.state.tag_mode && y < max_y {
+            let is_name_focused = matches!(self.state.focus, ComposeFocus::TagName);
+            let is_value_focused = matches!(self.state.focus, ComposeFocus::TagValue);
+
+            let mut x = area.x;
+
+            // Tag name input
+            let name_style = if is_name_focused {
+                Style::default().bg(Color::DarkGray)
+            } else {
+                Style::default().fg(Color::DarkGray)
+            };
+            buf.set_string(x, y, "[", Style::default());
+            x += 1;
+
+            let name_display = if self.state.current_tag_name.is_empty() && !is_name_focused {
+                "name"
+            } else {
+                &self.state.current_tag_name
+            };
+            buf.set_string(x, y, name_display, name_style);
+
+            if is_name_focused {
+                let cursor_x = x + self.state.cursor_pos as u16;
+                if cursor_x < area.x + area.width {
+                    buf[(cursor_x, y)].set_style(
+                        Style::default().bg(Color::White).fg(Color::Black)
+                    );
+                }
+            }
+
+            x += name_display.len().max(4) as u16;
+            buf.set_string(x, y, "]", Style::default());
+            x += 2;
+
+            // Tag value input
+            let value_style = if is_value_focused {
+                Style::default().bg(Color::DarkGray)
+            } else {
+                Style::default().fg(Color::DarkGray)
+            };
+            buf.set_string(x, y, "[", Style::default());
+            x += 1;
+
+            let value_display = if self.state.current_tag_value.is_empty() && !is_value_focused {
+                "value"
+            } else {
+                &self.state.current_tag_value
+            };
+            buf.set_string(x, y, value_display, value_style);
+
+            if is_value_focused {
+                let cursor_x = x + self.state.cursor_pos as u16;
+                if cursor_x < area.x + area.width {
+                    buf[(cursor_x, y)].set_style(
+                        Style::default().bg(Color::White).fg(Color::Black)
+                    );
+                }
+            }
+
+            x += value_display.len().max(5) as u16;
+            buf.set_string(x, y, "]", Style::default());
+            y += 1;
+        }
+
+        y - area.y
+    }
+}
+
+impl<'a> Widget for ComposeWidget<'a> {
+    fn render(self, area: Rect, buf: &mut Buffer) {
+        if self.state.show_preview {
+            // Split into left (input) and right (preview) panels
+            let chunks = Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+                .split(area);
+
+            // Left panel: Input
+            self.render_input_panel(buf, chunks[0]);
+
+            // Right panel: Event JSON preview
+            self.render_preview_panel(buf, chunks[1]);
+        } else {
+            // Full width input panel
+            self.render_input_panel(buf, area);
+        }
+    }
+}
+
+impl<'a> ComposeWidget<'a> {
+    fn render_input_panel(&self, buf: &mut Buffer, area: Rect) {
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(" Compose ");
+
+        let inner = block.inner(area);
+        block.render(area, buf);
+
+        if inner.height < 4 {
+            return;
+        }
+
+        let mut y = inner.y;
+        let has_sections = !self.state.sections.is_empty();
+
+        // Title field
+        let title_label = if has_sections { "Publication Title" } else { "Title" };
+        let is_title_focused = matches!(self.state.focus, ComposeFocus::Title);
+        self.render_text_field(
+            buf,
+            Rect { x: inner.x, y, width: inner.width, height: 1 },
+            title_label,
+            &self.state.title,
+            is_title_focused,
+            if is_title_focused { self.state.cursor_pos } else { 0 },
+        );
+        y += 1;
+
+        // Divider
+        let divider: String = "─".repeat(inner.width as usize);
+        buf.set_string(inner.x, y, &divider, Style::default().fg(Color::DarkGray));
+        y += 1;
+
+        // Tags section (if any tags or in tag mode)
+        if !self.state.tags.is_empty() || self.state.tag_mode {
+            // Calculate available height for tags (leave room for content)
+            let max_tag_height = (inner.y + inner.height).saturating_sub(y).saturating_sub(4).min(10);
+            let lines_used = self.render_tags(buf, Rect { x: inner.x, y, width: inner.width, height: max_tag_height });
+            y += lines_used;
+
+            // Divider after tags
+            buf.set_string(inner.x, y, &divider, Style::default().fg(Color::DarkGray));
+            y += 1;
+        }
+
+        // Sections or Content
+        if has_sections {
+            // Render sections
+            for (idx, section) in self.state.sections.iter().enumerate() {
+                if y >= inner.y + inner.height - 1 {
+                    break;
+                }
+
+                // Section header
+                let header = format!("─ Section {} ", idx + 1);
+                let header_fill: String = "─".repeat((inner.width as usize).saturating_sub(header.len()));
+                buf.set_string(inner.x, y, &header, Style::default().fg(Color::Cyan));
+                buf.set_string(inner.x + header.len() as u16, y, &header_fill, Style::default().fg(Color::DarkGray));
+                y += 1;
+
+                // Section title
+                let is_sec_title_focused = matches!(self.state.focus, ComposeFocus::SectionTitle(i) if i == idx);
+                self.render_text_field(
+                    buf,
+                    Rect { x: inner.x, y, width: inner.width, height: 1 },
+                    "Title",
+                    &section.title,
+                    is_sec_title_focused,
+                    if is_sec_title_focused { self.state.cursor_pos } else { 0 },
+                );
+                y += 1;
+
+                // Section content (abbreviated preview)
+                let is_sec_content_focused = matches!(self.state.focus, ComposeFocus::SectionContent(i) if i == idx);
+                let content_height = (inner.y + inner.height).saturating_sub(y).saturating_sub(1).min(4);
+                if content_height > 0 {
+                    self.render_content_area(
+                        buf,
+                        Rect { x: inner.x, y, width: inner.width, height: content_height },
+                        "Content",
+                        &section.content,
+                        is_sec_content_focused,
+                        if is_sec_content_focused { self.state.cursor_pos } else { 0 },
+                    );
+                    y += content_height;
+                }
+            }
+
+            // Add section hint
+            if y < inner.y + inner.height {
+                let hint = "[Ctrl+s: Add Section]";
+                buf.set_string(inner.x, y, hint, Style::default().fg(Color::DarkGray).italic());
+            }
+        } else {
+            // Main content area
+            let is_content_focused = matches!(self.state.focus, ComposeFocus::Content);
+            let content_height = (inner.y + inner.height).saturating_sub(y);
+            if content_height > 1 {
+                self.render_content_area(
+                    buf,
+                    Rect { x: inner.x, y, width: inner.width, height: content_height },
+                    "Content",
+                    &self.state.content,
+                    is_content_focused,
+                    if is_content_focused { self.state.cursor_pos } else { 0 },
+                );
+            }
+        }
+    }
+
+    fn render_preview_panel(&self, buf: &mut Buffer, area: Rect) {
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(" Event Preview ")
+            .border_style(Style::default().fg(Color::DarkGray));
+
+        let inner = block.inner(area);
+        block.render(area, buf);
+
+        if inner.height < 2 {
+            return;
+        }
+
+        // Get the preview JSON
+        let preview_json = self.state.preview_event_json();
+
+        // Render the JSON with syntax highlighting
+        let lines: Vec<&str> = preview_json.lines().collect();
+        let scroll = self.state.content_scroll;
+
+        for (i, line) in lines.iter().skip(scroll).take(inner.height as usize).enumerate() {
+            let y = inner.y + i as u16;
+            let display_line: String = line.chars().take(inner.width as usize).collect();
+
+            // Simple syntax highlighting for JSON
+            let style = if display_line.trim().starts_with('"') && display_line.contains(':') {
+                // Key
+                Style::default().fg(Color::Cyan)
+            } else if display_line.contains("\"<") {
+                // Placeholder values
+                Style::default().fg(Color::Yellow).italic()
+            } else if display_line.trim().starts_with('"') {
+                // String value
+                Style::default().fg(Color::Green)
+            } else if display_line.trim().chars().next().map(|c| c.is_numeric()).unwrap_or(false) {
+                // Number
+                Style::default().fg(Color::Magenta)
+            } else {
+                Style::default().fg(Color::White)
+            };
+
+            buf.set_string(inner.x, y, &display_line, style);
+        }
+
+        // Show scroll indicator if there's more content
+        if lines.len() > inner.height as usize {
+            let indicator = format!(" {}/{} ", scroll + 1, lines.len().saturating_sub(inner.height as usize) + 1);
+            let indicator_x = area.x + area.width - indicator.len() as u16 - 1;
+            buf.set_string(indicator_x, area.y, &indicator, Style::default().fg(Color::DarkGray));
         }
     }
 }

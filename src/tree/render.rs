@@ -3,7 +3,7 @@
 //! Provides a trait for rendering the tree state to different backends
 //! (TUI, HTML, etc.) and utilities for computing visible nodes.
 
-use super::node::{NodeId, TreeNode};
+use super::node::{NodeId, SyncStatus, TreeNode};
 use super::state::TreeState;
 
 /// A node prepared for rendering with display metadata
@@ -33,6 +33,8 @@ pub struct VisibleNode {
     pub error: Option<String>,
     /// Number of alternate versions (for sections)
     pub alternate_count: usize,
+    /// Sync status (Remote = from relay, LocalOnly = local db only)
+    pub sync_status: SyncStatus,
 }
 
 impl VisibleNode {
@@ -58,6 +60,7 @@ impl VisibleNode {
                 TreeNode::Section(s) => s.alternate_count,
                 _ => 0,
             },
+            sync_status: node.sync_status(),
         }
     }
 }
