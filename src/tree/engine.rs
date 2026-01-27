@@ -445,6 +445,12 @@ impl TreeEngine {
                 CommandResult::StateChanged
             }
 
+            AsyncResult::UserDataLoaded { user_data } => {
+                // Store the user data in the state
+                state.user_data = user_data;
+                CommandResult::StateChanged
+            }
+
             AsyncResult::Error { request, error } => {
                 // Try to mark the relevant node as errored
                 if let Some(node_id) = request.target_node() {

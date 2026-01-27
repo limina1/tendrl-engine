@@ -99,10 +99,13 @@ impl TuiApp {
                         tracing::warn!("Failed to restore npub identity: {}", e);
                     } else {
                         self.status_message = Some("Restored read-only session".to_string());
+                        // Load user profile data
+                        self.load_user_data_for_current_identity();
                     }
                 }
                 "ncryptsec" => {
                     // For ncryptsec, we restore to locked state (user needs to enter password)
+                    // User data will be loaded after password is entered
                     if let Err(e) = self.state.identity.login_ncryptsec(&key_data) {
                         tracing::warn!("Failed to restore ncryptsec identity: {}", e);
                     } else {
@@ -119,6 +122,8 @@ impl TuiApp {
                             tracing::warn!("Failed to restore nsec identity: {}", e);
                         } else {
                             self.status_message = Some("Session restored".to_string());
+                            // Load user profile data
+                            self.load_user_data_for_current_identity();
                         }
                     }
                 }
@@ -769,6 +774,9 @@ impl TuiApp {
                                 };
                                 self.state.login_dialog = None;
                                 self.status_message = Some("Signed in successfully".to_string());
+
+                                // Load user profile data
+                                self.load_user_data_for_current_identity();
                             }
                             Err(e) => {
                                 dialog.set_error(format!("Decryption failed: {}", e));
@@ -787,6 +795,9 @@ impl TuiApp {
                                 let _ = self.keyring.store_last_identity("npub", &npub);
                                 self.state.login_dialog = None;
                                 self.status_message = Some("Logged in (read-only)".to_string());
+
+                                // Load user profile data
+                                self.load_user_data_for_current_identity();
                             }
                         }
                         Ok(KeyType::Nsec(nsec)) => {
@@ -800,6 +811,9 @@ impl TuiApp {
                                 }
                                 self.state.login_dialog = None;
                                 self.status_message = Some("Signed in successfully".to_string());
+
+                                // Load user profile data
+                                self.load_user_data_for_current_identity();
                             }
                         }
                         Ok(KeyType::Ncryptsec(ncryptsec)) => {
@@ -1019,6 +1033,16 @@ impl TuiApp {
         }
 
         self.spawn_single_async_request(request);
+    }
+
+    /// Spawn loading of user profile data for the currently logged-in user
+    fn load_user_data_for_current_identity(&mut self) {
+        if let Some(pubkey) = self.state.identity.status.pubkey() {
+            let request = AsyncRequest::LoadUserData {
+                pubkey: pubkey.to_string(),
+            };
+            self.spawn_async_request(request);
+        }
     }
 
     fn spawn_single_async_request(&mut self, request: AsyncRequest) {
@@ -1251,5 +1275,149 @@ async fn execute_async_request(
             // Draft operations are handled synchronously in spawn_single_async_request
             unreachable!("Draft operations should be handled by spawn_single_async_request")
         }
+
+        AsyncRequest::LoadUserData { pubkey } => {
+            load_user_data(engine, &pubkey, policy).await
+        }
     }
+}
+
+/// Load all user profile data for a given pubkey
+async fn load_user_data(
+    engine: &Engine,
+    pubkey: &str,
+    policy: FetchPolicy,
+) -> anyhow::Result<AsyncResult> {
+    use crate::user_data::{
+        BlockedRelays, Bookmarks, FollowList, Metadata, MuteList, RelayList, RelaySet,
+        SearchRelays, UserData, USER_DATA_ADDRESSABLE_KINDS, USER_DATA_KINDS,
+    };
+    use serde_json::json;
+
+    let mut user_data = UserData::new();
+
+    // Fetch standard list kinds (0, 3, 10000, 10002, 10003, 10006, 10007)
+    let filter = json!({
+        "kinds": USER_DATA_KINDS,
+        "authors": [pubkey],
+        "limit": USER_DATA_KINDS.len()
+    });
+
+    let response = engine.get_events(vec![filter], policy, None).await?;
+
+    for event in &response.events {
+        let kind = event.get("kind").and_then(|v| v.as_u64()).unwrap_or(0);
+        let content = event.get("content").and_then(|v| v.as_str()).unwrap_or("");
+        let created_at = event.get("created_at").and_then(|v| v.as_u64()).unwrap_or(0);
+        let tags: Vec<Vec<String>> = event
+            .get("tags")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|tag| {
+                        tag.as_array().map(|a| {
+                            a.iter()
+                                .filter_map(|v| v.as_str().map(String::from))
+                                .collect()
+                        })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        match kind {
+            0 => {
+                // Only update if newer
+                if user_data.metadata.as_ref().map(|m| m.created_at).unwrap_or(0) < created_at {
+                    user_data.metadata = Metadata::from_event_content(content, created_at);
+                }
+            }
+            3 => {
+                if user_data.follows.as_ref().map(|f| f.created_at).unwrap_or(0) < created_at {
+                    user_data.follows = Some(FollowList::from_event_tags(&tags, created_at));
+                }
+            }
+            10000 => {
+                if user_data.mutes.as_ref().map(|m| m.created_at).unwrap_or(0) < created_at {
+                    user_data.mutes = Some(MuteList::from_event(
+                        &tags,
+                        content,
+                        created_at,
+                    ));
+                }
+            }
+            10002 => {
+                if user_data.relays.as_ref().map(|r| r.created_at).unwrap_or(0) < created_at {
+                    user_data.relays = Some(RelayList::from_event_tags(&tags, created_at));
+                }
+            }
+            10003 => {
+                if user_data.bookmarks.as_ref().map(|b| b.created_at).unwrap_or(0) < created_at {
+                    user_data.bookmarks = Some(Bookmarks::from_event(
+                        &tags,
+                        content,
+                        created_at,
+                    ));
+                }
+            }
+            10006 => {
+                if user_data.blocked_relays.as_ref().map(|b| b.created_at).unwrap_or(0) < created_at {
+                    user_data.blocked_relays = Some(BlockedRelays::from_event_tags(&tags, created_at));
+                }
+            }
+            10007 => {
+                if user_data.search_relays.as_ref().map(|s| s.created_at).unwrap_or(0) < created_at {
+                    user_data.search_relays = Some(SearchRelays::from_event_tags(&tags, created_at));
+                }
+            }
+            _ => {}
+        }
+    }
+
+    // Fetch addressable kinds (30002 relay sets)
+    for &kind in USER_DATA_ADDRESSABLE_KINDS {
+        let filter = json!({
+            "kinds": [kind],
+            "authors": [pubkey],
+            "limit": 100
+        });
+
+        let response = engine.get_events(vec![filter], policy, None).await?;
+
+        for event in &response.events {
+            let created_at = event.get("created_at").and_then(|v| v.as_u64()).unwrap_or(0);
+            let tags: Vec<Vec<String>> = event
+                .get("tags")
+                .and_then(|v| v.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|tag| {
+                            tag.as_array().map(|a| {
+                                a.iter()
+                                    .filter_map(|v| v.as_str().map(String::from))
+                                    .collect()
+                            })
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+
+            if kind == 30002 {
+                if let Some(relay_set) = RelaySet::from_event(&tags, created_at) {
+                    // Only update if newer
+                    let should_update = user_data
+                        .relay_sets
+                        .get(&relay_set.d_tag)
+                        .map(|existing| existing.created_at < created_at)
+                        .unwrap_or(true);
+
+                    if should_update {
+                        user_data.relay_sets.insert(relay_set.d_tag.clone(), relay_set);
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(AsyncResult::UserDataLoaded { user_data })
 }

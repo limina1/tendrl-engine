@@ -6,6 +6,7 @@
 use super::node::NodeId;
 use super::state::SectionCompose;
 use crate::publication::NAddr;
+use crate::user_data::UserData;
 use serde::{Deserialize, Serialize};
 
 /// Information about a command for the command palette
@@ -788,6 +789,11 @@ pub enum AsyncRequest {
     },
     /// Load all drafts from storage
     LoadDrafts,
+    /// Load user profile data (metadata, follows, mutes, relays, etc.)
+    LoadUserData {
+        /// The user's public key (hex)
+        pubkey: String,
+    },
 }
 
 impl AsyncRequest {
@@ -818,6 +824,7 @@ impl AsyncRequest {
             }
             AsyncRequest::SaveDraft { .. } => "Saving draft...".to_string(),
             AsyncRequest::LoadDrafts => "Loading drafts...".to_string(),
+            AsyncRequest::LoadUserData { .. } => "Loading user data...".to_string(),
         }
     }
 
@@ -835,7 +842,8 @@ impl AsyncRequest {
             | AsyncRequest::PublishNote { .. }
             | AsyncRequest::PublishPublication { .. }
             | AsyncRequest::SaveDraft { .. }
-            | AsyncRequest::LoadDrafts => None,
+            | AsyncRequest::LoadDrafts
+            | AsyncRequest::LoadUserData { .. } => None,
         }
     }
 }
@@ -876,6 +884,11 @@ pub enum AsyncResult {
     /// Drafts loaded from storage
     DraftsLoaded {
         drafts: Vec<LoadedDraft>,
+    },
+    /// User data loaded successfully
+    UserDataLoaded {
+        /// The loaded user data
+        user_data: UserData,
     },
     /// Operation failed
     Error {

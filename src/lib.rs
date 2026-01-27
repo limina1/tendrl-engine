@@ -60,6 +60,7 @@ pub mod publication;
 pub mod query;
 pub mod relay;
 pub mod tree;
+pub mod user_data;
 
 // Re-export main types for convenience
 pub use config::Config;

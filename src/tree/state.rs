@@ -7,6 +7,7 @@ use super::command::{all_commands, CommandInfo};
 use super::node::{NodeId, TreeNode};
 use super::undo::UndoStack;
 use crate::identity::Identity;
+use crate::user_data::UserData;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 
@@ -76,6 +77,8 @@ pub struct TreeState {
     pub identity: Identity,
     /// Login dialog state (if open)
     pub login_dialog: Option<LoginDialogState>,
+    /// User profile data (loaded after login)
+    pub user_data: UserData,
 }
 
 impl TreeState {
@@ -102,6 +105,7 @@ impl TreeState {
             windows: WindowManager::new(),
             identity: Identity::new(),
             login_dialog: None,
+            user_data: UserData::new(),
         }
     }
 
