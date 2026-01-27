@@ -443,7 +443,10 @@ impl<'a> OutlineWidget<'a> {
                     let is_cursor = child_id == self.state.cursor;
 
                     if let Some(TreeNode::Section(s)) = self.state.nodes.get(&child_id) {
-                        let title = s.title.clone().unwrap_or_else(|| format!("Section {}", idx + 1));
+                        let title = s
+                            .title
+                            .clone()
+                            .unwrap_or_else(|| s.addr.short_format());
 
                         // Build preview (truncated, single line)
                         let preview = s.content.as_ref().map(|c| {
@@ -599,9 +602,12 @@ impl<'a> ContinuousWidget<'a> {
             }
 
             // Add each section
-            for (i, &child_id) in p.children.iter().enumerate() {
+            for &child_id in p.children.iter() {
                 if let Some(TreeNode::Section(s)) = self.state.nodes.get(&child_id) {
-                    let section_title = s.title.clone().unwrap_or_else(|| format!("Section {}", i + 1));
+                    let section_title = s
+                        .title
+                        .clone()
+                        .unwrap_or_else(|| s.addr.d_tag.clone());
                     content.push_str(&format!("## {}\n\n", section_title));
 
                     if let Some(ref section_content) = s.content {
@@ -664,7 +670,10 @@ impl<'a> PaginatedWidget<'a> {
 
             if let Some(&child_id) = p.children.get(idx) {
                 if let Some(TreeNode::Section(s)) = self.state.nodes.get(&child_id) {
-                    let title = s.title.clone().unwrap_or_else(|| format!("Section {}", idx + 1));
+                    let title = s
+                        .title
+                        .clone()
+                        .unwrap_or_else(|| s.addr.d_tag.clone());
                     let content = s.content.clone().unwrap_or_else(|| "[Content not loaded - press Enter to load]".to_string());
                     return Some((idx + 1, total, title, content));
                 }

@@ -55,6 +55,21 @@ impl NAddr {
     pub fn to_a_tag(&self) -> String {
         format!("{}:{}:{}", self.kind, self.pubkey, self.d_tag)
     }
+
+    /// Short display format: "kind:abcd...wxyz:d-tag"
+    /// Shows first 4 and last 4 characters of pubkey for readability
+    pub fn short_format(&self) -> String {
+        let short_pubkey = if self.pubkey.len() > 8 {
+            format!(
+                "{}...{}",
+                &self.pubkey[..4],
+                &self.pubkey[self.pubkey.len() - 4..]
+            )
+        } else {
+            self.pubkey.clone()
+        };
+        format!("{}:{}:{}", self.kind, short_pubkey, self.d_tag)
+    }
 }
 
 /// Load status for lazy-loadable content
@@ -692,5 +707,20 @@ mod tests {
         let tag = addr.to_a_tag();
         let parsed = NAddr::from_a_tag(&tag).unwrap();
         assert_eq!(addr, parsed);
+    }
+
+    #[test]
+    fn test_naddr_short_format() {
+        // Long pubkey gets abbreviated
+        let addr = NAddr::new(30041, "abcdefghijklmnopqrstuvwxyz", "my-section");
+        assert_eq!(addr.short_format(), "30041:abcd...wxyz:my-section");
+
+        // Short pubkey stays as-is
+        let addr = NAddr::new(30040, "abcd1234", "doc");
+        assert_eq!(addr.short_format(), "30040:abcd1234:doc");
+
+        // Very short pubkey stays as-is
+        let addr = NAddr::new(30040, "abc", "doc");
+        assert_eq!(addr.short_format(), "30040:abc:doc");
     }
 }

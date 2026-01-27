@@ -124,10 +124,16 @@ impl TreeNode {
     }
 
     /// Get the node's display title
-    pub fn title(&self) -> &str {
+    ///
+    /// For loaded nodes, returns the title. For unloaded nodes, returns
+    /// a shortened address format: "kind:abcd...wxyz:d-tag"
+    pub fn title(&self) -> String {
         match self {
-            TreeNode::Publication(p) => p.title.as_deref().unwrap_or("Untitled Publication"),
-            TreeNode::Section(s) => s.title.as_deref().unwrap_or("Untitled Section"),
+            TreeNode::Publication(p) => p
+                .title
+                .clone()
+                .unwrap_or_else(|| p.addr.short_format()),
+            TreeNode::Section(s) => s.title.clone().unwrap_or_else(|| s.addr.short_format()),
         }
     }
 
