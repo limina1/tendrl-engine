@@ -2,9 +2,10 @@
 //!
 //! Main application loop for the terminal interface with async bridge.
 
+use crate::drafts::DraftStore;
 use crate::engine::{Engine, FetchPolicy};
 use crate::publication::{NAddr, PublicationEngine};
-use crate::tree::command::{AsyncRequest, AsyncResult, CommandResult, ConfigAction};
+use crate::tree::command::{AsyncRequest, AsyncResult, CommandResult, ConfigAction, LoadedDraft};
 use crate::tree::engine::{init_from_publications, TreeEngine};
 use crate::tree::node::{NodeId, SectionNode, TreeNode};
 use crate::tree::state::TreeState;
@@ -55,12 +56,17 @@ pub struct TuiApp {
     spinner: Spinner,
     /// Number of pending async requests (for showing spinner)
     pending_count: usize,
+    /// Draft storage for unsigned publications
+    draft_store: Option<DraftStore>,
 }
 
 impl TuiApp {
     /// Create a new TUI application
     pub fn new(nostr_engine: Arc<Engine>, policy: FetchPolicy) -> Self {
         let (async_tx, async_rx) = mpsc::channel(32);
+
+        // Initialize draft store in the same data directory as the engine
+        let draft_store = DraftStore::new(nostr_engine.data_dir()).ok();
 
         TuiApp {
             state: TreeState::new(),
@@ -74,6 +80,7 @@ impl TuiApp {
             async_tx,
             spinner: Spinner::new(),
             pending_count: 0,
+            draft_store,
         }
     }
 
@@ -128,9 +135,101 @@ impl TuiApp {
         self.status_message = Some(format!("{}: {}", prefix, relay_list));
     }
 
+    /// Load drafts synchronously and add to state
+    fn load_drafts_sync(&mut self) {
+        use crate::tree::node::{PublicationNode, SyncStatus};
+
+        if let Some(ref store) = self.draft_store {
+            if let Ok(drafts) = store.list_drafts() {
+                for draft in drafts {
+                    // Create a pseudo-NAddr for the draft publication
+                    let pub_addr = NAddr::new(30040, &"0".repeat(64), &draft.draft_id);
+                    let pub_id = NodeId::from_addr(&pub_addr);
+
+                    // Skip if already exists
+                    if self.state.nodes.contains_key(&pub_id) {
+                        continue;
+                    }
+
+                    // Create section nodes from the draft's section events
+                    let mut child_ids = Vec::new();
+                    for (i, section_event) in draft.section_events.iter().enumerate() {
+                        // Extract section info from the event JSON
+                        let section_d_tag = section_event
+                            .get("tags")
+                            .and_then(|t| t.as_array())
+                            .and_then(|tags| {
+                                tags.iter().find_map(|tag| {
+                                    let arr = tag.as_array()?;
+                                    if arr.first()?.as_str()? == "d" {
+                                        arr.get(1)?.as_str().map(String::from)
+                                    } else {
+                                        None
+                                    }
+                                })
+                            })
+                            .unwrap_or_else(|| format!("{}-section-{}", draft.draft_id, i));
+
+                        let section_title = section_event
+                            .get("tags")
+                            .and_then(|t| t.as_array())
+                            .and_then(|tags| {
+                                tags.iter().find_map(|tag| {
+                                    let arr = tag.as_array()?;
+                                    if arr.first()?.as_str()? == "title" {
+                                        arr.get(1)?.as_str().map(String::from)
+                                    } else {
+                                        None
+                                    }
+                                })
+                            });
+
+                        let section_content = section_event
+                            .get("content")
+                            .and_then(|c| c.as_str())
+                            .map(String::from);
+
+                        // Create section address and node
+                        let section_addr = NAddr::new(30041, &"0".repeat(64), &section_d_tag);
+                        let section_id = NodeId::from_addr(&section_addr);
+                        child_ids.push(section_id);
+
+                        let mut section_node = SectionNode::stub(section_addr, pub_id, i);
+                        section_node.title = section_title;
+                        section_node.content = section_content;
+                        section_node.loaded = true;
+                        section_node.sync_status = SyncStatus::Draft;
+                        section_node.draft_id = Some(draft.draft_id.clone());
+
+                        self.state.nodes.insert(section_id, TreeNode::Section(section_node));
+                    }
+
+                    // Create publication node with children linked
+                    let mut pub_node = PublicationNode::stub(pub_addr, None);
+                    pub_node.title = Some(draft.title.clone());
+                    pub_node.summary = Some(format!("{} sections", draft.section_events.len()));
+                    pub_node.author = "Draft".to_string();
+                    pub_node.author_name = Some("Unsigned Draft".to_string());
+                    pub_node.created_at = draft.modified_at;
+                    pub_node.loaded = true;
+                    pub_node.sync_status = SyncStatus::Draft;
+                    pub_node.draft_id = Some(draft.draft_id.clone());
+                    pub_node.children = child_ids;
+
+                    self.state.nodes.insert(pub_id, TreeNode::Publication(pub_node));
+                    // Insert drafts at the beginning of roots
+                    self.state.roots.insert(0, pub_id);
+                }
+            }
+        }
+    }
+
     /// Load initial publications
     pub async fn load_initial(&mut self) -> anyhow::Result<()> {
         self.status_message = Some("Loading publications...".to_string());
+
+        // Load drafts first (they appear at top of feed)
+        self.load_drafts_sync();
 
         let pub_engine = PublicationEngine::new(&self.nostr_engine);
         let publications = pub_engine.list_root_publications(self.policy, 15).await?;
@@ -726,6 +825,68 @@ impl TuiApp {
     }
 
     fn spawn_single_async_request(&mut self, request: AsyncRequest) {
+        // Handle draft requests synchronously since they need the draft store
+        match &request {
+            AsyncRequest::SaveDraft { compose } => {
+                self.pending_count += 1;
+                let result = if let Some(ref store) = self.draft_store {
+                    match store.save_draft(compose) {
+                        Ok(draft_id) => AsyncResult::DraftSaved { draft_id },
+                        Err(e) => AsyncResult::Error {
+                            request: request.clone(),
+                            error: e.to_string(),
+                        },
+                    }
+                } else {
+                    AsyncResult::Error {
+                        request: request.clone(),
+                        error: "Draft store not initialized".to_string(),
+                    }
+                };
+                // Send result through channel to be processed in event loop
+                let tx = self.async_tx.clone();
+                tokio::spawn(async move {
+                    let _ = tx.send(AsyncMessage::Result(result)).await;
+                });
+                return;
+            }
+            AsyncRequest::LoadDrafts => {
+                self.pending_count += 1;
+                let result = if let Some(ref store) = self.draft_store {
+                    match store.list_drafts() {
+                        Ok(drafts) => {
+                            let loaded: Vec<LoadedDraft> = drafts
+                                .into_iter()
+                                .map(|d| LoadedDraft {
+                                    draft_id: d.draft_id,
+                                    title: d.title,
+                                    created_at: d.created_at,
+                                    modified_at: d.modified_at,
+                                    section_count: d.section_events.len(),
+                                })
+                                .collect();
+                            AsyncResult::DraftsLoaded { drafts: loaded }
+                        }
+                        Err(e) => AsyncResult::Error {
+                            request: request.clone(),
+                            error: e.to_string(),
+                        },
+                    }
+                } else {
+                    AsyncResult::Error {
+                        request: request.clone(),
+                        error: "Draft store not initialized".to_string(),
+                    }
+                };
+                let tx = self.async_tx.clone();
+                tokio::spawn(async move {
+                    let _ = tx.send(AsyncMessage::Result(result)).await;
+                });
+                return;
+            }
+            _ => {}
+        }
+
         self.pending_count += 1;
 
         let tx = self.async_tx.clone();
@@ -887,6 +1048,11 @@ async fn execute_async_request(
                 request,
                 error: "Publishing not yet implemented".to_string(),
             })
+        }
+
+        AsyncRequest::SaveDraft { .. } | AsyncRequest::LoadDrafts => {
+            // Draft operations are handled synchronously in spawn_single_async_request
+            unreachable!("Draft operations should be handled by spawn_single_async_request")
         }
     }
 }

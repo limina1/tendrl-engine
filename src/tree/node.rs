@@ -86,6 +86,15 @@ pub enum SyncStatus {
     Remote,
     /// Event only exists locally (not yet sent to relays or unconfirmed)
     LocalOnly,
+    /// Unsigned local draft (not yet signed or published)
+    Draft,
+}
+
+impl SyncStatus {
+    /// Check if this is a draft (unsigned)
+    pub fn is_draft(&self) -> bool {
+        matches!(self, SyncStatus::Draft)
+    }
 }
 
 /// A node in the publication tree
@@ -212,6 +221,8 @@ pub struct PublicationNode {
     pub error: Option<String>,
     /// Sync status - whether event was fetched from relay or is local-only
     pub sync_status: SyncStatus,
+    /// Draft ID if this is an unsigned draft
+    pub draft_id: Option<String>,
 }
 
 impl PublicationNode {
@@ -240,6 +251,7 @@ impl PublicationNode {
             loading: false,
             error: None,
             sync_status: SyncStatus::Remote, // Fetched from relay
+            draft_id: None,
         }
     }
 
@@ -261,6 +273,7 @@ impl PublicationNode {
             loading: false,
             error: None,
             sync_status: SyncStatus::default(),
+            draft_id: None,
         }
     }
 }
@@ -292,6 +305,8 @@ pub struct SectionNode {
     pub alternate_count: usize,
     /// Sync status - whether event was fetched from relay or is local-only
     pub sync_status: SyncStatus,
+    /// Draft ID if this is an unsigned draft section
+    pub draft_id: Option<String>,
 }
 
 impl SectionNode {
@@ -311,6 +326,7 @@ impl SectionNode {
             error: None,
             alternate_count: section.alternates.len(),
             sync_status: SyncStatus::Remote, // Fetched from relay
+            draft_id: None,
         }
     }
 
@@ -330,6 +346,7 @@ impl SectionNode {
             error: None,
             alternate_count: 0,
             sync_status: SyncStatus::default(),
+            draft_id: None,
         }
     }
 }

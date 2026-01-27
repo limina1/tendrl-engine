@@ -70,6 +70,8 @@ pub struct Engine {
     /// Request timeout in milliseconds
     #[allow(dead_code)]
     timeout_ms: u64,
+    /// Data directory path
+    data_dir: std::path::PathBuf,
 }
 
 impl Engine {
@@ -99,6 +101,7 @@ impl Engine {
             ndb: Arc::new(ndb),
             relays: relays.iter().map(|s| s.to_string()).collect(),
             timeout_ms,
+            data_dir: data_path.to_path_buf(),
         })
     }
 
@@ -110,6 +113,11 @@ impl Engine {
     /// Get the configured relays
     pub fn relays(&self) -> &[String] {
         &self.relays
+    }
+
+    /// Get the data directory path
+    pub fn data_dir(&self) -> &std::path::Path {
+        &self.data_dir
     }
 
     /// Query events using NIP-01 filters with the specified fetch policy

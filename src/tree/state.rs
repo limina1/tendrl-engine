@@ -357,6 +357,8 @@ pub struct ViewState {
     pub search_query: Option<String>,
     /// Filter mode
     pub filter: FilterMode,
+    /// Filter to show only drafts (unsigned publications)
+    pub filter_drafts: bool,
 }
 
 impl ViewState {
@@ -371,6 +373,7 @@ impl ViewState {
             content_scroll: 0,
             search_query: None,
             filter: FilterMode::None,
+            filter_drafts: false,
         }
     }
 
@@ -960,7 +963,6 @@ impl ComposeState {
     /// - When focused on publication fields (Title, Tags) → shows 30040 event
     /// - When focused on section fields → shows that section's 30041 event
     pub fn preview_event_json(&self) -> String {
-        use serde_json::json;
         use std::time::{SystemTime, UNIX_EPOCH};
 
         let now = SystemTime::now()

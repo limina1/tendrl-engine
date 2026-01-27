@@ -132,6 +132,10 @@ impl KeyMapper {
             KeyCode::Char('r') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 Some(TreeCommand::Redo)
             }
+            // Draft filter toggle (Ctrl+u in feed mode)
+            KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                Some(TreeCommand::FilterDrafts)
+            }
             KeyCode::Char('u') => Some(TreeCommand::Undo),
 
             // Scrolling (larger jumps)
@@ -222,6 +226,9 @@ impl KeyMapper {
             }
             KeyCode::Char('p') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 Some(TreeCommand::TogglePreview)
+            }
+            KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                Some(TreeCommand::SaveDraft)
             }
             KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 Some(TreeCommand::Quit)
@@ -327,6 +334,8 @@ pub fn keybinding_help() -> Vec<(&'static str, &'static str)> {
         ("a", "Show alternates"),
         ("Tab", "Toggle preview"),
         ("u/Ctrl+r", "Undo/Redo"),
+        ("Ctrl+u", "Filter drafts"),
+        ("Ctrl+d", "Save draft (compose)"),
         ("V/s", "Select/Select all"),
         (":", "Show relays"),
         ("R", "Refresh"),

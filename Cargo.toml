@@ -71,4 +71,5 @@ crossterm = { version = "0.28", optional = true }
 tracing-appender = { version = "0.2", optional = true }
 
 [dev-dependencies]
+tempfile = "3.24.0"
 tokio-test = "0.4"

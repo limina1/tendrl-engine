@@ -145,6 +145,7 @@ impl<'a> Widget for TreeWidget<'a> {
             let bar_color = match node.sync_status {
                 SyncStatus::Remote => Color::Cyan,
                 SyncStatus::LocalOnly => Color::Yellow,
+                SyncStatus::Draft => Color::Red,
             };
             buf[(bar_x, y)].set_char('▌').set_fg(bar_color);
         }
@@ -179,15 +180,15 @@ impl<'a> FeedWidget<'a> {
 
     /// Create list items from root publications
     fn create_items(&self) -> Vec<ListItem<'a>> {
-        let mut items: Vec<ListItem<'a>> = self.state
-            .roots
+        let visible_roots = self.get_visible_roots();
+        let mut items: Vec<ListItem<'a>> = visible_roots
             .iter()
             .enumerate()
             .map(|(idx, &node_id)| self.render_publication_card(node_id, idx))
             .collect();
 
         // Add loading indicator or end-of-feed message
-        if self.state.loading_more {
+        if self.state.loading_more && !self.state.view.filter_drafts {
             let loading_text = if let Some(frame) = self.spinner_frame {
                 format!("{} Loading more...", frame)
             } else {
@@ -197,9 +198,14 @@ impl<'a> FeedWidget<'a> {
                 loading_text,
                 Style::default().fg(Color::Yellow).italic(),
             ))));
-        } else if self.state.feed_exhausted {
+        } else if self.state.feed_exhausted && !self.state.view.filter_drafts {
             items.push(ListItem::new(Line::from(Span::styled(
                 "— End of feed —",
+                Style::default().fg(Color::DarkGray).italic(),
+            ))));
+        } else if self.state.view.filter_drafts && items.is_empty() {
+            items.push(ListItem::new(Line::from(Span::styled(
+                "— No drafts —",
                 Style::default().fg(Color::DarkGray).italic(),
             ))));
         }
@@ -248,14 +254,28 @@ impl<'a> FeedWidget<'a> {
                 "Not loaded".to_string()
             };
 
+            // Check if this is a draft
+            let is_draft = p.sync_status.is_draft();
+
             // Build multi-line card (sync bar rendered separately on right edge)
-            let mut lines = vec![
-                Line::from(Span::styled(title, Style::default().fg(Color::Cyan).bold())),
-                Line::from(Span::styled(
-                    format!("  by {} • {}", author, section_info),
-                    Style::default().fg(Color::DarkGray),
-                )),
-            ];
+            let mut lines = Vec::new();
+
+            // Add draft banner if this is a draft
+            if is_draft {
+                lines.push(Line::from(Span::styled(
+                    "  [DRAFT - Unsigned]",
+                    Style::default().fg(Color::Red).bold().italic(),
+                )));
+            }
+
+            // Title with color based on draft status
+            let title_color = if is_draft { Color::Red } else { Color::Cyan };
+            lines.push(Line::from(Span::styled(title, Style::default().fg(title_color).bold())));
+
+            lines.push(Line::from(Span::styled(
+                format!("  by {} • {}", author, section_info),
+                Style::default().fg(Color::DarkGray),
+            )));
 
             if !summary.is_empty() {
                 lines.push(Line::from(Span::styled(format!("  {}", summary), Style::default().fg(Color::White))));
@@ -278,19 +298,44 @@ impl<'a> FeedWidget<'a> {
 
     /// Get the number of lines each publication card uses
     fn get_card_line_counts(&self) -> Vec<(crate::tree::node::NodeId, usize)> {
-        self.state
-            .roots
+        self.get_visible_roots()
             .iter()
             .map(|&node_id| {
                 if let Some(TreeNode::Publication(p)) = self.state.nodes.get(&node_id) {
-                    // Title + author line + separator = 3, + summary if present = 4
-                    let lines = if p.summary.is_some() { 4 } else { 3 };
+                    // Base: Title + author line + separator = 3
+                    // + summary if present = 4
+                    // + draft banner if draft = +1
+                    let mut lines = if p.summary.is_some() { 4 } else { 3 };
+                    if p.sync_status.is_draft() {
+                        lines += 1;
+                    }
                     (node_id, lines)
                 } else {
                     (node_id, 1)
                 }
             })
             .collect()
+    }
+
+    /// Get the visible roots (filtered if filter_drafts is enabled)
+    fn get_visible_roots(&self) -> Vec<crate::tree::node::NodeId> {
+        if self.state.view.filter_drafts {
+            // Only show drafts
+            self.state
+                .roots
+                .iter()
+                .filter(|&node_id| {
+                    if let Some(TreeNode::Publication(p)) = self.state.nodes.get(node_id) {
+                        p.sync_status.is_draft()
+                    } else {
+                        false
+                    }
+                })
+                .copied()
+                .collect()
+        } else {
+            self.state.roots.clone()
+        }
     }
 }
 
@@ -301,9 +346,16 @@ impl<'a> Widget for FeedWidget<'a> {
         let card_lines = self.get_card_line_counts();
         let items = self.create_items();
 
+        // Title includes filter indicator
+        let title = if self.state.view.filter_drafts {
+            " Publications [Drafts Only] "
+        } else {
+            " Publications "
+        };
+
         let block = Block::default()
             .borders(Borders::ALL)
-            .title(" Publications ");
+            .title(title);
 
         let inner = block.inner(area);
 
@@ -330,6 +382,7 @@ impl<'a> Widget for FeedWidget<'a> {
                 match p.sync_status {
                     SyncStatus::Remote => Color::Cyan,
                     SyncStatus::LocalOnly => Color::Yellow,
+                    SyncStatus::Draft => Color::Red,
                 }
             } else {
                 Color::DarkGray
@@ -501,6 +554,7 @@ impl<'a> Widget for OutlineWidget<'a> {
             let bar_color = match sync_status {
                 SyncStatus::Remote => Color::Cyan,
                 SyncStatus::LocalOnly => Color::Yellow,
+                SyncStatus::Draft => Color::Red,
             };
 
             // Draw bar for each line of this section card

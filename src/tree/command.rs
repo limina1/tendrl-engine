@@ -429,6 +429,21 @@ pub fn all_commands() -> Vec<CommandInfo> {
             category: CommandCategory::View,
             keybinding: None,
         },
+        // Draft management
+        CommandInfo {
+            command: TreeCommand::SaveDraft,
+            name: "Save Draft",
+            description: "Save current composition as an unsigned draft",
+            category: CommandCategory::Compose,
+            keybinding: Some("Ctrl+d"),
+        },
+        CommandInfo {
+            command: TreeCommand::FilterDrafts,
+            name: "Filter Drafts",
+            description: "Toggle filter to show only unsigned drafts",
+            category: CommandCategory::View,
+            keybinding: Some("Ctrl+u"),
+        },
     ]
 }
 
@@ -596,6 +611,16 @@ pub enum TreeCommand {
     WindowScrollToBottom,
     /// Show event JSON for current selection (opens in a window)
     ShowEventJson,
+
+    // Draft management
+    /// Save current compose as draft (Ctrl+d)
+    SaveDraft,
+    /// Load a draft for editing
+    LoadDraft { draft_id: String },
+    /// Delete a draft
+    DeleteDraft { draft_id: String },
+    /// Toggle draft-only filter in feed
+    FilterDrafts,
 }
 
 impl TreeCommand {
@@ -611,6 +636,7 @@ impl TreeCommand {
                 | TreeCommand::LoadBufferEvents
                 | TreeCommand::RefreshBuffer
                 | TreeCommand::Publish
+                | TreeCommand::SaveDraft
         )
     }
 
@@ -729,6 +755,12 @@ pub enum AsyncRequest {
         tags: Vec<Vec<String>>,
         sections: Vec<SectionCompose>,
     },
+    /// Save compose state as a draft
+    SaveDraft {
+        compose: crate::tree::state::ComposeState,
+    },
+    /// Load all drafts from storage
+    LoadDrafts,
 }
 
 impl AsyncRequest {
@@ -757,6 +789,8 @@ impl AsyncRequest {
             AsyncRequest::PublishPublication { title, .. } => {
                 format!("Publishing {}...", title)
             }
+            AsyncRequest::SaveDraft { .. } => "Saving draft...".to_string(),
+            AsyncRequest::LoadDrafts => "Loading drafts...".to_string(),
         }
     }
 
@@ -772,7 +806,9 @@ impl AsyncRequest {
             | AsyncRequest::LoadMorePublications { .. }
             | AsyncRequest::LoadBatch { .. }
             | AsyncRequest::PublishNote { .. }
-            | AsyncRequest::PublishPublication { .. } => None,
+            | AsyncRequest::PublishPublication { .. }
+            | AsyncRequest::SaveDraft { .. }
+            | AsyncRequest::LoadDrafts => None,
         }
     }
 }
@@ -806,11 +842,29 @@ pub enum AsyncResult {
     MorePublicationsLoaded {
         publications: Vec<LoadedPublication>,
     },
+    /// Draft saved successfully
+    DraftSaved {
+        draft_id: String,
+    },
+    /// Drafts loaded from storage
+    DraftsLoaded {
+        drafts: Vec<LoadedDraft>,
+    },
     /// Operation failed
     Error {
         request: AsyncRequest,
         error: String,
     },
+}
+
+/// A loaded draft for display in the feed
+#[derive(Debug, Clone)]
+pub struct LoadedDraft {
+    pub draft_id: String,
+    pub title: String,
+    pub created_at: u64,
+    pub modified_at: u64,
+    pub section_count: usize,
 }
 
 /// A loaded publication for feed pagination

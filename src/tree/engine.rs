@@ -51,6 +51,11 @@ impl TreeEngine {
                 }
                 TreeCommand::Enter => return self.feed_enter(state),
                 TreeCommand::EnterCompose => return self.enter_compose(state),
+                TreeCommand::FilterDrafts => {
+                    state.view.filter_drafts = !state.view.filter_drafts;
+                    state.feed_cursor = 0; // Reset cursor when toggling filter
+                    return CommandResult::StateChanged;
+                }
                 // Other commands fall through to normal handling
                 _ => {}
             }
@@ -203,6 +208,20 @@ impl TreeEngine {
             | TreeCommand::WindowScrollToBottom
             | TreeCommand::ShowEventJson => {
                 // Window commands are handled directly in app.rs
+                CommandResult::NoOp
+            }
+
+            // Draft management (SaveDraft handled in execute_compose, others handled by app)
+            TreeCommand::SaveDraft => {
+                // Only valid in compose mode, handled by execute_compose
+                CommandResult::NoOp
+            }
+            TreeCommand::LoadDraft { .. } | TreeCommand::DeleteDraft { .. } => {
+                // Handled by app.rs
+                CommandResult::NoOp
+            }
+            TreeCommand::FilterDrafts => {
+                // Only valid in feed mode, handled above
                 CommandResult::NoOp
             }
         }
@@ -369,6 +388,48 @@ impl TreeEngine {
                     } else {
                         state.oldest_timestamp = Some(pub_data.created_at);
                     }
+                }
+
+                CommandResult::StateChanged
+            }
+
+            AsyncResult::DraftSaved { draft_id: _ } => {
+                // Draft saved successfully - exit compose mode
+                state.exit_compose();
+                CommandResult::ModeChanged(super::state::AppMode::Feed)
+            }
+
+            AsyncResult::DraftsLoaded { drafts } => {
+                use crate::publication::NAddr;
+                use crate::tree::node::SyncStatus;
+
+                // Add drafts to the tree as publications with Draft sync status
+                // Note: LoadedDraft only has metadata, not full section content
+                // Full draft loading with sections is done in load_drafts_sync
+                for draft in drafts {
+                    // Create a pseudo-NAddr for the draft
+                    let addr = NAddr::new(30040, &"0".repeat(64), &draft.draft_id);
+                    let id = NodeId::from_addr(&addr);
+
+                    // Skip if already exists
+                    if state.nodes.contains_key(&id) {
+                        continue;
+                    }
+
+                    let mut pub_node = PublicationNode::stub(addr, None);
+                    pub_node.title = Some(draft.title.clone());
+                    pub_node.summary = Some(format!("{} sections", draft.section_count));
+                    pub_node.author = "Draft".to_string();
+                    pub_node.author_name = Some("Unsigned Draft".to_string());
+                    pub_node.created_at = draft.modified_at;
+                    // Mark as not loaded since we don't have section details in LoadedDraft
+                    pub_node.loaded = false;
+                    pub_node.sync_status = SyncStatus::Draft;
+                    pub_node.draft_id = Some(draft.draft_id.clone());
+
+                    state.nodes.insert(id, TreeNode::Publication(pub_node));
+                    // Insert drafts at the beginning of roots (they're local and should be prominent)
+                    state.roots.insert(0, id);
                 }
 
                 CommandResult::StateChanged
@@ -947,6 +1008,14 @@ impl TreeEngine {
                     title: state.compose.title.clone(),
                     tags,
                     sections: state.compose.sections.clone(),
+                })
+            }
+            TreeCommand::SaveDraft => {
+                if !state.compose.has_content() {
+                    return CommandResult::Error("No content to save as draft".to_string());
+                }
+                CommandResult::NeedsAsync(AsyncRequest::SaveDraft {
+                    compose: state.compose.clone(),
                 })
             }
             TreeCommand::Quit => CommandResult::Exit,
