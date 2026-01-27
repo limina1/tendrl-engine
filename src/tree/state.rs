@@ -6,6 +6,7 @@
 use super::command::{all_commands, CommandInfo};
 use super::node::{NodeId, TreeNode};
 use super::undo::UndoStack;
+use crate::identity::Identity;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 
@@ -71,6 +72,10 @@ pub struct TreeState {
     pub compose: ComposeState,
     /// Window manager for overlay windows
     pub windows: WindowManager,
+    /// Identity/login state
+    pub identity: Identity,
+    /// Login dialog state (if open)
+    pub login_dialog: Option<LoginDialogState>,
 }
 
 impl TreeState {
@@ -95,6 +100,8 @@ impl TreeState {
             command_palette: CommandPaletteState::new(),
             compose: ComposeState::new(),
             windows: WindowManager::new(),
+            identity: Identity::new(),
+            login_dialog: None,
         }
     }
 
@@ -963,6 +970,11 @@ impl ComposeState {
     /// - When focused on publication fields (Title, Tags) → shows 30040 event
     /// - When focused on section fields → shows that section's 30041 event
     pub fn preview_event_json(&self) -> String {
+        self.preview_event_json_with_pubkey(None)
+    }
+
+    /// Generate a preview of the current event with an optional pubkey
+    pub fn preview_event_json_with_pubkey(&self, pubkey: Option<&str>) -> String {
         use std::time::{SystemTime, UNIX_EPOCH};
 
         let now = SystemTime::now()
@@ -981,24 +993,26 @@ impl ComposeState {
 
         if let Some(idx) = section_idx {
             // Show the section's 30041 event
-            self.preview_section_json(idx, now)
+            self.preview_section_json(idx, now, pubkey)
         } else {
             // Show the publication's 30040 event
-            self.preview_publication_json(now)
+            self.preview_publication_json(now, pubkey)
         }
     }
 
     /// Generate JSON for the 30040 publication event
-    fn preview_publication_json(&self, now: u64) -> String {
+    fn preview_publication_json(&self, now: u64, pubkey: Option<&str>) -> String {
         use serde_json::{json, Value};
 
         let pub_d_tag = self.publication_d_tag();
+        let pubkey_display = pubkey.unwrap_or("<not signed in>");
 
         // Build section `a` tag references
         let mut section_a_tags: Vec<Value> = Vec::new();
         for i in 0..self.sections.len() {
             let section_d_tag = self.section_d_tag(i);
-            section_a_tags.push(json!(["a", format!("30041:<pubkey>:{}", section_d_tag), ""]));
+            let a_tag_pubkey = pubkey.unwrap_or("<pubkey>");
+            section_a_tags.push(json!(["a", format!("30041:{}:{}", a_tag_pubkey, section_d_tag), ""]));
         }
 
         // Build publication tags
@@ -1023,7 +1037,7 @@ impl ComposeState {
 
         let pub_event = json!({
             "id": "<unsigned>",
-            "pubkey": "<not signed in>",
+            "pubkey": pubkey_display,
             "created_at": now,
             "kind": 30040,
             "tags": pub_tags,
@@ -1035,7 +1049,7 @@ impl ComposeState {
     }
 
     /// Generate JSON for a section's 30041 event
-    fn preview_section_json(&self, idx: usize, now: u64) -> String {
+    fn preview_section_json(&self, idx: usize, now: u64, pubkey: Option<&str>) -> String {
         use serde_json::{json, Value};
 
         let section = match self.sections.get(idx) {
@@ -1044,6 +1058,7 @@ impl ComposeState {
         };
 
         let section_d_tag = self.section_d_tag(idx);
+        let pubkey_display = pubkey.unwrap_or("<not signed in>");
 
         // Build section tags
         let mut section_tags: Vec<Value> = vec![
@@ -1061,7 +1076,7 @@ impl ComposeState {
 
         let section_event = json!({
             "id": "<unsigned>",
-            "pubkey": "<not signed in>",
+            "pubkey": pubkey_display,
             "created_at": now,
             "kind": 30041,
             "tags": section_tags,
@@ -1407,6 +1422,134 @@ impl WindowManager {
     pub fn scroll_to_bottom(&mut self, viewport_height: usize) {
         if let Some(window) = self.focused_window_mut() {
             window.scroll_to_bottom(viewport_height);
+        }
+    }
+}
+
+/// State for the login dialog
+#[derive(Debug, Clone, Default)]
+pub struct LoginDialogState {
+    /// Current input text (key or password)
+    pub input: String,
+    /// Cursor position within the input
+    pub cursor_pos: usize,
+    /// Error message to display (if any)
+    pub error: Option<String>,
+    /// Whether we're awaiting a password (vs initial key input)
+    pub awaiting_password: bool,
+    /// The ncryptsec that needs to be unlocked (if awaiting_password)
+    pub pending_ncryptsec: Option<String>,
+    /// Whether to mask the input (for password entry)
+    pub mask_input: bool,
+}
+
+impl LoginDialogState {
+    /// Create a new login dialog state
+    pub fn new() -> Self {
+        LoginDialogState {
+            input: String::new(),
+            cursor_pos: 0,
+            error: None,
+            awaiting_password: false,
+            pending_ncryptsec: None,
+            mask_input: false,
+        }
+    }
+
+    /// Create a password prompt dialog
+    pub fn password_prompt(ncryptsec: String) -> Self {
+        LoginDialogState {
+            input: String::new(),
+            cursor_pos: 0,
+            error: None,
+            awaiting_password: true,
+            pending_ncryptsec: Some(ncryptsec),
+            mask_input: true,
+        }
+    }
+
+    /// Insert a character at the cursor position
+    pub fn insert_char(&mut self, c: char) {
+        let pos = self.cursor_pos.min(self.input.len());
+        self.input.insert(pos, c);
+        self.cursor_pos = pos + 1;
+        self.error = None; // Clear error on input
+    }
+
+    /// Delete character before cursor (backspace)
+    pub fn delete_char(&mut self) {
+        if self.cursor_pos > 0 {
+            let pos = self.cursor_pos.min(self.input.len());
+            if pos > 0 {
+                self.input.remove(pos - 1);
+                self.cursor_pos = pos - 1;
+            }
+        }
+        self.error = None;
+    }
+
+    /// Delete character at cursor (delete key)
+    pub fn delete_char_forward(&mut self) {
+        let pos = self.cursor_pos.min(self.input.len());
+        if pos < self.input.len() {
+            self.input.remove(pos);
+        }
+        self.error = None;
+    }
+
+    /// Move cursor left
+    pub fn cursor_left(&mut self) {
+        if self.cursor_pos > 0 {
+            self.cursor_pos -= 1;
+        }
+    }
+
+    /// Move cursor right
+    pub fn cursor_right(&mut self) {
+        if self.cursor_pos < self.input.len() {
+            self.cursor_pos += 1;
+        }
+    }
+
+    /// Move cursor to beginning
+    pub fn cursor_home(&mut self) {
+        self.cursor_pos = 0;
+    }
+
+    /// Move cursor to end
+    pub fn cursor_end(&mut self) {
+        self.cursor_pos = self.input.len();
+    }
+
+    /// Set an error message
+    pub fn set_error(&mut self, error: impl Into<String>) {
+        self.error = Some(error.into());
+    }
+
+    /// Get the display text (masked if password)
+    pub fn display_text(&self) -> String {
+        if self.mask_input {
+            "*".repeat(self.input.len())
+        } else {
+            self.input.clone()
+        }
+    }
+
+    /// Get the title for the dialog
+    pub fn title(&self) -> &'static str {
+        if self.awaiting_password {
+            "Enter Password"
+        } else {
+            "Login"
+        }
+    }
+
+    /// Get the placeholder text
+    pub fn placeholder(&self) -> &'static str {
+        if self.awaiting_password {
+            "Password for ncryptsec..."
+        } else {
+            "npub1... / nsec1... / ncryptsec1..."
         }
     }
 }

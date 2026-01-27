@@ -4,17 +4,17 @@
 
 use crate::drafts::DraftStore;
 use crate::engine::{Engine, FetchPolicy};
+use crate::identity::{parse_key, decrypt_ncryptsec, IdentityKeyring, KeyType, LoginStatus};
 use crate::publication::{NAddr, PublicationEngine};
 use crate::tree::command::{AsyncRequest, AsyncResult, CommandResult, ConfigAction, LoadedDraft};
 use crate::tree::engine::{init_from_publications, TreeEngine};
 use crate::tree::node::{NodeId, SectionNode, TreeNode};
-use crate::tree::state::TreeState;
+use crate::tree::state::{LoginDialogState, TreeState, ViewMode};
 use crate::tree::tui::input::{KeyContext, KeyMapper};
-use crate::tree::state::ViewMode;
 use crate::tree::tui::spinner::Spinner;
 use crate::tree::tui::widgets::{
     CommandPaletteWidget, ComposeWidget, ContentPreview, ContinuousWidget, FeedWidget, HelpBar,
-    OutlineWidget, PaginatedWidget, StatusBar, TreeWidget, WindowWidget,
+    LoginDialogWidget, OutlineWidget, PaginatedWidget, StatusBar, TreeWidget, WindowWidget,
 };
 
 use crate::tree::command::TreeCommand;
@@ -58,6 +58,8 @@ pub struct TuiApp {
     pending_count: usize,
     /// Draft storage for unsigned publications
     draft_store: Option<DraftStore>,
+    /// Identity keyring for secure storage
+    keyring: IdentityKeyring,
 }
 
 impl TuiApp {
@@ -67,6 +69,9 @@ impl TuiApp {
 
         // Initialize draft store in the same data directory as the engine
         let draft_store = DraftStore::new(nostr_engine.data_dir()).ok();
+
+        // Initialize keyring for identity storage
+        let keyring = IdentityKeyring::new();
 
         TuiApp {
             state: TreeState::new(),
@@ -81,6 +86,44 @@ impl TuiApp {
             spinner: Spinner::new(),
             pending_count: 0,
             draft_store,
+            keyring,
+        }
+    }
+
+    /// Try to restore identity from keyring on startup
+    pub fn restore_identity(&mut self) {
+        if let Ok((key_type, key_data)) = self.keyring.get_last_identity() {
+            match key_type.as_str() {
+                "npub" => {
+                    if let Err(e) = self.state.identity.login_npub(&key_data) {
+                        tracing::warn!("Failed to restore npub identity: {}", e);
+                    } else {
+                        self.status_message = Some("Restored read-only session".to_string());
+                    }
+                }
+                "ncryptsec" => {
+                    // For ncryptsec, we restore to locked state (user needs to enter password)
+                    if let Err(e) = self.state.identity.login_ncryptsec(&key_data) {
+                        tracing::warn!("Failed to restore ncryptsec identity: {}", e);
+                    } else {
+                        self.status_message = Some("Session restored - enter password to unlock".to_string());
+                    }
+                }
+                "nsec" => {
+                    // For nsec, check if we have the secret stored
+                    // We don't store nsec directly in last_identity, only the pubkey
+                    // The actual secret should be in the keyring under the pubkey
+                    if let Ok(secret) = self.keyring.get_secret(&key_data) {
+                        // key_data here is the pubkey, secret is the nsec
+                        if let Err(e) = self.state.identity.login_nsec(&secret) {
+                            tracing::warn!("Failed to restore nsec identity: {}", e);
+                        } else {
+                            self.status_message = Some("Session restored".to_string());
+                        }
+                    }
+                }
+                _ => {}
+            }
         }
     }
 
@@ -226,6 +269,9 @@ impl TuiApp {
 
     /// Load initial publications
     pub async fn load_initial(&mut self) -> anyhow::Result<()> {
+        // Try to restore identity from previous session
+        self.restore_identity();
+
         self.status_message = Some("Loading publications...".to_string());
 
         // Load drafts first (they appear at top of feed)
@@ -366,6 +412,12 @@ impl TuiApp {
                         continue;
                     }
 
+                    // Handle login dialog input first (highest priority modal)
+                    if self.state.login_dialog.is_some() {
+                        self.handle_login_dialog_input(key);
+                        continue;
+                    }
+
                     // Handle command palette input separately
                     if self.state.command_palette.visible {
                         if let Some(result) = self.handle_palette_input(key) {
@@ -407,6 +459,11 @@ impl TuiApp {
                         // Handle ShowCommandPalette specially
                         if matches!(command, TreeCommand::ShowCommandPalette) {
                             self.state.command_palette.open();
+                            continue;
+                        }
+
+                        // Handle login commands specially
+                        if self.handle_login_command(&command) {
                             continue;
                         }
 
@@ -661,6 +718,132 @@ impl TuiApp {
         }
     }
 
+    /// Handle login-related commands (returns true if handled)
+    fn handle_login_command(&mut self, command: &TreeCommand) -> bool {
+        match command {
+            TreeCommand::OpenLoginDialog => {
+                self.state.login_dialog = Some(LoginDialogState::new());
+                true
+            }
+            TreeCommand::CloseLoginDialog => {
+                self.state.login_dialog = None;
+                true
+            }
+            TreeCommand::Logout => {
+                self.state.identity.logout();
+                let _ = self.keyring.clear_last_identity();
+                self.status_message = Some("Logged out".to_string());
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// Handle input when the login dialog is open
+    fn handle_login_dialog_input(&mut self, key: crossterm::event::KeyEvent) {
+        let dialog = match self.state.login_dialog.as_mut() {
+            Some(d) => d,
+            None => return,
+        };
+
+        match key.code {
+            // Close dialog
+            KeyCode::Esc => {
+                self.state.login_dialog = None;
+            }
+            // Submit
+            KeyCode::Enter => {
+                if dialog.awaiting_password {
+                    // Decrypt ncryptsec with password
+                    if let Some(ref ncryptsec) = dialog.pending_ncryptsec.clone() {
+                        match decrypt_ncryptsec(ncryptsec, &dialog.input) {
+                            Ok((secret_hex, pubkey_hex)) => {
+                                // Store secret in keyring
+                                let _ = self.keyring.store_secret(&pubkey_hex, &secret_hex);
+                                let _ = self.keyring.store_last_identity("ncryptsec", ncryptsec);
+
+                                // Update identity status
+                                self.state.identity.status = LoginStatus::SignedIn {
+                                    pubkey: pubkey_hex,
+                                    from_ncryptsec: true,
+                                };
+                                self.state.login_dialog = None;
+                                self.status_message = Some("Signed in successfully".to_string());
+                            }
+                            Err(e) => {
+                                dialog.set_error(format!("Decryption failed: {}", e));
+                            }
+                        }
+                    }
+                } else {
+                    // Parse and process the key
+                    let input = dialog.input.clone();
+                    match parse_key(&input) {
+                        Ok(KeyType::Npub(npub)) => {
+                            if let Err(e) = self.state.identity.login_npub(&npub) {
+                                dialog.set_error(format!("Invalid npub: {}", e));
+                            } else {
+                                // Store for session restoration
+                                let _ = self.keyring.store_last_identity("npub", &npub);
+                                self.state.login_dialog = None;
+                                self.status_message = Some("Logged in (read-only)".to_string());
+                            }
+                        }
+                        Ok(KeyType::Nsec(nsec)) => {
+                            if let Err(e) = self.state.identity.login_nsec(&nsec) {
+                                dialog.set_error(format!("Invalid nsec: {}", e));
+                            } else {
+                                // Store secret in keyring (use pubkey as key)
+                                if let Some(pubkey) = self.state.identity.status.pubkey() {
+                                    let _ = self.keyring.store_secret(pubkey, &nsec);
+                                    let _ = self.keyring.store_last_identity("nsec", pubkey);
+                                }
+                                self.state.login_dialog = None;
+                                self.status_message = Some("Signed in successfully".to_string());
+                            }
+                        }
+                        Ok(KeyType::Ncryptsec(ncryptsec)) => {
+                            // Switch to password entry mode
+                            self.state.login_dialog = Some(LoginDialogState::password_prompt(ncryptsec));
+                        }
+                        Err(e) => {
+                            dialog.set_error(format!("Invalid key: {}", e));
+                        }
+                    }
+                }
+            }
+            // Text editing
+            KeyCode::Backspace => {
+                dialog.delete_char();
+            }
+            KeyCode::Delete => {
+                dialog.delete_char_forward();
+            }
+            KeyCode::Left => {
+                dialog.cursor_left();
+            }
+            KeyCode::Right => {
+                dialog.cursor_right();
+            }
+            KeyCode::Home => {
+                dialog.cursor_home();
+            }
+            KeyCode::End => {
+                dialog.cursor_end();
+            }
+            // Character input
+            KeyCode::Char(c) => {
+                // Don't handle Ctrl+C as typing
+                if key.modifiers.contains(KeyModifiers::CONTROL) && c == 'c' {
+                    self.state.login_dialog = None;
+                    return;
+                }
+                dialog.insert_char(c);
+            }
+            _ => {}
+        }
+    }
+
     fn draw(&self, frame: &mut Frame) {
         let area = frame.area();
 
@@ -717,6 +900,15 @@ impl TuiApp {
                 window.height_percent,
             );
             frame.render_widget(WindowWidget::new(window, is_focused), window_area);
+        }
+
+        // Render login dialog if open (on top of windows)
+        if let Some(ref login_dialog) = self.state.login_dialog {
+            let dialog_area = LoginDialogWidget::calculate_area(area);
+            frame.render_widget(
+                LoginDialogWidget::new(login_dialog),
+                dialog_area,
+            );
         }
 
         // Render command palette overlay if visible (on top of everything)
@@ -809,7 +1001,12 @@ impl TuiApp {
     }
 
     fn draw_compose_mode(&self, frame: &mut Frame, area: Rect) {
-        frame.render_widget(ComposeWidget::new(&self.state.compose), area);
+        // Pass the identity pubkey to the compose widget for event preview
+        let pubkey = self.state.identity.status.pubkey();
+        frame.render_widget(
+            ComposeWidget::new(&self.state.compose).with_pubkey(pubkey),
+            area
+        );
     }
 
     fn spawn_async_request(&mut self, request: AsyncRequest) {

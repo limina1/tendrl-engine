@@ -71,6 +71,8 @@ Feature-gated with `--features tui`:
 - `Esc` - Back to feed
 - `v` - Cycle view mode
 - `Tab` - Toggle preview panel
+- `i` - Login (open identity dialog)
+- `c` - Compose new publication
 - `:` - Show relay configuration
 - `q` - Quit
 
@@ -96,6 +98,24 @@ cargo run --features tui --bin nostr-tree -- --purge-db -y
 
 ```bash
 cargo test --features tui
+```
+
+### Identity Test Credentials
+
+For testing the login system with ncryptsec (NIP-49):
+
+**Fast test (log_n=8):**
+```
+ncryptsec: ncryptsec1qgyqzqsrqszsvpcgpy9qkrqdpc83qygjzv2p29shrqv35xcur50p7gppyg3jgffxyu5z8wu7vvv70gz4s7p5qnaualstkwcj8tr5zxa67u6vrdfcum674j8lkajw8aul9qw05hstpjx9cprargvjj0tz
+password: nostr-engine-test
+secret:   e698fdd6e2e780b7d9800266bfc02d56630835856a0146969cc984bb21b068c6
+```
+
+**Production strength (log_n=16, nak default):**
+```
+ncryptsec: ncryptsec1qggqzqsrqszsvpcgpy9qkrqdpc83qygjzv2p29shrqv35xcur50p7gppyg3jgffxyu5fu084qapxen8l6nyvkeexzyjf5wsh23tjyrmqg2r5aajj9gn578l6gu30usjgxjrjyl4n43rklcw0pvhqxme9
+password: nostr-engine-test
+secret:   e698fdd6e2e780b7d9800266bfc02d56630835856a0146969cc984bb21b068c6
 ```
 
 ## Design Principles

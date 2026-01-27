@@ -2,10 +2,11 @@
 //!
 //! Provides ratatui widgets for rendering the tree view and content preview.
 
+use crate::identity::LoginStatus;
 use crate::tree::command::CommandCategory;
 use crate::tree::node::{NodeId, TreeNode};
 use crate::tree::render::{visible_nodes, RenderOptions, VisibleNode};
-use crate::tree::state::{CommandPaletteState, ComposeFocus, ComposeState, TreeState};
+use crate::tree::state::{CommandPaletteState, ComposeFocus, ComposeState, LoginDialogState, TreeState};
 use ratatui::prelude::*;
 use ratatui::layout::{Layout, Direction, Constraint};
 use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Wrap};
@@ -868,7 +869,8 @@ impl<'a> Widget for StatusBar<'a> {
         let mode_name = self.state.mode.name();
         let view_mode = self.state.view.mode.name();
 
-        let right = format!(
+        // Build the middle section (cursor | mode | view | preview)
+        let middle = format!(
             "{} | {} | {} | {}",
             cursor_info,
             mode_name,
@@ -880,31 +882,78 @@ impl<'a> Widget for StatusBar<'a> {
             }
         );
 
-        // Calculate padding
-        let available = area.width as usize;
-        let left_len = left.chars().count();
-        let right_len = right.chars().count();
+        // Get identity indicator components
+        let (identity_text, identity_style, banner_text, banner_style) =
+            get_identity_indicator(&self.state.identity.status);
 
-        let line = if left_len + right_len + 2 <= available {
-            let padding = available - left_len - right_len;
-            format!("{}{:>width$}", left, right, width = padding + right_len)
+        // Calculate total right-side length (middle + identity)
+        let identity_section_len = if let (Some(ref id_text), Some(ref banner)) = (&identity_text, &banner_text) {
+            id_text.len() + 1 + banner.len() + 1 // "[id_text] [banner] "
         } else {
-            // Truncate left side if needed
-            let max_left = available.saturating_sub(right_len + 3);
-            if max_left > 0 {
-                format!("{}...{}", &left[..max_left.min(left_len)], right)
-            } else {
-                right
-            }
+            0
         };
+        let right_total_len = middle.len() + identity_section_len;
 
-        let style = Style::default().fg(Color::Black).bg(Color::White);
-        buf.set_string(area.x, area.y, &line, style);
-
-        // Fill remaining width
-        for x in area.x + line.len() as u16..area.x + area.width {
-            buf[(x, area.y)].set_style(style);
+        // Fill background first
+        let bg_style = Style::default().fg(Color::Black).bg(Color::White);
+        for x in area.x..area.x + area.width {
+            buf[(x, area.y)].set_char(' ').set_style(bg_style);
         }
+
+        // Render left section
+        let left_display: String = left.chars().take((area.width as usize).saturating_sub(right_total_len + 2)).collect();
+        buf.set_string(area.x, area.y, &left_display, bg_style);
+
+        // Calculate where the right section starts
+        let right_start = area.x + area.width - right_total_len as u16;
+
+        // Render middle section
+        buf.set_string(right_start, area.y, &middle, bg_style);
+
+        // Render identity section if logged in
+        if let (Some(id_text), Some(id_style), Some(banner), Some(b_style)) =
+            (identity_text, identity_style, banner_text, banner_style)
+        {
+            let identity_x = right_start + middle.len() as u16 + 1;
+            // Render the abbreviated pubkey
+            buf.set_string(identity_x, area.y, &id_text, id_style.bg(Color::White));
+            // Render the banner
+            let banner_x = identity_x + id_text.len() as u16 + 1;
+            buf.set_string(banner_x, area.y, &banner, b_style);
+        }
+    }
+}
+
+/// Get the identity indicator components for the status bar
+fn get_identity_indicator(status: &LoginStatus) -> (Option<String>, Option<Style>, Option<String>, Option<Style>) {
+    use crate::identity::abbreviate_pubkey_hex;
+
+    match status {
+        LoginStatus::None => (None, None, None, None),
+        LoginStatus::ReadOnly { pubkey, .. } => (
+            Some(abbreviate_pubkey_hex(pubkey)),
+            Some(Style::default().fg(Color::Magenta)),
+            Some(" Read Only ".to_string()),
+            Some(Style::default().fg(Color::White).bg(Color::Magenta)),
+        ),
+        LoginStatus::EncryptedLocked { pubkey, .. } => {
+            let display = pubkey
+                .as_ref()
+                .map(|pk| abbreviate_pubkey_hex(pk))
+                .unwrap_or_else(|| "ncryptsec".to_string());
+            (
+                Some(display),
+                Some(Style::default().fg(Color::Green)),
+                Some(" need password ".to_string()),
+                Some(Style::default().fg(Color::Black).bg(Color::Yellow)),
+            )
+        }
+        LoginStatus::SignedIn { pubkey, .. } => (
+            Some(abbreviate_pubkey_hex(pubkey)),
+            Some(Style::default().fg(Color::Green)),
+            Some(" signed in ".to_string()),
+            Some(Style::default().fg(Color::Black).bg(Color::Green)),
+        ),
     }
 }
 
@@ -1120,11 +1169,19 @@ impl<'a> Widget for CommandPaletteWidget<'a> {
 /// Widget for rendering the compose view
 pub struct ComposeWidget<'a> {
     state: &'a ComposeState,
+    /// Optional pubkey to show in preview (from identity)
+    pubkey: Option<&'a str>,
 }
 
 impl<'a> ComposeWidget<'a> {
     pub fn new(state: &'a ComposeState) -> Self {
-        ComposeWidget { state }
+        ComposeWidget { state, pubkey: None }
+    }
+
+    /// Set the pubkey to use in the event preview
+    pub fn with_pubkey(mut self, pubkey: Option<&'a str>) -> Self {
+        self.pubkey = pubkey;
+        self
     }
 
     /// Render a text field with cursor
@@ -1530,8 +1587,8 @@ impl<'a> ComposeWidget<'a> {
             return;
         }
 
-        // Get the preview JSON
-        let preview_json = self.state.preview_event_json();
+        // Get the preview JSON (with pubkey if available)
+        let preview_json = self.state.preview_event_json_with_pubkey(self.pubkey);
 
         // Render the JSON with syntax highlighting
         let lines: Vec<&str> = preview_json.lines().collect();
@@ -1675,6 +1732,111 @@ impl Widget for WindowWidget<'_> {
         let help_y = area.y + area.height - 1;
         if help.len() < area.width as usize - 2 {
             buf.set_string(help_x, help_y, help, Style::default().fg(Color::DarkGray));
+        }
+    }
+}
+
+/// Widget for the login dialog
+pub struct LoginDialogWidget<'a> {
+    state: &'a LoginDialogState,
+}
+
+impl<'a> LoginDialogWidget<'a> {
+    pub fn new(state: &'a LoginDialogState) -> Self {
+        LoginDialogWidget { state }
+    }
+
+    /// Calculate the area for the dialog (centered popup)
+    pub fn calculate_area(parent: Rect) -> Rect {
+        let width = parent.width.min(60).max(40);
+        let height = 7; // Title bar + input + error + help + borders
+        let x = (parent.width.saturating_sub(width)) / 2;
+        let y = (parent.height.saturating_sub(height)) / 2;
+        Rect::new(x, y, width, height)
+    }
+}
+
+impl Widget for LoginDialogWidget<'_> {
+    fn render(self, area: Rect, buf: &mut Buffer) {
+        // Clear the area first
+        Clear.render(area, buf);
+
+        // Dialog border and title
+        let title = format!(" {} ", self.state.title());
+        let border_style = Style::default().fg(Color::Cyan);
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(border_style)
+            .title(title.as_str())
+            .style(Style::default().bg(Color::Black));
+
+        let inner = block.inner(area);
+        block.render(area, buf);
+
+        if inner.height < 3 || inner.width < 10 {
+            return;
+        }
+
+        let mut y = inner.y;
+
+        // Input label
+        let label = if self.state.awaiting_password {
+            "Password:"
+        } else {
+            "Key:"
+        };
+        buf.set_string(inner.x, y, label, Style::default().fg(Color::Cyan));
+        y += 1;
+
+        // Input field with cursor
+        let input_style = Style::default().bg(Color::DarkGray);
+        let display_text = self.state.display_text();
+        let placeholder = self.state.placeholder();
+
+        // Clear input area background
+        for x in inner.x..inner.x + inner.width {
+            buf[(x, y)].set_char(' ').set_style(input_style);
+        }
+
+        // Show placeholder or input
+        if display_text.is_empty() {
+            buf.set_string(inner.x, y, placeholder, Style::default().fg(Color::DarkGray).bg(Color::DarkGray).italic());
+        } else {
+            // Calculate visible portion (scroll if text is longer than width)
+            let max_visible = inner.width as usize - 1;
+            let cursor_pos = self.state.cursor_pos;
+            let visible_start = if cursor_pos > max_visible {
+                cursor_pos - max_visible + 1
+            } else {
+                0
+            };
+            let visible_text: String = display_text.chars().skip(visible_start).take(max_visible).collect();
+            buf.set_string(inner.x, y, &visible_text, input_style);
+
+            // Render cursor
+            let cursor_screen_pos = cursor_pos.saturating_sub(visible_start);
+            let cursor_x = inner.x + cursor_screen_pos as u16;
+            if cursor_x < inner.x + inner.width {
+                buf[(cursor_x, y)].set_style(Style::default().bg(Color::White).fg(Color::Black));
+            }
+        }
+        y += 1;
+
+        // Error message (if any)
+        if let Some(ref error) = self.state.error {
+            let error_display: String = error.chars().take(inner.width as usize).collect();
+            buf.set_string(inner.x, y, &error_display, Style::default().fg(Color::Red));
+        }
+        y += 1;
+
+        // Help text at bottom
+        let help = if self.state.awaiting_password {
+            "Enter:Submit  Esc:Cancel"
+        } else {
+            "Enter:Login  Esc:Cancel"
+        };
+        if y < inner.y + inner.height {
+            buf.set_string(inner.x, y, help, Style::default().fg(Color::DarkGray));
         }
     }
 }

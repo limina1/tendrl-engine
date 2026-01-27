@@ -175,6 +175,9 @@ impl KeyMapper {
             // Compose (from feed mode)
             KeyCode::Char('c') => Some(TreeCommand::EnterCompose),
 
+            // Login (from feed mode)
+            KeyCode::Char('i') => Some(TreeCommand::OpenLoginDialog),
+
             _ => None,
         }
     }
@@ -338,6 +341,8 @@ pub fn keybinding_help() -> Vec<(&'static str, &'static str)> {
         ("Ctrl+d", "Save draft (compose)"),
         ("V/s", "Select/Select all"),
         (":", "Show relays"),
+        ("i", "Login"),
+        ("c", "Compose"),
         ("R", "Refresh"),
         ("L", "Load visible"),
         ("q", "Quit"),

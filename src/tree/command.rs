@@ -444,6 +444,21 @@ pub fn all_commands() -> Vec<CommandInfo> {
             category: CommandCategory::View,
             keybinding: Some("Ctrl+u"),
         },
+        // Identity
+        CommandInfo {
+            command: TreeCommand::OpenLoginDialog,
+            name: "Login",
+            description: "Open the login dialog to sign in with npub/nsec/ncryptsec",
+            category: CommandCategory::Application,
+            keybinding: Some("i"),
+        },
+        CommandInfo {
+            command: TreeCommand::Logout,
+            name: "Logout",
+            description: "Sign out from the current identity",
+            category: CommandCategory::Application,
+            keybinding: None,
+        },
     ]
 }
 
@@ -621,6 +636,18 @@ pub enum TreeCommand {
     DeleteDraft { draft_id: String },
     /// Toggle draft-only filter in feed
     FilterDrafts,
+
+    // Identity management
+    /// Open the login dialog
+    OpenLoginDialog,
+    /// Close the login dialog
+    CloseLoginDialog,
+    /// Submit a key for login (from dialog)
+    SubmitLogin { key: String },
+    /// Submit a password for ncryptsec unlock
+    SubmitPassword { password: String },
+    /// Logout from the current identity
+    Logout,
 }
 
 impl TreeCommand {

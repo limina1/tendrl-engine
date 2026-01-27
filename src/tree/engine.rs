@@ -224,6 +224,16 @@ impl TreeEngine {
                 // Only valid in feed mode, handled above
                 CommandResult::NoOp
             }
+
+            // Identity management (handled by app.rs, not engine)
+            TreeCommand::OpenLoginDialog
+            | TreeCommand::CloseLoginDialog
+            | TreeCommand::SubmitLogin { .. }
+            | TreeCommand::SubmitPassword { .. }
+            | TreeCommand::Logout => {
+                // Login/logout commands are handled directly in app.rs
+                CommandResult::NoOp
+            }
         }
     }
 

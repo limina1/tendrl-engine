@@ -55,6 +55,7 @@ pub mod config;
 pub mod drafts;
 pub mod engine;
 pub mod error;
+pub mod identity;
 pub mod publication;
 pub mod query;
 pub mod relay;
