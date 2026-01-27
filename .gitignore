@@ -1,0 +1,25 @@
+# Build artifacts
+/target/
+**/*.rs.bk
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# nostrdb data
+*.mdb
+ndb/
+
+# Reference projects (not part of this repo)
+/notedeck/
+/notedeck-compose/
+
+# Environment
+.env
+.env.local

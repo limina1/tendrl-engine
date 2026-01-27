@@ -1,0 +1,430 @@
+#+TITLE: Nostr Engine
+#+AUTHOR: nostr-engine
+#+OPTIONS: toc:2
+
+* Overview
+
+Nostr Engine is a standalone local Nostr backend with an HTTP API. It provides:
+
+- Local-first querying against nostrdb (LMDB-backed)
+- Automatic relay backfill when data is missing
+- Configurable fetch policies
+- Clean REST API usable from any language/framework
+- Library interface for direct Rust integration
+
+* Installation
+
+** From Source
+
+#+begin_src bash
+git clone https://github.com/youruser/nostr-engine
+cd nostr-engine
+cargo build --release
+#+end_src
+
+** Using Cargo
+
+#+begin_src bash
+cargo install --git https://github.com/youruser/nostr-engine
+#+end_src
+
+* Quick Start
+
+** Run the Server
+
+#+begin_src bash
+# With defaults (port 3030, data at ~/.local/share/nostr-engine/nostrdb)
+nostr-engine
+
+# With custom settings
+nostr-engine --port 8080 --data-dir /path/to/nostrdb
+
+# With verbose logging
+nostr-engine -v
+#+end_src
+
+** Test the API
+
+#+begin_src bash
+# Health check
+curl http://localhost:3030/health
+
+# Query for events
+curl -X POST http://localhost:3030/api/v1/query \
+  -H "Content-Type: application/json" \
+  -d '{"filters": [{"kinds": [1], "limit": 5}]}'
+#+end_src
+
+* API Reference
+
+** POST /api/v1/query
+
+Query events using NIP-01 filters.
+
+*** Request
+
+#+begin_src json
+{
+  "filters": [
+    {"kinds": [1], "limit": 10},
+    {"kinds": [30023], "authors": ["<pubkey>"], "limit": 5}
+  ],
+  "policy": "local_first",
+  "relays": ["wss://relay.damus.io"]
+}
+#+end_src
+
+| Field   | Type     | Required | Description                              |
+|---------+----------+----------+------------------------------------------|
+| filters | array    | yes      | Array of NIP-01 filter objects           |
+| policy  | string   | no       | Fetch policy (default: "local_first")    |
+| relays  | array    | no       | Override default relays for this request |
+
+*** Response
+
+#+begin_src json
+{
+  "events": [...],
+  "count": 42,
+  "source": {
+    "local_count": 40,
+    "relay_count": 2
+  }
+}
+#+end_src
+
+** GET /api/v1/events/:id
+
+Get a single event by its 64-character hex ID.
+
+#+begin_src bash
+curl http://localhost:3030/api/v1/events/abc123...
+#+end_src
+
+** GET /api/v1/addressable/:kind/:pubkey/:d_tag
+
+Get an addressable event by kind, pubkey, and d-tag.
+
+#+begin_src bash
+curl http://localhost:3030/api/v1/addressable/30023/abc123.../my-article
+#+end_src
+
+** GET /health
+
+Health check endpoint.
+
+#+begin_src json
+{"status": "ok", "version": "0.1.0"}
+#+end_src
+
+* Publication API (NKBIP-01)
+
+The Publication API provides high-level endpoints for working with composed articles:
+- Kind 30040: Publication indexes
+- Kind 30041: Publication sections
+
+** GET /api/v1/publications
+
+List root publications (not nested in other publications).
+
+#+begin_src bash
+curl "http://localhost:3030/api/v1/publications?limit=20&policy=local_first"
+#+end_src
+
+*** Response
+
+#+begin_src json
+{
+  "publications": [
+    {
+      "addr": {"kind": 30040, "pubkey": "abc...", "d_tag": "my-book"},
+      "title": "My Publication",
+      "summary": "A brief description",
+      "image": "https://...",
+      "author_pubkey": "abc...",
+      "version": "1.0",
+      "created_at": 1706000000,
+      "section_count": 5
+    }
+  ],
+  "count": 1
+}
+#+end_src
+
+** GET /api/v1/publications/:pubkey/:d_tag
+
+Get a publication with its table of contents.
+
+#+begin_src bash
+curl http://localhost:3030/api/v1/publications/abc123.../my-book
+#+end_src
+
+*** Response
+
+#+begin_src json
+{
+  "publication": {
+    "addr": {"kind": 30040, "pubkey": "abc...", "d_tag": "my-book"},
+    "title": "My Publication",
+    "toc": [...]
+  },
+  "toc": [
+    {
+      "addr": {"kind": 30041, "pubkey": "abc...", "d_tag": "chapter-1"},
+      "title": "Chapter 1",
+      "depth": 0,
+      "loaded": false,
+      "is_publication": false,
+      "children": []
+    }
+  ],
+  "section_count": 5
+}
+#+end_src
+
+** POST /api/v1/publications/:pubkey/:d_tag/sections
+
+Load all sections for a publication.
+
+#+begin_src bash
+curl -X POST http://localhost:3030/api/v1/publications/abc123.../my-book/sections
+#+end_src
+
+*** Response
+
+#+begin_src json
+{
+  "sections": [
+    {
+      "addr": {"kind": 30041, "pubkey": "abc...", "d_tag": "chapter-1"},
+      "title": "Chapter 1",
+      "content": "# Introduction\n\nThis is the content...",
+      "position": 0,
+      "loaded": true
+    }
+  ],
+  "loaded_count": 5,
+  "total_count": 5
+}
+#+end_src
+
+** GET /api/v1/publications/:pubkey/:d_tag/sections/:index
+
+Load a single section by index (lazy loading).
+
+#+begin_src bash
+curl http://localhost:3030/api/v1/publications/abc123.../my-book/sections/0
+#+end_src
+
+** GET /api/v1/sections/:pubkey/:d_tag/versions
+
+Find alternate versions of a section (for forking/comparison UI).
+
+This queries for all events with the same kind and d-tag from any author.
+
+#+begin_src bash
+curl http://localhost:3030/api/v1/sections/abc123.../chapter-1/versions
+#+end_src
+
+*** Response
+
+#+begin_src json
+{
+  "versions": [
+    {
+      "author": "abc123...",
+      "created_at": 1706000000,
+      "version": "1.0",
+      "content_preview": "# Introduction\n\nThis is the content..."
+    },
+    {
+      "author": "def456...",
+      "created_at": 1706100000,
+      "version": null,
+      "content_preview": "# Introduction (Forked)\n\nAlternate version..."
+    }
+  ],
+  "count": 2
+}
+#+end_src
+
+* Fetch Policies
+
+| Policy       | Behavior                                              |
+|--------------+-------------------------------------------------------|
+| local_only   | Only query local nostrdb, never fetch from relays     |
+| local_first  | Try local first, fetch from relays if no results      |
+| fetch_always | Always fetch from relays, merge with local results    |
+
+* Configuration
+
+Create a =config.toml= file:
+
+#+begin_src toml
+[server]
+host = "127.0.0.1"
+port = 3030
+
+[database]
+data_dir = "~/.local/share/nostr-engine/nostrdb"
+
+[relay]
+default_relays = [
+    "wss://relay.damus.io",
+    "wss://nos.lol",
+    "wss://relay.nostr.band"
+]
+timeout_ms = 15000
+#+end_src
+
+Then run with:
+
+#+begin_src bash
+nostr-engine --config config.toml
+#+end_src
+
+* Library Usage
+
+** Rust
+
+Add to your =Cargo.toml=:
+
+#+begin_src toml
+[dependencies]
+nostr-engine = { git = "https://github.com/youruser/nostr-engine" }
+#+end_src
+
+Example:
+
+#+begin_src rust
+use nostr_engine::{Engine, FetchPolicy};
+use std::path::Path;
+use serde_json::json;
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    let engine = Engine::new(Path::new("~/.local/share/nostr-engine/nostrdb"))?;
+
+    // Query for events
+    let filter = json!({"kinds": [1], "limit": 10});
+    let response = engine.get_events(
+        vec![filter],
+        FetchPolicy::LocalFirst,
+        None
+    ).await?;
+
+    println!("Found {} events", response.count);
+
+    // Get by ID
+    let event = engine.get_by_id("abc123...", FetchPolicy::LocalFirst).await?;
+
+    // Get addressable event
+    let article = engine.get_addressable(
+        30023,
+        "pubkey_hex",
+        "article-slug",
+        FetchPolicy::LocalFirst
+    ).await?;
+
+    Ok(())
+}
+#+end_src
+
+** Python
+
+#+begin_src python
+import requests
+
+BASE_URL = "http://localhost:3030"
+
+# Query events
+response = requests.post(f"{BASE_URL}/api/v1/query", json={
+    "filters": [{"kinds": [1], "limit": 10}],
+    "policy": "local_first"
+})
+data = response.json()
+print(f"Found {data['count']} events")
+
+for event in data["events"]:
+    print(f"  - {event['content'][:50]}...")
+
+# Get event by ID
+response = requests.get(f"{BASE_URL}/api/v1/events/{event_id}")
+event = response.json()["event"]
+
+# Get addressable event
+response = requests.get(f"{BASE_URL}/api/v1/addressable/30023/{pubkey}/{d_tag}")
+article = response.json()["event"]
+#+end_src
+
+** Flask Integration
+
+#+begin_src python
+from flask import Flask, render_template
+import requests
+
+app = Flask(__name__)
+NOSTR_ENGINE = "http://localhost:3030"
+
+@app.route("/feed")
+def feed():
+    response = requests.post(f"{NOSTR_ENGINE}/api/v1/query", json={
+        "filters": [{"kinds": [30040], "limit": 20}],
+        "policy": "local_first"
+    })
+    publications = response.json()["events"]
+    return render_template("feed.html", publications=publications)
+
+@app.route("/article/<pubkey>/<slug>")
+def article(pubkey, slug):
+    response = requests.get(
+        f"{NOSTR_ENGINE}/api/v1/addressable/30023/{pubkey}/{slug}"
+    )
+    article = response.json()["event"]
+    return render_template("article.html", article=article)
+#+end_src
+
+* Data Storage
+
+Nostr Engine uses nostrdb (LMDB) for persistent storage. The default location is:
+
+1. =$XDG_DATA_HOME/nostr-engine/nostrdb= (if XDG_DATA_HOME is set)
+2. =~/.local/share/nostr-engine/nostrdb= (Linux/macOS default)
+3. =./nostr_engine_data/nostrdb= (fallback)
+
+Events fetched from relays are automatically ingested and cached locally.
+
+* Supported Event Kinds
+
+All NIP-01 event kinds are supported. Common kinds:
+
+| Kind  | Type                       |
+|-------+----------------------------|
+|     0 | User metadata (profiles)   |
+|     1 | Short text notes           |
+|     3 | Contact lists              |
+|     6 | Reposts                    |
+|     7 | Reactions                  |
+| 30023 | Long-form articles         |
+| 30040 | Publication indexes        |
+| 30041 | Publication sections       |
+
+* NIP-01 Filter Support
+
+The query interface supports standard NIP-01 filters:
+
+| Field   | Type          | Description                     |
+|---------+---------------+---------------------------------|
+| ids     | array[string] | Event IDs (hex)                 |
+| authors | array[string] | Pubkeys (hex)                   |
+| kinds   | array[number] | Event kinds                     |
+| since   | number        | Unix timestamp (inclusive)      |
+| until   | number        | Unix timestamp (inclusive)      |
+| limit   | number        | Max events to return            |
+| #e      | array[string] | Events referenced by 'e' tag   |
+| #p      | array[string] | Pubkeys referenced by 'p' tag  |
+| #d      | array[string] | D-tag values (replaceable)     |
+
+* License
+
+MIT OR Apache-2.0

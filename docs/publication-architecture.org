@@ -1,0 +1,356 @@
+#+TITLE: Publication Fetching & Display Architecture
+#+AUTHOR: nostr-engine
+#+DATE: 2026-01-26
+
+* Overview
+
+This document describes the architecture for fetching and displaying NKBIP-01 publications (kind 30040 indexes, kind 30041 sections) based on patterns from notedeck and tendrl_ws.
+
+* Event Kinds
+
+| Kind  | Name              | Purpose                                      |
+|-------+-------------------+----------------------------------------------|
+| 30040 | Publication Index | Table of contents - ordered list of a-tags   |
+| 30041 | Publication Section | Content section - markdown/asciidoc text   |
+| 30023 | Long-form Article | Standalone article (no hierarchy)            |
+
+* Data Structures
+
+** Event Address (NIP-33)
+
+Format: =kind:pubkey:d-tag=
+
+#+begin_src rust
+pub struct EventAddress {
+    pub kind: u32,
+    pub pubkey: [u8; 32],
+    pub dtag: String,  // Can contain colons
+}
+
+// Parsing: use splitn(3, ':') to preserve d-tag
+// Example: "30041:abc123:my:section:name" -> dtag = "my:section:name"
+#+end_src
+
+** Publication Tree (Notedeck Pattern)
+
+Index-based tree structure (avoids borrow checker issues with nested references):
+
+#+begin_src rust
+pub struct PublicationTree {
+    nodes: Vec<PublicationTreeNode>,
+    address_to_index: HashMap<EventAddress, usize>,
+    root_index: usize,
+}
+
+pub struct PublicationTreeNode {
+    node_type: NodeType,      // Branch (30040) or Leaf (30041)
+    status: NodeStatus,       // Pending | Loading | Resolved | Error
+    address: EventAddress,
+    note_key: Option<NoteKey>,
+    parent: Option<usize>,
+    children: Vec<usize>,
+    title: Option<String>,
+    order: usize,             // Position in parent's a-tags
+}
+
+pub enum NodeStatus {
+    Pending,    // Not yet fetched
+    Loading,    // Fetch in progress
+    Resolved,   // Successfully loaded
+    Error(String),
+}
+#+end_src
+
+** Tree Building Flow
+
+#+begin_src
+1. Fetch root 30040 event
+   |
+   v
+2. Parse a-tags -> create child nodes (all Pending)
+   |
+   v
+3. For each resolved child:
+   +-- If 30041 (Leaf): extract content, mark Resolved
+   +-- If 30040 (Branch): parse its a-tags -> add grandchildren (Pending)
+   |
+   v
+4. Repeat recursively as nodes become visible
+#+end_src
+
+* Fetching Strategies
+
+** Strategy 1: Eager (Simple)
+
+Load everything upfront. Simple but doesn't scale.
+
+#+begin_src
+GET /publication/:pk/:d
+    |
+    v
+Fetch 30040 -> Fetch ALL 30041s -> Return complete tree
+#+end_src
+
+Pros: Simple, works offline after initial load
+Cons: Slow for large publications, wastes bandwidth
+
+** Strategy 2: Lazy by Index (Current nostr-engine)
+
+Load sections on demand by position.
+
+#+begin_src
+GET /publication/:pk/:d        -> Returns index + TOC (sections pending)
+GET /publication/:pk/:d/sections/0  -> Loads first section
+GET /publication/:pk/:d/sections/5  -> Loads sixth section
+#+end_src
+
+Pros: Simple API, predictable
+Cons: No visibility awareness, can't batch efficiently
+
+** Strategy 3: Visibility-Driven (Notedeck)
+
+UI signals which nodes are rendered -> fetch those + buffer zone.
+
+#+begin_src rust
+// Each frame, UI reports visible node indices
+state.set_visible_nodes([3, 4, 5, 6]);  // Currently on screen
+
+// State layer calculates what to fetch:
+// - Visible pending nodes
+// - Children of visible nodes (prefetch)
+// - Adjacent siblings (buffer)
+let to_fetch = state.visible_pending_addresses();
+
+// Batch into efficient filters
+let filters = batch_by_kind_pubkey(to_fetch);
+pool.subscribe(sub_id, filters);
+#+end_src
+
+Pros: Optimal bandwidth, smooth scrolling
+Cons: Requires stateful connection, more complex
+
+** Strategy 4: Subscription-Based (Recommended for real-time)
+
+Keep relay connection open, receive updates.
+
+#+begin_src rust
+// Initial subscription for root
+pool.subscribe("pub_root", vec![
+    Filter::new().kinds([30040]).authors([pk]).tags([d], 'd').build()
+]);
+
+// On root received, expand subscription for children
+pool.subscribe("pub_children", vec![
+    Filter::new().kinds([30041]).authors([pk]).tags(child_dtags, 'd').build()
+]);
+
+// Connection stays open for updates
+#+end_src
+
+* Filter Batching
+
+Group addresses by =(kind, pubkey)= to minimize filter count:
+
+#+begin_src rust
+// Instead of 10 separate filters:
+// [kind:30041, author:A, #d:sec1]
+// [kind:30041, author:A, #d:sec2]
+// ...
+
+// Batch into 1 filter:
+// [kind:30041, author:A, #d:[sec1, sec2, sec3, ...]]
+
+pub fn batch_filters(addresses: &[EventAddress]) -> Vec<Filter> {
+    let mut grouped: HashMap<(u32, Pubkey), Vec<String>> = HashMap::new();
+
+    for addr in addresses {
+        grouped
+            .entry((addr.kind, addr.pubkey))
+            .or_default()
+            .push(addr.dtag.clone());
+    }
+
+    grouped.into_iter().map(|((kind, pk), dtags)| {
+        Filter::new()
+            .kinds([kind])
+            .authors([pk])
+            .tags(dtags, 'd')
+            .build()
+    }).collect()
+}
+#+end_src
+
+* Display Modes
+
+** Mode 1: Outline View
+
+Tree-based navigation with expand/collapse.
+
+#+begin_src
++-------------------------------------+
+| My Publication                      |
+| +-- Chapter 1 (click to expand)     |
+| |   +-- Section 1.1                 |
+| |   +-- Section 1.2                 |
+| +-- Chapter 2                       |
+| +-- Appendix (nested 30040)         |
++-------------------------------------+
+#+end_src
+
+- Shows current node + direct children
+- Click to drill down/up
+- Max inline depth (e.g., 5) before opening separately
+
+** Mode 2: Continuous Scroll
+
+All sections in reading order, infinite scroll.
+
+#+begin_src
++-------------------------------------+
+| Chapter 1                           |
+| ----------------------------------- |
+| Lorem ipsum dolor sit amet...       |
+|                                     |
+| Section 1.1                         |
+| ----------------------------------- |
+| Consectetur adipiscing elit...      |
+|                                     |
+| [Loading Section 1.2...]            |  <-- Lazy loads as you scroll
+|                                     |
++-------------------------------------+
+#+end_src
+
+- Track visible node indices each frame
+- Prefetch nodes entering viewport
+- IntersectionObserver pattern for web
+
+** Mode 3: Paginated
+
+One section at a time.
+
+#+begin_src
++-------------------------------------+
+| Chapter 1: Introduction     [3/40]  |
+| ----------------------------------- |
+|                                     |
+| Lorem ipsum dolor sit amet,         |
+| consectetur adipiscing elit...      |
+|                                     |
+|                                     |
+| [< Prev]              [Next >]      |
++-------------------------------------+
+#+end_src
+
+- Minimal loading (current + adjacent)
+- Progress indicator
+- Keyboard navigation (left/right arrows)
+
+* Nested Publication Handling
+
+When a 30040 contains another 30040 in its a-tags:
+
+#+begin_src rust
+pub struct PublicationSelection {
+    pub current_id: NoteId,
+    history: Vec<NoteId>,  // Navigation stack
+}
+
+impl PublicationSelection {
+    pub fn navigate_into(&mut self, nested_id: NoteId) {
+        self.history.push(self.current_id);
+        self.current_id = nested_id;
+    }
+
+    pub fn navigate_back(&mut self) -> bool {
+        if let Some(prev) = self.history.pop() {
+            self.current_id = prev;
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn breadcrumbs(&self) -> &[NoteId] {
+        &self.history
+    }
+}
+#+end_src
+
+* Change Detection
+
+Use version counter instead of per-node dirty flags:
+
+#+begin_src rust
+pub struct PublicationTreeState {
+    tree: PublicationTree,
+    resolved_version: u64,  // Increments on each resolution
+}
+
+impl PublicationTreeState {
+    pub fn resolve_node(&mut self, addr: &EventAddress, note: Note) {
+        // ... update node ...
+        self.resolved_version += 1;
+    }
+}
+
+// UI checks: if version changed, re-render
+if state.resolved_version != last_rendered_version {
+    render_tree(&state.tree);
+    last_rendered_version = state.resolved_version;
+}
+#+end_src
+
+* API Design Comparison
+
+** REST API (nostr-engine current)
+
+#+begin_src
+GET  /publications                           # List roots
+GET  /publications/:pk/:d                    # Get index + TOC
+POST /publications/:pk/:d/sections           # Load all sections
+GET  /publications/:pk/:d/sections/:index    # Load one section
+GET  /sections/:pk/:d/versions               # Find forks
+#+end_src
+
+** WebSocket API (for visibility-driven)
+
+#+begin_src json
+// Client -> Server: Set visible nodes
+{"type": "set_visible", "pub_id": "...", "nodes": [3, 4, 5, 6]}
+
+// Server -> Client: Node resolved
+{"type": "node_resolved", "pub_id": "...", "index": 4, "content": "..."}
+
+// Server -> Client: Batch update
+{"type": "nodes_resolved", "pub_id": "...", "nodes": [...]}
+#+end_src
+
+* Implementation Phases
+
+** Phase 1: Core Tree Structure
+- [ ] Implement =PublicationTree= with indexed nodes
+- [ ] Add =NodeStatus= tracking (Pending/Loading/Resolved/Error)
+- [ ] Parse a-tags recursively for nested 30040s
+
+** Phase 2: Lazy Loading
+- [ ] Add =load_node(index)= for single node fetch
+- [ ] Add =load_visible(indices)= for batch fetch
+- [ ] Implement filter batching by (kind, pubkey)
+
+** Phase 3: Display Modes
+- [ ] Outline view with expand/collapse
+- [ ] Continuous scroll with intersection observer
+- [ ] Paginated view with navigation
+
+** Phase 4: Advanced Features
+- [ ] Nested publication navigation with history
+- [ ] Section versioning/forking UI
+- [ ] WebSocket subscription mode
+- [ ] Offline caching strategy
+
+* References
+
+- Notedeck implementation: =~/Programming/notedeck/crates/notedeck_publications/=
+- NKBIP-01 spec: Publication index events
+- NIP-33: Parameterized replaceable events
+- tendrl_ws: =~/Documents/Programming/tendrl-worspace/tendrl_ws/=

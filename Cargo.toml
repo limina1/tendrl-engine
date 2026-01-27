@@ -1,0 +1,74 @@
+[package]
+name = "nostr-engine"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "Standalone local Nostr backend with HTTP API - query nostrdb and fetch from relays"
+repository = "https://github.com/youruser/nostr-engine"
+keywords = ["nostr", "relay", "database", "api"]
+categories = ["database", "web-programming"]
+
+[lib]
+name = "nostr_engine"
+path = "src/lib.rs"
+
+[[bin]]
+name = "nostr-engine"
+path = "src/main.rs"
+
+[[example]]
+name = "basic_query"
+path = "examples/basic_query.rs"
+
+[[bin]]
+name = "nostr-tree"
+path = "src/bin/nostr-tree.rs"
+required-features = ["tui"]
+
+[features]
+default = []
+tui = ["ratatui", "crossterm", "tracing-appender"]
+
+[dependencies]
+# Nostr database
+nostrdb = { git = "https://github.com/damus-io/nostrdb-rs", rev = "2b2e5e43c019b80b98f1db6a03a1b88ca699bfa3" }
+
+# HTTP server
+axum = "0.7"
+tower-http = { version = "0.5", features = ["cors"] }
+
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+futures = "0.3"
+
+# WebSocket client for relay fetching
+tokio-tungstenite = { version = "0.21", features = ["native-tls"] }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Configuration
+toml = "0.8"
+
+# Error handling
+anyhow = "1"
+thiserror = "2"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Utilities
+hex = "0.4"
+
+# CLI argument parsing
+clap = { version = "4", features = ["derive"] }
+
+# TUI (optional, for nostr-tree binary)
+ratatui = { version = "0.29", optional = true }
+crossterm = { version = "0.28", optional = true }
+tracing-appender = { version = "0.2", optional = true }
+
+[dev-dependencies]
+tokio-test = "0.4"
