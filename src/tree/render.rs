@@ -134,8 +134,21 @@ pub trait TreeRenderer {
 }
 
 /// Get all visible nodes in display order
+///
+/// In Feed mode, returns all roots with their expanded children.
+/// In Reader mode, only returns the selected publication and its children.
 pub fn visible_nodes(state: &TreeState) -> Vec<VisibleNode> {
     let mut result = Vec::new();
+
+    // In Reader mode, only show the selected publication's tree
+    if state.is_reader_mode() {
+        if let Some(pub_id) = state.selected_publication {
+            collect_visible(state, pub_id, 0, &mut result);
+            return result;
+        }
+    }
+
+    // In Feed mode (or fallback), show all roots
     for &root_id in &state.roots {
         collect_visible(state, root_id, 0, &mut result);
     }
