@@ -1264,10 +1264,24 @@ impl TuiApp {
                     let pub_d_tag = compose.publication_d_tag();
                     let addr = NAddr::new(30040, &pubkey, &pub_d_tag);
 
+                    // Build section data for the result
+                    use crate::tree::command::CreatedSection;
+                    let created_sections: Vec<CreatedSection> = compose.sections.iter()
+                        .enumerate()
+                        .map(|(i, s)| {
+                            let section_d_tag = compose.section_d_tag(i);
+                            CreatedSection {
+                                addr: NAddr::new(30041, &pubkey, &section_d_tag),
+                                title: if s.title.is_empty() { None } else { Some(s.title.clone()) },
+                                content: if s.content.is_empty() { None } else { Some(s.content.clone()) },
+                            }
+                        })
+                        .collect();
+
                     AsyncResult::PublicationCreated {
                         addr,
                         title: Some(title.clone()),
-                        section_count: sections.len(),
+                        sections: created_sections,
                     }
                 };
 

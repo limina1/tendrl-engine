@@ -984,8 +984,8 @@ pub enum AsyncResult {
         addr: NAddr,
         /// Publication title
         title: Option<String>,
-        /// Number of sections created
-        section_count: usize,
+        /// Section addresses with titles and content
+        sections: Vec<CreatedSection>,
     },
     /// Operation failed
     Error {
@@ -1022,6 +1022,14 @@ pub struct LoadedChild {
     pub addr: NAddr,
     pub title: Option<String>,
     pub is_publication: bool,
+}
+
+/// A locally created section (for PublicationCreated result)
+#[derive(Debug, Clone)]
+pub struct CreatedSection {
+    pub addr: NAddr,
+    pub title: Option<String>,
+    pub content: Option<String>,
 }
 
 /// An alternate version of a section

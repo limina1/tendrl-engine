@@ -476,7 +476,7 @@ impl TreeEngine {
                 CommandResult::StateChanged
             }
 
-            AsyncResult::PublicationCreated { addr, title, section_count } => {
+            AsyncResult::PublicationCreated { addr, title, sections } => {
                 use crate::tree::node::SyncStatus;
 
                 // Create publication node with LocalCreated status
@@ -486,9 +486,26 @@ impl TreeEngine {
                 pub_node.author = addr.pubkey.clone();
                 pub_node.loaded = true;
                 pub_node.sync_status = SyncStatus::LocalCreated;
-                pub_node.summary = Some(format!("{} sections", section_count));
+                pub_node.summary = Some(format!("{} sections", sections.len()));
 
+                // Create section nodes
+                let mut child_ids = Vec::new();
+                for (i, section) in sections.iter().enumerate() {
+                    let section_id = NodeId::from_addr(&section.addr);
+                    child_ids.push(section_id);
+
+                    let mut section_node = SectionNode::stub(section.addr.clone(), pub_id, i);
+                    section_node.title = section.title.clone();
+                    section_node.content = section.content.clone();
+                    section_node.loaded = true;
+                    section_node.sync_status = SyncStatus::LocalCreated;
+
+                    state.nodes.insert(section_id, TreeNode::Section(section_node));
+                }
+
+                pub_node.children = child_ids;
                 state.nodes.insert(pub_id, TreeNode::Publication(pub_node));
+
                 // Insert at top of feed
                 state.roots.insert(0, pub_id);
 
