@@ -21,6 +21,10 @@ pub struct KeyContext {
     pub window_focused: bool,
     /// Whether the user data menu is open
     pub user_data_menu_open: bool,
+    /// Whether using editor compose (true) vs structured compose (false)
+    pub editor_compose: bool,
+    /// Whether in insert mode (for editor compose)
+    pub editor_insert_mode: bool,
 }
 
 impl KeyMapper {
@@ -52,7 +56,11 @@ impl KeyMapper {
         // Handle compose mode separately - it captures most input
         if let Some(c) = ctx {
             if c.app_mode == AppMode::Compose {
-                return self.map_compose(key);
+                if c.editor_compose {
+                    return self.map_editor_compose(key, c.editor_insert_mode);
+                } else {
+                    return self.map_compose(key);
+                }
             }
         }
 
@@ -183,6 +191,8 @@ impl KeyMapper {
 
             // Compose (from feed mode)
             KeyCode::Char('c') => Some(TreeCommand::EnterCompose),
+            // Editor compose (C = shift+c)
+            KeyCode::Char('C') => Some(TreeCommand::EnterEditorCompose),
 
             // Login (from feed mode)
             KeyCode::Char('i') => Some(TreeCommand::OpenLoginDialog),
@@ -258,6 +268,83 @@ impl KeyMapper {
             KeyCode::Char(c) => Some(TreeCommand::InsertChar { c }),
 
             _ => None,
+        }
+    }
+
+    /// Map keys for editor compose mode
+    fn map_editor_compose(&mut self, key: KeyEvent, insert_mode: bool) -> Option<TreeCommand> {
+        if insert_mode {
+            // Insert mode - most keys insert characters
+            match key.code {
+                // Exit insert mode
+                KeyCode::Esc => Some(TreeCommand::EditorToggleMode),
+
+                // Navigation (arrow keys work in insert mode)
+                KeyCode::Left => Some(TreeCommand::EditorCursorLeft),
+                KeyCode::Right => Some(TreeCommand::EditorCursorRight),
+                KeyCode::Up => Some(TreeCommand::EditorCursorUp),
+                KeyCode::Down => Some(TreeCommand::EditorCursorDown),
+                KeyCode::Home => Some(TreeCommand::EditorCursorHome),
+                KeyCode::End => Some(TreeCommand::EditorCursorEnd),
+
+                // Text editing
+                KeyCode::Backspace => Some(TreeCommand::EditorBackspace),
+                KeyCode::Delete => Some(TreeCommand::EditorDelete),
+                KeyCode::Enter => Some(TreeCommand::EditorInsertNewline),
+
+                // Control commands
+                KeyCode::Char('s') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    Some(TreeCommand::SaveDraft)
+                }
+                KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    Some(TreeCommand::ExitCompose)
+                }
+                KeyCode::Char('e') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    // Toggle to structured compose
+                    Some(TreeCommand::ToggleComposeStyle)
+                }
+
+                // Character input
+                KeyCode::Char(c) => Some(TreeCommand::EditorInsertChar { c }),
+
+                _ => None,
+            }
+        } else {
+            // Normal mode - vim-like navigation
+            match key.code {
+                // Enter insert mode
+                KeyCode::Char('i') => Some(TreeCommand::EditorToggleMode),
+                KeyCode::Char('a') => Some(TreeCommand::EditorInsertAfter),
+                KeyCode::Char('o') => Some(TreeCommand::EditorInsertLineBelow),
+                KeyCode::Char('O') => Some(TreeCommand::EditorInsertLineAbove),
+
+                // Exit compose
+                KeyCode::Esc | KeyCode::Char('q') => Some(TreeCommand::ExitCompose),
+
+                // Navigation
+                KeyCode::Char('h') | KeyCode::Left => Some(TreeCommand::EditorCursorLeft),
+                KeyCode::Char('l') | KeyCode::Right => Some(TreeCommand::EditorCursorRight),
+                KeyCode::Char('j') | KeyCode::Down => Some(TreeCommand::EditorCursorDown),
+                KeyCode::Char('k') | KeyCode::Up => Some(TreeCommand::EditorCursorUp),
+                KeyCode::Char('0') | KeyCode::Home => Some(TreeCommand::EditorCursorHome),
+                KeyCode::Char('$') | KeyCode::End => Some(TreeCommand::EditorCursorEnd),
+                KeyCode::Char('g') => {
+                    self.g_prefix = true;
+                    None
+                }
+                KeyCode::Char('G') => Some(TreeCommand::EditorCursorToEnd),
+
+                // Delete
+                KeyCode::Char('x') => Some(TreeCommand::EditorDelete),
+                KeyCode::Char('d') => Some(TreeCommand::EditorDeleteLine),
+
+                // Control commands
+                KeyCode::Char('e') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    Some(TreeCommand::ToggleComposeStyle)
+                }
+
+                _ => None,
+            }
         }
     }
 

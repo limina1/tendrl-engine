@@ -69,8 +69,12 @@ pub struct TreeState {
     pub feed_exhausted: bool,
     /// Command palette state
     pub command_palette: CommandPaletteState,
-    /// Compose mode state
+    /// Compose mode state (structured)
     pub compose: ComposeState,
+    /// Editor compose mode state (single buffer)
+    pub editor_compose: EditorComposeState,
+    /// Whether to use editor compose (true) or structured compose (false)
+    pub use_editor_compose: bool,
     /// Window manager for overlay windows
     pub windows: WindowManager,
     /// Identity/login state
@@ -104,6 +108,8 @@ impl TreeState {
             feed_exhausted: false,
             command_palette: CommandPaletteState::new(),
             compose: ComposeState::new(),
+            editor_compose: EditorComposeState::new(),
+            use_editor_compose: false,
             windows: WindowManager::new(),
             identity: Identity::new(),
             login_dialog: None,
@@ -112,10 +118,28 @@ impl TreeState {
         }
     }
 
-    /// Enter compose mode
+    /// Enter compose mode (structured)
     pub fn enter_compose(&mut self) {
         self.compose.reset();
+        self.use_editor_compose = false;
         self.mode = AppMode::Compose;
+    }
+
+    /// Enter editor compose mode (single buffer)
+    pub fn enter_editor_compose(&mut self) {
+        self.editor_compose = EditorComposeState::new();
+        self.use_editor_compose = true;
+        self.mode = AppMode::Compose;
+    }
+
+    /// Toggle between structured and editor compose modes
+    pub fn toggle_compose_style(&mut self) {
+        self.use_editor_compose = !self.use_editor_compose;
+    }
+
+    /// Check if using editor compose mode
+    pub fn is_editor_compose(&self) -> bool {
+        self.mode == AppMode::Compose && self.use_editor_compose
     }
 
     /// Exit compose mode and return to feed

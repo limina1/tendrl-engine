@@ -1927,11 +1927,11 @@ impl Widget for UserDataMenuWidget<'_> {
 /// - Attributes shown with "t" indicator
 /// - Code blocks with language label and distinct background
 pub struct EditorComposeWidget<'a> {
-    state: &'a mut crate::tree::state::EditorComposeState,
+    state: &'a crate::tree::state::EditorComposeState,
 }
 
 impl<'a> EditorComposeWidget<'a> {
-    pub fn new(state: &'a mut crate::tree::state::EditorComposeState) -> Self {
+    pub fn new(state: &'a crate::tree::state::EditorComposeState) -> Self {
         EditorComposeWidget { state }
     }
 
@@ -1987,12 +1987,20 @@ impl<'a> Widget for EditorComposeWidget<'a> {
         let indicator_width = 6;
         let text_width = inner.width.saturating_sub(indicator_width + 1);
 
-        // Ensure cursor is visible
+        // Calculate effective scroll to keep cursor visible
         let visible_lines = inner.height as usize;
-        self.state.ensure_cursor_visible(visible_lines);
+        let scroll = {
+            let mut s = self.state.scroll;
+            if self.state.cursor_line < s {
+                s = self.state.cursor_line;
+            } else if self.state.cursor_line >= s + visible_lines {
+                s = self.state.cursor_line - visible_lines + 1;
+            }
+            s
+        };
 
         // Render visible lines
-        for (i, line_idx) in (self.state.scroll..self.state.scroll + visible_lines).enumerate() {
+        for (i, line_idx) in (scroll..scroll + visible_lines).enumerate() {
             let y = inner.y + i as u16;
             if y >= inner.y + inner.height {
                 break;
@@ -2063,7 +2071,7 @@ impl<'a> Widget for EditorComposeWidget<'a> {
             );
 
             // Show current code block language if in one
-            let blocks = crate::tree::parser::ParsedDocument::parse(&self.state.content, self.state.mode).code_blocks();
+            let blocks = parsed.code_blocks();
             for (start, end, lang) in blocks {
                 if self.state.cursor_line >= start && self.state.cursor_line <= end && !lang.is_empty() {
                     let lang_status = format!("[{}]", lang);

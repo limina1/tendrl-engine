@@ -51,6 +51,7 @@ impl TreeEngine {
                 }
                 TreeCommand::Enter => return self.feed_enter(state),
                 TreeCommand::EnterCompose => return self.enter_compose(state),
+                TreeCommand::EnterEditorCompose => return self.enter_editor_compose(state),
                 TreeCommand::FilterDrafts => {
                     state.view.filter_drafts = !state.view.filter_drafts;
                     state.feed_cursor = 0; // Reset cursor when toggling filter
@@ -172,8 +173,8 @@ impl TreeEngine {
             }
 
             // Compose mode commands - only valid in compose mode, handled by execute_compose
-            TreeCommand::EnterCompose => {
-                // In feed mode, this is handled above; in other modes it's a no-op
+            TreeCommand::EnterCompose | TreeCommand::EnterEditorCompose => {
+                // In feed mode, these are handled above; in other modes it's a no-op
                 CommandResult::NoOp
             }
             TreeCommand::ExitCompose
@@ -191,7 +192,24 @@ impl TreeEngine {
             | TreeCommand::AddSection
             | TreeCommand::RemoveSection
             | TreeCommand::InsertNewline
-            | TreeCommand::Publish => {
+            | TreeCommand::Publish
+            | TreeCommand::ToggleComposeStyle
+            | TreeCommand::EditorToggleMode
+            | TreeCommand::EditorInsertChar { .. }
+            | TreeCommand::EditorInsertNewline
+            | TreeCommand::EditorBackspace
+            | TreeCommand::EditorDelete
+            | TreeCommand::EditorDeleteLine
+            | TreeCommand::EditorCursorLeft
+            | TreeCommand::EditorCursorRight
+            | TreeCommand::EditorCursorUp
+            | TreeCommand::EditorCursorDown
+            | TreeCommand::EditorCursorHome
+            | TreeCommand::EditorCursorEnd
+            | TreeCommand::EditorCursorToEnd
+            | TreeCommand::EditorInsertAfter
+            | TreeCommand::EditorInsertLineBelow
+            | TreeCommand::EditorInsertLineAbove => {
                 // These are only valid in compose mode
                 CommandResult::NoOp
             }
@@ -942,6 +960,11 @@ impl TreeEngine {
         CommandResult::ModeChanged(AppMode::Compose)
     }
 
+    fn enter_editor_compose(&self, state: &mut TreeState) -> CommandResult {
+        state.enter_editor_compose();
+        CommandResult::ModeChanged(AppMode::Compose)
+    }
+
     fn execute_compose(&self, state: &mut TreeState, command: TreeCommand) -> CommandResult {
         match command {
             TreeCommand::ExitCompose | TreeCommand::Back => {
@@ -1038,6 +1061,95 @@ impl TreeEngine {
                 CommandResult::NeedsAsync(AsyncRequest::SaveDraft {
                     compose: state.compose.clone(),
                 })
+            }
+            TreeCommand::ToggleComposeStyle => {
+                state.toggle_compose_style();
+                CommandResult::StateChanged
+            }
+            // Editor compose commands
+            TreeCommand::EditorToggleMode => {
+                state.editor_compose.insert_mode = !state.editor_compose.insert_mode;
+                CommandResult::StateChanged
+            }
+            TreeCommand::EditorInsertChar { c } => {
+                state.editor_compose.insert_char(c);
+                CommandResult::StateChanged
+            }
+            TreeCommand::EditorInsertNewline => {
+                state.editor_compose.insert_char('\n');
+                CommandResult::StateChanged
+            }
+            TreeCommand::EditorBackspace => {
+                state.editor_compose.delete_char_before();
+                CommandResult::StateChanged
+            }
+            TreeCommand::EditorDelete => {
+                state.editor_compose.delete_char_at();
+                CommandResult::StateChanged
+            }
+            TreeCommand::EditorDeleteLine => {
+                // Delete current line (simplified: just delete to end of line)
+                state.editor_compose.cursor_home();
+                while state.editor_compose.get_line(state.editor_compose.cursor_line)
+                    .map(|l| !l.is_empty())
+                    .unwrap_or(false)
+                {
+                    state.editor_compose.delete_char_at();
+                }
+                // Also delete the newline if not at end
+                state.editor_compose.delete_char_at();
+                CommandResult::StateChanged
+            }
+            TreeCommand::EditorCursorLeft => {
+                state.editor_compose.cursor_left();
+                CommandResult::StateChanged
+            }
+            TreeCommand::EditorCursorRight => {
+                state.editor_compose.cursor_right();
+                CommandResult::StateChanged
+            }
+            TreeCommand::EditorCursorUp => {
+                state.editor_compose.cursor_up();
+                CommandResult::StateChanged
+            }
+            TreeCommand::EditorCursorDown => {
+                state.editor_compose.cursor_down();
+                CommandResult::StateChanged
+            }
+            TreeCommand::EditorCursorHome => {
+                state.editor_compose.cursor_home();
+                CommandResult::StateChanged
+            }
+            TreeCommand::EditorCursorEnd => {
+                state.editor_compose.cursor_end();
+                CommandResult::StateChanged
+            }
+            TreeCommand::EditorCursorToEnd => {
+                // Move to end of document
+                let line_count = state.editor_compose.line_count();
+                if line_count > 0 {
+                    state.editor_compose.cursor_line = line_count - 1;
+                    state.editor_compose.cursor_end();
+                }
+                CommandResult::StateChanged
+            }
+            TreeCommand::EditorInsertAfter => {
+                state.editor_compose.cursor_right();
+                state.editor_compose.insert_mode = true;
+                CommandResult::StateChanged
+            }
+            TreeCommand::EditorInsertLineBelow => {
+                state.editor_compose.cursor_end();
+                state.editor_compose.insert_char('\n');
+                state.editor_compose.insert_mode = true;
+                CommandResult::StateChanged
+            }
+            TreeCommand::EditorInsertLineAbove => {
+                state.editor_compose.cursor_home();
+                state.editor_compose.insert_char('\n');
+                state.editor_compose.cursor_up();
+                state.editor_compose.insert_mode = true;
+                CommandResult::StateChanged
             }
             TreeCommand::Quit => CommandResult::Exit,
             // All other commands are no-ops in compose mode

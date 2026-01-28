@@ -578,8 +578,10 @@ pub enum TreeCommand {
     ShowCommandPalette,
 
     // Compose mode
-    /// Enter compose mode
+    /// Enter compose mode (structured)
     EnterCompose,
+    /// Enter editor compose mode (single buffer)
+    EnterEditorCompose,
     /// Exit compose mode (back to feed)
     ExitCompose,
     /// Insert a character at cursor
@@ -612,6 +614,42 @@ pub enum TreeCommand {
     InsertNewline,
     /// Publish the composed content (Ctrl+Enter)
     Publish,
+    /// Toggle between structured and editor compose modes
+    ToggleComposeStyle,
+
+    // Editor compose mode
+    /// Toggle insert/normal mode in editor compose
+    EditorToggleMode,
+    /// Insert character in editor compose
+    EditorInsertChar { c: char },
+    /// Insert newline in editor compose
+    EditorInsertNewline,
+    /// Backspace in editor compose
+    EditorBackspace,
+    /// Delete at cursor in editor compose
+    EditorDelete,
+    /// Delete entire line in editor compose
+    EditorDeleteLine,
+    /// Cursor left in editor compose
+    EditorCursorLeft,
+    /// Cursor right in editor compose
+    EditorCursorRight,
+    /// Cursor up in editor compose
+    EditorCursorUp,
+    /// Cursor down in editor compose
+    EditorCursorDown,
+    /// Cursor to start of line in editor compose
+    EditorCursorHome,
+    /// Cursor to end of line in editor compose
+    EditorCursorEnd,
+    /// Cursor to end of document in editor compose
+    EditorCursorToEnd,
+    /// Enter insert mode after cursor (a)
+    EditorInsertAfter,
+    /// Insert new line below and enter insert mode (o)
+    EditorInsertLineBelow,
+    /// Insert new line above and enter insert mode (O)
+    EditorInsertLineAbove,
 
     // Window management
     /// Open a window with JSON content (e.g., raw event data)

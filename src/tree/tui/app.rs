@@ -13,7 +13,7 @@ use crate::tree::state::{LoginDialogState, TreeState, ViewMode};
 use crate::tree::tui::input::{KeyContext, KeyMapper};
 use crate::tree::tui::spinner::Spinner;
 use crate::tree::tui::widgets::{
-    CommandPaletteWidget, ComposeWidget, ContentPreview, ContinuousWidget, FeedWidget, HelpBar,
+    CommandPaletteWidget, ComposeWidget, ContentPreview, ContinuousWidget, EditorComposeWidget, FeedWidget, HelpBar,
     LoginDialogWidget, OutlineWidget, PaginatedWidget, StatusBar, TreeWidget, UserDataMenuWidget,
     WindowWidget,
 };
@@ -461,6 +461,8 @@ impl TuiApp {
                         },
                         window_focused: self.state.windows.is_focused(),
                         user_data_menu_open: self.state.user_data_menu.is_some(),
+                        editor_compose: self.state.use_editor_compose,
+                        editor_insert_mode: self.state.editor_compose.insert_mode,
                     };
                     if let Some(command) = self.key_mapper.map_with_context(key, Some(&ctx)) {
                         // Handle ShowCommandPalette specially
@@ -1081,12 +1083,20 @@ impl TuiApp {
     }
 
     fn draw_compose_mode(&self, frame: &mut Frame, area: Rect) {
-        // Pass the identity pubkey to the compose widget for event preview
-        let pubkey = self.state.identity.status.pubkey();
-        frame.render_widget(
-            ComposeWidget::new(&self.state.compose).with_pubkey(pubkey),
-            area
-        );
+        if self.state.use_editor_compose {
+            // Editor compose mode - single buffer with structure detection
+            frame.render_widget(
+                EditorComposeWidget::new(&self.state.editor_compose),
+                area
+            );
+        } else {
+            // Structured compose mode - explicit sections
+            let pubkey = self.state.identity.status.pubkey();
+            frame.render_widget(
+                ComposeWidget::new(&self.state.compose).with_pubkey(pubkey),
+                area
+            );
+        }
     }
 
     fn spawn_async_request(&mut self, request: AsyncRequest) {
