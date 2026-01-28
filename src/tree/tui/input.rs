@@ -303,6 +303,9 @@ impl KeyMapper {
                     // Toggle to structured compose
                     Some(TreeCommand::ToggleComposeStyle)
                 }
+                KeyCode::Char('v') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    Some(TreeCommand::CycleEditorViewMode)
+                }
 
                 // Character input
                 KeyCode::Char(c) => Some(TreeCommand::EditorInsertChar { c }),
@@ -311,6 +314,16 @@ impl KeyMapper {
             }
         } else {
             // Normal mode - vim-like navigation
+
+            // Handle g prefix for gg
+            if self.g_prefix {
+                self.g_prefix = false;
+                if key.code == KeyCode::Char('g') {
+                    return Some(TreeCommand::MoveToFirst); // Reuse for go-to-top
+                }
+                return None;
+            }
+
             match key.code {
                 // Enter insert mode
                 KeyCode::Char('i') => Some(TreeCommand::EditorToggleMode),
@@ -332,7 +345,7 @@ impl KeyMapper {
                     self.g_prefix = true;
                     None
                 }
-                KeyCode::Char('G') => Some(TreeCommand::EditorCursorToEnd),
+                KeyCode::Char('G') => Some(TreeCommand::MoveToLast),
 
                 // Delete
                 KeyCode::Char('x') => Some(TreeCommand::EditorDelete),
@@ -342,6 +355,12 @@ impl KeyMapper {
                 KeyCode::Char('e') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                     Some(TreeCommand::ToggleComposeStyle)
                 }
+                KeyCode::Char('v') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    Some(TreeCommand::CycleEditorViewMode)
+                }
+
+                // View mode cycling (v in normal mode)
+                KeyCode::Char('v') => Some(TreeCommand::CycleEditorViewMode),
 
                 _ => None,
             }

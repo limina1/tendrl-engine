@@ -1967,11 +1967,15 @@ impl<'a> EditorComposeWidget<'a> {
 
 impl<'a> Widget for EditorComposeWidget<'a> {
     fn render(self, area: Rect, buf: &mut Buffer) {
-        use crate::tree::parser::LineType;
+        use crate::tree::state::EditorViewMode;
 
         let block = Block::default()
             .borders(Borders::ALL)
-            .title(format!(" Editor [{}] ", self.state.mode.name()));
+            .title(format!(
+                " Editor [{}] [{}] ",
+                self.state.mode.name(),
+                self.state.view_mode.name()
+            ));
 
         let inner = block.inner(area);
         block.render(area, buf);
@@ -1979,6 +1983,20 @@ impl<'a> Widget for EditorComposeWidget<'a> {
         if inner.height < 2 || inner.width < 10 {
             return;
         }
+
+        // Dispatch to the appropriate view renderer
+        match self.state.view_mode {
+            EditorViewMode::Plain => self.render_plain_view(inner, buf),
+            EditorViewMode::Json => self.render_json_view(inner, buf),
+            EditorViewMode::Structured => self.render_structured_view(inner, buf),
+        }
+    }
+}
+
+impl<'a> EditorComposeWidget<'a> {
+    /// Render the plain text editor view
+    fn render_plain_view(&self, inner: Rect, buf: &mut Buffer) {
+        use crate::tree::parser::LineType;
 
         // Parse the document
         let parsed = crate::tree::parser::ParsedDocument::parse(&self.state.content, self.state.mode);
@@ -2054,7 +2072,7 @@ impl<'a> Widget for EditorComposeWidget<'a> {
 
         // Status line at bottom (if room)
         if inner.height > 1 {
-            let status_y = area.y + area.height - 1;
+            let status_y = inner.y + inner.height - 1;
             let mode_str = if self.state.insert_mode { "INSERT" } else { "NORMAL" };
             let status = format!(
                 " {} | L{}/{} C{} ",
@@ -2064,7 +2082,7 @@ impl<'a> Widget for EditorComposeWidget<'a> {
                 self.state.cursor_col + 1
             );
             buf.set_string(
-                area.x + 1,
+                inner.x,
                 status_y,
                 &status,
                 Style::default().fg(Color::DarkGray),
@@ -2075,11 +2093,146 @@ impl<'a> Widget for EditorComposeWidget<'a> {
             for (start, end, lang) in blocks {
                 if self.state.cursor_line >= start && self.state.cursor_line <= end && !lang.is_empty() {
                     let lang_status = format!("[{}]", lang);
-                    let lang_x = area.x + area.width - lang_status.len() as u16 - 2;
+                    let lang_x = inner.x + inner.width - lang_status.len() as u16 - 1;
                     buf.set_string(lang_x, status_y, &lang_status, Style::default().fg(Color::Yellow));
                     break;
                 }
             }
+        }
+    }
+
+    /// Render the JSON preview view showing events that would be generated
+    fn render_json_view(&self, inner: Rect, buf: &mut Buffer) {
+        // Parse document to get sections
+        let parsed = crate::tree::parser::ParsedDocument::parse(&self.state.content, self.state.mode);
+        let sections = parsed.sections();
+
+        // Build a simple JSON representation of the events
+        let mut lines: Vec<String> = Vec::new();
+        lines.push("// Events that would be generated:".to_string());
+        lines.push(String::new());
+
+        // Index event (30040)
+        lines.push("// Index Event (kind 30040)".to_string());
+        lines.push("{".to_string());
+        lines.push("  \"kind\": 30040,".to_string());
+        lines.push("  \"content\": \"\",".to_string());
+        lines.push("  \"tags\": [".to_string());
+        for (i, section) in sections.iter().enumerate() {
+            let title = if section.title.is_empty() { "Untitled" } else { &section.title };
+            let comma = if i < sections.len() - 1 { "," } else { "" };
+            lines.push(format!("    [\"a\", \"30041:<pubkey>:{}\"]{}  // {}", i, comma, title));
+        }
+        lines.push("  ]".to_string());
+        lines.push("}".to_string());
+        lines.push(String::new());
+
+        // Content events (30041)
+        for (i, section) in sections.iter().enumerate() {
+            let title = if section.title.is_empty() { "Untitled" } else { &section.title };
+            let line_count = section.end_line.saturating_sub(section.start_line) + 1;
+            lines.push(format!("// Section {} (kind 30041): {}", i + 1, title));
+            lines.push("{".to_string());
+            lines.push("  \"kind\": 30041,".to_string());
+            lines.push(format!("  \"content\": \"<{} lines>\",", line_count));
+            lines.push(format!("  \"tags\": [[\"title\", \"{}\"]]", title));
+            lines.push("}".to_string());
+            lines.push(String::new());
+        }
+
+        // Render the lines with scroll support (use cursor_line as scroll offset)
+        let visible_lines = inner.height.saturating_sub(1) as usize; // Reserve 1 line for status
+        let scroll = self.state.cursor_line.min(lines.len().saturating_sub(visible_lines));
+        let total_lines = lines.len();
+
+        for (i, line) in lines.iter().skip(scroll).take(visible_lines).enumerate() {
+            let y = inner.y + i as u16;
+            let display: String = line.chars().take(inner.width as usize).collect();
+            let style = if line.starts_with("//") {
+                Style::default().fg(Color::DarkGray)
+            } else {
+                Style::default().fg(Color::Cyan)
+            };
+            buf.set_string(inner.x, y, &display, style);
+        }
+
+        // Status line
+        if inner.height > 1 {
+            let status_y = inner.y + inner.height - 1;
+            let status = format!(
+                " {} sections | L{}/{} | j/k scroll | v switch view ",
+                sections.len(),
+                scroll + 1,
+                total_lines
+            );
+            buf.set_string(inner.x, status_y, &status, Style::default().fg(Color::DarkGray));
+        }
+    }
+
+    /// Render the structured document tree view
+    fn render_structured_view(&self, inner: Rect, buf: &mut Buffer) {
+        // Parse document to get sections
+        let parsed = crate::tree::parser::ParsedDocument::parse(&self.state.content, self.state.mode);
+        let sections = parsed.sections();
+
+        let mut lines: Vec<(String, Style)> = Vec::new();
+
+        // Document structure header
+        lines.push((
+            format!("Document Structure ({} sections)", sections.len()),
+            Style::default().fg(Color::White).bold(),
+        ));
+        lines.push((String::new(), Style::default()));
+
+        // Render each section as a tree node
+        for (i, section) in sections.iter().enumerate() {
+            let title = if section.title.is_empty() { "Untitled" } else { &section.title };
+            let prefix = if i == sections.len() - 1 { "└── " } else { "├── " };
+
+            // Section header
+            lines.push((
+                format!("{}{}", prefix, title),
+                Style::default().fg(Color::Green).bold(),
+            ));
+
+            // Section details
+            let detail_prefix = if i == sections.len() - 1 { "    " } else { "│   " };
+            let line_count = section.end_line.saturating_sub(section.start_line) + 1;
+            lines.push((
+                format!("{}  Kind: {}", detail_prefix, section.event_kind),
+                Style::default().fg(Color::DarkGray),
+            ));
+            lines.push((
+                format!("{}  Lines: {}-{}", detail_prefix, section.start_line + 1, section.end_line + 1),
+                Style::default().fg(Color::DarkGray),
+            ));
+            lines.push((
+                format!("{}  Content: {} lines", detail_prefix, line_count),
+                Style::default().fg(Color::DarkGray),
+            ));
+        }
+
+        // Render the lines with scroll support (use cursor_line as scroll offset)
+        let visible_lines = inner.height.saturating_sub(1) as usize; // Reserve 1 line for status
+        let scroll = self.state.cursor_line.min(lines.len().saturating_sub(visible_lines));
+        let total_lines = lines.len();
+
+        for (i, (line, style)) in lines.iter().skip(scroll).take(visible_lines).enumerate() {
+            let y = inner.y + i as u16;
+            let display: String = line.chars().take(inner.width as usize).collect();
+            buf.set_string(inner.x, y, &display, *style);
+        }
+
+        // Status line
+        if inner.height > 1 {
+            let status_y = inner.y + inner.height - 1;
+            let status = format!(
+                " {} sections | L{}/{} | j/k scroll | v switch view ",
+                sections.len(),
+                scroll + 1,
+                total_lines
+            );
+            buf.set_string(inner.x, status_y, &status, Style::default().fg(Color::DarkGray));
         }
     }
 }

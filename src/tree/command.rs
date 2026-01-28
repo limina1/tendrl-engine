@@ -438,6 +438,35 @@ pub fn all_commands() -> Vec<CommandInfo> {
             category: CommandCategory::Compose,
             keybinding: Some("Ctrl+d"),
         },
+        // Editor view modes
+        CommandInfo {
+            command: TreeCommand::CycleEditorViewMode,
+            name: "Cycle Editor View",
+            description: "Cycle editor view mode (Plain → JSON → Structured)",
+            category: CommandCategory::Compose,
+            keybinding: Some("v / Ctrl+v"),
+        },
+        CommandInfo {
+            command: TreeCommand::SetEditorViewMode { mode: crate::tree::state::EditorViewMode::Plain },
+            name: "Plain Editor View",
+            description: "Switch to plain text editor view",
+            category: CommandCategory::Compose,
+            keybinding: None,
+        },
+        CommandInfo {
+            command: TreeCommand::SetEditorViewMode { mode: crate::tree::state::EditorViewMode::Json },
+            name: "JSON Preview",
+            description: "Switch to JSON event preview view",
+            category: CommandCategory::Compose,
+            keybinding: None,
+        },
+        CommandInfo {
+            command: TreeCommand::SetEditorViewMode { mode: crate::tree::state::EditorViewMode::Structured },
+            name: "Structured View",
+            description: "Switch to structured document tree view",
+            category: CommandCategory::Compose,
+            keybinding: None,
+        },
         CommandInfo {
             command: TreeCommand::FilterDrafts,
             name: "Filter Drafts",
@@ -650,6 +679,10 @@ pub enum TreeCommand {
     EditorInsertLineBelow,
     /// Insert new line above and enter insert mode (O)
     EditorInsertLineAbove,
+    /// Cycle editor view mode (Plain → JSON → Structured)
+    CycleEditorViewMode,
+    /// Set editor view mode to a specific mode
+    SetEditorViewMode { mode: crate::tree::state::EditorViewMode },
 
     // Window management
     /// Open a window with JSON content (e.g., raw event data)

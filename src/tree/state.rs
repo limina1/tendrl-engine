@@ -374,6 +374,38 @@ impl ViewMode {
     }
 }
 
+/// View mode for the editor compose view
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum EditorViewMode {
+    /// Plain text editor (default)
+    #[default]
+    Plain,
+    /// JSON preview showing the events that would be generated
+    Json,
+    /// Structured view showing the parsed document tree
+    Structured,
+}
+
+impl EditorViewMode {
+    /// Get the display name for this mode
+    pub fn name(&self) -> &'static str {
+        match self {
+            EditorViewMode::Plain => "Plain",
+            EditorViewMode::Json => "JSON",
+            EditorViewMode::Structured => "Structured",
+        }
+    }
+
+    /// Cycle to the next view mode
+    pub fn next(&self) -> Self {
+        match self {
+            EditorViewMode::Plain => EditorViewMode::Json,
+            EditorViewMode::Json => EditorViewMode::Structured,
+            EditorViewMode::Structured => EditorViewMode::Plain,
+        }
+    }
+}
+
 /// View configuration state
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ViewState {
@@ -1130,6 +1162,8 @@ pub struct EditorComposeState {
     pub content: String,
     /// Content format mode
     pub mode: super::node::ContentMode,
+    /// View mode (Plain, JSON, Structured)
+    pub view_mode: EditorViewMode,
     /// Cursor position (byte offset)
     pub cursor: usize,
     /// Cursor line (0-indexed)
@@ -1149,6 +1183,7 @@ impl Default for EditorComposeState {
         Self {
             content: String::new(),
             mode: super::node::ContentMode::Markdown,
+            view_mode: EditorViewMode::default(),
             cursor: 0,
             cursor_line: 0,
             cursor_col: 0,
@@ -1376,6 +1411,24 @@ impl EditorComposeState {
             }
         }
         None
+    }
+
+    /// Cycle to the next view mode
+    pub fn cycle_view_mode(&mut self) {
+        self.view_mode = self.view_mode.next();
+        // JSON/Structured views are read-only, so exit insert mode
+        if self.view_mode != EditorViewMode::Plain {
+            self.insert_mode = false;
+        }
+    }
+
+    /// Set the view mode
+    pub fn set_view_mode(&mut self, mode: EditorViewMode) {
+        self.view_mode = mode;
+        // JSON/Structured views are read-only, so exit insert mode
+        if self.view_mode != EditorViewMode::Plain {
+            self.insert_mode = false;
+        }
     }
 }
 

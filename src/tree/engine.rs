@@ -209,7 +209,9 @@ impl TreeEngine {
             | TreeCommand::EditorCursorToEnd
             | TreeCommand::EditorInsertAfter
             | TreeCommand::EditorInsertLineBelow
-            | TreeCommand::EditorInsertLineAbove => {
+            | TreeCommand::EditorInsertLineAbove
+            | TreeCommand::CycleEditorViewMode
+            | TreeCommand::SetEditorViewMode { .. } => {
                 // These are only valid in compose mode
                 CommandResult::NoOp
             }
@@ -1109,11 +1111,27 @@ impl TreeEngine {
                 CommandResult::StateChanged
             }
             TreeCommand::EditorCursorUp => {
-                state.editor_compose.cursor_up();
+                use crate::tree::state::EditorViewMode;
+                match state.editor_compose.view_mode {
+                    EditorViewMode::Plain => state.editor_compose.cursor_up(),
+                    // In JSON/Structured views, just decrement cursor_line for scrolling
+                    EditorViewMode::Json | EditorViewMode::Structured => {
+                        state.editor_compose.cursor_line =
+                            state.editor_compose.cursor_line.saturating_sub(1);
+                    }
+                }
                 CommandResult::StateChanged
             }
             TreeCommand::EditorCursorDown => {
-                state.editor_compose.cursor_down();
+                use crate::tree::state::EditorViewMode;
+                match state.editor_compose.view_mode {
+                    EditorViewMode::Plain => state.editor_compose.cursor_down(),
+                    // In JSON/Structured views, just increment cursor_line for scrolling
+                    // (the render function will clamp it)
+                    EditorViewMode::Json | EditorViewMode::Structured => {
+                        state.editor_compose.cursor_line += 1;
+                    }
+                }
                 CommandResult::StateChanged
             }
             TreeCommand::EditorCursorHome => {
@@ -1149,6 +1167,39 @@ impl TreeEngine {
                 state.editor_compose.insert_char('\n');
                 state.editor_compose.cursor_up();
                 state.editor_compose.insert_mode = true;
+                CommandResult::StateChanged
+            }
+            TreeCommand::CycleEditorViewMode => {
+                state.editor_compose.cycle_view_mode();
+                CommandResult::StateChanged
+            }
+            TreeCommand::SetEditorViewMode { mode } => {
+                state.editor_compose.set_view_mode(mode);
+                CommandResult::StateChanged
+            }
+            // gg - go to top (works in all view modes)
+            TreeCommand::MoveToFirst => {
+                state.editor_compose.cursor_line = 0;
+                state.editor_compose.cursor_col = 0;
+                state.editor_compose.cursor = 0;
+                CommandResult::StateChanged
+            }
+            // G - go to bottom
+            TreeCommand::MoveToLast => {
+                use crate::tree::state::EditorViewMode;
+                match state.editor_compose.view_mode {
+                    EditorViewMode::Plain => {
+                        let line_count = state.editor_compose.line_count();
+                        if line_count > 0 {
+                            state.editor_compose.cursor_line = line_count - 1;
+                            state.editor_compose.cursor_end();
+                        }
+                    }
+                    // For JSON/Structured views, set to large number (render clamps it)
+                    EditorViewMode::Json | EditorViewMode::Structured => {
+                        state.editor_compose.cursor_line = usize::MAX / 2;
+                    }
+                }
                 CommandResult::StateChanged
             }
             TreeCommand::Quit => CommandResult::Exit,
