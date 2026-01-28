@@ -1114,10 +1114,17 @@ impl TreeEngine {
                 use crate::tree::state::EditorViewMode;
                 match state.editor_compose.view_mode {
                     EditorViewMode::Plain => state.editor_compose.cursor_up(),
-                    // In JSON/Structured views, just decrement cursor_line for scrolling
+                    // In JSON/Structured views, move view_cursor up (scroll follows)
                     EditorViewMode::Json | EditorViewMode::Structured => {
-                        state.editor_compose.cursor_line =
-                            state.editor_compose.cursor_line.saturating_sub(1);
+                        if state.editor_compose.view_cursor > 0 {
+                            state.editor_compose.view_cursor -= 1;
+                            // Scroll up if cursor goes above visible area
+                            if state.editor_compose.view_cursor < state.editor_compose.view_scroll
+                            {
+                                state.editor_compose.view_scroll =
+                                    state.editor_compose.view_cursor;
+                            }
+                        }
                     }
                 }
                 CommandResult::StateChanged
@@ -1126,10 +1133,10 @@ impl TreeEngine {
                 use crate::tree::state::EditorViewMode;
                 match state.editor_compose.view_mode {
                     EditorViewMode::Plain => state.editor_compose.cursor_down(),
-                    // In JSON/Structured views, just increment cursor_line for scrolling
-                    // (the render function will clamp it)
+                    // In JSON/Structured views, move view_cursor down
                     EditorViewMode::Json | EditorViewMode::Structured => {
-                        state.editor_compose.cursor_line += 1;
+                        state.editor_compose.view_cursor += 1;
+                        state.editor_compose.clamp_view_cursor();
                     }
                 }
                 CommandResult::StateChanged
@@ -1179,9 +1186,18 @@ impl TreeEngine {
             }
             // gg - go to top (works in all view modes)
             TreeCommand::MoveToFirst => {
-                state.editor_compose.cursor_line = 0;
-                state.editor_compose.cursor_col = 0;
-                state.editor_compose.cursor = 0;
+                use crate::tree::state::EditorViewMode;
+                match state.editor_compose.view_mode {
+                    EditorViewMode::Plain => {
+                        state.editor_compose.cursor_line = 0;
+                        state.editor_compose.cursor_col = 0;
+                        state.editor_compose.cursor = 0;
+                    }
+                    EditorViewMode::Json | EditorViewMode::Structured => {
+                        state.editor_compose.view_cursor = 0;
+                        state.editor_compose.view_scroll = 0;
+                    }
+                }
                 CommandResult::StateChanged
             }
             // G - go to bottom
@@ -1195,9 +1211,10 @@ impl TreeEngine {
                             state.editor_compose.cursor_end();
                         }
                     }
-                    // For JSON/Structured views, set to large number (render clamps it)
+                    // For JSON/Structured views, go to last line
                     EditorViewMode::Json | EditorViewMode::Structured => {
-                        state.editor_compose.cursor_line = usize::MAX / 2;
+                        state.editor_compose.view_cursor = usize::MAX / 2;
+                        state.editor_compose.clamp_view_cursor();
                     }
                 }
                 CommandResult::StateChanged

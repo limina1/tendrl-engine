@@ -1170,10 +1170,14 @@ pub struct EditorComposeState {
     pub cursor_line: usize,
     /// Cursor column (0-indexed)
     pub cursor_col: usize,
-    /// Scroll offset (first visible line)
+    /// Scroll offset (first visible line) for Plain view
     pub scroll: usize,
     /// Whether in insert mode (vs normal mode)
     pub insert_mode: bool,
+    /// Scroll offset for read-only views (JSON/Structured)
+    pub view_scroll: usize,
+    /// Cursor position within read-only views (JSON/Structured) - 0-indexed line
+    pub view_cursor: usize,
     /// Cached parsed document (updated on content change)
     parsed: Option<super::parser::ParsedDocument>,
 }
@@ -1189,6 +1193,8 @@ impl Default for EditorComposeState {
             cursor_col: 0,
             scroll: 0,
             insert_mode: true,
+            view_scroll: 0,
+            view_cursor: 0,
             parsed: None,
         }
     }
@@ -1413,9 +1419,43 @@ impl EditorComposeState {
         None
     }
 
+    /// Get line count for JSON view (based on parsed sections)
+    pub fn json_view_line_count(&mut self) -> usize {
+        let sections = self.parsed().sections();
+        // Lines in JSON view:
+        // Fixed: 2 (header+blank) + 1 (index comment) + 1 (open) + 3 (kind,content,tags) + 1 (d-tag) = 8
+        // Per section in index: 3 lines (open bracket, value, close bracket)
+        // Fixed end: 2 (close tags, close brace) + 1 (blank) = 3
+        // Per content section: 11 lines (comment, open, kind, content key, value, tags, d-tag, title, close, close, blank)
+        let section_count = sections.len();
+        11 + section_count * 14
+    }
+
+    /// Get line count for Structured view (based on parsed sections)
+    pub fn structured_view_line_count(&mut self) -> usize {
+        let sections = self.parsed().sections();
+        // Lines in Structured view:
+        // Fixed: header + blank + 3 stats lines + blank + 3 index lines + blank = 10
+        // Per section: 3 lines (header, d-tag, lines)
+        10 + sections.len() * 3
+    }
+
+    /// Clamp view_cursor to valid range based on current view mode
+    pub fn clamp_view_cursor(&mut self) {
+        let max_lines = match self.view_mode {
+            EditorViewMode::Plain => return, // Plain mode doesn't use view_cursor
+            EditorViewMode::Json => self.json_view_line_count(),
+            EditorViewMode::Structured => self.structured_view_line_count(),
+        };
+        self.view_cursor = self.view_cursor.min(max_lines.saturating_sub(1));
+    }
+
     /// Cycle to the next view mode
     pub fn cycle_view_mode(&mut self) {
         self.view_mode = self.view_mode.next();
+        // Reset scroll position for the new view
+        self.view_scroll = 0;
+        self.view_cursor = 0;
         // JSON/Structured views are read-only, so exit insert mode
         if self.view_mode != EditorViewMode::Plain {
             self.insert_mode = false;
@@ -1425,6 +1465,9 @@ impl EditorComposeState {
     /// Set the view mode
     pub fn set_view_mode(&mut self, mode: EditorViewMode) {
         self.view_mode = mode;
+        // Reset scroll position for the new view
+        self.view_scroll = 0;
+        self.view_cursor = 0;
         // JSON/Structured views are read-only, so exit insert mode
         if self.view_mode != EditorViewMode::Plain {
             self.insert_mode = false;

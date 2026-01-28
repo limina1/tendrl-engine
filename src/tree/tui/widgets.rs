@@ -6,7 +6,7 @@ use crate::identity::LoginStatus;
 use crate::tree::command::CommandCategory;
 use crate::tree::node::{NodeId, TreeNode};
 use crate::tree::render::{visible_nodes, RenderOptions, VisibleNode};
-use crate::tree::state::{CommandPaletteState, ComposeFocus, ComposeState, EditorComposeState, LoginDialogState, TreeState, UserDataMenuState};
+use crate::tree::state::{CommandPaletteState, ComposeFocus, ComposeState, LoginDialogState, TreeState, UserDataMenuState};
 use ratatui::prelude::*;
 use ratatui::layout::{Layout, Direction, Constraint};
 use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Wrap};
@@ -2104,135 +2104,394 @@ impl<'a> EditorComposeWidget<'a> {
     /// Render the JSON preview view showing events that would be generated
     fn render_json_view(&self, inner: Rect, buf: &mut Buffer) {
         // Parse document to get sections
-        let parsed = crate::tree::parser::ParsedDocument::parse(&self.state.content, self.state.mode);
+        let parsed =
+            crate::tree::parser::ParsedDocument::parse(&self.state.content, self.state.mode);
         let sections = parsed.sections();
 
-        // Build a simple JSON representation of the events
-        let mut lines: Vec<String> = Vec::new();
-        lines.push("// Events that would be generated:".to_string());
-        lines.push(String::new());
+        // Build a JSON representation with styled segments
+        // Each line is a vector of (text, style) pairs for syntax highlighting
+        let mut lines: Vec<Vec<(String, Style)>> = Vec::new();
 
-        // Index event (30040)
-        lines.push("// Index Event (kind 30040)".to_string());
-        lines.push("{".to_string());
-        lines.push("  \"kind\": 30040,".to_string());
-        lines.push("  \"content\": \"\",".to_string());
-        lines.push("  \"tags\": [".to_string());
-        for (i, section) in sections.iter().enumerate() {
-            let title = if section.title.is_empty() { "Untitled" } else { &section.title };
-            let comma = if i < sections.len() - 1 { "," } else { "" };
-            lines.push(format!("    [\"a\", \"30041:<pubkey>:{}\"]{}  // {}", i, comma, title));
+        // Style definitions for JSON syntax highlighting
+        let style_comment = Style::default().fg(Color::DarkGray).italic();
+        let style_brace = Style::default().fg(Color::White);
+        let style_key = Style::default().fg(Color::Cyan);
+        let style_string = Style::default().fg(Color::Green);
+        let style_number = Style::default().fg(Color::Yellow);
+        let style_bracket = Style::default().fg(Color::White);
+
+        // Helper to create a styled line from segments
+        fn line(segments: Vec<(&str, Style)>) -> Vec<(String, Style)> {
+            segments
+                .into_iter()
+                .map(|(s, st)| (s.to_string(), st))
+                .collect()
         }
-        lines.push("  ]".to_string());
-        lines.push("}".to_string());
-        lines.push(String::new());
+
+        // Header comment
+        lines.push(line(vec![("// Events that would be generated:", style_comment)]));
+        lines.push(vec![]);
+
+        // Index event (30040) header
+        lines.push(line(vec![
+            ("// ", style_comment),
+            ("[I]", Style::default().fg(Color::Magenta).bold()),
+            (" Index Event (kind 30040)", style_comment),
+        ]));
+        lines.push(line(vec![("{", style_brace)]));
+        lines.push(line(vec![
+            ("  ", style_brace),
+            ("\"kind\"", style_key),
+            (": ", style_brace),
+            ("30040", style_number),
+            (",", style_brace),
+        ]));
+        lines.push(line(vec![
+            ("  ", style_brace),
+            ("\"content\"", style_key),
+            (": ", style_brace),
+            ("\"\"", style_string),
+            (",", style_brace),
+        ]));
+
+        // d-tag for the publication
+        lines.push(line(vec![
+            ("  ", style_brace),
+            ("\"tags\"", style_key),
+            (": [", style_bracket),
+        ]));
+        lines.push(line(vec![
+            ("    [", style_bracket),
+            ("\"d\"", style_string),
+            (", ", style_bracket),
+            ("\"<publication-id>\"", style_string),
+            ("],", style_bracket),
+        ]));
+
+        // a-tags referencing sections
+        for (i, section) in sections.iter().enumerate() {
+            let title = if section.title.is_empty() {
+                "Untitled"
+            } else {
+                &section.title
+            };
+            let comma = if i < sections.len() - 1 { "," } else { "" };
+            let d_tag = format!("section-{}", i);
+
+            lines.push(line(vec![
+                ("    [", style_bracket),
+                ("\"a\"", style_string),
+                (", ", style_bracket),
+            ]));
+            // Split the a-tag value for syntax highlighting
+            lines.push(vec![
+                ("      \"30041:".to_string(), style_string),
+                ("<pubkey>".to_string(), Style::default().fg(Color::Gray)),
+                (format!(":{}\"{}", d_tag, comma), style_string),
+                (format!("  // {}", title), style_comment),
+            ]);
+            // Close the array if not last, or leave it for the next iteration
+            if i == sections.len() - 1 {
+                lines.push(line(vec![("    ]", style_bracket)]));
+            } else {
+                lines.push(line(vec![("    ],", style_bracket)]));
+            }
+        }
+
+        if sections.is_empty() {
+            // If no sections, close the tags array
+            lines.push(line(vec![("  ]", style_bracket)]));
+        } else {
+            lines.push(line(vec![("  ]", style_bracket)]));
+        }
+        lines.push(line(vec![("}", style_brace)]));
+        lines.push(vec![]);
 
         // Content events (30041)
         for (i, section) in sections.iter().enumerate() {
-            let title = if section.title.is_empty() { "Untitled" } else { &section.title };
+            let title = if section.title.is_empty() {
+                "Untitled"
+            } else {
+                &section.title
+            };
             let line_count = section.end_line.saturating_sub(section.start_line) + 1;
-            lines.push(format!("// Section {} (kind 30041): {}", i + 1, title));
-            lines.push("{".to_string());
-            lines.push("  \"kind\": 30041,".to_string());
-            lines.push(format!("  \"content\": \"<{} lines>\",", line_count));
-            lines.push(format!("  \"tags\": [[\"title\", \"{}\"]]", title));
-            lines.push("}".to_string());
-            lines.push(String::new());
+            let d_tag = format!("section-{}", i);
+
+            // Section header comment
+            lines.push(line(vec![
+                ("// ", style_comment),
+                ("[C]", Style::default().fg(Color::Blue).bold()),
+                (&format!(" Section {} (kind 30041): {}", i + 1, title), style_comment),
+            ]));
+            lines.push(line(vec![("{", style_brace)]));
+            lines.push(line(vec![
+                ("  ", style_brace),
+                ("\"kind\"", style_key),
+                (": ", style_brace),
+                ("30041", style_number),
+                (",", style_brace),
+            ]));
+            lines.push(line(vec![
+                ("  ", style_brace),
+                ("\"content\"", style_key),
+                (": ", style_brace),
+            ]));
+            lines.push(vec![(
+                format!("    \"<{} lines of content>\"", line_count),
+                style_string,
+            ), (",".to_string(), style_brace)]);
+            lines.push(line(vec![
+                ("  ", style_brace),
+                ("\"tags\"", style_key),
+                (": [", style_bracket),
+            ]));
+            lines.push(line(vec![
+                ("    [", style_bracket),
+                ("\"d\"", style_string),
+                (", ", style_bracket),
+                (&format!("\"{}\"", d_tag), style_string),
+                ("],", style_bracket),
+            ]));
+            lines.push(vec![
+                ("    [".to_string(), style_bracket),
+                ("\"title\"".to_string(), style_string),
+                (", ".to_string(), style_bracket),
+                (format!("\"{}\"", title), style_string),
+                ("]".to_string(), style_bracket),
+            ]);
+            lines.push(line(vec![("  ]", style_bracket)]));
+            lines.push(line(vec![("}", style_brace)]));
+            lines.push(vec![]);
         }
 
-        // Render the lines with scroll support (use cursor_line as scroll offset)
+        // Render the lines with scroll support using view_scroll and view_cursor
         let visible_lines = inner.height.saturating_sub(1) as usize; // Reserve 1 line for status
-        let scroll = self.state.cursor_line.min(lines.len().saturating_sub(visible_lines));
         let total_lines = lines.len();
 
-        for (i, line) in lines.iter().skip(scroll).take(visible_lines).enumerate() {
+        // Clamp view_cursor to valid range
+        let cursor = self.state.view_cursor.min(total_lines.saturating_sub(1));
+
+        // Adjust scroll to keep cursor visible
+        let scroll = if total_lines <= visible_lines {
+            0
+        } else if cursor < self.state.view_scroll {
+            cursor
+        } else if cursor >= self.state.view_scroll + visible_lines {
+            cursor.saturating_sub(visible_lines) + 1
+        } else {
+            self.state
+                .view_scroll
+                .min(total_lines.saturating_sub(visible_lines))
+        };
+
+        for (i, styled_line) in lines.iter().skip(scroll).take(visible_lines).enumerate() {
             let y = inner.y + i as u16;
-            let display: String = line.chars().take(inner.width as usize).collect();
-            let style = if line.starts_with("//") {
-                Style::default().fg(Color::DarkGray)
-            } else {
-                Style::default().fg(Color::Cyan)
-            };
-            buf.set_string(inner.x, y, &display, style);
+            let line_index = scroll + i;
+            let is_current = line_index == cursor;
+
+            // Clear the line first if it's the current line (for background)
+            if is_current {
+                let bg_style = Style::default().bg(Color::DarkGray);
+                buf.set_string(inner.x, y, " ".repeat(inner.width as usize), bg_style);
+            }
+
+            // Render each styled segment
+            let mut x_offset = 0u16;
+            for (text, style) in styled_line {
+                let display_text: String = text.chars().take((inner.width as usize).saturating_sub(x_offset as usize)).collect();
+                let final_style = if is_current {
+                    style.bg(Color::DarkGray)
+                } else {
+                    *style
+                };
+                buf.set_string(inner.x + x_offset, y, &display_text, final_style);
+                x_offset += display_text.len() as u16;
+                if x_offset >= inner.width {
+                    break;
+                }
+            }
         }
 
         // Status line
         if inner.height > 1 {
             let status_y = inner.y + inner.height - 1;
             let status = format!(
-                " {} sections | L{}/{} | j/k scroll | v switch view ",
+                " {} sections | [I]=Index [C]=Content | L{}/{} | j/k gg/G nav | v switch ",
                 sections.len(),
-                scroll + 1,
+                cursor + 1,
                 total_lines
             );
-            buf.set_string(inner.x, status_y, &status, Style::default().fg(Color::DarkGray));
+            buf.set_string(
+                inner.x,
+                status_y,
+                &status,
+                Style::default().fg(Color::DarkGray),
+            );
         }
     }
 
     /// Render the structured document tree view
     fn render_structured_view(&self, inner: Rect, buf: &mut Buffer) {
         // Parse document to get sections
-        let parsed = crate::tree::parser::ParsedDocument::parse(&self.state.content, self.state.mode);
+        let parsed =
+            crate::tree::parser::ParsedDocument::parse(&self.state.content, self.state.mode);
         let sections = parsed.sections();
 
-        let mut lines: Vec<(String, Style)> = Vec::new();
+        // Use styled segments like JSON view for better highlighting
+        let mut lines: Vec<Vec<(String, Style)>> = Vec::new();
 
-        // Document structure header
-        lines.push((
-            format!("Document Structure ({} sections)", sections.len()),
-            Style::default().fg(Color::White).bold(),
-        ));
-        lines.push((String::new(), Style::default()));
+        // Style definitions
+        let style_header = Style::default().fg(Color::White).bold();
+        let style_dim = Style::default().fg(Color::DarkGray);
+        let style_tree = Style::default().fg(Color::Gray);
+        let style_title = Style::default().fg(Color::Green).bold();
+        let style_index = Style::default().fg(Color::Magenta).bold();
+        let style_content = Style::default().fg(Color::Blue).bold();
+        let style_value = Style::default().fg(Color::Cyan);
+
+        // Document structure header with statistics
+        lines.push(vec![("Document Structure".to_string(), style_header)]);
+        lines.push(vec![]);
+
+        // Statistics summary
+        let index_count = 1; // Always one 30040 index event
+        let content_count = sections.len();
+        lines.push(vec![
+            ("  Events: ".to_string(), style_dim),
+            (format!("{}", index_count + content_count), style_value),
+            (" total".to_string(), style_dim),
+        ]);
+        lines.push(vec![
+            ("    ".to_string(), Style::default()),
+            ("[I]".to_string(), style_index),
+            (format!(" Index (30040): {}", index_count), style_dim),
+        ]);
+        lines.push(vec![
+            ("    ".to_string(), Style::default()),
+            ("[C]".to_string(), style_content),
+            (format!(" Content (30041): {}", content_count), style_dim),
+        ]);
+        lines.push(vec![]);
+
+        // Index event representation
+        lines.push(vec![
+            ("[I]".to_string(), style_index),
+            (" Publication Index".to_string(), style_header),
+        ]);
+        lines.push(vec![
+            ("    ".to_string(), Style::default()),
+            ("d-tag: ".to_string(), style_dim),
+            ("<publication-id>".to_string(), style_value),
+        ]);
+        lines.push(vec![
+            ("    ".to_string(), Style::default()),
+            (format!("references: {} sections", sections.len()), style_dim),
+        ]);
+        lines.push(vec![]);
 
         // Render each section as a tree node
         for (i, section) in sections.iter().enumerate() {
-            let title = if section.title.is_empty() { "Untitled" } else { &section.title };
-            let prefix = if i == sections.len() - 1 { "└── " } else { "├── " };
+            let title = if section.title.is_empty() {
+                "Untitled"
+            } else {
+                &section.title
+            };
+            let is_last = i == sections.len() - 1;
+            let tree_char = if is_last { "└" } else { "├" };
+            let detail_prefix = if is_last { "    " } else { "│   " };
+            let line_count = section.end_line.saturating_sub(section.start_line) + 1;
+            let d_tag = format!("section-{}", i);
 
-            // Section header
-            lines.push((
-                format!("{}{}", prefix, title),
-                Style::default().fg(Color::Green).bold(),
-            ));
+            // Section header with event kind indicator
+            lines.push(vec![
+                (format!("{}── ", tree_char), style_tree),
+                ("[C]".to_string(), style_content),
+                (format!(" {}", title), style_title),
+            ]);
 
             // Section details
-            let detail_prefix = if i == sections.len() - 1 { "    " } else { "│   " };
-            let line_count = section.end_line.saturating_sub(section.start_line) + 1;
-            lines.push((
-                format!("{}  Kind: {}", detail_prefix, section.event_kind),
-                Style::default().fg(Color::DarkGray),
-            ));
-            lines.push((
-                format!("{}  Lines: {}-{}", detail_prefix, section.start_line + 1, section.end_line + 1),
-                Style::default().fg(Color::DarkGray),
-            ));
-            lines.push((
-                format!("{}  Content: {} lines", detail_prefix, line_count),
-                Style::default().fg(Color::DarkGray),
-            ));
+            lines.push(vec![
+                (format!("{}  ", detail_prefix), style_tree),
+                ("d-tag: ".to_string(), style_dim),
+                (d_tag, style_value),
+            ]);
+            lines.push(vec![
+                (format!("{}  ", detail_prefix), style_tree),
+                ("lines: ".to_string(), style_dim),
+                (
+                    format!("{}-{}", section.start_line + 1, section.end_line + 1),
+                    style_value,
+                ),
+                (format!(" ({} lines)", line_count), style_dim),
+            ]);
         }
 
-        // Render the lines with scroll support (use cursor_line as scroll offset)
-        let visible_lines = inner.height.saturating_sub(1) as usize; // Reserve 1 line for status
-        let scroll = self.state.cursor_line.min(lines.len().saturating_sub(visible_lines));
+        // Render the lines with scroll support using view_scroll and view_cursor
+        let visible_lines = inner.height.saturating_sub(1) as usize;
         let total_lines = lines.len();
 
-        for (i, (line, style)) in lines.iter().skip(scroll).take(visible_lines).enumerate() {
+        // Clamp view_cursor to valid range
+        let cursor = self.state.view_cursor.min(total_lines.saturating_sub(1));
+
+        // Adjust scroll to keep cursor visible
+        let scroll = if total_lines <= visible_lines {
+            0
+        } else if cursor < self.state.view_scroll {
+            cursor
+        } else if cursor >= self.state.view_scroll + visible_lines {
+            cursor.saturating_sub(visible_lines) + 1
+        } else {
+            self.state
+                .view_scroll
+                .min(total_lines.saturating_sub(visible_lines))
+        };
+
+        for (i, styled_line) in lines.iter().skip(scroll).take(visible_lines).enumerate() {
             let y = inner.y + i as u16;
-            let display: String = line.chars().take(inner.width as usize).collect();
-            buf.set_string(inner.x, y, &display, *style);
+            let line_index = scroll + i;
+            let is_current = line_index == cursor;
+
+            // Clear the line first if it's the current line (for background)
+            if is_current {
+                let bg_style = Style::default().bg(Color::DarkGray);
+                buf.set_string(inner.x, y, " ".repeat(inner.width as usize), bg_style);
+            }
+
+            // Render each styled segment
+            let mut x_offset = 0u16;
+            for (text, style) in styled_line {
+                let display_text: String = text
+                    .chars()
+                    .take((inner.width as usize).saturating_sub(x_offset as usize))
+                    .collect();
+                let final_style = if is_current {
+                    style.bg(Color::DarkGray)
+                } else {
+                    *style
+                };
+                buf.set_string(inner.x + x_offset, y, &display_text, final_style);
+                x_offset += display_text.len() as u16;
+                if x_offset >= inner.width {
+                    break;
+                }
+            }
         }
 
         // Status line
         if inner.height > 1 {
             let status_y = inner.y + inner.height - 1;
             let status = format!(
-                " {} sections | L{}/{} | j/k scroll | v switch view ",
-                sections.len(),
-                scroll + 1,
+                " {} events | [I]=30040 [C]=30041 | L{}/{} | j/k gg/G nav | v switch ",
+                1 + sections.len(),
+                cursor + 1,
                 total_lines
             );
-            buf.set_string(inner.x, status_y, &status, Style::default().fg(Color::DarkGray));
+            buf.set_string(
+                inner.x,
+                status_y,
+                &status,
+                Style::default().fg(Color::DarkGray),
+            );
         }
     }
 }
