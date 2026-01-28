@@ -978,6 +978,15 @@ pub enum AsyncResult {
         /// The loaded user data
         user_data: UserData,
     },
+    /// Publication created locally (stored in nostrdb, not yet synced to relays)
+    PublicationCreated {
+        /// The address of the created publication
+        addr: NAddr,
+        /// Publication title
+        title: Option<String>,
+        /// Number of sections created
+        section_count: usize,
+    },
     /// Operation failed
     Error {
         request: AsyncRequest,

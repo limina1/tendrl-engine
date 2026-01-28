@@ -685,6 +685,156 @@ impl<'a> PublicationEngine<'a> {
     }
 }
 
+// --- Event Building for Local Creation ---
+
+use crate::tree::state::{ComposeState, SectionCompose};
+use sha2::{Sha256, Digest};
+
+/// Build unsigned publication events from compose state
+///
+/// Returns (publication_event, section_events) as JSON values.
+/// The events have proper structure with calculated IDs but placeholder signatures.
+pub fn build_publication_events(
+    compose: &ComposeState,
+    pubkey: &str,
+) -> (Value, Vec<Value>) {
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+
+    // Build section events first (need their d-tags for references)
+    let mut section_events = Vec::new();
+    for i in 0..compose.sections.len() {
+        let section_d_tag = compose.section_d_tag(i);
+        let section_event = build_section_event(&compose.sections[i], &section_d_tag, pubkey, timestamp);
+        section_events.push(section_event);
+    }
+
+    // Build publication index event
+    let pub_event = build_index_event(compose, pubkey, timestamp);
+
+    (pub_event, section_events)
+}
+
+/// Build a section (30041) event
+fn build_section_event(
+    section: &SectionCompose,
+    d_tag: &str,
+    pubkey: &str,
+    timestamp: u64,
+) -> Value {
+    use serde_json::json;
+
+    // Build section tags
+    let mut tags: Vec<Value> = vec![json!(["d", d_tag])];
+
+    if !section.title.is_empty() {
+        tags.push(json!(["title", &section.title]));
+    }
+
+    // Add section-specific tags
+    for tag_vec in ComposeState::tags_to_nostr_format(&section.tags) {
+        tags.push(serde_json::to_value(tag_vec).unwrap_or(json!([])));
+    }
+
+    // Build the event without id/sig first for hashing
+    let event_for_hash = json!([
+        0,
+        pubkey,
+        timestamp,
+        KIND_PUBLICATION_SECTION,
+        tags,
+        &section.content
+    ]);
+
+    let id = calculate_event_id(&event_for_hash);
+
+    // Placeholder signature (64 zero bytes in hex = 128 zeros)
+    let placeholder_sig = "0".repeat(128);
+
+    json!({
+        "id": id,
+        "pubkey": pubkey,
+        "created_at": timestamp,
+        "kind": KIND_PUBLICATION_SECTION,
+        "tags": tags,
+        "content": &section.content,
+        "sig": placeholder_sig
+    })
+}
+
+/// Build a publication index (30040) event
+fn build_index_event(
+    compose: &ComposeState,
+    pubkey: &str,
+    timestamp: u64,
+) -> Value {
+    use serde_json::json;
+
+    let pub_d_tag = compose.publication_d_tag();
+
+    // Build publication tags
+    let mut tags: Vec<Value> = vec![json!(["d", &pub_d_tag])];
+
+    if !compose.title.is_empty() {
+        tags.push(json!(["title", &compose.title]));
+    }
+
+    // Add custom tags
+    for tag_vec in ComposeState::tags_to_nostr_format(&compose.tags) {
+        tags.push(serde_json::to_value(tag_vec).unwrap_or(json!([])));
+    }
+
+    // Add section references (a-tags)
+    for i in 0..compose.sections.len() {
+        let section_d_tag = compose.section_d_tag(i);
+        let a_tag_value = format!("{}:{}:{}", KIND_PUBLICATION_SECTION, pubkey, section_d_tag);
+        tags.push(json!(["a", a_tag_value, ""]));
+    }
+
+    // Add auto-update tag
+    tags.push(json!(["auto-update", compose.auto_update.as_str()]));
+
+    // Build the event without id/sig first for hashing
+    // Note: 30040 events MUST have empty content
+    let event_for_hash = json!([
+        0,
+        pubkey,
+        timestamp,
+        KIND_PUBLICATION_INDEX,
+        tags,
+        ""
+    ]);
+
+    let id = calculate_event_id(&event_for_hash);
+
+    // Placeholder signature
+    let placeholder_sig = "0".repeat(128);
+
+    json!({
+        "id": id,
+        "pubkey": pubkey,
+        "created_at": timestamp,
+        "kind": KIND_PUBLICATION_INDEX,
+        "tags": tags,
+        "content": "",
+        "sig": placeholder_sig
+    })
+}
+
+/// Calculate the event ID per NIP-01
+///
+/// The ID is the SHA256 hash of the serialized event array:
+/// [0, pubkey, created_at, kind, tags, content]
+fn calculate_event_id(event_array: &Value) -> String {
+    let serialized = serde_json::to_string(event_array).unwrap_or_default();
+    let hash = Sha256::digest(serialized.as_bytes());
+    hex::encode(hash)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

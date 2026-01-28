@@ -17,6 +17,8 @@ pub const LOCAL_RELAY: &str = "ws://localhost:3334";
 /// Default relays to fetch from (focused on publication-supporting relays)
 pub const DEFAULT_RELAYS: &[&str] = &[
     "ws://localhost:3334",
+    "wss://relay.noswhere.com",
+    "wss://relay.damus.io",
 ];
 
 /// Check if a local relay is available at the given URL

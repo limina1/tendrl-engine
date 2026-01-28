@@ -1195,6 +1195,88 @@ impl TuiApp {
                 });
                 return;
             }
+            AsyncRequest::PublishPublication { title, tags, sections } => {
+                self.pending_count += 1;
+
+                // Check if logged in with signing capability
+                let pubkey = match self.state.identity.status.pubkey() {
+                    Some(pk) => pk.to_string(),
+                    None => {
+                        let tx = self.async_tx.clone();
+                        let result = AsyncResult::Error {
+                            request: request.clone(),
+                            error: "Must be logged in to create publications".to_string(),
+                        };
+                        tokio::spawn(async move {
+                            let _ = tx.send(AsyncMessage::Result(result)).await;
+                        });
+                        return;
+                    }
+                };
+
+                // Build a temporary ComposeState from the request data
+                use crate::tree::state::{ComposeState, TagEntry};
+                let mut compose = ComposeState::new();
+                compose.title = title.clone();
+                // Convert tags back to TagEntry format
+                for tag_vec in tags.iter() {
+                    if tag_vec.len() >= 2 {
+                        compose.tags.push(TagEntry {
+                            name: tag_vec[0].clone(),
+                            value: tag_vec[1..].join(", "),
+                        });
+                    }
+                }
+                compose.sections = sections.clone();
+
+                // Build unsigned events from compose state
+                use crate::publication::build_publication_events;
+                let (pub_event, section_events) = build_publication_events(&compose, &pubkey);
+
+                // Ingest all events into nostrdb
+                let engine = self.nostr_engine.clone();
+                let mut ingest_error: Option<String> = None;
+
+                // Ingest section events first
+                for section_event in &section_events {
+                    let json_str = serde_json::to_string(section_event).unwrap_or_default();
+                    if let Err(e) = engine.ingest_event(&json_str) {
+                        ingest_error = Some(format!("Failed to ingest section: {}", e));
+                        break;
+                    }
+                }
+
+                // Ingest publication event
+                if ingest_error.is_none() {
+                    let json_str = serde_json::to_string(&pub_event).unwrap_or_default();
+                    if let Err(e) = engine.ingest_event(&json_str) {
+                        ingest_error = Some(format!("Failed to ingest publication: {}", e));
+                    }
+                }
+
+                let result = if let Some(error) = ingest_error {
+                    AsyncResult::Error {
+                        request: request.clone(),
+                        error,
+                    }
+                } else {
+                    // Build the NAddr for the created publication
+                    let pub_d_tag = compose.publication_d_tag();
+                    let addr = NAddr::new(30040, &pubkey, &pub_d_tag);
+
+                    AsyncResult::PublicationCreated {
+                        addr,
+                        title: Some(title.clone()),
+                        section_count: sections.len(),
+                    }
+                };
+
+                let tx = self.async_tx.clone();
+                tokio::spawn(async move {
+                    let _ = tx.send(AsyncMessage::Result(result)).await;
+                });
+                return;
+            }
             _ => {}
         }
 

@@ -476,6 +476,29 @@ impl TreeEngine {
                 CommandResult::StateChanged
             }
 
+            AsyncResult::PublicationCreated { addr, title, section_count } => {
+                use crate::tree::node::SyncStatus;
+
+                // Create publication node with LocalCreated status
+                let pub_id = NodeId::from_addr(&addr);
+                let mut pub_node = PublicationNode::stub(addr.clone(), None);
+                pub_node.title = title;
+                pub_node.author = addr.pubkey.clone();
+                pub_node.loaded = true;
+                pub_node.sync_status = SyncStatus::LocalCreated;
+                pub_node.summary = Some(format!("{} sections", section_count));
+
+                state.nodes.insert(pub_id, TreeNode::Publication(pub_node));
+                // Insert at top of feed
+                state.roots.insert(0, pub_id);
+
+                // Exit compose mode and go to feed
+                state.exit_compose();
+                state.feed_cursor = 0;
+
+                CommandResult::ModeChanged(super::state::AppMode::Feed)
+            }
+
             AsyncResult::Error { request, error } => {
                 // Try to mark the relevant node as errored
                 if let Some(node_id) = request.target_node() {
@@ -1041,19 +1064,32 @@ impl TreeEngine {
             TreeCommand::Publish => {
                 use crate::tree::state::ComposeState;
 
-                if !state.compose.is_ready_to_publish() {
-                    return CommandResult::Error(
-                        "Need title and at least one section with title and content".to_string()
-                    );
-                }
+                // Handle both structured and editor compose modes
+                let compose = if state.use_editor_compose {
+                    // Convert editor compose to structured compose
+                    if !state.editor_compose.is_ready_to_publish() {
+                        return CommandResult::Error(
+                            "Document is empty - add some content before publishing".to_string()
+                        );
+                    }
+                    state.editor_compose.to_compose_state()
+                } else {
+                    // Use structured compose directly
+                    if !state.compose.is_ready_to_publish() {
+                        return CommandResult::Error(
+                            "Need title and at least one section with title and content".to_string()
+                        );
+                    }
+                    state.compose.clone()
+                };
 
-                let tags = ComposeState::tags_to_nostr_format(&state.compose.tags);
+                let tags = ComposeState::tags_to_nostr_format(&compose.tags);
 
                 // NKBIP-01: Always create 30040 + 30041 events
                 CommandResult::NeedsAsync(AsyncRequest::PublishPublication {
-                    title: state.compose.title.clone(),
+                    title: compose.title.clone(),
                     tags,
-                    sections: state.compose.sections.clone(),
+                    sections: compose.sections.clone(),
                 })
             }
             TreeCommand::SaveDraft => {

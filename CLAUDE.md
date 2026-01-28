@@ -18,8 +18,18 @@ these directly** - they exist to show idiomatic usage of nostrdb and Nostr patte
 | Directory | Purpose |
 |-----------|---------|
 | `notedeck/` | Reference for nostrdb usage patterns, tag parsing, account management |
+| `gc-alexandria`| Reference for NKBIP-01 reading and writing events|
 | `notedeck-compose/` | Older version, less relevant |
 | `nips/` | NIP specifications for protocol reference |
+
+
+### When to Consult gc-alexandria/
+If you are implementing a collection related events. 
+
+It is the reference implementation for:
+- fetching publications
+- displaying publications
+- composing documents through a text editor.
 
 ### When to Consult notedeck/
 

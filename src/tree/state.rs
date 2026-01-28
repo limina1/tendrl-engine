@@ -1473,6 +1473,82 @@ impl EditorComposeState {
             self.insert_mode = false;
         }
     }
+
+    /// Convert editor compose state to structured ComposeState for publishing
+    ///
+    /// Parses the document to extract sections and their content.
+    pub fn to_compose_state(&self) -> ComposeState {
+        let parsed = super::parser::ParsedDocument::parse(&self.content, self.mode);
+        let sections = parsed.sections();
+        let lines: Vec<&str> = self.content.lines().collect();
+
+        let mut compose = ComposeState::new();
+
+        // If no sections found, treat the entire content as a single section
+        if sections.is_empty() {
+            // Use first line as title if it looks like a heading, otherwise use default
+            let (title, content) = if let Some(first_line) = lines.first() {
+                let trimmed = first_line.trim();
+                if trimmed.starts_with('#') || trimmed.starts_with('*') {
+                    // Strip markdown/org heading markers
+                    let title = trimmed.trim_start_matches('#').trim_start_matches('*').trim();
+                    let content = lines.iter().skip(1).copied().collect::<Vec<_>>().join("\n");
+                    (title.to_string(), content)
+                } else {
+                    ("Untitled".to_string(), self.content.clone())
+                }
+            } else {
+                ("Untitled".to_string(), self.content.clone())
+            };
+
+            compose.title = title.clone();
+            compose.sections.push(SectionCompose {
+                title,
+                content,
+                ..Default::default()
+            });
+        } else {
+            // Use first section's title as publication title
+            compose.title = if sections[0].title.is_empty() {
+                "Untitled".to_string()
+            } else {
+                sections[0].title.clone()
+            };
+
+            // Convert each parsed section to SectionCompose
+            for section in &sections {
+                // Extract content lines for this section (skip the heading line)
+                let content_start = section.start_line + 1;
+                let content_end = section.end_line;
+
+                let content = if content_start <= content_end && content_end < lines.len() {
+                    lines[content_start..=content_end].join("\n")
+                } else if content_start < lines.len() {
+                    lines[content_start..].join("\n")
+                } else {
+                    String::new()
+                };
+
+                compose.sections.push(SectionCompose {
+                    title: section.title.clone(),
+                    content: content.trim().to_string(),
+                    ..Default::default()
+                });
+            }
+        }
+
+        compose
+    }
+
+    /// Check if there's publishable content
+    pub fn has_content(&self) -> bool {
+        !self.content.trim().is_empty()
+    }
+
+    /// Check if ready to publish (has non-empty content)
+    pub fn is_ready_to_publish(&self) -> bool {
+        !self.content.trim().is_empty()
+    }
 }
 
 /// Clipboard content for copy/paste operations

@@ -86,6 +86,8 @@ pub enum SyncStatus {
     Remote,
     /// Event only exists locally (not yet sent to relays or unconfirmed)
     LocalOnly,
+    /// Created locally with signature, stored in nostrdb, not yet published to relays
+    LocalCreated,
     /// Unsigned local draft (not yet signed or published)
     Draft,
 }
@@ -94,6 +96,11 @@ impl SyncStatus {
     /// Check if this is a draft (unsigned)
     pub fn is_draft(&self) -> bool {
         matches!(self, SyncStatus::Draft)
+    }
+
+    /// Check if this was created locally and not yet synced to relays
+    pub fn is_local_created(&self) -> bool {
+        matches!(self, SyncStatus::LocalCreated)
     }
 }
 

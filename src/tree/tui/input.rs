@@ -290,7 +290,13 @@ impl KeyMapper {
                 // Text editing
                 KeyCode::Backspace => Some(TreeCommand::EditorBackspace),
                 KeyCode::Delete => Some(TreeCommand::EditorDelete),
-                KeyCode::Enter => Some(TreeCommand::EditorInsertNewline),
+                KeyCode::Enter => {
+                    if key.modifiers.contains(KeyModifiers::CONTROL) {
+                        Some(TreeCommand::Publish)
+                    } else {
+                        Some(TreeCommand::EditorInsertNewline)
+                    }
+                }
 
                 // Control commands
                 KeyCode::Char('s') if key.modifiers.contains(KeyModifiers::CONTROL) => {
@@ -361,6 +367,12 @@ impl KeyMapper {
 
                 // View mode cycling (v in normal mode)
                 KeyCode::Char('v') => Some(TreeCommand::CycleEditorViewMode),
+
+                // Publish (P in normal mode or Ctrl+Enter)
+                KeyCode::Char('P') => Some(TreeCommand::Publish),
+                KeyCode::Enter if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    Some(TreeCommand::Publish)
+                }
 
                 _ => None,
             }
