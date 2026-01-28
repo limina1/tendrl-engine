@@ -44,6 +44,10 @@ struct Args {
     /// Skip confirmation prompt for --purge-db
     #[arg(long, short = 'y')]
     yes: bool,
+
+    /// Path to file containing ncryptsec (will prompt for password on sign-in)
+    #[arg(long)]
+    ncryptsec_file: Option<String>,
 }
 
 #[tokio::main]
@@ -124,6 +128,27 @@ async fn main() -> anyhow::Result<()> {
 
     // Create and run TUI
     let mut app = TuiApp::new(engine, policy);
+
+    // Load ncryptsec from file if provided
+    if let Some(ref ncryptsec_path) = args.ncryptsec_file {
+        let path = expand_tilde(ncryptsec_path);
+        match std::fs::read_to_string(&path) {
+            Ok(content) => {
+                let ncryptsec = content.trim().to_string();
+                if ncryptsec.starts_with("ncryptsec1") {
+                    app.set_ncryptsec(ncryptsec);
+                    println!("Loaded ncryptsec from {:?} - will prompt for password on sign-in", path);
+                } else {
+                    eprintln!("Error: File does not contain a valid ncryptsec (must start with 'ncryptsec1')");
+                    return Ok(());
+                }
+            }
+            Err(e) => {
+                eprintln!("Error reading ncryptsec file {:?}: {}", path, e);
+                return Ok(());
+            }
+        }
+    }
 
     // Load initial publications
     app.load_initial().await?;

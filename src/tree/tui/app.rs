@@ -91,6 +91,15 @@ impl TuiApp {
         }
     }
 
+    /// Set ncryptsec from file (will prompt for password on sign-in)
+    pub fn set_ncryptsec(&mut self, ncryptsec: String) {
+        if let Err(e) = self.state.identity.login_ncryptsec(&ncryptsec) {
+            tracing::warn!("Failed to set ncryptsec: {}", e);
+        } else {
+            self.status_message = Some("Press 'i' to unlock with password".to_string());
+        }
+    }
+
     /// Try to restore identity from keyring on startup
     pub fn restore_identity(&mut self) {
         if let Ok((key_type, key_data)) = self.keyring.get_last_identity() {
@@ -786,7 +795,12 @@ impl TuiApp {
     fn handle_login_command(&mut self, command: &TreeCommand) -> bool {
         match command {
             TreeCommand::OpenLoginDialog => {
-                self.state.login_dialog = Some(LoginDialogState::new());
+                // If we already have a locked ncryptsec, go straight to password prompt
+                if let LoginStatus::EncryptedLocked { ncryptsec, .. } = &self.state.identity.status {
+                    self.state.login_dialog = Some(LoginDialogState::password_prompt(ncryptsec.clone()));
+                } else {
+                    self.state.login_dialog = Some(LoginDialogState::new());
+                }
                 true
             }
             TreeCommand::CloseLoginDialog => {
