@@ -25,6 +25,8 @@ pub struct KeyContext {
     pub editor_compose: bool,
     /// Whether in insert mode (for editor compose)
     pub editor_insert_mode: bool,
+    /// Whether the preview panel is focused
+    pub preview_focused: bool,
 }
 
 impl KeyMapper {
@@ -50,6 +52,13 @@ impl KeyMapper {
         if let Some(c) = ctx {
             if c.user_data_menu_open {
                 return self.map_user_data_menu(key);
+            }
+        }
+
+        // Handle preview-focused mode - captures navigation for scrolling preview
+        if let Some(c) = ctx {
+            if c.preview_focused {
+                return self.map_preview(key);
             }
         }
 
@@ -429,6 +438,49 @@ impl KeyMapper {
             }
 
             // Quit
+            KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                Some(TreeCommand::Quit)
+            }
+
+            _ => None,
+        }
+    }
+
+    /// Map keys when the preview panel is focused
+    fn map_preview(&mut self, key: KeyEvent) -> Option<TreeCommand> {
+        // Handle g prefix for gg
+        if self.g_prefix {
+            self.g_prefix = false;
+            if key.code == KeyCode::Char('g') {
+                return Some(TreeCommand::ScrollPreviewToTop);
+            }
+            return None;
+        }
+
+        match key.code {
+            // Scrolling
+            KeyCode::Char('j') | KeyCode::Down => Some(TreeCommand::ScrollPreviewDown),
+            KeyCode::Char('k') | KeyCode::Up => Some(TreeCommand::ScrollPreviewUp),
+            KeyCode::Char('g') => {
+                self.g_prefix = true;
+                None
+            }
+            KeyCode::Char('G') => Some(TreeCommand::ScrollPreviewToBottom),
+
+            // Page scrolling
+            KeyCode::PageDown | KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                Some(TreeCommand::ScrollPreviewDown) // Could be larger scroll
+            }
+            KeyCode::PageUp | KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                Some(TreeCommand::ScrollPreviewUp)
+            }
+
+            // Exit preview focus (back to main content)
+            KeyCode::Tab => Some(TreeCommand::TogglePreview),
+            KeyCode::Esc | KeyCode::Char('h') => Some(TreeCommand::UnfocusPreview),
+
+            // Quit
+            KeyCode::Char('q') => Some(TreeCommand::Quit),
             KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 Some(TreeCommand::Quit)
             }

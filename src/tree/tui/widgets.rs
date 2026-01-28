@@ -930,10 +930,23 @@ impl<'a> JsonPreview<'a> {
 impl<'a> Widget for JsonPreview<'a> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         let (title, content) = self.get_json();
+        let is_focused = self.state.view.is_preview_focused();
+
+        // Show focus indicator in title and border style
+        let title_text = if is_focused {
+            format!(" {} [FOCUSED - j/k scroll, Tab/Esc exit] ", title)
+        } else {
+            format!(" {} [Tab to focus] ", title)
+        };
 
         let block = Block::default()
             .borders(Borders::ALL)
-            .title(format!(" {} ", title));
+            .border_style(if is_focused {
+                Style::default().fg(Color::Yellow)
+            } else {
+                Style::default().fg(Color::DarkGray)
+            })
+            .title(title_text);
 
         let paragraph = Paragraph::new(content)
             .block(block)

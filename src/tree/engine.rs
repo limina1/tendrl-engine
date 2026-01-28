@@ -95,6 +95,23 @@ impl TreeEngine {
                 state.view.preview_scroll += 1;
                 CommandResult::StateChanged
             }
+            TreeCommand::ScrollPreviewToTop => {
+                state.view.preview_scroll = 0;
+                CommandResult::StateChanged
+            }
+            TreeCommand::ScrollPreviewToBottom => {
+                // Set to a large value; actual clamping happens in render
+                state.view.preview_scroll = usize::MAX / 2;
+                CommandResult::StateChanged
+            }
+            TreeCommand::FocusPreview => {
+                state.view.focus_preview();
+                CommandResult::StateChanged
+            }
+            TreeCommand::UnfocusPreview => {
+                state.view.unfocus_preview();
+                CommandResult::StateChanged
+            }
             TreeCommand::ScrollContentUp => {
                 if state.view.content_scroll > 0 {
                     state.view.content_scroll = state.view.content_scroll.saturating_sub(3);

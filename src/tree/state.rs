@@ -413,6 +413,8 @@ pub struct ViewState {
     pub mode: ViewMode,
     /// Show content preview panel (for Tree mode)
     pub show_preview: bool,
+    /// Whether the preview panel is focused (for scrolling)
+    pub preview_focused: bool,
     /// Preview panel width (percentage, 0-100)
     pub preview_width: u16,
     /// Scroll offset in the tree view
@@ -436,6 +438,7 @@ impl ViewState {
         ViewState {
             mode: ViewMode::default(),
             show_preview: true,
+            preview_focused: false,
             preview_width: 50,
             tree_scroll: 0,
             preview_scroll: 0,
@@ -447,9 +450,38 @@ impl ViewState {
         }
     }
 
-    /// Toggle preview visibility
+    /// Toggle preview visibility and focus
+    /// Cycles: hidden -> visible (unfocused) -> visible (focused) -> hidden
     pub fn toggle_preview(&mut self) {
-        self.show_preview = !self.show_preview;
+        if !self.show_preview {
+            // Hidden -> visible (unfocused)
+            self.show_preview = true;
+            self.preview_focused = false;
+        } else if !self.preview_focused {
+            // Visible but unfocused -> focus it
+            self.preview_focused = true;
+        } else {
+            // Visible and focused -> hide
+            self.show_preview = false;
+            self.preview_focused = false;
+        }
+    }
+
+    /// Focus the preview panel (when visible)
+    pub fn focus_preview(&mut self) {
+        if self.show_preview {
+            self.preview_focused = true;
+        }
+    }
+
+    /// Unfocus the preview panel
+    pub fn unfocus_preview(&mut self) {
+        self.preview_focused = false;
+    }
+
+    /// Check if preview is focused
+    pub fn is_preview_focused(&self) -> bool {
+        self.show_preview && self.preview_focused
     }
 }
 

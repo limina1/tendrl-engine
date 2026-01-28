@@ -553,10 +553,18 @@ pub enum TreeCommand {
     // View
     /// Toggle content preview panel
     TogglePreview,
+    /// Focus the preview panel
+    FocusPreview,
+    /// Unfocus the preview panel (return to main content)
+    UnfocusPreview,
     /// Scroll preview up
     ScrollPreviewUp,
     /// Scroll preview down
     ScrollPreviewDown,
+    /// Scroll preview to top
+    ScrollPreviewToTop,
+    /// Scroll preview to bottom
+    ScrollPreviewToBottom,
     /// Scroll content up (for Continuous mode)
     ScrollContentUp,
     /// Scroll content down (for Continuous mode)

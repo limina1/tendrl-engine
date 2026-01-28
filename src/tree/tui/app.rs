@@ -472,6 +472,7 @@ impl TuiApp {
                         user_data_menu_open: self.state.user_data_menu.is_some(),
                         editor_compose: self.state.use_editor_compose,
                         editor_insert_mode: self.state.editor_compose.insert_mode,
+                        preview_focused: self.state.view.is_preview_focused(),
                     };
                     if let Some(command) = self.key_mapper.map_with_context(key, Some(&ctx)) {
                         // Handle ShowCommandPalette specially
