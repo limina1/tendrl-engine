@@ -803,6 +803,147 @@ impl<'a> Widget for ContentPreview<'a> {
     }
 }
 
+/// Widget for rendering JSON preview of events
+pub struct JsonPreview<'a> {
+    state: &'a TreeState,
+    /// Whether to show full publication JSON (all events) in addition to selected
+    show_full: bool,
+}
+
+impl<'a> JsonPreview<'a> {
+    pub fn new(state: &'a TreeState) -> Self {
+        JsonPreview { state, show_full: false }
+    }
+
+    /// Enable showing full publication JSON (all events)
+    pub fn with_full_json(mut self) -> Self {
+        self.show_full = true;
+        self
+    }
+
+    /// Generate JSON for a single node
+    fn node_to_json(&self, node: &TreeNode) -> String {
+        use serde_json::json;
+
+        match node {
+            TreeNode::Publication(p) => {
+                // Build tags array
+                let mut tags: Vec<serde_json::Value> = vec![
+                    json!(["d", &p.addr.d_tag]),
+                ];
+                if let Some(ref title) = p.title {
+                    tags.push(json!(["title", title]));
+                }
+                if let Some(ref summary) = p.summary {
+                    tags.push(json!(["summary", summary]));
+                }
+                // Add section references
+                for child_id in &p.children {
+                    if let Some(TreeNode::Section(s)) = self.state.nodes.get(child_id) {
+                        tags.push(json!(["a", format!("30041:{}:{}", s.addr.pubkey, s.addr.d_tag), ""]));
+                    }
+                }
+
+                let event = json!({
+                    "kind": 30040,
+                    "pubkey": &p.author,
+                    "tags": tags,
+                    "content": ""
+                });
+                serde_json::to_string_pretty(&event).unwrap_or_default()
+            }
+            TreeNode::Section(s) => {
+                let mut tags: Vec<serde_json::Value> = vec![
+                    json!(["d", &s.addr.d_tag]),
+                ];
+                if let Some(ref title) = s.title {
+                    tags.push(json!(["title", title]));
+                }
+
+                let content = s.content.as_deref().unwrap_or("");
+                let event = json!({
+                    "kind": 30041,
+                    "pubkey": &s.addr.pubkey,
+                    "tags": tags,
+                    "content": content
+                });
+                serde_json::to_string_pretty(&event).unwrap_or_default()
+            }
+        }
+    }
+
+    /// Generate full JSON for the publication and all its sections
+    fn full_publication_json(&self) -> String {
+        let pub_id = self.state.selected_publication.unwrap_or(self.state.cursor);
+
+        if let Some(TreeNode::Publication(p)) = self.state.nodes.get(&pub_id) {
+            let mut result = String::new();
+
+            // Publication index event
+            result.push_str("// Index Event (kind 30040)\n");
+            result.push_str(&self.node_to_json(&TreeNode::Publication(p.clone())));
+            result.push_str("\n\n");
+
+            // Section events
+            for (i, child_id) in p.children.iter().enumerate() {
+                if let Some(node @ TreeNode::Section(_)) = self.state.nodes.get(child_id) {
+                    result.push_str(&format!("// Section {} (kind 30041)\n", i + 1));
+                    result.push_str(&self.node_to_json(node));
+                    result.push_str("\n\n");
+                }
+            }
+
+            result
+        } else {
+            "[No publication selected]".to_string()
+        }
+    }
+
+    /// Get JSON content based on current selection
+    fn get_json(&self) -> (String, String) {
+        // Get the selected node
+        let node = if self.state.is_feed_mode() {
+            self.state
+                .roots
+                .get(self.state.feed_cursor)
+                .and_then(|id| self.state.nodes.get(id))
+        } else {
+            self.state.cursor_node()
+        };
+
+        if let Some(node) = node {
+            let title = format!("JSON: {}", node.title());
+
+            let content = if self.show_full {
+                self.full_publication_json()
+            } else {
+                self.node_to_json(node)
+            };
+
+            (title, content)
+        } else {
+            ("JSON Preview".to_string(), "[No selection]".to_string())
+        }
+    }
+}
+
+impl<'a> Widget for JsonPreview<'a> {
+    fn render(self, area: Rect, buf: &mut Buffer) {
+        let (title, content) = self.get_json();
+
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(format!(" {} ", title));
+
+        let paragraph = Paragraph::new(content)
+            .block(block)
+            .wrap(Wrap { trim: false })
+            .scroll((self.state.view.preview_scroll as u16, 0));
+
+        paragraph.render(area, buf);
+    }
+}
+
 /// Widget for the status bar
 pub struct StatusBar<'a> {
     state: &'a TreeState,

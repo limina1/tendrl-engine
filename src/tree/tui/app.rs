@@ -13,9 +13,9 @@ use crate::tree::state::{LoginDialogState, TreeState, ViewMode};
 use crate::tree::tui::input::{KeyContext, KeyMapper};
 use crate::tree::tui::spinner::Spinner;
 use crate::tree::tui::widgets::{
-    CommandPaletteWidget, ComposeWidget, ContentPreview, ContinuousWidget, EditorComposeWidget, FeedWidget, HelpBar,
-    LoginDialogWidget, OutlineWidget, PaginatedWidget, StatusBar, TreeWidget, UserDataMenuWidget,
-    WindowWidget,
+    CommandPaletteWidget, ComposeWidget, ContentPreview, ContinuousWidget, EditorComposeWidget,
+    FeedWidget, HelpBar, JsonPreview, LoginDialogWidget, OutlineWidget, PaginatedWidget, StatusBar,
+    TreeWidget, UserDataMenuWidget, WindowWidget,
 };
 
 use crate::tree::command::TreeCommand;
@@ -1064,15 +1064,15 @@ impl TuiApp {
                 .split(area);
 
             frame.render_widget(tree_widget, chunks[0]);
-            frame.render_widget(ContentPreview::new(&self.state), chunks[1]);
+            frame.render_widget(JsonPreview::new(&self.state), chunks[1]);
         } else {
             frame.render_widget(tree_widget, area);
         }
     }
 
     fn draw_outline_view(&self, frame: &mut Frame, area: Rect) {
-        // Outline mode: sections as cards, full width
-        // Preview can show detailed content of selected section
+        // Outline mode: sections as cards
+        // Preview shows JSON of selected section + full publication JSON
         if self.state.view.show_preview {
             let chunks = Layout::default()
                 .direction(Direction::Horizontal)
@@ -1080,20 +1080,34 @@ impl TuiApp {
                 .split(area);
 
             frame.render_widget(OutlineWidget::new(&self.state), chunks[0]);
-            frame.render_widget(ContentPreview::new(&self.state), chunks[1]);
+            frame.render_widget(JsonPreview::new(&self.state).with_full_json(), chunks[1]);
         } else {
             frame.render_widget(OutlineWidget::new(&self.state), area);
         }
     }
 
     fn draw_continuous_view(&self, frame: &mut Frame, area: Rect) {
-        // Continuous mode: full scrollable content
-        frame.render_widget(ContinuousWidget::new(&self.state), area);
+        // Continuous mode: full scrollable content, or full JSON with preview
+        if self.state.view.show_preview {
+            frame.render_widget(JsonPreview::new(&self.state).with_full_json(), area);
+        } else {
+            frame.render_widget(ContinuousWidget::new(&self.state), area);
+        }
     }
 
     fn draw_paginated_view(&self, frame: &mut Frame, area: Rect) {
-        // Paginated mode: one section at a time, full width
-        frame.render_widget(PaginatedWidget::new(&self.state), area);
+        // Paginated mode: one section at a time, or with JSON preview panel
+        if self.state.view.show_preview {
+            let chunks = Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([Constraint::Percentage(60), Constraint::Percentage(40)])
+                .split(area);
+
+            frame.render_widget(PaginatedWidget::new(&self.state), chunks[0]);
+            frame.render_widget(JsonPreview::new(&self.state), chunks[1]);
+        } else {
+            frame.render_widget(PaginatedWidget::new(&self.state), area);
+        }
     }
 
     fn draw_compose_mode(&self, frame: &mut Frame, area: Rect) {
