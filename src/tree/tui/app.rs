@@ -1392,97 +1392,173 @@ async fn load_user_data(
         }
     }
 
+    // Collect contact pubkeys for later profile fetching (needs to be done before transaction)
+    let mut contact_hex_pubkeys: Vec<String> = Vec::new();
+
     // Now query nostrdb directly using Note API (following notedeck patterns)
-    let ndb = engine.ndb();
-    let txn = Transaction::new(ndb)
-        .map_err(|e| anyhow::anyhow!("Failed to create transaction: {}", e))?;
+    // Scope the transaction to avoid holding it across await points
+    {
+        let ndb = engine.ndb();
+        let txn = Transaction::new(ndb)
+            .map_err(|e| anyhow::anyhow!("Failed to create transaction: {}", e))?;
 
-    // Query standard list kinds (0, 3, 10000, 10002, 10003, 10006, 10007)
-    let filter = Filter::new()
-        .authors([&pubkey_bytes])
-        .kinds(USER_DATA_KINDS.iter().copied())
-        .limit(USER_DATA_KINDS.len() as u64)
-        .build();
-
-    let results = ndb
-        .query(&txn, &[filter], USER_DATA_KINDS.len() as i32)
-        .map_err(|e| anyhow::anyhow!("Query failed: {}", e))?;
-
-    for query_result in results {
-        if let Ok(note) = ndb.get_note_by_key(&txn, query_result.note_key) {
-            let kind = note.kind() as u64;
-            let created_at = note.created_at();
-
-            match kind {
-                0 => {
-                    if user_data.metadata.as_ref().map(|m| m.created_at).unwrap_or(0) < created_at {
-                        user_data.metadata = Metadata::from_note(&note);
-                    }
-                }
-                3 => {
-                    if user_data.follows.as_ref().map(|f| f.created_at).unwrap_or(0) < created_at {
-                        user_data.follows = Some(FollowList::from_note(&note));
-                    }
-                }
-                10000 => {
-                    if user_data.mutes.as_ref().map(|m| m.created_at).unwrap_or(0) < created_at {
-                        user_data.mutes = Some(MuteList::from_note(&note));
-                    }
-                }
-                10002 => {
-                    if user_data.relays.as_ref().map(|r| r.created_at).unwrap_or(0) < created_at {
-                        user_data.relays = Some(RelayList::from_note(&note));
-                    }
-                }
-                10003 => {
-                    if user_data.bookmarks.as_ref().map(|b| b.created_at).unwrap_or(0) < created_at {
-                        user_data.bookmarks = Some(Bookmarks::from_note(&note));
-                    }
-                }
-                10006 => {
-                    if user_data.blocked_relays.as_ref().map(|b| b.created_at).unwrap_or(0) < created_at {
-                        user_data.blocked_relays = Some(BlockedRelays::from_note(&note));
-                    }
-                }
-                10007 => {
-                    if user_data.search_relays.as_ref().map(|s| s.created_at).unwrap_or(0) < created_at {
-                        user_data.search_relays = Some(SearchRelays::from_note(&note));
-                    }
-                }
-                _ => {}
-            }
-        }
-    }
-
-    // Query addressable kinds (30002 relay sets)
-    for &kind in USER_DATA_ADDRESSABLE_KINDS {
+        // Query standard list kinds (0, 3, 10000, 10002, 10003, 10006, 10007)
         let filter = Filter::new()
             .authors([&pubkey_bytes])
-            .kinds([kind])
-            .limit(100)
+            .kinds(USER_DATA_KINDS.iter().copied())
+            .limit(USER_DATA_KINDS.len() as u64)
             .build();
 
         let results = ndb
-            .query(&txn, &[filter], 100)
+            .query(&txn, &[filter], USER_DATA_KINDS.len() as i32)
             .map_err(|e| anyhow::anyhow!("Query failed: {}", e))?;
 
         for query_result in results {
             if let Ok(note) = ndb.get_note_by_key(&txn, query_result.note_key) {
-                if kind == 30002 {
-                    if let Some(relay_set) = RelaySet::from_note(&note) {
-                        let should_update = user_data
-                            .relay_sets
-                            .get(&relay_set.d_tag)
-                            .map(|existing| existing.created_at < relay_set.created_at)
-                            .unwrap_or(true);
+                let kind = note.kind() as u64;
+                let created_at = note.created_at();
 
-                        if should_update {
-                            user_data.relay_sets.insert(relay_set.d_tag.clone(), relay_set);
+                match kind {
+                    0 => {
+                        if user_data.metadata.as_ref().map(|m| m.created_at).unwrap_or(0) < created_at {
+                            user_data.metadata = Metadata::from_note(&note);
+                        }
+                    }
+                    3 => {
+                        if user_data.follows.as_ref().map(|f| f.created_at).unwrap_or(0) < created_at {
+                            user_data.follows = Some(FollowList::from_note(&note));
+                        }
+                    }
+                    10000 => {
+                        if user_data.mutes.as_ref().map(|m| m.created_at).unwrap_or(0) < created_at {
+                            user_data.mutes = Some(MuteList::from_note(&note));
+                        }
+                    }
+                    10002 => {
+                        if user_data.relays.as_ref().map(|r| r.created_at).unwrap_or(0) < created_at {
+                            user_data.relays = Some(RelayList::from_note(&note));
+                        }
+                    }
+                    10003 => {
+                        if user_data.bookmarks.as_ref().map(|b| b.created_at).unwrap_or(0) < created_at {
+                            user_data.bookmarks = Some(Bookmarks::from_note(&note));
+                        }
+                    }
+                    10006 => {
+                        if user_data.blocked_relays.as_ref().map(|b| b.created_at).unwrap_or(0) < created_at {
+                            user_data.blocked_relays = Some(BlockedRelays::from_note(&note));
+                        }
+                    }
+                    10007 => {
+                        if user_data.search_relays.as_ref().map(|s| s.created_at).unwrap_or(0) < created_at {
+                            user_data.search_relays = Some(SearchRelays::from_note(&note));
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        // Query addressable kinds (30002 relay sets)
+        for &kind in USER_DATA_ADDRESSABLE_KINDS {
+            let filter = Filter::new()
+                .authors([&pubkey_bytes])
+                .kinds([kind])
+                .limit(100)
+                .build();
+
+            let results = ndb
+                .query(&txn, &[filter], 100)
+                .map_err(|e| anyhow::anyhow!("Query failed: {}", e))?;
+
+            for query_result in results {
+                if let Ok(note) = ndb.get_note_by_key(&txn, query_result.note_key) {
+                    if kind == 30002 {
+                        if let Some(relay_set) = RelaySet::from_note(&note) {
+                            let should_update = user_data
+                                .relay_sets
+                                .get(&relay_set.d_tag)
+                                .map(|existing| existing.created_at < relay_set.created_at)
+                                .unwrap_or(true);
+
+                            if should_update {
+                                user_data.relay_sets.insert(relay_set.d_tag.clone(), relay_set);
+                            }
                         }
                     }
                 }
             }
         }
+
+        // Collect contact pubkeys for profile fetching (normalize to lowercase)
+        if let Some(ref follows) = user_data.follows {
+            contact_hex_pubkeys = follows
+                .contacts
+                .iter()
+                .filter(|c| c.pubkey.len() == 64 && c.pubkey.chars().all(|ch| ch.is_ascii_hexdigit()))
+                .map(|c| c.pubkey.to_lowercase())
+                .collect();
+        }
+    } // Transaction dropped here
+
+    // Fetch kind 0 profiles for followed contacts
+    if !contact_hex_pubkeys.is_empty() {
+        use serde_json::json;
+        use tracing::{debug, warn};
+
+        debug!("Fetching kind 0 profiles for {} contacts", contact_hex_pubkeys.len());
+        let pubkey_refs: Vec<&str> = contact_hex_pubkeys.iter().map(|s| s.as_str()).collect();
+        let mut profiles_fetched = 0usize;
+
+        // Batch into chunks of 100 pubkeys
+        for (chunk_idx, chunk) in pubkey_refs.chunks(100).enumerate() {
+            let filter = json!({
+                "kinds": [0],
+                "authors": chunk,
+                "limit": chunk.len()
+            });
+
+            debug!("Fetching profile chunk {} ({} pubkeys)", chunk_idx + 1, chunk.len());
+
+            // get_events returns events from both local db and relays
+            match engine.get_events(vec![filter], policy, None).await {
+                Ok(response) => {
+                    debug!("Got {} events for profile chunk {}", response.events.len(), chunk_idx + 1);
+                    // Parse the returned events directly (they're JSON)
+                    for event in response.events {
+                        if let Some(kind) = event.get("kind").and_then(|v| v.as_u64()) {
+                            if kind == 0 {
+                                if let (Some(pubkey), Some(content), Some(created_at)) = (
+                                    event.get("pubkey").and_then(|v| v.as_str()),
+                                    event.get("content").and_then(|v| v.as_str()),
+                                    event.get("created_at").and_then(|v| v.as_u64()),
+                                ) {
+                                    // Only update if newer than existing (use lowercase for comparison)
+                                    let pubkey_lower = pubkey.to_lowercase();
+                                    let should_update = user_data
+                                        .contact_profiles
+                                        .get(&pubkey_lower)
+                                        .map(|existing| existing.created_at < created_at)
+                                        .unwrap_or(true);
+
+                                    if should_update {
+                                        if let Some(metadata) = Metadata::from_event_content(content, created_at) {
+                                            user_data.contact_profiles.insert(pubkey_lower, metadata);
+                                            profiles_fetched += 1;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                Err(e) => {
+                    warn!("Failed to fetch profile chunk {}: {}", chunk_idx + 1, e);
+                }
+            }
+        }
+
+        debug!("Loaded {} contact profiles", profiles_fetched);
     }
 
     Ok(AsyncResult::UserDataLoaded { user_data })

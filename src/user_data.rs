@@ -21,9 +21,38 @@
 //!
 //! See `notedeck/crates/notedeck/src/account/mute.rs` for reference patterns.
 
+use bech32::{Bech32, Hrp};
 use nostrdb::Note;
 use serde_json::Value;
 use std::collections::HashMap;
+
+/// Convert a hex pubkey to npub (bech32 encoded)
+fn hex_to_npub(hex_pubkey: &str) -> Option<String> {
+    let bytes = hex::decode(hex_pubkey).ok()?;
+    if bytes.len() != 32 {
+        return None;
+    }
+    let hrp = Hrp::parse("npub").ok()?;
+    bech32::encode::<Bech32>(hrp, &bytes).ok()
+}
+
+/// Format a pubkey for display: npub1xxxx/yyyy,xxxx/yyyy
+fn format_pubkey_display(hex_pubkey: &str) -> String {
+    let hex_short = format!(
+        "{}/{}",
+        &hex_pubkey[..4],
+        &hex_pubkey[hex_pubkey.len() - 4..]
+    );
+
+    if let Some(npub) = hex_to_npub(hex_pubkey) {
+        // npub1 is 5 chars, so we take chars 5..9 for first 4 after prefix
+        let npub_start = &npub[5..9];
+        let npub_end = &npub[npub.len() - 4..];
+        format!("npub1{}/{},{}", npub_start, npub_end, hex_short)
+    } else {
+        hex_short
+    }
+}
 
 /// All user-related data fetched after login
 #[derive(Debug, Clone, Default)]
@@ -44,6 +73,8 @@ pub struct UserData {
     pub search_relays: Option<SearchRelays>,
     /// Relay sets (kind 30002, can have multiple)
     pub relay_sets: HashMap<String, RelaySet>,
+    /// Profile metadata for followed contacts (kind 0, keyed by pubkey hex)
+    pub contact_profiles: HashMap<String, Metadata>,
 }
 
 impl UserData {
@@ -110,63 +141,44 @@ impl UserData {
     pub fn format_follow_list(&self) -> String {
         let mut lines = Vec::new();
         if let Some(ref follows) = self.follows {
-            // Count valid pubkeys (64 hex chars)
-            let valid_count = follows.contacts.iter()
-                .filter(|c| c.pubkey.len() == 64 && c.pubkey.chars().all(|ch| ch.is_ascii_hexdigit()))
-                .count();
-
-            // Show debug info about parsing
-            lines.push(format!("Event had {} total tags, {} were 'p' tags",
-                follows.debug_total_tags, follows.debug_p_tags));
-            lines.push(format!("Parsed {} contacts ({} with valid pubkeys)",
-                follows.len(), valid_count));
+            // Show counts
+            let profiles_loaded = self.contact_profiles.len();
+            lines.push(format!("{} contacts ({} profiles loaded)",
+                follows.len(), profiles_loaded));
             lines.push(String::new());
 
-            // Show sample of raw tags for debugging
-            if !follows.debug_sample_tags.is_empty() {
-                lines.push("Sample of first 10 tags (ALL types, raw):".to_string());
-                for (i, tag) in follows.debug_sample_tags.iter().enumerate() {
-                    lines.push(format!("  {}: {:?}", i + 1, tag));
-                }
-                lines.push(String::new());
-            }
-
-            lines.push("Parsed contacts:".to_string());
             for (i, contact) in follows.contacts.iter().enumerate() {
                 // Check if pubkey looks valid (64 hex chars)
                 let is_valid_pubkey = contact.pubkey.len() == 64
                     && contact.pubkey.chars().all(|c| c.is_ascii_hexdigit());
 
-                let pubkey_display = if is_valid_pubkey {
-                    // Valid pubkey - show shortened version
-                    format!("{}...{}", &contact.pubkey[..8], &contact.pubkey[contact.pubkey.len()-8..])
+                let pubkey_short = if is_valid_pubkey {
+                    format_pubkey_display(&contact.pubkey)
                 } else {
-                    // Invalid/malformed - show as-is with warning
-                    format!("[invalid len={}: {}]", contact.pubkey.len(),
-                        if contact.pubkey.len() > 40 {
-                            format!("{}...", &contact.pubkey[..40])
-                        } else {
-                            contact.pubkey.clone()
-                        })
+                    "[invalid]".to_string()
                 };
 
-                let mut entry = format!("{}. {}", i + 1, pubkey_display);
-                if let Some(ref petname) = contact.petname {
-                    entry = format!("{}. {} ({})", i + 1, petname, pubkey_display);
-                }
-                if let Some(ref relay) = contact.relay_url {
-                    entry.push_str(&format!("\n   Relay: {}", relay));
-                }
+                // Try to get name from profile metadata (normalize to lowercase for lookup)
+                let profile_name = self.contact_profiles
+                    .get(&contact.pubkey.to_lowercase())
+                    .and_then(|m| m.display_name().map(String::from));
+
+                // Priority: profile name > petname > pubkey
+                let display_name = profile_name
+                    .or_else(|| contact.petname.clone())
+                    .unwrap_or_else(|| pubkey_short.clone());
+
+                // Show name with pubkey in parens if different
+                let entry = if display_name != pubkey_short {
+                    format!("{}. {} ({})", i + 1, display_name, pubkey_short)
+                } else {
+                    format!("{}. {}", i + 1, display_name)
+                };
+
                 lines.push(entry);
             }
             if follows.is_empty() {
-                lines.push("(no contacts parsed - check raw tags above)".to_string());
-            }
-
-            // Note about raw JSON
-            if follows.debug_raw_json.is_some() {
-                lines.push(String::new());
-                lines.push("(Raw JSON available - select 'Follow list JSON' from menu)".to_string());
+                lines.push("(no contacts)".to_string());
             }
         } else {
             lines.push("(not loaded)".to_string());
@@ -1338,6 +1350,7 @@ mod tests {
 
         let follows = user_data.format_follow_list();
         assert!(follows.contains("Bob"));
-        assert!(follows.contains("abc123de"));  // shortened pubkey
+        assert!(follows.contains("npub1"));  // npub format
+        assert!(follows.contains("abc1/abcd"));  // shortened hex pubkey
     }
 }
