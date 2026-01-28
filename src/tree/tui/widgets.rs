@@ -6,7 +6,7 @@ use crate::identity::LoginStatus;
 use crate::tree::command::CommandCategory;
 use crate::tree::node::{NodeId, TreeNode};
 use crate::tree::render::{visible_nodes, RenderOptions, VisibleNode};
-use crate::tree::state::{CommandPaletteState, ComposeFocus, ComposeState, LoginDialogState, TreeState, UserDataMenuState};
+use crate::tree::state::{CommandPaletteState, ComposeFocus, ComposeState, EditorComposeState, LoginDialogState, TreeState, UserDataMenuState};
 use ratatui::prelude::*;
 use ratatui::layout::{Layout, Direction, Constraint};
 use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Wrap};
@@ -1916,6 +1916,162 @@ impl Widget for UserDataMenuWidget<'_> {
         if y < inner.y + inner.height {
             let help = "j/k:Navigate  Enter:Select  q:Close";
             buf.set_string(inner.x, y, help, Style::default().fg(Color::DarkGray));
+        }
+    }
+}
+
+/// Widget for editor-style compose mode
+///
+/// Renders a single text buffer with visual indicators for structure:
+/// - Headings highlighted with event kind (30040/30041)
+/// - Attributes shown with "t" indicator
+/// - Code blocks with language label and distinct background
+pub struct EditorComposeWidget<'a> {
+    state: &'a mut crate::tree::state::EditorComposeState,
+}
+
+impl<'a> EditorComposeWidget<'a> {
+    pub fn new(state: &'a mut crate::tree::state::EditorComposeState) -> Self {
+        EditorComposeWidget { state }
+    }
+
+    /// Get style for a line type
+    fn line_style(line_type: &crate::tree::parser::LineType) -> Style {
+        use crate::tree::parser::LineType;
+        match line_type {
+            LineType::Heading { event_kind: 30040, .. } => {
+                Style::default().fg(Color::Cyan).bold()
+            }
+            LineType::Heading { event_kind: 30041, .. } => {
+                Style::default().fg(Color::Green).bold()
+            }
+            LineType::Heading { .. } => Style::default().bold(),
+            LineType::Attribute { .. } => Style::default().fg(Color::DarkGray),
+            LineType::CodeStart { .. } => {
+                Style::default().fg(Color::Yellow).bg(Color::Rgb(30, 30, 40))
+            }
+            LineType::CodeBody => Style::default().bg(Color::Rgb(30, 30, 40)),
+            LineType::CodeEnd => {
+                Style::default().fg(Color::Yellow).bg(Color::Rgb(30, 30, 40))
+            }
+            LineType::Prose => Style::default(),
+            LineType::Empty => Style::default(),
+        }
+    }
+
+    /// Get indicator text for right margin
+    fn indicator_style() -> Style {
+        Style::default().fg(Color::DarkGray)
+    }
+}
+
+impl<'a> Widget for EditorComposeWidget<'a> {
+    fn render(self, area: Rect, buf: &mut Buffer) {
+        use crate::tree::parser::LineType;
+
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(format!(" Editor [{}] ", self.state.mode.name()));
+
+        let inner = block.inner(area);
+        block.render(area, buf);
+
+        if inner.height < 2 || inner.width < 10 {
+            return;
+        }
+
+        // Parse the document
+        let parsed = crate::tree::parser::ParsedDocument::parse(&self.state.content, self.state.mode);
+
+        // Reserve space for indicators on the right
+        let indicator_width = 6;
+        let text_width = inner.width.saturating_sub(indicator_width + 1);
+
+        // Ensure cursor is visible
+        let visible_lines = inner.height as usize;
+        self.state.ensure_cursor_visible(visible_lines);
+
+        // Render visible lines
+        for (i, line_idx) in (self.state.scroll..self.state.scroll + visible_lines).enumerate() {
+            let y = inner.y + i as u16;
+            if y >= inner.y + inner.height {
+                break;
+            }
+
+            // Get parsed line info
+            let (line_content, line_type) = if let Some(parsed_line) = parsed.lines.get(line_idx) {
+                (parsed_line.content.as_str(), &parsed_line.line_type)
+            } else {
+                // Past end of document - show empty line
+                ("", &LineType::Empty)
+            };
+
+            // Determine if this is the cursor line
+            let is_cursor_line = line_idx == self.state.cursor_line;
+
+            // Get base style for this line type
+            let mut style = Self::line_style(line_type);
+
+            // Highlight cursor line
+            if is_cursor_line && !self.state.insert_mode {
+                style = style.bg(Color::Rgb(40, 40, 50));
+            }
+
+            // Clear the line with style
+            for x in inner.x..inner.x + text_width {
+                buf[(x, y)].set_char(' ').set_style(style);
+            }
+
+            // Render line content (truncated to fit)
+            let display: String = line_content.chars().take(text_width as usize).collect();
+            buf.set_string(inner.x, y, &display, style);
+
+            // Render cursor if in insert mode and on this line
+            if is_cursor_line && self.state.insert_mode {
+                let cursor_x = inner.x + self.state.cursor_col.min(text_width as usize) as u16;
+                if cursor_x < inner.x + text_width {
+                    buf[(cursor_x, y)]
+                        .set_style(Style::default().bg(Color::White).fg(Color::Black));
+                }
+            }
+
+            // Render indicator on the right
+            let indicator = line_type.indicator();
+            if !indicator.is_empty() {
+                let indicator_x = inner.x + text_width + 1;
+                let display_indicator: String = indicator.chars().take(indicator_width as usize).collect();
+                buf.set_string(indicator_x, y, &display_indicator, Self::indicator_style());
+            }
+        }
+
+        // Status line at bottom (if room)
+        if inner.height > 1 {
+            let status_y = area.y + area.height - 1;
+            let mode_str = if self.state.insert_mode { "INSERT" } else { "NORMAL" };
+            let status = format!(
+                " {} | L{}/{} C{} ",
+                mode_str,
+                self.state.cursor_line + 1,
+                self.state.line_count(),
+                self.state.cursor_col + 1
+            );
+            buf.set_string(
+                area.x + 1,
+                status_y,
+                &status,
+                Style::default().fg(Color::DarkGray),
+            );
+
+            // Show current code block language if in one
+            let blocks = crate::tree::parser::ParsedDocument::parse(&self.state.content, self.state.mode).code_blocks();
+            for (start, end, lang) in blocks {
+                if self.state.cursor_line >= start && self.state.cursor_line <= end && !lang.is_empty() {
+                    let lang_status = format!("[{}]", lang);
+                    let lang_x = area.x + area.width - lang_status.len() as u16 - 2;
+                    buf.set_string(lang_x, status_y, &lang_status, Style::default().fg(Color::Yellow));
+                    break;
+                }
+            }
         }
     }
 }

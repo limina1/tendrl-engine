@@ -55,7 +55,7 @@ pub use engine::TreeEngine;
 pub use node::{ContentMode, NodeId, PublicationNode, SectionNode, TreeNode};
 pub use render::{RenderOptions, TreeRenderer, VisibleNode};
 pub use state::{
-    AppMode, ClipboardContent, CommandPaletteState, FilterMode, TreeState, ViewMode, ViewState,
+    AppMode, ClipboardContent, CommandPaletteState, EditorComposeState, FilterMode, TreeState, ViewMode, ViewState,
 };
 pub use parser::{LineType, ParsedDocument, ParsedLine, Section as ParsedSection};
 pub use undo::{Operation, UndoStack};

@@ -1095,6 +1095,266 @@ impl ComposeState {
     }
 }
 
+/// State for editor-style compose mode (single text buffer)
+///
+/// Unlike structured ComposeState, this provides a free-form text editor
+/// where structure (headings, code blocks, attributes) is detected automatically
+/// using the parser module.
+#[derive(Debug, Clone)]
+pub struct EditorComposeState {
+    /// The raw text content
+    pub content: String,
+    /// Content format mode
+    pub mode: super::node::ContentMode,
+    /// Cursor position (byte offset)
+    pub cursor: usize,
+    /// Cursor line (0-indexed)
+    pub cursor_line: usize,
+    /// Cursor column (0-indexed)
+    pub cursor_col: usize,
+    /// Scroll offset (first visible line)
+    pub scroll: usize,
+    /// Whether in insert mode (vs normal mode)
+    pub insert_mode: bool,
+    /// Cached parsed document (updated on content change)
+    parsed: Option<super::parser::ParsedDocument>,
+}
+
+impl Default for EditorComposeState {
+    fn default() -> Self {
+        Self {
+            content: String::new(),
+            mode: super::node::ContentMode::Markdown,
+            cursor: 0,
+            cursor_line: 0,
+            cursor_col: 0,
+            scroll: 0,
+            insert_mode: true,
+            parsed: None,
+        }
+    }
+}
+
+impl EditorComposeState {
+    /// Create a new editor compose state
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Create with specific content mode
+    pub fn with_mode(mode: super::node::ContentMode) -> Self {
+        Self {
+            mode,
+            ..Self::default()
+        }
+    }
+
+    /// Set content and reparse
+    pub fn set_content(&mut self, content: String) {
+        self.content = content;
+        self.invalidate_parse();
+        self.update_cursor_position();
+    }
+
+    /// Get the parsed document (parses on first access after change)
+    pub fn parsed(&mut self) -> &super::parser::ParsedDocument {
+        if self.parsed.is_none() {
+            self.parsed = Some(super::parser::ParsedDocument::parse(&self.content, self.mode));
+        }
+        self.parsed.as_ref().unwrap()
+    }
+
+    /// Invalidate the cached parse (call after content changes)
+    fn invalidate_parse(&mut self) {
+        self.parsed = None;
+    }
+
+    /// Update cursor line/col from byte offset
+    fn update_cursor_position(&mut self) {
+        let before_cursor = &self.content[..self.cursor.min(self.content.len())];
+        self.cursor_line = before_cursor.lines().count().saturating_sub(1);
+        self.cursor_col = before_cursor.lines().last().map(|l| l.len()).unwrap_or(0);
+    }
+
+    /// Get total line count
+    pub fn line_count(&self) -> usize {
+        self.content.lines().count().max(1)
+    }
+
+    /// Get a specific line by number (0-indexed)
+    pub fn get_line(&self, line_num: usize) -> Option<&str> {
+        self.content.lines().nth(line_num)
+    }
+
+    /// Insert a character at cursor
+    pub fn insert_char(&mut self, c: char) {
+        if self.cursor <= self.content.len() {
+            self.content.insert(self.cursor, c);
+            self.cursor += c.len_utf8();
+            self.invalidate_parse();
+            self.update_cursor_position();
+        }
+    }
+
+    /// Insert a string at cursor
+    pub fn insert_str(&mut self, s: &str) {
+        if self.cursor <= self.content.len() {
+            self.content.insert_str(self.cursor, s);
+            self.cursor += s.len();
+            self.invalidate_parse();
+            self.update_cursor_position();
+        }
+    }
+
+    /// Delete character before cursor (backspace)
+    pub fn delete_char_before(&mut self) {
+        if self.cursor > 0 {
+            // Find the start of the previous character
+            let prev_char_start = self.content[..self.cursor]
+                .char_indices()
+                .last()
+                .map(|(i, _)| i)
+                .unwrap_or(0);
+            self.content.remove(prev_char_start);
+            self.cursor = prev_char_start;
+            self.invalidate_parse();
+            self.update_cursor_position();
+        }
+    }
+
+    /// Delete character at cursor (delete)
+    pub fn delete_char_at(&mut self) {
+        if self.cursor < self.content.len() {
+            self.content.remove(self.cursor);
+            self.invalidate_parse();
+            // Cursor position unchanged
+        }
+    }
+
+    /// Move cursor up one line
+    pub fn cursor_up(&mut self) {
+        if self.cursor_line > 0 {
+            let target_line = self.cursor_line - 1;
+            self.move_to_line(target_line);
+        }
+    }
+
+    /// Move cursor down one line
+    pub fn cursor_down(&mut self) {
+        if self.cursor_line < self.line_count().saturating_sub(1) {
+            let target_line = self.cursor_line + 1;
+            self.move_to_line(target_line);
+        }
+    }
+
+    /// Move cursor left
+    pub fn cursor_left(&mut self) {
+        if self.cursor > 0 {
+            // Move to start of previous character
+            self.cursor = self.content[..self.cursor]
+                .char_indices()
+                .last()
+                .map(|(i, _)| i)
+                .unwrap_or(0);
+            self.update_cursor_position();
+        }
+    }
+
+    /// Move cursor right
+    pub fn cursor_right(&mut self) {
+        if self.cursor < self.content.len() {
+            // Move past current character
+            let c = self.content[self.cursor..].chars().next().unwrap();
+            self.cursor += c.len_utf8();
+            self.update_cursor_position();
+        }
+    }
+
+    /// Move cursor to start of line
+    pub fn cursor_home(&mut self) {
+        self.move_to_line(self.cursor_line);
+        self.cursor_col = 0;
+    }
+
+    /// Move cursor to end of line
+    pub fn cursor_end(&mut self) {
+        if let Some(line) = self.get_line(self.cursor_line) {
+            let line_len = line.len();
+            self.cursor_col = line_len;
+            // Recalculate byte offset
+            let mut offset = 0;
+            for (i, l) in self.content.lines().enumerate() {
+                if i == self.cursor_line {
+                    self.cursor = offset + line_len;
+                    break;
+                }
+                offset += l.len() + 1; // +1 for newline
+            }
+        }
+    }
+
+    /// Move to a specific line, preserving column if possible
+    fn move_to_line(&mut self, target_line: usize) {
+        let target_col = self.cursor_col;
+        let mut offset = 0;
+
+        for (i, line) in self.content.lines().enumerate() {
+            if i == target_line {
+                let actual_col = target_col.min(line.len());
+                self.cursor = offset + actual_col;
+                self.cursor_line = target_line;
+                self.cursor_col = actual_col;
+                return;
+            }
+            offset += line.len() + 1; // +1 for newline
+        }
+    }
+
+    /// Scroll view to ensure cursor is visible
+    pub fn ensure_cursor_visible(&mut self, visible_lines: usize) {
+        if self.cursor_line < self.scroll {
+            self.scroll = self.cursor_line;
+        } else if self.cursor_line >= self.scroll + visible_lines {
+            self.scroll = self.cursor_line - visible_lines + 1;
+        }
+    }
+
+    /// Get the line type at cursor position
+    pub fn current_line_type(&mut self) -> super::parser::LineType {
+        let cursor_line = self.cursor_line;
+        let parsed = self.parsed();
+        parsed
+            .lines
+            .get(cursor_line)
+            .map(|l| l.line_type.clone())
+            .unwrap_or(super::parser::LineType::Empty)
+    }
+
+    /// Get sections extracted from the document
+    pub fn sections(&mut self) -> Vec<super::parser::Section> {
+        // Need to clone to avoid borrow issues
+        let parsed = super::parser::ParsedDocument::parse(&self.content, self.mode);
+        parsed.sections()
+    }
+
+    /// Get code blocks from the document
+    pub fn code_blocks(&mut self) -> Vec<(usize, usize, String)> {
+        let parsed = super::parser::ParsedDocument::parse(&self.content, self.mode);
+        parsed.code_blocks()
+    }
+
+    /// Check if cursor is inside a code block
+    pub fn cursor_in_code_block(&mut self) -> Option<(usize, usize, String)> {
+        let blocks = self.code_blocks();
+        for (start, end, lang) in blocks {
+            if self.cursor_line >= start && self.cursor_line <= end {
+                return Some((start, end, lang));
+            }
+        }
+        None
+    }
+}
+
 /// Clipboard content for copy/paste operations
 #[derive(Debug, Clone)]
 pub enum ClipboardContent {
@@ -1979,5 +2239,147 @@ mod tests {
 
         // Unicode (accented characters are kept since is_alphanumeric() returns true)
         assert_eq!(ComposeState::generate_d_tag("Café au Lait"), "café-au-lait");
+    }
+
+    #[test]
+    fn test_editor_compose_state_basic() {
+        use super::super::node::ContentMode;
+
+        let mut editor = EditorComposeState::new();
+        assert_eq!(editor.content, "");
+        assert_eq!(editor.cursor, 0);
+        assert_eq!(editor.mode, ContentMode::Markdown);
+
+        // Insert characters
+        editor.insert_char('H');
+        editor.insert_char('i');
+        assert_eq!(editor.content, "Hi");
+        assert_eq!(editor.cursor, 2);
+
+        // Insert string
+        editor.insert_str(" there");
+        assert_eq!(editor.content, "Hi there");
+        assert_eq!(editor.cursor, 8);
+    }
+
+    #[test]
+    fn test_editor_compose_state_cursor_movement() {
+        let mut editor = EditorComposeState::new();
+        editor.set_content("Line 1\nLine 2\nLine 3".to_string());
+
+        // Should be at start
+        assert_eq!(editor.cursor, 0);
+        assert_eq!(editor.cursor_line, 0);
+        assert_eq!(editor.cursor_col, 0);
+
+        // Move right
+        editor.cursor_right();
+        assert_eq!(editor.cursor_col, 1);
+
+        // Move to end of line
+        editor.cursor_end();
+        assert_eq!(editor.cursor_col, 6); // "Line 1" has 6 chars
+
+        // Move down
+        editor.cursor_down();
+        assert_eq!(editor.cursor_line, 1);
+
+        // Move to start of line
+        editor.cursor_home();
+        assert_eq!(editor.cursor_col, 0);
+
+        // Move up
+        editor.cursor_up();
+        assert_eq!(editor.cursor_line, 0);
+    }
+
+    #[test]
+    fn test_editor_compose_state_delete() {
+        let mut editor = EditorComposeState::new();
+        editor.set_content("Hello".to_string());
+        editor.cursor = 5; // At end
+        editor.update_cursor_position();
+
+        // Backspace
+        editor.delete_char_before();
+        assert_eq!(editor.content, "Hell");
+        assert_eq!(editor.cursor, 4);
+
+        // Move to start and delete forward
+        editor.cursor = 0;
+        editor.delete_char_at();
+        assert_eq!(editor.content, "ell");
+    }
+
+    #[test]
+    fn test_editor_compose_state_parsing() {
+        use super::super::parser::LineType;
+
+        let mut editor = EditorComposeState::new();
+        editor.set_content("# Title\n\nSome prose.\n\n```rust\ncode\n```".to_string());
+
+        // Get the parsed document
+        let parsed = editor.parsed();
+        assert_eq!(parsed.lines.len(), 7);
+
+        // First line should be a heading
+        assert!(matches!(
+            &parsed.lines[0].line_type,
+            LineType::Heading { level: 1, event_kind: 30040, .. }
+        ));
+
+        // Code block detection
+        assert!(matches!(&parsed.lines[4].line_type, LineType::CodeStart { language } if language == "rust"));
+        assert!(matches!(&parsed.lines[5].line_type, LineType::CodeBody));
+        assert!(matches!(&parsed.lines[6].line_type, LineType::CodeEnd));
+    }
+
+    #[test]
+    fn test_editor_compose_state_sections() {
+        let mut editor = EditorComposeState::new();
+        editor.set_content("# My Article\n\n## Section 1\n\nContent 1\n\n## Section 2\n\nContent 2".to_string());
+
+        let sections = editor.sections();
+        assert_eq!(sections.len(), 3); // Title + 2 sections
+
+        // First is the title (30040)
+        assert_eq!(sections[0].title, "My Article");
+        assert_eq!(sections[0].event_kind, 30040);
+
+        // Second is Section 1 (30041)
+        assert_eq!(sections[1].title, "Section 1");
+        assert_eq!(sections[1].event_kind, 30041);
+
+        // Third is Section 2 (30041)
+        assert_eq!(sections[2].title, "Section 2");
+        assert_eq!(sections[2].event_kind, 30041);
+    }
+
+    #[test]
+    fn test_editor_compose_state_code_blocks() {
+        let mut editor = EditorComposeState::new();
+        editor.set_content("Prose\n\n```python\nprint('hi')\n```\n\nMore prose\n\n```rust\nfn main() {}\n```".to_string());
+
+        let blocks = editor.code_blocks();
+        assert_eq!(blocks.len(), 2);
+
+        assert_eq!(blocks[0].2, "python"); // language
+        assert_eq!(blocks[1].2, "rust");
+    }
+
+    #[test]
+    fn test_editor_compose_state_cursor_in_code_block() {
+        let mut editor = EditorComposeState::new();
+        editor.set_content("Prose\n\n```python\nprint('hi')\n```".to_string());
+
+        // Cursor on prose line
+        editor.cursor_line = 0;
+        assert!(editor.cursor_in_code_block().is_none());
+
+        // Cursor inside code block
+        editor.cursor_line = 3; // "print('hi')" line
+        let block = editor.cursor_in_code_block();
+        assert!(block.is_some());
+        assert_eq!(block.unwrap().2, "python");
     }
 }
