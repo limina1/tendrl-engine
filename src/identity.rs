@@ -308,7 +308,7 @@ fn derive_pubkey_from_secret(secret_hex: &str) -> Result<String, KeyParseError> 
 pub fn decrypt_ncryptsec(ncryptsec: &str, password: &str) -> Result<(String, String), DecryptError> {
     use bech32::Hrp;
     use chacha20poly1305::{
-        aead::{Aead, KeyInit},
+        aead::{Aead, KeyInit, Payload},
         XChaCha20Poly1305,
     };
     use scrypt::{scrypt, Params};
@@ -323,10 +323,10 @@ pub fn decrypt_ncryptsec(ncryptsec: &str, password: &str) -> Result<(String, Str
     }
 
     // NIP-49 format:
-    // version (1 byte) | log_n (1 byte) | salt (16 bytes) | nonce (24 bytes) | ciphertext
-    // ciphertext = encrypted(key_security_byte (1) + secret_key (32)) + auth_tag (16) = 49 bytes
-    // Minimum total: 1 + 1 + 16 + 24 + 33 + 16 = 91 bytes
-    if data.len() < 91 {
+    // version (1) | log_n (1) | salt (16) | nonce (24) | key_security_byte (1) | ciphertext (48)
+    // ciphertext = encrypted(secret_key (32)) + auth_tag (16) = 48 bytes
+    // Total: 1 + 1 + 16 + 24 + 1 + 48 = 91 bytes
+    if data.len() != 91 {
         return Err(DecryptError::InvalidFormat);
     }
 
@@ -338,7 +338,8 @@ pub fn decrypt_ncryptsec(ncryptsec: &str, password: &str) -> Result<(String, Str
     let log_n = data[1];
     let salt = &data[2..18];
     let nonce = &data[18..42];
-    let ciphertext = &data[42..];
+    let key_security_byte = data[42]; // Associated data (AAD), not part of ciphertext
+    let ciphertext = &data[43..]; // 48 bytes: 32 encrypted + 16 auth tag
 
     // NIP-49 requires NFKC normalization of the password
     let normalized_password: String = password.nfkc().collect();
@@ -351,27 +352,30 @@ pub fn decrypt_ncryptsec(ncryptsec: &str, password: &str) -> Result<(String, Str
     scrypt(normalized_password.as_bytes(), salt, &params, &mut key)
         .map_err(|_| DecryptError::KeyDerivationFailed)?;
 
-    // Decrypt using XChaCha20-Poly1305
+    // Decrypt using XChaCha20-Poly1305 with key_security_byte as associated data
     let cipher = XChaCha20Poly1305::new_from_slice(&key)
         .map_err(|_| DecryptError::DecryptionFailed)?;
 
     let nonce_arr: [u8; 24] = nonce.try_into()
         .map_err(|_| DecryptError::InvalidFormat)?;
 
+    // NIP-49: key_security_byte is passed as associated data (AAD), not encrypted
     let plaintext = cipher
-        .decrypt(&nonce_arr.into(), ciphertext)
+        .decrypt(
+            &nonce_arr.into(),
+            Payload {
+                msg: ciphertext,
+                aad: &[key_security_byte],
+            },
+        )
         .map_err(|_| DecryptError::DecryptionFailed)?;
 
-    // NIP-49: plaintext is key_security_byte (1) + secret_key (32) = 33 bytes
-    if plaintext.len() != 33 {
+    // NIP-49: plaintext is just the 32-byte secret key
+    if plaintext.len() != 32 {
         return Err(DecryptError::DecryptionFailed);
     }
 
-    // First byte is key security (0x00=unknown, 0x01=unsafe, 0x02=safe), skip it
-    let _key_security = plaintext[0];
-    let secret_bytes = &plaintext[1..33];
-
-    let secret_hex = hex::encode(secret_bytes);
+    let secret_hex = hex::encode(&plaintext);
     let pubkey_hex = derive_pubkey_from_secret(&secret_hex)
         .map_err(|_| DecryptError::DecryptionFailed)?;
 
@@ -392,12 +396,30 @@ pub fn abbreviate_pubkey_hex(pubkey_hex: &str) -> String {
     }
 }
 
-/// Abbreviate an npub for display
+/// Abbreviate an npub for display (npub1xxxx...yyyy format)
 pub fn abbreviate_npub(npub: &str) -> String {
-    if npub.len() > 20 {
-        format!("{}...{}", &npub[..10], &npub[npub.len()-6..])
+    // npub1 is 5 chars, show first 4 after prefix and last 4
+    if npub.len() > 16 && npub.starts_with("npub1") {
+        format!("npub1{}...{}", &npub[5..9], &npub[npub.len()-4..])
+    } else if npub.len() > 12 {
+        format!("{}...{}", &npub[..6], &npub[npub.len()-4..])
     } else {
         npub.to_string()
+    }
+}
+
+/// Format a hex pubkey as abbreviated npub for display
+pub fn format_pubkey_as_npub(hex_pubkey: &str) -> String {
+    match encode_npub(hex_pubkey) {
+        Ok(npub) => abbreviate_npub(&npub),
+        Err(_) => {
+            // Fallback to abbreviated hex if encoding fails
+            if hex_pubkey.len() >= 16 {
+                format!("{}...{}", &hex_pubkey[..4], &hex_pubkey[hex_pubkey.len()-4..])
+            } else {
+                hex_pubkey.to_string()
+            }
+        }
     }
 }
 
@@ -540,13 +562,32 @@ mod tests {
         // In real usage, use a valid npub
     }
 
+    /// NIP-49 official test vector from the specification
+    /// This is the definitive test that our implementation is correct
+    #[test]
+    fn test_ncryptsec_nip49_official() {
+        // From NIP-49 spec:
+        // ncryptsec: ncryptsec1qgg9947rlpvqu76pj5ecreduf9jxhselq2nae2kghhvd5g7dgjtcxfqtd67p9m0w57lspw8gsq6yphnm8623nsl8xn9j4jdzz84zm3frztj3z7s35vpzmqf6ksu8r89qk5z2zxfmu5gv8th8wclt0h4p
+        // password: nostr
+        // log_n: 16
+        // expected key: 3501454135014541350145413501453fefb02227e449e57cf4d3a3ce05378683
+        let ncryptsec = "ncryptsec1qgg9947rlpvqu76pj5ecreduf9jxhselq2nae2kghhvd5g7dgjtcxfqtd67p9m0w57lspw8gsq6yphnm8623nsl8xn9j4jdzz84zm3frztj3z7s35vpzmqf6ksu8r89qk5z2zxfmu5gv8th8wclt0h4p";
+        let password = "nostr";
+        let expected_secret = "3501454135014541350145413501453fefb02227e449e57cf4d3a3ce05378683";
+
+        let result = super::decrypt_ncryptsec(ncryptsec, password);
+        assert!(result.is_ok(), "NIP-49 official test vector failed: {:?}", result.err());
+
+        let (decrypted, _pubkey) = result.unwrap();
+        assert_eq!(decrypted, expected_secret, "Decrypted key doesn't match NIP-49 expected value");
+    }
+
     /// Test with a fixed/deterministic test vector for reproducibility
-    /// Password: "nostr-engine-test"
-    /// Secret: e698fdd6e2e780b7d9800266bfc02d56630835856a0146969cc984bb21b068c6
+    /// Uses correct NIP-49 format: key_security_byte as AAD, not part of plaintext
     #[test]
     fn test_ncryptsec_fixed_vector_log8() {
         use bech32::{Bech32, Hrp};
-        use chacha20poly1305::{aead::{Aead, KeyInit}, XChaCha20Poly1305};
+        use chacha20poly1305::{aead::{Aead, KeyInit, Payload}, XChaCha20Poly1305};
         use scrypt::{scrypt, Params};
         use unicode_normalization::UnicodeNormalization;
 
@@ -554,6 +595,7 @@ mod tests {
         let secret_hex = "e698fdd6e2e780b7d9800266bfc02d56630835856a0146969cc984bb21b068c6";
         let secret_bytes = hex::decode(secret_hex).unwrap();
         let password = "nostr-engine-test";
+        let key_security_byte: u8 = 0x02; // "client doesn't track"
 
         // Fixed salt and nonce (deterministic for reproducible test vector)
         let salt: [u8; 16] = [0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
@@ -569,26 +611,27 @@ mod tests {
         let mut key = [0u8; 32];
         scrypt(normalized.as_bytes(), &salt, &params, &mut key).unwrap();
 
-        // Encrypt
-        let mut plaintext = vec![0x02u8]; // key_security = safe
-        plaintext.extend_from_slice(&secret_bytes);
-
+        // NIP-49: Encrypt with key_security_byte as AAD, plaintext is just the 32-byte secret
         let cipher = XChaCha20Poly1305::new_from_slice(&key).unwrap();
-        let ciphertext = cipher.encrypt(&nonce.into(), plaintext.as_slice()).unwrap();
+        let ciphertext = cipher.encrypt(
+            &nonce.into(),
+            Payload {
+                msg: &secret_bytes,
+                aad: &[key_security_byte],
+            },
+        ).unwrap();
+        assert_eq!(ciphertext.len(), 48); // 32 plaintext + 16 tag
 
-        // Build ncryptsec
+        // Build ncryptsec: version | log_n | salt | nonce | key_security_byte | ciphertext
         let mut data = vec![0x02u8, log_n];
         data.extend_from_slice(&salt);
         data.extend_from_slice(&nonce);
+        data.push(key_security_byte);
         data.extend_from_slice(&ciphertext);
+        assert_eq!(data.len(), 91);
 
         let hrp = Hrp::parse("ncryptsec").unwrap();
         let ncryptsec = bech32::encode::<Bech32>(hrp, &data).unwrap();
-
-        // Print for documentation
-        println!("Test ncryptsec (log_n=8): {}", ncryptsec);
-        println!("Password: {}", password);
-        println!("Expected secret: {}", secret_hex);
 
         // Verify decryption works
         let result = super::decrypt_ncryptsec(&ncryptsec, password);
@@ -598,67 +641,13 @@ mod tests {
         assert_eq!(decrypted, secret_hex);
     }
 
-    /// Test with log_n=16 (nak default, production strength)
-    #[test]
-    fn test_ncryptsec_fixed_vector_log16() {
-        use bech32::{Bech32, Hrp};
-        use chacha20poly1305::{aead::{Aead, KeyInit}, XChaCha20Poly1305};
-        use scrypt::{scrypt, Params};
-        use unicode_normalization::UnicodeNormalization;
-
-        // Fixed test values
-        let secret_hex = "e698fdd6e2e780b7d9800266bfc02d56630835856a0146969cc984bb21b068c6";
-        let secret_bytes = hex::decode(secret_hex).unwrap();
-        let password = "nostr-engine-test";
-
-        // Fixed salt and nonce
-        let salt: [u8; 16] = [0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
-                              0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10];
-        let nonce: [u8; 24] = [0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18,
-                               0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f, 0x20,
-                               0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28];
-        let log_n: u8 = 16; // Production strength (N = 65536)
-
-        // Derive key
-        let normalized: String = password.nfkc().collect();
-        let params = Params::new(log_n, 8, 1, 32).unwrap();
-        let mut key = [0u8; 32];
-        scrypt(normalized.as_bytes(), &salt, &params, &mut key).unwrap();
-
-        println!("Derived key (log_n=16): {}", hex::encode(&key));
-
-        // Encrypt
-        let mut plaintext = vec![0x02u8]; // key_security = safe
-        plaintext.extend_from_slice(&secret_bytes);
-
-        let cipher = XChaCha20Poly1305::new_from_slice(&key).unwrap();
-        let ciphertext = cipher.encrypt(&nonce.into(), plaintext.as_slice()).unwrap();
-
-        // Build ncryptsec
-        let mut data = vec![0x02u8, log_n];
-        data.extend_from_slice(&salt);
-        data.extend_from_slice(&nonce);
-        data.extend_from_slice(&ciphertext);
-
-        let hrp = Hrp::parse("ncryptsec").unwrap();
-        let ncryptsec = bech32::encode::<Bech32>(hrp, &data).unwrap();
-
-        println!("Test ncryptsec (log_n=16): {}", ncryptsec);
-        println!("Password: {}", password);
-
-        // Verify decryption works
-        let result = super::decrypt_ncryptsec(&ncryptsec, password);
-        assert!(result.is_ok(), "Decryption failed with log_n=16: {:?}", result.err());
-
-        let (decrypted, _) = result.unwrap();
-        assert_eq!(decrypted, secret_hex);
-    }
-
+    /// Test roundtrip encryption/decryption with random salt/nonce
+    /// Uses correct NIP-49 format: key_security_byte as AAD
     #[test]
     fn test_ncryptsec_roundtrip() {
         use bech32::{Bech32, Hrp};
         use chacha20poly1305::{
-            aead::{Aead, KeyInit, OsRng},
+            aead::{Aead, KeyInit, OsRng, Payload},
             XChaCha20Poly1305,
         };
         use chacha20poly1305::aead::rand_core::RngCore;
@@ -669,6 +658,7 @@ mod tests {
         let secret_hex = "e698fdd6e2e780b7d9800266bfc02d56630835856a0146969cc984bb21b068c6";
         let secret_bytes = hex::decode(secret_hex).unwrap();
         let password = "testpassword123";
+        let key_security_byte: u8 = 0x02;
 
         // Generate random salt and nonce
         let mut salt = [0u8; 16];
@@ -684,21 +674,23 @@ mod tests {
         let mut key = [0u8; 32];
         scrypt(normalized_password.as_bytes(), &salt, &params, &mut key).expect("scrypt");
 
-        // Build plaintext: key_security_byte (0x02 = safe) + secret
-        let mut plaintext = vec![0x02u8];
-        plaintext.extend_from_slice(&secret_bytes);
-        assert_eq!(plaintext.len(), 33);
-
-        // Encrypt using XChaCha20-Poly1305
+        // NIP-49: Encrypt with key_security_byte as AAD
         let cipher = XChaCha20Poly1305::new_from_slice(&key).expect("cipher");
-        let ciphertext = cipher.encrypt(&nonce.into(), plaintext.as_slice()).expect("encrypt");
-        assert_eq!(ciphertext.len(), 49); // 33 plaintext + 16 tag
+        let ciphertext = cipher.encrypt(
+            &nonce.into(),
+            Payload {
+                msg: &secret_bytes,
+                aad: &[key_security_byte],
+            },
+        ).expect("encrypt");
+        assert_eq!(ciphertext.len(), 48); // 32 plaintext + 16 tag
 
-        // Build ncryptsec data
+        // Build ncryptsec data: version | log_n | salt | nonce | key_security | ciphertext
         let mut data = vec![0x02u8]; // version
         data.push(log_n);
         data.extend_from_slice(&salt);
         data.extend_from_slice(&nonce);
+        data.push(key_security_byte);
         data.extend_from_slice(&ciphertext);
         assert_eq!(data.len(), 91);
 
@@ -712,5 +704,15 @@ mod tests {
 
         let (decrypted_secret, _pubkey) = result.unwrap();
         assert_eq!(decrypted_secret, secret_hex);
+    }
+
+    /// Test that wrong password fails decryption
+    #[test]
+    fn test_ncryptsec_wrong_password() {
+        let ncryptsec = "ncryptsec1qgg9947rlpvqu76pj5ecreduf9jxhselq2nae2kghhvd5g7dgjtcxfqtd67p9m0w57lspw8gsq6yphnm8623nsl8xn9j4jdzz84zm3frztj3z7s35vpzmqf6ksu8r89qk5z2zxfmu5gv8th8wclt0h4p";
+
+        let result = super::decrypt_ncryptsec(ncryptsec, "wrongpassword");
+        assert!(result.is_err(), "Should fail with wrong password");
+        assert!(matches!(result.unwrap_err(), super::DecryptError::DecryptionFailed));
     }
 }
