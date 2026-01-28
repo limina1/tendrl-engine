@@ -37,6 +37,7 @@ pub mod command;
 pub mod content;
 pub mod engine;
 pub mod node;
+pub mod parser;
 pub mod render;
 pub mod state;
 pub mod undo;
@@ -56,4 +57,5 @@ pub use render::{RenderOptions, TreeRenderer, VisibleNode};
 pub use state::{
     AppMode, ClipboardContent, CommandPaletteState, FilterMode, TreeState, ViewMode, ViewState,
 };
+pub use parser::{LineType, ParsedDocument, ParsedLine, Section as ParsedSection};
 pub use undo::{Operation, UndoStack};
