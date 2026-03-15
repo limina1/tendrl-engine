@@ -7,7 +7,8 @@
 		onupdate,
 		onreset,
 		onremove,
-		onsendtocompose
+		onsendtocompose,
+		ondelete
 	}: {
 		entries: ContextItem[];
 		disabled?: boolean;
@@ -15,6 +16,7 @@
 		onreset: (id: string) => void;
 		onremove: (id: string) => void;
 		onsendtocompose: (items: ContextItem[]) => void;
+		ondelete: (items: ContextItem[]) => void;
 	} = $props();
 
 	let checkedIds: Set<string> = $state(new Set());
@@ -33,6 +35,14 @@
 			checkedIds = new Set();
 		}
 	}
+
+	function deleteChecked() {
+		const items = entries.filter((e) => checkedIds.has(e.id));
+		if (items.length > 0) {
+			ondelete(items);
+			checkedIds = new Set();
+		}
+	}
 </script>
 
 <div class="context-panel">
@@ -43,14 +53,20 @@
 				<span class="badge">{entries.length}</span>
 			{/if}
 		</span>
-		<button
-			class="send-btn icon-btn"
-			onclick={sendChecked}
-			disabled={disabled || checkedIds.size === 0}
-			title="Send to compose"
-		>
-			□
-		</button>
+		<div class="header-actions">
+			<button
+				class="icon-btn"
+				onclick={sendChecked}
+				disabled={disabled || checkedIds.size === 0}
+				title="Send to compose"
+			>□</button>
+			<button
+				class="icon-btn trash-btn"
+				onclick={deleteChecked}
+				disabled={disabled || checkedIds.size === 0}
+				title="Remove from context"
+			>🗑</button>
+		</div>
 	</div>
 
 	<div class="context-list">
@@ -131,10 +147,19 @@
 		border-radius: 10px;
 	}
 
-	.send-btn {
+	.header-actions {
+		display: flex;
+		gap: 4px;
+	}
+
+	.icon-btn {
 		font-size: 0.85rem;
 		padding: 4px 8px;
 		min-width: 28px;
+	}
+
+	.trash-btn {
+		font-size: 0.75rem;
 	}
 
 	.context-list {

@@ -10,13 +10,15 @@
 		onupdate,
 		oncancel,
 		onsendtochat,
-		onpublish
+		onpublish,
+		ondelete
 	}: {
 		compose: ComposeState;
 		onupdate: (state: ComposeState) => void;
 		oncancel: () => void;
 		onsendtochat: (items: ContextItem[]) => void;
 		onpublish: (items: ContextItem[]) => void;
+		ondelete: (items: ContextItem[]) => void;
 	} = $props();
 
 	let checkedIds: Set<string> = $state(new Set());
@@ -246,6 +248,14 @@
 		}
 	}
 
+	function deleteChecked() {
+		const items = compose.sections.filter((s) => checkedIds.has(s.id));
+		if (items.length > 0) {
+			ondelete(items);
+			checkedIds = new Set();
+		}
+	}
+
 	// Plain/preview: send all to chat
 	function sendAllToChat() {
 		let currentState = compose;
@@ -346,6 +356,7 @@
 		<div class="compose-toolbar">
 			<button class="icon-btn" onclick={sendCheckedToChat} disabled={checkedIds.size === 0} title="Send to chat">◂</button>
 			<button class="icon-btn" onclick={publishChecked} disabled={checkedIds.size === 0} title="Publish locally">▸</button>
+			<button class="icon-btn trash-btn" onclick={deleteChecked} disabled={checkedIds.size === 0} title="Remove from compose">🗑</button>
 		</div>
 
 		<div class="compose-sections">
@@ -468,6 +479,10 @@
 		padding: 4px 8px;
 		font-size: 0.85rem;
 		min-width: 28px;
+	}
+
+	.trash-btn {
+		font-size: 0.75rem;
 	}
 
 	.compose-sections {

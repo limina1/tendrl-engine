@@ -213,6 +213,21 @@
 		syncContext();
 	}
 
+	// Context 🗑 → set in_context false, gc
+	function handleDeleteFromContext(deleteItems: ContextItem[]) {
+		const ids = new Set(deleteItems.map((i) => i.id));
+		items = items.map((e) => (ids.has(e.id) ? { ...e, in_context: false } : e));
+		gc();
+		syncContext();
+	}
+
+	// Compose 🗑 → set in_compose false, gc
+	function handleDeleteFromCompose(deleteItems: ContextItem[]) {
+		const ids = new Set(deleteItems.map((i) => i.id));
+		items = items.map((e) => (ids.has(e.id) ? { ...e, in_compose: false } : e));
+		gc();
+	}
+
 	// Context □ → set in_compose on checked items
 	function handleContextToCompose(checkedItems: ContextItem[]) {
 		const ids = new Set(checkedItems.map((i) => i.id));
@@ -423,6 +438,7 @@
 				onsendtocompose={handleContextToCompose}
 				onsendfragmentstocompose={handleChatFragmentsToCompose}
 				onpublishfragments={handleChatPublishFragments}
+				ondeletecontext={handleDeleteFromContext}
 			/>
 		</PanelFrame>
 
@@ -444,6 +460,7 @@
 				oncancelcompose={handleCancelCompose}
 				onsendtochat={handleComposeToChat}
 				onpublishcompose={handleComposePublish}
+				ondeletecompose={handleDeleteFromCompose}
 				ondoctochat={handleDocToChat}
 				ondocpublish={handleDocPublish}
 			/>

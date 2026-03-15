@@ -25,7 +25,8 @@
 		onremovecontext,
 		onsendtocompose,
 		onsendfragmentstocompose,
-		onpublishfragments
+		onpublishfragments,
+		ondeletecontext
 	}: {
 		chat: ChatResponse | null;
 		loading?: boolean;
@@ -46,6 +47,7 @@
 		onsendtocompose: (items: ContextItem[]) => void;
 		onsendfragmentstocompose: (fragments: Fragment[]) => void;
 		onpublishfragments: (fragments: Fragment[]) => void;
+		ondeletecontext: (items: ContextItem[]) => void;
 	} = $props();
 
 	let checkedFragmentIds: Set<number> = $state(new Set());
@@ -111,6 +113,7 @@
 			onreset={onresetcontext}
 			onremove={onremovecontext}
 			{onsendtocompose}
+			ondelete={ondeletecontext}
 			disabled={loading}
 		/>
 	{/if}
