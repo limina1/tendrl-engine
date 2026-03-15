@@ -334,6 +334,30 @@
 		if (docMode !== 'compose') docMode = 'compose';
 	}
 
+	// Search bulk ◂
+	async function handleAddManyToContext(results: SearchResult[]) {
+		const newItems = await Promise.all(
+			results.map(async (r) => {
+				const content = await fetchEventContent(r);
+				return makeItem(resultFields(r, content), { context: true });
+			})
+		);
+		items = [...items, ...newItems];
+		syncContext();
+	}
+
+	// Search bulk □
+	async function handleAddManyToCompose(results: SearchResult[]) {
+		const newItems = await Promise.all(
+			results.map(async (r) => {
+				const content = await fetchEventContent(r);
+				return makeItem(resultFields(r, content), { compose: true });
+			})
+		);
+		items = [...items, ...newItems];
+		if (docMode !== 'compose') docMode = 'compose';
+	}
+
 	// JSON modal
 	async function handleViewJson(result: SearchResult) {
 		try {
@@ -487,6 +511,8 @@
 				onviewjson={handleViewJson}
 				onaddtocontext={handleAddToContext}
 				onaddtocompose={handleAddToCompose}
+				onaddmanytocontext={handleAddManyToContext}
+				onaddmanytocompose={handleAddManyToCompose}
 			/>
 		</PanelFrame>
 	</div>

@@ -35,6 +35,18 @@
 		clearTrash();
 	}
 
+	function selectAll() {
+		checkedIds = new Set(entries.map((e) => e.id));
+	}
+
+	function invertSelection() {
+		const next = new Set<string>();
+		for (const e of entries) {
+			if (!checkedIds.has(e.id)) next.add(e.id);
+		}
+		checkedIds = next;
+	}
+
 	function sendChecked() {
 		const items = entries.filter((e) => checkedIds.has(e.id));
 		if (items.length > 0) {
@@ -85,6 +97,8 @@
 			{/if}
 		</span>
 		<div class="header-actions">
+			<button class="sel-btn" onclick={selectAll} disabled={disabled || entries.length === 0} title="Select all">All</button>
+			<button class="sel-btn" onclick={invertSelection} disabled={disabled || entries.length === 0} title="Invert selection">Inv</button>
 			<button
 				class="icon-btn"
 				onclick={sendChecked}
@@ -186,6 +200,12 @@
 		display: flex;
 		align-items: center;
 		gap: 4px;
+	}
+
+	.sel-btn {
+		font-size: 0.65rem;
+		padding: 2px 6px;
+		color: var(--fg-muted);
 	}
 
 	.icon-btn {

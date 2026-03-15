@@ -3,12 +3,16 @@
 
 	let {
 		result,
+		checked = false,
+		ontogglecheck,
 		onselect,
 		onviewjson,
 		onaddtocontext,
 		onaddtocompose
 	}: {
 		result: SearchResult;
+		checked?: boolean;
+		ontogglecheck?: () => void;
 		onselect: (result: SearchResult) => void;
 		onviewjson: (result: SearchResult) => void;
 		onaddtocontext: (result: SearchResult) => void;
@@ -41,9 +45,16 @@
 </script>
 
 <div class="result-item">
-	<div class="result-header" onclick={() => onselect(result)} onkeydown={(e) => e.key === 'Enter' && onselect(result)} role="button" tabindex="0">
+	<div class="result-header">
+		{#if ontogglecheck}
+			<label class="result-check" onclick={(e) => e.stopPropagation()}>
+				<input type="checkbox" {checked} onchange={ontogglecheck} />
+			</label>
+		{/if}
+		<div class="result-header-text" onclick={() => onselect(result)} onkeydown={(e) => e.key === 'Enter' && onselect(result)} role="button" tabindex="0">
 		<span class="result-title">{result.title ?? '[Untitled]'}</span>
 		<span class="kind-badge">{KINDS[result.kind] ?? result.kind}</span>
+		</div>
 	</div>
 	<p class="result-preview" onclick={() => onselect(result)} role="presentation">{preview}</p>
 
@@ -105,14 +116,27 @@
 
 	.result-header {
 		display: flex;
+		align-items: center;
+		gap: 6px;
+		margin-bottom: 4px;
+	}
+
+	.result-check {
+		display: flex;
+		align-items: center;
+		flex-shrink: 0;
+	}
+
+	.result-header-text {
+		flex: 1;
+		display: flex;
 		justify-content: space-between;
 		align-items: center;
 		gap: 8px;
-		margin-bottom: 4px;
 		cursor: pointer;
 	}
 
-	.result-header:hover {
+	.result-header-text:hover {
 		color: var(--accent);
 	}
 

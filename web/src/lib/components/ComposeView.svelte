@@ -231,6 +231,18 @@
 
 	// --- Full mode handlers ---
 
+	function selectAll() {
+		checkedIds = new Set(compose.sections.map((s) => s.id));
+	}
+
+	function invertSelection() {
+		const next = new Set<string>();
+		for (const s of compose.sections) {
+			if (!checkedIds.has(s.id)) next.add(s.id);
+		}
+		checkedIds = next;
+	}
+
 	function toggleCheck(id: string) {
 		const next = new Set(checkedIds);
 		if (next.has(id)) next.delete(id);
@@ -386,6 +398,8 @@
 		</div>
 
 		<div class="compose-toolbar">
+			<button class="sel-btn" onclick={selectAll} disabled={compose.sections.length === 0} title="Select all">All</button>
+			<button class="sel-btn" onclick={invertSelection} disabled={compose.sections.length === 0} title="Invert selection">Inv</button>
 			<button class="icon-btn" onclick={sendCheckedToChat} disabled={checkedIds.size === 0} title="Send to chat">◂</button>
 			<button class="icon-btn" onclick={publishChecked} disabled={checkedIds.size === 0} title="Publish locally">▸</button>
 			<button
@@ -514,6 +528,13 @@
 	.compose-toolbar {
 		display: flex;
 		gap: 6px;
+		align-items: center;
+	}
+
+	.sel-btn {
+		font-size: 0.65rem;
+		padding: 2px 6px;
+		color: var(--fg-muted);
 	}
 
 	.icon-btn {

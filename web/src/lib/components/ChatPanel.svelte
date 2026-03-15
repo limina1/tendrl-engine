@@ -61,6 +61,20 @@
 		checkedFragmentIds = next;
 	}
 
+	function selectAllFragments() {
+		if (!chat) return;
+		checkedFragmentIds = new Set(chat.fragments.map((f) => f.id));
+	}
+
+	function invertFragmentSelection() {
+		if (!chat) return;
+		const next = new Set<number>();
+		for (const f of chat.fragments) {
+			if (!checkedFragmentIds.has(f.id)) next.add(f.id);
+		}
+		checkedFragmentIds = next;
+	}
+
 	function sendToCompose() {
 		if (!chat) return;
 		const checked = chat.fragments.filter((f) => checkedFragmentIds.has(f.id));
@@ -96,6 +110,8 @@
 		<button onclick={onedit} disabled={loading || (chat?.edit_mode ?? false)}>Edit</button>
 		<button onclick={onreset} disabled={loading}>Reset</button>
 		<span class="toolbar-spacer"></span>
+		<button class="sel-btn" onclick={selectAllFragments} disabled={loading || !chat || chat.fragments.length === 0} title="Select all">All</button>
+		<button class="sel-btn" onclick={invertFragmentSelection} disabled={loading || !chat || chat.fragments.length === 0} title="Invert selection">Inv</button>
 		<button class="icon-btn" onclick={sendToCompose} disabled={loading || !hasChecked} title="Send to compose">□</button>
 		<button class="icon-btn" onclick={publish} disabled={loading || !hasChecked} title="Publish locally">▸</button>
 	</div>
@@ -187,6 +203,12 @@
 		padding: 0 5px;
 		border-radius: 8px;
 		margin-left: 2px;
+	}
+
+	.sel-btn {
+		font-size: 0.65rem;
+		padding: 2px 6px;
+		color: var(--fg-muted);
 	}
 
 	.icon-btn {
