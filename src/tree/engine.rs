@@ -57,6 +57,26 @@ impl TreeEngine {
                     state.feed_cursor = 0; // Reset cursor when toggling filter
                     return CommandResult::StateChanged;
                 }
+                TreeCommand::BroadcastSelected => {
+                    // Get the selected publication
+                    if let Some(&pub_id) = state.roots.get(state.feed_cursor) {
+                        if let Some(TreeNode::Publication(p)) = state.nodes.get(&pub_id) {
+                            // Only allow broadcast for LocalCreated publications
+                            if p.sync_status.is_local_created() {
+                                return CommandResult::NeedsAsync(AsyncRequest::BroadcastSelected {
+                                    addr: p.addr.clone(),
+                                });
+                            } else if p.sync_status.is_synced() {
+                                return CommandResult::Error("Already published to relays".to_string());
+                            } else if p.sync_status.is_draft() {
+                                return CommandResult::Error("Draft must be signed first (Ctrl+Enter in compose)".to_string());
+                            } else {
+                                return CommandResult::Error("Cannot broadcast remote publications".to_string());
+                            }
+                        }
+                    }
+                    return CommandResult::Error("No publication selected".to_string());
+                }
                 // Other commands fall through to normal handling
                 _ => {}
             }
@@ -262,7 +282,7 @@ impl TreeEngine {
                 // Handled by app.rs
                 CommandResult::NoOp
             }
-            TreeCommand::FilterDrafts => {
+            TreeCommand::FilterDrafts | TreeCommand::BroadcastSelected => {
                 // Only valid in feed mode, handled above
                 CommandResult::NoOp
             }
@@ -445,6 +465,12 @@ impl TreeEngine {
                 CommandResult::StateChanged
             }
 
+            AsyncResult::SearchResults { results: _, query: _ } => {
+                // Search results are handled by the UI layer
+                // TODO: populate search results panel when workbench UI is built
+                CommandResult::StateChanged
+            }
+
             AsyncResult::DraftSaved { draft_id: _ } => {
                 // Draft saved successfully - exit compose mode
                 state.exit_compose();
@@ -493,7 +519,7 @@ impl TreeEngine {
                 CommandResult::StateChanged
             }
 
-            AsyncResult::PublicationCreated { addr, title, sections } => {
+            AsyncResult::PublicationCreated { addr, title, sections, signed_events: _ } => {
                 use crate::tree::node::SyncStatus;
 
                 // Create publication node with LocalCreated status
@@ -531,6 +557,32 @@ impl TreeEngine {
                 state.feed_cursor = 0;
 
                 CommandResult::ModeChanged(super::state::AppMode::Feed)
+            }
+
+            AsyncResult::BroadcastProgress { .. } => {
+                // Progress updates are handled directly in app.rs for UI feedback
+                CommandResult::NoOp
+            }
+
+            AsyncResult::BroadcastComplete { addr, successful_relays, total_relays: _, message: _ } => {
+                use crate::tree::node::SyncStatus;
+
+                // Update the publication's sync status
+                let pub_id = NodeId::from_addr(&addr);
+                if let Some(TreeNode::Publication(ref mut pub_node)) = state.nodes.get_mut(&pub_id) {
+                    if successful_relays > 0 {
+                        pub_node.sync_status = SyncStatus::Synced;
+                        // Also update section sync status
+                        for child_id in pub_node.children.clone() {
+                            if let Some(TreeNode::Section(ref mut sec_node)) = state.nodes.get_mut(&child_id) {
+                                sec_node.sync_status = SyncStatus::Synced;
+                            }
+                        }
+                    }
+                }
+
+                // Result message is shown via status in app.rs
+                CommandResult::StateChanged
             }
 
             AsyncResult::Error { request, error } => {
@@ -1027,6 +1079,25 @@ impl TreeEngine {
     fn execute_compose(&self, state: &mut TreeState, command: TreeCommand) -> CommandResult {
         match command {
             TreeCommand::ExitCompose | TreeCommand::Back => {
+                // Auto-save draft if there's content worth saving
+                let has_content = if state.use_editor_compose {
+                    state.editor_compose.has_content()
+                } else {
+                    state.compose.has_content()
+                };
+
+                if has_content {
+                    // Convert editor compose to structured if needed, then save
+                    let compose = if state.use_editor_compose {
+                        state.editor_compose.to_compose_state()
+                    } else {
+                        state.compose.clone()
+                    };
+                    // The DraftSaved result handler will exit compose mode
+                    return CommandResult::NeedsAsync(AsyncRequest::SaveDraft { compose });
+                }
+
+                // No content to save, just exit
                 state.exit_compose();
                 CommandResult::ModeChanged(AppMode::Feed)
             }

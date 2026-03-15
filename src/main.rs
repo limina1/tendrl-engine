@@ -95,6 +95,8 @@ async fn main() -> anyhow::Result<()> {
             "/api/v1/addressable/{kind}/{pubkey}/{d_tag}",
             get(api::get_addressable_handler),
         )
+        // Search endpoint
+        .route("/api/v1/search", post(api::search_handler))
         // Publication endpoints
         .route("/api/v1/publications", get(api::list_publications_handler))
         .route(

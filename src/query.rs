@@ -66,31 +66,45 @@ pub fn query_by_id(ndb: &Ndb, id: &str) -> Result<Option<Value>> {
 }
 
 /// Query an addressable event by kind, pubkey, and d-tag
+///
+/// For NIP-33 replaceable events, this returns the newest version (highest created_at)
+/// since nostrdb stores all versions without auto-replacement.
 pub fn query_addressable(ndb: &Ndb, kind: u64, pubkey: &str, d_tag: &str) -> Result<Option<Value>> {
     let pubkey_bytes = parse_hex_id(pubkey)?;
 
     let txn = Transaction::new(ndb)
         .map_err(|e| EngineError::Database(format!("Failed to create transaction: {}", e)))?;
 
+    // Query multiple results since nostrdb may have multiple versions of the same addressable event
     let filter = FilterBuilder::new()
         .kinds([kind])
         .authors([pubkey_bytes].iter())
         .tags([d_tag], 'd')
-        .limit(1)
+        .limit(100)
         .build();
 
     let results = ndb
-        .query(&txn, &[filter], 1)
+        .query(&txn, &[filter], 100)
         .map_err(|e| EngineError::Database(format!("Query failed: {}", e)))?;
 
-    if let Some(query_result) = results.first() {
+    // Find the newest version by created_at
+    let mut newest: Option<(u64, Value)> = None;
+    for query_result in results {
         let note = ndb
             .get_note_by_key(&txn, query_result.note_key)
             .map_err(|e| EngineError::Database(format!("Failed to get note: {}", e)))?;
-        Ok(Some(note_to_json(&note)?))
-    } else {
-        Ok(None)
+        let created_at = note.created_at();
+
+        match &newest {
+            Some((best_time, _)) if created_at <= *best_time => continue,
+            _ => {
+                let event = note_to_json(&note)?;
+                newest = Some((created_at, event));
+            }
+        }
     }
+
+    Ok(newest.map(|(_, event)| event))
 }
 
 /// Parse a hex string to a 32-byte array
@@ -223,7 +237,7 @@ fn parse_filter(filter_json: &Value) -> Result<nostrdb::Filter> {
                             builder = builder.tags(tag_values.iter().copied(), 'd');
                         }
                         _ => {
-                            debug!("Unsupported tag filter: {}", key);
+                            builder = builder.tags(tag_values.iter().copied(), tag_char);
                         }
                     }
                 }
@@ -232,6 +246,49 @@ fn parse_filter(filter_json: &Value) -> Result<nostrdb::Filter> {
     }
 
     Ok(builder.build())
+}
+
+/// Post-filter events by text content (and title tag), case-insensitive.
+///
+/// - Keywords: all words must appear (AND, order-independent)
+/// - Exact: content must contain the substring
+pub fn filter_by_text(events: &[Value], filter: &crate::search::TextFilter) -> Vec<Value> {
+    events
+        .iter()
+        .filter(|event| {
+            let content = event
+                .get("content")
+                .and_then(|c| c.as_str())
+                .unwrap_or("");
+            let title = event
+                .get("tags")
+                .and_then(|t| t.as_array())
+                .and_then(|tags| {
+                    tags.iter().find_map(|tag| {
+                        let arr = tag.as_array()?;
+                        if arr.first()?.as_str()? == "title" {
+                            arr.get(1)?.as_str()
+                        } else {
+                            None
+                        }
+                    })
+                })
+                .unwrap_or("");
+
+            let searchable = format!("{} {}", content, title);
+            let lower = searchable.to_lowercase();
+
+            match filter {
+                crate::search::TextFilter::Keywords(words) => {
+                    words.iter().all(|w| lower.contains(&w.to_lowercase()))
+                }
+                crate::search::TextFilter::Exact(phrase) => {
+                    lower.contains(&phrase.to_lowercase())
+                }
+            }
+        })
+        .cloned()
+        .collect()
 }
 
 /// Convert a nostrdb Note to JSON event format
@@ -268,4 +325,73 @@ fn note_to_json(note: &nostrdb::Note) -> Result<Value> {
         "content": content,
         "sig": sig_hex
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::search::TextFilter;
+    use serde_json::json;
+
+    #[test]
+    fn test_filter_by_text_keywords_single() {
+        let events = vec![
+            json!({"content": "hello world", "tags": []}),
+            json!({"content": "goodbye world", "tags": []}),
+        ];
+        let filter = TextFilter::Keywords(vec!["hello".to_string()]);
+        let result = filter_by_text(&events, &filter);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0]["content"], "hello world");
+    }
+
+    #[test]
+    fn test_filter_by_text_keywords_multi_and() {
+        let events = vec![
+            json!({"content": "hello world tutorial", "tags": []}),
+            json!({"content": "hello universe", "tags": []}),
+        ];
+        let filter = TextFilter::Keywords(vec!["hello".to_string(), "tutorial".to_string()]);
+        let result = filter_by_text(&events, &filter);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0]["content"], "hello world tutorial");
+    }
+
+    #[test]
+    fn test_filter_by_text_keywords_no_match() {
+        let events = vec![json!({"content": "hello world", "tags": []})];
+        let filter = TextFilter::Keywords(vec!["python".to_string()]);
+        let result = filter_by_text(&events, &filter);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_filter_by_text_exact() {
+        let events = vec![
+            json!({"content": "this is an exact phrase test", "tags": []}),
+            json!({"content": "exact test", "tags": []}),
+        ];
+        let filter = TextFilter::Exact("exact phrase".to_string());
+        let result = filter_by_text(&events, &filter);
+        assert_eq!(result.len(), 1);
+    }
+
+    #[test]
+    fn test_filter_by_text_case_insensitive() {
+        let events = vec![json!({"content": "Hello WORLD", "tags": []})];
+        let filter = TextFilter::Exact("hello world".to_string());
+        let result = filter_by_text(&events, &filter);
+        assert_eq!(result.len(), 1);
+    }
+
+    #[test]
+    fn test_filter_by_text_matches_title_tag() {
+        let events = vec![
+            json!({"content": "body text", "tags": [["title", "Python Tutorial"]]}),
+            json!({"content": "other content", "tags": []}),
+        ];
+        let filter = TextFilter::Keywords(vec!["python".to_string()]);
+        let result = filter_by_text(&events, &filter);
+        assert_eq!(result.len(), 1);
+    }
 }

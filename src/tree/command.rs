@@ -6,6 +6,7 @@
 use super::node::NodeId;
 use super::state::SectionCompose;
 use crate::publication::NAddr;
+use crate::search::{SearchQuery, SearchResult};
 use crate::user_data::UserData;
 use serde::{Deserialize, Serialize};
 
@@ -723,6 +724,8 @@ pub enum TreeCommand {
     DeleteDraft { draft_id: String },
     /// Toggle draft-only filter in feed
     FilterDrafts,
+    /// Broadcast selected publication to relays
+    BroadcastSelected,
 
     // Identity management
     /// Open the login dialog
@@ -855,9 +858,9 @@ pub enum AsyncRequest {
     },
     /// Refresh the entire tree
     RefreshAll,
-    /// Search for publications matching a query
-    Search {
-        query: String,
+    /// Search for events matching a structured query
+    SearchEvents {
+        query: SearchQuery,
     },
     /// Load more publications (pagination) - fetch events before the given timestamp
     LoadMorePublications {
@@ -890,6 +893,20 @@ pub enum AsyncRequest {
         /// The user's public key (hex)
         pubkey: String,
     },
+    /// Broadcast events to relays (after local storage)
+    BroadcastToRelays {
+        /// The publication address (for status updates)
+        addr: NAddr,
+        /// Signed event JSONs to broadcast (publication + sections)
+        events: Vec<String>,
+        /// Target relay URLs
+        relays: Vec<String>,
+    },
+    /// Broadcast a selected publication from feed (queries events from nostrdb)
+    BroadcastSelected {
+        /// The publication address to broadcast
+        addr: NAddr,
+    },
 }
 
 impl AsyncRequest {
@@ -907,7 +924,7 @@ impl AsyncRequest {
                 format!("Finding alternates for {}", addr.d_tag)
             }
             AsyncRequest::RefreshAll => "Refreshing...".to_string(),
-            AsyncRequest::Search { query } => format!("Searching: {}", query),
+            AsyncRequest::SearchEvents { query } => format!("Searching: {:?}", query.text_filter),
             AsyncRequest::LoadMorePublications { limit, .. } => {
                 format!("Loading {} more publications...", limit)
             }
@@ -921,6 +938,12 @@ impl AsyncRequest {
             AsyncRequest::SaveDraft { .. } => "Saving draft...".to_string(),
             AsyncRequest::LoadDrafts => "Loading drafts...".to_string(),
             AsyncRequest::LoadUserData { .. } => "Loading user data...".to_string(),
+            AsyncRequest::BroadcastToRelays { relays, .. } => {
+                format!("Broadcasting to {} relays...", relays.len())
+            }
+            AsyncRequest::BroadcastSelected { addr } => {
+                format!("Broadcasting {}...", addr.d_tag)
+            }
         }
     }
 
@@ -932,14 +955,16 @@ impl AsyncRequest {
             AsyncRequest::LoadChildren { parent } => Some(*parent),
             AsyncRequest::FindAlternates { node_id, .. } => Some(*node_id),
             AsyncRequest::RefreshAll
-            | AsyncRequest::Search { .. }
+            | AsyncRequest::SearchEvents { .. }
             | AsyncRequest::LoadMorePublications { .. }
             | AsyncRequest::LoadBatch { .. }
             | AsyncRequest::PublishNote { .. }
             | AsyncRequest::PublishPublication { .. }
             | AsyncRequest::SaveDraft { .. }
             | AsyncRequest::LoadDrafts
-            | AsyncRequest::LoadUserData { .. } => None,
+            | AsyncRequest::LoadUserData { .. }
+            | AsyncRequest::BroadcastToRelays { .. }
+            | AsyncRequest::BroadcastSelected { .. } => None,
         }
     }
 }
@@ -973,6 +998,11 @@ pub enum AsyncResult {
     MorePublicationsLoaded {
         publications: Vec<LoadedPublication>,
     },
+    /// Search results returned
+    SearchResults {
+        results: Vec<SearchResult>,
+        query: SearchQuery,
+    },
     /// Draft saved successfully
     DraftSaved {
         draft_id: String,
@@ -994,6 +1024,32 @@ pub enum AsyncResult {
         title: Option<String>,
         /// Section addresses with titles and content
         sections: Vec<CreatedSection>,
+        /// Signed event JSONs for potential relay broadcast
+        signed_events: Vec<String>,
+    },
+    /// Broadcast progress update (for UI feedback)
+    BroadcastProgress {
+        /// Current relay being processed
+        current_relay: usize,
+        /// Total number of relays
+        total_relays: usize,
+        /// Current event being sent
+        current_event: usize,
+        /// Total number of events
+        total_events: usize,
+        /// Relay name
+        relay_name: String,
+    },
+    /// Broadcast to relays completed
+    BroadcastComplete {
+        /// The publication address
+        addr: NAddr,
+        /// Number of relays that accepted all events
+        successful_relays: usize,
+        /// Total number of relays attempted
+        total_relays: usize,
+        /// Summary message
+        message: String,
     },
     /// Operation failed
     Error {

@@ -2,13 +2,13 @@
 //!
 //! Main application loop for the terminal interface with async bridge.
 
-use crate::drafts::DraftStore;
+use crate::drafts::{DraftStore, LocalPublicationTracker};
 use crate::engine::{Engine, FetchPolicy};
 use crate::identity::{parse_key, decrypt_ncryptsec, IdentityKeyring, KeyType, LoginStatus};
 use crate::publication::{NAddr, PublicationEngine};
 use crate::tree::command::{AsyncRequest, AsyncResult, CommandResult, ConfigAction, LoadedDraft};
 use crate::tree::engine::{init_from_publications, TreeEngine};
-use crate::tree::node::{NodeId, SectionNode, TreeNode};
+use crate::tree::node::{NodeId, SectionNode, SyncStatus, TreeNode};
 use crate::tree::state::{LoginDialogState, TreeState, ViewMode};
 use crate::tree::tui::input::{KeyContext, KeyMapper};
 use crate::tree::tui::spinner::Spinner;
@@ -61,6 +61,11 @@ pub struct TuiApp {
     draft_store: Option<DraftStore>,
     /// Identity keyring for secure storage
     keyring: IdentityKeyring,
+    /// Session secret cache (fallback when keyring fails)
+    /// Maps pubkey -> secret_hex
+    session_secrets: std::collections::HashMap<String, String>,
+    /// Tracker for locally-created publications (not yet published to relays)
+    local_tracker: Option<LocalPublicationTracker>,
 }
 
 impl TuiApp {
@@ -70,6 +75,9 @@ impl TuiApp {
 
         // Initialize draft store in the same data directory as the engine
         let draft_store = DraftStore::new(nostr_engine.data_dir()).ok();
+
+        // Initialize local publication tracker
+        let local_tracker = LocalPublicationTracker::new(nostr_engine.data_dir()).ok();
 
         // Initialize keyring for identity storage
         let keyring = IdentityKeyring::new();
@@ -88,6 +96,8 @@ impl TuiApp {
             pending_count: 0,
             draft_store,
             keyring,
+            session_secrets: std::collections::HashMap::new(),
+            local_tracker,
         }
     }
 
@@ -193,9 +203,29 @@ impl TuiApp {
         self.status_message = Some(format!("{}: {}", prefix, relay_list));
     }
 
+    /// Update sync_status for locally-created publications
+    ///
+    /// Iterates through all publication nodes and marks any that are tracked
+    /// as locally-created (not yet published to relays) with SyncStatus::LocalCreated.
+    fn update_local_publication_status(&mut self) {
+        let tracker = match &self.local_tracker {
+            Some(t) => t,
+            None => return,
+        };
+
+        for node in self.state.nodes.values_mut() {
+            if let TreeNode::Publication(ref mut pub_node) = node {
+                let a_tag = pub_node.addr.to_a_tag();
+                if tracker.is_local(&a_tag) {
+                    pub_node.sync_status = SyncStatus::LocalCreated;
+                }
+            }
+        }
+    }
+
     /// Load drafts synchronously and add to state
     fn load_drafts_sync(&mut self) {
-        use crate::tree::node::{PublicationNode, SyncStatus};
+        use crate::tree::node::PublicationNode;
 
         if let Some(ref store) = self.draft_store {
             if let Ok(drafts) = store.list_drafts() {
@@ -347,6 +377,13 @@ impl TuiApp {
                 node.version = pub_.version.clone();
                 node.created_at = pub_.created_at;
                 node.children = child_ids;
+
+                // Check if this publication was locally created (not yet published to relays)
+                if let Some(ref tracker) = self.local_tracker {
+                    if tracker.is_local(&pub_.addr.to_a_tag()) {
+                        node.sync_status = SyncStatus::LocalCreated;
+                    }
+                }
             }
         }
 
@@ -387,12 +424,43 @@ impl TuiApp {
             while let Ok(msg) = self.async_rx.try_recv() {
                 let AsyncMessage::Result(result) = msg;
                 self.pending_count = self.pending_count.saturating_sub(1);
+
+                // Handle special results - show status messages
+                if let AsyncResult::PublicationCreated { .. } = result {
+                    self.status_message = Some("Saved to local DB. Press 'b' to broadcast to relays.".to_string());
+                }
+
+                // Show broadcast progress
+                if let AsyncResult::BroadcastProgress {
+                    current_relay, total_relays, current_event, total_events, ref relay_name
+                } = result {
+                    let progress_bar = "█".repeat(current_relay) + &"░".repeat(total_relays - current_relay);
+                    self.status_message = Some(format!(
+                        "[{}] Relay {}/{}: {} (event {}/{})",
+                        progress_bar, current_relay, total_relays, relay_name, current_event, total_events
+                    ));
+                    // Don't process progress through engine, just update UI
+                    continue;
+                }
+
+                // Show broadcast completion status
+                if let AsyncResult::BroadcastComplete { ref message, successful_relays, .. } = result {
+                    if successful_relays > 0 {
+                        self.status_message = Some(message.clone());
+                    } else {
+                        self.status_message = Some(format!("Warning: {}", message));
+                    }
+                }
+
                 let cmd_result = self.engine.apply_async_result(&mut self.state, result);
                 if let CommandResult::Error(e) = cmd_result {
                     self.status_message = Some(format!("Error: {}", e));
-                } else if self.pending_count == 0 {
+                } else if self.pending_count == 0 && self.status_message.is_none() {
                     self.status_message = None;
                 }
+
+                // Update sync_status for any locally-created publications
+                self.update_local_publication_status();
             }
 
             // Poll for events with timeout
@@ -837,8 +905,13 @@ impl TuiApp {
                     if let Some(ref ncryptsec) = dialog.pending_ncryptsec.clone() {
                         match decrypt_ncryptsec(ncryptsec, &dialog.input) {
                             Ok((secret_hex, pubkey_hex)) => {
-                                // Store secret in keyring
-                                let _ = self.keyring.store_secret(&pubkey_hex, &secret_hex);
+                                // Store secret in session cache (always works)
+                                self.session_secrets.insert(pubkey_hex.clone(), secret_hex.clone());
+
+                                // Try to store in keyring (may fail on some systems)
+                                if let Err(e) = self.keyring.store_secret(&pubkey_hex, &secret_hex) {
+                                    tracing::warn!("Failed to store secret in keyring: {:?} (using session cache)", e);
+                                }
                                 let _ = self.keyring.store_last_identity("ncryptsec", ncryptsec);
 
                                 // Update identity status
@@ -878,9 +951,15 @@ impl TuiApp {
                             if let Err(e) = self.state.identity.login_nsec(&nsec) {
                                 dialog.set_error(format!("Invalid nsec: {}", e));
                             } else {
-                                // Store secret in keyring (use pubkey as key)
+                                // Store secret in session cache and keyring
                                 if let Some(pubkey) = self.state.identity.status.pubkey() {
-                                    let _ = self.keyring.store_secret(pubkey, &nsec);
+                                    // Store in session cache (always works)
+                                    self.session_secrets.insert(pubkey.to_string(), nsec.clone());
+
+                                    // Try to store in keyring
+                                    if let Err(e) = self.keyring.store_secret(pubkey, &nsec) {
+                                        tracing::warn!("Failed to store secret in keyring: {:?}", e);
+                                    }
                                     let _ = self.keyring.store_last_identity("nsec", pubkey);
                                 }
                                 self.state.login_dialog = None;
@@ -1214,18 +1293,98 @@ impl TuiApp {
                 self.pending_count += 1;
 
                 // Check if logged in with signing capability
-                let pubkey = match self.state.identity.status.pubkey() {
-                    Some(pk) => pk.to_string(),
-                    None => {
+                let pubkey = match &self.state.identity.status {
+                    crate::identity::LoginStatus::SignedIn { pubkey, .. } => pubkey.clone(),
+                    crate::identity::LoginStatus::EncryptedLocked { .. } => {
                         let tx = self.async_tx.clone();
                         let result = AsyncResult::Error {
                             request: request.clone(),
-                            error: "Must be logged in to create publications".to_string(),
+                            error: "Session is locked - enter password first (press 'i' to unlock)".to_string(),
                         };
                         tokio::spawn(async move {
                             let _ = tx.send(AsyncMessage::Result(result)).await;
                         });
                         return;
+                    }
+                    crate::identity::LoginStatus::ReadOnly { .. } => {
+                        let tx = self.async_tx.clone();
+                        let result = AsyncResult::Error {
+                            request: request.clone(),
+                            error: "Read-only login (npub) cannot create publications - need nsec or ncryptsec".to_string(),
+                        };
+                        tokio::spawn(async move {
+                            let _ = tx.send(AsyncMessage::Result(result)).await;
+                        });
+                        return;
+                    }
+                    crate::identity::LoginStatus::None => {
+                        let tx = self.async_tx.clone();
+                        let result = AsyncResult::Error {
+                            request: request.clone(),
+                            error: "Must be logged in to create publications (press 'i' to login)".to_string(),
+                        };
+                        tokio::spawn(async move {
+                            let _ = tx.send(AsyncMessage::Result(result)).await;
+                        });
+                        return;
+                    }
+                };
+
+                // Get secret key for signing (check session cache first, then keyring)
+                let secret_hex = if let Some(secret) = self.session_secrets.get(&pubkey) {
+                    // Found in session cache - decode if it's an nsec
+                    if secret.starts_with("nsec1") {
+                        match crate::identity::decode_nsec(secret) {
+                            Ok(hex) => hex,
+                            Err(e) => {
+                                let tx = self.async_tx.clone();
+                                let result = AsyncResult::Error {
+                                    request: request.clone(),
+                                    error: format!("Invalid nsec in session cache: {}", e),
+                                };
+                                tokio::spawn(async move {
+                                    let _ = tx.send(AsyncMessage::Result(result)).await;
+                                });
+                                return;
+                            }
+                        }
+                    } else {
+                        secret.clone()
+                    }
+                } else {
+                    // Try keyring as fallback
+                    match self.keyring.get_secret(&pubkey) {
+                        Ok(secret) => {
+                            if secret.starts_with("nsec1") {
+                                match crate::identity::decode_nsec(&secret) {
+                                    Ok(hex) => hex,
+                                    Err(e) => {
+                                        let tx = self.async_tx.clone();
+                                        let result = AsyncResult::Error {
+                                            request: request.clone(),
+                                            error: format!("Invalid nsec in keyring: {}", e),
+                                        };
+                                        tokio::spawn(async move {
+                                            let _ = tx.send(AsyncMessage::Result(result)).await;
+                                        });
+                                        return;
+                                    }
+                                }
+                            } else {
+                                secret
+                            }
+                        }
+                        Err(_) => {
+                            let tx = self.async_tx.clone();
+                            let result = AsyncResult::Error {
+                                request: request.clone(),
+                                error: "Secret not found. Please re-enter your password (press 'i')".to_string(),
+                            };
+                            tokio::spawn(async move {
+                                let _ = tx.send(AsyncMessage::Result(result)).await;
+                            });
+                            return;
+                        }
                     }
                 };
 
@@ -1244,19 +1403,27 @@ impl TuiApp {
                 }
                 compose.sections = sections.clone();
 
-                // Build unsigned events from compose state
-                use crate::publication::build_publication_events;
-                let (pub_event, section_events) = build_publication_events(&compose, &pubkey);
+                // Build signed events from compose state
+                use crate::publication::build_signed_publication_events;
+                let (pub_event, section_events) = build_signed_publication_events(&compose, &pubkey, &secret_hex);
+
+                // Log the events being created
+                let pub_id = pub_event.get("id").and_then(|v| v.as_str()).unwrap_or("unknown");
+                tracing::info!("Publishing event ID: {}", pub_id);
+                tracing::debug!("Publication event: {}", serde_json::to_string(&pub_event).unwrap_or_default());
 
                 // Ingest all events into nostrdb
                 let engine = self.nostr_engine.clone();
                 let mut ingest_error: Option<String> = None;
 
                 // Ingest section events first
-                for section_event in &section_events {
+                for (i, section_event) in section_events.iter().enumerate() {
                     let json_str = serde_json::to_string(section_event).unwrap_or_default();
+                    let section_id = section_event.get("id").and_then(|v| v.as_str()).unwrap_or("unknown");
+                    tracing::info!("Ingesting section {} with ID: {}", i, section_id);
                     if let Err(e) = engine.ingest_event(&json_str) {
-                        ingest_error = Some(format!("Failed to ingest section: {}", e));
+                        ingest_error = Some(format!("Failed to ingest section {}: {}", i, e));
+                        tracing::error!("Section ingest failed: {}", e);
                         break;
                     }
                 }
@@ -1264,10 +1431,42 @@ impl TuiApp {
                 // Ingest publication event
                 if ingest_error.is_none() {
                     let json_str = serde_json::to_string(&pub_event).unwrap_or_default();
+                    tracing::info!("Ingesting publication event");
                     if let Err(e) = engine.ingest_event(&json_str) {
                         ingest_error = Some(format!("Failed to ingest publication: {}", e));
+                        tracing::error!("Publication ingest failed: {}", e);
+                    } else {
+                        tracing::info!("Publication ingested successfully, ID: {}", pub_id);
                     }
                 }
+
+                // Wait for async processing
+                std::thread::sleep(std::time::Duration::from_millis(200));
+
+                // Verify the event was stored
+                let _verified = if ingest_error.is_none() {
+                    let verify_filter = serde_json::json!({
+                        "ids": [pub_id],
+                        "limit": 1
+                    });
+                    match crate::query::query_local(&engine.ndb(), &[verify_filter]) {
+                        Ok(events) if !events.is_empty() => {
+                            tracing::info!("VERIFIED: Event {} found in database", pub_id);
+                            true
+                        }
+                        Ok(_) => {
+                            tracing::error!("FAILED: Event {} NOT found in database after ingest!", pub_id);
+                            ingest_error = Some(format!("Event {} was not stored in database", pub_id));
+                            false
+                        }
+                        Err(e) => {
+                            tracing::warn!("Verification query failed: {}", e);
+                            false
+                        }
+                    }
+                } else {
+                    false
+                };
 
                 let result = if let Some(error) = ingest_error {
                     AsyncResult::Error {
@@ -1275,9 +1474,28 @@ impl TuiApp {
                         error,
                     }
                 } else {
+                    // Count total events
+                    let all_filter = serde_json::json!({
+                        "kinds": [30040],
+                        "limit": 100
+                    });
+                    let total_count = crate::query::query_local(&engine.ndb(), &[all_filter])
+                        .map(|e| e.len())
+                        .unwrap_or(0);
+                    tracing::info!("Total 30040 events in database: {}", total_count);
+
                     // Build the NAddr for the created publication
                     let pub_d_tag = compose.publication_d_tag();
                     let addr = NAddr::new(30040, &pubkey, &pub_d_tag);
+
+                    // Mark this publication as locally-created (not yet published to relays)
+                    if let Some(ref tracker) = self.local_tracker {
+                        if let Err(e) = tracker.mark_local(&addr.to_a_tag()) {
+                            tracing::warn!("Failed to mark publication as local: {}", e);
+                        } else {
+                            tracing::info!("Marked publication as local: {}", addr.to_a_tag());
+                        }
+                    }
 
                     // Build section data for the result
                     use crate::tree::command::CreatedSection;
@@ -1293,10 +1511,24 @@ impl TuiApp {
                         })
                         .collect();
 
+                    // Collect signed event JSONs for relay broadcast
+                    let mut signed_events = Vec::new();
+                    // Add section events first (they're referenced by the publication)
+                    for section_event in &section_events {
+                        if let Ok(json) = serde_json::to_string(section_event) {
+                            signed_events.push(json);
+                        }
+                    }
+                    // Add publication event
+                    if let Ok(json) = serde_json::to_string(&pub_event) {
+                        signed_events.push(json);
+                    }
+
                     AsyncResult::PublicationCreated {
                         addr,
                         title: Some(title.clone()),
                         sections: created_sections,
+                        signed_events,
                     }
                 };
 
@@ -1304,6 +1536,162 @@ impl TuiApp {
                 tokio::spawn(async move {
                     let _ = tx.send(AsyncMessage::Result(result)).await;
                 });
+                return;
+            }
+            AsyncRequest::BroadcastToRelays { addr, events, relays } => {
+                self.pending_count += 1;
+
+                let addr = addr.clone();
+                let events = events.clone();
+                let relays = relays.clone();
+                let tx = self.async_tx.clone();
+                tokio::spawn(async move {
+                    use crate::relay::publish_events_to_relays_with_progress;
+
+                    let tx_progress = tx.clone();
+                    let (successful, total, _details) = publish_events_to_relays_with_progress(
+                        &relays,
+                        &events,
+                        |progress| {
+                            let result = AsyncResult::BroadcastProgress {
+                                current_relay: progress.current_relay,
+                                total_relays: progress.total_relays,
+                                current_event: progress.current_event,
+                                total_events: progress.total_events,
+                                relay_name: progress.relay_name,
+                            };
+                            // Use blocking send since we're in a sync closure
+                            let _ = tx_progress.try_send(AsyncMessage::Result(result));
+                        },
+                    ).await;
+
+                    let message = if successful == total {
+                        format!("Published to all {} relays", total)
+                    } else if successful > 0 {
+                        format!("Published to {}/{} relays", successful, total)
+                    } else {
+                        format!("Failed to publish to any of {} relays", total)
+                    };
+
+                    let result = AsyncResult::BroadcastComplete {
+                        addr,
+                        successful_relays: successful,
+                        total_relays: total,
+                        message,
+                    };
+                    let _ = tx.send(AsyncMessage::Result(result)).await;
+                });
+                return;
+            }
+            AsyncRequest::BroadcastSelected { addr } => {
+                self.pending_count += 1;
+
+                // Query events from nostrdb
+                let engine = self.nostr_engine.clone();
+                let relays = self.effective_relays()
+                    .unwrap_or_else(|| crate::relay::DEFAULT_RELAYS.iter().map(|s| s.to_string()).collect());
+
+                if relays.is_empty() {
+                    let tx = self.async_tx.clone();
+                    let result = AsyncResult::Error {
+                        request: request.clone(),
+                        error: "No relays configured".to_string(),
+                    };
+                    tokio::spawn(async move {
+                        let _ = tx.send(AsyncMessage::Result(result)).await;
+                    });
+                    return;
+                }
+
+                // Query the publication event
+                let pub_filter = serde_json::json!({
+                    "kinds": [30040],
+                    "authors": [&addr.pubkey],
+                    "#d": [&addr.d_tag],
+                    "limit": 1
+                });
+
+                let pub_events = match crate::query::query_local(&engine.ndb(), &[pub_filter]) {
+                    Ok(events) => events,
+                    Err(e) => {
+                        let tx = self.async_tx.clone();
+                        let result = AsyncResult::Error {
+                            request: request.clone(),
+                            error: format!("Failed to query publication: {}", e),
+                        };
+                        tokio::spawn(async move {
+                            let _ = tx.send(AsyncMessage::Result(result)).await;
+                        });
+                        return;
+                    }
+                };
+
+                if pub_events.is_empty() {
+                    let tx = self.async_tx.clone();
+                    let result = AsyncResult::Error {
+                        request: request.clone(),
+                        error: "Publication not found in local database".to_string(),
+                    };
+                    tokio::spawn(async move {
+                        let _ = tx.send(AsyncMessage::Result(result)).await;
+                    });
+                    return;
+                }
+
+                let pub_event = &pub_events[0];
+
+                // Extract section d-tags from the publication's "a" tags
+                let mut section_d_tags = Vec::new();
+                if let Some(tags) = pub_event.get("tags").and_then(|t| t.as_array()) {
+                    for tag in tags {
+                        if let Some(arr) = tag.as_array() {
+                            if arr.len() >= 2 {
+                                if let (Some("a"), Some(a_value)) = (arr[0].as_str(), arr[1].as_str()) {
+                                    // Parse "30041:pubkey:d-tag"
+                                    let parts: Vec<&str> = a_value.split(':').collect();
+                                    if parts.len() >= 3 && parts[0] == "30041" {
+                                        section_d_tags.push(parts[2].to_string());
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Query section events
+                let mut events = Vec::new();
+                for d_tag in &section_d_tags {
+                    let sec_filter = serde_json::json!({
+                        "kinds": [30041],
+                        "authors": [&addr.pubkey],
+                        "#d": [d_tag],
+                        "limit": 1
+                    });
+                    if let Ok(sec_events) = crate::query::query_local(&engine.ndb(), &[sec_filter]) {
+                        for sec_event in sec_events {
+                            if let Ok(json) = serde_json::to_string(&sec_event) {
+                                events.push(json);
+                            }
+                        }
+                    }
+                }
+
+                // Add publication event last
+                if let Ok(json) = serde_json::to_string(pub_event) {
+                    events.push(json);
+                }
+
+                let event_count = events.len();
+                let relay_count = relays.len();
+                self.status_message = Some(format!("Broadcasting {} events to {} relays...", event_count, relay_count));
+
+                // Create broadcast request
+                let broadcast_req = AsyncRequest::BroadcastToRelays {
+                    addr: addr.clone(),
+                    events,
+                    relays,
+                };
+                self.spawn_single_async_request(broadcast_req);
                 return;
             }
             _ => {}
@@ -1429,11 +1817,11 @@ async fn execute_async_request(
             })
         }
 
-        AsyncRequest::Search { query: _ } => {
-            // Search not yet implemented
-            Ok(AsyncResult::ChildrenLoaded {
-                parent_id: NodeId::root(),
-                children: Vec::new(),
+        AsyncRequest::SearchEvents { query } => {
+            let response = engine.search(&query, policy, None).await?;
+            Ok(AsyncResult::SearchResults {
+                results: response.results,
+                query,
             })
         }
 
@@ -1479,6 +1867,11 @@ async fn execute_async_request(
 
         AsyncRequest::LoadUserData { pubkey } => {
             load_user_data(engine, &pubkey, policy).await
+        }
+
+        AsyncRequest::BroadcastToRelays { .. } | AsyncRequest::BroadcastSelected { .. } => {
+            // Broadcast operations are handled synchronously in spawn_single_async_request
+            unreachable!("Broadcast operations should be handled by spawn_single_async_request")
         }
     }
 }

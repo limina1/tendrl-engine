@@ -59,6 +59,7 @@ pub mod identity;
 pub mod publication;
 pub mod query;
 pub mod relay;
+pub mod search;
 pub mod tree;
 pub mod user_data;
 

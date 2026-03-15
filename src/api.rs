@@ -142,6 +142,66 @@ pub async fn health_handler() -> Json<HealthResponse> {
 }
 
 // ============================================================================
+// Search API Endpoint
+// ============================================================================
+
+use crate::search::{AuthorFilter, SearchQuery, SearchResponse};
+
+/// Search request body
+#[derive(Debug, Deserialize)]
+pub struct SearchRequest {
+    /// Search query string (e.g. "t:python k:30041 tutorial")
+    pub query: String,
+    /// Maximum number of results (optional)
+    pub limit: Option<usize>,
+    /// Fetch policy (optional, defaults to local_first)
+    pub policy: Option<String>,
+    /// Override relays for this request (optional)
+    pub relays: Option<Vec<String>>,
+    /// Current user's pubkey hex (required for by:me queries)
+    pub my_pubkey: Option<String>,
+}
+
+/// POST /api/v1/search
+///
+/// Search for events using the structured search query language
+pub async fn search_handler(
+    State(engine): State<AppState>,
+    Json(req): Json<SearchRequest>,
+) -> Result<Json<SearchResponse>, EngineError> {
+    debug!("Search request: query={:?}", req.query);
+
+    let mut query = SearchQuery::parse(&req.query)
+        .map_err(|e| EngineError::InvalidFilter(e.to_string()))?;
+
+    if let Some(limit) = req.limit {
+        query.limit = Some(limit);
+    }
+
+    // Resolve by:me to actual pubkey
+    if let Some(AuthorFilter::CurrentUser) = &query.author_filter {
+        if let Some(ref pk) = req.my_pubkey {
+            query.author_filter = Some(AuthorFilter::Pubkeys(vec![pk.clone()]));
+        } else {
+            return Err(EngineError::InvalidFilter(
+                "by:me requires my_pubkey in request".to_string(),
+            ));
+        }
+    }
+
+    let policy = match &req.policy {
+        Some(p) => p.parse()?,
+        None => FetchPolicy::default(),
+    };
+
+    let response = engine
+        .search(&query, policy, req.relays.as_deref())
+        .await?;
+
+    Ok(Json(response))
+}
+
+// ============================================================================
 // Publication API Endpoints
 // ============================================================================
 
