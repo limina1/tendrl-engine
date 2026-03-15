@@ -25,6 +25,7 @@
 		onsendtochat,
 		onpublishcompose,
 		ondeletecompose,
+		ondeletepermanentcompose,
 		ondoctochat,
 		ondocpublish
 	}: {
@@ -45,6 +46,7 @@
 		onsendtochat: (items: ContextItem[]) => void;
 		onpublishcompose: (items: ContextItem[]) => void;
 		ondeletecompose: (items: ContextItem[]) => void;
+		ondeletepermanentcompose: (items: ContextItem[]) => void;
 		ondoctochat: () => void;
 		ondocpublish: () => void;
 	} = $props();
@@ -89,6 +91,7 @@
 				{onsendtochat}
 				onpublish={onpublishcompose}
 				ondelete={ondeletecompose}
+				ondeletepermanent={ondeletepermanentcompose}
 			/>
 		{/if}
 

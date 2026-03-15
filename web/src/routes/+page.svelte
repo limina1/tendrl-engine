@@ -228,6 +228,13 @@
 		gc();
 	}
 
+	// 🗑🗑 → permanent delete from pool
+	function handleDeletePermanent(deleteItems: ContextItem[]) {
+		const ids = new Set(deleteItems.map((i) => i.id));
+		items = items.filter((e) => !ids.has(e.id));
+		syncContext();
+	}
+
 	// Context □ → set in_compose on checked items
 	function handleContextToCompose(checkedItems: ContextItem[]) {
 		const ids = new Set(checkedItems.map((i) => i.id));
@@ -439,6 +446,7 @@
 				onsendfragmentstocompose={handleChatFragmentsToCompose}
 				onpublishfragments={handleChatPublishFragments}
 				ondeletecontext={handleDeleteFromContext}
+				ondeletepermanentcontext={handleDeletePermanent}
 			/>
 		</PanelFrame>
 
@@ -461,6 +469,7 @@
 				onsendtochat={handleComposeToChat}
 				onpublishcompose={handleComposePublish}
 				ondeletecompose={handleDeleteFromCompose}
+				ondeletepermanentcompose={handleDeletePermanent}
 				ondoctochat={handleDocToChat}
 				ondocpublish={handleDocPublish}
 			/>

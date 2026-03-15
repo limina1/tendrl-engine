@@ -11,7 +11,8 @@
 		oncancel,
 		onsendtochat,
 		onpublish,
-		ondelete
+		ondelete,
+		ondeletepermanent
 	}: {
 		compose: ComposeState;
 		onupdate: (state: ComposeState) => void;
@@ -19,6 +20,7 @@
 		onsendtochat: (items: ContextItem[]) => void;
 		onpublish: (items: ContextItem[]) => void;
 		ondelete: (items: ContextItem[]) => void;
+		ondeletepermanent: (items: ContextItem[]) => void;
 	} = $props();
 
 	let checkedIds: Set<string> = $state(new Set());
@@ -26,6 +28,8 @@
 	let delimiter = $state('');
 	let plainBuffer = $state('');
 	let prevDelim = $state('');
+	let trashPending: ContextItem[] = $state([]);
+	let trashTimer: ReturnType<typeof setTimeout> | null = $state(null);
 
 	// --- Reactive delimiter: swap headers when delim changes ---
 
@@ -230,6 +234,7 @@
 		if (next.has(id)) next.delete(id);
 		else next.add(id);
 		checkedIds = next;
+		clearTrash();
 	}
 
 	function sendCheckedToChat() {
@@ -238,6 +243,7 @@
 			onsendtochat(items);
 			checkedIds = new Set();
 		}
+		clearTrash();
 	}
 
 	function publishChecked() {
@@ -246,15 +252,31 @@
 			onpublish(items);
 			checkedIds = new Set();
 		}
+		clearTrash();
 	}
 
-	function deleteChecked() {
-		const items = compose.sections.filter((s) => checkedIds.has(s.id));
-		if (items.length > 0) {
-			ondelete(items);
-			checkedIds = new Set();
-		}
+	function clearTrash() {
+		trashPending = [];
+		if (trashTimer) clearTimeout(trashTimer);
+		trashTimer = null;
 	}
+
+	function handleTrash() {
+		if (trashPending.length > 0) {
+			ondeletepermanent(trashPending);
+			checkedIds = new Set();
+			clearTrash();
+			return;
+		}
+		const items = compose.sections.filter((s) => checkedIds.has(s.id));
+		if (items.length === 0) return;
+		ondelete(items);
+		trashPending = items;
+		checkedIds = new Set();
+		trashTimer = setTimeout(clearTrash, 5000);
+	}
+
+	const trashActive = $derived(trashPending.length > 0);
 
 	// Plain/preview: send all to chat
 	function sendAllToChat() {
@@ -356,7 +378,16 @@
 		<div class="compose-toolbar">
 			<button class="icon-btn" onclick={sendCheckedToChat} disabled={checkedIds.size === 0} title="Send to chat">◂</button>
 			<button class="icon-btn" onclick={publishChecked} disabled={checkedIds.size === 0} title="Publish locally">▸</button>
-			<button class="icon-btn trash-btn" onclick={deleteChecked} disabled={checkedIds.size === 0} title="Remove from compose">🗑</button>
+			<button
+				class="icon-btn trash-btn"
+				class:trash-armed={trashActive}
+				onclick={handleTrash}
+				disabled={checkedIds.size === 0 && !trashActive}
+				title={trashActive ? 'Delete everywhere' : 'Remove from compose'}
+			>🗑</button>
+			{#if trashActive}
+				<span class="trash-warn">press again to delete everywhere</span>
+			{/if}
 		</div>
 
 		<div class="compose-sections">
@@ -483,6 +514,19 @@
 
 	.trash-btn {
 		font-size: 0.75rem;
+	}
+
+	.trash-armed {
+		background: #dc2626;
+		border-color: #dc2626;
+		color: white;
+	}
+
+	.trash-warn {
+		font-size: 0.7rem;
+		color: #dc2626;
+		font-weight: 600;
+		white-space: nowrap;
 	}
 
 	.compose-sections {

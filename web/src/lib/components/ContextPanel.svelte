@@ -8,7 +8,8 @@
 		onreset,
 		onremove,
 		onsendtocompose,
-		ondelete
+		ondelete,
+		ondeletepermanent
 	}: {
 		entries: ContextItem[];
 		disabled?: boolean;
@@ -17,15 +18,19 @@
 		onremove: (id: string) => void;
 		onsendtocompose: (items: ContextItem[]) => void;
 		ondelete: (items: ContextItem[]) => void;
+		ondeletepermanent: (items: ContextItem[]) => void;
 	} = $props();
 
 	let checkedIds: Set<string> = $state(new Set());
+	let trashPending: ContextItem[] = $state([]);
+	let trashTimer: ReturnType<typeof setTimeout> | null = $state(null);
 
 	function toggleCheck(id: string) {
 		const next = new Set(checkedIds);
 		if (next.has(id)) next.delete(id);
 		else next.add(id);
 		checkedIds = next;
+		clearTrash();
 	}
 
 	function sendChecked() {
@@ -34,15 +39,36 @@
 			onsendtocompose(items);
 			checkedIds = new Set();
 		}
+		clearTrash();
 	}
 
-	function deleteChecked() {
-		const items = entries.filter((e) => checkedIds.has(e.id));
-		if (items.length > 0) {
-			ondelete(items);
-			checkedIds = new Set();
-		}
+	function clearTrash() {
+		trashPending = [];
+		if (trashTimer) clearTimeout(trashTimer);
+		trashTimer = null;
 	}
+
+	function handleTrash() {
+		if (trashPending.length > 0) {
+			// Second press — delete everywhere
+			ondeletepermanent(trashPending);
+			checkedIds = new Set();
+			clearTrash();
+			return;
+		}
+		// First press — remove from this column
+		const items = entries.filter((e) => checkedIds.has(e.id));
+		if (items.length === 0) return;
+		ondelete(items);
+		// Check if any survived in the pool (they're in the other column)
+		// We set trashPending to the items we just deleted — the parent
+		// will have removed them from this panel, but they may still exist
+		trashPending = items;
+		checkedIds = new Set();
+		trashTimer = setTimeout(clearTrash, 5000);
+	}
+
+	const trashActive = $derived(trashPending.length > 0);
 </script>
 
 <div class="context-panel">
@@ -62,10 +88,14 @@
 			>□</button>
 			<button
 				class="icon-btn trash-btn"
-				onclick={deleteChecked}
-				disabled={disabled || checkedIds.size === 0}
-				title="Remove from context"
+				class:trash-armed={trashActive}
+				onclick={handleTrash}
+				disabled={disabled || (checkedIds.size === 0 && !trashActive)}
+				title={trashActive ? 'Delete everywhere' : 'Remove from context'}
 			>🗑</button>
+			{#if trashActive}
+				<span class="trash-warn">press again to delete everywhere</span>
+			{/if}
 		</div>
 	</div>
 
@@ -149,6 +179,7 @@
 
 	.header-actions {
 		display: flex;
+		align-items: center;
 		gap: 4px;
 	}
 
@@ -160,6 +191,19 @@
 
 	.trash-btn {
 		font-size: 0.75rem;
+	}
+
+	.trash-armed {
+		background: #dc2626;
+		border-color: #dc2626;
+		color: white;
+	}
+
+	.trash-warn {
+		font-size: 0.7rem;
+		color: #dc2626;
+		font-weight: 600;
+		white-space: nowrap;
 	}
 
 	.context-list {
