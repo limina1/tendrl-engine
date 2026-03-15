@@ -30,6 +30,8 @@
 	let prevDelim = $state('');
 	let trashPending: ContextItem[] = $state([]);
 	let trashTimer: ReturnType<typeof setTimeout> | null = $state(null);
+	let trashCountdown = $state(0);
+	let countdownInterval: ReturnType<typeof setInterval> | null = $state(null);
 
 	// --- Reactive delimiter: swap headers when delim changes ---
 
@@ -257,8 +259,11 @@
 
 	function clearTrash() {
 		trashPending = [];
+		trashCountdown = 0;
 		if (trashTimer) clearTimeout(trashTimer);
 		trashTimer = null;
+		if (countdownInterval) clearInterval(countdownInterval);
+		countdownInterval = null;
 	}
 
 	function handleTrash() {
@@ -273,7 +278,12 @@
 		ondelete(items);
 		trashPending = items;
 		checkedIds = new Set();
-		trashTimer = setTimeout(clearTrash, 5000);
+		trashCountdown = 10;
+		trashTimer = setTimeout(clearTrash, 10000);
+		countdownInterval = setInterval(() => {
+			trashCountdown--;
+			if (trashCountdown <= 0) clearTrash();
+		}, 1000);
 	}
 
 	const trashActive = $derived(trashPending.length > 0);
@@ -386,7 +396,7 @@
 				title={trashActive ? 'Delete everywhere' : 'Remove from compose'}
 			>🗑</button>
 			{#if trashActive}
-				<span class="trash-warn">press again to delete everywhere</span>
+				<span class="trash-warn" style:opacity={trashCountdown / 10}>delete everywhere ({trashCountdown}s)</span>
 			{/if}
 		</div>
 

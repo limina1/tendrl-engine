@@ -24,6 +24,8 @@
 	let checkedIds: Set<string> = $state(new Set());
 	let trashPending: ContextItem[] = $state([]);
 	let trashTimer: ReturnType<typeof setTimeout> | null = $state(null);
+	let trashCountdown = $state(0);
+	let countdownInterval: ReturnType<typeof setInterval> | null = $state(null);
 
 	function toggleCheck(id: string) {
 		const next = new Set(checkedIds);
@@ -44,28 +46,31 @@
 
 	function clearTrash() {
 		trashPending = [];
+		trashCountdown = 0;
 		if (trashTimer) clearTimeout(trashTimer);
 		trashTimer = null;
+		if (countdownInterval) clearInterval(countdownInterval);
+		countdownInterval = null;
 	}
 
 	function handleTrash() {
 		if (trashPending.length > 0) {
-			// Second press — delete everywhere
 			ondeletepermanent(trashPending);
 			checkedIds = new Set();
 			clearTrash();
 			return;
 		}
-		// First press — remove from this column
 		const items = entries.filter((e) => checkedIds.has(e.id));
 		if (items.length === 0) return;
 		ondelete(items);
-		// Check if any survived in the pool (they're in the other column)
-		// We set trashPending to the items we just deleted — the parent
-		// will have removed them from this panel, but they may still exist
 		trashPending = items;
 		checkedIds = new Set();
-		trashTimer = setTimeout(clearTrash, 5000);
+		trashCountdown = 10;
+		trashTimer = setTimeout(clearTrash, 10000);
+		countdownInterval = setInterval(() => {
+			trashCountdown--;
+			if (trashCountdown <= 0) clearTrash();
+		}, 1000);
 	}
 
 	const trashActive = $derived(trashPending.length > 0);
@@ -94,7 +99,7 @@
 				title={trashActive ? 'Delete everywhere' : 'Remove from context'}
 			>🗑</button>
 			{#if trashActive}
-				<span class="trash-warn">press again to delete everywhere</span>
+				<span class="trash-warn" style:opacity={trashCountdown / 10}>delete everywhere ({trashCountdown}s)</span>
 			{/if}
 		</div>
 	</div>
