@@ -7,10 +7,11 @@ use axum::{
     Router,
 };
 use clap::Parser;
-use nostr_engine::{api, config::Config, engine::Engine};
+use nostr_engine::{api, chat::ChatState, config::Config, engine::Engine};
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use tower_http::cors::{Any, CorsLayer};
+use tower_http::services::{ServeDir, ServeFile};
 use tracing::{info, Level};
 use tracing_subscriber::EnvFilter;
 
@@ -85,6 +86,20 @@ async fn main() -> anyhow::Result<()> {
         .allow_methods(Any)
         .allow_headers(Any);
 
+    // Chat state (single-session test harness)
+    let chat_state: api::ChatAppState = Arc::new(Mutex::new(ChatState::new()));
+
+    let chat_routes = Router::new()
+        .route("/api/v1/chat", get(api::chat_get).delete(api::chat_reset))
+        .route("/api/v1/chat/message", post(api::chat_send))
+        .route(
+            "/api/v1/chat/edit",
+            post(api::chat_enter_edit).put(api::chat_exit_edit),
+        )
+        .route("/api/v1/chat/system", post(api::chat_set_system))
+        .route("/api/v1/chat/context", post(api::chat_inject_context).put(api::chat_replace_context))
+        .with_state(chat_state);
+
     // Build router
     let app = Router::new()
         // Core endpoints
@@ -115,8 +130,21 @@ async fn main() -> anyhow::Result<()> {
             "/api/v1/sections/{pubkey}/{d_tag}/versions",
             get(api::get_section_versions_handler),
         )
-        .layer(cors)
-        .with_state(state);
+        .with_state(state)
+        .merge(chat_routes)
+        .layer(cors);
+
+    // Serve static files from web/build/ if it exists (production SPA)
+    let web_dir = std::path::Path::new("web/build");
+    let app = if web_dir.exists() {
+        info!("Serving web UI from web/build/");
+        app.fallback_service(
+            ServeDir::new(web_dir)
+                .not_found_service(ServeFile::new(web_dir.join("index.html"))),
+        )
+    } else {
+        app
+    };
 
     // Start server
     let bind_addr = config.bind_addr();

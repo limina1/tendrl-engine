@@ -104,16 +104,23 @@ export interface TagEntry {
 	value: string;
 }
 
-export interface ComposeEntry {
+export interface ContextItem {
+	id: string;
 	title: string;
 	content: string;
 	tags: TagEntry[];
+	source_event_id?: string;
+	source_addr?: NAddr | null;
+	original_content: string;
+	modified: boolean;
+	in_context: boolean;
+	in_compose: boolean;
 }
 
 export interface ComposeState {
 	title: string;
 	tags: TagEntry[];
-	sections: ComposeEntry[];
+	sections: ContextItem[];
 }
 
 export type ViewMode = 'outline' | 'continuous' | 'paginated';

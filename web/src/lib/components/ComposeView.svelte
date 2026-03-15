@@ -1,17 +1,208 @@
 <script lang="ts">
-	import type { ComposeState, ComposeEntry, TagEntry } from '$lib/types';
+	import type { ComposeState, ContextItem, TagEntry } from '$lib/types';
 	import ComposeSection from './ComposeSection.svelte';
 	import TagEditor from './TagEditor.svelte';
+
+	type ComposeMode = 'full' | 'plain' | 'preview';
 
 	let {
 		compose,
 		onupdate,
-		oncancel
+		oncancel,
+		onsendtochat,
+		onpublish
 	}: {
 		compose: ComposeState;
 		onupdate: (state: ComposeState) => void;
 		oncancel: () => void;
+		onsendtochat: (items: ContextItem[]) => void;
+		onpublish: (items: ContextItem[]) => void;
 	} = $props();
+
+	let checkedIds: Set<string> = $state(new Set());
+	let mode: ComposeMode = $state('full');
+	let delimiter = $state('');
+	let plainBuffer = $state('');
+	let prevDelim = $state('');
+
+	// --- Reactive delimiter: swap headers when delim changes ---
+
+	function replaceDelimiters(text: string, oldD: string, newD: string): string {
+		const oldC = oldD.trim() || '=';
+		const newC = newD.trim() || '=';
+		if (oldC === newC) return text;
+		const oldH2 = `${oldC}${oldC} `;
+		const newH2 = `${newC}${newC} `;
+		const oldH1 = `${oldC} `;
+		const newH1 = `${newC} `;
+		return text
+			.split('\n')
+			.map((line) => {
+				if (line.startsWith(oldH2)) return newH2 + line.slice(oldH2.length);
+				if (line.startsWith(oldH1)) return newH1 + line.slice(oldH1.length);
+				return line;
+			})
+			.join('\n');
+	}
+
+	$effect(() => {
+		const d = delimiter;
+		if (d === prevDelim) return;
+		if (mode === 'plain') {
+			plainBuffer = replaceDelimiters(plainBuffer, prevDelim, d);
+		} else if (mode === 'preview') {
+			plainBuffer = serializeState(compose);
+		}
+		prevDelim = d;
+	});
+
+	// --- Serialize / Parse ---
+
+	function effectiveDelim(): string {
+		return delimiter.trim() || '=';
+	}
+
+	function headChars(): [string, string] {
+		const d = effectiveDelim();
+		return [`${d} `, `${d}${d} `];
+	}
+
+	function serializeState(state: ComposeState): string {
+		const [h1, h2] = headChars();
+		let out = `${h1}${state.title}\n`;
+		for (const s of state.sections) {
+			out += `\n${h2}${s.title}\n\n${s.content}\n`;
+		}
+		return out;
+	}
+
+	function parsePlain(
+		text: string
+	): { title: string; sections: { title: string; content: string }[] } {
+		const [h1, h2] = headChars();
+		const lines = text.split('\n');
+		let title = '';
+		const sections: { title: string; content: string }[] = [];
+		let current: { title: string; lines: string[] } | null = null;
+
+		for (const line of lines) {
+			if (line.startsWith(h2)) {
+				if (current) {
+					sections.push({
+						title: current.title,
+						content: current.lines.join('\n').trim()
+					});
+				}
+				current = { title: line.slice(h2.length).trim(), lines: [] };
+			} else if (line.startsWith(h1) && !title) {
+				title = line.slice(h1.length).trim();
+			} else if (current) {
+				current.lines.push(line);
+			}
+		}
+
+		if (current) {
+			sections.push({ title: current.title, content: current.lines.join('\n').trim() });
+		}
+
+		return { title, sections };
+	}
+
+	function applyPlainToState(): ComposeState {
+		const parsed = parsePlain(plainBuffer);
+		const existingByTitle = new Map<string, ContextItem>();
+		for (const s of compose.sections) {
+			existingByTitle.set(s.title, s);
+		}
+		const sections: ContextItem[] = parsed.sections.map((s) => {
+			const existing = existingByTitle.get(s.title);
+			if (existing) {
+				return {
+					...existing,
+					title: s.title,
+					content: s.content,
+					modified: s.content !== existing.original_content
+				};
+			}
+			return {
+				id: crypto.randomUUID(),
+				title: s.title,
+				content: s.content,
+				tags: [],
+				original_content: s.content,
+				modified: false,
+				in_context: false,
+				in_compose: true
+			};
+		});
+		const newState: ComposeState = {
+			...compose,
+			title: parsed.title || compose.title,
+			sections
+		};
+		onupdate(newState);
+		return newState;
+	}
+
+	// --- Mode switching ---
+
+	function setMode(m: ComposeMode) {
+		let currentState = compose;
+		if (mode === 'plain' && m !== 'plain') {
+			currentState = applyPlainToState();
+		}
+		if (m === 'plain' || m === 'preview') {
+			plainBuffer = serializeState(currentState);
+		}
+		mode = m;
+	}
+
+	// --- Full mode handlers ---
+
+	function toggleCheck(id: string) {
+		const next = new Set(checkedIds);
+		if (next.has(id)) next.delete(id);
+		else next.add(id);
+		checkedIds = next;
+	}
+
+	function sendCheckedToChat() {
+		const items = compose.sections.filter((s) => checkedIds.has(s.id));
+		if (items.length > 0) {
+			onsendtochat(items);
+			checkedIds = new Set();
+		}
+	}
+
+	function publishChecked() {
+		const items = compose.sections.filter((s) => checkedIds.has(s.id));
+		if (items.length > 0) {
+			onpublish(items);
+			checkedIds = new Set();
+		}
+	}
+
+	// Plain/preview: send all to chat
+	function sendAllToChat() {
+		let currentState = compose;
+		if (mode === 'plain') {
+			currentState = applyPlainToState();
+		}
+		if (currentState.sections.length > 0) {
+			onsendtochat(currentState.sections);
+		}
+	}
+
+	// Plain/preview: publish all
+	function publishAll() {
+		let currentState = compose;
+		if (mode === 'plain') {
+			currentState = applyPlainToState();
+		}
+		if (currentState.sections.length > 0) {
+			onpublish(currentState.sections);
+		}
+	}
 
 	function updateTitle(e: Event) {
 		onupdate({ ...compose, title: (e.target as HTMLInputElement).value });
@@ -21,44 +212,119 @@
 		onupdate({ ...compose, tags });
 	}
 
-	function updateSection(index: number, section: ComposeEntry) {
-		const sections = compose.sections.map((s, i) => (i === index ? section : s));
+	function updateSection(id: string, title: string, content: string) {
+		const sections = compose.sections.map((s) =>
+			s.id === id ? { ...s, title, content, modified: content !== s.original_content } : s
+		);
 		onupdate({ ...compose, sections });
 	}
 
-	function removeSection(index: number) {
-		onupdate({ ...compose, sections: compose.sections.filter((_, i) => i !== index) });
+	function updateSectionTags(id: string, tags: TagEntry[]) {
+		const sections = compose.sections.map((s) => (s.id === id ? { ...s, tags } : s));
+		onupdate({ ...compose, sections });
+	}
+
+	function resetSection(id: string) {
+		const sections = compose.sections.map((s) =>
+			s.id === id ? { ...s, content: s.original_content, modified: false } : s
+		);
+		onupdate({ ...compose, sections });
+	}
+
+	function removeSection(id: string) {
+		onupdate({ ...compose, sections: compose.sections.filter((s) => s.id !== id) });
 	}
 
 	function addSection() {
-		onupdate({
-			...compose,
-			sections: [...compose.sections, { title: '', content: '', tags: [] }]
-		});
+		const item: ContextItem = {
+			id: crypto.randomUUID(),
+			title: '',
+			content: '',
+			tags: [],
+			original_content: '',
+			modified: false,
+			in_context: false,
+			in_compose: true
+		};
+		onupdate({ ...compose, sections: [...compose.sections, item] });
 	}
 </script>
 
 <div class="compose-view">
-	<div class="compose-header">
-		<input
-			class="compose-title"
-			value={compose.title}
-			oninput={updateTitle}
-			placeholder="Publication title"
-		/>
-		<TagEditor tags={compose.tags} onupdate={updateTags} />
+	<div class="compose-mode-bar">
+		<div class="mode-group">
+			<button class:active={mode === 'full'} onclick={() => setMode('full')}>Full</button>
+			<button class:active={mode === 'plain'} onclick={() => setMode('plain')}>Plain</button>
+			<button class:active={mode === 'preview'} onclick={() => setMode('preview')}>Preview</button>
+		</div>
+		<div class="delim-group">
+			<span class="delim-label">delim</span>
+			<input
+				class="delim-input"
+				bind:value={delimiter}
+				placeholder="="
+				maxlength="2"
+			/>
+		</div>
 	</div>
 
-	<div class="compose-sections">
-		{#each compose.sections as section, i}
-			<ComposeSection {section} index={i} onupdate={updateSection} onremove={removeSection} />
-		{/each}
-	</div>
+	{#if mode === 'full'}
+		<div class="compose-header">
+			<input
+				class="compose-title"
+				value={compose.title}
+				oninput={updateTitle}
+				placeholder="Publication title"
+			/>
+			<TagEditor tags={compose.tags} onupdate={updateTags} />
+		</div>
 
-	<div class="compose-actions">
-		<button onclick={addSection}>+ Section</button>
-		<button onclick={oncancel}>Cancel</button>
-	</div>
+		<div class="compose-toolbar">
+			<button class="icon-btn" onclick={sendCheckedToChat} disabled={checkedIds.size === 0} title="Send to chat">◂</button>
+			<button class="icon-btn" onclick={publishChecked} disabled={checkedIds.size === 0} title="Publish locally">▸</button>
+		</div>
+
+		<div class="compose-sections">
+			{#each compose.sections as section (section.id)}
+				<ComposeSection
+					{section}
+					checked={checkedIds.has(section.id)}
+					oncheck={toggleCheck}
+					onupdate={updateSection}
+					onupdatetags={updateSectionTags}
+					onreset={resetSection}
+					onremove={removeSection}
+				/>
+			{/each}
+		</div>
+
+		<div class="compose-actions">
+			<button onclick={addSection}>+ Section</button>
+			<button onclick={oncancel}>Cancel</button>
+		</div>
+	{:else if mode === 'plain'}
+		<div class="compose-toolbar">
+			<button class="icon-btn" onclick={sendAllToChat} title="Send all to chat">◂</button>
+			<button class="icon-btn" onclick={publishAll} title="Publish locally">▸</button>
+		</div>
+		<textarea
+			class="plain-editor"
+			bind:value={plainBuffer}
+			spellcheck="false"
+		></textarea>
+		<div class="compose-actions">
+			<button onclick={oncancel}>Cancel</button>
+		</div>
+	{:else}
+		<div class="compose-toolbar">
+			<button class="icon-btn" onclick={sendAllToChat} title="Send all to chat">◂</button>
+			<button class="icon-btn" onclick={publishAll} title="Publish locally">▸</button>
+		</div>
+		<pre class="preview-content">{plainBuffer}</pre>
+		<div class="compose-actions">
+			<button onclick={oncancel}>Cancel</button>
+		</div>
+	{/if}
 </div>
 
 <style>
@@ -69,6 +335,42 @@
 		flex-direction: column;
 		gap: 16px;
 		padding: 16px;
+	}
+
+	.compose-mode-bar {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 8px;
+		flex-wrap: wrap;
+	}
+
+	.mode-group {
+		display: flex;
+		gap: 4px;
+	}
+
+	.delim-group {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+	}
+
+	.delim-label {
+		font-size: 0.75rem;
+		color: var(--fg-muted);
+		font-weight: 600;
+		text-transform: uppercase;
+		letter-spacing: 0.05em;
+	}
+
+	.delim-input {
+		width: 36px;
+		text-align: center;
+		font-family: var(--font-mono);
+		font-size: 0.85rem;
+		font-weight: 700;
+		padding: 4px 6px;
 	}
 
 	.compose-header {
@@ -93,6 +395,17 @@
 		border-color: var(--accent);
 	}
 
+	.compose-toolbar {
+		display: flex;
+		gap: 6px;
+	}
+
+	.icon-btn {
+		padding: 4px 8px;
+		font-size: 0.85rem;
+		min-width: 28px;
+	}
+
 	.compose-sections {
 		display: flex;
 		flex-direction: column;
@@ -104,5 +417,47 @@
 		gap: 8px;
 		padding-top: 8px;
 		border-top: 1px solid var(--border);
+	}
+
+	.plain-editor {
+		flex: 1;
+		min-height: 300px;
+		font-family: var(--font-mono);
+		font-size: 0.85rem;
+		line-height: 1.6;
+		resize: none;
+		border: 1px solid var(--border);
+		border-radius: var(--radius);
+		background: var(--bg-surface);
+		color: var(--fg);
+		padding: 12px;
+		outline: none;
+	}
+
+	.plain-editor:focus {
+		border-color: var(--accent);
+	}
+
+	.preview-content {
+		flex: 1;
+		min-height: 300px;
+		font-family: var(--font-mono);
+		font-size: 0.85rem;
+		line-height: 1.6;
+		padding: 12px;
+		border: 1px solid var(--border);
+		border-radius: var(--radius);
+		background: var(--bg-surface);
+		color: var(--fg);
+		overflow: auto;
+		white-space: pre-wrap;
+		word-break: break-word;
+		margin: 0;
+	}
+
+	.active {
+		background: var(--accent);
+		color: white;
+		border-color: var(--accent);
 	}
 </style>

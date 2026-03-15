@@ -7,7 +7,9 @@
 		previewVisible = false,
 		onviewmode,
 		ontogglepreview,
-		oncompose
+		oncompose,
+		onsendtochat,
+		onpublish
 	}: {
 		viewMode: ViewMode;
 		docMode: DocMode;
@@ -15,6 +17,8 @@
 		onviewmode: (mode: ViewMode) => void;
 		ontogglepreview: () => void;
 		oncompose: () => void;
+		onsendtochat?: () => void;
+		onpublish?: () => void;
 	} = $props();
 </script>
 
@@ -40,6 +44,8 @@
 	</div>
 	<div class="doc-toolbar-right">
 		{#if docMode === 'reading'}
+			<button class="icon-btn" onclick={onsendtochat} title="Copy to chat" disabled={!onsendtochat}>◂</button>
+			<button class="icon-btn" onclick={onpublish} title="Publish locally" disabled={!onpublish}>▸</button>
 			<button class:active={previewVisible} onclick={ontogglepreview}>JSON</button>
 		{/if}
 		{#if docMode !== 'compose'}
@@ -69,5 +75,11 @@
 		background: var(--accent);
 		color: white;
 		border-color: var(--accent);
+	}
+
+	.icon-btn {
+		padding: 4px 8px;
+		font-size: 0.85rem;
+		min-width: 28px;
 	}
 </style>

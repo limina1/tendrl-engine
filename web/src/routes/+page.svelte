@@ -6,6 +6,9 @@
 		PublicationDetail,
 		Section,
 		ComposeState,
+		ContextItem,
+		Fragment,
+		TagEntry,
 		ViewMode,
 		DocMode
 	} from '$lib/types';
@@ -23,6 +26,20 @@
 	let contextExpanded = $state(false);
 	let originalEditBuffer = $state('');
 
+	// === Unified item pool ===
+	let items: ContextItem[] = $state([]);
+	const contextEntries = $derived(items.filter((i) => i.in_context));
+	const composeSections = $derived(items.filter((i) => i.in_compose));
+
+	// Compose publication-level metadata (separate from items)
+	let composeTitle = $state('');
+	let composeTags: TagEntry[] = $state([]);
+	const compose = $derived<ComposeState>({
+		title: composeTitle,
+		tags: composeTags,
+		sections: composeSections
+	});
+
 	// Document state
 	let docMode: DocMode = $state('empty');
 	let publication: PublicationDetail | null = $state(null);
@@ -31,7 +48,6 @@
 	let currentSection = $state(0);
 	let previewVisible = $state(false);
 	let docLoading = $state(false);
-	let compose: ComposeState = $state({ title: '', tags: [], sections: [] });
 
 	// Search state
 	let searchResults: SearchResult[] = $state([]);
@@ -60,7 +76,62 @@
 		chat = await api.getChat();
 	});
 
-	// Chat handlers
+	// --- Helpers ---
+
+	function makeItem(
+		fields: Omit<ContextItem, 'id' | 'modified' | 'in_context' | 'in_compose'>,
+		target: { context?: boolean; compose?: boolean }
+	): ContextItem {
+		return {
+			...fields,
+			id: crypto.randomUUID(),
+			modified: false,
+			in_context: target.context ?? false,
+			in_compose: target.compose ?? false
+		};
+	}
+
+	async function fetchEventContent(result: SearchResult): Promise<string> {
+		try {
+			const resp = await api.getEvent(result.event_id);
+			const event = resp.event as Record<string, unknown> | null;
+			return (event?.content as string) ?? result.preview;
+		} catch {
+			return result.preview;
+		}
+	}
+
+	function resultFields(result: SearchResult, content: string) {
+		return {
+			title: result.title ?? '[Untitled]',
+			content,
+			tags: (result.tags ?? []).map((t) => ({ name: t[0] ?? '', value: t.slice(1).join(', ') })),
+			source_event_id: result.event_id,
+			source_addr: result.addr,
+			original_content: content
+		};
+	}
+
+	// Remove items that belong to neither panel
+	function gc() {
+		items = items.filter((e) => e.in_context || e.in_compose);
+	}
+
+	// --- Sync context to backend ---
+
+	async function syncContext() {
+		const ctx = items.filter((e) => e.in_context);
+		try {
+			chat = await api.replaceContext(
+				ctx.map((e) => ({ title: e.title, content: e.content }))
+			);
+		} catch {
+			// silent
+		}
+	}
+
+	// --- Chat handlers ---
+
 	async function handleSend(content: string) {
 		chatLoading = true;
 		try {
@@ -116,16 +187,104 @@
 		}
 	}
 
-	async function handleInjectContext(title: string, content: string) {
-		chatLoading = true;
-		try {
-			chat = await api.injectContext([{ title, content }]);
-		} finally {
-			chatLoading = false;
-		}
+	// --- Item handlers (shared, used by both context and compose) ---
+
+	function handleUpdateItem(id: string, title: string, content: string) {
+		items = items.map((e) =>
+			e.id === id
+				? { ...e, title, content, modified: content !== e.original_content }
+				: e
+		);
+		syncContext();
 	}
 
-	// Search handlers
+	function handleResetItem(id: string) {
+		items = items.map((e) =>
+			e.id === id ? { ...e, content: e.original_content, modified: false } : e
+		);
+		syncContext();
+	}
+
+	function handleRemoveFromContext(id: string) {
+		items = items.map((e) =>
+			e.id === id ? { ...e, in_context: false } : e
+		);
+		gc();
+		syncContext();
+	}
+
+	// Context □ → set in_compose on checked items
+	function handleContextToCompose(checkedItems: ContextItem[]) {
+		const ids = new Set(checkedItems.map((i) => i.id));
+		items = items.map((e) => (ids.has(e.id) ? { ...e, in_compose: true } : e));
+		if (docMode !== 'compose') docMode = 'compose';
+	}
+
+	// Compose ◂ → set in_context on checked items
+	function handleComposeToChat(checkedItems: ContextItem[]) {
+		const ids = new Set(checkedItems.map((i) => i.id));
+		items = items.map((e) => (ids.has(e.id) ? { ...e, in_context: true } : e));
+		syncContext();
+	}
+
+	// Chat fragments □ → add as new items with in_compose
+	function handleChatFragmentsToCompose(fragments: Fragment[]) {
+		const newItems = fragments.map((f) =>
+			makeItem(
+				{ title: `[${f.role}]`, content: f.content, tags: [], original_content: f.content },
+				{ compose: true }
+			)
+		);
+		items = [...items, ...newItems];
+		if (docMode !== 'compose') docMode = 'compose';
+	}
+
+	// Chat fragments ▸
+	function handleChatPublishFragments(_fragments: Fragment[]) {
+		// TODO: create local nostr events
+	}
+
+	// Compose ▸
+	function handleComposePublish(_items: ContextItem[]) {
+		// TODO: create local nostr events
+	}
+
+	// --- Compose update reconciliation ---
+
+	function handleComposeUpdate(state: ComposeState) {
+		composeTitle = state.title;
+		composeTags = state.tags;
+
+		const updatedById = new Map(state.sections.map((s) => [s.id, s]));
+
+		// Update existing compose items, remove ones dropped from sections
+		items = items
+			.map((item) => {
+				if (!item.in_compose) return item;
+				const updated = updatedById.get(item.id);
+				if (updated) {
+					updatedById.delete(item.id);
+					return { ...updated, in_context: item.in_context, in_compose: true };
+				}
+				// Removed from compose
+				if (item.in_context) return { ...item, in_compose: false };
+				return null;
+			})
+			.filter((item): item is ContextItem => item !== null);
+
+		// Add new items (from + Section or plain text parse)
+		const existingIds = new Set(items.map((i) => i.id));
+		for (const [id, section] of updatedById) {
+			if (!existingIds.has(id)) {
+				items = [...items, { ...section, in_context: false, in_compose: true }];
+			}
+		}
+
+		syncContext();
+	}
+
+	// --- Search handlers ---
+
 	async function handleSearch(query: string) {
 		searchLoading = true;
 		try {
@@ -139,7 +298,21 @@
 		}
 	}
 
-	// JSON modal handler
+	// Search ◂ → add to pool with in_context
+	async function handleAddToContext(result: SearchResult) {
+		const content = await fetchEventContent(result);
+		items = [...items, makeItem(resultFields(result, content), { context: true })];
+		syncContext();
+	}
+
+	// Search □ → add to pool with in_compose
+	async function handleAddToCompose(result: SearchResult) {
+		const content = await fetchEventContent(result);
+		items = [...items, makeItem(resultFields(result, content), { compose: true })];
+		if (docMode !== 'compose') docMode = 'compose';
+	}
+
+	// JSON modal
 	async function handleViewJson(result: SearchResult) {
 		try {
 			const resp = await api.getEvent(result.event_id);
@@ -149,7 +322,8 @@
 		}
 	}
 
-	// Document handlers
+	// --- Document handlers ---
+
 	async function handleSelectResult(result: SearchResult) {
 		if (!result.addr) return;
 		docLoading = true;
@@ -182,17 +356,45 @@
 	}
 
 	function handleCompose() {
-		compose = { title: '', tags: [], sections: [{ title: '', content: '', tags: [] }] };
+		// Clear compose flags, gc, start fresh
+		items = [
+			...items.map((e) => ({ ...e, in_compose: false })).filter((e) => e.in_context),
+			makeItem({ title: '', content: '', tags: [], original_content: '' }, { compose: true })
+		];
+		composeTitle = '';
+		composeTags = [];
 		docMode = 'compose';
 		previewVisible = false;
 	}
 
-	function handleComposeUpdate(state: ComposeState) {
-		compose = state;
-	}
-
 	function handleCancelCompose() {
 		docMode = publication ? 'reading' : 'empty';
+	}
+
+	// Document reading ◂ → add sections to pool with in_context
+	function handleDocToChat() {
+		if (!sections.length) return;
+		const newItems = sections
+			.filter((s) => s.content)
+			.map((s) =>
+				makeItem(
+					{
+						title: s.title ?? '[Section]',
+						content: s.content ?? '',
+						tags: [],
+						source_addr: s.addr,
+						original_content: s.content ?? ''
+					},
+					{ context: true }
+				)
+			);
+		items = [...items, ...newItems];
+		syncContext();
+	}
+
+	// Document reading ▸
+	function handleDocPublish() {
+		// TODO: create local nostr event
 	}
 </script>
 
@@ -206,6 +408,7 @@
 				loading={chatLoading}
 				{systemExpanded}
 				{contextExpanded}
+				{contextEntries}
 				ontogglesystem={() => (systemExpanded = !systemExpanded)}
 				ontogglecontext={() => (contextExpanded = !contextExpanded)}
 				onsend={handleSend}
@@ -214,7 +417,12 @@
 				onapplyedit={handleApplyEdit}
 				oncanceledit={handleCancelEdit}
 				onsetsystem={handleSetSystem}
-				oninjectcontext={handleInjectContext}
+				onupdatecontext={handleUpdateItem}
+				onresetcontext={handleResetItem}
+				onremovecontext={handleRemoveFromContext}
+				onsendtocompose={handleContextToCompose}
+				onsendfragmentstocompose={handleChatFragmentsToCompose}
+				onpublishfragments={handleChatPublishFragments}
 			/>
 		</PanelFrame>
 
@@ -234,6 +442,10 @@
 				onnavigate={handleNavigate}
 				oncomposeupdate={handleComposeUpdate}
 				oncancelcompose={handleCancelCompose}
+				onsendtochat={handleComposeToChat}
+				onpublishcompose={handleComposePublish}
+				ondoctochat={handleDocToChat}
+				ondocpublish={handleDocPublish}
 			/>
 		</PanelFrame>
 
@@ -247,6 +459,8 @@
 				onsearch={handleSearch}
 				onselect={handleSelectResult}
 				onviewjson={handleViewJson}
+				onaddtocontext={handleAddToContext}
+				onaddtocompose={handleAddToCompose}
 			/>
 		</PanelFrame>
 	</div>

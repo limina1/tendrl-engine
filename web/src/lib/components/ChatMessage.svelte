@@ -1,18 +1,51 @@
 <script lang="ts">
 	import type { Fragment } from '$lib/types';
 
-	let { fragment }: { fragment: Fragment } = $props();
+	let {
+		fragment,
+		checked = false,
+		ontoggle
+	}: {
+		fragment: Fragment;
+		checked?: boolean;
+		ontoggle?: (id: number) => void;
+	} = $props();
 
 	const isUser = $derived(fragment.role === 'user');
 </script>
 
-<div class="message" class:user={isUser} class:assistant={!isUser}>
-	<span class="role">{fragment.role}</span>
-	<pre class="content">{fragment.content}</pre>
+<div class="message-row">
+	{#if ontoggle}
+		<label class="msg-check">
+			<input
+				type="checkbox"
+				{checked}
+				onchange={() => ontoggle?.(fragment.id)}
+			/>
+		</label>
+	{/if}
+	<div class="message" class:user={isUser} class:assistant={!isUser}>
+		<span class="role">{fragment.role}</span>
+		<pre class="content">{fragment.content}</pre>
+	</div>
 </div>
 
 <style>
+	.message-row {
+		display: flex;
+		align-items: flex-start;
+		gap: 6px;
+	}
+
+	.msg-check {
+		display: flex;
+		align-items: center;
+		padding-top: 10px;
+		flex-shrink: 0;
+	}
+
 	.message {
+		flex: 1;
 		padding: 10px 14px;
 		border-radius: var(--radius);
 		max-width: 85%;
@@ -22,6 +55,7 @@
 	.user {
 		align-self: flex-end;
 		background: var(--user-bg);
+		margin-left: auto;
 	}
 
 	.assistant {

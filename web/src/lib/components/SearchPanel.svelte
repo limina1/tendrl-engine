@@ -11,7 +11,9 @@
 		loading = false,
 		onsearch,
 		onselect,
-		onviewjson
+		onviewjson,
+		onaddtocontext,
+		onaddtocompose
 	}: {
 		results: SearchResult[];
 		count?: number;
@@ -21,6 +23,8 @@
 		onsearch: (query: string) => void;
 		onselect: (result: SearchResult) => void;
 		onviewjson: (result: SearchResult) => void;
+		onaddtocontext: (result: SearchResult) => void;
+		onaddtocompose: (result: SearchResult) => void;
 	} = $props();
 </script>
 
@@ -35,7 +39,7 @@
 
 	<div class="search-results">
 		{#each results as result (result.event_id)}
-			<SearchResultItem {result} {onselect} {onviewjson} />
+			<SearchResultItem {result} {onselect} {onviewjson} {onaddtocontext} {onaddtocompose} />
 		{/each}
 
 		{#if !loading && results.length === 0}

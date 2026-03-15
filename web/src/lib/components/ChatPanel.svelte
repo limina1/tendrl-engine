@@ -1,5 +1,5 @@
 <script lang="ts">
-	import type { ChatResponse } from '$lib/types';
+	import type { ChatResponse, ContextItem, Fragment } from '$lib/types';
 	import ChatLog from './ChatLog.svelte';
 	import ChatInput from './ChatInput.svelte';
 	import EditView from './EditView.svelte';
@@ -11,6 +11,7 @@
 		loading = false,
 		systemExpanded = false,
 		contextExpanded = false,
+		contextEntries,
 		ontogglesystem,
 		ontogglecontext,
 		onsend,
@@ -19,12 +20,18 @@
 		onapplyedit,
 		oncanceledit,
 		onsetsystem,
-		oninjectcontext
+		onupdatecontext,
+		onresetcontext,
+		onremovecontext,
+		onsendtocompose,
+		onsendfragmentstocompose,
+		onpublishfragments
 	}: {
 		chat: ChatResponse | null;
 		loading?: boolean;
 		systemExpanded?: boolean;
 		contextExpanded?: boolean;
+		contextEntries: ContextItem[];
 		ontogglesystem: () => void;
 		ontogglecontext: () => void;
 		onsend: (content: string) => void;
@@ -33,8 +40,42 @@
 		onapplyedit: (buffer: string) => void;
 		oncanceledit: () => void;
 		onsetsystem: (prompt: string) => void;
-		oninjectcontext: (title: string, content: string) => void;
+		onupdatecontext: (id: string, title: string, content: string) => void;
+		onresetcontext: (id: string) => void;
+		onremovecontext: (id: string) => void;
+		onsendtocompose: (items: ContextItem[]) => void;
+		onsendfragmentstocompose: (fragments: Fragment[]) => void;
+		onpublishfragments: (fragments: Fragment[]) => void;
 	} = $props();
+
+	let checkedFragmentIds: Set<number> = $state(new Set());
+
+	function toggleFragmentCheck(id: number) {
+		const next = new Set(checkedFragmentIds);
+		if (next.has(id)) next.delete(id);
+		else next.add(id);
+		checkedFragmentIds = next;
+	}
+
+	function sendToCompose() {
+		if (!chat) return;
+		const checked = chat.fragments.filter((f) => checkedFragmentIds.has(f.id));
+		if (checked.length > 0) {
+			onsendfragmentstocompose(checked);
+			checkedFragmentIds = new Set();
+		}
+	}
+
+	function publish() {
+		if (!chat) return;
+		const checked = chat.fragments.filter((f) => checkedFragmentIds.has(f.id));
+		if (checked.length > 0) {
+			onpublishfragments(checked);
+			checkedFragmentIds = new Set();
+		}
+	}
+
+	const hasChecked = $derived(checkedFragmentIds.size > 0);
 </script>
 
 <div class="chat-panel">
@@ -44,9 +85,15 @@
 		</button>
 		<button onclick={ontogglecontext} class:active={contextExpanded} disabled={loading}>
 			Context
+			{#if contextEntries.length > 0}
+				<span class="toolbar-badge">{contextEntries.length}</span>
+			{/if}
 		</button>
 		<button onclick={onedit} disabled={loading || (chat?.edit_mode ?? false)}>Edit</button>
 		<button onclick={onreset} disabled={loading}>Reset</button>
+		<span class="toolbar-spacer"></span>
+		<button class="icon-btn" onclick={sendToCompose} disabled={loading || !hasChecked} title="Send to compose">□</button>
+		<button class="icon-btn" onclick={publish} disabled={loading || !hasChecked} title="Publish locally">▸</button>
 	</div>
 
 	{#if systemExpanded}
@@ -59,8 +106,11 @@
 
 	{#if contextExpanded}
 		<ContextPanel
-			contextCount={chat?.context_count ?? 0}
-			oninject={oninjectcontext}
+			entries={contextEntries}
+			onupdate={onupdatecontext}
+			onreset={onresetcontext}
+			onremove={onremovecontext}
+			{onsendtocompose}
 			disabled={loading}
 		/>
 	{/if}
@@ -73,7 +123,11 @@
 				oncancel={oncanceledit}
 			/>
 		{:else}
-			<ChatLog fragments={chat.fragments} />
+			<ChatLog
+				fragments={chat.fragments}
+				checkedIds={checkedFragmentIds}
+				ontogglecheck={toggleFragmentCheck}
+			/>
 		{/if}
 	{:else}
 		<div class="chat-empty">Loading...</div>
@@ -86,6 +140,7 @@
 
 <style>
 	.chat-panel {
+		flex: 1;
 		display: flex;
 		flex-direction: column;
 		min-height: 0;
@@ -99,6 +154,11 @@
 		padding: 8px 12px;
 		border-bottom: 1px solid var(--border);
 		background: var(--bg-surface);
+		align-items: center;
+	}
+
+	.toolbar-spacer {
+		flex: 1;
 	}
 
 	.chat-empty {
@@ -113,5 +173,19 @@
 		background: var(--accent);
 		color: white;
 		border-color: var(--accent);
+	}
+
+	.toolbar-badge {
+		background: rgba(255, 255, 255, 0.3);
+		font-size: 0.7rem;
+		padding: 0 5px;
+		border-radius: 8px;
+		margin-left: 2px;
+	}
+
+	.icon-btn {
+		padding: 4px 8px;
+		font-size: 0.85rem;
+		min-width: 28px;
 	}
 </style>

@@ -59,6 +59,11 @@ export function injectContext(notes: { title: string; content: string }[]): Prom
 	return fetchJson<ChatResponse>(`${CHAT}/context`, { method: 'POST', body: JSON.stringify(body) });
 }
 
+export function replaceContext(notes: { title: string; content: string }[]): Promise<ChatResponse> {
+	const body: InjectContextRequest = { notes };
+	return fetchJson<ChatResponse>(`${CHAT}/context`, { method: 'PUT', body: JSON.stringify(body) });
+}
+
 // Publications API
 
 export function listPublications(limit = 20) {

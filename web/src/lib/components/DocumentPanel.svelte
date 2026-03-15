@@ -1,5 +1,5 @@
 <script lang="ts">
-	import type { Section, ViewMode, DocMode, PublicationDetail, ComposeState } from '$lib/types';
+	import type { Section, ViewMode, DocMode, PublicationDetail, ComposeState, ContextItem } from '$lib/types';
 	import DocumentToolbar from './DocumentToolbar.svelte';
 	import OutlineView from './OutlineView.svelte';
 	import ContinuousView from './ContinuousView.svelte';
@@ -21,7 +21,11 @@
 		oncompose,
 		onnavigate,
 		oncomposeupdate,
-		oncancelcompose
+		oncancelcompose,
+		onsendtochat,
+		onpublishcompose,
+		ondoctochat,
+		ondocpublish
 	}: {
 		docMode: DocMode;
 		publication: PublicationDetail | null;
@@ -37,6 +41,10 @@
 		onnavigate: (index: number) => void;
 		oncomposeupdate: (state: ComposeState) => void;
 		oncancelcompose: () => void;
+		onsendtochat: (items: ContextItem[]) => void;
+		onpublishcompose: (items: ContextItem[]) => void;
+		ondoctochat: () => void;
+		ondocpublish: () => void;
 	} = $props();
 </script>
 
@@ -48,6 +56,8 @@
 		{onviewmode}
 		{ontogglepreview}
 		{oncompose}
+		onsendtochat={ondoctochat}
+		onpublish={ondocpublish}
 	/>
 
 	{#if docMode === 'reading' && publication?.title}
@@ -70,7 +80,13 @@
 				<PaginatedView {sections} {currentSection} {onnavigate} />
 			{/if}
 		{:else if docMode === 'compose'}
-			<ComposeView {compose} onupdate={oncomposeupdate} oncancel={oncancelcompose} />
+			<ComposeView
+				{compose}
+				onupdate={oncomposeupdate}
+				oncancel={oncancelcompose}
+				{onsendtochat}
+				onpublish={onpublishcompose}
+			/>
 		{/if}
 
 		{#if previewVisible && publication}

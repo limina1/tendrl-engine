@@ -453,3 +453,319 @@ pub async fn get_section_versions_handler(
         "count": versions.len()
     })))
 }
+
+// ============================================================================
+// Chat API Endpoints
+// ============================================================================
+
+use crate::chat::{ChatState, InjectedNote};
+use crate::llm::{LLMProvider, NoopProvider};
+use std::sync::Mutex;
+
+/// Shared chat session state (single-session test harness)
+pub type ChatAppState = Arc<Mutex<ChatState>>;
+
+/// A single fragment in the API response
+#[derive(Debug, Serialize)]
+pub struct FragmentResponse {
+    pub id: usize,
+    pub role: String,
+    pub content: String,
+}
+
+/// Unified response for all chat endpoints
+#[derive(Debug, Serialize)]
+pub struct ChatResponse {
+    pub fragments: Vec<FragmentResponse>,
+    pub fragment_count: usize,
+    pub edit_mode: bool,
+    pub edit_buffer: Option<String>,
+    pub system_prompt: Option<String>,
+    pub context_count: usize,
+    pub generating: bool,
+}
+
+fn build_chat_response(state: &ChatState) -> ChatResponse {
+    let fragments: Vec<FragmentResponse> = state
+        .fragments
+        .iter()
+        .map(|f| FragmentResponse {
+            id: f.id,
+            role: f.role.as_str().to_string(),
+            content: f.content.clone(),
+        })
+        .collect();
+    let fragment_count = fragments.len();
+    ChatResponse {
+        fragments,
+        fragment_count,
+        edit_mode: state.edit_mode,
+        edit_buffer: if state.edit_mode {
+            Some(state.edit_buffer.clone())
+        } else {
+            None
+        },
+        system_prompt: state.system_prompt.clone(),
+        context_count: state.injected_context.len(),
+        generating: state.generating,
+    }
+}
+
+/// Request to send a chat message
+#[derive(Debug, Deserialize)]
+pub struct SendMessageRequest {
+    pub content: String,
+}
+
+/// Request to submit an edited buffer
+#[derive(Debug, Deserialize)]
+pub struct EditBufferRequest {
+    pub buffer: String,
+}
+
+/// Request to set the system prompt
+#[derive(Debug, Deserialize)]
+pub struct SystemPromptRequest {
+    pub prompt: String,
+}
+
+/// A context note to inject
+#[derive(Debug, Deserialize)]
+pub struct NoteRequest {
+    pub title: String,
+    pub content: String,
+}
+
+/// Request to inject context notes
+#[derive(Debug, Deserialize)]
+pub struct InjectContextRequest {
+    pub notes: Vec<NoteRequest>,
+}
+
+/// GET /api/v1/chat — get current conversation state
+pub async fn chat_get(State(state): State<ChatAppState>) -> Json<ChatResponse> {
+    let chat = state.lock().unwrap();
+    Json(build_chat_response(&chat))
+}
+
+/// DELETE /api/v1/chat — reset conversation
+pub async fn chat_reset(State(state): State<ChatAppState>) -> Json<ChatResponse> {
+    let mut chat = state.lock().unwrap();
+    *chat = ChatState::new();
+    Json(build_chat_response(&chat))
+}
+
+/// POST /api/v1/chat/message — send message, get echo response
+pub async fn chat_send(
+    State(state): State<ChatAppState>,
+    Json(req): Json<SendMessageRequest>,
+) -> Json<ChatResponse> {
+    let messages = {
+        let mut chat = state.lock().unwrap();
+        chat.input = req.content;
+        chat.send_message()
+    };
+
+    let provider = NoopProvider::echo();
+    let response = provider
+        .chat(messages)
+        .await
+        .unwrap_or_else(|e| format!("Error: {}", e));
+
+    let mut chat = state.lock().unwrap();
+    chat.receive_response(response);
+    Json(build_chat_response(&chat))
+}
+
+/// POST /api/v1/chat/edit — enter edit mode
+pub async fn chat_enter_edit(State(state): State<ChatAppState>) -> Json<ChatResponse> {
+    let mut chat = state.lock().unwrap();
+    chat.enter_edit_mode();
+    Json(build_chat_response(&chat))
+}
+
+/// PUT /api/v1/chat/edit — submit modified buffer, exit edit mode
+pub async fn chat_exit_edit(
+    State(state): State<ChatAppState>,
+    Json(req): Json<EditBufferRequest>,
+) -> Json<ChatResponse> {
+    let mut chat = state.lock().unwrap();
+    chat.edit_buffer = req.buffer;
+    chat.exit_edit_mode();
+    Json(build_chat_response(&chat))
+}
+
+/// POST /api/v1/chat/system — set system prompt
+pub async fn chat_set_system(
+    State(state): State<ChatAppState>,
+    Json(req): Json<SystemPromptRequest>,
+) -> Json<ChatResponse> {
+    let mut chat = state.lock().unwrap();
+    chat.system_prompt = Some(req.prompt);
+    Json(build_chat_response(&chat))
+}
+
+/// POST /api/v1/chat/context — inject context notes
+pub async fn chat_inject_context(
+    State(state): State<ChatAppState>,
+    Json(req): Json<InjectContextRequest>,
+) -> Json<ChatResponse> {
+    let mut chat = state.lock().unwrap();
+    let notes: Vec<InjectedNote> = req
+        .notes
+        .into_iter()
+        .map(|n| InjectedNote {
+            addr: None,
+            title: n.title,
+            content: n.content,
+        })
+        .collect();
+    chat.inject_context(notes);
+    Json(build_chat_response(&chat))
+}
+
+/// PUT /api/v1/chat/context — clear and replace all context notes
+pub async fn chat_replace_context(
+    State(state): State<ChatAppState>,
+    Json(req): Json<InjectContextRequest>,
+) -> Json<ChatResponse> {
+    let mut chat = state.lock().unwrap();
+    chat.clear_context();
+    let notes: Vec<InjectedNote> = req
+        .notes
+        .into_iter()
+        .map(|n| InjectedNote {
+            addr: None,
+            title: n.title,
+            content: n.content,
+        })
+        .collect();
+    chat.inject_context(notes);
+    Json(build_chat_response(&chat))
+}
+
+#[cfg(test)]
+mod chat_api_tests {
+    use super::*;
+
+    fn make_state() -> ChatAppState {
+        Arc::new(Mutex::new(ChatState::new()))
+    }
+
+    #[tokio::test]
+    async fn test_chat_api_get_empty() {
+        let state = make_state();
+        let Json(resp) = chat_get(State(state)).await;
+        assert_eq!(resp.fragment_count, 0);
+        assert!(!resp.edit_mode);
+        assert!(resp.edit_buffer.is_none());
+        assert!(resp.system_prompt.is_none());
+        assert_eq!(resp.context_count, 0);
+        assert!(!resp.generating);
+    }
+
+    #[tokio::test]
+    async fn test_chat_api_send_message() {
+        let state = make_state();
+        let req = SendMessageRequest {
+            content: "Hello world".into(),
+        };
+        let Json(resp) = chat_send(State(state), Json(req)).await;
+        assert_eq!(resp.fragment_count, 2);
+        assert_eq!(resp.fragments[0].role, "user");
+        assert_eq!(resp.fragments[0].content, "Hello world");
+        assert_eq!(resp.fragments[1].role, "assistant");
+        assert_eq!(resp.fragments[1].content, "Echo: Hello world");
+    }
+
+    #[tokio::test]
+    async fn test_chat_api_edit_roundtrip() {
+        let state = make_state();
+
+        // Send a message first
+        let req = SendMessageRequest {
+            content: "Hello".into(),
+        };
+        let _ = chat_send(State(state.clone()), Json(req)).await;
+
+        // Enter edit mode
+        let Json(resp) = chat_enter_edit(State(state.clone())).await;
+        assert!(resp.edit_mode);
+        assert!(resp.edit_buffer.is_some());
+        let buffer = resp.edit_buffer.unwrap();
+        assert!(buffer.contains("[user]"));
+        assert!(buffer.contains("Hello"));
+
+        // Modify and exit
+        let req = EditBufferRequest {
+            buffer: "[user]\nHello\n---\n[assistant]\nCustom response\n---\n[user]\nFollow-up"
+                .into(),
+        };
+        let Json(resp) = chat_exit_edit(State(state.clone()), Json(req)).await;
+        assert!(!resp.edit_mode);
+        assert_eq!(resp.fragment_count, 3);
+        assert_eq!(resp.fragments[2].role, "user");
+        assert_eq!(resp.fragments[2].content, "Follow-up");
+    }
+
+    #[tokio::test]
+    async fn test_chat_api_reset() {
+        let state = make_state();
+
+        let req = SendMessageRequest {
+            content: "Hello".into(),
+        };
+        let _ = chat_send(State(state.clone()), Json(req)).await;
+
+        let Json(resp) = chat_reset(State(state)).await;
+        assert_eq!(resp.fragment_count, 0);
+    }
+
+    #[tokio::test]
+    async fn test_chat_api_system_prompt() {
+        let state = make_state();
+        let req = SystemPromptRequest {
+            prompt: "You are a helpful assistant.".into(),
+        };
+        let Json(resp) = chat_set_system(State(state), Json(req)).await;
+        assert_eq!(
+            resp.system_prompt,
+            Some("You are a helpful assistant.".to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn test_chat_api_inject_context() {
+        let state = make_state();
+        let req = InjectContextRequest {
+            notes: vec![NoteRequest {
+                title: "Test Note".into(),
+                content: "Some context".into(),
+            }],
+        };
+        let Json(resp) = chat_inject_context(State(state), Json(req)).await;
+        assert_eq!(resp.context_count, 1);
+    }
+
+    #[tokio::test]
+    async fn test_chat_api_replace_context() {
+        let state = make_state();
+
+        // Inject initial context
+        let req = InjectContextRequest {
+            notes: vec![
+                NoteRequest { title: "A".into(), content: "aaa".into() },
+                NoteRequest { title: "B".into(), content: "bbb".into() },
+            ],
+        };
+        let Json(resp) = chat_inject_context(State(state.clone()), Json(req)).await;
+        assert_eq!(resp.context_count, 2);
+
+        // Replace with single note
+        let req = InjectContextRequest {
+            notes: vec![NoteRequest { title: "C".into(), content: "ccc".into() }],
+        };
+        let Json(resp) = chat_replace_context(State(state), Json(req)).await;
+        assert_eq!(resp.context_count, 1);
+    }
+}

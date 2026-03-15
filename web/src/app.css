@@ -11,6 +11,9 @@
 	--font-sans: system-ui, -apple-system, sans-serif;
 	--font-mono: ui-monospace, 'Cascadia Code', 'Fira Code', monospace;
 	--radius: 8px;
+	--modified-bg: #fef3c7;
+	--modified-fg: #92400e;
+	--modified-border: #fcd34d;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -24,6 +27,9 @@
 		--border: #2e2e2e;
 		--user-bg: #1e293b;
 		--assistant-bg: #1f1f1f;
+		--modified-bg: #292524;
+		--modified-fg: #fcd34d;
+		--modified-border: #44403c;
 	}
 }
 
