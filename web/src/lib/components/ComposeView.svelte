@@ -67,45 +67,107 @@
 		return [`${d} `, `${d}${d} `];
 	}
 
+	function serializeTagBlock(tags: TagEntry[]): string {
+		if (tags.length === 0) return '';
+		const tValues: string[] = [];
+		const lines: string[] = [];
+		for (const tag of tags) {
+			if (tag.name === 't') {
+				tValues.push(tag.value);
+			} else {
+				lines.push(`:${tag.name}: ${tag.value}`);
+			}
+		}
+		if (tValues.length > 0) {
+			lines.push(`:tags: ${tValues.join(', ')}`);
+		}
+		return lines.join('\n') + '\n';
+	}
+
+	function parseTagLine(line: string): TagEntry[] | null {
+		const match = line.match(/^:([^:]+):\s*(.*)$/);
+		if (!match) return null;
+		const name = match[1].trim();
+		const value = match[2].trim();
+		if (name === 'tags') {
+			return value
+				.split(',')
+				.map((s) => s.trim())
+				.filter(Boolean)
+				.map((v) => ({ name: 't', value: v }));
+		}
+		return [{ name, value }];
+	}
+
 	function serializeState(state: ComposeState): string {
 		const [h1, h2] = headChars();
 		let out = `${h1}${state.title}\n`;
+		out += serializeTagBlock(state.tags);
 		for (const s of state.sections) {
-			out += `\n${h2}${s.title}\n\n${s.content}\n`;
+			out += `\n${h2}${s.title}\n`;
+			out += serializeTagBlock(s.tags);
+			out += `\n${s.content}\n`;
 		}
 		return out;
 	}
 
-	function parsePlain(
-		text: string
-	): { title: string; sections: { title: string; content: string }[] } {
+	function parsePlain(text: string): {
+		title: string;
+		pubTags: TagEntry[];
+		sections: { title: string; content: string; tags: TagEntry[] }[];
+	} {
 		const [h1, h2] = headChars();
 		const lines = text.split('\n');
 		let title = '';
-		const sections: { title: string; content: string }[] = [];
-		let current: { title: string; lines: string[] } | null = null;
+		let pubTags: TagEntry[] = [];
+		let afterTitle = false;
+		const sections: { title: string; content: string; tags: TagEntry[] }[] = [];
+		let current: { title: string; tags: TagEntry[]; lines: string[]; inTagBlock: boolean } | null =
+			null;
 
 		for (const line of lines) {
 			if (line.startsWith(h2)) {
 				if (current) {
 					sections.push({
 						title: current.title,
-						content: current.lines.join('\n').trim()
+						content: current.lines.join('\n').trim(),
+						tags: current.tags
 					});
 				}
-				current = { title: line.slice(h2.length).trim(), lines: [] };
+				current = { title: line.slice(h2.length).trim(), tags: [], lines: [], inTagBlock: true };
+				afterTitle = false;
 			} else if (line.startsWith(h1) && !title) {
 				title = line.slice(h1.length).trim();
+				afterTitle = true;
+			} else if (afterTitle) {
+				const parsed = parseTagLine(line);
+				if (parsed) {
+					pubTags.push(...parsed);
+				} else {
+					afterTitle = false;
+				}
 			} else if (current) {
+				if (current.inTagBlock) {
+					const parsed = parseTagLine(line);
+					if (parsed) {
+						current.tags.push(...parsed);
+						continue;
+					}
+					current.inTagBlock = false;
+				}
 				current.lines.push(line);
 			}
 		}
 
 		if (current) {
-			sections.push({ title: current.title, content: current.lines.join('\n').trim() });
+			sections.push({
+				title: current.title,
+				content: current.lines.join('\n').trim(),
+				tags: current.tags
+			});
 		}
 
-		return { title, sections };
+		return { title, pubTags, sections };
 	}
 
 	function applyPlainToState(): ComposeState {
@@ -121,6 +183,7 @@
 					...existing,
 					title: s.title,
 					content: s.content,
+					tags: s.tags,
 					modified: s.content !== existing.original_content
 				};
 			}
@@ -128,7 +191,7 @@
 				id: crypto.randomUUID(),
 				title: s.title,
 				content: s.content,
-				tags: [],
+				tags: s.tags,
 				original_content: s.content,
 				modified: false,
 				in_context: false,
@@ -138,6 +201,7 @@
 		const newState: ComposeState = {
 			...compose,
 			title: parsed.title || compose.title,
+			tags: parsed.pubTags.length > 0 ? parsed.pubTags : compose.tags,
 			sections
 		};
 		onupdate(newState);
