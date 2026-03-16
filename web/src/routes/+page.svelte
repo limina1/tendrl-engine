@@ -20,7 +20,15 @@
 	import SearchPanel from '$lib/components/SearchPanel.svelte';
 
 	// Chat state
-	let chat: ChatResponse | null = $state(null);
+	let chat: ChatResponse | null = $state({
+		fragments: [],
+		fragment_count: 0,
+		edit_mode: false,
+		edit_buffer: null,
+		system_prompt: null,
+		context_count: 0,
+		generating: false
+	});
 	let chatLoading = $state(false);
 	let systemExpanded = $state(false);
 	let contextExpanded = $state(false);
@@ -73,7 +81,11 @@
 	);
 
 	onMount(async () => {
-		chat = await api.getChat();
+		try {
+			chat = await api.getChat();
+		} catch {
+			// Backend unavailable — keep default empty state
+		}
 	});
 
 	// --- Helpers ---
