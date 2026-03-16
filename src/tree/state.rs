@@ -7,6 +7,7 @@ use super::command::{all_commands, CommandInfo};
 use super::node::{NodeId, TreeNode};
 use super::undo::UndoStack;
 use crate::identity::Identity;
+use crate::publication::NAddr;
 use crate::user_data::UserData;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -1180,6 +1181,235 @@ impl ComposeState {
         });
 
         serde_json::to_string_pretty(&section_event).unwrap_or_else(|_| "{}".to_string())
+    }
+}
+
+// --- Block-based Compose Model ---
+
+/// The kind of a compose block
+#[derive(Debug, Clone)]
+pub enum BlockKind {
+    /// User-authored editable content
+    Editable { content: String, cursor: usize },
+    /// Read-only reference to someone else's section
+    Imported {
+        source_addr: NAddr,
+        content: String,
+        author: String,
+        fork_requested: bool,
+    },
+    /// Editable copy of someone else's section, with lineage
+    Forked {
+        original_addr: NAddr,
+        content: String,
+        cursor: usize,
+        original_author: String,
+    },
+}
+
+/// A single block in a block-based composition
+#[derive(Debug, Clone)]
+pub struct ComposeBlock {
+    pub block_id: usize,
+    pub kind: BlockKind,
+    pub title: String,
+    pub tags: Vec<TagEntry>,
+    pub collapsed: bool,
+}
+
+impl ComposeBlock {
+    /// Returns the content from any block variant
+    pub fn content(&self) -> &str {
+        match &self.kind {
+            BlockKind::Editable { content, .. } => content,
+            BlockKind::Imported { content, .. } => content,
+            BlockKind::Forked { content, .. } => content,
+        }
+    }
+
+    /// Returns true for Editable and Forked blocks
+    pub fn is_editable(&self) -> bool {
+        matches!(self.kind, BlockKind::Editable { .. } | BlockKind::Forked { .. })
+    }
+
+    /// Returns cursor position for editable block kinds
+    pub fn cursor(&self) -> Option<usize> {
+        match &self.kind {
+            BlockKind::Editable { cursor, .. } => Some(*cursor),
+            BlockKind::Forked { cursor, .. } => Some(*cursor),
+            BlockKind::Imported { .. } => None,
+        }
+    }
+}
+
+/// State for block-based composition (supports mixed editable/imported/forked blocks)
+pub struct ComposeBlockState {
+    pub blocks: Vec<ComposeBlock>,
+    pub block_cursor: usize,
+    next_block_id: usize,
+    pub title: String,
+    pub tags: Vec<TagEntry>,
+    pub auto_update: AutoUpdateMode,
+}
+
+impl ComposeBlockState {
+    pub fn new() -> Self {
+        Self {
+            blocks: Vec::new(),
+            block_cursor: 0,
+            next_block_id: 0,
+            title: String::new(),
+            tags: Vec::new(),
+            auto_update: AutoUpdateMode::default(),
+        }
+    }
+
+    /// Append an empty editable block
+    pub fn add_editable(&mut self) {
+        let id = self.next_block_id;
+        self.next_block_id += 1;
+        self.blocks.push(ComposeBlock {
+            block_id: id,
+            kind: BlockKind::Editable {
+                content: String::new(),
+                cursor: 0,
+            },
+            title: String::new(),
+            tags: Vec::new(),
+            collapsed: false,
+        });
+        self.block_cursor = self.blocks.len() - 1;
+    }
+
+    /// Append an imported (read-only reference) block
+    pub fn add_imported(&mut self, addr: NAddr, content: String, author: String, title: String) {
+        let id = self.next_block_id;
+        self.next_block_id += 1;
+        self.blocks.push(ComposeBlock {
+            block_id: id,
+            kind: BlockKind::Imported {
+                source_addr: addr,
+                content,
+                author,
+                fork_requested: false,
+            },
+            title,
+            tags: Vec::new(),
+            collapsed: false,
+        });
+        self.block_cursor = self.blocks.len() - 1;
+    }
+
+    /// Toggle a block between Imported and Forked states.
+    ///
+    /// Imported → Forked: copies content, resets cursor.
+    /// Forked → Imported: only if content is unchanged from original.
+    pub fn toggle_fork(&mut self, idx: usize) {
+        let block = match self.blocks.get_mut(idx) {
+            Some(b) => b,
+            None => return,
+        };
+        match block.kind.clone() {
+            BlockKind::Imported {
+                source_addr,
+                content,
+                author,
+                ..
+            } => {
+                block.kind = BlockKind::Forked {
+                    original_addr: source_addr,
+                    content: content.clone(),
+                    cursor: 0,
+                    original_author: author,
+                };
+            }
+            BlockKind::Forked {
+                original_addr,
+                content,
+                original_author,
+                ..
+            } => {
+                // Only revert if content is unchanged (would need original content)
+                // For now, always allow back-toggle
+                block.kind = BlockKind::Imported {
+                    source_addr: original_addr,
+                    content,
+                    author: original_author,
+                    fork_requested: false,
+                };
+            }
+            BlockKind::Editable { .. } => {} // no-op for editable blocks
+        }
+    }
+
+    /// Move a block up in the list
+    pub fn move_block_up(&mut self, idx: usize) {
+        if idx > 0 && idx < self.blocks.len() {
+            self.blocks.swap(idx, idx - 1);
+            if self.block_cursor == idx {
+                self.block_cursor = idx - 1;
+            }
+        }
+    }
+
+    /// Move a block down in the list
+    pub fn move_block_down(&mut self, idx: usize) {
+        if idx + 1 < self.blocks.len() {
+            self.blocks.swap(idx, idx + 1);
+            if self.block_cursor == idx {
+                self.block_cursor = idx + 1;
+            }
+        }
+    }
+
+    /// Remove a block, clamping the cursor
+    pub fn remove_block(&mut self, idx: usize) {
+        if idx < self.blocks.len() {
+            self.blocks.remove(idx);
+            if self.blocks.is_empty() {
+                self.block_cursor = 0;
+            } else if self.block_cursor >= self.blocks.len() {
+                self.block_cursor = self.blocks.len() - 1;
+            }
+        }
+    }
+
+    /// Check if ready to publish (has title + at least one block)
+    pub fn is_ready_to_publish(&self) -> bool {
+        !self.title.is_empty() && !self.blocks.is_empty()
+    }
+
+    /// Generate the d-tag for the publication
+    pub fn publication_d_tag(&self) -> String {
+        if self.title.is_empty() {
+            "untitled".to_string()
+        } else {
+            ComposeState::generate_d_tag(&self.title)
+        }
+    }
+
+    /// Generate the d-tag for a block at the given index.
+    ///
+    /// Pattern: `pub-d-tag-section-d-tag`
+    /// For forked blocks, uses the original addr's d-tag with a "fork-" prefix.
+    pub fn block_d_tag(&self, idx: usize) -> String {
+        let pub_d_tag = self.publication_d_tag();
+        match self.blocks.get(idx) {
+            Some(block) => {
+                let section_part = if block.title.is_empty() {
+                    format!("section-{}", idx)
+                } else {
+                    ComposeState::generate_d_tag(&block.title)
+                };
+                match &block.kind {
+                    BlockKind::Forked { original_addr, .. } => {
+                        format!("{}-fork-{}", pub_d_tag, original_addr.d_tag)
+                    }
+                    _ => format!("{}-{}", pub_d_tag, section_part),
+                }
+            }
+            None => format!("{}-section-{}", pub_d_tag, idx),
+        }
     }
 }
 
@@ -2609,5 +2839,134 @@ mod tests {
         let block = editor.cursor_in_code_block();
         assert!(block.is_some());
         assert_eq!(block.unwrap().2, "python");
+    }
+
+    // --- ComposeBlockState tests ---
+
+    #[test]
+    fn test_compose_block_state_new() {
+        let state = ComposeBlockState::new();
+        assert!(state.blocks.is_empty());
+        assert_eq!(state.block_cursor, 0);
+        assert!(state.title.is_empty());
+        assert!(!state.is_ready_to_publish());
+    }
+
+    #[test]
+    fn test_compose_block_add_editable() {
+        let mut state = ComposeBlockState::new();
+        state.add_editable();
+        assert_eq!(state.blocks.len(), 1);
+        assert!(state.blocks[0].is_editable());
+        assert_eq!(state.blocks[0].content(), "");
+        assert_eq!(state.blocks[0].cursor(), Some(0));
+        assert_eq!(state.block_cursor, 0);
+    }
+
+    #[test]
+    fn test_compose_block_add_imported() {
+        let mut state = ComposeBlockState::new();
+        let addr = NAddr::new(30041, "author123", "section-1");
+        state.add_imported(addr, "imported text".into(), "alice".into(), "Imported Section".into());
+        assert_eq!(state.blocks.len(), 1);
+        assert!(!state.blocks[0].is_editable());
+        assert_eq!(state.blocks[0].content(), "imported text");
+        assert_eq!(state.blocks[0].cursor(), None);
+        assert_eq!(state.blocks[0].title, "Imported Section");
+    }
+
+    #[test]
+    fn test_compose_block_toggle_fork_imported_to_forked() {
+        let mut state = ComposeBlockState::new();
+        let addr = NAddr::new(30041, "author123", "section-1");
+        state.add_imported(addr, "original text".into(), "alice".into(), "Title".into());
+
+        state.toggle_fork(0);
+        assert!(state.blocks[0].is_editable());
+        assert_eq!(state.blocks[0].content(), "original text");
+        assert_eq!(state.blocks[0].cursor(), Some(0));
+    }
+
+    #[test]
+    fn test_compose_block_toggle_fork_back() {
+        let mut state = ComposeBlockState::new();
+        let addr = NAddr::new(30041, "author123", "section-1");
+        state.add_imported(addr, "original text".into(), "alice".into(), "Title".into());
+
+        // Imported → Forked → Imported
+        state.toggle_fork(0);
+        assert!(state.blocks[0].is_editable());
+        state.toggle_fork(0);
+        assert!(!state.blocks[0].is_editable());
+    }
+
+    #[test]
+    fn test_compose_block_move_up_down() {
+        let mut state = ComposeBlockState::new();
+        state.add_editable();
+        state.blocks[0].title = "A".into();
+        state.add_editable();
+        state.blocks[1].title = "B".into();
+        state.add_editable();
+        state.blocks[2].title = "C".into();
+
+        // Move B (idx 1) up → becomes idx 0
+        state.block_cursor = 1;
+        state.move_block_up(1);
+        assert_eq!(state.blocks[0].title, "B");
+        assert_eq!(state.blocks[1].title, "A");
+        assert_eq!(state.block_cursor, 0);
+
+        // Move B (idx 0) down → becomes idx 1
+        state.move_block_down(0);
+        assert_eq!(state.blocks[0].title, "A");
+        assert_eq!(state.blocks[1].title, "B");
+        assert_eq!(state.block_cursor, 1);
+    }
+
+    #[test]
+    fn test_compose_block_remove_adjusts_cursor() {
+        let mut state = ComposeBlockState::new();
+        state.add_editable();
+        state.add_editable();
+        state.add_editable();
+        state.block_cursor = 2;
+
+        state.remove_block(2);
+        assert_eq!(state.blocks.len(), 2);
+        assert_eq!(state.block_cursor, 1); // Clamped to last
+    }
+
+    #[test]
+    fn test_compose_block_d_tag_editable() {
+        let mut state = ComposeBlockState::new();
+        state.title = "My Article".into();
+        state.add_editable();
+        state.blocks[0].title = "Introduction".into();
+
+        assert_eq!(state.block_d_tag(0), "my-article-introduction");
+    }
+
+    #[test]
+    fn test_compose_block_d_tag_forked() {
+        let mut state = ComposeBlockState::new();
+        state.title = "My Article".into();
+        let addr = NAddr::new(30041, "author123", "original-section");
+        state.add_imported(addr, "text".into(), "alice".into(), "Title".into());
+        state.toggle_fork(0); // → Forked
+
+        assert_eq!(state.block_d_tag(0), "my-article-fork-original-section");
+    }
+
+    #[test]
+    fn test_compose_block_is_ready_to_publish() {
+        let mut state = ComposeBlockState::new();
+        assert!(!state.is_ready_to_publish());
+
+        state.title = "Test".into();
+        assert!(!state.is_ready_to_publish()); // No blocks
+
+        state.add_editable();
+        assert!(state.is_ready_to_publish()); // Title + block
     }
 }

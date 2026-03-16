@@ -90,6 +90,8 @@ pub enum SyncStatus {
     LocalCreated,
     /// Unsigned local draft (not yet signed or published)
     Draft,
+    /// Successfully published to at least one relay
+    Synced,
 }
 
 impl SyncStatus {
@@ -101,6 +103,11 @@ impl SyncStatus {
     /// Check if this was created locally and not yet synced to relays
     pub fn is_local_created(&self) -> bool {
         matches!(self, SyncStatus::LocalCreated)
+    }
+
+    /// Check if this has been synced to relays
+    pub fn is_synced(&self) -> bool {
+        matches!(self, SyncStatus::Synced)
     }
 }
 

@@ -497,14 +497,26 @@ impl<'a> PublicationEngine<'a> {
             }
         }
 
-        // Filter to root publications only
-        let mut roots = Vec::new();
+        // Filter to root publications only, deduplicating by a-tag (keep newest)
+        // nostrdb stores all versions of replaceable events, so we need to dedupe
+        let mut by_addr: std::collections::HashMap<String, Publication> = std::collections::HashMap::new();
+
         for event in response.events {
             match Publication::from_event(&event, true) {
                 Ok(pub_) => {
                     let own_addr = pub_.addr.to_a_tag();
-                    if !child_addrs.contains(&own_addr) {
-                        roots.push(pub_);
+
+                    // Skip if this is a child publication
+                    if child_addrs.contains(&own_addr) {
+                        continue;
+                    }
+
+                    // Keep only the newest version for each a-tag
+                    match by_addr.get(&own_addr) {
+                        Some(existing) if pub_.created_at <= existing.created_at => continue,
+                        _ => {
+                            by_addr.insert(own_addr, pub_);
+                        }
                     }
                 }
                 Err(e) => {
@@ -515,7 +527,8 @@ impl<'a> PublicationEngine<'a> {
             }
         }
 
-        // Sort by created_at descending
+        // Collect into vec and sort by created_at descending
+        let mut roots: Vec<Publication> = by_addr.into_values().collect();
         roots.sort_by(|a, b| b.created_at.cmp(&a.created_at));
 
         // Apply limit after filtering
@@ -562,14 +575,25 @@ impl<'a> PublicationEngine<'a> {
             }
         }
 
-        // Filter to root publications only
-        let mut roots = Vec::new();
+        // Filter to root publications only, deduplicating by a-tag (keep newest)
+        let mut by_addr: std::collections::HashMap<String, Publication> = std::collections::HashMap::new();
+
         for event in response.events {
             match Publication::from_event(&event, true) {
                 Ok(pub_) => {
                     let own_addr = pub_.addr.to_a_tag();
-                    if !child_addrs.contains(&own_addr) {
-                        roots.push(pub_);
+
+                    // Skip if this is a child publication
+                    if child_addrs.contains(&own_addr) {
+                        continue;
+                    }
+
+                    // Keep only the newest version for each a-tag
+                    match by_addr.get(&own_addr) {
+                        Some(existing) if pub_.created_at <= existing.created_at => continue,
+                        _ => {
+                            by_addr.insert(own_addr, pub_);
+                        }
                     }
                 }
                 Err(e) => {
@@ -579,7 +603,8 @@ impl<'a> PublicationEngine<'a> {
             }
         }
 
-        // Sort by created_at descending
+        // Collect into vec and sort by created_at descending
+        let mut roots: Vec<Publication> = by_addr.into_values().collect();
         roots.sort_by(|a, b| b.created_at.cmp(&a.created_at));
 
         // Apply limit after filtering
@@ -694,9 +719,29 @@ use sha2::{Sha256, Digest};
 ///
 /// Returns (publication_event, section_events) as JSON values.
 /// The events have proper structure with calculated IDs but placeholder signatures.
+/// Use `build_signed_publication_events` for events that can be stored in nostrdb.
 pub fn build_publication_events(
     compose: &ComposeState,
     pubkey: &str,
+) -> (Value, Vec<Value>) {
+    build_publication_events_internal(compose, pubkey, None)
+}
+
+/// Build publication events with proper Schnorr signatures.
+/// This is required for events to be accepted by nostrdb.
+pub fn build_signed_publication_events(
+    compose: &ComposeState,
+    pubkey: &str,
+    secret_hex: &str,
+) -> (Value, Vec<Value>) {
+    build_publication_events_internal(compose, pubkey, Some(secret_hex))
+}
+
+/// Internal function to build publication events with optional signing
+fn build_publication_events_internal(
+    compose: &ComposeState,
+    pubkey: &str,
+    secret_hex: Option<&str>,
 ) -> (Value, Vec<Value>) {
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -709,22 +754,23 @@ pub fn build_publication_events(
     let mut section_events = Vec::new();
     for i in 0..compose.sections.len() {
         let section_d_tag = compose.section_d_tag(i);
-        let section_event = build_section_event(&compose.sections[i], &section_d_tag, pubkey, timestamp);
+        let section_event = build_section_event_internal(&compose.sections[i], &section_d_tag, pubkey, timestamp, secret_hex);
         section_events.push(section_event);
     }
 
     // Build publication index event
-    let pub_event = build_index_event(compose, pubkey, timestamp);
+    let pub_event = build_index_event_internal(compose, pubkey, timestamp, secret_hex);
 
     (pub_event, section_events)
 }
 
-/// Build a section (30041) event
-fn build_section_event(
+/// Build a section (30041) event with optional signing
+fn build_section_event_internal(
     section: &SectionCompose,
     d_tag: &str,
     pubkey: &str,
     timestamp: u64,
+    secret_hex: Option<&str>,
 ) -> Value {
     use serde_json::json;
 
@@ -752,8 +798,12 @@ fn build_section_event(
 
     let id = calculate_event_id(&event_for_hash);
 
-    // Placeholder signature (64 zero bytes in hex = 128 zeros)
-    let placeholder_sig = "0".repeat(128);
+    // Sign with secret key if provided, otherwise use placeholder
+    let sig = if let Some(secret) = secret_hex {
+        crate::identity::sign_event_hash(&id, secret).unwrap_or_else(|_| "0".repeat(128))
+    } else {
+        "0".repeat(128)
+    };
 
     json!({
         "id": id,
@@ -762,15 +812,16 @@ fn build_section_event(
         "kind": KIND_PUBLICATION_SECTION,
         "tags": tags,
         "content": &section.content,
-        "sig": placeholder_sig
+        "sig": sig
     })
 }
 
-/// Build a publication index (30040) event
-fn build_index_event(
+/// Build a publication index (30040) event with optional signing
+fn build_index_event_internal(
     compose: &ComposeState,
     pubkey: &str,
     timestamp: u64,
+    secret_hex: Option<&str>,
 ) -> Value {
     use serde_json::json;
 
@@ -811,8 +862,12 @@ fn build_index_event(
 
     let id = calculate_event_id(&event_for_hash);
 
-    // Placeholder signature
-    let placeholder_sig = "0".repeat(128);
+    // Sign with secret key if provided, otherwise use placeholder
+    let sig = if let Some(secret) = secret_hex {
+        crate::identity::sign_event_hash(&id, secret).unwrap_or_else(|_| "0".repeat(128))
+    } else {
+        "0".repeat(128)
+    };
 
     json!({
         "id": id,
@@ -821,7 +876,7 @@ fn build_index_event(
         "kind": KIND_PUBLICATION_INDEX,
         "tags": tags,
         "content": "",
-        "sig": placeholder_sig
+        "sig": sig
     })
 }
 
@@ -835,9 +890,211 @@ fn calculate_event_id(event_array: &Value) -> String {
     hex::encode(hash)
 }
 
+// --- Block-aware event building ---
+
+use crate::tree::state::{BlockKind, ComposeBlock, ComposeBlockState};
+
+/// Build publication events from a block-based compose state.
+///
+/// Returns (publication_30040_event, section_30041_events).
+/// Imported blocks do NOT generate 30041 events — they reference the original.
+pub fn build_block_publication_events(
+    state: &ComposeBlockState,
+    pubkey: &str,
+    secret_hex: Option<&str>,
+) -> (Value, Vec<Value>) {
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+
+    let pub_d_tag = state.publication_d_tag();
+    let mut section_events = Vec::new();
+    let mut a_tags: Vec<Value> = Vec::new();
+
+    for (i, block) in state.blocks.iter().enumerate() {
+        let block_d_tag = state.block_d_tag(i);
+
+        match &block.kind {
+            BlockKind::Editable { content, .. } => {
+                // Build a new 30041 event via existing internal builder
+                let section = SectionCompose {
+                    title: block.title.clone(),
+                    content: content.clone(),
+                    tags: block.tags.iter().map(|t| crate::tree::state::TagEntry {
+                        name: t.name.clone(),
+                        value: t.value.clone(),
+                    }).collect(),
+                    ..Default::default()
+                };
+                let event = build_section_event_internal(
+                    &section, &block_d_tag, pubkey, timestamp, secret_hex,
+                );
+                section_events.push(event);
+                a_tags.push(serde_json::json!([
+                    "a",
+                    format!("{}:{}:{}", KIND_PUBLICATION_SECTION, pubkey, block_d_tag),
+                    ""
+                ]));
+            }
+            BlockKind::Imported { source_addr, .. } => {
+                // No 30041 event — reference the original directly
+                a_tags.push(serde_json::json!([
+                    "a",
+                    format!(
+                        "{}:{}:{}",
+                        KIND_PUBLICATION_SECTION,
+                        source_addr.pubkey,
+                        source_addr.d_tag
+                    ),
+                    ""
+                ]));
+            }
+            BlockKind::Forked { original_addr, content, .. } => {
+                let event = build_forked_section_event(
+                    block, &block_d_tag, original_addr, content, pubkey, timestamp, secret_hex,
+                );
+                section_events.push(event);
+                a_tags.push(serde_json::json!([
+                    "a",
+                    format!("{}:{}:{}", KIND_PUBLICATION_SECTION, pubkey, block_d_tag),
+                    ""
+                ]));
+            }
+        }
+    }
+
+    // Build the 30040 publication index event
+    let pub_event = build_block_index_event(state, &pub_d_tag, pubkey, timestamp, &a_tags, secret_hex);
+
+    (pub_event, section_events)
+}
+
+/// Build a 30041 event for a forked section with lineage tags
+fn build_forked_section_event(
+    block: &ComposeBlock,
+    d_tag: &str,
+    original_addr: &NAddr,
+    content: &str,
+    pubkey: &str,
+    timestamp: u64,
+    secret_hex: Option<&str>,
+) -> Value {
+    use serde_json::json;
+
+    let mut tags: Vec<Value> = vec![json!(["d", d_tag])];
+
+    if !block.title.is_empty() {
+        tags.push(json!(["title", &block.title]));
+    }
+
+    // Fork lineage tag — NIP-54 addressable fork marker
+    tags.push(json!([
+        "a",
+        format!(
+            "{}:{}:{}",
+            KIND_PUBLICATION_SECTION, original_addr.pubkey, original_addr.d_tag
+        ),
+        "",
+        "fork"
+    ]));
+
+    // Custom tags from block
+    for tag_vec in ComposeState::tags_to_nostr_format(&block.tags) {
+        tags.push(serde_json::to_value(tag_vec).unwrap_or(json!([])));
+    }
+
+    let event_for_hash = json!([
+        0,
+        pubkey,
+        timestamp,
+        KIND_PUBLICATION_SECTION,
+        tags,
+        content
+    ]);
+
+    let id = calculate_event_id(&event_for_hash);
+
+    let sig = if let Some(secret) = secret_hex {
+        crate::identity::sign_event_hash(&id, secret).unwrap_or_else(|_| "0".repeat(128))
+    } else {
+        "0".repeat(128)
+    };
+
+    json!({
+        "id": id,
+        "pubkey": pubkey,
+        "created_at": timestamp,
+        "kind": KIND_PUBLICATION_SECTION,
+        "tags": tags,
+        "content": content,
+        "sig": sig
+    })
+}
+
+/// Build a 30040 publication index event for block-based composition
+fn build_block_index_event(
+    state: &ComposeBlockState,
+    pub_d_tag: &str,
+    pubkey: &str,
+    timestamp: u64,
+    a_tags: &[Value],
+    secret_hex: Option<&str>,
+) -> Value {
+    use serde_json::json;
+
+    let mut tags: Vec<Value> = vec![json!(["d", pub_d_tag])];
+
+    if !state.title.is_empty() {
+        tags.push(json!(["title", &state.title]));
+    }
+
+    // Custom tags
+    for tag_vec in ComposeState::tags_to_nostr_format(&state.tags) {
+        tags.push(serde_json::to_value(tag_vec).unwrap_or(json!([])));
+    }
+
+    // Section references
+    tags.extend(a_tags.iter().cloned());
+
+    // Auto-update tag
+    tags.push(json!(["auto-update", state.auto_update.as_str()]));
+
+    // 30040 events MUST have empty content
+    let event_for_hash = json!([
+        0,
+        pubkey,
+        timestamp,
+        KIND_PUBLICATION_INDEX,
+        tags,
+        ""
+    ]);
+
+    let id = calculate_event_id(&event_for_hash);
+
+    let sig = if let Some(secret) = secret_hex {
+        crate::identity::sign_event_hash(&id, secret).unwrap_or_else(|_| "0".repeat(128))
+    } else {
+        "0".repeat(128)
+    };
+
+    json!({
+        "id": id,
+        "pubkey": pubkey,
+        "created_at": timestamp,
+        "kind": KIND_PUBLICATION_INDEX,
+        "tags": tags,
+        "content": "",
+        "sig": sig
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tree::state::{ComposeBlockState, TagEntry};
 
     #[test]
     fn test_naddr_parsing() {
@@ -872,5 +1129,153 @@ mod tests {
         // Very short pubkey stays as-is
         let addr = NAddr::new(30040, "abc", "doc");
         assert_eq!(addr.short_format(), "30040:abc:doc");
+    }
+
+    // --- Block publication event tests ---
+
+    fn make_block_state_all_editable() -> ComposeBlockState {
+        let mut state = ComposeBlockState::new();
+        state.title = "Test Article".into();
+        state.add_editable();
+        if let crate::tree::state::BlockKind::Editable { ref mut content, .. } = state.blocks[0].kind {
+            *content = "Hello world".into();
+        }
+        state.blocks[0].title = "Intro".into();
+        state
+    }
+
+    #[test]
+    fn test_build_block_all_editable_regression() {
+        let state = make_block_state_all_editable();
+        let (pub_event, section_events) = build_block_publication_events(&state, "pubkey1", None);
+
+        assert_eq!(pub_event["kind"], 30040);
+        assert_eq!(pub_event["content"], "");
+        assert_eq!(section_events.len(), 1);
+        assert_eq!(section_events[0]["kind"], 30041);
+        assert_eq!(section_events[0]["content"], "Hello world");
+    }
+
+    #[test]
+    fn test_build_block_imported_only() {
+        let mut state = ComposeBlockState::new();
+        state.title = "Curated".into();
+        let addr = NAddr::new(30041, "alice", "ch1");
+        state.add_imported(addr, "imported content".into(), "alice".into(), "Chapter 1".into());
+
+        let (pub_event, section_events) = build_block_publication_events(&state, "pubkey1", None);
+
+        // No section events for imported blocks
+        assert!(section_events.is_empty());
+        // But the 30040 should have an a-tag pointing to alice's section
+        let tags = pub_event["tags"].as_array().unwrap();
+        let a_tags: Vec<_> = tags.iter().filter(|t| t[0] == "a").collect();
+        assert_eq!(a_tags.len(), 1);
+        assert!(a_tags[0][1].as_str().unwrap().contains("alice"));
+        assert!(a_tags[0][1].as_str().unwrap().contains("ch1"));
+    }
+
+    #[test]
+    fn test_build_block_forked_creates_30041_with_fork_tags() {
+        let mut state = ComposeBlockState::new();
+        state.title = "My Fork".into();
+        let addr = NAddr::new(30041, "alice", "original-section");
+        state.add_imported(addr, "original text".into(), "alice".into(), "Original".into());
+        state.toggle_fork(0);
+
+        let (_, section_events) = build_block_publication_events(&state, "pubkey1", None);
+        assert_eq!(section_events.len(), 1);
+        assert_eq!(section_events[0]["kind"], 30041);
+
+        // Should have fork lineage tag
+        let tags = section_events[0]["tags"].as_array().unwrap();
+        let fork_tags: Vec<_> = tags.iter().filter(|t| {
+            t.as_array().map(|a| a.len() >= 4 && a[3] == "fork").unwrap_or(false)
+        }).collect();
+        assert_eq!(fork_tags.len(), 1);
+        assert!(fork_tags[0][1].as_str().unwrap().contains("alice"));
+    }
+
+    #[test]
+    fn test_build_block_mixed_event_count_and_a_tags() {
+        let mut state = ComposeBlockState::new();
+        state.title = "Mixed".into();
+
+        // 1 editable
+        state.add_editable();
+        state.blocks[0].title = "My Section".into();
+        if let crate::tree::state::BlockKind::Editable { ref mut content, .. } = state.blocks[0].kind {
+            *content = "editable text".into();
+        }
+
+        // 1 imported
+        let addr = NAddr::new(30041, "alice", "ref-1");
+        state.add_imported(addr, "imported".into(), "alice".into(), "Referenced".into());
+
+        // 1 forked
+        let addr2 = NAddr::new(30041, "bob", "forked-1");
+        state.add_imported(addr2, "fork source".into(), "bob".into(), "Forked".into());
+        state.toggle_fork(2);
+
+        let (pub_event, section_events) = build_block_publication_events(&state, "pubkey1", None);
+
+        // 2 section events (editable + forked), not 3
+        assert_eq!(section_events.len(), 2);
+
+        // 3 a-tags in the 30040
+        let tags = pub_event["tags"].as_array().unwrap();
+        let a_tags: Vec<_> = tags.iter().filter(|t| t[0] == "a").collect();
+        assert_eq!(a_tags.len(), 3);
+    }
+
+    #[test]
+    fn test_build_block_forked_has_fork_a_tag() {
+        let mut state = ComposeBlockState::new();
+        state.title = "Fork Test".into();
+        let addr = NAddr::new(30041, "alice", "orig");
+        state.add_imported(addr, "text".into(), "alice".into(), "T".into());
+        state.toggle_fork(0);
+
+        let (_, section_events) = build_block_publication_events(&state, "me", None);
+        let tags = section_events[0]["tags"].as_array().unwrap();
+
+        // Should have ["a", "30041:alice:orig", "", "fork"]
+        let fork_a = tags.iter().find(|t| {
+            t.as_array().map(|a| a.len() >= 4 && a[3] == "fork").unwrap_or(false)
+        });
+        assert!(fork_a.is_some());
+        let fork_a = fork_a.unwrap();
+        assert_eq!(fork_a[1].as_str().unwrap(), "30041:alice:orig");
+    }
+
+    #[test]
+    fn test_build_block_imported_produces_no_event() {
+        let mut state = ComposeBlockState::new();
+        state.title = "Import Only".into();
+        state.add_imported(
+            NAddr::new(30041, "x", "y"),
+            "content".into(),
+            "x".into(),
+            "T".into(),
+        );
+        let (_, section_events) = build_block_publication_events(&state, "me", None);
+        assert!(section_events.is_empty());
+    }
+
+    #[test]
+    fn test_build_block_signed_events_structure() {
+        let state = make_block_state_all_editable();
+        let (pub_event, section_events) = build_block_publication_events(&state, "pubkey1", None);
+
+        // All events should have required fields
+        for event in std::iter::once(&pub_event).chain(section_events.iter()) {
+            assert!(event.get("id").is_some());
+            assert!(event.get("pubkey").is_some());
+            assert!(event.get("created_at").is_some());
+            assert!(event.get("kind").is_some());
+            assert!(event.get("tags").is_some());
+            assert!(event.get("content").is_some());
+            assert!(event.get("sig").is_some());
+        }
     }
 }

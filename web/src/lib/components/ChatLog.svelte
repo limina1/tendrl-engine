@@ -1,15 +1,17 @@
 <script lang="ts">
-	import type { Fragment } from '$lib/types';
+	import type { Fragment, ContextItem } from '$lib/types';
 	import ChatMessage from './ChatMessage.svelte';
 
 	let {
 		fragments,
 		checkedIds,
-		ontogglecheck
+		ontogglecheck,
+		chatFragmentItems
 	}: {
 		fragments: Fragment[];
 		checkedIds: Set<number>;
 		ontogglecheck: (id: number) => void;
+		chatFragmentItems: Map<number, ContextItem>;
 	} = $props();
 
 	let container: HTMLDivElement | undefined = $state();
@@ -24,10 +26,13 @@
 
 <div class="log" bind:this={container}>
 	{#each fragments as fragment (fragment.id)}
+		{@const composeItem = chatFragmentItems.get(fragment.id)}
 		<ChatMessage
 			{fragment}
 			checked={checkedIds.has(fragment.id)}
 			ontoggle={ontogglecheck}
+			inCompose={!!composeItem}
+			composeModified={!!composeItem && composeItem.content !== composeItem.original_content}
 		/>
 	{/each}
 	{#if fragments.length === 0}

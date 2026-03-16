@@ -148,6 +148,7 @@ impl<'a> Widget for TreeWidget<'a> {
                 SyncStatus::LocalOnly => Color::Yellow,
                 SyncStatus::LocalCreated => Color::Rgb(255, 165, 0), // Orange
                 SyncStatus::Draft => Color::Red,
+                SyncStatus::Synced => Color::Green, // Successfully published
             };
             buf[(bar_x, y)].set_char('▌').set_fg(bar_color);
         }
@@ -256,15 +257,21 @@ impl<'a> FeedWidget<'a> {
                 "Not loaded".to_string()
             };
 
-            // Check if this is a draft or local-created
+            // Check sync status
             let is_draft = p.sync_status.is_draft();
             let is_local_created = p.sync_status.is_local_created();
+            let is_synced = p.sync_status.is_synced();
 
             // Build multi-line card (sync bar rendered separately on right edge)
             let mut lines = Vec::new();
 
             // Add status banner
-            if is_local_created {
+            if is_synced {
+                lines.push(Line::from(Span::styled(
+                    "  [PUBLISHED]",
+                    Style::default().fg(Color::Green).bold().italic(),
+                )));
+            } else if is_local_created {
                 lines.push(Line::from(Span::styled(
                     "  [LOCAL - Not Published]",
                     Style::default().fg(Color::Rgb(255, 165, 0)).bold().italic(),
@@ -277,7 +284,9 @@ impl<'a> FeedWidget<'a> {
             }
 
             // Title with color based on status
-            let title_color = if is_local_created {
+            let title_color = if is_synced {
+                Color::Green
+            } else if is_local_created {
                 Color::Rgb(255, 165, 0) // Orange
             } else if is_draft {
                 Color::Red
@@ -318,9 +327,9 @@ impl<'a> FeedWidget<'a> {
                 if let Some(TreeNode::Publication(p)) = self.state.nodes.get(&node_id) {
                     // Base: Title + author line + separator = 3
                     // + summary if present = 4
-                    // + draft/local banner if present = +1
+                    // + status banner if present = +1
                     let mut lines = if p.summary.is_some() { 4 } else { 3 };
-                    if p.sync_status.is_draft() || p.sync_status.is_local_created() {
+                    if p.sync_status.is_draft() || p.sync_status.is_local_created() || p.sync_status.is_synced() {
                         lines += 1;
                     }
                     (node_id, lines)
@@ -398,6 +407,7 @@ impl<'a> Widget for FeedWidget<'a> {
                     SyncStatus::LocalOnly => Color::Yellow,
                     SyncStatus::LocalCreated => Color::Rgb(255, 165, 0), // Orange
                     SyncStatus::Draft => Color::Red,
+                    SyncStatus::Synced => Color::Green, // Successfully published
                 }
             } else {
                 Color::DarkGray
@@ -574,6 +584,7 @@ impl<'a> Widget for OutlineWidget<'a> {
                 SyncStatus::LocalOnly => Color::Yellow,
                 SyncStatus::LocalCreated => Color::Rgb(255, 165, 0), // Orange
                 SyncStatus::Draft => Color::Red,
+                SyncStatus::Synced => Color::Green, // Successfully published
             };
 
             // Draw bar for each line of this section card

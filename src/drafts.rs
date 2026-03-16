@@ -346,6 +346,66 @@ impl From<&DraftComposeState> for ComposeState {
     }
 }
 
+/// Tracks locally-created publications that haven't been published to relays yet.
+/// Stores a simple list of a-tag addresses (kind:pubkey:d_tag) in a JSON file.
+pub struct LocalPublicationTracker {
+    file_path: PathBuf,
+}
+
+impl LocalPublicationTracker {
+    /// Create a new tracker, storing data in the given directory
+    pub fn new(data_dir: &Path) -> Result<Self> {
+        fs::create_dir_all(data_dir)?;
+        let file_path = data_dir.join("local_publications.json");
+        Ok(Self { file_path })
+    }
+
+    /// Mark a publication as locally created (not yet published to relays)
+    pub fn mark_local(&self, a_tag: &str) -> Result<()> {
+        let mut tags = self.load_tags()?;
+        if !tags.contains(&a_tag.to_string()) {
+            tags.push(a_tag.to_string());
+            self.save_tags(&tags)?;
+        }
+        Ok(())
+    }
+
+    /// Remove a publication from local tracking (after publishing to relays)
+    pub fn mark_published(&self, a_tag: &str) -> Result<()> {
+        let mut tags = self.load_tags()?;
+        tags.retain(|t| t != a_tag);
+        self.save_tags(&tags)?;
+        Ok(())
+    }
+
+    /// Check if a publication is marked as locally created
+    pub fn is_local(&self, a_tag: &str) -> bool {
+        self.load_tags()
+            .map(|tags| tags.contains(&a_tag.to_string()))
+            .unwrap_or(false)
+    }
+
+    /// Get all locally-created publication a-tags
+    pub fn list_local(&self) -> Vec<String> {
+        self.load_tags().unwrap_or_default()
+    }
+
+    fn load_tags(&self) -> Result<Vec<String>> {
+        if !self.file_path.exists() {
+            return Ok(Vec::new());
+        }
+        let content = fs::read_to_string(&self.file_path)?;
+        let tags: Vec<String> = serde_json::from_str(&content)?;
+        Ok(tags)
+    }
+
+    fn save_tags(&self, tags: &[String]) -> Result<()> {
+        let content = serde_json::to_string_pretty(tags)?;
+        fs::write(&self.file_path, content)?;
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

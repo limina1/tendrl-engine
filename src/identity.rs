@@ -303,6 +303,36 @@ fn derive_pubkey_from_secret(secret_hex: &str) -> Result<String, KeyParseError> 
     Ok(hex::encode(x_only))
 }
 
+/// Sign a message hash using Schnorr signature (NIP-01)
+/// Returns the signature as a 64-byte hex string
+pub fn sign_event_hash(event_id_hex: &str, secret_hex: &str) -> Result<String, KeyParseError> {
+    use secp256k1::{Secp256k1, SecretKey, Message, Keypair};
+
+    if secret_hex.len() != 64 {
+        return Err(KeyParseError::InvalidLength);
+    }
+    if event_id_hex.len() != 64 {
+        return Err(KeyParseError::InvalidLength);
+    }
+
+    let secret_bytes = hex::decode(secret_hex)
+        .map_err(|_| KeyParseError::InvalidHex)?;
+    let event_id_bytes = hex::decode(event_id_hex)
+        .map_err(|_| KeyParseError::InvalidHex)?;
+
+    let secp = Secp256k1::new();
+    let secret_key = SecretKey::from_slice(&secret_bytes)
+        .map_err(|_| KeyParseError::InvalidLength)?;
+    let keypair = Keypair::from_secret_key(&secp, &secret_key);
+
+    let message = Message::from_digest_slice(&event_id_bytes)
+        .map_err(|_| KeyParseError::InvalidLength)?;
+
+    let signature = secp.sign_schnorr_no_aux_rand(&message, &keypair);
+
+    Ok(hex::encode(signature.as_ref()))
+}
+
 /// Decrypt an ncryptsec with a password
 /// Returns (secret_hex, pubkey_hex)
 pub fn decrypt_ncryptsec(ncryptsec: &str, password: &str) -> Result<(String, String), DecryptError> {

@@ -13,7 +13,9 @@
 		onreset,
 		onremove,
 		onsendtochat,
-		ontogglereadonly
+		ontogglereadonly,
+		onlocksource,
+		oncrosspanelcopy
 	}: {
 		section: ContextItem;
 		checked: boolean;
@@ -25,6 +27,8 @@
 		onremove: (id: string) => void;
 		onsendtochat: (id: string) => void;
 		ontogglereadonly: (id: string) => void;
+		onlocksource: (id: string) => void;
+		oncrosspanelcopy: (id: string, fromPanel: string) => void;
 	} = $props();
 </script>
 
@@ -44,7 +48,7 @@
 			placeholder="Section title"
 			disabled={section.readonly}
 		/>
-		<ItemBadge item={section} {syncMode} panel="compose" {ontogglereadonly} />
+		<ItemBadge item={section} {syncMode} panel="compose" {ontogglereadonly} {onlocksource} {oncrosspanelcopy} />
 		<button class="icon-btn-sm" onclick={() => onsendtochat(section.id)} title="Send to chat">◂</button>
 		<button onclick={() => onremove(section.id)}>Remove</button>
 	</div>

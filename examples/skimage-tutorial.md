@@ -1,5 +1,8 @@
 # Exploring Images with scikit-image
 :tags: python, skimage, tutorial, visualization
+:m: text/asciidoc
+:L: en
+:type: notebook
 :author: tendrl-engine
 
 A literate programming exploration of image processing using scikit-image.

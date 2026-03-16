@@ -30,7 +30,9 @@
 		ondocpublish,
 		syncMode,
 		onsenditemtochat,
-		ontogglereadonly
+		ontogglereadonly,
+		onlocksource,
+		oncrosspanelcopy
 	}: {
 		docMode: DocMode;
 		publication: PublicationDetail | null;
@@ -55,6 +57,8 @@
 		syncMode: SyncMode;
 		onsenditemtochat: (id: string) => void;
 		ontogglereadonly: (id: string) => void;
+		onlocksource: (id: string) => void;
+		oncrosspanelcopy: (id: string, fromPanel: string) => void;
 	} = $props();
 </script>
 
@@ -101,6 +105,8 @@
 				{syncMode}
 				{onsenditemtochat}
 				{ontogglereadonly}
+				{onlocksource}
+				{oncrosspanelcopy}
 			/>
 		{/if}
 
@@ -112,6 +118,7 @@
 
 <style>
 	.document-panel {
+		flex: 1;
 		display: flex;
 		flex-direction: column;
 		min-height: 0;

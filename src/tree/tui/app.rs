@@ -1873,6 +1873,23 @@ async fn execute_async_request(
             // Broadcast operations are handled synchronously in spawn_single_async_request
             unreachable!("Broadcast operations should be handled by spawn_single_async_request")
         }
+
+        AsyncRequest::PublishBlockPublication { .. } => {
+            // Block publication is deferred — placeholder until signing is wired
+            Ok(AsyncResult::Error {
+                request,
+                error: "Block publication not yet implemented".to_string(),
+            })
+        }
+
+        AsyncRequest::LLMChat { .. } => {
+            // Placeholder — returns empty response until a real provider is configured
+            tracing::info!("LLM chat requested (no provider configured)");
+            Ok(AsyncResult::LLMResponse {
+                content: String::new(),
+                done: true,
+            })
+        }
     }
 }
 

@@ -190,6 +190,183 @@ pub async fn fetch_event_by_id(ndb: &Ndb, relays: &[String], event_id: &str) -> 
     Ok(None)
 }
 
+/// Result of publishing an event to a relay
+#[derive(Debug, Clone)]
+pub struct PublishResult {
+    pub relay_url: String,
+    pub success: bool,
+    pub message: Option<String>,
+}
+
+/// Publish an event to a single relay
+/// Returns success/failure with any message from the relay
+pub async fn publish_event(relay_url: &str, event_json: &str) -> PublishResult {
+    let result = async {
+        let (mut ws, _) = connect_async(relay_url)
+            .await
+            .map_err(|e| format!("Failed to connect: {}", e))?;
+
+        // Send EVENT message: ["EVENT", {event}]
+        let event: Value = serde_json::from_str(event_json)
+            .map_err(|e| format!("Invalid event JSON: {}", e))?;
+        let event_id = event.get("id").and_then(|v| v.as_str()).unwrap_or("unknown");
+        let msg = json!(["EVENT", event]);
+
+        ws.send(Message::Text(msg.to_string()))
+            .await
+            .map_err(|e| format!("Failed to send: {}", e))?;
+
+        // Wait for OK response (NIP-20)
+        let start = Instant::now();
+        let response_timeout = Duration::from_secs(10);
+
+        while start.elapsed() < response_timeout {
+            match timeout(Duration::from_secs(5), ws.next()).await {
+                Ok(Some(Ok(Message::Text(text)))) => {
+                    if let Ok(msg) = serde_json::from_str::<Vec<Value>>(&text) {
+                        if msg.len() >= 2 {
+                            let msg_type = msg[0].as_str().unwrap_or("");
+                            match msg_type {
+                                "OK" => {
+                                    // ["OK", event_id, success, message]
+                                    let ok_event_id = msg.get(1).and_then(|v| v.as_str()).unwrap_or("");
+                                    let success = msg.get(2).and_then(|v| v.as_bool()).unwrap_or(false);
+                                    let message = msg.get(3).and_then(|v| v.as_str()).map(|s| s.to_string());
+
+                                    if ok_event_id == event_id {
+                                        let _ = ws.close(None).await;
+                                        if success {
+                                            return Ok(message);
+                                        } else {
+                                            return Err(message.unwrap_or_else(|| "Rejected".to_string()));
+                                        }
+                                    }
+                                }
+                                "NOTICE" => {
+                                    if let Some(notice) = msg.get(1).and_then(|v| v.as_str()) {
+                                        warn!("Relay notice from {}: {}", relay_url, notice);
+                                    }
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                }
+                Ok(Some(Ok(_))) => {} // Other message types
+                Ok(Some(Err(e))) => {
+                    return Err(format!("WebSocket error: {}", e));
+                }
+                Ok(None) => {
+                    return Err("Connection closed".to_string());
+                }
+                Err(_) => {
+                    // Timeout - some relays don't send OK, assume success
+                    let _ = ws.close(None).await;
+                    return Ok(Some("No response (assumed success)".to_string()));
+                }
+            }
+        }
+
+        let _ = ws.close(None).await;
+        Ok(Some("Timeout waiting for confirmation".to_string()))
+    }
+    .await;
+
+    match result {
+        Ok(message) => {
+            info!("Published event to {}", relay_url);
+            PublishResult {
+                relay_url: relay_url.to_string(),
+                success: true,
+                message,
+            }
+        }
+        Err(e) => {
+            warn!("Failed to publish to {}: {}", relay_url, e);
+            PublishResult {
+                relay_url: relay_url.to_string(),
+                success: false,
+                message: Some(e),
+            }
+        }
+    }
+}
+
+/// Publish an event to multiple relays
+/// Returns results for each relay
+pub async fn publish_to_relays(relays: &[String], event_json: &str) -> Vec<PublishResult> {
+    let mut results = Vec::new();
+
+    for relay_url in relays {
+        let result = publish_event(relay_url, event_json).await;
+        results.push(result);
+    }
+
+    results
+}
+
+/// Progress update for broadcast operations
+#[derive(Debug, Clone)]
+pub struct BroadcastProgress {
+    pub current_relay: usize,
+    pub total_relays: usize,
+    pub current_event: usize,
+    pub total_events: usize,
+    pub relay_name: String,
+    pub status: String,
+}
+
+/// Publish multiple events to multiple relays (for publication + sections)
+/// Returns (successful_relay_count, total_relay_count, details)
+pub async fn publish_events_to_relays(
+    relays: &[String],
+    events: &[String],
+) -> (usize, usize, Vec<PublishResult>) {
+    publish_events_to_relays_with_progress(relays, events, |_| {}).await
+}
+
+/// Publish multiple events to multiple relays with progress callback
+pub async fn publish_events_to_relays_with_progress<F>(
+    relays: &[String],
+    events: &[String],
+    mut on_progress: F,
+) -> (usize, usize, Vec<PublishResult>)
+where
+    F: FnMut(BroadcastProgress),
+{
+    let mut all_results = Vec::new();
+    let mut success_count = 0;
+    let total_relays = relays.len();
+    let total_events = events.len();
+
+    for (relay_idx, relay_url) in relays.iter().enumerate() {
+        let mut relay_success = true;
+
+        for (event_idx, event_json) in events.iter().enumerate() {
+            on_progress(BroadcastProgress {
+                current_relay: relay_idx + 1,
+                total_relays,
+                current_event: event_idx + 1,
+                total_events,
+                relay_name: relay_url.clone(),
+                status: format!("Event {}/{}", event_idx + 1, total_events),
+            });
+
+            let result = publish_event(relay_url, event_json).await;
+            if !result.success {
+                relay_success = false;
+            }
+            all_results.push(result);
+        }
+
+        if relay_success {
+            success_count += 1;
+        }
+    }
+
+    (success_count, relays.len(), all_results)
+}
+
 /// Fetch an addressable event by kind:pubkey:d-tag from relays
 pub async fn fetch_addressable(
     ndb: &Ndb,

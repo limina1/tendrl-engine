@@ -108,9 +108,11 @@ export interface ContextItem {
 	id: string;
 	title: string;
 	content: string;
+	context_content: string;
 	tags: TagEntry[];
 	source_event_id?: string;
 	source_addr?: NAddr | null;
+	source_fragment_id?: number;
 	original_content: string;
 	modified: boolean;
 	in_context: boolean;

@@ -153,6 +153,9 @@ impl KeyMapper {
             KeyCode::Char('f') => Some(TreeCommand::Fork),
             KeyCode::Char('a') => Some(TreeCommand::ShowAlternates),
 
+            // Broadcasting
+            KeyCode::Char('b') => Some(TreeCommand::BroadcastSelected),
+
             // View
             KeyCode::Tab => Some(TreeCommand::TogglePreview),
             KeyCode::Char('r') if key.modifiers.contains(KeyModifiers::CONTROL) => {
@@ -361,6 +364,14 @@ impl KeyMapper {
                     None
                 }
                 KeyCode::Char('G') => Some(TreeCommand::MoveToLast),
+
+                // Command palette - accessible in normal mode (must come before plain 'x')
+                KeyCode::Char(' ') => Some(TreeCommand::ShowCommandPalette),
+                KeyCode::Char('/') => Some(TreeCommand::ShowCommandPalette),
+                KeyCode::Char('?') => Some(TreeCommand::ShowCommandPalette),
+                KeyCode::Char('x') if key.modifiers.contains(KeyModifiers::ALT) => {
+                    Some(TreeCommand::ShowCommandPalette)
+                }
 
                 // Delete
                 KeyCode::Char('x') => Some(TreeCommand::EditorDelete),

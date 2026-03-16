@@ -5,6 +5,7 @@
 
 use super::node::NodeId;
 use super::state::SectionCompose;
+use crate::chat::{InjectedNote, LLMMessage};
 use crate::publication::NAddr;
 use crate::search::{SearchQuery, SearchResult};
 use crate::user_data::UserData;
@@ -907,6 +908,37 @@ pub enum AsyncRequest {
         /// The publication address to broadcast
         addr: NAddr,
     },
+    /// Publish a block-based publication (mixed editable/imported/forked blocks)
+    PublishBlockPublication {
+        title: String,
+        tags: Vec<Vec<String>>,
+        blocks: Vec<PublishBlock>,
+    },
+    /// Send messages to an LLM provider for chat completion
+    LLMChat {
+        messages: Vec<LLMMessage>,
+        context: Vec<InjectedNote>,
+    },
+}
+
+/// A serializable block for publishing
+#[derive(Debug, Clone)]
+pub struct PublishBlock {
+    pub kind: PublishBlockKind,
+    pub title: String,
+    pub tags: Vec<Vec<String>>,
+}
+
+/// The kind of a publish block
+#[derive(Debug, Clone)]
+pub enum PublishBlockKind {
+    Editable { content: String },
+    Imported { source_addr: NAddr },
+    Forked {
+        original_addr: NAddr,
+        content: String,
+        original_author: String,
+    },
 }
 
 impl AsyncRequest {
@@ -944,6 +976,10 @@ impl AsyncRequest {
             AsyncRequest::BroadcastSelected { addr } => {
                 format!("Broadcasting {}...", addr.d_tag)
             }
+            AsyncRequest::PublishBlockPublication { title, .. } => {
+                format!("Publishing block publication: {}...", title)
+            }
+            AsyncRequest::LLMChat { .. } => "Sending to LLM...".to_string(),
         }
     }
 
@@ -964,7 +1000,9 @@ impl AsyncRequest {
             | AsyncRequest::LoadDrafts
             | AsyncRequest::LoadUserData { .. }
             | AsyncRequest::BroadcastToRelays { .. }
-            | AsyncRequest::BroadcastSelected { .. } => None,
+            | AsyncRequest::BroadcastSelected { .. }
+            | AsyncRequest::PublishBlockPublication { .. }
+            | AsyncRequest::LLMChat { .. } => None,
         }
     }
 }
@@ -1050,6 +1088,11 @@ pub enum AsyncResult {
         total_relays: usize,
         /// Summary message
         message: String,
+    },
+    /// LLM chat completion response
+    LLMResponse {
+        content: String,
+        done: bool,
     },
     /// Operation failed
     Error {

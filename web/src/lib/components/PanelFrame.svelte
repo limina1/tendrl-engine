@@ -15,15 +15,17 @@
 </script>
 
 {#if collapsed}
-	<div class="panel-bar">
-		<button class="toggle" onclick={ontoggle} title="Expand {title}">›</button>
+	<!-- svelte-ignore a11y_click_events_have_key_events -->
+	<div class="panel-bar" onclick={ontoggle} role="button" tabindex="0" title="Expand {title}">
+		<span class="toggle">›</span>
 		<span class="label">{title}</span>
 	</div>
 {:else}
 	<div class="panel">
-		<div class="panel-head">
+		<!-- svelte-ignore a11y_click_events_have_key_events -->
+		<div class="panel-head" onclick={ontoggle} role="button" tabindex="0" title="Collapse {title}">
 			<span class="name">{title}</span>
-			<button class="toggle" onclick={ontoggle} title="Collapse {title}">‹</button>
+			<span class="toggle">‹</span>
 		</div>
 		<div class="panel-body">
 			{@render children()}
@@ -41,6 +43,11 @@
 		background: var(--bg-surface);
 		width: 32px;
 		min-width: 32px;
+		cursor: pointer;
+	}
+
+	.panel-bar:hover {
+		background: var(--border);
 	}
 
 	.label {
@@ -87,6 +94,11 @@
 		border-bottom: 1px solid var(--border);
 		background: var(--bg-surface);
 		min-height: 28px;
+		cursor: pointer;
+	}
+
+	.panel-head:hover {
+		background: var(--border);
 	}
 
 	.name {

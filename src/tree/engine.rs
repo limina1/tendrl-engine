@@ -585,6 +585,11 @@ impl TreeEngine {
                 CommandResult::StateChanged
             }
 
+            AsyncResult::LLMResponse { .. } => {
+                // LLM response received — UI layer handles updating ChatState
+                CommandResult::StateChanged
+            }
+
             AsyncResult::Error { request, error } => {
                 // Try to mark the relevant node as errored
                 if let Some(node_id) = request.target_node() {

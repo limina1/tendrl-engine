@@ -13,6 +13,8 @@
 		ondelete,
 		ondeletepermanent,
 		ontogglereadonly,
+		onlocksource,
+		oncrosspanelcopy,
 		onsenditemtocompose
 	}: {
 		entries: ContextItem[];
@@ -25,6 +27,8 @@
 		ondelete: (items: ContextItem[]) => void;
 		ondeletepermanent: (items: ContextItem[]) => void;
 		ontogglereadonly: (id: string) => void;
+		onlocksource: (id: string) => void;
+		oncrosspanelcopy: (id: string, fromPanel: string) => void;
 		onsenditemtocompose: (id: string) => void;
 	} = $props();
 
@@ -127,7 +131,8 @@
 
 	<div class="context-list">
 		{#each entries as entry (entry.id)}
-			<div class="context-card" class:modified={entry.modified}>
+			{@const contextModified = entry.context_content !== entry.original_content}
+			<div class="context-card" class:modified={contextModified}>
 				<div class="card-header">
 					<label class="check">
 						<input
@@ -139,22 +144,22 @@
 					<input
 						class="card-title"
 						value={entry.title}
-						oninput={(e) => onupdate(entry.id, e.currentTarget.value, entry.content)}
+						oninput={(e) => onupdate(entry.id, e.currentTarget.value, entry.context_content)}
 						placeholder="Title"
 						disabled={disabled || entry.readonly}
 					/>
-					<ItemBadge item={entry} {syncMode} panel="context" {ontogglereadonly} />
+					<ItemBadge item={entry} {syncMode} panel="context" {ontogglereadonly} {onlocksource} {oncrosspanelcopy} />
 					<button class="icon-btn-sm" onclick={() => onsenditemtocompose(entry.id)} disabled={disabled} title="Send to compose">□</button>
 					<button class="remove-btn" onclick={() => onremove(entry.id)} {disabled}>×</button>
 				</div>
 				<textarea
-					value={entry.content}
+					value={entry.context_content}
 					oninput={(e) => onupdate(entry.id, entry.title, e.currentTarget.value)}
 					placeholder="Content..."
 					rows="3"
 					disabled={disabled || entry.readonly}
 				></textarea>
-				{#if entry.modified}
+				{#if contextModified}
 					<div class="modified-banner">
 						<span>Modified</span>
 						<button class="reset-btn" onclick={() => onreset(entry.id)} {disabled}>Reset</button>

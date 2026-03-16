@@ -35,11 +35,21 @@
 	let systemExpanded = $state(false);
 	let contextExpanded = $state(false);
 	let originalEditBuffer = $state('');
+	let chatHiddenFragmentIds: Set<number> = $state(new Set());
 
 	// === Unified item pool ===
 	let items: ContextItem[] = $state([]);
 	const contextEntries = $derived(items.filter((i) => i.in_context));
 	const composeSections = $derived(items.filter((i) => i.in_compose));
+
+	// Map fragment_id → compose item for chat-origin items
+	const chatFragmentItems = $derived(
+		new Map(
+			items
+				.filter((i) => i.origin === 'chat' && i.source_fragment_id != null)
+				.map((i) => [i.source_fragment_id!, i])
+		)
+	);
 
 	// Compose publication-level metadata (separate from items)
 	let composeTitle = $state('');
@@ -74,9 +84,9 @@
 	let buttonLabels: ButtonLabels = $state('icon');
 
 	// Panel collapse
-	let chatCollapsed = $state(false);
+	let chatCollapsed = $state(true);
 	let docCollapsed = $state(false);
-	let searchCollapsed = $state(false);
+	let searchCollapsed = $state(true);
 
 	const gridTemplate = $derived(
 		[
@@ -97,12 +107,13 @@
 	// --- Helpers ---
 
 	function makeItem(
-		fields: Omit<ContextItem, 'id' | 'modified' | 'in_context' | 'in_compose' | 'readonly'>,
+		fields: Omit<ContextItem, 'id' | 'modified' | 'in_context' | 'in_compose' | 'readonly' | 'context_content'>,
 		target: { context?: boolean; compose?: boolean }
 	): ContextItem {
 		return {
 			...fields,
 			id: crypto.randomUUID(),
+			context_content: fields.content,
 			modified: false,
 			readonly: false,
 			in_context: target.context ?? false,
@@ -139,7 +150,7 @@
 
 	// Dedup by source_event_id or source_addr — flip flags if exists, else create
 	function addToPool(
-		fields: Omit<ContextItem, 'id' | 'modified' | 'in_context' | 'in_compose' | 'readonly'>,
+		fields: Omit<ContextItem, 'id' | 'modified' | 'in_context' | 'in_compose' | 'readonly' | 'context_content'>,
 		target: { context?: boolean; compose?: boolean }
 	) {
 		const existing = items.find((e) => {
@@ -160,7 +171,10 @@
 					? {
 							...e,
 							in_context: e.in_context || (target.context ?? false),
-							in_compose: e.in_compose || (target.compose ?? false)
+							in_compose: e.in_compose || (target.compose ?? false),
+							// Snapshot content on first bridge to other panel
+							...(target.context && !e.in_context ? { context_content: e.content } : {}),
+							...(target.compose && !e.in_compose ? { content: e.context_content } : {})
 						}
 					: e
 			);
@@ -175,7 +189,7 @@
 		const ctx = items.filter((e) => e.in_context);
 		try {
 			chat = await api.replaceContext(
-				ctx.map((e) => ({ title: e.title, content: e.content }))
+				ctx.map((e) => ({ title: e.title, content: e.context_content }))
 			);
 		} catch {
 			// silent
@@ -241,18 +255,16 @@
 
 	// --- Item handlers (shared, used by both context and compose) ---
 
-	function handleUpdateItem(id: string, title: string, content: string) {
+	function handleUpdateContextItem(id: string, title: string, contextContent: string) {
 		items = items.map((e) =>
-			e.id === id
-				? { ...e, title, content, modified: content !== e.original_content }
-				: e
+			e.id === id ? { ...e, title, context_content: contextContent } : e
 		);
 		syncContext();
 	}
 
-	function handleResetItem(id: string) {
+	function handleResetContextItem(id: string) {
 		items = items.map((e) =>
-			e.id === id ? { ...e, content: e.original_content, modified: false } : e
+			e.id === id ? { ...e, context_content: e.original_content } : e
 		);
 		syncContext();
 	}
@@ -287,52 +299,58 @@
 		syncContext();
 	}
 
-	// Context □ → compose (move in explicit, share in reactive)
+	// Context □ → compose (copy context_content into compose content)
 	function handleContextToCompose(checkedItems: ContextItem[]) {
 		const ids = new Set(checkedItems.map((i) => i.id));
 		items = items.map((e) =>
 			ids.has(e.id)
-				? syncMode === 'reactive'
-					? { ...e, in_compose: true, in_context: true }
-					: { ...e, in_compose: true, in_context: false }
+				? { ...e, in_compose: true, in_context: true, content: e.context_content, modified: e.context_content !== e.original_content }
 				: e
 		);
 		syncContext();
 		if (docMode !== 'compose') docMode = 'compose';
 	}
 
-	// Compose ◂ → context (move in explicit, share in reactive)
+	// Compose ◂ → context (copy compose content into context_content)
+	// For chat-origin items, hide the source fragment
 	function handleComposeToChat(checkedItems: ContextItem[]) {
 		const ids = new Set(checkedItems.map((i) => i.id));
+		// Hide chat fragments for items moving to context
+		const nextHidden = new Set(chatHiddenFragmentIds);
+		for (const item of checkedItems) {
+			if (item.origin === 'chat' && item.source_fragment_id != null) {
+				nextHidden.add(item.source_fragment_id);
+			}
+		}
+		chatHiddenFragmentIds = nextHidden;
 		items = items.map((e) =>
 			ids.has(e.id)
-				? syncMode === 'reactive'
-					? { ...e, in_context: true, in_compose: true }
-					: { ...e, in_context: true, in_compose: false }
+				? { ...e, in_context: true, in_compose: true, context_content: e.content }
 				: e
 		);
 		syncContext();
 	}
 
-	// Per-item: send single item to chat/context
+	// Per-item: send single item to context (snapshot compose content)
+	// For chat-origin items, hide the source fragment
 	function handleSendItemToChat(id: string) {
+		const item = items.find((e) => e.id === id);
+		if (item?.origin === 'chat' && item.source_fragment_id != null) {
+			chatHiddenFragmentIds = new Set([...chatHiddenFragmentIds, item.source_fragment_id]);
+		}
 		items = items.map((e) =>
 			e.id === id
-				? syncMode === 'reactive'
-					? { ...e, in_context: true, in_compose: true }
-					: { ...e, in_context: true, in_compose: false }
+				? { ...e, in_context: true, in_compose: true, context_content: e.content }
 				: e
 		);
 		syncContext();
 	}
 
-	// Per-item: send single item to compose
+	// Per-item: send single item to compose (snapshot context content)
 	function handleSendItemToCompose(id: string) {
 		items = items.map((e) =>
 			e.id === id
-				? syncMode === 'reactive'
-					? { ...e, in_context: true, in_compose: true }
-					: { ...e, in_context: false, in_compose: true }
+				? { ...e, in_context: true, in_compose: true, content: e.context_content, modified: e.context_content !== e.original_content }
 				: e
 		);
 		syncContext();
@@ -340,18 +358,51 @@
 	}
 
 	// Toggle readonly on any item
+	// Cross-panel lock toggle (context/compose badge)
 	function handleToggleReadonly(id: string) {
 		items = items.map((e) =>
 			e.id === id ? { ...e, readonly: !e.readonly } : e
 		);
 	}
 
-	// Chat fragments □ → add as new items with in_compose
-	// (ChatPanel hides the fragments from view internally)
+	// Origin lock: toggle readonly + reset to original source content when locking
+	function handleLockToSource(id: string) {
+		items = items.map((e) => {
+			if (e.id !== id) return e;
+			const locking = !e.readonly;
+			if (locking) {
+				return {
+					...e,
+					readonly: true,
+					content: e.original_content,
+					context_content: e.original_content,
+					modified: false
+				};
+			}
+			return { ...e, readonly: false };
+		});
+		syncContext();
+	}
+
+	// Cross-panel copy: overwrite other panel's content from this panel
+	function handleCrossPanelCopy(id: string, fromPanel: string) {
+		items = items.map((e) => {
+			if (e.id !== id) return e;
+			if (fromPanel === 'compose') {
+				return { ...e, context_content: e.content, readonly: false };
+			} else if (fromPanel === 'context') {
+				return { ...e, content: e.context_content, modified: e.context_content !== e.original_content, readonly: false };
+			}
+			return e;
+		});
+		syncContext();
+	}
+
+	// Chat fragments □ → add as new items with in_compose (fragments stay visible)
 	function handleChatFragmentsToCompose(fragments: Fragment[]) {
 		const newItems = fragments.map((f) =>
 			makeItem(
-				{ title: `[${f.role}]`, content: f.content, tags: [], original_content: f.content, origin: 'chat' },
+				{ title: `[${f.role}]`, content: f.content, tags: [], original_content: f.content, origin: 'chat', source_fragment_id: f.id },
 				{ compose: true }
 			)
 		);
@@ -384,7 +435,7 @@
 				const updated = updatedById.get(item.id);
 				if (updated) {
 					updatedById.delete(item.id);
-					return { ...updated, in_context: item.in_context, in_compose: true };
+					return { ...updated, in_context: item.in_context, in_compose: true, context_content: item.context_content };
 				}
 				// Removed from compose
 				if (item.in_context) return { ...item, in_compose: false };
@@ -559,8 +610,8 @@
 				onapplyedit={handleApplyEdit}
 				oncanceledit={handleCancelEdit}
 				onsetsystem={handleSetSystem}
-				onupdatecontext={handleUpdateItem}
-				onresetcontext={handleResetItem}
+				onupdatecontext={handleUpdateContextItem}
+				onresetcontext={handleResetContextItem}
 				onremovecontext={handleRemoveFromContext}
 				onsendtocompose={handleContextToCompose}
 				onsendfragmentstocompose={handleChatFragmentsToCompose}
@@ -569,7 +620,11 @@
 				ondeletepermanentcontext={handleDeletePermanent}
 				{syncMode}
 				ontogglereadonly={handleToggleReadonly}
+				onlocksource={handleLockToSource}
+				oncrosspanelcopy={handleCrossPanelCopy}
 				onsenditemtocompose={handleSendItemToCompose}
+				{chatHiddenFragmentIds}
+				{chatFragmentItems}
 			/>
 		</PanelFrame>
 
@@ -598,6 +653,8 @@
 				{syncMode}
 				onsenditemtochat={handleSendItemToChat}
 				ontogglereadonly={handleToggleReadonly}
+				onlocksource={handleLockToSource}
+				oncrosspanelcopy={handleCrossPanelCopy}
 			/>
 		</PanelFrame>
 

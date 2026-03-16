@@ -4,11 +4,15 @@
 	let {
 		fragment,
 		checked = false,
-		ontoggle
+		ontoggle,
+		inCompose = false,
+		composeModified = false
 	}: {
 		fragment: Fragment;
 		checked?: boolean;
 		ontoggle?: (id: number) => void;
+		inCompose?: boolean;
+		composeModified?: boolean;
 	} = $props();
 
 	const isUser = $derived(fragment.role === 'user');
@@ -24,8 +28,13 @@
 			/>
 		</label>
 	{/if}
-	<div class="message" class:user={isUser} class:assistant={!isUser}>
-		<span class="role">{fragment.role}</span>
+	<div class="message" class:user={isUser} class:assistant={!isUser} class:in-compose={inCompose} class:compose-modified={composeModified}>
+		<div class="message-header">
+			<span class="role">{fragment.role}</span>
+			{#if inCompose}
+				<span class="compose-badge" class:modified={composeModified}>compose{#if composeModified} ✎{/if}</span>
+			{/if}
+		</div>
 		<pre class="content">{fragment.content}</pre>
 	</div>
 </div>
@@ -63,13 +72,41 @@
 		background: var(--assistant-bg);
 	}
 
+	.in-compose {
+		border: 1px solid var(--badge-synced);
+	}
+
+	.compose-modified {
+		border-color: var(--badge-modified);
+	}
+
+	.message-header {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		margin-bottom: 4px;
+	}
+
 	.role {
-		display: block;
 		font-size: 0.75rem;
 		color: var(--fg-muted);
-		margin-bottom: 4px;
 		text-transform: uppercase;
 		letter-spacing: 0.05em;
+	}
+
+	.compose-badge {
+		font-size: 0.6rem;
+		padding: 0 5px;
+		border-radius: 4px;
+		font-weight: 600;
+		line-height: 1.6;
+		background: color-mix(in srgb, var(--badge-synced) 20%, transparent);
+		color: var(--badge-synced);
+	}
+
+	.compose-badge.modified {
+		background: color-mix(in srgb, var(--badge-modified) 20%, transparent);
+		color: var(--badge-modified);
 	}
 
 	.content {

@@ -30,7 +30,11 @@
 		ondeletecontext,
 		ondeletepermanentcontext,
 		ontogglereadonly,
-		onsenditemtocompose
+		onlocksource,
+		oncrosspanelcopy,
+		onsenditemtocompose,
+		chatHiddenFragmentIds,
+		chatFragmentItems
 	}: {
 		chat: ChatResponse | null;
 		loading?: boolean;
@@ -55,14 +59,18 @@
 		ondeletecontext: (items: ContextItem[]) => void;
 		ondeletepermanentcontext: (items: ContextItem[]) => void;
 		ontogglereadonly: (id: string) => void;
+		onlocksource: (id: string) => void;
+		oncrosspanelcopy: (id: string, fromPanel: string) => void;
 		onsenditemtocompose: (id: string) => void;
+		chatHiddenFragmentIds: Set<number>;
+		chatFragmentItems: Map<number, ContextItem>;
 	} = $props();
 
 	let checkedFragmentIds: Set<number> = $state(new Set());
-	let hiddenFragmentIds: Set<number> = $state(new Set());
+	let localHiddenIds: Set<number> = $state(new Set());
 
 	const visibleFragments = $derived(
-		chat?.fragments.filter((f) => !hiddenFragmentIds.has(f.id)) ?? []
+		chat?.fragments.filter((f) => !localHiddenIds.has(f.id) && !chatHiddenFragmentIds.has(f.id)) ?? []
 	);
 
 	function toggleFragmentCheck(id: number) {
@@ -88,10 +96,7 @@
 		const checked = visibleFragments.filter((f) => checkedFragmentIds.has(f.id));
 		if (checked.length === 0) return;
 		onsendfragmentstocompose(checked);
-		// Hide moved fragments
-		const next = new Set(hiddenFragmentIds);
-		for (const f of checked) next.add(f.id);
-		hiddenFragmentIds = next;
+		// Fragments stay visible — they'll show compose status via chatFragmentItems
 		checkedFragmentIds = new Set();
 	}
 
@@ -103,9 +108,9 @@
 	}
 
 	function deleteFragments() {
-		const next = new Set(hiddenFragmentIds);
+		const next = new Set(localHiddenIds);
 		for (const id of checkedFragmentIds) next.add(id);
-		hiddenFragmentIds = next;
+		localHiddenIds = next;
 		checkedFragmentIds = new Set();
 	}
 
@@ -152,6 +157,8 @@
 			ondelete={ondeletecontext}
 			ondeletepermanent={ondeletepermanentcontext}
 			{ontogglereadonly}
+			{onlocksource}
+			{oncrosspanelcopy}
 			{onsenditemtocompose}
 			disabled={loading}
 		/>
@@ -169,6 +176,7 @@
 				fragments={visibleFragments}
 				checkedIds={checkedFragmentIds}
 				ontogglecheck={toggleFragmentCheck}
+				{chatFragmentItems}
 			/>
 		{/if}
 	{:else}

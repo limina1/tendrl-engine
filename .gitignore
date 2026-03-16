@@ -20,6 +20,11 @@ ndb/
 /notedeck/
 /notedeck-compose/
 
+# Web UI
+web/node_modules/
+web/build/
+web/.svelte-kit/
+
 # Environment
 .env
 .env.local

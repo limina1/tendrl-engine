@@ -1,6 +1,7 @@
 <script lang="ts">
 	import type { ComposeState, ContextItem, TagEntry, SyncMode } from '$lib/types';
 	import ComposeSection from './ComposeSection.svelte';
+	import ItemBadge from './ItemBadge.svelte';
 	import TagEditor from './TagEditor.svelte';
 
 	type ComposeMode = 'full' | 'plain' | 'preview';
@@ -15,7 +16,9 @@
 		ondelete,
 		ondeletepermanent,
 		onsenditemtochat,
-		ontogglereadonly
+		ontogglereadonly,
+		onlocksource,
+		oncrosspanelcopy
 	}: {
 		compose: ComposeState;
 		syncMode: SyncMode;
@@ -27,11 +30,14 @@
 		ondeletepermanent: (items: ContextItem[]) => void;
 		onsenditemtochat: (id: string) => void;
 		ontogglereadonly: (id: string) => void;
+		onlocksource: (id: string) => void;
+		oncrosspanelcopy: (id: string, fromPanel: string) => void;
 	} = $props();
 
 	let checkedIds: Set<string> = $state(new Set());
 	let mode: ComposeMode = $state('full');
 	let delimiter = $state('');
+	let prevDelimiter = $state('');
 	let trashPending: ContextItem[] = $state([]);
 	let trashTimer: ReturnType<typeof setTimeout> | null = $state(null);
 	let trashCountdown = $state(0);
@@ -47,6 +53,29 @@
 		const d = effectiveDelim();
 		return [`${d} `, `${d}${d} `];
 	}
+
+	function headCharsFor(d: string): [string, string] {
+		return [`${d} `, `${d}${d} `];
+	}
+
+	// Reactively swap delimiters in plain text
+	$effect(() => {
+		const cur = effectiveDelim();
+		if (mode === 'plain' && prevDelimiter && cur !== prevDelimiter) {
+			// Replace old delimiter headings with new ones in the live text
+			const [oldH1, oldH2] = headCharsFor(prevDelimiter);
+			const [newH1, newH2] = headCharsFor(cur);
+			plainText = plainText
+				.split('\n')
+				.map((line) => {
+					if (line.startsWith(oldH2)) return newH2 + line.slice(oldH2.length);
+					if (line.startsWith(oldH1)) return newH1 + line.slice(oldH1.length);
+					return line;
+				})
+				.join('\n');
+		}
+		prevDelimiter = cur;
+	});
 
 	function serializeTagBlock(tags: TagEntry[]): string {
 		if (tags.length === 0) return '';
@@ -88,10 +117,181 @@
 		return out;
 	}
 
+	// Serialize entire document into one text blob
+	function serializeAll(): string {
+		const [h1, h2] = headChars();
+		let out = `${h1}${compose.title}\n`;
+		out += serializeTagBlock(compose.tags);
+		for (const s of compose.sections) {
+			out += `\n${h2}${s.title}\n`;
+			out += serializeTagBlock(s.tags);
+			out += `\n${s.content}\n`;
+		}
+		return out;
+	}
+
+	interface ParsedSection {
+		title: string;
+		tags: TagEntry[];
+		content: string;
+	}
+
+	// Parse full text blob back into title/tags + sections
+	function parseAll(text: string): { title: string; tags: TagEntry[]; sections: ParsedSection[] } {
+		const [h1, h2] = headChars();
+		const lines = text.split('\n');
+		let docTitle = '';
+		const docTags: TagEntry[] = [];
+		const sections: ParsedSection[] = [];
+		let current: { title: string; tags: TagEntry[]; contentLines: string[]; inTags: boolean } | null = null;
+		let inDocHeader = true;
+		let docInTags = true;
+
+		for (const line of lines) {
+			if (inDocHeader && !docTitle && line.startsWith(h1) && !line.startsWith(h2)) {
+				docTitle = line.slice(h1.length).trim();
+				continue;
+			}
+			if (line.startsWith(h2)) {
+				// Finish previous section
+				if (current) {
+					sections.push({
+						title: current.title,
+						tags: current.tags,
+						content: current.contentLines.join('\n').trim()
+					});
+				}
+				inDocHeader = false;
+				current = { title: line.slice(h2.length).trim(), tags: [], contentLines: [], inTags: true };
+				continue;
+			}
+			if (inDocHeader) {
+				if (docInTags) {
+					const parsed = parseTagLine(line);
+					if (parsed) {
+						docTags.push(...parsed);
+						continue;
+					}
+					docInTags = false;
+				}
+				// Skip blank lines in header before first section
+				if (line.trim() === '') continue;
+				// Non-heading content before any section — start an untitled section
+				inDocHeader = false;
+				current = { title: '', tags: [], contentLines: [line], inTags: false };
+			} else if (current) {
+				if (current.inTags) {
+					const parsed = parseTagLine(line);
+					if (parsed) {
+						current.tags.push(...parsed);
+					} else {
+						current.inTags = false;
+						current.contentLines.push(line);
+					}
+				} else {
+					current.contentLines.push(line);
+				}
+			}
+		}
+		// Finish last section
+		if (current) {
+			sections.push({
+				title: current.title,
+				tags: current.tags,
+				content: current.contentLines.join('\n').trim()
+			});
+		}
+		return { title: docTitle, tags: docTags, sections };
+	}
+
+	// Reconcile parsed sections with existing compose sections
+	function handlePlainFullEdit(text: string) {
+		const parsed = parseAll(text);
+		const oldSections = compose.sections;
+
+		// Match parsed sections to existing by position, create new for extras
+		const newSections: ContextItem[] = parsed.sections.map((p, i) => {
+			const existing = i < oldSections.length ? oldSections[i] : null;
+			if (existing) {
+				return {
+					...existing,
+					title: p.title,
+					content: p.content,
+					tags: p.tags,
+					modified: p.content !== existing.original_content
+				};
+			}
+			return {
+				id: crypto.randomUUID(),
+				title: p.title,
+				content: p.content,
+				context_content: p.content,
+				tags: p.tags,
+				original_content: '',
+				modified: true,
+				in_context: false,
+				in_compose: true,
+				origin: 'compose' as const,
+				readonly: false
+			};
+		});
+
+		onupdate({ title: parsed.title, tags: parsed.tags, sections: newSections });
+	}
+
+	// Detected structure for plain mode sidebar
+	let plainText = $state('');
+	const detectedState = $derived.by(() => {
+		if (mode !== 'plain') return { title: '', tags: [] as TagEntry[], sections: [] as { title: string; item: ContextItem | null; index: number }[] };
+		const parsed = parseAll(plainText);
+		const oldSections = compose.sections;
+		return {
+			title: parsed.title,
+			tags: parsed.tags,
+			sections: parsed.sections.map((p, i) => {
+				const existing = i < oldSections.length ? oldSections[i] : null;
+				return { title: p.title, item: existing, index: i };
+			})
+		};
+	});
+	const detectedSections = $derived(detectedState.sections);
+
+	// Track known section IDs so we can detect external additions/removals
+	let knownSectionIds: Set<string> = $state(new Set());
+
+	function enterPlainMode() {
+		plainText = serializeAll();
+		knownSectionIds = new Set(compose.sections.map((s) => s.id));
+		prevDelimiter = effectiveDelim();
+		mode = 'plain';
+	}
+
+	// Re-serialize when sections change externally (e.g. search → compose)
+	$effect(() => {
+		if (mode !== 'plain') return;
+		const currentIds = new Set(compose.sections.map((s) => s.id));
+		const changed =
+			currentIds.size !== knownSectionIds.size ||
+			[...currentIds].some((id) => !knownSectionIds.has(id)) ||
+			[...knownSectionIds].some((id) => !currentIds.has(id));
+		if (changed) {
+			plainText = serializeAll();
+			knownSectionIds = currentIds;
+		}
+	});
+
 	// --- Mode switching ---
 
 	function setMode(m: ComposeMode) {
-		mode = m;
+		if (m === 'plain') {
+			enterPlainMode();
+		} else {
+			if (mode === 'plain') {
+				// Commit plain text edits before leaving
+				handlePlainFullEdit(plainText);
+			}
+			mode = m;
+		}
 	}
 
 	// --- Trash state ---
@@ -168,37 +368,62 @@
 		checkedIds = next;
 	}
 
-	function handlePlainSectionEdit(id: string, text: string) {
-		const [, h2] = headChars();
-		const lines = text.split('\n');
-		let title = '';
-		const tags: TagEntry[] = [];
-		const contentLines: string[] = [];
-		let inTags = true;
+	function handlePlainInput(e: Event) {
+		plainText = (e.target as HTMLTextAreaElement).value;
+	}
 
-		for (const line of lines) {
-			if (!title && line.startsWith(h2)) {
-				title = line.slice(h2.length).trim();
-			} else if (inTags) {
-				const parsed = parseTagLine(line);
-				if (parsed) {
-					tags.push(...parsed);
-				} else {
-					inTags = false;
-					contentLines.push(line);
-				}
-			} else {
-				contentLines.push(line);
+	function handlePlainBlur() {
+		handlePlainFullEdit(plainText);
+	}
+
+	// Highlight backdrop: render same text with section headers styled
+	let plainTextarea: HTMLTextAreaElement | undefined = $state();
+	let backdropEl: HTMLPreElement | undefined = $state();
+
+	function syncScroll() {
+		if (backdropEl && plainTextarea) {
+			backdropEl.scrollTop = plainTextarea.scrollTop;
+			backdropEl.scrollLeft = plainTextarea.scrollLeft;
+		}
+	}
+
+	// Build highlighted HTML from plain text
+	const highlightedHtml = $derived.by(() => {
+		const [h1, h2] = headChars();
+		const lines = plainText.split('\n');
+		// Figure out which lines belong to which section index (for checked highlighting)
+		let sectionIdx = -1;
+		const checkedSectionIndices = new Set<number>();
+		const oldSections = compose.sections;
+		for (let i = 0; i < detectedSections.length; i++) {
+			const det = detectedSections[i];
+			if (det.item && checkedIds.has(det.item.id)) {
+				checkedSectionIndices.add(i);
 			}
 		}
 
-		const content = contentLines.join('\n').trim();
-		const sections = compose.sections.map((s) =>
-			s.id === id
-				? { ...s, title: title || s.title, content, tags, modified: content !== s.original_content }
-				: s
-		);
-		onupdate({ ...compose, sections });
+		const htmlLines: string[] = [];
+		let currentSectionIdx = -1;
+		for (const line of lines) {
+			const escaped = escapeHtml(line);
+			if (line.startsWith(h2)) {
+				currentSectionIdx++;
+				const isChecked = checkedSectionIndices.has(currentSectionIdx);
+				htmlLines.push(`<span class="hl-heading${isChecked ? ' hl-checked' : ''}">${escaped}</span>`);
+			} else if (currentSectionIdx === -1 && line.startsWith(h1) && !line.startsWith(h2)) {
+				htmlLines.push(`<span class="hl-title">${escaped}</span>`);
+			} else if (line.match(/^:[^:]+:\s/)) {
+				htmlLines.push(`<span class="hl-tag">${escaped}</span>`);
+			} else {
+				const isChecked = checkedSectionIndices.has(currentSectionIdx);
+				htmlLines.push(isChecked ? `<span class="hl-checked">${escaped}</span>` : escaped);
+			}
+		}
+		return htmlLines.join('\n') + '\n';
+	});
+
+	function escapeHtml(s: string): string {
+		return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 	}
 
 	function updateTitle(e: Event) {
@@ -237,6 +462,7 @@
 			id: crypto.randomUUID(),
 			title: '',
 			content: '',
+			context_content: '',
 			tags: [],
 			original_content: '',
 			modified: false,
@@ -267,15 +493,17 @@
 		</div>
 	</div>
 
-	<div class="compose-header">
-		<input
-			class="compose-title"
-			value={compose.title}
-			oninput={updateTitle}
-			placeholder="Publication title"
-		/>
-		<TagEditor tags={compose.tags} onupdate={updateTags} />
-	</div>
+	{#if mode !== 'plain'}
+		<div class="compose-header">
+			<input
+				class="compose-title"
+				value={compose.title}
+				oninput={updateTitle}
+				placeholder="Publication title"
+			/>
+			<TagEditor tags={compose.tags} onupdate={updateTags} />
+		</div>
+	{/if}
 
 	<div class="compose-toolbar">
 		<button class="sel-btn" onclick={toolbarSelectAll} disabled={compose.sections.length === 0} title="Select all">All</button>
@@ -309,31 +537,77 @@
 						onremove={removeSection}
 						onsendtochat={onsenditemtochat}
 						{ontogglereadonly}
+						{onlocksource}
+						{oncrosspanelcopy}
 					/>
 				{/each}
 			</div>
+		{:else if mode === 'plain'}
+			<div class="plain-layout">
+				<div class="plain-editor-wrap">
+					<pre class="plain-backdrop" bind:this={backdropEl}>{@html highlightedHtml}</pre>
+					<textarea
+						class="plain-editor"
+						spellcheck="false"
+						bind:this={plainTextarea}
+						value={plainText}
+						oninput={handlePlainInput}
+						onblur={handlePlainBlur}
+						onscroll={syncScroll}
+					></textarea>
+				</div>
+				<div class="detected-sections">
+					<div class="detected-header">Detected</div>
+					<div class="detected-row detected-doc-title">
+						<span class="detected-label">title</span>
+						<span class="detected-title">{detectedState.title || '[No title]'}</span>
+					</div>
+					{#if detectedState.tags.length > 0}
+						<div class="detected-row">
+							<span class="detected-label">tags</span>
+							<span class="detected-title">{detectedState.tags.length}</span>
+						</div>
+					{/if}
+					{#each detectedSections as det (det.index)}
+						<div class="detected-row">
+							{#if det.item}
+								<label class="check">
+									<input
+										type="checkbox"
+										checked={checkedIds.has(det.item.id)}
+										onchange={() => toggleCheck(det.item!.id)}
+									/>
+								</label>
+								<span class="detected-title">{det.title || '[Untitled]'}</span>
+								<ItemBadge item={det.item} {syncMode} panel="compose" {ontogglereadonly} {onlocksource} {oncrosspanelcopy} />
+								<button class="icon-btn-sm" onclick={() => onsenditemtochat(det.item!.id)} title="Send to chat">◂</button>
+							{:else}
+								<span class="detected-title detected-new">{det.title || '[Untitled]'}</span>
+								<span class="badge badge-new">new</span>
+							{/if}
+						</div>
+					{/each}
+					{#if detectedSections.length === 0}
+						<div class="detected-empty">Type == heading to create sections</div>
+					{/if}
+				</div>
+			</div>
 		{:else}
-			<div class="text-sections">
+			<div class="preview-sections">
 				{#each compose.sections as section (section.id)}
-					<div class="text-section" class:checked-section={checkedIds.has(section.id)}>
-						<label class="section-check">
+					<div class="preview-section-bar">
+						<label class="check">
 							<input
 								type="checkbox"
 								checked={checkedIds.has(section.id)}
 								onchange={() => toggleCheck(section.id)}
 							/>
 						</label>
-						{#if mode === 'plain'}
-							<textarea
-								class="editor-pane editor-textarea"
-								spellcheck="false"
-								value={serializeSection(section)}
-								onblur={(e) => handlePlainSectionEdit(section.id, e.currentTarget.value)}
-							></textarea>
-						{:else}
-							<pre class="editor-pane">{serializeSection(section)}</pre>
-						{/if}
+						<span class="detected-title">{section.title || '[Untitled]'}</span>
+						<ItemBadge item={section} {syncMode} panel="compose" {ontogglereadonly} {onlocksource} {oncrosspanelcopy} />
+						<button class="icon-btn-sm" onclick={() => onsenditemtochat(section.id)} title="Send to chat">◂</button>
 					</div>
+					<pre class="editor-pane" class:checked-section={checkedIds.has(section.id)}>{serializeSection(section)}</pre>
 				{/each}
 			</div>
 		{/if}
@@ -456,45 +730,202 @@
 
 	.compose-content {
 		flex: 1;
-		overflow-y: auto;
+		display: flex;
+		flex-direction: column;
+		min-height: 0;
+		overflow: hidden;
 		border: 1px solid var(--border);
 		border-radius: var(--radius);
 		background: var(--bg-surface);
 	}
 
 	.compose-sections {
+		flex: 1;
+		min-height: 0;
+		overflow-y: auto;
 		display: flex;
 		flex-direction: column;
 		gap: 12px;
 		padding: 12px;
 	}
 
-	.text-sections {
+	.plain-layout {
+		display: flex;
+		flex: 1;
+		gap: 0;
+		min-height: 0;
+	}
+
+	.plain-editor-wrap {
+		flex: 1;
+		position: relative;
+		min-height: 0;
+		overflow: hidden;
+	}
+
+	.plain-backdrop {
+		position: absolute;
+		inset: 0;
+		font-family: var(--font-mono);
+		font-size: 0.85rem;
+		line-height: 1.6;
+		padding: 12px;
+		margin: 0;
+		white-space: pre-wrap;
+		word-break: break-word;
+		overflow: hidden;
+		color: transparent;
+		pointer-events: none;
+	}
+
+	.plain-editor {
+		position: relative;
+		width: 100%;
+		height: 100%;
+		font-family: var(--font-mono);
+		font-size: 0.85rem;
+		line-height: 1.6;
+		padding: 12px;
+		margin: 0;
+		border: none;
+		outline: none;
+		background: transparent;
+		color: var(--fg);
+		resize: none;
+		white-space: pre-wrap;
+		word-break: break-word;
+		overflow-y: auto;
+	}
+
+	/* Highlight styles in backdrop */
+	.plain-backdrop :global(.hl-title) {
+		background: color-mix(in srgb, var(--accent) 15%, transparent);
+		display: inline;
+		border-radius: 2px;
+	}
+
+	.plain-backdrop :global(.hl-heading) {
+		background: color-mix(in srgb, var(--badge-synced) 12%, transparent);
+		display: inline;
+		border-radius: 2px;
+		border-left: 3px solid var(--badge-synced);
+		padding-left: 4px;
+		margin-left: -4px;
+	}
+
+	.plain-backdrop :global(.hl-tag) {
+		background: color-mix(in srgb, var(--fg-muted) 8%, transparent);
+		display: inline;
+		border-radius: 2px;
+	}
+
+	.plain-backdrop :global(.hl-checked) {
+		background: color-mix(in srgb, var(--accent) 8%, transparent);
+	}
+
+	.detected-sections {
+		width: 200px;
+		flex-shrink: 0;
+		border-left: 1px solid var(--border);
+		overflow-y: auto;
+		background: var(--bg);
+	}
+
+	.detected-header {
+		font-size: 0.7rem;
+		font-weight: 600;
+		color: var(--fg-muted);
+		text-transform: uppercase;
+		letter-spacing: 0.05em;
+		padding: 8px 10px 4px;
+	}
+
+	.detected-row {
+		display: flex;
+		align-items: center;
+		gap: 4px;
+		padding: 4px 10px;
+		border-bottom: 1px solid var(--border);
+		font-size: 0.75rem;
+	}
+
+	.detected-title {
+		flex: 1;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+		font-weight: 600;
+		font-size: 0.75rem;
+	}
+
+	.detected-new {
+		color: var(--fg-muted);
+		font-style: italic;
+	}
+
+	.detected-label {
+		font-size: 0.6rem;
+		font-weight: 600;
+		color: var(--fg-muted);
+		text-transform: uppercase;
+		letter-spacing: 0.03em;
+		flex-shrink: 0;
+	}
+
+	.detected-doc-title {
+		font-weight: 700;
+	}
+
+	.detected-empty {
+		padding: 12px 10px;
+		color: var(--fg-muted);
+		font-size: 0.75rem;
+		font-style: italic;
+	}
+
+	.detected-row .check {
+		display: flex;
+		align-items: center;
+	}
+
+	.icon-btn-sm {
+		padding: 2px 6px;
+		font-size: 0.75rem;
+		min-width: 22px;
+	}
+
+	.badge-new {
+		font-size: 0.6rem;
+		padding: 0 5px;
+		border-radius: 4px;
+		font-weight: 600;
+		line-height: 1.6;
+		background: color-mix(in srgb, var(--accent) 20%, transparent);
+		color: var(--accent);
+	}
+
+	.preview-sections {
+		flex: 1;
+		min-height: 0;
+		overflow-y: auto;
 		display: flex;
 		flex-direction: column;
-		gap: 2px;
+		gap: 0;
 	}
 
-	.text-section {
+	.preview-section-bar {
 		display: flex;
-		gap: 6px;
-		padding: 4px 8px;
+		align-items: center;
+		gap: 4px;
+		padding: 4px 10px;
+		background: var(--bg);
 		border-bottom: 1px solid var(--border);
-	}
-
-	.text-section:last-child {
-		border-bottom: none;
+		font-size: 0.75rem;
+		flex-shrink: 0;
 	}
 
 	.checked-section {
 		background: color-mix(in srgb, var(--accent) 8%, transparent);
-	}
-
-	.section-check {
-		display: flex;
-		align-items: flex-start;
-		padding-top: 4px;
-		flex-shrink: 0;
 	}
 
 	.editor-pane {
@@ -510,12 +941,6 @@
 		outline: none;
 		background: transparent;
 		border: none;
-	}
-
-	.editor-textarea {
-		resize: none;
-		min-height: 80px;
-		field-sizing: content;
 	}
 
 	.compose-actions {
