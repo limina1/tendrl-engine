@@ -26,43 +26,10 @@
 	let checkedIds: Set<string> = $state(new Set());
 	let mode: ComposeMode = $state('full');
 	let delimiter = $state('');
-	let plainBuffer = $state('');
-	let prevDelim = $state('');
 	let trashPending: ContextItem[] = $state([]);
 	let trashTimer: ReturnType<typeof setTimeout> | null = $state(null);
 	let trashCountdown = $state(0);
 	let countdownInterval: ReturnType<typeof setInterval> | null = $state(null);
-
-	// --- Reactive delimiter: swap headers when delim changes ---
-
-	function replaceDelimiters(text: string, oldD: string, newD: string): string {
-		const oldC = oldD.trim() || '=';
-		const newC = newD.trim() || '=';
-		if (oldC === newC) return text;
-		const oldH2 = `${oldC}${oldC} `;
-		const newH2 = `${newC}${newC} `;
-		const oldH1 = `${oldC} `;
-		const newH1 = `${newC} `;
-		return text
-			.split('\n')
-			.map((line) => {
-				if (line.startsWith(oldH2)) return newH2 + line.slice(oldH2.length);
-				if (line.startsWith(oldH1)) return newH1 + line.slice(oldH1.length);
-				return line;
-			})
-			.join('\n');
-	}
-
-	$effect(() => {
-		const d = delimiter;
-		if (d === prevDelim) return;
-		if (mode === 'plain') {
-			plainBuffer = replaceDelimiters(plainBuffer, prevDelim, d);
-		} else if (mode === 'preview') {
-			plainBuffer = serializeState(compose);
-		}
-		prevDelim = d;
-	});
 
 	// --- Serialize / Parse ---
 
@@ -107,125 +74,27 @@
 		return [{ name, value }];
 	}
 
-	function serializeState(state: ComposeState): string {
-		const [h1, h2] = headChars();
-		let out = `${h1}${state.title}\n`;
-		out += serializeTagBlock(state.tags);
-		for (const s of state.sections) {
-			out += `\n${h2}${s.title}\n`;
-			out += serializeTagBlock(s.tags);
-			out += `\n${s.content}\n`;
-		}
+	function serializeSection(s: ContextItem): string {
+		const [, h2] = headChars();
+		let out = `${h2}${s.title}\n`;
+		out += serializeTagBlock(s.tags);
+		out += `\n${s.content}`;
 		return out;
 	}
 
-	function parsePlain(text: string): {
-		title: string;
-		pubTags: TagEntry[];
-		sections: { title: string; content: string; tags: TagEntry[] }[];
-	} {
-		const [h1, h2] = headChars();
-		const lines = text.split('\n');
-		let title = '';
-		let pubTags: TagEntry[] = [];
-		let afterTitle = false;
-		const sections: { title: string; content: string; tags: TagEntry[] }[] = [];
-		let current: { title: string; tags: TagEntry[]; lines: string[]; inTagBlock: boolean } | null =
-			null;
-
-		for (const line of lines) {
-			if (line.startsWith(h2)) {
-				if (current) {
-					sections.push({
-						title: current.title,
-						content: current.lines.join('\n').trim(),
-						tags: current.tags
-					});
-				}
-				current = { title: line.slice(h2.length).trim(), tags: [], lines: [], inTagBlock: true };
-				afterTitle = false;
-			} else if (line.startsWith(h1) && !title) {
-				title = line.slice(h1.length).trim();
-				afterTitle = true;
-			} else if (afterTitle) {
-				const parsed = parseTagLine(line);
-				if (parsed) {
-					pubTags.push(...parsed);
-				} else {
-					afterTitle = false;
-				}
-			} else if (current) {
-				if (current.inTagBlock) {
-					const parsed = parseTagLine(line);
-					if (parsed) {
-						current.tags.push(...parsed);
-						continue;
-					}
-					current.inTagBlock = false;
-				}
-				current.lines.push(line);
-			}
+	function serializeState(state: ComposeState): string {
+		const [h1] = headChars();
+		let out = `${h1}${state.title}\n`;
+		out += serializeTagBlock(state.tags);
+		for (const s of state.sections) {
+			out += `\n${serializeSection(s)}\n`;
 		}
-
-		if (current) {
-			sections.push({
-				title: current.title,
-				content: current.lines.join('\n').trim(),
-				tags: current.tags
-			});
-		}
-
-		return { title, pubTags, sections };
-	}
-
-	function applyPlainToState(): ComposeState {
-		const parsed = parsePlain(plainBuffer);
-		const existingByTitle = new Map<string, ContextItem>();
-		for (const s of compose.sections) {
-			existingByTitle.set(s.title, s);
-		}
-		const sections: ContextItem[] = parsed.sections.map((s) => {
-			const existing = existingByTitle.get(s.title);
-			if (existing) {
-				return {
-					...existing,
-					title: s.title,
-					content: s.content,
-					tags: s.tags,
-					modified: s.content !== existing.original_content
-				};
-			}
-			return {
-				id: crypto.randomUUID(),
-				title: s.title,
-				content: s.content,
-				tags: s.tags,
-				original_content: s.content,
-				modified: false,
-				in_context: false,
-				in_compose: true
-			};
-		});
-		const newState: ComposeState = {
-			...compose,
-			title: parsed.title || compose.title,
-			tags: parsed.pubTags.length > 0 ? parsed.pubTags : compose.tags,
-			sections
-		};
-		onupdate(newState);
-		return newState;
+		return out;
 	}
 
 	// --- Mode switching ---
 
 	function setMode(m: ComposeMode) {
-		let currentState = compose;
-		if (mode === 'plain' && m !== 'plain') {
-			currentState = applyPlainToState();
-		}
-		if (m === 'plain' || m === 'preview') {
-			plainBuffer = serializeState(currentState);
-		}
 		mode = m;
 	}
 
@@ -252,16 +121,9 @@
 		clearTrash();
 	}
 
-	// Ensure compose state is current (sync plain buffer if needed)
-	function ensureSynced(): ComposeState {
-		if (mode === 'plain') return applyPlainToState();
-		return compose;
-	}
-
-	// Toolbar actions work across all modes
+	// Toolbar actions work across all modes via compose.sections
 	function toolbarSendToChat() {
-		const state = ensureSynced();
-		const items = state.sections.filter((s) => checkedIds.has(s.id));
+		const items = compose.sections.filter((s) => checkedIds.has(s.id));
 		if (items.length > 0) {
 			onsendtochat(items);
 			checkedIds = new Set();
@@ -270,8 +132,7 @@
 	}
 
 	function toolbarPublish() {
-		const state = ensureSynced();
-		const items = state.sections.filter((s) => checkedIds.has(s.id));
+		const items = compose.sections.filter((s) => checkedIds.has(s.id));
 		if (items.length > 0) {
 			onpublish(items);
 			checkedIds = new Set();
@@ -286,8 +147,7 @@
 			clearTrash();
 			return;
 		}
-		const state = ensureSynced();
-		const items = state.sections.filter((s) => checkedIds.has(s.id));
+		const items = compose.sections.filter((s) => checkedIds.has(s.id));
 		if (items.length === 0) return;
 		ondelete(items);
 		trashPending = items;
@@ -301,17 +161,48 @@
 	}
 
 	function toolbarSelectAll() {
-		const state = ensureSynced();
-		checkedIds = new Set(state.sections.map((s) => s.id));
+		checkedIds = new Set(compose.sections.map((s) => s.id));
 	}
 
 	function toolbarInvert() {
-		const state = ensureSynced();
 		const next = new Set<string>();
-		for (const s of state.sections) {
+		for (const s of compose.sections) {
 			if (!checkedIds.has(s.id)) next.add(s.id);
 		}
 		checkedIds = next;
+	}
+
+	function handlePlainSectionEdit(id: string, text: string) {
+		const [, h2] = headChars();
+		const lines = text.split('\n');
+		let title = '';
+		const tags: TagEntry[] = [];
+		const contentLines: string[] = [];
+		let inTags = true;
+
+		for (const line of lines) {
+			if (!title && line.startsWith(h2)) {
+				title = line.slice(h2.length).trim();
+			} else if (inTags) {
+				const parsed = parseTagLine(line);
+				if (parsed) {
+					tags.push(...parsed);
+				} else {
+					inTags = false;
+					contentLines.push(line);
+				}
+			} else {
+				contentLines.push(line);
+			}
+		}
+
+		const content = contentLines.join('\n').trim();
+		const sections = compose.sections.map((s) =>
+			s.id === id
+				? { ...s, title: title || s.title, content, tags, modified: content !== s.original_content }
+				: s
+		);
+		onupdate({ ...compose, sections });
 	}
 
 	function updateTitle(e: Event) {
@@ -422,15 +313,33 @@
 					/>
 				{/each}
 			</div>
-		{:else if mode === 'plain'}
-			<pre
-				class="editor-pane"
-				contenteditable="true"
-				spellcheck="false"
-				oninput={(e) => { plainBuffer = (e.currentTarget as HTMLElement).textContent ?? ''; }}
-			>{plainBuffer}</pre>
 		{:else}
-			<pre class="editor-pane">{plainBuffer}</pre>
+			<div class="text-sections">
+				{#each compose.sections as section (section.id)}
+					<div class="text-section" class:checked-section={checkedIds.has(section.id)}>
+						<label class="section-check">
+							<input
+								type="checkbox"
+								checked={checkedIds.has(section.id)}
+								onchange={() => toggleCheck(section.id)}
+							/>
+						</label>
+						{#if mode === 'plain'}
+							<pre
+								class="editor-pane"
+								contenteditable="true"
+								spellcheck="false"
+								oninput={(e) => {
+									const text = (e.currentTarget as HTMLElement).textContent ?? '';
+									handlePlainSectionEdit(section.id, text);
+								}}
+							>{serializeSection(section)}</pre>
+						{:else}
+							<pre class="editor-pane">{serializeSection(section)}</pre>
+						{/if}
+					</div>
+				{/each}
+			</div>
 		{/if}
 	</div>
 
@@ -564,17 +473,47 @@
 		padding: 12px;
 	}
 
+	.text-sections {
+		display: flex;
+		flex-direction: column;
+		gap: 2px;
+	}
+
+	.text-section {
+		display: flex;
+		gap: 6px;
+		padding: 4px 8px;
+		border-bottom: 1px solid var(--border);
+	}
+
+	.text-section:last-child {
+		border-bottom: none;
+	}
+
+	.checked-section {
+		background: color-mix(in srgb, var(--accent) 8%, transparent);
+	}
+
+	.section-check {
+		display: flex;
+		align-items: flex-start;
+		padding-top: 4px;
+		flex-shrink: 0;
+	}
+
 	.editor-pane {
+		flex: 1;
 		font-family: var(--font-mono);
 		font-size: 0.85rem;
 		line-height: 1.6;
-		padding: 12px;
+		padding: 4px 0;
 		margin: 0;
-		min-height: 100%;
 		white-space: pre-wrap;
 		word-break: break-word;
 		color: var(--fg);
 		outline: none;
+		background: transparent;
+		border: none;
 	}
 
 	.compose-actions {
