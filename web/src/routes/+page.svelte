@@ -117,6 +117,38 @@
 		items = items.filter((e) => e.in_context || e.in_compose);
 	}
 
+	// Dedup by source_event_id or source_addr — flip flags if exists, else create
+	function addToPool(
+		fields: Omit<ContextItem, 'id' | 'modified' | 'in_context' | 'in_compose'>,
+		target: { context?: boolean; compose?: boolean }
+	) {
+		const existing = items.find((e) => {
+			if (fields.source_event_id && e.source_event_id === fields.source_event_id) return true;
+			if (
+				fields.source_addr &&
+				e.source_addr &&
+				fields.source_addr.kind === e.source_addr.kind &&
+				fields.source_addr.pubkey === e.source_addr.pubkey &&
+				fields.source_addr.d_tag === e.source_addr.d_tag
+			)
+				return true;
+			return false;
+		});
+		if (existing) {
+			items = items.map((e) =>
+				e.id === existing.id
+					? {
+							...e,
+							in_context: e.in_context || (target.context ?? false),
+							in_compose: e.in_compose || (target.compose ?? false)
+						}
+					: e
+			);
+		} else {
+			items = [...items, makeItem(fields, target)];
+		}
+	}
+
 	// --- Sync context to backend ---
 
 	async function syncContext() {
@@ -320,41 +352,35 @@
 		}
 	}
 
-	// Search ◂ → add to pool with in_context
+	// Search ◂ → add or flag in_context
 	async function handleAddToContext(result: SearchResult) {
 		const content = await fetchEventContent(result);
-		items = [...items, makeItem(resultFields(result, content), { context: true })];
+		addToPool(resultFields(result, content), { context: true });
 		syncContext();
 	}
 
-	// Search □ → add to pool with in_compose
+	// Search □ → add or flag in_compose
 	async function handleAddToCompose(result: SearchResult) {
 		const content = await fetchEventContent(result);
-		items = [...items, makeItem(resultFields(result, content), { compose: true })];
+		addToPool(resultFields(result, content), { compose: true });
 		if (docMode !== 'compose') docMode = 'compose';
 	}
 
 	// Search bulk ◂
 	async function handleAddManyToContext(results: SearchResult[]) {
-		const newItems = await Promise.all(
-			results.map(async (r) => {
-				const content = await fetchEventContent(r);
-				return makeItem(resultFields(r, content), { context: true });
-			})
-		);
-		items = [...items, ...newItems];
+		for (const r of results) {
+			const content = await fetchEventContent(r);
+			addToPool(resultFields(r, content), { context: true });
+		}
 		syncContext();
 	}
 
 	// Search bulk □
 	async function handleAddManyToCompose(results: SearchResult[]) {
-		const newItems = await Promise.all(
-			results.map(async (r) => {
-				const content = await fetchEventContent(r);
-				return makeItem(resultFields(r, content), { compose: true });
-			})
-		);
-		items = [...items, ...newItems];
+		for (const r of results) {
+			const content = await fetchEventContent(r);
+			addToPool(resultFields(r, content), { compose: true });
+		}
 		if (docMode !== 'compose') docMode = 'compose';
 	}
 
@@ -417,24 +443,22 @@
 		docMode = publication ? 'reading' : 'empty';
 	}
 
-	// Document reading ◂ → add sections to pool with in_context
+	// Document reading ◂ → add or flag sections in_context
 	function handleDocToChat() {
 		if (!sections.length) return;
-		const newItems = sections
-			.filter((s) => s.content)
-			.map((s) =>
-				makeItem(
-					{
-						title: s.title ?? '[Section]',
-						content: s.content ?? '',
-						tags: [],
-						source_addr: s.addr,
-						original_content: s.content ?? ''
-					},
-					{ context: true }
-				)
+		for (const s of sections) {
+			if (!s.content) continue;
+			addToPool(
+				{
+					title: s.title ?? '[Section]',
+					content: s.content ?? '',
+					tags: [],
+					source_addr: s.addr,
+					original_content: s.content ?? ''
+				},
+				{ context: true }
 			);
-		items = [...items, ...newItems];
+		}
 		syncContext();
 	}
 
