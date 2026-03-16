@@ -1327,11 +1327,8 @@ base sidebar.
 - [X] Implement =SearchQuery::parse()= for tag/kind/author/text syntax
 - [X] Implement =SearchQuery::to_nip01_filters()= compilation
 - [X] Add text scanning over nostrdb events (content substring match)
-- [ ] Add =SearchState= to =TreeState=
 - [X] Add search panel commands to =TreeCommand=
 - [X] Add =AsyncRequest::SearchEvents= and result handling
-- [ ] TUI: search panel widget with query bar, results list, checkboxes
-- [ ] TUI: send-to-compose flow (imported read-only blocks)
 - [X] HTTP API: =POST /api/v1/search= endpoint
 - [X] Web: search panel with results list, tag pills, tag inspector
 - [X] Web: per-result checkboxes with select all / invert
@@ -1345,7 +1342,6 @@ Extend compose to support mixed editable/imported/forked blocks.
 - [X] Implement =ComposeBlock= enum (Editable, Imported, Forked)
 - [X] Extend publication building to handle imported =a= tags and forked events
 - [X] Fork flow: imported → forked with lineage tag
-- [ ] TUI: block-based compose widget with visual indicators
 - [X] Block reordering, insertion, removal commands
 - [X] =AsyncRequest::PublishBlockPublication= and dispatch wiring
 - [X] Web: full/plain/preview compose modes with unified toolbar
@@ -1366,7 +1362,6 @@ Add the conversation panel with basic LLM interaction.
 - [X] Implement chat edit mode: collapse fragments → buffer with =---= delimiters
 - [X] Re-parse buffer on exit: split on =---=, detect =[role]= headers
 - [X] =AsyncRequest::LLMChat= / =AsyncResult::LLMResponse= wiring
-- [ ] TUI: chat panel widget with fragment display and input bar
 - [X] Context injection flow (search → chat)
 - [X] Fragment selection and push-to-compose flow
 - [X] HTTP API: =PUT /api/v1/chat/context= (replace-all context sync)
@@ -1386,7 +1381,6 @@ The chat's powerful editing capabilities.
 - [X] Re-parse buffer on exit: split on =---=, detect =[role]= headers
 - [X] Web: fragment → compose flow (checked messages □ → compose sections)
 - [ ] Zettlize action: selected fragments or edit buffer → compose blocks
-- [ ] TUI: edit mode buffer widget (reuse editor compose patterns)
 
 ** Phase 5: Semantic Search
 
@@ -1413,6 +1407,18 @@ Let the LLM search the knowledge base autonomously during conversation.
 - [ ] Handle tool call responses: run search, inject results
 - [ ] Display tool usage in chat (collapsible "searched for..." blocks)
 - [ ] Consider additional tools: =read_event=, =list_publications=
+
+** Deferred: TUI Widgets
+
+TUI workbench panels deferred — web frontend is the primary interface for now.
+These can be revisited when the web workflow is stable.
+
+- [ ] Add =SearchState= to =TreeState= (search results, selection, query state)
+- [ ] TUI: search panel widget with query bar, results list, checkboxes
+- [ ] TUI: send-to-compose flow (imported read-only blocks)
+- [ ] TUI: block-based compose widget with visual indicators
+- [ ] TUI: chat panel widget with fragment display and input bar
+- [ ] TUI: edit mode buffer widget (reuse editor compose patterns)
 
 * Cross-Frontend Considerations
 
