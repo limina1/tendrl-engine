@@ -82,16 +82,6 @@
 		return out;
 	}
 
-	function serializeState(state: ComposeState): string {
-		const [h1] = headChars();
-		let out = `${h1}${state.title}\n`;
-		out += serializeTagBlock(state.tags);
-		for (const s of state.sections) {
-			out += `\n${serializeSection(s)}\n`;
-		}
-		return out;
-	}
-
 	// --- Mode switching ---
 
 	function setMode(m: ComposeMode) {
@@ -269,17 +259,15 @@
 		</div>
 	</div>
 
-	{#if mode === 'full'}
-		<div class="compose-header">
-			<input
-				class="compose-title"
-				value={compose.title}
-				oninput={updateTitle}
-				placeholder="Publication title"
-			/>
-			<TagEditor tags={compose.tags} onupdate={updateTags} />
-		</div>
-	{/if}
+	<div class="compose-header">
+		<input
+			class="compose-title"
+			value={compose.title}
+			oninput={updateTitle}
+			placeholder="Publication title"
+		/>
+		<TagEditor tags={compose.tags} onupdate={updateTags} />
+	</div>
 
 	<div class="compose-toolbar">
 		<button class="sel-btn" onclick={toolbarSelectAll} disabled={compose.sections.length === 0} title="Select all">All</button>
@@ -325,15 +313,12 @@
 							/>
 						</label>
 						{#if mode === 'plain'}
-							<pre
-								class="editor-pane"
-								contenteditable="true"
+							<textarea
+								class="editor-pane editor-textarea"
 								spellcheck="false"
-								oninput={(e) => {
-									const text = (e.currentTarget as HTMLElement).textContent ?? '';
-									handlePlainSectionEdit(section.id, text);
-								}}
-							>{serializeSection(section)}</pre>
+								value={serializeSection(section)}
+								onblur={(e) => handlePlainSectionEdit(section.id, e.currentTarget.value)}
+							></textarea>
 						{:else}
 							<pre class="editor-pane">{serializeSection(section)}</pre>
 						{/if}
@@ -514,6 +499,12 @@
 		outline: none;
 		background: transparent;
 		border: none;
+	}
+
+	.editor-textarea {
+		resize: none;
+		min-height: 80px;
+		field-sizing: content;
 	}
 
 	.compose-actions {
