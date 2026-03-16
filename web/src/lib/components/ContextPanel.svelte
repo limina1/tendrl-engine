@@ -143,9 +143,8 @@
 						placeholder="Title"
 						disabled={disabled || entry.readonly}
 					/>
-					<ItemBadge item={entry} {syncMode} panel="context" />
+					<ItemBadge item={entry} {syncMode} panel="context" {ontogglereadonly} />
 					<button class="icon-btn-sm" onclick={() => onsenditemtocompose(entry.id)} disabled={disabled} title="Send to compose">□</button>
-					<button class="icon-btn-sm" onclick={() => ontogglereadonly(entry.id)} disabled={disabled} title={entry.readonly ? 'Unlock' : 'Lock'}>{entry.readonly ? '🔓' : '🔒'}</button>
 					<button class="remove-btn" onclick={() => onremove(entry.id)} {disabled}>×</button>
 				</div>
 				<textarea

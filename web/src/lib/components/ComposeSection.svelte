@@ -44,9 +44,8 @@
 			placeholder="Section title"
 			disabled={section.readonly}
 		/>
-		<ItemBadge item={section} {syncMode} panel="compose" />
+		<ItemBadge item={section} {syncMode} panel="compose" {ontogglereadonly} />
 		<button class="icon-btn-sm" onclick={() => onsendtochat(section.id)} title="Send to chat">◂</button>
-		<button class="icon-btn-sm" onclick={() => ontogglereadonly(section.id)} title={section.readonly ? 'Unlock' : 'Lock'}>{section.readonly ? '🔓' : '🔒'}</button>
 		<button onclick={() => onremove(section.id)}>Remove</button>
 	</div>
 	<textarea

@@ -4,11 +4,13 @@
 	let {
 		item,
 		syncMode,
-		panel
+		panel,
+		ontogglereadonly
 	}: {
 		item: ContextItem;
 		syncMode: SyncMode;
 		panel: 'context' | 'compose' | 'search';
+		ontogglereadonly?: (id: string) => void;
 	} = $props();
 
 	const otherPanel = $derived(
@@ -17,7 +19,6 @@
 
 	const inBoth = $derived(item.in_context && item.in_compose);
 
-	// Location badge: where else does this item live?
 	const locationLabel = $derived(
 		panel === 'search'
 			? item.in_context && item.in_compose
@@ -32,21 +33,36 @@
 				: null
 	);
 
-	// Location color: green if synced, yellow if modified
 	const locationColor = $derived(
 		syncMode === 'reactive' ? 'synced' : item.modified ? 'modified' : 'synced'
 	);
+
+	// Origin badge: clickable to toggle readonly, color reflects lock state
+	const originColor = $derived(item.readonly ? 'readonly' : 'synced');
 </script>
 
 <span class="badges">
-	{#if item.readonly}
-		<span class="badge badge-readonly">readonly</span>
-	{/if}
 	{#if item.origin === 'chat'}
-		<span class="badge badge-chat">chat</span>
+		<button
+			class="badge badge-chat"
+			class:badge-readonly={item.readonly}
+			onclick={() => ontogglereadonly?.(item.id)}
+			title={item.readonly ? 'Unlock' : 'Lock'}
+		>chat{#if item.readonly} 🔒{/if}</button>
 	{/if}
 	{#if item.origin === 'search'}
-		<span class="badge badge-synced">search</span>
+		<button
+			class="badge badge-{originColor}"
+			onclick={() => ontogglereadonly?.(item.id)}
+			title={item.readonly ? 'Unlock' : 'Lock'}
+		>search{#if item.readonly} 🔒{/if}</button>
+	{/if}
+	{#if item.origin === 'compose'}
+		<button
+			class="badge badge-{originColor}"
+			onclick={() => ontogglereadonly?.(item.id)}
+			title={item.readonly ? 'Unlock' : 'Lock'}
+		>compose{#if item.readonly} 🔒{/if}</button>
 	{/if}
 	{#if locationLabel}
 		<span class="badge badge-{locationColor}">{locationLabel}</span>
@@ -67,6 +83,8 @@
 		white-space: nowrap;
 		font-weight: 600;
 		line-height: 1.6;
+		border: none;
+		cursor: pointer;
 	}
 
 	.badge-synced {
