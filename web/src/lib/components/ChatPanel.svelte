@@ -177,6 +177,7 @@
 				checkedIds={checkedFragmentIds}
 				ontogglecheck={toggleFragmentCheck}
 				{chatFragmentItems}
+				{loading}
 			/>
 		{/if}
 	{:else}

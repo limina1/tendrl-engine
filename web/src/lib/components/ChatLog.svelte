@@ -6,12 +6,14 @@
 		fragments,
 		checkedIds,
 		ontogglecheck,
-		chatFragmentItems
+		chatFragmentItems,
+		loading = false
 	}: {
 		fragments: Fragment[];
 		checkedIds: Set<number>;
 		ontogglecheck: (id: number) => void;
 		chatFragmentItems: Map<number, ContextItem>;
+		loading?: boolean;
 	} = $props();
 
 	let container: HTMLDivElement | undefined = $state();
@@ -35,7 +37,12 @@
 			composeModified={!!composeItem && composeItem.content !== composeItem.original_content}
 		/>
 	{/each}
-	{#if fragments.length === 0}
+	{#if loading}
+		<div class="loading">
+			<span class="dot"></span><span class="dot"></span><span class="dot"></span>
+		</div>
+	{/if}
+	{#if fragments.length === 0 && !loading}
 		<p class="empty">No messages yet. Start a conversation.</p>
 	{/if}
 </div>
@@ -55,5 +62,28 @@
 		text-align: center;
 		margin-top: 40px;
 		font-size: 0.9rem;
+	}
+
+	.loading {
+		display: flex;
+		gap: 4px;
+		padding: 10px 14px;
+		align-self: flex-start;
+	}
+
+	.dot {
+		width: 6px;
+		height: 6px;
+		border-radius: 50%;
+		background: var(--fg-muted);
+		animation: bounce 1.2s infinite ease-in-out;
+	}
+
+	.dot:nth-child(2) { animation-delay: 0.2s; }
+	.dot:nth-child(3) { animation-delay: 0.4s; }
+
+	@keyframes bounce {
+		0%, 60%, 100% { opacity: 0.3; transform: translateY(0); }
+		30% { opacity: 1; transform: translateY(-4px); }
 	}
 </style>

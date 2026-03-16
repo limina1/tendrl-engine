@@ -7,7 +7,7 @@ use axum::{
     Router,
 };
 use clap::Parser;
-use nostr_engine::{api, chat::ChatState, config::Config, engine::Engine};
+use nostr_engine::{api, chat::ChatState, config::Config, engine::Engine, llm};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use tower_http::cors::{Any, CorsLayer};
@@ -86,8 +86,11 @@ async fn main() -> anyhow::Result<()> {
         .allow_methods(Any)
         .allow_headers(Any);
 
-    // Chat state (single-session test harness)
-    let chat_state: api::ChatAppState = Arc::new(Mutex::new(ChatState::new()));
+    // Chat state + LLM provider
+    let chat_state = api::ChatAppState {
+        chat: Arc::new(Mutex::new(ChatState::new())),
+        provider: llm::provider_from_env(),
+    };
 
     let chat_routes = Router::new()
         .route("/api/v1/chat", get(api::chat_get).delete(api::chat_reset))

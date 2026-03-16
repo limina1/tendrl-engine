@@ -199,6 +199,15 @@
 	// --- Chat handlers ---
 
 	async function handleSend(content: string) {
+		// Optimistically show user message before waiting for LLM
+		if (chat) {
+			const nextId = Math.max(0, ...chat.fragments.map((f) => f.id)) + 1;
+			chat = {
+				...chat,
+				fragments: [...chat.fragments, { id: nextId, role: 'user', content }],
+				fragment_count: chat.fragment_count + 1
+			};
+		}
 		chatLoading = true;
 		try {
 			chat = await api.sendMessage(content);

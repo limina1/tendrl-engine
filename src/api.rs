@@ -459,11 +459,15 @@ pub async fn get_section_versions_handler(
 // ============================================================================
 
 use crate::chat::{ChatState, InjectedNote};
-use crate::llm::{LLMProvider, NoopProvider};
+use crate::llm::LLMProvider;
 use std::sync::Mutex;
 
-/// Shared chat session state (single-session test harness)
-pub type ChatAppState = Arc<Mutex<ChatState>>;
+/// Shared chat + LLM provider state
+#[derive(Clone)]
+pub struct ChatAppState {
+    pub chat: Arc<Mutex<ChatState>>,
+    pub provider: Arc<dyn LLMProvider>,
+}
 
 /// A single fragment in the API response
 #[derive(Debug, Serialize)]
@@ -544,42 +548,44 @@ pub struct InjectContextRequest {
 
 /// GET /api/v1/chat — get current conversation state
 pub async fn chat_get(State(state): State<ChatAppState>) -> Json<ChatResponse> {
-    let chat = state.lock().unwrap();
+    let chat = state.chat.lock().unwrap();
     Json(build_chat_response(&chat))
 }
 
 /// DELETE /api/v1/chat — reset conversation
 pub async fn chat_reset(State(state): State<ChatAppState>) -> Json<ChatResponse> {
-    let mut chat = state.lock().unwrap();
+    let mut chat = state.chat.lock().unwrap();
     *chat = ChatState::new();
     Json(build_chat_response(&chat))
 }
 
-/// POST /api/v1/chat/message — send message, get echo response
+/// POST /api/v1/chat/message — send message, get LLM response
 pub async fn chat_send(
     State(state): State<ChatAppState>,
     Json(req): Json<SendMessageRequest>,
 ) -> Json<ChatResponse> {
     let messages = {
-        let mut chat = state.lock().unwrap();
+        let mut chat = state.chat.lock().unwrap();
         chat.input = req.content;
+        chat.generating = true;
         chat.send_message()
     };
 
-    let provider = NoopProvider::echo();
-    let response = provider
+    let response = state
+        .provider
         .chat(messages)
         .await
         .unwrap_or_else(|e| format!("Error: {}", e));
 
-    let mut chat = state.lock().unwrap();
+    let mut chat = state.chat.lock().unwrap();
+    chat.generating = false;
     chat.receive_response(response);
     Json(build_chat_response(&chat))
 }
 
 /// POST /api/v1/chat/edit — enter edit mode
 pub async fn chat_enter_edit(State(state): State<ChatAppState>) -> Json<ChatResponse> {
-    let mut chat = state.lock().unwrap();
+    let mut chat = state.chat.lock().unwrap();
     chat.enter_edit_mode();
     Json(build_chat_response(&chat))
 }
@@ -589,7 +595,7 @@ pub async fn chat_exit_edit(
     State(state): State<ChatAppState>,
     Json(req): Json<EditBufferRequest>,
 ) -> Json<ChatResponse> {
-    let mut chat = state.lock().unwrap();
+    let mut chat = state.chat.lock().unwrap();
     chat.edit_buffer = req.buffer;
     chat.exit_edit_mode();
     Json(build_chat_response(&chat))
@@ -600,7 +606,7 @@ pub async fn chat_set_system(
     State(state): State<ChatAppState>,
     Json(req): Json<SystemPromptRequest>,
 ) -> Json<ChatResponse> {
-    let mut chat = state.lock().unwrap();
+    let mut chat = state.chat.lock().unwrap();
     chat.system_prompt = Some(req.prompt);
     Json(build_chat_response(&chat))
 }
@@ -610,7 +616,7 @@ pub async fn chat_inject_context(
     State(state): State<ChatAppState>,
     Json(req): Json<InjectContextRequest>,
 ) -> Json<ChatResponse> {
-    let mut chat = state.lock().unwrap();
+    let mut chat = state.chat.lock().unwrap();
     let notes: Vec<InjectedNote> = req
         .notes
         .into_iter()
@@ -629,7 +635,7 @@ pub async fn chat_replace_context(
     State(state): State<ChatAppState>,
     Json(req): Json<InjectContextRequest>,
 ) -> Json<ChatResponse> {
-    let mut chat = state.lock().unwrap();
+    let mut chat = state.chat.lock().unwrap();
     chat.clear_context();
     let notes: Vec<InjectedNote> = req
         .notes
@@ -649,7 +655,11 @@ mod chat_api_tests {
     use super::*;
 
     fn make_state() -> ChatAppState {
-        Arc::new(Mutex::new(ChatState::new()))
+        use crate::llm::NoopProvider;
+        ChatAppState {
+            chat: Arc::new(Mutex::new(ChatState::new())),
+            provider: Arc::new(NoopProvider::echo()),
+        }
     }
 
     #[tokio::test]
