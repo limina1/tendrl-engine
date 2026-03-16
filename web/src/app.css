@@ -14,6 +14,10 @@
 	--modified-bg: #fef3c7;
 	--modified-fg: #92400e;
 	--modified-border: #fcd34d;
+	--badge-synced: #22c55e;
+	--badge-modified: #eab308;
+	--badge-chat: #f97316;
+	--badge-readonly: #3b82f6;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -30,6 +34,10 @@
 		--modified-bg: #292524;
 		--modified-fg: #fcd34d;
 		--modified-border: #44403c;
+		--badge-synced: #4ade80;
+		--badge-modified: #facc15;
+		--badge-chat: #fb923c;
+		--badge-readonly: #60a5fa;
 	}
 }
 

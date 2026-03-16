@@ -1,7 +1,7 @@
 <script lang="ts">
 	import type { TagEntry } from '$lib/types';
 
-	let { tags, onupdate }: { tags: TagEntry[]; onupdate: (tags: TagEntry[]) => void } = $props();
+	let { tags, onupdate, disabled = false }: { tags: TagEntry[]; onupdate: (tags: TagEntry[]) => void; disabled?: boolean } = $props();
 
 	function addTag() {
 		onupdate([...tags, { name: '', value: '' }]);
@@ -24,16 +24,18 @@
 				placeholder="name"
 				value={tag.name}
 				oninput={(e) => updateTag(i, 'name', e.currentTarget.value)}
+				{disabled}
 			/>
 			<input
 				placeholder="value"
 				value={tag.value}
 				oninput={(e) => updateTag(i, 'value', e.currentTarget.value)}
+				{disabled}
 			/>
-			<button class="tag-remove" onclick={() => removeTag(i)}>x</button>
+			<button class="tag-remove" onclick={() => removeTag(i)} {disabled}>x</button>
 		</div>
 	{/each}
-	<button class="tag-add" onclick={addTag}>+ Tag</button>
+	<button class="tag-add" onclick={addTag} {disabled}>+ Tag</button>
 </div>
 
 <style>

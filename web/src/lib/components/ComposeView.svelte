@@ -1,5 +1,5 @@
 <script lang="ts">
-	import type { ComposeState, ContextItem, TagEntry } from '$lib/types';
+	import type { ComposeState, ContextItem, TagEntry, SyncMode } from '$lib/types';
 	import ComposeSection from './ComposeSection.svelte';
 	import TagEditor from './TagEditor.svelte';
 
@@ -7,20 +7,26 @@
 
 	let {
 		compose,
+		syncMode,
 		onupdate,
 		oncancel,
 		onsendtochat,
 		onpublish,
 		ondelete,
-		ondeletepermanent
+		ondeletepermanent,
+		onsenditemtochat,
+		ontogglereadonly
 	}: {
 		compose: ComposeState;
+		syncMode: SyncMode;
 		onupdate: (state: ComposeState) => void;
 		oncancel: () => void;
 		onsendtochat: (items: ContextItem[]) => void;
 		onpublish: (items: ContextItem[]) => void;
 		ondelete: (items: ContextItem[]) => void;
 		ondeletepermanent: (items: ContextItem[]) => void;
+		onsenditemtochat: (id: string) => void;
+		ontogglereadonly: (id: string) => void;
 	} = $props();
 
 	let checkedIds: Set<string> = $state(new Set());
@@ -235,7 +241,9 @@
 			original_content: '',
 			modified: false,
 			in_context: false,
-			in_compose: true
+			in_compose: true,
+			origin: 'compose' as const,
+			readonly: false
 		};
 		onupdate({ ...compose, sections: [...compose.sections, item] });
 	}
@@ -292,12 +300,15 @@
 				{#each compose.sections as section (section.id)}
 					<ComposeSection
 						{section}
+						{syncMode}
 						checked={checkedIds.has(section.id)}
 						oncheck={toggleCheck}
 						onupdate={updateSection}
 						onupdatetags={updateSectionTags}
 						onreset={resetSection}
 						onremove={removeSection}
+						onsendtochat={onsenditemtochat}
+						{ontogglereadonly}
 					/>
 				{/each}
 			</div>

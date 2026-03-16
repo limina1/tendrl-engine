@@ -1,24 +1,31 @@
 <script lang="ts">
-	import type { ContextItem } from '$lib/types';
+	import type { ContextItem, SyncMode } from '$lib/types';
+	import ItemBadge from './ItemBadge.svelte';
 
 	let {
 		entries,
 		disabled = false,
+		syncMode,
 		onupdate,
 		onreset,
 		onremove,
 		onsendtocompose,
 		ondelete,
-		ondeletepermanent
+		ondeletepermanent,
+		ontogglereadonly,
+		onsenditemtocompose
 	}: {
 		entries: ContextItem[];
 		disabled?: boolean;
+		syncMode: SyncMode;
 		onupdate: (id: string, title: string, content: string) => void;
 		onreset: (id: string) => void;
 		onremove: (id: string) => void;
 		onsendtocompose: (items: ContextItem[]) => void;
 		ondelete: (items: ContextItem[]) => void;
 		ondeletepermanent: (items: ContextItem[]) => void;
+		ontogglereadonly: (id: string) => void;
+		onsenditemtocompose: (id: string) => void;
 	} = $props();
 
 	let checkedIds: Set<string> = $state(new Set());
@@ -134,8 +141,11 @@
 						value={entry.title}
 						oninput={(e) => onupdate(entry.id, e.currentTarget.value, entry.content)}
 						placeholder="Title"
-						{disabled}
+						disabled={disabled || entry.readonly}
 					/>
+					<ItemBadge item={entry} {syncMode} panel="context" />
+					<button class="icon-btn-sm" onclick={() => onsenditemtocompose(entry.id)} disabled={disabled} title="Send to compose">□</button>
+					<button class="icon-btn-sm" onclick={() => ontogglereadonly(entry.id)} disabled={disabled} title={entry.readonly ? 'Unlock' : 'Lock'}>{entry.readonly ? '🔓' : '🔒'}</button>
 					<button class="remove-btn" onclick={() => onremove(entry.id)} {disabled}>×</button>
 				</div>
 				<textarea
@@ -143,7 +153,7 @@
 					oninput={(e) => onupdate(entry.id, entry.title, e.currentTarget.value)}
 					placeholder="Content..."
 					rows="3"
-					{disabled}
+					disabled={disabled || entry.readonly}
 				></textarea>
 				{#if entry.modified}
 					<div class="modified-banner">
@@ -280,6 +290,12 @@
 
 	.card-title:focus {
 		border-color: var(--accent);
+	}
+
+	.icon-btn-sm {
+		padding: 2px 6px;
+		font-size: 0.75rem;
+		min-width: 22px;
 	}
 
 	.remove-btn {

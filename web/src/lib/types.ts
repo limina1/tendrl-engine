@@ -115,7 +115,12 @@ export interface ContextItem {
 	modified: boolean;
 	in_context: boolean;
 	in_compose: boolean;
+	origin: 'chat' | 'search' | 'compose';
+	readonly: boolean;
 }
+
+export type SyncMode = 'reactive' | 'explicit';
+export type ButtonLabels = 'icon' | 'text';
 
 export interface ComposeState {
 	title: string;

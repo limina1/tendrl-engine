@@ -10,7 +10,9 @@
 		Fragment,
 		TagEntry,
 		ViewMode,
-		DocMode
+		DocMode,
+		SyncMode,
+		ButtonLabels
 	} from '$lib/types';
 	import * as api from '$lib/api';
 	import WorkbenchToolbar from '$lib/components/WorkbenchToolbar.svelte';
@@ -67,6 +69,10 @@
 	// JSON modal
 	let jsonModalData: unknown = $state(null);
 
+	// Settings
+	let syncMode: SyncMode = $state('explicit');
+	let buttonLabels: ButtonLabels = $state('icon');
+
 	// Panel collapse
 	let chatCollapsed = $state(false);
 	let docCollapsed = $state(false);
@@ -91,13 +97,14 @@
 	// --- Helpers ---
 
 	function makeItem(
-		fields: Omit<ContextItem, 'id' | 'modified' | 'in_context' | 'in_compose'>,
+		fields: Omit<ContextItem, 'id' | 'modified' | 'in_context' | 'in_compose' | 'readonly'>,
 		target: { context?: boolean; compose?: boolean }
 	): ContextItem {
 		return {
 			...fields,
 			id: crypto.randomUUID(),
 			modified: false,
+			readonly: false,
 			in_context: target.context ?? false,
 			in_compose: target.compose ?? false
 		};
@@ -120,7 +127,8 @@
 			tags: (result.tags ?? []).map((t) => ({ name: t[0] ?? '', value: t.slice(1).join(', ') })),
 			source_event_id: result.event_id,
 			source_addr: result.addr,
-			original_content: content
+			original_content: content,
+			origin: 'search' as const
 		};
 	}
 
@@ -131,7 +139,7 @@
 
 	// Dedup by source_event_id or source_addr — flip flags if exists, else create
 	function addToPool(
-		fields: Omit<ContextItem, 'id' | 'modified' | 'in_context' | 'in_compose'>,
+		fields: Omit<ContextItem, 'id' | 'modified' | 'in_context' | 'in_compose' | 'readonly'>,
 		target: { context?: boolean; compose?: boolean }
 	) {
 		const existing = items.find((e) => {
@@ -279,30 +287,71 @@
 		syncContext();
 	}
 
-	// Context □ → move to compose (remove from context)
+	// Context □ → compose (move in explicit, share in reactive)
 	function handleContextToCompose(checkedItems: ContextItem[]) {
 		const ids = new Set(checkedItems.map((i) => i.id));
 		items = items.map((e) =>
-			ids.has(e.id) ? { ...e, in_compose: true, in_context: false } : e
+			ids.has(e.id)
+				? syncMode === 'reactive'
+					? { ...e, in_compose: true, in_context: true }
+					: { ...e, in_compose: true, in_context: false }
+				: e
 		);
 		syncContext();
 		if (docMode !== 'compose') docMode = 'compose';
 	}
 
-	// Compose ◂ → move to context (remove from compose)
+	// Compose ◂ → context (move in explicit, share in reactive)
 	function handleComposeToChat(checkedItems: ContextItem[]) {
 		const ids = new Set(checkedItems.map((i) => i.id));
 		items = items.map((e) =>
-			ids.has(e.id) ? { ...e, in_context: true, in_compose: false } : e
+			ids.has(e.id)
+				? syncMode === 'reactive'
+					? { ...e, in_context: true, in_compose: true }
+					: { ...e, in_context: true, in_compose: false }
+				: e
 		);
 		syncContext();
 	}
 
+	// Per-item: send single item to chat/context
+	function handleSendItemToChat(id: string) {
+		items = items.map((e) =>
+			e.id === id
+				? syncMode === 'reactive'
+					? { ...e, in_context: true, in_compose: true }
+					: { ...e, in_context: true, in_compose: false }
+				: e
+		);
+		syncContext();
+	}
+
+	// Per-item: send single item to compose
+	function handleSendItemToCompose(id: string) {
+		items = items.map((e) =>
+			e.id === id
+				? syncMode === 'reactive'
+					? { ...e, in_context: true, in_compose: true }
+					: { ...e, in_context: false, in_compose: true }
+				: e
+		);
+		syncContext();
+		if (docMode !== 'compose') docMode = 'compose';
+	}
+
+	// Toggle readonly on any item
+	function handleToggleReadonly(id: string) {
+		items = items.map((e) =>
+			e.id === id ? { ...e, readonly: !e.readonly } : e
+		);
+	}
+
 	// Chat fragments □ → add as new items with in_compose
+	// (ChatPanel hides the fragments from view internally)
 	function handleChatFragmentsToCompose(fragments: Fragment[]) {
 		const newItems = fragments.map((f) =>
 			makeItem(
-				{ title: `[${f.role}]`, content: f.content, tags: [], original_content: f.content },
+				{ title: `[${f.role}]`, content: f.content, tags: [], original_content: f.content, origin: 'chat' },
 				{ compose: true }
 			)
 		);
@@ -448,7 +497,7 @@
 		// Clear compose flags, gc, start fresh
 		items = [
 			...items.map((e) => ({ ...e, in_compose: false })).filter((e) => e.in_context),
-			makeItem({ title: '', content: '', tags: [], original_content: '' }, { compose: true })
+			makeItem({ title: '', content: '', tags: [], original_content: '', origin: 'compose' }, { compose: true })
 		];
 		composeTitle = '';
 		composeTags = [];
@@ -471,7 +520,8 @@
 					content: s.content ?? '',
 					tags: [],
 					source_addr: s.addr,
-					original_content: s.content ?? ''
+					original_content: s.content ?? '',
+					origin: 'search'
 				},
 				{ context: true }
 			);
@@ -486,7 +536,12 @@
 </script>
 
 <div class="workbench">
-	<WorkbenchToolbar />
+	<WorkbenchToolbar
+		{syncMode}
+		{buttonLabels}
+		onsetsyncmode={(m: SyncMode) => (syncMode = m)}
+		onsetbuttonlabels={(m: ButtonLabels) => (buttonLabels = m)}
+	/>
 
 	<div class="workbench-panels" style:grid-template-columns={gridTemplate}>
 		<PanelFrame title="Chat" collapsed={chatCollapsed} ontoggle={() => (chatCollapsed = !chatCollapsed)}>
@@ -512,6 +567,9 @@
 				onpublishfragments={handleChatPublishFragments}
 				ondeletecontext={handleDeleteFromContext}
 				ondeletepermanentcontext={handleDeletePermanent}
+				{syncMode}
+				ontogglereadonly={handleToggleReadonly}
+				onsenditemtocompose={handleSendItemToCompose}
 			/>
 		</PanelFrame>
 
@@ -537,6 +595,9 @@
 				ondeletepermanentcompose={handleDeletePermanent}
 				ondoctochat={handleDocToChat}
 				ondocpublish={handleDocPublish}
+				{syncMode}
+				onsenditemtochat={handleSendItemToChat}
+				ontogglereadonly={handleToggleReadonly}
 			/>
 		</PanelFrame>
 
@@ -554,6 +615,7 @@
 				onaddtocompose={handleAddToCompose}
 				onaddmanytocontext={handleAddManyToContext}
 				onaddmanytocompose={handleAddManyToCompose}
+				{items}
 			/>
 		</PanelFrame>
 	</div>

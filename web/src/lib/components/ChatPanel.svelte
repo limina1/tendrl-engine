@@ -1,5 +1,5 @@
 <script lang="ts">
-	import type { ChatResponse, ContextItem, Fragment } from '$lib/types';
+	import type { ChatResponse, ContextItem, Fragment, SyncMode } from '$lib/types';
 	import ChatLog from './ChatLog.svelte';
 	import ChatInput from './ChatInput.svelte';
 	import EditView from './EditView.svelte';
@@ -12,6 +12,7 @@
 		systemExpanded = false,
 		contextExpanded = false,
 		contextEntries,
+		syncMode,
 		ontogglesystem,
 		ontogglecontext,
 		onsend,
@@ -27,13 +28,16 @@
 		onsendfragmentstocompose,
 		onpublishfragments,
 		ondeletecontext,
-		ondeletepermanentcontext
+		ondeletepermanentcontext,
+		ontogglereadonly,
+		onsenditemtocompose
 	}: {
 		chat: ChatResponse | null;
 		loading?: boolean;
 		systemExpanded?: boolean;
 		contextExpanded?: boolean;
 		contextEntries: ContextItem[];
+		syncMode: SyncMode;
 		ontogglesystem: () => void;
 		ontogglecontext: () => void;
 		onsend: (content: string) => void;
@@ -50,9 +54,16 @@
 		onpublishfragments: (fragments: Fragment[]) => void;
 		ondeletecontext: (items: ContextItem[]) => void;
 		ondeletepermanentcontext: (items: ContextItem[]) => void;
+		ontogglereadonly: (id: string) => void;
+		onsenditemtocompose: (id: string) => void;
 	} = $props();
 
 	let checkedFragmentIds: Set<number> = $state(new Set());
+	let hiddenFragmentIds: Set<number> = $state(new Set());
+
+	const visibleFragments = $derived(
+		chat?.fragments.filter((f) => !hiddenFragmentIds.has(f.id)) ?? []
+	);
 
 	function toggleFragmentCheck(id: number) {
 		const next = new Set(checkedFragmentIds);
@@ -62,35 +73,40 @@
 	}
 
 	function selectAllFragments() {
-		if (!chat) return;
-		checkedFragmentIds = new Set(chat.fragments.map((f) => f.id));
+		checkedFragmentIds = new Set(visibleFragments.map((f) => f.id));
 	}
 
 	function invertFragmentSelection() {
-		if (!chat) return;
 		const next = new Set<number>();
-		for (const f of chat.fragments) {
+		for (const f of visibleFragments) {
 			if (!checkedFragmentIds.has(f.id)) next.add(f.id);
 		}
 		checkedFragmentIds = next;
 	}
 
 	function sendToCompose() {
-		if (!chat) return;
-		const checked = chat.fragments.filter((f) => checkedFragmentIds.has(f.id));
-		if (checked.length > 0) {
-			onsendfragmentstocompose(checked);
-			checkedFragmentIds = new Set();
-		}
+		const checked = visibleFragments.filter((f) => checkedFragmentIds.has(f.id));
+		if (checked.length === 0) return;
+		onsendfragmentstocompose(checked);
+		// Hide moved fragments
+		const next = new Set(hiddenFragmentIds);
+		for (const f of checked) next.add(f.id);
+		hiddenFragmentIds = next;
+		checkedFragmentIds = new Set();
 	}
 
 	function publish() {
-		if (!chat) return;
-		const checked = chat.fragments.filter((f) => checkedFragmentIds.has(f.id));
-		if (checked.length > 0) {
-			onpublishfragments(checked);
-			checkedFragmentIds = new Set();
-		}
+		const checked = visibleFragments.filter((f) => checkedFragmentIds.has(f.id));
+		if (checked.length === 0) return;
+		onpublishfragments(checked);
+		checkedFragmentIds = new Set();
+	}
+
+	function deleteFragments() {
+		const next = new Set(hiddenFragmentIds);
+		for (const id of checkedFragmentIds) next.add(id);
+		hiddenFragmentIds = next;
+		checkedFragmentIds = new Set();
 	}
 
 	const hasChecked = $derived(checkedFragmentIds.size > 0);
@@ -110,10 +126,11 @@
 		<button onclick={onedit} disabled={loading || (chat?.edit_mode ?? false)}>Edit</button>
 		<button onclick={onreset} disabled={loading}>Reset</button>
 		<span class="toolbar-spacer"></span>
-		<button class="sel-btn" onclick={selectAllFragments} disabled={loading || !chat || chat.fragments.length === 0} title="Select all">All</button>
-		<button class="sel-btn" onclick={invertFragmentSelection} disabled={loading || !chat || chat.fragments.length === 0} title="Invert selection">Inv</button>
+		<button class="sel-btn" onclick={selectAllFragments} disabled={loading || visibleFragments.length === 0} title="Select all">All</button>
+		<button class="sel-btn" onclick={invertFragmentSelection} disabled={loading || visibleFragments.length === 0} title="Invert selection">Inv</button>
 		<button class="icon-btn" onclick={sendToCompose} disabled={loading || !hasChecked} title="Send to compose">□</button>
 		<button class="icon-btn" onclick={publish} disabled={loading || !hasChecked} title="Publish locally">▸</button>
+		<button class="icon-btn trash-btn" onclick={deleteFragments} disabled={loading || !hasChecked} title="Delete from chat">🗑</button>
 	</div>
 
 	{#if systemExpanded}
@@ -127,12 +144,15 @@
 	{#if contextExpanded}
 		<ContextPanel
 			entries={contextEntries}
+			{syncMode}
 			onupdate={onupdatecontext}
 			onreset={onresetcontext}
 			onremove={onremovecontext}
 			{onsendtocompose}
 			ondelete={ondeletecontext}
 			ondeletepermanent={ondeletepermanentcontext}
+			{ontogglereadonly}
+			{onsenditemtocompose}
 			disabled={loading}
 		/>
 	{/if}
@@ -146,7 +166,7 @@
 			/>
 		{:else}
 			<ChatLog
-				fragments={chat.fragments}
+				fragments={visibleFragments}
 				checkedIds={checkedFragmentIds}
 				ontogglecheck={toggleFragmentCheck}
 			/>
@@ -216,4 +236,9 @@
 		font-size: 0.85rem;
 		min-width: 28px;
 	}
+
+	.trash-btn {
+		font-size: 0.75rem;
+	}
+
 </style>

@@ -1,5 +1,5 @@
 <script lang="ts">
-	import type { SearchResult } from '$lib/types';
+	import type { SearchResult, ContextItem } from '$lib/types';
 
 	let {
 		result,
@@ -8,7 +8,8 @@
 		onselect,
 		onviewjson,
 		onaddtocontext,
-		onaddtocompose
+		onaddtocompose,
+		items = []
 	}: {
 		result: SearchResult;
 		checked?: boolean;
@@ -17,7 +18,12 @@
 		onviewjson: (result: SearchResult) => void;
 		onaddtocontext: (result: SearchResult) => void;
 		onaddtocompose: (result: SearchResult) => void;
+		items?: ContextItem[];
 	} = $props();
+
+	const poolMatch = $derived(
+		items.find((e) => e.source_event_id === result.event_id) ?? null
+	);
 
 	let tagsExpanded = $state(false);
 
@@ -54,6 +60,12 @@
 		<div class="result-header-text" onclick={() => onselect(result)} onkeydown={(e) => e.key === 'Enter' && onselect(result)} role="button" tabindex="0">
 		<span class="result-title">{result.title ?? '[Untitled]'}</span>
 		<span class="kind-badge">{KINDS[result.kind] ?? result.kind}</span>
+		{#if poolMatch?.in_context}
+			<span class="loc-badge" class:loc-synced={!poolMatch.modified} class:loc-modified={poolMatch.modified}>context</span>
+		{/if}
+		{#if poolMatch?.in_compose}
+			<span class="loc-badge" class:loc-synced={!poolMatch.modified} class:loc-modified={poolMatch.modified}>compose</span>
+		{/if}
 		</div>
 	</div>
 	<p class="result-preview" onclick={() => onselect(result)} role="presentation">{preview}</p>
@@ -248,5 +260,23 @@
 		font-size: 0.8rem;
 		min-width: 22px;
 		text-align: center;
+	}
+
+	.loc-badge {
+		font-size: 0.6rem;
+		padding: 0 5px;
+		border-radius: 4px;
+		font-weight: 600;
+		white-space: nowrap;
+	}
+
+	.loc-synced {
+		background: color-mix(in srgb, var(--badge-synced) 20%, transparent);
+		color: var(--badge-synced);
+	}
+
+	.loc-modified {
+		background: color-mix(in srgb, var(--badge-modified) 20%, transparent);
+		color: var(--badge-modified);
 	}
 </style>

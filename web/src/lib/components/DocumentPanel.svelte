@@ -1,5 +1,5 @@
 <script lang="ts">
-	import type { Section, ViewMode, DocMode, PublicationDetail, ComposeState, ContextItem } from '$lib/types';
+	import type { Section, ViewMode, DocMode, PublicationDetail, ComposeState, ContextItem, SyncMode } from '$lib/types';
 	import DocumentToolbar from './DocumentToolbar.svelte';
 	import OutlineView from './OutlineView.svelte';
 	import ContinuousView from './ContinuousView.svelte';
@@ -27,7 +27,10 @@
 		ondeletecompose,
 		ondeletepermanentcompose,
 		ondoctochat,
-		ondocpublish
+		ondocpublish,
+		syncMode,
+		onsenditemtochat,
+		ontogglereadonly
 	}: {
 		docMode: DocMode;
 		publication: PublicationDetail | null;
@@ -49,6 +52,9 @@
 		ondeletepermanentcompose: (items: ContextItem[]) => void;
 		ondoctochat: () => void;
 		ondocpublish: () => void;
+		syncMode: SyncMode;
+		onsenditemtochat: (id: string) => void;
+		ontogglereadonly: (id: string) => void;
 	} = $props();
 </script>
 
@@ -92,6 +98,9 @@
 				onpublish={onpublishcompose}
 				ondelete={ondeletecompose}
 				ondeletepermanent={ondeletepermanentcompose}
+				{syncMode}
+				{onsenditemtochat}
+				{ontogglereadonly}
 			/>
 		{/if}
 

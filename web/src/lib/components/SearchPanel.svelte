@@ -1,5 +1,5 @@
 <script lang="ts">
-	import type { SearchResult } from '$lib/types';
+	import type { SearchResult, ContextItem } from '$lib/types';
 	import SearchInput from './SearchInput.svelte';
 	import SearchResultItem from './SearchResultItem.svelte';
 
@@ -15,7 +15,8 @@
 		onaddtocontext,
 		onaddtocompose,
 		onaddmanytocontext,
-		onaddmanytocompose
+		onaddmanytocompose,
+		items = []
 	}: {
 		results: SearchResult[];
 		count?: number;
@@ -29,6 +30,7 @@
 		onaddtocompose: (result: SearchResult) => void;
 		onaddmanytocontext: (results: SearchResult[]) => void;
 		onaddmanytocompose: (results: SearchResult[]) => void;
+		items?: ContextItem[];
 	} = $props();
 
 	let checkedIds: Set<string> = $state(new Set());
@@ -98,6 +100,7 @@
 				{onviewjson}
 				{onaddtocontext}
 				{onaddtocompose}
+				{items}
 			/>
 		{/each}
 
