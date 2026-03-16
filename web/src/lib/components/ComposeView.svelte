@@ -229,45 +229,7 @@
 		mode = m;
 	}
 
-	// --- Full mode handlers ---
-
-	function selectAll() {
-		checkedIds = new Set(compose.sections.map((s) => s.id));
-	}
-
-	function invertSelection() {
-		const next = new Set<string>();
-		for (const s of compose.sections) {
-			if (!checkedIds.has(s.id)) next.add(s.id);
-		}
-		checkedIds = next;
-	}
-
-	function toggleCheck(id: string) {
-		const next = new Set(checkedIds);
-		if (next.has(id)) next.delete(id);
-		else next.add(id);
-		checkedIds = next;
-		clearTrash();
-	}
-
-	function sendCheckedToChat() {
-		const items = compose.sections.filter((s) => checkedIds.has(s.id));
-		if (items.length > 0) {
-			onsendtochat(items);
-			checkedIds = new Set();
-		}
-		clearTrash();
-	}
-
-	function publishChecked() {
-		const items = compose.sections.filter((s) => checkedIds.has(s.id));
-		if (items.length > 0) {
-			onpublish(items);
-			checkedIds = new Set();
-		}
-		clearTrash();
-	}
+	// --- Trash state ---
 
 	function clearTrash() {
 		trashPending = [];
@@ -278,14 +240,54 @@
 		countdownInterval = null;
 	}
 
-	function handleTrash() {
+	const trashActive = $derived(trashPending.length > 0);
+
+	// --- Section handlers ---
+
+	function toggleCheck(id: string) {
+		const next = new Set(checkedIds);
+		if (next.has(id)) next.delete(id);
+		else next.add(id);
+		checkedIds = next;
+		clearTrash();
+	}
+
+	// Ensure compose state is current (sync plain buffer if needed)
+	function ensureSynced(): ComposeState {
+		if (mode === 'plain') return applyPlainToState();
+		return compose;
+	}
+
+	// Toolbar actions work across all modes
+	function toolbarSendToChat() {
+		const state = ensureSynced();
+		const items = state.sections.filter((s) => checkedIds.has(s.id));
+		if (items.length > 0) {
+			onsendtochat(items);
+			checkedIds = new Set();
+		}
+		clearTrash();
+	}
+
+	function toolbarPublish() {
+		const state = ensureSynced();
+		const items = state.sections.filter((s) => checkedIds.has(s.id));
+		if (items.length > 0) {
+			onpublish(items);
+			checkedIds = new Set();
+		}
+		clearTrash();
+	}
+
+	function toolbarTrash() {
 		if (trashPending.length > 0) {
 			ondeletepermanent(trashPending);
 			checkedIds = new Set();
 			clearTrash();
 			return;
 		}
-		const items = compose.sections.filter((s) => checkedIds.has(s.id));
+		const state = ensureSynced();
+		const items = state.sections.filter((s) => checkedIds.has(s.id));
 		if (items.length === 0) return;
 		ondelete(items);
 		trashPending = items;
@@ -298,28 +300,18 @@
 		}, 1000);
 	}
 
-	const trashActive = $derived(trashPending.length > 0);
-
-	// Plain/preview: send all to chat
-	function sendAllToChat() {
-		let currentState = compose;
-		if (mode === 'plain') {
-			currentState = applyPlainToState();
-		}
-		if (currentState.sections.length > 0) {
-			onsendtochat(currentState.sections);
-		}
+	function toolbarSelectAll() {
+		const state = ensureSynced();
+		checkedIds = new Set(state.sections.map((s) => s.id));
 	}
 
-	// Plain/preview: publish all
-	function publishAll() {
-		let currentState = compose;
-		if (mode === 'plain') {
-			currentState = applyPlainToState();
+	function toolbarInvert() {
+		const state = ensureSynced();
+		const next = new Set<string>();
+		for (const s of state.sections) {
+			if (!checkedIds.has(s.id)) next.add(s.id);
 		}
-		if (currentState.sections.length > 0) {
-			onpublish(currentState.sections);
-		}
+		checkedIds = next;
 	}
 
 	function updateTitle(e: Event) {
@@ -396,75 +388,69 @@
 			/>
 			<TagEditor tags={compose.tags} onupdate={updateTags} />
 		</div>
-
-		<div class="compose-toolbar">
-			<button class="sel-btn" onclick={selectAll} disabled={compose.sections.length === 0} title="Select all">All</button>
-			<button class="sel-btn" onclick={invertSelection} disabled={compose.sections.length === 0} title="Invert selection">Inv</button>
-			<button class="icon-btn" onclick={sendCheckedToChat} disabled={checkedIds.size === 0} title="Send to chat">◂</button>
-			<button class="icon-btn" onclick={publishChecked} disabled={checkedIds.size === 0} title="Publish locally">▸</button>
-			<button
-				class="icon-btn trash-btn"
-				class:trash-armed={trashActive}
-				onclick={handleTrash}
-				disabled={checkedIds.size === 0 && !trashActive}
-				title={trashActive ? 'Delete everywhere' : 'Remove from compose'}
-			>🗑</button>
-			{#if trashActive}
-				<span class="trash-warn" style:opacity={trashCountdown / 10}>delete everywhere ({trashCountdown}s)</span>
-			{/if}
-		</div>
-
-		<div class="compose-sections">
-			{#each compose.sections as section (section.id)}
-				<ComposeSection
-					{section}
-					checked={checkedIds.has(section.id)}
-					oncheck={toggleCheck}
-					onupdate={updateSection}
-					onupdatetags={updateSectionTags}
-					onreset={resetSection}
-					onremove={removeSection}
-				/>
-			{/each}
-		</div>
-
-		<div class="compose-actions">
-			<button onclick={addSection}>+ Section</button>
-			<button onclick={oncancel}>Cancel</button>
-		</div>
-	{:else if mode === 'plain'}
-		<div class="compose-toolbar">
-			<button class="icon-btn" onclick={sendAllToChat} title="Send all to chat">◂</button>
-			<button class="icon-btn" onclick={publishAll} title="Publish locally">▸</button>
-		</div>
-		<textarea
-			class="plain-editor"
-			bind:value={plainBuffer}
-			spellcheck="false"
-		></textarea>
-		<div class="compose-actions">
-			<button onclick={oncancel}>Cancel</button>
-		</div>
-	{:else}
-		<div class="compose-toolbar">
-			<button class="icon-btn" onclick={sendAllToChat} title="Send all to chat">◂</button>
-			<button class="icon-btn" onclick={publishAll} title="Publish locally">▸</button>
-		</div>
-		<pre class="preview-content">{plainBuffer}</pre>
-		<div class="compose-actions">
-			<button onclick={oncancel}>Cancel</button>
-		</div>
 	{/if}
+
+	<div class="compose-toolbar">
+		<button class="sel-btn" onclick={toolbarSelectAll} disabled={compose.sections.length === 0} title="Select all">All</button>
+		<button class="sel-btn" onclick={toolbarInvert} disabled={compose.sections.length === 0} title="Invert selection">Inv</button>
+		<button class="icon-btn" onclick={toolbarSendToChat} disabled={checkedIds.size === 0} title="Send to chat">◂</button>
+		<button class="icon-btn" onclick={toolbarPublish} disabled={checkedIds.size === 0} title="Publish locally">▸</button>
+		<button
+			class="icon-btn trash-btn"
+			class:trash-armed={trashActive}
+			onclick={toolbarTrash}
+			disabled={checkedIds.size === 0 && !trashActive}
+			title={trashActive ? 'Delete everywhere' : 'Remove from compose'}
+		>🗑</button>
+		{#if trashActive}
+			<span class="trash-warn" style:opacity={trashCountdown / 10}>delete everywhere ({trashCountdown}s)</span>
+		{/if}
+	</div>
+
+	<div class="compose-content">
+		{#if mode === 'full'}
+			<div class="compose-sections">
+				{#each compose.sections as section (section.id)}
+					<ComposeSection
+						{section}
+						checked={checkedIds.has(section.id)}
+						oncheck={toggleCheck}
+						onupdate={updateSection}
+						onupdatetags={updateSectionTags}
+						onreset={resetSection}
+						onremove={removeSection}
+					/>
+				{/each}
+			</div>
+		{:else if mode === 'plain'}
+			<pre
+				class="editor-pane"
+				contenteditable="true"
+				spellcheck="false"
+				oninput={(e) => { plainBuffer = (e.currentTarget as HTMLElement).textContent ?? ''; }}
+			>{plainBuffer}</pre>
+		{:else}
+			<pre class="editor-pane">{plainBuffer}</pre>
+		{/if}
+	</div>
+
+	<div class="compose-actions">
+		{#if mode === 'full'}
+			<button onclick={addSection}>+ Section</button>
+		{/if}
+		<button onclick={oncancel}>Cancel</button>
+	</div>
 </div>
 
 <style>
 	.compose-view {
 		flex: 1;
-		overflow-y: auto;
 		display: flex;
 		flex-direction: column;
-		gap: 16px;
+		gap: 12px;
 		padding: 16px;
+		min-height: 0;
+		overflow: hidden;
 	}
 
 	.compose-mode-bar {
@@ -473,6 +459,7 @@
 		justify-content: space-between;
 		gap: 8px;
 		flex-wrap: wrap;
+		flex-shrink: 0;
 	}
 
 	.mode-group {
@@ -507,6 +494,7 @@
 		display: flex;
 		flex-direction: column;
 		gap: 8px;
+		flex-shrink: 0;
 	}
 
 	.compose-title {
@@ -529,6 +517,7 @@
 		display: flex;
 		gap: 6px;
 		align-items: center;
+		flex-shrink: 0;
 	}
 
 	.sel-btn {
@@ -560,10 +549,32 @@
 		white-space: nowrap;
 	}
 
+	.compose-content {
+		flex: 1;
+		overflow-y: auto;
+		border: 1px solid var(--border);
+		border-radius: var(--radius);
+		background: var(--bg-surface);
+	}
+
 	.compose-sections {
 		display: flex;
 		flex-direction: column;
 		gap: 12px;
+		padding: 12px;
+	}
+
+	.editor-pane {
+		font-family: var(--font-mono);
+		font-size: 0.85rem;
+		line-height: 1.6;
+		padding: 12px;
+		margin: 0;
+		min-height: 100%;
+		white-space: pre-wrap;
+		word-break: break-word;
+		color: var(--fg);
+		outline: none;
 	}
 
 	.compose-actions {
@@ -571,42 +582,7 @@
 		gap: 8px;
 		padding-top: 8px;
 		border-top: 1px solid var(--border);
-	}
-
-	.plain-editor {
-		flex: 1;
-		min-height: 300px;
-		font-family: var(--font-mono);
-		font-size: 0.85rem;
-		line-height: 1.6;
-		resize: none;
-		border: 1px solid var(--border);
-		border-radius: var(--radius);
-		background: var(--bg-surface);
-		color: var(--fg);
-		padding: 12px;
-		outline: none;
-	}
-
-	.plain-editor:focus {
-		border-color: var(--accent);
-	}
-
-	.preview-content {
-		flex: 1;
-		min-height: 300px;
-		font-family: var(--font-mono);
-		font-size: 0.85rem;
-		line-height: 1.6;
-		padding: 12px;
-		border: 1px solid var(--border);
-		border-radius: var(--radius);
-		background: var(--bg-surface);
-		color: var(--fg);
-		overflow: auto;
-		white-space: pre-wrap;
-		word-break: break-word;
-		margin: 0;
+		flex-shrink: 0;
 	}
 
 	.active {
