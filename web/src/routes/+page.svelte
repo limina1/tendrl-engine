@@ -267,17 +267,22 @@
 		syncContext();
 	}
 
-	// Context □ → set in_compose on checked items
+	// Context □ → move to compose (remove from context)
 	function handleContextToCompose(checkedItems: ContextItem[]) {
 		const ids = new Set(checkedItems.map((i) => i.id));
-		items = items.map((e) => (ids.has(e.id) ? { ...e, in_compose: true } : e));
+		items = items.map((e) =>
+			ids.has(e.id) ? { ...e, in_compose: true, in_context: false } : e
+		);
+		syncContext();
 		if (docMode !== 'compose') docMode = 'compose';
 	}
 
-	// Compose ◂ → set in_context on checked items
+	// Compose ◂ → move to context (remove from compose)
 	function handleComposeToChat(checkedItems: ContextItem[]) {
 		const ids = new Set(checkedItems.map((i) => i.id));
-		items = items.map((e) => (ids.has(e.id) ? { ...e, in_context: true } : e));
+		items = items.map((e) =>
+			ids.has(e.id) ? { ...e, in_context: true, in_compose: false } : e
+		);
 		syncContext();
 	}
 
