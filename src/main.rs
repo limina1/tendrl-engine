@@ -74,10 +74,16 @@ async fn main() -> anyhow::Result<()> {
     info!("Data directory: {}", config.database.data_dir);
     info!("Default relays: {:?}", config.relay.default_relays);
 
+    let my_pubkey = config.pubkey_hex();
+    if let Some(ref pk) = my_pubkey {
+        info!("Identity pubkey: {}...{}", &pk[..8], &pk[pk.len()-8..]);
+    }
+
     // Create the engine
     let data_path = PathBuf::from(&config.database.data_dir);
     let relay_refs: Vec<&str> = config.relay.default_relays.iter().map(|s| s.as_str()).collect();
-    let engine = Engine::with_config(&data_path, &relay_refs, config.relay.timeout_ms)?;
+    let mut engine = Engine::with_config(&data_path, &relay_refs, config.relay.timeout_ms)?;
+    engine.set_my_pubkey(my_pubkey.clone());
     let state = Arc::new(engine);
 
     // Configure CORS
@@ -103,14 +109,23 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/v1/chat/context", post(api::chat_inject_context).put(api::chat_replace_context))
         .with_state(chat_state);
 
+    // Config endpoint (returns pubkey etc. to the frontend)
+    let config_pubkey = my_pubkey.clone();
+    let config_handler = move || async move {
+        axum::Json(serde_json::json!({
+            "my_pubkey": config_pubkey
+        }))
+    };
+
     // Build router
     let app = Router::new()
         // Core endpoints
         .route("/health", get(api::health_handler))
+        .route("/api/v1/config", get(config_handler))
         .route("/api/v1/query", post(api::query_handler))
-        .route("/api/v1/events/{id}", get(api::get_event_handler))
+        .route("/api/v1/events/:id", get(api::get_event_handler))
         .route(
-            "/api/v1/addressable/{kind}/{pubkey}/{d_tag}",
+            "/api/v1/addressable/:kind/:pubkey/:d_tag",
             get(api::get_addressable_handler),
         )
         // Search endpoint
@@ -118,19 +133,23 @@ async fn main() -> anyhow::Result<()> {
         // Publication endpoints
         .route("/api/v1/publications", get(api::list_publications_handler))
         .route(
-            "/api/v1/publications/{pubkey}/{d_tag}",
+            "/api/v1/publications/:pubkey/:d_tag",
             get(api::get_publication_handler),
         )
         .route(
-            "/api/v1/publications/{pubkey}/{d_tag}/sections",
+            "/api/v1/publications/:pubkey/:d_tag/sections/metadata",
+            post(api::load_sections_metadata_handler),
+        )
+        .route(
+            "/api/v1/publications/:pubkey/:d_tag/sections",
             post(api::load_sections_handler),
         )
         .route(
-            "/api/v1/publications/{pubkey}/{d_tag}/sections/{index}",
+            "/api/v1/publications/:pubkey/:d_tag/sections/:index",
             get(api::get_section_handler),
         )
         .route(
-            "/api/v1/sections/{pubkey}/{d_tag}/versions",
+            "/api/v1/sections/:pubkey/:d_tag/versions",
             get(api::get_section_versions_handler),
         )
         .with_state(state)

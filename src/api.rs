@@ -178,13 +178,14 @@ pub async fn search_handler(
         query.limit = Some(limit);
     }
 
-    // Resolve by:me to actual pubkey
+    // Resolve by:me to actual pubkey (from request or engine config)
     if let Some(AuthorFilter::CurrentUser) = &query.author_filter {
-        if let Some(ref pk) = req.my_pubkey {
-            query.author_filter = Some(AuthorFilter::Pubkeys(vec![pk.clone()]));
+        let pk = req.my_pubkey.as_deref().or_else(|| engine.my_pubkey());
+        if let Some(pk) = pk {
+            query.author_filter = Some(AuthorFilter::Pubkeys(vec![pk.to_string()]));
         } else {
             return Err(EngineError::InvalidFilter(
-                "by:me requires my_pubkey in request".to_string(),
+                "by:me requires pubkey in config or request".to_string(),
             ));
         }
     }
@@ -215,6 +216,8 @@ pub struct PublicationsQuery {
     pub limit: usize,
     /// Fetch policy
     pub policy: Option<String>,
+    /// Cursor: only return publications created before this timestamp
+    pub before: Option<u64>,
 }
 
 fn default_limit() -> usize {
@@ -233,10 +236,10 @@ pub async fn list_publications_handler(
         None => FetchPolicy::default(),
     };
 
-    debug!("List publications request: limit={}, policy={:?}", query.limit, policy);
+    debug!("List publications request: limit={}, policy={:?}, before={:?}", query.limit, policy, query.before);
 
     let pub_engine = PublicationEngine::new(&engine);
-    let publications = pub_engine.list_root_publications(policy, query.limit).await?;
+    let publications = pub_engine.list_root_publications(policy, query.limit, query.before).await?;
 
     // Convert to summary format
     let summaries: Vec<Value> = publications
@@ -250,7 +253,7 @@ pub async fn list_publications_handler(
                 "author_pubkey": p.author_pubkey,
                 "version": p.version,
                 "created_at": p.created_at,
-                "section_count": p.sections.len()
+                "section_count": p.section_count()
             })
         })
         .collect();
@@ -259,6 +262,12 @@ pub async fn list_publications_handler(
         "publications": summaries,
         "count": summaries.len()
     })))
+}
+
+/// Query parameters for policy override (shared by multiple handlers)
+#[derive(Debug, Deserialize)]
+pub struct PolicyQuery {
+    pub policy: Option<String>,
 }
 
 /// Path parameters for publication endpoint
@@ -274,8 +283,14 @@ pub struct PublicationPath {
 pub async fn get_publication_handler(
     State(engine): State<AppState>,
     Path(params): Path<PublicationPath>,
+    axum::extract::Query(query): axum::extract::Query<PolicyQuery>,
 ) -> Result<impl IntoResponse, EngineError> {
-    debug!("Get publication request: {}:{}", params.pubkey, params.d_tag);
+    let policy = match &query.policy {
+        Some(p) => p.parse()?,
+        None => FetchPolicy::default(),
+    };
+
+    debug!("Get publication request: {}:{} policy={:?}", params.pubkey, params.d_tag, policy);
 
     // Validate hex pubkey format
     if params.pubkey.len() != 64 || hex::decode(&params.pubkey).is_err() {
@@ -287,7 +302,7 @@ pub async fn get_publication_handler(
     let addr = NAddr::new(KIND_PUBLICATION_INDEX, &params.pubkey, &params.d_tag);
     let pub_engine = PublicationEngine::new(&engine);
 
-    let publication = pub_engine.load_publication(&addr, FetchPolicy::LocalFirst).await?;
+    let publication = pub_engine.load_publication(&addr, policy).await?;
     let toc = pub_engine.build_toc(&publication, 0);
 
     Ok((
@@ -366,10 +381,16 @@ pub struct SectionPath {
 pub async fn get_section_handler(
     State(engine): State<AppState>,
     Path(params): Path<SectionPath>,
+    axum::extract::Query(query): axum::extract::Query<PolicyQuery>,
 ) -> Result<impl IntoResponse, EngineError> {
+    let policy = match &query.policy {
+        Some(p) => p.parse()?,
+        None => FetchPolicy::default(),
+    };
+
     debug!(
-        "Get section request: {}:{} index={}",
-        params.pubkey, params.d_tag, params.index
+        "Get section request: {}:{} index={} policy={:?}",
+        params.pubkey, params.d_tag, params.index, policy
     );
 
     if params.pubkey.len() != 64 || hex::decode(&params.pubkey).is_err() {
@@ -381,9 +402,9 @@ pub async fn get_section_handler(
     let addr = NAddr::new(KIND_PUBLICATION_INDEX, &params.pubkey, &params.d_tag);
     let pub_engine = PublicationEngine::new(&engine);
 
-    let mut publication = pub_engine.load_publication(&addr, FetchPolicy::LocalFirst).await?;
+    let mut publication = pub_engine.load_publication(&addr, policy).await?;
     pub_engine
-        .load_section(&mut publication, params.index, FetchPolicy::LocalFirst)
+        .load_section(&mut publication, params.index, policy)
         .await?;
 
     let section = publication.sections.get(params.index).ok_or_else(|| {
@@ -451,6 +472,60 @@ pub async fn get_section_versions_handler(
     Ok(Json(json!({
         "versions": version_summaries,
         "count": versions.len()
+    })))
+}
+
+/// POST /api/v1/publications/:pubkey/:d_tag/sections/metadata
+///
+/// Lightweight metadata-only view of sections (no content).
+/// Defaults to LocalOnly for instant response; accepts ?policy= override.
+pub async fn load_sections_metadata_handler(
+    State(engine): State<AppState>,
+    Path(params): Path<PublicationPath>,
+    axum::extract::Query(query): axum::extract::Query<PolicyQuery>,
+) -> Result<impl IntoResponse, EngineError> {
+    let policy = match &query.policy {
+        Some(p) => p.parse()?,
+        None => FetchPolicy::LocalOnly,
+    };
+
+    debug!(
+        "Load sections metadata request: {}:{} policy={:?}",
+        params.pubkey, params.d_tag, policy
+    );
+
+    if params.pubkey.len() != 64 || hex::decode(&params.pubkey).is_err() {
+        return Err(EngineError::InvalidHex(
+            "Pubkey must be a 64-character hex string".to_string(),
+        ));
+    }
+
+    let addr = NAddr::new(KIND_PUBLICATION_INDEX, &params.pubkey, &params.d_tag);
+    let pub_engine = PublicationEngine::new(&engine);
+
+    let mut publication = pub_engine.load_publication(&addr, FetchPolicy::LocalOnly).await?;
+    pub_engine
+        .load_sections(&mut publication, policy)
+        .await?;
+
+    let sections_meta: Vec<Value> = publication
+        .sections
+        .iter()
+        .map(|s| {
+            json!({
+                "addr": s.addr,
+                "title": s.title,
+                "position": s.position,
+                "loaded": s.event.is_loaded()
+            })
+        })
+        .collect();
+
+    let total_count = sections_meta.len();
+
+    Ok(Json(json!({
+        "sections_meta": sections_meta,
+        "total_count": total_count
     })))
 }
 

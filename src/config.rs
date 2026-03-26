@@ -80,11 +80,10 @@ pub struct RelayConfig {
 }
 
 fn default_relays() -> Vec<String> {
-    vec![
-        "wss://relay.damus.io".to_string(),
-        "wss://nos.lol".to_string(),
-        "wss://relay.nostr.band".to_string(),
-    ]
+    crate::relay::DEFAULT_RELAYS
+        .iter()
+        .map(|s| s.to_string())
+        .collect()
 }
 
 fn default_timeout_ms() -> u64 {
@@ -100,6 +99,13 @@ impl Default for RelayConfig {
     }
 }
 
+/// Identity configuration
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct IdentityConfig {
+    /// User's public key (npub1... or hex)
+    pub pubkey: Option<String>,
+}
+
 /// Main configuration struct
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Config {
@@ -112,9 +118,24 @@ pub struct Config {
     /// Relay settings
     #[serde(default)]
     pub relay: RelayConfig,
+    /// Identity settings
+    #[serde(default)]
+    pub identity: IdentityConfig,
 }
 
 impl Config {
+    /// Resolve the configured pubkey to hex format (handles npub1... bech32)
+    pub fn pubkey_hex(&self) -> Option<String> {
+        let raw = self.identity.pubkey.as_deref()?;
+        if raw.starts_with("npub1") {
+            crate::identity::decode_npub(raw).ok()
+        } else if raw.len() == 64 && hex::decode(raw).is_ok() {
+            Some(raw.to_string())
+        } else {
+            None
+        }
+    }
+
     /// Load configuration from a TOML file
     pub fn from_file(path: &Path) -> Result<Self> {
         let content = std::fs::read_to_string(path)?;

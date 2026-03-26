@@ -50,7 +50,7 @@
 	const extraTagCount = $derived(Math.max(0, result.tags.length - 3));
 </script>
 
-<div class="result-item">
+<div class="result-item" class:kind-index={result.kind === 30040} class:kind-section={result.kind === 30041}>
 	<div class="result-header">
 		{#if ontogglecheck}
 			<label class="result-check" onclick={(e) => e.stopPropagation()}>
@@ -124,6 +124,15 @@
 		border-radius: 0;
 		background: transparent;
 		transition: background 0.1s;
+		border-right: 3px solid transparent;
+	}
+
+	.result-item.kind-index {
+		border-right-color: #3b82f6;
+	}
+
+	.result-item.kind-section {
+		border-right-color: #22c55e;
 	}
 
 	.result-header {

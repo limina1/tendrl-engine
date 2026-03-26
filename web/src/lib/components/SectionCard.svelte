@@ -1,23 +1,62 @@
 <script lang="ts">
-	import type { Section } from '$lib/types';
+	import type { LazySection, SectionStatus } from '$lib/types';
 
-	let { section, truncate = false }: { section: Section; truncate?: boolean } = $props();
+	let {
+		section,
+		truncate = false,
+		index = undefined,
+		preview = false,
+		onclick = undefined
+	}: {
+		section: LazySection;
+		truncate?: boolean;
+		index?: number | undefined;
+		preview?: boolean;
+		onclick?: (() => void) | undefined;
+	} = $props();
 
-	const displayContent = $derived(
-		truncate && section.content && section.content.length > 200
-			? section.content.slice(0, 200) + '...'
-			: section.content
-	);
+	const status: SectionStatus = $derived(section.status ?? 'loaded');
+
+	const displayContent = $derived.by(() => {
+		if (status !== 'loaded' || !section.content) return null;
+		if (preview) {
+			const firstLine = section.content.split('\n')[0] ?? '';
+			return firstLine.length > 80 ? firstLine.slice(0, 80) + '...' : firstLine;
+		}
+		if (truncate && section.content.length > 200) {
+			return section.content.slice(0, 200) + '...';
+		}
+		return section.content;
+	});
 </script>
 
-<div class="section-card">
-	{#if section.title}
-		<h3 class="section-title">{section.title}</h3>
-	{/if}
-	{#if displayContent}
-		<pre class="section-content">{displayContent}</pre>
-	{:else if !section.loaded}
-		<p class="section-loading">Loading...</p>
+<!-- svelte-ignore a11y_no_static_element_interactions -->
+<div
+	class="section-card"
+	class:clickable={!!onclick}
+	class:pending={status === 'pending'}
+	onclick={onclick}
+	onkeydown={onclick ? (e) => { if (e.key === 'Enter' || e.key === ' ') onclick?.(); } : undefined}
+	role={onclick ? 'button' : undefined}
+	tabindex={onclick ? 0 : undefined}
+>
+	<h3 class="section-title">
+		{#if index !== undefined}<span class="section-index">{index}.</span>{/if}
+		{section.title ?? `Section ${(section.position ?? 0) + 1}`}
+		{#if status === 'loading'}
+			<span class="status-indicator loading-dots">...</span>
+		{:else if status === 'error'}
+			<span class="status-indicator status-error">!</span>
+		{/if}
+	</h3>
+	{#if status === 'loaded' && displayContent}
+		<pre class="section-content" class:muted={preview}>{displayContent}</pre>
+	{:else if status === 'loading'}
+		<div class="skeleton"></div>
+	{:else if status === 'error'}
+		<p class="section-error">{section.error ?? 'Failed to load'}</p>
+	{:else if status === 'pending'}
+		<p class="section-pending">Not loaded</p>
 	{/if}
 </div>
 
@@ -27,10 +66,47 @@
 		border-bottom: 1px solid var(--border);
 	}
 
+	.section-card.clickable {
+		cursor: pointer;
+	}
+
+	.section-card.clickable:hover {
+		background: var(--bg-surface);
+	}
+
+	.section-card.pending {
+		opacity: 0.6;
+	}
+
 	.section-title {
 		font-size: 0.95rem;
 		font-weight: 600;
 		margin-bottom: 6px;
+	}
+
+	.section-index {
+		color: var(--fg-muted);
+		margin-right: 4px;
+	}
+
+	.status-indicator {
+		font-size: 0.75rem;
+		margin-left: 6px;
+	}
+
+	.loading-dots {
+		color: var(--accent);
+		animation: pulse 1s ease-in-out infinite;
+	}
+
+	.status-error {
+		color: #ef4444;
+		font-weight: 700;
+	}
+
+	@keyframes pulse {
+		0%, 100% { opacity: 0.4; }
+		50% { opacity: 1; }
 	}
 
 	.section-content {
@@ -42,9 +118,25 @@
 		margin: 0;
 	}
 
-	.section-loading {
+	.section-content.muted {
 		color: var(--fg-muted);
-		font-size: 0.85rem;
+	}
+
+	.skeleton {
+		height: 40px;
+		background: var(--border);
+		border-radius: 4px;
+		animation: pulse 1.5s ease-in-out infinite;
+	}
+
+	.section-pending {
+		color: var(--fg-muted);
+		font-size: 0.8rem;
 		font-style: italic;
+	}
+
+	.section-error {
+		color: #ef4444;
+		font-size: 0.8rem;
 	}
 </style>

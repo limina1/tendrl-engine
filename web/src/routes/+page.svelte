@@ -1,10 +1,11 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
 	import type {
 		ChatResponse,
 		SearchResult,
+		PublicationSummary,
 		PublicationDetail,
 		Section,
+		LazySection,
 		ComposeState,
 		ContextItem,
 		Fragment,
@@ -63,11 +64,21 @@
 	// Document state
 	let docMode: DocMode = $state('empty');
 	let publication: PublicationDetail | null = $state(null);
-	let sections: Section[] = $state([]);
+	let sections: LazySection[] = $state([]);
 	let viewMode: ViewMode = $state('outline');
 	let currentSection = $state(0);
 	let previewVisible = $state(false);
 	let docLoading = $state(false);
+
+	// Section loading deduplication
+	const loadingPromises = new Map<number, Promise<void>>();
+
+	// Publication feed (shown in empty state)
+	let feed: PublicationSummary[] = $state([]);
+	let feedLoading = $state(false);
+	let feedSyncing = $state(false);
+	let feedLoadingMore = $state(false);
+	let feedHasMore = $state(true);
 
 	// Search state
 	let searchResults: SearchResult[] = $state([]);
@@ -78,6 +89,9 @@
 
 	// JSON modal
 	let jsonModalData: unknown = $state(null);
+
+	// Identity
+	let myPubkey: string | null = $state(null);
 
 	// Settings
 	let syncMode: SyncMode = $state('explicit');
@@ -96,12 +110,113 @@
 		].join(' ')
 	);
 
-	onMount(async () => {
+	async function loadFeed() {
+		feedLoading = true;
 		try {
-			chat = await api.getChat();
+			const resp = await api.listPublications();
+			feed = resp.publications;
+			feedHasMore = resp.count >= 20;
+			// If config didn't load pubkey, try to get it from feed data
+			if (!myPubkey) {
+				try {
+					const cfg = await api.getConfig();
+					myPubkey = cfg.my_pubkey;
+				} catch { /* ignore */ }
+			}
 		} catch {
-			// Backend unavailable — keep default empty state
+			// Backend unavailable
+		} finally {
+			feedLoading = false;
 		}
+	}
+
+	async function handleFeedSync() {
+		feedSyncing = true;
+		try {
+			const resp = await api.listPublications(20, 'fetch_always');
+			feed = resp.publications;
+			feedHasMore = resp.count >= 20;
+		} catch {
+			// Relay fetch failed
+		} finally {
+			feedSyncing = false;
+		}
+	}
+
+	async function handleFeedLoadMore() {
+		if (feedLoadingMore || !feedHasMore || feed.length === 0) return;
+		feedLoadingMore = true;
+		try {
+			const oldest = Math.min(...feed.map(p => p.created_at));
+			const resp = await api.listPublications(20, 'local_only', oldest);
+			if (resp.count === 0) {
+				feedHasMore = false;
+			} else {
+				// Deduplicate by addr
+				const existing = new Set(feed.map(p => `${p.addr.pubkey}:${p.addr.d_tag}`));
+				const newPubs = resp.publications.filter(p => !existing.has(`${p.addr.pubkey}:${p.addr.d_tag}`));
+				feed = [...feed, ...newPubs];
+				feedHasMore = resp.count >= 20;
+			}
+		} catch {
+			// silent
+		} finally {
+			feedLoadingMore = false;
+		}
+	}
+
+	async function handleLoadSection(index: number) {
+		if (index < 0 || index >= sections.length) return;
+		const section = sections[index];
+		if (section.status === 'loaded' || section.status === 'loading') return;
+		if (loadingPromises.has(index)) return;
+
+		sections[index] = { ...section, status: 'loading' };
+
+		const promise = (async () => {
+			try {
+				const pubkey = publication!.addr.pubkey;
+				const d_tag = publication!.addr.d_tag;
+				const resp = await api.getSection(pubkey, d_tag, index);
+				sections[index] = {
+					...sections[index],
+					title: resp.section.title ?? sections[index].title,
+					content: resp.section.content,
+					status: 'loaded'
+				};
+			} catch (e) {
+				sections[index] = {
+					...sections[index],
+					status: 'error',
+					error: String(e)
+				};
+			} finally {
+				loadingPromises.delete(index);
+			}
+		})();
+
+		loadingPromises.set(index, promise);
+	}
+
+	let initialized = $state(false);
+	$effect(() => {
+		if (initialized) return;
+		initialized = true;
+		(async () => {
+			try {
+				const cfg = await api.getConfig();
+				myPubkey = cfg.my_pubkey;
+				console.log('Config loaded, myPubkey:', myPubkey);
+			} catch (e) {
+				console.warn('Config fetch failed:', e);
+			}
+			try {
+				chat = await api.getChat();
+			} catch {
+				// Backend unavailable
+			}
+			await loadFeed();
+		})();
 	});
 
 	// --- Helpers ---
@@ -466,13 +581,65 @@
 	// --- Search handlers ---
 
 	async function handleSearch(query: string) {
+		// Empty search: reset feed and clear results
+		if (!query.trim()) {
+			searchResults = [];
+			searchCount = 0;
+			searchLocalCount = 0;
+			searchRelayCount = 0;
+			if (docMode === 'empty') await loadFeed();
+			return;
+		}
+
 		searchLoading = true;
 		try {
-			const resp = await api.search(query);
+			let effectiveQuery = query;
+
+			// Context-aware kind filter based on document panel state
+			const isFeedSearch = docMode === 'empty' && !query.includes('k:');
+			if (isFeedSearch) {
+				effectiveQuery = `k:30040 ${effectiveQuery}`;
+			}
+
+			// Default to by:me if pubkey is configured
+			if (myPubkey && !query.includes('by:')) {
+				effectiveQuery = `by:me ${effectiveQuery}`;
+			}
+
+			console.log('search:', effectiveQuery, 'myPubkey:', myPubkey);
+			const resp = await api.search(effectiveQuery, undefined, myPubkey ?? undefined);
 			searchResults = resp.results;
 			searchCount = resp.count;
 			searchLocalCount = resp.local_count;
 			searchRelayCount = resp.relay_count;
+
+			// In feed mode, search results drive the feed display
+			if (docMode === 'empty') {
+				const pubs = resp.results.filter(r => r.kind === 30040 && r.addr);
+				if (pubs.length > 0) {
+					// Deduplicate by pubkey:d_tag (nostrdb returns all versions)
+					const seen = new Set<string>();
+					feed = [];
+					for (const r of pubs) {
+						const key = `${r.addr!.pubkey}:${r.addr!.d_tag}`;
+						if (seen.has(key)) continue;
+						seen.add(key);
+						feed.push({
+							addr: r.addr!,
+							title: r.title,
+							summary: r.preview || null,
+							image: null,
+							author_pubkey: r.author,
+							version: null,
+							created_at: r.created_at,
+							section_count: r.tags.filter(t => t[0] === 'a').length
+						});
+					}
+					feedHasMore = false;
+				}
+			}
+		} catch (e) {
+			console.error('Search failed:', e);
 		} finally {
 			searchLoading = false;
 		}
@@ -522,23 +689,79 @@
 
 	// --- Document handlers ---
 
-	async function handleSelectResult(result: SearchResult) {
-		if (!result.addr) return;
+	async function openPublication(pubkey: string, d_tag: string) {
+		// Switch to reading mode immediately so the user sees "Loading..."
+		docMode = 'reading';
 		docLoading = true;
+		publication = null;
+		sections = [];
+		loadingPromises.clear();
 		try {
-			const pubResp = await api.getPublication(result.addr.pubkey, result.addr.d_tag);
+			const pubResp = await api.getPublication(pubkey, d_tag, 'local_first');
 			publication = pubResp.publication;
-			const secResp = await api.loadSections(result.addr.pubkey, result.addr.d_tag);
-			sections = secResp.sections;
-			docMode = 'reading';
+
+			// Build sections from TOC (includes both 30041 sections and 30040 nested)
+			sections = pubResp.toc.map((entry, i) => ({
+				addr: entry.addr,
+				title: entry.title,
+				content: null,
+				position: i,
+				status: 'pending' as const
+			}));
+
 			viewMode = 'outline';
 			currentSection = 0;
 			previewVisible = false;
-		} catch {
-			// Non-publication results can't be loaded yet
+		} catch (e) {
+			console.error('Failed to open publication:', pubkey, d_tag, e);
+			// Go back to feed on error
+			docMode = 'empty';
 		} finally {
 			docLoading = false;
 		}
+	}
+
+	async function handleSelectResult(result: SearchResult) {
+		if (!result.addr) return;
+		if (result.kind === 30040) {
+			// Publication index — open directly
+			await openPublication(result.addr.pubkey, result.addr.d_tag);
+		} else if (result.kind === 30041) {
+			// Section — look for parent publication via its tags
+			try {
+				const resp = await api.getEvent(result.event_id);
+				const event = resp.event as Record<string, unknown> | null;
+				const tags = (event?.tags as string[][] | undefined) ?? [];
+				const aTag = tags.find((t) => t[0] === 'a' && t[1]?.startsWith('30040:'));
+				if (aTag) {
+					const [, ref] = aTag;
+					const parts = ref.split(':');
+					if (parts.length >= 3) {
+						await openPublication(parts[1], parts.slice(2).join(':'));
+						// Navigate to the section within the publication
+						const idx = sections.findIndex(
+							(s) => s.addr?.d_tag === result.addr!.d_tag && s.addr?.pubkey === result.addr!.pubkey
+						);
+						if (idx >= 0) {
+							currentSection = idx;
+							viewMode = 'paginated';
+						}
+						return;
+					}
+				}
+			} catch {
+				// Fall through to direct load attempt
+			}
+			// No parent found — try loading as standalone
+			await openPublication(result.addr.pubkey, result.addr.d_tag).catch(() => {});
+		} else {
+			// Other kinds — try loading, silently fail
+			await openPublication(result.addr.pubkey, result.addr.d_tag).catch(() => {});
+		}
+	}
+
+	function handleOpenFeedPublication(pub_summary: PublicationSummary) {
+		openPublication(pub_summary.addr.pubkey, pub_summary.addr.d_tag);
 	}
 
 	function handleViewMode(mode: ViewMode) {
@@ -601,6 +824,7 @@
 		{buttonLabels}
 		onsetsyncmode={(m: SyncMode) => (syncMode = m)}
 		onsetbuttonlabels={(m: ButtonLabels) => (buttonLabels = m)}
+		onhome={() => { docMode = 'empty'; publication = null; sections = []; docCollapsed = false; if (searchCount === 0) loadFeed(); }}
 	/>
 
 	<div class="workbench-panels" style:grid-template-columns={gridTemplate}>
@@ -647,6 +871,11 @@
 				{previewVisible}
 				{compose}
 				loading={docLoading}
+				{feed}
+				{feedLoading}
+				{feedSyncing}
+				{feedLoadingMore}
+				{feedHasMore}
 				onviewmode={handleViewMode}
 				ontogglepreview={handleTogglePreview}
 				oncompose={handleCompose}
@@ -659,6 +888,10 @@
 				ondeletepermanentcompose={handleDeletePermanent}
 				ondoctochat={handleDocToChat}
 				ondocpublish={handleDocPublish}
+				onopenpub={handleOpenFeedPublication}
+				onfeedsync={handleFeedSync}
+				onfeedloadmore={handleFeedLoadMore}
+				onloadsection={handleLoadSection}
 				{syncMode}
 				onsenditemtochat={handleSendItemToChat}
 				ontogglereadonly={handleToggleReadonly}
@@ -674,6 +907,7 @@
 				localCount={searchLocalCount}
 				relayCount={searchRelayCount}
 				loading={searchLoading}
+				searchContext={docMode === 'empty' ? 'publications' : 'knowledge base'}
 				onsearch={handleSearch}
 				onselect={handleSelectResult}
 				onviewjson={handleViewJson}

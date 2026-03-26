@@ -80,6 +80,24 @@ export interface Section {
 	loaded: boolean;
 }
 
+export type SectionStatus = 'pending' | 'loading' | 'loaded' | 'error';
+
+export interface LazySection {
+	addr: NAddr;
+	title: string | null;
+	content: string | null;
+	position: number;
+	status: SectionStatus;
+	error?: string;
+}
+
+export interface SectionMeta {
+	addr: NAddr;
+	title: string | null;
+	position: number;
+	loaded: boolean;
+}
+
 export interface SearchResult {
 	addr: NAddr | null;
 	event_id: string;

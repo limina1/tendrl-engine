@@ -73,6 +73,8 @@ pub struct Engine {
     timeout_ms: u64,
     /// Data directory path
     data_dir: std::path::PathBuf,
+    /// Configured user pubkey (hex) for resolving by:me
+    my_pubkey: Option<String>,
 }
 
 impl Engine {
@@ -103,6 +105,7 @@ impl Engine {
             relays: relays.iter().map(|s| s.to_string()).collect(),
             timeout_ms,
             data_dir: data_path.to_path_buf(),
+            my_pubkey: None,
         })
     }
 
@@ -119,6 +122,16 @@ impl Engine {
     /// Get the data directory path
     pub fn data_dir(&self) -> &std::path::Path {
         &self.data_dir
+    }
+
+    /// Set the configured user pubkey (hex)
+    pub fn set_my_pubkey(&mut self, pubkey: Option<String>) {
+        self.my_pubkey = pubkey;
+    }
+
+    /// Get the configured user pubkey
+    pub fn my_pubkey(&self) -> Option<&str> {
+        self.my_pubkey.as_deref()
     }
 
     /// Query events using NIP-01 filters with the specified fetch policy

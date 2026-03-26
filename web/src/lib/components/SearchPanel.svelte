@@ -9,6 +9,7 @@
 		localCount = 0,
 		relayCount = 0,
 		loading = false,
+		searchContext = 'knowledge base',
 		onsearch,
 		onselect,
 		onviewjson,
@@ -23,6 +24,7 @@
 		localCount?: number;
 		relayCount?: number;
 		loading?: boolean;
+		searchContext?: string;
 		onsearch: (query: string) => void;
 		onselect: (result: SearchResult) => void;
 		onviewjson: (result: SearchResult) => void;
@@ -74,7 +76,7 @@
 </script>
 
 <div class="search-panel">
-	<SearchInput {onsearch} disabled={loading} />
+	<SearchInput {onsearch} />
 
 	{#if count > 0}
 		<div class="search-bar">
@@ -105,7 +107,7 @@
 		{/each}
 
 		{#if !loading && results.length === 0}
-			<p class="empty">Search publications, sections, and notes</p>
+			<p class="empty">Search {searchContext}</p>
 		{/if}
 
 		{#if loading}

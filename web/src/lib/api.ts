@@ -8,6 +8,7 @@ import type {
 	PublicationDetail,
 	TocEntry,
 	Section,
+	SectionMeta,
 	SearchResponse
 } from './types';
 
@@ -66,28 +67,35 @@ export function replaceContext(notes: { title: string; content: string }[]): Pro
 
 // Publications API
 
-export function listPublications(limit = 20) {
-	return fetchJson<{ publications: PublicationSummary[]; count: number }>(
-		`/api/v1/publications?limit=${limit}`
-	);
+export function listPublications(limit = 20, policy = 'local_only', before?: number) {
+	let url = `/api/v1/publications?limit=${limit}&policy=${policy}`;
+	if (before) url += `&before=${before}`;
+	return fetchJson<{ publications: PublicationSummary[]; count: number }>(url);
 }
 
-export function getPublication(pubkey: string, d_tag: string) {
+export function getPublication(pubkey: string, d_tag: string, policy = 'local_first') {
 	return fetchJson<{ publication: PublicationDetail; toc: TocEntry[]; section_count: number }>(
-		`/api/v1/publications/${pubkey}/${encodeURIComponent(d_tag)}`
+		`/api/v1/publications/${pubkey}/${encodeURIComponent(d_tag)}?policy=${policy}`
 	);
 }
 
-export function loadSections(pubkey: string, d_tag: string) {
+export function loadSections(pubkey: string, d_tag: string, policy = 'local_first') {
 	return fetchJson<{ sections: Section[]; loaded_count: number; total_count: number }>(
-		`/api/v1/publications/${pubkey}/${encodeURIComponent(d_tag)}/sections`,
+		`/api/v1/publications/${pubkey}/${encodeURIComponent(d_tag)}/sections?policy=${policy}`,
 		{ method: 'POST' }
 	);
 }
 
-export function getSection(pubkey: string, d_tag: string, index: number) {
+export function loadSectionsMeta(pubkey: string, d_tag: string, policy = 'local_only') {
+	return fetchJson<{ sections_meta: SectionMeta[]; total_count: number }>(
+		`/api/v1/publications/${pubkey}/${encodeURIComponent(d_tag)}/sections/metadata?policy=${policy}`,
+		{ method: 'POST' }
+	);
+}
+
+export function getSection(pubkey: string, d_tag: string, index: number, policy = 'local_first') {
 	return fetchJson<{ section: Section & { event?: unknown } }>(
-		`/api/v1/publications/${pubkey}/${encodeURIComponent(d_tag)}/sections/${index}`
+		`/api/v1/publications/${pubkey}/${encodeURIComponent(d_tag)}/sections/${index}?policy=${policy}`
 	);
 }
 
@@ -97,11 +105,17 @@ export function getEvent(eventId: string) {
 	return fetchJson<{ event: unknown }>(`/api/v1/events/${eventId}`);
 }
 
+// Config API
+
+export function getConfig() {
+	return fetchJson<{ my_pubkey: string | null }>('/api/v1/config');
+}
+
 // Search API
 
-export function search(query: string, limit?: number) {
+export function search(query: string, limit?: number, my_pubkey?: string, policy = 'local_only') {
 	return fetchJson<SearchResponse>('/api/v1/search', {
 		method: 'POST',
-		body: JSON.stringify({ query, limit })
+		body: JSON.stringify({ query, limit, my_pubkey, policy })
 	});
 }

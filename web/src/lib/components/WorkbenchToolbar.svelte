@@ -5,19 +5,21 @@
 		syncMode,
 		buttonLabels,
 		onsetsyncmode,
-		onsetbuttonlabels
+		onsetbuttonlabels,
+		onhome
 	}: {
 		syncMode: SyncMode;
 		buttonLabels: ButtonLabels;
 		onsetsyncmode: (mode: SyncMode) => void;
 		onsetbuttonlabels: (mode: ButtonLabels) => void;
+		onhome?: () => void;
 	} = $props();
 
 	let settingsOpen = $state(false);
 </script>
 
 <div class="workbench-toolbar">
-	<span class="workbench-title">tendrl</span>
+	<button class="workbench-title" onclick={onhome}>tendrl</button>
 	<span class="spacer"></span>
 	<button class="settings-toggle" onclick={() => (settingsOpen = !settingsOpen)} title="Settings">
 		{settingsOpen ? '✕' : '⚙'}
@@ -47,6 +49,18 @@
 	.workbench-title {
 		font-weight: 700;
 		font-size: 1rem;
+		background: none !important;
+		border: none !important;
+		color: var(--accent);
+		cursor: pointer;
+		padding: 2px 4px !important;
+		border-radius: 0;
+		letter-spacing: 0.02em;
+	}
+
+	.workbench-title:hover {
+		color: var(--fg);
+		background: none !important;
 	}
 
 	.spacer {

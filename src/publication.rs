@@ -156,17 +156,9 @@ pub struct Publication {
 impl Publication {
     /// Extract metadata from a publication index event
     ///
-    /// Note: Publication index events (kind 30040) should not have content.
-    /// Events with non-empty content are rejected as invalid per NKBIP-01.
+    /// Note: Publication index events (kind 30040) should not have content per NKBIP-01,
+    /// but in practice many events do. We accept them and ignore the content field.
     pub fn from_event(event: &Value, is_root: bool) -> Result<Self> {
-        // Defensive: 30040 events should not have content
-        if let Some(content) = event.get("content").and_then(|v| v.as_str()) {
-            if !content.trim().is_empty() {
-                return Err(EngineError::InvalidFilter(
-                    "Publication index (30040) should not have content".into(),
-                ));
-            }
-        }
 
         let id = event.get("id").and_then(|v| v.as_str()).unwrap_or("");
         let pubkey = event
@@ -211,20 +203,39 @@ impl Publication {
 
         let addr = NAddr::new(KIND_PUBLICATION_INDEX, pubkey, &d_tag);
 
-        // Create section stubs for each a-tag
-        let sections: Vec<Section> = section_addrs
-            .into_iter()
-            .enumerate()
-            .filter(|(_, a)| a.kind == KIND_PUBLICATION_SECTION)
-            .map(|(i, a)| Section {
-                addr: a,
-                event: LoadStatus::Pending,
-                title: None,
-                content: None,
-                position: i,
-                alternates: Vec::new(),
-            })
-            .collect();
+        // Separate a-tags: 30041 → sections, 30040 → nested publication stubs
+        let mut sections = Vec::new();
+        let mut nested = Vec::new();
+        let mut sec_pos = 0;
+
+        for a in section_addrs {
+            if a.kind == KIND_PUBLICATION_SECTION {
+                sections.push(Section {
+                    addr: a,
+                    event: LoadStatus::Pending,
+                    title: None,
+                    content: None,
+                    position: sec_pos,
+                    alternates: Vec::new(),
+                });
+                sec_pos += 1;
+            } else if a.kind == KIND_PUBLICATION_INDEX {
+                nested.push(Publication {
+                    addr: a.clone(),
+                    index: LoadStatus::Pending,
+                    title: None,
+                    summary: None,
+                    image: None,
+                    author_pubkey: a.pubkey.clone(),
+                    author_name: None,
+                    version: None,
+                    created_at: 0,
+                    sections: Vec::new(),
+                    nested: Vec::new(),
+                    is_root: false,
+                });
+            }
+        }
 
         Ok(Publication {
             addr,
@@ -239,16 +250,15 @@ impl Publication {
             version,
             created_at,
             sections,
-            nested: Vec::new(),
+            nested,
             is_root,
         })
     }
 
-    /// Get total section count (including nested)
+    /// Get total child count (sections + nested sub-publications)
+    /// Matches notedeck behavior: counts all a-tag references
     pub fn section_count(&self) -> usize {
-        let own = self.sections.len();
-        let nested: usize = self.nested.iter().map(|p| p.section_count()).sum();
-        own + nested
+        self.sections.len() + self.nested.len()
     }
 
     /// Get all loaded section contents as a flat list
@@ -462,20 +472,29 @@ impl<'a> PublicationEngine<'a> {
     }
 
     /// Query all root publications (not referenced by other 30040s)
+    ///
+    /// Pass `before` timestamp for cursor-based pagination.
     pub async fn list_root_publications(
         &self,
         policy: FetchPolicy,
         limit: usize,
+        before: Option<u64>,
     ) -> Result<Vec<Publication>> {
         use serde_json::json;
 
-        // Fetch all 30040 events
-        let filter = json!({
+        // Cast a wide net — nostrdb stores all versions of replaceable events
+        // and many get filtered as children/duplicates. Reference code uses 500.
+        let query_limit = 500;
+        let mut filter = json!({
             "kinds": [KIND_PUBLICATION_INDEX],
-            "limit": limit * 2  // Fetch extra to account for non-root filtering
+            "limit": query_limit
         });
+        if let Some(ts) = before {
+            filter["until"] = json!(ts - 1);
+        }
 
         let response = self.engine.get_events(vec![filter], policy, None).await?;
+        tracing::debug!("list_root_publications: got {} raw 30040 events from store", response.events.len());
 
         // Build set of all addresses referenced as children
         let mut child_addrs = std::collections::HashSet::new();
@@ -496,42 +515,56 @@ impl<'a> PublicationEngine<'a> {
                 }
             }
         }
+        tracing::debug!("list_root_publications: {} child addrs to exclude", child_addrs.len());
 
         // Filter to root publications only, deduplicating by a-tag (keep newest)
         // nostrdb stores all versions of replaceable events, so we need to dedupe
         let mut by_addr: std::collections::HashMap<String, Publication> = std::collections::HashMap::new();
+        let mut skipped_child = 0usize;
+        let mut skipped_empty = 0usize;
+        let mut skipped_dupe = 0usize;
+        let mut skipped_err = 0usize;
 
         for event in response.events {
             match Publication::from_event(&event, true) {
                 Ok(pub_) => {
                     let own_addr = pub_.addr.to_a_tag();
 
-                    // Skip if this is a child publication
                     if child_addrs.contains(&own_addr) {
+                        skipped_child += 1;
                         continue;
                     }
 
-                    // Keep only the newest version for each a-tag
+                    if pub_.sections.is_empty() && pub_.nested.is_empty() {
+                        skipped_empty += 1;
+                        continue;
+                    }
+
                     match by_addr.get(&own_addr) {
-                        Some(existing) if pub_.created_at <= existing.created_at => continue,
+                        Some(existing) if pub_.created_at <= existing.created_at => {
+                            skipped_dupe += 1;
+                            continue;
+                        }
                         _ => {
                             by_addr.insert(own_addr, pub_);
                         }
                     }
                 }
                 Err(e) => {
-                    // Log and skip invalid publications (e.g., 30040 with content)
-                    let id = event.get("id").and_then(|v| v.as_str()).unwrap_or("unknown");
-                    tracing::debug!("Skipping invalid publication {}: {}", id, e);
+                    skipped_err += 1;
+                    tracing::debug!("Skipping invalid publication: {}", e);
                 }
             }
         }
 
+        tracing::info!(
+            "list_root_publications: {} unique roots (skipped: {} child, {} empty, {} dupe, {} err)",
+            by_addr.len(), skipped_child, skipped_empty, skipped_dupe, skipped_err
+        );
+
         // Collect into vec and sort by created_at descending
         let mut roots: Vec<Publication> = by_addr.into_values().collect();
         roots.sort_by(|a, b| b.created_at.cmp(&a.created_at));
-
-        // Apply limit after filtering
         roots.truncate(limit);
 
         Ok(roots)

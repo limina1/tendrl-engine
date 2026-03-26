@@ -5,8 +5,14 @@ export default defineConfig({
 	plugins: [sveltekit()],
 	server: {
 		proxy: {
-			'/api': 'http://localhost:3030',
-			'/health': 'http://localhost:3030'
+			'/api': {
+				target: 'http://localhost:3030',
+				changeOrigin: true
+			},
+			'/health': {
+				target: 'http://localhost:3030',
+				changeOrigin: true
+			}
 		}
 	}
 });
