@@ -73,6 +73,12 @@ pub struct SearchQuery {
     pub until: Option<u64>,
 }
 
+/// A compound query: one or more sub-queries joined by | (OR / union)
+#[derive(Debug, Clone)]
+pub struct CompoundQuery {
+    pub branches: Vec<SearchQuery>,
+}
+
 /// A single search result
 #[derive(Debug, Clone, Serialize)]
 pub struct SearchResult {
@@ -113,6 +119,31 @@ impl SearchQuery {
     /// - `"quoted string"` → TextFilter::Exact
     /// - `"~:multi word"` → SemanticFilter (quoted semantic)
     /// - bare words → TextFilter::Keywords
+    /// Parse a compound query (may contain | for OR/union).
+    /// Returns a CompoundQuery with one or more branches.
+    pub fn parse_compound(input: &str) -> Result<CompoundQuery, QueryParseError> {
+        let input = input.trim();
+        if input.is_empty() {
+            return Err(QueryParseError::EmptyQuery);
+        }
+
+        // Split on | (pipe) for OR branches
+        let parts: Vec<&str> = input.split('|').collect();
+        let mut branches = Vec::new();
+        for part in parts {
+            let part = part.trim();
+            if !part.is_empty() {
+                branches.push(Self::parse(part)?);
+            }
+        }
+
+        if branches.is_empty() {
+            return Err(QueryParseError::EmptyQuery);
+        }
+
+        Ok(CompoundQuery { branches })
+    }
+
     pub fn parse(input: &str) -> Result<Self, QueryParseError> {
         let input = input.trim();
         if input.is_empty() {
@@ -863,5 +894,39 @@ mod tests {
         assert!(tokens[1].quoted);
         assert_eq!(tokens[2].text, "bare_word");
         assert!(!tokens[2].quoted);
+    }
+
+    // --- Compound (OR) query tests ---
+
+    #[test]
+    fn test_parse_compound_single() {
+        let cq = SearchQuery::parse_compound("k:30041 python").unwrap();
+        assert_eq!(cq.branches.len(), 1);
+        assert_eq!(cq.branches[0].kind_filter, Some(vec![30041]));
+    }
+
+    #[test]
+    fn test_parse_compound_or() {
+        let cq = SearchQuery::parse_compound("k:30041 python | k:30040 by:me").unwrap();
+        assert_eq!(cq.branches.len(), 2);
+        assert_eq!(cq.branches[0].kind_filter, Some(vec![30041]));
+        assert_eq!(cq.branches[0].text_filter, Some(TextFilter::Keywords(vec!["python".to_string()])));
+        assert_eq!(cq.branches[1].kind_filter, Some(vec![30040]));
+        assert_eq!(cq.branches[1].author_filter, Some(AuthorFilter::CurrentUser));
+    }
+
+    #[test]
+    fn test_parse_compound_three_branches() {
+        let cq = SearchQuery::parse_compound("t:rust | t:python | t:go").unwrap();
+        assert_eq!(cq.branches.len(), 3);
+        assert_eq!(cq.branches[0].tag_filters[0].values, vec!["rust".to_string()]);
+        assert_eq!(cq.branches[1].tag_filters[0].values, vec!["python".to_string()]);
+        assert_eq!(cq.branches[2].tag_filters[0].values, vec!["go".to_string()]);
+    }
+
+    #[test]
+    fn test_parse_compound_empty_branch_skipped() {
+        let cq = SearchQuery::parse_compound("t:rust | | t:python").unwrap();
+        assert_eq!(cq.branches.len(), 2);
     }
 }

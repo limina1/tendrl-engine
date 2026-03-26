@@ -121,6 +121,32 @@ export function search(query: string, limit?: number, my_pubkey?: string, policy
 	});
 }
 
+// Publish API
+
+export interface PublishRequest {
+	title: string;
+	tags: [string, string][];
+	sections: { title: string; content: string; tags: [string, string][] }[];
+	sign: boolean;
+	broadcast: boolean;
+	relays?: string[];
+}
+
+export interface PublishResponse {
+	publication_id: string;
+	section_ids: string[];
+	signed: boolean;
+	ingested: boolean;
+	broadcast_results?: { relay: string; success: boolean; message: string | null }[];
+}
+
+export function publish(req: PublishRequest) {
+	return fetchJson<PublishResponse>('/api/v1/publish', {
+		method: 'POST',
+		body: JSON.stringify(req)
+	});
+}
+
 // Embedding API
 
 export function getEmbeddingStatus() {

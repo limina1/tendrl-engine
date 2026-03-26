@@ -138,6 +138,8 @@ async fn main() -> anyhow::Result<()> {
         )
         // Search endpoint
         .route("/api/v1/search", post(api::search_handler))
+        // Publish endpoint
+        .route("/api/v1/publish", post(api::publish_handler))
         // Embedding endpoints
         .route("/api/v1/embed/status", get(api::embed_status_handler))
         .route("/api/v1/embed/sync", post(api::embed_sync_handler))

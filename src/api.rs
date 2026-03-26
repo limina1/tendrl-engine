@@ -171,6 +171,51 @@ pub async fn search_handler(
 ) -> Result<Json<SearchResponse>, EngineError> {
     debug!("Search request: query={:?}", req.query);
 
+    let policy = match &req.policy {
+        Some(p) => p.parse()?,
+        None => FetchPolicy::default(),
+    };
+
+    // Check for compound query (contains |)
+    if req.query.contains('|') {
+        let compound = SearchQuery::parse_compound(&req.query)
+            .map_err(|e| EngineError::InvalidFilter(e.to_string()))?;
+
+        let mut all_results = Vec::new();
+        let mut seen_ids = std::collections::HashSet::new();
+        let mut total_local = 0;
+        let mut total_relay = 0;
+
+        for mut branch in compound.branches {
+            if let Some(limit) = req.limit {
+                branch.limit = Some(limit);
+            }
+            resolve_author(&mut branch, &req, &engine)?;
+
+            let resp = engine
+                .search(&branch, policy, req.relays.as_deref())
+                .await?;
+
+            total_local += resp.local_count;
+            total_relay += resp.relay_count;
+
+            for result in resp.results {
+                if seen_ids.insert(result.event_id.clone()) {
+                    all_results.push(result);
+                }
+            }
+        }
+
+        let count = all_results.len();
+        return Ok(Json(SearchResponse {
+            results: all_results,
+            count,
+            local_count: total_local,
+            relay_count: total_relay,
+        }));
+    }
+
+    // Single query path
     let mut query = SearchQuery::parse(&req.query)
         .map_err(|e| EngineError::InvalidFilter(e.to_string()))?;
 
@@ -178,7 +223,21 @@ pub async fn search_handler(
         query.limit = Some(limit);
     }
 
-    // Resolve by:me to actual pubkey (from request or engine config)
+    resolve_author(&mut query, &req, &engine)?;
+
+    let response = engine
+        .search(&query, policy, req.relays.as_deref())
+        .await?;
+
+    Ok(Json(response))
+}
+
+/// Resolve by:me in a query to actual pubkey
+fn resolve_author(
+    query: &mut SearchQuery,
+    req: &SearchRequest,
+    engine: &AppState,
+) -> Result<(), EngineError> {
     if let Some(AuthorFilter::CurrentUser) = &query.author_filter {
         let pk = req.my_pubkey.as_deref().or_else(|| engine.my_pubkey());
         if let Some(pk) = pk {
@@ -189,17 +248,7 @@ pub async fn search_handler(
             ));
         }
     }
-
-    let policy = match &req.policy {
-        Some(p) => p.parse()?,
-        None => FetchPolicy::default(),
-    };
-
-    let response = engine
-        .search(&query, policy, req.relays.as_deref())
-        .await?;
-
-    Ok(Json(response))
+    Ok(())
 }
 
 // ============================================================================
@@ -527,6 +576,161 @@ pub async fn load_sections_metadata_handler(
         "sections_meta": sections_meta,
         "total_count": total_count
     })))
+}
+
+// ============================================================================
+// Publish API Endpoints
+// ============================================================================
+
+use crate::publication::{build_publication_events, build_signed_publication_events};
+use crate::tree::state::{ComposeState, SectionCompose};
+
+/// Request to publish/draft a publication
+#[derive(Debug, Deserialize)]
+pub struct PublishRequest {
+    pub title: String,
+    #[serde(default)]
+    pub tags: Vec<(String, String)>,
+    pub sections: Vec<PublishSectionRequest>,
+    /// Whether to sign the events (requires secret key in engine)
+    #[serde(default)]
+    pub sign: bool,
+    /// Whether to broadcast to relays after creating
+    #[serde(default)]
+    pub broadcast: bool,
+    /// Specific relays to broadcast to (defaults to configured relays)
+    pub relays: Option<Vec<String>>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct PublishSectionRequest {
+    pub title: String,
+    pub content: String,
+    #[serde(default)]
+    pub tags: Vec<(String, String)>,
+}
+
+/// Response from publish endpoint
+#[derive(Debug, Serialize)]
+pub struct PublishResponse {
+    pub publication_id: String,
+    pub section_ids: Vec<String>,
+    pub signed: bool,
+    pub ingested: bool,
+    pub broadcast_results: Option<Vec<BroadcastResult>>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct BroadcastResult {
+    pub relay: String,
+    pub success: bool,
+    pub message: Option<String>,
+}
+
+/// POST /api/v1/publish — create a publication (draft or signed)
+pub async fn publish_handler(
+    State(engine): State<AppState>,
+    Json(req): Json<PublishRequest>,
+) -> Result<impl IntoResponse, EngineError> {
+    let pubkey = engine.my_pubkey().ok_or_else(|| {
+        EngineError::Config("Publishing requires [identity] pubkey in config".into())
+    })?;
+    let pubkey = pubkey.to_string();
+
+    // Map request to ComposeState
+    use crate::tree::state::TagEntry;
+    let mut compose = ComposeState::new();
+    compose.title = req.title;
+    for (name, value) in &req.tags {
+        compose.tags.push(TagEntry { name: name.clone(), value: value.clone() });
+    }
+    compose.sections = req
+        .sections
+        .iter()
+        .map(|s| {
+            let mut sc = SectionCompose::default();
+            sc.title = s.title.clone();
+            sc.content = s.content.clone();
+            sc.tags = s.tags.iter().map(|(n, v)| TagEntry { name: n.clone(), value: v.clone() }).collect();
+            sc
+        })
+        .collect();
+
+    // Build events (signed or unsigned)
+    let (pub_event, section_events) = if req.sign {
+        // Try to get secret from engine's keyring
+        let secret = crate::identity::IdentityKeyring::new()
+            .get_secret(&pubkey)
+            .map_err(|e| EngineError::Config(format!("Cannot sign: {e}")))?;
+        build_signed_publication_events(&compose, &pubkey, &secret)
+    } else {
+        build_publication_events(&compose, &pubkey)
+    };
+
+    let pub_id = pub_event
+        .get("id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let section_ids: Vec<String> = section_events
+        .iter()
+        .map(|e| {
+            e.get("id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string()
+        })
+        .collect();
+
+    // Ingest into local nostrdb
+    let mut ingested = true;
+    for event in section_events.iter().chain(std::iter::once(&pub_event)) {
+        let json_str = serde_json::to_string(event)
+            .map_err(|e| EngineError::Database(format!("JSON error: {e}")))?;
+        if let Err(e) = engine.ingest_event(&json_str) {
+            debug!("Ingest warning: {}", e);
+            ingested = false;
+        }
+    }
+
+    // Broadcast to relays if requested
+    let broadcast_results = if req.broadcast {
+        let relays = req
+            .relays
+            .as_deref()
+            .map(|r| r.to_vec())
+            .unwrap_or_else(|| engine.relays().to_vec());
+
+        let event_jsons: Vec<String> = section_events
+            .iter()
+            .chain(std::iter::once(&pub_event))
+            .map(|e| serde_json::to_string(e).unwrap())
+            .collect();
+
+        let (_, _, results) =
+            crate::relay::publish_events_to_relays(&relays, &event_jsons).await;
+
+        Some(
+            results
+                .into_iter()
+                .map(|r| BroadcastResult {
+                    relay: r.relay_url,
+                    success: r.success,
+                    message: r.message,
+                })
+                .collect::<Vec<_>>(),
+        )
+    } else {
+        None
+    };
+
+    Ok(Json(PublishResponse {
+        publication_id: pub_id,
+        section_ids,
+        signed: req.sign,
+        ingested,
+        broadcast_results,
+    }))
 }
 
 // ============================================================================

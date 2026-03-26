@@ -564,13 +564,46 @@
 	}
 
 	// Chat fragments ▸
-	function handleChatPublishFragments(_fragments: Fragment[]) {
-		// TODO: create local nostr events
+	async function handleChatPublishFragments(fragments: Fragment[]) {
+		if (!fragments.length) return;
+		try {
+			await api.publish({
+				title: `Chat export ${new Date().toISOString().slice(0, 10)}`,
+				tags: [],
+				sections: fragments.map(f => ({
+					title: `[${f.role}]`,
+					content: f.content,
+					tags: []
+				})),
+				sign: false,
+				broadcast: false
+			});
+			await loadFeed();
+		} catch (e) {
+			console.error('Publish fragments failed:', e);
+		}
 	}
 
 	// Compose ▸
-	function handleComposePublish(_items: ContextItem[]) {
-		// TODO: create local nostr events
+	async function handleComposePublish(_items: ContextItem[]) {
+		if (!compose.title && !compose.sections.length) return;
+		try {
+			const resp = await api.publish({
+				title: compose.title,
+				tags: compose.tags.map(t => [t.name, t.value] as [string, string]),
+				sections: compose.sections.map(s => ({
+					title: s.title,
+					content: s.content,
+					tags: s.tags.map(t => [t.name, t.value] as [string, string])
+				})),
+				sign: false,
+				broadcast: false
+			});
+			console.log('Published:', resp.publication_id);
+			await loadFeed();
+		} catch (e) {
+			console.error('Publish compose failed:', e);
+		}
 	}
 
 	// --- Compose update reconciliation ---
@@ -842,8 +875,27 @@
 	}
 
 	// Document reading ▸
-	function handleDocPublish() {
-		// TODO: create local nostr event
+	async function handleDocPublish() {
+		if (!publication || !sections.length) return;
+		try {
+			const loadedSections = sections.filter(s => s.status === 'loaded' && s.content);
+			if (!loadedSections.length) return;
+			const resp = await api.publish({
+				title: publication.title ?? 'Untitled',
+				tags: [],
+				sections: loadedSections.map(s => ({
+					title: s.title ?? '',
+					content: s.content ?? '',
+					tags: []
+				})),
+				sign: false,
+				broadcast: false
+			});
+			console.log('Published from reader:', resp.publication_id);
+			await loadFeed();
+		} catch (e) {
+			console.error('Publish doc failed:', e);
+		}
 	}
 </script>
 
