@@ -1015,7 +1015,7 @@ pub async fn embed_status_handler(
     let indexed_count = index.len();
 
     // Count total events in nostrdb
-    let filter = serde_json::json!({"limit": 10000});
+    let filter = serde_json::json!({"limit": 100000});
     let total_events = crate::query::query_local(engine.ndb(), &[filter])
         .map(|e| e.len())
         .unwrap_or(0);

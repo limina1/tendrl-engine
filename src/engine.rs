@@ -275,7 +275,7 @@ impl Engine {
         })?;
 
         // Get all events from nostrdb
-        let filter = serde_json::json!({"limit": 10000});
+        let filter = serde_json::json!({"limit": 100000});
         let all_events = query::query_local(&self.ndb, &[filter])?;
         let total_events = all_events.len();
 

@@ -11,6 +11,7 @@
 		onsetbuttonlabels,
 		onhome,
 		onsyncembeddings,
+		onreindexembeddings,
 		onviewignored,
 		onpurge
 	}: {
@@ -23,6 +24,7 @@
 		onsetbuttonlabels: (mode: ButtonLabels) => void;
 		onhome?: () => void;
 		onsyncembeddings?: () => void;
+		onreindexembeddings?: () => void;
 		onviewignored?: () => void;
 		onpurge?: () => void;
 	} = $props();
@@ -52,8 +54,11 @@
 				<div class="embed-progress-bar" style:width="{pct}%"></div>
 			</div>
 		{/if}
-		<button class="embed-sync-btn" onclick={onsyncembeddings} disabled={embeddingSyncing} title="Sync embeddings">
+		<button class="embed-sync-btn" onclick={onsyncembeddings} disabled={embeddingSyncing} title="Embed new events">
 			{embeddingSyncing ? '...' : '↻'}
+		</button>
+		<button class="embed-sync-btn reindex-btn" onclick={() => { if (confirm('Clear embedding index and re-embed all events?')) onreindexembeddings?.(); }} disabled={embeddingSyncing} title="Reindex all embeddings">
+			Re
 		</button>
 	{/if}
 	<button class="settings-toggle" onclick={() => (settingsOpen = !settingsOpen)} title="Settings">
@@ -169,6 +174,12 @@
 	.embed-sync-btn:hover {
 		color: var(--fg);
 		border-color: var(--fg-muted);
+	}
+
+	.reindex-btn {
+		color: #ef4444;
+		border-color: #ef4444;
+		font-size: 0.6rem;
 	}
 
 	.settings-toggle {

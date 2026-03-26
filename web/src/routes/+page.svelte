@@ -303,6 +303,22 @@
 		}
 	}
 
+	async function handleReindexEmbeddings() {
+		embeddingSyncing = true;
+		const pollInterval = setInterval(async () => {
+			try { embeddingStatus = await api.getEmbeddingStatus(); } catch {}
+		}, 1000);
+		try {
+			embeddingStatus = await api.reindexEmbeddings();
+		} catch (e) {
+			console.error('Reindex failed:', e);
+		} finally {
+			clearInterval(pollInterval);
+			try { embeddingStatus = await api.getEmbeddingStatus(); } catch {}
+			embeddingSyncing = false;
+		}
+	}
+
 	async function handleSyncEmbeddings() {
 		embeddingSyncing = true;
 
@@ -1017,6 +1033,7 @@
 		onsetbuttonlabels={(m: ButtonLabels) => (buttonLabels = m)}
 		onhome={() => { docMode = 'empty'; publication = null; sections = []; docCollapsed = false; if (searchCount === 0) loadFeed(); }}
 		onsyncembeddings={handleSyncEmbeddings}
+		onreindexembeddings={handleReindexEmbeddings}
 		onviewignored={handleViewIgnored}
 		onpurge={handlePurge}
 	/>
