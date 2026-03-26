@@ -43,8 +43,8 @@ if [[ ! -f "$CONFIG" ]]; then
     exit 1
 fi
 
-# Check if embedding is enabled
-EMBED_ENABLED=$(grep -A1 '\[embedding\]' "$CONFIG" 2>/dev/null | grep 'enabled.*true' || true)
+# Check if embedding is enabled (search anywhere in the [embedding] section)
+EMBED_ENABLED=$(awk '/^\[embedding\]/,/^\[/' "$CONFIG" 2>/dev/null | grep -E '^\s*enabled\s*=\s*true' || true)
 
 # 1. Start embedding sidecar (if enabled)
 if [[ -n "$EMBED_ENABLED" ]]; then
@@ -52,7 +52,15 @@ if [[ -n "$EMBED_ENABLED" ]]; then
     cd sidecar && ./run.sh &
     PIDS+=($!)
     cd ..
-    sleep 2
+    # Wait for sidecar to be ready (model download + load can take a while)
+    echo "Waiting for sidecar to load model..."
+    for i in $(seq 1 60); do
+        if curl -s http://localhost:3031/health > /dev/null 2>&1; then
+            echo "Sidecar ready."
+            break
+        fi
+        sleep 1
+    done
 fi
 
 # 2. Build and start backend
