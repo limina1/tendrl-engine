@@ -1,0 +1,55 @@
+# tendrl-engine configuration
+# Copy to config.toml and customize, then run:
+#   cargo run -- -c config.toml
+
+[identity]
+# Your nostr public key (npub or hex)
+# pubkey = "npub1..."
+
+[relay]
+timeout_ms = 15000
+
+# General relays — profile info, contacts, relay lists
+[relay.general]
+urls = [
+    "wss://relay.damus.io",
+    "wss://nos.lol",
+    "wss://relay.nostr.band",
+]
+kinds = [0, 3, 10002, 30023, 30818, 30817]
+
+# Publish relays — where your events get pushed
+# Add your local relay here for drafts
+[relay.publish]
+urls = [
+    "wss://relay.damus.io",
+    "wss://nos.lol",
+]
+
+# Fetch relays — where to pull publications and sections from
+# Add ws://localhost:3334 if you run a local relay
+[relay.fetch]
+urls = [
+    "wss://relay.damus.io",
+    "wss://relay.noswhere.com",
+    "wss://nos.lol",
+]
+kinds = [0, 30040, 30041, 30023, 30818, 30817, 9802]
+
+# Embedding / vector search (optional)
+# Start the sidecar first: cd sidecar && ./run.sh
+[embedding]
+enabled = false
+backend = "python"                    # "python" or "onnx" (--features onnx)
+sidecar_url = "http://localhost:3031"
+model = "all-MiniLM-L6-v2"
+dimensions = 384
+
+# Server settings (optional)
+# [server]
+# host = "127.0.0.1"
+# port = 3030
+
+# Database settings (optional)
+# [database]
+# data_dir = "~/.local/share/nostr-engine/nostrdb"

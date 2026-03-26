@@ -1,0 +1,40 @@
+# tendrl-engine configuration
+# Run with: cargo run -- -c config.toml
+
+[identity]
+pubkey = "npub1m3xdppkd0njmrqe2ma8a6ys39zvgp5k8u22mev8xsnqp4nh80srqhqa5sf"
+
+[relay]
+timeout_ms = 15000
+
+# General relays — profile info, contacts, relay lists
+[relay.general]
+urls = [
+    "wss://relay.damus.io",
+    "wss://nos.lol",
+    "wss://relay.nostr.band",
+]
+kinds = [0, 3, 10002, 30023, 30818, 30817]
+
+# Publish relays — where your events get pushed
+[relay.publish]
+urls = [
+    "ws://localhost:3334",
+    "wss://relay.damus.io",
+]
+
+# Fetch relays — where to pull publications and sections from
+[relay.fetch]
+urls = [
+    "ws://localhost:3334",
+    "wss://relay.noswhere.com",
+    "wss://relay.damus.io",
+]
+kinds = [0, 30040, 30041, 30023, 30818, 30817, 9802]
+
+[embedding]
+enabled = true
+backend = "python"                    # "python" or "onnx" (--features onnx)
+sidecar_url = "http://localhost:3031"
+model = "all-MiniLM-L6-v2"
+dimensions = 384
