@@ -315,6 +315,14 @@ enum TokenClass {
 }
 
 /// Tokenize input respecting double-quoted strings
+///
+/// Handles three forms:
+/// - `word` → Token { text: "word", quoted: false }
+/// - `"quoted phrase"` → Token { text: "quoted phrase", quoted: true }
+/// - `prefix:"quoted phrase"` → Token { text: "prefix:quoted phrase", quoted: true }
+/// - `prefix:"quoted phrase":suffix` → Token { text: "prefix:quoted phrase:suffix", quoted: true }
+///
+/// The last two forms support `~:"semantic query":5` syntax.
 fn tokenize(input: &str) -> Vec<Token> {
     let mut tokens = Vec::new();
     let mut chars = input.chars().peekable();
@@ -326,6 +334,7 @@ fn tokenize(input: &str) -> Vec<Token> {
         }
 
         if c == '"' {
+            // Bare quoted string: "exact phrase"
             chars.next(); // consume opening quote
             let mut text = String::new();
             while let Some(&c) = chars.peek() {
@@ -340,18 +349,39 @@ fn tokenize(input: &str) -> Vec<Token> {
                 tokens.push(Token { text, quoted: true });
             }
         } else {
+            // Unquoted token — but may contain prefix:"quoted" form
             let mut text = String::new();
+            let mut has_embedded_quote = false;
+
             while let Some(&c) = chars.peek() {
                 if c.is_whitespace() {
                     break;
                 }
+                if c == '"' {
+                    // Embedded quote: prefix:"content" — read until closing quote
+                    chars.next(); // consume opening quote
+                    has_embedded_quote = true;
+                    while let Some(&c) = chars.peek() {
+                        if c == '"' {
+                            chars.next(); // consume closing quote
+                            break;
+                        }
+                        text.push(c);
+                        chars.next();
+                    }
+                    // Continue reading any suffix after the closing quote (e.g., :5)
+                    continue;
+                }
                 text.push(c);
                 chars.next();
             }
-            tokens.push(Token {
-                text,
-                quoted: false,
-            });
+
+            if !text.is_empty() {
+                tokens.push(Token {
+                    text,
+                    quoted: has_embedded_quote,
+                });
+            }
         }
     }
 
@@ -524,7 +554,34 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_semantic_multiword() {
+    fn test_parse_semantic_multiword_new_syntax() {
+        // New syntax: ~:"phrase"
+        let q = SearchQuery::parse(r#"~:"machine learning""#).unwrap();
+        assert_eq!(
+            q.semantic_filter,
+            Some(SemanticFilter {
+                query: "machine learning".to_string(),
+                k: 10
+            })
+        );
+    }
+
+    #[test]
+    fn test_parse_semantic_multiword_with_k() {
+        // ~:"phrase":k syntax
+        let q = SearchQuery::parse(r#"~:"machine learning":5"#).unwrap();
+        assert_eq!(
+            q.semantic_filter,
+            Some(SemanticFilter {
+                query: "machine learning".to_string(),
+                k: 5
+            })
+        );
+    }
+
+    #[test]
+    fn test_parse_semantic_multiword_old_syntax() {
+        // Old syntax still works: "~:phrase"
         let q = SearchQuery::parse(r#""~:machine learning""#).unwrap();
         assert_eq!(
             q.semantic_filter,
@@ -715,5 +772,96 @@ mod tests {
 
         let results = build_search_results(&events, 5);
         assert_eq!(results.len(), 5);
+    }
+
+    // --- Compound query tests ---
+
+    #[test]
+    fn test_parse_text_and_semantic() {
+        let q = SearchQuery::parse("python ~:machine_learning").unwrap();
+        assert_eq!(
+            q.text_filter,
+            Some(TextFilter::Keywords(vec!["python".to_string()]))
+        );
+        assert_eq!(
+            q.semantic_filter,
+            Some(SemanticFilter {
+                query: "machine_learning".to_string(),
+                k: 10
+            })
+        );
+        assert!(q.needs_text_scan());
+        assert!(q.needs_semantic());
+    }
+
+    #[test]
+    fn test_parse_kind_and_semantic() {
+        let q = SearchQuery::parse("k:30041 ~:knowledge:7").unwrap();
+        assert_eq!(q.kind_filter, Some(vec![30041]));
+        assert_eq!(
+            q.semantic_filter,
+            Some(SemanticFilter {
+                query: "knowledge".to_string(),
+                k: 7
+            })
+        );
+    }
+
+    #[test]
+    fn test_parse_all_filters_combined() {
+        let hex = "32bf915904bfde2d136ba45dde32c88f4aca863783999faea2e847a8fafd2f15";
+        let q = SearchQuery::parse(&format!(
+            r#"by:{} k:30041 t:nostr ~:"distributed systems":5 protocol"#,
+            hex
+        ))
+        .unwrap();
+        assert_eq!(q.author_filter, Some(AuthorFilter::Pubkeys(vec![hex.to_string()])));
+        assert_eq!(q.kind_filter, Some(vec![30041]));
+        assert_eq!(q.tag_filters, vec![TagFilter { tag_name: 't', values: vec!["nostr".to_string()] }]);
+        assert_eq!(q.semantic_filter, Some(SemanticFilter { query: "distributed systems".to_string(), k: 5 }));
+        assert_eq!(q.text_filter, Some(TextFilter::Keywords(vec!["protocol".to_string()])));
+    }
+
+    #[test]
+    fn test_parse_semantic_new_syntax_no_k() {
+        let q = SearchQuery::parse(r#"~:"virtue ethics""#).unwrap();
+        assert_eq!(
+            q.semantic_filter,
+            Some(SemanticFilter {
+                query: "virtue ethics".to_string(),
+                k: 10
+            })
+        );
+        // Should NOT be treated as exact text
+        assert!(q.text_filter.is_none());
+    }
+
+    #[test]
+    fn test_parse_semantic_combined_with_exact_text() {
+        let q = SearchQuery::parse(r#"~:concept "exact phrase""#).unwrap();
+        assert_eq!(q.semantic_filter, Some(SemanticFilter { query: "concept".to_string(), k: 10 }));
+        assert_eq!(q.text_filter, Some(TextFilter::Exact("exact phrase".to_string())));
+    }
+
+    // --- Tokenizer edge cases ---
+
+    #[test]
+    fn test_tokenize_prefix_quoted() {
+        let tokens = tokenize(r#"~:"hello world":3"#);
+        assert_eq!(tokens.len(), 1);
+        assert_eq!(tokens[0].text, "~:hello world:3");
+        assert!(tokens[0].quoted);
+    }
+
+    #[test]
+    fn test_tokenize_mixed() {
+        let tokens = tokenize(r#"k:30041 ~:"semantic query" bare_word"#);
+        assert_eq!(tokens.len(), 3);
+        assert_eq!(tokens[0].text, "k:30041");
+        assert!(!tokens[0].quoted);
+        assert_eq!(tokens[1].text, "~:semantic query");
+        assert!(tokens[1].quoted);
+        assert_eq!(tokens[2].text, "bare_word");
+        assert!(!tokens[2].quoted);
     }
 }

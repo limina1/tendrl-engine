@@ -1164,6 +1164,91 @@ mod tests {
         assert_eq!(addr.short_format(), "30040:abc:doc");
     }
 
+    // --- from_event tests ---
+
+    #[test]
+    fn test_from_event_with_sections() {
+        let event = serde_json::json!({
+            "id": "abc123",
+            "pubkey": "deadbeef",
+            "created_at": 1700000000u64,
+            "kind": 30040,
+            "content": "",
+            "tags": [
+                ["d", "my-pub"],
+                ["title", "My Publication"],
+                ["a", "30041:deadbeef:section-1"],
+                ["a", "30041:deadbeef:section-2"]
+            ]
+        });
+
+        let pub_ = Publication::from_event(&event, true).unwrap();
+        assert_eq!(pub_.title, Some("My Publication".to_string()));
+        assert_eq!(pub_.sections.len(), 2);
+        assert_eq!(pub_.nested.len(), 0);
+        assert_eq!(pub_.section_count(), 2);
+        assert_eq!(pub_.sections[0].addr.d_tag, "section-1");
+        assert_eq!(pub_.sections[1].addr.d_tag, "section-2");
+    }
+
+    #[test]
+    fn test_from_event_with_nested() {
+        let event = serde_json::json!({
+            "id": "abc123",
+            "pubkey": "deadbeef",
+            "created_at": 1700000000u64,
+            "kind": 30040,
+            "content": "",
+            "tags": [
+                ["d", "my-pub"],
+                ["a", "30040:alice:chapter-1"],
+                ["a", "30040:alice:chapter-2"],
+                ["a", "30041:deadbeef:intro"]
+            ]
+        });
+
+        let pub_ = Publication::from_event(&event, true).unwrap();
+        assert_eq!(pub_.sections.len(), 1); // only 30041
+        assert_eq!(pub_.nested.len(), 2);   // 30040 sub-pubs
+        assert_eq!(pub_.section_count(), 3); // total children
+    }
+
+    #[test]
+    fn test_from_event_with_content_accepted() {
+        // Events with content should be accepted (many real events have it)
+        let event = serde_json::json!({
+            "id": "abc123",
+            "pubkey": "deadbeef",
+            "created_at": 1700000000u64,
+            "kind": 30040,
+            "content": "some content that should be ignored",
+            "tags": [
+                ["d", "my-pub"],
+                ["a", "30041:deadbeef:section-1"]
+            ]
+        });
+
+        let pub_ = Publication::from_event(&event, true).unwrap();
+        assert_eq!(pub_.sections.len(), 1);
+    }
+
+    #[test]
+    fn test_from_event_empty_no_sections() {
+        let event = serde_json::json!({
+            "id": "abc123",
+            "pubkey": "deadbeef",
+            "created_at": 1700000000u64,
+            "kind": 30040,
+            "content": "",
+            "tags": [["d", "empty-pub"]]
+        });
+
+        let pub_ = Publication::from_event(&event, true).unwrap();
+        assert_eq!(pub_.sections.len(), 0);
+        assert_eq!(pub_.nested.len(), 0);
+        assert_eq!(pub_.section_count(), 0);
+    }
+
     // --- Block publication event tests ---
 
     fn make_block_state_all_editable() -> ComposeBlockState {

@@ -418,3 +418,152 @@ impl EmbeddingIndex {
             .map_err(|e| EngineError::Database(format!("ONNX embedding failed: {e}")))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_config() -> EmbeddingConfig {
+        EmbeddingConfig {
+            enabled: true,
+            backend: "python".to_string(),
+            sidecar_url: "http://localhost:99999".to_string(), // won't connect
+            model: "test-model".to_string(),
+            dimensions: 4,
+            index_path: None,
+            auto_embed: false,
+        }
+    }
+
+    #[test]
+    fn test_new_index() {
+        let dir = tempfile::tempdir().unwrap();
+        let idx = EmbeddingIndex::new(dir.path(), &test_config()).unwrap();
+        assert_eq!(idx.len(), 0);
+        assert_eq!(idx.model(), "test-model");
+    }
+
+    #[test]
+    fn test_insert_and_search() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut idx = EmbeddingIndex::new(dir.path(), &test_config()).unwrap();
+
+        // Insert 3 vectors (4 dimensions)
+        idx.insert("event_a", &[1.0, 0.0, 0.0, 0.0]).unwrap();
+        idx.insert("event_b", &[0.0, 1.0, 0.0, 0.0]).unwrap();
+        idx.insert("event_c", &[0.9, 0.1, 0.0, 0.0]).unwrap();
+
+        assert_eq!(idx.len(), 3);
+        assert!(idx.contains("event_a"));
+        assert!(!idx.contains("event_d"));
+
+        // Search for nearest to event_a's direction
+        let results = idx.search(&[1.0, 0.0, 0.0, 0.0], 2).unwrap();
+        assert_eq!(results.len(), 2);
+        // event_a should be closest (exact match), event_c second (0.9 similarity)
+        assert_eq!(results[0].0, "event_a");
+        assert_eq!(results[1].0, "event_c");
+    }
+
+    #[test]
+    fn test_insert_dedup() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut idx = EmbeddingIndex::new(dir.path(), &test_config()).unwrap();
+
+        idx.insert("event_a", &[1.0, 0.0, 0.0, 0.0]).unwrap();
+        idx.insert("event_a", &[0.0, 1.0, 0.0, 0.0]).unwrap(); // should skip
+
+        assert_eq!(idx.len(), 1);
+    }
+
+    #[test]
+    fn test_dimension_mismatch() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut idx = EmbeddingIndex::new(dir.path(), &test_config()).unwrap();
+
+        let result = idx.insert("event_a", &[1.0, 0.0]); // 2 dims instead of 4
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("dimension mismatch"));
+    }
+
+    #[test]
+    fn test_save_and_load() {
+        let dir = tempfile::tempdir().unwrap();
+
+        // Create and populate
+        {
+            let mut idx = EmbeddingIndex::new(dir.path(), &test_config()).unwrap();
+            idx.insert("event_a", &[1.0, 0.0, 0.0, 0.0]).unwrap();
+            idx.insert("event_b", &[0.0, 1.0, 0.0, 0.0]).unwrap();
+            idx.save().unwrap();
+        }
+
+        // Reload
+        {
+            let idx = EmbeddingIndex::load(dir.path(), &test_config()).unwrap();
+            assert_eq!(idx.len(), 2);
+            assert!(idx.contains("event_a"));
+            assert!(idx.contains("event_b"));
+
+            // Search still works after reload
+            let results = idx.search(&[1.0, 0.0, 0.0, 0.0], 1).unwrap();
+            assert_eq!(results[0].0, "event_a");
+        }
+    }
+
+    #[test]
+    fn test_remove() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut idx = EmbeddingIndex::new(dir.path(), &test_config()).unwrap();
+
+        idx.insert("event_a", &[1.0, 0.0, 0.0, 0.0]).unwrap();
+        idx.insert("event_b", &[0.0, 1.0, 0.0, 0.0]).unwrap();
+        assert_eq!(idx.len(), 2);
+
+        idx.remove("event_a").unwrap();
+        assert_eq!(idx.len(), 1);
+        assert!(!idx.contains("event_a"));
+        assert!(idx.contains("event_b"));
+    }
+
+    #[test]
+    fn test_clear() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut idx = EmbeddingIndex::new(dir.path(), &test_config()).unwrap();
+
+        idx.insert("event_a", &[1.0, 0.0, 0.0, 0.0]).unwrap();
+        idx.insert("event_b", &[0.0, 1.0, 0.0, 0.0]).unwrap();
+
+        idx.clear().unwrap();
+        assert_eq!(idx.len(), 0);
+        assert!(!idx.contains("event_a"));
+    }
+
+    #[test]
+    fn test_search_empty_index() {
+        let dir = tempfile::tempdir().unwrap();
+        let idx = EmbeddingIndex::new(dir.path(), &test_config()).unwrap();
+        let results = idx.search(&[1.0, 0.0, 0.0, 0.0], 5).unwrap();
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_model_mismatch_warning() {
+        let dir = tempfile::tempdir().unwrap();
+
+        // Save with one model
+        {
+            let mut idx = EmbeddingIndex::new(dir.path(), &test_config()).unwrap();
+            idx.insert("event_a", &[1.0, 0.0, 0.0, 0.0]).unwrap();
+            idx.save().unwrap();
+        }
+
+        // Load with different model name — should still load (with warning)
+        {
+            let mut config = test_config();
+            config.model = "different-model".to_string();
+            let idx = EmbeddingIndex::load(dir.path(), &config).unwrap();
+            assert_eq!(idx.len(), 1); // still has the data
+        }
+    }
+}
