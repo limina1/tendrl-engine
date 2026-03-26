@@ -55,7 +55,7 @@
 		<hr class="pub-divider" />
 	{/if}
 
-	{#each sections as section, i (section.addr?.d_tag ?? i)}
+	{#each sections as section, i (`${i}:${section.addr?.pubkey ?? ''}:${section.addr?.d_tag ?? ''}`)}
 		<div class="continuous-section" data-section-index={i}>
 			{#if section.title}
 				<h3 class="section-title">{section.title}</h3>
