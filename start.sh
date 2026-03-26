@@ -49,18 +49,27 @@ EMBED_ENABLED=$(awk '/^\[embedding\]/,/^\[/' "$CONFIG" 2>/dev/null | grep -E '^\
 # 1. Start embedding sidecar (if enabled)
 if [[ -n "$EMBED_ENABLED" ]]; then
     echo "Starting embedding sidecar..."
-    cd sidecar && ./run.sh &
+    ./sidecar/run.sh &
     PIDS+=($!)
-    cd ..
     # Wait for sidecar to be ready (model download + load can take a while)
     echo "Waiting for sidecar to load model..."
-    for i in $(seq 1 60); do
+    SIDECAR_READY=false
+    for i in $(seq 1 90); do
+        # Check if process is still alive
+        if ! kill -0 "${PIDS[-1]}" 2>/dev/null; then
+            echo "ERROR: Sidecar process died. Check sidecar/run.sh output."
+            break
+        fi
         if curl -s http://localhost:3031/health > /dev/null 2>&1; then
             echo "Sidecar ready."
+            SIDECAR_READY=true
             break
         fi
         sleep 1
     done
+    if [[ "$SIDECAR_READY" != true ]]; then
+        echo "WARNING: Sidecar not ready, continuing without embeddings."
+    fi
 fi
 
 # 2. Build and start backend
