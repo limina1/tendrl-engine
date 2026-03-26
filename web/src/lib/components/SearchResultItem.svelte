@@ -30,6 +30,7 @@
 	);
 
 	let tagsExpanded = $state(false);
+	let menuOpen = $state(false);
 
 	const KINDS: Record<number, string> = {
 		30040: 'index',
@@ -49,11 +50,9 @@
 	const preview = $derived(
 		result.preview.length > 100 ? result.preview.slice(0, 100) + '...' : result.preview
 	);
-
-	const visibleTags = $derived(result.tags.slice(0, 3));
-	const extraTagCount = $derived(Math.max(0, result.tags.length - 3));
 </script>
 
+<!-- svelte-ignore a11y_no_static_element_interactions -->
 <div class="result-item" class:kind-index={result.kind === 30040} class:kind-section={result.kind === 30041}>
 	<div class="result-header">
 		{#if ontogglecheck}
@@ -62,42 +61,27 @@
 			</label>
 		{/if}
 		<div class="result-header-text" onclick={() => onselect(result)} onkeydown={(e) => e.key === 'Enter' && onselect(result)} role="button" tabindex="0">
-		<span class="result-title">{result.title ?? '[Untitled]'}</span>
-		<span class="kind-badge">{KINDS[result.kind] ?? result.kind}</span>
-		{#if result.semantic_score != null}
-			<span class="score-badge">{(result.semantic_score * 100).toFixed(0)}%</span>
-		{/if}
-		{#if poolMatch?.in_context}
-			<span class="loc-badge" class:loc-synced={!poolMatch.modified} class:loc-modified={poolMatch.modified}>context</span>
-		{/if}
-		{#if poolMatch?.in_compose}
-			<span class="loc-badge" class:loc-synced={!poolMatch.modified} class:loc-modified={poolMatch.modified}>compose</span>
-		{/if}
+			<span class="result-title">{result.title ?? '[Untitled]'}</span>
+			<span class="kind-badge">{KINDS[result.kind] ?? result.kind}</span>
+			{#if result.semantic_score != null}
+				<span class="score-badge">{(result.semantic_score * 100).toFixed(0)}%</span>
+			{/if}
+			{#if poolMatch?.in_context}
+				<span class="loc-badge" class:loc-synced={!poolMatch.modified} class:loc-modified={poolMatch.modified}>context</span>
+			{/if}
+			{#if poolMatch?.in_compose}
+				<span class="loc-badge" class:loc-synced={!poolMatch.modified} class:loc-modified={poolMatch.modified}>compose</span>
+			{/if}
 		</div>
 	</div>
+
 	<p class="result-preview" onclick={() => onselect(result)} role="presentation">{preview}</p>
 
 	{#if result.tags.length > 0}
-		<div class="tag-row">
-			{#each visibleTags as tag}
-				<span
-					class="tag-pill"
-					onclick={() => (tagsExpanded = !tagsExpanded)}
-					role="button"
-					tabindex="0"
-					onkeydown={(e) => e.key === 'Enter' && (tagsExpanded = !tagsExpanded)}
-				>{formatTag(tag)}</span>
-			{/each}
-			{#if extraTagCount > 0}
-				<span
-					class="tag-pill tag-more"
-					onclick={() => (tagsExpanded = !tagsExpanded)}
-					role="button"
-					tabindex="0"
-					onkeydown={(e) => e.key === 'Enter' && (tagsExpanded = !tagsExpanded)}
-				>+{extraTagCount} more</span>
-			{/if}
-		</div>
+		<button class="tag-toggle" onclick={() => (tagsExpanded = !tagsExpanded)}>
+			<span class="tag-arrow" class:open={tagsExpanded}>{tagsExpanded ? '▾' : '▸'}</span>
+			<span class="tag-count">{result.tags.length} tags</span>
+		</button>
 	{/if}
 
 	{#if tagsExpanded}
@@ -114,15 +98,24 @@
 	<div class="result-meta">
 		<span class="result-author">{result.author.slice(0, 12)}...</span>
 		<span class="result-time">{formatTime(result.created_at)}</span>
-		<button class="action-btn" onclick={(e) => { e.stopPropagation(); onviewjson(result); }}>JSON</button>
 		<button class="action-btn icon-btn" onclick={(e) => { e.stopPropagation(); onaddtocontext(result); }} title="Send to chat">◂</button>
 		<button class="action-btn icon-btn" onclick={(e) => { e.stopPropagation(); onaddtocompose(result); }} title="Send to compose">□</button>
-		{#if onignore}
-			<button class="action-btn ignore-btn" onclick={(e) => { e.stopPropagation(); onignore(result); }} title="Hide this event">✕</button>
-		{/if}
-		{#if onignorepubkey}
-			<button class="action-btn ignore-btn" onclick={(e) => { e.stopPropagation(); onignorepubkey(result); }} title="Hide all from this author">⊘</button>
-		{/if}
+		<div class="menu-container">
+			<button class="action-btn menu-btn" onclick={(e) => { e.stopPropagation(); menuOpen = !menuOpen; }} title="More actions">⋮</button>
+			{#if menuOpen}
+				<!-- svelte-ignore a11y_click_events_have_key_events -->
+				<div class="menu-backdrop" onclick={() => (menuOpen = false)} role="presentation"></div>
+				<div class="menu-dropdown">
+					<button class="menu-item" onclick={(e) => { e.stopPropagation(); menuOpen = false; onviewjson(result); }}>View JSON</button>
+					{#if onignore}
+						<button class="menu-item menu-item-danger" onclick={(e) => { e.stopPropagation(); menuOpen = false; onignore(result); }}>Hide event</button>
+					{/if}
+					{#if onignorepubkey}
+						<button class="menu-item menu-item-danger" onclick={(e) => { e.stopPropagation(); menuOpen = false; onignorepubkey(result); }}>Hide author</button>
+					{/if}
+				</div>
+			{/if}
+		</div>
 	</div>
 </div>
 
@@ -210,28 +203,31 @@
 		cursor: pointer;
 	}
 
-	.tag-row {
+	/* Tag disclosure toggle */
+
+	.tag-toggle {
 		display: flex;
-		flex-wrap: wrap;
+		align-items: center;
 		gap: 4px;
+		background: none;
+		border: none;
+		color: var(--fg-muted);
+		font-size: 0.7rem;
+		cursor: pointer;
+		padding: 2px 0;
 		margin-bottom: 4px;
 	}
 
-	.tag-pill {
-		font-size: 0.65rem;
-		padding: 1px 6px;
-		border-radius: 4px;
-		background: var(--border);
-		color: var(--fg-muted);
-		cursor: pointer;
-	}
-
-	.tag-pill:hover {
+	.tag-toggle:hover {
 		color: var(--fg);
 	}
 
-	.tag-more {
-		font-style: italic;
+	.tag-arrow {
+		font-size: 0.6rem;
+	}
+
+	.tag-count {
+		font-size: 0.65rem;
 	}
 
 	.tag-inspector {
@@ -261,6 +257,8 @@
 		color: var(--fg-muted);
 		word-break: break-all;
 	}
+
+	/* Meta row with actions */
 
 	.result-meta {
 		display: flex;
@@ -294,31 +292,78 @@
 		text-align: center;
 	}
 
-	.ignore-btn {
-		color: #ef4444;
-		opacity: 0.5;
+	/* Hamburger menu */
+
+	.menu-container {
+		position: relative;
 	}
 
-	.ignore-btn:hover {
-		opacity: 1;
-		color: #ef4444 !important;
+	.menu-btn {
+		font-size: 0.9rem;
+		min-width: 20px;
+		text-align: center;
+		line-height: 1;
 	}
+
+	.menu-backdrop {
+		position: fixed;
+		inset: 0;
+		z-index: 50;
+	}
+
+	.menu-dropdown {
+		position: absolute;
+		right: 0;
+		bottom: 100%;
+		z-index: 51;
+		background: var(--bg);
+		border: 1px solid var(--border);
+		border-radius: var(--radius);
+		box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+		min-width: 120px;
+		padding: 4px 0;
+	}
+
+	.menu-item {
+		display: block;
+		width: 100%;
+		text-align: left;
+		padding: 6px 12px;
+		font-size: 0.75rem;
+		background: none;
+		border: none;
+		color: var(--fg);
+		cursor: pointer;
+	}
+
+	.menu-item:hover {
+		background: var(--bg-surface);
+	}
+
+	.menu-item-danger {
+		color: #ef4444;
+	}
+
+	.menu-item-danger:hover {
+		background: #ef444415;
+	}
+
+	/* Location badges */
 
 	.loc-badge {
 		font-size: 0.6rem;
 		padding: 0 5px;
-		border-radius: 4px;
-		font-weight: 600;
+		border-radius: 3px;
 		white-space: nowrap;
 	}
 
 	.loc-synced {
-		background: color-mix(in srgb, var(--badge-synced) 20%, transparent);
-		color: var(--badge-synced);
+		background: #22c55e33;
+		color: #22c55e;
 	}
 
 	.loc-modified {
-		background: color-mix(in srgb, var(--badge-modified) 20%, transparent);
-		color: var(--badge-modified);
+		background: #eab30833;
+		color: #eab308;
 	}
 </style>

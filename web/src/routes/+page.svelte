@@ -1008,6 +1008,8 @@
 				onfeedsync={handleFeedSync}
 				onfeedloadmore={handleFeedLoadMore}
 				onloadsection={handleLoadSection}
+				onignoreevent={async (id) => { try { const r = await api.ignoreEvents([id]); ignoredCount = r.ignored_event_count + r.ignored_pubkey_count; await loadFeed(); } catch {} }}
+				onignorepubkey={async (pk) => { try { const r = await api.ignoreEvents([], [pk]); ignoredCount = r.ignored_event_count + r.ignored_pubkey_count; await loadFeed(); } catch {} }}
 				{syncMode}
 				onsenditemtochat={handleSendItemToChat}
 				ontogglereadonly={handleToggleReadonly}

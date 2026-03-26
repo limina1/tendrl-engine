@@ -37,6 +37,8 @@
 		onfeedsync,
 		onfeedloadmore,
 		onloadsection,
+		onignoreevent,
+		onignorepubkey,
 		syncMode,
 		onsenditemtochat,
 		ontogglereadonly,
@@ -72,12 +74,16 @@
 		onfeedsync?: () => void;
 		onfeedloadmore?: () => void;
 		onloadsection?: (index: number) => void;
+		onignoreevent?: (event_id: string) => void;
+		onignorepubkey?: (pubkey: string) => void;
 		syncMode: SyncMode;
 		onsenditemtochat: (id: string) => void;
 		ontogglereadonly: (id: string) => void;
 		onlocksource: (id: string) => void;
 		oncrosspanelcopy: (id: string, fromPanel: string) => void;
 	} = $props();
+
+	let feedMenuOpen: string | null = $state(null);
 
 	function formatTime(ts: number): string {
 		return new Date(ts * 1000).toLocaleDateString();
@@ -113,6 +119,7 @@
 						</button>
 					</div>
 					{#each feed as pub_item (`${pub_item.addr.pubkey}:${pub_item.addr.d_tag}`)}
+						{@const feedKey = `${pub_item.addr.pubkey}:${pub_item.addr.d_tag}`}
 						<!-- svelte-ignore a11y_no_static_element_interactions -->
 						<div
 							class="feed-item"
@@ -124,6 +131,17 @@
 							<div class="feed-item-header">
 								<span class="feed-item-title">{pub_item.title ?? '[Untitled]'}</span>
 								<span class="feed-item-meta">{pub_item.section_count} sections</span>
+								<div class="feed-menu-container">
+									<button class="feed-menu-btn" onclick={(e) => { e.stopPropagation(); feedMenuOpen = feedMenuOpen === feedKey ? null : feedKey; }} title="More">⋮</button>
+									{#if feedMenuOpen === feedKey}
+										<!-- svelte-ignore a11y_click_events_have_key_events -->
+										<div class="feed-menu-backdrop" onclick={(e) => { e.stopPropagation(); feedMenuOpen = null; }} role="presentation"></div>
+										<div class="feed-menu-dropdown">
+											<button class="feed-menu-item" onclick={(e) => { e.stopPropagation(); feedMenuOpen = null; onignoreevent?.(pub_item.addr.d_tag); }}>Hide publication</button>
+											<button class="feed-menu-item feed-menu-danger" onclick={(e) => { e.stopPropagation(); feedMenuOpen = null; onignorepubkey?.(pub_item.author_pubkey); }}>Hide author</button>
+										</div>
+									{/if}
+								</div>
 							</div>
 							{#if pub_item.summary}
 								<p class="feed-item-summary">{pub_item.summary}</p>
@@ -306,6 +324,67 @@
 		font-size: 0.7rem;
 		color: var(--fg-muted);
 		margin-top: 4px;
+	}
+
+	.feed-menu-container {
+		position: relative;
+	}
+
+	.feed-menu-btn {
+		background: none;
+		border: none;
+		color: var(--fg-muted);
+		cursor: pointer;
+		font-size: 0.9rem;
+		padding: 0 4px;
+		line-height: 1;
+	}
+
+	.feed-menu-btn:hover {
+		color: var(--fg);
+	}
+
+	.feed-menu-backdrop {
+		position: fixed;
+		inset: 0;
+		z-index: 50;
+	}
+
+	.feed-menu-dropdown {
+		position: absolute;
+		right: 0;
+		top: 100%;
+		z-index: 51;
+		background: var(--bg);
+		border: 1px solid var(--border);
+		border-radius: var(--radius);
+		box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+		min-width: 130px;
+		padding: 4px 0;
+	}
+
+	.feed-menu-item {
+		display: block;
+		width: 100%;
+		text-align: left;
+		padding: 6px 12px;
+		font-size: 0.75rem;
+		background: none;
+		border: none;
+		color: var(--fg);
+		cursor: pointer;
+	}
+
+	.feed-menu-item:hover {
+		background: var(--bg-surface);
+	}
+
+	.feed-menu-danger {
+		color: #ef4444;
+	}
+
+	.feed-menu-danger:hover {
+		background: #ef444415;
 	}
 
 	.feed-load-more {
