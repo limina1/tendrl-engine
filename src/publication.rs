@@ -520,12 +520,24 @@ impl<'a> PublicationEngine<'a> {
         // Filter to root publications only, deduplicating by a-tag (keep newest)
         // nostrdb stores all versions of replaceable events, so we need to dedupe
         let mut by_addr: std::collections::HashMap<String, Publication> = std::collections::HashMap::new();
+        // Load ignore list
+        let ignore_list = self.engine.ignore_list().read().await;
+
         let mut skipped_child = 0usize;
         let mut skipped_empty = 0usize;
         let mut skipped_dupe = 0usize;
         let mut skipped_err = 0usize;
+        let mut skipped_ignored = 0usize;
 
         for event in response.events {
+            // Check ignore list before parsing
+            let event_id = event.get("id").and_then(|v| v.as_str()).unwrap_or("");
+            let pubkey = event.get("pubkey").and_then(|v| v.as_str()).unwrap_or("");
+            if ignore_list.is_ignored(event_id, pubkey) {
+                skipped_ignored += 1;
+                continue;
+            }
+
             match Publication::from_event(&event, true) {
                 Ok(pub_) => {
                     let own_addr = pub_.addr.to_a_tag();
@@ -558,8 +570,8 @@ impl<'a> PublicationEngine<'a> {
         }
 
         tracing::info!(
-            "list_root_publications: {} unique roots (skipped: {} child, {} empty, {} dupe, {} err)",
-            by_addr.len(), skipped_child, skipped_empty, skipped_dupe, skipped_err
+            "list_root_publications: {} unique roots (skipped: {} child, {} empty, {} dupe, {} err, {} ignored)",
+            by_addr.len(), skipped_child, skipped_empty, skipped_dupe, skipped_err, skipped_ignored
         );
 
         // Collect into vec and sort by created_at descending

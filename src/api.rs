@@ -579,6 +579,100 @@ pub async fn load_sections_metadata_handler(
 }
 
 // ============================================================================
+// Ignore List API Endpoints
+// ============================================================================
+
+/// Response for ignore list operations
+#[derive(Debug, Serialize)]
+pub struct IgnoreListResponse {
+    pub ignored_event_count: usize,
+    pub ignored_pubkey_count: usize,
+    pub event_ids: Vec<String>,
+    pub pubkeys: Vec<String>,
+}
+
+/// GET /api/v1/ignore — get current ignore list
+pub async fn ignore_list_handler(
+    State(engine): State<AppState>,
+) -> Result<Json<IgnoreListResponse>, EngineError> {
+    let list = engine.ignore_list().read().await;
+    Ok(Json(IgnoreListResponse {
+        ignored_event_count: list.event_ids.len(),
+        ignored_pubkey_count: list.pubkeys.len(),
+        event_ids: list.event_ids.iter().cloned().collect(),
+        pubkeys: list.pubkeys.iter().cloned().collect(),
+    }))
+}
+
+/// Request to ignore/unignore
+#[derive(Debug, Deserialize)]
+pub struct IgnoreRequest {
+    /// Event IDs to add to ignore list
+    #[serde(default)]
+    pub event_ids: Vec<String>,
+    /// Pubkeys to add to ignore list
+    #[serde(default)]
+    pub pubkeys: Vec<String>,
+}
+
+/// POST /api/v1/ignore — add events/pubkeys to ignore list
+pub async fn ignore_add_handler(
+    State(engine): State<AppState>,
+    Json(req): Json<IgnoreRequest>,
+) -> Result<Json<IgnoreListResponse>, EngineError> {
+    for id in &req.event_ids {
+        engine.ignore_event(id).await?;
+    }
+    for pk in &req.pubkeys {
+        engine.ignore_pubkey(pk).await?;
+    }
+    let list = engine.ignore_list().read().await;
+    Ok(Json(IgnoreListResponse {
+        ignored_event_count: list.event_ids.len(),
+        ignored_pubkey_count: list.pubkeys.len(),
+        event_ids: list.event_ids.iter().cloned().collect(),
+        pubkeys: list.pubkeys.iter().cloned().collect(),
+    }))
+}
+
+/// DELETE /api/v1/ignore — remove events/pubkeys from ignore list
+pub async fn ignore_remove_handler(
+    State(engine): State<AppState>,
+    Json(req): Json<IgnoreRequest>,
+) -> Result<Json<IgnoreListResponse>, EngineError> {
+    for id in &req.event_ids {
+        engine.unignore_event(id).await?;
+    }
+    for pk in &req.pubkeys {
+        engine.unignore_pubkey(pk).await?;
+    }
+    let list = engine.ignore_list().read().await;
+    Ok(Json(IgnoreListResponse {
+        ignored_event_count: list.event_ids.len(),
+        ignored_pubkey_count: list.pubkeys.len(),
+        event_ids: list.event_ids.iter().cloned().collect(),
+        pubkeys: list.pubkeys.iter().cloned().collect(),
+    }))
+}
+
+// ============================================================================
+// Purge API Endpoint
+// ============================================================================
+
+/// POST /api/v1/purge — delete nostrdb and restart fresh
+pub async fn purge_handler(
+    State(engine): State<AppState>,
+) -> Result<Json<serde_json::Value>, EngineError> {
+    let data_dir = engine.data_dir().to_path_buf();
+    // Can't actually delete while nostrdb is open — return the path for manual purge
+    Ok(Json(json!({
+        "message": "Purge requires restart. Delete the data directory and restart the engine.",
+        "data_dir": data_dir.to_string_lossy(),
+        "command": format!("rm -rf {} && cargo run -- -c config.toml", data_dir.display())
+    })))
+}
+
+// ============================================================================
 // Publish API Endpoints
 // ============================================================================
 

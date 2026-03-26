@@ -97,6 +97,9 @@
 	let embeddingStatus: import('$lib/types').EmbeddingStatusResponse | null = $state(null);
 	let embeddingSyncing = $state(false);
 
+	// Ignore list
+	let ignoredCount = $state(0);
+
 	// Settings
 	let syncMode: SyncMode = $state('explicit');
 	let buttonLabels: ButtonLabels = $state('icon');
@@ -223,6 +226,10 @@
 			try {
 				embeddingStatus = await api.getEmbeddingStatus();
 			} catch { /* embedding not enabled */ }
+			try {
+				const il = await api.getIgnoreList();
+				ignoredCount = il.ignored_event_count + il.ignored_pubkey_count;
+			} catch { /* ignore */ }
 		})();
 	});
 
@@ -749,6 +756,30 @@
 		}
 	}
 
+	async function handleIgnoreEvent(result: SearchResult) {
+		try {
+			const resp = await api.ignoreEvents([result.event_id]);
+			ignoredCount = resp.ignored_event_count + resp.ignored_pubkey_count;
+			searchResults = searchResults.filter(r => r.event_id !== result.event_id);
+			searchCount = searchResults.length;
+			if (docMode === 'empty') await loadFeed();
+		} catch (e) {
+			console.error('Ignore failed:', e);
+		}
+	}
+
+	async function handleIgnorePubkey(result: SearchResult) {
+		try {
+			const resp = await api.ignoreEvents([], [result.author]);
+			ignoredCount = resp.ignored_event_count + resp.ignored_pubkey_count;
+			searchResults = searchResults.filter(r => r.author !== result.author);
+			searchCount = searchResults.length;
+			if (docMode === 'empty') await loadFeed();
+		} catch (e) {
+			console.error('Ignore pubkey failed:', e);
+		}
+	}
+
 	// --- Document handlers ---
 
 	async function openPublication(pubkey: string, d_tag: string) {
@@ -905,6 +936,7 @@
 		{buttonLabels}
 		{embeddingStatus}
 		{embeddingSyncing}
+		{ignoredCount}
 		onsetsyncmode={(m: SyncMode) => (syncMode = m)}
 		onsetbuttonlabels={(m: ButtonLabels) => (buttonLabels = m)}
 		onhome={() => { docMode = 'empty'; publication = null; sections = []; docCollapsed = false; if (searchCount === 0) loadFeed(); }}
@@ -999,6 +1031,8 @@
 				onaddtocompose={handleAddToCompose}
 				onaddmanytocontext={handleAddManyToContext}
 				onaddmanytocompose={handleAddManyToCompose}
+				onignore={handleIgnoreEvent}
+				onignorepubkey={handleIgnorePubkey}
 				{items}
 			/>
 		</PanelFrame>

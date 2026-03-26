@@ -138,6 +138,9 @@ async fn main() -> anyhow::Result<()> {
         )
         // Search endpoint
         .route("/api/v1/search", post(api::search_handler))
+        // Ignore list + purge
+        .route("/api/v1/ignore", get(api::ignore_list_handler).post(api::ignore_add_handler).delete(api::ignore_remove_handler))
+        .route("/api/v1/purge", post(api::purge_handler))
         // Publish endpoint
         .route("/api/v1/publish", post(api::publish_handler))
         // Embedding endpoints

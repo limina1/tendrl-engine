@@ -6,6 +6,7 @@
 		buttonLabels,
 		embeddingStatus = null,
 		embeddingSyncing = false,
+		ignoredCount = 0,
 		onsetsyncmode,
 		onsetbuttonlabels,
 		onhome,
@@ -15,6 +16,7 @@
 		buttonLabels: ButtonLabels;
 		embeddingStatus?: EmbeddingStatusResponse | null;
 		embeddingSyncing?: boolean;
+		ignoredCount?: number;
 		onsetsyncmode: (mode: SyncMode) => void;
 		onsetbuttonlabels: (mode: ButtonLabels) => void;
 		onhome?: () => void;
@@ -26,6 +28,9 @@
 
 <div class="workbench-toolbar">
 	<button class="workbench-title" onclick={onhome}>tendrl</button>
+	{#if ignoredCount > 0}
+		<span class="ignored-count" title="{ignoredCount} events/authors hidden">{ignoredCount} hidden</span>
+	{/if}
 	<span class="spacer"></span>
 	{#if embeddingStatus?.enabled}
 		{@const pct = embeddingStatus.total_events > 0 ? Math.round((embeddingStatus.indexed_count / embeddingStatus.total_events) * 100) : 0}
@@ -91,6 +96,13 @@
 
 	.spacer {
 		flex: 1;
+	}
+
+	.ignored-count {
+		font-size: 0.65rem;
+		color: #ef4444;
+		opacity: 0.7;
+		margin-left: 8px;
 	}
 
 	.embed-status {

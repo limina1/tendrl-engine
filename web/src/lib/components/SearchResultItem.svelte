@@ -9,6 +9,8 @@
 		onviewjson,
 		onaddtocontext,
 		onaddtocompose,
+		onignore,
+		onignorepubkey,
 		items = []
 	}: {
 		result: SearchResult;
@@ -18,6 +20,8 @@
 		onviewjson: (result: SearchResult) => void;
 		onaddtocontext: (result: SearchResult) => void;
 		onaddtocompose: (result: SearchResult) => void;
+		onignore?: (result: SearchResult) => void;
+		onignorepubkey?: (result: SearchResult) => void;
 		items?: ContextItem[];
 	} = $props();
 
@@ -113,6 +117,12 @@
 		<button class="action-btn" onclick={(e) => { e.stopPropagation(); onviewjson(result); }}>JSON</button>
 		<button class="action-btn icon-btn" onclick={(e) => { e.stopPropagation(); onaddtocontext(result); }} title="Send to chat">◂</button>
 		<button class="action-btn icon-btn" onclick={(e) => { e.stopPropagation(); onaddtocompose(result); }} title="Send to compose">□</button>
+		{#if onignore}
+			<button class="action-btn ignore-btn" onclick={(e) => { e.stopPropagation(); onignore(result); }} title="Hide this event">✕</button>
+		{/if}
+		{#if onignorepubkey}
+			<button class="action-btn ignore-btn" onclick={(e) => { e.stopPropagation(); onignorepubkey(result); }} title="Hide all from this author">⊘</button>
+		{/if}
 	</div>
 </div>
 
@@ -282,6 +292,16 @@
 		font-size: 0.8rem;
 		min-width: 22px;
 		text-align: center;
+	}
+
+	.ignore-btn {
+		color: #ef4444;
+		opacity: 0.5;
+	}
+
+	.ignore-btn:hover {
+		opacity: 1;
+		color: #ef4444 !important;
 	}
 
 	.loc-badge {

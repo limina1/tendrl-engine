@@ -147,6 +147,33 @@ export function publish(req: PublishRequest) {
 	});
 }
 
+// Ignore List API
+
+export interface IgnoreListResponse {
+	ignored_event_count: number;
+	ignored_pubkey_count: number;
+	event_ids: string[];
+	pubkeys: string[];
+}
+
+export function getIgnoreList() {
+	return fetchJson<IgnoreListResponse>('/api/v1/ignore');
+}
+
+export function ignoreEvents(event_ids: string[] = [], pubkeys: string[] = []) {
+	return fetchJson<IgnoreListResponse>('/api/v1/ignore', {
+		method: 'POST',
+		body: JSON.stringify({ event_ids, pubkeys })
+	});
+}
+
+export function unignoreEvents(event_ids: string[] = [], pubkeys: string[] = []) {
+	return fetchJson<IgnoreListResponse>('/api/v1/ignore', {
+		method: 'DELETE',
+		body: JSON.stringify({ event_ids, pubkeys })
+	});
+}
+
 // Embedding API
 
 export function getEmbeddingStatus() {

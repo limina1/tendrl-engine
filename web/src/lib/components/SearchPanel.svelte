@@ -17,6 +17,8 @@
 		onaddtocompose,
 		onaddmanytocontext,
 		onaddmanytocompose,
+		onignore,
+		onignorepubkey,
 		items = []
 	}: {
 		results: SearchResult[];
@@ -32,6 +34,8 @@
 		onaddtocompose: (result: SearchResult) => void;
 		onaddmanytocontext: (results: SearchResult[]) => void;
 		onaddmanytocompose: (results: SearchResult[]) => void;
+		onignore?: (result: SearchResult) => void;
+		onignorepubkey?: (result: SearchResult) => void;
 		items?: ContextItem[];
 	} = $props();
 
@@ -102,6 +106,8 @@
 				{onviewjson}
 				{onaddtocontext}
 				{onaddtocompose}
+				{onignore}
+				{onignorepubkey}
 				{items}
 			/>
 		{/each}

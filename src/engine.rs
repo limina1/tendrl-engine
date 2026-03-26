@@ -65,6 +65,43 @@ pub struct QueryResponse {
     pub source: QuerySource,
 }
 
+/// Persistent ignore list for hiding events from feed/search
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct IgnoreList {
+    /// Event IDs to ignore (hex)
+    pub event_ids: std::collections::HashSet<String>,
+    /// Pubkeys to ignore (hex) — all events from these authors
+    pub pubkeys: std::collections::HashSet<String>,
+}
+
+impl IgnoreList {
+    fn path(data_dir: &Path) -> std::path::PathBuf {
+        data_dir.parent().unwrap_or(data_dir).join("ignored.json")
+    }
+
+    pub fn load(data_dir: &Path) -> Self {
+        let path = Self::path(data_dir);
+        if let Ok(data) = std::fs::read_to_string(&path) {
+            serde_json::from_str(&data).unwrap_or_default()
+        } else {
+            Self::default()
+        }
+    }
+
+    pub fn save(&self, data_dir: &Path) -> Result<()> {
+        let path = Self::path(data_dir);
+        let data = serde_json::to_string_pretty(self)
+            .map_err(|e| EngineError::Database(format!("Failed to serialize ignore list: {e}")))?;
+        std::fs::write(&path, data)
+            .map_err(|e| EngineError::Database(format!("Failed to write ignore list: {e}")))?;
+        Ok(())
+    }
+
+    pub fn is_ignored(&self, event_id: &str, pubkey: &str) -> bool {
+        self.event_ids.contains(event_id) || self.pubkeys.contains(pubkey)
+    }
+}
+
 /// The main Nostr Engine
 pub struct Engine {
     /// The nostrdb instance
@@ -80,6 +117,8 @@ pub struct Engine {
     my_pubkey: Option<String>,
     /// Optional embedding index for semantic search
     embedding: Option<Arc<RwLock<EmbeddingIndex>>>,
+    /// Ignore list for filtering events
+    ignore_list: RwLock<IgnoreList>,
 }
 
 impl Engine {
@@ -105,6 +144,12 @@ impl Engine {
 
         info!("Opened nostrdb at {:?}", data_path);
 
+        let ignore_list = IgnoreList::load(data_path);
+        let ignored_count = ignore_list.event_ids.len() + ignore_list.pubkeys.len();
+        if ignored_count > 0 {
+            info!("Loaded ignore list: {} events, {} pubkeys", ignore_list.event_ids.len(), ignore_list.pubkeys.len());
+        }
+
         Ok(Engine {
             ndb: Arc::new(ndb),
             relays: relays.iter().map(|s| s.to_string()).collect(),
@@ -112,6 +157,7 @@ impl Engine {
             data_dir: data_path.to_path_buf(),
             my_pubkey: None,
             embedding: None,
+            ignore_list: RwLock::new(ignore_list),
         })
     }
 
@@ -138,6 +184,45 @@ impl Engine {
     /// Get the configured user pubkey
     pub fn my_pubkey(&self) -> Option<&str> {
         self.my_pubkey.as_deref()
+    }
+
+    /// Get the ignore list
+    pub fn ignore_list(&self) -> &RwLock<IgnoreList> {
+        &self.ignore_list
+    }
+
+    /// Add an event ID to the ignore list
+    pub async fn ignore_event(&self, event_id: &str) -> Result<()> {
+        let mut list = self.ignore_list.write().await;
+        list.event_ids.insert(event_id.to_string());
+        list.save(&self.data_dir)
+    }
+
+    /// Add a pubkey to the ignore list
+    pub async fn ignore_pubkey(&self, pubkey: &str) -> Result<()> {
+        let mut list = self.ignore_list.write().await;
+        list.pubkeys.insert(pubkey.to_string());
+        list.save(&self.data_dir)
+    }
+
+    /// Remove an event ID from the ignore list
+    pub async fn unignore_event(&self, event_id: &str) -> Result<()> {
+        let mut list = self.ignore_list.write().await;
+        list.event_ids.remove(event_id);
+        list.save(&self.data_dir)
+    }
+
+    /// Remove a pubkey from the ignore list
+    pub async fn unignore_pubkey(&self, pubkey: &str) -> Result<()> {
+        let mut list = self.ignore_list.write().await;
+        list.pubkeys.remove(pubkey);
+        list.save(&self.data_dir)
+    }
+
+    /// Check if an event is ignored
+    pub async fn is_ignored(&self, event_id: &str, pubkey: &str) -> bool {
+        let list = self.ignore_list.read().await;
+        list.is_ignored(event_id, pubkey)
     }
 
     /// Initialize the embedding index from config
@@ -420,6 +505,13 @@ impl Engine {
         };
 
         let results = search::build_search_results(&filtered, limit);
+
+        // Filter ignored events
+        let ignore = self.ignore_list.read().await;
+        let results: Vec<_> = results
+            .into_iter()
+            .filter(|r| !ignore.is_ignored(&r.event_id, &r.author))
+            .collect();
         let count = results.len();
 
         Ok(SearchResponse {
