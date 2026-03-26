@@ -24,7 +24,7 @@
 </script>
 
 <div class="outline-view">
-	{#each sections as section, i (section.addr?.d_tag ?? i)}
+	{#each sections as section, i (`${i}:${section.addr?.pubkey ?? ''}:${section.addr?.d_tag ?? ''}`)}
 		<SectionCard
 			{section}
 			preview
