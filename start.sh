@@ -43,8 +43,8 @@ if [[ ! -f "$CONFIG" ]]; then
     exit 1
 fi
 
-# Check if embedding is enabled (search anywhere in the [embedding] section)
-EMBED_ENABLED=$(awk '/^\[embedding\]/,/^\[/' "$CONFIG" 2>/dev/null | grep -E '^\s*enabled\s*=\s*true' || true)
+# Check if embedding is enabled
+EMBED_ENABLED=$(grep -E '^\s*enabled\s*=\s*true' "$CONFIG" 2>/dev/null || true)
 
 # 1. Start embedding sidecar (if enabled)
 if [[ -n "$EMBED_ENABLED" ]]; then
