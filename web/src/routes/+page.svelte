@@ -178,6 +178,9 @@
 					myPubkey = cfg.my_pubkey;
 				} catch { /* ignore */ }
 			}
+			// Prefetch profiles for feed authors (background)
+			const pubkeys = [...new Set(resp.publications.map(p => p.author_pubkey))];
+			api.prefetchProfiles(pubkeys);
 		} catch {
 			// Backend unavailable
 		} finally {

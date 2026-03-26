@@ -146,6 +146,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/v1/search", post(api::search_handler))
         // Profile + relay config + fetch
         .route("/api/v1/profile/:pubkey", get(api::profile_handler))
+        .route("/api/v1/profiles/fetch", post(api::fetch_profiles_handler))
         .route("/api/v1/relays", get(api::relay_config_handler))
         .route("/api/v1/config/update", post(api::config_update_handler))
         .route("/api/v1/fetch", post(api::fetch_relay_handler))

@@ -207,13 +207,48 @@ export interface Profile {
 }
 
 const profileCache = new Map<string, Profile>();
+const pendingProfiles = new Map<string, Promise<Profile>>();
 
 export async function getProfile(pubkey: string): Promise<Profile> {
 	const cached = profileCache.get(pubkey);
 	if (cached) return cached;
-	const profile = await fetchJson<Profile>(`/api/v1/profile/${pubkey}`);
-	if (profile.found) profileCache.set(pubkey, profile);
-	return profile;
+
+	// Deduplicate in-flight requests for the same pubkey
+	const pending = pendingProfiles.get(pubkey);
+	if (pending) return pending;
+
+	const promise = fetchJson<Profile>(`/api/v1/profile/${pubkey}`)
+		.then(profile => {
+			if (profile.found) profileCache.set(pubkey, profile);
+			pendingProfiles.delete(pubkey);
+			return profile;
+		})
+		.catch(() => {
+			pendingProfiles.delete(pubkey);
+			return { pubkey, name: null, display_name: null, picture: null, about: null, nip05: null, found: false };
+		});
+
+	pendingProfiles.set(pubkey, promise);
+	return promise;
+}
+
+/// Batch-prefetch profiles: first fetch missing from relays, then populate cache
+export async function prefetchProfiles(pubkeys: string[]) {
+	const unique = [...new Set(pubkeys)].filter(pk => !profileCache.has(pk) && pk.length === 64);
+	if (unique.length === 0) return;
+
+	// Ask backend to fetch missing profiles from general relays (ingests into nostrdb)
+	try {
+		await fetchJson<{ fetched: number }>('/api/v1/profiles/fetch', {
+			method: 'POST',
+			body: JSON.stringify({ pubkeys: unique })
+		});
+	} catch { /* ignore */ }
+
+	// Now populate cache from local (all should be in nostrdb now)
+	for (const pk of unique) {
+		getProfile(pk);
+	}
 }
 
 // Ignore List API

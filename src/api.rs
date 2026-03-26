@@ -582,7 +582,21 @@ pub async fn load_sections_metadata_handler(
 // Profile API Endpoint
 // ============================================================================
 
-/// GET /api/v1/profile/:pubkey — get kind 0 profile metadata for a pubkey
+fn profile_from_event(pubkey: &str, event: &Value) -> Value {
+    let content = event.get("content").and_then(|v| v.as_str()).unwrap_or("{}");
+    let profile: Value = serde_json::from_str(content).unwrap_or(json!({}));
+    json!({
+        "pubkey": pubkey,
+        "name": profile.get("name").and_then(|v| v.as_str()),
+        "display_name": profile.get("display_name").and_then(|v| v.as_str()),
+        "picture": profile.get("picture").and_then(|v| v.as_str()),
+        "about": profile.get("about").and_then(|v| v.as_str()),
+        "nip05": profile.get("nip05").and_then(|v| v.as_str()),
+        "found": true
+    })
+}
+
+/// GET /api/v1/profile/:pubkey — get kind 0 profile (local only, instant)
 pub async fn profile_handler(
     State(engine): State<AppState>,
     Path(pubkey): Path<String>,
@@ -593,42 +607,52 @@ pub async fn profile_handler(
         ));
     }
 
-    // Try local first
     if let Some(event) = crate::query::query_addressable(engine.ndb(), 0, &pubkey, "")
         .unwrap_or(None)
     {
-        let content = event.get("content").and_then(|v| v.as_str()).unwrap_or("{}");
-        let profile: Value = serde_json::from_str(content).unwrap_or(json!({}));
-        return Ok(Json(json!({
-            "pubkey": pubkey,
-            "name": profile.get("name").and_then(|v| v.as_str()),
-            "display_name": profile.get("display_name").and_then(|v| v.as_str()),
-            "picture": profile.get("picture").and_then(|v| v.as_str()),
-            "about": profile.get("about").and_then(|v| v.as_str()),
-            "nip05": profile.get("nip05").and_then(|v| v.as_str()),
-            "found": true
-        })));
+        return Ok(Json(profile_from_event(&pubkey, &event)));
     }
 
-    // Try relays
+    Ok(Json(json!({ "pubkey": pubkey, "found": false })))
+}
+
+/// POST /api/v1/profiles/fetch — batch-fetch profiles from general relays
+#[derive(Debug, Deserialize)]
+pub struct FetchProfilesRequest {
+    pub pubkeys: Vec<String>,
+}
+
+pub async fn fetch_profiles_handler(
+    State(engine): State<AppState>,
+    Json(req): Json<FetchProfilesRequest>,
+) -> Result<Json<Value>, EngineError> {
     let relays = &engine.relay_config().general.urls;
-    if let Ok(Some(event)) = crate::relay::fetch_addressable(engine.ndb(), relays, 0, &pubkey, "").await {
-        let content = event.get("content").and_then(|v| v.as_str()).unwrap_or("{}");
-        let profile: Value = serde_json::from_str(content).unwrap_or(json!({}));
-        return Ok(Json(json!({
-            "pubkey": pubkey,
-            "name": profile.get("name").and_then(|v| v.as_str()),
-            "display_name": profile.get("display_name").and_then(|v| v.as_str()),
-            "picture": profile.get("picture").and_then(|v| v.as_str()),
-            "about": profile.get("about").and_then(|v| v.as_str()),
-            "nip05": profile.get("nip05").and_then(|v| v.as_str()),
-            "found": true
-        })));
+    let mut fetched = 0;
+
+    // Fetch kind 0 for each pubkey not already in nostrdb
+    for pubkey in &req.pubkeys {
+        if pubkey.len() != 64 { continue; }
+        // Skip if already cached locally
+        if crate::query::query_addressable(engine.ndb(), 0, pubkey, "")
+            .unwrap_or(None)
+            .is_some()
+        {
+            continue;
+        }
+        // Fetch from general relays
+        if crate::relay::fetch_addressable(engine.ndb(), relays, 0, pubkey, "")
+            .await
+            .ok()
+            .flatten()
+            .is_some()
+        {
+            fetched += 1;
+        }
     }
 
     Ok(Json(json!({
-        "pubkey": pubkey,
-        "found": false
+        "fetched": fetched,
+        "total": req.pubkeys.len()
     })))
 }
 
