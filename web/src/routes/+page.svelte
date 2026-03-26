@@ -97,6 +97,9 @@
 	let embeddingStatus: import('$lib/types').EmbeddingStatusResponse | null = $state(null);
 	let embeddingSyncing = $state(false);
 
+	// Relay config
+	let fetchRelayUrls: string[] = $state([]);
+
 	// Ignore list
 	let ignoredCount = $state(0);
 	let ignoredEventIds: string[] = $state([]);
@@ -271,8 +274,22 @@
 				embeddingStatus = await api.getEmbeddingStatus();
 			} catch { /* embedding not enabled */ }
 			await refreshIgnoreList();
+			try {
+				const rc = await api.getRelayConfig();
+				fetchRelayUrls = rc.fetch.urls;
+			} catch {}
 		})();
 	});
+
+	async function handleFetchFromRelay(url: string, kinds: number[]) {
+		try {
+			const resp = await api.fetchFromRelay(url, kinds);
+			console.log(`Fetched ${resp.fetched} events from ${resp.relay}`);
+			await loadFeed();
+		} catch (e) {
+			console.error('Fetch from relay failed:', e);
+		}
+	}
 
 	async function handleSyncEmbeddings() {
 		embeddingSyncing = true;
@@ -1055,6 +1072,8 @@
 				ondocpublish={handleDocPublish}
 				onopenpub={handleOpenFeedPublication}
 				onfeedsync={handleFeedSync}
+				onfetchfromrelay={handleFetchFromRelay}
+				fetchRelays={fetchRelayUrls}
 				onfeedloadmore={handleFeedLoadMore}
 				onloadsection={handleLoadSection}
 				onignoreevent={async (id) => { try { await api.ignoreEvents([id]); await refreshIgnoreList(); await loadFeed(); } catch {} }}

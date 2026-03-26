@@ -36,7 +36,9 @@
 		ondocpublish,
 		onopenpub,
 		onfeedsync,
+		onfetchfromrelay,
 		onfeedloadmore,
+		fetchRelays = [],
 		onloadsection,
 		onignoreevent,
 		onignorepubkey,
@@ -76,7 +78,9 @@
 		ondocpublish: () => void;
 		onopenpub?: (pub_summary: PublicationSummary) => void;
 		onfeedsync?: () => void;
+		onfetchfromrelay?: (url: string, kinds: number[]) => void;
 		onfeedloadmore?: () => void;
+		fetchRelays?: string[];
 		onloadsection?: (index: number) => void;
 		onignoreevent?: (event_id: string) => void;
 		onignorepubkey?: (pubkey: string) => void;
@@ -91,6 +95,10 @@
 	} = $props();
 
 	let feedMenuOpen: string | null = $state(null);
+	let fetchPanelOpen = $state(false);
+	let customRelayUrl = $state('');
+	let customKinds = $state('30040,30041');
+	let fetchingRelay: string | null = $state(null);
 
 	function formatTime(ts: number): string {
 		return new Date(ts * 1000).toLocaleDateString();
@@ -122,9 +130,57 @@
 					<div class="feed-header">
 						<span>Publications ({feed.length})</span>
 						<button class="feed-sync-btn" onclick={onfeedsync} disabled={feedSyncing}>
-							{feedSyncing ? 'Syncing...' : 'Sync from relays'}
+							{feedSyncing ? 'Syncing...' : 'Sync all'}
+						</button>
+						<button class="feed-sync-btn" onclick={() => (fetchPanelOpen = !fetchPanelOpen)}>
+							{fetchPanelOpen ? '✕' : 'Fetch'}
 						</button>
 					</div>
+					{#if fetchPanelOpen}
+						<div class="fetch-panel">
+							{#each fetchRelays as relay}
+								<button
+									class="fetch-relay-btn"
+									disabled={fetchingRelay === relay}
+									onclick={async () => {
+										fetchingRelay = relay;
+										const kinds = customKinds.split(',').map(k => parseInt(k.trim())).filter(k => !isNaN(k));
+										await onfetchfromrelay?.(relay, kinds);
+										fetchingRelay = null;
+									}}
+								>
+									{fetchingRelay === relay ? '...' : '↻'} {relay.replace('wss://', '').replace('ws://', '')}
+								</button>
+							{/each}
+							<div class="fetch-custom">
+								<input
+									type="text"
+									bind:value={customRelayUrl}
+									placeholder="wss://relay.example.com"
+									class="fetch-input"
+								/>
+								<input
+									type="text"
+									bind:value={customKinds}
+									placeholder="30040,30041"
+									class="fetch-kinds-input"
+									title="Event kinds to fetch"
+								/>
+								<button
+									class="fetch-go-btn"
+									disabled={!customRelayUrl.trim() || fetchingRelay === customRelayUrl}
+									onclick={async () => {
+										const url = customRelayUrl.trim();
+										if (!url) return;
+										fetchingRelay = url;
+										const kinds = customKinds.split(',').map(k => parseInt(k.trim())).filter(k => !isNaN(k));
+										await onfetchfromrelay?.(url, kinds);
+										fetchingRelay = null;
+									}}
+								>Fetch</button>
+							</div>
+						</div>
+					{/if}
 					{#each feed as pub_item (`${pub_item.addr.pubkey}:${pub_item.addr.d_tag}`)}
 						{@const feedKey = `${pub_item.addr.pubkey}:${pub_item.addr.d_tag}`}
 						<!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -358,6 +414,66 @@
 		font-size: 0.7rem;
 		color: var(--fg-muted);
 		margin-top: 4px;
+	}
+
+	/* Fetch panel */
+
+	.fetch-panel {
+		padding: 6px 12px;
+		border-bottom: 1px solid var(--border);
+		background: var(--bg-surface);
+		display: flex;
+		flex-direction: column;
+		gap: 4px;
+	}
+
+	.fetch-relay-btn {
+		text-align: left;
+		font-size: 0.7rem;
+		padding: 4px 8px;
+		background: none;
+		border: 1px solid var(--border);
+		border-radius: var(--radius);
+		color: var(--fg);
+		cursor: pointer;
+	}
+
+	.fetch-relay-btn:hover {
+		background: var(--bg);
+		border-color: var(--accent);
+	}
+
+	.fetch-custom {
+		display: flex;
+		gap: 4px;
+		margin-top: 2px;
+	}
+
+	.fetch-input {
+		flex: 1;
+		font-size: 0.7rem;
+		padding: 4px 6px;
+		border: 1px solid var(--border);
+		border-radius: var(--radius);
+		background: var(--bg);
+		color: var(--fg);
+		font-family: var(--font-mono);
+	}
+
+	.fetch-kinds-input {
+		width: 80px;
+		font-size: 0.7rem;
+		padding: 4px 6px;
+		border: 1px solid var(--border);
+		border-radius: var(--radius);
+		background: var(--bg);
+		color: var(--fg);
+		font-family: var(--font-mono);
+	}
+
+	.fetch-go-btn {
+		font-size: 0.7rem;
+		padding: 4px 10px;
 	}
 
 	.feed-menu-container {

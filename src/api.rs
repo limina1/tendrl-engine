@@ -636,6 +636,47 @@ pub async fn profile_handler(
 // Relay Config API Endpoints
 // ============================================================================
 
+/// Request to fetch from a specific relay
+#[derive(Debug, Deserialize)]
+pub struct FetchRelayRequest {
+    pub relay: String,
+    #[serde(default)]
+    pub kinds: Vec<u64>,
+    #[serde(default = "default_fetch_limit")]
+    pub limit: usize,
+}
+
+fn default_fetch_limit() -> usize { 200 }
+
+/// POST /api/v1/fetch — fetch events from a specific relay
+pub async fn fetch_relay_handler(
+    State(engine): State<AppState>,
+    Json(req): Json<FetchRelayRequest>,
+) -> Result<Json<Value>, EngineError> {
+    debug!("Fetch from relay: {} kinds={:?} limit={}", req.relay, req.kinds, req.limit);
+
+    let mut filter = json!({"limit": req.limit});
+    if !req.kinds.is_empty() {
+        filter["kinds"] = json!(req.kinds);
+    }
+
+    let events = crate::relay::fetch_with_filters(
+        engine.ndb(),
+        &req.relay,
+        &[filter],
+    )
+    .await?;
+
+    let count = events.len();
+    debug!("Fetched {} events from {}", count, req.relay);
+
+    Ok(Json(json!({
+        "fetched": count,
+        "relay": req.relay,
+        "kinds": req.kinds
+    })))
+}
+
 /// GET /api/v1/relays — get relay configuration
 pub async fn relay_config_handler(
     State(engine): State<AppState>,

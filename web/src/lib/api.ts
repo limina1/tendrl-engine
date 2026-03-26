@@ -147,6 +147,23 @@ export function publish(req: PublishRequest) {
 	});
 }
 
+// Fetch API
+
+export function fetchFromRelay(relay: string, kinds: number[], limit = 200) {
+	return fetchJson<{ fetched: number; relay: string; kinds: number[] }>('/api/v1/fetch', {
+		method: 'POST',
+		body: JSON.stringify({ relay, kinds, limit })
+	});
+}
+
+export function getRelayConfig() {
+	return fetchJson<{
+		general: { urls: string[]; kinds: number[] };
+		publish: { urls: string[]; kinds: number[] };
+		fetch: { urls: string[]; kinds: number[] };
+	}>('/api/v1/relays');
+}
+
 // Profile API
 
 export interface Profile {
