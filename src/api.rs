@@ -724,6 +724,101 @@ pub async fn fetch_authors_handler(
     })))
 }
 
+/// Request to add relay/author to config
+#[derive(Debug, Deserialize)]
+pub struct ConfigUpdateRequest {
+    /// Add a relay URL to a set ("general", "publish", "fetch")
+    pub add_relay: Option<AddRelay>,
+    /// Add an author (npub or hex)
+    pub add_author: Option<String>,
+    /// Remove an author
+    pub remove_author: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AddRelay {
+    pub set: String,
+    pub url: String,
+}
+
+/// POST /api/v1/config/update — update config.toml from UI
+pub async fn config_update_handler(
+    State(engine): State<AppState>,
+    Json(req): Json<ConfigUpdateRequest>,
+) -> Result<Json<Value>, EngineError> {
+    let config_path = engine.config_path().ok_or_else(|| {
+        EngineError::Config("No config file path set (use -c config.toml)".into())
+    })?;
+
+    // Read current config
+    let content = std::fs::read_to_string(config_path)
+        .map_err(|e| EngineError::Config(format!("Failed to read config: {e}")))?;
+    let mut doc: toml::Table = toml::from_str(&content)
+        .map_err(|e| EngineError::Config(format!("Failed to parse config: {e}")))?;
+
+    let mut changed = false;
+
+    // Add relay
+    if let Some(add) = &req.add_relay {
+        let relay = doc.entry("relay").or_insert_with(|| toml::Value::Table(toml::Table::new()));
+        if let toml::Value::Table(relay_table) = relay {
+            let set = relay_table.entry(&add.set).or_insert_with(|| {
+                let mut t = toml::Table::new();
+                t.insert("urls".into(), toml::Value::Array(Vec::new()));
+                toml::Value::Table(t)
+            });
+            if let toml::Value::Table(set_table) = set {
+                let urls = set_table.entry("urls").or_insert_with(|| toml::Value::Array(Vec::new()));
+                if let toml::Value::Array(arr) = urls {
+                    let url_val = toml::Value::String(add.url.clone());
+                    if !arr.contains(&url_val) {
+                        arr.push(url_val);
+                        changed = true;
+                    }
+                }
+            }
+        }
+    }
+
+    // Add author
+    if let Some(author) = &req.add_author {
+        let relay = doc.entry("relay").or_insert_with(|| toml::Value::Table(toml::Table::new()));
+        if let toml::Value::Table(relay_table) = relay {
+            let authors = relay_table.entry("authors").or_insert_with(|| toml::Value::Array(Vec::new()));
+            if let toml::Value::Array(arr) = authors {
+                let val = toml::Value::String(author.clone());
+                if !arr.contains(&val) {
+                    arr.push(val);
+                    changed = true;
+                }
+            }
+        }
+    }
+
+    // Remove author
+    if let Some(author) = &req.remove_author {
+        if let Some(toml::Value::Table(relay_table)) = doc.get_mut("relay") {
+            if let Some(toml::Value::Array(arr)) = relay_table.get_mut("authors") {
+                let before = arr.len();
+                arr.retain(|v| v.as_str() != Some(author));
+                if arr.len() != before { changed = true; }
+            }
+        }
+    }
+
+    if changed {
+        let output = toml::to_string_pretty(&doc)
+            .map_err(|e| EngineError::Config(format!("Failed to serialize config: {e}")))?;
+        std::fs::write(config_path, &output)
+            .map_err(|e| EngineError::Config(format!("Failed to write config: {e}")))?;
+    }
+
+    Ok(Json(json!({
+        "updated": changed,
+        "message": if changed { "Config updated. Restart to apply relay changes." } else { "No changes needed." }
+    })))
+}
+
 /// GET /api/v1/relays — get relay configuration
 pub async fn relay_config_handler(
     State(engine): State<AppState>,

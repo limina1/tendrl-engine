@@ -86,6 +86,9 @@ async fn main() -> anyhow::Result<()> {
     // Create the engine
     let data_path = PathBuf::from(&config.database.data_dir);
     let mut engine = Engine::with_relay_config(&data_path, &relay_config)?;
+    if let Some(ref config_path) = args.config {
+        engine.set_config_path(config_path.clone());
+    }
     engine.set_my_pubkey(my_pubkey.clone());
 
     // Initialize embedding index if enabled
@@ -144,6 +147,7 @@ async fn main() -> anyhow::Result<()> {
         // Profile + relay config + fetch
         .route("/api/v1/profile/:pubkey", get(api::profile_handler))
         .route("/api/v1/relays", get(api::relay_config_handler))
+        .route("/api/v1/config/update", post(api::config_update_handler))
         .route("/api/v1/fetch", post(api::fetch_relay_handler))
         .route("/api/v1/fetch/authors", post(api::fetch_authors_handler))
         // Ignore list + purge

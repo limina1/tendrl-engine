@@ -110,6 +110,8 @@ pub struct Engine {
     relay_config: RelayConfig,
     /// Data directory path
     data_dir: std::path::PathBuf,
+    /// Config file path (for saving changes from UI)
+    config_path: Option<std::path::PathBuf>,
     /// Configured user pubkey (hex) for resolving by:me
     my_pubkey: Option<String>,
     /// Optional embedding index for semantic search
@@ -160,6 +162,7 @@ impl Engine {
             ndb: Arc::new(ndb),
             relay_config: relay_config.clone(),
             data_dir: data_path.to_path_buf(),
+            config_path: None,
             my_pubkey: None,
             embedding: None,
             ignore_list: RwLock::new(ignore_list),
@@ -238,6 +241,41 @@ impl Engine {
     pub async fn is_ignored(&self, event_id: &str, pubkey: &str) -> bool {
         let list = self.ignore_list.read().await;
         list.is_ignored(event_id, pubkey)
+    }
+
+    /// Set the config file path (for saving changes from UI)
+    pub fn set_config_path(&mut self, path: std::path::PathBuf) {
+        self.config_path = Some(path);
+    }
+
+    /// Get the config file path
+    pub fn config_path(&self) -> Option<&std::path::Path> {
+        self.config_path.as_deref()
+    }
+
+    /// Add a relay URL to a set (mutates in-memory config)
+    pub fn add_relay(&mut self, set: &str, url: &str) {
+        let urls = match set {
+            "general" => &mut self.relay_config.general.urls,
+            "publish" => &mut self.relay_config.publish.urls,
+            "fetch" => &mut self.relay_config.fetch.urls,
+            _ => return,
+        };
+        if !urls.contains(&url.to_string()) {
+            urls.push(url.to_string());
+        }
+    }
+
+    /// Add an author to the follow list
+    pub fn add_author(&mut self, author: &str) {
+        if !self.relay_config.authors.contains(&author.to_string()) {
+            self.relay_config.authors.push(author.to_string());
+        }
+    }
+
+    /// Remove an author from the follow list
+    pub fn remove_author(&mut self, author: &str) {
+        self.relay_config.authors.retain(|a| a != author);
     }
 
     /// Initialize the embedding index from config

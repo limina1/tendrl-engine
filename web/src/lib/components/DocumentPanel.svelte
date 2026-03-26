@@ -2,6 +2,7 @@
 	import type { LazySection, ViewMode, DocMode, PublicationSummary, PublicationDetail, ComposeState, ContextItem, SyncMode } from '$lib/types';
 	import DocumentToolbar from './DocumentToolbar.svelte';
 	import ProfileName from './ProfileName.svelte';
+	import * as api from '$lib/api';
 	import OutlineView from './OutlineView.svelte';
 	import ContinuousView from './ContinuousView.svelte';
 	import PaginatedView from './PaginatedView.svelte';
@@ -195,6 +196,33 @@
 										fetchingRelay = null;
 									}}
 								>Fetch</button>
+								<button
+									class="fetch-go-btn fetch-save-btn"
+									disabled={!customRelayUrl.trim()}
+									onclick={async () => {
+										const url = customRelayUrl.trim();
+										if (!url) return;
+										await api.addRelay('fetch', url);
+										customRelayUrl = '';
+									}}
+									title="Save relay to config.toml"
+								>+</button>
+							</div>
+							<div class="fetch-custom">
+								<input
+									type="text"
+									placeholder="npub1... or hex pubkey"
+									class="fetch-input"
+									onkeydown={async (e) => {
+										if (e.key !== 'Enter') return;
+										const input = e.currentTarget as HTMLInputElement;
+										const val = input.value.trim();
+										if (!val) return;
+										await api.addAuthor(val);
+										input.value = '';
+									}}
+								/>
+								<span class="fetch-hint">Enter to add author</span>
 							</div>
 						</div>
 					{/if}
@@ -496,6 +524,18 @@
 	.fetch-go-btn {
 		font-size: 0.7rem;
 		padding: 4px 10px;
+	}
+
+	.fetch-save-btn {
+		font-size: 0.8rem;
+		min-width: 24px;
+		color: var(--accent);
+	}
+
+	.fetch-hint {
+		font-size: 0.6rem;
+		color: var(--fg-muted);
+		white-space: nowrap;
 	}
 
 	.feed-menu-container {

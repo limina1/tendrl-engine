@@ -171,6 +171,29 @@ export function getRelayConfig() {
 	}>('/api/v1/relays');
 }
 
+// Config update API
+
+export function addRelay(set: string, url: string) {
+	return fetchJson<{ updated: boolean; message: string }>('/api/v1/config/update', {
+		method: 'POST',
+		body: JSON.stringify({ add_relay: { set, url } })
+	});
+}
+
+export function addAuthor(author: string) {
+	return fetchJson<{ updated: boolean; message: string }>('/api/v1/config/update', {
+		method: 'POST',
+		body: JSON.stringify({ add_author: author })
+	});
+}
+
+export function removeAuthor(author: string) {
+	return fetchJson<{ updated: boolean; message: string }>('/api/v1/config/update', {
+		method: 'POST',
+		body: JSON.stringify({ remove_author: author })
+	});
+}
+
 // Profile API
 
 export interface Profile {
