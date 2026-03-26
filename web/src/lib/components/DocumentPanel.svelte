@@ -245,7 +245,7 @@
 										<!-- svelte-ignore a11y_click_events_have_key_events -->
 										<div class="feed-menu-backdrop" onclick={(e) => { e.stopPropagation(); feedMenuOpen = null; }} role="presentation"></div>
 										<div class="feed-menu-dropdown">
-											<button class="feed-menu-item" onclick={(e) => { e.stopPropagation(); feedMenuOpen = null; onignoreevent?.(pub_item.addr.d_tag); }}>Hide publication</button>
+											<button class="feed-menu-item" onclick={(e) => { e.stopPropagation(); feedMenuOpen = null; onignoreevent?.(`${pub_item.addr.kind}:${pub_item.addr.pubkey}:${pub_item.addr.d_tag}`); }}>Hide publication</button>
 											<button class="feed-menu-item feed-menu-danger" onclick={(e) => { e.stopPropagation(); feedMenuOpen = null; onignorepubkey?.(pub_item.author_pubkey); }}>Hide author</button>
 										</div>
 									{/if}

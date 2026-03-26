@@ -530,10 +530,22 @@ impl<'a> PublicationEngine<'a> {
         let mut skipped_ignored = 0usize;
 
         for event in response.events {
-            // Check ignore list before parsing
+            // Check ignore list: by event_id, pubkey, or a-tag (kind:pubkey:d_tag)
             let event_id = event.get("id").and_then(|v| v.as_str()).unwrap_or("");
             let pubkey = event.get("pubkey").and_then(|v| v.as_str()).unwrap_or("");
             if ignore_list.is_ignored(event_id, pubkey) {
+                skipped_ignored += 1;
+                continue;
+            }
+            // Also check a-tag format (used when hiding from feed UI)
+            let d_tag = event.get("tags").and_then(|t| t.as_array()).and_then(|tags| {
+                tags.iter().find_map(|tag| {
+                    let arr = tag.as_array()?;
+                    if arr.first()?.as_str()? == "d" { arr.get(1)?.as_str() } else { None }
+                })
+            }).unwrap_or("");
+            let a_tag = format!("{}:{}:{}", KIND_PUBLICATION_INDEX, pubkey, d_tag);
+            if ignore_list.event_ids.contains(&a_tag) {
                 skipped_ignored += 1;
                 continue;
             }
