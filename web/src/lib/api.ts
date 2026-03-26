@@ -10,7 +10,9 @@ import type {
 	Section,
 	SectionMeta,
 	SearchResponse,
-	EmbeddingStatusResponse
+	EmbeddingStatusResponse,
+	DocumentFile,
+	ImportResult
 } from './types';
 
 async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
@@ -144,6 +146,27 @@ export function publish(req: PublishRequest) {
 	return fetchJson<PublishResponse>('/api/v1/publish', {
 		method: 'POST',
 		body: JSON.stringify(req)
+	});
+}
+
+// Document Import API
+
+export function listDocuments() {
+	return fetchJson<{ path: string; files: DocumentFile[]; count: number }>('/api/v1/documents');
+}
+
+export async function importDocument(file: File): Promise<ImportResult> {
+	const formData = new FormData();
+	formData.append('file', file);
+	const res = await fetch('/api/v1/import', { method: 'POST', body: formData });
+	if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
+	return res.json();
+}
+
+export function parseDocument(filename: string) {
+	return fetchJson<ImportResult>('/api/v1/documents/parse', {
+		method: 'POST',
+		body: JSON.stringify({ filename })
 	});
 }
 

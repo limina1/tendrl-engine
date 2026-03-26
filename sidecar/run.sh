@@ -10,4 +10,4 @@
 set -e
 cd "$(dirname "$0")"
 
-exec uv run --with sentence-transformers --with flask python embed.py "$@"
+exec uv run --with sentence-transformers --with flask --with pymupdf --with python-docx --with ebooklib --with lxml python embed.py "$@"

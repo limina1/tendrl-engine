@@ -579,6 +579,148 @@ pub async fn load_sections_metadata_handler(
 }
 
 // ============================================================================
+// Document Import API Endpoints
+// ============================================================================
+
+/// GET /api/v1/documents — list files in the documents folder
+pub async fn list_documents_handler(
+    State(engine): State<AppState>,
+) -> Result<Json<Value>, EngineError> {
+    let docs_dir = engine.documents_path();
+
+    let mut files = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(&docs_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if !path.is_file() { continue; }
+            let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("").to_string();
+            let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase();
+            let supported = ["pdf", "docx", "epub", "html", "htm", "txt", "md", "org", "adoc", "asciidoc", "rst"];
+            if !supported.contains(&ext.as_str()) { continue; }
+            let size = entry.metadata().map(|m| m.len()).unwrap_or(0);
+            let modified = entry.metadata().ok()
+                .and_then(|m| m.modified().ok())
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| d.as_secs())
+                .unwrap_or(0u64);
+            files.push(json!({
+                "name": name,
+                "format": ext,
+                "size": size,
+                "modified": modified,
+            }));
+        }
+    }
+
+    files.sort_by(|a, b| {
+        b.get("modified").and_then(|v| v.as_u64())
+            .cmp(&a.get("modified").and_then(|v| v.as_u64()))
+    });
+
+    Ok(Json(json!({
+        "path": docs_dir.to_string_lossy(),
+        "files": files,
+        "count": files.len(),
+    })))
+}
+
+/// POST /api/v1/documents/parse — parse a file from the documents folder
+#[derive(Debug, Deserialize)]
+pub struct ParseDocRequest {
+    pub filename: String,
+}
+
+pub async fn parse_document_handler(
+    State(engine): State<AppState>,
+    Json(req): Json<ParseDocRequest>,
+) -> Result<Json<Value>, EngineError> {
+    let file_path = engine.documents_path().join(&req.filename);
+    if !file_path.exists() {
+        return Err(EngineError::InvalidFilter(format!("File not found: {}", req.filename)));
+    }
+
+    let file_bytes = std::fs::read(&file_path)
+        .map_err(|e| EngineError::Database(format!("Failed to read file: {e}")))?;
+
+    let sidecar = engine.sidecar_url();
+
+    // Send to sidecar /parse as multipart
+    let part = reqwest::multipart::Part::bytes(file_bytes)
+        .file_name(req.filename.clone())
+        .mime_str("application/octet-stream")
+        .unwrap();
+    let form = reqwest::multipart::Form::new().part("file", part);
+
+    let resp: Value = reqwest::Client::new()
+        .post(format!("{sidecar}/parse"))
+        .multipart(form)
+        .timeout(std::time::Duration::from_secs(60))
+        .send()
+        .await
+        .map_err(|e| EngineError::Database(format!("Sidecar parse failed: {e}")))?
+        .json()
+        .await
+        .map_err(|e| EngineError::Database(format!("Invalid parse response: {e}")))?;
+
+    Ok(Json(resp))
+}
+
+/// POST /api/v1/import — upload file, save to docs folder, parse
+pub async fn import_document_handler(
+    State(engine): State<AppState>,
+    mut multipart: axum::extract::Multipart,
+) -> Result<Json<Value>, EngineError> {
+    let docs_dir = engine.documents_path();
+    std::fs::create_dir_all(&docs_dir)
+        .map_err(|e| EngineError::Database(format!("Failed to create docs dir: {e}")))?;
+
+    // Read the uploaded file
+    let mut filename = String::new();
+    let mut file_bytes = Vec::new();
+
+    while let Some(field) = multipart.next_field().await
+        .map_err(|e| EngineError::Database(format!("Multipart error: {e}")))?
+    {
+        if field.name() == Some("file") {
+            filename = field.file_name().unwrap_or("upload").to_string();
+            file_bytes = field.bytes().await
+                .map_err(|e| EngineError::Database(format!("Read error: {e}")))?
+                .to_vec();
+        }
+    }
+
+    if file_bytes.is_empty() {
+        return Err(EngineError::InvalidFilter("No file uploaded".into()));
+    }
+
+    // Save to docs folder
+    let dest = docs_dir.join(&filename);
+    std::fs::write(&dest, &file_bytes)
+        .map_err(|e| EngineError::Database(format!("Failed to save file: {e}")))?;
+
+    // Parse via sidecar
+    let sidecar = engine.sidecar_url();
+    let part = reqwest::multipart::Part::bytes(file_bytes)
+        .file_name(filename.clone())
+        .mime_str("application/octet-stream")
+        .unwrap();
+    let form = reqwest::multipart::Form::new().part("file", part);
+
+    let resp: Value = reqwest::Client::new()
+        .post(format!("{sidecar}/parse"))
+        .multipart(form)
+        .timeout(std::time::Duration::from_secs(60))
+        .send()
+        .await
+        .map_err(|e| EngineError::Database(format!("Sidecar parse failed: {e}")))?
+        .json()
+        .await
+        .map_err(|e| EngineError::Database(format!("Invalid parse response: {e}")))?;
+
+    Ok(Json(resp))
+}
+
+// ============================================================================
 // Profile API Endpoint
 // ============================================================================
 

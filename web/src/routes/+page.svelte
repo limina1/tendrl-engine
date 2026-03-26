@@ -101,6 +101,12 @@
 	let fetchRelayUrls: string[] = $state([]);
 	let authorCount = $state(0);
 
+	// Document import
+	let documentFiles: import('$lib/types').DocumentFile[] = $state([]);
+	let importPages: import('$lib/types').ImportPage[] = $state([]);
+	let importFilename = $state('');
+	let importLoading = $state(false);
+
 	// Ignore list
 	let ignoredCount = $state(0);
 	let ignoredEventIds: string[] = $state([]);
@@ -285,6 +291,75 @@
 			} catch {}
 		})();
 	});
+
+	async function handleListDocuments() {
+		try {
+			const resp = await api.listDocuments();
+			documentFiles = resp.files;
+			importPages = [];
+			importFilename = '';
+		} catch (e) {
+			console.error('List documents failed:', e);
+		}
+	}
+
+	async function handleImportFile(file: File) {
+		importLoading = true;
+		try {
+			const resp = await api.importDocument(file);
+			importFilename = resp.filename;
+			importPages = resp.pages;
+			// Refresh file list
+			handleListDocuments();
+		} catch (e) {
+			console.error('Import failed:', e);
+		} finally {
+			importLoading = false;
+		}
+	}
+
+	async function handleParseDocument(filename: string) {
+		importLoading = true;
+		try {
+			const resp = await api.parseDocument(filename);
+			importFilename = resp.filename;
+			importPages = resp.pages;
+		} catch (e) {
+			console.error('Parse failed:', e);
+		} finally {
+			importLoading = false;
+		}
+	}
+
+	function handleImportPageToContext(page: import('$lib/types').ImportPage) {
+		addToPool({
+			title: page.title ?? `Page ${page.page_num}`,
+			content: page.content,
+			tags: [{ name: 'source', value: importFilename }, { name: 'page', value: String(page.page_num) }],
+			original_content: page.content,
+			origin: 'import' as const
+		}, { context: true });
+		syncContext();
+	}
+
+	function handleImportPageToCompose(page: import('$lib/types').ImportPage) {
+		addToPool({
+			title: page.title ?? `Page ${page.page_num}`,
+			content: page.content,
+			tags: [{ name: 'source', value: importFilename }, { name: 'page', value: String(page.page_num) }],
+			original_content: page.content,
+			origin: 'import' as const
+		}, { compose: true });
+		if (docMode !== 'compose') docMode = 'compose';
+	}
+
+	function handleImportPagesToContext(pages: import('$lib/types').ImportPage[]) {
+		for (const page of pages) handleImportPageToContext(page);
+	}
+
+	function handleImportPagesToCompose(pages: import('$lib/types').ImportPage[]) {
+		for (const page of pages) handleImportPageToCompose(page);
+	}
 
 	async function handleFetchAuthors() {
 		try {
@@ -1140,6 +1215,17 @@
 				onaddmanytocompose={handleAddManyToCompose}
 				onignore={handleIgnoreEvent}
 				onignorepubkey={handleIgnorePubkey}
+				{documentFiles}
+				{importPages}
+				{importFilename}
+				{importLoading}
+				onlistdocuments={handleListDocuments}
+				onimportfile={handleImportFile}
+				onparsedocument={handleParseDocument}
+				onimportpagetocontext={handleImportPageToContext}
+				onimportpagetocompose={handleImportPageToCompose}
+				onimportpagestocontext={handleImportPagesToContext}
+				onimportpagestocompose={handleImportPagesToCompose}
 				{items}
 			/>
 		</PanelFrame>

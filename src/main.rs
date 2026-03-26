@@ -89,6 +89,8 @@ async fn main() -> anyhow::Result<()> {
     if let Some(ref config_path) = args.config {
         engine.set_config_path(config_path.clone());
     }
+    engine.set_documents_path(std::path::PathBuf::from(&config.documents.path));
+    engine.set_sidecar_url(config.embedding.sidecar_url.clone());
     engine.set_my_pubkey(my_pubkey.clone());
 
     // Initialize embedding index if enabled
@@ -144,6 +146,10 @@ async fn main() -> anyhow::Result<()> {
         )
         // Search endpoint
         .route("/api/v1/search", post(api::search_handler))
+        // Documents
+        .route("/api/v1/documents", get(api::list_documents_handler))
+        .route("/api/v1/documents/parse", post(api::parse_document_handler))
+        .route("/api/v1/import", post(api::import_document_handler))
         // Profile + relay config + fetch
         .route("/api/v1/profile/:pubkey", get(api::profile_handler))
         .route("/api/v1/profiles/fetch", post(api::fetch_profiles_handler))

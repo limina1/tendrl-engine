@@ -118,6 +118,10 @@ pub struct Engine {
     embedding: Option<Arc<RwLock<EmbeddingIndex>>>,
     /// Ignore list for filtering events
     ignore_list: RwLock<IgnoreList>,
+    /// Documents folder path
+    documents_dir: std::path::PathBuf,
+    /// Sidecar URL
+    sidecar_url: String,
 }
 
 impl Engine {
@@ -166,6 +170,8 @@ impl Engine {
             my_pubkey: None,
             embedding: None,
             ignore_list: RwLock::new(ignore_list),
+            documents_dir: std::path::PathBuf::from("./docs"),
+            sidecar_url: "http://localhost:3031".to_string(),
         })
     }
 
@@ -276,6 +282,26 @@ impl Engine {
     /// Remove an author from the follow list
     pub fn remove_author(&mut self, author: &str) {
         self.relay_config.authors.retain(|a| a != author);
+    }
+
+    /// Get the documents folder path
+    pub fn documents_path(&self) -> &std::path::Path {
+        &self.documents_dir
+    }
+
+    /// Set the documents folder path
+    pub fn set_documents_path(&mut self, path: std::path::PathBuf) {
+        self.documents_dir = path;
+    }
+
+    /// Get the sidecar URL
+    pub fn sidecar_url(&self) -> &str {
+        &self.sidecar_url
+    }
+
+    /// Set the sidecar URL
+    pub fn set_sidecar_url(&mut self, url: String) {
+        self.sidecar_url = url;
     }
 
     /// Initialize the embedding index from config

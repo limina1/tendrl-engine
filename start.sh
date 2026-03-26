@@ -49,7 +49,7 @@ EMBED_ENABLED=$(grep -E '^\s*enabled\s*=\s*true' "$CONFIG" 2>/dev/null || true)
 # 1. Start embedding sidecar (if enabled)
 if [[ -n "$EMBED_ENABLED" ]]; then
     echo "Starting embedding sidecar..."
-    bash -c 'cd sidecar && exec uv run --with sentence-transformers --with flask python embed.py' &
+    bash -c 'cd sidecar && exec uv run --with sentence-transformers --with flask --with pymupdf --with python-docx --with ebooklib --with lxml python embed.py' &
     PIDS+=($!)
     # Wait for sidecar to be ready (model download + load can take a while)
     echo "Waiting for sidecar to load model..."

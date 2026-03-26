@@ -135,7 +135,7 @@ export interface ContextItem {
 	modified: boolean;
 	in_context: boolean;
 	in_compose: boolean;
-	origin: 'chat' | 'search' | 'compose';
+	origin: 'chat' | 'search' | 'compose' | 'import';
 	readonly: boolean;
 }
 
@@ -150,6 +150,26 @@ export interface ComposeState {
 
 export type ViewMode = 'outline' | 'continuous' | 'paginated';
 export type DocMode = 'empty' | 'reading' | 'compose' | 'ignored';
+
+export interface DocumentFile {
+	name: string;
+	format: string;
+	size: number;
+	modified: number;
+}
+
+export interface ImportPage {
+	page_num: number;
+	title: string | null;
+	content: string;
+}
+
+export interface ImportResult {
+	filename: string;
+	format: string;
+	page_count: number;
+	pages: ImportPage[];
+}
 
 export interface EmbeddingStatusResponse {
 	enabled: boolean;

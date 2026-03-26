@@ -264,6 +264,29 @@ pub struct Config {
     /// Embedding settings
     #[serde(default)]
     pub embedding: EmbeddingConfig,
+    /// Documents folder settings
+    #[serde(default)]
+    pub documents: DocumentsConfig,
+}
+
+/// Documents folder configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DocumentsConfig {
+    /// Path to documents folder
+    #[serde(default = "default_documents_path")]
+    pub path: String,
+}
+
+fn default_documents_path() -> String {
+    "./docs".to_string()
+}
+
+impl Default for DocumentsConfig {
+    fn default() -> Self {
+        Self {
+            path: default_documents_path(),
+        }
+    }
 }
 
 impl Config {
