@@ -1382,21 +1382,30 @@ The chat's powerful editing capabilities.
 - [X] Web: fragment → compose flow (checked messages □ → compose sections)
 - [ ] Zettlize action: selected fragments or edit buffer → compose blocks
 
-** Phase 5: Semantic Search
+** Phase 5: Semantic Search + Feed + Publish (Complete)
 
-Add vector embeddings for similarity search with explicit user-driven indexing.
+Vector embeddings, publication feed, lazy loading, publish flow.
 
-- [ ] Implement =SemanticIndex= struct with HNSW sidecar storage
-- [ ] Integrate =fastembed= for local all-MiniLM-L6-v2 inference
-- [ ] Implement =embed_remaining()= and =embed_all()=
-- [ ] Implement =missing_count()= for the embedding gap indicator
-- [ ] Add =EmbedRemaining=, =EmbedAll=, =CheckEmbeddings= async requests
-- [X] Add =~:{query}:{k}= syntax to =SearchQuery= parser
-- [ ] Handle =SemanticFilter= within =AsyncRequest::SearchEvents= execution
-- [ ] Merge semantic results with tag/text results (unified ranking in UI)
-- [ ] Status bar indicator: "N events missing embeddings" (yellow when gap > 0)
-- [ ] Run =CheckEmbeddings= on startup and after relay fetches
-- [ ] Model mismatch detection on index load (prompt =EmbedAll= if stale)
+- [X] =EmbeddingIndex= struct wrapping usearch HNSW with event_id mapping
+- [X] Dual backend: Python sidecar (sentence-transformers) or Rust ONNX (=--features onnx=)
+- [X] =sync_embeddings()= and =reindex_embeddings()= with batch processing
+- [X] Model mismatch detection on index load (warning + dimension check)
+- [X] =~:"phrase":k= syntax (quotes after prefix, consistent with other patterns)
+- [X] Handle =SemanticFilter= in =Engine::search()= — embed query, HNSW search, merge scores
+- [X] Text+semantic intersection: compound queries must match both
+- [X] Over-fetch k×10 when kind/author filters present, truncate after
+- [X] HTTP API: =GET /embed/status=, =POST /embed/sync=, =POST /embed/reindex=
+- [X] Web toolbar: embedding count indicator + sync button with progress bar
+- [X] Web: semantic score badges (green percentage) on search results
+- [X] OR/union queries with =|= operator in search parser
+- [X] Publication feed: local-first loading, relay sync, cursor pagination (Load more)
+- [X] Context-aware search: =k:30040= on feed, =by:me= default from config
+- [X] Search-driven feed filtering (search results replace feed in feed mode)
+- [X] Lazy section loading: outline auto-loads, paginated prefetches, continuous IntersectionObserver
+- [X] Progressive publication opening via TOC (30041 sections + 30040 nested)
+- [X] =POST /api/v1/publish=: compose → unsigned/signed events → local ingest → relay broadcast
+- [X] Compose ▸ / Doc ▸ / Chat ▸ publish handlers wired in web frontend
+- [X] =[embedding]= and =[identity]= config sections
 - [ ] Implement =export_vectors()= for external visualization
 
 ** Phase 6: LLM Tool Calling
