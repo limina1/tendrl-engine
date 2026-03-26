@@ -1,6 +1,7 @@
 <script lang="ts">
 	import type { LazySection, ViewMode, DocMode, PublicationSummary, PublicationDetail, ComposeState, ContextItem, SyncMode } from '$lib/types';
 	import DocumentToolbar from './DocumentToolbar.svelte';
+	import ProfileName from './ProfileName.svelte';
 	import OutlineView from './OutlineView.svelte';
 	import ContinuousView from './ContinuousView.svelte';
 	import PaginatedView from './PaginatedView.svelte';
@@ -153,7 +154,7 @@
 								<p class="feed-item-summary">{pub_item.summary}</p>
 							{/if}
 							<div class="feed-item-footer">
-								<span class="feed-item-author">{pub_item.author_pubkey.slice(0, 12)}...</span>
+								<span class="feed-item-author"><ProfileName pubkey={pub_item.author_pubkey} /></span>
 								<span class="feed-item-time">{formatTime(pub_item.created_at)}</span>
 							</div>
 						</div>

@@ -147,6 +147,28 @@ export function publish(req: PublishRequest) {
 	});
 }
 
+// Profile API
+
+export interface Profile {
+	pubkey: string;
+	name: string | null;
+	display_name: string | null;
+	picture: string | null;
+	about: string | null;
+	nip05: string | null;
+	found: boolean;
+}
+
+const profileCache = new Map<string, Profile>();
+
+export async function getProfile(pubkey: string): Promise<Profile> {
+	const cached = profileCache.get(pubkey);
+	if (cached) return cached;
+	const profile = await fetchJson<Profile>(`/api/v1/profile/${pubkey}`);
+	if (profile.found) profileCache.set(pubkey, profile);
+	return profile;
+}
+
 // Ignore List API
 
 export interface IgnoreListResponse {

@@ -1,5 +1,6 @@
 <script lang="ts">
 	import type { SearchResult, ContextItem } from '$lib/types';
+	import ProfileName from './ProfileName.svelte';
 
 	let {
 		result,
@@ -96,7 +97,7 @@
 	{/if}
 
 	<div class="result-meta">
-		<span class="result-author">{result.author.slice(0, 12)}...</span>
+		<span class="result-author"><ProfileName pubkey={result.author} /></span>
 		<span class="result-time">{formatTime(result.created_at)}</span>
 		<button class="action-btn icon-btn" onclick={(e) => { e.stopPropagation(); onaddtocontext(result); }} title="Send to chat">◂</button>
 		<button class="action-btn icon-btn" onclick={(e) => { e.stopPropagation(); onaddtocompose(result); }} title="Send to compose">□</button>

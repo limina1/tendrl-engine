@@ -706,8 +706,14 @@
 			let effectiveQuery = query;
 
 			// Context-aware kind filter based on document panel state
+			// Only add k:30040 when there's no text content to search
+			// (text search needs content-bearing kinds like 30041)
+			const hasTextTerms = effectiveQuery.split(/\s+/).some(t =>
+				!t.startsWith('k:') && !t.startsWith('by:') && !t.startsWith('t:') &&
+				!t.startsWith('~:') && !t.startsWith('d:') && !t.startsWith('"')
+			);
 			const isFeedSearch = docMode === 'empty' && !query.includes('k:');
-			if (isFeedSearch) {
+			if (isFeedSearch && !hasTextTerms) {
 				effectiveQuery = `k:30040 ${effectiveQuery}`;
 			}
 

@@ -579,6 +579,60 @@ pub async fn load_sections_metadata_handler(
 }
 
 // ============================================================================
+// Profile API Endpoint
+// ============================================================================
+
+/// GET /api/v1/profile/:pubkey — get kind 0 profile metadata for a pubkey
+pub async fn profile_handler(
+    State(engine): State<AppState>,
+    Path(pubkey): Path<String>,
+) -> Result<impl IntoResponse, EngineError> {
+    if pubkey.len() != 64 || hex::decode(&pubkey).is_err() {
+        return Err(EngineError::InvalidHex(
+            "Pubkey must be a 64-character hex string".to_string(),
+        ));
+    }
+
+    // Try local first
+    if let Some(event) = crate::query::query_addressable(engine.ndb(), 0, &pubkey, "")
+        .unwrap_or(None)
+    {
+        let content = event.get("content").and_then(|v| v.as_str()).unwrap_or("{}");
+        let profile: Value = serde_json::from_str(content).unwrap_or(json!({}));
+        return Ok(Json(json!({
+            "pubkey": pubkey,
+            "name": profile.get("name").and_then(|v| v.as_str()),
+            "display_name": profile.get("display_name").and_then(|v| v.as_str()),
+            "picture": profile.get("picture").and_then(|v| v.as_str()),
+            "about": profile.get("about").and_then(|v| v.as_str()),
+            "nip05": profile.get("nip05").and_then(|v| v.as_str()),
+            "found": true
+        })));
+    }
+
+    // Try relays
+    let relays = &engine.relay_config().general.urls;
+    if let Ok(Some(event)) = crate::relay::fetch_addressable(engine.ndb(), relays, 0, &pubkey, "").await {
+        let content = event.get("content").and_then(|v| v.as_str()).unwrap_or("{}");
+        let profile: Value = serde_json::from_str(content).unwrap_or(json!({}));
+        return Ok(Json(json!({
+            "pubkey": pubkey,
+            "name": profile.get("name").and_then(|v| v.as_str()),
+            "display_name": profile.get("display_name").and_then(|v| v.as_str()),
+            "picture": profile.get("picture").and_then(|v| v.as_str()),
+            "about": profile.get("about").and_then(|v| v.as_str()),
+            "nip05": profile.get("nip05").and_then(|v| v.as_str()),
+            "found": true
+        })));
+    }
+
+    Ok(Json(json!({
+        "pubkey": pubkey,
+        "found": false
+    })))
+}
+
+// ============================================================================
 // Relay Config API Endpoints
 // ============================================================================
 
