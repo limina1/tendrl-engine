@@ -10,7 +10,9 @@
 		onsetsyncmode,
 		onsetbuttonlabels,
 		onhome,
-		onsyncembeddings
+		onsyncembeddings,
+		onviewignored,
+		onpurge
 	}: {
 		syncMode: SyncMode;
 		buttonLabels: ButtonLabels;
@@ -21,6 +23,8 @@
 		onsetbuttonlabels: (mode: ButtonLabels) => void;
 		onhome?: () => void;
 		onsyncembeddings?: () => void;
+		onviewignored?: () => void;
+		onpurge?: () => void;
 	} = $props();
 
 	let settingsOpen = $state(false);
@@ -29,7 +33,7 @@
 <div class="workbench-toolbar">
 	<button class="workbench-title" onclick={onhome}>tendrl</button>
 	{#if ignoredCount > 0}
-		<span class="ignored-count" title="{ignoredCount} events/authors hidden">{ignoredCount} hidden</span>
+		<button class="ignored-btn" onclick={onviewignored} title="{ignoredCount} events/authors hidden">{ignoredCount} hidden</button>
 	{/if}
 	<span class="spacer"></span>
 	{#if embeddingStatus?.enabled}
@@ -65,6 +69,8 @@
 		<span class="settings-label">Labels:</span>
 		<button class="settings-btn" class:active={buttonLabels === 'icon'} onclick={() => onsetbuttonlabels('icon')}>◂ □ ▸</button>
 		<button class="settings-btn" class:active={buttonLabels === 'text'} onclick={() => onsetbuttonlabels('text')}>text</button>
+		<span class="settings-spacer"></span>
+		<button class="settings-btn purge-btn" onclick={onpurge}>Purge DB</button>
 	</div>
 {/if}
 
@@ -98,11 +104,29 @@
 		flex: 1;
 	}
 
-	.ignored-count {
+	.ignored-btn {
 		font-size: 0.65rem;
 		color: #ef4444;
 		opacity: 0.7;
 		margin-left: 8px;
+		background: none;
+		border: none;
+		cursor: pointer;
+		padding: 2px 4px;
+	}
+
+	.ignored-btn:hover {
+		opacity: 1;
+		text-decoration: underline;
+	}
+
+	.settings-spacer {
+		flex: 1;
+	}
+
+	.purge-btn {
+		color: #ef4444 !important;
+		border-color: #ef4444 !important;
 	}
 
 	.embed-status {

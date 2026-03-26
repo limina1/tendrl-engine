@@ -39,6 +39,9 @@
 		onloadsection,
 		onignoreevent,
 		onignorepubkey,
+		ignoredEventIds = [],
+		ignoredPubkeys = [],
+		onunignore,
 		syncMode,
 		onsenditemtochat,
 		ontogglereadonly,
@@ -76,6 +79,9 @@
 		onloadsection?: (index: number) => void;
 		onignoreevent?: (event_id: string) => void;
 		onignorepubkey?: (pubkey: string) => void;
+		ignoredEventIds?: string[];
+		ignoredPubkeys?: string[];
+		onunignore?: (type: 'event' | 'pubkey', id: string) => void;
 		syncMode: SyncMode;
 		onsenditemtochat: (id: string) => void;
 		ontogglereadonly: (id: string) => void;
@@ -195,6 +201,33 @@
 				{onlocksource}
 				{oncrosspanelcopy}
 			/>
+		{:else if docMode === 'ignored'}
+			<div class="ignored-view">
+				<div class="ignored-header">
+					<span>Hidden ({ignoredEventIds.length} events, {ignoredPubkeys.length} authors)</span>
+				</div>
+				{#if ignoredEventIds.length > 0}
+					<div class="ignored-section-title">Events</div>
+					{#each ignoredEventIds as id}
+						<div class="ignored-item">
+							<span class="ignored-id">{id.slice(0, 16)}...{id.slice(-8)}</span>
+							<button class="unignore-btn" onclick={() => onunignore?.('event', id)}>Unblock</button>
+						</div>
+					{/each}
+				{/if}
+				{#if ignoredPubkeys.length > 0}
+					<div class="ignored-section-title">Authors</div>
+					{#each ignoredPubkeys as pk}
+						<div class="ignored-item">
+							<span class="ignored-id">{pk.slice(0, 16)}...{pk.slice(-8)}</span>
+							<button class="unignore-btn" onclick={() => onunignore?.('pubkey', pk)}>Unblock</button>
+						</div>
+					{/each}
+				{/if}
+				{#if ignoredEventIds.length === 0 && ignoredPubkeys.length === 0}
+					<div class="doc-empty"><p>No hidden events or authors</p></div>
+				{/if}
+			</div>
 		{/if}
 
 		{#if previewVisible && publication}
@@ -385,6 +418,60 @@
 
 	.feed-menu-danger:hover {
 		background: #ef444415;
+	}
+
+	/* Ignored view */
+
+	.ignored-view {
+		flex: 1;
+		overflow-y: auto;
+	}
+
+	.ignored-header {
+		padding: 10px 16px;
+		font-size: 0.8rem;
+		font-weight: 600;
+		color: var(--fg-muted);
+		text-transform: uppercase;
+		letter-spacing: 0.05em;
+		border-bottom: 1px solid var(--border);
+	}
+
+	.ignored-section-title {
+		padding: 8px 16px 4px;
+		font-size: 0.7rem;
+		font-weight: 600;
+		color: var(--fg-muted);
+		text-transform: uppercase;
+	}
+
+	.ignored-item {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		padding: 6px 16px;
+		border-bottom: 1px solid var(--border);
+	}
+
+	.ignored-id {
+		font-size: 0.75rem;
+		font-family: var(--font-mono);
+		color: var(--fg-muted);
+	}
+
+	.unignore-btn {
+		font-size: 0.7rem;
+		padding: 2px 8px;
+		color: var(--accent);
+		background: none;
+		border: 1px solid var(--accent);
+		border-radius: var(--radius);
+		cursor: pointer;
+	}
+
+	.unignore-btn:hover {
+		background: var(--accent);
+		color: white;
 	}
 
 	.feed-load-more {

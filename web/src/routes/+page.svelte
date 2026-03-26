@@ -99,6 +99,50 @@
 
 	// Ignore list
 	let ignoredCount = $state(0);
+	let ignoredEventIds: string[] = $state([]);
+	let ignoredPubkeys: string[] = $state([]);
+
+	async function refreshIgnoreList() {
+		try {
+			const il = await api.getIgnoreList();
+			ignoredCount = il.ignored_event_count + il.ignored_pubkey_count;
+			ignoredEventIds = il.event_ids;
+			ignoredPubkeys = il.pubkeys;
+		} catch {}
+	}
+
+	function handleViewIgnored() {
+		docMode = 'ignored';
+		refreshIgnoreList();
+	}
+
+	async function handleUnignore(type: 'event' | 'pubkey', id: string) {
+		try {
+			if (type === 'event') {
+				await api.unignoreEvents([id]);
+			} else {
+				await api.unignoreEvents([], [id]);
+			}
+			await refreshIgnoreList();
+			if (ignoredCount === 0) {
+				docMode = 'empty';
+				await loadFeed();
+			}
+		} catch (e) {
+			console.error('Unignore failed:', e);
+		}
+	}
+
+	async function handlePurge() {
+		if (!confirm('This will show the command to delete the nostrdb database. Continue?')) return;
+		try {
+			const resp = await fetch('/api/v1/purge', { method: 'POST' });
+			const data = await resp.json();
+			alert(`To purge, stop the engine and run:\n\n${data.command}`);
+		} catch (e) {
+			console.error('Purge failed:', e);
+		}
+	}
 
 	// Settings
 	let syncMode: SyncMode = $state('explicit');
@@ -226,10 +270,7 @@
 			try {
 				embeddingStatus = await api.getEmbeddingStatus();
 			} catch { /* embedding not enabled */ }
-			try {
-				const il = await api.getIgnoreList();
-				ignoredCount = il.ignored_event_count + il.ignored_pubkey_count;
-			} catch { /* ignore */ }
+			await refreshIgnoreList();
 		})();
 	});
 
@@ -758,8 +799,8 @@
 
 	async function handleIgnoreEvent(result: SearchResult) {
 		try {
-			const resp = await api.ignoreEvents([result.event_id]);
-			ignoredCount = resp.ignored_event_count + resp.ignored_pubkey_count;
+			await api.ignoreEvents([result.event_id]);
+			await refreshIgnoreList();
 			searchResults = searchResults.filter(r => r.event_id !== result.event_id);
 			searchCount = searchResults.length;
 			if (docMode === 'empty') await loadFeed();
@@ -770,8 +811,8 @@
 
 	async function handleIgnorePubkey(result: SearchResult) {
 		try {
-			const resp = await api.ignoreEvents([], [result.author]);
-			ignoredCount = resp.ignored_event_count + resp.ignored_pubkey_count;
+			await api.ignoreEvents([], [result.author]);
+			await refreshIgnoreList();
 			searchResults = searchResults.filter(r => r.author !== result.author);
 			searchCount = searchResults.length;
 			if (docMode === 'empty') await loadFeed();
@@ -941,6 +982,8 @@
 		onsetbuttonlabels={(m: ButtonLabels) => (buttonLabels = m)}
 		onhome={() => { docMode = 'empty'; publication = null; sections = []; docCollapsed = false; if (searchCount === 0) loadFeed(); }}
 		onsyncembeddings={handleSyncEmbeddings}
+		onviewignored={handleViewIgnored}
+		onpurge={handlePurge}
 	/>
 
 	<div class="workbench-panels" style:grid-template-columns={gridTemplate}>
@@ -1008,8 +1051,11 @@
 				onfeedsync={handleFeedSync}
 				onfeedloadmore={handleFeedLoadMore}
 				onloadsection={handleLoadSection}
-				onignoreevent={async (id) => { try { const r = await api.ignoreEvents([id]); ignoredCount = r.ignored_event_count + r.ignored_pubkey_count; await loadFeed(); } catch {} }}
-				onignorepubkey={async (pk) => { try { const r = await api.ignoreEvents([], [pk]); ignoredCount = r.ignored_event_count + r.ignored_pubkey_count; await loadFeed(); } catch {} }}
+				onignoreevent={async (id) => { try { await api.ignoreEvents([id]); await refreshIgnoreList(); await loadFeed(); } catch {} }}
+				onignorepubkey={async (pk) => { try { await api.ignoreEvents([], [pk]); await refreshIgnoreList(); await loadFeed(); } catch {} }}
+				{ignoredEventIds}
+				{ignoredPubkeys}
+				onunignore={handleUnignore}
 				{syncMode}
 				onsenditemtochat={handleSendItemToChat}
 				ontogglereadonly={handleToggleReadonly}

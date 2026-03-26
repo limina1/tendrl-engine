@@ -149,7 +149,7 @@ export interface ComposeState {
 }
 
 export type ViewMode = 'outline' | 'continuous' | 'paginated';
-export type DocMode = 'empty' | 'reading' | 'compose';
+export type DocMode = 'empty' | 'reading' | 'compose' | 'ignored';
 
 export interface EmbeddingStatusResponse {
 	enabled: boolean;
