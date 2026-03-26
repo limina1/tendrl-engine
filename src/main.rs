@@ -72,7 +72,11 @@ async fn main() -> anyhow::Result<()> {
 
     info!("Starting nostr-engine v{}", env!("CARGO_PKG_VERSION"));
     info!("Data directory: {}", config.database.data_dir);
-    info!("Default relays: {:?}", config.relay.default_relays);
+
+    // Resolve relay config (backwards-compat default_relays → sets)
+    let relay_config = config.relay.resolved();
+    info!("Relays — general: {:?}, fetch: {:?}, publish: {:?}",
+        relay_config.general.urls, relay_config.fetch.urls, relay_config.publish.urls);
 
     let my_pubkey = config.pubkey_hex();
     if let Some(ref pk) = my_pubkey {
@@ -81,8 +85,7 @@ async fn main() -> anyhow::Result<()> {
 
     // Create the engine
     let data_path = PathBuf::from(&config.database.data_dir);
-    let relay_refs: Vec<&str> = config.relay.default_relays.iter().map(|s| s.as_str()).collect();
-    let mut engine = Engine::with_config(&data_path, &relay_refs, config.relay.timeout_ms)?;
+    let mut engine = Engine::with_relay_config(&data_path, &relay_config)?;
     engine.set_my_pubkey(my_pubkey.clone());
 
     // Initialize embedding index if enabled
@@ -138,6 +141,8 @@ async fn main() -> anyhow::Result<()> {
         )
         // Search endpoint
         .route("/api/v1/search", post(api::search_handler))
+        // Relay config
+        .route("/api/v1/relays", get(api::relay_config_handler))
         // Ignore list + purge
         .route("/api/v1/ignore", get(api::ignore_list_handler).post(api::ignore_add_handler).delete(api::ignore_remove_handler))
         .route("/api/v1/purge", post(api::purge_handler))

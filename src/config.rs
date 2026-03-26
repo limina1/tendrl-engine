@@ -68,22 +68,64 @@ impl Default for DatabaseConfig {
     }
 }
 
-/// Relay configuration
+/// A relay set with URLs and the event kinds to fetch from them
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RelaySet {
+    /// Relay WebSocket URLs
+    pub urls: Vec<String>,
+    /// Event kinds to fetch (empty = all kinds)
+    #[serde(default)]
+    pub kinds: Vec<u64>,
+}
+
+/// Relay configuration with purpose-specific sets
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RelayConfig {
-    /// Default relays to fetch from
-    #[serde(default = "default_relays")]
-    pub default_relays: Vec<String>,
+    /// General relays for profile info, metadata, notes
+    #[serde(default = "default_general")]
+    pub general: RelaySet,
+    /// Relays to publish events to (push only, kinds not used for fetch)
+    #[serde(default = "default_publish")]
+    pub publish: RelaySet,
+    /// Relays to fetch publications/sections from
+    #[serde(default = "default_fetch")]
+    pub fetch: RelaySet,
     /// Request timeout in milliseconds
     #[serde(default = "default_timeout_ms")]
     pub timeout_ms: u64,
+    /// Backwards compat: if only default_relays is set, use it for all sets
+    #[serde(default)]
+    pub default_relays: Option<Vec<String>>,
 }
 
-fn default_relays() -> Vec<String> {
-    crate::relay::DEFAULT_RELAYS
-        .iter()
-        .map(|s| s.to_string())
-        .collect()
+fn default_general() -> RelaySet {
+    RelaySet {
+        urls: vec![
+            "wss://relay.damus.io".to_string(),
+            "wss://nos.lol".to_string(),
+        ],
+        kinds: vec![0, 3, 10002, 30023, 30818, 30817],
+    }
+}
+
+fn default_publish() -> RelaySet {
+    RelaySet {
+        urls: vec![
+            "wss://relay.damus.io".to_string(),
+            "wss://nos.lol".to_string(),
+        ],
+        kinds: vec![],
+    }
+}
+
+fn default_fetch() -> RelaySet {
+    RelaySet {
+        urls: crate::relay::DEFAULT_RELAYS
+            .iter()
+            .map(|s| s.to_string())
+            .collect(),
+        kinds: vec![0, 30040, 30041, 30023, 30818, 30817, 9802],
+    }
 }
 
 fn default_timeout_ms() -> u64 {
@@ -93,8 +135,41 @@ fn default_timeout_ms() -> u64 {
 impl Default for RelayConfig {
     fn default() -> Self {
         Self {
-            default_relays: default_relays(),
+            general: default_general(),
+            publish: default_publish(),
+            fetch: default_fetch(),
             timeout_ms: default_timeout_ms(),
+            default_relays: None,
+        }
+    }
+}
+
+impl RelayConfig {
+    /// Get all unique relay URLs across all sets
+    pub fn all_urls(&self) -> Vec<String> {
+        let mut urls = std::collections::HashSet::new();
+        for u in &self.general.urls { urls.insert(u.clone()); }
+        for u in &self.publish.urls { urls.insert(u.clone()); }
+        for u in &self.fetch.urls { urls.insert(u.clone()); }
+        urls.into_iter().collect()
+    }
+
+    /// Resolve backwards-compatible default_relays into all sets if present
+    pub fn resolved(&self) -> Self {
+        if let Some(ref defaults) = self.default_relays {
+            let mut resolved = self.clone();
+            if resolved.general.urls.is_empty() {
+                resolved.general.urls = defaults.clone();
+            }
+            if resolved.publish.urls.is_empty() {
+                resolved.publish.urls = defaults.clone();
+            }
+            if resolved.fetch.urls.is_empty() {
+                resolved.fetch.urls = defaults.clone();
+            }
+            resolved
+        } else {
+            self.clone()
         }
     }
 }

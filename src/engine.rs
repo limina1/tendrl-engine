@@ -3,7 +3,7 @@
 //! Provides a unified interface for querying events from local nostrdb
 //! with optional relay backfill based on configurable fetch policies.
 
-use crate::config::EmbeddingConfig;
+use crate::config::{EmbeddingConfig, RelayConfig};
 use crate::embedding::{EmbeddingIndex, EmbeddingStatus};
 use crate::error::{EngineError, Result};
 use crate::search::{self, SearchQuery, SearchResponse};
@@ -106,11 +106,8 @@ impl IgnoreList {
 pub struct Engine {
     /// The nostrdb instance
     ndb: Arc<Ndb>,
-    /// Default relays for fetching
-    relays: Vec<String>,
-    /// Request timeout in milliseconds
-    #[allow(dead_code)]
-    timeout_ms: u64,
+    /// Relay configuration (general, publish, fetch sets)
+    relay_config: RelayConfig,
     /// Data directory path
     data_dir: std::path::PathBuf,
     /// Configured user pubkey (hex) for resolving by:me
@@ -124,11 +121,20 @@ pub struct Engine {
 impl Engine {
     /// Create a new Engine with the specified data path
     pub fn new(data_path: &Path) -> Result<Self> {
-        Self::with_config(data_path, relay::DEFAULT_RELAYS, 15000)
+        Self::with_relay_config(data_path, &RelayConfig::default())
     }
 
-    /// Create a new Engine with custom configuration
-    pub fn with_config(data_path: &Path, relays: &[&str], timeout_ms: u64) -> Result<Self> {
+    /// Create a new Engine with custom configuration (backwards compat)
+    pub fn with_config(data_path: &Path, relays: &[&str], _timeout_ms: u64) -> Result<Self> {
+        let mut config = RelayConfig::default();
+        let urls: Vec<String> = relays.iter().map(|s| s.to_string()).collect();
+        config.fetch.urls = urls.clone();
+        config.publish.urls = urls;
+        Self::with_relay_config(data_path, &config)
+    }
+
+    /// Create a new Engine with full relay configuration
+    pub fn with_relay_config(data_path: &Path, relay_config: &RelayConfig) -> Result<Self> {
         // Ensure the data directory exists
         std::fs::create_dir_all(data_path)?;
 
@@ -152,8 +158,7 @@ impl Engine {
 
         Ok(Engine {
             ndb: Arc::new(ndb),
-            relays: relays.iter().map(|s| s.to_string()).collect(),
-            timeout_ms,
+            relay_config: relay_config.clone(),
             data_dir: data_path.to_path_buf(),
             my_pubkey: None,
             embedding: None,
@@ -166,9 +171,19 @@ impl Engine {
         &self.ndb
     }
 
-    /// Get the configured relays
+    /// Get the relay configuration
+    pub fn relay_config(&self) -> &RelayConfig {
+        &self.relay_config
+    }
+
+    /// Get fetch relay URLs (backwards compat)
     pub fn relays(&self) -> &[String] {
-        &self.relays
+        &self.relay_config.fetch.urls
+    }
+
+    /// Get publish relay URLs
+    pub fn publish_relays(&self) -> &[String] {
+        &self.relay_config.publish.urls
     }
 
     /// Get the data directory path
@@ -393,7 +408,7 @@ impl Engine {
         policy: FetchPolicy,
         override_relays: Option<&[String]>,
     ) -> Result<QueryResponse> {
-        let relays = override_relays.unwrap_or(&self.relays);
+        let relays = override_relays.unwrap_or(&self.relay_config.fetch.urls);
 
         match policy {
             FetchPolicy::LocalOnly => self.query_local_only(&filters),
@@ -419,7 +434,7 @@ impl Engine {
         // Fetch from relays if needed
         if policy != FetchPolicy::LocalOnly {
             debug!("Fetching event {} from relays", event_id);
-            return relay::fetch_event_by_id(&self.ndb, &self.relays, event_id).await;
+            return relay::fetch_event_by_id(&self.ndb, &self.relay_config.fetch.urls, event_id).await;
         }
 
         Ok(None)
@@ -444,7 +459,7 @@ impl Engine {
         // Fetch from relays if needed
         if policy != FetchPolicy::LocalOnly {
             debug!("Fetching addressable event {}:{}:{}... from relays", kind, &pubkey.chars().take(8).collect::<String>(), d_tag);
-            return relay::fetch_addressable(&self.ndb, &self.relays, kind, pubkey, d_tag).await;
+            return relay::fetch_addressable(&self.ndb, &self.relay_config.fetch.urls, kind, pubkey, d_tag).await;
         }
 
         Ok(None)

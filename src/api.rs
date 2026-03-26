@@ -579,6 +579,22 @@ pub async fn load_sections_metadata_handler(
 }
 
 // ============================================================================
+// Relay Config API Endpoints
+// ============================================================================
+
+/// GET /api/v1/relays — get relay configuration
+pub async fn relay_config_handler(
+    State(engine): State<AppState>,
+) -> Json<Value> {
+    let rc = engine.relay_config();
+    Json(json!({
+        "general": { "urls": rc.general.urls, "kinds": rc.general.kinds },
+        "publish": { "urls": rc.publish.urls, "kinds": rc.publish.kinds },
+        "fetch": { "urls": rc.fetch.urls, "kinds": rc.fetch.kinds },
+    }))
+}
+
+// ============================================================================
 // Ignore List API Endpoints
 // ============================================================================
 
@@ -793,7 +809,7 @@ pub async fn publish_handler(
             .relays
             .as_deref()
             .map(|r| r.to_vec())
-            .unwrap_or_else(|| engine.relays().to_vec());
+            .unwrap_or_else(|| engine.publish_relays().to_vec());
 
         let event_jsons: Vec<String> = section_events
             .iter()
