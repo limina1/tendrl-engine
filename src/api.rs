@@ -596,6 +596,21 @@ fn profile_from_event(pubkey: &str, event: &Value) -> Value {
     })
 }
 
+/// Query kind 0 profile by pubkey (no d-tag — kind 0 is regular replaceable, not parameterized)
+fn query_profile(ndb: &nostrdb::Ndb, pubkey: &str) -> Option<Value> {
+    let pubkey_bytes = crate::query::parse_hex_pubkey(pubkey).ok()?;
+    let txn = nostrdb::Transaction::new(ndb).ok()?;
+    let filter = nostrdb::FilterBuilder::new()
+        .kinds([0])
+        .authors([pubkey_bytes].iter())
+        .limit(1)
+        .build();
+    let results = ndb.query(&txn, &[filter], 1).ok()?;
+    let qr = results.first()?;
+    let note = ndb.get_note_by_key(&txn, qr.note_key).ok()?;
+    crate::query::note_to_json_pub(&note).ok()
+}
+
 /// GET /api/v1/profile/:pubkey — get kind 0 profile (local only, instant)
 pub async fn profile_handler(
     State(engine): State<AppState>,
@@ -607,9 +622,7 @@ pub async fn profile_handler(
         ));
     }
 
-    if let Some(event) = crate::query::query_addressable(engine.ndb(), 0, &pubkey, "")
-        .unwrap_or(None)
-    {
+    if let Some(event) = query_profile(engine.ndb(), &pubkey) {
         return Ok(Json(profile_from_event(&pubkey, &event)));
     }
 
@@ -633,20 +646,19 @@ pub async fn fetch_profiles_handler(
     for pubkey in &req.pubkeys {
         if pubkey.len() != 64 { continue; }
         // Skip if already cached locally
-        if crate::query::query_addressable(engine.ndb(), 0, pubkey, "")
-            .unwrap_or(None)
-            .is_some()
-        {
+        if query_profile(engine.ndb(), pubkey).is_some() {
             continue;
         }
-        // Fetch from general relays
-        if crate::relay::fetch_addressable(engine.ndb(), relays, 0, pubkey, "")
-            .await
-            .ok()
-            .flatten()
-            .is_some()
-        {
-            fetched += 1;
+        // Fetch from general relays (kind 0 has no d-tag, use filter directly)
+        let filter = json!({"kinds": [0], "authors": [pubkey], "limit": 1});
+        for relay_url in relays {
+            match crate::relay::fetch_with_filters(engine.ndb(), relay_url, &[filter.clone()]).await {
+                Ok(events) if !events.is_empty() => {
+                    fetched += 1;
+                    break;
+                }
+                _ => continue,
+            }
         }
     }
 

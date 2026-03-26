@@ -107,6 +107,11 @@ pub fn query_addressable(ndb: &Ndb, kind: u64, pubkey: &str, d_tag: &str) -> Res
     Ok(newest.map(|(_, event)| event))
 }
 
+/// Parse a hex pubkey to a 32-byte array (public for profile queries)
+pub fn parse_hex_pubkey(hex_str: &str) -> Result<[u8; 32]> {
+    parse_hex_id(hex_str)
+}
+
 /// Parse a hex string to a 32-byte array
 fn parse_hex_id(hex_str: &str) -> Result<[u8; 32]> {
     let bytes = hex::decode(hex_str)?;
@@ -289,6 +294,11 @@ pub fn filter_by_text(events: &[Value], filter: &crate::search::TextFilter) -> V
         })
         .cloned()
         .collect()
+}
+
+/// Convert a nostrdb Note to JSON event format (public for profile queries)
+pub fn note_to_json_pub(note: &nostrdb::Note) -> Result<Value> {
+    note_to_json(note)
 }
 
 /// Convert a nostrdb Note to JSON event format
