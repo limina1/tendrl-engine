@@ -49,7 +49,7 @@ EMBED_ENABLED=$(awk '/^\[embedding\]/,/^\[/' "$CONFIG" 2>/dev/null | grep -E '^\
 # 1. Start embedding sidecar (if enabled)
 if [[ -n "$EMBED_ENABLED" ]]; then
     echo "Starting embedding sidecar..."
-    bash -c 'cd sidecar && uv run --with sentence-transformers --with flask python embed.py' 2>&1 | sed 's/^/[sidecar] /' &
+    bash -c 'cd sidecar && exec uv run --with sentence-transformers --with flask python embed.py' &
     PIDS+=($!)
     # Wait for sidecar to be ready (model download + load can take a while)
     echo "Waiting for sidecar to load model..."
@@ -74,7 +74,7 @@ fi
 
 # 2. Build and start backend
 echo "Starting backend..."
-cargo run -- -c "$CONFIG" 2>&1 | sed 's/^/[engine] /' &
+cargo run -- -c "$CONFIG" &
 PIDS+=($!)
 
 # 3. Start frontend dev server (optional)
