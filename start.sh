@@ -49,7 +49,7 @@ EMBED_ENABLED=$(awk '/^\[embedding\]/,/^\[/' "$CONFIG" 2>/dev/null | grep -E '^\
 # 1. Start embedding sidecar (if enabled)
 if [[ -n "$EMBED_ENABLED" ]]; then
     echo "Starting embedding sidecar..."
-    ./sidecar/run.sh &
+    (cd sidecar && uv run --with sentence-transformers --with flask python embed.py) &
     PIDS+=($!)
     # Wait for sidecar to be ready (model download + load can take a while)
     echo "Waiting for sidecar to load model..."
