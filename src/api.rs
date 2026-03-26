@@ -642,6 +642,9 @@ pub struct FetchRelayRequest {
     pub relay: String,
     #[serde(default)]
     pub kinds: Vec<u64>,
+    /// Pubkeys to fetch from (hex). Empty = no author filter.
+    #[serde(default)]
+    pub authors: Vec<String>,
     #[serde(default = "default_fetch_limit")]
     pub limit: usize,
 }
@@ -653,11 +656,14 @@ pub async fn fetch_relay_handler(
     State(engine): State<AppState>,
     Json(req): Json<FetchRelayRequest>,
 ) -> Result<Json<Value>, EngineError> {
-    debug!("Fetch from relay: {} kinds={:?} limit={}", req.relay, req.kinds, req.limit);
+    debug!("Fetch from relay: {} kinds={:?} authors={} limit={}", req.relay, req.kinds, req.authors.len(), req.limit);
 
     let mut filter = json!({"limit": req.limit});
     if !req.kinds.is_empty() {
         filter["kinds"] = json!(req.kinds);
+    }
+    if !req.authors.is_empty() {
+        filter["authors"] = json!(req.authors);
     }
 
     let events = crate::relay::fetch_with_filters(
@@ -677,6 +683,47 @@ pub async fn fetch_relay_handler(
     })))
 }
 
+/// POST /api/v1/fetch/authors — fetch from all fetch relays for configured authors
+pub async fn fetch_authors_handler(
+    State(engine): State<AppState>,
+) -> Result<Json<Value>, EngineError> {
+    let rc = engine.relay_config();
+    let authors = rc.authors_hex();
+
+    if authors.is_empty() {
+        return Ok(Json(json!({
+            "message": "No authors configured in [relay] authors list",
+            "fetched": 0
+        })));
+    }
+
+    let kinds = &rc.fetch.kinds;
+    let mut total_fetched = 0;
+
+    for relay_url in &rc.fetch.urls {
+        let mut filter = json!({"limit": 200, "authors": authors});
+        if !kinds.is_empty() {
+            filter["kinds"] = json!(kinds);
+        }
+
+        match crate::relay::fetch_with_filters(engine.ndb(), relay_url, &[filter]).await {
+            Ok(events) => {
+                debug!("Fetched {} events for authors from {}", events.len(), relay_url);
+                total_fetched += events.len();
+            }
+            Err(e) => {
+                debug!("Failed to fetch authors from {}: {}", relay_url, e);
+            }
+        }
+    }
+
+    Ok(Json(json!({
+        "fetched": total_fetched,
+        "authors": authors.len(),
+        "relays": rc.fetch.urls.len()
+    })))
+}
+
 /// GET /api/v1/relays — get relay configuration
 pub async fn relay_config_handler(
     State(engine): State<AppState>,
@@ -686,6 +733,7 @@ pub async fn relay_config_handler(
         "general": { "urls": rc.general.urls, "kinds": rc.general.kinds },
         "publish": { "urls": rc.publish.urls, "kinds": rc.publish.kinds },
         "fetch": { "urls": rc.fetch.urls, "kinds": rc.fetch.kinds },
+        "authors": rc.authors_hex(),
     }))
 }
 

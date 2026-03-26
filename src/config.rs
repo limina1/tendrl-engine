@@ -90,6 +90,9 @@ pub struct RelayConfig {
     /// Relays to fetch publications/sections from
     #[serde(default = "default_fetch")]
     pub fetch: RelaySet,
+    /// Authors to follow — fetch their events from fetch relays (npub or hex)
+    #[serde(default)]
+    pub authors: Vec<String>,
     /// Request timeout in milliseconds
     #[serde(default = "default_timeout_ms")]
     pub timeout_ms: u64,
@@ -138,6 +141,7 @@ impl Default for RelayConfig {
             general: default_general(),
             publish: default_publish(),
             fetch: default_fetch(),
+            authors: Vec::new(),
             timeout_ms: default_timeout_ms(),
             default_relays: None,
         }
@@ -171,6 +175,22 @@ impl RelayConfig {
         } else {
             self.clone()
         }
+    }
+
+    /// Resolve author list to hex pubkeys (handles npub and hex)
+    pub fn authors_hex(&self) -> Vec<String> {
+        self.authors
+            .iter()
+            .filter_map(|a| {
+                if a.starts_with("npub1") {
+                    crate::identity::decode_npub(a).ok()
+                } else if a.len() == 64 && hex::decode(a).is_ok() {
+                    Some(a.clone())
+                } else {
+                    None
+                }
+            })
+            .collect()
     }
 }
 

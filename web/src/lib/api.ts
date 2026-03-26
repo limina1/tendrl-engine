@@ -149,10 +149,16 @@ export function publish(req: PublishRequest) {
 
 // Fetch API
 
-export function fetchFromRelay(relay: string, kinds: number[], limit = 200) {
+export function fetchFromRelay(relay: string, kinds: number[], authors: string[] = [], limit = 200) {
 	return fetchJson<{ fetched: number; relay: string; kinds: number[] }>('/api/v1/fetch', {
 		method: 'POST',
-		body: JSON.stringify({ relay, kinds, limit })
+		body: JSON.stringify({ relay, kinds, authors, limit })
+	});
+}
+
+export function fetchAuthors() {
+	return fetchJson<{ fetched: number; authors: number; relays: number }>('/api/v1/fetch/authors', {
+		method: 'POST'
 	});
 }
 
@@ -161,6 +167,7 @@ export function getRelayConfig() {
 		general: { urls: string[]; kinds: number[] };
 		publish: { urls: string[]; kinds: number[] };
 		fetch: { urls: string[]; kinds: number[] };
+		authors: string[];
 	}>('/api/v1/relays');
 }
 

@@ -37,8 +37,10 @@
 		onopenpub,
 		onfeedsync,
 		onfetchfromrelay,
+		onfetchauthors,
 		onfeedloadmore,
 		fetchRelays = [],
+		authorCount = 0,
 		onloadsection,
 		onignoreevent,
 		onignorepubkey,
@@ -79,8 +81,10 @@
 		onopenpub?: (pub_summary: PublicationSummary) => void;
 		onfeedsync?: () => void;
 		onfetchfromrelay?: (url: string, kinds: number[]) => void;
+		onfetchauthors?: () => void;
 		onfeedloadmore?: () => void;
 		fetchRelays?: string[];
+		authorCount?: number;
 		onloadsection?: (index: number) => void;
 		onignoreevent?: (event_id: string) => void;
 		onignorepubkey?: (pubkey: string) => void;
@@ -152,6 +156,19 @@
 									{fetchingRelay === relay ? '...' : '↻'} {relay.replace('wss://', '').replace('ws://', '')}
 								</button>
 							{/each}
+							{#if authorCount > 0}
+								<button
+									class="fetch-relay-btn fetch-authors-btn"
+									disabled={fetchingRelay === '__authors__'}
+									onclick={async () => {
+										fetchingRelay = '__authors__';
+										await onfetchauthors?.();
+										fetchingRelay = null;
+									}}
+								>
+									{fetchingRelay === '__authors__' ? '...' : '↻'} Fetch {authorCount} followed authors
+								</button>
+							{/if}
 							<div class="fetch-custom">
 								<input
 									type="text"
@@ -441,6 +458,11 @@
 	.fetch-relay-btn:hover {
 		background: var(--bg);
 		border-color: var(--accent);
+	}
+
+	.fetch-authors-btn {
+		border-color: var(--accent);
+		color: var(--accent);
 	}
 
 	.fetch-custom {

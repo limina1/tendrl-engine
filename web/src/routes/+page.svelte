@@ -99,6 +99,7 @@
 
 	// Relay config
 	let fetchRelayUrls: string[] = $state([]);
+	let authorCount = $state(0);
 
 	// Ignore list
 	let ignoredCount = $state(0);
@@ -277,9 +278,20 @@
 			try {
 				const rc = await api.getRelayConfig();
 				fetchRelayUrls = rc.fetch.urls;
+				authorCount = rc.authors.length;
 			} catch {}
 		})();
 	});
+
+	async function handleFetchAuthors() {
+		try {
+			const resp = await api.fetchAuthors();
+			console.log(`Fetched ${resp.fetched} events for ${resp.authors} authors from ${resp.relays} relays`);
+			await loadFeed();
+		} catch (e) {
+			console.error('Fetch authors failed:', e);
+		}
+	}
 
 	async function handleFetchFromRelay(url: string, kinds: number[]) {
 		try {
@@ -1073,7 +1085,9 @@
 				onopenpub={handleOpenFeedPublication}
 				onfeedsync={handleFeedSync}
 				onfetchfromrelay={handleFetchFromRelay}
+				onfetchauthors={handleFetchAuthors}
 				fetchRelays={fetchRelayUrls}
+				{authorCount}
 				onfeedloadmore={handleFeedLoadMore}
 				onloadsection={handleLoadSection}
 				onignoreevent={async (id) => { try { await api.ignoreEvents([id]); await refreshIgnoreList(); await loadFeed(); } catch {} }}

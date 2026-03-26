@@ -145,6 +145,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/v1/profile/:pubkey", get(api::profile_handler))
         .route("/api/v1/relays", get(api::relay_config_handler))
         .route("/api/v1/fetch", post(api::fetch_relay_handler))
+        .route("/api/v1/fetch/authors", post(api::fetch_authors_handler))
         // Ignore list + purge
         .route("/api/v1/ignore", get(api::ignore_list_handler).post(api::ignore_add_handler).delete(api::ignore_remove_handler))
         .route("/api/v1/purge", post(api::purge_handler))
