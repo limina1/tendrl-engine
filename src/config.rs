@@ -106,6 +106,51 @@ pub struct IdentityConfig {
     pub pubkey: Option<String>,
 }
 
+/// Embedding configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EmbeddingConfig {
+    /// Enable embedding index
+    #[serde(default)]
+    pub enabled: bool,
+    /// Backend: "python" (sidecar) or "onnx" (in-process, requires --features onnx)
+    #[serde(default = "default_embedding_backend")]
+    pub backend: String,
+    /// Python sidecar URL
+    #[serde(default = "default_sidecar_url")]
+    pub sidecar_url: String,
+    /// Sentence transformer model name
+    #[serde(default = "default_embedding_model")]
+    pub model: String,
+    /// Embedding dimensions (must match model)
+    #[serde(default = "default_dimensions")]
+    pub dimensions: usize,
+    /// Custom index path (defaults to {data_dir parent}/vectors.*)
+    #[serde(default)]
+    pub index_path: Option<String>,
+    /// Automatically embed new events on ingest
+    #[serde(default)]
+    pub auto_embed: bool,
+}
+
+fn default_embedding_backend() -> String { "python".to_string() }
+fn default_sidecar_url() -> String { "http://localhost:3031".to_string() }
+fn default_embedding_model() -> String { "all-MiniLM-L6-v2".to_string() }
+fn default_dimensions() -> usize { 384 }
+
+impl Default for EmbeddingConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            backend: default_embedding_backend(),
+            sidecar_url: default_sidecar_url(),
+            model: default_embedding_model(),
+            dimensions: default_dimensions(),
+            index_path: None,
+            auto_embed: false,
+        }
+    }
+}
+
 /// Main configuration struct
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Config {
@@ -121,6 +166,9 @@ pub struct Config {
     /// Identity settings
     #[serde(default)]
     pub identity: IdentityConfig,
+    /// Embedding settings
+    #[serde(default)]
+    pub embedding: EmbeddingConfig,
 }
 
 impl Config {

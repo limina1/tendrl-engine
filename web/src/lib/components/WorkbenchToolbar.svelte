@@ -1,18 +1,24 @@
 <script lang="ts">
-	import type { SyncMode, ButtonLabels } from '$lib/types';
+	import type { SyncMode, ButtonLabels, EmbeddingStatusResponse } from '$lib/types';
 
 	let {
 		syncMode,
 		buttonLabels,
+		embeddingStatus = null,
+		embeddingSyncing = false,
 		onsetsyncmode,
 		onsetbuttonlabels,
-		onhome
+		onhome,
+		onsyncembeddings
 	}: {
 		syncMode: SyncMode;
 		buttonLabels: ButtonLabels;
+		embeddingStatus?: EmbeddingStatusResponse | null;
+		embeddingSyncing?: boolean;
 		onsetsyncmode: (mode: SyncMode) => void;
 		onsetbuttonlabels: (mode: ButtonLabels) => void;
 		onhome?: () => void;
+		onsyncembeddings?: () => void;
 	} = $props();
 
 	let settingsOpen = $state(false);
@@ -21,6 +27,26 @@
 <div class="workbench-toolbar">
 	<button class="workbench-title" onclick={onhome}>tendrl</button>
 	<span class="spacer"></span>
+	{#if embeddingStatus?.enabled}
+		{@const pct = embeddingStatus.total_events > 0 ? Math.round((embeddingStatus.indexed_count / embeddingStatus.total_events) * 100) : 0}
+		<span class="embed-status" class:offline={!embeddingStatus.sidecar_available}>
+			{#if !embeddingStatus.sidecar_available}
+				embed offline
+			{:else if embeddingSyncing}
+				{embeddingStatus.indexed_count}/{embeddingStatus.total_events}
+			{:else}
+				{embeddingStatus.indexed_count}/{embeddingStatus.total_events}
+			{/if}
+		</span>
+		{#if embeddingSyncing}
+			<div class="embed-progress">
+				<div class="embed-progress-bar" style:width="{pct}%"></div>
+			</div>
+		{/if}
+		<button class="embed-sync-btn" onclick={onsyncembeddings} disabled={embeddingSyncing} title="Sync embeddings">
+			{embeddingSyncing ? '...' : '↻'}
+		</button>
+	{/if}
 	<button class="settings-toggle" onclick={() => (settingsOpen = !settingsOpen)} title="Settings">
 		{settingsOpen ? '✕' : '⚙'}
 	</button>
@@ -65,6 +91,48 @@
 
 	.spacer {
 		flex: 1;
+	}
+
+	.embed-status {
+		font-size: 0.7rem;
+		color: var(--fg-muted);
+		margin-right: 4px;
+	}
+
+	.embed-status.offline {
+		color: #ef4444;
+	}
+
+	.embed-progress {
+		width: 60px;
+		height: 6px;
+		background: var(--border);
+		border-radius: 3px;
+		overflow: hidden;
+		margin-right: 4px;
+	}
+
+	.embed-progress-bar {
+		height: 100%;
+		background: var(--accent);
+		border-radius: 3px;
+		transition: width 0.3s ease;
+	}
+
+	.embed-sync-btn {
+		font-size: 0.75rem;
+		padding: 1px 6px;
+		margin-right: 8px;
+		background: none;
+		border: 1px solid var(--border);
+		color: var(--fg-muted);
+		cursor: pointer;
+		border-radius: var(--radius);
+	}
+
+	.embed-sync-btn:hover {
+		color: var(--fg);
+		border-color: var(--fg-muted);
 	}
 
 	.settings-toggle {

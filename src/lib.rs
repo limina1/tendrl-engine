@@ -54,6 +54,7 @@ pub mod api;
 pub mod chat;
 pub mod config;
 pub mod drafts;
+pub mod embedding;
 pub mod engine;
 pub mod error;
 pub mod identity;

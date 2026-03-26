@@ -93,6 +93,10 @@
 	// Identity
 	let myPubkey: string | null = $state(null);
 
+	// Embedding
+	let embeddingStatus: import('$lib/types').EmbeddingStatusResponse | null = $state(null);
+	let embeddingSyncing = $state(false);
+
 	// Settings
 	let syncMode: SyncMode = $state('explicit');
 	let buttonLabels: ButtonLabels = $state('icon');
@@ -216,8 +220,33 @@
 				// Backend unavailable
 			}
 			await loadFeed();
+			try {
+				embeddingStatus = await api.getEmbeddingStatus();
+			} catch { /* embedding not enabled */ }
 		})();
 	});
+
+	async function handleSyncEmbeddings() {
+		embeddingSyncing = true;
+
+		// Poll status while sync runs in the background
+		const pollInterval = setInterval(async () => {
+			try {
+				embeddingStatus = await api.getEmbeddingStatus();
+			} catch { /* ignore poll errors */ }
+		}, 1000);
+
+		try {
+			embeddingStatus = await api.syncEmbeddings();
+		} catch (e) {
+			console.error('Embedding sync failed:', e);
+		} finally {
+			clearInterval(pollInterval);
+			// Final status refresh
+			try { embeddingStatus = await api.getEmbeddingStatus(); } catch {}
+			embeddingSyncing = false;
+		}
+	}
 
 	// --- Helpers ---
 
@@ -822,9 +851,12 @@
 	<WorkbenchToolbar
 		{syncMode}
 		{buttonLabels}
+		{embeddingStatus}
+		{embeddingSyncing}
 		onsetsyncmode={(m: SyncMode) => (syncMode = m)}
 		onsetbuttonlabels={(m: ButtonLabels) => (buttonLabels = m)}
 		onhome={() => { docMode = 'empty'; publication = null; sections = []; docCollapsed = false; if (searchCount === 0) loadFeed(); }}
+		onsyncembeddings={handleSyncEmbeddings}
 	/>
 
 	<div class="workbench-panels" style:grid-template-columns={gridTemplate}>

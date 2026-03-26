@@ -84,6 +84,14 @@ async fn main() -> anyhow::Result<()> {
     let relay_refs: Vec<&str> = config.relay.default_relays.iter().map(|s| s.as_str()).collect();
     let mut engine = Engine::with_config(&data_path, &relay_refs, config.relay.timeout_ms)?;
     engine.set_my_pubkey(my_pubkey.clone());
+
+    // Initialize embedding index if enabled
+    if config.embedding.enabled {
+        if let Err(e) = engine.init_embedding(&config.embedding) {
+            tracing::warn!("Failed to initialize embedding index: {}", e);
+        }
+    }
+
     let state = Arc::new(engine);
 
     // Configure CORS
@@ -130,6 +138,10 @@ async fn main() -> anyhow::Result<()> {
         )
         // Search endpoint
         .route("/api/v1/search", post(api::search_handler))
+        // Embedding endpoints
+        .route("/api/v1/embed/status", get(api::embed_status_handler))
+        .route("/api/v1/embed/sync", post(api::embed_sync_handler))
+        .route("/api/v1/embed/reindex", post(api::embed_reindex_handler))
         // Publication endpoints
         .route("/api/v1/publications", get(api::list_publications_handler))
         .route(

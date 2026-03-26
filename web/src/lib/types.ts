@@ -150,3 +150,11 @@ export interface ComposeState {
 
 export type ViewMode = 'outline' | 'continuous' | 'paginated';
 export type DocMode = 'empty' | 'reading' | 'compose';
+
+export interface EmbeddingStatusResponse {
+	enabled: boolean;
+	indexed_count: number;
+	total_events: number;
+	sidecar_available: boolean;
+	model: string | null;
+}

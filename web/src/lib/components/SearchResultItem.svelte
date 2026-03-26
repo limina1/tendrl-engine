@@ -60,6 +60,9 @@
 		<div class="result-header-text" onclick={() => onselect(result)} onkeydown={(e) => e.key === 'Enter' && onselect(result)} role="button" tabindex="0">
 		<span class="result-title">{result.title ?? '[Untitled]'}</span>
 		<span class="kind-badge">{KINDS[result.kind] ?? result.kind}</span>
+		{#if result.semantic_score != null}
+			<span class="score-badge">{(result.semantic_score * 100).toFixed(0)}%</span>
+		{/if}
 		{#if poolMatch?.in_context}
 			<span class="loc-badge" class:loc-synced={!poolMatch.modified} class:loc-modified={poolMatch.modified}>context</span>
 		{/if}
@@ -176,6 +179,16 @@
 		border-radius: 4px;
 		background: var(--border);
 		color: var(--fg-muted);
+		white-space: nowrap;
+	}
+
+	.score-badge {
+		font-size: 0.65rem;
+		padding: 1px 5px;
+		border-radius: 4px;
+		background: #22c55e33;
+		color: #22c55e;
+		font-weight: 600;
 		white-space: nowrap;
 	}
 

@@ -3,6 +3,8 @@
 //! Provides a unified interface for querying events from local nostrdb
 //! with optional relay backfill based on configurable fetch policies.
 
+use crate::config::EmbeddingConfig;
+use crate::embedding::{EmbeddingIndex, EmbeddingStatus};
 use crate::error::{EngineError, Result};
 use crate::search::{self, SearchQuery, SearchResponse};
 use crate::{query, relay};
@@ -11,7 +13,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::path::Path;
 use std::sync::Arc;
-use tracing::{debug, info};
+use tokio::sync::RwLock;
+use tracing::{debug, info, warn};
 
 /// Fetch policy determines how the engine retrieves events
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -75,6 +78,8 @@ pub struct Engine {
     data_dir: std::path::PathBuf,
     /// Configured user pubkey (hex) for resolving by:me
     my_pubkey: Option<String>,
+    /// Optional embedding index for semantic search
+    embedding: Option<Arc<RwLock<EmbeddingIndex>>>,
 }
 
 impl Engine {
@@ -106,6 +111,7 @@ impl Engine {
             timeout_ms,
             data_dir: data_path.to_path_buf(),
             my_pubkey: None,
+            embedding: None,
         })
     }
 
@@ -132,6 +138,167 @@ impl Engine {
     /// Get the configured user pubkey
     pub fn my_pubkey(&self) -> Option<&str> {
         self.my_pubkey.as_deref()
+    }
+
+    /// Initialize the embedding index from config
+    pub fn init_embedding(&mut self, config: &EmbeddingConfig) -> Result<()> {
+        if !config.enabled {
+            return Ok(());
+        }
+
+        let index_dir = config
+            .index_path
+            .as_deref()
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| {
+                self.data_dir
+                    .parent()
+                    .unwrap_or(&self.data_dir)
+                    .to_path_buf()
+            });
+
+        let index = EmbeddingIndex::load(&index_dir, config)?;
+        info!("Embedding index: {} vectors, model={}", index.len(), index.model());
+        self.embedding = Some(Arc::new(RwLock::new(index)));
+        Ok(())
+    }
+
+    /// Get the embedding index (for API handlers)
+    pub fn embedding_index(&self) -> Option<&Arc<RwLock<EmbeddingIndex>>> {
+        self.embedding.as_ref()
+    }
+
+    /// Sync embeddings: find unembedded events, embed them, update index
+    pub async fn sync_embeddings(&self) -> Result<EmbeddingStatus> {
+        let emb = self.embedding.as_ref().ok_or_else(|| {
+            EngineError::Config("Embedding not enabled".into())
+        })?;
+
+        // Get all events from nostrdb
+        let filter = serde_json::json!({"limit": 10000});
+        let all_events = query::query_local(&self.ndb, &[filter])?;
+        let total_events = all_events.len();
+
+        // Find unembedded events
+        let index = emb.read().await;
+        let mut to_embed: Vec<(String, String)> = Vec::new(); // (event_id, text)
+
+        for event in &all_events {
+            let event_id = event.get("id").and_then(|v| v.as_str()).unwrap_or("");
+            if event_id.is_empty() || index.contains(event_id) {
+                continue;
+            }
+
+            // Extract text: title + content
+            let content = event.get("content").and_then(|v| v.as_str()).unwrap_or("");
+            let title = event
+                .get("tags")
+                .and_then(|t| t.as_array())
+                .and_then(|tags| {
+                    tags.iter().find_map(|tag| {
+                        let arr = tag.as_array()?;
+                        if arr.first()?.as_str()? == "title" {
+                            arr.get(1)?.as_str()
+                        } else {
+                            None
+                        }
+                    })
+                })
+                .unwrap_or("");
+
+            let text = if title.is_empty() {
+                content.to_string()
+            } else if content.is_empty() {
+                title.to_string()
+            } else {
+                format!("{title}\n{content}")
+            };
+
+            // Skip events with no meaningful text
+            if text.trim().is_empty() {
+                continue;
+            }
+
+            to_embed.push((event_id.to_string(), text));
+        }
+
+        drop(index); // release read lock
+
+        if to_embed.is_empty() {
+            let index = emb.read().await;
+            let model = index.model().to_string();
+            return Ok(EmbeddingStatus {
+                enabled: true,
+                indexed_count: index.len(),
+                total_events,
+                sidecar_available: true,
+                model: Some(model),
+            });
+        }
+
+        info!("Embedding {} new events", to_embed.len());
+
+        // Batch embed — release lock between batches so status polling works
+        let batch_size = 64;
+
+        for chunk in to_embed.chunks(batch_size) {
+            let texts: Vec<String> = chunk.iter().map(|(_, t)| t.clone()).collect();
+            let ids: Vec<String> = chunk.iter().map(|(id, _)| id.clone()).collect();
+
+            // Embed with read lock (only needs the backend, not mutation)
+            let vectors = {
+                let index = emb.read().await;
+                index.embed_texts(&texts).await
+            };
+
+            match vectors {
+                Ok(vectors) => {
+                    // Insert with write lock
+                    let mut index = emb.write().await;
+                    for (id, vec) in ids.iter().zip(vectors.iter()) {
+                        if let Err(e) = index.insert(id, vec) {
+                            warn!("Failed to insert embedding for {}: {}", id, e);
+                        }
+                    }
+                }
+                Err(e) => {
+                    warn!("Batch embedding failed: {}", e);
+                    break;
+                }
+            }
+        }
+
+        // Save once at end
+        {
+            let index = emb.read().await;
+            index.save()?;
+        }
+
+        let index = emb.read().await;
+        let model = index.model().to_string();
+        let indexed_count = index.len();
+
+        Ok(EmbeddingStatus {
+            enabled: true,
+            indexed_count,
+            total_events,
+            sidecar_available: true,
+            model: Some(model),
+        })
+    }
+
+    /// Clear and rebuild the entire embedding index
+    pub async fn reindex_embeddings(&self) -> Result<EmbeddingStatus> {
+        let emb = self.embedding.as_ref().ok_or_else(|| {
+            EngineError::Config("Embedding not enabled".into())
+        })?;
+
+        {
+            let mut index = emb.write().await;
+            index.clear()?;
+        }
+
+        self.sync_embeddings().await
     }
 
     /// Query events using NIP-01 filters with the specified fetch policy
@@ -223,7 +390,8 @@ impl Engine {
     /// Search for events using a structured search query.
     ///
     /// Compiles the query to NIP-01 filters, fetches events, applies text
-    /// post-filtering, and builds SearchResult objects.
+    /// post-filtering, and builds SearchResult objects. When a `~:` semantic
+    /// filter is present, queries the HNSW index for nearest neighbors.
     pub async fn search(
         &self,
         query: &SearchQuery,
@@ -231,6 +399,11 @@ impl Engine {
         override_relays: Option<&[String]>,
     ) -> Result<SearchResponse> {
         let limit = query.limit.unwrap_or(100);
+
+        // Semantic search path
+        if query.needs_semantic() {
+            return self.semantic_search(query, policy, override_relays).await;
+        }
 
         let mut filters = query.to_nip01_filters();
         if filters.is_empty() {
@@ -254,6 +427,96 @@ impl Engine {
             count,
             local_count: response.source.local_count,
             relay_count: response.source.relay_count,
+        })
+    }
+
+    /// Semantic search: embed query, search HNSW, fetch events, merge scores
+    async fn semantic_search(
+        &self,
+        query: &SearchQuery,
+        _policy: FetchPolicy,
+        _override_relays: Option<&[String]>,
+    ) -> Result<SearchResponse> {
+        let emb = self.embedding.as_ref().ok_or_else(|| {
+            EngineError::Config("Semantic search requires [embedding] enabled in config".into())
+        })?;
+
+        let semantic = query.semantic_filter.as_ref().unwrap();
+        let k = semantic.k;
+
+        // Over-fetch from HNSW since kind/author filters will discard many
+        let has_post_filters = query.kind_filter.is_some() || query.author_filter.is_some();
+        let fetch_k = if has_post_filters { k * 10 } else { k };
+
+        // Embed the query
+        let index = emb.read().await;
+        let query_vec = index.embed_query(&semantic.query).await?;
+
+        // Search HNSW
+        let matches = index.search(&query_vec, fetch_k)?;
+        drop(index);
+
+        if matches.is_empty() {
+            return Ok(SearchResponse {
+                results: vec![],
+                count: 0,
+                local_count: 0,
+                relay_count: 0,
+            });
+        }
+
+        // Fetch full events for matched IDs
+        let mut results = Vec::new();
+        let scores: std::collections::HashMap<String, f64> =
+            matches.into_iter().collect();
+
+        for (event_id, score) in &scores {
+            if let Some(event) = query::query_by_id(&self.ndb, event_id)? {
+                // Apply kind filter
+                if let Some(kinds) = &query.kind_filter {
+                    let event_kind = event.get("kind").and_then(|v| v.as_u64()).unwrap_or(0);
+                    if !kinds.contains(&event_kind) {
+                        continue;
+                    }
+                }
+                // Apply author filter
+                if let Some(search::AuthorFilter::Pubkeys(pks)) = &query.author_filter {
+                    let author = event.get("pubkey").and_then(|v| v.as_str()).unwrap_or("");
+                    if !pks.iter().any(|pk| pk == author) {
+                        continue;
+                    }
+                }
+                // Apply text filter (intersection: must match both semantic AND text)
+                if let Some(text_filter) = &query.text_filter {
+                    let text_matches = query::filter_by_text(&[event.clone()], text_filter);
+                    if text_matches.is_empty() {
+                        continue;
+                    }
+                }
+
+                let mut sr = search::build_search_results(&[event], 1);
+                if let Some(mut r) = sr.pop() {
+                    r.semantic_score = Some(*score);
+                    results.push(r);
+                }
+            }
+        }
+
+        // Sort by semantic score descending, truncate to requested k
+        results.sort_by(|a, b| {
+            b.semantic_score
+                .partial_cmp(&a.semantic_score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        results.truncate(k);
+
+        let count = results.len();
+
+        Ok(SearchResponse {
+            results,
+            count,
+            local_count: count,
+            relay_count: 0,
         })
     }
 

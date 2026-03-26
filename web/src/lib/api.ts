@@ -9,7 +9,8 @@ import type {
 	TocEntry,
 	Section,
 	SectionMeta,
-	SearchResponse
+	SearchResponse,
+	EmbeddingStatusResponse
 } from './types';
 
 async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
@@ -118,4 +119,18 @@ export function search(query: string, limit?: number, my_pubkey?: string, policy
 		method: 'POST',
 		body: JSON.stringify({ query, limit, my_pubkey, policy })
 	});
+}
+
+// Embedding API
+
+export function getEmbeddingStatus() {
+	return fetchJson<EmbeddingStatusResponse>('/api/v1/embed/status');
+}
+
+export function syncEmbeddings() {
+	return fetchJson<EmbeddingStatusResponse>('/api/v1/embed/sync', { method: 'POST' });
+}
+
+export function reindexEmbeddings() {
+	return fetchJson<EmbeddingStatusResponse>('/api/v1/embed/reindex', { method: 'POST' });
 }

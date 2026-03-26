@@ -97,7 +97,7 @@ impl ClaudeProvider {
     pub fn new(api_key: String) -> Self {
         Self {
             api_key,
-            model: "claude-sonnet-4-20250514".to_string(),
+            model: "claude-haiku-4-5-20251001".to_string(),
             client: reqwest::Client::new(),
         }
     }

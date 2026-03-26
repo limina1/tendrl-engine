@@ -29,6 +29,7 @@ required-features = ["tui"]
 [features]
 default = []
 tui = ["ratatui", "crossterm", "tracing-appender"]
+onnx = ["fastembed"]
 
 [dependencies]
 # Nostr database
@@ -78,6 +79,12 @@ unicode-normalization = "0.1"
 
 # CLI argument parsing
 clap = { version = "4", features = ["derive"] }
+
+# Vector search
+usearch = "2"
+
+# ONNX embeddings (optional, for --features onnx)
+fastembed = { version = "4", optional = true }
 
 # TUI (optional, for nostr-tree binary)
 ratatui = { version = "0.29", optional = true }

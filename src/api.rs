@@ -530,6 +530,65 @@ pub async fn load_sections_metadata_handler(
 }
 
 // ============================================================================
+// Embedding API Endpoints
+// ============================================================================
+
+use crate::embedding::EmbeddingStatus;
+
+/// GET /api/v1/embed/status — current embedding index status
+pub async fn embed_status_handler(
+    State(engine): State<AppState>,
+) -> Result<Json<EmbeddingStatus>, EngineError> {
+    let emb = match engine.embedding_index() {
+        Some(e) => e,
+        None => {
+            return Ok(Json(EmbeddingStatus {
+                enabled: false,
+                indexed_count: 0,
+                total_events: 0,
+                sidecar_available: false,
+                model: None,
+            }));
+        }
+    };
+
+    let index = emb.read().await;
+    let sidecar_available = index.health_check().await.is_ok();
+    let model = index.model().to_string();
+    let indexed_count = index.len();
+
+    // Count total events in nostrdb
+    let filter = serde_json::json!({"limit": 10000});
+    let total_events = crate::query::query_local(engine.ndb(), &[filter])
+        .map(|e| e.len())
+        .unwrap_or(0);
+
+    Ok(Json(EmbeddingStatus {
+        enabled: true,
+        indexed_count,
+        total_events,
+        sidecar_available,
+        model: Some(model),
+    }))
+}
+
+/// POST /api/v1/embed/sync — embed unembedded events
+pub async fn embed_sync_handler(
+    State(engine): State<AppState>,
+) -> Result<Json<EmbeddingStatus>, EngineError> {
+    let status = engine.sync_embeddings().await?;
+    Ok(Json(status))
+}
+
+/// POST /api/v1/embed/reindex — clear and re-embed everything
+pub async fn embed_reindex_handler(
+    State(engine): State<AppState>,
+) -> Result<Json<EmbeddingStatus>, EngineError> {
+    let status = engine.reindex_embeddings().await?;
+    Ok(Json(status))
+}
+
+// ============================================================================
 // Chat API Endpoints
 // ============================================================================
 
