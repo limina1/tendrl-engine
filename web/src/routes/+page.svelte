@@ -829,24 +829,14 @@
 		try {
 			let effectiveQuery = query;
 
-			// Context-aware kind filter based on document panel state
-			// Only add k:30040 when there's no text content to search
-			// (text search needs content-bearing kinds like 30041)
-			const hasTextTerms = effectiveQuery.split(/\s+/).some(t =>
-				!t.startsWith('k:') && !t.startsWith('by:') && !t.startsWith('t:') &&
-				!t.startsWith('~:') && !t.startsWith('d:') && !t.startsWith('"')
-			);
-			const isFeedSearch = docMode === 'empty' && !query.includes('k:');
-			if (isFeedSearch && !hasTextTerms) {
-				effectiveQuery = `k:30040 ${effectiveQuery}`;
-			}
+			// Search everything — don't restrict by kind.
+			// The feed will pick up any 30040 results automatically.
 
 			// Default to by:me if pubkey is configured
 			if (myPubkey && !query.includes('by:')) {
 				effectiveQuery = `by:me ${effectiveQuery}`;
 			}
 
-			console.log('search:', effectiveQuery, 'myPubkey:', myPubkey);
 			const resp = await api.search(effectiveQuery, undefined, myPubkey ?? undefined);
 			searchResults = resp.results;
 			searchCount = resp.count;
@@ -863,28 +853,29 @@
 				importFilename = resp.doc_results[0].filename;
 			}
 
-			// In feed mode, search results drive the feed display
+			// In feed mode, filter 30040 results into the feed
 			if (docMode === 'empty') {
 				const pubs = resp.results.filter(r => r.kind === 30040 && r.addr);
-				if (pubs.length > 0) {
-					// Deduplicate by pubkey:d_tag (nostrdb returns all versions)
-					const seen = new Set<string>();
-					feed = [];
-					for (const r of pubs) {
-						const key = `${r.addr!.pubkey}:${r.addr!.d_tag}`;
-						if (seen.has(key)) continue;
-						seen.add(key);
-						feed.push({
-							addr: r.addr!,
-							title: r.title,
-							summary: r.preview || null,
-							image: null,
-							author_pubkey: r.author,
-							version: null,
-							created_at: r.created_at,
-							section_count: r.tags.filter(t => t[0] === 'a').length
-						});
-					}
+				// Deduplicate by pubkey:d_tag
+				const seen = new Set<string>();
+				const feedPubs = [];
+				for (const r of pubs) {
+					const key = `${r.addr!.pubkey}:${r.addr!.d_tag}`;
+					if (seen.has(key)) continue;
+					seen.add(key);
+					feedPubs.push({
+						addr: r.addr!,
+						title: r.title,
+						summary: r.preview || null,
+						image: null,
+						author_pubkey: r.author,
+						version: null,
+						created_at: r.created_at,
+						section_count: r.tags.filter(t => t[0] === 'a').length
+					});
+				}
+				if (feedPubs.length > 0) {
+					feed = feedPubs;
 					feedHasMore = false;
 				}
 			}
