@@ -787,24 +787,32 @@ pub async fn fetch_profiles_handler(
     let relays = &engine.relay_config().general.urls;
     let mut fetched = 0;
 
-    // Fetch kind 0 for each pubkey not already in nostrdb
-    for pubkey in &req.pubkeys {
-        if pubkey.len() != 64 { continue; }
-        // Skip if already cached locally
-        if query_profile(engine.ndb(), pubkey).is_some() {
-            continue;
-        }
-        // Fetch from general relays (kind 0 has no d-tag, use filter directly)
-        let filter = json!({"kinds": [0], "authors": [pubkey], "limit": 1});
-        for relay_url in relays {
-            match crate::relay::fetch_with_filters(engine.ndb(), relay_url, &[filter.clone()]).await {
-                Ok(events) if !events.is_empty() => {
-                    fetched += 1;
-                    break;
-                }
-                _ => continue,
+    // Collect pubkeys not already in nostrdb
+    let missing: Vec<&str> = req.pubkeys.iter()
+        .filter(|pk| pk.len() == 64 && query_profile(engine.ndb(), pk).is_none())
+        .map(|pk| pk.as_str())
+        .collect();
+
+    if missing.is_empty() {
+        return Ok(Json(json!({ "fetched": 0, "total": req.pubkeys.len() })));
+    }
+
+    // Batch fetch: one request per relay with ALL missing pubkeys
+    let filter = json!({"kinds": [0], "authors": missing, "limit": missing.len()});
+    for relay_url in relays {
+        match crate::relay::fetch_with_filters(engine.ndb(), relay_url, &[filter.clone()]).await {
+            Ok(events) => {
+                fetched += events.len();
+            }
+            Err(e) => {
+                debug!("Failed to fetch profiles from {}: {}", relay_url, e);
             }
         }
+    }
+
+    // Brief wait for nostrdb to process ingested events
+    if fetched > 0 {
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
     }
 
     Ok(Json(json!({
