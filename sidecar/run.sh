@@ -10,4 +10,11 @@
 set -e
 cd "$(dirname "$0")"
 
-exec uv run --with sentence-transformers --with flask --with pymupdf --with python-docx --with ebooklib --with lxml python embed.py "$@"
+# Create persistent venv on first run
+if [ ! -d .venv ]; then
+    echo "Creating sidecar venv..."
+    uv venv
+    uv pip install sentence-transformers flask pymupdf python-docx ebooklib lxml
+fi
+
+exec .venv/bin/python embed.py "$@"

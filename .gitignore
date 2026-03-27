@@ -28,3 +28,4 @@ web/.svelte-kit/
 # Environment
 .env
 .env.local
+sidecar/.venv/
