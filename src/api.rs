@@ -769,6 +769,21 @@ pub async fn profile_handler(
         return Ok(Json(profile_from_event(&pubkey, &event)));
     }
 
+    // Not found locally — try general relays
+    let relays = &engine.relay_config().general.urls;
+    let filter = json!({"kinds": [0], "authors": [&pubkey], "limit": 1});
+    for relay_url in relays {
+        if let Ok(events) = crate::relay::fetch_with_filters(engine.ndb(), relay_url, &[filter.clone()]).await {
+            if !events.is_empty() {
+                // Wait briefly for nostrdb to process the ingested event
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                if let Some(event) = query_profile(engine.ndb(), &pubkey) {
+                    return Ok(Json(profile_from_event(&pubkey, &event)));
+                }
+            }
+        }
+    }
+
     Ok(Json(json!({ "pubkey": pubkey, "found": false })))
 }
 
