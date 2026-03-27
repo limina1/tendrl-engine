@@ -144,12 +144,35 @@
 
 	const hasImportChecked = $derived(importChecked.size > 0);
 	const checkedImportPages = $derived(importPages.filter(p => importChecked.has(p.page_num)));
+	const hasDocResults = $derived(importPages.length > 0 && importFilename !== '');
+	const semanticTotal = $derived(
+		(results.filter(r => r.semantic_score != null).length) +
+		(importPages.length > 0 && importFilename ? importPages.length : 0)
+	);
 </script>
 
 <div class="search-panel">
+	{#if semanticTotal > 0}
+		<div class="semantic-summary">
+			{semanticTotal} semantic {semanticTotal === 1 ? 'match' : 'matches'}
+			{#if results.some(r => r.semantic_score != null) && hasDocResults}
+				({results.filter(r => r.semantic_score != null).length} events, {importPages.length} doc pages)
+			{/if}
+		</div>
+	{/if}
 	<div class="tab-bar">
-		<button class="tab" class:active={activeTab === 'search'} onclick={() => (activeTab = 'search')}>Search</button>
-		<button class="tab" class:active={activeTab === 'import'} onclick={() => { activeTab = 'import'; onlistdocuments?.(); }}>Import</button>
+		<button class="tab" class:active={activeTab === 'search'} onclick={() => (activeTab = 'search')}>
+			Search
+			{#if results.some(r => r.semantic_score != null)}
+				<span class="tab-badge">{results.filter(r => r.semantic_score != null).length}</span>
+			{/if}
+		</button>
+		<button class="tab" class:active={activeTab === 'import'} onclick={() => { activeTab = 'import'; if (!hasDocResults) onlistdocuments?.(); }}>
+			Import
+			{#if hasDocResults}
+				<span class="tab-badge">{importPages.length}</span>
+			{/if}
+		</button>
 	</div>
 
 	{#if activeTab === 'search'}
@@ -198,7 +221,7 @@
 		{#if importPages.length > 0}
 			<!-- Page view -->
 			<div class="import-header">
-				<button class="import-back" onclick={() => { /* clear pages to go back to file list */ onlistdocuments?.(); }}>← Back</button>
+				<button class="import-back" onclick={() => onlistdocuments?.()}>← Back</button>
 				<span class="import-file-name">{importFilename}</span>
 				<span class="import-page-count">{importPages.length} pages</span>
 			</div>
@@ -326,6 +349,16 @@
 		padding: 0 12px;
 	}
 
+	/* Semantic summary */
+	.semantic-summary {
+		padding: 4px 12px;
+		font-size: 0.7rem;
+		color: #22c55e;
+		background: #22c55e10;
+		text-align: center;
+		border-bottom: 1px solid var(--border);
+	}
+
 	/* Tab bar */
 	.tab-bar {
 		display: flex;
@@ -347,6 +380,14 @@
 	.tab.active {
 		color: var(--accent);
 		border-bottom-color: var(--accent);
+	}
+	.tab-badge {
+		font-size: 0.6rem;
+		background: var(--accent);
+		color: white;
+		padding: 0 4px;
+		border-radius: 8px;
+		margin-left: 4px;
 	}
 
 	/* Import file list */

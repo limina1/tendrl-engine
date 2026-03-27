@@ -296,6 +296,7 @@
 		try {
 			const resp = await api.listDocuments();
 			documentFiles = resp.files;
+			// Clear pages to show file list (user clicked back)
 			importPages = [];
 			importFilename = '';
 		} catch (e) {
