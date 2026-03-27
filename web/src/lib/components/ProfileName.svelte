@@ -1,6 +1,5 @@
 <script lang="ts">
 	import { getProfile, onProfileUpdate } from '$lib/api';
-	import { onDestroy } from 'svelte';
 
 	let { pubkey }: { pubkey: string } = $props();
 
@@ -15,15 +14,17 @@
 	}
 
 	$effect(() => {
+		const pk = pubkey;
 		name = null;
-		resolve(pubkey);
-	});
+		resolve(pk);
 
-	// Re-resolve when batch prefetch completes
-	const unsub = onProfileUpdate(() => {
-		if (!name) resolve(pubkey);
+		// Re-resolve when batch prefetch completes
+		const unsub = onProfileUpdate(() => {
+			if (!name) resolve(pk);
+		});
+
+		return unsub;
 	});
-	onDestroy(unsub);
 </script>
 
 {#if name}
