@@ -184,8 +184,9 @@
 					myPubkey = cfg.my_pubkey;
 				} catch { /* ignore */ }
 			}
-			// Prefetch profiles for feed authors (background)
+			// Prefetch profiles for feed authors + own pubkey (background)
 			const pubkeys = [...new Set(resp.publications.map(p => p.author_pubkey))];
+			if (myPubkey) pubkeys.push(myPubkey);
 			api.prefetchProfiles(pubkeys);
 		} catch {
 			// Backend unavailable
@@ -200,6 +201,7 @@
 			const resp = await api.listPublications(20, 'fetch_always');
 			feed = resp.publications;
 			feedHasMore = resp.count >= 20;
+			api.prefetchProfiles([...new Set(resp.publications.map(p => p.author_pubkey))]);
 		} catch {
 			// Relay fetch failed
 		} finally {
@@ -221,6 +223,7 @@
 				const newPubs = resp.publications.filter(p => !existing.has(`${p.addr.pubkey}:${p.addr.d_tag}`));
 				feed = [...feed, ...newPubs];
 				feedHasMore = resp.count >= 20;
+				api.prefetchProfiles([...new Set(newPubs.map(p => p.author_pubkey))]);
 			}
 		} catch {
 			// silent
@@ -842,6 +845,10 @@
 			searchCount = resp.count;
 			searchLocalCount = resp.local_count;
 			searchRelayCount = resp.relay_count;
+
+			// Prefetch profiles for search result authors
+			const searchPubkeys = [...new Set(resp.results.map(r => r.author))];
+			api.prefetchProfiles(searchPubkeys);
 
 			// Route doc results to import panel
 			if (resp.doc_results && resp.doc_results.length > 0) {
