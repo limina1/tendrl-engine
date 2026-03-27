@@ -17,4 +17,7 @@ if [ ! -d .venv ]; then
     uv pip install sentence-transformers flask pymupdf python-docx ebooklib lxml
 fi
 
+# Use cached model, don't check HF Hub on startup
+export HF_HUB_OFFLINE=1
+
 exec .venv/bin/python embed.py "$@"
