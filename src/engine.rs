@@ -585,11 +585,19 @@ impl Engine {
 
         let results = search::build_search_results(&filtered, limit);
 
-        // Filter ignored events
+        // Filter ignored events (check event_id, pubkey, and a-tag format)
         let ignore = self.ignore_list.read().await;
         let results: Vec<_> = results
             .into_iter()
-            .filter(|r| !ignore.is_ignored(&r.event_id, &r.author))
+            .filter(|r| {
+                if ignore.is_ignored(&r.event_id, &r.author) { return false; }
+                // Also check a-tag format (used when hiding publications from feed)
+                if let Some(ref addr) = r.addr {
+                    let a_tag = format!("{}:{}:{}", addr.kind, addr.pubkey, addr.d_tag);
+                    if ignore.event_ids.contains(&a_tag) { return false; }
+                }
+                true
+            })
             .collect();
         let count = results.len();
 
@@ -639,6 +647,7 @@ impl Engine {
         }
 
         // Split matches into event results and doc page results
+        let ignore = self.ignore_list.read().await;
         let mut results = Vec::new();
         let mut doc_results = Vec::new();
 
@@ -667,14 +676,16 @@ impl Engine {
                     });
                 }
             } else {
-                // Nostr event
+                // Nostr event — check ignore list
+                if ignore.is_ignored(&match_id, "") { continue; }
                 if let Some(event) = query::query_by_id(&self.ndb, &match_id)? {
+                    let author = event.get("pubkey").and_then(|v| v.as_str()).unwrap_or("");
+                    if ignore.pubkeys.contains(author) { continue; }
                     if let Some(kinds) = &query.kind_filter {
                         let event_kind = event.get("kind").and_then(|v| v.as_u64()).unwrap_or(0);
                         if !kinds.contains(&event_kind) { continue; }
                     }
                     if let Some(search::AuthorFilter::Pubkeys(pks)) = &query.author_filter {
-                        let author = event.get("pubkey").and_then(|v| v.as_str()).unwrap_or("");
                         if !pks.iter().any(|pk| pk == author) { continue; }
                     }
                     if let Some(text_filter) = &query.text_filter {

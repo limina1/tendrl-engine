@@ -932,9 +932,14 @@
 		try {
 			await api.ignoreEvents([result.event_id]);
 			await refreshIgnoreList();
+			// Reactively remove from search results
 			searchResults = searchResults.filter(r => r.event_id !== result.event_id);
 			searchCount = searchResults.length;
-			if (docMode === 'empty') await loadFeed();
+			// Reactively remove matching publication from feed
+			if (result.addr) {
+				const aTag = `${result.addr.kind}:${result.addr.pubkey}:${result.addr.d_tag}`;
+				feed = feed.filter(p => `${p.addr.kind}:${p.addr.pubkey}:${p.addr.d_tag}` !== aTag);
+			}
 		} catch (e) {
 			console.error('Ignore failed:', e);
 		}
@@ -944,9 +949,10 @@
 		try {
 			await api.ignoreEvents([], [result.author]);
 			await refreshIgnoreList();
+			// Reactively remove from search and feed
 			searchResults = searchResults.filter(r => r.author !== result.author);
 			searchCount = searchResults.length;
-			if (docMode === 'empty') await loadFeed();
+			feed = feed.filter(p => p.author_pubkey !== result.author);
 		} catch (e) {
 			console.error('Ignore pubkey failed:', e);
 		}
@@ -1187,8 +1193,8 @@
 				{authorCount}
 				onfeedloadmore={handleFeedLoadMore}
 				onloadsection={handleLoadSection}
-				onignoreevent={async (id) => { try { await api.ignoreEvents([id]); await refreshIgnoreList(); await loadFeed(); } catch {} }}
-				onignorepubkey={async (pk) => { try { await api.ignoreEvents([], [pk]); await refreshIgnoreList(); await loadFeed(); } catch {} }}
+				onignoreevent={async (id) => { try { await api.ignoreEvents([id]); await refreshIgnoreList(); feed = feed.filter(p => `${p.addr.kind}:${p.addr.pubkey}:${p.addr.d_tag}` !== id); } catch {} }}
+				onignorepubkey={async (pk) => { try { await api.ignoreEvents([], [pk]); await refreshIgnoreList(); feed = feed.filter(p => p.author_pubkey !== pk); } catch {} }}
 				{ignoredEventIds}
 				{ignoredPubkeys}
 				onunignore={handleUnignore}
