@@ -1,19 +1,29 @@
 <script lang="ts">
-	import { getProfile } from '$lib/api';
+	import { getProfile, onProfileUpdate } from '$lib/api';
+	import { onDestroy } from 'svelte';
 
 	let { pubkey }: { pubkey: string } = $props();
 
 	let name = $state<string | null>(null);
 
-	$effect(() => {
-		const pk = pubkey;
-		name = null;
+	function resolve(pk: string) {
 		getProfile(pk).then(p => {
 			if (p.found) {
 				name = p.display_name || p.name;
 			}
 		}).catch(() => {});
+	}
+
+	$effect(() => {
+		name = null;
+		resolve(pubkey);
 	});
+
+	// Re-resolve when batch prefetch completes
+	const unsub = onProfileUpdate(() => {
+		if (!name) resolve(pubkey);
+	});
+	onDestroy(unsub);
 </script>
 
 {#if name}

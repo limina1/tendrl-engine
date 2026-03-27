@@ -231,6 +231,19 @@ export interface Profile {
 
 const profileCache = new Map<string, Profile>();
 const pendingProfiles = new Map<string, Promise<Profile>>();
+let profileVersion = 0;
+const profileListeners = new Set<() => void>();
+
+/** Subscribe to profile cache updates (returns unsubscribe) */
+export function onProfileUpdate(fn: () => void): () => void {
+	profileListeners.add(fn);
+	return () => profileListeners.delete(fn);
+}
+
+function notifyProfileUpdate() {
+	profileVersion++;
+	for (const fn of profileListeners) fn();
+}
 
 export async function getProfile(pubkey: string): Promise<Profile> {
 	const cached = profileCache.get(pubkey);
@@ -242,7 +255,10 @@ export async function getProfile(pubkey: string): Promise<Profile> {
 
 	const promise = fetchJson<Profile>(`/api/v1/profile/${pubkey}`)
 		.then(profile => {
-			if (profile.found) profileCache.set(pubkey, profile);
+			if (profile.found) {
+				profileCache.set(pubkey, profile);
+				notifyProfileUpdate();
+			}
 			pendingProfiles.delete(pubkey);
 			return profile;
 		})
@@ -269,9 +285,8 @@ export async function prefetchProfiles(pubkeys: string[]) {
 	} catch { /* ignore */ }
 
 	// Now populate cache from local (all should be in nostrdb now)
-	for (const pk of unique) {
-		getProfile(pk);
-	}
+	await Promise.all(unique.map(pk => getProfile(pk)));
+	notifyProfileUpdate();
 }
 
 // Ignore List API
