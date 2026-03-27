@@ -167,7 +167,7 @@
 				<span class="tab-badge">{results.filter(r => r.semantic_score != null).length}</span>
 			{/if}
 		</button>
-		<button class="tab" class:active={activeTab === 'import'} onclick={() => { activeTab = 'import'; if (!hasDocResults) onlistdocuments?.(); }}>
+		<button class="tab" class:active={activeTab === 'import'} onclick={() => { activeTab = 'import'; if (importPages.length === 0 && documentFiles.length === 0) onlistdocuments?.(); }}>
 			Import
 			{#if hasDocResults}
 				<span class="tab-badge">{importPages.length}</span>
