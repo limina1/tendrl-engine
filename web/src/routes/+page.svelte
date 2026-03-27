@@ -852,6 +852,16 @@
 			searchLocalCount = resp.local_count;
 			searchRelayCount = resp.relay_count;
 
+			// Route doc results to import panel
+			if (resp.doc_results && resp.doc_results.length > 0) {
+				importPages = resp.doc_results.map(d => ({
+					page_num: d.page_num,
+					title: d.title ?? `${d.filename} p.${d.page_num}`,
+					content: d.content
+				}));
+				importFilename = resp.doc_results[0].filename;
+			}
+
 			// In feed mode, search results drive the feed display
 			if (docMode === 'empty') {
 				const pubs = resp.results.filter(r => r.kind === 30040 && r.addr);

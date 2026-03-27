@@ -212,6 +212,7 @@ pub async fn search_handler(
             count,
             local_count: total_local,
             relay_count: total_relay,
+            doc_results: vec![],
         }));
     }
 
@@ -1307,6 +1308,8 @@ pub async fn embed_sync_handler(
     State(engine): State<AppState>,
 ) -> Result<Json<EmbeddingStatus>, EngineError> {
     let status = engine.sync_embeddings().await?;
+    // Also sync document embeddings
+    let _ = engine.sync_doc_embeddings().await;
     Ok(Json(status))
 }
 

@@ -598,6 +598,7 @@ impl Engine {
             count,
             local_count: response.source.local_count,
             relay_count: response.source.relay_count,
+            doc_results: vec![],
         })
     }
 
@@ -633,53 +634,65 @@ impl Engine {
                 count: 0,
                 local_count: 0,
                 relay_count: 0,
+                doc_results: vec![],
             });
         }
 
-        // Fetch full events for matched IDs
+        // Split matches into event results and doc page results
         let mut results = Vec::new();
-        let scores: std::collections::HashMap<String, f64> =
-            matches.into_iter().collect();
+        let mut doc_results = Vec::new();
 
-        for (event_id, score) in &scores {
-            if let Some(event) = query::query_by_id(&self.ndb, event_id)? {
-                // Apply kind filter
-                if let Some(kinds) = &query.kind_filter {
-                    let event_kind = event.get("kind").and_then(|v| v.as_u64()).unwrap_or(0);
-                    if !kinds.contains(&event_kind) {
-                        continue;
-                    }
-                }
-                // Apply author filter
-                if let Some(search::AuthorFilter::Pubkeys(pks)) = &query.author_filter {
-                    let author = event.get("pubkey").and_then(|v| v.as_str()).unwrap_or("");
-                    if !pks.iter().any(|pk| pk == author) {
-                        continue;
-                    }
-                }
-                // Apply text filter (intersection: must match both semantic AND text)
-                if let Some(text_filter) = &query.text_filter {
-                    let text_matches = query::filter_by_text(&[event.clone()], text_filter);
-                    if text_matches.is_empty() {
-                        continue;
-                    }
-                }
+        for (match_id, score) in matches {
+            if match_id.starts_with("doc:") {
+                // Document page: doc:filename:page_num
+                let parts: Vec<&str> = match_id.splitn(3, ':').collect();
+                if parts.len() == 3 {
+                    let filename = parts[1].to_string();
+                    let page_num: usize = parts[2].parse().unwrap_or(0);
 
-                let mut sr = search::build_search_results(&[event], 1);
-                if let Some(mut r) = sr.pop() {
-                    r.semantic_score = Some(*score);
-                    results.push(r);
+                    // Load page content from the docs folder
+                    let doc_path = self.documents_dir.join(&filename);
+                    let content = if let Ok(pages) = self.load_doc_page(&doc_path, page_num).await {
+                        pages
+                    } else {
+                        format!("[Page {} of {}]", page_num, filename)
+                    };
+
+                    doc_results.push(search::DocPageResult {
+                        filename,
+                        page_num,
+                        title: None,
+                        content,
+                        semantic_score: score,
+                    });
+                }
+            } else {
+                // Nostr event
+                if let Some(event) = query::query_by_id(&self.ndb, &match_id)? {
+                    if let Some(kinds) = &query.kind_filter {
+                        let event_kind = event.get("kind").and_then(|v| v.as_u64()).unwrap_or(0);
+                        if !kinds.contains(&event_kind) { continue; }
+                    }
+                    if let Some(search::AuthorFilter::Pubkeys(pks)) = &query.author_filter {
+                        let author = event.get("pubkey").and_then(|v| v.as_str()).unwrap_or("");
+                        if !pks.iter().any(|pk| pk == author) { continue; }
+                    }
+                    if let Some(text_filter) = &query.text_filter {
+                        if query::filter_by_text(&[event.clone()], text_filter).is_empty() { continue; }
+                    }
+                    let mut sr = search::build_search_results(&[event], 1);
+                    if let Some(mut r) = sr.pop() {
+                        r.semantic_score = Some(score);
+                        results.push(r);
+                    }
                 }
             }
         }
 
-        // Sort by semantic score descending, truncate to requested k
-        results.sort_by(|a, b| {
-            b.semantic_score
-                .partial_cmp(&a.semantic_score)
-                .unwrap_or(std::cmp::Ordering::Equal)
-        });
+        results.sort_by(|a, b| b.semantic_score.partial_cmp(&a.semantic_score).unwrap_or(std::cmp::Ordering::Equal));
         results.truncate(k);
+        doc_results.sort_by(|a, b| b.semantic_score.partial_cmp(&a.semantic_score).unwrap_or(std::cmp::Ordering::Equal));
+        doc_results.truncate(k);
 
         let count = results.len();
 
@@ -688,7 +701,169 @@ impl Engine {
             count,
             local_count: count,
             relay_count: 0,
+            doc_results,
         })
+    }
+
+    /// Sync document embeddings: parse all docs, embed pages not yet in HNSW
+    pub async fn sync_doc_embeddings(&self) -> Result<usize> {
+        let emb = self.embedding.as_ref().ok_or_else(|| {
+            EngineError::Config("Embedding not enabled".into())
+        })?;
+
+        let docs_dir = &self.documents_dir;
+        if !docs_dir.exists() { return Ok(0); }
+
+        let sidecar = &self.sidecar_url;
+        let mut total_embedded = 0;
+
+        let entries: Vec<_> = std::fs::read_dir(docs_dir)
+            .map_err(|e| EngineError::Database(format!("Failed to read docs dir: {e}")))?
+            .filter_map(|e| e.ok())
+            .filter(|e| e.path().is_file())
+            .collect();
+
+        for entry in entries {
+            let path = entry.path();
+            let filename = path.file_name().and_then(|n| n.to_str()).unwrap_or("").to_string();
+            let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase();
+
+            let supported = ["pdf", "docx", "epub", "html", "htm", "txt", "md", "org", "adoc"];
+            if !supported.contains(&ext.as_str()) { continue; }
+
+            // Check if first page is already embedded (quick check)
+            let first_key = format!("doc:{}:1", filename);
+            {
+                let index = emb.read().await;
+                if index.contains(&first_key) { continue; }
+            }
+
+            // Parse via sidecar
+            let file_bytes = match std::fs::read(&path) {
+                Ok(b) => b,
+                Err(_) => continue,
+            };
+
+            let part = reqwest::multipart::Part::bytes(file_bytes)
+                .file_name(filename.clone())
+                .mime_str("application/octet-stream")
+                .unwrap();
+            let form = reqwest::multipart::Form::new().part("file", part);
+
+            let resp = match reqwest::Client::new()
+                .post(format!("{sidecar}/parse"))
+                .multipart(form)
+                .timeout(std::time::Duration::from_secs(60))
+                .send()
+                .await
+            {
+                Ok(r) => r,
+                Err(e) => { warn!("Failed to parse {}: {}", filename, e); continue; }
+            };
+
+            let parsed: serde_json::Value = match resp.json().await {
+                Ok(v) => v,
+                Err(e) => { warn!("Invalid parse response for {}: {}", filename, e); continue; }
+            };
+
+            let pages = match parsed.get("pages").and_then(|p| p.as_array()) {
+                Some(p) => p,
+                None => continue,
+            };
+
+            // Embed each page
+            let mut texts = Vec::new();
+            let mut keys = Vec::new();
+
+            for page in pages {
+                let page_num = page.get("page_num").and_then(|v| v.as_u64()).unwrap_or(0);
+                let content = page.get("content").and_then(|v| v.as_str()).unwrap_or("");
+                let title = page.get("title").and_then(|v| v.as_str()).unwrap_or("");
+
+                if content.trim().is_empty() { continue; }
+
+                let key = format!("doc:{}:{}", filename, page_num);
+                let text = if title.is_empty() { content.to_string() } else { format!("{}\n{}", title, content) };
+
+                let index = emb.read().await;
+                if index.contains(&key) { continue; }
+                drop(index);
+
+                keys.push(key);
+                texts.push(text);
+            }
+
+            if texts.is_empty() { continue; }
+
+            // Batch embed
+            for chunk in texts.chunks(64) {
+                let chunk_keys: Vec<&str> = keys[..chunk.len()].iter().map(|s| s.as_str()).collect();
+                let chunk_texts: Vec<String> = chunk.to_vec();
+
+                let vectors = {
+                    let index = emb.read().await;
+                    index.embed_texts(&chunk_texts).await
+                };
+
+                match vectors {
+                    Ok(vecs) => {
+                        let mut index = emb.write().await;
+                        for (key, vec) in chunk_keys.iter().zip(vecs.iter()) {
+                            if let Err(e) = index.insert(key, vec) {
+                                warn!("Failed to insert doc embedding {}: {}", key, e);
+                            } else {
+                                total_embedded += 1;
+                            }
+                        }
+                    }
+                    Err(e) => { warn!("Doc embedding batch failed: {}", e); break; }
+                }
+            }
+        }
+
+        if total_embedded > 0 {
+            let index = emb.read().await;
+            index.save()?;
+            info!("Embedded {} document pages", total_embedded);
+        }
+
+        Ok(total_embedded)
+    }
+
+    /// Load a specific page's content from a parsed document (via sidecar)
+    async fn load_doc_page(&self, doc_path: &std::path::Path, page_num: usize) -> Result<String> {
+        let file_bytes = std::fs::read(doc_path)
+            .map_err(|e| EngineError::Database(format!("Failed to read doc: {e}")))?;
+        let filename = doc_path.file_name().and_then(|n| n.to_str()).unwrap_or("unknown");
+
+        let part = reqwest::multipart::Part::bytes(file_bytes)
+            .file_name(filename.to_string())
+            .mime_str("application/octet-stream")
+            .unwrap();
+        let form = reqwest::multipart::Form::new().part("file", part);
+
+        let parsed: serde_json::Value = reqwest::Client::new()
+            .post(format!("{}/parse", self.sidecar_url))
+            .multipart(form)
+            .timeout(std::time::Duration::from_secs(30))
+            .send()
+            .await
+            .map_err(|e| EngineError::Database(format!("Sidecar parse failed: {e}")))?
+            .json()
+            .await
+            .map_err(|e| EngineError::Database(format!("Invalid response: {e}")))?;
+
+        let pages = parsed.get("pages").and_then(|p| p.as_array())
+            .ok_or_else(|| EngineError::Database("No pages in response".into()))?;
+
+        for page in pages {
+            let pn = page.get("page_num").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+            if pn == page_num {
+                return Ok(page.get("content").and_then(|v| v.as_str()).unwrap_or("").to_string());
+            }
+        }
+
+        Err(EngineError::Database(format!("Page {} not found", page_num)))
     }
 
     // ---- Private helper methods ----

@@ -110,11 +110,20 @@ export interface SearchResult {
 	semantic_score: number | null;
 }
 
+export interface DocPageResult {
+	filename: string;
+	page_num: number;
+	title: string | null;
+	content: string;
+	semantic_score: number;
+}
+
 export interface SearchResponse {
 	results: SearchResult[];
 	count: number;
 	local_count: number;
 	relay_count: number;
+	doc_results?: DocPageResult[];
 }
 
 export interface TagEntry {

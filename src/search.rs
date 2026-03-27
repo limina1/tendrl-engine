@@ -96,6 +96,16 @@ pub struct SearchResult {
     pub semantic_score: Option<f64>,
 }
 
+/// A document page result from semantic search
+#[derive(Debug, Clone, Serialize)]
+pub struct DocPageResult {
+    pub filename: String,
+    pub page_num: usize,
+    pub title: Option<String>,
+    pub content: String,
+    pub semantic_score: f64,
+}
+
 /// Response from a search operation
 #[derive(Debug, Clone, Serialize)]
 pub struct SearchResponse {
@@ -103,6 +113,9 @@ pub struct SearchResponse {
     pub count: usize,
     pub local_count: usize,
     pub relay_count: usize,
+    /// Document page results from semantic search (separate from event results)
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub doc_results: Vec<DocPageResult>,
 }
 
 impl SearchQuery {
