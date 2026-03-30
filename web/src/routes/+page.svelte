@@ -90,8 +90,13 @@
 	// JSON modal
 	let jsonModalData: unknown = $state(null);
 
+	// Profile view
+	let profilePubkey: string | null = $state(null);
+
 	// Identity
 	let myPubkey: string | null = $state(null);
+	let assistantPubkey: string | null = $state(null);
+	const localPubkeys = $derived(new Set([myPubkey, assistantPubkey].filter(Boolean) as string[]));
 
 	// Embedding
 	let embeddingStatus: import('$lib/types').EmbeddingStatusResponse | null = $state(null);
@@ -100,6 +105,12 @@
 	// Relay config
 	let fetchRelayUrls: string[] = $state([]);
 	let authorCount = $state(0);
+
+	// Claude Code sessions
+	let claudeSessions: import('$lib/types').ClaudeSessionSummary[] = $state([]);
+	let claudeSessionDetail: { id: string; messages: import('$lib/types').ClaudeSessionMessage[]; count: number } | null = $state(null);
+	let claudeSessionsLoading = $state(false);
+	let sessionsExpanded = $state(false);
 
 	// Document import
 	let documentFiles: import('$lib/types').DocumentFile[] = $state([]);
@@ -156,6 +167,7 @@
 
 	// Settings
 	let syncMode: SyncMode = $state('explicit');
+	let passthrough = $state(false);
 	let buttonLabels: ButtonLabels = $state('icon');
 
 	// Panel collapse
@@ -273,7 +285,8 @@
 			try {
 				const cfg = await api.getConfig();
 				myPubkey = cfg.my_pubkey;
-				console.log('Config loaded, myPubkey:', myPubkey);
+				assistantPubkey = cfg.assistant_pubkey;
+				console.log('Config loaded, myPubkey:', myPubkey, 'assistantPubkey:', assistantPubkey);
 			} catch (e) {
 				console.warn('Config fetch failed:', e);
 			}
@@ -375,6 +388,16 @@
 		}
 	}
 
+	async function handleFetchSections() {
+		try {
+			const resp = await api.fetchSections();
+			console.log(`Fetch sections: ${resp.total_referenced} referenced, ${resp.missing} missing, ${resp.fetched} fetched`);
+			await loadFeed();
+		} catch (e) {
+			console.error('Fetch sections failed:', e);
+		}
+	}
+
 	async function handleFetchFromRelay(url: string, kinds: number[]) {
 		try {
 			const resp = await api.fetchFromRelay(url, kinds);
@@ -420,6 +443,172 @@
 			// Final status refresh
 			try { embeddingStatus = await api.getEmbeddingStatus(); } catch {}
 			embeddingSyncing = false;
+		}
+	}
+
+	// --- Claude Code Sessions ---
+
+	async function handleToggleSessions() {
+		sessionsExpanded = !sessionsExpanded;
+		if (!sessionsExpanded && !loadedSessionId) stopSessionPoll();
+		if (sessionsExpanded && claudeSessions.length === 0) {
+			claudeSessionsLoading = true;
+			try {
+				const resp = await api.listClaudeSessions();
+				claudeSessions = resp.sessions;
+			} catch (e) {
+				console.error('Failed to load Claude sessions:', e);
+			} finally {
+				claudeSessionsLoading = false;
+			}
+		}
+	}
+
+	let sessionPollInterval: ReturnType<typeof setInterval> | null = null;
+	let watchingSessionId: string | null = null;
+	let loadedSessionId: string | null = null;
+	let loadedSessionMessageCount = 0;
+
+	async function handleSelectClaudeSession(id: string) {
+		stopSessionPoll();
+		claudeSessionsLoading = true;
+		try {
+			claudeSessionDetail = await api.getClaudeSession(id);
+			watchingSessionId = id;
+			startSessionPoll(id);
+		} catch (e) {
+			console.error('Failed to load session:', e);
+		} finally {
+			claudeSessionsLoading = false;
+		}
+	}
+
+	function startSessionPoll(id: string) {
+		sessionPollInterval = setInterval(async () => {
+			if (watchingSessionId !== id) return;
+			try {
+				// Determine offset based on whether we're viewing or loaded-to-chat
+				const offset = loadedSessionId === id
+					? loadedSessionMessageCount
+					: (claudeSessionDetail?.messages.length ?? 0);
+
+				const resp = await api.getClaudeSession(id, offset);
+				if (resp.messages.length === 0) return;
+
+				// Update session viewer if open
+				if (claudeSessionDetail && watchingSessionId === id) {
+					claudeSessionDetail = {
+						...claudeSessionDetail,
+						messages: [...claudeSessionDetail.messages, ...resp.messages],
+						count: claudeSessionDetail.count + resp.messages.length,
+					};
+				}
+
+				// Append to chat if this session is loaded
+				if (loadedSessionId === id && chat) {
+					const newFragments = messagesToFragments(resp.messages, chat.fragments.length);
+					chat = {
+						...chat,
+						fragments: [...chat.fragments, ...newFragments],
+						fragment_count: chat.fragment_count + newFragments.length,
+					};
+					loadedSessionMessageCount += resp.messages.length;
+				}
+			} catch { /* ignore poll errors */ }
+		}, 2000);
+	}
+
+	/** Convert session messages to chat fragments with blocks */
+	function messagesToFragments(
+		messages: import('$lib/types').ClaudeSessionMessage[],
+		startId: number
+	): import('$lib/types').Fragment[] {
+		const fragments: import('$lib/types').Fragment[] = [];
+		let id = startId;
+		// Track pending tool_use fragments so we can attach results
+		let pendingToolFragments: import('$lib/types').Fragment[] = [];
+
+		for (const msg of messages) {
+			const hasText = msg.blocks.some(b => b.type === 'text');
+			const hasToolUse = msg.blocks.some(b => b.type === 'tool_use');
+			const hasToolResult = msg.blocks.some(b => b.type === 'tool_result');
+
+			if (hasText) {
+				pendingToolFragments = [];
+				const text = msg.blocks.filter(b => b.type === 'text').map(b => b.text ?? '').join('\n');
+				fragments.push({ id: id++, role: msg.role, content: text, blocks: msg.blocks });
+			} else if (hasToolUse) {
+				const frag: import('$lib/types').Fragment = { id: -(id++), role: 'tool', content: '', blocks: [...msg.blocks] };
+				pendingToolFragments.push(frag);
+				fragments.push(frag);
+			} else if (hasToolResult && pendingToolFragments.length > 0) {
+				// Attach tool_result blocks to the first pending tool_use fragment
+				const target = pendingToolFragments.shift()!;
+				const resultBlocks = msg.blocks.filter(b => b.type === 'tool_result');
+				target.blocks = [...(target.blocks ?? []), ...resultBlocks];
+			}
+		}
+		return fragments;
+	}
+
+	function stopSessionPoll() {
+		if (sessionPollInterval) {
+			clearInterval(sessionPollInterval);
+			sessionPollInterval = null;
+		}
+		watchingSessionId = null;
+	}
+
+	function handleClaudeSessionBack() {
+		// Only stop poll if we haven't loaded this session to chat
+		if (!loadedSessionId || loadedSessionId !== watchingSessionId) {
+			stopSessionPoll();
+		}
+		claudeSessionDetail = null;
+	}
+
+	async function handleLoadSessionToChat(session: { id: string; messages: import('$lib/types').ClaudeSessionMessage[] }) {
+		chatLoading = true;
+		try {
+			// Send text-only fragments to backend chat state
+			const textFragments = session.messages
+				.filter(m => m.blocks.some(b => b.type === 'text'))
+				.map(m => ({
+					role: m.role,
+					content: m.blocks.filter(b => b.type === 'text').map(b => b.text ?? '').join('\n')
+				}));
+			chat = await api.loadChatFragments(textFragments);
+
+			// Enrich with full blocks
+			if (chat) {
+				const enriched = messagesToFragments(session.messages, 0);
+				// Re-assign backend IDs to text fragments
+				let backendIdx = 0;
+				for (const frag of enriched) {
+					if (frag.role !== 'tool' && backendIdx < chat.fragments.length) {
+						frag.id = chat.fragments[backendIdx].id;
+						backendIdx++;
+					}
+				}
+				chat = { ...chat, fragments: enriched, fragment_count: enriched.length };
+			}
+
+			// Track for live updates
+			loadedSessionId = session.id;
+			loadedSessionMessageCount = session.messages.length;
+
+			// Start or continue polling
+			if (watchingSessionId !== session.id) {
+				stopSessionPoll();
+				watchingSessionId = session.id;
+				startSessionPoll(session.id);
+			}
+
+			sessionsExpanded = false;
+		} catch (e) {
+			console.error('Failed to load session to chat:', e);
+		} finally {
+			chatLoading = false;
 		}
 	}
 
@@ -527,6 +716,22 @@
 				fragment_count: chat.fragment_count + 1
 			};
 		}
+
+		// Append to Claude Code session if one is loaded
+		if (loadedSessionId) {
+			try {
+				await api.appendClaudeSessionMessage(loadedSessionId, content);
+			} catch (e) {
+				console.error('Failed to append to Claude session:', e);
+			}
+		}
+
+		// In passthrough mode, only write to session — don't call LLM
+		if (passthrough) {
+			if (loadedSessionId) loadedSessionMessageCount += 1;
+			return;
+		}
+
 		chatLoading = true;
 		try {
 			chat = await api.sendMessage(content);
@@ -537,6 +742,11 @@
 
 	async function handleReset() {
 		chatLoading = true;
+		if (loadedSessionId) {
+			stopSessionPoll();
+			loadedSessionId = null;
+			loadedSessionMessageCount = 0;
+		}
 		try {
 			chat = await api.resetChat();
 		} finally {
@@ -835,8 +1045,9 @@
 			// Search everything — don't restrict by kind.
 			// The feed will pick up any 30040 results automatically.
 
-			// Default to by:me if pubkey is configured
-			if (myPubkey && !query.includes('by:')) {
+			// Default to by:me if pubkey is configured (skip for semantic searches
+			// which should search across all authors)
+			if (myPubkey && !query.includes('by:') && !query.includes('~:')) {
 				effectiveQuery = `by:me ${effectiveQuery}`;
 			}
 
@@ -999,6 +1210,43 @@
 		}
 	}
 
+	async function openStandaloneSection(result: SearchResult) {
+		// Load the event content and display as a single-section readable view
+		docMode = 'reading';
+		docLoading = true;
+		publication = null;
+		sections = [];
+		loadingPromises.clear();
+		try {
+			const content = await fetchEventContent(result);
+			publication = {
+				addr: result.addr!,
+				title: result.title,
+				summary: null,
+				image: null,
+				author_pubkey: result.author,
+				version: null,
+				created_at: result.created_at,
+				index: null
+			};
+			sections = [{
+				addr: result.addr!,
+				title: result.title,
+				content,
+				position: 0,
+				status: 'loaded' as const
+			}];
+			viewMode = 'paginated';
+			currentSection = 0;
+			previewVisible = false;
+		} catch (e) {
+			console.error('Failed to open standalone section:', e);
+			docMode = 'empty';
+		} finally {
+			docLoading = false;
+		}
+	}
+
 	async function handleSelectResult(result: SearchResult) {
 		if (!result.addr) return;
 		if (result.kind === 30040) {
@@ -1028,18 +1276,30 @@
 					}
 				}
 			} catch {
-				// Fall through to direct load attempt
+				// Fall through to standalone view
 			}
-			// No parent found — try loading as standalone
-			await openPublication(result.addr.pubkey, result.addr.d_tag).catch(() => {});
+			// No parent found — view as standalone section
+			await openStandaloneSection(result);
 		} else {
-			// Other kinds — try loading, silently fail
-			await openPublication(result.addr.pubkey, result.addr.d_tag).catch(() => {});
+			// Other kinds — view as standalone section
+			await openStandaloneSection(result);
 		}
 	}
 
 	function handleOpenFeedPublication(pub_summary: PublicationSummary) {
 		openPublication(pub_summary.addr.pubkey, pub_summary.addr.d_tag);
+	}
+
+	function handleViewProfile(pubkey: string) {
+		if (!pubkey) {
+			// Back from profile
+			profilePubkey = null;
+			docMode = 'empty';
+			loadFeed();
+			return;
+		}
+		profilePubkey = pubkey;
+		docMode = 'profile';
 	}
 
 	function handleViewMode(mode: ViewMode) {
@@ -1124,11 +1384,13 @@
 		{ignoredCount}
 		onsetsyncmode={(m: SyncMode) => (syncMode = m)}
 		onsetbuttonlabels={(m: ButtonLabels) => (buttonLabels = m)}
-		onhome={() => { docMode = 'empty'; publication = null; sections = []; docCollapsed = false; if (searchCount === 0) loadFeed(); }}
+		onhome={() => { docMode = 'empty'; publication = null; sections = []; docCollapsed = false; profilePubkey = null; if (searchCount === 0) loadFeed(); }}
 		onsyncembeddings={handleSyncEmbeddings}
 		onreindexembeddings={handleReindexEmbeddings}
 		onviewignored={handleViewIgnored}
 		onpurge={handlePurge}
+		{passthrough}
+		onsetpassthrough={(v: boolean) => (passthrough = v)}
 	/>
 
 	<div class="workbench-panels" style:grid-template-columns={gridTemplate}>
@@ -1162,6 +1424,14 @@
 				onsenditemtocompose={handleSendItemToCompose}
 				{chatHiddenFragmentIds}
 				{chatFragmentItems}
+				{claudeSessions}
+				{claudeSessionDetail}
+				{claudeSessionsLoading}
+				{sessionsExpanded}
+				ontogglesessions={handleToggleSessions}
+				onclaudesessionselect={handleSelectClaudeSession}
+				onclaudesessionback={handleClaudeSessionBack}
+				onloadsessiontochat={handleLoadSessionToChat}
 			/>
 		</PanelFrame>
 
@@ -1193,9 +1463,12 @@
 				ondoctochat={handleDocToChat}
 				ondocpublish={handleDocPublish}
 				onopenpub={handleOpenFeedPublication}
+				{profilePubkey}
+				onviewprofile={handleViewProfile}
 				onfeedsync={handleFeedSync}
 				onfetchfromrelay={handleFetchFromRelay}
 				onfetchauthors={handleFetchAuthors}
+				onfetchsections={handleFetchSections}
 				fetchRelays={fetchRelayUrls}
 				{authorCount}
 				onfeedloadmore={handleFeedLoadMore}
@@ -1210,6 +1483,7 @@
 				ontogglereadonly={handleToggleReadonly}
 				onlocksource={handleLockToSource}
 				oncrosspanelcopy={handleCrossPanelCopy}
+				{localPubkeys}
 			/>
 		</PanelFrame>
 
@@ -1242,6 +1516,7 @@
 				onimportpagestocontext={handleImportPagesToContext}
 				onimportpagestocompose={handleImportPagesToCompose}
 				{items}
+				{localPubkeys}
 			/>
 		</PanelFrame>
 	</div>

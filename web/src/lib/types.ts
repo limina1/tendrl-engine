@@ -2,6 +2,8 @@ export interface Fragment {
 	id: number;
 	role: string;
 	content: string;
+	/** Optional structured blocks from Claude Code sessions */
+	blocks?: ClaudeSessionBlock[];
 }
 
 export interface ChatResponse {
@@ -158,7 +160,40 @@ export interface ComposeState {
 }
 
 export type ViewMode = 'outline' | 'continuous' | 'paginated';
-export type DocMode = 'empty' | 'reading' | 'compose' | 'ignored';
+export type DocMode = 'empty' | 'reading' | 'compose' | 'ignored' | 'claude-sessions' | 'profile';
+
+export interface NostrEvent {
+	id: string;
+	pubkey: string;
+	kind: number;
+	created_at: number;
+	content: string;
+	tags: string[][];
+}
+
+export interface ClaudeSessionSummary {
+	id: string;
+	date: string;
+	message_count: number;
+	first_prompt: string;
+	last_message: string;
+	modified: number;
+}
+
+export interface ClaudeSessionBlock {
+	type: 'text' | 'thinking' | 'tool_use' | 'tool_result';
+	text?: string;
+	thinking?: string;
+	name?: string;
+	input?: unknown;
+	content?: string;
+}
+
+export interface ClaudeSessionMessage {
+	role: string;
+	blocks: ClaudeSessionBlock[];
+	timestamp: string;
+}
 
 export interface DocumentFile {
 	name: string;
@@ -184,6 +219,8 @@ export interface EmbeddingStatusResponse {
 	enabled: boolean;
 	indexed_count: number;
 	total_events: number;
+	stale_count: number;
+	missing_sections: number;
 	sidecar_available: boolean;
 	model: string | null;
 }

@@ -1,0 +1,8 @@
+Respond with limericks of the form
+{comment about limerick}
+
+# {title}
+:tags: comma, separated, tags, no, pound sign
+:tagname: tagvalue
+
+{content}

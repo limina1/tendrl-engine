@@ -1,0 +1,254 @@
+#+TITLE: Chat API Walkthrough
+#+DESCRIPTION: Hands-on guide to the chat test harness HTTP API
+
+* Overview
+
+Seven endpoints exposing ~ChatState~ round-trips over HTTP. The backend
+uses ~NoopProvider::echo()~: you send text, you get "Echo: {text}" back.
+All endpoints return the same ~ChatResponse~ shape so you can always
+inspect the full conversation state.
+
+Start the server:
+
+#+begin_src sh
+cargo run -- --port 3030 --data-dir /tmp/test-chat
+#+end_src
+
+Every response looks like this:
+
+#+begin_src json
+{
+  "fragments": [ { "id": 0, "role": "user", "content": "..." }, ... ],
+  "fragment_count": 2,
+  "edit_mode": false,
+  "edit_buffer": null,
+  "system_prompt": null,
+  "context_count": 0,
+  "generating": false
+}
+#+end_src
+
+* Endpoint Reference
+
+| Method   | Route                  | Purpose                              |
+|----------+------------------------+--------------------------------------|
+| ~GET~    | ~/api/v1/chat~         | Current conversation state           |
+| ~DELETE~ | ~/api/v1/chat~         | Reset conversation                   |
+| ~POST~   | ~/api/v1/chat/message~ | Send message, get echo response      |
+| ~POST~   | ~/api/v1/chat/edit~    | Enter edit mode (get formatted buffer) |
+| ~PUT~    | ~/api/v1/chat/edit~    | Submit modified buffer, exit edit    |
+| ~POST~   | ~/api/v1/chat/system~  | Set system prompt                    |
+| ~POST~   | ~/api/v1/chat/context~ | Inject context notes                 |
+
+* Walkthrough: Full Round-Trip
+
+Run these in order. Each step builds on the previous state.
+
+** 1. Check empty state
+
+#+begin_src sh
+curl -s http://localhost:3030/api/v1/chat | jq
+#+end_src
+
+Expected: ~fragment_count: 0~, everything null/false/zero.
+
+** 2. Send a message
+
+#+begin_src sh
+curl -s -X POST http://localhost:3030/api/v1/chat/message \
+  -H "Content-Type: application/json" \
+  -d '{"content": "Hello world"}' | jq
+#+end_src
+
+Expected: two fragments — ~user: "Hello world"~ and ~assistant: "Echo: Hello world"~.
+
+** 3. Send another message (multi-turn)
+
+#+begin_src sh
+curl -s -X POST http://localhost:3030/api/v1/chat/message \
+  -H "Content-Type: application/json" \
+  -d '{"content": "How are you?"}' | jq
+#+end_src
+
+Expected: four fragments now. The echo provider mirrors each user message.
+
+** 4. Inspect the conversation
+
+#+begin_src sh
+curl -s http://localhost:3030/api/v1/chat | jq '.fragments[] | "\(.role): \(.content)"'
+#+end_src
+
+Shows the full thread as one string per fragment.
+
+** 5. Enter edit mode
+
+#+begin_src sh
+curl -s -X POST http://localhost:3030/api/v1/chat/edit | jq '.edit_buffer'
+#+end_src
+
+Returns the conversation as an editable text block:
+
+#+begin_example
+[user]
+Hello world
+---
+[assistant]
+Echo: Hello world
+---
+[user]
+How are you?
+---
+[assistant]
+Echo: How are you?
+#+end_example
+
+~edit_mode~ is now ~true~ in the response.
+
+** 6. Submit a modified buffer
+
+Restructure the conversation: drop messages, edit content, add new turns.
+
+#+begin_src sh
+curl -s -X PUT http://localhost:3030/api/v1/chat/edit \
+  -H "Content-Type: application/json" \
+  -d '{"buffer": "[user]\nHello world\n---\n[assistant]\nA custom rewritten response\n---\n[user]\nBrand new follow-up question"}' | jq
+#+end_src
+
+Expected: three fragments with your modified content. ~edit_mode~ back to ~false~.
+The middle turns were dropped, the assistant response rewritten, and a new
+user message added — all by editing the text buffer.
+
+** 7. Verify the restructured state
+
+#+begin_src sh
+curl -s http://localhost:3030/api/v1/chat | jq '.fragments'
+#+end_src
+
+The conversation now has exactly the three fragments you submitted.
+
+** 8. Reset
+
+#+begin_src sh
+curl -s -X DELETE http://localhost:3030/api/v1/chat | jq
+#+end_src
+
+Back to empty. ~fragment_count: 0~.
+
+* Walkthrough: System Prompt and Context
+
+These can be set independently of the conversation.
+
+** Set a system prompt
+
+#+begin_src sh
+curl -s -X POST http://localhost:3030/api/v1/chat/system \
+  -H "Content-Type: application/json" \
+  -d '{"prompt": "You are a writing assistant focused on clarity."}' | jq '.system_prompt'
+#+end_src
+
+The system prompt appears in ~system_prompt~ and will be included when
+messages are sent to the LLM (visible via ~to_llm_messages()~ internally).
+
+** Inject context notes
+
+#+begin_src sh
+curl -s -X POST http://localhost:3030/api/v1/chat/context \
+  -H "Content-Type: application/json" \
+  -d '{"notes": [{"title": "Style Guide", "content": "Use short sentences. Prefer active voice."}]}' | jq '.context_count'
+#+end_src
+
+Returns ~1~. Context notes are injected as a system message before the
+conversation fragments when building the LLM message list.
+
+** Send with system + context active
+
+#+begin_src sh
+curl -s -X POST http://localhost:3030/api/v1/chat/message \
+  -H "Content-Type: application/json" \
+  -d '{"content": "Rewrite: The ball was thrown by the boy."}' | jq '.fragments'
+#+end_src
+
+The echo provider ignores system/context (it just echoes), but the internal
+~to_llm_messages()~ builds the full message list: system prompt, context
+system message, then conversation fragments — ready for a real provider.
+
+* Walkthrough: Edit Mode In Depth
+
+Edit mode is the key differentiator. It turns a structured conversation
+into a text document you can reshape, then parses it back.
+
+** The format
+
+Fragments are separated by ~\n---\n~. Each starts with a ~[role]~ header:
+
+#+begin_example
+[user]
+First message content
+---
+[assistant]
+Response content
+---
+[user]
+Follow-up
+#+end_example
+
+** What you can do in edit mode
+
+- *Delete turns*: remove a ~[role]...---~ block entirely
+- *Rewrite content*: change the text under any ~[role]~ header
+- *Add turns*: append new ~---\n[role]\ncontent~ blocks
+- *Change roles*: switch ~[user]~ to ~[assistant]~ or vice versa
+- *Merge turns*: remove a ~---~ separator to combine two fragments
+- *Split turns*: insert ~\n---\n[role]\n~ to break one fragment into two
+- *Reorder*: rearrange blocks (though user/assistant alternation is typical)
+
+If you omit ~[role]~ headers, the parser infers alternating user/assistant.
+
+** Example: surgery on a conversation
+
+#+begin_src sh
+# Build a 3-turn conversation
+curl -s -X POST http://localhost:3030/api/v1/chat/message \
+  -H "Content-Type: application/json" \
+  -d '{"content": "What is Nostr?"}' > /dev/null
+
+curl -s -X POST http://localhost:3030/api/v1/chat/message \
+  -H "Content-Type: application/json" \
+  -d '{"content": "How do relays work?"}' > /dev/null
+
+# Enter edit mode
+curl -s -X POST http://localhost:3030/api/v1/chat/edit | jq '.edit_buffer'
+
+# Now submit a rewrite: keep first exchange, replace the second
+curl -s -X PUT http://localhost:3030/api/v1/chat/edit \
+  -H "Content-Type: application/json" \
+  -d '{"buffer": "[user]\nWhat is Nostr?\n---\n[assistant]\nNostr is a decentralized protocol for social communication.\n---\n[user]\nWhat are NIPs?\n---\n[assistant]\nNIPs are Nostr Implementation Possibilities — the spec documents."}' | jq '.fragments'
+#+end_src
+
+Result: a clean 4-fragment conversation where you replaced the echo
+responses with real content, changed the second question, and added
+an answer that never came from the provider.
+
+* Running the Tests
+
+#+begin_src sh
+# Chat API unit tests (handler-level, no server needed)
+cargo test chat_api
+
+# All chat state tests
+cargo test chat
+
+# Full suite including TUI
+cargo test --features tui
+#+end_src
+
+* Code Pointers
+
+| What                    | Where                   |
+|-------------------------+-------------------------|
+| Chat state + edit logic | ~src/chat.rs~           |
+| LLM provider trait      | ~src/llm.rs~            |
+| API types + handlers    | ~src/api.rs:457-725~    |
+| Route wiring            | ~src/main.rs:88-105~    |
+| Chat state tests        | ~src/chat.rs:322-581~   |
+| API handler tests       | ~src/api.rs:627-725~    |

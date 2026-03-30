@@ -53,6 +53,10 @@ export function exitEditMode(buffer: string): Promise<ChatResponse> {
 	return fetchJson<ChatResponse>(`${CHAT}/edit`, { method: 'PUT', body: JSON.stringify(body) });
 }
 
+export function loadChatFragments(fragments: { role: string; content: string }[]): Promise<ChatResponse> {
+	return fetchJson<ChatResponse>(`${CHAT}/load`, { method: 'PUT', body: JSON.stringify(fragments) });
+}
+
 export function setSystemPrompt(prompt: string): Promise<ChatResponse> {
 	const body: SystemPromptRequest = { prompt };
 	return fetchJson<ChatResponse>(`${CHAT}/system`, { method: 'POST', body: JSON.stringify(body) });
@@ -108,10 +112,17 @@ export function getEvent(eventId: string) {
 	return fetchJson<{ event: unknown }>(`/api/v1/events/${eventId}`);
 }
 
+export function queryEvents(filters: Record<string, unknown>[], policy = 'local_first') {
+	return fetchJson<{ events: unknown[]; count: number; source: { local_count: number; relay_count: number } }>('/api/v1/query', {
+		method: 'POST',
+		body: JSON.stringify({ filters, policy })
+	});
+}
+
 // Config API
 
 export function getConfig() {
-	return fetchJson<{ my_pubkey: string | null }>('/api/v1/config');
+	return fetchJson<{ my_pubkey: string | null; assistant_pubkey: string | null }>('/api/v1/config');
 }
 
 // Search API
@@ -176,6 +187,12 @@ export function fetchFromRelay(relay: string, kinds: number[], authors: string[]
 	return fetchJson<{ fetched: number; relay: string; kinds: number[] }>('/api/v1/fetch', {
 		method: 'POST',
 		body: JSON.stringify({ relay, kinds, authors, limit })
+	});
+}
+
+export function fetchSections() {
+	return fetchJson<{ total_referenced: number; missing: number; fetched: number }>('/api/v1/fetch/sections', {
+		method: 'POST'
 	});
 }
 
@@ -328,4 +345,26 @@ export function syncEmbeddings() {
 
 export function reindexEmbeddings() {
 	return fetchJson<EmbeddingStatusResponse>('/api/v1/embed/reindex', { method: 'POST' });
+}
+
+// Claude Code Sessions API
+
+import type { ClaudeSessionSummary, ClaudeSessionMessage } from './types';
+
+export function listClaudeSessions() {
+	return fetchJson<{ sessions: ClaudeSessionSummary[]; count: number }>('/api/v1/claude-sessions');
+}
+
+export function appendClaudeSessionMessage(id: string, content: string) {
+	return fetchJson<{ uuid: string; session_id: string }>(`/api/v1/claude-sessions/${id}/message`, {
+		method: 'POST',
+		body: JSON.stringify({ content })
+	});
+}
+
+export function getClaudeSession(id: string, offset?: number) {
+	const params = offset ? `?offset=${offset}` : '';
+	return fetchJson<{ id: string; messages: ClaudeSessionMessage[]; count: number; offset?: number }>(
+		`/api/v1/claude-sessions/${id}${params}`
+	);
 }

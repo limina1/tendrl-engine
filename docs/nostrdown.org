@@ -1,0 +1,475 @@
+#+TITLE: Nostrdown: Universal Nostr Content Syntax
+#+SUBTITLE: Working Document — Brainstorming & Design Notes
+#+DATE: 2026-02-27
+#+STATUS: DRAFT — evocative, iterative, not a spec
+
+* Overview
+
+A markup-agnostic syntax layer for Nostr content that links events together,
+regardless of the underlying format (Markdown, AsciiDoc, Org-mode, plain text).
+
+Think of it as: *Obsidian-style linking, but for a distributed event network
+instead of a local file vault.*
+
+The core tension: Nostr events are immutable, addressed by long bech32 strings,
+and scattered across relays — yet authors need concise, human-readable ways to
+reference them inline.
+
+* Design Constraints
+
+- *Markup-agnostic*: Must not conflict with Markdown, AsciiDoc, or Org syntax
+- *Graceful degradation*: Content stays readable in any plain-text renderer
+- *Nostr-native*: Build on NIP-19/21 primitives, don't reinvent addressing
+- *Tag-mediated*: Resolution metadata in event tags, not inline bloat
+- *Short for common cases*: Internal refs concise; external refs use full URIs
+- *Presentation-agnostic*: Content says /what/ to reference, not /how/ to render it
+
+* The Safe Delimiter: ={{ }}=
+
+** Syntax Conflict Analysis
+
+| Delimiter | Markdown | AsciiDoc   | Org-mode     | Safe? |
+|-----------+----------+------------+--------------+-------|
+| =[[ ]]=     | unused   | anchor def | *link syntax*  | NO    |
+| =(( ))=     | unused   | *index term* | unused       | NO    |
+| ={{ }}=     | unused   | unused     | unused       | *YES*   |
+| =<< >>=     | unused   | *cross-ref*  | *radio target* | NO    |
+
+={{ }}= is the only double-bracket pair safe across all three major markup
+languages. MediaWiki uses it for transclusion, so there's precedent for "pull
+in content from elsewhere."
+
+** Open Question: Alternative Delimiters?
+
+- =nd:ref:chapter-3= — URI-like prefix, less visually distinct
+- ={nostr:ref:...}= — single-brace, more subtle
+- =@[ref:...]= — mention-style
+- Something else entirely?
+
+* Syntax Categories
+
+** 1. External Event Links (NIP-21 — already works)
+
+Each markup's native link syntax with =nostr:= URIs. No new syntax needed.
+
+#+begin_example
+[Chapter 3](nostr:naddr1...)           # Markdown
+[[nostr:naddr1...][Chapter 3]]         # Org-mode
+link:nostr:naddr1...[Chapter 3]        # AsciiDoc
+#+end_example
+
+Problem: =naddr= strings are 200+ characters. Reference-style links help:
+
+#+begin_example
+See [Chapter 3][ch3] for details.
+
+[ch3]: nostr:naddr1qvzqqqr4gupzp...
+#+end_example
+
+** 2. Internal References (within a publication) — NEW
+
+The biggest gap. Section A referencing Section B in the same 30040 publication
+shouldn't require a full =naddr=.
+
+#+begin_example
+{{ref:chapter-3}}
+{{ref:chapter-3|Display Text}}
+#+end_example
+
+Resolution: client looks up d-tag among sibling 30041 sections in the same
+30040 index. Event tag provides the hint:
+
+#+begin_src json
+["ref", "chapter-3", "30041:pubkey:chapter-3-d-tag"]
+#+end_src
+
+Falls back to visible ={{ref:chapter-3}}= in plain renderers — still readable.
+
+*** Open Questions
+
+- Should resolution be automatic (client finds siblings) or always tag-mediated?
+- What about referencing a /heading/ within a section? =heading-slug= after =#=?
+  ={{ref:chapter-3#the-first-theorem}}=
+- Should there be a "relative" form? (next section, previous section)
+
+** 3. Wikilinks (markup-agnostic replacement for =[[ ]]=) — NEW
+
+NKBIP-01 defines =[[wikilinks]]= but these conflict with Org-mode.
+
+#+begin_example
+{{wiki:target-topic}}
+{{wiki:target-topic|Display Text}}
+#+end_example
+
+Resolution: client normalizes target (lowercase, spaces→dashes) and queries
+across kind 30818 (wiki), 30041 (sections), or 30023 (articles).
+
+*** Scope Question
+
+How should wikilinks resolve?
+- Same publication first, then same author, then network?
+- Web-of-trust scoped? (friends' content before strangers')
+- Explicit relay hints via tags?
+
+Existing NKBIP-01 tag format:
+#+begin_src json
+["wikilink", "target-topic", "<pubkey>", "<relay>", "<event-id>"]
+#+end_src
+
+** 4. Transclusion / Embedding — NEW
+
+Embed another event's content inline. Like Obsidian's =![[embed]]=.
+
+#+begin_example
+{{embed:naddr1...}}              # full event from network
+{{embed:section-T-tag}}          # sibling section in same publication
+{{embed:naddr1...#heading}}      # specific heading from an event
+#+end_example
+
+This is powerful: publications can /compose/ from reusable sections. A textbook
+chapter could embed exercises from a shared problem set. A journal article could
+transclude a dataset description maintained separately.
+
+*** Open Questions
+
+- Should embeds be recursive? (embedded content that itself has embeds)
+- Depth limit to prevent infinite loops?
+- Should the embedded content be rendered with its own styling or inherit?
+- Cache/snapshot behavior? Embed the version at publish time, or always latest?
+
+** 5. Profile Mentions — EXTENSION
+
+Already works with =nostr:npub1...= but shorthand for known collaborators:
+
+#+begin_example
+{{@display-name}}
+#+end_example
+
+Resolution via =p= tag:
+#+begin_src json
+["p", "<pubkey>", "<relay>", "display-name"]
+#+end_src
+
+** 6. Heading Anchors — EXTENSION
+
+Fragment extension to nostr URIs:
+
+#+begin_example
+nostr:naddr1...#heading-slug
+{{ref:section-T-tag#heading-slug}}
+#+end_example
+
+Slug normalization should follow NIP-54 conventions (lowercase, dashes, strip
+punctuation).
+
+** 7. Media with Nostr Provenance — EXTENSION
+
+For Nostr-hosted media (kind 1063 file metadata, blossom):
+
+#+begin_example
+{{media:nevent1...}}
+{{media:naddr1...}}
+#+end_example
+
+Low priority — standard URLs work fine for now.
+
+* Citations — Drawing from NKBIP-03
+
+NKBIP-03 proposes citations as first-class Nostr events. The core idea is
+strong; some details need refinement.
+
+** What NKBIP-03 Gets Right
+
+- *Citations as reusable events* — multiple publications cite the same source
+  without duplicating metadata
+- *Rich tag metadata* — DOI, geohash, publisher, version, accessed_on
+- *Source type taxonomy* — Internal Nostr / Web / Hardcopy / Prompt
+- *Prompt references* — forward-thinking for AI-assisted content
+- *Quoted text in content field* — preservation even if source disappears
+
+** Proposed Refinements
+
+*** Kind Numbers
+
+NKBIP-03 uses kinds 30-33 (core protocol range). Suggest parameterized
+replaceable events instead:
+
+| NKBIP-03 | Proposed   | Benefit                        |
+|----------+------------+--------------------------------|
+| kind:30  | kind:30030 | Updatable, won't conflict      |
+| kind:31  | kind:30030 | One kind, typed by =source-type= tag |
+| kind:32  | kind:30030 | Simpler querying               |
+| kind:33  | kind:30030 | Same                           |
+
+One kind with a =source-type= tag (=nostr= / =web= / =hardcopy= / =prompt=)
+instead of four separate kinds. Simplifies queries: "all citations by this
+pubkey" = one filter.
+
+*** Citation Event Structure (amended)
+
+#+begin_src json
+{
+  "kind": 30030,
+  "tags": [
+    ["d", "smith-2024-truth-about-time"],
+    ["source-type", "nostr"],
+    ["a", "30023:<pubkey>:<d-tag>", "<relay>"],
+    ["title", "The Truth About Time"],
+    ["author", "John Smith"],
+    ["published_on", "2024-01-18T00:00:00Z"],
+    ["accessed_on", "2024-06-15T12:00:00Z"]
+  ],
+  "content": "The exact quoted passage goes here."
+}
+#+end_src
+
+*** Presentation Separation
+
+NKBIP-03 embeds rendering style in the markup: =[[citation::foot::...]]=,
+=[[citation::end::...]]=, =[[citation::inline::...]]=.
+
+Counter-proposal: content marks /what/ to cite, not /how/:
+
+#+begin_example
+{{cite:smith-2024-truth-about-time}}
+#+end_example
+
+Rendering style (footnote, endnote, inline parenthetical) determined by:
+- Publication-level tag: =["citation-style", "chicago"]= or =["citation-style", "footnote"]=
+- Client/reader preference
+- Per-citation override only when author has specific reason:
+  ={{cite:smith-2024|quote}}= — force block quote
+
+*** The =[[  ]]= Syntax Problem
+
+NKBIP-03 uses =[[citation::type::nevent...]]=. This conflicts with Org-mode
+link syntax. The ={{ }}= form avoids this.
+
+** Prompt Citations — Worth Preserving
+
+#+begin_src json
+{
+  "kind": 30030,
+  "tags": [
+    ["d", "gpt4-session-2024-06"],
+    ["source-type", "prompt"],
+    ["llm", "GPT-4"],
+    ["version", "gpt-4-turbo-2024-04-09"],
+    ["accessed_on", "2024-06-15"],
+    ["u", "https://chat.openai.com"]
+  ],
+  "content": "Prompt: What is the nature of time?\nResponse: ..."
+}
+#+end_src
+
+** Open Questions on Citations
+
+- Should a citation =d=-tag follow a convention? e.g., =author-year-slug=?
+- How do bibliography sections work? Special 30041 tagged =["role", "bibliography"]=?
+- Should citations aggregate? (A "citation list" event that groups related citations?)
+- Integration with existing standards: CSL (Citation Style Language), BibTeX export?
+
+* The Tag Resolution Pattern
+
+A unifying principle across all nostrdown features: *content uses short
+references, event tags carry resolution metadata*.
+
+#+begin_example
+According to {{cite:smith-2024}} and {{ref:chapter-3}},
+the {{wiki:fable}} tradition (see {{@aesop}}) suggests...
+#+end_example
+
+#+begin_src json
+"tags": [
+    ["cite", "smith-2024", "30030:<pubkey>:smith-2024"],
+    ["ref", "chapter-3", "30041:<pubkey>:chapter-3"],
+    ["wikilink", "fable", "<pubkey>", "<relay>", "<event-id>"],
+    ["p", "<aesop-pubkey>", "<relay>", "aesop"]
+]
+#+end_src
+
+Content stays concise and human-readable. Tags are machine-readable resolution
+hints. Tags can be updated (event republished) without changing content text.
+
+* Inspirations & Related Work
+
+** Obsidian
+
+- =[[wikilinks]]= for local vault linking
+- =![[embeds]]= for transclusion
+- =[[page#heading]]= for heading anchors
+- =[[page^block-id]]= for block references
+- Backlinks and graph view as emergent UI features
+- Key insight: /linking should be as easy as typing/
+
+** Roam Research
+
+- =(( ))= block-level references — every paragraph is addressable
+- Transclusion by default (block refs show content inline)
+- Block UIDs are opaque random strings
+- Key insight: /the unit of reference is the block, not the page/
+
+** Org-mode
+
+- =[[target][description]]= — mature, consistent link syntax
+- =[[id:uuid]]= — globally unique, not filename-dependent (closest analog to
+  nostr event addressing)
+- =<<radio targets>>= — automatic backlinking by text match
+- =#+NAME:= / cross-references — clean label/ref system
+- org-cite — =[@key]= citation syntax with CSL support
+- Key insight: /IDs should be stable and independent of location/
+
+** MediaWiki
+
+- Namespaces (=Category:=, =File:=, =Template:=) — typed links
+- ={{ }}= for transclusion (precedent for our delimiter choice)
+- Interwiki prefixes — cross-instance linking via registry
+- Key insight: /the link's type should be explicit, not inferred/
+
+** LaTeX / Pandoc
+
+- =\label{}= / =\ref{}= — the gold standard for cross-references
+- Pandoc-crossref: =[@sec:intro]=, =[@fig:chart]=, =[@tbl:data]=
+- CSL for citation formatting — style separate from data
+- Key insight: /numbering and formatting are presentation, not content/
+
+** NIP-54 (Wiki on Nostr)
+
+- Kind 30818 wiki events with d-tag as topic identifier
+- Normalization rules for d-tags
+- Merge conflicts and fork resolution
+- Key insight: /collaborative content needs conflict resolution strategies/
+
+** NKBIP-01 (Publications)
+
+- Kind 30040 (index) + 30041 (sections) structure
+- Wikilinks in content (using =[[ ]]=, which we're replacing)
+- =["wikilink", ...]= tags for resolution
+- Key insight: /publications are graphs of events, not monolithic documents/
+
+** Gemini Protocol / Gemtext
+
+- Extremely minimal markup: one link per line, no inline links
+- Forces clarity about what each link is
+- Key insight: /simplicity has value — not everything needs to be inline/
+
+** Zettelkasten Method
+
+- Small, atomic notes linked densely
+- Each note has a unique ID
+- Links are first-class, not an afterthought
+- Key insight: /the value is in the connections, not the individual notes/
+
+* Unexplored Directions
+
+Ideas we haven't fully developed but are worth thinking about:
+
+** Collaborative Annotations
+
+What if readers could attach annotations to specific passages? A kind of
+distributed marginalia. The annotation references a section + character range
+or heading. Related to NIP-28 (public chat) and Hypothesis web annotation.
+
+** Version References
+
+Nostr events are immutable, but parameterized replaceable events get updated.
+Should nostrdown have syntax for "version X of this section"?
+={{ref:chapter-3@nevent1...}}= — pinned to a specific version vs latest?
+
+** Conditional Content
+
+Content that renders differently based on context:
+={{if:subscribed}}Premium content here{{/if}}=
+Probably over-engineering, but the event model could support it via encrypted
+sections (NIP-04/44).
+
+** Bidirectional Links / Backlinks
+
+Not a syntax feature — emergent from the link graph. But clients could:
+- Show "cited by" on citation events
+- Show "embedded in" on sections
+- Build a graph view of publication relationships
+- Auto-discover related content via shared citations
+
+** Content Addressing (beyond event IDs)
+
+What if nostrdown could reference content by hash? Immutable, verifiable,
+relay-independent. Related to IPFS CIDs and NIP-94 file metadata.
+
+** Structured Data Embedding
+
+Tables, datasets, formulas as referenceable units:
+={{data:dataset-d-tag}}= — embed a data table from a separate event
+={{formula:euler-identity}}= — embed a named equation
+Probably too specialized, but worth noting.
+
+** Semantic Roles
+
+Beyond "link" and "embed" — what /relationship/ does the reference express?
+- ={{supports:event}}= — this evidence supports that claim
+- ={{contradicts:event}}= — this evidence contradicts that claim
+- ={{extends:event}}= — this builds on that work
+- ={{corrects:event}}= — this corrects an error in that
+Related to semantic web / linked data concepts. Might be too heavy for v1
+but powerful for knowledge graphs.
+
+* Priority Roadmap (Tentative)
+
+** Tier 1 — Build First
+
+- ={{ref:}}= internal references (most needed day-to-day)
+- ={{wiki:}}= markup-agnostic wikilinks (replaces broken =[[ ]]=)
+- ={{embed:}}= transclusion (enables modular publications)
+- =nostr:naddr#heading= fragment anchors
+
+** Tier 2 — Build Second
+
+- ={{cite:}}= citations (drawing from NKBIP-03)
+- ={{@name}}= profile mention shorthand
+- Citation events (kind 30030) with rich metadata
+- Publication-level citation style tags
+
+** Tier 3 — Build Later
+
+- ={{term:}}= glossary references
+- ={{media:}}= nostr-native media embedding
+- Backlink discovery / graph view (client feature)
+- Collaborative annotations
+
+* Parser Design Notes
+
+The nostrdown parser needs to:
+
+1. Scan content for ={{ }}= delimiters
+2. Parse the prefix (=ref=, =wiki=, =cite=, =embed=, =@=, etc.)
+3. Extract the identifier and optional display text / modifiers
+4. Resolve against event tags first, then query if needed
+5. Return a structured representation for the renderer
+
+A rough grammar:
+
+#+begin_example
+nostrdown_ref  := '{{' prefix ':' identifier ('|' display_text)? '}}'
+prefix         := 'ref' | 'wiki' | 'cite' | 'embed' | '@' | 'term' | 'media'
+identifier     := [a-zA-Z0-9_-]+ ('#' heading_slug)?
+display_text   := [^}]+
+#+end_example
+
+This parser runs /before/ the markup-specific parser (Markdown, Org, AsciiDoc)
+and replaces nostrdown references with the appropriate native syntax for that
+markup, or with rendered HTML/terminal output directly.
+
+* Relationship to Existing NIPs
+
+| NIP     | Relationship                                     |
+|---------+--------------------------------------------------|
+| NIP-01  | Event structure, kinds, tags — foundation         |
+| NIP-19  | bech32 encoding (npub, nevent, naddr) — addressing |
+| NIP-21  | =nostr:= URI scheme — external links              |
+| NIP-23  | Long-form content (kind 30023) — potential target  |
+| NIP-27  | Inline references in content — overlaps            |
+| NIP-36  | Sensitive content — could affect transclusion      |
+| NIP-54  | Wiki (kind 30818) — wikilink resolution target     |
+| NIP-94  | File metadata — media references                   |
+| NKBIP-01 | Publications (30040/30041) — primary context       |
+| NKBIP-03 | Citations — incorporated and amended               |

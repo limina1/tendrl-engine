@@ -31,7 +31,8 @@
 		onimportpagetocompose,
 		onimportpagestocontext,
 		onimportpagestocompose,
-		items = []
+		items = [],
+		localPubkeys = new Set<string>()
 	}: {
 		results: SearchResult[];
 		count?: number;
@@ -60,6 +61,7 @@
 		onimportpagestocontext?: (pages: ImportPage[]) => void;
 		onimportpagestocompose?: (pages: ImportPage[]) => void;
 		items?: ContextItem[];
+		localPubkeys?: Set<string>;
 	} = $props();
 
 	let activeTab: 'search' | 'import' = $state('search');
@@ -205,6 +207,7 @@
 					{onignore}
 					{onignorepubkey}
 					{items}
+					{localPubkeys}
 				/>
 			{/each}
 

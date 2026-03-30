@@ -13,7 +13,9 @@
 		onsyncembeddings,
 		onreindexembeddings,
 		onviewignored,
-		onpurge
+		onpurge,
+		passthrough = false,
+		onsetpassthrough
 	}: {
 		syncMode: SyncMode;
 		buttonLabels: ButtonLabels;
@@ -27,6 +29,8 @@
 		onreindexembeddings?: () => void;
 		onviewignored?: () => void;
 		onpurge?: () => void;
+		passthrough?: boolean;
+		onsetpassthrough?: (v: boolean) => void;
 	} = $props();
 
 	let settingsOpen = $state(false);
@@ -43,10 +47,8 @@
 		<span class="embed-status" class:offline={!embeddingStatus.sidecar_available}>
 			{#if !embeddingStatus.sidecar_available}
 				embed offline
-			{:else if embeddingSyncing}
-				{embeddingStatus.indexed_count}/{embeddingStatus.total_events}
 			{:else}
-				{embeddingStatus.indexed_count}/{embeddingStatus.total_events}
+				{embeddingStatus.indexed_count}/{embeddingStatus.total_events}{#if embeddingStatus.stale_count > 0} ({embeddingStatus.stale_count} stale){/if}{#if embeddingStatus.missing_sections > 0} +{embeddingStatus.missing_sections} unfetched{/if}
 			{/if}
 		</span>
 		{#if embeddingSyncing}
@@ -75,6 +77,10 @@
 		<button class="settings-btn" class:active={buttonLabels === 'icon'} onclick={() => onsetbuttonlabels('icon')}>◂ □ ▸</button>
 		<button class="settings-btn" class:active={buttonLabels === 'text'} onclick={() => onsetbuttonlabels('text')}>text</button>
 		<span class="settings-spacer"></span>
+		<label class="settings-check">
+			<input type="checkbox" checked={passthrough} onchange={() => onsetpassthrough?.(!passthrough)} />
+			<span>Passthrough</span>
+		</label>
 		<button class="settings-btn purge-btn" onclick={onpurge}>Purge DB</button>
 	</div>
 {/if}
@@ -132,6 +138,19 @@
 	.purge-btn {
 		color: #ef4444 !important;
 		border-color: #ef4444 !important;
+	}
+
+	.settings-check {
+		display: flex;
+		align-items: center;
+		gap: 4px;
+		font-size: 0.65rem;
+		color: var(--fg-muted);
+		cursor: pointer;
+	}
+
+	.settings-check input {
+		margin: 0;
 	}
 
 	.embed-status {

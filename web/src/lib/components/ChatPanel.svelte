@@ -1,10 +1,11 @@
 <script lang="ts">
-	import type { ChatResponse, ContextItem, Fragment, SyncMode } from '$lib/types';
+	import type { ChatResponse, ContextItem, Fragment, SyncMode, ClaudeSessionSummary, ClaudeSessionMessage } from '$lib/types';
 	import ChatLog from './ChatLog.svelte';
 	import ChatInput from './ChatInput.svelte';
 	import EditView from './EditView.svelte';
 	import SystemPrompt from './SystemPrompt.svelte';
 	import ContextPanel from './ContextPanel.svelte';
+	import ClaudeSessionView from './ClaudeSessionView.svelte';
 
 	let {
 		chat,
@@ -34,7 +35,15 @@
 		oncrosspanelcopy,
 		onsenditemtocompose,
 		chatHiddenFragmentIds,
-		chatFragmentItems
+		chatFragmentItems,
+		claudeSessions = [],
+		claudeSessionDetail = null,
+		claudeSessionsLoading = false,
+		sessionsExpanded = false,
+		ontogglesessions,
+		onclaudesessionselect,
+		onclaudesessionback,
+		onloadsessiontochat
 	}: {
 		chat: ChatResponse | null;
 		loading?: boolean;
@@ -64,6 +73,14 @@
 		onsenditemtocompose: (id: string) => void;
 		chatHiddenFragmentIds: Set<number>;
 		chatFragmentItems: Map<number, ContextItem>;
+		claudeSessions?: ClaudeSessionSummary[];
+		claudeSessionDetail?: { id: string; messages: ClaudeSessionMessage[]; count: number } | null;
+		claudeSessionsLoading?: boolean;
+		sessionsExpanded?: boolean;
+		ontogglesessions?: () => void;
+		onclaudesessionselect?: (id: string) => void;
+		onclaudesessionback?: () => void;
+		onloadsessiontochat?: (session: { id: string; messages: ClaudeSessionMessage[] }) => void;
 	} = $props();
 
 	let checkedFragmentIds: Set<number> = $state(new Set());
@@ -130,6 +147,7 @@
 		</button>
 		<button onclick={onedit} disabled={loading || (chat?.edit_mode ?? false)}>Edit</button>
 		<button onclick={onreset} disabled={loading}>Reset</button>
+		<button onclick={ontogglesessions} class:active={sessionsExpanded} disabled={loading}>Sessions</button>
 		<span class="toolbar-spacer"></span>
 		<button class="sel-btn" onclick={selectAllFragments} disabled={loading || visibleFragments.length === 0} title="Select all">All</button>
 		<button class="sel-btn" onclick={invertFragmentSelection} disabled={loading || visibleFragments.length === 0} title="Invert selection">Inv</button>
@@ -162,6 +180,19 @@
 			{onsenditemtocompose}
 			disabled={loading}
 		/>
+	{/if}
+
+	{#if sessionsExpanded}
+		<div class="sessions-container">
+			<ClaudeSessionView
+				sessions={claudeSessions ?? []}
+				selectedSession={claudeSessionDetail ?? null}
+				loading={claudeSessionsLoading ?? false}
+				onselect={onclaudesessionselect}
+				onback={onclaudesessionback}
+				onload={onloadsessiontochat && claudeSessionDetail ? () => onloadsessiontochat?.(claudeSessionDetail!) : undefined}
+			/>
+		</div>
 	{/if}
 
 	{#if chat}
@@ -248,6 +279,15 @@
 
 	.trash-btn {
 		font-size: 0.75rem;
+	}
+
+	.sessions-container {
+		flex: 1;
+		min-height: 0;
+		overflow: hidden;
+		display: flex;
+		flex-direction: column;
+		border-bottom: 1px solid var(--border);
 	}
 
 </style>

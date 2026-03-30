@@ -12,7 +12,8 @@
 		onaddtocompose,
 		onignore,
 		onignorepubkey,
-		items = []
+		items = [],
+		localPubkeys = new Set<string>()
 	}: {
 		result: SearchResult;
 		checked?: boolean;
@@ -24,6 +25,7 @@
 		onignore?: (result: SearchResult) => void;
 		onignorepubkey?: (result: SearchResult) => void;
 		items?: ContextItem[];
+		localPubkeys?: Set<string>;
 	} = $props();
 
 	const poolMatch = $derived(
@@ -64,6 +66,9 @@
 		<div class="result-header-text" onclick={() => onselect(result)} onkeydown={(e) => e.key === 'Enter' && onselect(result)} role="button" tabindex="0">
 			<span class="result-title">{result.title ?? '[Untitled]'}</span>
 			<span class="kind-badge">{KINDS[result.kind] ?? result.kind}</span>
+			{#if localPubkeys?.has(result.author)}
+				<span class="local-badge">local</span>
+			{/if}
 			{#if result.semantic_score != null}
 				<span class="score-badge">{(result.semantic_score * 100).toFixed(0)}%</span>
 			{/if}
@@ -184,6 +189,16 @@
 		background: var(--border);
 		color: var(--fg-muted);
 		white-space: nowrap;
+	}
+
+	.local-badge {
+		font-size: 0.6rem;
+		padding: 0 5px;
+		border-radius: 3px;
+		background: #f9731633;
+		color: #f97316;
+		white-space: nowrap;
+		font-weight: 600;
 	}
 
 	.score-badge {

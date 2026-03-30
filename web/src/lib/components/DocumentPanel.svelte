@@ -2,6 +2,9 @@
 	import type { LazySection, ViewMode, DocMode, PublicationSummary, PublicationDetail, ComposeState, ContextItem, SyncMode } from '$lib/types';
 	import DocumentToolbar from './DocumentToolbar.svelte';
 	import ProfileName from './ProfileName.svelte';
+	import ProfileModal from './ProfileModal.svelte';
+	import ProfileView from './ProfileView.svelte';
+	import { getProfile, onProfileUpdate, type Profile } from '$lib/api';
 	import * as api from '$lib/api';
 	import OutlineView from './OutlineView.svelte';
 	import ContinuousView from './ContinuousView.svelte';
@@ -39,6 +42,7 @@
 		onfeedsync,
 		onfetchfromrelay,
 		onfetchauthors,
+		onfetchsections,
 		onfeedloadmore,
 		fetchRelays = [],
 		authorCount = 0,
@@ -52,7 +56,10 @@
 		onsenditemtochat,
 		ontogglereadonly,
 		onlocksource,
-		oncrosspanelcopy
+		oncrosspanelcopy,
+		profilePubkey = null as string | null,
+		onviewprofile,
+		localPubkeys = new Set<string>()
 	}: {
 		docMode: DocMode;
 		publication: PublicationDetail | null;
@@ -83,6 +90,7 @@
 		onfeedsync?: () => void;
 		onfetchfromrelay?: (url: string, kinds: number[]) => void;
 		onfetchauthors?: () => void;
+		onfetchsections?: () => void;
 		onfeedloadmore?: () => void;
 		fetchRelays?: string[];
 		authorCount?: number;
@@ -97,10 +105,35 @@
 		ontogglereadonly: (id: string) => void;
 		onlocksource: (id: string) => void;
 		oncrosspanelcopy: (id: string, fromPanel: string) => void;
+		profilePubkey?: string | null;
+		onviewprofile?: (pubkey: string) => void;
+		localPubkeys?: Set<string>;
 	} = $props();
 
 	let feedMenuOpen: string | null = $state(null);
 	let fetchPanelOpen = $state(false);
+	let authorProfile = $state<Profile | null>(null);
+	let showAuthorModal = $state(false);
+
+	// Resolve author profile when publication changes
+	$effect(() => {
+		const pk = publication?.author_pubkey;
+		authorProfile = null;
+		if (!pk) return;
+
+		function resolve() {
+			getProfile(pk!).then(p => {
+				if (p.found) authorProfile = p;
+			}).catch(() => {});
+		}
+		resolve();
+
+		const unsub = onProfileUpdate(() => {
+			if (!authorProfile) resolve();
+		});
+
+		return unsub;
+	});
 	let customRelayUrl = $state('');
 	let customKinds = $state('30040,30041');
 	let fetchingRelay: string | null = $state(null);
@@ -122,8 +155,26 @@
 		onpublish={ondocpublish}
 	/>
 
-	{#if docMode === 'reading' && publication?.title}
-		<div class="doc-title">{publication.title}</div>
+	{#if docMode === 'reading' && publication}
+		{#if publication.title}
+			<div class="doc-title">{publication.title}</div>
+		{/if}
+		<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+		<div class="doc-author-bar" onclick={() => { if (authorProfile) showAuthorModal = true; }}>
+			{#if authorProfile?.picture}
+				<img class="doc-author-avatar" src={authorProfile.picture} alt="" />
+			{:else}
+				<div class="doc-author-avatar placeholder">?</div>
+			{/if}
+			<span class="doc-author-name">
+				<ProfileName pubkey={publication.author_pubkey} />
+			</span>
+			<span class="doc-author-time">{formatTime(publication.created_at)}</span>
+		</div>
+	{/if}
+
+	{#if showAuthorModal && authorProfile}
+		<ProfileModal profile={authorProfile} onclose={() => showAuthorModal = false} {onviewprofile} />
 	{/if}
 
 	<div class="doc-content">
@@ -170,6 +221,17 @@
 									{fetchingRelay === '__authors__' ? '...' : '↻'} Fetch {authorCount} followed authors
 								</button>
 							{/if}
+							<button
+								class="fetch-relay-btn"
+								disabled={fetchingRelay === '__sections__'}
+								onclick={async () => {
+									fetchingRelay = '__sections__';
+									await onfetchsections?.();
+									fetchingRelay = null;
+								}}
+							>
+								{fetchingRelay === '__sections__' ? '...' : '↻'} Fetch missing sections
+							</button>
 							<div class="fetch-custom">
 								<input
 									type="text"
@@ -238,6 +300,9 @@
 						>
 							<div class="feed-item-header">
 								<span class="feed-item-title">{pub_item.title ?? '[Untitled]'}</span>
+								{#if localPubkeys?.has(pub_item.author_pubkey)}
+									<span class="local-badge">local</span>
+								{/if}
 								<span class="feed-item-meta">{pub_item.section_count} sections</span>
 								<div class="feed-menu-container">
 									<button class="feed-menu-btn" onclick={(e) => { e.stopPropagation(); feedMenuOpen = feedMenuOpen === feedKey ? null : feedKey; }} title="More">⋮</button>
@@ -303,6 +368,12 @@
 				{onlocksource}
 				{oncrosspanelcopy}
 			/>
+		{:else if docMode === 'profile' && profilePubkey}
+			<ProfileView
+				pubkey={profilePubkey}
+				{onopenpub}
+				onback={() => onviewprofile?.('')}
+			/>
 		{:else if docMode === 'ignored'}
 			<div class="ignored-view">
 				<div class="ignored-header">
@@ -352,6 +423,47 @@
 		font-size: 1.1rem;
 		font-weight: 700;
 		border-bottom: 1px solid var(--border);
+	}
+
+	.doc-author-bar {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		padding: 8px 16px;
+		border-bottom: 1px solid var(--border);
+		cursor: pointer;
+	}
+
+	.doc-author-bar:hover {
+		background: var(--bg-surface);
+	}
+
+	.doc-author-avatar {
+		width: 28px;
+		height: 28px;
+		border-radius: 50%;
+		object-fit: cover;
+		flex-shrink: 0;
+	}
+
+	.doc-author-avatar.placeholder {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		background: var(--bg-surface);
+		border: 1px solid var(--border);
+		color: var(--fg-muted);
+		font-size: 0.75rem;
+	}
+
+	.doc-author-name {
+		font-size: 0.85rem;
+	}
+
+	.doc-author-time {
+		font-size: 0.75rem;
+		color: var(--fg-muted);
+		margin-left: auto;
 	}
 
 	.doc-content {
@@ -434,6 +546,16 @@
 		text-overflow: ellipsis;
 		white-space: nowrap;
 		flex: 1;
+	}
+
+	.local-badge {
+		font-size: 0.6rem;
+		padding: 0 5px;
+		border-radius: 3px;
+		background: #f9731633;
+		color: #f97316;
+		white-space: nowrap;
+		font-weight: 600;
 	}
 
 	.feed-item-meta {
