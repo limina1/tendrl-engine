@@ -1315,11 +1315,32 @@ pub async fn publish_handler(
 
     // Build events (signed or unsigned)
     let (pub_event, section_events) = if req.sign {
-        // Try to get secret from engine's keyring
-        let secret = crate::identity::IdentityKeyring::new()
+        // Try keyring first, then fall back to .env file (NOSTR_NCRYPTSEC + NOSTR_PASSWORD)
+        let (sign_pubkey, secret) = crate::identity::IdentityKeyring::new()
             .get_secret(&pubkey)
-            .map_err(|e| EngineError::Config(format!("Cannot sign: {e}")))?;
-        build_signed_publication_events(&compose, &pubkey, &secret)
+            .map(|s| (pubkey.clone(), s))
+            .or_else(|_| {
+                // Read .env file from working directory
+                let env_content = std::fs::read_to_string(".env")
+                    .map_err(|_| crate::identity::KeyringError::NotFound)?;
+                let mut ncryptsec = None;
+                let mut password = None;
+                for line in env_content.lines() {
+                    let line = line.trim();
+                    if let Some(val) = line.strip_prefix("NOSTR_NCRYPTSEC=") {
+                        ncryptsec = Some(val.to_string());
+                    } else if let Some(val) = line.strip_prefix("NOSTR_PASSWORD=") {
+                        password = Some(val.to_string());
+                    }
+                }
+                let ncryptsec = ncryptsec.ok_or(crate::identity::KeyringError::NotFound)?;
+                let password = password.ok_or(crate::identity::KeyringError::NotFound)?;
+                let (secret_hex, derived_pubkey) = crate::identity::decrypt_ncryptsec(&ncryptsec, &password)
+                    .map_err(|e| crate::identity::KeyringError::Keyring(e.to_string()))?;
+                Ok((derived_pubkey, secret_hex))
+            })
+            .map_err(|e: crate::identity::KeyringError| EngineError::Config(format!("Cannot sign: {e}")))?;
+        build_signed_publication_events(&compose, &sign_pubkey, &secret)
     } else {
         build_publication_events(&compose, &pubkey)
     };
@@ -1340,14 +1361,26 @@ pub async fn publish_handler(
         .collect();
 
     // Ingest into local nostrdb
-    let mut ingested = true;
+    // process_event is async — it queues events for background processing.
+    // We ingest all events, wait for nostrdb to process them, then verify.
     for event in section_events.iter().chain(std::iter::once(&pub_event)) {
         let json_str = serde_json::to_string(event)
             .map_err(|e| EngineError::Database(format!("JSON error: {e}")))?;
         if let Err(e) = engine.ingest_event(&json_str) {
-            debug!("Ingest warning: {}", e);
-            ingested = false;
+            debug!("Ingest queue warning: {}", e);
         }
+    }
+
+    // Wait for nostrdb to process the queued events
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+
+    // Verify the publication event was actually stored
+    let ingested = crate::query::query_by_id(engine.ndb(), &pub_id)
+        .ok()
+        .flatten()
+        .is_some();
+    if !ingested {
+        debug!("Publication {} was not persisted by nostrdb after ingest", pub_id);
     }
 
     // Broadcast to relays if requested
@@ -1513,12 +1546,11 @@ pub async fn export_manifest_handler(
         }
     }
 
-    let emb_count = engine.embedding_index()
-        .map(|e| {
-            let rt = tokio::runtime::Handle::current();
-            rt.block_on(async { e.read().await.len() })
-        })
-        .unwrap_or(0);
+    let emb_count = if let Some(e) = engine.embedding_index() {
+        e.read().await.len()
+    } else {
+        0
+    };
 
     Ok(Json(json!({
         "event_count": events.len(),
@@ -1553,7 +1585,7 @@ pub async fn ingest_handler(
 
     let is_ndjson = content_type.contains("ndjson") || content_type.contains("jsonl");
 
-    if is_ndjson || body.trim_start().starts_with('{') && body.contains('\n') && body.trim().lines().count() > 1 {
+    if is_ndjson {
         // Bulk JSONL ingest
         let start = std::time::Instant::now();
         let mut ingested = 0usize;
@@ -1567,17 +1599,10 @@ pub async fn ingest_handler(
             }
             match serde_json::from_str::<Value>(line) {
                 Ok(event) => {
-                    // Skip if event ID already exists in nostrdb
-                    if let Some(id) = event.get("id").and_then(|v| v.as_str()) {
-                        if crate::query::query_by_id(engine.ndb(), id).ok().flatten().is_some() {
-                            skipped += 1;
-                            continue;
-                        }
-                    }
                     let event_json = event.to_string();
                     match engine.ingest_event(&event_json) {
                         Ok(()) => ingested += 1,
-                        Err(_) => errors += 1,
+                        Err(_) => skipped += 1, // nostrdb rejects duplicates
                     }
                 }
                 Err(_) => errors += 1,

@@ -223,6 +223,7 @@ async fn main() -> anyhow::Result<()> {
         )
         .with_state(state.clone())
         .merge(chat_routes)
+        .layer(axum::extract::DefaultBodyLimit::max(50 * 1024 * 1024)) // 50MB for JSONL import
         .layer(cors);
 
     // Serve static files from web/build/ if it exists (production SPA)
