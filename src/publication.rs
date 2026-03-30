@@ -483,8 +483,8 @@ impl<'a> PublicationEngine<'a> {
         use serde_json::json;
 
         // Cast a wide net — nostrdb stores all versions of replaceable events
-        // and many get filtered as children/duplicates. Reference code uses 500.
-        let query_limit = 500;
+        // and many get filtered as children/duplicates.
+        let query_limit = 5000;
         let mut filter = json!({
             "kinds": [KIND_PUBLICATION_INDEX],
             "limit": query_limit
