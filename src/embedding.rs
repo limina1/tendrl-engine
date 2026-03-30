@@ -71,7 +71,7 @@ impl EmbeddingIndex {
     pub fn new(data_dir: &Path, config: &EmbeddingConfig) -> Result<Self> {
         let opts = IndexOptions {
             dimensions: config.dimensions,
-            metric: MetricKind::IP, // inner product (embeddings are normalized)
+            metric: MetricKind::Cos,
             quantization: ScalarKind::F32,
             ..Default::default()
         };
@@ -136,7 +136,7 @@ impl EmbeddingIndex {
         // Load HNSW index
         let opts = IndexOptions {
             dimensions: config.dimensions,
-            metric: MetricKind::IP,
+            metric: MetricKind::Cos,
             quantization: ScalarKind::F32,
             ..Default::default()
         };
@@ -241,6 +241,11 @@ impl EmbeddingIndex {
     }
 
     /// Search for the k nearest neighbors of a query vector
+    /// Search for the k nearest neighbors, returning (id, similarity) pairs.
+    ///
+    /// usearch returns distances (lower = more similar). For IP metric the
+    /// distance is `1 - inner_product`, for Cos it is `1 - cosine_similarity`.
+    /// We convert to similarity = 1 - distance so higher values = better match.
     pub fn search(&self, query_vec: &[f32], k: usize) -> Result<Vec<(String, f64)>> {
         if self.mapping.id_to_key.is_empty() {
             return Ok(vec![]);
@@ -254,7 +259,8 @@ impl EmbeddingIndex {
         let mut matches = Vec::new();
         for (key, distance) in results.keys.iter().zip(results.distances.iter()) {
             if let Some(event_id) = self.mapping.key_to_id.get(key) {
-                matches.push((event_id.clone(), *distance as f64));
+                let similarity = 1.0 - *distance as f64;
+                matches.push((event_id.clone(), similarity));
             }
         }
 
@@ -264,6 +270,11 @@ impl EmbeddingIndex {
     /// Number of indexed events
     pub fn len(&self) -> usize {
         self.mapping.id_to_key.len()
+    }
+
+    /// All indexed event IDs
+    pub fn all_ids(&self) -> Vec<String> {
+        self.mapping.id_to_key.keys().cloned().collect()
     }
 
     /// Model name
@@ -319,7 +330,7 @@ impl EmbeddingIndex {
     pub fn clear(&mut self) -> Result<()> {
         let opts = IndexOptions {
             dimensions: self.mapping.dimensions,
-            metric: MetricKind::IP,
+            metric: MetricKind::Cos,
             quantization: ScalarKind::F32,
             ..Default::default()
         };

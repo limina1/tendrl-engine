@@ -168,6 +168,17 @@ impl ChatState {
         messages
     }
 
+    /// Replace all fragments with the given role/content pairs
+    pub fn load_fragments(&mut self, fragments: Vec<(ChatRole, String)>) {
+        self.fragments = fragments
+            .into_iter()
+            .map(|(role, content)| {
+                let id = self.next_id();
+                ChatFragment { role, content, id }
+            })
+            .collect();
+    }
+
     // --- Context management ---
 
     pub fn inject_context(&mut self, notes: Vec<InjectedNote>) {

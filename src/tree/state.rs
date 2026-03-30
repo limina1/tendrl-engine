@@ -992,12 +992,22 @@ impl ComposeState {
     }
 
     /// Get the d-tag for the publication
+    /// Uses slugified title + short content hash for uniqueness
     pub fn publication_d_tag(&self) -> String {
-        if self.title.is_empty() {
+        use sha2::{Sha256, Digest};
+        let slug = if self.title.is_empty() {
             "untitled".to_string()
         } else {
             Self::generate_d_tag(&self.title)
+        };
+        // Hash title + section titles for a stable unique suffix
+        let mut hasher = Sha256::new();
+        hasher.update(self.title.as_bytes());
+        for s in &self.sections {
+            hasher.update(s.title.as_bytes());
         }
+        let hash = format!("{:x}", hasher.finalize());
+        format!("{}-{}", slug, &hash[..8])
     }
 
     /// Get the d-tag for a section
@@ -1005,12 +1015,12 @@ impl ComposeState {
         let pub_d_tag = self.publication_d_tag();
         if let Some(section) = self.sections.get(section_idx) {
             if section.title.is_empty() {
-                format!("{}-section-{}", pub_d_tag, section_idx)
+                format!("{}-s{}", pub_d_tag, section_idx)
             } else {
                 format!("{}-{}", pub_d_tag, Self::generate_d_tag(&section.title))
             }
         } else {
-            format!("{}-section-{}", pub_d_tag, section_idx)
+            format!("{}-s{}", pub_d_tag, section_idx)
         }
     }
 

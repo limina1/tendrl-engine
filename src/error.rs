@@ -33,6 +33,10 @@ pub enum EngineError {
     #[error("Invalid hex: {0}")]
     InvalidHex(String),
 
+    /// Resource not found
+    #[error("Not found: {0}")]
+    NotFound(String),
+
     /// Configuration errors
     #[error("Configuration error: {0}")]
     Config(String),
@@ -66,6 +70,7 @@ impl IntoResponse for EngineError {
             EngineError::Relay(msg) => (StatusCode::BAD_GATEWAY, "relay_error", msg.clone()),
             EngineError::Serialization(err) => (StatusCode::BAD_REQUEST, "serialization_error", err.to_string()),
             EngineError::InvalidFilter(msg) => (StatusCode::BAD_REQUEST, "invalid_filter", msg.clone()),
+            EngineError::NotFound(msg) => (StatusCode::NOT_FOUND, "not_found", msg.clone()),
             EngineError::InvalidHex(msg) => (StatusCode::BAD_REQUEST, "invalid_hex", msg.clone()),
             EngineError::Config(msg) => (StatusCode::INTERNAL_SERVER_ERROR, "config_error", msg.clone()),
             EngineError::Io(err) => (StatusCode::INTERNAL_SERVER_ERROR, "io_error", err.to_string()),

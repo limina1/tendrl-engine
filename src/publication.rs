@@ -586,9 +586,9 @@ impl<'a> PublicationEngine<'a> {
             by_addr.len(), skipped_child, skipped_empty, skipped_dupe, skipped_err, skipped_ignored
         );
 
-        // Collect into vec and sort by created_at descending
+        // Collect into vec and sort by created_at descending, with d-tag tiebreaker for stability
         let mut roots: Vec<Publication> = by_addr.into_values().collect();
-        roots.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+        roots.sort_by(|a, b| b.created_at.cmp(&a.created_at).then_with(|| a.addr.d_tag.cmp(&b.addr.d_tag)));
         roots.truncate(limit);
 
         Ok(roots)
@@ -660,9 +660,9 @@ impl<'a> PublicationEngine<'a> {
             }
         }
 
-        // Collect into vec and sort by created_at descending
+        // Collect into vec and sort by created_at descending, with d-tag tiebreaker for stability
         let mut roots: Vec<Publication> = by_addr.into_values().collect();
-        roots.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+        roots.sort_by(|a, b| b.created_at.cmp(&a.created_at).then_with(|| a.addr.d_tag.cmp(&b.addr.d_tag)));
 
         // Apply limit after filtering
         roots.truncate(limit);

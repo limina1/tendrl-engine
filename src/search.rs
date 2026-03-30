@@ -58,6 +58,7 @@ pub struct SemanticFilter {
 pub enum AuthorFilter {
     Pubkeys(Vec<String>),
     CurrentUser,
+    AssistantUser,
 }
 
 /// Parsed search query
@@ -462,6 +463,9 @@ fn classify_token(token: &Token) -> TokenClass {
     if let Some(rest) = text.strip_prefix("by:") {
         if rest == "me" {
             return TokenClass::Author(AuthorFilter::CurrentUser);
+        }
+        if rest == "assistant" {
+            return TokenClass::Author(AuthorFilter::AssistantUser);
         }
         if rest.starts_with("npub1") {
             match identity::decode_npub(rest) {
