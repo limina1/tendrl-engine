@@ -1,0 +1,356 @@
+#+TITLE: Embedding Sidecar & Event Fetching
+#+DESCRIPTION: How the embedding sidecar works, how events are fetched from relays, and when the engine is online vs offline
+
+* Overview
+
+Two systems that interact but serve different purposes:
+
+1. *Event fetching* — pulling Nostr events from relays into the local nostrdb
+2. *Embedding sidecar* — computing vector embeddings of events for semantic search
+
+The engine has no boolean "offline mode" toggle. Instead, every query
+carries a ~FetchPolicy~ that determines whether it touches relays.
+Understanding when each policy is used is the key to knowing when the
+app is online vs offline.
+
+* FetchPolicy
+
+Defined in =src/engine.rs:19-46=. Three variants:
+
+| Policy         | Behavior                                               |
+|----------------+--------------------------------------------------------|
+| ~LocalOnly~    | Query nostrdb only. Never opens a relay connection.    |
+| ~LocalFirst~   | Query local first. Fetch from relays if results < limit. |
+| ~FetchAlways~  | Always fetch from relays, merge with local results.    |
+
+Default is ~LocalFirst~. Parsed from strings like ~"local_only"~,
+~"fetch_always"~ (case-insensitive).
+
+** What each API endpoint uses
+
+The web UI passes the policy as a query param or JSON field.
+
+| Endpoint / action               | Default policy  | Notes                              |
+|----------------------------------+-----------------+------------------------------------|
+| ~POST /api/v1/query~            | ~LocalFirst~    | Caller can override                |
+| ~GET /api/v1/events/:id~        | ~LocalFirst~    | Hardcoded                          |
+| ~GET /api/v1/addressable/:k/:p/:d~ | ~LocalFirst~ | Hardcoded                          |
+| ~POST /api/v1/search~           | ~LocalFirst~    | Caller can override                |
+| ~GET /api/v1/publications~      | ~LocalFirst~    | Caller can override                |
+| Publication load + sections     | ~LocalFirst~    | Hardcoded in load_publication      |
+| Section versions                | ~FetchAlways~   | Always checks relays for versions  |
+| Sections metadata               | ~LocalOnly~     | Cheap local-only scan              |
+| ~POST /api/v1/chat/context~     | ~LocalFirst~    | Caller can override                |
+
+** What the web UI actually sends
+
+Defaults set in =web/src/lib/api.ts=:
+
+| Function              | Default policy sent |
+|-----------------------+---------------------|
+| ~listPublications()~  | ~local_only~        |
+| ~getPublication()~    | ~local_first~       |
+| ~loadSections()~      | ~local_first~       |
+| ~loadSectionsMeta()~  | ~local_only~        |
+| ~getSection()~        | ~local_first~       |
+| ~queryEvents()~       | ~local_first~       |
+| ~search()~            | ~local_only~        |
+
+Search defaults to ~local_only~ — it queries the local nostrdb and
+embedding index without hitting relays. Publication listings also
+default to ~local_only~. The relay-touching paths are publication
+detail loading and individual event lookups.
+
+* Event fetching: what triggers relay connections
+
+There are exactly these triggers:
+
+** 1. API requests with ~LocalFirst~ or ~FetchAlways~
+
+Any query endpoint where the policy is not ~LocalOnly~.
+~LocalFirst~ only fetches if local results are insufficient (below the
+requested limit). ~FetchAlways~ always opens relay WebSocket connections.
+
+** 2. Background section fetch (every 60 seconds)
+
+=src/main.rs:229-268=. Only runs when ~embedding.enabled = true~.
+
+#+begin_src
+loop (every 60s):
+  1. fetch_missing_sections()  — find 30040 indexes locally,
+     extract a-tags pointing to 30041 sections, check which
+     are missing, batch-fetch from relay.fetch.urls
+  2. sync_embeddings()         — embed any unembedded events
+#+end_src
+
+This is the main automatic relay activity. It starts 10 seconds after
+boot to let the sidecar warm up.
+
+** 3. Manual fetch endpoints
+
+Called explicitly from the web UI toolbar:
+
+- ~POST /api/v1/fetch~ — ad-hoc fetch from a specific relay with custom filters
+- ~POST /api/v1/fetch/sections~ — trigger ~fetch_missing_sections()~ on demand
+- ~POST /api/v1/fetch/authors~ — fetch all events from configured authors
+- ~POST /api/v1/profiles/fetch~ — batch-fetch profile metadata (kind 0)
+
+** 4. Publication section loading
+
+When loading a publication via ~load_publication()~ / ~load_sections()~
+with ~LocalFirst~, each missing section triggers an addressable event
+fetch from relays. ~LoadStatus~ tracks each section through:
+
+#+begin_example
+Pending → Loading → Loaded { data } | Failed { error }
+#+end_example
+
+** 5. Profile prefetching
+
+~prefetchProfiles()~ in the web UI fires after feed/search/sync
+results arrive, fetching kind 0 metadata for unknown pubkeys from
+general relays.
+
+* Relay configuration
+
+=config.toml= defines three relay sets:
+
+#+begin_src toml
+[relay]
+  timeout_ms = 15000
+
+  [relay.fetch]
+    # Publication content. Used by fetch_missing_sections, author fetch,
+    # and LocalFirst/FetchAlways queries.
+    kinds = [0, 1111, 30040, 30041, 30023, 30818, 30817, 9802]
+    urls = ["ws://localhost:3334", "wss://spatia-arcana.com", ...]
+
+  [relay.general]
+    # Profile metadata, contact lists, relay lists.
+    # Used by profile prefetch and general queries.
+    kinds = [0, 3, 10002, 30023, 30818, 30817]
+    urls = ["wss://relay.damus.io", ...]
+
+  [relay.publish]
+    # Outbound only. Never used for reading.
+    urls = ["ws://localhost:3334", "wss://relay.damus.io"]
+#+end_src
+
+Relay connections are per-request: open WebSocket, send REQ, receive
+events until EOSE or 15s timeout, close. No persistent subscriptions.
+
+* Relay fetch lifecycle
+
+=src/relay.rs= — ~fetch_with_filters()~:
+
+#+begin_example
+1. Connect WebSocket to relay URL
+2. Send NIP-01 REQ with filters
+3. Loop: receive EVENT messages
+   → ndb.process_event() on each (ingested immediately)
+4. On EOSE or 15s timeout: close subscription
+5. Return collected events
+#+end_example
+
+Events are persisted into nostrdb *during* the fetch, not after. A
+crash mid-fetch still preserves events received so far.
+
+For multiple relays, ~fetch_from_multiple_relays()~ iterates each URL,
+deduplicates by event ID, and continues on failure.
+
+* Embedding sidecar
+
+** Architecture
+
+Two backends (configured via ~embedding.backend~):
+
+- ~python~ (default) — external Flask HTTP server in =sidecar/=
+- ~onnx~ (compile with ~--features onnx~) — in-process via fastembed
+
+The Python sidecar is the primary path. It runs as a separate process
+on ~localhost:3031~.
+
+** Startup
+
+#+begin_src sh
+cd sidecar && ./run.sh [--model MODEL] [--port PORT]
+#+end_src
+
+The script:
+1. Creates a persistent Python venv via ~uv~ (reused across restarts)
+2. Installs: ~sentence-transformers~, ~flask~, ~torch~, ~pymupdf~, ~python-docx~, ~ebooklib~
+3. Sets ~HF_HUB_OFFLINE=1~ — uses cached model, no HuggingFace Hub calls
+4. Launches Flask on port 3031
+
+** Sidecar API
+
+Three endpoints in =sidecar/embed.py=:
+
+*** ~GET /health~
+
+Returns model name and vector dimensions. Used by the engine's health
+check and status endpoints.
+
+*** ~POST /embed~
+
+#+begin_src json
+{ "texts": ["text 1", "text 2", ...] }
+→ { "vectors": [[0.12, -0.34, ...], ...] }
+#+end_src
+
+Batch embedding. Internally sub-batches at 512 texts to avoid OOM.
+Uses ~sentence_transformers.SentenceTransformer.encode(normalize_embeddings=True)~.
+
+*** ~POST /parse~
+
+Multipart file upload → structured pages with title and content.
+Supports: PDF, DOCX, EPUB, HTML, Markdown, Org-mode, AsciiDoc, plain text.
+
+** Model
+
+Default: ~all-MiniLM-L6-v2~ (configurable in config.toml).
+
+- 384-dimensional vectors
+- Normalized (unit-length), cosine similarity via dot product
+- ~100 sentences/sec on CPU
+
+** Vector index
+
+=src/embedding.rs= — ~EmbeddingIndex~ wraps:
+
+- *HNSW index* (usearch crate) — =vectors.idx= binary file
+- *ID mapping* — =vectors.map= JSON file mapping event IDs ↔ integer keys
+
+#+begin_src rust
+IndexOptions {
+    dimensions: 384,           // matches model
+    metric: MetricKind::Cos,   // cosine distance
+    quantization: ScalarKind::F32,
+}
+#+end_src
+
+Key operations:
+- ~insert(event_id, vector)~ — add to index
+- ~search(query_vec, k)~ — k-nearest neighbors, returns ~(event_id, similarity)~
+- ~contains(event_id)~ — deduplication check
+- ~save()~ / ~load()~ — persist to disk
+
+* Embedding sync
+
+=src/engine.rs= ~sync_embeddings()~:
+
+#+begin_example
+1. Query nostrdb for kinds [30041, 30023, 30818, 9802]
+   (note: 30040 indexes are skipped — no prose content)
+2. For each event not in the HNSW index:
+   extract title + content → batch of texts
+3. Send to sidecar in chunks of 64
+4. Insert returned vectors into index
+5. Save index to disk after each chunk
+#+end_example
+
+Document embedding (~sync_doc_embeddings~) follows the same pattern
+but reads files from the =docs/= folder, parses via ~POST /parse~,
+and indexes pages with composite keys like ~doc:filename:page_num~.
+
+** When embedding sync runs
+
+| Trigger                         | What runs             |
+|---------------------------------+-----------------------|
+| Background loop (every 60s)     | events + docs         |
+| After ~/api/v1/fetch/authors~   | events                |
+| After ~/api/v1/fetch/sections~  | events                |
+| ~POST /api/v1/embed/sync~       | events + docs         |
+| ~POST /api/v1/embed/reindex~    | clear + full rebuild  |
+
+* Semantic search flow
+
+Query syntax: ~~:concept~, ~~:concept:5~, ~~:"multi-word query":10~
+
+=src/engine.rs= — ~semantic_search()~:
+
+#+begin_example
+1. Parse query → SemanticFilter { query, k }
+2. Over-fetch: if post-filters exist (kind, author, text),
+   multiply k by 10; otherwise by 5
+3. Embed query text via sidecar → Vec<f32>
+4. HNSW search → top-k (event_id, similarity) pairs
+5. Split results:
+   - "doc:..." keys → document page results
+   - others → nostrdb event lookup
+6. Apply post-filters (kind, author, text match)
+7. Attach semantic_score to each result
+8. Return SearchResponse { results, doc_results }
+#+end_example
+
+* Complete fetch-to-embedding pipeline
+
+#+begin_example
+User action / timer tick
+        │
+        ▼
+  ┌─────────────────┐
+  │   FetchPolicy?  │
+  └────┬───┬───┬────┘
+       │   │   │
+  Local│   │   │FetchAlways
+  Only │   │   │
+       │   │   ▼
+       │   │ Relay WebSocket
+       │   │ ← EVENT messages
+       │   │ → ndb.process_event()
+       │   │   (persisted immediately)
+       │   │
+       │   │LocalFirst
+       │   ▼
+       │ Local query
+       │ enough results? ──yes──→ return
+       │       │no
+       │       ▼
+       │  Relay fetch (same as FetchAlways)
+       │
+       ▼
+  Local query only
+       │
+       ▼
+  ┌─────────────────┐
+  │  Return results  │
+  └────────┬────────┘
+           │
+           │ (if embedding enabled)
+           ▼
+  ┌─────────────────┐
+  │ sync_embeddings  │
+  │ • find unembedded│
+  │ • POST /embed    │
+  │ • insert HNSW    │
+  │ • save to disk   │
+  └─────────────────┘
+#+end_example
+
+* Running fully offline
+
+To ensure zero relay connections:
+
+1. All web UI ~search()~ calls already default to ~local_only~
+2. ~listPublications()~ already defaults to ~local_only~
+3. Disable the background sync by setting ~embedding.enabled = false~
+   (or keep it — it only fetches sections, not arbitrary events)
+4. Don't call the manual fetch endpoints
+5. For publication detail views, pass ~policy=local_only~ to avoid
+   relay lookups for missing sections
+
+The engine will work entirely from its nostrdb cache. Semantic search
+still works against the existing HNSW index (the sidecar only needs to
+be running for the query embedding call).
+
+* Configuration reference
+
+#+begin_src toml
+[embedding]
+enabled = true                          # false = no background sync, no embedding endpoints
+backend = "python"                      # "python" or "onnx"
+sidecar_url = "http://localhost:3031"   # sidecar HTTP address
+model = "all-MiniLM-L6-v2"             # sentence-transformers model name
+dimensions = 384                        # must match model output
+#+end_src

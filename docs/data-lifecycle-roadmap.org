@@ -1,0 +1,432 @@
+#+TITLE: Data Lifecycle Roadmap
+#+DESCRIPTION: Clean fetching, JSONL backup, purge, reingest — a predictable data model users can trust
+
+* Problem statement
+
+Users cannot answer basic questions about their engine:
+
+- "Is it talking to relays right now?" — No indicator. 11 code paths
+  silently open WebSocket connections.
+- "Can I back up my data?" — No export. Events go into nostrdb but
+  cannot come out in a portable format.
+- "Can I start fresh?" — Purge requires ~rm -rf~ and a restart.
+  No way to selectively clear or reimport.
+- "Where did this event come from?" — No provenance. Local-authored
+  events are mixed with relay-fetched events with no distinction.
+
+The goal is a data lifecycle users can draw on a napkin:
+
+#+begin_example
+  Relays ──fetch──→ nostrdb ──export──→ backup.jsonl
+                      ↑                     │
+                      │                     │
+                   ingest ←────reimport─────┘
+                      │
+                    purge → empty db → fetch or reimport
+#+end_example
+
+* Principles
+
+1. *No surprise network.* If the engine opens a relay connection, the
+   user asked for it or explicitly enabled a background job that does it.
+2. *Portable data.* JSONL is the interchange format. One event per line,
+   standard NIP-01 JSON. Any Nostr tool can read it.
+3. *Atomic operations.* Export, purge, reimport are discrete steps that
+   don't interfere with each other. No half-states.
+4. *Visible state.* The UI shows: online/offline mode, active fetches,
+   last sync time, event counts by source.
+
+* Phase 1 — Predictable fetching
+
+Everything in this phase is about eliminating hidden relay connections
+and giving users a clear online/offline mental model.
+
+** 1.1 Introduce engine-level online/offline mode
+
+Add a runtime mode to ~Engine~:
+
+#+begin_src rust
+pub enum NetworkMode {
+    /// No relay connections. All queries use LocalOnly.
+    /// Background sync disabled.
+    Offline,
+    /// Relay connections allowed per FetchPolicy.
+    /// Background sync runs if embedding enabled.
+    Online,
+}
+#+end_src
+
+- Persisted in config as ~[network] mode = "offline"~ / ~"online"~
+- Toggleable at runtime via ~POST /api/v1/network/mode~
+- When ~Offline~, *all* FetchPolicy values are clamped to ~LocalOnly~
+  at the engine boundary — individual endpoints don't need to change
+- Web UI toggle in toolbar: clear indicator showing current mode
+
+** 1.2 Audit and fix implicit fetches
+
+Every endpoint gets an explicit, documented policy:
+
+| Endpoint                        | Current          | Change to          | Rationale                              |
+|---------------------------------+------------------+--------------------+----------------------------------------|
+| ~GET /events/:id~               | LocalFirst       | Respect mode       | GET should not surprise-fetch          |
+| ~GET /addressable/:k/:pk/:d~   | LocalFirst       | Respect mode       | Same                                   |
+| ~GET /publications/:pk/:d~     | LocalFirst       | Respect mode       | Opening a pub shouldn't hit relays     |
+| ~POST .../sections~            | LocalFirst       | Respect mode       | Section load should be predictable     |
+| ~GET .../sections/:idx~        | LocalFirst       | Respect mode       | Same                                   |
+| ~GET .../versions~             | FetchAlways      | Respect mode       | Versions can use local when offline    |
+| ~prefetchProfiles()~           | Always fetches   | Skip when offline  | Biggest hidden fetch source            |
+| Background section fetch       | Always fetches   | Skip when offline  | Timer should respect mode              |
+
+"Respect mode" means: use the caller's policy if provided, otherwise
+use the engine's NetworkMode to select ~LocalOnly~ or ~LocalFirst~.
+
+** 1.3 Fetch activity log
+
+Add a bounded ring buffer of recent fetch activity:
+
+#+begin_src rust
+pub struct FetchEvent {
+    pub timestamp: u64,
+    pub relay: String,
+    pub filter_summary: String,  // "30041 by abc...def, 3 d-tags"
+    pub events_received: usize,
+    pub duration_ms: u64,
+    pub trigger: FetchTrigger,   // UserQuery, BackgroundSync, ProfilePrefetch, ManualFetch
+}
+#+end_src
+
+- ~GET /api/v1/network/activity~ — returns last N fetch events
+- Web UI: network icon shows fetch count, click to see log
+- Makes the answer to "is it fetching right now?" always visible
+
+** 1.4 Startup behavior
+
+On first launch or after purge:
+
+#+begin_example
+Engine starts in Offline mode.
+  → User sees empty feed, "No local data" message
+  → Toolbar shows: [Offline] [Fetch from relays] [Import JSONL]
+  → User explicitly chooses how to populate the database
+#+end_example
+
+Returning launches (data exists):
+
+#+begin_example
+Engine starts in last-used mode (persisted in config).
+  → If Online: background sync resumes after 10s delay
+  → If Offline: everything local-only until user toggles
+#+end_example
+
+** Phase 1 checklist
+
+- [ ] ~NetworkMode~ enum and engine field
+- [ ] Config persistence for mode
+- [ ] ~POST /api/v1/network/mode~ endpoint
+- [ ] Clamp all FetchPolicy to LocalOnly when Offline
+- [ ] Guard background sync loop on Online mode
+- [ ] Guard ~prefetchProfiles()~ on Online mode
+- [ ] ~FetchEvent~ ring buffer and ~/network/activity~ endpoint
+- [ ] Web UI: mode toggle in toolbar
+- [ ] Web UI: network activity indicator
+
+* Phase 2 — JSONL export
+
+** 2.1 Export endpoint
+
+~GET /api/v1/export~ — streams all events as JSONL.
+
+#+begin_src
+GET /api/v1/export?kinds=30040,30041&authors=abc...def&since=1700000000
+Accept: application/x-ndjson
+
+→ {"id":"...","pubkey":"...","kind":30041,"content":"...","tags":[...],"sig":"...","created_at":...}
+{"id":"...","pubkey":"...","kind":30040,"content":"...","tags":[...],"sig":"...","created_at":...}
+...
+#+end_src
+
+Requirements:
+- Streams via chunked transfer encoding — no buffering entire db
+- Each line is a valid NIP-01 signed event JSON
+- Optional filters: kinds, authors, since, until, limit
+- No filter = export everything
+- Response header: ~X-Event-Count: 1234~
+
+** 2.2 Export with metadata sidecar
+
+Alongside the JSONL, optionally export a manifest:
+
+#+begin_src json
+{
+  "exported_at": "2026-03-30T12:00:00Z",
+  "engine_version": "0.1.0",
+  "event_count": 1234,
+  "kinds": { "30040": 12, "30041": 890, "30023": 45 },
+  "authors": ["abc...def", "123...456"],
+  "filters_used": { "kinds": [30040, 30041] },
+  "embedding_model": "all-MiniLM-L6-v2",
+  "embedding_count": 1100
+}
+#+end_src
+
+~GET /api/v1/export/manifest~ — returns this without streaming events.
+Useful for checking what an export would contain before running it.
+
+** 2.3 CLI support
+
+#+begin_src sh
+tendrl export > backup-2026-03-30.jsonl
+tendrl export --kinds 30040,30041 --authors me > publications.jsonl
+tendrl export --manifest  # print manifest only
+#+end_src
+
+** Phase 2 checklist
+
+- [ ] ~query_all_local()~ method that iterates nostrdb without limit
+- [ ] Streaming JSONL response with chunked encoding
+- [ ] Filter support: kinds, authors, since, until
+- [ ] ~X-Event-Count~ header
+- [ ] ~/api/v1/export/manifest~ endpoint
+- [ ] CLI ~tendrl export~ subcommand
+
+* Phase 3 — JSONL ingest
+
+** 3.1 Ingest endpoint
+
+~POST /api/v1/ingest~ already exists for single events. Extend it:
+
+#+begin_src
+POST /api/v1/ingest
+Content-Type: application/x-ndjson
+
+{"id":"...","pubkey":"...","kind":30041,...}
+{"id":"...","pubkey":"...","kind":30040,...}
+...
+
+→ { "ingested": 1234, "skipped": 5, "errors": 0, "duration_ms": 800 }
+#+end_src
+
+Requirements:
+- Accept JSONL body (streaming read, not buffer-all)
+- Verify signatures (~nostrdb~ does this on ingest)
+- Skip duplicates (already in db) — count as skipped, not error
+- Report invalid lines as errors without aborting the stream
+- Trigger embedding sync after ingest completes (if enabled)
+
+** 3.2 File upload ingest
+
+~POST /api/v1/ingest/file~ — multipart upload of a ~.jsonl~ file.
+Same semantics as streaming ingest but from a file upload.
+
+** 3.3 CLI support
+
+#+begin_src sh
+tendrl ingest < backup.jsonl
+tendrl ingest --file publications.jsonl
+cat *.jsonl | tendrl ingest
+#+end_src
+
+** Phase 3 checklist
+
+- [ ] Extend ~/api/v1/ingest~ to accept JSONL body
+- [ ] Streaming line-by-line parsing
+- [ ] Duplicate detection and skip counting
+- [ ] Error reporting without abort
+- [ ] ~/api/v1/ingest/file~ multipart endpoint
+- [ ] Post-ingest embedding sync
+- [ ] CLI ~tendrl ingest~ subcommand
+
+* Phase 4 — Purge and rebuild
+
+** 4.1 Purge endpoint
+
+~POST /api/v1/purge~ — currently returns instructions. Make it work:
+
+#+begin_src
+POST /api/v1/purge
+{ "confirm": true, "keep_config": true }
+
+→ { "purged": true, "events_removed": 1234, "embeddings_cleared": true }
+#+end_src
+
+Implementation:
+- Close nostrdb, delete data directory, reopen fresh
+- Clear embedding index (vectors.idx + vectors.map)
+- Optionally preserve: config.toml, ignored.json, docs/
+- ~keep_config: true~ (default) preserves relay config and identity
+- Engine returns to empty state without restart
+
+** 4.2 Selective purge
+
+#+begin_src
+POST /api/v1/purge
+{ "confirm": true, "authors": ["abc...def"], "kinds": [1111] }
+#+end_src
+
+Nostrdb may not support selective deletion (LMDB append-only). If not
+feasible, selective purge = export-minus-unwanted → purge → reimport:
+
+#+begin_example
+1. Export everything except target: GET /api/v1/export?exclude_authors=...
+2. Full purge: POST /api/v1/purge
+3. Reimport keeper set: POST /api/v1/ingest < keepers.jsonl
+#+end_example
+
+Document this as the supported workflow even if we can't do surgical
+deletes. The export/purge/ingest cycle makes it safe.
+
+** 4.3 CLI support
+
+#+begin_src sh
+tendrl purge --confirm              # full purge
+tendrl purge --confirm --keep-docs  # preserve docs folder
+#+end_src
+
+** Phase 4 checklist
+
+- [ ] In-process nostrdb close and reopen
+- [ ] Delete data directory contents
+- [ ] Clear embedding index
+- [ ] Preserve config/identity by default
+- [ ] Document selective-purge-via-export workflow
+- [ ] CLI ~tendrl purge~ subcommand
+
+* Phase 5 — Rebuild from source
+
+After a purge, two paths to repopulate:
+
+** 5.1 Reimport from JSONL
+
+#+begin_example
+1. POST /api/v1/ingest < backup.jsonl
+2. POST /api/v1/embed/sync   (rebuild vectors)
+#+end_example
+
+Or combined:
+
+#+begin_src sh
+tendrl ingest --file backup.jsonl --embed
+#+end_src
+
+** 5.2 Fresh fetch from relays
+
+#+begin_example
+1. Toggle Online mode
+2. POST /api/v1/fetch/authors   (configured authors)
+3. POST /api/v1/fetch/sections  (fill missing sections)
+4. POST /api/v1/embed/sync      (embed everything)
+#+end_example
+
+Or via UI:
+
+#+begin_example
+Engine starts after purge → Offline, empty
+  → User clicks [Fetch from relays]
+  → Mode switches to Online
+  → Fetches authors, sections, profiles
+  → Embedding sync runs
+  → User sees their library repopulate
+#+end_example
+
+** 5.3 Hybrid
+
+Import a JSONL baseline, then fetch to catch recent updates:
+
+#+begin_src sh
+tendrl ingest --file last-backup.jsonl
+tendrl fetch --authors --sections --embed
+#+end_src
+
+** Phase 5 checklist
+
+- [ ] ~tendrl ingest --embed~ flag (sync after ingest)
+- [ ] ~tendrl fetch~ CLI subcommand (combined author+section fetch)
+- [ ] Web UI: post-purge onboarding flow
+- [ ] Web UI: progress indicator for bulk operations
+
+* Phase 6 — UI clarity
+
+** 6.1 Status bar
+
+Persistent bar in web UI footer:
+
+#+begin_example
+ ● Online | 1,247 events | 1,100 embedded | Last sync: 2m ago | ↓ 0 active fetches
+#+end_example
+
+#+begin_example
+ ○ Offline | 1,247 events | 1,100 embedded | No relay connections
+#+end_example
+
+** 6.2 Data management panel
+
+New settings panel (or section in existing config panel):
+
+- Event count by kind
+- Embedding status (indexed / total)
+- Last fetch time per relay
+- Export button → downloads .jsonl
+- Import button → upload .jsonl
+- Purge button → confirm dialog → purge + show rebuild options
+
+** 6.3 Fetch attribution
+
+Search results and feed items show provenance:
+
+#+begin_example
+ 📄 Section title
+    by npub1abc... · kind 30041 · local (fetched from wss://relay.example.com 2d ago)
+#+end_example
+
+This requires tracking fetch source per event — a lightweight
+metadata table mapping event_id → (source_relay, fetched_at).
+Not strictly necessary for v1 but valuable for trust.
+
+** Phase 6 checklist
+
+- [ ] Status bar component
+- [ ] Data management panel
+- [ ] Export/import buttons wired to endpoints
+- [ ] Purge flow with confirmation and rebuild options
+
+* Implementation order
+
+Phases are designed to be independently useful:
+
+| Phase | What it gives users                                  | Depends on |
+|-------+------------------------------------------------------+------------|
+|     1 | "I know when it's fetching"                          | —          |
+|     2 | "I can back up my data"                              | —          |
+|     3 | "I can import data from a file"                      | —          |
+|     4 | "I can start fresh"                                  | 2, 3       |
+|     5 | "I can rebuild from backup or relays"                | 3, 4       |
+|     6 | "I can see and manage everything from the UI"        | 1-5        |
+
+Phases 1, 2, and 3 can be built in parallel. Phase 4 depends on 2+3
+because purge is only safe when export and reimport work. Phase 5 is
+the workflow glue. Phase 6 is the UI that ties it together.
+
+* User-facing mental model
+
+The documentation / help text should teach this:
+
+#+begin_example
+Your engine has a local database of Nostr events.
+
+Events get IN three ways:
+  1. You fetch from relays        (Online mode, explicit action)
+  2. You import a JSONL file      (works offline)
+  3. You publish new content      (creates events locally + sends to relays)
+
+Events come OUT one way:
+  4. You export to JSONL           (portable backup, works offline)
+
+You can wipe the database and rebuild from either source:
+  5. Purge → reimport JSONL        (offline, instant)
+  6. Purge → fetch from relays     (online, depends on relay availability)
+
+The engine is either Online or Offline.
+  Online  = relay connections allowed, background sync runs
+  Offline = no network, everything from local cache
+  You choose. The engine never connects without your permission.
+#+end_example
