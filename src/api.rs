@@ -4,6 +4,7 @@
 
 use crate::engine::{Engine, FetchPolicy, QueryResponse};
 use crate::error::EngineError;
+use crate::network::{FetchTrigger, NetworkMode};
 use axum::{
     extract::{Path, State},
     http::StatusCode,
@@ -233,21 +234,33 @@ pub async fn search_handler(
     Ok(Json(response))
 }
 
-/// Resolve by:me in a query to actual pubkey
+/// Resolve by:me / by:assistant in a query to actual pubkey
 fn resolve_author(
     query: &mut SearchQuery,
     req: &SearchRequest,
     engine: &AppState,
 ) -> Result<(), EngineError> {
-    if let Some(AuthorFilter::CurrentUser) = &query.author_filter {
-        let pk = req.my_pubkey.as_deref().or_else(|| engine.my_pubkey());
-        if let Some(pk) = pk {
-            query.author_filter = Some(AuthorFilter::Pubkeys(vec![pk.to_string()]));
-        } else {
-            return Err(EngineError::InvalidFilter(
-                "by:me requires pubkey in config or request".to_string(),
-            ));
+    match &query.author_filter {
+        Some(AuthorFilter::CurrentUser) => {
+            let pk = req.my_pubkey.as_deref().or_else(|| engine.my_pubkey());
+            if let Some(pk) = pk {
+                query.author_filter = Some(AuthorFilter::Pubkeys(vec![pk.to_string()]));
+            } else {
+                return Err(EngineError::InvalidFilter(
+                    "by:me requires pubkey in config or request".to_string(),
+                ));
+            }
         }
+        Some(AuthorFilter::AssistantUser) => {
+            if let Some(pk) = engine.assistant_pubkey() {
+                query.author_filter = Some(AuthorFilter::Pubkeys(vec![pk.to_string()]));
+            } else {
+                return Err(EngineError::InvalidFilter(
+                    "by:assistant requires identity.assistant in config".to_string(),
+                ));
+            }
+        }
+        _ => {}
     }
     Ok(())
 }
@@ -718,6 +731,16 @@ pub async fn import_document_handler(
         .await
         .map_err(|e| EngineError::Database(format!("Invalid parse response: {e}")))?;
 
+    // Trigger background doc embedding sync
+    if engine.embedding_index().is_some() {
+        let eng = engine.clone();
+        tokio::spawn(async move {
+            if let Err(e) = eng.sync_doc_embeddings().await {
+                debug!("Background doc embedding sync after import: {}", e);
+            }
+        });
+    }
+
     Ok(Json(resp))
 }
 
@@ -800,7 +823,7 @@ pub async fn fetch_profiles_handler(
     // Batch fetch: one request per relay with ALL missing pubkeys
     let filter = json!({"kinds": [0], "authors": missing, "limit": missing.len()});
     for relay_url in relays {
-        match crate::relay::fetch_with_filters(engine.ndb(), relay_url, &[filter.clone()]).await {
+        match engine.tracked_fetch(relay_url, &[filter.clone()], FetchTrigger::ProfilePrefetch).await {
             Ok(events) => {
                 fetched += events.len();
             }
@@ -855,15 +878,25 @@ pub async fn fetch_relay_handler(
         filter["authors"] = json!(req.authors);
     }
 
-    let events = crate::relay::fetch_with_filters(
-        engine.ndb(),
+    let events = engine.tracked_fetch(
         &req.relay,
         &[filter],
+        FetchTrigger::UserAction,
     )
     .await?;
 
     let count = events.len();
     debug!("Fetched {} events from {}", count, req.relay);
+
+    // Trigger background embedding sync for newly fetched events
+    if count > 0 && engine.embedding_index().is_some() {
+        let eng = engine.clone();
+        tokio::spawn(async move {
+            if let Err(e) = eng.sync_embeddings().await {
+                debug!("Background embedding sync after fetch: {}", e);
+            }
+        });
+    }
 
     Ok(Json(json!({
         "fetched": count,
@@ -895,7 +928,7 @@ pub async fn fetch_authors_handler(
             filter["kinds"] = json!(kinds);
         }
 
-        match crate::relay::fetch_with_filters(engine.ndb(), relay_url, &[filter]).await {
+        match engine.tracked_fetch(relay_url, &[filter], FetchTrigger::UserAction).await {
             Ok(events) => {
                 debug!("Fetched {} events for authors from {}", events.len(), relay_url);
                 total_fetched += events.len();
@@ -906,12 +939,99 @@ pub async fn fetch_authors_handler(
         }
     }
 
+    // Trigger background embedding sync for newly fetched events
+    if total_fetched > 0 && engine.embedding_index().is_some() {
+        let eng = engine.clone();
+        tokio::spawn(async move {
+            if let Err(e) = eng.sync_embeddings().await {
+                debug!("Background embedding sync after author fetch: {}", e);
+            }
+        });
+    }
+
     Ok(Json(json!({
         "fetched": total_fetched,
         "authors": authors.len(),
         "relays": rc.fetch.urls.len()
     })))
 }
+
+/// POST /api/v1/fetch/sections — bulk-fetch missing 30041 sections for all known 30040 indexes
+pub async fn fetch_sections_handler(
+    State(engine): State<AppState>,
+) -> Result<Json<Value>, EngineError> {
+    let (total_referenced, missing, fetched) = engine.fetch_missing_sections().await?;
+
+    // Trigger background embedding sync for newly fetched sections
+    if fetched > 0 && engine.embedding_index().is_some() {
+        let eng = engine.clone();
+        tokio::spawn(async move {
+            if let Err(e) = eng.sync_embeddings().await {
+                debug!("Background embedding sync after section fetch: {}", e);
+            }
+        });
+    }
+
+    Ok(Json(json!({
+        "total_referenced": total_referenced,
+        "missing": missing,
+        "fetched": fetched
+    })))
+}
+
+// ============================================================================
+// Network Mode & Activity API
+// ============================================================================
+
+/// GET /api/v1/network/status — current mode, active fetches, recent activity
+pub async fn network_status_handler(
+    State(engine): State<AppState>,
+) -> Json<Value> {
+    let status = engine.network().status().await;
+    Json(serde_json::to_value(status).unwrap_or_default())
+}
+
+/// POST /api/v1/network/mode — toggle online/offline
+#[derive(Debug, Deserialize)]
+pub struct SetNetworkModeRequest {
+    pub mode: String,
+}
+
+pub async fn set_network_mode_handler(
+    State(engine): State<AppState>,
+    Json(req): Json<SetNetworkModeRequest>,
+) -> Result<Json<Value>, EngineError> {
+    let mode: NetworkMode = req.mode.parse().map_err(|e: String| {
+        EngineError::InvalidFilter(e)
+    })?;
+
+    engine.set_network_mode(mode);
+
+    // Persist to config.toml if we have a config path
+    if let Some(config_path) = engine.config_path() {
+        if let Ok(content) = std::fs::read_to_string(config_path) {
+            if let Ok(mut doc) = content.parse::<toml::Table>() {
+                let network = doc.entry("network")
+                    .or_insert_with(|| toml::Value::Table(toml::Table::new()));
+                if let toml::Value::Table(table) = network {
+                    table.insert("mode".into(), toml::Value::String(mode.to_string()));
+                }
+                if let Ok(serialized) = toml::to_string_pretty(&doc) {
+                    if let Err(e) = std::fs::write(config_path, serialized) {
+                        debug!("Failed to persist network mode to config: {}", e);
+                    }
+                }
+            }
+        }
+    }
+
+    let status = engine.network().status().await;
+    Ok(Json(serde_json::to_value(status).unwrap_or_default()))
+}
+
+// ============================================================================
+// Relay Config API Endpoints
+// ============================================================================
 
 /// Request to add relay/author to config
 #[derive(Debug, Deserialize)]
@@ -1261,6 +1381,16 @@ pub async fn publish_handler(
         None
     };
 
+    // Trigger background embedding sync so new events are searchable immediately
+    if ingested && engine.embedding_index().is_some() {
+        let eng = engine.clone();
+        tokio::spawn(async move {
+            if let Err(e) = eng.sync_embeddings().await {
+                debug!("Background embedding sync after publish: {}", e);
+            }
+        });
+    }
+
     Ok(Json(PublishResponse {
         publication_id: pub_id,
         section_ids,
@@ -1268,6 +1398,214 @@ pub async fn publish_handler(
         ingested,
         broadcast_results,
     }))
+}
+
+// ============================================================================
+// Ingest API Endpoint
+// ============================================================================
+// Export API
+// ============================================================================
+
+/// GET /api/v1/export — export all local events as JSONL (one event per line)
+///
+/// Query params:
+/// - kinds: comma-separated kind numbers (e.g. ?kinds=30040,30041)
+/// - authors: comma-separated hex pubkeys
+/// - since: unix timestamp lower bound
+/// - until: unix timestamp upper bound
+/// - limit: max events (default: 100000)
+pub async fn export_handler(
+    State(engine): State<AppState>,
+    axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Result<impl IntoResponse, EngineError> {
+    let mut filter = serde_json::json!({});
+
+    if let Some(kinds_str) = params.get("kinds") {
+        let kinds: Vec<u64> = kinds_str.split(',')
+            .filter_map(|s| s.trim().parse().ok())
+            .collect();
+        if !kinds.is_empty() {
+            filter["kinds"] = json!(kinds);
+        }
+    }
+    if let Some(authors_str) = params.get("authors") {
+        let authors: Vec<&str> = authors_str.split(',')
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .collect();
+        if !authors.is_empty() {
+            filter["authors"] = json!(authors);
+        }
+    }
+    if let Some(since) = params.get("since").and_then(|s| s.parse::<u64>().ok()) {
+        filter["since"] = json!(since);
+    }
+    if let Some(until) = params.get("until").and_then(|s| s.parse::<u64>().ok()) {
+        filter["until"] = json!(until);
+    }
+    let limit = params.get("limit")
+        .and_then(|s| s.parse::<u64>().ok())
+        .unwrap_or(100_000);
+    filter["limit"] = json!(limit);
+
+    let events = crate::query::query_local(engine.ndb(), &[filter])?;
+    let count = events.len();
+
+    // Build JSONL body
+    let mut body = String::new();
+    for event in &events {
+        if let Ok(line) = serde_json::to_string(event) {
+            body.push_str(&line);
+            body.push('\n');
+        }
+    }
+
+    let mut headers = axum::http::HeaderMap::new();
+    headers.insert("content-type", "application/x-ndjson".parse().unwrap());
+    headers.insert("x-event-count", count.to_string().parse().unwrap());
+
+    Ok((headers, body))
+}
+
+/// GET /api/v1/export/manifest — summary of what an export would contain
+pub async fn export_manifest_handler(
+    State(engine): State<AppState>,
+    axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Result<Json<Value>, EngineError> {
+    // Query with same filters to count
+    let mut filter = serde_json::json!({});
+    if let Some(kinds_str) = params.get("kinds") {
+        let kinds: Vec<u64> = kinds_str.split(',')
+            .filter_map(|s| s.trim().parse().ok())
+            .collect();
+        if !kinds.is_empty() {
+            filter["kinds"] = json!(kinds);
+        }
+    }
+    if let Some(authors_str) = params.get("authors") {
+        let authors: Vec<&str> = authors_str.split(',')
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .collect();
+        if !authors.is_empty() {
+            filter["authors"] = json!(authors);
+        }
+    }
+    if let Some(since) = params.get("since").and_then(|s| s.parse::<u64>().ok()) {
+        filter["since"] = json!(since);
+    }
+    if let Some(until) = params.get("until").and_then(|s| s.parse::<u64>().ok()) {
+        filter["until"] = json!(until);
+    }
+    filter["limit"] = json!(100_000u64);
+
+    let events = crate::query::query_local(engine.ndb(), &[filter])?;
+
+    // Count by kind
+    let mut kinds_count = std::collections::HashMap::<u64, usize>::new();
+    let mut authors_set = std::collections::HashSet::<String>::new();
+    for event in &events {
+        if let Some(kind) = event.get("kind").and_then(|v| v.as_u64()) {
+            *kinds_count.entry(kind).or_default() += 1;
+        }
+        if let Some(author) = event.get("pubkey").and_then(|v| v.as_str()) {
+            authors_set.insert(author.to_string());
+        }
+    }
+
+    let emb_count = engine.embedding_index()
+        .map(|e| {
+            let rt = tokio::runtime::Handle::current();
+            rt.block_on(async { e.read().await.len() })
+        })
+        .unwrap_or(0);
+
+    Ok(Json(json!({
+        "event_count": events.len(),
+        "kinds": kinds_count,
+        "authors": authors_set.len(),
+        "embedding_count": emb_count,
+        "filters_used": params,
+    })))
+}
+
+// ============================================================================
+// Ingest API
+// ============================================================================
+
+/// POST /api/v1/ingest — ingest Nostr events into nostrdb
+///
+/// Accepts either:
+/// - A single JSON event object: `{"id":"...", ...}`
+/// - A JSONL body (one event per line) with Content-Type: application/x-ndjson
+///
+/// Embedding sync is NOT triggered per event. The background 60s loop
+/// handles it, or call POST /api/v1/embed/sync explicitly after bulk ingest.
+pub async fn ingest_handler(
+    State(engine): State<AppState>,
+    headers: axum::http::HeaderMap,
+    body: String,
+) -> Result<impl IntoResponse, EngineError> {
+    let content_type = headers
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("application/json");
+
+    let is_ndjson = content_type.contains("ndjson") || content_type.contains("jsonl");
+
+    if is_ndjson || body.trim_start().starts_with('{') && body.contains('\n') && body.trim().lines().count() > 1 {
+        // Bulk JSONL ingest
+        let start = std::time::Instant::now();
+        let mut ingested = 0usize;
+        let mut skipped = 0usize;
+        let mut errors = 0usize;
+
+        for line in body.lines() {
+            let line = line.trim();
+            if line.is_empty() {
+                continue;
+            }
+            match serde_json::from_str::<Value>(line) {
+                Ok(event) => {
+                    // Skip if event ID already exists in nostrdb
+                    if let Some(id) = event.get("id").and_then(|v| v.as_str()) {
+                        if crate::query::query_by_id(engine.ndb(), id).ok().flatten().is_some() {
+                            skipped += 1;
+                            continue;
+                        }
+                    }
+                    let event_json = event.to_string();
+                    match engine.ingest_event(&event_json) {
+                        Ok(()) => ingested += 1,
+                        Err(_) => errors += 1,
+                    }
+                }
+                Err(_) => errors += 1,
+            }
+        }
+
+        let duration_ms = start.elapsed().as_millis() as u64;
+
+        // Don't trigger embedding sync per chunk — the background 60s loop
+        // handles it, or the caller can POST /api/v1/embed/sync after import.
+        let embedding_sync = "deferred";
+
+        Ok(Json(json!({
+            "ingested": ingested,
+            "skipped": skipped,
+            "errors": errors,
+            "duration_ms": duration_ms,
+            "embedding_sync": embedding_sync
+        })))
+    } else {
+        // Single event ingest (no embedding sync — background loop handles it)
+        let event: Value = serde_json::from_str(&body)
+            .map_err(|e| EngineError::Database(format!("JSON error: {e}")))?;
+        let event_json = event.to_string();
+        engine.ingest_event(&event_json)?;
+        let id = event.get("id").and_then(|v| v.as_str()).unwrap_or("");
+        Ok(Json(json!({ "ingested": true, "id": id })))
+    }
 }
 
 // ============================================================================
@@ -1279,17 +1617,19 @@ use crate::embedding::EmbeddingStatus;
 /// GET /api/v1/embed/status — current embedding index status
 pub async fn embed_status_handler(
     State(engine): State<AppState>,
-) -> Result<Json<EmbeddingStatus>, EngineError> {
+) -> Result<Json<Value>, EngineError> {
     let emb = match engine.embedding_index() {
         Some(e) => e,
         None => {
-            return Ok(Json(EmbeddingStatus {
-                enabled: false,
-                indexed_count: 0,
-                total_events: 0,
-                sidecar_available: false,
-                model: None,
-            }));
+            return Ok(Json(json!({
+                "enabled": false,
+                "indexed_count": 0,
+                "total_events": 0,
+                "stale_count": 0,
+                "missing_sections": 0,
+                "sidecar_available": false,
+                "model": null,
+            })));
         }
     };
 
@@ -1298,19 +1638,50 @@ pub async fn embed_status_handler(
     let model = index.model().to_string();
     let indexed_count = index.len();
 
-    // Count total events in nostrdb
-    let filter = serde_json::json!({"limit": 100000});
-    let total_events = crate::query::query_local(engine.ndb(), &[filter])
-        .map(|e| e.len())
-        .unwrap_or(0);
+    // Count embeddable events in nostrdb (content kinds only; skip 30040 index events)
+    let filter = serde_json::json!({"kinds": [30041, 30023, 30818, 9802], "limit": 100000});
+    let local_events = crate::query::query_local(engine.ndb(), &[filter])
+        .unwrap_or_default();
+    let total_events = local_events.len();
 
-    Ok(Json(EmbeddingStatus {
-        enabled: true,
-        indexed_count,
-        total_events,
-        sidecar_available,
-        model: Some(model),
-    }))
+    // Count stale embeddings (indexed but no longer in nostrdb)
+    let local_ids: std::collections::HashSet<&str> = local_events.iter()
+        .filter_map(|e| e.get("id").and_then(|v| v.as_str()))
+        .collect();
+    let stale_count = indexed_count.saturating_sub(
+        index.all_ids().iter().filter(|id| local_ids.contains(id.as_str())).count()
+    );
+
+    // Count missing sections (30040 indexes reference 30041s not yet fetched)
+    let idx_filter = serde_json::json!({"kinds": [30040], "limit": 100000});
+    let indexes = crate::query::query_local(engine.ndb(), &[idx_filter]).unwrap_or_default();
+    let mut referenced_sections = 0usize;
+    for event in &indexes {
+        if let Some(tags) = event.get("tags").and_then(|v| v.as_array()) {
+            for tag in tags {
+                if let Some(arr) = tag.as_array() {
+                    if arr.first().and_then(|v| v.as_str()) == Some("a") {
+                        if let Some(addr) = arr.get(1).and_then(|v| v.as_str()) {
+                            if addr.starts_with("30041:") {
+                                referenced_sections += 1;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    let missing_sections = referenced_sections.saturating_sub(total_events);
+
+    Ok(Json(json!({
+        "enabled": true,
+        "indexed_count": indexed_count,
+        "total_events": total_events,
+        "stale_count": stale_count,
+        "missing_sections": missing_sections,
+        "sidecar_available": sidecar_available,
+        "model": model,
+    })))
 }
 
 /// POST /api/v1/embed/sync — embed unembedded events
@@ -1332,10 +1703,103 @@ pub async fn embed_reindex_handler(
 }
 
 // ============================================================================
+// Claude Code Sessions
+// ============================================================================
+
+/// GET /api/v1/claude-sessions — list available Claude Code conversation sessions
+pub async fn list_claude_sessions_handler(
+    State(engine): State<AppState>,
+) -> Result<Json<Value>, EngineError> {
+    let dir = engine.claude_sessions_dir().ok_or_else(|| {
+        EngineError::Config("Claude Code sessions directory not found".into())
+    })?;
+    let sessions = crate::claude_sessions::list_sessions(dir)?;
+    let count = sessions.len();
+    Ok(Json(json!({
+        "sessions": sessions,
+        "count": count,
+    })))
+}
+
+/// Query parameters for session endpoint
+#[derive(Debug, Deserialize)]
+pub struct SessionQuery {
+    /// Skip the first N messages (for polling new messages)
+    pub offset: Option<usize>,
+}
+
+/// GET /api/v1/claude-sessions/:id — get messages for a specific session
+pub async fn get_claude_session_handler(
+    State(engine): State<AppState>,
+    Path(session_id): Path<String>,
+    axum::extract::Query(query): axum::extract::Query<SessionQuery>,
+) -> Result<Json<Value>, EngineError> {
+    let dir = engine.claude_sessions_dir().ok_or_else(|| {
+        EngineError::Config("Claude Code sessions directory not found".into())
+    })?;
+
+    let offset = query.offset.unwrap_or(0);
+    if offset > 0 {
+        // Polling mode: find the file and return only new messages
+        let matches: Vec<_> = std::fs::read_dir(dir)
+            .map_err(|e| EngineError::Database(format!("Failed to read sessions dir: {e}")))?
+            .filter_map(|e| e.ok())
+            .filter(|e| {
+                let name = e.file_name();
+                let name = name.to_string_lossy();
+                name.starts_with(&session_id) && name.ends_with(".jsonl")
+            })
+            .map(|e| e.path())
+            .collect();
+
+        if matches.is_empty() {
+            return Err(EngineError::NotFound(format!("No session matching '{session_id}'")));
+        }
+
+        let messages = crate::claude_sessions::parse_session_messages(&matches[0], offset)?;
+        return Ok(Json(json!({
+            "id": session_id,
+            "messages": messages,
+            "count": messages.len(),
+            "offset": offset,
+        })));
+    }
+
+    let detail = crate::claude_sessions::get_session(dir, &session_id)?;
+    let count = detail.messages.len();
+    Ok(Json(json!({
+        "id": detail.id,
+        "messages": detail.messages,
+        "count": count,
+    })))
+}
+
+/// POST /api/v1/claude-sessions/:id/message — append a user message to a session
+pub async fn append_claude_session_handler(
+    State(engine): State<AppState>,
+    Path(session_id): Path<String>,
+    Json(req): Json<AppendSessionRequest>,
+) -> Result<Json<Value>, EngineError> {
+    let dir = engine.claude_sessions_dir().ok_or_else(|| {
+        EngineError::Config("Claude Code sessions directory not found".into())
+    })?;
+    let uuid = crate::claude_sessions::append_message(dir, &session_id, &req.content)?;
+    Ok(Json(json!({
+        "uuid": uuid,
+        "session_id": session_id,
+    })))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AppendSessionRequest {
+    pub content: String,
+}
+
+// ============================================================================
 // Chat API Endpoints
 // ============================================================================
 
-use crate::chat::{ChatState, InjectedNote};
+use crate::chat::{ChatRole, ChatState, InjectedNote};
 use crate::llm::LLMProvider;
 use std::sync::Mutex;
 
@@ -1465,6 +1929,30 @@ pub async fn chat_enter_edit(State(state): State<ChatAppState>) -> Json<ChatResp
     let mut chat = state.chat.lock().unwrap();
     chat.enter_edit_mode();
     Json(build_chat_response(&chat))
+}
+
+/// PUT /api/v1/chat/load — load fragments directly (for importing sessions)
+pub async fn chat_load_fragments(
+    State(state): State<ChatAppState>,
+    Json(req): Json<Vec<FragmentInput>>,
+) -> Json<ChatResponse> {
+    let mut chat = state.chat.lock().unwrap();
+    let fragments: Vec<(ChatRole, String)> = req
+        .into_iter()
+        .filter_map(|f| {
+            let role = ChatRole::from_str(&f.role)?;
+            Some((role, f.content))
+        })
+        .collect();
+    chat.load_fragments(fragments);
+    Json(build_chat_response(&chat))
+}
+
+/// Input for loading a fragment
+#[derive(Debug, Deserialize)]
+pub struct FragmentInput {
+    pub role: String,
+    pub content: String,
 }
 
 /// PUT /api/v1/chat/edit — submit modified buffer, exit edit mode

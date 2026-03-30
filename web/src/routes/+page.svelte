@@ -102,6 +102,9 @@
 	let embeddingStatus: import('$lib/types').EmbeddingStatusResponse | null = $state(null);
 	let embeddingSyncing = $state(false);
 
+	// Network status
+	let networkStatus: import('$lib/types').NetworkStatus | null = $state(null);
+
 	// Relay config
 	let fetchRelayUrls: string[] = $state([]);
 	let authorCount = $state(0);
@@ -162,6 +165,41 @@
 			alert(`To purge, stop the engine and run:\n\n${data.command}`);
 		} catch (e) {
 			console.error('Purge failed:', e);
+		}
+	}
+
+	let exporting = $state(false);
+
+	async function handleExport() {
+		exporting = true;
+		try {
+			const result = await api.downloadExport();
+			alert(`Exported ${result.count} events to ${result.filename}`);
+		} catch (e) {
+			console.error('Export failed:', e);
+			alert('Export failed: ' + (e as Error).message);
+		} finally {
+			exporting = false;
+		}
+	}
+
+	let importing = $state(false);
+	let importProgress: { total: number; sent: number; ingested: number; skipped: number; errors: number; done: boolean } | null = $state(null);
+
+	async function handleImport(file: File) {
+		importing = true;
+		importProgress = null;
+		try {
+			const result = await api.importJsonl(file, (p) => { importProgress = { ...p }; });
+			if (result.ingested > 0) {
+				await loadFeed();
+				handleSyncEmbeddings();
+			}
+		} catch (e) {
+			console.error('Import failed:', e);
+			alert('Import failed: ' + (e as Error).message);
+		} finally {
+			importing = false;
 		}
 	}
 
@@ -299,6 +337,9 @@
 			try {
 				embeddingStatus = await api.getEmbeddingStatus();
 			} catch { /* embedding not enabled */ }
+			try {
+				networkStatus = await api.getNetworkStatus();
+			} catch {}
 			await refreshIgnoreList();
 			try {
 				const rc = await api.getRelayConfig();
@@ -306,6 +347,12 @@
 				authorCount = rc.authors.length;
 			} catch {}
 		})();
+
+		// Poll network status every 2s
+		const networkPoll = setInterval(async () => {
+			try { networkStatus = await api.getNetworkStatus(); } catch {}
+		}, 2000);
+		return () => clearInterval(networkPoll);
 	});
 
 	async function handleListDocuments() {
@@ -443,6 +490,14 @@
 			// Final status refresh
 			try { embeddingStatus = await api.getEmbeddingStatus(); } catch {}
 			embeddingSyncing = false;
+		}
+	}
+
+	async function handleSetNetworkMode(mode: import('$lib/types').NetworkMode) {
+		try {
+			networkStatus = await api.setNetworkMode(mode);
+		} catch (e) {
+			console.error('Failed to set network mode:', e);
 		}
 	}
 
@@ -1382,6 +1437,7 @@
 		{embeddingStatus}
 		{embeddingSyncing}
 		{ignoredCount}
+		{networkStatus}
 		onsetsyncmode={(m: SyncMode) => (syncMode = m)}
 		onsetbuttonlabels={(m: ButtonLabels) => (buttonLabels = m)}
 		onhome={() => { docMode = 'empty'; publication = null; sections = []; docCollapsed = false; profilePubkey = null; if (searchCount === 0) loadFeed(); }}
@@ -1389,8 +1445,14 @@
 		onreindexembeddings={handleReindexEmbeddings}
 		onviewignored={handleViewIgnored}
 		onpurge={handlePurge}
+		onexport={handleExport}
+		{exporting}
+		onimport={handleImport}
+		{importing}
+		{importProgress}
 		{passthrough}
 		onsetpassthrough={(v: boolean) => (passthrough = v)}
+		onsetnetworkmode={handleSetNetworkMode}
 	/>
 
 	<div class="workbench-panels" style:grid-template-columns={gridTemplate}>

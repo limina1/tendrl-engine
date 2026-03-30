@@ -11,6 +11,8 @@ import type {
 	SectionMeta,
 	SearchResponse,
 	EmbeddingStatusResponse,
+	NetworkStatus,
+	NetworkMode,
 	DocumentFile,
 	ImportResult
 } from './types';
@@ -367,4 +369,104 @@ export function getClaudeSession(id: string, offset?: number) {
 	return fetchJson<{ id: string; messages: ClaudeSessionMessage[]; count: number; offset?: number }>(
 		`/api/v1/claude-sessions/${id}${params}`
 	);
+}
+
+// Network mode & activity API
+
+// Export API
+
+export interface ExportManifest {
+	event_count: number;
+	kinds: Record<string, number>;
+	authors: number;
+	embedding_count: number;
+}
+
+export function getExportManifest(kinds?: string) {
+	const params = kinds ? `?kinds=${kinds}` : '';
+	return fetchJson<ExportManifest>(`/api/v1/export/manifest${params}`);
+}
+
+export async function downloadExport(kinds?: string) {
+	const params = kinds ? `?kinds=${kinds}` : '';
+	const res = await fetch(`/api/v1/export${params}`);
+	if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
+	const count = res.headers.get('x-event-count') || '0';
+	const blob = await res.blob();
+	const date = new Date().toISOString().slice(0, 10);
+	const filename = `tendrl-export-${date}-${count}events.jsonl`;
+
+	const url = URL.createObjectURL(blob);
+	const a = document.createElement('a');
+	a.href = url;
+	a.download = filename;
+	a.click();
+	URL.revokeObjectURL(url);
+	return { filename, count: parseInt(count) };
+}
+
+// Import API
+
+export interface IngestResult {
+	ingested: number;
+	skipped: number;
+	errors: number;
+	duration_ms: number;
+	embedding_sync: string;
+}
+
+export interface IngestProgress {
+	total: number;
+	sent: number;
+	ingested: number;
+	skipped: number;
+	errors: number;
+	done: boolean;
+}
+
+const CHUNK_SIZE = 200;
+
+export async function importJsonl(
+	file: File,
+	onProgress?: (progress: IngestProgress) => void
+): Promise<IngestResult> {
+	const text = await file.text();
+	const lines = text.split('\n').filter((l) => l.trim());
+	const total = lines.length;
+	let ingested = 0;
+	let skipped = 0;
+	let errors = 0;
+	let sent = 0;
+
+	for (let i = 0; i < lines.length; i += CHUNK_SIZE) {
+		const chunk = lines.slice(i, i + CHUNK_SIZE).join('\n');
+		const res = await fetch('/api/v1/ingest', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/x-ndjson' },
+			body: chunk
+		});
+		if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
+		const r: IngestResult = await res.json();
+		ingested += r.ingested;
+		skipped += r.skipped;
+		errors += r.errors;
+		sent = Math.min(i + CHUNK_SIZE, lines.length);
+		onProgress?.({ total, sent, ingested, skipped, errors, done: false });
+	}
+
+	onProgress?.({ total, sent: total, ingested, skipped, errors, done: true });
+	return { ingested, skipped, errors, duration_ms: 0, embedding_sync: 'started' };
+}
+
+// Network mode & activity API
+
+export function getNetworkStatus() {
+	return fetchJson<NetworkStatus>('/api/v1/network/status');
+}
+
+export function setNetworkMode(mode: NetworkMode) {
+	return fetchJson<NetworkStatus>('/api/v1/network/mode', {
+		method: 'POST',
+		body: JSON.stringify({ mode })
+	});
 }

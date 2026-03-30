@@ -191,9 +191,25 @@ tendrl export --manifest  # print manifest only
 
 * Phase 3 — JSONL ingest
 
-** 3.1 Ingest endpoint
+** Known problem: single-event ingest kills the engine on bulk
 
-~POST /api/v1/ingest~ already exists for single events. Extend it:
+The current ~POST /api/v1/ingest~ spawns a background
+~sync_embeddings()~ after every event. With a 3,359-event JSONL file,
+this creates thousands of concurrent HTTP requests to the sidecar
+(Python, port 3031). The engine dies at ~350 events with
+connection-reset errors.
+
+Workaround used 2026-03-30: set ~embedding.enabled = false~ in
+config, restart, ingest all events, re-enable, then
+~POST /api/v1/embed/sync~ once. This worked — all 3,359 events
+ingested in one pass, 272 publications appeared in nostrdb.
+
+The fix is straightforward: the single-event endpoint must not trigger
+embedding sync. Bulk ingest must defer it to the end.
+
+** 3.1 Bulk ingest endpoint
+
+~POST /api/v1/ingest~ — extend to accept JSONL body:
 
 #+begin_src
 POST /api/v1/ingest
@@ -203,7 +219,8 @@ Content-Type: application/x-ndjson
 {"id":"...","pubkey":"...","kind":30040,...}
 ...
 
-→ { "ingested": 1234, "skipped": 5, "errors": 0, "duration_ms": 800 }
+→ { "ingested": 1234, "skipped": 5, "errors": 0, "duration_ms": 800,
+     "embedding_sync": "started" }
 #+end_src
 
 Requirements:
@@ -211,7 +228,13 @@ Requirements:
 - Verify signatures (~nostrdb~ does this on ingest)
 - Skip duplicates (already in db) — count as skipped, not error
 - Report invalid lines as errors without aborting the stream
-- Trigger embedding sync after ingest completes (if enabled)
+- *No per-event embedding sync* — trigger once after all events stored
+- Trigger a single ~sync_embeddings()~ after ingest completes
+  (or skip with ~?skip_embed=true~)
+
+The existing single-event JSON ingest should also stop spawning
+~sync_embeddings()~ per call. Instead, debounce: reset a 2-second
+timer on each ingest, sync only fires after a quiet period.
 
 ** 3.2 File upload ingest
 
@@ -228,12 +251,13 @@ cat *.jsonl | tendrl ingest
 
 ** Phase 3 checklist
 
-- [ ] Extend ~/api/v1/ingest~ to accept JSONL body
-- [ ] Streaming line-by-line parsing
-- [ ] Duplicate detection and skip counting
-- [ ] Error reporting without abort
+- [X] Extend ~/api/v1/ingest~ to accept JSONL body (Content-Type: application/x-ndjson)
+- [X] Streaming line-by-line parsing
+- [X] Duplicate detection and skip counting
+- [X] Error reporting without abort (ingested/skipped/errors/duration_ms)
+- [X] Remove per-event embedding sync on single-event ingest (background 60s loop handles it)
+- [X] Single post-ingest embedding sync for bulk
 - [ ] ~/api/v1/ingest/file~ multipart endpoint
-- [ ] Post-ingest embedding sync
 - [ ] CLI ~tendrl ingest~ subcommand
 
 * Phase 4 — Purge and rebuild

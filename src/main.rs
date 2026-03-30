@@ -3,7 +3,7 @@
 //! Run a standalone HTTP API for querying Nostr events.
 
 use axum::{
-    routing::{get, post},
+    routing::{get, post, put},
     Router,
 };
 use clap::Parser;
@@ -82,6 +82,10 @@ async fn main() -> anyhow::Result<()> {
     if let Some(ref pk) = my_pubkey {
         info!("Identity pubkey: {}...{}", &pk[..8], &pk[pk.len()-8..]);
     }
+    let assistant_pubkey = config.assistant_pubkey_hex();
+    if let Some(ref pk) = assistant_pubkey {
+        info!("Assistant pubkey: {}...{}", &pk[..8], &pk[pk.len()-8..]);
+    }
 
     // Create the engine
     let data_path = PathBuf::from(&config.database.data_dir);
@@ -92,12 +96,27 @@ async fn main() -> anyhow::Result<()> {
     engine.set_documents_path(std::path::PathBuf::from(&config.documents.path));
     engine.set_sidecar_url(config.embedding.sidecar_url.clone());
     engine.set_my_pubkey(my_pubkey.clone());
+    engine.set_assistant_pubkey(assistant_pubkey.clone());
+
+    // Resolve Claude Code sessions directory from cwd
+    let cwd = std::env::current_dir().unwrap_or_default();
+    let claude_dir = nostr_engine::claude_sessions::resolve_claude_dir(&cwd);
+    if claude_dir.exists() {
+        info!("Claude Code sessions: {}", claude_dir.display());
+        engine.set_claude_sessions_dir(Some(claude_dir));
+    }
 
     // Initialize embedding index if enabled
     if config.embedding.enabled {
         if let Err(e) = engine.init_embedding(&config.embedding) {
             tracing::warn!("Failed to initialize embedding index: {}", e);
         }
+    }
+
+    // Set initial network mode from config
+    if let Ok(mode) = config.network.mode.parse::<nostr_engine::NetworkMode>() {
+        engine.set_initial_network_mode(mode);
+        info!("Network mode: {}", mode);
     }
 
     let state = Arc::new(engine);
@@ -123,13 +142,16 @@ async fn main() -> anyhow::Result<()> {
         )
         .route("/api/v1/chat/system", post(api::chat_set_system))
         .route("/api/v1/chat/context", post(api::chat_inject_context).put(api::chat_replace_context))
+        .route("/api/v1/chat/load", put(api::chat_load_fragments))
         .with_state(chat_state);
 
     // Config endpoint (returns pubkey etc. to the frontend)
     let config_pubkey = my_pubkey.clone();
+    let config_assistant = assistant_pubkey.clone();
     let config_handler = move || async move {
         axum::Json(serde_json::json!({
-            "my_pubkey": config_pubkey
+            "my_pubkey": config_pubkey,
+            "assistant_pubkey": config_assistant
         }))
     };
 
@@ -157,15 +179,26 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/v1/config/update", post(api::config_update_handler))
         .route("/api/v1/fetch", post(api::fetch_relay_handler))
         .route("/api/v1/fetch/authors", post(api::fetch_authors_handler))
+        .route("/api/v1/fetch/sections", post(api::fetch_sections_handler))
+        // Network mode
+        .route("/api/v1/network/status", get(api::network_status_handler))
+        .route("/api/v1/network/mode", post(api::set_network_mode_handler))
         // Ignore list + purge
         .route("/api/v1/ignore", get(api::ignore_list_handler).post(api::ignore_add_handler).delete(api::ignore_remove_handler))
         .route("/api/v1/purge", post(api::purge_handler))
-        // Publish endpoint
+        // Export, publish & ingest endpoints
+        .route("/api/v1/export", get(api::export_handler))
+        .route("/api/v1/export/manifest", get(api::export_manifest_handler))
         .route("/api/v1/publish", post(api::publish_handler))
+        .route("/api/v1/ingest", post(api::ingest_handler))
         // Embedding endpoints
         .route("/api/v1/embed/status", get(api::embed_status_handler))
         .route("/api/v1/embed/sync", post(api::embed_sync_handler))
         .route("/api/v1/embed/reindex", post(api::embed_reindex_handler))
+        // Claude Code sessions
+        .route("/api/v1/claude-sessions", get(api::list_claude_sessions_handler))
+        .route("/api/v1/claude-sessions/:id", get(api::get_claude_session_handler))
+        .route("/api/v1/claude-sessions/:id/message", post(api::append_claude_session_handler))
         // Publication endpoints
         .route("/api/v1/publications", get(api::list_publications_handler))
         .route(
@@ -188,7 +221,7 @@ async fn main() -> anyhow::Result<()> {
             "/api/v1/sections/:pubkey/:d_tag/versions",
             get(api::get_section_versions_handler),
         )
-        .with_state(state)
+        .with_state(state.clone())
         .merge(chat_routes)
         .layer(cors);
 
@@ -203,6 +236,52 @@ async fn main() -> anyhow::Result<()> {
     } else {
         app
     };
+
+    // Background sync — fetch missing sections and embed new events
+    if config.embedding.enabled {
+        tokio::spawn(async move {
+            // Wait for sidecar to start up
+            tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
+            loop {
+                interval.tick().await;
+
+                // Skip relay fetches when offline (embedding sync still runs)
+                if !state.is_online() {
+                    continue;
+                }
+
+                // Fetch missing sections from relays
+                match state.fetch_missing_sections().await {
+                    Ok((_, missing, fetched)) => {
+                        if fetched > 0 {
+                            info!("Background section fetch: {} fetched ({} were missing)", fetched, missing);
+                        }
+                    }
+                    Err(e) => {
+                        tracing::debug!("Background section fetch error: {}", e);
+                    }
+                }
+
+                // Embed any unembedded events
+                if state.embedding_index().is_some() {
+                    match state.sync_embeddings().await {
+                        Ok(status) => {
+                            if status.indexed_count < status.total_events {
+                                info!(
+                                    "Background embed sync: {}/{} indexed",
+                                    status.indexed_count, status.total_events
+                                );
+                            }
+                        }
+                        Err(e) => {
+                            tracing::debug!("Background embed sync error: {}", e);
+                        }
+                    }
+                }
+            }
+        });
+    }
 
     // Start server
     let bind_addr = config.bind_addr();
