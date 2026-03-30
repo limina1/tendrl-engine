@@ -52,6 +52,7 @@
 
 pub mod api;
 pub mod chat;
+pub mod claude_sessions;
 pub mod config;
 pub mod drafts;
 pub mod embedding;
@@ -59,6 +60,7 @@ pub mod engine;
 pub mod error;
 pub mod identity;
 pub mod llm;
+pub mod network;
 pub mod publication;
 pub mod query;
 pub mod relay;
@@ -69,6 +71,7 @@ pub mod user_data;
 // Re-export main types for convenience
 pub use config::Config;
 pub use engine::{Engine, FetchPolicy, QueryResponse, QuerySource};
+pub use network::NetworkMode;
 pub use error::{EngineError, Result};
 pub use publication::{
     LoadStatus, NAddr, Publication, PublicationEngine, Section, SectionVersion, TocEntry,

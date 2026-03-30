@@ -199,6 +199,8 @@ impl RelayConfig {
 pub struct IdentityConfig {
     /// User's public key (npub1... or hex)
     pub pubkey: Option<String>,
+    /// Assistant's public key (npub1... or hex)
+    pub assistant: Option<String>,
 }
 
 /// Embedding configuration
@@ -267,6 +269,29 @@ pub struct Config {
     /// Documents folder settings
     #[serde(default)]
     pub documents: DocumentsConfig,
+    /// Network mode settings
+    #[serde(default)]
+    pub network: NetworkConfig,
+}
+
+/// Network mode configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NetworkConfig {
+    /// "online" or "offline"
+    #[serde(default = "default_network_mode")]
+    pub mode: String,
+}
+
+fn default_network_mode() -> String {
+    "online".to_string()
+}
+
+impl Default for NetworkConfig {
+    fn default() -> Self {
+        Self {
+            mode: default_network_mode(),
+        }
+    }
 }
 
 /// Documents folder configuration
@@ -292,7 +317,16 @@ impl Default for DocumentsConfig {
 impl Config {
     /// Resolve the configured pubkey to hex format (handles npub1... bech32)
     pub fn pubkey_hex(&self) -> Option<String> {
-        let raw = self.identity.pubkey.as_deref()?;
+        Self::resolve_pubkey(self.identity.pubkey.as_deref())
+    }
+
+    /// Resolve the configured assistant pubkey to hex format
+    pub fn assistant_pubkey_hex(&self) -> Option<String> {
+        Self::resolve_pubkey(self.identity.assistant.as_deref())
+    }
+
+    fn resolve_pubkey(raw: Option<&str>) -> Option<String> {
+        let raw = raw?;
         if raw.starts_with("npub1") {
             crate::identity::decode_npub(raw).ok()
         } else if raw.len() == 64 && hex::decode(raw).is_ok() {

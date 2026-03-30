@@ -6,6 +6,7 @@
 use crate::config::{EmbeddingConfig, RelayConfig};
 use crate::embedding::{EmbeddingIndex, EmbeddingStatus};
 use crate::error::{EngineError, Result};
+use crate::network::{self, FetchTrigger, NetworkActivity, NetworkMode};
 use crate::search::{self, SearchQuery, SearchResponse};
 use crate::{query, relay};
 use nostrdb::{Config, IngestMetadata, Ndb};
@@ -114,6 +115,8 @@ pub struct Engine {
     config_path: Option<std::path::PathBuf>,
     /// Configured user pubkey (hex) for resolving by:me
     my_pubkey: Option<String>,
+    /// Configured assistant pubkey (hex) for resolving by:assistant
+    assistant_pubkey: Option<String>,
     /// Optional embedding index for semantic search
     embedding: Option<Arc<RwLock<EmbeddingIndex>>>,
     /// Ignore list for filtering events
@@ -122,6 +125,10 @@ pub struct Engine {
     documents_dir: std::path::PathBuf,
     /// Sidecar URL
     sidecar_url: String,
+    /// Claude Code sessions directory
+    claude_sessions_dir: Option<std::path::PathBuf>,
+    /// Network activity tracker (mode + fetch log)
+    network: Arc<NetworkActivity>,
 }
 
 impl Engine {
@@ -168,10 +175,13 @@ impl Engine {
             data_dir: data_path.to_path_buf(),
             config_path: None,
             my_pubkey: None,
+            assistant_pubkey: None,
             embedding: None,
             ignore_list: RwLock::new(ignore_list),
             documents_dir: std::path::PathBuf::from("./docs"),
             sidecar_url: "http://localhost:3031".to_string(),
+            claude_sessions_dir: None,
+            network: Arc::new(NetworkActivity::new(NetworkMode::Online)),
         })
     }
 
@@ -208,6 +218,31 @@ impl Engine {
     /// Get the configured user pubkey
     pub fn my_pubkey(&self) -> Option<&str> {
         self.my_pubkey.as_deref()
+    }
+
+    /// Set the configured assistant pubkey (hex)
+    pub fn set_assistant_pubkey(&mut self, pubkey: Option<String>) {
+        self.assistant_pubkey = pubkey;
+    }
+
+    /// Get the configured assistant pubkey
+    pub fn assistant_pubkey(&self) -> Option<&str> {
+        self.assistant_pubkey.as_deref()
+    }
+
+    /// Get the network activity tracker
+    pub fn network(&self) -> &Arc<NetworkActivity> {
+        &self.network
+    }
+
+    /// Check if engine is in online mode
+    pub fn is_online(&self) -> bool {
+        self.network.is_online()
+    }
+
+    /// Set the network mode
+    pub fn set_network_mode(&self, mode: NetworkMode) {
+        self.network.set_mode(mode);
     }
 
     /// Get the ignore list
@@ -304,6 +339,80 @@ impl Engine {
         self.sidecar_url = url;
     }
 
+    /// Get the Claude Code sessions directory
+    pub fn claude_sessions_dir(&self) -> Option<&std::path::Path> {
+        self.claude_sessions_dir.as_deref()
+    }
+
+    /// Set the Claude Code sessions directory
+    pub fn set_claude_sessions_dir(&mut self, path: Option<std::path::PathBuf>) {
+        self.claude_sessions_dir = path;
+    }
+
+    /// Set the initial network mode (called during startup from config)
+    pub fn set_initial_network_mode(&self, mode: NetworkMode) {
+        self.network.set_mode(mode);
+    }
+
+    /// Fetch from a single relay with activity tracking.
+    /// Returns empty vec if engine is offline.
+    pub async fn tracked_fetch(
+        &self,
+        relay_url: &str,
+        filters: &[Value],
+        trigger: FetchTrigger,
+    ) -> Result<Vec<Value>> {
+        if !self.is_online() {
+            return Ok(vec![]);
+        }
+        let summary = network::summarize_filters(filters);
+        let guard = self.network.begin_fetch(relay_url, summary, trigger);
+        match relay::fetch_with_filters(&self.ndb, relay_url, filters).await {
+            Ok(events) => {
+                let count = events.len();
+                guard.complete(count).await;
+                Ok(events)
+            }
+            Err(e) => {
+                let msg = e.to_string();
+                guard.fail(msg).await;
+                Err(e)
+            }
+        }
+    }
+
+    /// Fetch from multiple relays with activity tracking.
+    /// Each relay gets its own FetchRecord in the activity log.
+    pub async fn tracked_fetch_multiple(
+        &self,
+        relays: &[String],
+        filters: &[Value],
+        trigger: FetchTrigger,
+    ) -> Result<Vec<Value>> {
+        if !self.is_online() {
+            return Ok(vec![]);
+        }
+        let mut all_events = Vec::new();
+        let mut seen_ids = std::collections::HashSet::new();
+        for relay_url in relays {
+            match self.tracked_fetch(relay_url, filters, trigger.clone()).await {
+                Ok(events) => {
+                    for event in events {
+                        if let Some(id) = event.get("id").and_then(|v| v.as_str()) {
+                            if seen_ids.insert(id.to_string()) {
+                                all_events.push(event);
+                            }
+                        }
+                    }
+                }
+                Err(e) => {
+                    debug!("Relay {} error: {}", relay_url, e);
+                }
+            }
+        }
+        Ok(all_events)
+    }
+
     /// Initialize the embedding index from config
     pub fn init_embedding(&mut self, config: &EmbeddingConfig) -> Result<()> {
         if !config.enabled {
@@ -338,8 +447,9 @@ impl Engine {
             EngineError::Config("Embedding not enabled".into())
         })?;
 
-        // Get all events from nostrdb
-        let filter = serde_json::json!({"limit": 100000});
+        // Get embeddable events from nostrdb (content kinds only; skip 30040 index
+        // events which contain no prose — their sections (30041) carry the content)
+        let filter = serde_json::json!({"kinds": [30041, 30023, 30818, 9802], "limit": 100000});
         let all_events = query::query_local(&self.ndb, &[filter])?;
         let total_events = all_events.len();
 
@@ -424,10 +534,15 @@ impl Engine {
                             warn!("Failed to insert embedding for {}: {}", id, e);
                         }
                     }
+                    // Save after each batch so progress is preserved
+                    if let Err(e) = index.save() {
+                        warn!("Failed to save embeddings after batch: {}", e);
+                    }
                 }
                 Err(e) => {
                     warn!("Batch embedding failed: {}", e);
-                    break;
+                    // Continue with remaining batches instead of breaking
+                    continue;
                 }
             }
         }
@@ -449,6 +564,95 @@ impl Engine {
             sidecar_available: true,
             model: Some(model),
         })
+    }
+
+    /// Fetch missing 30041 sections for all locally known 30040 indexes
+    pub async fn fetch_missing_sections(&self) -> Result<(usize, usize, usize)> {
+        use std::collections::{HashSet, HashMap};
+        use serde_json::json;
+
+        if !self.is_online() {
+            return Ok((0, 0, 0));
+        }
+
+        // 1. Get all local 30040 indexes
+        let filter = json!({"kinds": [30040], "limit": 100000});
+        let indexes = query::query_local(&self.ndb, &[filter]).unwrap_or_default();
+
+        // 2. Extract section a-tags
+        let mut needed: HashSet<(String, String)> = HashSet::new();
+        for event in &indexes {
+            if let Some(tags) = event.get("tags").and_then(|v| v.as_array()) {
+                for tag in tags {
+                    if let Some(arr) = tag.as_array() {
+                        if arr.first().and_then(|v| v.as_str()) == Some("a") {
+                            if let Some(addr_str) = arr.get(1).and_then(|v| v.as_str()) {
+                                let parts: Vec<&str> = addr_str.splitn(3, ':').collect();
+                                if parts.len() == 3 && parts[0] == "30041" {
+                                    needed.insert((parts[1].to_string(), parts[2].to_string()));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // 3. Check which are missing locally
+        let mut missing: Vec<(String, String)> = Vec::new();
+        for (pubkey, d_tag) in &needed {
+            let check = json!({"kinds": [30041], "authors": [pubkey], "#d": [d_tag], "limit": 1});
+            let found = query::query_local(&self.ndb, &[check])
+                .map(|e| !e.is_empty())
+                .unwrap_or(false);
+            if !found {
+                missing.push((pubkey.clone(), d_tag.clone()));
+            }
+        }
+
+        if missing.is_empty() {
+            return Ok((needed.len(), 0, 0));
+        }
+
+        debug!("fetch_missing_sections: {} referenced, {} missing", needed.len(), missing.len());
+
+        // 4. Batch fetch from relays
+        let mut by_pubkey: HashMap<String, Vec<String>> = HashMap::new();
+        for (pubkey, d_tag) in &missing {
+            by_pubkey.entry(pubkey.clone()).or_default().push(d_tag.clone());
+        }
+
+        let relays = &self.relay_config.fetch.urls;
+        let mut total_fetched = 0usize;
+
+        for (pubkey, d_tags) in &by_pubkey {
+            for chunk in d_tags.chunks(50) {
+                let filter = json!({
+                    "kinds": [30041],
+                    "authors": [pubkey],
+                    "#d": chunk,
+                    "limit": chunk.len() * 2
+                });
+
+                for relay_url in relays {
+                    match self.tracked_fetch(relay_url, &[filter.clone()], FetchTrigger::BackgroundSync).await {
+                        Ok(events) => {
+                            if !events.is_empty() {
+                                debug!("Fetched {} sections from {}", events.len(), relay_url);
+                                total_fetched += events.len();
+                                break;
+                            }
+                        }
+                        Err(e) => {
+                            debug!("Failed to fetch sections from {}: {}", relay_url, e);
+                        }
+                    }
+                }
+            }
+        }
+
+        info!("fetch_missing_sections: fetched {} of {} missing sections", total_fetched, missing.len());
+        Ok((needed.len(), missing.len(), total_fetched))
     }
 
     /// Clear and rebuild the entire embedding index
@@ -473,6 +677,7 @@ impl Engine {
         override_relays: Option<&[String]>,
     ) -> Result<QueryResponse> {
         let relays = override_relays.unwrap_or(&self.relay_config.fetch.urls);
+        let policy = if self.is_online() { policy } else { FetchPolicy::LocalOnly };
 
         match policy {
             FetchPolicy::LocalOnly => self.query_local_only(&filters),
@@ -487,6 +692,8 @@ impl Engine {
         event_id: &str,
         policy: FetchPolicy,
     ) -> Result<Option<Value>> {
+        let policy = if self.is_online() { policy } else { FetchPolicy::LocalOnly };
+
         // Try local first (unless FetchAlways)
         if policy != FetchPolicy::FetchAlways {
             if let Some(event) = query::query_by_id(&self.ndb, event_id)? {
@@ -512,6 +719,8 @@ impl Engine {
         d_tag: &str,
         policy: FetchPolicy,
     ) -> Result<Option<Value>> {
+        let policy = if self.is_online() { policy } else { FetchPolicy::LocalOnly };
+
         // Try local first (unless FetchAlways)
         if policy != FetchPolicy::FetchAlways {
             if let Some(event) = query::query_addressable(&self.ndb, kind, pubkey, d_tag)? {
@@ -624,9 +833,12 @@ impl Engine {
         let semantic = query.semantic_filter.as_ref().unwrap();
         let k = semantic.k;
 
-        // Over-fetch from HNSW since kind/author filters will discard many
-        let has_post_filters = query.kind_filter.is_some() || query.author_filter.is_some();
-        let fetch_k = if has_post_filters { k * 10 } else { k };
+        // Over-fetch from HNSW: the index contains both events and doc pages,
+        // and kind/author/text post-filters may discard many matches.
+        let has_post_filters = query.kind_filter.is_some()
+            || query.author_filter.is_some()
+            || query.text_filter.is_some();
+        let fetch_k = if has_post_filters { k * 10 } else { k * 5 };
 
         // Embed the query
         let index = emb.read().await;
@@ -635,6 +847,8 @@ impl Engine {
         // Search HNSW
         let matches = index.search(&query_vec, fetch_k)?;
         drop(index);
+
+        debug!("HNSW returned {} matches for k={}, fetch_k={}", matches.len(), k, fetch_k);
 
         if matches.is_empty() {
             return Ok(SearchResponse {
@@ -650,6 +864,7 @@ impl Engine {
         let ignore = self.ignore_list.read().await;
         let mut results = Vec::new();
         let mut doc_results = Vec::new();
+        let mut lookup_failures = 0usize;
 
         for (match_id, score) in matches {
             if match_id.starts_with("doc:") {
@@ -678,27 +893,35 @@ impl Engine {
             } else {
                 // Nostr event — check ignore list
                 if ignore.is_ignored(&match_id, "") { continue; }
-                if let Some(event) = query::query_by_id(&self.ndb, &match_id)? {
-                    let author = event.get("pubkey").and_then(|v| v.as_str()).unwrap_or("");
-                    if ignore.pubkeys.contains(author) { continue; }
-                    if let Some(kinds) = &query.kind_filter {
-                        let event_kind = event.get("kind").and_then(|v| v.as_u64()).unwrap_or(0);
-                        if !kinds.contains(&event_kind) { continue; }
-                    }
-                    if let Some(search::AuthorFilter::Pubkeys(pks)) = &query.author_filter {
-                        if !pks.iter().any(|pk| pk == author) { continue; }
-                    }
-                    if let Some(text_filter) = &query.text_filter {
-                        if query::filter_by_text(&[event.clone()], text_filter).is_empty() { continue; }
-                    }
-                    let mut sr = search::build_search_results(&[event], 1);
-                    if let Some(mut r) = sr.pop() {
-                        r.semantic_score = Some(score);
-                        results.push(r);
-                    }
+                let event = match query::query_by_id(&self.ndb, &match_id) {
+                    Ok(Some(e)) => e,
+                    Ok(None) => { lookup_failures += 1; continue; }
+                    Err(e) => { debug!("query_by_id error for {}: {}", &match_id[..16.min(match_id.len())], e); lookup_failures += 1; continue; }
+                };
+                let author = event.get("pubkey").and_then(|v| v.as_str()).unwrap_or("");
+                if ignore.pubkeys.contains(author) { continue; }
+                if let Some(kinds) = &query.kind_filter {
+                    let event_kind = event.get("kind").and_then(|v| v.as_u64()).unwrap_or(0);
+                    if !kinds.contains(&event_kind) { continue; }
+                }
+                if let Some(search::AuthorFilter::Pubkeys(pks)) = &query.author_filter {
+                    if !pks.iter().any(|pk| pk == author) { continue; }
+                }
+                if let Some(text_filter) = &query.text_filter {
+                    if query::filter_by_text(&[event.clone()], text_filter).is_empty() { continue; }
+                }
+                let mut sr = search::build_search_results(&[event], 1);
+                if let Some(mut r) = sr.pop() {
+                    r.semantic_score = Some(score);
+                    results.push(r);
                 }
             }
         }
+
+        if lookup_failures > 0 {
+            warn!("Semantic search: {} event ID lookups failed (stale index?)", lookup_failures);
+        }
+        debug!("Semantic search: {} event results, {} doc results from HNSW matches", results.len(), doc_results.len());
 
         results.sort_by(|a, b| b.semantic_score.partial_cmp(&a.semantic_score).unwrap_or(std::cmp::Ordering::Equal));
         results.truncate(k);
@@ -926,7 +1149,7 @@ impl Engine {
             "Found {} local results (requested {}), fetching from relays",
             local_count, requested_limit
         );
-        let relay_events = relay::fetch_from_multiple_relays(&self.ndb, relays, filters).await?;
+        let relay_events = self.tracked_fetch_multiple(relays, filters, FetchTrigger::LocalFirst).await?;
         let relay_count = relay_events.len();
 
         // Merge and deduplicate by event ID
@@ -964,7 +1187,7 @@ impl Engine {
 
     async fn query_fetch_always(&self, filters: &[Value], relays: &[String]) -> Result<QueryResponse> {
         // Fetch from relays first (this also ingests into nostrdb)
-        let relay_events = relay::fetch_from_multiple_relays(&self.ndb, relays, filters).await?;
+        let relay_events = self.tracked_fetch_multiple(relays, filters, FetchTrigger::FetchAlways).await?;
         let relay_count = relay_events.len();
 
         // Now query local (which includes freshly ingested events)

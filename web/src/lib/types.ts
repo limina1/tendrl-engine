@@ -224,3 +224,25 @@ export interface EmbeddingStatusResponse {
 	sidecar_available: boolean;
 	model: string | null;
 }
+
+export type NetworkMode = 'online' | 'offline';
+
+export interface FetchRecord {
+	id: number;
+	relay: string;
+	filter_summary: string;
+	event_count: number;
+	duration_ms: number;
+	trigger: string;
+	timestamp: number;
+	success: boolean;
+	error: string | null;
+}
+
+export interface NetworkStatus {
+	mode: NetworkMode;
+	active_fetches: number;
+	total_events_fetched: number;
+	last_fetch_timestamp: number;
+	recent: FetchRecord[];
+}
