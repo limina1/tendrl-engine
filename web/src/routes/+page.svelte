@@ -496,7 +496,8 @@
 
 	async function handleSetNetworkMode(mode: import('$lib/types').NetworkMode) {
 		try {
-			networkStatus = await api.setNetworkMode(mode);
+			await api.setNetworkMode(mode);
+			networkStatus = await api.getNetworkStatus();
 		} catch (e) {
 			console.error('Failed to set network mode:', e);
 		}
