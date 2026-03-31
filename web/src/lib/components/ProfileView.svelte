@@ -40,26 +40,24 @@
 			api.queryEvents([{ kinds: [1111], authors: [pk], limit: 200 }], 'local_only')
 		]);
 		profile = prof.found ? prof : null;
-		// Convert raw 30040 events to PublicationSummary shape
-		publications = (pubResult.events as NostrEvent[])
-			.map(e => {
-				const d_tag = getTag(e, 'd') || '';
-				const title = getTag(e, 'title');
-				const summary = getTag(e, 'summary');
-				const image = getTag(e, 'image');
-				const section_count = e.tags.filter(t => t[0] === 'a').length;
-				return {
-					addr: { kind: 30040, pubkey: e.pubkey, d_tag },
-					title,
-					summary,
-					image,
-					author_pubkey: e.pubkey,
-					version: null,
-					created_at: e.created_at,
-					section_count
-				} as PublicationSummary;
-			})
-			.sort((a, b) => b.created_at - a.created_at);
+		// Convert raw 30040 events to PublicationSummary, deduplicate by d_tag (keep newest)
+		const byDtag = new Map<string, PublicationSummary>();
+		for (const e of (pubResult.events as NostrEvent[])) {
+			const d_tag = getTag(e, 'd') || '';
+			const existing = byDtag.get(d_tag);
+			if (existing && existing.created_at >= e.created_at) continue;
+			byDtag.set(d_tag, {
+				addr: { kind: 30040, pubkey: e.pubkey, d_tag },
+				title: getTag(e, 'title'),
+				summary: getTag(e, 'summary'),
+				image: getTag(e, 'image'),
+				author_pubkey: e.pubkey,
+				version: null,
+				created_at: e.created_at,
+				section_count: e.tags.filter(t => t[0] === 'a').length
+			} as PublicationSummary);
+		}
+		publications = [...byDtag.values()].sort((a, b) => b.created_at - a.created_at);
 		sections = (secResult.events as NostrEvent[]).sort((a, b) => b.created_at - a.created_at);
 		comments = (comResult.events as NostrEvent[]).sort((a, b) => b.created_at - a.created_at);
 	}

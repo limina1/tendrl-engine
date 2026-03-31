@@ -247,24 +247,20 @@ async fn main() -> anyhow::Result<()> {
             loop {
                 interval.tick().await;
 
-                // Skip relay fetches when offline (embedding sync still runs)
-                if !state.is_online() {
-                    continue;
-                }
-
-                // Fetch missing sections from relays
-                match state.fetch_missing_sections().await {
-                    Ok((_, missing, fetched)) => {
-                        if fetched > 0 {
-                            info!("Background section fetch: {} fetched ({} were missing)", fetched, missing);
+                if state.is_online() {
+                    match state.fetch_missing_sections().await {
+                        Ok((_, missing, fetched)) => {
+                            if fetched > 0 {
+                                info!("Background section fetch: {} fetched ({} were missing)", fetched, missing);
+                            }
+                        }
+                        Err(e) => {
+                            tracing::debug!("Background section fetch error: {}", e);
                         }
                     }
-                    Err(e) => {
-                        tracing::debug!("Background section fetch error: {}", e);
-                    }
                 }
 
-                // Embed any unembedded events
+                // Embed any unembedded events (runs regardless of online/offline)
                 if state.embedding_index().is_some() {
                     match state.sync_embeddings().await {
                         Ok(status) => {

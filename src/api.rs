@@ -987,7 +987,7 @@ pub async fn fetch_sections_handler(
 pub async fn network_status_handler(
     State(engine): State<AppState>,
 ) -> Json<Value> {
-    let status = engine.network().status().await;
+    let status = engine.network().status();
     Json(serde_json::to_value(status).unwrap_or_default())
 }
 
@@ -1007,26 +1007,28 @@ pub async fn set_network_mode_handler(
 
     engine.set_network_mode(mode);
 
-    // Persist to config.toml if we have a config path
+    // Persist to config.toml in a blocking task to avoid stalling the runtime
     if let Some(config_path) = engine.config_path() {
-        if let Ok(content) = std::fs::read_to_string(config_path) {
-            if let Ok(mut doc) = content.parse::<toml::Table>() {
-                let network = doc.entry("network")
-                    .or_insert_with(|| toml::Value::Table(toml::Table::new()));
-                if let toml::Value::Table(table) = network {
-                    table.insert("mode".into(), toml::Value::String(mode.to_string()));
-                }
-                if let Ok(serialized) = toml::to_string_pretty(&doc) {
-                    if let Err(e) = std::fs::write(config_path, serialized) {
-                        debug!("Failed to persist network mode to config: {}", e);
+        let config_path = config_path.to_path_buf();
+        let mode_str = mode.to_string();
+        tokio::task::spawn_blocking(move || {
+            if let Ok(content) = std::fs::read_to_string(&config_path) {
+                if let Ok(mut doc) = content.parse::<toml::Table>() {
+                    let network = doc.entry("network")
+                        .or_insert_with(|| toml::Value::Table(toml::Table::new()));
+                    if let toml::Value::Table(table) = network {
+                        table.insert("mode".into(), toml::Value::String(mode_str));
+                    }
+                    if let Ok(serialized) = toml::to_string_pretty(&doc) {
+                        let _ = std::fs::write(&config_path, serialized);
                     }
                 }
             }
-        }
+        });
     }
 
-    let status = engine.network().status().await;
-    Ok(Json(serde_json::to_value(status).unwrap_or_default()))
+    // Return immediately with current mode — don't wait for status lock
+    Ok(Json(json!({ "mode": mode })))
 }
 
 // ============================================================================

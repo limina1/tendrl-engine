@@ -290,21 +290,33 @@ export async function getProfile(pubkey: string): Promise<Profile> {
 	return promise;
 }
 
-/// Batch-prefetch profiles: first fetch missing from relays, then populate cache
-export async function prefetchProfiles(pubkeys: string[]) {
-	const unique = [...new Set(pubkeys)].filter(pk => !profileCache.has(pk) && pk.length === 64);
-	if (unique.length === 0) return;
+/// Debounced profile prefetch — collects pubkeys over 300ms then fires once
+let prefetchQueue: Set<string> = new Set();
+let prefetchTimer: ReturnType<typeof setTimeout> | null = null;
 
-	// Ask backend to fetch missing profiles from general relays (ingests into nostrdb)
+export function prefetchProfiles(pubkeys: string[]) {
+	for (const pk of pubkeys) {
+		if (!profileCache.has(pk) && pk.length === 64) prefetchQueue.add(pk);
+	}
+	if (prefetchQueue.size === 0) return;
+	if (prefetchTimer) clearTimeout(prefetchTimer);
+	prefetchTimer = setTimeout(flushPrefetch, 300);
+}
+
+async function flushPrefetch() {
+	const batch = [...prefetchQueue];
+	prefetchQueue.clear();
+	prefetchTimer = null;
+	if (batch.length === 0) return;
+
 	try {
 		await fetchJson<{ fetched: number }>('/api/v1/profiles/fetch', {
 			method: 'POST',
-			body: JSON.stringify({ pubkeys: unique })
+			body: JSON.stringify({ pubkeys: batch })
 		});
 	} catch { /* ignore */ }
 
-	// Now populate cache from local (all should be in nostrdb now)
-	await Promise.all(unique.map(pk => getProfile(pk)));
+	await Promise.all(batch.map(pk => getProfile(pk)));
 	notifyProfileUpdate();
 }
 

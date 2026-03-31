@@ -348,8 +348,9 @@
 			} catch {}
 		})();
 
-		// Poll network status every 2s
+		// Poll network status every 2s (skip when tab hidden)
 		const networkPoll = setInterval(async () => {
+			if (document.hidden) return;
 			try { networkStatus = await api.getNetworkStatus(); } catch {}
 		}, 2000);
 		return () => clearInterval(networkPoll);

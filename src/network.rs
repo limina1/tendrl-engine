@@ -8,8 +8,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::Mutex;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
-use tokio::sync::RwLock;
 
 const MAX_LOG_ENTRIES: usize = 64;
 
@@ -95,7 +95,7 @@ pub struct NetworkStatus {
 
 pub struct NetworkActivity {
     mode: AtomicBool, // true = online
-    log: RwLock<VecDeque<FetchRecord>>,
+    log: Mutex<VecDeque<FetchRecord>>,
     active_fetches: AtomicU64,
     next_id: AtomicU64,
     total_events_fetched: AtomicU64,
@@ -106,7 +106,7 @@ impl NetworkActivity {
     pub fn new(initial_mode: NetworkMode) -> Self {
         Self {
             mode: AtomicBool::new(matches!(initial_mode, NetworkMode::Online)),
-            log: RwLock::new(VecDeque::with_capacity(MAX_LOG_ENTRIES)),
+            log: Mutex::new(VecDeque::with_capacity(MAX_LOG_ENTRIES)),
             active_fetches: AtomicU64::new(0),
             next_id: AtomicU64::new(1),
             total_events_fetched: AtomicU64::new(0),
@@ -157,27 +157,32 @@ impl NetworkActivity {
         }
     }
 
-    async fn record(&self, record: FetchRecord) {
+    fn record(&self, record: FetchRecord) {
         self.total_events_fetched
             .fetch_add(record.event_count as u64, Ordering::Relaxed);
         self.last_fetch_timestamp
             .store(record.timestamp, Ordering::Relaxed);
 
-        let mut log = self.log.write().await;
-        if log.len() >= MAX_LOG_ENTRIES {
-            log.pop_front();
+        if let Ok(mut log) = self.log.lock() {
+            if log.len() >= MAX_LOG_ENTRIES {
+                log.pop_front();
+            }
+            log.push_back(record);
         }
-        log.push_back(record);
     }
 
-    pub async fn status(&self) -> NetworkStatus {
-        let log = self.log.read().await;
+    pub fn status(&self) -> NetworkStatus {
+        let recent = if let Ok(log) = self.log.lock() {
+            log.iter().rev().cloned().collect()
+        } else {
+            vec![]
+        };
         NetworkStatus {
             mode: self.mode(),
             active_fetches: self.active_fetches.load(Ordering::Relaxed),
             total_events_fetched: self.total_events_fetched.load(Ordering::Relaxed),
             last_fetch_timestamp: self.last_fetch_timestamp.load(Ordering::Relaxed),
-            recent: log.iter().rev().cloned().collect(),
+            recent,
         }
     }
 }
@@ -197,7 +202,7 @@ pub struct FetchGuard {
 }
 
 impl FetchGuard {
-    pub async fn complete(mut self, event_count: usize) {
+    pub fn complete(mut self, event_count: usize) {
         self.completed = true;
         self.activity.active_fetches.fetch_sub(1, Ordering::Relaxed);
         let record = FetchRecord {
@@ -211,10 +216,10 @@ impl FetchGuard {
             success: true,
             error: None,
         };
-        self.activity.record(record).await;
+        self.activity.record(record);
     }
 
-    pub async fn fail(mut self, error: String) {
+    pub fn fail(mut self, error: String) {
         self.completed = true;
         self.activity.active_fetches.fetch_sub(1, Ordering::Relaxed);
         let record = FetchRecord {
@@ -228,7 +233,7 @@ impl FetchGuard {
             success: false,
             error: Some(error),
         };
-        self.activity.record(record).await;
+        self.activity.record(record);
     }
 }
 

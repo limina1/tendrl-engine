@@ -370,12 +370,12 @@ impl Engine {
         match relay::fetch_with_filters(&self.ndb, relay_url, filters).await {
             Ok(events) => {
                 let count = events.len();
-                guard.complete(count).await;
+                guard.complete(count);
                 Ok(events)
             }
             Err(e) => {
                 let msg = e.to_string();
-                guard.fail(msg).await;
+                guard.fail(msg);
                 Err(e)
             }
         }
@@ -447,56 +447,60 @@ impl Engine {
             EngineError::Config("Embedding not enabled".into())
         })?;
 
-        // Get embeddable events from nostrdb (content kinds only; skip 30040 index
-        // events which contain no prose — their sections (30041) carry the content)
-        let filter = serde_json::json!({"kinds": [30041, 30023, 30818, 9802], "limit": 100000});
-        let all_events = query::query_local(&self.ndb, &[filter])?;
-        let total_events = all_events.len();
+        // CPU-heavy: query 100k events, iterate to find unembedded — offload to blocking pool
+        let ndb = Arc::clone(&self.ndb);
+        let indexed_ids: std::collections::HashSet<String> = {
+            let index = emb.read().await;
+            index.all_ids().into_iter().collect()
+        };
 
-        // Find unembedded events
-        let index = emb.read().await;
-        let mut to_embed: Vec<(String, String)> = Vec::new(); // (event_id, text)
+        let (total_events, to_embed) = tokio::task::spawn_blocking(move || {
+            let filter = serde_json::json!({"kinds": [30041, 30023, 30818, 9802], "limit": 100000});
+            let all_events = query::query_local(&ndb, &[filter]).unwrap_or_default();
+            let total_events = all_events.len();
 
-        for event in &all_events {
-            let event_id = event.get("id").and_then(|v| v.as_str()).unwrap_or("");
-            if event_id.is_empty() || index.contains(event_id) {
-                continue;
-            }
+            let mut to_embed: Vec<(String, String)> = Vec::new();
+            for event in &all_events {
+                let event_id = event.get("id").and_then(|v| v.as_str()).unwrap_or("");
+                if event_id.is_empty() || indexed_ids.contains(event_id) {
+                    continue;
+                }
 
-            // Extract text: title + content
-            let content = event.get("content").and_then(|v| v.as_str()).unwrap_or("");
-            let title = event
-                .get("tags")
-                .and_then(|t| t.as_array())
-                .and_then(|tags| {
-                    tags.iter().find_map(|tag| {
-                        let arr = tag.as_array()?;
-                        if arr.first()?.as_str()? == "title" {
-                            arr.get(1)?.as_str()
-                        } else {
-                            None
-                        }
+                let content = event.get("content").and_then(|v| v.as_str()).unwrap_or("");
+                let title = event
+                    .get("tags")
+                    .and_then(|t| t.as_array())
+                    .and_then(|tags| {
+                        tags.iter().find_map(|tag| {
+                            let arr = tag.as_array()?;
+                            if arr.first()?.as_str()? == "title" {
+                                arr.get(1)?.as_str()
+                            } else {
+                                None
+                            }
+                        })
                     })
-                })
-                .unwrap_or("");
+                    .unwrap_or("");
 
-            let text = if title.is_empty() {
-                content.to_string()
-            } else if content.is_empty() {
-                title.to_string()
-            } else {
-                format!("{title}\n{content}")
-            };
+                let text = if title.is_empty() {
+                    content.to_string()
+                } else if content.is_empty() {
+                    title.to_string()
+                } else {
+                    format!("{title}\n{content}")
+                };
 
-            // Skip events with no meaningful text
-            if text.trim().is_empty() {
-                continue;
+                if text.trim().is_empty() {
+                    continue;
+                }
+
+                to_embed.push((event_id.to_string(), text));
             }
 
-            to_embed.push((event_id.to_string(), text));
-        }
-
-        drop(index); // release read lock
+            (total_events, to_embed)
+        })
+        .await
+        .map_err(|e| EngineError::Database(format!("spawn_blocking: {e}")))?;
 
         if to_embed.is_empty() {
             let index = emb.read().await;
@@ -575,46 +579,51 @@ impl Engine {
             return Ok((0, 0, 0));
         }
 
-        // 1. Get all local 30040 indexes
-        let filter = json!({"kinds": [30040], "limit": 100000});
-        let indexes = query::query_local(&self.ndb, &[filter]).unwrap_or_default();
+        // CPU-heavy part: query indexes, extract tags, check missing — offload to blocking pool
+        let ndb = Arc::clone(&self.ndb);
+        let (needed_count, missing) = tokio::task::spawn_blocking(move || {
+            let filter = json!({"kinds": [30040], "limit": 100000});
+            let indexes = query::query_local(&ndb, &[filter]).unwrap_or_default();
 
-        // 2. Extract section a-tags
-        let mut needed: HashSet<(String, String)> = HashSet::new();
-        for event in &indexes {
-            if let Some(tags) = event.get("tags").and_then(|v| v.as_array()) {
-                for tag in tags {
-                    if let Some(arr) = tag.as_array() {
-                        if arr.first().and_then(|v| v.as_str()) == Some("a") {
-                            if let Some(addr_str) = arr.get(1).and_then(|v| v.as_str()) {
-                                let parts: Vec<&str> = addr_str.splitn(3, ':').collect();
-                                if parts.len() == 3 && parts[0] == "30041" {
-                                    needed.insert((parts[1].to_string(), parts[2].to_string()));
+            let mut needed: HashSet<(String, String)> = HashSet::new();
+            for event in &indexes {
+                if let Some(tags) = event.get("tags").and_then(|v| v.as_array()) {
+                    for tag in tags {
+                        if let Some(arr) = tag.as_array() {
+                            if arr.first().and_then(|v| v.as_str()) == Some("a") {
+                                if let Some(addr_str) = arr.get(1).and_then(|v| v.as_str()) {
+                                    let parts: Vec<&str> = addr_str.splitn(3, ':').collect();
+                                    if parts.len() == 3 && parts[0] == "30041" {
+                                        needed.insert((parts[1].to_string(), parts[2].to_string()));
+                                    }
                                 }
                             }
                         }
                     }
                 }
             }
-        }
 
-        // 3. Check which are missing locally
-        let mut missing: Vec<(String, String)> = Vec::new();
-        for (pubkey, d_tag) in &needed {
-            let check = json!({"kinds": [30041], "authors": [pubkey], "#d": [d_tag], "limit": 1});
-            let found = query::query_local(&self.ndb, &[check])
-                .map(|e| !e.is_empty())
-                .unwrap_or(false);
-            if !found {
-                missing.push((pubkey.clone(), d_tag.clone()));
+            let mut missing: Vec<(String, String)> = Vec::new();
+            for (pubkey, d_tag) in &needed {
+                let check = json!({"kinds": [30041], "authors": [pubkey], "#d": [d_tag], "limit": 1});
+                let found = query::query_local(&ndb, &[check])
+                    .map(|e| !e.is_empty())
+                    .unwrap_or(false);
+                if !found {
+                    missing.push((pubkey.clone(), d_tag.clone()));
+                }
             }
-        }
+
+            (needed.len(), missing)
+        })
+        .await
+        .map_err(|e| EngineError::Database(format!("spawn_blocking: {e}")))?;
 
         if missing.is_empty() {
-            return Ok((needed.len(), 0, 0));
+            return Ok((needed_count, 0, 0));
         }
 
-        debug!("fetch_missing_sections: {} referenced, {} missing", needed.len(), missing.len());
+        debug!("fetch_missing_sections: {} referenced, {} missing", needed_count, missing.len());
 
         // 4. Batch fetch from relays
         let mut by_pubkey: HashMap<String, Vec<String>> = HashMap::new();
@@ -652,7 +661,7 @@ impl Engine {
         }
 
         info!("fetch_missing_sections: fetched {} of {} missing sections", total_fetched, missing.len());
-        Ok((needed.len(), missing.len(), total_fetched))
+        Ok((needed_count, missing.len(), total_fetched))
     }
 
     /// Clear and rebuild the entire embedding index

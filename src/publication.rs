@@ -293,6 +293,98 @@ pub struct TocEntry {
     pub children: Vec<TocEntry>,
 }
 
+/// CPU-heavy publication dedup/filter/sort — runs in spawn_blocking
+fn process_root_publications(
+    events: Vec<serde_json::Value>,
+    ignore_list: crate::engine::IgnoreList,
+    limit: usize,
+) -> Vec<Publication> {
+    use std::collections::{HashMap, HashSet};
+
+    // Build set of all addresses referenced as children
+    let mut child_addrs = HashSet::new();
+    for event in &events {
+        if let Some(tags) = event.get("tags").and_then(|v| v.as_array()) {
+            for tag in tags {
+                if let Some(arr) = tag.as_array() {
+                    if arr.first().and_then(|v| v.as_str()) == Some("a") {
+                        if let Some(addr_str) = arr.get(1).and_then(|v| v.as_str()) {
+                            if let Some(addr) = NAddr::from_a_tag(addr_str) {
+                                if addr.kind == KIND_PUBLICATION_INDEX {
+                                    child_addrs.insert(addr.to_a_tag());
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    let mut by_addr: HashMap<String, Publication> = HashMap::new();
+    let mut skipped_child = 0usize;
+    let mut skipped_empty = 0usize;
+    let mut skipped_dupe = 0usize;
+    let mut skipped_err = 0usize;
+    let mut skipped_ignored = 0usize;
+
+    for event in events {
+        let event_id = event.get("id").and_then(|v| v.as_str()).unwrap_or("");
+        let pubkey = event.get("pubkey").and_then(|v| v.as_str()).unwrap_or("");
+        if ignore_list.is_ignored(event_id, pubkey) {
+            skipped_ignored += 1;
+            continue;
+        }
+        let d_tag = event.get("tags").and_then(|t| t.as_array()).and_then(|tags| {
+            tags.iter().find_map(|tag| {
+                let arr = tag.as_array()?;
+                if arr.first()?.as_str()? == "d" { arr.get(1)?.as_str() } else { None }
+            })
+        }).unwrap_or("");
+        let a_tag = format!("{}:{}:{}", KIND_PUBLICATION_INDEX, pubkey, d_tag);
+        if ignore_list.event_ids.contains(&a_tag) {
+            skipped_ignored += 1;
+            continue;
+        }
+
+        match Publication::from_event(&event, true) {
+            Ok(pub_) => {
+                let own_addr = pub_.addr.to_a_tag();
+                if child_addrs.contains(&own_addr) {
+                    skipped_child += 1;
+                    continue;
+                }
+                if pub_.sections.is_empty() && pub_.nested.is_empty() {
+                    skipped_empty += 1;
+                    continue;
+                }
+                match by_addr.get(&own_addr) {
+                    Some(existing) if pub_.created_at <= existing.created_at => {
+                        skipped_dupe += 1;
+                    }
+                    _ => {
+                        by_addr.insert(own_addr, pub_);
+                    }
+                }
+            }
+            Err(e) => {
+                skipped_err += 1;
+                tracing::debug!("Skipping invalid publication: {}", e);
+            }
+        }
+    }
+
+    tracing::info!(
+        "list_root_publications: {} unique roots (skipped: {} child, {} empty, {} dupe, {} err, {} ignored)",
+        by_addr.len(), skipped_child, skipped_empty, skipped_dupe, skipped_err, skipped_ignored
+    );
+
+    let mut roots: Vec<Publication> = by_addr.into_values().collect();
+    roots.sort_by(|a, b| b.created_at.cmp(&a.created_at).then_with(|| a.addr.d_tag.cmp(&b.addr.d_tag)));
+    roots.truncate(limit);
+    roots
+}
+
 /// Publication engine extension for the main Engine
 pub struct PublicationEngine<'a> {
     engine: &'a Engine,
@@ -476,120 +568,52 @@ impl<'a> PublicationEngine<'a> {
     /// Pass `before` timestamp for cursor-based pagination.
     pub async fn list_root_publications(
         &self,
-        policy: FetchPolicy,
+        _policy: FetchPolicy,
         limit: usize,
         before: Option<u64>,
     ) -> Result<Vec<Publication>> {
         use serde_json::json;
 
-        // Cast a wide net — nostrdb stores all versions of replaceable events
-        // and many get filtered as children/duplicates.
-        let query_limit = 5000;
+        // Scope to known authors to avoid processing thousands of foreign events.
+        // nostrdb stores all versions of replaceable events, so we over-fetch and dedup.
+        let mut authors: Vec<String> = self.engine.relay_config().authors_hex();
+        if let Some(me) = self.engine.my_pubkey() {
+            if !authors.contains(&me.to_string()) {
+                authors.push(me.to_string());
+            }
+        }
+        if let Some(asst) = self.engine.assistant_pubkey() {
+            if !authors.contains(&asst.to_string()) {
+                authors.push(asst.to_string());
+            }
+        }
+
+        let query_limit = if authors.is_empty() { limit * 5 } else { limit * 10 };
         let mut filter = json!({
             "kinds": [KIND_PUBLICATION_INDEX],
             "limit": query_limit
         });
+        if !authors.is_empty() {
+            filter["authors"] = json!(authors);
+        }
         if let Some(ts) = before {
             filter["until"] = json!(ts - 1);
         }
 
-        let response = self.engine.get_events(vec![filter], policy, None).await?;
+        let response = self.engine.get_events(vec![filter], FetchPolicy::LocalOnly, None).await?;
         tracing::debug!("list_root_publications: got {} raw 30040 events from store", response.events.len());
 
-        // Build set of all addresses referenced as children
-        let mut child_addrs = std::collections::HashSet::new();
-        for event in &response.events {
-            if let Some(tags) = event.get("tags").and_then(|v| v.as_array()) {
-                for tag in tags {
-                    if let Some(arr) = tag.as_array() {
-                        if arr.first().and_then(|v| v.as_str()) == Some("a") {
-                            if let Some(addr_str) = arr.get(1).and_then(|v| v.as_str()) {
-                                if let Some(addr) = NAddr::from_a_tag(addr_str) {
-                                    if addr.kind == KIND_PUBLICATION_INDEX {
-                                        child_addrs.insert(addr.to_a_tag());
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        tracing::debug!("list_root_publications: {} child addrs to exclude", child_addrs.len());
+        // Read ignore list before entering blocking closure
+        let ignore_list = self.engine.ignore_list().read().await.clone();
+        let events = response.events;
 
-        // Filter to root publications only, deduplicating by a-tag (keep newest)
-        // nostrdb stores all versions of replaceable events, so we need to dedupe
-        let mut by_addr: std::collections::HashMap<String, Publication> = std::collections::HashMap::new();
-        // Load ignore list
-        let ignore_list = self.engine.ignore_list().read().await;
-
-        let mut skipped_child = 0usize;
-        let mut skipped_empty = 0usize;
-        let mut skipped_dupe = 0usize;
-        let mut skipped_err = 0usize;
-        let mut skipped_ignored = 0usize;
-
-        for event in response.events {
-            // Check ignore list: by event_id, pubkey, or a-tag (kind:pubkey:d_tag)
-            let event_id = event.get("id").and_then(|v| v.as_str()).unwrap_or("");
-            let pubkey = event.get("pubkey").and_then(|v| v.as_str()).unwrap_or("");
-            if ignore_list.is_ignored(event_id, pubkey) {
-                skipped_ignored += 1;
-                continue;
-            }
-            // Also check a-tag format (used when hiding from feed UI)
-            let d_tag = event.get("tags").and_then(|t| t.as_array()).and_then(|tags| {
-                tags.iter().find_map(|tag| {
-                    let arr = tag.as_array()?;
-                    if arr.first()?.as_str()? == "d" { arr.get(1)?.as_str() } else { None }
-                })
-            }).unwrap_or("");
-            let a_tag = format!("{}:{}:{}", KIND_PUBLICATION_INDEX, pubkey, d_tag);
-            if ignore_list.event_ids.contains(&a_tag) {
-                skipped_ignored += 1;
-                continue;
-            }
-
-            match Publication::from_event(&event, true) {
-                Ok(pub_) => {
-                    let own_addr = pub_.addr.to_a_tag();
-
-                    if child_addrs.contains(&own_addr) {
-                        skipped_child += 1;
-                        continue;
-                    }
-
-                    if pub_.sections.is_empty() && pub_.nested.is_empty() {
-                        skipped_empty += 1;
-                        continue;
-                    }
-
-                    match by_addr.get(&own_addr) {
-                        Some(existing) if pub_.created_at <= existing.created_at => {
-                            skipped_dupe += 1;
-                            continue;
-                        }
-                        _ => {
-                            by_addr.insert(own_addr, pub_);
-                        }
-                    }
-                }
-                Err(e) => {
-                    skipped_err += 1;
-                    tracing::debug!("Skipping invalid publication: {}", e);
-                }
-            }
-        }
-
-        tracing::info!(
-            "list_root_publications: {} unique roots (skipped: {} child, {} empty, {} dupe, {} err, {} ignored)",
-            by_addr.len(), skipped_child, skipped_empty, skipped_dupe, skipped_err, skipped_ignored
-        );
-
-        // Collect into vec and sort by created_at descending, with d-tag tiebreaker for stability
-        let mut roots: Vec<Publication> = by_addr.into_values().collect();
-        roots.sort_by(|a, b| b.created_at.cmp(&a.created_at).then_with(|| a.addr.d_tag.cmp(&b.addr.d_tag)));
-        roots.truncate(limit);
+        // Offload CPU-heavy dedup/filter/sort to blocking threadpool
+        // so the async runtime stays responsive
+        let roots = tokio::task::spawn_blocking(move || {
+            process_root_publications(events, ignore_list, limit)
+        })
+        .await
+        .map_err(|e| crate::error::EngineError::Database(format!("spawn_blocking: {e}")))?;
 
         Ok(roots)
     }
@@ -598,74 +622,42 @@ impl<'a> PublicationEngine<'a> {
     pub async fn list_publications_before(
         &self,
         before_timestamp: u64,
-        policy: FetchPolicy,
+        _policy: FetchPolicy,
         limit: usize,
     ) -> Result<Vec<Publication>> {
         use serde_json::json;
 
-        // Fetch 30040 events created before the given timestamp
-        let filter = json!({
+        // Scope to known authors — same as list_root_publications
+        let mut authors: Vec<String> = self.engine.relay_config().authors_hex();
+        if let Some(me) = self.engine.my_pubkey() {
+            if !authors.contains(&me.to_string()) {
+                authors.push(me.to_string());
+            }
+        }
+        if let Some(asst) = self.engine.assistant_pubkey() {
+            if !authors.contains(&asst.to_string()) {
+                authors.push(asst.to_string());
+            }
+        }
+
+        let mut filter = json!({
             "kinds": [KIND_PUBLICATION_INDEX],
-            "until": before_timestamp - 1,  // Exclusive of the timestamp
-            "limit": limit * 2  // Fetch extra to account for filtering
+            "until": before_timestamp - 1,
+            "limit": limit * 5
         });
-
-        let response = self.engine.get_events(vec![filter], policy, None).await?;
-
-        // Build set of all addresses referenced as children (to filter out nested pubs)
-        let mut child_addrs = std::collections::HashSet::new();
-        for event in &response.events {
-            if let Some(tags) = event.get("tags").and_then(|v| v.as_array()) {
-                for tag in tags {
-                    if let Some(arr) = tag.as_array() {
-                        if arr.first().and_then(|v| v.as_str()) == Some("a") {
-                            if let Some(addr_str) = arr.get(1).and_then(|v| v.as_str()) {
-                                if let Some(addr) = NAddr::from_a_tag(addr_str) {
-                                    if addr.kind == KIND_PUBLICATION_INDEX {
-                                        child_addrs.insert(addr.to_a_tag());
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
+        if !authors.is_empty() {
+            filter["authors"] = json!(authors);
         }
 
-        // Filter to root publications only, deduplicating by a-tag (keep newest)
-        let mut by_addr: std::collections::HashMap<String, Publication> = std::collections::HashMap::new();
+        let response = self.engine.get_events(vec![filter], FetchPolicy::LocalOnly, None).await?;
+        let ignore_list = self.engine.ignore_list().read().await.clone();
+        let events = response.events;
 
-        for event in response.events {
-            match Publication::from_event(&event, true) {
-                Ok(pub_) => {
-                    let own_addr = pub_.addr.to_a_tag();
-
-                    // Skip if this is a child publication
-                    if child_addrs.contains(&own_addr) {
-                        continue;
-                    }
-
-                    // Keep only the newest version for each a-tag
-                    match by_addr.get(&own_addr) {
-                        Some(existing) if pub_.created_at <= existing.created_at => continue,
-                        _ => {
-                            by_addr.insert(own_addr, pub_);
-                        }
-                    }
-                }
-                Err(e) => {
-                    let id = event.get("id").and_then(|v| v.as_str()).unwrap_or("unknown");
-                    tracing::debug!("Skipping invalid publication {}: {}", id, e);
-                }
-            }
-        }
-
-        // Collect into vec and sort by created_at descending, with d-tag tiebreaker for stability
-        let mut roots: Vec<Publication> = by_addr.into_values().collect();
-        roots.sort_by(|a, b| b.created_at.cmp(&a.created_at).then_with(|| a.addr.d_tag.cmp(&b.addr.d_tag)));
-
-        // Apply limit after filtering
-        roots.truncate(limit);
+        let roots = tokio::task::spawn_blocking(move || {
+            process_root_publications(events, ignore_list, limit)
+        })
+        .await
+        .map_err(|e| crate::error::EngineError::Database(format!("spawn_blocking: {e}")))?;
 
         Ok(roots)
     }

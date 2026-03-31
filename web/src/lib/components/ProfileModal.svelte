@@ -6,6 +6,7 @@
 	const npub = $derived(profile.pubkey.slice(0, 16) + '...');
 
 	function handleBackdrop(e: MouseEvent) {
+		e.stopPropagation();
 		if (e.target === e.currentTarget) onclose();
 	}
 
@@ -47,7 +48,7 @@
 
 		{#if onviewprofile}
 			<div class="profile-actions">
-				<button class="view-profile-btn" onclick={() => { onviewprofile?.(profile.pubkey); onclose(); }}>View profile</button>
+				<button class="view-profile-btn" onclick={(e) => { e.stopPropagation(); onviewprofile?.(profile.pubkey); onclose(); }}>View profile</button>
 			</div>
 		{/if}
 
