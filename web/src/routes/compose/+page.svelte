@@ -13,6 +13,7 @@
 	<div class="doc-content">
 		<ComposeView
 			compose={app.compose}
+			canPublish={app.identityStatus?.state === 'unlocked'}
 			onupdate={app.handleComposeUpdate}
 			oncancel={app.handleCancelCompose}
 			onsendtochat={app.handleComposeToChat}

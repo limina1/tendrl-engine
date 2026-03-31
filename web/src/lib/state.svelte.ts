@@ -599,14 +599,15 @@ function _createAppState() {
 		}
 	}
 
-	async function handleComposePublish(_items: ContextItem[]) {
-		if (!compose.title && !compose.sections.length) return;
+	async function handleComposePublish(items: ContextItem[]) {
+		const sections = items.length > 0 ? items : compose.sections;
+		if (!sections.length) return;
 		const canSign = identityStatus?.state === 'unlocked';
 		try {
 			const resp = await api.publish({
 				title: compose.title,
 				tags: compose.tags.map(t => [t.name, t.value] as [string, string]),
-				sections: compose.sections.map(s => ({
+				sections: sections.map(s => ({
 					title: s.title,
 					content: s.content,
 					tags: s.tags.map(t => [t.name, t.value] as [string, string])

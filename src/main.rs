@@ -11,7 +11,7 @@ use nostr_engine::{api, chat::ChatState, config::Config, engine::Engine, identit
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use tower_http::cors::{Any, CorsLayer};
-use tower_http::services::{ServeDir, ServeFile};
+use tower_http::services::ServeDir;
 use tracing::{info, Level};
 use tracing_subscriber::EnvFilter;
 
@@ -246,12 +246,21 @@ async fn main() -> anyhow::Result<()> {
         .layer(cors);
 
     // Serve static files from web/build/ if it exists (production SPA)
+    // For SPA routing, unknown paths must return index.html with 200 (not 404)
+    // so the client-side router can handle them.
     let web_dir = std::path::Path::new("web/build");
     let app = if web_dir.exists() {
         info!("Serving web UI from web/build/");
+        let index_html: &'static str = Box::leak(
+            std::fs::read_to_string(web_dir.join("index.html"))
+                .expect("web/build/index.html must exist")
+                .into_boxed_str(),
+        );
+        let spa_fallback = get(move || async move {
+            axum::response::Html(index_html)
+        });
         app.fallback_service(
-            ServeDir::new(web_dir)
-                .not_found_service(ServeFile::new(web_dir.join("index.html"))),
+            ServeDir::new(web_dir).fallback(spa_fallback),
         )
     } else {
         app

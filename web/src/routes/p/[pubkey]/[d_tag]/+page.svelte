@@ -17,7 +17,9 @@
 
 	// Load publication when route params change
 	$effect(() => {
-		const { pubkey, d_tag } = $page.params;
+		const params = $page.params;
+		if (!params) return;
+		const { pubkey, d_tag } = params;
 		if (pubkey && d_tag) {
 			app.openPublication(pubkey, d_tag);
 		}

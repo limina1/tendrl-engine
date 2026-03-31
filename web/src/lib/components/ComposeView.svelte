@@ -9,6 +9,7 @@
 	let {
 		compose,
 		syncMode,
+		canPublish = false,
 		onupdate,
 		oncancel,
 		onsendtochat,
@@ -22,6 +23,7 @@
 	}: {
 		compose: ComposeState;
 		syncMode: SyncMode;
+		canPublish?: boolean;
 		onupdate: (state: ComposeState) => void;
 		oncancel: () => void;
 		onsendtochat: (items: ContextItem[]) => void;
@@ -328,11 +330,7 @@
 	}
 
 	function toolbarPublish() {
-		const items = compose.sections.filter((s) => checkedIds.has(s.id));
-		if (items.length > 0) {
-			onpublish(items);
-			checkedIds = new Set();
-		}
+		publishSelected();
 		clearTrash();
 	}
 
@@ -472,6 +470,20 @@
 			readonly: false
 		};
 		onupdate({ ...compose, sections: [...compose.sections, item] });
+	}
+
+	function publishAll() {
+		if (mode === 'plain') handlePlainFullEdit(plainText);
+		onpublish(compose.sections);
+	}
+
+	function publishSelected() {
+		if (mode === 'plain') handlePlainFullEdit(plainText);
+		const items = compose.sections.filter((s) => checkedIds.has(s.id));
+		if (items.length > 0) {
+			onpublish(items);
+			checkedIds = new Set();
+		}
 	}
 </script>
 
@@ -616,6 +628,12 @@
 	<div class="compose-actions">
 		{#if mode === 'full'}
 			<button onclick={addSection}>+ Section</button>
+		{/if}
+		{#if canPublish}
+			<button class="publish-btn" onclick={publishAll} disabled={compose.sections.length === 0}>Publish</button>
+			{#if checkedIds.size > 0}
+				<button class="publish-btn publish-selected" onclick={publishSelected}>Publish ({checkedIds.size})</button>
+			{/if}
 		{/if}
 		<button onclick={oncancel}>Cancel</button>
 	</div>
@@ -949,6 +967,23 @@
 		padding-top: 8px;
 		border-top: 1px solid var(--border);
 		flex-shrink: 0;
+	}
+
+	.publish-btn {
+		background: var(--accent);
+		color: white;
+		border-color: var(--accent);
+		font-weight: 600;
+	}
+
+	.publish-btn:disabled {
+		opacity: 0.4;
+	}
+
+	.publish-selected {
+		background: transparent;
+		color: var(--accent);
+		border: 1px solid var(--accent);
 	}
 
 	.active {

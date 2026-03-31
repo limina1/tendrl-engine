@@ -17,7 +17,9 @@
 
 	// Load publication and navigate to specific section
 	$effect(() => {
-		const { pubkey, d_tag, index } = $page.params;
+		const params = $page.params;
+		if (!params) return;
+		const { pubkey, d_tag, index } = params;
 		if (pubkey && d_tag && index) {
 			app.openPublication(pubkey, d_tag).then(() => {
 				const idx = parseInt(index, 10);

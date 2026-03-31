@@ -6,7 +6,7 @@
 
 	const app = getAppState();
 
-	const pubkey = $derived($page.params.pubkey);
+	const pubkey = $derived($page.params?.pubkey);
 </script>
 
 <svelte:head>
