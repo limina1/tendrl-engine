@@ -543,6 +543,207 @@ impl Default for IdentityKeyring {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Server-side identity session state (for web UI login flow)
+// ---------------------------------------------------------------------------
+
+use serde::Serialize;
+use std::time::{Duration, Instant};
+
+/// Serializable identity status returned by the API
+#[derive(Debug, Clone, Serialize)]
+pub struct IdentityStatusResponse {
+    /// "none" | "locked" | "unlocked"
+    pub state: String,
+    /// Hex pubkey (available when locked or unlocked)
+    pub pubkey: Option<String>,
+    /// Abbreviated npub for display
+    pub npub: Option<String>,
+    /// Seconds until auto-lock (only when unlocked)
+    pub seconds_remaining: Option<u64>,
+    /// Number of events published unsigned while identity was available
+    pub unsigned_count: usize,
+    /// Current lock timeout in minutes
+    pub lock_timeout_minutes: u64,
+}
+
+/// Mutable identity session — holds ncryptsec, decrypted secret, and lock timer.
+///
+/// Designed to live inside `Arc<Mutex<IdentitySession>>` and be shared across
+/// API handlers via axum Extension or State.
+pub struct IdentitySession {
+    /// The ncryptsec string (persisted across lock/unlock cycles)
+    ncryptsec: Option<String>,
+    /// Derived pubkey hex (available once ncryptsec is provided, even when locked)
+    pubkey: Option<String>,
+    /// Decrypted secret key hex (only present when unlocked)
+    secret: Option<String>,
+    /// When the secret was last used
+    last_activity: Option<Instant>,
+    /// Auto-lock after this duration of inactivity (default 15 min)
+    lock_timeout: Duration,
+    /// Event IDs published unsigned while identity was locked
+    unsigned_event_ids: Vec<String>,
+}
+
+impl Default for IdentitySession {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl IdentitySession {
+    pub fn new() -> Self {
+        Self {
+            ncryptsec: None,
+            pubkey: None,
+            secret: None,
+            last_activity: None,
+            lock_timeout: Duration::from_secs(15 * 60),
+            unsigned_event_ids: Vec::new(),
+        }
+    }
+
+    /// Store an ncryptsec and transition to locked state.
+    /// Returns the pubkey if we can derive it (we can't without the password,
+    /// so this just validates the format and stores it).
+    pub fn login_ncryptsec(&mut self, ncryptsec: &str) -> Result<(), KeyParseError> {
+        if !ncryptsec.starts_with("ncryptsec1") {
+            return Err(KeyParseError::UnknownPrefix(
+                ncryptsec.chars().take(10).collect(),
+            ));
+        }
+        // Clear any previous session
+        self.secret = None;
+        self.last_activity = None;
+        self.pubkey = None;
+        self.ncryptsec = Some(ncryptsec.to_string());
+        Ok(())
+    }
+
+    /// Decrypt the stored ncryptsec with a password.
+    /// On success, stores the secret and pubkey and starts the lock timer.
+    pub fn unlock(&mut self, password: &str) -> Result<String, DecryptError> {
+        let ncryptsec = self
+            .ncryptsec
+            .as_ref()
+            .ok_or(DecryptError::InvalidFormat)?;
+        let (secret_hex, pubkey_hex) = decrypt_ncryptsec(ncryptsec, password)?;
+        self.secret = Some(secret_hex);
+        self.pubkey = Some(pubkey_hex.clone());
+        self.last_activity = Some(Instant::now());
+        Ok(pubkey_hex)
+    }
+
+    /// Clear the decrypted secret but keep the ncryptsec for re-unlock.
+    pub fn lock(&mut self) {
+        self.secret = None;
+        self.last_activity = None;
+    }
+
+    /// Clear everything — full logout.
+    pub fn logout(&mut self) {
+        self.ncryptsec = None;
+        self.pubkey = None;
+        self.secret = None;
+        self.last_activity = None;
+        self.unsigned_event_ids.clear();
+    }
+
+    /// Check if the lock timeout has elapsed and auto-lock if so.
+    pub fn check_timeout(&mut self) {
+        if let Some(last) = self.last_activity {
+            if last.elapsed() > self.lock_timeout {
+                self.secret = None;
+                self.last_activity = None;
+            }
+        }
+    }
+
+    /// Update last activity timestamp (call after successful signing).
+    pub fn touch(&mut self) {
+        if self.secret.is_some() {
+            self.last_activity = Some(Instant::now());
+        }
+    }
+
+    /// Sign an event hash. Checks timeout first, touches on success.
+    pub fn sign(&mut self, event_id_hex: &str) -> Result<String, KeyParseError> {
+        self.check_timeout();
+        let secret = self
+            .secret
+            .as_ref()
+            .ok_or(KeyParseError::InvalidLength)?;
+        let sig = sign_event_hash(event_id_hex, secret)?;
+        self.touch();
+        Ok(sig)
+    }
+
+    /// Whether the session can currently sign events.
+    pub fn can_sign(&mut self) -> bool {
+        self.check_timeout();
+        self.secret.is_some()
+    }
+
+    /// Get the pubkey if available.
+    pub fn pubkey(&self) -> Option<&str> {
+        self.pubkey.as_deref()
+    }
+
+    /// Get the secret if unlocked (for building signed events).
+    pub fn secret(&mut self) -> Option<&str> {
+        self.check_timeout();
+        self.secret.as_deref()
+    }
+
+    /// Track an event ID that was published unsigned.
+    pub fn track_unsigned(&mut self, event_id: String) {
+        self.unsigned_event_ids.push(event_id);
+    }
+
+    /// Clear unsigned tracking (e.g. after batch signing).
+    pub fn clear_unsigned(&mut self) {
+        self.unsigned_event_ids.clear();
+    }
+
+    /// Set the lock timeout duration.
+    pub fn set_timeout_minutes(&mut self, minutes: u64) {
+        self.lock_timeout = Duration::from_secs(minutes * 60);
+    }
+
+    /// Build the serializable status response.
+    pub fn status(&mut self) -> IdentityStatusResponse {
+        self.check_timeout();
+        let state = if self.secret.is_some() {
+            "unlocked"
+        } else if self.ncryptsec.is_some() {
+            "locked"
+        } else {
+            "none"
+        };
+        let seconds_remaining = if self.secret.is_some() {
+            self.last_activity.map(|last| {
+                let elapsed = last.elapsed();
+                if elapsed < self.lock_timeout {
+                    (self.lock_timeout - elapsed).as_secs()
+                } else {
+                    0
+                }
+            })
+        } else {
+            None
+        };
+        IdentityStatusResponse {
+            state: state.to_string(),
+            pubkey: self.pubkey.clone(),
+            npub: self.pubkey.as_deref().map(abbreviate_pubkey_hex),
+            seconds_remaining,
+            unsigned_count: self.unsigned_event_ids.len(),
+            lock_timeout_minutes: self.lock_timeout.as_secs() / 60,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

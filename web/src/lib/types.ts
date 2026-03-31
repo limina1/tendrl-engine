@@ -246,3 +246,14 @@ export interface NetworkStatus {
 	last_fetch_timestamp: number;
 	recent: FetchRecord[];
 }
+
+export type IdentityState = 'none' | 'locked' | 'unlocked';
+
+export interface IdentityStatus {
+	state: IdentityState;
+	pubkey: string | null;
+	npub: string | null;
+	seconds_remaining: number | null;
+	unsigned_count: number;
+	lock_timeout_minutes: number;
+}

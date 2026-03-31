@@ -7,7 +7,7 @@ use axum::{
     Router,
 };
 use clap::Parser;
-use nostr_engine::{api, chat::ChatState, config::Config, engine::Engine, llm};
+use nostr_engine::{api, chat::ChatState, config::Config, engine::Engine, identity::IdentitySession, llm};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use tower_http::cors::{Any, CorsLayer};
@@ -145,6 +145,23 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/v1/chat/load", put(api::chat_load_fragments))
         .with_state(chat_state);
 
+    // Identity session state
+    let identity_state: api::IdentityAppState = Arc::new(Mutex::new(IdentitySession::new()));
+
+    let identity_routes = Router::new()
+        .route("/api/v1/identity", get(api::identity_status_handler))
+        .route("/api/v1/identity/login", post(api::identity_login_handler))
+        .route(
+            "/api/v1/identity/unlock",
+            post(api::identity_unlock_handler),
+        )
+        .route("/api/v1/identity/lock", post(api::identity_lock_handler))
+        .route(
+            "/api/v1/identity/logout",
+            post(api::identity_logout_handler),
+        )
+        .with_state(identity_state.clone());
+
     // Config endpoint (returns pubkey etc. to the frontend)
     let config_pubkey = my_pubkey.clone();
     let config_assistant = assistant_pubkey.clone();
@@ -223,6 +240,8 @@ async fn main() -> anyhow::Result<()> {
         )
         .with_state(state.clone())
         .merge(chat_routes)
+        .merge(identity_routes)
+        .layer(axum::Extension(identity_state.clone()))
         .layer(axum::extract::DefaultBodyLimit::max(50 * 1024 * 1024)) // 50MB for JSONL import
         .layer(cors);
 

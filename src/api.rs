@@ -9,7 +9,7 @@ use axum::{
     extract::{Path, State},
     http::StatusCode,
     response::IntoResponse,
-    Json,
+    Extension, Json,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -1289,12 +1289,18 @@ pub struct BroadcastResult {
 /// POST /api/v1/publish — create a publication (draft or signed)
 pub async fn publish_handler(
     State(engine): State<AppState>,
+    Extension(identity): Extension<IdentityAppState>,
     Json(req): Json<PublishRequest>,
 ) -> Result<impl IntoResponse, EngineError> {
-    let pubkey = engine.my_pubkey().ok_or_else(|| {
-        EngineError::Config("Publishing requires [identity] pubkey in config".into())
+    // Resolve pubkey: prefer identity session, fall back to config
+    let pubkey = {
+        let session = identity.lock().unwrap();
+        session.pubkey().map(|s| s.to_string())
+    }
+    .or_else(|| engine.my_pubkey().map(|s| s.to_string()))
+    .ok_or_else(|| {
+        EngineError::Config("Publishing requires identity login or [identity] pubkey in config".into())
     })?;
-    let pubkey = pubkey.to_string();
 
     // Map request to ComposeState
     use crate::tree::state::TagEntry;
@@ -1317,34 +1323,75 @@ pub async fn publish_handler(
 
     // Build events (signed or unsigned)
     let (pub_event, section_events) = if req.sign {
-        // Try keyring first, then fall back to .env file (NOSTR_NCRYPTSEC + NOSTR_PASSWORD)
-        let (sign_pubkey, secret) = crate::identity::IdentityKeyring::new()
-            .get_secret(&pubkey)
-            .map(|s| (pubkey.clone(), s))
-            .or_else(|_| {
-                // Read .env file from working directory
-                let env_content = std::fs::read_to_string(".env")
-                    .map_err(|_| crate::identity::KeyringError::NotFound)?;
-                let mut ncryptsec = None;
-                let mut password = None;
-                for line in env_content.lines() {
-                    let line = line.trim();
-                    if let Some(val) = line.strip_prefix("NOSTR_NCRYPTSEC=") {
-                        ncryptsec = Some(val.to_string());
-                    } else if let Some(val) = line.strip_prefix("NOSTR_PASSWORD=") {
-                        password = Some(val.to_string());
-                    }
-                }
-                let ncryptsec = ncryptsec.ok_or(crate::identity::KeyringError::NotFound)?;
-                let password = password.ok_or(crate::identity::KeyringError::NotFound)?;
-                let (secret_hex, derived_pubkey) = crate::identity::decrypt_ncryptsec(&ncryptsec, &password)
-                    .map_err(|e| crate::identity::KeyringError::Keyring(e.to_string()))?;
-                Ok((derived_pubkey, secret_hex))
-            })
-            .map_err(|e: crate::identity::KeyringError| EngineError::Config(format!("Cannot sign: {e}")))?;
+        // Try identity session first, then keyring, then .env
+        let (sign_pubkey, secret) = {
+            let mut session = identity.lock().unwrap();
+            if session.can_sign() {
+                session.touch();
+                Ok((
+                    session.pubkey().unwrap().to_string(),
+                    session.secret().unwrap().to_string(),
+                ))
+            } else if session.pubkey().is_some() {
+                Err(EngineError::Locked(
+                    "Identity is locked — unlock with password first".into(),
+                ))
+            } else {
+                drop(session);
+                // Fall back to keyring / .env
+                crate::identity::IdentityKeyring::new()
+                    .get_secret(&pubkey)
+                    .map(|s| (pubkey.clone(), s))
+                    .or_else(|_| {
+                        let env_content = std::fs::read_to_string(".env")
+                            .map_err(|_| crate::identity::KeyringError::NotFound)?;
+                        let mut ncryptsec = None;
+                        let mut password = None;
+                        for line in env_content.lines() {
+                            let line = line.trim();
+                            if let Some(val) = line.strip_prefix("NOSTR_NCRYPTSEC=") {
+                                ncryptsec = Some(val.to_string());
+                            } else if let Some(val) = line.strip_prefix("NOSTR_PASSWORD=") {
+                                password = Some(val.to_string());
+                            }
+                        }
+                        let ncryptsec =
+                            ncryptsec.ok_or(crate::identity::KeyringError::NotFound)?;
+                        let password =
+                            password.ok_or(crate::identity::KeyringError::NotFound)?;
+                        let (secret_hex, derived_pubkey) =
+                            crate::identity::decrypt_ncryptsec(&ncryptsec, &password)
+                                .map_err(|e| {
+                                    crate::identity::KeyringError::Keyring(e.to_string())
+                                })?;
+                        Ok((derived_pubkey, secret_hex))
+                    })
+                    .map_err(|e: crate::identity::KeyringError| {
+                        EngineError::Config(format!("Cannot sign: {e}"))
+                    })
+            }
+        }?;
         build_signed_publication_events(&compose, &sign_pubkey, &secret)
     } else {
-        build_publication_events(&compose, &pubkey)
+        // Track unsigned events if identity is present but locked
+        let should_track = {
+            let session = identity.lock().unwrap();
+            session.pubkey().is_some()
+        };
+        let events = build_publication_events(&compose, &pubkey);
+        if should_track {
+            let pub_id = events
+                .0
+                .get("id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            if !pub_id.is_empty() {
+                let mut session = identity.lock().unwrap();
+                session.track_unsigned(pub_id);
+            }
+        }
+        events
     };
 
     let pub_id = pub_event
@@ -2040,6 +2087,102 @@ pub async fn chat_replace_context(
         .collect();
     chat.inject_context(notes);
     Json(build_chat_response(&chat))
+}
+
+// ---------------------------------------------------------------------------
+// Identity session endpoints
+// ---------------------------------------------------------------------------
+
+use crate::identity::{IdentitySession, IdentityStatusResponse};
+
+/// Shared identity session state
+pub type IdentityAppState = Arc<std::sync::Mutex<IdentitySession>>;
+
+#[derive(Debug, Deserialize)]
+pub struct LoginRequest {
+    pub ncryptsec: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UnlockRequest {
+    pub password: String,
+}
+
+/// GET /api/v1/identity — current identity status
+pub async fn identity_status_handler(
+    State(identity): State<IdentityAppState>,
+) -> Json<IdentityStatusResponse> {
+    let mut session = identity.lock().unwrap();
+    Json(session.status())
+}
+
+/// POST /api/v1/identity/login — provide ncryptsec, transition to locked
+pub async fn identity_login_handler(
+    State(identity): State<IdentityAppState>,
+    Json(req): Json<LoginRequest>,
+) -> Result<Json<IdentityStatusResponse>, EngineError> {
+    let mut session = identity.lock().unwrap();
+    session
+        .login_ncryptsec(&req.ncryptsec)
+        .map_err(|e| EngineError::InvalidFilter(e.to_string()))?;
+    Ok(Json(session.status()))
+}
+
+/// POST /api/v1/identity/unlock — decrypt ncryptsec with password
+pub async fn identity_unlock_handler(
+    State(identity): State<IdentityAppState>,
+    Json(req): Json<UnlockRequest>,
+) -> Result<Json<IdentityStatusResponse>, EngineError> {
+    // Quick state check
+    {
+        let mut session = identity.lock().unwrap();
+        let state = session.status().state;
+        if state == "none" {
+            return Err(EngineError::Auth("No identity loaded — login first".into()));
+        }
+        if state == "unlocked" {
+            session.touch();
+            return Ok(Json(session.status()));
+        }
+    }
+
+    let password = req.password.clone();
+    let identity_clone = identity.clone();
+
+    // spawn_blocking to avoid blocking the async runtime with scrypt
+    let result = tokio::task::spawn_blocking(move || {
+        let mut session = identity_clone.lock().unwrap();
+        session.unlock(&password)
+    })
+    .await
+    .map_err(|e| EngineError::Other(format!("Task join error: {e}")))?;
+
+    match result {
+        Ok(pubkey) => {
+            debug!("Identity unlocked for pubkey {}", pubkey);
+            let mut session = identity.lock().unwrap();
+            Ok(Json(session.status()))
+        }
+        Err(e) => Err(EngineError::Auth(format!("Unlock failed: {e}"))),
+    }
+}
+
+/// POST /api/v1/identity/lock — re-lock (clear secret, keep ncryptsec)
+pub async fn identity_lock_handler(
+    State(identity): State<IdentityAppState>,
+) -> Json<IdentityStatusResponse> {
+    let mut session = identity.lock().unwrap();
+    session.lock();
+    Json(session.status())
+}
+
+/// POST /api/v1/identity/logout — clear everything
+pub async fn identity_logout_handler(
+    State(identity): State<IdentityAppState>,
+) -> Json<IdentityStatusResponse> {
+    let mut session = identity.lock().unwrap();
+    session.logout();
+    Json(session.status())
 }
 
 #[cfg(test)]

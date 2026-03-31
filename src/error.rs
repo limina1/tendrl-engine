@@ -45,6 +45,14 @@ pub enum EngineError {
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
 
+    /// Authentication required (identity not unlocked)
+    #[error("Authentication required: {0}")]
+    Auth(String),
+
+    /// Identity is locked (ncryptsec present but not decrypted)
+    #[error("Identity locked: {0}")]
+    Locked(String),
+
     /// Generic error wrapper
     #[error("{0}")]
     Other(String),
@@ -72,6 +80,8 @@ impl IntoResponse for EngineError {
             EngineError::InvalidFilter(msg) => (StatusCode::BAD_REQUEST, "invalid_filter", msg.clone()),
             EngineError::NotFound(msg) => (StatusCode::NOT_FOUND, "not_found", msg.clone()),
             EngineError::InvalidHex(msg) => (StatusCode::BAD_REQUEST, "invalid_hex", msg.clone()),
+            EngineError::Auth(msg) => (StatusCode::UNAUTHORIZED, "auth_required", msg.clone()),
+            EngineError::Locked(msg) => (StatusCode::LOCKED, "identity_locked", msg.clone()),
             EngineError::Config(msg) => (StatusCode::INTERNAL_SERVER_ERROR, "config_error", msg.clone()),
             EngineError::Io(err) => (StatusCode::INTERNAL_SERVER_ERROR, "io_error", err.to_string()),
             EngineError::Other(msg) => (StatusCode::INTERNAL_SERVER_ERROR, "error", msg.clone()),

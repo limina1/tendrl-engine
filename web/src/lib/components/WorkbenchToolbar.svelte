@@ -1,5 +1,5 @@
 <script lang="ts">
-	import type { SyncMode, ButtonLabels, EmbeddingStatusResponse, NetworkStatus, NetworkMode } from '$lib/types';
+	import type { SyncMode, ButtonLabels, EmbeddingStatusResponse, NetworkStatus, NetworkMode, IdentityStatus } from '$lib/types';
 
 	let {
 		syncMode,
@@ -8,6 +8,10 @@
 		embeddingSyncing = false,
 		ignoredCount = 0,
 		networkStatus = null,
+		identityStatus = null,
+		identityLoading = false,
+		identityError = null,
+		identityDisplayName = null,
 		onsetsyncmode,
 		onsetbuttonlabels,
 		onhome,
@@ -22,7 +26,13 @@
 		exporting = false,
 		onimport,
 		importing = false,
-		importProgress = null
+		importProgress = null,
+		onidentitylogin,
+		onidentityunlock,
+		onidentitylock,
+		onidentitylogout,
+		onclearidentityerror,
+		onviewprofile
 	}: {
 		syncMode: SyncMode;
 		buttonLabels: ButtonLabels;
@@ -30,6 +40,10 @@
 		embeddingSyncing?: boolean;
 		ignoredCount?: number;
 		networkStatus?: NetworkStatus | null;
+		identityStatus?: IdentityStatus | null;
+		identityLoading?: boolean;
+		identityError?: string | null;
+		identityDisplayName?: string | null;
 		onsetsyncmode: (mode: SyncMode) => void;
 		onsetbuttonlabels: (mode: ButtonLabels) => void;
 		onhome?: () => void;
@@ -45,14 +59,44 @@
 		onimport?: (file: File) => void;
 		importing?: boolean;
 		importProgress?: { total: number; sent: number; ingested: number; skipped: number; errors: number; done: boolean } | null;
+		onidentitylogin?: (ncryptsec: string) => void;
+		onidentityunlock?: (password: string) => void;
+		onidentitylock?: () => void;
+		onidentitylogout?: () => void;
+		onclearidentityerror?: () => void;
+		onviewprofile?: (pubkey: string) => void;
 	} = $props();
 
 	let settingsOpen = $state(false);
 	let networkLogOpen = $state(false);
+	let identityOpen = $state(false);
+	let ncryptsecInput = $state('');
+	let passwordInput = $state('');
 
 	function toggleNetworkMode() {
 		if (!networkStatus || !onsetnetworkmode) return;
 		onsetnetworkmode(networkStatus.mode === 'online' ? 'offline' : 'online');
+	}
+
+	function handleLogin() {
+		if (!ncryptsecInput.trim()) return;
+		onclearidentityerror?.();
+		onidentitylogin?.(ncryptsecInput.trim());
+		ncryptsecInput = '';
+	}
+
+	function handleUnlock() {
+		if (!passwordInput) return;
+		onclearidentityerror?.();
+		onidentityunlock?.(passwordInput);
+		passwordInput = '';
+	}
+
+	function formatTimeRemaining(seconds: number | null): string {
+		if (seconds == null) return '';
+		const m = Math.floor(seconds / 60);
+		const s = seconds % 60;
+		return `${m}:${s.toString().padStart(2, '0')}`;
 	}
 
 	function shortRelay(url: string): string {
@@ -93,6 +137,24 @@
 	{/if}
 	{#if ignoredCount > 0}
 		<button class="ignored-btn" onclick={onviewignored} title="{ignoredCount} events/authors hidden">{ignoredCount} hidden</button>
+	{/if}
+	<!-- Identity indicator -->
+	{#if !identityStatus || identityStatus.state === 'none'}
+		<button class="identity-btn" onclick={() => (identityOpen = !identityOpen)} title="Login with ncryptsec">
+			Login
+		</button>
+	{:else if identityStatus.state === 'locked'}
+		<button class="identity-btn locked" onclick={() => (identityOpen = !identityOpen)} title="Identity locked — click to unlock">
+			🔒 {identityDisplayName ?? identityStatus.npub ?? ''}
+			{#if identityStatus.unsigned_count > 0}
+				<span class="unsigned-badge">{identityStatus.unsigned_count}</span>
+			{/if}
+		</button>
+	{:else if identityStatus.state === 'unlocked'}
+		<button class="identity-btn unlocked" onclick={() => (identityOpen = !identityOpen)} title="Identity unlocked — {formatTimeRemaining(identityStatus.seconds_remaining ?? null)} remaining">
+			🔓 {identityDisplayName ?? identityStatus.npub ?? ''}
+			<span class="timer">{formatTimeRemaining(identityStatus.seconds_remaining ?? null)}</span>
+		</button>
 	{/if}
 	<span class="spacer"></span>
 	{#if embeddingStatus?.enabled}
@@ -156,6 +218,83 @@
 			</div>
 		{/if}
 		<button class="settings-btn purge-btn" onclick={onpurge}>Purge DB</button>
+	</div>
+{/if}
+
+{#if identityOpen}
+	<div class="identity-panel">
+		{#if !identityStatus || identityStatus.state === 'none'}
+			<div class="identity-form">
+				<label class="identity-label">ncryptsec</label>
+				<textarea
+					class="identity-input"
+					bind:value={ncryptsecInput}
+					placeholder="ncryptsec1..."
+					rows="2"
+					onkeydown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleLogin(); } }}
+				></textarea>
+				<button class="identity-action-btn" onclick={handleLogin} disabled={identityLoading || !ncryptsecInput.trim()}>
+					{identityLoading ? 'Loading...' : 'Login'}
+				</button>
+			</div>
+		{:else if identityStatus.state === 'locked'}
+			<div class="identity-form">
+				<div class="identity-info">
+					<button class="identity-profile-link" onclick={() => { const pk = identityStatus?.pubkey; identityOpen = false; if (pk) onviewprofile?.(pk); }}>
+						{#if identityDisplayName}
+							<span class="identity-name">{identityDisplayName}</span>
+						{/if}
+						<span class="identity-npub">{identityStatus.npub}</span>
+					</button>
+					<span class="identity-state-label">locked</span>
+				</div>
+				<label class="identity-label">Password</label>
+				<!-- svelte-ignore a11y_autofocus -->
+				<input
+					class="identity-input"
+					type="password"
+					bind:value={passwordInput}
+					placeholder="Enter password to unlock"
+					autofocus
+					onkeydown={(e) => { if (e.key === 'Enter') handleUnlock(); }}
+				/>
+				<div class="identity-actions">
+					<button class="identity-action-btn" onclick={handleUnlock} disabled={identityLoading || !passwordInput}>
+						{identityLoading ? 'Decrypting...' : 'Unlock'}
+					</button>
+					<button class="identity-action-btn secondary" onclick={() => { onidentitylogout?.(); identityOpen = false; }}>
+						Logout
+					</button>
+				</div>
+			</div>
+		{:else if identityStatus.state === 'unlocked'}
+			<div class="identity-form">
+				<div class="identity-info">
+					<button class="identity-profile-link" onclick={() => { const pk = identityStatus?.pubkey; identityOpen = false; if (pk) onviewprofile?.(pk); }}>
+						{#if identityDisplayName}
+							<span class="identity-name">{identityDisplayName}</span>
+						{/if}
+						<span class="identity-npub">{identityStatus.npub}</span>
+					</button>
+					<span class="identity-state-label unlocked">unlocked</span>
+					<span class="identity-timer">{formatTimeRemaining(identityStatus.seconds_remaining ?? null)}</span>
+				</div>
+				{#if identityStatus.unsigned_count > 0}
+					<div class="identity-unsigned">{identityStatus.unsigned_count} unsigned event{identityStatus.unsigned_count === 1 ? '' : 's'}</div>
+				{/if}
+				<div class="identity-actions">
+					<button class="identity-action-btn" onclick={() => { onidentitylock?.(); }}>
+						Lock
+					</button>
+					<button class="identity-action-btn secondary" onclick={() => { onidentitylogout?.(); identityOpen = false; }}>
+						Logout
+					</button>
+				</div>
+			</div>
+		{/if}
+		{#if identityError}
+			<div class="identity-error">{identityError}</div>
+		{/if}
 	</div>
 {/if}
 
@@ -517,5 +656,185 @@
 	.log-error {
 		color: #ef4444;
 		flex: 1;
+	}
+
+	/* Identity */
+	.identity-btn {
+		display: flex;
+		align-items: center;
+		gap: 4px;
+		font-size: 0.65rem;
+		padding: 2px 8px;
+		margin-left: 8px;
+		background: none;
+		border: 1px solid var(--border);
+		color: var(--fg-muted);
+		cursor: pointer;
+		border-radius: var(--radius);
+		white-space: nowrap;
+	}
+
+	.identity-btn:hover {
+		color: var(--fg);
+		border-color: var(--fg-muted);
+	}
+
+	.identity-btn.locked {
+		color: #f59e0b;
+		border-color: #f59e0b40;
+	}
+
+	.identity-btn.unlocked {
+		color: #22c55e;
+		border-color: #22c55e40;
+	}
+
+	.unsigned-badge {
+		background: #ef4444;
+		color: white;
+		font-size: 0.55rem;
+		padding: 0 4px;
+		border-radius: 8px;
+		font-weight: 700;
+		line-height: 1.4;
+	}
+
+	.timer {
+		font-family: monospace;
+		font-size: 0.6rem;
+		opacity: 0.8;
+	}
+
+	.identity-panel {
+		padding: 8px 16px;
+		border-bottom: 1px solid var(--border);
+		background: var(--bg-surface);
+	}
+
+	.identity-form {
+		display: flex;
+		flex-direction: column;
+		gap: 6px;
+		max-width: 400px;
+	}
+
+	.identity-label {
+		font-size: 0.6rem;
+		color: var(--fg-muted);
+		text-transform: uppercase;
+		font-weight: 600;
+	}
+
+	.identity-input {
+		font-size: 0.75rem;
+		padding: 4px 8px;
+		border: 1px solid var(--border);
+		border-radius: var(--radius);
+		background: var(--bg);
+		color: var(--fg);
+		font-family: monospace;
+		resize: none;
+	}
+
+	.identity-input:focus {
+		outline: none;
+		border-color: var(--accent);
+	}
+
+	.identity-info {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+	}
+
+	.identity-profile-link {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		background: none;
+		border: none;
+		padding: 0;
+		cursor: pointer;
+		color: inherit;
+	}
+
+	.identity-profile-link:hover .identity-name,
+	.identity-profile-link:hover .identity-npub {
+		color: var(--accent);
+	}
+
+	.identity-name {
+		font-size: 0.75rem;
+		font-weight: 600;
+		color: var(--fg);
+	}
+
+	.identity-npub {
+		font-family: monospace;
+		font-size: 0.65rem;
+		color: var(--fg-muted);
+	}
+
+	.identity-state-label {
+		font-size: 0.6rem;
+		padding: 1px 6px;
+		border-radius: var(--radius);
+		background: #f59e0b20;
+		color: #f59e0b;
+		font-weight: 600;
+		text-transform: uppercase;
+	}
+
+	.identity-state-label.unlocked {
+		background: #22c55e20;
+		color: #22c55e;
+	}
+
+	.identity-timer {
+		font-family: monospace;
+		font-size: 0.7rem;
+		color: var(--fg-muted);
+	}
+
+	.identity-unsigned {
+		font-size: 0.65rem;
+		color: #f59e0b;
+	}
+
+	.identity-actions {
+		display: flex;
+		gap: 6px;
+	}
+
+	.identity-action-btn {
+		font-size: 0.65rem;
+		padding: 3px 10px;
+		border: 1px solid var(--accent);
+		background: var(--accent);
+		color: white;
+		border-radius: var(--radius);
+		cursor: pointer;
+	}
+
+	.identity-action-btn:disabled {
+		opacity: 0.5;
+		cursor: not-allowed;
+	}
+
+	.identity-action-btn.secondary {
+		background: none;
+		color: var(--fg-muted);
+		border-color: var(--border);
+	}
+
+	.identity-action-btn.secondary:hover {
+		color: var(--fg);
+		border-color: var(--fg-muted);
+	}
+
+	.identity-error {
+		font-size: 0.65rem;
+		color: #ef4444;
+		margin-top: 4px;
 	}
 </style>

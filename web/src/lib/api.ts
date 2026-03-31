@@ -14,7 +14,8 @@ import type {
 	NetworkStatus,
 	NetworkMode,
 	DocumentFile,
-	ImportResult
+	ImportResult,
+	IdentityStatus
 } from './types';
 
 async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
@@ -125,6 +126,34 @@ export function queryEvents(filters: Record<string, unknown>[], policy = 'local_
 
 export function getConfig() {
 	return fetchJson<{ my_pubkey: string | null; assistant_pubkey: string | null }>('/api/v1/config');
+}
+
+// Identity API
+
+export function getIdentity() {
+	return fetchJson<IdentityStatus>('/api/v1/identity');
+}
+
+export function loginIdentity(ncryptsec: string) {
+	return fetchJson<IdentityStatus>('/api/v1/identity/login', {
+		method: 'POST',
+		body: JSON.stringify({ ncryptsec })
+	});
+}
+
+export function unlockIdentity(password: string) {
+	return fetchJson<IdentityStatus>('/api/v1/identity/unlock', {
+		method: 'POST',
+		body: JSON.stringify({ password })
+	});
+}
+
+export function lockIdentity() {
+	return fetchJson<IdentityStatus>('/api/v1/identity/lock', { method: 'POST' });
+}
+
+export function logoutIdentity() {
+	return fetchJson<IdentityStatus>('/api/v1/identity/logout', { method: 'POST' });
 }
 
 // Search API
