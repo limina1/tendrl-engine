@@ -21,6 +21,7 @@
 	let sections = $state<NostrEvent[]>([]);
 	let comments = $state<NostrEvent[]>([]);
 	let loading = $state(true);
+	let fetching = $state(false);
 
 	function getTag(event: NostrEvent, name: string): string | null {
 		const tag = event.tags.find(t => t[0] === name);
@@ -31,6 +32,62 @@
 		return new Date(ts * 1000).toLocaleDateString();
 	}
 
+	async function loadLocal(pk: string) {
+		const [prof, pubResult, secResult, comResult] = await Promise.all([
+			api.getProfile(pk),
+			api.queryEvents([{ kinds: [30040], authors: [pk], limit: 500 }], 'local_only'),
+			api.queryEvents([{ kinds: [30041], authors: [pk], limit: 200 }], 'local_only'),
+			api.queryEvents([{ kinds: [1111], authors: [pk], limit: 200 }], 'local_only')
+		]);
+		profile = prof.found ? prof : null;
+		// Convert raw 30040 events to PublicationSummary shape
+		publications = (pubResult.events as NostrEvent[])
+			.map(e => {
+				const d_tag = getTag(e, 'd') || '';
+				const title = getTag(e, 'title');
+				const summary = getTag(e, 'summary');
+				const image = getTag(e, 'image');
+				const section_count = e.tags.filter(t => t[0] === 'a').length;
+				return {
+					addr: { kind: 30040, pubkey: e.pubkey, d_tag },
+					title,
+					summary,
+					image,
+					author_pubkey: e.pubkey,
+					version: null,
+					created_at: e.created_at,
+					section_count
+				} as PublicationSummary;
+			})
+			.sort((a, b) => b.created_at - a.created_at);
+		sections = (secResult.events as NostrEvent[]).sort((a, b) => b.created_at - a.created_at);
+		comments = (comResult.events as NostrEvent[]).sort((a, b) => b.created_at - a.created_at);
+	}
+
+	async function handleFetch() {
+		fetching = true;
+		try {
+			// Fetch this author's events from all configured fetch relays
+			const rc = await api.getRelayConfig();
+			const kinds = rc.fetch.kinds.length > 0 ? rc.fetch.kinds : [0, 30040, 30041, 1111];
+			for (const relay of rc.fetch.urls) {
+				try {
+					await api.fetchFromRelay(relay, kinds, [pubkey], 500);
+				} catch {}
+			}
+			// Also fetch profile from general relays
+			await api.prefetchProfiles([pubkey]);
+			// Wait for nostrdb to process ingested events
+			await new Promise(r => setTimeout(r, 500));
+			// Reload local data
+			await loadLocal(pubkey);
+		} catch (e) {
+			console.error('Fetch failed:', e);
+		} finally {
+			fetching = false;
+		}
+	}
+
 	$effect(() => {
 		const pk = pubkey;
 		loading = true;
@@ -39,20 +96,7 @@
 		sections = [];
 		comments = [];
 
-		Promise.all([
-			api.getProfile(pk),
-			api.listPublications(50, 'local_only'),
-			api.queryEvents([{ kinds: [30041], authors: [pk], limit: 50 }], 'local_only'),
-			api.queryEvents([{ kinds: [1111], authors: [pk], limit: 50 }], 'local_only')
-		]).then(([prof, pubs, secResult, comResult]) => {
-			profile = prof.found ? prof : null;
-			publications = pubs.publications.filter(p => p.author_pubkey === pk);
-			sections = (secResult.events as NostrEvent[]).sort((a, b) => b.created_at - a.created_at);
-			comments = (comResult.events as NostrEvent[]).sort((a, b) => b.created_at - a.created_at);
-			loading = false;
-		}).catch(() => {
-			loading = false;
-		});
+		loadLocal(pk).catch(() => {}).finally(() => { loading = false; });
 	});
 </script>
 
@@ -70,6 +114,10 @@
 				<span class="about">{profile.about}</span>
 			{/if}
 		</div>
+		<span class="bar-spacer"></span>
+		<button class="fetch-btn" onclick={handleFetch} disabled={fetching} title="Fetch this author's events from relays">
+			{fetching ? 'Fetching...' : '↻ Fetch'}
+		</button>
 	</div>
 
 	<div class="tabs">
@@ -221,6 +269,31 @@
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
+	}
+
+	.bar-spacer {
+		flex: 1;
+	}
+
+	.fetch-btn {
+		font-size: 0.7rem;
+		padding: 4px 10px;
+		background: none;
+		border: 1px solid var(--accent);
+		color: var(--accent);
+		border-radius: var(--radius);
+		cursor: pointer;
+		white-space: nowrap;
+	}
+
+	.fetch-btn:hover:not(:disabled) {
+		background: var(--accent);
+		color: white;
+	}
+
+	.fetch-btn:disabled {
+		opacity: 0.5;
+		cursor: default;
 	}
 
 	.tabs {

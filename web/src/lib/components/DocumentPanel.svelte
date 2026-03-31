@@ -167,7 +167,7 @@
 				<div class="doc-author-avatar placeholder">?</div>
 			{/if}
 			<span class="doc-author-name">
-				<ProfileName pubkey={publication.author_pubkey} />
+				<ProfileName pubkey={publication.author_pubkey} {onviewprofile} />
 			</span>
 			<span class="doc-author-time">{formatTime(publication.created_at)}</span>
 		</div>
@@ -320,7 +320,7 @@
 								<p class="feed-item-summary">{pub_item.summary}</p>
 							{/if}
 							<div class="feed-item-footer">
-								<span class="feed-item-author"><ProfileName pubkey={pub_item.author_pubkey} /></span>
+								<span class="feed-item-author"><ProfileName pubkey={pub_item.author_pubkey} {onviewprofile} /></span>
 								<span class="feed-item-time">{formatTime(pub_item.created_at)}</span>
 							</div>
 						</div>

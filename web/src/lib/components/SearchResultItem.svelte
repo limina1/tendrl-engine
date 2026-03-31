@@ -13,7 +13,8 @@
 		onignore,
 		onignorepubkey,
 		items = [],
-		localPubkeys = new Set<string>()
+		localPubkeys = new Set<string>(),
+		onviewprofile
 	}: {
 		result: SearchResult;
 		checked?: boolean;
@@ -26,6 +27,7 @@
 		onignorepubkey?: (result: SearchResult) => void;
 		items?: ContextItem[];
 		localPubkeys?: Set<string>;
+		onviewprofile?: (pubkey: string) => void;
 	} = $props();
 
 	const poolMatch = $derived(
@@ -102,7 +104,7 @@
 	{/if}
 
 	<div class="result-meta">
-		<span class="result-author"><ProfileName pubkey={result.author} /></span>
+		<span class="result-author"><ProfileName pubkey={result.author} {onviewprofile} /></span>
 		<span class="result-time">{formatTime(result.created_at)}</span>
 		<button class="action-btn icon-btn" onclick={(e) => { e.stopPropagation(); onaddtocontext(result); }} title="Send to chat">◂</button>
 		<button class="action-btn icon-btn" onclick={(e) => { e.stopPropagation(); onaddtocompose(result); }} title="Send to compose">□</button>

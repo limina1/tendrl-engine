@@ -1579,6 +1579,7 @@
 				onimportpagestocompose={handleImportPagesToCompose}
 				{items}
 				{localPubkeys}
+				onviewprofile={handleViewProfile}
 			/>
 		</PanelFrame>
 	</div>

@@ -2,7 +2,7 @@
 	import { getProfile, onProfileUpdate, type Profile } from '$lib/api';
 	import ProfileModal from './ProfileModal.svelte';
 
-	let { pubkey }: { pubkey: string } = $props();
+	let { pubkey, onviewprofile }: { pubkey: string; onviewprofile?: (pubkey: string) => void } = $props();
 
 	let profile = $state<Profile | null>(null);
 	let name = $state<string | null>(null);
@@ -44,7 +44,7 @@
 {/if}
 
 {#if showModal && profile}
-	<ProfileModal {profile} onclose={() => showModal = false} />
+	<ProfileModal {profile} onclose={() => showModal = false} {onviewprofile} />
 {/if}
 
 <style>
