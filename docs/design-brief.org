@@ -1,0 +1,208 @@
+#+TITLE: Tendrl Engine — Designer Brief
+#+SUBTITLE: Orientation packet for redesigning the web interface
+#+DATE: 2026-04-27
+#+STATUS: HANDOFF — for designer onboarding
+
+* What this app is, in one paragraph
+
+Tendrl is a *local-first knowledge workbench* built on the Nostr protocol. It
+lets a writer (a) collect notes and long-form documents from a decentralized
+network, (b) discuss them with an LLM, and (c) assemble new publications by
+composing existing notes plus original writing. Think of it as
+"Obsidian + Roam + Substack" if your notes were public, addressable Nostr
+events instead of files in a vault. It runs locally as a Rust engine + a
+SvelteKit web UI; there is no server-side account.
+
+* Read-this-first list
+
+These docs already exist in =docs/=. Read in this order — they each take 5–15
+minutes:
+
+1. =project-summary.org= — the 30,000-ft view: what we're building and why
+2. =workbench-architecture.org= — the *core design vision*: three-panel
+   compose environment with the ASCII mockup the rest of the UI is meant to
+   converge toward
+3. =features.org= — the menu of capabilities (feed, search, compose, ignore,
+   profiles, embeddings)
+4. =publication-architecture.org= — the data model (publications, sections,
+   versioning, addressing). Skim unless you want depth.
+5. =data-lifecycle-roadmap.org= — fetch policies, online/offline, sync
+6. =nostrdown.org= — our markup-agnostic citation/transclusion syntax
+   (relevant if you're designing the editor)
+
+If you only read one, read =workbench-architecture.org=.
+
+* The mental model in three terms
+
+These three terms appear everywhere. Internalize them and the rest follows.
+
+** Section (kind 30041)
+An atomic note. A paragraph, a chapter, a code listing, a quote. Has a stable
+address (=kind:pubkey:d_tag=) so it can be linked, versioned, and reused.
+*Sections are the unit of composition.*
+
+** Publication (kind 30040)
+An *index* — an ordered list of references to sections. A publication owns no
+content of its own; it curates. The same section can appear in multiple
+publications. Editing a publication is editing its table of contents.
+
+** Zettel
+The mental frame: every section is a small, addressable, independently-useful
+piece of writing. The UI should make it natural to *find one*, *drag it into a
+new publication*, and *cite it elsewhere*.
+
+If those three concepts don't feel solid, the rest of the design will fight
+the data model. Spend ten minutes on this.
+
+* Where to find each surface in code
+
+| Surface                | Route                              | Component                                          |
+|------------------------+------------------------------------+----------------------------------------------------|
+| Feed (publication list) | =/=                                | =web/src/routes/+page.svelte=                      |
+| Read a publication     | =/p/[pubkey]/[d_tag]=              | =web/src/routes/p/[pubkey]/[d_tag]/+page.svelte=   |
+| Read a single section  | =/p/[pubkey]/[d_tag]/[index]=      | =.../[index]/+page.svelte=                         |
+| Compose a publication  | =/compose=                         | =web/src/routes/compose/+page.svelte=              |
+| Profile view           | =/profile/[pubkey]=                | =web/src/routes/profile/[pubkey]/+page.svelte=     |
+| Ignored items          | =/ignored=                         | =web/src/routes/ignored/+page.svelte=              |
+| Three-panel chrome     | (all routes)                       | =web/src/routes/+layout.svelte=                    |
+| Reusable components    | —                                  | =web/src/lib/components/= (~30 components)         |
+| Client state + API     | —                                  | =web/src/lib/state.svelte.ts=, =web/src/lib/api.ts= |
+
+The web UI is *Svelte 5* (using runes: =$state=, =$effect=, =$derived=). State
+lives in a single =AppState= class with reactive properties.
+
+* The five flows to design for
+
+Every design decision should be evaluated against these flows. They're listed
+in order of how often a real user does them.
+
+** 1. Browse and read (highest traffic)
+User opens app → sees feed of publications → picks one → reads it → maybe
+reads a single section, maybe jumps to author profile.
+
+  - Pain points: feed is undifferentiated cards; no sense of recency,
+    importance, or progress; reading view doesn't feel like reading.
+
+** 2. Search and discover
+User has a topic in mind → searches by keyword, tag, or natural-language
+("~semantic" prefix) → results appear → user opens or saves them.
+
+  - Pain points: search panel competes with reading; results are a flat list;
+    no faceting; semantic vs. keyword distinction is invisible.
+
+** 3. Compose
+User starts a new publication → drags in existing sections, writes new ones,
+asks the LLM to help → previews → publishes.
+
+  - Pain points: this is the *least built-out* surface and the most important
+    one for the redesign. The =workbench-architecture.org= ASCII mockup is
+    the target.
+
+** 4. Manage identity, relays, and ignore list
+User logs in with an encrypted key (=ncryptsec=) → manages which relays they
+read from and publish to → ignores noisy authors or low-quality items.
+
+  - Currently surfaced as toolbar buttons + modals. Probably belongs in a
+    proper settings surface.
+
+** 5. Network mode (offline / online)
+User toggles the engine offline (e.g. on a plane or to avoid relay traffic) →
+all work continues against the local cache.
+
+  - Currently a small toggle. Should be visible enough that a user always
+    knows their state, without being annoying.
+
+* Constraints the design must respect
+
+These come from the data model and engine, not from preference.
+
+- *Loading is a first-class state.* Almost everything is fetched async with a
+  =Pending → Loading → Loaded | Failed= state machine. The UI must show all
+  four states gracefully — not just spinners. See =LoadStatus<T>= in
+  =src/publication.rs=.
+- *Content has multiple markup modes.* Sections can be Markdown, Org, AsciiDoc,
+  or PlainText. Rendering needs to be consistent across them. See =content.rs=
+  in =src/tree/=.
+- *Addresses, not IDs.* Things are identified by =kind:pubkey:d_tag=, not by a
+  database ID. URLs reflect this. Never invent IDs.
+- *Local-first.* Everything works offline against the local cache. Network
+  fetches are *augmentation*, not the primary path.
+- *No accounts, no server.* Identity is a Nostr keypair. There is no
+  forgot-password flow, no email, no admin. Designs that imply server-side
+  accounts won't work.
+- *Three-panel as the default chrome.* Left = chat, middle = document/feed,
+  right = search. The middle panel changes with the route; the side panels
+  persist. See =web/src/routes/+layout.svelte=.
+
+* Open design questions / known pain points
+
+Things we'd love a designer's perspective on. None of these have a "right
+answer" yet.
+
+1. *Compose is the headline feature and the weakest surface.* What does a
+   first-class zettelkasten composer look like in a browser?
+2. *The three-panel layout collapses badly on narrow screens.* What's the
+   responsive story? (We're laptop-first, but tablet matters.)
+3. *Search results mix publications, sections, profiles, and document pages
+   from imports.* How do we present a heterogeneous result list without
+   overwhelming?
+4. *Loading states are everywhere and currently feel jittery.* Skeleton
+   screens? Optimistic placeholders? Progress affordances for slow relays?
+5. *Identity is technically scary* (encrypted keys, ncryptsec passwords). How
+   do we make first-run + daily login feel safe and ordinary?
+6. *No visual language yet.* Typography, color, spacing, density are all
+   ad-hoc. The CSS in =web/src/app.css= is the current baseline.
+7. *Reading vs. composing should feel like different modes,* but currently
+   share most of the chrome. Worth pulling apart?
+
+* What to send back
+
+Whatever shape works for you — Figma file, exported PNGs, Loom walkthrough,
+hand sketches. We'll iterate. The most useful first artifact is probably:
+
+1. A *quick critique* of current screenshots (annotated, 1–2 pages) so we
+   share a vocabulary.
+2. A *proposed redesign of the compose flow* — the highest-leverage surface.
+3. A *visual system sketch* (type, color, spacing, component primitives) we
+   can apply consistently.
+
+Don't try to design everything at once. Compose + visual system would be a
+huge unlock.
+
+* Screenshot list to capture
+
+The user will attach screenshots of these states. Each one is a route plus a
+specific condition:
+
+- [ ] =/= — feed, populated with several publications
+- [ ] =/= — feed, empty state (fresh install)
+- [ ] =/= — feed, loading state
+- [ ] =/p/<pubkey>/<d_tag>= — reading a publication, table of contents visible
+- [ ] =/p/<pubkey>/<d_tag>/<index>= — reading a single section
+- [ ] =/compose= — empty compose
+- [ ] =/compose= — compose with several sections (mix of new + imported)
+- [ ] =/profile/<pubkey>= — viewing a profile
+- [ ] =/ignored= — ignored items list
+- [ ] Search panel open with keyword results
+- [ ] Search panel open with =~semantic= results
+- [ ] Chat panel open with an LLM conversation
+- [ ] Login modal (ncryptsec entry)
+- [ ] Relay/fetch panel open
+- [ ] Network-mode toggle in both online and offline states
+- [ ] Narrow viewport (~800px wide) showing how things collapse
+
+* Glossary
+
+- *Nostr* — decentralized protocol where signed events are gossiped between
+  relays. No central server.
+- *Relay* — a server that stores and forwards events. Users connect to many.
+- *NKBIP-01* — our convention for structured publications using kinds 30040
+  and 30041. See =nips/nkbip01.md= or =/nips/nips/= for related NIPs.
+- *npub / nsec / ncryptsec* — public key (npub), private key (nsec), and
+  encrypted private key (ncryptsec) in bech32 encoding.
+- *Kind* — a number identifying what an event is (1 = note, 30023 = article,
+  30040 = publication index, 30041 = section, etc.).
+- *=a= tag / =e= tag* — references between events. =a= references replaceable
+  events by address; =e= references by event id.
+- *Addressable / replaceable event* — events at kinds 30000–39999 that the
+  author can update; identified by =kind:pubkey:d_tag=.

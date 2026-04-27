@@ -1,7 +1,7 @@
 #+TITLE: Tendrl Engine: Project Summary
 #+SUBTITLE: Nostr-Native Knowledge Workbench — Design, Architecture, and Implementation Status
-#+DATE: 2026-03-16
-#+STATUS: CURRENT — reflects implemented state as of commit 98c0ee4
+#+DATE: 2026-04-27
+#+STATUS: CURRENT — reflects implemented state as of commit 5c92b81
 
 * What This Project Is
 
@@ -83,11 +83,28 @@ All state manipulation flows through a REST API so any frontend can drive it:
 | =PUT /api/v1/chat/edit=                          | PUT    | Exit edit mode (re-parse buffer)       |
 | =POST /api/v1/chat/system=                       | POST   | Set system prompt                      |
 | =PUT /api/v1/chat/context=                       | PUT    | Replace all injected context notes     |
+| =POST /api/v1/publish=                           | POST   | Build + sign + broadcast 30040/30041   |
+| =POST /api/v1/ingest=                            | POST   | Stream-ingest events from JSONL upload |
+| =GET /api/v1/export[/manifest]=                  | GET    | Export local DB as JSONL + manifest    |
+| =POST /api/v1/import=                            | POST   | Parse PDF/DOCX/EPUB/HTML/TXT to events |
+| =GET /api/v1/profile/:pubkey=                    | GET    | Profile lookup (local-first w/ relay) |
+| =POST /api/v1/profiles/fetch=                    | POST   | Batch profile prefetch                 |
+| =GET /api/v1/identity=                           | GET    | Current identity status (locked/open)  |
+| =POST /api/v1/identity/login=                    | POST   | Decrypt ncryptsec, unlock signer       |
+| =POST /api/v1/identity/lock=                     | POST   | Lock signer, clear in-memory key       |
+| =GET/POST/DELETE /api/v1/ignore=                 | —      | Ignore list CRUD                       |
+| =GET /api/v1/network/status=                     | GET    | Online/offline + active fetch tally    |
+| =POST /api/v1/network/mode=                      | POST   | Toggle online/offline                  |
+| =GET /api/v1/relays=                             | GET    | Resolved relay sets (general/fetch/pub)|
+| =POST /api/v1/config/update=                     | POST   | Edit config.toml from UI               |
+| =POST /api/v1/fetch[/authors|/sections]=         | POST   | Per-relay/per-author/per-section pulls |
+| =GET /api/v1/embed/status=                       | GET    | Embedding sidecar + index health       |
+| =POST /api/v1/embed/sync=, =/reindex=              | POST   | Sync new events / full reindex         |
 
 ** Svelte Web Frontend
 
-The primary UI is a SvelteKit 2 / Svelte 5 application (~24 components) with a
-three-panel workbench layout:
+The primary UI is a SvelteKit 2 / Svelte 5 application (~30 components, ~10K
+LOC) with a three-panel workbench layout:
 
 #+begin_example
 ┌─────────────────┬──────────────────────┬──────────────────┐
@@ -286,14 +303,52 @@ design.
 - =~:"phrase":k= syntax (quotes after prefix, consistent with other patterns)
 - Config: =[embedding]= section (backend, model, dimensions), =[identity]= pubkey
 
+** Phase 6: Operations, Identity, and Import (Complete)
+
+Work since the Phase 5 milestone (commit 98c0ee4) has focused on making the
+app survive real-world use: bigger libraries, real identities, real imports,
+real network failures.
+
+- *NetworkMode (online/offline)* with =FetchGuard= RAII tracking of in-flight
+  relay requests; =FetchPolicy= clamps to =LocalOnly= when offline regardless
+  of the caller's preference (=src/network.rs=)
+- *ncryptsec login* with idle lock timer and auto-signing while unlocked
+  (commit c22bec1)
+- *Engine concurrency fix*: CPU-bound DB scans wrapped in =spawn_blocking= so
+  the Tokio runtime stops freezing under load (commit 1d3752d)
+- *Document import*: PDF, DOCX, EPUB, HTML, and TXT parsing into kind 30041
+  sections, with per-page embeddings and split search results (commits
+  69b01af, 7359251, 21440a4)
+- *Streaming JSONL ingest* with duplicate skip, progress UI, and an export
+  manifest for round-trip backup/restore (commits 0250959, a10c6d9)
+- *Profile pipeline*: batch prefetch on every event fetch, reactive updates
+  after batch completes, fall back to general relays when local-only misses
+  (commits ef48970, 5793712, 76ca450, 36e5fa7)
+- *Ignore list end-to-end*: filtered in search, semantic results, and the
+  feed reactively; "ignored" view with unblock and purge (commits bff97a7,
+  3566ce9, cd429c0, 4944bd1)
+- *Relay sets restructured* into general / fetch / publish with per-set kind
+  filters; editable from the UI (commits dae3e94, 35af34b, 2ae9a0e, 193e98a)
+- *SPA route structure*: =/p/[pubkey]/[d_tag]=, =/compose=, =/profile=,
+  =/ignored= with deep-linkable state (commits f0312d6, b45d95e)
+- *Sidecar reliability*: persistent venv, =HF_HUB_OFFLINE=1=, and a
+  =start.sh= that waits for sidecar health and detects embedding readiness
+  before starting the engine (commits 14977ac, e1174ee, plus the start.sh
+  series)
+- *Publication query limit raised to 5000* for large libraries (commit 78f7165)
+- *Search "everything" mode* that auto-routes 30040 hits to the feed and
+  splits document-page results into a separate tab with badges (commits
+  6f23a00, 21440a4)
+
 ** Not Yet Started
 
 | Feature                        | Phase | Notes                                           |
 |--------------------------------+-------+-------------------------------------------------|
-| LLM tool calling               | 6     | LLM autonomously searches knowledge base         |
+| LLM tool calling               | 7     | LLM autonomously searches knowledge base         |
 | Zettelize action               | 4     | Edit buffer → compose blocks (chat → zettel)     |
 | TUI workbench panels           | Def.  | Deferred — web is primary                        |
 | TUI draft flags                | Def.  | local-only / unsigned / signed / broadcast flags |
+| Stability roadmap items        | —     | See =docs/stability-roadmap.org=                 |
 
 * Technology Stack
 
@@ -312,13 +367,14 @@ design.
 
 | Directory        | Contents                                        | Approx. Size  |
 |------------------+-------------------------------------------------+---------------|
-| =src/=             | Rust backend (30 files)                         | ~12,000 lines |
-| =src/tree/=        | TUI state, commands, widgets                    | ~5,000 lines  |
-| =web/src/=         | Svelte frontend (24 components + lib)           | ~4,000 lines  |
-| =docs/=            | Architecture docs (org-mode)                    | ~1,500 lines  |
+| =src/=             | Rust backend                                    | ~13,000 lines |
+| =src/tree/=        | TUI state, commands, widgets                    | ~6,000 lines  |
+| =web/src/=         | Svelte frontend (~30 components + lib)          | ~10,000 lines |
+| =docs/=            | Architecture docs (org-mode)                    | ~3,000 lines  |
 | =tests/=           | Integration tests (search, query, engine)       | ~800 lines    |
 
-47 commits from initial commit to current HEAD. All co-authored with Claude.
+100 commits from initial commit to current HEAD (5c92b81). All co-authored
+with Claude.
 
 * Summary
 
@@ -328,5 +384,7 @@ assemble publications from a mix of original writing, imported references, and
 AI-generated content — all without leaving a single interface. The markup-
 agnostic design means writers can use whatever syntax they prefer. The
 read-only-by-default import model with explicit forking preserves attribution
-across the Nostr network. Four of six planned phases are complete, with semantic
-LLM tool-calling as the remaining major work.
+across the Nostr network. Six implementation phases are complete (search,
+compose blocks, chat, edit mode, feed/publish/semantic, ops/identity/import).
+Remaining major work: LLM tool-calling and the stability items in
+=stability-roadmap.org=.

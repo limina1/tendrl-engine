@@ -1,48 +1,194 @@
-#+TITLE: nostr-engine Features
-#+AUTHOR: nostr-engine contributors
-#+DATE: 2026-01-27
+#+TITLE: Tendrl Engine — Features
+#+AUTHOR: tendrl-engine contributors
+#+DATE: 2026-04-27
+#+STATUS: CURRENT — reflects implemented state as of commit 5c92b81
 
-* Overview
+* Scope
 
-nostr-engine is a Rust library and TUI application for working with NKBIP-01
-publications (kind 30040/30041) on the Nostr protocol. It provides a local-first
-experience with vim-style navigation.
+Tendrl is a local-first Rust engine for Nostr publications (NKBIP-01) with
+three frontends:
+
+- *Web app* (SvelteKit, primary) — three-panel workbench at
+  =http://localhost:3030= when the engine is running
+- *TUI* (=cargo run --features tui --bin nostr-tree=) — vim-flavored terminal
+  UI, originally the primary interface
+- *HTTP API* (Axum, =/api/v1/*=) — drives both UIs and is consumed by Emacs
+  and Nvim integrations
+
+All three sit on the same engine: nostrdb storage, NIP-01 relay client,
+structured search, embedding sidecar, identity manager, and publication
+builder.
 
 * Core Engine
 
 ** nostrdb Integration
-- Local SQLite-based storage via nostrdb
-- Events are cached locally for offline access and fast retrieval
+- Local LMDB-backed event storage via the nostrdb C library
+- Events are cached for offline use and millisecond-time queries
+- Author-scoped queries to keep large libraries snappy
+- CPU-bound scans run on =spawn_blocking= so the async runtime stays responsive
 
 ** Relay Connections
-- Connects to multiple Nostr relays simultaneously
-- Local relay auto-detection: checks =ws://localhost:3334= on startup
-- If local relay is available, it's prepended to the relay list for faster access
-- Default relays: theforest.nostr1.com, thecitadel.nostr1.com, relay.damus.io
-- Custom relays can be specified via command line (=--relay=)
+- NIP-01 WebSocket client; multiple relays in parallel; deduplicates results
+- Local relay auto-detection at =ws://localhost:3334=
+- Structured *relay sets*:
+  - =[relay.general]= — profile, contacts, NIP-65 relay lists
+  - =[relay.fetch]= — publication content (kinds 30040/30041, articles, wikis)
+  - =[relay.publish]= — where signed events get pushed
+- Each set has its own URL list and kind filter; editable from the web UI via
+  =POST /api/v1/config/update=
 
 ** Fetch Policies
-Three fetch strategies to balance speed and freshness:
-- *LocalOnly*: Query local database only
-- *LocalFirst*: Check local DB first, fetch from relays only if insufficient results
-- *FetchAlways*: Always query relays (updates local cache)
+- =LocalOnly= — nostrdb only (instant, offline)
+- =LocalFirst= — local then relay backfill if under limit (default)
+- =FetchAlways= — always hit relays, merge with local
+
+** Network Mode (Online / Offline)
+- Single =NetworkMode= toggle clamps any policy to =LocalOnly= when offline
+- =FetchGuard= RAII tracks in-flight relay requests so the UI shows live
+  activity (=GET /api/v1/network/status=)
+- Toggling online → offline cancels nothing but stops new fetches
 
 ** NKBIP-01 Support
-- Full support for kind 30040 (publication index) and kind 30041 (sections)
-- Defensive validation: rejects malformed events (e.g., 30040 with non-empty content)
-- Proper d-tag handling for addressable events
+- Full kind 30040 (publication index) and kind 30041 (section) handling
+- Defensive validation: rejects malformed events (e.g. 30040 with non-empty
+  =content=)
+- Address-based identity (=kind:pubkey:d_tag=) for replaceable events
+- Versioning preserved (=load_section_versions=)
 
-* TUI Application
+** Structured Search
+- Query language: =k:30041 by:npub1... t:python "exact phrase" ~semantic= and
+  =|= for OR/union
+- Compiles to NIP-01 filters with text post-filtering over nostrdb content
+- Semantic search via embedding sidecar; over-fetches k×10 from HNSW when
+  kind/author filters are present
+- Search results split by type: publications routed to the feed, document
+  pages into their own tab with badges
 
-** Feed View
-- Card-based list of all available publications
-- Shows title, author, summary, and section count per publication
-- Infinite scroll with automatic loading (fetches 15 more when near bottom)
-- Visual indicators: "Loading more..." and "End of feed" states
+** Embedding Sidecar
+- Two backends:
+  - *Python sidecar* (sentence-transformers / Flask) — default, dev-friendly,
+    runs at =http://localhost:3031= via =start.sh=
+  - *Rust ONNX* (=--features onnx=) — in-process, single-binary deployment
+- usearch HNSW index, persisted to =vectors.idx= + =vectors.map=
+- =POST /api/v1/embed/sync= for incremental, =/reindex= for full
+- =GET /api/v1/embed/status= for health + index size
+- Reliability fixes: persistent venv, =HF_HUB_OFFLINE=1= so the sidecar
+  doesn't block on Hugging Face Hub on startup
+
+** Document Import
+- Parsers for PDF, DOCX, EPUB, HTML, TXT (=POST /api/v1/import=)
+- Each document becomes a kind 30041 with per-page chunks for embedding
+- Streaming JSONL ingest (=POST /api/v1/ingest=) with duplicate skip and
+  progress UI
+- JSONL export (=GET /api/v1/export=) plus an export manifest endpoint for
+  round-trip backup/restore
+
+** Publishing
+- =POST /api/v1/publish= builds 30040 + 30041 events from compose state
+- Three modes: unsigned draft, signed local, signed + broadcast to publish
+  relays
+- Local ingest of broadcast events for instant feedback in the UI
+
+* Identity
+
+** Supported Key Formats
+- *npub* — public key only (read-only)
+- *nsec* — unencrypted secret (rare; not recommended)
+- *ncryptsec* — NIP-49 encrypted secret (scrypt + XChaCha20-Poly1305), the
+  default flow
+
+** Login & Lock
+- Web: ncryptsec entry modal; password decrypts in-memory, never persisted
+- *Idle lock timer*: signer auto-locks after configurable inactivity
+- *Auto-signing while unlocked*: publish flows don't re-prompt for password
+  during a session
+- =GET /api/v1/identity= returns status (none / locked / unlocked); =/login=
+  and =/lock= flip state
+
+** Storage
+- OS keyring integration for the encrypted blob (not the plaintext key)
+- TUI also supports session restoration on startup via the keyring
+
+* Web App
+
+** Three-Panel Workbench
+=web/src/routes/+layout.svelte=
+
+- Left: *chat* (LLM conversation, system prompt, context panel)
+- Middle: *document / feed / compose* (changes with route)
+- Right: *search* (keyword + semantic, filters, result actions)
+- Each panel collapses to a 32px vertical bar
+- Center gets =2fr=, sides get =1fr= each by default
+
+** Routes
+| Path                              | Purpose                              |
+|-----------------------------------+--------------------------------------|
+| =/=                                 | Feed of publications                  |
+| =/p/[pubkey]/[d_tag]=               | Read a publication (TOC + content)    |
+| =/p/[pubkey]/[d_tag]/[index]=       | Read a single section                 |
+| =/compose=                          | Build a new publication               |
+| =/profile/[pubkey]=                 | View an author's profile + works      |
+| =/ignored=                          | Manage ignored items                  |
+
+** Feed
+- Publication cards with title, author, summary, section count
+- =Sync all= pulls fresh data from fetch relays
+- Per-item hamburger menu: open, copy address, ignore
+- Pagination raised to 5000 items for large libraries
+
+** Reader
+- Outline view auto-loads all sections
+- Continuous view uses IntersectionObserver with read-ahead
+- Paginated view prefetches adjacent sections
+- TOC handles nested 30040 sub-publications
+
+** Compose
+- Block model: editable, imported (read-only reference), forked (with =a/e=
+  lineage tags, NIP-54 marker)
+- Three editing modes: full (structured cards), plain (delimiter-based
+  textarea), preview (read-only render)
+- Configurable delimiter for plain mode (=#=, =*=, ===, custom)
+- Tag serialization: =:name: value=, =:tags: a, b, c=
+- Bulk actions across sections: =All=, =Inv=, =◂= (to context), =□= (to
+  compose), =▸= (publish), =🗑= (two-step trash with countdown)
+- Modified detection (yellow highlight) with per-section reset
+
+** Chat
+- Typed fragments (system, user, assistant), individually selectable
+- Edit mode collapses everything into a single buffer with =---= delimiters
+  and =[role]= headers, freely editable, re-parses on exit
+- =LLMProvider= trait with Claude (Anthropic Messages API) and noop backends
+- Context notes injected into system message for the LLM
+
+** Search Panel
+- Keyword + tag + kind + author filters
+- =~semantic= prefix for HNSW search; semantic score badges on results
+- Per-result checkboxes, select all / invert
+- Per-result =◂= (to context) and =□= (to compose) actions
+
+** Profiles
+- Local-first profile lookup; falls back to general relays on miss
+- Batch prefetch on every event fetch, so usernames resolve without UI churn
+- =ProfileView= is a full route with profile metadata + that author's works
+- =ProfileName= component used everywhere; reactive across batch updates
+
+** Ignore List
+- Identifier: =kind:pubkey:d_tag= so it survives event re-fetches
+- Filtered in feed, search, and semantic results
+- =/ignored= page lists everything blocked, with unblock + permanent purge
+
+** Settings & Operations
+- Relay sets editable from the UI
+- Per-relay / per-author / per-section manual fetch buttons
+- Reindex button + live event-count indicator for the embedding sidecar
+- Network-mode toggle visible in the header
+
+* TUI
+
+The TUI predates the web app and remains functional, though new feature work
+goes to the web first.
 
 ** Reader View Modes
-Four different ways to read a publication:
-
 | Mode       | Description                    | Primary Navigation     |
 |------------+--------------------------------+------------------------|
 | Tree       | Hierarchical expand/collapse   | j/k nav, h/l fold      |
@@ -50,11 +196,9 @@ Four different ways to read a publication:
 | Continuous | Scrollable full content        | j/k scroll             |
 | Paginated  | One section at a time          | j/k scroll, J/K section|
 
-Cycle between modes with =v= key.
+Cycle modes with =v=.
 
 ** Vim-Style Keybindings
-Navigation is optimized for keyboard-first usage:
-
 | Key     | Action                                    |
 |---------+-------------------------------------------|
 | j/k     | Navigate down/up or scroll                |
@@ -65,207 +209,80 @@ Navigation is optimized for keyboard-first usage:
 | v       | Cycle view mode                           |
 | Tab     | Toggle preview panel                      |
 | q       | Quit                                      |
+| c       | Compose new publication                   |
+| i       | Login dialog                              |
+| :       | Relay configuration dialog                |
+| ?       | Command palette                           |
+| Ctrl+d  | Save current as draft                     |
+| Ctrl+u  | Filter to show only drafts                |
+| Ctrl+t  | Toggle tag editing (compose)              |
+| Ctrl+p  | Toggle JSON event preview                 |
 
-* Loading & Async Operations
+** Command Palette
+- =?= or =Alt+x= (or =Space= in Doom style)
+- Categorized commands (Navigation, Manipulation, View, Compose, etc.) with
+  fuzzy search and inline keybinding hints
 
-** Animated Loading Spinner
-Visual feedback for async operations with rotating spinner animation (◐◓◑◒):
-- Appears in status bar during global loading
-- Shows on individual tree nodes and feed cards when loading
-- Tracks pending request count to show/hide appropriately
-
-** Buffer Loading Commands
-Batch operations for efficient content loading:
-- =L= key: Load all visible unloaded items at once (LoadBufferEvents)
-- RefreshBuffer: Refresh all visible loaded items
-
-* Command Palette
-
-Emacs-style command palette accessible via =?= or =Alt+x= (or =Space= in Doom style):
-
-- Displays all 42+ available commands with metadata
-- Color-coded categories: Navigation, Manipulation, View, etc.
-- Fuzzy search filtering on command name, description, and category
-- Shows keybindings for each command
-- Keyboard navigation with arrows/Tab and execution with Enter
-- Centered popup overlay with scrollable list
-
-* Compose Mode
-
-Create new NKBIP-01 publications directly in the TUI:
-
-** Publication Creation
-- =c= key opens compose mode from Feed view
-- Edit title, content, and tags
-- Auto-generates d-tags from normalized titles
-- Sections automatically get publication d-tag prefix
-
-** Tag Editing
-- Multi-value tag syntax: =[name] [val1, val2]= → =["name", "val1", "val2"]=
-- =Ctrl+t= toggles tag editing mode
-- Section-level tag support
-
-** Event Preview
-- =Ctrl+p= toggles JSON preview panel
-- Shows current event structure (30040 or 30041 based on focus)
-- JSON syntax highlighting in preview window
-
-* Window System
-
-Overlay window system for displaying additional content:
-
-** Features
-- WindowWidget with JSON syntax highlighting
-- Scroll indicators for long content
-- j/k scrolling, gg/G for top/bottom navigation
-- Tab cycles focus between windows
-- q/Esc closes window
-- Mouse scroll support
-
-** Use Cases
-- ShowEventJson command: View any node as raw JSON
-- Event preview in compose mode
-
-* Sync Status Indicators
-
-Track where events originated:
-
+** Sync Status Indicators
 | Status    | Color  | Meaning                     |
 |-----------+--------+-----------------------------|
 | Remote    | Cyan   | Fetched from relay          |
 | LocalOnly | Yellow | Only in local database      |
 | Draft     | Red    | Unsigned local draft        |
 
-Displayed as colored vertical bars on the right edge of:
-- Feed cards
-- Tree nodes
-- Outline cards
+** Draft Storage
+- Unsigned 30040/30041 events stored as JSON in =<data_dir>/drafts/=
+- Drafts auto-load on startup, displayed in feed with a red sync bar
 
-* Draft Storage
+* Operations
 
-"Dry publish" functionality for unsigned events:
+** start.sh
+=./start.sh= launches sidecar + engine; =--dev= also starts the SvelteKit dev
+server. Waits for sidecar health, detects embedding readiness, applies
+=HF_HUB_OFFLINE= so it doesn't hang on a missing network.
 
-** Features
-- Store unsigned 30040/30041 events locally as JSON files
-- Drafts persist in =<data_dir>/drafts/= directory
-- Drafts automatically load on app startup
-- Display drafts in feed with red sync bar and "[DRAFT - Unsigned]" banner
+** Purge & Reingest
+- =POST /api/v1/purge= clears local data
+- TUI =--purge-db -y= flag for a clean slate
+- Combined with JSONL export, gives a backup → wipe → reingest loop
 
-** Keybindings
-| Key     | Action                    |
-|---------+---------------------------|
-| Ctrl+d  | Save current as draft     |
-| Ctrl+u  | Filter to show only drafts|
-
-** Commands
-- SaveDraft: Save current composition as draft
-- LoadDraft: Load a draft into compose mode
-- DeleteDraft: Remove a draft from storage
-- FilterDrafts: Toggle draft-only view in feed
-
-* Identity System
-
-User authentication and key management:
-
-** Supported Key Formats
-- *npub*: Public key only (read-only mode)
-- *nsec*: Unencrypted secret key
-- *ncryptsec*: NIP-49 encrypted secret key (scrypt + XChaCha20-Poly1305)
-
-** Features
-- Login dialog widget with password entry for ncryptsec
-- OS keyring integration for secure secret storage
-- Session restoration on startup
-- Status bar shows identity indicator (right-justified)
-- =i= key opens login dialog in Feed mode
-
-** Security
-- Secrets stored in OS keyring (not plaintext)
-- NIP-49 decryption with configurable scrypt parameters
-- Tested with log_n=8 (fast) and log_n=16 (production strength)
-
-* UI Improvements
-
-** Shortened Addresses for Unloaded Sections
-Instead of "Untitled Section" or "Section N", shows:
-- Tree/Outline views: =kind:abcd...wxyz:d-tag= format
-- Continuous/Paginated views: Just the d-tag for cleaner reading
-
-** Relay Configuration
-=:= key opens relay configuration dialog
-
-* Technical Architecture
-
-** Interface-Agnostic Design
-The tree module is separated from the TUI:
-- =TreeState=: Pure state types (no IO)
-- =TreeEngine=: Synchronous command execution
-- =AsyncRequest/AsyncResult=: Bridge for IO operations
-
-This allows the core logic to work with any UI (TUI, GUI, web, etc.)
-
-** Module Structure
-#+BEGIN_SRC
-src/
-├── engine.rs        # Core nostr engine
-├── publication.rs   # NKBIP-01 types
-├── identity.rs      # Key management, NIP-49
-├── drafts.rs        # Draft storage
-├── relay.rs         # Relay connections
-├── query.rs         # nostrdb queries
-└── tree/
-    ├── state.rs     # TreeState, AppMode, ViewMode
-    ├── command.rs   # Commands, AsyncRequest/Result
-    ├── engine.rs    # TreeEngine
-    ├── node.rs      # Node types
-    ├── render.rs    # Text rendering
-    ├── content.rs   # Content detection
-    └── tui/         # TUI-specific code
-        ├── app.rs      # TuiApp
-        ├── input.rs    # KeyMapper
-        └── widgets.rs  # All widgets
-#+END_SRC
+** Claude Code Sessions
+- =GET /api/v1/claude-sessions= lists local Claude Code session JSON
+- Useful for surfacing prior conversations as context inside the workbench
 
 * Known Limitations
 
 ** nostrdb Deletion
-nostrdb does not support deleting individual events. While deletion flags exist
-in the codebase, they are not actively used. For delete functionality:
-- Session-only removal (events remain in local DB)
+nostrdb does not support deleting individual events. Workarounds:
+- Session-only ignore (events stay in DB, UI hides them)
 - NIP-09 deletion requests (network signal only)
+- Full purge + selective reingest from JSONL backup
 
-See =docs/nostrdb-deletion-architecture.org= for details.
+See =docs/nostrdb-deletion-architecture.org=.
+
+** Bulk Ingest Throughput
+=sync_embeddings()= per-event can overwhelm the sidecar around ~350 events.
+Tracked separately; batching is the planned fix.
 
 ** ncryptsec Compatibility
-NIP-49 decryption works with test vectors but may have compatibility issues
-with some external implementations.
+NIP-49 decryption works against the official test vectors but may show edge
+cases with some external implementations.
 
 * Running the Application
 
-#+BEGIN_SRC bash
-# Run TUI (auto-detects local relay at ws://localhost:3334)
+#+begin_src bash
+# Full stack (sidecar + engine)
+./start.sh
+
+# Full stack + web dev server
+./start.sh --dev
+
+# Engine only
+cargo run -- -c config.toml
+
+# TUI
 cargo run --features tui --bin nostr-tree
 
-# With custom relays (disables local relay auto-detection)
-cargo run --features tui --bin nostr-tree -- --relay wss://relay.example.com
-
-# Multiple custom relays
-cargo run --features tui --bin nostr-tree -- \
-    --relay wss://relay1.example.com \
-    --relay wss://relay2.example.com
-
-# Local relay only (offline/testing mode)
-cargo run --features tui --bin nostr-tree -- --relay ws://localhost:3334
-
-# Purge local database (events will be re-fetched from relays)
-cargo run --features tui --bin nostr-tree -- --purge-db -y
-
-# Purge and start with empty feed (no relay fetching)
-cargo run --features tui --bin nostr-tree -- --purge-db -y --policy local_only
-
-# Purge database AND clear identity from OS keyring
-cargo run --features tui --bin nostr-tree -- --purge-db --purge-identity -y
-
-# Run tests
-cargo test --features tui
-#+END_SRC
+# Tests
+cargo test
+#+end_src
