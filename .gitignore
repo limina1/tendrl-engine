@@ -19,6 +19,15 @@ ndb/
 # Reference projects (not part of this repo)
 /notedeck/
 /notedeck-compose/
+/reference/
+/nips/nips/
+
+# Local content and data exports
+/knowledgebase/
+/tendrl-export-*.jsonl
+
+# Local Claude state
+/.claude/
 
 # Web UI
 web/node_modules/

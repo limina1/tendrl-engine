@@ -1,40 +1,55 @@
-# tendrl-engine configuration
-# Run with: cargo run -- -c config.toml
+[embedding]
+backend = "python"
+dimensions = 384
+enabled = true
+model = "all-MiniLM-L6-v2"
+sidecar_url = "http://localhost:3031"
 
 [identity]
+assistant = "npub1upulrz5tvvphu37c5ygs8xc6xpg30yds799dzspey7rsvrpgyzdqa8r477"
 pubkey = "npub1m3xdppkd0njmrqe2ma8a6ys39zvgp5k8u22mev8xsnqp4nh80srqhqa5sf"
+
+[network]
+mode = "online"
 
 [relay]
 timeout_ms = 15000
 
-# General relays — profile info, contacts, relay lists
+[relay.fetch]
+kinds = [
+    0,
+    1111,
+    30040,
+    30041,
+    30023,
+    30818,
+    30817,
+    9802,
+]
+urls = [
+    "ws://localhost:3334",
+    "wss://spatia-arcana.com",
+    "wss://theforest.nostr1.com",
+    "wss://relay.damus.io",
+]
+
 [relay.general]
+kinds = [
+    0,
+    3,
+    10002,
+    30023,
+    30818,
+    30817,
+]
 urls = [
     "wss://relay.damus.io",
     "wss://nos.lol",
-    "wss://relay.nostr.band",
+    "wss://theforest.nostr1.com",
 ]
-kinds = [0, 3, 10002, 30023, 30818, 30817]
 
-# Publish relays — where your events get pushed
 [relay.publish]
 urls = [
     "ws://localhost:3334",
     "wss://relay.damus.io",
 ]
-
-# Fetch relays — where to pull publications and sections from
-[relay.fetch]
-urls = [
-    "ws://localhost:3334",
-    "wss://relay.noswhere.com",
-    "wss://relay.damus.io",
-]
-kinds = [0, 30040, 30041, 30023, 30818, 30817, 9802]
-
-[embedding]
-enabled = true
-backend = "python"                    # "python" or "onnx" (--features onnx)
-sidecar_url = "http://localhost:3031"
-model = "all-MiniLM-L6-v2"
-dimensions = 384
