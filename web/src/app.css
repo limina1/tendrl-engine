@@ -1,44 +1,26 @@
-:root {
-	--bg: #fafafa;
-	--bg-surface: #ffffff;
-	--bg-edit: #fffbeb;
-	--fg: #1a1a1a;
-	--fg-muted: #6b7280;
-	--accent: #3b82f6;
-	--border: #e5e7eb;
-	--user-bg: #eff6ff;
-	--assistant-bg: #f3f4f6;
-	--font-sans: system-ui, -apple-system, sans-serif;
-	--font-mono: ui-monospace, 'Cascadia Code', 'Fira Code', monospace;
-	--radius: 8px;
-	--modified-bg: #fef3c7;
-	--modified-fg: #92400e;
-	--modified-border: #fcd34d;
-	--badge-synced: #22c55e;
-	--badge-modified: #eab308;
-	--badge-chat: #f97316;
-	--badge-readonly: #3b82f6;
-}
+/* Iceberg compat shim — maps the legacy token names used across
+   existing Svelte components onto the iceberg dark palette defined
+   in lib/styles/tokens.css. New components should consume iceberg
+   tokens directly (--base*, --panel-border, --t-*, --r-*, etc). */
 
-@media (prefers-color-scheme: dark) {
-	:root {
-		--bg: #0f0f0f;
-		--bg-surface: #1a1a1a;
-		--bg-edit: #1c1a0f;
-		--fg: #e5e5e5;
-		--fg-muted: #9ca3af;
-		--accent: #60a5fa;
-		--border: #2e2e2e;
-		--user-bg: #1e293b;
-		--assistant-bg: #1f1f1f;
-		--modified-bg: #292524;
-		--modified-fg: #fcd34d;
-		--modified-border: #44403c;
-		--badge-synced: #4ade80;
-		--badge-modified: #facc15;
-		--badge-chat: #fb923c;
-		--badge-readonly: #60a5fa;
-	}
+:root {
+	--bg-surface: var(--base1);
+	--bg-edit: rgba(233, 177, 137, 0.08);
+	--fg-muted: var(--base6);
+	--accent: var(--blue);
+	--border: var(--panel-border);
+	--user-bg: rgba(132, 160, 198, 0.08);
+	--assistant-bg: var(--base1);
+	--radius: var(--r-md);
+
+	--modified-bg: rgba(226, 164, 120, 0.12);
+	--modified-fg: var(--orange);
+	--modified-border: var(--orange);
+
+	--badge-synced: var(--green);
+	--badge-modified: var(--yellow);
+	--badge-chat: var(--orange);
+	--badge-readonly: var(--blue);
 }
 
 *,
@@ -49,12 +31,9 @@
 	padding: 0;
 }
 
-html, body {
+html,
+body {
 	height: 100%;
-	font-family: var(--font-sans);
-	background: var(--bg);
-	color: var(--fg);
-	-webkit-font-smoothing: antialiased;
 }
 
 button {
@@ -62,16 +41,17 @@ button {
 	cursor: pointer;
 	border: 1px solid var(--border);
 	border-radius: var(--radius);
-	padding: 6px 14px;
-	background: var(--bg-surface);
+	padding: 4px 10px;
+	background: transparent;
 	color: var(--fg);
-	font-size: 0.85rem;
+	font-size: var(--t-sm);
 	white-space: nowrap;
-	transition: background 0.15s;
+	transition: background 0.15s, border-color 0.15s;
 }
 
 button:hover {
-	background: var(--border);
+	background: var(--base1);
+	border-color: var(--base4);
 }
 
 button:disabled {
@@ -80,13 +60,15 @@ button:disabled {
 }
 
 button.primary {
-	background: var(--accent);
-	color: white;
-	border-color: var(--accent);
+	background: var(--dark-blue);
+	color: var(--base8);
+	border-color: var(--dark-blue);
 }
 
 button.primary:hover {
-	opacity: 0.9;
+	background: var(--blue);
+	border-color: var(--blue);
+	opacity: 1;
 }
 
 textarea {
@@ -94,9 +76,9 @@ textarea {
 	font-size: inherit;
 	border: 1px solid var(--border);
 	border-radius: var(--radius);
-	background: var(--bg-surface);
+	background: var(--base0);
 	color: var(--fg);
-	padding: 10px 12px;
+	padding: 8px 10px;
 	resize: none;
 	outline: none;
 }
@@ -110,9 +92,9 @@ input {
 	font-size: inherit;
 	border: 1px solid var(--border);
 	border-radius: var(--radius);
-	background: var(--bg-surface);
+	background: var(--base0);
 	color: var(--fg);
-	padding: 8px 12px;
+	padding: 6px 10px;
 	outline: none;
 }
 

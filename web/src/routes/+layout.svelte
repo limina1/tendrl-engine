@@ -1,5 +1,7 @@
 <script lang="ts">
+	import '$lib/styles/tokens.css';
 	import '../app.css';
+	import { page } from '$app/state';
 	import { createAppState } from '$lib/state.svelte';
 	import WorkbenchToolbar from '$lib/components/WorkbenchToolbar.svelte';
 	import PanelFrame from '$lib/components/PanelFrame.svelte';
@@ -10,9 +12,11 @@
 
 	const app = createAppState();
 
+	const bare = $derived(page.url.pathname === '/design' || page.url.pathname.startsWith('/design/'));
+
 	let initialized = $state(false);
 	$effect(() => {
-		if (initialized) return;
+		if (initialized || bare) return;
 		initialized = true;
 		app.initialize();
 		const cleanup = app.startNetworkPoll();
@@ -20,6 +24,9 @@
 	});
 </script>
 
+{#if bare}
+	{@render children()}
+{:else}
 <div class="workbench">
 	<WorkbenchToolbar
 		syncMode={app.syncMode}
@@ -137,7 +144,9 @@
 	</div>
 </div>
 
-{#if app.jsonModalData}
+{/if}
+
+{#if !bare && app.jsonModalData}
 	<!-- svelte-ignore a11y_click_events_have_key_events -->
 	<div class="json-modal-backdrop" onclick={() => (app.jsonModalData = null)} role="presentation">
 		<div class="json-modal" onclick={(e) => e.stopPropagation()} role="dialog" tabindex="-1">
