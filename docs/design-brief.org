@@ -94,9 +94,12 @@ User has a topic in mind → searches by keyword, tag, or natural-language
 User starts a new publication → drags in existing sections, writes new ones,
 asks the LLM to help → previews → publishes.
 
-  - Pain points: this is the *least built-out* surface and the most important
-    one for the redesign. The =workbench-architecture.org= ASCII mockup is
-    the target.
+  - This is the *highest-leverage surface* and the one we have the most
+    specific direction on. *Read =docs/design-brief-compose.org=* for the
+    mode hierarchy (button / plain / WYSIWYG overlay / preview), the
+    plain-text-as-canonical principle, AsciiDoc as base case, the block
+    model (editable / imported / forked), and the Nostrdown citation
+    picker.
 
 ** 4. Manage identity, relays, and ignore list
 User logs in with an encrypted key (=ncryptsec=) → manages which relays they
