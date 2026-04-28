@@ -28,6 +28,7 @@ export type LeaderContext = {
 	navigateSlot: (dir: 1 | -1) => void;
 	setLayout: (name: string) => void;
 	toggleNetworkMode: () => void;
+	openSplitPicker: () => void;
 };
 
 export function buildLeaderRoot(ctx: LeaderContext): SubPrefix {
@@ -56,7 +57,7 @@ export function buildLeaderRoot(ctx: LeaderContext): SubPrefix {
 					l: { type: 'leaf', desc: 'focus right', category: 'Window', kind: 'client', run: () => ctx.navigateSlot(1) },
 					j: { type: 'leaf', desc: 'focus down', category: 'Window', kind: 'client', run: () => ctx.navigateSlot(1) },
 					k: { type: 'leaf', desc: 'focus up', category: 'Window', kind: 'client', run: () => ctx.navigateSlot(-1) },
-					s: { type: 'leaf', desc: 'split (deferred)', category: 'Window', kind: 'client', deferred: true, run: () => {} }
+					s: { type: 'leaf', desc: 'split (same-class h)', category: 'Window', kind: 'client', run: () => ctx.openSplitPicker() }
 				}
 			},
 			f: {
@@ -72,13 +73,9 @@ export function buildLeaderRoot(ctx: LeaderContext): SubPrefix {
 				type: 'prefix',
 				desc: 'layout',
 				children: {
-					h: { type: 'leaf', desc: 'home', category: 'Layout', kind: 'client', run: () => ctx.setLayout('home') },
-					r: { type: 'leaf', desc: 'read', category: 'Layout', kind: 'client', run: () => ctx.setLayout('read') },
-					w: { type: 'leaf', desc: 'write', category: 'Layout', kind: 'client', run: () => ctx.setLayout('write') },
-					t: { type: 'leaf', desc: 'triage', category: 'Layout', kind: 'client', run: () => ctx.setLayout('triage') },
+					b: { type: 'leaf', desc: 'base', category: 'Layout', kind: 'client', run: () => ctx.setLayout('base') },
 					c: { type: 'leaf', desc: 'chat', category: 'Layout', kind: 'client', run: () => ctx.setLayout('chat') },
-					z: { type: 'leaf', desc: 'zen', category: 'Layout', kind: 'client', run: () => ctx.setLayout('zen') },
-					s: { type: 'leaf', desc: 'save current', category: 'Layout', kind: 'client', run: () => {} }
+					s: { type: 'leaf', desc: 'save current (deferred)', category: 'Layout', kind: 'client', deferred: true, run: () => {} }
 				}
 			},
 			t: {

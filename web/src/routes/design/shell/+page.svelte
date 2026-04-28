@@ -33,95 +33,48 @@
 	const refsBuf: Buffer = { id: 'refs', kind: 'refs', label: 'refs' };
 	const kbBuf: Buffer = { id: 'kb', kind: 'knowledgebase', label: 'kb' };
 	const ignoredBuf: Buffer = { id: 'ignored', kind: 'ignored', label: 'ignored' };
-	// Reader placeholder — replaced as soon as a publication is opened.
-	const readerPlaceholder: Buffer = { id: 'reader:placeholder', kind: 'reader', label: 'reader', kicker: 'no publication' };
 
 	const openBuffers: OpenBuf[] = [
 		{ className: 'chat', buffer: chatBuf },
-		{ className: 'research', buffer: feedBuf },
+		// Work class — main content surface. Cycles via SPC b b: feed → reader
+		// → composer → ... Click a publication in the feed to spawn a reader
+		// that joins this cycle (replaces feed in the active leaf).
+		{ className: 'work', buffer: feedBuf },
 		{ className: 'work', buffer: composerBuf },
 		{ className: 'work', buffer: ignoredBuf },
+		// Research class — auxiliary tools (search, refs, kb).
 		{ className: 'research', buffer: searchBuf },
 		{ className: 'research', buffer: refsBuf },
 		{ className: 'research', buffer: kbBuf }
 	];
 
+	// One base layout: chat rail-left / work center / research rail-right. Each
+	// slot collapsible via SPC w c. Named "modes" are just slot-state combos the
+	// user produces interactively — no need for predefined layouts. A `chat`
+	// preset is kept since chat-wide-left is genuinely different geometry.
+	// Future: user-savable perspectives via `SPC l s` recalled via `SPC l <key>`.
 	const layouts: Record<string, LayoutConfig> = {
-		home: {
-			name: 'home',
-			desc: 'Home — feed in center for browsing. Chat and work as rails, ready to summon.',
+		base: {
+			name: 'base',
+			desc: 'Workbench — main content center (feed/reader/composer cycle), chat and research as rails.',
 			slots: {
 				left: { className: 'chat', state: 'rail', tree: { type: 'leaf', buffer: chatBuf } },
-				center: { className: 'research', state: 'open', tree: { type: 'leaf', buffer: feedBuf } },
-				right: { className: 'work', state: 'rail', tree: { type: 'leaf', buffer: composerBuf } }
-			}
-		},
-		read: {
-			name: 'read',
-			desc: 'Center reader wide. Sides collapsed to rails — ready to summon.',
-			slots: {
-				left: { className: 'chat', state: 'rail', tree: { type: 'leaf', buffer: chatBuf } },
-				center: { className: 'work', state: 'open', tree: { type: 'leaf', buffer: readerPlaceholder } },
+				center: { className: 'work', state: 'open', tree: { type: 'leaf', buffer: feedBuf } },
 				right: { className: 'research', state: 'rail', tree: { type: 'leaf', buffer: searchBuf } }
-			}
-		},
-		write: {
-			name: 'write',
-			desc: 'Composer in center. Search and refs h-split on the right for citation work.',
-			slots: {
-				left: { className: 'chat', state: 'rail', tree: { type: 'leaf', buffer: chatBuf } },
-				center: { className: 'work', state: 'open', tree: { type: 'leaf', buffer: composerBuf } },
-				right: {
-					className: 'research',
-					state: 'open',
-					tree: {
-						type: 'split',
-						orient: 'h',
-						children: [
-							{ type: 'leaf', buffer: searchBuf },
-							{ type: 'leaf', buffer: refsBuf }
-						]
-					}
-				}
-			}
-		},
-		triage: {
-			name: 'triage',
-			desc: 'Research on the left wide — feed h-split with search. Center holds the last reader.',
-			slots: {
-				left: {
-					className: 'research',
-					state: 'open',
-					tree: {
-						type: 'split',
-						orient: 'h',
-						children: [
-							{ type: 'leaf', buffer: feedBuf },
-							{ type: 'leaf', buffer: searchBuf }
-						]
-					}
-				},
-				center: { className: 'work', state: 'open', tree: { type: 'leaf', buffer: readerPlaceholder } }
 			}
 		},
 		chat: {
 			name: 'chat',
-			desc: 'Chat opened wide on the left. Work narrows to make room.',
+			desc: 'Chat wide-left preset. Work in center, research as rail.',
 			slots: {
 				left: { className: 'chat', state: 'open', tree: { type: 'leaf', buffer: chatBuf } },
-				center: { className: 'work', state: 'open', tree: { type: 'leaf', buffer: readerPlaceholder } }
-			}
-		},
-		zen: {
-			name: 'zen',
-			desc: 'Single-buffer mode. Sides hidden — typography opens up automatically.',
-			slots: {
-				center: { className: 'work', state: 'open', tree: { type: 'leaf', buffer: readerPlaceholder } }
+				center: { className: 'work', state: 'open', tree: { type: 'leaf', buffer: feedBuf } },
+				right: { className: 'research', state: 'rail', tree: { type: 'leaf', buffer: searchBuf } }
 			}
 		}
 	};
 
-	const store = new BufferStore(layouts, 'home');
+	const store = new BufferStore(layouts, 'base');
 	store.seed(openBuffers);
 	setActiveStore(store);
 
@@ -182,7 +135,11 @@
 	}
 
 	function selectBuffer(entry: OpenBuf) {
-		store.selectBuffer(entry);
+		if (mb.mode === 'split') {
+			store.splitFocused(entry.buffer, 'h');
+		} else {
+			store.selectBuffer(entry);
+		}
 		closeMinibuffer();
 	}
 
@@ -200,7 +157,9 @@
 		const source = mb.mode === 'recent' ? store.recentlyClosed : store.openBuffers;
 		const cls = store.focusedSlotClass();
 		const filtered =
-			mb.mode === 'class' && cls ? source.filter((e) => e.className === cls) : source;
+			(mb.mode === 'class' || mb.mode === 'split') && cls
+				? source.filter((e) => e.className === cls)
+				: source;
 		const q = mb.query.trim().toLowerCase();
 		if (!q) return filtered;
 		return filtered.filter(
@@ -410,7 +369,8 @@
 		toggleFocusedSlot: () => store.toggleFocusedSlot(),
 		navigateSlot: (dir) => store.navigateSlot(dir),
 		setLayout,
-		toggleNetworkMode
+		toggleNetworkMode,
+		openSplitPicker: () => openMinibuffer('split')
 	});
 
 	function openLeader() {
@@ -475,12 +435,16 @@
 		return parts.join('  ·  ');
 	});
 
-	const layoutOrder: string[] = ['home', 'read', 'write', 'triage', 'chat', 'zen'];
+	const layoutOrder: string[] = ['base', 'chat'];
 
 	const minibufferTitle = $derived.by(() => {
 		if (mb.mode === 'class') {
 			const cls = store.focusedSlotClass();
 			return `Switch buffer · ${cls ?? '?'} class · ${minibufferEntries.length} open`;
+		}
+		if (mb.mode === 'split') {
+			const cls = store.focusedSlotClass();
+			return `Split with · ${cls ?? '?'} class · ${minibufferEntries.length} open`;
 		}
 		if (mb.mode === 'global') return `Switch buffer · global · ${minibufferEntries.length} open`;
 		if (mb.mode === 'recent') return `Recently closed · ${minibufferEntries.length}`;
@@ -533,11 +497,10 @@
 
 		<div class="shell__body">
 			{#each store.positionOrder as pos (pos)}
-				{@const slot = store.currentLayout.slots[pos]}
-				{@const state = store.effectiveState(pos)}
-				{#if slot && state === 'open'}
+				{@const slot = store.slotFor(pos)}
+				{#if slot && slot.state === 'open'}
 					{@render windowSlot(pos, slot)}
-				{:else if slot && state === 'rail'}
+				{:else if slot && slot.state === 'rail'}
 					{@render railSlot(pos, slot)}
 				{/if}
 			{/each}
@@ -573,7 +536,7 @@
 			</div>
 			<div class="legend__item">
 				<div class="legend__h">Buffer classes</div>
-				<p><strong>chat</strong> = chat (singleton). <strong>work</strong> = reader, composer, profile, ignored. <strong>research</strong> = feed, knowledgebase, search, refs.</p>
+				<p><strong>chat</strong> = chat (singleton). <strong>work</strong> = main content surface — feed, reader, composer, profile, ignored. Cycle via <span class="kbd">SPC b b</span> to move through read/write/feed modes. <strong>research</strong> = auxiliary tools — search, refs, knowledgebase.</p>
 			</div>
 			<div class="legend__item">
 				<div class="legend__h">Class transitions</div>
@@ -660,23 +623,12 @@
 		<div class="pane {isRoot ? 'pane--root' : ''}">
 			<div class="pane__head">
 				<span class="cls cls--{slot.className}">{slot.className}</span>
-				{#if isRoot}
-					{@const lf = store.effectiveLeaf(pos, slot)}
-					<span class="pane__name">{lf?.label ?? node.buffer.label}</span>
-					{#if lf?.kicker ?? node.buffer.kicker}
-						<span class="pane__kicker">· {lf?.kicker ?? node.buffer.kicker}</span>
-					{/if}
-					{#if lf?.modified ?? node.buffer.modified}
-						<span class="pane__mod" title="Modified">●</span>
-					{/if}
-				{:else}
-					<span class="pane__name">{node.buffer.label}</span>
-					{#if node.buffer.kicker}
-						<span class="pane__kicker">· {node.buffer.kicker}</span>
-					{/if}
-					{#if node.buffer.modified}
-						<span class="pane__mod" title="Modified">●</span>
-					{/if}
+				<span class="pane__name">{node.buffer.label}</span>
+				{#if node.buffer.kicker}
+					<span class="pane__kicker">· {node.buffer.kicker}</span>
+				{/if}
+				{#if node.buffer.modified}
+					<span class="pane__mod" title="Modified">●</span>
 				{/if}
 				<div class="pane__sp"></div>
 				{#if isRoot}
@@ -690,8 +642,8 @@
 					>×</button>
 				{/if}
 			</div>
-			<div class="pane__body pane__body--{isRoot ? (store.effectiveLeaf(pos, slot)?.kind ?? node.buffer.kind) : node.buffer.kind}">
-				{@render bufferContent(isRoot ? (store.effectiveLeaf(pos, slot) ?? node.buffer) : node.buffer)}
+			<div class="pane__body pane__body--{node.buffer.kind}">
+				{@render bufferContent(node.buffer)}
 			</div>
 		</div>
 	{:else}
@@ -905,7 +857,7 @@
 		</div>
 		<div class="mb__input-row">
 			<span class="mb__title">{minibufferTitle}</span>
-			<span class="mb__prompt">{mb.mode === 'global' ? 'B>' : mb.mode === 'recent' ? 'r>' : mb.mode === 'mx' ? 'M-x' : 'b>'}</span>
+			<span class="mb__prompt">{mb.mode === 'global' ? 'B>' : mb.mode === 'recent' ? 'r>' : mb.mode === 'mx' ? 'M-x' : mb.mode === 'split' ? 's>' : 'b>'}</span>
 			<!-- svelte-ignore a11y_autofocus -->
 			<input
 				class="mb__input"
@@ -914,7 +866,7 @@
 				autofocus
 				placeholder={mb.mode === 'mx' ? 'command…' : 'filter…'}
 			/>
-			<span class="mb__hint">↑↓ select · enter {mb.mode === 'mx' ? 'execute' : 'switch'} · esc close</span>
+			<span class="mb__hint">↑↓ select · enter {mb.mode === 'mx' ? 'execute' : mb.mode === 'split' ? 'split' : 'switch'} · esc close</span>
 		</div>
 	</div>
 {/snippet}

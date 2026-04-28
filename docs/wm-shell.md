@@ -1,7 +1,7 @@
 #+TITLE: WM Shell — Active Spec
 #+SUBTITLE: Scoped working spec for the tiling-WM web UI redesign
 #+DATE: 2026-04-28
-#+STATUS: WORKING — currently building SPC leader
+#+STATUS: WORKING — Phase 1.5 (layout simplification + split-create)
 
 * Scope
 
@@ -13,6 +13,55 @@ For high-level context (what tendrl is, why a redesign, the engine/
 interface separation, the data model), read =docs/design-brief.org=.
 This doc is the working spec; the brief is the orientation packet.
 
+* Roadmap
+
+Tick boxes as work lands; don't delete the line. The roadmap is the
+running ledger of what was promised vs what shipped.
+
+** Phase 0 — Artboard scaffolding [X]
+
+- [X] Class-typed slots, layouts, modal editing, leader popup, M-x
+- [X] Mock buffers prove out the WM mechanics
+
+** Phase 1 — Wire to real engine data [X] (commit ~f5d6cc3~)
+
+- [X] BufferStore, registry, BufferRenderer
+- [X] Per-kind renderers: Chat, Feed, Reader (multi-instance), Search, Profile, Composer (singleton), Ignored, Knowledgebase, Refs
+- [X] AppState init lifted for =/design/*=; JSON modal scope fixed
+- [X] Engine commands: =SPC t n=, M-x show-event-json, login/logout
+- [X] =home= layout default (chat rail + feed center + work rail)
+
+** Phase 1.5 — Layout simplification + split-create [ ] (current)
+
+- [X] Trim named layouts to one base (=chat= / =work= / =research=, all collapsible) + =chat= preset; defer the named-layout list to a user-savable-perspectives feature
+- [X] Wire =SPC w s= same-class split-create (horizontal split with class-scoped buffer picker; new leaf takes focus)
+- [X] Intra-slot leaf navigation (=j= / =k= cycles between leaves when slot has multiple; focuses one buffer at a time)
+- [X] Class taxonomy revision: =feed= moves from =research= to =work= so feed/reader/composer cycle the same center slot (the "main content surface"). Research class is now auxiliary tools only (search/refs/kb).
+
+** Phase 2 — Promote to root [ ]
+
+- [ ] Replace =+layout.svelte= three-column chrome with the WM shell
+- [ ] Existing routes (=/=, =/p/=, =/compose=, =/profile/=, =/ignored=) deleted or made redirects
+- [ ] AppState shrink — remove dead per-route fields once renderers fully own state
+
+** Polish (parallel) [ ]
+
+- [ ] Free-text find prompt for =SPC f e/d/p=
+- [ ] Statusbar pill chrome (segmented mode-line with =pill--online= / =dot--fetching=)
+- [ ] Rail keybinding glyphs (=rail-key= chips)
+- [ ] Scroll position retention across layout switches
+- [ ] Cross-tab =BroadcastChannel= sync for buffer list
+
+** Deferred indefinitely (low priority / open) [ ]
+
+- [ ] Timeout-based leader popup suppression (Doom muscle-memory mode)
+- [ ] Sub-prefix hover/help discoverability
+- [ ] User-customizable prefix tree
+- [ ] Multi-instance composer — likely unnecessary: a draft is itself a list of kind:30041 sections, so the composer already organizes "multiple drafts" internally
+- [ ] Layout persistence backend (localStorage vs per-identity Nostr replaceable event)
+- [ ] Deep-link routing (=?event=<naddr>=)
+- [ ] =Rail.svelte= naming clash resolution
+
 * Resolved decisions
 
 ** Class-typed slots
@@ -20,8 +69,12 @@ This doc is the working spec; the brief is the orientation packet.
 | Class      | Buffer types                                              | Splits?             |
 |------------+-----------------------------------------------------------+---------------------|
 | =chat=     | chat                                                      | no — singleton      |
-| =work=     | reader, composer, profile, ignored                        | yes (internal only) |
-| =research= | feed, knowledgebase, search, refs/citation                | yes (internal only) |
+| =work=     | feed, reader, composer, profile, ignored                  | yes (=SPC w s=)     |
+| =research= | search, knowledgebase, refs/citation                      | yes (=SPC w s=)     |
+
+*Note (2026-04-28):* feed moved from =research= to =work= so the "main
+content surface" cycles feed → reader → composer in one slot. Research
+is now auxiliary tools (search / kb / refs) only.
 
 - One slot per class per frame.
 - Cross-class splits forbidden.
@@ -33,10 +86,17 @@ This doc is the working spec; the brief is the orientation packet.
 
 ** Layouts
 
-Five named: =read=, =write=, =triage=, =chat=, =zen=. *Layout-scoped*
-buffer state — switching from =write= to =read= and back restores the
-write layout's last buffers (Emacs perspectives style, not VS Code
-view-mode style).
+*Updated 2026-04-28:* the original five-layout list (=read=, =write=,
+=triage=, =chat=, =zen=) collapsed to **one base layout** (chat /
+work / research, all collapsible) plus =chat= as a preset. Reasoning:
+home/read/write are not different *arrangements*, they're different
+*content* in the same arrangement — =SPC b b= already swaps reader↔
+composer without needing a layout switch. Named-layout recall (=SPC l
+<key>=) becomes a user-savable-perspectives feature, deferred.
+
+Layout-scoped buffer state still applies *if/when* user-saved perspectives
+ship: switching back to a named perspective restores its last buffers
+(Emacs perspectives style, not VS Code view-mode style).
 
 ** Frames
 
@@ -195,23 +255,9 @@ SPC
 
 * Deferred (within this project)
 
-These are part of the WM shell work but punted to a later pass:
-
-- *Real keybindings.* Artboard uses click-driven button stand-ins.
-  Production needs a real keybinding dispatcher with proper precedence.
-- *Drag-split / dynamic split create.* Splits are layout-defined for
-  now; user can't create a new same-class split interactively.
-- *Buffer-list buffer.* Emacs has both transient =C-x b= switch and
-  persistent =*Buffer List*=. We have the first; the second is deferred.
-- *Layout persistence backend.* localStorage vs per-identity Nostr
-  replaceable event. localStorage is fine to start.
-- *Deep-link routing.* =?event=<naddr>= query params for sharing
-  links that auto-open a buffer.
-- *Migration plan* from current =+layout.svelte= to the WM shell
-  incrementally — currently the shell only lives at =/design/shell=.
-- *=Rail.svelte= naming clash.* Existing component is a VS-Code-style
-  activity bar; the WM rail is the closed-state strip. Rename or pick a
-  new name when extracting components from the artboard.
+See the [[*Roadmap][Roadmap]] section above for the canonical list with
+checkboxes. Items are tracked there as Phase 1.5 / Phase 2 / Polish /
+Deferred-indefinitely.
 
 * Out of scope (broader product roadmap)
 

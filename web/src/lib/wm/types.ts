@@ -28,7 +28,7 @@ export type LayoutConfig = {
 
 export type OpenBuf = { className: ClassName; buffer: Buffer };
 
-export type MinibufferMode = 'closed' | 'class' | 'global' | 'recent' | 'mx';
+export type MinibufferMode = 'closed' | 'class' | 'global' | 'recent' | 'mx' | 'split';
 
 export type CommandCat =
 	| 'Buffer'

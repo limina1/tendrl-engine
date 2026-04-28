@@ -23,12 +23,16 @@ export type BufferKindEntry = {
 
 const entries: BufferKindEntry[] = [
 	{ kind: 'chat', className: 'chat', component: ChatBuffer, defaultLabel: 'chat' },
-	{ kind: 'feed', className: 'research', component: FeedBuffer, defaultLabel: 'feed' },
-	{ kind: 'search', className: 'research', component: SearchBuffer, defaultLabel: 'search' },
+	// Work class is the "main content surface" — feed, reader, composer all
+	// cycle the center slot. The user moves through read/write/feed as
+	// modes of the same window.
+	{ kind: 'feed', className: 'work', component: FeedBuffer, defaultLabel: 'feed' },
 	{ kind: 'reader', className: 'work', component: ReaderBuffer, defaultLabel: 'reader' },
-	{ kind: 'profile', className: 'work', component: ProfileBuffer, defaultLabel: 'profile' },
 	{ kind: 'composer', className: 'work', component: ComposerBuffer, defaultLabel: 'composer' },
+	{ kind: 'profile', className: 'work', component: ProfileBuffer, defaultLabel: 'profile' },
 	{ kind: 'ignored', className: 'work', component: IgnoredBuffer, defaultLabel: 'ignored' },
+	// Research class is auxiliary tools that support the work surface.
+	{ kind: 'search', className: 'research', component: SearchBuffer, defaultLabel: 'search' },
 	{ kind: 'knowledgebase', className: 'research', component: KnowledgebaseBuffer, defaultLabel: 'kb' },
 	{ kind: 'refs', className: 'research', component: RefsBuffer, defaultLabel: 'refs' }
 ];

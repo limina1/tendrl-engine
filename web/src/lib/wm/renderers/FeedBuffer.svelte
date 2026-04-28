@@ -22,9 +22,8 @@
 
 	function openPub(pub: { addr: { kind: number; pubkey: string; d_tag: string }; title: string | null; section_count: number }) {
 		const id = `reader:${pub.addr.kind}:${pub.addr.pubkey}:${pub.addr.d_tag}`;
-		// Switch to read layout first so the reader lands in a wide-center work slot,
-		// then open the buffer (setLayout resets leaf overrides, so order matters).
-		store.setLayout('read');
+		// openBuffer handles slot routing: opens the reader in the work slot
+		// (auto-expanding rail if needed). Layout stays on `base`.
 		store.openBuffer({
 			className: 'work',
 			buffer: {
