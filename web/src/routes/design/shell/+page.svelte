@@ -1,67 +1,68 @@
 <script lang="ts">
-	type SlotState = 'open' | 'rail' | 'hidden';
-	type ClassName = 'chat' | 'work' | 'research';
-	type Position = 'left' | 'center' | 'right';
+	import type {
+		Buffer,
+		ClassName,
+		Command,
+		CommandCat,
+		LayoutConfig,
+		MinibufferMode,
+		OpenBuf,
+		Position,
+		Slot,
+		SlotState,
+		SplitNode
+	} from '$lib/wm/types';
+	import {
+		buildLeaderRoot,
+		resolveLeaderNode,
+		type LeaderNode,
+		type SubPrefix
+	} from '$lib/wm/leader';
+	import { BufferStore, setActiveStore } from '$lib/wm/buffer-store.svelte';
+	import BufferRenderer from '$lib/wm/BufferRenderer.svelte';
+	import { rendererFor } from '$lib/wm/registry';
+	import { getAppState } from '$lib/state.svelte';
 
-	type Buffer = {
-		id: string;
-		kind: string;
-		label: string;
-		kicker?: string;
-		modified?: boolean;
-	};
+	const app = getAppState();
 
-	type SplitNode =
-		| { type: 'leaf'; buffer: Buffer }
-		| { type: 'split'; orient: 'h' | 'v'; children: SplitNode[] };
+	// Singleton buffers seeded on every frame.
+	const chatBuf: Buffer = { id: 'chat', kind: 'chat', label: 'chat' };
+	const feedBuf: Buffer = { id: 'feed', kind: 'feed', label: 'feed' };
+	const composerBuf: Buffer = { id: 'composer:current', kind: 'composer', label: 'composer', kicker: 'untitled draft' };
+	const searchBuf: Buffer = { id: 'search:default', kind: 'search', label: 'search' };
+	const refsBuf: Buffer = { id: 'refs', kind: 'refs', label: 'refs' };
+	const kbBuf: Buffer = { id: 'kb', kind: 'knowledgebase', label: 'kb' };
+	const ignoredBuf: Buffer = { id: 'ignored', kind: 'ignored', label: 'ignored' };
+	// Reader placeholder — replaced as soon as a publication is opened.
+	const readerPlaceholder: Buffer = { id: 'reader:placeholder', kind: 'reader', label: 'reader', kicker: 'no publication' };
 
-	type Slot = {
-		className: ClassName;
-		state: SlotState;
-		tree: SplitNode;
-	};
-
-	type LayoutConfig = {
-		name: string;
-		desc: string;
-		slots: Partial<Record<Position, Slot>>;
-	};
-
-	// Class-typed buffers
-	const composer: Buffer = { id: 'b1', kind: 'composer', label: 'composer', kicker: 'untitled draft', modified: true };
-	const reader: Buffer = { id: 'b2', kind: 'reader', label: 'reader', kicker: 'ring signatures · §3' };
-	const reader2: Buffer = { id: 'b3', kind: 'reader', label: 'reader', kicker: 'nostrdown spec · §1' };
-	const profile: Buffer = { id: 'b4', kind: 'profile', label: 'profile', kicker: 'fiatjaf' };
-	const chatBuf: Buffer = { id: 'b5', kind: 'chat', label: 'chat', kicker: 'session: drift on citation' };
-	const search1: Buffer = { id: 'b6', kind: 'search', label: 'search', kicker: '~zettel composition' };
-	const search2: Buffer = { id: 'b7', kind: 'search', label: 'search', kicker: 'kind:30041 by:fiatjaf' };
-	const refs: Buffer = { id: 'b8', kind: 'refs', label: 'refs', kicker: '4 citations · ring sigs' };
-	const feed: Buffer = { id: 'b9', kind: 'feed', label: 'feed', kicker: '127 publications' };
-	const kb: Buffer = { id: 'b10', kind: 'knowledgebase', label: 'kb', kicker: '34 imported docs' };
-
-	// Open-buffer registry — all currently open buffers in this frame, with their class.
-	type OpenBuf = { className: ClassName; buffer: Buffer };
 	const openBuffers: OpenBuf[] = [
 		{ className: 'chat', buffer: chatBuf },
-		{ className: 'work', buffer: reader },
-		{ className: 'work', buffer: reader2 },
-		{ className: 'work', buffer: composer },
-		{ className: 'work', buffer: profile },
-		{ className: 'research', buffer: feed },
-		{ className: 'research', buffer: kb },
-		{ className: 'research', buffer: search1 },
-		{ className: 'research', buffer: search2 },
-		{ className: 'research', buffer: refs }
+		{ className: 'research', buffer: feedBuf },
+		{ className: 'work', buffer: composerBuf },
+		{ className: 'work', buffer: ignoredBuf },
+		{ className: 'research', buffer: searchBuf },
+		{ className: 'research', buffer: refsBuf },
+		{ className: 'research', buffer: kbBuf }
 	];
 
 	const layouts: Record<string, LayoutConfig> = {
+		home: {
+			name: 'home',
+			desc: 'Home — feed in center for browsing. Chat and work as rails, ready to summon.',
+			slots: {
+				left: { className: 'chat', state: 'rail', tree: { type: 'leaf', buffer: chatBuf } },
+				center: { className: 'research', state: 'open', tree: { type: 'leaf', buffer: feedBuf } },
+				right: { className: 'work', state: 'rail', tree: { type: 'leaf', buffer: composerBuf } }
+			}
+		},
 		read: {
 			name: 'read',
 			desc: 'Center reader wide. Sides collapsed to rails — ready to summon.',
 			slots: {
 				left: { className: 'chat', state: 'rail', tree: { type: 'leaf', buffer: chatBuf } },
-				center: { className: 'work', state: 'open', tree: { type: 'leaf', buffer: reader } },
-				right: { className: 'research', state: 'rail', tree: { type: 'leaf', buffer: search1 } }
+				center: { className: 'work', state: 'open', tree: { type: 'leaf', buffer: readerPlaceholder } },
+				right: { className: 'research', state: 'rail', tree: { type: 'leaf', buffer: searchBuf } }
 			}
 		},
 		write: {
@@ -69,7 +70,7 @@
 			desc: 'Composer in center. Search and refs h-split on the right for citation work.',
 			slots: {
 				left: { className: 'chat', state: 'rail', tree: { type: 'leaf', buffer: chatBuf } },
-				center: { className: 'work', state: 'open', tree: { type: 'leaf', buffer: composer } },
+				center: { className: 'work', state: 'open', tree: { type: 'leaf', buffer: composerBuf } },
 				right: {
 					className: 'research',
 					state: 'open',
@@ -77,8 +78,8 @@
 						type: 'split',
 						orient: 'h',
 						children: [
-							{ type: 'leaf', buffer: search1 },
-							{ type: 'leaf', buffer: refs }
+							{ type: 'leaf', buffer: searchBuf },
+							{ type: 'leaf', buffer: refsBuf }
 						]
 					}
 				}
@@ -95,12 +96,12 @@
 						type: 'split',
 						orient: 'h',
 						children: [
-							{ type: 'leaf', buffer: feed },
-							{ type: 'leaf', buffer: search1 }
+							{ type: 'leaf', buffer: feedBuf },
+							{ type: 'leaf', buffer: searchBuf }
 						]
 					}
 				},
-				center: { className: 'work', state: 'open', tree: { type: 'leaf', buffer: reader } }
+				center: { className: 'work', state: 'open', tree: { type: 'leaf', buffer: readerPlaceholder } }
 			}
 		},
 		chat: {
@@ -108,50 +109,26 @@
 			desc: 'Chat opened wide on the left. Work narrows to make room.',
 			slots: {
 				left: { className: 'chat', state: 'open', tree: { type: 'leaf', buffer: chatBuf } },
-				center: { className: 'work', state: 'open', tree: { type: 'leaf', buffer: reader } }
+				center: { className: 'work', state: 'open', tree: { type: 'leaf', buffer: readerPlaceholder } }
 			}
 		},
 		zen: {
 			name: 'zen',
 			desc: 'Single-buffer mode. Sides hidden — typography opens up automatically.',
 			slots: {
-				center: { className: 'work', state: 'open', tree: { type: 'leaf', buffer: reader } }
+				center: { className: 'work', state: 'open', tree: { type: 'leaf', buffer: readerPlaceholder } }
 			}
 		}
 	};
 
-	let currentLayoutName = $state<keyof typeof layouts>('write');
-	let overrides = $state<Partial<Record<Position, SlotState>>>({});
-	let centerLeaf = $state<Buffer | null>(null);
-	let leftLeaf = $state<Buffer | null>(null);
-	let rightLeaf = $state<Buffer | null>(null);
+	const store = new BufferStore(layouts, 'home');
+	store.seed(openBuffers);
+	setActiveStore(store);
 
-	let focusedSlot = $state<Position>('center');
-	let prefix = $state<'idle' | 'C-x' | 'SPC' | 'SPC w' | 'SPC b'>('idle');
-	let flashSlot = $state<Position | null>(null);
+	let prefixPath = $state<string[]>([]);
 	let mode = $state<'normal' | 'insert'>('normal');
+	let composerExtraBlocks = $state(0);
 	let slotBodyEls: Partial<Record<Position, HTMLElement>> = {};
-
-	type MinibufferMode = 'closed' | 'class' | 'global' | 'recent' | 'mx';
-
-	type CommandCat =
-		| 'Buffer'
-		| 'Window'
-		| 'Layout'
-		| 'Navigation'
-		| 'Compose'
-		| 'Application'
-		| 'Configuration'
-		| 'Versioning'
-		| 'View';
-
-	type Command = {
-		id: string;
-		name: string;
-		description: string;
-		category: CommandCat;
-		keybinding?: string;
-	};
 
 	// Representative subset — production reads from src/tree/command.rs (61 commands).
 	const commands: Command[] = [
@@ -192,104 +169,36 @@
 		query: '',
 		selectedIndex: 0
 	});
-	const recentlyClosed: OpenBuf[] = [
+
+	store.recentlyClosed = [
 		{ className: 'work', buffer: { id: 'r1', kind: 'reader', label: 'reader', kicker: 'NIP-23 long-form · §2' } },
 		{ className: 'research', buffer: { id: 'r2', kind: 'search', label: 'search', kicker: 'by:fiatjaf since:30d' } }
 	];
 
-	const layout = $derived(layouts[currentLayoutName]);
-
-	function effectiveState(pos: Position): SlotState | null {
-		const slot = layout.slots[pos];
-		if (!slot) return null;
-		return overrides[pos] ?? slot.state;
-	}
-
-	function effectiveLeaf(pos: Position, slot: Slot): Buffer | null {
-		// If the user has switched a buffer in this slot during this session, return that.
-		const override = pos === 'center' ? centerLeaf : pos === 'left' ? leftLeaf : rightLeaf;
-		if (override) return override;
-		const t = slot.tree;
-		if (t.type === 'leaf') return t.buffer;
-		return t.children[0].type === 'leaf' ? t.children[0].buffer : null;
-	}
-
-	function setLayout(name: keyof typeof layouts) {
-		currentLayoutName = name;
-		overrides = {};
-		centerLeaf = null;
-		leftLeaf = null;
-		rightLeaf = null;
+	function setLayout(name: string) {
+		store.setLayout(name);
+		composerExtraBlocks = 0;
 		closeMinibuffer();
-	}
-
-	function toggleSlot(pos: Position) {
-		const cur = effectiveState(pos);
-		if (cur === 'open') overrides = { ...overrides, [pos]: 'rail' };
-		else if (cur === 'rail') overrides = { ...overrides, [pos]: 'open' };
-	}
-
-	function focusSlot(pos: Position) {
-		focusedSlot = pos;
-	}
-
-	function findSlotForClass(cls: ClassName): Position | null {
-		for (const pos of positionOrder) {
-			const s = layout.slots[pos];
-			if (s && s.className === cls) return pos;
-		}
-		return null;
-	}
-
-	function setLeaf(pos: Position, buf: Buffer) {
-		if (pos === 'center') centerLeaf = buf;
-		else if (pos === 'left') leftLeaf = buf;
-		else rightLeaf = buf;
-	}
-
-	function flash(pos: Position) {
-		flashSlot = pos;
-		setTimeout(() => {
-			flashSlot = null;
-		}, 700);
 	}
 
 	function selectBuffer(entry: OpenBuf) {
-		const target = findSlotForClass(entry.className);
-		if (!target) {
-			// No slot of that class in current layout. Mock: do nothing (would need a "create slot" affordance).
-			closeMinibuffer();
-			return;
-		}
-		// Restore slot if collapsed.
-		const cur = effectiveState(target);
-		if (cur === 'rail' || cur === 'hidden') {
-			overrides = { ...overrides, [target]: 'open' };
-		}
-		setLeaf(target, entry.buffer);
-		focusedSlot = target;
+		store.selectBuffer(entry);
 		closeMinibuffer();
-		flash(target);
 	}
 
 	function openMinibuffer(mode: MinibufferMode) {
 		mb = { mode, query: '', selectedIndex: 0 };
-		prefix = 'idle';
+		prefixPath = [];
 	}
 
 	function closeMinibuffer() {
 		mb = { mode: 'closed', query: '', selectedIndex: 0 };
 	}
 
-	function focusedSlotClass(): ClassName | null {
-		const s = layout.slots[focusedSlot];
-		return s ? s.className : null;
-	}
-
 	const minibufferEntries = $derived.by<OpenBuf[]>(() => {
 		if (mb.mode === 'closed' || mb.mode === 'mx') return [];
-		const source = mb.mode === 'recent' ? recentlyClosed : openBuffers;
-		const cls = focusedSlotClass();
+		const source = mb.mode === 'recent' ? store.recentlyClosed : store.openBuffers;
+		const cls = store.focusedSlotClass();
 		const filtered =
 			mb.mode === 'class' && cls ? source.filter((e) => e.className === cls) : source;
 		const q = mb.query.trim().toLowerCase();
@@ -315,17 +224,46 @@
 	});
 
 	function executeCommand(cmd: Command) {
-		// Most commands are stubs in the artboard, but a few wire to real shell state.
-		if (cmd.id === 'tendrl-switch-buffer') openMinibuffer('class');
-		else if (cmd.id === 'tendrl-switch-buffer-global') openMinibuffer('global');
-		else if (cmd.id === 'tendrl-recent-buffer') openMinibuffer('recent');
-		else if (cmd.id === 'tendrl-toggle-rail') {
-			toggleSlot(focusedSlot);
-			closeMinibuffer();
-		} else {
-			// Stub: just close the minibuffer.
-			closeMinibuffer();
+		if (cmd.id === 'tendrl-switch-buffer') {
+			openMinibuffer('class');
+			return;
 		}
+		if (cmd.id === 'tendrl-switch-buffer-global') {
+			openMinibuffer('global');
+			return;
+		}
+		if (cmd.id === 'tendrl-recent-buffer') {
+			openMinibuffer('recent');
+			return;
+		}
+		if (cmd.id === 'tendrl-toggle-rail') {
+			store.toggleFocusedSlot();
+			closeMinibuffer();
+			return;
+		}
+		if (cmd.id === 'tendrl-toggle-network-mode') {
+			toggleNetworkMode();
+			closeMinibuffer();
+			return;
+		}
+		if (cmd.id === 'tendrl-show-event-json') {
+			const fb = focusedBuffer;
+			app.jsonModalData = fb ? { buffer: fb } : null;
+			closeMinibuffer();
+			return;
+		}
+		if (cmd.id === 'tendrl-logout') {
+			app.handleIdentityLogout();
+			closeMinibuffer();
+			return;
+		}
+		if (cmd.id === 'tendrl-login') {
+			app.handleIdentityLock();
+			closeMinibuffer();
+			return;
+		}
+		// Stubs for unrecognized commands.
+		closeMinibuffer();
 	}
 
 	function focusEntryFieldIn(pos: Position) {
@@ -342,12 +280,24 @@
 	function enterInsertMode() {
 		mode = 'insert';
 		// Try to focus the entry field of the currently focused slot.
-		setTimeout(() => focusEntryFieldIn(focusedSlot), 0);
+		setTimeout(() => focusEntryFieldIn(store.focusedSlot), 0);
 	}
 
 	function exitInsertMode() {
 		mode = 'normal';
 		(document.activeElement as HTMLElement | null)?.blur();
+	}
+
+	function openAndInsert() {
+		// `o` semantics: open something new, then enter insert.
+		store.expandFocusedIfRail();
+		const buf = focusedBuffer;
+		if (buf?.kind === 'composer') {
+			composerExtraBlocks += 1;
+		}
+		// For splittable non-composer buffers (reader, search, etc.), a same-class
+		// split-create would happen here — deferred for now, falls through to insert.
+		enterInsertMode();
 	}
 
 	function onGlobalKeydown(e: KeyboardEvent) {
@@ -385,108 +335,151 @@
 			return;
 		}
 
+		// Leader is open: every keystroke either descends, executes, or cancels.
+		if (leaderOpen) {
+			if (e.key === 'Escape' || (e.key === '[' && e.ctrlKey) || (e.key === 'g' && e.ctrlKey)) {
+				e.preventDefault();
+				prefixPath = [];
+				return;
+			}
+			if (e.key === 'Backspace') {
+				e.preventDefault();
+				leaderUp();
+				return;
+			}
+			if (e.metaKey || e.altKey || e.ctrlKey) return;
+			e.preventDefault();
+			leaderDescend(e.key);
+			return;
+		}
+
 		// Normal mode: vim-style navigation + leader-ish.
 		// Don't trigger if a meta-key is held (let browser shortcuts work).
 		if (e.metaKey || e.altKey) return;
 
+		if (e.key === ' ') {
+			e.preventDefault();
+			openLeader();
+			return;
+		}
+
 		if (e.key === 'h' || e.key === 'ArrowLeft') {
 			e.preventDefault();
-			navigateSlot(-1);
+			store.navigateSlot(-1);
 		} else if (e.key === 'l' || e.key === 'ArrowRight') {
 			e.preventDefault();
-			navigateSlot(1);
+			store.navigateSlot(1);
 		} else if (e.key === 'j' || e.key === 'ArrowDown') {
 			e.preventDefault();
-			if (effectiveState(focusedSlot) === 'rail') return;
-			cycleBufferInSlot(1);
+			store.cycleBufferInSlot(1);
 		} else if (e.key === 'k' || e.key === 'ArrowUp') {
 			e.preventDefault();
-			if (effectiveState(focusedSlot) === 'rail') return;
-			cycleBufferInSlot(-1);
+			store.cycleBufferInSlot(-1);
 		} else if (e.key === 'Enter') {
 			e.preventDefault();
-			expandFocusedIfRail();
+			store.expandFocusedIfRail();
+		} else if (e.key === 'i') {
+			e.preventDefault();
+			store.expandFocusedIfRail();
+			enterInsertMode();
 		} else if (e.key === 'o') {
 			e.preventDefault();
-			// On a rail, expand first; the entry-field focus will run on next tick.
-			expandFocusedIfRail();
-			enterInsertMode();
+			openAndInsert();
 		} else if (e.key === ':') {
 			e.preventDefault();
 			openMinibuffer('mx');
 		}
 	}
 
-	function navigateSlot(dir: 1 | -1) {
-		const visible = positionOrder.filter((p) => {
-			const s = layout.slots[p];
-			return s && (effectiveState(p) === 'open' || effectiveState(p) === 'rail');
-		});
-		const idx = visible.indexOf(focusedSlot);
-		if (idx === -1 && visible.length) {
-			focusedSlot = visible[0];
-			flash(visible[0]);
+	function prefilterMx(name: string) {
+		openMinibuffer('mx');
+		mb.query = name;
+		mb.selectedIndex = 0;
+	}
+
+	function toggleNetworkMode() {
+		const next = app.networkStatus?.mode === 'online' ? 'offline' : 'online';
+		app.handleSetNetworkMode(next);
+	}
+
+	const leaderRoot: SubPrefix = buildLeaderRoot({
+		openMinibuffer,
+		prefilterMx,
+		killFocusedBuffer: () => store.killFocused(),
+		cycleBufferInSlot: (dir) => store.cycleBufferInSlot(dir),
+		toggleFocusedSlot: () => store.toggleFocusedSlot(),
+		navigateSlot: (dir) => store.navigateSlot(dir),
+		setLayout,
+		toggleNetworkMode
+	});
+
+	function openLeader() {
+		closeMinibuffer();
+		prefixPath = ['SPC'];
+	}
+
+	function leaderDescend(key: string) {
+		const node = currentLeaderNode;
+		if (!node || node.type !== 'prefix') {
+			prefixPath = [];
 			return;
 		}
-		const next = visible[(idx + dir + visible.length) % visible.length];
-		focusedSlot = next;
-		flash(next);
-		// Don't auto-expand rails — Enter expands them.
-	}
-
-	function expandFocusedIfRail() {
-		if (effectiveState(focusedSlot) === 'rail') {
-			overrides = { ...overrides, [focusedSlot]: 'open' };
-			flash(focusedSlot);
-			return true;
+		const child = node.children[key];
+		if (!child) return; // unknown key — popup stays open, ignore
+		if (child.type === 'prefix') {
+			prefixPath = [...prefixPath, key];
+		} else {
+			if (child.deferred) return; // deferred leaves are inert
+			const run = child.run;
+			prefixPath = [];
+			run();
 		}
-		return false;
 	}
 
-	function cycleBufferInSlot(dir: 1 | -1) {
-		const slot = layout.slots[focusedSlot];
-		if (!slot) return;
-		const classBuffers = openBuffers.filter((b) => b.className === slot.className);
-		if (classBuffers.length < 2) return;
-		const cur = effectiveLeaf(focusedSlot, slot);
-		const idx = cur ? classBuffers.findIndex((b) => b.buffer.id === cur.id) : -1;
-		const next = classBuffers[(idx + dir + classBuffers.length) % classBuffers.length];
-		setLeaf(focusedSlot, next.buffer);
+	function leaderUp() {
+		if (prefixPath.length > 1) prefixPath = prefixPath.slice(0, -1);
+		else prefixPath = [];
 	}
 
-	function bumpSpcPrefix() {
-		if (prefix === 'idle' || prefix === 'C-x') prefix = 'SPC';
-		else if (prefix === 'SPC') prefix = 'SPC w';
-		else prefix = 'idle';
-	}
+	const focusedBuffer = $derived(store.focusedBuffer());
 
-	const focusedBuffer = $derived.by(() => {
-		const slot = layout.slots[focusedSlot];
-		if (!slot) return null;
-		return effectiveLeaf(focusedSlot, slot);
+	const leaderOpen = $derived(prefixPath[0] === 'SPC');
+
+	const currentLeaderNode = $derived.by<LeaderNode | null>(() => {
+		if (!leaderOpen) return null;
+		return resolveLeaderNode(leaderRoot, prefixPath.slice(1));
 	});
+
+	const leaderPathLabel = $derived(prefixPath.length === 0 ? '' : prefixPath.join(' '));
 
 	const modelineText = $derived.by(() => {
 		const parts: string[] = [];
-		parts.push(`L:${layout.name}`);
-		const cls = focusedSlotClass();
+		parts.push(`L:${store.currentLayout.name}`);
+		const cls = store.focusedSlotClass();
 		if (cls) parts.push(`@${cls}`);
 		if (focusedBuffer) {
 			const star = focusedBuffer.modified ? ' *' : '';
 			parts.push(`${focusedBuffer.label}${star}${focusedBuffer.kicker ? ` (${focusedBuffer.kicker})` : ''}`);
 		}
-		if (prefix !== 'idle') parts.push(`[${prefix}-]`);
+		if (leaderOpen) parts.push(`[${leaderPathLabel}-]`);
 		if (mb.mode !== 'closed') parts.push(`[mb:${mb.mode}]`);
-		parts.push('online');
+		const netMode = app.networkStatus?.mode ?? '?';
+		parts.push(netMode);
+		const id = app.identityStatus;
+		if (id?.state === 'unlocked') {
+			const npub = id.npub ?? '';
+			parts.push(`@${npub.slice(0, 12)}`);
+		} else if (id?.state === 'locked') {
+			parts.push('locked');
+		}
 		return parts.join('  ·  ');
 	});
 
-	const layoutOrder: Array<keyof typeof layouts> = ['read', 'write', 'triage', 'chat', 'zen'];
-	const positionOrder: Position[] = ['left', 'center', 'right'];
+	const layoutOrder: string[] = ['home', 'read', 'write', 'triage', 'chat', 'zen'];
 
 	const minibufferTitle = $derived.by(() => {
 		if (mb.mode === 'class') {
-			const cls = focusedSlotClass();
+			const cls = store.focusedSlotClass();
 			return `Switch buffer · ${cls ?? '?'} class · ${minibufferEntries.length} open`;
 		}
 		if (mb.mode === 'global') return `Switch buffer · global · ${minibufferEntries.length} open`;
@@ -506,12 +499,13 @@
 		<h1 class="title">WM Shell — class-typed slots + buffer switcher</h1>
 		<p class="lede">
 			Three slots: <code>chat</code>, <code>work</code>, <code>research</code>. Splits restricted to same class.
-			Switch buffers within the focused slot's class via <span class="kbd">SPC b b</span>, or globally via
-			<span class="kbd">SPC b B</span> with a flash on the target slot.
+			Press <span class="kbd">SPC</span> for the leader popup; descend with <span class="kbd">b b</span> for class-scoped switch,
+			<span class="kbd">b B</span> for global, <span class="kbd">l r/w/t/c/z</span> for layouts, etc.
 		</p>
 		<div class="hint">
 			Click a layout button to switch · Click a slot's <span class="kbd">×</span> to collapse to rail · Click a rail to reopen ·
-			Click a slot to focus it · <span class="kbd">↑</span><span class="kbd">↓</span> + <span class="kbd">Enter</span> in the minibuffer
+			Click a slot to focus it · <span class="kbd">SPC</span> opens the leader popup · <span class="kbd">:</span> opens M-x ·
+			<span class="kbd">↑</span><span class="kbd">↓</span> + <span class="kbd">Enter</span> in the minibuffer
 		</div>
 	</header>
 
@@ -521,38 +515,26 @@
 			<div class="shell__layouts">
 				{#each layoutOrder as name (name)}
 					<button
-						class="lt {currentLayoutName === name ? 'lt--on' : ''}"
+						class="lt {store.currentLayoutName === name ? 'lt--on' : ''}"
 						onclick={() => setLayout(name)}
 					>
 						{name}
 					</button>
 				{/each}
 			</div>
-			<div class="shell__layout-desc">{layout.desc}</div>
-			<div class="shell__prefix">
-				<button
-					class="px {prefix === 'C-x' ? 'px--on' : ''}"
-					onclick={() => (prefix = prefix === 'C-x' ? 'idle' : 'C-x')}
-					title="Toggle C-x prefix"
-				>C-x</button>
-				<button
-					class="px {prefix === 'SPC' || prefix === 'SPC w' ? 'px--on' : ''}"
-					onclick={bumpSpcPrefix}
-					title="Cycle SPC prefix"
-				>SPC</button>
-				<button class="px" onclick={() => openMinibuffer('class')} title="SPC b b — class-scoped switch">b b</button>
-				<button class="px" onclick={() => openMinibuffer('global')} title="SPC b B — global switch">b B</button>
-				<button class="px" onclick={() => openMinibuffer('recent')} title="SPC b r — recently closed">b r</button>
-				<button class="px" onclick={() => toggleSlot(focusedSlot)} title="SPC w c — collapse/expand focused slot">w c</button>
-				<button class="px" onclick={() => openMinibuffer('mx')} title="M-x — command palette">:</button>
-			</div>
+			<div class="shell__layout-desc">{store.currentLayout.desc}</div>
+			<button
+				class="px {leaderOpen ? 'px--on' : ''}"
+				onclick={() => (leaderOpen ? (prefixPath = []) : openLeader())}
+				title="SPC — leader prefix (which-key popup)"
+			>SPC</button>
 			<button class="shell__mx {mb.mode === 'mx' ? 'shell__mx--on' : ''}" onclick={() => openMinibuffer('mx')} title="M-x · command palette">M-x</button>
 		</div>
 
 		<div class="shell__body">
-			{#each positionOrder as pos (pos)}
-				{@const slot = layout.slots[pos]}
-				{@const state = effectiveState(pos)}
+			{#each store.positionOrder as pos (pos)}
+				{@const slot = store.currentLayout.slots[pos]}
+				{@const state = store.effectiveState(pos)}
 				{#if slot && state === 'open'}
 					{@render windowSlot(pos, slot)}
 				{:else if slot && state === 'rail'}
@@ -560,6 +542,10 @@
 				{/if}
 			{/each}
 		</div>
+
+		{#if leaderOpen && currentLeaderNode?.type === 'prefix'}
+			{@render leaderPopup(currentLeaderNode)}
+		{/if}
 
 		{#if mb.mode !== 'closed'}
 			{@render minibufferStrip()}
@@ -616,19 +602,30 @@
 			<div class="legend__item">
 				<div class="legend__h">Modal editing</div>
 				<p>
-					<span class="kbd">NORMAL</span>: <span class="kbd">h</span> <span class="kbd">l</span> focus prev/next slot (rails included) · <span class="kbd">j</span> <span class="kbd">k</span> cycle buffer in open slot's class · <span class="kbd">Enter</span> expands focused rail · <span class="kbd">o</span> enter insert mode (expands rail first if needed) · <span class="kbd">:</span> opens M-x.
+					<span class="kbd">NORMAL</span>: <span class="kbd">h</span> <span class="kbd">l</span> focus prev/next slot · <span class="kbd">j</span> <span class="kbd">k</span> cycle buffer in slot's class · <span class="kbd">Enter</span> expands focused rail · <span class="kbd">:</span> opens M-x · <span class="kbd">SPC</span> opens leader.
 				</p>
 				<p>
-					<span class="kbd">SPC w c</span> (or click <span class="kbd">w c</span>): toggle focused slot between open and rail.
+					<span class="kbd">i</span> — standard insert (focus the focused buffer's entry field).
+				</p>
+				<p>
+					<span class="kbd">o</span> — open-and-insert. On <strong>composer</strong>: appends a new section block and inserts. On <strong>chat</strong> (singleton): same as <span class="kbd">i</span>. On other splittable buffers: would create a same-class split — split-create is deferred, so falls back to <span class="kbd">i</span>.
 				</p>
 				<p>
 					<span class="kbd">INSERT</span>: type into focused field. <span class="kbd">Esc</span> · <span class="kbd">C-[</span> · <span class="kbd">C-g</span> all return to normal.
 				</p>
-				<p>The minibuffer takes over key handling when open — same escapes close it.</p>
+				<p>The minibuffer and leader popup each take over key handling when open — same escapes close them.</p>
 			</div>
 			<div class="legend__item">
-				<div class="legend__h">Leader simulation (temp)</div>
-				<p>The header buttons (<span class="kbd">b b</span> · <span class="kbd">b B</span> · <span class="kbd">b r</span> · <span class="kbd">w c</span> · <span class="kbd">:</span>) are click-driven stand-ins for the SPC leader popup. The real popup-prefix UI is deferred. M-x (<span class="kbd">:</span>) is the always-on alternative — type any command name.</p>
+				<div class="legend__h">SPC leader (which-key)</div>
+				<p>
+					Press <span class="kbd">SPC</span> in normal mode (or click the <span class="kbd">SPC</span> button) to open a popup of next-key bindings. Each key descends into a sub-prefix or executes a leaf. <span class="kbd">Backspace</span> goes up one level; <span class="kbd">Esc</span> · <span class="kbd">C-g</span> · <span class="kbd">C-[</span> cancel.
+				</p>
+				<p>
+					Leaves carry a <span class="kbd">kind</span> tag — <em>engine</em> commands go through the Tendrl HTTP API, <em>client</em> commands are pure UI. The same split applies in the eventual Tendrl+Emacs port.
+				</p>
+				<p>
+					Deferred leaves (e.g. <span class="kbd">SPC w s</span> split-create) are shown grayed out for discoverability.
+				</p>
 			</div>
 		</div>
 	</section>
@@ -636,10 +633,11 @@
 	<section class="notes">
 		<h2 class="notes__title">What this artboard isn't yet</h2>
 		<ul>
-			<li>No real keybindings — <span class="kbd">SPC b</span> buttons are click-driven entry points to demonstrate the minibuffer.</li>
-			<li>No <code>find-event</code> / <code>find-draft</code> commands — those create new buffers (different from switcher).</li>
-			<li>No drag-split or splits-create — splits shown are layout-defined.</li>
-			<li>No M-x palette — the strip is visual only.</li>
+			<li>SPC leader is wired, but <em>timeout suppression</em> (Doom's "no popup if released quickly") is deferred — the popup always opens.</li>
+			<li>Sub-prefix hover/help (peek into a child branch) is deferred.</li>
+			<li>User customization of the prefix tree is deferred — tree is hard-coded.</li>
+			<li><code>SPC f e/d/p</code> (engine find commands) currently just prefilter M-x — actual engine API calls aren't wired in the artboard.</li>
+			<li>No drag-split or splits-create — splits shown are layout-defined; <code>SPC w s</code> is shown grayed.</li>
 			<li>No persistence — refresh resets to <code>write</code>.</li>
 		</ul>
 	</section>
@@ -649,8 +647,8 @@
 	<!-- svelte-ignore a11y_click_events_have_key_events -->
 	<!-- svelte-ignore a11y_no_static_element_interactions -->
 	<div
-		class="win win--{pos} win--{slot.className} {focusedSlot === pos ? 'win--focused' : ''} {flashSlot === pos ? 'win--flash' : ''}"
-		onclick={() => focusSlot(pos)}
+		class="win win--{pos} win--{slot.className} {store.focusedSlot === pos ? 'win--focused' : ''} {store.flashSlot === pos ? 'win--flash' : ''}"
+		onclick={() => store.focusSlot(pos)}
 		bind:this={slotBodyEls[pos]}
 	>
 		{@render renderTree(slot.tree, slot, pos, true)}
@@ -663,7 +661,7 @@
 			<div class="pane__head">
 				<span class="cls cls--{slot.className}">{slot.className}</span>
 				{#if isRoot}
-					{@const lf = effectiveLeaf(pos, slot)}
+					{@const lf = store.effectiveLeaf(pos, slot)}
 					<span class="pane__name">{lf?.label ?? node.buffer.label}</span>
 					{#if lf?.kicker ?? node.buffer.kicker}
 						<span class="pane__kicker">· {lf?.kicker ?? node.buffer.kicker}</span>
@@ -686,14 +684,14 @@
 						class="pane__x"
 						onclick={(e) => {
 							e.stopPropagation();
-							toggleSlot(pos);
+							store.toggleSlot(pos);
 						}}
 						title="Collapse to rail"
 					>×</button>
 				{/if}
 			</div>
-			<div class="pane__body pane__body--{isRoot ? (effectiveLeaf(pos, slot)?.kind ?? node.buffer.kind) : node.buffer.kind}">
-				{@render bufferContent(isRoot ? (effectiveLeaf(pos, slot) ?? node.buffer) : node.buffer)}
+			<div class="pane__body pane__body--{isRoot ? (store.effectiveLeaf(pos, slot)?.kind ?? node.buffer.kind) : node.buffer.kind}">
+				{@render bufferContent(isRoot ? (store.effectiveLeaf(pos, slot) ?? node.buffer) : node.buffer)}
 			</div>
 		</div>
 	{:else}
@@ -706,7 +704,9 @@
 {/snippet}
 
 {#snippet bufferContent(b: Buffer)}
-	{#if b.kind === 'reader'}
+	{#if rendererFor(b.kind)}
+		<BufferRenderer buffer={b} />
+	{:else if b.kind === 'reader'}
 		<div class="reader">
 			<div class="reader__h2">{b.kicker ?? 'Section'}</div>
 			<div class="reader__line reader__line--lg"></div>
@@ -739,6 +739,13 @@
 				<div class="composer__line"></div>
 				<div class="composer__cursor">▎</div>
 			</div>
+			{#each Array(composerExtraBlocks) as _, i (i)}
+				<div class="composer__block composer__block--editable composer__block--new">
+					<div class="composer__block-h">§ block · new (o)</div>
+					<div class="composer__line composer__line--short"></div>
+					<div class="composer__cursor">▎</div>
+				</div>
+			{/each}
 		</div>
 	{:else if b.kind === 'feed'}
 		<div class="feed">
@@ -814,17 +821,47 @@
 
 {#snippet railSlot(pos: Position, slot: Slot)}
 	<button
-		class="rail rail--{pos} rail--{slot.className} {focusedSlot === pos ? 'rail--focused' : ''} {flashSlot === pos ? 'rail--flash' : ''}"
+		class="rail rail--{pos} rail--{slot.className} {store.focusedSlot === pos ? 'rail--focused' : ''} {store.flashSlot === pos ? 'rail--flash' : ''}"
 		onclick={(e) => {
 			e.stopPropagation();
-			focusSlot(pos);
-			toggleSlot(pos);
+			store.focusSlot(pos);
+			store.toggleSlot(pos);
 		}}
 		title="Click to expand · Enter expands when focused"
 	>
 		<span class="cls cls--{slot.className} cls--vert">{slot.className}</span>
 		<span class="rail__name">{slot.tree.type === 'leaf' ? slot.tree.buffer.label : 'split'}</span>
 	</button>
+{/snippet}
+
+{#snippet leaderPopup(node: SubPrefix)}
+	<div class="lp">
+		<div class="lp__head">
+			<span class="lp__path">{leaderPathLabel}-</span>
+			<span class="lp__path-desc">{node.desc}</span>
+			<span class="lp__sp"></span>
+			<span class="lp__hint">key descends · backspace up · esc / C-g cancel</span>
+		</div>
+		<div class="lp__grid">
+			{#each Object.entries(node.children) as [key, child] (key)}
+				<button
+					class="lp__row {child.type === 'leaf' && child.deferred ? 'lp__row--deferred' : ''}"
+					onclick={() => leaderDescend(key)}
+					disabled={child.type === 'leaf' && child.deferred}
+				>
+					<span class="lp__keychip">{key}</span>
+					<span class="lp__arrow">{child.type === 'prefix' ? '+' : '→'}</span>
+					<span class="lp__desc">{child.desc}</span>
+					<span class="lp__sp"></span>
+					{#if child.type === 'leaf'}
+						<span class="lp__kind lp__kind--{child.kind}">{child.kind}</span>
+					{:else}
+						<span class="lp__kind lp__kind--prefix">prefix</span>
+					{/if}
+				</button>
+			{/each}
+		</div>
+	</div>
 {/snippet}
 
 {#snippet minibufferStrip()}
@@ -1191,6 +1228,111 @@
 	.ml__mode--insert {
 		background: color-mix(in srgb, var(--id-yours) 25%, transparent);
 		color: var(--id-yours);
+	}
+
+	/* Leader popup (which-key) */
+	.lp {
+		border-top: 1px solid var(--base3);
+		background: var(--panel-bg);
+		display: flex;
+		flex-direction: column;
+		flex-shrink: 0;
+		max-height: 280px;
+	}
+	.lp__head {
+		display: flex;
+		align-items: center;
+		gap: var(--s-3);
+		padding: var(--s-2) var(--s-3);
+		background: var(--panel-bg-soft);
+		border-bottom: 1px solid var(--panel-border);
+		font-family: var(--font-mono);
+		font-size: var(--t-xs);
+	}
+	.lp__path {
+		color: var(--id-yours);
+		font-weight: 600;
+		letter-spacing: 0.05em;
+	}
+	.lp__path-desc {
+		color: var(--base6);
+		text-transform: uppercase;
+		letter-spacing: 0.05em;
+	}
+	.lp__hint { color: var(--base5); font-size: 10px; }
+	.lp__sp { flex: 1; }
+	.lp__grid {
+		display: grid;
+		grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+		gap: 2px;
+		padding: var(--s-2);
+		overflow-y: auto;
+	}
+	.lp__row {
+		display: flex;
+		align-items: center;
+		gap: var(--s-2);
+		padding: 4px var(--s-2);
+		background: transparent;
+		border: 1px solid transparent;
+		border-radius: var(--r-sm);
+		cursor: pointer;
+		font-family: var(--font-sans);
+		font-size: var(--t-sm);
+		color: var(--fg);
+		text-align: left;
+	}
+	.lp__row:hover:not(:disabled) {
+		background: var(--base1);
+		border-color: var(--base3);
+	}
+	.lp__row--deferred {
+		opacity: 0.45;
+		cursor: not-allowed;
+	}
+	.lp__keychip {
+		font-family: var(--font-mono);
+		font-size: var(--t-xs);
+		font-weight: 600;
+		min-width: 22px;
+		padding: 1px 6px;
+		text-align: center;
+		background: var(--base2);
+		border: 1px solid var(--base3);
+		border-radius: var(--r-sm);
+		color: var(--id-yours);
+		flex-shrink: 0;
+	}
+	.lp__arrow {
+		font-family: var(--font-mono);
+		font-size: var(--t-xs);
+		color: var(--base5);
+		width: 10px;
+		text-align: center;
+		flex-shrink: 0;
+	}
+	.lp__desc { color: var(--fg-alt); font-size: var(--t-sm); }
+	.lp__kind {
+		font-family: var(--font-mono);
+		font-size: 9px;
+		text-transform: uppercase;
+		letter-spacing: 0.06em;
+		padding: 1px 6px;
+		border-radius: var(--r-sm);
+		font-weight: 600;
+		flex-shrink: 0;
+	}
+	.lp__kind--engine {
+		background: color-mix(in srgb, var(--state-fetching) 18%, transparent);
+		color: var(--state-fetching);
+	}
+	.lp__kind--client {
+		background: color-mix(in srgb, var(--base6) 18%, transparent);
+		color: var(--base7);
+	}
+	.lp__kind--prefix {
+		background: color-mix(in srgb, var(--id-imported) 18%, transparent);
+		color: var(--id-imported);
 	}
 
 	/* Minibuffer strip */

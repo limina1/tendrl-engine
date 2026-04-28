@@ -75,7 +75,8 @@ Two modes; mode shown in mode-line at left.
 | =j= / =↓=       | Cycle buffer down within slot's class                 |
 | =k= / =↑=       | Cycle buffer up within slot's class                   |
 | =Enter=         | Expand focused slot if it's a rail                    |
-| =o=             | Enter insert mode (expands rail first if needed)      |
+| =i=             | Standard insert — focus the buffer's entry field      |
+| =o=             | Open-and-insert (buffer-kind-specific; see below)     |
 | =:=             | Open M-x                                              |
 | =SPC=           | Leader prefix                                         |
 | =SPC b b=       | Switch buffer (class-scoped)                          |
@@ -83,6 +84,19 @@ Two modes; mode shown in mode-line at left.
 | =SPC b r=       | Recently closed                                       |
 | =SPC b k=       | Kill buffer                                           |
 | =SPC w c=       | Toggle focused slot collapse/expand                   |
+
+*=i= vs =o=:*
+
+- =i= is the canonical "enter insert mode" — focuses the focused
+  buffer's entry field (chat input, search input, composer cursor).
+  Pure vim semantics.
+- =o= is "open then insert" — context-dependent on buffer kind:
+  - *composer*: appends a new editable section block to the document
+    and enters insert in it (analog of vim's "open new line below").
+  - *chat* (singleton): same as =i= — chat can't split.
+  - *other splittable* (reader, search, refs, feed, knowledgebase,
+    profile, ignored): would create a same-class window split, then
+    insert. Falls back to =i= until split-create lands (deferred).
 
 *Insert mode:* typing flows into the focused buffer's entry field
 (chat input, search input, composer). Only escape keys are intercepted.

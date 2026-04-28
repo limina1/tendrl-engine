@@ -16,7 +16,7 @@
 
 	let initialized = $state(false);
 	$effect(() => {
-		if (initialized || bare) return;
+		if (initialized) return;
 		initialized = true;
 		app.initialize();
 		const cleanup = app.startNetworkPoll();
@@ -146,7 +146,7 @@
 
 {/if}
 
-{#if !bare && app.jsonModalData}
+{#if app.jsonModalData}
 	<!-- svelte-ignore a11y_click_events_have_key_events -->
 	<div class="json-modal-backdrop" onclick={() => (app.jsonModalData = null)} role="presentation">
 		<div class="json-modal" onclick={(e) => e.stopPropagation()} role="dialog" tabindex="-1">
