@@ -40,9 +40,12 @@ running ledger of what was promised vs what shipped.
 
 ** Phase 2 — Promote to root [ ]
 
-- [ ] Replace =+layout.svelte= three-column chrome with the WM shell
-- [ ] Existing routes (=/=, =/p/=, =/compose=, =/profile/=, =/ignored=) deleted or made redirects
-- [ ] AppState shrink — remove dead per-route fields once renderers fully own state
+- [X] Replace =+layout.svelte= three-column chrome with the WM shell — layout is now minimal (init AppState, mount JSON modal, render children)
+- [X] Existing routes (=/p/=, =/compose=, =/profile/=, =/ignored=) deleted; root =/+page.svelte= mounts the workbench at full viewport; =/design/shell= removed (was a duplicate of root)
+- [ ] Extract Shell into a reusable component (currently inlined in =/+page.svelte=; the deleted =/design/shell= can return as the artboard wrapper around it)
+- [ ] AppState shrink — remove dead per-route fields (=publication=, =sections=, =viewMode=, =searchResults=, etc.) once renderers fully own state
+- [ ] Delete unused legacy chrome components (=WorkbenchToolbar=, =PanelFrame=)
+- [ ] Deep-link routing: =/p/<pubkey>/<dtag>= etc. spawn the right buffer on load instead of 404
 
 ** Polish (parallel) [ ]
 
