@@ -3,6 +3,7 @@
 	import ComposeSection from './ComposeSection.svelte';
 	import ItemBadge from './ItemBadge.svelte';
 	import TagEditor from './TagEditor.svelte';
+	import DraftReader from '$lib/wm/renderers/DraftReader.svelte';
 
 	type ComposeMode = 'full' | 'plain' | 'preview';
 
@@ -605,23 +606,7 @@
 				</div>
 			</div>
 		{:else}
-			<div class="preview-sections">
-				{#each compose.sections as section (section.id)}
-					<div class="preview-section-bar">
-						<label class="check">
-							<input
-								type="checkbox"
-								checked={checkedIds.has(section.id)}
-								onchange={() => toggleCheck(section.id)}
-							/>
-						</label>
-						<span class="detected-title">{section.title || '[Untitled]'}</span>
-						<ItemBadge item={section} {syncMode} panel="compose" {ontogglereadonly} {onlocksource} {oncrosspanelcopy} />
-						<button class="icon-btn-sm" onclick={() => onsenditemtochat(section.id)} title="Send to chat">◂</button>
-					</div>
-					<pre class="editor-pane" class:checked-section={checkedIds.has(section.id)}>{serializeSection(section)}</pre>
-				{/each}
-			</div>
+			<DraftReader {compose} {ontogglereadonly} />
 		{/if}
 	</div>
 

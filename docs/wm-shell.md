@@ -51,6 +51,13 @@ running ledger of what was promised vs what shipped.
 - [ ] Rail keybinding glyphs (=rail-key= chips)
 - [ ] Scroll position retention across layout switches
 - [ ] Cross-tab =BroadcastChannel= sync for buffer list
+- [X] Stop AppState navigation handlers from goto-ing routes when a shell is mounted (=app.setNavigationHandlers=); search-result clicks and add-to-compose now spawn buffers instead of breaking out to =/p/...= or =/compose=
+- [X] ReaderBuffer "Edit" / "Edit §" — import loaded sections (or just the focused section in paginated mode) into the compose pool and jump to composer
+- [X] DraftReader: composer's =preview= tab body replaced with the same outline/continuous/paginated rendering as ReaderBuffer, fed by an adapter that turns =ComposeState.sections= into =LazySection[]=. Per-entry lock toggle in outline (yellow accent when unlocked).
+- [ ] DraftReader: drag-to-reorder when section is unlocked
+- [ ] DraftReader: transclusion affordance — "+" between entries opens a search picker; selecting inserts as a new section with =a= tag = picked event's address
+- [ ] DraftReader: per-entry remove
+- [X] Pane header =N↻= cycle button — clicking opens the class-scoped switcher (lets user back out of composer to the reader without knowing =SPC b b=)
 
 ** Deferred indefinitely (low priority / open) [ ]
 

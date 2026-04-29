@@ -21,6 +21,7 @@ import type {
 	ClaudeSessionSummary,
 	ClaudeSessionMessage,
 	IdentityStatus,
+	NAddr,
 } from '$lib/types';
 import * as api from '$lib/api';
 
@@ -731,6 +732,43 @@ function _createAppState() {
 		if (docMode !== 'compose') navigateToCompose();
 	}
 
+	// Import a (already-loaded) section into the compose pool. Used by
+	// ReaderBuffer's "edit this" affordance to send the active publication
+	// into the composer without re-fetching from the engine.
+	function importSectionToCompose(
+		addr: NAddr,
+		title: string | null,
+		content: string,
+		tags: { name: string; value: string }[] = []
+	) {
+		addToPool(
+			{
+				title: title ?? '[Untitled section]',
+				content,
+				tags,
+				source_addr: addr,
+				original_content: content,
+				origin: 'import' as const
+			},
+			{ compose: true }
+		);
+	}
+
+	// Drop everything currently in the compose pool. Called before an
+	// "edit this" action to avoid mixing the new edit target with stale
+	// imports from a previous session.
+	function clearComposePool() {
+		items = items.map((e) => (e.in_compose ? { ...e, in_compose: false } : e));
+	}
+
+	// Set the publication-level draft fields (title + topic tags). Used by
+	// ReaderBuffer's "Edit" so the 30040 metadata survives the round trip
+	// from reader → composer.
+	function seedDraftMetadata(title: string | null, tags: TagEntry[]) {
+		composeTitle = title ?? '';
+		composeTags = tags;
+	}
+
 	async function handleAddManyToContext(results: SearchResult[]) {
 		for (const r of results) {
 			const content = await fetchEventContent(r);
@@ -1337,19 +1375,47 @@ function _createAppState() {
 
 	// ===================== Navigation =====================
 
+	// When set (by the WM shell), navigation calls invoke these instead of
+	// goto-ing route URLs. Lets the shell stay on its single URL while
+	// spawning/focusing buffers in response to the same handlers that drive
+	// the legacy multi-route chrome.
+	type NavigationHandlers = {
+		onPublication?: (pubkey: string, d_tag: string) => void;
+		onProfile?: (pubkey: string) => void;
+		onCompose?: () => void;
+		onHome?: () => void;
+	};
+	let navHandlers: NavigationHandlers | null = null;
+
+	function setNavigationHandlers(h: NavigationHandlers | null) {
+		navHandlers = h;
+	}
+
 	function navigateToPublication(pubkey: string, d_tag: string) {
 		docMode = 'reading';
-		goto(`/p/${pubkey}/${d_tag}`);
+		if (navHandlers?.onPublication) {
+			navHandlers.onPublication(pubkey, d_tag);
+		} else {
+			goto(`/p/${pubkey}/${d_tag}`);
+		}
 	}
 
 	function navigateToProfile(pubkey: string) {
 		docMode = 'profile';
-		goto(`/profile/${pubkey}`);
+		if (navHandlers?.onProfile) {
+			navHandlers.onProfile(pubkey);
+		} else {
+			goto(`/profile/${pubkey}`);
+		}
 	}
 
 	function navigateToCompose() {
 		docMode = 'compose';
-		goto('/compose');
+		if (navHandlers?.onCompose) {
+			navHandlers.onCompose();
+		} else {
+			goto('/compose');
+		}
 	}
 
 	function navigateHome() {
@@ -1357,7 +1423,11 @@ function _createAppState() {
 		profilePubkey = null;
 		publication = null;
 		sections = [];
-		goto('/');
+		if (navHandlers?.onHome) {
+			navHandlers.onHome();
+		} else {
+			goto('/');
+		}
 	}
 
 	// ===================== Initialization =====================
@@ -1679,6 +1749,10 @@ function _createAppState() {
 		navigateToProfile,
 		navigateToCompose,
 		navigateHome,
+		setNavigationHandlers,
+		importSectionToCompose,
+		clearComposePool,
+		seedDraftMetadata,
 
 		// Lifecycle
 		initialize,

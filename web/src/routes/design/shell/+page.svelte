@@ -78,6 +78,45 @@
 	store.seed(openBuffers);
 	setActiveStore(store);
 
+	// Redirect AppState navigation calls to spawn buffers in the shell
+	// instead of route-navigating away from /design/shell.
+	app.setNavigationHandlers({
+		onPublication: (pubkey, d_tag) => {
+			store.openBuffer({
+				className: 'work',
+				buffer: {
+					id: `reader:30040:${pubkey}:${d_tag}`,
+					kind: 'reader',
+					label: 'reader',
+					kicker: d_tag
+				}
+			});
+		},
+		onProfile: (pubkey) => {
+			store.openBuffer({
+				className: 'work',
+				buffer: {
+					id: `profile:${pubkey}`,
+					kind: 'profile',
+					label: 'profile',
+					kicker: pubkey.slice(0, 8) + '…'
+				}
+			});
+		},
+		onCompose: () => {
+			store.openBuffer({
+				className: 'work',
+				buffer: { id: 'composer:current', kind: 'composer', label: 'composer', kicker: 'draft' }
+			});
+		},
+		onHome: () => {
+			store.openBuffer({
+				className: 'work',
+				buffer: { id: 'feed', kind: 'feed', label: 'feed' }
+			});
+		}
+	});
+
 	let prefixPath = $state<string[]>([]);
 	let mode = $state<'normal' | 'insert'>('normal');
 	let composerExtraBlocks = $state(0);
@@ -620,6 +659,7 @@
 
 {#snippet renderTree(node: SplitNode, slot: Slot, pos: Position, isRoot: boolean)}
 	{#if node.type === 'leaf'}
+		{@const classCount = store.openBuffers.filter((b) => b.className === slot.className).length}
 		<div class="pane {isRoot ? 'pane--root' : ''}">
 			<div class="pane__head">
 				<span class="cls cls--{slot.className}">{slot.className}</span>
@@ -631,6 +671,17 @@
 					<span class="pane__mod" title="Modified">●</span>
 				{/if}
 				<div class="pane__sp"></div>
+				{#if isRoot && classCount > 1}
+					<button
+						class="pane__cycle"
+						onclick={(e) => {
+							e.stopPropagation();
+							store.focusSlot(pos);
+							openMinibuffer('class');
+						}}
+						title="Switch buffer in this slot ({classCount} {slot.className} buffers)"
+					>{classCount}↻</button>
+				{/if}
 				{#if isRoot}
 					<button
 						class="pane__x"
@@ -1091,6 +1142,18 @@
 		padding: 0 4px;
 	}
 	.pane__x:hover { color: var(--fg); }
+	.pane__cycle {
+		background: transparent;
+		border: 1px solid var(--base3);
+		border-radius: var(--r-sm);
+		color: var(--base6);
+		cursor: pointer;
+		font-family: var(--font-mono);
+		font-size: 10px;
+		padding: 1px 6px;
+		margin-right: 4px;
+	}
+	.pane__cycle:hover { color: var(--fg); border-color: var(--id-yours); }
 	.pane__body {
 		flex: 1;
 		padding: var(--s-3);

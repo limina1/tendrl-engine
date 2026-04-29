@@ -1,12 +1,15 @@
 <script lang="ts">
 	import * as api from '$lib/api';
+	import { getAppState } from '$lib/state.svelte';
 	import OutlineView from '$lib/components/OutlineView.svelte';
 	import ContinuousView from '$lib/components/ContinuousView.svelte';
 	import PaginatedView from '$lib/components/PaginatedView.svelte';
-	import type { LazySection, PublicationDetail, ViewMode } from '$lib/types';
+	import type { LazySection, PublicationDetail, TagEntry, ViewMode } from '$lib/types';
 	import type { Buffer } from '../types';
 
 	let { buffer }: { buffer: Buffer } = $props();
+
+	const app = getAppState();
 
 	let publication = $state<PublicationDetail | null>(null);
 	let sections = $state<LazySection[]>([]);
@@ -84,6 +87,63 @@
 	function handleNavigate(index: number) {
 		currentSection = index;
 	}
+
+	function extractPublicationTags(pub: PublicationDetail | null): TagEntry[] {
+		if (!pub) return [];
+		// pub.index is the raw 30040 event; tags include `t` (topic), `title`,
+		// `summary`, `image`, `d`, `a`. Drop the structural ones (a-tag list
+		// is regenerated on publish from the section list; d-tag is set by
+		// the publish step) and keep user-facing metadata.
+		const skip = new Set(['d', 'a', 'alt', 'e', 'p']);
+		const rawTags =
+			(pub.index as { data?: { tags?: string[][] } } | null)?.data?.tags ?? [];
+		return rawTags
+			.filter((t) => !skip.has(t[0]))
+			.map((t) => ({ name: t[0], value: t.slice(1).join(', ') }));
+	}
+
+	async function ensureAllSectionsLoaded() {
+		for (let i = 0; i < sections.length; i++) {
+			if (sections[i].status === 'pending') handleLoadSection(i);
+		}
+		// loadingPromises is mutated by handleLoadSection — snapshot then await.
+		const inflight = Array.from(loadingPromises.values());
+		if (inflight.length) await Promise.all(inflight);
+	}
+
+	async function editInComposer() {
+		// Replace whatever is in the compose pool with this publication's
+		// sections, then jump to the composer buffer. Force-load any
+		// pending sections first so we don't lose content.
+		await ensureAllSectionsLoaded();
+		app.clearComposePool();
+		app.seedDraftMetadata(publication?.title ?? null, extractPublicationTags(publication));
+		for (const s of sections) {
+			if (s.status !== 'loaded' || s.content == null) continue;
+			app.importSectionToCompose(s.addr, s.title, s.content);
+		}
+		app.navigateToCompose();
+	}
+
+	async function editFocusedSection() {
+		// Just the currently-paginated section. Replaces whatever is in the
+		// pool so "Edit §" never leaks the rest of the document. Skips
+		// publication-level title/tag seeding since we're scoped to a
+		// single section.
+		const s = sections[currentSection];
+		if (!s) return;
+		if (s.status !== 'loaded' || s.content == null) {
+			handleLoadSection(currentSection);
+			const inflight = Array.from(loadingPromises.values());
+			if (inflight.length) await Promise.all(inflight);
+		}
+		const reloaded = sections[currentSection];
+		if (!reloaded || reloaded.status !== 'loaded' || reloaded.content == null) return;
+		app.clearComposePool();
+		app.seedDraftMetadata(null, []);
+		app.importSectionToCompose(reloaded.addr, reloaded.title, reloaded.content);
+		app.navigateToCompose();
+	}
 </script>
 
 <div class="reader-wrap">
@@ -91,6 +151,11 @@
 		<button class:active={viewMode === 'outline'} onclick={() => (viewMode = 'outline')}>Outline</button>
 		<button class:active={viewMode === 'continuous'} onclick={() => (viewMode = 'continuous')}>Continuous</button>
 		<button class:active={viewMode === 'paginated'} onclick={() => (viewMode = 'paginated')}>Paginated</button>
+		<span class="sp"></span>
+		{#if viewMode === 'paginated'}
+			<button class="edit" onclick={editFocusedSection} disabled={!publication} title="Send focused section to composer">Edit §</button>
+		{/if}
+		<button class="edit" onclick={editInComposer} disabled={!publication} title="Send all loaded sections to composer">Edit</button>
 	</div>
 
 	{#if loading}
@@ -157,6 +222,16 @@
 		color: var(--bg);
 		border-color: var(--id-yours);
 	}
+	.toolbar .sp { flex: 1; }
+	.toolbar .edit {
+		color: var(--id-draft);
+		border-color: var(--id-draft);
+	}
+	.toolbar .edit:hover:not(:disabled) {
+		background: var(--id-draft);
+		color: var(--bg);
+	}
+	.toolbar .edit:disabled { opacity: 0.5; cursor: not-allowed; }
 	.title {
 		padding: 8px var(--s-3);
 		font-size: var(--t-md);
