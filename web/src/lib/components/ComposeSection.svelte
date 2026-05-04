@@ -2,12 +2,15 @@
 	import type { ContextItem, TagEntry, SyncMode } from '$lib/types';
 	import TagEditor from './TagEditor.svelte';
 	import ItemBadge from './ItemBadge.svelte';
+	import { sectionState } from '$lib/compose/state';
 
 	let {
 		section,
 		checked,
 		syncMode,
+		collapsed,
 		oncheck,
+		oncollapse,
 		onupdate,
 		onupdatetags,
 		onreset,
@@ -20,7 +23,9 @@
 		section: ContextItem;
 		checked: boolean;
 		syncMode: SyncMode;
+		collapsed: boolean;
 		oncheck: (id: string) => void;
+		oncollapse: (id: string) => void;
 		onupdate: (id: string, title: string, content: string) => void;
 		onupdatetags: (id: string, tags: TagEntry[]) => void;
 		onreset: (id: string) => void;
@@ -30,10 +35,25 @@
 		onlocksource: (id: string) => void;
 		oncrosspanelcopy: (id: string, fromPanel: string) => void;
 	} = $props();
+
+	const provenance = $derived(sectionState(section));
 </script>
 
-<div class="compose-section" class:modified={section.modified}>
+<div
+	class="compose-section"
+	class:modified={section.modified}
+	class:section--imported={provenance === 'imported'}
+	class:section--claimed={provenance === 'claimed'}
+	class:section--forked={provenance === 'forked'}
+	class:compose-section--collapsed={collapsed}
+>
 	<div class="compose-section-header">
+		<button
+			class="collapse-toggle"
+			onclick={() => oncollapse(section.id)}
+			title={collapsed ? 'Expand section' : 'Collapse to title only'}
+			aria-expanded={!collapsed}
+		>{collapsed ? '▸' : '▾'}</button>
 		<label class="check">
 			<input
 				type="checkbox"
@@ -52,19 +72,21 @@
 		<button class="icon-btn-sm" onclick={() => onsendtochat(section.id)} title="Send to chat">◂</button>
 		<button onclick={() => onremove(section.id)}>Remove</button>
 	</div>
-	<textarea
-		value={section.content}
-		oninput={(e) => onupdate(section.id, section.title, e.currentTarget.value)}
-		placeholder="Section content..."
-		rows="6"
-		disabled={section.readonly}
-	></textarea>
-	<TagEditor tags={section.tags} onupdate={(tags) => onupdatetags(section.id, tags)} disabled={section.readonly} />
-	{#if section.modified}
-		<div class="modified-banner">
-			<span>Modified</span>
-			<button class="reset-btn" onclick={() => onreset(section.id)}>Reset</button>
-		</div>
+	{#if !collapsed}
+		<textarea
+			value={section.content}
+			oninput={(e) => onupdate(section.id, section.title, e.currentTarget.value)}
+			placeholder="Section content..."
+			rows="6"
+			disabled={section.readonly}
+		></textarea>
+		<TagEditor tags={section.tags} onupdate={(tags) => onupdatetags(section.id, tags)} disabled={section.readonly} />
+		{#if section.modified}
+			<div class="modified-banner">
+				<span>Modified</span>
+				<button class="reset-btn" onclick={() => onreset(section.id)}>Reset</button>
+			</div>
+		{/if}
 	{/if}
 </div>
 
@@ -78,9 +100,47 @@
 		gap: 8px;
 	}
 
+	.compose-section--collapsed {
+		padding: 6px 12px;
+	}
+
+	.collapse-toggle {
+		font-size: 0.75rem;
+		padding: 0 4px;
+		min-width: 18px;
+		background: transparent;
+		border: none;
+		color: var(--fg-muted);
+		cursor: pointer;
+	}
+	.collapse-toggle:hover { color: var(--fg); }
+
 	.compose-section.modified {
 		border-color: var(--modified-border);
 		background: var(--modified-bg);
+	}
+
+	/* Provenance-derived borders. Same vocabulary as DraftReader so the
+	   read↔edit transition is visually continuous:
+	   - imported (green): transcluded as-is, no new event on publish.
+	   - claimed (yellow): unlocked but unchanged — UX flag, still publishes
+	     as a transclusion unless edited (the user gets a "publish anyway?"
+	     popup).
+	   - forked (violet): content diverged, will publish a fork-marked 30041.
+	   --id-draft is iceberg's red ("unsigned draft"), so we use --yellow
+	   directly here; --id-imported is magenta in iceberg, so we use
+	   --green for attribution-clean. */
+	.section--imported {
+		border-color: var(--green);
+		background: color-mix(in srgb, var(--green) 5%, transparent);
+	}
+	.section--claimed {
+		border-color: var(--yellow);
+		background: color-mix(in srgb, var(--yellow) 6%, transparent);
+	}
+	.section--forked {
+		border-color: var(--id-forked);
+		background: color-mix(in srgb, var(--id-forked) 7%, transparent);
 	}
 
 	.compose-section-header {

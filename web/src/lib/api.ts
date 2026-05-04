@@ -191,6 +191,53 @@ export function publish(req: PublishRequest) {
 	});
 }
 
+// Block-based publish (NIP-54-style fork support).
+//
+// Each block is one of:
+//   { kind: "editable",  content }
+//   { kind: "imported",  source_addr, content, author }       — emits no 30041; TOC references source addr
+//   { kind: "forked",    original_addr, content, original_author } — emits a 30041 with `fork`-marker `a`/`e` tags
+//
+// When source_publication_addr is set, the new 30040 also emits `fork`
+// `a`/`e` tags pointing at the parent publication.
+
+export type PublishBlock =
+	| { kind: 'editable'; title: string; tags: [string, string][]; content: string }
+	| {
+			kind: 'imported';
+			title: string;
+			tags: [string, string][];
+			source_addr: { kind: number; pubkey: string; d_tag: string };
+			content: string;
+			author: string;
+	  }
+	| {
+			kind: 'forked';
+			title: string;
+			tags: [string, string][];
+			original_addr: { kind: number; pubkey: string; d_tag: string };
+			content: string;
+			original_author: string;
+	  };
+
+export interface PublishBlocksRequest {
+	title: string;
+	tags: [string, string][];
+	blocks: PublishBlock[];
+	source_publication_addr?: { kind: number; pubkey: string; d_tag: string } | null;
+	source_publication_event_id?: string | null;
+	sign: boolean;
+	broadcast: boolean;
+	relays?: string[];
+}
+
+export function publishBlocks(req: PublishBlocksRequest) {
+	return fetchJson<PublishResponse>('/api/v1/publish/blocks', {
+		method: 'POST',
+		body: JSON.stringify(req)
+	});
+}
+
 // Document Import API
 
 export function listDocuments() {

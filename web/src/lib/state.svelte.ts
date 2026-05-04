@@ -70,10 +70,19 @@ function _createAppState() {
 	// --- Compose metadata ---
 	let composeTitle = $state('');
 	let composeTags: TagEntry[] = $state([]);
+	// Provenance for the publication being edited (set when a draft is seeded
+	// from an existing 30040). Drives fork-marker tag emission and the
+	// "structural change" gate on publish.
+	let composeSourcePubAddr: NAddr | null = $state(null);
+	let composeSourcePubEventId: string | null = $state(null);
+	let composeSourceSectionOrder: NAddr[] = $state([]);
 	const compose = $derived<ComposeState>({
 		title: composeTitle,
 		tags: composeTags,
-		sections: composeSections
+		sections: composeSections,
+		source_publication_addr: composeSourcePubAddr,
+		source_publication_event_id: composeSourcePubEventId,
+		source_section_order: composeSourceSectionOrder
 	});
 
 	// --- Document state (shared for reading mode) ---
@@ -186,7 +195,12 @@ function _createAppState() {
 			id: crypto.randomUUID(),
 			context_content: fields.content,
 			modified: false,
-			readonly: false,
+			// Sections imported from a published 30040 default to locked —
+			// this matches the read-mode default ("I'm transcluding the
+			// original as-is, attributed to its author"). The user unlocks
+			// (yellow) to claim, or modifies (purple) to fork. Items from
+			// other origins (chat, search, fresh compose) stay unlocked.
+			readonly: fields.origin === 'import',
 			in_context: target.context ?? false,
 			in_compose: target.compose ?? false
 		};
@@ -604,19 +618,71 @@ function _createAppState() {
 		const sections = items.length > 0 ? items : compose.sections;
 		if (!sections.length) return;
 		const canSign = identityStatus?.state === 'unlocked';
+
+		// If any section has a source_addr OR the draft was seeded from a
+		// publication, route through the block endpoint so we emit fork-
+		// marker tags. Otherwise fall back to the legacy publish.
+		const hasProvenance =
+			!!composeSourcePubAddr || sections.some((s) => !!s.source_addr);
+
 		try {
-			const resp = await api.publish({
-				title: compose.title,
-				tags: compose.tags.map(t => [t.name, t.value] as [string, string]),
-				sections: sections.map(s => ({
-					title: s.title,
-					content: s.content,
-					tags: s.tags.map(t => [t.name, t.value] as [string, string])
-				})),
-				sign: canSign,
-				broadcast: canSign
-			});
-			console.log('Published:', resp.publication_id);
+			if (hasProvenance) {
+				const blocks: api.PublishBlock[] = sections.map((s) => {
+					const baseTags = s.tags.map(
+						(t) => [t.name, t.value] as [string, string]
+					);
+					if (!s.source_addr) {
+						return {
+							kind: 'editable',
+							title: s.title,
+							tags: baseTags,
+							content: s.content
+						};
+					}
+					const diverged = s.content !== s.original_content;
+					if (diverged) {
+						return {
+							kind: 'forked',
+							title: s.title,
+							tags: baseTags,
+							original_addr: s.source_addr,
+							content: s.content,
+							original_author: s.source_addr.pubkey
+						};
+					}
+					return {
+						kind: 'imported',
+						title: s.title,
+						tags: baseTags,
+						source_addr: s.source_addr,
+						content: s.content,
+						author: s.source_addr.pubkey
+					};
+				});
+				const resp = await api.publishBlocks({
+					title: compose.title,
+					tags: compose.tags.map((t) => [t.name, t.value] as [string, string]),
+					blocks,
+					source_publication_addr: composeSourcePubAddr,
+					source_publication_event_id: composeSourcePubEventId,
+					sign: canSign,
+					broadcast: canSign
+				});
+				console.log('Published (blocks):', resp.publication_id);
+			} else {
+				const resp = await api.publish({
+					title: compose.title,
+					tags: compose.tags.map((t) => [t.name, t.value] as [string, string]),
+					sections: sections.map((s) => ({
+						title: s.title,
+						content: s.content,
+						tags: s.tags.map((t) => [t.name, t.value] as [string, string])
+					})),
+					sign: canSign,
+					broadcast: canSign
+				});
+				console.log('Published:', resp.publication_id);
+			}
 			await loadFeed();
 		} catch (e) {
 			console.error('Publish compose failed:', e);
@@ -756,17 +822,64 @@ function _createAppState() {
 
 	// Drop everything currently in the compose pool. Called before an
 	// "edit this" action to avoid mixing the new edit target with stale
-	// imports from a previous session.
+	// imports from a previous session. Also clears publication-source
+	// provenance so a follow-up seed can reset it cleanly.
 	function clearComposePool() {
 		items = items.map((e) => (e.in_compose ? { ...e, in_compose: false } : e));
+		composeSourcePubAddr = null;
+		composeSourcePubEventId = null;
+		composeSourceSectionOrder = [];
 	}
 
-	// Set the publication-level draft fields (title + topic tags). Used by
-	// ReaderBuffer's "Edit" so the 30040 metadata survives the round trip
-	// from reader → composer.
-	function seedDraftMetadata(title: string | null, tags: TagEntry[]) {
+	// Move an in-compose section up or down by one position in the
+	// section list. Reorder operates on the underlying `items` array so
+	// the derived `composeSections` reflects the new order. No-op if the
+	// section is already at the boundary.
+	function reorderComposeSection(id: string, direction: 'up' | 'down') {
+		const composeIds = items.filter((i) => i.in_compose).map((i) => i.id);
+		const localIdx = composeIds.indexOf(id);
+		if (localIdx < 0) return;
+		const swapWith = direction === 'up' ? localIdx - 1 : localIdx + 1;
+		if (swapWith < 0 || swapWith >= composeIds.length) return;
+		const aId = composeIds[localIdx];
+		const bId = composeIds[swapWith];
+		const aIdx = items.findIndex((i) => i.id === aId);
+		const bIdx = items.findIndex((i) => i.id === bId);
+		if (aIdx < 0 || bIdx < 0) return;
+		const next = items.slice();
+		[next[aIdx], next[bIdx]] = [next[bIdx], next[aIdx]];
+		items = next;
+	}
+
+	// Switch the user back to the read view of the draft.
+	// - If the draft was seeded from a published 30040, navigate to its
+	//   ReaderBuffer; that buffer's "draft mode" check picks up the
+	//   matching compose state and renders editable lock/reorder UI.
+	// - Otherwise (from-scratch draft), this is a no-op for now.
+	function previewDraft() {
+		const src = composeSourcePubAddr;
+		if (!src) return;
+		navigateToPublication(src.pubkey, src.d_tag);
+	}
+
+	// Set the publication-level draft fields (title + topic tags) and
+	// optional source provenance. Used by ReaderBuffer's "Edit" so both the
+	// 30040 metadata and the fork lineage survive the round trip from
+	// reader → composer.
+	function seedDraftMetadata(
+		title: string | null,
+		tags: TagEntry[],
+		source?: {
+			pub_addr?: NAddr | null;
+			pub_event_id?: string | null;
+			section_order?: NAddr[];
+		}
+	) {
 		composeTitle = title ?? '';
 		composeTags = tags;
+		composeSourcePubAddr = source?.pub_addr ?? null;
+		composeSourcePubEventId = source?.pub_event_id ?? null;
+		composeSourceSectionOrder = source?.section_order ?? [];
 	}
 
 	async function handleAddManyToContext(results: SearchResult[]) {
@@ -1753,6 +1866,8 @@ function _createAppState() {
 		importSectionToCompose,
 		clearComposePool,
 		seedDraftMetadata,
+		reorderComposeSection,
+		previewDraft,
 
 		// Lifecycle
 		initialize,

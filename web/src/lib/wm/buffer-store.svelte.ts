@@ -11,6 +11,9 @@ import type {
 
 const POSITION_ORDER: Position[] = ['left', 'center', 'right'];
 
+export type NavAction = 'up' | 'down' | 'left' | 'right' | 'select' | 'back';
+export type NavHandler = (action: NavAction) => boolean;
+
 function cloneTree(t: SplitNode): SplitNode {
 	if (t.type === 'leaf') return { type: 'leaf', buffer: t.buffer };
 	return { type: 'split', orient: t.orient, children: t.children.map(cloneTree) };
@@ -62,6 +65,16 @@ export class BufferStore {
 	focusedSlot = $state<Position>('center');
 	flashSlot = $state<Position | null>(null);
 	bufferState = new Map<string, unknown>();
+
+	// Per-buffer keyboard nav handlers — populated by renderers on mount,
+	// dispatched by the global keydown handler when normal mode + non-editable
+	// focus + no leader. The Map itself is non-reactive: an `$effect` that
+	// calls `registerNavHandler` would otherwise read it (in `new Map(...)`),
+	// track it as a dep, then re-trigger when the method writes — infinite
+	// loop. We expose `navHandlerKeys` separately as a reactive snapshot
+	// for the modeline diagnostic.
+	private _navHandlers = new Map<string, NavHandler>();
+	navHandlerKeys = $state<string[]>([]);
 
 	layouts: Record<string, LayoutConfig>;
 
@@ -236,6 +249,24 @@ export class BufferStore {
 		this.flash(this.focusedSlot);
 	}
 
+	registerNavHandler(bufferId: string, handler: NavHandler) {
+		this._navHandlers.set(bufferId, handler);
+		this.navHandlerKeys = Array.from(this._navHandlers.keys());
+	}
+
+	unregisterNavHandler(bufferId: string) {
+		this._navHandlers.delete(bufferId);
+		this.navHandlerKeys = Array.from(this._navHandlers.keys());
+	}
+
+	dispatchNav(action: NavAction): boolean {
+		const buf = this.focusedLeaf(this.focusedSlot)?.buffer;
+		if (!buf) return false;
+		const handler = this._navHandlers.get(buf.id);
+		if (!handler) return false;
+		return handler(action);
+	}
+
 	cycleBufferInSlot(dir: 1 | -1) {
 		const pos = this.focusedSlot;
 		if (this.slotStates[pos] === 'rail') return;
@@ -311,18 +342,24 @@ export class BufferStore {
 	}
 }
 
-// Phase 1 uses a module-level singleton — one shell instance per page.
-// Multi-frame (multiple browser tabs sharing buffer state) will swap this
-// for a per-frame store synced via BroadcastChannel.
-let _activeStore: BufferStore | null = null;
+// Phase 1 uses a singleton — one shell instance per page. Stash it on
+// globalThis so HMR module-duplication can't fork the active store
+// (otherwise +page.svelte's copy of this module and a renderer's copy
+// each end up with their own `_activeStore`, and registrations in one
+// are invisible to the other — which manifests as `nav:✗` in the
+// modeline).
+const ACTIVE_STORE_KEY = '__tendrl_active_buffer_store__';
+
+type GlobalWithStore = typeof globalThis & { [ACTIVE_STORE_KEY]?: BufferStore };
 
 export function setActiveStore(store: BufferStore): void {
-	_activeStore = store;
+	(globalThis as GlobalWithStore)[ACTIVE_STORE_KEY] = store;
 }
 
 export function getActiveStore(): BufferStore {
-	if (!_activeStore) {
+	const store = (globalThis as GlobalWithStore)[ACTIVE_STORE_KEY];
+	if (!store) {
 		throw new Error('BufferStore not active — call setActiveStore() in the shell root');
 	}
-	return _activeStore;
+	return store;
 }

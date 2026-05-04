@@ -1105,6 +1105,24 @@ fn build_block_index_event(
         tags.push(serde_json::to_value(tag_vec).unwrap_or(json!([])));
     }
 
+    // Fork lineage (NIP-54): if this draft was seeded from an existing
+    // 30040, emit `a` and `e` tags with `fork` marker pointing at the
+    // source. This applies whenever any block is forked, the order
+    // changed, or new blocks were added — the client decides whether to
+    // populate `source_publication_addr` based on its own structural-
+    // change check.
+    if let Some(src) = &state.source_publication_addr {
+        tags.push(json!([
+            "a",
+            format!("{}:{}:{}", KIND_PUBLICATION_INDEX, src.pubkey, src.d_tag),
+            "",
+            "fork"
+        ]));
+        if let Some(eid) = &state.source_publication_event_id {
+            tags.push(json!(["e", eid, "", "fork"]));
+        }
+    }
+
     // Section references
     tags.extend(a_tags.iter().cloned());
 

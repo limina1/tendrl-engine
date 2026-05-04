@@ -57,9 +57,22 @@ running ledger of what was promised vs what shipped.
 - [X] Stop AppState navigation handlers from goto-ing routes when a shell is mounted (=app.setNavigationHandlers=); search-result clicks and add-to-compose now spawn buffers instead of breaking out to =/p/...= or =/compose=
 - [X] ReaderBuffer "Edit" / "Edit §" — import loaded sections (or just the focused section in paginated mode) into the compose pool and jump to composer
 - [X] DraftReader: composer's =preview= tab body replaced with the same outline/continuous/paginated rendering as ReaderBuffer, fed by an adapter that turns =ComposeState.sections= into =LazySection[]=. Per-entry lock toggle in outline (yellow accent when unlocked).
-- [ ] DraftReader: drag-to-reorder when section is unlocked
-- [ ] DraftReader: transclusion affordance — "+" between entries opens a search picker; selecting inserts as a new section with =a= tag = picked event's address
-- [ ] DraftReader: per-entry remove
+- [X] Provenance-aware section state (=imported= / =claimed= / =forked= / =original=) derived from =ContextItem.source_addr= + =original_content= + =readonly=. Drives DraftReader and ComposeView border colors (green / yellow / purple / none).
+- [X] Consecutive-locked-group segmentation — runs of imported sections render as one movable unit in DraftReader's outline; claimed/forked/original entries are atomic.
+- [X] Bulk =Unlock all= / =Lock all= toolbar actions.
+- [X] Per-entry remove (only for non-imported sections).
+- [X] Publish gate: button disabled when there's no structural change since the source 30040 (matching section count, order, no forks, no new sections). =hasStructuralChange= helper in =$lib/compose/state.ts=.
+- [X] Claimed-untouched confirm: when sections are unlocked but unmodified at publish time, =confirm()= popup before the API call; on accept they emit as transclusions.
+- [X] NIP-54 fork-marker emission on publish: new =/api/v1/publish/blocks= endpoint accepting block-typed payload; engine emits =["a", "...", "", "fork"]= + =["e", "...", "", "fork"]= on the new 30040 (when seeded from a source publication) and on each forked 30041. Imported blocks emit no 30041 — the new TOC references the source addr directly.
+- [X] Iceberg color fix: =--id-draft= is iceberg-red (unsigned-draft), =--id-imported= is magenta. Repointed provenance borders to =--green= / =--yellow= / =--id-forked= so green = transcluded, yellow = claimed, violet = forked.
+- [X] Imports default to locked (=readonly: true=) on =origin === 'import'= — matches the user's "preview makes everything locked" expectation: sections come in as transcluded green, user unlocks per-section to claim.
+- [X] Pane-body flex chain fix: =.pane__body= in the WM shell wasn't a flex container, so child renderers' =flex: 1= collapsed and inner =overflow: auto= regions never got a bounded height. Adding =display: flex; flex-direction: column; min-height: 0= unblocked scroll for ChatPanel, ComposeView, ReaderBuffer, etc.
+- [X] Lock/unlock/reorder UX moved into ReaderBuffer (the regular read view). =isDraftMode= derived from =compose.source_publication_addr= matching the buffer's pubkey:dtag. Pristine: each section has a 🔒 button that, on click, seeds compose from the publication and switches into draft mode. Draft mode: per-section lock toggle, ▲/▼ atomic reorder for non-imported entries, ▲▲/▼▼ for imported groups, ✕ to remove non-imported.
+- [X] ComposeView Preview button now navigates back to the ReaderBuffer for the source publication (via =app.previewDraft()= → =navigateToPublication=) when source provenance is set; from-scratch drafts still fall back to inline DraftReader.
+- [X] Cross-draft guard: clicking unlock from a publication that doesn't match the in-progress draft prompts =confirm()= before clobbering the existing draft. Only one draft at a time for now.
+- [ ] Drag-to-reorder (replaces / supplements the ▲/▼ click affordance) for non-imported segments and imported groups
+- [ ] DraftReader / ReaderBuffer transclusion affordance — "+" between entries opens a search picker; selecting inserts as a new section with =a= tag = picked event's address
+- [ ] Multi-draft: keep one draft per publication, switch between them via SPC b b on the composer slot
 - [X] Pane header =N↻= cycle button — clicking opens the class-scoped switcher (lets user back out of composer to the reader without knowing =SPC b b=)
 
 ** Deferred indefinitely (low priority / open) [ ]

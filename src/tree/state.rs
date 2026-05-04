@@ -1260,6 +1260,13 @@ pub struct ComposeBlockState {
     pub title: String,
     pub tags: Vec<TagEntry>,
     pub auto_update: AutoUpdateMode,
+    /// When this draft was seeded from an existing 30040, this is its NAddr.
+    /// Used to emit a `fork`-marker `a` tag on the new publication index so
+    /// the lineage is queryable per NIP-54.
+    pub source_publication_addr: Option<NAddr>,
+    /// Event id of the specific 30040 version we forked from. Used to emit
+    /// the matching `fork`-marker `e` tag.
+    pub source_publication_event_id: Option<String>,
 }
 
 impl ComposeBlockState {
@@ -1271,6 +1278,8 @@ impl ComposeBlockState {
             title: String::new(),
             tags: Vec::new(),
             auto_update: AutoUpdateMode::default(),
+            source_publication_addr: None,
+            source_publication_event_id: None,
         }
     }
 

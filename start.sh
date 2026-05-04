@@ -1,11 +1,15 @@
 #!/usr/bin/env bash
 # Start all tendrl-engine services
-# Usage: ./start.sh [-c config.toml] [--dev]
+# Usage: ./start.sh [-c config.toml] [--dev] [--build]
 #
 # Services:
 #   1. Embedding sidecar (Python, port 3031)
 #   2. Backend engine (Rust, port 3030)
-#   3. Frontend dev server (optional, --dev flag, port 5173)
+#   3. Frontend (port 5173 with --dev, otherwise preview of web/build/ on 5174)
+#
+# Flags:
+#   --dev    Run vite dev (hot-reload) on 5173 instead of preview
+#   --build  Run `pnpm build` before starting the preview
 #
 # Stop: Ctrl+C (kills all)
 
@@ -14,6 +18,7 @@ cd "$(dirname "$0")"
 
 CONFIG="config.toml"
 DEV=false
+BUILD=false
 PIDS=()
 
 # Parse args
@@ -21,6 +26,7 @@ while [[ $# -gt 0 ]]; do
     case "$1" in
         -c) CONFIG="$2"; shift 2 ;;
         --dev) DEV=true; shift ;;
+        --build) BUILD=true; shift ;;
         *) shift ;;
     esac
 done
@@ -77,22 +83,34 @@ echo "Starting backend..."
 cargo run -- -c "$CONFIG" &
 PIDS+=($!)
 
-# 3. Start frontend dev server (optional)
+# 3. Start frontend
 if [[ "$DEV" == true ]]; then
     sleep 1
     echo "Starting frontend dev server..."
-    cd web && pnpm dev &
+    (cd web && pnpm dev) &
     PIDS+=($!)
-    cd ..
+    FRONTEND_URL="http://localhost:5173"
+else
+    if [[ "$BUILD" == true ]]; then
+        echo "Building frontend..."
+        (cd web && pnpm build)
+    fi
+    if [[ ! -f "web/build/index.html" ]]; then
+        echo "ERROR: web/build/index.html not found. Run with --build first."
+        exit 1
+    fi
+    sleep 1
+    echo "Starting frontend preview on 5174..."
+    (cd web && pnpm preview -- --port 5174 --strictPort) &
+    PIDS+=($!)
+    FRONTEND_URL="http://localhost:5174"
 fi
 
 echo ""
 echo "═══════════════════════════════════════"
 echo "  tendrl-engine running"
 echo "  Backend:  http://localhost:3030"
-if [[ "$DEV" == true ]]; then
-    echo "  Frontend: http://localhost:5173"
-fi
+echo "  Frontend: $FRONTEND_URL"
 if [[ -n "$EMBED_ENABLED" ]]; then
     echo "  Sidecar:  http://localhost:3031"
 fi

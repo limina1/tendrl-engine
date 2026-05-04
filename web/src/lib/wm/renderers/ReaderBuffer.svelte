@@ -1,18 +1,29 @@
 <script lang="ts">
+	import { untrack } from 'svelte';
 	import * as api from '$lib/api';
 	import { getAppState } from '$lib/state.svelte';
 	import OutlineView from '$lib/components/OutlineView.svelte';
 	import ContinuousView from '$lib/components/ContinuousView.svelte';
 	import PaginatedView from '$lib/components/PaginatedView.svelte';
-	import type { LazySection, PublicationDetail, TagEntry, ViewMode } from '$lib/types';
+	import SectionCard from '$lib/components/SectionCard.svelte';
+	import { getActiveStore, type NavAction } from '../buffer-store.svelte';
+	import type {
+		LazySection,
+		PublicationDetail,
+		TagEntry,
+		ViewMode,
+		ContextItem
+	} from '$lib/types';
 	import type { Buffer } from '../types';
+	import { sectionState, segmentSections } from '$lib/compose/state';
 
 	let { buffer }: { buffer: Buffer } = $props();
 
 	const app = getAppState();
+	const store = getActiveStore();
 
 	let publication = $state<PublicationDetail | null>(null);
-	let sections = $state<LazySection[]>([]);
+	let pristineSections = $state<LazySection[]>([]);
 	let viewMode = $state<ViewMode>('outline');
 	let currentSection = $state(0);
 	let loading = $state(true);
@@ -26,18 +37,59 @@
 		return { pubkey: match[1].toLowerCase(), dTag: match[2] };
 	}
 
+	const parsedAddr = $derived(parseBufferId(buffer.id));
+
+	// Draft mode: the live compose state was seeded from THIS publication.
+	// In that mode we render editable sections from compose.sections rather
+	// than from the API result. Lock/unlock and reorder operate on those
+	// sections directly. Per the design model, the regular reader view
+	// owns the lock/unlock UX — the composer is only entered for content
+	// edits.
+	const isDraftMode = $derived.by(() => {
+		const src = app.compose.source_publication_addr;
+		if (!src || !parsedAddr) return false;
+		return (
+			src.kind === 30040 &&
+			src.pubkey.toLowerCase() === parsedAddr.pubkey &&
+			src.d_tag === parsedAddr.dTag
+		);
+	});
+
+	const draftSections = $derived<LazySection[]>(
+		isDraftMode
+			? app.compose.sections.map((s, i) => ({
+					addr: s.source_addr ?? { kind: 30041, pubkey: '', d_tag: s.id },
+					title: s.title || null,
+					content: s.content,
+					position: i,
+					status: 'loaded' as const
+				}))
+			: []
+	);
+
+	const sections = $derived<LazySection[]>(
+		isDraftMode ? draftSections : pristineSections
+	);
+
+	const segments = $derived(
+		isDraftMode ? segmentSections(app.compose) : []
+	);
+
 	async function load() {
-		const parsed = parseBufferId(buffer.id);
-		if (!parsed) {
+		if (!parsedAddr) {
 			error = 'Buffer id does not encode a publication address';
 			loading = false;
 			return;
 		}
 		loading = true;
 		try {
-			const resp = await api.getPublication(parsed.pubkey, parsed.dTag, 'local_first');
+			const resp = await api.getPublication(
+				parsedAddr.pubkey,
+				parsedAddr.dTag,
+				'local_first'
+			);
 			publication = resp.publication;
-			sections = resp.toc.map((entry, i) => ({
+			pristineSections = resp.toc.map((entry, i) => ({
 				addr: entry.addr,
 				title: entry.title,
 				content: null,
@@ -52,31 +104,37 @@
 	}
 
 	$effect(() => {
-		// Re-run when buffer.id changes; {#key buffer.id} in BufferRenderer
-		// also remounts on id change so this is belt-and-braces.
 		buffer.id;
 		load();
 	});
 
 	function handleLoadSection(index: number) {
-		if (index < 0 || index >= sections.length) return;
-		const cur = sections[index];
+		if (isDraftMode) return; // draft sections are already loaded
+		if (index < 0 || index >= pristineSections.length) return;
+		const cur = pristineSections[index];
 		if (cur.status === 'loaded' || cur.status === 'loading') return;
 		if (loadingPromises.has(index)) return;
-		sections[index] = { ...cur, status: 'loading' };
-		const parsed = parseBufferId(buffer.id);
-		if (!parsed) return;
+		pristineSections[index] = { ...cur, status: 'loading' };
+		if (!parsedAddr) return;
 		const promise = (async () => {
 			try {
-				const resp = await api.getSection(parsed.pubkey, parsed.dTag, index);
-				sections[index] = {
-					...sections[index],
-					title: resp.section.title ?? sections[index].title,
+				const resp = await api.getSection(
+					parsedAddr.pubkey,
+					parsedAddr.dTag,
+					index
+				);
+				pristineSections[index] = {
+					...pristineSections[index],
+					title: resp.section.title ?? pristineSections[index].title,
 					content: resp.section.content,
 					status: 'loaded'
 				};
 			} catch (e) {
-				sections[index] = { ...sections[index], status: 'error', error: String(e) };
+				pristineSections[index] = {
+					...pristineSections[index],
+					status: 'error',
+					error: String(e)
+				};
 			} finally {
 				loadingPromises.delete(index);
 			}
@@ -86,14 +144,11 @@
 
 	function handleNavigate(index: number) {
 		currentSection = index;
+		outlineCursor = index;
 	}
 
 	function extractPublicationTags(pub: PublicationDetail | null): TagEntry[] {
 		if (!pub) return [];
-		// pub.index is the raw 30040 event; tags include `t` (topic), `title`,
-		// `summary`, `image`, `d`, `a`. Drop the structural ones (a-tag list
-		// is regenerated on publish from the section list; d-tag is set by
-		// the publish step) and keep user-facing metadata.
 		const skip = new Set(['d', 'a', 'alt', 'e', 'p']);
 		const rawTags =
 			(pub.index as { data?: { tags?: string[][] } } | null)?.data?.tags ?? [];
@@ -103,59 +158,316 @@
 	}
 
 	async function ensureAllSectionsLoaded() {
-		for (let i = 0; i < sections.length; i++) {
-			if (sections[i].status === 'pending') handleLoadSection(i);
+		for (let i = 0; i < pristineSections.length; i++) {
+			if (pristineSections[i].status === 'pending') handleLoadSection(i);
 		}
-		// loadingPromises is mutated by handleLoadSection — snapshot then await.
 		const inflight = Array.from(loadingPromises.values());
 		if (inflight.length) await Promise.all(inflight);
 	}
 
-	async function editInComposer() {
-		// Replace whatever is in the compose pool with this publication's
-		// sections, then jump to the composer buffer. Force-load any
-		// pending sections first so we don't lose content.
+	function publicationEventId(pub: PublicationDetail | null): string | null {
+		if (!pub) return null;
+		const ev = pub.index as { id?: unknown } | null;
+		return typeof ev?.id === 'string' ? ev.id : null;
+	}
+
+	// Seed compose state from the loaded publication so subsequent lock/
+	// unlock/reorder actions write into a real draft. Idempotent — calling
+	// it when isDraftMode is already true is a no-op. If there's an
+	// existing draft for a different publication, prompt before clobbering
+	// it (only one in-progress draft at a time for now).
+	async function seedDraftFromPublication(): Promise<boolean> {
+		if (isDraftMode) return true;
+		const existingSrc = app.compose.source_publication_addr;
+		const hasOtherDraft =
+			!!existingSrc &&
+			parsedAddr &&
+			(existingSrc.pubkey.toLowerCase() !== parsedAddr.pubkey ||
+				existingSrc.d_tag !== parsedAddr.dTag);
+		if (hasOtherDraft) {
+			const ok = confirm(
+				`A draft is already in progress for "${existingSrc!.d_tag}". Discard it and start a new draft for this publication?`
+			);
+			if (!ok) return false;
+		}
 		await ensureAllSectionsLoaded();
 		app.clearComposePool();
-		app.seedDraftMetadata(publication?.title ?? null, extractPublicationTags(publication));
-		for (const s of sections) {
+		app.seedDraftMetadata(
+			publication?.title ?? null,
+			extractPublicationTags(publication),
+			{
+				pub_addr: publication?.addr ?? null,
+				pub_event_id: publicationEventId(publication),
+				section_order: pristineSections.map((s) => s.addr)
+			}
+		);
+		for (const s of pristineSections) {
 			if (s.status !== 'loaded' || s.content == null) continue;
 			app.importSectionToCompose(s.addr, s.title, s.content);
 		}
+		return true;
+	}
+
+	async function editInComposer() {
+		const ok = await seedDraftFromPublication();
+		if (!ok) return;
 		app.navigateToCompose();
 	}
 
 	async function editFocusedSection() {
-		// Just the currently-paginated section. Replaces whatever is in the
-		// pool so "Edit §" never leaks the rest of the document. Skips
-		// publication-level title/tag seeding since we're scoped to a
-		// single section.
-		const s = sections[currentSection];
+		const s = pristineSections[currentSection];
 		if (!s) return;
 		if (s.status !== 'loaded' || s.content == null) {
 			handleLoadSection(currentSection);
 			const inflight = Array.from(loadingPromises.values());
 			if (inflight.length) await Promise.all(inflight);
 		}
-		const reloaded = sections[currentSection];
-		if (!reloaded || reloaded.status !== 'loaded' || reloaded.content == null) return;
+		const reloaded = pristineSections[currentSection];
+		if (
+			!reloaded ||
+			reloaded.status !== 'loaded' ||
+			reloaded.content == null
+		)
+			return;
 		app.clearComposePool();
 		app.seedDraftMetadata(null, []);
 		app.importSectionToCompose(reloaded.addr, reloaded.title, reloaded.content);
 		app.navigateToCompose();
 	}
+
+	function itemAt(index: number): ContextItem | null {
+		return app.compose.sections[index] ?? null;
+	}
+
+	function stateAt(index: number) {
+		const item = itemAt(index);
+		return item ? sectionState(item) : 'original';
+	}
+
+	async function ensureDraftThenToggle(index: number) {
+		// Click on a lock from pristine view: implicitly enter draft mode
+		// (seed compose from the publication), then toggle the clicked
+		// section. After this returns, isDraftMode is true and subsequent
+		// lock clicks operate directly on compose state.
+		if (!isDraftMode) {
+			const ok = await seedDraftFromPublication();
+			if (!ok) return;
+		}
+		const item = app.compose.sections[index];
+		if (!item) return;
+		app.handleToggleReadonly(item.id);
+	}
+
+	function toggleLockDraft(index: number) {
+		const item = itemAt(index);
+		if (item) app.handleToggleReadonly(item.id);
+	}
+
+	function moveSection(index: number, direction: 'up' | 'down') {
+		const item = itemAt(index);
+		if (!item) return;
+		app.reorderComposeSection(item.id, direction);
+	}
+
+	function removeAt(index: number) {
+		const item = itemAt(index);
+		if (!item) return;
+		app.handleDeleteFromCompose([item]);
+	}
+
+	const anyUnlocked = $derived(
+		isDraftMode &&
+			app.compose.sections.some((s) => s.source_addr && !s.readonly)
+	);
+	const anyLockable = $derived(
+		isDraftMode && app.compose.sections.some((s) => s.source_addr && s.readonly)
+	);
+
+	function unlockAllImported() {
+		for (const s of app.compose.sections) {
+			if (s.source_addr && s.readonly) app.handleToggleReadonly(s.id);
+		}
+	}
+
+	function lockAllUnlocked() {
+		for (const s of app.compose.sections) {
+			if (s.source_addr && !s.readonly && s.content === s.original_content) {
+				app.handleToggleReadonly(s.id);
+			}
+		}
+	}
+
+	// Outline cursor — separate from paginated currentSection so the two
+	// don't fight: cursor is the selection in outline view, currentSection
+	// is the page in paginated view. Pressing Enter (or l/right) on a
+	// cursored outline entry switches to paginated mode at that index.
+	let outlineCursor = $state(0);
+	let outlineEl: HTMLDivElement | undefined = $state();
+	let contentWrap: HTMLDivElement | undefined = $state();
+
+	function clampCursor() {
+		const total = sections.length;
+		if (total === 0) outlineCursor = 0;
+		else if (outlineCursor >= total) outlineCursor = total - 1;
+		else if (outlineCursor < 0) outlineCursor = 0;
+	}
+
+	function scrollOutlineCursorIntoView() {
+		// The outline rows live inside `.outline-overlay`, which itself
+		// lives inside the scrollable `.content` (contentWrap). Manipulate
+		// scrollTop on the actual scroll ancestor.
+		if (!contentWrap || !outlineEl) return;
+		const row = outlineEl.querySelector<HTMLElement>(`[data-cursor="${outlineCursor}"]`);
+		if (!row) return;
+		const wrapRect = contentWrap.getBoundingClientRect();
+		const rowRect = row.getBoundingClientRect();
+		if (rowRect.top < wrapRect.top) {
+			contentWrap.scrollTop -= wrapRect.top - rowRect.top;
+		} else if (rowRect.bottom > wrapRect.bottom) {
+			contentWrap.scrollTop += rowRect.bottom - wrapRect.bottom;
+		}
+	}
+
+	function openCursorInPaginated() {
+		if (sections.length === 0) return;
+		if (!isDraftMode) handleLoadSection(outlineCursor);
+		viewMode = 'paginated';
+		handleNavigate(outlineCursor);
+	}
+
+	// View-mode order — left/right (h/l) cycles through these. Outline's
+	// l/→ is special: it drills into paginated and loads the cursored
+	// section. Otherwise l advances through the cycle, h reverses.
+	const VIEW_ORDER: ViewMode[] = ['outline', 'paginated', 'continuous'];
+
+	function cycleView(dir: 1 | -1) {
+		const i = VIEW_ORDER.indexOf(viewMode);
+		const n = VIEW_ORDER.length;
+		viewMode = VIEW_ORDER[(i + dir + n) % n];
+	}
+
+	function handleNav(action: NavAction): boolean {
+		if (sections.length === 0) return false;
+		if (viewMode === 'outline') {
+			if (action === 'down') {
+				outlineCursor = Math.min(sections.length - 1, outlineCursor + 1);
+				queueMicrotask(scrollOutlineCursorIntoView);
+				return true;
+			}
+			if (action === 'up') {
+				outlineCursor = Math.max(0, outlineCursor - 1);
+				queueMicrotask(scrollOutlineCursorIntoView);
+				return true;
+			}
+			if (action === 'select' || action === 'right') {
+				// Outline → paginated drills with the selected section.
+				openCursorInPaginated();
+				return true;
+			}
+			if (action === 'left') {
+				// Cycle backward: outline ← continuous.
+				cycleView(-1);
+				return true;
+			}
+			return false;
+		}
+		if (viewMode === 'paginated') {
+			if (action === 'down') {
+				if (currentSection < sections.length - 1) handleNavigate(currentSection + 1);
+				return true;
+			}
+			if (action === 'up') {
+				if (currentSection > 0) handleNavigate(currentSection - 1);
+				return true;
+			}
+			if (action === 'left' || action === 'right') {
+				cycleView(action === 'right' ? 1 : -1);
+				return true;
+			}
+			if (action === 'select') return true;
+			return false;
+		}
+		// continuous: j/k page-scroll by viewport; h/l cycles modes.
+		if (viewMode === 'continuous') {
+			if (action === 'left' || action === 'right') {
+				cycleView(action === 'right' ? 1 : -1);
+				return true;
+			}
+			if (contentWrap) {
+				const step = Math.max(80, contentWrap.clientHeight - 60);
+				if (action === 'down') {
+					contentWrap.scrollTop += step;
+					return true;
+				}
+				if (action === 'up') {
+					contentWrap.scrollTop -= step;
+					return true;
+				}
+			}
+		}
+		return false;
+	}
+
+	$effect(() => {
+		const id = buffer.id;
+		const handler = handleNav;
+		untrack(() => store.registerNavHandler(id, handler));
+		return () => untrack(() => store.unregisterNavHandler(id));
+	});
+
+	$effect(() => {
+		sections.length;
+		untrack(clampCursor);
+	});
 </script>
 
 <div class="reader-wrap">
 	<div class="toolbar">
-		<button class:active={viewMode === 'outline'} onclick={() => (viewMode = 'outline')}>Outline</button>
-		<button class:active={viewMode === 'continuous'} onclick={() => (viewMode = 'continuous')}>Continuous</button>
-		<button class:active={viewMode === 'paginated'} onclick={() => (viewMode = 'paginated')}>Paginated</button>
+		<!-- Order matches the h/l drill axis: outline → paginated → continuous.
+		     l/→ cycles right, h/← cycles left. Outline's l/→ is special —
+		     it drills into paginated with the cursored section loaded. -->
+		<button
+			class:active={viewMode === 'outline'}
+			onclick={() => (viewMode = 'outline')}>Outline</button
+		>
+		<button
+			class:active={viewMode === 'paginated'}
+			onclick={() => (viewMode = 'paginated')}>Paginated</button
+		>
+		<button
+			class:active={viewMode === 'continuous'}
+			onclick={() => (viewMode = 'continuous')}>Continuous</button
+		>
 		<span class="sp"></span>
-		{#if viewMode === 'paginated'}
-			<button class="edit" onclick={editFocusedSection} disabled={!publication} title="Send focused section to composer">Edit §</button>
+		{#if isDraftMode}
+			<span class="draft-pill" title="A draft of this publication is in progress">DRAFT</span>
+			<button
+				class="bulk"
+				onclick={unlockAllImported}
+				disabled={!anyLockable}
+				title="Unlock all imported sections (yellow — claimed for reorder/edit)"
+			>Unlock all</button>
+			<button
+				class="bulk"
+				onclick={lockAllUnlocked}
+				disabled={!anyUnlocked}
+				title="Re-lock unlocked sections that haven't been modified"
+			>Lock all</button>
 		{/if}
-		<button class="edit" onclick={editInComposer} disabled={!publication} title="Send all loaded sections to composer">Edit</button>
+		{#if viewMode === 'paginated'}
+			<button
+				class="edit"
+				onclick={editFocusedSection}
+				disabled={!publication}
+				title="Send focused section to composer">Edit §</button
+			>
+		{/if}
+		<button
+			class="edit"
+			onclick={editInComposer}
+			disabled={!publication}
+			title={isDraftMode ? 'Continue editing this draft' : 'Open this publication in the composer'}
+		>Edit</button>
 	</div>
 
 	{#if loading}
@@ -168,29 +480,183 @@
 		{#if publication.title}
 			<div class="title">{publication.title}</div>
 		{/if}
-		<div class="content">
+		<div class="content" bind:this={contentWrap}>
 			{#if viewMode === 'outline'}
-				<OutlineView
-					{sections}
-					onload={handleLoadSection}
-					onselect={(i) => {
-						handleLoadSection(i);
-						viewMode = 'paginated';
-						handleNavigate(i);
-					}}
-				/>
+				{#if isDraftMode}
+					<!-- Draft outline: lock/unlock per section, up/down reorder,
+					     remove on non-imported. Border colors derive from
+					     sectionState (green=imported, yellow=claimed,
+					     violet=forked, none=original). -->
+					<div class="outline-overlay" bind:this={outlineEl}>
+						{#each segments as seg, segIdx (segIdx + ':' + seg.indices.join(','))}
+							<div
+								class="segment"
+								class:segment--imported={seg.state === 'imported'}
+								class:segment--claimed={seg.state === 'claimed'}
+								class:segment--forked={seg.state === 'forked'}
+								class:segment--original={seg.state === 'original'}
+								class:segment--group={seg.indices.length > 1}
+							>
+								{#each seg.indices as i (i)}
+									{@const item = app.compose.sections[i]}
+									{@const st = stateAt(i)}
+									{@const isLast = seg.indices[seg.indices.length - 1] === i}
+									{@const isFirstInSeg = seg.indices[0] === i}
+									<div
+										class="entry"
+										class:entry--imported={st === 'imported'}
+										class:entry--claimed={st === 'claimed'}
+										class:entry--forked={st === 'forked'}
+										class:entry--original={st === 'original'}
+										class:entry--cursor={i === outlineCursor}
+										data-cursor={i}
+									>
+										<div class="rail" aria-hidden="true">
+											{#if seg.indices.length > 1}
+												<span class="rail-glyph"
+													>{isLast
+														? '└'
+														: isFirstInSeg
+															? '┌'
+															: '│'}</span
+												>
+											{/if}
+										</div>
+										{#if item && item.source_addr}
+											<button
+												class="lock"
+												class:lock--unlocked={st === 'claimed' ||
+													st === 'forked'}
+												onclick={() => toggleLockDraft(i)}
+												title={st === 'imported'
+													? 'Unlock — claim for reorder / fork'
+													: st === 'forked'
+														? 'Forked — re-lock blocked'
+														: 'Lock — restore as transcluded'}
+												disabled={st === 'forked'}
+											>{st === 'imported' ? '🔒' : '🔓'}</button>
+										{:else}
+											<span
+												class="lock lock--placeholder"
+												title="Original — no source to lock against">·</span
+											>
+										{/if}
+										<div class="entry-body">
+											<SectionCard
+												section={sections[i]}
+												preview
+												index={i + 1}
+												onclick={() => {
+													viewMode = 'paginated';
+													handleNavigate(i);
+												}}
+											/>
+										</div>
+										<div class="row-actions">
+											{#if st !== 'imported'}
+												<button
+													class="row-btn"
+													onclick={() => moveSection(i, 'up')}
+													disabled={i === 0}
+													title="Move up"
+												>▲</button>
+												<button
+													class="row-btn"
+													onclick={() => moveSection(i, 'down')}
+													disabled={i === sections.length - 1}
+													title="Move down"
+												>▼</button>
+												<button
+													class="row-btn remove"
+													onclick={() => removeAt(i)}
+													title="Remove from draft"
+												>✕</button>
+											{:else if isFirstInSeg && seg.indices.length > 1}
+												<!-- Group reorder: imported runs move as a single
+												     unit. Anchor the up/down on the first row of
+												     each group. -->
+												<button
+													class="row-btn"
+													onclick={() => {
+														for (const idx of seg.indices) {
+															moveSection(idx, 'up');
+														}
+													}}
+													disabled={i === 0}
+													title="Move group up"
+												>▲▲</button>
+												<button
+													class="row-btn"
+													onclick={() => {
+														for (const idx of [...seg.indices].reverse()) {
+															moveSection(idx, 'down');
+														}
+													}}
+													disabled={
+														seg.indices[seg.indices.length - 1] ===
+														sections.length - 1
+													}
+													title="Move group down"
+												>▼▼</button>
+											{/if}
+										</div>
+									</div>
+								{/each}
+							</div>
+						{/each}
+						<p class="hint">
+							🔒 click to unlock. Unlocked sections (yellow) reorder atomically;
+							locked imports (green) move together. Forked (violet) sections
+							carry diverged content — go to compose to keep editing.
+						</p>
+					</div>
+				{:else}
+					<!-- Pristine outline: same SectionCard as before, plus a per-
+					     section lock toggle. The first lock click seeds compose
+					     state from this publication and switches into draft mode. -->
+					<div class="outline-overlay" bind:this={outlineEl}>
+						{#each pristineSections as section, i (`${i}:${section.addr.pubkey}:${section.addr.d_tag}`)}
+							<div
+								class="entry entry--pristine"
+								class:entry--cursor={i === outlineCursor}
+								data-cursor={i}
+							>
+								<button
+									class="lock"
+									onclick={() => ensureDraftThenToggle(i)}
+									title="Unlock to start a draft for reorder/fork">🔒</button
+								>
+								<div class="entry-body">
+									<SectionCard
+										{section}
+										preview
+										index={i + 1}
+										onclick={() => {
+											handleLoadSection(i);
+											viewMode = 'paginated';
+											handleNavigate(i);
+										}}
+									/>
+								</div>
+							</div>
+						{/each}
+					</div>
+				{/if}
 			{:else if viewMode === 'continuous'}
 				<ContinuousView
 					{sections}
-					publication={{ title: publication.title, summary: publication.summary }}
-					onload={handleLoadSection}
+					publication={{
+						title: publication.title,
+						summary: publication.summary
+					}}
+					onload={isDraftMode ? undefined : handleLoadSection}
 				/>
 			{:else}
 				<PaginatedView
 					{sections}
 					{currentSection}
 					onnavigate={handleNavigate}
-					onload={handleLoadSection}
+					onload={isDraftMode ? undefined : handleLoadSection}
 				/>
 			{/if}
 		</div>
@@ -198,7 +664,12 @@
 </div>
 
 <style>
-	.reader-wrap { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+	.reader-wrap {
+		display: flex;
+		flex-direction: column;
+		height: 100%;
+		min-height: 0;
+	}
 	.toolbar {
 		display: flex;
 		gap: 4px;
@@ -206,6 +677,7 @@
 		border-bottom: 1px solid var(--panel-border);
 		background: var(--panel-bg-soft);
 		flex-shrink: 0;
+		align-items: center;
 	}
 	.toolbar button {
 		font-family: var(--font-mono);
@@ -223,6 +695,17 @@
 		border-color: var(--id-yours);
 	}
 	.toolbar .sp { flex: 1; }
+	.toolbar .draft-pill {
+		font-family: var(--font-mono);
+		font-size: 9px;
+		font-weight: 700;
+		letter-spacing: 0.08em;
+		padding: 1px 6px;
+		border-radius: var(--r-sm);
+		background: color-mix(in srgb, var(--yellow) 22%, transparent);
+		color: var(--yellow);
+	}
+	.toolbar .bulk:disabled { opacity: 0.4; cursor: not-allowed; }
 	.toolbar .edit {
 		color: var(--id-draft);
 		border-color: var(--id-draft);
@@ -232,6 +715,7 @@
 		color: var(--bg);
 	}
 	.toolbar .edit:disabled { opacity: 0.5; cursor: not-allowed; }
+
 	.title {
 		padding: 8px var(--s-3);
 		font-size: var(--t-md);
@@ -247,5 +731,116 @@
 		justify-content: center;
 		color: var(--base5);
 		font-size: var(--t-sm);
+	}
+
+	/* Outline-overlay layout (used by both draft and pristine modes). */
+	.outline-overlay {
+		padding: 8px;
+	}
+	.segment { margin-bottom: 6px; }
+	.segment--group.segment--imported {
+		border-left: 2px solid var(--green);
+		padding-left: 4px;
+	}
+	.entry {
+		display: grid;
+		grid-template-columns: 14px auto 1fr auto;
+		gap: 6px;
+		align-items: flex-start;
+		padding: 4px 6px;
+		border: 1px solid transparent;
+		border-radius: var(--r-sm);
+		margin-bottom: 2px;
+	}
+	.entry--pristine {
+		grid-template-columns: auto 1fr;
+	}
+	.entry--imported {
+		border-color: var(--green);
+		background: color-mix(in srgb, var(--green) 6%, transparent);
+	}
+	.entry--claimed {
+		border-color: var(--yellow);
+		background: color-mix(in srgb, var(--yellow) 7%, transparent);
+	}
+	.entry--forked {
+		border-color: var(--id-forked);
+		background: color-mix(in srgb, var(--id-forked) 8%, transparent);
+	}
+	.entry--original { /* no border on purpose */ }
+
+	/* Ranger-style outline cursor: bright bar + tinted background. Wins
+	   over the provenance-derived border so the cursor stays legible
+	   regardless of section state. */
+	.entry--cursor {
+		box-shadow: inset 4px 0 0 var(--id-yours);
+		background: color-mix(in srgb, var(--id-yours) 18%, transparent);
+	}
+
+	.rail {
+		font-family: var(--font-mono);
+		color: var(--green);
+		font-size: 14px;
+		line-height: 1;
+		padding-top: 6px;
+	}
+	.lock {
+		flex-shrink: 0;
+		background: transparent;
+		border: 1px solid var(--base3);
+		border-radius: var(--r-sm);
+		font-size: 12px;
+		padding: 0 6px;
+		cursor: pointer;
+		color: var(--base6);
+		align-self: flex-start;
+	}
+	.lock--unlocked {
+		border-color: var(--yellow);
+		color: var(--yellow);
+	}
+	.lock--placeholder { opacity: 0.3; cursor: default; }
+	.lock:hover:not(:disabled):not(.lock--placeholder) {
+		border-color: var(--id-yours);
+		color: var(--fg);
+	}
+	.lock:disabled { opacity: 0.6; cursor: not-allowed; }
+
+	.entry-body { min-width: 0; }
+
+	.row-actions {
+		display: flex;
+		flex-direction: column;
+		gap: 2px;
+		align-self: flex-start;
+	}
+	.row-btn {
+		background: transparent;
+		border: 1px solid var(--base3);
+		border-radius: var(--r-sm);
+		font-size: 10px;
+		padding: 0 4px;
+		min-width: 22px;
+		cursor: pointer;
+		color: var(--base6);
+		font-family: var(--font-mono);
+	}
+	.row-btn:hover:not(:disabled) {
+		border-color: var(--id-yours);
+		color: var(--fg);
+	}
+	.row-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+	.row-btn.remove:hover:not(:disabled) {
+		border-color: var(--red);
+		color: var(--red);
+	}
+
+	.hint {
+		padding: 12px;
+		font-size: var(--t-xs);
+		color: var(--base5);
+		font-style: italic;
+		text-align: center;
+		margin: 0;
 	}
 </style>

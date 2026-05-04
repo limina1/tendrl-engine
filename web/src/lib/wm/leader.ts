@@ -53,10 +53,16 @@ export function buildLeaderRoot(ctx: LeaderContext): SubPrefix {
 				desc: 'window',
 				children: {
 					c: { type: 'leaf', desc: 'collapse / expand', category: 'Window', kind: 'client', run: () => ctx.toggleFocusedSlot() },
-					h: { type: 'leaf', desc: 'focus left', category: 'Window', kind: 'client', run: () => ctx.navigateSlot(-1) },
-					l: { type: 'leaf', desc: 'focus right', category: 'Window', kind: 'client', run: () => ctx.navigateSlot(1) },
-					j: { type: 'leaf', desc: 'focus down', category: 'Window', kind: 'client', run: () => ctx.navigateSlot(1) },
-					k: { type: 'leaf', desc: 'focus up', category: 'Window', kind: 'client', run: () => ctx.navigateSlot(-1) },
+					// h/l move focus across slots (chat ↔ work ↔ research).
+					// j/k cycle through buffers within the focused slot.
+					h: { type: 'leaf', desc: 'focus left slot', category: 'Window', kind: 'client', run: () => ctx.navigateSlot(-1) },
+					l: { type: 'leaf', desc: 'focus right slot', category: 'Window', kind: 'client', run: () => ctx.navigateSlot(1) },
+					ArrowLeft: { type: 'leaf', desc: 'focus left slot', category: 'Window', kind: 'client', run: () => ctx.navigateSlot(-1) },
+					ArrowRight: { type: 'leaf', desc: 'focus right slot', category: 'Window', kind: 'client', run: () => ctx.navigateSlot(1) },
+					j: { type: 'leaf', desc: 'next buffer in slot', category: 'Window', kind: 'client', run: () => ctx.cycleBufferInSlot(1) },
+					k: { type: 'leaf', desc: 'prev buffer in slot', category: 'Window', kind: 'client', run: () => ctx.cycleBufferInSlot(-1) },
+					ArrowDown: { type: 'leaf', desc: 'next buffer in slot', category: 'Window', kind: 'client', run: () => ctx.cycleBufferInSlot(1) },
+					ArrowUp: { type: 'leaf', desc: 'prev buffer in slot', category: 'Window', kind: 'client', run: () => ctx.cycleBufferInSlot(-1) },
 					s: { type: 'leaf', desc: 'split (same-class h)', category: 'Window', kind: 'client', run: () => ctx.openSplitPicker() }
 				}
 			},

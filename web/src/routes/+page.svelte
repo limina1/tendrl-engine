@@ -18,7 +18,7 @@
 		type LeaderNode,
 		type SubPrefix
 	} from '$lib/wm/leader';
-	import { BufferStore, setActiveStore } from '$lib/wm/buffer-store.svelte';
+	import { BufferStore, setActiveStore, type NavAction } from '$lib/wm/buffer-store.svelte';
 	import BufferRenderer from '$lib/wm/BufferRenderer.svelte';
 	import { rendererFor } from '$lib/wm/registry';
 	import { getAppState } from '$lib/state.svelte';
@@ -286,6 +286,28 @@
 		(document.activeElement as HTMLElement | null)?.blur();
 	}
 
+	// Treat any focused editable as implicit insert intent — SPC / h j k l
+	// must reach the textarea, not trigger global nav. Mirrors evil-mode's
+	// auto-state-switch: the focused element decides the state.
+	function isEditable(el: EventTarget | null): boolean {
+		if (!(el instanceof HTMLElement)) return false;
+		const tag = el.tagName;
+		if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return true;
+		if (el.isContentEditable) return true;
+		return false;
+	}
+
+	function onFocusIn(e: FocusEvent) {
+		if (isEditable(e.target) && mode !== 'insert') mode = 'insert';
+	}
+
+	function onFocusOut(e: FocusEvent) {
+		// Only flip back when focus actually leaves all editables.
+		if (!isEditable(e.target)) return;
+		const next = e.relatedTarget;
+		if (!isEditable(next) && mode === 'insert') mode = 'normal';
+	}
+
 	function openAndInsert() {
 		// `o` semantics: open something new, then enter insert.
 		store.expandFocusedIfRail();
@@ -299,6 +321,19 @@
 	}
 
 	function onGlobalKeydown(e: KeyboardEvent) {
+		// Editable focus = implicit insert. The keystroke must reach the
+		// field — don't preventDefault, don't trigger global nav. Esc and
+		// C-[ / C-g still escape (which blurs the field via focusout →
+		// mode = 'normal'). This is the safety net; focusin/out keeps
+		// `mode` aligned for the modeline.
+		if (isEditable(document.activeElement) && mb.mode === 'closed') {
+			if (e.key === 'Escape' || (e.key === '[' && e.ctrlKey) || (e.key === 'g' && e.ctrlKey)) {
+				e.preventDefault();
+				exitInsertMode();
+			}
+			return;
+		}
+
 		// Minibuffer always wins.
 		if (mb.mode !== 'closed') {
 			const len = mb.mode === 'mx' ? mxEntries.length : minibufferEntries.length;
@@ -361,21 +396,25 @@
 			return;
 		}
 
-		if (e.key === 'h' || e.key === 'ArrowLeft') {
+		// Vim/ranger-style in-buffer nav. h/j/k/l + arrows dispatch to the
+		// focused buffer's registered handler. preventDefault fires
+		// unconditionally in normal mode so arrow keys never trigger
+		// browser-default scroll — selection-by-row is the only way the
+		// scrollbar should move via keyboard. Mouse wheel still scrolls.
+		const navMap: Record<string, NavAction> = {
+			h: 'left', l: 'right', j: 'down', k: 'up',
+			ArrowLeft: 'left', ArrowRight: 'right', ArrowDown: 'down', ArrowUp: 'up'
+		};
+		const navAction = navMap[e.key];
+		if (navAction) {
 			e.preventDefault();
-			store.navigateSlot(-1);
-		} else if (e.key === 'l' || e.key === 'ArrowRight') {
+			store.dispatchNav(navAction);
+			return;
+		}
+
+		if (e.key === 'Enter') {
 			e.preventDefault();
-			store.navigateSlot(1);
-		} else if (e.key === 'j' || e.key === 'ArrowDown') {
-			e.preventDefault();
-			store.cycleBufferInSlot(1);
-		} else if (e.key === 'k' || e.key === 'ArrowUp') {
-			e.preventDefault();
-			store.cycleBufferInSlot(-1);
-		} else if (e.key === 'Enter') {
-			e.preventDefault();
-			store.expandFocusedIfRail();
+			if (!store.dispatchNav('select')) store.expandFocusedIfRail();
 		} else if (e.key === 'i') {
 			e.preventDefault();
 			store.expandFocusedIfRail();
@@ -494,7 +533,7 @@
 
 <svelte:head><title>tendrl</title></svelte:head>
 
-<svelte:window onkeydown={onGlobalKeydown} />
+<svelte:window onkeydown={onGlobalKeydown} onfocusin={onFocusIn} onfocusout={onFocusOut} />
 
 <div class="page">
 	<div class="shell">
@@ -562,11 +601,27 @@
 
 {#snippet renderTree(node: SplitNode, slot: Slot, pos: Position, isRoot: boolean)}
 	{#if node.type === 'leaf'}
-		{@const classCount = store.openBuffers.filter((b) => b.className === slot.className).length}
+		{@const classBuffers = store.openBuffers.filter((b) => b.className === slot.className)}
 		<div class="pane {isRoot ? 'pane--root' : ''}">
 			<div class="pane__head">
 				<span class="cls cls--{slot.className}">{slot.className}</span>
-				<span class="pane__name">{node.buffer.label}</span>
+				{#if isRoot && classBuffers.length > 1}
+					<div class="pane__tabs">
+						{#each classBuffers as ob (ob.buffer.id)}
+							<button
+								class="pane__tab {ob.buffer.id === node.buffer.id ? 'pane__tab--on' : ''}"
+								onclick={(e) => {
+									e.stopPropagation();
+									store.focusSlot(pos);
+									if (ob.buffer.id !== node.buffer.id) store.setLeaf(pos, ob.buffer);
+								}}
+								title={ob.buffer.kicker ?? ob.buffer.label}
+							>{ob.buffer.label}</button>
+						{/each}
+					</div>
+				{:else}
+					<span class="pane__name">{node.buffer.label}</span>
+				{/if}
 				{#if node.buffer.kicker}
 					<span class="pane__kicker">· {node.buffer.kicker}</span>
 				{/if}
@@ -574,17 +629,6 @@
 					<span class="pane__mod" title="Modified">●</span>
 				{/if}
 				<div class="pane__sp"></div>
-				{#if isRoot && classCount > 1}
-					<button
-						class="pane__cycle"
-						onclick={(e) => {
-							e.stopPropagation();
-							store.focusSlot(pos);
-							openMinibuffer('class');
-						}}
-						title="Switch buffer in this slot ({classCount} {slot.className} buffers)"
-					>{classCount}↻</button>
-				{/if}
 				{#if isRoot}
 					<button
 						class="pane__x"
@@ -1041,21 +1085,37 @@
 		padding: 0 4px;
 	}
 	.pane__x:hover { color: var(--fg); }
-	.pane__cycle {
+	.pane__tabs {
+		display: flex;
+		gap: 2px;
+		align-items: center;
+	}
+	.pane__tab {
 		background: transparent;
-		border: 1px solid var(--base3);
+		border: 1px solid transparent;
 		border-radius: var(--r-sm);
-		color: var(--base6);
+		color: var(--base5);
 		cursor: pointer;
 		font-family: var(--font-mono);
 		font-size: 10px;
+		text-transform: uppercase;
+		letter-spacing: 0.05em;
 		padding: 1px 6px;
-		margin-right: 4px;
 	}
-	.pane__cycle:hover { color: var(--fg); border-color: var(--id-yours); }
+	.pane__tab:hover { color: var(--fg); border-color: var(--base3); }
+	.pane__tab--on {
+		color: var(--fg);
+		border-color: var(--id-yours);
+		background: color-mix(in srgb, var(--id-yours) 10%, transparent);
+		font-weight: 600;
+	}
 	.pane__body {
 		flex: 1;
 		padding: var(--s-3);
+		min-height: 0;
+		min-width: 0;
+		display: flex;
+		flex-direction: column;
 		overflow: hidden;
 	}
 

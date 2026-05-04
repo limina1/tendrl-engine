@@ -157,7 +157,22 @@ export interface ComposeState {
 	title: string;
 	tags: TagEntry[];
 	sections: ContextItem[];
+	/** When the draft was seeded from an existing publication, this is the
+	 * source 30040 NAddr. Used to (a) detect structural change at publish
+	 * time and (b) emit a fork-marker tag on the new 30040. */
+	source_publication_addr?: NAddr | null;
+	/** The 30040 event id we forked from — emitted as the `e` tag with
+	 * `fork` marker when republished. */
+	source_publication_event_id?: string | null;
+	/** Original section order (list of source NAddrs) for structural-change
+	 * detection. Indexes line up with the order of `sections` at seed time. */
+	source_section_order?: NAddr[];
 }
+
+/** Per-section authorship/provenance state, derived from ContextItem.
+ * Drives border color in DraftReader and ComposeView, and decides what
+ * each section emits on publish. */
+export type SectionState = 'imported' | 'claimed' | 'forked' | 'original';
 
 export type ViewMode = 'outline' | 'continuous' | 'paginated';
 export type DocMode = 'empty' | 'reading' | 'compose' | 'ignored' | 'claude-sessions' | 'profile';

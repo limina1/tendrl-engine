@@ -1241,8 +1241,12 @@ pub async fn purge_handler(
 // Publish API Endpoints
 // ============================================================================
 
-use crate::publication::{build_publication_events, build_signed_publication_events};
-use crate::tree::state::{ComposeState, SectionCompose};
+use crate::publication::{
+    build_block_publication_events, build_publication_events, build_signed_publication_events,
+};
+use crate::tree::state::{
+    BlockKind, ComposeBlock, ComposeBlockState, ComposeState, SectionCompose,
+};
 
 /// Request to publish/draft a publication
 #[derive(Debug, Deserialize)]
@@ -1469,6 +1473,286 @@ pub async fn publish_handler(
         tokio::spawn(async move {
             if let Err(e) = eng.sync_embeddings().await {
                 debug!("Background embedding sync after publish: {}", e);
+            }
+        });
+    }
+
+    Ok(Json(PublishResponse {
+        publication_id: pub_id,
+        section_ids,
+        signed: req.sign,
+        ingested,
+        broadcast_results,
+    }))
+}
+
+// ----------------------------------------------------------------------------
+// Block-based publish (NIP-54-style fork support)
+// ----------------------------------------------------------------------------
+//
+// The legacy /publish endpoint always emits a fresh 30041 per section. The
+// block endpoint accepts a richer payload where each block can be:
+//
+//   - editable  → emit a new 30041 (no fork lineage).
+//   - imported  → no 30041 emitted; the new 30040 references the source addr.
+//   - forked    → emit a new 30041 with `a`/`e` `fork`-marker tags.
+//
+// When the payload's `source_publication_addr` is set, the new 30040 also
+// carries `a`/`e` `fork`-marker tags pointing at the parent 30040, per
+// NIP-54.
+//
+// The web client computes structural-change locally and only calls this
+// endpoint when there's something to publish.
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum PublishBlockKind {
+    Editable {
+        content: String,
+    },
+    Imported {
+        source_addr: NAddrPayload,
+        content: String,
+        author: String,
+    },
+    Forked {
+        original_addr: NAddrPayload,
+        content: String,
+        original_author: String,
+    },
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+pub struct NAddrPayload {
+    pub kind: u64,
+    pub pubkey: String,
+    pub d_tag: String,
+}
+
+impl NAddrPayload {
+    fn into_naddr(self) -> NAddr {
+        NAddr {
+            kind: self.kind,
+            pubkey: self.pubkey,
+            d_tag: self.d_tag,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct PublishBlockEntry {
+    pub title: String,
+    #[serde(default)]
+    pub tags: Vec<(String, String)>,
+    #[serde(flatten)]
+    pub kind: PublishBlockKind,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct PublishBlocksRequest {
+    pub title: String,
+    #[serde(default)]
+    pub tags: Vec<(String, String)>,
+    pub blocks: Vec<PublishBlockEntry>,
+    /// If set, the new 30040 emits `["a", ..., "fork"]` (and optionally
+    /// `["e", ..., "fork"]`) pointing at this source publication.
+    pub source_publication_addr: Option<NAddrPayload>,
+    pub source_publication_event_id: Option<String>,
+    #[serde(default)]
+    pub sign: bool,
+    #[serde(default)]
+    pub broadcast: bool,
+    pub relays: Option<Vec<String>>,
+}
+
+/// POST /api/v1/publish/blocks — publish a block-based draft.
+pub async fn publish_blocks_handler(
+    State(engine): State<AppState>,
+    Extension(identity): Extension<IdentityAppState>,
+    Json(req): Json<PublishBlocksRequest>,
+) -> Result<impl IntoResponse, EngineError> {
+    let pubkey = {
+        let session = identity.lock().unwrap();
+        session.pubkey().map(|s| s.to_string())
+    }
+    .or_else(|| engine.my_pubkey().map(|s| s.to_string()))
+    .ok_or_else(|| {
+        EngineError::Config(
+            "Publishing requires identity login or [identity] pubkey in config".into(),
+        )
+    })?;
+
+    use crate::tree::state::TagEntry;
+    let mut state = ComposeBlockState::new();
+    state.title = req.title;
+    for (name, value) in &req.tags {
+        state.tags.push(TagEntry {
+            name: name.clone(),
+            value: value.clone(),
+        });
+    }
+    state.source_publication_addr = req.source_publication_addr.map(|n| n.into_naddr());
+    state.source_publication_event_id = req.source_publication_event_id;
+
+    let mut next_id: usize = 0;
+    for entry in req.blocks {
+        let block_id = next_id;
+        next_id += 1;
+        let kind = match entry.kind {
+            PublishBlockKind::Editable { content } => BlockKind::Editable {
+                content,
+                cursor: 0,
+            },
+            PublishBlockKind::Imported {
+                source_addr,
+                content,
+                author,
+            } => BlockKind::Imported {
+                source_addr: source_addr.into_naddr(),
+                content,
+                author,
+                fork_requested: false,
+            },
+            PublishBlockKind::Forked {
+                original_addr,
+                content,
+                original_author,
+            } => BlockKind::Forked {
+                original_addr: original_addr.into_naddr(),
+                content,
+                cursor: 0,
+                original_author,
+            },
+        };
+        state.blocks.push(ComposeBlock {
+            block_id,
+            kind,
+            title: entry.title,
+            tags: entry
+                .tags
+                .into_iter()
+                .map(|(name, value)| TagEntry { name, value })
+                .collect(),
+            collapsed: false,
+        });
+    }
+
+    // Resolve signing key — same fallback chain as the legacy publish handler.
+    let secret_hex: Option<String> = if req.sign {
+        let resolved = {
+            let mut session = identity.lock().unwrap();
+            if session.can_sign() {
+                session.touch();
+                Some(session.secret().unwrap().to_string())
+            } else if session.pubkey().is_some() {
+                return Err(EngineError::Locked(
+                    "Identity is locked — unlock with password first".into(),
+                ));
+            } else {
+                None
+            }
+        };
+        if let Some(s) = resolved {
+            Some(s)
+        } else {
+            // Fall back to keyring or .env
+            let from_keyring = crate::identity::IdentityKeyring::new()
+                .get_secret(&pubkey)
+                .ok();
+            if let Some(s) = from_keyring {
+                Some(s)
+            } else {
+                let env_content = std::fs::read_to_string(".env").ok();
+                let mut secret: Option<String> = None;
+                if let Some(content) = env_content {
+                    let mut ncryptsec: Option<String> = None;
+                    let mut password: Option<String> = None;
+                    for line in content.lines() {
+                        let line = line.trim();
+                        if let Some(val) = line.strip_prefix("NOSTR_NCRYPTSEC=") {
+                            ncryptsec = Some(val.to_string());
+                        } else if let Some(val) = line.strip_prefix("NOSTR_PASSWORD=") {
+                            password = Some(val.to_string());
+                        }
+                    }
+                    if let (Some(nc), Some(pw)) = (ncryptsec, password) {
+                        if let Ok((s_hex, _)) = crate::identity::decrypt_ncryptsec(&nc, &pw) {
+                            secret = Some(s_hex);
+                        }
+                    }
+                }
+                secret
+            }
+        }
+    } else {
+        None
+    };
+
+    let (pub_event, section_events) =
+        build_block_publication_events(&state, &pubkey, secret_hex.as_deref());
+
+    let pub_id = pub_event
+        .get("id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let section_ids: Vec<String> = section_events
+        .iter()
+        .map(|e| {
+            e.get("id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string()
+        })
+        .collect();
+
+    for event in section_events.iter().chain(std::iter::once(&pub_event)) {
+        let json_str = serde_json::to_string(event)
+            .map_err(|e| EngineError::Database(format!("JSON error: {e}")))?;
+        if let Err(e) = engine.ingest_event(&json_str) {
+            debug!("Ingest queue warning: {}", e);
+        }
+    }
+
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+
+    let ingested = crate::query::query_by_id(engine.ndb(), &pub_id)
+        .ok()
+        .flatten()
+        .is_some();
+
+    let broadcast_results = if req.broadcast {
+        let relays = req
+            .relays
+            .as_deref()
+            .map(|r| r.to_vec())
+            .unwrap_or_else(|| engine.publish_relays().to_vec());
+        let event_jsons: Vec<String> = section_events
+            .iter()
+            .chain(std::iter::once(&pub_event))
+            .map(|e| serde_json::to_string(e).unwrap())
+            .collect();
+        let (_, _, results) =
+            crate::relay::publish_events_to_relays(&relays, &event_jsons).await;
+        Some(
+            results
+                .into_iter()
+                .map(|r| BroadcastResult {
+                    relay: r.relay_url,
+                    success: r.success,
+                    message: r.message,
+                })
+                .collect::<Vec<_>>(),
+        )
+    } else {
+        None
+    };
+
+    if ingested && engine.embedding_index().is_some() {
+        let eng = engine.clone();
+        tokio::spawn(async move {
+            if let Err(e) = eng.sync_embeddings().await {
+                debug!("Background embedding sync after block publish: {}", e);
             }
         });
     }

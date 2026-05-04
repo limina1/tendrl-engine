@@ -33,28 +33,12 @@
 		contentEl?.scrollTo(0, 0);
 	});
 
-	function handleKeydown(e: KeyboardEvent) {
-		if (e.key === 'ArrowLeft' && currentSection > 0) {
-			e.preventDefault();
-			onnavigate(currentSection - 1);
-		} else if (e.key === 'ArrowRight' && currentSection < total - 1) {
-			e.preventDefault();
-			onnavigate(currentSection + 1);
-		}
-	}
+	// Keydown is handled by ReaderBuffer's nav handler (registered via the
+	// global buffer-store dispatcher). PaginatedView no longer attaches its
+	// own listener — global j/k/arrow already drives onnavigate from there.
 </script>
 
-<svelte:window onkeydown={handleKeydown} />
-
 <div class="paginated-view">
-	{#if section?.title}
-		<div class="paginated-title">{section.title}</div>
-	{/if}
-	<div class="paginated-content" bind:this={contentEl}>
-		{#if section}
-			<SectionCard {section} />
-		{/if}
-	</div>
 	<div class="paginated-nav">
 		<button onclick={() => onnavigate(currentSection - 1)} disabled={currentSection <= 0}>
 			Prev
@@ -69,6 +53,14 @@
 		>
 			Next
 		</button>
+	</div>
+	{#if section?.title}
+		<div class="paginated-title">{section.title}</div>
+	{/if}
+	<div class="paginated-content" bind:this={contentEl}>
+		{#if section}
+			<SectionCard {section} />
+		{/if}
 	</div>
 </div>
 
@@ -98,8 +90,9 @@
 		justify-content: center;
 		gap: 12px;
 		padding: 10px;
-		border-top: 1px solid var(--border);
+		border-bottom: 1px solid var(--border);
 		background: var(--bg-surface);
+		flex-shrink: 0;
 	}
 
 	.page-counter {

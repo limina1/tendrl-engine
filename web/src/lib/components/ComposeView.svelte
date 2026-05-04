@@ -4,6 +4,13 @@
 	import ItemBadge from './ItemBadge.svelte';
 	import TagEditor from './TagEditor.svelte';
 	import DraftReader from '$lib/wm/renderers/DraftReader.svelte';
+	import {
+		hasStructuralChange,
+		claimedUntouchedSections
+	} from '$lib/compose/state';
+	import { getAppState } from '$lib/state.svelte';
+
+	const app = getAppState();
 
 	type ComposeMode = 'full' | 'plain' | 'preview';
 
@@ -38,6 +45,8 @@
 	} = $props();
 
 	let checkedIds: Set<string> = $state(new Set());
+	let collapsedIds: Set<string> = $state(new Set());
+	let headerCollapsed = $state(false);
 	let mode: ComposeMode = $state('full');
 	let delimiter = $state('');
 	let prevDelimiter = $state('');
@@ -320,6 +329,25 @@
 		clearTrash();
 	}
 
+	function toggleCollapse(id: string) {
+		const next = new Set(collapsedIds);
+		if (next.has(id)) next.delete(id);
+		else next.add(id);
+		collapsedIds = next;
+	}
+
+	function toggleAllCollapsed() {
+		if (allCollapsed) {
+			collapsedIds = new Set();
+		} else {
+			collapsedIds = new Set(compose.sections.map((s) => s.id));
+		}
+	}
+
+	const allCollapsed = $derived(
+		compose.sections.length > 0 && compose.sections.every((s) => collapsedIds.has(s.id))
+	);
+
 	// Toolbar actions work across all modes via compose.sections
 	function toolbarSendToChat() {
 		const items = compose.sections.filter((s) => checkedIds.has(s.id));
@@ -456,6 +484,35 @@
 		onupdate({ ...compose, sections: compose.sections.filter((s) => s.id !== id) });
 	}
 
+	function unlockAllImported() {
+		const sections = compose.sections.map((s) =>
+			s.source_addr && s.readonly ? { ...s, readonly: false } : s
+		);
+		onupdate({ ...compose, sections });
+	}
+
+	function lockAllUnlocked() {
+		const sections = compose.sections.map((s) =>
+			s.source_addr && !s.readonly && s.content === s.original_content
+				? { ...s, readonly: true }
+				: s
+		);
+		onupdate({ ...compose, sections });
+	}
+
+	const structuralChange = $derived(hasStructuralChange(compose));
+	const claimedUntouched = $derived(claimedUntouchedSections(compose));
+
+	// Mirror ReaderBuffer's bulk-lock affordance: a section is "lockable"
+	// when imported and currently locked (can be unlocked), and "unlocked"
+	// when imported, unlocked, and unmodified (can be re-locked cleanly).
+	const anyLockable = $derived(
+		compose.sections.some((s) => s.source_addr && s.readonly)
+	);
+	const anyUnlocked = $derived(
+		compose.sections.some((s) => s.source_addr && !s.readonly && s.content === s.original_content)
+	);
+
 	function addSection() {
 		const item: ContextItem = {
 			id: crypto.randomUUID(),
@@ -475,16 +532,33 @@
 
 	function publishAll() {
 		if (mode === 'plain') handlePlainFullEdit(plainText);
+		if (claimedUntouched.length > 0) {
+			const n = claimedUntouched.length;
+			const ok = confirm(
+				`You've left ${n} section${n === 1 ? '' : 's'} unlocked but haven't modified ${n === 1 ? 'it' : 'them'}. ` +
+					`Unlocked-but-untouched sections still publish as transclusions of the original. Publish anyway?`
+			);
+			if (!ok) return;
+		}
 		onpublish(compose.sections);
 	}
 
 	function publishSelected() {
 		if (mode === 'plain') handlePlainFullEdit(plainText);
 		const items = compose.sections.filter((s) => checkedIds.has(s.id));
-		if (items.length > 0) {
-			onpublish(items);
-			checkedIds = new Set();
+		if (items.length === 0) return;
+		const claimedInSelection = items.filter(
+			(s) => s.source_addr && !s.readonly && s.content === s.original_content
+		);
+		if (claimedInSelection.length > 0) {
+			const n = claimedInSelection.length;
+			const ok = confirm(
+				`You've left ${n} of the selected section${n === 1 ? '' : 's'} unlocked but haven't modified ${n === 1 ? 'it' : 'them'}. Publish anyway?`
+			);
+			if (!ok) return;
 		}
+		onpublish(items);
+		checkedIds = new Set();
 	}
 </script>
 
@@ -493,7 +567,6 @@
 		<div class="mode-group">
 			<button class:active={mode === 'full'} onclick={() => setMode('full')}>Full</button>
 			<button class:active={mode === 'plain'} onclick={() => setMode('plain')}>Plain</button>
-			<button class:active={mode === 'preview'} onclick={() => setMode('preview')}>Preview</button>
 		</div>
 		<div class="delim-group">
 			<span class="delim-label">delim</span>
@@ -504,36 +577,101 @@
 				maxlength="2"
 			/>
 		</div>
+		<span class="bar-sp"></span>
+		<!-- Bulk lock/unlock mirrors ReaderBuffer's draft toolbar so the
+		     read↔edit transition keeps the same affordances at the same
+		     on-screen level. Gated on a source publication since there's
+		     nothing to lock against in a from-scratch draft. -->
+		{#if compose.source_publication_addr}
+			<button
+				class="bulk-btn"
+				onclick={unlockAllImported}
+				disabled={!anyLockable}
+				title="Unlock all imported sections (yellow — claimed for reorder/edit)"
+			>Unlock all</button>
+			<button
+				class="bulk-btn"
+				onclick={lockAllUnlocked}
+				disabled={!anyUnlocked}
+				title="Re-lock unlocked sections that haven't been modified"
+			>Lock all</button>
+		{/if}
+		<!-- Read mirrors ReaderBuffer's "Edit" button — same on-screen
+		     position (toolbar far-right) so the Edit↔Read swap reads as
+		     a single mode toggle. When a source pub exists we navigate to
+		     its ReaderBuffer; for from-scratch drafts we fall back to
+		     inline DraftReader. Green to signal "read view" symmetric to
+		     Edit. -->
+		<button
+			class="read-btn"
+			onclick={() => {
+				if (mode === 'plain') handlePlainFullEdit(plainText);
+				if (compose.source_publication_addr) {
+					app.previewDraft();
+				} else {
+					mode = 'preview';
+				}
+			}}
+			class:active={mode === 'preview'}
+			title={compose.source_publication_addr
+				? 'Switch to the read view of this publication'
+				: 'Preview the draft (no source publication to navigate to)'}
+		>Read</button>
 	</div>
 
-	{#if mode !== 'plain'}
-		<div class="compose-header">
-			<input
-				class="compose-title"
-				value={compose.title}
-				oninput={updateTitle}
-				placeholder="Publication title"
-			/>
-			<TagEditor tags={compose.tags} onupdate={updateTags} />
+	<!-- Edit chrome (title/tags + selection toolbar) is hidden in
+	     preview so the read view fills the buffer. The mode bar above
+	     stays so the user can flip back to Full/Plain. -->
+	{#if mode !== 'plain' && mode !== 'preview'}
+		<div class="compose-header" class:compose-header--collapsed={headerCollapsed}>
+			<div class="compose-title-row">
+				<button
+					class="collapse-toggle"
+					onclick={() => (headerCollapsed = !headerCollapsed)}
+					title={headerCollapsed ? 'Expand publication tags' : 'Collapse to title only'}
+					aria-expanded={!headerCollapsed}
+				>{headerCollapsed ? '▸' : '▾'}</button>
+				<input
+					class="compose-title"
+					value={compose.title}
+					oninput={updateTitle}
+					placeholder="Publication title"
+				/>
+				{#if headerCollapsed && compose.tags.length > 0}
+					<span class="header-tag-count" title="{compose.tags.length} publication tag{compose.tags.length === 1 ? '' : 's'}">{compose.tags.length} tag{compose.tags.length === 1 ? '' : 's'}</span>
+				{/if}
+			</div>
+			{#if !headerCollapsed}
+				<TagEditor tags={compose.tags} onupdate={updateTags} />
+			{/if}
 		</div>
 	{/if}
 
-	<div class="compose-toolbar">
-		<button class="sel-btn" onclick={toolbarSelectAll} disabled={compose.sections.length === 0} title="Select all">All</button>
-		<button class="sel-btn" onclick={toolbarInvert} disabled={compose.sections.length === 0} title="Invert selection">Inv</button>
-		<button class="icon-btn" onclick={toolbarSendToChat} disabled={checkedIds.size === 0} title="Send to chat">◂</button>
-		<button class="icon-btn" onclick={toolbarPublish} disabled={checkedIds.size === 0} title="Publish locally">▸</button>
-		<button
-			class="icon-btn trash-btn"
-			class:trash-armed={trashActive}
-			onclick={toolbarTrash}
-			disabled={checkedIds.size === 0 && !trashActive}
-			title={trashActive ? 'Delete everywhere' : 'Remove from compose'}
-		>🗑</button>
-		{#if trashActive}
-			<span class="trash-warn" style:opacity={trashCountdown / 10}>delete everywhere ({trashCountdown}s)</span>
-		{/if}
-	</div>
+	{#if mode !== 'preview'}
+		<div class="compose-toolbar">
+			<button class="sel-btn" onclick={toolbarSelectAll} disabled={compose.sections.length === 0} title="Select all">All</button>
+			<button class="sel-btn" onclick={toolbarInvert} disabled={compose.sections.length === 0} title="Invert selection">Inv</button>
+			<button class="icon-btn" onclick={toolbarSendToChat} disabled={checkedIds.size === 0} title="Send to chat">◂</button>
+			<button class="icon-btn" onclick={toolbarPublish} disabled={checkedIds.size === 0} title="Publish locally">▸</button>
+			<button
+				class="icon-btn trash-btn"
+				class:trash-armed={trashActive}
+				onclick={toolbarTrash}
+				disabled={checkedIds.size === 0 && !trashActive}
+				title={trashActive ? 'Delete everywhere' : 'Remove from compose'}
+			>🗑</button>
+			{#if trashActive}
+				<span class="trash-warn" style:opacity={trashCountdown / 10}>delete everywhere ({trashCountdown}s)</span>
+			{/if}
+			<span class="toolbar-sp"></span>
+			<button
+				class="sel-btn"
+				onclick={toggleAllCollapsed}
+				disabled={compose.sections.length === 0}
+				title={allCollapsed ? 'Expand all sections' : 'Collapse all sections to titles'}
+			>{allCollapsed ? '▾ all' : '▸ all'}</button>
+		</div>
+	{/if}
 
 	<div class="compose-content">
 		{#if mode === 'full'}
@@ -543,7 +681,9 @@
 						{section}
 						{syncMode}
 						checked={checkedIds.has(section.id)}
+						collapsed={collapsedIds.has(section.id)}
 						oncheck={toggleCheck}
+						oncollapse={toggleCollapse}
 						onupdate={updateSection}
 						onupdatetags={updateSectionTags}
 						onreset={resetSection}
@@ -606,7 +746,17 @@
 				</div>
 			</div>
 		{:else}
-			<DraftReader {compose} {ontogglereadonly} />
+			<!-- Preview = the read view of the current draft. Same lock/
+			     unlock/reorder affordances as ReaderBuffer; the surrounding
+			     edit chrome (title/tags + selection toolbar) is hidden so
+			     this reads as the read-mode equivalent of the draft. -->
+			<DraftReader
+				{compose}
+				{ontogglereadonly}
+				onremove={removeSection}
+				onunlockall={unlockAllImported}
+				onlockall={lockAllUnlocked}
+			/>
 		{/if}
 	</div>
 
@@ -615,7 +765,16 @@
 			<button onclick={addSection}>+ Section</button>
 		{/if}
 		{#if canPublish}
-			<button class="publish-btn" onclick={publishAll} disabled={compose.sections.length === 0}>Publish</button>
+			<button
+				class="publish-btn"
+				onclick={publishAll}
+				disabled={compose.sections.length === 0 || !structuralChange}
+				title={structuralChange
+					? 'Publish this draft'
+					: compose.source_publication_addr
+						? 'No structural change since the source publication — nothing to publish'
+						: 'Add or modify a section to enable publishing'}
+			>Publish</button>
 			{#if checkedIds.size > 0}
 				<button class="publish-btn publish-selected" onclick={publishSelected}>Publish ({checkedIds.size})</button>
 			{/if}
@@ -638,7 +797,6 @@
 	.compose-mode-bar {
 		display: flex;
 		align-items: center;
-		justify-content: space-between;
 		gap: 8px;
 		flex-wrap: wrap;
 		flex-shrink: 0;
@@ -677,6 +835,41 @@
 		flex-direction: column;
 		gap: 8px;
 		flex-shrink: 0;
+		max-height: 28vh;
+		overflow-y: auto;
+		padding-right: 4px;
+	}
+
+	.compose-header--collapsed {
+		max-height: none;
+		overflow-y: visible;
+	}
+
+	.compose-title-row {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+	}
+
+	.compose-title-row .compose-title { flex: 1; }
+
+	.collapse-toggle {
+		font-size: 0.75rem;
+		padding: 0 4px;
+		min-width: 18px;
+		background: transparent;
+		border: none;
+		color: var(--fg-muted);
+		cursor: pointer;
+	}
+	.collapse-toggle:hover { color: var(--fg); }
+
+	.header-tag-count {
+		font-size: 0.7rem;
+		color: var(--fg-muted);
+		font-family: var(--font-mono);
+		text-transform: uppercase;
+		letter-spacing: 0.05em;
 	}
 
 	.compose-title {
@@ -730,6 +923,8 @@
 		font-weight: 600;
 		white-space: nowrap;
 	}
+
+	.toolbar-sp { flex: 1; }
 
 	.compose-content {
 		flex: 1;
@@ -975,5 +1170,42 @@
 		background: var(--accent);
 		color: white;
 		border-color: var(--accent);
+	}
+
+	.bar-sp { flex: 1; }
+
+	/* Match ReaderBuffer's `.toolbar .bulk` look so the right-cluster of
+	   the compose mode-bar reads as the same control row as the read view. */
+	.bulk-btn {
+		font-family: var(--font-mono);
+		font-size: var(--t-xs);
+		padding: 2px 8px;
+		background: transparent;
+		border: 1px solid var(--base3);
+		border-radius: var(--r-sm);
+		color: var(--base6);
+		cursor: pointer;
+	}
+	.bulk-btn:hover:not(:disabled) {
+		color: var(--fg);
+		border-color: var(--id-yours);
+	}
+	.bulk-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+	/* Symmetric round-trip with ReaderBuffer's Edit button: Read = green,
+	   sits at the far right of the same toolbar row as Unlock/Lock all. */
+	.read-btn {
+		background: color-mix(in srgb, var(--green) 18%, transparent);
+		color: var(--green);
+		border-color: var(--green);
+		font-weight: 600;
+	}
+	.read-btn:hover {
+		background: color-mix(in srgb, var(--green) 28%, transparent);
+	}
+	.read-btn.active {
+		background: var(--green);
+		color: var(--bg);
+		border-color: var(--green);
 	}
 </style>
