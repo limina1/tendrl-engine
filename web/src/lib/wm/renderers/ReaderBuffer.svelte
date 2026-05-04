@@ -96,6 +96,15 @@
 				position: i,
 				status: 'pending' as const
 			}));
+			// Eager-load every section in the background. Outline mode only
+			// shows titles and never triggers loads, and continuous's
+			// IntersectionObserver root is nested inside another scroll
+			// container so visibility events are unreliable. handleLoadSection
+			// is idempotent (early-returns on loading/loaded), so view-mode
+			// hooks just no-op once a load is already in flight.
+			for (let i = 0; i < pristineSections.length; i++) {
+				handleLoadSection(i);
+			}
 		} catch (e) {
 			error = String(e);
 		} finally {
