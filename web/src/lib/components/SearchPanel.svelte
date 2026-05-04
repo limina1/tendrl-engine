@@ -33,7 +33,9 @@
 		onimportpagestocompose,
 		items = [],
 		localPubkeys = new Set<string>(),
-		onviewprofile
+		onviewprofile,
+		cursor = -1,
+		listEl = $bindable<HTMLDivElement | undefined>(undefined)
 	}: {
 		results: SearchResult[];
 		count?: number;
@@ -64,6 +66,8 @@
 		items?: ContextItem[];
 		localPubkeys?: Set<string>;
 		onviewprofile?: (pubkey: string) => void;
+		cursor?: number;
+		listEl?: HTMLDivElement;
 	} = $props();
 
 	let activeTab: 'search' | 'import' = $state('search');
@@ -196,22 +200,24 @@
 			</div>
 		{/if}
 
-		<div class="search-results">
-			{#each results as result (result.event_id)}
-				<SearchResultItem
-					{result}
-					checked={checkedIds.has(result.event_id)}
-					ontogglecheck={() => toggleCheck(result.event_id)}
-					{onselect}
-					{onviewjson}
-					{onaddtocontext}
-					{onaddtocompose}
-					{onignore}
-					{onignorepubkey}
-					{items}
-					{localPubkeys}
-					{onviewprofile}
-				/>
+		<div class="search-results" bind:this={listEl}>
+			{#each results as result, i (result.event_id)}
+				<div class="result-row" class:result-row--cursor={i === cursor} data-cursor={i}>
+					<SearchResultItem
+						{result}
+						checked={checkedIds.has(result.event_id)}
+						ontogglecheck={() => toggleCheck(result.event_id)}
+						{onselect}
+						{onviewjson}
+						{onaddtocontext}
+						{onaddtocompose}
+						{onignore}
+						{onignorepubkey}
+						{items}
+						{localPubkeys}
+						{onviewprofile}
+					/>
+				</div>
 			{/each}
 
 			{#if !loading && results.length === 0}
@@ -345,6 +351,13 @@
 	.search-results {
 		flex: 1;
 		overflow-y: auto;
+	}
+
+	/* Ranger-style cursor: bright bar + tinted background, mirrors
+	   FeedBuffer / ReaderBuffer outline cursor. */
+	.result-row--cursor {
+		box-shadow: inset 4px 0 0 var(--id-yours);
+		background: color-mix(in srgb, var(--id-yours) 18%, transparent);
 	}
 
 	.empty {

@@ -8,6 +8,11 @@
 		if (e.key === 'Enter') {
 			e.preventDefault();
 			submit();
+			// Blur after commit so the global focusout listener flips
+			// modal nav back to 'normal' — same loop as vim `/` search:
+			// query → RET commits & exits insert → j/k walks results →
+			// i/o re-enters the field.
+			(e.currentTarget as HTMLInputElement).blur();
 		}
 	}
 
@@ -30,6 +35,7 @@
 		bind:value
 		onkeydown={handleKeydown}
 		placeholder={'t:tag k:30041 "exact" words'}
+		data-entry
 		{disabled}
 	/>
 	{#if value.length > 0}

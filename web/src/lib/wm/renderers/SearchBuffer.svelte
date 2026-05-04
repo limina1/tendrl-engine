@@ -1,15 +1,66 @@
 <script lang="ts">
+	import { untrack } from 'svelte';
 	import { getAppState } from '$lib/state.svelte';
 	import * as api from '$lib/api';
 	import SearchPanel from '$lib/components/SearchPanel.svelte';
 	import type { SearchResult } from '$lib/types';
-	import { getActiveStore } from '../buffer-store.svelte';
+	import { getActiveStore, type NavAction } from '../buffer-store.svelte';
 	import type { Buffer } from '../types';
 
-	let { buffer: _buffer }: { buffer: Buffer } = $props();
+	let { buffer }: { buffer: Buffer } = $props();
 
 	const app = getAppState();
 	const store = getActiveStore();
+
+	let cursor = $state(0);
+	let listEl: HTMLDivElement | undefined = $state();
+
+	$effect(() => {
+		// Clamp cursor when result set changes (new search, filter, etc.).
+		const len = app.searchResults.length;
+		if (cursor >= len) cursor = Math.max(0, len - 1);
+	});
+
+	function scrollCursorIntoView() {
+		if (!listEl) return;
+		const row = listEl.querySelector<HTMLDivElement>(`[data-cursor="${cursor}"]`);
+		if (!row) return;
+		const listRect = listEl.getBoundingClientRect();
+		const rowRect = row.getBoundingClientRect();
+		if (rowRect.top < listRect.top) {
+			listEl.scrollTop -= listRect.top - rowRect.top;
+		} else if (rowRect.bottom > listRect.bottom) {
+			listEl.scrollTop += rowRect.bottom - listRect.bottom;
+		}
+	}
+
+	function handleNav(action: NavAction): boolean {
+		const total = app.searchResults.length;
+		if (total === 0) return false;
+		if (action === 'down') {
+			cursor = Math.min(total - 1, cursor + 1);
+			queueMicrotask(scrollCursorIntoView);
+			return true;
+		}
+		if (action === 'up') {
+			cursor = Math.max(0, cursor - 1);
+			queueMicrotask(scrollCursorIntoView);
+			return true;
+		}
+		if (action === 'select' || action === 'right') {
+			const r = app.searchResults[cursor];
+			if (r) onSelect(r);
+			return true;
+		}
+		return false;
+	}
+
+	$effect(() => {
+		const id = buffer.id;
+		const handler = handleNav;
+		untrack(() => store.registerNavHandler(id, handler));
+		return () => untrack(() => store.unregisterNavHandler(id));
+	});
 
 	function spawnReader(pubkey: string, d_tag: string, label: string | null) {
 		store.openBuffer({
@@ -58,6 +109,8 @@
 </script>
 
 <SearchPanel
+	{cursor}
+	bind:listEl
 	results={app.searchResults}
 	count={app.searchCount}
 	localCount={app.searchLocalCount}
