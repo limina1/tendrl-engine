@@ -47,6 +47,36 @@ running ledger of what was promised vs what shipped.
 - [ ] Delete unused legacy chrome components (=WorkbenchToolbar=, =PanelFrame=)
 - [ ] Deep-link routing: =/p/<pubkey>/<dtag>= etc. spawn the right buffer on load instead of 404
 
+** Modal nav + ranger nav (shipped this session) [X]
+
+Tracked here as a single line per work cluster — see commits
+~872d1cb..3852a74~ for the per-feature granularity, and
+=docs/features.md= for the user-facing summary.
+
+- [X] Per-buffer NavHandler registry on BufferStore; non-reactive Map +
+      reactive snapshot for diagnostics; singleton on =globalThis= so
+      HMR module duplication can't fork it
+- [X] Ranger-style cursor over feed, reader (outline / paginated /
+      continuous), search, compose-full — bounds-checked scroll, same
+      inset-bar + tinted-bg highlight everywhere
+- [X] =gg= / =G= motion (700ms pending-=g=) wired into every ranger
+      buffer; in continuous reader, snaps =scrollTop= to 0 / =scrollHeight=
+- [X] =h= / =l= drill axis: reader cycles outline → paginated →
+      continuous; compose toggles full ↔ plain
+- [X] Editable-focus implicit insert (=focusin= / =focusout= flips
+      modal nav); =Esc= / =C-[= / =C-g= safety net to escape from
+      inside any input
+- [X] =i= / =o= dispatch through =NavAction='insert'= so buffers can
+      target a specific input vs. the generic first-=[data-entry]=
+      fallback
+- [X] Search "commit-and-exit" loop on =Enter= (vim =/=-search
+      semantics); ranger over results; result-row data-cursor wrapper
+- [X] Reader eager-loads all sections after the TOC arrives — fixes
+      empty-outline regression on entering reader from feed
+- [X] Plain compose runs CodeMirror 6 + =@replit/codemirror-vim= via
+      a Svelte =use:= action; doc-compare sync (no cursor reset on
+      bindable round-trip); double-Esc stack to leave the editor
+
 ** Polish (parallel) [ ]
 
 - [ ] Free-text find prompt for =SPC f e/d/p=
@@ -61,6 +91,59 @@ running ledger of what was promised vs what shipped.
 - [ ] DraftReader: transclusion affordance — "+" between entries opens a search picker; selecting inserts as a new section with =a= tag = picked event's address
 - [ ] DraftReader: per-entry remove
 - [X] Pane header =N↻= cycle button — clicking opens the class-scoped switcher (lets user back out of composer to the reader without knowing =SPC b b=)
+
+** Phase 3 — Reading / editing / knowledge workflow [ ]
+
+Design vision: =docs/reading-editing-workflow.md=. This phase makes the
+reader and composer first-class for nested publications and inline
+references; pairs with the eventual AsciiDoc wysiwyg editor.
+
+Engine:
+- [ ] =GET /api/v1/publications/:addr/parents= — walk =a= tag references
+      to resolve the containment chain
+- [ ] =GET /api/v1/publications/:addr/children/meta= — child kind +
+      title + section count without loading section bodies (for packed
+      cards)
+
+Web — nested publications:
+- [ ] ReaderBuffer outline renders nested 30040 children as packed
+      cards by default (title + author + child count + =▸=)
+- [ ] Inline expand: =l= / =Enter= on a packed card drops in the child
+      TOC below the row (cursor descends; =h= / =Esc= collapses)
+- [ ] Drill-in: =L= / double-click replaces the buffer's root with the
+      child publication; breadcrumb chrome at the top; =h= / =Backspace=
+      ascends
+- [ ] Left-rail navigation tree showing the path from root + siblings
+      at each level when drilled into a child
+- [ ] =SPC g p= / =SPC g c= jump to parent publication / parent
+      collection
+- [ ] DraftReader gets the same packed/unpacked rendering for nested
+      authoring
+
+Web — search-to-source:
+- [ ] Search result row gains a containment breadcrumb
+      (=collection › book › chapter=) resolved client-side from each
+      result's =a= tag
+- [ ] Default click on a section result opens it *in context* (parent
+      30040 unpacked, cursor on the result section); =Alt=-click keeps
+      the current standalone behavior
+
+Compose / transclusion:
+- [ ] =+= picker between sections (existing Polish item) — selecting a
+      30040 inserts as a *packed child* (nested publication), selecting
+      a 30041 inserts as an editable / imported section
+- [ ] =Nest= button in the compose mode bar — prompts for an existing
+      30040 to embed as a child entry of the current publication
+- [ ] Nostrdown ={{ }}= rendering in reader (inline / quoted /
+      collapsed modes) — pairs with =docs/nostrdown.org=
+
+Editor (parallel work):
+- [ ] AsciiDoc wysiwyg editor with toolbar buttons for inline syntax;
+      replaces the current per-section textarea inside Full mode
+- [ ] Per-section CM6 instance ("repotting" pattern) for power-user
+      editing as a fallback / alternate mode
+- [ ] CM6 syntax decoration for =:tag:= lines and the configured
+      delimiter heading style (lost when we dropped =lang-markdown=)
 
 ** Deferred indefinitely (low priority / open) [ ]
 
