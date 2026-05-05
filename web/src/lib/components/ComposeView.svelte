@@ -1,9 +1,11 @@
 <script lang="ts">
 	import type { ComposeState, ContextItem, TagEntry, SyncMode } from '$lib/types';
+	import type { EditorView } from '@codemirror/view';
 	import ComposeSection from './ComposeSection.svelte';
 	import ItemBadge from './ItemBadge.svelte';
 	import TagEditor from './TagEditor.svelte';
 	import DraftReader from '$lib/wm/renderers/DraftReader.svelte';
+	import CodeMirrorEditor from './CodeMirrorEditor.svelte';
 	import {
 		hasStructuralChange,
 		claimedUntouchedSections
@@ -30,7 +32,8 @@
 		oncrosspanelcopy,
 		mode = $bindable<ComposeMode>('full'),
 		cursor = -1,
-		sectionsListEl = $bindable<HTMLDivElement | undefined>(undefined)
+		sectionsListEl = $bindable<HTMLDivElement | undefined>(undefined),
+		plainCmView = $bindable<EditorView | null>(null)
 	}: {
 		compose: ComposeState;
 		syncMode: SyncMode;
@@ -48,6 +51,7 @@
 		mode?: ComposeMode;
 		cursor?: number;
 		sectionsListEl?: HTMLDivElement;
+		plainCmView?: EditorView | null;
 	} = $props();
 
 	let checkedIds: Set<string> = $state(new Set());
@@ -400,62 +404,8 @@
 		checkedIds = next;
 	}
 
-	function handlePlainInput(e: Event) {
-		plainText = (e.target as HTMLTextAreaElement).value;
-	}
-
 	function handlePlainBlur() {
 		handlePlainFullEdit(plainText);
-	}
-
-	// Highlight backdrop: render same text with section headers styled
-	let plainTextarea: HTMLTextAreaElement | undefined = $state();
-	let backdropEl: HTMLPreElement | undefined = $state();
-
-	function syncScroll() {
-		if (backdropEl && plainTextarea) {
-			backdropEl.scrollTop = plainTextarea.scrollTop;
-			backdropEl.scrollLeft = plainTextarea.scrollLeft;
-		}
-	}
-
-	// Build highlighted HTML from plain text
-	const highlightedHtml = $derived.by(() => {
-		const [h1, h2] = headChars();
-		const lines = plainText.split('\n');
-		// Figure out which lines belong to which section index (for checked highlighting)
-		let sectionIdx = -1;
-		const checkedSectionIndices = new Set<number>();
-		const oldSections = compose.sections;
-		for (let i = 0; i < detectedSections.length; i++) {
-			const det = detectedSections[i];
-			if (det.item && checkedIds.has(det.item.id)) {
-				checkedSectionIndices.add(i);
-			}
-		}
-
-		const htmlLines: string[] = [];
-		let currentSectionIdx = -1;
-		for (const line of lines) {
-			const escaped = escapeHtml(line);
-			if (line.startsWith(h2)) {
-				currentSectionIdx++;
-				const isChecked = checkedSectionIndices.has(currentSectionIdx);
-				htmlLines.push(`<span class="hl-heading${isChecked ? ' hl-checked' : ''}">${escaped}</span>`);
-			} else if (currentSectionIdx === -1 && line.startsWith(h1) && !line.startsWith(h2)) {
-				htmlLines.push(`<span class="hl-title">${escaped}</span>`);
-			} else if (line.match(/^:[^:]+:\s/)) {
-				htmlLines.push(`<span class="hl-tag">${escaped}</span>`);
-			} else {
-				const isChecked = checkedSectionIndices.has(currentSectionIdx);
-				htmlLines.push(isChecked ? `<span class="hl-checked">${escaped}</span>` : escaped);
-			}
-		}
-		return htmlLines.join('\n') + '\n';
-	});
-
-	function escapeHtml(s: string): string {
-		return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 	}
 
 	function updateTitle(e: Event) {
@@ -709,16 +659,11 @@
 		{:else if mode === 'plain'}
 			<div class="plain-layout">
 				<div class="plain-editor-wrap">
-					<pre class="plain-backdrop" bind:this={backdropEl}>{@html highlightedHtml}</pre>
-					<textarea
-						class="plain-editor"
-						spellcheck="false"
-						bind:this={plainTextarea}
-						value={plainText}
-						oninput={handlePlainInput}
-						onblur={handlePlainBlur}
-						onscroll={syncScroll}
-					></textarea>
+					<CodeMirrorEditor
+						bind:value={plainText}
+						bind:editorView={plainCmView}
+						onBlur={handlePlainBlur}
+					/>
 				</div>
 				<div class="detected-sections">
 					<div class="detected-header">Detected</div>
@@ -979,69 +924,10 @@
 
 	.plain-editor-wrap {
 		flex: 1;
-		position: relative;
+		display: flex;
+		flex-direction: column;
 		min-height: 0;
 		overflow: hidden;
-	}
-
-	.plain-backdrop {
-		position: absolute;
-		inset: 0;
-		font-family: var(--font-mono);
-		font-size: 0.85rem;
-		line-height: 1.6;
-		padding: 12px;
-		margin: 0;
-		white-space: pre-wrap;
-		word-break: break-word;
-		overflow: hidden;
-		color: transparent;
-		pointer-events: none;
-	}
-
-	.plain-editor {
-		position: relative;
-		width: 100%;
-		height: 100%;
-		font-family: var(--font-mono);
-		font-size: 0.85rem;
-		line-height: 1.6;
-		padding: 12px;
-		margin: 0;
-		border: none;
-		outline: none;
-		background: transparent;
-		color: var(--fg);
-		resize: none;
-		white-space: pre-wrap;
-		word-break: break-word;
-		overflow-y: auto;
-	}
-
-	/* Highlight styles in backdrop */
-	.plain-backdrop :global(.hl-title) {
-		background: color-mix(in srgb, var(--accent) 15%, transparent);
-		display: inline;
-		border-radius: 2px;
-	}
-
-	.plain-backdrop :global(.hl-heading) {
-		background: color-mix(in srgb, var(--badge-synced) 12%, transparent);
-		display: inline;
-		border-radius: 2px;
-		border-left: 3px solid var(--badge-synced);
-		padding-left: 4px;
-		margin-left: -4px;
-	}
-
-	.plain-backdrop :global(.hl-tag) {
-		background: color-mix(in srgb, var(--fg-muted) 8%, transparent);
-		display: inline;
-		border-radius: 2px;
-	}
-
-	.plain-backdrop :global(.hl-checked) {
-		background: color-mix(in srgb, var(--accent) 8%, transparent);
 	}
 
 	.detected-sections {

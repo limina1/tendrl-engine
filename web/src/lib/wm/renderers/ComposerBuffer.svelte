@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { untrack } from 'svelte';
+	import type { EditorView } from '@codemirror/view';
 	import { getAppState } from '$lib/state.svelte';
 	import ComposeView from '$lib/components/ComposeView.svelte';
 	import { getActiveStore, type NavAction } from '../buffer-store.svelte';
@@ -15,6 +16,7 @@
 	let cursor = $state(0);
 	let mode = $state<ComposeMode>('full');
 	let sectionsListEl: HTMLDivElement | undefined = $state();
+	let plainCmView: EditorView | null = $state(null);
 
 	$effect(() => {
 		const len = app.compose.sections.length;
@@ -49,10 +51,8 @@
 	}
 
 	function focusPlainEditor(): boolean {
-		const root = sectionsListEl?.closest('.compose-content') ?? document;
-		const ta = root.querySelector<HTMLTextAreaElement>('.plain-editor');
-		if (!ta) return false;
-		ta.focus();
+		if (!plainCmView) return false;
+		plainCmView.focus();
 		return true;
 	}
 
@@ -111,6 +111,7 @@
 <ComposeView
 	bind:mode
 	bind:sectionsListEl
+	bind:plainCmView
 	{cursor}
 	compose={app.compose}
 	canPublish={app.identityStatus?.state === 'unlocked'}
