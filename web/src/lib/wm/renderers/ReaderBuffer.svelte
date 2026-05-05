@@ -368,6 +368,16 @@
 				queueMicrotask(scrollOutlineCursorIntoView);
 				return true;
 			}
+			if (action === 'top') {
+				outlineCursor = 0;
+				queueMicrotask(scrollOutlineCursorIntoView);
+				return true;
+			}
+			if (action === 'bottom') {
+				outlineCursor = sections.length - 1;
+				queueMicrotask(scrollOutlineCursorIntoView);
+				return true;
+			}
 			if (action === 'select' || action === 'right') {
 				// Outline → paginated drills with the selected section.
 				openCursorInPaginated();
@@ -389,6 +399,14 @@
 				if (currentSection > 0) handleNavigate(currentSection - 1);
 				return true;
 			}
+			if (action === 'top') {
+				handleNavigate(0);
+				return true;
+			}
+			if (action === 'bottom') {
+				handleNavigate(sections.length - 1);
+				return true;
+			}
 			if (action === 'left' || action === 'right') {
 				cycleView(action === 'right' ? 1 : -1);
 				return true;
@@ -396,13 +414,22 @@
 			if (action === 'select') return true;
 			return false;
 		}
-		// continuous: j/k page-scroll by viewport; h/l cycles modes.
+		// continuous: j/k page-scroll by viewport; h/l cycles modes;
+		// gg / G snap to top / bottom of the document.
 		if (viewMode === 'continuous') {
 			if (action === 'left' || action === 'right') {
 				cycleView(action === 'right' ? 1 : -1);
 				return true;
 			}
 			if (contentWrap) {
+				if (action === 'top') {
+					contentWrap.scrollTop = 0;
+					return true;
+				}
+				if (action === 'bottom') {
+					contentWrap.scrollTop = contentWrap.scrollHeight;
+					return true;
+				}
 				const step = Math.max(80, contentWrap.clientHeight - 60);
 				if (action === 'down') {
 					contentWrap.scrollTop += step;

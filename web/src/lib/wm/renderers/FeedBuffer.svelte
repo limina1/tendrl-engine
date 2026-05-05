@@ -72,6 +72,16 @@
 			queueMicrotask(scrollCursorIntoView);
 			return true;
 		}
+		if (action === 'top') {
+			cursor = 0;
+			queueMicrotask(scrollCursorIntoView);
+			return true;
+		}
+		if (action === 'bottom') {
+			cursor = total - 1;
+			queueMicrotask(scrollCursorIntoView);
+			return true;
+		}
 		if (action === 'select' || action === 'right') {
 			openPub(app.feed[cursor]);
 			return true;

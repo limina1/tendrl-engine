@@ -11,7 +11,16 @@ import type {
 
 const POSITION_ORDER: Position[] = ['left', 'center', 'right'];
 
-export type NavAction = 'up' | 'down' | 'left' | 'right' | 'select' | 'back';
+export type NavAction =
+	| 'up'
+	| 'down'
+	| 'left'
+	| 'right'
+	| 'select'
+	| 'back'
+	| 'top'
+	| 'bottom'
+	| 'insert';
 export type NavHandler = (action: NavAction) => boolean;
 
 function cloneTree(t: SplitNode): SplitNode {

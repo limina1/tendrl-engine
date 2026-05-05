@@ -27,7 +27,10 @@
 		onsenditemtochat,
 		ontogglereadonly,
 		onlocksource,
-		oncrosspanelcopy
+		oncrosspanelcopy,
+		mode = $bindable<ComposeMode>('full'),
+		cursor = -1,
+		sectionsListEl = $bindable<HTMLDivElement | undefined>(undefined)
 	}: {
 		compose: ComposeState;
 		syncMode: SyncMode;
@@ -42,12 +45,14 @@
 		ontogglereadonly: (id: string) => void;
 		onlocksource: (id: string) => void;
 		oncrosspanelcopy: (id: string, fromPanel: string) => void;
+		mode?: ComposeMode;
+		cursor?: number;
+		sectionsListEl?: HTMLDivElement;
 	} = $props();
 
 	let checkedIds: Set<string> = $state(new Set());
 	let collapsedIds: Set<string> = $state(new Set());
 	let headerCollapsed = $state(false);
-	let mode: ComposeMode = $state('full');
 	let delimiter = $state('');
 	let prevDelimiter = $state('');
 	let trashPending: ContextItem[] = $state([]);
@@ -675,24 +680,30 @@
 
 	<div class="compose-content">
 		{#if mode === 'full'}
-			<div class="compose-sections">
-				{#each compose.sections as section (section.id)}
-					<ComposeSection
-						{section}
-						{syncMode}
-						checked={checkedIds.has(section.id)}
-						collapsed={collapsedIds.has(section.id)}
-						oncheck={toggleCheck}
-						oncollapse={toggleCollapse}
-						onupdate={updateSection}
-						onupdatetags={updateSectionTags}
-						onreset={resetSection}
-						onremove={removeSection}
-						onsendtochat={onsenditemtochat}
-						{ontogglereadonly}
-						{onlocksource}
-						{oncrosspanelcopy}
-					/>
+			<div class="compose-sections" bind:this={sectionsListEl}>
+				{#each compose.sections as section, i (section.id)}
+					<div
+						class="compose-section-row"
+						class:compose-section-row--cursor={i === cursor}
+						data-cursor={i}
+					>
+						<ComposeSection
+							{section}
+							{syncMode}
+							checked={checkedIds.has(section.id)}
+							collapsed={collapsedIds.has(section.id)}
+							oncheck={toggleCheck}
+							oncollapse={toggleCollapse}
+							onupdate={updateSection}
+							onupdatetags={updateSectionTags}
+							onreset={resetSection}
+							onremove={removeSection}
+							onsendtochat={onsenditemtochat}
+							{ontogglereadonly}
+							{onlocksource}
+							{oncrosspanelcopy}
+						/>
+					</div>
 				{/each}
 			</div>
 		{:else if mode === 'plain'}
@@ -945,6 +956,18 @@
 		flex-direction: column;
 		gap: 12px;
 		padding: 12px;
+	}
+
+	/* Ranger-style cursor over compose sections — same inset bar +
+	   tinted background as feed/reader/search. Wraps each
+	   ComposeSection so the section's own provenance border is
+	   preserved alongside the cursor highlight. */
+	.compose-section-row {
+		border-radius: 4px;
+	}
+	.compose-section-row--cursor {
+		box-shadow: inset 4px 0 0 var(--id-yours);
+		background: color-mix(in srgb, var(--id-yours) 10%, transparent);
 	}
 
 	.plain-layout {

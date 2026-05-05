@@ -122,6 +122,20 @@
 	let composerExtraBlocks = $state(0);
 	let slotBodyEls: Partial<Record<Position, HTMLElement>> = {};
 
+	// Pending `g` for the `gg` motion. Cleared after a short window or by
+	// any non-`g` keystroke. `G` (shift) fires immediately as 'bottom'.
+	let pendingG = $state(false);
+	let pendingGTimer: ReturnType<typeof setTimeout> | null = null;
+	function armPendingG() {
+		pendingG = true;
+		if (pendingGTimer) clearTimeout(pendingGTimer);
+		pendingGTimer = setTimeout(() => { pendingG = false; pendingGTimer = null; }, 700);
+	}
+	function clearPendingG() {
+		pendingG = false;
+		if (pendingGTimer) { clearTimeout(pendingGTimer); pendingGTimer = null; }
+	}
+
 	// Representative subset — production reads from src/tree/command.rs (61 commands).
 	const commands: Command[] = [
 		// Buffer
@@ -407,24 +421,55 @@
 		};
 		const navAction = navMap[e.key];
 		if (navAction) {
+			clearPendingG();
 			e.preventDefault();
 			store.dispatchNav(navAction);
 			return;
 		}
 
+		// G (shift+g) → bottom; gg (two-step) → top. CM6's vim plugin
+		// handles G/gg internally for in-section motion; this is the
+		// app-level fallback for ranger-style buffers (feed, reader
+		// outline/paginated/continuous, search).
+		if (e.key === 'G') {
+			clearPendingG();
+			e.preventDefault();
+			store.dispatchNav('bottom');
+			return;
+		}
+		if (e.key === 'g') {
+			e.preventDefault();
+			if (pendingG) {
+				clearPendingG();
+				store.dispatchNav('top');
+			} else {
+				armPendingG();
+			}
+			return;
+		}
+
 		if (e.key === 'Enter') {
+			clearPendingG();
 			e.preventDefault();
 			if (!store.dispatchNav('select')) store.expandFocusedIfRail();
 		} else if (e.key === 'i') {
+			clearPendingG();
 			e.preventDefault();
 			store.expandFocusedIfRail();
-			enterInsertMode();
+			// Buffer-specific 'insert' (e.g., compose focuses the cursored
+			// section's textarea) wins over the generic first-data-entry
+			// fallback. focusin will flip mode → 'insert'.
+			if (!store.dispatchNav('insert')) enterInsertMode();
 		} else if (e.key === 'o') {
+			clearPendingG();
 			e.preventDefault();
 			openAndInsert();
 		} else if (e.key === ':') {
+			clearPendingG();
 			e.preventDefault();
 			openMinibuffer('mx');
+		} else {
+			clearPendingG();
 		}
 	}
 

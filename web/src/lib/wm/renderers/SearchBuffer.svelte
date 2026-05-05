@@ -47,6 +47,16 @@
 			queueMicrotask(scrollCursorIntoView);
 			return true;
 		}
+		if (action === 'top') {
+			cursor = 0;
+			queueMicrotask(scrollCursorIntoView);
+			return true;
+		}
+		if (action === 'bottom') {
+			cursor = total - 1;
+			queueMicrotask(scrollCursorIntoView);
+			return true;
+		}
 		if (action === 'select' || action === 'right') {
 			const r = app.searchResults[cursor];
 			if (r) onSelect(r);

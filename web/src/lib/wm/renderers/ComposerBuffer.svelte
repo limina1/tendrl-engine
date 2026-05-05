@@ -1,14 +1,117 @@
 <script lang="ts">
+	import { untrack } from 'svelte';
 	import { getAppState } from '$lib/state.svelte';
 	import ComposeView from '$lib/components/ComposeView.svelte';
+	import { getActiveStore, type NavAction } from '../buffer-store.svelte';
 	import type { Buffer } from '../types';
 
-	let { buffer: _buffer }: { buffer: Buffer } = $props();
+	let { buffer }: { buffer: Buffer } = $props();
 
 	const app = getAppState();
+	const store = getActiveStore();
+
+	type ComposeMode = 'full' | 'plain' | 'preview';
+
+	let cursor = $state(0);
+	let mode = $state<ComposeMode>('full');
+	let sectionsListEl: HTMLDivElement | undefined = $state();
+
+	$effect(() => {
+		const len = app.compose.sections.length;
+		if (cursor >= len) cursor = Math.max(0, len - 1);
+	});
+
+	function scrollCursorIntoView() {
+		if (!sectionsListEl) return;
+		const row = sectionsListEl.querySelector<HTMLElement>(`[data-cursor="${cursor}"]`);
+		if (!row) return;
+		const listRect = sectionsListEl.getBoundingClientRect();
+		const rowRect = row.getBoundingClientRect();
+		if (rowRect.top < listRect.top) {
+			sectionsListEl.scrollTop -= listRect.top - rowRect.top;
+		} else if (rowRect.bottom > listRect.bottom) {
+			sectionsListEl.scrollTop += rowRect.bottom - listRect.bottom;
+		}
+	}
+
+	function focusCursoredSection(): boolean {
+		if (!sectionsListEl) return false;
+		const row = sectionsListEl.querySelector<HTMLElement>(`[data-cursor="${cursor}"]`);
+		if (!row) return false;
+		// Prefer the content textarea over the title input — the textarea is
+		// the main editing surface. focusin will flip mode → 'insert'.
+		const textarea = row.querySelector<HTMLTextAreaElement>('textarea');
+		const target =
+			textarea ?? row.querySelector<HTMLInputElement>('input[class~="compose-section-title"]');
+		if (!target) return false;
+		target.focus();
+		return true;
+	}
+
+	function focusPlainEditor(): boolean {
+		const root = sectionsListEl?.closest('.compose-content') ?? document;
+		const ta = root.querySelector<HTMLTextAreaElement>('.plain-editor');
+		if (!ta) return false;
+		ta.focus();
+		return true;
+	}
+
+	function handleNav(action: NavAction): boolean {
+		// In plain (and preview) mode there's no per-section cursor — h/l
+		// still cycles back to full. 'insert' focuses the plain textarea.
+		if (mode !== 'full') {
+			if (action === 'left' || action === 'right') {
+				mode = mode === 'plain' ? 'full' : 'plain';
+				return true;
+			}
+			if (action === 'insert' && mode === 'plain') return focusPlainEditor();
+			return false;
+		}
+
+		const total = app.compose.sections.length;
+		if (action === 'left' || action === 'right') {
+			mode = 'plain';
+			return true;
+		}
+		if (total === 0) return false;
+		if (action === 'down') {
+			cursor = Math.min(total - 1, cursor + 1);
+			queueMicrotask(scrollCursorIntoView);
+			return true;
+		}
+		if (action === 'up') {
+			cursor = Math.max(0, cursor - 1);
+			queueMicrotask(scrollCursorIntoView);
+			return true;
+		}
+		if (action === 'top') {
+			cursor = 0;
+			queueMicrotask(scrollCursorIntoView);
+			return true;
+		}
+		if (action === 'bottom') {
+			cursor = total - 1;
+			queueMicrotask(scrollCursorIntoView);
+			return true;
+		}
+		if (action === 'select' || action === 'insert') {
+			return focusCursoredSection();
+		}
+		return false;
+	}
+
+	$effect(() => {
+		const id = buffer.id;
+		const handler = handleNav;
+		untrack(() => store.registerNavHandler(id, handler));
+		return () => untrack(() => store.unregisterNavHandler(id));
+	});
 </script>
 
 <ComposeView
+	bind:mode
+	bind:sectionsListEl
+	{cursor}
 	compose={app.compose}
 	canPublish={app.identityStatus?.state === 'unlocked'}
 	onupdate={app.handleComposeUpdate}
