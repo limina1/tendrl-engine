@@ -1,12 +1,29 @@
 # Identity & signing — plan
 
-**Status:** PLAN. Engine-resident ncryptsec is mostly shipped already
-(`src/identity.rs`, `/api/v1/identity/login`, lock timer, keyring).
-This doc captures the *separation-of-concerns* model: the engine is
-the broadcaster *and* the signing orchestrator. UI clients (web
-today, eventually Emacs/TUI) are pluggable signing providers — they
-register their capabilities and fulfill sign requests routed through
-the engine.
+**Status:** LANDED (2026-05-06). End-to-end NIP-07 working through
+the engine. Phases 1–9:
+
+| Phase | Title                                         | Commit    |
+|-------|-----------------------------------------------|-----------|
+| 1     | Signer trait + InProcessSigner + EventTemplate | `c79e396` |
+| 2     | Lift secret-fallback into InProcessSigner::resolve | `8b3d0f3` |
+| 3     | SigningController + IdentitySource + /use, /sign | `b0c9ed6` |
+| 4     | ExternalSigner via SSE channel + registry     | `24143fe` |
+| 5     | Web NIP-07 client (signer.ts) + API helpers   | `5b1738f` |
+| 6     | SettingsBuffer Identity section               | `1b6bca0` |
+| 7     | Publish routes through SigningController      | `277c34a` |
+| 8     | M-x cleanup + SPC s i                          | `75fc2fe` |
+| 9     | Verification + cleanup (this doc + dead-code drop) | this commit |
+
+**Deferred** (not in this pass):
+  - NIP-46 ExternalSigner impl (the trait + back-channel are ready;
+    only the bunker-DM transport remains).
+  - Multi-tab disambiguation (designate primary signer; first-come
+    wins is fine for now).
+  - Web auto-register at boot (currently user-initiated from the
+    Settings → Identity radio).
+
+The remainder of this doc captures the original design for context.
 
 Pairs with `docs/publish-flow-engine-plan.md`. The publish flow takes
 signed events; this doc describes how those events get signed.
