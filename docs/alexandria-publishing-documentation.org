@@ -1,0 +1,233 @@
+#+TITLE: Alexandria Publishing Workflow - Behavior & Progress Feedback
+#+AUTHOR: Alexandria Documentation
+#+DATE: 2026-05-06
+#+OPTIONS: toc:2 num:t
+
+* Overview
+
+This document describes how Alexandria publishes NKBIP-01 publications (kind
+30040 indexes and kind 30041 sections) from the Compose route, with a focus on
+the *progress bar*, *success/failure detection*, and *partial-failure UX*.
+It is intended as a reference for contributors touching the publish path or
+designing improvements to it.
+
+For the broader compose/editor design, see =04-compose-editor.org=. This doc
+covers what actually happens at runtime when the user clicks "Publish".
+
+* Surface
+
+** Progress Bar Component
+
+File: =src/lib/components/ZettelEditor.svelte:1023–1040=
+
+A Flowbite =Progressbar= renders only while ~isPublishing && publishProgress.total > 0~.
+
+- Header text: "Publishing events..."
+- Counter: ~{publishProgress.current} of {publishProgress.total}~
+- Bar: ~progress = (current / total) * 100~, =h-2.5=, blue.
+
+The bar shows /attempts/, not /successes/ — see [[*Progress Semantics][Progress Semantics]] below.
+
+** Result Surface
+
+File: =src/routes/new/compose/+page.svelte:256–331=
+
+After publishing finishes, ~publishResults~ drives one of two alerts:
+
+- *All success* (~successCount === total~): green alert listing each event with
+  its =nevent= bech32 code (lines 258–280).
+- *Partial or all failure* (~successCount < total~): red alert with two
+  sub-sections (lines 281–329):
+  - "Successfully published": titles + links for events that made it.
+  - "Failed": each failed event with its error message and a per-event
+    /Retry/ button.
+
+The Retry button is wired but stubbed — see [[*Retry][Retry]].
+
+* Orchestration
+
+** Article Publish (Index + Sections)
+
+File: =src/routes/new/compose/+page.svelte:82–157= (~handlePublishArticle~)
+
+#+BEGIN_EXAMPLE
+1. isPublishing ← true
+2. total ← (indexEvent ? 1 : 0) + contentEvents.length
+3. publishProgress ← { current: 0, total }
+4. If indexEvent:
+     await publishSingleEvent(indexEvent)   # kind 30040
+     results.push(result); current += 1
+5. For each contentEvent in order:
+     await publishSingleEvent(contentEvent) # kind 30041
+     results.push(result); current += 1
+6. publishResults ← processPublishResults(results, events, hasIndexEvent)
+7. isPublishing ← false
+#+END_EXAMPLE
+
+Events are published *sequentially with `await`*, not in parallel. Each call
+waits for the previous event's publish promise before the bar advances.
+
+** Scattered Notes Publish
+
+File: =src/routes/new/compose/+page.svelte:159–203= (~handlePublishScatteredNotes~)
+
+Same shape as the article path, minus the index event: only ~contentEvents~ are
+published, ~total = contentEvents.length~.
+
+* Single-Event Publish Primitive
+
+File: =src/lib/services/publisher.ts:118–226= (~publishSingleEvent~)
+
+Steps (real-mode path, lines 154–217):
+
+1. Read all relay URLs from ~ndk.pool.relays~; throw if empty.
+2. Build an =NDKRelaySet= from those URLs.
+3. Rewrite =a= tags whose value contains the placeholder =:pubkey:= to use
+   the actual signed-in pubkey (lines 164–179).
+4. Auto-append =author= and =p= tags from the active user if missing
+   (lines 182–198).
+5. Create the =NDKEvent=, set ~kind~, ~created_at~, ~tags~, ~content~,
+   ~pubkey~, then ~await ndkEvent.sign()~.
+6. ~await ndkEvent.publish(relaySet)~ → returns ~Set<NDKRelay>~ of relays
+   that accepted the event.
+7. If ~publishedToRelays.size > 0~ → ~{ success: true, eventId }~.
+   Else throw ~"Failed to publish to any relays"~ → caught and returned as
+   ~{ success: false, error }~.
+
+** Mock Mode
+
+A ~VITE_MOCK_PUBLISH=true~ env flag (publisher.ts:130–146) short-circuits the
+real publish path: it logs the event, sleeps 300–500ms, and returns a fake
+event id. Useful for exercising the progress bar and result UI without hitting
+relays.
+
+* Success / Failure Detection
+
+The model is *binary and per-event*, not per-relay:
+
+- *Success* = NDK's ~publish(relaySet)~ resolved with at least one relay in
+  the returned set.
+- *Failure* = empty set (treated as a thrown error) or any thrown exception
+  during signing/publishing.
+
+What is *not* tracked:
+
+- *No per-relay accept/reject breakdown.* The UI cannot tell you whether 1/8
+  or 8/8 relays accepted an event — only that "≥1 did".
+- *No NIP-20 OK reasoning.* Specific relay rejection reasons (rate limits,
+  auth, invalid signature) are collapsed into NDK's aggregate result.
+- *No explicit timeout in the publish loop.* The pipeline relies on NDK's
+  internal per-relay timeout (~5–10s). A separate utility,
+  =src/lib/services/nostrEventService.ts:withTimeout(5000)= (~line 121~),
+  exists but is not used by the compose publish path.
+
+* Progress Semantics
+
+The progress counter increments *unconditionally after each ~publishSingleEvent~
+returns, regardless of success or failure*
+(=+page.svelte:118–119, 139, 189=).
+
+Implications:
+
+1. The bar is *monotonic* and *always* reaches 100% — it represents
+   "attempts completed", not "events successfully published".
+2. A user watching the bar reach 100% has no signal about partial failure
+   until the result alert renders below it.
+3. Total count is fixed up-front from the generated event tree; it does not
+   shrink if early events fail.
+
+If the project wants the bar to communicate /successes/ specifically, the
+counter should advance only on ~result.success~, or the bar should be split
+into success/failure segments.
+
+* Result Aggregation
+
+File: =src/lib/services/publisher.ts:319–382= (~processPublishResults~)
+
+Maps each =PublishResult= back to a human-readable title:
+
+- Index event → title "Article Index"
+- Section event at result-index ~i~ → ~contentEvents[i - (hasIndexEvent ? 1 : 0)].title~
+
+Returns:
+
+#+BEGIN_SRC typescript
+interface ProcessedPublishResults {
+  successCount: number;
+  total: number;
+  errors: string[];
+  successfulEvents: Array<{ eventId: string; title: string }>;
+  failedEvents: Array<{ title: string; error: string; sectionIndex: number }>;
+}
+#+END_SRC
+
+The ~sectionIndex~ on each failed event is what a future Retry implementation
+would use to look up the original payload.
+
+* Retry
+
+File: =src/routes/new/compose/+page.svelte:205–231= (~retryFailedEvent~)
+
+Currently a stub. The function:
+
+1. Looks up the failed event by ~sectionIndex~.
+2. Logs ~"Retry not implemented - would need to store original event data"~.
+3. Returns without re-publishing.
+
+To make Retry functional, the publish path needs to retain the original
+~{ kind, tags, content }~ payload alongside each ~PublishResult~ so it can be
+re-fed into ~publishSingleEvent~. Today only the title and error survive past
+the publish loop.
+
+The Retry button in the result alert is also disabled while ~isPublishing~
+(=+page.svelte:319=).
+
+* State Summary
+
+In =+page.svelte=:
+
+#+BEGIN_SRC typescript
+let isPublishing: boolean = false;
+let publishProgress: { current: number; total: number } = { current: 0, total: 0 };
+let publishResults: ProcessedPublishResults | null = null;
+#+END_SRC
+
+In =publisher.ts=:
+
+#+BEGIN_SRC typescript
+interface PublishResult {
+  success: boolean;
+  eventId?: string;
+  error?: string;
+}
+#+END_SRC
+
+* Known Gaps
+
+These are documented as *current behavior*, not as bugs — but they are the
+likely targets of any future work on the publishing UX.
+
+1. *Bar conflates attempted with succeeded.* See [[*Progress Semantics][Progress Semantics]].
+2. *No per-relay visibility.* Users cannot see whether their event actually
+   propagated widely or only landed on one relay.
+3. *Sequential publishing.* N events × per-event latency. Section events are
+   independent (they all reference the index by =a= tag) and could publish in
+   parallel via ~Promise.allSettled~.
+4. *No publish-loop timeout.* A misbehaving relay set can stall the entire
+   sequential loop.
+5. *Retry is non-functional.* Original event payload is discarded after the
+   loop.
+6. *Index-then-content ordering is implicit.* If the index publish fails,
+   sections still publish but their =a= tags reference an index that is not
+   on any relay; the UI does not warn about this dependency.
+
+* References
+
+- =src/lib/components/ZettelEditor.svelte= — progress bar markup.
+- =src/routes/new/compose/+page.svelte= — orchestration, result UI, retry stub.
+- =src/lib/services/publisher.ts= — ~publishSingleEvent~, ~processPublishResults~.
+- =src/lib/services/nostrEventService.ts= — alternative publish utility with
+  explicit timeout (not used by compose path).
+- =docs/design/04-compose-editor.org= — broader compose/editor design.
+- NKBIP-01 — publication index (30040) and section (30041) event structure.
+

@@ -8,14 +8,20 @@
 		type PublishRelayStatus,
 		type RelayResult
 	} from '../publish-progress.svelte';
+	import { naddrFromATag } from '$lib/nostr/nip19';
+	import { getAppState } from '$lib/state.svelte';
 	import type { Buffer } from '../types';
 
 	let { buffer: _buffer }: { buffer: Buffer } = $props();
 
 	const store = getStore();
+	const app = getAppState();
 	const progress = $derived(store.current);
 
 	let expanded = $state(new Set<string>());
+	// Tracks the just-copied identifier so we can flash a "copied"
+	// label next to the value the user clicked. Cleared after 1.4 s.
+	let copiedKey = $state<string | null>(null);
 
 	function toggleExpanded(id: string) {
 		const next = new Set(expanded);
@@ -36,6 +42,26 @@
 		if (kind === 30040) return 'index';
 		if (kind === 30041) return 'section';
 		return `kind:${kind}`;
+	}
+
+	async function copyValue(key: string, value: string) {
+		try {
+			await navigator.clipboard.writeText(value);
+			copiedKey = key;
+			setTimeout(() => {
+				if (copiedKey === key) copiedKey = null;
+			}, 1400);
+		} catch (e) {
+			console.warn('[PublishProgress] clipboard write failed', e);
+		}
+	}
+
+	function showRawEvent(ev: PublishEventStatus) {
+		if (ev.rawEvent != null) app.jsonModalData = ev.rawEvent;
+	}
+
+	function naddrFor(ev: PublishEventStatus): string | null {
+		return ev.aTag ? naddrFromATag(ev.aTag) : null;
 	}
 
 	function dotClass(state: RelayResult): string {
@@ -70,9 +96,6 @@
 		}
 	}
 
-	function eventDisplayId(ev: PublishEventStatus): string {
-		return ev.naddr ?? ev.eventId;
-	}
 </script>
 
 <div class="pp-view">
@@ -93,6 +116,7 @@
 		{@const agg = aggregateAcceptRatio(progress)}
 		{@const aggColor = ratioColor(agg.ratio)}
 
+		{@const headerNaddr = progress.aTag ? naddrFromATag(progress.aTag) : null}
 		<header class="pp-header">
 			<div class="pp-title-row">
 				<span class="pp-title">{progress.title ?? 'Publishing'}</span>
@@ -102,8 +126,8 @@
 					<span class="pill pill--ghost"><span class="dot dot--fetching"></span>publishing</span>
 				{/if}
 			</div>
-			{#if progress.naddr}
-				<div class="pp-naddr mono">{progress.naddr}</div>
+			{#if headerNaddr}
+				{@render copyable('publication-naddr', headerNaddr, 'pp-naddr', 'naddr — click to copy')}
 			{/if}
 			<div class="pp-summary">
 				{progress.events.length} event{progress.events.length === 1 ? '' : 's'} ·
@@ -145,21 +169,46 @@
 					</button>
 
 					{#if open}
+						{@const evNaddr = naddrFor(ev)}
 						<div class="pp-event-detail">
+							<div class="pp-detail-actions">
+								{#if ev.rawEvent != null}
+									<button
+										class="btn-link"
+										onclick={() => showRawEvent(ev)}
+										title="Show full JSON"
+									>view raw JSON</button>
+								{/if}
+							</div>
+
 							<dl class="kv">
-								<dt>address</dt>
-								<dd class="mono">{eventDisplayId(ev)}</dd>
+								{#if evNaddr}
+									<dt>naddr</dt>
+									<dd>
+										{@render copyValue_('event-naddr-' + ev.eventId, evNaddr, true)}
+									</dd>
+								{/if}
+								{#if ev.aTag}
+									<dt>a tag</dt>
+									<dd>
+										{@render copyValue_('event-atag-' + ev.eventId, ev.aTag, true)}
+									</dd>
+								{/if}
 								<dt>event id</dt>
-								<dd class="mono">{shortenId(ev.eventId)}</dd>
+								<dd>
+									{@render copyValue_('event-id-' + ev.eventId, ev.eventId, true)}
+								</dd>
 								<dt>author</dt>
-								<dd class="mono">{shortenId(ev.author)}</dd>
+								<dd>
+									{@render copyValue_('event-author-' + ev.eventId, ev.author, true)}
+								</dd>
 								<dt>kind</dt>
 								<dd>{ev.kind} ({kindLabel(ev.kind)})</dd>
 							</dl>
 
 							<div class="pp-relay-list">
 								{#each ev.relays as relay (relay.url)}
-									{@render relayRow(relay)}
+									{@render relayRow(relay, ev.eventId)}
 								{/each}
 							</div>
 						</div>
@@ -170,10 +219,16 @@
 	{/if}
 </div>
 
-{#snippet relayRow(r: PublishRelayStatus)}
+{#snippet relayRow(r: PublishRelayStatus, eventId: string)}
 	<div class="pp-relay" class:pp-relay--local={r.isLocal}>
 		<span class="dot {dotClass(r.state)}"></span>
-		<span class="pp-relay-url mono" title={r.url}>{shortenUrl(r.url)}</span>
+		<button
+			class="pp-relay-url mono copy-link"
+			onclick={() => copyValue(`relay-${eventId}-${r.url}`, r.url)}
+			title="{r.url} — click to copy"
+		>
+			{shortenUrl(r.url)}{copiedKey === `relay-${eventId}-${r.url}` ? ' ✓' : ''}
+		</button>
 		{#if r.isLocal}
 			<span class="pill pill--local pp-relay-tag">local</span>
 		{/if}
@@ -185,6 +240,26 @@
 			<span class="pp-relay-dur">{r.durationMs}ms</span>
 		{/if}
 	</div>
+{/snippet}
+
+{#snippet copyable(key: string, value: string, klass: string, hint: string)}
+	<button
+		class="copy-link {klass} mono"
+		onclick={() => copyValue(key, value)}
+		title="{hint}: {value}"
+	>
+		{value}{copiedKey === key ? ' ✓ copied' : ''}
+	</button>
+{/snippet}
+
+{#snippet copyValue_(key: string, value: string, short: boolean)}
+	<button
+		class="copy-link mono"
+		onclick={() => copyValue(key, value)}
+		title="{value} — click to copy"
+	>
+		{short ? shortenId(value) : value}{copiedKey === key ? ' ✓' : ''}
+	</button>
 {/snippet}
 
 <style>
@@ -242,6 +317,52 @@
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
+		text-align: left;
+		max-width: 100%;
+	}
+
+	/* Click-to-copy buttons reuse mono font and align with their dt
+	   labels visually, but stay clickable + show a brief ✓ confirmation
+	   when a value lands on the clipboard. */
+	.copy-link {
+		background: transparent;
+		border: none;
+		color: inherit;
+		font: inherit;
+		padding: 0;
+		cursor: pointer;
+		text-align: left;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+		max-width: 100%;
+	}
+	.copy-link:hover {
+		color: var(--accent);
+		text-decoration: underline;
+		text-decoration-style: dotted;
+	}
+	.copy-link:focus-visible {
+		outline: 1px solid var(--accent);
+		outline-offset: 2px;
+	}
+
+	.pp-detail-actions {
+		display: flex;
+		gap: 8px;
+	}
+	.btn-link {
+		background: transparent;
+		border: none;
+		color: var(--accent);
+		font: inherit;
+		font-size: var(--t-xs);
+		font-family: var(--font-mono);
+		cursor: pointer;
+		padding: 2px 0;
+	}
+	.btn-link:hover {
+		text-decoration: underline;
 	}
 
 	.pp-summary {

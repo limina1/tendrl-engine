@@ -27,15 +27,19 @@ export interface PublishRelayStatus {
 
 export interface PublishEventStatus {
 	eventId: string;
-	naddr?: string;
+	/** `kind:pubkey:dtag` form. Render via `encodeNaddr` for display. */
+	aTag?: string;
 	kind: number;
 	title: string | null;
 	author: string;
 	relays: PublishRelayStatus[];
+	/** Full signed event JSON, for the inline JSON modal. */
+	rawEvent?: unknown;
 }
 
 export interface PublishProgressState {
-	naddr?: string;
+	/** `kind:pubkey:dtag` for the publication index. Render via `encodeNaddr`. */
+	aTag?: string;
 	title?: string;
 	authorPubkey?: string;
 	events: PublishEventStatus[];
@@ -145,74 +149,100 @@ export function mockProgress(): PublishProgressState {
 		});
 	};
 
-	const sections: PublishEventStatus[] = [
-		{
-			eventId: 'fa1c1c1c01000000000000000000000000000000000000000000000000000001',
-			naddr: `30041:${author}:${dTag}-introduction`,
+	const mkSection = (
+		idSuffix: string,
+		dSuffix: string,
+		title: string,
+		content: string,
+		states: [RelayResult, string?][]
+	): PublishEventStatus => {
+		const sectionDTag = `${dTag}-${dSuffix}`;
+		const eventId = `fa1c1c1c${idSuffix}${'0'.repeat(64 - 8 - idSuffix.length)}`;
+		const aTag = `30041:${author}:${sectionDTag}`;
+		return {
+			eventId,
+			aTag,
 			kind: 30041,
-			title: 'Introduction',
+			title,
 			author,
-			relays: mkRelays([['accepted'], ['accepted'], ['accepted'], ['accepted']])
-		},
-		{
-			eventId: 'fa1c1c1c02000000000000000000000000000000000000000000000000000002',
-			naddr: `30041:${author}:${dTag}-method`,
-			kind: 30041,
-			title: 'Method',
-			author,
-			relays: mkRelays([
-				['accepted'],
-				['rejected', 'rate-limited: max 1 event per 2 minutes'],
-				['rejected', 'auth-required: relay requires NIP-42'],
-				['timeout', 'no OK after 10s']
-			])
-		},
-		{
-			eventId: 'fa1c1c1c03000000000000000000000000000000000000000000000000000003',
-			naddr: `30041:${author}:${dTag}-results`,
-			kind: 30041,
-			title: 'Results',
-			author,
-			relays: mkRelays([['accepted'], ['sending'], ['pending'], ['pending']])
-		},
-		{
-			eventId: 'fa1c1c1c04000000000000000000000000000000000000000000000000000004',
-			naddr: `30041:${author}:${dTag}-discussion`,
-			kind: 30041,
-			title: 'Discussion',
-			author,
-			relays: mkRelays([
-				['accepted'],
-				['accepted'],
-				['rejected', 'invalid: bad signature'],
-				['accepted']
-			])
-		},
-		{
-			eventId: 'fa1c1c1c05000000000000000000000000000000000000000000000000000005',
-			naddr: `30041:${author}:${dTag}-conclusion`,
-			kind: 30041,
-			title: 'Conclusion',
-			author,
-			relays: mkRelays([
-				['rejected', 'pow: requires min 16 leading zero bits'],
-				['accepted'],
-				['accepted'],
-				['accepted']
-			])
-		},
-		{
-			eventId: 'fa1c1c1c00000000000000000000000000000000000000000000000000000000',
-			naddr: `30040:${author}:${dTag}`,
+			relays: mkRelays(states),
+			rawEvent: {
+				id: eventId,
+				kind: 30041,
+				pubkey: author,
+				created_at: Math.floor((Date.now() - 1500) / 1000),
+				tags: [
+					['d', sectionDTag],
+					['title', title]
+				],
+				content,
+				sig: 'd34db33f'.repeat(16)
+			}
+		};
+	};
+
+	const indexEvent: PublishEventStatus = {
+		eventId: `fa1c1c1c00${'0'.repeat(54)}`,
+		aTag: `30040:${author}:${dTag}`,
+		kind: 30040,
+		title: 'Demo Publication — overall index',
+		author,
+		relays: mkRelays([['accepted'], ['accepted'], ['accepted'], ['accepted']]),
+		rawEvent: {
+			id: `fa1c1c1c00${'0'.repeat(54)}`,
 			kind: 30040,
-			title: 'Demo Publication — overall index',
-			author,
-			relays: mkRelays([['accepted'], ['accepted'], ['accepted'], ['accepted']])
+			pubkey: author,
+			created_at: Math.floor(Date.now() / 1000),
+			tags: [
+				['d', dTag],
+				['title', 'Demo Publication'],
+				['a', `30041:${author}:${dTag}-introduction`, ''],
+				['a', `30041:${author}:${dTag}-method`, ''],
+				['a', `30041:${author}:${dTag}-results`, ''],
+				['a', `30041:${author}:${dTag}-discussion`, ''],
+				['a', `30041:${author}:${dTag}-conclusion`, '']
+			],
+			content: '',
+			sig: 'd34db33f'.repeat(16)
 		}
+	};
+
+	const sections: PublishEventStatus[] = [
+		mkSection('01', 'introduction', 'Introduction', 'Lorem ipsum…', [
+			['accepted'],
+			['accepted'],
+			['accepted'],
+			['accepted']
+		]),
+		mkSection('02', 'method', 'Method', 'We did the thing.', [
+			['accepted'],
+			['rejected', 'rate-limited: max 1 event per 2 minutes'],
+			['rejected', 'auth-required: relay requires NIP-42'],
+			['timeout', 'no OK after 10s']
+		]),
+		mkSection('03', 'results', 'Results', 'p < 0.05.', [
+			['accepted'],
+			['sending'],
+			['pending'],
+			['pending']
+		]),
+		mkSection('04', 'discussion', 'Discussion', 'Discussion of the thing.', [
+			['accepted'],
+			['accepted'],
+			['rejected', 'invalid: bad signature'],
+			['accepted']
+		]),
+		mkSection('05', 'conclusion', 'Conclusion', 'In conclusion.', [
+			['rejected', 'pow: requires min 16 leading zero bits'],
+			['accepted'],
+			['accepted'],
+			['accepted']
+		]),
+		indexEvent
 	];
 
 	return {
-		naddr: `30040:${author}:${dTag}`,
+		aTag: `30040:${author}:${dTag}`,
 		title: 'Demo Publication',
 		authorPubkey: author,
 		events: sections,
