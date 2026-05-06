@@ -597,6 +597,13 @@
 		});
 	}
 
+	function openRelays() {
+		store.openBuffer({
+			className: 'work',
+			buffer: { id: 'relays', kind: 'relays', label: 'relays', kicker: 'config' }
+		});
+	}
+
 	const minibufferTitle = $derived.by(() => {
 		if (mb.mode === 'class') {
 			const cls = store.focusedSlotClass();
@@ -670,10 +677,14 @@
 				<span class="ml__seg ml__seg--prefix">mb:{mb.mode}</span>
 			{/if}
 			<span class="ml__spacer"></span>
-			<span class="pill {networkPill.pillClass}" title="Network mode">
+			<button
+				class="pill pill--btn {networkPill.pillClass}"
+				onclick={openRelays}
+				title="Network · click to open relay configuration"
+			>
 				<span class="dot {networkPill.dotClass}"></span>
 				{networkPill.label}
-			</span>
+			</button>
 			{#if embeddingPill}
 				<span class="pill {embeddingPill.pillClass}" title="Embedding index">
 					<span class="dot {embeddingPill.dotClass}"></span>
@@ -1293,6 +1304,14 @@
 	.ml__seg { color: var(--base6); }
 	.ml__seg--buf { color: var(--fg); }
 	.ml__seg--prefix { color: var(--id-yours); }
+	.pill--btn {
+		border: none;
+		cursor: pointer;
+		font: inherit;
+	}
+	.pill--btn:hover {
+		filter: brightness(1.15);
+	}
 	.ml__mode {
 		font-family: var(--font-mono);
 		font-size: var(--t-xs);

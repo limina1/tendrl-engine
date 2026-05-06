@@ -11,6 +11,7 @@ import KnowledgebaseBuffer from './renderers/KnowledgebaseBuffer.svelte';
 import RefsBuffer from './renderers/RefsBuffer.svelte';
 import SettingsBuffer from './renderers/SettingsBuffer.svelte';
 import DraftReaderBuffer from './renderers/DraftReaderBuffer.svelte';
+import RelaysBuffer from './renderers/RelaysBuffer.svelte';
 
 export type RendererProps = {
 	buffer: Buffer;
@@ -35,6 +36,7 @@ const entries: BufferKindEntry[] = [
 	{ kind: 'profile', className: 'work', component: ProfileBuffer, defaultLabel: 'profile' },
 	{ kind: 'ignored', className: 'work', component: IgnoredBuffer, defaultLabel: 'ignored' },
 	{ kind: 'settings', className: 'work', component: SettingsBuffer, defaultLabel: 'settings' },
+	{ kind: 'relays', className: 'work', component: RelaysBuffer, defaultLabel: 'relays' },
 	// Research class is auxiliary tools that support the work surface.
 	{ kind: 'search', className: 'research', component: SearchBuffer, defaultLabel: 'search' },
 	{ kind: 'knowledgebase', className: 'research', component: KnowledgebaseBuffer, defaultLabel: 'kb' },

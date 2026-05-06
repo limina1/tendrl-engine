@@ -11,6 +11,7 @@
 	import RefsBuffer from './renderers/RefsBuffer.svelte';
 	import SettingsBuffer from './renderers/SettingsBuffer.svelte';
 	import DraftReaderBuffer from './renderers/DraftReaderBuffer.svelte';
+	import RelaysBuffer from './renderers/RelaysBuffer.svelte';
 
 	let { buffer }: { buffer: Buffer } = $props();
 </script>
@@ -38,6 +39,8 @@
 		<RefsBuffer {buffer} />
 	{:else if buffer.kind === 'settings'}
 		<SettingsBuffer {buffer} />
+	{:else if buffer.kind === 'relays'}
+		<RelaysBuffer {buffer} />
 	{:else}
 		<div class="missing">no renderer registered for kind {buffer.kind}</div>
 	{/if}
