@@ -266,6 +266,8 @@ export interface NetworkStatus {
 
 export type IdentityState = 'none' | 'locked' | 'unlocked';
 
+export type IdentitySourceKind = 'engine' | 'nip07' | 'nip46';
+
 export interface IdentityStatus {
 	state: IdentityState;
 	pubkey: string | null;
@@ -273,4 +275,8 @@ export interface IdentityStatus {
 	seconds_remaining: number | null;
 	unsigned_count: number;
 	lock_timeout_minutes: number;
+	/** Active signing source. Always present (defaults to "engine"). */
+	source: IdentitySourceKind;
+	/** Set when source is nip07 / nip46. */
+	signer_id?: string;
 }

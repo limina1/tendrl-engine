@@ -1714,6 +1714,50 @@ function _createAppState() {
 		}
 	}
 
+	// --- External signer (NIP-07) state ---
+	// Registration is user-initiated from the settings buffer. The
+	// teardown closure closes the EventSource and reverts the engine
+	// source back to `engine`. The pubkey is cached so the settings
+	// buffer can show it without re-querying window.nostr.
+	let externalSignerPubkey: string | null = $state(null);
+	let externalSignerTeardown: (() => void) | null = null;
+
+	async function handleSelectNip07Source() {
+		identityError = null;
+		identityLoading = true;
+		try {
+			const { detectNip07, registerNip07Signer } = await import('$lib/identity/signer');
+			if (!detectNip07()) {
+				throw new Error('No window.nostr signer detected');
+			}
+			// Cache pubkey before registering so the UI can surface it
+			// even if the engine status hasn't refreshed yet.
+			externalSignerPubkey = await window.nostr!.getPublicKey();
+			externalSignerTeardown = await registerNip07Signer();
+			identityStatus = await api.getIdentity();
+			myPubkey = externalSignerPubkey;
+			resolveIdentityName(externalSignerPubkey);
+		} catch (e: unknown) {
+			identityError = e instanceof Error ? e.message : String(e);
+			externalSignerPubkey = null;
+		} finally {
+			identityLoading = false;
+		}
+	}
+
+	async function handleSelectEngineSource() {
+		try {
+			if (externalSignerTeardown) {
+				externalSignerTeardown();
+				externalSignerTeardown = null;
+			}
+			externalSignerPubkey = null;
+			identityStatus = await api.useIdentitySource({ source: 'engine' });
+		} catch (e) {
+			console.error('switch to engine source failed:', e);
+		}
+	}
+
 	// ===================== Return public API =====================
 
 	return {
@@ -1792,6 +1836,9 @@ function _createAppState() {
 		handleIdentityUnlock,
 		handleIdentityLock,
 		handleIdentityLogout,
+		get externalSignerPubkey() { return externalSignerPubkey; },
+		handleSelectNip07Source,
+		handleSelectEngineSource,
 
 		// Embedding
 		get embeddingStatus() { return embeddingStatus; },
