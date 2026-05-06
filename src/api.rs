@@ -1347,55 +1347,23 @@ pub async fn publish_handler(
 
     // Build events (signed or unsigned)
     let (pub_event, section_events) = if req.sign {
-        // Try identity session first, then keyring, then .env
-        let (sign_pubkey, secret) = {
+        // Resolve a signer through the unified fallback chain
+        // (unlocked session → OS keyring → .env). The whole sequence
+        // used to be open-coded right here; it now lives in
+        // `InProcessSigner::resolve` so other publish paths (chat,
+        // profile updates, the planned PublishController) can reuse it.
+        let signer = {
             let mut session = identity.lock().unwrap();
-            if session.can_sign() {
-                session.touch();
-                Ok((
-                    session.pubkey().unwrap().to_string(),
-                    session.secret().unwrap().to_string(),
-                ))
-            } else if session.pubkey().is_some() {
-                Err(EngineError::Locked(
-                    "Identity is locked — unlock with password first".into(),
-                ))
-            } else {
-                drop(session);
-                // Fall back to keyring / .env
-                crate::identity::IdentityKeyring::new()
-                    .get_secret(&pubkey)
-                    .map(|s| (pubkey.clone(), s))
-                    .or_else(|_| {
-                        let env_content = std::fs::read_to_string(".env")
-                            .map_err(|_| crate::identity::KeyringError::NotFound)?;
-                        let mut ncryptsec = None;
-                        let mut password = None;
-                        for line in env_content.lines() {
-                            let line = line.trim();
-                            if let Some(val) = line.strip_prefix("NOSTR_NCRYPTSEC=") {
-                                ncryptsec = Some(val.to_string());
-                            } else if let Some(val) = line.strip_prefix("NOSTR_PASSWORD=") {
-                                password = Some(val.to_string());
-                            }
-                        }
-                        let ncryptsec =
-                            ncryptsec.ok_or(crate::identity::KeyringError::NotFound)?;
-                        let password =
-                            password.ok_or(crate::identity::KeyringError::NotFound)?;
-                        let (secret_hex, derived_pubkey) =
-                            crate::identity::decrypt_ncryptsec(&ncryptsec, &password)
-                                .map_err(|e| {
-                                    crate::identity::KeyringError::Keyring(e.to_string())
-                                })?;
-                        Ok((derived_pubkey, secret_hex))
-                    })
-                    .map_err(|e: crate::identity::KeyringError| {
-                        EngineError::Config(format!("Cannot sign: {e}"))
-                    })
-            }
-        }?;
-        build_signed_publication_events(&compose, &sign_pubkey, &secret)
+            crate::signing::InProcessSigner::resolve(&mut session, Some(&pubkey)).map_err(
+                |e| match e {
+                    crate::signing::SigningError::Locked => EngineError::Locked(
+                        "Identity is locked — unlock with password first".into(),
+                    ),
+                    other => EngineError::Config(format!("Cannot sign: {other}")),
+                },
+            )?
+        };
+        build_signed_publication_events(&compose, signer.pubkey_hex(), signer.secret_hex())
     } else {
         // Track unsigned events if identity is present but locked
         let should_track = {

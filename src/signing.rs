@@ -103,6 +103,22 @@ impl InProcessSigner {
         Self { pubkey_hex, secret_hex }
     }
 
+    /// Inherent pubkey accessor (mirrors `Signer::pubkey`), provided so
+    /// callers don't need `use crate::signing::Signer;` to read the
+    /// pubkey of a known concrete `InProcessSigner`.
+    pub fn pubkey_hex(&self) -> &str {
+        &self.pubkey_hex
+    }
+
+    /// Engine-internal access to the secret hex. Exposed so the legacy
+    /// synchronous `build_signed_publication_events` path can keep using
+    /// the existing `sign_event_hash` primitive while the async-signing
+    /// migration lands incrementally. Don't pass this beyond engine
+    /// modules.
+    pub fn secret_hex(&self) -> &str {
+        &self.secret_hex
+    }
+
     /// Resolve a signer through the existing fallback chain:
     ///
     /// 1. The unlocked `IdentitySession` (in-memory after user-driven login).
