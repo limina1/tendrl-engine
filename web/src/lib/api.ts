@@ -156,6 +156,82 @@ export function logoutIdentity() {
 	return fetchJson<IdentityStatus>('/api/v1/identity/logout', { method: 'POST' });
 }
 
+// External signer / signing-source API (Phase 3 + 4 of identity plan)
+
+export interface SignerCapabilities {
+	sign_event?: boolean;
+	nip04_encrypt?: boolean;
+	nip04_decrypt?: boolean;
+	nip44_encrypt?: boolean;
+	nip44_decrypt?: boolean;
+	auto_approve_kinds?: number[];
+}
+
+export interface SignerRegisterRequest {
+	kind: 'nip07' | 'nip46';
+	pubkey: string;
+	capabilities?: SignerCapabilities;
+}
+
+export interface SignerRegisterResponse {
+	signer_id: string;
+	token: string;
+}
+
+export function registerSigner(req: SignerRegisterRequest) {
+	return fetchJson<SignerRegisterResponse>('/api/v1/identity/signer-register', {
+		method: 'POST',
+		body: JSON.stringify(req)
+	});
+}
+
+export interface UseSourceRequest {
+	source: 'engine' | 'nip07' | 'nip46';
+	signer_id?: string;
+}
+
+export function useIdentitySource(req: UseSourceRequest) {
+	return fetchJson<IdentityStatus>('/api/v1/identity/use', {
+		method: 'POST',
+		body: JSON.stringify(req)
+	});
+}
+
+export interface SignTemplateRequest {
+	template: {
+		kind: number;
+		created_at: number;
+		tags: string[][];
+		content: string;
+		pubkey?: string;
+	};
+}
+
+export interface SignTemplateResponse {
+	signed_event: unknown;
+}
+
+export function signTemplate(req: SignTemplateRequest) {
+	return fetchJson<SignTemplateResponse>('/api/v1/identity/sign', {
+		method: 'POST',
+		body: JSON.stringify(req)
+	});
+}
+
+export interface SignResponseRequest {
+	signer_id: string;
+	req_id: string;
+	signed_event?: unknown;
+	error?: string;
+}
+
+export function postSignResponse(req: SignResponseRequest) {
+	return fetchJson<{ resolved: boolean }>('/api/v1/identity/sign-response', {
+		method: 'POST',
+		body: JSON.stringify(req)
+	});
+}
+
 // Search API
 
 export function search(query: string, limit?: number, my_pubkey?: string, policy = 'local_only') {
