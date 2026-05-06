@@ -151,6 +151,7 @@
 		{ id: 'tendrl-toggle-network-mode', name: 'tendrl-toggle-network-mode', description: 'Toggle between online and offline mode', category: 'Configuration' },
 		{ id: 'tendrl-show-relays', name: 'tendrl-show-relays', description: 'Show configured relays', category: 'Configuration' },
 		{ id: 'tendrl-open-settings', name: 'tendrl-open-settings', description: 'Open the settings buffer', category: 'Configuration', keybinding: 'SPC s s' },
+		{ id: 'tendrl-demo-publish-progress', name: 'tendrl-demo-publish-progress', description: 'Open the publish-progress buffer with mock data (design demo)', category: 'Configuration' },
 		{ id: 'tendrl-login', name: 'tendrl-login', description: 'Unlock identity (ncryptsec)', category: 'Configuration' },
 		{ id: 'tendrl-logout', name: 'tendrl-logout', description: 'Lock identity', category: 'Configuration' },
 		// View
@@ -254,6 +255,22 @@
 			store.openBuffer({
 				className: 'work',
 				buffer: { id: 'settings', kind: 'settings', label: 'settings', kicker: 'settings' }
+			});
+			closeMinibuffer();
+			return;
+		}
+		if (cmd.id === 'tendrl-demo-publish-progress') {
+			import('$lib/wm/publish-progress.svelte').then(({ setProgress, mockProgress }) => {
+				setProgress(mockProgress());
+				store.openBuffer({
+					className: 'work',
+					buffer: {
+						id: 'publish-progress:current',
+						kind: 'publish-progress',
+						label: 'publish',
+						kicker: 'demo'
+					}
+				});
 			});
 			closeMinibuffer();
 			return;

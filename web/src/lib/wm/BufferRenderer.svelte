@@ -12,6 +12,7 @@
 	import SettingsBuffer from './renderers/SettingsBuffer.svelte';
 	import DraftReaderBuffer from './renderers/DraftReaderBuffer.svelte';
 	import RelaysBuffer from './renderers/RelaysBuffer.svelte';
+	import PublishProgressBuffer from './renderers/PublishProgressBuffer.svelte';
 
 	let { buffer }: { buffer: Buffer } = $props();
 </script>
@@ -41,6 +42,8 @@
 		<SettingsBuffer {buffer} />
 	{:else if buffer.kind === 'relays'}
 		<RelaysBuffer {buffer} />
+	{:else if buffer.kind === 'publish-progress'}
+		<PublishProgressBuffer {buffer} />
 	{:else}
 		<div class="missing">no renderer registered for kind {buffer.kind}</div>
 	{/if}
