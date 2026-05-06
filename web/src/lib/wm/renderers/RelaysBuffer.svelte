@@ -1,23 +1,30 @@
 <script lang="ts">
 	import * as api from '$lib/api';
+	import { getRelayInfo, normalizeRelayUrl, type Nip11Status, type Nip11Doc } from '$lib/relay/nip11';
 	import type { Buffer } from '../types';
 
 	let { buffer: _buffer }: { buffer: Buffer } = $props();
 
+	// Per docs/relay-classes-and-info-port.md, a relay row carries the
+	// role-agnostic shell (URL + runtime metadata + NIP-11 derived
+	// flags) while role membership (read/write) lives in role-specific
+	// list events. Auth here is a placeholder for the eventual
+	// blocked/auth-required taxonomy; toggles don't persist yet.
 	type RelayRow = {
 		url: string;
 		read: boolean;
 		write: boolean;
-		auth: boolean; // placeholder — engine doesn't track this yet
+		auth: boolean;
 	};
 
 	let rows = $state<RelayRow[]>([]);
 	let loading = $state(true);
 	let error = $state<string | null>(null);
+	let expanded = $state(new Set<string>());
+	// Map<normalizedUrl, Nip11Status> — refreshed reactively as fetches
+	// resolve. Fresh object each update so $derived sees a change.
+	let infoMap = $state<Record<string, Nip11Status>>({});
 
-	// Fetch the engine's three relay sets and unify them into a single list
-	// keyed by URL. Read = appears in `general` or `fetch`; write = appears
-	// in `general` or `publish`. Auth is a placeholder (no engine support).
 	async function load() {
 		loading = true;
 		try {
@@ -39,6 +46,9 @@
 			for (const url of cfg.fetch?.urls ?? []) ensure(url).read = true;
 			for (const url of cfg.publish?.urls ?? []) ensure(url).write = true;
 			rows = [...map.values()].sort((a, b) => a.url.localeCompare(b.url));
+			// Kick off NIP-11 fetches up-front so the badges fill in
+			// without the user expanding each row.
+			for (const r of rows) primeInfo(r.url);
 		} catch (e) {
 			error = String(e);
 		} finally {
@@ -46,18 +56,40 @@
 		}
 	}
 
+	function primeInfo(url: string) {
+		const key = normalizeRelayUrl(url);
+		const status = getRelayInfo(url, (s) => {
+			infoMap = { ...infoMap, [key]: s };
+		});
+		infoMap = { ...infoMap, [key]: status };
+	}
+
 	$effect(() => {
 		load();
 	});
 
 	function toggle(url: string, field: 'read' | 'write' | 'auth') {
-		// Placeholder — local state only. Real persistence will go through
-		// /api/v1/config/update with the new relay-set membership rules.
 		rows = rows.map((r) => (r.url === url ? { ...r, [field]: !r[field] } : r));
+	}
+
+	function toggleExpanded(url: string) {
+		const next = new Set(expanded);
+		if (next.has(url)) next.delete(url);
+		else next.add(url);
+		expanded = next;
 	}
 
 	function shorten(url: string): string {
 		return url.replace(/^wss?:\/\//, '').replace(/\/$/, '');
+	}
+
+	function statusFor(url: string): Nip11Status {
+		return infoMap[normalizeRelayUrl(url)] ?? { state: 'pending' };
+	}
+
+	function docFor(url: string): Nip11Doc | null {
+		const s = statusFor(url);
+		return s.state === 'loaded' ? s.doc : null;
 	}
 </script>
 
@@ -74,38 +106,167 @@
 	{:else if rows.length === 0}
 		<p class="empty">No relays configured</p>
 	{:else}
-		<div class="relays-grid">
-			<div class="grid-head">
-				<span>relay</span>
-				<span class="col-toggle">read</span>
-				<span class="col-toggle">write</span>
-				<span class="col-toggle">auth</span>
-			</div>
+		<div class="relays-list">
 			{#each rows as row (row.url)}
-				<div class="grid-row">
-					<span class="relay-url" title={row.url}>{shorten(row.url)}</span>
-					<label class="col-toggle"
-						><input
-							type="checkbox"
-							checked={row.read}
-							onchange={() => toggle(row.url, 'read')}
-						/></label
-					>
-					<label class="col-toggle"
-						><input
-							type="checkbox"
-							checked={row.write}
-							onchange={() => toggle(row.url, 'write')}
-						/></label
-					>
-					<label class="col-toggle"
-						><input
-							type="checkbox"
-							checked={row.auth}
-							onchange={() => toggle(row.url, 'auth')}
-							title="Some relays (e.g. paid / private) require NIP-42 auth — placeholder"
-						/></label
-					>
+				{@const status = statusFor(row.url)}
+				{@const doc = docFor(row.url)}
+				{@const lim = doc?.limitation}
+				<div class="relay-card" class:relay-card--expanded={expanded.has(row.url)}>
+					<div class="relay-row">
+						<button
+							class="relay-disclosure"
+							onclick={() => toggleExpanded(row.url)}
+							aria-expanded={expanded.has(row.url)}
+							title={expanded.has(row.url) ? 'Collapse' : 'Show NIP-11 details'}
+						>{expanded.has(row.url) ? '▾' : '▸'}</button>
+
+						<div class="relay-id">
+							<span class="relay-url">{shorten(row.url)}</span>
+							<div class="relay-flags">
+								{#if status.state === 'loading'}
+									<span class="pill pill--ghost"><span class="dot dot--fetching"></span>info</span>
+								{:else if status.state === 'failed'}
+									<span class="pill pill--ghost" title={status.error}>info: {status.error.slice(0, 24)}</span>
+								{:else if doc}
+									{#if lim?.payment_required}
+										<span class="pill pill--draft" title="Payment required">paid</span>
+									{/if}
+									{#if lim?.auth_required}
+										<span class="pill pill--imported" title="NIP-42 auth required">auth</span>
+									{/if}
+									{#if lim?.restricted_writes}
+										<span class="pill pill--diverged" title="Writes restricted">restricted</span>
+									{/if}
+									{#if doc.software}
+										<span class="pill pill--ghost" title="{doc.software}{doc.version ? ` ${doc.version}` : ''}">{doc.software.split('/').pop()}</span>
+									{/if}
+								{/if}
+							</div>
+						</div>
+
+						<div class="relay-toggles">
+							<button
+								class="pill toggle-pill"
+								class:toggle-pill--on={row.read}
+								onclick={() => toggle(row.url, 'read')}
+								title="Read from this relay"
+							>read</button>
+							<button
+								class="pill toggle-pill"
+								class:toggle-pill--on={row.write}
+								onclick={() => toggle(row.url, 'write')}
+								title="Publish to this relay"
+							>write</button>
+							<button
+								class="pill toggle-pill"
+								class:toggle-pill--on={row.auth}
+								onclick={() => toggle(row.url, 'auth')}
+								title="Authenticate (NIP-42) when this relay challenges"
+							>auth</button>
+						</div>
+					</div>
+
+					{#if expanded.has(row.url)}
+						<div class="relay-detail">
+							{#if status.state === 'loading'}
+								<p class="empty muted">Fetching NIP-11…</p>
+							{:else if status.state === 'failed'}
+								<p class="empty error">Couldn't load NIP-11: {status.error}</p>
+							{:else if doc}
+								{#if doc.name || doc.description}
+									<section class="info-section">
+										{#if doc.name}<h3 class="info-title">{doc.name}</h3>{/if}
+										{#if doc.description}<p class="info-desc">{doc.description}</p>{/if}
+									</section>
+								{/if}
+
+								{#if doc.software || doc.version || doc.contact || doc.pubkey}
+									<section class="info-section">
+										<div class="info-section-title">Software</div>
+										<dl class="kv">
+											{#if doc.software}<dt>software</dt><dd class="mono">{doc.software}</dd>{/if}
+											{#if doc.version}<dt>version</dt><dd class="mono">{doc.version}</dd>{/if}
+											{#if doc.contact}<dt>contact</dt><dd>{doc.contact}</dd>{/if}
+											{#if doc.pubkey}<dt>operator</dt><dd class="mono">{doc.pubkey.slice(0, 16)}…</dd>{/if}
+										</dl>
+									</section>
+								{/if}
+
+								{#if doc.supported_nips && doc.supported_nips.length > 0}
+									<section class="info-section">
+										<div class="info-section-title">Supported NIPs</div>
+										<div class="nip-chips">
+											{#each doc.supported_nips as nip (nip)}
+												<a
+													class="nip-chip"
+													href={`https://github.com/nostr-protocol/nips/blob/master/${String(nip).padStart(2, '0')}.md`}
+													target="_blank"
+													rel="noopener noreferrer"
+													title="Open NIP-{nip} in a new tab"
+												>{nip}</a>
+											{/each}
+										</div>
+									</section>
+								{/if}
+
+								{#if lim}
+									<section class="info-section">
+										<div class="info-section-title">Limitations</div>
+										<dl class="kv">
+											{#if lim.max_message_length}<dt>max msg</dt><dd>{lim.max_message_length} bytes</dd>{/if}
+											{#if lim.max_event_tags}<dt>max tags</dt><dd>{lim.max_event_tags}</dd>{/if}
+											{#if lim.max_content_length}<dt>max content</dt><dd>{lim.max_content_length} bytes</dd>{/if}
+											{#if lim.max_subscriptions}<dt>max subs</dt><dd>{lim.max_subscriptions}</dd>{/if}
+											{#if lim.max_limit}<dt>max limit</dt><dd>{lim.max_limit}</dd>{/if}
+											{#if lim.min_pow_difficulty}<dt>min PoW</dt><dd>{lim.min_pow_difficulty}</dd>{/if}
+										</dl>
+									</section>
+								{/if}
+
+								{#if doc.fees && (doc.fees.admission?.length || doc.fees.subscription?.length || doc.fees.publication?.length)}
+									<section class="info-section">
+										<div class="info-section-title">Fees</div>
+										<dl class="kv">
+											{#each doc.fees.admission ?? [] as fee, i (`a${i}`)}
+												<dt>admission</dt><dd>{fee.amount} {fee.unit}</dd>
+											{/each}
+											{#each doc.fees.subscription ?? [] as fee, i (`s${i}`)}
+												<dt>subscription</dt><dd>{fee.amount} {fee.unit}{fee.period ? ` / ${fee.period}s` : ''}</dd>
+											{/each}
+											{#each doc.fees.publication ?? [] as fee, i (`p${i}`)}
+												<dt>publication{fee.kinds ? ` (k:${fee.kinds.join(',')})` : ''}</dt>
+												<dd>{fee.amount} {fee.unit}</dd>
+											{/each}
+										</dl>
+									</section>
+								{/if}
+
+								{#if (doc.tags && doc.tags.length) || (doc.relay_countries && doc.relay_countries.length) || (doc.language_tags && doc.language_tags.length)}
+									<section class="info-section">
+										<div class="info-section-title">Audience</div>
+										<dl class="kv">
+											{#if doc.tags?.length}<dt>tags</dt><dd>{doc.tags.join(', ')}</dd>{/if}
+											{#if doc.relay_countries?.length}<dt>countries</dt><dd>{doc.relay_countries.join(', ')}</dd>{/if}
+											{#if doc.language_tags?.length}<dt>languages</dt><dd>{doc.language_tags.join(', ')}</dd>{/if}
+										</dl>
+									</section>
+								{/if}
+
+								{#if doc.privacy_policy || doc.terms_of_service || doc.posting_policy}
+									<section class="info-section">
+										<div class="info-section-title">Policies</div>
+										<dl class="kv">
+											{#if doc.privacy_policy}<dt>privacy</dt><dd><a href={doc.privacy_policy} target="_blank" rel="noopener noreferrer">{doc.privacy_policy}</a></dd>{/if}
+											{#if doc.terms_of_service}<dt>terms</dt><dd><a href={doc.terms_of_service} target="_blank" rel="noopener noreferrer">{doc.terms_of_service}</a></dd>{/if}
+											{#if doc.posting_policy}<dt>posting</dt><dd><a href={doc.posting_policy} target="_blank" rel="noopener noreferrer">{doc.posting_policy}</a></dd>{/if}
+										</dl>
+									</section>
+								{/if}
+							{:else}
+								<p class="empty muted">No NIP-11 fetched yet.</p>
+							{/if}
+						</div>
+					{/if}
 				</div>
 			{/each}
 		</div>
@@ -152,55 +313,162 @@
 		color: var(--base5);
 		font-size: var(--t-sm);
 	}
-	.empty.error {
-		color: var(--id-draft);
-	}
+	.empty.error { color: var(--id-draft); }
+	.empty.muted { color: var(--base5); }
 
-	.relays-grid {
+	.relays-list {
 		display: flex;
 		flex-direction: column;
+		gap: 4px;
 		padding: 6px 0;
 	}
 
-	.grid-head,
-	.grid-row {
-		display: grid;
-		grid-template-columns: 1fr 60px 60px 60px;
-		gap: 8px;
-		align-items: center;
-		padding: 6px 14px;
-	}
-
-	.grid-head {
-		font-size: var(--t-xs);
-		text-transform: uppercase;
-		letter-spacing: 0.05em;
-		color: var(--base5);
-		border-bottom: 1px solid var(--panel-border);
-		padding-bottom: 8px;
-		margin-bottom: 4px;
-	}
-
-	.grid-row {
-		font-size: var(--t-sm);
+	.relay-card {
 		border-bottom: 1px solid var(--panel-border);
 	}
-	.grid-row:hover {
+	.relay-card--expanded {
 		background: var(--bg-surface);
+	}
+
+	.relay-row {
+		display: flex;
+		align-items: center;
+		gap: 10px;
+		padding: 8px 14px;
+	}
+
+	.relay-disclosure {
+		background: transparent;
+		border: none;
+		color: var(--fg-muted);
+		font-size: 0.8rem;
+		min-width: 18px;
+		cursor: pointer;
+		padding: 0;
+	}
+	.relay-disclosure:hover { color: var(--fg); }
+
+	.relay-id {
+		flex: 1;
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		min-width: 0;
 	}
 
 	.relay-url {
 		font-family: var(--font-mono);
+		font-size: var(--t-sm);
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
 	}
 
-	.col-toggle {
+	.relay-flags {
 		display: flex;
-		justify-content: center;
-		align-items: center;
+		gap: 4px;
+		flex-wrap: wrap;
+	}
+
+	.relay-toggles {
+		display: flex;
+		gap: 4px;
+		flex-shrink: 0;
+	}
+
+	/* Toggle pills: ghost outline when off, filled-tinted when on. The
+	   "on" tints reuse pill--online so all three toggles read as "this
+	   relay carries this role." */
+	.toggle-pill {
+		border: 1px solid var(--base3);
+		background: transparent;
+		color: var(--base6);
 		cursor: pointer;
+		font-family: var(--font-mono);
+		padding: 1px 8px;
+	}
+	.toggle-pill:hover {
+		color: var(--fg);
+	}
+	.toggle-pill--on {
+		background: rgba(180, 190, 130, 0.14);
+		color: var(--state-online);
+		border-color: color-mix(in srgb, var(--state-online) 50%, transparent);
+	}
+	.toggle-pill--on:hover {
+		filter: brightness(1.15);
+	}
+
+	.relay-detail {
+		padding: 4px 14px 16px 38px;
+		display: flex;
+		flex-direction: column;
+		gap: 12px;
+	}
+
+	.info-section {
+		display: flex;
+		flex-direction: column;
+		gap: 4px;
+	}
+	.info-section-title {
+		font-size: var(--t-xs);
+		font-weight: 600;
+		text-transform: uppercase;
+		letter-spacing: 0.05em;
+		color: var(--base5);
+	}
+	.info-title {
+		font-size: var(--t-md);
+		margin: 0;
+	}
+	.info-desc {
+		font-size: var(--t-sm);
+		margin: 0;
+		color: var(--fg);
+	}
+
+	.kv {
+		display: grid;
+		grid-template-columns: 110px 1fr;
+		gap: 2px 12px;
+		margin: 0;
+		font-size: var(--t-xs);
+	}
+	.kv dt {
+		color: var(--base5);
+		font-family: var(--font-mono);
+	}
+	.kv dd {
+		margin: 0;
+		color: var(--fg);
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+	.kv .mono {
+		font-family: var(--font-mono);
+	}
+	.kv a {
+		color: var(--accent);
+	}
+
+	.nip-chips {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 4px;
+	}
+	.nip-chip {
+		display: inline-block;
+		padding: 1px 8px;
+		border-radius: var(--r-md);
+		font-family: var(--font-mono);
+		font-size: var(--t-xs);
+		background: rgba(137, 184, 194, 0.12);
+		color: var(--id-remote);
+		text-decoration: none;
+	}
+	.nip-chip:hover {
+		filter: brightness(1.15);
 	}
 
 	.relays-footer {
