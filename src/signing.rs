@@ -18,9 +18,16 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
+use std::sync::Mutex;
+
 use crate::identity::{
-    decrypt_ncryptsec, sign_event_hash, IdentityKeyring, IdentitySession, KeyParseError,
+    decrypt_ncryptsec, sign_event_hash, IdentityKeyring, IdentitySession, IdentitySource,
+    KeyParseError,
 };
+
+/// Type alias for the shared identity state used across handlers
+/// (matches the existing `IdentityAppState` in `api.rs`).
+pub type IdentityHandle = std::sync::Arc<Mutex<IdentitySession>>;
 
 /// Errors surfaced by any `Signer` implementation. Wraps the lower-level
 /// crypto errors plus identity-state failures the controller needs to
@@ -241,6 +248,65 @@ pub(crate) fn canonical_id(canonical: &Value) -> String {
     let serialized = serde_json::to_string(canonical).unwrap_or_default();
     let hash = Sha256::digest(serialized.as_bytes());
     hex::encode(hash)
+}
+
+/// Routes a `sign(template)` call through the right `Signer` based on
+/// the active `IdentitySource`. For Phase 3 only the `Engine` source is
+/// fulfilled (via `InProcessSigner::resolve`); `Nip07` / `Nip46` return
+/// `SignerNotConnected` until Phase 4 wires the registry + SSE channel.
+///
+/// Cheap to clone — internally just bumps an `Arc` refcount on the
+/// shared identity session, mirroring the existing `IdentityAppState`
+/// convention.
+#[derive(Clone)]
+pub struct SigningController {
+    identity: IdentityHandle,
+}
+
+impl SigningController {
+    pub fn new(identity: IdentityHandle) -> Self {
+        Self { identity }
+    }
+
+    pub fn current_source(&self) -> IdentitySource {
+        self.identity
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .source()
+            .clone()
+    }
+
+    pub fn set_source(&self, source: IdentitySource) {
+        self.identity
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .set_source(source);
+    }
+
+    /// Resolve the right signer for the active source and produce a
+    /// signed event. Phase 4 extends this to look up an
+    /// `ExternalSigner` from the registry when source is nip07 / nip46.
+    pub async fn sign(&self, template: EventTemplate) -> Result<SignedEvent, SigningError> {
+        let source = self.current_source();
+        match source {
+            IdentitySource::Engine => {
+                let signer = {
+                    let mut session = self
+                        .identity
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner());
+                    InProcessSigner::resolve(&mut session, None)?
+                };
+                signer.sign(template).await
+            }
+            IdentitySource::Nip07 { .. } | IdentitySource::Nip46 { .. } => {
+                // Phase 4 wires this. Until then, surface a clean
+                // "no external signer connected" error so the UI can
+                // prompt the user to switch sources or connect one.
+                Err(SigningError::SignerNotConnected)
+            }
+        }
+    }
 }
 
 #[cfg(test)]

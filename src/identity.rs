@@ -547,8 +547,47 @@ impl Default for IdentityKeyring {
 // Server-side identity session state (for web UI login flow)
 // ---------------------------------------------------------------------------
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::time::{Duration, Instant};
+
+/// Which signer the engine should route signing requests to.
+///
+/// `Engine` = use the in-process `InProcessSigner` (ncryptsec / keyring /
+/// .env). `Nip07` / `Nip46` = route to a connected `ExternalSigner`
+/// registered under `signer_id`. The active source is per-session state
+/// — the user picks it via `POST /api/v1/identity/use`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum IdentitySource {
+    Engine,
+    Nip07 { signer_id: String },
+    Nip46 { signer_id: String },
+}
+
+impl Default for IdentitySource {
+    fn default() -> Self {
+        IdentitySource::Engine
+    }
+}
+
+impl IdentitySource {
+    pub fn kind_str(&self) -> &'static str {
+        match self {
+            IdentitySource::Engine => "engine",
+            IdentitySource::Nip07 { .. } => "nip07",
+            IdentitySource::Nip46 { .. } => "nip46",
+        }
+    }
+
+    pub fn signer_id(&self) -> Option<&str> {
+        match self {
+            IdentitySource::Engine => None,
+            IdentitySource::Nip07 { signer_id } | IdentitySource::Nip46 { signer_id } => {
+                Some(signer_id)
+            }
+        }
+    }
+}
 
 /// Serializable identity status returned by the API
 #[derive(Debug, Clone, Serialize)]
@@ -565,6 +604,12 @@ pub struct IdentityStatusResponse {
     pub unsigned_count: usize,
     /// Current lock timeout in minutes
     pub lock_timeout_minutes: u64,
+    /// Active signing source ("engine" | "nip07" | "nip46"). Always present;
+    /// defaults to "engine".
+    pub source: String,
+    /// Signer registry id when source is external. None for engine source.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub signer_id: Option<String>,
 }
 
 /// Mutable identity session — holds ncryptsec, decrypted secret, and lock timer.
@@ -584,6 +629,8 @@ pub struct IdentitySession {
     lock_timeout: Duration,
     /// Event IDs published unsigned while identity was locked
     unsigned_event_ids: Vec<String>,
+    /// Which signer to route through. Defaults to `Engine`.
+    source: IdentitySource,
 }
 
 impl Default for IdentitySession {
@@ -601,7 +648,18 @@ impl IdentitySession {
             last_activity: None,
             lock_timeout: Duration::from_secs(15 * 60),
             unsigned_event_ids: Vec::new(),
+            source: IdentitySource::Engine,
         }
+    }
+
+    /// Read the current signer source.
+    pub fn source(&self) -> &IdentitySource {
+        &self.source
+    }
+
+    /// Switch the active signer source. Used by `POST /identity/use`.
+    pub fn set_source(&mut self, source: IdentitySource) {
+        self.source = source;
     }
 
     /// Store an ncryptsec and transition to locked state.
@@ -740,6 +798,8 @@ impl IdentitySession {
             seconds_remaining,
             unsigned_count: self.unsigned_event_ids.len(),
             lock_timeout_minutes: self.lock_timeout.as_secs() / 60,
+            source: self.source.kind_str().to_string(),
+            signer_id: self.source.signer_id().map(|s| s.to_string()),
         }
     }
 }

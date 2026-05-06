@@ -2457,6 +2457,77 @@ pub async fn identity_logout_handler(
     Json(session.status())
 }
 
+#[derive(Debug, Deserialize)]
+pub struct UseSourceRequest {
+    /// "engine" | "nip07" | "nip46"
+    pub source: String,
+    /// Required when source is nip07 / nip46 (returned by /signer-register).
+    #[serde(default)]
+    pub signer_id: Option<String>,
+}
+
+/// POST /api/v1/identity/use — switch the active signing source.
+pub async fn identity_use_source_handler(
+    State(identity): State<IdentityAppState>,
+    Json(req): Json<UseSourceRequest>,
+) -> Result<Json<IdentityStatusResponse>, EngineError> {
+    use crate::identity::IdentitySource;
+    let new_source = match req.source.as_str() {
+        "engine" => IdentitySource::Engine,
+        "nip07" => {
+            let signer_id = req
+                .signer_id
+                .ok_or_else(|| EngineError::Config("nip07 source requires signer_id".into()))?;
+            IdentitySource::Nip07 { signer_id }
+        }
+        "nip46" => {
+            let signer_id = req
+                .signer_id
+                .ok_or_else(|| EngineError::Config("nip46 source requires signer_id".into()))?;
+            IdentitySource::Nip46 { signer_id }
+        }
+        other => {
+            return Err(EngineError::Config(format!("unknown source: {other}")));
+        }
+    };
+    let mut session = identity.lock().unwrap();
+    session.set_source(new_source);
+    Ok(Json(session.status()))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SignTemplateRequest {
+    pub template: crate::signing::EventTemplate,
+}
+
+#[derive(Debug, Serialize)]
+pub struct SignTemplateResponse {
+    pub signed_event: crate::signing::SignedEvent,
+}
+
+/// POST /api/v1/identity/sign — sign a single event template through the
+/// active source. Used by callers that need one-shot signing without
+/// going through the full publish flow (chat publish, profile updates).
+pub async fn identity_sign_handler(
+    State(identity): State<IdentityAppState>,
+    Json(req): Json<SignTemplateRequest>,
+) -> Result<Json<SignTemplateResponse>, EngineError> {
+    let controller = crate::signing::SigningController::new(identity);
+    let signed_event = controller.sign(req.template).await.map_err(|e| match e {
+        crate::signing::SigningError::Locked => {
+            EngineError::Locked("Identity is locked — unlock with password first".into())
+        }
+        crate::signing::SigningError::NoIdentity => {
+            EngineError::Config("No identity configured".into())
+        }
+        crate::signing::SigningError::SignerNotConnected => EngineError::Config(
+            "External signer not connected — open a tab with the signer extension".into(),
+        ),
+        other => EngineError::Config(format!("Sign failed: {other}")),
+    })?;
+    Ok(Json(SignTemplateResponse { signed_event }))
+}
+
 #[cfg(test)]
 mod chat_api_tests {
     use super::*;

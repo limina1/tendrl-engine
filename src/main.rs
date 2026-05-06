@@ -159,6 +159,11 @@ async fn main() -> anyhow::Result<()> {
             "/api/v1/identity/logout",
             post(api::identity_logout_handler),
         )
+        .route(
+            "/api/v1/identity/use",
+            post(api::identity_use_source_handler),
+        )
+        .route("/api/v1/identity/sign", post(api::identity_sign_handler))
         .with_state(identity_state.clone());
 
     // Config endpoint (returns pubkey etc. to the frontend)
