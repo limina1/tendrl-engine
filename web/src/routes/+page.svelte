@@ -152,8 +152,9 @@
 		{ id: 'tendrl-show-relays', name: 'tendrl-show-relays', description: 'Show configured relays', category: 'Configuration' },
 		{ id: 'tendrl-open-settings', name: 'tendrl-open-settings', description: 'Open the settings buffer', category: 'Configuration', keybinding: 'SPC s s' },
 		{ id: 'tendrl-demo-publish-progress', name: 'tendrl-demo-publish-progress', description: 'Open the publish-progress buffer with mock data (design demo)', category: 'Configuration' },
-		{ id: 'tendrl-login', name: 'tendrl-login', description: 'Unlock identity (ncryptsec)', category: 'Configuration' },
-		{ id: 'tendrl-logout', name: 'tendrl-logout', description: 'Lock identity', category: 'Configuration' },
+		{ id: 'tendrl-login', name: 'tendrl-login', description: 'Open settings buffer to login (ncryptsec or NIP-07)', category: 'Configuration', keybinding: 'SPC s i' },
+		{ id: 'tendrl-logout', name: 'tendrl-logout', description: 'Logout active identity', category: 'Configuration' },
+		{ id: 'tendrl-switch-source', name: 'tendrl-switch-source', description: 'Switch signing source (engine / nip07 / nip46)', category: 'Configuration' },
 		// View
 		{ id: 'tendrl-show-event-json', name: 'tendrl-show-event-json', description: 'Show the raw JSON of the focused event', category: 'View' },
 		// Versioning
@@ -287,7 +288,15 @@
 			return;
 		}
 		if (cmd.id === 'tendrl-login') {
-			app.handleIdentityLock();
+			// Open the Settings buffer where the Identity section's login
+			// form lives. Earlier this called handleIdentityLock — wrong;
+			// "login" should drive the user to the place that takes a key.
+			openSettings();
+			closeMinibuffer();
+			return;
+		}
+		if (cmd.id === 'tendrl-switch-source') {
+			openSettings();
 			closeMinibuffer();
 			return;
 		}

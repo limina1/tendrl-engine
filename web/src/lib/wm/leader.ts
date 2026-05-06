@@ -95,7 +95,8 @@ export function buildLeaderRoot(ctx: LeaderContext): SubPrefix {
 				type: 'prefix',
 				desc: 'settings',
 				children: {
-					s: { type: 'leaf', desc: 'open settings', category: 'Configuration', kind: 'client', run: () => ctx.openSettings() }
+					s: { type: 'leaf', desc: 'open settings', category: 'Configuration', kind: 'client', run: () => ctx.openSettings() },
+					i: { type: 'leaf', desc: 'identity (login / source)', category: 'Configuration', kind: 'client', run: () => ctx.openSettings() }
 				}
 			},
 			q: {
