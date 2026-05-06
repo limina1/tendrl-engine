@@ -61,6 +61,7 @@ pub mod error;
 pub mod identity;
 pub mod llm;
 pub mod network;
+pub mod nip11;
 pub mod publication;
 pub mod query;
 pub mod relay;

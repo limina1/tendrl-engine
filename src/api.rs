@@ -1143,6 +1143,26 @@ pub async fn relay_config_handler(
     }))
 }
 
+#[derive(Debug, Deserialize)]
+pub struct RelayInfoQuery {
+    pub url: String,
+}
+
+/// GET /api/v1/relay/info?url=wss://… — return cached NIP-11 doc
+/// for the relay (or kick off a fetch if missing/stale and return
+/// `Loading`). See `docs/relay-classes-and-info-port.md` §4 for the
+/// caching contract.
+pub async fn relay_nip11_handler(
+    State(engine): State<AppState>,
+    axum::extract::Query(q): axum::extract::Query<RelayInfoQuery>,
+) -> Json<Value> {
+    let status = engine.nip11_cache().get(&q.url).await;
+    Json(json!({
+        "url": q.url,
+        "status": status,
+    }))
+}
+
 // ============================================================================
 // Ignore List API Endpoints
 // ============================================================================

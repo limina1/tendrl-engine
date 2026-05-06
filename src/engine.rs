@@ -129,6 +129,8 @@ pub struct Engine {
     claude_sessions_dir: Option<std::path::PathBuf>,
     /// Network activity tracker (mode + fetch log)
     network: Arc<NetworkActivity>,
+    /// NIP-11 relay information cache (process-wide, 1h TTL)
+    nip11_cache: crate::nip11::Nip11Cache,
 }
 
 impl Engine {
@@ -182,6 +184,7 @@ impl Engine {
             sidecar_url: "http://localhost:3031".to_string(),
             claude_sessions_dir: None,
             network: Arc::new(NetworkActivity::new(NetworkMode::Online)),
+            nip11_cache: crate::nip11::Nip11Cache::new(),
         })
     }
 
@@ -231,6 +234,11 @@ impl Engine {
     }
 
     /// Get the network activity tracker
+    /// NIP-11 cache shared across all consumers (web, TUI, eventual Emacs).
+    pub fn nip11_cache(&self) -> &crate::nip11::Nip11Cache {
+        &self.nip11_cache
+    }
+
     pub fn network(&self) -> &Arc<NetworkActivity> {
         &self.network
     }

@@ -1,16 +1,19 @@
-// NIP-11 fetch + cache (browser-side, placeholder).
+// Thin client for the engine's NIP-11 cache.
 //
-// Per docs/relay-classes-and-info-port.md: this is the lightweight
-// equivalent of Amethyst's `Nip11Retriever` + `Nip11CachedRetriever`.
-// Eventually moves to the engine (`/api/v1/relay/info?url=…`) so the
-// cache is process-wide and survives reload, but the buffer-local
-// cache here is sufficient as scaffolding.
+// The canonical fetcher + cache lives in Rust at `src/nip11.rs` and is
+// served by `GET /api/v1/relay/info?url=...`. This module is just an
+// adapter so Svelte components can read the engine's status without
+// each one re-implementing a poll loop.
 //
-// Principles applied (port doc §3):
-//   - Tolerate sloppy JSON: `supported_nips` accepts ints and strings.
-//   - Every field is optional; consumers must presence-check.
-//   - URL normalization before cache keying.
-//   - 5-second timeout, 256 KB body cap, semaphore of 5 concurrent.
+// Design notes:
+//   - Engine returns the four-state machine (Pending | Loading |
+//     Loaded | Failed). We retransmit it verbatim — UI sections per
+//     `docs/relay-classes-and-info-port.md` §5 are pure functions of
+//     the doc.
+//   - When the engine returns Loading, we poll once after a short
+//     delay so the row settles without the caller wiring its own
+//     timer. Engine TTL (1h) handles longer-term caching, so a
+//     completed fetch sticks across navigations within the tab.
 
 export type Nip11Doc = {
 	name?: string;
@@ -52,142 +55,57 @@ export type Nip11Doc = {
 export type Nip11Status =
 	| { state: 'pending' }
 	| { state: 'loading' }
-	| { state: 'loaded'; doc: Nip11Doc }
-	| { state: 'failed'; error: string };
+	| { state: 'loaded'; doc: Nip11Doc; fetched_at: number }
+	| { state: 'failed'; error: string; fetched_at: number };
 
-const TTL_MS = 60 * 60 * 1000; // 1h, per port doc
-const MAX_BODY = 256 * 1024;
-const TIMEOUT_MS = 5_000;
-const MAX_CONCURRENT = 5;
-
-const cache = new Map<string, { status: Nip11Status; ts: number }>();
-const inflight = new Map<string, Promise<Nip11Status>>();
-let active = 0;
-const queue: (() => void)[] = [];
-
-function acquire(): Promise<void> {
-	if (active < MAX_CONCURRENT) {
-		active++;
-		return Promise.resolve();
-	}
-	return new Promise<void>((resolve) => queue.push(resolve)).then(() => {
-		active++;
-	});
-}
-
-function release() {
-	active--;
-	const next = queue.shift();
-	if (next) next();
-}
+type Envelope = { url: string; status: Nip11Status };
 
 export function normalizeRelayUrl(url: string): string {
 	return url.trim().toLowerCase().replace(/\/+$/, '');
 }
 
-function toHttp(wssUrl: string): string {
-	if (wssUrl.startsWith('wss://')) return 'https://' + wssUrl.slice(6);
-	if (wssUrl.startsWith('ws://')) return 'http://' + wssUrl.slice(5);
-	return wssUrl;
-}
-
-// Permissive: NIP-11 in the wild ships supported_nips as a mix of
-// ints and stringified ints. Fold to numbers, drop garbage.
-function coerceNips(raw: unknown): number[] | undefined {
-	if (!Array.isArray(raw)) return undefined;
-	const out: number[] = [];
-	for (const v of raw) {
-		const n = typeof v === 'number' ? v : typeof v === 'string' ? Number(v) : NaN;
-		if (Number.isFinite(n)) out.push(n);
-	}
-	return out;
-}
-
 async function fetchOnce(url: string): Promise<Nip11Status> {
-	const httpUrl = toHttp(url);
-	const ctrl = new AbortController();
-	const t = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
-	try {
-		const resp = await fetch(httpUrl, {
-			headers: { Accept: 'application/nostr+json' },
-			signal: ctrl.signal
-		});
-		if (!resp.ok) return { state: 'failed', error: `HTTP ${resp.status}` };
-		// Soft body cap — read up to MAX_BODY characters of text.
-		const reader = resp.body?.getReader();
-		if (!reader) return { state: 'failed', error: 'No response body' };
-		const decoder = new TextDecoder();
-		let received = '';
-		while (received.length < MAX_BODY) {
-			const { done, value } = await reader.read();
-			if (done) break;
-			received += decoder.decode(value, { stream: true });
-		}
-		const json = JSON.parse(received) as Record<string, unknown>;
-		const doc: Nip11Doc = {
-			name: typeof json.name === 'string' ? json.name : undefined,
-			description: typeof json.description === 'string' ? json.description : undefined,
-			pubkey: typeof json.pubkey === 'string' ? json.pubkey : undefined,
-			contact: typeof json.contact === 'string' ? json.contact : undefined,
-			software: typeof json.software === 'string' ? json.software : undefined,
-			version: typeof json.version === 'string' ? json.version : undefined,
-			icon: typeof json.icon === 'string' ? json.icon : undefined,
-			banner: typeof json.banner === 'string' ? json.banner : undefined,
-			supported_nips: coerceNips(json.supported_nips),
-			privacy_policy:
-				typeof json.privacy_policy === 'string' ? json.privacy_policy : undefined,
-			terms_of_service:
-				typeof json.terms_of_service === 'string' ? json.terms_of_service : undefined,
-			posting_policy:
-				typeof json.posting_policy === 'string' ? json.posting_policy : undefined,
-			limitation: (json.limitation ?? undefined) as Nip11Doc['limitation'],
-			retention: (json.retention ?? undefined) as Nip11Doc['retention'],
-			relay_countries: Array.isArray(json.relay_countries)
-				? (json.relay_countries as string[])
-				: undefined,
-			language_tags: Array.isArray(json.language_tags)
-				? (json.language_tags as string[])
-				: undefined,
-			tags: Array.isArray(json.tags) ? (json.tags as string[]) : undefined,
-			fees: (json.fees ?? undefined) as Nip11Doc['fees']
-		};
-		return { state: 'loaded', doc };
-	} catch (e) {
-		const msg = e instanceof Error ? e.message : String(e);
-		return { state: 'failed', error: msg };
-	} finally {
-		clearTimeout(t);
+	const resp = await fetch(`/api/v1/relay/info?url=${encodeURIComponent(url)}`);
+	if (!resp.ok) {
+		return { state: 'failed', error: `engine HTTP ${resp.status}`, fetched_at: 0 };
 	}
+	const env = (await resp.json()) as Envelope;
+	return env.status;
 }
 
-// Returns the current cached status for a relay URL. If absent or
-// stale, kicks off a fetch (deduplicated) and returns 'loading'.
-// `onUpdate` is called when the fetch resolves.
+// Per-tab dedup so two components asking about the same relay during
+// the same render frame don't both poll the engine.
+const inflight = new Map<string, Promise<Nip11Status>>();
+
+/**
+ * Read the engine's current NIP-11 status for a relay. If the engine
+ * reports `Loading`, schedules a single follow-up poll so the caller's
+ * `onUpdate` fires once the fetch lands without needing its own timer.
+ */
 export function getRelayInfo(
 	url: string,
 	onUpdate?: (s: Nip11Status) => void
 ): Nip11Status {
 	const key = normalizeRelayUrl(url);
-	const cached = cache.get(key);
-	const now = Date.now();
-	if (cached && now - cached.ts < TTL_MS) return cached.status;
 
-	if (inflight.has(key)) {
-		if (onUpdate) inflight.get(key)!.then(onUpdate);
-		return { state: 'loading' };
+	let promise = inflight.get(key);
+	if (!promise) {
+		promise = fetchOnce(url).finally(() => inflight.delete(key));
+		inflight.set(key, promise);
 	}
 
-	const promise = acquire().then(async () => {
-		try {
-			const result = await fetchOnce(url);
-			cache.set(key, { status: result, ts: Date.now() });
-			return result;
-		} finally {
-			release();
-			inflight.delete(key);
+	promise.then((status) => {
+		if (onUpdate) onUpdate(status);
+		// Engine returned Loading — fetch was kicked off, poll once when
+		// the typical NIP-11 round trip should be done.
+		if (status.state === 'loading') {
+			setTimeout(() => {
+				fetchOnce(url).then((s) => {
+					if (onUpdate) onUpdate(s);
+				});
+			}, 1500);
 		}
 	});
-	inflight.set(key, promise);
-	if (onUpdate) promise.then(onUpdate);
-	return { state: 'loading' };
+
+	return { state: 'pending' };
 }
