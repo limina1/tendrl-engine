@@ -2509,10 +2509,9 @@ pub struct SignTemplateResponse {
 /// active source. Used by callers that need one-shot signing without
 /// going through the full publish flow (chat publish, profile updates).
 pub async fn identity_sign_handler(
-    State(identity): State<IdentityAppState>,
+    State(controller): State<crate::signing::SigningController>,
     Json(req): Json<SignTemplateRequest>,
 ) -> Result<Json<SignTemplateResponse>, EngineError> {
-    let controller = crate::signing::SigningController::new(identity);
     let signed_event = controller.sign(req.template).await.map_err(|e| match e {
         crate::signing::SigningError::Locked => {
             EngineError::Locked("Identity is locked — unlock with password first".into())
@@ -2526,6 +2525,112 @@ pub async fn identity_sign_handler(
         other => EngineError::Config(format!("Sign failed: {other}")),
     })?;
     Ok(Json(SignTemplateResponse { signed_event }))
+}
+
+// ---------------------------------------------------------------------------
+// External signer channel (Phase 4)
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Deserialize)]
+pub struct SignerRegisterRequest {
+    pub kind: String,
+    pub pubkey: String,
+    #[serde(default)]
+    pub capabilities: crate::signing::SignerCapabilities,
+}
+
+#[derive(Debug, Serialize)]
+pub struct SignerRegisterResponse {
+    pub signer_id: String,
+    pub token: String,
+}
+
+/// POST /api/v1/identity/signer-register
+pub async fn signer_register_handler(
+    State(controller): State<crate::signing::SigningController>,
+    Json(req): Json<SignerRegisterRequest>,
+) -> Json<SignerRegisterResponse> {
+    let (signer_id, token) = controller
+        .register_external(req.kind, req.pubkey, req.capabilities)
+        .await;
+    Json(SignerRegisterResponse { signer_id, token })
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SignerChannelQuery {
+    pub token: String,
+}
+
+/// GET /api/v1/identity/signer-channel?token=...
+///
+/// Long-lived SSE stream. Each `sign_request` event carries a `req_id`
+/// and the `EventTemplate`; the client signs (e.g. via
+/// `window.nostr.signEvent`) and POSTs back to `/sign-response`.
+pub async fn signer_channel_handler(
+    State(controller): State<crate::signing::SigningController>,
+    axum::extract::Query(q): axum::extract::Query<SignerChannelQuery>,
+) -> Result<axum::response::Sse<futures::stream::BoxStream<'static, Result<axum::response::sse::Event, std::convert::Infallible>>>, EngineError>
+{
+    use axum::response::sse::{Event as SseHttpEvent, KeepAlive, Sse};
+    use futures::stream::StreamExt;
+
+    let signer = controller
+        .lookup_by_token(&q.token)
+        .await
+        .ok_or_else(|| EngineError::Auth("unknown signer token".into()))?;
+    let rx = signer
+        .take_receiver()
+        .ok_or_else(|| EngineError::Auth("signer channel already claimed".into()))?;
+    signer.touch();
+
+    // Bridge the mpsc receiver into a stream of SSE events. On send-side
+    // disconnect (signer dropped from registry), the stream ends.
+    let stream = futures::stream::unfold(rx, |mut rx| async move {
+        match rx.recv().await {
+            Some(ev) => {
+                let payload = serde_json::to_string(&ev).unwrap_or_default();
+                let sse_event = SseHttpEvent::default().data(payload);
+                Some((
+                    Ok::<SseHttpEvent, std::convert::Infallible>(sse_event),
+                    rx,
+                ))
+            }
+            None => None,
+        }
+    });
+
+    Ok(Sse::new(stream.boxed()).keep_alive(KeepAlive::default()))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SignResponseRequest {
+    pub signer_id: String,
+    pub req_id: String,
+    #[serde(default)]
+    pub signed_event: Option<Value>,
+    #[serde(default)]
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct SignResponseResponse {
+    pub resolved: bool,
+}
+
+/// POST /api/v1/identity/sign-response
+pub async fn sign_response_handler(
+    State(controller): State<crate::signing::SigningController>,
+    Json(req): Json<SignResponseRequest>,
+) -> Json<SignResponseResponse> {
+    let reply = match (req.signed_event, req.error) {
+        (Some(ev), _) => crate::signing::SignerReply::Ok(ev),
+        (None, Some(msg)) => crate::signing::SignerReply::Err(msg),
+        (None, None) => crate::signing::SignerReply::Err("empty response".into()),
+    };
+    let resolved = controller
+        .resolve_sign_response(&req.signer_id, &req.req_id, reply)
+        .await;
+    Json(SignResponseResponse { resolved })
 }
 
 #[cfg(test)]

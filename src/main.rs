@@ -163,8 +163,30 @@ async fn main() -> anyhow::Result<()> {
             "/api/v1/identity/use",
             post(api::identity_use_source_handler),
         )
-        .route("/api/v1/identity/sign", post(api::identity_sign_handler))
         .with_state(identity_state.clone());
+
+    // SigningController owns the external-signer registry and routes
+    // signing through the active source. Constructed once and shared
+    // across the sign / signer-register / signer-channel / sign-response
+    // handlers.
+    let signing_controller =
+        nostr_engine::signing::SigningController::new(identity_state.clone());
+
+    let signing_routes = Router::new()
+        .route("/api/v1/identity/sign", post(api::identity_sign_handler))
+        .route(
+            "/api/v1/identity/signer-register",
+            post(api::signer_register_handler),
+        )
+        .route(
+            "/api/v1/identity/signer-channel",
+            get(api::signer_channel_handler),
+        )
+        .route(
+            "/api/v1/identity/sign-response",
+            post(api::sign_response_handler),
+        )
+        .with_state(signing_controller);
 
     // Config endpoint (returns pubkey etc. to the frontend)
     let config_pubkey = my_pubkey.clone();
@@ -247,6 +269,7 @@ async fn main() -> anyhow::Result<()> {
         .with_state(state.clone())
         .merge(chat_routes)
         .merge(identity_routes)
+        .merge(signing_routes)
         .layer(axum::Extension(identity_state.clone()))
         .layer(axum::extract::DefaultBodyLimit::max(50 * 1024 * 1024)) // 50MB for JSONL import
         .layer(cors);
