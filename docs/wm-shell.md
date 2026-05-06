@@ -1,7 +1,7 @@
 #+TITLE: WM Shell — Active Spec
 #+SUBTITLE: Scoped working spec for the tiling-WM web UI redesign
-#+DATE: 2026-04-28
-#+STATUS: WORKING — Phase 1.5 (layout simplification + split-create)
+#+DATE: 2026-05-06
+#+STATUS: WORKING — Phase 2 polish + Phase 3 prep
 
 * Scope
 
@@ -31,12 +31,13 @@ running ledger of what was promised vs what shipped.
 - [X] Engine commands: =SPC t n=, M-x show-event-json, login/logout
 - [X] =home= layout default (chat rail + feed center + work rail)
 
-** Phase 1.5 — Layout simplification + split-create [ ] (current)
+** Phase 1.5 — Layout simplification + split-create [X]
 
 - [X] Trim named layouts to one base (=chat= / =work= / =research=, all collapsible) + =chat= preset; defer the named-layout list to a user-savable-perspectives feature
 - [X] Wire =SPC w s= same-class split-create (horizontal split with class-scoped buffer picker; new leaf takes focus)
 - [X] Intra-slot leaf navigation (=j= / =k= cycles between leaves when slot has multiple; focuses one buffer at a time)
 - [X] Class taxonomy revision: =feed= moves from =research= to =work= so feed/reader/composer cycle the same center slot (the "main content surface"). Research class is now auxiliary tools only (search/refs/kb).
+- [X] =chat= preset dropped — base covers it via slot toggle (=SPC w c=). Header layout pills replaced with a single =settings= button.
 
 ** Phase 2 — Promote to root [ ]
 
@@ -88,9 +89,61 @@ Tracked here as a single line per work cluster — see commits
 - [X] ReaderBuffer "Edit" / "Edit §" — import loaded sections (or just the focused section in paginated mode) into the compose pool and jump to composer
 - [X] DraftReader: composer's =preview= tab body replaced with the same outline/continuous/paginated rendering as ReaderBuffer, fed by an adapter that turns =ComposeState.sections= into =LazySection[]=. Per-entry lock toggle in outline (yellow accent when unlocked).
 - [ ] DraftReader: drag-to-reorder when section is unlocked
-- [ ] DraftReader: transclusion affordance — "+" between entries opens a search picker; selecting inserts as a new section with =a= tag = picked event's address
-- [ ] DraftReader: per-entry remove
+- [X] DraftReader: transclusion affordance — search action modal's "Insert into compose" path covers this (a-tag preserved via =source_addr=, default-locked import)
+- [X] DraftReader: per-entry remove (plumbed via =onremove= → =handleDeleteFromCompose=)
 - [X] Pane header =N↻= cycle button — clicking opens the class-scoped switcher (lets user back out of composer to the reader without knowing =SPC b b=)
+
+** Search → compose, settings, draft separation (shipped 2026-05-06) [X]
+
+Tracked here as a single line per work cluster — see commit ~0b98195~
+for the bundled implementation.
+
+- [X] *Search action modal* on Enter/click — three actions (Read
+      section/publication, Find containing publications, Insert into
+      compose). Replaces the inline =◂= / =□= buttons (=◂= chat retained;
+      =□= dropped). =j= / =k= / =Enter= keyboard nav, letter shortcuts
+      (=r= / =f= / =i=).
+- [X] *Find containing publications* uses an =a= tag query against
+      nostrdb (=a:KIND:PUBKEY:DTAG=, parsed as =#a= filter). New
+      =scopeToMe= opt-out on =handleSearch= so cross-author parents
+      aren't filtered to =by:me=. Force-focuses the search slot when
+      results land.
+- [X] *Insert into compose* writes a default-locked section block
+      (origin: import) with ===Title= heading so the plain-mode parser
+      sees it; respects =editorInsertMode= setting (=cursor= dispatches
+      CM6 insert at the active plain-mode caret; =append= goes to end
+      of doc or pool).
+- [X] *Standalone-section reader* — =reader:event:<id>= buffer-id
+      format; ReaderBuffer.parseEventId synthesizes a single-section
+      publication via =api.getEvent= and forces =viewMode = 'paginated'=.
+- [X] *Reader / draft separation* — =isDraftMode= ripped out of
+      ReaderBuffer; opening a published 30040 from feed always shows
+      the pristine API view. =DraftReaderBuffer= registered as
+      =draft-reader:current= in registry + BufferRenderer; compose's
+      =Read= button opens it instead of navigating to source pub.
+- [X] *Settings buffer* (=kind: 'settings'=, opens via =SPC s s=, =M-x
+      tendrl-open-settings=, or the new header button). Editor: line
+      numbers, vim mode, insert mode (cursor / append). Compose:
+      default mode (full / plain), sync mode, button labels.
+- [X] *CodeMirror Compartments* — =lineNumbers()= and =vim()= live in
+      compartments so toggles reconfigure without remounting (cursor
+      and undo stack survive).
+- [X] *Compose mode toggle dropped* — default lives in settings; =h= /
+      =l= in normal mode still flips. A =$effect= on the bindable
+      =mode= prop runs the transition (serialize on entering plain,
+      commit on leaving).
+- [X] *Reorder controls* — =↑= / =↓= buttons in ComposeSection (full
+      mode, wired to =reorderComposeSection=) and in plain mode's
+      detected sidebar (parse → swap → re-serialize on plainText, no
+      pool round-trip). New empty sections from =+ Section= default
+      to =readonly: true= matching transclusion semantics.
+- [X] *Buffer kill* — =BufferStore.killFocused= was a flash-only stub;
+      now removes from openBuffers, pushes onto recentlyClosed (cap
+      20), replaces the focused leaf with another same-class buffer
+      or restores the class default singleton (=feed= for work, =chat=
+      for chat, =search= for research).
+- [X] Drop =@codemirror/lang-markdown= — no syntax highlighting on
+      plain mode (the asciidoc-wysiwyg direction will own that later).
 
 ** Phase 3 — Reading / editing / knowledge workflow [ ]
 

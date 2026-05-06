@@ -1,7 +1,7 @@
 #+TITLE: Tendrl Engine — Features
 #+AUTHOR: tendrl-engine contributors
-#+DATE: 2026-05-04
-#+STATUS: CURRENT — reflects implemented state as of commit 3852a74
+#+DATE: 2026-05-06
+#+STATUS: CURRENT — reflects implemented state as of commit 0b98195
 
 * Scope
 
@@ -119,16 +119,27 @@ retired — the shell is now the only frontend layout.
 - *Class-typed slots*: =chat= (left), =work= (center), =research=
   (right). Each slot is =open= or =rail= (32px collapsed bar).
 - *Buffers* with stable IDs: =reader:30040:<pk>:<dtag>=,
-  =composer:current=, =profile:<pk>=, plus singletons (=chat=,
-  =feed=, =search:default=, =ignored=, =refs=, =kb=).
+  =reader:event:<id>= (standalone-section reader, paginated view),
+  =composer:current=, =draft-reader:current=, =profile:<pk>=, plus
+  singletons (=chat=, =feed=, =search:default=, =ignored=, =settings=,
+  =refs=, =kb=).
 - *Splits*: =SPC w s= picks another same-class buffer and splits the
   focused leaf horizontally; =j= / =k= cycles between leaves.
-- *Layouts*: a =base= layout (chat rail / work center / research rail)
-  and a =chat= preset; user-savable perspectives are deferred.
+- *Single base layout* (chat rail / work center / research rail);
+  collapse / expand individual slots to reshape on the fly. The
+  earlier =chat= preset and named-layout list are gone — user-savable
+  perspectives are deferred.
+- *Buffer kill* (=SPC b k=): removes from the open list, pushes onto
+  recently-closed (recall via =SPC b r=, cap 20), replaces the focused
+  leaf with another same-class buffer or the class default singleton.
 - *Leader popup* (=SPC=) — Doom-style which-key with descend / up /
   cancel; resolves to engine commands or further prefixes.
 - *M-x palette* — fuzzy-searchable command list keyed off =:= or the
   M-x button in the header.
+- *Settings buffer* (=settings= kind) — opens via =SPC s s=,
+  =M-x tendrl-open-settings=, or the header settings button. Editor
+  options (line numbers, vim mode, insert-from-search behavior) and
+  compose options (default mode, sync mode, button labels) live here.
 - *Modeline* shows layout name, focused class, focused buffer with
   modified marker, network mode, identity badge.
 
@@ -180,29 +191,50 @@ inside the corresponding buffer renderer. Deep-link routing
 - Paginated prefetches adjacent sections on navigate.
 - =Edit= / =Edit §= buttons import the publication (or just the
   cursored section) into the compose pool and open the composer.
+- *Always pristine* — opening a published 30040 from the feed
+  always shows the engine's view, even if the user has a draft
+  seeded from the same publication. Draft preview lives in its own
+  =draft-reader:current= buffer, opened via composer's =Read=
+  button.
+- *Standalone-section reader*: =reader:event:<id>= synthesizes a
+  one-section publication from any event id and forces paginated
+  view — used by the search action modal's "Read section" path so
+  a 30041 result opens just that section, no parent walk.
 - TOC handles nested 30040 sub-publications.
 
 ** Compose
 - Block model: editable, imported (read-only reference), forked (with =a/e=
   lineage tags, NIP-54 marker)
-- Three editing modes (cycle via =h= / =l= in normal mode): full
-  (structured cards with collapsible header + sections), plain
-  (single CodeMirror 6 buffer over the delimited document), preview
-  (read-only render via DraftReader)
+- Two editing modes (default lives in settings; =h= / =l= in normal
+  mode toggles): full (structured cards with collapsible header +
+  sections), plain (single CodeMirror 6 buffer over the delimited
+  document). The visible Full/Plain toggle is gone now that the
+  default is a setting; mode transitions run from a =$effect= on the
+  bindable mode prop. Read view ships as its own =draft-reader=
+  buffer.
 - *Plain mode runs CodeMirror 6 + vim* (=@replit/codemirror-vim=).
   Double-Esc stack: first Esc — vim insert→normal (handled by the
   plugin); second Esc while already normal — blurs the editor and
   returns the shell to normal mode. CM6 is attached via a Svelte
   =use:= action so the editor instance is stable for the buffer
-  lifetime regardless of upstream re-renders.
+  lifetime regardless of upstream re-renders. Line numbers and vim
+  mode each live in a Compartment so settings toggles reconfigure
+  live without losing cursor or undo history.
 - *Ranger nav over sections* in full mode: =j= / =k= / =gg= / =G=
   walk a cursor across section blocks with the same inset-bar +
   tinted-bg highlight as feed/reader/search; =Enter= / =i= focuses
   the cursored section's textarea.
+- *Reorder controls*: ↑ / ↓ buttons in each section's header in
+  full mode (calls =reorderComposeSection=), and on each detected
+  section row in plain mode (parse → swap → reserialize the
+  =plainText=, no pool round-trip).
+- *Default-locked sections*: =+ Section= and search-Insert both
+  create =readonly: true= entries — unlock-to-edit matches the
+  transclusion model. Bulk =Unlock all= / =Lock all= still available.
 - Configurable delimiter for plain mode (=#=, =*=, ===, custom)
 - Tag serialization: =:name: value=, =:tags: a, b, c=
-- Bulk actions across sections: =All=, =Inv=, =◂= (to context), =□= (to
-  compose), =▸= (publish), =🗑= (two-step trash with countdown)
+- Bulk actions across sections: =All=, =Inv=, =◂= (to context),
+  =▸= (publish), =🗑= (two-step trash with countdown)
 - *Unlock all* / *Lock all* bulk buttons mirror the reader's lock
   affordance, available from the compose mode bar
 - Modified detection (yellow highlight) with per-section reset
@@ -218,7 +250,19 @@ inside the corresponding buffer renderer. Deep-link routing
 - Keyword + tag + kind + author filters
 - =~semantic= prefix for HNSW search; semantic score badges on results
 - Per-result checkboxes, select all / invert
-- Per-result =◂= (to context) and =□= (to compose) actions
+- *Action modal* on Enter or row click — opens a three-action chooser
+  (=r= Read section/publication, =f= Find containing publications,
+  =i= Insert into compose). =◂= chat button retained for quick send;
+  =□= compose button dropped (Insert covers it).
+- *Find containing publications* runs an =a:KIND:PUBKEY:DTAG= query
+  against nostrdb (translated to the =#a= tag filter) — opt-out from
+  =handleSearch='s default =by:me= scoping so cross-author parents
+  surface. Force-focuses the search slot when results land.
+- *Insert into compose* respects the =editorInsertMode= setting:
+  =cursor= dispatches a CM6 insert at the active plain-mode caret;
+  =append= writes to end of doc or appends to the section pool.
+  Inserted blocks use a default-locked =import= origin and an ====
+  heading so the plain parser sees them as sections.
 
 ** Profiles
 - Local-first profile lookup; falls back to general relays on miss
