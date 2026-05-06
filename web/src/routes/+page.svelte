@@ -540,27 +540,54 @@
 
 	const leaderPathLabel = $derived(prefixPath.length === 0 ? '' : prefixPath.join(' '));
 
-	const modelineText = $derived.by(() => {
-		const parts: string[] = [];
-		parts.push(`L:${store.currentLayout.name}`);
-		const cls = store.focusedSlotClass();
-		if (cls) parts.push(`@${cls}`);
-		if (focusedBuffer) {
-			const star = focusedBuffer.modified ? ' *' : '';
-			parts.push(`${focusedBuffer.label}${star}${focusedBuffer.kicker ? ` (${focusedBuffer.kicker})` : ''}`);
+	// Mode-line segments. Network and identity states drive pill/dot
+	// chrome (see modeline render below); leader/minibuffer/buffer info
+	// stays as text segments — they're transient and don't fit the
+	// stable-status-pill metaphor.
+	const focusedBufferText = $derived.by(() => {
+		if (!focusedBuffer) return '';
+		const star = focusedBuffer.modified ? ' *' : '';
+		const kicker = focusedBuffer.kicker ? ` (${focusedBuffer.kicker})` : '';
+		return `${focusedBuffer.label}${star}${kicker}`;
+	});
+
+	const networkPill = $derived.by(() => {
+		const mode = app.networkStatus?.mode ?? null;
+		const active = (app.networkStatus?.active_fetches ?? 0) > 0;
+		if (mode === 'online') {
+			return {
+				label: active ? 'fetching' : 'online',
+				pillClass: 'pill--online',
+				dotClass: active ? 'dot--fetching' : 'dot--online'
+			};
 		}
-		if (leaderOpen) parts.push(`[${leaderPathLabel}-]`);
-		if (mb.mode !== 'closed') parts.push(`[mb:${mb.mode}]`);
-		const netMode = app.networkStatus?.mode ?? '?';
-		parts.push(netMode);
+		if (mode === 'offline') {
+			return { label: 'offline', pillClass: 'pill--offline', dotClass: 'dot--offline' };
+		}
+		return { label: '—', pillClass: 'pill--ghost', dotClass: 'dot--offline' };
+	});
+
+	const identityPill = $derived.by(() => {
 		const id = app.identityStatus;
-		if (id?.state === 'unlocked') {
+		if (!id || id.state === 'none') return null;
+		if (id.state === 'unlocked') {
 			const npub = id.npub ?? '';
-			parts.push(`@${npub.slice(0, 12)}`);
-		} else if (id?.state === 'locked') {
-			parts.push('locked');
+			return { label: npub ? `@${npub.slice(0, 12)}` : 'unlocked', pillClass: 'pill--local' };
 		}
-		return parts.join('  ·  ');
+		return { label: 'locked', pillClass: 'pill--draft' };
+	});
+
+	const embeddingPill = $derived.by(() => {
+		const e = app.embeddingStatus;
+		if (!e || !e.enabled) return null;
+		const stale = (e.stale_count ?? 0) > 0;
+		const missing = (e.missing_sections ?? 0) > 0;
+		const fetching = stale || missing;
+		return {
+			label: `embed ${e.indexed_count}/${e.total_events}`,
+			pillClass: 'pill--ghost',
+			dotClass: fetching ? 'dot--fetching' : 'dot--online'
+		};
 	});
 
 	function openSettings() {
@@ -629,9 +656,35 @@
 
 		<div class="shell__modeline">
 			<span class="ml__mode ml__mode--{mode}">-- {mode.toUpperCase()} --</span>
-			<span class="ml__layout">{modelineText}</span>
+			<span class="ml__seg ml__seg--text">L:{store.currentLayout.name}</span>
+			{#if store.focusedSlotClass()}
+				<span class="ml__seg ml__seg--text">@{store.focusedSlotClass()}</span>
+			{/if}
+			{#if focusedBufferText}
+				<span class="ml__seg ml__seg--buf">{focusedBufferText}</span>
+			{/if}
+			{#if leaderOpen}
+				<span class="ml__seg ml__seg--prefix">{leaderPathLabel || 'SPC'}-</span>
+			{/if}
+			{#if mb.mode !== 'closed'}
+				<span class="ml__seg ml__seg--prefix">mb:{mb.mode}</span>
+			{/if}
 			<span class="ml__spacer"></span>
-			<span class="ml__pos">L42:18</span>
+			<span class="pill {networkPill.pillClass}" title="Network mode">
+				<span class="dot {networkPill.dotClass}"></span>
+				{networkPill.label}
+			</span>
+			{#if embeddingPill}
+				<span class="pill {embeddingPill.pillClass}" title="Embedding index">
+					<span class="dot {embeddingPill.dotClass}"></span>
+					{embeddingPill.label}
+				</span>
+			{/if}
+			{#if identityPill}
+				<span class="pill {identityPill.pillClass}" title="Identity">
+					{identityPill.label}
+				</span>
+			{/if}
 		</div>
 	</div>
 
@@ -1237,7 +1290,9 @@
 		gap: var(--s-3);
 	}
 	.ml__spacer { flex: 1; }
-	.ml__pos { color: var(--base5); }
+	.ml__seg { color: var(--base6); }
+	.ml__seg--buf { color: var(--fg); }
+	.ml__seg--prefix { color: var(--id-yours); }
 	.ml__mode {
 		font-family: var(--font-mono);
 		font-size: var(--t-xs);

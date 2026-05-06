@@ -81,7 +81,12 @@ Tracked here as a single line per work cluster — see commits
 ** Polish (parallel) [ ]
 
 - [ ] Free-text find prompt for =SPC f e/d/p=
-- [ ] Statusbar pill chrome (segmented mode-line with =pill--online= / =dot--fetching=)
+- [X] Statusbar pill chrome — modeline now renders =network=,
+      =embedding=, and =identity= as segmented pills with state dots
+      (=dot--online= / =dot--offline= / =dot--fetching=). Active
+      relay fetches drive the pulsing fetching dot. Buffer / leader /
+      minibuffer info stays as text segments — they're transient and
+      don't fit the stable-status metaphor.
 - [ ] Rail keybinding glyphs (=rail-key= chips)
 - [ ] Scroll position retention across layout switches
 - [ ] Cross-tab =BroadcastChannel= sync for buffer list
