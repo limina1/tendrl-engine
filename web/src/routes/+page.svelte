@@ -155,6 +155,7 @@
 		{ id: 'tendrl-login', name: 'tendrl-login', description: 'Open settings buffer to login (ncryptsec or NIP-07)', category: 'Configuration', keybinding: 'SPC s i' },
 		{ id: 'tendrl-logout', name: 'tendrl-logout', description: 'Logout active identity', category: 'Configuration' },
 		{ id: 'tendrl-switch-source', name: 'tendrl-switch-source', description: 'Switch signing source (engine / nip07 / nip46)', category: 'Configuration' },
+		{ id: 'tendrl-edit-profile', name: 'tendrl-edit-profile', description: 'Edit your kind 0 profile metadata and broadcast', category: 'Configuration', keybinding: 'SPC s p' },
 		// View
 		{ id: 'tendrl-show-event-json', name: 'tendrl-show-event-json', description: 'Show the raw JSON of the focused event', category: 'View' },
 		// Versioning
@@ -297,6 +298,19 @@
 		}
 		if (cmd.id === 'tendrl-switch-source') {
 			openSettings();
+			closeMinibuffer();
+			return;
+		}
+		if (cmd.id === 'tendrl-edit-profile') {
+			store.openBuffer({
+				className: 'work',
+				buffer: {
+					id: 'profile-edit:current',
+					kind: 'profile-edit',
+					label: 'profile',
+					kicker: 'kind:0'
+				}
+			});
 			closeMinibuffer();
 			return;
 		}
@@ -524,6 +538,16 @@
 			store.openBuffer({
 				className: 'work',
 				buffer: { id: 'settings', kind: 'settings', label: 'settings', kicker: 'settings' }
+			}),
+		openProfileEdit: () =>
+			store.openBuffer({
+				className: 'work',
+				buffer: {
+					id: 'profile-edit:current',
+					kind: 'profile-edit',
+					label: 'profile',
+					kicker: 'kind:0'
+				}
 			})
 	});
 

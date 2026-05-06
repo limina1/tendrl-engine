@@ -232,6 +232,30 @@ export function postSignResponse(req: SignResponseRequest) {
 	});
 }
 
+export interface BroadcastRequest {
+	event: unknown;
+	relays?: string[];
+}
+
+export interface RelayPublishResult {
+	relay_url: string;
+	success: boolean;
+	message: string | null;
+}
+
+export interface BroadcastResponse {
+	successful: number;
+	total: number;
+	results: RelayPublishResult[];
+}
+
+export function broadcastEvent(req: BroadcastRequest) {
+	return fetchJson<BroadcastResponse>('/api/v1/broadcast', {
+		method: 'POST',
+		body: JSON.stringify(req)
+	});
+}
+
 // Search API
 
 export function search(query: string, limit?: number, my_pubkey?: string, policy = 'local_only') {

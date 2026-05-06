@@ -152,3 +152,19 @@ export async function signAndPublish(
 	}
 	return signed;
 }
+
+/**
+ * Sign one template through the active source, then broadcast the
+ * resulting event via the engine's `/api/v1/broadcast` endpoint.
+ * Used by the profile-edit flow and any other "publish a single
+ * non-publication event" surface.
+ */
+export async function signAndBroadcast(
+	template: EventTemplate,
+	relays?: string[]
+): Promise<{ signed: SignedEvent; broadcast: import('$lib/api').BroadcastResponse }> {
+	const resp = (await api.signTemplate({ template })) as SignTemplateResponse;
+	const signed = resp.signed_event as SignedEvent;
+	const broadcast = await api.broadcastEvent({ event: signed, relays });
+	return { signed, broadcast };
+}

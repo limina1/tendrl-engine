@@ -30,6 +30,7 @@ export type LeaderContext = {
 	toggleNetworkMode: () => void;
 	openSplitPicker: () => void;
 	openSettings: () => void;
+	openProfileEdit: () => void;
 };
 
 export function buildLeaderRoot(ctx: LeaderContext): SubPrefix {
@@ -96,7 +97,8 @@ export function buildLeaderRoot(ctx: LeaderContext): SubPrefix {
 				desc: 'settings',
 				children: {
 					s: { type: 'leaf', desc: 'open settings', category: 'Configuration', kind: 'client', run: () => ctx.openSettings() },
-					i: { type: 'leaf', desc: 'identity (login / source)', category: 'Configuration', kind: 'client', run: () => ctx.openSettings() }
+					i: { type: 'leaf', desc: 'identity (login / source)', category: 'Configuration', kind: 'client', run: () => ctx.openSettings() },
+					p: { type: 'leaf', desc: 'profile (kind 0)', category: 'Configuration', kind: 'engine', run: () => ctx.openProfileEdit() }
 				}
 			},
 			q: {

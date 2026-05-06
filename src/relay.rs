@@ -191,7 +191,7 @@ pub async fn fetch_event_by_id(ndb: &Ndb, relays: &[String], event_id: &str) -> 
 }
 
 /// Result of publishing an event to a relay
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct PublishResult {
     pub relay_url: String,
     pub success: bool,

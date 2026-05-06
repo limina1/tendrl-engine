@@ -2536,6 +2536,71 @@ pub async fn identity_sign_handler(
 }
 
 // ---------------------------------------------------------------------------
+// Generic broadcast — pushes a fully-signed event to relays
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Deserialize)]
+pub struct BroadcastRequest {
+    /// Already-signed event JSON (must include `id`, `pubkey`, `sig`).
+    pub event: Value,
+    /// Optional explicit relay list. Defaults to the engine's publish set.
+    #[serde(default)]
+    pub relays: Option<Vec<String>>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct BroadcastResponse {
+    pub successful: usize,
+    pub total: usize,
+    pub results: Vec<crate::relay::PublishResult>,
+}
+
+/// POST /api/v1/broadcast — push a fully-signed event to relays.
+///
+/// Used by clients that signed via `/identity/sign` (or any other path
+/// that produced a signed event JSON) and want to fan it out without
+/// going through the publication-shaped publish handler. Used today by
+/// the profile-edit buffer to push kind-0 metadata.
+pub async fn broadcast_handler(
+    State(engine): State<AppState>,
+    Json(req): Json<BroadcastRequest>,
+) -> Result<Json<BroadcastResponse>, EngineError> {
+    // Basic shape check — the relay layer will reject malformed events
+    // anyway, but a clear error here saves a round trip.
+    let event = req.event.as_object().ok_or_else(|| {
+        EngineError::Config("event must be a JSON object".into())
+    })?;
+    for field in ["id", "pubkey", "sig", "kind", "created_at", "tags", "content"] {
+        if !event.contains_key(field) {
+            return Err(EngineError::Config(format!(
+                "event missing required field `{field}`"
+            )));
+        }
+    }
+
+    let relays = req
+        .relays
+        .unwrap_or_else(|| engine.publish_relays().to_vec());
+    if relays.is_empty() {
+        return Err(EngineError::Config(
+            "no relays configured (set [relays.publish] in config or pass `relays`)".into(),
+        ));
+    }
+
+    let event_json = serde_json::to_string(&req.event).map_err(|e| {
+        EngineError::Config(format!("event serialize: {e}"))
+    })?;
+    let results = crate::relay::publish_to_relays(&relays, &event_json).await;
+    let successful = results.iter().filter(|r| r.success).count();
+    let total = results.len();
+    Ok(Json(BroadcastResponse {
+        successful,
+        total,
+        results,
+    }))
+}
+
+// ---------------------------------------------------------------------------
 // External signer channel (Phase 4)
 // ---------------------------------------------------------------------------
 
