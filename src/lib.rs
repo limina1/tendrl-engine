@@ -63,6 +63,7 @@ pub mod llm;
 pub mod network;
 pub mod nip11;
 pub mod publication;
+pub mod signing;
 pub mod query;
 pub mod relay;
 pub mod search;

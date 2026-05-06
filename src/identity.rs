@@ -279,7 +279,7 @@ pub fn decode_nsec(nsec: &str) -> Result<String, KeyParseError> {
 }
 
 /// Derive pubkey from secret key using secp256k1
-fn derive_pubkey_from_secret(secret_hex: &str) -> Result<String, KeyParseError> {
+pub(crate) fn derive_pubkey_from_secret(secret_hex: &str) -> Result<String, KeyParseError> {
     use secp256k1::{Secp256k1, SecretKey, PublicKey};
 
     if secret_hex.len() != 64 {
