@@ -9,6 +9,8 @@
 	import IgnoredBuffer from './renderers/IgnoredBuffer.svelte';
 	import KnowledgebaseBuffer from './renderers/KnowledgebaseBuffer.svelte';
 	import RefsBuffer from './renderers/RefsBuffer.svelte';
+	import SettingsBuffer from './renderers/SettingsBuffer.svelte';
+	import DraftReaderBuffer from './renderers/DraftReaderBuffer.svelte';
 
 	let { buffer }: { buffer: Buffer } = $props();
 </script>
@@ -22,6 +24,8 @@
 		<SearchBuffer {buffer} />
 	{:else if buffer.kind === 'reader'}
 		<ReaderBuffer {buffer} />
+	{:else if buffer.kind === 'draft-reader'}
+		<DraftReaderBuffer {buffer} />
 	{:else if buffer.kind === 'profile'}
 		<ProfileBuffer {buffer} />
 	{:else if buffer.kind === 'composer'}
@@ -32,6 +36,8 @@
 		<KnowledgebaseBuffer {buffer} />
 	{:else if buffer.kind === 'refs'}
 		<RefsBuffer {buffer} />
+	{:else if buffer.kind === 'settings'}
+		<SettingsBuffer {buffer} />
 	{:else}
 		<div class="missing">no renderer registered for kind {buffer.kind}</div>
 	{/if}

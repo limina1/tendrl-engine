@@ -1,4 +1,6 @@
 <script lang="ts">
+	import { untrack } from 'svelte';
+	import { getActiveStore } from '$lib/wm/buffer-store.svelte';
 	import type { ComposeState, ContextItem, TagEntry, SyncMode } from '$lib/types';
 	import type { EditorView } from '@codemirror/view';
 	import ComposeSection from './ComposeSection.svelte';
@@ -30,10 +32,13 @@
 		ontogglereadonly,
 		onlocksource,
 		oncrosspanelcopy,
+		onreorder,
 		mode = $bindable<ComposeMode>('full'),
 		cursor = -1,
 		sectionsListEl = $bindable<HTMLDivElement | undefined>(undefined),
-		plainCmView = $bindable<EditorView | null>(null)
+		plainCmView = $bindable<EditorView | null>(null),
+		lineNumbers = false,
+		vimMode = true
 	}: {
 		compose: ComposeState;
 		syncMode: SyncMode;
@@ -48,10 +53,13 @@
 		ontogglereadonly: (id: string) => void;
 		onlocksource: (id: string) => void;
 		oncrosspanelcopy: (id: string, fromPanel: string) => void;
+		onreorder?: (id: string, dir: 'up' | 'down') => void;
 		mode?: ComposeMode;
 		cursor?: number;
 		sectionsListEl?: HTMLDivElement;
 		plainCmView?: EditorView | null;
+		lineNumbers?: boolean;
+		vimMode?: boolean;
 	} = $props();
 
 	let checkedIds: Set<string> = $state(new Set());
@@ -149,6 +157,34 @@
 			out += `\n${s.content}\n`;
 		}
 		return out;
+	}
+
+	// Serialize a *parsed* document (used by plain-mode reorder: parse →
+	// swap sections in the array → write back without round-tripping
+	// through compose.sections).
+	function serializeParsed(
+		title: string,
+		tags: TagEntry[],
+		sections: { title: string; tags: TagEntry[]; content: string }[]
+	): string {
+		const [h1, h2] = headChars();
+		let out = `${h1}${title}\n`;
+		out += serializeTagBlock(tags);
+		for (const s of sections) {
+			out += `\n${h2}${s.title}\n`;
+			out += serializeTagBlock(s.tags);
+			out += `\n${s.content}\n`;
+		}
+		return out;
+	}
+
+	function reorderInPlain(index: number, dir: 'up' | 'down') {
+		const parsed = parseAll(plainText);
+		const swap = dir === 'up' ? index - 1 : index + 1;
+		if (swap < 0 || swap >= parsed.sections.length) return;
+		const next = parsed.sections.slice();
+		[next[index], next[swap]] = [next[swap], next[index]];
+		plainText = serializeParsed(parsed.title, parsed.tags, next);
 	}
 
 	interface ParsedSection {
@@ -280,13 +316,6 @@
 	// Track known section IDs so we can detect external additions/removals
 	let knownSectionIds: Set<string> = $state(new Set());
 
-	function enterPlainMode() {
-		plainText = serializeAll();
-		knownSectionIds = new Set(compose.sections.map((s) => s.id));
-		prevDelimiter = effectiveDelim();
-		mode = 'plain';
-	}
-
 	// Re-serialize when sections change externally (e.g. search → compose)
 	$effect(() => {
 		if (mode !== 'plain') return;
@@ -302,18 +331,27 @@
 	});
 
 	// --- Mode switching ---
-
-	function setMode(m: ComposeMode) {
-		if (m === 'plain') {
-			enterPlainMode();
-		} else {
-			if (mode === 'plain') {
-				// Commit plain text edits before leaving
+	// `mode` is bindable. ComposerBuffer's normal-mode h/l toggle writes
+	// directly into it; the settings-driven default also lands here at
+	// mount. We watch it via $effect and run the appropriate transition
+	// (serialize on entering plain, commit on leaving) so the prop write
+	// stays the single source of truth. `appliedMode` starts as null so
+	// the first run always serializes when mounting in plain mode.
+	let appliedMode = $state<ComposeMode | null>(null);
+	$effect(() => {
+		const next = mode;
+		untrack(() => {
+			if (next === appliedMode) return;
+			if (next === 'plain') {
+				plainText = serializeAll();
+				knownSectionIds = new Set(compose.sections.map((s) => s.id));
+				prevDelimiter = effectiveDelim();
+			} else if (appliedMode === 'plain') {
 				handlePlainFullEdit(plainText);
 			}
-			mode = m;
-		}
-	}
+			appliedMode = next;
+		});
+	});
 
 	// --- Trash state ---
 
@@ -480,7 +518,9 @@
 			in_context: false,
 			in_compose: true,
 			origin: 'compose' as const,
-			readonly: false
+			// Default-locked. The user explicitly unlocks (yellow) before
+			// editing, matching the model used for transcluded sections.
+			readonly: true
 		};
 		onupdate({ ...compose, sections: [...compose.sections, item] });
 	}
@@ -519,10 +559,11 @@
 
 <div class="compose-view">
 	<div class="compose-mode-bar">
-		<div class="mode-group">
-			<button class:active={mode === 'full'} onclick={() => setMode('full')}>Full</button>
-			<button class:active={mode === 'plain'} onclick={() => setMode('plain')}>Plain</button>
-		</div>
+		<!-- Mode is set by the user's compose-default setting and toggled
+		     via h/l in normal mode; no visible toggle button. The current
+		     mode is rendered as a static label so the user knows where
+		     they are. -->
+		<div class="mode-label">{mode}</div>
 		<div class="delim-group">
 			<span class="delim-label">delim</span>
 			<input
@@ -561,16 +602,24 @@
 			class="read-btn"
 			onclick={() => {
 				if (mode === 'plain') handlePlainFullEdit(plainText);
-				if (compose.source_publication_addr) {
-					app.previewDraft();
-				} else {
+				try {
+					const store = getActiveStore();
+					store.openBuffer({
+						className: 'work',
+						buffer: {
+							id: 'draft-reader:current',
+							kind: 'draft-reader',
+							label: 'draft',
+							kicker: compose.title || 'preview'
+						}
+					});
+				} catch {
+					// No WM store — inline preview as fallback.
 					mode = 'preview';
 				}
 			}}
 			class:active={mode === 'preview'}
-			title={compose.source_publication_addr
-				? 'Switch to the read view of this publication'
-				: 'Preview the draft (no source publication to navigate to)'}
+			title="Preview the draft in a separate buffer"
 		>Read</button>
 	</div>
 
@@ -652,6 +701,9 @@
 							{ontogglereadonly}
 							{onlocksource}
 							{oncrosspanelcopy}
+							onreorder={onreorder}
+							isFirst={i === 0}
+							isLast={i === compose.sections.length - 1}
 						/>
 					</div>
 				{/each}
@@ -662,6 +714,8 @@
 					<CodeMirrorEditor
 						bind:value={plainText}
 						bind:editorView={plainCmView}
+						{lineNumbers}
+						{vimMode}
 						onBlur={handlePlainBlur}
 					/>
 				</div>
@@ -677,7 +731,7 @@
 							<span class="detected-title">{detectedState.tags.length}</span>
 						</div>
 					{/if}
-					{#each detectedSections as det (det.index)}
+					{#each detectedSections as det, di (det.index)}
 						<div class="detected-row">
 							{#if det.item}
 								<label class="check">
@@ -694,6 +748,20 @@
 								<span class="detected-title detected-new">{det.title || '[Untitled]'}</span>
 								<span class="badge badge-new">new</span>
 							{/if}
+							<button
+								class="icon-btn-sm"
+								onclick={() => reorderInPlain(di, 'up')}
+								disabled={di === 0}
+								title="Move section up"
+								aria-label="Move section up"
+							>↑</button>
+							<button
+								class="icon-btn-sm"
+								onclick={() => reorderInPlain(di, 'down')}
+								disabled={di === detectedSections.length - 1}
+								title="Move section down"
+								aria-label="Move section down"
+							>↓</button>
 						</div>
 					{/each}
 					{#if detectedSections.length === 0}
@@ -758,9 +826,15 @@
 		flex-shrink: 0;
 	}
 
-	.mode-group {
-		display: flex;
-		gap: 4px;
+	.mode-label {
+		font-family: var(--font-mono);
+		font-size: 0.7rem;
+		color: var(--fg-muted);
+		text-transform: uppercase;
+		letter-spacing: 0.05em;
+		padding: 2px 6px;
+		border: 1px solid var(--border);
+		border-radius: var(--radius);
 	}
 
 	.delim-group {

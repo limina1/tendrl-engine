@@ -37,45 +37,28 @@
 		return { pubkey: match[1].toLowerCase(), dTag: match[2] };
 	}
 
+	function parseEventId(id: string): string | null {
+		const match = id.match(/^reader:event:([0-9a-fA-F]{64})$/);
+		return match ? match[1].toLowerCase() : null;
+	}
+
 	const parsedAddr = $derived(parseBufferId(buffer.id));
+	const parsedEventId = $derived(parseEventId(buffer.id));
 
-	// Draft mode: the live compose state was seeded from THIS publication.
-	// In that mode we render editable sections from compose.sections rather
-	// than from the API result. Lock/unlock and reorder operate on those
-	// sections directly. Per the design model, the regular reader view
-	// owns the lock/unlock UX — the composer is only entered for content
-	// edits.
-	const isDraftMode = $derived.by(() => {
-		const src = app.compose.source_publication_addr;
-		if (!src || !parsedAddr) return false;
-		return (
-			src.kind === 30040 &&
-			src.pubkey.toLowerCase() === parsedAddr.pubkey &&
-			src.d_tag === parsedAddr.dTag
-		);
-	});
-
-	const draftSections = $derived<LazySection[]>(
-		isDraftMode
-			? app.compose.sections.map((s, i) => ({
-					addr: s.source_addr ?? { kind: 30041, pubkey: '', d_tag: s.id },
-					title: s.title || null,
-					content: s.content,
-					position: i,
-					status: 'loaded' as const
-				}))
-			: []
-	);
-
-	const sections = $derived<LazySection[]>(
-		isDraftMode ? draftSections : pristineSections
-	);
-
-	const segments = $derived(
-		isDraftMode ? segmentSections(app.compose) : []
-	);
+	// ReaderBuffer always shows the *pristine* published view fetched from
+	// the engine. Draft state lives in a separate `draft-reader` buffer
+	// (kind: 'draft-reader') so editing a publication can't bleed back into
+	// the original article shown in the feed. To preview a draft, use
+	// ComposeView's "Read" affordance which spawns the draft buffer.
+	const isDraftMode = false;
+	const sections = $derived<LazySection[]>(pristineSections);
+	const segments = $derived<ReturnType<typeof segmentSections>>([]);
 
 	async function load() {
+		if (parsedEventId) {
+			await loadEvent(parsedEventId);
+			return;
+		}
 		if (!parsedAddr) {
 			error = 'Buffer id does not encode a publication address';
 			loading = false;
@@ -105,6 +88,55 @@
 			for (let i = 0; i < pristineSections.length; i++) {
 				handleLoadSection(i);
 			}
+		} catch (e) {
+			error = String(e);
+		} finally {
+			loading = false;
+		}
+	}
+
+	// Standalone-event reader: a `reader:event:<id>` buffer renders one
+	// section, no TOC walk, and defaults to paginated view so the user
+	// reads exactly the event they searched for.
+	async function loadEvent(eventId: string) {
+		loading = true;
+		try {
+			const resp = await api.getEvent(eventId);
+			const ev = resp.event as
+				| { kind?: number; pubkey?: string; tags?: string[][]; content?: string; created_at?: number }
+				| null;
+			if (!ev) {
+				error = 'Event not found';
+				return;
+			}
+			const tags = ev.tags ?? [];
+			const dTag = tags.find((t) => t[0] === 'd')?.[1] ?? '';
+			const titleTag = tags.find((t) => t[0] === 'title')?.[1] ?? null;
+			const addr = {
+				kind: ev.kind ?? 0,
+				pubkey: ev.pubkey ?? '',
+				d_tag: dTag
+			};
+			publication = {
+				addr,
+				title: titleTag,
+				summary: null,
+				image: null,
+				author_pubkey: ev.pubkey ?? '',
+				version: null,
+				created_at: ev.created_at ?? 0,
+				index: ev
+			};
+			pristineSections = [
+				{
+					addr,
+					title: titleTag,
+					content: ev.content ?? '',
+					position: 0,
+					status: 'loaded' as const
+				}
+			];
+			viewMode = 'paginated';
 		} catch (e) {
 			error = String(e);
 		} finally {

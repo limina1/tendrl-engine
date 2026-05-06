@@ -1,14 +1,14 @@
 <script lang="ts">
 	import { untrack } from 'svelte';
-	import { EditorState, type Extension } from '@codemirror/state';
-	import { EditorView, keymap } from '@codemirror/view';
+	import { EditorState, Compartment, type Extension } from '@codemirror/state';
+	import { EditorView, keymap, lineNumbers as lineNumbersExt } from '@codemirror/view';
 	import { defaultKeymap, history, historyKeymap } from '@codemirror/commands';
-	import { markdown } from '@codemirror/lang-markdown';
 	import { vim, getCM } from '@replit/codemirror-vim';
 
 	let {
 		value = $bindable<string>(''),
 		vimMode = true,
+		lineNumbers = false,
 		onLeave,
 		onBlur,
 		extensions = [],
@@ -16,11 +16,17 @@
 	}: {
 		value?: string;
 		vimMode?: boolean;
+		lineNumbers?: boolean;
 		onLeave?: () => void;
 		onBlur?: () => void;
 		extensions?: Extension[];
 		editorView?: EditorView | null;
 	} = $props();
+
+	// Compartments let us reconfigure line-numbers and vim mode without
+	// tearing down the editor (which would lose cursor / undo history).
+	const lineNumbersCompartment = new Compartment();
+	const vimCompartment = new Compartment();
 
 	let view: EditorView | null = $state(null);
 
@@ -39,11 +45,20 @@
 			initialDoc = value ?? '';
 		});
 
+		// Snapshot toggles once for initial config; later changes flow through
+		// the sync $effects via their compartments.
+		let initialLineNumbers = false;
+		let initialVimMode = true;
+		untrack(() => {
+			initialLineNumbers = !!lineNumbers;
+			initialVimMode = !!vimMode;
+		});
+
 		const baseExt: Extension[] = [
-			...(vimMode ? [vim()] : []),
+			vimCompartment.of(initialVimMode ? vim() : []),
+			lineNumbersCompartment.of(initialLineNumbers ? lineNumbersExt() : []),
 			history(),
 			keymap.of([...defaultKeymap, ...historyKeymap]),
-			markdown(),
 			EditorView.lineWrapping,
 			sizeTheme,
 			EditorView.updateListener.of((u) => {
@@ -97,6 +112,29 @@
 			const cur = view.state.doc.toString();
 			if (cur === v) return;
 			view.dispatch({ changes: { from: 0, to: cur.length, insert: v } });
+		});
+	});
+
+	// Line-number toggle: reconfigure the compartment without remounting.
+	$effect(() => {
+		const want = !!lineNumbers;
+		untrack(() => {
+			if (!view) return;
+			view.dispatch({
+				effects: lineNumbersCompartment.reconfigure(want ? lineNumbersExt() : [])
+			});
+		});
+	});
+
+	// Vim-mode toggle. Reconfigure the vim compartment live; CM rebuilds
+	// the keymap and the user keeps their cursor + undo stack.
+	$effect(() => {
+		const want = !!vimMode;
+		untrack(() => {
+			if (!view) return;
+			view.dispatch({
+				effects: vimCompartment.reconfigure(want ? vim() : [])
+			});
 		});
 	});
 </script>

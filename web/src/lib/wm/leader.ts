@@ -29,6 +29,7 @@ export type LeaderContext = {
 	setLayout: (name: string) => void;
 	toggleNetworkMode: () => void;
 	openSplitPicker: () => void;
+	openSettings: () => void;
 };
 
 export function buildLeaderRoot(ctx: LeaderContext): SubPrefix {
@@ -80,7 +81,6 @@ export function buildLeaderRoot(ctx: LeaderContext): SubPrefix {
 				desc: 'layout',
 				children: {
 					b: { type: 'leaf', desc: 'base', category: 'Layout', kind: 'client', run: () => ctx.setLayout('base') },
-					c: { type: 'leaf', desc: 'chat', category: 'Layout', kind: 'client', run: () => ctx.setLayout('chat') },
 					s: { type: 'leaf', desc: 'save current (deferred)', category: 'Layout', kind: 'client', deferred: true, run: () => {} }
 				}
 			},
@@ -89,6 +89,13 @@ export function buildLeaderRoot(ctx: LeaderContext): SubPrefix {
 				desc: 'toggle',
 				children: {
 					n: { type: 'leaf', desc: 'network mode', category: 'Configuration', kind: 'engine', run: () => ctx.toggleNetworkMode() }
+				}
+			},
+			s: {
+				type: 'prefix',
+				desc: 'settings',
+				children: {
+					s: { type: 'leaf', desc: 'open settings', category: 'Configuration', kind: 'client', run: () => ctx.openSettings() }
 				}
 			},
 			q: {

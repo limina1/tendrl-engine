@@ -107,7 +107,6 @@
 		<span class="result-author"><ProfileName pubkey={result.author} {onviewprofile} /></span>
 		<span class="result-time">{formatTime(result.created_at)}</span>
 		<button class="action-btn icon-btn" onclick={(e) => { e.stopPropagation(); onaddtocontext(result); }} title="Send to chat">◂</button>
-		<button class="action-btn icon-btn" onclick={(e) => { e.stopPropagation(); onaddtocompose(result); }} title="Send to compose">□</button>
 		<div class="menu-container">
 			<button class="action-btn menu-btn" onclick={(e) => { e.stopPropagation(); menuOpen = !menuOpen; }} title="More actions">⋮</button>
 			{#if menuOpen}

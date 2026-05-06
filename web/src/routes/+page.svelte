@@ -62,15 +62,6 @@
 				center: { className: 'work', state: 'open', tree: { type: 'leaf', buffer: feedBuf } },
 				right: { className: 'research', state: 'rail', tree: { type: 'leaf', buffer: searchBuf } }
 			}
-		},
-		chat: {
-			name: 'chat',
-			desc: 'Chat wide-left preset. Work in center, research as rail.',
-			slots: {
-				left: { className: 'chat', state: 'open', tree: { type: 'leaf', buffer: chatBuf } },
-				center: { className: 'work', state: 'open', tree: { type: 'leaf', buffer: feedBuf } },
-				right: { className: 'research', state: 'rail', tree: { type: 'leaf', buffer: searchBuf } }
-			}
 		}
 	};
 
@@ -159,6 +150,7 @@
 		// Configuration
 		{ id: 'tendrl-toggle-network-mode', name: 'tendrl-toggle-network-mode', description: 'Toggle between online and offline mode', category: 'Configuration' },
 		{ id: 'tendrl-show-relays', name: 'tendrl-show-relays', description: 'Show configured relays', category: 'Configuration' },
+		{ id: 'tendrl-open-settings', name: 'tendrl-open-settings', description: 'Open the settings buffer', category: 'Configuration', keybinding: 'SPC s s' },
 		{ id: 'tendrl-login', name: 'tendrl-login', description: 'Unlock identity (ncryptsec)', category: 'Configuration' },
 		{ id: 'tendrl-logout', name: 'tendrl-logout', description: 'Lock identity', category: 'Configuration' },
 		// View
@@ -255,6 +247,14 @@
 		}
 		if (cmd.id === 'tendrl-toggle-network-mode') {
 			toggleNetworkMode();
+			closeMinibuffer();
+			return;
+		}
+		if (cmd.id === 'tendrl-open-settings') {
+			store.openBuffer({
+				className: 'work',
+				buffer: { id: 'settings', kind: 'settings', label: 'settings', kicker: 'settings' }
+			});
 			closeMinibuffer();
 			return;
 		}
@@ -493,7 +493,12 @@
 		navigateSlot: (dir) => store.navigateSlot(dir),
 		setLayout,
 		toggleNetworkMode,
-		openSplitPicker: () => openMinibuffer('split')
+		openSplitPicker: () => openMinibuffer('split'),
+		openSettings: () =>
+			store.openBuffer({
+				className: 'work',
+				buffer: { id: 'settings', kind: 'settings', label: 'settings', kicker: 'settings' }
+			})
 	});
 
 	function openLeader() {
@@ -558,7 +563,12 @@
 		return parts.join('  ·  ');
 	});
 
-	const layoutOrder: string[] = ['base', 'chat'];
+	function openSettings() {
+		store.openBuffer({
+			className: 'work',
+			buffer: { id: 'settings', kind: 'settings', label: 'settings', kicker: 'settings' }
+		});
+	}
 
 	const minibufferTitle = $derived.by(() => {
 		if (mb.mode === 'class') {
@@ -584,16 +594,11 @@
 	<div class="shell">
 		<div class="shell__header">
 			<div class="shell__brand">tendrl</div>
-			<div class="shell__layouts">
-				{#each layoutOrder as name (name)}
-					<button
-						class="lt {store.currentLayoutName === name ? 'lt--on' : ''}"
-						onclick={() => setLayout(name)}
-					>
-						{name}
-					</button>
-				{/each}
-			</div>
+			<button
+				class="lt"
+				onclick={openSettings}
+				title="Open settings buffer (SPC s s)"
+			>settings</button>
 			<div class="shell__layout-desc">{store.currentLayout.desc}</div>
 			<button
 				class="px {leaderOpen ? 'px--on' : ''}"

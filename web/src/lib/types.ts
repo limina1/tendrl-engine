@@ -152,6 +152,8 @@ export interface ContextItem {
 
 export type SyncMode = 'reactive' | 'explicit';
 export type ButtonLabels = 'icon' | 'text';
+export type EditorInsertMode = 'cursor' | 'append';
+export type ComposeDefaultMode = 'full' | 'plain';
 
 export interface ComposeState {
 	title: string;

@@ -18,7 +18,10 @@
 		onsendtochat,
 		ontogglereadonly,
 		onlocksource,
-		oncrosspanelcopy
+		oncrosspanelcopy,
+		onreorder,
+		isFirst = false,
+		isLast = false
 	}: {
 		section: ContextItem;
 		checked: boolean;
@@ -34,6 +37,9 @@
 		ontogglereadonly: (id: string) => void;
 		onlocksource: (id: string) => void;
 		oncrosspanelcopy: (id: string, fromPanel: string) => void;
+		onreorder?: (id: string, dir: 'up' | 'down') => void;
+		isFirst?: boolean;
+		isLast?: boolean;
 	} = $props();
 
 	const provenance = $derived(sectionState(section));
@@ -69,6 +75,22 @@
 			disabled={section.readonly}
 		/>
 		<ItemBadge item={section} {syncMode} panel="compose" {ontogglereadonly} {onlocksource} {oncrosspanelcopy} />
+		{#if onreorder}
+			<button
+				class="icon-btn-sm"
+				onclick={() => onreorder(section.id, 'up')}
+				disabled={isFirst}
+				title="Move section up"
+				aria-label="Move section up"
+			>↑</button>
+			<button
+				class="icon-btn-sm"
+				onclick={() => onreorder(section.id, 'down')}
+				disabled={isLast}
+				title="Move section down"
+				aria-label="Move section down"
+			>↓</button>
+		{/if}
 		<button class="icon-btn-sm" onclick={() => onsendtochat(section.id)} title="Send to chat">◂</button>
 		<button onclick={() => onremove(section.id)}>Remove</button>
 	</div>

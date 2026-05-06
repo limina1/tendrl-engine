@@ -9,6 +9,8 @@ import ComposerBuffer from './renderers/ComposerBuffer.svelte';
 import IgnoredBuffer from './renderers/IgnoredBuffer.svelte';
 import KnowledgebaseBuffer from './renderers/KnowledgebaseBuffer.svelte';
 import RefsBuffer from './renderers/RefsBuffer.svelte';
+import SettingsBuffer from './renderers/SettingsBuffer.svelte';
+import DraftReaderBuffer from './renderers/DraftReaderBuffer.svelte';
 
 export type RendererProps = {
 	buffer: Buffer;
@@ -28,9 +30,11 @@ const entries: BufferKindEntry[] = [
 	// modes of the same window.
 	{ kind: 'feed', className: 'work', component: FeedBuffer, defaultLabel: 'feed' },
 	{ kind: 'reader', className: 'work', component: ReaderBuffer, defaultLabel: 'reader' },
+	{ kind: 'draft-reader', className: 'work', component: DraftReaderBuffer, defaultLabel: 'draft' },
 	{ kind: 'composer', className: 'work', component: ComposerBuffer, defaultLabel: 'composer' },
 	{ kind: 'profile', className: 'work', component: ProfileBuffer, defaultLabel: 'profile' },
 	{ kind: 'ignored', className: 'work', component: IgnoredBuffer, defaultLabel: 'ignored' },
+	{ kind: 'settings', className: 'work', component: SettingsBuffer, defaultLabel: 'settings' },
 	// Research class is auxiliary tools that support the work surface.
 	{ kind: 'search', className: 'research', component: SearchBuffer, defaultLabel: 'search' },
 	{ kind: 'knowledgebase', className: 'research', component: KnowledgebaseBuffer, defaultLabel: 'kb' },

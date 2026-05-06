@@ -14,7 +14,7 @@
 	type ComposeMode = 'full' | 'plain' | 'preview';
 
 	let cursor = $state(0);
-	let mode = $state<ComposeMode>('full');
+	let mode = $state<ComposeMode>(app.composeDefaultMode);
 	let sectionsListEl: HTMLDivElement | undefined = $state();
 	let plainCmView: EditorView | null = $state(null);
 
@@ -106,6 +106,18 @@
 		untrack(() => store.registerNavHandler(id, handler));
 		return () => untrack(() => store.unregisterNavHandler(id));
 	});
+
+	// Publish the plain-mode CM view to AppState so cross-buffer actions
+	// (e.g. SearchBuffer's "insert at cursor") can dispatch into it.
+	$effect(() => {
+		const v = mode === 'plain' ? plainCmView : null;
+		untrack(() => app.setComposerActiveView(v));
+	});
+
+	// Clear on unmount — handlers shouldn't dispatch into a disposed view.
+	$effect(() => {
+		return () => untrack(() => app.setComposerActiveView(null));
+	});
 </script>
 
 <ComposeView
@@ -122,8 +134,11 @@
 	ondelete={app.handleDeleteFromCompose}
 	ondeletepermanent={app.handleDeletePermanent}
 	syncMode={app.syncMode}
+	lineNumbers={app.editorLineNumbers}
+	vimMode={app.editorVimMode}
 	onsenditemtochat={app.handleSendItemToChat}
 	ontogglereadonly={app.handleToggleReadonly}
 	onlocksource={app.handleLockToSource}
 	oncrosspanelcopy={app.handleCrossPanelCopy}
+	onreorder={app.reorderComposeSection}
 />

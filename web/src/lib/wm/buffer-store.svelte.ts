@@ -252,9 +252,49 @@ export class BufferStore {
 		return true;
 	}
 
+	// Class fallback when killing the last buffer of a class. These are
+	// always-conceptually-open singletons; reopening them is cheap.
+	private classDefault(cls: ClassName): Buffer | null {
+		if (cls === 'chat') return { id: 'chat', kind: 'chat', label: 'chat', kicker: '' };
+		if (cls === 'work') return { id: 'feed', kind: 'feed', label: 'feed', kicker: '' };
+		if (cls === 'research') return { id: 'search', kind: 'search', label: 'search', kicker: '' };
+		return null;
+	}
+
 	killFocused() {
-		// Phase 1 stub — flash for visual feedback. Production removes from
-		// openBuffers, prompts-to-save if dirty draft, propagates via BroadcastChannel.
+		const cur = this.focusedLeaf(this.focusedSlot);
+		if (!cur) return;
+		const buf = cur.buffer;
+
+		const wasOpen = this.openBuffers.find((b) => b.buffer.id === buf.id);
+		if (wasOpen) {
+			this.openBuffers = this.openBuffers.filter((b) => b.buffer.id !== buf.id);
+			this.recentlyClosed = [wasOpen, ...this.recentlyClosed].slice(0, 20);
+		}
+
+		const cls = wasOpen?.className ?? this.classFor(this.focusedSlot);
+		if (!cls) {
+			this.flash(this.focusedSlot);
+			return;
+		}
+
+		// Replace the focused leaf with another buffer of the same class.
+		// Prefer something already in openBuffers; otherwise restore the
+		// class default singleton.
+		const replacement = this.openBuffers.find(
+			(b) => b.className === cls && b.buffer.id !== buf.id
+		);
+		if (replacement) {
+			this.setLeaf(this.focusedSlot, replacement.buffer);
+			this.flash(this.focusedSlot);
+			return;
+		}
+
+		const fallback = this.classDefault(cls);
+		if (fallback) {
+			this.openBuffers = [...this.openBuffers, { className: cls, buffer: fallback }];
+			this.setLeaf(this.focusedSlot, fallback);
+		}
 		this.flash(this.focusedSlot);
 	}
 

@@ -13,6 +13,8 @@ import type {
 	DocMode,
 	SyncMode,
 	ButtonLabels,
+	EditorInsertMode,
+	ComposeDefaultMode,
 	ImportPage,
 	DocumentFile,
 	EmbeddingStatusResponse,
@@ -112,6 +114,12 @@ function _createAppState() {
 	// --- JSON modal ---
 	let jsonModalData: unknown = $state(null);
 
+	// --- Search action modal ---
+	// When set, the SearchActionModal overlay is open for this result.
+	// Acts as a singleton — only one modal at a time, regardless of how
+	// many SearchBuffers are open.
+	let actionModalResult: SearchResult | null = $state(null);
+
 	// --- Profile ---
 	let profilePubkey: string | null = $state(null);
 
@@ -166,6 +174,10 @@ function _createAppState() {
 	let syncMode: SyncMode = $state('explicit');
 	let passthrough = $state(false);
 	let buttonLabels: ButtonLabels = $state('icon');
+	let editorInsertMode: EditorInsertMode = $state('append');
+	let editorLineNumbers: boolean = $state(true);
+	let editorVimMode: boolean = $state(true);
+	let composeDefaultMode: ComposeDefaultMode = $state('full');
 
 	// --- Panel collapse ---
 	let chatCollapsed = $state(true);
@@ -720,7 +732,8 @@ function _createAppState() {
 
 	// ===================== Search =====================
 
-	async function handleSearch(query: string) {
+	async function handleSearch(query: string, opts: { scopeToMe?: boolean } = {}) {
+		const scopeToMe = opts.scopeToMe ?? true;
 		if (!query.trim()) {
 			searchResults = [];
 			searchCount = 0;
@@ -733,7 +746,7 @@ function _createAppState() {
 		searchLoading = true;
 		try {
 			let effectiveQuery = query;
-			if (myPubkey && !query.includes('by:') && !query.includes('~:')) {
+			if (scopeToMe && myPubkey && !query.includes('by:') && !query.includes('~:')) {
 				effectiveQuery = `by:me ${effectiveQuery}`;
 			}
 
@@ -795,6 +808,47 @@ function _createAppState() {
 	async function handleAddToCompose(result: SearchResult) {
 		const content = await fetchEventContent(result);
 		addToPool(resultFields(result, content), { compose: true });
+		if (docMode !== 'compose') navigateToCompose();
+	}
+
+	// --- Active plain-mode CM6 view ---
+	// ComposerBuffer publishes its plain CodeMirror view here so cross-buffer
+	// actions (e.g. SearchBuffer's "insert at cursor") can dispatch into it
+	// without prop-drilling. `unknown` to avoid pulling @codemirror/view into
+	// every state import; callers cast at the use site.
+	let composerActiveView: unknown = null;
+	function setComposerActiveView(v: unknown) {
+		composerActiveView = v;
+	}
+
+	// Insert a search result into the composer per the configured mode.
+	// 'cursor' inserts at the active plain-mode caret; 'append' appends to
+	// either the plain-mode buffer or the compose section pool depending on
+	// whether the plain editor is active.
+	async function handleInsertEvent(result: SearchResult, mode: EditorInsertMode) {
+		const content = await fetchEventContent(result);
+		const view = composerActiveView as
+			| { state: { doc: { length: number; toString: () => string }; selection: { main: { from: number } } }; dispatch: (spec: unknown) => void; focus: () => void }
+			| null;
+		if (view) {
+			const title = result.title?.trim() || '[Untitled]';
+			// `==` is the section-heading prefix in compose's plain-mode parser
+			// (single `=` is reserved for the publication title).
+			const text = `\n== ${title}\n\n${content}\n`;
+			const pos = mode === 'cursor' ? view.state.selection.main.from : view.state.doc.length;
+			view.dispatch({
+				changes: { from: pos, insert: text },
+				selection: { anchor: pos + text.length }
+			});
+			view.focus();
+			if (docMode !== 'compose') navigateToCompose();
+			return;
+		}
+		// Plain editor not active — fall back to pool append. Mark origin
+		// 'import' so the new section defaults to locked: the user is
+		// transcluding an existing event, not authoring fresh text.
+		const fields = { ...resultFields(result, content), origin: 'import' as const };
+		addToPool(fields, { compose: true });
 		if (docMode !== 'compose') navigateToCompose();
 	}
 
@@ -1718,6 +1772,8 @@ function _createAppState() {
 		// JSON modal
 		get jsonModalData() { return jsonModalData; },
 		set jsonModalData(v: unknown) { jsonModalData = v; },
+		get actionModalResult() { return actionModalResult; },
+		set actionModalResult(v: SearchResult | null) { actionModalResult = v; },
 
 		// Profile
 		get profilePubkey() { return profilePubkey; },
@@ -1772,6 +1828,14 @@ function _createAppState() {
 		set passthrough(v: boolean) { passthrough = v; },
 		get buttonLabels() { return buttonLabels; },
 		set buttonLabels(v: ButtonLabels) { buttonLabels = v; },
+		get editorInsertMode() { return editorInsertMode; },
+		set editorInsertMode(v: EditorInsertMode) { editorInsertMode = v; },
+		get editorLineNumbers() { return editorLineNumbers; },
+		set editorLineNumbers(v: boolean) { editorLineNumbers = v; },
+		get editorVimMode() { return editorVimMode; },
+		set editorVimMode(v: boolean) { editorVimMode = v; },
+		get composeDefaultMode() { return composeDefaultMode; },
+		set composeDefaultMode(v: ComposeDefaultMode) { composeDefaultMode = v; },
 
 		// Panel collapse
 		get chatCollapsed() { return chatCollapsed; },
@@ -1816,6 +1880,8 @@ function _createAppState() {
 		handleAddToCompose,
 		handleAddManyToContext,
 		handleAddManyToCompose,
+		handleInsertEvent,
+		setComposerActiveView,
 		handleViewJson,
 		handleIgnoreEvent,
 		handleIgnorePubkey,
