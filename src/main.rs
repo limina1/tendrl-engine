@@ -186,7 +186,7 @@ async fn main() -> anyhow::Result<()> {
             "/api/v1/identity/sign-response",
             post(api::sign_response_handler),
         )
-        .with_state(signing_controller);
+        .with_state(signing_controller.clone());
 
     // Config endpoint (returns pubkey etc. to the frontend)
     let config_pubkey = my_pubkey.clone();
@@ -271,6 +271,7 @@ async fn main() -> anyhow::Result<()> {
         .merge(identity_routes)
         .merge(signing_routes)
         .layer(axum::Extension(identity_state.clone()))
+        .layer(axum::Extension(signing_controller.clone()))
         .layer(axum::extract::DefaultBodyLimit::max(50 * 1024 * 1024)) // 50MB for JSONL import
         .layer(cors);
 

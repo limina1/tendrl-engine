@@ -776,14 +776,93 @@ pub fn build_publication_events(
     build_publication_events_internal(compose, pubkey, None)
 }
 
-/// Build publication events with proper Schnorr signatures.
-/// This is required for events to be accepted by nostrdb.
+/// Build publication events with proper Schnorr signatures using the
+/// engine's in-process key material directly. Kept for the TUI / test
+/// paths that don't need to route through the SigningController; live
+/// HTTP publish goes through `build_signed_publication_events_via_signer`.
 pub fn build_signed_publication_events(
     compose: &ComposeState,
     pubkey: &str,
     secret_hex: &str,
 ) -> (Value, Vec<Value>) {
     build_publication_events_internal(compose, pubkey, Some(secret_hex))
+}
+
+/// Build publication events through a `Signer`. Each section + the
+/// 30040 index is constructed as an `EventTemplate` and signed via
+/// `signer.sign(...)`. This is the path that supports external signers
+/// (NIP-07 / NIP-46): every per-event sig round-trips through whatever
+/// the active source is.
+///
+/// `pubkey` must match the signer's active source pubkey. The signer
+/// re-checks via `template.pubkey` and refuses on mismatch.
+pub async fn build_signed_publication_events_via_signer(
+    compose: &ComposeState,
+    pubkey: &str,
+    signer: &dyn crate::signing::Signer,
+) -> std::result::Result<(Value, Vec<Value>), crate::signing::SigningError> {
+    use crate::signing::EventTemplate;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+
+    let pubkey = pubkey.to_string();
+
+    // Section events (need their d-tags before the index references
+    // them).
+    let mut section_events = Vec::new();
+    for i in 0..compose.sections.len() {
+        let section = &compose.sections[i];
+        let section_d_tag = compose.section_d_tag(i);
+
+        let mut tags: Vec<Vec<String>> = vec![vec!["d".into(), section_d_tag.clone()]];
+        if !section.title.is_empty() {
+            tags.push(vec!["title".into(), section.title.clone()]);
+        }
+        for tag_vec in ComposeState::tags_to_nostr_format(&section.tags) {
+            tags.push(tag_vec);
+        }
+
+        let template = EventTemplate {
+            kind: KIND_PUBLICATION_SECTION as u32,
+            created_at: timestamp,
+            tags,
+            content: section.content.clone(),
+            pubkey: Some(pubkey.clone()),
+        };
+        let signed = signer.sign(template).await?;
+        section_events.push(signed);
+    }
+
+    // Index event references each section by `a` tag.
+    let pub_d_tag = compose.publication_d_tag();
+    let mut tags: Vec<Vec<String>> = vec![vec!["d".into(), pub_d_tag]];
+    if !compose.title.is_empty() {
+        tags.push(vec!["title".into(), compose.title.clone()]);
+    }
+    for tag_vec in ComposeState::tags_to_nostr_format(&compose.tags) {
+        tags.push(tag_vec);
+    }
+    for i in 0..compose.sections.len() {
+        let section_d_tag = compose.section_d_tag(i);
+        let a_tag_value = format!("{}:{}:{}", KIND_PUBLICATION_SECTION, pubkey, section_d_tag);
+        tags.push(vec!["a".into(), a_tag_value, "".into()]);
+    }
+    tags.push(vec!["auto-update".into(), compose.auto_update.as_str().into()]);
+
+    let template = EventTemplate {
+        kind: KIND_PUBLICATION_INDEX as u32,
+        created_at: timestamp,
+        tags,
+        content: String::new(),
+        pubkey: Some(pubkey.clone()),
+    };
+    let pub_event = signer.sign(template).await?;
+
+    Ok((pub_event, section_events))
 }
 
 /// Internal function to build publication events with optional signing

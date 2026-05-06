@@ -568,6 +568,50 @@ impl SigningController {
     }
 }
 
+/// `SigningController` is itself a `Signer`. The trait `pubkey()` is
+/// not meaningful here (the active pubkey resolves through an async
+/// path; see `active_pubkey`); callers that need the pubkey alongside
+/// the signer pass it explicitly. The trait impl exists so `&dyn
+/// Signer` accepts a controller for `build_signed_publication_events_via_signer`.
+#[async_trait]
+impl Signer for SigningController {
+    async fn sign(&self, template: EventTemplate) -> Result<SignedEvent, SigningError> {
+        SigningController::sign(self, template).await
+    }
+
+    fn pubkey(&self) -> &str {
+        ""
+    }
+
+    fn capabilities(&self) -> SignerCapabilities {
+        SignerCapabilities {
+            sign_event: true,
+            ..Default::default()
+        }
+    }
+}
+
+impl SigningController {
+    /// Resolve the active source's pubkey. Returns `None` when no
+    /// identity is configured / no external signer is connected.
+    pub async fn active_pubkey(&self) -> Option<String> {
+        let source = self.current_source();
+        match source {
+            IdentitySource::Engine => self
+                .identity
+                .lock()
+                .ok()
+                .and_then(|s| s.pubkey().map(|p| p.to_string())),
+            IdentitySource::Nip07 { signer_id } | IdentitySource::Nip46 { signer_id } => self
+                .registry
+                .read()
+                .await
+                .get(&signer_id)
+                .map(|s| s.pubkey.clone()),
+        }
+    }
+}
+
 /// Best-effort sweep of stale signers. Call periodically (e.g. from the
 /// background sync loop) to drop entries whose SSE channel went silent.
 #[allow(dead_code)]

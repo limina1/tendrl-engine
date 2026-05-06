@@ -1261,9 +1261,7 @@ pub async fn purge_handler(
 // Publish API Endpoints
 // ============================================================================
 
-use crate::publication::{
-    build_block_publication_events, build_publication_events, build_signed_publication_events,
-};
+use crate::publication::{build_block_publication_events, build_publication_events};
 use crate::tree::state::{
     BlockKind, ComposeBlock, ComposeBlockState, ComposeState, SectionCompose,
 };
@@ -1314,6 +1312,7 @@ pub struct BroadcastResult {
 pub async fn publish_handler(
     State(engine): State<AppState>,
     Extension(identity): Extension<IdentityAppState>,
+    Extension(signing): Extension<crate::signing::SigningController>,
     Json(req): Json<PublishRequest>,
 ) -> Result<impl IntoResponse, EngineError> {
     // Resolve pubkey: prefer identity session, fall back to config
@@ -1347,23 +1346,32 @@ pub async fn publish_handler(
 
     // Build events (signed or unsigned)
     let (pub_event, section_events) = if req.sign {
-        // Resolve a signer through the unified fallback chain
-        // (unlocked session → OS keyring → .env). The whole sequence
-        // used to be open-coded right here; it now lives in
-        // `InProcessSigner::resolve` so other publish paths (chat,
-        // profile updates, the planned PublishController) can reuse it.
-        let signer = {
-            let mut session = identity.lock().unwrap();
-            crate::signing::InProcessSigner::resolve(&mut session, Some(&pubkey)).map_err(
-                |e| match e {
-                    crate::signing::SigningError::Locked => EngineError::Locked(
-                        "Identity is locked — unlock with password first".into(),
-                    ),
-                    other => EngineError::Config(format!("Cannot sign: {other}")),
-                },
-            )?
-        };
-        build_signed_publication_events(&compose, signer.pubkey_hex(), signer.secret_hex())
+        // Sign every event through the SigningController. For engine
+        // source this resolves InProcessSigner (same fallback chain as
+        // before); for nip07 / nip46 source this round-trips each
+        // template through the registered ExternalSigner via the SSE
+        // back-channel. Either way the publish handler is unaware.
+        let active_pubkey = signing.active_pubkey().await.ok_or_else(|| {
+            EngineError::Config(
+                "No identity configured (engine source needs login; nip07 needs a connected signer)"
+                    .into(),
+            )
+        })?;
+        crate::publication::build_signed_publication_events_via_signer(
+            &compose,
+            &active_pubkey,
+            &signing,
+        )
+        .await
+        .map_err(|e| match e {
+            crate::signing::SigningError::Locked => {
+                EngineError::Locked("Identity is locked — unlock with password first".into())
+            }
+            crate::signing::SigningError::SignerNotConnected => EngineError::Config(
+                "External signer not connected — open a tab with the signer extension".into(),
+            ),
+            other => EngineError::Config(format!("Cannot sign: {other}")),
+        })?
     } else {
         // Track unsigned events if identity is present but locked
         let should_track = {
