@@ -212,14 +212,67 @@
 								{#if lim}
 									<section class="info-section">
 										<div class="info-section-title">Limitations</div>
-										<dl class="kv">
-											{#if lim.max_message_length}<dt>max msg</dt><dd>{lim.max_message_length} bytes</dd>{/if}
-											{#if lim.max_event_tags}<dt>max tags</dt><dd>{lim.max_event_tags}</dd>{/if}
-											{#if lim.max_content_length}<dt>max content</dt><dd>{lim.max_content_length} bytes</dd>{/if}
-											{#if lim.max_subscriptions}<dt>max subs</dt><dd>{lim.max_subscriptions}</dd>{/if}
-											{#if lim.max_limit}<dt>max limit</dt><dd>{lim.max_limit}</dd>{/if}
-											{#if lim.min_pow_difficulty}<dt>min PoW</dt><dd>{lim.min_pow_difficulty}</dd>{/if}
-										</dl>
+										{#if lim.max_message_length || lim.max_event_tags || lim.max_content_length || lim.max_subscriptions || lim.max_limit || lim.min_pow_difficulty}
+											<div class="info-subtitle">Sizes &amp; throughput</div>
+											<dl class="kv">
+												{#if lim.max_message_length}
+													<dt title="Maximum bytes in any single client→relay message">max message</dt>
+													<dd>{lim.max_message_length.toLocaleString()} bytes</dd>
+												{/if}
+												{#if lim.max_event_tags}
+													<dt title="Maximum tags on a single event">max tags</dt>
+													<dd>{lim.max_event_tags}</dd>
+												{/if}
+												{#if lim.max_content_length}
+													<dt title="Maximum bytes in an event's content field">max content</dt>
+													<dd>{lim.max_content_length.toLocaleString()} bytes</dd>
+												{/if}
+												{#if lim.max_subscriptions}
+													<dt title="Maximum concurrent REQ subscriptions on one connection (not per second)">max subscriptions</dt>
+													<dd>{lim.max_subscriptions}</dd>
+												{/if}
+												{#if lim.max_limit}
+													<dt title="Largest value the relay accepts in a filter's `limit` field">max filter limit</dt>
+													<dd>{lim.max_limit}</dd>
+												{/if}
+												{#if lim.min_pow_difficulty}
+													<dt title="Minimum NIP-13 proof-of-work difficulty (leading zero bits)">min PoW</dt>
+													<dd>{lim.min_pow_difficulty} bits</dd>
+												{/if}
+											</dl>
+										{/if}
+
+										{#if lim.auth_required || lim.payment_required || lim.restricted_writes}
+											<div class="info-subtitle">Access</div>
+											<dl class="kv">
+												{#if lim.auth_required}
+													<dt title="Relay challenges connections with NIP-42 auth before serving">auth required</dt>
+													<dd>yes</dd>
+												{/if}
+												{#if lim.payment_required}
+													<dt title="Relay requires payment (see Fees) before accepting events">payment required</dt>
+													<dd>yes</dd>
+												{/if}
+												{#if lim.restricted_writes}
+													<dt title="Anyone can read; only members can publish">restricted writes</dt>
+													<dd>yes</dd>
+												{/if}
+											</dl>
+										{/if}
+
+										{#if (lim.created_at_lower_limit ?? 0) > 0 || (lim.created_at_upper_limit ?? 0) > 0}
+											<div class="info-subtitle">Event time bounds</div>
+											<dl class="kv">
+												{#if (lim.created_at_lower_limit ?? 0) > 0}
+													<dt title="Events with `created_at` older than this (Unix seconds) are rejected">created_at min</dt>
+													<dd>{lim.created_at_lower_limit}</dd>
+												{/if}
+												{#if (lim.created_at_upper_limit ?? 0) > 0}
+													<dt title="Events with `created_at` newer than this (Unix seconds) are rejected">created_at max</dt>
+													<dd>{lim.created_at_upper_limit}</dd>
+												{/if}
+											</dl>
+										{/if}
 									</section>
 								{/if}
 
@@ -417,6 +470,11 @@
 		text-transform: uppercase;
 		letter-spacing: 0.05em;
 		color: var(--base5);
+	}
+	.info-subtitle {
+		font-size: var(--t-xs);
+		color: var(--base6);
+		margin-top: 4px;
 	}
 	.info-title {
 		font-size: var(--t-md);
