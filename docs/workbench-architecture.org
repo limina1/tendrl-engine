@@ -131,6 +131,16 @@ Search has three load-bearing invariants that the rest of the workbench
    deterministic, fast (sub-ms for tag/kind filters, ms-scale for
    content scans), and safe to run offline.
 
+   /Scope:/ this invariant binds the *UX surface* (the search bar +
+   anything that calls =app.handleSearch=). The engine API primitive
+   =Engine::search(query, FetchPolicy, …)= still accepts
+   =LocalFirst= / =FetchAlways= for non-UX callers (publication
+   navigation, =a=-tag follow, MCP integrations, etc.). The
+   invariant is "the search bar never escalates to relays", not "the
+   engine never reaches the network." The split is intentional —
+   keeps the discovery surface stable while letting other features
+   pull from relays explicitly.
+
 2. *Relay fetch is a separate UX surface.* If the user wants events
    pulled from relays — for backfill, for resolving an =naddr= relay
    hint, for following a citation — that is a distinct, explicit action
@@ -176,25 +186,66 @@ filters and optional semantic search:
 
 *** Tag Queries
 
-Any Nostr event tag can be queried with the syntax ={tag-letter}:{value}=:
+Tag filters take the form ={name}:{value}=. Both NIP-01 short-tag names
+(single letter) and multi-char names ( =author= , =client= , =imeta= , =alt= ,
+=subject= , =summary= , =published_at= , …) are recognized. Tag name shape:
+=[A-Za-z][A-Za-z0-9_]*= ; value must be non-empty and not start with =/=
+so URLs don't get misclassified.
 
-| Query          | Meaning                             | NIP-01 Filter                    |
-|----------------+-------------------------------------+----------------------------------|
-| =t:python=       | Events tagged with =t= = python       | =#t: ["python"]=                   |
-| =d:chapter-3=    | Events with d-tag "chapter-3"       | =#d: ["chapter-3"]=                |
-| =p:npub1abc...=  | Events referencing pubkey            | =#p: ["<hex>"]=                    |
-| =e:note1abc...=  | Events referencing event             | =#e: ["<hex>"]=                    |
-| =L:en=           | Events with language tag "en"        | =#L: ["en"]=                       |
-| =m:text/asciidoc= | Events with MIME type tag            | =#m: ["text/asciidoc"]=            |
+| Query                | Meaning                              | NIP-01 Filter                    |
+|----------------------+--------------------------------------+----------------------------------|
+| =t:python=           | Events tagged with =t= = python         | =#t: ["python"]=                 |
+| =d:chapter-3=        | Events with d-tag "chapter-3"         | =#d: ["chapter-3"]=              |
+| =p:npub1abc...=      | Events referencing pubkey             | =#p: ["<hex>"]=                  |
+| =e:note1abc...=      | Events referencing event              | =#e: ["<hex>"]=                  |
+| =L:en=               | Events with language tag "en"         | =#L: ["en"]=                     |
+| =m:text/asciidoc=    | Events with MIME type tag             | =#m: ["text/asciidoc"]=          |
+| =author:Claude=      | Events with =["author","Claude"]= tag | (post-filter — substring match)  |
+| =client:tendrl=      | Events tagged by a client name        | (post-filter)                    |
+| =author:"alice in wonderland"= | Multi-word tag value      | (post-filter — quoted phrase)    |
+
+*Single-char vs multi-char matching:* single-letter tag filters are
+applied at the nostrdb / NIP-01 layer where the protocol mandates exact
+value match. Multi-char names go through a *case-insensitive substring*
+post-filter so =author:liminal= matches a tag value of "liminal 🌑",
+"Liminal Day", etc. — practical for display names where casing and
+emoji vary.
+
+*author is a tag, not the publishing pubkey.* =author:Foo= filters
+events that have an =["author", "Foo"]= tag. To filter by publishing
+pubkey, use =by:= (below).
+
+*** Tag-Presence and Aggregation
+
+| Query              | Meaning                                                   |
+|--------------------+-----------------------------------------------------------|
+| =has:author=       | Any event with at least one =["author", ...]= tag           |
+| =has:imeta=        | Any event with at least one =["imeta", ...]= tag            |
+| =count:author=     | Return a histogram of distinct values for the =author= tag  |
+| =count:t=          | Histogram of distinct =t= values                            |
+
+=has:NAME= is the discovery operator — find events with a tag at all,
+no value match needed. Composes with other filters; the DB-side fetch
+bumps to 500 candidates when =has:= is the only selectivity so the
+post-filter has enough to chew on.
+
+=count:NAME= is the aggregation operator. Returns a histogram
+( =tag_counts: { NAME: [{value, count, event_ids}, …] }= ) sorted by
+count desc, ties broken alphabetically. The search panel switches into
+a grouped / foldable view automatically when =count:= is in the query —
+top-level rows are buckets, click to expand into the contributing
+events. Per-event dedup ( a single event with two
+=["author","Claude"]= tags contributes 1, not 2 ).
 
 *** Kind and Author Filters
 
-| Query              | Meaning                    | NIP-01 Filter           |
-|--------------------+----------------------------+-------------------------|
-| =k:30041=            | Only sections              | =kinds: [30041]=          |
-| =k:30040=            | Only publication indexes   | =kinds: [30040]=          |
-| =by:npub1abc...=     | By specific author         | =authors: ["<hex>"]=      |
-| =by:me=              | By logged-in user          | =authors: ["<my-hex>"]=   |
+| Query                | Meaning                                    | NIP-01 Filter             |
+|----------------------+--------------------------------------------+---------------------------|
+| =k:30041=            | Only sections                              | =kinds: [30041]=          |
+| =k:30040=            | Only publication indexes                   | =kinds: [30040]=          |
+| =by:npub1abc...=     | By specific author (publishing pubkey)     | =authors: ["<hex>"]=      |
+| =by:me=              | By logged-in user                          | =authors: ["<my-hex>"]=   |
+| =by:assistant=       | By the configured assistant identity       | =authors: ["<asst-hex>"]= |
 
 *** Text Search
 

@@ -281,3 +281,147 @@ costs too much.
 - `web/src/lib/api.ts` — no change (uses existing `queryEvents`).
 - `src/search.rs`, `src/api.rs` — no change. The Rust backend already
   exposes everything we need.
+
+---
+
+# LANDED — 2026-05-13 (addendum)
+
+Status: all 7 slices shipped. This section records what changed from the
+original plan during implementation, so the body above stays as historical
+record without becoming a lie. Read this addendum as the canonical
+"what got built."
+
+## Architectural changes from the original
+
+### History surface — modeline pill, not floating strip
+
+The plan called for a global status strip with `🔍 N` that expanded into
+a popover. After implementing it as a separate row, the row was rejected
+("creates a new row — that's not good UI"); the indicator was moved
+into the existing modeline cluster as a `.pill--hs` tinted with
+`--id-yours`, anchored by `.hs-pill-wrap { position: relative }`. The
+popover (Slice 3) attaches to that anchor at `bottom: calc(100% + 6px)`
+with `z-index: 120` so it sits above any modal backdrop.
+
+Consequence: Slice 4 simplified — instead of clipping the modal backdrop
+around a strip that might or might not be present, all modal backdrops
+now clip to a single `--modeline-h: 23px` token in `app.css`. The
+modeline is always present, so the clipping is unconditional.
+
+### Modal `event` prop is reactive; chained nav swaps in place
+
+The plan's "chained nav" was framed as a back-stack inside the modal.
+The actual implementation lets `app.eventModalData` drive the modal's
+`event` prop directly — chained nav (clicking an `e`/`q` chip) calls
+`app.getEventForModal(id)` which sets `eventModalData` to the new
+event, and the modal's `$derived` normalization picks it up
+reactively. A local `breadcrumb: Crumb[]` tracks the stack of prior
+events so back-navigation works; the breadcrumb auto-resets when the
+event prop changes via external nav (history-popover replay) rather
+than chained nav, detected via a `pendingNavTarget` ref.
+
+### Decode lives in Rust, not JS
+
+The plan listed adding `nostr-tools` as an option. We didn't — instead
+`src/nip19.rs` exposes a `POST /api/v1/decode` endpoint that decodes
+npub / nprofile / nevent / naddr server-side. The web side gained
+`encodeNpub` (bech32) and `encodeNevent` (bech32m) in
+`web/src/lib/nostr/nip19.ts` for the copy-to-clipboard affordances —
+extending the existing `encodeNaddr` machinery (parameterized the
+checksum constant). No JS bech32 dependency added.
+
+### Tag chip dispatch — multi-char + presence + aggregation
+
+The plan's tag-click table covered single-char NIP-01 short tags
+(`e`, `q`, `note`, `a`, `p`, `d`, `t`) and "Anything else with single-token
+value → `#key:value`". The actual implementation widened the search
+parser to recognize multi-char tag names natively (`TagFilter.tag_name`
+changed from `char` to `String`, `src/search.rs:506` classifier) and
+added two new operators that weren't in the plan:
+
+- `has:NAME` — tag-presence filter. Backs the "I don't know which events
+  have an `author` tag" discovery workflow.
+- `count:NAME` — tag-value histogram. Returns `tag_counts` keyed by
+  name, sorted by count desc, with `event_ids` per bucket so the UI
+  can render an expandable grouped view. SearchPanel switches into
+  grouped mode automatically when `tag_counts` is non-empty.
+
+Multi-char tag matching is **case-insensitive substring** in the
+post-filter path (so `author:liminal` matches `liminal 🌑` /
+`Liminal Day`); single-char filters stay exact at the NIP-01/DB layer.
+Quoted multi-word values are supported (`author:"alice in wonderland"`)
+via a parser-order fix that runs the tag dispatch before the
+quoted-Exact fallback.
+
+### `author:` is a tag, `by:` is the publishing pubkey
+
+A misread early on tried adding `author:` as an alias for `by:`. The
+correct distinction: `author` is a TAG NAME (the literal `["author", ...]`
+event tag), `by:` is the publishing-pubkey filter. Reverted that commit
+and saved a project memory (`project_search_syntax`) so the confusion
+doesn't recur. The substring-match default for tag values makes
+`author:liminal` work as the user expected.
+
+### Multi-char tag filter post-filtering
+
+NIP-01 only indexes single-letter tag-filter keys at the protocol/DB
+layer (`#t`, `#d`, …). Emitting `#author: ["Claude"]` to nostrdb is a
+silent no-op — the filter is ignored, all events come back. Fix is in
+two parts:
+
+- `to_nip01_filters` skips multi-char filters entirely (don't send
+  invalid keys to the DB).
+- `query::filter_by_tags` walks each returned event's `tags` and
+  matches by name + substring of value.
+- `engine::search` bumps the broad-fetch limit to 500 when multi-char,
+  `has:`, or `count:` are the only DB-side selectivity, so the
+  post-filter has enough candidates.
+
+### Open questions resolved
+
+1. **Bech32 in JS**: yes, needed for copy-out. Done without
+   `nostr-tools` — extended the existing 80-line encoder.
+2. **Profile route**: doesn't exist as a per-profile buffer yet.
+   `p`-clicks fall back to `by:<npub>` search per the plan's fallback.
+3. **Auto-load policy**: `local_only` explicitly, per the audit-locked
+   "search is local-only" invariant.
+4. **Modal lifetime / back-stack**: resets when the modal closes
+   (component unmounts). The breadcrumb is component-local state.
+
+## Files actually touched
+
+Rust (engine):
+- `src/nip19.rs` (new) — decoders + tests
+- `src/api.rs` — `decode_handler`, `tag_counts` field
+- `src/main.rs` — `/api/v1/decode` route
+- `src/lib.rs` — module declaration
+- `src/search.rs` — multi-char tag support, `has:`, `count:`, parser
+  ordering, value-substring policy, tests
+- `src/query.rs` — `filter_by_tags`, `filter_by_has_tags`,
+  `count_tag_values`, tests
+- `src/engine.rs` — pipeline integration, fetch-limit bump
+
+Web:
+- `web/src/lib/state.svelte.ts` — state split, search-history model,
+  `pushHistoryEntry`, `getEventForModal`, `findContainingIndexes`,
+  `searchTagCounts`
+- `web/src/lib/components/EventViewModal.svelte` (new, ~600 lines after
+  growth)
+- `web/src/lib/components/SearchPanel.svelte` — grouped view for
+  `count:` queries
+- `web/src/routes/+layout.svelte` — modal mounting, `onspawnreader` +
+  `onfindcontaining` callbacks
+- `web/src/routes/+page.svelte` — modeline pill, popover, replay,
+  Enter-bubble fix
+- `web/src/lib/nostr/nip19.ts` — `encodeNpub` (bech32) +
+  `encodeNevent` (bech32m) + helpers
+- `web/src/lib/api.ts` — decode wrapper
+- `web/src/lib/wm/renderers/SearchBuffer.svelte` — pass `tagCounts`
+  through
+- `web/src/app.css` — `--modeline-h` token
+
+Docs:
+- `docs/workbench-architecture.{md,org}` — Search Invariants scope
+  clarification, full Query Bar Syntax update
+- `docs/commands.org` — paste-safe verification recipes per slice
+- `docs/event-view-modal-plan.md` — this addendum
