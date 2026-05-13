@@ -2,7 +2,13 @@
 	import type { NostrEvent, SearchResult } from '$lib/types';
 	import ProfileName from './ProfileName.svelte';
 	import { getAppState } from '$lib/state.svelte';
-	import { encodeNpub, encodeNevent, isHex64, stripNostrPrefix } from '$lib/nostr/nip19';
+	import {
+		encodeNpub,
+		encodeNevent,
+		encodeNaddr,
+		isHex64,
+		stripNostrPrefix
+	} from '$lib/nostr/nip19';
 	import * as api from '$lib/api';
 
 	let {
@@ -167,29 +173,6 @@
 		return `${s.slice(0, head)}…${s.slice(-tail)}`;
 	}
 
-	// ===== Click handlers =====
-
-	function onClickEventId() {
-		// Chained nav into the same modal — pushes a history entry +
-		// breadcrumb step.
-		pushBreadcrumb();
-		pendingNavTarget = n.id.toLowerCase();
-		app.getEventForModal(n.id);
-	}
-
-	function onClickAuthor() {
-		let npub: string;
-		try { npub = encodeNpub(n.pubkey); } catch { return; }
-		onclose();
-		app.handleSearch(`by:${npub}`, { scopeToMe: false });
-	}
-
-	function onClickAddr() {
-		if (!addrRef) return;
-		onclose();
-		app.handleSearch(`a:${addrRef}`, { scopeToMe: false });
-	}
-
 	// ===== Tag click dispatch =====
 
 	type TagAction =
@@ -327,45 +310,46 @@
 		{/if}
 
 		<section class="evm__section">
-			<h3 class="evm__heading">Identifiers</h3>
-			<div class="evm__ids">
-				<!-- event id -->
-				<div class="evm__id-row">
-					<span class="evm__id-key">id</span>
-					<button class="evm__id-val" onclick={onClickEventId} title="Open this event ({n.id})">
-						{shortHex(n.id)}
-					</button>
-					<button class="evm__copy" onclick={() => copyText(n.id)} title="Copy hex id">copy</button>
+			<h3 class="evm__heading">Copy as</h3>
+			<div class="evm__copy-bar">
+				<button
+					class="evm__copy-pill"
+					onclick={() => copyText(n.id)}
+					title="Copy hex id ({n.id})"
+				>
+					<span class="evm__copy-icon" aria-hidden="true">📋</span>
+					<span class="evm__copy-label">id</span>
+				</button>
+				<button
+					class="evm__copy-pill"
+					onclick={() => { try { copyText(encodeNevent(n.id)); } catch { /* */ } }}
+					title="Copy as nevent1… (bech32m event id)"
+				>
+					<span class="evm__copy-icon" aria-hidden="true">📋</span>
+					<span class="evm__copy-label">nevent</span>
+				</button>
+				{#if addrRef && dTag}
 					<button
-						class="evm__copy"
-						onclick={() => { try { copyText(encodeNevent(n.id)); } catch { /* */ } }}
-						title="Copy as nevent"
-					>copy nevent</button>
-				</div>
-
-				<!-- addr (only for replaceable events with a d-tag) -->
-				{#if addrRef}
-					<div class="evm__id-row">
-						<span class="evm__id-key">addr</span>
-						<button class="evm__id-val" onclick={onClickAddr} title="Search a:{addrRef}">
-							{n.kind}:{shortHex(n.pubkey, 6, 4)}:{dTag}
-						</button>
-						<button class="evm__copy" onclick={() => copyText(addrRef)} title="Copy addr">copy</button>
-					</div>
+						class="evm__copy-pill"
+						onclick={() => {
+							try {
+								copyText(encodeNaddr({ kind: n.kind, pubkey: n.pubkey, dTag }));
+							} catch { /* */ }
+						}}
+						title="Copy as naddr1… (bech32m {n.kind}:{shortHex(n.pubkey, 6, 4)}:{dTag})"
+					>
+						<span class="evm__copy-icon" aria-hidden="true">📋</span>
+						<span class="evm__copy-label">naddr</span>
+					</button>
 				{/if}
-
-				<!-- author -->
-				<div class="evm__id-row">
-					<span class="evm__id-key">author</span>
-					<button class="evm__id-val" onclick={onClickAuthor} title="Search by:{n.pubkey}">
-						<ProfileName pubkey={n.pubkey} />
-					</button>
-					<button
-						class="evm__copy"
-						onclick={() => { try { copyText(encodeNpub(n.pubkey)); } catch { /* */ } }}
-						title="Copy npub"
-					>copy npub</button>
-				</div>
+				<button
+					class="evm__copy-pill"
+					onclick={() => { try { copyText(encodeNpub(n.pubkey)); } catch { /* */ } }}
+					title="Copy author npub1… (bech32 pubkey)"
+				>
+					<span class="evm__copy-icon" aria-hidden="true">📋</span>
+					<span class="evm__copy-label">npub</span>
+				</button>
 			</div>
 		</section>
 
@@ -654,59 +638,41 @@
 		text-decoration: underline;
 	}
 
-	/* Identifiers block */
-	.evm__ids {
+	/* Identifiers block — compact "Copy as" pill bar. Each pill is a
+	   clipboard icon + format label; click copies that encoding to the
+	   clipboard. Replaces the older per-row layout (id / addr / author
+	   each on its own row with separate copy buttons). */
+	.evm__copy-bar {
 		display: flex;
-		flex-direction: column;
-		gap: 4px;
+		flex-wrap: wrap;
+		gap: 6px;
 	}
-	.evm__id-row {
-		display: flex;
+	.evm__copy-pill {
+		display: inline-flex;
 		align-items: center;
-		gap: 8px;
-		font-size: 0.75rem;
-	}
-	.evm__id-key {
-		font-family: var(--font-mono);
-		font-size: 0.7rem;
-		color: var(--fg-muted);
-		min-width: 50px;
-		flex-shrink: 0;
-	}
-	.evm__id-val {
-		background: none;
-		border: none;
-		color: var(--fg);
-		font-family: var(--font-mono);
-		font-size: 0.75rem;
-		cursor: pointer;
-		padding: 2px 6px;
-		border-radius: var(--r-sm);
-		text-align: left;
-		flex: 1;
-		min-width: 0;
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
-	}
-	.evm__id-val:hover {
-		background: color-mix(in srgb, var(--id-yours) 12%, transparent);
+		gap: 4px;
+		background: color-mix(in srgb, var(--id-yours) 10%, transparent);
+		border: 1px solid color-mix(in srgb, var(--id-yours) 30%, transparent);
 		color: var(--id-yours);
-	}
-	.evm__copy {
-		background: none;
-		border: 1px solid var(--border);
-		color: var(--fg-muted);
 		font-family: var(--font-mono);
-		font-size: 0.65rem;
-		padding: 1px 6px;
+		font-size: 0.72rem;
+		padding: 2px 8px;
 		border-radius: var(--r-sm);
 		cursor: pointer;
-		flex-shrink: 0;
 	}
-	.evm__copy:hover {
-		color: var(--fg);
-		border-color: var(--fg-muted);
+	.evm__copy-pill:hover {
+		background: color-mix(in srgb, var(--id-yours) 20%, transparent);
+		border-color: var(--id-yours);
+	}
+	.evm__copy-pill:active {
+		background: color-mix(in srgb, var(--id-yours) 30%, transparent);
+	}
+	.evm__copy-icon {
+		font-size: 0.85rem;
+		line-height: 1;
+	}
+	.evm__copy-label {
+		font-weight: 500;
 	}
 
 	/* Tag chips */
