@@ -8,11 +8,13 @@
 	let {
 		event,
 		onclose,
-		onspawnreader
+		onspawnreader,
+		onfindcontaining
 	}: {
 		event: NostrEvent | SearchResult;
 		onclose: () => void;
 		onspawnreader?: (pubkey: string, d_tag: string, label: string | null) => void;
+		onfindcontaining?: (kind: number, pubkey: string, d_tag: string) => void;
 	} = $props();
 
 	const app = getAppState();
@@ -64,6 +66,49 @@
 	const dTag = $derived(n.tags.find((t) => t[0] === 'd')?.[1] ?? null);
 	const addrRef = $derived(dTag ? `${n.kind}:${n.pubkey}:${dTag}` : null);
 	let rawOpen = $state(false);
+
+	// Containing publications — kind-30040 indexes that reference the
+	// currently-displayed event by `#a` (preferred, for replaceable kinds)
+	// or `#e`. Refetched on every event swap; the app-level cache makes
+	// repeat visits cheap. Hidden entirely for kinds where the lookup
+	// isn't meaningful (anything outside 30041/30818/30040/30023).
+	const CONTAINING_KINDS = new Set([30041, 30818, 30040, 30023]);
+	const containingApplicable = $derived(CONTAINING_KINDS.has(n.kind));
+	let containingStatus: 'idle' | 'loading' | 'loaded' | 'failed' = $state('idle');
+	let containingIndexes: { id: string; pubkey: string; d_tag: string; title: string }[] = $state([]);
+
+	$effect(() => {
+		// Re-run when the event id changes. `event` is read inside the
+		// async call below — capture it locally so the closure sees the
+		// version that was current when this effect fired (avoids races
+		// when the user clicks chips quickly).
+		const currentEvent = event;
+		const currentId = n.id.toLowerCase();
+		if (!containingApplicable) {
+			containingStatus = 'loaded';
+			containingIndexes = [];
+			return;
+		}
+		containingStatus = 'loading';
+		containingIndexes = [];
+		app.findContainingIndexes(currentEvent).then((r) => {
+			// Drop stale results if the user navigated away in the meantime.
+			if (n.id.toLowerCase() !== currentId) return;
+			containingStatus = r.status;
+			containingIndexes = r.indexes;
+		});
+	});
+
+	function onClickContaining(idx: { pubkey: string; d_tag: string; title: string }) {
+		onclose();
+		onspawnreader?.(idx.pubkey, idx.d_tag, idx.title);
+	}
+
+	function onClickShowAllRefs() {
+		if (!dTag) return;
+		onclose();
+		onfindcontaining?.(n.kind, n.pubkey, dTag);
+	}
 
 	// Breadcrumb reset: when n.id changes, if it isn't the expected chained
 	// target, the user came in via external nav (popover replay, fresh open)
@@ -357,10 +402,41 @@
 			{/if}
 		</section>
 
-		<section class="evm__section">
-			<!-- Containing publications block — Slice 6 -->
-			<div class="evm__placeholder">Containing publications · pending Slice 6</div>
-		</section>
+		{#if containingApplicable}
+			<section class="evm__section">
+				<h3 class="evm__heading">
+					Containing publications
+					{#if containingStatus === 'loaded' && containingIndexes.length > 0}
+						<span class="evm__heading-meta">({containingIndexes.length})</span>
+					{/if}
+				</h3>
+				{#if containingStatus === 'loading'}
+					<div class="evm__placeholder">Searching…</div>
+				{:else if containingStatus === 'failed'}
+					<div class="evm__placeholder">Lookup failed.</div>
+				{:else if containingIndexes.length === 0}
+					<div class="evm__placeholder">No publications reference this event locally.</div>
+				{:else}
+					<div class="evm__containing">
+						{#each containingIndexes as idx (idx.id)}
+							<button
+								class="evm__containing-btn"
+								onclick={() => onClickContaining(idx)}
+								title="Open publication: {idx.title}"
+							>
+								<span class="evm__containing-title">{idx.title}</span>
+								<span class="evm__containing-dtag">{idx.d_tag}</span>
+							</button>
+						{/each}
+					</div>
+				{/if}
+				{#if dTag}
+					<button class="evm__show-all" onclick={onClickShowAllRefs}>
+						Show all references →
+					</button>
+				{/if}
+			</section>
+		{/if}
 
 		<section class="evm__section evm__section--raw">
 			<button class="evm__raw-toggle" onclick={() => (rawOpen = !rawOpen)}>
@@ -522,6 +598,60 @@
 		font-size: 0.75rem;
 		color: var(--fg-muted);
 		font-style: italic;
+	}
+
+	/* Containing publications block */
+	.evm__containing {
+		display: flex;
+		flex-direction: column;
+		gap: 4px;
+		margin-bottom: 6px;
+	}
+	.evm__containing-btn {
+		display: flex;
+		align-items: center;
+		gap: 10px;
+		background: none;
+		border: 1px solid var(--border);
+		border-radius: var(--r-sm);
+		padding: 6px 10px;
+		text-align: left;
+		cursor: pointer;
+		color: var(--fg);
+		font-size: 0.78rem;
+	}
+	.evm__containing-btn:hover {
+		background: color-mix(in srgb, var(--id-yours) 12%, transparent);
+		border-color: var(--id-yours);
+	}
+	.evm__containing-title {
+		flex: 1;
+		font-weight: 500;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+	.evm__containing-dtag {
+		font-family: var(--font-mono);
+		font-size: 0.68rem;
+		color: var(--fg-muted);
+		max-width: 200px;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+	.evm__show-all {
+		background: none;
+		border: none;
+		color: var(--id-yours);
+		font-family: inherit;
+		font-size: 0.72rem;
+		padding: 2px 0;
+		cursor: pointer;
+		text-align: left;
+	}
+	.evm__show-all:hover {
+		text-decoration: underline;
 	}
 
 	/* Identifiers block */

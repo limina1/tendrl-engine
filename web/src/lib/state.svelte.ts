@@ -813,6 +813,84 @@ function _createAppState() {
 		searchHistory = [entry, ...searchHistory];
 	}
 
+	// ===================== Containing publications =====================
+	//
+	// For an event (section / wiki / long-form / publication), look up
+	// kind-30040 publication indexes that reference it via `#a` or `#e`
+	// tags. Cached per event id to avoid re-querying as the user paginates
+	// or chains through the modal.
+
+	type ContainingResult = {
+		status: 'loading' | 'loaded' | 'failed';
+		indexes: { id: string; pubkey: string; d_tag: string; title: string }[];
+	};
+	const containingCache = new Map<string, ContainingResult>();
+
+	function addressOf(event: NostrEvent): string | null {
+		const d = event.tags.find((t: string[]) => t[0] === 'd')?.[1];
+		if (!d) return null;
+		return `${event.kind}:${event.pubkey}:${d}`;
+	}
+
+	async function findContainingIndexes(
+		event: NostrEvent | SearchResult
+	): Promise<ContainingResult> {
+		// Normalize id / kind across the two shapes.
+		const id = ('event_id' in event ? event.event_id : event.id).toLowerCase();
+		const kind = event.kind;
+		const ALLOWED = new Set([30041, 30818, 30040, 30023]);
+		if (!ALLOWED.has(kind)) {
+			const empty: ContainingResult = { status: 'loaded', indexes: [] };
+			containingCache.set(id, empty);
+			return empty;
+		}
+
+		const cached = containingCache.get(id);
+		if (cached) return cached;
+
+		// Build the addressOf reference if the event has a d-tag. For
+		// SearchResult, the `addr` field already gives us the components;
+		// for NostrEvent, walk the tags.
+		let aRef: string | null = null;
+		if ('addr' in event && event.addr) {
+			aRef = `${event.kind}:${event.addr.pubkey}:${event.addr.d_tag}`;
+		} else if ('tags' in event && Array.isArray(event.tags)) {
+			aRef = addressOf(event as NostrEvent);
+		}
+
+		const loading: ContainingResult = { status: 'loading', indexes: [] };
+		containingCache.set(id, loading);
+
+		try {
+			const [byA, byE] = await Promise.all([
+				aRef
+					? api.queryEvents([{ kinds: [30040], '#a': [aRef] }], 'local_only')
+					: Promise.resolve({ events: [] }),
+				api.queryEvents([{ kinds: [30040], '#e': [id] }], 'local_only')
+			]);
+			const seen = new Set<string>();
+			const indexes: ContainingResult['indexes'] = [];
+			for (const ev of [...(byA?.events ?? []), ...(byE?.events ?? [])]) {
+				const e = ev as NostrEvent;
+				if (seen.has(e.id)) continue;
+				seen.add(e.id);
+				const title = e.tags.find((t: string[]) => t[0] === 'title')?.[1];
+				const d_tag = e.tags.find((t: string[]) => t[0] === 'd')?.[1];
+				if (!title || !d_tag) continue;
+				indexes.push({ id: e.id, pubkey: e.pubkey, d_tag, title });
+				if (indexes.length >= 5) break;
+			}
+			const result: ContainingResult = { status: 'loaded', indexes };
+			containingCache.set(id, result);
+			return result;
+		} catch (e) {
+			console.error('findContainingIndexes failed:', e);
+			const failed: ContainingResult = { status: 'failed', indexes: [] };
+			containingCache.set(id, failed);
+			return failed;
+		}
+	}
+
 	async function getEventForModal(eventId: string) {
 		const id = eventId.toLowerCase();
 		try {
@@ -2045,6 +2123,7 @@ function _createAppState() {
 		handleSearch,
 		pushHistoryEntry,
 		getEventForModal,
+		findContainingIndexes,
 		get searchHistory() { return searchHistory; },
 		get currentEntry() { return currentEntry; },
 		get previousEntry() { return previousEntry; },

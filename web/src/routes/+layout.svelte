@@ -140,6 +140,22 @@
 		event={app.eventModalData}
 		onclose={() => (app.eventModalData = null)}
 		onspawnreader={spawnReader}
+		onfindcontaining={(kind, pubkey, d_tag) => {
+			// Match onFindContaining's behavior — broad `a:K:pk:d` search +
+			// pop the search slot into view. Modal closed by the component.
+			const aRef = `${kind}:${pubkey}:${d_tag}`;
+			app.handleSearch(`a:${aRef}`, { scopeToMe: false });
+			try {
+				const store = getActiveStore();
+				const searchSlot = store.findSlotForClass('research');
+				if (searchSlot) {
+					store.focusSlot(searchSlot);
+					if (store.effectiveState(searchSlot) === 'rail') store.toggleSlot(searchSlot);
+				}
+			} catch {
+				// no store — legacy chrome
+			}
+		}}
 	/>
 {/if}
 

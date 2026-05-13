@@ -589,3 +589,68 @@ Verify:
 
 When the query has no =count:= , the panel keeps its original
 flat-list behavior. Switching is automatic per response shape.
+
+* Slice 6 — Containing publications block
+
+EventViewModal grows a "Containing publications" section that
+looks up kind-30040 indexes referencing the currently-displayed
+event via =#a= (preferred — replaceable address) and =#e= ( event
+id). Hidden entirely for kinds outside =30041 / 30818 / 30040 /
+30023= , where the lookup isn't meaningful.
+
+State lives in =state.svelte.ts= as =findContainingIndexes(event)= ,
+which caches results per event id ( Map<string, {status, indexes}> )
+so repeat visits are free. Up to 5 results, dedupe by id, require
+both =title= and =d= tags. Always =local_only= — by intent, the
+audit-locked invariant.
+
+UI: each result renders as a button ( title + d-tag chip) → on
+click, closes the modal and calls =onspawnreader= to open the
+publication in a reader buffer. A "Show all references →" link
+below dispatches the broader =a:K:pk:d= search via
+=onfindcontaining= ( wired in =+layout.svelte= to focus the
+research slot).
+
+** Typecheck
+
+#+begin_src bash
+cd web && pnpm check
+#+end_src
+
+Expected: =0 ERRORS= .
+
+** UI verification
+
+#+begin_src bash
+cd web && pnpm dev
+#+end_src
+
+1. *Section appears for kind 30041*: open EventViewModal on a
+   publication section. Block titled "Containing publications"
+   renders below Tags. While loading, "Searching…". Once loaded,
+   up to 5 publication buttons appear (or "No publications
+   reference this event locally." if none).
+
+2. *Click → reader opens*: click any publication button. Modal
+   closes, a reader buffer spawns for that publication. History
+   pill count stays the same (this is reader-open, not a search).
+
+3. *Show all references*: click "Show all references →" at the
+   bottom. Modal closes, the search slot becomes visible (focused,
+   expanded out of rail if needed), populated with =a:K:pk:d=
+   results — every event that references the address, not just
+   30040 indexes.
+
+4. *Cache hit on chained nav*: navigate via an =e= chip to a new
+   event, then breadcrumb back. The original event's "Containing
+   publications" block should be instant (no "Searching…" flash) —
+   the cache populated on first visit.
+
+5. *Hidden for unrelated kinds*: open the modal on a kind-1 note.
+   The "Containing publications" section should not render at all
+   (entire block hidden, not just empty).
+
+6. *External nav clears state appropriately*: replay an event
+   from the history popover while the modal is already open. The
+   block re-runs the lookup for the new event (its own cache
+   entry), not a stale one from the previous event.
