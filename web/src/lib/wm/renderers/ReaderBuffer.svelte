@@ -644,6 +644,7 @@
 													viewMode = 'paginated';
 													handleNavigate(i);
 												}}
+												onviewjson={openSectionJsonBySection}
 											/>
 										</div>
 										<div class="row-actions">
@@ -730,6 +731,7 @@
 											viewMode = 'paginated';
 											handleNavigate(i);
 										}}
+										onviewjson={openSectionJsonBySection}
 									/>
 								</div>
 							</div>
