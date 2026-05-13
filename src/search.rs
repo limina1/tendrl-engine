@@ -237,10 +237,18 @@ impl SearchQuery {
     ///
     /// Only includes tag, kind, author, since, until, and limit.
     /// Text and semantic filters are excluded (they're post-filters).
+    ///
+    /// **Multi-char tag filters are excluded here** — NIP-01 only indexes
+    /// single-letter tag-filter keys (`#t`, `#d`, etc.). Emitting `#author`
+    /// or `#client` would pass through nostrdb unfiltered. Multi-char names
+    /// are applied as a post-filter via `query::filter_by_tags`.
     pub fn to_nip01_filters(&self) -> Vec<Value> {
         let mut filter = serde_json::Map::new();
 
         for tf in &self.tag_filters {
+            if tf.tag_name.chars().count() != 1 {
+                continue;
+            }
             let key = format!("#{}", tf.tag_name);
             let values: Vec<Value> = tf.values.iter().map(|v| Value::String(v.clone())).collect();
             filter.insert(key, Value::Array(values));

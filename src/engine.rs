@@ -796,17 +796,33 @@ impl Engine {
         }
 
         let mut filters = query.to_nip01_filters();
+        let has_multi_char_tag = query
+            .tag_filters
+            .iter()
+            .any(|tf| tf.tag_name.chars().count() > 1);
+
         if filters.is_empty() {
-            // No NIP-01 filters — fetch broadly with a limit
-            filters = vec![serde_json::json!({"limit": limit})];
+            // No NIP-01-indexable filters — fetch broadly with a limit. Bump
+            // the fetch limit when a multi-char tag filter is the only
+            // criterion, since post-filtering will discard the vast majority.
+            let fetch_limit = if has_multi_char_tag { limit.max(500) } else { limit };
+            filters = vec![serde_json::json!({"limit": fetch_limit})];
         }
 
         let response = self.get_events(filters, policy, override_relays).await?;
 
-        let filtered = if let Some(text_filter) = &query.text_filter {
-            query::filter_by_text(&response.events, text_filter)
+        // Multi-char tag filters (e.g. `author:Claude`) are applied here —
+        // NIP-01 only indexes single-letter keys at the DB layer.
+        let tag_filtered = if has_multi_char_tag {
+            query::filter_by_tags(&response.events, &query.tag_filters)
         } else {
             response.events
+        };
+
+        let filtered = if let Some(text_filter) = &query.text_filter {
+            query::filter_by_text(&tag_filtered, text_filter)
+        } else {
+            tag_filtered
         };
 
         let results = search::build_search_results(&filtered, limit);

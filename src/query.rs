@@ -255,6 +255,55 @@ fn parse_filter(filter_json: &Value) -> Result<nostrdb::Filter> {
 
 /// Post-filter events by text content (and title tag), case-insensitive.
 ///
+/// Post-filter events by tag filters that NIP-01 / nostrdb can't index.
+///
+/// NIP-01 only indexes single-letter tag-filter keys (`#t`, `#d`, etc.).
+/// Multi-char tag names like `author`, `client`, `imeta`, `alt`, …
+/// pass through nostrdb without filtering — we apply them here by
+/// walking each event's `tags` array.
+///
+/// Each event must satisfy ALL multi-char filters (AND across filters,
+/// OR within a single filter's values — same semantics as NIP-01).
+/// Single-char filters are skipped here since they were already applied
+/// in the DB query.
+pub fn filter_by_tags(
+    events: &[Value],
+    tag_filters: &[crate::search::TagFilter],
+) -> Vec<Value> {
+    let multi_char: Vec<&crate::search::TagFilter> = tag_filters
+        .iter()
+        .filter(|tf| tf.tag_name.chars().count() > 1)
+        .collect();
+    if multi_char.is_empty() {
+        return events.to_vec();
+    }
+
+    events
+        .iter()
+        .filter(|event| {
+            let tags = match event.get("tags").and_then(|t| t.as_array()) {
+                Some(t) => t,
+                None => return false,
+            };
+            multi_char.iter().all(|tf| {
+                tags.iter().any(|tag| {
+                    let arr = match tag.as_array() {
+                        Some(a) => a,
+                        None => return false,
+                    };
+                    let name = arr.first().and_then(|v| v.as_str()).unwrap_or("");
+                    if name != tf.tag_name {
+                        return false;
+                    }
+                    let val = arr.get(1).and_then(|v| v.as_str()).unwrap_or("");
+                    tf.values.iter().any(|v| v == val)
+                })
+            })
+        })
+        .cloned()
+        .collect()
+}
+
 /// - Keywords: all words must appear (AND, order-independent)
 /// - Exact: content must contain the substring
 pub fn filter_by_text(events: &[Value], filter: &crate::search::TextFilter) -> Vec<Value> {
@@ -342,6 +391,41 @@ mod tests {
     use super::*;
     use crate::search::TextFilter;
     use serde_json::json;
+
+    #[test]
+    fn test_filter_by_tags_multi_char() {
+        use crate::search::TagFilter;
+        let events = vec![
+            json!({"tags": [["author", "Claude"], ["t", "tech"]]}),
+            json!({"tags": [["author", "Pablo"]]}),
+            json!({"tags": [["t", "tech"]]}),
+            json!({"tags": [["author", "Claude"], ["author", "Pablo"]]}),
+        ];
+        let filters = vec![TagFilter {
+            tag_name: "author".to_string(),
+            values: vec!["Claude".to_string()],
+        }];
+        let result = filter_by_tags(&events, &filters);
+        // Events 0 and 3 have an "author"=>"Claude" tag.
+        assert_eq!(result.len(), 2);
+    }
+
+    #[test]
+    fn test_filter_by_tags_single_char_passthrough() {
+        use crate::search::TagFilter;
+        // Single-char filters are applied by nostrdb, not here — this helper
+        // ignores them and returns everything.
+        let events = vec![
+            json!({"tags": [["t", "rust"]]}),
+            json!({"tags": [["t", "python"]]}),
+        ];
+        let filters = vec![TagFilter {
+            tag_name: "t".to_string(),
+            values: vec!["rust".to_string()],
+        }];
+        let result = filter_by_tags(&events, &filters);
+        assert_eq!(result.len(), 2);
+    }
 
     #[test]
     fn test_filter_by_text_keywords_single() {
