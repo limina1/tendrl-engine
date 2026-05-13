@@ -491,3 +491,33 @@ Implementation: =SearchQuery.has_tags: Vec<String>=, parsed in
 =src/search.rs= (must be checked before the generic =name:value=
 dispatch so =has:author= doesn't parse as =Tag("has", "author")=),
 applied by =query::filter_by_has_tags= after the DB fetch.
+
+** Tag value matching: substring + quoted phrases
+
+For multi-char tag filters, the post-filter does *case-insensitive
+substring* matching, not exact. =author:liminal= matches events
+with author tags =liminal 🌑=, =Liminal Day=, =the liminal night=,
+etc. This is the right default for display-name conventions where
+emoji and casing vary.
+
+Multi-word values via double quotes:
+
+#+begin_src bash
+read -r -d '' Q <<'Q'
+{"query":"author:\"alice in wonderland\"","policy":"local_only","scope_to_me":false}
+Q
+curl -X POST http://localhost:3030/api/v1/search \
+  -H 'Content-Type: application/json' -d "$Q"
+#+end_src
+
+Parser ordering note: the tag-prefix check at =src/search.rs:506=
+runs BEFORE the quoted-Exact fallback. =author:"alice in wonderland"=
+classifies as =TagFilter("author", "alice in wonderland")=, not as
+an exact-text search. Plain quoted tokens with no recognized
+prefix ( ="hello world"= ) still fall through to =TextFilter::Exact=
+as before.
+
+Single-char tag filters ( =t:= , =d:= , …) keep exact-match semantics
+because they're applied at the nostrdb / NIP-01 layer where the
+protocol mandates exact value match. Only the post-filter path is
+substring-based.

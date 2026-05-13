@@ -484,11 +484,6 @@ fn classify_token(token: &Token) -> TokenClass {
         });
     }
 
-    // Quoted tokens without special prefix → exact text
-    if token.quoted {
-        return TokenClass::Exact(text.clone());
-    }
-
     // by: prefix → author filter
     if let Some(rest) = text.strip_prefix("by:") {
         if rest == "me" {
@@ -556,6 +551,9 @@ fn classify_token(token: &Token) -> TokenClass {
     // (`author`, `client`, `imeta`, `alt`, `subject`, `summary`, …) both
     // qualify. The value must not start with `/` so URLs like
     // `https://example.com` don't get misclassified as a tag filter.
+    // This check intentionally runs BEFORE the quoted-Exact fallback so
+    // `author:"alice in wonderland"` is recognized as a tag filter with
+    // a multi-word value, not as an exact-text search.
     if let Some((prefix, rest)) = text.split_once(':') {
         let valid_name = !prefix.is_empty()
             && prefix
@@ -570,6 +568,11 @@ fn classify_token(token: &Token) -> TokenClass {
         if valid_name && valid_value {
             return TokenClass::Tag(prefix.to_string(), rest.to_string());
         }
+    }
+
+    // Quoted token with no recognized prefix → exact text match.
+    if token.quoted {
+        return TokenClass::Exact(text.clone());
     }
 
     // Bare word → keyword
@@ -792,6 +795,19 @@ mod tests {
         let q = SearchQuery::parse("k:30041 has:imeta").unwrap();
         assert_eq!(q.kind_filter, Some(vec![30041]));
         assert_eq!(q.has_tags, vec!["imeta".to_string()]);
+    }
+
+    #[test]
+    fn test_parse_multichar_tag_quoted_value() {
+        // Quoted value preserves spaces — `author:"alice in wonderland"`.
+        let q = SearchQuery::parse(r#"author:"alice in wonderland""#).unwrap();
+        assert_eq!(
+            q.tag_filters,
+            vec![TagFilter {
+                tag_name: "author".to_string(),
+                values: vec!["alice in wonderland".to_string()]
+            }]
+        );
     }
 
     #[test]

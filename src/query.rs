@@ -262,6 +262,12 @@ fn parse_filter(filter_json: &Value) -> Result<nostrdb::Filter> {
 /// pass through nostrdb without filtering — we apply them here by
 /// walking each event's `tags` array.
 ///
+/// **Matching is case-insensitive substring** so `author:liminal` finds
+/// events whose author tag is `"liminal 🌑"` or `"Liminal Day"`. To force
+/// exact match, callers can post-process the results themselves; in
+/// practice, surface noise from substring is preferable to missing hits
+/// when display-name conventions vary (emoji, casing, last names).
+///
 /// Each event must satisfy ALL multi-char filters (AND across filters,
 /// OR within a single filter's values — same semantics as NIP-01).
 /// Single-char filters are skipped here since they were already applied
@@ -278,6 +284,17 @@ pub fn filter_by_tags(
         return events.to_vec();
     }
 
+    // Lowercase the filter values once up front.
+    let needles: Vec<(String, Vec<String>)> = multi_char
+        .iter()
+        .map(|tf| {
+            (
+                tf.tag_name.clone(),
+                tf.values.iter().map(|v| v.to_lowercase()).collect(),
+            )
+        })
+        .collect();
+
     events
         .iter()
         .filter(|event| {
@@ -285,18 +302,19 @@ pub fn filter_by_tags(
                 Some(t) => t,
                 None => return false,
             };
-            multi_char.iter().all(|tf| {
+            needles.iter().all(|(name, values)| {
                 tags.iter().any(|tag| {
                     let arr = match tag.as_array() {
                         Some(a) => a,
                         None => return false,
                     };
-                    let name = arr.first().and_then(|v| v.as_str()).unwrap_or("");
-                    if name != tf.tag_name {
+                    let tag_name = arr.first().and_then(|v| v.as_str()).unwrap_or("");
+                    if tag_name != name.as_str() {
                         return false;
                     }
-                    let val = arr.get(1).and_then(|v| v.as_str()).unwrap_or("");
-                    tf.values.iter().any(|v| v == val)
+                    let tag_val = arr.get(1).and_then(|v| v.as_str()).unwrap_or("");
+                    let tag_val_lc = tag_val.to_lowercase();
+                    values.iter().any(|needle| tag_val_lc.contains(needle))
                 })
             })
         })
@@ -437,6 +455,42 @@ mod tests {
         let result = filter_by_tags(&events, &filters);
         // Events 0 and 3 have an "author"=>"Claude" tag.
         assert_eq!(result.len(), 2);
+    }
+
+    #[test]
+    fn test_filter_by_tags_substring_case_insensitive() {
+        use crate::search::TagFilter;
+        // `author:liminal` should match "liminal 🌑", "Liminal Day",
+        // "the liminal night" — substring + case-insensitive.
+        let events = vec![
+            json!({"tags": [["author", "liminal 🌑"]]}),
+            json!({"tags": [["author", "Liminal Day"]]}),
+            json!({"tags": [["author", "the liminal night"]]}),
+            json!({"tags": [["author", "Claude"]]}),
+        ];
+        let filters = vec![TagFilter {
+            tag_name: "author".to_string(),
+            values: vec!["liminal".to_string()],
+        }];
+        let result = filter_by_tags(&events, &filters);
+        assert_eq!(result.len(), 3);
+    }
+
+    #[test]
+    fn test_filter_by_tags_quoted_phrase() {
+        use crate::search::TagFilter;
+        // `author:"word sequence"` — the tokenizer hands us the spaces
+        // intact; we substring-match the phrase.
+        let events = vec![
+            json!({"tags": [["author", "alice in wonderland"]]}),
+            json!({"tags": [["author", "alice"]]}),
+        ];
+        let filters = vec![TagFilter {
+            tag_name: "author".to_string(),
+            values: vec!["in wonderland".to_string()],
+        }];
+        let result = filter_by_tags(&events, &filters);
+        assert_eq!(result.len(), 1);
     }
 
     #[test]
