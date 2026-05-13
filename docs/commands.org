@@ -337,9 +337,9 @@ Click dispatch:
 | =a=         | =30040:pk:d=      | =onspawnreader(pk, d, null)=, close modal                             |
 | =a=         | =K:pk:d= (K≠30040) | local_only =queryEvents=, swap modal to newest, push naddr history    |
 | =p=         | hex64             | =handleSearch("by:" + encodeNpub(value))=, close modal                |
-| =d=         | any text          | =handleSearch("#d:" + value)=, close modal                            |
-| =t=         | any text          | =handleSearch("#t:" + value)=, close modal                            |
-| 1-char key  | whitespace-free   | =handleSearch("#key:value")=, close modal                             |
+| =d=         | any text          | =handleSearch("d:" + value)=, close modal                             |
+| =t=         | any text          | =handleSearch("t:" + value)=, close modal                             |
+| 1-char key  | whitespace-free   | =handleSearch("key:value")= (no =#= — see =src/search.rs:126=)        |
 | anything else                  | none — plain chip                                                     |
 
 Hex values are validated by =/^[0-9a-f]{64}$/= (lowercased first);

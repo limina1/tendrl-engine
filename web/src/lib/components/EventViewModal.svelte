@@ -141,12 +141,13 @@
 			}
 			return { kind: 'addr-nonindex', addr: value };
 		}
-		if (key === 'd') return { kind: 'search', query: `#d:${value}` };
-		if (key === 't') return { kind: 'search', query: `#t:${value}` };
+		if (key === 'd') return { kind: 'search', query: `d:${value}` };
+		if (key === 't') return { kind: 'search', query: `t:${value}` };
 		// Single-token fallback: any 1-char key with a whitespace-free value
-		// becomes #key:value. Multi-word values fall through to plain chip.
+		// becomes key:value (matches the search parser's tag-filter syntax —
+		// see src/search.rs:126). Multi-word values fall through to plain chip.
 		if (key.length === 1 && /^[^\s]+$/.test(value)) {
-			return { kind: 'search', query: `#${key}:${value}` };
+			return { kind: 'search', query: `${key}:${value}` };
 		}
 		return { kind: 'none' };
 	}
