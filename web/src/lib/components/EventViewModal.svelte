@@ -164,8 +164,13 @@
 		return new Date(ts * 1000).toLocaleString();
 	}
 
-	function copyText(s: string) {
-		try { navigator.clipboard?.writeText(s); } catch { /* no-op */ }
+	function copyText(s: string, label = 'value'): void {
+		try {
+			navigator.clipboard?.writeText(s);
+			app.pushToast(`${label} copied`, 'success');
+		} catch {
+			app.pushToast(`Couldn't copy ${label}`, 'error');
+		}
 	}
 
 	function shortHex(s: string, head = 8, tail = 6): string {
@@ -314,7 +319,7 @@
 			<div class="evm__copy-bar">
 				<button
 					class="evm__copy-pill"
-					onclick={() => copyText(n.id)}
+					onclick={() => copyText(n.id, 'id')}
 					title="Copy hex id ({n.id})"
 				>
 					<span class="evm__copy-icon" aria-hidden="true">📋</span>
@@ -322,7 +327,13 @@
 				</button>
 				<button
 					class="evm__copy-pill"
-					onclick={() => { try { copyText(encodeNevent(n.id)); } catch { /* */ } }}
+					onclick={() => {
+						try {
+							copyText(encodeNevent(n.id), 'nevent');
+						} catch {
+							app.pushToast("Couldn't encode nevent", 'error');
+						}
+					}}
 					title="Copy as nevent1… (bech32m event id)"
 				>
 					<span class="evm__copy-icon" aria-hidden="true">📋</span>
@@ -333,8 +344,13 @@
 						class="evm__copy-pill"
 						onclick={() => {
 							try {
-								copyText(encodeNaddr({ kind: n.kind, pubkey: n.pubkey, dTag }));
-							} catch { /* */ }
+								copyText(
+									encodeNaddr({ kind: n.kind, pubkey: n.pubkey, dTag }),
+									'naddr'
+								);
+							} catch {
+								app.pushToast("Couldn't encode naddr", 'error');
+							}
 						}}
 						title="Copy as naddr1… (bech32m {n.kind}:{shortHex(n.pubkey, 6, 4)}:{dTag})"
 					>
@@ -344,7 +360,13 @@
 				{/if}
 				<button
 					class="evm__copy-pill"
-					onclick={() => { try { copyText(encodeNpub(n.pubkey)); } catch { /* */ } }}
+					onclick={() => {
+						try {
+							copyText(encodeNpub(n.pubkey), 'npub');
+						} catch {
+							app.pushToast("Couldn't encode npub", 'error');
+						}
+					}}
 					title="Copy author npub1… (bech32 pubkey)"
 				>
 					<span class="evm__copy-icon" aria-hidden="true">📋</span>

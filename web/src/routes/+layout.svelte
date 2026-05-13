@@ -4,6 +4,7 @@
 	import { createAppState } from '$lib/state.svelte';
 	import SearchActionModal from '$lib/components/SearchActionModal.svelte';
 	import EventViewModal from '$lib/components/EventViewModal.svelte';
+	import ToastStack from '$lib/components/ToastStack.svelte';
 	import type { SearchResult } from '$lib/types';
 	import { getActiveStore } from '$lib/wm/buffer-store.svelte';
 
@@ -122,6 +123,8 @@
 </script>
 
 {@render children()}
+
+<ToastStack />
 
 {#if app.actionModalResult}
 	<SearchActionModal

@@ -125,6 +125,41 @@ function _createAppState() {
 	let feedLoadingMore = $state(false);
 	let feedHasMore = $state(true);
 
+	// --- Toasts ---
+	//
+	// Lightweight transient notifications for quick acknowledgments —
+	// "copied to clipboard", "publish queued", "broadcast complete", etc.
+	// Stack mounts lower-right via <ToastStack /> in the layout. Each
+	// toast auto-dismisses after `ttlMs`; the timer is cleared if the
+	// user dismisses it manually first.
+	type Toast = {
+		id: number;
+		message: string;
+		kind: 'success' | 'info' | 'error';
+	};
+	let toasts: Toast[] = $state([]);
+	let nextToastId = 1;
+	const toastTimers = new Map<number, ReturnType<typeof setTimeout>>();
+
+	function pushToast(message: string, kind: Toast['kind'] = 'success', ttlMs = 2000): number {
+		const id = nextToastId++;
+		toasts = [...toasts, { id, message, kind }];
+		toastTimers.set(
+			id,
+			setTimeout(() => dismissToast(id), ttlMs)
+		);
+		return id;
+	}
+
+	function dismissToast(id: number): void {
+		const t = toastTimers.get(id);
+		if (t) {
+			clearTimeout(t);
+			toastTimers.delete(id);
+		}
+		toasts = toasts.filter((t) => t.id !== id);
+	}
+
 	// --- Search ---
 	let searchResults: SearchResult[] = $state([]);
 	let searchCount = $state(0);
@@ -2169,6 +2204,9 @@ function _createAppState() {
 		getEventForModal,
 		openAddressableInModal,
 		findContainingIndexes,
+		get toasts() { return toasts; },
+		pushToast,
+		dismissToast,
 		get searchHistory() { return searchHistory; },
 		get currentEntry() { return currentEntry; },
 		get previousEntry() { return previousEntry; },
