@@ -62,7 +62,8 @@
 <style>
 	.modal-backdrop {
 		position: fixed;
-		inset: 0;
+		/* Leave the modeline visible for history pill + network pill access. */
+		inset: 0 0 var(--modeline-h, 0) 0;
 		z-index: 100;
 		display: flex;
 		align-items: center;

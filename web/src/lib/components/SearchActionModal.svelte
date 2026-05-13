@@ -145,7 +145,8 @@
 <style>
 	.action-modal-backdrop {
 		position: fixed;
-		inset: 0;
+		/* Leave the modeline visible for history pill + network pill access. */
+		inset: 0 0 var(--modeline-h, 0) 0;
 		z-index: 110;
 		background: rgba(0, 0, 0, 0.5);
 		display: flex;

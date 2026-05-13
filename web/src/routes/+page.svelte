@@ -1441,13 +1441,14 @@
 		color: var(--id-yours);
 	}
 
-	/* Slice 3 popover — anchored above the pill (bottom: 100%). z-index 110
-	   keeps it above the modal backdrop (100) for Slice 4. */
+	/* Slice 3 popover — anchored above the pill (bottom: 100%). z-index 120
+	   keeps it above every modal backdrop (100–110) so it stays clickable
+	   while a modal is open (Slice 4: backdrops clip to the modeline). */
 	.hs-popover {
 		position: absolute;
 		bottom: calc(100% + 6px);
 		right: 0;
-		z-index: 110;
+		z-index: 120;
 		min-width: 320px;
 		max-width: 480px;
 		background: var(--panel-bg);

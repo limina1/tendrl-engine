@@ -113,7 +113,9 @@
 <style>
 	.evm-backdrop {
 		position: fixed;
-		inset: 0;
+		/* Stop short of the modeline so the search-history pill stays
+		   clickable while the modal is open. */
+		inset: 0 0 var(--modeline-h, 0) 0;
 		z-index: 100;
 		background: rgba(0, 0, 0, 0.5);
 		display: flex;

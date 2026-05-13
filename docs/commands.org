@@ -269,3 +269,55 @@ The =replayEntry= helper is a switch on =entry.kind=:
 The =naddr= path isn't exercised yet — those entries only get pushed
 once Slice 5 wires =a=-tag clicks in the EventViewModal. Its replay
 path is in place for when that lands.
+
+* Slice 4 — Modal overlay clipping
+
+Modal backdrops stop short of the modeline so the history pill +
+network pill stay clickable while a modal is open. Exposed as
+=--modeline-h: 23px= in =app.css= (22px modeline + 1px border-top);
+each backdrop uses =inset: 0 0 var(--modeline-h, 0) 0=.
+
+Applied to: =EventViewModal=, the legacy =json-modal-backdrop= in
+=+layout.svelte=, =SearchActionModal=, =ProfileModal=. The popover
+=hs-popover= is bumped to =z-index: 120= so it sits above every
+modal backdrop ( =100=– =110= ) — opening the popover while a modal
+is open works.
+
+** Typecheck
+
+#+begin_src bash
+cd web && pnpm check
+#+end_src
+
+Expected: =0 ERRORS=.
+
+** UI verification
+
+#+begin_src bash
+cd web && pnpm dev
+#+end_src
+
+1. *Modeline visible under EventViewModal*: run a search, click
+   =⋮= → =View JSON= on a result. The new EventViewModal opens.
+   The bottom modeline (with the 🔍 history pill + network pill +
+   identity pill) should remain visible below the dimmed backdrop.
+
+2. *Pill clickable through modal*: with the modal still open, click
+   the 🔍 pill in the modeline. The popover opens, the modal stays
+   open. (Confirms the click reaches the pill, not the backdrop.)
+
+3. *Popover renders above the modal*: with the modal open, open the
+   popover. The popover should visually overlap the modal's top edge
+   without being obscured by it (z-120 > z-100).
+
+4. *Clicking backdrop still closes*: click anywhere on the dimmed
+   region (outside the modal card, outside the modeline). Modal
+   closes. Modeline pills still don't dismiss it on click — they do
+   their normal thing.
+
+5. *SearchActionModal also clips*: from the search results, click
+   the title of a result row to open the "Read / Find containing /
+   Insert" action modal. Modeline should be visible below it too.
+
+6. *ProfileModal also clips*: click an author name in any place that
+   opens =ProfileModal=. Same: modeline stays visible.

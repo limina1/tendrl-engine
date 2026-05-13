@@ -157,7 +157,9 @@
 <style>
 	.json-modal-backdrop {
 		position: fixed;
-		inset: 0;
+		/* Leave the bottom modeline visible so the search-history pill
+		   stays clickable while a modal is open. */
+		inset: 0 0 var(--modeline-h, 0) 0;
 		z-index: 100;
 		background: rgba(0, 0, 0, 0.5);
 		display: flex;
