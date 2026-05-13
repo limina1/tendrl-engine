@@ -6,6 +6,7 @@
 
 const CHARSET = 'qpzry9x8gf2tvdw0s3jn54khce6mua7l';
 const BECH32M_CONST = 0x2bc830a3;
+const BECH32_CONST = 1;
 
 function polymod(values: number[]): number {
 	const GEN = [0x3b6a57b2, 0x26508e6d, 0x1ea119fa, 0x3d4233dd, 0x2a1462b3];
@@ -26,16 +27,16 @@ function hrpExpand(hrp: string): number[] {
 	return ret;
 }
 
-function createChecksum(hrp: string, data: number[]): number[] {
+function createChecksum(hrp: string, data: number[], constant: number): number[] {
 	const values = hrpExpand(hrp).concat(data).concat([0, 0, 0, 0, 0, 0]);
-	const mod = polymod(values) ^ BECH32M_CONST;
+	const mod = polymod(values) ^ constant;
 	const ret: number[] = [];
 	for (let p = 0; p < 6; p++) ret.push((mod >> (5 * (5 - p))) & 31);
 	return ret;
 }
 
-function bech32Encode(hrp: string, data: number[]): string {
-	const combined = data.concat(createChecksum(hrp, data));
+function bech32Encode(hrp: string, data: number[], constant: number): string {
+	const combined = data.concat(createChecksum(hrp, data, constant));
 	let ret = `${hrp}1`;
 	for (const v of combined) ret += CHARSET[v];
 	return ret;
@@ -122,7 +123,47 @@ export function encodeNaddr(opts: {
 	);
 
 	const fiveBit = convertBits(payload, 8, 5, true);
-	return bech32Encode('naddr', fiveBit);
+	return bech32Encode('naddr', fiveBit, BECH32M_CONST);
+}
+
+/**
+ * Encode a 64-char hex pubkey as an `npub1...` bech32 string.
+ * Uses the bech32 checksum (NIP-19 spec — npub and nsec are bech32,
+ * everything else is bech32m).
+ */
+export function encodeNpub(hexPubkey: string): string {
+	if (hexPubkey.length !== 64) {
+		throw new Error(`encodeNpub: expected 64-char hex, got ${hexPubkey.length}`);
+	}
+	const bytes = hexToBytes(hexPubkey);
+	const fiveBit = convertBits(bytes, 8, 5, true);
+	return bech32Encode('npub', fiveBit, BECH32_CONST);
+}
+
+/**
+ * Encode an event id (64-char hex) as an `nevent1...` bech32m string.
+ * Only the SPECIAL TLV (the event id) — no relay/author/kind hints.
+ */
+export function encodeNevent(hexEventId: string): string {
+	if (hexEventId.length !== 64) {
+		throw new Error(`encodeNevent: expected 64-char hex, got ${hexEventId.length}`);
+	}
+	const idBytes = hexToBytes(hexEventId);
+	const payload = tlv(TLV_SPECIAL, idBytes);
+	const fiveBit = convertBits(payload, 8, 5, true);
+	return bech32Encode('nevent', fiveBit, BECH32M_CONST);
+}
+
+/** Strip an optional `nostr:` URI prefix from a NIP-19 identifier. */
+export function stripNostrPrefix(s: string): string {
+	const t = s.trim();
+	return t.startsWith('nostr:') ? t.slice(6) : t;
+}
+
+/** RFC 4648 lowercase hex, exactly 64 chars. */
+const HEX64_RE = /^[0-9a-f]{64}$/;
+export function isHex64(s: string): boolean {
+	return HEX64_RE.test(s.toLowerCase());
 }
 
 /**

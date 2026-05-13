@@ -321,3 +321,101 @@ cd web && pnpm dev
 
 6. *ProfileModal also clips*: click an author name in any place that
    opens =ProfileModal=. Same: modeline stays visible.
+
+* Slice 5 — Identifiers + Tags blocks in EventViewModal
+
+The modal now has two real sections beyond the header: *Identifiers*
+( =id= / =addr= / =author= rows with clickable values + copy buttons)
+and *Tags* (every tag rendered as a chip with kind-tinted prefix;
+clickable when the value maps to a known action).
+
+Click dispatch:
+
+| Tag         | Value shape       | Action                                                                |
+|-------------+-------------------+-----------------------------------------------------------------------|
+| =e= / =q= / =note= | hex64             | chained nav — =getEventForModal(value)= swaps the modal in place      |
+| =a=         | =30040:pk:d=      | =onspawnreader(pk, d, null)=, close modal                             |
+| =a=         | =K:pk:d= (K≠30040) | local_only =queryEvents=, swap modal to newest, push naddr history    |
+| =p=         | hex64             | =handleSearch("by:" + encodeNpub(value))=, close modal                |
+| =d=         | any text          | =handleSearch("#d:" + value)=, close modal                            |
+| =t=         | any text          | =handleSearch("#t:" + value)=, close modal                            |
+| 1-char key  | whitespace-free   | =handleSearch("#key:value")=, close modal                             |
+| anything else                  | none — plain chip                                                     |
+
+Hex values are validated by =/^[0-9a-f]{64}$/= (lowercased first);
+non-hex falls through to plain chip. =nostr:= prefix is stripped at
+the input boundary via =stripNostrPrefix=.
+
+The =d= tag itself is hidden from the Tags block — its value is
+shown as the =addr= row in Identifiers. =title= is also hidden (it's
+already the modal header).
+
+** Typecheck
+
+#+begin_src bash
+cd web && pnpm check
+#+end_src
+
+Expected: =0 ERRORS=.
+
+** UI verification
+
+Start the dev server, then walk the checklist:
+
+#+begin_src bash
+cd web && pnpm dev
+#+end_src
+
+1. *Identifiers block — id*: open EventViewModal on any event.
+   The =ID= row shows shortened hex; click → modal swaps to that
+   same event (chained nav adds an =nevent= entry to the history
+   pill). Click =copy= → hex on clipboard. Click =copy nevent= →
+   =nevent1...= bech32m on clipboard. Decode via
+   =POST /api/v1/decode= round-trips back to the same hex.
+
+2. *Identifiers block — addr* (only for events with a =d= tag):
+   shows =K:pkShort:d-tag= and clicking it runs =a:K:pk:d= search.
+   Closes modal. Search slot shows everything that references the
+   address. =copy= writes the canonical =K:pk:d-tag= string.
+
+3. *Identifiers block — author*: shows =ProfileName=, click →
+   runs =by:<npub>= search and closes the modal. =copy npub=
+   writes a valid =npub1...= string ( =bech32= checksum, not
+   =bech32m=). Round-trip via the decode endpoint should yield the
+   original hex.
+
+4. *Tag chips — clickable kinds*: open a kind-30041 section with a
+   mix of tags. =e= / =q= / =note= chips → modal swaps in place;
+   =a= to 30040 → reader opens, modal closes; =p= → close + search;
+   =d= / =t= → close + tag search.
+
+5. *Tag chips — fall-through*: any tag with a non-hex value where
+   it shouldn't matter (e.g. a malformed =e= tag, or a multi-word
+   value under a multi-char key) renders as a plain chip — no
+   hover highlight, no click handler.
+
+6. *Spec npub round-trip via UI* (catches encoder regressions):
+   open the modal on an event authored by the
+   =84dee6e676e5bb67b4ad4e042cf70cbd8681155db535942fcc6a0533858a7240=
+   pubkey (or any event you can construct with that author).
+   Click =copy npub= → paste into:
+
+   #+begin_src bash
+   read -r -d '' NPUB <<'NPUB'
+   PASTE_HERE
+   NPUB
+   curl -X POST http://localhost:3030/api/v1/decode \
+     -H 'Content-Type: application/json' \
+     -d "$(jq -n --arg i "$NPUB" '{input:$i}')"
+   #+end_src
+
+   Expected =pubkey= field matches the original hex.
+
+** Encoder symmetry note
+
+The added =encodeNpub= uses =BECH32_CONST = 1=, not =BECH32M_CONST=
+=0x2bc830a3=. NIP-19 splits the namespace: =npub= / =nsec= are
+bech32, everything else (including =nevent= / =naddr= / =nprofile=)
+is bech32m. =encodeNevent= correctly uses the bech32m constant. If a
+copied =npub1...= fails to decode with the right pubkey, the
+checksum constant is the first thing to suspect.

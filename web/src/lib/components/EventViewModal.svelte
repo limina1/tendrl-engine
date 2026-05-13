@@ -1,14 +1,21 @@
 <script lang="ts">
 	import type { NostrEvent, SearchResult } from '$lib/types';
 	import ProfileName from './ProfileName.svelte';
+	import { getAppState } from '$lib/state.svelte';
+	import { encodeNpub, encodeNevent, isHex64, stripNostrPrefix } from '$lib/nostr/nip19';
+	import * as api from '$lib/api';
 
 	let {
 		event,
-		onclose
+		onclose,
+		onspawnreader
 	}: {
 		event: NostrEvent | SearchResult;
 		onclose: () => void;
+		onspawnreader?: (pubkey: string, d_tag: string, label: string | null) => void;
 	} = $props();
+
+	const app = getAppState();
 
 	type Normalized = {
 		id: string;
@@ -20,9 +27,6 @@
 		title: string | null;
 	};
 
-	// SearchResult and NostrEvent diverge: SearchResult uses `event_id`/`author`,
-	// lacks `content` (only `preview`), and ships a denormalized `title`.
-	// Normalize at the boundary so the rest of the component reads one shape.
 	function normalize(input: NostrEvent | SearchResult): Normalized {
 		if ('event_id' in input) {
 			return {
@@ -48,6 +52,8 @@
 	}
 
 	const n = $derived(normalize(event));
+	const dTag = $derived(n.tags.find((t) => t[0] === 'd')?.[1] ?? null);
+	const addrRef = $derived(dTag ? `${n.kind}:${n.pubkey}:${dTag}` : null);
 	let rawOpen = $state(false);
 
 	const KIND_LABEL: Record<number, string> = {
@@ -66,6 +72,135 @@
 	function formatTime(ts: number): string {
 		return new Date(ts * 1000).toLocaleString();
 	}
+
+	function copyText(s: string) {
+		try { navigator.clipboard?.writeText(s); } catch { /* no-op */ }
+	}
+
+	function shortHex(s: string, head = 8, tail = 6): string {
+		if (s.length <= head + tail + 1) return s;
+		return `${s.slice(0, head)}…${s.slice(-tail)}`;
+	}
+
+	// ===== Click handlers =====
+
+	function onClickEventId() {
+		// Chained nav into the same modal — pushes a history entry.
+		app.getEventForModal(n.id);
+	}
+
+	function onClickAuthor() {
+		let npub: string;
+		try { npub = encodeNpub(n.pubkey); } catch { return; }
+		onclose();
+		app.handleSearch(`by:${npub}`, { scopeToMe: false });
+	}
+
+	function onClickAddr() {
+		if (!addrRef) return;
+		onclose();
+		app.handleSearch(`a:${addrRef}`, { scopeToMe: false });
+	}
+
+	// ===== Tag click dispatch =====
+
+	type TagAction =
+		| { kind: 'none' }
+		| { kind: 'event'; eventId: string }
+		| { kind: 'reader'; pubkey: string; d_tag: string; label: string | null }
+		| { kind: 'addr-nonindex'; addr: string }
+		| { kind: 'search'; query: string };
+
+	function tagAction(tag: string[]): TagAction {
+		if (!Array.isArray(tag) || tag.length < 1) return { kind: 'none' };
+		const key = tag[0];
+		const rawValue = tag[1] ?? '';
+		const value = stripNostrPrefix(rawValue).trim();
+		if (!value) return { kind: 'none' };
+
+		if (key === 'e' || key === 'q' || key === 'note') {
+			if (isHex64(value)) return { kind: 'event', eventId: value.toLowerCase() };
+			return { kind: 'none' };
+		}
+		if (key === 'p') {
+			if (!isHex64(value)) return { kind: 'none' };
+			try {
+				const npub = encodeNpub(value.toLowerCase());
+				return { kind: 'search', query: `by:${npub}` };
+			} catch { return { kind: 'none' }; }
+		}
+		if (key === 'a') {
+			const parts = value.split(':');
+			if (parts.length < 3) return { kind: 'none' };
+			const kind = Number(parts[0]);
+			const pubkey = parts[1];
+			const d_tag = parts.slice(2).join(':');
+			if (!Number.isFinite(kind) || !isHex64(pubkey)) return { kind: 'none' };
+			if (kind === 30040) {
+				return { kind: 'reader', pubkey, d_tag, label: null };
+			}
+			return { kind: 'addr-nonindex', addr: value };
+		}
+		if (key === 'd') return { kind: 'search', query: `#d:${value}` };
+		if (key === 't') return { kind: 'search', query: `#t:${value}` };
+		// Single-token fallback: any 1-char key with a whitespace-free value
+		// becomes #key:value. Multi-word values fall through to plain chip.
+		if (key.length === 1 && /^[^\s]+$/.test(value)) {
+			return { kind: 'search', query: `#${key}:${value}` };
+		}
+		return { kind: 'none' };
+	}
+
+	async function onTagClick(tag: string[]) {
+		const action = tagAction(tag);
+		if (action.kind === 'none') return;
+		if (action.kind === 'event') {
+			// Chained nav — keep modal open, swap content via getEventForModal.
+			app.getEventForModal(action.eventId);
+			return;
+		}
+		if (action.kind === 'reader') {
+			onclose();
+			onspawnreader?.(action.pubkey, action.d_tag, action.label);
+			return;
+		}
+		if (action.kind === 'addr-nonindex') {
+			// Version-aware: query all kinds-by-pubkey-by-d, show newest in modal.
+			const parts = action.addr.split(':');
+			const k = Number(parts[0]);
+			const pk = parts[1];
+			const d = parts.slice(2).join(':');
+			try {
+				const resp = await api.queryEvents(
+					[{ kinds: [k], authors: [pk], '#d': [d] }],
+					'local_only'
+				);
+				const evts = (resp?.events ?? []) as NostrEvent[];
+				evts.sort((a, b) => b.created_at - a.created_at);
+				if (evts[0]) {
+					app.eventModalData = evts[0];
+					app.pushHistoryEntry({
+						kind: 'naddr',
+						coord: { kind: k, pubkey: pk, d_tag: d },
+						title: evts[0].tags.find((t) => t[0] === 'title')?.[1],
+						lastRunAt: Date.now()
+					});
+				}
+			} catch (e) {
+				console.error('a-tag non-index lookup failed:', e);
+			}
+			return;
+		}
+		// search
+		onclose();
+		app.handleSearch(action.query, { scopeToMe: false });
+	}
+
+	// Tags shown in the chip block — exclude the title tag (already in the
+	// header) and the d tag (rendered as the addr identifier above).
+	const tagChips = $derived(
+		n.tags.filter((t) => t[0] !== 'title' && t[0] !== 'd')
+	);
 </script>
 
 <!-- svelte-ignore a11y_click_events_have_key_events -->
@@ -84,13 +219,79 @@
 		</header>
 
 		<section class="evm__section">
-			<!-- Identifiers block — Slice 5 -->
-			<div class="evm__placeholder">Identifiers · pending Slice 5</div>
+			<h3 class="evm__heading">Identifiers</h3>
+			<div class="evm__ids">
+				<!-- event id -->
+				<div class="evm__id-row">
+					<span class="evm__id-key">id</span>
+					<button class="evm__id-val" onclick={onClickEventId} title="Open this event ({n.id})">
+						{shortHex(n.id)}
+					</button>
+					<button class="evm__copy" onclick={() => copyText(n.id)} title="Copy hex id">copy</button>
+					<button
+						class="evm__copy"
+						onclick={() => { try { copyText(encodeNevent(n.id)); } catch { /* */ } }}
+						title="Copy as nevent"
+					>copy nevent</button>
+				</div>
+
+				<!-- addr (only for replaceable events with a d-tag) -->
+				{#if addrRef}
+					<div class="evm__id-row">
+						<span class="evm__id-key">addr</span>
+						<button class="evm__id-val" onclick={onClickAddr} title="Search a:{addrRef}">
+							{n.kind}:{shortHex(n.pubkey, 6, 4)}:{dTag}
+						</button>
+						<button class="evm__copy" onclick={() => copyText(addrRef)} title="Copy addr">copy</button>
+					</div>
+				{/if}
+
+				<!-- author -->
+				<div class="evm__id-row">
+					<span class="evm__id-key">author</span>
+					<button class="evm__id-val" onclick={onClickAuthor} title="Search by:{n.pubkey}">
+						<ProfileName pubkey={n.pubkey} />
+					</button>
+					<button
+						class="evm__copy"
+						onclick={() => { try { copyText(encodeNpub(n.pubkey)); } catch { /* */ } }}
+						title="Copy npub"
+					>copy npub</button>
+				</div>
+			</div>
 		</section>
 
 		<section class="evm__section">
-			<!-- Tags block — Slice 5 -->
-			<div class="evm__placeholder">{n.tags.length} tags · pending Slice 5</div>
+			<h3 class="evm__heading">Tags <span class="evm__heading-meta">({tagChips.length})</span></h3>
+			{#if tagChips.length === 0}
+				<div class="evm__placeholder">No tags.</div>
+			{:else}
+				<div class="evm__chips">
+					{#each tagChips as tag, i (i)}
+						{@const action = tagAction(tag)}
+						{@const clickable = action.kind !== 'none'}
+						{#if clickable}
+							<!-- svelte-ignore a11y_click_events_have_key_events -->
+							<button
+								class="evm__chip evm__chip--{tag[0]} evm__chip--clickable"
+								onclick={() => onTagClick(tag)}
+								title="{tag[0]}: {tag[1] ?? ''}"
+							>
+								<span class="evm__chip-key">{tag[0]}</span>
+								<span class="evm__chip-val">{tag[1] ?? ''}</span>
+							</button>
+						{:else}
+							<span
+								class="evm__chip evm__chip--{tag[0]}"
+								title="{tag[0]}: {tag[1] ?? ''}"
+							>
+								<span class="evm__chip-key">{tag[0]}</span>
+								<span class="evm__chip-val">{tag[1] ?? ''}</span>
+							</span>
+						{/if}
+					{/each}
+				</div>
+			{/if}
 		</section>
 
 		<section class="evm__section">
@@ -200,11 +401,127 @@
 		overflow-y: auto;
 	}
 
+	.evm__heading {
+		font-size: 0.7rem;
+		text-transform: uppercase;
+		letter-spacing: 0.06em;
+		color: var(--fg-muted);
+		margin-bottom: 6px;
+		font-weight: 600;
+	}
+	.evm__heading-meta {
+		color: var(--fg-muted);
+		font-weight: 400;
+	}
+
 	.evm__placeholder {
 		font-size: 0.75rem;
 		color: var(--fg-muted);
 		font-style: italic;
 	}
+
+	/* Identifiers block */
+	.evm__ids {
+		display: flex;
+		flex-direction: column;
+		gap: 4px;
+	}
+	.evm__id-row {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		font-size: 0.75rem;
+	}
+	.evm__id-key {
+		font-family: var(--font-mono);
+		text-transform: uppercase;
+		font-size: 0.65rem;
+		color: var(--fg-muted);
+		min-width: 50px;
+		flex-shrink: 0;
+	}
+	.evm__id-val {
+		background: none;
+		border: none;
+		color: var(--fg);
+		font-family: var(--font-mono);
+		font-size: 0.75rem;
+		cursor: pointer;
+		padding: 2px 6px;
+		border-radius: var(--r-sm);
+		text-align: left;
+		flex: 1;
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+	.evm__id-val:hover {
+		background: color-mix(in srgb, var(--id-yours) 12%, transparent);
+		color: var(--id-yours);
+	}
+	.evm__copy {
+		background: none;
+		border: 1px solid var(--border);
+		color: var(--fg-muted);
+		font-family: var(--font-mono);
+		font-size: 0.65rem;
+		padding: 1px 6px;
+		border-radius: var(--r-sm);
+		cursor: pointer;
+		flex-shrink: 0;
+	}
+	.evm__copy:hover {
+		color: var(--fg);
+		border-color: var(--fg-muted);
+	}
+
+	/* Tag chips */
+	.evm__chips {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 4px;
+	}
+	.evm__chip {
+		display: inline-flex;
+		align-items: center;
+		gap: 4px;
+		background: var(--border);
+		color: var(--fg);
+		border: 1px solid transparent;
+		border-radius: var(--r-sm);
+		padding: 2px 6px;
+		font-family: var(--font-mono);
+		font-size: 0.7rem;
+		max-width: 100%;
+	}
+	.evm__chip--clickable {
+		cursor: pointer;
+	}
+	.evm__chip--clickable:hover {
+		background: color-mix(in srgb, var(--id-yours) 18%, var(--border));
+		border-color: var(--id-yours);
+	}
+	.evm__chip-key {
+		color: var(--fg-muted);
+		text-transform: uppercase;
+		font-size: 0.6rem;
+		font-weight: 600;
+	}
+	.evm__chip-val {
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+		max-width: 240px;
+	}
+	/* Per-kind tints for the most common tags */
+	.evm__chip--e .evm__chip-key,
+	.evm__chip--q .evm__chip-key,
+	.evm__chip--note .evm__chip-key { color: var(--id-yours); }
+	.evm__chip--a .evm__chip-key { color: var(--id-imported); }
+	.evm__chip--p .evm__chip-key { color: var(--id-remote); }
+	.evm__chip--t .evm__chip-key,
+	.evm__chip--d .evm__chip-key { color: var(--cyan); }
 
 	.evm__raw-toggle {
 		background: none;

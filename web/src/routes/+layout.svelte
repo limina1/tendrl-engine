@@ -136,7 +136,11 @@
 {/if}
 
 {#if app.eventModalData}
-	<EventViewModal event={app.eventModalData} onclose={() => (app.eventModalData = null)} />
+	<EventViewModal
+		event={app.eventModalData}
+		onclose={() => (app.eventModalData = null)}
+		onspawnreader={spawnReader}
+	/>
 {/if}
 
 {#if app.jsonModalData}
