@@ -83,6 +83,7 @@
 	{cursor}
 	bind:listEl
 	results={app.searchResults}
+	tagCounts={app.searchTagCounts}
 	count={app.searchCount}
 	localCount={app.searchLocalCount}
 	relayCount={app.searchRelayCount}

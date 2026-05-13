@@ -120,12 +120,22 @@ export interface DocPageResult {
 	semantic_score: number;
 }
 
+/** One bucket of a `count:NAME` histogram. */
+export interface TagValueCount {
+	value: string;
+	count: number;
+	event_ids: string[];
+}
+
 export interface SearchResponse {
 	results: SearchResult[];
 	count: number;
 	local_count: number;
 	relay_count: number;
 	doc_results?: DocPageResult[];
+	/** Histograms from `count:NAME` operators. Keyed by tag name; each list
+	 *  is sorted by count desc. Omitted from the JSON when empty. */
+	tag_counts?: Record<string, TagValueCount[]>;
 }
 
 export interface TagEntry {

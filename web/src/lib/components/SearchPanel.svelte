@@ -1,10 +1,11 @@
 <script lang="ts">
-	import type { SearchResult, ContextItem, DocumentFile, ImportPage } from '$lib/types';
+	import type { SearchResult, ContextItem, DocumentFile, ImportPage, TagValueCount } from '$lib/types';
 	import SearchInput from './SearchInput.svelte';
 	import SearchResultItem from './SearchResultItem.svelte';
 
 	let {
 		results,
+		tagCounts = {},
 		count = 0,
 		localCount = 0,
 		relayCount = 0,
@@ -38,6 +39,7 @@
 		listEl = $bindable<HTMLDivElement | undefined>(undefined)
 	}: {
 		results: SearchResult[];
+		tagCounts?: Record<string, TagValueCount[]>;
 		count?: number;
 		localCount?: number;
 		relayCount?: number;
@@ -73,6 +75,25 @@
 	let activeTab: 'search' | 'import' = $state('search');
 
 	let checkedIds: Set<string> = $state(new Set());
+
+	// Grouped mode: when the query had `count:NAME`, the response includes
+	// histogram buckets. We switch the panel to a folded view where the
+	// top level is bucket headers (value + count) and each expands to
+	// reveal the contributing events (looked up from `results` by id).
+	const groupedNames = $derived(Object.keys(tagCounts ?? {}));
+	const isGrouped = $derived(groupedNames.length > 0);
+	const resultsById = $derived(new Map(results.map((r) => [r.event_id, r])));
+	let expandedBuckets: Set<string> = $state(new Set());
+	function bucketKey(tagName: string, value: string): string {
+		return `${tagName}::${value}`;
+	}
+	function toggleBucket(tagName: string, value: string) {
+		const key = bucketKey(tagName, value);
+		const next = new Set(expandedBuckets);
+		if (next.has(key)) next.delete(key);
+		else next.add(key);
+		expandedBuckets = next;
+	}
 
 	function toggleCheck(id: string) {
 		const next = new Set(checkedIds);
@@ -201,26 +222,84 @@
 		{/if}
 
 		<div class="search-results" bind:this={listEl}>
-			{#each results as result, i (result.event_id)}
-				<div class="result-row" class:result-row--cursor={i === cursor} data-cursor={i}>
-					<SearchResultItem
-						{result}
-						checked={checkedIds.has(result.event_id)}
-						ontogglecheck={() => toggleCheck(result.event_id)}
-						{onselect}
-						{onviewjson}
-						{onaddtocontext}
-						{onaddtocompose}
-						{onignore}
-						{onignorepubkey}
-						{items}
-						{localPubkeys}
-						{onviewprofile}
-					/>
-				</div>
-			{/each}
+			{#if isGrouped}
+				<!-- Grouped view: top-level rows are histogram buckets from
+				     `count:NAME`. Click a bucket to expand it into its
+				     contributing events. -->
+				{#each groupedNames as tagName}
+					<div class="bucket-group">
+						<div class="bucket-group__header">
+							<span class="bucket-group__name">{tagName}</span>
+							<span class="bucket-group__total">{tagCounts[tagName].length} values</span>
+						</div>
+						{#each tagCounts[tagName] as bucket (tagName + ':' + bucket.value)}
+							{@const expanded = expandedBuckets.has(bucketKey(tagName, bucket.value))}
+							<!-- svelte-ignore a11y_click_events_have_key_events -->
+							<button
+								class="bucket"
+								class:bucket--open={expanded}
+								onclick={() => toggleBucket(tagName, bucket.value)}
+								title="{bucket.count} events with {tagName}={bucket.value}"
+							>
+								<span class="bucket__arrow" class:open={expanded}>{expanded ? '▾' : '▸'}</span>
+								<span class="bucket__value">{bucket.value || '(empty)'}</span>
+								<span class="bucket__count">{bucket.count}</span>
+							</button>
+							{#if expanded}
+								<div class="bucket__events">
+									{#each bucket.event_ids as id (id)}
+										{@const r = resultsById.get(id)}
+										{#if r}
+											<div class="result-row result-row--nested" data-cursor={results.indexOf(r)}>
+												<SearchResultItem
+													result={r}
+													checked={checkedIds.has(r.event_id)}
+													ontogglecheck={() => toggleCheck(r.event_id)}
+													{onselect}
+													{onviewjson}
+													{onaddtocontext}
+													{onaddtocompose}
+													{onignore}
+													{onignorepubkey}
+													{items}
+													{localPubkeys}
+													{onviewprofile}
+												/>
+											</div>
+										{:else}
+											<div class="bucket__event-missing">
+												<span class="evid">{id.slice(0, 12)}…</span>
+												<span class="hint">(event not in results — likely beyond fetch limit)</span>
+											</div>
+										{/if}
+									{/each}
+								</div>
+							{/if}
+						{/each}
+					</div>
+				{/each}
+			{:else}
+				{#each results as result, i (result.event_id)}
+					<div class="result-row" class:result-row--cursor={i === cursor} data-cursor={i}>
+						<SearchResultItem
+							{result}
+							checked={checkedIds.has(result.event_id)}
+							ontogglecheck={() => toggleCheck(result.event_id)}
+							{onselect}
+							{onviewjson}
+							{onaddtocontext}
+							{onaddtocompose}
+							{onignore}
+							{onignorepubkey}
+							{items}
+							{localPubkeys}
+							{onviewprofile}
+						/>
+					</div>
+				{/each}
+			{/if}
 
-			{#if !loading && results.length === 0}
+			{#if !loading && results.length === 0 && !isGrouped}
 				<p class="empty">Search {searchContext}</p>
 			{/if}
 
@@ -359,6 +438,94 @@
 	.result-row--cursor {
 		box-shadow: inset 4px 0 0 var(--id-yours);
 		background: color-mix(in srgb, var(--id-yours) 18%, transparent);
+	}
+	.result-row--nested {
+		padding-left: 18px;
+		border-left: 2px solid var(--border);
+	}
+
+	/* Grouped view for `count:NAME` queries. */
+	.bucket-group {
+		margin-bottom: 8px;
+	}
+	.bucket-group__header {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		padding: 6px 12px;
+		background: var(--panel-bg-soft, var(--border));
+		border-bottom: 1px solid var(--border);
+		font-family: var(--font-mono);
+		font-size: 0.65rem;
+		text-transform: uppercase;
+		letter-spacing: 0.06em;
+		color: var(--fg-muted);
+	}
+	.bucket-group__name {
+		flex: 1;
+		color: var(--id-yours);
+		font-weight: 600;
+	}
+	.bucket-group__total {
+		font-family: var(--font-mono);
+	}
+	.bucket {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		width: 100%;
+		padding: 5px 12px;
+		background: none;
+		border: none;
+		border-bottom: 1px solid var(--border);
+		text-align: left;
+		cursor: pointer;
+		color: var(--fg);
+		font-family: var(--font-mono);
+		font-size: 0.78rem;
+	}
+	.bucket:hover {
+		background: color-mix(in srgb, var(--id-yours) 8%, transparent);
+	}
+	.bucket--open {
+		background: color-mix(in srgb, var(--id-yours) 12%, transparent);
+	}
+	.bucket__arrow {
+		color: var(--fg-muted);
+		font-size: 0.7rem;
+		width: 12px;
+		flex-shrink: 0;
+	}
+	.bucket__arrow.open {
+		color: var(--id-yours);
+	}
+	.bucket__value {
+		flex: 1;
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+	.bucket__count {
+		color: var(--fg-muted);
+		font-size: 0.7rem;
+		padding: 1px 6px;
+		border-radius: var(--radius);
+		background: color-mix(in srgb, var(--id-yours) 12%, transparent);
+		flex-shrink: 0;
+	}
+	.bucket__events {
+		background: color-mix(in srgb, var(--id-yours) 4%, transparent);
+	}
+	.bucket__event-missing {
+		padding: 4px 12px 4px 30px;
+		font-size: 0.7rem;
+		color: var(--fg-muted);
+		font-family: var(--font-mono);
+	}
+	.bucket__event-missing .hint {
+		font-style: italic;
+		margin-left: 8px;
 	}
 
 	.empty {

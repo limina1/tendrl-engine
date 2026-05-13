@@ -565,3 +565,27 @@ adds 1, not 2 — same model as =Counter(set(...))= over each event's
 tag set). Values are compared case-sensitively against the raw tag
 value; if you want fuzzy aggregation, normalize client-side after
 fetching.
+
+** UI: grouped view in the search panel
+
+When a query contains a =count:NAME= operator, the search panel
+switches into *grouped mode*. Top-level rows become histogram
+buckets ( =arrow + value + count= ); clicking a bucket expands it
+to reveal the contributing events (looked up from =results= by id).
+
+Verify:
+
+1. Open the search slot, run e.g. =k:30041 count:author=.
+2. Instead of a flat list, the panel shows a header
+   ( =AUTHOR · N values= ) followed by rows like
+   =▸ Claude   17= , =▸ liminal 🌑   5= , =▸ Pablo   3= .
+3. Click =▸= → arrow flips to =▾=, contributing events appear
+   nested below with a left border to indicate hierarchy.
+4. Click again to collapse.
+5. Multiple =count:= clauses ( =count:author count:client= )
+   render as two separate groups stacked vertically.
+6. =event_ids= beyond the fetch limit ( e.g. cursor-overflow )
+   appear as a single muted "id… (not in results)" placeholder.
+
+When the query has no =count:= , the panel keeps its original
+flat-list behavior. Switching is automatic per response shape.

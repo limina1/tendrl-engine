@@ -131,6 +131,10 @@ function _createAppState() {
 	let searchLocalCount = $state(0);
 	let searchRelayCount = $state(0);
 	let searchLoading = $state(false);
+	// Populated only when the query contained a `count:NAME` operator.
+	// Switches the SearchPanel into "grouped" view: top-level rows are the
+	// histogram buckets, each unfolds to its contributing events.
+	let searchTagCounts: Record<string, import('$lib/types').TagValueCount[]> = $state({});
 
 	// --- Event view modal ---
 	// Set by handleViewJson; rendered by the structured EventViewModal.
@@ -838,6 +842,7 @@ function _createAppState() {
 			searchCount = 0;
 			searchLocalCount = 0;
 			searchRelayCount = 0;
+			searchTagCounts = {};
 			if (docMode === 'empty') await loadFeed();
 			return;
 		}
@@ -863,6 +868,7 @@ function _createAppState() {
 			searchCount = resp.count;
 			searchLocalCount = resp.local_count;
 			searchRelayCount = resp.relay_count;
+			searchTagCounts = resp.tag_counts ?? {};
 
 			const searchPubkeys = [...new Set(resp.results.map(r => r.author))];
 			api.prefetchProfiles(searchPubkeys);
@@ -1916,6 +1922,7 @@ function _createAppState() {
 
 		// Search
 		get searchResults() { return searchResults; },
+		get searchTagCounts() { return searchTagCounts; },
 		get searchCount() { return searchCount; },
 		get searchLocalCount() { return searchLocalCount; },
 		get searchRelayCount() { return searchRelayCount; },
