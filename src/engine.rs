@@ -801,12 +801,14 @@ impl Engine {
             .iter()
             .any(|tf| tf.tag_name.chars().count() > 1);
         let has_has_tags = !query.has_tags.is_empty();
-        let needs_broad_fetch = has_multi_char_tag || has_has_tags;
+        let has_count_tags = !query.count_tags.is_empty();
+        let needs_broad_fetch = has_multi_char_tag || has_has_tags || has_count_tags;
 
         if filters.is_empty() {
             // No NIP-01-indexable filters — fetch broadly with a limit. Bump
-            // the fetch limit when multi-char or has: filters are the only
-            // criteria, since post-filtering will discard most candidates.
+            // the fetch limit when multi-char, has:, or count: are the only
+            // criteria, since post-filtering / aggregation will need more
+            // candidates to be meaningful.
             let fetch_limit = if needs_broad_fetch { limit.max(500) } else { limit };
             filters = vec![serde_json::json!({"limit": fetch_limit})];
         }
@@ -834,6 +836,14 @@ impl Engine {
             has_filtered
         };
 
+        // `count:NAME` runs AFTER all filtering so histograms reflect the
+        // user's narrowing. Empty by default when no count: was requested.
+        let tag_counts = if has_count_tags {
+            query::count_tag_values(&filtered, &query.count_tags)
+        } else {
+            std::collections::HashMap::new()
+        };
+
         let results = search::build_search_results(&filtered, limit);
 
         // Filter ignored events (check event_id, pubkey, and a-tag format)
@@ -858,6 +868,7 @@ impl Engine {
             local_count: response.source.local_count,
             relay_count: response.source.relay_count,
             doc_results: vec![],
+            tag_counts,
         })
     }
 
@@ -899,6 +910,7 @@ impl Engine {
                 local_count: 0,
                 relay_count: 0,
                 doc_results: vec![],
+                tag_counts: std::collections::HashMap::new(),
             });
         }
 
@@ -978,6 +990,7 @@ impl Engine {
             local_count: count,
             relay_count: 0,
             doc_results,
+            tag_counts: std::collections::HashMap::new(),
         })
     }
 

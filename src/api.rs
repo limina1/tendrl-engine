@@ -240,6 +240,7 @@ pub async fn search_handler(
             local_count: total_local,
             relay_count: total_relay,
             doc_results: vec![],
+            tag_counts: std::collections::HashMap::new(),
         }));
     }
 

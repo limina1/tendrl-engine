@@ -75,6 +75,10 @@ pub struct SearchQuery {
     /// one tag whose first element is `NAME`, regardless of value. Applied
     /// as a post-filter (NIP-01 has no "any value" form).
     pub has_tags: Vec<String>,
+    /// Aggregation request: `count:NAME` returns a histogram of distinct
+    /// values for that tag across the matched events. Composes with other
+    /// filters — the histogram is computed AFTER all filtering.
+    pub count_tags: Vec<String>,
     pub kind_filter: Option<Vec<u64>>,
     pub author_filter: Option<AuthorFilter>,
     pub text_filter: Option<TextFilter>,
@@ -117,6 +121,14 @@ pub struct DocPageResult {
     pub semantic_score: f64,
 }
 
+/// One bucket in a `count:NAME` histogram — a distinct tag value and how
+/// many matched events carry it.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct TagValueCount {
+    pub value: String,
+    pub count: usize,
+}
+
 /// Response from a search operation
 #[derive(Debug, Clone, Serialize)]
 pub struct SearchResponse {
@@ -127,6 +139,11 @@ pub struct SearchResponse {
     /// Document page results from semantic search (separate from event results)
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub doc_results: Vec<DocPageResult>,
+    /// Tag-value histograms, one bucket per `count:NAME` operator in the
+    /// query. Keyed by tag name; each list is sorted by count descending.
+    /// Empty when no `count:` operator was used.
+    #[serde(skip_serializing_if = "std::collections::HashMap::is_empty")]
+    pub tag_counts: std::collections::HashMap<String, Vec<TagValueCount>>,
 }
 
 impl SearchQuery {
@@ -137,6 +154,7 @@ impl SearchQuery {
     /// - `author:val`, `client:val`, `imeta:val`, … (multi-char tags) → TagFilter
     ///   (any `[A-Za-z][A-Za-z0-9_]*:value` where value does not start with `/`)
     /// - `has:NAME` → tag-presence filter (matches any event with a `NAME` tag)
+    /// - `count:NAME` → return a histogram of distinct values for tag NAME
     /// - `k:30041` → kind_filter
     /// - `by:me` → AuthorFilter::CurrentUser
     /// - `by:npub1...` → AuthorFilter::Pubkeys (decoded)
@@ -181,6 +199,7 @@ impl SearchQuery {
 
         let mut tag_filters: Vec<TagFilter> = Vec::new();
         let mut has_tags: Vec<String> = Vec::new();
+        let mut count_tags: Vec<String> = Vec::new();
         let mut kind_filter: Option<Vec<u64>> = None;
         let mut author_filter: Option<AuthorFilter> = None;
         let mut text_filter: Option<TextFilter> = None;
@@ -202,6 +221,11 @@ impl SearchQuery {
                 TokenClass::HasTag(name) => {
                     if !has_tags.iter().any(|n| n == &name) {
                         has_tags.push(name);
+                    }
+                }
+                TokenClass::CountTag(name) => {
+                    if !count_tags.iter().any(|n| n == &name) {
+                        count_tags.push(name);
                     }
                 }
                 TokenClass::Kind(k) => {
@@ -235,6 +259,7 @@ impl SearchQuery {
         Ok(SearchQuery {
             tag_filters,
             has_tags,
+            count_tags,
             kind_filter,
             author_filter,
             text_filter,
@@ -380,6 +405,8 @@ enum TokenClass {
     Tag(String, String),
     /// `has:NAME` — match events with any tag matching NAME (presence-only)
     HasTag(String),
+    /// `count:NAME` — aggregate distinct values of NAME across matches
+    CountTag(String),
     Kind(u64),
     Author(AuthorFilter),
     Semantic(SemanticFilter),
@@ -527,6 +554,21 @@ fn classify_token(token: &Token) -> TokenClass {
             return TokenClass::HasTag(rest.to_string());
         }
         // Malformed `has:` — fall through to keyword.
+    }
+
+    // count: prefix → tag-value aggregation. Same name-shape rule as has:.
+    // Same ordering constraint — must precede the generic tag dispatch.
+    if let Some(rest) = text.strip_prefix("count:") {
+        let valid = !rest.is_empty()
+            && rest
+                .chars()
+                .next()
+                .map(|c| c.is_ascii_alphabetic())
+                .unwrap_or(false)
+            && rest.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
+        if valid {
+            return TokenClass::CountTag(rest.to_string());
+        }
     }
 
     // ~: prefix (unquoted, single word) → semantic filter
@@ -808,6 +850,20 @@ mod tests {
                 values: vec!["alice in wonderland".to_string()]
             }]
         );
+    }
+
+    #[test]
+    fn test_parse_count_tag() {
+        let q = SearchQuery::parse("count:author").unwrap();
+        assert_eq!(q.count_tags, vec!["author".to_string()]);
+    }
+
+    #[test]
+    fn test_parse_count_tag_with_filters() {
+        let q = SearchQuery::parse("k:30041 has:author count:author").unwrap();
+        assert_eq!(q.kind_filter, Some(vec![30041]));
+        assert_eq!(q.has_tags, vec!["author".to_string()]);
+        assert_eq!(q.count_tags, vec!["author".to_string()]);
     }
 
     #[test]

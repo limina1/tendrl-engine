@@ -322,6 +322,70 @@ pub fn filter_by_tags(
         .collect()
 }
 
+/// Aggregate distinct tag values for each requested name across `events`.
+///
+/// Backs `count:NAME` queries. For each requested tag name, walks the
+/// events and tallies how many events carry each distinct value. Returns
+/// a map keyed by tag name; each list is sorted by count descending,
+/// then alphabetically for ties.
+///
+/// Counting is per-event (an event with two `["author","Claude"]` tags
+/// still only adds 1 to Claude's bucket), and case-sensitive (matches
+/// the raw tag value).
+pub fn count_tag_values(
+    events: &[Value],
+    names: &[String],
+) -> std::collections::HashMap<String, Vec<crate::search::TagValueCount>> {
+    use std::collections::HashMap;
+
+    let mut buckets: HashMap<String, HashMap<String, usize>> = HashMap::new();
+    for name in names {
+        buckets.insert(name.clone(), HashMap::new());
+    }
+
+    for event in events {
+        let tags = match event.get("tags").and_then(|t| t.as_array()) {
+            Some(t) => t,
+            None => continue,
+        };
+        // Per-event de-dup so repeated tags on one event don't double-count.
+        let mut seen: HashMap<&str, std::collections::HashSet<String>> = HashMap::new();
+        for tag in tags {
+            let arr = match tag.as_array() {
+                Some(a) => a,
+                None => continue,
+            };
+            let name = match arr.first().and_then(|v| v.as_str()) {
+                Some(s) => s,
+                None => continue,
+            };
+            if !buckets.contains_key(name) {
+                continue;
+            }
+            let value = arr.get(1).and_then(|v| v.as_str()).unwrap_or("").to_string();
+            seen.entry(name).or_default().insert(value);
+        }
+        for (name, values) in seen {
+            let bucket = buckets.get_mut(name).expect("bucket exists");
+            for v in values {
+                *bucket.entry(v).or_insert(0) += 1;
+            }
+        }
+    }
+
+    buckets
+        .into_iter()
+        .map(|(name, value_counts)| {
+            let mut entries: Vec<crate::search::TagValueCount> = value_counts
+                .into_iter()
+                .map(|(value, count)| crate::search::TagValueCount { value, count })
+                .collect();
+            entries.sort_by(|a, b| b.count.cmp(&a.count).then_with(|| a.value.cmp(&b.value)));
+            (name, entries)
+        })
+        .collect()
+}
+
 /// Keep only events that have at least one tag for each named key.
 ///
 /// Backing `has:NAME` queries. Pure presence test (no value match), AND
@@ -491,6 +555,47 @@ mod tests {
         }];
         let result = filter_by_tags(&events, &filters);
         assert_eq!(result.len(), 1);
+    }
+
+    #[test]
+    fn test_count_tag_values_basic() {
+        let events = vec![
+            json!({"tags": [["author", "Claude"]]}),
+            json!({"tags": [["author", "Claude"]]}),
+            json!({"tags": [["author", "Pablo"]]}),
+            json!({"tags": [["author", "liminal 🌑"]]}),
+            json!({"tags": [["t", "tech"]]}),
+        ];
+        let result = count_tag_values(&events, &["author".to_string()]);
+        let authors = &result["author"];
+        // Sorted desc by count; ties broken alphabetically.
+        assert_eq!(authors[0], crate::search::TagValueCount { value: "Claude".into(), count: 2 });
+        assert_eq!(authors[1], crate::search::TagValueCount { value: "Pablo".into(), count: 1 });
+        assert_eq!(authors[2], crate::search::TagValueCount { value: "liminal 🌑".into(), count: 1 });
+    }
+
+    #[test]
+    fn test_count_tag_values_dedupes_within_event() {
+        // Two `["author", "Claude"]` on one event count as 1, not 2.
+        let events = vec![
+            json!({"tags": [["author", "Claude"], ["author", "Claude"]]}),
+        ];
+        let result = count_tag_values(&events, &["author".to_string()]);
+        assert_eq!(result["author"][0].count, 1);
+    }
+
+    #[test]
+    fn test_count_tag_values_multiple_names() {
+        let events = vec![
+            json!({"tags": [["author", "Claude"], ["client", "tendrl"]]}),
+            json!({"tags": [["author", "Pablo"], ["client", "amethyst"]]}),
+        ];
+        let result = count_tag_values(
+            &events,
+            &["author".to_string(), "client".to_string()],
+        );
+        assert_eq!(result["author"].len(), 2);
+        assert_eq!(result["client"].len(), 2);
     }
 
     #[test]

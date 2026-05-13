@@ -521,3 +521,41 @@ Single-char tag filters ( =t:= , =d:= , …) keep exact-match semantics
 because they're applied at the nostrdb / NIP-01 layer where the
 protocol mandates exact value match. Only the post-filter path is
 substring-based.
+
+** Tag-value histograms — =count:NAME=
+
+=count:NAME= returns a histogram of distinct values for that tag
+across the matched event set. Composes with other filters; the
+aggregation runs AFTER all filtering, so the histogram reflects
+exactly the events that would have come back as =results=.
+
+Response shape: =tag_counts: { NAME: [{value, count}, ...] }=
+sorted by count descending, ties broken alphabetically. Empty when
+no =count:= was requested ( =serde(skip_serializing_if = "...")=
+keeps the JSON clean).
+
+#+begin_src bash
+# All distinct author tag values across kind-30041 events,
+# with how many events carry each.
+read -r -d '' Q <<'Q'
+{"query":"k:30041 count:author","policy":"local_only","scope_to_me":false}
+Q
+curl -X POST http://localhost:3030/api/v1/search \
+  -H 'Content-Type: application/json' -d "$Q" | jq '.tag_counts.author[:10]'
+#+end_src
+
+Multiple =count:= clauses are independent buckets:
+
+#+begin_src bash
+read -r -d '' Q <<'Q'
+{"query":"k:30041 count:author count:client","policy":"local_only","scope_to_me":false}
+Q
+curl -X POST http://localhost:3030/api/v1/search \
+  -H 'Content-Type: application/json' -d "$Q" | jq '.tag_counts'
+#+end_src
+
+Counting is per-event (an event with two =["author","Claude"]= tags
+adds 1, not 2 — same model as =Counter(set(...))= over each event's
+tag set). Values are compared case-sensitively against the raw tag
+value; if you want fuzzy aggregation, normalize client-side after
+fetching.
