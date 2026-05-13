@@ -654,3 +654,62 @@ cd web && pnpm dev
    from the history popover while the modal is already open. The
    block re-runs the lookup for the new event (its own cache
    entry), not a stale one from the previous event.
+
+* Reader → EventViewModal affordances
+
+The EventViewModal is now reachable from the reader in three places:
+
+- *Toolbar =JSON= button* — opens the kind-30040 publication index
+  in the modal. Tinted with =--id-yours= so it doesn't read as a
+  fourth view-mode toggle next to Outline/Paginated/Continuous.
+- *Paginated nav =§ json= chip* — right-margin of the pager
+  ( =Prev   i / N · Section i of N   Next   ────   [§ json]= ).
+  Opens the *current* section's event.
+- *Continuous per-section =⋮= kebab* — top-right of each
+  section title. Opens *that* section's event.
+
+State plumbing: =app.openAddressableInModal({kind, pubkey, d_tag})=
+in =state.svelte.ts= runs a =local_only= =queryEvents=, picks the
+newest matching event ( replaceable semantics ), sets
+=eventModalData= , and pushes an =naddr= history entry so the
+search-history popover sees it.
+
+** Typecheck
+
+#+begin_src bash
+cd web && pnpm check
+#+end_src
+
+Expected: =0 ERRORS= .
+
+** UI verification
+
+#+begin_src bash
+cd web && pnpm dev
+#+end_src
+
+1. *Toolbar JSON button*: open any publication in a reader buffer.
+   Click =JSON= in the toolbar. EventViewModal opens on the kind
+   30040 index — title in header, kind chip reads "publication
+   index", Identifiers shows =addr= row matching the publication.
+
+2. *Paginated =§ json= chip*: switch to Paginated. Below the pager
+   row ( =Prev   i / N · Section i of N   Next= ), confirm the
+   right-aligned =[§ json]= chip. Click it → modal opens on the
+   *current* section's kind-30041 event. Navigate Next, click =§
+   json= again → modal swaps to the new section.
+
+3. *Continuous kebab*: switch to Continuous. Each section title
+   row carries a =⋮= on the right. Click → modal opens on that
+   section. Multiple sections → multiple independent kebabs.
+
+4. *History pill picks them up*: each modal-open via these routes
+   pushes an =naddr= history entry. The 🔍 N pill in the modeline
+   increments; the popover lists them with the =naddr= chip color.
+   Click a popover row → modal re-opens on that section
+   (replay path).
+
+5. *Replaceable-event freshness*: if a section has multiple
+   versions locally, the modal shows the newest ( highest
+   =created_at= ). Edit + republish a section, click =§ json=
+   again → modal swaps to the new version.

@@ -5,11 +5,15 @@
 	let {
 		sections,
 		publication = null,
-		onload
+		onload,
+		onviewjson
 	}: {
 		sections: LazySection[];
 		publication?: { title: string | null; summary: string | null } | null;
 		onload?: (index: number) => void;
+		/** Kebab affordance per section — opens the section's underlying
+		 *  event in the structured JSON modal. */
+		onviewjson?: (section: LazySection) => void;
 	} = $props();
 
 	let containerEl: HTMLDivElement | undefined = $state();
@@ -57,8 +61,17 @@
 
 	{#each sections as section, i (`${i}:${section.addr?.pubkey ?? ''}:${section.addr?.d_tag ?? ''}`)}
 		<div class="continuous-section" data-section-index={i}>
-			{#if section.title}
-				<h3 class="section-title">{section.title}</h3>
+			{#if section.title || onviewjson}
+				<h3 class="section-title">
+					{section.title ?? ''}
+					{#if onviewjson}
+						<button
+							class="section-kebab"
+							onclick={() => onviewjson?.(section)}
+							title="Open this section's raw event in the JSON viewer"
+						>⋮</button>
+					{/if}
+				</h3>
 			{/if}
 			{#if section.status === 'loaded' && section.content}
 				<pre class="section-content">{section.content}</pre>
@@ -114,6 +127,24 @@
 		font-size: 0.95rem;
 		font-weight: 600;
 		margin-bottom: 6px;
+		display: flex;
+		align-items: center;
+		gap: 4px;
+	}
+	.section-kebab {
+		margin-left: auto;
+		background: none;
+		border: none;
+		color: var(--fg-muted);
+		font-size: 1rem;
+		line-height: 1;
+		padding: 0 6px;
+		border-radius: 4px;
+		cursor: pointer;
+	}
+	.section-kebab:hover {
+		background: color-mix(in srgb, var(--id-yours) 12%, transparent);
+		color: var(--id-yours);
 	}
 
 	.section-content {

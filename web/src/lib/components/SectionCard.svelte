@@ -6,13 +6,17 @@
 		truncate = false,
 		index = undefined,
 		preview = false,
-		onclick = undefined
+		onclick = undefined,
+		onviewjson = undefined
 	}: {
 		section: LazySection;
 		truncate?: boolean;
 		index?: number | undefined;
 		preview?: boolean;
 		onclick?: (() => void) | undefined;
+		/** When provided, renders a kebab `⋮` in the top-right that opens
+		 *  this section's underlying event in the structured JSON modal. */
+		onviewjson?: ((section: LazySection) => void) | undefined;
 	} = $props();
 
 	const status: SectionStatus = $derived(section.status ?? 'loaded');
@@ -48,6 +52,16 @@
 		{:else if status === 'error'}
 			<span class="status-indicator status-error">!</span>
 		{/if}
+		{#if onviewjson}
+			<button
+				class="section-kebab"
+				onclick={(e) => {
+					e.stopPropagation();
+					onviewjson?.(section);
+				}}
+				title="Open this section's raw event in the JSON viewer"
+			>⋮</button>
+		{/if}
 	</h3>
 	{#if status === 'loaded' && displayContent}
 		<pre class="section-content" class:muted={preview}>{displayContent}</pre>
@@ -82,6 +96,24 @@
 		font-size: 0.95rem;
 		font-weight: 600;
 		margin-bottom: 6px;
+		display: flex;
+		align-items: center;
+		gap: 4px;
+	}
+	.section-kebab {
+		margin-left: auto;
+		background: none;
+		border: none;
+		color: var(--fg-muted);
+		font-size: 1rem;
+		line-height: 1;
+		padding: 0 6px;
+		border-radius: var(--radius);
+		cursor: pointer;
+	}
+	.section-kebab:hover {
+		background: color-mix(in srgb, var(--id-yours) 12%, transparent);
+		color: var(--id-yours);
 	}
 
 	.section-index {

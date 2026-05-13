@@ -188,6 +188,26 @@
 		outlineCursor = index;
 	}
 
+	// JSON-viewer affordances. The publication-level button opens the
+	// kind-30040 index event; the per-section kebab + pager's "§ json"
+	// link opens the corresponding section event. All three resolve via
+	// the addressable coordinate, so they handle replaceable updates the
+	// same way (newest event for that (kind, pubkey, d) wins).
+	function openPublicationJson() {
+		if (!publication) return;
+		app.openAddressableInModal(publication.addr);
+	}
+
+	function openSectionJsonByIndex(index: number) {
+		const s = pristineSections[index];
+		if (!s) return;
+		app.openAddressableInModal(s.addr);
+	}
+
+	function openSectionJsonBySection(s: { addr: { kind: number; pubkey: string; d_tag: string } }) {
+		app.openAddressableInModal(s.addr);
+	}
+
 	function extractPublicationTags(pub: PublicationDetail | null): TagEntry[] {
 		if (!pub) return [];
 		const skip = new Set(['d', 'a', 'alt', 'e', 'p']);
@@ -506,6 +526,12 @@
 			class:active={viewMode === 'continuous'}
 			onclick={() => (viewMode = 'continuous')}>Continuous</button
 		>
+		<button
+			class="json-btn"
+			onclick={openPublicationJson}
+			disabled={!publication}
+			title="Open the publication index (kind 30040) in the JSON viewer"
+		>JSON</button>
 		<span class="sp"></span>
 		{#if isDraftMode}
 			<span class="draft-pill" title="A draft of this publication is in progress">DRAFT</span>
@@ -718,6 +744,7 @@
 						summary: publication.summary
 					}}
 					onload={isDraftMode ? undefined : handleLoadSection}
+					onviewjson={openSectionJsonBySection}
 				/>
 			{:else}
 				<PaginatedView
@@ -725,6 +752,7 @@
 					{currentSection}
 					onnavigate={handleNavigate}
 					onload={isDraftMode ? undefined : handleLoadSection}
+					onsectionjson={openSectionJsonByIndex}
 				/>
 			{/if}
 		</div>
@@ -783,6 +811,19 @@
 		color: var(--bg);
 	}
 	.toolbar .edit:disabled { opacity: 0.5; cursor: not-allowed; }
+	/* JSON action — distinct from view-mode toggles so it doesn't read
+	   as a fourth view mode. Tinted with --id-yours like other modal /
+	   nav affordances. */
+	.toolbar .json-btn {
+		color: var(--id-yours);
+		border-color: color-mix(in srgb, var(--id-yours) 40%, transparent);
+		margin-left: 4px;
+	}
+	.toolbar .json-btn:hover:not(:disabled) {
+		background: color-mix(in srgb, var(--id-yours) 14%, transparent);
+		border-color: var(--id-yours);
+	}
+	.toolbar .json-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
 	.title {
 		padding: 8px var(--s-3);

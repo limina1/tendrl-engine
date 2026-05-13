@@ -6,12 +6,16 @@
 		sections,
 		currentSection = 0,
 		onnavigate,
-		onload
+		onload,
+		onsectionjson
 	}: {
 		sections: LazySection[];
 		currentSection?: number;
 		onnavigate: (index: number) => void;
 		onload?: (index: number) => void;
+		/** Open the section's underlying event in the structured JSON modal.
+		 *  Surfaces on the right margin of the pager. */
+		onsectionjson?: (index: number) => void;
 	} = $props();
 
 	const section = $derived(sections[currentSection]);
@@ -53,6 +57,14 @@
 		>
 			Next
 		</button>
+		<span class="pager-spacer"></span>
+		{#if onsectionjson && section}
+			<button
+				class="pager-json"
+				onclick={() => onsectionjson?.(currentSection)}
+				title="Open this section's raw event in the JSON viewer"
+			>§ json</button>
+		{/if}
 	</div>
 	{#if section?.title}
 		<div class="paginated-title">{section.title}</div>
@@ -87,12 +99,26 @@
 	.paginated-nav {
 		display: flex;
 		align-items: center;
-		justify-content: center;
 		gap: 12px;
 		padding: 10px;
 		border-bottom: 1px solid var(--border);
 		background: var(--bg-surface);
 		flex-shrink: 0;
+	}
+	.pager-spacer { flex: 1; }
+	.pager-json {
+		background: none;
+		border: 1px solid var(--border);
+		color: var(--id-yours);
+		font-family: var(--font-mono);
+		font-size: 0.72rem;
+		padding: 2px 8px;
+		border-radius: var(--radius);
+		cursor: pointer;
+	}
+	.pager-json:hover {
+		background: color-mix(in srgb, var(--id-yours) 12%, transparent);
+		border-color: var(--id-yours);
 	}
 
 	.page-counter {

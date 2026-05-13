@@ -891,6 +891,50 @@ function _createAppState() {
 		}
 	}
 
+	/**
+	 * Open the structured EventViewModal on the newest event matching the
+	 * given replaceable-event coordinate (kind:pubkey:d_tag). Used by the
+	 * reader's "JSON" affordances (publication-level + per-section).
+	 *
+	 * Local-only per the search invariant; if the event isn't locally
+	 * indexed yet, the modal stays closed and we log. Pushes a naddr
+	 * history entry so the user can return to it via the popover.
+	 */
+	async function openAddressableInModal(coord: {
+		kind: number;
+		pubkey: string;
+		d_tag: string;
+	}): Promise<void> {
+		try {
+			const resp = await api.queryEvents(
+				[
+					{
+						kinds: [coord.kind],
+						authors: [coord.pubkey],
+						'#d': [coord.d_tag]
+					}
+				],
+				'local_only'
+			);
+			const evts = (resp?.events ?? []) as NostrEvent[];
+			evts.sort((a, b) => b.created_at - a.created_at);
+			const ev = evts[0];
+			if (!ev) {
+				console.warn('openAddressableInModal: no local event for', coord);
+				return;
+			}
+			eventModalData = ev;
+			pushHistoryEntry({
+				kind: 'naddr',
+				coord,
+				title: ev.tags.find((t: string[]) => t[0] === 'title')?.[1],
+				lastRunAt: Date.now()
+			});
+		} catch (e) {
+			console.error('openAddressableInModal failed:', e);
+		}
+	}
+
 	async function getEventForModal(eventId: string) {
 		const id = eventId.toLowerCase();
 		try {
@@ -2123,6 +2167,7 @@ function _createAppState() {
 		handleSearch,
 		pushHistoryEntry,
 		getEventForModal,
+		openAddressableInModal,
 		findContainingIndexes,
 		get searchHistory() { return searchHistory; },
 		get currentEntry() { return currentEntry; },
