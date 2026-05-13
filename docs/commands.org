@@ -340,6 +340,7 @@ Click dispatch:
 | =d=         | any text          | =handleSearch("d:" + value)=, close modal                             |
 | =t=         | any text          | =handleSearch("t:" + value)=, close modal                             |
 | 1-char key  | whitespace-free   | =handleSearch("key:value")= (no =#= — see =src/search.rs:126=)        |
+| multi-char  | any text          | =handleSearch(value)= as free-text keyword (parser is 1-char-only)    |
 | anything else                  | none — plain chip                                                     |
 
 Hex values are validated by =/^[0-9a-f]{64}$/= (lowercased first);
@@ -419,3 +420,39 @@ bech32, everything else (including =nevent= / =naddr= / =nprofile=)
 is bech32m. =encodeNevent= correctly uses the bech32m constant. If a
 copied =npub1...= fails to decode with the right pubkey, the
 checksum constant is the first thing to suspect.
+
+** Breadcrumb behavior (chained nav)
+
+Clicking an =e= / =q= / =note= chip (or an =a= chip to a non-30040)
+pushes the current event onto a modal-local breadcrumb stack before
+swapping content. The crumbs render as a small row between the
+header and the Identifiers section, =current › prev › older=.
+
+- *Push*: chip click → before swap, push ={ event, label, id }= onto
+  =breadcrumb=. =label= is =n.title= if available else
+  =shortHex(n.id)=.
+- *Pop / jump*: clicking a crumb sets =app.eventModalData= back to
+  that event and trims =breadcrumb= to its prefix.
+- *External nav resets the chain*: if the modal's =event= prop
+  changes to an id that isn't the most-recent expected nav target,
+  the breadcrumb clears. (Used when the user replays from the
+  history popover while the modal is open, or opens a fresh modal.)
+
+Verify:
+
+1. Click =View JSON= on a result with at least one hex64 =e= tag.
+2. Click that =e= chip → modal swaps, breadcrumb row appears with
+   the previous event title as a single crumb.
+3. Click a second =e= or =q= chip on the new event → breadcrumb now
+   has two crumbs.
+4. Click the first crumb → modal jumps back to the first event;
+   breadcrumb is empty again.
+5. Close the modal and reopen on a fresh event → no breadcrumb.
+
+** Multi-char tag note
+
+Tags with multi-char keys ( =client=, =imeta=, =subject=, =alt= …)
+fall through to a free-text keyword search of the *value*. The
+parser is single-char only ( =src/search.rs:506= ); supporting
+arbitrary tag names would require widening =TagFilter.tag_name= from
+=char= to =String=. Tracked in =project_search_syntax= memory.

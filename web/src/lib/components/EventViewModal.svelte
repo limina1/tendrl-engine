@@ -17,6 +17,15 @@
 
 	const app = getAppState();
 
+	// Breadcrumb of events visited via chained nav within this modal session.
+	// Reset when the displayed event id doesn't match the most recent nav
+	// target (i.e. the event was set externally — e.g. history popover replay
+	// or a fresh "View JSON" click). Each entry stores the original event so
+	// breadcrumb-back can restore it without a refetch.
+	type Crumb = { event: NostrEvent | SearchResult; label: string; id: string };
+	let breadcrumb: Crumb[] = $state([]);
+	let pendingNavTarget: string | null = null;
+
 	type Normalized = {
 		id: string;
 		pubkey: string;
@@ -56,6 +65,37 @@
 	const addrRef = $derived(dTag ? `${n.kind}:${n.pubkey}:${dTag}` : null);
 	let rawOpen = $state(false);
 
+	// Breadcrumb reset: when n.id changes, if it isn't the expected chained
+	// target, the user came in via external nav (popover replay, fresh open)
+	// and the breadcrumb is stale. The check runs after each prop change.
+	$effect(() => {
+		const id = n.id.toLowerCase();
+		if (pendingNavTarget !== null && id === pendingNavTarget) {
+			pendingNavTarget = null;
+		} else if (pendingNavTarget === null && breadcrumb.length > 0) {
+			const top = breadcrumb[breadcrumb.length - 1];
+			// Back-step landed: do nothing (breadcrumb already trimmed).
+			if (top.id === id) return;
+			// External nav — chain is broken.
+			breadcrumb = [];
+		}
+	});
+
+	function pushBreadcrumb() {
+		breadcrumb = [
+			...breadcrumb,
+			{ event, label: n.title ?? shortHex(n.id, 6, 4), id: n.id.toLowerCase() }
+		];
+	}
+
+	function gotoBreadcrumb(idx: number) {
+		if (idx < 0 || idx >= breadcrumb.length) return;
+		const target = breadcrumb[idx];
+		breadcrumb = breadcrumb.slice(0, idx);
+		pendingNavTarget = target.id;
+		app.eventModalData = target.event;
+	}
+
 	const KIND_LABEL: Record<number, string> = {
 		0: 'profile',
 		1: 'note',
@@ -85,7 +125,10 @@
 	// ===== Click handlers =====
 
 	function onClickEventId() {
-		// Chained nav into the same modal — pushes a history entry.
+		// Chained nav into the same modal — pushes a history entry +
+		// breadcrumb step.
+		pushBreadcrumb();
+		pendingNavTarget = n.id.toLowerCase();
 		app.getEventForModal(n.id);
 	}
 
@@ -109,7 +152,8 @@
 		| { kind: 'event'; eventId: string }
 		| { kind: 'reader'; pubkey: string; d_tag: string; label: string | null }
 		| { kind: 'addr-nonindex'; addr: string }
-		| { kind: 'search'; query: string };
+		| { kind: 'search'; query: string }
+		| { kind: 'keyword'; value: string }; // multi-char tag fallback
 
 	function tagAction(tag: string[]): TagAction {
 		if (!Array.isArray(tag) || tag.length < 1) return { kind: 'none' };
@@ -143,11 +187,15 @@
 		}
 		if (key === 'd') return { kind: 'search', query: `d:${value}` };
 		if (key === 't') return { kind: 'search', query: `t:${value}` };
-		// Single-token fallback: any 1-char key with a whitespace-free value
-		// becomes key:value (matches the search parser's tag-filter syntax —
-		// see src/search.rs:126). Multi-word values fall through to plain chip.
+		// Single-char key with a whitespace-free value → bare key:value tag
+		// filter (see src/search.rs:506). The parser only treats single-char
+		// keys as tag filters today; multi-char keys fall through to a
+		// free-text keyword search of the value (best-effort).
 		if (key.length === 1 && /^[^\s]+$/.test(value)) {
 			return { kind: 'search', query: `${key}:${value}` };
+		}
+		if (key.length > 1) {
+			return { kind: 'keyword', value };
 		}
 		return { kind: 'none' };
 	}
@@ -157,6 +205,8 @@
 		if (action.kind === 'none') return;
 		if (action.kind === 'event') {
 			// Chained nav — keep modal open, swap content via getEventForModal.
+			pushBreadcrumb();
+			pendingNavTarget = action.eventId;
 			app.getEventForModal(action.eventId);
 			return;
 		}
@@ -179,6 +229,8 @@
 				const evts = (resp?.events ?? []) as NostrEvent[];
 				evts.sort((a, b) => b.created_at - a.created_at);
 				if (evts[0]) {
+					pushBreadcrumb();
+					pendingNavTarget = evts[0].id.toLowerCase();
 					app.eventModalData = evts[0];
 					app.pushHistoryEntry({
 						kind: 'naddr',
@@ -190,6 +242,11 @@
 			} catch (e) {
 				console.error('a-tag non-index lookup failed:', e);
 			}
+			return;
+		}
+		if (action.kind === 'keyword') {
+			onclose();
+			app.handleSearch(action.value, { scopeToMe: false });
 			return;
 		}
 		// search
@@ -218,6 +275,18 @@
 				<span class="evm__time">{formatTime(n.created_at)}</span>
 			</div>
 		</header>
+
+		{#if breadcrumb.length > 0}
+			<nav class="evm__crumbs" aria-label="In-modal navigation">
+				{#each breadcrumb as crumb, i (crumb.id + ':' + i)}
+					<button class="evm__crumb" onclick={() => gotoBreadcrumb(i)} title="Back to {crumb.label}">
+						{crumb.label}
+					</button>
+					<span class="evm__crumb-sep">›</span>
+				{/each}
+				<span class="evm__crumb evm__crumb--current">{n.title ?? shortHex(n.id, 6, 4)}</span>
+			</nav>
+		{/if}
 
 		<section class="evm__section">
 			<h3 class="evm__heading">Identifiers</h3>
@@ -387,6 +456,47 @@
 		color: var(--fg-muted);
 	}
 
+	/* Chained-nav breadcrumb. Each crumb is the title (or shortened id) of an
+	   event we navigated away from via an e/q/a click. Click to pop back. */
+	.evm__crumbs {
+		display: flex;
+		align-items: center;
+		gap: 4px;
+		padding: 6px 14px;
+		border-bottom: 1px solid var(--border);
+		background: color-mix(in srgb, var(--id-yours) 6%, transparent);
+		font-size: 0.72rem;
+		flex-wrap: wrap;
+	}
+	.evm__crumb {
+		background: none;
+		border: none;
+		color: var(--id-yours);
+		font-family: inherit;
+		font-size: inherit;
+		padding: 1px 4px;
+		border-radius: var(--r-sm);
+		cursor: pointer;
+		max-width: 200px;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+	.evm__crumb:hover {
+		background: color-mix(in srgb, var(--id-yours) 18%, transparent);
+	}
+	.evm__crumb--current {
+		color: var(--fg);
+		cursor: default;
+	}
+	.evm__crumb--current:hover {
+		background: none;
+	}
+	.evm__crumb-sep {
+		color: var(--fg-muted);
+		font-size: 0.85rem;
+	}
+
 	.evm__section {
 		padding: 10px 14px;
 		border-bottom: 1px solid var(--border);
@@ -435,8 +545,7 @@
 	}
 	.evm__id-key {
 		font-family: var(--font-mono);
-		text-transform: uppercase;
-		font-size: 0.65rem;
+		font-size: 0.7rem;
 		color: var(--fg-muted);
 		min-width: 50px;
 		flex-shrink: 0;
@@ -505,8 +614,7 @@
 	}
 	.evm__chip-key {
 		color: var(--fg-muted);
-		text-transform: uppercase;
-		font-size: 0.6rem;
+		font-size: 0.65rem;
 		font-weight: 600;
 	}
 	.evm__chip-val {
