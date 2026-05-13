@@ -800,12 +800,14 @@ impl Engine {
             .tag_filters
             .iter()
             .any(|tf| tf.tag_name.chars().count() > 1);
+        let has_has_tags = !query.has_tags.is_empty();
+        let needs_broad_fetch = has_multi_char_tag || has_has_tags;
 
         if filters.is_empty() {
             // No NIP-01-indexable filters — fetch broadly with a limit. Bump
-            // the fetch limit when a multi-char tag filter is the only
-            // criterion, since post-filtering will discard the vast majority.
-            let fetch_limit = if has_multi_char_tag { limit.max(500) } else { limit };
+            // the fetch limit when multi-char or has: filters are the only
+            // criteria, since post-filtering will discard most candidates.
+            let fetch_limit = if needs_broad_fetch { limit.max(500) } else { limit };
             filters = vec![serde_json::json!({"limit": fetch_limit})];
         }
 
@@ -819,10 +821,17 @@ impl Engine {
             response.events
         };
 
-        let filtered = if let Some(text_filter) = &query.text_filter {
-            query::filter_by_text(&tag_filtered, text_filter)
+        // `has:NAME` tag-presence filters — also post-filter only.
+        let has_filtered = if has_has_tags {
+            query::filter_by_has_tags(&tag_filtered, &query.has_tags)
         } else {
             tag_filtered
+        };
+
+        let filtered = if let Some(text_filter) = &query.text_filter {
+            query::filter_by_text(&has_filtered, text_filter)
+        } else {
+            has_filtered
         };
 
         let results = search::build_search_results(&filtered, limit);

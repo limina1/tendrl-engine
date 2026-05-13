@@ -304,6 +304,35 @@ pub fn filter_by_tags(
         .collect()
 }
 
+/// Keep only events that have at least one tag for each named key.
+///
+/// Backing `has:NAME` queries. Pure presence test (no value match), AND
+/// across multiple names.
+pub fn filter_by_has_tags(events: &[Value], names: &[String]) -> Vec<Value> {
+    if names.is_empty() {
+        return events.to_vec();
+    }
+    events
+        .iter()
+        .filter(|event| {
+            let tags = match event.get("tags").and_then(|t| t.as_array()) {
+                Some(t) => t,
+                None => return false,
+            };
+            names.iter().all(|name| {
+                tags.iter().any(|tag| {
+                    tag.as_array()
+                        .and_then(|a| a.first())
+                        .and_then(|v| v.as_str())
+                        .map(|n| n == name)
+                        .unwrap_or(false)
+                })
+            })
+        })
+        .cloned()
+        .collect()
+}
+
 /// - Keywords: all words must appear (AND, order-independent)
 /// - Exact: content must contain the substring
 pub fn filter_by_text(events: &[Value], filter: &crate::search::TextFilter) -> Vec<Value> {
@@ -408,6 +437,41 @@ mod tests {
         let result = filter_by_tags(&events, &filters);
         // Events 0 and 3 have an "author"=>"Claude" tag.
         assert_eq!(result.len(), 2);
+    }
+
+    #[test]
+    fn test_filter_by_has_tags_presence() {
+        let events = vec![
+            json!({"tags": [["author", "Claude"]]}),
+            json!({"tags": [["author", "Pablo"], ["t", "tech"]]}),
+            json!({"tags": [["t", "tech"]]}),
+            json!({"tags": []}),
+        ];
+        let result = filter_by_has_tags(&events, &["author".to_string()]);
+        assert_eq!(result.len(), 2);
+    }
+
+    #[test]
+    fn test_filter_by_has_tags_and_across_names() {
+        let events = vec![
+            json!({"tags": [["author", "Claude"], ["client", "tendrl"]]}),
+            json!({"tags": [["author", "Pablo"]]}),
+            json!({"tags": [["client", "amethyst"]]}),
+        ];
+        // Both names must be present (AND).
+        let result = filter_by_has_tags(
+            &events,
+            &["author".to_string(), "client".to_string()],
+        );
+        assert_eq!(result.len(), 1);
+    }
+
+    #[test]
+    fn test_filter_by_has_tags_empty_names() {
+        // No filters → pass through everything.
+        let events = vec![json!({"tags": []})];
+        let result = filter_by_has_tags(&events, &[]);
+        assert_eq!(result.len(), 1);
     }
 
     #[test]

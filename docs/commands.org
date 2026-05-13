@@ -464,3 +464,30 @@ NB: =author:= is a TAG NAME — it filters events with an
 =["author", "<val>"]= tag. It is NOT an alias for =by:=, which
 filters by publishing pubkey ( =me= / =assistant= / =npub1...= /
 =hex64=).
+
+** Tag presence query
+
+=has:NAME= matches any event with a tag whose first element is
+=NAME=, regardless of the value. Useful when you don't know what
+values to expect (e.g. =has:author= surfaces events that have any
+=["author", ...]= tag at all).
+
+Compose with other filters to make the initial fetch selective —
+=k:30041 has:imeta= is much faster than =has:imeta= alone because
+the kind filter narrows the DB-side fetch before the post-filter
+runs.
+
+#+begin_src bash
+# Returns up to 500 candidate events, post-filtered to those with
+# any "author" tag.
+read -r -d '' Q <<'Q'
+{"query":"has:author","policy":"local_only","scope_to_me":false}
+Q
+curl -X POST http://localhost:3030/api/v1/search \
+  -H 'Content-Type: application/json' -d "$Q"
+#+end_src
+
+Implementation: =SearchQuery.has_tags: Vec<String>=, parsed in
+=src/search.rs= (must be checked before the generic =name:value=
+dispatch so =has:author= doesn't parse as =Tag("has", "author")=),
+applied by =query::filter_by_has_tags= after the DB fetch.

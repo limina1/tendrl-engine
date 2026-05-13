@@ -71,6 +71,10 @@ pub enum AuthorFilter {
 #[derive(Debug, Clone)]
 pub struct SearchQuery {
     pub tag_filters: Vec<TagFilter>,
+    /// Tag-presence filters: `has:NAME` matches events that have at least
+    /// one tag whose first element is `NAME`, regardless of value. Applied
+    /// as a post-filter (NIP-01 has no "any value" form).
+    pub has_tags: Vec<String>,
     pub kind_filter: Option<Vec<u64>>,
     pub author_filter: Option<AuthorFilter>,
     pub text_filter: Option<TextFilter>,
@@ -132,6 +136,7 @@ impl SearchQuery {
     /// - `t:val`, `d:val`, `L:val`, `m:val` (NIP-01 short tags) → TagFilter
     /// - `author:val`, `client:val`, `imeta:val`, … (multi-char tags) → TagFilter
     ///   (any `[A-Za-z][A-Za-z0-9_]*:value` where value does not start with `/`)
+    /// - `has:NAME` → tag-presence filter (matches any event with a `NAME` tag)
     /// - `k:30041` → kind_filter
     /// - `by:me` → AuthorFilter::CurrentUser
     /// - `by:npub1...` → AuthorFilter::Pubkeys (decoded)
@@ -175,6 +180,7 @@ impl SearchQuery {
         let tokens = tokenize(input);
 
         let mut tag_filters: Vec<TagFilter> = Vec::new();
+        let mut has_tags: Vec<String> = Vec::new();
         let mut kind_filter: Option<Vec<u64>> = None;
         let mut author_filter: Option<AuthorFilter> = None;
         let mut text_filter: Option<TextFilter> = None;
@@ -191,6 +197,11 @@ impl SearchQuery {
                             tag_name: name,
                             values: vec![value],
                         });
+                    }
+                }
+                TokenClass::HasTag(name) => {
+                    if !has_tags.iter().any(|n| n == &name) {
+                        has_tags.push(name);
                     }
                 }
                 TokenClass::Kind(k) => {
@@ -223,6 +234,7 @@ impl SearchQuery {
 
         Ok(SearchQuery {
             tag_filters,
+            has_tags,
             kind_filter,
             author_filter,
             text_filter,
@@ -366,6 +378,8 @@ struct Token {
 
 enum TokenClass {
     Tag(String, String),
+    /// `has:NAME` — match events with any tag matching NAME (presence-only)
+    HasTag(String),
     Kind(u64),
     Author(AuthorFilter),
     Semantic(SemanticFilter),
@@ -501,6 +515,23 @@ fn classify_token(token: &Token) -> TokenClass {
             Ok(k) => return TokenClass::Kind(k),
             Err(_) => return TokenClass::InvalidKind(rest.to_string()),
         }
+    }
+
+    // has: prefix → tag-presence filter. Must come before the generic
+    // `name:value` tag dispatch so `has:author` parses as HasTag("author"),
+    // not Tag("has", "author"). Name shape matches the tag-name shape.
+    if let Some(rest) = text.strip_prefix("has:") {
+        let valid = !rest.is_empty()
+            && rest
+                .chars()
+                .next()
+                .map(|c| c.is_ascii_alphabetic())
+                .unwrap_or(false)
+            && rest.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
+        if valid {
+            return TokenClass::HasTag(rest.to_string());
+        }
+        // Malformed `has:` — fall through to keyword.
     }
 
     // ~: prefix (unquoted, single word) → semantic filter
@@ -739,6 +770,28 @@ mod tests {
                 values: vec!["tendrl-engine".to_string()]
             }]
         );
+    }
+
+    #[test]
+    fn test_parse_has_tag() {
+        let q = SearchQuery::parse("has:author").unwrap();
+        assert_eq!(q.has_tags, vec!["author".to_string()]);
+        assert!(q.tag_filters.is_empty());
+    }
+
+    #[test]
+    fn test_parse_has_tag_dedup() {
+        // Repeating has:NAME is a no-op — same as having it once.
+        let q = SearchQuery::parse("has:author has:author has:client").unwrap();
+        assert_eq!(q.has_tags, vec!["author".to_string(), "client".to_string()]);
+    }
+
+    #[test]
+    fn test_parse_has_tag_combined() {
+        // `has:` composes with other filters.
+        let q = SearchQuery::parse("k:30041 has:imeta").unwrap();
+        assert_eq!(q.kind_filter, Some(vec![30041]));
+        assert_eq!(q.has_tags, vec!["imeta".to_string()]);
     }
 
     #[test]
