@@ -36,6 +36,39 @@
 
 	let tagsExpanded = $state(false);
 	let menuOpen = $state(false);
+	let menuBtn: HTMLButtonElement | undefined = $state();
+	let menuDirection: 'up' | 'down' = $state('up');
+
+	// Drop the menu down when there isn't room above the kebab inside its
+	// nearest scroll container — otherwise the upward-opening dropdown gets
+	// clipped by the scroll container's top edge.
+	const DROPDOWN_HEIGHT_PX = 100;
+
+	function findScrollableAncestor(el: HTMLElement): HTMLElement | null {
+		let node: HTMLElement | null = el.parentElement;
+		while (node) {
+			const overflowY = getComputedStyle(node).overflowY;
+			if (overflowY === 'auto' || overflowY === 'scroll' || overflowY === 'overlay') return node;
+			node = node.parentElement;
+		}
+		return null;
+	}
+
+	function toggleMenu(e: MouseEvent) {
+		e.stopPropagation();
+		if (menuOpen) {
+			menuOpen = false;
+			return;
+		}
+		if (menuBtn) {
+			const btnRect = menuBtn.getBoundingClientRect();
+			const container = findScrollableAncestor(menuBtn);
+			const topBound = container?.getBoundingClientRect().top ?? 0;
+			const spaceAbove = btnRect.top - topBound;
+			menuDirection = spaceAbove < DROPDOWN_HEIGHT_PX ? 'down' : 'up';
+		}
+		menuOpen = true;
+	}
 
 	const KINDS: Record<number, string> = {
 		30040: 'index',
@@ -108,11 +141,11 @@
 		<span class="result-time">{formatTime(result.created_at)}</span>
 		<button class="action-btn icon-btn" onclick={(e) => { e.stopPropagation(); onaddtocontext(result); }} title="Send to chat">◂</button>
 		<div class="menu-container">
-			<button class="action-btn menu-btn" onclick={(e) => { e.stopPropagation(); menuOpen = !menuOpen; }} title="More actions">⋮</button>
+			<button bind:this={menuBtn} class="action-btn menu-btn" onclick={toggleMenu} title="More actions">⋮</button>
 			{#if menuOpen}
 				<!-- svelte-ignore a11y_click_events_have_key_events -->
 				<div class="menu-backdrop" onclick={() => (menuOpen = false)} role="presentation"></div>
-				<div class="menu-dropdown">
+				<div class="menu-dropdown" class:menu-dropdown--down={menuDirection === 'down'}>
 					<button class="menu-item" onclick={(e) => { e.stopPropagation(); menuOpen = false; onviewjson(result); }}>View JSON</button>
 					{#if onignore}
 						<button class="menu-item menu-item-danger" onclick={(e) => { e.stopPropagation(); menuOpen = false; onignore(result); }}>Hide event</button>
@@ -339,6 +372,11 @@
 		box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
 		min-width: 120px;
 		padding: 4px 0;
+	}
+
+	.menu-dropdown--down {
+		bottom: auto;
+		top: 100%;
 	}
 
 	.menu-item {
