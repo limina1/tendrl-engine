@@ -138,6 +138,19 @@ html, body {
 }
 .pill--ghost { border: 1px solid var(--base3); color: var(--base6); }
 .pill--local { background: rgba(233,177,137,0.12); color: var(--id-local); }
+/* `json` action pill — clickable, opens the row's underlying event in
+   the structured EventViewModal. Tinted with --id-yours to match the
+   other modal/nav affordances (history popover, kebab hovers). */
+.pill--json {
+  background: color-mix(in srgb, var(--id-yours) 12%, transparent);
+  color: var(--id-yours);
+  border: none;
+  cursor: pointer;
+  font: inherit;
+}
+.pill--json:hover {
+  background: color-mix(in srgb, var(--id-yours) 22%, transparent);
+}
 .pill--remote { background: rgba(137,184,194,0.12); color: var(--id-remote); }
 .pill--draft { background: rgba(226,120,120,0.12); color: var(--id-draft); }
 .pill--imported { background: rgba(160,147,199,0.12); color: var(--id-imported); }

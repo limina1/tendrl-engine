@@ -127,6 +127,14 @@
 					<div class="row-body">
 					<div class="row-head">
 						<span class="title">{pub_item.title ?? '[Untitled]'}</span>
+						<button
+							class="pill pill--json"
+							onclick={(e) => {
+								e.stopPropagation();
+								app.openAddressableInModal(pub_item.addr);
+							}}
+							title="Open this publication's index event in the JSON viewer"
+						>json</button>
 						{#if app.localPubkeys.has(pub_item.author_pubkey)}
 							<span class="pill pill--local">local</span>
 						{/if}
