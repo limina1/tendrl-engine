@@ -1,0 +1,271 @@
+#+TITLE: Project Commands
+#+SUBTITLE: Verify / test / repro commands you copy-paste from this file
+#+DATE: 2026-05-13
+
+Use this file as the canonical paste source for terminal commands. Pasting
+from chat messages corrupts long strings (bech32, base64, hex blobs); the
+editor → terminal channel preserves them. Group entries by the slice or
+task they verify; keep payloads inline as heredocs or in adjacent files
+under =docs/test-payloads/= rather than on the command line.
+
+* Slice 0 — NIP-19 decode endpoint
+
+Endpoint: =POST /api/v1/decode=, request =JSON { input: "..." }=, returns
+a =kind=-tagged JSON object (npub / nprofile / nevent / naddr). Strips an
+optional =nostr:= prefix; otherwise rejects with =400=.
+
+** Short paste-safe test: spec npub
+
+The NIP-19 spec npub test vector. Short enough to paste reliably from
+anywhere. Expected response field: =pubkey=
+=84dee6e676e5bb67b4ad4e042cf70cbd8681155db535942fcc6a0533858a7240=.
+
+#+begin_src bash
+curl -X POST http://localhost:3030/api/v1/decode \
+  -H 'Content-Type: application/json' \
+  -d '{"input":"npub1sn0wdenkukak0d9dfczzeacvhkrgz92ak56egt7vdgzn8pv2wfqqhrjdv9"}'
+#+end_src
+
+#+RESULTS:
+| {"kind":"npub" | pubkey:"84dee6e676e5bb67b4ad4e042cf70cbd8681155db535942fcc6a0533858a7240"} |
+
+Same with the =nostr:= URI prefix (should decode identically):
+
+#+begin_src bash
+curl -X POST http://localhost:3030/api/v1/decode \
+  -H 'Content-Type: application/json' \
+  -d '{"input":"nostr:npub1sn0wdenkukak0d9dfczzeacvhkrgz92ak56egt7vdgzn8pv2wfqqhrjdv9"}'
+#+end_src
+
+#+RESULTS:
+| {"kind":"npub" | pubkey:"84dee6e676e5bb67b4ad4e042cf70cbd8681155db535942fcc6a0533858a7240"} |
+
+** Long nevent test (heredoc — preserves the full string)
+
+For long bech32 inputs, use a heredoc so the shell doesn't see the
+fragile string on the command line. Replace the =nevent1...= block below
+with your test vector; the heredoc terminates at the =NEVENT= marker.
+
+#+begin_src bash
+read -r -d '' NEVENT <<'NEVENT'
+nevent1qvzqqqr4typzphzv6zrv6l89kxpj4h60m5fpz2ycsrfv0c54hjcwdpxqrt8wwlqxqyd8wumn8ghj7argv4nx7un9wd6zumn0wd68yvfwvdhk6qgmwaehxw309a6xsetrd96xzer9dshxummnw3erztnrdakszyrhwden5te0dehhxarj9ekxzmnyqyg8wumn8ghj7mn0wd68ytnhd9hx2qghwaehxw309ahx7um5wgh8xmmkvf5hgtngdaehgqg3waehxw309ahx7um5wgerztnrdaksz9thwden5te0v9nkwu3wdehhxarj9ekxzmnyqyv8wumn8ghj7un9d3shjtnwdaehw6r9wfjjucm0d5q3gamnwvaz7tmjv4kxz7fwv3sk6atn9e5k7qgewaehxw309an8yet9d3shjtnndamxy6t59e5x7um5qqsdpzpntawm398pdq9mnnmnfjm6t6vtf9mznhsegtdtg2eye8srdjc7824mp
+NEVENT
+
+curl -X POST http://localhost:3030/api/v1/decode \
+  -H 'Content-Type: application/json' \
+  -d "$(jq -n --arg i "$NEVENT" '{input:$i}')"
+#+end_src
+
+#+RESULTS:
+| {"kind":"nevent" | event_id:"d088335f5db894e1680bb9cf734cb7a5e98b497629de1942dab42b24c9e036cb" | relays:["wss://theforest.nostr1.com" | wss://thecitadel.nostr1.com | wss://nostr.land | wss://nostr.wine | wss://nostr.sovbit.host | wss://nostr21.com | wss://aggr.nostr.land | wss://relay.noswhere.com | wss://relay.damus.io | wss://freelay.sovbit.host] | author:"dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06" | kind_int:30041} |
+
+Expected: =kind:"nevent"=, an =event_id= hex string, a non-empty =relays=
+array (since this nevent carries relay hints in its TLV), and possibly
+=author= / =kind_int= depending on the vector.
+
+** Common error responses
+
+- =400 {"error":{"message":"Invalid bech32 encoding: ...","type":"invalid_filter"}}= →
+  the string is corrupted or has the wrong checksum (often a paste issue).
+- =400 {"error":{"message":"Unknown HRP: foo","type":"invalid_filter"}}= →
+  not a NIP-19 identifier we handle (only npub / nprofile / nevent / naddr).
+- =400 {"error":{"message":"Missing required TLV type 0x00","type":"invalid_filter"}}= →
+  payload structurally valid bech32 but missing a required field for the
+  detected variant.
+
+** Unit tests
+
+#+begin_src bash
+cargo test --lib nip19
+#+end_src
+
+Expected: =6 passed; 0 failed= covering strip_prefix, the spec npub
+vector, =nostr:= prefix handling, unknown HRP rejection, TLV round-trip,
+TLV truncation.
+
+* Slice 1 — State split + EventViewModal stub
+
+Web frontend changes only (no Rust). Type-narrowing for =jsonModalData=
+plus a new structured =EventViewModal= component that mounts when
+=eventModalData= is set. The legacy =<pre>= JSON dump still handles the
+M-x buffer-inspector and PublishProgressBuffer raw-event paths.
+
+** Typecheck
+
+#+begin_src bash
+cd web && pnpm check
+#+end_src
+
+Expected: =0 ERRORS=. (Warnings are pre-existing in other files.)
+
+** UI verification (start the dev server first)
+
+#+begin_src bash
+cd web && pnpm dev
+#+end_src
+
+Then in the browser, walk these three paths to confirm the state split
+routes correctly:
+
+1. *Search result → View JSON*: run any search, hover a result, click
+   =⋮= → =View JSON=. Should render the *new* EventViewModal (header
+   with title + kind chip + close ✕, three "pending Slice N" section
+   placeholders, collapsible "Raw JSON" at the bottom). Close, reopen,
+   confirm no stale state.
+
+2. *M-x tendrl-show-event-json*: press =SPC := (or =M-x=), type
+   =tendrl-show-event-json=, Enter. Should render the *legacy* =<pre>=
+   dump showing ={ buffer: ... }=.
+
+3. *PublishProgressBuffer raw event*: open a publish-progress buffer
+   with a non-null =rawEvent= on at least one row, click its raw-JSON
+   button. Should render the *legacy* =<pre>= dump showing
+   ={ rawEvent: ... }=.
+
+If any of the three paths renders the wrong modal (or both at once),
+the state split has a bug.
+
+* Slice 2 — Search history data model + modeline pill
+
+Adds an app-level =searchHistory= stack with =currentEntry= /
+=previousEntry= pointers, a =pushHistoryEntry= function (deduped,
+newest-first prepend, no list reorder on dedupe), and a =pill--hs=
+in the existing modeline (right cluster, just before the network
+pill). The pill is hidden when history is empty — no new row, no
+chrome shift.
+
+The popover itself ships in Slice 3 — the pill click currently just
+toggles a local =historyPopoverOpen= flag (no visible effect yet).
+
+** Typecheck
+
+#+begin_src bash
+cd web && pnpm check
+#+end_src
+
+Expected: =0 ERRORS=.
+
+** UI verification
+
+Start the dev server, then walk the checklist:
+
+#+begin_src bash
+cd web && pnpm dev
+#+end_src
+
+1. *Empty on first load*: open the page. No 🔍 pill in the modeline.
+   (Background: =searchHistory.length=== 0=.)
+
+2. *First search appears as ~🔍 1~*: type any query in the search bar.
+   On submit, the pill appears in the modeline cluster (just before the
+   network pill), count =1=. Note: append must be synchronous — the
+   pill should show before the network round-trip finishes.
+
+3. *Distinct queries grow the count*: run three different queries
+   (e.g. =bitcoin=, =rust=, =t:python=). Count goes =1 → 2 → 3=.
+
+4. *Re-running the current query does not grow the count*: re-submit
+   the last query verbatim. Count stays put.
+
+5. *Re-running a non-current prior query also stays put*: run query
+   =bitcoin=, then =rust=, then =bitcoin= again. Final count =2= (not
+   3) because =bitcoin= already exists in the list.
+
+6. *Inspect pointers in devtools console*:
+
+   #+begin_src javascript :results output
+   const app = (await import('/src/lib/state.svelte.ts')).getAppState();
+   console.log({
+     count: app.searchHistory.length,
+     current: app.currentEntry,
+     previous: app.previousEntry,
+     list: app.searchHistory.map(e => ({ kind: e.kind, ...e }))
+   });
+   #+end_src
+
+   - After step 4 (re-run current): =current= and =previous= unchanged
+     from before the re-run.
+   - After step 5 (run A → B → A): =current= = the second A,
+     =previous= = B, =list= = =[B, A]= (B at index 0 because it was
+     the second unique, A at index 1).
+
+7. *Reload page*: =searchHistory= empties (in-memory only), pill
+   vanishes again.
+
+** Click handler smoke test
+
+The icon click currently toggles =historyPopoverOpen= but nothing
+visible happens. To confirm the binding is alive, open Svelte
+devtools, find the =+page.svelte= component, click =🔍 N=, and watch
+the =historyPopoverOpen= flag flip. Full popover rendering comes in
+Slice 3.
+
+* Slice 3 — History popover list + replay
+
+Click the =pill--hs= → popover opens above it anchored to the
+=.hs-pill-wrap=. Lists every entry in =searchHistory= as a row
+( =query= / =nevent= / =naddr= kind chip + label + meta). The row
+whose key matches =previousEntry= gets the =hs-row--prev= highlight
+( =id-yours= tint + left border). Clicking a row calls
+=replayEntry= (which calls =handleSearch= or =getEventForModal=)
+then closes the popover. Click-outside closes too.
+
+** Typecheck
+
+#+begin_src bash
+cd web && pnpm check
+#+end_src
+
+Expected: =0 ERRORS=.
+
+** UI verification
+
+Start the dev server, then walk the checklist:
+
+#+begin_src bash
+cd web && pnpm dev
+#+end_src
+
+1. *Popover opens on pill click*: run a search so the pill shows up,
+   click =🔍 N=. A popover appears just above the pill, listing one
+   row per history entry.
+
+2. *previous-highlight is empty for the first search*: with exactly
+   one entry, =previousEntry= is =null=, so no row is highlighted.
+
+3. *Highlight migrates on second search*: run a different query.
+   Open the popover. The just-displaced first query (now =previousEntry=)
+   should have the lighter =hs-row--prev= background and left border.
+
+4. *Click row → replay*: click any =query= row. The popover closes
+   and =handleSearch= reruns; results appear in the search slot.
+   Open the popover again: the clicked row is the new =currentEntry=,
+   and whatever was current before becomes =previousEntry= (the
+   highlight moved).
+
+5. *Click-outside closes*: open the popover, click anywhere outside
+   the =.hs-pill-wrap=. Popover closes. (Clicking inside the popover
+   on a row also closes, via the explicit replay handler.)
+
+6. *Order is stable*: re-run any older row. List order does NOT
+   change — only the timestamp/title cache + the
+   =current=/=previous= pointers update. The new previous-highlight
+   reflects whatever was current just before the click.
+
+7. *Truncation*: paste a long query (e.g.
+   =k:30041 by:abc... t:python "exact phrase here please" ~:semantic search=).
+   Row should clip with ellipsis; full text is in the =title= attr.
+
+** Replay handler dispatch
+
+The =replayEntry= helper is a switch on =entry.kind=:
+
+- =query= → =app.handleSearch(entry.query, entry.opts)=
+- =nevent= → =app.getEventForModal(entry.eventId)=
+- =naddr= → build =k:K by:HEX #d:D= and call =handleSearch= with
+  =scopeToMe: false= (backend accepts hex in =by:= per
+  =src/search.rs:471=).
+
+The =naddr= path isn't exercised yet — those entries only get pushed
+once Slice 5 wires =a=-tag clicks in the EventViewModal. Its replay
+path is in place for when that lands.

@@ -658,3 +658,26 @@ export function setNetworkMode(mode: NetworkMode) {
 		body: JSON.stringify({ mode })
 	});
 }
+
+// Discussion counts: NIP-22 comments (kind 1111) and NIP-84 highlights
+// (kind 9802) referencing the given addressable events via their `a` tag.
+
+export interface DiscussionCount {
+	comments: number;
+	highlights: number;
+}
+
+export interface DiscussionCountsResponse {
+	counts: Record<string, DiscussionCount>;
+	source: { local_count: number; relay_count: number };
+}
+
+export function getDiscussionCounts(
+	addresses: string[],
+	policy: 'local_only' | 'local_first' | 'fetch_always' = 'local_first'
+) {
+	return fetchJson<DiscussionCountsResponse>('/api/v1/discussions/counts', {
+		method: 'POST',
+		body: JSON.stringify({ addresses, policy })
+	});
+}

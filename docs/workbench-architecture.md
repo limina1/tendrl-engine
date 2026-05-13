@@ -119,6 +119,56 @@ as a lightweight alternative.
 
 * Search Panel (Knowledge Base)
 
+** Search Invariants
+
+Search has three load-bearing invariants that the rest of the workbench
+(and the View Event modal, and future history features) depends on:
+
+1. *Search is local-only.* Every search executes against the local
+   nostrdb index. Searches never fetch from relays, never block on
+   network IO, and never produce results that weren't already in the
+   local database when the query started. This makes search
+   deterministic, fast (sub-ms for tag/kind filters, ms-scale for
+   content scans), and safe to run offline.
+
+2. *Relay fetch is a separate UX surface.* If the user wants events
+   pulled from relays — for backfill, for resolving an =naddr= relay
+   hint, for following a citation — that is a distinct, explicit action
+   with its own affordance (e.g., =>= to pick relays from a buffer, an
+   explicit "Fetch from relays" command, or auto-fetch on publication
+   navigation). Relay fetches write to the local database; the next
+   search picks them up. Search itself stays read-only against the
+   index.
+
+3. *Searches are replayable.* Every =handleSearch= invocation is
+   appended to an app-level =searchHistory= stack. Because search is
+   local and deterministic, replaying a prior query is cheap and yields
+   the freshest local state — events that arrived after the original
+   query (via relay fetch, publish, or import) show up automatically.
+   The history stack is the substrate for:
+   - Modal back-navigation (close a chained drill-down, return to the
+     prior result set).
+   - A future "search history" minibuffer mode (jump to any prior
+     query, mirroring how =recent= lists closed buffers).
+   - Replaying queries after publishing or fetching to see impact.
+
+   Stack entries are a union of three shapes, all replayable as local
+   queries:
+
+   - =query= — string + opts (=scopeToMe=). Replay: =handleSearch(q, opts)=.
+   - =nevent= — single hex event id. Replay: =api.getEvent(id)=, wrap as
+     a 1-row result.
+   - =naddr= — coordinate ={kind, pubkey, d_tag}= + optional relay
+     hints. Replay: equivalent =k:K by:<npub> #d:<d>= query (may yield
+     multiple versions; newest is canonical, older are surfaced as a
+     badge).
+
+*Implication.* The search bar is a window onto the local knowledge
+graph, not a search engine that reaches out to the network. Users build
+the local graph (subscribe, fetch, import, publish); search makes it
+queryable. This is what lets View Event modal chains, history
+navigation, and offline use all share the same underlying mechanism.
+
 ** Query Bar Syntax
 
 The query bar accepts a structured micro-language that compiles to NIP-01
@@ -161,8 +211,11 @@ Bare words are a multi-keyword AND match — each word must appear somewhere in
 the event content, but not necessarily adjacent or in order. Quoting forces
 exact substring matching.
 
-Text search operates over locally cached events (nostrdb content scan) and
-optionally queries NIP-50 search-capable relays.
+Text search operates over locally cached events (nostrdb content scan)
+only. NIP-50 relay search is *not* invoked from the search bar — see
+[[*Search Invariants][Search Invariants]] for why. Relay-side search,
+if exposed, lives behind an explicit "fetch from relays" affordance,
+not as a transparent fallback.
 
 *** Semantic Search
 

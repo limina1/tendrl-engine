@@ -3,6 +3,7 @@
 	import '../app.css';
 	import { createAppState } from '$lib/state.svelte';
 	import SearchActionModal from '$lib/components/SearchActionModal.svelte';
+	import EventViewModal from '$lib/components/EventViewModal.svelte';
 	import type { SearchResult } from '$lib/types';
 	import { getActiveStore } from '$lib/wm/buffer-store.svelte';
 
@@ -134,12 +135,18 @@
 	/>
 {/if}
 
+{#if app.eventModalData}
+	<EventViewModal event={app.eventModalData} onclose={() => (app.eventModalData = null)} />
+{/if}
+
 {#if app.jsonModalData}
+	<!-- Legacy <pre> dump for the M-x buffer-inspector and PublishProgressBuffer
+	     raw-event paths. Will get its own structured viewer later if needed. -->
 	<!-- svelte-ignore a11y_click_events_have_key_events -->
 	<div class="json-modal-backdrop" onclick={() => (app.jsonModalData = null)} role="presentation">
 		<div class="json-modal" onclick={(e) => e.stopPropagation()} role="dialog" tabindex="-1">
 			<div class="json-modal-header">
-				<span>Event JSON</span>
+				<span>Raw JSON</span>
 				<button onclick={() => (app.jsonModalData = null)}>Close</button>
 			</div>
 			<pre class="json-modal-body">{JSON.stringify(app.jsonModalData, null, 2)}</pre>

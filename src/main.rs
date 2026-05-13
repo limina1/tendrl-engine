@@ -211,6 +211,8 @@ async fn main() -> anyhow::Result<()> {
         )
         // Search endpoint
         .route("/api/v1/search", post(api::search_handler))
+        // NIP-19 decode
+        .route("/api/v1/decode", post(api::decode_handler))
         // Documents
         .route("/api/v1/documents", get(api::list_documents_handler))
         .route("/api/v1/documents/parse", post(api::parse_document_handler))

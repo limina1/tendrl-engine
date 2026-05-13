@@ -62,6 +62,7 @@ pub mod identity;
 pub mod llm;
 pub mod network;
 pub mod nip11;
+pub mod nip19;
 pub mod publication;
 pub mod signing;
 pub mod query;

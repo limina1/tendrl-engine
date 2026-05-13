@@ -143,6 +143,32 @@ pub async fn health_handler() -> Json<HealthResponse> {
 }
 
 // ============================================================================
+// NIP-19 Decode Endpoint
+// ============================================================================
+
+use crate::nip19;
+
+/// POST /api/v1/decode body.
+#[derive(Debug, Deserialize)]
+pub struct DecodeRequest {
+    /// Bech32 NIP-19 identifier (npub / nprofile / nevent / naddr).
+    /// May be prefixed with `nostr:`; the server strips that before decoding.
+    pub input: String,
+}
+
+/// POST /api/v1/decode
+///
+/// Decode a NIP-19 bech32 identifier into its structured fields. Returns a
+/// `kind`-tagged JSON object — see `nip19::Decoded` for the variants.
+pub async fn decode_handler(
+    Json(req): Json<DecodeRequest>,
+) -> Result<Json<nip19::Decoded>, EngineError> {
+    nip19::decode(&req.input)
+        .map(Json)
+        .map_err(|e| EngineError::InvalidFilter(e.to_string()))
+}
+
+// ============================================================================
 // Search API Endpoint
 // ============================================================================
 

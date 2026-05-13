@@ -57,7 +57,7 @@
 	}
 
 	function showRawEvent(ev: PublishEventStatus) {
-		if (ev.rawEvent != null) app.jsonModalData = ev.rawEvent;
+		if (ev.rawEvent != null) app.jsonModalData = { rawEvent: ev.rawEvent };
 	}
 
 	function naddrFor(ev: PublishEventStatus): string | null {

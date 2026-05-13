@@ -24,8 +24,29 @@ import type {
 	ClaudeSessionMessage,
 	IdentityStatus,
 	NAddr,
+	NostrEvent,
 } from '$lib/types';
+import type { Buffer } from '$lib/wm/types';
 import * as api from '$lib/api';
+
+/**
+ * One node in the app-level search-history stack. Three shapes:
+ * - `query`  — string + opts. Replay calls `handleSearch(query, opts)`.
+ * - `nevent` — single event id. Replay fetches the event and shows the modal.
+ * - `naddr`  — coordinate `(kind, pubkey, d_tag)`. Replay runs the
+ *   equivalent `k:K by:<pk> #d:<d>` query.
+ *
+ * `title` is a display cache populated lazily when the entry is resolved.
+ */
+export type ModalNavEntry =
+	| { kind: 'query'; query: string; opts: { scopeToMe: boolean }; lastRunAt: number }
+	| { kind: 'nevent'; eventId: string; title?: string; lastRunAt: number }
+	| {
+			kind: 'naddr';
+			coord: { kind: number; pubkey: string; d_tag: string };
+			title?: string;
+			lastRunAt: number;
+	  };
 
 let _app: ReturnType<typeof _createAppState> | null = null;
 
@@ -111,8 +132,26 @@ function _createAppState() {
 	let searchRelayCount = $state(0);
 	let searchLoading = $state(false);
 
-	// --- JSON modal ---
-	let jsonModalData: unknown = $state(null);
+	// --- Event view modal ---
+	// Set by handleViewJson; rendered by the structured EventViewModal.
+	let eventModalData: NostrEvent | SearchResult | null = $state(null);
+
+	// --- Legacy JSON dump modal ---
+	// Set by the M-x `tendrl-show-event-json` command (buffer inspector) and
+	// by PublishProgressBuffer's raw-event button. Still renders through the
+	// legacy <pre> dump in +layout.svelte. Narrowed so each call site is
+	// explicit about which shape it's pushing.
+	let jsonModalData: { buffer: Buffer } | { rawEvent: unknown } | null = $state(null);
+
+	// --- Search history ---
+	// App-level navigation history. Every query / event-view / coord lookup
+	// is appended (deduped) here. `currentEntry` tracks what's on screen;
+	// `previousEntry` is the depth-1 breadcrumb (the entry that was current
+	// just before this one). See docs/workbench-architecture.org Search
+	// Invariants for the model.
+	let searchHistory: ModalNavEntry[] = $state([]);
+	let currentEntry: ModalNavEntry | null = $state(null);
+	let previousEntry: ModalNavEntry | null = $state(null);
 
 	// --- Search action modal ---
 	// When set, the SearchActionModal overlay is open for this result.
@@ -730,6 +769,66 @@ function _createAppState() {
 		syncContext();
 	}
 
+	// ===================== Search history =====================
+
+	function normalizeQuery(q: string): string {
+		return q.trim().replace(/\s+/g, ' ');
+	}
+
+	function entryKey(e: ModalNavEntry): string {
+		if (e.kind === 'query') return `q|${normalizeQuery(e.query)}|s=${e.opts.scopeToMe}`;
+		if (e.kind === 'nevent') return `e|${e.eventId.toLowerCase()}`;
+		return `a|${e.coord.kind}:${e.coord.pubkey}:${e.coord.d_tag}`;
+	}
+
+	function pushHistoryEntry(entry: ModalNavEntry) {
+		const key = entryKey(entry);
+
+		// Same as current → no pointer move. Still bump the in-list timestamp
+		// so recency tracks user activity even when no navigation happens.
+		if (currentEntry && entryKey(currentEntry) === key) {
+			const existing = searchHistory.find((e) => entryKey(e) === key);
+			if (existing) existing.lastRunAt = entry.lastRunAt;
+			return;
+		}
+
+		// New entry displaces current — move the depth-1 highlight.
+		previousEntry = currentEntry;
+		currentEntry = entry;
+
+		// Dedupe into the list. Existing entries keep their position; only
+		// the timestamp (and title, if newly known) update.
+		const idx = searchHistory.findIndex((e) => entryKey(e) === key);
+		if (idx >= 0) {
+			const existing = searchHistory[idx] as ModalNavEntry & { title?: string };
+			existing.lastRunAt = entry.lastRunAt;
+			const newTitle = (entry as { title?: string }).title;
+			if (newTitle && !existing.title) existing.title = newTitle;
+			return;
+		}
+		searchHistory = [entry, ...searchHistory];
+	}
+
+	async function getEventForModal(eventId: string) {
+		const id = eventId.toLowerCase();
+		try {
+			const resp = await api.getEvent(id);
+			const ev = resp.event as NostrEvent;
+			eventModalData = ev;
+			const titleTag = Array.isArray(ev?.tags)
+				? ev.tags.find((t: string[]) => t[0] === 'title')
+				: undefined;
+			pushHistoryEntry({
+				kind: 'nevent',
+				eventId: id,
+				title: titleTag?.[1],
+				lastRunAt: Date.now()
+			});
+		} catch (e) {
+			console.error('getEventForModal failed:', e);
+		}
+	}
+
 	// ===================== Search =====================
 
 	async function handleSearch(query: string, opts: { scopeToMe?: boolean } = {}) {
@@ -742,6 +841,15 @@ function _createAppState() {
 			if (docMode === 'empty') await loadFeed();
 			return;
 		}
+
+		// Push synchronously, before any await. Two back-to-back searches
+		// must preserve user-perceived order in the history list.
+		pushHistoryEntry({
+			kind: 'query',
+			query,
+			opts: { scopeToMe },
+			lastRunAt: Date.now()
+		});
 
 		searchLoading = true;
 		try {
@@ -955,9 +1063,9 @@ function _createAppState() {
 	async function handleViewJson(result: SearchResult) {
 		try {
 			const resp = await api.getEvent(result.event_id);
-			jsonModalData = resp.event;
+			eventModalData = resp.event as NostrEvent;
 		} catch {
-			jsonModalData = result;
+			eventModalData = result;
 		}
 	}
 
@@ -1813,9 +1921,14 @@ function _createAppState() {
 		get searchRelayCount() { return searchRelayCount; },
 		get searchLoading() { return searchLoading; },
 
-		// JSON modal
+		// Event view modal (structured)
+		get eventModalData() { return eventModalData; },
+		set eventModalData(v: NostrEvent | SearchResult | null) { eventModalData = v; },
+
+		// Legacy JSON dump modal (buffer inspector + rawEvent)
 		get jsonModalData() { return jsonModalData; },
-		set jsonModalData(v: unknown) { jsonModalData = v; },
+		set jsonModalData(v: { buffer: Buffer } | { rawEvent: unknown } | null) { jsonModalData = v; },
+
 		get actionModalResult() { return actionModalResult; },
 		set actionModalResult(v: SearchResult | null) { actionModalResult = v; },
 
@@ -1923,6 +2036,11 @@ function _createAppState() {
 		handleComposePublish,
 		handleComposeUpdate,
 		handleSearch,
+		pushHistoryEntry,
+		getEventForModal,
+		get searchHistory() { return searchHistory; },
+		get currentEntry() { return currentEntry; },
+		get previousEntry() { return previousEntry; },
 		handleAddToContext,
 		handleAddToCompose,
 		handleAddManyToContext,

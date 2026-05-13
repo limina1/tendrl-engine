@@ -21,7 +21,7 @@
 	import { BufferStore, setActiveStore, type NavAction } from '$lib/wm/buffer-store.svelte';
 	import BufferRenderer from '$lib/wm/BufferRenderer.svelte';
 	import { rendererFor } from '$lib/wm/registry';
-	import { getAppState } from '$lib/state.svelte';
+	import { getAppState, type ModalNavEntry } from '$lib/state.svelte';
 
 	const app = getAppState();
 
@@ -170,6 +170,60 @@
 		query: '',
 		selectedIndex: 0
 	});
+
+	// Search-history popover toggle, anchored to the .hs-pill-wrap in the
+	// modeline. Click-outside closes it via the $effect below.
+	let historyPopoverOpen = $state(false);
+	let hsWrapEl: HTMLElement | null = $state(null);
+
+	$effect(() => {
+		if (!historyPopoverOpen) return;
+		function onDocMouseDown(e: MouseEvent) {
+			if (!hsWrapEl) return;
+			if (e.target instanceof Node && hsWrapEl.contains(e.target)) return;
+			historyPopoverOpen = false;
+		}
+		document.addEventListener('mousedown', onDocMouseDown);
+		return () => document.removeEventListener('mousedown', onDocMouseDown);
+	});
+
+	// Local mirror of state.svelte.ts entryKey — used to test "is this row
+	// the previousEntry" for the depth-1 highlight.
+	function entryKey(e: ModalNavEntry): string {
+		if (e.kind === 'query') {
+			const norm = e.query.trim().replace(/\s+/g, ' ');
+			return `q|${norm}|s=${e.opts.scopeToMe}`;
+		}
+		if (e.kind === 'nevent') return `e|${e.eventId.toLowerCase()}`;
+		return `a|${e.coord.kind}:${e.coord.pubkey}:${e.coord.d_tag}`;
+	}
+
+	function entryLabel(e: ModalNavEntry): string {
+		if (e.kind === 'query') return e.query;
+		if (e.kind === 'nevent') return e.title ?? e.eventId.slice(0, 12) + '…';
+		return e.title ?? e.coord.d_tag;
+	}
+
+	function entryMeta(e: ModalNavEntry): string {
+		if (e.kind === 'query') return e.opts.scopeToMe ? 'scoped' : '';
+		if (e.kind === 'nevent') return e.eventId.slice(0, 8);
+		return `k:${e.coord.kind}`;
+	}
+
+	async function replayEntry(entry: ModalNavEntry) {
+		historyPopoverOpen = false;
+		if (entry.kind === 'query') {
+			await app.handleSearch(entry.query, entry.opts);
+			return;
+		}
+		if (entry.kind === 'nevent') {
+			await app.getEventForModal(entry.eventId);
+			return;
+		}
+		// naddr — replay as a structured query. by: accepts hex per src/search.rs.
+		const q = `k:${entry.coord.kind} by:${entry.coord.pubkey} #d:${entry.coord.d_tag}`;
+		await app.handleSearch(q, { scopeToMe: false });
+	}
 
 	store.recentlyClosed = [
 		{ className: 'work', buffer: { id: 'r1', kind: 'reader', label: 'reader', kicker: 'NIP-23 long-form · §2' } },
@@ -380,7 +434,11 @@
 		// C-[ / C-g still escape (which blurs the field via focusout →
 		// mode = 'normal'). This is the safety net; focusin/out keeps
 		// `mode` aligned for the modeline.
-		if (isEditable(document.activeElement) && mb.mode === 'closed') {
+		// Also gate on e.target: a field can blur synchronously inside its
+		// own keydown handler (SearchInput does this on Enter), so by the
+		// time the event bubbles here, document.activeElement is no longer
+		// editable — but the keystroke was still for that field, not us.
+		if ((isEditable(document.activeElement) || isEditable(e.target)) && mb.mode === 'closed') {
 			if (e.key === 'Escape' || (e.key === '[' && e.ctrlKey) || (e.key === 'g' && e.ctrlKey)) {
 				e.preventDefault();
 				exitInsertMode();
@@ -727,6 +785,40 @@
 				<span class="ml__seg ml__seg--prefix">mb:{mb.mode}</span>
 			{/if}
 			<span class="ml__spacer"></span>
+			{#if app.searchHistory.length > 0}
+				<span class="hs-pill-wrap" bind:this={hsWrapEl}>
+					<button
+						class="pill pill--btn pill--hs"
+						onclick={() => (historyPopoverOpen = !historyPopoverOpen)}
+						title="Search history · click to expand"
+					>
+						🔍 {app.searchHistory.length}
+					</button>
+					{#if historyPopoverOpen}
+						{@const prevKey = app.previousEntry ? entryKey(app.previousEntry) : null}
+						<div class="hs-popover" role="dialog" aria-label="Search history">
+							<div class="hs-popover__list">
+								{#each app.searchHistory as entry (entryKey(entry))}
+									{@const k = entryKey(entry)}
+									<!-- svelte-ignore a11y_click_events_have_key_events -->
+									<button
+										class="hs-row {prevKey === k ? 'hs-row--prev' : ''}"
+										onclick={() => replayEntry(entry)}
+										title={entryLabel(entry)}
+									>
+										<span class="hs-row__kind hs-row__kind--{entry.kind}">{entry.kind}</span>
+										<span class="hs-row__label">{entryLabel(entry)}</span>
+										{#if prevKey === k}
+											<span class="hs-row__tag">prev search</span>
+										{/if}
+										<span class="hs-row__meta">{entryMeta(entry)}</span>
+									</button>
+								{/each}
+							</div>
+						</div>
+					{/if}
+				</span>
+			{/if}
 			<button
 				class="pill pill--btn {networkPill.pillClass}"
 				onclick={openRelays}
@@ -1335,6 +1427,114 @@
 		background: color-mix(in srgb, var(--id-yours) 12%, var(--panel-rail-bg));
 		border-right-color: var(--id-yours);
 		box-shadow: inset 1px 0 0 var(--id-yours), inset -1px 0 0 var(--id-yours);
+	}
+
+	/* Search history pill — sits in the modeline cluster, anchors the
+	   Slice 3 popover via .hs-pill-wrap (position: relative). Tinted with
+	   id-yours so it reads as a navigation-context pill, not a status pill. */
+	.hs-pill-wrap {
+		position: relative;
+		display: inline-flex;
+	}
+	.pill--hs {
+		background: color-mix(in srgb, var(--id-yours) 12%, transparent);
+		color: var(--id-yours);
+	}
+
+	/* Slice 3 popover — anchored above the pill (bottom: 100%). z-index 110
+	   keeps it above the modal backdrop (100) for Slice 4. */
+	.hs-popover {
+		position: absolute;
+		bottom: calc(100% + 6px);
+		right: 0;
+		z-index: 110;
+		min-width: 320px;
+		max-width: 480px;
+		background: var(--panel-bg);
+		border: 1px solid var(--panel-border);
+		border-radius: var(--r-md);
+		box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+		font-family: var(--font-sans);
+	}
+	.hs-popover__list {
+		display: flex;
+		flex-direction: column;
+		max-height: 320px;
+		overflow-y: auto;
+		padding: var(--s-1) 0;
+	}
+	.hs-row {
+		display: flex;
+		align-items: center;
+		gap: var(--s-2);
+		padding: 4px var(--s-3);
+		background: transparent;
+		border: none;
+		border-left: 2px solid transparent;
+		text-align: left;
+		cursor: pointer;
+		color: var(--fg);
+		font-size: var(--t-sm);
+	}
+	.hs-row:hover {
+		background: var(--base1);
+	}
+	.hs-row--prev {
+		background: color-mix(in srgb, var(--id-yours) 12%, transparent);
+		border-left-color: var(--id-yours);
+	}
+	.hs-row--prev:hover {
+		background: color-mix(in srgb, var(--id-yours) 18%, transparent);
+	}
+	.hs-row__kind {
+		font-family: var(--font-mono);
+		font-size: 9px;
+		text-transform: uppercase;
+		letter-spacing: 0.06em;
+		padding: 1px 6px;
+		border-radius: var(--r-sm);
+		font-weight: 600;
+		min-width: 56px;
+		text-align: center;
+		flex-shrink: 0;
+	}
+	.hs-row__kind--query {
+		background: color-mix(in srgb, var(--cyan) 18%, transparent);
+		color: var(--cyan);
+	}
+	.hs-row__kind--nevent {
+		background: color-mix(in srgb, var(--id-yours) 18%, transparent);
+		color: var(--id-yours);
+	}
+	.hs-row__kind--naddr {
+		background: color-mix(in srgb, var(--id-imported) 18%, transparent);
+		color: var(--id-imported);
+	}
+	.hs-row__label {
+		flex: 1;
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+		font-family: var(--font-mono);
+		font-size: var(--t-xs);
+	}
+	.hs-row__meta {
+		color: var(--base6);
+		font-family: var(--font-mono);
+		font-size: 10px;
+		flex-shrink: 0;
+	}
+	.hs-row__tag {
+		font-family: var(--font-mono);
+		font-size: 9px;
+		text-transform: uppercase;
+		letter-spacing: 0.06em;
+		color: var(--id-yours);
+		padding: 1px 5px;
+		border: 1px solid color-mix(in srgb, var(--id-yours) 40%, transparent);
+		border-radius: var(--r-sm);
+		flex-shrink: 0;
 	}
 
 	.shell__modeline {
