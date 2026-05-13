@@ -459,8 +459,12 @@ fn classify_token(token: &Token) -> TokenClass {
         return TokenClass::Exact(text.clone());
     }
 
-    // by: prefix → author filter
-    if let Some(rest) = text.strip_prefix("by:") {
+    // by: / author: prefix → author filter. `author:` is an alias for `by:`
+    // (same value forms: me / assistant / npub1... / <64-hex>).
+    let author_rest = text
+        .strip_prefix("by:")
+        .or_else(|| text.strip_prefix("author:"));
+    if let Some(rest) = author_rest {
         if rest == "me" {
             return TokenClass::Author(AuthorFilter::CurrentUser);
         }
@@ -564,6 +568,21 @@ mod tests {
         let q = SearchQuery::parse(&format!("by:{}", hex)).unwrap();
         assert_eq!(
             q.author_filter,
+            Some(AuthorFilter::Pubkeys(vec![hex.to_string()]))
+        );
+    }
+
+    #[test]
+    fn test_parse_author_alias() {
+        // `author:` is an alias for `by:` — same value forms accepted.
+        let q1 = SearchQuery::parse("author:me").unwrap();
+        assert_eq!(q1.author_filter, Some(AuthorFilter::CurrentUser));
+        let q2 = SearchQuery::parse("author:assistant").unwrap();
+        assert_eq!(q2.author_filter, Some(AuthorFilter::AssistantUser));
+        let hex = "32bf915904bfde2d136ba45dde32c88f4aca863783999faea2e847a8fafd2f15";
+        let q3 = SearchQuery::parse(&format!("author:{}", hex)).unwrap();
+        assert_eq!(
+            q3.author_filter,
             Some(AuthorFilter::Pubkeys(vec![hex.to_string()]))
         );
     }
