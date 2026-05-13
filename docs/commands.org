@@ -339,8 +339,7 @@ Click dispatch:
 | =p=         | hex64             | =handleSearch("by:" + encodeNpub(value))=, close modal                |
 | =d=         | any text          | =handleSearch("d:" + value)=, close modal                             |
 | =t=         | any text          | =handleSearch("t:" + value)=, close modal                             |
-| 1-char key  | whitespace-free   | =handleSearch("key:value")= (no =#= — see =src/search.rs:126=)        |
-| multi-char  | any text          | =handleSearch(value)= as free-text keyword (parser is 1-char-only)    |
+| any tag key | whitespace-free, value not starting with =/= | =handleSearch("name:value")= — single- or multi-char names accept by parser (see =src/search.rs:506=) |
 | anything else                  | none — plain chip                                                     |
 
 Hex values are validated by =/^[0-9a-f]{64}$/= (lowercased first);
@@ -449,10 +448,19 @@ Verify:
    breadcrumb is empty again.
 5. Close the modal and reopen on a fresh event → no breadcrumb.
 
-** Multi-char tag note
+** Tag name shape
 
-Tags with multi-char keys ( =client=, =imeta=, =subject=, =alt= …)
-fall through to a free-text keyword search of the *value*. The
-parser is single-char only ( =src/search.rs:506= ); supporting
-arbitrary tag names would require widening =TagFilter.tag_name= from
-=char= to =String=. Tracked in =project_search_syntax= memory.
+The parser accepts both single-char NIP-01 short tags ( =t=, =d=,
+=e=, =a=, =p=, =L=, =m=, …) and multi-char names ( =author=,
+=client=, =imeta=, =alt=, =subject=, =summary=, =published_at=, …)
+as tag filters. =TagFilter.tag_name= is =String=.
+
+Name shape constraint at =src/search.rs:506=: =[A-Za-z][A-Za-z0-9_]*=
+plus a value that is non-empty and does not start with =/=. The
+slash exclusion prevents URLs ( =https://example.com=) from being
+misclassified as a tag filter ( =https= with value =//example.com=).
+
+NB: =author:= is a TAG NAME — it filters events with an
+=["author", "<val>"]= tag. It is NOT an alias for =by:=, which
+filters by publishing pubkey ( =me= / =assistant= / =npub1...= /
+=hex64=).

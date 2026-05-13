@@ -30,10 +30,16 @@ impl fmt::Display for QueryParseError {
 
 impl std::error::Error for QueryParseError {}
 
-/// Tag filter for NIP-01 queries
+/// Tag filter for NIP-01 queries.
+///
+/// `tag_name` may be any non-empty ASCII-alphanumeric/underscore string —
+/// single-letter (`t`, `d`, `p`, `e`, `a`, `L`, `m`, …) per the NIP-01
+/// short-tag convention, or multi-char (`author`, `client`, `imeta`,
+/// `alt`, `subject`, `summary`, `published_at`, …). The classifier in
+/// `classify_token` enforces shape constraints — see `src/search.rs:506`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TagFilter {
-    pub tag_name: char,
+    pub tag_name: String,
     pub values: Vec<String>,
 }
 
@@ -123,7 +129,9 @@ impl SearchQuery {
     /// Parse a search query string into a structured SearchQuery.
     ///
     /// Token classification:
-    /// - `t:val`, `d:val`, `L:val`, `m:val` (single char + colon) → TagFilter
+    /// - `t:val`, `d:val`, `L:val`, `m:val` (NIP-01 short tags) → TagFilter
+    /// - `author:val`, `client:val`, `imeta:val`, … (multi-char tags) → TagFilter
+    ///   (any `[A-Za-z][A-Za-z0-9_]*:value` where value does not start with `/`)
     /// - `k:30041` → kind_filter
     /// - `by:me` → AuthorFilter::CurrentUser
     /// - `by:npub1...` → AuthorFilter::Pubkeys (decoded)
@@ -349,7 +357,7 @@ struct Token {
 }
 
 enum TokenClass {
-    Tag(char, String),
+    Tag(String, String),
     Kind(u64),
     Author(AuthorFilter),
     Semantic(SemanticFilter),
@@ -503,14 +511,25 @@ fn classify_token(token: &Token) -> TokenClass {
         });
     }
 
-    // Single-char tag prefix (X:value)
-    let mut chars = text.chars();
-    if let Some(first_char) = chars.next() {
-        if chars.next() == Some(':') {
-            let value: String = chars.collect();
-            if !value.is_empty() {
-                return TokenClass::Tag(first_char, value);
-            }
+    // Tag prefix (NAME:value). Tag name = ASCII alpha-start, then
+    // alphanumerics or underscores; single-letter names (NIP-01 short
+    // tags: `t`, `d`, `e`, `a`, `p`, `L`, `m`, …) and multi-char names
+    // (`author`, `client`, `imeta`, `alt`, `subject`, `summary`, …) both
+    // qualify. The value must not start with `/` so URLs like
+    // `https://example.com` don't get misclassified as a tag filter.
+    if let Some((prefix, rest)) = text.split_once(':') {
+        let valid_name = !prefix.is_empty()
+            && prefix
+                .chars()
+                .next()
+                .map(|c| c.is_ascii_alphabetic())
+                .unwrap_or(false)
+            && prefix
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '_');
+        let valid_value = !rest.is_empty() && !rest.starts_with('/');
+        if valid_name && valid_value {
+            return TokenClass::Tag(prefix.to_string(), rest.to_string());
         }
     }
 
@@ -529,7 +548,7 @@ mod tests {
         assert_eq!(
             q.tag_filters,
             vec![TagFilter {
-                tag_name: 't',
+                tag_name: "t".to_string(),
                 values: vec!["python".to_string()]
             }]
         );
@@ -658,7 +677,7 @@ mod tests {
         assert_eq!(
             q.tag_filters,
             vec![TagFilter {
-                tag_name: 't',
+                tag_name: "t".to_string(),
                 values: vec!["python".to_string()]
             }]
         );
@@ -694,12 +713,45 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_multichar_tag() {
+        // author / client / imeta / alt are common multi-char tag names.
+        let q = SearchQuery::parse("author:Claude").unwrap();
+        assert_eq!(
+            q.tag_filters,
+            vec![TagFilter {
+                tag_name: "author".to_string(),
+                values: vec!["Claude".to_string()]
+            }]
+        );
+        let q2 = SearchQuery::parse("client:tendrl-engine").unwrap();
+        assert_eq!(
+            q2.tag_filters,
+            vec![TagFilter {
+                tag_name: "client".to_string(),
+                values: vec!["tendrl-engine".to_string()]
+            }]
+        );
+    }
+
+    #[test]
+    fn test_parse_url_is_not_tag() {
+        // URLs contain `:` but should remain keyword tokens (value starts
+        // with `/` so the classifier bails out).
+        let q = SearchQuery::parse("https://example.com").unwrap();
+        assert!(q.tag_filters.is_empty());
+        assert_eq!(
+            q.text_filter,
+            Some(TextFilter::Keywords(vec!["https://example.com".to_string()]))
+        );
+    }
+
+    #[test]
     fn test_parse_dtag_with_dashes() {
         let q = SearchQuery::parse("d:some-d-tag-with-dashes").unwrap();
         assert_eq!(
             q.tag_filters,
             vec![TagFilter {
-                tag_name: 'd',
+                tag_name: "d".to_string(),
                 values: vec!["some-d-tag-with-dashes".to_string()]
             }]
         );
@@ -711,7 +763,7 @@ mod tests {
         assert_eq!(
             q.tag_filters,
             vec![TagFilter {
-                tag_name: 't',
+                tag_name: "t".to_string(),
                 values: vec!["python".to_string(), "rust".to_string()]
             }]
         );
@@ -865,7 +917,7 @@ mod tests {
         .unwrap();
         assert_eq!(q.author_filter, Some(AuthorFilter::Pubkeys(vec![hex.to_string()])));
         assert_eq!(q.kind_filter, Some(vec![30041]));
-        assert_eq!(q.tag_filters, vec![TagFilter { tag_name: 't', values: vec!["nostr".to_string()] }]);
+        assert_eq!(q.tag_filters, vec![TagFilter { tag_name: "t".to_string(), values: vec!["nostr".to_string()] }]);
         assert_eq!(q.semantic_filter, Some(SemanticFilter { query: "distributed systems".to_string(), k: 5 }));
         assert_eq!(q.text_filter, Some(TextFilter::Keywords(vec!["protocol".to_string()])));
     }

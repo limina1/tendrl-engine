@@ -152,8 +152,7 @@
 		| { kind: 'event'; eventId: string }
 		| { kind: 'reader'; pubkey: string; d_tag: string; label: string | null }
 		| { kind: 'addr-nonindex'; addr: string }
-		| { kind: 'search'; query: string }
-		| { kind: 'keyword'; value: string }; // multi-char tag fallback
+		| { kind: 'search'; query: string };
 
 	function tagAction(tag: string[]): TagAction {
 		if (!Array.isArray(tag) || tag.length < 1) return { kind: 'none' };
@@ -187,15 +186,14 @@
 		}
 		if (key === 'd') return { kind: 'search', query: `d:${value}` };
 		if (key === 't') return { kind: 'search', query: `t:${value}` };
-		// Single-char key with a whitespace-free value → bare key:value tag
-		// filter (see src/search.rs:506). The parser only treats single-char
-		// keys as tag filters today; multi-char keys fall through to a
-		// free-text keyword search of the value (best-effort).
-		if (key.length === 1 && /^[^\s]+$/.test(value)) {
+		// Generic tag filter — both single-char (NIP-01 short tags) and
+		// multi-char names (author, client, imeta, alt, …) are accepted by
+		// the parser (src/search.rs:506). The value must be whitespace-free
+		// and not start with `/`; otherwise fall through to a plain chip.
+		const validName = /^[A-Za-z][A-Za-z0-9_]*$/.test(key);
+		const validValue = !value.startsWith('/') && /^[^\s]+$/.test(value);
+		if (validName && validValue) {
 			return { kind: 'search', query: `${key}:${value}` };
-		}
-		if (key.length > 1) {
-			return { kind: 'keyword', value };
 		}
 		return { kind: 'none' };
 	}
@@ -242,11 +240,6 @@
 			} catch (e) {
 				console.error('a-tag non-index lookup failed:', e);
 			}
-			return;
-		}
-		if (action.kind === 'keyword') {
-			onclose();
-			app.handleSearch(action.value, { scopeToMe: false });
 			return;
 		}
 		// search
