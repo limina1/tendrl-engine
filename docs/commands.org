@@ -529,19 +529,25 @@ across the matched event set. Composes with other filters; the
 aggregation runs AFTER all filtering, so the histogram reflects
 exactly the events that would have come back as =results=.
 
-Response shape: =tag_counts: { NAME: [{value, count}, ...] }=
-sorted by count descending, ties broken alphabetically. Empty when
-no =count:= was requested ( =serde(skip_serializing_if = "...")=
-keeps the JSON clean).
+Response shape:
+=tag_counts: { NAME: [{value, count, event_ids: [...]}, ...] }=
+sorted by count descending, ties broken alphabetically. Each
+bucket carries the IDs of the events that contributed, so the UI
+can render an unfoldable group view (header = value + count, fold
+out = the actual events looked up in =results=). Empty when no
+=count:= was requested ( =serde(skip_serializing_if)= keeps the
+JSON clean).
 
 #+begin_src bash
 # All distinct author tag values across kind-30041 events,
-# with how many events carry each.
+# with how many events carry each + IDs of those events.
 read -r -d '' Q <<'Q'
 {"query":"k:30041 count:author","policy":"local_only","scope_to_me":false}
 Q
 curl -X POST http://localhost:3030/api/v1/search \
   -H 'Content-Type: application/json' -d "$Q" | jq '.tag_counts.author[:10]'
+# →  [{"value":"liminal 🌑","count":42,"event_ids":["abc...","def...",...]},
+#     {"value":"Claude","count":17,"event_ids":[...]}, ...]
 #+end_src
 
 Multiple =count:= clauses are independent buckets:

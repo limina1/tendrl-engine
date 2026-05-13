@@ -121,12 +121,15 @@ pub struct DocPageResult {
     pub semantic_score: f64,
 }
 
-/// One bucket in a `count:NAME` histogram — a distinct tag value and how
-/// many matched events carry it.
+/// One bucket in a `count:NAME` histogram — a distinct tag value, how
+/// many matched events carry it, and the IDs of those events so the UI
+/// can render an expandable "unfold > list" view. Full event details
+/// stay in `SearchResponse.results`; the IDs are an index into that.
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct TagValueCount {
     pub value: String,
     pub count: usize,
+    pub event_ids: Vec<String>,
 }
 
 /// Response from a search operation
