@@ -897,6 +897,12 @@ pub struct FetchRelayRequest {
     pub authors: Vec<String>,
     #[serde(default = "default_fetch_limit")]
     pub limit: usize,
+    /// Set true for explicit user-initiated fetches that should reach
+    /// the network even when global network mode is offline (e.g. the
+    /// profile-page "Choose relays and fetch" modal). Background
+    /// pollers must NOT set this — offline mode silences them by design.
+    #[serde(default)]
+    pub bypass_offline: bool,
 }
 
 fn default_fetch_limit() -> usize { 200 }
@@ -906,7 +912,7 @@ pub async fn fetch_relay_handler(
     State(engine): State<AppState>,
     Json(req): Json<FetchRelayRequest>,
 ) -> Result<Json<Value>, EngineError> {
-    debug!("Fetch from relay: {} kinds={:?} authors={} limit={}", req.relay, req.kinds, req.authors.len(), req.limit);
+    debug!("Fetch from relay: {} kinds={:?} authors={} limit={} bypass_offline={}", req.relay, req.kinds, req.authors.len(), req.limit, req.bypass_offline);
 
     let mut filter = json!({"limit": req.limit});
     if !req.kinds.is_empty() {
@@ -916,10 +922,11 @@ pub async fn fetch_relay_handler(
         filter["authors"] = json!(req.authors);
     }
 
-    let events = engine.tracked_fetch(
+    let events = engine.tracked_fetch_with_options(
         &req.relay,
         &[filter],
         FetchTrigger::UserAction,
+        req.bypass_offline,
     )
     .await?;
 

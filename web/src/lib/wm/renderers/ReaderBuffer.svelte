@@ -202,11 +202,13 @@
 		};
 	}
 
-	function parseBufferId(id: string): { pubkey: string; dTag: string } | null {
+	function parseBufferId(id: string): { kind: number; pubkey: string; dTag: string } | null {
 		const { core } = splitBufferId(id);
-		const match = core.match(/^reader:\d+:([0-9a-fA-F]{64}):(.+)$/);
+		const match = core.match(/^reader:(\d+):([0-9a-fA-F]{64}):(.+)$/);
 		if (!match) return null;
-		return { pubkey: match[1].toLowerCase(), dTag: match[2] };
+		const kind = parseInt(match[1], 10);
+		if (!Number.isFinite(kind)) return null;
+		return { kind, pubkey: match[2].toLowerCase(), dTag: match[3] };
 	}
 
 	function parseEventId(id: string): string | null {
@@ -502,6 +504,15 @@
 			loading = false;
 			return;
 		}
+		// Non-NKBIP-01 addressables (long-form articles 30023, wikis 30818,
+		// etc.) don't have a separate index/section structure — they're a
+		// single event with a content body. Fetch the addressable directly
+		// and wrap it as a single-section view so the rest of the reader
+		// (paginated/continuous, highlights, comments) works uniformly.
+		if (parsedAddr.kind !== 30040) {
+			await loadAddressable(parsedAddr.kind, parsedAddr.pubkey, parsedAddr.dTag);
+			return;
+		}
 		loading = true;
 		try {
 			const resp = await api.getPublication(
@@ -569,6 +580,54 @@
 				{
 					addr,
 					title: titleTag,
+					content: ev.content ?? '',
+					position: 0,
+					status: 'loaded' as const
+				}
+			];
+			viewMode = 'paginated';
+		} catch (e) {
+			error = String(e);
+		} finally {
+			loading = false;
+		}
+	}
+
+	// Addressable reader: fetch a 30023 (long-form article) / 30818 (wiki)
+	// / other addressable event by its kind+pubkey+d-tag triple, then
+	// render it as a single-section view. Reuses the same publication
+	// shape as loadEvent so the downstream rendering paths (paginated,
+	// continuous, discussion overlay) don't have to special-case kinds.
+	async function loadAddressable(kind: number, pubkey: string, dTag: string) {
+		loading = true;
+		try {
+			const resp = await api.getAddressable(kind, pubkey, dTag);
+			const ev = resp.event as
+				| { id?: string; kind?: number; pubkey?: string; tags?: string[][]; content?: string; created_at?: number }
+				| null;
+			if (!ev) {
+				error = `${kind === 30023 ? 'Article' : kind === 30818 ? 'Wiki' : 'Addressable event'} not found locally — try fetching the author from their profile (↻ Fetch).`;
+				return;
+			}
+			const tags = ev.tags ?? [];
+			const titleTag = tags.find((t) => t[0] === 'title')?.[1] ?? null;
+			const summaryTag = tags.find((t) => t[0] === 'summary')?.[1] ?? null;
+			const imageTag = tags.find((t) => t[0] === 'image')?.[1] ?? null;
+			const addr = { kind, pubkey, d_tag: dTag };
+			publication = {
+				addr,
+				title: titleTag ?? (kind === 30818 ? dTag : null),
+				summary: summaryTag,
+				image: imageTag,
+				author_pubkey: ev.pubkey ?? pubkey,
+				version: null,
+				created_at: ev.created_at ?? 0,
+				index: ev
+			};
+			pristineSections = [
+				{
+					addr,
+					title: titleTag ?? (kind === 30818 ? dTag : null),
 					content: ev.content ?? '',
 					position: 0,
 					status: 'loaded' as const

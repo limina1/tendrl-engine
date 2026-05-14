@@ -370,7 +370,24 @@ impl Engine {
         filters: &[Value],
         trigger: FetchTrigger,
     ) -> Result<Vec<Value>> {
-        if !self.is_online() {
+        self.tracked_fetch_with_options(relay_url, filters, trigger, false)
+            .await
+    }
+
+    /// Variant of `tracked_fetch` that can bypass the offline-mode
+    /// short-circuit. Reserved for explicit, user-initiated relay
+    /// fetches — e.g. the profile-page refresh modal where the user
+    /// has selected which relays to hit. Background pollers must
+    /// continue using `tracked_fetch` so offline mode actually
+    /// silences automatic traffic.
+    pub async fn tracked_fetch_with_options(
+        &self,
+        relay_url: &str,
+        filters: &[Value],
+        trigger: FetchTrigger,
+        bypass_offline: bool,
+    ) -> Result<Vec<Value>> {
+        if !bypass_offline && !self.is_online() {
             return Ok(vec![]);
         }
         let summary = network::summarize_filters(filters);

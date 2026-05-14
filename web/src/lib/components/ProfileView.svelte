@@ -3,21 +3,43 @@
 	import * as api from '$lib/api';
 	import type { Profile } from '$lib/api';
 	import ProfileName from './ProfileName.svelte';
+	import { fetchFromRelaysWithPrompt } from '$lib/fetch/relay-fetch.svelte';
+	import { getAppState } from '$lib/state.svelte';
+
+	const app = getAppState();
 
 	let {
 		pubkey,
 		onopenpub,
+		onopenaddr,
 		onback
 	}: {
 		pubkey: string;
 		onopenpub?: (pub_summary: PublicationSummary) => void;
+		/** Open any non-30040 addressable (article, wiki, etc.) in the
+		 *  reader. The buffer-id pattern reader:&lt;kind&gt;:&lt;pk&gt;:&lt;dtag&gt; works
+		 *  for these uniformly so the host can route them without caring
+		 *  about kind-specific layout. */
+		onopenaddr?: (addr: { kind: number; pubkey: string; d_tag: string }, title: string | null) => void;
 		onback: () => void;
 	} = $props();
 
-	type Tab = 'publications' | 'sections' | 'comments';
+	type Tab = 'publications' | 'articles' | 'wikis' | 'sections' | 'comments';
 	let activeTab: Tab = $state('publications');
 	let profile = $state<Profile | null>(null);
 	let publications = $state<PublicationSummary[]>([]);
+	// NIP-23 long-form articles (kind 30023) and NKBIP-02 wikis (kind
+	// 30818). Both are addressable replaceable events, deduped by d_tag
+	// keeping the newest version.
+	type AddressableSummary = {
+		addr: { kind: number; pubkey: string; d_tag: string };
+		title: string | null;
+		summary: string | null;
+		image: string | null;
+		created_at: number;
+	};
+	let articles = $state<AddressableSummary[]>([]);
+	let wikis = $state<AddressableSummary[]>([]);
 	let sections = $state<NostrEvent[]>([]);
 	let comments = $state<NostrEvent[]>([]);
 	let loading = $state(true);
@@ -32,15 +54,39 @@
 		return new Date(ts * 1000).toLocaleDateString();
 	}
 
+	function dedupAddressable(events: NostrEvent[], kind: number): AddressableSummary[] {
+		// Replaceable events: same (kind, pubkey, d_tag) → latest version
+		// (highest created_at) wins. Same dedup the publication path uses,
+		// generalized so 30023 and 30818 reuse it.
+		const byDtag = new Map<string, AddressableSummary>();
+		for (const e of events) {
+			const d_tag = getTag(e, 'd') || '';
+			const existing = byDtag.get(d_tag);
+			if (existing && existing.created_at >= e.created_at) continue;
+			byDtag.set(d_tag, {
+				addr: { kind, pubkey: e.pubkey, d_tag },
+				title: getTag(e, 'title'),
+				summary: getTag(e, 'summary'),
+				image: getTag(e, 'image'),
+				created_at: e.created_at
+			});
+		}
+		return [...byDtag.values()].sort((a, b) => b.created_at - a.created_at);
+	}
+
 	async function loadLocal(pk: string) {
-		const [prof, pubResult, secResult, comResult] = await Promise.all([
+		const [prof, pubResult, artResult, wikiResult, secResult, comResult] = await Promise.all([
 			api.getProfile(pk),
 			api.queryEvents([{ kinds: [30040], authors: [pk], limit: 500 }], 'local_only'),
+			api.queryEvents([{ kinds: [30023], authors: [pk], limit: 200 }], 'local_only'),
+			api.queryEvents([{ kinds: [30818], authors: [pk], limit: 200 }], 'local_only'),
 			api.queryEvents([{ kinds: [30041], authors: [pk], limit: 200 }], 'local_only'),
 			api.queryEvents([{ kinds: [1111], authors: [pk], limit: 200 }], 'local_only')
 		]);
 		profile = prof.found ? prof : null;
-		// Convert raw 30040 events to PublicationSummary, deduplicate by d_tag (keep newest)
+		// 30040 publications: same dedup, but kept as the existing
+		// PublicationSummary shape so the openpub callback contract
+		// downstream (and the section_count display) is preserved.
 		const byDtag = new Map<string, PublicationSummary>();
 		for (const e of (pubResult.events as NostrEvent[])) {
 			const d_tag = getTag(e, 'd') || '';
@@ -58,31 +104,85 @@
 			} as PublicationSummary);
 		}
 		publications = [...byDtag.values()].sort((a, b) => b.created_at - a.created_at);
+		articles = dedupAddressable(artResult.events as NostrEvent[], 30023);
+		wikis = dedupAddressable(wikiResult.events as NostrEvent[], 30818);
 		sections = (secResult.events as NostrEvent[]).sort((a, b) => b.created_at - a.created_at);
 		comments = (comResult.events as NostrEvent[]).sort((a, b) => b.created_at - a.created_at);
+	}
+
+	// Tab → which event kinds to pull. The top-bar Fetch button pulls
+	// the union; per-tab refresh buttons scope to a single kind so the
+	// user can do targeted refreshes without hammering relays for
+	// everything every time.
+	const TAB_KINDS: Record<Tab, number[]> = {
+		publications: [30040],
+		articles: [30023],
+		wikis: [30818],
+		sections: [30041],
+		comments: [1111]
+	};
+	const TAB_LABEL: Record<Tab, string> = {
+		publications: 'publications',
+		articles: 'articles',
+		wikis: 'wikis',
+		sections: 'sections',
+		comments: 'comments'
+	};
+
+	let tabFetchingKinds = $state<number | null>(null);
+
+	const isOnline = $derived(app.networkStatus?.mode === 'online');
+
+	async function runFetch(opts: { title: string; kinds: number[] }) {
+		console.debug('[ProfileView] fetch start', {
+			title: opts.title,
+			kinds: opts.kinds,
+			pubkey,
+			isOnline
+		});
+		const result = await fetchFromRelaysWithPrompt(
+			{ title: opts.title, kinds: opts.kinds, authors: [pubkey], limit: 500 },
+			{ isOnline }
+		);
+		console.debug('[ProfileView] fetch result', result);
+		if (!result) return null;
+		// nostrdb ingest is async on the engine side — give it a beat
+		// before re-reading locally so the new events show up.
+		await new Promise((r) => setTimeout(r, 400));
+		await loadLocal(pubkey);
+		return result;
 	}
 
 	async function handleFetch() {
 		fetching = true;
 		try {
-			// Fetch this author's events from all configured fetch relays
-			const rc = await api.getRelayConfig();
-			const kinds = rc.fetch.kinds.length > 0 ? rc.fetch.kinds : [0, 30040, 30041, 1111];
-			for (const relay of rc.fetch.urls) {
-				try {
-					await api.fetchFromRelay(relay, kinds, [pubkey], 500);
-				} catch {}
-			}
-			// Also fetch profile from general relays
+			await runFetch({
+				title: `Fetch all events for ${profile?.display_name || profile?.name || pubkey.slice(0, 12) + '…'}`,
+				kinds: [0, 30040, 30023, 30818, 30041, 1111]
+			});
+			// Profile prefetch hits general relays unconditionally — names
+			// don't go through the prompted flow because they're a side
+			// effect of any fetch, not the primary target.
 			await api.prefetchProfiles([pubkey]);
-			// Wait for nostrdb to process ingested events
-			await new Promise(r => setTimeout(r, 500));
-			// Reload local data
-			await loadLocal(pubkey);
 		} catch (e) {
 			console.error('Fetch failed:', e);
 		} finally {
 			fetching = false;
+		}
+	}
+
+	async function handleTabFetch(tab: Tab) {
+		const kinds = TAB_KINDS[tab];
+		tabFetchingKinds = kinds[0];
+		try {
+			await runFetch({
+				title: `Fetch ${TAB_LABEL[tab]} for ${profile?.display_name || profile?.name || pubkey.slice(0, 12) + '…'}`,
+				kinds
+			});
+		} catch (e) {
+			console.error('Tab fetch failed:', e);
+		} finally {
+			tabFetchingKinds = null;
 		}
 	}
 
@@ -91,6 +191,8 @@
 		loading = true;
 		profile = null;
 		publications = [];
+		articles = [];
+		wikis = [];
 		sections = [];
 		comments = [];
 
@@ -118,16 +220,30 @@
 		</button>
 	</div>
 
+	{#snippet tabCell(t: Tab, label: string, count: number)}
+		<div class="tab" class:active={activeTab === t}>
+			<button class="tab-label" onclick={() => (activeTab = t)}>
+				{label} ({count})
+			</button>
+			<button
+				class="tab-refresh"
+				onclick={() => handleTabFetch(t)}
+				disabled={tabFetchingKinds === TAB_KINDS[t][0]}
+				title={isOnline
+					? `Fetch ${label.toLowerCase()} from configured relays`
+					: `Choose relays and fetch ${label.toLowerCase()}`}
+			>
+				{tabFetchingKinds === TAB_KINDS[t][0] ? '…' : '↻'}
+			</button>
+		</div>
+	{/snippet}
+
 	<div class="tabs">
-		<button class="tab" class:active={activeTab === 'publications'} onclick={() => activeTab = 'publications'}>
-			Publications ({publications.length})
-		</button>
-		<button class="tab" class:active={activeTab === 'sections'} onclick={() => activeTab = 'sections'}>
-			Sections ({sections.length})
-		</button>
-		<button class="tab" class:active={activeTab === 'comments'} onclick={() => activeTab = 'comments'}>
-			Comments ({comments.length})
-		</button>
+		{@render tabCell('publications', 'Publications', publications.length)}
+		{@render tabCell('articles', 'Articles', articles.length)}
+		{@render tabCell('wikis', 'Wikis', wikis.length)}
+		{@render tabCell('sections', 'Sections', sections.length)}
+		{@render tabCell('comments', 'Comments', comments.length)}
 	</div>
 
 	<div class="tab-content">
@@ -154,6 +270,54 @@
 							<p class="item-preview">{pub_item.summary}</p>
 						{/if}
 						<span class="item-time">{formatTime(pub_item.created_at)}</span>
+					</div>
+				{/each}
+			{/if}
+		{:else if activeTab === 'articles'}
+			{#if articles.length === 0}
+				<div class="empty">No articles</div>
+			{:else}
+				{#each articles as art (`${art.addr.pubkey}:${art.addr.d_tag}`)}
+					<!-- svelte-ignore a11y_no_static_element_interactions -->
+					<div
+						class="item pub-item"
+						onclick={() => onopenaddr?.(art.addr, art.title)}
+						onkeydown={(e) => { if (e.key === 'Enter') onopenaddr?.(art.addr, art.title); }}
+						role="button"
+						tabindex="0"
+					>
+						<div class="item-header">
+							<span class="item-title">{art.title ?? '[Untitled]'}</span>
+							<span class="item-meta">long-form</span>
+						</div>
+						{#if art.summary}
+							<p class="item-preview">{art.summary}</p>
+						{/if}
+						<span class="item-time">{formatTime(art.created_at)}</span>
+					</div>
+				{/each}
+			{/if}
+		{:else if activeTab === 'wikis'}
+			{#if wikis.length === 0}
+				<div class="empty">No wikis</div>
+			{:else}
+				{#each wikis as wiki (`${wiki.addr.pubkey}:${wiki.addr.d_tag}`)}
+					<!-- svelte-ignore a11y_no_static_element_interactions -->
+					<div
+						class="item pub-item"
+						onclick={() => onopenaddr?.(wiki.addr, wiki.title)}
+						onkeydown={(e) => { if (e.key === 'Enter') onopenaddr?.(wiki.addr, wiki.title); }}
+						role="button"
+						tabindex="0"
+					>
+						<div class="item-header">
+							<span class="item-title">{wiki.title ?? wiki.addr.d_tag ?? '[Untitled]'}</span>
+							<span class="item-meta">wiki</span>
+						</div>
+						{#if wiki.summary}
+							<p class="item-preview">{wiki.summary}</p>
+						{/if}
+						<span class="item-time">{formatTime(wiki.created_at)}</span>
 					</div>
 				{/each}
 			{/if}
@@ -301,23 +465,54 @@
 
 	.tab {
 		flex: 1;
-		padding: 8px 12px;
+		display: flex;
+		align-items: stretch;
+		justify-content: center;
+		border-bottom: 2px solid transparent;
+		min-width: 0;
+	}
+	.tab.active {
+		border-bottom-color: var(--accent);
+	}
+	.tab-label {
+		flex: 1;
+		padding: 8px 4px 8px 12px;
 		font-size: 0.75rem;
 		background: none;
 		border: none;
-		border-bottom: 2px solid transparent;
 		color: var(--fg-muted);
 		cursor: pointer;
 		text-align: center;
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
 	}
-
-	.tab:hover {
+	.tab-label:hover {
+		color: var(--fg);
+	}
+	.tab.active .tab-label {
 		color: var(--fg);
 	}
 
-	.tab.active {
-		color: var(--fg);
-		border-bottom-color: var(--accent);
+	.tab-refresh {
+		padding: 0 6px;
+		background: none;
+		border: none;
+		color: var(--base5);
+		cursor: pointer;
+		font-size: 0.85rem;
+		line-height: 1;
+		opacity: 0.6;
+		transition: opacity 100ms;
+	}
+	.tab-refresh:hover:not(:disabled) {
+		color: var(--state-online);
+		opacity: 1;
+	}
+	.tab-refresh:disabled {
+		opacity: 0.3;
+		cursor: not-allowed;
 	}
 
 	.tab-content {

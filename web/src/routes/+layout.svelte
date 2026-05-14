@@ -4,7 +4,13 @@
 	import { createAppState } from '$lib/state.svelte';
 	import SearchActionModal from '$lib/components/SearchActionModal.svelte';
 	import EventViewModal from '$lib/components/EventViewModal.svelte';
+	import RelayFetchModal from '$lib/components/RelayFetchModal.svelte';
 	import ToastStack from '$lib/components/ToastStack.svelte';
+	import {
+		fetchModal,
+		confirmFetchModal,
+		cancelFetchModal
+	} from '$lib/fetch/relay-fetch.svelte';
 	import type { SearchResult } from '$lib/types';
 	import { getActiveStore } from '$lib/wm/buffer-store.svelte';
 
@@ -159,6 +165,15 @@
 				// no store — legacy chrome
 			}
 		}}
+	/>
+{/if}
+
+{#if fetchModal.pending}
+	<RelayFetchModal
+		opts={fetchModal.pending.opts}
+		configRelays={fetchModal.pending.configRelays}
+		onconfirm={(relays) => confirmFetchModal(relays)}
+		oncancel={cancelFetchModal}
 	/>
 {/if}
 

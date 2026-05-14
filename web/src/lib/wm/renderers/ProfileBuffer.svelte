@@ -21,11 +21,29 @@
 			buffer: { id, kind: 'reader', label: 'reader', kicker: pub.title ?? '[Untitled]' }
 		});
 	}
+
+	function openAddr(addr: { kind: number; pubkey: string; d_tag: string }, title: string | null) {
+		// Non-30040 addressables (long-form articles, wikis) reuse the same
+		// reader buffer route — the reader's parseBufferId regex matches
+		// any kind, and the publication-load path will fall back to a
+		// single-section view when the event isn't an NKBIP-01 index.
+		const id = `reader:${addr.kind}:${addr.pubkey}:${addr.d_tag}`;
+		const label = addr.kind === 30023 ? 'article' : addr.kind === 30818 ? 'wiki' : 'reader';
+		store.openBuffer({
+			className: 'work',
+			buffer: { id, kind: 'reader', label, kicker: title ?? addr.d_tag ?? '[Untitled]' }
+		});
+	}
 </script>
 
 <div class="profile-wrap">
 	{#if pubkey}
-		<ProfileView {pubkey} onopenpub={openPub} onback={() => store.killFocused()} />
+		<ProfileView
+			{pubkey}
+			onopenpub={openPub}
+			onopenaddr={openAddr}
+			onback={() => store.killFocused()}
+		/>
 	{:else}
 		<div class="empty"><p>Buffer id does not encode a profile pubkey</p></div>
 	{/if}

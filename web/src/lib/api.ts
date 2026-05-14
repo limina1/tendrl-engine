@@ -115,6 +115,13 @@ export function getEvent(eventId: string) {
 	return fetchJson<{ event: unknown }>(`/api/v1/events/${eventId}`);
 }
 
+/** Fetch an addressable event (latest version for the kind/pubkey/d_tag
+ *  triple). Used by the reader to render non-30040 addressables like
+ *  NIP-23 long-form articles (30023) and NKBIP-02 wikis (30818). */
+export function getAddressable(kind: number, pubkey: string, d_tag: string) {
+	return fetchJson<{ event: unknown }>(`/api/v1/addressable/${kind}/${pubkey}/${encodeURIComponent(d_tag)}`);
+}
+
 export function queryEvents(filters: Record<string, unknown>[], policy = 'local_first') {
 	return fetchJson<{ events: unknown[]; count: number; source: { local_count: number; relay_count: number } }>('/api/v1/query', {
 		method: 'POST',
@@ -361,10 +368,22 @@ export function parseDocument(filename: string) {
 
 // Fetch API
 
-export function fetchFromRelay(relay: string, kinds: number[], authors: string[] = [], limit = 200) {
+export function fetchFromRelay(
+	relay: string,
+	kinds: number[],
+	authors: string[] = [],
+	limit = 200,
+	options: { bypassOffline?: boolean } = {}
+) {
 	return fetchJson<{ fetched: number; relay: string; kinds: number[] }>('/api/v1/fetch', {
 		method: 'POST',
-		body: JSON.stringify({ relay, kinds, authors, limit })
+		body: JSON.stringify({
+			relay,
+			kinds,
+			authors,
+			limit,
+			bypass_offline: options.bypassOffline ?? false
+		})
 	});
 }
 
