@@ -1,13 +1,20 @@
 <script lang="ts">
 	import type { LazySection } from '$lib/types';
+	import { threadContainsId, type ThreadNode } from '$lib/discussions/thread';
+	import type { Highlight } from '$lib/discussions/highlights';
 	import SectionCard from './SectionCard.svelte';
+	import CommentThread from './CommentThread.svelte';
 
 	let {
 		sections,
 		currentSection = 0,
 		onnavigate,
 		onload,
-		onsectionjson
+		onsectionjson,
+		highlightsFor = null,
+		focusedHighlightId = null,
+		threadsFor = null,
+		focusedCommentId = null
 	}: {
 		sections: LazySection[];
 		currentSection?: number;
@@ -16,10 +23,31 @@
 		/** Open the section's underlying event in the structured JSON modal.
 		 *  Surfaces on the right margin of the pager. */
 		onsectionjson?: (index: number) => void;
+		/** Lookup: section addr → all highlights to overlay on its content. */
+		highlightsFor?: ((addr: { kind: number; pubkey: string; d_tag: string }) => Highlight[]) | null;
+		/** Id of the highlight to emphasize (from ?highlight= marker). */
+		focusedHighlightId?: string | null;
+		/** Lookup: given a section addr, return the NIP-22 thread tree to
+		 *  render beneath it. Pass null to suppress inline threads. */
+		threadsFor?: ((addr: { kind: number; pubkey: string; d_tag: string }) => ThreadNode[]) | null;
+		focusedCommentId?: string | null;
 	} = $props();
 
 	const section = $derived(sections[currentSection]);
 	const total = $derived(sections.length);
+	const threads = $derived(threadsFor && section ? threadsFor(section.addr) : []);
+	const highlights = $derived(highlightsFor && section ? highlightsFor(section.addr) : []);
+
+	// Per-section thread toggle. Closed by default — same posture as the
+	// highlights drawer. Resets each time the user pages, with one
+	// exception: when the focused comment (`?focus_comment=<id>`) lives
+	// in this section's thread, snap open so the targeted reply is
+	// actually visible.
+	let threadsOpen = $state(false);
+	$effect(() => {
+		currentSection;
+		threadsOpen = threadContainsId(threads, focusedCommentId);
+	});
 
 	let contentEl: HTMLDivElement | undefined = $state();
 
@@ -71,7 +99,22 @@
 	{/if}
 	<div class="paginated-content" bind:this={contentEl}>
 		{#if section}
-			<SectionCard {section} />
+			<SectionCard {section} {highlights} {focusedHighlightId} />
+			{#if threads.length > 0}
+				<div class="paginated-threads">
+					<button
+						class="paginated-threads-head"
+						onclick={() => (threadsOpen = !threadsOpen)}
+						aria-expanded={threadsOpen}
+					>
+						<span class="ptr">{threadsOpen ? '▾' : '▸'}</span>
+						Comments on this section ({threads.length})
+					</button>
+					{#if threadsOpen}
+						<CommentThread nodes={threads} focusedEventId={focusedCommentId} />
+					{/if}
+				</div>
+			{/if}
 		{/if}
 	</div>
 </div>
@@ -133,5 +176,31 @@
 		font-size: 0.75rem;
 		color: var(--fg-muted);
 		opacity: 0.7;
+	}
+
+	.paginated-threads {
+		padding: 12px 16px;
+		border-top: 1px solid var(--border);
+		background: var(--bg);
+	}
+	.paginated-threads-head {
+		font-family: var(--font-mono);
+		font-size: var(--t-xs);
+		text-transform: uppercase;
+		letter-spacing: 0.06em;
+		color: var(--id-yours);
+		margin-bottom: 6px;
+		display: inline-flex;
+		align-items: center;
+		gap: 4px;
+		background: transparent;
+		border: none;
+		padding: 0;
+		cursor: pointer;
+	}
+	.paginated-threads-head:hover { color: var(--fg); }
+	.paginated-threads-head .ptr {
+		min-width: 1ch;
+		display: inline-block;
 	}
 </style>

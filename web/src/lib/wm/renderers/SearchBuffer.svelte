@@ -74,7 +74,16 @@
 	// Enter / click on a result opens the action modal (read / find /
 	// insert). The actions themselves live in +layout.svelte, which owns
 	// the modal so it overlays the whole shell.
+	//
+	// Exception: NIP-22 comments (kind 1111) and NIP-84 highlights (kind
+	// 9802) bypass the modal — they aren't standalone destinations.
+	// `app.handleSelectResult` resolves their referenced article and
+	// opens it directly with a focus marker.
 	function onSelect(result: SearchResult) {
+		if (result.kind === 1111 || result.kind === 9802) {
+			app.handleSelectResult(result);
+			return;
+		}
 		app.actionModalResult = result;
 	}
 </script>

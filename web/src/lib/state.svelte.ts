@@ -1016,7 +1016,22 @@ function _createAppState() {
 		searchLoading = true;
 		try {
 			let effectiveQuery = query;
-			if (scopeToMe && myPubkey && !query.includes('by:') && !query.includes('~:')) {
+			// Auto-scope to "by:me" so the default search shows my own
+			// content. Opt out when the user signals other intent:
+			//   - they already wrote `by:` (someone specific)
+			//   - they used `~:` (semantic)
+			//   - they typed an explicit `k:` / `kind:` filter — kinds
+			//     like 1111 (comments) or 9802 (highlights) are written
+			//     by *others* about my content, so auto-`by:me` would
+			//     always return zero for them.
+			const hasExplicitKind = /\bk(ind)?:/i.test(query);
+			if (
+				scopeToMe &&
+				myPubkey &&
+				!query.includes('by:') &&
+				!query.includes('~:') &&
+				!hasExplicitKind
+			) {
 				effectiveQuery = `by:me ${effectiveQuery}`;
 			}
 
@@ -1288,6 +1303,80 @@ function _createAppState() {
 		}
 	}
 
+	// Resolve a kind 1111 (NIP-22) or 9802 (NIP-84) result to the article
+	// it cites and open that in the reader. For comments we prefer the
+	// uppercase A/E tag (root scope of the thread) over lowercase a/e
+	// (immediate parent) so clicking any reply lands on the article it
+	// was replying inside, not on the parent comment. For highlights we
+	// prefer lowercase `a` (NIP-84 uses lowercase only).
+	async function openReferencedTarget(result: SearchResult) {
+		try {
+			const resp = await api.getEvent(result.event_id);
+			const ev = resp.event as
+				| { kind?: number; tags?: string[][]; pubkey?: string }
+				| null;
+			if (!ev) {
+				console.warn('openReferencedTarget: event not found', result.event_id);
+				return;
+			}
+			const tags = ev.tags ?? [];
+
+			const findTag = (name: string) =>
+				tags.find((t) => t[0] === name && t[1])?.[1];
+
+			// NIP-22 conventionally puts uppercase A/E (root scope) on
+			// every comment. Highlights use lowercase a/e. Try both orders.
+			const aValue =
+				result.kind === 1111
+					? findTag('A') ?? findTag('a')
+					: findTag('a') ?? findTag('A');
+			const eValue =
+				result.kind === 1111
+					? findTag('E') ?? findTag('e')
+					: findTag('e') ?? findTag('E');
+
+			const marker =
+				result.kind === 9802
+					? `highlight=${result.event_id}`
+					: `focus_comment=${result.event_id}`;
+
+			if (aValue) {
+				const parts = aValue.split(':');
+				if (parts.length >= 3) {
+					const kind = parseInt(parts[0], 10);
+					const pubkey = parts[1];
+					const d_tag = parts.slice(2).join(':');
+					const bufId = `reader:${kind}:${pubkey}:${d_tag}?${marker}`;
+					navigateToReader(
+						bufId,
+						kind === 30040 ? 'reader' : 'event',
+						d_tag.length > 24 ? d_tag.slice(0, 24) + '…' : d_tag
+					);
+					return;
+				}
+			}
+			if (eValue) {
+				navigateToReader(
+					`reader:event:${eValue}?${marker}`,
+					'event',
+					eValue.slice(0, 8) + '…'
+				);
+				return;
+			}
+
+			// No parseable parent — fall back to opening the event in the
+			// reader on its own. This still beats silently swallowing the
+			// click; the user at least sees the comment/highlight body.
+			navigateToReader(
+				`reader:event:${result.event_id}`,
+				result.kind === 9802 ? 'highlight' : 'comment',
+				result.event_id.slice(0, 8) + '…'
+			);
+		} catch (e) {
+			console.warn('openReferencedTarget failed', e);
+		}
+	}
+
 	async function openStandaloneSection(result: SearchResult) {
 		docMode = 'reading';
 		docLoading = true;
@@ -1325,6 +1414,14 @@ function _createAppState() {
 	}
 
 	async function handleSelectResult(result: SearchResult) {
+		// NIP-22 comments and NIP-84 highlights aren't destinations on
+		// their own — they're citations of an article section. Resolve
+		// the referenced target and open *that* in the reader, with a
+		// marker so the matching thread/highlight is in view.
+		if (result.kind === 1111 || result.kind === 9802) {
+			await openReferencedTarget(result);
+			return;
+		}
 		if (!result.addr) return;
 		if (result.kind === 30040) {
 			navigateToPublication(result.addr.pubkey, result.addr.d_tag);
@@ -1821,6 +1918,11 @@ function _createAppState() {
 		onPublication?: (pubkey: string, d_tag: string) => void;
 		onProfile?: (pubkey: string) => void;
 		onCompose?: () => void;
+		onDiscussion?: (event_id: string, kind: number) => void;
+		/** Open an arbitrary reader buffer by its id. Used when the id
+		 *  needs to carry a marker (`?focus_comment=`, `?highlight=`)
+		 *  that the structured handlers above can't express. */
+		onReader?: (buffer_id: string, label: string, kicker: string) => void;
 		onHome?: () => void;
 	};
 	let navHandlers: NavigationHandlers | null = null;
@@ -1835,6 +1937,31 @@ function _createAppState() {
 			navHandlers.onPublication(pubkey, d_tag);
 		} else {
 			goto(`/p/${pubkey}/${d_tag}`);
+		}
+	}
+
+	// NIP-22 comments (kind 1111) and NIP-84 highlights (kind 9802) open
+	// in a dedicated DiscussionViewBuffer rather than the normal reader
+	// because they're meta-events *about* other content: the UI needs to
+	// surface the parent reference and (for comments) the thread, not the
+	// raw event content alone.
+	function navigateToDiscussion(event_id: string, kind: number) {
+		docMode = 'reading';
+		if (navHandlers?.onDiscussion) {
+			navHandlers.onDiscussion(event_id, kind);
+		} else {
+			goto(`/d/${event_id}`);
+		}
+	}
+
+	function navigateToReader(buffer_id: string, label: string, kicker: string) {
+		docMode = 'reading';
+		if (navHandlers?.onReader) {
+			navHandlers.onReader(buffer_id, label, kicker);
+		} else {
+			// No-op fallback when running outside the shell — there isn't a
+			// route that maps to arbitrary reader buffer ids today.
+			console.warn('navigateToReader: no handler registered', buffer_id);
 		}
 	}
 
@@ -2259,6 +2386,7 @@ function _createAppState() {
 
 		// Navigation
 		navigateToPublication,
+		navigateToDiscussion,
 		navigateToProfile,
 		navigateToCompose,
 		navigateHome,

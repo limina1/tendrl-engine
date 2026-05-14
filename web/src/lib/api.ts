@@ -440,6 +440,40 @@ function notifyProfileUpdate() {
 	for (const fn of profileListeners) fn();
 }
 
+/** Synchronous read of the profile cache. Returns null when no profile
+ *  is known yet — callers that want to drive UI should subscribe to
+ *  `onProfileUpdate` and re-read. */
+export function getCachedProfile(pubkey: string): Profile | null {
+	return profileCache.get(pubkey) ?? null;
+}
+
+/** Drop entries from the web cache. Used by the refresh flow so a
+ *  force-fetched profile replaces a stale one rather than being short-
+ *  circuited by the in-memory cache hit. */
+export function evictProfiles(pubkeys: string[]) {
+	for (const pk of pubkeys) profileCache.delete(pk);
+	notifyProfileUpdate();
+}
+
+/** Force-refetch the given pubkeys' kind 0 from the engine's general
+ *  relays, then drop and reload the web cache so consumers see the new
+ *  names. Resolves once both legs are done. */
+export async function refreshProfiles(pubkeys: string[]): Promise<void> {
+	const distinct = [...new Set(pubkeys.filter((pk) => pk.length === 64))];
+	if (distinct.length === 0) return;
+	try {
+		await fetchJson<{ fetched: number; total: number }>('/api/v1/profiles/fetch', {
+			method: 'POST',
+			body: JSON.stringify({ pubkeys: distinct, force: true })
+		});
+	} catch (e) {
+		console.warn('[refreshProfiles] relay fetch failed', e);
+	}
+	evictProfiles(distinct);
+	await Promise.all(distinct.map((pk) => getProfile(pk)));
+	notifyProfileUpdate();
+}
+
 export async function getProfile(pubkey: string): Promise<Profile> {
 	const cached = profileCache.get(pubkey);
 	if (cached) return cached;
@@ -674,10 +708,64 @@ export interface DiscussionCountsResponse {
 
 export function getDiscussionCounts(
 	addresses: string[],
-	policy: 'local_only' | 'local_first' | 'fetch_always' = 'local_first'
+	policy: 'local_only' | 'local_first' | 'fetch_always' = 'local_first',
+	options: { bypassOffline?: boolean } = {}
 ) {
 	return fetchJson<DiscussionCountsResponse>('/api/v1/discussions/counts', {
 		method: 'POST',
-		body: JSON.stringify({ addresses, policy })
+		body: JSON.stringify({
+			addresses,
+			policy,
+			bypass_offline: options.bypassOffline ?? false
+		})
 	});
+}
+
+// Discussions list: full event payloads (not just counts) for the same
+// shape of query as discussions/counts. Used by DiscussionsListBuffer
+// and the inline section-disclosure to render comments + highlights.
+
+export interface DiscussionEvent {
+	id: string;
+	kind: number;
+	pubkey: string;
+	created_at: number;
+	content: string;
+	tags: string[][];
+	sig?: string;
+}
+
+export interface DiscussionsListResponse {
+	events: DiscussionEvent[];
+	source: { local_count: number; relay_count: number };
+	/** Unix seconds at which the engine computed the result. Pass back
+	 *  as `since` on a subsequent call for incremental refresh. */
+	refreshed_at: number;
+}
+
+export function getDiscussionList(
+	options: {
+		addresses?: string[];
+		eventIds?: string[];
+		kinds?: number[];
+		policy?: 'local_only' | 'local_first' | 'fetch_always';
+		limit?: number;
+		since?: number;
+		bypassOffline?: boolean;
+		relays?: string[];
+	} = {}
+) {
+	const params = new URLSearchParams();
+	if (options.addresses?.length) params.set('addresses', options.addresses.join(','));
+	if (options.eventIds?.length) params.set('event_ids', options.eventIds.join(','));
+	if (options.kinds?.length) params.set('kinds', options.kinds.join(','));
+	if (options.policy) params.set('policy', options.policy);
+	if (options.limit !== undefined) params.set('limit', String(options.limit));
+	if (options.since !== undefined) params.set('since', String(options.since));
+	if (options.bypassOffline) params.set('bypass_offline', 'true');
+	if (options.relays?.length) params.set('relays', options.relays.join(','));
+	const qs = params.toString();
+	return fetchJson<DiscussionsListResponse>(
+		`/api/v1/discussions/list${qs ? '?' + qs : ''}`
+	);
 }

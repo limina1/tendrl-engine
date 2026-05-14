@@ -16,6 +16,13 @@
 	} from '$lib/types';
 	import type { Buffer } from '../types';
 	import { sectionState, segmentSections } from '$lib/compose/state';
+	import { buildThread, threadContainsId, type ThreadNode } from '$lib/discussions/thread';
+	import type { Highlight } from '$lib/discussions/highlights';
+	import CommentThread from '$lib/components/CommentThread.svelte';
+	import HighlightsDrawer, {
+		type DrawerHighlight
+	} from '$lib/components/HighlightsDrawer.svelte';
+	import { prefetchAuthors, refreshAuthors } from '$lib/discussions/authors.svelte';
 
 	let { buffer }: { buffer: Buffer } = $props();
 
@@ -24,26 +31,398 @@
 
 	let publication = $state<PublicationDetail | null>(null);
 	let pristineSections = $state<LazySection[]>([]);
+	// Default to outline. If the buffer carries `?highlight=<id>` the
+	// effect below switches to paginated so the highlight overlay is
+	// visible right away.
 	let viewMode = $state<ViewMode>('outline');
 	let currentSection = $state(0);
 	let loading = $state(true);
 	let error = $state<string | null>(null);
 
+	// NIP-22 comments + NIP-84 highlights referencing each event. Keyed by
+	// the `a` tag value (kind:pubkey:d-tag). Populated in two phases: a
+	// fast local_only query for instant indicators, then if online a
+	// fetch_always query to pick up new events from connected relays.
+	let discussionCounts = $state<Record<string, api.DiscussionCount>>({});
+	let discussionSource = $state<{ local_count: number; relay_count: number } | null>(null);
+	let discussionLoading = $state(false);
+	let discussionRefreshedAt = $state<number | null>(null);
+
+	// Full discussion-event payloads keyed by section addr (kind:pk:dtag).
+	// Comments and highlights both land here; downstream renderers split
+	// by event.kind. Populated alongside discussionCounts so the reader's
+	// inline threads stay in sync with the badges.
+	let discussionEvents = $state<Record<string, api.DiscussionEvent[]>>({});
+
 	const loadingPromises = new Map<number, Promise<void>>();
 
+	function addrKey(addr: { kind: number; pubkey: string; d_tag: string }): string {
+		return `${addr.kind}:${addr.pubkey}:${addr.d_tag}`;
+	}
+
+	function publicationAddresses(): string[] {
+		if (!publication) return [];
+		const keys = new Set<string>();
+		keys.add(addrKey(publication.addr));
+		for (const s of pristineSections) keys.add(addrKey(s.addr));
+		return Array.from(keys);
+	}
+
+	async function loadDiscussionCounts(
+		policy: 'local_only' | 'local_first' | 'fetch_always',
+		options: { bypassOffline?: boolean } = {}
+	) {
+		const addrs = publicationAddresses();
+		if (addrs.length === 0) return;
+		try {
+			// Pull the full event payloads so we can render inline threads
+			// in addition to the badge counts. Counts are derived from the
+			// same set client-side — one round trip serves both views.
+			const resp = await api.getDiscussionList({
+				addresses: addrs,
+				kinds: [1111, 9802],
+				policy,
+				bypassOffline: options.bypassOffline,
+				limit: 500
+			});
+			const byAddr: Record<string, api.DiscussionEvent[]> = {};
+			const counts: Record<string, api.DiscussionCount> = {};
+			for (const a of addrs) {
+				byAddr[a] = [];
+				counts[a] = { comments: 0, highlights: 0 };
+			}
+			const addrSet = new Set(addrs);
+			for (const ev of resp.events) {
+				const matched = new Set<string>();
+				for (const tag of ev.tags) {
+					if (!tag || tag.length < 2) continue;
+					if (tag[0] !== 'a' && tag[0] !== 'A') continue;
+					const value = tag[1];
+					if (addrSet.has(value)) matched.add(value);
+				}
+				for (const m of matched) {
+					byAddr[m].push(ev);
+					if (ev.kind === 1111) counts[m].comments += 1;
+					else if (ev.kind === 9802) counts[m].highlights += 1;
+				}
+			}
+			discussionEvents = byAddr;
+			discussionCounts = counts;
+			discussionSource = resp.source;
+			discussionRefreshedAt = Date.now();
+
+			// Kick a debounced prefetch for every distinct discussion
+			// author so names land in the profile cache without us
+			// blocking on it. The drawer and inline threads pick them up
+			// reactively via getAuthorDisplayName.
+			const authors = new Set<string>();
+			for (const ev of resp.events) authors.add(ev.pubkey);
+			if (authors.size > 0) prefetchAuthors([...authors]);
+
+			console.debug('[ReaderBuffer] discussions loaded', {
+				policy,
+				requested: addrs.length,
+				events: resp.events.length,
+				authors: authors.size,
+				source: resp.source
+			});
+		} catch (e) {
+			console.warn('[ReaderBuffer] discussion load failed', e);
+		}
+	}
+
+	async function refreshDiscussions() {
+		if (discussionLoading) return;
+		discussionLoading = true;
+		try {
+			// Explicit user action: bypass the engine's offline-mode
+			// downgrade so the button actually reaches out to relays even
+			// when the global network mode is offline. The user's workflow
+			// for the offline case is "click the button to pull manually".
+			await loadDiscussionCounts('fetch_always', { bypassOffline: true });
+			// Same click also force-refetches kind 0 for every distinct
+			// author we now know about, so renamed/avatar-updated profiles
+			// surface in the drawer and inline threads. We do this after
+			// the discussions land so the author set is fully populated.
+			const authors = new Set<string>();
+			for (const events of Object.values(discussionEvents)) {
+				for (const ev of events) authors.add(ev.pubkey);
+			}
+			if (authors.size > 0) {
+				try {
+					await refreshAuthors([...authors]);
+				} catch (e) {
+					console.warn('[ReaderBuffer] author refresh failed', e);
+				}
+			}
+		} finally {
+			discussionLoading = false;
+		}
+	}
+
+	function discussionFor(addr: { kind: number; pubkey: string; d_tag: string }): api.DiscussionCount {
+		return discussionCounts[addrKey(addr)] ?? { comments: 0, highlights: 0 };
+	}
+
+	const publicationDiscussion = $derived(
+		publication ? discussionFor(publication.addr) : { comments: 0, highlights: 0 }
+	);
+	const totalDiscussion = $derived.by(() => {
+		let comments = 0;
+		let highlights = 0;
+		for (const v of Object.values(discussionCounts)) {
+			comments += v.comments;
+			highlights += v.highlights;
+		}
+		return { comments, highlights };
+	});
+
+	// Buffer ids may carry a `?highlight=<eventId>` or
+	// `?focus_comment=<eventId>` suffix when the search router sends the
+	// user here from a discussion hit. We strip those for address
+	// parsing and surface them as separate fields.
+	function splitBufferId(id: string): {
+		core: string;
+		highlightId: string | null;
+		focusCommentId: string | null;
+	} {
+		// Take everything before the first `?`, then parse the query.
+		const q = id.indexOf('?');
+		if (q < 0) return { core: id, highlightId: null, focusCommentId: null };
+		const core = id.slice(0, q);
+		const params = new URLSearchParams(id.slice(q + 1));
+		const hl = params.get('highlight');
+		const fc = params.get('focus_comment');
+		const isHex = (s: string | null) => (s && /^[0-9a-fA-F]{64}$/.test(s) ? s.toLowerCase() : null);
+		return {
+			core,
+			highlightId: isHex(hl),
+			focusCommentId: isHex(fc)
+		};
+	}
+
 	function parseBufferId(id: string): { pubkey: string; dTag: string } | null {
-		const match = id.match(/^reader:\d+:([0-9a-fA-F]{64}):(.+)$/);
+		const { core } = splitBufferId(id);
+		const match = core.match(/^reader:\d+:([0-9a-fA-F]{64}):(.+)$/);
 		if (!match) return null;
 		return { pubkey: match[1].toLowerCase(), dTag: match[2] };
 	}
 
 	function parseEventId(id: string): string | null {
-		const match = id.match(/^reader:event:([0-9a-fA-F]{64})$/);
+		const { core } = splitBufferId(id);
+		const match = core.match(/^reader:event:([0-9a-fA-F]{64})$/);
 		return match ? match[1].toLowerCase() : null;
 	}
 
 	const parsedAddr = $derived(parseBufferId(buffer.id));
 	const parsedEventId = $derived(parseEventId(buffer.id));
+	const parsedHighlightId = $derived(splitBufferId(buffer.id).highlightId);
+	const parsedFocusCommentId = $derived(splitBufferId(buffer.id).focusCommentId);
+
+	// Build a thread tree per section addr from the loaded discussion
+	// events. Highlights (kind 9802) are excluded from the tree — they
+	// surface as section badges + overlays, not inline comments.
+	const threadsBySection = $derived.by(() => {
+		const out: Record<string, ThreadNode[]> = {};
+		for (const [addr, events] of Object.entries(discussionEvents)) {
+			const comments = events.filter((e) => e.kind === 1111);
+			out[addr] = buildThread(comments);
+		}
+		return out;
+	});
+
+	function threadsForSection(addr: { kind: number; pubkey: string; d_tag: string }): ThreadNode[] {
+		return threadsBySection[addrKey(addr)] ?? [];
+	}
+
+	// Comments scoped to the publication index (kind 30040) itself rather
+	// than a specific section. Surfaced near the title so that
+	// article-level discussion isn't invisible when the user is paging
+	// through individual 30041 sections.
+	const publicationThreads = $derived<ThreadNode[]>(
+		publication ? threadsBySection[addrKey(publication.addr)] ?? [] : []
+	);
+	// Threads are collapsed by default — same posture as the highlights
+	// drawer. The user expands the block they care about; routine reading
+	// isn't interrupted by walls of comments.
+	let publicationThreadsOpen = $state(false);
+	// Auto-open when the user arrives via ?focus_comment=<id> and the
+	// focused comment lives in the publication-level thread.
+	$effect(() => {
+		if (threadContainsId(publicationThreads, parsedFocusCommentId)) {
+			untrack(() => {
+				publicationThreadsOpen = true;
+			});
+		}
+	});
+
+	// All NIP-84 highlights to overlay on a given section. Two sources:
+	//   - Events tagging this section's addr directly.
+	//   - Events tagging the publication root (kind 30040); we cascade
+	//     these down to whichever section's content their substring
+	//     actually matches. This was a documented open question in the
+	//     plan and the user's content shows highlights almost always
+	//     scope to the publication, so substring-matching them onto
+	//     individual sections is the only way they show at all.
+	function highlightsForSection(addr: {
+		kind: number;
+		pubkey: string;
+		d_tag: string;
+	}): Highlight[] {
+		const out: Highlight[] = [];
+		const seen = new Set<string>();
+		const push = (ev: api.DiscussionEvent) => {
+			if (seen.has(ev.id) || ev.kind !== 9802) return;
+			seen.add(ev.id);
+			out.push({ id: ev.id, content: ev.content ?? '', pubkey: ev.pubkey });
+		};
+		for (const ev of discussionEvents[addrKey(addr)] ?? []) push(ev);
+		if (publication) {
+			for (const ev of discussionEvents[addrKey(publication.addr)] ?? []) push(ev);
+		}
+		return out;
+	}
+
+	// Drawer state. `drawerOpen` is toggled from the discussion summary
+	// chip. `drawerHighlights` walks every distinct kind-9802 event in
+	// discussionEvents (a single event can appear under multiple addr
+	// keys when it cascades, so we dedupe by id) and resolves each one
+	// to the section addr whose content actually contains its text —
+	// that's what makes click-to-scroll work for publication-level
+	// highlights that don't carry a section addr themselves.
+	let drawerOpen = $state(false);
+
+	const drawerHighlights = $derived.by<DrawerHighlight[]>(() => {
+		const byId = new Map<string, api.DiscussionEvent>();
+		for (const events of Object.values(discussionEvents)) {
+			for (const ev of events) {
+				if (ev.kind === 9802 && !byId.has(ev.id)) byId.set(ev.id, ev);
+			}
+		}
+		const out: DrawerHighlight[] = [];
+		for (const ev of byId.values()) {
+			const needle = (ev.content ?? '').trim().toLowerCase();
+			let sectionAddr: string | null = null;
+			if (needle) {
+				for (const s of pristineSections) {
+					if ((s.content ?? '').toLowerCase().includes(needle)) {
+						sectionAddr = addrKey(s.addr);
+						break;
+					}
+				}
+			}
+			out.push({
+				id: ev.id,
+				pubkey: ev.pubkey,
+				content: ev.content ?? '',
+				created_at: ev.created_at,
+				section_addr: sectionAddr
+			});
+		}
+		return out.sort((a, b) => b.created_at - a.created_at);
+	});
+
+	function sectionIndexForAddr(addr: string): number {
+		return pristineSections.findIndex((s) => addrKey(s.addr) === addr);
+	}
+
+	function scrollToHighlight(highlightId: string, sectionAddr: string | null) {
+		// Step 1: if the highlight lives in a section the pager isn't
+		// currently showing, switch to it and into paginated view first.
+		if (sectionAddr) {
+			const idx = sectionIndexForAddr(sectionAddr);
+			if (idx >= 0 && currentSection !== idx) {
+				currentSection = idx;
+				viewMode = 'paginated';
+			}
+		}
+		// Step 2: wait one frame so the DOM has settled, then locate the
+		// mark and scroll it into view. We use the `~=` attribute
+		// selector — `data-hl-ids` is a space-separated id list for
+		// composite-highlight forward compatibility, even though today's
+		// segmenter only ever puts one id per mark.
+		requestAnimationFrame(() => {
+			const safeId = highlightId.replace(/"/g, '\\"');
+			const mark = document.querySelector<HTMLElement>(
+				`mark.hl-overlay[data-hl-ids~="${safeId}"]`
+			);
+			if (!mark) return;
+			mark.scrollIntoView({ behavior: 'smooth', block: 'center' });
+			mark.classList.add('hl-flash');
+			setTimeout(() => mark.classList.remove('hl-flash'), 1200);
+		});
+	}
+
+	// When parsedHighlightId is present, fetch the highlight event and
+	// extract its content. Sections render with an overlay span around
+	// any substring matching this text.
+	let highlightText = $state<string | null>(null);
+	let highlightMeta = $state<{ author: string; created_at: number } | null>(null);
+
+	$effect(() => {
+		const id = parsedHighlightId;
+		if (!id) {
+			highlightText = null;
+			highlightMeta = null;
+			return;
+		}
+		// Default into paginated view so the overlay is visible up front;
+		// outline mode only shows titles and would hide the match.
+		viewMode = 'paginated';
+		untrack(async () => {
+			try {
+				const resp = await api.getEvent(id);
+				const ev = resp.event as
+					| { content?: string; pubkey?: string; created_at?: number; kind?: number }
+					| null;
+				if (ev && ev.kind === 9802) {
+					highlightText = ev.content ?? '';
+					highlightMeta = {
+						author: ev.pubkey ?? '',
+						created_at: ev.created_at ?? 0
+					};
+				}
+			} catch (e) {
+				console.warn('[ReaderBuffer] failed to load highlight', e);
+			}
+		});
+	});
+
+	// When the highlight text becomes available, try to jump to the
+	// section containing it so the overlay is in view without scrolling.
+	$effect(() => {
+		const text = highlightText;
+		if (!text) return;
+		untrack(() => {
+			const needle = text.trim().toLowerCase();
+			if (!needle) return;
+			const idx = pristineSections.findIndex(
+				(s) => (s.content ?? '').toLowerCase().includes(needle)
+			);
+			if (idx >= 0) currentSection = idx;
+		});
+	});
+
+	// When ?focus_comment=<id> is set and threads have loaded, jump to
+	// the section whose thread contains that comment, switch to
+	// paginated view, and let CommentThread scroll the matching node
+	// into view from there.
+	$effect(() => {
+		const id = parsedFocusCommentId;
+		if (!id) return;
+		const idLc = id.toLowerCase();
+		untrack(() => {
+			for (let i = 0; i < pristineSections.length; i++) {
+				const addr = pristineSections[i].addr;
+				const events = discussionEvents[addrKey(addr)] ?? [];
+				if (events.some((e) => e.id.toLowerCase() === idLc)) {
+					currentSection = i;
+					viewMode = 'paginated';
+					return;
+				}
+			}
+		});
+	});
 
 	// ReaderBuffer always shows the *pristine* published view fetched from
 	// the engine. Draft state lives in a separate `draft-reader` buffer
@@ -147,6 +526,39 @@
 	$effect(() => {
 		buffer.id;
 		load();
+	});
+
+	// After a publication finishes loading, hydrate discussion counts.
+	// Phase A is local_only for instant rendering; phase B is fetch_always
+	// when online so newly-published comments/highlights show up without
+	// requiring a manual refresh. Guard with `loadedFor` so per-section
+	// loads (which mutate pristineSections as their status flips) don't
+	// re-trigger this effect — the counts only depend on the addresses,
+	// which are known as soon as the TOC arrives.
+	let loadedFor = $state<string | null>(null);
+	$effect(() => {
+		const id = buffer.id;
+		const done = !loading && !!publication && pristineSections.length > 0;
+		if (!done) return;
+		if (loadedFor === id) return;
+		loadedFor = id;
+		untrack(async () => {
+			await loadDiscussionCounts('local_only');
+			if (app.networkStatus?.mode === 'online') {
+				refreshDiscussions();
+			}
+		});
+	});
+
+	// Reset the guard when the buffer changes so a different publication
+	// triggers a fresh fetch.
+	$effect(() => {
+		buffer.id;
+		untrack(() => {
+			loadedFor = null;
+			discussionCounts = {};
+			discussionRefreshedAt = null;
+		});
 	});
 
 	function handleLoadSection(index: number) {
@@ -562,6 +974,16 @@
 			disabled={!publication}
 			title={isDraftMode ? 'Continue editing this draft' : 'Open this publication in the composer'}
 		>Edit</button>
+		<button
+			class="discussions-refresh"
+			onclick={refreshDiscussions}
+			disabled={discussionLoading || !publication}
+			title={app.networkStatus?.mode === 'online'
+				? 'Pull new comments and highlights from relays'
+				: 'Offline — pull comments and highlights from relays anyway (manual override)'}
+		>
+			{discussionLoading ? '…' : 'Refresh discussions'}
+		</button>
 	</div>
 
 	{#if loading}
@@ -573,6 +995,73 @@
 	{:else}
 		{#if publication.title}
 			<div class="title">{publication.title}</div>
+		{/if}
+		{#if highlightText !== null}
+			<div class="hl-banner">
+				<span class="hl-banner__label">Viewing highlight</span>
+				<span class="hl-banner__sample" title={highlightText}>
+					“{highlightText.length > 120 ? highlightText.slice(0, 120) + '…' : highlightText}”
+				</span>
+				{#if highlightMeta}
+					<span class="hl-banner__meta">
+						by <code>{highlightMeta.author.slice(0, 12)}…</code>
+					</span>
+				{/if}
+			</div>
+		{/if}
+		{#if discussionRefreshedAt !== null || discussionLoading}
+			<div class="discussion-summary" title="Across the publication index and all sections">
+				{#if discussionLoading}
+					<span class="ds-badge">Fetching discussions…</span>
+				{:else if totalDiscussion.comments === 0 && totalDiscussion.highlights === 0}
+					<span class="ds-badge ds-badge--empty">No comments or highlights found</span>
+					{#if discussionSource}
+						<span class="ds-sep">·</span>
+						<span class="ds-source" title="Engine returned this many events from local DB and relays for the underlying query">
+							scanned {discussionSource.local_count} local / {discussionSource.relay_count} relay events
+						</span>
+					{/if}
+				{:else}
+					<span class="ds-badge ds-badge--comments">
+						{totalDiscussion.comments} comment{totalDiscussion.comments === 1 ? '' : 's'}
+					</span>
+					<span class="ds-sep">·</span>
+					<button
+						class="ds-badge ds-badge--highlights ds-badge--button"
+						onclick={() => (drawerOpen = !drawerOpen)}
+						title={drawerOpen ? 'Hide highlights drawer' : 'Open highlights drawer (grouped by author, click to scroll)'}
+					>
+						{totalDiscussion.highlights} highlight{totalDiscussion.highlights === 1 ? '' : 's'}
+					</button>
+					{#if publicationDiscussion.comments > 0 || publicationDiscussion.highlights > 0}
+						<span class="ds-sep">·</span>
+						<span class="ds-on-index" title="Comments/highlights on the publication index itself (kind 30040)">
+							index: c {publicationDiscussion.comments} h {publicationDiscussion.highlights}
+						</span>
+					{/if}
+					{#if discussionSource}
+						<span class="ds-sep">·</span>
+						<span class="ds-source" title="local DB matches + relay-fetched events for this query">
+							{discussionSource.local_count}L / {discussionSource.relay_count}R
+						</span>
+					{/if}
+				{/if}
+			</div>
+		{/if}
+		{#if publicationThreads.length > 0}
+			<div class="pub-threads">
+				<button
+					class="pub-threads-head"
+					onclick={() => (publicationThreadsOpen = !publicationThreadsOpen)}
+					aria-expanded={publicationThreadsOpen}
+				>
+					<span class="ptr">{publicationThreadsOpen ? '▾' : '▸'}</span>
+					Comments on this article ({publicationThreads.length})
+				</button>
+				{#if publicationThreadsOpen}
+					<CommentThread nodes={publicationThreads} focusedEventId={parsedFocusCommentId} />
+				{/if}
+			</div>
 		{/if}
 		<div class="content" bind:this={contentWrap}>
 			{#if viewMode === 'outline'}
@@ -711,6 +1200,7 @@
 					     state from this publication and switches into draft mode. -->
 					<div class="outline-overlay" bind:this={outlineEl}>
 						{#each pristineSections as section, i (`${i}:${section.addr.pubkey}:${section.addr.d_tag}`)}
+							{@const disc = discussionFor(section.addr)}
 							<div
 								class="entry entry--pristine"
 								class:entry--cursor={i === outlineCursor}
@@ -734,6 +1224,19 @@
 										onviewjson={openSectionJsonBySection}
 									/>
 								</div>
+								{#if disc.comments > 0 || disc.highlights > 0}
+									<div
+										class="section-badge"
+										title="Existing discussions on this section (NIP-22 comments + NIP-84 highlights)"
+									>
+										{#if disc.comments > 0}
+											<span class="section-badge__chip section-badge__chip--c">c {disc.comments}</span>
+										{/if}
+										{#if disc.highlights > 0}
+											<span class="section-badge__chip section-badge__chip--h">h {disc.highlights}</span>
+										{/if}
+									</div>
+								{/if}
 							</div>
 						{/each}
 					</div>
@@ -747,6 +1250,10 @@
 					}}
 					onload={isDraftMode ? undefined : handleLoadSection}
 					onviewjson={openSectionJsonBySection}
+					highlightsFor={highlightsForSection}
+					focusedHighlightId={parsedHighlightId}
+					threadsFor={threadsForSection}
+					focusedCommentId={parsedFocusCommentId}
 				/>
 			{:else}
 				<PaginatedView
@@ -755,10 +1262,24 @@
 					onnavigate={handleNavigate}
 					onload={isDraftMode ? undefined : handleLoadSection}
 					onsectionjson={openSectionJsonByIndex}
+					highlightsFor={highlightsForSection}
+					focusedHighlightId={parsedHighlightId}
+					threadsFor={threadsForSection}
+					focusedCommentId={parsedFocusCommentId}
 				/>
 			{/if}
 		</div>
 	{/if}
+	<HighlightsDrawer
+		highlights={drawerHighlights}
+		open={drawerOpen}
+		onclose={() => (drawerOpen = false)}
+		onnavigate={scrollToHighlight}
+		onrefresh={async () => {
+			const authors = new Set<string>(drawerHighlights.map((h) => h.pubkey));
+			if (authors.size > 0) await refreshAuthors([...authors]);
+		}}
+	/>
 </div>
 
 <style>
@@ -827,6 +1348,126 @@
 	}
 	.toolbar .json-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
+	.toolbar .discussions-refresh {
+		margin-left: 4px;
+		font-family: var(--font-mono);
+		font-size: var(--t-xs);
+	}
+	.toolbar .discussions-refresh:disabled { opacity: 0.5; cursor: not-allowed; }
+
+	.discussion-summary {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		padding: 4px var(--s-3);
+		font-family: var(--font-mono);
+		font-size: var(--t-xs);
+		color: var(--base5);
+		border-bottom: 1px solid var(--panel-border);
+		flex-shrink: 0;
+	}
+	.ds-badge { color: var(--base6); }
+	.ds-badge--comments { color: var(--id-yours, var(--base7)); }
+	.ds-badge--highlights { color: var(--state-online, var(--base6)); }
+	.ds-badge--empty { color: var(--base5); font-style: italic; }
+	.ds-sep { color: var(--base4); }
+	.ds-on-index { color: var(--base5); }
+	.ds-source { color: var(--base4); font-size: calc(var(--t-xs) - 1px); }
+
+	/* The highlights badge is interactive — toggles the drawer. */
+	.ds-badge--button {
+		background: transparent;
+		border: 1px solid transparent;
+		padding: 1px 6px;
+		border-radius: var(--r-sm);
+		cursor: pointer;
+		font: inherit;
+	}
+	.ds-badge--button:hover {
+		border-color: var(--state-online);
+	}
+
+	.pub-threads {
+		padding: 10px var(--s-3);
+		border-bottom: 1px solid var(--panel-border);
+		flex-shrink: 0;
+		max-height: 40%;
+		overflow-y: auto;
+	}
+	.pub-threads-head {
+		font-family: var(--font-mono);
+		font-size: var(--t-xs);
+		text-transform: uppercase;
+		letter-spacing: 0.06em;
+		color: var(--id-yours);
+		margin-bottom: 6px;
+		display: inline-flex;
+		align-items: center;
+		gap: 4px;
+		background: transparent;
+		border: none;
+		padding: 0;
+		cursor: pointer;
+	}
+	.pub-threads-head:hover { color: var(--fg); }
+	.pub-threads-head .ptr { min-width: 1ch; }
+
+	.hl-banner {
+		display: flex;
+		gap: 8px;
+		align-items: baseline;
+		padding: 6px var(--s-3);
+		border-bottom: 1px solid var(--panel-border);
+		background: color-mix(in srgb, var(--state-online) 8%, transparent);
+		font-size: var(--t-xs);
+		flex-shrink: 0;
+		flex-wrap: wrap;
+	}
+	.hl-banner__label {
+		font-family: var(--font-mono);
+		text-transform: uppercase;
+		letter-spacing: 0.06em;
+		color: var(--state-online);
+	}
+	.hl-banner__sample {
+		color: var(--fg);
+		font-style: italic;
+		flex: 1;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+	.hl-banner__meta {
+		font-family: var(--font-mono);
+		color: var(--base5);
+	}
+	.hl-banner__meta code {
+		background: var(--bg-surface);
+		padding: 0 4px;
+		border-radius: var(--r-sm);
+	}
+
+	.section-badge {
+		display: flex;
+		gap: 4px;
+		align-items: center;
+		padding: 0 6px;
+		flex-shrink: 0;
+		align-self: center;
+	}
+	.section-badge__chip {
+		font-family: var(--font-mono);
+		font-size: var(--t-xs);
+		padding: 1px 5px;
+		border-radius: var(--r-sm);
+		border: 1px solid var(--panel-border);
+		background: var(--bg-surface);
+		color: var(--base6);
+		line-height: 1.4;
+	}
+	.section-badge__chip--c { border-color: var(--id-yours); color: var(--id-yours); }
+	.section-badge__chip--h { border-color: var(--state-online); color: var(--state-online); }
+
 	.title {
 		padding: 8px var(--s-3);
 		font-size: var(--t-md);
@@ -864,7 +1505,7 @@
 		margin-bottom: 2px;
 	}
 	.entry--pristine {
-		grid-template-columns: auto 1fr;
+		grid-template-columns: auto 1fr auto;
 	}
 	.entry--imported {
 		border-color: var(--green);

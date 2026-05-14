@@ -1,5 +1,13 @@
 <script lang="ts">
 	import type { LazySection, SectionStatus } from '$lib/types';
+	import {
+		pubkeyToHighlightFill,
+		pubkeyToHighlightStroke
+	} from '$lib/discussions/colors';
+	import {
+		computeHighlightSegments,
+		type Highlight
+	} from '$lib/discussions/highlights';
 
 	let {
 		section,
@@ -7,7 +15,9 @@
 		index = undefined,
 		preview = false,
 		onclick = undefined,
-		onviewjson = undefined
+		onviewjson = undefined,
+		highlights = [],
+		focusedHighlightId = null
 	}: {
 		section: LazySection;
 		truncate?: boolean;
@@ -17,7 +27,26 @@
 		/** When provided, renders a kebab `⋮` in the top-right that opens
 		 *  this section's underlying event in the structured JSON modal. */
 		onviewjson?: ((section: LazySection) => void) | undefined;
+		/** All NIP-84 highlights to overlay on this section's content.
+		 *  Each highlight whose `content` matches a substring lands as
+		 *  its own <mark> in the author's hue. */
+		highlights?: Highlight[];
+		/** Id of the highlight to emphasize (from ?highlight= marker). */
+		focusedHighlightId?: string | null;
 	} = $props();
+
+	function styleFor(pubkey: string, focused: boolean): string {
+		const fill = pubkeyToHighlightFill(pubkey);
+		const stroke = pubkeyToHighlightStroke(pubkey);
+		// Inset stripe anchored to the left edge per the plan's recipe.
+		// Focused (`?highlight=<id>` or drawer click-to-scroll) adds an
+		// outer green ring so the user can find the scrolled-to mark
+		// even when it shares a hue with neighbours.
+		if (focused) {
+			return `background: ${fill}; box-shadow: inset 3px 0 0 ${stroke}, 0 0 0 2px var(--state-online);`;
+		}
+		return `background: ${fill}; box-shadow: inset 3px 0 0 ${stroke};`;
+	}
 
 	const status: SectionStatus = $derived(section.status ?? 'loaded');
 
@@ -32,6 +61,17 @@
 		}
 		return section.content;
 	});
+
+	// Multi-highlight overlay: every passed highlight whose content
+	// appears in displayContent gets its own <mark> in the author's hue.
+	// In preview mode (single-line truncated cards) we skip overlays —
+	// the preview text is too short and shifted to bear them usefully.
+	const highlightSegments = $derived.by(() => {
+		if (!displayContent || preview || highlights.length === 0) return null;
+		const segs = computeHighlightSegments(displayContent, highlights, focusedHighlightId);
+		const anyHighlighted = segs.some((s) => s.highlight !== null);
+		return anyHighlighted ? segs : null;
+	});
 </script>
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -43,6 +83,7 @@
 	onkeydown={onclick ? (e) => { if (e.key === 'Enter' || e.key === ' ') onclick?.(); } : undefined}
 	role={onclick ? 'button' : undefined}
 	tabindex={onclick ? 0 : undefined}
+	data-section-addr={section.addr ? `${section.addr.kind}:${section.addr.pubkey}:${section.addr.d_tag}` : undefined}
 >
 	<h3 class="section-title">
 		{#if index !== undefined}<span class="section-index">{index}.</span>{/if}
@@ -64,7 +105,11 @@
 		{/if}
 	</h3>
 	{#if status === 'loaded' && displayContent}
-		<pre class="section-content" class:muted={preview}>{displayContent}</pre>
+		{#if highlightSegments}
+			<pre class="section-content" class:muted={preview}>{#each highlightSegments as seg, i (i)}{#if seg.highlight}<mark class="hl-overlay" data-hl-ids={seg.highlight.id} style={styleFor(seg.highlight.pubkey, seg.highlight.focused)} title="NIP-84 highlight {seg.highlight.id.slice(0, 8)}… by {seg.highlight.pubkey.slice(0, 12)}…">{seg.text}</mark>{:else}{seg.text}{/if}{/each}</pre>
+		{:else}
+			<pre class="section-content" class:muted={preview}>{displayContent}</pre>
+		{/if}
 	{:else if status === 'loading'}
 		<div class="skeleton"></div>
 	{:else if status === 'error'}
@@ -170,5 +215,21 @@
 	.section-error {
 		color: #ef4444;
 		font-size: 0.8rem;
+	}
+	.hl-overlay {
+		color: inherit;
+		padding: 1px 2px;
+		border-radius: 2px;
+	}
+	/* Drawer's flash animation — applied imperatively when the user
+	   clicks a row in the highlights drawer. Brightness/saturation
+	   pulse so it works with whatever per-author hue is already
+	   painted on the mark. */
+	@keyframes hl-flash {
+		0%, 100% { filter: brightness(1) saturate(1); }
+		30%      { filter: brightness(1.5) saturate(1.6); }
+	}
+	.hl-overlay.hl-flash {
+		animation: hl-flash 1.2s ease-in-out;
 	}
 </style>

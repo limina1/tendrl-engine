@@ -269,6 +269,14 @@ async fn main() -> anyhow::Result<()> {
             "/api/v1/sections/:pubkey/:d_tag/versions",
             get(api::get_section_versions_handler),
         )
+        .route(
+            "/api/v1/discussions/counts",
+            post(api::discussion_counts_handler),
+        )
+        .route(
+            "/api/v1/discussions/list",
+            get(api::discussions_list_handler),
+        )
         .with_state(state.clone())
         .merge(chat_routes)
         .merge(identity_routes)

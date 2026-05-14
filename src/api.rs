@@ -824,10 +824,16 @@ pub async fn profile_handler(
     Ok(Json(json!({ "pubkey": pubkey, "found": false })))
 }
 
-/// POST /api/v1/profiles/fetch — batch-fetch profiles from general relays
+/// POST /api/v1/profiles/fetch — batch-fetch profiles from general relays.
+///
+/// By default only pubkeys not already in nostrdb are queried. Set
+/// `force` to refetch every listed pubkey unconditionally — used by the
+/// reader's "Refresh discussions" button to pick up renamed authors.
 #[derive(Debug, Deserialize)]
 pub struct FetchProfilesRequest {
     pub pubkeys: Vec<String>,
+    #[serde(default)]
+    pub force: bool,
 }
 
 pub async fn fetch_profiles_handler(
@@ -837,18 +843,23 @@ pub async fn fetch_profiles_handler(
     let relays = &engine.relay_config().general.urls;
     let mut fetched = 0;
 
-    // Collect pubkeys not already in nostrdb
-    let missing: Vec<&str> = req.pubkeys.iter()
-        .filter(|pk| pk.len() == 64 && query_profile(engine.ndb(), pk).is_none())
+    // When force is set, query every listed pubkey unconditionally so a
+    // newer kind 0 supersedes the cached one. Otherwise only pubkeys
+    // missing from nostrdb are queried — the default avoids hammering
+    // relays on every reader-buffer open.
+    let targets: Vec<&str> = req
+        .pubkeys
+        .iter()
+        .filter(|pk| pk.len() == 64 && (req.force || query_profile(engine.ndb(), pk).is_none()))
         .map(|pk| pk.as_str())
         .collect();
 
-    if missing.is_empty() {
+    if targets.is_empty() {
         return Ok(Json(json!({ "fetched": 0, "total": req.pubkeys.len() })));
     }
 
     // Batch fetch: one request per relay with ALL missing pubkeys
-    let filter = json!({"kinds": [0], "authors": missing, "limit": missing.len()});
+    let filter = json!({"kinds": [0], "authors": targets, "limit": targets.len()});
     for relay_url in relays {
         match engine.tracked_fetch(relay_url, &[filter.clone()], FetchTrigger::ProfilePrefetch).await {
             Ok(events) => {
@@ -1282,6 +1293,274 @@ pub async fn purge_handler(
         "data_dir": data_dir.to_string_lossy(),
         "command": format!("rm -rf {} && cargo run -- -c config.toml", data_dir.display())
     })))
+}
+
+// ============================================================================
+// Discussion counts (NIP-22 comments + NIP-84 highlights)
+// ============================================================================
+
+/// Request body for `POST /api/v1/discussions/counts`.
+///
+/// `addresses` are NIP-01 `a` tag values in `kind:pubkey:d-tag` form.
+/// The handler returns, per address, how many kind-1111 comments and
+/// kind-9802 highlights reference it.
+#[derive(Debug, Deserialize)]
+pub struct DiscussionCountsRequest {
+    pub addresses: Vec<String>,
+    #[serde(default)]
+    pub policy: Option<String>,
+    pub relays: Option<Vec<String>>,
+    /// Bypass the offline-mode policy downgrade. Set true for explicit,
+    /// user-initiated refreshes ("Refresh discussions") so the user can
+    /// pull comments and highlights into the local DB without having to
+    /// flip the global network mode online first.
+    #[serde(default)]
+    pub bypass_offline: bool,
+}
+
+#[derive(Debug, Serialize, Default, Clone)]
+pub struct DiscussionCount {
+    pub comments: usize,
+    pub highlights: usize,
+}
+
+#[derive(Debug, Serialize)]
+pub struct DiscussionCountsResponse {
+    pub counts: std::collections::HashMap<String, DiscussionCount>,
+    pub source: crate::engine::QuerySource,
+}
+
+/// POST /api/v1/discussions/counts
+///
+/// Aggregate NIP-22 (kind 1111) comment counts and NIP-84 (kind 9802)
+/// highlight counts for a batch of addressable events. Used by the
+/// reader to show "this section has discussions" indicators without
+/// fetching the events themselves.
+pub async fn discussion_counts_handler(
+    State(engine): State<AppState>,
+    Json(req): Json<DiscussionCountsRequest>,
+) -> Result<Json<DiscussionCountsResponse>, EngineError> {
+    let policy = match &req.policy {
+        Some(p) => p.parse()?,
+        None => FetchPolicy::default(),
+    };
+
+    // De-duplicate and validate addresses up front so we never ask a
+    // relay for the same `a` tag twice.
+    let mut seen = std::collections::HashSet::new();
+    let addresses: Vec<String> = req
+        .addresses
+        .into_iter()
+        .filter(|a| !a.is_empty() && seen.insert(a.clone()))
+        .collect();
+
+    if addresses.is_empty() {
+        return Ok(Json(DiscussionCountsResponse {
+            counts: std::collections::HashMap::new(),
+            source: crate::engine::QuerySource {
+                local_count: 0,
+                relay_count: 0,
+            },
+        }));
+    }
+
+    debug!(
+        "Discussion counts: {} addresses, policy={:?}",
+        addresses.len(),
+        policy
+    );
+
+    // One combined relay REQ for both kinds keeps roundtrips minimal.
+    let filters = vec![json!({
+        "kinds": [1111, 9802],
+        "#a": addresses,
+    })];
+
+    let response = engine
+        .get_events_with_options(filters, policy, req.relays.as_deref(), req.bypass_offline)
+        .await?;
+
+    let address_set: std::collections::HashSet<&str> =
+        addresses.iter().map(String::as_str).collect();
+    let mut counts: std::collections::HashMap<String, DiscussionCount> =
+        addresses.iter().map(|a| (a.clone(), DiscussionCount::default())).collect();
+
+    for event in &response.events {
+        let kind = event.get("kind").and_then(|v| v.as_u64()).unwrap_or(0);
+        let Some(tags) = event.get("tags").and_then(|v| v.as_array()) else {
+            continue;
+        };
+        // The same comment can carry both `a` (parent) and `A` (root) tags
+        // pointing to the same addr. We bump the counter once per (event,
+        // address) by collecting matched addresses first.
+        let mut matched: std::collections::HashSet<&str> = std::collections::HashSet::new();
+        for tag in tags {
+            let arr = match tag.as_array() {
+                Some(a) if a.len() >= 2 => a,
+                _ => continue,
+            };
+            let key = arr[0].as_str().unwrap_or("");
+            if !matches!(key, "a" | "A") {
+                continue;
+            }
+            if let Some(val) = arr[1].as_str() {
+                if let Some(&hit) = address_set.get(val) {
+                    matched.insert(hit);
+                }
+            }
+        }
+        for addr in matched {
+            let entry = counts.entry(addr.to_string()).or_default();
+            match kind {
+                1111 => entry.comments += 1,
+                9802 => entry.highlights += 1,
+                _ => {}
+            }
+        }
+    }
+
+    Ok(Json(DiscussionCountsResponse {
+        counts,
+        source: response.source,
+    }))
+}
+
+/// Query params for `GET /api/v1/discussions/list`.
+///
+/// Repeatable fields (`addresses`, `event_ids`, `kinds`, `relays`) are
+/// passed comma-separated to keep the wire format compatible with the
+/// default `serde_urlencoded` Query extractor. `kinds` defaults to
+/// `"1111,9802"`; the empty/missing case is treated as "both".
+#[derive(Debug, Deserialize, Default)]
+pub struct DiscussionsListQuery {
+    pub addresses: Option<String>,
+    pub event_ids: Option<String>,
+    pub kinds: Option<String>,
+    pub policy: Option<String>,
+    pub relays: Option<String>,
+    pub limit: Option<usize>,
+    pub since: Option<i64>,
+    #[serde(default)]
+    pub bypass_offline: bool,
+}
+
+#[derive(Debug, Serialize)]
+pub struct DiscussionsListResponse {
+    pub events: Vec<Value>,
+    pub source: crate::engine::QuerySource,
+    /// Server's view of when the result was computed (unix seconds).
+    /// The web uses this as a `since` cursor for incremental refreshes.
+    pub refreshed_at: i64,
+}
+
+fn split_csv(s: &Option<String>) -> Vec<String> {
+    s.as_deref()
+        .unwrap_or("")
+        .split(',')
+        .filter(|p| !p.is_empty())
+        .map(String::from)
+        .collect()
+}
+
+/// GET /api/v1/discussions/list
+///
+/// Returns the full set of NIP-22 (kind 1111) comments and NIP-84 (kind
+/// 9802) highlights referencing the requested addresses or event ids.
+/// Unlike `discussions/counts`, this endpoint returns whole events so
+/// the web can thread them, render comment bodies, and overlay
+/// highlights. The same call also warms nostrdb when `policy` admits
+/// relay fetches, so subsequent `discussions/counts` queries hit local.
+pub async fn discussions_list_handler(
+    State(engine): State<AppState>,
+    axum::extract::Query(req): axum::extract::Query<DiscussionsListQuery>,
+) -> Result<Json<DiscussionsListResponse>, EngineError> {
+    let addresses = split_csv(&req.addresses);
+    let event_ids = split_csv(&req.event_ids);
+
+    let kinds: Vec<u64> = if let Some(raw) = &req.kinds {
+        raw.split(',').filter_map(|p| p.parse().ok()).collect()
+    } else {
+        vec![1111, 9802]
+    };
+
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+
+    if (addresses.is_empty() && event_ids.is_empty()) || kinds.is_empty() {
+        return Ok(Json(DiscussionsListResponse {
+            events: vec![],
+            source: crate::engine::QuerySource {
+                local_count: 0,
+                relay_count: 0,
+            },
+            refreshed_at: now,
+        }));
+    }
+
+    let policy = match &req.policy {
+        Some(p) => p.parse()?,
+        None => FetchPolicy::default(),
+    };
+    let limit = req.limit.unwrap_or(500);
+
+    // Build the filter set. NIP-01 ANDs inside a filter and ORs across
+    // filters, so to catch every referencing form we emit:
+    //   - `#a` for top-level + addressable-parent refs
+    //   - `#A` for nested replies (root scope only carries uppercase A)
+    //   - `#e` when the caller passed event ids directly
+    let mut filters: Vec<Value> = Vec::new();
+
+    let make_base = || {
+        let mut f = serde_json::Map::new();
+        f.insert("kinds".to_string(), json!(kinds));
+        f.insert("limit".to_string(), json!(limit));
+        if let Some(since) = req.since {
+            f.insert("since".to_string(), json!(since));
+        }
+        f
+    };
+
+    if !addresses.is_empty() {
+        let mut lower = make_base();
+        lower.insert("#a".to_string(), json!(addresses));
+        filters.push(Value::Object(lower));
+
+        let mut upper = make_base();
+        upper.insert("#A".to_string(), json!(addresses));
+        filters.push(Value::Object(upper));
+    }
+    if !event_ids.is_empty() {
+        let mut by_e = make_base();
+        by_e.insert("#e".to_string(), json!(event_ids));
+        filters.push(Value::Object(by_e));
+    }
+
+    let relays_vec = split_csv(&req.relays);
+    let relays_opt: Option<&[String]> = if relays_vec.is_empty() {
+        None
+    } else {
+        Some(relays_vec.as_slice())
+    };
+
+    debug!(
+        "Discussions list: {} addresses, {} event_ids, kinds={:?}, policy={:?}",
+        addresses.len(),
+        event_ids.len(),
+        kinds,
+        policy
+    );
+
+    let response = engine
+        .get_events_with_options(filters, policy, relays_opt, req.bypass_offline)
+        .await?;
+
+    Ok(Json(DiscussionsListResponse {
+        events: response.events,
+        source: response.source,
+        refreshed_at: now,
+    }))
 }
 
 // ============================================================================

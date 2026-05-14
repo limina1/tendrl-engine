@@ -693,8 +693,28 @@ impl Engine {
         policy: FetchPolicy,
         override_relays: Option<&[String]>,
     ) -> Result<QueryResponse> {
+        self.get_events_with_options(filters, policy, override_relays, false)
+            .await
+    }
+
+    /// Variant of `get_events` that can bypass the offline-mode policy
+    /// downgrade. Use sparingly — this is for explicit, user-initiated
+    /// fetches (e.g. "Refresh discussions" buttons) where the user has
+    /// asked for a relay round-trip despite the engine being offline.
+    /// Automatic / background callers should keep using `get_events`.
+    pub async fn get_events_with_options(
+        &self,
+        filters: Vec<Value>,
+        policy: FetchPolicy,
+        override_relays: Option<&[String]>,
+        bypass_offline: bool,
+    ) -> Result<QueryResponse> {
         let relays = override_relays.unwrap_or(&self.relay_config.fetch.urls);
-        let policy = if self.is_online() { policy } else { FetchPolicy::LocalOnly };
+        let policy = if bypass_offline || self.is_online() {
+            policy
+        } else {
+            FetchPolicy::LocalOnly
+        };
 
         match policy {
             FetchPolicy::LocalOnly => self.query_local_only(&filters),

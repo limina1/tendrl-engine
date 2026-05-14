@@ -14,6 +14,7 @@
 	import RelaysBuffer from './renderers/RelaysBuffer.svelte';
 	import PublishProgressBuffer from './renderers/PublishProgressBuffer.svelte';
 	import ProfileEditBuffer from './renderers/ProfileEditBuffer.svelte';
+	import DiscussionViewBuffer from './renderers/DiscussionViewBuffer.svelte';
 
 	let { buffer }: { buffer: Buffer } = $props();
 </script>
@@ -47,6 +48,8 @@
 		<PublishProgressBuffer {buffer} />
 	{:else if buffer.kind === 'profile-edit'}
 		<ProfileEditBuffer {buffer} />
+	{:else if buffer.kind === 'discussion-view'}
+		<DiscussionViewBuffer {buffer} />
 	{:else}
 		<div class="missing">no renderer registered for kind {buffer.kind}</div>
 	{/if}

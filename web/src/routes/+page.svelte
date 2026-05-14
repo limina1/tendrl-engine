@@ -94,6 +94,28 @@
 				}
 			});
 		},
+		onDiscussion: (event_id, kind) => {
+			store.openBuffer({
+				className: 'work',
+				buffer: {
+					id: `discussion:${event_id}`,
+					kind: 'discussion-view',
+					label: kind === 9802 ? 'highlight' : 'comment',
+					kicker: event_id.slice(0, 8) + '…'
+				}
+			});
+		},
+		onReader: (buffer_id, label, kicker) => {
+			store.openBuffer({
+				className: 'work',
+				buffer: {
+					id: buffer_id,
+					kind: 'reader',
+					label,
+					kicker
+				}
+			});
+		},
 		onCompose: () => {
 			store.openBuffer({
 				className: 'work',
@@ -821,8 +843,12 @@
 			{/if}
 			<button
 				class="pill pill--btn {networkPill.pillClass}"
-				onclick={openRelays}
-				title="Network · click to open relay configuration"
+				onclick={toggleNetworkMode}
+				oncontextmenu={(e) => {
+					e.preventDefault();
+					openRelays();
+				}}
+				title="Click to toggle online/offline · right-click for relay configuration"
 			>
 				<span class="dot {networkPill.dotClass}"></span>
 				{networkPill.label}
