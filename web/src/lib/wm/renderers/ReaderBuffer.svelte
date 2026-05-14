@@ -19,6 +19,7 @@
 	import { buildThread, threadContainsId, type ThreadNode } from '$lib/discussions/thread';
 	import type { Highlight } from '$lib/discussions/highlights';
 	import CommentThread from '$lib/components/CommentThread.svelte';
+	import HighlightList from '$lib/components/HighlightList.svelte';
 	import HighlightsDrawer, {
 		type DrawerHighlight
 	} from '$lib/components/HighlightsDrawer.svelte';
@@ -281,6 +282,64 @@
 			for (const ev of discussionEvents[addrKey(publication.addr)] ?? []) push(ev);
 		}
 		return out;
+	}
+
+	// Outline-specific helpers: the inline list is the de-duped set of
+	// highlights actually attributable to this section — direct refs
+	// plus publication-cascaded ones whose content substring-matches the
+	// section's text. Count + list are computed off the same set so they
+	// always agree.
+	type SectionHighlightEntry = Highlight & { created_at: number };
+
+	function effectiveHighlightsForSection(addr: {
+		kind: number;
+		pubkey: string;
+		d_tag: string;
+	}): SectionHighlightEntry[] {
+		const section = pristineSections.find((s) => addrKey(s.addr) === addrKey(addr));
+		const content = (section?.content ?? '').toLowerCase();
+		const out: SectionHighlightEntry[] = [];
+		const seen = new Set<string>();
+		const push = (ev: api.DiscussionEvent) => {
+			if (seen.has(ev.id) || ev.kind !== 9802) return;
+			seen.add(ev.id);
+			out.push({
+				id: ev.id,
+				content: ev.content ?? '',
+				pubkey: ev.pubkey,
+				created_at: ev.created_at
+			});
+		};
+		for (const ev of discussionEvents[addrKey(addr)] ?? []) push(ev);
+		if (publication && content) {
+			for (const ev of discussionEvents[addrKey(publication.addr)] ?? []) {
+				if (ev.kind !== 9802) continue;
+				const needle = (ev.content ?? '').trim().toLowerCase();
+				if (needle && content.includes(needle)) push(ev);
+			}
+		}
+		return out;
+	}
+
+	function effectiveHighlightCount(addr: {
+		kind: number;
+		pubkey: string;
+		d_tag: string;
+	}): number {
+		return effectiveHighlightsForSection(addr).length;
+	}
+
+	// Outline expansion state: which sections have their inline comments
+	// thread or flat highlights list open. Keyed by index since the
+	// outline iterates pristineSections positionally.
+	let outlineCommentsOpen = $state<Record<number, boolean>>({});
+	let outlineHighlightsOpen = $state<Record<number, boolean>>({});
+
+	function toggleOutlineComments(i: number) {
+		outlineCommentsOpen[i] = !(outlineCommentsOpen[i] ?? false);
+	}
+	function toggleOutlineHighlights(i: number) {
+		outlineHighlightsOpen[i] = !(outlineHighlightsOpen[i] ?? false);
 	}
 
 	// Drawer state. `drawerOpen` is toggled from the discussion summary
@@ -1201,6 +1260,12 @@
 					<div class="outline-overlay" bind:this={outlineEl}>
 						{#each pristineSections as section, i (`${i}:${section.addr.pubkey}:${section.addr.d_tag}`)}
 							{@const disc = discussionFor(section.addr)}
+							{@const sectionHighlights = effectiveHighlightsForSection(section.addr)}
+							{@const highlightN = sectionHighlights.length}
+							{@const commentN = disc.comments}
+							{@const sectionThreads = threadsForSection(section.addr)}
+							{@const commentsOpen = outlineCommentsOpen[i] ?? false}
+							{@const highlightsOpen = outlineHighlightsOpen[i] ?? false}
 							<div
 								class="entry entry--pristine"
 								class:entry--cursor={i === outlineCursor}
@@ -1221,23 +1286,51 @@
 											viewMode = 'paginated';
 											handleNavigate(i);
 										}}
-										onviewjson={openSectionJsonBySection}
 									/>
 								</div>
-								{#if disc.comments > 0 || disc.highlights > 0}
-									<div
-										class="section-badge"
-										title="Existing discussions on this section (NIP-22 comments + NIP-84 highlights)"
-									>
-										{#if disc.comments > 0}
-											<span class="section-badge__chip section-badge__chip--c">c {disc.comments}</span>
-										{/if}
-										{#if disc.highlights > 0}
-											<span class="section-badge__chip section-badge__chip--h">h {disc.highlights}</span>
-										{/if}
-									</div>
-								{/if}
+								<div class="section-actions">
+									{#if highlightN > 0}
+										<button
+											class="section-action section-action--highlights"
+											class:open={highlightsOpen}
+											onclick={(e) => {
+												e.stopPropagation();
+												toggleOutlineHighlights(i);
+											}}
+											title="{highlightsOpen ? 'Hide' : 'Show'} the {highlightN} highlight{highlightN === 1 ? '' : 's'} on this section"
+										>highlights {highlightN}</button>
+									{/if}
+									{#if commentN > 0}
+										<button
+											class="section-action section-action--comments"
+											class:open={commentsOpen}
+											onclick={(e) => {
+												e.stopPropagation();
+												toggleOutlineComments(i);
+											}}
+											title="{commentsOpen ? 'Hide' : 'Show'} the threaded comments on this section"
+										>comments {commentN}</button>
+									{/if}
+									<button
+										class="section-action section-action--more"
+										onclick={(e) => {
+											e.stopPropagation();
+											openSectionJsonBySection(section);
+										}}
+										title="View this section's raw event in the JSON viewer"
+									>⋮</button>
+								</div>
 							</div>
+							{#if highlightsOpen && highlightN > 0}
+								<div class="outline-detail outline-detail--highlights">
+									<HighlightList highlights={sectionHighlights} />
+								</div>
+							{/if}
+							{#if commentsOpen && sectionThreads.length > 0}
+								<div class="outline-detail outline-detail--comments">
+									<CommentThread nodes={sectionThreads} focusedEventId={parsedFocusCommentId} />
+								</div>
+							{/if}
 						{/each}
 					</div>
 				{/if}
@@ -1447,7 +1540,7 @@
 		border-radius: var(--r-sm);
 	}
 
-	.section-badge {
+	.section-actions {
 		display: flex;
 		gap: 4px;
 		align-items: center;
@@ -1455,18 +1548,51 @@
 		flex-shrink: 0;
 		align-self: center;
 	}
-	.section-badge__chip {
+	.section-action {
 		font-family: var(--font-mono);
 		font-size: var(--t-xs);
-		padding: 1px 5px;
+		padding: 1px 6px;
 		border-radius: var(--r-sm);
 		border: 1px solid var(--panel-border);
 		background: var(--bg-surface);
 		color: var(--base6);
 		line-height: 1.4;
+		cursor: pointer;
 	}
-	.section-badge__chip--c { border-color: var(--id-yours); color: var(--id-yours); }
-	.section-badge__chip--h { border-color: var(--state-online); color: var(--state-online); }
+	.section-action:hover {
+		filter: brightness(1.2);
+	}
+	.section-action--highlights {
+		border-color: var(--state-online);
+		color: var(--state-online);
+	}
+	.section-action--highlights.open {
+		background: color-mix(in srgb, var(--state-online) 18%, transparent);
+	}
+	.section-action--comments {
+		border-color: var(--id-yours);
+		color: var(--id-yours);
+	}
+	.section-action--comments.open {
+		background: color-mix(in srgb, var(--id-yours) 18%, transparent);
+	}
+	.section-action--more {
+		padding: 1px 7px;
+	}
+
+	.outline-detail {
+		margin-left: 22px;
+		margin-right: 6px;
+		margin-bottom: 6px;
+		padding: 6px 8px;
+		border-left: 2px solid var(--panel-border);
+	}
+	.outline-detail--highlights {
+		border-left-color: var(--state-online);
+	}
+	.outline-detail--comments {
+		border-left-color: var(--id-yours);
+	}
 
 	.title {
 		padding: 8px var(--s-3);
