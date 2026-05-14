@@ -61,6 +61,16 @@ export function hasAuthorName(pubkey: string): boolean {
 	return !!(p?.display_name?.trim() || p?.name?.trim());
 }
 
+/**
+ * Reactive read of the full cached profile (or null). Use this when a
+ * caller needs both name and avatar in one place.
+ */
+export function getAuthorProfile(pubkey: string): api.Profile | null {
+	ensureSubscribed();
+	void version;
+	return api.getCachedProfile(pubkey);
+}
+
 /** Trigger a debounced batch fetch for any pubkeys we haven't seen yet. */
 export function prefetchAuthors(pubkeys: string[]) {
 	api.prefetchProfiles(pubkeys);

@@ -22,6 +22,12 @@
 	import BufferRenderer from '$lib/wm/BufferRenderer.svelte';
 	import { rendererFor } from '$lib/wm/registry';
 	import { getAppState, type ModalNavEntry } from '$lib/state.svelte';
+	import {
+		getAuthorDisplayName,
+		getAuthorProfile,
+		prefetchAuthors
+	} from '$lib/discussions/authors.svelte';
+	import { pubkeyToColor } from '$lib/discussions/colors';
 
 	const app = getAppState();
 
@@ -707,6 +713,24 @@
 		return { label: 'locked', pillClass: 'pill--draft' };
 	});
 
+	// Top-left profile chip. We prefer the unlocked-session pubkey
+	// (NIP-07 or in-process) but fall back to the config-only
+	// `my_pubkey` so the chip is visible even when signing isn't wired
+	// up — clicking still routes to the user's own profile buffer.
+	const mePubkey = $derived(app.identityStatus?.pubkey ?? app.myPubkey ?? null);
+	const meProfile = $derived(mePubkey ? getAuthorProfile(mePubkey) : null);
+	const meName = $derived(mePubkey ? getAuthorDisplayName(mePubkey) : '');
+	const meColor = $derived(mePubkey ? pubkeyToColor(mePubkey) : 'transparent');
+
+	$effect(() => {
+		if (mePubkey) prefetchAuthors([mePubkey]);
+	});
+
+	function openMyProfile() {
+		if (!mePubkey) return;
+		app.navigateToProfile(mePubkey);
+	}
+
 	const embeddingPill = $derived.by(() => {
 		const e = app.embeddingStatus;
 		if (!e || !e.enabled) return null;
@@ -758,6 +782,20 @@
 	<div class="shell">
 		<div class="shell__header">
 			<div class="shell__brand">tendrl</div>
+			{#if mePubkey}
+				<button
+					class="me-chip"
+					onclick={openMyProfile}
+					title="Open my profile ({mePubkey.slice(0, 12)}…)"
+				>
+					{#if meProfile?.picture}
+						<img class="me-chip__avatar" src={meProfile.picture} alt="" />
+					{:else}
+						<span class="me-chip__dot" style="background: {meColor};"></span>
+					{/if}
+					<span class="me-chip__name">{meName}</span>
+				</button>
+			{/if}
 			<button
 				class="lt"
 				onclick={openSettings}
@@ -1231,6 +1269,47 @@
 		color: var(--base7);
 		font-weight: 600;
 	}
+
+	.me-chip {
+		display: inline-flex;
+		align-items: center;
+		gap: 6px;
+		padding: 2px 8px 2px 4px;
+		border: 1px solid transparent;
+		border-radius: 999px;
+		background: transparent;
+		color: var(--base6);
+		font-family: var(--font-mono);
+		font-size: var(--t-xs);
+		cursor: pointer;
+		max-width: 200px;
+	}
+	.me-chip:hover {
+		background: var(--base1);
+		border-color: var(--base3);
+		color: var(--fg);
+	}
+	.me-chip__avatar {
+		width: 18px;
+		height: 18px;
+		border-radius: 50%;
+		object-fit: cover;
+		flex-shrink: 0;
+		background: var(--base2);
+	}
+	.me-chip__dot {
+		width: 10px;
+		height: 10px;
+		border-radius: 50%;
+		flex-shrink: 0;
+		margin-left: 4px;
+	}
+	.me-chip__name {
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
 	.shell__layouts { display: flex; gap: 2px; }
 	.lt {
 		font-family: var(--font-mono);
