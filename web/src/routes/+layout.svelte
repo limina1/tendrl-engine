@@ -5,6 +5,7 @@
 	import SearchActionModal from '$lib/components/SearchActionModal.svelte';
 	import EventViewModal from '$lib/components/EventViewModal.svelte';
 	import RelayFetchModal from '$lib/components/RelayFetchModal.svelte';
+	import FetchConfirmModal from '$lib/components/FetchConfirmModal.svelte';
 	import SearchConfigModal from '$lib/components/SearchConfigModal.svelte';
 	import ToastStack from '$lib/components/ToastStack.svelte';
 	import {
@@ -12,6 +13,7 @@
 		confirmFetchModal,
 		cancelFetchModal
 	} from '$lib/fetch/relay-fetch.svelte';
+	import { confirmState, startFetchEvents } from '$lib/network/fetch-events.svelte';
 	import type { SearchResult } from '$lib/types';
 	import { getActiveStore } from '$lib/wm/buffer-store.svelte';
 
@@ -24,8 +26,12 @@
 		if (initialized) return;
 		initialized = true;
 		app.initialize();
-		const cleanup = app.startNetworkPoll();
-		return cleanup;
+		const stopPoll = app.startNetworkPoll();
+		const stopEvents = startFetchEvents(app);
+		return () => {
+			stopPoll();
+			stopEvents();
+		};
 	});
 
 	function spawnReader(pubkey: string, d_tag: string, label: string | null) {
@@ -176,6 +182,10 @@
 		onconfirm={(relays) => confirmFetchModal(relays)}
 		oncancel={cancelFetchModal}
 	/>
+{/if}
+
+{#if confirmState.intent}
+	<FetchConfirmModal intent={confirmState.intent} />
 {/if}
 
 <SearchConfigModal />
