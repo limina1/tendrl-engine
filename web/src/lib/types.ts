@@ -112,6 +112,20 @@ export interface SearchResult {
 	semantic_score: number | null;
 }
 
+/** A profile (kind-0) hit — an author match. Search returns these as a
+ *  category distinct from content `results` (see search-architecture). */
+export interface ProfileResult {
+	pubkey: string;
+	name?: string;
+	display_name?: string;
+	nip05?: string;
+	picture?: string;
+	about?: string;
+	/** Match strength — 0 strongest (name prefix), higher = weaker. */
+	score: number;
+	source: 'local' | 'relay';
+}
+
 export interface DocPageResult {
 	filename: string;
 	page_num: number;
@@ -129,6 +143,9 @@ export interface TagValueCount {
 
 export interface SearchResponse {
 	results: SearchResult[];
+	/** Profile (kind-0) hits — an author match, distinct from `results`.
+	 *  Omitted from the JSON when empty. */
+	profiles?: ProfileResult[];
 	count: number;
 	local_count: number;
 	relay_count: number;

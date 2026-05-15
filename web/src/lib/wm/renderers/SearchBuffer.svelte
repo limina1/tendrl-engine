@@ -92,6 +92,7 @@
 	{cursor}
 	bind:listEl
 	results={app.searchResults}
+	profiles={app.searchProfiles}
 	tagCounts={app.searchTagCounts}
 	count={app.searchCount}
 	localCount={app.searchLocalCount}

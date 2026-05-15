@@ -8,6 +8,7 @@ import {
 import type {
 	ChatResponse,
 	SearchResult,
+	ProfileResult,
 	PublicationSummary,
 	PublicationDetail,
 	LazySection,
@@ -213,6 +214,9 @@ function _createAppState() {
 
 	// --- Search ---
 	let searchResults: SearchResult[] = $state([]);
+	// The "people" half of search's fan-out — kind-0 author matches,
+	// surfaced as a category distinct from content `searchResults`.
+	let searchProfiles: ProfileResult[] = $state([]);
 	let searchCount = $state(0);
 	let searchLocalCount = $state(0);
 	let searchRelayCount = $state(0);
@@ -1052,6 +1056,7 @@ function _createAppState() {
 		const scopeToMe = opts.scopeToMe ?? true;
 		if (!query.trim()) {
 			searchResults = [];
+			searchProfiles = [];
 			searchCount = 0;
 			searchLocalCount = 0;
 			searchRelayCount = 0;
@@ -1089,6 +1094,7 @@ function _createAppState() {
 				myPubkey ?? undefined
 			);
 			searchResults = dedupeLatestProfiles(resp.results);
+			searchProfiles = resp.profiles ?? [];
 			searchCount = searchResults.length;
 			searchLocalCount = resp.local_count;
 			searchRelayCount = resp.relay_count;
@@ -1270,6 +1276,7 @@ function _createAppState() {
 				{ relays: chosenRelays, bypassOffline: true }
 			);
 			searchResults = dedupeLatestProfiles(resp.results);
+			searchProfiles = resp.profiles ?? [];
 			searchCount = searchResults.length;
 			searchLocalCount = resp.local_count;
 			searchRelayCount = resp.relay_count;
@@ -1482,6 +1489,7 @@ function _createAppState() {
 			await api.ignoreEvents([], [result.author]);
 			await refreshIgnoreList();
 			searchResults = searchResults.filter(r => r.author !== result.author);
+			searchProfiles = searchProfiles.filter(p => p.pubkey !== result.author);
 			searchCount = searchResults.length;
 			feed = feed.filter(p => p.author_pubkey !== result.author);
 		} catch (e) {
@@ -2422,6 +2430,7 @@ function _createAppState() {
 
 		// Search
 		get searchResults() { return searchResults; },
+		get searchProfiles() { return searchProfiles; },
 		get searchTagCounts() { return searchTagCounts; },
 		get searchCount() { return searchCount; },
 		get searchLocalCount() { return searchLocalCount; },

@@ -1,7 +1,15 @@
 <script lang="ts">
-	import type { SearchResult, ContextItem, DocumentFile, ImportPage, TagValueCount } from '$lib/types';
+	import type {
+		SearchResult,
+		ProfileResult,
+		ContextItem,
+		DocumentFile,
+		ImportPage,
+		TagValueCount
+	} from '$lib/types';
 	import SearchInput from './SearchInput.svelte';
 	import SearchResultItem from './SearchResultItem.svelte';
+	import PersonResultItem from './PersonResultItem.svelte';
 	import {
 		searchConfig,
 		openSearchConfig,
@@ -10,6 +18,7 @@
 
 	let {
 		results,
+		profiles = [],
 		tagCounts = {},
 		count = 0,
 		localCount = 0,
@@ -46,6 +55,7 @@
 		onsearchrelays
 	}: {
 		results: SearchResult[];
+		profiles?: ProfileResult[];
 		tagCounts?: Record<string, TagValueCount[]>;
 		count?: number;
 		localCount?: number;
@@ -257,6 +267,20 @@
 		{/if}
 
 		<div class="search-results" bind:this={listEl}>
+			<!-- People category: kind-0 author matches, surfaced above
+			     content results — search's people/notes fan-out. -->
+			{#if profiles.length > 0}
+				<div class="people-section">
+					<div class="people-header">
+						<span class="people-header__label">People</span>
+						<span class="people-header__count">{profiles.length}</span>
+					</div>
+					{#each profiles as profile (profile.pubkey)}
+						<PersonResultItem {profile} {onviewprofile} {localPubkeys} />
+					{/each}
+				</div>
+			{/if}
+
 			{#if isGrouped}
 				<!-- Grouped view: top-level rows are histogram buckets from
 				     `count:NAME`. Click a bucket to expand it into its
@@ -334,7 +358,7 @@
 				{/each}
 			{/if}
 
-			{#if !loading && results.length === 0 && !isGrouped}
+			{#if !loading && results.length === 0 && profiles.length === 0 && !isGrouped}
 				{#if canPromptRelays}
 					<div class="empty empty-cta">
 						<p>No events found in local DB.</p>
@@ -529,6 +553,31 @@
 	.result-row--nested {
 		padding-left: 18px;
 		border-left: 2px solid var(--border);
+	}
+
+	/* People category header — author matches above content results. */
+	.people-section {
+		margin-bottom: 4px;
+	}
+	.people-header {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		padding: 6px 12px;
+		background: color-mix(in srgb, #a093c7 12%, transparent);
+		border-bottom: 1px solid var(--border);
+		font-size: 0.65rem;
+		text-transform: uppercase;
+		letter-spacing: 0.06em;
+	}
+	.people-header__label {
+		flex: 1;
+		color: #a093c7;
+		font-weight: 600;
+	}
+	.people-header__count {
+		font-family: var(--font-mono);
+		color: var(--fg-muted);
 	}
 
 	/* Grouped view for `count:NAME` queries. */
