@@ -251,7 +251,7 @@ pub async fn search_handler(
         let profiles = merge_profile_search(&engine, &profile_terms).await;
 
         let count = all_results.len();
-        return Ok(Json(SearchResponse {
+        let response = SearchResponse {
             results: all_results,
             profiles,
             count,
@@ -259,7 +259,9 @@ pub async fn search_handler(
             relay_count: total_relay,
             doc_results: vec![],
             tag_counts: std::collections::HashMap::new(),
-        }));
+        };
+        backfill_result_profiles(&engine, &response, req.bypass_offline).await;
+        return Ok(Json(response));
     }
 
     // Single query path
@@ -282,7 +284,31 @@ pub async fn search_handler(
         response.profiles = engine.search_profiles(&term).await;
     }
 
+    backfill_result_profiles(&engine, &response, req.bypass_offline).await;
     Ok(Json(response))
+}
+
+/// Cache kind-0 profiles for the authors of these search results.
+/// Awaited — the profiles are fetched into nostrdb *before* the search
+/// response returns, so the client's first render resolves author
+/// metadata locally with no follow-up round-trip. The engine method
+/// no-ops for authors already cached.
+///
+/// `bypass_offline` is the search request's own flag: a search the user
+/// authorized to reach relays despite offline mode carries its profile
+/// backfill along on the same okay.
+async fn backfill_result_profiles(
+    engine: &AppState,
+    response: &SearchResponse,
+    bypass_offline: bool,
+) {
+    let pubkeys: Vec<String> = response.results.iter().map(|r| r.author.clone()).collect();
+    if pubkeys.is_empty() {
+        return;
+    }
+    engine
+        .backfill_missing_profiles(pubkeys, bypass_offline)
+        .await;
 }
 
 /// The free-text component of a query — the keywords or exact phrase

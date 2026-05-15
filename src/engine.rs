@@ -17,6 +17,10 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{debug, info, warn};
 
+/// Upper bound on authors fetched in one profile backfill — keeps a
+/// large result set from issuing an unwieldy REQ to relays.
+const PROFILE_BACKFILL_CAP: usize = 200;
+
 /// Fetch policy determines how the engine retrieves events
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -1029,6 +1033,91 @@ impl Engine {
             .into_iter()
             .filter(|p| !ignore.pubkeys.contains(&p.pubkey))
             .collect()
+    }
+
+    /// Ensure a kind-0 profile is cached for each of `pubkeys` — fetch
+    /// the ones missing locally in a single batched REQ across every
+    /// configured relay. Best-effort; returns the count of profile
+    /// events ingested. Meant to run after a search/fetch pulls in
+    /// events, so the authors of freshly-seen events get their metadata
+    /// cached. Logs its outcome at `info` so the backfill is visible.
+    ///
+    /// `bypass_offline` carries the search's relay authorization: when
+    /// the accompanying search was allowed to reach relays despite
+    /// offline mode, the backfill rides along on the same okay.
+    pub async fn backfill_missing_profiles(
+        &self,
+        pubkeys: Vec<String>,
+        bypass_offline: bool,
+    ) -> usize {
+        let considered = pubkeys.len();
+        // Distinct, well-formed pubkeys with no kind-0 cached locally.
+        let mut seen = std::collections::HashSet::new();
+        let missing: Vec<String> = pubkeys
+            .into_iter()
+            .filter(|pk| pk.len() == 64 && seen.insert(pk.clone()))
+            .filter(|pk| !query::profile_exists(&self.ndb, pk))
+            .take(PROFILE_BACKFILL_CAP)
+            .collect();
+        if missing.is_empty() {
+            debug!(
+                "Profile backfill: all {} result authors already cached",
+                considered
+            );
+            return 0;
+        }
+
+        if !bypass_offline && !self.is_online() {
+            info!(
+                "Profile backfill: {} author(s) missing a kind-0, but the engine is offline — skipped",
+                missing.len()
+            );
+            return 0;
+        }
+
+        // Profiles can live on any configured relay — query the union of
+        // the general / fetch / publish sets so an empty `general` set
+        // doesn't silently disable the backfill.
+        let relays = self.relay_config.all_urls();
+        if relays.is_empty() {
+            warn!(
+                "Profile backfill: {} author(s) missing a kind-0, but no relays are configured",
+                missing.len()
+            );
+            return 0;
+        }
+
+        info!(
+            "Profile backfill: fetching {} missing author profile(s) from {} relay(s)",
+            missing.len(),
+            relays.len()
+        );
+        let filter = serde_json::json!({
+            "kinds": [0],
+            "authors": missing,
+            "limit": missing.len(),
+        });
+        let mut fetched = 0;
+        for relay_url in &relays {
+            match self
+                .tracked_fetch_with_options(
+                    relay_url,
+                    &[filter.clone()],
+                    FetchTrigger::ProfilePrefetch,
+                    bypass_offline,
+                )
+                .await
+            {
+                Ok(events) => fetched += events.len(),
+                Err(e) => debug!("Profile backfill from {} failed: {}", relay_url, e),
+            }
+        }
+        info!(
+            "Profile backfill: ingested {} kind-0 event(s) for {} missing author(s)",
+            fetched,
+            missing.len()
+        );
+        fetched
     }
 
     /// Semantic search: embed query, search HNSW, fetch events, merge scores

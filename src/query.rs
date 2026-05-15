@@ -495,6 +495,27 @@ pub fn note_to_json_pub(note: &nostrdb::Note) -> Result<Value> {
     note_to_json(note)
 }
 
+/// True when a kind-0 (profile metadata) event for `pubkey` is already
+/// cached locally. Used to decide whether an author needs a profile
+/// backfill from relays. A malformed pubkey reports `false`.
+pub fn profile_exists(ndb: &Ndb, pubkey: &str) -> bool {
+    let Ok(pk) = parse_hex_id(pubkey) else {
+        return false;
+    };
+    let _guard = ndb_query_lock();
+    let Ok(txn) = Transaction::new(ndb) else {
+        return false;
+    };
+    let filter = FilterBuilder::new()
+        .kinds([0])
+        .authors([pk].iter())
+        .limit(1)
+        .build();
+    ndb.query(&txn, &[filter], 1)
+        .map(|r| !r.is_empty())
+        .unwrap_or(false)
+}
+
 /// How many kind-0 events the profile scan walks, and how many hits it
 /// returns. The scan is brute-force (NIP-01 has no name index); the cap
 /// keeps a noisy term from flooding the people category.
