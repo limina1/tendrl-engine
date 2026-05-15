@@ -2,7 +2,6 @@
 	import type { NostrEvent, PublicationSummary } from '$lib/types';
 	import * as api from '$lib/api';
 	import type { Profile } from '$lib/api';
-	import ProfileName from './ProfileName.svelte';
 	import { fetchFromRelaysWithPrompt } from '$lib/fetch/relay-fetch.svelte';
 	import { getAppState } from '$lib/state.svelte';
 
@@ -12,15 +11,20 @@
 		pubkey,
 		onopenpub,
 		onopenaddr,
+		oncomment,
 		onback
 	}: {
 		pubkey: string;
 		onopenpub?: (pub_summary: PublicationSummary) => void;
-		/** Open any non-30040 addressable (article, wiki, etc.) in the
-		 *  reader. The buffer-id pattern reader:&lt;kind&gt;:&lt;pk&gt;:&lt;dtag&gt; works
+		/** Open any non-30040 addressable (article, wiki, section, etc.) in
+		 *  the reader. The buffer-id pattern reader:&lt;kind&gt;:&lt;pk&gt;:&lt;dtag&gt; works
 		 *  for these uniformly so the host can route them without caring
 		 *  about kind-specific layout. */
 		onopenaddr?: (addr: { kind: number; pubkey: string; d_tag: string }, title: string | null) => void;
+		/** Open a NIP-22 comment (kind 1111) in its discussion view — the
+		 *  comment isn't a standalone reader destination, so the host routes
+		 *  it to a DiscussionViewBuffer that resolves the thread context. */
+		oncomment?: (event: NostrEvent) => void;
 		onback: () => void;
 	} = $props();
 
@@ -106,7 +110,16 @@
 		publications = [...byDtag.values()].sort((a, b) => b.created_at - a.created_at);
 		articles = dedupAddressable(artResult.events as NostrEvent[], 30023);
 		wikis = dedupAddressable(wikiResult.events as NostrEvent[], 30818);
-		sections = (secResult.events as NostrEvent[]).sort((a, b) => b.created_at - a.created_at);
+		// Sections are replaceable (kind 30041) — collapse versions by
+		// d-tag, newest wins, so a section isn't listed once per edit.
+		const secByDtag = new Map<string, NostrEvent>();
+		for (const e of (secResult.events as NostrEvent[])) {
+			const d_tag = getTag(e, 'd') || '';
+			const existing = secByDtag.get(d_tag);
+			if (existing && existing.created_at >= e.created_at) continue;
+			secByDtag.set(d_tag, e);
+		}
+		sections = [...secByDtag.values()].sort((a, b) => b.created_at - a.created_at);
 		comments = (comResult.events as NostrEvent[]).sort((a, b) => b.created_at - a.created_at);
 	}
 
@@ -326,9 +339,18 @@
 				<div class="empty">No sections</div>
 			{:else}
 				{#each sections as sec (sec.id)}
-					{@const title = getTag(sec, 'title') || getTag(sec, 'd') || '[Untitled]'}
+					{@const dTag = getTag(sec, 'd') || ''}
+					{@const title = getTag(sec, 'title') || dTag || '[Untitled]'}
 					{@const parentAddr = getTag(sec, 'a')}
-					<div class="item">
+					{@const addr = { kind: 30041, pubkey: sec.pubkey, d_tag: dTag }}
+					<!-- svelte-ignore a11y_no_static_element_interactions -->
+					<div
+						class="item pub-item"
+						onclick={() => onopenaddr?.(addr, title)}
+						onkeydown={(e) => { if (e.key === 'Enter') onopenaddr?.(addr, title); }}
+						role="button"
+						tabindex="0"
+					>
 						<div class="item-header">
 							<span class="item-title">{title}</span>
 						</div>
@@ -351,7 +373,14 @@
 				{#each comments as comment (comment.id)}
 					{@const rootAddr = getTag(comment, 'A') || getTag(comment, 'E') || getTag(comment, 'I')}
 					{@const rootKind = getTag(comment, 'K')}
-					<div class="item">
+					<!-- svelte-ignore a11y_no_static_element_interactions -->
+					<div
+						class="item pub-item"
+						onclick={() => oncomment?.(comment)}
+						onkeydown={(e) => { if (e.key === 'Enter') oncomment?.(comment); }}
+						role="button"
+						tabindex="0"
+					>
 						<div class="item-header">
 							{#if rootAddr}
 								<span class="item-ref">on {rootKind ? `k:${rootKind}` : ''} {rootAddr.split(':').pop()}</span>

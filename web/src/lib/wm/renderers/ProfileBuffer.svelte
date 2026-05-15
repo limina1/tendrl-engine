@@ -23,15 +23,44 @@
 	}
 
 	function openAddr(addr: { kind: number; pubkey: string; d_tag: string }, title: string | null) {
-		// Non-30040 addressables (long-form articles, wikis) reuse the same
-		// reader buffer route — the reader's parseBufferId regex matches
-		// any kind, and the publication-load path will fall back to a
-		// single-section view when the event isn't an NKBIP-01 index.
-		const id = `reader:${addr.kind}:${addr.pubkey}:${addr.d_tag}`;
-		const label = addr.kind === 30023 ? 'article' : addr.kind === 30818 ? 'wiki' : 'reader';
+		const kicker = title ?? addr.d_tag ?? '[Untitled]';
+		// Long-form articles (30023) and wiki pages (30818) are single
+		// documents — route them to the slim DocBuffer, which drops the
+		// reader's pager/outline chrome.
+		if (addr.kind === 30023 || addr.kind === 30818) {
+			store.openBuffer({
+				className: 'work',
+				buffer: {
+					id: `doc:${addr.kind}:${addr.pubkey}:${addr.d_tag}`,
+					kind: 'doc',
+					label: addr.kind === 30023 ? 'article' : 'wiki',
+					kicker
+				}
+			});
+			return;
+		}
+		// Other addressables (e.g. standalone 30041 sections) reuse the
+		// reader buffer route — its parseBufferId regex matches any kind,
+		// and the publication-load path falls back to a single-section view.
 		store.openBuffer({
 			className: 'work',
-			buffer: { id, kind: 'reader', label, kicker: title ?? addr.d_tag ?? '[Untitled]' }
+			buffer: {
+				id: `reader:${addr.kind}:${addr.pubkey}:${addr.d_tag}`,
+				kind: 'reader',
+				label: addr.kind === 30041 ? 'section' : 'reader',
+				kicker
+			}
+		});
+	}
+
+	function openComment(event: { id: string; content: string }) {
+		// A NIP-22 comment isn't a standalone reader destination — route it
+		// to the DiscussionViewBuffer, which resolves the thread it belongs
+		// to. Mirrors +page.svelte's `onDiscussion` handler.
+		const kicker = event.content.trim().slice(0, 32) || event.id.slice(0, 8) + '…';
+		store.openBuffer({
+			className: 'work',
+			buffer: { id: `discussion:${event.id}`, kind: 'discussion-view', label: 'comment', kicker }
 		});
 	}
 </script>
@@ -42,6 +71,7 @@
 			{pubkey}
 			onopenpub={openPub}
 			onopenaddr={openAddr}
+			oncomment={openComment}
 			onback={() => store.killFocused()}
 		/>
 	{:else}

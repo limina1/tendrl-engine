@@ -151,6 +151,7 @@
 		0: 'profile',
 		1: 'note',
 		3: 'contacts',
+		1111: 'comment',
 		10002: 'relay list',
 		30023: 'long-form',
 		30040: 'publication index',
