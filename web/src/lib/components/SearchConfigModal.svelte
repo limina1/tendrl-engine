@@ -1,10 +1,10 @@
 <script lang="ts">
 	// Search-defaults editor. Opened by the gear button on the search
-	// panel. Two modes — Form (a checkbox board) and Query (the raw
-	// search-syntax equivalent) — are two views of the same config:
-	// `{ kinds, limit, relays }`. The kinds chosen here scope every
-	// search that doesn't write its own `k:` token; the relays are what
-	// the offline "Search relays" fallback queries.
+	// panel. Two modes — Form (collapsible widget sections) and Query
+	// (the raw search-syntax equivalent) — are two views of the same
+	// config. Kinds + Relays open by default; Author, Time window and
+	// NIP-50 collapse so power users aren't slowed by knobs they rarely
+	// touch, while still being one click (or one typed token) away.
 
 	import * as api from '$lib/api';
 	import {
@@ -13,51 +13,62 @@
 		searchConfigUI,
 		closeSearchConfig,
 		saveSearchConfig,
-		resetSearchConfig
+		resetSearchConfig,
+		type AuthorMode
 	} from '$lib/search/search-config.svelte';
 
 	type Mode = 'form' | 'query';
 	let mode = $state<Mode>('form');
 
+	// Which sections are expanded. Kinds + Relays open; the rest fold.
+	let open = $state<Record<string, boolean>>({
+		kinds: true,
+		author: false,
+		time: false,
+		relays: true,
+		nip50: false
+	});
+
 	// Local draft — committed to `searchConfig` only on Save, so Cancel
 	// leaves the live defaults untouched.
-	let draftKinds = $state<number[]>([...searchConfig.kinds]);
+	let draftKinds = $state<number[]>([]);
 	let draftLimit = $state<number>(searchConfig.limit);
-	let draftRelays = $state<string[]>([...searchConfig.relays]);
+	let draftRelays = $state<string[]>([]);
+	let draftAddedRelays = $state<string[]>([]);
+	let draftCustomKinds = $state<number[]>([]);
+	let draftAuthor = $state<{ mode: AuthorMode; pubkey: string }>({ mode: 'me', pubkey: '' });
+	let draftSince = $state<number | null>(null);
+	let draftUntil = $state<number | null>(null);
+	let draftNip50 = $state({ enabled: false, language: '', nsfw: true, includeSpam: false });
+
 	let customKind = $state('');
 	let queryText = $state('');
 	let parseNote = $state<string | null>(null);
+	let showNames = $state(true);
 	let relayInput = $state('');
 	let relayError = $state<string | null>(null);
-	// Known-kind pills toggle between their number and their functional
-	// name. Default to names — the whole point of the table is that a
-	// reader shouldn't have to memorise kind numbers.
-	let showNames = $state(true);
-	// Custom kinds the user added. Tracked separately from `draftKinds`
-	// so one toggled *off* still renders (purple-outlined) instead of
-	// disappearing the moment it leaves the selected set.
-	let draftCustomKinds = $state<number[]>([]);
 
-	// The engine's configured [relay.fetch] relays — the pickable set.
 	let configRelays = $state<string[]>([]);
 
 	const knownKindNums = KNOWN_KINDS.map((k) => k.kind);
 
-	// Re-seed the draft and reload the config relays each time the modal
-	// opens.
+	// Re-seed the draft and reload the config relays each time it opens.
 	$effect(() => {
 		if (searchConfigUI.open) {
 			draftKinds = [...searchConfig.kinds];
 			draftLimit = searchConfig.limit;
 			draftRelays = [...searchConfig.relays];
-			// Custom registry ∪ any selected kind that isn't a known one
-			// (covers configs saved before the registry existed).
+			draftAddedRelays = [...new Set([...searchConfig.addedRelays, ...searchConfig.relays])];
 			draftCustomKinds = [
 				...new Set([
 					...searchConfig.customKinds,
 					...searchConfig.kinds.filter((k) => !knownKindNums.includes(k))
 				])
 			].sort((a, b) => a - b);
+			draftAuthor = { mode: searchConfig.author.mode, pubkey: searchConfig.author.pubkey };
+			draftSince = searchConfig.since;
+			draftUntil = searchConfig.until;
+			draftNip50 = { ...searchConfig.nip50 };
 			customKind = '';
 			relayInput = '';
 			relayError = null;
@@ -77,12 +88,23 @@
 		}
 	}
 
-	// Relays to list: configured fetch relays + any the user typed in.
 	const relayOptions = $derived([
 		...configRelays,
-		...draftRelays.filter((r) => !configRelays.includes(r))
+		...draftAddedRelays.filter((r) => !configRelays.includes(r))
 	]);
 
+	// ---- date <-> unix helpers (Time window) -------------------------
+	function unixToDate(u: number | null): string {
+		if (u == null) return '';
+		return new Date(u * 1000).toISOString().slice(0, 10);
+	}
+	function dateToUnix(s: string, endOfDay: boolean): number | null {
+		if (!s) return null;
+		const ms = Date.parse(`${s}T${endOfDay ? '23:59:59' : '00:00:00'}Z`);
+		return Number.isNaN(ms) ? null : Math.floor(ms / 1000);
+	}
+
+	// ---- kinds -------------------------------------------------------
 	function toggleKind(kind: number) {
 		if (draftKinds.includes(kind)) draftKinds = draftKinds.filter((k) => k !== kind);
 		else draftKinds = [...draftKinds, kind].sort((a, b) => a - b);
@@ -94,7 +116,6 @@
 			parseNote = 'Kind must be a non-negative integer.';
 			return;
 		}
-		// A known kind typed here is just selected, not made "custom".
 		if (!knownKindNums.includes(n) && !draftCustomKinds.includes(n)) {
 			draftCustomKinds = [...draftCustomKinds, n].sort((a, b) => a - b);
 		}
@@ -103,6 +124,7 @@
 		parseNote = null;
 	}
 
+	// ---- relays ------------------------------------------------------
 	function toggleRelay(url: string) {
 		if (draftRelays.includes(url)) draftRelays = draftRelays.filter((r) => r !== url);
 		else draftRelays = [...draftRelays, url];
@@ -115,39 +137,59 @@
 			relayError = 'Relay URL must start with ws:// or wss://';
 			return;
 		}
+		if (!draftAddedRelays.includes(v)) draftAddedRelays = [...draftAddedRelays, v];
 		if (!draftRelays.includes(v)) draftRelays = [...draftRelays, v];
 		relayInput = '';
 		relayError = null;
 	}
 
-	// Form → Query: render the chosen kinds as the `k:` tokens an engine
-	// query would carry. Limit lives in its own field, not the textarea.
+	// ---- form <-> query round-trip -----------------------------------
+	// Query mode carries the dimensions that have a query token: kinds,
+	// author, time. NIP-50 has no token (it's a relay mode), so it stays
+	// a form widget regardless of mode.
 	function syncQueryFromForm() {
-		queryText = draftKinds.map((k) => `k:${k}`).join(' ');
+		const parts = draftKinds.map((k) => `k:${k}`);
+		if (draftAuthor.mode === 'me') parts.push('by:me');
+		else if (draftAuthor.mode === 'pubkey' && draftAuthor.pubkey) {
+			parts.push(`by:${draftAuthor.pubkey}`);
+		}
+		if (draftSince != null) parts.push(`since:${draftSince}`);
+		if (draftUntil != null) parts.push(`until:${draftUntil}`);
+		queryText = parts.join(' ');
 	}
 
-	// Query → Form: pull `k:`/`kind:` tokens back out. Anything else is
-	// ignored (with a note) — this editor sets the default kind scope.
 	function syncFormFromQuery() {
 		const tokens = queryText.split(/\s+/).filter(Boolean);
 		const kinds: number[] = [];
 		const ignored: string[] = [];
+		let author: { mode: AuthorMode; pubkey: string } = { mode: 'anyone', pubkey: '' };
+		let since: number | null = null;
+		let until: number | null = null;
 		for (const t of tokens) {
 			const km = t.match(/^k(?:ind)?:(\d+)$/i);
+			const sm = t.match(/^since:(\d+)$/i);
+			const um = t.match(/^until:(\d+)$/i);
 			if (km) {
 				const n = Number(km[1]);
 				if (!kinds.includes(n)) kinds.push(n);
+			} else if (sm) {
+				since = Number(sm[1]);
+			} else if (um) {
+				until = Number(um[1]);
+			} else if (/^by:/i.test(t)) {
+				const v = t.slice(3);
+				author = v.toLowerCase() === 'me' ? { mode: 'me', pubkey: '' } : { mode: 'pubkey', pubkey: v };
 			} else {
 				ignored.push(t);
 			}
 		}
 		draftKinds = kinds.sort((a, b) => a - b);
-		// Register any non-standard kind so it keeps a board pill.
 		const newCustom = kinds.filter((k) => !knownKindNums.includes(k));
 		draftCustomKinds = [...new Set([...draftCustomKinds, ...newCustom])].sort((a, b) => a - b);
-		parseNote = ignored.length
-			? `Ignored (not a kind token): ${ignored.join(' ')}`
-			: null;
+		draftAuthor = author;
+		draftSince = since;
+		draftUntil = until;
+		parseNote = ignored.length ? `Ignored (not a scope token): ${ignored.join(' ')}` : null;
 	}
 
 	function switchMode(next: Mode) {
@@ -162,7 +204,12 @@
 		searchConfig.kinds = [...draftKinds];
 		searchConfig.limit = Math.max(1, Math.min(1000, Math.floor(draftLimit) || 1));
 		searchConfig.relays = [...draftRelays];
+		searchConfig.addedRelays = draftAddedRelays.filter((r) => !configRelays.includes(r));
 		searchConfig.customKinds = [...draftCustomKinds];
+		searchConfig.author = { mode: draftAuthor.mode, pubkey: draftAuthor.pubkey.trim() };
+		searchConfig.since = draftSince;
+		searchConfig.until = draftUntil;
+		searchConfig.nip50 = { ...draftNip50, language: draftNip50.language.trim() };
 		saveSearchConfig();
 		closeSearchConfig();
 	}
@@ -172,7 +219,12 @@
 		draftKinds = [...searchConfig.kinds];
 		draftLimit = searchConfig.limit;
 		draftRelays = [...searchConfig.relays];
+		draftAddedRelays = [...searchConfig.addedRelays];
 		draftCustomKinds = [...searchConfig.customKinds];
+		draftAuthor = { mode: searchConfig.author.mode, pubkey: searchConfig.author.pubkey };
+		draftSince = searchConfig.since;
+		draftUntil = searchConfig.until;
+		draftNip50 = { ...searchConfig.nip50 };
 		if (mode === 'query') syncQueryFromForm();
 		parseNote = null;
 	}
@@ -183,6 +235,19 @@
 </script>
 
 <svelte:window onkeydown={handleKeydown} />
+
+{#snippet sectionHead(key: string, title: string, summary: string)}
+	<button
+		type="button"
+		class="sc-sec-head"
+		onclick={() => (open[key] = !open[key])}
+		aria-expanded={open[key]}
+	>
+		<span class="sc-sec-arrow">{open[key] ? '▾' : '▸'}</span>
+		<span class="sc-sec-title">{title}</span>
+		<span class="sc-sec-summary">{summary}</span>
+	</button>
+{/snippet}
 
 {#if searchConfigUI.open}
 	<!-- svelte-ignore a11y_click_events_have_key_events -->
@@ -201,8 +266,7 @@
 
 			<p class="sc-blurb">
 				These defaults scope every search that doesn't write its own
-				<code>k:</code> filter — including the offline
-				<em>Search relays</em> fallback.
+				token — including the offline <em>Search relays</em> fallback.
 			</p>
 
 			<div class="sc-tabs">
@@ -229,119 +293,273 @@
 				</label>
 			</div>
 
-			{#if mode === 'form'}
-				<div class="sc-body">
-					<div class="sc-group-head">
-						<span>Kinds to search</span>
-						<label class="sc-toggle">
-							<input type="checkbox" bind:checked={showNames} />
-							<span>names</span>
-						</label>
-					</div>
-					<!-- Wrapping pill cloud. Known kinds show their functional
-					     name or number (the `names` toggle); the other form
-					     plus the spec live in the hover tooltip. Custom kinds
-					     stay numeric and outline purple while excluded. -->
-					<div class="sc-cloud">
-						{#each KNOWN_KINDS as k (k.kind)}
-							<button
-								type="button"
-								class="sc-pill"
-								class:sc-pill--on={draftKinds.includes(k.kind)}
-								aria-pressed={draftKinds.includes(k.kind)}
-								title={showNames
-									? `kind ${k.kind} · ${k.note}`
-									: `${k.label} · ${k.note}`}
-								onclick={() => toggleKind(k.kind)}
-								>{showNames ? k.label : k.kind}</button
-							>
-						{/each}
-						{#each draftCustomKinds as k (k)}
-							<button
-								type="button"
-								class="sc-pill"
-								class:sc-pill--on={draftKinds.includes(k)}
-								class:sc-pill--custom-off={!draftKinds.includes(k)}
-								aria-pressed={draftKinds.includes(k)}
-								title="custom kind {k}"
-								onclick={() => toggleKind(k)}>{k}</button
-							>
-						{/each}
-					</div>
-
-					<div class="sc-append">
-						<input
-							class="sc-input"
-							placeholder="custom kind, e.g. 30817"
-							bind:value={customKind}
-							onkeydown={(e) => {
-								if (e.key === 'Enter') {
-									e.preventDefault();
-									addCustomKind();
-								}
-							}}
-						/>
-						<button class="sc-append-btn" onclick={addCustomKind}>Add kind</button>
-					</div>
-				</div>
-			{:else}
-				<div class="sc-body">
-					<div class="sc-group-head"><span>Kind-scope syntax</span></div>
-					<textarea
-						class="sc-query"
-						rows="2"
-						bind:value={queryText}
-						spellcheck="false"
-						placeholder="k:30040 k:30041 k:30818 k:30023"
-					></textarea>
-					<p class="sc-hint">
-						Only <code>k:</code>/<code>kind:</code> tokens are read here.
-						The result limit has its own field above.
-					</p>
-				</div>
-			{/if}
-
-			<div class="sc-body sc-body--relays">
-				<div class="sc-group-head"><span>Relays to search from</span></div>
-				{#if relayOptions.length === 0}
-					<p class="sc-empty">No relays in <code>[relay.fetch]</code> — add one below.</p>
-				{:else}
-					<ul class="sc-relays">
-						{#each relayOptions as url (url)}
-							<li>
-								<label class="sc-relay-row">
-									<input
-										type="checkbox"
-										checked={draftRelays.includes(url)}
-										onchange={() => toggleRelay(url)}
-									/>
-									<code class="sc-relay-url">{url}</code>
+			<div class="sc-scroll">
+				{#if mode === 'form'}
+					<!-- Kinds -->
+					<section class="sc-sec">
+						{@render sectionHead(
+							'kinds',
+							'Kinds to search',
+							`${draftKinds.length} selected`
+						)}
+						{#if open.kinds}
+							<div class="sc-sec-body">
+								<label class="sc-toggle sc-toggle--right">
+									<input type="checkbox" bind:checked={showNames} />
+									<span>names</span>
 								</label>
-							</li>
-						{/each}
-					</ul>
+								<div class="sc-cloud">
+									{#each KNOWN_KINDS as k (k.kind)}
+										<button
+											type="button"
+											class="sc-pill"
+											class:sc-pill--on={draftKinds.includes(k.kind)}
+											aria-pressed={draftKinds.includes(k.kind)}
+											title={showNames
+												? `kind ${k.kind} · ${k.note}`
+												: `${k.label} · ${k.note}`}
+											onclick={() => toggleKind(k.kind)}
+											><span class="sc-pill-txt"
+												>{showNames ? k.label : k.kind}</span
+											></button
+										>
+									{/each}
+									{#each draftCustomKinds as k (k)}
+										<button
+											type="button"
+											class="sc-pill"
+											class:sc-pill--on={draftKinds.includes(k)}
+											class:sc-pill--custom-off={!draftKinds.includes(k)}
+											aria-pressed={draftKinds.includes(k)}
+											title="custom kind {k}"
+											onclick={() => toggleKind(k)}
+											><span class="sc-pill-txt">{k}</span></button
+										>
+									{/each}
+								</div>
+								<div class="sc-append">
+									<input
+										class="sc-input"
+										placeholder="custom kind, e.g. 30817"
+										bind:value={customKind}
+										onkeydown={(e) => {
+											if (e.key === 'Enter') {
+												e.preventDefault();
+												addCustomKind();
+											}
+										}}
+									/>
+									<button class="sc-append-btn" onclick={addCustomKind}>Add kind</button>
+								</div>
+							</div>
+						{/if}
+					</section>
+
+					<!-- Author scope -->
+					<section class="sc-sec">
+						{@render sectionHead(
+							'author',
+							'Author scope',
+							draftAuthor.mode === 'me'
+								? 'me'
+								: draftAuthor.mode === 'anyone'
+									? 'anyone'
+									: 'specific'
+						)}
+						{#if open.author}
+							<div class="sc-sec-body">
+								<label class="sc-radio">
+									<input type="radio" value="me" bind:group={draftAuthor.mode} />
+									<span>Me — scope to my own events (<code>by:me</code>)</span>
+								</label>
+								<label class="sc-radio">
+									<input type="radio" value="anyone" bind:group={draftAuthor.mode} />
+									<span>Anyone — no author constraint</span>
+								</label>
+								<label class="sc-radio">
+									<input type="radio" value="pubkey" bind:group={draftAuthor.mode} />
+									<span>Specific — <code>by:&lt;npub&gt;</code></span>
+								</label>
+								{#if draftAuthor.mode === 'pubkey'}
+									<input
+										class="sc-input"
+										placeholder="npub1… or 64-hex pubkey"
+										bind:value={draftAuthor.pubkey}
+									/>
+								{/if}
+							</div>
+						{/if}
+					</section>
+
+					<!-- Time window -->
+					<section class="sc-sec">
+						{@render sectionHead(
+							'time',
+							'Time window',
+							draftSince == null && draftUntil == null ? 'any time' : 'bounded'
+						)}
+						{#if open.time}
+							<div class="sc-sec-body">
+								<div class="sc-dates">
+									<label class="sc-date">
+										<span>From</span>
+										<input
+											type="date"
+											class="sc-input"
+											value={unixToDate(draftSince)}
+											onchange={(e) =>
+												(draftSince = dateToUnix(e.currentTarget.value, false))}
+										/>
+									</label>
+									<label class="sc-date">
+										<span>To</span>
+										<input
+											type="date"
+											class="sc-input"
+											value={unixToDate(draftUntil)}
+											onchange={(e) =>
+												(draftUntil = dateToUnix(e.currentTarget.value, true))}
+										/>
+									</label>
+									<button
+										class="sc-append-btn"
+										onclick={() => {
+											draftSince = null;
+											draftUntil = null;
+										}}>Clear</button
+									>
+								</div>
+								<p class="sc-hint">
+									NIP-01 <code>since</code> / <code>until</code> bounds. Empty =
+									unbounded.
+								</p>
+							</div>
+						{/if}
+					</section>
+				{:else}
+					<section class="sc-sec sc-sec--open">
+						<div class="sc-sec-body">
+							<div class="sc-group-head"><span>Scope syntax</span></div>
+							<textarea
+								class="sc-query"
+								rows="3"
+								bind:value={queryText}
+								spellcheck="false"
+								placeholder="k:30040 k:30041 by:me since:1700000000"
+							></textarea>
+							<p class="sc-hint">
+								<code>k:</code>/<code>kind:</code>, <code>by:</code>,
+								<code>since:</code>, <code>until:</code> tokens are read here.
+								Result limit and NIP-50 have their own controls.
+							</p>
+						</div>
+					</section>
 				{/if}
-				<div class="sc-append">
-					<input
-						class="sc-input"
-						placeholder="wss://relay.example.com"
-						bind:value={relayInput}
-						onkeydown={(e) => {
-							if (e.key === 'Enter') {
-								e.preventDefault();
-								addRelay();
-							}
-						}}
-					/>
-					<button class="sc-append-btn" onclick={addRelay}>Add relay</button>
-				</div>
-				{#if relayError}
-					<p class="sc-note">{relayError}</p>
-				{/if}
-				<p class="sc-hint">
-					Leave all unchecked to fall back to the engine's configured
-					fetch relays.
-				</p>
+
+				<!-- Relays — mode-independent -->
+				<section class="sc-sec">
+					{@render sectionHead(
+						'relays',
+						'Relays to search from',
+						draftRelays.length === 0 ? 'config default' : `${draftRelays.length} chosen`
+					)}
+					{#if open.relays}
+						<div class="sc-sec-body">
+							{#if relayOptions.length === 0}
+								<p class="sc-empty">
+									No relays in <code>[relay.fetch]</code> — add one below.
+								</p>
+							{:else}
+								<!-- Click toggles; colour carries state — green when
+								     on, purple for a user-added relay left off,
+								     muted for an unselected config relay. -->
+								<ul class="sc-relays">
+									{#each relayOptions as url (url)}
+										{@const on = draftRelays.includes(url)}
+										{@const added = !configRelays.includes(url)}
+										<li>
+											<button
+												type="button"
+												class="sc-relay"
+												class:sc-relay--on={on}
+												class:sc-relay--added-off={added && !on}
+												aria-pressed={on}
+												onclick={() => toggleRelay(url)}>{url}</button
+											>
+										</li>
+									{/each}
+								</ul>
+							{/if}
+							<div class="sc-append">
+								<input
+									class="sc-input"
+									placeholder="wss://relay.example.com"
+									bind:value={relayInput}
+									onkeydown={(e) => {
+										if (e.key === 'Enter') {
+											e.preventDefault();
+											addRelay();
+										}
+									}}
+								/>
+								<button class="sc-append-btn" onclick={addRelay}>Add relay</button>
+							</div>
+							{#if relayError}
+								<p class="sc-note">{relayError}</p>
+							{/if}
+							<p class="sc-hint">
+								Leave all unchecked to fall back to the engine's configured fetch
+								relays.
+							</p>
+						</div>
+					{/if}
+				</section>
+
+				<!-- NIP-50 — mode-independent -->
+				<section class="sc-sec">
+					{@render sectionHead(
+						'nip50',
+						'NIP-50 relay search',
+						draftNip50.enabled ? 'on' : 'off'
+					)}
+					{#if open.nip50}
+						<div class="sc-sec-body">
+							<label class="sc-radio">
+								<input type="checkbox" bind:checked={draftNip50.enabled} />
+								<span>Ask relays to full-text match the query (NIP-50)</span>
+							</label>
+							<label class="sc-field">
+								<span>Language</span>
+								<input
+									class="sc-input sc-input--sm"
+									placeholder="ISO 639-1, e.g. en"
+									bind:value={draftNip50.language}
+									disabled={!draftNip50.enabled}
+								/>
+							</label>
+							<label class="sc-radio">
+								<input
+									type="checkbox"
+									bind:checked={draftNip50.nsfw}
+									disabled={!draftNip50.enabled}
+								/>
+								<span>Include NSFW results</span>
+							</label>
+							<label class="sc-radio">
+								<input
+									type="checkbox"
+									bind:checked={draftNip50.includeSpam}
+									disabled={!draftNip50.enabled}
+								/>
+								<span>Include spam (<code>include:spam</code>)</span>
+							</label>
+							<p class="sc-hint">
+								Extensions are advisory — relays without NIP-50 support ignore
+								them.
+							</p>
+						</div>
+					{/if}
+				</section>
 			</div>
 
 			{#if parseNote}
@@ -417,10 +635,6 @@
 		line-height: 1.5;
 		border-bottom: 1px solid var(--panel-border);
 	}
-	.sc-blurb code {
-		background: transparent;
-		color: var(--id-yours);
-	}
 
 	.sc-tabs {
 		display: flex;
@@ -459,51 +673,94 @@
 		font-size: calc(var(--t-xs) - 1px);
 	}
 
-	.sc-body {
-		padding: 10px 14px;
+	.sc-scroll {
 		overflow-y: auto;
-	}
-	.sc-body--relays {
 		border-top: 1px solid var(--panel-border);
-		padding-top: 8px;
 	}
-	.sc-group-head {
+
+	/* Collapsible section */
+	.sc-sec {
+		border-bottom: 1px solid var(--panel-border);
+	}
+	.sc-sec-head {
 		display: flex;
 		align-items: center;
-		justify-content: space-between;
+		gap: 8px;
+		width: 100%;
+		padding: 8px 14px;
+		background: transparent;
+		border: none;
+		cursor: pointer;
+		font: inherit;
+		text-align: left;
+		color: var(--id-yours);
+	}
+	.sc-sec-head:hover {
+		background: var(--bg-surface);
+	}
+	.sc-sec-arrow {
+		color: var(--base5);
+		width: 10px;
+		flex-shrink: 0;
+	}
+	.sc-sec-title {
+		text-transform: uppercase;
+		letter-spacing: 0.06em;
+		font-size: calc(var(--t-xs) - 1px);
+	}
+	.sc-sec-summary {
+		margin-left: auto;
+		color: var(--base5);
+		font-size: calc(var(--t-xs) - 1px);
+	}
+	.sc-sec-body {
+		padding: 4px 14px 12px;
+	}
+
+	.sc-group-head {
 		text-transform: uppercase;
 		letter-spacing: 0.06em;
 		color: var(--id-yours);
-		margin: 4px 0 6px;
+		margin: 2px 0 6px;
 		font-size: calc(var(--t-xs) - 1px);
 	}
 	.sc-toggle {
 		display: flex;
 		align-items: center;
 		gap: 4px;
-		text-transform: none;
-		letter-spacing: 0;
 		color: var(--base5);
 		cursor: pointer;
+	}
+	.sc-toggle--right {
+		justify-content: flex-end;
+		margin-bottom: 6px;
 	}
 	.sc-toggle input {
 		accent-color: var(--state-online);
 	}
-	/* Wrapping pill cloud — one toggle button per kind. */
+
+	/* Pill cloud — slanted parallelogram chips that pack horizontally.
+	   The button is skewed; an inner span counter-skews so the label
+	   itself stays upright. */
 	.sc-cloud {
 		display: flex;
 		flex-wrap: wrap;
-		gap: 6px;
+		gap: 4px 5px;
 		margin-bottom: 8px;
 	}
 	.sc-pill {
 		font: inherit;
-		padding: 4px 12px;
-		border-radius: 999px;
+		padding: 2px 9px;
+		border-radius: 2px;
 		border: 1px solid var(--panel-border);
 		background: var(--bg-surface);
 		color: var(--base5);
 		cursor: pointer;
+		transform: skewX(12deg);
+	}
+	.sc-pill-txt {
+		display: inline-block;
+		transform: skewX(-12deg);
 	}
 	.sc-pill:hover {
 		border-color: var(--state-online);
@@ -514,8 +771,6 @@
 		background: color-mix(in srgb, var(--state-online) 18%, transparent);
 		color: var(--state-online);
 	}
-	/* Excluded custom kind — purple outline marks it as user-added and
-	   currently out of scope (vs the plain grey of an off known kind). */
 	.sc-pill--custom-off {
 		border-color: var(--id-imported);
 		color: var(--id-imported);
@@ -528,7 +783,6 @@
 	.sc-append {
 		display: flex;
 		gap: 6px;
-		margin-bottom: 4px;
 	}
 	.sc-input {
 		flex: 1;
@@ -539,9 +793,16 @@
 		color: var(--fg);
 		border-radius: var(--r-sm);
 	}
+	.sc-input:disabled {
+		opacity: 0.45;
+	}
 	.sc-input--limit {
 		flex: none;
 		width: 72px;
+	}
+	.sc-input--sm {
+		flex: none;
+		width: 150px;
 	}
 	.sc-append-btn {
 		font: inherit;
@@ -551,12 +812,58 @@
 		color: var(--base6);
 		border-radius: var(--r-sm);
 		cursor: pointer;
+		white-space: nowrap;
 	}
 	.sc-append-btn:hover {
 		border-color: var(--state-online);
 		color: var(--state-online);
 	}
 
+	/* Author / NIP-50 rows */
+	.sc-radio {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		padding: 3px 0;
+		cursor: pointer;
+		color: var(--fg);
+	}
+	.sc-radio input {
+		accent-color: var(--state-online);
+	}
+	.sc-radio code,
+	.sc-hint code,
+	.sc-empty code {
+		background: transparent;
+		color: var(--id-yours);
+	}
+	.sc-field {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		padding: 4px 0;
+		color: var(--base5);
+	}
+
+	/* Time window */
+	.sc-dates {
+		display: flex;
+		align-items: flex-end;
+		gap: 8px;
+		flex-wrap: wrap;
+	}
+	.sc-date {
+		display: flex;
+		flex-direction: column;
+		gap: 3px;
+		color: var(--base5);
+	}
+	.sc-date .sc-input {
+		flex: none;
+		width: 140px;
+	}
+
+	/* Relays — colour-coded toggle rows, no checkbox. */
 	.sc-relays {
 		list-style: none;
 		margin: 0 0 6px;
@@ -564,36 +871,35 @@
 		max-height: 20vh;
 		overflow-y: auto;
 	}
-	.sc-relay-row {
-		display: flex;
-		align-items: center;
-		gap: 8px;
+	.sc-relay {
+		display: block;
+		width: 100%;
+		text-align: left;
+		font: inherit;
+		background: none;
+		border: none;
+		cursor: pointer;
 		padding: 3px 6px;
 		border-radius: var(--r-sm);
-		cursor: pointer;
-	}
-	.sc-relay-row:hover {
-		background: var(--bg-surface);
-	}
-	.sc-relay-row input[type='checkbox'] {
-		accent-color: var(--state-online);
-	}
-	.sc-relay-url {
-		flex: 1;
+		color: var(--base5);
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
-		background: transparent;
-		color: var(--base6);
+	}
+	.sc-relay:hover {
+		background: var(--bg-surface);
+	}
+	/* on = green (any origin); user-added but off = purple. */
+	.sc-relay--on {
+		color: var(--state-online);
+	}
+	.sc-relay--added-off {
+		color: var(--id-imported);
 	}
 	.sc-empty {
 		margin: 0 0 6px;
 		color: var(--base5);
 		font-style: italic;
-	}
-	.sc-empty code {
-		background: transparent;
-		color: var(--id-yours);
 	}
 
 	.sc-query {
@@ -608,13 +914,9 @@
 		box-sizing: border-box;
 	}
 	.sc-hint {
-		margin: 4px 0 0;
+		margin: 6px 0 0;
 		color: var(--base5);
 		line-height: 1.5;
-	}
-	.sc-hint code {
-		background: transparent;
-		color: var(--id-yours);
 	}
 	.sc-note {
 		margin: 6px 14px 4px;

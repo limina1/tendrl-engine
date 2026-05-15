@@ -2,7 +2,8 @@ import { goto } from '$app/navigation';
 import {
 	searchConfig,
 	loadSearchConfig,
-	applyKindScope
+	applySearchDefaults,
+	nip50SearchString
 } from '$lib/search/search-config.svelte';
 import type {
 	ChatResponse,
@@ -1050,31 +1051,16 @@ function _createAppState() {
 
 		searchLoading = true;
 		try {
-			let effectiveQuery = query;
-			// Auto-scope to "by:me" so the default search shows my own
-			// content. Opt out when the user signals other intent:
-			//   - they already wrote `by:` (someone specific)
-			//   - they used `~:` (semantic)
-			//   - they typed an explicit `k:` / `kind:` filter — kinds
-			//     like 1111 (comments) or 9802 (highlights) are written
-			//     by *others* about my content, so auto-`by:me` would
-			//     always return zero for them.
-			const hasExplicitKind = /\bk(ind)?:/i.test(query);
-			if (
-				scopeToMe &&
-				myPubkey &&
-				!query.includes('by:') &&
-				!query.includes('~:') &&
-				!hasExplicitKind
-			) {
-				effectiveQuery = `by:me ${effectiveQuery}`;
-			}
-
-			// Scope to the configured default kinds (publication kinds,
-			// out of the box) unless the query pinned its own `k:`. This
-			// keeps kind-1 noise out of a bare keyword search and is the
-			// same scope the offline "Search relays" fallback inherits.
-			effectiveQuery = applyKindScope(effectiveQuery);
+			// Apply the configured search defaults — kind scope, author
+			// scope, time window — to the raw query. A query that writes
+			// its own k:/by:/since:/until: keeps it; `scopeToMe=false`
+			// (some history replays) suppresses the author default. This
+			// is the same scope the offline "Search relays" fallback
+			// inherits, since it replays searchLastQuery.
+			const effectiveQuery = applySearchDefaults(query, {
+				scopeAuthor: scopeToMe,
+				hasIdentity: !!myPubkey
+			});
 
 			searchLastQuery = effectiveQuery;
 			const resp = await api.search(
@@ -1176,7 +1162,9 @@ function _createAppState() {
 		const toastId = pushToast(
 			namePartial
 				? `Searching NIP-50 relays for profiles matching "${namePartial}"…`
-				: `Searching relays…`,
+				: searchConfig.nip50.enabled
+					? `NIP-50 relay search…`
+					: `Searching relays…`,
 			'pending',
 			60_000
 		);
@@ -1208,6 +1196,32 @@ function _createAppState() {
 						message: `Ingested ${result.total_fetched} event${result.total_fetched === 1 ? '' : 's'} · resolving locally…`
 					}
 				);
+			} else if (searchConfig.nip50.enabled) {
+				// NIP-50 two-phase: ask relays to full-text match the
+				// query's free text, ingest the hits, then the shared tail
+				// re-runs the full query locally so kind / author / time
+				// defaults still filter the result set.
+				const term = nip50SearchString(searchLastQuery);
+				const result = await fetchFromRelaysWithPrompt(
+					{
+						title: `NIP-50 search: ${term ?? searchLastQuery}`,
+						query: searchLastQuery,
+						kinds: searchConfig.kinds,
+						authors: [],
+						search: term ?? undefined,
+						limit: searchConfig.limit
+					},
+					{ isOnline: networkStatus?.mode === 'online' }
+				);
+				if (!result || result.relays.length === 0) {
+					updateToast(toastId, { message: 'Relay search cancelled', kind: 'info' }, 1500);
+					return;
+				}
+				chosenRelays = result.relays;
+				await new Promise((r) => setTimeout(r, 350));
+				updateToast(toastId, {
+					message: `Ingested ${result.total_fetched} event${result.total_fetched === 1 ? '' : 's'} · resolving locally…`
+				});
 			} else if (searchConfig.relays.length > 0) {
 				// Search relays configured in the defaults — run straight
 				// through with no prompt ("search with the default
