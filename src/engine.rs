@@ -960,11 +960,22 @@ impl Engine {
             tag_filtered
         };
 
-        let filtered = if let Some(text_filter) = &query.text_filter {
+        let mut filtered = if let Some(text_filter) = &query.text_filter {
             query::filter_by_text(&has_filtered, text_filter)
         } else {
             has_filtered
         };
+
+        // Newest-first. nostrdb returns notes recency-ordered already,
+        // but a LocalFirst relay backfill appends its events unsorted —
+        // and an addressable (naddr) lookup must list every stored
+        // version most-recent first. Sort explicitly so order is
+        // guaranteed regardless of source.
+        filtered.sort_by(|a, b| {
+            let ta = a.get("created_at").and_then(|v| v.as_u64()).unwrap_or(0);
+            let tb = b.get("created_at").and_then(|v| v.as_u64()).unwrap_or(0);
+            tb.cmp(&ta)
+        });
 
         // `count:NAME` runs AFTER all filtering so histograms reflect the
         // user's narrowing. Empty by default when no count: was requested.
