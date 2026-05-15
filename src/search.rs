@@ -872,6 +872,29 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_nevent_entity() {
+        // An `nevent1…` token (id + relay + kind TLVs) decodes to an
+        // event-id filter, same as `id:` and `note`.
+        let mut tlv = vec![0x00u8, 32];
+        tlv.extend(hex::decode(TEST_ID).unwrap());
+        tlv.extend([0x01u8, 9]);
+        tlv.extend_from_slice(b"wss://r.x");
+        tlv.extend([0x03u8, 4]);
+        tlv.extend(30041u32.to_be_bytes());
+        let q = SearchQuery::parse(&make_bech32("nevent", &tlv)).unwrap();
+        assert_eq!(q.ids, Some(vec![TEST_ID.to_string()]));
+    }
+
+    #[test]
+    fn test_parse_nostr_prefixed_nevent() {
+        let mut tlv = vec![0x00u8, 32];
+        tlv.extend(hex::decode(TEST_ID).unwrap());
+        let nevent = make_bech32("nevent", &tlv);
+        let q = SearchQuery::parse(&format!("nostr:{}", nevent)).unwrap();
+        assert_eq!(q.ids, Some(vec![TEST_ID.to_string()]));
+    }
+
+    #[test]
     fn test_parse_npub_bare_is_author() {
         // A bare `npub1…` (no `by:`) scopes to that author.
         let hex = "32bf915904bfde2d136ba45dde32c88f4aca863783999faea2e847a8fafd2f15";

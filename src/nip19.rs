@@ -277,6 +277,81 @@ mod tests {
         }
     }
 
+    fn encode(hrp: &str, payload: &[u8]) -> String {
+        use bech32::{Bech32, Hrp};
+        bech32::encode::<Bech32>(Hrp::parse(hrp).unwrap(), payload).unwrap()
+    }
+
+    #[test]
+    fn decode_nevent_with_all_tlvs() {
+        // A realistic nevent: event-id + relay + author + kind TLVs,
+        // exactly as Damus / Amethyst / njump emit them.
+        let id = "ae3a6f7ce2971e43cfeeda2a41f30206d205cc16542a5cd9e127cefb01d409a4";
+        let author = "84dee6e676e5bb67b4ad4e042cf70cbd8681155db535942fcc6a0533858a7240";
+        let relay = b"wss://relay.damus.io";
+        let mut tlv = vec![0x00, 32];
+        tlv.extend(hex::decode(id).unwrap());
+        tlv.extend([0x01, relay.len() as u8]);
+        tlv.extend_from_slice(relay);
+        tlv.extend([0x02, 32]);
+        tlv.extend(hex::decode(author).unwrap());
+        tlv.extend([0x03, 4]);
+        tlv.extend(1u32.to_be_bytes());
+
+        match decode(&encode("nevent", &tlv)).expect("decode nevent") {
+            Decoded::Nevent {
+                event_id,
+                relays,
+                author: a,
+                kind_int,
+            } => {
+                assert_eq!(event_id, id);
+                assert_eq!(relays, vec!["wss://relay.damus.io".to_string()]);
+                assert_eq!(a.as_deref(), Some(author));
+                assert_eq!(kind_int, Some(1));
+            }
+            other => panic!("expected Nevent, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn decode_nevent_id_only() {
+        // The minimal nevent — just the type-0 event id, no hints.
+        let id = "ae3a6f7ce2971e43cfeeda2a41f30206d205cc16542a5cd9e127cefb01d409a4";
+        let mut tlv = vec![0x00, 32];
+        tlv.extend(hex::decode(id).unwrap());
+        match decode(&encode("nevent", &tlv)).expect("decode nevent") {
+            Decoded::Nevent { event_id, .. } => assert_eq!(event_id, id),
+            other => panic!("expected Nevent, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn decode_naddr_round_trips() {
+        let pubkey = "84dee6e676e5bb67b4ad4e042cf70cbd8681155db535942fcc6a0533858a7240";
+        let d_tag = b"my-publication";
+        let mut tlv = vec![0x00, d_tag.len() as u8];
+        tlv.extend_from_slice(d_tag);
+        tlv.extend([0x02, 32]);
+        tlv.extend(hex::decode(pubkey).unwrap());
+        tlv.extend([0x03, 4]);
+        tlv.extend(30040u32.to_be_bytes());
+
+        match decode(&encode("naddr", &tlv)).expect("decode naddr") {
+            Decoded::Naddr {
+                kind_int,
+                pubkey: pk,
+                d_tag: d,
+                ..
+            } => {
+                assert_eq!(kind_int, 30040);
+                assert_eq!(pk, pubkey);
+                assert_eq!(d, "my-publication");
+            }
+            other => panic!("expected Naddr, got {:?}", other),
+        }
+    }
+
     #[test]
     fn tlv_parser_round_trip() {
         // Build a minimal nevent-style payload by hand:
