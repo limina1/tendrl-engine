@@ -764,3 +764,60 @@ it after editing =requirements.txt=:
 #+begin_src bash
 make lock-sidecar
 #+end_src
+
+* Slice — Confirm/Auto network mode
+
+The network toggle is now =auto= (fetch automatically) / =confirm=
+(every user-initiated relay fetch emits an SSE intent the UI must
+approve). Engine endpoints: =GET /api/v1/network/fetch-events= (SSE
+stream of fetch-operation events), =POST /api/v1/network/fetch-confirm=
+(=ConfirmDecision { operation_id, approved, relays? }=). Legacy
+=online=/=offline= still parse as aliases.
+
+** Build + test (engine)
+
+=cargo test= fails to compile the =examples/= target (those files are
+deleted locally) — scope to the lib.
+
+#+begin_src bash
+cargo build
+cargo test --lib
+cargo clippy --lib
+#+end_src
+
+=tree::state::tests::test_compose_state_preview_json_section= is a
+pre-existing failure unrelated to this slice.
+
+** Build (web)
+
+#+begin_src bash
+cd web && pnpm exec svelte-check --threshold error && pnpm exec vite build
+#+end_src
+
+** Inspect the SSE stream
+
+Watch fetch-operation events live (intents, progress, completion):
+
+#+begin_src bash
+curl -N http://localhost:3030/api/v1/network/fetch-events
+#+end_src
+
+** Toggle the mode
+
+#+begin_src bash
+curl -X POST http://localhost:3030/api/v1/network/mode \
+  -H 'Content-Type: application/json' -d '{"mode":"confirm"}'
+curl -X POST http://localhost:3030/api/v1/network/mode \
+  -H 'Content-Type: application/json' -d '{"mode":"auto"}'
+#+end_src
+
+** Approve a pending operation
+
+In Confirm mode a gated fetch blocks ~60s awaiting this. Take the
+=operation_id= from the SSE =intent= event.
+
+#+begin_src bash
+curl -X POST http://localhost:3030/api/v1/network/fetch-confirm \
+  -H 'Content-Type: application/json' \
+  -d '{"operation_id":"op-...","approved":true}'
+#+end_src
