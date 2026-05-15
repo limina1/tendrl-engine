@@ -4,7 +4,7 @@
 //! cache for NIP-11 lives in the engine — process-wide, normalized
 //! URL keys, 1-hour TTL, four-state lifecycle (`Pending | Loading |
 //! Loaded | Failed`), 256 KB body cap, 5-second timeout, semaphore of
-//! 5 concurrent fetches. The web/Emacs/TUI clients all consume the
+//! 5 concurrent fetches. The web/Emacs clients all consume the
 //! same cache through `GET /api/v1/relay/info?url=...`.
 
 use std::collections::HashMap;

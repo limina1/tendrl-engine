@@ -1,7 +1,7 @@
 # tendrl-engine
 
 A local-first Nostr backend implementing [NKBIP-01](nips/) — publication
-indexes and sections — with an HTTP API, a web frontend, and an optional TUI.
+indexes and sections — with an HTTP API and a web frontend.
 
 ## Architecture
 
@@ -13,9 +13,8 @@ Three processes cooperate:
 | **Web frontend** | `web/` | `5173` dev / `5174` preview | SvelteKit UI (window-manager paradigm) |
 | **Embedding sidecar** | `sidecar/` | `3031` | Python vector-search server — optional |
 
-The engine owns all data access; the web UI and TUI are interchangeable
-consumers of the same interface-agnostic tree logic. See
-[`CLAUDE.md`](CLAUDE.md) for the architecture in depth.
+The engine owns all data access; the web UI consumes its interface-agnostic
+tree logic. See [`CLAUDE.md`](CLAUDE.md) for the architecture in depth.
 
 ## Prerequisites
 
@@ -69,12 +68,6 @@ cd sidecar && ./run.sh              # embedding sidecar only
 pnpm -C web dev                     # web dev server only
 ```
 
-### Optional TUI
-
-```bash
-cargo run --features tui --bin nostr-tree
-```
-
 ## Updating dependencies
 
 A `Makefile` drives all three package managers (cargo / pnpm / uv) plus the
@@ -102,7 +95,7 @@ pnpm -C web check           # Svelte / TypeScript checks
 ## Project layout
 
 ```
-src/        Rust engine (library + nostr-engine / nostr-tree binaries)
+src/        Rust engine (library + the nostr-engine binary)
 web/        SvelteKit frontend
 sidecar/    Python embedding server
 nips/       Nostr protocol specs (NIP references and custom NKBIPs)

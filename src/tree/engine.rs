@@ -1057,7 +1057,7 @@ impl TreeEngine {
 
     fn adjust_scroll(&self, state: &mut TreeState) {
         // Ensure cursor is visible in the viewport
-        // This is a simple implementation; the TUI can do more sophisticated scrolling
+        // This is a simple implementation; consumers can do more sophisticated scrolling
         let visible = visible_nodes(state);
         if let Some(cursor_idx) = visible.iter().position(|n| n.id == state.cursor) {
             // Keep cursor in view with some margin

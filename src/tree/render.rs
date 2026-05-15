@@ -1,7 +1,7 @@
 //! Tree rendering abstraction
 //!
 //! Provides a trait for rendering the tree state to different backends
-//! (TUI, HTML, etc.) and utilities for computing visible nodes.
+//! (HTML, plain text, etc.) and utilities for computing visible nodes.
 
 use super::node::{NodeId, SyncStatus, TreeNode};
 use super::state::TreeState;
@@ -94,19 +94,6 @@ impl RenderOptions {
             collapsed_indicator: "▸".to_string(),
             expanded_indicator: "▾".to_string(),
             leaf_indicator: "•".to_string(),
-        }
-    }
-
-    /// Create options for TUI rendering
-    pub fn tui() -> Self {
-        RenderOptions {
-            max_depth: None,
-            show_loading: true,
-            show_errors: true,
-            indent: "  ".to_string(),
-            collapsed_indicator: "▸".to_string(),
-            expanded_indicator: "▾".to_string(),
-            leaf_indicator: "◦".to_string(),
         }
     }
 

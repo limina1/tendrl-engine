@@ -777,7 +777,7 @@ pub fn build_publication_events(
 }
 
 /// Build publication events with proper Schnorr signatures using the
-/// engine's in-process key material directly. Kept for the TUI / test
+/// engine's in-process key material directly. Kept for the synchronous / test
 /// paths that don't need to route through the SigningController; live
 /// HTTP publish goes through `build_signed_publication_events_via_signer`.
 pub fn build_signed_publication_events(

@@ -21,14 +21,8 @@ path = "src/main.rs"
 name = "basic_query"
 path = "examples/basic_query.rs"
 
-[[bin]]
-name = "nostr-tree"
-path = "src/bin/nostr-tree.rs"
-required-features = ["tui"]
-
 [features]
 default = []
-tui = ["ratatui", "crossterm", "tracing-appender"]
 onnx = ["fastembed"]
 
 [dependencies]
@@ -85,11 +79,6 @@ usearch = "2"
 
 # ONNX embeddings (optional, for --features onnx)
 fastembed = { version = "4", optional = true }
-
-# TUI (optional, for nostr-tree binary)
-ratatui = { version = "0.29", optional = true }
-crossterm = { version = "0.28", optional = true }
-tracing-appender = { version = "0.2", optional = true }
 
 [dev-dependencies]
 tempfile = "3.24.0"

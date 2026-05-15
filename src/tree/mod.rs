@@ -42,9 +42,6 @@ pub mod render;
 pub mod state;
 pub mod undo;
 
-#[cfg(feature = "tui")]
-pub mod tui;
-
 // Re-export main types
 pub use command::{
     all_commands, AsyncRequest, AsyncResult, CommandCategory, CommandInfo, CommandResult,

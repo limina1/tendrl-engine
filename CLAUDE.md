@@ -8,7 +8,6 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 # Build
 cargo build                         # debug build
 cargo build --release               # release build
-cargo build --features tui          # include TUI binary (nostr-tree)
 
 # Run
 cargo run -- -c config.toml         # run engine with config
@@ -51,9 +50,9 @@ Interface-agnostic tree navigation for publications, with strict separation:
 - **`engine.rs`**: `TreeEngine` — executes commands synchronously on TreeState
 - **Async boundary**: When IO is needed, `TreeEngine::execute()` returns `CommandResult::NeedsAsync(AsyncRequest)`. The UI layer handles the async work and feeds results back via `apply_async_result()`. This is the key architectural pattern — tree logic never does IO directly.
 - **`node.rs`**: `TreeNode` enum (`Publication` | `Section`), identified by `NodeId`
-- **`render.rs`**: Flattens tree into `Vec<VisibleNode>` for display, used by both TUI and web
+- **`render.rs`**: Flattens tree into `Vec<VisibleNode>` for display, consumed by the web UI
 
-The TUI (`src/tree/tui/`, behind `--features tui`) is one consumer; the web UI is another.
+The tree logic is interface-agnostic — the web UI is its consumer, and the design keeps room for other front-ends (e.g. Emacs).
 
 ### HTTP API (`src/api.rs`, `src/main.rs`)
 Axum-based REST API. State is `Arc<Engine>`. Routes are mounted under `/api/v1/`. The `EngineError` type in `src/error.rs` implements `IntoResponse` for automatic HTTP error codes.
@@ -69,7 +68,7 @@ Axum-based REST API. State is `Arc<Engine>`. Routes are mounted under `/api/v1/`
 
 ## Project Layout
 
-- `src/` — Rust engine (library + two binaries: `nostr-engine`, `nostr-tree`)
+- `src/` — Rust engine (library + the `nostr-engine` binary)
 - `web/` — SvelteKit frontend (Svelte 5, pnpm, static adapter, served from `web/build/`)
 - `sidecar/` — Python embedding server (sentence-transformers, Flask, uv for venv)
 - `config.example.toml` — reference config; copy to `config.toml`
