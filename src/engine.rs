@@ -191,7 +191,7 @@ impl Engine {
             documents_dir: std::path::PathBuf::from("./docs"),
             sidecar_url: "http://localhost:3031".to_string(),
             claude_sessions_dir: None,
-            network: Arc::new(NetworkActivity::new(NetworkMode::Online)),
+            network: Arc::new(NetworkActivity::new(NetworkMode::Auto)),
             nip11_cache: crate::nip11::Nip11Cache::new(),
         })
     }
@@ -252,8 +252,8 @@ impl Engine {
     }
 
     /// Check if engine is in online mode
-    pub fn is_online(&self) -> bool {
-        self.network.is_online()
+    pub fn is_auto(&self) -> bool {
+        self.network.is_auto()
     }
 
     /// Set the network mode
@@ -395,7 +395,7 @@ impl Engine {
         trigger: FetchTrigger,
         bypass_offline: bool,
     ) -> Result<Vec<Value>> {
-        if !bypass_offline && !self.is_online() {
+        if !bypass_offline && !self.is_auto() {
             return Ok(vec![]);
         }
         let summary = network::summarize_filters(filters);
@@ -438,7 +438,7 @@ impl Engine {
         trigger: FetchTrigger,
         bypass_offline: bool,
     ) -> Result<Vec<Value>> {
-        if !bypass_offline && !self.is_online() {
+        if !bypass_offline && !self.is_auto() {
             return Ok(vec![]);
         }
         let mut all_events = Vec::new();
@@ -632,7 +632,7 @@ impl Engine {
         use serde_json::json;
         use std::collections::{HashMap, HashSet};
 
-        if !self.is_online() {
+        if !self.is_auto() {
             return Ok((0, 0, 0));
         }
 
@@ -775,7 +775,7 @@ impl Engine {
         bypass_offline: bool,
     ) -> Result<QueryResponse> {
         let relays = override_relays.unwrap_or(&self.relay_config.fetch.urls);
-        let policy = if bypass_offline || self.is_online() {
+        let policy = if bypass_offline || self.is_auto() {
             policy
         } else {
             FetchPolicy::LocalOnly
@@ -796,7 +796,7 @@ impl Engine {
 
     /// Get a single event by its ID
     pub async fn get_by_id(&self, event_id: &str, policy: FetchPolicy) -> Result<Option<Value>> {
-        let policy = if self.is_online() {
+        let policy = if self.is_auto() {
             policy
         } else {
             FetchPolicy::LocalOnly
@@ -828,7 +828,7 @@ impl Engine {
         d_tag: &str,
         policy: FetchPolicy,
     ) -> Result<Option<Value>> {
-        let policy = if self.is_online() {
+        let policy = if self.is_auto() {
             policy
         } else {
             FetchPolicy::LocalOnly
@@ -1067,7 +1067,7 @@ impl Engine {
             return 0;
         }
 
-        if !bypass_offline && !self.is_online() {
+        if !bypass_offline && !self.is_auto() {
             info!(
                 "Profile backfill: {} author(s) missing a kind-0, but the engine is offline — skipped",
                 missing.len()

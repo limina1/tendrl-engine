@@ -295,7 +295,7 @@ async fn main() -> anyhow::Result<()> {
             loop {
                 interval.tick().await;
 
-                if state.is_online() {
+                if state.is_auto() {
                     match state.fetch_missing_sections().await {
                         Ok((_, missing, fetched)) => {
                             if fetched > 0 {

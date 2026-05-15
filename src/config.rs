@@ -277,13 +277,13 @@ pub struct Config {
 /// Network mode configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NetworkConfig {
-    /// "online" or "offline"
+    /// "auto" or "confirm" (legacy "online"/"offline" still parse)
     #[serde(default = "default_network_mode")]
     pub mode: String,
 }
 
 fn default_network_mode() -> String {
-    "online".to_string()
+    "auto".to_string()
 }
 
 impl Default for NetworkConfig {

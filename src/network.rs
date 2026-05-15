@@ -17,20 +17,28 @@ const MAX_LOG_ENTRIES: usize = 64;
 // Types
 // ---------------------------------------------------------------------------
 
+/// The engine's stance toward relay fetches.
+///
+/// - `Auto` — fetch from relays automatically (the former "online").
+/// - `Confirm` — every user-initiated relay fetch emits an intent the
+///   UI must approve before the engine proceeds (the former "offline",
+///   reframed: instead of silently suppressing, the engine asks).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum NetworkMode {
-    Online,
-    Offline,
+    Auto,
+    Confirm,
 }
 
 impl std::str::FromStr for NetworkMode {
     type Err = String;
     fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
-            "online" => Ok(NetworkMode::Online),
-            "offline" => Ok(NetworkMode::Offline),
-            _ => Err(format!("Unknown network mode: {s}. Valid: online, offline")),
+            // `online`/`offline` are accepted as aliases so configs and
+            // clients written before the rename keep working.
+            "auto" | "online" => Ok(NetworkMode::Auto),
+            "confirm" | "offline" => Ok(NetworkMode::Confirm),
+            _ => Err(format!("Unknown network mode: {s}. Valid: auto, confirm")),
         }
     }
 }
@@ -38,8 +46,8 @@ impl std::str::FromStr for NetworkMode {
 impl std::fmt::Display for NetworkMode {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            NetworkMode::Online => write!(f, "online"),
-            NetworkMode::Offline => write!(f, "offline"),
+            NetworkMode::Auto => write!(f, "auto"),
+            NetworkMode::Confirm => write!(f, "confirm"),
         }
     }
 }
@@ -105,7 +113,7 @@ pub struct NetworkActivity {
 impl NetworkActivity {
     pub fn new(initial_mode: NetworkMode) -> Self {
         Self {
-            mode: AtomicBool::new(matches!(initial_mode, NetworkMode::Online)),
+            mode: AtomicBool::new(matches!(initial_mode, NetworkMode::Auto)),
             log: Mutex::new(VecDeque::with_capacity(MAX_LOG_ENTRIES)),
             active_fetches: AtomicU64::new(0),
             next_id: AtomicU64::new(1),
@@ -114,21 +122,21 @@ impl NetworkActivity {
         }
     }
 
-    pub fn is_online(&self) -> bool {
+    pub fn is_auto(&self) -> bool {
         self.mode.load(Ordering::Relaxed)
     }
 
     pub fn mode(&self) -> NetworkMode {
-        if self.is_online() {
-            NetworkMode::Online
+        if self.is_auto() {
+            NetworkMode::Auto
         } else {
-            NetworkMode::Offline
+            NetworkMode::Confirm
         }
     }
 
     pub fn set_mode(&self, mode: NetworkMode) {
         self.mode
-            .store(matches!(mode, NetworkMode::Online), Ordering::Relaxed);
+            .store(matches!(mode, NetworkMode::Auto), Ordering::Relaxed);
     }
 
     pub fn active_count(&self) -> u64 {
