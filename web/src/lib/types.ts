@@ -269,7 +269,25 @@ export interface EmbeddingStatusResponse {
 	model: string | null;
 }
 
-export type NetworkMode = 'online' | 'offline';
+export type NetworkMode = 'auto' | 'confirm';
+
+/** Pattern of a user-initiated fetch operation (mirrors the engine). */
+export type FetchPattern = 'event' | 'publication' | 'thread' | 'search' | 'profile' | 'custom';
+
+/** Events streamed from the engine over /api/v1/network/fetch-events. */
+export type FetchEvent =
+	| {
+			type: 'intent';
+			operation_id: string;
+			pattern: FetchPattern;
+			label: string;
+			steps: string[];
+			relays: string[];
+			needs_confirmation: boolean;
+	  }
+	| { type: 'progress'; operation_id: string; label: string; done: number; total: number | null }
+	| { type: 'completed'; operation_id: string; event_count: number }
+	| { type: 'failed'; operation_id: string; error: string };
 
 export interface FetchRecord {
 	id: number;

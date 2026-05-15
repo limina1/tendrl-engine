@@ -123,7 +123,7 @@
 	localPubkeys={app.localPubkeys}
 	onviewprofile={app.handleViewProfile}
 	canPromptRelays={
-		app.networkStatus?.mode === 'offline' &&
+		app.networkStatus?.mode === 'confirm' &&
 		app.searchLastQuery !== '' &&
 		!app.searchLoading
 	}

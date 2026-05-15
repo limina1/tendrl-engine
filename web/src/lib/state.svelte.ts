@@ -1205,7 +1205,7 @@ function _createAppState() {
 						search: namePartial,
 						limit: 100
 					},
-					{ isOnline: networkStatus?.mode === 'online' }
+					{ isOnline: networkStatus?.mode === 'auto' }
 				);
 				if (!result || result.relays.length === 0) {
 					updateToast(toastId, { message: 'Relay search cancelled', kind: 'info' }, 1500);
@@ -1237,7 +1237,7 @@ function _createAppState() {
 						search: term ?? undefined,
 						limit: searchConfig.limit
 					},
-					{ isOnline: networkStatus?.mode === 'online' }
+					{ isOnline: networkStatus?.mode === 'auto' }
 				);
 				if (!result || result.relays.length === 0) {
 					updateToast(toastId, { message: 'Relay search cancelled', kind: 'info' }, 1500);

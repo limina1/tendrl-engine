@@ -663,7 +663,7 @@
 		loadedFor = id;
 		untrack(async () => {
 			await loadDiscussionCounts('local_only');
-			if (app.networkStatus?.mode === 'online') {
+			if (app.networkStatus?.mode === 'auto') {
 				refreshDiscussions();
 			}
 		});
@@ -1097,7 +1097,7 @@
 			class="discussions-refresh"
 			onclick={refreshDiscussions}
 			disabled={discussionLoading || !publication}
-			title={app.networkStatus?.mode === 'online'
+			title={app.networkStatus?.mode === 'auto'
 				? 'Pull new comments and highlights from relays'
 				: 'Offline — pull comments and highlights from relays anyway (manual override)'}
 		>

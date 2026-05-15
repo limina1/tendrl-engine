@@ -606,7 +606,7 @@
 	}
 
 	function toggleNetworkMode() {
-		const next = app.networkStatus?.mode === 'online' ? 'offline' : 'online';
+		const next = app.networkStatus?.mode === 'auto' ? 'confirm' : 'auto';
 		app.handleSetNetworkMode(next);
 	}
 
@@ -690,15 +690,19 @@
 	const networkPill = $derived.by(() => {
 		const mode = app.networkStatus?.mode ?? null;
 		const active = (app.networkStatus?.active_fetches ?? 0) > 0;
-		if (mode === 'online') {
+		if (mode === 'auto') {
 			return {
-				label: active ? 'fetching' : 'online',
+				label: active ? 'fetching' : 'auto',
 				pillClass: 'pill--online',
 				dotClass: active ? 'dot--fetching' : 'dot--online'
 			};
 		}
-		if (mode === 'offline') {
-			return { label: 'offline', pillClass: 'pill--offline', dotClass: 'dot--offline' };
+		if (mode === 'confirm') {
+			return {
+				label: active ? 'fetching' : 'confirm',
+				pillClass: 'pill--offline',
+				dotClass: active ? 'dot--fetching' : 'dot--offline'
+			};
 		}
 		return { label: '—', pillClass: 'pill--ghost', dotClass: 'dot--offline' };
 	});
@@ -886,7 +890,7 @@
 					e.preventDefault();
 					openRelays();
 				}}
-				title="Click to toggle online/offline · right-click for relay configuration"
+				title="Click to toggle auto/confirm fetching · right-click for relay configuration"
 			>
 				<span class="dot {networkPill.dotClass}"></span>
 				{networkPill.label}

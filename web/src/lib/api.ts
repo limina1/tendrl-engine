@@ -725,6 +725,15 @@ export function setNetworkMode(mode: NetworkMode) {
 	});
 }
 
+/** Reply to a confirm Intent — approve or decline a pending fetch
+ *  operation, optionally overriding the relay set. */
+export function confirmFetch(operationId: string, approved: boolean, relays?: string[]) {
+	return fetchJson<{ resolved: boolean }>('/api/v1/network/fetch-confirm', {
+		method: 'POST',
+		body: JSON.stringify({ operation_id: operationId, approved, relays })
+	});
+}
+
 // Discussion counts: NIP-22 comments (kind 1111) and NIP-84 highlights
 // (kind 9802) referencing the given addressable events via their `a` tag.
 

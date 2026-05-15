@@ -144,7 +144,7 @@
 
 	let tabFetchingKinds = $state<number | null>(null);
 
-	const isOnline = $derived(app.networkStatus?.mode === 'online');
+	const isOnline = $derived(app.networkStatus?.mode === 'auto');
 
 	async function runFetch(opts: { title: string; kinds: number[] }) {
 		console.debug('[ProfileView] fetch start', {
