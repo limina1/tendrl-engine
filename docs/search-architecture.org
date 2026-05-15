@@ -1,0 +1,572 @@
+#+TITLE: Search Architecture
+#+DATE: 2026-05-15
+#+AUTHOR: Design Doc — Explainer + Proposal
+
+Scope: how Amethyst implements global search, and how tendrl-engine should
+evolve its own search to adopt the parts that matter.
+
+* Purpose
+
+tendrl-engine already has a capable structured-query search (=src/search.rs=)
+with semantic (embedding) support. What it does *not* have is the thing that
+makes Amethyst's search feel complete: a single query that returns *both*
+content (notes/sections matching words) *and* people (profiles matching a
+username), as distinct result categories.
+
+This document has two parts:
+
+- *Part I* — a reference explainer of how Amethyst's search works, end to
+  end. This is the model we are borrowing from.
+- *Part II* — the current state of tendrl-engine search, its gaps, and a
+  concrete proposal for adopting the multi-category model.
+
+The reference implementation lives under =reference/amethyst/= in this repo.
+All Amethyst paths below are relative to that directory.
+
+* Part I — How Amethyst does search (reference)
+
+** 2. The core idea: search is a fan-out, not one query
+
+Amethyst's search is /not/ a single query against a single index. A typed
+term fans out into several independent producers, each emitting its own
+result list, and the UI stitches those lists into one scrolling feed.
+
+There are two orthogonal axes:
+
+| Axis   | Values             | Meaning                                  |
+|--------+--------------------+------------------------------------------|
+| Source | =LOCAL= / =RELAYS= | scan the in-memory cache, or query relays |
+| Scope  | =ALL= / =PEOPLE= / =NOTES= | which result categories to include |
+
+And there are /several result categories/, each backed by its own
+=StateFlow= in =SearchBarViewModel=:
+
+1. Hashtags
+2. Users (profiles)
+3. Relays (when the term looks like =wss://…=)
+4. Public chat channels
+5. Ephemeral chat channels
+6. Live-activity channels
+7. Notes
+
+The key architectural decision: *profiles and notes are never one query and
+never one ranked list.* They are computed separately and rendered as separate
+sections. This is what lets "search for a username" pull in both the person
+/and/ notes that mention that word — they are simply two of the fan-out
+branches firing on the same input string.
+
+=SearchBarViewModel.kt=
+(=amethyst/.../ui/screen/loggedIn/search/SearchBarViewModel.kt=) is the
+coordinator. =SearchScreen.kt= (same package) is the UI.
+
+** 3. The local path — scanning the in-memory cache
+
+=LocalCache= is Amethyst's object-level event store: every event the app has
+ever seen, as live =User= and =Note= objects. The local path is a brute-force
+scan over that store. It is instant and works offline.
+
+*** 3.1 Profile matching — findUsersStartingWith
+
+=LocalCache.kt:1928= — =findUsersStartingWith(username, forAccount): List<User>=
+
+Algorithm:
+
+1. *Early exits.* Blank → empty. If the term decodes as a 64-char hex
+   pubkey, return that single user.
+2. *Build a =DualCase= matcher* — the term's lowercase + uppercase forms
+   cached together, so matching is case-insensitive /without/ allocating a
+   lowercased copy of every candidate string (=StringUtils.kt:112=).
+3. *First-pass filter* over every =User= in the cache. A user matches if:
+   - it has no metadata yet → =pubkeyHex= or =npub= starts with the term; or
+   - it has metadata → =anyNameOrAddressContains(term)= /or/ pubkey/npub
+     prefix match, /and/ the user is not muted/hidden by the account.
+4. *Multi-factor sort* of the matches:
+
+#+begin_src text
+compareBy(
+  { isFollowing == false },        // people you follow first
+  { nameStartsWith == false },     // name prefix beats name substring
+  { addressStartsWith == false },  // nip05/lud16 prefix next
+  { displayName.lowercase() },     // then alphabetical
+  { pubkeyHex },                   // stable tiebreaker
+)
+#+end_src
+
+The fields that count as "name or address"
+(=quartz/.../nip01Core/metadata/UserMetadata.kt:113=):
+
+#+begin_src kotlin
+fun anyNameOrAddressContains(terms) =
+    name        ?.containsAny(terms) ||   // kind-0 "name"
+    displayName ?.containsAny(terms) ||   // kind-0 "display_name"
+    lud16       ?.containsAny(terms) ||   // lightning address
+    nip05       ?.containsAny(terms) ||   // nip-05 identifier
+    website     ?.containsAny(terms)
+#+end_src
+
+So a username search hits *name, display_name, NIP-05, lightning address, and
+website* — all from the kind-0 metadata event — plus raw pubkey/npub prefixes.
+
+*** 3.2 Note matching — findNotesStartingWith
+
+=LocalCache.kt:2000= — =findNotesStartingWith(text, hiddenUsers): List<Note>=
+
+1. If the term decodes as an event id, return that note directly.
+2. Otherwise scan every =Note=. A note matches if:
+   - any *tag value* contains the term (=tagValueContains=, case-insensitive
+     — =quartz/.../nip01Core/core/TagArray.kt:176=), or its id starts with
+     the term; or
+   - the event's *content is not encrypted* (=isContentEncoded() == false= —
+     DMs/giftwraps return =true= and are skipped) and the content contains
+     the term.
+3. Hidden/muted notes are dropped.
+4. Non-searchable kinds are excluded up front (=excludeNoteEventFromSearchResults=,
+   =LocalCache.kt:1986=): reposts, reactions, zaps, file headers, metadata,
+   contact lists, app-specific data.
+
+This is a linear =content.contains(text)= scan — there is no full-text index.
+It is fast enough because it runs on an in-memory =LargeCache=.
+
+** 4. The relay path — NIP-50 search
+
+When =source == RELAYS=, Amethyst issues real relay subscriptions. NIP-50 is
+the relevant NIP: it adds a =search= string field to a normal NIP-01 filter.
+Relays that support NIP-50 do free-text matching server-side; relays that
+don't simply ignore the field (per spec).
+
+=Filter= (=quartz/.../nip01Core/relay/filters/Filter.kt:50=) carries the
+optional field:
+
+#+begin_src kotlin
+class Filter(
+    val ids: List<HexKey>? = null,
+    val authors: List<HexKey>? = null,
+    val kinds: List<Kind>? = null,
+    val tags: Map<String, List<String>>? = null,
+    ...
+    val search: String? = null,   // NIP-50
+)
+#+end_src
+
+*** 4.1 Subscription orchestration
+
+#+begin_src text
+SearchFilterAssembler                       (searchCommand/SearchFilterAssembler.kt:44)
+ ├── SearchUserWatcherSubAssembler           → profiles
+ └── SearchPostWatcherSubAssembler           → posts/notes
+#+end_src
+
+=SearchFilterAssembler= is a =MutableComposeSubscriptionManager<SearchQueryState>=
+— a Compose-lifecycle-aware subscription manager. =SearchQueryState= bundles
+the search-term =StateFlow= with the =Account=. Each sub-assembler is a
+=PerUniqueIdEoseManager= that tracks EOSE per query and reuses subscriptions.
+
+When the term changes, each sub-assembler's =updateFilter()= is called and
+returns a list of =RelayBasedFilter= (a =(relay, filter)= pair).
+
+*** 4.2 Profile search filter — searchPeopleByName
+
+=searchCommand/subassemblies/SearchPeopleByName.kt=:
+
+#+begin_src kotlin
+Filter(
+    kinds  = listOf(MetadataEvent.KIND),  // kind 0 only
+    search = searchString,
+    limit  = 1000,
+)
+#+end_src
+
+One filter per configured search relay. *Profile search = NIP-50 search
+restricted to kind 0.* In addition, =SearchUserWatcherSubAssembler= handles
+/direct/ lookups: if the term is a hex key or a NIP-19 URI (=npub=,
+=nprofile=, =nsec=), it skips NIP-50 and instead does an author-filtered
+fetch against the user's NIP-65 relays / indexer relays.
+
+*** 4.3 Note search filter — searchPostsByText
+
+=searchCommand/subassemblies/SearchPostsByText.kt= batches a large kind list
+into *three* filters per relay (each =limit = 100=), because a single filter
+with 30 kinds is unwieldy:
+
+- *Kinds1:* text note (1), long-form (30023), badge definition (30009),
+  people list (30000), bookmark list + old bookmark list, audio header,
+  audio track, pin list, zap poll, channel-create (40).
+- *Kinds2:* channel metadata (41), classifieds (30402), community definition
+  (34550), emoji pack (30030), highlight (9802), live activities (30311),
+  public message, NNS, wiki note (30818), comment (1111).
+- *Kinds3:* interactive-story prologue + scene, follow list, NIP text, poll +
+  poll response, calendar time-slot + date-slot, code snippet.
+
+Direct lookups again bypass NIP-50: a hex event id or =nevent= / =note= /
+=naddr= URI triggers a targeted fetch.
+
+#+begin_quote
+*Answer to "what default kinds does it search?"* — Amethyst does *not* let
+the user pick search kinds. Profile search is hard-wired to kind 0; note
+search is hard-wired to the ~30-kind list above. The only user knob is /which
+relays/ to search, not /which kinds/.
+#+end_quote
+
+** 5. Search relay configuration
+
+Two distinct relay sets (=commons/.../defaults/AmethystDefaults.kt=):
+
+- *=DefaultSearchRelayList=* — NIP-50-capable relays used for
+  =searchPeopleByName= / =searchPostsByText=: =nostr.wine=, =where.nostr.wine=,
+  =nos.today=, =anti.primal.net=, =ditto.pub=.
+- *=DefaultIndexerRelayList=* — relays with broad profile coverage, used for
+  /direct/ pubkey lookups: =purplepages=, =coracle.social=, =userkinds=,
+  =yabu=, =nostr-1.com=.
+
+The user's own search-relay list is a *NIP-51 kind-10007 event*
+(=SearchRelayListEvent=), managed by =SearchRelayListState.kt=. When the user
+has no list, the defaults are substituted.
+
+** 6. Direct resolution: NIP-05, NIP-19, hex
+
+=SearchBarViewModel= runs a separate =directNip05Resolver= flow (debounced
+*400ms*, longer than the main 300ms term to avoid flicker). If the typed term
+is:
+
+- =user@domain= or a bare =.bit= domain → resolve via the NIP-05
+  =.well-known= endpoint to a single =User=;
+- a =nostr:npub…/nprofile…/nsec…= URI → decode to a pubkey;
+- a raw 64-char hex pubkey → look up directly.
+
+If this resolver succeeds it *short-circuits* the local user scan: the result
+list becomes exactly that one resolved user.
+
+** 7. Hashtags and relay URLs
+
+- *Hashtags:* =findHashtags(searchValue)= runs the hashtag regex over the raw
+  input; matches become tappable chips that navigate to the hashtag feed.
+- *Relay URLs:* if the term is longer than 7 chars and starts with =wss://=
+  or =ws://=, it is normalised into a relay entry; the cache's relay-hint DB
+  is also substring-matched. Results are sorted by bytes received and capped
+  at 20.
+
+** 8. Result merging and UI
+
+=SearchScreen.kt= → =DisplaySearchResults= collects every category flow and
+renders them into *one =LazyColumn=* in a fixed priority order:
+
+#+begin_src text
+hashtags → users → relays → public chat → ephemeral chat
+         → live activities → notes
+#+end_src
+
+Each category is a separate =itemsIndexed(...)= block with its own item-key
+prefix (=u + pubkey=, =n + noteId=, …) and a =HorizontalDivider= between
+items. Users render via =UserCompose=, notes via =NoteCompose=. There is no
+unified relevance ranking /across/ categories — order is categorical.
+
+Relay results stream in asynchronously: as relays answer, events land in
+=LocalCache=, which bumps the =invalidations= counter, which re-runs the
+local-scan flows. So the relay path and the local path converge through the
+cache rather than being merged explicitly.
+
+** 9. Debounce and lifecycle summary
+
+| Flow                              | Debounce | Notes                      |
+|-----------------------------------+----------+----------------------------|
+| =searchTerm= (drives local scan)  | 300 ms   | deduplicated               |
+| =directNip05Resolver=             | 400 ms   | avoids NIP-05 churn        |
+| per-category result flows         | 100 ms   | batches =invalidations=    |
+
+=invalidations= is a monotonically increasing =Int= =StateFlow=; every result
+flow =combine=s on it, so any new event in the cache triggers recomputation.
+=clear()= resets the term to ="​"=, which cascades empty through all flows.
+
+* Part II — tendrl-engine search today
+
+** 10. What exists
+
+tendrl-engine's search is implemented in Rust across:
+
+- *=src/search.rs=* — query parser + result types.
+- *=src/query.rs=* — local nostrdb query execution + post-filters.
+- *=src/embedding.rs=* — HNSW vector index for semantic search.
+- *=src/engine.rs=* — orchestration (=search_with_options=,
+  =semantic_search=), =FetchPolicy=, =NetworkMode=.
+- *=src/api.rs=* — HTTP endpoints.
+- *=web/src/lib/search/search-config.svelte.ts=* — frontend search config.
+
+*** 10.1 Query syntax (search.rs)
+
+=SearchQuery::parse= / =parse_compound= support a rich operator language:
+
+| Token                            | Meaning                                     |
+|-----------------------------------+---------------------------------------------|
+| =k:30041=                         | kind filter (compiled into the NIP-01 filter) |
+| =t:val= =d:val= =L:val=           | single-char indexed tag filters (NIP-01)    |
+| =author:val= =client:val=         | multi-char tag filters (post-filter only)   |
+| =by:me= / =by:assistant=          | resolved to the configured pubkeys          |
+| =by:npub1…= / =by:<hex>=          | explicit author pubkey                      |
+| =by:name:<partial>= / =by:<word>= | name substring → resolved to pubkeys        |
+| =has:NAME=                        | tag-presence filter                         |
+| =count:NAME=                      | tag-value histogram aggregation             |
+| =~:concept= / =~:"phrase":k=      | semantic (embedding) search                 |
+| ="exact phrase"=                  | exact substring match                       |
+| bare words                        | keyword AND search                          |
+| =since:= / =until:=               | time bounds                                 |
+| =a \vert b=                       | compound OR (union of branches)             |
+
+*** 10.2 Pipeline
+
+=engine.search_with_options(query, policy, relays, bypass_offline)=:
+
+1. If =query.needs_semantic()= → delegate to =semantic_search()=.
+2. Else: compile =to_nip01_filters()= (single-char tags + kinds only).
+3. Fetch local/relay events per =FetchPolicy= (=LocalOnly= / =LocalFirst= /
+   =FetchAlways=); =NetworkMode::Offline= downgrades anything below
+   =FetchAlways= to =LocalOnly=.
+4. Post-filter in =query.rs=: =filter_by_tags= (multi-char, substring),
+   =filter_by_has_tags=, =filter_by_text= (keywords/exact over content +
+   title tag).
+5. Optional =count_tag_values= aggregation.
+6. =build_search_results= → =SearchResponse=.
+
+*** 10.3 Semantic search
+
+=engine.semantic_search()= embeds the query string, queries the HNSW index
+(=embedding.rs=, usearch — Python sidecar or in-process ONNX), over-fetches
+=k*5=–=k*10= to survive post-filtering, splits hits into event results and
+document-page results, applies kind/author/text post-filters, sorts by score.
+
+*** 10.4 HTTP API (api.rs)
+
+- =POST /api/v1/search= — ={ query, limit, policy, relays, my_pubkey,
+  bypass_offline }= → =SearchResponse=.
+- =POST /api/v1/fetch= — generic relay fetch; *already accepts an optional
+  =search= string* (NIP-50) but only on this endpoint.
+- =GET /api/v1/profile/:pubkey= — single kind-0 lookup, local only.
+- =POST /api/v1/profiles/fetch= — batch kind-0 fetch from relays.
+
+*** 10.5 Profile handling today
+
+- =resolve_pubkeys_by_name(ndb, partial)= (=api.rs=) — the only "username
+  search": queries up to 2000 local kind-0 events, parses each JSON content,
+  substring-matches =display_name= / =name=, returns pubkeys. It is used
+  /only/ to expand the =by:name:= author token — it never surfaces profiles
+  as search /results/.
+- =query_profile= — single profile by pubkey.
+- The relay client (=relay.rs=) passes any filter JSON through verbatim, so
+  NIP-50 =search= is supported at the wire level.
+
+** 11. Gaps relative to Amethyst
+
+| Gap                                          | Consequence                                                                 |
+|-----------------------------------------------+-----------------------------------------------------------------------------|
+| Profiles are not a result category.           | A user searching "fiatjaf" gets notes mentioning the word, never the person. =by:name:= only narrows authorship. |
+| NIP-50 not wired into =/api/v1/search=.        | The =search= field exists on =/api/v1/fetch= only. The main search endpoint cannot do relay-side free-text search; text matching is always a local post-filter. |
+| No NIP-05 / NIP-19 direct resolution in search. | Typing =name@domain= or an =npub= does not jump to a profile.              |
+| No profile name match beyond =name= / =display_name=. | Amethyst also matches NIP-05, lightning address, website.           |
+| No "search relay" set.                         | Config has general/fetch/publish relay sets but no NIP-50 search-relay set. |
+| No hashtag / relay-URL suggestions.            | Minor, but cheap to add.                                                    |
+| Single ranked list, no categories.            | =SearchResponse.results= is one flat list; the response shape has no place for profile hits. |
+
+* Part III — Proposal
+
+** 12. Guiding principles (borrowed from Amethyst)
+
+1. *Search is a fan-out.* Profiles and content are separate passes over the
+   same store, surfaced as separate result categories — /not/ one ranked
+   list. This is the central change.
+2. *Two sources, same merge point.* Local scan gives instant results;
+   relay/NIP-50 backfills. Both write into nostrdb; the response can be
+   recomputed from the local store after backfill (mirrors Amethyst's
+   =invalidations= convergence).
+3. *Kinds are policy, not user input.* Like Amethyst, hard-wire a sensible
+   default kind set; expose /relays/, not /kinds/, as the knob. The web UI
+   already owns the default-kind policy — keep it there.
+
+** 13. Proposed change 1 — profiles as a first-class category
+
+Extend =SearchResponse= (=search.rs=) with a profile list:
+
+#+begin_src rust
+pub struct SearchResponse {
+    pub results: Vec<SearchResult>,        // content (existing)
+    pub profiles: Vec<ProfileResult>,      // NEW
+    pub doc_results: Vec<DocPageResult>,   // existing
+    pub tag_counts: HashMap<String, Vec<TagValueCount>>,
+    pub count: usize,
+    pub local_count: usize,
+    pub relay_count: usize,
+}
+
+pub struct ProfileResult {
+    pub pubkey: String,
+    pub name: Option<String>,
+    pub display_name: Option<String>,
+    pub nip05: Option<String>,
+    pub picture: Option<String>,
+    pub about: Option<String>,
+    pub score: u8,            // 0 = following/exact, higher = weaker match
+    pub source: ResultSource, // Local | Relay
+}
+#+end_src
+
+A new =engine::search_profiles(term, policy, relays)= runs alongside the
+existing content search inside the =/api/v1/search= handler, and both lists go
+back in one response. The web UI renders them as two sections (profiles
+first), exactly like Amethyst's =DisplaySearchResults=.
+
+When is profile search triggered? Default: *always*, for any non-empty bare
+term (no leading operator). Optionally gate it behind a =scope= request field
+(=all= / =people= / =content=) mirroring Amethyst's =SearchScope=.
+
+** 14. Proposed change 2 — local profile matching
+
+Port =findUsersStartingWith= into Rust as
+=query::find_profiles_matching(ndb, term) -> Vec<ProfileResult>=:
+
+1. If =term= decodes as hex/npub → direct kind-0 lookup, return that profile.
+2. Else scan local kind-0 events (reuse the existing 2000-event scan from
+   =resolve_pubkeys_by_name=, but return full =ProfileResult=s, not pubkeys).
+3. Match the term (case-insensitive substring) against *name, display_name,
+   nip05, lud16, website* — not just name/display_name.
+4. Sort: exact/prefix name match first, then substring, then alphabetical.
+   (Skip the "following" tier unless/until the engine tracks a follow list;
+   =kind:3= is available via =LocalCache= equivalents — see the
+   =account-state= notes — so this can be a later refinement.)
+
+=resolve_pubkeys_by_name= then becomes a thin wrapper that maps
+=find_profiles_matching= to pubkeys, removing duplication.
+
+** 15. Proposed change 3 — wire NIP-50 into /api/v1/search
+
+The wire support already exists (=relay.rs= passes =search= through;
+=/api/v1/fetch= already builds it). The work is in =engine.rs=:
+
+- When =policy= is =LocalFirst= (and local results are thin) or
+  =FetchAlways=, and the term has a free-text component, issue *two* NIP-50
+  subscriptions to the search-relay set:
+  - ={"kinds":[0], "search":<term>, "limit":1000}= — profiles
+  - ={"kinds":[<default content kinds>], "search":<term>, "limit":100}= —
+    content
+- Results land in nostrdb; recompute the response from the local store after
+  EOSE (the Amethyst convergence pattern). =relay_count= reflects the delta.
+- Respect =NetworkMode::Offline= / =bypass_offline= exactly as the structured
+  path already does.
+
+The frontend already computes a NIP-50 query string (=nip50SearchString()= in
+=search-config.svelte.ts=) — currently only for the "Search relays?"
+fallback. Route that into the main request instead.
+
+** 16. Proposed change 4 — a search-relay set in config
+
+Add a =search= relay list to =RelayConfig= (=config.rs=), parallel to the
+existing general/fetch/publish sets, defaulting to known NIP-50 relays
+(=nostr.wine=, =relay.nostr.band=, …). =RelayConfig::resolved()= already
+merges legacy fields — extend it. This is the analogue of Amethyst's
+=DefaultSearchRelayList=.
+
+** 17. Default kinds policy
+
+Keep kinds out of the query language as a /requirement/ (=k:= stays
+optional). Define a default content-kind set appropriate to tendrl's
+publication focus — distinct from Amethyst's social-feed kind list:
+
+| Kind  | Meaning              |
+|-------+----------------------|
+| 30040 | publication index    |
+| 30041 | publication section  |
+| 30023 | long-form article    |
+| 30818 | wiki page            |
+| 1     | text note            |
+| 9802  | highlight            |
+
+Profile search is always kind =0=. The web frontend
+(=search-config.svelte.ts=) already holds =[30040, 30041, 30818, 30023]= as
+its default — align the engine's NIP-50 content filter with that list and
+treat the frontend value as the single source of truth, passed in the
+request.
+
+** 18. Optional change — NIP-05 / NIP-19 direct resolution
+
+Low effort, high polish. In the =/api/v1/search= handler, before fan-out:
+
+- term matches =user@domain= → resolve NIP-05 (the engine can do the
+  =.well-known= fetch when online) → return that one profile;
+- term is =npub= / =nprofile= / hex → direct kind-0 lookup;
+- term is =note= / =nevent= / =naddr= / event-hex → direct event lookup.
+
+A direct hit short-circuits the fan-out, mirroring Amethyst's
+=directNip05Resolver=.
+
+** 19. Phasing
+
+| Phase | Deliverable                                                                                          | Touches                              |
+|-------+------------------------------------------------------------------------------------------------------+--------------------------------------|
+| 1     | =ProfileResult= + =profiles= field on =SearchResponse=; =find_profiles_matching=; profiles surfaced from local scan in =/api/v1/search= | =search.rs=, =query.rs=, =api.rs=    |
+| 2     | NIP-50 search-relay set in config; wire NIP-50 profile + content subscriptions into =search_with_options= | =config.rs=, =engine.rs=, =relay.rs= |
+| 3     | NIP-05 / NIP-19 direct resolution short-circuit                                                      | =api.rs=, =identity.rs=              |
+| 4     | Web UI: two-section results (profiles + content), =scope= toggle, hashtag/relay-URL suggestions       | =web/src/lib/search/=                |
+
+Phase 1 alone closes the headline gap — "search a username, get the person."
+
+** 20. Open questions
+
+- *Following tier in sort.* Amethyst ranks followed users first. tendrl has a
+  configured identity but no first-class follow list in the engine. Worth a
+  =kind:3= ingest, or punt to a later phase?
+- *Recompute vs. merge.* Amethyst recomputes local flows when relays answer
+  (via =invalidations=). The HTTP API is request/response — do we (a) return
+  local results immediately and let the client re-poll after backfill, or
+  (b) block on EOSE with a timeout? =bypass_offline= + the existing
+  =FetchGuard= pattern suggest (a) is more in keeping with the codebase.
+- *Document pages.* Semantic search already returns =DocPageResult=s. Should
+  profile/content fan-out also run for semantic queries, or stay
+  content-only? Amethyst has no semantic equivalent, so this is
+  tendrl-specific.
+
+* Implementation progress
+
+Tracked on the =search= branch. Tick when shipped; leave the box.
+
+- [X] *Phase 1 (engine)* — profiles as a first-class category.
+  =ProfileResult= + =ResultSource= types; =profiles= field on
+  =SearchResponse=; =query::find_profiles_matching= (newest-kind-0-per-
+  pubkey local scan, matching name / display_name / nip05 / lud16 /
+  website, scored by strength); =Engine::search_profiles=;
+  =/api/v1/search= fans out to profile search for any free-text term;
+  =resolve_pubkeys_by_name= reduced to a wrapper.
+- [X] *Phase 1 (web)* — =ProfileResult= type; =PersonResultItem=
+  component; "People" section in =SearchPanel= above content results;
+  =searchProfiles= state.
+- [ ] *Phase 2* — NIP-50 search-relay set in =config.rs=; wire NIP-50
+  profile + content subscriptions into =search_with_options=.
+- [ ] *Phase 3* — NIP-05 / NIP-19 direct-resolution short-circuit.
+- [ ] *Phase 4* — =scope= toggle (all / people / content); hashtag and
+  relay-URL suggestions.
+
+* Cross-reference
+
+** Amethyst (reference/amethyst/)
+
+| Concern                          | File                                                                       |
+|-----------------------------------+----------------------------------------------------------------------------|
+| Search coordinator (flows, debounce) | =amethyst/.../ui/screen/loggedIn/search/SearchBarViewModel.kt=          |
+| Search UI / result merge          | =amethyst/.../ui/screen/loggedIn/search/SearchScreen.kt=                   |
+| Local profile scan                | =amethyst/.../model/LocalCache.kt:1928= (=findUsersStartingWith=)          |
+| Local note scan                   | =amethyst/.../model/LocalCache.kt:2000= (=findNotesStartingWith=)          |
+| Profile-field matching            | =quartz/.../nip01Core/metadata/UserMetadata.kt:113=                        |
+| Relay subscription manager        | =amethyst/.../service/relayClient/searchCommand/SearchFilterAssembler.kt=  |
+| NIP-50 profile filter             | =amethyst/.../searchCommand/subassemblies/SearchPeopleByName.kt=           |
+| NIP-50 note filter + kind lists   | =amethyst/.../searchCommand/subassemblies/SearchPostsByText.kt=            |
+| Filter struct (=search= field)    | =quartz/.../nip01Core/relay/filters/Filter.kt:50=                          |
+| Search-relay defaults             | =commons/.../defaults/AmethystDefaults.kt=                                 |
+
+** tendrl-engine (src/)
+
+| Concern                          | File                                                          |
+|-----------------------------------+---------------------------------------------------------------|
+| Query parser + result types       | =src/search.rs=                                              |
+| Local nostrdb query + post-filters | =src/query.rs=                                               |
+| Search orchestration, =FetchPolicy= | =src/engine.rs= (=search_with_options=, =semantic_search=)  |
+| Semantic / HNSW index             | =src/embedding.rs=                                            |
+| HTTP endpoints                    | =src/api.rs= (=search_handler=, =resolve_pubkeys_by_name=)    |
+| Relay client (NIP-50 passthrough) | =src/relay.rs=                                                |
+| Relay sets                        | =src/config.rs= (=RelayConfig=)                               |
+| Frontend search config            | =web/src/lib/search/search-config.svelte.ts=                  |
