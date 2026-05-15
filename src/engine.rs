@@ -251,7 +251,7 @@ impl Engine {
         &self.network
     }
 
-    /// Check if engine is in online mode
+    /// True when the engine auto-fetches from relays (Auto mode).
     pub fn is_auto(&self) -> bool {
         self.network.is_auto()
     }
@@ -259,6 +259,33 @@ impl Engine {
     /// Set the network mode
     pub fn set_network_mode(&self, mode: NetworkMode) {
         self.network.set_mode(mode);
+    }
+
+    /// Open a user-initiated fetch operation — the confirm/auto gate.
+    /// In Auto mode returns immediately; in Confirm mode emits an intent
+    /// and blocks until the UI approves (or `Err(FetchCancelled)`).
+    pub async fn begin_fetch_operation(
+        &self,
+        pattern: crate::network::FetchPattern,
+        label: String,
+        steps: Vec<String>,
+        relays: Vec<String>,
+    ) -> std::result::Result<crate::network::FetchOperation, crate::network::FetchCancelled> {
+        self.network
+            .begin_operation(pattern, label, steps, relays)
+            .await
+    }
+
+    /// Subscribe to the fetch-event stream (one receiver per SSE client).
+    pub fn subscribe_fetch_events(
+        &self,
+    ) -> tokio::sync::broadcast::Receiver<crate::network::FetchEvent> {
+        self.network.subscribe_fetch_events()
+    }
+
+    /// Resolve a pending confirm intent with the UI's decision.
+    pub async fn resolve_fetch_confirm(&self, decision: crate::network::ConfirmDecision) -> bool {
+        self.network.resolve_confirm(decision).await
     }
 
     /// Get the ignore list

@@ -6,10 +6,11 @@
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Mutex;
-use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use tokio::sync::{broadcast, oneshot};
 
 const MAX_LOG_ENTRIES: usize = 64;
 
@@ -102,16 +103,21 @@ pub struct NetworkStatus {
 // ---------------------------------------------------------------------------
 
 pub struct NetworkActivity {
-    mode: AtomicBool, // true = online
+    mode: AtomicBool, // true = auto
     log: Mutex<VecDeque<FetchRecord>>,
     active_fetches: AtomicU64,
     next_id: AtomicU64,
     total_events_fetched: AtomicU64,
     last_fetch_timestamp: AtomicU64,
+    /// Broadcast of fetch-operation events to SSE subscribers.
+    events: broadcast::Sender<FetchEvent>,
+    /// Operations awaiting a confirm decision, keyed by operation_id.
+    pending: tokio::sync::Mutex<HashMap<String, oneshot::Sender<ConfirmDecision>>>,
 }
 
 impl NetworkActivity {
     pub fn new(initial_mode: NetworkMode) -> Self {
+        let (events, _) = broadcast::channel(FETCH_EVENT_CAP);
         Self {
             mode: AtomicBool::new(matches!(initial_mode, NetworkMode::Auto)),
             log: Mutex::new(VecDeque::with_capacity(MAX_LOG_ENTRIES)),
@@ -119,6 +125,8 @@ impl NetworkActivity {
             next_id: AtomicU64::new(1),
             total_events_fetched: AtomicU64::new(0),
             last_fetch_timestamp: AtomicU64::new(0),
+            events,
+            pending: tokio::sync::Mutex::new(HashMap::new()),
         }
     }
 
@@ -192,6 +200,77 @@ impl NetworkActivity {
             last_fetch_timestamp: self.last_fetch_timestamp.load(Ordering::Relaxed),
             recent,
         }
+    }
+
+    /// Subscribe to the fetch-event stream — one receiver per SSE client.
+    pub fn subscribe_fetch_events(&self) -> broadcast::Receiver<FetchEvent> {
+        self.events.subscribe()
+    }
+
+    /// Emit a fetch event. A send error only means no subscribers — the
+    /// events are advisory, so that's fine.
+    fn emit(&self, ev: FetchEvent) {
+        let _ = self.events.send(ev);
+    }
+
+    /// Resolve a pending confirm intent with the UI's decision. Returns
+    /// false when no operation is awaiting that id (already resolved or
+    /// timed out).
+    pub async fn resolve_confirm(&self, decision: ConfirmDecision) -> bool {
+        let waiter = self.pending.lock().await.remove(&decision.operation_id);
+        match waiter {
+            Some(tx) => tx.send(decision).is_ok(),
+            None => false,
+        }
+    }
+
+    /// Open a fetch operation. Emits an `Intent`; in Auto mode returns
+    /// immediately, in Confirm mode registers a oneshot and awaits the
+    /// UI's decision (`CONFIRM_TIMEOUT` → treated as cancelled).
+    pub async fn begin_operation(
+        self: &std::sync::Arc<Self>,
+        pattern: FetchPattern,
+        label: String,
+        steps: Vec<String>,
+        relays: Vec<String>,
+    ) -> std::result::Result<FetchOperation, FetchCancelled> {
+        let operation_id = next_operation_id();
+        let needs_confirmation = !self.is_auto();
+        self.emit(FetchEvent::Intent {
+            operation_id: operation_id.clone(),
+            pattern,
+            label,
+            steps,
+            relays: relays.clone(),
+            needs_confirmation,
+        });
+
+        let chosen = if needs_confirmation {
+            let rx = {
+                let (tx, rx) = oneshot::channel();
+                self.pending.lock().await.insert(operation_id.clone(), tx);
+                rx
+            };
+            match tokio::time::timeout(CONFIRM_TIMEOUT, rx).await {
+                Ok(Ok(d)) if d.approved => d.relays.unwrap_or(relays),
+                _ => {
+                    self.pending.lock().await.remove(&operation_id);
+                    self.emit(FetchEvent::Failed {
+                        operation_id,
+                        error: "cancelled".into(),
+                    });
+                    return Err(FetchCancelled);
+                }
+            }
+        } else {
+            relays
+        };
+
+        Ok(FetchOperation {
+            activity: std::sync::Arc::clone(self),
+            operation_id,
+            relays: chosen,
+        })
     }
 }
 
@@ -298,5 +377,142 @@ pub fn summarize_filters(filters: &[Value]) -> String {
         "no filters".to_string()
     } else {
         parts.join(" ")
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Fetch operations — engine-driven confirm + progress channel
+// ---------------------------------------------------------------------------
+
+/// Capacity of the fetch-event broadcast buffer. A subscriber that
+/// falls this far behind drops intermediate events — fine, since each
+/// event carries the full state the UI needs.
+const FETCH_EVENT_CAP: usize = 256;
+
+/// How long the engine waits for the UI to answer a confirm intent
+/// before treating the operation as cancelled.
+const CONFIRM_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// The shape of a user-initiated fetch operation — drives the canned
+/// step description shown to the user before they approve it.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FetchPattern {
+    Event,
+    Publication,
+    Thread,
+    Search,
+    Profile,
+    Custom,
+}
+
+/// Events streamed to the UI for every user-initiated fetch operation.
+/// `Intent` opens it; `Progress` narrates; `Completed`/`Failed` close it.
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum FetchEvent {
+    Intent {
+        operation_id: String,
+        pattern: FetchPattern,
+        label: String,
+        steps: Vec<String>,
+        relays: Vec<String>,
+        /// True in Confirm mode — the UI must POST a decision before the
+        /// engine proceeds. False in Auto mode — informational only.
+        needs_confirmation: bool,
+    },
+    Progress {
+        operation_id: String,
+        label: String,
+        done: usize,
+        total: Option<usize>,
+    },
+    Completed {
+        operation_id: String,
+        event_count: usize,
+    },
+    Failed {
+        operation_id: String,
+        error: String,
+    },
+}
+
+/// The UI's reply to an `Intent`, delivered via
+/// `POST /api/v1/network/fetch-confirm`.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ConfirmDecision {
+    pub operation_id: String,
+    pub approved: bool,
+    /// When present, the relay set the user picked in the modal —
+    /// overrides the relays the engine proposed.
+    #[serde(default)]
+    pub relays: Option<Vec<String>>,
+}
+
+/// Returned by `begin_operation` when the user declined the fetch (or
+/// didn't answer within `CONFIRM_TIMEOUT`). Callers degrade gracefully
+/// — typically by returning local-only results.
+#[derive(Debug, Clone, Copy)]
+pub struct FetchCancelled;
+
+impl std::fmt::Display for FetchCancelled {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "fetch cancelled by user")
+    }
+}
+
+fn next_operation_id() -> String {
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let micros = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_micros() as u64)
+        .unwrap_or(0);
+    let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+    format!("op-{micros:013x}-{n:08x}")
+}
+
+/// Handle for an approved (or Auto-mode) fetch operation. Emits progress
+/// and the terminal event; carries the relay set to actually fetch from.
+pub struct FetchOperation {
+    activity: std::sync::Arc<NetworkActivity>,
+    operation_id: String,
+    relays: Vec<String>,
+}
+
+impl FetchOperation {
+    pub fn id(&self) -> &str {
+        &self.operation_id
+    }
+
+    /// The relay set to fetch from — the engine's proposal, or the
+    /// user's override from the confirm modal.
+    pub fn relays(&self) -> &[String] {
+        &self.relays
+    }
+
+    /// Narrate a step of the operation to the UI's progress toast.
+    pub fn progress(&self, label: impl Into<String>, done: usize, total: Option<usize>) {
+        self.activity.emit(FetchEvent::Progress {
+            operation_id: self.operation_id.clone(),
+            label: label.into(),
+            done,
+            total,
+        });
+    }
+
+    /// Close the operation successfully.
+    pub fn complete(self, event_count: usize) {
+        self.activity.emit(FetchEvent::Completed {
+            operation_id: self.operation_id.clone(),
+            event_count,
+        });
+    }
+
+    /// Close the operation with an error.
+    pub fn fail(self, error: impl Into<String>) {
+        self.activity.emit(FetchEvent::Failed {
+            operation_id: self.operation_id.clone(),
+            error: error.into(),
+        });
     }
 }
