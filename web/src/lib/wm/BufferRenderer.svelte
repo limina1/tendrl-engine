@@ -4,6 +4,7 @@
 	import FeedBuffer from './renderers/FeedBuffer.svelte';
 	import SearchBuffer from './renderers/SearchBuffer.svelte';
 	import ReaderBuffer from './renderers/ReaderBuffer.svelte';
+	import DocBuffer from './renderers/DocBuffer.svelte';
 	import ProfileBuffer from './renderers/ProfileBuffer.svelte';
 	import ComposerBuffer from './renderers/ComposerBuffer.svelte';
 	import IgnoredBuffer from './renderers/IgnoredBuffer.svelte';
@@ -28,6 +29,8 @@
 		<SearchBuffer {buffer} />
 	{:else if buffer.kind === 'reader'}
 		<ReaderBuffer {buffer} />
+	{:else if buffer.kind === 'doc'}
+		<DocBuffer {buffer} />
 	{:else if buffer.kind === 'draft-reader'}
 		<DraftReaderBuffer {buffer} />
 	{:else if buffer.kind === 'profile'}

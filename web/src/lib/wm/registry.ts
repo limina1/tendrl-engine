@@ -4,6 +4,7 @@ import ChatBuffer from './renderers/ChatBuffer.svelte';
 import FeedBuffer from './renderers/FeedBuffer.svelte';
 import SearchBuffer from './renderers/SearchBuffer.svelte';
 import ReaderBuffer from './renderers/ReaderBuffer.svelte';
+import DocBuffer from './renderers/DocBuffer.svelte';
 import ProfileBuffer from './renderers/ProfileBuffer.svelte';
 import ComposerBuffer from './renderers/ComposerBuffer.svelte';
 import IgnoredBuffer from './renderers/IgnoredBuffer.svelte';
@@ -34,6 +35,9 @@ const entries: BufferKindEntry[] = [
 	// modes of the same window.
 	{ kind: 'feed', className: 'work', component: FeedBuffer, defaultLabel: 'feed' },
 	{ kind: 'reader', className: 'work', component: ReaderBuffer, defaultLabel: 'reader' },
+	// Slim single-document viewer for 30023 articles / 30818 wiki pages —
+	// no pager/outline, just body + comments.
+	{ kind: 'doc', className: 'work', component: DocBuffer, defaultLabel: 'doc' },
 	{ kind: 'draft-reader', className: 'work', component: DraftReaderBuffer, defaultLabel: 'draft' },
 	{ kind: 'composer', className: 'work', component: ComposerBuffer, defaultLabel: 'composer' },
 	{ kind: 'profile', className: 'work', component: ProfileBuffer, defaultLabel: 'profile' },
