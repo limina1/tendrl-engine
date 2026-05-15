@@ -2,6 +2,9 @@
 	import * as api from '$lib/api';
 	import { getActiveStore } from '../buffer-store.svelte';
 	import type { Buffer } from '../types';
+	import CommentThread from '$lib/components/CommentThread.svelte';
+	import { buildThread, type ThreadNode } from '$lib/discussions/thread';
+	import { prefetchAuthors } from '$lib/discussions/authors.svelte';
 
 	let { buffer }: { buffer: Buffer } = $props();
 	const store = getActiveStore();
@@ -23,10 +26,24 @@
 	let loading = $state(true);
 	let error = $state<string | null>(null);
 
-	let thread = $state<NostrEvent[]>([]);
+	// "Pull thread" state — the thread tree built from every kind-1111
+	// comment sharing this comment's root scope, plus the resolved root
+	// event the conversation hangs off.
+	let threadNodes = $state<ThreadNode[]>([]);
+	let threadCount = $state(0);
+	let rootEvent = $state<NostrEvent | null>(null);
 	let threadOpen = $state(false);
 	let threadLoading = $state(false);
 	let threadError = $state<string | null>(null);
+
+	const ROOT_KIND_LABEL: Record<number, string> = {
+		1: 'note',
+		1111: 'comment',
+		30023: 'article',
+		30040: 'publication',
+		30041: 'section',
+		30818: 'wiki'
+	};
 
 	const eventId = $derived(parseBufferId(buffer.id));
 
@@ -66,6 +83,12 @@
 		}
 		loading = true;
 		error = null;
+		// Drop any thread pulled for a previously-viewed comment.
+		threadNodes = [];
+		threadCount = 0;
+		rootEvent = null;
+		threadOpen = false;
+		threadError = null;
 		try {
 			const resp = await api.getEvent(eventId);
 			const ev = resp.event as NostrEvent | null;
@@ -174,40 +197,91 @@
 		}
 	}
 
-	async function loadThread() {
+	// Pull the whole thread: backfill every kind-1111 comment sharing this
+	// comment's root scope from relays (not just whatever's local), resolve
+	// the root event the conversation hangs off, and assemble a proper
+	// reply tree with this comment in it. A user clicking the button is
+	// explicit intent — fetch_always + bypass_offline so it reaches relays
+	// even when the app is in offline mode.
+	async function pullThread() {
 		if (!event || !isComment) return;
-		if (threadOpen) {
+		// Already pulled — the button is just a visibility toggle now.
+		if (threadOpen && threadNodes.length > 0) {
 			threadOpen = false;
 			return;
 		}
 		threadOpen = true;
-		if (thread.length > 0) return;
 		threadLoading = true;
 		threadError = null;
 		try {
-			// Siblings of this comment: kind 1111 sharing the same root
-			// scope. We try `#A` first (addressable root) and fall back
-			// to `#E` (event root) if no A tag was on the event.
 			const root = refs.root ?? refs.parent;
 			if (!root) {
 				threadError = 'No root reference on this comment';
 				return;
 			}
-			const filter: Record<string, unknown> = {
+			const opts: Parameters<typeof api.getDiscussionList>[0] = {
 				kinds: [1111],
-				limit: 200
+				policy: 'fetch_always',
+				bypassOffline: true,
+				limit: 500
 			};
-			if (root.type === 'a') filter['#A'] = [root.value];
-			else filter['#E'] = [root.value];
-			const resp = await api.queryEvents([filter], 'local_first');
-			const others = (resp.events as NostrEvent[]).filter((e) => e.id !== event!.id);
-			thread = others.sort((a, b) => a.created_at - b.created_at);
+			if (root.type === 'a') opts.addresses = [root.value];
+			else opts.eventIds = [root.value];
+			const resp = await api.getDiscussionList(opts);
+			// Dedup by id and fold in the comment we're viewing — relays may
+			// lag and not echo it back, but it's definitely in the thread.
+			const byId = new Map<string, NostrEvent>();
+			for (const e of resp.events) {
+				if (e.kind === 1111) byId.set(e.id, e as NostrEvent);
+			}
+			byId.set(event.id, event);
+			const comments = [...byId.values()];
+			threadNodes = buildThread(comments);
+			threadCount = comments.length;
+			// Resolve the root event for the header, and warm author names.
+			await loadRootEvent(root);
+			const authors = new Set(comments.map((c) => c.pubkey));
+			if (authors.size > 0) prefetchAuthors([...authors]);
 		} catch (e) {
 			threadError = e instanceof Error ? e.message : String(e);
 		} finally {
 			threadLoading = false;
 		}
 	}
+
+	async function loadRootEvent(root: ParentRef) {
+		try {
+			if (root.type === 'a') {
+				const parts = root.value.split(':');
+				if (parts.length < 3) return;
+				const kind = parseInt(parts[0], 10);
+				const pubkey = parts[1];
+				const d_tag = parts.slice(2).join(':');
+				const resp = await api.getAddressable(kind, pubkey, d_tag);
+				rootEvent = (resp.event as NostrEvent | null) ?? null;
+			} else {
+				const resp = await api.getEvent(root.value);
+				rootEvent = (resp.event as NostrEvent | null) ?? null;
+			}
+		} catch {
+			rootEvent = null;
+		}
+	}
+
+	function tagValue(ev: NostrEvent, name: string): string | null {
+		return ev.tags.find((t) => t[0] === name)?.[1] ?? null;
+	}
+
+	const rootKindLabel = $derived(
+		rootEvent ? (ROOT_KIND_LABEL[rootEvent.kind] ?? `kind ${rootEvent.kind}`) : ''
+	);
+	const rootTitle = $derived(
+		rootEvent
+			? tagValue(rootEvent, 'title') ??
+					tagValue(rootEvent, 'd') ??
+					(rootEvent.content ? rootEvent.content.slice(0, 80) : short(rootEvent.id, 16))
+			: ''
+	);
 
 	function short(s: string, n = 12): string {
 		return s.length > n ? `${s.slice(0, n)}…` : s;
@@ -259,27 +333,41 @@
 				{/if}
 			{:else if isComment}
 				<div class="dv-comment">{event.content}</div>
-				<button class="dv-action" onclick={loadThread} disabled={threadLoading}>
-					{threadOpen ? 'Hide thread' : threadLoading ? 'Loading thread…' : `Show thread`}
-					{#if thread.length > 0}
-						<span class="dv-thread-count">{thread.length}</span>
+				<button class="dv-action" onclick={pullThread} disabled={threadLoading}>
+					{threadLoading
+						? 'Pulling thread…'
+						: threadOpen && threadNodes.length > 0
+							? 'Hide thread'
+							: 'Pull thread'}
+					{#if threadCount > 0}
+						<span class="dv-thread-count">{threadCount}</span>
 					{/if}
 				</button>
 				{#if threadOpen}
-					<div class="dv-thread">
+					<div class="dv-thread-wrap">
 						{#if threadError}
 							<div class="dv-error">{threadError}</div>
-						{:else if thread.length === 0 && !threadLoading}
-							<div class="dv-empty-thread">No siblings found locally.</div>
-						{:else}
-							{#each thread as t (t.id)}
-								<div class="dv-thread-item" class:dv-thread-item--self={t.pubkey === event.pubkey}>
-									<div class="dv-thread-meta">
-										<code>{short(t.pubkey, 12)}</code> · {fmtTime(t.created_at)}
-									</div>
-									<div class="dv-thread-body">{t.content}</div>
-								</div>
-							{/each}
+						{/if}
+						{#if rootEvent}
+							<div class="dv-root">
+								<span class="dv-root-label">thread root</span>
+								<button
+									class="dv-root-card"
+									onclick={() => {
+										const r = refs.root ?? refs.parent;
+										if (r) openInReader(r);
+									}}
+									title="Open the root in the reader"
+								>
+									<span class="dv-root-kind">{rootKindLabel}</span>
+									<span class="dv-root-title">{rootTitle}</span>
+								</button>
+							</div>
+						{/if}
+						{#if threadNodes.length > 0}
+							<CommentThread nodes={threadNodes} focusedEventId={event.id} />
+						{:else if !threadLoading && !threadError}
+							<div class="dv-empty-thread">No comments found in this thread.</div>
 						{/if}
 					</div>
 				{/if}
@@ -426,35 +514,52 @@
 		color: var(--base5);
 	}
 
-	.dv-thread {
+	.dv-thread-wrap {
 		display: flex;
 		flex-direction: column;
-		gap: 8px;
+		gap: 10px;
 		margin-top: 4px;
-		padding-left: 10px;
-		border-left: 2px solid var(--panel-border);
 	}
-	.dv-thread-item {
+	.dv-root {
+		display: flex;
+		flex-direction: column;
+		gap: 4px;
+	}
+	.dv-root-label {
+		font-family: var(--font-mono);
+		font-size: var(--t-xs);
+		text-transform: uppercase;
+		letter-spacing: 0.06em;
+		color: var(--base5);
+	}
+	.dv-root-card {
+		display: flex;
+		align-items: baseline;
+		gap: 8px;
 		padding: 8px 10px;
 		background: var(--bg-surface);
 		border: 1px solid var(--panel-border);
 		border-radius: var(--r-sm);
+		text-align: left;
+		cursor: pointer;
 	}
-	.dv-thread-item--self {
+	.dv-root-card:hover {
 		border-color: var(--id-yours);
 	}
-	.dv-thread-meta {
+	.dv-root-kind {
 		font-family: var(--font-mono);
 		font-size: calc(var(--t-xs) - 1px);
+		text-transform: uppercase;
+		letter-spacing: 0.06em;
 		color: var(--base5);
-		margin-bottom: 4px;
+		flex-shrink: 0;
 	}
-	.dv-thread-meta code { background: transparent; }
-	.dv-thread-body {
+	.dv-root-title {
 		color: var(--fg);
-		font-size: var(--t-xs);
-		white-space: pre-wrap;
-		line-height: 1.5;
+		font-size: var(--t-sm);
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
 	}
 	.dv-empty-thread {
 		font-size: var(--t-xs);
