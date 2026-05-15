@@ -14,7 +14,6 @@ timeout_ms = 15000
 urls = [
     "wss://relay.damus.io",
     "wss://nos.lol",
-    "wss://relay.nostr.band",
 ]
 kinds = [0, 3, 10002, 30023, 30818, 30817]
 
