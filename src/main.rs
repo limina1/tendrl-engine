@@ -229,6 +229,14 @@ async fn main() -> anyhow::Result<()> {
         // Network mode
         .route("/api/v1/network/status", get(api::network_status_handler))
         .route("/api/v1/network/mode", post(api::set_network_mode_handler))
+        .route(
+            "/api/v1/network/fetch-events",
+            get(api::fetch_events_handler),
+        )
+        .route(
+            "/api/v1/network/fetch-confirm",
+            post(api::fetch_confirm_handler),
+        )
         // Ignore list + purge
         .route("/api/v1/ignore", get(api::ignore_list_handler).post(api::ignore_add_handler).delete(api::ignore_remove_handler))
         .route("/api/v1/purge", post(api::purge_handler))

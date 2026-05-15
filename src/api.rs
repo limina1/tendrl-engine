@@ -1275,6 +1275,60 @@ pub async fn set_network_mode_handler(
     Ok(Json(json!({ "mode": mode })))
 }
 
+/// GET /api/v1/network/fetch-events
+///
+/// Long-lived SSE stream of fetch-operation events (`intent`,
+/// `progress`, `completed`, `failed`). In Confirm mode an `intent`
+/// with `needs_confirmation` must be answered via `/network/fetch-confirm`.
+pub async fn fetch_events_handler(
+    State(engine): State<AppState>,
+) -> axum::response::Sse<
+    futures::stream::BoxStream<
+        'static,
+        Result<axum::response::sse::Event, std::convert::Infallible>,
+    >,
+> {
+    use axum::response::sse::{Event as SseHttpEvent, KeepAlive, Sse};
+    use futures::stream::StreamExt;
+    use tokio::sync::broadcast::error::RecvError;
+
+    let rx = engine.subscribe_fetch_events();
+    let stream = futures::stream::unfold(rx, |mut rx| async move {
+        loop {
+            match rx.recv().await {
+                Ok(ev) => {
+                    let payload = serde_json::to_string(&ev).unwrap_or_default();
+                    let sse_event = SseHttpEvent::default().data(payload);
+                    return Some((Ok::<SseHttpEvent, std::convert::Infallible>(sse_event), rx));
+                }
+                // Subscriber fell behind — skip dropped events and keep going.
+                Err(RecvError::Lagged(_)) => continue,
+                // No more senders — end the stream.
+                Err(RecvError::Closed) => return None,
+            }
+        }
+    });
+
+    Sse::new(stream.boxed()).keep_alive(KeepAlive::default())
+}
+
+#[derive(Debug, Serialize)]
+pub struct FetchConfirmResponse {
+    pub resolved: bool,
+}
+
+/// POST /api/v1/network/fetch-confirm
+///
+/// The UI's reply to a confirm intent — body is a `ConfirmDecision`
+/// (`operation_id`, `approved`, optional `relays` override).
+pub async fn fetch_confirm_handler(
+    State(engine): State<AppState>,
+    Json(decision): Json<crate::network::ConfirmDecision>,
+) -> Json<FetchConfirmResponse> {
+    let resolved = engine.resolve_fetch_confirm(decision).await;
+    Json(FetchConfirmResponse { resolved })
+}
+
 // ============================================================================
 // Relay Config API Endpoints
 // ============================================================================
