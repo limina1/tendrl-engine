@@ -194,7 +194,7 @@ pub struct SearchRequest {
     /// the network even when global network mode is offline (the web's
     /// "No events in local DB — search relays?" CTA).
     #[serde(default)]
-    pub bypass_offline: bool,
+    pub mode_confirm: bool,
 }
 
 /// POST /api/v1/search
@@ -202,14 +202,49 @@ pub struct SearchRequest {
 /// Search for events using the structured search query language
 pub async fn search_handler(
     State(engine): State<AppState>,
-    Json(req): Json<SearchRequest>,
+    Json(mut req): Json<SearchRequest>,
 ) -> Result<Json<SearchResponse>, EngineError> {
     debug!("Search request: query={:?}", req.query);
 
-    let policy = match &req.policy {
+    let mut policy = match &req.policy {
         Some(p) => p.parse()?,
         None => FetchPolicy::default(),
     };
+
+    // An explicit relay search is a user-initiated fetch operation —
+    // gate it. In Auto mode this returns at once; in Confirm mode it
+    // blocks for the modal. Declined → fall back to a local-only search.
+    let mut op: Option<crate::network::FetchOperation> = None;
+    let mut override_relays = req.relays.clone();
+    if req.mode_confirm {
+        let steps = vec![
+            "Query each relay (NIP-01 / NIP-50)".to_string(),
+            "Ingest matching events".to_string(),
+            "Backfill author profiles (kind 0)".to_string(),
+        ];
+        let relays = req
+            .relays
+            .clone()
+            .unwrap_or_else(|| engine.relay_config().all_urls());
+        match engine
+            .begin_fetch_operation(
+                crate::network::FetchPattern::Search,
+                format!("Search relays: {}", req.query.trim()),
+                steps,
+                relays,
+            )
+            .await
+        {
+            Ok(o) => {
+                override_relays = Some(o.relays().to_vec());
+                op = Some(o);
+            }
+            Err(_) => {
+                req.mode_confirm = false;
+                policy = FetchPolicy::LocalOnly;
+            }
+        }
+    }
 
     // Check for compound query (contains |)
     if req.query.contains('|') {
@@ -235,7 +270,7 @@ pub async fn search_handler(
             }
 
             let resp = engine
-                .search_with_options(&branch, policy, req.relays.as_deref(), req.bypass_offline)
+                .search_with_options(&branch, policy, override_relays.as_deref(), req.mode_confirm)
                 .await?;
 
             total_local += resp.local_count;
@@ -260,7 +295,10 @@ pub async fn search_handler(
             doc_results: vec![],
             tag_counts: std::collections::HashMap::new(),
         };
-        backfill_result_profiles(&engine, &response, req.bypass_offline).await;
+        backfill_result_profiles(&engine, &response, req.mode_confirm).await;
+        if let Some(op) = op {
+            op.complete(response.count);
+        }
         return Ok(Json(response));
     }
 
@@ -275,7 +313,7 @@ pub async fn search_handler(
     resolve_author(&mut query, &req, &engine)?;
 
     let mut response = engine
-        .search_with_options(&query, policy, req.relays.as_deref(), req.bypass_offline)
+        .search_with_options(&query, policy, override_relays.as_deref(), req.mode_confirm)
         .await?;
 
     // Fan out to the people category: any free-text term also scans
@@ -284,7 +322,10 @@ pub async fn search_handler(
         response.profiles = engine.search_profiles(&term).await;
     }
 
-    backfill_result_profiles(&engine, &response, req.bypass_offline).await;
+    backfill_result_profiles(&engine, &response, req.mode_confirm).await;
+    if let Some(op) = op {
+        op.complete(response.count);
+    }
     Ok(Json(response))
 }
 
@@ -294,20 +335,20 @@ pub async fn search_handler(
 /// metadata locally with no follow-up round-trip. The engine method
 /// no-ops for authors already cached.
 ///
-/// `bypass_offline` is the search request's own flag: a search the user
+/// `mode_confirm` is the search request's own flag: a search the user
 /// authorized to reach relays despite offline mode carries its profile
 /// backfill along on the same okay.
 async fn backfill_result_profiles(
     engine: &AppState,
     response: &SearchResponse,
-    bypass_offline: bool,
+    mode_confirm: bool,
 ) {
     let pubkeys: Vec<String> = response.results.iter().map(|r| r.author.clone()).collect();
     if pubkeys.is_empty() {
         return;
     }
     engine
-        .backfill_missing_profiles(pubkeys, bypass_offline)
+        .backfill_missing_profiles(pubkeys, mode_confirm)
         .await;
 }
 
@@ -1000,7 +1041,7 @@ pub async fn fetch_profiles_handler(
 ) -> Result<Json<Value>, EngineError> {
     // Profiles can live on any configured relay — query the union of
     // every set so an empty `general` set can't silently disable this.
-    let relays = engine.relay_config().all_urls();
+    let mut relays = engine.relay_config().all_urls();
     let mut fetched = 0;
 
     // When force is set, query every listed pubkey unconditionally so a
@@ -1017,6 +1058,34 @@ pub async fn fetch_profiles_handler(
     if targets.is_empty() {
         return Ok(Json(json!({ "fetched": 0, "total": req.pubkeys.len() })));
     }
+
+    // A forced profile fetch is an explicit user action — gate it.
+    // Declined → report nothing fetched (cached profiles are kept).
+    let op = if req.force {
+        match engine
+            .begin_fetch_operation(
+                crate::network::FetchPattern::Profile,
+                format!(
+                    "Fetch {} profile{}",
+                    targets.len(),
+                    if targets.len() == 1 { "" } else { "s" }
+                ),
+                vec!["Fetch kind-0 profile metadata".to_string()],
+                relays.clone(),
+            )
+            .await
+        {
+            Ok(o) => {
+                relays = o.relays().to_vec();
+                Some(o)
+            }
+            Err(_) => {
+                return Ok(Json(json!({ "fetched": 0, "total": req.pubkeys.len() })));
+            }
+        }
+    } else {
+        None
+    };
 
     // Batch fetch: one request per relay with ALL missing pubkeys
     let filter = json!({"kinds": [0], "authors": targets, "limit": targets.len()});
@@ -1044,6 +1113,9 @@ pub async fn fetch_profiles_handler(
         tokio::time::sleep(std::time::Duration::from_millis(200)).await;
     }
 
+    if let Some(op) = op {
+        op.complete(fetched);
+    }
     Ok(Json(json!({
         "fetched": fetched,
         "total": req.pubkeys.len()
@@ -1070,7 +1142,7 @@ pub struct FetchRelayRequest {
     /// profile-page "Choose relays and fetch" modal). Background
     /// pollers must NOT set this — offline mode silences them by design.
     #[serde(default)]
-    pub bypass_offline: bool,
+    pub mode_confirm: bool,
     /// NIP-50 search string. When present, the REQ filter sent to the
     /// relay includes `"search": "<value>"` so NIP-50-supporting relays
     /// do free-text matching (typically against `content` for kind 1,
@@ -1089,12 +1161,12 @@ pub async fn fetch_relay_handler(
     Json(req): Json<FetchRelayRequest>,
 ) -> Result<Json<Value>, EngineError> {
     debug!(
-        "Fetch from relay: {} kinds={:?} authors={} limit={} bypass_offline={}",
+        "Fetch from relay: {} kinds={:?} authors={} limit={} mode_confirm={}",
         req.relay,
         req.kinds,
         req.authors.len(),
         req.limit,
-        req.bypass_offline
+        req.mode_confirm
     );
 
     let mut filter = json!({"limit": req.limit});
@@ -1113,17 +1185,55 @@ pub async fn fetch_relay_handler(
         }
     }
 
+    // A targeted relay fetch is a user-initiated operation — gate it.
+    let op = if req.mode_confirm {
+        let mut steps = Vec::new();
+        if !req.kinds.is_empty() {
+            steps.push(format!("kinds {:?}", req.kinds));
+        }
+        if !req.authors.is_empty() {
+            steps.push(format!("{} author(s)", req.authors.len()));
+        }
+        if let Some(s) = req.search.as_deref().filter(|s| !s.is_empty()) {
+            steps.push(format!("NIP-50 search: {s}"));
+        }
+        steps.push(format!("limit {}", req.limit));
+        match engine
+            .begin_fetch_operation(
+                crate::network::FetchPattern::Custom,
+                format!("Fetch from {}", req.relay),
+                steps,
+                vec![req.relay.clone()],
+            )
+            .await
+        {
+            Ok(o) => Some(o),
+            Err(_) => {
+                return Ok(Json(json!({
+                    "fetched": 0,
+                    "relay": req.relay,
+                    "kinds": req.kinds
+                })));
+            }
+        }
+    } else {
+        None
+    };
+
     let events = engine
         .tracked_fetch_with_options(
             &req.relay,
             &[filter],
             FetchTrigger::UserAction,
-            req.bypass_offline,
+            req.mode_confirm,
         )
         .await?;
 
     let count = events.len();
     debug!("Fetched {} events from {}", count, req.relay);
+    if let Some(op) = op {
+        op.complete(count);
+    }
 
     // Trigger background embedding sync for newly fetched events
     if count > 0 && engine.embedding_index().is_some() {
@@ -1583,7 +1693,7 @@ pub struct DiscussionCountsRequest {
     /// pull comments and highlights into the local DB without having to
     /// flip the global network mode online first.
     #[serde(default)]
-    pub bypass_offline: bool,
+    pub mode_confirm: bool,
 }
 
 #[derive(Debug, Serialize, Default, Clone)]
@@ -1606,9 +1716,9 @@ pub struct DiscussionCountsResponse {
 /// fetching the events themselves.
 pub async fn discussion_counts_handler(
     State(engine): State<AppState>,
-    Json(req): Json<DiscussionCountsRequest>,
+    Json(mut req): Json<DiscussionCountsRequest>,
 ) -> Result<Json<DiscussionCountsResponse>, EngineError> {
-    let policy = match &req.policy {
+    let mut policy = match &req.policy {
         Some(p) => p.parse()?,
         None => FetchPolicy::default(),
     };
@@ -1638,6 +1748,34 @@ pub async fn discussion_counts_handler(
         policy
     );
 
+    // A discussion-counts refresh is a user-initiated fetch operation —
+    // gate it. Declined → fall back to a local-only count.
+    let mut op: Option<crate::network::FetchOperation> = None;
+    if req.mode_confirm {
+        let proposed = req
+            .relays
+            .clone()
+            .unwrap_or_else(|| engine.relay_config().all_urls());
+        match engine
+            .begin_fetch_operation(
+                crate::network::FetchPattern::Thread,
+                format!("Refresh discussion counts ({} target(s))", addresses.len()),
+                vec!["Count comments & highlights (kinds 1111 / 9802)".to_string()],
+                proposed,
+            )
+            .await
+        {
+            Ok(o) => {
+                req.relays = Some(o.relays().to_vec());
+                op = Some(o);
+            }
+            Err(_) => {
+                req.mode_confirm = false;
+                policy = FetchPolicy::LocalOnly;
+            }
+        }
+    }
+
     // One combined relay REQ for both kinds keeps roundtrips minimal.
     let filters = vec![json!({
         "kinds": [1111, 9802],
@@ -1645,8 +1783,9 @@ pub async fn discussion_counts_handler(
     })];
 
     let response = engine
-        .get_events_with_options(filters, policy, req.relays.as_deref(), req.bypass_offline)
+        .get_events_with_options(filters, policy, req.relays.as_deref(), req.mode_confirm)
         .await?;
+    let fetched = response.events.len();
 
     let address_set: std::collections::HashSet<&str> =
         addresses.iter().map(String::as_str).collect();
@@ -1689,6 +1828,9 @@ pub async fn discussion_counts_handler(
         }
     }
 
+    if let Some(op) = op {
+        op.complete(fetched);
+    }
     Ok(Json(DiscussionCountsResponse {
         counts,
         source: response.source,
@@ -1711,7 +1853,7 @@ pub struct DiscussionsListQuery {
     pub limit: Option<usize>,
     pub since: Option<i64>,
     #[serde(default)]
-    pub bypass_offline: bool,
+    pub mode_confirm: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -1742,7 +1884,7 @@ fn split_csv(s: &Option<String>) -> Vec<String> {
 /// relay fetches, so subsequent `discussions/counts` queries hit local.
 pub async fn discussions_list_handler(
     State(engine): State<AppState>,
-    axum::extract::Query(req): axum::extract::Query<DiscussionsListQuery>,
+    axum::extract::Query(mut req): axum::extract::Query<DiscussionsListQuery>,
 ) -> Result<Json<DiscussionsListResponse>, EngineError> {
     let addresses = split_csv(&req.addresses);
     let event_ids = split_csv(&req.event_ids);
@@ -1769,11 +1911,47 @@ pub async fn discussions_list_handler(
         }));
     }
 
-    let policy = match &req.policy {
+    let mut policy = match &req.policy {
         Some(p) => p.parse()?,
         None => FetchPolicy::default(),
     };
     let limit = req.limit.unwrap_or(500);
+
+    // A discussions pull is a user-initiated fetch operation — gate it.
+    // In Auto mode this returns at once; in Confirm mode it blocks for
+    // the modal. Declined → fall back to a local-only read.
+    let relays_vec = split_csv(&req.relays);
+    let mut op: Option<crate::network::FetchOperation> = None;
+    if req.mode_confirm {
+        let label = if event_ids.is_empty() {
+            format!("Fetch discussions for {} target(s)", addresses.len())
+        } else {
+            "Pull comment thread".to_string()
+        };
+        let proposed = if relays_vec.is_empty() {
+            engine.relay_config().all_urls()
+        } else {
+            relays_vec.clone()
+        };
+        match engine
+            .begin_fetch_operation(
+                crate::network::FetchPattern::Thread,
+                label,
+                vec![
+                    "Fetch comments & highlights (kinds 1111 / 9802)".to_string(),
+                    "Backfill comment authors (kind 0)".to_string(),
+                ],
+                proposed,
+            )
+            .await
+        {
+            Ok(o) => op = Some(o),
+            Err(_) => {
+                req.mode_confirm = false;
+                policy = FetchPolicy::LocalOnly;
+            }
+        }
+    }
 
     // Build the filter set. NIP-01 ANDs inside a filter and ORs across
     // filters, so to catch every referencing form we emit:
@@ -1807,11 +1985,16 @@ pub async fn discussions_list_handler(
         filters.push(Value::Object(by_e));
     }
 
-    let relays_vec = split_csv(&req.relays);
-    let relays_opt: Option<&[String]> = if relays_vec.is_empty() {
+    // The confirm modal can override the relay set; otherwise use the
+    // request's relays (or the engine default, resolved inside the engine).
+    let chosen_relays: Vec<String> = match &op {
+        Some(o) => o.relays().to_vec(),
+        None => relays_vec.clone(),
+    };
+    let relays_opt: Option<&[String]> = if chosen_relays.is_empty() {
         None
     } else {
-        Some(relays_vec.as_slice())
+        Some(chosen_relays.as_slice())
     };
 
     debug!(
@@ -1823,9 +2006,12 @@ pub async fn discussions_list_handler(
     );
 
     let response = engine
-        .get_events_with_options(filters, policy, relays_opt, req.bypass_offline)
+        .get_events_with_options(filters, policy, relays_opt, req.mode_confirm)
         .await?;
 
+    if let Some(op) = op {
+        op.complete(response.events.len());
+    }
     Ok(Json(DiscussionsListResponse {
         events: response.events,
         source: response.source,

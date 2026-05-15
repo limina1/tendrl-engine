@@ -420,9 +420,9 @@ impl Engine {
         relay_url: &str,
         filters: &[Value],
         trigger: FetchTrigger,
-        bypass_offline: bool,
+        mode_confirm: bool,
     ) -> Result<Vec<Value>> {
-        if !bypass_offline && !self.is_auto() {
+        if !mode_confirm && !self.is_auto() {
             return Ok(vec![]);
         }
         let summary = network::summarize_filters(filters);
@@ -463,16 +463,16 @@ impl Engine {
         relays: &[String],
         filters: &[Value],
         trigger: FetchTrigger,
-        bypass_offline: bool,
+        mode_confirm: bool,
     ) -> Result<Vec<Value>> {
-        if !bypass_offline && !self.is_auto() {
+        if !mode_confirm && !self.is_auto() {
             return Ok(vec![]);
         }
         let mut all_events = Vec::new();
         let mut seen_ids = std::collections::HashSet::new();
         for relay_url in relays {
             match self
-                .tracked_fetch_with_options(relay_url, filters, trigger.clone(), bypass_offline)
+                .tracked_fetch_with_options(relay_url, filters, trigger.clone(), mode_confirm)
                 .await
             {
                 Ok(events) => {
@@ -799,10 +799,10 @@ impl Engine {
         filters: Vec<Value>,
         policy: FetchPolicy,
         override_relays: Option<&[String]>,
-        bypass_offline: bool,
+        mode_confirm: bool,
     ) -> Result<QueryResponse> {
         let relays = override_relays.unwrap_or(&self.relay_config.fetch.urls);
-        let policy = if bypass_offline || self.is_auto() {
+        let policy = if mode_confirm || self.is_auto() {
             policy
         } else {
             FetchPolicy::LocalOnly
@@ -811,11 +811,11 @@ impl Engine {
         match policy {
             FetchPolicy::LocalOnly => self.query_local_only(&filters),
             FetchPolicy::LocalFirst => {
-                self.query_local_first_with_options(&filters, relays, bypass_offline)
+                self.query_local_first_with_options(&filters, relays, mode_confirm)
                     .await
             }
             FetchPolicy::FetchAlways => {
-                self.query_fetch_always_with_options(&filters, relays, bypass_offline)
+                self.query_fetch_always_with_options(&filters, relays, mode_confirm)
                     .await
             }
         }
@@ -934,14 +934,14 @@ impl Engine {
 
     /// Variant of `search` that can bypass the offline-mode policy
     /// downgrade. The web's "No events in local DB — search relays?"
-    /// CTA passes `bypass_offline=true` so the engine actually performs
+    /// CTA passes `mode_confirm=true` so the engine actually performs
     /// the relay round-trip even when offline mode is set.
     pub async fn search_with_options(
         &self,
         query: &SearchQuery,
         policy: FetchPolicy,
         override_relays: Option<&[String]>,
-        bypass_offline: bool,
+        mode_confirm: bool,
     ) -> Result<SearchResponse> {
         let limit = query.limit.unwrap_or(100);
 
@@ -973,7 +973,7 @@ impl Engine {
         }
 
         let response = self
-            .get_events_with_options(filters, policy, override_relays, bypass_offline)
+            .get_events_with_options(filters, policy, override_relays, mode_confirm)
             .await?;
 
         // Multi-char tag filters (e.g. `author:Claude`) are applied here —
@@ -1069,13 +1069,13 @@ impl Engine {
     /// events, so the authors of freshly-seen events get their metadata
     /// cached. Logs its outcome at `info` so the backfill is visible.
     ///
-    /// `bypass_offline` carries the search's relay authorization: when
+    /// `mode_confirm` carries the search's relay authorization: when
     /// the accompanying search was allowed to reach relays despite
     /// offline mode, the backfill rides along on the same okay.
     pub async fn backfill_missing_profiles(
         &self,
         pubkeys: Vec<String>,
-        bypass_offline: bool,
+        mode_confirm: bool,
     ) -> usize {
         let considered = pubkeys.len();
         // Distinct, well-formed pubkeys with no kind-0 cached locally.
@@ -1094,7 +1094,7 @@ impl Engine {
             return 0;
         }
 
-        if !bypass_offline && !self.is_auto() {
+        if !mode_confirm && !self.is_auto() {
             info!(
                 "Profile backfill: {} author(s) missing a kind-0, but the engine is offline — skipped",
                 missing.len()
@@ -1131,7 +1131,7 @@ impl Engine {
                     relay_url,
                     &[filter.clone()],
                     FetchTrigger::ProfilePrefetch,
-                    bypass_offline,
+                    mode_confirm,
                 )
                 .await
             {
@@ -1542,7 +1542,7 @@ impl Engine {
         &self,
         filters: &[Value],
         relays: &[String],
-        bypass_offline: bool,
+        mode_confirm: bool,
     ) -> Result<QueryResponse> {
         // Try local first
         let local_events = query::query_local(&self.ndb, filters)?;
@@ -1581,7 +1581,7 @@ impl Engine {
                 relays,
                 filters,
                 FetchTrigger::LocalFirst,
-                bypass_offline,
+                mode_confirm,
             )
             .await?;
         let relay_count = relay_events.len();
@@ -1623,7 +1623,7 @@ impl Engine {
         &self,
         filters: &[Value],
         relays: &[String],
-        bypass_offline: bool,
+        mode_confirm: bool,
     ) -> Result<QueryResponse> {
         // Fetch from relays first (this also ingests into nostrdb)
         let relay_events = self
@@ -1631,7 +1631,7 @@ impl Engine {
                 relays,
                 filters,
                 FetchTrigger::FetchAlways,
-                bypass_offline,
+                mode_confirm,
             )
             .await?;
         let relay_count = relay_events.len();
