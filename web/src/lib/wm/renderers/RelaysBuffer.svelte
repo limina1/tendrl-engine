@@ -1,6 +1,7 @@
 <script lang="ts">
 	import * as api from '$lib/api';
 	import { getRelayInfo, normalizeRelayUrl, type Nip11Status, type Nip11Doc } from '$lib/relay/nip11';
+	import ProfileName from '$lib/components/ProfileName.svelte';
 	import type { Buffer } from '../types';
 
 	let { buffer: _buffer }: { buffer: Buffer } = $props();
@@ -187,7 +188,7 @@
 											{#if doc.software}<dt>software</dt><dd class="mono">{doc.software}</dd>{/if}
 											{#if doc.version}<dt>version</dt><dd class="mono">{doc.version}</dd>{/if}
 											{#if doc.contact}<dt>contact</dt><dd>{doc.contact}</dd>{/if}
-											{#if doc.pubkey}<dt>operator</dt><dd class="mono">{doc.pubkey.slice(0, 16)}…</dd>{/if}
+											{#if doc.pubkey}<dt>operator</dt><dd><ProfileName pubkey={doc.pubkey} /></dd>{/if}
 										</dl>
 									</section>
 								{/if}

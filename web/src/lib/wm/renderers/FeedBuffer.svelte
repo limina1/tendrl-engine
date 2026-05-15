@@ -144,7 +144,7 @@
 						<p class="summary">{pub_item.summary}</p>
 					{/if}
 					<div class="row-foot">
-						<span class="author"><ProfileName pubkey={pub_item.author_pubkey} onviewprofile={(_pk) => {}} /></span>
+						<span class="author"><ProfileName pubkey={pub_item.author_pubkey} onviewprofile={app.handleViewProfile} /></span>
 						<span class="time">{formatTime(pub_item.created_at)}</span>
 					</div>
 					</div>

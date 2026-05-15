@@ -6,6 +6,7 @@
 	import ContinuousView from '$lib/components/ContinuousView.svelte';
 	import PaginatedView from '$lib/components/PaginatedView.svelte';
 	import SectionCard from '$lib/components/SectionCard.svelte';
+	import ProfileName from '$lib/components/ProfileName.svelte';
 	import { getActiveStore, type NavAction } from '../buffer-store.svelte';
 	import type {
 		LazySection,
@@ -1122,7 +1123,7 @@
 				</span>
 				{#if highlightMeta}
 					<span class="hl-banner__meta">
-						by <code>{highlightMeta.author.slice(0, 12)}…</code>
+						by <ProfileName pubkey={highlightMeta.author} onviewprofile={app.handleViewProfile} />
 					</span>
 				{/if}
 			</div>
@@ -1592,11 +1593,6 @@
 	.hl-banner__meta {
 		font-family: var(--font-mono);
 		color: var(--base5);
-	}
-	.hl-banner__meta code {
-		background: var(--bg-surface);
-		padding: 0 4px;
-		border-radius: var(--r-sm);
 	}
 
 	.section-actions {

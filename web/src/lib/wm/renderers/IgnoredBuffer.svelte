@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { getAppState } from '$lib/state.svelte';
+	import ProfileName from '$lib/components/ProfileName.svelte';
 	import type { Buffer } from '../types';
 
 	let { buffer: _buffer }: { buffer: Buffer } = $props();
@@ -24,7 +25,7 @@
 		<div class="ignored-section-title">Authors</div>
 		{#each app.ignoredPubkeys as pk (pk)}
 			<div class="ignored-item">
-				<span class="ignored-id">{pk.slice(0, 16)}…{pk.slice(-8)}</span>
+				<span class="ignored-id"><ProfileName pubkey={pk} onviewprofile={app.handleViewProfile} /></span>
 				<button class="unignore" onclick={() => app.handleUnignore('pubkey', pk)}>Unblock</button>
 			</div>
 		{/each}
