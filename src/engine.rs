@@ -1999,6 +1999,30 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_search_by_id_finds_local_event() {
+        // The `id:` / nevent path end-to-end: ingest an event, then look
+        // it up by its event id against the local DB only.
+        let dir = tempdir().unwrap();
+        let engine = Engine::with_config(dir.path(), &[], 1000).unwrap();
+
+        let event = build_test_event(1, "find me by id", vec![], 1700000001);
+        let id = serde_json::from_str::<Value>(&event).unwrap()["id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        ingest_and_wait(&engine, &[event]).await;
+
+        let query = SearchQuery::parse(&format!("id:{}", id)).unwrap();
+        let response = engine
+            .search(&query, FetchPolicy::LocalOnly, None)
+            .await
+            .unwrap();
+
+        assert_eq!(response.results.len(), 1, "id: should find the event");
+        assert_eq!(response.results[0].event_id, id);
+    }
+
+    #[tokio::test]
     async fn test_search_empty_results() {
         let dir = tempdir().unwrap();
         let engine = Engine::with_config(dir.path(), &[], 1000).unwrap();
