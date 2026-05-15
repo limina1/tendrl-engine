@@ -213,6 +213,8 @@ impl SearchQuery {
         let mut text_filter: Option<TextFilter> = None;
         let mut semantic_filter: Option<SemanticFilter> = None;
         let mut keywords: Vec<String> = Vec::new();
+        let mut since: Option<u64> = None;
+        let mut until: Option<u64> = None;
 
         for token in tokens {
             match classify_token(&token) {
@@ -245,6 +247,12 @@ impl SearchQuery {
                 TokenClass::Semantic(sf) => {
                     semantic_filter = Some(sf);
                 }
+                TokenClass::Since(ts) => {
+                    since = Some(ts);
+                }
+                TokenClass::Until(ts) => {
+                    until = Some(ts);
+                }
                 TokenClass::Exact(phrase) => {
                     text_filter = Some(TextFilter::Exact(phrase));
                 }
@@ -273,8 +281,8 @@ impl SearchQuery {
             text_filter,
             semantic_filter,
             limit: None,
-            since: None,
-            until: None,
+            since,
+            until,
         })
     }
 
@@ -418,6 +426,10 @@ enum TokenClass {
     Kind(u64),
     Author(AuthorFilter),
     Semantic(SemanticFilter),
+    /// `since:<unix>` — lower time bound (NIP-01 `since`).
+    Since(u64),
+    /// `until:<unix>` — upper time bound (NIP-01 `until`).
+    Until(u64),
     Exact(String),
     Keyword(String),
     InvalidKind(String),
@@ -564,6 +576,20 @@ fn classify_token(token: &Token) -> TokenClass {
         match rest.parse::<u64>() {
             Ok(k) => return TokenClass::Kind(k),
             Err(_) => return TokenClass::InvalidKind(rest.to_string()),
+        }
+    }
+
+    // since:/until: prefix → NIP-01 time bounds. Must precede the generic
+    // `NAME:value` tag dispatch so they aren't misread as tag filters. A
+    // non-numeric value falls through (treated as an ordinary tag).
+    if let Some(rest) = text.strip_prefix("since:") {
+        if let Ok(ts) = rest.parse::<u64>() {
+            return TokenClass::Since(ts);
+        }
+    }
+    if let Some(rest) = text.strip_prefix("until:") {
+        if let Ok(ts) = rest.parse::<u64>() {
+            return TokenClass::Until(ts);
         }
     }
 
