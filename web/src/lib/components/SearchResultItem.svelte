@@ -1,6 +1,7 @@
 <script lang="ts">
 	import type { SearchResult, ContextItem } from '$lib/types';
 	import ProfileName from './ProfileName.svelte';
+	import ProfileResultItem from './ProfileResultItem.svelte';
 
 	let {
 		result,
@@ -90,6 +91,11 @@
 	);
 </script>
 
+{#if result.kind === 0}
+	<!-- A kind-0 hit is an author match — render the profile, not a
+	     generic document row. -->
+	<ProfileResultItem {result} {checked} {ontogglecheck} {onviewprofile} {onignorepubkey} {localPubkeys} />
+{:else}
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div class="result-item" class:kind-index={result.kind === 30040} class:kind-section={result.kind === 30041}>
 	<div class="result-header">
@@ -158,6 +164,7 @@
 		</div>
 	</div>
 </div>
+{/if}
 
 <style>
 	.result-item {

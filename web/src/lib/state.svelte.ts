@@ -35,6 +35,26 @@ import type {
 import type { Buffer } from '$lib/wm/types';
 import * as api from '$lib/api';
 
+/** Replaceable kind-0 events can pile up multiple historical versions in
+ *  the DB / relay results. A search should surface only the *current*
+ *  profile, so collapse kind-0 hits to the newest per author. Non-kind-0
+ *  results pass through untouched, order preserved. */
+function dedupeLatestProfiles(results: SearchResult[]): SearchResult[] {
+	const latest = new Map<string, number>();
+	for (const r of results) {
+		if (r.kind !== 0) continue;
+		const seen = latest.get(r.author);
+		if (seen == null || r.created_at > seen) latest.set(r.author, r.created_at);
+	}
+	const kept = new Set<string>();
+	return results.filter((r) => {
+		if (r.kind !== 0) return true;
+		if (r.created_at !== latest.get(r.author) || kept.has(r.author)) return false;
+		kept.add(r.author);
+		return true;
+	});
+}
+
 /**
  * One node in the app-level search-history stack. Three shapes:
  * - `query`  — string + opts. Replay calls `handleSearch(query, opts)`.
@@ -1068,8 +1088,8 @@ function _createAppState() {
 				searchConfig.limit,
 				myPubkey ?? undefined
 			);
-			searchResults = resp.results;
-			searchCount = resp.count;
+			searchResults = dedupeLatestProfiles(resp.results);
+			searchCount = searchResults.length;
 			searchLocalCount = resp.local_count;
 			searchRelayCount = resp.relay_count;
 			searchTagCounts = resp.tag_counts ?? {};
@@ -1249,8 +1269,8 @@ function _createAppState() {
 				'fetch_always',
 				{ relays: chosenRelays, bypassOffline: true }
 			);
-			searchResults = resp.results;
-			searchCount = resp.count;
+			searchResults = dedupeLatestProfiles(resp.results);
+			searchCount = searchResults.length;
 			searchLocalCount = resp.local_count;
 			searchRelayCount = resp.relay_count;
 			searchTagCounts = resp.tag_counts ?? {};
