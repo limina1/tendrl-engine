@@ -274,7 +274,7 @@ export function search(
 ) {
 	const body: Record<string, unknown> = { query, limit, my_pubkey, policy };
 	if (options.relays && options.relays.length > 0) body.relays = options.relays;
-	if (options.bypassOffline) body.bypass_offline = true;
+	if (options.bypassOffline) body.mode_confirm = true;
 	return fetchJson<SearchResponse>('/api/v1/search', {
 		method: 'POST',
 		body: JSON.stringify(body)
@@ -377,24 +377,26 @@ export function parseDocument(filename: string) {
 
 // Fetch API
 
+/** Fetch from one or more relays. The engine treats the whole relay
+ *  set as a single confirm operation. */
 export function fetchFromRelay(
-	relay: string,
+	relays: string[],
 	kinds: number[],
 	authors: string[] = [],
 	limit = 200,
-	options: { bypassOffline?: boolean; search?: string } = {}
+	options: { modeConfirm?: boolean; search?: string } = {}
 ) {
 	const body: Record<string, unknown> = {
-		relay,
+		relays,
 		kinds,
 		authors,
 		limit,
-		bypass_offline: options.bypassOffline ?? false
+		mode_confirm: options.modeConfirm ?? false
 	};
 	// NIP-50: include `search` only when set so relays that don't
 	// implement the spec aren't confused by an empty-string filter.
 	if (options.search && options.search.length > 0) body.search = options.search;
-	return fetchJson<{ fetched: number; relay: string; kinds: number[] }>('/api/v1/fetch', {
+	return fetchJson<{ fetched: number; relays: string[]; kinds: number[] }>('/api/v1/fetch', {
 		method: 'POST',
 		body: JSON.stringify(body)
 	});
@@ -757,7 +759,7 @@ export function getDiscussionCounts(
 		body: JSON.stringify({
 			addresses,
 			policy,
-			bypass_offline: options.bypassOffline ?? false
+			mode_confirm: options.bypassOffline ?? false
 		})
 	});
 }
@@ -803,7 +805,7 @@ export function getDiscussionList(
 	if (options.policy) params.set('policy', options.policy);
 	if (options.limit !== undefined) params.set('limit', String(options.limit));
 	if (options.since !== undefined) params.set('since', String(options.since));
-	if (options.bypassOffline) params.set('bypass_offline', 'true');
+	if (options.bypassOffline) params.set('mode_confirm', 'true');
 	if (options.relays?.length) params.set('relays', options.relays.join(','));
 	const qs = params.toString();
 	return fetchJson<DiscussionsListResponse>(

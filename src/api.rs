@@ -1126,10 +1126,15 @@ pub async fn fetch_profiles_handler(
 // Relay Config API Endpoints
 // ============================================================================
 
-/// Request to fetch from a specific relay
+/// Request to fetch from one or more relays in a single operation.
 #[derive(Debug, Deserialize)]
 pub struct FetchRelayRequest {
+    /// Single relay (legacy single-target form). Prefer `relays`.
+    #[serde(default)]
     pub relay: String,
+    /// Relay set — fetched together under one confirm operation.
+    #[serde(default)]
+    pub relays: Vec<String>,
     #[serde(default)]
     pub kinds: Vec<u64>,
     /// Pubkeys to fetch from (hex). Empty = no author filter.
@@ -1137,10 +1142,9 @@ pub struct FetchRelayRequest {
     pub authors: Vec<String>,
     #[serde(default = "default_fetch_limit")]
     pub limit: usize,
-    /// Set true for explicit user-initiated fetches that should reach
-    /// the network even when global network mode is offline (e.g. the
-    /// profile-page "Choose relays and fetch" modal). Background
-    /// pollers must NOT set this — offline mode silences them by design.
+    /// Set true for explicit user-initiated fetches. In Confirm mode the
+    /// engine gates the operation behind the confirm modal; background
+    /// pollers must NOT set this.
     #[serde(default)]
     pub mode_confirm: bool,
     /// NIP-50 search string. When present, the REQ filter sent to the
@@ -1155,14 +1159,23 @@ fn default_fetch_limit() -> usize {
     200
 }
 
-/// POST /api/v1/fetch — fetch events from a specific relay
+/// POST /api/v1/fetch — fetch events from one or more relays
 pub async fn fetch_relay_handler(
     State(engine): State<AppState>,
     Json(req): Json<FetchRelayRequest>,
 ) -> Result<Json<Value>, EngineError> {
+    // Relay set: `relays` wins; fall back to the legacy single `relay`.
+    let targets: Vec<String> = if !req.relays.is_empty() {
+        req.relays.clone()
+    } else if !req.relay.is_empty() {
+        vec![req.relay.clone()]
+    } else {
+        return Err(EngineError::InvalidFilter("no relay specified".into()));
+    };
+
     debug!(
-        "Fetch from relay: {} kinds={:?} authors={} limit={} mode_confirm={}",
-        req.relay,
+        "Fetch from {} relay(s) kinds={:?} authors={} limit={} mode_confirm={}",
+        targets.len(),
         req.kinds,
         req.authors.len(),
         req.limit,
@@ -1178,14 +1191,11 @@ pub async fn fetch_relay_handler(
     }
     if let Some(s) = req.search.as_deref() {
         if !s.is_empty() {
-            // NIP-50: free-text matching at the relay. Relays without
-            // NIP-50 support ignore the field, so it's safe to include
-            // unconditionally when the caller asks for it.
             filter["search"] = json!(s);
         }
     }
 
-    // A targeted relay fetch is a user-initiated operation — gate it.
+    // One confirm operation covers the whole relay set — gate once.
     let op = if req.mode_confirm {
         let mut steps = Vec::new();
         if !req.kinds.is_empty() {
@@ -1201,9 +1211,9 @@ pub async fn fetch_relay_handler(
         match engine
             .begin_fetch_operation(
                 crate::network::FetchPattern::Custom,
-                format!("Fetch from {}", req.relay),
+                format!("Fetch from {} relay(s)", targets.len()),
                 steps,
-                vec![req.relay.clone()],
+                targets.clone(),
             )
             .await
         {
@@ -1211,7 +1221,7 @@ pub async fn fetch_relay_handler(
             Err(_) => {
                 return Ok(Json(json!({
                     "fetched": 0,
-                    "relay": req.relay,
+                    "relays": targets,
                     "kinds": req.kinds
                 })));
             }
@@ -1220,17 +1230,27 @@ pub async fn fetch_relay_handler(
         None
     };
 
-    let events = engine
-        .tracked_fetch_with_options(
-            &req.relay,
-            &[filter],
-            FetchTrigger::UserAction,
-            req.mode_confirm,
-        )
-        .await?;
+    let fetch_relays: Vec<String> = match &op {
+        Some(o) => o.relays().to_vec(),
+        None => targets,
+    };
 
-    let count = events.len();
-    debug!("Fetched {} events from {}", count, req.relay);
+    let mut count = 0usize;
+    for relay_url in &fetch_relays {
+        match engine
+            .tracked_fetch_with_options(
+                relay_url,
+                std::slice::from_ref(&filter),
+                FetchTrigger::UserAction,
+                req.mode_confirm,
+            )
+            .await
+        {
+            Ok(events) => count += events.len(),
+            Err(e) => debug!("Fetch from {} failed: {}", relay_url, e),
+        }
+    }
+    debug!("Fetched {} events from {} relay(s)", count, fetch_relays.len());
     if let Some(op) = op {
         op.complete(count);
     }
@@ -1247,7 +1267,7 @@ pub async fn fetch_relay_handler(
 
     Ok(Json(json!({
         "fetched": count,
-        "relay": req.relay,
+        "relays": fetch_relays,
         "kinds": req.kinds
     })))
 }
