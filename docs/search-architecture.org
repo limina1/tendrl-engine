@@ -537,7 +537,13 @@ Tracked on the =search= branch. Tick when shipped; leave the box.
   =searchProfiles= state.
 - [ ] *Phase 2* — NIP-50 search-relay set in =config.rs=; wire NIP-50
   profile + content subscriptions into =search_with_options=.
-- [ ] *Phase 3* — NIP-05 / NIP-19 direct-resolution short-circuit.
+- [-] *Phase 3* — direct resolution.
+  - [X] NIP-19 entities — =note= / =nevent= / =naddr= / =npub= /
+    =nprofile=, bare or =nostr:=-prefixed — and an =id:<hex>= operator
+    resolve in the query parser to a precise filter. =nip19::decode=
+    gained the =note= HRP.
+  - [ ] NIP-05 =name@domain= =.well-known= resolution; bare-hex short-
+    circuit straight to a profile view.
 - [ ] *Phase 4* — =scope= toggle (all / people / content); hashtag and
   relay-URL suggestions.
 
