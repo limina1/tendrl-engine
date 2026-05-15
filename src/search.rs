@@ -116,6 +116,41 @@ pub struct SearchResult {
     pub semantic_score: Option<f64>,
 }
 
+/// Where a result was found — the local nostrdb cache, or a relay
+/// round-trip. Profile search reports this per hit so the UI can show
+/// provenance (mirrors Amethyst's Local/Relay source split).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ResultSource {
+    Local,
+    /// Constructed by the NIP-50 relay search path (a later phase).
+    #[allow(dead_code)]
+    Relay,
+}
+
+/// A profile (kind-0) hit — an *author match*. Search fans out into two
+/// categories: content (`SearchResult`) and people (`ProfileResult`),
+/// surfaced as separate lists rather than one ranked feed. See
+/// `docs/search-architecture.org` §13.
+#[derive(Debug, Clone, Serialize)]
+pub struct ProfileResult {
+    pub pubkey: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub nip05: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub picture: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub about: Option<String>,
+    /// Match strength — 0 strongest (name prefix), higher = weaker.
+    /// The category's sort key.
+    pub score: u8,
+    pub source: ResultSource,
+}
+
 /// A document page result from semantic search
 #[derive(Debug, Clone, Serialize)]
 pub struct DocPageResult {
@@ -141,6 +176,11 @@ pub struct TagValueCount {
 #[derive(Debug, Clone, Serialize)]
 pub struct SearchResponse {
     pub results: Vec<SearchResult>,
+    /// Profile (kind-0) hits — an author match, a category distinct from
+    /// the content `results`. Empty unless the query had a free-text
+    /// term to match names against.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub profiles: Vec<ProfileResult>,
     pub count: usize,
     pub local_count: usize,
     pub relay_count: usize,
@@ -356,10 +396,7 @@ pub fn build_search_results(events: &[Value], limit: usize) -> Vec<SearchResult>
             let author = event.get("pubkey")?.as_str()?.to_string();
             let kind = event.get("kind")?.as_u64()?;
             let created_at = event.get("created_at")?.as_u64()?;
-            let content = event
-                .get("content")
-                .and_then(|c| c.as_str())
-                .unwrap_or("");
+            let content = event.get("content").and_then(|c| c.as_str()).unwrap_or("");
 
             let tags: Vec<Vec<String>> = event
                 .get("tags")
@@ -928,7 +965,9 @@ mod tests {
         assert!(q.tag_filters.is_empty());
         assert_eq!(
             q.text_filter,
-            Some(TextFilter::Keywords(vec!["https://example.com".to_string()]))
+            Some(TextFilter::Keywords(
+                vec!["https://example.com".to_string()]
+            ))
         );
     }
 
@@ -1102,11 +1141,29 @@ mod tests {
             hex
         ))
         .unwrap();
-        assert_eq!(q.author_filter, Some(AuthorFilter::Pubkeys(vec![hex.to_string()])));
+        assert_eq!(
+            q.author_filter,
+            Some(AuthorFilter::Pubkeys(vec![hex.to_string()]))
+        );
         assert_eq!(q.kind_filter, Some(vec![30041]));
-        assert_eq!(q.tag_filters, vec![TagFilter { tag_name: "t".to_string(), values: vec!["nostr".to_string()] }]);
-        assert_eq!(q.semantic_filter, Some(SemanticFilter { query: "distributed systems".to_string(), k: 5 }));
-        assert_eq!(q.text_filter, Some(TextFilter::Keywords(vec!["protocol".to_string()])));
+        assert_eq!(
+            q.tag_filters,
+            vec![TagFilter {
+                tag_name: "t".to_string(),
+                values: vec!["nostr".to_string()]
+            }]
+        );
+        assert_eq!(
+            q.semantic_filter,
+            Some(SemanticFilter {
+                query: "distributed systems".to_string(),
+                k: 5
+            })
+        );
+        assert_eq!(
+            q.text_filter,
+            Some(TextFilter::Keywords(vec!["protocol".to_string()]))
+        );
     }
 
     #[test]
@@ -1126,8 +1183,17 @@ mod tests {
     #[test]
     fn test_parse_semantic_combined_with_exact_text() {
         let q = SearchQuery::parse(r#"~:concept "exact phrase""#).unwrap();
-        assert_eq!(q.semantic_filter, Some(SemanticFilter { query: "concept".to_string(), k: 10 }));
-        assert_eq!(q.text_filter, Some(TextFilter::Exact("exact phrase".to_string())));
+        assert_eq!(
+            q.semantic_filter,
+            Some(SemanticFilter {
+                query: "concept".to_string(),
+                k: 10
+            })
+        );
+        assert_eq!(
+            q.text_filter,
+            Some(TextFilter::Exact("exact phrase".to_string()))
+        );
     }
 
     // --- Tokenizer edge cases ---
@@ -1166,17 +1232,29 @@ mod tests {
         let cq = SearchQuery::parse_compound("k:30041 python | k:30040 by:me").unwrap();
         assert_eq!(cq.branches.len(), 2);
         assert_eq!(cq.branches[0].kind_filter, Some(vec![30041]));
-        assert_eq!(cq.branches[0].text_filter, Some(TextFilter::Keywords(vec!["python".to_string()])));
+        assert_eq!(
+            cq.branches[0].text_filter,
+            Some(TextFilter::Keywords(vec!["python".to_string()]))
+        );
         assert_eq!(cq.branches[1].kind_filter, Some(vec![30040]));
-        assert_eq!(cq.branches[1].author_filter, Some(AuthorFilter::CurrentUser));
+        assert_eq!(
+            cq.branches[1].author_filter,
+            Some(AuthorFilter::CurrentUser)
+        );
     }
 
     #[test]
     fn test_parse_compound_three_branches() {
         let cq = SearchQuery::parse_compound("t:rust | t:python | t:go").unwrap();
         assert_eq!(cq.branches.len(), 3);
-        assert_eq!(cq.branches[0].tag_filters[0].values, vec!["rust".to_string()]);
-        assert_eq!(cq.branches[1].tag_filters[0].values, vec!["python".to_string()]);
+        assert_eq!(
+            cq.branches[0].tag_filters[0].values,
+            vec!["rust".to_string()]
+        );
+        assert_eq!(
+            cq.branches[1].tag_filters[0].values,
+            vec!["python".to_string()]
+        );
         assert_eq!(cq.branches[2].tag_filters[0].values, vec!["go".to_string()]);
     }
 

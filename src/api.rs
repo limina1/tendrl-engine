@@ -83,7 +83,10 @@ pub async fn get_event_handler(
 
     match event {
         Some(e) => Ok((StatusCode::OK, Json(json!({ "event": e })))),
-        None => Ok((StatusCode::NOT_FOUND, Json(json!({ "event": null, "message": "Event not found" })))),
+        None => Ok((
+            StatusCode::NOT_FOUND,
+            Json(json!({ "event": null, "message": "Event not found" })),
+        )),
     }
 }
 
@@ -172,7 +175,7 @@ pub async fn decode_handler(
 // Search API Endpoint
 // ============================================================================
 
-use crate::search::{AuthorFilter, SearchQuery, SearchResponse};
+use crate::search::{AuthorFilter, ProfileResult, SearchQuery, SearchResponse, TextFilter};
 
 /// Search request body
 #[derive(Debug, Deserialize)]
@@ -217,12 +220,19 @@ pub async fn search_handler(
         let mut seen_ids = std::collections::HashSet::new();
         let mut total_local = 0;
         let mut total_relay = 0;
+        let mut profile_terms: Vec<String> = Vec::new();
 
         for mut branch in compound.branches {
             if let Some(limit) = req.limit {
                 branch.limit = Some(limit);
             }
             resolve_author(&mut branch, &req, &engine)?;
+
+            if let Some(term) = query_free_text(&branch) {
+                if !profile_terms.contains(&term) {
+                    profile_terms.push(term);
+                }
+            }
 
             let resp = engine
                 .search_with_options(&branch, policy, req.relays.as_deref(), req.bypass_offline)
@@ -238,9 +248,12 @@ pub async fn search_handler(
             }
         }
 
+        let profiles = merge_profile_search(&engine, &profile_terms).await;
+
         let count = all_results.len();
         return Ok(Json(SearchResponse {
             results: all_results,
+            profiles,
             count,
             local_count: total_local,
             relay_count: total_relay,
@@ -250,8 +263,8 @@ pub async fn search_handler(
     }
 
     // Single query path
-    let mut query = SearchQuery::parse(&req.query)
-        .map_err(|e| EngineError::InvalidFilter(e.to_string()))?;
+    let mut query =
+        SearchQuery::parse(&req.query).map_err(|e| EngineError::InvalidFilter(e.to_string()))?;
 
     if let Some(limit) = req.limit {
         query.limit = Some(limit);
@@ -259,11 +272,51 @@ pub async fn search_handler(
 
     resolve_author(&mut query, &req, &engine)?;
 
-    let response = engine
+    let mut response = engine
         .search_with_options(&query, policy, req.relays.as_deref(), req.bypass_offline)
         .await?;
 
+    // Fan out to the people category: any free-text term also scans
+    // local profiles, surfaced alongside content in `response.profiles`.
+    if let Some(term) = query_free_text(&query) {
+        response.profiles = engine.search_profiles(&term).await;
+    }
+
     Ok(Json(response))
+}
+
+/// The free-text component of a query — the keywords or exact phrase
+/// profile search matches author names against. `None` for an
+/// operator-only or semantic query (semantic fan-out stays
+/// content-only — see `docs/search-architecture.org` §20).
+fn query_free_text(q: &SearchQuery) -> Option<String> {
+    if q.semantic_filter.is_some() {
+        return None;
+    }
+    let term = match &q.text_filter {
+        Some(TextFilter::Keywords(words)) => words.join(" "),
+        Some(TextFilter::Exact(phrase)) => phrase.clone(),
+        None => return None,
+    };
+    let term = term.trim();
+    (!term.is_empty()).then(|| term.to_string())
+}
+
+/// Run profile search for each distinct term and merge the hits into one
+/// list, de-duplicated by pubkey, sorted by match score. Used by the
+/// compound (`|`) query path, where each OR-branch contributes a term.
+async fn merge_profile_search(engine: &AppState, terms: &[String]) -> Vec<ProfileResult> {
+    let mut merged: Vec<ProfileResult> = Vec::new();
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for term in terms {
+        for p in engine.search_profiles(term).await {
+            if seen.insert(p.pubkey.clone()) {
+                merged.push(p);
+            }
+        }
+    }
+    merged.sort_by(|a, b| a.score.cmp(&b.score));
+    merged
 }
 
 /// Resolve by:me / by:assistant in a query to actual pubkey
@@ -310,60 +363,17 @@ fn resolve_author(
     Ok(())
 }
 
-/// Scan local kind 0 events and return pubkeys whose display_name /
-/// name contains the partial (case-insensitive, substring). Used to
-/// resolve `by:name:<partial>` into a concrete pubkey list before the
-/// rest of the search pipeline runs. Cached scan limit is generous;
-/// most users won't have more than a few hundred profiles cached.
+/// Resolve `by:name:<partial>` into a concrete pubkey list.
+///
+/// A thin wrapper over `query::find_profiles_matching` — the same local
+/// kind-0 scan that powers profile search — mapped down to pubkeys.
+/// Matching the partial therefore also reaches nip05 / lud16 / website,
+/// not just name / display_name.
 fn resolve_pubkeys_by_name(ndb: &nostrdb::Ndb, partial: &str) -> Vec<String> {
-    let needle = partial.trim().to_lowercase();
-    if needle.is_empty() {
-        return Vec::new();
-    }
-
-    let _guard = crate::query::ndb_query_lock();
-    let txn = match nostrdb::Transaction::new(ndb) {
-        Ok(t) => t,
-        Err(_) => return Vec::new(),
-    };
-    let filter = nostrdb::FilterBuilder::new().kinds([0]).limit(2000).build();
-    let results = match ndb.query(&txn, &[filter], 2000) {
-        Ok(r) => r,
-        Err(_) => return Vec::new(),
-    };
-
-    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
-    let mut out: Vec<String> = Vec::new();
-    for qr in results {
-        let Ok(note) = ndb.get_note_by_key(&txn, qr.note_key) else {
-            continue;
-        };
-        let Ok(event) = crate::query::note_to_json_pub(&note) else {
-            continue;
-        };
-        let pubkey = event.get("pubkey").and_then(|v| v.as_str()).unwrap_or("");
-        if pubkey.len() != 64 || !seen.insert(pubkey.to_string()) {
-            continue;
-        }
-        let content = event.get("content").and_then(|v| v.as_str()).unwrap_or("");
-        if content.is_empty() {
-            continue;
-        }
-        let Ok(profile) = serde_json::from_str::<Value>(content) else {
-            continue;
-        };
-        let display_name = profile
-            .get("display_name")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
-        let name = profile.get("name").and_then(|v| v.as_str()).unwrap_or("");
-        let display_lc = display_name.to_lowercase();
-        let name_lc = name.to_lowercase();
-        if display_lc.contains(&needle) || name_lc.contains(&needle) {
-            out.push(pubkey.to_string());
-        }
-    }
-    out
+    crate::query::find_profiles_matching(ndb, partial)
+        .into_iter()
+        .map(|p| p.pubkey)
+        .collect()
 }
 
 // ============================================================================
@@ -400,10 +410,15 @@ pub async fn list_publications_handler(
         None => FetchPolicy::default(),
     };
 
-    debug!("List publications request: limit={}, policy={:?}, before={:?}", query.limit, policy, query.before);
+    debug!(
+        "List publications request: limit={}, policy={:?}, before={:?}",
+        query.limit, policy, query.before
+    );
 
     let pub_engine = PublicationEngine::new(&engine);
-    let publications = pub_engine.list_root_publications(policy, query.limit, query.before).await?;
+    let publications = pub_engine
+        .list_root_publications(policy, query.limit, query.before)
+        .await?;
 
     // Convert to summary format
     let summaries: Vec<Value> = publications
@@ -454,7 +469,10 @@ pub async fn get_publication_handler(
         None => FetchPolicy::default(),
     };
 
-    debug!("Get publication request: {}:{} policy={:?}", params.pubkey, params.d_tag, policy);
+    debug!(
+        "Get publication request: {}:{} policy={:?}",
+        params.pubkey, params.d_tag, policy
+    );
 
     // Validate hex pubkey format
     if params.pubkey.len() != 64 || hex::decode(&params.pubkey).is_err() {
@@ -506,8 +524,12 @@ pub async fn load_sections_handler(
     let addr = NAddr::new(KIND_PUBLICATION_INDEX, &params.pubkey, &params.d_tag);
     let pub_engine = PublicationEngine::new(&engine);
 
-    let mut publication = pub_engine.load_publication(&addr, FetchPolicy::LocalFirst).await?;
-    let loaded_count = pub_engine.load_sections(&mut publication, FetchPolicy::LocalFirst).await?;
+    let mut publication = pub_engine
+        .load_publication(&addr, FetchPolicy::LocalFirst)
+        .await?;
+    let loaded_count = pub_engine
+        .load_sections(&mut publication, FetchPolicy::LocalFirst)
+        .await?;
 
     // Build response with section content
     let sections: Vec<Value> = publication
@@ -571,9 +593,10 @@ pub async fn get_section_handler(
         .load_section(&mut publication, params.index, policy)
         .await?;
 
-    let section = publication.sections.get(params.index).ok_or_else(|| {
-        EngineError::InvalidFilter("Section index out of bounds".into())
-    })?;
+    let section = publication
+        .sections
+        .get(params.index)
+        .ok_or_else(|| EngineError::InvalidFilter("Section index out of bounds".into()))?;
 
     Ok(Json(json!({
         "section": {
@@ -612,7 +635,11 @@ pub async fn get_section_versions_handler(
         ));
     }
 
-    let addr = NAddr::new(crate::publication::KIND_PUBLICATION_SECTION, &params.pubkey, &params.d_tag);
+    let addr = NAddr::new(
+        crate::publication::KIND_PUBLICATION_SECTION,
+        &params.pubkey,
+        &params.d_tag,
+    );
     let pub_engine = PublicationEngine::new(&engine);
 
     let versions = pub_engine
@@ -667,10 +694,10 @@ pub async fn load_sections_metadata_handler(
     let addr = NAddr::new(KIND_PUBLICATION_INDEX, &params.pubkey, &params.d_tag);
     let pub_engine = PublicationEngine::new(&engine);
 
-    let mut publication = pub_engine.load_publication(&addr, FetchPolicy::LocalOnly).await?;
-    pub_engine
-        .load_sections(&mut publication, policy)
+    let mut publication = pub_engine
+        .load_publication(&addr, FetchPolicy::LocalOnly)
         .await?;
+    pub_engine.load_sections(&mut publication, policy).await?;
 
     let sections_meta: Vec<Value> = publication
         .sections
@@ -707,13 +734,29 @@ pub async fn list_documents_handler(
     if let Ok(entries) = std::fs::read_dir(&docs_dir) {
         for entry in entries.flatten() {
             let path = entry.path();
-            if !path.is_file() { continue; }
-            let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("").to_string();
-            let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase();
-            let supported = ["pdf", "docx", "epub", "html", "htm", "txt", "md", "org", "adoc", "asciidoc", "rst"];
-            if !supported.contains(&ext.as_str()) { continue; }
+            if !path.is_file() {
+                continue;
+            }
+            let name = path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("")
+                .to_string();
+            let ext = path
+                .extension()
+                .and_then(|e| e.to_str())
+                .unwrap_or("")
+                .to_lowercase();
+            let supported = [
+                "pdf", "docx", "epub", "html", "htm", "txt", "md", "org", "adoc", "asciidoc", "rst",
+            ];
+            if !supported.contains(&ext.as_str()) {
+                continue;
+            }
             let size = entry.metadata().map(|m| m.len()).unwrap_or(0);
-            let modified = entry.metadata().ok()
+            let modified = entry
+                .metadata()
+                .ok()
                 .and_then(|m| m.modified().ok())
                 .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
                 .map(|d| d.as_secs())
@@ -728,7 +771,8 @@ pub async fn list_documents_handler(
     }
 
     files.sort_by(|a, b| {
-        b.get("modified").and_then(|v| v.as_u64())
+        b.get("modified")
+            .and_then(|v| v.as_u64())
             .cmp(&a.get("modified").and_then(|v| v.as_u64()))
     });
 
@@ -751,7 +795,10 @@ pub async fn parse_document_handler(
 ) -> Result<Json<Value>, EngineError> {
     let file_path = engine.documents_path().join(&req.filename);
     if !file_path.exists() {
-        return Err(EngineError::InvalidFilter(format!("File not found: {}", req.filename)));
+        return Err(EngineError::InvalidFilter(format!(
+            "File not found: {}",
+            req.filename
+        )));
     }
 
     let file_bytes = std::fs::read(&file_path)
@@ -793,12 +840,16 @@ pub async fn import_document_handler(
     let mut filename = String::new();
     let mut file_bytes = Vec::new();
 
-    while let Some(field) = multipart.next_field().await
+    while let Some(field) = multipart
+        .next_field()
+        .await
         .map_err(|e| EngineError::Database(format!("Multipart error: {e}")))?
     {
         if field.name() == Some("file") {
             filename = field.file_name().unwrap_or("upload").to_string();
-            file_bytes = field.bytes().await
+            file_bytes = field
+                .bytes()
+                .await
                 .map_err(|e| EngineError::Database(format!("Read error: {e}")))?
                 .to_vec();
         }
@@ -850,7 +901,10 @@ pub async fn import_document_handler(
 // ============================================================================
 
 fn profile_from_event(pubkey: &str, event: &Value) -> Value {
-    let content = event.get("content").and_then(|v| v.as_str()).unwrap_or("{}");
+    let content = event
+        .get("content")
+        .and_then(|v| v.as_str())
+        .unwrap_or("{}");
     let profile: Value = serde_json::from_str(content).unwrap_or(json!({}));
     json!({
         "pubkey": pubkey,
@@ -936,7 +990,10 @@ pub async fn fetch_profiles_handler(
     // Batch fetch: one request per relay with ALL missing pubkeys
     let filter = json!({"kinds": [0], "authors": targets, "limit": targets.len()});
     for relay_url in relays {
-        match engine.tracked_fetch(relay_url, &[filter.clone()], FetchTrigger::ProfilePrefetch).await {
+        match engine
+            .tracked_fetch(relay_url, &[filter.clone()], FetchTrigger::ProfilePrefetch)
+            .await
+        {
             Ok(events) => {
                 fetched += events.len();
             }
@@ -986,14 +1043,23 @@ pub struct FetchRelayRequest {
     pub search: Option<String>,
 }
 
-fn default_fetch_limit() -> usize { 200 }
+fn default_fetch_limit() -> usize {
+    200
+}
 
 /// POST /api/v1/fetch — fetch events from a specific relay
 pub async fn fetch_relay_handler(
     State(engine): State<AppState>,
     Json(req): Json<FetchRelayRequest>,
 ) -> Result<Json<Value>, EngineError> {
-    debug!("Fetch from relay: {} kinds={:?} authors={} limit={} bypass_offline={}", req.relay, req.kinds, req.authors.len(), req.limit, req.bypass_offline);
+    debug!(
+        "Fetch from relay: {} kinds={:?} authors={} limit={} bypass_offline={}",
+        req.relay,
+        req.kinds,
+        req.authors.len(),
+        req.limit,
+        req.bypass_offline
+    );
 
     let mut filter = json!({"limit": req.limit});
     if !req.kinds.is_empty() {
@@ -1011,13 +1077,14 @@ pub async fn fetch_relay_handler(
         }
     }
 
-    let events = engine.tracked_fetch_with_options(
-        &req.relay,
-        &[filter],
-        FetchTrigger::UserAction,
-        req.bypass_offline,
-    )
-    .await?;
+    let events = engine
+        .tracked_fetch_with_options(
+            &req.relay,
+            &[filter],
+            FetchTrigger::UserAction,
+            req.bypass_offline,
+        )
+        .await?;
 
     let count = events.len();
     debug!("Fetched {} events from {}", count, req.relay);
@@ -1062,9 +1129,16 @@ pub async fn fetch_authors_handler(
             filter["kinds"] = json!(kinds);
         }
 
-        match engine.tracked_fetch(relay_url, &[filter], FetchTrigger::UserAction).await {
+        match engine
+            .tracked_fetch(relay_url, &[filter], FetchTrigger::UserAction)
+            .await
+        {
             Ok(events) => {
-                debug!("Fetched {} events for authors from {}", events.len(), relay_url);
+                debug!(
+                    "Fetched {} events for authors from {}",
+                    events.len(),
+                    relay_url
+                );
                 total_fetched += events.len();
             }
             Err(e) => {
@@ -1118,9 +1192,7 @@ pub async fn fetch_sections_handler(
 // ============================================================================
 
 /// GET /api/v1/network/status — current mode, active fetches, recent activity
-pub async fn network_status_handler(
-    State(engine): State<AppState>,
-) -> Json<Value> {
+pub async fn network_status_handler(State(engine): State<AppState>) -> Json<Value> {
     let status = engine.network().status();
     Json(serde_json::to_value(status).unwrap_or_default())
 }
@@ -1135,9 +1207,10 @@ pub async fn set_network_mode_handler(
     State(engine): State<AppState>,
     Json(req): Json<SetNetworkModeRequest>,
 ) -> Result<Json<Value>, EngineError> {
-    let mode: NetworkMode = req.mode.parse().map_err(|e: String| {
-        EngineError::InvalidFilter(e)
-    })?;
+    let mode: NetworkMode = req
+        .mode
+        .parse()
+        .map_err(|e: String| EngineError::InvalidFilter(e))?;
 
     engine.set_network_mode(mode);
 
@@ -1148,7 +1221,8 @@ pub async fn set_network_mode_handler(
         tokio::task::spawn_blocking(move || {
             if let Ok(content) = std::fs::read_to_string(&config_path) {
                 if let Ok(mut doc) = content.parse::<toml::Table>() {
-                    let network = doc.entry("network")
+                    let network = doc
+                        .entry("network")
                         .or_insert_with(|| toml::Value::Table(toml::Table::new()));
                     if let toml::Value::Table(table) = network {
                         table.insert("mode".into(), toml::Value::String(mode_str));
@@ -1205,7 +1279,9 @@ pub async fn config_update_handler(
 
     // Add relay
     if let Some(add) = &req.add_relay {
-        let relay = doc.entry("relay").or_insert_with(|| toml::Value::Table(toml::Table::new()));
+        let relay = doc
+            .entry("relay")
+            .or_insert_with(|| toml::Value::Table(toml::Table::new()));
         if let toml::Value::Table(relay_table) = relay {
             let set = relay_table.entry(&add.set).or_insert_with(|| {
                 let mut t = toml::Table::new();
@@ -1213,7 +1289,9 @@ pub async fn config_update_handler(
                 toml::Value::Table(t)
             });
             if let toml::Value::Table(set_table) = set {
-                let urls = set_table.entry("urls").or_insert_with(|| toml::Value::Array(Vec::new()));
+                let urls = set_table
+                    .entry("urls")
+                    .or_insert_with(|| toml::Value::Array(Vec::new()));
                 if let toml::Value::Array(arr) = urls {
                     let url_val = toml::Value::String(add.url.clone());
                     if !arr.contains(&url_val) {
@@ -1227,9 +1305,13 @@ pub async fn config_update_handler(
 
     // Add author
     if let Some(author) = &req.add_author {
-        let relay = doc.entry("relay").or_insert_with(|| toml::Value::Table(toml::Table::new()));
+        let relay = doc
+            .entry("relay")
+            .or_insert_with(|| toml::Value::Table(toml::Table::new()));
         if let toml::Value::Table(relay_table) = relay {
-            let authors = relay_table.entry("authors").or_insert_with(|| toml::Value::Array(Vec::new()));
+            let authors = relay_table
+                .entry("authors")
+                .or_insert_with(|| toml::Value::Array(Vec::new()));
             if let toml::Value::Array(arr) = authors {
                 let val = toml::Value::String(author.clone());
                 if !arr.contains(&val) {
@@ -1246,7 +1328,9 @@ pub async fn config_update_handler(
             if let Some(toml::Value::Array(arr)) = relay_table.get_mut("authors") {
                 let before = arr.len();
                 arr.retain(|v| v.as_str() != Some(author));
-                if arr.len() != before { changed = true; }
+                if arr.len() != before {
+                    changed = true;
+                }
             }
         }
     }
@@ -1265,9 +1349,7 @@ pub async fn config_update_handler(
 }
 
 /// GET /api/v1/relays — get relay configuration
-pub async fn relay_config_handler(
-    State(engine): State<AppState>,
-) -> Json<Value> {
+pub async fn relay_config_handler(State(engine): State<AppState>) -> Json<Value> {
     let rc = engine.relay_config();
     Json(json!({
         "general": { "urls": rc.general.urls, "kinds": rc.general.kinds },
@@ -1478,8 +1560,10 @@ pub async fn discussion_counts_handler(
 
     let address_set: std::collections::HashSet<&str> =
         addresses.iter().map(String::as_str).collect();
-    let mut counts: std::collections::HashMap<String, DiscussionCount> =
-        addresses.iter().map(|a| (a.clone(), DiscussionCount::default())).collect();
+    let mut counts: std::collections::HashMap<String, DiscussionCount> = addresses
+        .iter()
+        .map(|a| (a.clone(), DiscussionCount::default()))
+        .collect();
 
     for event in &response.events {
         let kind = event.get("kind").and_then(|v| v.as_u64()).unwrap_or(0);
@@ -1724,7 +1808,9 @@ pub async fn publish_handler(
     }
     .or_else(|| engine.my_pubkey().map(|s| s.to_string()))
     .ok_or_else(|| {
-        EngineError::Config("Publishing requires identity login or [identity] pubkey in config".into())
+        EngineError::Config(
+            "Publishing requires identity login or [identity] pubkey in config".into(),
+        )
     })?;
 
     // Map request to ComposeState
@@ -1732,7 +1818,10 @@ pub async fn publish_handler(
     let mut compose = ComposeState::new();
     compose.title = req.title;
     for (name, value) in &req.tags {
-        compose.tags.push(TagEntry { name: name.clone(), value: value.clone() });
+        compose.tags.push(TagEntry {
+            name: name.clone(),
+            value: value.clone(),
+        });
     }
     compose.sections = req
         .sections
@@ -1741,7 +1830,14 @@ pub async fn publish_handler(
             let mut sc = SectionCompose::default();
             sc.title = s.title.clone();
             sc.content = s.content.clone();
-            sc.tags = s.tags.iter().map(|(n, v)| TagEntry { name: n.clone(), value: v.clone() }).collect();
+            sc.tags = s
+                .tags
+                .iter()
+                .map(|(n, v)| TagEntry {
+                    name: n.clone(),
+                    value: v.clone(),
+                })
+                .collect();
             sc
         })
         .collect();
@@ -1831,7 +1927,10 @@ pub async fn publish_handler(
         .flatten()
         .is_some();
     if !ingested {
-        debug!("Publication {} was not persisted by nostrdb after ingest", pub_id);
+        debug!(
+            "Publication {} was not persisted by nostrdb after ingest",
+            pub_id
+        );
     }
 
     // Broadcast to relays if requested
@@ -1848,8 +1947,7 @@ pub async fn publish_handler(
             .map(|e| serde_json::to_string(e).unwrap())
             .collect();
 
-        let (_, _, results) =
-            crate::relay::publish_events_to_relays(&relays, &event_jsons).await;
+        let (_, _, results) = crate::relay::publish_events_to_relays(&relays, &event_jsons).await;
 
         Some(
             results
@@ -1997,10 +2095,7 @@ pub async fn publish_blocks_handler(
         let block_id = next_id;
         next_id += 1;
         let kind = match entry.kind {
-            PublishBlockKind::Editable { content } => BlockKind::Editable {
-                content,
-                cursor: 0,
-            },
+            PublishBlockKind::Editable { content } => BlockKind::Editable { content, cursor: 0 },
             PublishBlockKind::Imported {
                 source_addr,
                 content,
@@ -2130,8 +2225,7 @@ pub async fn publish_blocks_handler(
             .chain(std::iter::once(&pub_event))
             .map(|e| serde_json::to_string(e).unwrap())
             .collect();
-        let (_, _, results) =
-            crate::relay::publish_events_to_relays(&relays, &event_jsons).await;
+        let (_, _, results) = crate::relay::publish_events_to_relays(&relays, &event_jsons).await;
         Some(
             results
                 .into_iter()
@@ -2185,7 +2279,8 @@ pub async fn export_handler(
     let mut filter = serde_json::json!({});
 
     if let Some(kinds_str) = params.get("kinds") {
-        let kinds: Vec<u64> = kinds_str.split(',')
+        let kinds: Vec<u64> = kinds_str
+            .split(',')
             .filter_map(|s| s.trim().parse().ok())
             .collect();
         if !kinds.is_empty() {
@@ -2193,7 +2288,8 @@ pub async fn export_handler(
         }
     }
     if let Some(authors_str) = params.get("authors") {
-        let authors: Vec<&str> = authors_str.split(',')
+        let authors: Vec<&str> = authors_str
+            .split(',')
             .map(|s| s.trim())
             .filter(|s| !s.is_empty())
             .collect();
@@ -2207,7 +2303,8 @@ pub async fn export_handler(
     if let Some(until) = params.get("until").and_then(|s| s.parse::<u64>().ok()) {
         filter["until"] = json!(until);
     }
-    let limit = params.get("limit")
+    let limit = params
+        .get("limit")
         .and_then(|s| s.parse::<u64>().ok())
         .unwrap_or(100_000);
     filter["limit"] = json!(limit);
@@ -2239,7 +2336,8 @@ pub async fn export_manifest_handler(
     // Query with same filters to count
     let mut filter = serde_json::json!({});
     if let Some(kinds_str) = params.get("kinds") {
-        let kinds: Vec<u64> = kinds_str.split(',')
+        let kinds: Vec<u64> = kinds_str
+            .split(',')
             .filter_map(|s| s.trim().parse().ok())
             .collect();
         if !kinds.is_empty() {
@@ -2247,7 +2345,8 @@ pub async fn export_manifest_handler(
         }
     }
     if let Some(authors_str) = params.get("authors") {
-        let authors: Vec<&str> = authors_str.split(',')
+        let authors: Vec<&str> = authors_str
+            .split(',')
             .map(|s| s.trim())
             .filter(|s| !s.is_empty())
             .collect();
@@ -2396,16 +2495,20 @@ pub async fn embed_status_handler(
 
     // Count embeddable events in nostrdb (content kinds only; skip 30040 index events)
     let filter = serde_json::json!({"kinds": [30041, 30023, 30818, 9802], "limit": 100000});
-    let local_events = crate::query::query_local(engine.ndb(), &[filter])
-        .unwrap_or_default();
+    let local_events = crate::query::query_local(engine.ndb(), &[filter]).unwrap_or_default();
     let total_events = local_events.len();
 
     // Count stale embeddings (indexed but no longer in nostrdb)
-    let local_ids: std::collections::HashSet<&str> = local_events.iter()
+    let local_ids: std::collections::HashSet<&str> = local_events
+        .iter()
         .filter_map(|e| e.get("id").and_then(|v| v.as_str()))
         .collect();
     let stale_count = indexed_count.saturating_sub(
-        index.all_ids().iter().filter(|id| local_ids.contains(id.as_str())).count()
+        index
+            .all_ids()
+            .iter()
+            .filter(|id| local_ids.contains(id.as_str()))
+            .count(),
     );
 
     // Count missing sections (30040 indexes reference 30041s not yet fetched)
@@ -2466,9 +2569,9 @@ pub async fn embed_reindex_handler(
 pub async fn list_claude_sessions_handler(
     State(engine): State<AppState>,
 ) -> Result<Json<Value>, EngineError> {
-    let dir = engine.claude_sessions_dir().ok_or_else(|| {
-        EngineError::Config("Claude Code sessions directory not found".into())
-    })?;
+    let dir = engine
+        .claude_sessions_dir()
+        .ok_or_else(|| EngineError::Config("Claude Code sessions directory not found".into()))?;
     let sessions = crate::claude_sessions::list_sessions(dir)?;
     let count = sessions.len();
     Ok(Json(json!({
@@ -2490,9 +2593,9 @@ pub async fn get_claude_session_handler(
     Path(session_id): Path<String>,
     axum::extract::Query(query): axum::extract::Query<SessionQuery>,
 ) -> Result<Json<Value>, EngineError> {
-    let dir = engine.claude_sessions_dir().ok_or_else(|| {
-        EngineError::Config("Claude Code sessions directory not found".into())
-    })?;
+    let dir = engine
+        .claude_sessions_dir()
+        .ok_or_else(|| EngineError::Config("Claude Code sessions directory not found".into()))?;
 
     let offset = query.offset.unwrap_or(0);
     if offset > 0 {
@@ -2509,7 +2612,9 @@ pub async fn get_claude_session_handler(
             .collect();
 
         if matches.is_empty() {
-            return Err(EngineError::NotFound(format!("No session matching '{session_id}'")));
+            return Err(EngineError::NotFound(format!(
+                "No session matching '{session_id}'"
+            )));
         }
 
         let messages = crate::claude_sessions::parse_session_messages(&matches[0], offset)?;
@@ -2536,9 +2641,9 @@ pub async fn append_claude_session_handler(
     Path(session_id): Path<String>,
     Json(req): Json<AppendSessionRequest>,
 ) -> Result<Json<Value>, EngineError> {
-    let dir = engine.claude_sessions_dir().ok_or_else(|| {
-        EngineError::Config("Claude Code sessions directory not found".into())
-    })?;
+    let dir = engine
+        .claude_sessions_dir()
+        .ok_or_else(|| EngineError::Config("Claude Code sessions directory not found".into()))?;
     let uuid = crate::claude_sessions::append_message(dir, &session_id, &req.content)?;
     Ok(Json(json!({
         "uuid": uuid,
@@ -2969,10 +3074,19 @@ pub async fn broadcast_handler(
 ) -> Result<Json<BroadcastResponse>, EngineError> {
     // Basic shape check — the relay layer will reject malformed events
     // anyway, but a clear error here saves a round trip.
-    let event = req.event.as_object().ok_or_else(|| {
-        EngineError::Config("event must be a JSON object".into())
-    })?;
-    for field in ["id", "pubkey", "sig", "kind", "created_at", "tags", "content"] {
+    let event = req
+        .event
+        .as_object()
+        .ok_or_else(|| EngineError::Config("event must be a JSON object".into()))?;
+    for field in [
+        "id",
+        "pubkey",
+        "sig",
+        "kind",
+        "created_at",
+        "tags",
+        "content",
+    ] {
         if !event.contains_key(field) {
             return Err(EngineError::Config(format!(
                 "event missing required field `{field}`"
@@ -2989,9 +3103,8 @@ pub async fn broadcast_handler(
         ));
     }
 
-    let event_json = serde_json::to_string(&req.event).map_err(|e| {
-        EngineError::Config(format!("event serialize: {e}"))
-    })?;
+    let event_json = serde_json::to_string(&req.event)
+        .map_err(|e| EngineError::Config(format!("event serialize: {e}")))?;
     let results = crate::relay::publish_to_relays(&relays, &event_json).await;
     let successful = results.iter().filter(|r| r.success).count();
     let total = results.len();
@@ -3044,8 +3157,15 @@ pub struct SignerChannelQuery {
 pub async fn signer_channel_handler(
     State(controller): State<crate::signing::SigningController>,
     axum::extract::Query(q): axum::extract::Query<SignerChannelQuery>,
-) -> Result<axum::response::Sse<futures::stream::BoxStream<'static, Result<axum::response::sse::Event, std::convert::Infallible>>>, EngineError>
-{
+) -> Result<
+    axum::response::Sse<
+        futures::stream::BoxStream<
+            'static,
+            Result<axum::response::sse::Event, std::convert::Infallible>,
+        >,
+    >,
+    EngineError,
+> {
     use axum::response::sse::{Event as SseHttpEvent, KeepAlive, Sse};
     use futures::stream::StreamExt;
 
@@ -3065,10 +3185,7 @@ pub async fn signer_channel_handler(
             Some(ev) => {
                 let payload = serde_json::to_string(&ev).unwrap_or_default();
                 let sse_event = SseHttpEvent::default().data(payload);
-                Some((
-                    Ok::<SseHttpEvent, std::convert::Infallible>(sse_event),
-                    rx,
-                ))
+                Some((Ok::<SseHttpEvent, std::convert::Infallible>(sse_event), rx))
             }
             None => None,
         }
@@ -3222,8 +3339,14 @@ mod chat_api_tests {
         // Inject initial context
         let req = InjectContextRequest {
             notes: vec![
-                NoteRequest { title: "A".into(), content: "aaa".into() },
-                NoteRequest { title: "B".into(), content: "bbb".into() },
+                NoteRequest {
+                    title: "A".into(),
+                    content: "aaa".into(),
+                },
+                NoteRequest {
+                    title: "B".into(),
+                    content: "bbb".into(),
+                },
             ],
         };
         let Json(resp) = chat_inject_context(State(state.clone()), Json(req)).await;
@@ -3231,7 +3354,10 @@ mod chat_api_tests {
 
         // Replace with single note
         let req = InjectContextRequest {
-            notes: vec![NoteRequest { title: "C".into(), content: "ccc".into() }],
+            notes: vec![NoteRequest {
+                title: "C".into(),
+                content: "ccc".into(),
+            }],
         };
         let Json(resp) = chat_replace_context(State(state), Json(req)).await;
         assert_eq!(resp.context_count, 1);

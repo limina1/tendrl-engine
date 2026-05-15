@@ -74,10 +74,7 @@ pub fn query_by_id(ndb: &Ndb, id: &str) -> Result<Option<Value>> {
     let txn = Transaction::new(ndb)
         .map_err(|e| EngineError::Database(format!("Failed to create transaction: {}", e)))?;
 
-    let filter = FilterBuilder::new()
-        .ids([id_bytes].iter())
-        .limit(1)
-        .build();
+    let filter = FilterBuilder::new().ids([id_bytes].iter()).limit(1).build();
 
     let results = ndb
         .query(&txn, &[filter], 1)
@@ -301,10 +298,7 @@ fn parse_filter(filter_json: &Value) -> Result<nostrdb::Filter> {
 /// OR within a single filter's values — same semantics as NIP-01).
 /// Single-char filters are skipped here since they were already applied
 /// in the DB query.
-pub fn filter_by_tags(
-    events: &[Value],
-    tag_filters: &[crate::search::TagFilter],
-) -> Vec<Value> {
+pub fn filter_by_tags(events: &[Value], tag_filters: &[crate::search::TagFilter]) -> Vec<Value> {
     let multi_char: Vec<&crate::search::TagFilter> = tag_filters
         .iter()
         .filter(|tf| tf.tag_name.chars().count() > 1)
@@ -399,7 +393,11 @@ pub fn count_tag_values(
             if !buckets.contains_key(name) {
                 continue;
             }
-            let value = arr.get(1).and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let value = arr
+                .get(1)
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
             seen.entry(name).or_default().insert(value);
         }
         for (name, values) in seen {
@@ -462,10 +460,7 @@ pub fn filter_by_text(events: &[Value], filter: &crate::search::TextFilter) -> V
     events
         .iter()
         .filter(|event| {
-            let content = event
-                .get("content")
-                .and_then(|c| c.as_str())
-                .unwrap_or("");
+            let content = event.get("content").and_then(|c| c.as_str()).unwrap_or("");
             let title = event
                 .get("tags")
                 .and_then(|t| t.as_array())
@@ -488,9 +483,7 @@ pub fn filter_by_text(events: &[Value], filter: &crate::search::TextFilter) -> V
                 crate::search::TextFilter::Keywords(words) => {
                     words.iter().all(|w| lower.contains(&w.to_lowercase()))
                 }
-                crate::search::TextFilter::Exact(phrase) => {
-                    lower.contains(&phrase.to_lowercase())
-                }
+                crate::search::TextFilter::Exact(phrase) => lower.contains(&phrase.to_lowercase()),
             }
         })
         .cloned()
@@ -500,6 +493,202 @@ pub fn filter_by_text(events: &[Value], filter: &crate::search::TextFilter) -> V
 /// Convert a nostrdb Note to JSON event format (public for profile queries)
 pub fn note_to_json_pub(note: &nostrdb::Note) -> Result<Value> {
     note_to_json(note)
+}
+
+/// How many kind-0 events the profile scan walks, and how many hits it
+/// returns. The scan is brute-force (NIP-01 has no name index); the cap
+/// keeps a noisy term from flooding the people category.
+const PROFILE_SCAN_LIMIT: u64 = 2000;
+const PROFILE_RESULT_CAP: usize = 50;
+
+/// Score a profile's text fields against lowercased keyword `needles`.
+///
+/// `None` = no match. Otherwise: `0` = the term is a prefix of `name`
+/// or `display_name`; `1` = every keyword appears somewhere in the name
+/// fields; `2` = the match only lands on an identifier field
+/// (nip05 / lud16 / website). Pure — unit-tested without an `Ndb`.
+fn score_profile_fields(
+    name: &str,
+    display_name: &str,
+    nip05: &str,
+    lud16: &str,
+    website: &str,
+    needles: &[String],
+) -> Option<u8> {
+    if needles.is_empty() {
+        return None;
+    }
+    let name_lc = name.to_lowercase();
+    let display_lc = display_name.to_lowercase();
+    let name_hay = format!("{name_lc} {display_lc}");
+    let id_hay = format!(
+        "{} {} {}",
+        nip05.to_lowercase(),
+        lud16.to_lowercase(),
+        website.to_lowercase()
+    );
+    let full = format!("{name_hay} {id_hay}");
+    if !needles.iter().all(|n| full.contains(n.as_str())) {
+        return None;
+    }
+    let first = needles[0].as_str();
+    if name_lc.starts_with(first) || display_lc.starts_with(first) {
+        Some(0)
+    } else if needles.iter().all(|n| name_hay.contains(n.as_str())) {
+        Some(1)
+    } else {
+        Some(2)
+    }
+}
+
+/// Scan local kind-0 events and return the profiles matching `term`.
+///
+/// The "people" half of search's fan-out — a port of Amethyst's
+/// `findUsersStartingWith` (see `docs/search-architecture.org` §3.1,
+/// §14). `term` is split into whitespace keywords; a profile matches
+/// when *every* keyword appears (case-insensitive substring) across its
+/// name, display_name, nip05, lud16, or website. A `term` that is a
+/// bare 64-hex pubkey short-circuits to a direct lookup of that author.
+///
+/// Only the newest kind-0 per pubkey is considered. Results are scored
+/// (`score_profile_fields`) and returned sorted by score then display
+/// name, capped at `PROFILE_RESULT_CAP`.
+pub fn find_profiles_matching(ndb: &Ndb, term: &str) -> Vec<crate::search::ProfileResult> {
+    use crate::search::{ProfileResult, ResultSource};
+
+    let term = term.trim();
+    if term.is_empty() {
+        return Vec::new();
+    }
+    let needles: Vec<String> = term.split_whitespace().map(|w| w.to_lowercase()).collect();
+    if needles.is_empty() {
+        return Vec::new();
+    }
+
+    // A bare 64-hex term is a pubkey, not a name — look it up directly.
+    let direct_hex = term.len() == 64 && term.chars().all(|c| c.is_ascii_hexdigit());
+
+    let _guard = ndb_query_lock();
+    let txn = match Transaction::new(ndb) {
+        Ok(t) => t,
+        Err(_) => return Vec::new(),
+    };
+
+    let filter = if direct_hex {
+        let mut pk = [0u8; 32];
+        match hex::decode(term) {
+            Ok(b) if b.len() == 32 => pk.copy_from_slice(&b),
+            _ => return Vec::new(),
+        }
+        FilterBuilder::new()
+            .kinds([0])
+            .authors([pk].iter())
+            .limit(20)
+            .build()
+    } else {
+        FilterBuilder::new()
+            .kinds([0])
+            .limit(PROFILE_SCAN_LIMIT)
+            .build()
+    };
+
+    let results = match ndb.query(&txn, &[filter], PROFILE_SCAN_LIMIT as i32) {
+        Ok(r) => r,
+        Err(_) => return Vec::new(),
+    };
+
+    // Collapse to the newest kind-0 per pubkey.
+    let mut newest: std::collections::HashMap<String, (u64, Value)> =
+        std::collections::HashMap::new();
+    for qr in results {
+        let Ok(note) = ndb.get_note_by_key(&txn, qr.note_key) else {
+            continue;
+        };
+        let Ok(event) = note_to_json(&note) else {
+            continue;
+        };
+        let pubkey = event
+            .get("pubkey")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        if pubkey.len() != 64 {
+            continue;
+        }
+        let created_at = event
+            .get("created_at")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
+        match newest.get(&pubkey) {
+            Some((ts, _)) if *ts >= created_at => {}
+            _ => {
+                newest.insert(pubkey, (created_at, event));
+            }
+        }
+    }
+
+    let mut out: Vec<ProfileResult> = Vec::new();
+    for (pubkey, (_, event)) in newest {
+        let content = event.get("content").and_then(|v| v.as_str()).unwrap_or("");
+        let profile: Value = serde_json::from_str(content).unwrap_or(Value::Null);
+        let field = |key: &str| {
+            profile
+                .get(key)
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string()
+        };
+        let name = field("name");
+        let display_name = field("display_name");
+        let nip05 = field("nip05");
+        let lud16 = field("lud16");
+        let website = field("website");
+        let picture = field("picture");
+        let about = field("about");
+
+        // A direct hex lookup always yields its profile (strongest score);
+        // a name scan requires an actual field match.
+        let score = if direct_hex {
+            0
+        } else {
+            match score_profile_fields(&name, &display_name, &nip05, &lud16, &website, &needles) {
+                Some(s) => s,
+                None => continue,
+            }
+        };
+
+        let opt = |s: String| (!s.is_empty()).then_some(s);
+        out.push(ProfileResult {
+            pubkey,
+            name: opt(name),
+            display_name: opt(display_name),
+            nip05: opt(nip05),
+            picture: opt(picture),
+            about: opt(about),
+            score,
+            source: ResultSource::Local,
+        });
+    }
+
+    out.sort_by(|a, b| {
+        a.score.cmp(&b.score).then_with(|| {
+            let an = a
+                .display_name
+                .as_deref()
+                .or(a.name.as_deref())
+                .unwrap_or("")
+                .to_lowercase();
+            let bn = b
+                .display_name
+                .as_deref()
+                .or(b.name.as_deref())
+                .unwrap_or("")
+                .to_lowercase();
+            an.cmp(&bn).then_with(|| a.pubkey.cmp(&b.pubkey))
+        })
+    });
+    out.truncate(PROFILE_RESULT_CAP);
+    out
 }
 
 /// Convert a nostrdb Note to JSON event format
@@ -612,7 +801,10 @@ mod tests {
         // Sorted desc by count; ties broken alphabetically.
         assert_eq!(authors[0].value, "Claude");
         assert_eq!(authors[0].count, 2);
-        assert_eq!(authors[0].event_ids, vec!["e1".to_string(), "e2".to_string()]);
+        assert_eq!(
+            authors[0].event_ids,
+            vec!["e1".to_string(), "e2".to_string()]
+        );
         assert_eq!(authors[1].value, "Pablo");
         assert_eq!(authors[1].event_ids, vec!["e3".to_string()]);
         assert_eq!(authors[2].value, "liminal 🌑");
@@ -623,9 +815,8 @@ mod tests {
     fn test_count_tag_values_dedupes_within_event() {
         // Two `["author", "Claude"]` on one event count as 1, and the id
         // appears once in event_ids (not twice).
-        let events = vec![
-            json!({"id": "e1", "tags": [["author", "Claude"], ["author", "Claude"]]}),
-        ];
+        let events =
+            vec![json!({"id": "e1", "tags": [["author", "Claude"], ["author", "Claude"]]})];
         let result = count_tag_values(&events, &["author".to_string()]);
         assert_eq!(result["author"][0].count, 1);
         assert_eq!(result["author"][0].event_ids, vec!["e1".to_string()]);
@@ -637,16 +828,19 @@ mod tests {
             json!({"id": "e1", "tags": [["author", "Claude"], ["client", "tendrl"]]}),
             json!({"id": "e2", "tags": [["author", "Pablo"], ["client", "amethyst"]]}),
         ];
-        let result = count_tag_values(
-            &events,
-            &["author".to_string(), "client".to_string()],
-        );
+        let result = count_tag_values(&events, &["author".to_string(), "client".to_string()]);
         assert_eq!(result["author"].len(), 2);
         assert_eq!(result["client"].len(), 2);
         // Same event can appear in multiple buckets — once per tag name.
-        let claude_bucket = result["author"].iter().find(|b| b.value == "Claude").unwrap();
+        let claude_bucket = result["author"]
+            .iter()
+            .find(|b| b.value == "Claude")
+            .unwrap();
         assert_eq!(claude_bucket.event_ids, vec!["e1".to_string()]);
-        let tendrl_bucket = result["client"].iter().find(|b| b.value == "tendrl").unwrap();
+        let tendrl_bucket = result["client"]
+            .iter()
+            .find(|b| b.value == "tendrl")
+            .unwrap();
         assert_eq!(tendrl_bucket.event_ids, vec!["e1".to_string()]);
     }
 
@@ -670,10 +864,7 @@ mod tests {
             json!({"tags": [["client", "amethyst"]]}),
         ];
         // Both names must be present (AND).
-        let result = filter_by_has_tags(
-            &events,
-            &["author".to_string(), "client".to_string()],
-        );
+        let result = filter_by_has_tags(&events, &["author".to_string(), "client".to_string()]);
         assert_eq!(result.len(), 1);
     }
 
@@ -751,6 +942,54 @@ mod tests {
         let filter = TextFilter::Exact("hello world".to_string());
         let result = filter_by_text(&events, &filter);
         assert_eq!(result.len(), 1);
+    }
+
+    fn needles(term: &str) -> Vec<String> {
+        term.split_whitespace().map(|w| w.to_lowercase()).collect()
+    }
+
+    #[test]
+    fn test_score_profile_name_prefix() {
+        // Term is a prefix of `name` → strongest (0).
+        let s = score_profile_fields("fiatjaf", "", "", "", "", &needles("fia"));
+        assert_eq!(s, Some(0));
+        // Prefix of display_name also counts.
+        let s = score_profile_fields("", "Fiatjaf", "", "", "", &needles("fia"));
+        assert_eq!(s, Some(0));
+    }
+
+    #[test]
+    fn test_score_profile_name_substring() {
+        // Match inside the name, not at the start → 1.
+        let s = score_profile_fields("the fiatjaf", "", "", "", "", &needles("fiat"));
+        assert_eq!(s, Some(1));
+    }
+
+    #[test]
+    fn test_score_profile_identifier_only() {
+        // Match lands only on nip05 / website → weakest (2).
+        let s = score_profile_fields("alice", "Alice", "bob@example.com", "", "", &needles("bob"));
+        assert_eq!(s, Some(2));
+        let s = score_profile_fields("alice", "", "", "", "https://carol.dev", &needles("carol"));
+        assert_eq!(s, Some(2));
+    }
+
+    #[test]
+    fn test_score_profile_no_match() {
+        let s = score_profile_fields("alice", "Alice", "alice@x.com", "", "", &needles("zzz"));
+        assert_eq!(s, None);
+        // Empty needles never match.
+        assert_eq!(score_profile_fields("alice", "", "", "", "", &[]), None);
+    }
+
+    #[test]
+    fn test_score_profile_multi_keyword_and() {
+        // Every keyword must appear; order-independent, across fields.
+        let s = score_profile_fields("Jack Dorsey", "", "", "", "", &needles("dorsey jack"));
+        assert_eq!(s, Some(1));
+        // One keyword missing → no match.
+        let s = score_profile_fields("Jack Dorsey", "", "", "", "", &needles("jack twitter"));
+        assert_eq!(s, None);
     }
 
     #[test]

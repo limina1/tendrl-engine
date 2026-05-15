@@ -156,9 +156,9 @@ impl Engine {
         let config = Config::new().set_ingester_threads(2);
 
         let ndb = Ndb::new(
-            data_path.to_str().ok_or_else(|| {
-                EngineError::Config("Invalid data path encoding".to_string())
-            })?,
+            data_path
+                .to_str()
+                .ok_or_else(|| EngineError::Config("Invalid data path encoding".to_string()))?,
             &config,
         )
         .map_err(|e| EngineError::Database(format!("Failed to open nostrdb: {}", e)))?;
@@ -168,7 +168,11 @@ impl Engine {
         let ignore_list = IgnoreList::load(data_path);
         let ignored_count = ignore_list.event_ids.len() + ignore_list.pubkeys.len();
         if ignored_count > 0 {
-            info!("Loaded ignore list: {} events, {} pubkeys", ignore_list.event_ids.len(), ignore_list.pubkeys.len());
+            info!(
+                "Loaded ignore list: {} events, {} pubkeys",
+                ignore_list.event_ids.len(),
+                ignore_list.pubkeys.len()
+            );
         }
 
         Ok(Engine {
@@ -475,7 +479,11 @@ impl Engine {
             });
 
         let index = EmbeddingIndex::load(&index_dir, config)?;
-        info!("Embedding index: {} vectors, model={}", index.len(), index.model());
+        info!(
+            "Embedding index: {} vectors, model={}",
+            index.len(),
+            index.model()
+        );
         self.embedding = Some(Arc::new(RwLock::new(index)));
         Ok(())
     }
@@ -487,9 +495,10 @@ impl Engine {
 
     /// Sync embeddings: find unembedded events, embed them, update index
     pub async fn sync_embeddings(&self) -> Result<EmbeddingStatus> {
-        let emb = self.embedding.as_ref().ok_or_else(|| {
-            EngineError::Config("Embedding not enabled".into())
-        })?;
+        let emb = self
+            .embedding
+            .as_ref()
+            .ok_or_else(|| EngineError::Config("Embedding not enabled".into()))?;
 
         // CPU-heavy: query 100k events, iterate to find unembedded — offload to blocking pool
         let ndb = Arc::clone(&self.ndb);
@@ -616,8 +625,8 @@ impl Engine {
 
     /// Fetch missing 30041 sections for all locally known 30040 indexes
     pub async fn fetch_missing_sections(&self) -> Result<(usize, usize, usize)> {
-        use std::collections::{HashSet, HashMap};
         use serde_json::json;
+        use std::collections::{HashMap, HashSet};
 
         if !self.is_online() {
             return Ok((0, 0, 0));
@@ -649,7 +658,8 @@ impl Engine {
 
             let mut missing: Vec<(String, String)> = Vec::new();
             for (pubkey, d_tag) in &needed {
-                let check = json!({"kinds": [30041], "authors": [pubkey], "#d": [d_tag], "limit": 1});
+                let check =
+                    json!({"kinds": [30041], "authors": [pubkey], "#d": [d_tag], "limit": 1});
                 let found = query::query_local(&ndb, &[check])
                     .map(|e| !e.is_empty())
                     .unwrap_or(false);
@@ -667,12 +677,19 @@ impl Engine {
             return Ok((needed_count, 0, 0));
         }
 
-        debug!("fetch_missing_sections: {} referenced, {} missing", needed_count, missing.len());
+        debug!(
+            "fetch_missing_sections: {} referenced, {} missing",
+            needed_count,
+            missing.len()
+        );
 
         // 4. Batch fetch from relays
         let mut by_pubkey: HashMap<String, Vec<String>> = HashMap::new();
         for (pubkey, d_tag) in &missing {
-            by_pubkey.entry(pubkey.clone()).or_default().push(d_tag.clone());
+            by_pubkey
+                .entry(pubkey.clone())
+                .or_default()
+                .push(d_tag.clone());
         }
 
         let relays = &self.relay_config.fetch.urls;
@@ -688,7 +705,10 @@ impl Engine {
                 });
 
                 for relay_url in relays {
-                    match self.tracked_fetch(relay_url, &[filter.clone()], FetchTrigger::BackgroundSync).await {
+                    match self
+                        .tracked_fetch(relay_url, &[filter.clone()], FetchTrigger::BackgroundSync)
+                        .await
+                    {
                         Ok(events) => {
                             if !events.is_empty() {
                                 debug!("Fetched {} sections from {}", events.len(), relay_url);
@@ -704,15 +724,20 @@ impl Engine {
             }
         }
 
-        info!("fetch_missing_sections: fetched {} of {} missing sections", total_fetched, missing.len());
+        info!(
+            "fetch_missing_sections: fetched {} of {} missing sections",
+            total_fetched,
+            missing.len()
+        );
         Ok((needed_count, missing.len(), total_fetched))
     }
 
     /// Clear and rebuild the entire embedding index
     pub async fn reindex_embeddings(&self) -> Result<EmbeddingStatus> {
-        let emb = self.embedding.as_ref().ok_or_else(|| {
-            EngineError::Config("Embedding not enabled".into())
-        })?;
+        let emb = self
+            .embedding
+            .as_ref()
+            .ok_or_else(|| EngineError::Config("Embedding not enabled".into()))?;
 
         {
             let mut index = emb.write().await;
@@ -754,22 +779,24 @@ impl Engine {
 
         match policy {
             FetchPolicy::LocalOnly => self.query_local_only(&filters),
-            FetchPolicy::LocalFirst => self
-                .query_local_first_with_options(&filters, relays, bypass_offline)
-                .await,
-            FetchPolicy::FetchAlways => self
-                .query_fetch_always_with_options(&filters, relays, bypass_offline)
-                .await,
+            FetchPolicy::LocalFirst => {
+                self.query_local_first_with_options(&filters, relays, bypass_offline)
+                    .await
+            }
+            FetchPolicy::FetchAlways => {
+                self.query_fetch_always_with_options(&filters, relays, bypass_offline)
+                    .await
+            }
         }
     }
 
     /// Get a single event by its ID
-    pub async fn get_by_id(
-        &self,
-        event_id: &str,
-        policy: FetchPolicy,
-    ) -> Result<Option<Value>> {
-        let policy = if self.is_online() { policy } else { FetchPolicy::LocalOnly };
+    pub async fn get_by_id(&self, event_id: &str, policy: FetchPolicy) -> Result<Option<Value>> {
+        let policy = if self.is_online() {
+            policy
+        } else {
+            FetchPolicy::LocalOnly
+        };
 
         // Try local first (unless FetchAlways)
         if policy != FetchPolicy::FetchAlways {
@@ -782,7 +809,8 @@ impl Engine {
         // Fetch from relays if needed
         if policy != FetchPolicy::LocalOnly {
             debug!("Fetching event {} from relays", event_id);
-            return relay::fetch_event_by_id(&self.ndb, &self.relay_config.fetch.urls, event_id).await;
+            return relay::fetch_event_by_id(&self.ndb, &self.relay_config.fetch.urls, event_id)
+                .await;
         }
 
         Ok(None)
@@ -796,20 +824,41 @@ impl Engine {
         d_tag: &str,
         policy: FetchPolicy,
     ) -> Result<Option<Value>> {
-        let policy = if self.is_online() { policy } else { FetchPolicy::LocalOnly };
+        let policy = if self.is_online() {
+            policy
+        } else {
+            FetchPolicy::LocalOnly
+        };
 
         // Try local first (unless FetchAlways)
         if policy != FetchPolicy::FetchAlways {
             if let Some(event) = query::query_addressable(&self.ndb, kind, pubkey, d_tag)? {
-                debug!("Found addressable event {}:{}:{}... locally", kind, &pubkey.chars().take(8).collect::<String>(), d_tag);
+                debug!(
+                    "Found addressable event {}:{}:{}... locally",
+                    kind,
+                    &pubkey.chars().take(8).collect::<String>(),
+                    d_tag
+                );
                 return Ok(Some(event));
             }
         }
 
         // Fetch from relays if needed
         if policy != FetchPolicy::LocalOnly {
-            debug!("Fetching addressable event {}:{}:{}... from relays", kind, &pubkey.chars().take(8).collect::<String>(), d_tag);
-            return relay::fetch_addressable(&self.ndb, &self.relay_config.fetch.urls, kind, pubkey, d_tag).await;
+            debug!(
+                "Fetching addressable event {}:{}:{}... from relays",
+                kind,
+                &pubkey.chars().take(8).collect::<String>(),
+                d_tag
+            );
+            return relay::fetch_addressable(
+                &self.ndb,
+                &self.relay_config.fetch.urls,
+                kind,
+                pubkey,
+                d_tag,
+            )
+            .await;
         }
 
         Ok(None)
@@ -884,7 +933,11 @@ impl Engine {
             // the fetch limit when multi-char, has:, or count: are the only
             // criteria, since post-filtering / aggregation will need more
             // candidates to be meaningful.
-            let fetch_limit = if needs_broad_fetch { limit.max(500) } else { limit };
+            let fetch_limit = if needs_broad_fetch {
+                limit.max(500)
+            } else {
+                limit
+            };
             filters = vec![serde_json::json!({"limit": fetch_limit})];
         }
 
@@ -928,11 +981,15 @@ impl Engine {
         let results: Vec<_> = results
             .into_iter()
             .filter(|r| {
-                if ignore.is_ignored(&r.event_id, &r.author) { return false; }
+                if ignore.is_ignored(&r.event_id, &r.author) {
+                    return false;
+                }
                 // Also check a-tag format (used when hiding publications from feed)
                 if let Some(ref addr) = r.addr {
                     let a_tag = format!("{}:{}:{}", addr.kind, addr.pubkey, addr.d_tag);
-                    if ignore.event_ids.contains(&a_tag) { return false; }
+                    if ignore.event_ids.contains(&a_tag) {
+                        return false;
+                    }
                 }
                 true
             })
@@ -941,12 +998,26 @@ impl Engine {
 
         Ok(SearchResponse {
             results,
+            profiles: vec![],
             count,
             local_count: response.source.local_count,
             relay_count: response.source.relay_count,
             doc_results: vec![],
             tag_counts,
         })
+    }
+
+    /// Search local kind-0 profiles for an author match — the "people"
+    /// half of search's fan-out (see `docs/search-architecture.org`).
+    /// Local-only for now; the NIP-50 relay path is a later phase.
+    /// Profiles whose pubkey is on the ignore list are dropped.
+    pub async fn search_profiles(&self, term: &str) -> Vec<search::ProfileResult> {
+        let profiles = query::find_profiles_matching(&self.ndb, term);
+        let ignore = self.ignore_list.read().await;
+        profiles
+            .into_iter()
+            .filter(|p| !ignore.pubkeys.contains(&p.pubkey))
+            .collect()
     }
 
     /// Semantic search: embed query, search HNSW, fetch events, merge scores
@@ -978,11 +1049,17 @@ impl Engine {
         let matches = index.search(&query_vec, fetch_k)?;
         drop(index);
 
-        debug!("HNSW returned {} matches for k={}, fetch_k={}", matches.len(), k, fetch_k);
+        debug!(
+            "HNSW returned {} matches for k={}, fetch_k={}",
+            matches.len(),
+            k,
+            fetch_k
+        );
 
         if matches.is_empty() {
             return Ok(SearchResponse {
                 results: vec![],
+                profiles: vec![],
                 count: 0,
                 local_count: 0,
                 relay_count: 0,
@@ -1023,23 +1100,44 @@ impl Engine {
                 }
             } else {
                 // Nostr event — check ignore list
-                if ignore.is_ignored(&match_id, "") { continue; }
+                if ignore.is_ignored(&match_id, "") {
+                    continue;
+                }
                 let event = match query::query_by_id(&self.ndb, &match_id) {
                     Ok(Some(e)) => e,
-                    Ok(None) => { lookup_failures += 1; continue; }
-                    Err(e) => { debug!("query_by_id error for {}: {}", &match_id[..16.min(match_id.len())], e); lookup_failures += 1; continue; }
+                    Ok(None) => {
+                        lookup_failures += 1;
+                        continue;
+                    }
+                    Err(e) => {
+                        debug!(
+                            "query_by_id error for {}: {}",
+                            &match_id[..16.min(match_id.len())],
+                            e
+                        );
+                        lookup_failures += 1;
+                        continue;
+                    }
                 };
                 let author = event.get("pubkey").and_then(|v| v.as_str()).unwrap_or("");
-                if ignore.pubkeys.contains(author) { continue; }
+                if ignore.pubkeys.contains(author) {
+                    continue;
+                }
                 if let Some(kinds) = &query.kind_filter {
                     let event_kind = event.get("kind").and_then(|v| v.as_u64()).unwrap_or(0);
-                    if !kinds.contains(&event_kind) { continue; }
+                    if !kinds.contains(&event_kind) {
+                        continue;
+                    }
                 }
                 if let Some(search::AuthorFilter::Pubkeys(pks)) = &query.author_filter {
-                    if !pks.iter().any(|pk| pk == author) { continue; }
+                    if !pks.iter().any(|pk| pk == author) {
+                        continue;
+                    }
                 }
                 if let Some(text_filter) = &query.text_filter {
-                    if query::filter_by_text(&[event.clone()], text_filter).is_empty() { continue; }
+                    if query::filter_by_text(&[event.clone()], text_filter).is_empty() {
+                        continue;
+                    }
                 }
                 let mut sr = search::build_search_results(&[event], 1);
                 if let Some(mut r) = sr.pop() {
@@ -1050,19 +1148,35 @@ impl Engine {
         }
 
         if lookup_failures > 0 {
-            warn!("Semantic search: {} event ID lookups failed (stale index?)", lookup_failures);
+            warn!(
+                "Semantic search: {} event ID lookups failed (stale index?)",
+                lookup_failures
+            );
         }
-        debug!("Semantic search: {} event results, {} doc results from HNSW matches", results.len(), doc_results.len());
+        debug!(
+            "Semantic search: {} event results, {} doc results from HNSW matches",
+            results.len(),
+            doc_results.len()
+        );
 
-        results.sort_by(|a, b| b.semantic_score.partial_cmp(&a.semantic_score).unwrap_or(std::cmp::Ordering::Equal));
+        results.sort_by(|a, b| {
+            b.semantic_score
+                .partial_cmp(&a.semantic_score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         results.truncate(k);
-        doc_results.sort_by(|a, b| b.semantic_score.partial_cmp(&a.semantic_score).unwrap_or(std::cmp::Ordering::Equal));
+        doc_results.sort_by(|a, b| {
+            b.semantic_score
+                .partial_cmp(&a.semantic_score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         doc_results.truncate(k);
 
         let count = results.len();
 
         Ok(SearchResponse {
             results,
+            profiles: vec![],
             count,
             local_count: count,
             relay_count: 0,
@@ -1073,12 +1187,15 @@ impl Engine {
 
     /// Sync document embeddings: parse all docs, embed pages not yet in HNSW
     pub async fn sync_doc_embeddings(&self) -> Result<usize> {
-        let emb = self.embedding.as_ref().ok_or_else(|| {
-            EngineError::Config("Embedding not enabled".into())
-        })?;
+        let emb = self
+            .embedding
+            .as_ref()
+            .ok_or_else(|| EngineError::Config("Embedding not enabled".into()))?;
 
         let docs_dir = &self.documents_dir;
-        if !docs_dir.exists() { return Ok(0); }
+        if !docs_dir.exists() {
+            return Ok(0);
+        }
 
         let sidecar = &self.sidecar_url;
         let mut total_embedded = 0;
@@ -1091,17 +1208,31 @@ impl Engine {
 
         for entry in entries {
             let path = entry.path();
-            let filename = path.file_name().and_then(|n| n.to_str()).unwrap_or("").to_string();
-            let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase();
+            let filename = path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("")
+                .to_string();
+            let ext = path
+                .extension()
+                .and_then(|e| e.to_str())
+                .unwrap_or("")
+                .to_lowercase();
 
-            let supported = ["pdf", "docx", "epub", "html", "htm", "txt", "md", "org", "adoc"];
-            if !supported.contains(&ext.as_str()) { continue; }
+            let supported = [
+                "pdf", "docx", "epub", "html", "htm", "txt", "md", "org", "adoc",
+            ];
+            if !supported.contains(&ext.as_str()) {
+                continue;
+            }
 
             // Check if first page is already embedded (quick check)
             let first_key = format!("doc:{}:1", filename);
             {
                 let index = emb.read().await;
-                if index.contains(&first_key) { continue; }
+                if index.contains(&first_key) {
+                    continue;
+                }
             }
 
             // Parse via sidecar
@@ -1124,12 +1255,18 @@ impl Engine {
                 .await
             {
                 Ok(r) => r,
-                Err(e) => { warn!("Failed to parse {}: {}", filename, e); continue; }
+                Err(e) => {
+                    warn!("Failed to parse {}: {}", filename, e);
+                    continue;
+                }
             };
 
             let parsed: serde_json::Value = match resp.json().await {
                 Ok(v) => v,
-                Err(e) => { warn!("Invalid parse response for {}: {}", filename, e); continue; }
+                Err(e) => {
+                    warn!("Invalid parse response for {}: {}", filename, e);
+                    continue;
+                }
             };
 
             let pages = match parsed.get("pages").and_then(|p| p.as_array()) {
@@ -1146,24 +1283,35 @@ impl Engine {
                 let content = page.get("content").and_then(|v| v.as_str()).unwrap_or("");
                 let title = page.get("title").and_then(|v| v.as_str()).unwrap_or("");
 
-                if content.trim().is_empty() { continue; }
+                if content.trim().is_empty() {
+                    continue;
+                }
 
                 let key = format!("doc:{}:{}", filename, page_num);
-                let text = if title.is_empty() { content.to_string() } else { format!("{}\n{}", title, content) };
+                let text = if title.is_empty() {
+                    content.to_string()
+                } else {
+                    format!("{}\n{}", title, content)
+                };
 
                 let index = emb.read().await;
-                if index.contains(&key) { continue; }
+                if index.contains(&key) {
+                    continue;
+                }
                 drop(index);
 
                 keys.push(key);
                 texts.push(text);
             }
 
-            if texts.is_empty() { continue; }
+            if texts.is_empty() {
+                continue;
+            }
 
             // Batch embed
             for chunk in texts.chunks(64) {
-                let chunk_keys: Vec<&str> = keys[..chunk.len()].iter().map(|s| s.as_str()).collect();
+                let chunk_keys: Vec<&str> =
+                    keys[..chunk.len()].iter().map(|s| s.as_str()).collect();
                 let chunk_texts: Vec<String> = chunk.to_vec();
 
                 let vectors = {
@@ -1182,7 +1330,10 @@ impl Engine {
                             }
                         }
                     }
-                    Err(e) => { warn!("Doc embedding batch failed: {}", e); break; }
+                    Err(e) => {
+                        warn!("Doc embedding batch failed: {}", e);
+                        break;
+                    }
                 }
             }
         }
@@ -1200,7 +1351,10 @@ impl Engine {
     async fn load_doc_page(&self, doc_path: &std::path::Path, page_num: usize) -> Result<String> {
         let file_bytes = std::fs::read(doc_path)
             .map_err(|e| EngineError::Database(format!("Failed to read doc: {e}")))?;
-        let filename = doc_path.file_name().and_then(|n| n.to_str()).unwrap_or("unknown");
+        let filename = doc_path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("unknown");
 
         let part = reqwest::multipart::Part::bytes(file_bytes)
             .file_name(filename.to_string())
@@ -1219,17 +1373,26 @@ impl Engine {
             .await
             .map_err(|e| EngineError::Database(format!("Invalid response: {e}")))?;
 
-        let pages = parsed.get("pages").and_then(|p| p.as_array())
+        let pages = parsed
+            .get("pages")
+            .and_then(|p| p.as_array())
             .ok_or_else(|| EngineError::Database("No pages in response".into()))?;
 
         for page in pages {
             let pn = page.get("page_num").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
             if pn == page_num {
-                return Ok(page.get("content").and_then(|v| v.as_str()).unwrap_or("").to_string());
+                return Ok(page
+                    .get("content")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string());
             }
         }
 
-        Err(EngineError::Database(format!("Page {} not found", page_num)))
+        Err(EngineError::Database(format!(
+            "Page {} not found",
+            page_num
+        )))
     }
 
     // ---- Private helper methods ----
@@ -1392,10 +1555,22 @@ mod tests {
 
     #[test]
     fn test_fetch_policy_parsing() {
-        assert_eq!("local_only".parse::<FetchPolicy>().unwrap(), FetchPolicy::LocalOnly);
-        assert_eq!("local_first".parse::<FetchPolicy>().unwrap(), FetchPolicy::LocalFirst);
-        assert_eq!("fetch_always".parse::<FetchPolicy>().unwrap(), FetchPolicy::FetchAlways);
-        assert_eq!("LocalFirst".parse::<FetchPolicy>().unwrap(), FetchPolicy::LocalFirst);
+        assert_eq!(
+            "local_only".parse::<FetchPolicy>().unwrap(),
+            FetchPolicy::LocalOnly
+        );
+        assert_eq!(
+            "local_first".parse::<FetchPolicy>().unwrap(),
+            FetchPolicy::LocalFirst
+        );
+        assert_eq!(
+            "fetch_always".parse::<FetchPolicy>().unwrap(),
+            FetchPolicy::FetchAlways
+        );
+        assert_eq!(
+            "LocalFirst".parse::<FetchPolicy>().unwrap(),
+            FetchPolicy::LocalFirst
+        );
         assert!("invalid".parse::<FetchPolicy>().is_err());
     }
 
@@ -1430,8 +1605,11 @@ mod tests {
         // Wait for the event to be processed (with timeout)
         let note_keys = tokio::time::timeout(
             std::time::Duration::from_secs(5),
-            engine.ndb.wait_for_notes(sub, 1)
-        ).await.expect("timeout waiting for notes").expect("waiting for notes");
+            engine.ndb.wait_for_notes(sub, 1),
+        )
+        .await
+        .expect("timeout waiting for notes")
+        .expect("waiting for notes");
 
         println!("Got {} note keys after ingest", note_keys.len());
         assert!(!note_keys.is_empty(), "No notes received from subscription");
@@ -1459,8 +1637,9 @@ mod tests {
         // Wait for the event with timeout
         let note_keys_result = tokio::time::timeout(
             std::time::Duration::from_secs(2),
-            engine.ndb.wait_for_notes(sub, 1)
-        ).await;
+            engine.ndb.wait_for_notes(sub, 1),
+        )
+        .await;
 
         match note_keys_result {
             Ok(Ok(keys)) => {
@@ -1478,9 +1657,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_build_and_ingest_signed_publication() {
-        use nostrdb::FilterBuilder;
         use crate::publication::build_signed_publication_events;
         use crate::tree::state::ComposeState;
+        use nostrdb::FilterBuilder;
 
         let dir = tempdir().unwrap();
         let engine = Engine::with_config(dir.path(), &[], 1000).unwrap();
@@ -1489,7 +1668,7 @@ mod tests {
         let secret_hex = "e698fdd6e2e780b7d9800266bfc02d56630835856a0146969cc984bb21b068c6";
 
         // Derive the pubkey
-        use secp256k1::{Secp256k1, SecretKey, PublicKey};
+        use secp256k1::{PublicKey, Secp256k1, SecretKey};
         let secret_bytes = hex::decode(secret_hex).unwrap();
         let secp = Secp256k1::new();
         let secret_key = SecretKey::from_slice(&secret_bytes).unwrap();
@@ -1510,10 +1689,17 @@ mod tests {
         });
 
         // Build signed events
-        let (pub_event, section_events) = build_signed_publication_events(&compose, &pubkey, secret_hex);
+        let (pub_event, section_events) =
+            build_signed_publication_events(&compose, &pubkey, secret_hex);
 
-        println!("Publication event: {}", serde_json::to_string_pretty(&pub_event).unwrap());
-        println!("Section event: {}", serde_json::to_string_pretty(&section_events[0]).unwrap());
+        println!(
+            "Publication event: {}",
+            serde_json::to_string_pretty(&pub_event).unwrap()
+        );
+        println!(
+            "Section event: {}",
+            serde_json::to_string_pretty(&section_events[0]).unwrap()
+        );
 
         // Subscribe BEFORE ingesting
         let filter = FilterBuilder::new().kinds([30040, 30041]).build();
@@ -1527,18 +1713,27 @@ mod tests {
         // Ingest publication event
         let pub_json = serde_json::to_string(&pub_event).unwrap();
         let result = engine.ingest_event(&pub_json);
-        assert!(result.is_ok(), "Publication ingest failed: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "Publication ingest failed: {:?}",
+            result.err()
+        );
 
         // Wait for the events with timeout
         let note_keys_result = tokio::time::timeout(
             std::time::Duration::from_secs(2),
-            engine.ndb.wait_for_notes(sub, 2)
-        ).await;
+            engine.ndb.wait_for_notes(sub, 2),
+        )
+        .await;
 
         match note_keys_result {
             Ok(Ok(keys)) => {
                 println!("SUCCESS: Got {} note keys for signed events", keys.len());
-                assert!(keys.len() >= 1, "Expected at least 1 note, got {}", keys.len());
+                assert!(
+                    keys.len() >= 1,
+                    "Expected at least 1 note, got {}",
+                    keys.len()
+                );
             }
             Ok(Err(e)) => {
                 panic!("Subscription error: {:?}", e);
@@ -1551,9 +1746,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_events_persist_across_restart() {
-        use nostrdb::FilterBuilder;
         use crate::publication::build_signed_publication_events;
         use crate::tree::state::ComposeState;
+        use nostrdb::FilterBuilder;
 
         // Use a non-temp directory so we can reopen it
         let test_dir = std::path::PathBuf::from("target/testdbs/persistence_test");
@@ -1564,7 +1759,7 @@ mod tests {
         let secret_hex = "e698fdd6e2e780b7d9800266bfc02d56630835856a0146969cc984bb21b068c6";
 
         // Derive pubkey
-        use secp256k1::{Secp256k1, SecretKey, PublicKey};
+        use secp256k1::{PublicKey, Secp256k1, SecretKey};
         let secret_bytes = hex::decode(secret_hex).unwrap();
         let secp = Secp256k1::new();
         let secret_key = SecretKey::from_slice(&secret_bytes).unwrap();
@@ -1588,7 +1783,8 @@ mod tests {
                 ..Default::default()
             });
 
-            let (pub_event, _section_events) = build_signed_publication_events(&compose, &pubkey, secret_hex);
+            let (pub_event, _section_events) =
+                build_signed_publication_events(&compose, &pubkey, secret_hex);
             event_id = pub_event.get("id").unwrap().as_str().unwrap().to_string();
 
             println!("Created event with ID: {}", event_id);
@@ -1603,8 +1799,11 @@ mod tests {
             // Wait for processing
             let keys = tokio::time::timeout(
                 std::time::Duration::from_secs(2),
-                engine.ndb.wait_for_notes(sub, 1)
-            ).await.expect("timeout").expect("wait_for_notes");
+                engine.ndb.wait_for_notes(sub, 1),
+            )
+            .await
+            .expect("timeout")
+            .expect("wait_for_notes");
 
             println!("Phase 1: Ingested and got {} note keys", keys.len());
             assert!(!keys.is_empty(), "Event not processed in phase 1");
@@ -1632,12 +1831,15 @@ mod tests {
             println!("Phase 2: Found {} events", events.len());
 
             // Check if our event is there
-            let found = events.iter().any(|e| {
-                e.get("id").and_then(|v| v.as_str()) == Some(&event_id)
-            });
+            let found = events
+                .iter()
+                .any(|e| e.get("id").and_then(|v| v.as_str()) == Some(&event_id));
 
             if !found {
-                println!("Events found: {:?}", events.iter().map(|e| e.get("id")).collect::<Vec<_>>());
+                println!(
+                    "Events found: {:?}",
+                    events.iter().map(|e| e.get("id")).collect::<Vec<_>>()
+                );
             }
 
             assert!(found, "Event {} not found after restart!", event_id);
@@ -1650,8 +1852,8 @@ mod tests {
 
     /// Helper: build a signed event with given kind, content, tags
     fn build_test_event(kind: u64, content: &str, tags: Vec<Vec<&str>>, created_at: u64) -> String {
-        use sha2::{Sha256, Digest};
-        use secp256k1::{Secp256k1, SecretKey, PublicKey};
+        use secp256k1::{PublicKey, Secp256k1, SecretKey};
+        use sha2::{Digest, Sha256};
 
         let secret_hex = "e698fdd6e2e780b7d9800266bfc02d56630835856a0146969cc984bb21b068c6";
         let secret_bytes = hex::decode(secret_hex).unwrap();
@@ -1660,7 +1862,8 @@ mod tests {
         let public_key = PublicKey::from_secret_key(&secp, &secret_key);
         let pubkey = hex::encode(&public_key.serialize()[1..33]);
 
-        let tags_json: Vec<Vec<String>> = tags.iter()
+        let tags_json: Vec<Vec<String>> = tags
+            .iter()
             .map(|t| t.iter().map(|s| s.to_string()).collect())
             .collect();
 
@@ -1682,7 +1885,8 @@ mod tests {
             "tags": tags_json,
             "content": content,
             "sig": sig
-        })).unwrap()
+        }))
+        .unwrap()
     }
 
     /// Helper: ingest events and wait for processing
@@ -1699,7 +1903,8 @@ mod tests {
         let _ = tokio::time::timeout(
             std::time::Duration::from_secs(5),
             engine.ndb.wait_for_notes(sub, events.len() as u32),
-        ).await;
+        )
+        .await;
     }
 
     #[tokio::test]
@@ -1708,17 +1913,36 @@ mod tests {
         let engine = Engine::with_config(dir.path(), &[], 1000).unwrap();
 
         let events = vec![
-            build_test_event(30041, "Python tutorial", vec![vec!["t", "python"], vec!["d", "s1"]], 1700000001),
-            build_test_event(30041, "Rust guide", vec![vec!["t", "rust"], vec!["d", "s2"]], 1700000002),
+            build_test_event(
+                30041,
+                "Python tutorial",
+                vec![vec!["t", "python"], vec!["d", "s1"]],
+                1700000001,
+            ),
+            build_test_event(
+                30041,
+                "Rust guide",
+                vec![vec!["t", "rust"], vec!["d", "s2"]],
+                1700000002,
+            ),
         ];
         ingest_and_wait(&engine, &events).await;
 
         let query = SearchQuery::parse("t:python").unwrap();
-        let response = engine.search(&query, FetchPolicy::LocalOnly, None).await.unwrap();
+        let response = engine
+            .search(&query, FetchPolicy::LocalOnly, None)
+            .await
+            .unwrap();
 
-        assert!(!response.results.is_empty(), "Should find python-tagged events");
+        assert!(
+            !response.results.is_empty(),
+            "Should find python-tagged events"
+        );
         assert!(response.results.iter().all(|r| {
-            r.tags.iter().any(|t| t.get(0).map(|s| s.as_str()) == Some("t") && t.get(1).map(|s| s.as_str()) == Some("python"))
+            r.tags.iter().any(|t| {
+                t.get(0).map(|s| s.as_str()) == Some("t")
+                    && t.get(1).map(|s| s.as_str()) == Some("python")
+            })
         }));
     }
 
@@ -1734,7 +1958,10 @@ mod tests {
         ingest_and_wait(&engine, &events).await;
 
         let query = SearchQuery::parse("neural").unwrap();
-        let response = engine.search(&query, FetchPolicy::LocalOnly, None).await.unwrap();
+        let response = engine
+            .search(&query, FetchPolicy::LocalOnly, None)
+            .await
+            .unwrap();
 
         assert_eq!(response.results.len(), 1);
         assert!(response.results[0].preview.contains("neural"));
@@ -1752,7 +1979,10 @@ mod tests {
         ingest_and_wait(&engine, &events).await;
 
         let query = SearchQuery::parse("k:30041").unwrap();
-        let response = engine.search(&query, FetchPolicy::LocalOnly, None).await.unwrap();
+        let response = engine
+            .search(&query, FetchPolicy::LocalOnly, None)
+            .await
+            .unwrap();
 
         assert!(response.results.iter().all(|r| r.kind == 30041));
     }
@@ -1763,7 +1993,10 @@ mod tests {
         let engine = Engine::with_config(dir.path(), &[], 1000).unwrap();
 
         let query = SearchQuery::parse("t:nonexistent").unwrap();
-        let response = engine.search(&query, FetchPolicy::LocalOnly, None).await.unwrap();
+        let response = engine
+            .search(&query, FetchPolicy::LocalOnly, None)
+            .await
+            .unwrap();
 
         assert_eq!(response.count, 0);
         assert!(response.results.is_empty());
@@ -1781,7 +2014,10 @@ mod tests {
 
         let mut query = SearchQuery::parse("note").unwrap();
         query.limit = Some(3);
-        let response = engine.search(&query, FetchPolicy::LocalOnly, None).await.unwrap();
+        let response = engine
+            .search(&query, FetchPolicy::LocalOnly, None)
+            .await
+            .unwrap();
 
         assert!(response.results.len() <= 3);
     }
