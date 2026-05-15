@@ -979,11 +979,14 @@ pub async fn profile_handler(
     Ok(Json(json!({ "pubkey": pubkey, "found": false })))
 }
 
-/// POST /api/v1/profiles/fetch — batch-fetch profiles from general relays.
+/// POST /api/v1/profiles/fetch — batch-fetch profiles from relays.
 ///
 /// By default only pubkeys not already in nostrdb are queried. Set
 /// `force` to refetch every listed pubkey unconditionally — used by the
-/// reader's "Refresh discussions" button to pick up renamed authors.
+/// reader's "Refresh discussions" button and the inline profile-refresh
+/// control to pick up renamed / newly-seen authors. A `force` fetch is
+/// an explicit user action, so it also bypasses offline mode: the user
+/// pressing refresh is the okay to reach relays.
 #[derive(Debug, Deserialize)]
 pub struct FetchProfilesRequest {
     pub pubkeys: Vec<String>,
@@ -995,7 +998,9 @@ pub async fn fetch_profiles_handler(
     State(engine): State<AppState>,
     Json(req): Json<FetchProfilesRequest>,
 ) -> Result<Json<Value>, EngineError> {
-    let relays = &engine.relay_config().general.urls;
+    // Profiles can live on any configured relay — query the union of
+    // every set so an empty `general` set can't silently disable this.
+    let relays = engine.relay_config().all_urls();
     let mut fetched = 0;
 
     // When force is set, query every listed pubkey unconditionally so a
@@ -1015,9 +1020,14 @@ pub async fn fetch_profiles_handler(
 
     // Batch fetch: one request per relay with ALL missing pubkeys
     let filter = json!({"kinds": [0], "authors": targets, "limit": targets.len()});
-    for relay_url in relays {
+    for relay_url in &relays {
         match engine
-            .tracked_fetch(relay_url, &[filter.clone()], FetchTrigger::ProfilePrefetch)
+            .tracked_fetch_with_options(
+                relay_url,
+                &[filter.clone()],
+                FetchTrigger::ProfilePrefetch,
+                req.force,
+            )
             .await
         {
             Ok(events) => {
