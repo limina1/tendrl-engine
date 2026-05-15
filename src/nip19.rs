@@ -32,6 +32,7 @@ pub enum DecodeError {
 ///
 /// JSON shape (tagged by `kind`):
 /// - `{"kind":"npub","pubkey":...}`
+/// - `{"kind":"note","event_id":...}`
 /// - `{"kind":"nprofile","pubkey":..., "relays":[...]}`
 /// - `{"kind":"nevent","event_id":..., "relays":[...], "author":?, "kind_int":?}`
 /// - `{"kind":"naddr","kind_int":..., "pubkey":..., "d_tag":..., "relays":[...]}`
@@ -40,6 +41,10 @@ pub enum DecodeError {
 pub enum Decoded {
     Npub {
         pubkey: String,
+    },
+    /// `note1…` — a plain 32-byte event id (no TLV, like `npub`).
+    Note {
+        event_id: String,
     },
     Nprofile {
         pubkey: String,
@@ -67,8 +72,7 @@ pub fn strip_nostr_prefix(s: &str) -> &str {
 
 pub fn decode(input: &str) -> Result<Decoded, DecodeError> {
     let input = strip_nostr_prefix(input);
-    let (hrp, data) =
-        bech32::decode(input).map_err(|e| DecodeError::Bech32(e.to_string()))?;
+    let (hrp, data) = bech32::decode(input).map_err(|e| DecodeError::Bech32(e.to_string()))?;
 
     let hrp_str = hrp.as_str().to_lowercase();
     match hrp_str.as_str() {
@@ -82,6 +86,18 @@ pub fn decode(input: &str) -> Result<Decoded, DecodeError> {
             }
             Ok(Decoded::Npub {
                 pubkey: hex::encode(&data),
+            })
+        }
+        "note" => {
+            if data.len() != 32 {
+                return Err(DecodeError::InvalidLength {
+                    tlv_type: 0,
+                    expected: 32,
+                    actual: data.len(),
+                });
+            }
+            Ok(Decoded::Note {
+                event_id: hex::encode(&data),
             })
         }
         "nprofile" => decode_nprofile_payload(&data),
@@ -246,6 +262,18 @@ mod tests {
         match err {
             DecodeError::Bech32(_) | DecodeError::UnknownHrp(_) => {}
             other => panic!("expected Bech32/UnknownHrp, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn decode_note_round_trips() {
+        use bech32::{Bech32, Hrp};
+        let id = "ae3a6f7ce2971e43cfeeda2a41f30206d205cc16542a5cd9e127cefb01d409a4";
+        let bytes = hex::decode(id).unwrap();
+        let note = bech32::encode::<Bech32>(Hrp::parse("note").unwrap(), &bytes).unwrap();
+        match decode(&note).expect("decode note") {
+            Decoded::Note { event_id } => assert_eq!(event_id, id),
+            other => panic!("expected Note, got {:?}", other),
         }
     }
 

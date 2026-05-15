@@ -16,6 +16,8 @@ pub enum QueryParseError {
     EmptyQuery,
     InvalidKind(String),
     InvalidNpub(String),
+    /// `id:<value>` where the value is not a 64-char hex event id.
+    InvalidEventId(String),
 }
 
 impl fmt::Display for QueryParseError {
@@ -24,6 +26,9 @@ impl fmt::Display for QueryParseError {
             QueryParseError::EmptyQuery => write!(f, "Search query is empty"),
             QueryParseError::InvalidKind(s) => write!(f, "Invalid kind: {}", s),
             QueryParseError::InvalidNpub(s) => write!(f, "Invalid npub: {}", s),
+            QueryParseError::InvalidEventId(s) => {
+                write!(f, "Invalid event id (expected 64 hex chars): {}", s)
+            }
         }
     }
 }
@@ -75,6 +80,9 @@ pub enum AuthorFilter {
 /// Parsed search query
 #[derive(Debug, Clone)]
 pub struct SearchQuery {
+    /// Event-id filter (NIP-01 `ids`). Set by `id:<hex>` and by `note` /
+    /// `nevent` NIP-19 entities — a direct, exact event lookup.
+    pub ids: Option<Vec<String>>,
     pub tag_filters: Vec<TagFilter>,
     /// Tag-presence filters: `has:NAME` matches events that have at least
     /// one tag whose first element is `NAME`, regardless of value. Applied
@@ -245,6 +253,7 @@ impl SearchQuery {
 
         let tokens = tokenize(input);
 
+        let mut ids: Option<Vec<String>> = None;
         let mut tag_filters: Vec<TagFilter> = Vec::new();
         let mut has_tags: Vec<String> = Vec::new();
         let mut count_tags: Vec<String> = Vec::new();
@@ -265,6 +274,27 @@ impl SearchQuery {
                         tag_filters.push(TagFilter {
                             tag_name: name,
                             values: vec![value],
+                        });
+                    }
+                }
+                TokenClass::Id(id) => {
+                    ids.get_or_insert_with(Vec::new).push(id);
+                }
+                TokenClass::NAddr {
+                    kind,
+                    pubkey,
+                    d_tag,
+                } => {
+                    // An naddr pins kind + author + d-tag. `d` is a
+                    // single-letter tag, so it filters at the NIP-01 layer.
+                    kind_filter.get_or_insert_with(Vec::new).push(kind);
+                    author_filter = Some(AuthorFilter::Pubkeys(vec![pubkey]));
+                    if let Some(existing) = tag_filters.iter_mut().find(|f| f.tag_name == "d") {
+                        existing.values.push(d_tag);
+                    } else {
+                        tag_filters.push(TagFilter {
+                            tag_name: "d".to_string(),
+                            values: vec![d_tag],
                         });
                     }
                 }
@@ -305,6 +335,9 @@ impl SearchQuery {
                 TokenClass::InvalidNpub(s) => {
                     return Err(QueryParseError::InvalidNpub(s));
                 }
+                TokenClass::InvalidEventId(s) => {
+                    return Err(QueryParseError::InvalidEventId(s));
+                }
             }
         }
 
@@ -313,6 +346,7 @@ impl SearchQuery {
         }
 
         Ok(SearchQuery {
+            ids,
             tag_filters,
             has_tags,
             count_tags,
@@ -337,6 +371,11 @@ impl SearchQuery {
     /// are applied as a post-filter via `query::filter_by_tags`.
     pub fn to_nip01_filters(&self) -> Vec<Value> {
         let mut filter = serde_json::Map::new();
+
+        if let Some(ids) = &self.ids {
+            let id_values: Vec<Value> = ids.iter().map(|i| Value::String(i.clone())).collect();
+            filter.insert("ids".to_string(), Value::Array(id_values));
+        }
 
         for tf in &self.tag_filters {
             if tf.tag_name.chars().count() != 1 {
@@ -456,6 +495,15 @@ struct Token {
 
 enum TokenClass {
     Tag(String, String),
+    /// `id:<hex>`, or a `note` / `nevent` NIP-19 entity → NIP-01 `ids`.
+    Id(String),
+    /// An `naddr` NIP-19 entity — an addressable coordinate. Expands to
+    /// a kind filter + author filter + `d`-tag filter.
+    NAddr {
+        kind: u64,
+        pubkey: String,
+        d_tag: String,
+    },
     /// `has:NAME` — match events with any tag matching NAME (presence-only)
     HasTag(String),
     /// `count:NAME` — aggregate distinct values of NAME across matches
@@ -471,6 +519,7 @@ enum TokenClass {
     Keyword(String),
     InvalidKind(String),
     InvalidNpub(String),
+    InvalidEventId(String),
 }
 
 /// Tokenize input respecting double-quoted strings
@@ -616,6 +665,52 @@ fn classify_token(token: &Token) -> TokenClass {
         }
     }
 
+    // id: prefix → event-id filter (NIP-01 `ids`). Must precede the
+    // generic `NAME:value` tag dispatch so it isn't read as a tag named
+    // "id". The value must be a full 64-char hex event id.
+    if let Some(rest) = text.strip_prefix("id:") {
+        let rest = rest.trim();
+        if rest.len() == 64 && rest.chars().all(|c| c.is_ascii_hexdigit()) {
+            return TokenClass::Id(rest.to_lowercase());
+        }
+        return TokenClass::InvalidEventId(rest.to_string());
+    }
+
+    // NIP-19 entities — `note1…` / `nevent1…` / `naddr1…` / `npub1…` /
+    // `nprofile1…`, optionally `nostr:`-prefixed (NIP-21). Each decodes
+    // to a precise filter: an event id, an addressable coordinate, or an
+    // author pubkey. Must precede the generic tag dispatch (so a
+    // `nostr:`-prefixed entity isn't read as a `nostr:` tag). A decode
+    // failure falls through — the token is then treated as plain text.
+    {
+        let entity = crate::nip19::strip_nostr_prefix(text);
+        let looks_nip19 = ["note1", "nevent1", "naddr1", "npub1", "nprofile1"]
+            .iter()
+            .any(|p| entity.starts_with(p));
+        if looks_nip19 {
+            if let Ok(decoded) = crate::nip19::decode(entity) {
+                return match decoded {
+                    crate::nip19::Decoded::Note { event_id }
+                    | crate::nip19::Decoded::Nevent { event_id, .. } => TokenClass::Id(event_id),
+                    crate::nip19::Decoded::Naddr {
+                        kind_int,
+                        pubkey,
+                        d_tag,
+                        ..
+                    } => TokenClass::NAddr {
+                        kind: kind_int as u64,
+                        pubkey,
+                        d_tag,
+                    },
+                    crate::nip19::Decoded::Npub { pubkey }
+                    | crate::nip19::Decoded::Nprofile { pubkey, .. } => {
+                        TokenClass::Author(AuthorFilter::Pubkeys(vec![pubkey]))
+                    }
+                };
+            }
+        }
+    }
+
     // since:/until: prefix → NIP-01 time bounds. Must precede the generic
     // `NAME:value` tag dispatch so they aren't misread as tag filters. A
     // non-numeric value falls through (treated as an ordinary tag).
@@ -733,6 +828,83 @@ mod tests {
     fn test_parse_kind_filter() {
         let q = SearchQuery::parse("k:30041").unwrap();
         assert_eq!(q.kind_filter, Some(vec![30041]));
+    }
+
+    const TEST_ID: &str = "ae3a6f7ce2971e43cfeeda2a41f30206d205cc16542a5cd9e127cefb01d409a4";
+
+    fn make_bech32(hrp: &str, payload: &[u8]) -> String {
+        use bech32::{Bech32, Hrp};
+        bech32::encode::<Bech32>(Hrp::parse(hrp).unwrap(), payload).unwrap()
+    }
+
+    #[test]
+    fn test_parse_id_filter() {
+        let q = SearchQuery::parse(&format!("id:{}", TEST_ID)).unwrap();
+        assert_eq!(q.ids, Some(vec![TEST_ID.to_string()]));
+    }
+
+    #[test]
+    fn test_parse_id_uppercase_normalized() {
+        let q = SearchQuery::parse(&format!("id:{}", TEST_ID.to_uppercase())).unwrap();
+        assert_eq!(q.ids, Some(vec![TEST_ID.to_string()]));
+    }
+
+    #[test]
+    fn test_parse_id_invalid() {
+        let result = SearchQuery::parse("id:notahexid");
+        assert!(matches!(result, Err(QueryParseError::InvalidEventId(_))));
+    }
+
+    #[test]
+    fn test_to_nip01_ids() {
+        let q = SearchQuery::parse(&format!("id:{}", TEST_ID)).unwrap();
+        let filters = q.to_nip01_filters();
+        assert_eq!(filters.len(), 1);
+        assert_eq!(filters[0]["ids"], json!([TEST_ID]));
+    }
+
+    #[test]
+    fn test_parse_note_entity() {
+        // A `note1…` token decodes to an event-id filter.
+        let note = make_bech32("note", &hex::decode(TEST_ID).unwrap());
+        let q = SearchQuery::parse(&note).unwrap();
+        assert_eq!(q.ids, Some(vec![TEST_ID.to_string()]));
+    }
+
+    #[test]
+    fn test_parse_npub_bare_is_author() {
+        // A bare `npub1…` (no `by:`) scopes to that author.
+        let hex = "32bf915904bfde2d136ba45dde32c88f4aca863783999faea2e847a8fafd2f15";
+        let npub = crate::identity::encode_npub(hex).unwrap();
+        let q = SearchQuery::parse(&npub).unwrap();
+        assert_eq!(
+            q.author_filter,
+            Some(AuthorFilter::Pubkeys(vec![hex.to_string()]))
+        );
+    }
+
+    #[test]
+    fn test_parse_nostr_prefixed_npub() {
+        // The `nostr:` URI prefix (NIP-21) is stripped before decoding.
+        let hex = "32bf915904bfde2d136ba45dde32c88f4aca863783999faea2e847a8fafd2f15";
+        let npub = crate::identity::encode_npub(hex).unwrap();
+        let q = SearchQuery::parse(&format!("nostr:{}", npub)).unwrap();
+        assert_eq!(
+            q.author_filter,
+            Some(AuthorFilter::Pubkeys(vec![hex.to_string()]))
+        );
+    }
+
+    #[test]
+    fn test_parse_note_like_word_falls_through() {
+        // A word that merely starts with `note1` but isn't valid bech32
+        // stays a keyword — no decode panic, no spurious id filter.
+        let q = SearchQuery::parse("note1234").unwrap();
+        assert_eq!(q.ids, None);
+        assert_eq!(
+            q.text_filter,
+            Some(TextFilter::Keywords(vec!["note1234".to_string()]))
+        );
     }
 
     #[test]
