@@ -168,10 +168,23 @@ const AUTHOR_TOKEN = /(?:^|\s)by:/i;
 const SINCE_TOKEN = /(?:^|\s)since:\d+/i;
 const UNTIL_TOKEN = /(?:^|\s)until:\d+/i;
 const SEMANTIC_TOKEN = /(?:^|\s)~:/;
+const ID_TOKEN = /(?:^|\s)id:[0-9a-f]{64}(?:\s|$)/i;
+const NIP19_LOOKUP_TOKEN = /(?:^|\s)(?:nostr:)?(?:note1|nevent1|naddr1)[a-z0-9]+/i;
 
 /** True when the query already pins kinds itself. */
 export function queryHasExplicitKind(query: string): boolean {
 	return KIND_TOKEN.test(query);
+}
+
+/**
+ * True when a branch is an exact-event lookup — an `id:<hex>` token or a
+ * `note` / `nevent` / `naddr` NIP-19 entity. Such a query targets one
+ * specific event, so the configured default scope (kinds / author /
+ * time) must NOT be applied — a kind default would exclude the very
+ * event being looked up.
+ */
+export function isExactLookup(query: string): boolean {
+	return ID_TOKEN.test(query) || NIP19_LOOKUP_TOKEN.test(query);
 }
 
 /**
@@ -197,6 +210,10 @@ export function applySearchDefaults(
 		.map((branch) => {
 			const b = branch.trim();
 			if (!b) return b;
+			// An exact-event lookup is fully self-pinned — pass it through
+			// untouched so a default kind/author/time scope can't exclude
+			// the event being looked up.
+			if (isExactLookup(b)) return b;
 			const prefix: string[] = [];
 
 			if (searchConfig.kinds.length > 0 && !KIND_TOKEN.test(b)) {
