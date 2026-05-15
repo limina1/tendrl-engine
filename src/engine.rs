@@ -234,7 +234,7 @@ impl Engine {
     }
 
     /// Get the network activity tracker
-    /// NIP-11 cache shared across all consumers (web, TUI, eventual Emacs).
+    /// NIP-11 cache shared across all consumers (web, eventual Emacs).
     pub fn nip11_cache(&self) -> &crate::nip11::Nip11Cache {
         &self.nip11_cache
     }
@@ -414,13 +414,32 @@ impl Engine {
         filters: &[Value],
         trigger: FetchTrigger,
     ) -> Result<Vec<Value>> {
-        if !self.is_online() {
+        self.tracked_fetch_multiple_with_options(relays, filters, trigger, false)
+            .await
+    }
+
+    /// Bypass-aware variant of `tracked_fetch_multiple`. The
+    /// search-with-relays CTA + discussions/list pass `bypass=true` so
+    /// explicit user actions reach the network even when global
+    /// network mode is offline. Background syncs keep using
+    /// `tracked_fetch_multiple` (delegates with bypass=false).
+    pub async fn tracked_fetch_multiple_with_options(
+        &self,
+        relays: &[String],
+        filters: &[Value],
+        trigger: FetchTrigger,
+        bypass_offline: bool,
+    ) -> Result<Vec<Value>> {
+        if !bypass_offline && !self.is_online() {
             return Ok(vec![]);
         }
         let mut all_events = Vec::new();
         let mut seen_ids = std::collections::HashSet::new();
         for relay_url in relays {
-            match self.tracked_fetch(relay_url, filters, trigger.clone()).await {
+            match self
+                .tracked_fetch_with_options(relay_url, filters, trigger.clone(), bypass_offline)
+                .await
+            {
                 Ok(events) => {
                     for event in events {
                         if let Some(id) = event.get("id").and_then(|v| v.as_str()) {
@@ -735,8 +754,12 @@ impl Engine {
 
         match policy {
             FetchPolicy::LocalOnly => self.query_local_only(&filters),
-            FetchPolicy::LocalFirst => self.query_local_first(&filters, relays).await,
-            FetchPolicy::FetchAlways => self.query_fetch_always(&filters, relays).await,
+            FetchPolicy::LocalFirst => self
+                .query_local_first_with_options(&filters, relays, bypass_offline)
+                .await,
+            FetchPolicy::FetchAlways => self
+                .query_fetch_always_with_options(&filters, relays, bypass_offline)
+                .await,
         }
     }
 
@@ -825,6 +848,21 @@ impl Engine {
         policy: FetchPolicy,
         override_relays: Option<&[String]>,
     ) -> Result<SearchResponse> {
+        self.search_with_options(query, policy, override_relays, false)
+            .await
+    }
+
+    /// Variant of `search` that can bypass the offline-mode policy
+    /// downgrade. The web's "No events in local DB — search relays?"
+    /// CTA passes `bypass_offline=true` so the engine actually performs
+    /// the relay round-trip even when offline mode is set.
+    pub async fn search_with_options(
+        &self,
+        query: &SearchQuery,
+        policy: FetchPolicy,
+        override_relays: Option<&[String]>,
+        bypass_offline: bool,
+    ) -> Result<SearchResponse> {
         let limit = query.limit.unwrap_or(100);
 
         // Semantic search path
@@ -850,7 +888,9 @@ impl Engine {
             filters = vec![serde_json::json!({"limit": fetch_limit})];
         }
 
-        let response = self.get_events(filters, policy, override_relays).await?;
+        let response = self
+            .get_events_with_options(filters, policy, override_relays, bypass_offline)
+            .await?;
 
         // Multi-char tag filters (e.g. `author:Claude`) are applied here —
         // NIP-01 only indexes single-letter keys at the DB layer.
@@ -1208,7 +1248,12 @@ impl Engine {
         })
     }
 
-    async fn query_local_first(&self, filters: &[Value], relays: &[String]) -> Result<QueryResponse> {
+    async fn query_local_first_with_options(
+        &self,
+        filters: &[Value],
+        relays: &[String],
+        bypass_offline: bool,
+    ) -> Result<QueryResponse> {
         // Try local first
         let local_events = query::query_local(&self.ndb, filters)?;
         let local_count = local_events.len();
@@ -1241,7 +1286,14 @@ impl Engine {
             "Found {} local results (requested {}), fetching from relays",
             local_count, requested_limit
         );
-        let relay_events = self.tracked_fetch_multiple(relays, filters, FetchTrigger::LocalFirst).await?;
+        let relay_events = self
+            .tracked_fetch_multiple_with_options(
+                relays,
+                filters,
+                FetchTrigger::LocalFirst,
+                bypass_offline,
+            )
+            .await?;
         let relay_count = relay_events.len();
 
         // Merge and deduplicate by event ID
@@ -1277,9 +1329,21 @@ impl Engine {
         })
     }
 
-    async fn query_fetch_always(&self, filters: &[Value], relays: &[String]) -> Result<QueryResponse> {
+    async fn query_fetch_always_with_options(
+        &self,
+        filters: &[Value],
+        relays: &[String],
+        bypass_offline: bool,
+    ) -> Result<QueryResponse> {
         // Fetch from relays first (this also ingests into nostrdb)
-        let relay_events = self.tracked_fetch_multiple(relays, filters, FetchTrigger::FetchAlways).await?;
+        let relay_events = self
+            .tracked_fetch_multiple_with_options(
+                relays,
+                filters,
+                FetchTrigger::FetchAlways,
+                bypass_offline,
+            )
+            .await?;
         let relay_count = relay_events.len();
 
         // Now query local (which includes freshly ingested events)

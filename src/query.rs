@@ -5,10 +5,37 @@
 use crate::error::{EngineError, Result};
 use nostrdb::{FilterBuilder, Ndb, Transaction};
 use serde_json::Value;
+use std::sync::{Mutex, MutexGuard};
 use tracing::debug;
+
+/// Serializes nostrdb read queries.
+///
+/// nostrdb-rs's `Ndb::query` bitwise-copies each `ndb_filter` struct
+/// (`filters.iter().map(|a| a.data)`), and every `ndb_filter` owns a
+/// ~1 MiB heap buffer (`elem_buf.start`, malloc'd by
+/// `ndb_filter_init_with`). Two `ndb_query` calls running concurrently
+/// corrupt that buffer's heap metadata and abort the process with
+/// "double free or corruption" — confirmed from a core dump:
+/// `ndb_filter_destroy → free → SIGABRT` inside `query_local`.
+///
+/// Until the binding is fixed upstream, every nostrdb read acquires
+/// this lock. For a single-user local engine the cost is negligible:
+/// queries are sub-millisecond and there is no real read parallelism
+/// to lose.
+static NDB_QUERY_LOCK: Mutex<()> = Mutex::new(());
+
+/// Acquire the nostrdb query lock. Recovers from a poisoned mutex
+/// (a query holder that panicked) rather than propagating the panic —
+/// a recovered guard is strictly better than cascading failures.
+pub fn ndb_query_lock() -> MutexGuard<'static, ()> {
+    NDB_QUERY_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
 
 /// Query events from local nostrdb using NIP-01 filters
 pub fn query_local(ndb: &Ndb, filters: &[Value]) -> Result<Vec<Value>> {
+    let _guard = ndb_query_lock();
     let txn = Transaction::new(ndb)
         .map_err(|e| EngineError::Database(format!("Failed to create transaction: {}", e)))?;
 
@@ -43,6 +70,7 @@ pub fn query_local(ndb: &Ndb, filters: &[Value]) -> Result<Vec<Value>> {
 pub fn query_by_id(ndb: &Ndb, id: &str) -> Result<Option<Value>> {
     let id_bytes = parse_hex_id(id)?;
 
+    let _guard = ndb_query_lock();
     let txn = Transaction::new(ndb)
         .map_err(|e| EngineError::Database(format!("Failed to create transaction: {}", e)))?;
 
@@ -72,6 +100,7 @@ pub fn query_by_id(ndb: &Ndb, id: &str) -> Result<Option<Value>> {
 pub fn query_addressable(ndb: &Ndb, kind: u64, pubkey: &str, d_tag: &str) -> Result<Option<Value>> {
     let pubkey_bytes = parse_hex_id(pubkey)?;
 
+    let _guard = ndb_query_lock();
     let txn = Transaction::new(ndb)
         .map_err(|e| EngineError::Database(format!("Failed to create transaction: {}", e)))?;
 

@@ -187,6 +187,11 @@ pub struct SearchRequest {
     pub relays: Option<Vec<String>>,
     /// Current user's pubkey hex (required for by:me queries)
     pub my_pubkey: Option<String>,
+    /// Set true for explicit user-initiated searches that should reach
+    /// the network even when global network mode is offline (the web's
+    /// "No events in local DB — search relays?" CTA).
+    #[serde(default)]
+    pub bypass_offline: bool,
 }
 
 /// POST /api/v1/search
@@ -220,7 +225,7 @@ pub async fn search_handler(
             resolve_author(&mut branch, &req, &engine)?;
 
             let resp = engine
-                .search(&branch, policy, req.relays.as_deref())
+                .search_with_options(&branch, policy, req.relays.as_deref(), req.bypass_offline)
                 .await?;
 
             total_local += resp.local_count;
@@ -255,7 +260,7 @@ pub async fn search_handler(
     resolve_author(&mut query, &req, &engine)?;
 
     let response = engine
-        .search(&query, policy, req.relays.as_deref())
+        .search_with_options(&query, policy, req.relays.as_deref(), req.bypass_offline)
         .await?;
 
     Ok(Json(response))
@@ -287,9 +292,78 @@ fn resolve_author(
                 ));
             }
         }
+        Some(AuthorFilter::Name(partial)) => {
+            let matches = resolve_pubkeys_by_name(engine.ndb(), partial);
+            if matches.is_empty() {
+                // No match: short-circuit by inserting an obviously
+                // empty pubkey set. We could error instead, but a zero-
+                // result query is the more discoverable feedback — the
+                // user sees the search ran with no hits and can adjust
+                // the partial, rather than getting a 400.
+                query.author_filter = Some(AuthorFilter::Pubkeys(vec![]));
+            } else {
+                query.author_filter = Some(AuthorFilter::Pubkeys(matches));
+            }
+        }
         _ => {}
     }
     Ok(())
+}
+
+/// Scan local kind 0 events and return pubkeys whose display_name /
+/// name contains the partial (case-insensitive, substring). Used to
+/// resolve `by:name:<partial>` into a concrete pubkey list before the
+/// rest of the search pipeline runs. Cached scan limit is generous;
+/// most users won't have more than a few hundred profiles cached.
+fn resolve_pubkeys_by_name(ndb: &nostrdb::Ndb, partial: &str) -> Vec<String> {
+    let needle = partial.trim().to_lowercase();
+    if needle.is_empty() {
+        return Vec::new();
+    }
+
+    let _guard = crate::query::ndb_query_lock();
+    let txn = match nostrdb::Transaction::new(ndb) {
+        Ok(t) => t,
+        Err(_) => return Vec::new(),
+    };
+    let filter = nostrdb::FilterBuilder::new().kinds([0]).limit(2000).build();
+    let results = match ndb.query(&txn, &[filter], 2000) {
+        Ok(r) => r,
+        Err(_) => return Vec::new(),
+    };
+
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut out: Vec<String> = Vec::new();
+    for qr in results {
+        let Ok(note) = ndb.get_note_by_key(&txn, qr.note_key) else {
+            continue;
+        };
+        let Ok(event) = crate::query::note_to_json_pub(&note) else {
+            continue;
+        };
+        let pubkey = event.get("pubkey").and_then(|v| v.as_str()).unwrap_or("");
+        if pubkey.len() != 64 || !seen.insert(pubkey.to_string()) {
+            continue;
+        }
+        let content = event.get("content").and_then(|v| v.as_str()).unwrap_or("");
+        if content.is_empty() {
+            continue;
+        }
+        let Ok(profile) = serde_json::from_str::<Value>(content) else {
+            continue;
+        };
+        let display_name = profile
+            .get("display_name")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let name = profile.get("name").and_then(|v| v.as_str()).unwrap_or("");
+        let display_lc = display_name.to_lowercase();
+        let name_lc = name.to_lowercase();
+        if display_lc.contains(&needle) || name_lc.contains(&needle) {
+            out.push(pubkey.to_string());
+        }
+    }
+    out
 }
 
 // ============================================================================
@@ -792,6 +866,7 @@ fn profile_from_event(pubkey: &str, event: &Value) -> Value {
 /// Query kind 0 profile by pubkey (no d-tag — kind 0 is regular replaceable, not parameterized)
 fn query_profile(ndb: &nostrdb::Ndb, pubkey: &str) -> Option<Value> {
     let pubkey_bytes = crate::query::parse_hex_pubkey(pubkey).ok()?;
+    let _guard = crate::query::ndb_query_lock();
     let txn = nostrdb::Transaction::new(ndb).ok()?;
     let filter = nostrdb::FilterBuilder::new()
         .kinds([0])
@@ -903,6 +978,12 @@ pub struct FetchRelayRequest {
     /// pollers must NOT set this — offline mode silences them by design.
     #[serde(default)]
     pub bypass_offline: bool,
+    /// NIP-50 search string. When present, the REQ filter sent to the
+    /// relay includes `"search": "<value>"` so NIP-50-supporting relays
+    /// do free-text matching (typically against `content` for kind 1,
+    /// and against profile name/display_name/nip05 for kind 0). Relays
+    /// that don't support NIP-50 ignore the field per the spec.
+    pub search: Option<String>,
 }
 
 fn default_fetch_limit() -> usize { 200 }
@@ -920,6 +1001,14 @@ pub async fn fetch_relay_handler(
     }
     if !req.authors.is_empty() {
         filter["authors"] = json!(req.authors);
+    }
+    if let Some(s) = req.search.as_deref() {
+        if !s.is_empty() {
+            // NIP-50: free-text matching at the relay. Relays without
+            // NIP-50 support ignore the field, so it's safe to include
+            // unconditionally when the caller asks for it.
+            filter["search"] = json!(s);
+        }
     }
 
     let events = engine.tracked_fetch_with_options(

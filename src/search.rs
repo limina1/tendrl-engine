@@ -65,6 +65,11 @@ pub enum AuthorFilter {
     Pubkeys(Vec<String>),
     CurrentUser,
     AssistantUser,
+    /// `by:name:<partial>` — resolved to a list of matching pubkeys by
+    /// the engine (case-insensitive substring match against display_name
+    /// / name from cached kind 0 events). The query handler swaps this
+    /// for `Pubkeys(...)` before building NIP-01 filters.
+    Name(String),
 }
 
 /// Parsed search query
@@ -522,6 +527,14 @@ fn classify_token(token: &Token) -> TokenClass {
         if rest == "assistant" {
             return TokenClass::Author(AuthorFilter::AssistantUser);
         }
+        // by:name:<partial> — explicit form. Resolution happens in the
+        // search handler, not here, so the parser stays pure.
+        if let Some(partial) = rest.strip_prefix("name:") {
+            if !partial.is_empty() {
+                return TokenClass::Author(AuthorFilter::Name(partial.to_string()));
+            }
+            return TokenClass::InvalidNpub("by:name: requires a partial after the colon".into());
+        }
         if rest.starts_with("npub1") {
             match identity::decode_npub(rest) {
                 Ok(hex) => return TokenClass::Author(AuthorFilter::Pubkeys(vec![hex])),
@@ -531,7 +544,19 @@ fn classify_token(token: &Token) -> TokenClass {
         if rest.len() == 64 && rest.chars().all(|c| c.is_ascii_hexdigit()) {
             return TokenClass::Author(AuthorFilter::Pubkeys(vec![rest.to_string()]));
         }
-        return TokenClass::InvalidNpub(rest.to_string());
+        // Looks-like-a-pubkey-but-malformed: a 64-char string that's
+        // not all hex, or anything that starts with `npub1`, is more
+        // likely a typo'd pubkey than a name partial. Surface the
+        // error rather than silently searching for someone "named" it.
+        let looks_like_pubkey =
+            rest.len() == 64 || rest.starts_with("npub") || rest.starts_with("hex:");
+        if looks_like_pubkey {
+            return TokenClass::InvalidNpub(rest.to_string());
+        }
+        // Anything else (plain alpha-numeric word) is a name partial —
+        // same as `by:name:<rest>`. This matches user intuition: typing
+        // `by:fia` searches for profiles named "fia".
+        return TokenClass::Author(AuthorFilter::Name(rest.to_string()));
     }
 
     // k: prefix → kind filter
