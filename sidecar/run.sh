@@ -10,11 +10,18 @@
 set -e
 cd "$(dirname "$0")"
 
-# Create persistent venv on first run
+# Create persistent venv on first run.
+# Install from the pinned lockfile when present (reproducible); the
+# unpinned requirements.txt is only a fallback. Regenerate the lock with
+# `make lock-sidecar` / `make update-sidecar` from the repo root.
 if [ ! -d .venv ]; then
     echo "Creating sidecar venv..."
     uv venv
-    uv pip install sentence-transformers flask pymupdf python-docx ebooklib lxml
+    if [ -f requirements.lock ]; then
+        uv pip sync requirements.lock
+    else
+        uv pip install -r requirements.txt
+    fi
 fi
 
 # Use cached model, don't check HF Hub on startup

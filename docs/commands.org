@@ -713,3 +713,54 @@ cd web && pnpm dev
    versions locally, the modal shows the newest ( highest
    =created_at= ). Edit + republish a section, click =§ json=
    again → modal swaps to the new version.
+
+* Dependency updates
+
+One entrypoint — the root =Makefile= — drives all three package managers
+(cargo, pnpm, uv) plus the git-pinned =nostrdb= crate. Bare =make= only
+reports; nothing is written until you ask for an =update*= target.
+
+** Report what is outdated (no files touched)
+
+#+begin_src bash
+make            # = make check
+make check-rust # or check-nostrdb / check-web / check-sidecar individually
+#+end_src
+
+** Safe updates — stay within the version ranges in each manifest
+
+Updates =Cargo.lock=, =web/pnpm-lock.yaml=, =sidecar/requirements.lock=,
+and repins =nostrdb= to upstream HEAD. Build + test afterward.
+
+#+begin_src bash
+make update
+cargo build && cargo test && pnpm -C web check
+#+end_src
+
+** Aggressive updates — bump manifests to newest major versions
+
+Rewrites =Cargo.toml= and =web/package.json=. Breakage is expected.
+
+#+begin_src bash
+make tools          # one-time: installs cargo-outdated + cargo-edit
+make update-latest
+#+end_src
+
+** Single manager
+
+#+begin_src bash
+make update-rust         make update-rust-latest
+make update-web          make update-web-latest
+make update-sidecar      # recompiles the lock + syncs sidecar/.venv
+make update-nostrdb      # repin the git rev only
+#+end_src
+
+** Sidecar lockfile
+
+=sidecar/requirements.txt= is the unpinned input; =requirements.lock= is
+the compiled, pinned output that =sidecar/run.sh= installs from. Recreate
+it after editing =requirements.txt=:
+
+#+begin_src bash
+make lock-sidecar
+#+end_src
