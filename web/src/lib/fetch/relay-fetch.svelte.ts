@@ -15,9 +15,17 @@ import * as api from '$lib/api';
 export type RelayFetchOpts = {
 	/** Short human-readable purpose, surfaced in the modal header. */
 	title: string;
+	/** The structured search query this fetch will run, shown verbatim
+	 *  in the modal so the user sees exactly what's being asked for.
+	 *  Optional — plain event fetches (profiles, sections) have none. */
+	query?: string;
 	kinds: number[];
 	authors: string[];
 	limit?: number;
+	/** NIP-50 search string. When set, relays that support NIP-50 do
+	 *  free-text matching (against `content` and/or profile fields).
+	 *  Relays without NIP-50 support ignore it. */
+	search?: string;
 };
 
 export type RelayFetchResult = {
@@ -55,6 +63,22 @@ export function addSessionRelay(url: string) {
 
 export function removeSessionRelay(url: string) {
 	fetchModal.sessionRelays = fetchModal.sessionRelays.filter((u) => u !== url);
+}
+
+/**
+ * Pure relay-picker: show the same modal the fetch flow uses, but
+ * don't run any fetches — return the user's chosen relay list.
+ *
+ * Useful for surfaces that need the relay decision but want to drive
+ * a different request (e.g. /api/v1/search) with the selection.
+ * Returns null on cancel or when a previous modal is still open.
+ */
+export async function pickRelaysFromModal(opts: RelayFetchOpts): Promise<string[] | null> {
+	if (fetchModal.pending) return null;
+	const cfg = await api.getRelayConfig();
+	return await new Promise<string[] | null>((resolve) => {
+		fetchModal.pending = { opts, configRelays: cfg.fetch.urls, resolve };
+	});
 }
 
 export function confirmFetchModal(relays: string[]) {
@@ -114,7 +138,8 @@ export async function fetchFromRelaysWithPrompt(
 	for (const relay of chosen) {
 		try {
 			const r = await api.fetchFromRelay(relay, opts.kinds, opts.authors, limit, {
-				bypassOffline: true
+				bypassOffline: true,
+				search: opts.search
 			});
 			per_relay.push({ relay, fetched: r.fetched });
 			total += r.fetched;

@@ -2,6 +2,11 @@
 	import type { SearchResult, ContextItem, DocumentFile, ImportPage, TagValueCount } from '$lib/types';
 	import SearchInput from './SearchInput.svelte';
 	import SearchResultItem from './SearchResultItem.svelte';
+	import {
+		searchConfig,
+		openSearchConfig,
+		kindLabel
+	} from '$lib/search/search-config.svelte';
 
 	let {
 		results,
@@ -36,7 +41,9 @@
 		localPubkeys = new Set<string>(),
 		onviewprofile,
 		cursor = -1,
-		listEl = $bindable<HTMLDivElement | undefined>(undefined)
+		listEl = $bindable<HTMLDivElement | undefined>(undefined),
+		canPromptRelays = false,
+		onsearchrelays
 	}: {
 		results: SearchResult[];
 		tagCounts?: Record<string, TagValueCount[]>;
@@ -70,6 +77,13 @@
 		onviewprofile?: (pubkey: string) => void;
 		cursor?: number;
 		listEl?: HTMLDivElement;
+		/** When true, the offline-empty CTA appears so the user can
+		 *  prompt for relays and re-run the same query against the
+		 *  network. The host (state.svelte.ts) decides when this is
+		 *  meaningful — typically offline mode + a non-empty query
+		 *  that returned zero local hits. */
+		canPromptRelays?: boolean;
+		onsearchrelays?: () => void;
 	} = $props();
 
 	let activeTab: 'search' | 'import' = $state('search');
@@ -207,6 +221,27 @@
 	{#if activeTab === 'search'}
 		<SearchInput {onsearch} />
 
+		<!-- Scope strip: the kinds a search runs against when the query
+		     itself has no `k:` token. Makes the otherwise-invisible
+		     default scope explicit, and the gear edits it. -->
+		<div class="search-scope">
+			<span class="scope-label">scope</span>
+			{#if searchConfig.kinds.length > 0}
+				{#each searchConfig.kinds as k (k)}
+					<span class="scope-chip" title={kindLabel(k)}>k:{k}</span>
+				{/each}
+			{:else}
+				<span class="scope-chip scope-chip--all" title="No kind filter — every kind matches">all kinds</span>
+			{/if}
+			<span class="scope-spacer"></span>
+			<button
+				class="scope-gear"
+				onclick={openSearchConfig}
+				title="Configure search defaults — kinds, limit (explicit k: in a query overrides this)"
+				aria-label="Configure search defaults"
+			>⚙</button>
+		</div>
+
 		{#if count > 0}
 			<div class="search-bar">
 				<span class="search-summary">
@@ -300,7 +335,16 @@
 			{/if}
 
 			{#if !loading && results.length === 0 && !isGrouped}
-				<p class="empty">Search {searchContext}</p>
+				{#if canPromptRelays}
+					<div class="empty empty-cta">
+						<p>No events found in local DB.</p>
+						<button class="empty-cta__btn" onclick={() => onsearchrelays?.()}>
+							Search relays →
+						</button>
+					</div>
+				{:else}
+					<p class="empty">Search {searchContext}</p>
+				{/if}
 			{/if}
 
 			{#if loading}
@@ -428,6 +472,49 @@
 		min-width: 28px;
 	}
 
+	/* Scope strip — sits directly under the search input. */
+	.search-scope {
+		display: flex;
+		align-items: center;
+		gap: 5px;
+		padding: 0 12px 6px;
+		flex-wrap: wrap;
+	}
+	.scope-label {
+		font-size: 0.6rem;
+		text-transform: uppercase;
+		letter-spacing: 0.07em;
+		color: var(--fg-muted);
+	}
+	.scope-chip {
+		font-family: var(--font-mono);
+		font-size: 0.62rem;
+		padding: 1px 6px;
+		border-radius: var(--radius);
+		background: color-mix(in srgb, var(--accent) 14%, transparent);
+		color: var(--accent);
+		cursor: default;
+	}
+	.scope-chip--all {
+		background: color-mix(in srgb, var(--fg-muted) 16%, transparent);
+		color: var(--fg-muted);
+	}
+	.scope-spacer {
+		flex: 1;
+	}
+	.scope-gear {
+		background: none;
+		border: none;
+		color: var(--fg-muted);
+		cursor: pointer;
+		font-size: 0.8rem;
+		padding: 0 2px;
+		line-height: 1;
+	}
+	.scope-gear:hover {
+		color: var(--accent);
+	}
+
 	.search-results {
 		flex: 1;
 		overflow-y: auto;
@@ -534,6 +621,26 @@
 		margin-top: 40px;
 		font-size: 0.85rem;
 		padding: 0 12px;
+	}
+	.empty-cta {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 10px;
+	}
+	.empty-cta p { margin: 0; }
+	.empty-cta__btn {
+		font-family: var(--font-mono);
+		font-size: var(--t-xs);
+		padding: 6px 16px;
+		background: transparent;
+		border: 1px solid var(--state-online);
+		color: var(--state-online);
+		border-radius: var(--r-sm);
+		cursor: pointer;
+	}
+	.empty-cta__btn:hover {
+		background: color-mix(in srgb, var(--state-online) 18%, transparent);
 	}
 
 	/* Semantic summary */

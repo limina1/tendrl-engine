@@ -121,4 +121,10 @@
 	items={app.items}
 	localPubkeys={app.localPubkeys}
 	onviewprofile={app.handleViewProfile}
+	canPromptRelays={
+		app.networkStatus?.mode === 'offline' &&
+		app.searchLastQuery !== '' &&
+		!app.searchLoading
+	}
+	onsearchrelays={app.handleSearchViaRelays}
 />

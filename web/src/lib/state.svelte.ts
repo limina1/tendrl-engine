@@ -1,4 +1,9 @@
 import { goto } from '$app/navigation';
+import {
+	searchConfig,
+	loadSearchConfig,
+	applyKindScope
+} from '$lib/search/search-config.svelte';
 import type {
 	ChatResponse,
 	SearchResult,
@@ -135,7 +140,10 @@ function _createAppState() {
 	type Toast = {
 		id: number;
 		message: string;
-		kind: 'success' | 'info' | 'error';
+		// `pending` is the "working in progress" state — violet with a
+		// soft pulse. Callers flip to `success` (green) or `error` (red)
+		// via updateToast when the operation settles.
+		kind: 'success' | 'info' | 'error' | 'pending';
 	};
 	let toasts: Toast[] = $state([]);
 	let nextToastId = 1;
@@ -160,12 +168,39 @@ function _createAppState() {
 		toasts = toasts.filter((t) => t.id !== id);
 	}
 
+	/**
+	 * Patch a toast in place — message and/or kind — and optionally
+	 * reset its auto-dismiss timer. Used for "tick" toasts that flip
+	 * from `info` (purple) while an async action is running to
+	 * `success` (green) when it finishes, then vanish on the new TTL.
+	 */
+	function updateToast(
+		id: number,
+		patch: Partial<Pick<Toast, 'message' | 'kind'>>,
+		ttlMs?: number
+	): void {
+		toasts = toasts.map((t) => (t.id === id ? { ...t, ...patch } : t));
+		if (ttlMs !== undefined) {
+			const existing = toastTimers.get(id);
+			if (existing) clearTimeout(existing);
+			toastTimers.set(
+				id,
+				setTimeout(() => dismissToast(id), ttlMs)
+			);
+		}
+	}
+
 	// --- Search ---
 	let searchResults: SearchResult[] = $state([]);
 	let searchCount = $state(0);
 	let searchLocalCount = $state(0);
 	let searchRelayCount = $state(0);
 	let searchLoading = $state(false);
+	// The effective query (with auto-`by:me` etc. applied) of the most
+	// recent run. The offline "Search relays?" CTA replays this exact
+	// string with bypass_offline=true so we hit the same filter set, not
+	// whatever's currently typed in the input.
+	let searchLastQuery = $state('');
 	// Populated only when the query contained a `count:NAME` operator.
 	// Switches the SearchPanel into "grouped" view: top-level rows are the
 	// histogram buckets, each unfolds to its contributing events.
@@ -1035,7 +1070,18 @@ function _createAppState() {
 				effectiveQuery = `by:me ${effectiveQuery}`;
 			}
 
-			const resp = await api.search(effectiveQuery, undefined, myPubkey ?? undefined);
+			// Scope to the configured default kinds (publication kinds,
+			// out of the box) unless the query pinned its own `k:`. This
+			// keeps kind-1 noise out of a bare keyword search and is the
+			// same scope the offline "Search relays" fallback inherits.
+			effectiveQuery = applyKindScope(effectiveQuery);
+
+			searchLastQuery = effectiveQuery;
+			const resp = await api.search(
+				effectiveQuery,
+				searchConfig.limit,
+				myPubkey ?? undefined
+			);
 			searchResults = resp.results;
 			searchCount = resp.count;
 			searchLocalCount = resp.local_count;
@@ -1080,6 +1126,141 @@ function _createAppState() {
 			}
 		} catch (e) {
 			console.error('Search failed:', e);
+		} finally {
+			searchLoading = false;
+		}
+	}
+
+	// Offline fallback: when a local search returned no results and the
+	// user wants to reach out to relays, prompt for the relay set and
+	// replay the same effective query with bypass_offline=true. The
+	// engine's relay round-trip ingests new events into nostrdb, then
+	// the same search filters apply locally, so subsequent runs without
+	// relays still see them.
+	// Pull out the partial from a `by:name:<partial>` token (or the
+	// bare `by:<word>` shorthand the engine parser accepts) so we can
+	// hit NIP-50 relays with the right search string. We only treat
+	// the shorthand as a name when it doesn't look like a pubkey — an
+	// `npub1…` prefix or 64-hex string is something else entirely.
+	function extractByNamePartial(query: string): string | null {
+		const explicit = query.match(/(?:^|\s)by:name:(\S+)/i);
+		if (explicit) return explicit[1];
+		const m = query.match(/(?:^|\s)by:(\S+)/i);
+		if (!m) return null;
+		const value = m[1];
+		if (value === 'me' || value === 'assistant') return null;
+		if (value.startsWith('npub1')) return null;
+		if (value.length === 64 && /^[0-9a-fA-F]+$/.test(value)) return null;
+		return value;
+	}
+
+	async function handleSearchViaRelays() {
+		if (!searchLastQuery) return;
+		const namePartial = extractByNamePartial(searchLastQuery);
+		const { pickRelaysFromModal, fetchFromRelaysWithPrompt } = await import(
+			'$lib/fetch/relay-fetch.svelte'
+		);
+
+		// Two-phase when by:name: is present:
+		//   1. NIP-50 relay fetch with `search: <partial>` to ingest the
+		//      matching kind 0 profiles. This step uses the modal to
+		//      pick the relays.
+		//   2. Re-run the search locally. The freshly-ingested profiles
+		//      let the local by:name resolver find them, and the full
+		//      query (including other operators like k:30023) applies.
+		//
+		// When by:name: is absent we keep the simpler path: pick relays
+		// and pass them as override to api.search with bypass_offline so
+		// the engine's standard relay-search machinery handles it.
+		searchLoading = true;
+		const toastId = pushToast(
+			namePartial
+				? `Searching NIP-50 relays for profiles matching "${namePartial}"…`
+				: `Searching relays…`,
+			'pending',
+			60_000
+		);
+		try {
+			let chosenRelays: string[];
+			if (namePartial) {
+				const result = await fetchFromRelaysWithPrompt(
+					{
+						title: `NIP-50 profile search: ${namePartial}`,
+						kinds: [0],
+						authors: [],
+						search: namePartial,
+						limit: 100
+					},
+					{ isOnline: networkStatus?.mode === 'online' }
+				);
+				if (!result || result.relays.length === 0) {
+					updateToast(toastId, { message: 'Relay search cancelled', kind: 'info' }, 1500);
+					return;
+				}
+				chosenRelays = result.relays;
+				// Give nostrdb a beat to finish ingesting before the
+				// local re-resolve. Without this the new kind 0 events
+				// may not be queryable yet.
+				await new Promise((r) => setTimeout(r, 350));
+				updateToast(
+					toastId,
+					{
+						message: `Ingested ${result.total_fetched} event${result.total_fetched === 1 ? '' : 's'} · resolving locally…`
+					}
+				);
+			} else if (searchConfig.relays.length > 0) {
+				// Search relays configured in the defaults — run straight
+				// through with no prompt ("search with the default
+				// parameters"). The gear modal is where they're chosen.
+				chosenRelays = searchConfig.relays;
+			} else {
+				const relays = await pickRelaysFromModal({
+					title: `Search relays for: ${searchLastQuery}`,
+					query: searchLastQuery,
+					kinds: searchConfig.kinds,
+					authors: [],
+					limit: searchConfig.limit
+				});
+				if (!relays || relays.length === 0) {
+					updateToast(toastId, { message: 'Relay search cancelled', kind: 'info' }, 1500);
+					return;
+				}
+				chosenRelays = relays;
+			}
+
+			const resp = await api.search(
+				searchLastQuery,
+				searchConfig.limit,
+				myPubkey ?? undefined,
+				'fetch_always',
+				{ relays: chosenRelays, bypassOffline: true }
+			);
+			searchResults = resp.results;
+			searchCount = resp.count;
+			searchLocalCount = resp.local_count;
+			searchRelayCount = resp.relay_count;
+			searchTagCounts = resp.tag_counts ?? {};
+			const pks = [...new Set(resp.results.map((r) => r.author))];
+			api.prefetchProfiles(pks);
+			updateToast(
+				toastId,
+				{
+					message:
+						resp.count > 0
+							? `Found ${resp.count} event${resp.count === 1 ? '' : 's'} on ${chosenRelays.length} relay${chosenRelays.length === 1 ? '' : 's'}`
+							: `No matches on ${chosenRelays.length} relay${chosenRelays.length === 1 ? '' : 's'}`,
+					kind: 'success'
+				},
+				2000
+			);
+		} catch (e) {
+			const msg = e instanceof Error ? e.message : String(e);
+			console.error('Relay search failed:', e);
+			updateToast(
+				toastId,
+				{ message: `Relay search failed: ${msg.slice(0, 120)}`, kind: 'error' },
+				4500
+			);
 		} finally {
 			searchLoading = false;
 		}
@@ -1998,6 +2179,7 @@ function _createAppState() {
 	// ===================== Initialization =====================
 
 	async function initialize() {
+		loadSearchConfig();
 		try {
 			const cfg = await api.getConfig();
 			myPubkey = cfg.my_pubkey;
@@ -2327,12 +2509,15 @@ function _createAppState() {
 		handleComposePublish,
 		handleComposeUpdate,
 		handleSearch,
+		handleSearchViaRelays,
+		get searchLastQuery() { return searchLastQuery; },
 		pushHistoryEntry,
 		getEventForModal,
 		openAddressableInModal,
 		findContainingIndexes,
 		get toasts() { return toasts; },
 		pushToast,
+		updateToast,
 		dismissToast,
 		get searchHistory() { return searchHistory; },
 		get currentEntry() { return currentEntry; },

@@ -94,16 +94,41 @@
 			<h3 class="rf-title">{opts.title}</h3>
 			<button class="rf-close" onclick={oncancel} aria-label="Close">×</button>
 		</header>
-		<div class="rf-meta">
-			<span class="rf-meta-row">
-				<span class="rf-label">kinds</span>
-				<code>{opts.kinds.join(', ')}</code>
-			</span>
-			<span class="rf-meta-row">
-				<span class="rf-label">authors</span>
-				<code>{opts.authors.length} pubkey{opts.authors.length === 1 ? '' : 's'}</code>
-			</span>
-		</div>
+		{#if opts.query || opts.kinds.length > 0 || opts.authors.length > 0 || opts.search || opts.limit}
+			<div class="rf-meta">
+				<div class="rf-meta-head">Searching for</div>
+				{#if opts.query}
+					<span class="rf-meta-row">
+						<span class="rf-label">query</span>
+						<code class="rf-query">{opts.query}</code>
+					</span>
+				{/if}
+				{#if opts.kinds.length > 0}
+					<span class="rf-meta-row">
+						<span class="rf-label">kinds</span>
+						<code>{opts.kinds.join(', ')}</code>
+					</span>
+				{/if}
+				{#if opts.authors.length > 0}
+					<span class="rf-meta-row">
+						<span class="rf-label">authors</span>
+						<code>{opts.authors.length} pubkey{opts.authors.length === 1 ? '' : 's'}</code>
+					</span>
+				{/if}
+				{#if opts.search}
+					<span class="rf-meta-row">
+						<span class="rf-label">nip-50</span>
+						<code>"{opts.search}"</code>
+					</span>
+				{/if}
+				{#if opts.limit}
+					<span class="rf-meta-row">
+						<span class="rf-label">limit</span>
+						<code>{opts.limit}</code>
+					</span>
+				{/if}
+			</div>
+		{/if}
 
 		<div class="rf-section">
 			<div class="rf-section-head">Configured relays</div>
@@ -234,19 +259,34 @@
 
 	.rf-meta {
 		display: flex;
-		gap: 12px;
+		flex-direction: column;
+		gap: 4px;
 		padding: 8px 14px;
 		border-bottom: 1px solid var(--panel-border);
 		color: var(--base5);
 	}
+	.rf-meta-head {
+		text-transform: uppercase;
+		letter-spacing: 0.06em;
+		color: var(--id-yours);
+		font-size: calc(var(--t-xs) - 1px);
+		margin-bottom: 2px;
+	}
 	.rf-meta-row {
-		display: inline-flex;
-		gap: 6px;
+		display: flex;
+		gap: 8px;
 		align-items: baseline;
 	}
 	.rf-label {
 		text-transform: uppercase;
 		letter-spacing: 0.06em;
+		min-width: 56px;
+		flex-shrink: 0;
+	}
+	.rf-query {
+		white-space: pre-wrap;
+		word-break: break-word;
+		color: var(--fg);
 	}
 	.rf-meta code,
 	.rf-url {

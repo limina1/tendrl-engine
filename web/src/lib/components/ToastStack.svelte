@@ -85,4 +85,26 @@
 	.toast--error .toast__dot {
 		background: var(--state-error, var(--red));
 	}
+	/* In-progress state — violet with a soft pulse so the user can tell
+	   the operation hasn't completed yet. `updateToast` later flips the
+	   kind to success (green) or error (red), which keeps the same dom
+	   node so the cross-fade between border/dot colors reads as a
+	   single status changing rather than a new toast appearing. */
+	.toast--pending {
+		border-color: color-mix(in srgb, var(--id-forked) 40%, var(--panel-border));
+		transition: border-color 220ms ease;
+	}
+	.toast--pending .toast__dot {
+		background: var(--id-forked);
+		animation: toast-pulse 1.1s ease-in-out infinite;
+	}
+	.toast--pending .toast__msg {
+		color: var(--id-forked);
+	}
+	.toast .toast__dot { transition: background 220ms ease; }
+	.toast .toast__msg { transition: color 220ms ease; }
+	@keyframes toast-pulse {
+		0%, 100% { opacity: 1; box-shadow: 0 0 0 0 var(--id-forked); }
+		50%      { opacity: 0.55; box-shadow: 0 0 0 4px color-mix(in srgb, var(--id-forked) 25%, transparent); }
+	}
 </style>

@@ -5,6 +5,7 @@
 	import SearchActionModal from '$lib/components/SearchActionModal.svelte';
 	import EventViewModal from '$lib/components/EventViewModal.svelte';
 	import RelayFetchModal from '$lib/components/RelayFetchModal.svelte';
+	import SearchConfigModal from '$lib/components/SearchConfigModal.svelte';
 	import ToastStack from '$lib/components/ToastStack.svelte';
 	import {
 		fetchModal,
@@ -176,6 +177,8 @@
 		oncancel={cancelFetchModal}
 	/>
 {/if}
+
+<SearchConfigModal />
 
 {#if app.jsonModalData}
 	<!-- Legacy <pre> dump for the M-x buffer-inspector and PublishProgressBuffer

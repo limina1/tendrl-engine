@@ -265,10 +265,19 @@ export function broadcastEvent(req: BroadcastRequest) {
 
 // Search API
 
-export function search(query: string, limit?: number, my_pubkey?: string, policy = 'local_only') {
+export function search(
+	query: string,
+	limit?: number,
+	my_pubkey?: string,
+	policy = 'local_only',
+	options: { relays?: string[]; bypassOffline?: boolean } = {}
+) {
+	const body: Record<string, unknown> = { query, limit, my_pubkey, policy };
+	if (options.relays && options.relays.length > 0) body.relays = options.relays;
+	if (options.bypassOffline) body.bypass_offline = true;
 	return fetchJson<SearchResponse>('/api/v1/search', {
 		method: 'POST',
-		body: JSON.stringify({ query, limit, my_pubkey, policy })
+		body: JSON.stringify(body)
 	});
 }
 
@@ -373,17 +382,21 @@ export function fetchFromRelay(
 	kinds: number[],
 	authors: string[] = [],
 	limit = 200,
-	options: { bypassOffline?: boolean } = {}
+	options: { bypassOffline?: boolean; search?: string } = {}
 ) {
+	const body: Record<string, unknown> = {
+		relay,
+		kinds,
+		authors,
+		limit,
+		bypass_offline: options.bypassOffline ?? false
+	};
+	// NIP-50: include `search` only when set so relays that don't
+	// implement the spec aren't confused by an empty-string filter.
+	if (options.search && options.search.length > 0) body.search = options.search;
 	return fetchJson<{ fetched: number; relay: string; kinds: number[] }>('/api/v1/fetch', {
 		method: 'POST',
-		body: JSON.stringify({
-			relay,
-			kinds,
-			authors,
-			limit,
-			bypass_offline: options.bypassOffline ?? false
-		})
+		body: JSON.stringify(body)
 	});
 }
 
