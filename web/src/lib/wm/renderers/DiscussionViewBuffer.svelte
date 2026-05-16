@@ -213,12 +213,29 @@
 		}
 	}
 
-	// Pull the whole thread: backfill every kind-1111 comment sharing this
-	// comment's root scope from relays (not just whatever's local), resolve
-	// the root event the conversation hangs off, and assemble a proper
-	// reply tree with this comment in it. A user clicking the button is
-	// explicit intent — fetch_always + bypass_offline so it reaches relays
-	// even when the app is in offline mode.
+	// Rebuild the thread tree from a fresh set of comment events. Dedups
+	// by id and always folds in the comment being viewed — relays may lag
+	// and not echo it back, but it's definitely part of the thread.
+	function applyThread(events: NostrEvent[]) {
+		const byId = new Map<string, NostrEvent>();
+		for (const e of events) {
+			if (e.kind === 1111) byId.set(e.id, e);
+		}
+		if (event) byId.set(event.id, event);
+		const comments = [...byId.values()];
+		threadNodes = buildThread(comments);
+		threadCount = comments.length;
+		const authors = new Set(comments.map((c) => c.pubkey));
+		if (authors.size > 0) prefetchAuthors([...authors]);
+	}
+
+	// Pull the whole thread in two phases:
+	//   1. local_only — render whatever's already in nostrdb, instantly.
+	//   2. fetch_always — refresh from relays. `bypassOffline` routes the
+	//      call through the engine's confirm gate: a modal in Confirm
+	//      mode, automatic in Auto. A declined modal degrades to a local
+	//      read, so the worst case is the tree staying at the phase-1
+	//      result — never an error, never a blank screen.
 	async function pullThread() {
 		if (!event || !isComment) return;
 		// Already pulled — the button is just a visibility toggle now.
@@ -235,29 +252,26 @@
 				threadError = 'No root reference on this comment';
 				return;
 			}
-			const opts: Parameters<typeof api.getDiscussionList>[0] = {
+			const baseOpts: Parameters<typeof api.getDiscussionList>[0] = {
 				kinds: [1111],
-				policy: 'fetch_always',
-				bypassOffline: true,
 				limit: 500
 			};
-			if (root.type === 'a') opts.addresses = [root.value];
-			else opts.eventIds = [root.value];
-			const resp = await api.getDiscussionList(opts);
-			// Dedup by id and fold in the comment we're viewing — relays may
-			// lag and not echo it back, but it's definitely in the thread.
-			const byId = new Map<string, NostrEvent>();
-			for (const e of resp.events) {
-				if (e.kind === 1111) byId.set(e.id, e as NostrEvent);
-			}
-			byId.set(event.id, event);
-			const comments = [...byId.values()];
-			threadNodes = buildThread(comments);
-			threadCount = comments.length;
-			// Resolve the root event for the header, and warm author names.
+			if (root.type === 'a') baseOpts.addresses = [root.value];
+			else baseOpts.eventIds = [root.value];
+
+			// Phase 1 — instant local render.
+			const local = await api.getDiscussionList({ ...baseOpts, policy: 'local_only' });
+			applyThread(local.events as NostrEvent[]);
+			// Resolve the root header from cache while we're here.
 			await loadRootEvent(root);
-			const authors = new Set(comments.map((c) => c.pubkey));
-			if (authors.size > 0) prefetchAuthors([...authors]);
+
+			// Phase 2 — relay refresh, gated by the engine.
+			const fresh = await api.getDiscussionList({
+				...baseOpts,
+				policy: 'fetch_always',
+				bypassOffline: true
+			});
+			applyThread(fresh.events as NostrEvent[]);
 		} catch (e) {
 			threadError = e instanceof Error ? e.message : String(e);
 		} finally {

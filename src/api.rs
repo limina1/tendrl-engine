@@ -1914,6 +1914,77 @@ fn is_addr_coord(s: &str) -> bool {
     )
 }
 
+/// `e0557f939c5e…` — a hex id truncated for display.
+fn short_id(s: &str) -> String {
+    if s.len() > 12 {
+        format!("{}…", &s[..12])
+    } else {
+        s.to_string()
+    }
+}
+
+/// `30023:52b4a076…:ab008d4c` — an addressable coord with a short pubkey.
+fn short_addr(s: &str) -> String {
+    let p: Vec<&str> = s.splitn(3, ':').collect();
+    if p.len() == 3 {
+        let pk = if p[1].len() > 8 {
+            format!("{}…", &p[1][..8])
+        } else {
+            p[1].to_string()
+        };
+        format!("{}:{}:{}", p[0], pk, p[2])
+    } else {
+        s.to_string()
+    }
+}
+
+/// Confirm-modal step descriptions for a discussions fetch, derived from
+/// the actual request — which kinds, against which targets — rather than
+/// a canned template. The modal shows the user exactly what this call
+/// will ask the relays for.
+fn describe_discussion_steps(
+    kinds: &[u64],
+    addresses: &[String],
+    event_ids: &[String],
+) -> Vec<String> {
+    // Name the kinds being requested, deduped, in request order.
+    let mut what: Vec<&str> = Vec::new();
+    for k in kinds {
+        let name = match k {
+            1111 => "comments",
+            9802 => "highlights",
+            _ => "events",
+        };
+        if !what.contains(&name) {
+            what.push(name);
+        }
+    }
+    let what = what.join(" & ");
+    let kinds_str = kinds
+        .iter()
+        .map(|k| k.to_string())
+        .collect::<Vec<_>>()
+        .join(", ");
+    let kind_word = if kinds.len() > 1 { "kinds" } else { "kind" };
+
+    let mut steps = Vec::new();
+    if !event_ids.is_empty() {
+        let targets: Vec<String> = event_ids.iter().map(|s| short_id(s)).collect();
+        steps.push(format!(
+            "Fetch {what} ({kind_word} {kinds_str}) replying to {}",
+            targets.join(", ")
+        ));
+    }
+    if !addresses.is_empty() {
+        let targets: Vec<String> = addresses.iter().map(|s| short_addr(s)).collect();
+        steps.push(format!(
+            "Fetch {what} ({kind_word} {kinds_str}) referencing {}",
+            targets.join(", ")
+        ));
+    }
+    steps
+}
+
 /// GET /api/v1/discussions/list
 ///
 /// Returns the full set of NIP-22 (kind 1111) comments and NIP-84 (kind
@@ -1992,10 +2063,7 @@ pub async fn discussions_list_handler(
             .begin_fetch_operation(
                 crate::network::FetchPattern::Thread,
                 label,
-                vec![
-                    "Fetch comments & highlights (kinds 1111 / 9802)".to_string(),
-                    "Backfill comment authors (kind 0)".to_string(),
-                ],
+                describe_discussion_steps(&kinds, &addresses, &event_ids),
                 proposed,
             )
             .await
