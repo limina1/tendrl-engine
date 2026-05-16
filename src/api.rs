@@ -14,7 +14,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::sync::Arc;
-use tracing::debug;
+use tracing::{debug, warn};
 
 /// Shared application state
 pub type AppState = Arc<Engine>;
@@ -1899,6 +1899,21 @@ fn split_csv(s: &Option<String>) -> Vec<String> {
         .collect()
 }
 
+/// A bare 32-byte event id: exactly 64 hex chars.
+fn is_hex64(s: &str) -> bool {
+    s.len() == 64 && s.bytes().all(|b| b.is_ascii_hexdigit())
+}
+
+/// An addressable coordinate: `kind:pubkey:d_tag` (d_tag may be empty).
+fn is_addr_coord(s: &str) -> bool {
+    let mut p = s.splitn(3, ':');
+    matches!(
+        (p.next(), p.next(), p.next()),
+        (Some(kind), Some(pk), Some(_))
+            if !kind.is_empty() && kind.bytes().all(|b| b.is_ascii_digit()) && is_hex64(pk)
+    )
+}
+
 /// GET /api/v1/discussions/list
 ///
 /// Returns the full set of NIP-22 (kind 1111) comments and NIP-84 (kind
@@ -1911,8 +1926,23 @@ pub async fn discussions_list_handler(
     State(engine): State<AppState>,
     axum::extract::Query(mut req): axum::extract::Query<DiscussionsListQuery>,
 ) -> Result<Json<DiscussionsListResponse>, EngineError> {
-    let addresses = split_csv(&req.addresses);
-    let event_ids = split_csv(&req.event_ids);
+    // Drop malformed refs. A relay URL or other junk in `#e`/`#a` is
+    // dropped during nostr-filter parsing, degenerating the query into an
+    // unconstrained `kinds:[1111]` dump of every comment on the network.
+    // Validate here so a bad ref yields an empty result, not 500 events.
+    let mut addresses = split_csv(&req.addresses);
+    let mut event_ids = split_csv(&req.event_ids);
+    let raw_addr = addresses.len();
+    let raw_eids = event_ids.len();
+    addresses.retain(|s| is_addr_coord(s));
+    event_ids.retain(|s| is_hex64(s));
+    if addresses.len() != raw_addr || event_ids.len() != raw_eids {
+        warn!(
+            "Discussions list: dropped {} malformed address(es) and {} malformed event id(s)",
+            raw_addr - addresses.len(),
+            raw_eids - event_ids.len()
+        );
+    }
 
     let kinds: Vec<u64> = if let Some(raw) = &req.kinds {
         raw.split(',').filter_map(|p| p.parse().ok()).collect()

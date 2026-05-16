@@ -52,21 +52,37 @@
 		return m ? m[1].toLowerCase() : null;
 	}
 
+	// A bare 32-byte event id: 64 hex chars, nothing else.
+	function isHexId(v: string): boolean {
+		return /^[0-9a-f]{64}$/i.test(v);
+	}
+	// An addressable coordinate: `kind:pubkey:d_tag` (d_tag may be empty).
+	function isAddr(v: string): boolean {
+		const p = v.split(':');
+		return p.length >= 3 && /^\d+$/.test(p[0]) && isHexId(p[1]);
+	}
+
 	// NIP-22 + NIP-84 tag conventions:
 	//   uppercase A/E = root scope (the top of the thread)
 	//   lowercase a/e = parent (immediate ancestor)
 	// For a top-level comment they're identical. For a nested reply they
 	// diverge — root is the article, parent is the comment being replied to.
+	//
+	// The ref value is validated before use: some clients write malformed
+	// tags (a relay URL in the value slot). An unvalidated value would flow
+	// into the thread-pull filter as a bogus `#e`/`#a`, degenerate it into
+	// an unconstrained `kinds:[1111]` query, and dump 500 unrelated
+	// comments. Skipping a bad tag lets a later well-formed one still match.
 	function extractRefs(ev: NostrEvent): { root: ParentRef | null; parent: ParentRef | null } {
 		let root: ParentRef | null = null;
 		let parent: ParentRef | null = null;
 		for (const tag of ev.tags) {
 			if (!tag || tag.length < 2) continue;
 			const [name, value, relay, pk] = tag as [string, string, string?, string?];
-			if (name === 'A' && !root) root = { type: 'a', value, relay };
-			else if (name === 'E' && !root) root = { type: 'e', value, relay, pubkey: pk };
-			else if (name === 'a' && !parent) parent = { type: 'a', value, relay };
-			else if (name === 'e' && !parent) parent = { type: 'e', value, relay, pubkey: pk };
+			if (name === 'A' && !root && isAddr(value)) root = { type: 'a', value, relay };
+			else if (name === 'E' && !root && isHexId(value)) root = { type: 'e', value, relay, pubkey: pk };
+			else if (name === 'a' && !parent && isAddr(value)) parent = { type: 'a', value, relay };
+			else if (name === 'e' && !parent && isHexId(value)) parent = { type: 'e', value, relay, pubkey: pk };
 		}
 		return { root, parent };
 	}

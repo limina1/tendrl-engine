@@ -808,8 +808,16 @@ fn note_to_json(note: &nostrdb::Note) -> Result<Value> {
     for tag in note_tags.iter() {
         let mut tag_arr = Vec::new();
         for i in 0..tag.count() {
-            if let Some(s) = tag.get_unchecked(i).variant().str() {
-                tag_arr.push(Value::String(s.to_string()));
+            // nostrdb stores 32-byte ids/pubkeys (in `e`/`p`/`E`/`P`/`a`
+            // etc. tags) as a binary `Id` variant, not a string. `.str()`
+            // returns `None` for those — handling only `str()` silently
+            // drops every id and pubkey, collapsing `["e", id, relay,
+            // pubkey]` into `["e", relay]`. Hex-encode the `Id` variant.
+            match tag.get_unchecked(i).variant() {
+                nostrdb::NdbStrVariant::Str(s) => tag_arr.push(Value::String(s.to_string())),
+                nostrdb::NdbStrVariant::Id(id) => {
+                    tag_arr.push(Value::String(hex::encode(id)))
+                }
             }
         }
         if !tag_arr.is_empty() {
