@@ -527,6 +527,134 @@ impl<'a> PublicationEngine<'a> {
         }
     }
 
+    /// Recursively load a publication and its nested sub-publications to a
+    /// bounded depth.
+    ///
+    /// `max_depth` counts levels of *30040 nesting*: `0` loads this index and its
+    /// own 30041 sections only (nested 30040s are left as `Pending` stubs); `1`
+    /// additionally recurses one level into each nested index; and so on.
+    /// Sections (30041) are leaves and never consume a level.
+    ///
+    /// Below `max_depth`, nested indexes remain `Pending` stubs — the caller can
+    /// expand them later (lazily, or with another `load_publication_tree` call).
+    ///
+    /// Cycle-safe: a 30040 that references an ancestor (or itself) is not
+    /// recursed into; its stub is left `Pending`. Sibling nested indexes at one
+    /// level are fetched concurrently, bounded by `MAX_CONCURRENT_INDEX_FETCHES`.
+    pub async fn load_publication_tree(
+        &self,
+        addr: &NAddr,
+        max_depth: usize,
+        policy: FetchPolicy,
+    ) -> Result<Publication> {
+        self.load_tree_inner(
+            addr.clone(),
+            max_depth,
+            true,
+            policy,
+            std::collections::HashSet::new(),
+        )
+        .await
+    }
+
+    /// Recursive worker for [`load_publication_tree`]. Returns a boxed future so
+    /// the async recursion has a concrete (non-infinite) type.
+    fn load_tree_inner<'s>(
+        &'s self,
+        addr: NAddr,
+        max_depth: usize,
+        is_root: bool,
+        policy: FetchPolicy,
+        ancestors: std::collections::HashSet<NAddr>,
+    ) -> futures::future::BoxFuture<'s, Result<Publication>> {
+        /// Max nested indexes fetched concurrently at a single tree level.
+        const MAX_CONCURRENT_INDEX_FETCHES: usize = 8;
+
+        Box::pin(async move {
+            // 1. Fetch and parse this index event.
+            let event = self
+                .engine
+                .get_addressable(addr.kind, &addr.pubkey, &addr.d_tag, policy)
+                .await?
+                .ok_or_else(|| {
+                    EngineError::Database(format!(
+                        "Publication index not found: {}",
+                        addr.to_a_tag()
+                    ))
+                })?;
+            let mut pub_ = Publication::from_event(&event, is_root)?;
+
+            // 2. Resolve this level's 30041 leaf sections (full load).
+            if let Err(e) = self.load_sections(&mut pub_, policy).await {
+                tracing::warn!(
+                    "load_publication_tree: section load failed for {}: {}",
+                    addr.to_a_tag(),
+                    e
+                );
+            }
+
+            // 3. Recurse into nested 30040 indexes, depth-bounded and cycle-guarded.
+            if max_depth == 0 || pub_.nested.is_empty() {
+                return Ok(pub_);
+            }
+
+            // This node joins the ancestor set seen by its children.
+            let mut child_ancestors = ancestors;
+            child_ancestors.insert(addr.clone());
+
+            // Children to recurse into, skipping any that point back up the path.
+            let to_load: Vec<(usize, NAddr)> = pub_
+                .nested
+                .iter()
+                .enumerate()
+                .filter(|(_, stub)| !child_ancestors.contains(&stub.addr))
+                .map(|(i, stub)| (i, stub.addr.clone()))
+                .collect();
+
+            // Fetch sibling sub-publications concurrently, bounded.
+            use futures::stream::StreamExt;
+            let results: Vec<(usize, Result<Publication>)> = futures::stream::iter(to_load)
+                .map(|(i, child_addr)| {
+                    let ancestors = child_ancestors.clone();
+                    async move {
+                        (
+                            i,
+                            self.load_tree_inner(
+                                child_addr,
+                                max_depth - 1,
+                                false,
+                                policy,
+                                ancestors,
+                            )
+                            .await,
+                        )
+                    }
+                })
+                .buffer_unordered(MAX_CONCURRENT_INDEX_FETCHES)
+                .collect()
+                .await;
+
+            // Attach results, replacing stubs in place (preserves a-tag order).
+            for (i, result) in results {
+                match result {
+                    Ok(child) => pub_.nested[i] = child,
+                    Err(e) => {
+                        tracing::warn!(
+                            "load_publication_tree: nested index {} failed: {}",
+                            pub_.nested[i].addr.to_a_tag(),
+                            e
+                        );
+                        pub_.nested[i].index = LoadStatus::Failed {
+                            error: e.to_string(),
+                        };
+                    }
+                }
+            }
+
+            Ok(pub_)
+        })
+    }
+
     /// Build table of contents for a publication
     pub fn build_toc(&self, pub_: &Publication, depth: usize) -> Vec<TocEntry> {
         let mut entries = Vec::new();
@@ -1508,5 +1636,192 @@ mod tests {
             assert!(event.get("content").is_some());
             assert!(event.get("sig").is_some());
         }
+    }
+
+    // --- load_publication_tree (recursive depth-N loader) ---
+
+    /// Test signing key (shared with the engine's signed-publication tests).
+    const TEST_SECRET: &str =
+        "e698fdd6e2e780b7d9800266bfc02d56630835856a0146969cc984bb21b068c6";
+
+    /// Derive the x-only pubkey hex for [`TEST_SECRET`].
+    fn test_pubkey() -> String {
+        use secp256k1::{PublicKey, Secp256k1, SecretKey};
+        let secp = Secp256k1::new();
+        let sk = SecretKey::from_slice(&hex::decode(TEST_SECRET).unwrap()).unwrap();
+        let pk = PublicKey::from_secret_key(&secp, &sk);
+        hex::encode(&pk.serialize()[1..33])
+    }
+
+    /// Build a fixture event with a correct NIP-01 id and a real Schnorr
+    /// signature, so nostrdb accepts it on ingest.
+    fn fixture_event(pubkey: &str, kind: u64, tags: Value, content: &str) -> Value {
+        let created_at = 1_700_000_000u64;
+        let id_array = serde_json::json!([0, pubkey, created_at, kind, tags, content]);
+        let id = calculate_event_id(&id_array);
+        let sig = crate::identity::sign_event_hash(&id, TEST_SECRET).expect("sign fixture");
+        serde_json::json!({
+            "id": id,
+            "pubkey": pubkey,
+            "created_at": created_at,
+            "kind": kind,
+            "tags": tags,
+            "content": content,
+            "sig": sig,
+        })
+    }
+
+    fn fixture_index(pubkey: &str, d_tag: &str, title: &str, children: &[&NAddr]) -> Value {
+        let mut tags = vec![
+            serde_json::json!(["d", d_tag]),
+            serde_json::json!(["title", title]),
+        ];
+        for c in children {
+            tags.push(serde_json::json!(["a", c.to_a_tag()]));
+        }
+        fixture_event(pubkey, KIND_PUBLICATION_INDEX, Value::Array(tags), "")
+    }
+
+    fn fixture_section(pubkey: &str, d_tag: &str, title: &str, content: &str) -> Value {
+        let tags = vec![
+            serde_json::json!(["d", d_tag]),
+            serde_json::json!(["title", title]),
+        ];
+        fixture_event(pubkey, KIND_PUBLICATION_SECTION, Value::Array(tags), content)
+    }
+
+    /// Spin up an in-memory engine, ingest the events, and poll until every
+    /// ingested addressable event is locally queryable (nostrdb processes
+    /// ingests asynchronously). The returned `TempDir` must be kept alive for
+    /// as long as the engine.
+    async fn engine_with_events(events: &[Value]) -> (Engine, tempfile::TempDir) {
+        let dir = tempfile::tempdir().unwrap();
+        let engine = Engine::with_config(dir.path(), &[], 1000).unwrap();
+        for ev in events {
+            engine
+                .ingest_event(&serde_json::to_string(ev).unwrap())
+                .expect("ingest");
+        }
+
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            let mut all_visible = true;
+            for ev in events {
+                let kind = ev["kind"].as_u64().unwrap();
+                let pubkey = ev["pubkey"].as_str().unwrap();
+                let d_tag = ev["tags"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .find_map(|t| {
+                        let t = t.as_array()?;
+                        (t.first()?.as_str()? == "d").then(|| t.get(1)?.as_str())?
+                    })
+                    .expect("event has a d tag");
+                let found = engine
+                    .get_addressable(kind, pubkey, d_tag, FetchPolicy::LocalOnly)
+                    .await
+                    .unwrap()
+                    .is_some();
+                if !found {
+                    all_visible = false;
+                    break;
+                }
+            }
+            if all_visible {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "ingested events did not become queryable within timeout"
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+        (engine, dir)
+    }
+
+    #[tokio::test]
+    async fn test_load_publication_tree_depth() {
+        let pk_owned = test_pubkey();
+        let pk = pk_owned.as_str();
+        let root_sec = NAddr::new(KIND_PUBLICATION_SECTION, pk, "root-sec");
+        let nested_sec = NAddr::new(KIND_PUBLICATION_SECTION, pk, "nested-sec");
+        let nested_idx = NAddr::new(KIND_PUBLICATION_INDEX, pk, "nested-idx");
+        let root_idx = NAddr::new(KIND_PUBLICATION_INDEX, pk, "root-idx");
+
+        let (engine, _dir) = engine_with_events(&[
+            fixture_section(pk, "root-sec", "Root Section", "root body"),
+            fixture_section(pk, "nested-sec", "Nested Section", "nested body"),
+            fixture_index(pk, "nested-idx", "Nested", &[&nested_sec]),
+            fixture_index(pk, "root-idx", "Root", &[&root_sec, &nested_idx]),
+        ])
+        .await;
+        let pe = PublicationEngine::new(&engine);
+
+        // depth 1: root sections + one level of nested indexes resolved.
+        let tree = pe
+            .load_publication_tree(&root_idx, 1, FetchPolicy::LocalOnly)
+            .await
+            .expect("load depth 1");
+        assert!(tree.is_root);
+        assert_eq!(tree.sections.len(), 1);
+        assert!(tree.sections[0].event.is_loaded());
+        assert_eq!(tree.nested.len(), 1);
+        assert!(
+            tree.nested[0].index.is_loaded(),
+            "nested index resolved at depth 1"
+        );
+        assert!(!tree.nested[0].is_root);
+        assert_eq!(tree.nested[0].sections.len(), 1);
+        assert!(tree.nested[0].sections[0].event.is_loaded());
+
+        // depth 0: the nested index stays a Pending stub.
+        let tree0 = pe
+            .load_publication_tree(&root_idx, 0, FetchPolicy::LocalOnly)
+            .await
+            .expect("load depth 0");
+        assert!(tree0.sections[0].event.is_loaded());
+        assert_eq!(tree0.nested.len(), 1);
+        assert!(
+            !tree0.nested[0].index.is_loaded(),
+            "nested index NOT resolved at depth 0"
+        );
+        assert!(tree0.nested[0].sections.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_load_publication_tree_cycle_safe() {
+        let pk_owned = test_pubkey();
+        let pk = pk_owned.as_str();
+        let a = NAddr::new(KIND_PUBLICATION_INDEX, pk, "cyc-a");
+        let b = NAddr::new(KIND_PUBLICATION_INDEX, pk, "cyc-b");
+
+        // A references B; B references A back — a cycle.
+        let (engine, _dir) = engine_with_events(&[
+            fixture_index(pk, "cyc-a", "A", &[&b]),
+            fixture_index(pk, "cyc-b", "B", &[&a]),
+        ])
+        .await;
+        let pe = PublicationEngine::new(&engine);
+
+        // A deliberately large depth must still terminate.
+        let tree = pe
+            .load_publication_tree(&a, 100, FetchPolicy::LocalOnly)
+            .await
+            .expect("cyclic load terminates");
+
+        assert_eq!(tree.addr, a);
+        assert_eq!(tree.nested.len(), 1);
+        let b_node = &tree.nested[0];
+        assert_eq!(b_node.addr, b);
+        assert!(b_node.index.is_loaded(), "B resolved under A");
+
+        // B references A, but A is an ancestor — cycle guard leaves it Pending.
+        assert_eq!(b_node.nested.len(), 1);
+        assert_eq!(b_node.nested[0].addr, a);
+        assert!(
+            !b_node.nested[0].index.is_loaded(),
+            "ancestor A not re-recursed (cycle guard)"
+        );
     }
 }
