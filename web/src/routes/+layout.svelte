@@ -8,7 +8,9 @@
 	import FetchConfirmModal from '$lib/components/FetchConfirmModal.svelte';
 	import SearchConfigModal from '$lib/components/SearchConfigModal.svelte';
 	import ToastStack from '$lib/components/ToastStack.svelte';
-	import { confirmState, startFetchEvents } from '$lib/network/fetch-events.svelte';
+	// fetch-events self-starts the SSE subscription at module scope; we
+	// only need confirmState here to render the modal.
+	import { confirmState } from '$lib/network/fetch-events.svelte';
 	import type { SearchResult } from '$lib/types';
 	import { getActiveStore } from '$lib/wm/buffer-store.svelte';
 
@@ -21,17 +23,8 @@
 	// cleanup would tear down the network poll and SSE subscription the
 	// moment they're created.
 	onMount(() => {
-		console.warn('[layout] onMount start');
 		app.initialize();
-		console.warn('[layout] after initialize');
-		const stopPoll = app.startNetworkPoll();
-		console.warn('[layout] after startNetworkPoll');
-		const stopEvents = startFetchEvents(app);
-		console.warn('[layout] after startFetchEvents');
-		return () => {
-			stopPoll();
-			stopEvents();
-		};
+		return app.startNetworkPoll();
 	});
 
 	function spawnReader(pubkey: string, d_tag: string, label: string | null) {

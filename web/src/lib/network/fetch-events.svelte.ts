@@ -3,17 +3,17 @@
 // The engine owns the confirm/auto decision and the gating — this
 // module is a pure renderer. An `intent` that needs confirmation
 // becomes a modal; one that doesn't (Auto mode) becomes a toast.
-// `progress`/`completed`/`failed` update that toast. Any future
-// front-end can consume the same stream for identical behaviour.
+// `progress`/`completed`/`failed` update that toast.
+//
+// The subscription self-starts at module scope (browser only) rather
+// than from a component lifecycle hook — the stream is app-global and
+// lives for the page's lifetime, so it doesn't belong to any one
+// component's mount.
 
+import { browser } from '$app/environment';
 import { getAppState } from '$lib/state.svelte';
 import type { FetchEvent } from '$lib/types';
 import * as api from '$lib/api';
-
-// Debug probe — fires when this module is first evaluated (on import
-// by +layout). If you don't see this in the console, the running
-// bundle is stale.
-console.warn('[fetch-events] module loaded');
 
 type AppState = ReturnType<typeof getAppState>;
 type IntentEvent = Extract<FetchEvent, { type: 'intent' }>;
@@ -23,6 +23,16 @@ export const confirmState = $state<{ intent: IntentEvent | null }>({ intent: nul
 
 // operation_id → toast id, so progress/completed update the right toast.
 const opToasts = new Map<string, number>();
+
+/** Resolve the AppState lazily — it's created by +layout, which may run
+ *  after this module is first evaluated. Returns null if not ready. */
+function appOrNull(): AppState | null {
+	try {
+		return getAppState();
+	} catch {
+		return null;
+	}
+}
 
 function toastFor(app: AppState, operationId: string, label: string): number {
 	let id = opToasts.get(operationId);
@@ -34,21 +44,29 @@ function toastFor(app: AppState, operationId: string, label: string): number {
 	return id;
 }
 
-function handleEvent(app: AppState, ev: FetchEvent) {
+function handleEvent(ev: FetchEvent) {
+	// `intent` confirmation only touches confirmState, so it works even
+	// before AppState exists. Toast updates need AppState — skip if not.
+	if (ev.type === 'intent') {
+		console.warn(
+			'[fetch-events] intent',
+			ev.operation_id,
+			'needs_confirmation=',
+			ev.needs_confirmation
+		);
+		if (ev.needs_confirmation) {
+			confirmState.intent = ev;
+			return;
+		}
+	}
+
+	const app = appOrNull();
+	if (!app) return;
+
 	switch (ev.type) {
 		case 'intent':
-			console.warn(
-				'[fetch-events] intent',
-				ev.operation_id,
-				'needs_confirmation=',
-				ev.needs_confirmation
-			);
-			if (ev.needs_confirmation) {
-				confirmState.intent = ev;
-			} else {
-				// Auto mode — an informational progress toast, no modal.
-				toastFor(app, ev.operation_id, ev.label);
-			}
+			// Auto mode — an informational progress toast, no modal.
+			toastFor(app, ev.operation_id, ev.label);
 			break;
 		case 'progress': {
 			const id = toastFor(app, ev.operation_id, ev.label);
@@ -88,21 +106,20 @@ function handleEvent(app: AppState, ev: FetchEvent) {
 	}
 }
 
-/** Open the SSE subscription. Returns a teardown that closes it. */
-export function startFetchEvents(app: AppState): () => void {
+/** Open the SSE subscription. */
+function startFetchEvents() {
 	console.warn('[fetch-events] opening SSE subscription');
 	const es = new EventSource('/api/v1/network/fetch-events');
 	es.onopen = () => console.warn('[fetch-events] SSE connected');
 	es.onmessage = (msg) => {
 		console.warn('[fetch-events] SSE message:', msg.data);
 		try {
-			handleEvent(app, JSON.parse(msg.data) as FetchEvent);
+			handleEvent(JSON.parse(msg.data) as FetchEvent);
 		} catch (e) {
 			console.warn('[fetch-events] bad SSE message', e);
 		}
 	};
 	es.onerror = (e) => console.warn('[fetch-events] SSE connection error', e);
-	return () => es.close();
 }
 
 /** The FetchConfirmModal's confirm/cancel reply. `relays` overrides the
@@ -114,4 +131,11 @@ export function resolveConfirm(approved: boolean, relays?: string[]) {
 	api.confirmFetch(intent.operation_id, approved, relays).catch((e: unknown) => {
 		console.warn('[fetch-events] confirm POST failed', e);
 	});
+}
+
+// Self-start in the browser. Module scope is guaranteed to run on
+// import — it does not depend on any component mounting.
+console.warn('[fetch-events] module loaded, browser=', browser);
+if (browser) {
+	startFetchEvents();
 }
