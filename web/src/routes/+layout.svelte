@@ -21,9 +21,13 @@
 	// cleanup would tear down the network poll and SSE subscription the
 	// moment they're created.
 	onMount(() => {
+		console.warn('[layout] onMount start');
 		app.initialize();
+		console.warn('[layout] after initialize');
 		const stopPoll = app.startNetworkPoll();
+		console.warn('[layout] after startNetworkPoll');
 		const stopEvents = startFetchEvents(app);
+		console.warn('[layout] after startFetchEvents');
 		return () => {
 			stopPoll();
 			stopEvents();
