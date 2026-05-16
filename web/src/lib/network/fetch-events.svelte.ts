@@ -47,17 +47,9 @@ function toastFor(app: AppState, operationId: string, label: string): number {
 function handleEvent(ev: FetchEvent) {
 	// `intent` confirmation only touches confirmState, so it works even
 	// before AppState exists. Toast updates need AppState — skip if not.
-	if (ev.type === 'intent') {
-		console.warn(
-			'[fetch-events] intent',
-			ev.operation_id,
-			'needs_confirmation=',
-			ev.needs_confirmation
-		);
-		if (ev.needs_confirmation) {
-			confirmState.intent = ev;
-			return;
-		}
+	if (ev.type === 'intent' && ev.needs_confirmation) {
+		confirmState.intent = ev;
+		return;
 	}
 
 	const app = appOrNull();
@@ -108,18 +100,15 @@ function handleEvent(ev: FetchEvent) {
 
 /** Open the SSE subscription. */
 function startFetchEvents() {
-	console.warn('[fetch-events] opening SSE subscription');
 	const es = new EventSource('/api/v1/network/fetch-events');
-	es.onopen = () => console.warn('[fetch-events] SSE connected');
 	es.onmessage = (msg) => {
-		console.warn('[fetch-events] SSE message:', msg.data);
 		try {
 			handleEvent(JSON.parse(msg.data) as FetchEvent);
 		} catch (e) {
-			console.warn('[fetch-events] bad SSE message', e);
+			console.error('[fetch-events] bad SSE message', e);
 		}
 	};
-	es.onerror = (e) => console.warn('[fetch-events] SSE connection error', e);
+	es.onerror = (e) => console.error('[fetch-events] SSE connection error', e);
 }
 
 /** The FetchConfirmModal's confirm/cancel reply. `relays` overrides the
@@ -129,13 +118,12 @@ export function resolveConfirm(approved: boolean, relays?: string[]) {
 	if (!intent) return;
 	confirmState.intent = null;
 	api.confirmFetch(intent.operation_id, approved, relays).catch((e: unknown) => {
-		console.warn('[fetch-events] confirm POST failed', e);
+		console.error('[fetch-events] confirm POST failed', e);
 	});
 }
 
 // Self-start in the browser. Module scope is guaranteed to run on
 // import — it does not depend on any component mounting.
-console.warn('[fetch-events] module loaded, browser=', browser);
 if (browser) {
 	startFetchEvents();
 }
