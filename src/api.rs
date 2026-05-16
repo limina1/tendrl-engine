@@ -2034,11 +2034,26 @@ pub async fn discussions_list_handler(
         .get_events_with_options(filters, policy, relays_opt, req.mode_confirm)
         .await?;
 
+    // The `#a` and `#A` filters overlap — a comment that tags the
+    // address as both parent and root matches both, so it comes back
+    // twice. Dedup by id before returning.
+    let mut seen = std::collections::HashSet::new();
+    let events: Vec<Value> = response
+        .events
+        .into_iter()
+        .filter(|e| {
+            e.get("id")
+                .and_then(|v| v.as_str())
+                .map(|id| seen.insert(id.to_string()))
+                .unwrap_or(true)
+        })
+        .collect();
+
     if let Some(op) = op {
-        op.complete(response.events.len());
+        op.complete(events.len());
     }
     Ok(Json(DiscussionsListResponse {
-        events: response.events,
+        events,
         source: response.source,
         refreshed_at: now,
     }))
