@@ -1,6 +1,7 @@
 <script lang="ts">
 	import '$lib/styles/tokens.css';
 	import '../app.css';
+	import { onMount } from 'svelte';
 	import { createAppState } from '$lib/state.svelte';
 	import SearchActionModal from '$lib/components/SearchActionModal.svelte';
 	import EventViewModal from '$lib/components/EventViewModal.svelte';
@@ -15,10 +16,11 @@
 
 	const app = createAppState();
 
-	let initialized = $state(false);
-	$effect(() => {
-		if (initialized) return;
-		initialized = true;
+	// One-time setup. Must be onMount, not $effect — an $effect that both
+	// reads and writes a guard flag re-runs itself, and the re-run's
+	// cleanup would tear down the network poll and SSE subscription the
+	// moment they're created.
+	onMount(() => {
 		app.initialize();
 		const stopPoll = app.startNetworkPoll();
 		const stopEvents = startFetchEvents(app);
