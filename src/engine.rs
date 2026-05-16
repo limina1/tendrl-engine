@@ -1599,8 +1599,14 @@ impl Engine {
             }
         }
 
-        // Add relay events
+        // Add relay events — but only those that actually satisfy the
+        // filters. Relays can echo back more than was asked (e.g. when
+        // they don't honour an uppercase `#A` root-scope tag filter);
+        // trusting raw over-returns here leaked unrelated events.
         for event in relay_events {
+            if !query::event_matches_filters(&event, filters) {
+                continue;
+            }
             if let Some(id) = event.get("id").and_then(|v| v.as_str()) {
                 if seen_ids.insert(id.to_string()) {
                     merged.push(event);
@@ -1653,8 +1659,14 @@ impl Engine {
             }
         }
 
-        // Add any relay events not in local (edge case: just fetched but not yet queryable)
+        // Add any relay events not in local (edge case: just fetched but
+        // not yet queryable). Only those that satisfy the filters —
+        // relays can over-return (e.g. ignoring an uppercase `#A` tag
+        // filter), and those raw events must not leak into the result.
         for event in relay_events {
+            if !query::event_matches_filters(&event, filters) {
+                continue;
+            }
             if let Some(id) = event.get("id").and_then(|v| v.as_str()) {
                 if seen_ids.insert(id.to_string()) {
                     merged.push(event);

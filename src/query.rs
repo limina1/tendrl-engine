@@ -279,6 +279,88 @@ fn parse_filter(filter_json: &Value) -> Result<nostrdb::Filter> {
     Ok(builder.build())
 }
 
+/// Does an event satisfy at least one of the NIP-01 filters?
+///
+/// Filters are OR'd (NIP-01 semantics). Used to keep relay over-returns
+/// out of merged results: a relay that ignores or loosely matches a
+/// tag filter (notably uppercase `#A`/`#E` root-scope tags) can echo
+/// back far more than was asked for, and those raw events must not be
+/// trusted into the response just because they aren't in the local DB.
+pub fn event_matches_filters(event: &Value, filters: &[Value]) -> bool {
+    filters.iter().any(|f| event_matches_filter(event, f))
+}
+
+fn event_matches_filter(event: &Value, filter: &Value) -> bool {
+    let Some(filter) = filter.as_object() else {
+        return false;
+    };
+
+    if let Some(kinds) = filter.get("kinds").and_then(|v| v.as_array()) {
+        let k = event.get("kind").and_then(|v| v.as_u64());
+        if !kinds.iter().filter_map(|v| v.as_u64()).any(|kk| Some(kk) == k) {
+            return false;
+        }
+    }
+    if let Some(authors) = filter.get("authors").and_then(|v| v.as_array()) {
+        let pk = event.get("pubkey").and_then(|v| v.as_str());
+        if !authors.iter().filter_map(|v| v.as_str()).any(|a| Some(a) == pk) {
+            return false;
+        }
+    }
+    if let Some(ids) = filter.get("ids").and_then(|v| v.as_array()) {
+        let id = event.get("id").and_then(|v| v.as_str());
+        if !ids.iter().filter_map(|v| v.as_str()).any(|i| Some(i) == id) {
+            return false;
+        }
+    }
+    let created = event.get("created_at").and_then(|v| v.as_i64()).unwrap_or(0);
+    if let Some(since) = filter.get("since").and_then(|v| v.as_i64()) {
+        if created < since {
+            return false;
+        }
+    }
+    if let Some(until) = filter.get("until").and_then(|v| v.as_i64()) {
+        if created > until {
+            return false;
+        }
+    }
+
+    // `#<x>` tag filters — the event must carry a matching tag for each.
+    let tags = event.get("tags").and_then(|v| v.as_array());
+    for (key, value) in filter {
+        if !key.starts_with('#') || key.len() != 2 {
+            continue;
+        }
+        let tag_name = &key[1..];
+        let wanted: Vec<&str> = value
+            .as_array()
+            .map(|a| a.iter().filter_map(|v| v.as_str()).collect())
+            .unwrap_or_default();
+        if wanted.is_empty() {
+            continue;
+        }
+        let has = tags
+            .map(|tags| {
+                tags.iter().any(|t| {
+                    t.as_array()
+                        .map(|t| {
+                            t.first().and_then(|v| v.as_str()) == Some(tag_name)
+                                && t.get(1)
+                                    .and_then(|v| v.as_str())
+                                    .map(|val| wanted.contains(&val))
+                                    .unwrap_or(false)
+                        })
+                        .unwrap_or(false)
+                })
+            })
+            .unwrap_or(false);
+        if !has {
+            return false;
+        }
+    }
+    true
+}
+
 /// Post-filter events by text content (and title tag), case-insensitive.
 ///
 /// Post-filter events by tag filters that NIP-01 / nostrdb can't index.
