@@ -217,11 +217,6 @@ pub async fn search_handler(
     let mut op: Option<crate::network::FetchOperation> = None;
     let mut override_relays = req.relays.clone();
     if req.mode_confirm {
-        let steps = vec![
-            "Query each relay (NIP-01 / NIP-50)".to_string(),
-            "Ingest matching events".to_string(),
-            "Backfill author profiles (kind 0)".to_string(),
-        ];
         let relays = req
             .relays
             .clone()
@@ -230,7 +225,7 @@ pub async fn search_handler(
             .begin_fetch_operation(
                 crate::network::FetchPattern::Search,
                 format!("Search relays: {}", req.query.trim()),
-                steps,
+                describe_search_steps(&req.query),
                 relays,
             )
             .await
@@ -1070,7 +1065,7 @@ pub async fn fetch_profiles_handler(
                     targets.len(),
                     if targets.len() == 1 { "" } else { "s" }
                 ),
-                vec!["Fetch kind-0 profile metadata".to_string()],
+                describe_profile_steps(&targets),
                 relays.clone(),
             )
             .await
@@ -1785,7 +1780,7 @@ pub async fn discussion_counts_handler(
             .begin_fetch_operation(
                 crate::network::FetchPattern::Thread,
                 format!("Refresh discussion counts ({} target(s))", addresses.len()),
-                vec!["Count comments & highlights (kinds 1111 / 9802)".to_string()],
+                describe_discussion_steps(&[1111, 9802], &addresses, &[]),
                 proposed,
             )
             .await
@@ -1983,6 +1978,44 @@ fn describe_discussion_steps(
         ));
     }
     steps
+}
+
+/// Confirm-modal steps for a relay search, derived from the parsed
+/// query — which kinds, author scope, and tag filters it carries —
+/// rather than a fixed template.
+fn describe_search_steps(query: &str) -> Vec<String> {
+    let mut steps = Vec::new();
+    if let Ok(q) = SearchQuery::parse(query) {
+        if let Some(kinds) = q.kind_filter.as_ref().filter(|k| !k.is_empty()) {
+            let ks = kinds
+                .iter()
+                .map(|k| k.to_string())
+                .collect::<Vec<_>>()
+                .join(", ");
+            let word = if kinds.len() > 1 { "kinds" } else { "kind" };
+            steps.push(format!("Match {word} {ks}"));
+        }
+        if q.author_filter.is_some() {
+            steps.push("Scoped to a specific author".to_string());
+        }
+        if !q.tag_filters.is_empty() {
+            steps.push(format!("Filter by {} tag(s)", q.tag_filters.len()));
+        }
+    }
+    steps.push("Query the relays (NIP-01 / NIP-50) and ingest matches".to_string());
+    steps.push("Backfill author profiles (kind 0)".to_string());
+    steps
+}
+
+/// Confirm-modal steps for a forced profile fetch — names the pubkeys
+/// being requested (truncated, with an overflow count).
+fn describe_profile_steps(pubkeys: &[&str]) -> Vec<String> {
+    let shown: Vec<String> = pubkeys.iter().take(5).map(|p| short_id(p)).collect();
+    let mut step = format!("Fetch kind-0 profile metadata for {}", shown.join(", "));
+    if pubkeys.len() > 5 {
+        step.push_str(&format!(" +{} more", pubkeys.len() - 5));
+    }
+    vec![step]
 }
 
 /// GET /api/v1/discussions/list
