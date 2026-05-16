@@ -32,6 +32,12 @@ function toastFor(app: AppState, operationId: string, label: string): number {
 function handleEvent(app: AppState, ev: FetchEvent) {
 	switch (ev.type) {
 		case 'intent':
+			console.info(
+				'[fetch-events] intent',
+				ev.operation_id,
+				'needs_confirmation=',
+				ev.needs_confirmation
+			);
 			if (ev.needs_confirmation) {
 				confirmState.intent = ev;
 			} else {
@@ -79,8 +85,11 @@ function handleEvent(app: AppState, ev: FetchEvent) {
 
 /** Open the SSE subscription. Returns a teardown that closes it. */
 export function startFetchEvents(app: AppState): () => void {
+	console.info('[fetch-events] opening SSE subscription');
 	const es = new EventSource('/api/v1/network/fetch-events');
+	es.onopen = () => console.info('[fetch-events] SSE connected');
 	es.onmessage = (msg) => {
+		console.info('[fetch-events] SSE message:', msg.data);
 		try {
 			handleEvent(app, JSON.parse(msg.data) as FetchEvent);
 		} catch (e) {
