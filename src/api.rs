@@ -1410,15 +1410,9 @@ pub async fn set_network_mode_handler(
 /// Long-lived SSE stream of fetch-operation events (`intent`,
 /// `progress`, `completed`, `failed`). In Confirm mode an `intent`
 /// with `needs_confirmation` must be answered via `/network/fetch-confirm`.
-pub async fn fetch_events_handler(
-    State(engine): State<AppState>,
-) -> axum::response::Sse<
-    futures::stream::BoxStream<
-        'static,
-        Result<axum::response::sse::Event, std::convert::Infallible>,
-    >,
-> {
+pub async fn fetch_events_handler(State(engine): State<AppState>) -> axum::response::Response {
     use axum::response::sse::{Event as SseHttpEvent, KeepAlive, Sse};
+    use axum::response::IntoResponse;
     use futures::stream::StreamExt;
     use tokio::sync::broadcast::error::RecvError;
 
@@ -1439,7 +1433,18 @@ pub async fn fetch_events_handler(
         }
     });
 
-    Sse::new(stream.boxed()).keep_alive(KeepAlive::default())
+    let mut resp = Sse::new(stream.boxed())
+        .keep_alive(KeepAlive::default())
+        .into_response();
+    // `no-transform` tells intermediaries (vite preview's compression
+    // middleware, nginx, …) not to buffer/compress the stream — without
+    // it the event-stream is held until the connection closes and the
+    // browser's EventSource never sees an event.
+    resp.headers_mut().insert(
+        axum::http::header::CACHE_CONTROL,
+        axum::http::HeaderValue::from_static("no-cache, no-transform"),
+    );
+    resp
 }
 
 #[derive(Debug, Serialize)]
