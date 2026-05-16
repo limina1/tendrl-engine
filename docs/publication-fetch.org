@@ -1,0 +1,73 @@
+#+TITLE: Publication Fetching — Status & TODO
+#+DATE: [2026-05-15]
+
+Status of NKBIP-01 publication fetching in tendrl-engine. Companion to the
+full design in [[file:publication-tree-design.md]].
+
+* Context
+
+A publication (kind 30040) references its children — sections (30041) and
+nested sub-publications (30040) — via =a= tags. Fetching one is inherently
+recursive and lazy: you start from a root index and resolve children outward,
+one level at a time.
+
+* DONE Recursive depth-N publication tree loader
+CLOSED: [2026-05-15]
+
+=PublicationEngine::load_publication_tree(addr, max_depth, policy)= in
+=src/publication.rs=. Merged to =tendrl-web= (merge commit 6b32485, loader
+commit ebc82ff).
+
+- Resolves a root 30040, loads its 30041 sections, then recurses into nested
+  30040 indexes down to =max_depth= (0 = this index + its own sections only;
+  N = recurse N levels of nesting). Sections are leaves, never a level.
+- Sibling nested indexes are fetched concurrently, bounded by
+  =buffer_unordered(8)=. Depth is sequential per branch; breadth is parallel.
+- Cycle-safe: an =a= tag pointing back at an ancestor (or itself) is not
+  recursed into — its stub is left =Pending=. Verified with an A→B→A fixture
+  loaded at depth 100.
+- Failure-isolating: a nested index that fails to load becomes
+  =LoadStatus::Failed= without aborting its siblings.
+- Unit tests: =test_load_publication_tree_depth=,
+  =test_load_publication_tree_cycle_safe=.
+
+* TODO Test & verify the loader against real publications
+:PROPERTIES:
+:PRIORITY: A
+:END:
+
+The current tests use *synthetic, locally-ingested fixtures* with
+=FetchPolicy::LocalOnly=. The loader has *not* been exercised against the
+network or against real-world publications. Before relying on it:
+
+- [ ] Verify against a real multi-level publication fetched from relays
+      (=FetchPolicy::LocalFirst= / =FetchAlways=) — confirm nested 30040s
+      resolve and section content loads end to end.
+- [ ] Verify the missing-event path: an =a= tag no relay can satisfy should
+      yield =LoadStatus::Failed= and must not hang the load.
+- [ ] Confirm =get_addressable= relay backfill interacts correctly with the
+      concurrent breadth fetch (subscription churn, dedup, EOSE handling).
+- [ ] Measure a deep =max_depth= on a large publication — event count,
+      latency, memory — and pick a sane default depth.
+- [ ] Cross-author publications: nested 30040s owned by a different pubkey
+      than the root.
+- [ ] Decide whether the depth-N load should be gated by a confirm step
+      (design §9.4) before it commits to fetching.
+
+* TODO Wire the loader into the API and web UI
+
+- [ ] API endpoint to open a publication at a given depth (design §10).
+- [ ] Web: depth knob, indented N-level render, refocus-on-click into a
+      nested 30040 + breadcrumb (design §9.2–9.3).
+- [ ] =build_toc=: render a "load more" affordance for nested indexes left
+      =Pending= at the depth horizon — currently they show as a childless
+      "Nested Publication" entry.
+
+* TODO Remaining design items (not started)
+
+See [[file:publication-tree-design.md]] for the full plan and phase list.
+
+- [ ] Lazy, visibility-driven prefetch beyond the eager depth horizon (§5).
+- [ ] =resolved_version= change-detection counter (§4.3).
+- [ ] Outline drill-down navigation + within-tree breadcrumbs (§7).
+- [ ] =MAX_INLINE_DEPTH= overflow → open a nested index as a new view (§8).
