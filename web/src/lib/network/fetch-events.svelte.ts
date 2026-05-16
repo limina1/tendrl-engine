@@ -10,6 +10,11 @@ import { getAppState } from '$lib/state.svelte';
 import type { FetchEvent } from '$lib/types';
 import * as api from '$lib/api';
 
+// Debug probe — fires when this module is first evaluated (on import
+// by +layout). If you don't see this in the console, the running
+// bundle is stale.
+console.warn('[fetch-events] module loaded');
+
 type AppState = ReturnType<typeof getAppState>;
 type IntentEvent = Extract<FetchEvent, { type: 'intent' }>;
 
@@ -32,7 +37,7 @@ function toastFor(app: AppState, operationId: string, label: string): number {
 function handleEvent(app: AppState, ev: FetchEvent) {
 	switch (ev.type) {
 		case 'intent':
-			console.info(
+			console.warn(
 				'[fetch-events] intent',
 				ev.operation_id,
 				'needs_confirmation=',
@@ -85,11 +90,11 @@ function handleEvent(app: AppState, ev: FetchEvent) {
 
 /** Open the SSE subscription. Returns a teardown that closes it. */
 export function startFetchEvents(app: AppState): () => void {
-	console.info('[fetch-events] opening SSE subscription');
+	console.warn('[fetch-events] opening SSE subscription');
 	const es = new EventSource('/api/v1/network/fetch-events');
-	es.onopen = () => console.info('[fetch-events] SSE connected');
+	es.onopen = () => console.warn('[fetch-events] SSE connected');
 	es.onmessage = (msg) => {
-		console.info('[fetch-events] SSE message:', msg.data);
+		console.warn('[fetch-events] SSE message:', msg.data);
 		try {
 			handleEvent(app, JSON.parse(msg.data) as FetchEvent);
 		} catch (e) {
