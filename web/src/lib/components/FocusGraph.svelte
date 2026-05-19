@@ -35,9 +35,15 @@
 	const NODE_H = 38;
 	const TAB_W = 22;
 	const TAB_H = 15;
-	// How far below the node band a back-edge bows, so a cycle routes
-	// clear of the indexes between its source and target.
-	const BACK_DIP = 54;
+	// Back-edges route as orthogonal wires through stacked lanes below the
+	// node band — like circuit traces. LANE_TOP is the gap from the band to
+	// the first lane, LANE_PITCH the spacing between lanes, CORNER_R the
+	// turn radius, LANE_MARGIN the clearance two edges need to share a lane.
+	const LANE_TOP = 20;
+	const LANE_PITCH = 13;
+	const LANE_BOTTOM = 14;
+	const LANE_MARGIN = 18;
+	const CORNER_R = 7;
 
 	const pathSet = $derived(new Set(pathKeys));
 	const hasChildren = (k: string) => (nodes[k]?.childKeys.length ?? 0) > 0;
@@ -137,12 +143,35 @@
 				edges.push({ from: k, to: ck, back: (depth.get(ck) ?? 0) <= fd });
 			}
 		}
+		// Pack back-edges into horizontal lanes below the band: two whose
+		// x-spans don't overlap share a lane (greedy interval colouring), so
+		// many cycles stack tightly instead of piling on one another.
+		const laneOf = new Map<string, number>();
+		const laneRight: number[] = [];
+		const backSpans = edges
+			.filter((e) => e.back)
+			.map((e) => {
+				const a = pos.get(e.from)!;
+				const b = pos.get(e.to)!;
+				return { e, lo: Math.min(a.x, b.x), hi: Math.max(a.x, b.x) };
+			})
+			.sort((x, y) => x.lo - y.lo);
+		for (const { e, lo, hi } of backSpans) {
+			let lane = laneRight.findIndex((r) => r + LANE_MARGIN < lo);
+			if (lane < 0) {
+				lane = laneRight.length;
+				laneRight.push(0);
+			}
+			laneRight[lane] = hi;
+			laneOf.set(e.from + '->' + e.to, lane);
+		}
 		return {
 			pos,
 			edges,
+			laneOf,
+			laneCount: laneRight.length,
 			width: byDepth.size * COL_W,
-			height: maxLevel * ROW_H,
-			hasBack: edges.some((e) => e.back)
+			height: maxLevel * ROW_H
 		};
 	});
 
@@ -156,13 +185,23 @@
 		const a = layout.pos.get(e.from)!;
 		const b = layout.pos.get(e.to)!;
 		if (e.back) {
-			// Cycle edge: bow it below the node band so it never crosses the
-			// indexes sitting between source and target. Leaves the source's
-			// bottom, dips under everything, rises into the target's bottom.
-			const ay = a.y + NODE_H / 2;
-			const by = b.y + NODE_H / 2;
-			const dip = layout.height + BACK_DIP * 0.72;
-			return `M ${a.x} ${ay} C ${a.x} ${dip}, ${b.x} ${dip}, ${b.x} ${by}`;
+			// Cycle edge: an orthogonal wire. Drop straight from the source's
+			// bottom into its assigned lane below the band, run horizontally
+			// clear of every index, rise into the target. Corners are rounded
+			// so the turns read like circuit traces.
+			const lane = layout.laneOf.get(e.from + '->' + e.to) ?? 0;
+			const L = layout.height + LANE_TOP + lane * LANE_PITCH;
+			const sBot = a.y + NODE_H / 2;
+			const tBot = b.y + NODE_H / 2;
+			const dir = b.x < a.x ? -1 : 1;
+			const r = CORNER_R;
+			return (
+				`M ${a.x} ${sBot} L ${a.x} ${L - r} ` +
+				`Q ${a.x} ${L} ${a.x + dir * r} ${L} ` +
+				`L ${b.x - dir * r} ${L} ` +
+				`Q ${b.x} ${L} ${b.x} ${L - r} ` +
+				`L ${b.x} ${tBot}`
+			);
 		}
 		// Forward edge: source's right edge → target's left edge.
 		const ax = a.x + NODE_W / 2;
@@ -185,7 +224,11 @@
 		{#if layout.pos.size === 0}
 			<p class="fg__empty">No nested indexes loaded yet.</p>
 		{:else}
-			{@const svgH = layout.height + (layout.hasBack ? BACK_DIP : 0)}
+			{@const svgH =
+				layout.height +
+				(layout.laneCount > 0
+					? LANE_TOP + layout.laneCount * LANE_PITCH + LANE_BOTTOM
+					: 0)}
 			<svg
 				class="fg__svg"
 				width={layout.width}
