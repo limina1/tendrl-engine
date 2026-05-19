@@ -58,10 +58,11 @@
 	// Keyed by addrKey (`kind:pubkey:d_tag`).
 	let focusGraph = $state<Record<string, GraphNode>>({});
 	let graphOpen = $state(false);
-	// Target eager-expansion depth: how many levels of nested 30040 indexes
-	// the streaming loader walks. The depth controls set this. Capped at
-	// MAX_DEPTH — deeper than that you refocus into a sub-publication (a
-	// fresh budget, breadcrumbed).
+	// Target eager-expansion depth: how many levels of the tree are *fully*
+	// loaded. `treeDepth` N loads levels 0..N-1 and leaves level N as d-tag
+	// preview stubs — so the engine is asked for `treeDepth - 1` (its
+	// `max_depth` counts the deepest fully-loaded level). Minimum 1: level 0
+	// (the focused index itself) is always loaded.
 	const MAX_DEPTH = 6;
 	let treeDepth = $state(2);
 	// Depth the current focus's tree has actually been streamed to. Lowering
@@ -890,7 +891,15 @@
 			}
 		};
 
-		const es = api.streamPublication(focus.pubkey, focus.d_tag, 'local_first', treeDepth);
+		// `treeDepth` N fully loads levels 0..N-1; the engine's `max_depth` is
+		// the deepest fully-loaded level, so it gets `treeDepth - 1`. Level N
+		// comes back as d-tag preview stubs.
+		const es = api.streamPublication(
+			focus.pubkey,
+			focus.d_tag,
+			'local_first',
+			Math.max(0, treeDepth - 1)
+		);
 		streamSource = es;
 
 		es.onmessage = (msg) => {
@@ -1064,7 +1073,7 @@
 	 *  Changing it re-streams the current focus at the new depth: `runLoader`
 	 *  closes the prior stream, bumps the generation, and opens a fresh one. */
 	function setDepth(d: number) {
-		const clamped = Math.max(0, Math.min(MAX_DEPTH, d));
+		const clamped = Math.max(1, Math.min(MAX_DEPTH, d));
 		if (clamped === treeDepth) return;
 		treeDepth = clamped;
 		if (!parsedAddr || parsedAddr.kind !== 30040) return;
@@ -1665,7 +1674,7 @@
 				<button
 					class="depth-knob__step"
 					onclick={() => setDepth(treeDepth - 1)}
-					disabled={treeDepth <= 0}
+					disabled={treeDepth <= 1}
 					aria-label="Decrease depth"
 				>−</button>
 				<span class="depth-knob__val">{treeDepth}</span>
