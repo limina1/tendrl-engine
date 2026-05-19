@@ -38,3 +38,6 @@ web/.svelte-kit/
 .env
 .env.local
 sidecar/.venv/
+
+# Generated graph preview
+scripts/collatz-graph.svg
