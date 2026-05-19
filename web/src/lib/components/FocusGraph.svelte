@@ -12,6 +12,7 @@
 		rootKey,
 		currentKey,
 		pathKeys = [],
+		expandAll = false,
 		onnavigate,
 		onclose
 	}: {
@@ -22,6 +23,9 @@
 		currentKey: string;
 		/** addr-keys of the breadcrumb path up to the current focus. */
 		pathKeys?: string[];
+		/** Force every node unpacked — the corner tabs become no-ops.
+		 *  Used by the design artboard to show the whole graph at once. */
+		expandAll?: boolean;
 		onnavigate: (addr: NAddr) => void;
 		onclose: () => void;
 	} = $props();
@@ -114,7 +118,7 @@
 		while (queue.length) {
 			const k = queue.shift()!;
 			order.push(k);
-			if (!expanded.has(k)) continue; // collapsed — children stay packed
+			if (!expandAll && !expanded.has(k)) continue; // collapsed — children stay packed
 			for (const ck of nodes[k]?.childKeys ?? []) {
 				if (!nodes[ck] || depth.has(ck)) continue;
 				depth.set(ck, (depth.get(k) ?? 0) + 1);
@@ -271,7 +275,7 @@
 				{#each [...layout.pos] as [k, p] (k)}
 					{@const node = nodes[k]}
 					{@const expandable = hasChildren(k)}
-					{@const open = expanded.has(k)}
+					{@const open = expandAll || expanded.has(k)}
 					<g
 						class="fg__node"
 						class:fg__node--current={k === currentKey}
