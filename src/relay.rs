@@ -4,7 +4,7 @@
 
 use crate::error::{EngineError, Result};
 use futures::{SinkExt, StreamExt};
-use nostrdb::Ndb;
+use nostrdb::{IngestMetadata, Ndb};
 use serde_json::{json, Value};
 use std::time::{Duration, Instant};
 use tokio::time::timeout;
@@ -84,8 +84,13 @@ pub async fn fetch_with_filters(
                         match msg_type {
                             "EVENT" => {
                                 if msg.len() >= 3 {
-                                    // Ingest into nostrdb for caching
-                                    if let Err(e) = ndb.process_event(&text) {
+                                    // Ingest into nostrdb for caching, tagging
+                                    // the source relay so `note.relays()`
+                                    // records where the event was seen.
+                                    if let Err(e) = ndb.process_event_with(
+                                        &text,
+                                        IngestMetadata::new().client(false).relay(relay_url),
+                                    ) {
                                         debug!("Failed to ingest event: {}", e);
                                     }
                                     // Also collect the event to return
@@ -196,11 +201,19 @@ pub struct PublishResult {
     pub relay_url: String,
     pub success: bool,
     pub message: Option<String>,
+    /// The id of the event this result is for. Lets callers record relay
+    /// provenance per (event, relay) without relying on result ordering.
+    pub event_id: String,
 }
 
 /// Publish an event to a single relay
 /// Returns success/failure with any message from the relay
 pub async fn publish_event(relay_url: &str, event_json: &str) -> PublishResult {
+    let event_id = serde_json::from_str::<Value>(event_json)
+        .ok()
+        .and_then(|v| v.get("id").and_then(|i| i.as_str()).map(|s| s.to_string()))
+        .unwrap_or_default();
+
     let result = async {
         let (mut ws, _) = connect_async(relay_url)
             .await
@@ -209,7 +222,6 @@ pub async fn publish_event(relay_url: &str, event_json: &str) -> PublishResult {
         // Send EVENT message: ["EVENT", {event}]
         let event: Value = serde_json::from_str(event_json)
             .map_err(|e| format!("Invalid event JSON: {}", e))?;
-        let event_id = event.get("id").and_then(|v| v.as_str()).unwrap_or("unknown");
         let msg = json!(["EVENT", event]);
 
         ws.send(Message::Text(msg.to_string()))
@@ -233,7 +245,7 @@ pub async fn publish_event(relay_url: &str, event_json: &str) -> PublishResult {
                                     let success = msg.get(2).and_then(|v| v.as_bool()).unwrap_or(false);
                                     let message = msg.get(3).and_then(|v| v.as_str()).map(|s| s.to_string());
 
-                                    if ok_event_id == event_id {
+                                    if ok_event_id == event_id.as_str() {
                                         let _ = ws.close(None).await;
                                         if success {
                                             return Ok(message);
@@ -279,6 +291,7 @@ pub async fn publish_event(relay_url: &str, event_json: &str) -> PublishResult {
                 relay_url: relay_url.to_string(),
                 success: true,
                 message,
+                event_id,
             }
         }
         Err(e) => {
@@ -287,6 +300,7 @@ pub async fn publish_event(relay_url: &str, event_json: &str) -> PublishResult {
                 relay_url: relay_url.to_string(),
                 success: false,
                 message: Some(e),
+                event_id,
             }
         }
     }

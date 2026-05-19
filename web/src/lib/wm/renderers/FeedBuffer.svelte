@@ -28,6 +28,17 @@
 		return new Date(ts * 1000).toLocaleDateString();
 	}
 
+	/** Strip the scheme and trailing slash from a relay URL for compact display. */
+	function relayHost(url: string): string {
+		return url.replace(/^wss?:\/\//, '').replace(/\/+$/, '');
+	}
+
+	/** Compact label for a relay set: "relay.damus.io +2". */
+	function relayLabel(relays: string[]): string {
+		const first = relayHost(relays[0]);
+		return relays.length > 1 ? `${first} +${relays.length - 1}` : first;
+	}
+
 	function openPub(pub: { addr: { kind: number; pubkey: string; d_tag: string }; title: string | null; section_count: number }) {
 		const id = `reader:${pub.addr.kind}:${pub.addr.pubkey}:${pub.addr.d_tag}`;
 		store.openBuffer({
@@ -135,8 +146,18 @@
 							}}
 							title="Open this publication's index event in the JSON viewer"
 						>json</button>
-						{#if app.localPubkeys.has(pub_item.author_pubkey)}
-							<span class="pill pill--local">local</span>
+						<!-- Provenance badge. The current corpus is an initial bulk
+						     import from relays, so an event with no recorded relay
+						     metadata is treated as remote, not local. A genuine
+						     "local" state (written here, not yet published) needs
+						     local-write tracking — deferred until local authoring
+						     is actually a feature. -->
+						{#if !pub_item.signed}
+							<span class="pill pill--draft" title="Unsigned draft — not yet signed">draft</span>
+						{:else if pub_item.relays.length > 0}
+							<span class="pill pill--remote" title={`On ${pub_item.relays.length} relay(s):\n${pub_item.relays.join('\n')}`}>{relayLabel(pub_item.relays)}</span>
+						{:else}
+							<span class="pill pill--remote" title="From relays — origin relay not recorded">remote</span>
 						{/if}
 						<span class="meta">{pub_item.section_count} sections</span>
 					</div>

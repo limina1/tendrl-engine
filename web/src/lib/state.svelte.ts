@@ -1127,7 +1127,10 @@ function _createAppState() {
 						author_pubkey: r.author,
 						version: null,
 						created_at: r.created_at,
-						section_count: r.tags.filter(t => t[0] === 'a').length
+						section_count: r.tags.filter(t => t[0] === 'a').length,
+						// Search results don't carry relay/signature provenance.
+						relays: [],
+						signed: true
 					});
 				}
 				if (feedPubs.length > 0) {

@@ -58,7 +58,7 @@ pub fn query_local(ndb: &Ndb, filters: &[Value]) -> Result<Vec<Value>> {
                 .get_note_by_key(&txn, query_result.note_key)
                 .map_err(|e| EngineError::Database(format!("Failed to get note: {}", e)))?;
 
-            let event = note_to_json(&note)?;
+            let event = note_to_json(&note, &txn)?;
             all_events.push(event);
         }
     }
@@ -84,7 +84,7 @@ pub fn query_by_id(ndb: &Ndb, id: &str) -> Result<Option<Value>> {
         let note = ndb
             .get_note_by_key(&txn, query_result.note_key)
             .map_err(|e| EngineError::Database(format!("Failed to get note: {}", e)))?;
-        Ok(Some(note_to_json(&note)?))
+        Ok(Some(note_to_json(&note, &txn)?))
     } else {
         Ok(None)
     }
@@ -124,7 +124,7 @@ pub fn query_addressable(ndb: &Ndb, kind: u64, pubkey: &str, d_tag: &str) -> Res
         match &newest {
             Some((best_time, _)) if created_at <= *best_time => continue,
             _ => {
-                let event = note_to_json(&note)?;
+                let event = note_to_json(&note, &txn)?;
                 newest = Some((created_at, event));
             }
         }
@@ -580,8 +580,8 @@ pub fn filter_by_text(events: &[Value], filter: &crate::search::TextFilter) -> V
 }
 
 /// Convert a nostrdb Note to JSON event format (public for profile queries)
-pub fn note_to_json_pub(note: &nostrdb::Note) -> Result<Value> {
-    note_to_json(note)
+pub fn note_to_json_pub(note: &nostrdb::Note, txn: &Transaction) -> Result<Value> {
+    note_to_json(note, txn)
 }
 
 /// True when a kind-0 (profile metadata) event for `pubkey` is already
@@ -714,7 +714,7 @@ pub fn find_profiles_matching(ndb: &Ndb, term: &str) -> Vec<crate::search::Profi
         let Ok(note) = ndb.get_note_by_key(&txn, qr.note_key) else {
             continue;
         };
-        let Ok(event) = note_to_json(&note) else {
+        let Ok(event) = note_to_json(&note, &txn) else {
             continue;
         };
         let pubkey = event
@@ -802,7 +802,7 @@ pub fn find_profiles_matching(ndb: &Ndb, term: &str) -> Vec<crate::search::Profi
 }
 
 /// Convert a nostrdb Note to JSON event format
-fn note_to_json(note: &nostrdb::Note) -> Result<Value> {
+fn note_to_json(note: &nostrdb::Note, txn: &Transaction) -> Result<Value> {
     let id_hex = hex::encode(note.id());
     let pubkey_hex = hex::encode(note.pubkey());
     let created_at = note.created_at();
@@ -834,6 +834,14 @@ fn note_to_json(note: &nostrdb::Note) -> Result<Value> {
 
     let sig_hex = hex::encode(note.sig());
 
+    // Relays this note has been seen on (empty = written locally, never
+    // fetched from or broadcast to a relay). nostrdb records relay
+    // provenance per event id via `IngestMetadata::relay`.
+    let relays: Vec<Value> = note
+        .relays(txn)
+        .map(|r| Value::String(r.to_string()))
+        .collect();
+
     Ok(serde_json::json!({
         "id": id_hex,
         "pubkey": pubkey_hex,
@@ -841,7 +849,8 @@ fn note_to_json(note: &nostrdb::Note) -> Result<Value> {
         "kind": kind,
         "tags": tags,
         "content": content,
-        "sig": sig_hex
+        "sig": sig_hex,
+        "relays": relays
     }))
 }
 

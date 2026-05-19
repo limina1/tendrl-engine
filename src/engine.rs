@@ -924,6 +924,24 @@ impl Engine {
         Ok(())
     }
 
+    /// Record that `event_json` (a raw signed event object `{...}`) has been
+    /// seen on / broadcast to `relay_url`.
+    ///
+    /// Re-ingests the event with relay provenance metadata so `note.relays()`
+    /// reflects it — this is how a locally-authored publication stops showing
+    /// as "local-only" once it has actually been published. nostrdb dedups by
+    /// event id and simply appends the relay to the existing note's relay set.
+    /// The event must carry a valid signature (relay-form ingest verifies it).
+    pub fn record_event_relay(&self, event_json: &str, relay_url: &str) -> Result<()> {
+        let wrapped = format!(r#"["EVENT","tendrl-relay-meta",{}]"#, event_json);
+        self.ndb
+            .process_event_with(
+                &wrapped,
+                IngestMetadata::new().client(false).relay(relay_url),
+            )
+            .map_err(|e| EngineError::Database(format!("Failed to record relay metadata: {e}")))
+    }
+
     /// Search for events using a structured search query.
     ///
     /// Compiles the query to NIP-01 filters, fetches events, applies text
