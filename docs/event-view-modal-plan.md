@@ -425,3 +425,71 @@ Docs:
   clarification, full Query Bar Syntax update
 - `docs/commands.org` — paste-safe verification recipes per slice
 - `docs/event-view-modal-plan.md` — this addendum
+
+---
+
+# v2 — Universal Event Menu (planned)
+
+The LANDED modal above is an *inspector*. `SearchActionModal` is a separate
+*action sheet* (read / find / insert, opened on a search-result click). The
+two overlap — both are "a menu about one event" — and that split is the
+redundancy. v2 folds them into one modal: the same universal event menu
+whether reached from search, a profile card, a tag click, or a
+containing-publications row.
+
+## Target layout
+
+```
+Header        title · kind · close
+Breadcrumb    chained-nav crumbs (when chained)
+ACTIONS       Read <publication|section|article|wiki|event>   r
+              Find containing publications                    f   (d-tag only)
+              Insert into compose                             i   (zettel kinds)
+POOL          (Phase B — reserved slot, see below)
+COPY AS       id · nevent · naddr · npub          (always visible)
+TAGS          collapsible (was always-on)
+CONTAINING    inline auto-loaded recursable list  (zettel kinds)
+RAW JSON      collapsible, last
+```
+
+## Decisions
+
+- **SearchActionModal is retired.** Acting on a search result opens this
+  modal. `SearchBuffer.onSelect` routes through `handleViewJson`; the
+  `actionModalResult` state and `SearchActionModal.svelte` are deleted.
+- **Read is kind-aware.** 30040 -> "Read publication" (full reader); 30041
+  -> "Read section", 30023 -> "Read article", 30818 -> "Read wiki page",
+  else -> "Read event" — all non-30040 open the single-event reader, which
+  is the placeholder for kinds with no bespoke reader.
+- **Insert is zettel-only.** Shown for {30040, 30041, 30023, 30818}.
+- **Find containing** replaces the old "Show all references" link; the
+  inline CONTAINING list stays (auto-loaded, recursable per the LANDED
+  recursion change).
+- **"Add to search"** on containing rows is deferred to Phase B (needs the
+  query-form append affordance; see reference-pool-worksheet.md).
+
+## Phasing
+
+**Phase A — buildable now.** Layout restructure, ACTIONS block, kind-aware
+read, zettel-gated insert, collapsible Tags, SearchActionModal retirement.
+No dependency on the reference pool.
+
+**Phase B — needs the reference pool (workbench-architecture Phase 7).**
+The POOL block — membership fillable-squares (context / compose / refs),
+locked/forked state, drop-from-pool. This is reference-pool-worksheet
+issues 2-4 made visible. The POOL slot is reserved in the Phase-A layout
+(marked in EventViewModal) but renders nothing until `held`, the refs
+buffer, and origin/draft exist.
+
+## Files (Phase A)
+
+- `EventViewModal.svelte` — ACTIONS section + props (`onspawneventreader`,
+  `oninsert`, `insertMode`), kind-aware labels, collapsible Tags, POOL
+  placeholder comment.
+- `+layout.svelte` — drop SearchActionModal; wire the new modal props;
+  `onInsert` accepts `NostrEvent | SearchResult` (converts via a local
+  shim — SearchResult is a flat 9-field interface).
+- `SearchBuffer.svelte` — `onSelect` -> `handleViewJson` instead of
+  `actionModalResult`.
+- `state.svelte.ts` — remove `actionModalResult` state + accessors.
+- `SearchActionModal.svelte` — deleted.

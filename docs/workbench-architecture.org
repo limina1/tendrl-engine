@@ -824,6 +824,123 @@ Build 30040 index event with ordered a-tags
 Existing PublishPublication / BroadcastToRelays flow
 #+end_example
 
+* The Reference Pool
+
+** From Two Doors to a Substrate
+
+Phase 3 shipped a unified =ContextItem= pool with =in_context= and
+=in_compose= flags (see [[*Phase 3: Chat Panel + LLM Integration][Phase 3]]).
+In practice that pool is not a store of events — it is a store of events
+/already committed to a job/. Every entry point demands a purpose:
+
+- =addToPool(fields, target)= requires a =target= of ={ context }= or
+  ={ compose }=; there is no purposeless add.
+- =gc()= is =items.filter(e => e.in_context || e.in_compose)= — an item
+  with neither flag is garbage-collected on the next sync.
+
+So an event can be "the LLM should reference this" or "transclude / fork
+this into a publication", and nothing else. There is no anteroom: events
+flow straight from the search format into a panel, or they are dropped.
+The diagrams in [[*Event Flow Between Panels][Event Flow Between Panels]]
+show this directly — every arrow lands on a purpose.
+
+The *reference pool* lifts that constraint. The =items= array becomes a
+genuine substrate: a session-scoped, deduplicated, provenance-tracked set
+of events the user has /picked/. The panels become *routes off it*
+rather than the only ways in.
+
+** Held State
+
+A third membership joins =in_context= and =in_compose=:
+
+#+begin_src typescript
+type ContextItem = {
+  // ... existing fields ...
+  in_context: boolean;   // routed to the LLM chat
+  in_compose: boolean;   // routed to a compose section
+  held: boolean;         // picked, not yet routed — a neutral bookmark
+};
+#+end_src
+
+=held= is the neutral state: the event is flagged as relevant before any
+decision about what to do with it. Consequences:
+
+- =gc()= keeps any item that is =held=, =in_context=, /or/ =in_compose=.
+  An item is garbage only once every membership is false.
+- =addToPool= gains a no-purpose path — =addToPool(fields, { held: true })=
+  or a dedicated =holdEvent(event)= — so search results, the event-view
+  modal, profile cards, and the feed can drop an event into the pool
+  without committing it.
+- The memberships are independent, not a state machine. An event can be
+  held /and/ in compose /and/ cited at once; routing it elsewhere does
+  not clear =held=.
+
+** RefsBuffer Is the Pool's Neutral View
+
+The research-class =refs= buffer (=RefsBuffer.svelte=, currently a stub)
+becomes the UI surface for the held set — every =held= item with its
+provenance and a row of route actions:
+
+#+begin_example
+┌─ Refs ───────────────────────────────────┐
+│ ◆ "Action potentials"  30041  by alice   │
+│     [→ compose] [→ chat] [cite] [search]  │
+│ ◆ "Cybernetics index"  30040  by bob     │
+│     [→ compose] [→ chat] [cite] [search]  │
+└───────────────────────────────────────────┘
+#+end_example
+
+The chat's context panel and the compose section list are then just
+/filtered views/ of the same pool — =items.filter(i => i.in_context)=
+and =items.filter(i => i.in_compose)=, exactly as today. =refs= adds the
+third view, =items.filter(i => i.held)=.
+
+** Routes Off the Pool
+
+| Route       | Effect                                                        |
+|-------------+---------------------------------------------------------------|
+| → compose   | Set =in_compose= — imported (read-only) or forked block       |
+| → chat      | Set =in_context= — injected as LLM reference material         |
+| cite        | Mint an NKBIP-03 citation event from the held event           |
+| → search    | Append the event coordinate (=a:kind:pubkey:d=) to the query  |
+| drop        | Clear =held=; =gc()= reaps it if no other membership remains  |
+
+The "→ search" route is the narrow "append an naddr to the search query"
+idea — composing a filter, not running one. It is one spigot among
+several, not a feature in its own right.
+
+** Citations (NKBIP-03)
+
+[[file:../nips/NKBIP-03.adoc][NKBIP-03]] defines citation events —
+=kind:30= (internal Nostr reference), =kind:31= (external web),
+=kind:32= (hardcopy), =kind:33= (prompt) — plus a =[[citation::…]]=
+markup scheme for endnotes, footnotes, inline references, and quotes.
+
+The reference pool is the citation workflow's missing first step: you
+cannot cite what you have not picked. The flow:
+
+1. The user *holds* an event; it lands in =refs=.
+2. The *cite* route mints a citation event from it. For an internal
+   Nostr reference that is a =kind:30= carrying
+   =["c", "<kind>:<pubkey>:<id>"]= plus =title= / =author= /
+   =published_on= tags, prefilled from the held event and editable.
+3. Compose emits =[[citation::end::nevent…]]= /
+   =[[citation::inline::…]]= markup pointing at that citation event; the
+   renderer resolves it into endnotes / footnotes / inline references.
+
+External (=31=), hardcopy (=32=), and prompt (=33=) citations have no
+held Nostr event behind them — they are authored directly in =refs= as
+free-standing citation events. =refs= is therefore both the held-event
+view /and/ the citation composer.
+
+** Interface-Agnostic
+
+The pool, its three memberships, =addToPool=, =gc()=, and the derived
+filters live in the state layer. =refs=, the context panel, and the
+compose section list are three filtered renderings of one array — a TUI
+or Emacs front-end gets the same substrate, the held set rendered as a
+buffer-like list.
+
 * Command Extensions
 
 ** New Command Categories
@@ -1520,6 +1637,21 @@ Let the LLM search the knowledge base autonomously during conversation.
 - [ ] Handle tool call responses: run search, inject results
 - [ ] Display tool usage in chat (collapsible "searched for..." blocks)
 - [ ] Consider additional tools: =read_event=, =list_publications=
+
+** Phase 7: Reference Pool & Citations
+
+Generalize the =ContextItem= pool into a neutral substrate, then build the
+=refs= buffer and the NKBIP-03 citation workflow on top of it. See
+[[*The Reference Pool][The Reference Pool]].
+
+- [ ] Add a =held= membership to =ContextItem=; =gc()= keeps any item that is held, in context, or in compose
+- [ ] =addToPool= no-purpose path (=holdEvent=) — events can enter the pool without a context/compose target
+- [ ] "Hold" affordance on search results, the event-view modal, and profile cards (feeds the pool, no purpose committed)
+- [ ] Build =RefsBuffer.svelte= as the held-set view with per-row route actions (→ compose, → chat, cite, → search)
+- [ ] "→ search" route: append a coordinate token (=a:= / =by:= / =id:=) to the in-progress query without running it
+- [ ] NKBIP-03 citation minting: a held event → =kind:30= internal reference, tags prefilled and editable
+- [ ] Free-standing citation authoring in =refs=: =kind:31= web, =kind:32= hardcopy, =kind:33= prompt references
+- [ ] =[[citation::…]]= markup emission from compose + renderer resolution (endnote / footnote / inline / quote)
 
 ** Deferred: TUI Widgets
 

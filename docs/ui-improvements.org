@@ -1,0 +1,30 @@
+#+TITLE: UI Improvements
+#+SUBTITLE: Running list of web-UI improvements — checkbox items, ticked when shipped
+#+DATE: 2026-05-19
+
+Captured from working sessions. Tick items as they ship (don't delete them);
+keep enough context that a future session can pick one up cold.
+
+* Profile page
+- [X] Each profile-tab card (publications / articles / wikis / sections /
+  comments) has a =json= button that opens the structured EventViewModal on
+  the raw event. Addressable kinds resolve via =openAddressableInModal=;
+  comments set =eventModalData= directly.
+
+* Event view modal (the JSON view)
+- [X] Clicking a containing publication recurses into *its* JSON in the same
+  modal, chained through the breadcrumb, so the reader can climb the
+  reference graph one index at a time and step back down. Previously it
+  closed the modal and spawned a reader.
+- [X] Each containing-publication row has a right-hand =read= button that
+  keeps the old escape-to-reader behaviour (close modal, open in reader).
+- [ ] Each containing-publication row should also have a right-hand button
+  that *adds* the naddr coordinate (=a:kind:pubkey:d_tag=) to the search
+  query — composing, not running. Folded into the reference-pool design as
+  the "→ search" route — see below.
+
+* Reference pool (event workbench)
+The bigger picture behind the deferred item above — collect events into a
+neutral pool, then route them (bookmark / transclude-fork / LLM context /
+cite / append-to-search) — is captured as a design section and *Phase 7* in
+=docs/workbench-architecture.org=. Not duplicated here; that doc is the home.
