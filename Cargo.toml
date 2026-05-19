@@ -17,10 +17,6 @@ path = "src/lib.rs"
 name = "nostr-engine"
 path = "src/main.rs"
 
-[[example]]
-name = "basic_query"
-path = "examples/basic_query.rs"
-
 [features]
 default = []
 onnx = ["fastembed"]
