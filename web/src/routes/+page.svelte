@@ -849,6 +849,9 @@
 				<span class="ml__seg ml__seg--prefix">mb:{mb.mode}</span>
 			{/if}
 			<span class="ml__spacer"></span>
+			{#if focusedBuffer && store.modelineStatus(focusedBuffer.id)}
+				<span class="ml__seg ml__status">{store.modelineStatus(focusedBuffer.id)}</span>
+			{/if}
 			{#if app.searchHistory.length > 0}
 				<span class="hs-pill-wrap" bind:this={hsWrapEl}>
 					<button
@@ -1664,6 +1667,8 @@
 	.ml__seg { color: var(--base6); }
 	.ml__seg--buf { color: var(--fg); }
 	.ml__seg--prefix { color: var(--id-yours); }
+	/* Right-justified loading indicator — sits after .ml__spacer (flex:1). */
+	.ml__status { color: var(--base6); font-variant-numeric: tabular-nums; }
 	.pill--btn {
 		border: none;
 		cursor: pointer;

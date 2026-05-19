@@ -83,9 +83,46 @@ export function listPublications(limit = 20, policy = 'local_only', before?: num
 	return fetchJson<{ publications: PublicationSummary[]; count: number }>(url);
 }
 
-export function getPublication(pubkey: string, d_tag: string, policy = 'local_first') {
-	return fetchJson<{ publication: PublicationDetail; toc: TocEntry[]; section_count: number }>(
-		`/api/v1/publications/${pubkey}/${encodeURIComponent(d_tag)}?policy=${policy}`
+/** Fetch a publication and its table of contents.
+ *
+ *  `depth` controls eager expansion of nested 30040 indexes: 0 = this index
+ *  and its own sections; N = recurse N levels of nesting (sections are leaves
+ *  and never consume a level). The returned `toc` is a recursive tree —
+ *  entries carry `depth`, `is_publication`, and (for sections in horizon)
+ *  `content`. Defaults to 2: a publication plus one level of sub-publications.
+ *  DB-first; misses are backfilled from relays per `policy`. */
+export function getPublication(
+	pubkey: string,
+	d_tag: string,
+	policy = 'local_first',
+	depth = 2,
+	signal?: AbortSignal
+) {
+	return fetchJson<{
+		publication: PublicationDetail;
+		toc: TocEntry[];
+		depth: number;
+		section_count: number;
+	}>(
+		`/api/v1/publications/${pubkey}/${encodeURIComponent(d_tag)}?policy=${policy}&depth=${depth}`,
+		signal ? { signal } : undefined
+	);
+}
+
+/** Open an SSE stream of per-node publication-load events (`PubLoadEvent`).
+ *  The caller OWNS the returned EventSource and MUST call `.close()` — closing
+ *  it drops the engine's channel receiver, which aborts the server-side
+ *  recursive loader. Unlike `getPublication` (one batched response), this
+ *  surfaces each event as it resolves, for a live per-event load counter. */
+export function streamPublication(
+	pubkey: string,
+	d_tag: string,
+	policy = 'local_first',
+	depth = 2
+): EventSource {
+	return new EventSource(
+		`/api/v1/publications/${pubkey}/${encodeURIComponent(d_tag)}/stream` +
+			`?policy=${policy}&depth=${depth}`
 	);
 }
 
@@ -798,17 +835,21 @@ export function getDiscussionList(
 		relays?: string[];
 	} = {}
 ) {
-	const params = new URLSearchParams();
-	if (options.addresses?.length) params.set('addresses', options.addresses.join(','));
-	if (options.eventIds?.length) params.set('event_ids', options.eventIds.join(','));
-	if (options.kinds?.length) params.set('kinds', options.kinds.join(','));
-	if (options.policy) params.set('policy', options.policy);
-	if (options.limit !== undefined) params.set('limit', String(options.limit));
-	if (options.since !== undefined) params.set('since', String(options.since));
-	if (options.bypassOffline) params.set('mode_confirm', 'true');
-	if (options.relays?.length) params.set('relays', options.relays.join(','));
-	const qs = params.toString();
-	return fetchJson<DiscussionsListResponse>(
-		`/api/v1/discussions/list${qs ? '?' + qs : ''}`
-	);
+	// POST, not GET: a deep publication tree references hundreds of
+	// section coordinates — packing them into the URL overflows the
+	// server's request-line/header limit (HTTP 431). They travel in the
+	// body instead. Field names are snake_case to match the Rust struct.
+	return fetchJson<DiscussionsListResponse>('/api/v1/discussions/list', {
+		method: 'POST',
+		body: JSON.stringify({
+			addresses: options.addresses ?? [],
+			event_ids: options.eventIds ?? [],
+			kinds: options.kinds ?? [],
+			policy: options.policy,
+			limit: options.limit,
+			since: options.since,
+			mode_confirm: options.bypassOffline ?? false,
+			relays: options.relays ?? []
+		})
+	});
 }

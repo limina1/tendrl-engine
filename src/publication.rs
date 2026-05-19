@@ -19,6 +19,24 @@ use serde_json::Value;
 pub const KIND_PUBLICATION_INDEX: u64 = 30040;
 pub const KIND_PUBLICATION_SECTION: u64 = 30041;
 
+/// Kinds an NKBIP-01 index (30040) may reference as a *content leaf* — a
+/// readable terminal node, as opposed to a nested 30040 index. 30041 is the
+/// canonical publication section; 30023 (NIP-23 long-form) and 30818/30817
+/// (NKBIP-02 wiki) are addressable content events an index can curate
+/// directly as "zettels". Extend here to admit more leaf kinds.
+pub const ZETTEL_KINDS: &[u64] = &[
+    KIND_PUBLICATION_SECTION, // 30041
+    30023,                    // NIP-23 long-form article
+    30818,                    // NKBIP-02 wiki article
+    30817,                    // NKBIP-02 wiki (alt)
+];
+
+/// Whether `kind` is a content leaf an index may reference (vs. a nested
+/// 30040 index, or a non-publication kind that should be ignored).
+pub fn is_zettel_kind(kind: u64) -> bool {
+    ZETTEL_KINDS.contains(&kind)
+}
+
 /// Address identifier for replaceable events (kind:pubkey:d-tag)
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct NAddr {
@@ -151,6 +169,12 @@ pub struct Publication {
     pub nested: Vec<Publication>,
     /// Whether this is a root publication or nested
     pub is_root: bool,
+    /// Relays the index event (kind 30040) has been seen on. Empty means the
+    /// publication was written locally and has not been published/fetched.
+    pub relays: Vec<String>,
+    /// Whether the index event carries a real signature. `false` = an
+    /// unsigned draft (placeholder all-zero signature).
+    pub signed: bool,
 }
 
 impl Publication {
@@ -209,7 +233,9 @@ impl Publication {
         let mut sec_pos = 0;
 
         for a in section_addrs {
-            if a.kind == KIND_PUBLICATION_SECTION {
+            // Any zettel kind (30041 + long-form/wiki) is a content leaf;
+            // 30040 is a nested index; everything else is dropped.
+            if is_zettel_kind(a.kind) {
                 sections.push(Section {
                     addr: a,
                     event: LoadStatus::Pending,
@@ -233,9 +259,29 @@ impl Publication {
                     sections: Vec::new(),
                     nested: Vec::new(),
                     is_root: false,
+                    // Unknown until the nested index is actually loaded.
+                    relays: Vec::new(),
+                    signed: true,
                 });
             }
         }
+
+        // Relay provenance + signature state, threaded through from
+        // `note_to_json` (relays) and the raw event (sig).
+        let relays: Vec<String> = event
+            .get("relays")
+            .and_then(|v| v.as_array())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let signed = event
+            .get("sig")
+            .and_then(|v| v.as_str())
+            .map(|s| !s.is_empty() && !s.chars().all(|c| c == '0'))
+            .unwrap_or(false);
 
         Ok(Publication {
             addr,
@@ -252,6 +298,8 @@ impl Publication {
             sections,
             nested,
             is_root,
+            relays,
+            signed,
         })
     }
 
@@ -289,6 +337,11 @@ pub struct TocEntry {
     pub loaded: bool,
     /// Whether this is a nested publication (30040) vs section (30041)
     pub is_publication: bool,
+    /// Section body, when this is a resolved 30041 leaf. `None` for nested
+    /// indexes and for sections whose content has not been loaded. A depth-N
+    /// tree load fills this for every section inside the depth horizon, so the
+    /// reader can render the whole tree without per-section round trips.
+    pub content: Option<String>,
     /// Children entries (for tree view)
     pub children: Vec<TocEntry>,
 }
@@ -383,6 +436,66 @@ fn process_root_publications(
     roots.sort_by(|a, b| b.created_at.cmp(&a.created_at).then_with(|| a.addr.d_tag.cmp(&b.addr.d_tag)));
     roots.truncate(limit);
     roots
+}
+
+/// A child reference inside a streamed [`PubLoadEvent::Index`] — enough for the
+/// client to allocate a tree slot and decide whether the child counts toward
+/// the load total `N`.
+#[derive(Debug, Clone, Serialize)]
+pub struct PubChildRef {
+    pub addr: NAddr,
+    /// True for a nested 30040 index, false for a content leaf.
+    pub is_index: bool,
+    /// True if this child's own event(s) will be streamed (within the depth
+    /// horizon and not a cycle). `false` = a frontier stub: rendered and
+    /// refocus-able, but it emits no events and does not count toward `N`.
+    pub in_horizon: bool,
+}
+
+/// One progress event in a streaming publication load (see
+/// [`PublicationEngine::stream_publication_tree`]). Serialized to SSE as a
+/// `{"type": ...}`-tagged JSON object.
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum PubLoadEvent {
+    /// A 30040 index resolved. Always arrives before its children's events,
+    /// so the client can allocate child slots immediately.
+    Index {
+        addr: NAddr,
+        depth: usize,
+        title: Option<String>,
+        is_root: bool,
+        children: Vec<PubChildRef>,
+    },
+    /// A content leaf (30041 or another `ZETTEL_KINDS` kind) resolved.
+    Leaf {
+        addr: NAddr,
+        depth: usize,
+        title: Option<String>,
+        content: Option<String>,
+    },
+    /// A node (index or leaf) failed to resolve. Counted toward `N` so the
+    /// client's `i/N` still terminates cleanly.
+    Error {
+        addr: NAddr,
+        depth: usize,
+        message: String,
+    },
+    /// Terminal event — the in-horizon walk finished. `total` is the
+    /// authoritative in-horizon node count (a checksum for the client's `N`).
+    Done { total: usize },
+}
+
+/// Emit one stream event and bump the in-horizon counter. Returns `false` when
+/// the receiver has been dropped (the client disconnected) — callers then
+/// return, which unwinds the recursive load.
+async fn emit_pub_event(
+    tx: &tokio::sync::mpsc::Sender<PubLoadEvent>,
+    counter: &std::sync::atomic::AtomicUsize,
+    ev: PubLoadEvent,
+) -> bool {
+    counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    tx.send(ev).await.is_ok()
 }
 
 /// Publication engine extension for the main Engine
@@ -594,64 +707,321 @@ impl<'a> PublicationEngine<'a> {
             }
 
             // 3. Recurse into nested 30040 indexes, depth-bounded and cycle-guarded.
-            if max_depth == 0 || pub_.nested.is_empty() {
-                return Ok(pub_);
-            }
+            if max_depth > 0 && !pub_.nested.is_empty() {
+                // This node joins the ancestor set seen by its children.
+                let mut child_ancestors = ancestors;
+                child_ancestors.insert(addr.clone());
 
-            // This node joins the ancestor set seen by its children.
-            let mut child_ancestors = ancestors;
-            child_ancestors.insert(addr.clone());
+                // Children to recurse into, skipping any that point back up the path.
+                let to_load: Vec<(usize, NAddr)> = pub_
+                    .nested
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, stub)| !child_ancestors.contains(&stub.addr))
+                    .map(|(i, stub)| (i, stub.addr.clone()))
+                    .collect();
 
-            // Children to recurse into, skipping any that point back up the path.
-            let to_load: Vec<(usize, NAddr)> = pub_
-                .nested
-                .iter()
-                .enumerate()
-                .filter(|(_, stub)| !child_ancestors.contains(&stub.addr))
-                .map(|(i, stub)| (i, stub.addr.clone()))
-                .collect();
-
-            // Fetch sibling sub-publications concurrently, bounded.
-            use futures::stream::StreamExt;
-            let results: Vec<(usize, Result<Publication>)> = futures::stream::iter(to_load)
-                .map(|(i, child_addr)| {
-                    let ancestors = child_ancestors.clone();
-                    async move {
-                        (
-                            i,
-                            self.load_tree_inner(
-                                child_addr,
-                                max_depth - 1,
-                                false,
-                                policy,
-                                ancestors,
+                // Fetch sibling sub-publications concurrently, bounded.
+                use futures::stream::StreamExt;
+                let results: Vec<(usize, Result<Publication>)> = futures::stream::iter(to_load)
+                    .map(|(i, child_addr)| {
+                        let ancestors = child_ancestors.clone();
+                        async move {
+                            (
+                                i,
+                                self.load_tree_inner(
+                                    child_addr,
+                                    max_depth - 1,
+                                    false,
+                                    policy,
+                                    ancestors,
+                                )
+                                .await,
                             )
-                            .await,
-                        )
-                    }
-                })
-                .buffer_unordered(MAX_CONCURRENT_INDEX_FETCHES)
-                .collect()
-                .await;
+                        }
+                    })
+                    .buffer_unordered(MAX_CONCURRENT_INDEX_FETCHES)
+                    .collect()
+                    .await;
 
-            // Attach results, replacing stubs in place (preserves a-tag order).
-            for (i, result) in results {
-                match result {
-                    Ok(child) => pub_.nested[i] = child,
-                    Err(e) => {
-                        tracing::warn!(
-                            "load_publication_tree: nested index {} failed: {}",
-                            pub_.nested[i].addr.to_a_tag(),
-                            e
-                        );
-                        pub_.nested[i].index = LoadStatus::Failed {
-                            error: e.to_string(),
-                        };
+                // Attach results, replacing stubs in place (preserves a-tag order).
+                for (i, result) in results {
+                    match result {
+                        Ok(child) => pub_.nested[i] = child,
+                        Err(e) => {
+                            tracing::warn!(
+                                "load_publication_tree: nested index {} failed: {}",
+                                pub_.nested[i].addr.to_a_tag(),
+                                e
+                            );
+                            pub_.nested[i].index = LoadStatus::Failed {
+                                error: e.to_string(),
+                            };
+                        }
                     }
                 }
             }
 
+            // 4. Title backfill for nested indexes left unresolved (depth
+            //    horizon, cycle skip, or a failed recurse). Look the index
+            //    event up in the local store only — if it's there, surface
+            //    its real title; if it isn't, leave `title` empty so the TOC
+            //    falls back to the d-tag as a preview. No relay traffic here:
+            //    this is a cheap display nicety, not a fetch.
+            for stub in pub_.nested.iter_mut() {
+                if stub.index.is_loaded() {
+                    continue;
+                }
+                if let Ok(Some(ev)) = self
+                    .engine
+                    .get_addressable(
+                        stub.addr.kind,
+                        &stub.addr.pubkey,
+                        &stub.addr.d_tag,
+                        FetchPolicy::LocalOnly,
+                    )
+                    .await
+                {
+                    stub.title = Publication::from_event(&ev, false).ok().and_then(|p| p.title);
+                }
+            }
+
             Ok(pub_)
+        })
+    }
+
+    /// Stream a publication tree: run the same depth-bounded, cycle-guarded
+    /// recursive load as [`load_publication_tree`], but emit a [`PubLoadEvent`]
+    /// for every node as it resolves rather than returning the assembled tree.
+    /// An SSE handler forwards the events to the client, which builds the tree
+    /// incrementally and shows a per-event `i/N` counter.
+    ///
+    /// Cancellation is implicit: when `tx`'s receiver is dropped (the client
+    /// disconnected) every `send` fails and each recursive task returns. Sends
+    /// a terminal [`PubLoadEvent::Done`] and returns the in-horizon node count.
+    pub async fn stream_publication_tree(
+        &self,
+        addr: &NAddr,
+        max_depth: usize,
+        policy: FetchPolicy,
+        tx: tokio::sync::mpsc::Sender<PubLoadEvent>,
+    ) -> usize {
+        let counter = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        self.stream_tree_inner(
+            addr.clone(),
+            0,
+            max_depth,
+            true,
+            policy,
+            std::collections::HashSet::new(),
+            tx.clone(),
+            counter.clone(),
+        )
+        .await;
+        let total = counter.load(std::sync::atomic::Ordering::Relaxed);
+        let _ = tx.send(PubLoadEvent::Done { total }).await;
+        total
+    }
+
+    /// Recursive worker for [`stream_publication_tree`]. `depth` is this node's
+    /// level from the root (root = 0); `remaining_depth` is the 30040-nesting
+    /// budget left (mirrors `max_depth` in `load_tree_inner`). Returns early on
+    /// the first failed `send` — that is how a client disconnect aborts the load.
+    fn stream_tree_inner<'s>(
+        &'s self,
+        addr: NAddr,
+        depth: usize,
+        remaining_depth: usize,
+        is_root: bool,
+        policy: FetchPolicy,
+        ancestors: std::collections::HashSet<NAddr>,
+        tx: tokio::sync::mpsc::Sender<PubLoadEvent>,
+        counter: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    ) -> futures::future::BoxFuture<'s, ()> {
+        /// Max nested indexes streamed concurrently at a single tree level.
+        const MAX_CONCURRENT_INDEX_FETCHES: usize = 8;
+
+        Box::pin(async move {
+            // 1. Fetch and parse this index event.
+            let event = match self
+                .engine
+                .get_addressable(addr.kind, &addr.pubkey, &addr.d_tag, policy)
+                .await
+            {
+                Ok(Some(ev)) => ev,
+                Ok(None) => {
+                    emit_pub_event(
+                        &tx,
+                        &counter,
+                        PubLoadEvent::Error {
+                            addr: addr.clone(),
+                            depth,
+                            message: "Publication index not found".into(),
+                        },
+                    )
+                    .await;
+                    return;
+                }
+                Err(e) => {
+                    emit_pub_event(
+                        &tx,
+                        &counter,
+                        PubLoadEvent::Error {
+                            addr: addr.clone(),
+                            depth,
+                            message: e.to_string(),
+                        },
+                    )
+                    .await;
+                    return;
+                }
+            };
+            let pub_ = match Publication::from_event(&event, is_root) {
+                Ok(p) => p,
+                Err(e) => {
+                    emit_pub_event(
+                        &tx,
+                        &counter,
+                        PubLoadEvent::Error {
+                            addr: addr.clone(),
+                            depth,
+                            message: e.to_string(),
+                        },
+                    )
+                    .await;
+                    return;
+                }
+            };
+
+            // The current node joins the ancestor set for the cycle guard.
+            let mut child_ancestors = ancestors;
+            child_ancestors.insert(addr.clone());
+
+            // 2. Ordered child list: leaf sections first, then nested indexes
+            //    (matching `build_toc`). A nested index is in-horizon iff there
+            //    is depth budget left and it doesn't point back up the path.
+            let mut children: Vec<PubChildRef> = Vec::new();
+            for section in &pub_.sections {
+                children.push(PubChildRef {
+                    addr: section.addr.clone(),
+                    is_index: false,
+                    in_horizon: true,
+                });
+            }
+            for nested in &pub_.nested {
+                let will_recurse =
+                    remaining_depth > 0 && !child_ancestors.contains(&nested.addr);
+                children.push(PubChildRef {
+                    addr: nested.addr.clone(),
+                    is_index: true,
+                    in_horizon: will_recurse,
+                });
+            }
+
+            // 3. Emit this index — before any of its children's events.
+            if !emit_pub_event(
+                &tx,
+                &counter,
+                PubLoadEvent::Index {
+                    addr: addr.clone(),
+                    depth,
+                    title: pub_.title.clone(),
+                    is_root,
+                    children,
+                },
+            )
+            .await
+            {
+                return; // receiver gone — abort
+            }
+
+            // 4. Resolve this index's content leaves, one event each.
+            for section in &pub_.sections {
+                let ev = match self
+                    .engine
+                    .get_addressable(
+                        section.addr.kind,
+                        &section.addr.pubkey,
+                        &section.addr.d_tag,
+                        policy,
+                    )
+                    .await
+                {
+                    Ok(Some(leaf)) => {
+                        let content = leaf
+                            .get("content")
+                            .and_then(|v| v.as_str())
+                            .map(String::from);
+                        let title = leaf
+                            .get("tags")
+                            .and_then(|v| v.as_array())
+                            .and_then(|tags| {
+                                tags.iter().find_map(|t| {
+                                    let t = t.as_array()?;
+                                    if t.first()?.as_str()? == "title" {
+                                        t.get(1)?.as_str().map(String::from)
+                                    } else {
+                                        None
+                                    }
+                                })
+                            });
+                        PubLoadEvent::Leaf {
+                            addr: section.addr.clone(),
+                            depth: depth + 1,
+                            title,
+                            content,
+                        }
+                    }
+                    Ok(None) => PubLoadEvent::Error {
+                        addr: section.addr.clone(),
+                        depth: depth + 1,
+                        message: "Section not found".into(),
+                    },
+                    Err(e) => PubLoadEvent::Error {
+                        addr: section.addr.clone(),
+                        depth: depth + 1,
+                        message: e.to_string(),
+                    },
+                };
+                if !emit_pub_event(&tx, &counter, ev).await {
+                    return; // receiver gone — abort
+                }
+            }
+
+            // 5. Recurse into in-horizon nested indexes, concurrency-bounded.
+            if remaining_depth > 0 {
+                let to_recurse: Vec<NAddr> = pub_
+                    .nested
+                    .iter()
+                    .map(|n| n.addr.clone())
+                    .filter(|a| !child_ancestors.contains(a))
+                    .collect();
+                if !to_recurse.is_empty() {
+                    use futures::stream::StreamExt;
+                    futures::stream::iter(to_recurse)
+                        .map(|child_addr| {
+                            let ancestors = child_ancestors.clone();
+                            let tx = tx.clone();
+                            let counter = counter.clone();
+                            async move {
+                                self.stream_tree_inner(
+                                    child_addr,
+                                    depth + 1,
+                                    remaining_depth - 1,
+                                    false,
+                                    policy,
+                                    ancestors,
+                                    tx,
+                                    counter,
+                                )
+                                .await
+                            }
+                        })
+                        .buffer_unordered(MAX_CONCURRENT_INDEX_FETCHES)
+                        .collect::<Vec<()>>()
+                        .await;
+                }
+            }
         })
     }
 
@@ -669,6 +1039,7 @@ impl<'a> PublicationEngine<'a> {
                 depth,
                 loaded: section.event.is_loaded(),
                 is_publication: false,
+                content: section.content.clone(),
                 children: Vec::new(),
             });
         }
@@ -677,13 +1048,23 @@ impl<'a> PublicationEngine<'a> {
             let children = self.build_toc(nested, depth + 1);
             entries.push(TocEntry {
                 addr: nested.addr.clone(),
+                // `title` is set whenever the index event is in the store
+                // (resolved, or title-backfilled in `load_tree_inner` step 4).
+                // It's empty only for an index genuinely absent from the DB —
+                // there, preview with the `d` tag from the parent's `a` tag.
                 title: nested
                     .title
                     .clone()
+                    .filter(|t| !t.trim().is_empty())
+                    .or_else(|| {
+                        let d = nested.addr.d_tag.trim();
+                        (!d.is_empty()).then(|| d.to_string())
+                    })
                     .unwrap_or_else(|| "Nested Publication".into()),
                 depth,
                 loaded: nested.index.is_loaded(),
                 is_publication: true,
+                content: None,
                 children,
             });
         }
@@ -1638,6 +2019,45 @@ mod tests {
         }
     }
 
+    #[test]
+    fn test_is_zettel_kind() {
+        assert!(is_zettel_kind(KIND_PUBLICATION_SECTION));
+        assert!(is_zettel_kind(30023));
+        assert!(is_zettel_kind(30818));
+        assert!(is_zettel_kind(30817));
+        assert!(!is_zettel_kind(KIND_PUBLICATION_INDEX)); // index, not a leaf
+        assert!(!is_zettel_kind(1));
+    }
+
+    #[test]
+    fn test_from_event_buckets_zettel_kinds() {
+        let pk = test_pubkey();
+        let s_30041 = NAddr::new(KIND_PUBLICATION_SECTION, &pk, "sec-41");
+        let s_30023 = NAddr::new(30023, &pk, "longform");
+        let s_30818 = NAddr::new(30818, &pk, "wiki");
+        let nested = NAddr::new(KIND_PUBLICATION_INDEX, &pk, "nested-idx");
+        let junk = NAddr::new(1, &pk, "a-note");
+        let index = fixture_index(
+            &pk,
+            "z-root",
+            "Zettel Root",
+            &[&s_30041, &s_30023, &s_30818, &nested, &junk],
+        );
+        let publication = Publication::from_event(&index, true).expect("from_event");
+        // All three zettel kinds become content-leaf sections.
+        let section_kinds: Vec<u64> =
+            publication.sections.iter().map(|s| s.addr.kind).collect();
+        assert_eq!(publication.sections.len(), 3, "kinds: {section_kinds:?}");
+        assert!(section_kinds.contains(&KIND_PUBLICATION_SECTION));
+        assert!(section_kinds.contains(&30023));
+        assert!(section_kinds.contains(&30818));
+        // The 30040 a-tag is a nested index, not a leaf.
+        assert_eq!(publication.nested.len(), 1);
+        assert_eq!(publication.nested[0].addr.kind, KIND_PUBLICATION_INDEX);
+        // A plain note (kind 1) is neither — dropped.
+        assert!(!section_kinds.contains(&1));
+    }
+
     // --- load_publication_tree (recursive depth-N loader) ---
 
     /// Test signing key (shared with the engine's signed-publication tests).
@@ -1823,5 +2243,174 @@ mod tests {
             !b_node.nested[0].index.is_loaded(),
             "ancestor A not re-recursed (cycle guard)"
         );
+    }
+
+    // --- stream_publication_tree (streaming loader) ---
+
+    /// Drain a streaming load into a vec of events (test helper).
+    async fn stream_to_vec(
+        engine: &Engine,
+        addr: &NAddr,
+        max_depth: usize,
+    ) -> (usize, Vec<PubLoadEvent>) {
+        let pe = PublicationEngine::new(engine);
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<PubLoadEvent>(256);
+        let loader = pe.stream_publication_tree(addr, max_depth, FetchPolicy::LocalOnly, tx);
+        let drain = async {
+            let mut events = Vec::new();
+            while let Some(ev) = rx.recv().await {
+                events.push(ev);
+            }
+            events
+        };
+        tokio::join!(loader, drain)
+    }
+
+    #[tokio::test]
+    async fn test_stream_tree_emits_per_node() {
+        let pk_owned = test_pubkey();
+        let pk = pk_owned.as_str();
+        let root_sec = NAddr::new(KIND_PUBLICATION_SECTION, pk, "root-sec");
+        let nested_sec = NAddr::new(KIND_PUBLICATION_SECTION, pk, "nested-sec");
+        let nested_idx = NAddr::new(KIND_PUBLICATION_INDEX, pk, "nested-idx");
+        let root_idx = NAddr::new(KIND_PUBLICATION_INDEX, pk, "root-idx");
+
+        let (engine, _dir) = engine_with_events(&[
+            fixture_section(pk, "root-sec", "Root Section", "root body"),
+            fixture_section(pk, "nested-sec", "Nested Section", "nested body"),
+            fixture_index(pk, "nested-idx", "Nested", &[&nested_sec]),
+            fixture_index(pk, "root-idx", "Root", &[&root_sec, &nested_idx]),
+        ])
+        .await;
+
+        let (total, events) = stream_to_vec(&engine, &root_idx, 1).await;
+
+        let indexes = events
+            .iter()
+            .filter(|e| matches!(e, PubLoadEvent::Index { .. }))
+            .count();
+        let leaves = events
+            .iter()
+            .filter(|e| matches!(e, PubLoadEvent::Leaf { .. }))
+            .count();
+        let errors = events
+            .iter()
+            .filter(|e| matches!(e, PubLoadEvent::Error { .. }))
+            .count();
+        assert_eq!(indexes, 2, "one Index per 30040");
+        assert_eq!(leaves, 2, "one Leaf per resolved section");
+        assert_eq!(errors, 0);
+
+        // Exactly one Done, last, carrying the authoritative in-horizon total.
+        match events.last() {
+            Some(PubLoadEvent::Done { total: t }) => {
+                assert_eq!(*t, total);
+                assert_eq!(*t, 4, "2 indexes + 2 leaves");
+            }
+            other => panic!("expected Done last, got {other:?}"),
+        }
+
+        // The root index is emitted first, before any nested events.
+        match events.first() {
+            Some(PubLoadEvent::Index { is_root, .. }) => assert!(*is_root),
+            other => panic!("expected root Index first, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_stream_tree_in_horizon_flag() {
+        let pk_owned = test_pubkey();
+        let pk = pk_owned.as_str();
+        let nested_idx = NAddr::new(KIND_PUBLICATION_INDEX, pk, "nested-idx");
+        let root_idx = NAddr::new(KIND_PUBLICATION_INDEX, pk, "root-idx");
+
+        let (engine, _dir) = engine_with_events(&[
+            fixture_index(pk, "nested-idx", "Nested", &[]),
+            fixture_index(pk, "root-idx", "Root", &[&nested_idx]),
+        ])
+        .await;
+
+        // depth 0: the nested index is beyond the horizon.
+        let (_total, events) = stream_to_vec(&engine, &root_idx, 0).await;
+
+        let children = events
+            .iter()
+            .find_map(|e| match e {
+                PubLoadEvent::Index {
+                    is_root: true,
+                    children,
+                    ..
+                } => Some(children),
+                _ => None,
+            })
+            .expect("root Index present");
+        assert_eq!(children.len(), 1);
+        assert!(children[0].is_index);
+        assert!(
+            !children[0].in_horizon,
+            "nested index beyond depth 0 is a frontier stub"
+        );
+        // No Index event was streamed for the beyond-horizon nested index.
+        let nested_indexes = events
+            .iter()
+            .filter(|e| matches!(e, PubLoadEvent::Index { is_root: false, .. }))
+            .count();
+        assert_eq!(nested_indexes, 0);
+    }
+
+    #[tokio::test]
+    async fn test_stream_tree_zettel_leaf() {
+        let pk_owned = test_pubkey();
+        let pk = pk_owned.as_str();
+        let longform = NAddr::new(30023, pk, "lf");
+        let root_idx = NAddr::new(KIND_PUBLICATION_INDEX, pk, "z-idx");
+
+        let longform_event = fixture_event(
+            pk,
+            30023,
+            serde_json::json!([["d", "lf"], ["title", "Longform"]]),
+            "longform body",
+        );
+        let (engine, _dir) = engine_with_events(&[
+            longform_event,
+            fixture_index(pk, "z-idx", "Zettel Index", &[&longform]),
+        ])
+        .await;
+
+        let (_total, events) = stream_to_vec(&engine, &root_idx, 0).await;
+
+        let (addr, content) = events
+            .iter()
+            .find_map(|e| match e {
+                PubLoadEvent::Leaf { addr, content, .. } => Some((addr, content)),
+                _ => None,
+            })
+            .expect("a 30023 leaf was streamed");
+        assert_eq!(addr.kind, 30023);
+        assert_eq!(content.as_deref(), Some("longform body"));
+    }
+
+    #[tokio::test]
+    async fn test_stream_tree_cancellation() {
+        let pk_owned = test_pubkey();
+        let pk = pk_owned.as_str();
+        let sec = NAddr::new(KIND_PUBLICATION_SECTION, pk, "sec");
+        let root_idx = NAddr::new(KIND_PUBLICATION_INDEX, pk, "root-idx");
+
+        let (engine, _dir) = engine_with_events(&[
+            fixture_section(pk, "sec", "Section", "body"),
+            fixture_index(pk, "root-idx", "Root", &[&sec]),
+        ])
+        .await;
+        let pe = PublicationEngine::new(&engine);
+
+        // Receiver dropped before the loader starts — every send fails, so the
+        // recursion unwinds at once. This test completing proves termination.
+        let (tx, rx) = tokio::sync::mpsc::channel::<PubLoadEvent>(256);
+        drop(rx);
+        let total = pe
+            .stream_publication_tree(&root_idx, 5, FetchPolicy::LocalOnly, tx)
+            .await;
+        assert!(total <= 2, "aborted load emits almost nothing, got {total}");
     }
 }

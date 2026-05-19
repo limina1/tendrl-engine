@@ -2,7 +2,6 @@
 	import { untrack } from 'svelte';
 	import * as api from '$lib/api';
 	import { getAppState } from '$lib/state.svelte';
-	import OutlineView from '$lib/components/OutlineView.svelte';
 	import ContinuousView from '$lib/components/ContinuousView.svelte';
 	import PaginatedView from '$lib/components/PaginatedView.svelte';
 	import SectionCard from '$lib/components/SectionCard.svelte';
@@ -10,6 +9,8 @@
 	import { getActiveStore, type NavAction } from '../buffer-store.svelte';
 	import type {
 		LazySection,
+		NAddr,
+		PubLoadEvent,
 		PublicationDetail,
 		TagEntry,
 		ViewMode,
@@ -33,6 +34,67 @@
 
 	let publication = $state<PublicationDetail | null>(null);
 	let pristineSections = $state<LazySection[]>([]);
+
+	// Breadcrumb / refocus stack for cross-publication navigation. Index 0
+	// is the publication the buffer was opened on; the last element is the
+	// current focus. Refocusing into a nested 30040 pushes a level; clicking
+	// a breadcrumb pops back up. Each level is loaded at `treeDepth`.
+	let focusStack = $state<{ pubkey: string; d_tag: string; title: string }[]>([]);
+	// Target eager-expansion depth: how many levels of nested 30040 indexes
+	// the streaming loader walks. The depth controls set this. Capped at
+	// MAX_DEPTH — deeper than that you refocus into a sub-publication (a
+	// fresh budget, breadcrumbed).
+	const MAX_DEPTH = 6;
+	let treeDepth = $state(2);
+	// Depth the current focus's tree has actually been streamed to. Lowering
+	// `treeDepth` at or below this is a no-op — the deeper tree stays loaded
+	// and ready, so no re-stream and no counter reset.
+	let loadedDepth = $state(-1);
+	// True while an SSE stream is actively loading the tree.
+	let loaderRunning = $state(false);
+	// Bumped on every fresh load (buffer change / refocus / breadcrumb /
+	// depth change) so events from a superseded stream are discarded.
+	let loadGeneration = 0;
+	// The in-flight publication SSE stream — closed to abort the engine loader.
+	let streamSource: EventSource | null = null;
+	// Per-event load counter for the modeline: `resolvedCount` (i) is events
+	// resolved so far; `knownCount` (N) is the in-horizon total, climbing as
+	// indexes reveal their `a`-tag children. `loadingPath` is the truncated
+	// root->node name path of the most recently resolved node.
+	let resolvedCount = $state(0);
+	let knownCount = $state(0);
+	// `displayedCount` is `resolvedCount` ramped — it steps toward the real
+	// count a chunk per frame, so a fast DB burst (~40 events resolved in one
+	// frame) reads as a smooth climb rather than a jump. On a slow relay load
+	// it just tracks the real count 1:1.
+	let displayedCount = $state(0);
+	let loadingPath = $state('');
+	// Per-focus result cache, keyed by publication address. Refocusing into a
+	// sub-publication and breadcrumbing back restores instantly from here
+	// instead of re-streaming — stepping back out must not re-fetch. Only
+	// completed loads are cached.
+	type FocusCacheEntry = {
+		publication: PublicationDetail;
+		sections: LazySection[];
+		/** Depth this focus's tree was streamed to. */
+		loadedDepth: number;
+	};
+	const focusCache = new Map<string, FocusCacheEntry>();
+	const focusKey = (pubkey: string, d_tag: string) => `${pubkey}:${d_tag}`;
+	// A node in the streamed tree, keyed by addr; assembled as events arrive.
+	type StreamNode = {
+		addr: NAddr;
+		title: string | null;
+		isIndex: boolean;
+		content: string | null;
+		/** addr-keys of children, in tree order (from the index event). */
+		childKeys: string[];
+		/** addr-key of the parent index — set when the parent is processed.
+		 *  Lets the modeline show the root->node name path of a loading node. */
+		parentKey?: string;
+		status: 'pending' | 'loaded' | 'error';
+		error?: string;
+	};
 	// Default to outline. If the buffer carries `?highlight=<id>` the
 	// effect below switches to paginated so the highlight overlay is
 	// visible right away.
@@ -345,6 +407,107 @@
 		outlineHighlightsOpen[i] = !(outlineHighlightsOpen[i] ?? false);
 	}
 
+	// Outline tree collapse: nested 30040 indexes are collapsible folders,
+	// keyed by addr. Collapsed by default — the reader expands deeper
+	// levels deliberately, by index or all at once.
+	let outlineExpanded = $state<Record<string, boolean>>({});
+	const nestedAddrKey = (a: { kind: number; pubkey: string; d_tag: string }) =>
+		`${a.kind}:${a.pubkey}:${a.d_tag}`;
+	const isNestedIndex = (s: LazySection) => s.addr?.kind === 30040;
+
+	function toggleOutlineIndex(addr: { kind: number; pubkey: string; d_tag: string }) {
+		const k = nestedAddrKey(addr);
+		outlineExpanded = { ...outlineExpanded, [k]: !(outlineExpanded[k] ?? false) };
+	}
+	function expandAllOutline() {
+		const next: Record<string, boolean> = {};
+		for (const s of pristineSections) if (isNestedIndex(s)) next[nestedAddrKey(s.addr)] = true;
+		outlineExpanded = next;
+	}
+	function collapseAllOutline() {
+		outlineExpanded = {};
+	}
+
+	// Direct-child + descendant counts per nested-index position in the
+	// flattened TOC. An index with zero descendants sits beyond the depth
+	// horizon — expandable only via refocus, not in place.
+	const outlineChildInfo = $derived.by(() => {
+		const info = new Map<number, { direct: number; descendants: number }>();
+		for (let i = 0; i < pristineSections.length; i++) {
+			if (!isNestedIndex(pristineSections[i])) continue;
+			const d = pristineSections[i].depth ?? 0;
+			let direct = 0;
+			let descendants = 0;
+			for (let j = i + 1; j < pristineSections.length; j++) {
+				const dj = pristineSections[j].depth ?? 0;
+				if (dj <= d) break;
+				descendants++;
+				if (dj === d + 1) direct++;
+			}
+			info.set(i, { direct, descendants });
+		}
+		return info;
+	});
+
+	// The outline rows actually on screen — entries under a collapsed
+	// nested index are hidden until it's expanded. `hideDeeperThan` holds
+	// the depth of the nearest collapsed ancestor.
+	const outlineVisible = $derived.by(() => {
+		const rows: { section: LazySection; index: number }[] = [];
+		let hideDeeperThan: number | null = null;
+		for (let i = 0; i < pristineSections.length; i++) {
+			const s = pristineSections[i];
+			const d = s.depth ?? 0;
+			if (hideDeeperThan !== null) {
+				if (d > hideDeeperThan) continue;
+				hideDeeperThan = null;
+			}
+			rows.push({ section: s, index: i });
+			if (
+				isNestedIndex(s) &&
+				!(outlineExpanded[nestedAddrKey(s.addr)] ?? false) &&
+				(outlineChildInfo.get(i)?.descendants ?? 0) > 0
+			) {
+				hideDeeperThan = d;
+			}
+		}
+		return rows;
+	});
+
+	const outlineIndexCount = $derived(pristineSections.filter(isNestedIndex).length);
+
+	// ── Modeline loading indicator ──────────────────────────────────────
+	// A small live progress line shown ONLY in the WM modeline (not the
+	// buffer switcher or pane headers): a spinner, the truncated root->node
+	// name path of the node that just resolved, and the stream's i/N. The
+	// path scrubs through the tree as events arrive — finer-grained feedback
+	// than a bare counter, which jumps when many events land in one frame.
+	// Empty string when not loading.
+	const modelineStatus = $derived.by(() => {
+		// Stay visible after the stream ends until the ramped count catches
+		// up, so the user always sees i reach N.
+		if (!loaderRunning && displayedCount >= resolvedCount) return '';
+		return `⟳ ${loadingPath || '…'}: ${displayedCount}/${knownCount}`;
+	});
+	$effect(() => {
+		const s = modelineStatus;
+		untrack(() => {
+			if (s) store.setModelineStatus(buffer.id, s);
+			else store.clearModelineStatus(buffer.id);
+		});
+	});
+	// Cleanup on unmount — abort the stream and clear the modeline status.
+	// Done via an `$effect` teardown, not `onDestroy`: lifecycle hooks are
+	// unreliable under BufferRenderer's `{#key}{#if}` dispatch (see
+	// FeedBuffer), whereas an effect's teardown is tied to the effect tree.
+	// No reactive reads → the effect runs once; its teardown fires on destroy.
+	$effect(() => {
+		return () => {
+			streamSource?.close();
+			store.clearModelineStatus(buffer.id);
+		};
+	});
+
 	// Drawer state. `drawerOpen` is toggled from the discussion summary
 	// chip. `drawerHighlights` walks every distinct kind-9802 event in
 	// discussionEvents (a single event can appear under multiple addr
@@ -514,35 +677,300 @@
 			await loadAddressable(parsedAddr.kind, parsedAddr.pubkey, parsedAddr.dTag);
 			return;
 		}
-		loading = true;
-		try {
-			const resp = await api.getPublication(
-				parsedAddr.pubkey,
-				parsedAddr.dTag,
-				'local_first'
-			);
-			publication = resp.publication;
-			pristineSections = resp.toc.map((entry, i) => ({
-				addr: entry.addr,
-				title: entry.title,
-				content: null,
-				position: i,
-				status: 'pending' as const
-			}));
-			// Eager-load every section in the background. Outline mode only
-			// shows titles and never triggers loads, and continuous's
-			// IntersectionObserver root is nested inside another scroll
-			// container so visibility events are unreliable. handleLoadSection
-			// is idempotent (early-returns on loading/loaded), so view-mode
-			// hooks just no-op once a load is already in flight.
-			for (let i = 0; i < pristineSections.length; i++) {
-				handleLoadSection(i);
-			}
-		} catch (e) {
-			error = String(e);
-		} finally {
-			loading = false;
+		// Seed the focus stack with the buffer's own publication on first
+		// load. Refocus / breadcrumb navigation mutates the stack and calls
+		// load() again without the buffer id changing.
+		if (focusStack.length === 0) {
+			focusStack = [{ pubkey: parsedAddr.pubkey, d_tag: parsedAddr.dTag, title: '' }];
 		}
+		// Supersede any stream in flight.
+		streamSource?.close();
+		streamSource = null;
+		loaderRunning = false;
+		error = null;
+		const focus = focusStack[focusStack.length - 1];
+		const cached = focusCache.get(focusKey(focus.pubkey, focus.d_tag));
+		if (cached) {
+			// Seen before — restore instantly: no blank screen, no re-stream.
+			loadGeneration++; // discard any late events from a prior stream
+			publication = cached.publication;
+			pristineSections = cached.sections;
+			loadedDepth = cached.loadedDepth;
+			loading = false;
+			resolvedCount = 0;
+			knownCount = 0;
+			displayedCount = 0;
+			if (cached.publication.title && !focus.title) {
+				const i = focusStack.length - 1;
+				focusStack[i] = { ...focusStack[i], title: cached.publication.title };
+			}
+			// If the target is deeper than what was cached, stream the rest.
+			if (treeDepth > loadedDepth) runLoader();
+		} else {
+			// First visit — stream the tree from scratch.
+			loading = true;
+			publication = null;
+			pristineSections = [];
+			runLoader();
+		}
+	}
+
+	/** Stream-load the current focus. Opens an SSE stream of per-node events
+	 *  and assembles the tree from an addr-keyed map as they arrive (in
+	 *  resolution order, not tree order). `resolvedCount` / `knownCount` drive
+	 *  the modeline's per-event i/N. A bumped `loadGeneration` plus closing the
+	 *  EventSource discard / abort a superseded stream. */
+	function runLoader() {
+		const focus = focusStack[focusStack.length - 1];
+		if (!focus) return;
+		const myGen = ++loadGeneration;
+		streamSource?.close();
+		loaderRunning = true;
+		loadedDepth = -1;
+		resolvedCount = 0;
+		knownCount = 0;
+		displayedCount = 0;
+		loadingPath = '';
+		error = null;
+
+		// Ramp `displayedCount` toward `resolvedCount` a chunk per frame —
+		// small gaps step ~10, large gaps close in ~6 frames so a huge load
+		// never lags absurdly. Self-perpetuates each frame until it has caught
+		// up and the loader has settled.
+		const rampFrame = () => {
+			if (myGen !== loadGeneration) return;
+			const gap = resolvedCount - displayedCount;
+			if (gap > 0) {
+				displayedCount += Math.min(gap, Math.max(10, Math.ceil(gap / 6)));
+			}
+			if (loaderRunning || displayedCount < resolvedCount) {
+				requestAnimationFrame(rampFrame);
+			}
+		};
+		requestAnimationFrame(rampFrame);
+
+		// The streamed tree under construction. Keyed by addr; `childKeys`
+		// (captured from index events) gives tree order, so the engine's
+		// concurrent, out-of-order delivery is a non-issue.
+		const nodes = new Map<string, StreamNode>();
+		let rootKey: string | null = null;
+		const inHorizon = new Set<string>(); // addr-keys that count toward N
+
+		const upsert = (key: string, patch: Partial<StreamNode> & { addr: NAddr }) => {
+			const existing = nodes.get(key);
+			if (existing) {
+				Object.assign(existing, patch);
+				return;
+			}
+			nodes.set(key, {
+				addr: patch.addr,
+				title: patch.title ?? null,
+				isIndex: patch.isIndex ?? false,
+				content: patch.content ?? null,
+				childKeys: patch.childKeys ?? [],
+				parentKey: patch.parentKey,
+				status: patch.status ?? 'pending',
+				error: patch.error
+			});
+		};
+
+		// Truncated root->node name path (e.g. "Douay:NewT:Matth") of a node,
+		// for the modeline. Walks parentKey up; caps to the last 5 levels.
+		const pathOf = (key: string): string => {
+			const parts: string[] = [];
+			let cur: string | undefined = key;
+			let guard = 0;
+			while (cur && guard++ < 32) {
+				const n = nodes.get(cur);
+				if (!n) break;
+				const name = (n.title ?? n.addr.d_tag ?? '').trim();
+				parts.push(name.slice(0, 6) || '·');
+				cur = n.parentKey;
+			}
+			parts.reverse();
+			return (parts.length > 5 ? ['…', ...parts.slice(-5)] : parts).join(':');
+		};
+
+		// Rebuild publication + pristineSections from the map. Throttled to a
+		// frame so a burst of events paints once, not once per event.
+		let commitScheduled = false;
+		const commit = () => {
+			commitScheduled = false;
+			if (myGen !== loadGeneration || !rootKey) return;
+			const root = nodes.get(rootKey);
+			if (!root) return;
+			publication = {
+				addr: root.addr,
+				title: root.title,
+				summary: null,
+				image: null,
+				author_pubkey: root.addr.pubkey,
+				version: null,
+				created_at: 0,
+				index: null
+			};
+			// pristineSections is the root's subtree — its direct children at
+			// depth 0, matching the old flattenToc. The root itself is
+			// `publication`, not a section row.
+			const acc: LazySection[] = [];
+			const walk = (key: string, depth: number) => {
+				const n = nodes.get(key);
+				if (!n) return;
+				acc.push({
+					addr: n.addr,
+					title: n.title,
+					content: n.content,
+					position: acc.length,
+					depth,
+					status: n.status,
+					error: n.error
+				});
+				for (const ck of n.childKeys) walk(ck, depth + 1);
+			};
+			for (const ck of root.childKeys) walk(ck, 0);
+			pristineSections = acc;
+			loading = false;
+			if (publication?.title && !focus.title) {
+				const i = focusStack.length - 1;
+				focusStack[i] = { ...focusStack[i], title: publication.title };
+			}
+		};
+		const scheduleCommit = () => {
+			if (commitScheduled) return;
+			commitScheduled = true;
+			requestAnimationFrame(commit);
+		};
+		const finish = (total: number) => {
+			if (myGen !== loadGeneration) return;
+			streamSource?.close();
+			streamSource = null;
+			loaderRunning = false;
+			loading = false;
+			knownCount = total;
+			if (!rootKey && !error) {
+				error = 'Publication index could not be loaded';
+			}
+			commit();
+			// Cache the completed tree + the depth it reached, so a refocus
+			// back restores it and a depth change at or below `loadedDepth`
+			// needs no re-stream.
+			if (rootKey && publication) {
+				loadedDepth = treeDepth;
+				focusCache.set(focusKey(focus.pubkey, focus.d_tag), {
+					publication,
+					sections: pristineSections,
+					loadedDepth: treeDepth
+				});
+			}
+		};
+
+		const es = api.streamPublication(focus.pubkey, focus.d_tag, 'local_first', treeDepth);
+		streamSource = es;
+
+		es.onmessage = (msg) => {
+			if (myGen !== loadGeneration) {
+				es.close();
+				return;
+			}
+			let ev: PubLoadEvent;
+			try {
+				ev = JSON.parse(msg.data) as PubLoadEvent;
+			} catch {
+				return;
+			}
+			if (ev.type === 'index') {
+				const k = addrKey(ev.addr);
+				upsert(k, {
+					addr: ev.addr,
+					title: ev.title,
+					isIndex: true,
+					status: 'loaded',
+					childKeys: ev.children.map((c) => addrKey(c.addr))
+				});
+				if (ev.is_root) rootKey = k;
+				for (const c of ev.children) {
+					const ck = addrKey(c.addr);
+					upsert(ck, { addr: c.addr, isIndex: c.is_index, parentKey: k });
+					if (c.in_horizon) inHorizon.add(ck);
+				}
+				inHorizon.add(k);
+				resolvedCount++;
+				knownCount = inHorizon.size;
+				loadingPath = pathOf(k);
+				scheduleCommit();
+			} else if (ev.type === 'leaf') {
+				const k = addrKey(ev.addr);
+				upsert(k, {
+					addr: ev.addr,
+					title: ev.title,
+					isIndex: false,
+					content: ev.content,
+					status: 'loaded'
+				});
+				inHorizon.add(k);
+				resolvedCount++;
+				knownCount = inHorizon.size;
+				loadingPath = pathOf(k);
+				scheduleCommit();
+			} else if (ev.type === 'error') {
+				const k = addrKey(ev.addr);
+				upsert(k, { addr: ev.addr, status: 'error', error: ev.message });
+				inHorizon.add(k);
+				resolvedCount++;
+				knownCount = inHorizon.size;
+				loadingPath = pathOf(k);
+				scheduleCommit();
+			} else if (ev.type === 'done') {
+				finish(ev.total);
+			}
+		};
+		es.onerror = () => {
+			// A publication load is finite — EventSource would auto-reconnect
+			// on a transient drop, so close it and finish with what landed.
+			if (myGen !== loadGeneration) return;
+			finish(knownCount);
+		};
+	}
+
+	/** Refocus the reader on a nested 30040 index: push the current focus
+	 *  onto the breadcrumb stack and load the nested publication at the same
+	 *  depth, fetching whatever events haven't been loaded for this level. */
+	function refocus(section: LazySection) {
+		if (section.addr.kind !== 30040) return;
+		focusStack = [
+			...focusStack,
+			{
+				pubkey: section.addr.pubkey,
+				d_tag: section.addr.d_tag,
+				title: section.title ?? 'Nested publication'
+			}
+		];
+		currentSection = 0;
+		outlineCursor = 0;
+		load();
+	}
+
+	/** Pop the breadcrumb stack back to level `index` and reload it. */
+	function breadcrumbTo(index: number) {
+		if (index < 0 || index >= focusStack.length - 1) return;
+		focusStack = focusStack.slice(0, index + 1);
+		currentSection = 0;
+		outlineCursor = 0;
+		load();
+	}
+
+	/** Adjust the depth target. Always available — never disabled mid-load.
+	 *  Changing it re-streams the current focus at the new depth: `runLoader`
+	 *  closes the prior stream, bumps the generation, and opens a fresh one. */
+	function setDepth(d: number) {
+		const clamped = Math.max(0, Math.min(MAX_DEPTH, d));
+		if (clamped === treeDepth) return;
+		treeDepth = clamped;
+		if (!parsedAddr || parsedAddr.kind !== 30040) return;
+		// Lowering the depth, or any target within what's already loaded, is
+		// a no-op: the deeper tree stays in place, ready if depth is raised
+		// again. Only a target beyond `loadedDepth` needs a fresh stream.
+		if (treeDepth > loadedDepth) runLoader();
 	}
 
 	// Standalone-event reader: a `reader:event:<id>` buffer renders one
@@ -642,25 +1070,40 @@
 		}
 	}
 
-	$effect(() => {
-		buffer.id;
-		load();
-	});
-
-	// After a publication finishes loading, hydrate discussion counts.
-	// Phase A is local_only for instant rendering; phase B is fetch_always
-	// when online so newly-published comments/highlights show up without
-	// requiring a manual refresh. Guard with `loadedFor` so per-section
-	// loads (which mutate pristineSections as their status flips) don't
-	// re-trigger this effect — the counts only depend on the addresses,
-	// which are known as soon as the TOC arrives.
-	let loadedFor = $state<string | null>(null);
+	// Plain (non-reactive) guard: load() reads and writes `focusStack`, and
+	// because load() is async its reactive reads can't be fully suppressed by
+	// untrack — without this guard the effect would re-trigger itself in a
+	// loop. Comparing against a non-$state variable means a spurious re-run
+	// early-returns instead of reloading.
+	let lastLoadedBufferId: string | null = null;
 	$effect(() => {
 		const id = buffer.id;
-		const done = !loading && !!publication && pristineSections.length > 0;
-		if (!done) return;
-		if (loadedFor === id) return;
-		loadedFor = id;
+		if (id === lastLoadedBufferId) return;
+		lastLoadedBufferId = id;
+		// Switching the buffer to a different publication drops the refocus
+		// stack; load() re-seeds it from the new buffer address.
+		untrack(() => {
+			focusStack = [];
+			load();
+		});
+	});
+
+	// Hydrate discussion counts each time the progressive loader settles at
+	// a new depth — so badges fill in as the tree deepens, not just once on
+	// first load. `loadDiscussionCounts` POSTs the address set, so a deep
+	// level carrying hundreds of section addresses is fine. Phase A is
+	// local_only for instant rendering; phase B is fetch_always when online.
+	let discussionLoadedKey = $state<string | null>(null);
+	$effect(() => {
+		const settled =
+			!loaderRunning && !loading && !!publication && pristineSections.length > 0;
+		if (!settled) return;
+		// Key on the current focus address (not buffer.id — refocus keeps the
+		// same buffer) and the loaded depth, so each focus + actual load
+		// hydrates discussions once (a no-op depth-down doesn't re-fetch).
+		const key = `${addrKey(publication!.addr)}@${loadedDepth}`;
+		if (discussionLoadedKey === key) return;
+		discussionLoadedKey = key;
 		untrack(async () => {
 			await loadDiscussionCounts('local_only');
 			if (app.networkStatus?.mode === 'auto') {
@@ -669,36 +1112,46 @@
 		});
 	});
 
-	// Reset the guard when the buffer changes so a different publication
-	// triggers a fresh fetch.
+	// Reset discussion state when the buffer changes so a different
+	// publication triggers a fresh fetch.
 	$effect(() => {
 		buffer.id;
 		untrack(() => {
-			loadedFor = null;
+			discussionLoadedKey = null;
 			discussionCounts = {};
 			discussionRefreshedAt = null;
 		});
 	});
 
+	// Lazy fallback for a section that came back without content (a load
+	// failure inside the depth horizon). Loads by the section's own address
+	// rather than by index — the flattened list spans nested publications,
+	// so a root-relative section index is meaningless here. Nested 30040
+	// indexes are refocus targets, not readable sections, and are skipped.
 	function handleLoadSection(index: number) {
 		if (isDraftMode) return; // draft sections are already loaded
 		if (index < 0 || index >= pristineSections.length) return;
 		const cur = pristineSections[index];
+		if (cur.addr.kind === 30040) return; // nested index — refocus, not load
 		if (cur.status === 'loaded' || cur.status === 'loading') return;
 		if (loadingPromises.has(index)) return;
 		pristineSections[index] = { ...cur, status: 'loading' };
-		if (!parsedAddr) return;
 		const promise = (async () => {
 			try {
-				const resp = await api.getSection(
-					parsedAddr.pubkey,
-					parsedAddr.dTag,
-					index
+				const resp = await api.getAddressable(
+					cur.addr.kind,
+					cur.addr.pubkey,
+					cur.addr.d_tag
 				);
+				const ev = resp.event as
+					| { content?: string; tags?: string[][] }
+					| null;
+				if (!ev) throw new Error('Section event not found');
+				const titleTag = ev.tags?.find((t) => t[0] === 'title')?.[1];
 				pristineSections[index] = {
 					...pristineSections[index],
-					title: resp.section.title ?? pristineSections[index].title,
-					content: resp.section.content,
+					title: titleTag ?? pristineSections[index].title,
+					content: ev.content ?? '',
 					status: 'loaded'
 				};
 			} catch (e) {
@@ -922,6 +1375,18 @@
 
 	function openCursorInPaginated() {
 		if (sections.length === 0) return;
+		const cur = sections[outlineCursor];
+		// A nested 30040 index: expand it in place when its subtree is
+		// loaded, so drilling the outline matches the chevron. Refocus
+		// only when the index hasn't been pulled into the tree yet.
+		if (cur && cur.addr.kind === 30040) {
+			if ((outlineChildInfo.get(outlineCursor)?.descendants ?? 0) > 0) {
+				toggleOutlineIndex(cur.addr);
+			} else {
+				refocus(cur);
+			}
+			return;
+		}
 		if (!isDraftMode) handleLoadSection(outlineCursor);
 		viewMode = 'paginated';
 		handleNavigate(outlineCursor);
@@ -941,23 +1406,29 @@
 	function handleNav(action: NavAction): boolean {
 		if (sections.length === 0) return false;
 		if (viewMode === 'outline') {
-			if (action === 'down') {
-				outlineCursor = Math.min(sections.length - 1, outlineCursor + 1);
-				queueMicrotask(scrollOutlineCursorIntoView);
-				return true;
-			}
-			if (action === 'up') {
-				outlineCursor = Math.max(0, outlineCursor - 1);
+			// j/k step over *visible* rows — entries hidden under a
+			// collapsed nested index are skipped.
+			if (action === 'down' || action === 'up') {
+				const vis = outlineVisible;
+				if (vis.length > 0) {
+					let pos = vis.findIndex((r) => r.index === outlineCursor);
+					if (pos < 0) pos = 0;
+					pos = Math.min(
+						vis.length - 1,
+						Math.max(0, pos + (action === 'down' ? 1 : -1))
+					);
+					outlineCursor = vis[pos].index;
+				}
 				queueMicrotask(scrollOutlineCursorIntoView);
 				return true;
 			}
 			if (action === 'top') {
-				outlineCursor = 0;
+				outlineCursor = outlineVisible[0]?.index ?? 0;
 				queueMicrotask(scrollOutlineCursorIntoView);
 				return true;
 			}
 			if (action === 'bottom') {
-				outlineCursor = sections.length - 1;
+				outlineCursor = outlineVisible[outlineVisible.length - 1]?.index ?? 0;
 				queueMicrotask(scrollOutlineCursorIntoView);
 				return true;
 			}
@@ -1038,6 +1509,22 @@
 		sections.length;
 		untrack(clampCursor);
 	});
+
+	// Collapsing a nested index can hide the cursored row. Snap the cursor
+	// back to the nearest visible ancestor (the collapsed index itself).
+	$effect(() => {
+		const vis = outlineVisible;
+		if (vis.length === 0) return;
+		untrack(() => {
+			if (vis.some((r) => r.index === outlineCursor)) return;
+			let snap = vis[0].index;
+			for (const r of vis) {
+				if (r.index <= outlineCursor) snap = r.index;
+				else break;
+			}
+			outlineCursor = snap;
+		});
+	});
 </script>
 
 <div class="reader-wrap">
@@ -1063,6 +1550,27 @@
 			disabled={!publication}
 			title="Open the publication index (kind 30040) in the JSON viewer"
 		>JSON</button>
+		{#if parsedAddr?.kind === 30040}
+			<span
+				class="depth-knob"
+				title="Levels of nested 30040 indexes the loader walks toward. The buttons stay live during loading; past depth {MAX_DEPTH} you refocus into a sub-publication."
+			>
+				<span class="depth-knob__label">depth</span>
+				<button
+					class="depth-knob__step"
+					onclick={() => setDepth(treeDepth - 1)}
+					disabled={treeDepth <= 0}
+					aria-label="Decrease depth"
+				>−</button>
+				<span class="depth-knob__val">{treeDepth}</span>
+				<button
+					class="depth-knob__step"
+					onclick={() => setDepth(treeDepth + 1)}
+					disabled={treeDepth >= MAX_DEPTH}
+					aria-label="Increase depth"
+				>+</button>
+			</span>
+		{/if}
 		<span class="sp"></span>
 		{#if isDraftMode}
 			<span class="draft-pill" title="A draft of this publication is in progress">DRAFT</span>
@@ -1112,6 +1620,26 @@
 	{:else if !publication}
 		<div class="empty"><p>No publication loaded</p></div>
 	{:else}
+		{#if focusStack.length > 1}
+			<!-- Cross-publication breadcrumb: the trail of nested 30040
+			     indexes refocused into. Clicking a crumb pops back up to
+			     that level; the last crumb is the current focus. -->
+			<nav class="crumbs" aria-label="Publication breadcrumbs">
+				{#each focusStack as crumb, ci (ci + ':' + crumb.pubkey + ':' + crumb.d_tag)}
+					{#if ci > 0}<span class="crumb-sep" aria-hidden="true">›</span>{/if}
+					{#if ci < focusStack.length - 1}
+						<button
+							class="crumb"
+							onclick={() => breadcrumbTo(ci)}
+							title="Back up to {crumb.title || 'this publication'}"
+						>{crumb.title || 'Publication'}</button>
+					{:else}
+						<span class="crumb crumb--current" aria-current="page"
+							>{crumb.title || publication.title || 'Publication'}</span>
+					{/if}
+				{/each}
+			</nav>
+		{/if}
 		{#if publication.title}
 			<div class="title">{publication.title}</div>
 		{/if}
@@ -1314,41 +1842,115 @@
 						</p>
 					</div>
 				{:else}
-					<!-- Pristine outline: same SectionCard as before, plus a per-
-					     section lock toggle. The first lock click seeds compose
-					     state from this publication and switches into draft mode. -->
-					<div class="outline-overlay" bind:this={outlineEl}>
-						{#each pristineSections as section, i (`${i}:${section.addr.pubkey}:${section.addr.d_tag}`)}
-							{@const disc = discussionFor(section.addr)}
-							{@const sectionHighlights = effectiveHighlightsForSection(section.addr)}
-							{@const highlightN = sectionHighlights.length}
-							{@const commentN = disc.comments}
-							{@const sectionThreads = threadsForSection(section.addr)}
-							{@const commentsOpen = outlineCommentsOpen[i] ?? false}
-							{@const highlightsOpen = outlineHighlightsOpen[i] ?? false}
-							<div
-								class="entry entry--pristine"
-								class:entry--cursor={i === outlineCursor}
-								data-cursor={i}
+					<!-- Pristine outline: the depth-N tree as a collapsible
+					     hierarchy. 30041 sections render as section cards;
+					     nested 30040 indexes are collapsible folders — the
+					     caret expands children inline, `refocus` re-roots. -->
+					{#if outlineIndexCount > 0}
+						<div class="outline-treebar">
+							<span class="outline-treebar__label"
+								>{outlineIndexCount} nested {outlineIndexCount === 1
+									? 'index'
+									: 'indexes'}</span
 							>
-								<button
-									class="lock"
-									onclick={() => ensureDraftThenToggle(i)}
-									title="Unlock to start a draft for reorder/fork">🔒</button
+							<span class="outline-treebar__spacer"></span>
+							<button class="outline-treebar__btn" onclick={expandAllOutline}
+								>Expand all</button
+							>
+							<button class="outline-treebar__btn" onclick={collapseAllOutline}
+								>Collapse all</button
+							>
+						</div>
+					{/if}
+					<div class="outline-overlay" bind:this={outlineEl}>
+						{#each outlineVisible as row (`${row.index}:${row.section.addr.pubkey}:${row.section.addr.d_tag}`)}
+							{@const section = row.section}
+							{@const i = row.index}
+							{#if section.addr.kind === 30040}
+								{@const info = outlineChildInfo.get(i)}
+								{@const direct = info?.direct ?? 0}
+								{@const loadable = (info?.descendants ?? 0) > 0}
+								{@const pending = loaderRunning && !loadable}
+								{@const open = outlineExpanded[nestedAddrKey(section.addr)] ?? false}
+								<!-- Nested publication index — a collapsible folder. -->
+								<div
+									class="entry entry--nested"
+									class:entry--cursor={i === outlineCursor}
+									data-cursor={i}
+									style="--depth:{section.depth ?? 0}"
 								>
-								<div class="entry-body">
-									<SectionCard
-										{section}
-										preview
-										index={i + 1}
-										onclick={() => {
-											handleLoadSection(i);
-											viewMode = 'paginated';
-											handleNavigate(i);
-										}}
-									/>
+									<button
+										class="nested-row"
+										onclick={() =>
+											loadable ? toggleOutlineIndex(section.addr) : refocus(section)}
+										aria-expanded={loadable ? open : undefined}
+										title={loadable
+											? open
+												? 'Collapse this nested publication'
+												: 'Expand this nested publication'
+											: pending
+												? 'Loading this level…'
+												: 'Refocus the reader on this nested publication'}
+									>
+										<span
+											class="nested-caret"
+											class:spin={pending}
+											aria-hidden="true"
+											>{loadable ? (open ? '▾' : '▸') : pending ? '⟳' : '·'}</span
+										>
+										<span class="nested-icon" aria-hidden="true">⊞</span>
+										<span class="nested-title"
+											>{section.title || 'Nested publication'}</span
+										>
+										{#if loadable}
+											<span class="nested-count"
+												>{direct} {direct === 1 ? 'item' : 'items'}</span
+											>
+										{:else if pending}
+											<span class="nested-count nested-count--pending">loading…</span>
+										{:else}
+											<span class="nested-count nested-count--empty">not loaded</span>
+										{/if}
+									</button>
+									<button
+										class="nested-refocus-btn"
+										onclick={() => refocus(section)}
+										title="Refocus the reader on this nested publication"
+										>refocus ⟳</button
+									>
 								</div>
-								<div class="section-actions">
+							{:else}
+								{@const disc = discussionFor(section.addr)}
+								{@const sectionHighlights = effectiveHighlightsForSection(section.addr)}
+								{@const highlightN = sectionHighlights.length}
+								{@const commentN = disc.comments}
+								{@const sectionThreads = threadsForSection(section.addr)}
+								{@const commentsOpen = outlineCommentsOpen[i] ?? false}
+								{@const highlightsOpen = outlineHighlightsOpen[i] ?? false}
+								<div
+									class="entry entry--pristine"
+									class:entry--cursor={i === outlineCursor}
+									data-cursor={i}
+									style="--depth:{section.depth ?? 0}"
+								>
+									<button
+										class="lock"
+										onclick={() => ensureDraftThenToggle(i)}
+										title="Unlock to start a draft for reorder/fork">🔒</button
+									>
+									<div class="entry-body">
+										<SectionCard
+											{section}
+											preview
+											index={i + 1}
+											onclick={() => {
+												handleLoadSection(i);
+												viewMode = 'paginated';
+												handleNavigate(i);
+											}}
+										/>
+									</div>
+									<div class="section-actions">
 									{#if highlightN > 0}
 										<button
 											class="section-action section-action--highlights"
@@ -1386,10 +1988,11 @@
 									<HighlightList highlights={sectionHighlights} />
 								</div>
 							{/if}
-							{#if commentsOpen && sectionThreads.length > 0}
-								<div class="outline-detail outline-detail--comments">
-									<CommentThread nodes={sectionThreads} focusedEventId={parsedFocusCommentId} />
-								</div>
+								{#if commentsOpen && sectionThreads.length > 0}
+									<div class="outline-detail outline-detail--comments">
+										<CommentThread nodes={sectionThreads} focusedEventId={parsedFocusCommentId} />
+									</div>
+								{/if}
 							{/if}
 						{/each}
 					</div>
@@ -1397,6 +2000,7 @@
 			{:else if viewMode === 'continuous'}
 				<ContinuousView
 					{sections}
+					onrefocus={refocus}
 					publication={{
 						title: publication.title,
 						summary: publication.summary
@@ -1413,6 +2017,7 @@
 					{sections}
 					{currentSection}
 					onnavigate={handleNavigate}
+					onrefocus={refocus}
 					onload={isDraftMode ? undefined : handleLoadSection}
 					onsectionjson={openSectionJsonByIndex}
 					highlightsFor={highlightsForSection}
@@ -1708,6 +2313,183 @@
 	.entry--cursor {
 		box-shadow: inset 4px 0 0 var(--id-yours);
 		background: color-mix(in srgb, var(--id-yours) 18%, transparent);
+	}
+
+	/* Depth-N indentation: each nesting level shifts the row right. The
+	   `--depth` custom property is set inline from the TOC entry. */
+	.entry--pristine,
+	.entry--nested {
+		margin-left: calc(var(--depth, 0) * 18px);
+	}
+
+	/* Nested 30040 index — a collapsible folder. The caret expands the
+	   subtree inline; `refocus` re-roots the reader on the sub-publication
+	   and pushes a breadcrumb. */
+	.entry--nested {
+		display: flex;
+		align-items: stretch;
+		gap: 6px;
+		padding: 2px 6px;
+	}
+	.nested-row {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		flex: 1;
+		min-width: 0;
+		padding: 6px 10px;
+		border: 1px dashed var(--base3);
+		border-radius: var(--r-sm);
+		background: color-mix(in srgb, var(--id-yours) 6%, transparent);
+		color: var(--base6);
+		cursor: pointer;
+		text-align: left;
+	}
+	.nested-row:hover {
+		border-color: var(--id-yours);
+		background: color-mix(in srgb, var(--id-yours) 13%, transparent);
+		color: var(--fg);
+	}
+	.nested-row[aria-expanded='true'] {
+		border-style: solid;
+		background: color-mix(in srgb, var(--id-yours) 11%, transparent);
+	}
+	.nested-caret {
+		min-width: 1ch;
+		color: var(--id-yours);
+		font-size: 0.72rem;
+	}
+	.nested-icon { color: var(--id-yours); font-size: 1rem; line-height: 1; }
+	.nested-title {
+		font-weight: 600;
+		font-size: var(--t-sm);
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+	.nested-count {
+		margin-left: auto;
+		font-family: var(--font-mono);
+		font-size: 9px;
+		color: var(--fg-muted);
+		white-space: nowrap;
+	}
+	.nested-count--empty { font-style: italic; }
+	.nested-count--pending { color: var(--id-yours); font-style: italic; }
+	.nested-refocus-btn {
+		background: none;
+		border: 1px dashed var(--base3);
+		border-radius: var(--r-sm);
+		color: var(--id-yours);
+		font-family: var(--font-mono);
+		font-size: 9px;
+		text-transform: uppercase;
+		letter-spacing: 0.07em;
+		padding: 0 8px;
+		cursor: pointer;
+		white-space: nowrap;
+	}
+	.nested-refocus-btn:hover {
+		border-color: var(--id-yours);
+		background: color-mix(in srgb, var(--id-yours) 13%, transparent);
+	}
+
+	/* Outline tree controls — expand/collapse the whole hierarchy at once. */
+	.outline-treebar {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		padding: 6px 8px 0;
+	}
+	.outline-treebar__label {
+		font-family: var(--font-mono);
+		font-size: 9px;
+		text-transform: uppercase;
+		letter-spacing: 0.07em;
+		color: var(--fg-muted);
+	}
+	.outline-treebar__spacer { flex: 1; }
+	.outline-treebar__btn {
+		background: none;
+		border: 1px solid var(--panel-border);
+		color: var(--fg-muted);
+		font-family: var(--font-mono);
+		font-size: 9px;
+		text-transform: uppercase;
+		letter-spacing: 0.05em;
+		padding: 2px 8px;
+		border-radius: var(--r-sm);
+		cursor: pointer;
+	}
+	.outline-treebar__btn:hover {
+		border-color: var(--id-yours);
+		color: var(--id-yours);
+	}
+
+	/* Cross-publication breadcrumb trail. */
+	.crumbs {
+		display: flex;
+		align-items: center;
+		flex-wrap: wrap;
+		gap: 4px;
+		padding: 6px var(--s-3);
+		border-bottom: 1px solid var(--panel-border);
+		background: var(--panel-bg-soft);
+		flex-shrink: 0;
+	}
+	.crumb {
+		font-family: var(--font-mono);
+		font-size: var(--t-xs);
+		padding: 1px 6px;
+		background: transparent;
+		border: 1px solid transparent;
+		border-radius: var(--r-sm);
+		color: var(--id-yours);
+		cursor: pointer;
+	}
+	.crumb:hover { border-color: var(--id-yours); }
+	.crumb--current {
+		color: var(--base6);
+		cursor: default;
+		font-weight: 700;
+	}
+	.crumb-sep { color: var(--base5); font-size: var(--t-xs); }
+
+	/* Depth stepper in the toolbar. */
+	.depth-knob {
+		display: inline-flex;
+		align-items: center;
+		gap: 3px;
+		margin-left: 4px;
+		font-family: var(--font-mono);
+		font-size: var(--t-xs);
+		color: var(--base5);
+	}
+	.depth-knob__label { text-transform: uppercase; letter-spacing: 0.06em; }
+	.depth-knob__val { min-width: 1ch; text-align: center; color: var(--base6); }
+	.depth-knob__step {
+		font-family: var(--font-mono);
+		font-size: var(--t-xs);
+		line-height: 1;
+		padding: 1px 5px;
+		background: transparent;
+		border: 1px solid var(--base3);
+		border-radius: var(--r-sm);
+		color: var(--base6);
+		cursor: pointer;
+	}
+	.depth-knob__step:disabled { opacity: 0.4; cursor: not-allowed; }
+	.depth-knob__step:hover:not(:disabled) { border-color: var(--id-yours); }
+
+	/* Spinner for pending tree nodes while the loader is streaming. */
+	.spin {
+		display: inline-block;
+		animation: reader-spin 1s linear infinite;
+	}
+	@keyframes reader-spin {
+		to {
+			transform: rotate(360deg);
+		}
 	}
 
 	.rail {

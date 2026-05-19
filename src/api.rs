@@ -494,7 +494,9 @@ pub async fn list_publications_handler(
                 "author_pubkey": p.author_pubkey,
                 "version": p.version,
                 "created_at": p.created_at,
-                "section_count": p.section_count()
+                "section_count": p.section_count(),
+                "relays": p.relays,
+                "signed": p.signed
             })
         })
         .collect();
@@ -518,22 +520,50 @@ pub struct PublicationPath {
     pub d_tag: String,
 }
 
+/// Query parameters for `GET /publications/:pubkey/:d_tag`.
+///
+/// `depth` controls how many levels of nested 30040 indexes are eagerly
+/// resolved. NKBIP-01 publications are hierarchical: an index can reference
+/// other indexes. Depth 0 loads only this index and its own sections; depth N
+/// recurses N levels of nesting (sections are leaves and never consume a
+/// level). Defaults to 2 — enough to render a publication and one level of
+/// its sub-publications without a click.
+#[derive(Debug, Deserialize)]
+pub struct GetPublicationQuery {
+    pub policy: Option<String>,
+    pub depth: Option<usize>,
+}
+
+/// Default eager-expansion depth for `get_publication_handler`.
+const DEFAULT_PUBLICATION_DEPTH: usize = 2;
+/// Upper bound on `depth` so a crafted request can't trigger an unbounded
+/// recursive fetch. The recursive loader is cycle-guarded, but a legitimately
+/// deep publication could still fan out a huge number of relay requests.
+const MAX_PUBLICATION_DEPTH: usize = 12;
+
 /// GET /api/v1/publications/:pubkey/:d_tag
 ///
-/// Get a publication with its table of contents
+/// Get a publication with its table of contents. The TOC is a recursive tree:
+/// each entry carries `depth`, `is_publication` (30040 vs 30041), and — for
+/// resolved sections within the depth horizon — `content`. Nested 30040 indexes
+/// appear as entries the reader can refocus into.
 pub async fn get_publication_handler(
     State(engine): State<AppState>,
     Path(params): Path<PublicationPath>,
-    axum::extract::Query(query): axum::extract::Query<PolicyQuery>,
+    axum::extract::Query(query): axum::extract::Query<GetPublicationQuery>,
 ) -> Result<impl IntoResponse, EngineError> {
     let policy = match &query.policy {
         Some(p) => p.parse()?,
         None => FetchPolicy::default(),
     };
+    let depth = query
+        .depth
+        .unwrap_or(DEFAULT_PUBLICATION_DEPTH)
+        .min(MAX_PUBLICATION_DEPTH);
 
     debug!(
-        "Get publication request: {}:{} policy={:?}",
-        params.pubkey, params.d_tag, policy
+        "Get publication request: {}:{} policy={:?} depth={}",
+        params.pubkey, params.d_tag, policy, depth
     );
 
     // Validate hex pubkey format
@@ -546,7 +576,12 @@ pub async fn get_publication_handler(
     let addr = NAddr::new(KIND_PUBLICATION_INDEX, &params.pubkey, &params.d_tag);
     let pub_engine = PublicationEngine::new(&engine);
 
-    let publication = pub_engine.load_publication(&addr, policy).await?;
+    // Recursive depth-N load: resolves nested 30040 indexes and fully loads
+    // every section within `depth`. `build_toc` then recurses over the filled
+    // `nested` tree, so the TOC is the indented N-level view.
+    let publication = pub_engine
+        .load_publication_tree(&addr, depth, policy)
+        .await?;
     let toc = pub_engine.build_toc(&publication, 0);
 
     Ok((
@@ -563,9 +598,81 @@ pub async fn get_publication_handler(
                 "index": publication.index
             },
             "toc": toc,
+            "depth": depth,
             "section_count": publication.sections.len()
         })),
     ))
+}
+
+/// GET /api/v1/publications/:pubkey/:d_tag/stream
+///
+/// SSE variant of `get_publication_handler`: instead of returning the whole
+/// TOC in one response, it streams one `PubLoadEvent` per node as the
+/// recursive loader resolves it, ending with a `done` event. The client builds
+/// the tree incrementally and shows a true per-event load counter. Closing the
+/// connection drops the channel receiver, which aborts the engine-side loader.
+pub async fn stream_publication_handler(
+    State(engine): State<AppState>,
+    Path(params): Path<PublicationPath>,
+    axum::extract::Query(query): axum::extract::Query<GetPublicationQuery>,
+) -> Result<axum::response::Response, EngineError> {
+    use axum::response::sse::{Event as SseHttpEvent, KeepAlive, Sse};
+    use axum::response::IntoResponse;
+    use futures::stream::StreamExt;
+
+    let policy = match &query.policy {
+        Some(p) => p.parse()?,
+        None => FetchPolicy::default(),
+    };
+    let depth = query
+        .depth
+        .unwrap_or(DEFAULT_PUBLICATION_DEPTH)
+        .min(MAX_PUBLICATION_DEPTH);
+
+    if params.pubkey.len() != 64 || hex::decode(&params.pubkey).is_err() {
+        return Err(EngineError::InvalidHex(
+            "Pubkey must be a 64-character hex string".to_string(),
+        ));
+    }
+    let addr = NAddr::new(KIND_PUBLICATION_INDEX, &params.pubkey, &params.d_tag);
+    debug!(
+        "Stream publication: {}:{} policy={:?} depth={}",
+        params.pubkey, params.d_tag, policy, depth
+    );
+
+    // The loader runs in a spawned task and sends events into this channel.
+    // When the SSE response is dropped (client disconnects) the unfold below
+    // drops `rx`; the loader's `send`s then fail and the recursion unwinds.
+    let (tx, rx) = tokio::sync::mpsc::channel::<crate::publication::PubLoadEvent>(64);
+    let engine_for_task = engine.clone();
+    tokio::spawn(async move {
+        let pub_engine = PublicationEngine::new(&engine_for_task);
+        pub_engine
+            .stream_publication_tree(&addr, depth, policy, tx)
+            .await;
+    });
+
+    let stream = futures::stream::unfold(rx, |mut rx| async move {
+        match rx.recv().await {
+            Some(ev) => {
+                let payload = serde_json::to_string(&ev).unwrap_or_default();
+                let sse_event = SseHttpEvent::default().data(payload);
+                Some((Ok::<SseHttpEvent, std::convert::Infallible>(sse_event), rx))
+            }
+            None => None,
+        }
+    });
+
+    let mut resp = Sse::new(stream.boxed())
+        .keep_alive(KeepAlive::default())
+        .into_response();
+    // See `fetch_events_handler` — `no-transform` stops intermediaries from
+    // buffering the event stream.
+    resp.headers_mut().insert(
+        axum::http::header::CACHE_CONTROL,
+        axum::http::HeaderValue::from_static("no-cache, no-transform"),
+    );
+    Ok(resp)
 }
 
 /// POST /api/v1/publications/:pubkey/:d_tag/sections
@@ -992,7 +1099,7 @@ fn query_profile(ndb: &nostrdb::Ndb, pubkey: &str) -> Option<Value> {
     let results = ndb.query(&txn, &[filter], 1).ok()?;
     let qr = results.first()?;
     let note = ndb.get_note_by_key(&txn, qr.note_key).ok()?;
-    crate::query::note_to_json_pub(&note).ok()
+    crate::query::note_to_json_pub(&note, &txn).ok()
 }
 
 /// GET /api/v1/profile/:pubkey — get kind 0 profile (local only, instant)
@@ -1857,22 +1964,22 @@ pub async fn discussion_counts_handler(
     }))
 }
 
-/// Query params for `GET /api/v1/discussions/list`.
+/// Request body for `POST /api/v1/discussions/list`.
 ///
-/// Repeatable fields (`addresses`, `event_ids`, `kinds`, `relays`) are
-/// passed comma-separated to keep the wire format compatible with the
-/// default `serde_urlencoded` Query extractor. `kinds` defaults to
-/// `"1111,9802"`; the empty/missing case is treated as "both".
+/// The address / event-id sets travel in a JSON body, not the URL: a
+/// deep publication tree can reference hundreds of section coordinates,
+/// which overflows the request-line/header limit of a GET (HTTP 431).
+/// `kinds` empty/missing is treated as `[1111, 9802]`.
 #[derive(Debug, Deserialize, Default)]
-pub struct DiscussionsListQuery {
-    pub addresses: Option<String>,
-    pub event_ids: Option<String>,
-    pub kinds: Option<String>,
+#[serde(default)]
+pub struct DiscussionsListRequest {
+    pub addresses: Vec<String>,
+    pub event_ids: Vec<String>,
+    pub kinds: Vec<u64>,
     pub policy: Option<String>,
-    pub relays: Option<String>,
+    pub relays: Vec<String>,
     pub limit: Option<usize>,
     pub since: Option<i64>,
-    #[serde(default)]
     pub mode_confirm: bool,
 }
 
@@ -1883,15 +1990,6 @@ pub struct DiscussionsListResponse {
     /// Server's view of when the result was computed (unix seconds).
     /// The web uses this as a `since` cursor for incremental refreshes.
     pub refreshed_at: i64,
-}
-
-fn split_csv(s: &Option<String>) -> Vec<String> {
-    s.as_deref()
-        .unwrap_or("")
-        .split(',')
-        .filter(|p| !p.is_empty())
-        .map(String::from)
-        .collect()
 }
 
 /// A bare 32-byte event id: exactly 64 hex chars.
@@ -2018,7 +2116,7 @@ fn describe_profile_steps(pubkeys: &[&str]) -> Vec<String> {
     vec![step]
 }
 
-/// GET /api/v1/discussions/list
+/// POST /api/v1/discussions/list
 ///
 /// Returns the full set of NIP-22 (kind 1111) comments and NIP-84 (kind
 /// 9802) highlights referencing the requested addresses or event ids.
@@ -2028,14 +2126,14 @@ fn describe_profile_steps(pubkeys: &[&str]) -> Vec<String> {
 /// relay fetches, so subsequent `discussions/counts` queries hit local.
 pub async fn discussions_list_handler(
     State(engine): State<AppState>,
-    axum::extract::Query(mut req): axum::extract::Query<DiscussionsListQuery>,
+    Json(mut req): Json<DiscussionsListRequest>,
 ) -> Result<Json<DiscussionsListResponse>, EngineError> {
     // Drop malformed refs. A relay URL or other junk in `#e`/`#a` is
     // dropped during nostr-filter parsing, degenerating the query into an
     // unconstrained `kinds:[1111]` dump of every comment on the network.
     // Validate here so a bad ref yields an empty result, not 500 events.
-    let mut addresses = split_csv(&req.addresses);
-    let mut event_ids = split_csv(&req.event_ids);
+    let mut addresses = std::mem::take(&mut req.addresses);
+    let mut event_ids = std::mem::take(&mut req.event_ids);
     let raw_addr = addresses.len();
     let raw_eids = event_ids.len();
     addresses.retain(|s| is_addr_coord(s));
@@ -2048,10 +2146,10 @@ pub async fn discussions_list_handler(
         );
     }
 
-    let kinds: Vec<u64> = if let Some(raw) = &req.kinds {
-        raw.split(',').filter_map(|p| p.parse().ok()).collect()
-    } else {
+    let kinds: Vec<u64> = if req.kinds.is_empty() {
         vec![1111, 9802]
+    } else {
+        std::mem::take(&mut req.kinds)
     };
 
     let now = std::time::SystemTime::now()
@@ -2079,7 +2177,7 @@ pub async fn discussions_list_handler(
     // A discussions pull is a user-initiated fetch operation — gate it.
     // In Auto mode this returns at once; in Confirm mode it blocks for
     // the modal. Declined → fall back to a local-only read.
-    let relays_vec = split_csv(&req.relays);
+    let relays_vec = std::mem::take(&mut req.relays);
     let mut op: Option<crate::network::FetchOperation> = None;
     if req.mode_confirm {
         let label = if event_ids.is_empty() {
@@ -2396,6 +2494,25 @@ pub async fn publish_handler(
 
         let (_, _, results) = crate::relay::publish_events_to_relays(&relays, &event_jsons).await;
 
+        // Record relay provenance for every (event, relay) pair that
+        // succeeded, so a freshly-published publication stops showing as
+        // local-only without waiting to be re-fetched.
+        let by_id: std::collections::HashMap<&str, &String> = section_events
+            .iter()
+            .chain(std::iter::once(&pub_event))
+            .zip(event_jsons.iter())
+            .filter_map(|(e, j)| e.get("id").and_then(|v| v.as_str()).map(|id| (id, j)))
+            .collect();
+        for r in &results {
+            if r.success {
+                if let Some(j) = by_id.get(r.event_id.as_str()) {
+                    if let Err(e) = engine.record_event_relay(j, &r.relay_url) {
+                        debug!("record relay metadata: {e}");
+                    }
+                }
+            }
+        }
+
         Some(
             results
                 .into_iter()
@@ -2673,6 +2790,24 @@ pub async fn publish_blocks_handler(
             .map(|e| serde_json::to_string(e).unwrap())
             .collect();
         let (_, _, results) = crate::relay::publish_events_to_relays(&relays, &event_jsons).await;
+
+        // Record relay provenance for each (event, relay) pair that succeeded.
+        let by_id: std::collections::HashMap<&str, &String> = section_events
+            .iter()
+            .chain(std::iter::once(&pub_event))
+            .zip(event_jsons.iter())
+            .filter_map(|(e, j)| e.get("id").and_then(|v| v.as_str()).map(|id| (id, j)))
+            .collect();
+        for r in &results {
+            if r.success {
+                if let Some(j) = by_id.get(r.event_id.as_str()) {
+                    if let Err(e) = engine.record_event_relay(j, &r.relay_url) {
+                        debug!("record relay metadata: {e}");
+                    }
+                }
+            }
+        }
+
         Some(
             results
                 .into_iter()
@@ -3553,6 +3688,14 @@ pub async fn broadcast_handler(
     let event_json = serde_json::to_string(&req.event)
         .map_err(|e| EngineError::Config(format!("event serialize: {e}")))?;
     let results = crate::relay::publish_to_relays(&relays, &event_json).await;
+    // Record relay provenance for each relay that accepted the event.
+    for r in &results {
+        if r.success {
+            if let Err(e) = engine.record_event_relay(&event_json, &r.relay_url) {
+                debug!("record relay metadata: {e}");
+            }
+        }
+    }
     let successful = results.iter().filter(|r| r.success).count();
     let total = results.len();
     Ok(Json(BroadcastResponse {

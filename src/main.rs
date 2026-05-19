@@ -262,6 +262,10 @@ async fn main() -> anyhow::Result<()> {
             get(api::get_publication_handler),
         )
         .route(
+            "/api/v1/publications/:pubkey/:d_tag/stream",
+            get(api::stream_publication_handler),
+        )
+        .route(
             "/api/v1/publications/:pubkey/:d_tag/sections/metadata",
             post(api::load_sections_metadata_handler),
         )
@@ -283,7 +287,7 @@ async fn main() -> anyhow::Result<()> {
         )
         .route(
             "/api/v1/discussions/list",
-            get(api::discussions_list_handler),
+            post(api::discussions_list_handler),
         )
         .with_state(state.clone())
         .merge(chat_routes)

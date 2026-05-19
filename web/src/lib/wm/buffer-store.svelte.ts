@@ -75,6 +75,12 @@ export class BufferStore {
 	flashSlot = $state<Position | null>(null);
 	bufferState = new Map<string, unknown>();
 
+	// Per-buffer modeline status line — small transient text (loading
+	// indicators etc.) shown ONLY in the WM modeline. Deliberately separate
+	// from `Buffer.kicker`, which also renders in pane headers and the buffer
+	// switcher; this channel is the modeline alone.
+	private _modelineStatus = $state<Record<string, string>>({});
+
 	// Per-buffer keyboard nav handlers — populated by renderers on mount,
 	// dispatched by the global keydown handler when normal mode + non-editable
 	// focus + no leader. The Map itself is non-reactive: an `$effect` that
@@ -191,6 +197,26 @@ export class BufferStore {
 			[pos]: replaceAt(tree, path, () => ({ type: 'leaf', buffer: buf }))
 		};
 		this.focusedLeafPath = { ...this.focusedLeafPath, [pos]: path };
+	}
+
+	// Set / clear a buffer's modeline status line (see `_modelineStatus`).
+	// A renderer pushes loading progress here; `clear` removes it. Modeline
+	// only — never touches `Buffer.kicker`, the slot trees, or `openBuffers`,
+	// so pane headers and the buffer switcher never show this text.
+	setModelineStatus(id: string, status: string) {
+		if ((this._modelineStatus[id] ?? '') === status) return;
+		this._modelineStatus = { ...this._modelineStatus, [id]: status };
+	}
+
+	clearModelineStatus(id: string) {
+		if (!(id in this._modelineStatus)) return;
+		const next = { ...this._modelineStatus };
+		delete next[id];
+		this._modelineStatus = next;
+	}
+
+	modelineStatus(id: string): string {
+		return this._modelineStatus[id] ?? '';
 	}
 
 	// Split the focused leaf with a new buffer. The new leaf becomes focused.

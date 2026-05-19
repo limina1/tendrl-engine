@@ -52,6 +52,10 @@ export interface PublicationSummary {
 	version: string | null;
 	created_at: number;
 	section_count: number;
+	/** Relays the index event has been seen on. Empty = written locally, not published. */
+	relays: string[];
+	/** False = unsigned draft (placeholder signature). */
+	signed: boolean;
 }
 
 export interface PublicationDetail {
@@ -71,8 +75,45 @@ export interface TocEntry {
 	depth: number;
 	position: number;
 	loaded: boolean;
+	/** True for a nested 30040 index, false for a 30041 section leaf. */
+	is_publication: boolean;
+	/** Section body, when this is a resolved 30041 within the depth horizon.
+	 *  Null for nested indexes and for sections not yet loaded. */
+	content: string | null;
 	children: TocEntry[];
 }
+
+/** A child reference inside a streamed `index` event — mirrors the Rust
+ *  `PubChildRef`. `in_horizon` = this child's own events will be streamed and
+ *  it counts toward the load total `N`; a non-in_horizon nested index is a
+ *  frontier stub: rendered and refocus-able, but not counted. */
+export interface PubChildRef {
+	addr: NAddr;
+	is_index: boolean;
+	in_horizon: boolean;
+}
+
+/** One progress event from the streaming publication loader
+ *  (`GET /api/v1/publications/:pubkey/:d_tag/stream`). Mirrors the Rust
+ *  `PubLoadEvent` — the `type` tag and field names are its serde output. */
+export type PubLoadEvent =
+	| {
+			type: 'index';
+			addr: NAddr;
+			depth: number;
+			title: string | null;
+			is_root: boolean;
+			children: PubChildRef[];
+	  }
+	| {
+			type: 'leaf';
+			addr: NAddr;
+			depth: number;
+			title: string | null;
+			content: string | null;
+	  }
+	| { type: 'error'; addr: NAddr; depth: number; message: string }
+	| { type: 'done'; total: number };
 
 export interface Section {
 	addr: NAddr;
@@ -91,6 +132,10 @@ export interface LazySection {
 	position: number;
 	status: SectionStatus;
 	error?: string;
+	/** Nesting depth in the publication tree (0 = top level). Drives the
+	 *  indented render. A 30040 entry (`addr.kind === 30040`) is a nested
+	 *  index the reader can refocus into rather than a readable section. */
+	depth?: number;
 }
 
 export interface SectionMeta {
