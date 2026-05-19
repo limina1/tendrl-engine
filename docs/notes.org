@@ -1,0 +1,7 @@
+
+* Publications
+so, specificially here, we'd need an option in the viewer to load n levels in
+  the display, so when a new event is loaded, it fetches that many levels deep to
+  render, we indent each level rendered, if we hit a 30040, click on it, it
+  refocuses to that publication + n levels again, and then we'd need some sort of
+  breadcrumb/level navigator

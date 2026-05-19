@@ -821,3 +821,60 @@ curl -X POST http://localhost:3030/api/v1/network/fetch-confirm \
   -H 'Content-Type: application/json' \
   -d '{"operation_id":"op-...","approved":true}'
 #+end_src
+
+* Publication tree — depth-N load & refocus
+
+Opening a publication runs the recursive depth-N loader and the reader
+renders the indented tree, with refocus + breadcrumbs for nested 30040
+indexes. Design: [[file:publication-tree-design.md]] §9; status:
+[[file:publication-fetch.org]].
+
+** Depth-N endpoint
+
+=GET /api/v1/publications/:pubkey/:d_tag?depth=N= — =depth= defaults to
+2, clamps to 12. The =toc= comes back as a recursive tree; section
+=content= is filled for resolved 30041 leaves inside the depth horizon.
+
+#+begin_src bash
+# Depth 0 — index + its own sections, nested 30040s left as stubs.
+curl 'http://localhost:3030/api/v1/publications/<pubkey>/<d_tag>?depth=0' \
+  | jq '.depth, (.toc | length)'
+
+# Depth 2 (default) — recurse two levels of nested indexes.
+curl 'http://localhost:3030/api/v1/publications/<pubkey>/<d_tag>' \
+  | jq '.toc | .. | objects | select(.is_publication==true) | .title'
+#+end_src
+
+Expected: =depth= echoes the request; a depth-2 =toc= has nested
+=children= under any =is_publication:true= entry; section entries carry
+non-null =content=.
+
+** Typecheck
+
+#+begin_src bash
+cd web && pnpm check
+#+end_src
+
+Expected: =0 ERRORS=.
+
+** UI verification
+
+#+begin_src bash
+cargo run -- -c config.toml   # or ./start.sh
+#+end_src
+
+1. *Indented tree*: open a multi-level publication in a reader buffer.
+   Outline shows the depth-2 tree indented by nesting level; sections
+   are cards, nested 30040 indexes are dashed =⊞ … refocus ⟳= rows.
+
+2. *Depth knob*: toolbar shows =depth − N +=. Step it up — the tree
+   re-loads with more levels expanded; step to 0 — nested indexes
+   collapse to refocus stubs.
+
+3. *Refocus*: click a nested =⊞= row (Outline / Paginated / Continuous
+   all expose it). The reader re-roots on that sub-publication and a
+   breadcrumb bar =Root › Sub-pub= appears above the title.
+
+4. *Breadcrumb up*: click the =Root= crumb — the reader pops back to
+   the parent publication. Nested indexes beyond the depth horizon
+   resolve on refocus (DB-first, relay backfill on a miss).

@@ -54,14 +54,47 @@ network or against real-world publications. Before relying on it:
 - [ ] Decide whether the depth-N load should be gated by a confirm step
       (design §9.4) before it commits to fetching.
 
-* TODO Wire the loader into the API and web UI
+* DONE Wire the loader into the API and web UI
+CLOSED: [2026-05-16]
 
-- [ ] API endpoint to open a publication at a given depth (design §10).
-- [ ] Web: depth knob, indented N-level render, refocus-on-click into a
-      nested 30040 + breadcrumb (design §9.2–9.3).
-- [ ] =build_toc=: render a "load more" affordance for nested indexes left
-      =Pending= at the depth horizon — currently they show as a childless
-      "Nested Publication" entry.
+The recursive loader is now reachable from the reader. Opening a publication
+loads it at a default depth of 2, displays the depth-N tree indented by
+nesting level, and lets the reader walk into nested indexes and back out via
+breadcrumbs — DB-first, with relay backfill on a miss.
+
+- [X] API endpoint to open a publication at a given depth (design §10).
+      =GET /api/v1/publications/:pubkey/:d_tag?depth=N= now calls
+      =load_publication_tree= instead of the single-level =load_publication=.
+      =depth= defaults to 2 and is clamped to 12. The response =toc= is the
+      recursive =TocEntry= tree built by =build_toc=.
+- [X] =TocEntry= carries =content= (the section body, for resolved 30041
+      leaves inside the depth horizon) and =is_publication= (30040 vs 30041).
+      A depth-N load fully loads in-horizon sections, so the whole indented
+      tree — content included — arrives in one call; no per-section round
+      trips until you refocus past the horizon.
+- [X] Web: =depth= stepper in the reader toolbar; the recursive TOC is
+      flattened depth-first into the section list, each entry tagged with its
+      nesting =depth=. All three views (Outline / Paginated / Continuous)
+      indent by depth and render a nested 30040 as a refocus affordance.
+- [X] Refocus-on-click into a nested 30040 (design §9.3): pushes the current
+      focus onto a breadcrumb stack, re-roots the reader on the sub-publication,
+      and loads it at the same depth — fetching whatever events had not yet
+      been resolved for that level. A breadcrumb bar above the views walks
+      back up; clicking a crumb pops the stack to that level.
+- [X] =build_toc= "load more" at the depth horizon: a nested index left
+      =Pending= at the horizon now renders as the same refocus row as any
+      other 30040 — clicking it triggers the deeper load. Refocus *is* the
+      "load more" affordance.
+
+Implementation: =get_publication_handler= (=src/api.rs=), =TocEntry= +
+=build_toc= (=src/publication.rs=), and the reader
+(=web/src/lib/wm/renderers/ReaderBuffer.svelte=, =ContinuousView.svelte=,
+=PaginatedView.svelte=).
+
+Not yet done here — still tracked under "Test & verify" above and "Remaining
+design items" below: the eager depth-N load is *not* confirm-gated (§9.4), and
+there is no lazy visibility-driven prefetch past the horizon (§5) — deep
+levels resolve only when you refocus into them.
 
 * TODO Remaining design items (not started)
 
