@@ -10,7 +10,7 @@ assistant = "npub1upulrz5tvvphu37c5ygs8xc6xpg30yds799dzspey7rsvrpgyzdqa8r477"
 pubkey = "npub1m3xdppkd0njmrqe2ma8a6ys39zvgp5k8u22mev8xsnqp4nh80srqhqa5sf"
 
 [network]
-mode = "online"
+mode = "confirm"
 
 [relay]
 timeout_ms = 15000
