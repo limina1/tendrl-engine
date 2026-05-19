@@ -251,6 +251,16 @@
 		</div>
 	{/snippet}
 
+	{#snippet jsonBtn(open: () => void)}
+		<button
+			class="item-json"
+			onclick={(e) => { e.stopPropagation(); open(); }}
+			onkeydown={(e) => e.stopPropagation()}
+			title="View raw JSON"
+			aria-label="View raw JSON"
+		>json</button>
+	{/snippet}
+
 	<div class="tabs">
 		{@render tabCell('publications', 'Publications', publications.length)}
 		{@render tabCell('articles', 'Articles', articles.length)}
@@ -278,6 +288,7 @@
 						<div class="item-header">
 							<span class="item-title">{pub_item.title ?? '[Untitled]'}</span>
 							<span class="item-meta">{pub_item.section_count} sections</span>
+							{@render jsonBtn(() => app.openAddressableInModal(pub_item.addr))}
 						</div>
 						{#if pub_item.summary}
 							<p class="item-preview">{pub_item.summary}</p>
@@ -302,6 +313,7 @@
 						<div class="item-header">
 							<span class="item-title">{art.title ?? '[Untitled]'}</span>
 							<span class="item-meta">long-form</span>
+							{@render jsonBtn(() => app.openAddressableInModal(art.addr))}
 						</div>
 						{#if art.summary}
 							<p class="item-preview">{art.summary}</p>
@@ -326,6 +338,7 @@
 						<div class="item-header">
 							<span class="item-title">{wiki.title ?? wiki.addr.d_tag ?? '[Untitled]'}</span>
 							<span class="item-meta">wiki</span>
+							{@render jsonBtn(() => app.openAddressableInModal(wiki.addr))}
 						</div>
 						{#if wiki.summary}
 							<p class="item-preview">{wiki.summary}</p>
@@ -353,6 +366,7 @@
 					>
 						<div class="item-header">
 							<span class="item-title">{title}</span>
+							{@render jsonBtn(() => app.openAddressableInModal(addr))}
 						</div>
 						{#if sec.content}
 							<p class="item-preview">{sec.content.slice(0, 200)}</p>
@@ -385,6 +399,7 @@
 							{#if rootAddr}
 								<span class="item-ref">on {rootKind ? `k:${rootKind}` : ''} {rootAddr.split(':').pop()}</span>
 							{/if}
+							{@render jsonBtn(() => (app.eventModalData = comment))}
 						</div>
 						<p class="item-content">{comment.content}</p>
 						<span class="item-time">{formatTime(comment.created_at)}</span>
@@ -627,5 +642,26 @@
 	.item-time {
 		font-size: 0.7rem;
 		color: var(--fg-muted);
+	}
+
+	/* Per-item "json" affordance — opens the structured EventViewModal on
+	   the raw event. stopPropagation keeps the click off the card, which
+	   otherwise routes to the reader / discussion view. */
+	.item-json {
+		margin-left: auto;
+		flex-shrink: 0;
+		background: none;
+		border: 1px solid var(--border);
+		border-radius: var(--radius);
+		color: var(--fg-muted);
+		font-family: var(--font-mono);
+		font-size: 0.62rem;
+		padding: 1px 6px;
+		cursor: pointer;
+		line-height: 1.5;
+	}
+	.item-json:hover {
+		color: var(--accent);
+		border-color: var(--accent);
 	}
 </style>
