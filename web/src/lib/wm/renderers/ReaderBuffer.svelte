@@ -838,7 +838,16 @@
 			// depth 0, matching the old flattenToc. The root itself is
 			// `publication`, not a section row.
 			const acc: LazySection[] = [];
-			const walk = (key: string, depth: number) => {
+			// Depth-first flatten with a path-scoped cycle guard. `nodes` is a
+			// graph, not a tree: a 30040 may reference one of its ancestors
+			// (the loader's cycle data, e.g. E → A → C → E), and once the tree
+			// is streamed deep enough to close that loop an unguarded walk
+			// recurses forever. The cyclic node is still pushed — it shows as
+			// a refocus target — but its subtree is not re-walked. `ancestors`
+			// is the current root→node path, not a global visited set, so a
+			// diamond (a node reached by two distinct paths) still expands
+			// under each parent.
+			const walk = (key: string, depth: number, ancestors: Set<string>) => {
 				const n = nodes.get(key);
 				if (!n) return;
 				acc.push({
@@ -850,9 +859,11 @@
 					status: n.status,
 					error: n.error
 				});
-				for (const ck of n.childKeys) walk(ck, depth + 1);
+				if (ancestors.has(key)) return; // cycle — node shown, subtree cut
+				const next = new Set(ancestors).add(key);
+				for (const ck of n.childKeys) walk(ck, depth + 1, next);
 			};
-			for (const ck of root.childKeys) walk(ck, 0);
+			for (const ck of root.childKeys) walk(ck, 0, new Set([rootKey]));
 			pristineSections = acc;
 			loading = false;
 			if (publication?.title && !focus.title) {
