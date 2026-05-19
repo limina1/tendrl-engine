@@ -1018,9 +1018,30 @@ impl Engine {
             }
         }
 
-        let response = self
-            .get_events_with_options(filters, scan_policy, override_relays, mode_confirm)
-            .await?;
+        // A keyword/exact query runs its exhaustive scan through
+        // `query_local_text`, which applies the text match at the
+        // nostrdb-note level so only matches pay `note_to_json` — the
+        // difference between a sub-second search and a multi-second one.
+        // Other exhaustive scans (multi-char tag / has: / count:) keep
+        // the generic path.
+        let response = match (exhaustive, &query.text_filter) {
+            (true, Some(text_filter)) => {
+                let events = query::query_local_text(&self.ndb, &filters, text_filter, limit)?;
+                let count = events.len();
+                QueryResponse {
+                    events,
+                    count,
+                    source: QuerySource {
+                        local_count: count,
+                        relay_count: 0,
+                    },
+                }
+            }
+            _ => {
+                self.get_events_with_options(filters, scan_policy, override_relays, mode_confirm)
+                    .await?
+            }
+        };
 
         // Multi-char tag filters (e.g. `author:Claude`) are applied here —
         // NIP-01 only indexes single-letter keys at the DB layer.

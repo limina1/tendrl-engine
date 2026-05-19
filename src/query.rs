@@ -66,6 +66,82 @@ pub fn query_local(ndb: &Ndb, filters: &[Value]) -> Result<Vec<Value>> {
     Ok(all_events)
 }
 
+/// Exhaustive local scan with the text filter applied at the raw
+/// nostrdb-note level.
+///
+/// A keyword search has no usable DB index — nostrdb's full-text index
+/// covers only kinds 1 and 30023, never NKBIP-01 publications — so it
+/// must scan. But converting every scanned note to JSON dominates the
+/// cost, so the match (`content` + `title` tag, the same test
+/// `filter_by_text` does) runs on the `Note` directly and only matches
+/// pay `note_to_json`. Stops once `limit` matches are collected; nostrdb
+/// yields notes newest-first, so those are the newest `limit` matches.
+pub fn query_local_text(
+    ndb: &Ndb,
+    filters: &[Value],
+    text: &crate::search::TextFilter,
+    limit: usize,
+) -> Result<Vec<Value>> {
+    use crate::search::TextFilter;
+    let _guard = ndb_query_lock();
+    let txn = Transaction::new(ndb)
+        .map_err(|e| EngineError::Database(format!("Failed to create transaction: {}", e)))?;
+
+    // Lowercase the needles once up front. Keywords (every word must
+    // appear) and Exact (the phrase must appear) both reduce to "every
+    // needle is a substring of content+title".
+    let needles: Vec<String> = match text {
+        TextFilter::Keywords(words) => words.iter().map(|w| w.to_lowercase()).collect(),
+        TextFilter::Exact(phrase) => vec![phrase.to_lowercase()],
+    };
+
+    let mut matched = Vec::new();
+    for filter_json in filters {
+        if matched.len() >= limit {
+            break;
+        }
+        let filter = parse_filter(filter_json)?;
+        let scan_limit = extract_limit(filter_json).unwrap_or(100) as i32;
+        let results = ndb
+            .query(&txn, &[filter], scan_limit)
+            .map_err(|e| EngineError::Database(format!("Query failed: {}", e)))?;
+
+        for query_result in results {
+            if matched.len() >= limit {
+                break;
+            }
+            let note = ndb
+                .get_note_by_key(&txn, query_result.note_key)
+                .map_err(|e| EngineError::Database(format!("Failed to get note: {}", e)))?;
+
+            // The `title` tag is searched alongside content — a
+            // publication index's name lives there, not in `content`.
+            let mut title = "";
+            for tag in note.tags().iter() {
+                if tag.count() < 2 {
+                    continue;
+                }
+                if matches!(
+                    tag.get_unchecked(0).variant(),
+                    nostrdb::NdbStrVariant::Str("title")
+                ) {
+                    if let nostrdb::NdbStrVariant::Str(s) = tag.get_unchecked(1).variant() {
+                        title = s;
+                    }
+                    break;
+                }
+            }
+
+            let haystack = format!("{} {}", note.content(), title).to_lowercase();
+            if needles.iter().all(|n| haystack.contains(n.as_str())) {
+                matched.push(note_to_json(&note, &txn)?);
+            }
+        }
+    }
+
+    Ok(matched)
+}
+
 /// Query a single event by its ID
 pub fn query_by_id(ndb: &Ndb, id: &str) -> Result<Option<Value>> {
     let id_bytes = parse_hex_id(id)?;
