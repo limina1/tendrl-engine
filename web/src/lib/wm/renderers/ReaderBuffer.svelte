@@ -4,6 +4,7 @@
 	import { getAppState } from '$lib/state.svelte';
 	import ContinuousView from '$lib/components/ContinuousView.svelte';
 	import PaginatedView from '$lib/components/PaginatedView.svelte';
+	import FocusGraph, { type GraphNode } from '$lib/components/FocusGraph.svelte';
 	import SectionCard from '$lib/components/SectionCard.svelte';
 	import ProfileName from '$lib/components/ProfileName.svelte';
 	import { getActiveStore, type NavAction } from '../buffer-store.svelte';
@@ -35,11 +36,28 @@
 	let publication = $state<PublicationDetail | null>(null);
 	let pristineSections = $state<LazySection[]>([]);
 
-	// Breadcrumb / refocus stack for cross-publication navigation. Index 0
-	// is the publication the buffer was opened on; the last element is the
-	// current focus. Refocusing into a nested 30040 pushes a level; clicking
-	// a breadcrumb pops back up. Each level is loaded at `treeDepth`.
-	let focusStack = $state<{ pubkey: string; d_tag: string; title: string }[]>([]);
+	// Cross-publication navigation has two axes.
+	//
+	// `focusStack` is the *breadcrumb*: an append-only list of the distinct
+	// 30040 indexes ever focused, in first-visit order. `focusMarker` points
+	// at the current focus — not necessarily the tail, since cycling back to
+	// an already-visited index just moves the marker. Crumbs past the marker
+	// are the loop tail, reachable ahead of the current focus.
+	type FocusCrumb = { pubkey: string; d_tag: string; title: string };
+	let focusStack = $state<FocusCrumb[]>([]);
+	let focusMarker = $state(0);
+	// `visitLog` is the *temporal* axis: every focus in entry order, revisits
+	// included. `Prev Level` steps `visitIndex` back through it. There is no
+	// Next — inward movement is the refocus action, not a forward step.
+	let visitLog = $state<FocusCrumb[]>([]);
+	let visitIndex = $state(0);
+	// The accumulated 30040 reference graph behind the graph panel. Every
+	// index event seen — across all focuses and depths — merges in here and
+	// is never dropped, so the panel shows the structure discovered so far
+	// and grows as depth rises or sub-publications are refocused into.
+	// Keyed by addrKey (`kind:pubkey:d_tag`).
+	let focusGraph = $state<Record<string, GraphNode>>({});
+	let graphOpen = $state(false);
 	// Target eager-expansion depth: how many levels of nested 30040 indexes
 	// the streaming loader walks. The depth controls set this. Capped at
 	// MAX_DEPTH — deeper than that you refocus into a sub-publication (a
@@ -681,14 +699,18 @@
 		// load. Refocus / breadcrumb navigation mutates the stack and calls
 		// load() again without the buffer id changing.
 		if (focusStack.length === 0) {
-			focusStack = [{ pubkey: parsedAddr.pubkey, d_tag: parsedAddr.dTag, title: '' }];
+			const seed = { pubkey: parsedAddr.pubkey, d_tag: parsedAddr.dTag, title: '' };
+			focusStack = [seed];
+			focusMarker = 0;
+			visitLog = [seed];
+			visitIndex = 0;
 		}
 		// Supersede any stream in flight.
 		streamSource?.close();
 		streamSource = null;
 		loaderRunning = false;
 		error = null;
-		const focus = focusStack[focusStack.length - 1];
+		const focus = focusStack[focusMarker];
 		const cached = focusCache.get(focusKey(focus.pubkey, focus.d_tag));
 		if (cached) {
 			// Seen before — restore instantly: no blank screen, no re-stream.
@@ -701,8 +723,10 @@
 			knownCount = 0;
 			displayedCount = 0;
 			if (cached.publication.title && !focus.title) {
-				const i = focusStack.length - 1;
-				focusStack[i] = { ...focusStack[i], title: cached.publication.title };
+				focusStack[focusMarker] = {
+					...focusStack[focusMarker],
+					title: cached.publication.title
+				};
 			}
 			// If the target is deeper than what was cached, stream the rest.
 			if (treeDepth > loadedDepth) runLoader();
@@ -721,7 +745,7 @@
 	 *  the modeline's per-event i/N. A bumped `loadGeneration` plus closing the
 	 *  EventSource discard / abort a superseded stream. */
 	function runLoader() {
-		const focus = focusStack[focusStack.length - 1];
+		const focus = focusStack[focusMarker];
 		if (!focus) return;
 		const myGen = ++loadGeneration;
 		streamSource?.close();
@@ -831,8 +855,10 @@
 			pristineSections = acc;
 			loading = false;
 			if (publication?.title && !focus.title) {
-				const i = focusStack.length - 1;
-				focusStack[i] = { ...focusStack[i], title: publication.title };
+				focusStack[focusMarker] = {
+					...focusStack[focusMarker],
+					title: publication.title
+				};
 			}
 		};
 		const scheduleCommit = () => {
@@ -894,6 +920,24 @@
 					if (c.in_horizon) inHorizon.add(ck);
 				}
 				inHorizon.add(k);
+				// Merge this index into the persistent reference graph: the
+				// node itself plus stub entries for any nested 30040 it
+				// references, so a child shows as a node before its own
+				// index event arrives.
+				{
+					const g = { ...focusGraph };
+					g[k] = {
+						addr: ev.addr,
+						title: ev.title,
+						childKeys: ev.children.filter((c) => c.is_index).map((c) => addrKey(c.addr))
+					};
+					for (const c of ev.children) {
+						if (!c.is_index) continue;
+						const ck = addrKey(c.addr);
+						if (!g[ck]) g[ck] = { addr: c.addr, title: null, childKeys: [] };
+					}
+					focusGraph = g;
+				}
 				resolvedCount++;
 				knownCount = inHorizon.size;
 				loadingPath = pathOf(k);
@@ -935,29 +979,86 @@
 	/** Refocus the reader on a nested 30040 index: push the current focus
 	 *  onto the breadcrumb stack and load the nested publication at the same
 	 *  depth, fetching whatever events haven't been loaded for this level. */
-	function refocus(section: LazySection) {
-		if (section.addr.kind !== 30040) return;
-		focusStack = [
-			...focusStack,
-			{
-				pubkey: section.addr.pubkey,
-				d_tag: section.addr.d_tag,
-				title: section.title ?? 'Nested publication'
-			}
-		];
+	/** Refocus the reader on the 30040 at `pubkey`/`d_tag`. Onto an already-
+	 *  visited index it moves the breadcrumb marker (a cycle-back); onto a
+	 *  new one it appends a crumb. Either way the temporal visit axis grows. */
+	function refocusTo(pubkey: string, d_tag: string, title: string) {
+		const crumb: FocusCrumb = { pubkey, d_tag, title };
+		const key = focusKey(pubkey, d_tag);
+		const existing = focusStack.findIndex((c) => focusKey(c.pubkey, c.d_tag) === key);
+		if (existing >= 0) {
+			// Cycle-back: the target is already a breadcrumb (a 30040 that
+			// references an ancestor). Move the marker, don't duplicate it.
+			focusMarker = existing;
+		} else {
+			// A publication not yet visited — append a crumb, advance marker.
+			focusStack = [...focusStack, crumb];
+			focusMarker = focusStack.length - 1;
+		}
+		// The temporal axis records every entry, revisits included.
+		visitLog = [...visitLog, crumb];
+		visitIndex = visitLog.length - 1;
 		currentSection = 0;
 		outlineCursor = 0;
 		load();
 	}
 
-	/** Pop the breadcrumb stack back to level `index` and reload it. */
+	function refocus(section: LazySection) {
+		if (section.addr.kind !== 30040) return;
+		refocusTo(section.addr.pubkey, section.addr.d_tag, section.title ?? 'Nested publication');
+	}
+
+	/** Graph-panel node click: refocus onto the node and drop into outline. */
+	function navigateGraph(addr: NAddr) {
+		graphOpen = false;
+		viewMode = 'outline';
+		refocusTo(
+			addr.pubkey,
+			addr.d_tag,
+			focusGraph[addrKey(addr)]?.title ?? 'Nested publication'
+		);
+	}
+
+	// Graph-panel inputs — addr-keyed so they line up with `focusGraph`.
+	const crumbGraphKey = (c: FocusCrumb) =>
+		addrKey({ kind: 30040, pubkey: c.pubkey, d_tag: c.d_tag });
+	const graphRootKey = $derived(focusStack[0] ? crumbGraphKey(focusStack[0]) : '');
+	const graphCurrentKey = $derived(
+		focusStack[focusMarker] ? crumbGraphKey(focusStack[focusMarker]) : ''
+	);
+	const graphPathKeys = $derived(
+		focusStack.slice(0, focusMarker + 1).map(crumbGraphKey)
+	);
+	// The graph is worth showing once it has more than the root node.
+	const hasGraph = $derived(Object.keys(focusGraph).length > 1);
+
+	/** Move the focus marker to breadcrumb crumb `index` and reload it. */
 	function breadcrumbTo(index: number) {
-		if (index < 0 || index >= focusStack.length - 1) return;
-		focusStack = focusStack.slice(0, index + 1);
+		if (index < 0 || index >= focusStack.length || index === focusMarker) return;
+		focusMarker = index;
+		visitLog = [...visitLog, focusStack[index]];
+		visitIndex = visitLog.length - 1;
 		currentSection = 0;
 		outlineCursor = 0;
 		load();
 	}
+
+	/** `Prev Level` — step back one focus along the temporal visit axis.
+	 *  Walks `visitIndex` back through `visitLog` and re-points the
+	 *  breadcrumb marker at that publication. No Next: inward movement is
+	 *  the refocus action, not a deterministic forward step. */
+	function prevLevel() {
+		if (visitIndex <= 0) return;
+		visitIndex--;
+		const v = visitLog[visitIndex];
+		const key = focusKey(v.pubkey, v.d_tag);
+		const i = focusStack.findIndex((c) => focusKey(c.pubkey, c.d_tag) === key);
+		if (i >= 0) focusMarker = i;
+		currentSection = 0;
+		outlineCursor = 0;
+		load();
+	}
+	const canPrevLevel = $derived(visitIndex > 0);
 
 	/** Adjust the depth target. Always available — never disabled mid-load.
 	 *  Changing it re-streams the current focus at the new depth: `runLoader`
@@ -1084,6 +1185,11 @@
 		// stack; load() re-seeds it from the new buffer address.
 		untrack(() => {
 			focusStack = [];
+			focusMarker = 0;
+			visitLog = [];
+			visitIndex = 0;
+			focusGraph = {};
+			graphOpen = false;
 			load();
 		});
 	});
@@ -1620,25 +1726,59 @@
 	{:else if !publication}
 		<div class="empty"><p>No publication loaded</p></div>
 	{:else}
-		{#if focusStack.length > 1}
-			<!-- Cross-publication breadcrumb: the trail of nested 30040
-			     indexes refocused into. Clicking a crumb pops back up to
-			     that level; the last crumb is the current focus. -->
-			<nav class="crumbs" aria-label="Publication breadcrumbs">
-				{#each focusStack as crumb, ci (ci + ':' + crumb.pubkey + ':' + crumb.d_tag)}
-					{#if ci > 0}<span class="crumb-sep" aria-hidden="true">›</span>{/if}
-					{#if ci < focusStack.length - 1}
-						<button
-							class="crumb"
-							onclick={() => breadcrumbTo(ci)}
-							title="Back up to {crumb.title || 'this publication'}"
-						>{crumb.title || 'Publication'}</button>
-					{:else}
-						<span class="crumb crumb--current" aria-current="page"
-							>{crumb.title || publication.title || 'Publication'}</span>
-					{/if}
-				{/each}
+		{#if focusStack.length > 1 || hasGraph}
+			<!-- Cross-publication navigation. The breadcrumb is the trail of
+			     focused 30040 indexes; the marker (crumb--current) is where
+			     the reader is. Crumbs past the marker are the loop tail —
+			     reachable ahead of the current focus, e.g. after cycling
+			     back into an ancestor. `Prev Level` steps back along the
+			     temporal visit axis; the graph button opens the full
+			     reference graph. -->
+			<nav class="crumbs" aria-label="Publication navigation">
+				{#if focusStack.length > 1}
+					<button
+						class="crumb-prev"
+						onclick={prevLevel}
+						disabled={!canPrevLevel}
+						title="Prev Level — step back to the previously focused publication"
+					>‹ Prev Level</button>
+					<span class="crumb-sep" aria-hidden="true">·</span>
+					{#each focusStack as crumb, ci (ci + ':' + crumb.pubkey + ':' + crumb.d_tag)}
+						{#if ci > 0}<span class="crumb-sep" aria-hidden="true">›</span>{/if}
+						{#if ci === focusMarker}
+							<span class="crumb crumb--current" aria-current="page"
+								>{crumb.title || publication.title || 'Publication'}</span>
+						{:else}
+							<button
+								class="crumb"
+								class:crumb--ahead={ci > focusMarker}
+								onclick={() => breadcrumbTo(ci)}
+								title={ci > focusMarker
+									? `Loop ahead — jump forward to ${crumb.title || 'this publication'}`
+									: `Back up to ${crumb.title || 'this publication'}`}
+							>{ci > focusMarker ? '↻ ' : ''}{crumb.title || 'Publication'}</button>
+						{/if}
+					{/each}
+				{/if}
+				{#if hasGraph}
+					<button
+						class="crumb-graph"
+						class:active={graphOpen}
+						onclick={() => (graphOpen = !graphOpen)}
+						title="Toggle the publication reference graph"
+					>⊞ graph</button>
+				{/if}
 			</nav>
+		{/if}
+		{#if graphOpen && hasGraph}
+			<FocusGraph
+				nodes={focusGraph}
+				rootKey={graphRootKey}
+				currentKey={graphCurrentKey}
+				pathKeys={graphPathKeys}
+				onnavigate={navigateGraph}
+				onclose={() => (graphOpen = false)}
+			/>
 		{/if}
 		{#if publication.title}
 			<div class="title">{publication.title}</div>
@@ -2453,7 +2593,41 @@
 		cursor: default;
 		font-weight: 700;
 	}
+	/* Loop tail — crumbs ahead of the marker, reachable by cycling back. */
+	.crumb--ahead {
+		color: var(--base5);
+		font-style: italic;
+	}
+	.crumb--ahead:hover { border-color: var(--base5); }
 	.crumb-sep { color: var(--base5); font-size: var(--t-xs); }
+	.crumb-prev {
+		font-family: var(--font-mono);
+		font-size: var(--t-xs);
+		padding: 1px 8px;
+		background: transparent;
+		border: 1px solid var(--panel-border);
+		border-radius: var(--r-sm);
+		color: var(--id-yours);
+		cursor: pointer;
+	}
+	.crumb-prev:hover:not(:disabled) { border-color: var(--id-yours); }
+	.crumb-prev:disabled { color: var(--base5); cursor: default; opacity: 0.5; }
+	.crumb-graph {
+		margin-left: auto;
+		font-family: var(--font-mono);
+		font-size: var(--t-xs);
+		padding: 1px 8px;
+		background: transparent;
+		border: 1px solid var(--panel-border);
+		border-radius: var(--r-sm);
+		color: var(--id-yours);
+		cursor: pointer;
+	}
+	.crumb-graph:hover { border-color: var(--id-yours); }
+	.crumb-graph.active {
+		background: color-mix(in srgb, var(--id-yours) 16%, transparent);
+		border-color: var(--id-yours);
+	}
 
 	/* Depth stepper in the toolbar. */
 	.depth-knob {
