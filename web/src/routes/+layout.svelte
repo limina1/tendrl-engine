@@ -3,7 +3,6 @@
 	import '../app.css';
 	import { onMount } from 'svelte';
 	import { createAppState } from '$lib/state.svelte';
-	import SearchActionModal from '$lib/components/SearchActionModal.svelte';
 	import EventViewModal from '$lib/components/EventViewModal.svelte';
 	import FetchConfirmModal from '$lib/components/FetchConfirmModal.svelte';
 	import SearchConfigModal from '$lib/components/SearchConfigModal.svelte';
@@ -11,7 +10,7 @@
 	// fetch-events self-starts the SSE subscription at module scope; we
 	// only need confirmState here to render the modal.
 	import { confirmState } from '$lib/network/fetch-events.svelte';
-	import type { SearchResult } from '$lib/types';
+	import type { NostrEvent, SearchResult } from '$lib/types';
 	import { getActiveStore } from '$lib/wm/buffer-store.svelte';
 
 	let { children } = $props();
@@ -63,42 +62,26 @@
 		}
 	}
 
-	function onReadEvent(r: SearchResult) {
-		app.actionModalResult = null;
-		if (r.kind === 30040 && r.addr) {
-			// Read publication: full reader with all sections.
-			spawnReader(r.addr.pubkey, r.addr.d_tag, r.title);
-			return;
-		}
-		// Sections (30041) and other events: open just this event in a
-		// single-section reader, paginated view. No parent walk, no TOC.
-		spawnEventReader(r.event_id, r.title);
+	// The unified event modal works with either a full NostrEvent or a
+	// SearchResult. handleInsertEvent wants a SearchResult — flatten a
+	// NostrEvent into one (SearchResult is a flat 9-field interface).
+	function toSearchResult(ev: NostrEvent | SearchResult): SearchResult {
+		if ('event_id' in ev) return ev;
+		const d = ev.tags.find((t) => t[0] === 'd')?.[1];
+		return {
+			addr: d ? { kind: ev.kind, pubkey: ev.pubkey, d_tag: d } : null,
+			event_id: ev.id,
+			title: ev.tags.find((t) => t[0] === 'title')?.[1] ?? null,
+			preview: ev.content,
+			author: ev.pubkey,
+			kind: ev.kind,
+			tags: ev.tags,
+			created_at: ev.created_at,
+			semantic_score: null
+		};
 	}
 
-	async function onFindContaining(r: SearchResult) {
-		app.actionModalResult = null;
-		if (!r.addr) return;
-		// Populate the visible search buffer with everything that references
-		// this address — collections for 30040s, parent indexes for 30041s,
-		// notes that quoted it, etc. Skip the by:me scope (parents may live
-		// under any author).
-		const aRef = `${r.kind}:${r.addr.pubkey}:${r.addr.d_tag}`;
-		await app.handleSearch(`a:${aRef}`, { scopeToMe: false });
-		// Make sure the search slot is visible.
-		try {
-			const store = getActiveStore();
-			const searchSlot = store.findSlotForClass('research');
-			if (searchSlot) {
-				store.focusSlot(searchSlot);
-				if (store.effectiveState(searchSlot) === 'rail') store.toggleSlot(searchSlot);
-			}
-		} catch {
-			// no store — legacy chrome
-		}
-	}
-
-	async function onInsert(r: SearchResult, mode: 'cursor' | 'append') {
-		app.actionModalResult = null;
+	async function onInsert(ev: NostrEvent | SearchResult, mode: 'cursor' | 'append') {
 		// Make sure the composer buffer is on screen so the user can see
 		// what they just inserted. If the WM store isn't available (legacy
 		// chrome), handleInsertEvent will navigate via docMode.
@@ -111,20 +94,7 @@
 		} catch {
 			// fall through
 		}
-		await app.handleInsertEvent(r, mode);
-	}
-
-	function onOpenSettings() {
-		app.actionModalResult = null;
-		try {
-			const store = getActiveStore();
-			store.openBuffer({
-				className: 'work',
-				buffer: { id: 'settings', kind: 'settings', label: 'settings', kicker: 'settings' }
-			});
-		} catch {
-			// No-op — legacy chrome doesn't have a settings buffer yet.
-		}
+		await app.handleInsertEvent(toSearchResult(ev), mode);
 	}
 </script>
 
@@ -132,23 +102,14 @@
 
 <ToastStack />
 
-{#if app.actionModalResult}
-	<SearchActionModal
-		result={app.actionModalResult}
-		insertMode={app.editorInsertMode}
-		onclose={() => (app.actionModalResult = null)}
-		onread={onReadEvent}
-		onfindcontaining={onFindContaining}
-		oninsert={onInsert}
-		onopensettings={onOpenSettings}
-	/>
-{/if}
-
 {#if app.eventModalData}
 	<EventViewModal
 		event={app.eventModalData}
+		insertMode={app.editorInsertMode}
 		onclose={() => (app.eventModalData = null)}
 		onspawnreader={spawnReader}
+		onspawneventreader={spawnEventReader}
+		oninsert={onInsert}
 		onfindcontaining={(kind, pubkey, d_tag) => {
 			// Match onFindContaining's behavior — broad `a:K:pk:d` search +
 			// pop the search slot into view. Modal closed by the component.

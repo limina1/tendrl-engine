@@ -71,9 +71,9 @@
 		return () => untrack(() => store.unregisterNavHandler(id));
 	});
 
-	// Enter / click on a result opens the action modal (read / find /
-	// insert). The actions themselves live in +layout.svelte, which owns
-	// the modal so it overlays the whole shell.
+	// Enter / click on a result opens the unified event modal
+	// (EventViewModal — read / find / insert / inspect), rendered by
+	// +layout.svelte so it overlays the whole shell.
 	//
 	// Exception: NIP-22 comments (kind 1111) and NIP-84 highlights (kind
 	// 9802) bypass the modal — they aren't standalone destinations.
@@ -84,7 +84,7 @@
 			app.handleSelectResult(result);
 			return;
 		}
-		app.actionModalResult = result;
+		app.handleViewJson(result);
 	}
 </script>
 

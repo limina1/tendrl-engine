@@ -251,12 +251,6 @@ function _createAppState() {
 	let currentEntry: ModalNavEntry | null = $state(null);
 	let previousEntry: ModalNavEntry | null = $state(null);
 
-	// --- Search action modal ---
-	// When set, the SearchActionModal overlay is open for this result.
-	// Acts as a singleton — only one modal at a time, regardless of how
-	// many SearchBuffers are open.
-	let actionModalResult: SearchResult | null = $state(null);
-
 	// --- Profile ---
 	let profilePubkey: string | null = $state(null);
 
@@ -2316,9 +2310,6 @@ function _createAppState() {
 		// Legacy JSON dump modal (buffer inspector + rawEvent)
 		get jsonModalData() { return jsonModalData; },
 		set jsonModalData(v: { buffer: Buffer } | { rawEvent: unknown } | null) { jsonModalData = v; },
-
-		get actionModalResult() { return actionModalResult; },
-		set actionModalResult(v: SearchResult | null) { actionModalResult = v; },
 
 		// Profile
 		get profilePubkey() { return profilePubkey; },

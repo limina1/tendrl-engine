@@ -1,5 +1,5 @@
 <script lang="ts">
-	import type { NostrEvent, SearchResult } from '$lib/types';
+	import type { NostrEvent, SearchResult, EditorInsertMode } from '$lib/types';
 	import ProfileName from './ProfileName.svelte';
 	import { getAppState } from '$lib/state.svelte';
 	import {
@@ -13,14 +13,21 @@
 
 	let {
 		event,
+		insertMode = 'append',
 		onclose,
 		onspawnreader,
-		onfindcontaining
+		onspawneventreader,
+		onfindcontaining,
+		oninsert
 	}: {
 		event: NostrEvent | SearchResult;
+		/** Compose insert mode for the "Insert into compose" action. */
+		insertMode?: EditorInsertMode;
 		onclose: () => void;
 		onspawnreader?: (pubkey: string, d_tag: string, label: string | null) => void;
+		onspawneventreader?: (eventId: string, label: string | null) => void;
 		onfindcontaining?: (kind: number, pubkey: string, d_tag: string) => void;
+		oninsert?: (event: NostrEvent | SearchResult, mode: EditorInsertMode) => void;
 	} = $props();
 
 	const app = getAppState();
@@ -71,6 +78,7 @@
 	const n = $derived(normalize(event));
 	const dTag = $derived(n.tags.find((t) => t[0] === 'd')?.[1] ?? null);
 	const addrRef = $derived(dTag ? `${n.kind}:${n.pubkey}:${dTag}` : null);
+	let tagsOpen = $state(false);
 	let rawOpen = $state(false);
 
 	// Containing publications — kind-30040 indexes that reference the
@@ -78,8 +86,22 @@
 	// or `#e`. Refetched on every event swap; the app-level cache makes
 	// repeat visits cheap. Hidden entirely for kinds where the lookup
 	// isn't meaningful (anything outside 30041/30818/30040/30023).
-	const CONTAINING_KINDS = new Set([30041, 30818, 30040, 30023]);
-	const containingApplicable = $derived(CONTAINING_KINDS.has(n.kind));
+	const ZETTEL_KINDS = new Set([30041, 30818, 30040, 30023]);
+	const containingApplicable = $derived(ZETTEL_KINDS.has(n.kind));
+	const isZettel = $derived(ZETTEL_KINDS.has(n.kind));
+
+	// Kind-aware label for the primary "Read" action.
+	const readLabel = $derived(
+		n.kind === 30040
+			? 'Read publication'
+			: n.kind === 30041
+				? 'Read section'
+				: n.kind === 30023
+					? 'Read article'
+					: n.kind === 30818
+						? 'Read wiki page'
+						: 'Read event'
+	);
 	let containingStatus: 'idle' | 'loading' | 'loaded' | 'failed' = $state('idle');
 	let containingIndexes: { id: string; pubkey: string; d_tag: string; title: string }[] = $state([]);
 
@@ -105,15 +127,67 @@
 		});
 	});
 
-	function onClickContaining(idx: { pubkey: string; d_tag: string; title: string }) {
+	// Clicking a containing publication recurses into *its* JSON within this
+	// same modal — chained via the breadcrumb so the reader can climb the
+	// reference graph one index at a time and step back down. The per-row
+	// "read" button keeps the old escape-to-reader behaviour.
+	function onRecurseContaining(idx: { id: string }) {
+		pushBreadcrumb();
+		pendingNavTarget = idx.id.toLowerCase();
+		app.getEventForModal(idx.id);
+	}
+
+	function onReadContaining(idx: { pubkey: string; d_tag: string; title: string }) {
 		onclose();
 		onspawnreader?.(idx.pubkey, idx.d_tag, idx.title);
 	}
 
-	function onClickShowAllRefs() {
+	// ===== Primary actions =====
+
+	function onReadAction() {
+		onclose();
+		if (n.kind === 30040 && dTag) {
+			onspawnreader?.(n.pubkey, dTag, n.title);
+		} else {
+			onspawneventreader?.(n.id, n.title);
+		}
+	}
+
+	function onFindAction() {
 		if (!dTag) return;
 		onclose();
 		onfindcontaining?.(n.kind, n.pubkey, dTag);
+	}
+
+	function onInsertAction() {
+		if (!isZettel) return;
+		onclose();
+		oninsert?.(event, insertMode);
+	}
+
+	function onModalKeydown(e: KeyboardEvent) {
+		if (e.key === 'Escape') {
+			e.preventDefault();
+			onclose();
+			return;
+		}
+		// Action hotkeys — the modal has no text inputs, so bare letters
+		// are safe.
+		const k = e.key.toLowerCase();
+		if (k === 'r') {
+			e.preventDefault();
+			onReadAction();
+		} else if (k === 'f' && dTag) {
+			e.preventDefault();
+			onFindAction();
+		} else if (k === 'i' && isZettel) {
+			e.preventDefault();
+			onInsertAction();
+		}
+	}
+
+	function focusModal(el: HTMLElement) {
+		el.focus();
 	}
 
 	// Breadcrumb reset: when n.id changes, if it isn't the expected chained
@@ -290,7 +364,14 @@
 
 <!-- svelte-ignore a11y_click_events_have_key_events -->
 <div class="evm-backdrop" onclick={onclose} role="presentation">
-	<div class="evm" onclick={(e) => e.stopPropagation()} role="dialog" tabindex="-1">
+	<div
+		class="evm"
+		onclick={(e) => e.stopPropagation()}
+		onkeydown={onModalKeydown}
+		role="dialog"
+		tabindex="-1"
+		use:focusModal
+	>
 		<header class="evm__header">
 			<div class="evm__title-row">
 				<span class="evm__title">{n.title ?? '[Untitled]'}</span>
@@ -314,6 +395,33 @@
 				<span class="evm__crumb evm__crumb--current">{n.title ?? shortHex(n.id, 6, 4)}</span>
 			</nav>
 		{/if}
+
+		<section class="evm__section">
+			<h3 class="evm__heading">Actions</h3>
+			<div class="evm__actions">
+				<button class="evm__action" onclick={onReadAction}>
+					<span class="evm__action-key">r</span>
+					<span class="evm__action-label">{readLabel}</span>
+				</button>
+				{#if dTag}
+					<button class="evm__action" onclick={onFindAction}>
+						<span class="evm__action-key">f</span>
+						<span class="evm__action-label">Find containing publications</span>
+					</button>
+				{/if}
+				{#if isZettel}
+					<button class="evm__action" onclick={onInsertAction}>
+						<span class="evm__action-key">i</span>
+						<span class="evm__action-label">Insert into compose</span>
+					</button>
+				{/if}
+			</div>
+		</section>
+
+		<!-- POOL block — Phase B. Pool-membership controls (context /
+		     compose / refs fillable squares, locked/forked state, drop-
+		     from-pool) land here once the reference pool exists. See
+		     docs/event-view-modal-plan.md "v2" + reference-pool-worksheet.md. -->
 
 		<section class="evm__section">
 			<h3 class="evm__heading">Copy as</h3>
@@ -377,35 +485,40 @@
 		</section>
 
 		<section class="evm__section">
-			<h3 class="evm__heading">Tags <span class="evm__heading-meta">({tagChips.length})</span></h3>
-			{#if tagChips.length === 0}
-				<div class="evm__placeholder">No tags.</div>
-			{:else}
-				<div class="evm__chips">
-					{#each tagChips as tag, i (i)}
-						{@const action = tagAction(tag)}
-						{@const clickable = action.kind !== 'none'}
-						{#if clickable}
-							<!-- svelte-ignore a11y_click_events_have_key_events -->
-							<button
-								class="evm__chip evm__chip--{tag[0]} evm__chip--clickable"
-								onclick={() => onTagClick(tag)}
-								title="{tag[0]}: {tag[1] ?? ''}"
-							>
-								<span class="evm__chip-key">{tag[0]}</span>
-								<span class="evm__chip-val">{tag[1] ?? ''}</span>
-							</button>
-						{:else}
-							<span
-								class="evm__chip evm__chip--{tag[0]}"
-								title="{tag[0]}: {tag[1] ?? ''}"
-							>
-								<span class="evm__chip-key">{tag[0]}</span>
-								<span class="evm__chip-val">{tag[1] ?? ''}</span>
-							</span>
-						{/if}
-					{/each}
-				</div>
+			<button class="evm__raw-toggle" onclick={() => (tagsOpen = !tagsOpen)}>
+				<span class="evm__raw-arrow" class:open={tagsOpen}>{tagsOpen ? '▾' : '▸'}</span>
+				Tags <span class="evm__heading-meta">({tagChips.length})</span>
+			</button>
+			{#if tagsOpen}
+				{#if tagChips.length === 0}
+					<div class="evm__placeholder">No tags.</div>
+				{:else}
+					<div class="evm__chips">
+						{#each tagChips as tag, i (i)}
+							{@const action = tagAction(tag)}
+							{@const clickable = action.kind !== 'none'}
+							{#if clickable}
+								<!-- svelte-ignore a11y_click_events_have_key_events -->
+								<button
+									class="evm__chip evm__chip--{tag[0]} evm__chip--clickable"
+									onclick={() => onTagClick(tag)}
+									title="{tag[0]}: {tag[1] ?? ''}"
+								>
+									<span class="evm__chip-key">{tag[0]}</span>
+									<span class="evm__chip-val">{tag[1] ?? ''}</span>
+								</button>
+							{:else}
+								<span
+									class="evm__chip evm__chip--{tag[0]}"
+									title="{tag[0]}: {tag[1] ?? ''}"
+								>
+									<span class="evm__chip-key">{tag[0]}</span>
+									<span class="evm__chip-val">{tag[1] ?? ''}</span>
+								</span>
+							{/if}
+						{/each}
+					</div>
+				{/if}
 			{/if}
 		</section>
 
@@ -426,26 +539,27 @@
 				{:else}
 					<div class="evm__containing">
 						{#each containingIndexes as idx (idx.id)}
-							<button
-								class="evm__containing-btn"
-								onclick={() => onClickContaining(idx)}
-								title="Open publication: {idx.title}"
-							>
-								<span class="evm__containing-title">{idx.title}</span>
-								<span class="evm__containing-dtag">{idx.d_tag}</span>
-							</button>
+							<div class="evm__containing-row">
+								<button
+									class="evm__containing-btn"
+									onclick={() => onRecurseContaining(idx)}
+									title="View JSON for {idx.title} — climb to this index"
+								>
+									<span class="evm__containing-title">{idx.title}</span>
+									<span class="evm__containing-dtag">{idx.d_tag}</span>
+								</button>
+								<button
+									class="evm__containing-read"
+									onclick={() => onReadContaining(idx)}
+									title="Open {idx.title} in the reader"
+								>read</button>
+							</div>
 						{/each}
 					</div>
-				{/if}
-				{#if dTag}
-					<button class="evm__show-all" onclick={onClickShowAllRefs}>
-						Show all references →
-					</button>
-				{/if}
-			</section>
+				{/if}			</section>
 		{/if}
 
-		<section class="evm__section evm__section--raw">
+		<section class="evm__section">
 			<button class="evm__raw-toggle" onclick={() => (rawOpen = !rawOpen)}>
 				<span class="evm__raw-arrow" class:open={rawOpen}>{rawOpen ? '▾' : '▸'}</span>
 				Raw JSON
@@ -478,7 +592,10 @@
 		max-height: 80vh;
 		display: flex;
 		flex-direction: column;
-		overflow: hidden;
+		/* One scroll container for the whole modal — sections flow at their
+		   natural height; Raw JSON doesn't get a cramped scroll box of its
+		   own (it's often tiny). */
+		overflow-y: auto;
 	}
 
 	.evm__header {
@@ -582,12 +699,6 @@
 		border-bottom: none;
 	}
 
-	.evm__section--raw {
-		flex: 1;
-		min-height: 0;
-		overflow-y: auto;
-	}
-
 	.evm__heading {
 		font-size: 0.7rem;
 		text-transform: uppercase;
@@ -614,7 +725,13 @@
 		gap: 4px;
 		margin-bottom: 6px;
 	}
+	.evm__containing-row {
+		display: flex;
+		gap: 4px;
+	}
 	.evm__containing-btn {
+		flex: 1;
+		min-width: 0;
 		display: flex;
 		align-items: center;
 		gap: 10px;
@@ -629,6 +746,20 @@
 	}
 	.evm__containing-btn:hover {
 		background: color-mix(in srgb, var(--id-yours) 12%, transparent);
+		border-color: var(--id-yours);
+	}
+	.evm__containing-read {
+		flex-shrink: 0;
+		background: none;
+		border: 1px solid var(--border);
+		border-radius: var(--r-sm);
+		padding: 0 10px;
+		cursor: pointer;
+		color: var(--fg-muted);
+		font-size: 0.72rem;
+	}
+	.evm__containing-read:hover {
+		color: var(--id-yours);
 		border-color: var(--id-yours);
 	}
 	.evm__containing-title {
@@ -647,18 +778,36 @@
 		text-overflow: ellipsis;
 		white-space: nowrap;
 	}
-	.evm__show-all {
-		background: none;
-		border: none;
-		color: var(--id-yours);
-		font-family: inherit;
-		font-size: 0.72rem;
-		padding: 2px 0;
-		cursor: pointer;
-		text-align: left;
+	.evm__actions {
+		display: flex;
+		flex-direction: column;
+		gap: 2px;
 	}
-	.evm__show-all:hover {
-		text-decoration: underline;
+	.evm__action {
+		display: flex;
+		align-items: baseline;
+		gap: 10px;
+		background: none;
+		border: 1px solid transparent;
+		border-radius: var(--r-sm);
+		padding: 6px 8px;
+		text-align: left;
+		cursor: pointer;
+		color: var(--fg);
+		font-size: 0.82rem;
+	}
+	.evm__action:hover {
+		background: color-mix(in srgb, var(--id-yours) 12%, transparent);
+		border-color: var(--id-yours);
+	}
+	.evm__action-key {
+		font-family: var(--font-mono);
+		font-size: 0.7rem;
+		color: var(--fg-muted);
+		min-width: 12px;
+	}
+	.evm__action-label {
+		flex: 1;
 	}
 
 	/* Identifiers block — compact "Copy as" pill bar. Each pill is a
