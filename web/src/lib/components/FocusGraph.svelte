@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { untrack } from 'svelte';
 	import type { NAddr } from '$lib/types';
 
 	/** A 30040 node in the publication reference graph. `childKeys` are the
@@ -32,13 +33,67 @@
 	const ROW_H = 60;
 	const NODE_W = 134;
 	const NODE_H = 38;
+	const TAB_W = 22;
+	const TAB_H = 15;
 
 	const pathSet = $derived(new Set(pathKeys));
+	const hasChildren = (k: string) => (nodes[k]?.childKeys.length ?? 0) > 0;
 
-	// Lay the graph out left-to-right: BFS depth from the root sets the
-	// column, the indexes within a level stack down the column. Edges to a
-	// shallower-or-equal depth are back-edges — the cycles the loader's
-	// guard stops at.
+	// Which index nodes are unpacked. Collapsed by default — a node's child
+	// indexes show only once it (and its ancestors) are expanded.
+	let expanded = $state(new Set<string>());
+
+	// Full-graph BFS, collapse-blind: gives every node a structural parent so
+	// the path to the current focus can be auto-unpacked.
+	const fullParent = $derived.by(() => {
+		const parent = new Map<string, string>();
+		const seen = new Set<string>([rootKey]);
+		const queue: string[] = nodes[rootKey] ? [rootKey] : [];
+		while (queue.length) {
+			const k = queue.shift()!;
+			for (const ck of nodes[k]?.childKeys ?? []) {
+				if (!nodes[ck] || seen.has(ck)) continue;
+				seen.add(ck);
+				parent.set(ck, k);
+				queue.push(ck);
+			}
+		}
+		return parent;
+	});
+
+	// Keep the root and the chain of ancestors above the current focus
+	// unpacked, so refocusing always reveals where the reader is. Everything
+	// off that path stays collapsed until the reader opens it.
+	$effect(() => {
+		currentKey;
+		rootKey;
+		fullParent;
+		untrack(() => {
+			const next = new Set(expanded);
+			next.add(rootKey);
+			let cur: string | undefined = currentKey;
+			let guard = 0;
+			while (cur && guard++ < 64) {
+				const p = fullParent.get(cur);
+				if (!p) break;
+				next.add(p);
+				cur = p;
+			}
+			if (next.size !== expanded.size) expanded = next;
+		});
+	});
+
+	function toggle(k: string) {
+		const next = new Set(expanded);
+		if (next.has(k)) next.delete(k);
+		else next.add(k);
+		expanded = next;
+	}
+
+	// Lay the graph out left-to-right: BFS from the root sets the column,
+	// the indexes within a level stack down the column. A collapsed node is
+	// a dead end — its children are not laid out. Edges to a shallower-or-
+	// equal depth are back-edges — the cycles the loader's guard stops at.
 	const layout = $derived.by(() => {
 		const depth = new Map<string, number>();
 		const order: string[] = [];
@@ -50,22 +105,11 @@
 		while (queue.length) {
 			const k = queue.shift()!;
 			order.push(k);
-			const n = nodes[k];
-			if (!n) continue;
-			for (const ck of n.childKeys) {
-				if (!depth.has(ck) && nodes[ck]) {
-					depth.set(ck, (depth.get(k) ?? 0) + 1);
-					queue.push(ck);
-				}
-			}
-		}
-		// Nodes never reached from the root (disjoint) land on a trailing row.
-		let maxD = 0;
-		for (const d of depth.values()) maxD = Math.max(maxD, d);
-		for (const k of Object.keys(nodes)) {
-			if (!depth.has(k)) {
-				depth.set(k, maxD + 1);
-				order.push(k);
+			if (!expanded.has(k)) continue; // collapsed — children stay packed
+			for (const ck of nodes[k]?.childKeys ?? []) {
+				if (!nodes[ck] || depth.has(ck)) continue;
+				depth.set(ck, (depth.get(k) ?? 0) + 1);
+				queue.push(ck);
 			}
 		}
 		const byDepth = new Map<number, string[]>();
@@ -83,7 +127,7 @@
 			});
 		}
 		const edges: { from: string; to: string; back: boolean }[] = [];
-		for (const k of Object.keys(nodes)) {
+		for (const k of pos.keys()) {
 			const fd = depth.get(k) ?? 0;
 			for (const ck of nodes[k].childKeys) {
 				if (!pos.has(ck)) continue;
@@ -115,7 +159,7 @@
 <div class="fg">
 	<div class="fg__head">
 		<span class="fg__title">Reference graph</span>
-		<span class="fg__hint">click a node to refocus · ↻ = cyclic reference</span>
+		<span class="fg__hint">click a node to refocus · ⊞ corner tab unpacks · ↻ = cyclic</span>
 		<button class="fg__close" onclick={onclose} title="Close the graph panel">✕</button>
 	</div>
 	<div class="fg__body">
@@ -133,31 +177,75 @@
 				{/each}
 				{#each [...layout.pos] as [k, p] (k)}
 					{@const node = nodes[k]}
+					{@const expandable = hasChildren(k)}
+					{@const open = expanded.has(k)}
 					<g
 						class="fg__node"
 						class:fg__node--current={k === currentKey}
 						class:fg__node--path={k !== currentKey && pathSet.has(k)}
 						class:fg__node--stub={!node?.title}
-						role="button"
-						tabindex="0"
-						onclick={() => node && onnavigate(node.addr)}
-						onkeydown={(ev) => {
-							if ((ev.key === 'Enter' || ev.key === ' ') && node) {
-								ev.preventDefault();
-								onnavigate(node.addr);
-							}
-						}}
 					>
 						<rect
+							class="fg__box"
 							x={p.x - NODE_W / 2}
 							y={p.y - NODE_H / 2}
 							width={NODE_W}
 							height={NODE_H}
 							rx="6"
+							role="button"
+							tabindex="0"
+							aria-label="Refocus on {label(k)}"
+							onclick={() => node && onnavigate(node.addr)}
+							onkeydown={(ev) => {
+								if ((ev.key === 'Enter' || ev.key === ' ') && node) {
+									ev.preventDefault();
+									onnavigate(node.addr);
+								}
+							}}
 						/>
-						<text x={p.x} y={p.y} dominant-baseline="central" text-anchor="middle"
-							>{label(k)}</text
+						<text
+							class="fg__label"
+							x={p.x}
+							y={p.y}
+							dominant-baseline="central"
+							text-anchor="middle">{label(k)}</text
 						>
+						{#if expandable}
+							<!-- Bottom-right corner tab: unpacks this index's
+							     nested indexes. Collapsed by default. -->
+							<g
+								class="fg__tab"
+								class:fg__tab--open={open}
+								role="button"
+								tabindex="0"
+								aria-label="{open ? 'Collapse' : 'Expand'} {label(k)}"
+								onclick={(ev) => {
+									ev.stopPropagation();
+									toggle(k);
+								}}
+								onkeydown={(ev) => {
+									if (ev.key === 'Enter' || ev.key === ' ') {
+										ev.preventDefault();
+										ev.stopPropagation();
+										toggle(k);
+									}
+								}}
+							>
+								<rect
+									x={p.x + NODE_W / 2 - TAB_W}
+									y={p.y + NODE_H / 2 - TAB_H}
+									width={TAB_W}
+									height={TAB_H}
+									rx="3"
+								/>
+								<text
+									x={p.x + NODE_W / 2 - TAB_W / 2}
+									y={p.y + NODE_H / 2 - TAB_H / 2 + 0.5}
+									dominant-baseline="central"
+									text-anchor="middle">{open ? '−' : '+'}</text
+								>
+							</g>
+						{/if}
 					</g>
 				{/each}
 			</svg>
@@ -226,30 +314,53 @@
 		opacity: 0.7;
 	}
 
-	.fg__node { cursor: pointer; }
-	.fg__node rect {
+	.fg__box {
 		fill: var(--panel-bg);
 		stroke: var(--base4);
 		stroke-width: 1.5;
+		cursor: pointer;
 	}
-	.fg__node text {
+	.fg__label {
 		fill: var(--fg);
 		font-family: var(--font-mono);
 		font-size: 11px;
+		pointer-events: none;
 	}
-	.fg__node:hover rect { stroke: var(--id-yours); }
-	.fg__node--stub rect { stroke-dasharray: 3 3; }
-	.fg__node--stub text { fill: var(--base5); }
+	.fg__node:hover .fg__box { stroke: var(--id-yours); }
+	.fg__node--stub .fg__box { stroke-dasharray: 3 3; }
+	.fg__node--stub .fg__label { fill: var(--base5); }
 	/* On the breadcrumb path to the current focus. */
-	.fg__node--path rect {
+	.fg__node--path .fg__box {
 		stroke: var(--id-yours);
 		fill: color-mix(in srgb, var(--id-yours) 10%, var(--panel-bg));
 	}
 	/* The current focus. */
-	.fg__node--current rect {
+	.fg__node--current .fg__box {
 		stroke: var(--id-yours);
 		stroke-width: 2.5;
 		fill: color-mix(in srgb, var(--id-yours) 24%, var(--panel-bg));
 	}
-	.fg__node--current text { fill: var(--base6); font-weight: 700; }
+	.fg__node--current .fg__label { fill: var(--base6); font-weight: 700; }
+
+	/* Corner expand tab. */
+	.fg__tab { cursor: pointer; }
+	.fg__tab rect {
+		fill: var(--panel-bg-soft);
+		stroke: var(--base4);
+		stroke-width: 1;
+	}
+	.fg__tab text {
+		fill: var(--base5);
+		font-family: var(--font-mono);
+		font-size: 13px;
+		font-weight: 700;
+		pointer-events: none;
+	}
+	.fg__tab:hover rect { stroke: var(--id-yours); }
+	.fg__tab:hover text { fill: var(--id-yours); }
+	.fg__tab--open rect {
+		fill: color-mix(in srgb, var(--id-yours) 18%, var(--panel-bg));
+		stroke: var(--id-yours);
+	}
+	.fg__tab--open text { fill: var(--id-yours); }
 </style>
