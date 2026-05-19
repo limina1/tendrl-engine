@@ -1,5 +1,4 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
 	import type { LazySection } from '$lib/types';
 
 	import CommentThread from './CommentThread.svelte';
@@ -17,6 +16,7 @@
 		sections,
 		publication = null,
 		onload,
+		onrefocus = null,
 		onviewjson,
 		highlightsFor = null,
 		focusedHighlightId = null,
@@ -26,6 +26,8 @@
 		sections: LazySection[];
 		publication?: { title: string | null; summary: string | null } | null;
 		onload?: (index: number) => void;
+		/** Refocus the reader on a nested 30040 index encountered inline. */
+		onrefocus?: ((section: LazySection) => void) | null;
 		/** Kebab affordance per section — opens the section's underlying
 		 *  event in the structured JSON modal. */
 		onviewjson?: (section: LazySection) => void;
@@ -46,15 +48,98 @@
 		return `background: ${fill}; box-shadow: inset 3px 0 0 ${stroke};`;
 	}
 
+	function addrKey(addr: { kind: number; pubkey: string; d_tag: string }): string {
+		return `${addr.kind}:${addr.pubkey}:${addr.d_tag}`;
+	}
+
+	// ── Tree collapse model ─────────────────────────────────────────────
+	// `sections` is the depth-N TOC flattened depth-first: a 30040 index
+	// entry is immediately followed by its descendants (greater `depth`)
+	// until the next entry at its own depth or shallower. The continuous
+	// view honours that shape — a nested 30040 is a collapsible folder, not
+	// a flat dump of every leaf. Indices start collapsed, so the reader
+	// sees one level (the indices + their 30041 leaves) and expands deeper
+	// levels deliberately — by index, or all at once.
+	let expandedByAddr = $state<Record<string, boolean>>({});
+	function isExpanded(addr: { kind: number; pubkey: string; d_tag: string }): boolean {
+		return expandedByAddr[addrKey(addr)] ?? false;
+	}
+	function toggleIndex(addr: { kind: number; pubkey: string; d_tag: string }) {
+		const k = addrKey(addr);
+		expandedByAddr = { ...expandedByAddr, [k]: !(expandedByAddr[k] ?? false) };
+	}
+
+	const isIndex = (s: LazySection) => s.addr?.kind === 30040;
+
+	// Per-index child bookkeeping, keyed by the entry's position in
+	// `sections`: how many *direct* children (one level down) it carries
+	// and whether any descendants were loaded at all. An index with zero
+	// descendants sits beyond the depth horizon — it can only be reached
+	// by refocusing, not expanded in place.
+	const childInfo = $derived.by(() => {
+		const info = new Map<number, { direct: number; descendants: number }>();
+		for (let i = 0; i < sections.length; i++) {
+			if (!isIndex(sections[i])) continue;
+			const d = sections[i].depth ?? 0;
+			let direct = 0;
+			let descendants = 0;
+			for (let j = i + 1; j < sections.length; j++) {
+				const dj = sections[j].depth ?? 0;
+				if (dj <= d) break;
+				descendants++;
+				if (dj === d + 1) direct++;
+			}
+			info.set(i, { direct, descendants });
+		}
+		return info;
+	});
+
+	const indexCount = $derived(sections.filter(isIndex).length);
+
+	// Flatten the tree to the rows actually on screen: skip every entry
+	// that sits under a collapsed index. `hideDeeperThan` holds the depth
+	// of the nearest collapsed ancestor; any entry deeper than it is
+	// hidden until an entry at that depth or shallower closes the run.
+	const visibleRows = $derived.by(() => {
+		const rows: { section: LazySection; index: number }[] = [];
+		let hideDeeperThan: number | null = null;
+		for (let i = 0; i < sections.length; i++) {
+			const s = sections[i];
+			const d = s.depth ?? 0;
+			if (hideDeeperThan !== null) {
+				if (d > hideDeeperThan) continue;
+				hideDeeperThan = null;
+			}
+			rows.push({ section: s, index: i });
+			if (
+				isIndex(s) &&
+				s.addr &&
+				!isExpanded(s.addr) &&
+				(childInfo.get(i)?.descendants ?? 0) > 0
+			) {
+				hideDeeperThan = d;
+			}
+		}
+		return rows;
+	});
+
+	function expandAll() {
+		const next: Record<string, boolean> = {};
+		for (const s of sections) {
+			if (isIndex(s) && s.addr) next[addrKey(s.addr)] = true;
+		}
+		expandedByAddr = next;
+	}
+	function collapseAll() {
+		expandedByAddr = {};
+	}
+
 	// Per-section thread toggles, keyed by addr string. Each section's
 	// thread block can be collapsed independently in the continuous
 	// view since they're all on screen at the same time. Closed by
 	// default — auto-open below if a section contains the focused
 	// comment from a `?focus_comment=<id>` marker.
 	let threadOpenByAddr = $state<Record<string, boolean>>({});
-	function addrKey(addr: { kind: number; pubkey: string; d_tag: string }): string {
-		return `${addr.kind}:${addr.pubkey}:${addr.d_tag}`;
-	}
 	function isThreadOpen(addr: { kind: number; pubkey: string; d_tag: string }): boolean {
 		return threadOpenByAddr[addrKey(addr)] ?? false;
 	}
@@ -76,8 +161,13 @@
 
 	let containerEl: HTMLDivElement | undefined = $state();
 
-	onMount(() => {
+	// Visibility-driven lazy load. Re-runs whenever `visibleRows` changes
+	// so sections revealed by an expand get observed too — a one-shot
+	// onMount observer would miss every row mounted after a toggle.
+	$effect(() => {
 		if (!containerEl || !onload) return;
+		// Depend on the visible set so the observer is rebuilt on expand.
+		visibleRows;
 
 		const observer = new IntersectionObserver(
 			(entries) => {
@@ -100,9 +190,9 @@
 			}
 		);
 
-		// Observe all section containers
-		const sectionEls = containerEl.querySelectorAll('[data-section-index]');
-		sectionEls.forEach((el) => observer.observe(el));
+		containerEl
+			.querySelectorAll('[data-section-index]')
+			.forEach((el) => observer.observe(el));
 
 		return () => observer.disconnect();
 	});
@@ -117,61 +207,111 @@
 		<hr class="pub-divider" />
 	{/if}
 
-	{#each sections as section, i (`${i}:${section.addr?.pubkey ?? ''}:${section.addr?.d_tag ?? ''}`)}
-		<div
-			class="continuous-section"
-			data-section-index={i}
-			data-section-addr={section.addr ? `${section.addr.kind}:${section.addr.pubkey}:${section.addr.d_tag}` : undefined}
-		>
-			{#if section.title || onviewjson}
-				<h3 class="section-title">
-					{section.title ?? ''}
-					{#if onviewjson}
-						<button
-							class="section-kebab"
-							onclick={() => onviewjson?.(section)}
-							title="Open this section's raw event in the JSON viewer"
-						>⋮</button>
-					{/if}
-				</h3>
-			{/if}
-			{#if section.status === 'loaded' && section.content}
-				{@const hls = highlightsFor && section.addr ? highlightsFor(section.addr) : []}
-				{@const segs = hls.length > 0
-					? computeHighlightSegments(section.content, hls, focusedHighlightId)
-					: null}
-				{#if segs && segs.some((s) => s.highlight !== null)}
-					<pre class="section-content">{#each segs as seg, si (si)}{#if seg.highlight}<mark class="hl-overlay" data-hl-ids={seg.highlight.id} style={styleFor(seg.highlight.pubkey, seg.highlight.focused)} title="NIP-84 highlight {seg.highlight.id.slice(0, 8)}… by {seg.highlight.pubkey.slice(0, 12)}…">{seg.text}</mark>{:else}{seg.text}{/if}{/each}</pre>
-				{:else}
-					<pre class="section-content">{section.content}</pre>
-				{/if}
-			{:else if section.status === 'loading'}
-				<div class="skeleton"></div>
-			{:else if section.status === 'error'}
-				<p class="section-error">{section.error ?? 'Failed to load'}</p>
-			{:else}
-				<div class="skeleton pending"></div>
-			{/if}
-			{#if threadsFor && section.addr}
-				{@const t = threadsFor(section.addr)}
-				{#if t.length > 0}
-					<div class="cv-threads">
-						<button
-							class="cv-threads-head"
-							onclick={() => toggleThread(section.addr)}
-							aria-expanded={isThreadOpen(section.addr)}
-						>
-							<span class="ptr">{isThreadOpen(section.addr) ? '▾' : '▸'}</span>
-							Comments ({t.length})
-						</button>
-						{#if isThreadOpen(section.addr)}
-							<CommentThread nodes={t} focusedEventId={focusedCommentId} />
-						{/if}
-					</div>
-				{/if}
-			{/if}
+	{#if indexCount > 0}
+		<div class="cv-treebar">
+			<span class="cv-treebar__label">{indexCount} nested {indexCount === 1 ? 'index' : 'indexes'}</span>
+			<span class="cv-treebar__spacer"></span>
+			<button class="cv-treebar__btn" onclick={expandAll}>Expand all</button>
+			<button class="cv-treebar__btn" onclick={collapseAll}>Collapse all</button>
 		</div>
-		{#if i < sections.length - 1}
+	{/if}
+
+	{#each visibleRows as row, ri (`${row.index}:${row.section.addr?.pubkey ?? ''}:${row.section.addr?.d_tag ?? ''}`)}
+		{@const section = row.section}
+		{@const i = row.index}
+		{#if isIndex(section)}
+			{@const info = childInfo.get(i)}
+			{@const direct = info?.direct ?? 0}
+			{@const loadable = (info?.descendants ?? 0) > 0}
+			{@const open = section.addr ? isExpanded(section.addr) : false}
+			<div class="cv-index" class:cv-index--open={open} style="--depth:{section.depth ?? 0}">
+				<button
+					class="cv-index__main"
+					onclick={() => section.addr && toggleIndex(section.addr)}
+					disabled={!loadable}
+					aria-expanded={open}
+					title={loadable
+						? open
+							? 'Collapse this nested publication'
+							: 'Expand this nested publication'
+						: 'Nested publication — refocus to load its contents'}
+				>
+					<span class="cv-index__caret" aria-hidden="true"
+						>{loadable ? (open ? '▾' : '▸') : '·'}</span
+					>
+					<span class="cv-index__icon" aria-hidden="true">⊞</span>
+					<span class="cv-index__title">{section.title || 'Nested publication'}</span>
+					{#if loadable}
+						<span class="cv-index__count">{direct} {direct === 1 ? 'item' : 'items'}</span>
+					{:else}
+						<span class="cv-index__count cv-index__count--empty">not loaded</span>
+					{/if}
+				</button>
+				{#if onrefocus}
+					<button
+						class="cv-index__refocus"
+						onclick={() => onrefocus?.(section)}
+						title="Refocus the reader on this nested publication"
+					>refocus ⟳</button>
+				{/if}
+			</div>
+		{:else}
+			<div
+				class="continuous-section"
+				style="--depth:{section.depth ?? 0}"
+				data-section-index={i}
+				data-section-addr={section.addr ? `${section.addr.kind}:${section.addr.pubkey}:${section.addr.d_tag}` : undefined}
+			>
+				{#if section.title || onviewjson}
+					<h3 class="section-title">
+						{section.title ?? ''}
+						{#if onviewjson}
+							<button
+								class="section-kebab"
+								onclick={() => onviewjson?.(section)}
+								title="Open this section's raw event in the JSON viewer"
+							>⋮</button>
+						{/if}
+					</h3>
+				{/if}
+				{#if section.status === 'loaded' && section.content}
+					{@const hls = highlightsFor && section.addr ? highlightsFor(section.addr) : []}
+					{@const segs = hls.length > 0
+						? computeHighlightSegments(section.content, hls, focusedHighlightId)
+						: null}
+					{#if segs && segs.some((s) => s.highlight !== null)}
+						<pre class="section-content">{#each segs as seg, si (si)}{#if seg.highlight}<mark class="hl-overlay" data-hl-ids={seg.highlight.id} style={styleFor(seg.highlight.pubkey, seg.highlight.focused)} title="NIP-84 highlight {seg.highlight.id.slice(0, 8)}… by {seg.highlight.pubkey.slice(0, 12)}…">{seg.text}</mark>{:else}{seg.text}{/if}{/each}</pre>
+					{:else}
+						<pre class="section-content">{section.content}</pre>
+					{/if}
+				{:else if section.status === 'loading'}
+					<div class="skeleton"></div>
+				{:else if section.status === 'error'}
+					<p class="section-error">{section.error ?? 'Failed to load'}</p>
+				{:else}
+					<div class="skeleton pending"></div>
+				{/if}
+				{#if threadsFor && section.addr}
+					{@const t = threadsFor(section.addr)}
+					{#if t.length > 0}
+						<div class="cv-threads">
+							<button
+								class="cv-threads-head"
+								onclick={() => toggleThread(section.addr)}
+								aria-expanded={isThreadOpen(section.addr)}
+							>
+								<span class="ptr">{isThreadOpen(section.addr) ? '▾' : '▸'}</span>
+								Comments ({t.length})
+							</button>
+							{#if isThreadOpen(section.addr)}
+								<CommentThread nodes={t} focusedEventId={focusedCommentId} />
+							{/if}
+						</div>
+					{/if}
+				{/if}
+			</div>
+		{/if}
+		{#if ri < visibleRows.length - 1 && !isIndex(section)}
 			<hr class="section-divider" />
 		{/if}
 	{/each}
@@ -207,8 +347,114 @@
 		margin: 12px 0;
 	}
 
+	/* Tree controls — expand/collapse the whole nested structure at once. */
+	.cv-treebar {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		margin: 0 0 10px 0;
+		padding-bottom: 8px;
+		border-bottom: 1px solid var(--border);
+	}
+	.cv-treebar__label {
+		font-family: var(--font-mono);
+		font-size: 0.68rem;
+		text-transform: uppercase;
+		letter-spacing: 0.06em;
+		color: var(--fg-muted);
+	}
+	.cv-treebar__spacer { flex: 1; }
+	.cv-treebar__btn {
+		background: none;
+		border: 1px solid var(--border);
+		color: var(--fg-muted);
+		font-family: var(--font-mono);
+		font-size: 0.68rem;
+		text-transform: uppercase;
+		letter-spacing: 0.04em;
+		padding: 2px 8px;
+		border-radius: var(--radius);
+		cursor: pointer;
+	}
+	.cv-treebar__btn:hover {
+		border-color: var(--id-yours);
+		color: var(--id-yours);
+	}
+
 	.continuous-section {
 		padding: 8px 0;
+		padding-left: calc(var(--depth, 0) * 18px);
+	}
+
+	/* Inline nested-publication node — a collapsible folder. The caret
+	   expands its children inline; `refocus` re-roots the reader on it. */
+	.cv-index {
+		display: flex;
+		align-items: stretch;
+		gap: 6px;
+		margin: 6px 0;
+		margin-left: calc(var(--depth, 0) * 18px);
+	}
+	.cv-index__main {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		flex: 1;
+		min-width: 0;
+		padding: 8px 12px;
+		border: 1px dashed var(--border);
+		border-radius: var(--radius);
+		background: color-mix(in srgb, var(--id-yours) 6%, transparent);
+		color: var(--fg);
+		cursor: pointer;
+		text-align: left;
+	}
+	.cv-index__main:hover:not(:disabled) {
+		border-color: var(--id-yours);
+		background: color-mix(in srgb, var(--id-yours) 12%, transparent);
+	}
+	.cv-index__main:disabled { cursor: default; opacity: 0.65; }
+	.cv-index--open .cv-index__main {
+		border-style: solid;
+		background: color-mix(in srgb, var(--id-yours) 10%, transparent);
+	}
+	.cv-index__caret {
+		min-width: 1ch;
+		color: var(--id-yours);
+		font-size: 0.8rem;
+	}
+	.cv-index__icon { color: var(--id-yours); font-size: 1.1rem; }
+	.cv-index__title {
+		font-weight: 600;
+		font-size: 0.9rem;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+	.cv-index__count {
+		margin-left: auto;
+		font-family: var(--font-mono);
+		font-size: 0.68rem;
+		color: var(--fg-muted);
+		white-space: nowrap;
+	}
+	.cv-index__count--empty { font-style: italic; }
+	.cv-index__refocus {
+		background: none;
+		border: 1px dashed var(--border);
+		border-radius: var(--radius);
+		color: var(--id-yours);
+		font-family: var(--font-mono);
+		font-size: 0.66rem;
+		text-transform: uppercase;
+		letter-spacing: 0.05em;
+		padding: 0 8px;
+		cursor: pointer;
+		white-space: nowrap;
+	}
+	.cv-index__refocus:hover {
+		border-color: var(--id-yours);
+		background: color-mix(in srgb, var(--id-yours) 12%, transparent);
 	}
 
 	.section-title {

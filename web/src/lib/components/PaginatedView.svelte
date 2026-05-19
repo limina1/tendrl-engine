@@ -10,6 +10,7 @@
 		currentSection = 0,
 		onnavigate,
 		onload,
+		onrefocus = null,
 		onsectionjson,
 		highlightsFor = null,
 		focusedHighlightId = null,
@@ -20,6 +21,10 @@
 		currentSection?: number;
 		onnavigate: (index: number) => void;
 		onload?: (index: number) => void;
+		/** Refocus the reader on a nested 30040 index. When set, a 30040
+		 *  entry renders as a refocus card instead of a (non-readable)
+		 *  section body. */
+		onrefocus?: ((section: LazySection) => void) | null;
 		/** Open the section's underlying event in the structured JSON modal.
 		 *  Surfaces on the right margin of the pager. */
 		onsectionjson?: (index: number) => void;
@@ -98,7 +103,19 @@
 		<div class="paginated-title">{section.title}</div>
 	{/if}
 	<div class="paginated-content" bind:this={contentEl}>
-		{#if section}
+		{#if section && section.addr.kind === 30040}
+			<button
+				class="nested-page"
+				onclick={() => onrefocus?.(section)}
+				disabled={!onrefocus}
+				title="Refocus the reader on this nested publication"
+			>
+				<span class="nested-page__icon" aria-hidden="true">⊞</span>
+				<span class="nested-page__title"
+					>{section.title || 'Nested publication'}</span>
+				<span class="nested-page__hint">Nested publication — refocus ⟳</span>
+			</button>
+		{:else if section}
 			<SectionCard {section} {highlights} {focusedHighlightId} />
 			{#if threads.length > 0}
 				<div class="paginated-threads">
@@ -176,6 +193,35 @@
 		font-size: 0.75rem;
 		color: var(--fg-muted);
 		opacity: 0.7;
+	}
+
+	.nested-page {
+		display: flex;
+		flex-direction: column;
+		gap: 6px;
+		width: calc(100% - 32px);
+		margin: 16px;
+		padding: 20px;
+		border: 1px dashed var(--border);
+		border-radius: var(--radius);
+		background: color-mix(in srgb, var(--id-yours) 6%, transparent);
+		color: var(--fg);
+		cursor: pointer;
+		text-align: left;
+	}
+	.nested-page:hover:not(:disabled) {
+		border-color: var(--id-yours);
+		background: color-mix(in srgb, var(--id-yours) 12%, transparent);
+	}
+	.nested-page:disabled { cursor: default; opacity: 0.7; }
+	.nested-page__icon { font-size: 1.4rem; color: var(--id-yours); }
+	.nested-page__title { font-size: 1rem; font-weight: 700; }
+	.nested-page__hint {
+		font-family: var(--font-mono);
+		font-size: 0.72rem;
+		text-transform: uppercase;
+		letter-spacing: 0.06em;
+		color: var(--id-yours);
 	}
 
 	.paginated-threads {
