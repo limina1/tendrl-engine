@@ -35,6 +35,9 @@
 	const NODE_H = 38;
 	const TAB_W = 22;
 	const TAB_H = 15;
+	// How far below the node band a back-edge bows, so a cycle routes
+	// clear of the indexes between its source and target.
+	const BACK_DIP = 54;
 
 	const pathSet = $derived(new Set(pathKeys));
 	const hasChildren = (k: string) => (nodes[k]?.childKeys.length ?? 0) > 0;
@@ -138,7 +141,8 @@
 			pos,
 			edges,
 			width: byDepth.size * COL_W,
-			height: maxLevel * ROW_H
+			height: maxLevel * ROW_H,
+			hasBack: edges.some((e) => e.back)
 		};
 	});
 
@@ -148,32 +152,78 @@
 		return t.length > 17 ? t.slice(0, 16) + '…' : t;
 	}
 
-	function edgePath(e: { from: string; to: string }): string {
+	function edgePath(e: { from: string; to: string; back: boolean }): string {
 		const a = layout.pos.get(e.from)!;
 		const b = layout.pos.get(e.to)!;
-		const mx = (a.x + b.x) / 2;
-		return `M ${a.x} ${a.y} C ${mx} ${a.y}, ${mx} ${b.y}, ${b.x} ${b.y}`;
+		if (e.back) {
+			// Cycle edge: bow it below the node band so it never crosses the
+			// indexes sitting between source and target. Leaves the source's
+			// bottom, dips under everything, rises into the target's bottom.
+			const ay = a.y + NODE_H / 2;
+			const by = b.y + NODE_H / 2;
+			const dip = layout.height + BACK_DIP * 0.72;
+			return `M ${a.x} ${ay} C ${a.x} ${dip}, ${b.x} ${dip}, ${b.x} ${by}`;
+		}
+		// Forward edge: source's right edge → target's left edge.
+		const ax = a.x + NODE_W / 2;
+		const bx = b.x - NODE_W / 2;
+		const mx = (ax + bx) / 2;
+		return `M ${ax} ${a.y} C ${mx} ${a.y}, ${mx} ${b.y}, ${bx} ${b.y}`;
 	}
 </script>
 
 <div class="fg">
 	<div class="fg__head">
 		<span class="fg__title">Reference graph</span>
-		<span class="fg__hint">click a node to refocus · ⊞ corner tab unpacks · ↻ = cyclic</span>
+		<span class="fg__hint"
+			>click a node to refocus · ⊞ corner tab unpacks · green → forward,
+			yellow ⤺ cycle</span
+		>
 		<button class="fg__close" onclick={onclose} title="Close the graph panel">✕</button>
 	</div>
 	<div class="fg__body">
 		{#if layout.pos.size === 0}
 			<p class="fg__empty">No nested indexes loaded yet.</p>
 		{:else}
+			{@const svgH = layout.height + (layout.hasBack ? BACK_DIP : 0)}
 			<svg
 				class="fg__svg"
 				width={layout.width}
-				height={layout.height}
-				viewBox="0 0 {layout.width} {layout.height}"
+				height={svgH}
+				viewBox="0 0 {layout.width} {svgH}"
 			>
+				<defs>
+					<marker
+						id="fg-arrow-fwd"
+						markerUnits="userSpaceOnUse"
+						markerWidth="10"
+						markerHeight="10"
+						refX="8.5"
+						refY="5"
+						orient="auto"
+					>
+						<path class="fg__arrowhead--fwd" d="M0 0 L10 5 L0 10 Z" />
+					</marker>
+					<marker
+						id="fg-arrow-back"
+						markerUnits="userSpaceOnUse"
+						markerWidth="10"
+						markerHeight="10"
+						refX="8.5"
+						refY="5"
+						orient="auto"
+					>
+						<path class="fg__arrowhead--back" d="M0 0 L10 5 L0 10 Z" />
+					</marker>
+				</defs>
 				{#each layout.edges as e (e.from + '->' + e.to)}
-					<path class="fg__edge" class:fg__edge--back={e.back} d={edgePath(e)} />
+					<path
+						class="fg__edge"
+						class:fg__edge--back={e.back}
+						class:fg__edge--fwd={!e.back}
+						d={edgePath(e)}
+						marker-end="url(#{e.back ? 'fg-arrow-back' : 'fg-arrow-fwd'})"
+					/>
 				{/each}
 				{#each [...layout.pos] as [k, p] (k)}
 					{@const node = nodes[k]}
@@ -304,15 +354,18 @@
 
 	.fg__edge {
 		fill: none;
-		stroke: var(--base4);
-		stroke-width: 1.5;
+		stroke-width: 1.7;
 	}
-	/* Back-edge — a 30040 referencing one of its ancestors (a cycle). */
+	/* Forward edge — parent → nested child. */
+	.fg__edge--fwd { stroke: var(--green); }
+	.fg__arrowhead--fwd { fill: var(--green); }
+	/* Back-edge — a 30040 referencing one of its ancestors (a cycle).
+	   Routed in a bow below the node band so the loop stays visible. */
 	.fg__edge--back {
-		stroke: var(--id-yours);
-		stroke-dasharray: 4 3;
-		opacity: 0.7;
+		stroke: var(--yellow);
+		stroke-dasharray: 5 3;
 	}
+	.fg__arrowhead--back { fill: var(--yellow); }
 
 	.fg__box {
 		fill: var(--panel-bg);
