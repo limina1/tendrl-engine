@@ -77,7 +77,7 @@ function defaults(): SearchConfig {
 		relays: [],
 		addedRelays: [],
 		customKinds: [],
-		author: { mode: 'me', pubkey: '' },
+		author: { mode: 'anyone', pubkey: '' },
 		since: null,
 		until: null,
 		nip50: { enabled: false, language: '', nsfw: true, includeSpam: false }
@@ -170,6 +170,14 @@ const UNTIL_TOKEN = /(?:^|\s)until:\d+/i;
 const SEMANTIC_TOKEN = /(?:^|\s)~:/;
 const ID_TOKEN = /(?:^|\s)id:[0-9a-f]{64}(?:\s|$)/i;
 const NIP19_LOOKUP_TOKEN = /(?:^|\s)(?:nostr:)?(?:note1|nevent1|naddr1)[a-z0-9]+/i;
+// A generic `NAME:value` tag filter — any `word:value` pair whose key is
+// not a reserved search operator. The engine's tag index is not
+// author-partitioned, so a `by:me` default would silently hide every
+// matching event you didn't author; a query that filters by tag is
+// asking "who has this tag", not "what did I tag", so we drop the
+// author scope for it.
+const TAG_FILTER_TOKEN =
+	/(?:^|\s)(?!(?:k|kind|by|id|since|until|has|count):)[A-Za-z][A-Za-z0-9_]*:\S/i;
 
 /** True when the query already pins kinds itself. */
 export function queryHasExplicitKind(query: string): boolean {
@@ -196,6 +204,10 @@ export function isExactLookup(query: string): boolean {
  * that explicitly opted out of "scope to me"). `hasIdentity=false`
  * suppresses `by:me` specifically — the engine rejects `by:me` with no
  * configured pubkey, so an identity-less session searches everyone.
+ *
+ * A branch carrying a generic `NAME:value` tag filter also drops the
+ * author default — see TAG_FILTER_TOKEN — so a typed tag search behaves
+ * like clicking the same tag in the reader (cross-author).
  */
 export function applySearchDefaults(
 	query: string,
@@ -225,7 +237,8 @@ export function applySearchDefaults(
 				scopeAuthor &&
 				searchConfig.author.mode !== 'anyone' &&
 				!AUTHOR_TOKEN.test(b) &&
-				!SEMANTIC_TOKEN.test(b)
+				!SEMANTIC_TOKEN.test(b) &&
+				!TAG_FILTER_TOKEN.test(b)
 			) {
 				if (searchConfig.author.mode === 'me') {
 					if (hasIdentity) prefix.push('by:me');

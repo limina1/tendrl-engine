@@ -21,6 +21,13 @@ use tracing::{debug, info, warn};
 /// large result set from issuing an unwieldy REQ to relays.
 const PROFILE_BACKFILL_CAP: usize = 200;
 
+/// nostrdb fetch limit for a query that must be post-filtered in memory
+/// (multi-char tag / `has:` / `count:` / keyword). Such constraints are
+/// not indexable, so the scan must see every candidate — this bound is
+/// "effectively unbounded" for any realistic local DB while staying well
+/// inside `i32` (nostrdb's query-limit type).
+const EXHAUSTIVE_SCAN_LIMIT: usize = 1_000_000;
+
 /// Fetch policy determines how the engine retrieves events
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -957,23 +964,44 @@ impl Engine {
             .any(|tf| tf.tag_name.chars().count() > 1);
         let has_has_tags = !query.has_tags.is_empty();
         let has_count_tags = !query.count_tags.is_empty();
-        let needs_broad_fetch = has_multi_char_tag || has_has_tags || has_count_tags;
+        // A multi-char tag / `has:` / `count:` / keyword query carries a
+        // constraint nostrdb cannot index — it is post-filtered in memory
+        // by `query::filter_by_tags` / `filter_by_text` after the DB read.
+        // For the result to be complete the scan must see *every*
+        // candidate, not just a recent window. Any single-letter tag /
+        // kind / author in the same query still narrows the scan via the
+        // nostrdb index.
+        let has_text_filter = query.text_filter.is_some();
+        let needs_broad_fetch =
+            has_multi_char_tag || has_has_tags || has_count_tags || has_text_filter;
 
+        // An exhaustive scan is inherently local — a relay cannot answer a
+        // multi-char-tag / keyword constraint. Run it against nostrdb only;
+        // an explicit relay search (`mode_confirm`) instead keeps its given
+        // policy with a bounded limit.
+        let exhaustive = needs_broad_fetch && !mode_confirm;
+        let (scan_policy, scan_limit) = if exhaustive {
+            (FetchPolicy::LocalOnly, EXHAUSTIVE_SCAN_LIMIT)
+        } else if needs_broad_fetch {
+            (policy, limit.max(500))
+        } else {
+            (policy, limit)
+        };
+
+        // Stamp the scan limit onto every filter — or synthesize a bare
+        // filter when the query had nothing NIP-01-indexable at all.
         if filters.is_empty() {
-            // No NIP-01-indexable filters — fetch broadly with a limit. Bump
-            // the fetch limit when multi-char, has:, or count: are the only
-            // criteria, since post-filtering / aggregation will need more
-            // candidates to be meaningful.
-            let fetch_limit = if needs_broad_fetch {
-                limit.max(500)
-            } else {
-                limit
-            };
-            filters = vec![serde_json::json!({"limit": fetch_limit})];
+            filters = vec![serde_json::json!({ "limit": scan_limit })];
+        } else {
+            for f in &mut filters {
+                if let Some(obj) = f.as_object_mut() {
+                    obj.insert("limit".to_string(), serde_json::json!(scan_limit));
+                }
+            }
         }
 
         let response = self
-            .get_events_with_options(filters, policy, override_relays, mode_confirm)
+            .get_events_with_options(filters, scan_policy, override_relays, mode_confirm)
             .await?;
 
         // Multi-char tag filters (e.g. `author:Claude`) are applied here —

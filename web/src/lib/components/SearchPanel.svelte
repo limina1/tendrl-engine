@@ -372,7 +372,21 @@
 			{/if}
 
 			{#if loading}
-				<p class="empty">Searching...</p>
+				<div class="empty search-loading">
+					<p class="search-loading__label">Searching database…</p>
+					<div
+						class="search-loading__bar"
+						role="progressbar"
+						aria-label="Searching database"
+					>
+						<div class="search-loading__fill"></div>
+					</div>
+					<p class="search-loading__hint">
+						Scanning every event — unindexed filters have no shortcut.
+						Add a kind or a single-letter tag (e.g. <code>C:bible</code>)
+						to narrow the scan.
+					</p>
+				</div>
 			{/if}
 		</div>
 	{:else}
@@ -676,6 +690,48 @@
 		flex-direction: column;
 		align-items: center;
 		gap: 10px;
+	}
+
+	/* Search loading — an exhaustive scan (multi-char tag / keyword) can
+	   take a few seconds, so show an indeterminate bar rather than a
+	   bare "Searching..." that looks hung. */
+	.search-loading {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 10px;
+	}
+	.search-loading__label {
+		margin: 0;
+		font-family: var(--font-mono);
+	}
+	.search-loading__bar {
+		width: 180px;
+		height: 4px;
+		border-radius: var(--r-sm, 3px);
+		background: color-mix(in srgb, var(--fg-muted) 20%, transparent);
+		overflow: hidden;
+	}
+	.search-loading__fill {
+		height: 100%;
+		width: 40%;
+		border-radius: inherit;
+		background: var(--accent);
+		animation: search-scan 1.1s ease-in-out infinite;
+	}
+	@keyframes search-scan {
+		from { transform: translateX(-110%); }
+		to { transform: translateX(260%); }
+	}
+	.search-loading__hint {
+		margin: 0;
+		max-width: 240px;
+		font-size: 0.7rem;
+		line-height: 1.4;
+	}
+	.search-loading__hint code {
+		font-family: var(--font-mono);
+		color: var(--accent);
 	}
 	.empty-cta p { margin: 0; }
 	.empty-cta__btn {

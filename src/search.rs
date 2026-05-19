@@ -382,7 +382,15 @@ impl SearchQuery {
                 continue;
             }
             let key = format!("#{}", tf.tag_name);
-            let values: Vec<Value> = tf.values.iter().map(|v| Value::String(v.clone())).collect();
+            // NIP-01 tag filters match a value exactly, case-sensitively.
+            // Expand each value to its lowercase/slug variants so a typed
+            // `t:"Douay-Rheims Bible"` still hits a stored `douay-rheims-bible`.
+            let values: Vec<Value> = tf
+                .values
+                .iter()
+                .flat_map(|v| tag_value_variants(v))
+                .map(Value::String)
+                .collect();
             filter.insert(key, Value::Array(values));
         }
 
@@ -423,6 +431,29 @@ impl SearchQuery {
     pub fn needs_text_scan(&self) -> bool {
         self.text_filter.is_some()
     }
+}
+
+/// Expand a tag-filter value into the forms a stored tag might take.
+///
+/// Nostr hashtag-style tags are written as lowercase slugs by convention
+/// — NIP-24 mandates it for `t` — but a user types the human-readable
+/// form ("Douay-Rheims Bible"). We match either: the value as typed, its
+/// lowercase, and a lowercase slug (whitespace runs collapsed to a single
+/// `-`, so `t:"words separated by space"` also hits `words-separated-by-space`).
+///
+/// The literal is always kept, so normalization only ever *adds* candidate
+/// matches — NIP-01 tag filters are an OR over their value list, so a
+/// variant can never drop a result the literal would have found.
+pub fn tag_value_variants(value: &str) -> Vec<String> {
+    let mut out = vec![value.to_string()];
+    let lower = value.to_lowercase();
+    let slug = lower.split_whitespace().collect::<Vec<_>>().join("-");
+    for v in [lower, slug] {
+        if !out.contains(&v) {
+            out.push(v);
+        }
+    }
+    out
 }
 
 /// Build SearchResult objects from event JSON values
@@ -1195,7 +1226,38 @@ mod tests {
         let q = SearchQuery::parse("t:python").unwrap();
         let filters = q.to_nip01_filters();
         assert_eq!(filters.len(), 1);
+        // Already a lowercase single word — no extra variants.
         assert_eq!(filters[0]["#t"], json!(["python"]));
+    }
+
+    #[test]
+    fn test_tag_value_variants() {
+        // Plain lowercase word — just itself.
+        assert_eq!(tag_value_variants("python"), vec!["python"]);
+        // Mixed case — adds the lowercase form.
+        assert_eq!(tag_value_variants("Genesis"), vec!["Genesis", "genesis"]);
+        // Spaced human form — adds lowercase and a dash slug.
+        assert_eq!(
+            tag_value_variants("Douay-Rheims Bible"),
+            vec![
+                "Douay-Rheims Bible",
+                "douay-rheims bible",
+                "douay-rheims-bible"
+            ]
+        );
+    }
+
+    #[test]
+    fn test_to_nip01_tag_filter_normalized() {
+        // A quoted multi-word value expands to its slug form so it can
+        // match a stored lowercase-dashed tag.
+        let q = SearchQuery::parse(r#"t:"Douay-Rheims Bible""#).unwrap();
+        let filters = q.to_nip01_filters();
+        assert_eq!(filters.len(), 1);
+        assert_eq!(
+            filters[0]["#t"],
+            json!(["Douay-Rheims Bible", "douay-rheims bible", "douay-rheims-bible"])
+        );
     }
 
     #[test]

@@ -389,13 +389,20 @@ pub fn filter_by_tags(events: &[Value], tag_filters: &[crate::search::TagFilter]
         return events.to_vec();
     }
 
-    // Lowercase the filter values once up front.
+    // Lowercase the filter values once up front, expanding each to its
+    // lowercase/slug variants so a typed `author:"Some Name"` also hits a
+    // stored `some-name` (the same normalization single-char tags get in
+    // `SearchQuery::to_nip01_filters`).
     let needles: Vec<(String, Vec<String>)> = multi_char
         .iter()
         .map(|tf| {
             (
                 tf.tag_name.clone(),
-                tf.values.iter().map(|v| v.to_lowercase()).collect(),
+                tf.values
+                    .iter()
+                    .flat_map(|v| crate::search::tag_value_variants(v))
+                    .map(|v| v.to_lowercase())
+                    .collect(),
             )
         })
         .collect();
