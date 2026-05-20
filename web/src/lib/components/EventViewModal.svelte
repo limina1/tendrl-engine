@@ -195,25 +195,42 @@
 
 	// ===== Primary actions =====
 
+	// IMPORTANT — order matters here.  onclose() sets app.eventModalData
+	// to null on the parent, which makes the `event` prop go null
+	// synchronously in this component.  Anything that reads `event` or
+	// `n` (the derived normalize(event)) after that point will crash —
+	// normalize(null) throws on `'event_id' in input`.  So: snapshot
+	// what we need into locals, run the action, *then* close.
+
 	function onReadAction() {
+		const kind = n.kind;
+		const pubkey = n.pubkey;
+		const id = n.id;
+		const title = n.title;
+		const d = dTag;
 		onclose();
-		if (n.kind === 30040 && dTag) {
-			onspawnreader?.(n.pubkey, dTag, n.title);
+		if (kind === 30040 && d) {
+			onspawnreader?.(pubkey, d, title);
 		} else {
-			onspawneventreader?.(n.id, n.title);
+			onspawneventreader?.(id, title);
 		}
 	}
 
 	function onFindAction() {
 		if (!dTag) return;
+		const kind = n.kind;
+		const pubkey = n.pubkey;
+		const d = dTag;
 		onclose();
-		onfindcontaining?.(n.kind, n.pubkey, dTag);
+		onfindcontaining?.(kind, pubkey, d);
 	}
 
 	function onInsertAction() {
 		if (!isZettel) return;
+		const ev = event;
+		const mode = insertMode;
 		onclose();
-		oninsert?.(event, insertMode);
+		oninsert?.(ev, mode);
 	}
 
 	function onModalKeydown(e: KeyboardEvent) {
