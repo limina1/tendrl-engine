@@ -1824,6 +1824,7 @@
 					onpillctx={() => app.pillActionByAddr(pubAddr, 'context')}
 					onpillcmp={() => app.pillActionByAddr(pubAddr, 'compose')}
 					onpilldrop={() => app.pillActionByAddr(pubAddr, 'drop')}
+					orientation="horizontal"
 				/>
 			</div>
 		{/if}

@@ -418,6 +418,8 @@
 								onpillctx={() => app.pillActionByAddr(pub_item.addr, 'context')}
 								onpillcmp={() => app.pillActionByAddr(pub_item.addr, 'compose')}
 								onpilldrop={() => app.pillActionByAddr(pub_item.addr, 'drop')}
+								signed={pub_item.signed}
+								relays={pub_item.relays}
 							/>
 							<span class="item-meta">{pub_item.section_count} sections</span>
 							{@render menuBtn(() => app.openAddressableInModal(pub_item.addr))}

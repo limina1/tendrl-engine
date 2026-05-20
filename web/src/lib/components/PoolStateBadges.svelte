@@ -17,7 +17,8 @@
 		onpilldrop,
 		signed,
 		relays,
-		forked
+		forked,
+		orientation = 'vertical'
 	}: {
 		item: ContextItem | null;
 		/** Click handler for the ctx pill. If omitted, the pill is hidden.
@@ -35,6 +36,11 @@
 		/** True when the index event carries a NIP-54 e-tag with the
 		 *  `fork` marker — i.e. the publication is forked from another. */
 		forked?: boolean;
+		/** Vertical (default) stacks pills column-wise — works on row-style
+		 *  surfaces (feed/profile/search rows). Horizontal lays them inline
+		 *  for header surfaces where a column would push content down
+		 *  (paginated section title, reader publication header). */
+		orientation?: 'vertical' | 'horizontal';
 	} = $props();
 
 	/** Compact relay-label: "first-host +N" when multiple, just the host
@@ -52,7 +58,22 @@
 	);
 </script>
 
-<div class="psb">
+<div class="psb" class:psb--horizontal={orientation === 'horizontal'}>
+	<!-- Provenance first — where the event lives in the network.
+	     draft (unsigned), relay-label or remote (signed), fork
+	     (NIP-54 e-tag with fork marker). Renders only when the host
+	     supplies signed/relays/forked; suppressed otherwise. -->
+	{#if signed === false}
+		<span class="psb__pill psb__pill--passive psb__pill--draft" title="Unsigned draft — not yet signed">draft</span>
+	{:else if signed === true && relays && relays.length > 0}
+		<span class="psb__pill psb__pill--passive psb__pill--remote" title={`On ${relays.length} relay(s):\n${relays.join('\n')}`}>{relayLabel(relays)}</span>
+	{:else if signed === true}
+		<span class="psb__pill psb__pill--passive psb__pill--remote" title="From relays — origin relay not recorded">remote</span>
+	{/if}
+	{#if forked}
+		<span class="psb__pill psb__pill--passive psb__pill--fork" title="Forked from another publication (NIP-54 e-tag with fork marker)">fork</span>
+	{/if}
+	<!-- Pool routing actions — clickable toggles. -->
 	{#if onpillctx}
 		<button
 			class="psb__pill psb__pill--act"
@@ -85,6 +106,7 @@
 			title="Drop from pool — clears context/compose/refs"
 		>drop</button>
 	{/if}
+	<!-- Pool-derived state — passive informational pills. -->
 	{#if refsOnly}
 		<span class="psb__pill psb__pill--passive psb__pill--refs" title="Held in refs">refs</span>
 	{/if}
@@ -103,20 +125,6 @@
 	{#if item?.origin === 'chat'}
 		<span class="psb__pill psb__pill--passive psb__pill--chat" title="Pulled in by chat reasoning">chat</span>
 	{/if}
-	<!-- Event provenance — only renders when the host supplies the
-	     signal. draft (unsigned), relay-label or remote (signed), and
-	     fork (NIP-54 e-tag with fork marker). Same subtle style; the
-	     row reads provenance and pool state in one column. -->
-	{#if signed === false}
-		<span class="psb__pill psb__pill--passive psb__pill--draft" title="Unsigned draft — not yet signed">draft</span>
-	{:else if signed === true && relays && relays.length > 0}
-		<span class="psb__pill psb__pill--passive psb__pill--remote" title={`On ${relays.length} relay(s):\n${relays.join('\n')}`}>{relayLabel(relays)}</span>
-	{:else if signed === true}
-		<span class="psb__pill psb__pill--passive psb__pill--remote" title="From relays — origin relay not recorded">remote</span>
-	{/if}
-	{#if forked}
-		<span class="psb__pill psb__pill--passive psb__pill--fork" title="Forked from another publication (NIP-54 e-tag with fork marker)">fork</span>
-	{/if}
 </div>
 
 <style>
@@ -131,6 +139,15 @@
 		gap: 3px;
 		align-items: flex-start;
 		flex-shrink: 0;
+	}
+	/* Horizontal layout for header surfaces — paginated section title,
+	   reader publication header, continuous-view section titles. Pills
+	   wrap onto a second line gracefully if the title runs long. */
+	.psb--horizontal {
+		flex-direction: row;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 4px;
 	}
 	.psb__pill {
 		font-family: var(--font-mono);

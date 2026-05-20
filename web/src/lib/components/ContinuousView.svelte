@@ -1,7 +1,9 @@
 <script lang="ts">
 	import type { LazySection } from '$lib/types';
+	import { getAppState } from '$lib/state.svelte';
 
 	import CommentThread from './CommentThread.svelte';
+	import PoolStateBadges from './PoolStateBadges.svelte';
 	import { threadContainsId, type ThreadNode } from '$lib/discussions/thread';
 	import {
 		pubkeyToHighlightFill,
@@ -11,6 +13,8 @@
 		computeHighlightSegments,
 		type Highlight
 	} from '$lib/discussions/highlights';
+
+	const app = getAppState();
 
 	let {
 		sections,
@@ -264,7 +268,14 @@
 			>
 				{#if section.title || onviewjson}
 					<h3 class="section-title">
-						{section.title ?? ''}
+						<span class="section-title__text">{section.title ?? ''}</span>
+						<PoolStateBadges
+							item={app.findPoolItemByAddr(section.addr)}
+							onpillctx={() => app.pillActionByAddr(section.addr, 'context')}
+							onpillcmp={() => app.pillActionByAddr(section.addr, 'compose')}
+							onpilldrop={() => app.pillActionByAddr(section.addr, 'drop')}
+							orientation="horizontal"
+						/>
 						{#if onviewjson}
 							<button
 								class="section-menu"
@@ -463,8 +474,10 @@
 		margin-bottom: 6px;
 		display: flex;
 		align-items: center;
-		gap: 4px;
+		gap: 8px;
+		flex-wrap: wrap;
 	}
+	.section-title__text { flex: 1; min-width: 0; }
 	/* Pill-shaped "menu" chip — matches the feed and outline rows so the
 	   affordance reads the same across the reader. */
 	.section-menu {

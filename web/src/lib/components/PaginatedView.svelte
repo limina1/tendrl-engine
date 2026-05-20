@@ -111,6 +111,7 @@
 				onpillctx={() => app.pillActionByAddr(section.addr, 'context')}
 				onpillcmp={() => app.pillActionByAddr(section.addr, 'compose')}
 				onpilldrop={() => app.pillActionByAddr(section.addr, 'drop')}
+				orientation="horizontal"
 			/>
 		</div>
 	{/if}
