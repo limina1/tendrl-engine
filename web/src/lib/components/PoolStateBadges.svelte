@@ -14,7 +14,10 @@
 		item,
 		onpillctx,
 		onpillcmp,
-		onpilldrop
+		onpilldrop,
+		signed,
+		relays,
+		forked
 	}: {
 		item: ContextItem | null;
 		/** Click handler for the ctx pill. If omitted, the pill is hidden.
@@ -24,7 +27,22 @@
 		onpillcmp?: () => void;
 		/** Drop only renders when an item exists; nothing to drop otherwise. */
 		onpilldrop?: () => void;
+		/** Event provenance — passed in by surfaces that know it
+		 *  (FeedBuffer, reader publication header). undefined = unknown,
+		 *  pill suppressed. Search rows leave these unset. */
+		signed?: boolean;
+		relays?: string[];
+		/** True when the index event carries a NIP-54 e-tag with the
+		 *  `fork` marker — i.e. the publication is forked from another. */
+		forked?: boolean;
 	} = $props();
+
+	/** Compact relay-label: "first-host +N" when multiple, just the host
+	 *  when one. Mirrors the legacy FeedBuffer relayLabel(). */
+	function relayLabel(rs: string[]): string {
+		const host = rs[0].replace(/^wss?:\/\//, '').replace(/\/+$/, '');
+		return rs.length > 1 ? `${host} +${rs.length - 1}` : host;
+	}
 
 	// "In refs but no other membership" — the bookmark-only state. Only
 	// surfaces as a passive pill when this is the case (otherwise ctx /
@@ -84,6 +102,20 @@
 	{/if}
 	{#if item?.origin === 'chat'}
 		<span class="psb__pill psb__pill--passive psb__pill--chat" title="Pulled in by chat reasoning">chat</span>
+	{/if}
+	<!-- Event provenance — only renders when the host supplies the
+	     signal. draft (unsigned), relay-label or remote (signed), and
+	     fork (NIP-54 e-tag with fork marker). Same subtle style; the
+	     row reads provenance and pool state in one column. -->
+	{#if signed === false}
+		<span class="psb__pill psb__pill--passive psb__pill--draft" title="Unsigned draft — not yet signed">draft</span>
+	{:else if signed === true && relays && relays.length > 0}
+		<span class="psb__pill psb__pill--passive psb__pill--remote" title={`On ${relays.length} relay(s):\n${relays.join('\n')}`}>{relayLabel(relays)}</span>
+	{:else if signed === true}
+		<span class="psb__pill psb__pill--passive psb__pill--remote" title="From relays — origin relay not recorded">remote</span>
+	{/if}
+	{#if forked}
+		<span class="psb__pill psb__pill--passive psb__pill--fork" title="Forked from another publication (NIP-54 e-tag with fork marker)">fork</span>
 	{/if}
 </div>
 
@@ -160,6 +192,23 @@
 	.psb__pill--chat {
 		background: color-mix(in srgb, var(--id-yours) 20%, transparent);
 		color: var(--id-yours);
+	}
+	/* Provenance pills — sit at the bottom of the stack and signal
+	   where the event lives in the network. Tints come from the same
+	   palette the legacy .pill--remote / .pill--draft used so the
+	   migration is visually invisible. fork uses imported-accent
+	   since it points back to another event. */
+	.psb__pill--draft {
+		background: rgba(226, 120, 120, 0.12);
+		color: var(--id-draft);
+	}
+	.psb__pill--remote {
+		background: rgba(137, 184, 194, 0.12);
+		color: var(--id-remote);
+	}
+	.psb__pill--fork {
+		background: color-mix(in srgb, var(--id-imported) 22%, transparent);
+		color: var(--id-imported);
 	}
 
 	.psb__lock {
