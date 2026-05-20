@@ -10,6 +10,7 @@
 	import SearchInput from './SearchInput.svelte';
 	import SearchResultItem from './SearchResultItem.svelte';
 	import PersonResultItem from './PersonResultItem.svelte';
+	import PoolStateBadges from './PoolStateBadges.svelte';
 	import {
 		searchConfig,
 		openSearchConfig,
@@ -529,8 +530,7 @@
 								{#if item.source_addr?.kind != null}
 									<span class="held-row__kind">k:{item.source_addr.kind}</span>
 								{/if}
-								{#if item.in_context}<span class="held-row__loc">context</span>{/if}
-								{#if item.in_compose}<span class="held-row__loc">compose</span>{/if}
+								<PoolStateBadges {item} />
 							</div>
 						</div>
 						<button
@@ -683,15 +683,6 @@
 		border-radius: 4px;
 		background: var(--border);
 		color: var(--fg-muted);
-		white-space: nowrap;
-	}
-	.held-row__loc {
-		font-size: 0.6rem;
-		padding: 0 5px;
-		border-radius: 3px;
-		background: color-mix(in srgb, var(--id-yours) 20%, transparent);
-		color: var(--id-yours);
-		font-weight: 600;
 		white-space: nowrap;
 	}
 	.held-row__drop {

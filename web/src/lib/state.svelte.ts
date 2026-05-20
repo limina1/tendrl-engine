@@ -456,6 +456,27 @@ function _createAppState() {
 		);
 	}
 
+	/** Pool lookup keyed by an NAddr alone — used by surfaces that only
+	 *  carry an addressable coordinate (feed rows, profile cards, reader
+	 *  sections) and need to know membership state without reconstructing
+	 *  a full NostrEvent. */
+	function findPoolItemByAddr(addr: NAddr): ContextItem | null {
+		return (
+			items.find((e) =>
+				e.source_addr != null &&
+				e.source_addr.kind === addr.kind &&
+				e.source_addr.pubkey === addr.pubkey &&
+				e.source_addr.d_tag === addr.d_tag
+			) ?? null
+		);
+	}
+
+	/** Pool lookup keyed by a raw event id. Comments, highlights, and
+	 *  any other non-addressable kind need this fallback. */
+	function findPoolItemByEventId(eventId: string): ContextItem | null {
+		return items.find((e) => e.source_event_id === eventId) ?? null;
+	}
+
 	/** Toggle one membership flag on the pool item for `input`. If the item
 	 *  doesn't exist yet, it's created with that flag set. If toggling off
 	 *  leaves the item with no flags, gc() prunes it.
@@ -2423,6 +2444,8 @@ function _createAppState() {
 		get composeSections() { return composeSections; },
 		get heldEntries() { return heldEntries; },
 		findPoolItem,
+		findPoolItemByAddr,
+		findPoolItemByEventId,
 		togglePoolMembership,
 		togglePoolReadonly,
 		dropFromPool,

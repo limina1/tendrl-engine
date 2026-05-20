@@ -2,6 +2,7 @@
 	import type { SearchResult, ContextItem } from '$lib/types';
 	import ProfileName from './ProfileName.svelte';
 	import ProfileResultItem from './ProfileResultItem.svelte';
+	import PoolStateBadges from './PoolStateBadges.svelte';
 
 	let {
 		result,
@@ -113,20 +114,7 @@
 			{#if result.semantic_score != null}
 				<span class="score-badge">{(result.semantic_score * 100).toFixed(0)}%</span>
 			{/if}
-			{#if poolMatch?.in_context}
-				<span class="loc-badge" class:loc-synced={!poolMatch.modified} class:loc-modified={poolMatch.modified}>context</span>
-			{/if}
-			{#if poolMatch?.in_compose}
-				<span class="loc-badge" class:loc-synced={!poolMatch.modified} class:loc-modified={poolMatch.modified}>compose</span>
-			{/if}
-			<!-- Refs is the auto-hold history view: anything in context or
-			     compose is also in refs, so showing it then would be noise.
-			     Only surface the badge when the item is held *without* an
-			     active context/compose membership — i.e. dragged into refs
-			     manually, or released from context/compose but not dropped. -->
-			{#if poolMatch?.held && !poolMatch.in_context && !poolMatch.in_compose}
-				<span class="loc-badge loc-refs">refs</span>
-			{/if}
+			<PoolStateBadges item={poolMatch} />
 		</div>
 	</div>
 
@@ -418,29 +406,7 @@
 		background: #ef444415;
 	}
 
-	/* Location badges */
-
-	.loc-badge {
-		font-size: 0.6rem;
-		padding: 0 5px;
-		border-radius: 3px;
-		white-space: nowrap;
-	}
-
-	.loc-synced {
-		background: #22c55e33;
-		color: #22c55e;
-	}
-
-	.loc-modified {
-		background: #eab30833;
-		color: #eab308;
-	}
-
-	/* Refs-only state: held without context/compose. Imported-accent
-	   tint so it reads as "kept for reference, not actively routed". */
-	.loc-refs {
-		background: color-mix(in srgb, var(--id-imported) 25%, transparent);
-		color: var(--id-imported);
-	}
+	/* Membership / state badges previously lived here as .loc-* — moved
+	   to <PoolStateBadges /> so every event-display surface uses the
+	   same vocabulary. */
 </style>

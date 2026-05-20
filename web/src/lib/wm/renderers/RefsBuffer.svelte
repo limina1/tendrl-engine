@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { getAppState } from '$lib/state.svelte';
 	import ProfileName from '$lib/components/ProfileName.svelte';
+	import PoolStateBadges from '$lib/components/PoolStateBadges.svelte';
 	import type { Buffer } from '../types';
 	import type { ContextItem } from '$lib/types';
 
@@ -79,8 +80,7 @@
 						<div class="row-head">
 							<span class="title">{item.title}</span>
 							<span class="kind">{kindLabel(item)}</span>
-							{#if item.in_context}<span class="loc">context</span>{/if}
-							{#if item.in_compose}<span class="loc">compose</span>{/if}
+							<PoolStateBadges {item} />
 						</div>
 						{#if item.source_addr?.pubkey}
 							<div class="row-foot">
@@ -157,17 +157,6 @@
 		background: var(--border);
 		color: var(--fg-muted);
 		white-space: nowrap;
-	}
-	/* Memberships beyond `held` get a small chip so a held item that's
-	   *also* in context/compose isn't invisible from this view. */
-	.loc {
-		font-size: 0.6rem;
-		padding: 0 5px;
-		border-radius: 3px;
-		background: color-mix(in srgb, var(--id-yours) 20%, transparent);
-		color: var(--id-yours);
-		white-space: nowrap;
-		font-weight: 600;
 	}
 	.row-foot {
 		display: flex;

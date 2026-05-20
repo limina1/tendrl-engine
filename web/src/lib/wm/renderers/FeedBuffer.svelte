@@ -2,6 +2,7 @@
 	import { untrack } from 'svelte';
 	import { getAppState } from '$lib/state.svelte';
 	import ProfileName from '$lib/components/ProfileName.svelte';
+	import PoolStateBadges from '$lib/components/PoolStateBadges.svelte';
 	import { getActiveStore, type NavAction } from '../buffer-store.svelte';
 	import type { Buffer } from '../types';
 
@@ -166,6 +167,7 @@
 						{:else}
 							<span class="pill pill--remote" title="From relays — origin relay not recorded">remote</span>
 						{/if}
+						<PoolStateBadges item={app.findPoolItemByAddr(pub_item.addr)} />
 						<span class="meta">{pub_item.section_count} sections</span>
 					</div>
 					{#if pub_item.summary}

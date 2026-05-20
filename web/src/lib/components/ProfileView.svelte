@@ -5,6 +5,7 @@
 	import type { Profile } from '$lib/api';
 	import { fetchFromRelaysWithPrompt } from '$lib/fetch/relay-fetch.svelte';
 	import { getAppState } from '$lib/state.svelte';
+	import PoolStateBadges from './PoolStateBadges.svelte';
 	import { getActiveStore, type NavAction } from '$lib/wm/buffer-store.svelte';
 
 	const app = getAppState();
@@ -412,6 +413,7 @@
 					>
 						<div class="item-header">
 							<span class="item-title">{pub_item.title ?? '[Untitled]'}</span>
+							<PoolStateBadges item={app.findPoolItemByAddr(pub_item.addr)} />
 							<span class="item-meta">{pub_item.section_count} sections</span>
 							{@render menuBtn(() => app.openAddressableInModal(pub_item.addr))}
 						</div>
@@ -440,6 +442,7 @@
 					>
 						<div class="item-header">
 							<span class="item-title">{art.title ?? '[Untitled]'}</span>
+							<PoolStateBadges item={app.findPoolItemByAddr(art.addr)} />
 							<span class="item-meta">long-form</span>
 							{@render menuBtn(() => app.openAddressableInModal(art.addr))}
 						</div>
@@ -468,6 +471,7 @@
 					>
 						<div class="item-header">
 							<span class="item-title">{wiki.title ?? wiki.addr.d_tag ?? '[Untitled]'}</span>
+							<PoolStateBadges item={app.findPoolItemByAddr(wiki.addr)} />
 							<span class="item-meta">wiki</span>
 							{@render menuBtn(() => app.openAddressableInModal(wiki.addr))}
 						</div>
@@ -500,6 +504,7 @@
 					>
 						<div class="item-header">
 							<span class="item-title">{title}</span>
+							<PoolStateBadges item={app.findPoolItemByAddr(addr)} />
 							{@render menuBtn(() => app.openAddressableInModal(addr))}
 						</div>
 						{#if sec.content}
@@ -536,6 +541,7 @@
 							{#if rootAddr}
 								<span class="item-ref">on {rootKind ? `k:${rootKind}` : ''} {rootAddr.split(':').pop()}</span>
 							{/if}
+							<PoolStateBadges item={app.findPoolItemByEventId(comment.id)} />
 							{@render menuBtn(() => (app.eventModalData = comment))}
 						</div>
 						<p class="item-content">{comment.content}</p>
