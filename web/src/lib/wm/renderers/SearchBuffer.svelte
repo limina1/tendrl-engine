@@ -83,9 +83,9 @@
 	}
 
 	function openHeldItem(item: ContextItem) {
-		// Same routing the standalone RefsBuffer uses — prefer the
-		// addressable coordinate (latest replaceable version) and fall
-		// back to the pinned event id.
+		// Prefer the addressable coordinate (latest replaceable version)
+		// and fall back to the pinned event id for non-addressable kinds
+		// like comments and highlights.
 		if (item.source_addr) app.openAddressableInModal(item.source_addr);
 		else if (item.source_event_id) app.getEventForModal(item.source_event_id);
 	}

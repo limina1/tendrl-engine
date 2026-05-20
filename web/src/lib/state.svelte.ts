@@ -382,9 +382,9 @@ function _createAppState() {
 		items = items.filter((e) => e.in_context || e.in_compose || e.held);
 	}
 
-	// Derived view: held items only — the RefsBuffer reads this. An item with
-	// any of in_context / in_compose / held set survives gc(); held marks the
-	// "in the pool but not yet routed" state explicitly.
+	// Derived view: held items only — SearchPanel's Refs tab reads this.
+	// An item with any of in_context / in_compose / held set survives gc();
+	// held marks the "in the pool but not yet routed" state explicitly.
 	const heldEntries = $derived(items.filter((i) => i.held));
 
 	// ----- Pool helpers keyed by a viewed event (NostrEvent | SearchResult) -----
@@ -525,9 +525,11 @@ function _createAppState() {
 		addToPool(eventToPoolFields(input), { held: true });
 	}
 
-	/** Clear `held` on the item with this UUID and gc(). Used by
-	 *  RefsBuffer's row-level "drop" — keyed by item id rather than the
-	 *  source event so the caller doesn't have to reconstruct a NostrEvent. */
+	/** Clear `held` on the item with this UUID and gc(). Keyed by the
+	 *  ContextItem id so callers (the Refs tab today, any future
+	 *  surface) don't have to reconstruct a NostrEvent input. With the
+	 *  auto-hold rule this is rarely the right call — drop is usually
+	 *  what the user wants. Kept available for partial-release UX. */
 	function releaseHeldItem(itemId: string) {
 		const target = items.find((e) => e.id === itemId);
 		if (!target) return;

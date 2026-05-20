@@ -54,9 +54,9 @@
 		listEl = $bindable<HTMLDivElement | undefined>(undefined),
 		canPromptRelays = false,
 		onsearchrelays,
-		// Refs tab — held items in the reference pool, mirroring the
-		// standalone RefsBuffer. Cursor + open/release are routed through
-		// the host (SearchBuffer) so the same nav handler drives them.
+		// Refs tab — held items in the reference pool. Cursor + open/release
+		// are routed through the host (SearchBuffer) so the same nav handler
+		// drives them as the Search/KB tabs.
 		heldItems = [],
 		refsCursor = -1,
 		importCursor = -1,
@@ -501,9 +501,9 @@
 			</div>
 		{/if}
 	{:else}
-		<!-- Refs tab — held items from the reference pool. Mirrors the
-		     standalone RefsBuffer, embedded here so research-style use
-		     (search ↔ kb ↔ refs) cycles through the same panel via h/l. -->
+		<!-- Refs tab — held items from the reference pool, embedded so
+		     research-style use (search ↔ refs ↔ kb) cycles through the
+		     same panel via h/l. -->
 		<div class="search-results">
 			{#if heldItems.length === 0}
 				<p class="empty">
@@ -652,7 +652,7 @@
 	}
 
 	/* Refs tab rows — pool's held items. Imported-accent border-left so
-	   the row reads as a reference (matches the standalone RefsBuffer). */
+	   the row reads as a reference. */
 	.held-row {
 		display: flex;
 		align-items: flex-start;

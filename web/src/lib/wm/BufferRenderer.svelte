@@ -8,8 +8,6 @@
 	import ProfileBuffer from './renderers/ProfileBuffer.svelte';
 	import ComposerBuffer from './renderers/ComposerBuffer.svelte';
 	import IgnoredBuffer from './renderers/IgnoredBuffer.svelte';
-	import KnowledgebaseBuffer from './renderers/KnowledgebaseBuffer.svelte';
-	import RefsBuffer from './renderers/RefsBuffer.svelte';
 	import SettingsBuffer from './renderers/SettingsBuffer.svelte';
 	import DraftReaderBuffer from './renderers/DraftReaderBuffer.svelte';
 	import RelaysBuffer from './renderers/RelaysBuffer.svelte';
@@ -39,10 +37,6 @@
 		<ComposerBuffer {buffer} />
 	{:else if buffer.kind === 'ignored'}
 		<IgnoredBuffer {buffer} />
-	{:else if buffer.kind === 'knowledgebase'}
-		<KnowledgebaseBuffer {buffer} />
-	{:else if buffer.kind === 'refs'}
-		<RefsBuffer {buffer} />
 	{:else if buffer.kind === 'settings'}
 		<SettingsBuffer {buffer} />
 	{:else if buffer.kind === 'relays'}

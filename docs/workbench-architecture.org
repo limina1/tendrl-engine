@@ -1644,10 +1644,11 @@ Generalize the =ContextItem= pool into a neutral substrate, then build the
 =refs= buffer and the NKBIP-03 citation workflow on top of it. See
 [[*The Reference Pool][The Reference Pool]].
 
-- [ ] Add a =held= membership to =ContextItem=; =gc()= keeps any item that is held, in context, or in compose
-- [ ] =addToPool= no-purpose path (=holdEvent=) — events can enter the pool without a context/compose target
-- [ ] "Hold" affordance on search results, the event-view modal, and profile cards (feeds the pool, no purpose committed)
-- [ ] Build =RefsBuffer.svelte= as the held-set view with per-row route actions (→ compose, → chat, cite, → search)
+- [x] Add a =held= membership to =ContextItem=; =gc()= keeps any item that is held, in context, or in compose
+- [x] =addToPool= no-purpose path (=holdEvent=) — events can enter the pool without a context/compose target
+- [x] "Hold" affordance — auto-hold rule: any context/compose entry sets =held=true= (refs is the recency history of pool activity)
+- [x] Refs surface as the held-set view — landed as the Refs tab in =SearchPanel= alongside Search and KB; standalone =RefsBuffer= retired
+- [ ] Per-row route actions on refs rows (→ compose, → chat, cite, → search)
 - [ ] "→ search" route: append a coordinate token (=a:= / =by:= / =id:=) to the in-progress query without running it
 - [ ] NKBIP-03 citation minting: a held event → =kind:30= internal reference, tags prefilled and editable
 - [ ] Free-standing citation authoring in =refs=: =kind:31= web, =kind:32= hardcopy, =kind:33= prompt references

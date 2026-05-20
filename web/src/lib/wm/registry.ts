@@ -8,8 +8,6 @@ import DocBuffer from './renderers/DocBuffer.svelte';
 import ProfileBuffer from './renderers/ProfileBuffer.svelte';
 import ComposerBuffer from './renderers/ComposerBuffer.svelte';
 import IgnoredBuffer from './renderers/IgnoredBuffer.svelte';
-import KnowledgebaseBuffer from './renderers/KnowledgebaseBuffer.svelte';
-import RefsBuffer from './renderers/RefsBuffer.svelte';
 import SettingsBuffer from './renderers/SettingsBuffer.svelte';
 import DraftReaderBuffer from './renderers/DraftReaderBuffer.svelte';
 import RelaysBuffer from './renderers/RelaysBuffer.svelte';
@@ -47,10 +45,11 @@ const entries: BufferKindEntry[] = [
 	{ kind: 'publish-progress', className: 'work', component: PublishProgressBuffer, defaultLabel: 'publish' },
 	{ kind: 'profile-edit', className: 'work', component: ProfileEditBuffer, defaultLabel: 'profile' },
 	{ kind: 'discussion-view', className: 'work', component: DiscussionViewBuffer, defaultLabel: 'discussion' },
-	// Research class is auxiliary tools that support the work surface.
-	{ kind: 'search', className: 'research', component: SearchBuffer, defaultLabel: 'search' },
-	{ kind: 'knowledgebase', className: 'research', component: KnowledgebaseBuffer, defaultLabel: 'kb' },
-	{ kind: 'refs', className: 'research', component: RefsBuffer, defaultLabel: 'refs' }
+	// Research class — one buffer (search) that internally hosts Search /
+	// Refs / KB sub-tabs cycled via h/l. The standalone RefsBuffer and
+	// KnowledgebaseBuffer were retired once the SearchPanel grew matching
+	// tabs (held items + import flow) — one surface, one cycle, one cursor.
+	{ kind: 'search', className: 'research', component: SearchBuffer, defaultLabel: 'search' }
 ];
 
 const byKind: Record<string, BufferKindEntry> = Object.fromEntries(

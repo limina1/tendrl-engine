@@ -36,8 +36,6 @@
 	const feedBuf: Buffer = { id: 'feed', kind: 'feed', label: 'feed' };
 	const composerBuf: Buffer = { id: 'composer:current', kind: 'composer', label: 'composer', kicker: 'untitled draft' };
 	const searchBuf: Buffer = { id: 'search:default', kind: 'search', label: 'search' };
-	const refsBuf: Buffer = { id: 'refs', kind: 'refs', label: 'refs' };
-	const kbBuf: Buffer = { id: 'kb', kind: 'knowledgebase', label: 'kb' };
 	const ignoredBuf: Buffer = { id: 'ignored', kind: 'ignored', label: 'ignored' };
 
 	const openBuffers: OpenBuf[] = [
@@ -48,10 +46,10 @@
 		{ className: 'work', buffer: feedBuf },
 		{ className: 'work', buffer: composerBuf },
 		{ className: 'work', buffer: ignoredBuf },
-		// Research class — auxiliary tools (search, refs, kb).
-		{ className: 'research', buffer: searchBuf },
-		{ className: 'research', buffer: refsBuf },
-		{ className: 'research', buffer: kbBuf }
+		// Research class — single search buffer. It hosts Search · Refs · KB
+		// as internal h/l-cycled tabs; the standalone refs and KB buffers
+		// were retired once SearchPanel grew their equivalents.
+		{ className: 'research', buffer: searchBuf }
 	];
 
 	// One base layout: chat rail-left / work center / research rail-right. Each
@@ -1046,18 +1044,6 @@
 				</div>
 			{/each}
 		</div>
-	{:else if b.kind === 'knowledgebase'}
-		<div class="feed">
-			{#each [0, 1, 2, 3] as i (i)}
-				<div class="feed__row feed__row--kb">
-					<div class="kb__icon">📄</div>
-					<div class="feed__col">
-						<div class="feed__title"></div>
-						<div class="feed__meta"></div>
-					</div>
-				</div>
-			{/each}
-		</div>
 	{:else if b.kind === 'search'}
 		<div class="search">
 			<input
@@ -1071,15 +1057,6 @@
 				<div class="search__row">
 					<div class="search__title"></div>
 					<div class="search__meta"></div>
-				</div>
-			{/each}
-		</div>
-	{:else if b.kind === 'refs'}
-		<div class="refs">
-			{#each [0, 1, 2, 3] as i (i)}
-				<div class="refs__row">
-					<span class="refs__num">[{i + 1}]</span>
-					<span class="refs__line"></span>
 				</div>
 			{/each}
 		</div>
