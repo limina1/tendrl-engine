@@ -263,6 +263,23 @@ export interface NostrEvent {
 	created_at: number;
 	content: string;
 	tags: string[][];
+	/** Schnorr signature, hex-encoded. The engine emits this on every event
+	 *  returned from `/api/v1/query` and friends. Optional in the type because
+	 *  callers that build NostrEvent literals (e.g. compose previews) don't
+	 *  always populate it; a missing/empty sig signals "unsigned draft". */
+	sig?: string;
+	/** Relays the engine has seen this event on. Empty / missing = local-only
+	 *  (written or not yet broadcast). Used by `<PoolStateBadges>` for the
+	 *  draft / remote / relay-label provenance pill. */
+	relays?: string[];
+}
+
+/** Treat a hex `sig` as signed iff it's non-empty and not the all-zeros
+ *  placeholder the engine uses for unsigned drafts. Mirrors `publication.rs`
+ *  `signed` derivation so the same rule lights up frontend pills. */
+export function isEventSigned(sig: string | undefined | null): boolean {
+	if (!sig) return false;
+	return sig.length > 0 && !sig.split('').every((c) => c === '0');
 }
 
 export interface ClaudeSessionSummary {

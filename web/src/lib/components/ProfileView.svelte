@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { untrack } from 'svelte';
-	import type { NostrEvent, PublicationSummary } from '$lib/types';
+	import { isEventSigned, type NostrEvent, type PublicationSummary } from '$lib/types';
 	import * as api from '$lib/api';
 	import type { Profile } from '$lib/api';
 	import { fetchFromRelaysWithPrompt } from '$lib/fetch/relay-fetch.svelte';
@@ -50,6 +50,11 @@
 		summary: string | null;
 		image: string | null;
 		created_at: number;
+		/** Provenance — same fields PublicationSummary already carries.
+		 *  Threaded through so the draft / remote / relay-label pill lights
+		 *  up on articles + wikis the same way it does on publications. */
+		signed: boolean;
+		relays: string[];
 	};
 	let articles = $state<AddressableSummary[]>([]);
 	let wikis = $state<AddressableSummary[]>([]);
@@ -81,7 +86,9 @@
 				title: getTag(e, 'title'),
 				summary: getTag(e, 'summary'),
 				image: getTag(e, 'image'),
-				created_at: e.created_at
+				created_at: e.created_at,
+				signed: isEventSigned(e.sig),
+				relays: e.relays ?? []
 			});
 		}
 		return [...byDtag.values()].sort((a, b) => b.created_at - a.created_at);
@@ -113,7 +120,9 @@
 				author_pubkey: e.pubkey,
 				version: null,
 				created_at: e.created_at,
-				section_count: e.tags.filter(t => t[0] === 'a').length
+				section_count: e.tags.filter(t => t[0] === 'a').length,
+				relays: e.relays ?? [],
+				signed: isEventSigned(e.sig)
 			} as PublicationSummary);
 		}
 		publications = [...byDtag.values()].sort((a, b) => b.created_at - a.created_at);
@@ -454,6 +463,8 @@
 								onpillctx={() => app.pillActionByAddr(art.addr, 'context')}
 								onpillcmp={() => app.pillActionByAddr(art.addr, 'compose')}
 								onpilldrop={() => app.pillActionByAddr(art.addr, 'drop')}
+								signed={art.signed}
+								relays={art.relays}
 							/>
 							<span class="item-meta">long-form</span>
 							{@render menuBtn(() => app.openAddressableInModal(art.addr))}
@@ -488,6 +499,8 @@
 								onpillctx={() => app.pillActionByAddr(wiki.addr, 'context')}
 								onpillcmp={() => app.pillActionByAddr(wiki.addr, 'compose')}
 								onpilldrop={() => app.pillActionByAddr(wiki.addr, 'drop')}
+								signed={wiki.signed}
+								relays={wiki.relays}
 							/>
 							<span class="item-meta">wiki</span>
 							{@render menuBtn(() => app.openAddressableInModal(wiki.addr))}
@@ -526,6 +539,8 @@
 								onpillctx={() => app.pillActionByAddr(addr, 'context')}
 								onpillcmp={() => app.pillActionByAddr(addr, 'compose')}
 								onpilldrop={() => app.pillActionByAddr(addr, 'drop')}
+								signed={isEventSigned(sec.sig)}
+								relays={sec.relays ?? []}
 							/>
 							{@render menuBtn(() => app.openAddressableInModal(addr))}
 						</div>
@@ -568,6 +583,8 @@
 								onpillctx={() => app.pillActionByEventId(comment.id, 'context')}
 								onpillcmp={() => app.pillActionByEventId(comment.id, 'compose')}
 								onpilldrop={() => app.pillActionByEventId(comment.id, 'drop')}
+								signed={isEventSigned(comment.sig)}
+								relays={comment.relays ?? []}
 							/>
 							{@render menuBtn(() => (app.eventModalData = comment))}
 						</div>
