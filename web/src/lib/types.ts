@@ -67,6 +67,11 @@ export interface PublicationDetail {
 	version: string | null;
 	created_at: number;
 	index: unknown;
+	/** Relays the index event has been seen on. Empty = local-only.
+	 *  Populated by ReaderBuffer's stream consumer from the root
+	 *  PubLoadEvent::Index. */
+	relays?: string[];
+	signed?: boolean;
 }
 
 export interface TocEntry {
@@ -104,6 +109,13 @@ export type PubLoadEvent =
 			title: string | null;
 			is_root: boolean;
 			children: PubChildRef[];
+			/** Provenance from the index event itself — drives the reader
+			 *  publication header's draft / relay-label pill. Optional on
+			 *  the type so the parser tolerates older engines that don't
+			 *  emit them; engines that don't ship them default `signed` to
+			 *  true (vast majority) and `relays` to []. */
+			relays?: string[];
+			signed?: boolean;
 	  }
 	| {
 			type: 'leaf';
@@ -111,6 +123,10 @@ export type PubLoadEvent =
 			depth: number;
 			title: string | null;
 			content: string | null;
+			/** Same provenance as the index variant — drives the per-section
+			 *  pill in the reader outline + paginated/continuous header. */
+			relays?: string[];
+			signed?: boolean;
 	  }
 	| { type: 'error'; addr: NAddr; depth: number; message: string }
 	| { type: 'done'; total: number };
@@ -136,6 +152,15 @@ export interface LazySection {
 	 *  indented render. A 30040 entry (`addr.kind === 30040`) is a nested
 	 *  index the reader can refocus into rather than a readable section. */
 	depth?: number;
+	/** Relay provenance for this leaf/index event — populated from the
+	 *  matching PubLoadEvent so the reader outline + paginated/continuous
+	 *  header pills can render. Empty / missing = local-only. */
+	relays?: string[];
+	/** False = unsigned draft (placeholder all-zero signature). Optional so
+	 *  callers that don't have the info yet (e.g. before the leaf streams)
+	 *  can leave it undefined; PoolStateBadges suppresses the pill on
+	 *  undefined. */
+	signed?: boolean;
 }
 
 export interface SectionMeta {

@@ -274,6 +274,8 @@
 							onpillctx={() => app.pillActionByAddr(section.addr, 'context')}
 							onpillcmp={() => app.pillActionByAddr(section.addr, 'compose')}
 							onpilldrop={() => app.pillActionByAddr(section.addr, 'drop')}
+							signed={section.signed}
+							relays={section.relays}
 							orientation="horizontal"
 						/>
 						{#if onviewjson}

@@ -452,6 +452,16 @@ pub struct PubChildRef {
     pub in_horizon: bool,
 }
 
+/// Serde default for the `signed` field on stream events. Referenced via
+/// `#[serde(default = ...)]` attributes; the compiler can't see those uses
+/// statically because we never deserialize PubLoadEvent in the engine
+/// (only the web client does). Kept anyway so the schema round-trips
+/// cleanly if a tool ever decodes the stream.
+#[allow(dead_code)]
+fn default_true() -> bool {
+    true
+}
+
 /// One progress event in a streaming publication load (see
 /// [`PublicationEngine::stream_publication_tree`]). Serialized to SSE as a
 /// `{"type": ...}`-tagged JSON object.
@@ -466,6 +476,13 @@ pub enum PubLoadEvent {
         title: Option<String>,
         is_root: bool,
         children: Vec<PubChildRef>,
+        /// Relays this index event has been seen on. Empty = local-only.
+        /// Powers the reader's draft / relay-label provenance pill.
+        #[serde(default)]
+        relays: Vec<String>,
+        /// False = unsigned draft (placeholder all-zero signature).
+        #[serde(default = "default_true")]
+        signed: bool,
     },
     /// A content leaf (30041 or another `ZETTEL_KINDS` kind) resolved.
     Leaf {
@@ -473,6 +490,12 @@ pub enum PubLoadEvent {
         depth: usize,
         title: Option<String>,
         content: Option<String>,
+        /// Same provenance fields as Index — surfaced on the reader outline
+        /// row + the paginated/continuous section title.
+        #[serde(default)]
+        relays: Vec<String>,
+        #[serde(default = "default_true")]
+        signed: bool,
     },
     /// A node (index or leaf) failed to resolve. Counted toward `N` so the
     /// client's `i/N` still terminates cleanly.
@@ -919,6 +942,9 @@ impl<'a> PublicationEngine<'a> {
             }
 
             // 3. Emit this index — before any of its children's events.
+            //    `pub_` already carries the provenance fields off the
+            //    index event (Publication::from_event derives them), so
+            //    the stream just clones them through.
             if !emit_pub_event(
                 &tx,
                 &counter,
@@ -928,6 +954,8 @@ impl<'a> PublicationEngine<'a> {
                     title: pub_.title.clone(),
                     is_root,
                     children,
+                    relays: pub_.relays.clone(),
+                    signed: pub_.signed,
                 },
             )
             .await
@@ -965,11 +993,31 @@ impl<'a> PublicationEngine<'a> {
                                     }
                                 })
                             });
+                        // Mirror the publication-index path: extract sig +
+                        // relays from the raw event JSON so the section row
+                        // can render the same draft / relay-label pill the
+                        // root publication does.
+                        let relays: Vec<String> = leaf
+                            .get("relays")
+                            .and_then(|v| v.as_array())
+                            .map(|a| {
+                                a.iter()
+                                    .filter_map(|v| v.as_str().map(String::from))
+                                    .collect()
+                            })
+                            .unwrap_or_default();
+                        let signed = leaf
+                            .get("sig")
+                            .and_then(|v| v.as_str())
+                            .map(|s| !s.is_empty() && !s.chars().all(|c| c == '0'))
+                            .unwrap_or(false);
                         PubLoadEvent::Leaf {
                             addr: section.addr.clone(),
                             depth: depth + 1,
                             title,
                             content,
+                            relays,
+                            signed,
                         }
                     }
                     Ok(None) => PubLoadEvent::Error {

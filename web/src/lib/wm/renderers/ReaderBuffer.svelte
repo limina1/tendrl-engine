@@ -114,6 +114,12 @@
 		parentKey?: string;
 		status: 'pending' | 'loaded' | 'error';
 		error?: string;
+		/** Provenance pulled from the matching PubLoadEvent. Stays undefined
+		 *  for stub children (the index event named them but their own
+		 *  Leaf/Index hasn't streamed yet) — PoolStateBadges suppresses the
+		 *  pill on undefined so half-loaded rows don't lie. */
+		relays?: string[];
+		signed?: boolean;
 	};
 	// Default to outline. If the buffer carries `?highlight=<id>` the
 	// effect below switches to paginated so the highlight overlay is
@@ -833,7 +839,9 @@
 				author_pubkey: root.addr.pubkey,
 				version: null,
 				created_at: 0,
-				index: null
+				index: null,
+				relays: root.relays,
+				signed: root.signed
 			};
 			// pristineSections is the root's subtree — its direct children at
 			// depth 0, matching the old flattenToc. The root itself is
@@ -858,7 +866,9 @@
 					position: acc.length,
 					depth,
 					status: n.status,
-					error: n.error
+					error: n.error,
+					relays: n.relays,
+					signed: n.signed
 				});
 				if (ancestors.has(key)) return; // cycle — node shown, subtree cut
 				const next = new Set(ancestors).add(key);
@@ -932,7 +942,9 @@
 					title: ev.title,
 					isIndex: true,
 					status: 'loaded',
-					childKeys: ev.children.map((c) => addrKey(c.addr))
+					childKeys: ev.children.map((c) => addrKey(c.addr)),
+					relays: ev.relays ?? [],
+					signed: ev.signed ?? true
 				});
 				if (ev.is_root) rootKey = k;
 				for (const c of ev.children) {
@@ -970,7 +982,9 @@
 					title: ev.title,
 					isIndex: false,
 					content: ev.content,
-					status: 'loaded'
+					status: 'loaded',
+					relays: ev.relays ?? [],
+					signed: ev.signed ?? true
 				});
 				inHorizon.add(k);
 				resolvedCount++;
@@ -1824,6 +1838,8 @@
 					onpillctx={() => app.pillActionByAddr(pubAddr, 'context')}
 					onpillcmp={() => app.pillActionByAddr(pubAddr, 'compose')}
 					onpilldrop={() => app.pillActionByAddr(pubAddr, 'drop')}
+					signed={publication.signed}
+					relays={publication.relays}
 					orientation="horizontal"
 				/>
 			</div>
@@ -2092,6 +2108,8 @@
 											onpillctx={() => app.pillActionByAddr(section.addr, 'context')}
 											onpillcmp={() => app.pillActionByAddr(section.addr, 'compose')}
 											onpilldrop={() => app.pillActionByAddr(section.addr, 'drop')}
+											signed={section.signed}
+											relays={section.relays}
 										/>
 										{#if loadable}
 											<span class="nested-count"
@@ -2147,6 +2165,8 @@
 										onpillctx={() => app.pillActionByAddr(section.addr, 'context')}
 										onpillcmp={() => app.pillActionByAddr(section.addr, 'compose')}
 										onpilldrop={() => app.pillActionByAddr(section.addr, 'drop')}
+										signed={section.signed}
+										relays={section.relays}
 									/>
 									{#if highlightN > 0}
 										<button
