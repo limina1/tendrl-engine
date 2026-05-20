@@ -2,7 +2,7 @@
 	import { untrack } from 'svelte';
 	import { getAppState } from '$lib/state.svelte';
 	import SearchPanel from '$lib/components/SearchPanel.svelte';
-	import type { SearchResult } from '$lib/types';
+	import type { SearchResult, ContextItem } from '$lib/types';
 	import { getActiveStore, type NavAction } from '../buffer-store.svelte';
 	import type { Buffer } from '../types';
 
@@ -11,18 +11,51 @@
 	const app = getAppState();
 	const store = getActiveStore();
 
-	let cursor = $state(0);
+	// Three sibling sub-views — like the reader's outline/paginated/
+	// continuous. h/l cycles them; j/k walks the active tab's list.
+	type Tab = 'search' | 'import' | 'refs';
+	const TAB_ORDER: Tab[] = ['search', 'import', 'refs'];
+	let activeTab: Tab = $state('search');
+
+	// Per-tab cursor — kept here so each tab remembers its position when
+	// the user h/l-cycles away and back.
+	let searchCursor = $state(0);
+	let importCursor = $state(0);
+	let refsCursor = $state(0);
+
 	let listEl: HTMLDivElement | undefined = $state();
 
+	function listLength(tab: Tab): number {
+		if (tab === 'search') return app.searchResults.length;
+		if (tab === 'import') return app.importPages.length;
+		return app.heldEntries.length;
+	}
+
+	function getCursor(tab: Tab): number {
+		if (tab === 'search') return searchCursor;
+		if (tab === 'import') return importCursor;
+		return refsCursor;
+	}
+
+	function setCursor(tab: Tab, v: number) {
+		if (tab === 'search') searchCursor = v;
+		else if (tab === 'import') importCursor = v;
+		else refsCursor = v;
+	}
+
 	$effect(() => {
-		// Clamp cursor when result set changes (new search, filter, etc.).
-		const len = app.searchResults.length;
-		if (cursor >= len) cursor = Math.max(0, len - 1);
+		// Clamp every tab's cursor when its list shrinks.
+		for (const tab of TAB_ORDER) {
+			const len = listLength(tab);
+			const cur = getCursor(tab);
+			if (cur >= len) setCursor(tab, Math.max(0, len - 1));
+		}
 	});
 
 	function scrollCursorIntoView() {
 		if (!listEl) return;
-		const row = listEl.querySelector<HTMLDivElement>(`[data-cursor="${cursor}"]`);
+		const cur = getCursor(activeTab);
+		const row = listEl.querySelector<HTMLDivElement>(`[data-cursor="${cur}"]`);
 		if (!row) return;
 		const listRect = listEl.getBoundingClientRect();
 		const rowRect = row.getBoundingClientRect();
@@ -33,40 +66,83 @@
 		}
 	}
 
+	function cycleTab(dir: 1 | -1) {
+		const i = TAB_ORDER.indexOf(activeTab);
+		const next = TAB_ORDER[(i + dir + TAB_ORDER.length) % TAB_ORDER.length];
+		activeTab = next;
+		// On entering Import, lazy-load the document list if neither
+		// page parse nor file list has been touched yet — same behaviour
+		// the tab button has.
+		if (next === 'import' && app.importPages.length === 0 && app.documentFiles.length === 0) {
+			app.handleListDocuments();
+		}
+		queueMicrotask(scrollCursorIntoView);
+	}
+
+	function openHeldItem(item: ContextItem) {
+		// Same routing the standalone RefsBuffer uses — prefer the
+		// addressable coordinate (latest replaceable version) and fall
+		// back to the pinned event id.
+		if (item.source_addr) app.openAddressableInModal(item.source_addr);
+		else if (item.source_event_id) app.getEventForModal(item.source_event_id);
+	}
+
 	function handleNav(action: NavAction): boolean {
-		const total = app.searchResults.length;
+		// h/l cycles tabs — outside any list, so it works even when the
+		// active tab is empty.
+		if (action === 'left') { cycleTab(-1); return true; }
+		if (action === 'right') { cycleTab(1); return true; }
+
+		const total = listLength(activeTab);
 		if (total === 0) return false;
+		let cur = getCursor(activeTab);
+
 		if (action === 'down') {
-			cursor = Math.min(total - 1, cursor + 1);
+			setCursor(activeTab, Math.min(total - 1, cur + 1));
 			queueMicrotask(scrollCursorIntoView);
 			return true;
 		}
 		if (action === 'up') {
-			cursor = Math.max(0, cursor - 1);
+			setCursor(activeTab, Math.max(0, cur - 1));
 			queueMicrotask(scrollCursorIntoView);
 			return true;
 		}
 		if (action === 'top') {
-			cursor = 0;
+			setCursor(activeTab, 0);
 			queueMicrotask(scrollCursorIntoView);
 			return true;
 		}
 		if (action === 'bottom') {
-			cursor = total - 1;
+			setCursor(activeTab, total - 1);
 			queueMicrotask(scrollCursorIntoView);
 			return true;
 		}
-		if (action === 'select' || action === 'right') {
-			const r = app.searchResults[cursor];
-			if (r) onSelect(r);
+		cur = getCursor(activeTab);
+		if (action === 'select') {
+			if (activeTab === 'search') {
+				const r = app.searchResults[cur];
+				if (r) onSelect(r);
+			} else if (activeTab === 'import') {
+				const p = app.importPages[cur];
+				if (p) app.handleImportPageToContext(p);
+			} else {
+				const item = app.heldEntries[cur];
+				if (item) openHeldItem(item);
+			}
 			return true;
 		}
 		if (action === 'menu') {
 			// `m` always opens the event menu — including for comments and
 			// highlights that `select` short-circuits into the reader.
 			// The menu is the universal inspection / routing surface.
-			const r = app.searchResults[cursor];
-			if (r) app.handleViewJson(r);
+			if (activeTab === 'search') {
+				const r = app.searchResults[cur];
+				if (r) app.handleViewJson(r);
+			} else if (activeTab === 'refs') {
+				const item = app.heldEntries[cur];
+				if (item) openHeldItem(item);
+			}
+			// Import pages aren't events — no menu to open.
 			return true;
 		}
 		return false;
@@ -97,7 +173,13 @@
 </script>
 
 <SearchPanel
-	{cursor}
+	cursor={searchCursor}
+	{importCursor}
+	{refsCursor}
+	bind:activeTab
+	heldItems={app.heldEntries}
+	onopenheld={openHeldItem}
+	onreleaseheld={app.releaseHeldItem}
 	bind:listEl
 	results={app.searchResults}
 	profiles={app.searchProfiles}

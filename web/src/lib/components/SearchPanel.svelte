@@ -52,7 +52,16 @@
 		cursor = -1,
 		listEl = $bindable<HTMLDivElement | undefined>(undefined),
 		canPromptRelays = false,
-		onsearchrelays
+		onsearchrelays,
+		// Refs tab — held items in the reference pool, mirroring the
+		// standalone RefsBuffer. Cursor + open/release are routed through
+		// the host (SearchBuffer) so the same nav handler drives them.
+		heldItems = [],
+		refsCursor = -1,
+		importCursor = -1,
+		onopenheld,
+		onreleaseheld,
+		activeTab = $bindable<'search' | 'import' | 'refs'>('search')
 	}: {
 		results: SearchResult[];
 		profiles?: ProfileResult[];
@@ -94,9 +103,18 @@
 		 *  that returned zero local hits. */
 		canPromptRelays?: boolean;
 		onsearchrelays?: () => void;
+		/** Held items (the reference pool). Rendered in the Refs tab. */
+		heldItems?: ContextItem[];
+		/** Cursor index within the Refs / Import tab — passed in so the
+		 *  host (SearchBuffer) owns the per-tab cursor state and the global
+		 *  nav handler can move it alongside the existing search cursor. */
+		refsCursor?: number;
+		importCursor?: number;
+		onopenheld?: (item: ContextItem) => void;
+		onreleaseheld?: (id: string) => void;
+		/** Active tab — bindable so the host's nav handler can cycle on h/l. */
+		activeTab?: 'search' | 'import' | 'refs';
 	} = $props();
-
-	let activeTab: 'search' | 'import' = $state('search');
 
 	let checkedIds: Set<string> = $state(new Set());
 
@@ -221,9 +239,15 @@
 			{/if}
 		</button>
 		<button class="tab" class:active={activeTab === 'import'} onclick={() => { activeTab = 'import'; if (importPages.length === 0 && documentFiles.length === 0) onlistdocuments?.(); }}>
-			Import
+			KB
 			{#if hasDocResults}
 				<span class="tab-badge">{importPages.length}</span>
+			{/if}
+		</button>
+		<button class="tab" class:active={activeTab === 'refs'} onclick={() => (activeTab = 'refs')}>
+			Refs
+			{#if heldItems.length > 0}
+				<span class="tab-badge">{heldItems.length}</span>
 			{/if}
 		</button>
 	</div>
@@ -389,8 +413,8 @@
 				</div>
 			{/if}
 		</div>
-	{:else}
-		<!-- Import tab -->
+	{:else if activeTab === 'import'}
+		<!-- KB / Import tab -->
 		{#if importPages.length > 0}
 			<!-- Page view -->
 			<div class="import-header">
@@ -415,8 +439,13 @@
 				</div>
 			</div>
 			<div class="search-results">
-				{#each importPages as page (page.page_num)}
-					<div class="import-page" class:checked={importChecked.has(page.page_num)}>
+				{#each importPages as page, i (page.page_num)}
+					<div
+						class="import-page"
+						class:checked={importChecked.has(page.page_num)}
+						class:import-page--cursor={i === importCursor}
+						data-cursor={i}
+					>
 						<label class="import-check">
 							<input type="checkbox" checked={importChecked.has(page.page_num)} onchange={() => {
 								const next = new Set(importChecked);
@@ -467,6 +496,51 @@
 				</div>
 			</div>
 		{/if}
+	{:else}
+		<!-- Refs tab — held items from the reference pool. Mirrors the
+		     standalone RefsBuffer, embedded here so research-style use
+		     (search ↔ kb ↔ refs) cycles through the same panel via h/l. -->
+		<div class="search-results">
+			{#if heldItems.length === 0}
+				<p class="empty">
+					Nothing held. Open an event's menu (m) and toggle the
+					<strong>refs</strong> square to keep it here without
+					routing it into chat or compose.
+				</p>
+			{:else}
+				{#each heldItems as item, i (item.id)}
+					<!-- svelte-ignore a11y_no_static_element_interactions -->
+					<div
+						class="held-row"
+						class:held-row--cursor={i === refsCursor}
+						data-cursor={i}
+						onclick={() => onopenheld?.(item)}
+						onkeydown={(e) => { if (e.key === 'Enter') onopenheld?.(item); }}
+						role="button"
+						tabindex="0"
+					>
+						<div class="held-row__body">
+							<div class="held-row__head">
+								<span class="held-row__title">{item.title}</span>
+								{#if item.source_addr?.kind != null}
+									<span class="held-row__kind">k:{item.source_addr.kind}</span>
+								{/if}
+								{#if item.in_context}<span class="held-row__loc">context</span>{/if}
+								{#if item.in_compose}<span class="held-row__loc">compose</span>{/if}
+							</div>
+						</div>
+						<button
+							class="held-row__drop"
+							onclick={(e) => {
+								e.stopPropagation();
+								onreleaseheld?.(item.id);
+							}}
+							title="Release from refs"
+						>drop</button>
+					</div>
+				{/each}
+			{/if}
+		</div>
 	{/if}
 </div>
 
@@ -559,8 +633,12 @@
 	}
 
 	/* Ranger-style cursor: bright bar + tinted background, mirrors
-	   FeedBuffer / ReaderBuffer outline cursor. */
-	.result-row--cursor {
+	   FeedBuffer / ReaderBuffer outline cursor. Same treatment for the
+	   import-page rows and held-item rows so j/k reads the same across
+	   the three tabs. */
+	.result-row--cursor,
+	.import-page--cursor,
+	.held-row--cursor {
 		box-shadow: inset 4px 0 0 var(--id-yours);
 		background: color-mix(in srgb, var(--id-yours) 18%, transparent);
 	}
@@ -568,6 +646,61 @@
 		padding-left: 18px;
 		border-left: 2px solid var(--border);
 	}
+
+	/* Refs tab rows — pool's held items. Imported-accent border-left so
+	   the row reads as a reference (matches the standalone RefsBuffer). */
+	.held-row {
+		display: flex;
+		align-items: flex-start;
+		gap: 8px;
+		padding: 8px 12px;
+		border-bottom: 1px solid var(--border);
+		border-left: 3px solid var(--id-imported);
+		cursor: pointer;
+	}
+	.held-row:hover { background: var(--bg-surface); }
+	.held-row__body { flex: 1; min-width: 0; }
+	.held-row__head {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+	}
+	.held-row__title {
+		font-size: 0.85rem;
+		font-weight: 600;
+		flex: 1;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+	.held-row__kind {
+		font-size: 0.65rem;
+		padding: 1px 6px;
+		border-radius: 4px;
+		background: var(--border);
+		color: var(--fg-muted);
+		white-space: nowrap;
+	}
+	.held-row__loc {
+		font-size: 0.6rem;
+		padding: 0 5px;
+		border-radius: 3px;
+		background: color-mix(in srgb, var(--id-yours) 20%, transparent);
+		color: var(--id-yours);
+		font-weight: 600;
+		white-space: nowrap;
+	}
+	.held-row__drop {
+		font-family: var(--font-mono);
+		font-size: var(--t-xs);
+		padding: 2px 8px;
+		background: transparent;
+		border: 1px solid var(--base3);
+		border-radius: var(--r-sm);
+		color: var(--base6);
+		cursor: pointer;
+	}
+	.held-row__drop:hover { color: var(--fg); border-color: var(--id-imported); }
 
 	/* People category header — author matches above content results. */
 	.people-section {
