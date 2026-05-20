@@ -13,8 +13,11 @@
 
 	// Three sibling sub-views — like the reader's outline/paginated/
 	// continuous. h/l cycles them; j/k walks the active tab's list.
-	type Tab = 'search' | 'import' | 'refs';
-	const TAB_ORDER: Tab[] = ['search', 'import', 'refs'];
+	// Order is internal → external: Search and Refs both work with
+	// already-known events; KB last because its pages are external
+	// structures being pulled into the pool.
+	type Tab = 'search' | 'refs' | 'import';
+	const TAB_ORDER: Tab[] = ['search', 'refs', 'import'];
 	let activeTab: Tab = $state('search');
 
 	// Per-tab cursor — kept here so each tab remembers its position when

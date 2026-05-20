@@ -61,7 +61,7 @@
 		importCursor = -1,
 		onopenheld,
 		onreleaseheld,
-		activeTab = $bindable<'search' | 'import' | 'refs'>('search')
+		activeTab = $bindable<'search' | 'refs' | 'import'>('search')
 	}: {
 		results: SearchResult[];
 		profiles?: ProfileResult[];
@@ -112,8 +112,11 @@
 		importCursor?: number;
 		onopenheld?: (item: ContextItem) => void;
 		onreleaseheld?: (id: string) => void;
-		/** Active tab — bindable so the host's nav handler can cycle on h/l. */
-		activeTab?: 'search' | 'import' | 'refs';
+		/** Active tab — bindable so the host's nav handler can cycle on h/l.
+		 *  Order is internal → external: Search and Refs work over events
+		 *  already known to the engine; KB last because its pages come
+		 *  from outside the Nostr graph. */
+		activeTab?: 'search' | 'refs' | 'import';
 	} = $props();
 
 	let checkedIds: Set<string> = $state(new Set());
@@ -238,16 +241,16 @@
 				<span class="tab-badge">{results.filter(r => r.semantic_score != null).length}</span>
 			{/if}
 		</button>
-		<button class="tab" class:active={activeTab === 'import'} onclick={() => { activeTab = 'import'; if (importPages.length === 0 && documentFiles.length === 0) onlistdocuments?.(); }}>
-			KB
-			{#if hasDocResults}
-				<span class="tab-badge">{importPages.length}</span>
-			{/if}
-		</button>
 		<button class="tab" class:active={activeTab === 'refs'} onclick={() => (activeTab = 'refs')}>
 			Refs
 			{#if heldItems.length > 0}
 				<span class="tab-badge">{heldItems.length}</span>
+			{/if}
+		</button>
+		<button class="tab" class:active={activeTab === 'import'} onclick={() => { activeTab = 'import'; if (importPages.length === 0 && documentFiles.length === 0) onlistdocuments?.(); }}>
+			KB
+			{#if hasDocResults}
+				<span class="tab-badge">{importPages.length}</span>
 			{/if}
 		</button>
 	</div>
