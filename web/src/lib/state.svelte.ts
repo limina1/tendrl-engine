@@ -582,6 +582,93 @@ function _createAppState() {
 		return null;
 	}
 
+	/** Pill action dispatcher keyed by addressable coordinate. Used by
+	 *  feed rows, profile cards, reader outline + paginated header —
+	 *  any surface that knows an event by its NAddr.
+	 *
+	 *  If the item is already in the pool, toggles the relevant flag
+	 *  (or drops). If it isn't, fetches the latest local event for
+	 *  the coordinate and adds to the pool with the target flag. The
+	 *  async path mirrors openAddressableInModal's query shape. */
+	async function pillActionByAddr(addr: NAddr, kind: 'context' | 'compose' | 'drop') {
+		const existing = findPoolItemByAddr(addr);
+		if (kind === 'drop') {
+			if (existing) dropPoolItem(existing.id);
+			return;
+		}
+		if (existing) {
+			if (kind === 'context') routeHeldToContext(existing.id);
+			else routeHeldToCompose(existing.id);
+			return;
+		}
+		// Fresh — fetch the latest replaceable event for this coord and
+		// shape it into addToPool fields. Local-only — surfaces that
+		// don't have the event yet can use the m menu to broadcast a
+		// fetch first.
+		try {
+			const resp = await api.queryEvents(
+				[{ kinds: [addr.kind], authors: [addr.pubkey], '#d': [addr.d_tag] }],
+				'local_only'
+			);
+			const evts = (resp?.events ?? []) as NostrEvent[];
+			evts.sort((a, b) => b.created_at - a.created_at);
+			const ev = evts[0];
+			if (!ev) return;
+			const title = ev.tags.find((t) => t[0] === 'title')?.[1] ?? '[Untitled]';
+			addToPool(
+				{
+					title,
+					content: ev.content,
+					tags: (ev.tags ?? []).map((t) => ({ name: t[0] ?? '', value: t.slice(1).join(', ') })),
+					source_event_id: ev.id,
+					source_addr: { kind: ev.kind, pubkey: ev.pubkey, d_tag: addr.d_tag },
+					original_content: ev.content,
+					origin: 'search'
+				},
+				{ [kind]: true }
+			);
+			if (kind === 'context') syncContext();
+		} catch (e) {
+			console.error('pillActionByAddr failed', e);
+		}
+	}
+
+	/** Pill action dispatcher keyed by event id. For non-addressable
+	 *  kinds (comments, highlights) that don't carry an NAddr. */
+	async function pillActionByEventId(eventId: string, kind: 'context' | 'compose' | 'drop') {
+		const existing = findPoolItemByEventId(eventId);
+		if (kind === 'drop') {
+			if (existing) dropPoolItem(existing.id);
+			return;
+		}
+		if (existing) {
+			if (kind === 'context') routeHeldToContext(existing.id);
+			else routeHeldToCompose(existing.id);
+			return;
+		}
+		try {
+			const resp = await api.getEvent(eventId);
+			const ev = resp.event as NostrEvent | null;
+			if (!ev) return;
+			const title = ev.tags.find((t) => t[0] === 'title')?.[1] ?? '[Untitled]';
+			addToPool(
+				{
+					title,
+					content: ev.content,
+					tags: (ev.tags ?? []).map((t) => ({ name: t[0] ?? '', value: t.slice(1).join(', ') })),
+					source_event_id: ev.id,
+					source_addr: null,
+					original_content: ev.content,
+					origin: 'search'
+				},
+				{ [kind]: true }
+			);
+			if (kind === 'context') syncContext();
+		} catch (e) {
+			console.error('pillActionByEventId failed', e);
+		}
+	}
+
 	/** Drop a pool item entirely — clears every membership and gc()s it
 	 *  out. Keyed by the ContextItem's own UUID so refs-row drop buttons
 	 *  don't need to reconstruct a NostrEvent input. If the item was in
@@ -2502,6 +2589,8 @@ function _createAppState() {
 		routeHeldToContext,
 		routeHeldToCompose,
 		coordTokenForItem,
+		pillActionByAddr,
+		pillActionByEventId,
 		get compose() { return compose; },
 		get composeTitle() { return composeTitle; },
 		set composeTitle(v: string) { composeTitle = v; },

@@ -413,7 +413,12 @@
 					>
 						<div class="item-header">
 							<span class="item-title">{pub_item.title ?? '[Untitled]'}</span>
-							<PoolStateBadges item={app.findPoolItemByAddr(pub_item.addr)} />
+							<PoolStateBadges
+								item={app.findPoolItemByAddr(pub_item.addr)}
+								onpillctx={() => app.pillActionByAddr(pub_item.addr, 'context')}
+								onpillcmp={() => app.pillActionByAddr(pub_item.addr, 'compose')}
+								onpilldrop={() => app.pillActionByAddr(pub_item.addr, 'drop')}
+							/>
 							<span class="item-meta">{pub_item.section_count} sections</span>
 							{@render menuBtn(() => app.openAddressableInModal(pub_item.addr))}
 						</div>
@@ -442,7 +447,12 @@
 					>
 						<div class="item-header">
 							<span class="item-title">{art.title ?? '[Untitled]'}</span>
-							<PoolStateBadges item={app.findPoolItemByAddr(art.addr)} />
+							<PoolStateBadges
+								item={app.findPoolItemByAddr(art.addr)}
+								onpillctx={() => app.pillActionByAddr(art.addr, 'context')}
+								onpillcmp={() => app.pillActionByAddr(art.addr, 'compose')}
+								onpilldrop={() => app.pillActionByAddr(art.addr, 'drop')}
+							/>
 							<span class="item-meta">long-form</span>
 							{@render menuBtn(() => app.openAddressableInModal(art.addr))}
 						</div>
@@ -471,7 +481,12 @@
 					>
 						<div class="item-header">
 							<span class="item-title">{wiki.title ?? wiki.addr.d_tag ?? '[Untitled]'}</span>
-							<PoolStateBadges item={app.findPoolItemByAddr(wiki.addr)} />
+							<PoolStateBadges
+								item={app.findPoolItemByAddr(wiki.addr)}
+								onpillctx={() => app.pillActionByAddr(wiki.addr, 'context')}
+								onpillcmp={() => app.pillActionByAddr(wiki.addr, 'compose')}
+								onpilldrop={() => app.pillActionByAddr(wiki.addr, 'drop')}
+							/>
 							<span class="item-meta">wiki</span>
 							{@render menuBtn(() => app.openAddressableInModal(wiki.addr))}
 						</div>
@@ -504,7 +519,12 @@
 					>
 						<div class="item-header">
 							<span class="item-title">{title}</span>
-							<PoolStateBadges item={app.findPoolItemByAddr(addr)} />
+							<PoolStateBadges
+								item={app.findPoolItemByAddr(addr)}
+								onpillctx={() => app.pillActionByAddr(addr, 'context')}
+								onpillcmp={() => app.pillActionByAddr(addr, 'compose')}
+								onpilldrop={() => app.pillActionByAddr(addr, 'drop')}
+							/>
 							{@render menuBtn(() => app.openAddressableInModal(addr))}
 						</div>
 						{#if sec.content}
@@ -541,7 +561,12 @@
 							{#if rootAddr}
 								<span class="item-ref">on {rootKind ? `k:${rootKind}` : ''} {rootAddr.split(':').pop()}</span>
 							{/if}
-							<PoolStateBadges item={app.findPoolItemByEventId(comment.id)} />
+							<PoolStateBadges
+								item={app.findPoolItemByEventId(comment.id)}
+								onpillctx={() => app.pillActionByEventId(comment.id, 'context')}
+								onpillcmp={() => app.pillActionByEventId(comment.id, 'compose')}
+								onpilldrop={() => app.pillActionByEventId(comment.id, 'drop')}
+							/>
 							{@render menuBtn(() => (app.eventModalData = comment))}
 						</div>
 						<p class="item-content">{comment.content}</p>

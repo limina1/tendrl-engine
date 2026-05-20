@@ -167,7 +167,12 @@
 						{:else}
 							<span class="pill pill--remote" title="From relays — origin relay not recorded">remote</span>
 						{/if}
-						<PoolStateBadges item={app.findPoolItemByAddr(pub_item.addr)} />
+						<PoolStateBadges
+							item={app.findPoolItemByAddr(pub_item.addr)}
+							onpillctx={() => app.pillActionByAddr(pub_item.addr, 'context')}
+							onpillcmp={() => app.pillActionByAddr(pub_item.addr, 'compose')}
+							onpilldrop={() => app.pillActionByAddr(pub_item.addr, 'drop')}
+						/>
 						<span class="meta">{pub_item.section_count} sections</span>
 					</div>
 					{#if pub_item.summary}

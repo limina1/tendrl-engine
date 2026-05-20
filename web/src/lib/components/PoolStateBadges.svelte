@@ -88,69 +88,63 @@
 </div>
 
 <style>
+	/* Vertical stack of subtle state pills. Same look as the original
+	   loc-badge / kind-badge family (small tinted chips) so the row
+	   reads as state at a glance, not a CTA strip. Action pills are
+	   still clickable — same shape, just transparent in the
+	   off-state and tinted green when the underlying flag is on. */
 	.psb {
 		display: flex;
 		flex-direction: column;
-		gap: 4px;
-		align-items: stretch;
+		gap: 3px;
+		align-items: flex-start;
 		flex-shrink: 0;
 	}
 	.psb__pill {
 		font-family: var(--font-mono);
-		font-size: 0.62rem;
-		line-height: 1.2;
-		padding: 2px 10px;
-		border-radius: 999px;
-		text-align: center;
-		min-width: 52px;
+		font-size: 0.6rem;
+		line-height: 1.4;
+		padding: 0 6px;
+		border-radius: 3px;
 		white-space: nowrap;
 		display: inline-flex;
 		align-items: center;
-		justify-content: center;
 		gap: 3px;
+		font-weight: 600;
+		border: none;
+		background: transparent;
 	}
 
-	/* Action pills — actual buttons. Default to a muted outline, green
-	   tint when the underlying flag is on. Hover bumps the accent. */
+	/* Action pills — muted by default (just the label visible),
+	   tinted green when the underlying flag is set. Click toggles. */
 	.psb__pill--act {
-		background: transparent;
-		border: 1px solid var(--base3);
-		color: var(--base6);
+		color: var(--base5);
 		cursor: pointer;
-		transition: color 0.1s, border-color 0.1s, background 0.1s;
+		transition: background 0.1s, color 0.1s;
 	}
 	.psb__pill--act:hover {
 		color: var(--fg);
-		border-color: var(--id-yours);
+		background: color-mix(in srgb, var(--id-yours) 12%, transparent);
 	}
 	.psb__pill--on {
-		background: color-mix(in srgb, #22c55e 18%, transparent);
-		border-color: color-mix(in srgb, #22c55e 55%, transparent);
+		background: #22c55e33;
 		color: #22c55e;
 	}
 	.psb__pill--on:hover {
-		background: color-mix(in srgb, #22c55e 30%, transparent);
-		border-color: #22c55e;
+		background: #22c55e55;
 		color: #22c55e;
 	}
 
 	.psb__pill--drop {
-		background: transparent;
-		border: 1px solid var(--base3);
-		color: var(--base6);
+		color: var(--base5);
 		cursor: pointer;
 	}
 	.psb__pill--drop:hover {
-		color: var(--fg);
-		border-color: var(--id-imported);
+		background: color-mix(in srgb, var(--id-imported) 18%, transparent);
+		color: var(--id-imported);
 	}
 
-	/* Passive pills — informational only, no border in the muted state
-	   so the row reads as info rather than affordance. */
-	.psb__pill--passive {
-		border: 1px solid transparent;
-		font-weight: 600;
-	}
+	/* Passive pills — informational only. */
 	.psb__pill--refs {
 		background: color-mix(in srgb, var(--id-imported) 22%, transparent);
 		color: var(--id-imported);

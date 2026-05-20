@@ -809,26 +809,26 @@
 	.held-row__rail {
 		display: flex;
 		flex-direction: column;
-		gap: 4px;
+		gap: 3px;
 		flex-shrink: 0;
+		align-items: flex-start;
 	}
 	.held-row__srch {
 		font-family: var(--font-mono);
-		font-size: 0.62rem;
-		line-height: 1.2;
-		padding: 2px 10px;
+		font-size: 0.6rem;
+		line-height: 1.4;
+		padding: 0 6px;
 		background: transparent;
-		border: 1px solid var(--base3);
-		border-radius: 999px;
-		color: var(--base6);
+		border: none;
+		border-radius: 3px;
+		color: var(--base5);
 		cursor: pointer;
-		text-align: center;
-		min-width: 52px;
 		white-space: nowrap;
+		font-weight: 600;
 	}
 	.held-row__srch:hover {
 		color: var(--fg);
-		border-color: var(--id-yours);
+		background: color-mix(in srgb, var(--id-yours) 12%, transparent);
 	}
 
 	/* People category header — author matches above content results. */

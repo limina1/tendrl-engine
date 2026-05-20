@@ -1816,9 +1816,15 @@
 			/>
 		{/if}
 		{#if publication.title}
+			{@const pubAddr = publication.addr}
 			<div class="title">
-				{publication.title}
-				<PoolStateBadges item={app.findPoolItemByAddr(publication.addr)} />
+				<span class="title__text">{publication.title}</span>
+				<PoolStateBadges
+					item={app.findPoolItemByAddr(pubAddr)}
+					onpillctx={() => app.pillActionByAddr(pubAddr, 'context')}
+					onpillcmp={() => app.pillActionByAddr(pubAddr, 'compose')}
+					onpilldrop={() => app.pillActionByAddr(pubAddr, 'drop')}
+				/>
 			</div>
 		{/if}
 		{#if highlightText !== null}
@@ -2080,7 +2086,12 @@
 										<span class="nested-title"
 											>{section.title || 'Nested publication'}</span
 										>
-										<PoolStateBadges item={app.findPoolItemByAddr(section.addr)} />
+										<PoolStateBadges
+											item={app.findPoolItemByAddr(section.addr)}
+											onpillctx={() => app.pillActionByAddr(section.addr, 'context')}
+											onpillcmp={() => app.pillActionByAddr(section.addr, 'compose')}
+											onpilldrop={() => app.pillActionByAddr(section.addr, 'drop')}
+										/>
 										{#if loadable}
 											<span class="nested-count"
 												>{direct} {direct === 1 ? 'item' : 'items'}</span
@@ -2130,7 +2141,12 @@
 										/>
 									</div>
 									<div class="section-actions">
-									<PoolStateBadges item={app.findPoolItemByAddr(section.addr)} />
+									<PoolStateBadges
+										item={app.findPoolItemByAddr(section.addr)}
+										onpillctx={() => app.pillActionByAddr(section.addr, 'context')}
+										onpillcmp={() => app.pillActionByAddr(section.addr, 'compose')}
+										onpilldrop={() => app.pillActionByAddr(section.addr, 'drop')}
+									/>
 									{#if highlightN > 0}
 										<button
 											class="section-action section-action--highlights"

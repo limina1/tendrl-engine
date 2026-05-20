@@ -105,8 +105,13 @@
 	</div>
 	{#if section?.title}
 		<div class="paginated-title">
-			<span>{section.title}</span>
-			<PoolStateBadges item={app.findPoolItemByAddr(section.addr)} />
+			<span class="paginated-title__text">{section.title}</span>
+			<PoolStateBadges
+				item={app.findPoolItemByAddr(section.addr)}
+				onpillctx={() => app.pillActionByAddr(section.addr, 'context')}
+				onpillcmp={() => app.pillActionByAddr(section.addr, 'compose')}
+				onpilldrop={() => app.pillActionByAddr(section.addr, 'drop')}
+			/>
 		</div>
 	{/if}
 	<div class="paginated-content" bind:this={contentEl}>
