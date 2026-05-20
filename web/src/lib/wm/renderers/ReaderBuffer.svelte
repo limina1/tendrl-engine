@@ -120,6 +120,9 @@
 		 *  pill on undefined so half-loaded rows don't lie. */
 		relays?: string[];
 		signed?: boolean;
+		/** NIP-54 fork marker on this node's index event (Leaf nodes never
+		 *  set it — the marker only lives on 30040 index events). */
+		forked?: boolean;
 	};
 	// Default to outline. If the buffer carries `?highlight=<id>` the
 	// effect below switches to paginated so the highlight overlay is
@@ -841,7 +844,8 @@
 				created_at: 0,
 				index: null,
 				relays: root.relays,
-				signed: root.signed
+				signed: root.signed,
+				forked: root.forked
 			};
 			// pristineSections is the root's subtree — its direct children at
 			// depth 0, matching the old flattenToc. The root itself is
@@ -868,7 +872,8 @@
 					status: n.status,
 					error: n.error,
 					relays: n.relays,
-					signed: n.signed
+					signed: n.signed,
+					forked: n.forked
 				});
 				if (ancestors.has(key)) return; // cycle — node shown, subtree cut
 				const next = new Set(ancestors).add(key);
@@ -944,7 +949,8 @@
 					status: 'loaded',
 					childKeys: ev.children.map((c) => addrKey(c.addr)),
 					relays: ev.relays ?? [],
-					signed: ev.signed ?? true
+					signed: ev.signed ?? true,
+					forked: ev.forked ?? false
 				});
 				if (ev.is_root) rootKey = k;
 				for (const c of ev.children) {
@@ -1840,6 +1846,7 @@
 					onpilldrop={() => app.pillActionByAddr(pubAddr, 'drop')}
 					signed={publication.signed}
 					relays={publication.relays}
+					forked={publication.forked}
 					orientation="horizontal"
 				/>
 			</div>
@@ -2110,6 +2117,7 @@
 											onpilldrop={() => app.pillActionByAddr(section.addr, 'drop')}
 											signed={section.signed}
 											relays={section.relays}
+											forked={section.forked}
 										/>
 										{#if loadable}
 											<span class="nested-count"

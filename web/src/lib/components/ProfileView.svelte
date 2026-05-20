@@ -68,6 +68,14 @@
 		return tag ? tag[1] : null;
 	}
 
+	/** Detect a NIP-54 fork marker on a kind-30040 index event: an `a` or
+	 *  `e` tag whose 4th element is the literal "fork". Mirrors the engine
+	 *  detection in `Publication::from_event` so client-built summaries
+	 *  agree with server-derived ones. */
+	function hasForkMarker(event: NostrEvent): boolean {
+		return event.tags.some(t => (t[0] === 'a' || t[0] === 'e') && t[3] === 'fork');
+	}
+
 	function formatTime(ts: number): string {
 		return new Date(ts * 1000).toLocaleDateString();
 	}
@@ -120,9 +128,14 @@
 				author_pubkey: e.pubkey,
 				version: null,
 				created_at: e.created_at,
-				section_count: e.tags.filter(t => t[0] === 'a').length,
+				// A fork-marker `a` tag is not a content reference — strip
+				// it out of section_count so the displayed count matches
+				// the engine's (Publication::from_event applies the same
+				// filter via the fork-marker branch in its tag loop).
+				section_count: e.tags.filter(t => t[0] === 'a' && t[3] !== 'fork').length,
 				relays: e.relays ?? [],
-				signed: isEventSigned(e.sig)
+				signed: isEventSigned(e.sig),
+				forked: hasForkMarker(e)
 			} as PublicationSummary);
 		}
 		publications = [...byDtag.values()].sort((a, b) => b.created_at - a.created_at);
@@ -429,6 +442,7 @@
 								onpilldrop={() => app.pillActionByAddr(pub_item.addr, 'drop')}
 								signed={pub_item.signed}
 								relays={pub_item.relays}
+								forked={pub_item.forked}
 							/>
 							<span class="item-meta">{pub_item.section_count} sections</span>
 							{@render menuBtn(() => app.openAddressableInModal(pub_item.addr))}

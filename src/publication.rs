@@ -175,6 +175,12 @@ pub struct Publication {
     /// Whether the index event carries a real signature. `false` = an
     /// unsigned draft (placeholder all-zero signature).
     pub signed: bool,
+    /// True when the index event carries a NIP-54 fork-marker tag — an
+    /// `a` tag pointing at another kind-30040 publication or an `e` tag
+    /// pointing at another 30040 event, with the 4th element equal to
+    /// `"fork"`. Drives the `fork` provenance pill on every surface that
+    /// renders this publication.
+    pub forked: bool,
 }
 
 impl Publication {
@@ -199,12 +205,18 @@ impl Publication {
         let mut image = None;
         let mut version = None;
         let mut section_addrs = Vec::new();
+        // NIP-54 fork marker: an `a` or `e` tag whose 4th element is the
+        // literal "fork". The `a` variant points at the parent 30040
+        // address (kind:pubkey:d-tag), the `e` variant at its event id.
+        // Both signal lineage; either presence is enough.
+        let mut forked = false;
 
         if let Some(tags) = tags {
             for tag in tags {
                 if let Some(arr) = tag.as_array() {
                     let tag_name = arr.first().and_then(|v| v.as_str());
                     let tag_value = arr.get(1).and_then(|v| v.as_str());
+                    let tag_marker = arr.get(3).and_then(|v| v.as_str());
 
                     match tag_name {
                         Some("d") => d_tag = tag_value.unwrap_or(&d_tag).to_string(),
@@ -213,10 +225,23 @@ impl Publication {
                         Some("image") | Some("thumb") => image = tag_value.map(String::from),
                         Some("version") => version = tag_value.map(String::from),
                         Some("a") => {
-                            if let Some(addr_str) = tag_value {
+                            // Fork-marker `a` tag points at the parent 30040
+                            // — recognised before the section-collection
+                            // path so it isn't mis-parsed as a content ref.
+                            if tag_marker == Some("fork") {
+                                forked = true;
+                            } else if let Some(addr_str) = tag_value {
                                 if let Some(addr) = NAddr::from_a_tag(addr_str) {
                                     section_addrs.push(addr);
                                 }
+                            }
+                        }
+                        Some("e") => {
+                            // Fork-marker `e` tag — points at the parent
+                            // 30040's event id. Non-fork `e` tags on a
+                            // 30040 are uncommon but we ignore them.
+                            if tag_marker == Some("fork") {
+                                forked = true;
                             }
                         }
                         _ => {}
@@ -262,6 +287,7 @@ impl Publication {
                     // Unknown until the nested index is actually loaded.
                     relays: Vec::new(),
                     signed: true,
+                    forked: false,
                 });
             }
         }
@@ -300,6 +326,7 @@ impl Publication {
             is_root,
             relays,
             signed,
+            forked,
         })
     }
 
@@ -483,6 +510,10 @@ pub enum PubLoadEvent {
         /// False = unsigned draft (placeholder all-zero signature).
         #[serde(default = "default_true")]
         signed: bool,
+        /// True when the index event carries a NIP-54 fork-marker tag —
+        /// powers the `fork` provenance pill.
+        #[serde(default)]
+        forked: bool,
     },
     /// A content leaf (30041 or another `ZETTEL_KINDS` kind) resolved.
     Leaf {
@@ -956,6 +987,7 @@ impl<'a> PublicationEngine<'a> {
                     children,
                     relays: pub_.relays.clone(),
                     signed: pub_.signed,
+                    forked: pub_.forked,
                 },
             )
             .await
@@ -1881,6 +1913,66 @@ mod tests {
         assert_eq!(pub_.sections.len(), 1); // only 30041
         assert_eq!(pub_.nested.len(), 2);   // 30040 sub-pubs
         assert_eq!(pub_.section_count(), 3); // total children
+    }
+
+    #[test]
+    fn test_from_event_detects_fork_marker_a_tag() {
+        // NIP-54: an `a` tag with "fork" in the 4th slot marks lineage.
+        // The fork-marker `a` MUST NOT be folded into the section list —
+        // it doesn't reference content.
+        let event = serde_json::json!({
+            "id": "abc123",
+            "pubkey": "deadbeef",
+            "created_at": 1700000000u64,
+            "kind": 30040,
+            "content": "",
+            "tags": [
+                ["d", "my-pub"],
+                ["a", "30040:alice:original-pub", "", "fork"],
+                ["a", "30041:deadbeef:s1"]
+            ]
+        });
+        let pub_ = Publication::from_event(&event, true).unwrap();
+        assert!(pub_.forked, "fork-marker a tag must set forked=true");
+        assert_eq!(pub_.sections.len(), 1, "fork a-tag must not become a section");
+        assert_eq!(pub_.nested.len(), 0, "fork a-tag must not become a nested pub");
+    }
+
+    #[test]
+    fn test_from_event_detects_fork_marker_e_tag() {
+        // The `e` variant (event-id form) of the fork marker is the
+        // companion to the `a` variant — either alone is sufficient.
+        let event = serde_json::json!({
+            "id": "abc123",
+            "pubkey": "deadbeef",
+            "created_at": 1700000000u64,
+            "kind": 30040,
+            "content": "",
+            "tags": [
+                ["d", "my-pub"],
+                ["e", "feedfeed", "", "fork"]
+            ]
+        });
+        let pub_ = Publication::from_event(&event, true).unwrap();
+        assert!(pub_.forked, "fork-marker e tag must set forked=true");
+    }
+
+    #[test]
+    fn test_from_event_no_fork_marker() {
+        // A plain publication with sections only — forked must be false.
+        let event = serde_json::json!({
+            "id": "abc123",
+            "pubkey": "deadbeef",
+            "created_at": 1700000000u64,
+            "kind": 30040,
+            "content": "",
+            "tags": [
+                ["d", "my-pub"],
+                ["a", "30041:deadbeef:s1"]
+            ]
+        });
+        let pub_ = Publication::from_event(&event, true).unwrap();
+        assert!(!pub_.forked);
     }
 
     #[test]

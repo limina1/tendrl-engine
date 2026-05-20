@@ -56,6 +56,11 @@ export interface PublicationSummary {
 	relays: string[];
 	/** False = unsigned draft (placeholder signature). */
 	signed: boolean;
+	/** True when the index event carries a NIP-54 `a`/`e` tag with the
+	 *  `fork` marker — drives the `fork` provenance pill. Optional on the
+	 *  type so older payloads (engine didn't emit it) don't trip
+	 *  destructuring; PoolStateBadges treats `undefined` as "not forked". */
+	forked?: boolean;
 }
 
 export interface PublicationDetail {
@@ -72,6 +77,9 @@ export interface PublicationDetail {
 	 *  PubLoadEvent::Index. */
 	relays?: string[];
 	signed?: boolean;
+	/** True when the publication's index event carries a NIP-54 fork
+	 *  marker — see PublicationSummary.forked. */
+	forked?: boolean;
 }
 
 export interface TocEntry {
@@ -116,6 +124,10 @@ export type PubLoadEvent =
 			 *  true (vast majority) and `relays` to []. */
 			relays?: string[];
 			signed?: boolean;
+			/** NIP-54 fork marker on the index event. Drives the `fork`
+			 *  provenance pill. Older engines that don't emit this leave
+			 *  it undefined → renders as "not forked". */
+			forked?: boolean;
 	  }
 	| {
 			type: 'leaf';
@@ -161,6 +173,10 @@ export interface LazySection {
 	 *  can leave it undefined; PoolStateBadges suppresses the pill on
 	 *  undefined. */
 	signed?: boolean;
+	/** NIP-54 fork marker — only meaningful for nested 30040 entries
+	 *  (sections never carry it). Drives the `fork` pill on the
+	 *  outline's nested-publication rows. */
+	forked?: boolean;
 }
 
 export interface SectionMeta {

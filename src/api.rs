@@ -496,7 +496,8 @@ pub async fn list_publications_handler(
                 "created_at": p.created_at,
                 "section_count": p.section_count(),
                 "relays": p.relays,
-                "signed": p.signed
+                "signed": p.signed,
+                "forked": p.forked
             })
         })
         .collect();

@@ -154,6 +154,7 @@
 							onpilldrop={() => app.pillActionByAddr(pub_item.addr, 'drop')}
 							signed={pub_item.signed}
 							relays={pub_item.relays}
+							forked={pub_item.forked}
 						/>
 						<span class="meta">{pub_item.section_count} sections</span>
 					</div>
