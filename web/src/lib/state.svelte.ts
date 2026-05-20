@@ -537,6 +537,48 @@ function _createAppState() {
 		gc();
 	}
 
+	/** Route a held pool item into chat context. Sets in_context on the
+	 *  item and fires syncContext so the LLM picks it up. Idempotent —
+	 *  re-routing an item already in context is a no-op aside from the
+	 *  sync. The item's stored content is what gets sent; if it came in
+	 *  as a truncated SearchResult preview, that's what the LLM sees. */
+	function routeHeldToContext(itemId: string) {
+		const target = items.find((e) => e.id === itemId);
+		if (!target) return;
+		if (!target.in_context) {
+			items = items.map((e) => (e.id === itemId ? { ...e, in_context: true } : e));
+		}
+		syncContext();
+	}
+
+	/** Route a held pool item into the compose section list. The
+	 *  composer's reactive merge picks the new section up via
+	 *  composeSections (derived from items where in_compose). */
+	function routeHeldToCompose(itemId: string) {
+		const target = items.find((e) => e.id === itemId);
+		if (!target) return;
+		if (!target.in_compose) {
+			items = items.map((e) => (e.id === itemId ? { ...e, in_compose: true } : e));
+		}
+	}
+
+	/** Token-formatted coordinate for the search input. For addressable
+	 *  events (have source_addr), uses NIP-01 `a:kind:pubkey:d` notation
+	 *  which the search parser understands. For non-addressable kinds
+	 *  (comments, highlights, plain notes), falls back to `id:hex`. */
+	function coordTokenForItem(itemId: string): string | null {
+		const item = items.find((e) => e.id === itemId);
+		if (!item) return null;
+		if (item.source_addr) {
+			const { kind, pubkey, d_tag } = item.source_addr;
+			return `a:${kind}:${pubkey}:${d_tag}`;
+		}
+		if (item.source_event_id) {
+			return `id:${item.source_event_id}`;
+		}
+		return null;
+	}
+
 	/** Drop a pool item entirely — clears every membership and gc()s it
 	 *  out. Keyed by the ContextItem's own UUID so refs-row drop buttons
 	 *  don't need to reconstruct a NostrEvent input. If the item was in
@@ -2454,6 +2496,9 @@ function _createAppState() {
 		holdEvent,
 		releaseHeldItem,
 		dropPoolItem,
+		routeHeldToContext,
+		routeHeldToCompose,
+		coordTokenForItem,
 		get compose() { return compose; },
 		get composeTitle() { return composeTitle; },
 		set composeTitle(v: string) { composeTitle = v; },

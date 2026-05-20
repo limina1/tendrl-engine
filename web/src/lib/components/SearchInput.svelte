@@ -1,8 +1,12 @@
 <script lang="ts">
-	let { onsearch, disabled = false }: { onsearch: (query: string) => void; disabled?: boolean } =
-		$props();
-
-	let value = $state('');
+	// `value` is bindable so external surfaces (the Refs tab's "→ search"
+	// route action) can push coordinate tokens into the query without
+	// running it. The user then edits and presses Enter to commit.
+	let {
+		onsearch,
+		disabled = false,
+		value = $bindable<string>('')
+	}: { onsearch: (query: string) => void; disabled?: boolean; value?: string } = $props();
 
 	function handleKeydown(e: KeyboardEvent) {
 		if (e.key === 'Enter') {

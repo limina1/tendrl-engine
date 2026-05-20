@@ -104,6 +104,33 @@
 		else if (item.source_event_id) app.getEventForModal(item.source_event_id);
 	}
 
+	// The Search tab's input value — owned here so the Refs tab's
+	// "→ search" route can append a coordinate token to it from another
+	// tab without running the query.
+	let searchValue = $state('');
+
+	/** Refs row "→ context" — set in_context, fire syncContext. */
+	function routeRefToContext(item: ContextItem) {
+		app.routeHeldToContext(item.id);
+		app.pushToast('Added to chat context', 'success');
+	}
+
+	/** Refs row "→ compose" — set in_compose. */
+	function routeRefToCompose(item: ContextItem) {
+		app.routeHeldToCompose(item.id);
+		app.pushToast('Added to compose', 'success');
+	}
+
+	/** Refs row "→ search" — append coord token to the search input
+	 *  (with a leading space if non-empty) and flip to the Search tab.
+	 *  Doesn't submit; the user reviews and presses Enter. */
+	function routeRefToSearch(item: ContextItem) {
+		const token = app.coordTokenForItem(item.id);
+		if (!token) return;
+		searchValue = searchValue.trim() ? `${searchValue.trim()} ${token}` : token;
+		activeTab = 'search';
+	}
+
 	function handleNav(action: NavAction): boolean {
 		// h/l cycles tabs — outside any list, so it works even when the
 		// active tab is empty.
@@ -197,8 +224,12 @@
 	heldItems={filteredHeld}
 	heldTotal={app.heldEntries.length}
 	bind:refsQuery
+	bind:searchValue
 	onopenheld={openHeldItem}
 	onreleaseheld={app.dropPoolItem}
+	onrouterefcontext={routeRefToContext}
+	onrouterefcompose={routeRefToCompose}
+	onrouterefsearch={routeRefToSearch}
 	bind:listEl
 	results={app.searchResults}
 	profiles={app.searchProfiles}

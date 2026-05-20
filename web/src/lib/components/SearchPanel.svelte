@@ -65,8 +65,12 @@
 		importCursor = -1,
 		onopenheld,
 		onreleaseheld,
+		onrouterefcontext,
+		onrouterefcompose,
+		onrouterefsearch,
 		refsQuery = $bindable<string>(''),
-		activeTab = $bindable<'search' | 'refs' | 'import'>('search')
+		activeTab = $bindable<'search' | 'refs' | 'import'>('search'),
+		searchValue = $bindable<string>('')
 	}: {
 		results: SearchResult[];
 		profiles?: ProfileResult[];
@@ -121,9 +125,20 @@
 		importCursor?: number;
 		onopenheld?: (item: ContextItem) => void;
 		onreleaseheld?: (id: string) => void;
+		/** Refs row route actions — host (SearchBuffer) decides what to
+		 *  do (call into app state, navigate, etc). All three operate on
+		 *  the held ContextItem; the host knows whether to fire a toast,
+		 *  flip tabs, run anything async, etc. */
+		onrouterefcontext?: (item: ContextItem) => void;
+		onrouterefcompose?: (item: ContextItem) => void;
+		onrouterefsearch?: (item: ContextItem) => void;
 		/** Local case-insensitive substring filter over heldItems. Bindable
 		 *  so the host can clear it when needed and observe edits. */
 		refsQuery?: string;
+		/** The engine-side search query string (the input's value).
+		 *  Bindable so the Refs tab's "→ search" route can append a coord
+		 *  token without running the search. */
+		searchValue?: string;
 		/** Active tab — bindable so the host's nav handler can cycle on h/l.
 		 *  Order is internal → external: Search and Refs work over events
 		 *  already known to the engine; KB last because its pages come
@@ -268,7 +283,7 @@
 	</div>
 
 	{#if activeTab === 'search'}
-		<SearchInput {onsearch} />
+		<SearchInput {onsearch} bind:value={searchValue} />
 
 		<!-- Scope strip: the kinds a search runs against when the query
 		     itself has no `k:` token. Makes the otherwise-invisible
@@ -573,14 +588,54 @@
 								<PoolStateBadges {item} />
 							</div>
 						</div>
-						<button
-							class="held-row__drop"
-							onclick={(e) => {
-								e.stopPropagation();
-								onreleaseheld?.(item.id);
-							}}
-							title="Drop from pool — clears context/compose/refs"
-						>drop</button>
+						<div class="held-row__routes">
+							{#if onrouterefcontext}
+								<button
+									class="held-row__route held-row__route--context"
+									class:held-row__route--on={item.in_context}
+									onclick={(e) => {
+										e.stopPropagation();
+										onrouterefcontext?.(item);
+									}}
+									title={item.in_context
+										? 'Already in chat context'
+										: 'Send to chat context'}
+									disabled={item.in_context}
+								>→ ctx</button>
+							{/if}
+							{#if onrouterefcompose}
+								<button
+									class="held-row__route held-row__route--compose"
+									class:held-row__route--on={item.in_compose}
+									onclick={(e) => {
+										e.stopPropagation();
+										onrouterefcompose?.(item);
+									}}
+									title={item.in_compose
+										? 'Already in compose'
+										: 'Send to compose'}
+									disabled={item.in_compose}
+								>→ cmp</button>
+							{/if}
+							{#if onrouterefsearch}
+								<button
+									class="held-row__route held-row__route--search"
+									onclick={(e) => {
+										e.stopPropagation();
+										onrouterefsearch?.(item);
+									}}
+									title="Append coordinate token to the search query"
+								>→ srch</button>
+							{/if}
+							<button
+								class="held-row__drop"
+								onclick={(e) => {
+									e.stopPropagation();
+									onreleaseheld?.(item.id);
+								}}
+								title="Drop from pool — clears context/compose/refs"
+							>drop</button>
+						</div>
 					</div>
 				{/each}
 			{/if}
@@ -768,6 +823,17 @@
 		color: var(--fg-muted);
 		white-space: nowrap;
 	}
+	/* Route action strip — turns refs from passive list into a workbench.
+	   Each button promotes the row to a different surface (chat context,
+	   compose, search query) without leaving the refs tab. */
+	.held-row__routes {
+		display: flex;
+		flex-direction: column;
+		gap: 3px;
+		align-items: stretch;
+		flex-shrink: 0;
+	}
+	.held-row__route,
 	.held-row__drop {
 		font-family: var(--font-mono);
 		font-size: var(--t-xs);
@@ -777,6 +843,22 @@
 		border-radius: var(--r-sm);
 		color: var(--base6);
 		cursor: pointer;
+		text-align: left;
+		white-space: nowrap;
+	}
+	.held-row__route:hover:not(:disabled) {
+		color: var(--fg);
+		border-color: var(--id-yours);
+	}
+	.held-row__route:disabled {
+		opacity: 0.5;
+		cursor: default;
+	}
+	/* When a route's already taken (e.g. item is in_context), tint the
+	   button to communicate that the destination is set. */
+	.held-row__route--on {
+		border-color: color-mix(in srgb, #22c55e 45%, var(--base3));
+		color: #22c55e;
 	}
 	.held-row__drop:hover { color: var(--fg); border-color: var(--id-imported); }
 
