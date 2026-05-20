@@ -28,10 +28,24 @@
 
 	let listEl: HTMLDivElement | undefined = $state();
 
+	// Refs tab — a local case-insensitive substring filter over the held
+	// pool. Pure client-side, no engine round-trip. Persists across tab
+	// switches so the user can h/l away and come back to the same view.
+	let refsQuery = $state('');
+	const filteredHeld = $derived.by(() => {
+		const q = refsQuery.trim().toLowerCase();
+		if (!q) return app.heldEntries;
+		return app.heldEntries.filter((item) => {
+			if (item.title.toLowerCase().includes(q)) return true;
+			if (item.content.toLowerCase().includes(q)) return true;
+			return false;
+		});
+	});
+
 	function listLength(tab: Tab): number {
 		if (tab === 'search') return app.searchResults.length;
 		if (tab === 'import') return app.importPages.length;
-		return app.heldEntries.length;
+		return filteredHeld.length;
 	}
 
 	function getCursor(tab: Tab): number {
@@ -129,7 +143,7 @@
 				const p = app.importPages[cur];
 				if (p) app.handleImportPageToContext(p);
 			} else {
-				const item = app.heldEntries[cur];
+				const item = filteredHeld[cur];
 				if (item) openHeldItem(item);
 			}
 			return true;
@@ -142,7 +156,7 @@
 				const r = app.searchResults[cur];
 				if (r) app.handleViewJson(r);
 			} else if (activeTab === 'refs') {
-				const item = app.heldEntries[cur];
+				const item = filteredHeld[cur];
 				if (item) openHeldItem(item);
 			}
 			// Import pages aren't events — no menu to open.
@@ -180,7 +194,9 @@
 	{importCursor}
 	{refsCursor}
 	bind:activeTab
-	heldItems={app.heldEntries}
+	heldItems={filteredHeld}
+	heldTotal={app.heldEntries.length}
+	bind:refsQuery
 	onopenheld={openHeldItem}
 	onreleaseheld={app.dropPoolItem}
 	bind:listEl

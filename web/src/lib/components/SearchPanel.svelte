@@ -56,12 +56,16 @@
 		onsearchrelays,
 		// Refs tab — held items in the reference pool. Cursor + open/release
 		// are routed through the host (SearchBuffer) so the same nav handler
-		// drives them as the Search/KB tabs.
+		// drives them as the Search/KB tabs.  `heldItems` is the filtered
+		// list (post-refsQuery); `heldTotal` is the unfiltered count, so the
+		// tab badge shows the underlying pool size even while the user types.
 		heldItems = [],
+		heldTotal = 0,
 		refsCursor = -1,
 		importCursor = -1,
 		onopenheld,
 		onreleaseheld,
+		refsQuery = $bindable<string>(''),
 		activeTab = $bindable<'search' | 'refs' | 'import'>('search')
 	}: {
 		results: SearchResult[];
@@ -104,8 +108,12 @@
 		 *  that returned zero local hits. */
 		canPromptRelays?: boolean;
 		onsearchrelays?: () => void;
-		/** Held items (the reference pool). Rendered in the Refs tab. */
+		/** Held items (the reference pool). Rendered in the Refs tab.
+		 *  Already filtered by `refsQuery` upstream — render as-is. */
 		heldItems?: ContextItem[];
+		/** Unfiltered pool size — drives the tab badge so the user sees
+		 *  total held even while typing in the refs filter. */
+		heldTotal?: number;
 		/** Cursor index within the Refs / Import tab — passed in so the
 		 *  host (SearchBuffer) owns the per-tab cursor state and the global
 		 *  nav handler can move it alongside the existing search cursor. */
@@ -113,6 +121,9 @@
 		importCursor?: number;
 		onopenheld?: (item: ContextItem) => void;
 		onreleaseheld?: (id: string) => void;
+		/** Local case-insensitive substring filter over heldItems. Bindable
+		 *  so the host can clear it when needed and observe edits. */
+		refsQuery?: string;
 		/** Active tab — bindable so the host's nav handler can cycle on h/l.
 		 *  Order is internal → external: Search and Refs work over events
 		 *  already known to the engine; KB last because its pages come
@@ -244,8 +255,8 @@
 		</button>
 		<button class="tab" class:active={activeTab === 'refs'} onclick={() => (activeTab = 'refs')}>
 			Refs
-			{#if heldItems.length > 0}
-				<span class="tab-badge">{heldItems.length}</span>
+			{#if heldTotal > 0}
+				<span class="tab-badge">{heldTotal}</span>
 			{/if}
 		</button>
 		<button class="tab" class:active={activeTab === 'import'} onclick={() => { activeTab = 'import'; if (importPages.length === 0 && documentFiles.length === 0) onlistdocuments?.(); }}>
@@ -504,13 +515,42 @@
 		<!-- Refs tab — held items from the reference pool, embedded so
 		     research-style use (search ↔ refs ↔ kb) cycles through the
 		     same panel via h/l. -->
+		{#if heldTotal > 0}
+			<!-- Local substring filter over title + content. Pure client
+			     side; the held set is small enough that this is instant. -->
+			<div class="refs-filter">
+				<input
+					type="text"
+					class="refs-filter__input"
+					placeholder="filter refs…"
+					bind:value={refsQuery}
+					data-entry
+				/>
+				{#if refsQuery}
+					<button
+						class="refs-filter__clear"
+						onclick={() => (refsQuery = '')}
+						title="Clear filter"
+						aria-label="Clear filter"
+					>×</button>
+					<span class="refs-filter__count">
+						{heldItems.length} / {heldTotal}
+					</span>
+				{/if}
+			</div>
+		{/if}
 		<div class="search-results">
-			{#if heldItems.length === 0}
+			{#if heldTotal === 0}
 				<p class="empty">
 					Nothing here yet. Anything you send to <strong>context</strong>
 					or <strong>compose</strong> shows up automatically — refs is
 					the recency history of pool activity. Drop a row to remove
 					it from everywhere.
+				</p>
+			{:else if heldItems.length === 0}
+				<p class="empty">
+					No held items match <code>{refsQuery}</code>. Clear the filter
+					or try a different substring.
 				</p>
 			{:else}
 				{#each heldItems as item, i (item.id)}
@@ -649,6 +689,49 @@
 	.result-row--nested {
 		padding-left: 18px;
 		border-left: 2px solid var(--border);
+	}
+
+	/* Refs filter — small inline substring search over the held set.
+	   Compact bar at the top of the Refs tab; the engine-side search
+	   input is irrelevant here since refs is already local. */
+	.refs-filter {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		padding: 6px 12px;
+		border-bottom: 1px solid var(--border);
+	}
+	.refs-filter__input {
+		flex: 1;
+		font-family: var(--font-mono);
+		font-size: var(--t-xs);
+		padding: 4px 8px;
+		background: var(--bg-surface);
+		border: 1px solid var(--border);
+		border-radius: var(--r-sm);
+		color: var(--fg);
+	}
+	.refs-filter__input:focus {
+		outline: none;
+		border-color: var(--id-yours);
+	}
+	.refs-filter__clear {
+		font-family: var(--font-mono);
+		font-size: 0.9rem;
+		line-height: 1;
+		padding: 0 8px;
+		background: transparent;
+		border: 1px solid var(--border);
+		border-radius: var(--r-sm);
+		color: var(--fg-muted);
+		cursor: pointer;
+	}
+	.refs-filter__clear:hover { color: var(--fg); border-color: var(--id-yours); }
+	.refs-filter__count {
+		font-family: var(--font-mono);
+		font-size: 0.65rem;
+		color: var(--fg-muted);
+		white-space: nowrap;
 	}
 
 	/* Refs tab rows — pool's held items. Imported-accent border-left so
