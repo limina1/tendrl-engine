@@ -81,16 +81,21 @@
 	let tagsOpen = $state(false);
 	let rawOpen = $state(false);
 
-	// POOL row — static preview. These toggle local state only; not yet
-	// wired to a real pool (Phase B, once the reference pool exists). Here
-	// so the row's layout and interaction can be seen and tuned live.
-	let poolPreview = $state({ context: false, compose: false, refs: false, locked: true });
-
-	function dropFromPool() {
-		poolPreview.context = false;
-		poolPreview.compose = false;
-		poolPreview.refs = false;
-	}
+	// POOL row — live view of the reference pool. The viewed event may or
+	// may not have a ContextItem yet; `poolItem` is null until the user
+	// first toggles a square (which creates it via addToPool). Squares,
+	// lock, and drop all reflect and mutate the real `app.items` array.
+	const poolItem = $derived(app.findPoolItem(event));
+	const inPool = $derived(poolItem != null);
+	const inContext = $derived(poolItem?.in_context ?? false);
+	const inCompose = $derived(poolItem?.in_compose ?? false);
+	const isHeld = $derived(poolItem?.held ?? false);
+	// `readonly` only carries meaning once the item exists. When nothing's
+	// in the pool yet the lock button is disabled — there's nothing to
+	// lock — but we show the *would-be* default for affordance: imports
+	// default locked, everything else unlocked.
+	const wouldBeLocked = $derived(n.kind === 30041 || n.kind === 30040);
+	const locked = $derived(poolItem ? poolItem.readonly : wouldBeLocked);
 
 	// ===== Chord system =====
 	// Top-level keys c / a / p enter a prefix; the next key dispatches to
@@ -253,19 +258,19 @@
 			chordPrefix = null;
 			if (k === 'c') {
 				e.preventDefault();
-				poolPreview.context = !poolPreview.context;
+				app.togglePoolMembership(event, 'context');
 			} else if (k === 'm') {
 				e.preventDefault();
-				poolPreview.compose = !poolPreview.compose;
+				app.togglePoolMembership(event, 'compose');
 			} else if (k === 'r') {
 				e.preventDefault();
-				poolPreview.refs = !poolPreview.refs;
+				app.togglePoolMembership(event, 'held');
 			} else if (k === 'i') {
 				e.preventDefault();
-				poolPreview.locked = !poolPreview.locked;
+				if (inPool) app.togglePoolReadonly(event);
 			} else if (k === 'x') {
 				e.preventDefault();
-				dropFromPool();
+				if (inPool) app.dropFromPool(event);
 			}
 			return;
 		}
@@ -569,69 +574,84 @@
 			</div>
 		</section>
 
-		<!-- POOL — static preview (see the poolPreview note in <script>).
-		     Phase B wires the squares / lock / drop to the real reference
-		     pool once it exists. See docs/event-view-modal-plan.md "v2". -->
+		<!-- POOL — live view of the reference pool. The three squares show
+		     which memberships this event currently has; clicking toggles
+		     them on/off (creating the ContextItem on first touch).
+		     Lock reflects the item's `readonly` and is only interactive
+		     once the item is in the pool. Drop removes every flag and
+		     gc()s the item out. -->
 		<section class="evm__section" class:evm__section--active={chordPrefix === 'p'}>
 			<h3 class="evm__heading">
 				<span class="evm__key evm__key--head" class:evm__key--active={chordPrefix === 'p'}>p</span>
-				Pool <span class="evm__heading-meta">preview</span>
+				Pool
+				{#if !inPool}
+					<span class="evm__heading-meta">not in pool</span>
+				{/if}
 			</h3>
 			<div class="evm__pool">
 				<div class="evm__pool-members">
 					<button
 						class="evm__pool-sq"
-						class:evm__pool-sq--on={poolPreview.context}
-						onclick={() => (poolPreview.context = !poolPreview.context)}
+						class:evm__pool-sq--on={inContext}
+						onclick={() => app.togglePoolMembership(event, 'context')}
+						title={inContext ? 'In context — click to remove' : 'Add to chat context'}
 					>
 						<span class="evm__key">c</span>
-						<span class="evm__pool-box">{poolPreview.context ? '▣' : '▢'}</span>
+						<span class="evm__pool-box">{inContext ? '▣' : '▢'}</span>
 						context
 					</button>
 					<button
 						class="evm__pool-sq"
-						class:evm__pool-sq--on={poolPreview.compose}
-						onclick={() => (poolPreview.compose = !poolPreview.compose)}
+						class:evm__pool-sq--on={inCompose}
+						onclick={() => app.togglePoolMembership(event, 'compose')}
+						title={inCompose ? 'In compose — click to remove' : 'Add to compose'}
 					>
 						<span class="evm__key">m</span>
-						<span class="evm__pool-box">{poolPreview.compose ? '▣' : '▢'}</span>
+						<span class="evm__pool-box">{inCompose ? '▣' : '▢'}</span>
 						compose
 					</button>
 					<button
 						class="evm__pool-sq"
-						class:evm__pool-sq--on={poolPreview.refs}
-						onclick={() => (poolPreview.refs = !poolPreview.refs)}
+						class:evm__pool-sq--on={isHeld}
+						onclick={() => app.togglePoolMembership(event, 'held')}
+						title={isHeld ? 'Held in refs — click to release' : 'Hold in refs (no routing)'}
 					>
 						<span class="evm__key">r</span>
-						<span class="evm__pool-box">{poolPreview.refs ? '▣' : '▢'}</span>
+						<span class="evm__pool-box">{isHeld ? '▣' : '▢'}</span>
 						refs
 					</button>
 				</div>
 				<div class="evm__pool-state">
 					<button
 						class="evm__pool-lock"
-						class:evm__pool-lock--locked={poolPreview.locked}
-						onclick={() => (poolPreview.locked = !poolPreview.locked)}
-						title={poolPreview.locked
-							? 'Imported — locked to source; click to claim'
-							: 'Claimed — click to re-lock as imported'}
+						class:evm__pool-lock--locked={locked}
+						class:evm__pool-lock--disabled={!inPool}
+						onclick={() => inPool && app.togglePoolReadonly(event)}
+						disabled={!inPool}
+						title={!inPool
+							? 'Lock applies once the item is in the pool'
+							: locked
+								? 'Imported — locked to source; click to claim'
+								: 'Claimed — click to re-lock as imported'}
 					>
 						<span class="evm__key">i</span>
 						<svg class="evm__lock" viewBox="0 0 16 16" aria-hidden="true">
 							<rect x="3" y="7.2" width="10" height="6.8" rx="1.6" />
 							<path
 								class="evm__lock-shackle"
-								d={poolPreview.locked
+								d={locked
 									? 'M5.5 7.2 V5 a2.5 2.5 0 0 1 5 0 V7.2'
 									: 'M5.5 7.2 V5 a2.5 2.5 0 0 1 5 0'}
 							/>
 						</svg>
-						{poolPreview.locked ? 'imported' : 'claimed'}
+						{locked ? 'imported' : 'claimed'}
 					</button>
 					<button
 						class="evm__pool-drop"
-						onclick={dropFromPool}
-						title="Drop from every pool"
+						class:evm__pool-drop--disabled={!inPool}
+						onclick={() => inPool && app.dropFromPool(event)}
+						disabled={!inPool}
+						title={inPool ? 'Drop from every pool' : 'Nothing to drop'}
 					>
 						<span class="evm__key">x</span>
 						drop
@@ -1050,6 +1070,20 @@
 	.evm__pool-lock--locked {
 		color: var(--id-imported);
 		border-color: color-mix(in srgb, var(--id-imported) 45%, var(--border));
+	}
+	/* Lock/drop are nonsense until the item exists in the pool. We keep
+	   them visible (so the keycaps stay legible) but render them as
+	   clearly inert: muted text, dashed border, no pointer affordance. */
+	.evm__pool-lock--disabled,
+	.evm__pool-drop--disabled {
+		opacity: 0.45;
+		border-style: dashed;
+		cursor: not-allowed;
+	}
+	.evm__pool-lock--disabled:hover,
+	.evm__pool-drop--disabled:hover {
+		border-color: var(--border);
+		color: var(--fg-muted);
 	}
 	.evm__lock {
 		width: 12px;

@@ -288,6 +288,7 @@
 				modified: true,
 				in_context: false,
 				in_compose: true,
+				held: false,
 				origin: 'compose' as const,
 				readonly: false
 			};
@@ -517,6 +518,7 @@
 			modified: false,
 			in_context: false,
 			in_compose: true,
+			held: false,
 			origin: 'compose' as const,
 			// Default-locked. The user explicitly unlocks (yellow) before
 			// editing, matching the model used for transcluded sections.

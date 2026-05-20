@@ -330,8 +330,8 @@ function _createAppState() {
 	// ===================== Helpers =====================
 
 	function makeItem(
-		fields: Omit<ContextItem, 'id' | 'modified' | 'in_context' | 'in_compose' | 'readonly' | 'context_content'>,
-		target: { context?: boolean; compose?: boolean }
+		fields: Omit<ContextItem, 'id' | 'modified' | 'in_context' | 'in_compose' | 'held' | 'readonly' | 'context_content'>,
+		target: { context?: boolean; compose?: boolean; held?: boolean }
 	): ContextItem {
 		return {
 			...fields,
@@ -345,7 +345,8 @@ function _createAppState() {
 			// other origins (chat, search, fresh compose) stay unlocked.
 			readonly: fields.origin === 'import',
 			in_context: target.context ?? false,
-			in_compose: target.compose ?? false
+			in_compose: target.compose ?? false,
+			held: target.held ?? false
 		};
 	}
 
@@ -372,12 +373,144 @@ function _createAppState() {
 	}
 
 	function gc() {
-		items = items.filter((e) => e.in_context || e.in_compose);
+		items = items.filter((e) => e.in_context || e.in_compose || e.held);
+	}
+
+	// Derived view: held items only — the RefsBuffer reads this. An item with
+	// any of in_context / in_compose / held set survives gc(); held marks the
+	// "in the pool but not yet routed" state explicitly.
+	const heldEntries = $derived(items.filter((i) => i.held));
+
+	// ----- Pool helpers keyed by a viewed event (NostrEvent | SearchResult) -----
+	//
+	// The EventViewModal is opened on a generic Nostr event surface. To
+	// reach into the pool we need both an identity key (so we can find the
+	// matching ContextItem) and a `fields` payload (so we can create one
+	// if it doesn't exist). These two helpers shape both ends from either
+	// input form.
+
+	function poolKey(input: NostrEvent | SearchResult): { source_event_id: string; source_addr: NAddr | null } {
+		if ('event_id' in input) {
+			return { source_event_id: input.event_id, source_addr: input.addr ?? null };
+		}
+		const dTagEntry = input.tags.find((t) => t[0] === 'd');
+		const dTag = dTagEntry?.[1];
+		const source_addr: NAddr | null = dTag
+			? { kind: input.kind, pubkey: input.pubkey, d_tag: dTag }
+			: null;
+		return { source_event_id: input.id, source_addr };
+	}
+
+	function eventToPoolFields(
+		input: NostrEvent | SearchResult
+	): Omit<ContextItem, 'id' | 'modified' | 'in_context' | 'in_compose' | 'held' | 'readonly' | 'context_content'> {
+		const { source_event_id, source_addr } = poolKey(input);
+		if ('event_id' in input) {
+			// SearchResult — preview is what we have without an extra fetch.
+			// Callers that need the full body can pre-fetch via fetchEventContent.
+			const content = input.preview;
+			return {
+				title: input.title ?? '[Untitled]',
+				content,
+				tags: (input.tags ?? []).map((t) => ({ name: t[0] ?? '', value: t.slice(1).join(', ') })),
+				source_event_id,
+				source_addr,
+				original_content: content,
+				origin: 'search'
+			};
+		}
+		const titleTag = input.tags.find((t) => t[0] === 'title');
+		const content = input.content;
+		return {
+			title: titleTag?.[1] ?? '[Untitled]',
+			content,
+			tags: (input.tags ?? []).map((t) => ({ name: t[0] ?? '', value: t.slice(1).join(', ') })),
+			source_event_id,
+			source_addr,
+			original_content: content,
+			origin: 'search'
+		};
+	}
+
+	function findPoolItem(input: NostrEvent | SearchResult): ContextItem | null {
+		const { source_event_id, source_addr } = poolKey(input);
+		return (
+			items.find((e) => {
+				if (source_event_id && e.source_event_id === source_event_id) return true;
+				if (
+					source_addr &&
+					e.source_addr &&
+					source_addr.kind === e.source_addr.kind &&
+					source_addr.pubkey === e.source_addr.pubkey &&
+					source_addr.d_tag === e.source_addr.d_tag
+				)
+					return true;
+				return false;
+			}) ?? null
+		);
+	}
+
+	/** Toggle one membership flag on the pool item for `input`. If the item
+	 *  doesn't exist yet, it's created with that flag set. If toggling off
+	 *  leaves the item with no flags, gc() prunes it.
+	 *
+	 *  For 'context', we also trigger syncContext() so the chat panel reflects
+	 *  the new membership the same way the +context button does. */
+	function togglePoolMembership(input: NostrEvent | SearchResult, kind: 'context' | 'compose' | 'held') {
+		const existing = findPoolItem(input);
+		if (!existing) {
+			addToPool(eventToPoolFields(input), { [kind]: true });
+			if (kind === 'context') syncContext();
+			return;
+		}
+		const flagKey = kind === 'context' ? 'in_context' : kind === 'compose' ? 'in_compose' : 'held';
+		if (existing[flagKey]) {
+			items = items.map((e) => (e.id === existing.id ? { ...e, [flagKey]: false } : e));
+			gc();
+			if (kind === 'context') syncContext();
+		} else {
+			addToPool(eventToPoolFields(input), { [kind]: true });
+			if (kind === 'context') syncContext();
+		}
+	}
+
+	function togglePoolReadonly(input: NostrEvent | SearchResult) {
+		const existing = findPoolItem(input);
+		if (!existing) return;
+		items = items.map((e) => (e.id === existing.id ? { ...e, readonly: !e.readonly } : e));
+	}
+
+	/** Drop the item entirely — clears every flag and prunes via gc(). */
+	function dropFromPool(input: NostrEvent | SearchResult) {
+		const existing = findPoolItem(input);
+		if (!existing) return;
+		items = items.map((e) =>
+			e.id === existing.id ? { ...e, in_context: false, in_compose: false, held: false } : e
+		);
+		gc();
+		// If the dropped item had been syncing into context, the chat
+		// panel needs to forget it.
+		if (existing.in_context) syncContext();
+	}
+
+	/** Convenience: enter the pool with no routing intent (held only). */
+	function holdEvent(input: NostrEvent | SearchResult) {
+		addToPool(eventToPoolFields(input), { held: true });
+	}
+
+	/** Clear `held` on the item with this UUID and gc(). Used by
+	 *  RefsBuffer's row-level "drop" — keyed by item id rather than the
+	 *  source event so the caller doesn't have to reconstruct a NostrEvent. */
+	function releaseHeldItem(itemId: string) {
+		const target = items.find((e) => e.id === itemId);
+		if (!target) return;
+		items = items.map((e) => (e.id === itemId ? { ...e, held: false } : e));
+		gc();
 	}
 
 	function addToPool(
-		fields: Omit<ContextItem, 'id' | 'modified' | 'in_context' | 'in_compose' | 'readonly' | 'context_content'>,
-		target: { context?: boolean; compose?: boolean }
+		fields: Omit<ContextItem, 'id' | 'modified' | 'in_context' | 'in_compose' | 'held' | 'readonly' | 'context_content'>,
+		target: { context?: boolean; compose?: boolean; held?: boolean }
 	) {
 		const existing = items.find((e) => {
 			if (fields.source_event_id && e.source_event_id === fields.source_event_id) return true;
@@ -398,6 +531,7 @@ function _createAppState() {
 							...e,
 							in_context: e.in_context || (target.context ?? false),
 							in_compose: e.in_compose || (target.compose ?? false),
+							held: e.held || (target.held ?? false),
 							...(target.context && !e.in_context ? { context_content: e.content } : {}),
 							...(target.compose && !e.in_compose ? { content: e.context_content } : {})
 						}
@@ -2263,6 +2397,13 @@ function _createAppState() {
 		get items() { return items; },
 		get contextEntries() { return contextEntries; },
 		get composeSections() { return composeSections; },
+		get heldEntries() { return heldEntries; },
+		findPoolItem,
+		togglePoolMembership,
+		togglePoolReadonly,
+		dropFromPool,
+		holdEvent,
+		releaseHeldItem,
 		get compose() { return compose; },
 		get composeTitle() { return composeTitle; },
 		set composeTitle(v: string) { composeTitle = v; },

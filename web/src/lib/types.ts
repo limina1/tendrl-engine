@@ -218,6 +218,11 @@ export interface ContextItem {
 	modified: boolean;
 	in_context: boolean;
 	in_compose: boolean;
+	/** Held in the reference pool without an active routing intent — a
+	 *  bookmark/staging state. Items can be held in addition to (not instead
+	 *  of) `in_context` / `in_compose`; gc() keeps anything with any of the
+	 *  three flags set. The RefsBuffer is the held-filtered view. */
+	held: boolean;
 	origin: 'chat' | 'search' | 'compose' | 'import';
 	readonly: boolean;
 }
