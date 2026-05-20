@@ -7,6 +7,7 @@
 	import FocusGraph, { type GraphNode } from '$lib/components/FocusGraph.svelte';
 	import SectionCard from '$lib/components/SectionCard.svelte';
 	import ProfileName from '$lib/components/ProfileName.svelte';
+	import PoolStateBadges from '$lib/components/PoolStateBadges.svelte';
 	import { getActiveStore, type NavAction } from '../buffer-store.svelte';
 	import type {
 		LazySection,
@@ -1815,7 +1816,10 @@
 			/>
 		{/if}
 		{#if publication.title}
-			<div class="title">{publication.title}</div>
+			<div class="title">
+				{publication.title}
+				<PoolStateBadges item={app.findPoolItemByAddr(publication.addr)} />
+			</div>
 		{/if}
 		{#if highlightText !== null}
 			<div class="hl-banner">
@@ -2076,6 +2080,7 @@
 										<span class="nested-title"
 											>{section.title || 'Nested publication'}</span
 										>
+										<PoolStateBadges item={app.findPoolItemByAddr(section.addr)} />
 										{#if loadable}
 											<span class="nested-count"
 												>{direct} {direct === 1 ? 'item' : 'items'}</span
@@ -2125,6 +2130,7 @@
 										/>
 									</div>
 									<div class="section-actions">
+									<PoolStateBadges item={app.findPoolItemByAddr(section.addr)} />
 									{#if highlightN > 0}
 										<button
 											class="section-action section-action--highlights"
@@ -2442,6 +2448,9 @@
 		font-weight: 700;
 		border-bottom: 1px solid var(--panel-border);
 		flex-shrink: 0;
+		display: flex;
+		align-items: center;
+		gap: 8px;
 	}
 	.content { flex: 1; overflow: auto; min-height: 0; }
 	.empty {

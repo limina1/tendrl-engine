@@ -2,8 +2,12 @@
 	import type { LazySection } from '$lib/types';
 	import { threadContainsId, type ThreadNode } from '$lib/discussions/thread';
 	import type { Highlight } from '$lib/discussions/highlights';
+	import { getAppState } from '$lib/state.svelte';
 	import SectionCard from './SectionCard.svelte';
 	import CommentThread from './CommentThread.svelte';
+	import PoolStateBadges from './PoolStateBadges.svelte';
+
+	const app = getAppState();
 
 	let {
 		sections,
@@ -100,7 +104,10 @@
 		{/if}
 	</div>
 	{#if section?.title}
-		<div class="paginated-title">{section.title}</div>
+		<div class="paginated-title">
+			<span>{section.title}</span>
+			<PoolStateBadges item={app.findPoolItemByAddr(section.addr)} />
+		</div>
 	{/if}
 	<div class="paginated-content" bind:this={contentEl}>
 		{#if section && section.addr.kind === 30040}
@@ -149,6 +156,9 @@
 		font-size: 0.95rem;
 		font-weight: 700;
 		border-bottom: 1px solid var(--border);
+		display: flex;
+		align-items: center;
+		gap: 8px;
 	}
 
 	.paginated-content {
