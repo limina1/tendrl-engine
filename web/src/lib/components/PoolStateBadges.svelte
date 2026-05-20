@@ -44,7 +44,7 @@
 				onpillctx?.();
 			}}
 			title={item?.in_context ? 'In chat context — click to remove' : 'Send to chat context'}
-		>ctx</button>
+		>context</button>
 	{/if}
 	{#if onpillcmp}
 		<button
@@ -55,7 +55,7 @@
 				onpillcmp?.();
 			}}
 			title={item?.in_compose ? 'In compose — click to remove' : 'Send to compose'}
-		>cmp</button>
+		>compose</button>
 	{/if}
 	{#if onpilldrop && item}
 		<button
@@ -71,7 +71,7 @@
 		<span class="psb__pill psb__pill--passive psb__pill--refs" title="Held in refs">refs</span>
 	{/if}
 	{#if item?.modified}
-		<span class="psb__pill psb__pill--passive psb__pill--mod" title="Diverged from source">mod</span>
+		<span class="psb__pill psb__pill--passive psb__pill--mod" title="Diverged from source">modified</span>
 	{/if}
 	{#if item?.readonly}
 		<span class="psb__pill psb__pill--passive psb__pill--lock" title="Locked — transclusion">

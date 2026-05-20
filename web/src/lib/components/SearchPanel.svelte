@@ -611,7 +611,7 @@
 										onrouterefsearch?.(item);
 									}}
 									title="Append coordinate token to the search query"
-								>srch</button>
+								>search</button>
 							{/if}
 						</div>
 					</div>
