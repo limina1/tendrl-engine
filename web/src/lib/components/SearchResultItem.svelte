@@ -16,7 +16,8 @@
 		onignorepubkey,
 		items = [],
 		localPubkeys = new Set<string>(),
-		onviewprofile
+		onviewprofile,
+		onpillaction
 	}: {
 		result: SearchResult;
 		checked?: boolean;
@@ -30,6 +31,10 @@
 		items?: ContextItem[];
 		localPubkeys?: Set<string>;
 		onviewprofile?: (pubkey: string) => void;
+		/** Pill click on this row. Host (SearchBuffer) dispatches:
+		 *  add-to-pool for fresh results, flag toggle for already-in-pool,
+		 *  drop for full removal. */
+		onpillaction?: (result: SearchResult, kind: 'context' | 'compose' | 'drop') => void;
 	} = $props();
 
 	const poolMatch = $derived(
@@ -99,72 +104,83 @@
 {:else}
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div class="result-item" class:kind-index={result.kind === 30040} class:kind-section={result.kind === 30041}>
-	<div class="result-header">
-		{#if ontogglecheck}
-			<label class="result-check" onclick={(e) => e.stopPropagation()}>
-				<input type="checkbox" {checked} onchange={ontogglecheck} />
-			</label>
+	<div class="result-item__body">
+		<div class="result-header">
+			{#if ontogglecheck}
+				<label class="result-check" onclick={(e) => e.stopPropagation()}>
+					<input type="checkbox" {checked} onchange={ontogglecheck} />
+				</label>
+			{/if}
+			<div class="result-header-text" onclick={() => onselect(result)} onkeydown={(e) => e.key === 'Enter' && onselect(result)} role="button" tabindex="0">
+				<span class="result-title">{result.title ?? '[Untitled]'}</span>
+				<span class="kind-badge">{KINDS[result.kind] ?? result.kind}</span>
+				{#if localPubkeys?.has(result.author)}
+					<span class="local-badge">local</span>
+				{/if}
+				{#if result.semantic_score != null}
+					<span class="score-badge">{(result.semantic_score * 100).toFixed(0)}%</span>
+				{/if}
+			</div>
+		</div>
+
+		<p class="result-preview" onclick={() => onselect(result)} role="presentation">{preview}</p>
+
+		{#if result.tags.length > 0}
+			<button class="tag-toggle" onclick={() => (tagsExpanded = !tagsExpanded)}>
+				<span class="tag-arrow" class:open={tagsExpanded}>{tagsExpanded ? '▾' : '▸'}</span>
+				<span class="tag-count">{result.tags.length} tags</span>
+			</button>
 		{/if}
-		<div class="result-header-text" onclick={() => onselect(result)} onkeydown={(e) => e.key === 'Enter' && onselect(result)} role="button" tabindex="0">
-			<span class="result-title">{result.title ?? '[Untitled]'}</span>
-			<span class="kind-badge">{KINDS[result.kind] ?? result.kind}</span>
-			{#if localPubkeys?.has(result.author)}
-				<span class="local-badge">local</span>
-			{/if}
-			{#if result.semantic_score != null}
-				<span class="score-badge">{(result.semantic_score * 100).toFixed(0)}%</span>
-			{/if}
-			<PoolStateBadges item={poolMatch} />
+
+		{#if tagsExpanded}
+			<div class="tag-inspector">
+				{#each result.tags as tag}
+					<div class="tag-inspector-row">
+						<span class="tag-name">{tag[0] ?? ''}</span>
+						<span class="tag-value">{tag.slice(1).join(', ')}</span>
+					</div>
+				{/each}
+			</div>
+		{/if}
+
+		<div class="result-meta">
+			<span class="result-author"><ProfileName pubkey={result.author} {onviewprofile} /></span>
+			<span class="result-time">{formatTime(result.created_at)}</span>
+			<div class="menu-container">
+				<button bind:this={menuBtn} class="action-btn menu-btn" onclick={toggleMenu} title="More actions">⋮</button>
+				{#if menuOpen}
+					<!-- svelte-ignore a11y_click_events_have_key_events -->
+					<div class="menu-backdrop" onclick={() => (menuOpen = false)} role="presentation"></div>
+					<div class="menu-dropdown" class:menu-dropdown--down={menuDirection === 'down'}>
+						<button class="menu-item" onclick={(e) => { e.stopPropagation(); menuOpen = false; onviewjson(result); }}>Open menu</button>
+						{#if onignore}
+							<button class="menu-item menu-item-danger" onclick={(e) => { e.stopPropagation(); menuOpen = false; onignore(result); }}>Hide event</button>
+						{/if}
+						{#if onignorepubkey}
+							<button class="menu-item menu-item-danger" onclick={(e) => { e.stopPropagation(); menuOpen = false; onignorepubkey(result); }}>Hide author</button>
+						{/if}
+					</div>
+				{/if}
+			</div>
 		</div>
 	</div>
-
-	<p class="result-preview" onclick={() => onselect(result)} role="presentation">{preview}</p>
-
-	{#if result.tags.length > 0}
-		<button class="tag-toggle" onclick={() => (tagsExpanded = !tagsExpanded)}>
-			<span class="tag-arrow" class:open={tagsExpanded}>{tagsExpanded ? '▾' : '▸'}</span>
-			<span class="tag-count">{result.tags.length} tags</span>
-		</button>
-	{/if}
-
-	{#if tagsExpanded}
-		<div class="tag-inspector">
-			{#each result.tags as tag}
-				<div class="tag-inspector-row">
-					<span class="tag-name">{tag[0] ?? ''}</span>
-					<span class="tag-value">{tag.slice(1).join(', ')}</span>
-				</div>
-			{/each}
-		</div>
-	{/if}
-
-	<div class="result-meta">
-		<span class="result-author"><ProfileName pubkey={result.author} {onviewprofile} /></span>
-		<span class="result-time">{formatTime(result.created_at)}</span>
-		<button class="action-btn icon-btn" onclick={(e) => { e.stopPropagation(); onaddtocontext(result); }} title="Send to chat">◂</button>
-		<div class="menu-container">
-			<button bind:this={menuBtn} class="action-btn menu-btn" onclick={toggleMenu} title="More actions">⋮</button>
-			{#if menuOpen}
-				<!-- svelte-ignore a11y_click_events_have_key_events -->
-				<div class="menu-backdrop" onclick={() => (menuOpen = false)} role="presentation"></div>
-				<div class="menu-dropdown" class:menu-dropdown--down={menuDirection === 'down'}>
-					<button class="menu-item" onclick={(e) => { e.stopPropagation(); menuOpen = false; onviewjson(result); }}>Open menu</button>
-					{#if onignore}
-						<button class="menu-item menu-item-danger" onclick={(e) => { e.stopPropagation(); menuOpen = false; onignore(result); }}>Hide event</button>
-					{/if}
-					{#if onignorepubkey}
-						<button class="menu-item menu-item-danger" onclick={(e) => { e.stopPropagation(); menuOpen = false; onignorepubkey(result); }}>Hide author</button>
-					{/if}
-				</div>
-			{/if}
-		</div>
-	</div>
+	<!-- Unified pill stack — actions (ctx/cmp/drop) plus passive state
+	     pills (lock/modified/refs/chat) when applicable. Same component
+	     and vocabulary as the Refs tab and (eventually) feed/profile. -->
+	<PoolStateBadges
+		item={poolMatch}
+		onpillctx={() => onpillaction?.(result, 'context')}
+		onpillcmp={() => onpillaction?.(result, 'compose')}
+		onpilldrop={() => onpillaction?.(result, 'drop')}
+	/>
 </div>
 {/if}
 
 <style>
 	.result-item {
-		display: block;
+		display: flex;
+		align-items: flex-start;
+		gap: 8px;
 		width: 100%;
 		text-align: left;
 		padding: 10px 12px;
@@ -175,6 +191,7 @@
 		transition: background 0.1s;
 		border-right: 3px solid transparent;
 	}
+	.result-item__body { flex: 1; min-width: 0; }
 
 	.result-item.kind-index {
 		border-right-color: #3b82f6;
@@ -337,12 +354,6 @@
 
 	.action-btn:hover {
 		color: var(--fg);
-	}
-
-	.icon-btn {
-		font-size: 0.8rem;
-		min-width: 22px;
-		text-align: center;
 	}
 
 	/* Hamburger menu */

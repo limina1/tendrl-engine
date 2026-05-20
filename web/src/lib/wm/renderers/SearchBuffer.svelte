@@ -109,16 +109,18 @@
 	// tab without running the query.
 	let searchValue = $state('');
 
-	/** Refs row "→ context" — set in_context, fire syncContext. */
+	/** Refs row "ctx" — toggle in_context. */
 	function routeRefToContext(item: ContextItem) {
+		const wasIn = item.in_context;
 		app.routeHeldToContext(item.id);
-		app.pushToast('Added to chat context', 'success');
+		app.pushToast(wasIn ? 'Removed from chat context' : 'Added to chat context', 'success');
 	}
 
-	/** Refs row "→ compose" — set in_compose. */
+	/** Refs row "cmp" — toggle in_compose. */
 	function routeRefToCompose(item: ContextItem) {
+		const wasIn = item.in_compose;
 		app.routeHeldToCompose(item.id);
-		app.pushToast('Added to compose', 'success');
+		app.pushToast(wasIn ? 'Removed from compose' : 'Added to compose', 'success');
 	}
 
 	/** Refs row "→ search" — append coord token to the search input
@@ -129,6 +131,26 @@
 		if (!token) return;
 		searchValue = searchValue.trim() ? `${searchValue.trim()} ${token}` : token;
 		activeTab = 'search';
+	}
+
+	/** Pill action on a SEARCH-tab row. The pill is a state indicator
+	 *  that doubles as a toggle. If the result is already in the pool,
+	 *  we toggle the membership flag via id. If it isn't, we route
+	 *  through the existing add-* handlers, which fetch full content
+	 *  before creating the pool item. */
+	function onResultPillAction(result: SearchResult, kind: 'context' | 'compose' | 'drop') {
+		const existing = app.findPoolItem(result);
+		if (kind === 'drop') {
+			if (existing) app.dropPoolItem(existing.id);
+			return;
+		}
+		if (existing) {
+			if (kind === 'context') app.routeHeldToContext(existing.id);
+			else app.routeHeldToCompose(existing.id);
+		} else {
+			if (kind === 'context') app.handleAddToContext(result);
+			else app.handleAddToCompose(result);
+		}
 	}
 
 	function handleNav(action: NavAction): boolean {
@@ -230,6 +252,7 @@
 	onrouterefcontext={routeRefToContext}
 	onrouterefcompose={routeRefToCompose}
 	onrouterefsearch={routeRefToSearch}
+	onresultpillaction={onResultPillAction}
 	bind:listEl
 	results={app.searchResults}
 	profiles={app.searchProfiles}

@@ -68,6 +68,7 @@
 		onrouterefcontext,
 		onrouterefcompose,
 		onrouterefsearch,
+		onresultpillaction,
 		refsQuery = $bindable<string>(''),
 		activeTab = $bindable<'search' | 'refs' | 'import'>('search'),
 		searchValue = $bindable<string>('')
@@ -132,6 +133,10 @@
 		onrouterefcontext?: (item: ContextItem) => void;
 		onrouterefcompose?: (item: ContextItem) => void;
 		onrouterefsearch?: (item: ContextItem) => void;
+		/** Pill click on a search-tab row. The host (SearchBuffer) decides
+		 *  whether to add to pool (fresh result), toggle the membership
+		 *  (existing pool item), or drop. */
+		onresultpillaction?: (result: SearchResult, kind: 'context' | 'compose' | 'drop') => void;
 		/** Local case-insensitive substring filter over heldItems. Bindable
 		 *  so the host can clear it when needed and observe edits. */
 		refsQuery?: string;
@@ -377,6 +382,7 @@
 													{items}
 													{localPubkeys}
 													{onviewprofile}
+													onpillaction={onresultpillaction}
 												/>
 											</div>
 										{:else}
@@ -407,6 +413,7 @@
 							{items}
 							{localPubkeys}
 							{onviewprofile}
+							onpillaction={onresultpillaction}
 						/>
 					</div>
 				{/each}
@@ -585,56 +592,27 @@
 								{#if item.source_addr?.kind != null}
 									<span class="held-row__kind">k:{item.source_addr.kind}</span>
 								{/if}
-								<PoolStateBadges {item} />
 							</div>
 						</div>
-						<div class="held-row__routes">
-							{#if onrouterefcontext}
-								<button
-									class="held-row__route held-row__route--context"
-									class:held-row__route--on={item.in_context}
-									onclick={(e) => {
-										e.stopPropagation();
-										onrouterefcontext?.(item);
-									}}
-									title={item.in_context
-										? 'Already in chat context'
-										: 'Send to chat context'}
-									disabled={item.in_context}
-								>→ ctx</button>
-							{/if}
-							{#if onrouterefcompose}
-								<button
-									class="held-row__route held-row__route--compose"
-									class:held-row__route--on={item.in_compose}
-									onclick={(e) => {
-										e.stopPropagation();
-										onrouterefcompose?.(item);
-									}}
-									title={item.in_compose
-										? 'Already in compose'
-										: 'Send to compose'}
-									disabled={item.in_compose}
-								>→ cmp</button>
-							{/if}
+						<!-- One unified pill stack — actions + state. ctx/cmp toggle,
+						     drop drops, srch appends coord to search input. -->
+						<div class="held-row__rail">
+							<PoolStateBadges
+								{item}
+								onpillctx={() => onrouterefcontext?.(item)}
+								onpillcmp={() => onrouterefcompose?.(item)}
+								onpilldrop={() => onreleaseheld?.(item.id)}
+							/>
 							{#if onrouterefsearch}
 								<button
-									class="held-row__route held-row__route--search"
+									class="held-row__srch"
 									onclick={(e) => {
 										e.stopPropagation();
 										onrouterefsearch?.(item);
 									}}
 									title="Append coordinate token to the search query"
-								>→ srch</button>
+								>srch</button>
 							{/if}
-							<button
-								class="held-row__drop"
-								onclick={(e) => {
-									e.stopPropagation();
-									onreleaseheld?.(item.id);
-								}}
-								title="Drop from pool — clears context/compose/refs"
-							>drop</button>
 						</div>
 					</div>
 				{/each}
@@ -823,44 +801,35 @@
 		color: var(--fg-muted);
 		white-space: nowrap;
 	}
-	/* Route action strip — turns refs from passive list into a workbench.
-	   Each button promotes the row to a different surface (chat context,
-	   compose, search query) without leaving the refs tab. */
-	.held-row__routes {
+	/* The held-row rail is the right-side strip — PoolStateBadges plus
+	   the srch route (which is refs-specific and not part of the shared
+	   pill set). Wrapping them in a flex column keeps the visual rhythm
+	   consistent across rows even though srch lives outside the
+	   component. */
+	.held-row__rail {
 		display: flex;
 		flex-direction: column;
-		gap: 3px;
-		align-items: stretch;
+		gap: 4px;
 		flex-shrink: 0;
 	}
-	.held-row__route,
-	.held-row__drop {
+	.held-row__srch {
 		font-family: var(--font-mono);
-		font-size: var(--t-xs);
-		padding: 2px 8px;
+		font-size: 0.62rem;
+		line-height: 1.2;
+		padding: 2px 10px;
 		background: transparent;
 		border: 1px solid var(--base3);
-		border-radius: var(--r-sm);
+		border-radius: 999px;
 		color: var(--base6);
 		cursor: pointer;
-		text-align: left;
+		text-align: center;
+		min-width: 52px;
 		white-space: nowrap;
 	}
-	.held-row__route:hover:not(:disabled) {
+	.held-row__srch:hover {
 		color: var(--fg);
 		border-color: var(--id-yours);
 	}
-	.held-row__route:disabled {
-		opacity: 0.5;
-		cursor: default;
-	}
-	/* When a route's already taken (e.g. item is in_context), tint the
-	   button to communicate that the destination is set. */
-	.held-row__route--on {
-		border-color: color-mix(in srgb, #22c55e 45%, var(--base3));
-		color: #22c55e;
-	}
-	.held-row__drop:hover { color: var(--fg); border-color: var(--id-imported); }
 
 	/* People category header — author matches above content results. */
 	.people-section {

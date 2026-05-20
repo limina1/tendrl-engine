@@ -537,29 +537,32 @@ function _createAppState() {
 		gc();
 	}
 
-	/** Route a held pool item into chat context. Sets in_context on the
-	 *  item and fires syncContext so the LLM picks it up. Idempotent —
-	 *  re-routing an item already in context is a no-op aside from the
-	 *  sync. The item's stored content is what gets sent; if it came in
-	 *  as a truncated SearchResult preview, that's what the LLM sees. */
+	/** Toggle in_context on a pool item by id. Pills on the search/refs
+	 *  rows are state indicators that double as toggle buttons — click
+	 *  to flip. syncContext always fires so the chat panel reflects the
+	 *  new shape. The item's stored content is what gets sent; if it
+	 *  came in as a truncated SearchResult preview, that's what the LLM
+	 *  sees. (Full-content fetch on toggle is a follow-up.) */
 	function routeHeldToContext(itemId: string) {
 		const target = items.find((e) => e.id === itemId);
 		if (!target) return;
-		if (!target.in_context) {
-			items = items.map((e) => (e.id === itemId ? { ...e, in_context: true } : e));
-		}
+		items = items.map((e) =>
+			e.id === itemId ? { ...e, in_context: !e.in_context } : e
+		);
+		gc();
 		syncContext();
 	}
 
-	/** Route a held pool item into the compose section list. The
-	 *  composer's reactive merge picks the new section up via
-	 *  composeSections (derived from items where in_compose). */
+	/** Toggle in_compose on a pool item by id. The composer's reactive
+	 *  merge picks up the change via composeSections (items.filter
+	 *  in_compose). */
 	function routeHeldToCompose(itemId: string) {
 		const target = items.find((e) => e.id === itemId);
 		if (!target) return;
-		if (!target.in_compose) {
-			items = items.map((e) => (e.id === itemId ? { ...e, in_compose: true } : e));
-		}
+		items = items.map((e) =>
+			e.id === itemId ? { ...e, in_compose: !e.in_compose } : e
+		);
+		gc();
 	}
 
 	/** Token-formatted coordinate for the search input. For addressable
