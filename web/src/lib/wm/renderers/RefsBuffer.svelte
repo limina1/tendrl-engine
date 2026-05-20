@@ -54,10 +54,11 @@
 	</div>
 	{#if app.heldEntries.length === 0}
 		<div class="empty">
-			<p>Nothing held.</p>
+			<p>Nothing here yet.</p>
 			<p class="hint">
-				Open an event's menu (<kbd>m</kbd>) and toggle the <strong>refs</strong> square to hold
-				it here without routing it into chat or compose.
+				Anything you send to <strong>context</strong> or <strong>compose</strong>
+				shows up automatically — refs is the recency history of pool activity.
+				Drop a row to remove it from everywhere.
 			</p>
 		</div>
 	{:else}
@@ -69,7 +70,7 @@
 					onclick={() => openItem(item)}
 					onkeydown={(e) => {
 						if (e.key === 'Enter' || e.key === 'm') openItem(item);
-						else if (e.key === 'x') app.releaseHeldItem(item.id);
+						else if (e.key === 'x') app.dropPoolItem(item.id);
 					}}
 					role="button"
 					tabindex="0"
@@ -91,9 +92,9 @@
 						class="drop"
 						onclick={(e) => {
 							e.stopPropagation();
-							app.releaseHeldItem(item.id);
+							app.dropPoolItem(item.id);
 						}}
-						title="Release from refs (x)"
+						title="Drop from pool — clears context/compose/refs (x)"
 					>
 						drop
 					</button>
@@ -128,14 +129,6 @@
 		font-size: var(--t-sm);
 	}
 	.hint { max-width: 42ch; font-size: var(--t-xs); color: var(--base5); }
-	.hint kbd {
-		font-family: var(--font-mono);
-		font-size: 0.85em;
-		padding: 1px 5px;
-		border: 1px solid var(--base3);
-		border-radius: var(--r-sm);
-		background: var(--panel-bg-soft);
-	}
 
 	.row {
 		padding: 8px 12px;

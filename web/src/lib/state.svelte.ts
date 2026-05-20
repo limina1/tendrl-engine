@@ -333,6 +333,12 @@ function _createAppState() {
 		fields: Omit<ContextItem, 'id' | 'modified' | 'in_context' | 'in_compose' | 'held' | 'readonly' | 'context_content'>,
 		target: { context?: boolean; compose?: boolean; held?: boolean }
 	): ContextItem {
+		// Auto-hold: any context/compose entry — i.e. anything the user
+		// actively routed somewhere — also lands in refs. Refs is the
+		// recency history of pool activity; the user removes things from
+		// it via drop. Chat-origin items skip the auto-hold (they're
+		// internal LLM fragments, not events the user picked).
+		const autoHold = (target.context === true || target.compose === true) && fields.origin !== 'chat';
 		return {
 			...fields,
 			id: crypto.randomUUID(),
@@ -346,7 +352,7 @@ function _createAppState() {
 			readonly: fields.origin === 'import',
 			in_context: target.context ?? false,
 			in_compose: target.compose ?? false,
-			held: target.held ?? false
+			held: target.held ?? autoHold
 		};
 	}
 
@@ -508,6 +514,20 @@ function _createAppState() {
 		gc();
 	}
 
+	/** Drop a pool item entirely — clears every membership and gc()s it
+	 *  out. Keyed by the ContextItem's own UUID so refs-row drop buttons
+	 *  don't need to reconstruct a NostrEvent input. If the item was in
+	 *  context, syncContext() so the chat panel forgets it too. */
+	function dropPoolItem(itemId: string) {
+		const target = items.find((e) => e.id === itemId);
+		if (!target) return;
+		items = items.map((e) =>
+			e.id === itemId ? { ...e, in_context: false, in_compose: false, held: false } : e
+		);
+		gc();
+		if (target.in_context) syncContext();
+	}
+
 	function addToPool(
 		fields: Omit<ContextItem, 'id' | 'modified' | 'in_context' | 'in_compose' | 'held' | 'readonly' | 'context_content'>,
 		target: { context?: boolean; compose?: boolean; held?: boolean }
@@ -525,13 +545,17 @@ function _createAppState() {
 			return false;
 		});
 		if (existing) {
+			// Auto-hold rule (same as makeItem): any context/compose entry
+			// also lands in refs, so re-routing an event surfaces it in the
+			// refs tab again (refs = recency history of pool activity).
+			const autoHold = (target.context === true || target.compose === true) && fields.origin !== 'chat';
 			items = items.map((e) =>
 				e.id === existing.id
 					? {
 							...e,
 							in_context: e.in_context || (target.context ?? false),
 							in_compose: e.in_compose || (target.compose ?? false),
-							held: e.held || (target.held ?? false),
+							held: e.held || (target.held ?? false) || autoHold,
 							...(target.context && !e.in_context ? { context_content: e.content } : {}),
 							...(target.compose && !e.in_compose ? { content: e.context_content } : {})
 						}
@@ -2404,6 +2428,7 @@ function _createAppState() {
 		dropFromPool,
 		holdEvent,
 		releaseHeldItem,
+		dropPoolItem,
 		get compose() { return compose; },
 		get composeTitle() { return composeTitle; },
 		set composeTitle(v: string) { composeTitle = v; },

@@ -506,9 +506,10 @@
 		<div class="search-results">
 			{#if heldItems.length === 0}
 				<p class="empty">
-					Nothing held. Open an event's menu (m) and toggle the
-					<strong>refs</strong> square to keep it here without
-					routing it into chat or compose.
+					Nothing here yet. Anything you send to <strong>context</strong>
+					or <strong>compose</strong> shows up automatically — refs is
+					the recency history of pool activity. Drop a row to remove
+					it from everywhere.
 				</p>
 			{:else}
 				{#each heldItems as item, i (item.id)}
@@ -538,7 +539,7 @@
 								e.stopPropagation();
 								onreleaseheld?.(item.id);
 							}}
-							title="Release from refs"
+							title="Drop from pool — clears context/compose/refs"
 						>drop</button>
 					</div>
 				{/each}

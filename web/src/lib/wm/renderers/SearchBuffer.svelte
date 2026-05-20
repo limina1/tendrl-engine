@@ -182,7 +182,7 @@
 	bind:activeTab
 	heldItems={app.heldEntries}
 	onopenheld={openHeldItem}
-	onreleaseheld={app.releaseHeldItem}
+	onreleaseheld={app.dropPoolItem}
 	bind:listEl
 	results={app.searchResults}
 	profiles={app.searchProfiles}
