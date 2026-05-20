@@ -339,7 +339,17 @@
 	// Detected structure for plain mode sidebar
 	let plainText = $state('');
 	const detectedState = $derived.by(() => {
-		if (mode !== 'plain') return { title: '', tags: [] as TagEntry[], sections: [] as { title: string; item: ContextItem | null; index: number }[] };
+		if (mode !== 'plain')
+			return {
+				title: '',
+				tags: [] as TagEntry[],
+				sections: [] as {
+					title: string;
+					item: ContextItem | null;
+					index: number;
+					level: number;
+				}[]
+			};
 		const parsed = parseAll(plainText);
 		const oldSections = compose.sections;
 		return {
@@ -347,7 +357,7 @@
 			tags: parsed.tags,
 			sections: parsed.sections.map((p, i) => {
 				const existing = i < oldSections.length ? oldSections[i] : null;
-				return { title: p.title, item: existing, index: i };
+				return { title: p.title, item: existing, index: i, level: p.level };
 			})
 		};
 	});
@@ -773,7 +783,11 @@
 						</div>
 					{/if}
 					{#each detectedSections as det, di (det.index)}
-						<div class="detected-row">
+						<div
+							class="detected-row"
+							class:detected-row--nested={det.level > 2}
+							style="--depth: {Math.max(0, det.level - 2)}"
+						>
 							{#if det.item}
 								<label class="check">
 									<input
@@ -806,7 +820,11 @@
 						</div>
 					{/each}
 					{#if detectedSections.length === 0}
-						<div class="detected-empty">Type == heading to create sections</div>
+						<div class="detected-empty">
+							Type {effectiveDelim()}{effectiveDelim()} heading to create a
+							section ({effectiveDelim()}{effectiveDelim()}{effectiveDelim()}+
+							for nested sub-sections)
+						</div>
 					{/if}
 				</div>
 			</div>
@@ -1067,8 +1085,20 @@
 		align-items: center;
 		gap: 4px;
 		padding: 4px 10px;
+		padding-left: calc(10px + var(--depth, 0) * 14px);
 		border-bottom: 1px solid var(--border);
 		font-size: 0.75rem;
+	}
+
+	.detected-row--nested {
+		/* Nested sections (level >= 3) sit visually under their shallower
+		   sibling. The actual indent is driven by the inline --depth css
+		   variable so any level renders with the right offset. */
+		color: var(--fg-muted);
+	}
+
+	.detected-row--nested .detected-title {
+		font-weight: 500;
 	}
 
 	.detected-title {
