@@ -119,6 +119,14 @@
 			{#if poolMatch?.in_compose}
 				<span class="loc-badge" class:loc-synced={!poolMatch.modified} class:loc-modified={poolMatch.modified}>compose</span>
 			{/if}
+			<!-- Refs is the auto-hold history view: anything in context or
+			     compose is also in refs, so showing it then would be noise.
+			     Only surface the badge when the item is held *without* an
+			     active context/compose membership — i.e. dragged into refs
+			     manually, or released from context/compose but not dropped. -->
+			{#if poolMatch?.held && !poolMatch.in_context && !poolMatch.in_compose}
+				<span class="loc-badge loc-refs">refs</span>
+			{/if}
 		</div>
 	</div>
 
@@ -427,5 +435,12 @@
 	.loc-modified {
 		background: #eab30833;
 		color: #eab308;
+	}
+
+	/* Refs-only state: held without context/compose. Imported-accent
+	   tint so it reads as "kept for reference, not actively routed". */
+	.loc-refs {
+		background: color-mix(in srgb, var(--id-imported) 25%, transparent);
+		color: var(--id-imported);
 	}
 </style>
