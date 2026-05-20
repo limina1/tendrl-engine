@@ -788,7 +788,14 @@
 <div class="page">
 	<div class="shell">
 		<div class="shell__header">
-			<div class="shell__brand">tendrl</div>
+			<button
+				class="shell__brand"
+				onclick={() => store.openBuffer({
+					className: 'work',
+					buffer: { id: 'feed', kind: 'feed', label: 'feed' }
+				})}
+				title="Home — the feed (publications stream)"
+			>tendrl</button>
 			{#if mePubkey}
 				<button
 					class="me-chip"
@@ -1273,11 +1280,25 @@
 		border-bottom: 1px solid var(--panel-border);
 		flex-shrink: 0;
 	}
+	/* Brand doubles as the home button — clicking opens the feed buffer
+	   in the work slot. Visually neutral so it doesn't read as a chrome
+	   widget; subtle hover signals the affordance. */
 	.shell__brand {
 		font-family: var(--font-mono);
 		font-size: var(--t-sm);
 		color: var(--base7);
 		font-weight: 600;
+		background: none;
+		border: none;
+		padding: 4px 6px;
+		margin: 0 -6px 0 0;
+		cursor: pointer;
+		border-radius: var(--r-sm);
+		transition: color 0.1s, background 0.1s;
+	}
+	.shell__brand:hover {
+		color: var(--fg);
+		background: color-mix(in srgb, var(--id-yours) 12%, transparent);
 	}
 
 	.me-chip {
