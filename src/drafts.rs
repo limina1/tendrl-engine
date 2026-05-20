@@ -230,7 +230,9 @@ impl DraftStore {
         let mut pub_tags: Vec<serde_json::Value> = vec![json!(["d", &pub_d_tag])];
 
         if !compose.title.is_empty() {
+            // `title` = display; `T` = indexable title for search/discovery.
             pub_tags.push(json!(["title", &compose.title]));
+            pub_tags.push(json!(["T", &compose.title]));
         }
 
         // Add custom tags
@@ -280,7 +282,9 @@ impl DraftStore {
         let mut section_tags: Vec<serde_json::Value> = vec![json!(["d", &section_d_tag])];
 
         if !section.title.is_empty() {
+            // `title` = display; `T` = indexable title for search/discovery.
             section_tags.push(json!(["title", &section.title]));
+            section_tags.push(json!(["T", &section.title]));
         }
 
         // Add section-specific tags

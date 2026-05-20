@@ -1168,7 +1168,9 @@ impl ComposeState {
         ];
 
         if !self.title.is_empty() {
+            // `title` = display; `T` = indexable title for search/discovery.
             pub_tags.push(json!(["title", &self.title]));
+            pub_tags.push(json!(["T", &self.title]));
         }
 
         // Add custom tags
@@ -1214,7 +1216,9 @@ impl ComposeState {
         ];
 
         if !section.title.is_empty() {
+            // `title` = display; `T` = indexable title for search/discovery.
             section_tags.push(json!(["title", &section.title]));
+            section_tags.push(json!(["T", &section.title]));
         }
 
         // Add section-specific tags
@@ -2705,6 +2709,10 @@ mod tests {
         assert!(parsed["tags"].as_array().unwrap().iter().any(|t| {
             t.as_array().map(|a| a[0] == "title" && a[1] == "Test Note").unwrap_or(false)
         }));
+        // Should also carry an indexable `T` tag with the title
+        assert!(parsed["tags"].as_array().unwrap().iter().any(|t| {
+            t.as_array().map(|a| a[0] == "T" && a[1] == "Test Note").unwrap_or(false)
+        }));
         // Should have auto-update tag
         assert!(parsed["tags"].as_array().unwrap().iter().any(|t| {
             t.as_array().map(|a| a[0] == "auto-update").unwrap_or(false)
@@ -2758,6 +2766,10 @@ mod tests {
         // Should have title tag
         assert!(parsed["tags"].as_array().unwrap().iter().any(|t| {
             t.as_array().map(|a| a[0] == "title" && a[1] == "Chapter 1").unwrap_or(false)
+        }));
+        // And an indexable `T` tag with the same value
+        assert!(parsed["tags"].as_array().unwrap().iter().any(|t| {
+            t.as_array().map(|a| a[0] == "T" && a[1] == "Chapter 1").unwrap_or(false)
         }));
     }
 
