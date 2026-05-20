@@ -1963,7 +1963,150 @@ fn build_block_index_event(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tree::state::{ComposeBlockState, TagEntry};
+    use crate::tree::state::{ComposeBlockState, SectionCompose, TagEntry};
+
+    fn d_of(ev: &Value) -> String {
+        ev["tags"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find_map(|t| {
+                let a = t.as_array()?;
+                if a.first()?.as_str()? == "d" {
+                    Some(a.get(1)?.as_str()?.to_string())
+                } else {
+                    None
+                }
+            })
+            .expect("event missing d tag")
+    }
+
+    fn t_of(ev: &Value, key: &str) -> Option<String> {
+        ev["tags"].as_array()?.iter().find_map(|t| {
+            let a = t.as_array()?;
+            if a.first()?.as_str()? == key {
+                Some(a.get(1)?.as_str()?.to_string())
+            } else {
+                None
+            }
+        })
+    }
+
+    /// End-to-end integration: a multi-level ComposeState routed through
+    /// the public `build_publication_events` entry-point should branch
+    /// into the nested emitter and produce a tree of 30040 + 30041
+    /// events with stable nanoid d-tags and consistent T/title tagging.
+    #[test]
+    fn build_publication_events_nested_path() {
+        use crate::tree::state::ComposeState;
+
+        // Outer (lvl 2) → Inner (lvl 3); presence of lvl 3 triggers the
+        // nested branch in build_publication_events_internal.
+        let mut compose = ComposeState {
+            title: "Integration".to_string(),
+            sections: vec![
+                SectionCompose {
+                    title: "Outer".to_string(),
+                    content: "outer body".to_string(),
+                    level: 2,
+                    ..Default::default()
+                },
+                SectionCompose {
+                    title: "Inner".to_string(),
+                    content: "inner body".to_string(),
+                    level: 3,
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        };
+        let pubkey = "feedface".repeat(8);
+
+        let (root, children) = build_publication_events(&mut compose, &pubkey);
+
+        // Root is a 30040 with empty content and matching T+title tags.
+        assert_eq!(root["kind"], 30040);
+        assert_eq!(root["content"], "");
+        assert_eq!(t_of(&root, "T").as_deref(), Some("Integration"));
+        assert_eq!(t_of(&root, "title").as_deref(), Some("Integration"));
+
+        // Three children: Outer-30040, Outer-30041, Inner-30041 (pre-order).
+        assert_eq!(children.len(), 3);
+        assert_eq!(children[0]["kind"], 30040);
+        assert_eq!(children[0]["content"], "");
+        assert_eq!(children[1]["kind"], 30041);
+        assert_eq!(children[2]["kind"], 30041);
+
+        // All d-tags are nanoid-shaped.
+        let nanoid_shape = |s: &str| {
+            s.len() == 21
+                && s.chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+        };
+        assert!(nanoid_shape(&d_of(&root)));
+        for ev in &children {
+            assert!(nanoid_shape(&d_of(ev)));
+        }
+
+        // The Outer 30040 carries an `a` tag pointing at the Outer 30041
+        // (own content), AND an `a` tag pointing at the Inner 30041.
+        let outer_index_a_tags: Vec<String> = children[0]["tags"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|t| {
+                let a = t.as_array()?;
+                if a.first()?.as_str()? == "a" {
+                    Some(a.get(1)?.as_str()?.to_string())
+                } else {
+                    None
+                }
+            })
+            .collect();
+        assert_eq!(outer_index_a_tags.len(), 2);
+        // First a-tag is own content (30041 → outer's d).
+        assert!(outer_index_a_tags[0].starts_with("30041:"));
+        assert!(outer_index_a_tags[0].ends_with(&d_of(&children[1])));
+        // Second a-tag is the inner leaf.
+        assert!(outer_index_a_tags[1].starts_with("30041:"));
+        assert!(outer_index_a_tags[1].ends_with(&d_of(&children[2])));
+    }
+
+    /// Flat path (no section level > 2) keeps the original
+    /// single-30040 + N-30041 shape — the branch in
+    /// build_publication_events_internal must not regress this.
+    #[test]
+    fn build_publication_events_flat_path_unchanged() {
+        use crate::tree::state::ComposeState;
+
+        let mut compose = ComposeState {
+            title: "Flat".to_string(),
+            sections: vec![
+                SectionCompose {
+                    title: "A".to_string(),
+                    content: "a body".to_string(),
+                    level: 2,
+                    ..Default::default()
+                },
+                SectionCompose {
+                    title: "B".to_string(),
+                    content: "b body".to_string(),
+                    level: 2,
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        };
+        let pubkey = "feedface".repeat(8);
+
+        let (root, children) = build_publication_events(&mut compose, &pubkey);
+
+        assert_eq!(root["kind"], 30040);
+        assert_eq!(children.len(), 2);
+        for c in &children {
+            assert_eq!(c["kind"], 30041);
+        }
+    }
 
     #[test]
     fn test_naddr_parsing() {

@@ -210,6 +210,7 @@ pub fn build_nested_publication_events(
 /// Recursive helper: emit events for one node, appending to
 /// `child_events`, and push a single `a` tag for the parent to reference
 /// this node into `parent_a_tags`.
+#[allow(clippy::too_many_arguments)]
 fn emit_node(
     compose: &mut ComposeState,
     node: &HierarchicalNode,
