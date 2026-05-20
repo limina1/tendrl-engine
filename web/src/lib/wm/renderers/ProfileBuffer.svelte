@@ -69,6 +69,7 @@
 	{#if pubkey}
 		<ProfileView
 			{pubkey}
+			bufferId={buffer.id}
 			onopenpub={openPub}
 			onopenaddr={openAddr}
 			oncomment={openComment}

@@ -1,20 +1,28 @@
 <script lang="ts">
+	import { untrack } from 'svelte';
 	import type { NostrEvent, PublicationSummary } from '$lib/types';
 	import * as api from '$lib/api';
 	import type { Profile } from '$lib/api';
 	import { fetchFromRelaysWithPrompt } from '$lib/fetch/relay-fetch.svelte';
 	import { getAppState } from '$lib/state.svelte';
+	import { getActiveStore, type NavAction } from '$lib/wm/buffer-store.svelte';
 
 	const app = getAppState();
+	const store = getActiveStore();
 
 	let {
 		pubkey,
+		bufferId,
 		onopenpub,
 		onopenaddr,
 		oncomment,
 		onback
 	}: {
 		pubkey: string;
+		/** Owning buffer id — used to register a nav handler so j/k/Enter/m
+		 *  work in this view via the global keymap. Optional so direct
+		 *  embeddings (outside a WM buffer) still work without nav. */
+		bufferId?: string;
 		onopenpub?: (pub_summary: PublicationSummary) => void;
 		/** Open any non-30040 addressable (article, wiki, section, etc.) in
 		 *  the reader. The buffer-id pattern reader:&lt;kind&gt;:&lt;pk&gt;:&lt;dtag&gt; works
@@ -211,6 +219,120 @@
 
 		loadLocal(pk).catch(() => {}).finally(() => { loading = false; });
 	});
+
+	// ----- Cursor + nav handler -----
+	// One cursor index keyed by the active tab. j/k walk the active tab's
+	// list, Enter / l opens the cursored item, m opens it in the event
+	// menu. Resets when the tab changes so the cursor doesn't point past
+	// the new list's end.
+
+	let cursor = $state(0);
+	let listEl: HTMLDivElement | undefined = $state();
+
+	$effect(() => {
+		// Reset cursor when the active tab swaps.
+		void activeTab;
+		untrack(() => { cursor = 0; });
+	});
+
+	function activeList(): Array<unknown> {
+		if (activeTab === 'publications') return publications;
+		if (activeTab === 'articles') return articles;
+		if (activeTab === 'wikis') return wikis;
+		if (activeTab === 'sections') return sections;
+		return comments;
+	}
+
+	function scrollCursorIntoView() {
+		if (!listEl) return;
+		const row = listEl.querySelector<HTMLDivElement>(`[data-cursor="${cursor}"]`);
+		if (!row) return;
+		const listRect = listEl.getBoundingClientRect();
+		const rowRect = row.getBoundingClientRect();
+		if (rowRect.top < listRect.top) {
+			listEl.scrollTop -= listRect.top - rowRect.top;
+		} else if (rowRect.bottom > listRect.bottom) {
+			listEl.scrollTop += rowRect.bottom - listRect.bottom;
+		}
+	}
+
+	function openCursorItem() {
+		const list = activeList();
+		const item = list[cursor];
+		if (!item) return;
+		if (activeTab === 'publications') {
+			onopenpub?.(item as PublicationSummary);
+		} else if (activeTab === 'articles' || activeTab === 'wikis') {
+			const x = item as { addr: { kind: number; pubkey: string; d_tag: string }; title: string | null };
+			onopenaddr?.(x.addr, x.title);
+		} else if (activeTab === 'sections') {
+			const sec = item as NostrEvent;
+			const dTag = getTag(sec, 'd') || '';
+			const title = getTag(sec, 'title') || dTag || '[Untitled]';
+			onopenaddr?.({ kind: 30041, pubkey: sec.pubkey, d_tag: dTag }, title);
+		} else {
+			oncomment?.(item as NostrEvent);
+		}
+	}
+
+	function openCursorMenu() {
+		const list = activeList();
+		const item = list[cursor];
+		if (!item) return;
+		if (activeTab === 'comments') {
+			// Comments aren't addressable — feed the modal the raw event.
+			app.eventModalData = item as NostrEvent;
+		} else if (activeTab === 'sections') {
+			const sec = item as NostrEvent;
+			const dTag = getTag(sec, 'd') || '';
+			app.openAddressableInModal({ kind: 30041, pubkey: sec.pubkey, d_tag: dTag });
+		} else {
+			const addr = (item as { addr: { kind: number; pubkey: string; d_tag: string } }).addr;
+			app.openAddressableInModal(addr);
+		}
+	}
+
+	function handleNav(action: NavAction): boolean {
+		const total = activeList().length;
+		if (total === 0) return false;
+		if (action === 'down') {
+			cursor = Math.min(total - 1, cursor + 1);
+			queueMicrotask(scrollCursorIntoView);
+			return true;
+		}
+		if (action === 'up') {
+			cursor = Math.max(0, cursor - 1);
+			queueMicrotask(scrollCursorIntoView);
+			return true;
+		}
+		if (action === 'top') {
+			cursor = 0;
+			queueMicrotask(scrollCursorIntoView);
+			return true;
+		}
+		if (action === 'bottom') {
+			cursor = total - 1;
+			queueMicrotask(scrollCursorIntoView);
+			return true;
+		}
+		if (action === 'select' || action === 'right') {
+			openCursorItem();
+			return true;
+		}
+		if (action === 'menu') {
+			openCursorMenu();
+			return true;
+		}
+		return false;
+	}
+
+	$effect(() => {
+		if (!bufferId) return;
+		const id = bufferId;
+		const handler = handleNav;
+		untrack(() => store.registerNavHandler(id, handler));
+		return () => untrack(() => store.unregisterNavHandler(id));
+	});
 </script>
 
 <div class="profile-view">
@@ -269,22 +391,22 @@
 		{@render tabCell('comments', 'Comments', comments.length)}
 	</div>
 
-	<div class="tab-content">
+	<div class="tab-content" bind:this={listEl}>
 		{#if loading}
 			<div class="empty">Loading...</div>
 		{:else if activeTab === 'publications'}
 			{#if publications.length === 0}
 				<div class="empty">No publications</div>
 			{:else}
-				{#each publications as pub_item (`${pub_item.addr.pubkey}:${pub_item.addr.d_tag}`)}
+				{#each publications as pub_item, i (`${pub_item.addr.pubkey}:${pub_item.addr.d_tag}`)}
 					<!-- svelte-ignore a11y_no_static_element_interactions -->
 					<div
 						class="item pub-item"
-						onclick={() => onopenpub?.(pub_item)}
-						onkeydown={(e) => {
-							if (e.key === 'Enter') onopenpub?.(pub_item);
-							else if (e.key === 'm') app.openAddressableInModal(pub_item.addr);
-						}}
+						class:item--cursor={i === cursor}
+						data-cursor={i}
+						onclick={() => { cursor = i; onopenpub?.(pub_item); }}
+						onkeydown={(e) => { if (e.key === 'Enter') onopenpub?.(pub_item); }}
+						onfocus={() => (cursor = i)}
 						role="button"
 						tabindex="0"
 					>
@@ -304,15 +426,15 @@
 			{#if articles.length === 0}
 				<div class="empty">No articles</div>
 			{:else}
-				{#each articles as art (`${art.addr.pubkey}:${art.addr.d_tag}`)}
+				{#each articles as art, i (`${art.addr.pubkey}:${art.addr.d_tag}`)}
 					<!-- svelte-ignore a11y_no_static_element_interactions -->
 					<div
 						class="item pub-item"
-						onclick={() => onopenaddr?.(art.addr, art.title)}
-						onkeydown={(e) => {
-							if (e.key === 'Enter') onopenaddr?.(art.addr, art.title);
-							else if (e.key === 'm') app.openAddressableInModal(art.addr);
-						}}
+						class:item--cursor={i === cursor}
+						data-cursor={i}
+						onclick={() => { cursor = i; onopenaddr?.(art.addr, art.title); }}
+						onkeydown={(e) => { if (e.key === 'Enter') onopenaddr?.(art.addr, art.title); }}
+						onfocus={() => (cursor = i)}
 						role="button"
 						tabindex="0"
 					>
@@ -332,15 +454,15 @@
 			{#if wikis.length === 0}
 				<div class="empty">No wikis</div>
 			{:else}
-				{#each wikis as wiki (`${wiki.addr.pubkey}:${wiki.addr.d_tag}`)}
+				{#each wikis as wiki, i (`${wiki.addr.pubkey}:${wiki.addr.d_tag}`)}
 					<!-- svelte-ignore a11y_no_static_element_interactions -->
 					<div
 						class="item pub-item"
-						onclick={() => onopenaddr?.(wiki.addr, wiki.title)}
-						onkeydown={(e) => {
-							if (e.key === 'Enter') onopenaddr?.(wiki.addr, wiki.title);
-							else if (e.key === 'm') app.openAddressableInModal(wiki.addr);
-						}}
+						class:item--cursor={i === cursor}
+						data-cursor={i}
+						onclick={() => { cursor = i; onopenaddr?.(wiki.addr, wiki.title); }}
+						onkeydown={(e) => { if (e.key === 'Enter') onopenaddr?.(wiki.addr, wiki.title); }}
+						onfocus={() => (cursor = i)}
 						role="button"
 						tabindex="0"
 					>
@@ -360,7 +482,7 @@
 			{#if sections.length === 0}
 				<div class="empty">No sections</div>
 			{:else}
-				{#each sections as sec (sec.id)}
+				{#each sections as sec, i (sec.id)}
 					{@const dTag = getTag(sec, 'd') || ''}
 					{@const title = getTag(sec, 'title') || dTag || '[Untitled]'}
 					{@const parentAddr = getTag(sec, 'a')}
@@ -368,11 +490,11 @@
 					<!-- svelte-ignore a11y_no_static_element_interactions -->
 					<div
 						class="item pub-item"
-						onclick={() => onopenaddr?.(addr, title)}
-						onkeydown={(e) => {
-							if (e.key === 'Enter') onopenaddr?.(addr, title);
-							else if (e.key === 'm') app.openAddressableInModal(addr);
-						}}
+						class:item--cursor={i === cursor}
+						data-cursor={i}
+						onclick={() => { cursor = i; onopenaddr?.(addr, title); }}
+						onkeydown={(e) => { if (e.key === 'Enter') onopenaddr?.(addr, title); }}
+						onfocus={() => (cursor = i)}
 						role="button"
 						tabindex="0"
 					>
@@ -396,17 +518,17 @@
 			{#if comments.length === 0}
 				<div class="empty">No comments</div>
 			{:else}
-				{#each comments as comment (comment.id)}
+				{#each comments as comment, i (comment.id)}
 					{@const rootAddr = getTag(comment, 'A') || getTag(comment, 'E') || getTag(comment, 'I')}
 					{@const rootKind = getTag(comment, 'K')}
 					<!-- svelte-ignore a11y_no_static_element_interactions -->
 					<div
 						class="item pub-item"
-						onclick={() => oncomment?.(comment)}
-						onkeydown={(e) => {
-							if (e.key === 'Enter') oncomment?.(comment);
-							else if (e.key === 'm') (app.eventModalData = comment);
-						}}
+						class:item--cursor={i === cursor}
+						data-cursor={i}
+						onclick={() => { cursor = i; oncomment?.(comment); }}
+						onkeydown={(e) => { if (e.key === 'Enter') oncomment?.(comment); }}
+						onfocus={() => (cursor = i)}
 						role="button"
 						tabindex="0"
 					>
@@ -599,6 +721,17 @@
 	.pub-item:hover {
 		background: var(--bg-surface);
 	}
+
+	/* Cursor highlight: same ranger-style bar as FeedBuffer rows so the
+	   j/k cursor is unmistakable. The accent comes from --id-yours;
+	   click and tab-focus both snap the cursor onto the row. */
+	.item--cursor {
+		background: color-mix(in srgb, var(--id-yours) 18%, transparent);
+		border-left-color: var(--id-yours);
+		border-left-width: 5px;
+		padding-left: 14px;
+	}
+	.item--cursor .item-title { color: var(--fg); font-weight: 700; }
 
 	.item-header {
 		display: flex;

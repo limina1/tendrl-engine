@@ -267,10 +267,10 @@
 						{section.title ?? ''}
 						{#if onviewjson}
 							<button
-								class="section-kebab"
+								class="section-menu"
 								onclick={() => onviewjson?.(section)}
-								title="Open this section's raw event in the JSON viewer"
-							>⋮</button>
+								title="Open this section's event menu (m)"
+							>menu</button>
 						{/if}
 					</h3>
 				{/if}
@@ -465,19 +465,22 @@
 		align-items: center;
 		gap: 4px;
 	}
-	.section-kebab {
+	/* Pill-shaped "menu" chip — matches the feed and outline rows so the
+	   affordance reads the same across the reader. */
+	.section-menu {
 		margin-left: auto;
-		background: none;
-		border: none;
-		color: var(--fg-muted);
-		font-size: 1rem;
-		line-height: 1;
-		padding: 0 6px;
-		border-radius: 4px;
+		font-family: var(--font-mono);
+		font-size: var(--t-xs);
+		line-height: 1.4;
+		padding: 1px 6px;
+		border-radius: var(--r-sm);
+		border: 1px solid var(--panel-border);
+		background: var(--bg-surface);
+		color: var(--base6);
 		cursor: pointer;
 	}
-	.section-kebab:hover {
-		background: color-mix(in srgb, var(--id-yours) 12%, transparent);
+	.section-menu:hover {
+		border-color: var(--id-yours);
 		color: var(--id-yours);
 	}
 

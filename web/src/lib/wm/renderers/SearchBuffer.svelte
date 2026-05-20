@@ -61,6 +61,14 @@
 			if (r) onSelect(r);
 			return true;
 		}
+		if (action === 'menu') {
+			// `m` always opens the event menu — including for comments and
+			// highlights that `select` short-circuits into the reader.
+			// The menu is the universal inspection / routing surface.
+			const r = app.searchResults[cursor];
+			if (r) app.handleViewJson(r);
+			return true;
+		}
 		return false;
 	}
 

@@ -95,8 +95,8 @@
 			<button
 				class="pager-json"
 				onclick={() => onsectionjson?.(currentSection)}
-				title="Open this section's raw event in the JSON viewer"
-			>§ json</button>
+				title="Open this section's event menu (m)"
+			>§ menu</button>
 		{/if}
 	</div>
 	{#if section?.title}

@@ -1568,6 +1568,10 @@
 				cycleView(-1);
 				return true;
 			}
+			if (action === 'menu') {
+				openSectionJsonByIndex(outlineCursor);
+				return true;
+			}
 			return false;
 		}
 		if (viewMode === 'paginated') {
@@ -1592,6 +1596,10 @@
 				return true;
 			}
 			if (action === 'select') return true;
+			if (action === 'menu') {
+				openSectionJsonByIndex(currentSection);
+				return true;
+			}
 			return false;
 		}
 		// continuous: j/k page-scroll by viewport; h/l cycles modes;
@@ -1599,6 +1607,12 @@
 		if (viewMode === 'continuous') {
 			if (action === 'left' || action === 'right') {
 				cycleView(action === 'right' ? 1 : -1);
+				return true;
+			}
+			if (action === 'menu') {
+				// In continuous view there's no per-row cursor — the menu
+				// opens on whichever section the pager last advanced to.
+				openSectionJsonByIndex(currentSection);
 				return true;
 			}
 			if (contentWrap) {
@@ -1674,8 +1688,8 @@
 			class="json-btn"
 			onclick={openPublicationJson}
 			disabled={!publication}
-			title="Open the publication index (kind 30040) in the JSON viewer"
-		>JSON</button>
+			title="Open this publication's event menu (m)"
+		>menu</button>
 		{#if parsedAddr?.kind === 30040}
 			<span
 				class="depth-knob"
@@ -2134,13 +2148,13 @@
 										>comments {commentN}</button>
 									{/if}
 									<button
-										class="section-action section-action--more"
+										class="section-action section-action--menu"
 										onclick={(e) => {
 											e.stopPropagation();
 											openSectionJsonBySection(section);
 										}}
-										title="View this section's raw event in the JSON viewer"
-									>⋮</button>
+										title="Open this section's event menu (m)"
+									>menu</button>
 								</div>
 							</div>
 							{#if highlightsOpen && highlightN > 0}
@@ -2396,8 +2410,16 @@
 	.section-action--comments.open {
 		background: color-mix(in srgb, var(--id-yours) 18%, transparent);
 	}
-	.section-action--more {
-		padding: 1px 7px;
+	/* Section-level menu chip — matches the feed's pill--menu styling
+	   so the affordance reads the same across surfaces. Neutral border
+	   with a pop on hover, no special tint (highlights and comments
+	   already carry their own colors). */
+	.section-action--menu {
+		color: var(--fg);
+	}
+	.section-action--menu:hover {
+		border-color: var(--id-yours);
+		color: var(--id-yours);
 	}
 
 	.outline-detail {

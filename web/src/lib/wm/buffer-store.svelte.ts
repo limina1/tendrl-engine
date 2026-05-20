@@ -20,7 +20,11 @@ export type NavAction =
 	| 'back'
 	| 'top'
 	| 'bottom'
-	| 'insert';
+	| 'insert'
+	/** Open the cursored item in the universal event menu. Cursor-based
+	 *  buffers (feed, search, reader, profile) translate this to the
+	 *  appropriate `app.openAddressableInModal` / `getEventForModal` call. */
+	| 'menu';
 export type NavHandler = (action: NavAction) => boolean;
 
 function cloneTree(t: SplitNode): SplitNode {

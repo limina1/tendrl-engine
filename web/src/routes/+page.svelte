@@ -543,7 +543,10 @@
 		// scrollbar should move via keyboard. Mouse wheel still scrolls.
 		const navMap: Record<string, NavAction> = {
 			h: 'left', l: 'right', j: 'down', k: 'up',
-			ArrowLeft: 'left', ArrowRight: 'right', ArrowDown: 'down', ArrowUp: 'up'
+			ArrowLeft: 'left', ArrowRight: 'right', ArrowDown: 'down', ArrowUp: 'up',
+			// `m` opens the universal event menu on the cursored item. Each
+			// cursor-aware buffer translates this to the right modal call.
+			m: 'menu'
 		};
 		const navAction = navMap[e.key];
 		if (navAction) {

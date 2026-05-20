@@ -97,6 +97,11 @@
 			openPub(app.feed[cursor]);
 			return true;
 		}
+		if (action === 'menu') {
+			const cur = app.feed[cursor];
+			if (cur) app.openAddressableInModal(cur.addr);
+			return true;
+		}
 		return false;
 	}
 
@@ -132,7 +137,6 @@
 					onclick={() => { cursor = i; openPub(pub_item); }}
 					onkeydown={(e) => {
 						if (e.key === 'Enter') openPub(pub_item);
-						else if (e.key === 'm') app.openAddressableInModal(pub_item.addr);
 					}}
 					role="button"
 					tabindex="0"
