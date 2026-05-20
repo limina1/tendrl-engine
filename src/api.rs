@@ -2402,7 +2402,7 @@ pub async fn publish_handler(
             )
         })?;
         crate::publication::build_signed_publication_events_via_signer(
-            &compose,
+            &mut compose,
             &active_pubkey,
             &signing,
         )
@@ -2422,7 +2422,7 @@ pub async fn publish_handler(
             let session = identity.lock().unwrap();
             session.pubkey().is_some()
         };
-        let events = build_publication_events(&compose, &pubkey);
+        let events = build_publication_events(&mut compose, &pubkey);
         if should_track {
             let pub_id = events
                 .0

@@ -19,6 +19,16 @@ use serde_json::Value;
 pub const KIND_PUBLICATION_INDEX: u64 = 30040;
 pub const KIND_PUBLICATION_SECTION: u64 = 30041;
 
+/// Mint an opaque d-tag — 21-character URL-safe random string, same shape as
+/// the JS nanoid package (alphabet `A-Za-z0-9_-`). NKBIP-01 publications use
+/// stable nanoid d-tags so titles can be edited without breaking addressable
+/// identity, and so the same author can publish e.g. "virus" in different
+/// contexts without slug collisions. Every site that needs a fresh
+/// publication or section d-tag should funnel through here.
+pub fn mint_d_tag() -> String {
+    nanoid::nanoid!()
+}
+
 /// Kinds an NKBIP-01 index (30040) may reference as a *content leaf* — a
 /// readable terminal node, as opposed to a nested 30040 index. 30041 is the
 /// canonical publication section; 30023 (NIP-23 long-form) and 30818/30817
@@ -1359,7 +1369,7 @@ use sha2::{Sha256, Digest};
 /// The events have proper structure with calculated IDs but placeholder signatures.
 /// Use `build_signed_publication_events` for events that can be stored in nostrdb.
 pub fn build_publication_events(
-    compose: &ComposeState,
+    compose: &mut ComposeState,
     pubkey: &str,
 ) -> (Value, Vec<Value>) {
     build_publication_events_internal(compose, pubkey, None)
@@ -1370,7 +1380,7 @@ pub fn build_publication_events(
 /// paths that don't need to route through the SigningController; live
 /// HTTP publish goes through `build_signed_publication_events_via_signer`.
 pub fn build_signed_publication_events(
-    compose: &ComposeState,
+    compose: &mut ComposeState,
     pubkey: &str,
     secret_hex: &str,
 ) -> (Value, Vec<Value>) {
@@ -1386,7 +1396,7 @@ pub fn build_signed_publication_events(
 /// `pubkey` must match the signer's active source pubkey. The signer
 /// re-checks via `template.pubkey` and refuses on mismatch.
 pub async fn build_signed_publication_events_via_signer(
-    compose: &ComposeState,
+    compose: &mut ComposeState,
     pubkey: &str,
     signer: &dyn crate::signing::Signer,
 ) -> std::result::Result<(Value, Vec<Value>), crate::signing::SigningError> {
@@ -1401,17 +1411,22 @@ pub async fn build_signed_publication_events_via_signer(
     let pubkey = pubkey.to_string();
 
     // Section events (need their d-tags before the index references
-    // them).
+    // them). Mint each section's d-tag first, then clone the section's
+    // title/content/tags so the immutable borrow doesn't overlap with the
+    // mutable mint.
     let mut section_events = Vec::new();
     for i in 0..compose.sections.len() {
-        let section = &compose.sections[i];
         let section_d_tag = compose.section_d_tag(i);
+        let section = &compose.sections[i];
+        let section_title = section.title.clone();
+        let section_content = section.content.clone();
+        let section_tags = section.tags.clone();
 
         let mut tags: Vec<Vec<String>> = vec![vec!["d".into(), section_d_tag.clone()]];
-        if !section.title.is_empty() {
-            tags.push(vec!["title".into(), section.title.clone()]);
+        if !section_title.is_empty() {
+            tags.push(vec!["title".into(), section_title.clone()]);
         }
-        for tag_vec in ComposeState::tags_to_nostr_format(&section.tags) {
+        for tag_vec in ComposeState::tags_to_nostr_format(&section_tags) {
             tags.push(tag_vec);
         }
 
@@ -1419,7 +1434,7 @@ pub async fn build_signed_publication_events_via_signer(
             kind: KIND_PUBLICATION_SECTION as u32,
             created_at: timestamp,
             tags,
-            content: section.content.clone(),
+            content: section_content,
             pubkey: Some(pubkey.clone()),
         };
         let signed = signer.sign(template).await?;
@@ -1456,7 +1471,7 @@ pub async fn build_signed_publication_events_via_signer(
 
 /// Internal function to build publication events with optional signing
 fn build_publication_events_internal(
-    compose: &ComposeState,
+    compose: &mut ComposeState,
     pubkey: &str,
     secret_hex: Option<&str>,
 ) -> (Value, Vec<Value>) {
@@ -1535,7 +1550,7 @@ fn build_section_event_internal(
 
 /// Build a publication index (30040) event with optional signing
 fn build_index_event_internal(
-    compose: &ComposeState,
+    compose: &mut ComposeState,
     pubkey: &str,
     timestamp: u64,
     secret_hex: Option<&str>,
