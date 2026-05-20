@@ -251,14 +251,14 @@
 		</div>
 	{/snippet}
 
-	{#snippet jsonBtn(open: () => void)}
+	{#snippet menuBtn(open: () => void)}
 		<button
-			class="item-json"
+			class="item-menu"
 			onclick={(e) => { e.stopPropagation(); open(); }}
 			onkeydown={(e) => e.stopPropagation()}
-			title="View raw JSON"
-			aria-label="View raw JSON"
-		>json</button>
+			title="Open menu (m)"
+			aria-label="Open event menu"
+		>menu</button>
 	{/snippet}
 
 	<div class="tabs">
@@ -281,14 +281,17 @@
 					<div
 						class="item pub-item"
 						onclick={() => onopenpub?.(pub_item)}
-						onkeydown={(e) => { if (e.key === 'Enter') onopenpub?.(pub_item); }}
+						onkeydown={(e) => {
+							if (e.key === 'Enter') onopenpub?.(pub_item);
+							else if (e.key === 'm') app.openAddressableInModal(pub_item.addr);
+						}}
 						role="button"
 						tabindex="0"
 					>
 						<div class="item-header">
 							<span class="item-title">{pub_item.title ?? '[Untitled]'}</span>
 							<span class="item-meta">{pub_item.section_count} sections</span>
-							{@render jsonBtn(() => app.openAddressableInModal(pub_item.addr))}
+							{@render menuBtn(() => app.openAddressableInModal(pub_item.addr))}
 						</div>
 						{#if pub_item.summary}
 							<p class="item-preview">{pub_item.summary}</p>
@@ -306,14 +309,17 @@
 					<div
 						class="item pub-item"
 						onclick={() => onopenaddr?.(art.addr, art.title)}
-						onkeydown={(e) => { if (e.key === 'Enter') onopenaddr?.(art.addr, art.title); }}
+						onkeydown={(e) => {
+							if (e.key === 'Enter') onopenaddr?.(art.addr, art.title);
+							else if (e.key === 'm') app.openAddressableInModal(art.addr);
+						}}
 						role="button"
 						tabindex="0"
 					>
 						<div class="item-header">
 							<span class="item-title">{art.title ?? '[Untitled]'}</span>
 							<span class="item-meta">long-form</span>
-							{@render jsonBtn(() => app.openAddressableInModal(art.addr))}
+							{@render menuBtn(() => app.openAddressableInModal(art.addr))}
 						</div>
 						{#if art.summary}
 							<p class="item-preview">{art.summary}</p>
@@ -331,14 +337,17 @@
 					<div
 						class="item pub-item"
 						onclick={() => onopenaddr?.(wiki.addr, wiki.title)}
-						onkeydown={(e) => { if (e.key === 'Enter') onopenaddr?.(wiki.addr, wiki.title); }}
+						onkeydown={(e) => {
+							if (e.key === 'Enter') onopenaddr?.(wiki.addr, wiki.title);
+							else if (e.key === 'm') app.openAddressableInModal(wiki.addr);
+						}}
 						role="button"
 						tabindex="0"
 					>
 						<div class="item-header">
 							<span class="item-title">{wiki.title ?? wiki.addr.d_tag ?? '[Untitled]'}</span>
 							<span class="item-meta">wiki</span>
-							{@render jsonBtn(() => app.openAddressableInModal(wiki.addr))}
+							{@render menuBtn(() => app.openAddressableInModal(wiki.addr))}
 						</div>
 						{#if wiki.summary}
 							<p class="item-preview">{wiki.summary}</p>
@@ -360,13 +369,16 @@
 					<div
 						class="item pub-item"
 						onclick={() => onopenaddr?.(addr, title)}
-						onkeydown={(e) => { if (e.key === 'Enter') onopenaddr?.(addr, title); }}
+						onkeydown={(e) => {
+							if (e.key === 'Enter') onopenaddr?.(addr, title);
+							else if (e.key === 'm') app.openAddressableInModal(addr);
+						}}
 						role="button"
 						tabindex="0"
 					>
 						<div class="item-header">
 							<span class="item-title">{title}</span>
-							{@render jsonBtn(() => app.openAddressableInModal(addr))}
+							{@render menuBtn(() => app.openAddressableInModal(addr))}
 						</div>
 						{#if sec.content}
 							<p class="item-preview">{sec.content.slice(0, 200)}</p>
@@ -391,7 +403,10 @@
 					<div
 						class="item pub-item"
 						onclick={() => oncomment?.(comment)}
-						onkeydown={(e) => { if (e.key === 'Enter') oncomment?.(comment); }}
+						onkeydown={(e) => {
+							if (e.key === 'Enter') oncomment?.(comment);
+							else if (e.key === 'm') (app.eventModalData = comment);
+						}}
 						role="button"
 						tabindex="0"
 					>
@@ -399,7 +414,7 @@
 							{#if rootAddr}
 								<span class="item-ref">on {rootKind ? `k:${rootKind}` : ''} {rootAddr.split(':').pop()}</span>
 							{/if}
-							{@render jsonBtn(() => (app.eventModalData = comment))}
+							{@render menuBtn(() => (app.eventModalData = comment))}
 						</div>
 						<p class="item-content">{comment.content}</p>
 						<span class="item-time">{formatTime(comment.created_at)}</span>
@@ -644,10 +659,11 @@
 		color: var(--fg-muted);
 	}
 
-	/* Per-item "json" affordance — opens the structured EventViewModal on
-	   the raw event. stopPropagation keeps the click off the card, which
-	   otherwise routes to the reader / discussion view. */
-	.item-json {
+	/* Per-item "menu" affordance — opens the unified event menu modal on
+	   the raw event. Also reachable via `m` on the focused card.
+	   stopPropagation keeps clicks off the card, which otherwise routes
+	   to the reader / discussion view. */
+	.item-menu {
 		margin-left: auto;
 		flex-shrink: 0;
 		background: none;
@@ -660,7 +676,7 @@
 		cursor: pointer;
 		line-height: 1.5;
 	}
-	.item-json:hover {
+	.item-menu:hover {
 		color: var(--accent);
 		border-color: var(--accent);
 	}

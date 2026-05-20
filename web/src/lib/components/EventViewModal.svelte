@@ -81,6 +81,59 @@
 	let tagsOpen = $state(false);
 	let rawOpen = $state(false);
 
+	// POOL row — static preview. These toggle local state only; not yet
+	// wired to a real pool (Phase B, once the reference pool exists). Here
+	// so the row's layout and interaction can be seen and tuned live.
+	let poolPreview = $state({ context: false, compose: false, refs: false, locked: true });
+
+	function dropFromPool() {
+		poolPreview.context = false;
+		poolPreview.compose = false;
+		poolPreview.refs = false;
+	}
+
+	// ===== Chord system =====
+	// Top-level keys c / a / p enter a prefix; the next key dispatches to
+	// the prefix's sub-action and clears the prefix. Esc clears an active
+	// prefix (or closes the modal if none). t and r are bare toggles.
+	let chordPrefix: null | 'c' | 'a' | 'p' = $state(null);
+
+	function copy(kind: 'id' | 'nevent' | 'naddr' | 'npub'): void {
+		try {
+			if (kind === 'id') copyText(n.id, 'id');
+			else if (kind === 'nevent') copyText(encodeNevent(n.id), 'nevent');
+			else if (kind === 'naddr') {
+				if (!dTag) return;
+				copyText(encodeNaddr({ kind: n.kind, pubkey: n.pubkey, dTag }), 'naddr');
+			} else if (kind === 'npub') copyText(encodeNpub(n.pubkey), 'npub');
+		} catch {
+			app.pushToast(`Couldn't encode ${kind}`, 'error');
+		}
+	}
+
+	let tagsContainer: HTMLElement | null = $state(null);
+
+	function focusFirstTagChip() {
+		// Tags are conditionally rendered; wait for the DOM to settle.
+		queueMicrotask(() => {
+			const btn = tagsContainer?.querySelector<HTMLButtonElement>('button');
+			btn?.focus();
+		});
+	}
+
+	function navTagChips(e: KeyboardEvent) {
+		if (!(e.target instanceof HTMLButtonElement)) return;
+		if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+		const buttons = Array.from(
+			tagsContainer?.querySelectorAll<HTMLButtonElement>('button') ?? []
+		);
+		const idx = buttons.indexOf(e.target);
+		if (idx < 0) return;
+		e.preventDefault();
+		const next = e.key === 'ArrowRight' ? idx + 1 : idx - 1;
+		buttons[(next + buttons.length) % buttons.length]?.focus();
+	}
+
 	// Containing publications — kind-30040 indexes that reference the
 	// currently-displayed event by `#a` (preferred, for replaceable kinds)
 	// or `#e`. Refetched on every event swap; the app-level cache makes
@@ -102,7 +155,6 @@
 						? 'Read wiki page'
 						: 'Read event'
 	);
-	let containingStatus: 'idle' | 'loading' | 'loaded' | 'failed' = $state('idle');
 	let containingIndexes: { id: string; pubkey: string; d_tag: string; title: string }[] = $state([]);
 
 	$effect(() => {
@@ -112,17 +164,11 @@
 		// when the user clicks chips quickly).
 		const currentEvent = event;
 		const currentId = n.id.toLowerCase();
-		if (!containingApplicable) {
-			containingStatus = 'loaded';
-			containingIndexes = [];
-			return;
-		}
-		containingStatus = 'loading';
 		containingIndexes = [];
+		if (!containingApplicable) return;
 		app.findContainingIndexes(currentEvent).then((r) => {
 			// Drop stale results if the user navigated away in the meantime.
 			if (n.id.toLowerCase() !== currentId) return;
-			containingStatus = r.status;
 			containingIndexes = r.indexes;
 		});
 	});
@@ -168,21 +214,80 @@
 	function onModalKeydown(e: KeyboardEvent) {
 		if (e.key === 'Escape') {
 			e.preventDefault();
+			if (chordPrefix !== null) {
+				chordPrefix = null;
+				return;
+			}
 			onclose();
 			return;
 		}
-		// Action hotkeys — the modal has no text inputs, so bare letters
-		// are safe.
 		const k = e.key.toLowerCase();
-		if (k === 'r') {
+
+		// In a prefix — dispatch and clear.
+		if (chordPrefix === 'c') {
+			chordPrefix = null;
+			if (k === 'i' || k === 'e' || k === 'n') {
+				e.preventDefault();
+				copy(k === 'i' ? 'id' : k === 'e' ? 'nevent' : 'npub');
+			} else if (k === 'a' && addrRef && dTag) {
+				e.preventDefault();
+				copy('naddr');
+			}
+			return;
+		}
+		if (chordPrefix === 'a') {
+			chordPrefix = null;
+			if (k === 'r') {
+				e.preventDefault();
+				onReadAction();
+			} else if (k === 'f' && dTag) {
+				e.preventDefault();
+				onFindAction();
+			} else if (k === 'i' && isZettel) {
+				e.preventDefault();
+				onInsertAction();
+			}
+			return;
+		}
+		if (chordPrefix === 'p') {
+			chordPrefix = null;
+			if (k === 'c') {
+				e.preventDefault();
+				poolPreview.context = !poolPreview.context;
+			} else if (k === 'm') {
+				e.preventDefault();
+				poolPreview.compose = !poolPreview.compose;
+			} else if (k === 'r') {
+				e.preventDefault();
+				poolPreview.refs = !poolPreview.refs;
+			} else if (k === 'i') {
+				e.preventDefault();
+				poolPreview.locked = !poolPreview.locked;
+			} else if (k === 'x') {
+				e.preventDefault();
+				dropFromPool();
+			}
+			return;
+		}
+
+		// Top-level — prefixes (c/a/p) and bare toggles (t/r). The modal
+		// has no text inputs, so bare letters are safe.
+		if (k === 'c') {
 			e.preventDefault();
-			onReadAction();
-		} else if (k === 'f' && dTag) {
+			chordPrefix = 'c';
+		} else if (k === 'a') {
 			e.preventDefault();
-			onFindAction();
-		} else if (k === 'i' && isZettel) {
+			chordPrefix = 'a';
+		} else if (k === 'p') {
 			e.preventDefault();
-			onInsertAction();
+			chordPrefix = 'p';
+		} else if (k === 't') {
+			e.preventDefault();
+			tagsOpen = !tagsOpen;
+			if (tagsOpen) focusFirstTagChip();
+		} else if (k === 'r') {
+			e.preventDefault();
+			rawOpen = !rawOpen;
 		}
 	}
 
@@ -396,104 +501,157 @@
 			</nav>
 		{/if}
 
-		<section class="evm__section">
-			<h3 class="evm__heading">Actions</h3>
+		<section class="evm__section" class:evm__section--active={chordPrefix === 'c'}>
+			<h3 class="evm__heading">
+				<span class="evm__key evm__key--head" class:evm__key--active={chordPrefix === 'c'}>c</span>
+				Copy as
+			</h3>
+			<div class="evm__copy-bar">
+				<button
+					class="evm__copy-pill"
+					onclick={() => copy('id')}
+					title="Copy hex id ({n.id})"
+				>
+					<span class="evm__key">i</span>
+					<span class="evm__copy-label">id</span>
+				</button>
+				<button
+					class="evm__copy-pill"
+					onclick={() => copy('nevent')}
+					title="Copy as nevent1… (bech32m event id)"
+				>
+					<span class="evm__key">e</span>
+					<span class="evm__copy-label">nevent</span>
+				</button>
+				{#if addrRef && dTag}
+					<button
+						class="evm__copy-pill"
+						onclick={() => copy('naddr')}
+						title="Copy as naddr1… (bech32m {n.kind}:{shortHex(n.pubkey, 6, 4)}:{dTag})"
+					>
+						<span class="evm__key">a</span>
+						<span class="evm__copy-label">naddr</span>
+					</button>
+				{/if}
+				<button
+					class="evm__copy-pill"
+					onclick={() => copy('npub')}
+					title="Copy author npub1… (bech32 pubkey)"
+				>
+					<span class="evm__key">n</span>
+					<span class="evm__copy-label">npub</span>
+				</button>
+			</div>
+		</section>
+
+		<section class="evm__section" class:evm__section--active={chordPrefix === 'a'}>
+			<h3 class="evm__heading">
+				<span class="evm__key evm__key--head" class:evm__key--active={chordPrefix === 'a'}>a</span>
+				Actions
+			</h3>
 			<div class="evm__actions">
 				<button class="evm__action" onclick={onReadAction}>
-					<span class="evm__action-key">r</span>
+					<span class="evm__key">r</span>
 					<span class="evm__action-label">{readLabel}</span>
 				</button>
 				{#if dTag}
 					<button class="evm__action" onclick={onFindAction}>
-						<span class="evm__action-key">f</span>
+						<span class="evm__key">f</span>
 						<span class="evm__action-label">Find containing publications</span>
 					</button>
 				{/if}
 				{#if isZettel}
 					<button class="evm__action" onclick={onInsertAction}>
-						<span class="evm__action-key">i</span>
+						<span class="evm__key">i</span>
 						<span class="evm__action-label">Insert into compose</span>
 					</button>
 				{/if}
 			</div>
 		</section>
 
-		<!-- POOL block — Phase B. Pool-membership controls (context /
-		     compose / refs fillable squares, locked/forked state, drop-
-		     from-pool) land here once the reference pool exists. See
-		     docs/event-view-modal-plan.md "v2" + reference-pool-worksheet.md. -->
-
-		<section class="evm__section">
-			<h3 class="evm__heading">Copy as</h3>
-			<div class="evm__copy-bar">
-				<button
-					class="evm__copy-pill"
-					onclick={() => copyText(n.id, 'id')}
-					title="Copy hex id ({n.id})"
-				>
-					<span class="evm__copy-icon" aria-hidden="true">📋</span>
-					<span class="evm__copy-label">id</span>
-				</button>
-				<button
-					class="evm__copy-pill"
-					onclick={() => {
-						try {
-							copyText(encodeNevent(n.id), 'nevent');
-						} catch {
-							app.pushToast("Couldn't encode nevent", 'error');
-						}
-					}}
-					title="Copy as nevent1… (bech32m event id)"
-				>
-					<span class="evm__copy-icon" aria-hidden="true">📋</span>
-					<span class="evm__copy-label">nevent</span>
-				</button>
-				{#if addrRef && dTag}
+		<!-- POOL — static preview (see the poolPreview note in <script>).
+		     Phase B wires the squares / lock / drop to the real reference
+		     pool once it exists. See docs/event-view-modal-plan.md "v2". -->
+		<section class="evm__section" class:evm__section--active={chordPrefix === 'p'}>
+			<h3 class="evm__heading">
+				<span class="evm__key evm__key--head" class:evm__key--active={chordPrefix === 'p'}>p</span>
+				Pool <span class="evm__heading-meta">preview</span>
+			</h3>
+			<div class="evm__pool">
+				<div class="evm__pool-members">
 					<button
-						class="evm__copy-pill"
-						onclick={() => {
-							try {
-								copyText(
-									encodeNaddr({ kind: n.kind, pubkey: n.pubkey, dTag }),
-									'naddr'
-								);
-							} catch {
-								app.pushToast("Couldn't encode naddr", 'error');
-							}
-						}}
-						title="Copy as naddr1… (bech32m {n.kind}:{shortHex(n.pubkey, 6, 4)}:{dTag})"
+						class="evm__pool-sq"
+						class:evm__pool-sq--on={poolPreview.context}
+						onclick={() => (poolPreview.context = !poolPreview.context)}
 					>
-						<span class="evm__copy-icon" aria-hidden="true">📋</span>
-						<span class="evm__copy-label">naddr</span>
+						<span class="evm__key">c</span>
+						<span class="evm__pool-box">{poolPreview.context ? '▣' : '▢'}</span>
+						context
 					</button>
-				{/if}
-				<button
-					class="evm__copy-pill"
-					onclick={() => {
-						try {
-							copyText(encodeNpub(n.pubkey), 'npub');
-						} catch {
-							app.pushToast("Couldn't encode npub", 'error');
-						}
-					}}
-					title="Copy author npub1… (bech32 pubkey)"
-				>
-					<span class="evm__copy-icon" aria-hidden="true">📋</span>
-					<span class="evm__copy-label">npub</span>
-				</button>
+					<button
+						class="evm__pool-sq"
+						class:evm__pool-sq--on={poolPreview.compose}
+						onclick={() => (poolPreview.compose = !poolPreview.compose)}
+					>
+						<span class="evm__key">m</span>
+						<span class="evm__pool-box">{poolPreview.compose ? '▣' : '▢'}</span>
+						compose
+					</button>
+					<button
+						class="evm__pool-sq"
+						class:evm__pool-sq--on={poolPreview.refs}
+						onclick={() => (poolPreview.refs = !poolPreview.refs)}
+					>
+						<span class="evm__key">r</span>
+						<span class="evm__pool-box">{poolPreview.refs ? '▣' : '▢'}</span>
+						refs
+					</button>
+				</div>
+				<div class="evm__pool-state">
+					<button
+						class="evm__pool-lock"
+						class:evm__pool-lock--locked={poolPreview.locked}
+						onclick={() => (poolPreview.locked = !poolPreview.locked)}
+						title={poolPreview.locked
+							? 'Imported — locked to source; click to claim'
+							: 'Claimed — click to re-lock as imported'}
+					>
+						<span class="evm__key">i</span>
+						<svg class="evm__lock" viewBox="0 0 16 16" aria-hidden="true">
+							<rect x="3" y="7.2" width="10" height="6.8" rx="1.6" />
+							<path
+								class="evm__lock-shackle"
+								d={poolPreview.locked
+									? 'M5.5 7.2 V5 a2.5 2.5 0 0 1 5 0 V7.2'
+									: 'M5.5 7.2 V5 a2.5 2.5 0 0 1 5 0'}
+							/>
+						</svg>
+						{poolPreview.locked ? 'imported' : 'claimed'}
+					</button>
+					<button
+						class="evm__pool-drop"
+						onclick={dropFromPool}
+						title="Drop from every pool"
+					>
+						<span class="evm__key">x</span>
+						drop
+					</button>
+				</div>
 			</div>
 		</section>
 
 		<section class="evm__section">
 			<button class="evm__raw-toggle" onclick={() => (tagsOpen = !tagsOpen)}>
 				<span class="evm__raw-arrow" class:open={tagsOpen}>{tagsOpen ? '▾' : '▸'}</span>
+				<span class="evm__key evm__key--head">t</span>
 				Tags <span class="evm__heading-meta">({tagChips.length})</span>
 			</button>
 			{#if tagsOpen}
 				{#if tagChips.length === 0}
 					<div class="evm__placeholder">No tags.</div>
 				{:else}
-					<div class="evm__chips">
+					<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+					<div class="evm__chips" bind:this={tagsContainer} onkeydown={navTagChips} role="group">
 						{#each tagChips as tag, i (i)}
 							{@const action = tagAction(tag)}
 							{@const clickable = action.kind !== 'none'}
@@ -522,46 +680,40 @@
 			{/if}
 		</section>
 
-		{#if containingApplicable}
+		<!-- Only rendered when there are results — discovery when empty is
+		     the "Find containing publications" action's job. -->
+		{#if containingIndexes.length > 0}
 			<section class="evm__section">
 				<h3 class="evm__heading">
 					Containing publications
-					{#if containingStatus === 'loaded' && containingIndexes.length > 0}
-						<span class="evm__heading-meta">({containingIndexes.length})</span>
-					{/if}
+					<span class="evm__heading-meta">({containingIndexes.length})</span>
 				</h3>
-				{#if containingStatus === 'loading'}
-					<div class="evm__placeholder">Searching…</div>
-				{:else if containingStatus === 'failed'}
-					<div class="evm__placeholder">Lookup failed.</div>
-				{:else if containingIndexes.length === 0}
-					<div class="evm__placeholder">No publications reference this event locally.</div>
-				{:else}
-					<div class="evm__containing">
-						{#each containingIndexes as idx (idx.id)}
-							<div class="evm__containing-row">
-								<button
-									class="evm__containing-btn"
-									onclick={() => onRecurseContaining(idx)}
-									title="View JSON for {idx.title} — climb to this index"
-								>
-									<span class="evm__containing-title">{idx.title}</span>
-									<span class="evm__containing-dtag">{idx.d_tag}</span>
-								</button>
-								<button
-									class="evm__containing-read"
-									onclick={() => onReadContaining(idx)}
-									title="Open {idx.title} in the reader"
-								>read</button>
-							</div>
-						{/each}
-					</div>
-				{/if}			</section>
+				<div class="evm__containing">
+					{#each containingIndexes as idx (idx.id)}
+						<div class="evm__containing-row">
+							<button
+								class="evm__containing-btn"
+								onclick={() => onRecurseContaining(idx)}
+								title="View JSON for {idx.title} — climb to this index"
+							>
+								<span class="evm__containing-title">{idx.title}</span>
+								<span class="evm__containing-dtag">{idx.d_tag}</span>
+							</button>
+							<button
+								class="evm__containing-read"
+								onclick={() => onReadContaining(idx)}
+								title="Open {idx.title} in the reader"
+							>read</button>
+						</div>
+					{/each}
+				</div>
+			</section>
 		{/if}
 
 		<section class="evm__section">
 			<button class="evm__raw-toggle" onclick={() => (rawOpen = !rawOpen)}>
 				<span class="evm__raw-arrow" class:open={rawOpen}>{rawOpen ? '▾' : '▸'}</span>
+				<span class="evm__key evm__key--head">r</span>
 				Raw JSON
 			</button>
 			{#if rawOpen}
@@ -778,36 +930,139 @@
 		text-overflow: ellipsis;
 		white-space: nowrap;
 	}
+	/* Actions fill the section as one horizontal row of equal-width
+	   buttons. The Pool config row (Phase B) sits below as a sibling. */
 	.evm__actions {
 		display: flex;
-		flex-direction: column;
-		gap: 2px;
+		gap: 6px;
 	}
 	.evm__action {
+		flex: 1;
 		display: flex;
-		align-items: baseline;
-		gap: 10px;
+		align-items: center;
+		justify-content: center;
+		gap: 6px;
 		background: none;
-		border: 1px solid transparent;
+		border: 1px solid var(--border);
 		border-radius: var(--r-sm);
-		padding: 6px 8px;
-		text-align: left;
+		padding: 8px 6px;
+		text-align: center;
 		cursor: pointer;
 		color: var(--fg);
-		font-size: 0.82rem;
+		font-size: 0.75rem;
+		line-height: 1.3;
 	}
 	.evm__action:hover {
 		background: color-mix(in srgb, var(--id-yours) 12%, transparent);
 		border-color: var(--id-yours);
 	}
-	.evm__action-key {
+	/* Keycap — small monochrome key hint used everywhere a chord key
+	   exists (section headings, action buttons, copy pills, pool buttons).
+	   `--head` is for section-heading keycaps; `--active` lights up while
+	   that section's prefix is held. */
+	.evm__action-key,
+	.evm__key {
+		flex-shrink: 0;
 		font-family: var(--font-mono);
-		font-size: 0.7rem;
+		font-size: 0.6rem;
 		color: var(--fg-muted);
-		min-width: 12px;
+		border: 1px solid var(--border);
+		border-radius: 3px;
+		padding: 0 3px;
+		line-height: 1.5;
 	}
-	.evm__action-label {
-		flex: 1;
+	.evm__key--head {
+		font-size: 0.62rem;
+		font-weight: 600;
+	}
+	.evm__key--active {
+		color: var(--id-yours);
+		border-color: var(--id-yours);
+		background: color-mix(in srgb, var(--id-yours) 22%, transparent);
+	}
+	/* While a prefix is active, the relevant section gets a subtle tint
+	   so it's obvious which sub-keys are now armed. */
+	.evm__section--active {
+		background: color-mix(in srgb, var(--id-yours) 5%, transparent);
+	}
+
+	/* Pool row — membership squares (left) + provenance lock & drop
+	   (right). Static preview; Phase B wires it to the reference pool. */
+	.evm__pool {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 8px;
+		flex-wrap: wrap;
+	}
+	.evm__pool-members,
+	.evm__pool-state {
+		display: flex;
+		gap: 6px;
+	}
+	.evm__pool-sq {
+		display: flex;
+		align-items: center;
+		gap: 5px;
+		background: none;
+		border: 1px solid var(--border);
+		border-radius: var(--r-sm);
+		padding: 4px 9px;
+		cursor: pointer;
+		color: var(--fg-muted);
+		font-size: 0.75rem;
+	}
+	.evm__pool-sq:hover {
+		border-color: var(--id-yours);
+	}
+	.evm__pool-sq--on {
+		color: var(--fg);
+		border-color: var(--id-yours);
+		background: color-mix(in srgb, var(--id-yours) 12%, transparent);
+	}
+	.evm__pool-box {
+		font-size: 0.85rem;
+		line-height: 1;
+		color: var(--id-yours);
+	}
+	.evm__pool-lock,
+	.evm__pool-drop {
+		background: none;
+		border: 1px solid var(--border);
+		border-radius: var(--r-sm);
+		padding: 4px 9px;
+		cursor: pointer;
+		font-size: 0.72rem;
+		color: var(--fg-muted);
+	}
+	.evm__pool-lock:hover,
+	.evm__pool-drop:hover {
+		border-color: var(--id-yours);
+		color: var(--fg);
+	}
+	.evm__pool-lock {
+		display: inline-flex;
+		align-items: center;
+		gap: 5px;
+	}
+	/* Imported (locked) gets the --id-imported accent so the state reads
+	   at a glance; claimed falls back to the muted default. */
+	.evm__pool-lock--locked {
+		color: var(--id-imported);
+		border-color: color-mix(in srgb, var(--id-imported) 45%, var(--border));
+	}
+	.evm__lock {
+		width: 12px;
+		height: 12px;
+		flex-shrink: 0;
+	}
+	.evm__lock rect {
+		fill: currentColor;
+	}
+	.evm__lock-shackle {
+		fill: none;
+		stroke: currentColor;
+		stroke-width: 1.7;
 	}
 
 	/* Identifiers block — compact "Copy as" pill bar. Each pill is a
@@ -838,10 +1093,6 @@
 	}
 	.evm__copy-pill:active {
 		background: color-mix(in srgb, var(--id-yours) 30%, transparent);
-	}
-	.evm__copy-icon {
-		font-size: 0.85rem;
-		line-height: 1;
 	}
 	.evm__copy-label {
 		font-weight: 500;

@@ -152,7 +152,7 @@
 				<!-- svelte-ignore a11y_click_events_have_key_events -->
 				<div class="menu-backdrop" onclick={() => (menuOpen = false)} role="presentation"></div>
 				<div class="menu-dropdown" class:menu-dropdown--down={menuDirection === 'down'}>
-					<button class="menu-item" onclick={(e) => { e.stopPropagation(); menuOpen = false; onviewjson(result); }}>View JSON</button>
+					<button class="menu-item" onclick={(e) => { e.stopPropagation(); menuOpen = false; onviewjson(result); }}>Open menu</button>
 					{#if onignore}
 						<button class="menu-item menu-item-danger" onclick={(e) => { e.stopPropagation(); menuOpen = false; onignore(result); }}>Hide event</button>
 					{/if}

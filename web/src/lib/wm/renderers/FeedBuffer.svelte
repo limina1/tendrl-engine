@@ -130,7 +130,10 @@
 					class:row--cursor={i === cursor}
 					data-cursor={i}
 					onclick={() => { cursor = i; openPub(pub_item); }}
-					onkeydown={(e) => { if (e.key === 'Enter') openPub(pub_item); }}
+					onkeydown={(e) => {
+						if (e.key === 'Enter') openPub(pub_item);
+						else if (e.key === 'm') app.openAddressableInModal(pub_item.addr);
+					}}
 					role="button"
 					tabindex="0"
 				>
@@ -139,13 +142,13 @@
 					<div class="row-head">
 						<span class="title">{pub_item.title ?? '[Untitled]'}</span>
 						<button
-							class="pill pill--json"
+							class="pill pill--menu"
 							onclick={(e) => {
 								e.stopPropagation();
 								app.openAddressableInModal(pub_item.addr);
 							}}
-							title="Open this publication's index event in the JSON viewer"
-						>json</button>
+							title="Open the event menu (m)"
+						>menu</button>
 						<!-- Provenance badge. The current corpus is an initial bulk
 						     import from relays, so an event with no recorded relay
 						     metadata is treated as remote, not local. A genuine

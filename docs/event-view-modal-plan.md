@@ -445,7 +445,7 @@ Breadcrumb    chained-nav crumbs (when chained)
 ACTIONS       Read <publication|section|article|wiki|event>   r
               Find containing publications                    f   (d-tag only)
               Insert into compose                             i   (zettel kinds)
-POOL          (Phase B — reserved slot, see below)
+POOL          context/compose/refs squares · lock · drop  (static preview)
 COPY AS       id · nevent · naddr · npub          (always visible)
 TAGS          collapsible (was always-on)
 CONTAINING    inline auto-loaded recursable list  (zettel kinds)
@@ -474,12 +474,20 @@ RAW JSON      collapsible, last
 read, zettel-gated insert, collapsible Tags, SearchActionModal retirement.
 No dependency on the reference pool.
 
+**Pool row — static preview shipped in Phase A.** The POOL row renders
+now: three membership fillable-squares (context / compose / refs), a lock
+toggle (imported ↔ claimed), and an explicit drop control. The squares /
+lock / drop drive a local `poolPreview` state so the row's layout and
+interaction can be seen and tuned in the live modal — they are *not* yet
+wired to a real pool. This is reference-pool-worksheet issues 2-4 made
+visible.
+
 **Phase B — needs the reference pool (workbench-architecture Phase 7).**
-The POOL block — membership fillable-squares (context / compose / refs),
-locked/forked state, drop-from-pool. This is reference-pool-worksheet
-issues 2-4 made visible. The POOL slot is reserved in the Phase-A layout
-(marked in EventViewModal) but renders nothing until `held`, the refs
-buffer, and origin/draft exist.
+Wire the preview row to the real pool: the squares toggle `held` /
+`in_context` / `in_compose`, the lock toggle drives imported ↔ claimed,
+`forked` becomes a derived badge (draft ≠ origin), and drop clears
+membership with undo. Blocked on `held`, the refs buffer, and
+origin/draft existing.
 
 ## Files (Phase A)
 
