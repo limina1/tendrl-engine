@@ -49,6 +49,12 @@ pub struct DraftComposeState {
     pub title: String,
     pub tags: Vec<DraftTagEntry>,
     pub sections: Vec<DraftSectionCompose>,
+    /// Stable opaque nanoid d-tag for the publication's 30040.
+    /// `None` on legacy drafts saved before the field existed; on load,
+    /// a fresh nanoid is minted at first emission. New drafts always
+    /// carry one so re-publishing keeps the addressable identity.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub d_tag: Option<String>,
 }
 
 /// Serializable tag entry
@@ -64,6 +70,18 @@ pub struct DraftSectionCompose {
     pub title: String,
     pub content: String,
     pub tags: Vec<DraftTagEntry>,
+    /// Heading depth (defaults to 2 on legacy drafts). 3+ triggers
+    /// nested 30040/30041 emission at publish time.
+    #[serde(default = "default_section_level")]
+    pub level: u8,
+    /// Stable opaque nanoid d-tag for this section's 30041. Defaults to
+    /// `None` on legacy drafts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub d_tag: Option<String>,
+}
+
+fn default_section_level() -> u8 {
+    2
 }
 
 impl DraftPublication {
@@ -111,9 +129,13 @@ impl DraftStore {
         // Build the unsigned 30040 event (now that section d-tags exist).
         let index_event = self.build_index_event(compose, now);
 
-        // Convert compose state to serializable form
+        // Convert compose state to serializable form. By now the
+        // build_section_event / build_index_event calls above have
+        // minted any pending d-tags on the live ComposeState, so we
+        // can clone them into the draft for stable identity on resume.
         let compose_state = DraftComposeState {
             title: compose.title.clone(),
+            d_tag: compose.d_tag.clone(),
             tags: compose
                 .tags
                 .iter()
@@ -128,6 +150,8 @@ impl DraftStore {
                 .map(|s| DraftSectionCompose {
                     title: s.title.clone(),
                     content: s.content.clone(),
+                    level: s.level,
+                    d_tag: s.d_tag.clone(),
                     tags: s
                         .tags
                         .iter()
@@ -325,6 +349,10 @@ impl From<&DraftComposeState> for ComposeState {
 
         let mut compose = ComposeState::new();
         compose.title = draft.title.clone();
+        // Re-seed identity so a resumed draft re-publishes onto the
+        // same addressable events. Legacy drafts (d_tag == None) will
+        // mint fresh nanoids on next emission.
+        compose.d_tag = draft.d_tag.clone();
         compose.tags = draft
             .tags
             .iter()
@@ -339,6 +367,8 @@ impl From<&DraftComposeState> for ComposeState {
             .map(|s| SC {
                 title: s.title.clone(),
                 content: s.content.clone(),
+                level: s.level,
+                d_tag: s.d_tag.clone(),
                 tags: s
                     .tags
                     .iter()
@@ -453,6 +483,60 @@ mod tests {
         assert_eq!(loaded.title, "Test Publication");
         assert_eq!(loaded.section_events.len(), 2);
         assert_eq!(loaded.compose_state.sections.len(), 2);
+    }
+
+    /// Saving a draft mints d-tags on the in-memory compose state, and
+    /// the persisted DraftComposeState carries them forward. Round-tripping
+    /// through `From<&DraftComposeState> for ComposeState` must preserve
+    /// identity so a resumed draft re-publishes the same addressable
+    /// events.
+    #[test]
+    fn test_draft_round_trip_preserves_d_tags_and_levels() {
+        use crate::tree::state::SectionCompose as SC;
+
+        let temp_dir = TempDir::new().unwrap();
+        let store = DraftStore::new(temp_dir.path()).unwrap();
+
+        // Build a nested compose: one level-2 section + a level-3 child.
+        let mut compose = ComposeState::new();
+        compose.title = "Nested Test".to_string();
+        compose.sections.push(SC {
+            title: "Outer".to_string(),
+            content: "outer body".to_string(),
+            level: 2,
+            ..Default::default()
+        });
+        compose.sections.push(SC {
+            title: "Inner".to_string(),
+            content: "inner body".to_string(),
+            level: 3,
+            ..Default::default()
+        });
+
+        let draft_id = store.save_draft(&mut compose).unwrap();
+        let original_pub_d = compose.d_tag.clone().expect("pub d-tag minted on save");
+        let original_section_ds: Vec<String> = compose
+            .sections
+            .iter()
+            .map(|s| s.d_tag.clone().expect("section d-tag minted on save"))
+            .collect();
+
+        // Load and convert back to a live ComposeState.
+        let loaded = store.load_draft(&draft_id).unwrap();
+        let restored: ComposeState = (&loaded.compose_state).into();
+
+        assert_eq!(restored.d_tag.as_deref(), Some(original_pub_d.as_str()));
+        assert_eq!(restored.sections.len(), 2);
+        assert_eq!(restored.sections[0].level, 2);
+        assert_eq!(restored.sections[1].level, 3);
+        assert_eq!(
+            restored.sections[0].d_tag.as_deref(),
+            Some(original_section_ds[0].as_str())
+        );
+        assert_eq!(
+            restored.sections[1].d_tag.as_deref(),
+            Some(original_section_ds[1].as_str())
+        );
     }
 
     #[test]
