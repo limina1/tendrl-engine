@@ -341,6 +341,14 @@
 			closeMinibuffer();
 			return;
 		}
+		if (cmd.id === 'tendrl-show-relays') {
+			// Keyboard path to the relay-config buffer; previously this
+			// command was declared but had no handler (the buffer was only
+			// reachable by right-clicking the network-mode pill).
+			openRelays();
+			closeMinibuffer();
+			return;
+		}
 		if (cmd.id === 'tendrl-demo-publish-progress') {
 			import('$lib/wm/publish-progress.svelte').then(({ setProgress, mockProgress }) => {
 				setProgress(mockProgress());
