@@ -323,7 +323,7 @@ export function search(
 export interface PublishRequest {
 	title: string;
 	tags: [string, string][];
-	sections: { title: string; content: string; tags: [string, string][] }[];
+	sections: { title: string; content: string; tags: [string, string][]; level?: number }[];
 	sign: boolean;
 	broadcast: boolean;
 	relays?: string[];
@@ -340,10 +340,21 @@ export interface PublishResponse {
 		message: string | null;
 		event_id: string;
 	}[];
+	/** Full event JSON (index first, then sections) for the inspector. */
+	events?: unknown[];
 }
 
 export function publish(req: PublishRequest) {
 	return fetchJson<PublishResponse>('/api/v1/publish', {
+		method: 'POST',
+		body: JSON.stringify(req)
+	});
+}
+
+/** Build the unsigned 30040/30041 event graph for a compose without
+ *  signing/ingesting/broadcasting — feeds the compose JSON preview. */
+export function previewPublication(req: PublishRequest) {
+	return fetchJson<{ events: unknown[] }>('/api/v1/publish/preview', {
 		method: 'POST',
 		body: JSON.stringify(req)
 	});

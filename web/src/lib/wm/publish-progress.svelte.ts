@@ -292,12 +292,20 @@ export function progressFromPublish(
 			message: string | null;
 			event_id: string;
 		}[];
+		events?: unknown[];
 	},
 	meta: { title: string; authorPubkey: string; sections: { title: string | null; content: string }[] }
 ): PublishProgressState {
 	const results = resp.broadcast_results ?? [];
 	// Column order = the relays actually attempted, first-seen order.
 	const relayOrder = [...new Set(results.map((r) => r.relay))];
+
+	// Map event id -> full event JSON so each row can be inspected.
+	const rawById = new Map<string, unknown>();
+	for (const e of resp.events ?? []) {
+		const id = (e as { id?: string })?.id;
+		if (id) rawById.set(id, e);
+	}
 
 	const cellsFor = (eventId: string): PublishRelayStatus[] =>
 		relayOrder.map((url) => {
@@ -325,7 +333,8 @@ export function progressFromPublish(
 			title: meta.sections[i]?.title ?? null,
 			author: meta.authorPubkey,
 			relays: cellsFor(id),
-			contentPreview: preview(meta.sections[i]?.content ?? '')
+			contentPreview: preview(meta.sections[i]?.content ?? ''),
+			rawEvent: rawById.get(id)
 		})),
 		{
 			eventId: resp.publication_id,
@@ -334,7 +343,8 @@ export function progressFromPublish(
 			author: meta.authorPubkey,
 			relays: cellsFor(resp.publication_id),
 			// 30040 index content MUST be empty (NKBIP-01) — describe its role.
-			contentPreview: `Index — references ${resp.section_ids.length} section${resp.section_ids.length === 1 ? '' : 's'}`
+			contentPreview: `Index — references ${resp.section_ids.length} section${resp.section_ids.length === 1 ? '' : 's'}`,
+			rawEvent: rawById.get(resp.publication_id)
 		}
 	];
 

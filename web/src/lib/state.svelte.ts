@@ -31,6 +31,7 @@ import type {
 	IdentityStatus,
 	NAddr,
 	NostrEvent,
+	EventsModalItem,
 } from '$lib/types';
 import type { Buffer } from '$lib/wm/types';
 import * as api from '$lib/api';
@@ -243,6 +244,10 @@ function _createAppState() {
 	// legacy <pre> dump in +layout.svelte. Narrowed so each call site is
 	// explicit about which shape it's pushing.
 	let jsonModalData: { buffer: Buffer } | { rawEvent: unknown } | null = $state(null);
+
+	// Rich multi-event JSON inspector (publish results + compose preview):
+	// a list of events each independently expandable, plus expand-all.
+	let eventsModal: { title: string; events: EventsModalItem[] } | null = $state(null);
 
 	// --- Search history ---
 	// App-level navigation history. Every query / event-view / coord lookup
@@ -1158,6 +1163,7 @@ function _createAppState() {
 					sections: sections.map((s) => ({
 						title: s.title,
 						content: s.content,
+						level: s.level,
 						tags: s.tags.map((t) => [t.name, t.value] as [string, string])
 					})),
 					sign: canSign,
@@ -1198,6 +1204,53 @@ function _createAppState() {
 			// "nothing happened" (no modal, no error). Surface the reason.
 			console.error('Publish compose failed:', e);
 			updateToast(progressToast, { message: `Publish failed: ${e instanceof Error ? e.message : String(e)}`, kind: 'error' }, 6000);
+		}
+	}
+
+	// Turn a built nostr event (Value) into an inspector row.
+	function eventToModalItem(ev: unknown, idx: number): EventsModalItem {
+		const obj = (ev ?? {}) as { kind?: number; id?: string; tags?: unknown };
+		const tags = Array.isArray(obj.tags) ? (obj.tags as string[][]) : [];
+		const titleTag = tags.find((t) => t[0] === 'title')?.[1];
+		const dTag = tags.find((t) => t[0] === 'd')?.[1];
+		return {
+			label: titleTag || dTag || `event ${idx + 1}`,
+			kind: obj.kind,
+			id: obj.id,
+			json: ev
+		};
+	}
+
+	// Build the would-be event graph for the current compose and open the
+	// JSON inspector — no signing/ingest/broadcast. Mirrors the publish
+	// request shape so the preview matches what publishing emits.
+	async function handleComposePreview(items: ContextItem[], meta?: { title: string; tags: TagEntry[] }) {
+		const sections = items.length > 0 ? items : compose.sections;
+		if (!sections.length) {
+			pushToast('Nothing to preview — no sections detected', 'error', 4000);
+			return;
+		}
+		const pubTitle = meta?.title ?? compose.title;
+		const pubTags = meta?.tags ?? compose.tags;
+		try {
+			const resp = await api.previewPublication({
+				title: pubTitle,
+				tags: pubTags.map((t) => [t.name, t.value] as [string, string]),
+				sections: sections.map((s) => ({
+					title: s.title,
+					content: s.content,
+					level: s.level,
+					tags: s.tags.map((t) => [t.name, t.value] as [string, string])
+				})),
+				sign: false,
+				broadcast: false
+			});
+			eventsModal = {
+				title: `Preview — ${pubTitle || 'untitled'} (${resp.events.length} events)`,
+				events: resp.events.map((e, i) => eventToModalItem(e, i))
+			};
+		} catch (e) {
+			pushToast(`Preview failed: ${e instanceof Error ? e.message : String(e)}`, 'error', 6000);
 		}
 	}
 
@@ -2695,6 +2748,10 @@ function _createAppState() {
 		get jsonModalData() { return jsonModalData; },
 		set jsonModalData(v: { buffer: Buffer } | { rawEvent: unknown } | null) { jsonModalData = v; },
 
+		get eventsModal() { return eventsModal; },
+		set eventsModal(v: { title: string; events: EventsModalItem[] } | null) { eventsModal = v; },
+		openEventsModal(title: string, events: EventsModalItem[]) { eventsModal = { title, events }; },
+
 		// Profile
 		get profilePubkey() { return profilePubkey; },
 		set profilePubkey(v: string | null) { profilePubkey = v; },
@@ -2797,6 +2854,7 @@ function _createAppState() {
 		handleChatFragmentsToCompose,
 		handleChatPublishFragments,
 		handleComposePublish,
+		handleComposePreview,
 		handleComposeUpdate,
 		handleSearch,
 		handleSearchViaRelays,

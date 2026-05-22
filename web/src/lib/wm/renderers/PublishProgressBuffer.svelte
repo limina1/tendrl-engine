@@ -60,6 +60,19 @@
 		if (ev.rawEvent != null) app.jsonModalData = { rawEvent: ev.rawEvent };
 	}
 
+	function inspectAll() {
+		if (!progress) return;
+		app.openEventsModal(
+			progress.title ? `Published — ${progress.title}` : 'Published events',
+			progress.events.map((ev) => ({
+				label: ev.title ?? '[Untitled]',
+				kind: ev.kind,
+				id: ev.eventId,
+				json: ev.rawEvent ?? { id: ev.eventId, kind: ev.kind }
+			}))
+		);
+	}
+
 	function naddrFor(ev: PublishEventStatus): string | null {
 		return ev.aTag ? naddrFromATag(ev.aTag) : null;
 	}
@@ -132,6 +145,9 @@
 			<div class="pp-summary">
 				{progress.events.length} event{progress.events.length === 1 ? '' : 's'} ·
 				{agg.accepted} / {agg.total} relay-cells accepted
+				<button class="pp-inspect-all" onclick={inspectAll} title="Open every event in the JSON inspector (expand all / each)">
+					inspect all JSON
+				</button>
 			</div>
 		</header>
 
@@ -371,6 +387,12 @@
 	.pp-summary {
 		font-size: var(--t-xs);
 		color: var(--base5);
+	}
+	.pp-inspect-all {
+		margin-left: 8px;
+		font-size: var(--t-xs);
+		font-family: var(--font-mono);
+		padding: 1px 8px;
 	}
 
 	/* Top-level progress bar. The fill width is the accept ratio; the

@@ -4,6 +4,7 @@
 	import { onMount } from 'svelte';
 	import { createAppState } from '$lib/state.svelte';
 	import EventViewModal from '$lib/components/EventViewModal.svelte';
+	import EventsJsonModal from '$lib/components/EventsJsonModal.svelte';
 	import FetchConfirmModal from '$lib/components/FetchConfirmModal.svelte';
 	import SearchConfigModal from '$lib/components/SearchConfigModal.svelte';
 	import ToastStack from '$lib/components/ToastStack.svelte';
@@ -134,6 +135,8 @@
 {/if}
 
 <SearchConfigModal />
+
+<EventsJsonModal />
 
 {#if app.jsonModalData}
 	<!-- Legacy <pre> dump for the M-x buffer-inspector and PublishProgressBuffer

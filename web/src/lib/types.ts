@@ -438,3 +438,11 @@ export interface IdentityStatus {
 	/** Set when source is nip07 / nip46. */
 	signer_id?: string;
 }
+
+/** One row in the multi-event JSON inspector (EventsJsonModal). */
+export interface EventsModalItem {
+	label: string;
+	kind?: number;
+	id?: string;
+	json: unknown;
+}

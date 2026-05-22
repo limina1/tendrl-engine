@@ -2346,6 +2346,10 @@ pub struct PublishSectionRequest {
     pub content: String,
     #[serde(default)]
     pub tags: Vec<(String, String)>,
+    /// Heading depth (2 = top-level `==` section, 3+ = nested). Drives the
+    /// nested 30040/30041 emitter; absent/`2` keeps the flat graph.
+    #[serde(default)]
+    pub level: Option<u8>,
 }
 
 /// Response from publish endpoint
@@ -2356,6 +2360,10 @@ pub struct PublishResponse {
     pub signed: bool,
     pub ingested: bool,
     pub broadcast_results: Option<Vec<BroadcastResult>>,
+    /// Full event JSON (index first, then sections) so the client can
+    /// offer a per-event / expand-all JSON inspector without refetching.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub events: Option<Vec<Value>>,
 }
 
 #[derive(Debug, Serialize)]
@@ -2404,6 +2412,7 @@ pub async fn publish_handler(
             let mut sc = SectionCompose::default();
             sc.title = s.title.clone();
             sc.content = s.content.clone();
+            sc.level = s.level.unwrap_or(2);
             sc.tags = s
                 .tags
                 .iter()
@@ -2567,13 +2576,72 @@ pub async fn publish_handler(
         });
     }
 
+    // Index first, then sections — the order the inspector lists them.
+    let all_events: Vec<Value> = std::iter::once(pub_event.clone())
+        .chain(section_events.iter().cloned())
+        .collect();
+
     Ok(Json(PublishResponse {
         publication_id: pub_id,
         section_ids,
         signed: req.sign,
         ingested,
         broadcast_results,
+        events: Some(all_events),
     }))
+}
+
+/// POST /api/v1/publish/preview — build the unsigned event graph for a
+/// compose and return it without signing, ingesting, or broadcasting.
+/// Feeds the composer's "inspect events as JSON" modal so the user can
+/// see the exact 30040/30041 shape (nesting, d/T/title, a-tag wiring)
+/// before publishing.
+pub async fn publish_preview_handler(
+    State(engine): State<AppState>,
+    Extension(identity): Extension<IdentityAppState>,
+    Json(req): Json<PublishRequest>,
+) -> Result<Json<Value>, EngineError> {
+    let pubkey = {
+        let session = identity.lock().unwrap();
+        session.pubkey().map(|s| s.to_string())
+    }
+    .or_else(|| engine.my_pubkey().map(|s| s.to_string()))
+    .unwrap_or_else(|| "<preview>".to_string());
+
+    use crate::tree::state::TagEntry;
+    let mut compose = ComposeState::new();
+    compose.title = req.title;
+    for (name, value) in &req.tags {
+        compose.tags.push(TagEntry {
+            name: name.clone(),
+            value: value.clone(),
+        });
+    }
+    compose.sections = req
+        .sections
+        .iter()
+        .map(|s| {
+            let mut sc = SectionCompose::default();
+            sc.title = s.title.clone();
+            sc.content = s.content.clone();
+            sc.level = s.level.unwrap_or(2);
+            sc.tags = s
+                .tags
+                .iter()
+                .map(|(n, v)| TagEntry {
+                    name: n.clone(),
+                    value: v.clone(),
+                })
+                .collect();
+            sc
+        })
+        .collect();
+
+    let (pub_event, section_events) = build_publication_events(&mut compose, &pubkey);
+    let events: Vec<Value> = std::iter::once(pub_event)
+        .chain(section_events.into_iter())
+        .collect();
+    Ok(Json(json!({ "events": events })))
 }
 
 // ----------------------------------------------------------------------------
@@ -2862,12 +2930,17 @@ pub async fn publish_blocks_handler(
         });
     }
 
+    let all_events: Vec<Value> = std::iter::once(pub_event.clone())
+        .chain(section_events.iter().cloned())
+        .collect();
+
     Ok(Json(PublishResponse {
         publication_id: pub_id,
         section_ids,
         signed: req.sign,
         ingested,
         broadcast_results,
+        events: Some(all_events),
     }))
 }
 

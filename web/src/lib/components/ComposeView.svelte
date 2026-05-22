@@ -26,6 +26,7 @@
 		oncancel,
 		onsendtochat,
 		onpublish,
+		onpreview,
 		ondelete,
 		ondeletepermanent,
 		onsenditemtochat,
@@ -47,6 +48,7 @@
 		oncancel: () => void;
 		onsendtochat: (items: ContextItem[]) => void;
 		onpublish: (items: ContextItem[], meta?: { title: string; tags: TagEntry[] }) => void;
+		onpreview?: (items: ContextItem[], meta?: { title: string; tags: TagEntry[] }) => void;
 		ondelete: (items: ContextItem[]) => void;
 		ondeletepermanent: (items: ContextItem[]) => void;
 		onsenditemtochat: (id: string) => void;
@@ -612,6 +614,21 @@
 		onpublish(sections, meta);
 	}
 
+	// Inspect the would-be 30040/30041 events as JSON — no signing/publish.
+	function previewEvents() {
+		if (!onpreview) return;
+		let sections: ContextItem[];
+		let meta: { title: string; tags: TagEntry[] } | undefined;
+		if (mode === 'plain') {
+			const parsed = handlePlainFullEdit(plainText);
+			sections = parsed.sections;
+			meta = { title: parsed.title, tags: parsed.tags };
+		} else {
+			sections = compose.sections;
+		}
+		onpreview(sections, meta);
+	}
+
 	function publishSelected() {
 		let all: ContextItem[];
 		let meta: { title: string; tags: TagEntry[] } | undefined;
@@ -884,6 +901,16 @@
 	<div class="compose-actions">
 		{#if mode === 'full'}
 			<button onclick={addSection}>+ Section</button>
+		{/if}
+		{#if onpreview}
+			<button
+				class="preview-events-btn"
+				onclick={previewEvents}
+				disabled={mode === 'plain'
+					? detectedSections.length === 0
+					: compose.sections.length === 0}
+				title="Inspect the 30040/30041 events this draft would publish, as JSON"
+			>Preview events</button>
 		{/if}
 		{#if canPublish}
 			<button

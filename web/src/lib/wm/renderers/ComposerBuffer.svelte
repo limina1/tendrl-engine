@@ -132,6 +132,7 @@
 	oncancel={app.handleCancelCompose}
 	onsendtochat={app.handleComposeToChat}
 	onpublish={app.handleComposePublish}
+	onpreview={app.handleComposePreview}
 	ondelete={app.handleDeleteFromCompose}
 	ondeletepermanent={app.handleDeletePermanent}
 	syncMode={app.syncMode}
