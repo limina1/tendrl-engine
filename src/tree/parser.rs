@@ -73,8 +73,24 @@ pub struct ParsedLine {
 }
 
 impl ParsedDocument {
-    /// Parse a document into classified lines
+    /// Parse a document into classified lines. PlainText mode uses `=`
+    /// as the heading delimiter by default; use [`parse_with_delimiter`]
+    /// to override it (the compose UI lets the user pick).
+    ///
+    /// [`parse_with_delimiter`]: ParsedDocument::parse_with_delimiter
     pub fn parse(content: &str, mode: ContentMode) -> Self {
+        Self::parse_with_delimiter(content, mode, '=')
+    }
+
+    /// Like `parse`, but lets the caller choose the heading delimiter
+    /// for `ContentMode::PlainText`. The delimiter is ignored for the
+    /// other modes (each has its own syntactic heading marker). Headings
+    /// count leading occurrences of `plain_delim` before a required space.
+    pub fn parse_with_delimiter(
+        content: &str,
+        mode: ContentMode,
+        plain_delim: char,
+    ) -> Self {
         let mut lines = Vec::new();
         let mut in_code_block = false;
         let mut code_block_mode = CodeBlockMode::None;
@@ -84,7 +100,7 @@ impl ParsedDocument {
             .lines()
             .enumerate()
             .filter_map(|(i, line)| {
-                parse_heading(line, mode).map(|(level, _)| (i, level))
+                parse_heading(line, mode, plain_delim).map(|(level, _)| (i, level))
             })
             .collect();
 
@@ -101,7 +117,7 @@ impl ParsedDocument {
                 }
             } else if line.trim().is_empty() {
                 LineType::Empty
-            } else if let Some((level, title)) = parse_heading(line, mode) {
+            } else if let Some((level, title)) = parse_heading(line, mode, plain_delim) {
                 let event_kind = determine_event_kind(level, line_number, &headings);
                 LineType::Heading {
                     level,
@@ -223,8 +239,15 @@ enum CodeBlockMode {
     AsciiDocDash,   // ----
 }
 
-/// Parse a heading line, returns (level, title) if it's a heading
-fn parse_heading(line: &str, mode: ContentMode) -> Option<(u8, String)> {
+/// Parse a heading line, returns (level, title) if it's a heading.
+///
+/// `plain_delim` is only consulted for [`ContentMode::PlainText`] — the
+/// other modes have fixed syntactic markers. In PlainText the heading
+/// rule is: N copies of `plain_delim` followed by a single space, then
+/// the title. Level = N. The compose surface threads its user-selected
+/// delimiter through here (so e.g. `==` headings can be plain-text in
+/// one doc and `##` in another, without the engine baking in markup).
+fn parse_heading(line: &str, mode: ContentMode, plain_delim: char) -> Option<(u8, String)> {
     let trimmed = line.trim_start();
 
     match mode {
@@ -268,7 +291,20 @@ fn parse_heading(line: &str, mode: ContentMode) -> Option<(u8, String)> {
             }
         }
         ContentMode::PlainText => {
-            // No headings in plain text
+            // N copies of the user-chosen delimiter, then a space, then
+            // the title. Mirrors the AsciiDoc rule but with any
+            // delimiter (e.g. `=`, `#`, `*`, …). Up to 6 levels keeps
+            // event_kind tracking sane.
+            if trimmed.starts_with(plain_delim) {
+                let level = trimmed.chars().take_while(|&c| c == plain_delim).count() as u8;
+                let rest = &trimmed[level as usize * plain_delim.len_utf8()..];
+                if rest.starts_with(' ') {
+                    let title = rest.trim().to_string();
+                    if level >= 1 && level <= 6 && !title.is_empty() {
+                        return Some((level, title));
+                    }
+                }
+            }
         }
     }
 
@@ -434,44 +470,99 @@ mod tests {
     #[test]
     fn test_parse_markdown_heading() {
         assert_eq!(
-            parse_heading("# Title", ContentMode::Markdown),
+            parse_heading("# Title", ContentMode::Markdown, '='),
             Some((1, "Title".to_string()))
         );
         assert_eq!(
-            parse_heading("## Section", ContentMode::Markdown),
+            parse_heading("## Section", ContentMode::Markdown, '='),
             Some((2, "Section".to_string()))
         );
         assert_eq!(
-            parse_heading("### Subsection", ContentMode::Markdown),
+            parse_heading("### Subsection", ContentMode::Markdown, '='),
             Some((3, "Subsection".to_string()))
         );
-        assert_eq!(parse_heading("Not a heading", ContentMode::Markdown), None);
+        assert_eq!(parse_heading("Not a heading", ContentMode::Markdown, '='), None);
     }
 
     #[test]
     fn test_parse_org_heading() {
         assert_eq!(
-            parse_heading("* Title", ContentMode::OrgMode),
+            parse_heading("* Title", ContentMode::OrgMode, '='),
             Some((1, "Title".to_string()))
         );
         assert_eq!(
-            parse_heading("** Section", ContentMode::OrgMode),
+            parse_heading("** Section", ContentMode::OrgMode, '='),
             Some((2, "Section".to_string()))
         );
         // No space after stars = not a heading
-        assert_eq!(parse_heading("**bold**", ContentMode::OrgMode), None);
+        assert_eq!(parse_heading("**bold**", ContentMode::OrgMode, '='), None);
     }
 
     #[test]
     fn test_parse_asciidoc_heading() {
         assert_eq!(
-            parse_heading("= Title", ContentMode::AsciiDoc),
+            parse_heading("= Title", ContentMode::AsciiDoc, '='),
             Some((1, "Title".to_string()))
         );
         assert_eq!(
-            parse_heading("== Section", ContentMode::AsciiDoc),
+            parse_heading("== Section", ContentMode::AsciiDoc, '='),
             Some((2, "Section".to_string()))
         );
+    }
+
+    /// PlainText is markup-agnostic: heading detection follows the
+    /// caller-supplied delimiter (default `=` in `ParsedDocument::parse`).
+    /// N copies + space = level N.
+    #[test]
+    fn test_parse_plaintext_heading_with_delimiter() {
+        // Default `=` delimiter — same shape as AsciiDoc but in PlainText
+        // mode (none of the AsciiDoc-specific block macros).
+        assert_eq!(
+            parse_heading("= Outline", ContentMode::PlainText, '='),
+            Some((1, "Outline".to_string()))
+        );
+        assert_eq!(
+            parse_heading("=== Deep", ContentMode::PlainText, '='),
+            Some((3, "Deep".to_string()))
+        );
+
+        // Custom delimiter `#`
+        assert_eq!(
+            parse_heading("# Title", ContentMode::PlainText, '#'),
+            Some((1, "Title".to_string()))
+        );
+        assert_eq!(
+            parse_heading("### Inner", ContentMode::PlainText, '#'),
+            Some((3, "Inner".to_string()))
+        );
+
+        // No space after delimiter — not a heading.
+        assert_eq!(parse_heading("===NoSpace", ContentMode::PlainText, '='), None);
+
+        // Wrong delimiter for this doc — bare line, not a heading.
+        assert_eq!(parse_heading("# Title", ContentMode::PlainText, '='), None);
+    }
+
+    /// Documents parsed via `parse_with_delimiter` should classify
+    /// PlainText headings by the chosen delimiter and assign event_kind
+    /// the same way as AsciiDoc (deeper sibling → index 30040).
+    #[test]
+    fn test_parsed_document_plaintext_with_delimiter() {
+        let content = "= Doc\n\n== One\n\nbody\n\n=== Deep\n\nmore body\n";
+        let doc = ParsedDocument::parse_with_delimiter(content, ContentMode::PlainText, '=');
+        let headings = doc.headings();
+        assert_eq!(headings.len(), 3);
+        // Level 1 → 30040 (root), level 2 has a level-3 child → 30040,
+        // level 3 has no children → 30041.
+        if let LineType::Heading { event_kind, .. } = &headings[0].line_type {
+            assert_eq!(*event_kind, 30040);
+        }
+        if let LineType::Heading { event_kind, .. } = &headings[1].line_type {
+            assert_eq!(*event_kind, 30040);
+        }
+        if let LineType::Heading { event_kind, .. } = &headings[2].line_type {
+            assert_eq!(*event_kind, 30041);
+        }
     }
 
     #[test]

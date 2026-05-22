@@ -266,6 +266,11 @@ export interface ContextItem {
 	held: boolean;
 	origin: 'chat' | 'search' | 'compose' | 'import';
 	readonly: boolean;
+	/** Heading depth in the compose outline. 2 = top-level section
+	 *  (current default), 3+ = nested under the previous shallower
+	 *  sibling. Drives the engine's nested-30040 emission at publish
+	 *  time. Optional/legacy items default to 2 when absent. */
+	level?: number;
 }
 
 export type SyncMode = 'reactive' | 'explicit';

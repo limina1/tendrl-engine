@@ -1896,7 +1896,7 @@ mod tests {
 
         // Build signed events
         let (pub_event, section_events) =
-            build_signed_publication_events(&compose, &pubkey, secret_hex);
+            build_signed_publication_events(&mut compose, &pubkey, secret_hex);
 
         println!(
             "Publication event: {}",
@@ -1990,7 +1990,7 @@ mod tests {
             });
 
             let (pub_event, _section_events) =
-                build_signed_publication_events(&compose, &pubkey, secret_hex);
+                build_signed_publication_events(&mut compose, &pubkey, secret_hex);
             event_id = pub_event.get("id").unwrap().as_str().unwrap().to_string();
 
             println!("Created event with ID: {}", event_id);

@@ -49,6 +49,12 @@ pub struct DraftComposeState {
     pub title: String,
     pub tags: Vec<DraftTagEntry>,
     pub sections: Vec<DraftSectionCompose>,
+    /// Stable opaque nanoid d-tag for the publication's 30040.
+    /// `None` on legacy drafts saved before the field existed; on load,
+    /// a fresh nanoid is minted at first emission. New drafts always
+    /// carry one so re-publishing keeps the addressable identity.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub d_tag: Option<String>,
 }
 
 /// Serializable tag entry
@@ -64,6 +70,18 @@ pub struct DraftSectionCompose {
     pub title: String,
     pub content: String,
     pub tags: Vec<DraftTagEntry>,
+    /// Heading depth (defaults to 2 on legacy drafts). 3+ triggers
+    /// nested 30040/30041 emission at publish time.
+    #[serde(default = "default_section_level")]
+    pub level: u8,
+    /// Stable opaque nanoid d-tag for this section's 30041. Defaults to
+    /// `None` on legacy drafts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub d_tag: Option<String>,
+}
+
+fn default_section_level() -> u8 {
+    2
 }
 
 impl DraftPublication {
@@ -86,8 +104,13 @@ impl DraftStore {
         Ok(DraftStore { data_dir: drafts_dir })
     }
 
-    /// Save a draft from compose state
-    pub fn save_draft(&self, compose: &ComposeState) -> Result<String> {
+    /// Save a draft from compose state.
+    ///
+    /// Takes `&mut` because `publication_d_tag` / `section_d_tag` lazily
+    /// mint stable nanoid d-tags on first call — the draft has to persist
+    /// those values so resuming the draft (or re-publishing it) uses the
+    /// same addressable identity.
+    pub fn save_draft(&self, compose: &mut ComposeState) -> Result<String> {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map(|d| d.as_secs())
@@ -97,20 +120,22 @@ impl DraftStore {
         let d_tag = compose.publication_d_tag();
         let draft_id = format!("{}-{}", d_tag, now);
 
-        // Build the unsigned 30040 event
-        let index_event = self.build_index_event(compose, now);
-
-        // Build unsigned 30041 events for each section
-        let section_events: Vec<serde_json::Value> = compose
-            .sections
-            .iter()
-            .enumerate()
-            .map(|(i, _)| self.build_section_event(compose, i, now))
+        // Build unsigned 30041 events for each section first — that mints
+        // any pending section d-tags so the index can reference them.
+        let section_events: Vec<serde_json::Value> = (0..compose.sections.len())
+            .map(|i| self.build_section_event(compose, i, now))
             .collect();
 
-        // Convert compose state to serializable form
+        // Build the unsigned 30040 event (now that section d-tags exist).
+        let index_event = self.build_index_event(compose, now);
+
+        // Convert compose state to serializable form. By now the
+        // build_section_event / build_index_event calls above have
+        // minted any pending d-tags on the live ComposeState, so we
+        // can clone them into the draft for stable identity on resume.
         let compose_state = DraftComposeState {
             title: compose.title.clone(),
+            d_tag: compose.d_tag.clone(),
             tags: compose
                 .tags
                 .iter()
@@ -125,6 +150,8 @@ impl DraftStore {
                 .map(|s| DraftSectionCompose {
                     title: s.title.clone(),
                     content: s.content.clone(),
+                    level: s.level,
+                    d_tag: s.d_tag.clone(),
                     tags: s
                         .tags
                         .iter()
@@ -208,7 +235,7 @@ impl DraftStore {
     }
 
     /// Build an unsigned 30040 index event
-    fn build_index_event(&self, compose: &ComposeState, timestamp: u64) -> serde_json::Value {
+    fn build_index_event(&self, compose: &mut ComposeState, timestamp: u64) -> serde_json::Value {
         use serde_json::json;
 
         let pub_d_tag = compose.publication_d_tag();
@@ -227,7 +254,9 @@ impl DraftStore {
         let mut pub_tags: Vec<serde_json::Value> = vec![json!(["d", &pub_d_tag])];
 
         if !compose.title.is_empty() {
+            // `title` = display; `T` = indexable title for search/discovery.
             pub_tags.push(json!(["title", &compose.title]));
+            pub_tags.push(json!(["T", &compose.title]));
         }
 
         // Add custom tags
@@ -259,15 +288,16 @@ impl DraftStore {
     }
 
     /// Build an unsigned 30041 section event
-    fn build_section_event(&self, compose: &ComposeState, section_idx: usize, timestamp: u64) -> serde_json::Value {
+    fn build_section_event(&self, compose: &mut ComposeState, section_idx: usize, timestamp: u64) -> serde_json::Value {
         use serde_json::json;
 
+        // Mint the d-tag before taking an immutable borrow of the section
+        // for its title/content (avoids overlapping mutable+immutable refs).
+        let section_d_tag = compose.section_d_tag(section_idx);
         let section = match compose.sections.get(section_idx) {
             Some(s) => s,
             None => return json!({}),
         };
-
-        let section_d_tag = compose.section_d_tag(section_idx);
 
         // Placeholder pubkey (64 zeros)
         let placeholder_pubkey = "0".repeat(64);
@@ -276,7 +306,9 @@ impl DraftStore {
         let mut section_tags: Vec<serde_json::Value> = vec![json!(["d", &section_d_tag])];
 
         if !section.title.is_empty() {
+            // `title` = display; `T` = indexable title for search/discovery.
             section_tags.push(json!(["title", &section.title]));
+            section_tags.push(json!(["T", &section.title]));
         }
 
         // Add section-specific tags
@@ -317,6 +349,10 @@ impl From<&DraftComposeState> for ComposeState {
 
         let mut compose = ComposeState::new();
         compose.title = draft.title.clone();
+        // Re-seed identity so a resumed draft re-publishes onto the
+        // same addressable events. Legacy drafts (d_tag == None) will
+        // mint fresh nanoids on next emission.
+        compose.d_tag = draft.d_tag.clone();
         compose.tags = draft
             .tags
             .iter()
@@ -331,6 +367,8 @@ impl From<&DraftComposeState> for ComposeState {
             .map(|s| SC {
                 title: s.title.clone(),
                 content: s.content.clone(),
+                level: s.level,
+                d_tag: s.d_tag.clone(),
                 tags: s
                     .tags
                     .iter()
@@ -438,8 +476,8 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let store = DraftStore::new(temp_dir.path()).unwrap();
 
-        let compose = create_test_compose();
-        let draft_id = store.save_draft(&compose).unwrap();
+        let mut compose = create_test_compose();
+        let draft_id = store.save_draft(&mut compose).unwrap();
 
         let loaded = store.load_draft(&draft_id).unwrap();
         assert_eq!(loaded.title, "Test Publication");
@@ -447,17 +485,71 @@ mod tests {
         assert_eq!(loaded.compose_state.sections.len(), 2);
     }
 
+    /// Saving a draft mints d-tags on the in-memory compose state, and
+    /// the persisted DraftComposeState carries them forward. Round-tripping
+    /// through `From<&DraftComposeState> for ComposeState` must preserve
+    /// identity so a resumed draft re-publishes the same addressable
+    /// events.
+    #[test]
+    fn test_draft_round_trip_preserves_d_tags_and_levels() {
+        use crate::tree::state::SectionCompose as SC;
+
+        let temp_dir = TempDir::new().unwrap();
+        let store = DraftStore::new(temp_dir.path()).unwrap();
+
+        // Build a nested compose: one level-2 section + a level-3 child.
+        let mut compose = ComposeState::new();
+        compose.title = "Nested Test".to_string();
+        compose.sections.push(SC {
+            title: "Outer".to_string(),
+            content: "outer body".to_string(),
+            level: 2,
+            ..Default::default()
+        });
+        compose.sections.push(SC {
+            title: "Inner".to_string(),
+            content: "inner body".to_string(),
+            level: 3,
+            ..Default::default()
+        });
+
+        let draft_id = store.save_draft(&mut compose).unwrap();
+        let original_pub_d = compose.d_tag.clone().expect("pub d-tag minted on save");
+        let original_section_ds: Vec<String> = compose
+            .sections
+            .iter()
+            .map(|s| s.d_tag.clone().expect("section d-tag minted on save"))
+            .collect();
+
+        // Load and convert back to a live ComposeState.
+        let loaded = store.load_draft(&draft_id).unwrap();
+        let restored: ComposeState = (&loaded.compose_state).into();
+
+        assert_eq!(restored.d_tag.as_deref(), Some(original_pub_d.as_str()));
+        assert_eq!(restored.sections.len(), 2);
+        assert_eq!(restored.sections[0].level, 2);
+        assert_eq!(restored.sections[1].level, 3);
+        assert_eq!(
+            restored.sections[0].d_tag.as_deref(),
+            Some(original_section_ds[0].as_str())
+        );
+        assert_eq!(
+            restored.sections[1].d_tag.as_deref(),
+            Some(original_section_ds[1].as_str())
+        );
+    }
+
     #[test]
     fn test_list_drafts() {
         let temp_dir = TempDir::new().unwrap();
         let store = DraftStore::new(temp_dir.path()).unwrap();
 
-        let compose1 = create_test_compose();
-        store.save_draft(&compose1).unwrap();
+        let mut compose1 = create_test_compose();
+        store.save_draft(&mut compose1).unwrap();
 
         let mut compose2 = create_test_compose();
         compose2.title = "Another Publication".to_string();
-        store.save_draft(&compose2).unwrap();
+        store.save_draft(&mut compose2).unwrap();
 
         let drafts = store.list_drafts().unwrap();
         assert_eq!(drafts.len(), 2);
@@ -468,8 +560,8 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let store = DraftStore::new(temp_dir.path()).unwrap();
 
-        let compose = create_test_compose();
-        let draft_id = store.save_draft(&compose).unwrap();
+        let mut compose = create_test_compose();
+        let draft_id = store.save_draft(&mut compose).unwrap();
 
         assert!(store.load_draft(&draft_id).is_ok());
         store.delete_draft(&draft_id).unwrap();
@@ -481,8 +573,8 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let store = DraftStore::new(temp_dir.path()).unwrap();
 
-        let compose = create_test_compose();
-        let draft_id = store.save_draft(&compose).unwrap();
+        let mut compose = create_test_compose();
+        let draft_id = store.save_draft(&mut compose).unwrap();
         let loaded = store.load_draft(&draft_id).unwrap();
 
         // Check index event structure
