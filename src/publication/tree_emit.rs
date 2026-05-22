@@ -322,9 +322,10 @@ fn build_root_index_event(
     let mut tags: Vec<Value> = vec![json!(["d", pub_d_tag])];
 
     if !compose.title.is_empty() {
-        // `title` = display; `T` = indexable title for search/discovery.
+        // `title` = raw display title; `T` = normalized slug (lowercase-
+        // alphanumeric-dash) for exact `#T` discovery queries.
         tags.push(json!(["title", &compose.title]));
-        tags.push(json!(["T", &compose.title]));
+        tags.push(json!(["T", ComposeState::generate_d_tag(&compose.title)]));
     }
 
     for tag_vec in ComposeState::tags_to_nostr_format(&compose.tags) {
@@ -376,7 +377,7 @@ fn build_section_index_event(
 
     if !section_title.is_empty() {
         tags.push(json!(["title", &section_title]));
-        tags.push(json!(["T", &section_title]));
+        tags.push(json!(["T", ComposeState::generate_d_tag(&section_title)]));
     }
 
     for tag_vec in ComposeState::tags_to_nostr_format(&section_tags_vec) {
@@ -416,7 +417,7 @@ fn build_section_content_event(
 
     if !section_title.is_empty() {
         tags.push(json!(["title", &section_title]));
-        tags.push(json!(["T", &section_title]));
+        tags.push(json!(["T", ComposeState::generate_d_tag(&section_title)]));
     }
 
     for tag_vec in ComposeState::tags_to_nostr_format(&section_tags_vec) {
@@ -584,7 +585,7 @@ mod tests {
         // Root: 30040 with empty content, T+title tags, one a-tag → Outer's 30040
         assert_eq!(root["kind"], 30040);
         assert_eq!(root["content"], "");
-        assert_eq!(tag_value(&root, "T").as_deref(), Some("Root Pub"));
+        assert_eq!(tag_value(&root, "T").as_deref(), Some("root-pub"));
         assert_eq!(tag_value(&root, "title").as_deref(), Some("Root Pub"));
 
         let outer_d = compose.section_d_tag(0);
@@ -776,7 +777,7 @@ mod tests {
         assert_eq!(tag_value(&root1, "d"), tag_value(&root2, "d"));
         // T/title tags reflect the rename:
         assert_eq!(tag_value(&root2, "title").as_deref(), Some("Renamed"));
-        assert_eq!(tag_value(&root2, "T").as_deref(), Some("Renamed"));
+        assert_eq!(tag_value(&root2, "T").as_deref(), Some("renamed"));
 
         // Children d-tags are stable too.
         for (a, b) in children1.iter().zip(children2.iter()) {

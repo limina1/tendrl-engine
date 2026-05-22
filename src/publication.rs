@@ -1455,7 +1455,7 @@ pub async fn build_signed_publication_events_via_signer(
         if !section_title.is_empty() {
             // `title` = display; `T` = indexable title for search/discovery.
             tags.push(vec!["title".into(), section_title.clone()]);
-            tags.push(vec!["T".into(), section_title.clone()]);
+            tags.push(vec!["T".into(), ComposeState::generate_d_tag(&section_title)]);
         }
         for tag_vec in ComposeState::tags_to_nostr_format(&section_tags) {
             tags.push(tag_vec);
@@ -1478,7 +1478,7 @@ pub async fn build_signed_publication_events_via_signer(
     if !compose.title.is_empty() {
         // `title` = display; `T` = indexable title for search/discovery.
         tags.push(vec!["title".into(), compose.title.clone()]);
-        tags.push(vec!["T".into(), compose.title.clone()]);
+        tags.push(vec!["T".into(), ComposeState::generate_d_tag(&compose.title)]);
     }
     for tag_vec in ComposeState::tags_to_nostr_format(&compose.tags) {
         tags.push(tag_vec);
@@ -1623,7 +1623,10 @@ fn build_section_event_internal(
     if !section.title.is_empty() {
         // `title` = display; `T` = indexable title for search/discovery.
         tags.push(json!(["title", &section.title]));
-        tags.push(json!(["T", &section.title]));
+        tags.push(json!([
+            "T",
+            crate::tree::state::ComposeState::generate_d_tag(&section.title)
+        ]));
     }
 
     // Add section-specific tags
@@ -1678,7 +1681,10 @@ fn build_index_event_internal(
     if !compose.title.is_empty() {
         // `title` = display; `T` = indexable title for search/discovery.
         tags.push(json!(["title", &compose.title]));
-        tags.push(json!(["T", &compose.title]));
+        tags.push(json!([
+            "T",
+            crate::tree::state::ComposeState::generate_d_tag(&compose.title)
+        ]));
     }
 
     // Add custom tags
@@ -1836,7 +1842,10 @@ fn build_forked_section_event(
     if !block.title.is_empty() {
         // `title` = display; `T` = indexable title for search/discovery.
         tags.push(json!(["title", &block.title]));
-        tags.push(json!(["T", &block.title]));
+        tags.push(json!([
+            "T",
+            crate::tree::state::ComposeState::generate_d_tag(&block.title)
+        ]));
     }
 
     // Fork lineage tag — NIP-54 addressable fork marker
@@ -1899,7 +1908,7 @@ fn build_block_index_event(
     if !state.title.is_empty() {
         // `title` = display; `T` = indexable title for search/discovery.
         tags.push(json!(["title", &state.title]));
-        tags.push(json!(["T", &state.title]));
+        tags.push(json!(["T", ComposeState::generate_d_tag(&state.title)]));
     }
 
     // Custom tags
@@ -2027,7 +2036,7 @@ mod tests {
         // Root is a 30040 with empty content and matching T+title tags.
         assert_eq!(root["kind"], 30040);
         assert_eq!(root["content"], "");
-        assert_eq!(t_of(&root, "T").as_deref(), Some("Integration"));
+        assert_eq!(t_of(&root, "T").as_deref(), Some("integration"));
         assert_eq!(t_of(&root, "title").as_deref(), Some("Integration"));
 
         // Three children: Outer-30040, Outer-30041, Inner-30041 (pre-order).
