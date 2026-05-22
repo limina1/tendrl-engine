@@ -66,6 +66,10 @@
 	let collapsedIds: Set<string> = $state(new Set());
 	let headerCollapsed = $state(false);
 	let delimiter = $state('');
+	// When on, deeper headings (===, ====, …) become their own nested
+	// 30040 indices. When off (flat), only `==` starts a 30041 section and
+	// everything deeper stays inline as that section's content.
+	let nestDeep = $state(true);
 	let prevDelimiter = $state('');
 	let trashPending: ContextItem[] = $state([]);
 	let trashTimer: ReturnType<typeof setTimeout> | null = $state(null);
@@ -236,7 +240,9 @@
 				docTitle = head.title;
 				continue;
 			}
-			if (head && head.level >= 2) {
+			// In flat mode only `==` (level 2) starts a section; deeper
+			// headings fall through and are kept as the section's content.
+			if (head && head.level >= 2 && (nestDeep || head.level === 2)) {
 				// Finish previous section
 				if (current) {
 					sections.push({
@@ -630,6 +636,13 @@
 				maxlength="2"
 			/>
 		</div>
+		<label
+			class="nest-toggle"
+			title="On: deeper headings (===, ====) become their own nested 30040 indices. Off: everything under a == is one 30041 section, deeper headings stay as its content."
+		>
+			<input type="checkbox" bind:checked={nestDeep} />
+			<span>nest</span>
+		</label>
 		<span class="bar-sp"></span>
 		<!-- Bulk lock/unlock mirrors ReaderBuffer's draft toolbar so the
 		     read↔edit transition keeps the same affordances at the same
@@ -929,6 +942,23 @@
 		font-size: 0.85rem;
 		font-weight: 700;
 		padding: 4px 6px;
+	}
+
+	.nest-toggle {
+		display: flex;
+		align-items: center;
+		gap: 4px;
+		font-size: 0.75rem;
+		color: var(--fg-muted);
+		font-weight: 600;
+		text-transform: uppercase;
+		letter-spacing: 0.05em;
+		cursor: pointer;
+		user-select: none;
+	}
+	.nest-toggle input {
+		cursor: pointer;
+		margin: 0;
 	}
 
 	.compose-header {
