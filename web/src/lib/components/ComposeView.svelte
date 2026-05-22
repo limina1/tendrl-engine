@@ -68,10 +68,13 @@
 	let collapsedIds: Set<string> = $state(new Set());
 	let headerCollapsed = $state(false);
 	let delimiter = $state('');
-	// When on, deeper headings (===, ====, …) become their own nested
-	// 30040 indices. When off (flat), only `==` starts a 30041 section and
-	// everything deeper stays inline as that section's content.
-	let nestDeep = $state(true);
+	// Parse level — the heading depth at which sections stop being their
+	// own 30040 indices and fold into the nearest ancestor's 30041 content.
+	// 2 = flat (one index over a flat list of sections); each higher level
+	// turns one more heading tier into nested sub-indices and folds anything
+	// deeper into content. Mirrors Alexandria's parseLevel
+	// (docs/publication_creation.md §1.2). Range 2–5.
+	let parseLevel = $state(2);
 	let prevDelimiter = $state('');
 	let trashPending: ContextItem[] = $state([]);
 	let trashTimer: ReturnType<typeof setTimeout> | null = $state(null);
@@ -242,9 +245,10 @@
 				docTitle = head.title;
 				continue;
 			}
-			// In flat mode only `==` (level 2) starts a section; deeper
-			// headings fall through and are kept as the section's content.
-			if (head && head.level >= 2 && (nestDeep || head.level === 2)) {
+			// Sections at levels 2..parseLevel become their own segments;
+			// anything deeper falls through and folds into the nearest
+			// ancestor's content (header text and all).
+			if (head && head.level >= 2 && head.level <= parseLevel) {
 				// Finish previous section
 				if (current) {
 					sections.push({
@@ -673,11 +677,16 @@
 			/>
 		</div>
 		<label
-			class="nest-toggle"
-			title="On: deeper headings (===, ====) become their own nested 30040 indices. Off: everything under a == is one 30041 section, deeper headings stay as its content."
+			class="nest-group"
+			title="Parse level — how deep the outline nests into 30040 indices. flat = one index over a flat list of sections (deeper headings stay as content); each higher level turns one more heading tier into nested sub-indices and folds anything below it into content."
 		>
-			<input type="checkbox" bind:checked={nestDeep} />
-			<span>nest</span>
+			<span class="nest-label">nest</span>
+			<select class="nest-select" bind:value={parseLevel}>
+				<option value={2}>flat</option>
+				<option value={3}>1 tier</option>
+				<option value={4}>2 tiers</option>
+				<option value={5}>3 tiers</option>
+			</select>
 		</label>
 		<span class="bar-sp"></span>
 		<!-- Bulk lock/unlock mirrors ReaderBuffer's draft toolbar so the
@@ -990,21 +999,25 @@
 		padding: 4px 6px;
 	}
 
-	.nest-toggle {
+	.nest-group {
 		display: flex;
 		align-items: center;
-		gap: 4px;
+		gap: 6px;
+		cursor: pointer;
+		user-select: none;
+	}
+	.nest-label {
 		font-size: 0.75rem;
 		color: var(--fg-muted);
 		font-weight: 600;
 		text-transform: uppercase;
 		letter-spacing: 0.05em;
-		cursor: pointer;
-		user-select: none;
 	}
-	.nest-toggle input {
+	.nest-select {
+		font-family: var(--font-mono);
+		font-size: 0.8rem;
+		padding: 3px 6px;
 		cursor: pointer;
-		margin: 0;
 	}
 
 	.compose-header {
