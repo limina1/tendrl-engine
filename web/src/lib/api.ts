@@ -334,7 +334,12 @@ export interface PublishResponse {
 	section_ids: string[];
 	signed: boolean;
 	ingested: boolean;
-	broadcast_results?: { relay: string; success: boolean; message: string | null }[];
+	broadcast_results?: {
+		relay: string;
+		success: boolean;
+		message: string | null;
+		event_id: string;
+	}[];
 }
 
 export function publish(req: PublishRequest) {
@@ -466,6 +471,13 @@ export function addRelay(set: string, url: string) {
 	return fetchJson<{ updated: boolean; message: string }>('/api/v1/config/update', {
 		method: 'POST',
 		body: JSON.stringify({ add_relay: { set, url } })
+	});
+}
+
+export function removeRelay(set: string, url: string) {
+	return fetchJson<{ updated: boolean; message: string }>('/api/v1/config/update', {
+		method: 'POST',
+		body: JSON.stringify({ remove_relay: { set, url } })
 	});
 }
 

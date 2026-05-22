@@ -34,6 +34,9 @@ import type {
 } from '$lib/types';
 import type { Buffer } from '$lib/wm/types';
 import * as api from '$lib/api';
+import { getActiveStore } from '$lib/wm/buffer-store.svelte';
+import { setProgress, progressFromPublish } from '$lib/wm/publish-progress.svelte';
+import { identityCanSign } from '$lib/identity/signer';
 
 /** Replaceable kind-0 events can pile up multiple historical versions in
  *  the DB / relay results. A search should surface only the *current*
@@ -1052,7 +1055,7 @@ function _createAppState() {
 	async function handleChatPublishFragments(fragments: Fragment[]) {
 		if (!fragments.length) return;
 		try {
-			const canSign = identityStatus?.state === 'unlocked';
+			const canSign = identityCanSign(identityStatus);
 			await api.publish({
 				title: `Chat export ${new Date().toISOString().slice(0, 10)}`,
 				tags: [],
@@ -1072,8 +1075,22 @@ function _createAppState() {
 
 	async function handleComposePublish(items: ContextItem[]) {
 		const sections = items.length > 0 ? items : compose.sections;
-		if (!sections.length) return;
-		const canSign = identityStatus?.state === 'unlocked';
+		if (!sections.length) {
+			pushToast('Nothing to publish — no sections detected', 'error', 4000);
+			return;
+		}
+		const canSign = identityCanSign(identityStatus);
+
+		// Immediate feedback: signing N events through an external signer is
+		// slow (one round-trip per event) and otherwise gives no sign the
+		// click registered. Flip this toast to success/error when it settles.
+		const progressToast = pushToast(
+			canSign
+				? `Publishing ${sections.length + 1} events… (signing via ${identityStatus?.source ?? 'engine'})`
+				: 'Saving locally…',
+			'pending',
+			120000
+		);
 
 		// If any section has a source_addr OR the draft was seeded from a
 		// publication, route through the block endpoint so we emit fork-
@@ -1082,6 +1099,7 @@ function _createAppState() {
 			!!composeSourcePubAddr || sections.some((s) => !!s.source_addr);
 
 		try {
+			let resp: api.PublishResponse;
 			if (hasProvenance) {
 				const blocks: api.PublishBlock[] = sections.map((s) => {
 					const baseTags = s.tags.map(
@@ -1115,7 +1133,7 @@ function _createAppState() {
 						author: s.source_addr.pubkey
 					};
 				});
-				const resp = await api.publishBlocks({
+				resp = await api.publishBlocks({
 					title: compose.title,
 					tags: compose.tags.map((t) => [t.name, t.value] as [string, string]),
 					blocks,
@@ -1126,7 +1144,7 @@ function _createAppState() {
 				});
 				console.log('Published (blocks):', resp.publication_id);
 			} else {
-				const resp = await api.publish({
+				resp = await api.publish({
 					title: compose.title,
 					tags: compose.tags.map((t) => [t.name, t.value] as [string, string]),
 					sections: sections.map((s) => ({
@@ -1139,9 +1157,39 @@ function _createAppState() {
 				});
 				console.log('Published:', resp.publication_id);
 			}
+
+			// Surface where each event landed: build the per-event×relay
+			// grid from the broadcast results and pop the publish-progress
+			// buffer. Only when we actually broadcast (a signed publish).
+			if (resp.broadcast_results && resp.broadcast_results.length > 0) {
+				setProgress(
+					progressFromPublish(resp, {
+						title: compose.title,
+						authorPubkey: myPubkey ?? '',
+						sections: sections.map((s) => ({ title: s.title, content: s.content }))
+					})
+				);
+				getActiveStore().openBuffer({
+					className: 'work',
+					buffer: {
+						id: 'publish-progress:current',
+						kind: 'publish-progress',
+						label: 'publish',
+						kicker: 'live'
+					}
+				});
+				updateToast(progressToast, { message: 'Published — see relay results', kind: 'success' }, 3000);
+			} else if (!canSign) {
+				updateToast(progressToast, { message: 'Saved locally — log in to sign & broadcast', kind: 'info' }, 4000);
+			} else {
+				updateToast(progressToast, { message: 'Published (no relay results returned)', kind: 'success' }, 4000);
+			}
 			await loadFeed();
 		} catch (e) {
+			// Don't swallow — a failed sign/broadcast otherwise looks like
+			// "nothing happened" (no modal, no error). Surface the reason.
 			console.error('Publish compose failed:', e);
+			updateToast(progressToast, { message: `Publish failed: ${e instanceof Error ? e.message : String(e)}`, kind: 'error' }, 6000);
 		}
 	}
 
@@ -1949,7 +1997,7 @@ function _createAppState() {
 
 	async function handleDocPublish() {
 		if (!publication || !sections.length) return;
-		const canSign = identityStatus?.state === 'unlocked';
+		const canSign = identityCanSign(identityStatus);
 		try {
 			const loadedSections = sections.filter(s => s.status === 'loaded' && s.content);
 			if (!loadedSections.length) return;

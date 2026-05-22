@@ -262,7 +262,7 @@
 	}
 
 	// Reconcile parsed sections with existing compose sections
-	function handlePlainFullEdit(text: string) {
+	function handlePlainFullEdit(text: string): ContextItem[] {
 		const parsed = parseAll(text);
 		const oldSections = compose.sections;
 
@@ -295,6 +295,7 @@
 		});
 
 		onupdate({ title: parsed.title, tags: parsed.tags, sections: newSections });
+		return newSections;
 	}
 
 	// Detected structure for plain mode sidebar
@@ -528,7 +529,10 @@
 	}
 
 	function publishAll() {
-		if (mode === 'plain') handlePlainFullEdit(plainText);
+		// In plain mode `compose.sections` only commits on blur, so parse
+		// the live text here and publish that directly — otherwise the prop
+		// is stale (often empty) at click time.
+		const sections = mode === 'plain' ? handlePlainFullEdit(plainText) : compose.sections;
 		if (claimedUntouched.length > 0) {
 			const n = claimedUntouched.length;
 			const ok = confirm(
@@ -537,12 +541,12 @@
 			);
 			if (!ok) return;
 		}
-		onpublish(compose.sections);
+		onpublish(sections);
 	}
 
 	function publishSelected() {
-		if (mode === 'plain') handlePlainFullEdit(plainText);
-		const items = compose.sections.filter((s) => checkedIds.has(s.id));
+		const all = mode === 'plain' ? handlePlainFullEdit(plainText) : compose.sections;
+		const items = all.filter((s) => checkedIds.has(s.id));
 		if (items.length === 0) return;
 		const claimedInSelection = items.filter(
 			(s) => s.source_addr && !s.readonly && s.content === s.original_content
@@ -794,12 +798,18 @@
 			<button
 				class="publish-btn"
 				onclick={publishAll}
-				disabled={compose.sections.length === 0 || !structuralChange}
-				title={structuralChange
-					? 'Publish this draft'
-					: compose.source_publication_addr
-						? 'No structural change since the source publication — nothing to publish'
-						: 'Add or modify a section to enable publishing'}
+				disabled={mode === 'plain'
+					? detectedSections.length === 0
+					: compose.sections.length === 0 || !structuralChange}
+				title={mode === 'plain'
+					? detectedSections.length === 0
+						? 'Type a heading line to detect a section'
+						: 'Publish this draft'
+					: structuralChange
+						? 'Publish this draft'
+						: compose.source_publication_addr
+							? 'No structural change since the source publication — nothing to publish'
+							: 'Add or modify a section to enable publishing'}
 			>Publish</button>
 			{#if checkedIds.size > 0}
 				<button class="publish-btn publish-selected" onclick={publishSelected}>Publish ({checkedIds.size})</button>

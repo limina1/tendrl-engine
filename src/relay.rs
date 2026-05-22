@@ -348,37 +348,54 @@ pub async fn publish_events_to_relays_with_progress<F>(
 where
     F: FnMut(BroadcastProgress),
 {
-    let mut all_results = Vec::new();
-    let mut success_count = 0;
     let total_relays = relays.len();
     let total_events = events.len();
 
-    for (relay_idx, relay_url) in relays.iter().enumerate() {
-        let mut relay_success = true;
+    // Broadcast every (relay × event) pair concurrently, capped, rather
+    // than in a sequential nested loop. A 60-section publication to 2
+    // relays is 120 sends; each `publish_event` opens a WebSocket and
+    // waits up to 10s for the OK, so done sequentially the response is
+    // blocked for minutes and the client never sees the result. Capped
+    // concurrency keeps total wall-time near the slowest single send.
+    const MAX_CONCURRENT: usize = 16;
+    let pairs: Vec<(usize, usize)> = (0..total_relays)
+        .flat_map(|ri| (0..total_events).map(move |ei| (ri, ei)))
+        .collect();
+    let total_pairs = pairs.len();
 
-        for (event_idx, event_json) in events.iter().enumerate() {
-            on_progress(BroadcastProgress {
-                current_relay: relay_idx + 1,
-                total_relays,
-                current_event: event_idx + 1,
-                total_events,
-                relay_name: relay_url.clone(),
-                status: format!("Event {}/{}", event_idx + 1, total_events),
-            });
-
-            let result = publish_event(relay_url, event_json).await;
-            if !result.success {
-                relay_success = false;
-            }
-            all_results.push(result);
+    let mut stream = futures::stream::iter(pairs.into_iter().map(|(ri, ei)| {
+        let relay_url = relays[ri].clone();
+        let event_json = events[ei].clone();
+        async move {
+            let result = publish_event(&relay_url, &event_json).await;
+            (ri, result)
         }
+    }))
+    .buffer_unordered(MAX_CONCURRENT);
 
-        if relay_success {
-            success_count += 1;
+    let mut all_results = Vec::with_capacity(total_pairs);
+    // A relay counts as a success only if every one of its events landed.
+    let mut relay_ok: Vec<bool> = vec![true; total_relays];
+    let mut done = 0;
+
+    while let Some((ri, result)) = stream.next().await {
+        done += 1;
+        on_progress(BroadcastProgress {
+            current_relay: ri + 1,
+            total_relays,
+            current_event: done,
+            total_events,
+            relay_name: relays[ri].clone(),
+            status: format!("{done}/{total_pairs} sent"),
+        });
+        if !result.success {
+            relay_ok[ri] = false;
         }
+        all_results.push(result);
     }
 
-    (success_count, relays.len(), all_results)
+    let success_count = relay_ok.iter().filter(|&&ok| ok).count();
+    (success_count, total_relays, all_results)
 }
 
 /// Fetch an addressable event by kind:pubkey:d-tag from relays

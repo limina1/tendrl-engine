@@ -1576,6 +1576,8 @@ pub async fn fetch_confirm_handler(
 pub struct ConfigUpdateRequest {
     /// Add a relay URL to a set ("general", "publish", "fetch")
     pub add_relay: Option<AddRelay>,
+    /// Remove a relay URL from a set ("general", "publish", "fetch")
+    pub remove_relay: Option<AddRelay>,
     /// Add an author (npub or hex)
     pub add_author: Option<String>,
     /// Remove an author
@@ -1624,6 +1626,21 @@ pub async fn config_update_handler(
                     let url_val = toml::Value::String(add.url.clone());
                     if !arr.contains(&url_val) {
                         arr.push(url_val);
+                        changed = true;
+                    }
+                }
+            }
+        }
+    }
+
+    // Remove relay from a set
+    if let Some(rm) = &req.remove_relay {
+        if let Some(toml::Value::Table(relay_table)) = doc.get_mut("relay") {
+            if let Some(toml::Value::Table(set_table)) = relay_table.get_mut(&rm.set) {
+                if let Some(toml::Value::Array(arr)) = set_table.get_mut("urls") {
+                    let before = arr.len();
+                    arr.retain(|v| v.as_str() != Some(rm.url.as_str()));
+                    if arr.len() != before {
                         changed = true;
                     }
                 }
@@ -1690,6 +1707,10 @@ pub async fn relay_config_handler(State(engine): State<AppState>) -> Json<Value>
 #[derive(Debug, Deserialize)]
 pub struct RelayInfoQuery {
     pub url: String,
+    /// `?refresh=true` bypasses the cache and forces a fresh fetch —
+    /// the UI's retry button after a transient failure.
+    #[serde(default)]
+    pub refresh: bool,
 }
 
 /// GET /api/v1/relay/info?url=wss://… — return cached NIP-11 doc
@@ -1700,7 +1721,11 @@ pub async fn relay_nip11_handler(
     State(engine): State<AppState>,
     axum::extract::Query(q): axum::extract::Query<RelayInfoQuery>,
 ) -> Json<Value> {
-    let status = engine.nip11_cache().get(&q.url).await;
+    let status = if q.refresh {
+        engine.nip11_cache().refresh(&q.url).await
+    } else {
+        engine.nip11_cache().get(&q.url).await
+    };
     Json(json!({
         "url": q.url,
         "status": status,
@@ -2338,6 +2363,9 @@ pub struct BroadcastResult {
     pub relay: String,
     pub success: bool,
     pub message: Option<String>,
+    /// Event this result is for, so the client can group results into a
+    /// per-event × per-relay grid instead of a flat list.
+    pub event_id: String,
 }
 
 /// POST /api/v1/publish — create a publication (draft or signed)
@@ -2521,6 +2549,7 @@ pub async fn publish_handler(
                     relay: r.relay_url,
                     success: r.success,
                     message: r.message,
+                    event_id: r.event_id,
                 })
                 .collect::<Vec<_>>(),
         )
@@ -2816,6 +2845,7 @@ pub async fn publish_blocks_handler(
                     relay: r.relay_url,
                     success: r.success,
                     message: r.message,
+                    event_id: r.event_id,
                 })
                 .collect::<Vec<_>>(),
         )

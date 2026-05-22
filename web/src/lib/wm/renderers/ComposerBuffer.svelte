@@ -4,6 +4,7 @@
 	import { getAppState } from '$lib/state.svelte';
 	import ComposeView from '$lib/components/ComposeView.svelte';
 	import { getActiveStore, type NavAction } from '../buffer-store.svelte';
+	import { identityCanSign } from '$lib/identity/signer';
 	import type { Buffer } from '../types';
 
 	let { buffer }: { buffer: Buffer } = $props();
@@ -126,7 +127,7 @@
 	bind:plainCmView
 	{cursor}
 	compose={app.compose}
-	canPublish={app.identityStatus?.state === 'unlocked'}
+	canPublish={identityCanSign(app.identityStatus)}
 	onupdate={app.handleComposeUpdate}
 	oncancel={app.handleCancelCompose}
 	onsendtochat={app.handleComposeToChat}

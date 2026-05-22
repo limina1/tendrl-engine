@@ -171,6 +171,9 @@
 					{#if open}
 						{@const evNaddr = naddrFor(ev)}
 						<div class="pp-event-detail">
+							{#if ev.contentPreview}
+								<p class="pp-content-preview">{ev.contentPreview}</p>
+							{/if}
 							<div class="pp-detail-actions">
 								{#if ev.rawEvent != null}
 									<button
@@ -470,6 +473,16 @@
 		flex-direction: column;
 		gap: 12px;
 		background: var(--bg-surface);
+	}
+
+	.pp-content-preview {
+		margin: 0;
+		font-size: var(--t-sm);
+		color: var(--base7);
+		line-height: var(--lh-snug);
+		white-space: pre-wrap;
+		border-left: 2px solid var(--panel-border);
+		padding-left: 10px;
 	}
 
 	.kv {

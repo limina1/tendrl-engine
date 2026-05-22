@@ -64,8 +64,9 @@ export function normalizeRelayUrl(url: string): string {
 	return url.trim().toLowerCase().replace(/\/+$/, '');
 }
 
-async function fetchOnce(url: string): Promise<Nip11Status> {
-	const resp = await fetch(`/api/v1/relay/info?url=${encodeURIComponent(url)}`);
+async function fetchOnce(url: string, force = false): Promise<Nip11Status> {
+	const q = `url=${encodeURIComponent(url)}${force ? '&refresh=true' : ''}`;
+	const resp = await fetch(`/api/v1/relay/info?${q}`);
 	if (!resp.ok) {
 		return { state: 'failed', error: `engine HTTP ${resp.status}`, fetched_at: 0 };
 	}
@@ -81,16 +82,21 @@ const inflight = new Map<string, Promise<Nip11Status>>();
  * Read the engine's current NIP-11 status for a relay. If the engine
  * reports `Loading`, schedules a single follow-up poll so the caller's
  * `onUpdate` fires once the fetch lands without needing its own timer.
+ *
+ * Pass `{ force: true }` to bypass both the per-tab dedup and the
+ * engine's cache (a retry after a transient failure).
  */
 export function getRelayInfo(
 	url: string,
-	onUpdate?: (s: Nip11Status) => void
+	onUpdate?: (s: Nip11Status) => void,
+	opts?: { force?: boolean }
 ): Nip11Status {
 	const key = normalizeRelayUrl(url);
+	const force = opts?.force ?? false;
 
-	let promise = inflight.get(key);
+	let promise = force ? undefined : inflight.get(key);
 	if (!promise) {
-		promise = fetchOnce(url).finally(() => inflight.delete(key));
+		promise = fetchOnce(url, force).finally(() => inflight.delete(key));
 		inflight.set(key, promise);
 	}
 

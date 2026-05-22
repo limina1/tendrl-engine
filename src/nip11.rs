@@ -16,6 +16,12 @@ use serde_json::Value;
 use tokio::sync::{Mutex, Semaphore};
 
 const TTL: Duration = Duration::from_secs(60 * 60);
+/// Failed fetches expire fast so a transient miss (relay down at engine
+/// startup, slow first response) self-heals on the next read instead of
+/// being pinned for the full hour. Without this, a relay that wasn't up
+/// when the engine first probed it shows "couldn't load NIP-11" for an
+/// hour even after it comes online.
+const FAILED_TTL: Duration = Duration::from_secs(30);
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
 const MAX_BODY_BYTES: usize = 256 * 1024;
 const MAX_CONCURRENT: usize = 5;
@@ -75,6 +81,17 @@ pub enum Nip11Status {
     Failed { error: String, fetched_at: u64 },
 }
 
+impl Nip11Status {
+    /// How long this cached status stays fresh. Failures expire fast
+    /// (see `FAILED_TTL`); successful docs hold for the full `TTL`.
+    fn ttl(&self) -> Duration {
+        match self {
+            Nip11Status::Failed { .. } => FAILED_TTL,
+            _ => TTL,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 struct Entry {
     status: Nip11Status,
@@ -109,12 +126,24 @@ impl Nip11Cache {
     /// off a background fetch (deduplicated under a per-URL Notify)
     /// and returns `Loading` so the caller can render a skeleton.
     pub async fn get(&self, url: &str) -> Nip11Status {
+        self.get_inner(url, false).await
+    }
+
+    /// Force a re-fetch, ignoring any cached entry (but still
+    /// deduplicating against an already in-flight fetch). Backs the
+    /// UI's explicit "retry" affordance so a stale `Failed` can be
+    /// cleared on demand without waiting out `FAILED_TTL`.
+    pub async fn refresh(&self, url: &str) -> Nip11Status {
+        self.get_inner(url, true).await
+    }
+
+    async fn get_inner(&self, url: &str, force: bool) -> Nip11Status {
         let key = normalize_relay_url(url);
 
-        {
+        if !force {
             let entries = self.entries.lock().await;
             if let Some(entry) = entries.get(&key) {
-                if entry.inserted.elapsed() < TTL {
+                if entry.inserted.elapsed() < entry.status.ttl() {
                     return entry.status.clone();
                 }
             }
@@ -337,6 +366,21 @@ mod tests {
         });
         let doc = parse_doc(&raw);
         assert_eq!(doc.supported_nips, vec![1, 11, 50, 9999]);
+    }
+
+    #[test]
+    fn failed_entries_expire_faster_than_loaded() {
+        let failed = Nip11Status::Failed {
+            error: "connection refused".into(),
+            fetched_at: 0,
+        };
+        let loaded = Nip11Status::Loaded {
+            doc: Nip11Doc::default(),
+            fetched_at: 0,
+        };
+        assert_eq!(failed.ttl(), FAILED_TTL);
+        assert_eq!(loaded.ttl(), TTL);
+        assert!(failed.ttl() < loaded.ttl());
     }
 
     #[test]

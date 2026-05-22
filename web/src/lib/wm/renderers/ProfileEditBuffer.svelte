@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { getAppState } from '$lib/state.svelte';
 	import * as api from '$lib/api';
-	import { signAndBroadcast } from '$lib/identity/signer';
+	import { signAndBroadcast, identityCanSign } from '$lib/identity/signer';
 	import type { Buffer } from '../types';
 
 	let { buffer: _buffer }: { buffer: Buffer } = $props();
@@ -41,9 +41,7 @@
 	const activePubkey = $derived(
 		app.identityStatus?.pubkey ?? app.externalSignerPubkey ?? null
 	);
-	const canSign = $derived(
-		(app.identityStatus?.state === 'unlocked') || app.identityStatus?.source === 'nip07'
-	);
+	const canSign = $derived(identityCanSign(app.identityStatus));
 
 	// Fetch the current kind 0 directly from the engine. profile_handler
 	// returns the normalized fields it knows about; we also fetch the raw

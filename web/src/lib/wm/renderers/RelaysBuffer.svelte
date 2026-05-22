@@ -1,10 +1,13 @@
 <script lang="ts">
 	import * as api from '$lib/api';
+	import { getAppState } from '$lib/state.svelte';
 	import { getRelayInfo, normalizeRelayUrl, type Nip11Status, type Nip11Doc } from '$lib/relay/nip11';
 	import ProfileName from '$lib/components/ProfileName.svelte';
 	import type { Buffer } from '../types';
 
 	let { buffer: _buffer }: { buffer: Buffer } = $props();
+
+	const app = getAppState();
 
 	// Per docs/relay-classes-and-info-port.md, a relay row carries the
 	// role-agnostic shell (URL + runtime metadata + NIP-11 derived
@@ -26,7 +29,7 @@
 	// resolve. Fresh object each update so $derived sees a change.
 	let infoMap = $state<Record<string, Nip11Status>>({});
 
-	async function load() {
+	async function load(force = false) {
 		loading = true;
 		try {
 			const cfg = await api.getRelayConfig();
@@ -49,7 +52,7 @@
 			rows = [...map.values()].sort((a, b) => a.url.localeCompare(b.url));
 			// Kick off NIP-11 fetches up-front so the badges fill in
 			// without the user expanding each row.
-			for (const r of rows) primeInfo(r.url);
+			for (const r of rows) primeInfo(r.url, force);
 		} catch (e) {
 			error = String(e);
 		} finally {
@@ -57,20 +60,48 @@
 		}
 	}
 
-	function primeInfo(url: string) {
+	function primeInfo(url: string, force = false) {
 		const key = normalizeRelayUrl(url);
-		const status = getRelayInfo(url, (s) => {
-			infoMap = { ...infoMap, [key]: s };
-		});
-		infoMap = { ...infoMap, [key]: status };
+		if (force) infoMap = { ...infoMap, [key]: { state: 'loading' } };
+		const status = getRelayInfo(
+			url,
+			(s) => {
+				infoMap = { ...infoMap, [key]: s };
+			},
+			{ force }
+		);
+		if (!force) infoMap = { ...infoMap, [key]: status };
 	}
 
 	$effect(() => {
 		load();
 	});
 
-	function toggle(url: string, field: 'read' | 'write' | 'auth') {
-		rows = rows.map((r) => (r.url === url ? { ...r, [field]: !r[field] } : r));
+	async function toggle(url: string, field: 'read' | 'write' | 'auth') {
+		const row = rows.find((r) => r.url === url);
+		if (!row) return;
+		const next = { ...row, [field]: !row[field] };
+		rows = rows.map((r) => (r.url === url ? next : r)); // optimistic
+
+		// `auth` has no config home yet — keep it cosmetic.
+		if (field === 'auth') return;
+
+		try {
+			// Reconcile the row's read/write into explicit fetch + publish set
+			// membership, and drop it from the legacy `general` set (which means
+			// read+write) so a toggle-off actually takes effect after restart.
+			await api.removeRelay('general', url);
+			await (next.read ? api.addRelay('fetch', url) : api.removeRelay('fetch', url));
+			await (next.write ? api.addRelay('publish', url) : api.removeRelay('publish', url));
+			app.pushToast('Relay config saved — restart engine to apply', 'info', 3000);
+		} catch (e) {
+			rows = rows.map((r) => (r.url === url ? row : r)); // revert on failure
+			app.pushToast(
+				`Couldn't save relay config: ${e instanceof Error ? e.message : String(e)}`,
+				'error',
+				5000
+			);
+		}
 	}
 
 	function toggleExpanded(url: string) {
@@ -97,7 +128,7 @@
 <div class="relays-view">
 	<div class="relays-header">
 		<span>Relay configuration</span>
-		<span class="relays-hint">placeholder — toggles don't persist yet</span>
+		<span class="relays-hint">read/write persist (restart to apply) · auth is cosmetic</span>
 	</div>
 
 	{#if loading}
@@ -172,7 +203,10 @@
 							{#if status.state === 'loading'}
 								<p class="empty muted">Fetching NIP-11…</p>
 							{:else if status.state === 'failed'}
-								<p class="empty error">Couldn't load NIP-11: {status.error}</p>
+								<div class="failed-detail">
+									<p class="empty error">Couldn't load NIP-11: {status.error}</p>
+									<button class="btn-refresh" onclick={() => primeInfo(row.url, true)}>Retry</button>
+								</div>
 							{:else if doc}
 								{#if doc.name || doc.description}
 									<section class="info-section">
@@ -327,7 +361,7 @@
 
 		<div class="relays-footer">
 			<button class="btn-add" disabled title="Will prompt for a relay URL">+ Add relay</button>
-			<button class="btn-refresh" onclick={load}>Refresh</button>
+			<button class="btn-refresh" onclick={() => load(true)}>Refresh</button>
 		</div>
 	{/if}
 </div>
@@ -369,6 +403,17 @@
 	}
 	.empty.error { color: var(--id-draft); }
 	.empty.muted { color: var(--base5); }
+
+	.failed-detail {
+		display: flex;
+		flex-direction: column;
+		align-items: flex-start;
+		gap: 6px;
+	}
+	.failed-detail .empty {
+		padding: 8px 0;
+		text-align: left;
+	}
 
 	.relays-list {
 		display: flex;
