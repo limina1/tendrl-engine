@@ -323,10 +323,19 @@ export function search(
 export interface PublishRequest {
 	title: string;
 	tags: [string, string][];
-	sections: { title: string; content: string; tags: [string, string][]; level?: number }[];
+	sections: {
+		title: string;
+		content: string;
+		tags: [string, string][];
+		level?: number;
+		/** Reuse this section d-tag (republish replace) instead of minting. */
+		d_tag?: string;
+	}[];
 	sign: boolean;
 	broadcast: boolean;
 	relays?: string[];
+	/** Reuse this index d-tag (republish replace) instead of minting. */
+	d_tag?: string;
 }
 
 export interface PublishResponse {

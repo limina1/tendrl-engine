@@ -2330,6 +2330,10 @@ pub struct PublishRequest {
     #[serde(default)]
     pub tags: Vec<(String, String)>,
     pub sections: Vec<PublishSectionRequest>,
+    /// Reuse this index `d` tag instead of minting a fresh nanoid — set on
+    /// republish so the 30040 replaces the existing one rather than forking.
+    #[serde(default)]
+    pub d_tag: Option<String>,
     /// Whether to sign the events (requires secret key in engine)
     #[serde(default)]
     pub sign: bool,
@@ -2350,6 +2354,11 @@ pub struct PublishSectionRequest {
     /// nested 30040/30041 emitter; absent/`2` keeps the flat graph.
     #[serde(default)]
     pub level: Option<u8>,
+    /// Reuse this section `d` tag instead of minting — set on republish for
+    /// sections matched (by `T`) to an existing publication, so the 30041
+    /// replaces rather than forks.
+    #[serde(default)]
+    pub d_tag: Option<String>,
 }
 
 /// Response from publish endpoint
@@ -2413,6 +2422,7 @@ pub async fn publish_handler(
             sc.title = s.title.clone();
             sc.content = s.content.clone();
             sc.level = s.level.unwrap_or(2);
+            sc.d_tag = s.d_tag.clone();
             sc.tags = s
                 .tags
                 .iter()
@@ -2424,6 +2434,7 @@ pub async fn publish_handler(
             sc
         })
         .collect();
+    compose.d_tag = req.d_tag.clone();
 
     // Build events (signed or unsigned)
     let (pub_event, section_events) = if req.sign {
@@ -2625,6 +2636,7 @@ pub async fn publish_preview_handler(
             sc.title = s.title.clone();
             sc.content = s.content.clone();
             sc.level = s.level.unwrap_or(2);
+            sc.d_tag = s.d_tag.clone();
             sc.tags = s
                 .tags
                 .iter()
@@ -2636,6 +2648,7 @@ pub async fn publish_preview_handler(
             sc
         })
         .collect();
+    compose.d_tag = req.d_tag.clone();
 
     let (pub_event, section_events) = build_publication_events(&mut compose, &pubkey);
     let events: Vec<Value> = std::iter::once(pub_event)

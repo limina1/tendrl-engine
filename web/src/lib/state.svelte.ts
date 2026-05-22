@@ -32,7 +32,11 @@ import type {
 	NAddr,
 	NostrEvent,
 	EventsModalItem,
+	TocEntry,
+	RepublishDiff,
+	RepublishDiffSection,
 } from '$lib/types';
+import { slugify } from '$lib/nostr/slug';
 import type { Buffer } from '$lib/wm/types';
 import * as api from '$lib/api';
 import { getActiveStore } from '$lib/wm/buffer-store.svelte';
@@ -248,6 +252,18 @@ function _createAppState() {
 	// Rich multi-event JSON inspector (publish results + compose preview):
 	// a list of events each independently expandable, plus expand-all.
 	let eventsModal: { title: string; events: EventsModalItem[] } | null = $state(null);
+
+	// Republish diff prompt: set when Publish detects a same-title
+	// publication. ComparePublishModal renders the diff and calls
+	// confirmRepublish/cancelRepublish. Holds the pending publish args so
+	// the chosen action can proceed without re-deriving them.
+	let republishPrompt: {
+		diff: RepublishDiff;
+		sections: ContextItem[];
+		pubTitle: string;
+		pubTags: TagEntry[];
+		canSign: boolean;
+	} | null = $state(null);
 
 	// --- Search history ---
 	// App-level navigation history. Every query / event-view / coord lookup
@@ -1094,6 +1110,41 @@ function _createAppState() {
 		const pubTags = meta?.tags ?? compose.tags;
 		const canSign = identityCanSign(identityStatus);
 
+		// Republish guard: if a publication of yours with the same title
+		// already exists, intercept and show a diff so identifiers can be
+		// reused (replace) rather than forking with fresh nanoid d-tags.
+		const diff = await detectRepublish(pubTitle, sections);
+		if (diff) {
+			republishPrompt = { diff, sections, pubTitle, pubTags, canSign };
+			return; // ComparePublishModal drives confirm / publish-as-new / cancel
+		}
+
+		await executePublish(sections, pubTitle, pubTags, canSign);
+	}
+
+	// Reuse identifiers from the matched publication (replace) or publish
+	// fresh. Called by ComparePublishModal.
+	async function confirmRepublish(reuse: boolean) {
+		const p = republishPrompt;
+		republishPrompt = null;
+		if (!p) return;
+		const overrides = reuse
+			? { pubDTag: p.diff.pubDTag, sectionDTagByT: p.diff.sectionDTagByT }
+			: undefined;
+		await executePublish(p.sections, p.pubTitle, p.pubTags, p.canSign, overrides);
+	}
+
+	function cancelRepublish() {
+		republishPrompt = null;
+	}
+
+	async function executePublish(
+		sections: ContextItem[],
+		pubTitle: string,
+		pubTags: TagEntry[],
+		canSign: boolean,
+		overrides?: { pubDTag: string; sectionDTagByT: Record<string, string> }
+	) {
 		// Immediate feedback: signing N events through an external signer is
 		// slow (one round-trip per event) and otherwise gives no sign the
 		// click registered. Flip this toast to success/error when it settles.
@@ -1114,6 +1165,8 @@ function _createAppState() {
 		try {
 			let resp: api.PublishResponse;
 			if (hasProvenance) {
+				// NOTE: republish d-tag reuse is not wired through the block/
+				// fork path yet — see docs/republish-diff.md (deferred).
 				const blocks: api.PublishBlock[] = sections.map((s) => {
 					const baseTags = s.tags.map(
 						(t) => [t.name, t.value] as [string, string]
@@ -1164,8 +1217,12 @@ function _createAppState() {
 						title: s.title,
 						content: s.content,
 						level: s.level,
-						tags: s.tags.map((t) => [t.name, t.value] as [string, string])
+						tags: s.tags.map((t) => [t.name, t.value] as [string, string]),
+						// Reuse the matched section's d-tag on republish so the
+						// 30041 replaces rather than forks.
+						d_tag: overrides?.sectionDTagByT[slugify(s.title)]
 					})),
+					d_tag: overrides?.pubDTag,
 					sign: canSign,
 					broadcast: canSign
 				});
@@ -1204,6 +1261,88 @@ function _createAppState() {
 			// "nothing happened" (no modal, no error). Surface the reason.
 			console.error('Publish compose failed:', e);
 			updateToast(progressToast, { message: `Publish failed: ${e instanceof Error ? e.message : String(e)}`, kind: 'error' }, 6000);
+		}
+	}
+
+	function flattenToc(
+		toc: TocEntry[]
+	): { title: string | null; dTag: string; content: string | null; isPublication: boolean }[] {
+		const out: { title: string | null; dTag: string; content: string | null; isPublication: boolean }[] = [];
+		const walk = (entries: TocEntry[]) => {
+			for (const e of entries) {
+				out.push({
+					title: e.title,
+					dTag: e.addr.d_tag,
+					content: e.content,
+					isPublication: e.is_publication
+				});
+				if (e.children?.length) walk(e.children);
+			}
+		};
+		walk(toc);
+		return out;
+	}
+
+	// Does a publication of mine with this title already exist? If so build a
+	// section-level diff (matched by T = title slug) so a republish can reuse
+	// identifiers and replace instead of forking. Returns null when there's
+	// no match (normal first publish) or on any lookup failure (fail-open).
+	async function detectRepublish(
+		pubTitle: string,
+		sections: ContextItem[]
+	): Promise<RepublishDiff | null> {
+		if (!myPubkey || !pubTitle.trim()) return null;
+		const titleT = slugify(pubTitle);
+		try {
+			const { publications } = await api.listPublications(50, 'local_only');
+			const candidates = publications.filter(
+				(p) => p.author_pubkey === myPubkey && p.title && slugify(p.title) === titleT
+			);
+			if (!candidates.length) return null;
+			// "exact title match → highest 30040": newest wins.
+			const match = [...candidates].sort((a, b) => b.created_at - a.created_at)[0];
+
+			const { toc } = await api.getPublication(match.addr.pubkey, match.addr.d_tag, 'local_first', 5);
+			const existingSecs = flattenToc(toc).filter((e) => !e.isPublication);
+			const existingByT = new Map(existingSecs.map((e) => [slugify(e.title ?? ''), e]));
+
+			const newSecs = sections.map((s) => ({ title: s.title, content: s.content, t: slugify(s.title) }));
+			const newTs = new Set(newSecs.map((s) => s.t));
+
+			const matched: RepublishDiffSection[] = [];
+			const added: RepublishDiffSection[] = [];
+			const removed: RepublishDiffSection[] = [];
+
+			for (const s of newSecs) {
+				const ex = existingByT.get(s.t);
+				if (ex) {
+					matched.push({
+						title: s.title,
+						t: s.t,
+						dTag: ex.dTag,
+						contentChanged: (ex.content ?? '').trim() !== s.content.trim()
+					});
+				} else {
+					added.push({ title: s.title, t: s.t });
+				}
+			}
+			for (const e of existingSecs) {
+				const t = slugify(e.title ?? '');
+				if (!newTs.has(t)) removed.push({ title: e.title ?? '[untitled]', t, dTag: e.dTag });
+			}
+
+			return {
+				existingAddr: match.addr,
+				existingTitle: match.title ?? '',
+				pubDTag: match.addr.d_tag,
+				matched,
+				added,
+				removed,
+				sectionDTagByT: Object.fromEntries(matched.map((m) => [m.t, m.dTag!]))
+			};
+		} catch (e) {
+			console.warn('Republish detection skipped:', e);
+			return null; // fail-open: never block a publish on a lookup error
 		}
 	}
 
@@ -2855,6 +2994,9 @@ function _createAppState() {
 		handleChatPublishFragments,
 		handleComposePublish,
 		handleComposePreview,
+		get republishPrompt() { return republishPrompt; },
+		confirmRepublish,
+		cancelRepublish,
 		handleComposeUpdate,
 		handleSearch,
 		handleSearchViaRelays,
