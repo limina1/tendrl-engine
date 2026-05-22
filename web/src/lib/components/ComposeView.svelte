@@ -46,7 +46,7 @@
 		onupdate: (state: ComposeState) => void;
 		oncancel: () => void;
 		onsendtochat: (items: ContextItem[]) => void;
-		onpublish: (items: ContextItem[]) => void;
+		onpublish: (items: ContextItem[], meta?: { title: string; tags: TagEntry[] }) => void;
 		ondelete: (items: ContextItem[]) => void;
 		ondeletepermanent: (items: ContextItem[]) => void;
 		onsenditemtochat: (id: string) => void;
@@ -307,7 +307,9 @@
 	// publish path sees the nested-outline shape. Returns the parsed
 	// sections so the publish path can use them directly without waiting
 	// for the reactive commit.
-	function handlePlainFullEdit(text: string): ContextItem[] {
+	function handlePlainFullEdit(
+		text: string
+	): { title: string; tags: TagEntry[]; sections: ContextItem[] } {
 		const parsed = parseAll(text);
 		const oldSections = compose.sections;
 
@@ -342,7 +344,7 @@
 		});
 
 		onupdate({ title: parsed.title, tags: parsed.tags, sections: newSections });
-		return newSections;
+		return { title: parsed.title, tags: parsed.tags, sections: newSections };
 	}
 
 	// Detected structure for plain mode sidebar
@@ -586,10 +588,19 @@
 	}
 
 	function publishAll() {
-		// In plain mode `compose.sections` only commits on blur, so parse
-		// the live text here and publish that directly — otherwise the prop
-		// is stale (often empty) at click time.
-		const sections = mode === 'plain' ? handlePlainFullEdit(plainText) : compose.sections;
+		// In plain mode `compose.sections`/`compose.title` only commit on
+		// blur, so parse the live text here and publish title+tags+sections
+		// directly — otherwise the prop is stale (empty title / no sections)
+		// at click time.
+		let sections: ContextItem[];
+		let meta: { title: string; tags: TagEntry[] } | undefined;
+		if (mode === 'plain') {
+			const parsed = handlePlainFullEdit(plainText);
+			sections = parsed.sections;
+			meta = { title: parsed.title, tags: parsed.tags };
+		} else {
+			sections = compose.sections;
+		}
 		if (claimedUntouched.length > 0) {
 			const n = claimedUntouched.length;
 			const ok = confirm(
@@ -598,11 +609,19 @@
 			);
 			if (!ok) return;
 		}
-		onpublish(sections);
+		onpublish(sections, meta);
 	}
 
 	function publishSelected() {
-		const all = mode === 'plain' ? handlePlainFullEdit(plainText) : compose.sections;
+		let all: ContextItem[];
+		let meta: { title: string; tags: TagEntry[] } | undefined;
+		if (mode === 'plain') {
+			const parsed = handlePlainFullEdit(plainText);
+			all = parsed.sections;
+			meta = { title: parsed.title, tags: parsed.tags };
+		} else {
+			all = compose.sections;
+		}
 		const items = all.filter((s) => checkedIds.has(s.id));
 		if (items.length === 0) return;
 		const claimedInSelection = items.filter(
@@ -615,7 +634,7 @@
 			);
 			if (!ok) return;
 		}
-		onpublish(items);
+		onpublish(items, meta);
 		checkedIds = new Set();
 	}
 </script>

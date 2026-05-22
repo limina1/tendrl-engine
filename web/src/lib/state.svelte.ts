@@ -1073,12 +1073,20 @@ function _createAppState() {
 		}
 	}
 
-	async function handleComposePublish(items: ContextItem[]) {
+	async function handleComposePublish(
+		items: ContextItem[],
+		meta?: { title: string; tags: TagEntry[] }
+	) {
 		const sections = items.length > 0 ? items : compose.sections;
 		if (!sections.length) {
 			pushToast('Nothing to publish — no sections detected', 'error', 4000);
 			return;
 		}
+		// Prefer the title/tags parsed at click time (plain mode) over the
+		// reactive compose state, which can lag a same-tick edit and publish
+		// an empty title.
+		const pubTitle = meta?.title ?? compose.title;
+		const pubTags = meta?.tags ?? compose.tags;
 		const canSign = identityCanSign(identityStatus);
 
 		// Immediate feedback: signing N events through an external signer is
@@ -1134,8 +1142,8 @@ function _createAppState() {
 					};
 				});
 				resp = await api.publishBlocks({
-					title: compose.title,
-					tags: compose.tags.map((t) => [t.name, t.value] as [string, string]),
+					title: pubTitle,
+					tags: pubTags.map((t) => [t.name, t.value] as [string, string]),
 					blocks,
 					source_publication_addr: composeSourcePubAddr,
 					source_publication_event_id: composeSourcePubEventId,
@@ -1145,8 +1153,8 @@ function _createAppState() {
 				console.log('Published (blocks):', resp.publication_id);
 			} else {
 				resp = await api.publish({
-					title: compose.title,
-					tags: compose.tags.map((t) => [t.name, t.value] as [string, string]),
+					title: pubTitle,
+					tags: pubTags.map((t) => [t.name, t.value] as [string, string]),
 					sections: sections.map((s) => ({
 						title: s.title,
 						content: s.content,
@@ -1164,7 +1172,7 @@ function _createAppState() {
 			if (resp.broadcast_results && resp.broadcast_results.length > 0) {
 				setProgress(
 					progressFromPublish(resp, {
-						title: compose.title,
+						title: pubTitle,
 						authorPubkey: myPubkey ?? '',
 						sections: sections.map((s) => ({ title: s.title, content: s.content }))
 					})
