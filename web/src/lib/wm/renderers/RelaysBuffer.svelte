@@ -246,6 +246,54 @@
 		}
 	}
 
+	// Publish a kind 10002 (NIP-65 read/write relays) event with the
+	// user's current relay set. Explicit, user-initiated action — never
+	// fires on toggle/add/remove. Per project_publishing_philosophy:
+	// pulling kind 10002 is for context; publishing is deliberate.
+	let publishing10002 = $state(false);
+	async function publishRelayList() {
+		if (!app.myPubkey) {
+			app.pushToast('Sign in first — no identity to sign the event.', 'error', 4000);
+			return;
+		}
+		const tags: string[][] = [];
+		for (const r of rows) {
+			if (r.read && r.write) tags.push(['r', r.url]);
+			else if (r.read) tags.push(['r', r.url, 'read']);
+			else if (r.write) tags.push(['r', r.url, 'write']);
+		}
+		if (tags.length === 0) {
+			app.pushToast('No read/write relays to publish.', 'info', 3000);
+			return;
+		}
+		publishing10002 = true;
+		try {
+			const { signed_event } = await api.signTemplate({
+				template: {
+					kind: 10002,
+					created_at: Math.floor(Date.now() / 1000),
+					tags,
+					content: '',
+					pubkey: app.myPubkey
+				}
+			});
+			const resp = await api.broadcastEvent({ event: signed_event });
+			app.pushToast(
+				`Published kind 10002 (${tags.length} relays) to ${resp.successful}/${resp.total} publish relays`,
+				resp.successful > 0 ? 'success' : 'error',
+				4000
+			);
+		} catch (e) {
+			app.pushToast(
+				`Publish failed: ${e instanceof Error ? e.message : String(e)}`,
+				'error',
+				5000
+			);
+		} finally {
+			publishing10002 = false;
+		}
+	}
+
 	let snapshotting = $state(false);
 	async function snapshotToConfig() {
 		snapshotting = true;
@@ -597,6 +645,16 @@
 			<button class="btn-add" onclick={promptAdd} title="Add a new relay (defaults to read + write — toggle either off after)">+ Add relay</button>
 			<button class="btn-refresh" onclick={() => load(true)}>Refresh</button>
 			<button
+				class="btn-publish-10002"
+				onclick={publishRelayList}
+				disabled={publishing10002 || rows.length === 0 || !app.myPubkey}
+				title={!app.myPubkey
+					? 'Sign in first to publish a kind 10002 event.'
+					: 'Sign a kind 10002 (NIP-65) with your current read/write relays and broadcast it to your publish set. Other clients pulling your kind 10002 will see this list.'}
+			>
+				{publishing10002 ? 'Publishing…' : 'Publish to Nostr (kind 10002)'}
+			</button>
+			<button
 				class="btn-snapshot"
 				onclick={snapshotToConfig}
 				disabled={snapshotting || rows.length === 0}
@@ -838,9 +896,23 @@
 		padding: 4px 10px;
 		font-family: var(--font-mono);
 	}
-	.btn-snapshot[disabled] {
+	.btn-snapshot[disabled],
+	.btn-publish-10002[disabled] {
 		opacity: 0.5;
 		cursor: not-allowed;
+	}
+	.btn-publish-10002 {
+		font-size: var(--t-xs);
+		padding: 4px 10px;
+		font-family: var(--font-mono);
+		background: color-mix(in srgb, var(--id-yours) 14%, transparent);
+		border: 1px solid color-mix(in srgb, var(--id-yours) 35%, transparent);
+		color: var(--id-yours);
+		cursor: pointer;
+		border-radius: var(--r-sm);
+	}
+	.btn-publish-10002:hover:not([disabled]) {
+		background: color-mix(in srgb, var(--id-yours) 24%, transparent);
 	}
 	.btn-snapshot {
 		font-size: var(--t-xs);
