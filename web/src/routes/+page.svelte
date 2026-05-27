@@ -914,6 +914,13 @@
 				<span class="dot {networkPill.dotClass}"></span>
 				{networkPill.label}
 			</button>
+			<button
+				class="pill pill--btn pill--relays"
+				onclick={openRelays}
+				title="Relay configuration · read/write toggles · NIP-11 details"
+			>
+				relays
+			</button>
 			{#if embeddingPill}
 				<span class="pill {embeddingPill.pillClass}" title="Embedding index">
 					<span class="dot {embeddingPill.dotClass}"></span>
@@ -1685,6 +1692,10 @@
 	}
 	.pill--btn:hover {
 		filter: brightness(1.15);
+	}
+	.pill--relays {
+		background: color-mix(in srgb, var(--id-remote, var(--id-yours)) 14%, transparent);
+		color: var(--id-remote, var(--fg));
 	}
 	.ml__mode {
 		font-family: var(--font-mono);
