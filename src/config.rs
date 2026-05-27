@@ -150,6 +150,37 @@ fn default_timeout_ms() -> u64 {
     15000
 }
 
+/// Read the legacy `[relay.fetch] urls`, `[relay.general] urls`,
+/// `[relay.publish] urls` arrays from a parsed TOML doc, returning the
+/// **union** (de-duplicated, in insertion order) so a pre-migration
+/// config still produces a usable bootstrap seed when `initial_relays`
+/// is absent.
+fn legacy_relay_urls(raw: &toml::Table) -> Vec<String> {
+    let relay = match raw.get("relay").and_then(|v| v.as_table()) {
+        Some(t) => t,
+        None => return Vec::new(),
+    };
+    let mut seen = std::collections::HashSet::new();
+    let mut out = Vec::new();
+    for section in ["fetch", "general", "publish"] {
+        let urls = relay
+            .get(section)
+            .and_then(|v| v.as_table())
+            .and_then(|t| t.get("urls"))
+            .and_then(|v| v.as_array());
+        if let Some(arr) = urls {
+            for item in arr {
+                if let Some(s) = item.as_str() {
+                    if seen.insert(s.to_string()) {
+                        out.push(s.to_string());
+                    }
+                }
+            }
+        }
+    }
+    out
+}
+
 impl Default for RelayConfig {
     fn default() -> Self {
         Self {
@@ -344,8 +375,25 @@ impl Config {
     /// Load configuration from a TOML file
     pub fn from_file(path: &Path) -> Result<Self> {
         let content = std::fs::read_to_string(path)?;
-        let config: Config = toml::from_str(&content)
+        let mut config: Config = toml::from_str(&content)
             .map_err(|e| EngineError::Config(format!("Failed to parse config: {}", e)))?;
+        // Backward compatibility: if a config.toml still has the legacy
+        // `[relay.fetch] urls = [...]` / `[relay.general]` / `[relay.publish]`
+        // sections but no `initial_relays`, fall back to the legacy URLs
+        // as the bootstrap seed. Stops a quiet data-loss footgun where
+        // an older config would silently produce an empty relays.json.
+        if config.relay.initial_relays.is_empty() {
+            if let Ok(raw) = content.parse::<toml::Table>() {
+                let legacy = legacy_relay_urls(&raw);
+                if !legacy.is_empty() {
+                    tracing::info!(
+                        "config.toml has no `initial_relays`; falling back to legacy [relay.*] urls ({} unique) for bootstrap. Consider migrating to `initial_relays = [...]` under `[relay]`.",
+                        legacy.len()
+                    );
+                    config.relay.initial_relays = legacy;
+                }
+            }
+        }
         Ok(config)
     }
 
@@ -367,5 +415,88 @@ impl Config {
     /// Get the bind address as a string
     pub fn bind_addr(&self) -> String {
         format!("{}:{}", self.server.host, self.server.port)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn legacy_relay_urls_unions_three_sections_dedup_preserve_order() {
+        let toml_text = r#"
+[relay]
+timeout_ms = 15000
+
+[relay.fetch]
+urls = ["wss://a", "wss://b"]
+
+[relay.general]
+urls = ["wss://b", "wss://c"]
+
+[relay.publish]
+urls = ["wss://c", "wss://d"]
+"#;
+        let raw: toml::Table = toml_text.parse().unwrap();
+        let urls = legacy_relay_urls(&raw);
+        assert_eq!(urls, vec!["wss://a", "wss://b", "wss://c", "wss://d"]);
+    }
+
+    #[test]
+    fn legacy_relay_urls_returns_empty_when_no_legacy_sections() {
+        let toml_text = "[relay]\ninitial_relays = [\"wss://x\"]\n";
+        let raw: toml::Table = toml_text.parse().unwrap();
+        assert!(legacy_relay_urls(&raw).is_empty());
+    }
+
+    #[test]
+    fn from_file_seeds_initial_from_legacy_when_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(
+            &path,
+            r#"
+[relay]
+timeout_ms = 15000
+
+[relay.fetch]
+urls = ["wss://legacy-a", "wss://legacy-b"]
+
+[relay.publish]
+urls = ["ws://localhost:3334"]
+"#,
+        )
+        .unwrap();
+        let cfg = Config::from_file(&path).expect("load");
+        assert_eq!(
+            cfg.relay.initial_relays,
+            vec![
+                "wss://legacy-a".to_string(),
+                "wss://legacy-b".to_string(),
+                "ws://localhost:3334".to_string()
+            ],
+            "legacy [relay.*] urls should seed initial_relays when it's absent"
+        );
+    }
+
+    #[test]
+    fn from_file_keeps_explicit_initial_relays_over_legacy() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(
+            &path,
+            r#"
+[relay]
+initial_relays = ["wss://explicit"]
+
+[relay.fetch]
+urls = ["wss://legacy"]
+"#,
+        )
+        .unwrap();
+        let cfg = Config::from_file(&path).expect("load");
+        // Explicit initial_relays wins; legacy is ignored when initial_relays
+        // is non-empty (the fallback only kicks in for the empty case).
+        assert_eq!(cfg.relay.initial_relays, vec!["wss://explicit".to_string()]);
     }
 }
