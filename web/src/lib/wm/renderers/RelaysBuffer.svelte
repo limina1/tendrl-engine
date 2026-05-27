@@ -279,13 +279,21 @@
 				if (kind !== 10002 && (newest.preview?.length ?? 0) > 0) {
 					decryptAttempted = true;
 					if (canDecrypt) {
-						// NIP-04 ciphertext carries an "?iv=" suffix. Anything
-						// else gets treated as NIP-44 first. If the chosen
-						// path fails we fall back to the other before giving
-						// up — older Amethyst events may be NIP-04, newer
-						// ones NIP-44, and a single user can have a mix.
-						const ciphertext = newest.preview;
-						const looksNip04 = ciphertext.includes('?iv=');
+						// Mirror Amethyst's EncryptedInfo (nip04Dm/crypto):
+						// strip the `-null` suffix some clients tack on, then
+						// detect NIP-04 by `?iv=` at *position* length-28
+						// (24 base64 chars of IV + 4 for "?iv="). A loose
+						// `.includes('?iv=')` would false-positive on NIP-44
+						// base64 that happens to contain those chars.
+						const raw = newest.preview;
+						const ciphertext = raw.endsWith('-null') ? raw.slice(0, -5) : raw;
+						const l = ciphertext.length;
+						const looksNip04 =
+							l >= 28 &&
+							ciphertext[l - 28] === '?' &&
+							ciphertext[l - 27] === 'i' &&
+							ciphertext[l - 26] === 'v' &&
+							ciphertext[l - 25] === '=';
 						const tryPaths: Array<'nip04' | 'nip44'> = looksNip04
 							? ['nip04', 'nip44']
 							: ['nip44', 'nip04'];
@@ -309,8 +317,22 @@
 						if (plaintext === null) {
 							decryptFailed = true;
 							const msg = lastErr instanceof Error ? lastErr.message : String(lastErr);
-							pullDecryptErrors = { ...pullDecryptErrors, [kind]: msg };
-							console.warn(`decrypt failed for kind ${kind} (tried ${tryPaths.join(', ')}):`, lastErr);
+							// Include a fingerprint of the ciphertext to help
+							// diagnose mismatch / unknown format issues —
+							// length, looks_nip04, head, tail.
+							const head = ciphertext.slice(0, 12);
+							const tail = ciphertext.slice(-12);
+							const fingerprint = `len=${ciphertext.length} nip04=${looksNip04} tried=${tryPaths.join('→')} head="${head}…${tail}"`;
+							pullDecryptErrors = {
+								...pullDecryptErrors,
+								[kind]: `${msg} (${fingerprint})`
+							};
+							console.warn(
+								`decrypt failed for kind ${kind} (tried ${tryPaths.join(' → ')}):\n  error:`,
+								lastErr,
+								`\n  ciphertext (${ciphertext.length} chars):`,
+								ciphertext
+							);
 						} else {
 							try {
 								const parsed = JSON.parse(plaintext);
