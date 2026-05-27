@@ -59,6 +59,12 @@
 	let pullError = $state<string | null>(null);
 	let pullCreatedAt = $state<number | null>(null);
 	let pullEncryptedKinds = $state<number[]>([]);
+	// Per-kind result tracking — the user wants to know which kinds
+	// returned events vs. which came up empty when "pulled in indexer
+	// and search relays" doesn't show what they expected.
+	type PullKindResult = 'parsed' | 'encrypted' | 'not_found';
+	let pullKindResults = $state<Record<10002 | 10007 | 10086 | 10088, PullKindResult> | null>(null);
+	let pullFetchedCount = $state(0);
 
 	async function load(force = false) {
 		loading = true;
@@ -191,6 +197,8 @@
 		pulling = true;
 		pullError = null;
 		pullEncryptedKinds = [];
+		pullKindResults = null;
+		pullFetchedCount = 0;
 		try {
 			// 1. Pull all four relay-list kinds from the seed relays.
 			//    10002 = read/write (NIP-65, public r tags).
@@ -199,11 +207,23 @@
 			//    them as encrypted (NIP-44) private tag arrays — those
 			//    arrive with `content` non-empty and no public `r` tags.
 			const kinds = [10002, 10007, 10086, 10088] as const;
-			await api.fetchFromRelay(initialRelays, [...kinds], [pubkey], 20);
+			const fetchResult = await api.fetchFromRelay(
+				initialRelays,
+				[...kinds],
+				[pubkey],
+				20
+			);
+			pullFetchedCount = fetchResult.fetched;
 			// 2. Read them back from the local cache. Newest per kind wins.
 			const entries: PulledRelay[] = [];
 			let maxCreatedAt = 0;
 			const encrypted: number[] = [];
+			const kindResults: Record<10002 | 10007 | 10086 | 10088, PullKindResult> = {
+				10002: 'not_found',
+				10007: 'not_found',
+				10086: 'not_found',
+				10088: 'not_found'
+			};
 			for (const kind of kinds) {
 				const result = await api.search(`by:${pubkey} k:${kind}`, 3, pubkey, 'local_only');
 				const newest = (result.results ?? []).sort(
@@ -218,8 +238,11 @@
 				// almost certainly NIP-44-encrypted (Amethyst convention).
 				if (rTags.length === 0 && (newest.preview?.length ?? 0) > 0 && kind !== 10002) {
 					encrypted.push(kind);
+					kindResults[kind] = 'encrypted';
 					continue;
 				}
+				if (rTags.length === 0) continue; // event found but empty list
+				kindResults[kind] = 'parsed';
 				for (const t of rTags) {
 					const url = t[1] as string;
 					const marker = (t[2] ?? '').toLowerCase();
@@ -241,11 +264,7 @@
 			}
 			pullCreatedAt = maxCreatedAt > 0 ? maxCreatedAt : null;
 			pullEncryptedKinds = encrypted;
-			if (entries.length === 0 && encrypted.length === 0) {
-				pullError = "No relay-list events found on those relays for your pubkey. (If you've never published your relay lists, there's nothing to pull yet.)";
-				pulled = [];
-				return;
-			}
+			pullKindResults = kindResults;
 			pulled = entries;
 		} catch (e) {
 			pullError = e instanceof Error ? e.message : String(e);
@@ -287,6 +306,8 @@
 		pullError = null;
 		pullCreatedAt = null;
 		pullEncryptedKinds = [];
+		pullKindResults = null;
+		pullFetchedCount = 0;
 	}
 
 	const pulledByKind = $derived.by(() => {
@@ -464,13 +485,29 @@
 			<button class="btn-pull btn-pull--small" onclick={pullFromProfile}>retry</button>
 		{:else if pulled}
 			<span class="pull-status">
-				Found {pulled.length} relay{pulled.length === 1 ? '' : 's'} in your kind 10002{#if pullCreatedAt}
-					· {new Date(pullCreatedAt * 1000).toLocaleDateString()}
+				Pulled {pullFetchedCount} event{pullFetchedCount === 1 ? '' : 's'} from {initialRelays.length} relay{initialRelays.length === 1 ? '' : 's'}{#if pullCreatedAt}
+					· newest {new Date(pullCreatedAt * 1000).toLocaleDateString()}
 				{/if}
 			</span>
 			<button class="btn-pull btn-pull--small" onclick={dismissPulled}>dismiss</button>
 		{/if}
 	</div>
+
+	{#if pullKindResults}
+		<div class="pull-diagnostics">
+			{#each [10002, 10007, 10086, 10088] as kind (kind)}
+				{@const status = pullKindResults[kind as 10002 | 10007 | 10086 | 10088]}
+				{@const group = pulledByKind[kind as 10002 | 10007 | 10086 | 10088]}
+				<span class="pull-diag" class:pull-diag--ok={status === 'parsed'} class:pull-diag--enc={status === 'encrypted'} class:pull-diag--missing={status === 'not_found'}>
+					kind {kind} ({classNameForKind(kind as 10002 | 10007 | 10086 | 10088)}):
+					{#if status === 'parsed'}{group.length} relay{group.length === 1 ? '' : 's'}
+					{:else if status === 'encrypted'}encrypted (NIP-44)
+					{:else}not found
+					{/if}
+				</span>
+			{/each}
+		</div>
+	{/if}
 
 	{#if (pulled && pulled.length > 0) || pullEncryptedKinds.length > 0}
 		<div class="pulled-list">
@@ -1178,6 +1215,18 @@
 		font-style: italic;
 		margin: 4px 0 0;
 	}
+	.pull-diagnostics {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 4px 10px;
+		padding: 4px 14px 10px;
+		border-bottom: 1px solid var(--panel-border);
+		font-size: 0.7rem;
+		font-family: var(--font-mono);
+	}
+	.pull-diag--ok { color: var(--state-online); }
+	.pull-diag--enc { color: var(--id-draft); }
+	.pull-diag--missing { color: var(--base5); }
 	.pulled-row {
 		display: flex;
 		align-items: center;
