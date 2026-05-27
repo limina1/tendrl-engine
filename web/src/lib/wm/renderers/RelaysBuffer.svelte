@@ -20,6 +20,7 @@
 		read: boolean;
 		write: boolean;
 		auth: boolean;
+		broadcast: boolean;
 	};
 
 	let rows = $state<RelayRow[]>([]);
@@ -50,7 +51,7 @@
 			const ensure = (url: string): RelayRow => {
 				let r = map.get(url);
 				if (!r) {
-					r = { url, read: false, write: false, auth: false };
+					r = { url, read: false, write: false, auth: false, broadcast: false };
 					map.set(url, r);
 				}
 				return r;
@@ -62,6 +63,7 @@
 			}
 			for (const url of cfg.fetch?.urls ?? []) ensure(url).read = true;
 			for (const url of cfg.publish?.urls ?? []) ensure(url).write = true;
+			for (const url of cfg.broadcast?.urls ?? []) ensure(url).broadcast = true;
 			rows = [...map.values()].sort((a, b) => a.url.localeCompare(b.url));
 			// Kick off NIP-11 fetches up-front so the badges fill in
 			// without the user expanding each row.
@@ -111,7 +113,7 @@
 		});
 	});
 
-	async function toggle(url: string, field: 'read' | 'write' | 'auth') {
+	async function toggle(url: string, field: 'read' | 'write' | 'auth' | 'broadcast') {
 		const row = rows.find((r) => r.url === url);
 		if (!row) return;
 		const next = { ...row, [field]: !row[field] };
@@ -121,12 +123,16 @@
 		if (field === 'auth') return;
 
 		try {
-			// Reconcile the row's read/write into explicit fetch + publish set
-			// membership, and drop it from the legacy `general` set (which means
-			// read+write) so a toggle-off actually takes effect after restart.
-			await api.removeRelay('general', url);
-			await (next.read ? api.addRelay('fetch', url) : api.removeRelay('fetch', url));
-			await (next.write ? api.addRelay('publish', url) : api.removeRelay('publish', url));
+			if (field === 'broadcast') {
+				await (next.broadcast ? api.addRelay('broadcast', url) : api.removeRelay('broadcast', url));
+			} else {
+				// Reconcile the row's read/write into explicit fetch + publish set
+				// membership, and drop it from the legacy `general` set (which means
+				// read+write) so a toggle-off actually takes effect after restart.
+				await api.removeRelay('general', url);
+				await (next.read ? api.addRelay('fetch', url) : api.removeRelay('fetch', url));
+				await (next.write ? api.addRelay('publish', url) : api.removeRelay('publish', url));
+			}
 			app.pushToast('Relay config saved', 'success', 2000);
 		} catch (e) {
 			rows = rows.map((r) => (r.url === url ? row : r)); // revert on failure
@@ -469,8 +475,14 @@
 								class="pill toggle-pill"
 								class:toggle-pill--on={row.write}
 								onclick={() => toggle(row.url, 'write')}
-								title="Publish to this relay"
+								title="Publish to this relay (your own signed events land here)"
 							>write</button>
+							<button
+								class="pill toggle-pill toggle-pill--broadcast"
+								class:toggle-pill--on={row.broadcast}
+								onclick={() => toggle(row.url, 'broadcast')}
+								title="Mark this relay as a broadcast / aggregator target. Never auto-published to — only when you explicitly opt in per event (e.g. push a note here without sending a paper here)."
+							>broadcast</button>
 							<button
 								class="pill toggle-pill"
 								class:toggle-pill--on={row.auth}
@@ -793,6 +805,14 @@
 		background: rgba(180, 190, 130, 0.14);
 		color: var(--state-online);
 		border-color: color-mix(in srgb, var(--state-online) 50%, transparent);
+	}
+	/* Broadcast is functionally distinct from read/write — tint it
+	   warmer so the user reads it as "different class, deliberate opt-in"
+	   rather than another read/write variant. */
+	.toggle-pill--broadcast.toggle-pill--on {
+		background: color-mix(in srgb, var(--id-draft) 14%, transparent);
+		color: var(--id-draft);
+		border-color: color-mix(in srgb, var(--id-draft) 50%, transparent);
 	}
 	.toggle-pill--on:hover {
 		filter: brightness(1.15);

@@ -44,18 +44,24 @@ pub struct RelaySets {
     pub fetch: Vec<String>,
     #[serde(default)]
     pub publish: Vec<String>,
+    /// Aggregator relays (nostr.land etc.) — never auto-targeted by
+    /// publish. Reserved for explicit per-event "also broadcast" opt-in
+    /// once per-event-kind routing lands. See [[project-relay-classes]].
+    #[serde(default)]
+    pub broadcast: Vec<String>,
 }
 
 impl RelaySets {
-    /// Seed all three sets from the bootstrap `initial_relays` list.
-    /// Used on first boot when no `relays.json` exists yet. URLs are
-    /// normalized + deduped so the first write is already canonical.
+    /// Seed read/write/general sets from the bootstrap `initial_relays`
+    /// list. `broadcast` is deliberately left empty: aggregators are
+    /// opt-in, not auto-populated from the initial seed.
     pub fn seed_from_initial(initial: &[String]) -> Self {
         let normalized = normalize_dedup(initial);
         Self {
             general: normalized.clone(),
             fetch: normalized.clone(),
             publish: normalized,
+            broadcast: Vec::new(),
         }
     }
 
@@ -66,6 +72,7 @@ impl RelaySets {
         self.general = normalize_dedup(&self.general);
         self.fetch = normalize_dedup(&self.fetch);
         self.publish = normalize_dedup(&self.publish);
+        self.broadcast = normalize_dedup(&self.broadcast);
     }
 
     /// Borrow the URL list for a named set. Returns `None` for unknown set
@@ -75,6 +82,7 @@ impl RelaySets {
             "general" => Some(&self.general),
             "fetch" => Some(&self.fetch),
             "publish" => Some(&self.publish),
+            "broadcast" => Some(&self.broadcast),
             _ => None,
         }
     }
@@ -84,6 +92,7 @@ impl RelaySets {
             "general" => Ok(&mut self.general),
             "fetch" => Ok(&mut self.fetch),
             "publish" => Ok(&mut self.publish),
+            "broadcast" => Ok(&mut self.broadcast),
             other => Err(RelayStoreError::UnknownSet(other.to_string())),
         }
     }

@@ -281,6 +281,14 @@ impl Engine {
         self.relay_config.read().unwrap().general.urls.clone()
     }
 
+    /// Get broadcast relay URLs (owned clone). Aggregator relays the user
+    /// has opted into — NEVER auto-targeted by publish; only via explicit
+    /// per-event opt-in once per-kind routing lands. See
+    /// `project-relay-classes` memory + T31.
+    pub fn broadcast_relays(&self) -> Vec<String> {
+        self.relay_config.read().unwrap().broadcast.urls.clone()
+    }
+
     /// Get the data directory path
     pub fn data_dir(&self) -> &std::path::Path {
         &self.data_dir
@@ -423,6 +431,7 @@ impl Engine {
                 "general" => &mut rc.general.urls,
                 "publish" => &mut rc.publish.urls,
                 "fetch" => &mut rc.fetch.urls,
+                "broadcast" => &mut rc.broadcast.urls,
                 _ => return false,
             };
             if urls.iter().any(|u| u == &url) {
@@ -433,6 +442,7 @@ impl Engine {
                 general: rc.general.urls.clone(),
                 fetch: rc.fetch.urls.clone(),
                 publish: rc.publish.urls.clone(),
+                broadcast: rc.broadcast.urls.clone(),
             }
         };
         if let Err(e) = self.relay_store.save(&snapshot) {
@@ -454,6 +464,7 @@ impl Engine {
                 "general" => &mut rc.general.urls,
                 "publish" => &mut rc.publish.urls,
                 "fetch" => &mut rc.fetch.urls,
+                "broadcast" => &mut rc.broadcast.urls,
                 _ => return false,
             };
             let before = urls.len();
@@ -465,6 +476,7 @@ impl Engine {
                 general: rc.general.urls.clone(),
                 fetch: rc.fetch.urls.clone(),
                 publish: rc.publish.urls.clone(),
+                broadcast: rc.broadcast.urls.clone(),
             }
         };
         if let Err(e) = self.relay_store.save(&snapshot) {

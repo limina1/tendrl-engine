@@ -110,6 +110,11 @@ pub struct RelayConfig {
     /// from `relays.json`; `kinds` defaulted in code.
     #[serde(skip, default = "default_fetch")]
     pub fetch: RelaySet,
+    /// Aggregator/broadcast relays (nostr.land etc.) — never targeted by
+    /// auto-publish. Reserved for explicit per-event opt-in once routing
+    /// lands. See `project-relay-classes` memory.
+    #[serde(skip, default = "default_broadcast")]
+    pub broadcast: RelaySet,
     /// Authors to follow — fetch their events from fetch relays (npub or hex)
     #[serde(default)]
     pub authors: Vec<String>,
@@ -136,6 +141,13 @@ fn default_fetch() -> RelaySet {
     RelaySet {
         urls: Vec::new(),
         kinds: vec![0, 30040, 30041, 30023, 30818, 30817, 9802],
+    }
+}
+
+fn default_broadcast() -> RelaySet {
+    RelaySet {
+        urls: Vec::new(),
+        kinds: vec![],
     }
 }
 
@@ -188,6 +200,7 @@ impl Default for RelayConfig {
             general: default_general(),
             publish: default_publish(),
             fetch: default_fetch(),
+            broadcast: default_broadcast(),
             authors: Vec::new(),
             timeout_ms: default_timeout_ms(),
         }
@@ -211,6 +224,7 @@ impl RelayConfig {
         self.general.urls = sets.general.clone();
         self.publish.urls = sets.publish.clone();
         self.fetch.urls = sets.fetch.clone();
+        self.broadcast.urls = sets.broadcast.clone();
     }
 
     /// Resolve author list to hex pubkeys (handles npub and hex)
