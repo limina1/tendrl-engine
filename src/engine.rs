@@ -7,6 +7,7 @@ use crate::config::{EmbeddingConfig, RelayConfig};
 use crate::embedding::{EmbeddingIndex, EmbeddingStatus};
 use crate::error::{EngineError, Result};
 use crate::network::{self, FetchTrigger, NetworkActivity, NetworkMode};
+use crate::relay_store::{RelayStore, RelaySets};
 use crate::search::{self, SearchQuery, SearchResponse};
 use crate::{query, relay};
 use nostrdb::{Config, IngestMetadata, Ndb};
@@ -118,8 +119,14 @@ impl IgnoreList {
 pub struct Engine {
     /// The nostrdb instance
     ndb: Arc<Ndb>,
-    /// Relay configuration (general, publish, fetch sets)
+    /// Relay configuration (general, publish, fetch sets).
+    /// The URL fields are mirrored from the persisted `RelayStore`; the
+    /// store is the source of truth for working sets, this is the live
+    /// in-memory copy the rest of the engine reads by reference.
     relay_config: RelayConfig,
+    /// Persistent backing for the working relay sets — writes through
+    /// to `<data_dir>/relays.json` on every `add_relay` / `remove_relay`.
+    relay_store: RelayStore,
     /// Data directory path
     data_dir: std::path::PathBuf,
     /// Config file path (for saving changes from UI)
@@ -150,16 +157,28 @@ impl Engine {
         Self::with_relay_config(data_path, &RelayConfig::default())
     }
 
-    /// Create a new Engine with custom configuration (backwards compat)
+    /// Create a new Engine with a bootstrap relay list (test/back-compat).
+    /// The relays are passed in as `initial_relays`; on first boot they
+    /// seed all three working sets via the relay store.
     pub fn with_config(data_path: &Path, relays: &[&str], _timeout_ms: u64) -> Result<Self> {
-        let mut config = RelayConfig::default();
-        let urls: Vec<String> = relays.iter().map(|s| s.to_string()).collect();
-        config.fetch.urls = urls.clone();
-        config.publish.urls = urls;
+        let config = RelayConfig {
+            initial_relays: relays.iter().map(|s| s.to_string()).collect(),
+            ..RelayConfig::default()
+        };
         Self::with_relay_config(data_path, &config)
     }
 
-    /// Create a new Engine with full relay configuration
+    /// Create a new Engine with full relay configuration.
+    ///
+    /// The TOML-derived `relay_config` provides `initial_relays`, `kinds`
+    /// defaults, `authors`, and `timeout_ms`. The live working URL sets
+    /// (`general` / `publish` / `fetch`) come from `<data_dir>/relays.json`:
+    ///
+    /// - First boot (no `relays.json`): seed all three sets from
+    ///   `initial_relays`, write the file, and use that as the runtime
+    ///   working copy.
+    /// - Subsequent boots: load the JSON file; ignore `initial_relays`
+    ///   entirely. The file is the source of truth.
     pub fn with_relay_config(data_path: &Path, relay_config: &RelayConfig) -> Result<Self> {
         // Ensure the data directory exists
         std::fs::create_dir_all(data_path)?;
@@ -186,9 +205,37 @@ impl Engine {
             );
         }
 
+        // Layer the persisted relay store on top of the (mostly-empty)
+        // TOML-derived RelayConfig. First boot seeds from initial_relays.
+        let relay_store = RelayStore::new(data_path)
+            .map_err(|e| EngineError::Config(format!("Failed to open relay store: {e}")))?;
+        let sets = if relay_store.is_first_boot() {
+            info!(
+                "No {} found — seeding from initial_relays ({} URLs)",
+                relay_store.path().display(),
+                relay_config.initial_relays.len()
+            );
+            let seeded = RelaySets::seed_from_initial(&relay_config.initial_relays);
+            relay_store
+                .save(&seeded)
+                .map_err(|e| EngineError::Config(format!("Failed to seed relay store: {e}")))?;
+            seeded
+        } else {
+            relay_store
+                .load()
+                .map_err(|e| EngineError::Config(format!("Failed to load relay store: {e}")))?
+        };
+        let mut relay_config = relay_config.clone();
+        relay_config.apply_persisted(&sets);
+        info!(
+            "Relays — general: {:?}, fetch: {:?}, publish: {:?}",
+            relay_config.general.urls, relay_config.fetch.urls, relay_config.publish.urls
+        );
+
         Ok(Engine {
             ndb: Arc::new(ndb),
-            relay_config: relay_config.clone(),
+            relay_config,
+            relay_store,
             data_dir: data_path.to_path_buf(),
             config_path: None,
             my_pubkey: None,
@@ -344,7 +391,15 @@ impl Engine {
         self.config_path.as_deref()
     }
 
-    /// Add a relay URL to a set (mutates in-memory config)
+    /// Add a relay URL to a working set. Mutates the in-memory `RelayConfig`
+    /// and writes through to `<data_dir>/relays.json` so the change survives
+    /// a restart.
+    ///
+    /// Silently ignores unknown set names so the API endpoint can stay lax
+    /// about user-supplied input (matching the previous behaviour). A
+    /// write-through failure is surfaced as a `tracing::warn!` rather than
+    /// an `Err` because the in-memory mutation still succeeded — callers
+    /// don't currently check a Result here.
     pub fn add_relay(&mut self, set: &str, url: &str) {
         let urls = match set {
             "general" => &mut self.relay_config.general.urls,
@@ -352,8 +407,43 @@ impl Engine {
             "fetch" => &mut self.relay_config.fetch.urls,
             _ => return,
         };
-        if !urls.contains(&url.to_string()) {
-            urls.push(url.to_string());
+        if urls.iter().any(|u| u == url) {
+            return;
+        }
+        urls.push(url.to_string());
+        // Persist to relays.json. Rebuild a RelaySets snapshot from the
+        // live config so general/fetch/publish stay in sync on disk.
+        let snapshot = RelaySets {
+            general: self.relay_config.general.urls.clone(),
+            fetch: self.relay_config.fetch.urls.clone(),
+            publish: self.relay_config.publish.urls.clone(),
+        };
+        if let Err(e) = self.relay_store.save(&snapshot) {
+            warn!("Failed to persist relay add ({set}/{url}): {e}");
+        }
+    }
+
+    /// Remove a relay URL from a working set. Mirror of `add_relay` —
+    /// mutates the in-memory config and writes through to `relays.json`.
+    pub fn remove_relay(&mut self, set: &str, url: &str) {
+        let urls = match set {
+            "general" => &mut self.relay_config.general.urls,
+            "publish" => &mut self.relay_config.publish.urls,
+            "fetch" => &mut self.relay_config.fetch.urls,
+            _ => return,
+        };
+        let before = urls.len();
+        urls.retain(|u| u != url);
+        if urls.len() == before {
+            return;
+        }
+        let snapshot = RelaySets {
+            general: self.relay_config.general.urls.clone(),
+            fetch: self.relay_config.fetch.urls.clone(),
+            publish: self.relay_config.publish.urls.clone(),
+        };
+        if let Err(e) = self.relay_store.save(&snapshot) {
+            warn!("Failed to persist relay remove ({set}/{url}): {e}");
         }
     }
 

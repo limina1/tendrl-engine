@@ -68,7 +68,12 @@ impl Default for DatabaseConfig {
     }
 }
 
-/// A relay set with URLs and the event kinds to fetch from them
+/// A relay set with URLs and the event kinds to fetch from them.
+///
+/// `urls` is the live working list — sourced from `relays.json` at runtime,
+/// not from TOML. `kinds` stays code-defaulted because it's a per-purpose
+/// fetch filter (e.g. "kind 0/3/10002 from general relays") and is not the
+/// kind of thing users edit from the UI.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RelaySet {
     /// Relay WebSocket URLs
@@ -78,17 +83,32 @@ pub struct RelaySet {
     pub kinds: Vec<u64>,
 }
 
-/// Relay configuration with purpose-specific sets
+/// Relay configuration.
+///
+/// `general` / `publish` / `fetch` keep their `Vec<String>` shape because
+/// the rest of the engine reads them by reference. They are **no longer**
+/// deserialized from TOML — the TOML carries only `initial_relays` (the
+/// first-boot seed) plus `timeout_ms` and `authors`. At runtime, the URL
+/// fields are filled in from `<data_dir>/relays.json` by the engine; the
+/// `kinds` come from these compiled-in defaults.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RelayConfig {
-    /// General relays for profile info, metadata, notes
-    #[serde(default = "default_general")]
+    /// Bootstrap-only relay list. Used **once** when no `relays.json`
+    /// exists yet, to seed all three working sets. After that, the JSON
+    /// file is authoritative and this field is ignored.
+    #[serde(default)]
+    pub initial_relays: Vec<String>,
+    /// General relays for profile info, metadata, notes. URLs filled at
+    /// runtime from `relays.json`; `kinds` defaulted in code.
+    #[serde(skip, default = "default_general")]
     pub general: RelaySet,
-    /// Relays to publish events to (push only, kinds not used for fetch)
-    #[serde(default = "default_publish")]
+    /// Relays to publish events to (push only, kinds not used for fetch).
+    /// URLs filled at runtime from `relays.json`.
+    #[serde(skip, default = "default_publish")]
     pub publish: RelaySet,
-    /// Relays to fetch publications/sections from
-    #[serde(default = "default_fetch")]
+    /// Relays to fetch publications/sections from. URLs filled at runtime
+    /// from `relays.json`; `kinds` defaulted in code.
+    #[serde(skip, default = "default_fetch")]
     pub fetch: RelaySet,
     /// Authors to follow — fetch their events from fetch relays (npub or hex)
     #[serde(default)]
@@ -96,39 +116,34 @@ pub struct RelayConfig {
     /// Request timeout in milliseconds
     #[serde(default = "default_timeout_ms")]
     pub timeout_ms: u64,
-    /// Backwards compat: if only default_relays is set, use it for all sets
-    #[serde(default)]
-    pub default_relays: Option<Vec<String>>,
 }
 
 fn default_general() -> RelaySet {
     RelaySet {
-        urls: vec![
-            "wss://relay.damus.io".to_string(),
-            "wss://nos.lol".to_string(),
-        ],
+        urls: Vec::new(),
         kinds: vec![0, 3, 10002, 30023, 30818, 30817],
     }
 }
 
 fn default_publish() -> RelaySet {
     RelaySet {
-        urls: vec![
-            "wss://relay.damus.io".to_string(),
-            "wss://nos.lol".to_string(),
-        ],
+        urls: Vec::new(),
         kinds: vec![],
     }
 }
 
 fn default_fetch() -> RelaySet {
     RelaySet {
-        urls: crate::relay::DEFAULT_RELAYS
-            .iter()
-            .map(|s| s.to_string())
-            .collect(),
+        urls: Vec::new(),
         kinds: vec![0, 30040, 30041, 30023, 30818, 30817, 9802],
     }
+}
+
+fn default_initial_relays() -> Vec<String> {
+    crate::relay::DEFAULT_RELAYS
+        .iter()
+        .map(|s| s.to_string())
+        .collect()
 }
 
 fn default_timeout_ms() -> u64 {
@@ -138,18 +153,18 @@ fn default_timeout_ms() -> u64 {
 impl Default for RelayConfig {
     fn default() -> Self {
         Self {
+            initial_relays: default_initial_relays(),
             general: default_general(),
             publish: default_publish(),
             fetch: default_fetch(),
             authors: Vec::new(),
             timeout_ms: default_timeout_ms(),
-            default_relays: None,
         }
     }
 }
 
 impl RelayConfig {
-    /// Get all unique relay URLs across all sets
+    /// Get all unique relay URLs across all working sets.
     pub fn all_urls(&self) -> Vec<String> {
         let mut urls = std::collections::HashSet::new();
         for u in &self.general.urls { urls.insert(u.clone()); }
@@ -158,23 +173,13 @@ impl RelayConfig {
         urls.into_iter().collect()
     }
 
-    /// Resolve backwards-compatible default_relays into all sets if present
-    pub fn resolved(&self) -> Self {
-        if let Some(ref defaults) = self.default_relays {
-            let mut resolved = self.clone();
-            if resolved.general.urls.is_empty() {
-                resolved.general.urls = defaults.clone();
-            }
-            if resolved.publish.urls.is_empty() {
-                resolved.publish.urls = defaults.clone();
-            }
-            if resolved.fetch.urls.is_empty() {
-                resolved.fetch.urls = defaults.clone();
-            }
-            resolved
-        } else {
-            self.clone()
-        }
+    /// Apply persisted URL sets from `relays.json` onto this config. The
+    /// `kinds` come from this struct's defaults — only URLs are layered in.
+    /// Called by the engine on startup after loading the state file.
+    pub fn apply_persisted(&mut self, sets: &crate::relay_store::RelaySets) {
+        self.general.urls = sets.general.clone();
+        self.publish.urls = sets.publish.clone();
+        self.fetch.urls = sets.fetch.clone();
     }
 
     /// Resolve author list to hex pubkeys (handles npub and hex)
