@@ -115,6 +115,14 @@ pub struct RelayConfig {
     /// lands. See `project-relay-classes` memory.
     #[serde(skip, default = "default_broadcast")]
     pub broadcast: RelaySet,
+    /// NIP-50 search-capable relays. Used by `~:` semantic queries when
+    /// per-class routing lands.
+    #[serde(skip, default = "default_search")]
+    pub search: RelaySet,
+    /// Indexer / discovery relays (purplepag.es etc.). Fallback for
+    /// profile / kind 10002 / metadata lookups when the read set misses.
+    #[serde(skip, default = "default_indexer")]
+    pub indexer: RelaySet,
     /// Authors to follow — fetch their events from fetch relays (npub or hex)
     #[serde(default)]
     pub authors: Vec<String>,
@@ -145,6 +153,20 @@ fn default_fetch() -> RelaySet {
 }
 
 fn default_broadcast() -> RelaySet {
+    RelaySet {
+        urls: Vec::new(),
+        kinds: vec![],
+    }
+}
+
+fn default_search() -> RelaySet {
+    RelaySet {
+        urls: Vec::new(),
+        kinds: vec![],
+    }
+}
+
+fn default_indexer() -> RelaySet {
     RelaySet {
         urls: Vec::new(),
         kinds: vec![],
@@ -201,6 +223,8 @@ impl Default for RelayConfig {
             publish: default_publish(),
             fetch: default_fetch(),
             broadcast: default_broadcast(),
+            search: default_search(),
+            indexer: default_indexer(),
             authors: Vec::new(),
             timeout_ms: default_timeout_ms(),
         }
@@ -225,6 +249,8 @@ impl RelayConfig {
         self.publish.urls = sets.publish.clone();
         self.fetch.urls = sets.fetch.clone();
         self.broadcast.urls = sets.broadcast.clone();
+        self.search.urls = sets.search.clone();
+        self.indexer.urls = sets.indexer.clone();
     }
 
     /// Resolve author list to hex pubkeys (handles npub and hex)

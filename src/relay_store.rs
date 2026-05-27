@@ -49,6 +49,13 @@ pub struct RelaySets {
     /// once per-event-kind routing lands. See [[project-relay-classes]].
     #[serde(default)]
     pub broadcast: Vec<String>,
+    /// Search-capable relays (NIP-50). Used by `~:` semantic queries.
+    #[serde(default)]
+    pub search: Vec<String>,
+    /// Indexer / discovery relays (purplepag.es etc.). Fallback tier
+    /// for kind 0 / 10002 lookups when the read set misses.
+    #[serde(default)]
+    pub indexer: Vec<String>,
 }
 
 impl RelaySets {
@@ -62,6 +69,8 @@ impl RelaySets {
             fetch: normalized.clone(),
             publish: normalized,
             broadcast: Vec::new(),
+            search: Vec::new(),
+            indexer: Vec::new(),
         }
     }
 
@@ -73,6 +82,8 @@ impl RelaySets {
         self.fetch = normalize_dedup(&self.fetch);
         self.publish = normalize_dedup(&self.publish);
         self.broadcast = normalize_dedup(&self.broadcast);
+        self.search = normalize_dedup(&self.search);
+        self.indexer = normalize_dedup(&self.indexer);
     }
 
     /// Borrow the URL list for a named set. Returns `None` for unknown set
@@ -83,6 +94,8 @@ impl RelaySets {
             "fetch" => Some(&self.fetch),
             "publish" => Some(&self.publish),
             "broadcast" => Some(&self.broadcast),
+            "search" => Some(&self.search),
+            "indexer" => Some(&self.indexer),
             _ => None,
         }
     }
@@ -93,6 +106,8 @@ impl RelaySets {
             "fetch" => Ok(&mut self.fetch),
             "publish" => Ok(&mut self.publish),
             "broadcast" => Ok(&mut self.broadcast),
+            "search" => Ok(&mut self.search),
+            "indexer" => Ok(&mut self.indexer),
             other => Err(RelayStoreError::UnknownSet(other.to_string())),
         }
     }

@@ -289,6 +289,18 @@ impl Engine {
         self.relay_config.read().unwrap().broadcast.urls.clone()
     }
 
+    /// Get search relay URLs (owned clone). NIP-50-capable; used by `~:`
+    /// queries once per-class routing is wired.
+    pub fn search_relays(&self) -> Vec<String> {
+        self.relay_config.read().unwrap().search.urls.clone()
+    }
+
+    /// Get indexer relay URLs (owned clone). Discovery fallback for
+    /// kind 0 / 10002 / metadata lookups when the read set misses.
+    pub fn indexer_relays(&self) -> Vec<String> {
+        self.relay_config.read().unwrap().indexer.urls.clone()
+    }
+
     /// Get the data directory path
     pub fn data_dir(&self) -> &std::path::Path {
         &self.data_dir
@@ -432,6 +444,8 @@ impl Engine {
                 "publish" => &mut rc.publish.urls,
                 "fetch" => &mut rc.fetch.urls,
                 "broadcast" => &mut rc.broadcast.urls,
+                "search" => &mut rc.search.urls,
+                "indexer" => &mut rc.indexer.urls,
                 _ => return false,
             };
             if urls.iter().any(|u| u == &url) {
@@ -443,6 +457,8 @@ impl Engine {
                 fetch: rc.fetch.urls.clone(),
                 publish: rc.publish.urls.clone(),
                 broadcast: rc.broadcast.urls.clone(),
+                search: rc.search.urls.clone(),
+                indexer: rc.indexer.urls.clone(),
             }
         };
         if let Err(e) = self.relay_store.save(&snapshot) {
@@ -465,6 +481,8 @@ impl Engine {
                 "publish" => &mut rc.publish.urls,
                 "fetch" => &mut rc.fetch.urls,
                 "broadcast" => &mut rc.broadcast.urls,
+                "search" => &mut rc.search.urls,
+                "indexer" => &mut rc.indexer.urls,
                 _ => return false,
             };
             let before = urls.len();
@@ -477,6 +495,8 @@ impl Engine {
                 fetch: rc.fetch.urls.clone(),
                 publish: rc.publish.urls.clone(),
                 broadcast: rc.broadcast.urls.clone(),
+                search: rc.search.urls.clone(),
+                indexer: rc.indexer.urls.clone(),
             }
         };
         if let Err(e) = self.relay_store.save(&snapshot) {

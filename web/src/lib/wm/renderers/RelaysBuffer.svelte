@@ -21,6 +21,8 @@
 		write: boolean;
 		auth: boolean;
 		broadcast: boolean;
+		search: boolean;
+		indexer: boolean;
 	};
 
 	let rows = $state<RelayRow[]>([]);
@@ -34,13 +36,29 @@
 	// Per-row DOM refs so we can scroll a focused row into view when
 	// the EventViewModal hands us a URL via the relayFocus signal.
 	let rowEls: Record<string, HTMLDivElement | undefined> = {};
-	// Pulled suggestions from the user's kind 10002. Surfaced as
-	// suggestions only — never auto-applied. The user picks per relay.
-	type PulledRelay = { url: string; read: boolean; write: boolean };
+	// Pulled suggestions from the user's published relay-list events
+	// (kinds 10002 / 10007 / 10086 / 10088). Surfaced as suggestions
+	// only — never auto-applied. The user picks per relay which set to
+	// import into. Amethyst publishes 10007/10086/10088 as NIP-44-
+	// encrypted content; we only parse public `r` tags here, and flag
+	// when an event was found but looked encrypted (decryption is a
+	// separate task).
+	type PulledRelay = {
+		url: string;
+		// kind 10002 markers
+		read?: boolean;
+		write?: boolean;
+		// new classes
+		search?: boolean;
+		indexer?: boolean;
+		broadcast?: boolean;
+		source_kind: 10002 | 10007 | 10086 | 10088;
+	};
 	let pulled = $state<PulledRelay[] | null>(null);
 	let pulling = $state(false);
 	let pullError = $state<string | null>(null);
 	let pullCreatedAt = $state<number | null>(null);
+	let pullEncryptedKinds = $state<number[]>([]);
 
 	async function load(force = false) {
 		loading = true;
@@ -51,7 +69,15 @@
 			const ensure = (url: string): RelayRow => {
 				let r = map.get(url);
 				if (!r) {
-					r = { url, read: false, write: false, auth: false, broadcast: false };
+					r = {
+						url,
+						read: false,
+						write: false,
+						auth: false,
+						broadcast: false,
+						search: false,
+						indexer: false
+					};
 					map.set(url, r);
 				}
 				return r;
@@ -64,6 +90,8 @@
 			for (const url of cfg.fetch?.urls ?? []) ensure(url).read = true;
 			for (const url of cfg.publish?.urls ?? []) ensure(url).write = true;
 			for (const url of cfg.broadcast?.urls ?? []) ensure(url).broadcast = true;
+			for (const url of cfg.search?.urls ?? []) ensure(url).search = true;
+			for (const url of cfg.indexer?.urls ?? []) ensure(url).indexer = true;
 			rows = [...map.values()].sort((a, b) => a.url.localeCompare(b.url));
 			// Kick off NIP-11 fetches up-front so the badges fill in
 			// without the user expanding each row.
@@ -113,7 +141,8 @@
 		});
 	});
 
-	async function toggle(url: string, field: 'read' | 'write' | 'auth' | 'broadcast') {
+	type ToggleField = 'read' | 'write' | 'auth' | 'broadcast' | 'search' | 'indexer';
+	async function toggle(url: string, field: ToggleField) {
 		const row = rows.find((r) => r.url === url);
 		if (!row) return;
 		const next = { ...row, [field]: !row[field] };
@@ -123,8 +152,8 @@
 		if (field === 'auth') return;
 
 		try {
-			if (field === 'broadcast') {
-				await (next.broadcast ? api.addRelay('broadcast', url) : api.removeRelay('broadcast', url));
+			if (field === 'broadcast' || field === 'search' || field === 'indexer') {
+				await (next[field] ? api.addRelay(field, url) : api.removeRelay(field, url));
 			} else {
 				// Reconcile the row's read/write into explicit fetch + publish set
 				// membership, and drop it from the legacy `general` set (which means
@@ -161,31 +190,62 @@
 		}
 		pulling = true;
 		pullError = null;
+		pullEncryptedKinds = [];
 		try {
-			// 1. Pull the user's kind 10002 from the seed relays. Confirm-mode
-			//    will gate this; otherwise it goes through silently.
-			await api.fetchFromRelay(initialRelays, [10002], [pubkey], 5);
-			// 2. Read it back from the local cache. The newest one wins.
-			const result = await api.search(`by:${pubkey} k:10002`, 3, pubkey, 'local_only');
-			const newest = (result.results ?? []).sort(
-				(a, b) => (b.created_at ?? 0) - (a.created_at ?? 0)
-			)[0];
-			if (!newest) {
-				pullError = "No kind 10002 found on those relays for your pubkey. (If you've never published your relay list, there's nothing to pull yet.)";
+			// 1. Pull all four relay-list kinds from the seed relays.
+			//    10002 = read/write (NIP-65, public r tags).
+			//    10007 = search (NIP-50). 10086 = indexer. 10088 = broadcast.
+			//    The 100xx kinds are Amethyst-defined; some clients publish
+			//    them as encrypted (NIP-44) private tag arrays — those
+			//    arrive with `content` non-empty and no public `r` tags.
+			const kinds = [10002, 10007, 10086, 10088] as const;
+			await api.fetchFromRelay(initialRelays, [...kinds], [pubkey], 20);
+			// 2. Read them back from the local cache. Newest per kind wins.
+			const entries: PulledRelay[] = [];
+			let maxCreatedAt = 0;
+			const encrypted: number[] = [];
+			for (const kind of kinds) {
+				const result = await api.search(`by:${pubkey} k:${kind}`, 3, pubkey, 'local_only');
+				const newest = (result.results ?? []).sort(
+					(a, b) => (b.created_at ?? 0) - (a.created_at ?? 0)
+				)[0];
+				if (!newest) continue;
+				if ((newest.created_at ?? 0) > maxCreatedAt) maxCreatedAt = newest.created_at ?? 0;
+				const rTags = (newest.tags ?? []).filter(
+					(t) => t[0] === 'r' && typeof t[1] === 'string'
+				);
+				// If a kind 100xx has content but no public r tags, it's
+				// almost certainly NIP-44-encrypted (Amethyst convention).
+				if (rTags.length === 0 && (newest.preview?.length ?? 0) > 0 && kind !== 10002) {
+					encrypted.push(kind);
+					continue;
+				}
+				for (const t of rTags) {
+					const url = t[1] as string;
+					const marker = (t[2] ?? '').toLowerCase();
+					if (kind === 10002) {
+						entries.push({
+							url,
+							source_kind: 10002,
+							read: marker === 'read' || marker === '',
+							write: marker === 'write' || marker === ''
+						});
+					} else if (kind === 10007) {
+						entries.push({ url, source_kind: 10007, search: true });
+					} else if (kind === 10086) {
+						entries.push({ url, source_kind: 10086, indexer: true });
+					} else if (kind === 10088) {
+						entries.push({ url, source_kind: 10088, broadcast: true });
+					}
+				}
+			}
+			pullCreatedAt = maxCreatedAt > 0 ? maxCreatedAt : null;
+			pullEncryptedKinds = encrypted;
+			if (entries.length === 0 && encrypted.length === 0) {
+				pullError = "No relay-list events found on those relays for your pubkey. (If you've never published your relay lists, there's nothing to pull yet.)";
 				pulled = [];
 				return;
 			}
-			pullCreatedAt = newest.created_at ?? null;
-			const entries: PulledRelay[] = (newest.tags ?? [])
-				.filter((t) => t[0] === 'r' && typeof t[1] === 'string')
-				.map((t) => {
-					const marker = (t[2] ?? '').toLowerCase();
-					return {
-						url: t[1] as string,
-						read: marker === 'read' || marker === '',
-						write: marker === 'write' || marker === ''
-					};
-				});
 			pulled = entries;
 		} catch (e) {
 			pullError = e instanceof Error ? e.message : String(e);
@@ -203,10 +263,14 @@
 		return rows.find((r) => rowKeyFor(r.url) === key);
 	}
 
-	async function importSuggestion(s: PulledRelay, role: 'fetch' | 'publish' | 'both') {
+	type ImportRole = 'fetch' | 'publish' | 'both' | 'broadcast' | 'search' | 'indexer';
+	async function importSuggestion(s: PulledRelay, role: ImportRole) {
 		try {
 			if (role === 'fetch' || role === 'both') await api.addRelay('fetch', s.url);
 			if (role === 'publish' || role === 'both') await api.addRelay('publish', s.url);
+			if (role === 'broadcast') await api.addRelay('broadcast', s.url);
+			if (role === 'search') await api.addRelay('search', s.url);
+			if (role === 'indexer') await api.addRelay('indexer', s.url);
 			app.pushToast(`Added ${shorten(s.url)} to ${role}`, 'success', 2500);
 			await load();
 		} catch (e) {
@@ -222,6 +286,28 @@
 		pulled = null;
 		pullError = null;
 		pullCreatedAt = null;
+		pullEncryptedKinds = [];
+	}
+
+	const pulledByKind = $derived.by(() => {
+		const groups: Record<10002 | 10007 | 10086 | 10088, PulledRelay[]> = {
+			10002: [],
+			10007: [],
+			10086: [],
+			10088: []
+		};
+		for (const s of pulled ?? []) groups[s.source_kind].push(s);
+		return groups;
+	});
+
+	function classNameForKind(k: 10002 | 10007 | 10086 | 10088): string {
+		return k === 10002
+			? 'read/write (NIP-65)'
+			: k === 10007
+				? 'search (NIP-50)'
+				: k === 10086
+					? 'indexer'
+					: 'broadcast';
 	}
 
 	// Add a new relay via the prompt — defaults to read+write so the
@@ -386,36 +472,70 @@
 		{/if}
 	</div>
 
-	{#if pulled && pulled.length > 0}
+	{#if (pulled && pulled.length > 0) || pullEncryptedKinds.length > 0}
 		<div class="pulled-list">
 			<div class="pulled-label">From your profile · suggestions</div>
-			{#each pulled as s (s.url)}
-				{@const existing = alreadyConfigured(s.url)}
-				<div class="pulled-row">
-					<span class="pulled-url" title={s.url}>{shorten(s.url)}</span>
-					<span class="pulled-marker">
-						{#if s.read && s.write}read+write
-						{:else if s.read}read
-						{:else if s.write}write
-						{/if}
-					</span>
-					{#if existing}
-						<span class="pulled-state">already configured</span>
-					{:else}
-						<div class="pulled-actions">
-							{#if s.read}
-								<button class="pull-add" onclick={() => importSuggestion(s, 'fetch')}>+ fetch</button>
-							{/if}
-							{#if s.write}
-								<button class="pull-add" onclick={() => importSuggestion(s, 'publish')}>+ publish</button>
-							{/if}
-							{#if s.read && s.write}
-								<button class="pull-add pull-add--strong" onclick={() => importSuggestion(s, 'both')}>+ both</button>
-							{/if}
+
+			{#each [10002, 10007, 10086, 10088] as kind (kind)}
+				{@const group = pulledByKind[kind as 10002 | 10007 | 10086 | 10088]}
+				{#if group.length > 0}
+					<div class="pulled-kind-label">kind {kind} · {classNameForKind(kind as 10002 | 10007 | 10086 | 10088)}</div>
+					{#each group as s (`${s.source_kind}:${s.url}`)}
+						{@const existing = alreadyConfigured(s.url)}
+						<div class="pulled-row">
+							<span class="pulled-url" title={s.url}>{shorten(s.url)}</span>
+							<span class="pulled-marker">
+								{#if kind === 10002}
+									{#if s.read && s.write}read+write
+									{:else if s.read}read
+									{:else if s.write}write
+									{/if}
+								{:else if kind === 10007}search
+								{:else if kind === 10086}indexer
+								{:else if kind === 10088}broadcast
+								{/if}
+							</span>
+							<div class="pulled-actions">
+								{#if kind === 10002}
+									{#if !existing?.read && s.read}
+										<button class="pull-add" onclick={() => importSuggestion(s, 'fetch')}>+ fetch</button>
+									{/if}
+									{#if !existing?.write && s.write}
+										<button class="pull-add" onclick={() => importSuggestion(s, 'publish')}>+ publish</button>
+									{/if}
+									{#if !existing?.read && !existing?.write && s.read && s.write}
+										<button class="pull-add pull-add--strong" onclick={() => importSuggestion(s, 'both')}>+ both</button>
+									{/if}
+								{:else if kind === 10007}
+									{#if !existing?.search}
+										<button class="pull-add" onclick={() => importSuggestion(s, 'search')}>+ search</button>
+									{/if}
+								{:else if kind === 10086}
+									{#if !existing?.indexer}
+										<button class="pull-add" onclick={() => importSuggestion(s, 'indexer')}>+ indexer</button>
+									{/if}
+								{:else if kind === 10088}
+									{#if !existing?.broadcast}
+										<button class="pull-add" onclick={() => importSuggestion(s, 'broadcast')}>+ broadcast</button>
+									{/if}
+								{/if}
+								{#if existing && existing[kind === 10002 ? 'read' : kind === 10007 ? 'search' : kind === 10086 ? 'indexer' : 'broadcast']}
+									<span class="pulled-state">already in {kind === 10002 ? 'read/write' : classNameForKind(kind as 10002 | 10007 | 10086 | 10088)}</span>
+								{/if}
+							</div>
 						</div>
-					{/if}
-				</div>
+					{/each}
+				{/if}
 			{/each}
+
+			{#if pullEncryptedKinds.length > 0}
+				<div class="pulled-kind-label">encrypted (NIP-44) — not yet decrypted</div>
+				<p class="pulled-encrypted">
+					Found encrypted private list event{pullEncryptedKinds.length === 1 ? '' : 's'} for kind
+					{pullEncryptedKinds.join(', ')}. Tendrl can't decrypt these yet — the active signer would need to
+					NIP-44 the content. Track as a follow-up.
+				</p>
+			{/if}
 		</div>
 	{/if}
 
@@ -481,8 +601,20 @@
 								class="pill toggle-pill toggle-pill--broadcast"
 								class:toggle-pill--on={row.broadcast}
 								onclick={() => toggle(row.url, 'broadcast')}
-								title="Mark this relay as a broadcast / aggregator target. Never auto-published to — only when you explicitly opt in per event (e.g. push a note here without sending a paper here)."
+								title="Mark this relay as a broadcast / aggregator target. Never auto-published to — only when you explicitly opt in per event."
 							>broadcast</button>
+							<button
+								class="pill toggle-pill toggle-pill--search"
+								class:toggle-pill--on={row.search}
+								onclick={() => toggle(row.url, 'search')}
+								title="Mark this relay as NIP-50 search-capable. Used for `~:` semantic queries when per-class routing lands."
+							>search</button>
+							<button
+								class="pill toggle-pill toggle-pill--indexer"
+								class:toggle-pill--on={row.indexer}
+								onclick={() => toggle(row.url, 'indexer')}
+								title="Mark this relay as an indexer / discovery fallback (purplepag.es etc.). Queried only when the read set misses on profile / kind 10002 / metadata lookups."
+							>indexer</button>
 							<button
 								class="pill toggle-pill"
 								class:toggle-pill--on={row.auth}
@@ -806,13 +938,23 @@
 		color: var(--state-online);
 		border-color: color-mix(in srgb, var(--state-online) 50%, transparent);
 	}
-	/* Broadcast is functionally distinct from read/write — tint it
-	   warmer so the user reads it as "different class, deliberate opt-in"
-	   rather than another read/write variant. */
+	/* Broadcast / search / indexer are functionally distinct from
+	   read/write — different tints so the user reads them as "different
+	   class, deliberate opt-in" rather than read/write variants. */
 	.toggle-pill--broadcast.toggle-pill--on {
 		background: color-mix(in srgb, var(--id-draft) 14%, transparent);
 		color: var(--id-draft);
 		border-color: color-mix(in srgb, var(--id-draft) 50%, transparent);
+	}
+	.toggle-pill--search.toggle-pill--on {
+		background: color-mix(in srgb, var(--id-remote, var(--id-yours)) 14%, transparent);
+		color: var(--id-remote, var(--id-yours));
+		border-color: color-mix(in srgb, var(--id-remote, var(--id-yours)) 50%, transparent);
+	}
+	.toggle-pill--indexer.toggle-pill--on {
+		background: color-mix(in srgb, var(--id-imported, var(--id-yours)) 14%, transparent);
+		color: var(--id-imported, var(--id-yours));
+		border-color: color-mix(in srgb, var(--id-imported, var(--id-yours)) 50%, transparent);
 	}
 	.toggle-pill--on:hover {
 		filter: brightness(1.15);
@@ -1017,6 +1159,24 @@
 		letter-spacing: 0.05em;
 		color: var(--base5);
 		margin-bottom: 2px;
+	}
+	.pulled-kind-label {
+		font-size: 0.7rem;
+		font-family: var(--font-mono);
+		color: var(--base5);
+		margin-top: 6px;
+		padding-top: 4px;
+		border-top: 1px dashed var(--panel-border);
+	}
+	.pulled-kind-label:first-of-type {
+		border-top: none;
+		padding-top: 0;
+	}
+	.pulled-encrypted {
+		font-size: var(--t-xs);
+		color: var(--base6);
+		font-style: italic;
+		margin: 4px 0 0;
 	}
 	.pulled-row {
 		display: flex;
