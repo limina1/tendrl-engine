@@ -502,14 +502,42 @@ export function removeRelay(set: string, url: string) {
 	});
 }
 
-/** Snapshot the live relay sets into config.toml's [relay] initial_relays
- *  as a portable bootstrap seed. Disk-only operation; doesn't change the
- *  running engine's working sets. */
-export function snapshotConfig() {
-	return fetchJson<{ updated: boolean; count: number; path: string; message: string }>(
-		'/api/v1/config/snapshot',
-		{ method: 'POST' }
-	);
+export interface SnapshotPayload {
+	include_relays?: boolean;
+	editor?: { line_numbers: boolean; vim_mode: boolean; insert_mode: string };
+	compose?: { default_mode: string; sync_mode: string; button_labels: string };
+	network_mode?: string;
+}
+
+/** Snapshot live state into config.toml. Pass nothing to default to
+ *  relays-only; pass any combination of editor/compose/network_mode to
+ *  also persist those settings. relays.json + in-memory state stay
+ *  authoritative at runtime — this is just for portability / restart
+ *  defaults. */
+export function snapshotConfig(payload?: SnapshotPayload) {
+	const init: RequestInit = { method: 'POST' };
+	if (payload) {
+		init.body = JSON.stringify(payload);
+		init.headers = { 'Content-Type': 'application/json' };
+	}
+	return fetchJson<{
+		updated: boolean;
+		wrote?: string[];
+		relay_count?: number;
+		path?: string;
+		message: string;
+	}>('/api/v1/config/snapshot', init);
+}
+
+/** Fetch editor/compose/network defaults from config.toml so the web can
+ *  hydrate the SettingsBuffer with the user's last-saved choices instead
+ *  of hard-coded defaults. */
+export function getSettings() {
+	return fetchJson<{
+		editor: { line_numbers: boolean; vim_mode: boolean; insert_mode: string };
+		compose: { default_mode: string; sync_mode: string; button_labels: string };
+		network: { mode: string };
+	}>('/api/v1/settings');
 }
 
 export function addAuthor(author: string) {

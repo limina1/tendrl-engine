@@ -1689,39 +1689,102 @@ pub async fn config_update_handler(
 /// The captured value is the **union** of general / fetch / publish
 /// URLs — `initial_relays` seeds all three sets identically on first
 /// boot, so the read/write distinction lives in relays.json, not here.
+#[derive(Debug, Deserialize, Default)]
+pub struct ConfigSnapshotRequest {
+    /// Include the live relay set as `[relay] initial_relays` (default true).
+    #[serde(default = "default_include_relays")]
+    pub include_relays: bool,
+    /// Optional editor settings — when present, written to `[editor]`.
+    #[serde(default)]
+    pub editor: Option<crate::config::EditorConfig>,
+    /// Optional compose settings — when present, written to `[compose]`.
+    #[serde(default)]
+    pub compose: Option<crate::config::ComposeConfig>,
+    /// Optional network default — when present, written to `[network] mode`.
+    #[serde(default)]
+    pub network_mode: Option<String>,
+}
+
+fn default_include_relays() -> bool {
+    true
+}
+
 pub async fn config_snapshot_handler(
     State(engine): State<AppState>,
+    body: Option<Json<ConfigSnapshotRequest>>,
 ) -> Result<Json<Value>, EngineError> {
+    let req = body.map(|Json(r)| r).unwrap_or_default();
+
     let config_path = engine
         .config_path()
         .ok_or_else(|| EngineError::Config("No config file path set (use -c config.toml)".into()))?
         .to_path_buf();
-
-    let rc = engine.relay_config();
-    // Union, in stable order, preserving the first appearance.
-    let mut seen = std::collections::HashSet::new();
-    let mut urls: Vec<String> = Vec::new();
-    for u in rc.fetch.urls.iter().chain(&rc.publish.urls).chain(&rc.general.urls) {
-        if seen.insert(u.clone()) {
-            urls.push(u.clone());
-        }
-    }
 
     let content = std::fs::read_to_string(&config_path)
         .map_err(|e| EngineError::Config(format!("Failed to read config: {e}")))?;
     let mut doc: toml::Table = toml::from_str(&content)
         .map_err(|e| EngineError::Config(format!("Failed to parse config: {e}")))?;
 
-    let relay = doc
-        .entry("relay")
-        .or_insert_with(|| toml::Value::Table(toml::Table::new()));
-    let toml::Value::Table(relay_table) = relay else {
-        return Err(EngineError::Config(
-            "[relay] in config.toml is not a table".into(),
-        ));
-    };
-    let arr: Vec<toml::Value> = urls.iter().map(|u| toml::Value::String(u.clone())).collect();
-    relay_table.insert("initial_relays".to_string(), toml::Value::Array(arr));
+    let mut wrote: Vec<&'static str> = Vec::new();
+    let mut relay_count = 0usize;
+
+    if req.include_relays {
+        let rc = engine.relay_config();
+        let mut seen = std::collections::HashSet::new();
+        let mut urls: Vec<String> = Vec::new();
+        for u in rc.fetch.urls.iter().chain(&rc.publish.urls).chain(&rc.general.urls) {
+            if seen.insert(u.clone()) {
+                urls.push(u.clone());
+            }
+        }
+        relay_count = urls.len();
+        let relay = doc
+            .entry("relay")
+            .or_insert_with(|| toml::Value::Table(toml::Table::new()));
+        let toml::Value::Table(relay_table) = relay else {
+            return Err(EngineError::Config(
+                "[relay] in config.toml is not a table".into(),
+            ));
+        };
+        let arr: Vec<toml::Value> = urls.iter().map(|u| toml::Value::String(u.clone())).collect();
+        relay_table.insert("initial_relays".to_string(), toml::Value::Array(arr));
+        wrote.push("initial_relays");
+    }
+
+    if let Some(editor) = &req.editor {
+        let mut t = toml::Table::new();
+        t.insert("line_numbers".into(), toml::Value::Boolean(editor.line_numbers));
+        t.insert("vim_mode".into(), toml::Value::Boolean(editor.vim_mode));
+        t.insert("insert_mode".into(), toml::Value::String(editor.insert_mode.clone()));
+        doc.insert("editor".into(), toml::Value::Table(t));
+        wrote.push("editor");
+    }
+
+    if let Some(compose) = &req.compose {
+        let mut t = toml::Table::new();
+        t.insert("default_mode".into(), toml::Value::String(compose.default_mode.clone()));
+        t.insert("sync_mode".into(), toml::Value::String(compose.sync_mode.clone()));
+        t.insert("button_labels".into(), toml::Value::String(compose.button_labels.clone()));
+        doc.insert("compose".into(), toml::Value::Table(t));
+        wrote.push("compose");
+    }
+
+    if let Some(mode) = &req.network_mode {
+        let network = doc
+            .entry("network")
+            .or_insert_with(|| toml::Value::Table(toml::Table::new()));
+        if let toml::Value::Table(t) = network {
+            t.insert("mode".into(), toml::Value::String(mode.clone()));
+            wrote.push("network");
+        }
+    }
+
+    if wrote.is_empty() {
+        return Ok(Json(json!({
+            "updated": false,
+            "message": "Nothing to snapshot — pass at least one of include_relays/editor/compose/network_mode."
+        })));
+    }
 
     let output = toml::to_string_pretty(&doc)
         .map_err(|e| EngineError::Config(format!("Failed to serialize config: {e}")))?;
@@ -1730,9 +1793,38 @@ pub async fn config_snapshot_handler(
 
     Ok(Json(json!({
         "updated": true,
-        "count": urls.len(),
+        "wrote": wrote,
+        "relay_count": relay_count,
         "path": config_path.display().to_string(),
-        "message": format!("Wrote {} relays to initial_relays in {}", urls.len(), config_path.display()),
+        "message": format!("Saved settings ({}) to {}", wrote.join(", "), config_path.display()),
+    })))
+}
+
+/// GET /api/v1/settings — return editor/compose/network defaults from the
+/// current config.toml so the web can hydrate state at boot instead of
+/// starting on hard-coded defaults that diverge from the user's last save.
+pub async fn settings_handler(
+    State(engine): State<AppState>,
+) -> Result<Json<Value>, EngineError> {
+    let config_path = engine.config_path();
+    let cfg = match config_path {
+        Some(p) => crate::config::Config::from_file(p).unwrap_or_default(),
+        None => crate::config::Config::default(),
+    };
+    Ok(Json(json!({
+        "editor": {
+            "line_numbers": cfg.editor.line_numbers,
+            "vim_mode": cfg.editor.vim_mode,
+            "insert_mode": cfg.editor.insert_mode,
+        },
+        "compose": {
+            "default_mode": cfg.compose.default_mode,
+            "sync_mode": cfg.compose.sync_mode,
+            "button_labels": cfg.compose.button_labels,
+        },
+        "network": {
+            "mode": cfg.network.mode,
+        },
     })))
 }
 

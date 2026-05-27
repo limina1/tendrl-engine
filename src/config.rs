@@ -308,6 +308,68 @@ pub struct Config {
     /// Network mode settings
     #[serde(default)]
     pub network: NetworkConfig,
+    /// Editor UI defaults (line numbers, vim mode, insert behaviour)
+    #[serde(default)]
+    pub editor: EditorConfig,
+    /// Composer UI defaults (edit mode, sync mode, button labels)
+    #[serde(default)]
+    pub compose: ComposeConfig,
+}
+
+/// Editor surface defaults. Mirrors the in-memory state in
+/// `web/src/lib/state.svelte.ts`; persisted via the settings page's
+/// "Save settings" so it survives across reloads / fresh machines.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EditorConfig {
+    #[serde(default = "default_line_numbers")]
+    pub line_numbers: bool,
+    #[serde(default = "default_vim_mode")]
+    pub vim_mode: bool,
+    /// `"cursor"` (insert at caret) or `"append"` (append at bottom).
+    #[serde(default = "default_insert_mode")]
+    pub insert_mode: String,
+}
+
+fn default_line_numbers() -> bool { true }
+fn default_vim_mode() -> bool { true }
+fn default_insert_mode() -> String { "cursor".to_string() }
+
+impl Default for EditorConfig {
+    fn default() -> Self {
+        Self {
+            line_numbers: default_line_numbers(),
+            vim_mode: default_vim_mode(),
+            insert_mode: default_insert_mode(),
+        }
+    }
+}
+
+/// Composer surface defaults.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ComposeConfig {
+    /// `"full"` or `"plain"`.
+    #[serde(default = "default_compose_mode")]
+    pub default_mode: String,
+    /// `"reactive"` or `"explicit"`.
+    #[serde(default = "default_sync_mode")]
+    pub sync_mode: String,
+    /// `"icon"` or `"text"`.
+    #[serde(default = "default_button_labels")]
+    pub button_labels: String,
+}
+
+fn default_compose_mode() -> String { "full".to_string() }
+fn default_sync_mode() -> String { "reactive".to_string() }
+fn default_button_labels() -> String { "icon".to_string() }
+
+impl Default for ComposeConfig {
+    fn default() -> Self {
+        Self {
+            default_mode: default_compose_mode(),
+            sync_mode: default_sync_mode(),
+            button_labels: default_button_labels(),
+        }
+    }
 }
 
 /// Network mode configuration

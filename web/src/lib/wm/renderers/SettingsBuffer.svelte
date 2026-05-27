@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { getAppState } from '$lib/state.svelte';
 	import { detectNip07 } from '$lib/identity/signer';
+	import * as api from '$lib/api';
 	import type { Buffer } from '../types';
 	import type { EditorInsertMode, SyncMode, ButtonLabels, ComposeDefaultMode } from '$lib/types';
 
@@ -43,6 +44,42 @@
 		if (!v) return;
 		await app.handleIdentityUnlock(v);
 		passwordInput = '';
+	}
+
+	const networkMode = $derived(app.networkStatus?.mode ?? 'auto');
+	async function setNetworkMode(mode: 'auto' | 'confirm') {
+		if (networkMode === mode) return;
+		await app.handleSetNetworkMode(mode);
+	}
+
+	let saving = $state(false);
+	async function saveSettings() {
+		saving = true;
+		try {
+			const resp = await api.snapshotConfig({
+				include_relays: true,
+				editor: {
+					line_numbers: app.editorLineNumbers,
+					vim_mode: app.editorVimMode,
+					insert_mode: app.editorInsertMode
+				},
+				compose: {
+					default_mode: app.composeDefaultMode,
+					sync_mode: app.syncMode,
+					button_labels: app.buttonLabels
+				},
+				network_mode: app.networkStatus?.mode ?? 'auto'
+			});
+			app.pushToast(resp.message, 'success', 3500);
+		} catch (e) {
+			app.pushToast(
+				`Save failed: ${e instanceof Error ? e.message : String(e)}`,
+				'error',
+				5000
+			);
+		} finally {
+			saving = false;
+		}
 	}
 </script>
 
@@ -281,6 +318,41 @@
 			</div>
 		</div>
 	</div>
+
+	<div class="settings-group">
+		<div class="settings-group-title">Network</div>
+
+		<div class="settings-row">
+			<span class="settings-label">Default mode</span>
+			<div class="radio-group">
+				{#each ['auto', 'confirm'] as opt (opt)}
+					<label class="radio">
+						<input
+							type="radio"
+							name="network-mode"
+							value={opt}
+							checked={networkMode === opt}
+							onchange={() => setNetworkMode(opt as 'auto' | 'confirm')}
+						/>
+						<span>{opt}</span>
+					</label>
+				{/each}
+			</div>
+		</div>
+		<p class="settings-hint">
+			<strong>auto</strong>: relay fetches run without confirmation.<br />
+			<strong>confirm</strong>: every relay fetch raises a confirm modal — useful when bandwidth, privacy, or rate-limits matter.
+		</p>
+	</div>
+
+	<div class="settings-save-bar">
+		<button class="settings-save" onclick={saveSettings} disabled={saving} title="Write the current identity source · editor · compose · network · relays into config.toml so the next boot starts here. relays.json + in-memory state stay authoritative at runtime.">
+			{saving ? 'Saving…' : 'Save settings'}
+		</button>
+		<span class="settings-hint">
+			Writes editor / compose / network mode / current relay set into <code>config.toml</code>. Survives restarts and is portable to another machine.
+		</span>
+	</div>
 </div>
 
 <style>
@@ -438,5 +510,38 @@
 
 	.mono {
 		font-family: var(--font-mono);
+	}
+
+	/* Pinned save bar at the bottom of the scrollable settings panel
+	   so the action is always reachable even when the page is long. */
+	.settings-save-bar {
+		display: flex;
+		align-items: center;
+		gap: 10px;
+		padding: 12px 14px;
+		border-top: 1px solid var(--panel-border);
+		margin-top: 12px;
+		position: sticky;
+		bottom: 0;
+		background: var(--panel-bg, var(--bg));
+		z-index: 1;
+	}
+	.settings-save {
+		font-size: var(--t-sm);
+		padding: 6px 14px;
+		font-family: var(--font-mono);
+		background: color-mix(in srgb, var(--state-online) 16%, transparent);
+		border: 1px solid color-mix(in srgb, var(--state-online) 45%, transparent);
+		color: var(--state-online);
+		cursor: pointer;
+		border-radius: var(--r-sm);
+		font-weight: 600;
+	}
+	.settings-save:hover:not([disabled]) {
+		background: color-mix(in srgb, var(--state-online) 26%, transparent);
+	}
+	.settings-save[disabled] {
+		opacity: 0.5;
+		cursor: not-allowed;
 	}
 </style>

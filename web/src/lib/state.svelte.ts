@@ -2663,6 +2663,21 @@ function _createAppState() {
 		try {
 			networkStatus = await api.getNetworkStatus();
 		} catch {}
+		// Hydrate editor / compose defaults from config.toml so a reload
+		// reflects the user's last-saved settings (instead of resetting
+		// to hard-coded defaults). Settings page's "Save settings" writes
+		// these back via the snapshot endpoint.
+		try {
+			const s = await api.getSettings();
+			editorLineNumbers = s.editor.line_numbers;
+			editorVimMode = s.editor.vim_mode;
+			editorInsertMode = s.editor.insert_mode as EditorInsertMode;
+			composeDefaultMode = s.compose.default_mode as ComposeDefaultMode;
+			syncMode = s.compose.sync_mode as SyncMode;
+			buttonLabels = s.compose.button_labels as ButtonLabels;
+		} catch {
+			// API not yet available — keep hard-coded defaults.
+		}
 		try {
 			chat = await api.getChat();
 		} catch {
