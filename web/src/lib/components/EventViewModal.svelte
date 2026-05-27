@@ -10,6 +10,8 @@
 		stripNostrPrefix
 	} from '$lib/nostr/nip19';
 	import * as api from '$lib/api';
+	import { getRelayInfo, normalizeRelayUrl, type Nip11Status } from '$lib/relay/nip11';
+	import { getActiveStore } from '$lib/wm/buffer-store.svelte';
 
 	let {
 		event,
@@ -487,6 +489,72 @@
 	const tagChips = $derived(
 		n.tags.filter((t) => t[0] !== 'title' && t[0] !== 'd')
 	);
+
+	// ===== Found on =====
+	// Relays this event has been seen on / broadcast to. The modal can't
+	// open without the event being locally cached, so the local-cache
+	// chip is always present. Network relays come from `event.relays`
+	// (only on full `NostrEvent`, not on `SearchResult` — that's by
+	// design per the provenance plan). Insertion order from nostrdb is
+	// preserved; no sort.
+	const eventRelays = $derived(
+		'event_id' in event ? [] : (event as NostrEvent).relays ?? []
+	);
+	const RELAY_COLLAPSE_THRESHOLD = 5;
+	let relaysExpanded = $state(false);
+	const visibleRelays = $derived(
+		relaysExpanded || eventRelays.length <= RELAY_COLLAPSE_THRESHOLD
+			? eventRelays
+			: eventRelays.slice(0, RELAY_COLLAPSE_THRESHOLD)
+	);
+	const hiddenRelayCount = $derived(
+		Math.max(0, eventRelays.length - visibleRelays.length)
+	);
+
+	// NIP-11 lookups for each chip — populated lazily on hover/focus so we
+	// don't fire one fetch per relay just to render the modal. The
+	// `getRelayInfo` helper dedups across components within the tab.
+	let relayInfo: Record<string, Nip11Status> = $state({});
+	function primeRelayInfo(url: string) {
+		const key = normalizeRelayUrl(url);
+		if (relayInfo[key]?.state === 'loaded' || relayInfo[key]?.state === 'loading') return;
+		const s = getRelayInfo(url, (next) => {
+			relayInfo = { ...relayInfo, [key]: next };
+		});
+		relayInfo = { ...relayInfo, [key]: s };
+	}
+	function relayTooltip(url: string): string {
+		const status = relayInfo[normalizeRelayUrl(url)];
+		if (!status || status.state === 'pending') return url;
+		if (status.state === 'loading') return `${url}\n(loading NIP-11…)`;
+		if (status.state === 'failed') return `${url}\n(NIP-11: ${status.error})`;
+		const doc = status.doc;
+		const parts: string[] = [url];
+		if (doc.name) parts.push(doc.name);
+		if (doc.description) parts.push(doc.description);
+		if (doc.software) parts.push(doc.software + (doc.version ? ` ${doc.version}` : ''));
+		return parts.join('\n');
+	}
+	// Open the relays buffer (same surface as the mode-line "relays" icon)
+	// so the user gets the full NIP-11 detail + read/write toggle row for
+	// the clicked relay. Closes the modal afterwards — the relays buffer
+	// occupies the work slot.
+	function openRelayInfo(_url: string) {
+		try {
+			getActiveStore().openBuffer({
+				className: 'work',
+				buffer: { id: 'relays', kind: 'relays', label: 'relays', kicker: 'config' }
+			});
+			onclose();
+		} catch {
+			// No active store yet (early boot, design route) — fall back to
+			// copying the URL so the user can paste it into config.
+			copyText(_url, 'relay url');
+		}
+	}
+	function shortenRelay(url: string): string {
+		return url.replace(/^wss?:\/\//, '').replace(/\/$/, '');
+	}
 </script>
 
 <!-- svelte-ignore a11y_click_events_have_key_events -->
@@ -675,6 +743,69 @@
 					</button>
 				</div>
 			</div>
+		</section>
+
+		<!-- FOUND ON — relays this event id has been seen on or successfully
+		     broadcast to, plus a "Local cache" chip (always shown — the modal
+		     can't open without the event being locally cached). Built from
+		     `event.relays` (only present on full NostrEvent; absent on
+		     SearchResult, deliberately). Order matches nostrdb insertion;
+		     no sort. Collapsed past five chips with an "expand all" link. -->
+		<section class="evm__section">
+			<h3 class="evm__heading">
+				Found on
+				<span class="evm__heading-meta">
+					{#if eventRelays.length === 0}
+						(local cache only)
+					{:else}
+						({eventRelays.length + 1} {eventRelays.length + 1 === 1 ? 'source' : 'sources'})
+					{/if}
+				</span>
+			</h3>
+			{#if eventRelays.length === 0}
+				<div class="evm__found-empty">
+					<span class="evm__relay-chip evm__relay-chip--local" title="Locally cached only — not seen on any relay yet">
+						<span class="evm__relay-dot"></span>
+						Local cache
+					</span>
+					<span class="evm__placeholder">Only in local cache — not seen on any relay yet.</span>
+				</div>
+			{:else}
+				<div class="evm__found-row">
+					<span
+						class="evm__relay-chip evm__relay-chip--local"
+						title="This event is in the local nostrdb cache"
+					>
+						<span class="evm__relay-dot"></span>
+						Local cache
+					</span>
+					{#each visibleRelays as url (url)}
+						<button
+							class="evm__relay-chip evm__relay-chip--remote"
+							onclick={() => openRelayInfo(url)}
+							onmouseenter={() => primeRelayInfo(url)}
+							onfocus={() => primeRelayInfo(url)}
+							title={relayTooltip(url)}
+						>
+							<span class="evm__relay-dot evm__relay-dot--remote"></span>
+							{shortenRelay(url)}
+						</button>
+					{/each}
+					{#if hiddenRelayCount > 0}
+						<button
+							class="evm__relay-more"
+							onclick={() => (relaysExpanded = true)}
+							title="Show every relay this event has been seen on"
+						>+ {hiddenRelayCount} more</button>
+					{:else if relaysExpanded && eventRelays.length > RELAY_COLLAPSE_THRESHOLD}
+						<button
+							class="evm__relay-more"
+							onclick={() => (relaysExpanded = false)}
+							title="Collapse to first {RELAY_COLLAPSE_THRESHOLD}"
+						>show fewer</button>
+					{/if}
+				</div>
+			{/if}
 		</section>
 
 		<section class="evm__section">
@@ -1194,6 +1325,78 @@
 	.evm__chip--p .evm__chip-key { color: var(--id-remote); }
 	.evm__chip--t .evm__chip-key,
 	.evm__chip--d .evm__chip-key { color: var(--cyan); }
+
+	/* Found on — relay provenance row. Local-cache chip is rendered
+	   distinctly (no host, --id-local tint) from the network-relay chips.
+	   Insertion order from nostrdb is preserved; no sort. */
+	.evm__found-row {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 6px;
+	}
+	.evm__found-empty {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 8px;
+	}
+	.evm__relay-chip {
+		display: inline-flex;
+		align-items: center;
+		gap: 6px;
+		font-family: var(--font-mono);
+		font-size: 0.72rem;
+		padding: 2px 8px;
+		border-radius: var(--r-sm);
+		border: 1px solid var(--border);
+		background: none;
+		color: var(--fg);
+		cursor: default;
+		max-width: 100%;
+	}
+	.evm__relay-chip--remote {
+		cursor: pointer;
+		border-color: color-mix(in srgb, var(--id-remote, var(--id-yours)) 35%, transparent);
+		background: color-mix(in srgb, var(--id-remote, var(--id-yours)) 8%, transparent);
+		color: var(--id-remote, var(--fg));
+	}
+	.evm__relay-chip--remote:hover {
+		border-color: var(--id-remote, var(--id-yours));
+		background: color-mix(in srgb, var(--id-remote, var(--id-yours)) 18%, transparent);
+	}
+	/* Local-cache chip — distinct token so it never looks like a network
+	   relay. Falls back to id-imported / id-yours if the local token is
+	   missing in a given theme. */
+	.evm__relay-chip--local {
+		border-color: color-mix(in srgb, var(--id-local, var(--id-imported, var(--id-yours))) 45%, transparent);
+		background: color-mix(in srgb, var(--id-local, var(--id-imported, var(--id-yours))) 10%, transparent);
+		color: var(--id-local, var(--id-imported, var(--fg)));
+	}
+	.evm__relay-dot {
+		display: inline-block;
+		width: 6px;
+		height: 6px;
+		border-radius: 50%;
+		background: var(--id-local, var(--id-imported, var(--fg-muted)));
+	}
+	.evm__relay-dot--remote {
+		background: var(--id-remote, var(--id-yours));
+	}
+	.evm__relay-more {
+		font-family: var(--font-mono);
+		font-size: 0.7rem;
+		padding: 2px 6px;
+		border-radius: var(--r-sm);
+		background: none;
+		border: 1px dashed var(--border);
+		color: var(--fg-muted);
+		cursor: pointer;
+	}
+	.evm__relay-more:hover {
+		color: var(--fg);
+		border-color: var(--fg-muted);
+	}
 
 	.evm__raw-toggle {
 		background: none;
