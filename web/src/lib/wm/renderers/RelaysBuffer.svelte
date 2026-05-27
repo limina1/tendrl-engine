@@ -68,6 +68,10 @@
 	// Why the encrypted notice was triggered — distinguishes "no extension
 	// reachable" from "extension refused / wrong identity / errored".
 	let pullDecryptReason = $state<'no-signer' | 'failed' | null>(null);
+	// Per-kind decrypt error message so a user with a partial decrypt
+	// (e.g. allowed kind 10088 but denied 10086) can see which failed
+	// and why. Cleared with the pulled state.
+	let pullDecryptErrors = $state<Record<number, string>>({});
 
 	async function load(force = false) {
 		loading = true;
@@ -203,6 +207,7 @@
 		pullKindResults = null;
 		pullFetchedCount = 0;
 		pullDecryptReason = null;
+		pullDecryptErrors = {};
 		try {
 			// 1. Pull all four relay-list kinds from the seed relays.
 			//    10002 = read/write (NIP-65, public `r` tags).
@@ -275,16 +280,34 @@
 								pubkey,
 								newest.preview
 							);
-							const parsed = JSON.parse(plaintext) as string[][];
-							privateRelayTags = parsed.filter(
-								(t) => Array.isArray(t) && t[0] === 'relay' && typeof t[1] === 'string'
+							let parsed: unknown;
+							try {
+								parsed = JSON.parse(plaintext);
+							} catch (parseErr) {
+								throw new Error(
+									`decrypted but not valid JSON: ${(parseErr as Error).message}`
+								);
+							}
+							if (!Array.isArray(parsed)) {
+								throw new Error('decrypted JSON is not an array of tags');
+							}
+							privateRelayTags = (parsed as unknown[]).filter(
+								(t): t is string[] =>
+									Array.isArray(t) && t[0] === 'relay' && typeof t[1] === 'string'
 							);
-						} catch {
+						} catch (err) {
 							decryptFailed = true;
+							const msg = err instanceof Error ? err.message : String(err);
+							pullDecryptErrors = { ...pullDecryptErrors, [kind]: msg };
+							console.warn(`nip44 decrypt failed for kind ${kind}:`, err);
 						}
 					} else {
 						// No nip44 path available → can't decrypt.
 						decryptFailed = true;
+						pullDecryptErrors = {
+							...pullDecryptErrors,
+							[kind]: 'no NIP-07 extension reachable'
+						};
 					}
 				}
 
@@ -371,6 +394,7 @@
 		pullKindResults = null;
 		pullFetchedCount = 0;
 		pullDecryptReason = null;
+		pullDecryptErrors = {};
 	}
 
 	const pulledByKind = $derived.by(() => {
@@ -636,10 +660,20 @@
 					{#if pullDecryptReason === 'no-signer'}
 						No NIP-07 extension reachable — install one (nos2x, Alby, …) that exposes <code>nip44.decrypt</code>, then retry. Engine-side decrypt with ncryptsec is queued as T32.
 					{:else}
-						Extension is reachable but didn't return plaintext — could be a denied prompt, a different identity, or the extension doesn't support nip44 on this key.
+						Extension is reachable but didn't return plaintext.
 						<button class="pull-add" onclick={pullFromProfile}>Retry decrypt</button>
 					{/if}
 				</p>
+				{#if Object.keys(pullDecryptErrors).length > 0}
+					<dl class="decrypt-errors">
+						{#each pullEncryptedKinds as kind (kind)}
+							{#if pullDecryptErrors[kind]}
+								<dt>kind {kind}</dt>
+								<dd>{pullDecryptErrors[kind]}</dd>
+							{/if}
+						{/each}
+					</dl>
+				{/if}
 			{/if}
 		</div>
 	{/if}
@@ -1295,6 +1329,16 @@
 	.pull-diag--ok { color: var(--state-online); }
 	.pull-diag--enc { color: var(--id-draft); }
 	.pull-diag--missing { color: var(--base5); }
+	.decrypt-errors {
+		display: grid;
+		grid-template-columns: auto 1fr;
+		gap: 2px 10px;
+		margin: 4px 0 0;
+		font-family: var(--font-mono);
+		font-size: 0.7rem;
+	}
+	.decrypt-errors dt { color: var(--id-draft); }
+	.decrypt-errors dd { color: var(--base6); margin: 0; }
 	.pulled-row {
 		display: flex;
 		align-items: center;
