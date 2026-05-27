@@ -3888,6 +3888,11 @@ pub struct UseSourceRequest {
     /// Required when source is nip07 / nip46 (returned by /signer-register).
     #[serde(default)]
     pub signer_id: Option<String>,
+    /// Hex pubkey of the external signer. When provided alongside an
+    /// nip07/nip46 source, the session surfaces it as the active
+    /// pubkey via /identity status.
+    #[serde(default)]
+    pub pubkey: Option<String>,
 }
 
 /// POST /api/v1/identity/use — switch the active signing source.
@@ -3915,7 +3920,14 @@ pub async fn identity_use_source_handler(
         }
     };
     let mut session = identity.lock().unwrap();
-    session.set_source(new_source);
+    match (&new_source, req.pubkey.as_ref()) {
+        (
+            crate::identity::IdentitySource::Nip07 { .. }
+            | crate::identity::IdentitySource::Nip46 { .. },
+            Some(pk),
+        ) => session.set_source_with_pubkey(new_source, pk.clone()),
+        _ => session.set_source(new_source),
+    }
     Ok(Json(session.status()))
 }
 

@@ -631,6 +631,10 @@ pub struct IdentitySession {
     unsigned_event_ids: Vec<String>,
     /// Which signer to route through. Defaults to `Engine`.
     source: IdentitySource,
+    /// Pubkey for the active external signer (nip07 / nip46) so status
+    /// can surface a non-null pubkey when source != engine. Set by
+    /// `set_source_with_pubkey`; cleared when switching back to engine.
+    external_pubkey: Option<String>,
 }
 
 impl Default for IdentitySession {
@@ -644,6 +648,7 @@ impl IdentitySession {
         Self {
             ncryptsec: None,
             pubkey: None,
+            external_pubkey: None,
             secret: None,
             last_activity: None,
             lock_timeout: Duration::from_secs(15 * 60),
@@ -658,8 +663,21 @@ impl IdentitySession {
     }
 
     /// Switch the active signer source. Used by `POST /identity/use`.
+    /// Clears any external pubkey — pair with `set_source_with_pubkey`
+    /// when switching to a nip07/nip46 source so status() can return a
+    /// non-null pubkey for the external signer.
     pub fn set_source(&mut self, source: IdentitySource) {
         self.source = source;
+        self.external_pubkey = None;
+    }
+
+    /// Switch source AND record the external signer's pubkey. For
+    /// nip07/nip46 sources the registered signer knows its own pubkey;
+    /// the web hands it through on `/identity/use` so status() can
+    /// surface it as the current identity's pubkey.
+    pub fn set_source_with_pubkey(&mut self, source: IdentitySource, pubkey: String) {
+        self.source = source;
+        self.external_pubkey = Some(pubkey);
     }
 
     /// Store an ncryptsec and transition to locked state.
@@ -791,10 +809,32 @@ impl IdentitySession {
         } else {
             None
         };
+        // When the active source is an external signer (nip07/nip46),
+        // surface its pubkey rather than the (likely None) ncryptsec
+        // pubkey. Engine source falls through to self.pubkey as before.
+        let effective_pubkey = match self.source {
+            IdentitySource::Engine => self.pubkey.clone(),
+            IdentitySource::Nip07 { .. } | IdentitySource::Nip46 { .. } => {
+                self.external_pubkey.clone().or_else(|| self.pubkey.clone())
+            }
+        };
+        // External signers are always "live" — the registered signer
+        // either exists (state = unlocked from the engine's POV) or
+        // doesn't (callers should re-register). Report "unlocked" so
+        // the UI doesn't treat nip07 as "no identity".
+        let effective_state = if matches!(
+            self.source,
+            IdentitySource::Nip07 { .. } | IdentitySource::Nip46 { .. }
+        ) && self.external_pubkey.is_some()
+        {
+            "unlocked"
+        } else {
+            state
+        };
         IdentityStatusResponse {
-            state: state.to_string(),
-            pubkey: self.pubkey.clone(),
-            npub: self.pubkey.as_deref().map(abbreviate_pubkey_hex),
+            state: effective_state.to_string(),
+            pubkey: effective_pubkey.clone(),
+            npub: effective_pubkey.as_deref().map(abbreviate_pubkey_hex),
             seconds_remaining,
             unsigned_count: self.unsigned_event_ids.len(),
             lock_timeout_minutes: self.lock_timeout.as_secs() / 60,

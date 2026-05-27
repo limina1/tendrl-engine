@@ -106,7 +106,8 @@ export async function registerNip07Signer(): Promise<() => void> {
 	});
 
 	// Switch the engine's active source to point at this registration.
-	await api.useIdentitySource({ source: 'nip07', signer_id: reg.signer_id });
+	// Pass pubkey so /identity status surfaces it instead of `null`.
+	await api.useIdentitySource({ source: 'nip07', signer_id: reg.signer_id, pubkey });
 
 	const url = `/api/v1/identity/signer-channel?token=${encodeURIComponent(reg.token)}`;
 	const es = new EventSource(url);

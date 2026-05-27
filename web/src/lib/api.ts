@@ -232,6 +232,9 @@ export function registerSigner(req: SignerRegisterRequest) {
 export interface UseSourceRequest {
 	source: 'engine' | 'nip07' | 'nip46';
 	signer_id?: string;
+	/** External signer pubkey (hex). Pass when source is nip07/nip46
+	 *  so /identity status surfaces a non-null pubkey. */
+	pubkey?: string;
 }
 
 export function useIdentitySource(req: UseSourceRequest) {
