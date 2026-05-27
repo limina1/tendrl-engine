@@ -288,13 +288,25 @@
 				if (kind !== 10002 && (newest.preview?.length ?? 0) > 0) {
 					decryptAttempted = true;
 					if (canDecrypt) {
+						// `newest.preview` is truncated to 200 chars in the
+						// engine's SearchResult (search.rs:492); decrypt
+						// needs the FULL event content. Fetch by id.
+						let fullContent: string;
+						try {
+							const fullEvent = (await api.getEvent(newest.event_id)).event as {
+								content?: string;
+							};
+							fullContent = fullEvent?.content ?? newest.preview;
+						} catch {
+							fullContent = newest.preview;
+						}
 						// Mirror Amethyst's EncryptedInfo (nip04Dm/crypto):
 						// strip the `-null` suffix some clients tack on, then
 						// detect NIP-04 by `?iv=` at *position* length-28
 						// (24 base64 chars of IV + 4 for "?iv="). A loose
 						// `.includes('?iv=')` would false-positive on NIP-44
 						// base64 that happens to contain those chars.
-						const raw = newest.preview;
+						const raw = fullContent;
 						const ciphertext = raw.endsWith('-null') ? raw.slice(0, -5) : raw;
 						const l = ciphertext.length;
 						const looksNip04 =
