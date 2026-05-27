@@ -262,7 +262,15 @@
 			>
 				Pull from your profile
 			</button>
-			<span class="pull-hint">Reads your kind 10002 from <code>initial_relays</code>; you choose what to import.</span>
+			{#if !app.myPubkey}
+				<span class="pull-hint pull-hint--warn">Sign in first to fetch your relay list.</span>
+			{:else if initialRelays.length === 0}
+				<span class="pull-hint pull-hint--warn">
+					No <code>initial_relays</code> configured. Add a few in <code>config.toml</code> under <code>[relay]</code> (e.g. <code>initial_relays = ["wss://relay.damus.io", "wss://nos.lol"]</code>) and restart — or add relays directly below.
+				</span>
+			{:else}
+				<span class="pull-hint">Reads your kind 10002 from <code>initial_relays</code> ({initialRelays.length} configured); you choose what to import.</span>
+			{/if}
 		{:else if pulling}
 			<span class="pull-status">Fetching your relay list…</span>
 		{:else if pullError}
@@ -811,6 +819,10 @@
 		font-size: var(--t-xs);
 		color: var(--base5);
 		font-style: italic;
+	}
+	.pull-hint--warn {
+		color: var(--id-draft);
+		font-style: normal;
 	}
 	.pull-hint code {
 		font-family: var(--font-mono);
