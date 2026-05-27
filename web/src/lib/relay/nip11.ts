@@ -60,8 +60,39 @@ export type Nip11Status =
 
 type Envelope = { url: string; status: Nip11Status };
 
+/**
+ * Normalize a relay URL to its canonical form. Mirrors the Rust
+ * `normalize_relay_url` helper so cross-language comparisons match.
+ *
+ * - Bare hostname → prepend `wss://`
+ * - Lowercase scheme + host
+ * - Strip trailing slash on root path
+ * - Strip default ports (443 for wss, 80 for ws)
+ * - Preserve non-root path/query/fragment
+ * - Preserve explicit `ws://` (don't force wss)
+ *
+ * Returns the trimmed input unchanged if it can't be parsed as a URL —
+ * never drops data.
+ */
 export function normalizeRelayUrl(url: string): string {
-	return url.trim().toLowerCase().replace(/\/+$/, '');
+	const s = url.trim();
+	if (!s) return '';
+	const withScheme = s.includes('://') ? s : `wss://${s}`;
+	let parsed: URL;
+	try {
+		parsed = new URL(withScheme);
+	} catch {
+		return s;
+	}
+	const scheme = parsed.protocol.replace(/:$/, '').toLowerCase();
+	if (scheme !== 'ws' && scheme !== 'wss') return s;
+	const host = parsed.hostname.toLowerCase();
+	const defaultPort = scheme === 'wss' ? '443' : '80';
+	const port = parsed.port && parsed.port !== defaultPort ? `:${parsed.port}` : '';
+	const path = parsed.pathname === '/' ? '' : parsed.pathname;
+	const query = parsed.search;
+	const fragment = parsed.hash;
+	return `${scheme}://${host}${port}${path}${query}${fragment}`;
 }
 
 async function fetchOnce(url: string, force = false): Promise<Nip11Status> {

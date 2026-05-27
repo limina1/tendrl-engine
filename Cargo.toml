@@ -59,6 +59,7 @@ hex = "0.4"
 sha2 = "0.10"
 async-trait = "0.1"
 nanoid = "0.4"
+url = "2"
 
 # Identity/key management
 keyring = "3"

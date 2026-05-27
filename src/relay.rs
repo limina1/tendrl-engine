@@ -87,9 +87,19 @@ pub async fn fetch_with_filters(
                                     // Ingest into nostrdb for caching, tagging
                                     // the source relay so `note.relays()`
                                     // records where the event was seen.
+                                    // Normalize the URL so two relays differing
+                                    // only in trailing slash / case / default
+                                    // port don't surface as duplicate chips.
+                                    let normalized =
+                                        crate::relay_url::normalize_relay_url(relay_url);
+                                    let tag_url = if normalized.is_empty() {
+                                        relay_url
+                                    } else {
+                                        normalized.as_str()
+                                    };
                                     if let Err(e) = ndb.process_event_with(
                                         &text,
-                                        IngestMetadata::new().client(false).relay(relay_url),
+                                        IngestMetadata::new().client(false).relay(tag_url),
                                     ) {
                                         debug!("Failed to ingest event: {}", e);
                                     }

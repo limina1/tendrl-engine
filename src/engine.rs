@@ -401,16 +401,20 @@ impl Engine {
     /// an `Err` because the in-memory mutation still succeeded — callers
     /// don't currently check a Result here.
     pub fn add_relay(&mut self, set: &str, url: &str) {
+        let url = crate::relay_url::normalize_relay_url(url);
+        if url.is_empty() {
+            return;
+        }
         let urls = match set {
             "general" => &mut self.relay_config.general.urls,
             "publish" => &mut self.relay_config.publish.urls,
             "fetch" => &mut self.relay_config.fetch.urls,
             _ => return,
         };
-        if urls.iter().any(|u| u == url) {
+        if urls.iter().any(|u| u == &url) {
             return;
         }
-        urls.push(url.to_string());
+        urls.push(url.clone());
         // Persist to relays.json. Rebuild a RelaySets snapshot from the
         // live config so general/fetch/publish stay in sync on disk.
         let snapshot = RelaySets {
@@ -426,6 +430,10 @@ impl Engine {
     /// Remove a relay URL from a working set. Mirror of `add_relay` —
     /// mutates the in-memory config and writes through to `relays.json`.
     pub fn remove_relay(&mut self, set: &str, url: &str) {
+        let url = crate::relay_url::normalize_relay_url(url);
+        if url.is_empty() {
+            return;
+        }
         let urls = match set {
             "general" => &mut self.relay_config.general.urls,
             "publish" => &mut self.relay_config.publish.urls,
@@ -433,7 +441,7 @@ impl Engine {
             _ => return,
         };
         let before = urls.len();
-        urls.retain(|u| u != url);
+        urls.retain(|u| u != &url);
         if urls.len() == before {
             return;
         }
@@ -1023,11 +1031,19 @@ impl Engine {
     /// event id and simply appends the relay to the existing note's relay set.
     /// The event must carry a valid signature (relay-form ingest verifies it).
     pub fn record_event_relay(&self, event_json: &str, relay_url: &str) -> Result<()> {
+        // Normalize so two URLs differing in trailing slash / case /
+        // default port collapse to a single chip in the provenance UI.
+        let normalized = crate::relay_url::normalize_relay_url(relay_url);
+        let tag_url = if normalized.is_empty() {
+            relay_url
+        } else {
+            normalized.as_str()
+        };
         let wrapped = format!(r#"["EVENT","tendrl-relay-meta",{}]"#, event_json);
         self.ndb
             .process_event_with(
                 &wrapped,
-                IngestMetadata::new().client(false).relay(relay_url),
+                IngestMetadata::new().client(false).relay(tag_url),
             )
             .map_err(|e| EngineError::Database(format!("Failed to record relay metadata: {e}")))
     }
@@ -2390,8 +2406,10 @@ mod tests {
             .iter()
             .map(|v| v.as_str().unwrap().to_string())
             .collect();
+        // record_event_relay normalizes the URL (strips the trailing slash)
+        // before tagging the note, so provenance reflects the canonical form.
         assert!(
-            relays.iter().any(|r| r == "wss://relay.example/"),
+            relays.iter().any(|r| r == "wss://relay.example"),
             "expected relay A in provenance, got {:?}",
             relays
         );
@@ -2414,8 +2432,8 @@ mod tests {
             .map(|v| v.as_str().unwrap().to_string())
             .collect();
         assert!(
-            relays.iter().any(|r| r == "wss://relay.example/")
-                && relays.iter().any(|r| r == "wss://relay.other/"),
+            relays.iter().any(|r| r == "wss://relay.example")
+                && relays.iter().any(|r| r == "wss://relay.other"),
             "expected both relays after second attribution, got {:?}",
             relays
         );

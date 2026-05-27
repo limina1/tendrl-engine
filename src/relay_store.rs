@@ -48,13 +48,24 @@ pub struct RelaySets {
 
 impl RelaySets {
     /// Seed all three sets from the bootstrap `initial_relays` list.
-    /// Used on first boot when no `relays.json` exists yet.
+    /// Used on first boot when no `relays.json` exists yet. URLs are
+    /// normalized + deduped so the first write is already canonical.
     pub fn seed_from_initial(initial: &[String]) -> Self {
+        let normalized = normalize_dedup(initial);
         Self {
-            general: initial.to_vec(),
-            fetch: initial.to_vec(),
-            publish: initial.to_vec(),
+            general: normalized.clone(),
+            fetch: normalized.clone(),
+            publish: normalized,
         }
+    }
+
+    /// Normalize every URL in each set and drop duplicates. Idempotent —
+    /// safe to call on already-normalized sets. Called after `load()` so
+    /// any legacy disk content gets canonicalized on next save.
+    fn canonicalize(&mut self) {
+        self.general = normalize_dedup(&self.general);
+        self.fetch = normalize_dedup(&self.fetch);
+        self.publish = normalize_dedup(&self.publish);
     }
 
     /// Borrow the URL list for a named set. Returns `None` for unknown set
@@ -112,7 +123,11 @@ impl RelayStore {
             return Ok(RelaySets::default());
         }
         let raw = fs::read_to_string(&self.file_path)?;
-        let sets: RelaySets = serde_json::from_str(&raw)?;
+        let mut sets: RelaySets = serde_json::from_str(&raw)?;
+        // Canonicalize loaded URLs so historical disk state with mixed-
+        // case / trailing-slash entries collapses to one chip per relay.
+        // Caller's next save will write the cleaned form.
+        sets.canonicalize();
         Ok(sets)
     }
 
@@ -155,6 +170,24 @@ impl RelayStore {
         }
         Ok(changed)
     }
+}
+
+/// Run every URL through `crate::relay_url::normalize_relay_url`,
+/// drop empty strings, and dedupe — preserving insertion order so the
+/// resulting list reads the same way the user typed it (modulo
+/// canonicalization).
+fn normalize_dedup(urls: &[String]) -> Vec<String> {
+    let mut out = Vec::with_capacity(urls.len());
+    for u in urls {
+        let n = crate::relay_url::normalize_relay_url(u);
+        if n.is_empty() {
+            continue;
+        }
+        if !out.contains(&n) {
+            out.push(n);
+        }
+    }
+    out
 }
 
 #[cfg(test)]
