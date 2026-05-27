@@ -218,6 +218,34 @@
 		pullCreatedAt = null;
 	}
 
+	// Add a new relay via the prompt — defaults to read+write so the
+	// relay is fully active; user can toggle either side off after.
+	async function promptAdd() {
+		const raw = window.prompt('Relay URL (bare hostname OK — wss:// is added if missing):');
+		if (!raw) return;
+		const trimmed = raw.trim();
+		if (!trimmed) return;
+		// Client-side normalization for nice display; the engine
+		// normalizes again on the receiving end, so this is purely UX.
+		const url = normalizeRelayUrl(trimmed);
+		if (rows.some((r) => normalizeRelayUrl(r.url) === url)) {
+			app.pushToast(`${shorten(url)} is already configured`, 'info', 2500);
+			return;
+		}
+		try {
+			await api.addRelay('fetch', url);
+			await api.addRelay('publish', url);
+			app.pushToast(`Added ${shorten(url)} (read + write)`, 'success', 2500);
+			await load();
+		} catch (e) {
+			app.pushToast(
+				`Couldn't add ${shorten(url)}: ${e instanceof Error ? e.message : String(e)}`,
+				'error',
+				4000
+			);
+		}
+	}
+
 	let snapshotting = $state(false);
 	async function snapshotToConfig() {
 		snapshotting = true;
@@ -566,7 +594,7 @@
 		</div>
 
 		<div class="relays-footer">
-			<button class="btn-add" disabled title="Will prompt for a relay URL">+ Add relay</button>
+			<button class="btn-add" onclick={promptAdd} title="Add a new relay (defaults to read + write — toggle either off after)">+ Add relay</button>
 			<button class="btn-refresh" onclick={() => load(true)}>Refresh</button>
 			<button
 				class="btn-snapshot"
@@ -810,7 +838,6 @@
 		padding: 4px 10px;
 		font-family: var(--font-mono);
 	}
-	.btn-add[disabled],
 	.btn-snapshot[disabled] {
 		opacity: 0.5;
 		cursor: not-allowed;
