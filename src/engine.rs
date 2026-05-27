@@ -2251,4 +2251,83 @@ mod tests {
 
         assert!(response.results.len() <= 3);
     }
+
+    /// `record_event_relay` must persist the source relay against the event
+    /// id so `note.relays(txn)` (surfaced as the `relays` field on
+    /// `GET /api/v1/events/:id`) reflects it. Re-attributing the same event
+    /// from a second relay appends rather than replacing — the per-event
+    /// set is append-only and survives nostrdb's dedup.
+    ///
+    /// Mocking a real WebSocket relay round-trip would be heavy; the audit
+    /// invariant is satisfied by exercising `record_event_relay` directly,
+    /// since `relay.rs:fetch_with_filters` funnels every inbound EVENT
+    /// through the same `IngestMetadata::relay(url)` write path.
+    #[tokio::test]
+    async fn test_record_event_relay_persists_provenance() {
+        use nostrdb::FilterBuilder;
+
+        let dir = tempdir().unwrap();
+        let engine = Engine::with_config(dir.path(), &[], 1000).unwrap();
+
+        // A signed kind-1 event (built the same way as the other tests).
+        let event_json =
+            build_test_event(1, "relay provenance probe", vec![], 1_700_000_001);
+        let event_value: serde_json::Value = serde_json::from_str(&event_json).unwrap();
+        let event_id = event_value["id"].as_str().unwrap().to_string();
+
+        // Subscribe before writing so we can await processing.
+        let filter = FilterBuilder::new().kinds([1]).build();
+        let sub = engine.ndb.subscribe(&[filter]).expect("subscription");
+
+        // Record from relay A.
+        engine
+            .record_event_relay(&event_json, "wss://relay.example/")
+            .expect("record relay A");
+        let _ = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            engine.ndb.wait_for_notes(sub, 1),
+        )
+        .await
+        .expect("ndb timeout")
+        .expect("wait_for_notes");
+
+        let value = crate::query::query_by_id(&engine.ndb, &event_id)
+            .expect("query")
+            .expect("event present");
+        let relays: Vec<String> = value["relays"]
+            .as_array()
+            .expect("relays array")
+            .iter()
+            .map(|v| v.as_str().unwrap().to_string())
+            .collect();
+        assert!(
+            relays.iter().any(|r| r == "wss://relay.example/"),
+            "expected relay A in provenance, got {:?}",
+            relays
+        );
+
+        // Re-attribute via a second relay. The same event id must now carry
+        // both — nostrdb's per-event relay set is append-only.
+        engine
+            .record_event_relay(&event_json, "wss://relay.other/")
+            .expect("record relay B");
+        // Give nostrdb a moment to process the second ingest.
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+
+        let value = crate::query::query_by_id(&engine.ndb, &event_id)
+            .expect("re-query")
+            .expect("event still present");
+        let relays: Vec<String> = value["relays"]
+            .as_array()
+            .expect("relays array")
+            .iter()
+            .map(|v| v.as_str().unwrap().to_string())
+            .collect();
+        assert!(
+            relays.iter().any(|r| r == "wss://relay.example/")
+                && relays.iter().any(|r| r == "wss://relay.other/"),
+            "expected both relays after second attribution, got {:?}",
+            relays
+        );
+    }
 }
