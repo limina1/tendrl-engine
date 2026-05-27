@@ -482,6 +482,7 @@ export function getRelayConfig() {
 		publish: { urls: string[]; kinds: number[] };
 		fetch: { urls: string[]; kinds: number[] };
 		authors: string[];
+		initial_relays: string[];
 	}>('/api/v1/relays');
 }
 

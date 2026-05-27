@@ -1698,6 +1698,7 @@ pub async fn relay_config_handler(State(engine): State<AppState>) -> Json<Value>
         "publish": { "urls": rc.publish.urls, "kinds": rc.publish.kinds },
         "fetch": { "urls": rc.fetch.urls, "kinds": rc.fetch.kinds },
         "authors": rc.authors_hex(),
+        "initial_relays": rc.initial_relays,
     }))
 }
 

@@ -23,6 +23,7 @@
 	};
 
 	let rows = $state<RelayRow[]>([]);
+	let initialRelays = $state<string[]>([]);
 	let loading = $state(true);
 	let error = $state<string | null>(null);
 	let expanded = $state(new Set<string>());
@@ -32,11 +33,19 @@
 	// Per-row DOM refs so we can scroll a focused row into view when
 	// the EventViewModal hands us a URL via the relayFocus signal.
 	let rowEls: Record<string, HTMLDivElement | undefined> = {};
+	// Pulled suggestions from the user's kind 10002. Surfaced as
+	// suggestions only — never auto-applied. The user picks per relay.
+	type PulledRelay = { url: string; read: boolean; write: boolean };
+	let pulled = $state<PulledRelay[] | null>(null);
+	let pulling = $state(false);
+	let pullError = $state<string | null>(null);
+	let pullCreatedAt = $state<number | null>(null);
 
 	async function load(force = false) {
 		loading = true;
 		try {
 			const cfg = await api.getRelayConfig();
+			initialRelays = cfg.initial_relays ?? [];
 			const map = new Map<string, RelayRow>();
 			const ensure = (url: string): RelayRow => {
 				let r = map.get(url);
@@ -129,6 +138,86 @@
 		}
 	}
 
+	// Pull the user's kind 10002 (NIP-65 read/write relays) from the
+	// configured `initial_relays` and surface them as **suggestions** —
+	// never auto-applied, never re-published. The user picks per-relay
+	// what to import into their working sets. See
+	// `project_publishing_philosophy.md`.
+	async function pullFromProfile() {
+		const pubkey = app.myPubkey;
+		if (!pubkey) {
+			pullError = 'Sign in first — no pubkey to look up.';
+			return;
+		}
+		if (initialRelays.length === 0) {
+			pullError = 'No initial relays configured in config.toml. Add `initial_relays = [...]` under `[relay]` to seed.';
+			return;
+		}
+		pulling = true;
+		pullError = null;
+		try {
+			// 1. Pull the user's kind 10002 from the seed relays. Confirm-mode
+			//    will gate this; otherwise it goes through silently.
+			await api.fetchFromRelay(initialRelays, [10002], [pubkey], 5);
+			// 2. Read it back from the local cache. The newest one wins.
+			const result = await api.search(`by:${pubkey} k:10002`, 3, pubkey, 'local_only');
+			const newest = (result.results ?? []).sort(
+				(a, b) => (b.created_at ?? 0) - (a.created_at ?? 0)
+			)[0];
+			if (!newest) {
+				pullError = "No kind 10002 found on those relays for your pubkey. (If you've never published your relay list, there's nothing to pull yet.)";
+				pulled = [];
+				return;
+			}
+			pullCreatedAt = newest.created_at ?? null;
+			const entries: PulledRelay[] = (newest.tags ?? [])
+				.filter((t) => t[0] === 'r' && typeof t[1] === 'string')
+				.map((t) => {
+					const marker = (t[2] ?? '').toLowerCase();
+					return {
+						url: t[1] as string,
+						read: marker === 'read' || marker === '',
+						write: marker === 'write' || marker === ''
+					};
+				});
+			pulled = entries;
+		} catch (e) {
+			pullError = e instanceof Error ? e.message : String(e);
+		} finally {
+			pulling = false;
+		}
+	}
+
+	function rowKeyFor(url: string): string {
+		return normalizeRelayUrl(url);
+	}
+
+	function alreadyConfigured(url: string): RelayRow | undefined {
+		const key = rowKeyFor(url);
+		return rows.find((r) => rowKeyFor(r.url) === key);
+	}
+
+	async function importSuggestion(s: PulledRelay, role: 'fetch' | 'publish' | 'both') {
+		try {
+			if (role === 'fetch' || role === 'both') await api.addRelay('fetch', s.url);
+			if (role === 'publish' || role === 'both') await api.addRelay('publish', s.url);
+			app.pushToast(`Added ${shorten(s.url)} to ${role}`, 'success', 2500);
+			await load();
+		} catch (e) {
+			app.pushToast(
+				`Couldn't add ${shorten(s.url)}: ${e instanceof Error ? e.message : String(e)}`,
+				'error',
+				4000
+			);
+		}
+	}
+
+	function dismissPulled() {
+		pulled = null;
+		pullError = null;
+		pullCreatedAt = null;
+	}
+
 	function toggleExpanded(url: string) {
 		const next = new Set(expanded);
 		if (next.has(url)) next.delete(url);
@@ -155,6 +244,73 @@
 		<span>Relay configuration</span>
 		<span class="relays-hint">read/write persist (restart to apply) · auth is cosmetic</span>
 	</div>
+
+	<!-- Pull-from-profile: fetches the user's kind 10002 (NIP-65) from
+	     the configured initial_relays and surfaces it as suggestions.
+	     Suggestions never auto-apply; the user picks per relay. -->
+	<div class="pull-bar">
+		{#if !pulled && !pulling && !pullError}
+			<button
+				class="btn-pull"
+				onclick={pullFromProfile}
+				disabled={!app.myPubkey || initialRelays.length === 0}
+				title={!app.myPubkey
+					? 'Sign in first'
+					: initialRelays.length === 0
+						? 'No initial_relays in config.toml'
+						: `Fetch your published relay list (kind 10002) from ${initialRelays.length} initial relay${initialRelays.length === 1 ? '' : 's'}`}
+			>
+				Pull from your profile
+			</button>
+			<span class="pull-hint">Reads your kind 10002 from <code>initial_relays</code>; you choose what to import.</span>
+		{:else if pulling}
+			<span class="pull-status">Fetching your relay list…</span>
+		{:else if pullError}
+			<span class="pull-status pull-status--err">{pullError}</span>
+			<button class="btn-pull btn-pull--small" onclick={dismissPulled}>dismiss</button>
+			<button class="btn-pull btn-pull--small" onclick={pullFromProfile}>retry</button>
+		{:else if pulled}
+			<span class="pull-status">
+				Found {pulled.length} relay{pulled.length === 1 ? '' : 's'} in your kind 10002{#if pullCreatedAt}
+					· {new Date(pullCreatedAt * 1000).toLocaleDateString()}
+				{/if}
+			</span>
+			<button class="btn-pull btn-pull--small" onclick={dismissPulled}>dismiss</button>
+		{/if}
+	</div>
+
+	{#if pulled && pulled.length > 0}
+		<div class="pulled-list">
+			<div class="pulled-label">From your profile · suggestions</div>
+			{#each pulled as s (s.url)}
+				{@const existing = alreadyConfigured(s.url)}
+				<div class="pulled-row">
+					<span class="pulled-url" title={s.url}>{shorten(s.url)}</span>
+					<span class="pulled-marker">
+						{#if s.read && s.write}read+write
+						{:else if s.read}read
+						{:else if s.write}write
+						{/if}
+					</span>
+					{#if existing}
+						<span class="pulled-state">already configured</span>
+					{:else}
+						<div class="pulled-actions">
+							{#if s.read}
+								<button class="pull-add" onclick={() => importSuggestion(s, 'fetch')}>+ fetch</button>
+							{/if}
+							{#if s.write}
+								<button class="pull-add" onclick={() => importSuggestion(s, 'publish')}>+ publish</button>
+							{/if}
+							{#if s.read && s.write}
+								<button class="pull-add pull-add--strong" onclick={() => importSuggestion(s, 'both')}>+ both</button>
+							{/if}
+						</div>
+					{/if}
+				</div>
+			{/each}
+		</div>
+	{/if}
 
 	{#if loading}
 		<p class="empty">Loading…</p>
@@ -616,5 +772,119 @@
 	.btn-add[disabled] {
 		opacity: 0.5;
 		cursor: not-allowed;
+	}
+
+	/* Pull-from-profile bar + suggestion list. Suggestions are deliberately
+	   chip-styled (not row-styled like configured relays) so they read as
+	   "external suggestion, click to accept" rather than "live config."
+	   Per project_publishing_philosophy.md, suggestions never auto-apply. */
+	.pull-bar {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 8px;
+		padding: 8px 14px;
+		border-bottom: 1px solid var(--panel-border);
+	}
+	.btn-pull {
+		font-size: var(--t-xs);
+		padding: 3px 10px;
+		font-family: var(--font-mono);
+		background: color-mix(in srgb, var(--id-remote, var(--id-yours)) 14%, transparent);
+		border: 1px solid color-mix(in srgb, var(--id-remote, var(--id-yours)) 35%, transparent);
+		color: var(--id-remote, var(--fg));
+		cursor: pointer;
+		border-radius: var(--r-sm);
+	}
+	.btn-pull:hover:not([disabled]) {
+		background: color-mix(in srgb, var(--id-remote, var(--id-yours)) 24%, transparent);
+	}
+	.btn-pull[disabled] {
+		opacity: 0.45;
+		cursor: not-allowed;
+	}
+	.btn-pull--small {
+		font-size: 0.7rem;
+		padding: 2px 8px;
+	}
+	.pull-hint {
+		font-size: var(--t-xs);
+		color: var(--base5);
+		font-style: italic;
+	}
+	.pull-hint code {
+		font-family: var(--font-mono);
+		font-style: normal;
+	}
+	.pull-status {
+		font-size: var(--t-xs);
+		color: var(--base6);
+	}
+	.pull-status--err {
+		color: var(--id-draft);
+	}
+	.pulled-list {
+		padding: 8px 14px 10px 14px;
+		display: flex;
+		flex-direction: column;
+		gap: 4px;
+		background: color-mix(in srgb, var(--id-remote, var(--id-yours)) 4%, transparent);
+		border-bottom: 1px solid var(--panel-border);
+	}
+	.pulled-label {
+		font-size: var(--t-xs);
+		font-weight: 600;
+		text-transform: uppercase;
+		letter-spacing: 0.05em;
+		color: var(--base5);
+		margin-bottom: 2px;
+	}
+	.pulled-row {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		font-size: var(--t-xs);
+	}
+	.pulled-url {
+		font-family: var(--font-mono);
+		flex: 1;
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+	.pulled-marker {
+		font-family: var(--font-mono);
+		color: var(--base5);
+		font-size: 0.7rem;
+	}
+	.pulled-state {
+		font-family: var(--font-mono);
+		font-size: 0.7rem;
+		color: var(--base5);
+		font-style: italic;
+	}
+	.pulled-actions {
+		display: flex;
+		gap: 4px;
+	}
+	.pull-add {
+		font-size: 0.7rem;
+		padding: 2px 7px;
+		font-family: var(--font-mono);
+		background: none;
+		border: 1px solid var(--base3);
+		color: var(--base6);
+		cursor: pointer;
+		border-radius: var(--r-sm);
+	}
+	.pull-add:hover {
+		color: var(--fg);
+		border-color: var(--fg-muted);
+	}
+	.pull-add--strong {
+		background: color-mix(in srgb, var(--state-online) 14%, transparent);
+		border-color: color-mix(in srgb, var(--state-online) 40%, transparent);
+		color: var(--state-online);
 	}
 </style>
