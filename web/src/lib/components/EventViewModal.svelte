@@ -236,6 +236,55 @@
 		oninsert?.(ev, mode);
 	}
 
+	// Per-event broadcast. Explicit, user-initiated — pushes the signed
+	// event to the configured broadcast set (nostr.land etc.) without
+	// going through the auto-publish path. Aligns with [[project-
+	// publishing-philosophy]]: deliberate, per-event opt-in.
+	//
+	// SearchResults arrive with truncated `preview` and no `sig`, so we
+	// always re-fetch the full event by id before broadcasting.
+	let broadcasting = $state(false);
+	async function onBroadcastAction() {
+		if (broadcasting) return;
+		broadcasting = true;
+		try {
+			const [fullResp, cfg] = await Promise.all([
+				api.getEvent(n.id),
+				api.getRelayConfig()
+			]);
+			const fullEvent = fullResp.event;
+			if (!fullEvent || typeof fullEvent !== 'object') {
+				throw new Error('Engine returned no event JSON');
+			}
+			const targets = cfg.broadcast?.urls ?? [];
+			if (targets.length === 0) {
+				app.pushToast(
+					'No broadcast relays configured. Toggle some as "broadcast" in the relays buffer first.',
+					'error',
+					5000
+				);
+				return;
+			}
+			const resp = await api.broadcastEvent({
+				event: fullEvent,
+				relays: targets
+			});
+			app.pushToast(
+				`Broadcast to ${resp.successful}/${resp.total} relay${resp.total === 1 ? '' : 's'}`,
+				resp.successful > 0 ? 'success' : 'error',
+				4000
+			);
+		} catch (e) {
+			app.pushToast(
+				`Broadcast failed: ${e instanceof Error ? e.message : String(e)}`,
+				'error',
+				5000
+			);
+		} finally {
+			broadcasting = false;
+		}
+	}
+
 	function onModalKeydown(e: KeyboardEvent) {
 		if (e.key === 'Escape') {
 			e.preventDefault();
@@ -271,6 +320,9 @@
 			} else if (k === 'i' && isZettel) {
 				e.preventDefault();
 				onInsertAction();
+			} else if (k === 'b') {
+				e.preventDefault();
+				onBroadcastAction();
 			}
 			return;
 		}
@@ -655,6 +707,15 @@
 						<span class="evm__action-label">Insert into compose</span>
 					</button>
 				{/if}
+				<button
+					class="evm__action"
+					onclick={onBroadcastAction}
+					disabled={broadcasting}
+					title="Push this event to your configured broadcast relays (aggregators like nostr.land). Deliberate per-event push — never auto-fires."
+				>
+					<span class="evm__key">b</span>
+					<span class="evm__action-label">{broadcasting ? 'Broadcasting…' : 'Broadcast'}</span>
+				</button>
 			</div>
 		</section>
 
