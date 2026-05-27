@@ -2687,15 +2687,31 @@ function _createAppState() {
 		// isn't reachable (uninstalled / not yet injected) the call
 		// surfaces a soft error and we fall back to engine source.
 		if (savedIdentitySource === 'nip07') {
-			// Tiny wait — most extensions inject window.nostr at
-			// document_start, but a small async tick gives slow ones
-			// time to land before we probe.
-			await new Promise((r) => setTimeout(r, 50));
+			// Poll for window.nostr — most extensions inject at
+			// document_start but slow ones (and dev-mode reloads) can
+			// take ~hundreds of ms. Try a few times with increasing
+			// delays before giving up.
 			const { detectNip07 } = await import('$lib/identity/signer');
-			if (detectNip07()) {
+			let detected = false;
+			for (const delay of [0, 100, 250, 500, 1000]) {
+				if (delay > 0) await new Promise((r) => setTimeout(r, delay));
+				if (detectNip07()) {
+					detected = true;
+					break;
+				}
+			}
+			if (detected) {
+				console.log('[identity] auto-reconnecting NIP-07 signer (saved in config.toml)');
 				await handleSelectNip07Source();
+				if (identityError) {
+					console.warn('[identity] auto-reconnect failed:', identityError);
+				} else {
+					console.log('[identity] auto-reconnected:', identityStatus?.source, identityStatus?.npub?.slice(0, 16));
+				}
 			} else {
-				console.warn('Saved identity.source = nip07 but window.nostr not reachable — staying on engine.');
+				console.warn(
+					'[identity] saved source = nip07 but window.nostr not reachable after ~2s — staying on engine. Pick NIP-07 manually if the extension is now available.'
+				);
 			}
 		}
 		try {
