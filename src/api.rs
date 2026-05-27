@@ -1677,6 +1677,65 @@ pub async fn config_update_handler(
     })))
 }
 
+/// POST /api/v1/config/snapshot — write the live engine relay sets into
+/// config.toml's `[relay] initial_relays` as a portable bootstrap seed.
+///
+/// Snapshotting is **only** for portability (moving config between
+/// machines, sharing a starter config, restoring after a wipe). At
+/// runtime, `<data_dir>/relays.json` is the source of truth for the
+/// engine's working sets; this just freezes a copy into TOML so a
+/// fresh boot with no relays.json file can seed from it.
+///
+/// The captured value is the **union** of general / fetch / publish
+/// URLs — `initial_relays` seeds all three sets identically on first
+/// boot, so the read/write distinction lives in relays.json, not here.
+pub async fn config_snapshot_handler(
+    State(engine): State<AppState>,
+) -> Result<Json<Value>, EngineError> {
+    let config_path = engine
+        .config_path()
+        .ok_or_else(|| EngineError::Config("No config file path set (use -c config.toml)".into()))?
+        .to_path_buf();
+
+    let rc = engine.relay_config();
+    // Union, in stable order, preserving the first appearance.
+    let mut seen = std::collections::HashSet::new();
+    let mut urls: Vec<String> = Vec::new();
+    for u in rc.fetch.urls.iter().chain(&rc.publish.urls).chain(&rc.general.urls) {
+        if seen.insert(u.clone()) {
+            urls.push(u.clone());
+        }
+    }
+
+    let content = std::fs::read_to_string(&config_path)
+        .map_err(|e| EngineError::Config(format!("Failed to read config: {e}")))?;
+    let mut doc: toml::Table = toml::from_str(&content)
+        .map_err(|e| EngineError::Config(format!("Failed to parse config: {e}")))?;
+
+    let relay = doc
+        .entry("relay")
+        .or_insert_with(|| toml::Value::Table(toml::Table::new()));
+    let toml::Value::Table(relay_table) = relay else {
+        return Err(EngineError::Config(
+            "[relay] in config.toml is not a table".into(),
+        ));
+    };
+    let arr: Vec<toml::Value> = urls.iter().map(|u| toml::Value::String(u.clone())).collect();
+    relay_table.insert("initial_relays".to_string(), toml::Value::Array(arr));
+
+    let output = toml::to_string_pretty(&doc)
+        .map_err(|e| EngineError::Config(format!("Failed to serialize config: {e}")))?;
+    std::fs::write(&config_path, &output)
+        .map_err(|e| EngineError::Config(format!("Failed to write config: {e}")))?;
+
+    Ok(Json(json!({
+        "updated": true,
+        "count": urls.len(),
+        "path": config_path.display().to_string(),
+        "message": format!("Wrote {} relays to initial_relays in {}", urls.len(), config_path.display()),
+    })))
+}
+
 /// GET /api/v1/relays — get relay configuration
 pub async fn relay_config_handler(State(engine): State<AppState>) -> Json<Value> {
     let rc = engine.relay_config();

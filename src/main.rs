@@ -223,6 +223,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/v1/relays", get(api::relay_config_handler))
         .route("/api/v1/relay/info", get(api::relay_nip11_handler))
         .route("/api/v1/config/update", post(api::config_update_handler))
+        .route("/api/v1/config/snapshot", post(api::config_snapshot_handler))
         .route("/api/v1/fetch", post(api::fetch_relay_handler))
         .route("/api/v1/fetch/authors", post(api::fetch_authors_handler))
         .route("/api/v1/fetch/sections", post(api::fetch_sections_handler))

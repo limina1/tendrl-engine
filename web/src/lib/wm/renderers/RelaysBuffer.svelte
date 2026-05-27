@@ -218,6 +218,23 @@
 		pullCreatedAt = null;
 	}
 
+	let snapshotting = $state(false);
+	async function snapshotToConfig() {
+		snapshotting = true;
+		try {
+			const resp = await api.snapshotConfig();
+			app.pushToast(resp.message, 'success', 3500);
+		} catch (e) {
+			app.pushToast(
+				`Snapshot failed: ${e instanceof Error ? e.message : String(e)}`,
+				'error',
+				5000
+			);
+		} finally {
+			snapshotting = false;
+		}
+	}
+
 	function toggleExpanded(url: string) {
 		const next = new Set(expanded);
 		if (next.has(url)) next.delete(url);
@@ -551,6 +568,14 @@
 		<div class="relays-footer">
 			<button class="btn-add" disabled title="Will prompt for a relay URL">+ Add relay</button>
 			<button class="btn-refresh" onclick={() => load(true)}>Refresh</button>
+			<button
+				class="btn-snapshot"
+				onclick={snapshotToConfig}
+				disabled={snapshotting || rows.length === 0}
+				title="Write the current relay set into config.toml's initial_relays — a portable bootstrap seed for another machine or a fresh data dir"
+			>
+				{snapshotting ? 'Snapshotting…' : 'Snapshot to config.toml'}
+			</button>
 		</div>
 	{/if}
 </div>
@@ -777,9 +802,24 @@
 		padding: 4px 10px;
 		font-family: var(--font-mono);
 	}
-	.btn-add[disabled] {
+	.btn-add[disabled],
+	.btn-snapshot[disabled] {
 		opacity: 0.5;
 		cursor: not-allowed;
+	}
+	.btn-snapshot {
+		font-size: var(--t-xs);
+		padding: 4px 10px;
+		font-family: var(--font-mono);
+		background: color-mix(in srgb, var(--id-yours) 14%, transparent);
+		border: 1px solid color-mix(in srgb, var(--id-yours) 35%, transparent);
+		color: var(--id-yours);
+		cursor: pointer;
+		margin-left: auto;
+		border-radius: var(--r-sm);
+	}
+	.btn-snapshot:hover:not([disabled]) {
+		background: color-mix(in srgb, var(--id-yours) 24%, transparent);
 	}
 
 	/* Pull-from-profile bar + suggestion list. Suggestions are deliberately

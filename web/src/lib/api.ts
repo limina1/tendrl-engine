@@ -502,6 +502,16 @@ export function removeRelay(set: string, url: string) {
 	});
 }
 
+/** Snapshot the live relay sets into config.toml's [relay] initial_relays
+ *  as a portable bootstrap seed. Disk-only operation; doesn't change the
+ *  running engine's working sets. */
+export function snapshotConfig() {
+	return fetchJson<{ updated: boolean; count: number; path: string; message: string }>(
+		'/api/v1/config/snapshot',
+		{ method: 'POST' }
+	);
+}
+
 export function addAuthor(author: string) {
 	return fetchJson<{ updated: boolean; message: string }>('/api/v1/config/update', {
 		method: 'POST',
