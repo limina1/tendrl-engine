@@ -228,13 +228,17 @@
 			);
 			pullFetchedCount = fetchResult.fetched;
 
-			// Try decrypt whenever a NIP-07 extension is reachable and exposes
-			// nip44 — independent of `identityStatus.source`. The extension
-			// runs its own permission flow on the call; if the user's engine
-			// identity differs from the extension identity, decrypt simply
-			// fails and we fall through to the encrypted notice.
-			const canNip44 =
-				typeof window !== 'undefined' && !!window.nostr?.nip44?.decrypt;
+			// Try decrypt whenever a NIP-07 extension is reachable. We try
+			// nip44 first (current Amethyst convention), then fall back to
+			// nip04 (legacy format used by older Amethyst versions and many
+			// other clients pre-nip44). Detection: NIP-04 ciphertext has
+			// "?iv=" in it; NIP-44 is a single base64 blob. The extension
+			// runs its own permission flow per call.
+			const canDecrypt =
+				typeof window !== 'undefined' &&
+				!!(window.nostr?.nip44?.decrypt || window.nostr?.nip04?.decrypt);
+			// Kept as `canNip44` below for diagnostic-state naming continuity.
+			const canNip44 = canDecrypt;
 
 			// 2. Read them back from the local cache. Newest per kind wins.
 			const entries: PulledRelay[] = [];
@@ -274,35 +278,59 @@
 				let decryptFailed = false;
 				if (kind !== 10002 && (newest.preview?.length ?? 0) > 0) {
 					decryptAttempted = true;
-					if (canNip44) {
-						try {
-							const plaintext = await window.nostr!.nip44!.decrypt(
-								pubkey,
-								newest.preview
-							);
-							let parsed: unknown;
+					if (canDecrypt) {
+						// NIP-04 ciphertext carries an "?iv=" suffix. Anything
+						// else gets treated as NIP-44 first. If the chosen
+						// path fails we fall back to the other before giving
+						// up — older Amethyst events may be NIP-04, newer
+						// ones NIP-44, and a single user can have a mix.
+						const ciphertext = newest.preview;
+						const looksNip04 = ciphertext.includes('?iv=');
+						const tryPaths: Array<'nip04' | 'nip44'> = looksNip04
+							? ['nip04', 'nip44']
+							: ['nip44', 'nip04'];
+						let plaintext: string | null = null;
+						let lastErr: unknown = null;
+						let usedPath: 'nip04' | 'nip44' | null = null;
+						for (const path of tryPaths) {
+							const fn = window.nostr?.[path]?.decrypt;
+							if (!fn) {
+								lastErr = lastErr ?? new Error(`extension has no ${path}.decrypt`);
+								continue;
+							}
 							try {
-								parsed = JSON.parse(plaintext);
-							} catch (parseErr) {
-								throw new Error(
-									`decrypted but not valid JSON: ${(parseErr as Error).message}`
-								);
+								plaintext = await fn.call(window.nostr![path]!, pubkey, ciphertext);
+								usedPath = path;
+								break;
+							} catch (err) {
+								lastErr = err;
 							}
-							if (!Array.isArray(parsed)) {
-								throw new Error('decrypted JSON is not an array of tags');
-							}
-							privateRelayTags = (parsed as unknown[]).filter(
-								(t): t is string[] =>
-									Array.isArray(t) && t[0] === 'relay' && typeof t[1] === 'string'
-							);
-						} catch (err) {
+						}
+						if (plaintext === null) {
 							decryptFailed = true;
-							const msg = err instanceof Error ? err.message : String(err);
+							const msg = lastErr instanceof Error ? lastErr.message : String(lastErr);
 							pullDecryptErrors = { ...pullDecryptErrors, [kind]: msg };
-							console.warn(`nip44 decrypt failed for kind ${kind}:`, err);
+							console.warn(`decrypt failed for kind ${kind} (tried ${tryPaths.join(', ')}):`, lastErr);
+						} else {
+							try {
+								const parsed = JSON.parse(plaintext);
+								if (!Array.isArray(parsed)) {
+									throw new Error('decrypted JSON is not an array of tags');
+								}
+								privateRelayTags = (parsed as unknown[]).filter(
+									(t): t is string[] =>
+										Array.isArray(t) && t[0] === 'relay' && typeof t[1] === 'string'
+								);
+								console.debug(`decrypted kind ${kind} via ${usedPath}, ${privateRelayTags.length} relay tag(s)`);
+							} catch (parseErr) {
+								decryptFailed = true;
+								const msg = `decrypted via ${usedPath} but not valid JSON: ${(parseErr as Error).message}`;
+								pullDecryptErrors = { ...pullDecryptErrors, [kind]: msg };
+								console.warn(`decrypt JSON parse failed for kind ${kind}:`, parseErr);
+							}
 						}
 					} else {
-						// No nip44 path available → can't decrypt.
+						// No decrypt path available → can't decrypt.
 						decryptFailed = true;
 						pullDecryptErrors = {
 							...pullDecryptErrors,
