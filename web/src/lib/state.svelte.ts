@@ -2667,6 +2667,7 @@ function _createAppState() {
 		// reflects the user's last-saved settings (instead of resetting
 		// to hard-coded defaults). Settings page's "Save settings" writes
 		// these back via the snapshot endpoint.
+		let savedIdentitySource: string | null = null;
 		try {
 			const s = await api.getSettings();
 			editorLineNumbers = s.editor.line_numbers;
@@ -2675,8 +2676,27 @@ function _createAppState() {
 			composeDefaultMode = s.compose.default_mode as ComposeDefaultMode;
 			syncMode = s.compose.sync_mode as SyncMode;
 			buttonLabels = s.compose.button_labels as ButtonLabels;
+			savedIdentitySource = s.identity?.source ?? null;
 		} catch {
 			// API not yet available — keep hard-coded defaults.
+		}
+		// Auto-reconnect to the previously-chosen signing source. NIP-07
+		// is a per-session connection that the browser holds; persisting
+		// the *intent* in config.toml lets us re-establish on reload
+		// without making the user re-click "use NIP-07". If the extension
+		// isn't reachable (uninstalled / not yet injected) the call
+		// surfaces a soft error and we fall back to engine source.
+		if (savedIdentitySource === 'nip07') {
+			// Tiny wait — most extensions inject window.nostr at
+			// document_start, but a small async tick gives slow ones
+			// time to land before we probe.
+			await new Promise((r) => setTimeout(r, 50));
+			const { detectNip07 } = await import('$lib/identity/signer');
+			if (detectNip07()) {
+				await handleSelectNip07Source();
+			} else {
+				console.warn('Saved identity.source = nip07 but window.nostr not reachable — staying on engine.');
+			}
 		}
 		try {
 			chat = await api.getChat();

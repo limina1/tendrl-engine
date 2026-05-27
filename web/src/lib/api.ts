@@ -552,6 +552,7 @@ export interface SnapshotPayload {
 	editor?: { line_numbers: boolean; vim_mode: boolean; insert_mode: string };
 	compose?: { default_mode: string; sync_mode: string; button_labels: string };
 	network_mode?: string;
+	identity_source?: string;
 }
 
 /** Snapshot live state into config.toml. Pass nothing to default to
@@ -582,6 +583,7 @@ export function getSettings() {
 		editor: { line_numbers: boolean; vim_mode: boolean; insert_mode: string };
 		compose: { default_mode: string; sync_mode: string; button_labels: string };
 		network: { mode: string };
+		identity: { source: string | null };
 	}>('/api/v1/settings');
 }
 

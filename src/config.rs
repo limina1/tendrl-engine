@@ -283,6 +283,13 @@ pub struct IdentityConfig {
     pub pubkey: Option<String>,
     /// Assistant's public key (npub1... or hex)
     pub assistant: Option<String>,
+    /// Last-chosen signing source — `"engine"` or `"nip07"`. Persisted
+    /// by the SettingsBuffer's Save Settings so a reload reconnects
+    /// to the same signer. Engine boots as `"engine"` regardless; the
+    /// web layer re-registers a NIP-07 signer when this is set and
+    /// `window.nostr` is reachable.
+    #[serde(default)]
+    pub source: Option<String>,
 }
 
 /// Embedding configuration

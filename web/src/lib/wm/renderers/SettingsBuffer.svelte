@@ -68,7 +68,10 @@
 					sync_mode: app.syncMode,
 					button_labels: app.buttonLabels
 				},
-				network_mode: app.networkStatus?.mode ?? 'auto'
+				network_mode: app.networkStatus?.mode ?? 'auto',
+				// Persist the current signing source so reload reconnects
+				// to the same extension/key without manual re-select.
+				identity_source: app.identityStatus?.source ?? 'engine'
 			});
 			app.pushToast(resp.message, 'success', 3500);
 		} catch (e) {

@@ -1756,6 +1756,10 @@ pub struct ConfigSnapshotRequest {
     /// Optional network default — when present, written to `[network] mode`.
     #[serde(default)]
     pub network_mode: Option<String>,
+    /// Optional identity source — when present, written to
+    /// `[identity] source`. Values: `"engine"` / `"nip07"`.
+    #[serde(default)]
+    pub identity_source: Option<String>,
 }
 
 fn default_include_relays() -> bool {
@@ -1832,6 +1836,16 @@ pub async fn config_snapshot_handler(
         }
     }
 
+    if let Some(source) = &req.identity_source {
+        let identity = doc
+            .entry("identity")
+            .or_insert_with(|| toml::Value::Table(toml::Table::new()));
+        if let toml::Value::Table(t) = identity {
+            t.insert("source".into(), toml::Value::String(source.clone()));
+            wrote.push("identity.source");
+        }
+    }
+
     if wrote.is_empty() {
         return Ok(Json(json!({
             "updated": false,
@@ -1877,6 +1891,9 @@ pub async fn settings_handler(
         },
         "network": {
             "mode": cfg.network.mode,
+        },
+        "identity": {
+            "source": cfg.identity.source,
         },
     })))
 }
