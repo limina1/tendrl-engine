@@ -1606,31 +1606,18 @@ pub async fn config_update_handler(
 ) -> Result<Json<Value>, EngineError> {
     let mut changed = false;
 
-    // Relay edits: write through to relays.json under the engine's data_dir.
-    if req.add_relay.is_some() || req.remove_relay.is_some() {
-        let store = crate::relay_store::RelayStore::new(engine.data_dir())
-            .map_err(|e| EngineError::Config(format!("Failed to open relay store: {e}")))?;
-        let mut sets = store
-            .load()
-            .map_err(|e| EngineError::Config(format!("Failed to load relay store: {e}")))?;
-
-        if let Some(add) = &req.add_relay {
-            match store.add(&mut sets, &add.set, &add.url) {
-                Ok(true) => changed = true,
-                Ok(false) => {}
-                Err(e) => {
-                    return Err(EngineError::Config(format!("Failed to add relay: {e}")));
-                }
-            }
+    // Relay edits route through Engine::add_relay / remove_relay, which
+    // mutate the live in-memory RelayConfig AND write through to
+    // <data_dir>/relays.json — so edits take effect immediately for the
+    // running engine instance, no restart needed.
+    if let Some(add) = &req.add_relay {
+        if engine.add_relay(&add.set, &add.url) {
+            changed = true;
         }
-        if let Some(rm) = &req.remove_relay {
-            match store.remove(&mut sets, &rm.set, &rm.url) {
-                Ok(true) => changed = true,
-                Ok(false) => {}
-                Err(e) => {
-                    return Err(EngineError::Config(format!("Failed to remove relay: {e}")));
-                }
-            }
+    }
+    if let Some(rm) = &req.remove_relay {
+        if engine.remove_relay(&rm.set, &rm.url) {
+            changed = true;
         }
     }
 

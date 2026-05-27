@@ -127,7 +127,7 @@
 			await api.removeRelay('general', url);
 			await (next.read ? api.addRelay('fetch', url) : api.removeRelay('fetch', url));
 			await (next.write ? api.addRelay('publish', url) : api.removeRelay('publish', url));
-			app.pushToast('Relay config saved — restart engine to apply', 'info', 3000);
+			app.pushToast('Relay config saved', 'success', 2000);
 		} catch (e) {
 			rows = rows.map((r) => (r.url === url ? row : r)); // revert on failure
 			app.pushToast(
@@ -242,7 +242,7 @@
 <div class="relays-view">
 	<div class="relays-header">
 		<span>Relay configuration</span>
-		<span class="relays-hint">read/write persist (restart to apply) · auth is cosmetic</span>
+		<span class="relays-hint">read/write apply live and persist · auth is cosmetic</span>
 	</div>
 
 	<!-- Pull-from-profile: fetches the user's kind 10002 (NIP-65) from
