@@ -201,11 +201,15 @@
 		pullFetchedCount = 0;
 		try {
 			// 1. Pull all four relay-list kinds from the seed relays.
-			//    10002 = read/write (NIP-65, public r tags).
+			//    10002 = read/write (NIP-65, public `r` tags).
 			//    10007 = search (NIP-50). 10086 = indexer. 10088 = broadcast.
-			//    The 100xx kinds are Amethyst-defined; some clients publish
-			//    them as encrypted (NIP-44) private tag arrays — those
-			//    arrive with `content` non-empty and no public `r` tags.
+			//    The 100xx kinds are Amethyst-defined and published as a
+			//    NIP-44-encrypted PrivateTagArrayEvent (Amethyst convention)
+			//    — the actual relay URLs sit in the encrypted `content` as a
+			//    JSON tag-array of `["relay", url]` entries. If the user is
+			//    signed in via a NIP-07 extension that exposes nip44.decrypt,
+			//    we attempt decryption and merge those entries with any
+			//    public `r` tags. Engine-side decrypt is tracked as T32.
 			const kinds = [10002, 10007, 10086, 10088] as const;
 			const fetchResult = await api.fetchFromRelay(
 				initialRelays,
@@ -214,8 +218,15 @@
 				20
 			);
 			pullFetchedCount = fetchResult.fetched;
+
+			const canNip44 =
+				app.identityStatus?.source === 'nip07' &&
+				typeof window !== 'undefined' &&
+				!!window.nostr?.nip44?.decrypt;
+
 			// 2. Read them back from the local cache. Newest per kind wins.
 			const entries: PulledRelay[] = [];
+			const seen = new Set<string>(); // dedup by `${source_kind}:${normalizedUrl}`
 			let maxCreatedAt = 0;
 			const encrypted: number[] = [];
 			const kindResults: Record<10002 | 10007 | 10086 | 10088, PullKindResult> = {
@@ -224,6 +235,13 @@
 				10086: 'not_found',
 				10088: 'not_found'
 			};
+			const push = (s: PulledRelay) => {
+				const key = `${s.source_kind}:${normalizeRelayUrl(s.url)}`;
+				if (seen.has(key)) return;
+				seen.add(key);
+				entries.push(s);
+			};
+
 			for (const kind of kinds) {
 				const result = await api.search(`by:${pubkey} k:${kind}`, 3, pubkey, 'local_only');
 				const newest = (result.results ?? []).sort(
@@ -231,37 +249,71 @@
 				)[0];
 				if (!newest) continue;
 				if ((newest.created_at ?? 0) > maxCreatedAt) maxCreatedAt = newest.created_at ?? 0;
+
+				// Public r-tags (any kind may use this format).
 				const rTags = (newest.tags ?? []).filter(
 					(t) => t[0] === 'r' && typeof t[1] === 'string'
 				);
-				// If a kind 100xx has content but no public r tags, it's
-				// almost certainly NIP-44-encrypted (Amethyst convention).
-				if (rTags.length === 0 && (newest.preview?.length ?? 0) > 0 && kind !== 10002) {
-					encrypted.push(kind);
-					kindResults[kind] = 'encrypted';
+
+				// Decrypted private tags (Amethyst's PrivateTagArrayEvent).
+				// Only attempted for 100xx kinds with non-empty content.
+				let privateRelayTags: string[][] = [];
+				let decryptAttempted = false;
+				let decryptFailed = false;
+				if (kind !== 10002 && (newest.preview?.length ?? 0) > 0) {
+					decryptAttempted = true;
+					if (canNip44) {
+						try {
+							const plaintext = await window.nostr!.nip44!.decrypt(
+								pubkey,
+								newest.preview
+							);
+							const parsed = JSON.parse(plaintext) as string[][];
+							privateRelayTags = parsed.filter(
+								(t) => Array.isArray(t) && t[0] === 'relay' && typeof t[1] === 'string'
+							);
+						} catch {
+							decryptFailed = true;
+						}
+					} else {
+						// No nip44 path available → can't decrypt.
+						decryptFailed = true;
+					}
+				}
+
+				if (rTags.length === 0 && privateRelayTags.length === 0) {
+					if (decryptAttempted && decryptFailed) {
+						encrypted.push(kind);
+						kindResults[kind] = 'encrypted';
+					}
 					continue;
 				}
-				if (rTags.length === 0) continue; // event found but empty list
+
 				kindResults[kind] = 'parsed';
+
+				// Merge: public r-tags then decrypted private relay tags.
 				for (const t of rTags) {
 					const url = t[1] as string;
 					const marker = (t[2] ?? '').toLowerCase();
 					if (kind === 10002) {
-						entries.push({
+						push({
 							url,
 							source_kind: 10002,
 							read: marker === 'read' || marker === '',
 							write: marker === 'write' || marker === ''
 						});
-					} else if (kind === 10007) {
-						entries.push({ url, source_kind: 10007, search: true });
-					} else if (kind === 10086) {
-						entries.push({ url, source_kind: 10086, indexer: true });
-					} else if (kind === 10088) {
-						entries.push({ url, source_kind: 10088, broadcast: true });
-					}
+					} else if (kind === 10007) push({ url, source_kind: 10007, search: true });
+					else if (kind === 10086) push({ url, source_kind: 10086, indexer: true });
+					else if (kind === 10088) push({ url, source_kind: 10088, broadcast: true });
+				}
+				for (const t of privateRelayTags) {
+					const url = t[1];
+					if (kind === 10007) push({ url, source_kind: 10007, search: true });
+					else if (kind === 10086) push({ url, source_kind: 10086, indexer: true });
+					else if (kind === 10088) push({ url, source_kind: 10088, broadcast: true });
 				}
 			}
+
 			pullCreatedAt = maxCreatedAt > 0 ? maxCreatedAt : null;
 			pullEncryptedKinds = encrypted;
 			pullKindResults = kindResults;
@@ -566,11 +618,15 @@
 			{/each}
 
 			{#if pullEncryptedKinds.length > 0}
-				<div class="pulled-kind-label">encrypted (NIP-44) — not yet decrypted</div>
+				<div class="pulled-kind-label">encrypted (NIP-44) — couldn't decrypt</div>
 				<p class="pulled-encrypted">
 					Found encrypted private list event{pullEncryptedKinds.length === 1 ? '' : 's'} for kind
-					{pullEncryptedKinds.join(', ')}. Tendrl can't decrypt these yet — the active signer would need to
-					NIP-44 the content. Track as a follow-up.
+					{pullEncryptedKinds.join(', ')}.
+					{#if app.identityStatus?.source !== 'nip07'}
+						Sign in via a NIP-07 extension that supports nip44 (e.g. nos2x, Alby) to decrypt — engine-side decrypt with ncryptsec is a follow-up (T32).
+					{:else}
+						Your signer is connected but refused / failed the nip44 decrypt. The event may be encrypted to a different identity.
+					{/if}
 				</p>
 			{/if}
 		</div>
