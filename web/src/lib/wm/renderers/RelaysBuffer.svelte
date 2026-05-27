@@ -65,6 +65,9 @@
 	type PullKindResult = 'parsed' | 'encrypted' | 'not_found';
 	let pullKindResults = $state<Record<10002 | 10007 | 10086 | 10088, PullKindResult> | null>(null);
 	let pullFetchedCount = $state(0);
+	// Why the encrypted notice was triggered — distinguishes "no extension
+	// reachable" from "extension refused / wrong identity / errored".
+	let pullDecryptReason = $state<'no-signer' | 'failed' | null>(null);
 
 	async function load(force = false) {
 		loading = true;
@@ -199,6 +202,7 @@
 		pullEncryptedKinds = [];
 		pullKindResults = null;
 		pullFetchedCount = 0;
+		pullDecryptReason = null;
 		try {
 			// 1. Pull all four relay-list kinds from the seed relays.
 			//    10002 = read/write (NIP-65, public `r` tags).
@@ -219,10 +223,13 @@
 			);
 			pullFetchedCount = fetchResult.fetched;
 
+			// Try decrypt whenever a NIP-07 extension is reachable and exposes
+			// nip44 — independent of `identityStatus.source`. The extension
+			// runs its own permission flow on the call; if the user's engine
+			// identity differs from the extension identity, decrypt simply
+			// fails and we fall through to the encrypted notice.
 			const canNip44 =
-				app.identityStatus?.source === 'nip07' &&
-				typeof window !== 'undefined' &&
-				!!window.nostr?.nip44?.decrypt;
+				typeof window !== 'undefined' && !!window.nostr?.nip44?.decrypt;
 
 			// 2. Read them back from the local cache. Newest per kind wins.
 			const entries: PulledRelay[] = [];
@@ -285,6 +292,9 @@
 					if (decryptAttempted && decryptFailed) {
 						encrypted.push(kind);
 						kindResults[kind] = 'encrypted';
+						// Record why so the notice can be specific.
+						if (!canNip44) pullDecryptReason = 'no-signer';
+						else if (!pullDecryptReason) pullDecryptReason = 'failed';
 					}
 					continue;
 				}
@@ -360,6 +370,7 @@
 		pullEncryptedKinds = [];
 		pullKindResults = null;
 		pullFetchedCount = 0;
+		pullDecryptReason = null;
 	}
 
 	const pulledByKind = $derived.by(() => {
@@ -622,10 +633,11 @@
 				<p class="pulled-encrypted">
 					Found encrypted private list event{pullEncryptedKinds.length === 1 ? '' : 's'} for kind
 					{pullEncryptedKinds.join(', ')}.
-					{#if app.identityStatus?.source !== 'nip07'}
-						Sign in via a NIP-07 extension that supports nip44 (e.g. nos2x, Alby) to decrypt — engine-side decrypt with ncryptsec is a follow-up (T32).
+					{#if pullDecryptReason === 'no-signer'}
+						No NIP-07 extension reachable — install one (nos2x, Alby, …) that exposes <code>nip44.decrypt</code>, then retry. Engine-side decrypt with ncryptsec is queued as T32.
 					{:else}
-						Your signer is connected but refused / failed the nip44 decrypt. The event may be encrypted to a different identity.
+						Extension is reachable but didn't return plaintext — could be a denied prompt, a different identity, or the extension doesn't support nip44 on this key.
+						<button class="pull-add" onclick={pullFromProfile}>Retry decrypt</button>
 					{/if}
 				</p>
 			{/if}
