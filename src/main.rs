@@ -72,10 +72,10 @@ async fn main() -> anyhow::Result<()> {
     info!("Starting nostr-engine v{}", env!("CARGO_PKG_VERSION"));
     info!("Data directory: {}", config.database.data_dir);
 
-    // Resolve relay config (backwards-compat default_relays → sets)
-    let relay_config = config.relay.resolved();
-    info!("Relays — general: {:?}, fetch: {:?}, publish: {:?}",
-        relay_config.general.urls, relay_config.fetch.urls, relay_config.publish.urls);
+    // Pass the TOML-derived RelayConfig straight through. The working
+    // URL sets are layered in by Engine::with_relay_config from
+    // <data_dir>/relays.json (seeded from initial_relays on first boot).
+    let relay_config = config.relay.clone();
 
     let my_pubkey = config.pubkey_hex();
     if let Some(ref pk) = my_pubkey {
