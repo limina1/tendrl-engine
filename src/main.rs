@@ -72,10 +72,10 @@ async fn main() -> anyhow::Result<()> {
     info!("Starting nostr-engine v{}", env!("CARGO_PKG_VERSION"));
     info!("Data directory: {}", config.database.data_dir);
 
-    // Resolve relay config (backwards-compat default_relays → sets)
-    let relay_config = config.relay.resolved();
-    info!("Relays — general: {:?}, fetch: {:?}, publish: {:?}",
-        relay_config.general.urls, relay_config.fetch.urls, relay_config.publish.urls);
+    // Pass the TOML-derived RelayConfig straight through. The working
+    // URL sets are layered in by Engine::with_relay_config from
+    // <data_dir>/relays.json (seeded from initial_relays on first boot).
+    let relay_config = config.relay.clone();
 
     let my_pubkey = config.pubkey_hex();
     if let Some(ref pk) = my_pubkey {
@@ -223,6 +223,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/v1/relays", get(api::relay_config_handler))
         .route("/api/v1/relay/info", get(api::relay_nip11_handler))
         .route("/api/v1/config/update", post(api::config_update_handler))
+        .route("/api/v1/config/snapshot", post(api::config_snapshot_handler))
         .route("/api/v1/fetch", post(api::fetch_relay_handler))
         .route("/api/v1/fetch/authors", post(api::fetch_authors_handler))
         .route("/api/v1/fetch/sections", post(api::fetch_sections_handler))
@@ -244,6 +245,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/v1/export", get(api::export_handler))
         .route("/api/v1/export/manifest", get(api::export_manifest_handler))
         .route("/api/v1/publish", post(api::publish_handler))
+        .route("/api/v1/publish/preview", post(api::publish_preview_handler))
         .route("/api/v1/publish/blocks", post(api::publish_blocks_handler))
         .route("/api/v1/broadcast", post(api::broadcast_handler))
         .route("/api/v1/ingest", post(api::ingest_handler))

@@ -266,6 +266,11 @@ export interface ContextItem {
 	held: boolean;
 	origin: 'chat' | 'search' | 'compose' | 'import';
 	readonly: boolean;
+	/** Heading depth in the compose outline. 2 = top-level section
+	 *  (current default), 3+ = nested under the previous shallower
+	 *  sibling. Drives the engine's nested-30040 emission at publish
+	 *  time. Optional/legacy items default to 2 when absent. */
+	level?: number;
 }
 
 export type SyncMode = 'reactive' | 'explicit';
@@ -432,4 +437,38 @@ export interface IdentityStatus {
 	source: IdentitySourceKind;
 	/** Set when source is nip07 / nip46. */
 	signer_id?: string;
+}
+
+/** One row in the multi-event JSON inspector (EventsJsonModal). */
+export interface EventsModalItem {
+	label: string;
+	kind?: number;
+	id?: string;
+	json: unknown;
+}
+
+/** A section in the republish diff, matched/added/removed by `T` (title slug). */
+export interface RepublishDiffSection {
+	title: string;
+	/** Title slug — the match key. */
+	t: string;
+	/** Existing d-tag (matched/removed only). */
+	dTag?: string;
+	/** Matched only: content differs from the published version. */
+	contentChanged?: boolean;
+}
+
+/** Result of detecting that a same-title publication already exists. Drives
+ *  ComparePublishModal. `matched` = same `T` (reuse d-tag → replace),
+ *  `added` = new only, `removed` = existing only. */
+export interface RepublishDiff {
+	existingAddr: NAddr;
+	existingTitle: string;
+	/** Existing index d-tag to reuse so the 30040 replaces. */
+	pubDTag: string;
+	matched: RepublishDiffSection[];
+	added: RepublishDiffSection[];
+	removed: RepublishDiffSection[];
+	/** Title-slug → existing d-tag, for reusing section identifiers. */
+	sectionDTagByT: Record<string, string>;
 }

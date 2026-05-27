@@ -26,6 +26,7 @@
 		oncancel,
 		onsendtochat,
 		onpublish,
+		onpreview,
 		ondelete,
 		ondeletepermanent,
 		onsenditemtochat,
@@ -46,7 +47,8 @@
 		onupdate: (state: ComposeState) => void;
 		oncancel: () => void;
 		onsendtochat: (items: ContextItem[]) => void;
-		onpublish: (items: ContextItem[]) => void;
+		onpublish: (items: ContextItem[], meta?: { title: string; tags: TagEntry[] }) => void;
+		onpreview?: (items: ContextItem[], meta?: { title: string; tags: TagEntry[] }) => void;
 		ondelete: (items: ContextItem[]) => void;
 		ondeletepermanent: (items: ContextItem[]) => void;
 		onsenditemtochat: (id: string) => void;
@@ -66,6 +68,13 @@
 	let collapsedIds: Set<string> = $state(new Set());
 	let headerCollapsed = $state(false);
 	let delimiter = $state('');
+	// Parse level — the heading depth at which sections stop being their
+	// own 30040 indices and fold into the nearest ancestor's 30041 content.
+	// 2 = flat (one index over a flat list of sections); each higher level
+	// turns one more heading tier into nested sub-indices and folds anything
+	// deeper into content. Mirrors Alexandria's parseLevel
+	// (docs/publication_creation.md §1.2). Range 2–5.
+	let parseLevel = $state(2);
 	let prevDelimiter = $state('');
 	let trashPending: ContextItem[] = $state([]);
 	let trashTimer: ReturnType<typeof setTimeout> | null = $state(null);
@@ -78,28 +87,43 @@
 		return delimiter.trim() || '=';
 	}
 
-	function headChars(): [string, string] {
-		const d = effectiveDelim();
-		return [`${d} `, `${d}${d} `];
+	/** Heading prefix for level N — N copies of the active delimiter
+	 *  followed by a single space. Level 1 = publication root, level 2 =
+	 *  top-level section, level 3+ = nested. */
+	function headFor(level: number): string {
+		return effectiveDelim().repeat(level) + ' ';
 	}
 
-	function headCharsFor(d: string): [string, string] {
-		return [`${d} `, `${d}${d} `];
+	function headForWith(d: string, level: number): string {
+		return d.repeat(level) + ' ';
 	}
 
-	// Reactively swap delimiters in plain text
+	/** If `line` starts with one of the heading prefixes for the active
+	 *  delimiter (level 1..6), return that level and the title; else null.
+	 *  Counts leading delimiter chars on the line and requires a space. */
+	function parseHeadingLine(line: string, d: string): { level: number; title: string } | null {
+		if (line.length === 0 || line[0] !== d) return null;
+		let i = 0;
+		while (i < line.length && line[i] === d) i++;
+		if (i < 1 || i > 6) return null;
+		if (line[i] !== ' ') return null;
+		const title = line.slice(i + 1).trimEnd();
+		if (!title) return null;
+		return { level: i, title };
+	}
+
+	// Reactively swap delimiters in plain text — preserves the level
+	// count per heading line by counting the old delim and replacing
+	// with the same count of the new delim.
 	$effect(() => {
 		const cur = effectiveDelim();
 		if (mode === 'plain' && prevDelimiter && cur !== prevDelimiter) {
-			// Replace old delimiter headings with new ones in the live text
-			const [oldH1, oldH2] = headCharsFor(prevDelimiter);
-			const [newH1, newH2] = headCharsFor(cur);
 			plainText = plainText
 				.split('\n')
 				.map((line) => {
-					if (line.startsWith(oldH2)) return newH2 + line.slice(oldH2.length);
-					if (line.startsWith(oldH1)) return newH1 + line.slice(oldH1.length);
-					return line;
+					const old = parseHeadingLine(line, prevDelimiter);
+					if (!old) return line;
+					return headForWith(cur, old.level) + old.title;
 				})
 				.join('\n');
 		}
@@ -139,8 +163,8 @@
 	}
 
 	function serializeSection(s: ContextItem): string {
-		const [, h2] = headChars();
-		let out = `${h2}${s.title}\n`;
+		const level = s.level ?? 2;
+		let out = `${headFor(level)}${s.title}\n`;
 		out += serializeTagBlock(s.tags);
 		out += `\n${s.content}`;
 		return out;
@@ -148,11 +172,11 @@
 
 	// Serialize entire document into one text blob
 	function serializeAll(): string {
-		const [h1, h2] = headChars();
-		let out = `${h1}${compose.title}\n`;
+		let out = `${headFor(1)}${compose.title}\n`;
 		out += serializeTagBlock(compose.tags);
 		for (const s of compose.sections) {
-			out += `\n${h2}${s.title}\n`;
+			const level = s.level ?? 2;
+			out += `\n${headFor(level)}${s.title}\n`;
 			out += serializeTagBlock(s.tags);
 			out += `\n${s.content}\n`;
 		}
@@ -161,17 +185,17 @@
 
 	// Serialize a *parsed* document (used by plain-mode reorder: parse →
 	// swap sections in the array → write back without round-tripping
-	// through compose.sections).
+	// through compose.sections). Carries per-section level so heading
+	// depth round-trips through the parser.
 	function serializeParsed(
 		title: string,
 		tags: TagEntry[],
-		sections: { title: string; tags: TagEntry[]; content: string }[]
+		sections: { title: string; tags: TagEntry[]; content: string; level: number }[]
 	): string {
-		const [h1, h2] = headChars();
-		let out = `${h1}${title}\n`;
+		let out = `${headFor(1)}${title}\n`;
 		out += serializeTagBlock(tags);
 		for (const s of sections) {
-			out += `\n${h2}${s.title}\n`;
+			out += `\n${headFor(s.level)}${s.title}\n`;
 			out += serializeTagBlock(s.tags);
 			out += `\n${s.content}\n`;
 		}
@@ -191,35 +215,57 @@
 		title: string;
 		tags: TagEntry[];
 		content: string;
+		/** Heading depth — 2 for `== Title`, 3 for `=== Subtitle`, … */
+		level: number;
 	}
 
-	// Parse full text blob back into title/tags + sections
+	// Parse full text blob back into title/tags + sections. Recognises
+	// any heading level >= 2 as a section; level 1 is reserved for the
+	// publication title. Per-section level rides through to compose so
+	// the engine can emit the nested 30040/30041 graph.
 	function parseAll(text: string): { title: string; tags: TagEntry[]; sections: ParsedSection[] } {
-		const [h1, h2] = headChars();
+		const d = effectiveDelim();
 		const lines = text.split('\n');
 		let docTitle = '';
 		const docTags: TagEntry[] = [];
 		const sections: ParsedSection[] = [];
-		let current: { title: string; tags: TagEntry[]; contentLines: string[]; inTags: boolean } | null = null;
+		let current: {
+			title: string;
+			tags: TagEntry[];
+			contentLines: string[];
+			inTags: boolean;
+			level: number;
+		} | null = null;
 		let inDocHeader = true;
 		let docInTags = true;
 
 		for (const line of lines) {
-			if (inDocHeader && !docTitle && line.startsWith(h1) && !line.startsWith(h2)) {
-				docTitle = line.slice(h1.length).trim();
+			const head = parseHeadingLine(line, d);
+			if (inDocHeader && !docTitle && head && head.level === 1) {
+				docTitle = head.title;
 				continue;
 			}
-			if (line.startsWith(h2)) {
+			// Sections at levels 2..parseLevel become their own segments;
+			// anything deeper falls through and folds into the nearest
+			// ancestor's content (header text and all).
+			if (head && head.level >= 2 && head.level <= parseLevel) {
 				// Finish previous section
 				if (current) {
 					sections.push({
 						title: current.title,
 						tags: current.tags,
-						content: current.contentLines.join('\n').trim()
+						content: current.contentLines.join('\n').trim(),
+						level: current.level
 					});
 				}
 				inDocHeader = false;
-				current = { title: line.slice(h2.length).trim(), tags: [], contentLines: [], inTags: true };
+				current = {
+					title: head.title,
+					tags: [],
+					contentLines: [],
+					inTags: true,
+					level: head.level
+				};
 				continue;
 			}
 			if (inDocHeader) {
@@ -235,7 +281,7 @@
 				if (line.trim() === '') continue;
 				// Non-heading content before any section — start an untitled section
 				inDocHeader = false;
-				current = { title: '', tags: [], contentLines: [line], inTags: false };
+				current = { title: '', tags: [], contentLines: [line], inTags: false, level: 2 };
 			} else if (current) {
 				if (current.inTags) {
 					const parsed = parseTagLine(line);
@@ -255,14 +301,21 @@
 			sections.push({
 				title: current.title,
 				tags: current.tags,
-				content: current.contentLines.join('\n').trim()
+				content: current.contentLines.join('\n').trim(),
+				level: current.level
 			});
 		}
 		return { title: docTitle, tags: docTags, sections };
 	}
 
-	// Reconcile parsed sections with existing compose sections
-	function handlePlainFullEdit(text: string) {
+	// Reconcile parsed sections with existing compose sections. Carries
+	// the parsed heading level through to each ContextItem so the engine's
+	// publish path sees the nested-outline shape. Returns the parsed
+	// sections so the publish path can use them directly without waiting
+	// for the reactive commit.
+	function handlePlainFullEdit(
+		text: string
+	): { title: string; tags: TagEntry[]; sections: ContextItem[] } {
 		const parsed = parseAll(text);
 		const oldSections = compose.sections;
 
@@ -275,6 +328,7 @@
 					title: p.title,
 					content: p.content,
 					tags: p.tags,
+					level: p.level,
 					modified: p.content !== existing.original_content
 				};
 			}
@@ -284,6 +338,7 @@
 				content: p.content,
 				context_content: p.content,
 				tags: p.tags,
+				level: p.level,
 				original_content: '',
 				modified: true,
 				in_context: false,
@@ -295,12 +350,23 @@
 		});
 
 		onupdate({ title: parsed.title, tags: parsed.tags, sections: newSections });
+		return { title: parsed.title, tags: parsed.tags, sections: newSections };
 	}
 
 	// Detected structure for plain mode sidebar
 	let plainText = $state('');
 	const detectedState = $derived.by(() => {
-		if (mode !== 'plain') return { title: '', tags: [] as TagEntry[], sections: [] as { title: string; item: ContextItem | null; index: number }[] };
+		if (mode !== 'plain')
+			return {
+				title: '',
+				tags: [] as TagEntry[],
+				sections: [] as {
+					title: string;
+					item: ContextItem | null;
+					index: number;
+					level: number;
+				}[]
+			};
 		const parsed = parseAll(plainText);
 		const oldSections = compose.sections;
 		return {
@@ -308,7 +374,7 @@
 			tags: parsed.tags,
 			sections: parsed.sections.map((p, i) => {
 				const existing = i < oldSections.length ? oldSections[i] : null;
-				return { title: p.title, item: existing, index: i };
+				return { title: p.title, item: existing, index: i, level: p.level };
 			})
 		};
 	});
@@ -528,7 +594,19 @@
 	}
 
 	function publishAll() {
-		if (mode === 'plain') handlePlainFullEdit(plainText);
+		// In plain mode `compose.sections`/`compose.title` only commit on
+		// blur, so parse the live text here and publish title+tags+sections
+		// directly — otherwise the prop is stale (empty title / no sections)
+		// at click time.
+		let sections: ContextItem[];
+		let meta: { title: string; tags: TagEntry[] } | undefined;
+		if (mode === 'plain') {
+			const parsed = handlePlainFullEdit(plainText);
+			sections = parsed.sections;
+			meta = { title: parsed.title, tags: parsed.tags };
+		} else {
+			sections = compose.sections;
+		}
 		if (claimedUntouched.length > 0) {
 			const n = claimedUntouched.length;
 			const ok = confirm(
@@ -537,12 +615,35 @@
 			);
 			if (!ok) return;
 		}
-		onpublish(compose.sections);
+		onpublish(sections, meta);
+	}
+
+	// Inspect the would-be 30040/30041 events as JSON — no signing/publish.
+	function previewEvents() {
+		if (!onpreview) return;
+		let sections: ContextItem[];
+		let meta: { title: string; tags: TagEntry[] } | undefined;
+		if (mode === 'plain') {
+			const parsed = handlePlainFullEdit(plainText);
+			sections = parsed.sections;
+			meta = { title: parsed.title, tags: parsed.tags };
+		} else {
+			sections = compose.sections;
+		}
+		onpreview(sections, meta);
 	}
 
 	function publishSelected() {
-		if (mode === 'plain') handlePlainFullEdit(plainText);
-		const items = compose.sections.filter((s) => checkedIds.has(s.id));
+		let all: ContextItem[];
+		let meta: { title: string; tags: TagEntry[] } | undefined;
+		if (mode === 'plain') {
+			const parsed = handlePlainFullEdit(plainText);
+			all = parsed.sections;
+			meta = { title: parsed.title, tags: parsed.tags };
+		} else {
+			all = compose.sections;
+		}
+		const items = all.filter((s) => checkedIds.has(s.id));
 		if (items.length === 0) return;
 		const claimedInSelection = items.filter(
 			(s) => s.source_addr && !s.readonly && s.content === s.original_content
@@ -554,7 +655,7 @@
 			);
 			if (!ok) return;
 		}
-		onpublish(items);
+		onpublish(items, meta);
 		checkedIds = new Set();
 	}
 </script>
@@ -575,6 +676,18 @@
 				maxlength="2"
 			/>
 		</div>
+		<label
+			class="nest-group"
+			title="Parse level — how deep the outline nests into 30040 indices. flat = one index over a flat list of sections (deeper headings stay as content); each higher level turns one more heading tier into nested sub-indices and folds anything below it into content."
+		>
+			<span class="nest-label">nest</span>
+			<select class="nest-select" bind:value={parseLevel}>
+				<option value={2}>flat</option>
+				<option value={3}>1 tier</option>
+				<option value={4}>2 tiers</option>
+				<option value={5}>3 tiers</option>
+			</select>
+		</label>
 		<span class="bar-sp"></span>
 		<!-- Bulk lock/unlock mirrors ReaderBuffer's draft toolbar so the
 		     read↔edit transition keeps the same affordances at the same
@@ -734,7 +847,11 @@
 						</div>
 					{/if}
 					{#each detectedSections as det, di (det.index)}
-						<div class="detected-row">
+						<div
+							class="detected-row"
+							class:detected-row--nested={det.level > 2}
+							style="--depth: {Math.max(0, det.level - 2)}"
+						>
 							{#if det.item}
 								<label class="check">
 									<input
@@ -767,7 +884,11 @@
 						</div>
 					{/each}
 					{#if detectedSections.length === 0}
-						<div class="detected-empty">Type == heading to create sections</div>
+						<div class="detected-empty">
+							Type {effectiveDelim()}{effectiveDelim()} heading to create a
+							section ({effectiveDelim()}{effectiveDelim()}{effectiveDelim()}+
+							for nested sub-sections)
+						</div>
 					{/if}
 				</div>
 			</div>
@@ -790,16 +911,32 @@
 		{#if mode === 'full'}
 			<button onclick={addSection}>+ Section</button>
 		{/if}
+		{#if onpreview}
+			<button
+				class="preview-events-btn"
+				onclick={previewEvents}
+				disabled={mode === 'plain'
+					? detectedSections.length === 0
+					: compose.sections.length === 0}
+				title="Inspect the 30040/30041 events this draft would publish, as JSON"
+			>Preview events</button>
+		{/if}
 		{#if canPublish}
 			<button
 				class="publish-btn"
 				onclick={publishAll}
-				disabled={compose.sections.length === 0 || !structuralChange}
-				title={structuralChange
-					? 'Publish this draft'
-					: compose.source_publication_addr
-						? 'No structural change since the source publication — nothing to publish'
-						: 'Add or modify a section to enable publishing'}
+				disabled={mode === 'plain'
+					? detectedSections.length === 0
+					: compose.sections.length === 0 || !structuralChange}
+				title={mode === 'plain'
+					? detectedSections.length === 0
+						? 'Type a heading line to detect a section'
+						: 'Publish this draft'
+					: structuralChange
+						? 'Publish this draft'
+						: compose.source_publication_addr
+							? 'No structural change since the source publication — nothing to publish'
+							: 'Add or modify a section to enable publishing'}
 			>Publish</button>
 			{#if checkedIds.size > 0}
 				<button class="publish-btn publish-selected" onclick={publishSelected}>Publish ({checkedIds.size})</button>
@@ -860,6 +997,27 @@
 		font-size: 0.85rem;
 		font-weight: 700;
 		padding: 4px 6px;
+	}
+
+	.nest-group {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		cursor: pointer;
+		user-select: none;
+	}
+	.nest-label {
+		font-size: 0.75rem;
+		color: var(--fg-muted);
+		font-weight: 600;
+		text-transform: uppercase;
+		letter-spacing: 0.05em;
+	}
+	.nest-select {
+		font-family: var(--font-mono);
+		font-size: 0.8rem;
+		padding: 3px 6px;
+		cursor: pointer;
 	}
 
 	.compose-header {
@@ -1028,8 +1186,20 @@
 		align-items: center;
 		gap: 4px;
 		padding: 4px 10px;
+		padding-left: calc(10px + var(--depth, 0) * 14px);
 		border-bottom: 1px solid var(--border);
 		font-size: 0.75rem;
+	}
+
+	.detected-row--nested {
+		/* Nested sections (level >= 3) sit visually under their shallower
+		   sibling. The actual indent is driven by the inline --depth css
+		   variable so any level renders with the right offset. */
+		color: var(--fg-muted);
+	}
+
+	.detected-row--nested .detected-title {
+		font-weight: 500;
 	}
 
 	.detected-title {

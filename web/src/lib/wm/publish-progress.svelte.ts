@@ -33,6 +33,9 @@ export interface PublishEventStatus {
 	title: string | null;
 	author: string;
 	relays: PublishRelayStatus[];
+	/** Short preview of the content being published — so the buffer shows
+	 *  *what* is going out, not just titles + relay status. */
+	contentPreview?: string;
 	/** Full signed event JSON, for the inline JSON modal. */
 	rawEvent?: unknown;
 }
@@ -166,6 +169,7 @@ export function mockProgress(): PublishProgressState {
 			title,
 			author,
 			relays: mkRelays(states),
+			contentPreview: content,
 			rawEvent: {
 				id: eventId,
 				kind: 30041,
@@ -188,6 +192,7 @@ export function mockProgress(): PublishProgressState {
 		title: 'Demo Publication — overall index',
 		author,
 		relays: mkRelays([['accepted'], ['accepted'], ['accepted'], ['accepted']]),
+		contentPreview: 'Index — references 5 sections',
 		rawEvent: {
 			id: `fa1c1c1c00${'0'.repeat(54)}`,
 			kind: 30040,
@@ -264,4 +269,90 @@ export function getStore(): Store {
 
 export function setProgress(state: PublishProgressState | null): void {
 	store.current = state;
+}
+
+/**
+ * Build a real `PublishProgressState` from a `/api/v1/publish` (or
+ * `/publish/blocks`) response. Each `broadcast_results` entry is one
+ * `(event_id × relay)` cell; we group them into one row per published
+ * event — sections first, the 30040 index last, matching broadcast
+ * order. Relays that returned no OK for an event show as `timeout`.
+ *
+ * Today's publish is one-shot synchronous, so this is a final snapshot
+ * (`completed: true`), not a live pending→accepted animation — that
+ * needs the SSE PublishSession from docs/publish-flow-engine-plan.md.
+ */
+export function progressFromPublish(
+	resp: {
+		publication_id: string;
+		section_ids: string[];
+		broadcast_results?: {
+			relay: string;
+			success: boolean;
+			message: string | null;
+			event_id: string;
+		}[];
+		events?: unknown[];
+	},
+	meta: { title: string; authorPubkey: string; sections: { title: string | null; content: string }[] }
+): PublishProgressState {
+	const results = resp.broadcast_results ?? [];
+	// Column order = the relays actually attempted, first-seen order.
+	const relayOrder = [...new Set(results.map((r) => r.relay))];
+
+	// Map event id -> full event JSON so each row can be inspected.
+	const rawById = new Map<string, unknown>();
+	for (const e of resp.events ?? []) {
+		const id = (e as { id?: string })?.id;
+		if (id) rawById.set(id, e);
+	}
+
+	const cellsFor = (eventId: string): PublishRelayStatus[] =>
+		relayOrder.map((url) => {
+			const hit = results.find((r) => r.event_id === eventId && r.relay === url);
+			if (!hit) {
+				return { url, isLocal: isLocalRelay(url), state: 'timeout', message: 'no response' };
+			}
+			return {
+				url,
+				isLocal: isLocalRelay(url),
+				state: hit.success ? 'accepted' : 'rejected',
+				message: hit.message ?? undefined
+			};
+		});
+
+	const preview = (text: string): string => {
+		const t = text.trim().replace(/\s+/g, ' ');
+		return t.length > 240 ? `${t.slice(0, 240)}…` : t;
+	};
+
+	const events: PublishEventStatus[] = [
+		...resp.section_ids.map((id, i) => ({
+			eventId: id,
+			kind: 30041,
+			title: meta.sections[i]?.title ?? null,
+			author: meta.authorPubkey,
+			relays: cellsFor(id),
+			contentPreview: preview(meta.sections[i]?.content ?? ''),
+			rawEvent: rawById.get(id)
+		})),
+		{
+			eventId: resp.publication_id,
+			kind: 30040,
+			title: meta.title,
+			author: meta.authorPubkey,
+			relays: cellsFor(resp.publication_id),
+			// 30040 index content MUST be empty (NKBIP-01) — describe its role.
+			contentPreview: `Index — references ${resp.section_ids.length} section${resp.section_ids.length === 1 ? '' : 's'}`,
+			rawEvent: rawById.get(resp.publication_id)
+		}
+	];
+
+	return {
+		title: meta.title,
+		authorPubkey: meta.authorPubkey,
+		events,
+		startedAt: Date.now(),
+		completed: true
+	};
 }

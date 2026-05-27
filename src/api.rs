@@ -1576,6 +1576,8 @@ pub async fn fetch_confirm_handler(
 pub struct ConfigUpdateRequest {
     /// Add a relay URL to a set ("general", "publish", "fetch")
     pub add_relay: Option<AddRelay>,
+    /// Remove a relay URL from a set ("general", "publish", "fetch")
+    pub remove_relay: Option<AddRelay>,
     /// Add an author (npub or hex)
     pub add_author: Option<String>,
     /// Remove an author
@@ -1588,91 +1590,149 @@ pub struct AddRelay {
     pub url: String,
 }
 
-/// POST /api/v1/config/update — update config.toml from UI
+/// POST /api/v1/config/update — apply UI-driven config edits.
+///
+/// Relay add/remove writes through to `<data_dir>/relays.json` (the
+/// live working sets — never to `config.toml`, which carries only the
+/// bootstrap `initial_relays` seed). Author add/remove still mutates
+/// `config.toml` because the author list hasn't been migrated to a
+/// state file yet.
+///
+/// Relay changes still require a restart to take effect for the running
+/// engine instance — the in-memory copy is loaded once at startup.
 pub async fn config_update_handler(
     State(engine): State<AppState>,
     Json(req): Json<ConfigUpdateRequest>,
 ) -> Result<Json<Value>, EngineError> {
-    let config_path = engine.config_path().ok_or_else(|| {
-        EngineError::Config("No config file path set (use -c config.toml)".into())
-    })?;
-
-    // Read current config
-    let content = std::fs::read_to_string(config_path)
-        .map_err(|e| EngineError::Config(format!("Failed to read config: {e}")))?;
-    let mut doc: toml::Table = toml::from_str(&content)
-        .map_err(|e| EngineError::Config(format!("Failed to parse config: {e}")))?;
-
     let mut changed = false;
 
-    // Add relay
+    // Relay edits route through Engine::add_relay / remove_relay, which
+    // mutate the live in-memory RelayConfig AND write through to
+    // <data_dir>/relays.json — so edits take effect immediately for the
+    // running engine instance, no restart needed.
     if let Some(add) = &req.add_relay {
-        let relay = doc
-            .entry("relay")
-            .or_insert_with(|| toml::Value::Table(toml::Table::new()));
-        if let toml::Value::Table(relay_table) = relay {
-            let set = relay_table.entry(&add.set).or_insert_with(|| {
-                let mut t = toml::Table::new();
-                t.insert("urls".into(), toml::Value::Array(Vec::new()));
-                toml::Value::Table(t)
-            });
-            if let toml::Value::Table(set_table) = set {
-                let urls = set_table
-                    .entry("urls")
+        if engine.add_relay(&add.set, &add.url) {
+            changed = true;
+        }
+    }
+    if let Some(rm) = &req.remove_relay {
+        if engine.remove_relay(&rm.set, &rm.url) {
+            changed = true;
+        }
+    }
+
+    // Author edits still flow to config.toml — they're a separate concern
+    // and not part of this migration.
+    if req.add_author.is_some() || req.remove_author.is_some() {
+        let config_path = engine.config_path().ok_or_else(|| {
+            EngineError::Config("No config file path set (use -c config.toml)".into())
+        })?;
+
+        let content = std::fs::read_to_string(config_path)
+            .map_err(|e| EngineError::Config(format!("Failed to read config: {e}")))?;
+        let mut doc: toml::Table = toml::from_str(&content)
+            .map_err(|e| EngineError::Config(format!("Failed to parse config: {e}")))?;
+
+        if let Some(author) = &req.add_author {
+            let relay = doc
+                .entry("relay")
+                .or_insert_with(|| toml::Value::Table(toml::Table::new()));
+            if let toml::Value::Table(relay_table) = relay {
+                let authors = relay_table
+                    .entry("authors")
                     .or_insert_with(|| toml::Value::Array(Vec::new()));
-                if let toml::Value::Array(arr) = urls {
-                    let url_val = toml::Value::String(add.url.clone());
-                    if !arr.contains(&url_val) {
-                        arr.push(url_val);
+                if let toml::Value::Array(arr) = authors {
+                    let val = toml::Value::String(author.clone());
+                    if !arr.contains(&val) {
+                        arr.push(val);
                         changed = true;
                     }
                 }
             }
         }
-    }
 
-    // Add author
-    if let Some(author) = &req.add_author {
-        let relay = doc
-            .entry("relay")
-            .or_insert_with(|| toml::Value::Table(toml::Table::new()));
-        if let toml::Value::Table(relay_table) = relay {
-            let authors = relay_table
-                .entry("authors")
-                .or_insert_with(|| toml::Value::Array(Vec::new()));
-            if let toml::Value::Array(arr) = authors {
-                let val = toml::Value::String(author.clone());
-                if !arr.contains(&val) {
-                    arr.push(val);
-                    changed = true;
+        if let Some(author) = &req.remove_author {
+            if let Some(toml::Value::Table(relay_table)) = doc.get_mut("relay") {
+                if let Some(toml::Value::Array(arr)) = relay_table.get_mut("authors") {
+                    let before = arr.len();
+                    arr.retain(|v| v.as_str() != Some(author));
+                    if arr.len() != before {
+                        changed = true;
+                    }
                 }
             }
         }
-    }
 
-    // Remove author
-    if let Some(author) = &req.remove_author {
-        if let Some(toml::Value::Table(relay_table)) = doc.get_mut("relay") {
-            if let Some(toml::Value::Array(arr)) = relay_table.get_mut("authors") {
-                let before = arr.len();
-                arr.retain(|v| v.as_str() != Some(author));
-                if arr.len() != before {
-                    changed = true;
-                }
-            }
+        if changed {
+            let output = toml::to_string_pretty(&doc)
+                .map_err(|e| EngineError::Config(format!("Failed to serialize config: {e}")))?;
+            std::fs::write(config_path, &output)
+                .map_err(|e| EngineError::Config(format!("Failed to write config: {e}")))?;
         }
-    }
-
-    if changed {
-        let output = toml::to_string_pretty(&doc)
-            .map_err(|e| EngineError::Config(format!("Failed to serialize config: {e}")))?;
-        std::fs::write(config_path, &output)
-            .map_err(|e| EngineError::Config(format!("Failed to write config: {e}")))?;
     }
 
     Ok(Json(json!({
         "updated": changed,
         "message": if changed { "Config updated. Restart to apply relay changes." } else { "No changes needed." }
+    })))
+}
+
+/// POST /api/v1/config/snapshot — write the live engine relay sets into
+/// config.toml's `[relay] initial_relays` as a portable bootstrap seed.
+///
+/// Snapshotting is **only** for portability (moving config between
+/// machines, sharing a starter config, restoring after a wipe). At
+/// runtime, `<data_dir>/relays.json` is the source of truth for the
+/// engine's working sets; this just freezes a copy into TOML so a
+/// fresh boot with no relays.json file can seed from it.
+///
+/// The captured value is the **union** of general / fetch / publish
+/// URLs — `initial_relays` seeds all three sets identically on first
+/// boot, so the read/write distinction lives in relays.json, not here.
+pub async fn config_snapshot_handler(
+    State(engine): State<AppState>,
+) -> Result<Json<Value>, EngineError> {
+    let config_path = engine
+        .config_path()
+        .ok_or_else(|| EngineError::Config("No config file path set (use -c config.toml)".into()))?
+        .to_path_buf();
+
+    let rc = engine.relay_config();
+    // Union, in stable order, preserving the first appearance.
+    let mut seen = std::collections::HashSet::new();
+    let mut urls: Vec<String> = Vec::new();
+    for u in rc.fetch.urls.iter().chain(&rc.publish.urls).chain(&rc.general.urls) {
+        if seen.insert(u.clone()) {
+            urls.push(u.clone());
+        }
+    }
+
+    let content = std::fs::read_to_string(&config_path)
+        .map_err(|e| EngineError::Config(format!("Failed to read config: {e}")))?;
+    let mut doc: toml::Table = toml::from_str(&content)
+        .map_err(|e| EngineError::Config(format!("Failed to parse config: {e}")))?;
+
+    let relay = doc
+        .entry("relay")
+        .or_insert_with(|| toml::Value::Table(toml::Table::new()));
+    let toml::Value::Table(relay_table) = relay else {
+        return Err(EngineError::Config(
+            "[relay] in config.toml is not a table".into(),
+        ));
+    };
+    let arr: Vec<toml::Value> = urls.iter().map(|u| toml::Value::String(u.clone())).collect();
+    relay_table.insert("initial_relays".to_string(), toml::Value::Array(arr));
+
+    let output = toml::to_string_pretty(&doc)
+        .map_err(|e| EngineError::Config(format!("Failed to serialize config: {e}")))?;
+    std::fs::write(&config_path, &output)
+        .map_err(|e| EngineError::Config(format!("Failed to write config: {e}")))?;
+
+    Ok(Json(json!({
+        "updated": true,
+        "count": urls.len(),
+        "path": config_path.display().to_string(),
+        "message": format!("Wrote {} relays to initial_relays in {}", urls.len(), config_path.display()),
     })))
 }
 
@@ -1684,12 +1744,17 @@ pub async fn relay_config_handler(State(engine): State<AppState>) -> Json<Value>
         "publish": { "urls": rc.publish.urls, "kinds": rc.publish.kinds },
         "fetch": { "urls": rc.fetch.urls, "kinds": rc.fetch.kinds },
         "authors": rc.authors_hex(),
+        "initial_relays": rc.initial_relays,
     }))
 }
 
 #[derive(Debug, Deserialize)]
 pub struct RelayInfoQuery {
     pub url: String,
+    /// `?refresh=true` bypasses the cache and forces a fresh fetch —
+    /// the UI's retry button after a transient failure.
+    #[serde(default)]
+    pub refresh: bool,
 }
 
 /// GET /api/v1/relay/info?url=wss://… — return cached NIP-11 doc
@@ -1700,7 +1765,11 @@ pub async fn relay_nip11_handler(
     State(engine): State<AppState>,
     axum::extract::Query(q): axum::extract::Query<RelayInfoQuery>,
 ) -> Json<Value> {
-    let status = engine.nip11_cache().get(&q.url).await;
+    let status = if q.refresh {
+        engine.nip11_cache().refresh(&q.url).await
+    } else {
+        engine.nip11_cache().get(&q.url).await
+    };
     Json(json!({
         "url": q.url,
         "status": status,
@@ -2305,6 +2374,10 @@ pub struct PublishRequest {
     #[serde(default)]
     pub tags: Vec<(String, String)>,
     pub sections: Vec<PublishSectionRequest>,
+    /// Reuse this index `d` tag instead of minting a fresh nanoid — set on
+    /// republish so the 30040 replaces the existing one rather than forking.
+    #[serde(default)]
+    pub d_tag: Option<String>,
     /// Whether to sign the events (requires secret key in engine)
     #[serde(default)]
     pub sign: bool,
@@ -2321,6 +2394,15 @@ pub struct PublishSectionRequest {
     pub content: String,
     #[serde(default)]
     pub tags: Vec<(String, String)>,
+    /// Heading depth (2 = top-level `==` section, 3+ = nested). Drives the
+    /// nested 30040/30041 emitter; absent/`2` keeps the flat graph.
+    #[serde(default)]
+    pub level: Option<u8>,
+    /// Reuse this section `d` tag instead of minting — set on republish for
+    /// sections matched (by `T`) to an existing publication, so the 30041
+    /// replaces rather than forks.
+    #[serde(default)]
+    pub d_tag: Option<String>,
 }
 
 /// Response from publish endpoint
@@ -2331,6 +2413,10 @@ pub struct PublishResponse {
     pub signed: bool,
     pub ingested: bool,
     pub broadcast_results: Option<Vec<BroadcastResult>>,
+    /// Full event JSON (index first, then sections) so the client can
+    /// offer a per-event / expand-all JSON inspector without refetching.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub events: Option<Vec<Value>>,
 }
 
 #[derive(Debug, Serialize)]
@@ -2338,6 +2424,9 @@ pub struct BroadcastResult {
     pub relay: String,
     pub success: bool,
     pub message: Option<String>,
+    /// Event this result is for, so the client can group results into a
+    /// per-event × per-relay grid instead of a flat list.
+    pub event_id: String,
 }
 
 /// POST /api/v1/publish — create a publication (draft or signed)
@@ -2376,6 +2465,8 @@ pub async fn publish_handler(
             let mut sc = SectionCompose::default();
             sc.title = s.title.clone();
             sc.content = s.content.clone();
+            sc.level = s.level.unwrap_or(2);
+            sc.d_tag = s.d_tag.clone();
             sc.tags = s
                 .tags
                 .iter()
@@ -2387,6 +2478,7 @@ pub async fn publish_handler(
             sc
         })
         .collect();
+    compose.d_tag = req.d_tag.clone();
 
     // Build events (signed or unsigned)
     let (pub_event, section_events) = if req.sign {
@@ -2402,7 +2494,7 @@ pub async fn publish_handler(
             )
         })?;
         crate::publication::build_signed_publication_events_via_signer(
-            &compose,
+            &mut compose,
             &active_pubkey,
             &signing,
         )
@@ -2422,7 +2514,7 @@ pub async fn publish_handler(
             let session = identity.lock().unwrap();
             session.pubkey().is_some()
         };
-        let events = build_publication_events(&compose, &pubkey);
+        let events = build_publication_events(&mut compose, &pubkey);
         if should_track {
             let pub_id = events
                 .0
@@ -2521,6 +2613,7 @@ pub async fn publish_handler(
                     relay: r.relay_url,
                     success: r.success,
                     message: r.message,
+                    event_id: r.event_id,
                 })
                 .collect::<Vec<_>>(),
         )
@@ -2538,13 +2631,74 @@ pub async fn publish_handler(
         });
     }
 
+    // Index first, then sections — the order the inspector lists them.
+    let all_events: Vec<Value> = std::iter::once(pub_event.clone())
+        .chain(section_events.iter().cloned())
+        .collect();
+
     Ok(Json(PublishResponse {
         publication_id: pub_id,
         section_ids,
         signed: req.sign,
         ingested,
         broadcast_results,
+        events: Some(all_events),
     }))
+}
+
+/// POST /api/v1/publish/preview — build the unsigned event graph for a
+/// compose and return it without signing, ingesting, or broadcasting.
+/// Feeds the composer's "inspect events as JSON" modal so the user can
+/// see the exact 30040/30041 shape (nesting, d/T/title, a-tag wiring)
+/// before publishing.
+pub async fn publish_preview_handler(
+    State(engine): State<AppState>,
+    Extension(identity): Extension<IdentityAppState>,
+    Json(req): Json<PublishRequest>,
+) -> Result<Json<Value>, EngineError> {
+    let pubkey = {
+        let session = identity.lock().unwrap();
+        session.pubkey().map(|s| s.to_string())
+    }
+    .or_else(|| engine.my_pubkey().map(|s| s.to_string()))
+    .unwrap_or_else(|| "<preview>".to_string());
+
+    use crate::tree::state::TagEntry;
+    let mut compose = ComposeState::new();
+    compose.title = req.title;
+    for (name, value) in &req.tags {
+        compose.tags.push(TagEntry {
+            name: name.clone(),
+            value: value.clone(),
+        });
+    }
+    compose.sections = req
+        .sections
+        .iter()
+        .map(|s| {
+            let mut sc = SectionCompose::default();
+            sc.title = s.title.clone();
+            sc.content = s.content.clone();
+            sc.level = s.level.unwrap_or(2);
+            sc.d_tag = s.d_tag.clone();
+            sc.tags = s
+                .tags
+                .iter()
+                .map(|(n, v)| TagEntry {
+                    name: n.clone(),
+                    value: v.clone(),
+                })
+                .collect();
+            sc
+        })
+        .collect();
+    compose.d_tag = req.d_tag.clone();
+
+    let (pub_event, section_events) = build_publication_events(&mut compose, &pubkey);
+    let events: Vec<Value> = std::iter::once(pub_event)
+        .chain(section_events.into_iter())
+        .collect();
+    Ok(Json(json!({ "events": events })))
 }
 
 // ----------------------------------------------------------------------------
@@ -2816,6 +2970,7 @@ pub async fn publish_blocks_handler(
                     relay: r.relay_url,
                     success: r.success,
                     message: r.message,
+                    event_id: r.event_id,
                 })
                 .collect::<Vec<_>>(),
         )
@@ -2832,12 +2987,17 @@ pub async fn publish_blocks_handler(
         });
     }
 
+    let all_events: Vec<Value> = std::iter::once(pub_event.clone())
+        .chain(section_events.iter().cloned())
+        .collect();
+
     Ok(Json(PublishResponse {
         publication_id: pub_id,
         section_ids,
         signed: req.sign,
         ingested,
         broadcast_results,
+        events: Some(all_events),
     }))
 }
 

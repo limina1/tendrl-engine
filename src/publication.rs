@@ -15,9 +15,21 @@ use crate::error::{EngineError, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+pub mod tree_emit;
+
 /// Kind constants for NKBIP-01 publications
 pub const KIND_PUBLICATION_INDEX: u64 = 30040;
 pub const KIND_PUBLICATION_SECTION: u64 = 30041;
+
+/// Mint an opaque d-tag — 21-character URL-safe random string, same shape as
+/// the JS nanoid package (alphabet `A-Za-z0-9_-`). NKBIP-01 publications use
+/// stable nanoid d-tags so titles can be edited without breaking addressable
+/// identity, and so the same author can publish e.g. "virus" in different
+/// contexts without slug collisions. Every site that needs a fresh
+/// publication or section d-tag should funnel through here.
+pub fn mint_d_tag() -> String {
+    nanoid::nanoid!()
+}
 
 /// Kinds an NKBIP-01 index (30040) may reference as a *content leaf* — a
 /// readable terminal node, as opposed to a nested 30040 index. 30041 is the
@@ -1359,7 +1371,7 @@ use sha2::{Sha256, Digest};
 /// The events have proper structure with calculated IDs but placeholder signatures.
 /// Use `build_signed_publication_events` for events that can be stored in nostrdb.
 pub fn build_publication_events(
-    compose: &ComposeState,
+    compose: &mut ComposeState,
     pubkey: &str,
 ) -> (Value, Vec<Value>) {
     build_publication_events_internal(compose, pubkey, None)
@@ -1370,7 +1382,7 @@ pub fn build_publication_events(
 /// paths that don't need to route through the SigningController; live
 /// HTTP publish goes through `build_signed_publication_events_via_signer`.
 pub fn build_signed_publication_events(
-    compose: &ComposeState,
+    compose: &mut ComposeState,
     pubkey: &str,
     secret_hex: &str,
 ) -> (Value, Vec<Value>) {
@@ -1386,7 +1398,7 @@ pub fn build_signed_publication_events(
 /// `pubkey` must match the signer's active source pubkey. The signer
 /// re-checks via `template.pubkey` and refuses on mismatch.
 pub async fn build_signed_publication_events_via_signer(
-    compose: &ComposeState,
+    compose: &mut ComposeState,
     pubkey: &str,
     signer: &dyn crate::signing::Signer,
 ) -> std::result::Result<(Value, Vec<Value>), crate::signing::SigningError> {
@@ -1399,19 +1411,53 @@ pub async fn build_signed_publication_events_via_signer(
         .unwrap_or(0);
 
     let pubkey = pubkey.to_string();
+    let is_nested = compose.sections.iter().any(|s| s.level > 2);
 
-    // Section events (need their d-tags before the index references
-    // them).
+    // Nested path: reuse the in-process emitter to build unsigned events
+    // (placeholder sigs), then re-sign each through the external signer.
+    // This keeps the recursive tag-graph logic in one place.
+    if is_nested {
+        let pub_d_tag = compose.publication_d_tag();
+        let (root_unsigned, children_unsigned) = tree_emit::build_nested_publication_events(
+            compose,
+            &pub_d_tag,
+            &pubkey,
+            timestamp as u64,
+            DEFAULT_PARSE_LEVEL,
+            None, // placeholder sig — we re-sign below
+        );
+
+        // Re-sign each child event through the external signer (e.g.
+        // NIP-07 / NIP-46). The Value already carries the correct tags
+        // and content; we just need a fresh sig over the canonical hash.
+        let mut signed_children = Vec::with_capacity(children_unsigned.len());
+        for ev in children_unsigned {
+            let signed = resign_value_through_signer(&ev, &pubkey, timestamp, signer).await?;
+            signed_children.push(signed);
+        }
+        let pub_event =
+            resign_value_through_signer(&root_unsigned, &pubkey, timestamp, signer).await?;
+
+        return Ok((pub_event, signed_children));
+    }
+
+    // Flat path (unchanged): per-section template signed in sequence,
+    // then the single 30040 index.
     let mut section_events = Vec::new();
     for i in 0..compose.sections.len() {
-        let section = &compose.sections[i];
         let section_d_tag = compose.section_d_tag(i);
+        let section = &compose.sections[i];
+        let section_title = section.title.clone();
+        let section_content = section.content.clone();
+        let section_tags = section.tags.clone();
 
         let mut tags: Vec<Vec<String>> = vec![vec!["d".into(), section_d_tag.clone()]];
-        if !section.title.is_empty() {
-            tags.push(vec!["title".into(), section.title.clone()]);
+        if !section_title.is_empty() {
+            // `title` = display; `T` = indexable title for search/discovery.
+            tags.push(vec!["title".into(), section_title.clone()]);
+            tags.push(vec!["T".into(), ComposeState::generate_d_tag(&section_title)]);
         }
-        for tag_vec in ComposeState::tags_to_nostr_format(&section.tags) {
+        for tag_vec in ComposeState::tags_to_nostr_format(&section_tags) {
             tags.push(tag_vec);
         }
 
@@ -1419,7 +1465,7 @@ pub async fn build_signed_publication_events_via_signer(
             kind: KIND_PUBLICATION_SECTION as u32,
             created_at: timestamp,
             tags,
-            content: section.content.clone(),
+            content: section_content,
             pubkey: Some(pubkey.clone()),
         };
         let signed = signer.sign(template).await?;
@@ -1430,7 +1476,9 @@ pub async fn build_signed_publication_events_via_signer(
     let pub_d_tag = compose.publication_d_tag();
     let mut tags: Vec<Vec<String>> = vec![vec!["d".into(), pub_d_tag]];
     if !compose.title.is_empty() {
+        // `title` = display; `T` = indexable title for search/discovery.
         tags.push(vec!["title".into(), compose.title.clone()]);
+        tags.push(vec!["T".into(), ComposeState::generate_d_tag(&compose.title)]);
     }
     for tag_vec in ComposeState::tags_to_nostr_format(&compose.tags) {
         tags.push(tag_vec);
@@ -1454,9 +1502,72 @@ pub async fn build_signed_publication_events_via_signer(
     Ok((pub_event, section_events))
 }
 
-/// Internal function to build publication events with optional signing
+/// Take an event `Value` built by `tree_emit` (which has a placeholder
+/// signature) and re-sign it through the external `Signer`. Used by the
+/// nested-graph path of the signer-routed publish so the recursive
+/// tag-emission logic lives in one place.
+async fn resign_value_through_signer(
+    ev: &Value,
+    expected_pubkey: &str,
+    created_at: i64,
+    signer: &dyn crate::signing::Signer,
+) -> std::result::Result<Value, crate::signing::SigningError> {
+    use crate::signing::EventTemplate;
+
+    // The Value built by tree_emit has kind/tags/content shaped exactly
+    // for hashing. Convert to a template the signer can consume.
+    let kind = ev.get("kind").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+    let content = ev
+        .get("content")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let tags: Vec<Vec<String>> = ev
+        .get("tags")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .map(|tag| {
+                    tag.as_array()
+                        .map(|inner| {
+                            inner
+                                .iter()
+                                .map(|v| v.as_str().unwrap_or("").to_string())
+                                .collect()
+                        })
+                        .unwrap_or_default()
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let template = EventTemplate {
+        kind,
+        created_at,
+        tags,
+        content,
+        pubkey: Some(expected_pubkey.to_string()),
+    };
+    signer.sign(template).await
+}
+
+/// Default parse-level ceiling for nested publication emission. Sections
+/// deeper than this collapse into their nearest ancestor's a-tag chain
+/// (see `tree_emit::build_nested_publication_events`). The value is a
+/// compromise: high enough to handle the common 3-level outline (book →
+/// chapter → section), low enough that adversarial inputs don't explode
+/// the event count.
+const DEFAULT_PARSE_LEVEL: u8 = 6;
+
+/// Internal function to build publication events with optional signing.
+///
+/// Branches on section depth:
+/// - Any section with `level > 2` → recursive nested 30040/30041 graph
+///   via [`tree_emit::build_nested_publication_events`].
+/// - All sections flat (`level <= 2`) → the original single-30040 path,
+///   unchanged.
 fn build_publication_events_internal(
-    compose: &ComposeState,
+    compose: &mut ComposeState,
     pubkey: &str,
     secret_hex: Option<&str>,
 ) -> (Value, Vec<Value>) {
@@ -1467,7 +1578,23 @@ fn build_publication_events_internal(
         .map(|d| d.as_secs())
         .unwrap_or(0);
 
-    // Build section events first (need their d-tags for references)
+    // Nested-graph path: any section deeper than level 2 means the
+    // publication is hierarchical and needs the recursive emitter.
+    let is_nested = compose.sections.iter().any(|s| s.level > 2);
+    if is_nested {
+        let pub_d_tag = compose.publication_d_tag();
+        return tree_emit::build_nested_publication_events(
+            compose,
+            &pub_d_tag,
+            pubkey,
+            timestamp,
+            DEFAULT_PARSE_LEVEL,
+            secret_hex,
+        );
+    }
+
+    // Flat path (unchanged): build section events first (need their
+    // d-tags for references), then the single 30040 index.
     let mut section_events = Vec::new();
     for i in 0..compose.sections.len() {
         let section_d_tag = compose.section_d_tag(i);
@@ -1475,7 +1602,6 @@ fn build_publication_events_internal(
         section_events.push(section_event);
     }
 
-    // Build publication index event
     let pub_event = build_index_event_internal(compose, pubkey, timestamp, secret_hex);
 
     (pub_event, section_events)
@@ -1495,7 +1621,12 @@ fn build_section_event_internal(
     let mut tags: Vec<Value> = vec![json!(["d", d_tag])];
 
     if !section.title.is_empty() {
+        // `title` = display; `T` = indexable title for search/discovery.
         tags.push(json!(["title", &section.title]));
+        tags.push(json!([
+            "T",
+            crate::tree::state::ComposeState::generate_d_tag(&section.title)
+        ]));
     }
 
     // Add section-specific tags
@@ -1535,7 +1666,7 @@ fn build_section_event_internal(
 
 /// Build a publication index (30040) event with optional signing
 fn build_index_event_internal(
-    compose: &ComposeState,
+    compose: &mut ComposeState,
     pubkey: &str,
     timestamp: u64,
     secret_hex: Option<&str>,
@@ -1548,7 +1679,12 @@ fn build_index_event_internal(
     let mut tags: Vec<Value> = vec![json!(["d", &pub_d_tag])];
 
     if !compose.title.is_empty() {
+        // `title` = display; `T` = indexable title for search/discovery.
         tags.push(json!(["title", &compose.title]));
+        tags.push(json!([
+            "T",
+            crate::tree::state::ComposeState::generate_d_tag(&compose.title)
+        ]));
     }
 
     // Add custom tags
@@ -1704,7 +1840,12 @@ fn build_forked_section_event(
     let mut tags: Vec<Value> = vec![json!(["d", d_tag])];
 
     if !block.title.is_empty() {
+        // `title` = display; `T` = indexable title for search/discovery.
         tags.push(json!(["title", &block.title]));
+        tags.push(json!([
+            "T",
+            crate::tree::state::ComposeState::generate_d_tag(&block.title)
+        ]));
     }
 
     // Fork lineage tag — NIP-54 addressable fork marker
@@ -1765,7 +1906,9 @@ fn build_block_index_event(
     let mut tags: Vec<Value> = vec![json!(["d", pub_d_tag])];
 
     if !state.title.is_empty() {
+        // `title` = display; `T` = indexable title for search/discovery.
         tags.push(json!(["title", &state.title]));
+        tags.push(json!(["T", ComposeState::generate_d_tag(&state.title)]));
     }
 
     // Custom tags
@@ -1829,7 +1972,150 @@ fn build_block_index_event(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tree::state::{ComposeBlockState, TagEntry};
+    use crate::tree::state::{ComposeBlockState, SectionCompose, TagEntry};
+
+    fn d_of(ev: &Value) -> String {
+        ev["tags"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find_map(|t| {
+                let a = t.as_array()?;
+                if a.first()?.as_str()? == "d" {
+                    Some(a.get(1)?.as_str()?.to_string())
+                } else {
+                    None
+                }
+            })
+            .expect("event missing d tag")
+    }
+
+    fn t_of(ev: &Value, key: &str) -> Option<String> {
+        ev["tags"].as_array()?.iter().find_map(|t| {
+            let a = t.as_array()?;
+            if a.first()?.as_str()? == key {
+                Some(a.get(1)?.as_str()?.to_string())
+            } else {
+                None
+            }
+        })
+    }
+
+    /// End-to-end integration: a multi-level ComposeState routed through
+    /// the public `build_publication_events` entry-point should branch
+    /// into the nested emitter and produce a tree of 30040 + 30041
+    /// events with stable nanoid d-tags and consistent T/title tagging.
+    #[test]
+    fn build_publication_events_nested_path() {
+        use crate::tree::state::ComposeState;
+
+        // Outer (lvl 2) → Inner (lvl 3); presence of lvl 3 triggers the
+        // nested branch in build_publication_events_internal.
+        let mut compose = ComposeState {
+            title: "Integration".to_string(),
+            sections: vec![
+                SectionCompose {
+                    title: "Outer".to_string(),
+                    content: "outer body".to_string(),
+                    level: 2,
+                    ..Default::default()
+                },
+                SectionCompose {
+                    title: "Inner".to_string(),
+                    content: "inner body".to_string(),
+                    level: 3,
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        };
+        let pubkey = "feedface".repeat(8);
+
+        let (root, children) = build_publication_events(&mut compose, &pubkey);
+
+        // Root is a 30040 with empty content and matching T+title tags.
+        assert_eq!(root["kind"], 30040);
+        assert_eq!(root["content"], "");
+        assert_eq!(t_of(&root, "T").as_deref(), Some("integration"));
+        assert_eq!(t_of(&root, "title").as_deref(), Some("Integration"));
+
+        // Three children: Outer-30040, Outer-30041, Inner-30041 (pre-order).
+        assert_eq!(children.len(), 3);
+        assert_eq!(children[0]["kind"], 30040);
+        assert_eq!(children[0]["content"], "");
+        assert_eq!(children[1]["kind"], 30041);
+        assert_eq!(children[2]["kind"], 30041);
+
+        // All d-tags are nanoid-shaped.
+        let nanoid_shape = |s: &str| {
+            s.len() == 21
+                && s.chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+        };
+        assert!(nanoid_shape(&d_of(&root)));
+        for ev in &children {
+            assert!(nanoid_shape(&d_of(ev)));
+        }
+
+        // The Outer 30040 carries an `a` tag pointing at the Outer 30041
+        // (own content), AND an `a` tag pointing at the Inner 30041.
+        let outer_index_a_tags: Vec<String> = children[0]["tags"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|t| {
+                let a = t.as_array()?;
+                if a.first()?.as_str()? == "a" {
+                    Some(a.get(1)?.as_str()?.to_string())
+                } else {
+                    None
+                }
+            })
+            .collect();
+        assert_eq!(outer_index_a_tags.len(), 2);
+        // First a-tag is own content (30041 → outer's d).
+        assert!(outer_index_a_tags[0].starts_with("30041:"));
+        assert!(outer_index_a_tags[0].ends_with(&d_of(&children[1])));
+        // Second a-tag is the inner leaf.
+        assert!(outer_index_a_tags[1].starts_with("30041:"));
+        assert!(outer_index_a_tags[1].ends_with(&d_of(&children[2])));
+    }
+
+    /// Flat path (no section level > 2) keeps the original
+    /// single-30040 + N-30041 shape — the branch in
+    /// build_publication_events_internal must not regress this.
+    #[test]
+    fn build_publication_events_flat_path_unchanged() {
+        use crate::tree::state::ComposeState;
+
+        let mut compose = ComposeState {
+            title: "Flat".to_string(),
+            sections: vec![
+                SectionCompose {
+                    title: "A".to_string(),
+                    content: "a body".to_string(),
+                    level: 2,
+                    ..Default::default()
+                },
+                SectionCompose {
+                    title: "B".to_string(),
+                    content: "b body".to_string(),
+                    level: 2,
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        };
+        let pubkey = "feedface".repeat(8);
+
+        let (root, children) = build_publication_events(&mut compose, &pubkey);
+
+        assert_eq!(root["kind"], 30040);
+        assert_eq!(children.len(), 2);
+        for c in &children {
+            assert_eq!(c["kind"], 30041);
+        }
+    }
 
     #[test]
     fn test_naddr_parsing() {

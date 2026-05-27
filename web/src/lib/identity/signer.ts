@@ -15,6 +15,21 @@
 
 import * as api from '$lib/api';
 import type { SignTemplateResponse } from '$lib/api';
+import type { IdentityStatus } from '$lib/types';
+
+/**
+ * True when the active identity can produce signatures: either the
+ * in-process engine key is unlocked, OR an external signer (NIP-07 /
+ * NIP-46) is connected. `state === 'unlocked'` describes only the
+ * engine key, so checking it alone wrongly excludes signer logins —
+ * which is why the compose Publish button vanished under a NIP-07 login.
+ */
+export function identityCanSign(status: IdentityStatus | null | undefined): boolean {
+	if (!status) return false;
+	return (
+		status.state === 'unlocked' || status.source === 'nip07' || status.source === 'nip46'
+	);
+}
 
 declare global {
 	interface Window {

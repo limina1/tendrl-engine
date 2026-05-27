@@ -878,3 +878,52 @@ cargo run -- -c config.toml   # or ./start.sh
 4. *Breadcrumb up*: click the =Root= crumb — the reader pops back to
    the parent publication. Nested indexes beyond the depth horizon
    resolve on refocus (DB-first, relay backfill on a miss).
+
+* Nested 30040/30041 publication graph
+
+Multi-level outlines (level 3+ headings in plain compose) emit a nested
+30040 tree: each interior section gets a 30040 index *and* a 30041
+content event, with `a` tags fanning out. d-tags are opaque 21-char
+nanoids (decoupled from titles); the title rides as both `T`
+(indexable) and `title` (display).
+
+** Unit + integration tests
+
+#+begin_src bash
+cargo test --lib publication::tree_emit  # forest folding + emit walk (8 tests)
+cargo test --lib publication             # + integration tests through the public API
+cargo test --lib parser                  # PlainText N-level delimiter parser
+cargo test --lib drafts                  # round-trip preserves level + d_tag
+#+end_src
+
+Expected: all green.
+
+** End-to-end via the API
+
+Start the engine, then POST a nested compose state through the unsigned
+publish path and confirm the event shape. With `level=3` on at least one
+section, the engine branches into `tree_emit::build_nested_publication_events`.
+
+#+begin_src bash
+cargo run -- -c config.toml
+#+end_src
+
+In the web compose surface (plain mode), type:
+
+#+begin_example
+= Integration Test
+
+== Outer
+:tags: nested
+
+outer body
+
+=== Inner
+
+inner body
+#+end_example
+
+Hit publish (signed or unsigned). The detected-sections panel should
+show =Inner= indented one level under =Outer=. The persisted events
+have a 30040 root → 30040 for Outer → 30041 for Outer's prose + 30041
+for Inner.

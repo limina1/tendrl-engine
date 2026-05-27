@@ -60,12 +60,44 @@ export type Nip11Status =
 
 type Envelope = { url: string; status: Nip11Status };
 
+/**
+ * Normalize a relay URL to its canonical form. Mirrors the Rust
+ * `normalize_relay_url` helper so cross-language comparisons match.
+ *
+ * - Bare hostname → prepend `wss://`
+ * - Lowercase scheme + host
+ * - Strip trailing slash on root path
+ * - Strip default ports (443 for wss, 80 for ws)
+ * - Preserve non-root path/query/fragment
+ * - Preserve explicit `ws://` (don't force wss)
+ *
+ * Returns the trimmed input unchanged if it can't be parsed as a URL —
+ * never drops data.
+ */
 export function normalizeRelayUrl(url: string): string {
-	return url.trim().toLowerCase().replace(/\/+$/, '');
+	const s = url.trim();
+	if (!s) return '';
+	const withScheme = s.includes('://') ? s : `wss://${s}`;
+	let parsed: URL;
+	try {
+		parsed = new URL(withScheme);
+	} catch {
+		return s;
+	}
+	const scheme = parsed.protocol.replace(/:$/, '').toLowerCase();
+	if (scheme !== 'ws' && scheme !== 'wss') return s;
+	const host = parsed.hostname.toLowerCase();
+	const defaultPort = scheme === 'wss' ? '443' : '80';
+	const port = parsed.port && parsed.port !== defaultPort ? `:${parsed.port}` : '';
+	const path = parsed.pathname === '/' ? '' : parsed.pathname;
+	const query = parsed.search;
+	const fragment = parsed.hash;
+	return `${scheme}://${host}${port}${path}${query}${fragment}`;
 }
 
-async function fetchOnce(url: string): Promise<Nip11Status> {
-	const resp = await fetch(`/api/v1/relay/info?url=${encodeURIComponent(url)}`);
+async function fetchOnce(url: string, force = false): Promise<Nip11Status> {
+	const q = `url=${encodeURIComponent(url)}${force ? '&refresh=true' : ''}`;
+	const resp = await fetch(`/api/v1/relay/info?${q}`);
 	if (!resp.ok) {
 		return { state: 'failed', error: `engine HTTP ${resp.status}`, fetched_at: 0 };
 	}
@@ -81,16 +113,21 @@ const inflight = new Map<string, Promise<Nip11Status>>();
  * Read the engine's current NIP-11 status for a relay. If the engine
  * reports `Loading`, schedules a single follow-up poll so the caller's
  * `onUpdate` fires once the fetch lands without needing its own timer.
+ *
+ * Pass `{ force: true }` to bypass both the per-tab dedup and the
+ * engine's cache (a retry after a transient failure).
  */
 export function getRelayInfo(
 	url: string,
-	onUpdate?: (s: Nip11Status) => void
+	onUpdate?: (s: Nip11Status) => void,
+	opts?: { force?: boolean }
 ): Nip11Status {
 	const key = normalizeRelayUrl(url);
+	const force = opts?.force ?? false;
 
-	let promise = inflight.get(key);
+	let promise = force ? undefined : inflight.get(key);
 	if (!promise) {
-		promise = fetchOnce(url).finally(() => inflight.delete(key));
+		promise = fetchOnce(url, force).finally(() => inflight.delete(key));
 		inflight.set(key, promise);
 	}
 

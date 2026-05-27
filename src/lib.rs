@@ -67,6 +67,8 @@ pub mod publication;
 pub mod signing;
 pub mod query;
 pub mod relay;
+pub mod relay_store;
+pub mod relay_url;
 pub mod search;
 pub mod tree;
 pub mod user_data;

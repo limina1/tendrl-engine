@@ -323,10 +323,19 @@ export function search(
 export interface PublishRequest {
 	title: string;
 	tags: [string, string][];
-	sections: { title: string; content: string; tags: [string, string][] }[];
+	sections: {
+		title: string;
+		content: string;
+		tags: [string, string][];
+		level?: number;
+		/** Reuse this section d-tag (republish replace) instead of minting. */
+		d_tag?: string;
+	}[];
 	sign: boolean;
 	broadcast: boolean;
 	relays?: string[];
+	/** Reuse this index d-tag (republish replace) instead of minting. */
+	d_tag?: string;
 }
 
 export interface PublishResponse {
@@ -334,11 +343,27 @@ export interface PublishResponse {
 	section_ids: string[];
 	signed: boolean;
 	ingested: boolean;
-	broadcast_results?: { relay: string; success: boolean; message: string | null }[];
+	broadcast_results?: {
+		relay: string;
+		success: boolean;
+		message: string | null;
+		event_id: string;
+	}[];
+	/** Full event JSON (index first, then sections) for the inspector. */
+	events?: unknown[];
 }
 
 export function publish(req: PublishRequest) {
 	return fetchJson<PublishResponse>('/api/v1/publish', {
+		method: 'POST',
+		body: JSON.stringify(req)
+	});
+}
+
+/** Build the unsigned 30040/30041 event graph for a compose without
+ *  signing/ingesting/broadcasting — feeds the compose JSON preview. */
+export function previewPublication(req: PublishRequest) {
+	return fetchJson<{ events: unknown[] }>('/api/v1/publish/preview', {
 		method: 'POST',
 		body: JSON.stringify(req)
 	});
@@ -457,6 +482,7 @@ export function getRelayConfig() {
 		publish: { urls: string[]; kinds: number[] };
 		fetch: { urls: string[]; kinds: number[] };
 		authors: string[];
+		initial_relays: string[];
 	}>('/api/v1/relays');
 }
 
@@ -467,6 +493,23 @@ export function addRelay(set: string, url: string) {
 		method: 'POST',
 		body: JSON.stringify({ add_relay: { set, url } })
 	});
+}
+
+export function removeRelay(set: string, url: string) {
+	return fetchJson<{ updated: boolean; message: string }>('/api/v1/config/update', {
+		method: 'POST',
+		body: JSON.stringify({ remove_relay: { set, url } })
+	});
+}
+
+/** Snapshot the live relay sets into config.toml's [relay] initial_relays
+ *  as a portable bootstrap seed. Disk-only operation; doesn't change the
+ *  running engine's working sets. */
+export function snapshotConfig() {
+	return fetchJson<{ updated: boolean; count: number; path: string; message: string }>(
+		'/api/v1/config/snapshot',
+		{ method: 'POST' }
+	);
 }
 
 export function addAuthor(author: string) {

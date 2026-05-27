@@ -7,6 +7,7 @@ use crate::config::{EmbeddingConfig, RelayConfig};
 use crate::embedding::{EmbeddingIndex, EmbeddingStatus};
 use crate::error::{EngineError, Result};
 use crate::network::{self, FetchTrigger, NetworkActivity, NetworkMode};
+use crate::relay_store::{RelayStore, RelaySets};
 use crate::search::{self, SearchQuery, SearchResponse};
 use crate::{query, relay};
 use nostrdb::{Config, IngestMetadata, Ndb};
@@ -15,6 +16,9 @@ use serde_json::Value;
 use std::path::Path;
 use std::sync::Arc;
 use tokio::sync::RwLock;
+// Separate sync RwLock for relay_config — guards short-lived
+// read/write of in-memory URL lists. Never held across .await.
+use std::sync::RwLock as StdRwLock;
 use tracing::{debug, info, warn};
 
 /// Upper bound on authors fetched in one profile backfill — keeps a
@@ -118,8 +122,16 @@ impl IgnoreList {
 pub struct Engine {
     /// The nostrdb instance
     ndb: Arc<Ndb>,
-    /// Relay configuration (general, publish, fetch sets)
-    relay_config: RelayConfig,
+    /// Relay configuration (general, publish, fetch sets).
+    ///
+    /// URL fields are mirrored from `RelayStore` at boot; thereafter the
+    /// `RwLock` allows `add_relay`/`remove_relay` to mutate the live copy
+    /// at runtime via `&self` (so API handlers can take effect without a
+    /// restart). Read sites clone before any `.await`.
+    relay_config: StdRwLock<RelayConfig>,
+    /// Persistent backing for the working relay sets — writes through
+    /// to `<data_dir>/relays.json` on every `add_relay` / `remove_relay`.
+    relay_store: RelayStore,
     /// Data directory path
     data_dir: std::path::PathBuf,
     /// Config file path (for saving changes from UI)
@@ -150,16 +162,28 @@ impl Engine {
         Self::with_relay_config(data_path, &RelayConfig::default())
     }
 
-    /// Create a new Engine with custom configuration (backwards compat)
+    /// Create a new Engine with a bootstrap relay list (test/back-compat).
+    /// The relays are passed in as `initial_relays`; on first boot they
+    /// seed all three working sets via the relay store.
     pub fn with_config(data_path: &Path, relays: &[&str], _timeout_ms: u64) -> Result<Self> {
-        let mut config = RelayConfig::default();
-        let urls: Vec<String> = relays.iter().map(|s| s.to_string()).collect();
-        config.fetch.urls = urls.clone();
-        config.publish.urls = urls;
+        let config = RelayConfig {
+            initial_relays: relays.iter().map(|s| s.to_string()).collect(),
+            ..RelayConfig::default()
+        };
         Self::with_relay_config(data_path, &config)
     }
 
-    /// Create a new Engine with full relay configuration
+    /// Create a new Engine with full relay configuration.
+    ///
+    /// The TOML-derived `relay_config` provides `initial_relays`, `kinds`
+    /// defaults, `authors`, and `timeout_ms`. The live working URL sets
+    /// (`general` / `publish` / `fetch`) come from `<data_dir>/relays.json`:
+    ///
+    /// - First boot (no `relays.json`): seed all three sets from
+    ///   `initial_relays`, write the file, and use that as the runtime
+    ///   working copy.
+    /// - Subsequent boots: load the JSON file; ignore `initial_relays`
+    ///   entirely. The file is the source of truth.
     pub fn with_relay_config(data_path: &Path, relay_config: &RelayConfig) -> Result<Self> {
         // Ensure the data directory exists
         std::fs::create_dir_all(data_path)?;
@@ -186,9 +210,37 @@ impl Engine {
             );
         }
 
+        // Layer the persisted relay store on top of the (mostly-empty)
+        // TOML-derived RelayConfig. First boot seeds from initial_relays.
+        let relay_store = RelayStore::new(data_path)
+            .map_err(|e| EngineError::Config(format!("Failed to open relay store: {e}")))?;
+        let sets = if relay_store.is_first_boot() {
+            info!(
+                "No {} found — seeding from initial_relays ({} URLs)",
+                relay_store.path().display(),
+                relay_config.initial_relays.len()
+            );
+            let seeded = RelaySets::seed_from_initial(&relay_config.initial_relays);
+            relay_store
+                .save(&seeded)
+                .map_err(|e| EngineError::Config(format!("Failed to seed relay store: {e}")))?;
+            seeded
+        } else {
+            relay_store
+                .load()
+                .map_err(|e| EngineError::Config(format!("Failed to load relay store: {e}")))?
+        };
+        let mut relay_config = relay_config.clone();
+        relay_config.apply_persisted(&sets);
+        info!(
+            "Relays — general: {:?}, fetch: {:?}, publish: {:?}",
+            relay_config.general.urls, relay_config.fetch.urls, relay_config.publish.urls
+        );
+
         Ok(Engine {
             ndb: Arc::new(ndb),
-            relay_config: relay_config.clone(),
+            relay_config: StdRwLock::new(relay_config),
+            relay_store,
             data_dir: data_path.to_path_buf(),
             config_path: None,
             my_pubkey: None,
@@ -208,19 +260,25 @@ impl Engine {
         &self.ndb
     }
 
-    /// Get the relay configuration
-    pub fn relay_config(&self) -> &RelayConfig {
-        &self.relay_config
+    /// Snapshot of the current relay configuration. Owns a clone — never
+    /// hand back a reference into the lock or callers might block writers.
+    pub fn relay_config(&self) -> RelayConfig {
+        self.relay_config.read().unwrap().clone()
     }
 
-    /// Get fetch relay URLs (backwards compat)
-    pub fn relays(&self) -> &[String] {
-        &self.relay_config.fetch.urls
+    /// Get fetch relay URLs (owned clone).
+    pub fn relays(&self) -> Vec<String> {
+        self.relay_config.read().unwrap().fetch.urls.clone()
     }
 
-    /// Get publish relay URLs
-    pub fn publish_relays(&self) -> &[String] {
-        &self.relay_config.publish.urls
+    /// Get publish relay URLs (owned clone).
+    pub fn publish_relays(&self) -> Vec<String> {
+        self.relay_config.read().unwrap().publish.urls.clone()
+    }
+
+    /// Get general relay URLs (owned clone).
+    pub fn general_relays(&self) -> Vec<String> {
+        self.relay_config.read().unwrap().general.urls.clone()
     }
 
     /// Get the data directory path
@@ -344,29 +402,88 @@ impl Engine {
         self.config_path.as_deref()
     }
 
-    /// Add a relay URL to a set (mutates in-memory config)
-    pub fn add_relay(&mut self, set: &str, url: &str) {
-        let urls = match set {
-            "general" => &mut self.relay_config.general.urls,
-            "publish" => &mut self.relay_config.publish.urls,
-            "fetch" => &mut self.relay_config.fetch.urls,
-            _ => return,
-        };
-        if !urls.contains(&url.to_string()) {
-            urls.push(url.to_string());
+    /// Add a relay URL to a working set. Mutates the in-memory `RelayConfig`
+    /// and writes through to `<data_dir>/relays.json` so the change survives
+    /// a restart.
+    ///
+    /// Silently ignores unknown set names so the API endpoint can stay lax
+    /// about user-supplied input (matching the previous behaviour). A
+    /// write-through failure is surfaced as a `tracing::warn!` rather than
+    /// an `Err` because the in-memory mutation still succeeded — callers
+    /// don't currently check a Result here.
+    pub fn add_relay(&self, set: &str, url: &str) -> bool {
+        let url = crate::relay_url::normalize_relay_url(url);
+        if url.is_empty() {
+            return false;
         }
+        // Mutate in-memory first; release the write lock before disk I/O.
+        let snapshot = {
+            let mut rc = self.relay_config.write().unwrap();
+            let urls = match set {
+                "general" => &mut rc.general.urls,
+                "publish" => &mut rc.publish.urls,
+                "fetch" => &mut rc.fetch.urls,
+                _ => return false,
+            };
+            if urls.iter().any(|u| u == &url) {
+                return false;
+            }
+            urls.push(url.clone());
+            RelaySets {
+                general: rc.general.urls.clone(),
+                fetch: rc.fetch.urls.clone(),
+                publish: rc.publish.urls.clone(),
+            }
+        };
+        if let Err(e) = self.relay_store.save(&snapshot) {
+            warn!("Failed to persist relay add ({set}/{url}): {e}");
+        }
+        true
+    }
+
+    /// Remove a relay URL from a working set. Mirror of `add_relay` —
+    /// mutates the in-memory config and writes through to `relays.json`.
+    pub fn remove_relay(&self, set: &str, url: &str) -> bool {
+        let url = crate::relay_url::normalize_relay_url(url);
+        if url.is_empty() {
+            return false;
+        }
+        let snapshot = {
+            let mut rc = self.relay_config.write().unwrap();
+            let urls = match set {
+                "general" => &mut rc.general.urls,
+                "publish" => &mut rc.publish.urls,
+                "fetch" => &mut rc.fetch.urls,
+                _ => return false,
+            };
+            let before = urls.len();
+            urls.retain(|u| u != &url);
+            if urls.len() == before {
+                return false;
+            }
+            RelaySets {
+                general: rc.general.urls.clone(),
+                fetch: rc.fetch.urls.clone(),
+                publish: rc.publish.urls.clone(),
+            }
+        };
+        if let Err(e) = self.relay_store.save(&snapshot) {
+            warn!("Failed to persist relay remove ({set}/{url}): {e}");
+        }
+        true
     }
 
     /// Add an author to the follow list
     pub fn add_author(&mut self, author: &str) {
-        if !self.relay_config.authors.contains(&author.to_string()) {
-            self.relay_config.authors.push(author.to_string());
+        let mut rc = self.relay_config.write().unwrap();
+        if !rc.authors.contains(&author.to_string()) {
+            rc.authors.push(author.to_string());
         }
     }
 
     /// Remove an author from the follow list
     pub fn remove_author(&mut self, author: &str) {
-        self.relay_config.authors.retain(|a| a != author);
+        self.relay_config.write().unwrap().authors.retain(|a| a != author);
     }
 
     /// Get the documents folder path
@@ -730,7 +847,7 @@ impl Engine {
                 .push(d_tag.clone());
         }
 
-        let relays = &self.relay_config.fetch.urls;
+        let relays = self.relays();
         let mut total_fetched = 0usize;
 
         for (pubkey, d_tags) in &by_pubkey {
@@ -742,7 +859,7 @@ impl Engine {
                     "limit": chunk.len() * 2
                 });
 
-                for relay_url in relays {
+                for relay_url in &relays {
                     match self
                         .tracked_fetch(relay_url, &[filter.clone()], FetchTrigger::BackgroundSync)
                         .await
@@ -808,7 +925,16 @@ impl Engine {
         override_relays: Option<&[String]>,
         mode_confirm: bool,
     ) -> Result<QueryResponse> {
-        let relays = override_relays.unwrap_or(&self.relay_config.fetch.urls);
+        // Snapshot the fetch URLs once so the lock is released before
+        // any .await. `override_relays` keeps borrowed semantics; the
+        // local Vec lives long enough for the downstream call.
+        let owned_fetch: Vec<String>;
+        let relays: &[String] = if let Some(o) = override_relays {
+            o
+        } else {
+            owned_fetch = self.relays();
+            &owned_fetch
+        };
         let policy = if mode_confirm || self.is_auto() {
             policy
         } else {
@@ -847,8 +973,8 @@ impl Engine {
         // Fetch from relays if needed
         if policy != FetchPolicy::LocalOnly {
             debug!("Fetching event {} from relays", event_id);
-            return relay::fetch_event_by_id(&self.ndb, &self.relay_config.fetch.urls, event_id)
-                .await;
+            let fetch_relays = self.relays();
+            return relay::fetch_event_by_id(&self.ndb, &fetch_relays, event_id).await;
         }
 
         Ok(None)
@@ -889,9 +1015,10 @@ impl Engine {
                 &pubkey.chars().take(8).collect::<String>(),
                 d_tag
             );
+            let fetch_relays = self.relays();
             return relay::fetch_addressable(
                 &self.ndb,
-                &self.relay_config.fetch.urls,
+                &fetch_relays,
                 kind,
                 pubkey,
                 d_tag,
@@ -933,11 +1060,19 @@ impl Engine {
     /// event id and simply appends the relay to the existing note's relay set.
     /// The event must carry a valid signature (relay-form ingest verifies it).
     pub fn record_event_relay(&self, event_json: &str, relay_url: &str) -> Result<()> {
+        // Normalize so two URLs differing in trailing slash / case /
+        // default port collapse to a single chip in the provenance UI.
+        let normalized = crate::relay_url::normalize_relay_url(relay_url);
+        let tag_url = if normalized.is_empty() {
+            relay_url
+        } else {
+            normalized.as_str()
+        };
         let wrapped = format!(r#"["EVENT","tendrl-relay-meta",{}]"#, event_json);
         self.ndb
             .process_event_with(
                 &wrapped,
-                IngestMetadata::new().client(false).relay(relay_url),
+                IngestMetadata::new().client(false).relay(tag_url),
             )
             .map_err(|e| EngineError::Database(format!("Failed to record relay metadata: {e}")))
     }
@@ -1172,7 +1307,7 @@ impl Engine {
         // Profiles can live on any configured relay — query the union of
         // the general / fetch / publish sets so an empty `general` set
         // doesn't silently disable the backfill.
-        let relays = self.relay_config.all_urls();
+        let relays = self.relay_config.read().unwrap().all_urls();
         if relays.is_empty() {
             warn!(
                 "Profile backfill: {} author(s) missing a kind-0, but no relays are configured",
@@ -1896,7 +2031,7 @@ mod tests {
 
         // Build signed events
         let (pub_event, section_events) =
-            build_signed_publication_events(&compose, &pubkey, secret_hex);
+            build_signed_publication_events(&mut compose, &pubkey, secret_hex);
 
         println!(
             "Publication event: {}",
@@ -1990,7 +2125,7 @@ mod tests {
             });
 
             let (pub_event, _section_events) =
-                build_signed_publication_events(&compose, &pubkey, secret_hex);
+                build_signed_publication_events(&mut compose, &pubkey, secret_hex);
             event_id = pub_event.get("id").unwrap().as_str().unwrap().to_string();
 
             println!("Created event with ID: {}", event_id);
@@ -2250,5 +2385,131 @@ mod tests {
             .unwrap();
 
         assert!(response.results.len() <= 3);
+    }
+
+    /// `record_event_relay` must persist the source relay against the event
+    /// id so `note.relays(txn)` (surfaced as the `relays` field on
+    /// `GET /api/v1/events/:id`) reflects it. Re-attributing the same event
+    /// from a second relay appends rather than replacing — the per-event
+    /// set is append-only and survives nostrdb's dedup.
+    ///
+    /// Mocking a real WebSocket relay round-trip would be heavy; the audit
+    /// invariant is satisfied by exercising `record_event_relay` directly,
+    /// since `relay.rs:fetch_with_filters` funnels every inbound EVENT
+    /// through the same `IngestMetadata::relay(url)` write path.
+    #[tokio::test]
+    async fn test_record_event_relay_persists_provenance() {
+        use nostrdb::FilterBuilder;
+
+        let dir = tempdir().unwrap();
+        let engine = Engine::with_config(dir.path(), &[], 1000).unwrap();
+
+        // A signed kind-1 event (built the same way as the other tests).
+        let event_json =
+            build_test_event(1, "relay provenance probe", vec![], 1_700_000_001);
+        let event_value: serde_json::Value = serde_json::from_str(&event_json).unwrap();
+        let event_id = event_value["id"].as_str().unwrap().to_string();
+
+        // Subscribe before writing so we can await processing.
+        let filter = FilterBuilder::new().kinds([1]).build();
+        let sub = engine.ndb.subscribe(&[filter]).expect("subscription");
+
+        // Record from relay A.
+        engine
+            .record_event_relay(&event_json, "wss://relay.example/")
+            .expect("record relay A");
+        let _ = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            engine.ndb.wait_for_notes(sub, 1),
+        )
+        .await
+        .expect("ndb timeout")
+        .expect("wait_for_notes");
+
+        let value = crate::query::query_by_id(&engine.ndb, &event_id)
+            .expect("query")
+            .expect("event present");
+        let relays: Vec<String> = value["relays"]
+            .as_array()
+            .expect("relays array")
+            .iter()
+            .map(|v| v.as_str().unwrap().to_string())
+            .collect();
+        // record_event_relay normalizes the URL (strips the trailing slash)
+        // before tagging the note, so provenance reflects the canonical form.
+        assert!(
+            relays.iter().any(|r| r == "wss://relay.example"),
+            "expected relay A in provenance, got {:?}",
+            relays
+        );
+
+        // Re-attribute via a second relay. The same event id must now carry
+        // both — nostrdb's per-event relay set is append-only.
+        engine
+            .record_event_relay(&event_json, "wss://relay.other/")
+            .expect("record relay B");
+        // Give nostrdb a moment to process the second ingest.
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+
+        let value = crate::query::query_by_id(&engine.ndb, &event_id)
+            .expect("re-query")
+            .expect("event still present");
+        let relays: Vec<String> = value["relays"]
+            .as_array()
+            .expect("relays array")
+            .iter()
+            .map(|v| v.as_str().unwrap().to_string())
+            .collect();
+        assert!(
+            relays.iter().any(|r| r == "wss://relay.example")
+                && relays.iter().any(|r| r == "wss://relay.other"),
+            "expected both relays after second attribution, got {:?}",
+            relays
+        );
+    }
+
+    /// `engine.add_relay` / `remove_relay` mutate the live in-memory
+    /// `RelayConfig` (not just `relays.json`) so API-driven edits take
+    /// effect for the running process without a restart. Locks in the
+    /// fix that previously made the relays buffer's toggles look like
+    /// they worked while the engine kept fetching from the old set.
+    #[tokio::test]
+    async fn test_add_and_remove_relay_mutates_in_memory_and_disk() {
+        let temp_dir = tempdir().expect("temp dir");
+        // Boot with no initial_relays so we can observe each add cleanly.
+        let cfg = RelayConfig {
+            initial_relays: Vec::new(),
+            ..RelayConfig::default()
+        };
+        let engine = Engine::with_relay_config(temp_dir.path(), &cfg).expect("engine");
+
+        assert!(engine.publish_relays().is_empty(), "publish should start empty");
+        assert!(engine.relays().is_empty(), "fetch should start empty");
+
+        // Add through &self (this is the API-handler path).
+        assert!(engine.add_relay("publish", "wss://target.relay"));
+        assert!(engine.add_relay("fetch", "wss://reader.relay"));
+
+        // In-memory view reflects the add immediately — no restart.
+        assert_eq!(engine.publish_relays(), vec!["wss://target.relay".to_string()]);
+        assert_eq!(engine.relays(), vec!["wss://reader.relay".to_string()]);
+
+        // Disk file also reflects the add — open a fresh store and read.
+        let store = crate::relay_store::RelayStore::new(temp_dir.path()).expect("store");
+        let sets = store.load().expect("load");
+        assert_eq!(sets.publish, vec!["wss://target.relay".to_string()]);
+        assert_eq!(sets.fetch, vec!["wss://reader.relay".to_string()]);
+
+        // Duplicate add is a no-op (returns false).
+        assert!(!engine.add_relay("publish", "wss://target.relay"));
+
+        // Remove through &self mirrors add.
+        assert!(engine.remove_relay("publish", "wss://target.relay"));
+        assert!(engine.publish_relays().is_empty());
+        let sets = store.load().expect("reload");
+        assert!(sets.publish.is_empty());
+
+        // Remove of a missing relay is a no-op.
+        assert!(!engine.remove_relay("publish", "wss://never-added"));
     }
 }

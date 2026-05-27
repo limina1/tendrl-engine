@@ -31,9 +31,17 @@ import type {
 	IdentityStatus,
 	NAddr,
 	NostrEvent,
+	EventsModalItem,
+	TocEntry,
+	RepublishDiff,
+	RepublishDiffSection,
 } from '$lib/types';
+import { slugify } from '$lib/nostr/slug';
 import type { Buffer } from '$lib/wm/types';
 import * as api from '$lib/api';
+import { getActiveStore } from '$lib/wm/buffer-store.svelte';
+import { setProgress, progressFromPublish } from '$lib/wm/publish-progress.svelte';
+import { identityCanSign } from '$lib/identity/signer';
 
 /** Replaceable kind-0 events can pile up multiple historical versions in
  *  the DB / relay results. A search should surface only the *current*
@@ -240,6 +248,22 @@ function _createAppState() {
 	// legacy <pre> dump in +layout.svelte. Narrowed so each call site is
 	// explicit about which shape it's pushing.
 	let jsonModalData: { buffer: Buffer } | { rawEvent: unknown } | null = $state(null);
+
+	// Rich multi-event JSON inspector (publish results + compose preview):
+	// a list of events each independently expandable, plus expand-all.
+	let eventsModal: { title: string; events: EventsModalItem[] } | null = $state(null);
+
+	// Republish diff prompt: set when Publish detects a same-title
+	// publication. ComparePublishModal renders the diff and calls
+	// confirmRepublish/cancelRepublish. Holds the pending publish args so
+	// the chosen action can proceed without re-deriving them.
+	let republishPrompt: {
+		diff: RepublishDiff;
+		sections: ContextItem[];
+		pubTitle: string;
+		pubTags: TagEntry[];
+		canSign: boolean;
+	} | null = $state(null);
 
 	// --- Search history ---
 	// App-level navigation history. Every query / event-view / coord lookup
@@ -1052,7 +1076,7 @@ function _createAppState() {
 	async function handleChatPublishFragments(fragments: Fragment[]) {
 		if (!fragments.length) return;
 		try {
-			const canSign = identityStatus?.state === 'unlocked';
+			const canSign = identityCanSign(identityStatus);
 			await api.publish({
 				title: `Chat export ${new Date().toISOString().slice(0, 10)}`,
 				tags: [],
@@ -1070,10 +1094,67 @@ function _createAppState() {
 		}
 	}
 
-	async function handleComposePublish(items: ContextItem[]) {
+	async function handleComposePublish(
+		items: ContextItem[],
+		meta?: { title: string; tags: TagEntry[] }
+	) {
 		const sections = items.length > 0 ? items : compose.sections;
-		if (!sections.length) return;
-		const canSign = identityStatus?.state === 'unlocked';
+		if (!sections.length) {
+			pushToast('Nothing to publish — no sections detected', 'error', 4000);
+			return;
+		}
+		// Prefer the title/tags parsed at click time (plain mode) over the
+		// reactive compose state, which can lag a same-tick edit and publish
+		// an empty title.
+		const pubTitle = meta?.title ?? compose.title;
+		const pubTags = meta?.tags ?? compose.tags;
+		const canSign = identityCanSign(identityStatus);
+
+		// Republish guard: if a publication of yours with the same title
+		// already exists, intercept and show a diff so identifiers can be
+		// reused (replace) rather than forking with fresh nanoid d-tags.
+		const diff = await detectRepublish(pubTitle, sections);
+		if (diff) {
+			republishPrompt = { diff, sections, pubTitle, pubTags, canSign };
+			return; // ComparePublishModal drives confirm / publish-as-new / cancel
+		}
+
+		await executePublish(sections, pubTitle, pubTags, canSign);
+	}
+
+	// Reuse identifiers from the matched publication (replace) or publish
+	// fresh. Called by ComparePublishModal.
+	async function confirmRepublish(reuse: boolean) {
+		const p = republishPrompt;
+		republishPrompt = null;
+		if (!p) return;
+		const overrides = reuse
+			? { pubDTag: p.diff.pubDTag, sectionDTagByT: p.diff.sectionDTagByT }
+			: undefined;
+		await executePublish(p.sections, p.pubTitle, p.pubTags, p.canSign, overrides);
+	}
+
+	function cancelRepublish() {
+		republishPrompt = null;
+	}
+
+	async function executePublish(
+		sections: ContextItem[],
+		pubTitle: string,
+		pubTags: TagEntry[],
+		canSign: boolean,
+		overrides?: { pubDTag: string; sectionDTagByT: Record<string, string> }
+	) {
+		// Immediate feedback: signing N events through an external signer is
+		// slow (one round-trip per event) and otherwise gives no sign the
+		// click registered. Flip this toast to success/error when it settles.
+		const progressToast = pushToast(
+			canSign
+				? `Publishing ${sections.length + 1} events… (signing via ${identityStatus?.source ?? 'engine'})`
+				: 'Saving locally…',
+			'pending',
+			120000
+		);
 
 		// If any section has a source_addr OR the draft was seeded from a
 		// publication, route through the block endpoint so we emit fork-
@@ -1082,7 +1163,10 @@ function _createAppState() {
 			!!composeSourcePubAddr || sections.some((s) => !!s.source_addr);
 
 		try {
+			let resp: api.PublishResponse;
 			if (hasProvenance) {
+				// NOTE: republish d-tag reuse is not wired through the block/
+				// fork path yet — see docs/republish-diff.md (deferred).
 				const blocks: api.PublishBlock[] = sections.map((s) => {
 					const baseTags = s.tags.map(
 						(t) => [t.name, t.value] as [string, string]
@@ -1115,9 +1199,9 @@ function _createAppState() {
 						author: s.source_addr.pubkey
 					};
 				});
-				const resp = await api.publishBlocks({
-					title: compose.title,
-					tags: compose.tags.map((t) => [t.name, t.value] as [string, string]),
+				resp = await api.publishBlocks({
+					title: pubTitle,
+					tags: pubTags.map((t) => [t.name, t.value] as [string, string]),
 					blocks,
 					source_publication_addr: composeSourcePubAddr,
 					source_publication_event_id: composeSourcePubEventId,
@@ -1126,22 +1210,186 @@ function _createAppState() {
 				});
 				console.log('Published (blocks):', resp.publication_id);
 			} else {
-				const resp = await api.publish({
-					title: compose.title,
-					tags: compose.tags.map((t) => [t.name, t.value] as [string, string]),
+				resp = await api.publish({
+					title: pubTitle,
+					tags: pubTags.map((t) => [t.name, t.value] as [string, string]),
 					sections: sections.map((s) => ({
 						title: s.title,
 						content: s.content,
-						tags: s.tags.map((t) => [t.name, t.value] as [string, string])
+						level: s.level,
+						tags: s.tags.map((t) => [t.name, t.value] as [string, string]),
+						// Reuse the matched section's d-tag on republish so the
+						// 30041 replaces rather than forks.
+						d_tag: overrides?.sectionDTagByT[slugify(s.title)]
 					})),
+					d_tag: overrides?.pubDTag,
 					sign: canSign,
 					broadcast: canSign
 				});
 				console.log('Published:', resp.publication_id);
 			}
+
+			// Surface where each event landed: build the per-event×relay
+			// grid from the broadcast results and pop the publish-progress
+			// buffer. Only when we actually broadcast (a signed publish).
+			if (resp.broadcast_results && resp.broadcast_results.length > 0) {
+				setProgress(
+					progressFromPublish(resp, {
+						title: pubTitle,
+						authorPubkey: myPubkey ?? '',
+						sections: sections.map((s) => ({ title: s.title, content: s.content }))
+					})
+				);
+				getActiveStore().openBuffer({
+					className: 'work',
+					buffer: {
+						id: 'publish-progress:current',
+						kind: 'publish-progress',
+						label: 'publish',
+						kicker: 'live'
+					}
+				});
+				updateToast(progressToast, { message: 'Published — see relay results', kind: 'success' }, 3000);
+			} else if (!canSign) {
+				updateToast(progressToast, { message: 'Saved locally — log in to sign & broadcast', kind: 'info' }, 4000);
+			} else {
+				updateToast(progressToast, { message: 'Published (no relay results returned)', kind: 'success' }, 4000);
+			}
 			await loadFeed();
 		} catch (e) {
+			// Don't swallow — a failed sign/broadcast otherwise looks like
+			// "nothing happened" (no modal, no error). Surface the reason.
 			console.error('Publish compose failed:', e);
+			updateToast(progressToast, { message: `Publish failed: ${e instanceof Error ? e.message : String(e)}`, kind: 'error' }, 6000);
+		}
+	}
+
+	function flattenToc(
+		toc: TocEntry[]
+	): { title: string | null; dTag: string; content: string | null; isPublication: boolean }[] {
+		const out: { title: string | null; dTag: string; content: string | null; isPublication: boolean }[] = [];
+		const walk = (entries: TocEntry[]) => {
+			for (const e of entries) {
+				out.push({
+					title: e.title,
+					dTag: e.addr.d_tag,
+					content: e.content,
+					isPublication: e.is_publication
+				});
+				if (e.children?.length) walk(e.children);
+			}
+		};
+		walk(toc);
+		return out;
+	}
+
+	// Does a publication of mine with this title already exist? If so build a
+	// section-level diff (matched by T = title slug) so a republish can reuse
+	// identifiers and replace instead of forking. Returns null when there's
+	// no match (normal first publish) or on any lookup failure (fail-open).
+	async function detectRepublish(
+		pubTitle: string,
+		sections: ContextItem[]
+	): Promise<RepublishDiff | null> {
+		if (!myPubkey || !pubTitle.trim()) return null;
+		const titleT = slugify(pubTitle);
+		try {
+			const { publications } = await api.listPublications(50, 'local_only');
+			const candidates = publications.filter(
+				(p) => p.author_pubkey === myPubkey && p.title && slugify(p.title) === titleT
+			);
+			if (!candidates.length) return null;
+			// "exact title match → highest 30040": newest wins.
+			const match = [...candidates].sort((a, b) => b.created_at - a.created_at)[0];
+
+			const { toc } = await api.getPublication(match.addr.pubkey, match.addr.d_tag, 'local_first', 5);
+			const existingSecs = flattenToc(toc).filter((e) => !e.isPublication);
+			const existingByT = new Map(existingSecs.map((e) => [slugify(e.title ?? ''), e]));
+
+			const newSecs = sections.map((s) => ({ title: s.title, content: s.content, t: slugify(s.title) }));
+			const newTs = new Set(newSecs.map((s) => s.t));
+
+			const matched: RepublishDiffSection[] = [];
+			const added: RepublishDiffSection[] = [];
+			const removed: RepublishDiffSection[] = [];
+
+			for (const s of newSecs) {
+				const ex = existingByT.get(s.t);
+				if (ex) {
+					matched.push({
+						title: s.title,
+						t: s.t,
+						dTag: ex.dTag,
+						contentChanged: (ex.content ?? '').trim() !== s.content.trim()
+					});
+				} else {
+					added.push({ title: s.title, t: s.t });
+				}
+			}
+			for (const e of existingSecs) {
+				const t = slugify(e.title ?? '');
+				if (!newTs.has(t)) removed.push({ title: e.title ?? '[untitled]', t, dTag: e.dTag });
+			}
+
+			return {
+				existingAddr: match.addr,
+				existingTitle: match.title ?? '',
+				pubDTag: match.addr.d_tag,
+				matched,
+				added,
+				removed,
+				sectionDTagByT: Object.fromEntries(matched.map((m) => [m.t, m.dTag!]))
+			};
+		} catch (e) {
+			console.warn('Republish detection skipped:', e);
+			return null; // fail-open: never block a publish on a lookup error
+		}
+	}
+
+	// Turn a built nostr event (Value) into an inspector row.
+	function eventToModalItem(ev: unknown, idx: number): EventsModalItem {
+		const obj = (ev ?? {}) as { kind?: number; id?: string; tags?: unknown };
+		const tags = Array.isArray(obj.tags) ? (obj.tags as string[][]) : [];
+		const titleTag = tags.find((t) => t[0] === 'title')?.[1];
+		const dTag = tags.find((t) => t[0] === 'd')?.[1];
+		return {
+			label: titleTag || dTag || `event ${idx + 1}`,
+			kind: obj.kind,
+			id: obj.id,
+			json: ev
+		};
+	}
+
+	// Build the would-be event graph for the current compose and open the
+	// JSON inspector — no signing/ingest/broadcast. Mirrors the publish
+	// request shape so the preview matches what publishing emits.
+	async function handleComposePreview(items: ContextItem[], meta?: { title: string; tags: TagEntry[] }) {
+		const sections = items.length > 0 ? items : compose.sections;
+		if (!sections.length) {
+			pushToast('Nothing to preview — no sections detected', 'error', 4000);
+			return;
+		}
+		const pubTitle = meta?.title ?? compose.title;
+		const pubTags = meta?.tags ?? compose.tags;
+		try {
+			const resp = await api.previewPublication({
+				title: pubTitle,
+				tags: pubTags.map((t) => [t.name, t.value] as [string, string]),
+				sections: sections.map((s) => ({
+					title: s.title,
+					content: s.content,
+					level: s.level,
+					tags: s.tags.map((t) => [t.name, t.value] as [string, string])
+				})),
+				sign: false,
+				broadcast: false
+			});
+			eventsModal = {
+				title: `Preview — ${pubTitle || 'untitled'} (${resp.events.length} events)`,
+				events: resp.events.map((e, i) => eventToModalItem(e, i))
+			};
+		} catch (e) {
+			pushToast(`Preview failed: ${e instanceof Error ? e.message : String(e)}`, 'error', 6000);
 		}
 	}
 
@@ -1949,7 +2197,7 @@ function _createAppState() {
 
 	async function handleDocPublish() {
 		if (!publication || !sections.length) return;
-		const canSign = identityStatus?.state === 'unlocked';
+		const canSign = identityCanSign(identityStatus);
 		try {
 			const loadedSections = sections.filter(s => s.status === 'loaded' && s.content);
 			if (!loadedSections.length) return;
@@ -2409,6 +2657,12 @@ function _createAppState() {
 		} catch (e) {
 			console.warn('Config fetch failed:', e);
 		}
+		// Load network status FIRST so the modeline's network/auto pill
+		// settles on the real state before the user sees the placeholder
+		// "—". loadFeed is slow; networkStatus is a cheap GET.
+		try {
+			networkStatus = await api.getNetworkStatus();
+		} catch {}
 		try {
 			chat = await api.getChat();
 		} catch {
@@ -2418,9 +2672,6 @@ function _createAppState() {
 		try {
 			embeddingStatus = await api.getEmbeddingStatus();
 		} catch { /* embedding not enabled */ }
-		try {
-			networkStatus = await api.getNetworkStatus();
-		} catch {}
 		await refreshIgnoreList();
 		try {
 			const rc = await api.getRelayConfig();
@@ -2639,6 +2890,10 @@ function _createAppState() {
 		get jsonModalData() { return jsonModalData; },
 		set jsonModalData(v: { buffer: Buffer } | { rawEvent: unknown } | null) { jsonModalData = v; },
 
+		get eventsModal() { return eventsModal; },
+		set eventsModal(v: { title: string; events: EventsModalItem[] } | null) { eventsModal = v; },
+		openEventsModal(title: string, events: EventsModalItem[]) { eventsModal = { title, events }; },
+
 		// Profile
 		get profilePubkey() { return profilePubkey; },
 		set profilePubkey(v: string | null) { profilePubkey = v; },
@@ -2741,6 +2996,10 @@ function _createAppState() {
 		handleChatFragmentsToCompose,
 		handleChatPublishFragments,
 		handleComposePublish,
+		handleComposePreview,
+		get republishPrompt() { return republishPrompt; },
+		confirmRepublish,
+		cancelRepublish,
 		handleComposeUpdate,
 		handleSearch,
 		handleSearchViaRelays,

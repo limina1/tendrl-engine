@@ -341,6 +341,14 @@
 			closeMinibuffer();
 			return;
 		}
+		if (cmd.id === 'tendrl-show-relays') {
+			// Keyboard path to the relay-config buffer; previously this
+			// command was declared but had no handler (the buffer was only
+			// reachable by right-clicking the network-mode pill).
+			openRelays();
+			closeMinibuffer();
+			return;
+		}
 		if (cmd.id === 'tendrl-demo-publish-progress') {
 			import('$lib/wm/publish-progress.svelte').then(({ setProgress, mockProgress }) => {
 				setProgress(mockProgress());
@@ -856,6 +864,15 @@
 			{#if mb.mode !== 'closed'}
 				<span class="ml__seg ml__seg--prefix">mb:{mb.mode}</span>
 			{/if}
+			<!-- Relays pill sits before the spacer so it lands closer to the
+			     visible center of the modeline rather than the right edge. -->
+			<button
+				class="pill pill--btn pill--relays"
+				onclick={openRelays}
+				title="Relay configuration · read/write toggles · NIP-11 details"
+			>
+				relays
+			</button>
 			<span class="ml__spacer"></span>
 			{#if focusedBuffer && store.modelineStatus(focusedBuffer.id)}
 				<span class="ml__seg ml__status">{store.modelineStatus(focusedBuffer.id)}</span>
@@ -1677,6 +1694,10 @@
 	}
 	.pill--btn:hover {
 		filter: brightness(1.15);
+	}
+	.pill--relays {
+		background: color-mix(in srgb, var(--id-remote, var(--id-yours)) 14%, transparent);
+		color: var(--id-remote, var(--fg));
 	}
 	.ml__mode {
 		font-family: var(--font-mono);

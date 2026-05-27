@@ -111,7 +111,9 @@ sections and embeds new events on a 60-second interval when embeddings are enabl
 - **`search.rs`**: Structured query parser — see *Search syntax* below
 - **`embedding.rs`**: HNSW vector index (usearch) with dual backends: Python sidecar
   (HTTP at port 3031) or in-process ONNX (`--features onnx`)
-- **`config.rs`**: TOML config with relay sets (general/fetch/publish), embedding, identity
+- **`config.rs`**: TOML config — `initial_relays` (bootstrap seed only),
+  `timeout_ms`, authors, embedding, identity. The live `general`/`fetch`/`publish`
+  URL sets are populated at runtime from `relay_store.rs`, not from TOML.
 - **`identity.rs`**: Nostr key management — ncryptsec decryption, keyring storage, NIP-49
 - **`signing.rs`**: Pluggable `Signer` trait + `InProcessSigner`. The engine is the
   signing orchestrator; callers turn an `EventTemplate` into a `SignedEvent` without
@@ -130,6 +132,11 @@ sections and embeds new events on a 60-second interval when embeddings are enabl
   `~/.claude/projects/`
 - **`drafts.rs`**: Local JSON draft storage for unsigned NKBIP-01 publications before
   they are signed and published
+- **`relay_store.rs`**: Persistent runtime relay sets (`general` / `fetch` /
+  `publish`) backed by `<data_dir>/relays.json`. The TOML config only carries the
+  bootstrap `initial_relays` seed; `relays.json` is authoritative for the live
+  working sets and is rewritten on every UI relay add/remove. Never publishes
+  Nostr events — relay-list mutations are local-only state by design.
 
 ## Search syntax
 
@@ -165,8 +172,12 @@ alias for the `by:` publishing-pubkey filter.
 
 - **Error handling**: `EngineError` (thiserror) with variants for Database, Relay,
   NotFound, etc. `Result<T>` is aliased to `Result<T, EngineError>`.
-- **Relay sets**: Config supports separate relay lists for general/fetch/publish.
-  `RelayConfig::resolved()` merges legacy `default_relays` into the new set structure.
+- **Relay sets**: The TOML config carries only `initial_relays` (a bootstrap seed
+  list used **once** on first boot). The live working sets — `general` / `fetch` /
+  `publish` — live in `<data_dir>/relays.json`, mutated by `engine.add_relay` /
+  `engine.remove_relay` and the `POST /api/v1/config/update` handler. The state
+  file is **never** broadcast as a Nostr event (no auto-publishing kind 10002 /
+  30002 from UI edits — see `project_publishing_philosophy`).
 - **Content modes**: Sections support Markdown, Org Mode, AsciiDoc, and PlainText,
   detected from event tags.
 - **nostrdb read lock**: Never run nostrdb queries concurrently — `query.rs` holds a

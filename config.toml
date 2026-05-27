@@ -10,46 +10,18 @@ assistant = "npub1upulrz5tvvphu37c5ygs8xc6xpg30yds799dzspey7rsvrpgyzdqa8r477"
 pubkey = "npub1m3xdppkd0njmrqe2ma8a6ys39zvgp5k8u22mev8xsnqp4nh80srqhqa5sf"
 
 [network]
-mode = "confirm"
+mode = "auto"
 
 [relay]
 timeout_ms = 15000
-
-[relay.fetch]
-kinds = [
-    0,
-    1111,
-    30040,
-    30041,
-    30023,
-    30818,
-    30817,
-    9802,
-]
-urls = [
+# Bootstrap seed: used ONLY on first boot (when <data_dir>/relays.json
+# doesn't exist) to populate the engine's working relay sets. After
+# that, the local state file is authoritative — edit relays via the UI
+# (the modeline `relays` pill) and changes persist there.
+initial_relays = [
     "ws://localhost:3334",
     "wss://spatia-arcana.com",
     "wss://theforest.nostr1.com",
     "wss://relay.damus.io",
-]
-
-[relay.general]
-kinds = [
-    0,
-    3,
-    10002,
-    30023,
-    30818,
-    30817,
-]
-urls = [
-    "wss://relay.damus.io",
     "wss://nos.lol",
-    "wss://theforest.nostr1.com",
-]
-
-[relay.publish]
-urls = [
-    "ws://localhost:3334",
-    "wss://relay.damus.io",
 ]

@@ -9,31 +9,18 @@
 [relay]
 timeout_ms = 15000
 
-# General relays — profile info, contacts, relay lists
-[relay.general]
-urls = [
-    "wss://relay.damus.io",
-    "wss://nos.lol",
-]
-kinds = [0, 3, 10002, 30023, 30818, 30817]
-
-# Publish relays — where your events get pushed
-# Add your local relay here for drafts
-[relay.publish]
-urls = [
-    "wss://relay.damus.io",
-    "wss://nos.lol",
-]
-
-# Fetch relays — where to pull publications and sections from
-# Add ws://localhost:3334 if you run a local relay
-[relay.fetch]
-urls = [
+# initial_relays: bootstrap seed used only on first boot to populate the
+# runtime relay sets. After that, edit relays via the UI; changes persist
+# to <data_dir>/relays.json (the live working sets — general / fetch /
+# publish). This list is never re-read once relays.json exists.
+initial_relays = [
     "wss://relay.damus.io",
     "wss://relay.noswhere.com",
     "wss://nos.lol",
 ]
-kinds = [0, 30040, 30041, 30023, 30818, 30817, 9802]
+
+# Authors to follow — fetch their events from fetch relays.
+# authors = ["npub1..."]
 
 # Embedding / vector search (optional)
 # Start the sidecar first: cd sidecar && ./run.sh

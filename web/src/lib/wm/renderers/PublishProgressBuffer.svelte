@@ -60,6 +60,19 @@
 		if (ev.rawEvent != null) app.jsonModalData = { rawEvent: ev.rawEvent };
 	}
 
+	function inspectAll() {
+		if (!progress) return;
+		app.openEventsModal(
+			progress.title ? `Published — ${progress.title}` : 'Published events',
+			progress.events.map((ev) => ({
+				label: ev.title ?? '[Untitled]',
+				kind: ev.kind,
+				id: ev.eventId,
+				json: ev.rawEvent ?? { id: ev.eventId, kind: ev.kind }
+			}))
+		);
+	}
+
 	function naddrFor(ev: PublishEventStatus): string | null {
 		return ev.aTag ? naddrFromATag(ev.aTag) : null;
 	}
@@ -132,6 +145,9 @@
 			<div class="pp-summary">
 				{progress.events.length} event{progress.events.length === 1 ? '' : 's'} ·
 				{agg.accepted} / {agg.total} relay-cells accepted
+				<button class="pp-inspect-all" onclick={inspectAll} title="Open every event in the JSON inspector (expand all / each)">
+					inspect all JSON
+				</button>
 			</div>
 		</header>
 
@@ -171,6 +187,9 @@
 					{#if open}
 						{@const evNaddr = naddrFor(ev)}
 						<div class="pp-event-detail">
+							{#if ev.contentPreview}
+								<p class="pp-content-preview">{ev.contentPreview}</p>
+							{/if}
 							<div class="pp-detail-actions">
 								{#if ev.rawEvent != null}
 									<button
@@ -369,6 +388,12 @@
 		font-size: var(--t-xs);
 		color: var(--base5);
 	}
+	.pp-inspect-all {
+		margin-left: 8px;
+		font-size: var(--t-xs);
+		font-family: var(--font-mono);
+		padding: 1px 8px;
+	}
 
 	/* Top-level progress bar. The fill width is the accept ratio; the
 	   color comes from --bar-fg / --bar-bg set per render via inline
@@ -470,6 +495,16 @@
 		flex-direction: column;
 		gap: 12px;
 		background: var(--bg-surface);
+	}
+
+	.pp-content-preview {
+		margin: 0;
+		font-size: var(--t-sm);
+		color: var(--base7);
+		line-height: var(--lh-snug);
+		white-space: pre-wrap;
+		border-left: 2px solid var(--panel-border);
+		padding-left: 10px;
 	}
 
 	.kv {

@@ -552,20 +552,43 @@ pub struct TagEntry {
 }
 
 /// A section being composed (for 30041 events)
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct SectionCompose {
-    /// Section title (used to generate d-tag)
+    /// Section title (displayed; also emitted as `T` and `title` tags)
     pub title: String,
     /// Section content (the actual text)
     pub content: String,
     /// Section-specific tags
     pub tags: Vec<TagEntry>,
+    /// Heading depth — 2 = top-level section (current default), 3+ = nested.
+    /// Drives the recursive 30040/30041 emission: any section with deeper
+    /// children becomes a 30040 index in addition to its own 30041.
+    pub level: u8,
+    /// Stable opaque d-tag (nanoid). `None` until first mint; once set it
+    /// persists across edits so renaming the title does not break the
+    /// addressable identity of the section's 30041 event.
+    pub d_tag: Option<String>,
     /// Whether currently in tag creation mode for this section
     pub tag_mode: bool,
     /// Current tag name being typed
     pub current_tag_name: String,
     /// Current tag value being typed
     pub current_tag_value: String,
+}
+
+impl Default for SectionCompose {
+    fn default() -> Self {
+        Self {
+            title: String::new(),
+            content: String::new(),
+            tags: Vec::new(),
+            level: 2,
+            d_tag: None,
+            tag_mode: false,
+            current_tag_name: String::new(),
+            current_tag_value: String::new(),
+        }
+    }
 }
 
 /// State for compose mode (NKBIP-01 publications)
@@ -577,8 +600,13 @@ pub struct SectionCompose {
 pub struct ComposeState {
     /// Current focus position
     pub focus: ComposeFocus,
-    /// Publication title (used to generate d-tag)
+    /// Publication title (displayed; also emitted as `T` and `title` tags)
     pub title: String,
+    /// Stable opaque d-tag (nanoid). `None` until first mint; once set it
+    /// persists across title edits so the addressable identity of the 30040
+    /// index event survives renames. Seeded from `source_publication_addr`
+    /// when loading an existing publication for edit.
+    pub d_tag: Option<String>,
     /// Tags for the publication (30040)
     pub tags: Vec<TagEntry>,
     /// Sections (30041 events)
@@ -991,37 +1019,46 @@ impl ComposeState {
         result.trim_end_matches('-').to_string()
     }
 
-    /// Get the d-tag for the publication
-    /// Uses slugified title + short content hash for uniqueness
-    pub fn publication_d_tag(&self) -> String {
-        use sha2::{Sha256, Digest};
-        let slug = if self.title.is_empty() {
-            "untitled".to_string()
-        } else {
-            Self::generate_d_tag(&self.title)
-        };
-        // Hash title + section titles for a stable unique suffix
-        let mut hasher = Sha256::new();
-        hasher.update(self.title.as_bytes());
-        for s in &self.sections {
-            hasher.update(s.title.as_bytes());
-        }
-        let hash = format!("{:x}", hasher.finalize());
-        format!("{}-{}", slug, &hash[..8])
+    /// Get the publication d-tag, minting one on first call.
+    ///
+    /// The d-tag is an opaque nanoid (21-char URL-safe) so the publication's
+    /// addressable identity is decoupled from the title and survives renames.
+    /// Once minted, the value is stored on `self.d_tag` and returned on every
+    /// subsequent call. Seed `self.d_tag` from a loaded event when entering
+    /// edit mode so re-publishing updates that event rather than forking.
+    pub fn publication_d_tag(&mut self) -> String {
+        self.d_tag
+            .get_or_insert_with(crate::publication::mint_d_tag)
+            .clone()
     }
 
-    /// Get the d-tag for a section
-    pub fn section_d_tag(&self, section_idx: usize) -> String {
-        let pub_d_tag = self.publication_d_tag();
-        if let Some(section) = self.sections.get(section_idx) {
-            if section.title.is_empty() {
-                format!("{}-s{}", pub_d_tag, section_idx)
-            } else {
-                format!("{}-{}", pub_d_tag, Self::generate_d_tag(&section.title))
-            }
-        } else {
-            format!("{}-s{}", pub_d_tag, section_idx)
+    /// Read-only variant: returns the publication d-tag if one has been
+    /// minted, otherwise `None`. Use this for preview / display code paths
+    /// that should not have the side-effect of minting.
+    pub fn publication_d_tag_or_pending(&self) -> Option<&str> {
+        self.d_tag.as_deref()
+    }
+
+    /// Get a section's d-tag, minting one on first call.
+    ///
+    /// Each section carries its own stable nanoid so child events can outlive
+    /// title or position changes. Out-of-range indices return a deterministic
+    /// `"pending-s{idx}"` placeholder rather than panicking — this only
+    /// surfaces in preview paths before the section list is finalised.
+    pub fn section_d_tag(&mut self, section_idx: usize) -> String {
+        match self.sections.get_mut(section_idx) {
+            Some(section) => section
+                .d_tag
+                .get_or_insert_with(crate::publication::mint_d_tag)
+                .clone(),
+            None => format!("pending-s{}", section_idx),
         }
+    }
+
+    /// Read-only variant for previews — returns the section d-tag only if
+    /// one has been minted.
+    pub fn section_d_tag_or_pending(&self, section_idx: usize) -> Option<&str> {
+        self.sections.get(section_idx).and_then(|s| s.d_tag.as_deref())
     }
 
     /// Convert tags to the format expected by Nostr events
@@ -1075,12 +1112,16 @@ impl ComposeState {
     /// Generate a preview of the current event based on focus
     /// - When focused on publication fields (Title, Tags) → shows 30040 event
     /// - When focused on section fields → shows that section's 30041 event
-    pub fn preview_event_json(&self) -> String {
+    ///
+    /// Takes `&mut self` so the preview can show real d-tags — they are
+    /// lazily minted on first call to `publication_d_tag`/`section_d_tag`
+    /// and persist for the lifetime of the compose state.
+    pub fn preview_event_json(&mut self) -> String {
         self.preview_event_json_with_pubkey(None)
     }
 
     /// Generate a preview of the current event with an optional pubkey
-    pub fn preview_event_json_with_pubkey(&self, pubkey: Option<&str>) -> String {
+    pub fn preview_event_json_with_pubkey(&mut self, pubkey: Option<&str>) -> String {
         use std::time::{SystemTime, UNIX_EPOCH};
 
         let now = SystemTime::now()
@@ -1107,7 +1148,7 @@ impl ComposeState {
     }
 
     /// Generate JSON for the 30040 publication event
-    fn preview_publication_json(&self, now: u64, pubkey: Option<&str>) -> String {
+    fn preview_publication_json(&mut self, now: u64, pubkey: Option<&str>) -> String {
         use serde_json::{json, Value};
 
         let pub_d_tag = self.publication_d_tag();
@@ -1127,7 +1168,9 @@ impl ComposeState {
         ];
 
         if !self.title.is_empty() {
+            // `title` = raw display; `T` = normalized slug for `#T` queries.
             pub_tags.push(json!(["title", &self.title]));
+            pub_tags.push(json!(["T", Self::generate_d_tag(&self.title)]));
         }
 
         // Add custom tags
@@ -1155,15 +1198,16 @@ impl ComposeState {
     }
 
     /// Generate JSON for a section's 30041 event
-    fn preview_section_json(&self, idx: usize, now: u64, pubkey: Option<&str>) -> String {
+    fn preview_section_json(&mut self, idx: usize, now: u64, pubkey: Option<&str>) -> String {
         use serde_json::{json, Value};
 
+        // Mint the d-tag first so the immutable borrow below doesn't
+        // conflict with the &mut needed for minting.
+        let section_d_tag = self.section_d_tag(idx);
         let section = match self.sections.get(idx) {
             Some(s) => s,
             None => return "{}".to_string(),
         };
-
-        let section_d_tag = self.section_d_tag(idx);
         let pubkey_display = pubkey.unwrap_or("<not signed in>");
 
         // Build section tags
@@ -1172,7 +1216,9 @@ impl ComposeState {
         ];
 
         if !section.title.is_empty() {
+            // `title` = raw display; `T` = normalized slug for `#T` queries.
             section_tags.push(json!(["title", &section.title]));
+            section_tags.push(json!(["T", Self::generate_d_tag(&section.title)]));
         }
 
         // Add section-specific tags
@@ -2663,6 +2709,10 @@ mod tests {
         assert!(parsed["tags"].as_array().unwrap().iter().any(|t| {
             t.as_array().map(|a| a[0] == "title" && a[1] == "Test Note").unwrap_or(false)
         }));
+        // Should also carry an indexable `T` tag with the normalized slug
+        assert!(parsed["tags"].as_array().unwrap().iter().any(|t| {
+            t.as_array().map(|a| a[0] == "T" && a[1] == "test-note").unwrap_or(false)
+        }));
         // Should have auto-update tag
         assert!(parsed["tags"].as_array().unwrap().iter().any(|t| {
             t.as_array().map(|a| a[0] == "auto-update").unwrap_or(false)
@@ -2692,14 +2742,34 @@ mod tests {
         assert_eq!(parsed["kind"], 30041);
         assert_eq!(parsed["content"], "First chapter content");
 
-        // Should have proper d-tag (publication-section)
-        assert!(parsed["tags"].as_array().unwrap().iter().any(|t| {
-            t.as_array().map(|a| a[0] == "d" && a[1] == "my-publication-chapter-1").unwrap_or(false)
-        }));
+        // Should have an opaque nanoid d-tag (21 chars, URL-safe alphabet)
+        let d_value = parsed["tags"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find_map(|t| {
+                let a = t.as_array()?;
+                if a.first()?.as_str()? == "d" {
+                    Some(a.get(1)?.as_str()?.to_string())
+                } else {
+                    None
+                }
+            })
+            .expect("section event should carry a d tag");
+        assert_eq!(d_value.len(), 21, "nanoid d-tag should be 21 chars, got {:?}", d_value);
+        assert!(
+            d_value.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-'),
+            "d-tag should be URL-safe nanoid alphabet, got {:?}",
+            d_value,
+        );
 
         // Should have title tag
         assert!(parsed["tags"].as_array().unwrap().iter().any(|t| {
             t.as_array().map(|a| a[0] == "title" && a[1] == "Chapter 1").unwrap_or(false)
+        }));
+        // And an indexable `T` tag with the normalized slug
+        assert!(parsed["tags"].as_array().unwrap().iter().any(|t| {
+            t.as_array().map(|a| a[0] == "T" && a[1] == "chapter-1").unwrap_or(false)
         }));
     }
 
