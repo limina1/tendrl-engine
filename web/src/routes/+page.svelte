@@ -864,6 +864,15 @@
 			{#if mb.mode !== 'closed'}
 				<span class="ml__seg ml__seg--prefix">mb:{mb.mode}</span>
 			{/if}
+			<!-- Relays pill sits before the spacer so it lands closer to the
+			     visible center of the modeline rather than the right edge. -->
+			<button
+				class="pill pill--btn pill--relays"
+				onclick={openRelays}
+				title="Relay configuration · read/write toggles · NIP-11 details"
+			>
+				relays
+			</button>
 			<span class="ml__spacer"></span>
 			{#if focusedBuffer && store.modelineStatus(focusedBuffer.id)}
 				<span class="ml__seg ml__status">{store.modelineStatus(focusedBuffer.id)}</span>
@@ -913,13 +922,6 @@
 			>
 				<span class="dot {networkPill.dotClass}"></span>
 				{networkPill.label}
-			</button>
-			<button
-				class="pill pill--btn pill--relays"
-				onclick={openRelays}
-				title="Relay configuration · read/write toggles · NIP-11 details"
-			>
-				relays
 			</button>
 			{#if embeddingPill}
 				<span class="pill {embeddingPill.pillClass}" title="Embedding index">

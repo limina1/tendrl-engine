@@ -2657,6 +2657,12 @@ function _createAppState() {
 		} catch (e) {
 			console.warn('Config fetch failed:', e);
 		}
+		// Load network status FIRST so the modeline's network/auto pill
+		// settles on the real state before the user sees the placeholder
+		// "—". loadFeed is slow; networkStatus is a cheap GET.
+		try {
+			networkStatus = await api.getNetworkStatus();
+		} catch {}
 		try {
 			chat = await api.getChat();
 		} catch {
@@ -2666,9 +2672,6 @@ function _createAppState() {
 		try {
 			embeddingStatus = await api.getEmbeddingStatus();
 		} catch { /* embedding not enabled */ }
-		try {
-			networkStatus = await api.getNetworkStatus();
-		} catch {}
 		await refreshIgnoreList();
 		try {
 			const rc = await api.getRelayConfig();
