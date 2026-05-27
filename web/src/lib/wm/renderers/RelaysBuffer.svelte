@@ -572,9 +572,9 @@
 				class="btn-snapshot"
 				onclick={snapshotToConfig}
 				disabled={snapshotting || rows.length === 0}
-				title="Write the current relay set into config.toml's initial_relays — a portable bootstrap seed for another machine or a fresh data dir"
+				title="Write the current relay set into config.toml's `initial_relays` — a portable bootstrap seed for another machine or a fresh data dir. relays.json stays the runtime source of truth."
 			>
-				{snapshotting ? 'Snapshotting…' : 'Snapshot to config.toml'}
+				{snapshotting ? 'Saving…' : 'Save settings'}
 			</button>
 		</div>
 	{/if}
@@ -795,6 +795,14 @@
 		padding: 10px 14px;
 		border-top: 1px solid var(--panel-border);
 		margin-top: 8px;
+		/* Pin to the bottom of the scrollable buffer so the action row
+		   (especially "Save settings") is always reachable even when
+		   the relay list scrolls. Background prevents row text from
+		   showing through. */
+		position: sticky;
+		bottom: 0;
+		background: var(--panel-bg, var(--bg));
+		z-index: 1;
 	}
 	.btn-add,
 	.btn-refresh {
