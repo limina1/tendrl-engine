@@ -264,6 +264,15 @@
 					(a, b) => (b.created_at ?? 0) - (a.created_at ?? 0)
 				)[0];
 				if (!newest) continue;
+				// Sanity: nip44 self-decrypt requires the event's author to
+				// match the recipient pubkey we pass. If the search returned
+				// an event authored by someone else, the extension will
+				// always fail with the opaque "Failed to decrypt message".
+				if (newest.author && newest.author !== pubkey) {
+					console.warn(
+						`kind ${kind}: search returned event by ${newest.author.slice(0, 16)}… but my pubkey is ${pubkey.slice(0, 16)}… — decrypt will fail`
+					);
+				}
 				if ((newest.created_at ?? 0) > maxCreatedAt) maxCreatedAt = newest.created_at ?? 0;
 
 				// Public r-tags (any kind may use this format).
@@ -322,7 +331,11 @@
 							// length, looks_nip04, head, tail.
 							const head = ciphertext.slice(0, 12);
 							const tail = ciphertext.slice(-12);
-							const fingerprint = `len=${ciphertext.length} nip04=${looksNip04} tried=${tryPaths.join('→')} head="${head}…${tail}"`;
+							const authorMismatch =
+								newest.author && newest.author !== pubkey
+									? ` author≠me`
+									: '';
+							const fingerprint = `len=${ciphertext.length} nip04=${looksNip04} tried=${tryPaths.join('→')}${authorMismatch} head="${head}…${tail}"`;
 							pullDecryptErrors = {
 								...pullDecryptErrors,
 								[kind]: `${msg} (${fingerprint})`
@@ -330,6 +343,12 @@
 							console.warn(
 								`decrypt failed for kind ${kind} (tried ${tryPaths.join(' → ')}):\n  error:`,
 								lastErr,
+								`\n  event id:`,
+								newest.event_id,
+								`\n  event author:`,
+								newest.author,
+								`\n  my pubkey:`,
+								pubkey,
 								`\n  ciphertext (${ciphertext.length} chars):`,
 								ciphertext
 							);
