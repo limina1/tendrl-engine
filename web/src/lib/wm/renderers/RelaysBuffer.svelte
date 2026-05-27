@@ -2,6 +2,7 @@
 	import * as api from '$lib/api';
 	import { getAppState } from '$lib/state.svelte';
 	import { getRelayInfo, normalizeRelayUrl, type Nip11Status, type Nip11Doc } from '$lib/relay/nip11';
+	import { relayFocus, consumeRelayFocus } from '$lib/relay/focus.svelte';
 	import ProfileName from '$lib/components/ProfileName.svelte';
 	import type { Buffer } from '../types';
 
@@ -28,6 +29,9 @@
 	// Map<normalizedUrl, Nip11Status> — refreshed reactively as fetches
 	// resolve. Fresh object each update so $derived sees a change.
 	let infoMap = $state<Record<string, Nip11Status>>({});
+	// Per-row DOM refs so we can scroll a focused row into view when
+	// the EventViewModal hands us a URL via the relayFocus signal.
+	let rowEls: Record<string, HTMLDivElement | undefined> = {};
 
 	async function load(force = false) {
 		loading = true;
@@ -75,6 +79,27 @@
 
 	$effect(() => {
 		load();
+	});
+
+	// Consume the one-shot focus signal once rows have populated: expand
+	// the matching row and scroll it into view. Matched by normalized URL
+	// so trailing-slash / case / port differences don't miss.
+	$effect(() => {
+		const focus = relayFocus.url;
+		if (!focus || rows.length === 0) return;
+		const target = normalizeRelayUrl(focus);
+		const row = rows.find((r) => normalizeRelayUrl(r.url) === target);
+		if (!row) return;
+		consumeRelayFocus();
+		const next = new Set(expanded);
+		next.add(row.url);
+		expanded = next;
+		primeInfo(row.url);
+		// Wait a frame so the {#if expanded} detail block is in the DOM
+		// before scrolling — gives a smoother "lands at the right place".
+		queueMicrotask(() => {
+			rowEls[row.url]?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+		});
 	});
 
 	async function toggle(url: string, field: 'read' | 'write' | 'auth') {
@@ -143,7 +168,7 @@
 				{@const status = statusFor(row.url)}
 				{@const doc = docFor(row.url)}
 				{@const lim = doc?.limitation}
-				<div class="relay-card" class:relay-card--expanded={expanded.has(row.url)}>
+				<div class="relay-card" class:relay-card--expanded={expanded.has(row.url)} bind:this={rowEls[row.url]}>
 					<div class="relay-row">
 						<button
 							class="relay-disclosure"

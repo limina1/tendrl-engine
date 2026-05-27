@@ -11,6 +11,7 @@
 	} from '$lib/nostr/nip19';
 	import * as api from '$lib/api';
 	import { getRelayInfo, normalizeRelayUrl, type Nip11Status } from '$lib/relay/nip11';
+	import { requestRelayFocus } from '$lib/relay/focus.svelte';
 	import { getActiveStore } from '$lib/wm/buffer-store.svelte';
 
 	let {
@@ -535,21 +536,19 @@
 		if (doc.software) parts.push(doc.software + (doc.version ? ` ${doc.version}` : ''));
 		return parts.join('\n');
 	}
-	// Open the relays buffer (same surface as the mode-line "relays" icon)
-	// so the user gets the full NIP-11 detail + read/write toggle row for
-	// the clicked relay. Closes the modal afterwards — the relays buffer
-	// occupies the work slot.
-	function openRelayInfo(_url: string) {
+	// Open the relays buffer focused on the clicked relay — sets a
+	// one-shot focus signal that RelaysBuffer consumes on mount/update
+	// to expand and scroll that specific row into view.
+	function openRelayInfo(url: string) {
 		try {
+			requestRelayFocus(url);
 			getActiveStore().openBuffer({
 				className: 'work',
 				buffer: { id: 'relays', kind: 'relays', label: 'relays', kicker: 'config' }
 			});
 			onclose();
 		} catch {
-			// No active store yet (early boot, design route) — fall back to
-			// copying the URL so the user can paste it into config.
-			copyText(_url, 'relay url');
+			copyText(url, 'relay url');
 		}
 	}
 	function shortenRelay(url: string): string {
@@ -1385,17 +1384,18 @@
 	}
 	.evm__relay-more {
 		font-family: var(--font-mono);
-		font-size: 0.7rem;
-		padding: 2px 6px;
+		font-size: 0.72rem;
+		padding: 2px 8px;
 		border-radius: var(--r-sm);
-		background: none;
-		border: 1px dashed var(--border);
-		color: var(--fg-muted);
+		background: color-mix(in srgb, var(--accent, var(--id-yours)) 10%, transparent);
+		border: 1px solid color-mix(in srgb, var(--accent, var(--id-yours)) 40%, transparent);
+		color: var(--accent, var(--id-yours));
 		cursor: pointer;
+		font-weight: 600;
 	}
 	.evm__relay-more:hover {
-		color: var(--fg);
-		border-color: var(--fg-muted);
+		background: color-mix(in srgb, var(--accent, var(--id-yours)) 22%, transparent);
+		border-color: var(--accent, var(--id-yours));
 	}
 
 	.evm__raw-toggle {
