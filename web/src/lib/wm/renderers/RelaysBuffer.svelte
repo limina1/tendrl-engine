@@ -527,51 +527,92 @@
 		}
 	}
 
-	// Publish a kind 10002 (NIP-65 read/write relays) event with the
-	// user's current relay set. Explicit, user-initiated action — never
-	// fires on toggle/add/remove. Per project_publishing_philosophy:
-	// pulling kind 10002 is for context; publishing is deliberate.
-	let publishing10002 = $state(false);
-	async function publishRelayList() {
+	// Publish a relay-list event. Explicit, user-initiated — never fires
+	// on toggle/add/remove. Per project_publishing_philosophy: pulling
+	// these is for context; publishing is deliberate. Amethyst-style
+	// kinds (10007/10086/10088) store the relay list as NIP-44 encrypted
+	// private tags in `content`; kind 10002 uses public `r` tags only.
+	type PublishableKind = 10002 | 10007 | 10086 | 10088;
+	let publishingKind = $state<PublishableKind | null>(null);
+
+	function relaysForPublish(kind: PublishableKind): string[] {
+		if (kind === 10002) {
+			return rows.filter((r) => r.read || r.write).map((r) => r.url);
+		}
+		const field: keyof RelayRow = kind === 10007 ? 'search' : kind === 10086 ? 'indexer' : 'broadcast';
+		return rows.filter((r) => r[field]).map((r) => r.url);
+	}
+
+	function classLabelForPublish(kind: PublishableKind): string {
+		return kind === 10002
+			? 'read/write'
+			: kind === 10007
+				? 'search'
+				: kind === 10086
+					? 'indexer'
+					: 'broadcast';
+	}
+
+	async function publishRelayListByKind(kind: PublishableKind) {
 		if (!app.myPubkey) {
 			app.pushToast('Sign in first — no identity to sign the event.', 'error', 4000);
 			return;
 		}
-		const tags: string[][] = [];
-		for (const r of rows) {
-			if (r.read && r.write) tags.push(['r', r.url]);
-			else if (r.read) tags.push(['r', r.url, 'read']);
-			else if (r.write) tags.push(['r', r.url, 'write']);
-		}
-		if (tags.length === 0) {
-			app.pushToast('No read/write relays to publish.', 'info', 3000);
+		const urls = relaysForPublish(kind);
+		if (urls.length === 0) {
+			app.pushToast(`No ${classLabelForPublish(kind)} relays to publish.`, 'info', 3000);
 			return;
 		}
-		publishing10002 = true;
+
+		publishingKind = kind;
 		try {
+			let tags: string[][] = [];
+			let content = '';
+			if (kind === 10002) {
+				// NIP-65: public r-tags with read/write markers.
+				for (const r of rows) {
+					if (r.read && r.write) tags.push(['r', r.url]);
+					else if (r.read) tags.push(['r', r.url, 'read']);
+					else if (r.write) tags.push(['r', r.url, 'write']);
+				}
+			} else {
+				// Amethyst PrivateTagArrayEvent convention: tags array is
+				// empty, the relay list lives in NIP-44-encrypted content
+				// as a JSON tag-array of ["relay", url] entries.
+				const privateTags = urls.map((url) => ['relay', url]);
+				const plaintext = JSON.stringify(privateTags);
+				if (!window.nostr?.nip44?.encrypt) {
+					throw new Error(
+						'NIP-07 extension does not expose nip44.encrypt — cannot publish encrypted private list (kind ' +
+							kind +
+							').'
+					);
+				}
+				content = await window.nostr.nip44.encrypt(app.myPubkey, plaintext);
+			}
 			const { signed_event } = await api.signTemplate({
 				template: {
-					kind: 10002,
+					kind,
 					created_at: Math.floor(Date.now() / 1000),
 					tags,
-					content: '',
+					content,
 					pubkey: app.myPubkey
 				}
 			});
 			const resp = await api.broadcastEvent({ event: signed_event });
 			app.pushToast(
-				`Published kind 10002 (${tags.length} relays) to ${resp.successful}/${resp.total} publish relays`,
+				`Published kind ${kind} (${urls.length} ${classLabelForPublish(kind)} relay${urls.length === 1 ? '' : 's'}) to ${resp.successful}/${resp.total} publish relays`,
 				resp.successful > 0 ? 'success' : 'error',
 				4000
 			);
 		} catch (e) {
 			app.pushToast(
-				`Publish failed: ${e instanceof Error ? e.message : String(e)}`,
+				`Publish kind ${kind} failed: ${e instanceof Error ? e.message : String(e)}`,
 				'error',
 				5000
 			);
 		} finally {
-			publishing10002 = false;
+			publishingKind = null;
 		}
 	}
 
@@ -1008,16 +1049,25 @@
 		<div class="relays-footer">
 			<button class="btn-add" onclick={promptAdd} title="Add a new relay (defaults to read + write — toggle either off after)">+ Add relay</button>
 			<button class="btn-refresh" onclick={() => load(true)}>Refresh</button>
-			<button
-				class="btn-publish-10002"
-				onclick={publishRelayList}
-				disabled={publishing10002 || rows.length === 0 || !app.myPubkey}
-				title={!app.myPubkey
-					? 'Sign in first to publish a kind 10002 event.'
-					: 'Sign a kind 10002 (NIP-65) with your current read/write relays and broadcast it to your publish set. Other clients pulling your kind 10002 will see this list.'}
-			>
-				{publishing10002 ? 'Publishing…' : 'Publish to Nostr (kind 10002)'}
-			</button>
+			{#each [10002, 10007, 10086, 10088] as kind (kind)}
+				{@const count = relaysForPublish(kind as PublishableKind).length}
+				<button
+					class="btn-publish-list"
+					class:btn-publish-list--read={kind === 10002}
+					class:btn-publish-list--search={kind === 10007}
+					class:btn-publish-list--indexer={kind === 10086}
+					class:btn-publish-list--broadcast={kind === 10088}
+					onclick={() => publishRelayListByKind(kind as PublishableKind)}
+					disabled={publishingKind !== null || count === 0 || !app.myPubkey}
+					title={!app.myPubkey
+						? 'Sign in first to publish.'
+						: count === 0
+							? `No ${classLabelForPublish(kind as PublishableKind)} relays toggled.`
+							: `Sign a kind ${kind} (${classLabelForPublish(kind as PublishableKind)}) with ${count} relay${count === 1 ? '' : 's'} and broadcast to your publish set. ${kind !== 10002 ? 'Content is NIP-44 encrypted to your own pubkey (Amethyst convention).' : 'Public r-tags per NIP-65.'}`}
+				>
+					{publishingKind === kind ? 'Publishing…' : `Publish kind ${kind} (${count})`}
+				</button>
+			{/each}
 			<button
 				class="btn-snapshot"
 				onclick={snapshotToConfig}
@@ -1279,11 +1329,11 @@
 		font-family: var(--font-mono);
 	}
 	.btn-snapshot[disabled],
-	.btn-publish-10002[disabled] {
+	.btn-publish-list[disabled] {
 		opacity: 0.5;
 		cursor: not-allowed;
 	}
-	.btn-publish-10002 {
+	.btn-publish-list {
 		font-size: var(--t-xs);
 		padding: 4px 10px;
 		font-family: var(--font-mono);
@@ -1293,8 +1343,34 @@
 		cursor: pointer;
 		border-radius: var(--r-sm);
 	}
-	.btn-publish-10002:hover:not([disabled]) {
+	.btn-publish-list:hover:not([disabled]) {
 		background: color-mix(in srgb, var(--id-yours) 24%, transparent);
+	}
+	/* Per-class tints so the four publish buttons line up visually with
+	   the matching row toggles. */
+	.btn-publish-list--broadcast {
+		background: color-mix(in srgb, var(--id-draft) 14%, transparent);
+		border-color: color-mix(in srgb, var(--id-draft) 35%, transparent);
+		color: var(--id-draft);
+	}
+	.btn-publish-list--broadcast:hover:not([disabled]) {
+		background: color-mix(in srgb, var(--id-draft) 24%, transparent);
+	}
+	.btn-publish-list--search {
+		background: color-mix(in srgb, var(--id-remote, var(--id-yours)) 14%, transparent);
+		border-color: color-mix(in srgb, var(--id-remote, var(--id-yours)) 35%, transparent);
+		color: var(--id-remote, var(--id-yours));
+	}
+	.btn-publish-list--search:hover:not([disabled]) {
+		background: color-mix(in srgb, var(--id-remote, var(--id-yours)) 24%, transparent);
+	}
+	.btn-publish-list--indexer {
+		background: color-mix(in srgb, var(--id-imported, var(--id-yours)) 14%, transparent);
+		border-color: color-mix(in srgb, var(--id-imported, var(--id-yours)) 35%, transparent);
+		color: var(--id-imported, var(--id-yours));
+	}
+	.btn-publish-list--indexer:hover:not([disabled]) {
+		background: color-mix(in srgb, var(--id-imported, var(--id-yours)) 24%, transparent);
 	}
 	.btn-snapshot {
 		font-size: var(--t-xs);
