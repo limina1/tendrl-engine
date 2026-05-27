@@ -27,6 +27,9 @@
 
 	let rows = $state<RelayRow[]>([]);
 	let initialRelays = $state<string[]>([]);
+	let namedSets = $state<api.NamedRelaySet[]>([]);
+	let expandedSet = $state<string | null>(null);
+	let publishingSetTag = $state<string | null>(null);
 	let loading = $state(true);
 	let error = $state<string | null>(null);
 	let expanded = $state(new Set<string>());
@@ -78,6 +81,7 @@
 		try {
 			const cfg = await api.getRelayConfig();
 			initialRelays = cfg.initial_relays ?? [];
+			namedSets = cfg.named_sets ?? [];
 			const map = new Map<string, RelayRow>();
 			const ensure = (url: string): RelayRow => {
 				let r = map.get(url);
@@ -616,6 +620,135 @@
 		}
 	}
 
+	// ---- Named sets (NIP-51 kind 30002) ---------------------------------
+	async function promptNewSet() {
+		const title = window.prompt('Name for the new relay set (e.g. "research", "friends"):');
+		if (!title || !title.trim()) return;
+		const d_tag = crypto.randomUUID();
+		try {
+			await api.createNamedSet(d_tag, title.trim());
+			app.pushToast(`Created set "${title.trim()}"`, 'success', 2000);
+			await load();
+			expandedSet = d_tag;
+		} catch (e) {
+			app.pushToast(
+				`Couldn't create set: ${e instanceof Error ? e.message : String(e)}`,
+				'error',
+				4000
+			);
+		}
+	}
+
+	async function promptAddToSet(d_tag: string) {
+		const raw = window.prompt('Relay URL to add to this set:');
+		if (!raw || !raw.trim()) return;
+		const url = normalizeRelayUrl(raw.trim());
+		try {
+			await api.addToNamedSet(d_tag, url);
+			app.pushToast(`Added ${shorten(url)}`, 'success', 2000);
+			await load();
+		} catch (e) {
+			app.pushToast(
+				`Couldn't add ${shorten(url)}: ${e instanceof Error ? e.message : String(e)}`,
+				'error',
+				4000
+			);
+		}
+	}
+
+	async function removeMemberFromSet(d_tag: string, url: string) {
+		try {
+			await api.removeFromNamedSet(d_tag, url);
+			await load();
+		} catch (e) {
+			app.pushToast(
+				`Couldn't remove ${shorten(url)}: ${e instanceof Error ? e.message : String(e)}`,
+				'error',
+				4000
+			);
+		}
+	}
+
+	async function deleteSet(d_tag: string, title: string) {
+		if (!window.confirm(`Delete the "${title}" relay set?\n\n(This only removes it locally. To take it down from Nostr you'd publish a delete event — not done here.)`)) {
+			return;
+		}
+		try {
+			await api.deleteNamedSet(d_tag);
+			app.pushToast(`Deleted set "${title}"`, 'info', 2000);
+			if (expandedSet === d_tag) expandedSet = null;
+			await load();
+		} catch (e) {
+			app.pushToast(
+				`Couldn't delete set: ${e instanceof Error ? e.message : String(e)}`,
+				'error',
+				4000
+			);
+		}
+	}
+
+	async function renameSet(d_tag: string, currentTitle: string) {
+		const next = window.prompt('Rename set:', currentTitle);
+		if (!next || !next.trim() || next.trim() === currentTitle) return;
+		try {
+			await api.renameNamedSet(d_tag, next.trim());
+			await load();
+		} catch (e) {
+			app.pushToast(
+				`Couldn't rename: ${e instanceof Error ? e.message : String(e)}`,
+				'error',
+				4000
+			);
+		}
+	}
+
+	async function publishNamedSet(set: api.NamedRelaySet) {
+		if (!app.myPubkey) {
+			app.pushToast('Sign in first.', 'error', 4000);
+			return;
+		}
+		if (set.urls.length === 0) {
+			app.pushToast(`"${set.title}" has no relays.`, 'info', 3000);
+			return;
+		}
+		publishingSetTag = set.d_tag;
+		try {
+			// NIP-51 kind 30002: `d` for the addressable id, `title` for
+			// the human label, `r` tags for each public relay entry. We
+			// publish the public form; encrypted private members would
+			// go in NIP-44-encrypted content (deferred).
+			const tags: string[][] = [
+				['d', set.d_tag],
+				['title', set.title],
+				['alt', `Relay set: ${set.title}`],
+				...set.urls.map((url) => ['r', url])
+			];
+			const { signed_event } = await api.signTemplate({
+				template: {
+					kind: 30002,
+					created_at: Math.floor(Date.now() / 1000),
+					tags,
+					content: '',
+					pubkey: app.myPubkey
+				}
+			});
+			const resp = await api.broadcastEvent({ event: signed_event });
+			app.pushToast(
+				`Published "${set.title}" (kind 30002, ${set.urls.length} relays) to ${resp.successful}/${resp.total} publish relays`,
+				resp.successful > 0 ? 'success' : 'error',
+				4000
+			);
+		} catch (e) {
+			app.pushToast(
+				`Publish failed: ${e instanceof Error ? e.message : String(e)}`,
+				'error',
+				5000
+			);
+		} finally {
+			publishingSetTag = null;
+		}
+	}
+
 	let snapshotting = $state(false);
 	async function snapshotToConfig() {
 		snapshotting = true;
@@ -1046,6 +1179,77 @@
 			{/each}
 		</div>
 
+		<!-- Named sets — NIP-51 kind 30002 thematic groupings. Orthogonal
+		     to the functional classes above; a relay can sit in any
+		     combination of class toggles AND any number of named sets. -->
+		<div class="named-sets">
+			<div class="named-sets-header">
+				<span>Named sets · kind 30002</span>
+				<button class="btn-add" onclick={promptNewSet}>+ New set</button>
+			</div>
+			{#if namedSets.length === 0}
+				<p class="empty muted">No named sets yet. Create one to publish a NIP-51 relay set (e.g. "research", "friends-only").</p>
+			{:else}
+				{#each namedSets as set (set.d_tag)}
+					<div class="named-set" class:named-set--expanded={expandedSet === set.d_tag}>
+						<div class="named-set-row">
+							<button
+								class="relay-disclosure"
+								onclick={() => (expandedSet = expandedSet === set.d_tag ? null : set.d_tag)}
+								aria-expanded={expandedSet === set.d_tag}
+							>{expandedSet === set.d_tag ? '▾' : '▸'}</button>
+							<button class="named-set-title" onclick={() => renameSet(set.d_tag, set.title)} title="Click to rename">
+								{set.title}
+							</button>
+							<span class="named-set-count">{set.urls.length} relay{set.urls.length === 1 ? '' : 's'}</span>
+							<div class="named-set-actions">
+								<button
+									class="pull-add"
+									onclick={() => promptAddToSet(set.d_tag)}
+									title="Add a relay URL to this set"
+								>+ relay</button>
+								<button
+									class="btn-publish-list btn-publish-list--read"
+									onclick={() => publishNamedSet(set)}
+									disabled={publishingSetTag !== null || set.urls.length === 0 || !app.myPubkey}
+									title={!app.myPubkey
+										? 'Sign in first.'
+										: set.urls.length === 0
+											? 'Empty set — add relays first.'
+											: `Sign + broadcast a kind 30002 with d="${set.d_tag.slice(0, 8)}…" and ${set.urls.length} relays.`}
+								>
+									{publishingSetTag === set.d_tag ? 'Publishing…' : 'Publish 30002'}
+								</button>
+								<button
+									class="pull-add"
+									onclick={() => deleteSet(set.d_tag, set.title)}
+									title="Delete this set locally (does not publish a delete event)"
+								>delete</button>
+							</div>
+						</div>
+						{#if expandedSet === set.d_tag}
+							<div class="named-set-members">
+								{#if set.urls.length === 0}
+									<p class="empty muted">No members yet.</p>
+								{:else}
+									{#each set.urls as url (url)}
+										<div class="named-set-member">
+											<span class="named-set-member-url">{shorten(url)}</span>
+											<button
+												class="pull-add"
+												onclick={() => removeMemberFromSet(set.d_tag, url)}
+												title="Remove this relay from the set"
+											>−</button>
+										</div>
+									{/each}
+								{/if}
+							</div>
+						{/if}
+					</div>
+				{/each}
+			{/if}
+		</div>
+
 		<div class="relays-footer">
 			<button class="btn-add" onclick={promptAdd} title="Add a new relay (defaults to read + write — toggle either off after)">+ Add relay</button>
 			<button class="btn-refresh" onclick={() => load(true)}>Refresh</button>
@@ -1371,6 +1575,79 @@
 	}
 	.btn-publish-list--indexer:hover:not([disabled]) {
 		background: color-mix(in srgb, var(--id-imported, var(--id-yours)) 24%, transparent);
+	}
+
+	/* Named sets — NIP-51 kind 30002. Sits between the functional-class
+	   relay rows and the footer. */
+	.named-sets {
+		padding: 4px 14px 12px;
+		border-top: 1px solid var(--panel-border);
+	}
+	.named-sets-header {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		padding: 8px 0 4px;
+		font-size: var(--t-xs);
+		font-weight: 600;
+		text-transform: uppercase;
+		letter-spacing: 0.05em;
+		color: var(--base5);
+	}
+	.named-set {
+		border-top: 1px dashed var(--panel-border);
+		padding: 6px 0;
+	}
+	.named-set:first-of-type {
+		border-top: none;
+	}
+	.named-set-row {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+	}
+	.named-set-title {
+		font-weight: 600;
+		font-family: var(--font-mono);
+		background: none;
+		border: none;
+		padding: 2px 4px;
+		color: var(--fg);
+		cursor: text;
+		border-radius: var(--r-sm);
+	}
+	.named-set-title:hover {
+		background: color-mix(in srgb, var(--fg) 6%, transparent);
+	}
+	.named-set-count {
+		font-size: var(--t-xs);
+		color: var(--base5);
+		font-family: var(--font-mono);
+	}
+	.named-set-actions {
+		display: flex;
+		gap: 4px;
+		margin-left: auto;
+	}
+	.named-set-members {
+		padding: 4px 0 4px 24px;
+		display: flex;
+		flex-direction: column;
+		gap: 2px;
+	}
+	.named-set-member {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		font-size: var(--t-xs);
+	}
+	.named-set-member-url {
+		font-family: var(--font-mono);
+		flex: 1;
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
 	}
 	.btn-snapshot {
 		font-size: var(--t-xs);

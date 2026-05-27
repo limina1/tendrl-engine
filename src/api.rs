@@ -1582,6 +1582,34 @@ pub struct ConfigUpdateRequest {
     pub add_author: Option<String>,
     /// Remove an author
     pub remove_author: Option<String>,
+    /// Create an empty named set (NIP-51 kind 30002 candidate).
+    pub create_named_set: Option<CreateNamedSet>,
+    /// Delete a named set by d_tag.
+    pub delete_named_set: Option<String>,
+    /// Rename a named set's title.
+    pub rename_named_set: Option<RenameNamedSet>,
+    /// Add a relay URL to a named set.
+    pub add_to_named_set: Option<NamedSetMember>,
+    /// Remove a relay URL from a named set.
+    pub remove_from_named_set: Option<NamedSetMember>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CreateNamedSet {
+    pub d_tag: String,
+    pub title: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct RenameNamedSet {
+    pub d_tag: String,
+    pub title: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct NamedSetMember {
+    pub d_tag: String,
+    pub url: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1617,6 +1645,31 @@ pub async fn config_update_handler(
     }
     if let Some(rm) = &req.remove_relay {
         if engine.remove_relay(&rm.set, &rm.url) {
+            changed = true;
+        }
+    }
+    if let Some(create) = &req.create_named_set {
+        if engine.create_named_set(&create.d_tag, &create.title) {
+            changed = true;
+        }
+    }
+    if let Some(d_tag) = &req.delete_named_set {
+        if engine.delete_named_set(d_tag) {
+            changed = true;
+        }
+    }
+    if let Some(rename) = &req.rename_named_set {
+        if engine.rename_named_set(&rename.d_tag, &rename.title) {
+            changed = true;
+        }
+    }
+    if let Some(m) = &req.add_to_named_set {
+        if engine.add_to_named_set(&m.d_tag, &m.url) {
+            changed = true;
+        }
+    }
+    if let Some(m) = &req.remove_from_named_set {
+        if engine.remove_from_named_set(&m.d_tag, &m.url) {
             changed = true;
         }
     }
@@ -1838,6 +1891,7 @@ pub async fn relay_config_handler(State(engine): State<AppState>) -> Json<Value>
         "broadcast": { "urls": rc.broadcast.urls, "kinds": rc.broadcast.kinds },
         "search": { "urls": rc.search.urls, "kinds": rc.search.kinds },
         "indexer": { "urls": rc.indexer.urls, "kinds": rc.indexer.kinds },
+        "named_sets": rc.named_sets,
         "authors": rc.authors_hex(),
         "initial_relays": rc.initial_relays,
     }))

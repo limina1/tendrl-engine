@@ -56,6 +56,25 @@ pub struct RelaySets {
     /// for kind 0 / 10002 lookups when the read set misses.
     #[serde(default)]
     pub indexer: Vec<String>,
+    /// User-defined named relay sets — NIP-51 kind 30002. Thematic
+    /// groupings ("research", "friends-only", "high-priority") that
+    /// can be published as kind 30002 for sharing or backup. Orthogonal
+    /// to the functional classes above: a relay can be in any
+    /// combination of classes AND any number of named sets.
+    #[serde(default)]
+    pub named: Vec<NamedRelaySet>,
+}
+
+/// A NIP-51 kind 30002 relay set — user-named grouping of relays.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct NamedRelaySet {
+    /// `d` tag value — stable identifier for replaceable-event addressing.
+    /// Auto-generated on create; never renamed.
+    pub d_tag: String,
+    /// Human-readable title (`title` tag value). Editable.
+    pub title: String,
+    /// Member relay URLs (published as `r` tags on kind 30002).
+    pub urls: Vec<String>,
 }
 
 impl RelaySets {
@@ -71,6 +90,7 @@ impl RelaySets {
             broadcast: Vec::new(),
             search: Vec::new(),
             indexer: Vec::new(),
+            named: Vec::new(),
         }
     }
 
@@ -84,6 +104,9 @@ impl RelaySets {
         self.broadcast = normalize_dedup(&self.broadcast);
         self.search = normalize_dedup(&self.search);
         self.indexer = normalize_dedup(&self.indexer);
+        for s in &mut self.named {
+            s.urls = normalize_dedup(&s.urls);
+        }
     }
 
     /// Borrow the URL list for a named set. Returns `None` for unknown set

@@ -123,6 +123,10 @@ pub struct RelayConfig {
     /// profile / kind 10002 / metadata lookups when the read set misses.
     #[serde(skip, default = "default_indexer")]
     pub indexer: RelaySet,
+    /// User-defined named relay sets (NIP-51 kind 30002). Loaded from
+    /// `relays.json` at runtime; never deserialized from TOML.
+    #[serde(skip, default)]
+    pub named_sets: Vec<crate::relay_store::NamedRelaySet>,
     /// Authors to follow — fetch their events from fetch relays (npub or hex)
     #[serde(default)]
     pub authors: Vec<String>,
@@ -225,6 +229,7 @@ impl Default for RelayConfig {
             broadcast: default_broadcast(),
             search: default_search(),
             indexer: default_indexer(),
+            named_sets: Vec::new(),
             authors: Vec::new(),
             timeout_ms: default_timeout_ms(),
         }
@@ -251,6 +256,7 @@ impl RelayConfig {
         self.broadcast.urls = sets.broadcast.clone();
         self.search.urls = sets.search.clone();
         self.indexer.urls = sets.indexer.clone();
+        self.named_sets = sets.named.clone();
     }
 
     /// Resolve author list to hex pubkeys (handles npub and hex)

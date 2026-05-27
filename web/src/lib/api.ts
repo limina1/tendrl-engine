@@ -476,6 +476,12 @@ export function fetchAuthors() {
 	});
 }
 
+export interface NamedRelaySet {
+	d_tag: string;
+	title: string;
+	urls: string[];
+}
+
 export function getRelayConfig() {
 	return fetchJson<{
 		general: { urls: string[]; kinds: number[] };
@@ -484,9 +490,45 @@ export function getRelayConfig() {
 		broadcast: { urls: string[]; kinds: number[] };
 		search: { urls: string[]; kinds: number[] };
 		indexer: { urls: string[]; kinds: number[] };
+		named_sets: NamedRelaySet[];
 		authors: string[];
 		initial_relays: string[];
 	}>('/api/v1/relays');
+}
+
+export function createNamedSet(d_tag: string, title: string) {
+	return fetchJson<{ updated: boolean; message: string }>('/api/v1/config/update', {
+		method: 'POST',
+		body: JSON.stringify({ create_named_set: { d_tag, title } })
+	});
+}
+
+export function deleteNamedSet(d_tag: string) {
+	return fetchJson<{ updated: boolean; message: string }>('/api/v1/config/update', {
+		method: 'POST',
+		body: JSON.stringify({ delete_named_set: d_tag })
+	});
+}
+
+export function renameNamedSet(d_tag: string, title: string) {
+	return fetchJson<{ updated: boolean; message: string }>('/api/v1/config/update', {
+		method: 'POST',
+		body: JSON.stringify({ rename_named_set: { d_tag, title } })
+	});
+}
+
+export function addToNamedSet(d_tag: string, url: string) {
+	return fetchJson<{ updated: boolean; message: string }>('/api/v1/config/update', {
+		method: 'POST',
+		body: JSON.stringify({ add_to_named_set: { d_tag, url } })
+	});
+}
+
+export function removeFromNamedSet(d_tag: string, url: string) {
+	return fetchJson<{ updated: boolean; message: string }>('/api/v1/config/update', {
+		method: 'POST',
+		body: JSON.stringify({ remove_from_named_set: { d_tag, url } })
+	});
 }
 
 // Config update API

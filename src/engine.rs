@@ -301,6 +301,134 @@ impl Engine {
         self.relay_config.read().unwrap().indexer.urls.clone()
     }
 
+    /// Get all named relay sets (NIP-51 kind 30002 groupings). Owned
+    /// clone — never hand back a reference into the lock.
+    pub fn named_relay_sets(&self) -> Vec<crate::relay_store::NamedRelaySet> {
+        self.relay_config.read().unwrap().named_sets.clone()
+    }
+
+    /// Create a new empty named set. `d_tag` is the stable identifier
+    /// (caller-provided, e.g. a nanoid); `title` is the human label.
+    /// Returns false if a set with this d_tag already exists.
+    pub fn create_named_set(&self, d_tag: &str, title: &str) -> bool {
+        let snapshot = {
+            let mut rc = self.relay_config.write().unwrap();
+            if rc.named_sets.iter().any(|s| s.d_tag == d_tag) {
+                return false;
+            }
+            rc.named_sets.push(crate::relay_store::NamedRelaySet {
+                d_tag: d_tag.to_string(),
+                title: title.to_string(),
+                urls: Vec::new(),
+            });
+            self.relay_sets_snapshot_locked(&rc)
+        };
+        if let Err(e) = self.relay_store.save(&snapshot) {
+            warn!("Failed to persist named-set create ({d_tag}): {e}");
+        }
+        true
+    }
+
+    /// Remove a named set by `d_tag`. Returns whether anything was removed.
+    pub fn delete_named_set(&self, d_tag: &str) -> bool {
+        let snapshot = {
+            let mut rc = self.relay_config.write().unwrap();
+            let before = rc.named_sets.len();
+            rc.named_sets.retain(|s| s.d_tag != d_tag);
+            if rc.named_sets.len() == before {
+                return false;
+            }
+            self.relay_sets_snapshot_locked(&rc)
+        };
+        if let Err(e) = self.relay_store.save(&snapshot) {
+            warn!("Failed to persist named-set delete ({d_tag}): {e}");
+        }
+        true
+    }
+
+    /// Rename an existing named set's `title`. Returns whether the title
+    /// actually changed.
+    pub fn rename_named_set(&self, d_tag: &str, new_title: &str) -> bool {
+        let snapshot = {
+            let mut rc = self.relay_config.write().unwrap();
+            let Some(s) = rc.named_sets.iter_mut().find(|s| s.d_tag == d_tag) else {
+                return false;
+            };
+            if s.title == new_title {
+                return false;
+            }
+            s.title = new_title.to_string();
+            self.relay_sets_snapshot_locked(&rc)
+        };
+        if let Err(e) = self.relay_store.save(&snapshot) {
+            warn!("Failed to persist named-set rename ({d_tag}): {e}");
+        }
+        true
+    }
+
+    /// Add a URL to a named set. Idempotent: returns false if already a
+    /// member or if the set doesn't exist.
+    pub fn add_to_named_set(&self, d_tag: &str, url: &str) -> bool {
+        let url = crate::relay_url::normalize_relay_url(url);
+        if url.is_empty() {
+            return false;
+        }
+        let snapshot = {
+            let mut rc = self.relay_config.write().unwrap();
+            let Some(s) = rc.named_sets.iter_mut().find(|s| s.d_tag == d_tag) else {
+                return false;
+            };
+            if s.urls.iter().any(|u| u == &url) {
+                return false;
+            }
+            s.urls.push(url.clone());
+            self.relay_sets_snapshot_locked(&rc)
+        };
+        if let Err(e) = self.relay_store.save(&snapshot) {
+            warn!("Failed to persist add-to-named-set ({d_tag}/{url}): {e}");
+        }
+        true
+    }
+
+    /// Remove a URL from a named set. Returns whether anything was removed.
+    pub fn remove_from_named_set(&self, d_tag: &str, url: &str) -> bool {
+        let url = crate::relay_url::normalize_relay_url(url);
+        if url.is_empty() {
+            return false;
+        }
+        let snapshot = {
+            let mut rc = self.relay_config.write().unwrap();
+            let Some(s) = rc.named_sets.iter_mut().find(|s| s.d_tag == d_tag) else {
+                return false;
+            };
+            let before = s.urls.len();
+            s.urls.retain(|u| u != &url);
+            if s.urls.len() == before {
+                return false;
+            }
+            self.relay_sets_snapshot_locked(&rc)
+        };
+        if let Err(e) = self.relay_store.save(&snapshot) {
+            warn!("Failed to persist remove-from-named-set ({d_tag}/{url}): {e}");
+        }
+        true
+    }
+
+    /// Helper — build a RelaySets snapshot from the *already locked*
+    /// RelayConfig. Internal; callers hold the write lock when they
+    /// invoke this and release it after the snapshot is built.
+    fn relay_sets_snapshot_locked(&self, rc: &RelayConfig) -> RelaySets {
+        RelaySets {
+            general: rc.general.urls.clone(),
+            fetch: rc.fetch.urls.clone(),
+            publish: rc.publish.urls.clone(),
+            broadcast: rc.broadcast.urls.clone(),
+            search: rc.search.urls.clone(),
+            indexer: rc.indexer.urls.clone(),
+            named: rc.named_sets.clone(),
+        }
+    }
+
     /// Get the data directory path
     pub fn data_dir(&self) -> &std::path::Path {
         &self.data_dir
@@ -452,14 +580,7 @@ impl Engine {
                 return false;
             }
             urls.push(url.clone());
-            RelaySets {
-                general: rc.general.urls.clone(),
-                fetch: rc.fetch.urls.clone(),
-                publish: rc.publish.urls.clone(),
-                broadcast: rc.broadcast.urls.clone(),
-                search: rc.search.urls.clone(),
-                indexer: rc.indexer.urls.clone(),
-            }
+            self.relay_sets_snapshot_locked(&rc)
         };
         if let Err(e) = self.relay_store.save(&snapshot) {
             warn!("Failed to persist relay add ({set}/{url}): {e}");
@@ -490,14 +611,7 @@ impl Engine {
             if urls.len() == before {
                 return false;
             }
-            RelaySets {
-                general: rc.general.urls.clone(),
-                fetch: rc.fetch.urls.clone(),
-                publish: rc.publish.urls.clone(),
-                broadcast: rc.broadcast.urls.clone(),
-                search: rc.search.urls.clone(),
-                indexer: rc.indexer.urls.clone(),
-            }
+            self.relay_sets_snapshot_locked(&rc)
         };
         if let Err(e) = self.relay_store.save(&snapshot) {
             warn!("Failed to persist relay remove ({set}/{url}): {e}");
