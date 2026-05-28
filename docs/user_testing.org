@@ -1,0 +1,265 @@
+#+TITLE: tendrl — user testing checklist
+#+OPTIONS: toc:2
+
+Manual validation for the work landed in this session. Each item is a
+short user flow with an expected outcome. Tick [X] when verified;
+leave [ ] when not yet exercised; mark [-] for "tried, doesn't work"
+and add a note under the item.
+
+* Setup
+
+- [ ] Engine restarted on the latest =tendrl-web= tip.
+- [ ] Web hard-reloaded (Cmd/Ctrl+Shift+R) so HMR doesn't mask
+  =state.svelte.ts= changes.
+- [ ] =cargo test --lib= passes locally (283+ tests).
+- [ ] =pnpm -C web check= reports 0 errors.
+
+* Identity / signing
+
+** Engine source (ncryptsec)
+- [ ] Open SettingsBuffer (=SPC b b= or modeline). Identity section
+  shows source =engine= selected.
+- [ ] Paste an =ncryptsec1...=, click /Login/. Status flips to
+  =locked= with the right npub.
+- [ ] Enter password, click /Unlock/. Status flips to =unlocked=.
+- [ ] /Lock/ returns to =locked=. /Logout/ returns to =none=.
+
+** NIP-07 source (browser extension)
+- [ ] Install a NIP-07 extension that exposes =window.nostr.signEvent=
+  (soapbox-signer, nos2x, Alby). Reload.
+- [ ] SettingsBuffer "nip07" radio is enabled (not greyed out).
+- [ ] Pick =nip07=. Extension prompts =getPublicKey=; approve.
+  Identity row shows your npub.
+- [ ] Modeline identity pill shows the truncated npub (=@npub1...=).
+
+** Identity source persists across reload (FIX 6561a23)
+- [ ] With =nip07= selected, click /Save settings/. Toast says
+  "Saved settings (... identity.source ...)".
+- [ ] Confirm =config.toml= now has =[identity] source = "nip07"=
+  (=cat config.toml | grep -A1 identity=).
+- [ ] Hard-reload the web. Console shows
+  =[identity] auto-reconnecting NIP-07 signer (saved in config.toml)=
+  followed by =[identity] auto-reconnected: nip07 npub1...=.
+- [ ] SettingsBuffer radio shows =nip07= selected (not engine).
+- [ ] =await fetch('/api/v1/identity').then(r=>r.json())= in the
+  console returns =state: "unlocked"=, =pubkey: "<hex>"=,
+  =source: "nip07"=.
+
+* Relay configuration
+
+** Five class toggles per row
+- [ ] Open the relays buffer (modeline =relays= pill).
+- [ ] Each row has six toggles: =read=, =write=, =broadcast=,
+  =search=, =indexer=, =auth=. Click each — toggle persists on the
+  row immediately (no restart). Toast says "Relay config saved".
+- [ ] =broadcast=/=search=/=indexer= each get a distinct tint
+  (warmer / blue-ish / imported-ish) so the user reads them as
+  different classes from read/write.
+
+** Add a new relay
+- [ ] Footer =+ Add relay= button opens a prompt. Type a bare
+  hostname (=relay.example=). It gets normalized to =wss://relay.example=
+  (URL normalization spec [[file:../src/relay_url.rs::pub fn normalize_relay_url]]).
+- [ ] New row appears with =read= + =write= ON by default.
+- [ ] Adding the same URL again gives "already configured" toast.
+
+** Edits take effect WITHOUT engine restart (T28)
+- [ ] Toggle a relay's =read= OFF. Hit refresh in the relays buffer —
+  the toggle stays off.
+- [ ] =await fetch('/api/v1/relays').then(r=>r.json())= shows the
+  in-memory state matches the disk (fetch.urls no longer contains
+  the toggled-off relay).
+
+** relays.json persistence
+- [ ] Toggle some relays. =cat <data_dir>/relays.json= reflects the
+  current state immediately. ((typical data_dir:
+  ~/.local/share/nostr-engine/nostrdb/relays.json=))
+- [ ] Restart the engine. Reload the web. Toggles survive.
+
+** Legacy =[relay.fetch] urls= fallback (T27)
+- [ ] Delete =<data_dir>/relays.json= and =[relay] initial_relays=
+  from config.toml. Keep the legacy =[relay.fetch] urls = [...]=
+  section in config.toml.
+- [ ] Restart engine. =cat relays.json= — should be re-seeded from
+  the legacy section, NOT empty.
+- [ ] Engine log shows: "config.toml has no =initial_relays=; falling
+  back to legacy =[relay.*]= urls".
+
+* Pull from your profile
+
+** kind 10002 (public NIP-65)
+- [ ] Sign in. In the relays buffer, click /Pull from your profile/.
+- [ ] Diagnostic line shows =kind 10002 (read/write (NIP-65)): N
+  relays= in green.
+- [ ] Suggestions appear grouped under "kind 10002 · read/write".
+  Each has =+ fetch= / =+ publish= / =+ both= where applicable.
+- [ ] Already-configured relays show "already in read/write" instead
+  of an add button.
+
+** kinds 10007 / 10086 / 10088 (encrypted, Amethyst-style)
+- [ ] If signed in via NIP-07 with =window.nostr.nip44.decrypt=:
+  extension prompts to decrypt. Approve.
+- [ ] Diagnostic line shows =kind 10086 (indexer): N relays= in
+  green (if successfully decrypted).
+- [ ] Suggestions appear under their respective groups with
+  =+ search= / =+ indexer= / =+ broadcast= buttons.
+- [ ] Browser console logs =decrypted kind 10086 via nip44, N relay
+  tag(s)= for each decrypted kind.
+
+** Decrypt fallback to NIP-04
+- [ ] If your stored event is NIP-04 (older Amethyst): decrypt still
+  succeeds because of the position-based =?iv== detection at
+  =length-28= and =-null= suffix strip (mirrors Amethyst's
+  =EncryptedInfo.isNIP04=).
+
+** Encrypted notice (no extension)
+- [ ] Switch to engine source (or use a browser without a NIP-07
+  extension). Click /Pull/.
+- [ ] Encrypted kinds show "encrypted (NIP-44) — couldn't decrypt"
+  with the message "No NIP-07 extension reachable — install one ...
+  Engine-side decrypt with ncryptsec is queued as T32."
+
+* Publishing — relay lists
+
+** kind 10002 (NIP-65 read/write)
+- [ ] Toggle a few rows as read/write. Click =Publish kind 10002 (N)=
+  in the footer.
+- [ ] Toast: "Published kind 10002 (N relays) to X/Y publish relays".
+- [ ] =nak req -k 10002 -a <mypubkey> wss://relay.damus.io= (or
+  similar) returns the just-signed event.
+
+** kind 10007 / 10086 / 10088 (encrypted PrivateTagArrayEvent)
+- [ ] Toggle some rows as =search=, =indexer=, =broadcast=. Click
+  the matching =Publish kind 10007/10086/10088 (N)= button.
+- [ ] Extension prompts for =nip44.encrypt= (different prompt from
+  decrypt). Approve.
+- [ ] Toast: "Published kind 10086 (N indexer relays) to X/Y publish
+  relays".
+- [ ] On the next Pull from your profile, the same relays come
+  back — round trip confirmed.
+
+** Named sets (NIP-51 kind 30002, T30)
+- [ ] In relays buffer, scroll to "Named sets · kind 30002". Click
+  =+ New set=. Name it (e.g. =research=).
+- [ ] Expand the set (caret). Click =+ relay= to add a member URL.
+- [ ] Click the set's =Publish 30002= button. Toast:
+  "Published 'research' (kind 30002, N relays) to X/Y publish relays".
+- [ ] Verify on a relay: =nak req -k 30002 -a <mypubkey> -d <d_tag>=.
+- [ ] Click set title to rename — input prompt. Re-publish reuses
+  the same =d_tag= so it /replaces/ the addressable event (not
+  forks).
+- [ ] Delete a set with the =delete= button. Confirmation prompt;
+  local-only delete (no kind 5).
+
+* Per-event actions
+
+** Broadcast (=a b= chord, T31)
+- [ ] Open any event in the EventViewModal. Press =a= then =b=
+  (or click the /Broadcast/ button in the Actions row).
+- [ ] If no broadcast relays toggled: toast says "No broadcast
+  relays configured. Toggle some as 'broadcast' in the relays
+  buffer first."
+- [ ] Toggle a broadcast relay. Try again. Toast: "Broadcast to
+  X/Y relays".
+- [ ] Verify the event arrived on the broadcast relay
+  (=nak req -i <event_id> wss://nostr.land=).
+
+** Chip click → focus in RelaysBuffer
+- [ ] Open an event that has been seen on at least one relay
+  (provenance chips in "Found on" block).
+- [ ] Click a relay chip. Modal closes; RelaysBuffer opens with
+  the matching row expanded and scrolled into view.
+- [ ] =+ N more= button on collapsed chip strip — clicking expands
+  to show all chips.
+
+* Settings persistence
+
+** Editor + compose settings
+- [ ] Open SettingsBuffer. Toggle line numbers, vim mode, insert
+  mode, default edit mode, sync mode, button labels each.
+- [ ] Click /Save settings/. Toast: "Saved settings (initial_relays,
+  editor, compose, network, identity.source) to /path/to/config.toml".
+- [ ] =cat config.toml | head -20= — sees =[editor]= and =[compose]=
+  sections with the chosen values.
+- [ ] Hard-reload web. Settings reflect the saved state, not the
+  hard-coded defaults.
+
+** Network mode
+- [ ] In SettingsBuffer's Network section, switch between =auto= and
+  =confirm=. Modeline network pill reflects the change live.
+- [ ] /Save settings/ → reload → mode persists.
+
+** Save Settings also snapshots relays
+- [ ] /Save settings/ writes =initial_relays= in config.toml
+  (relays.json is still authoritative at runtime; this is the
+  portability snapshot).
+- [ ] If you delete =relays.json= and restart, engine seeds from
+  the snapshotted =initial_relays=.
+
+* Publications
+
+** Flat publication (compose surface)
+- [ ] Open compose. Type a doc with =A title= and several =A=
+  level-2 sections. Click /Publish/.
+- [ ] Toast appears. Publish progress modal opens showing each
+  event (1 root 30040 + N 30041 sections) and which relays
+  accepted/rejected each.
+
+** Nested publication (parseLevel dropdown)
+- [ ] In compose, switch =nest= dropdown from 1 tier → 3 tiers.
+  Sections deeper than level 2 emit nested 30040 indices.
+- [ ] Inspect generated events JSON (compose's /Preview JSON/
+  button). Confirm:
+  - Root 30040 has =T=, =title=, empty content, =a= tags pointing
+    at children.
+  - L2 sections that have children are 30040 + 30041 pairs.
+  - L2/L3 leaf sections are 30041 only.
+
+** Republish (re-publish detection)
+- [ ] Publish a doc once. Then re-paste the same doc into compose.
+  Click /Publish/.
+- [ ] /ComparePublishModal/ opens showing matched/added/removed
+  sections. Choose /Replace (reuse identifiers)/.
+- [ ] Confirm the new events have the SAME =d= tags as the first
+  publish (=nak req -a <pubkey> -k 30040= shows the same naddr).
+
+* Misc
+
+** Pull bar diagnostics
+- [ ] After /Pull from your profile/, the diagnostic line shows
+  per-kind status: =N relays= (green), =encrypted (NIP-44)= (warning),
+  or =not found= (muted).
+
+** Toasts
+- [ ] All save / publish / decrypt outcomes appear in the
+  lower-right toast stack with correct severity (success / info /
+  error).
+
+* Known gaps (don't expect these to work)
+
+- =T33= — indexer relays don't function as a fetch-path fallback yet.
+  Toggling a relay as indexer does NOT make profile / kind 10002
+  lookups fall through to it on read-set miss. Visible in the row
+  toggle; doesn't change fetch behavior.
+- /Engine-side NIP-44 decrypt/ — only the NIP-07 extension path
+  decrypts private relay lists. If signed in via engine ncryptsec
+  with no extension, encrypted lists show "no NIP-07 extension
+  reachable".
+- /Per-event-kind routing table/ — deferred. Choose targets
+  explicitly per publish; no automatic "papers never auto-broadcast"
+  guard yet.
+- /kind 30002 private members/ — named sets publish public =r= tags
+  only. NIP-44-encrypted private members deferred.
+- /Identity source = engine on first boot after fresh install/ —
+  expected. NIP-07 auto-reconnect only triggers when config.toml has
+  =[identity] source = "nip07"= AND the extension is reachable.
+
+* Worktrees / branches
+
+- =tendrl-web= is the integration branch. All work in this checklist
+  is at HEAD as of the last commit.
+- Engine restart required for any =cargo= changes: relay-class
+  storage shape, identity.external_pubkey, named sets in
+  RelaySets/RelayConfig.
+- Web hard-reload required for =.svelte.ts= state changes (HMR
+  doesn't always pick up $state declarations).
