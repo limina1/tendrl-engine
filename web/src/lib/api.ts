@@ -473,6 +473,22 @@ export function fetchSections() {
 	});
 }
 
+/** Pull a user's relay-list events (kinds 10002 / 10007 / 10086 /
+ *  10088 / 30002) through the engine's indexer composition — read
+ *  relays first, falling through to indexer.default → indexer.fallback
+ *  if the primary returns zero. Honors NetworkMode::Confirm via the
+ *  activity-event modal. The web reads the events back from local
+ *  nostrdb via api.search after this resolves. */
+export function pullUserData(pubkey: string, modeConfirm = true) {
+	return fetchJson<{ fetched: number; kinds: number[]; author: string }>(
+		'/api/v1/pull-user-data',
+		{
+			method: 'POST',
+			body: JSON.stringify({ pubkey, mode_confirm: modeConfirm })
+		}
+	);
+}
+
 export function fetchAuthors() {
 	return fetchJson<{ fetched: number; authors: number; relays: number }>('/api/v1/fetch/authors', {
 		method: 'POST'

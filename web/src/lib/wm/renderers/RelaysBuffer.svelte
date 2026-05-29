@@ -68,7 +68,19 @@
 		broadcast?: boolean;
 		source_kind: 10002 | 10007 | 10086 | 10088;
 	};
+	/** A NIP-51 kind 30002 named relay set pulled from the user's
+	 *  profile. Each set is addressable, identified by `d_tag`. The
+	 *  user can import the whole set into their local named_sets via
+	 *  the "+ import as set" button. */
+	type PulledNamedSet = {
+		d_tag: string;
+		title: string;
+		urls: string[];
+		created_at: number;
+		event_id: string;
+	};
 	let pulled = $state<PulledRelay[] | null>(null);
+	let pulledNamedSets = $state<PulledNamedSet[]>([]);
 	let pulling = $state(false);
 	let pullError = $state<string | null>(null);
 	let pullCreatedAt = $state<number | null>(null);
@@ -77,7 +89,8 @@
 	// returned events vs. which came up empty when "pulled in indexer
 	// and search relays" doesn't show what they expected.
 	type PullKindResult = 'parsed' | 'encrypted' | 'not_found';
-	let pullKindResults = $state<Record<10002 | 10007 | 10086 | 10088, PullKindResult> | null>(null);
+	type PullKind = 10002 | 10007 | 10086 | 10088 | 30002;
+	let pullKindResults = $state<Record<PullKind, PullKindResult> | null>(null);
 	let pullFetchedCount = $state(0);
 	// Why the encrypted notice was triggered — distinguishes "no extension
 	// reachable" from "extension refused / wrong identity / errored".
@@ -329,10 +342,6 @@
 			pullError = 'Sign in first — no pubkey to look up.';
 			return;
 		}
-		if (initialRelays.length === 0) {
-			pullError = 'No initial relays configured in config.toml. Add `initial_relays = [...]` under `[relay]` to seed.';
-			return;
-		}
 		pulling = true;
 		pullError = null;
 		pullEncryptedKinds = [];
@@ -340,24 +349,25 @@
 		pullFetchedCount = 0;
 		pullDecryptReason = null;
 		pullDecryptErrors = {};
+		pulledNamedSets = [];
 		try {
-			// 1. Pull all four relay-list kinds from the seed relays.
-			//    10002 = read/write (NIP-65, public `r` tags).
-			//    10007 = search (NIP-50). 10086 = indexer. 10088 = broadcast.
-			//    The 100xx kinds are Amethyst-defined and published as a
-			//    NIP-44-encrypted PrivateTagArrayEvent (Amethyst convention)
-			//    — the actual relay URLs sit in the encrypted `content` as a
-			//    JSON tag-array of `["relay", url]` entries. If the user is
-			//    signed in via a NIP-07 extension that exposes nip44.decrypt,
-			//    we attempt decryption and merge those entries with any
-			//    public `r` tags. Engine-side decrypt is tracked as T32.
-			const kinds = [10002, 10007, 10086, 10088] as const;
-			const fetchResult = await api.fetchFromRelay(
-				initialRelays,
-				[...kinds],
-				[pubkey],
-				20
-			);
+			// 1. Phase 4.1: pull through the engine's indexer composition
+			//    rather than hitting `initial_relays` directly. The
+			//    engine fans out across read relays (joined with
+			//    indexer.default unless `exclusive.indexer` is set) and
+			//    falls through to indexer.fallback when the primary
+			//    returns zero — so the kind 10002 that lives only on
+			//    purplepag.es shows up automatically. Activity toast +
+			//    modal display the per-phase, per-relay status.
+			//
+			//    Kinds pulled:
+			//      10002 = read/write (NIP-65, public `r` tags)
+			//      10007 = search relays   (NIP-44 encrypted, Amethyst)
+			//      10086 = indexer relays  (NIP-44 encrypted, Amethyst)
+			//      10088 = broadcast list  (NIP-44 encrypted, Amethyst)
+			//      30002 = NIP-51 named relay sets (one per d_tag)
+			const kinds = [10002, 10007, 10086, 10088, 30002] as const;
+			const fetchResult = await api.pullUserData(pubkey);
 			pullFetchedCount = fetchResult.fetched;
 
 			// Try decrypt whenever a NIP-07 extension is reachable. We try
@@ -372,16 +382,21 @@
 			// Kept as `canNip44` below for diagnostic-state naming continuity.
 			const canNip44 = canDecrypt;
 
-			// 2. Read them back from the local cache. Newest per kind wins.
+			// 2. Read them back from the local cache.
+			//    - For replaceable 100xx: newest per kind wins.
+			//    - For addressable 30002: take ALL events; each is a
+			//      separate named set keyed by `d` tag.
 			const entries: PulledRelay[] = [];
+			const namedSets: PulledNamedSet[] = [];
 			const seen = new Set<string>(); // dedup by `${source_kind}:${normalizedUrl}`
 			let maxCreatedAt = 0;
 			const encrypted: number[] = [];
-			const kindResults: Record<10002 | 10007 | 10086 | 10088, PullKindResult> = {
+			const kindResults: Record<PullKind, PullKindResult> = {
 				10002: 'not_found',
 				10007: 'not_found',
 				10086: 'not_found',
-				10088: 'not_found'
+				10088: 'not_found',
+				30002: 'not_found'
 			};
 			const push = (s: PulledRelay) => {
 				const key = `${s.source_kind}:${normalizeRelayUrl(s.url)}`;
@@ -390,7 +405,43 @@
 				entries.push(s);
 			};
 
-			for (const kind of kinds) {
+			// --- Kind 30002 readback (addressable, many per author) ---
+			{
+				const result = await api.search(`by:${pubkey} k:30002`, 64, pubkey, 'local_only');
+				const events = result.results ?? [];
+				// One PulledNamedSet per latest event per `d` tag — older
+				// versions of the same set get superseded by the newer one.
+				const byDtag = new Map<string, typeof events[number]>();
+				for (const ev of events) {
+					const dTag = (ev.tags ?? []).find((t) => t[0] === 'd')?.[1];
+					if (!dTag) continue;
+					const existing = byDtag.get(dTag);
+					if (!existing || (ev.created_at ?? 0) > (existing.created_at ?? 0)) {
+						byDtag.set(dTag, ev);
+					}
+				}
+				for (const ev of byDtag.values()) {
+					const dTag = (ev.tags ?? []).find((t) => t[0] === 'd')?.[1] ?? '';
+					const title =
+						(ev.tags ?? []).find((t) => t[0] === 'title')?.[1] ?? dTag;
+					const urls = (ev.tags ?? [])
+						.filter((t) => t[0] === 'r' && typeof t[1] === 'string')
+						.map((t) => t[1] as string);
+					namedSets.push({
+						d_tag: dTag,
+						title,
+						urls,
+						created_at: ev.created_at ?? 0,
+						event_id: ev.event_id
+					});
+					if ((ev.created_at ?? 0) > maxCreatedAt) maxCreatedAt = ev.created_at ?? 0;
+				}
+				if (namedSets.length > 0) kindResults[30002] = 'parsed';
+			}
+
+			// --- Kinds 10002/10007/10086/10088 (replaceable; newest wins) ---
+			const replaceableKinds = [10002, 10007, 10086, 10088] as const;
+			for (const kind of replaceableKinds) {
 				const result = await api.search(`by:${pubkey} k:${kind}`, 3, pubkey, 'local_only');
 				const newest = (result.results ?? []).sort(
 					(a, b) => (b.created_at ?? 0) - (a.created_at ?? 0)
@@ -564,10 +615,40 @@
 			pullEncryptedKinds = encrypted;
 			pullKindResults = kindResults;
 			pulled = entries;
+			pulledNamedSets = namedSets;
 		} catch (e) {
 			pullError = e instanceof Error ? e.message : String(e);
 		} finally {
 			pulling = false;
+		}
+	}
+
+	/** Import a pulled NIP-51 kind 30002 named set into local
+	 *  `named_sets`. Creates the set (if it doesn't already exist) then
+	 *  adds each URL as a member. Idempotent at the engine level — the
+	 *  named_set CRUD already silently skips existing dups. */
+	let importingSetTag = $state<string | null>(null);
+	async function importNamedSet(set: PulledNamedSet) {
+		importingSetTag = set.d_tag;
+		try {
+			await api.createNamedSet(set.d_tag, set.title);
+			for (const url of set.urls) {
+				await api.addToNamedSet(set.d_tag, url);
+			}
+			app.pushToast(
+				`Imported "${set.title}" (${set.urls.length} relay${set.urls.length === 1 ? '' : 's'})`,
+				'success',
+				2500
+			);
+			await load();
+		} catch (e) {
+			app.pushToast(
+				`Couldn't import "${set.title}": ${e instanceof Error ? e.message : String(e)}`,
+				'error',
+				4500
+			);
+		} finally {
+			importingSetTag = null;
 		}
 	}
 
@@ -930,31 +1011,31 @@
 		<span class="relays-hint">read/write apply live and persist · auth is cosmetic</span>
 	</div>
 
-	<!-- Pull-from-profile: fetches the user's kind 10002 (NIP-65) from
-	     the configured initial_relays and surfaces it as suggestions.
-	     Suggestions never auto-apply; the user picks per relay. -->
+	<!-- Pull-from-profile: fetches the user's relay-list events
+	     (10002/10007/10086/10088/30002) through the engine's indexer
+	     composition — read relays first, falling through to
+	     indexer.default → indexer.fallback. Suggestions never
+	     auto-apply; the user picks per relay. -->
 	<div class="pull-bar">
 		{#if !pulled && !pulling && !pullError}
 			<button
 				class="btn-pull"
 				onclick={pullFromProfile}
-				disabled={!app.myPubkey || initialRelays.length === 0}
+				disabled={!app.myPubkey}
 				title={!app.myPubkey
 					? 'Sign in first'
-					: initialRelays.length === 0
-						? 'No initial_relays in config.toml'
-						: `Fetch your published relay list (kind 10002) from ${initialRelays.length} initial relay${initialRelays.length === 1 ? '' : 's'}`}
+					: 'Fetch your published relay lists (kinds 10002 / 10007 / 10086 / 10088 / 30002) through the indexer composition.'}
 			>
 				Pull from your profile
 			</button>
 			{#if !app.myPubkey}
 				<span class="pull-hint pull-hint--warn">Sign in first to fetch your relay list.</span>
-			{:else if initialRelays.length === 0}
+			{:else if initialRelays.length === 0 && rows.length === 0}
 				<span class="pull-hint pull-hint--warn">
-					No <code>initial_relays</code> configured. Add a few in <code>config.toml</code> under <code>[relay]</code> (e.g. <code>initial_relays = ["wss://relay.damus.io", "wss://nos.lol"]</code>) and restart — or add relays directly below.
+					No relays configured. Add at least one read relay below — or seed via <code>initial_relays</code> in <code>config.toml</code> under <code>[relay]</code>.
 				</span>
 			{:else}
-				<span class="pull-hint">Reads your kind 10002 from <code>initial_relays</code> ({initialRelays.length} configured); you choose what to import.</span>
+				<span class="pull-hint">Walks the indexer composition; you choose what to import. Pulls kind 10002 / 10007 / 10086 / 10088 / 30002.</span>
 			{/if}
 		{:else if pulling}
 			<span class="pull-status">Fetching your relay list…</span>
@@ -985,12 +1066,47 @@
 					{/if}
 				</span>
 			{/each}
+			<span
+				class="pull-diag"
+				class:pull-diag--ok={pullKindResults[30002] === 'parsed'}
+				class:pull-diag--missing={pullKindResults[30002] === 'not_found'}
+			>
+				kind 30002 (named sets):
+				{#if pullKindResults[30002] === 'parsed'}{pulledNamedSets.length} set{pulledNamedSets.length === 1 ? '' : 's'}
+				{:else}not found
+				{/if}
+			</span>
 		</div>
 	{/if}
 
-	{#if (pulled && pulled.length > 0) || pullEncryptedKinds.length > 0}
+	{#if (pulled && pulled.length > 0) || pullEncryptedKinds.length > 0 || pulledNamedSets.length > 0}
 		<div class="pulled-list">
 			<div class="pulled-label">From your profile · suggestions</div>
+
+			{#if pulledNamedSets.length > 0}
+				<div class="pulled-kind-label">kind 30002 · named sets</div>
+				{#each pulledNamedSets as set (set.d_tag)}
+					{@const alreadyImported = namedSets.some((s) => s.d_tag === set.d_tag)}
+					<div class="pulled-row pulled-row--set">
+						<span class="pulled-set-title" title={`d=${set.d_tag}`}>{set.title}</span>
+						<span class="pulled-set-meta">{set.urls.length} relay{set.urls.length === 1 ? '' : 's'}</span>
+						<div class="pulled-actions">
+							{#if alreadyImported}
+								<span class="pulled-state">already imported</span>
+							{:else}
+								<button
+									class="pull-add pull-add--strong"
+									onclick={() => importNamedSet(set)}
+									disabled={importingSetTag !== null}
+									title={`Create a local named set with d="${set.d_tag.slice(0, 8)}…" and add ${set.urls.length} member relay${set.urls.length === 1 ? '' : 's'}.`}
+								>
+									{importingSetTag === set.d_tag ? 'Importing…' : '+ import as set'}
+								</button>
+							{/if}
+						</div>
+					</div>
+				{/each}
+			{/if}
 
 			{#each [10002, 10007, 10086, 10088] as kind (kind)}
 				{@const group = pulledByKind[kind as 10002 | 10007 | 10086 | 10088]}
@@ -2125,6 +2241,22 @@
 		align-items: center;
 		gap: 8px;
 		font-size: var(--t-xs);
+	}
+	.pulled-row--set {
+		padding: 2px 0;
+	}
+	.pulled-set-title {
+		font-weight: 500;
+		flex: 1;
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+	.pulled-set-meta {
+		color: var(--muted);
+		font-family: var(--font-mono);
+		font-size: 0.7rem;
 	}
 	.pulled-url {
 		font-family: var(--font-mono);

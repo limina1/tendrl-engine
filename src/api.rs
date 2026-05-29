@@ -1194,6 +1194,89 @@ pub async fn fetch_profiles_handler(
     })))
 }
 
+/// POST /api/v1/pull-user-data — fetch the user's relay-list events
+/// (kind 10002 NIP-65, 10007 search, 10086 indexer, 10088 broadcast,
+/// 30002 NIP-51 named sets) through the indexer composition.
+///
+/// Phase 4.1 wiring: instead of the previous "hit `initial_relays`
+/// directly" path, this routes through `engine.fetch_with_composition`
+/// so the read → indexer.default → indexer.fallback chain handles the
+/// "kind 10002 isn't cached locally but lives on purplepag.es" case
+/// automatically. Emits an SSE op with the structured RequestSummary
+/// so the activity toast shows the formal-language query and
+/// per-relay status; per-phase fallback shows up as ordered toasts.
+#[derive(Debug, Deserialize)]
+pub struct PullUserDataRequest {
+    /// Hex pubkey of the user whose relay-list events to fetch.
+    /// (Typically the logged-in identity, but any author is allowed —
+    /// "pull alice's named sets" is a planned secondary use case.)
+    pub pubkey: String,
+    /// Whether this is user-initiated (default true). Confirm-mode
+    /// gates the operation behind the modal when true.
+    #[serde(default = "default_pull_confirm")]
+    pub mode_confirm: bool,
+}
+
+fn default_pull_confirm() -> bool {
+    true
+}
+
+pub async fn pull_user_data_handler(
+    State(engine): State<AppState>,
+    Json(req): Json<PullUserDataRequest>,
+) -> Result<Json<Value>, EngineError> {
+    if req.pubkey.len() != 64 || hex::decode(&req.pubkey).is_err() {
+        return Err(EngineError::InvalidHex(
+            "Pubkey must be a 64-character hex string".to_string(),
+        ));
+    }
+
+    // Kinds we pull as relay-list payloads. The 100xx are Amethyst-
+    // defined PrivateTagArrayEvents; 30002 is NIP-51 named sets. The
+    // web parses each kind appropriately after the fetch lands in
+    // local nostrdb.
+    let kinds = [10002u64, 10007, 10086, 10088, 30002];
+
+    let composition = engine.compose_discovery_phases("indexer");
+    // One filter for the 100xx replaceable kinds (1 event per
+    // {author, kind}) and one for kind 30002 addressable (many per
+    // author). We send them as a single REQ subscription with two
+    // filters so relays can stream both in one round trip.
+    let filter_replaceable = json!({
+        "kinds": [10002, 10007, 10086, 10088],
+        "authors": [&req.pubkey],
+        "limit": 4,
+    });
+    let filter_addressable = json!({
+        "kinds": [30002],
+        "authors": [&req.pubkey],
+        "limit": 64,
+    });
+
+    let events = engine
+        .fetch_with_composition(
+            &composition,
+            &[filter_replaceable, filter_addressable],
+            format!("Pull relay lists for @{}", short_id(&req.pubkey)),
+            crate::network::FetchPattern::Profile,
+            req.mode_confirm,
+        )
+        .await;
+
+    let fetched = events.len();
+
+    // Brief wait for nostrdb to ingest before the web reads back.
+    if fetched > 0 {
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    }
+
+    Ok(Json(json!({
+        "fetched": fetched,
+        "kinds": kinds,
+        "author": req.pubkey,
+    })))
+}
+
 // ============================================================================
 // Relay Config API Endpoints
 // ============================================================================
