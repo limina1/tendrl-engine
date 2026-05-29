@@ -97,17 +97,26 @@
 
 	/** True when any live setting differs from the last-saved value in
 	 *  config.toml. Drives the dirty visual + enabled state on the
-	 *  Save Settings button — nothing to save means nothing to click. */
+	 *  Save Settings button — nothing to save means nothing to click.
+	 *
+	 *  Default-dirty when the baseline hasn't loaded yet: better to
+	 *  let the user click (no-op save) than to stick the button in a
+	 *  perma-disabled state if `/api/v1/settings` errored or hasn't
+	 *  resolved yet. */
 	const settingsDirty = $derived.by(() => {
 		const b = savedBaseline;
-		if (!b) return false;
+		if (!b) return true;
 		if (b.editor.line_numbers !== app.editorLineNumbers) return true;
 		if (b.editor.vim_mode !== app.editorVimMode) return true;
 		if (b.editor.insert_mode !== app.editorInsertMode) return true;
 		if (b.compose.default_mode !== app.composeDefaultMode) return true;
 		if (b.compose.sync_mode !== app.syncMode) return true;
 		if (b.compose.button_labels !== app.buttonLabels) return true;
-		if (b.network.mode !== (app.networkStatus?.mode ?? 'auto')) return true;
+		// networkStatus may briefly be null before the first poll —
+		// don't false-positive in that window. Only call it dirty
+		// when we actually have a live mode to compare against.
+		const liveMode = app.networkStatus?.mode;
+		if (liveMode != null && b.network.mode !== liveMode) return true;
 		const liveSource = app.identityStatus?.source ?? 'engine';
 		if ((b.identity_source ?? 'engine') !== liveSource) return true;
 		return false;

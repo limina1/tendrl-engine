@@ -987,17 +987,21 @@
 		}
 	}
 
-	/** True when the current relay union (general ∪ fetch ∪ publish,
-	 *  the same set that snapshotToConfig would write) differs from
-	 *  what's currently in config.toml's `initial_relays`. The Save
-	 *  Settings button uses this to disable + de-emphasize itself when
-	 *  there's nothing to save. */
+	/** True when the current relay union the snapshot would write
+	 *  (general ∪ fetch ∪ publish — i.e. anything toggled read OR
+	 *  write) differs from what's currently in config.toml's
+	 *  `initial_relays`. Broadcast-only / search-only / indexer-only
+	 *  URLs DON'T count — those aren't in the snapshot. */
 	const settingsDirty = $derived.by(() => {
-		// `rows` already deduplicates per URL across all sets, and the
-		// engine snapshot writes the same `general ∪ fetch ∪ publish`
-		// union. Comparing the sorted-normalized URL lists tells us
-		// whether a snapshot would actually change config.toml.
-		const live = rows.map((r) => normalizeRelayUrl(r.url)).sort();
+		// Only URLs in fetch (read), publish (write), or general
+		// (both) end up in the snapshot. A row toggled broadcast-only
+		// would show up in `rows` but not in `initial_relays`, so
+		// matching against the wider rows set kept the button
+		// permanently dirty.
+		const live = rows
+			.filter((r) => r.read || r.write)
+			.map((r) => normalizeRelayUrl(r.url))
+			.sort();
 		const saved = initialRelays.map((u) => normalizeRelayUrl(u)).sort();
 		if (live.length !== saved.length) return true;
 		for (let i = 0; i < live.length; i++) {
