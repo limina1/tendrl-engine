@@ -131,9 +131,25 @@ function handleEvent(ev: FetchEvent) {
 	}
 }
 
-/** Open the SSE subscription. */
+/** Open the SSE subscription with explicit reconnect on error.
+ *  EventSource has built-in retry but it gives up on hard errors
+ *  (e.g. engine re-exec during a purge); without explicit reconnect
+ *  the web loses its event channel and no intents / toasts arrive
+ *  until a full reload. Exponential backoff caps at 30s. */
+let reconnectBackoffMs = 500;
+let activeEventSource: EventSource | null = null;
 function startFetchEvents() {
+	if (activeEventSource) {
+		activeEventSource.close();
+		activeEventSource = null;
+	}
 	const es = new EventSource('/api/v1/network/fetch-events');
+	activeEventSource = es;
+	es.onopen = () => {
+		// Successful (re-)connect — reset the backoff so the next
+		// drop doesn't start at 30s.
+		reconnectBackoffMs = 500;
+	};
 	es.onmessage = (msg) => {
 		try {
 			handleEvent(JSON.parse(msg.data) as FetchEvent);
@@ -141,7 +157,21 @@ function startFetchEvents() {
 			console.error('[fetch-events] bad SSE message', e);
 		}
 	};
-	es.onerror = (e) => console.error('[fetch-events] SSE connection error', e);
+	es.onerror = (e) => {
+		console.warn(
+			`[fetch-events] SSE connection error — reconnecting in ${reconnectBackoffMs}ms`,
+			e
+		);
+		es.close();
+		if (activeEventSource === es) {
+			activeEventSource = null;
+		}
+		const delay = reconnectBackoffMs;
+		reconnectBackoffMs = Math.min(reconnectBackoffMs * 2, 30_000);
+		setTimeout(() => {
+			if (browser) startFetchEvents();
+		}, delay);
+	};
 }
 
 /** The FetchConfirmModal's confirm/cancel reply. `relays` overrides the
