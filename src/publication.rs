@@ -1201,6 +1201,21 @@ impl<'a> PublicationEngine<'a> {
             filter["until"] = json!(ts - 1);
         }
 
+        // Piggyback a kind-0 filter for known authors so the same fetch
+        // that brings in publications also brings in their profiles.
+        // Without this, confirm mode would pop a second modal 300ms
+        // later when the web's `prefetchProfiles` queue flushes —
+        // easy to miss / dismiss, leaving profile names blank in the
+        // feed.
+        let mut filters_to_fetch = vec![filter];
+        if !authors.is_empty() {
+            filters_to_fetch.push(json!({
+                "kinds": [0],
+                "authors": authors,
+                "limit": authors.len(),
+            }));
+        }
+
         // Honor the caller's policy. The web's loadFeed() retries
         // with FetchAlways when the local query returns zero (cold
         // cache after purge / fresh install) — that retry only does
@@ -1236,7 +1251,7 @@ impl<'a> PublicationEngine<'a> {
                         let res = self
                             .engine
                             .get_events_with_options(
-                                vec![filter],
+                                filters_to_fetch,
                                 FetchPolicy::FetchAlways,
                                 Some(&chosen_relays),
                                 true,
@@ -1251,14 +1266,14 @@ impl<'a> PublicationEngine<'a> {
                         // the local cache (empty for the cold-cache
                         // case that motivated this branch).
                         self.engine
-                            .get_events(vec![filter], FetchPolicy::LocalOnly, None)
+                            .get_events(filters_to_fetch, FetchPolicy::LocalOnly, None)
                             .await?
                     }
                 }
             }
             _ => {
                 self.engine
-                    .get_events(vec![filter], policy, None)
+                    .get_events(filters_to_fetch, policy, None)
                     .await?
             }
         };
