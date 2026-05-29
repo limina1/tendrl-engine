@@ -2106,16 +2106,73 @@ pub async fn ignore_remove_handler(
 // Purge API Endpoint
 // ============================================================================
 
-/// POST /api/v1/purge — delete nostrdb and restart fresh
+/// POST /api/v1/purge — delete nostrdb and re-exec the engine process.
+///
+/// Schedules a background task that deletes `data.mdb` + `lock.mdb`
+/// from the data directory, then re-execs the current binary with
+/// the same argv via `CommandExt::exec` (Unix). The HTTP response
+/// returns immediately so the web can show a "purging…" toast and
+/// reconnect to the fresh engine in ~1 second.
+///
+/// What's preserved: `relays.json` (relay state file, lives in the
+/// same data_dir but isn't touched), `config.toml`, the embedding
+/// index files. What's purged: the LMDB database holding events,
+/// profiles, blocks, ingest queue.
 pub async fn purge_handler(
     State(engine): State<AppState>,
 ) -> Result<Json<serde_json::Value>, EngineError> {
     let data_dir = engine.data_dir().to_path_buf();
-    // Can't actually delete while nostrdb is open — return the path for manual purge
+
+    // Schedule the destructive work AFTER this response gets sent.
+    // The browser sees a clean 200 with the message, then the engine
+    // tears down and re-execs — the SSE channels and any in-flight
+    // requests die cleanly with connection-closed rather than a
+    // mid-response crash.
+    tokio::spawn(async move {
+        // Give the HTTP layer a beat to flush this response.
+        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+
+        // Delete the LMDB files. On Linux, unlink succeeds even while
+        // the running engine still has the files mapped — the inode
+        // stays alive until the engine exits, but the directory entry
+        // is removed so the fresh post-exec engine sees an empty dir.
+        for name in ["data.mdb", "lock.mdb"] {
+            let p = data_dir.join(name);
+            if let Err(e) = std::fs::remove_file(&p) {
+                tracing::warn!("purge: failed to remove {}: {}", p.display(), e);
+            }
+        }
+
+        // Re-exec the current binary with the original argv. On Unix
+        // this replaces the process image: same PID, same parent,
+        // fresh memory + fresh file handles. `exec()` only returns on
+        // failure.
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::CommandExt;
+            let exe = match std::env::current_exe() {
+                Ok(p) => p,
+                Err(e) => {
+                    tracing::error!("purge: can't resolve current exe: {}", e);
+                    std::process::exit(1);
+                }
+            };
+            let args: Vec<_> = std::env::args().skip(1).collect();
+            let err = std::process::Command::new(exe).args(&args).exec();
+            tracing::error!("purge: exec failed: {} — aborting so a process supervisor can restart", err);
+            std::process::exit(1);
+        }
+        #[cfg(not(unix))]
+        {
+            tracing::error!("purge: in-process re-exec only supported on Unix");
+            std::process::exit(1);
+        }
+    });
+
+    let data_dir_display = engine.data_dir().to_path_buf().to_string_lossy().to_string();
     Ok(Json(json!({
-        "message": "Purge requires restart. Delete the data directory and restart the engine.",
-        "data_dir": data_dir.to_string_lossy(),
-        "command": format!("rm -rf {} && cargo run -- -c config.toml", data_dir.display())
+        "message": "Purging the local cache and re-execing the engine. Reconnect in ~1 second.",
+        "data_dir": data_dir_display,
     })))
 }
 

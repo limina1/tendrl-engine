@@ -2454,27 +2454,55 @@ function _createAppState() {
 
 	// ===================== Purge / Export / Import =====================
 
-	/** Get the engine's purge instructions — nostrdb file handles are
-	 *  open during runtime, so a true in-place purge requires engine
-	 *  restart. Returns the recommended shell command + data dir path
-	 *  so the caller can render them in a copy-friendly modal/toast
-	 *  rather than the old confirm/alert pair. */
-	async function handlePurge(): Promise<{ command: string; data_dir: string; message: string } | null> {
+	/** Trigger an engine cache purge. The engine deletes its LMDB
+	 *  files and re-execs itself in-place (~1 second of unavailability).
+	 *  This shows a pending toast that resolves once the engine comes
+	 *  back, by polling /api/v1/network/status. */
+	async function handlePurge(): Promise<void> {
+		const toastId = pushToast('Purging local cache…', 'pending', 120_000);
+		let resp: Response;
 		try {
-			const resp = await fetch('/api/v1/purge', { method: 'POST' });
-			if (!resp.ok) {
-				pushToast(`Purge request failed: ${resp.status}`, 'error', 5000);
-				return null;
-			}
-			return await resp.json();
+			resp = await fetch('/api/v1/purge', { method: 'POST' });
 		} catch (e) {
-			pushToast(
-				`Purge request failed: ${e instanceof Error ? e.message : String(e)}`,
-				'error',
+			updateToast(
+				toastId,
+				{ message: `Purge request failed: ${e instanceof Error ? e.message : String(e)}`, kind: 'error' },
 				5000
 			);
-			return null;
+			return;
 		}
+		if (!resp.ok) {
+			updateToast(toastId, { message: `Purge request failed: ${resp.status}`, kind: 'error' }, 5000);
+			return;
+		}
+		// Engine acknowledged; it'll re-exec in ~150ms. Poll until the
+		// new engine answers /network/status, then flip to success.
+		updateToast(toastId, { message: 'Engine restarting…' });
+		const startedAt = Date.now();
+		const deadline = startedAt + 15_000; // 15s should be plenty
+		while (Date.now() < deadline) {
+			await new Promise((r) => setTimeout(r, 300));
+			try {
+				const r = await fetch('/api/v1/network/status');
+				if (r.ok) {
+					updateToast(toastId, { message: 'Purged + reconnected', kind: 'success' }, 2500);
+					// Re-load anything the engine just lost (relay
+					// config still survives since it's in relays.json,
+					// but identity session resets — refresh it).
+					try {
+						identityStatus = await api.getIdentity();
+					} catch {}
+					return;
+				}
+			} catch {
+				/* engine still down, keep polling */
+			}
+		}
+		updateToast(
+			toastId,
+			{ message: "Engine didn't come back in 15s — check the terminal", kind: 'error' },
+			7000
+		);
 	}
 
 	async function handleExport() {
