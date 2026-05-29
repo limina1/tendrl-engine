@@ -588,6 +588,15 @@ export function setDiscoveryExclusive(klass: 'search' | 'indexer', value: boolea
 	});
 }
 
+/** Merge the engine's well-known indexer/search defaults into the
+ *  current `default` tiers. Idempotent — already-present URLs skip. */
+export function restoreDiscoveryDefaults() {
+	return fetchJson<{ updated: boolean; message: string }>('/api/v1/config/update', {
+		method: 'POST',
+		body: JSON.stringify({ restore_discovery_defaults: true })
+	});
+}
+
 export interface SnapshotPayload {
 	include_relays?: boolean;
 	editor?: { line_numbers: boolean; vim_mode: boolean; insert_mode: string };

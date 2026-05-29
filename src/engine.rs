@@ -315,6 +315,31 @@ impl Engine {
         self.relay_config.read().unwrap().indexer.fallback.clone()
     }
 
+    /// Merge the engine's well-known default discovery URLs into the
+    /// current live config + persist. Idempotent — URLs already
+    /// present skip. Returns how many were added. Useful for existing
+    /// users whose relays.json predates the discovery defaults.
+    pub fn merge_discovery_defaults(&self) -> usize {
+        let mut snapshot = {
+            let cfg = self.relay_config.read().unwrap();
+            self.relay_sets_snapshot_locked(&cfg)
+        };
+        let added = snapshot.merge_discovery_defaults();
+        if added == 0 {
+            return 0;
+        }
+        // Apply back to in-memory config so the change is live.
+        {
+            let mut cfg = self.relay_config.write().unwrap();
+            cfg.search = snapshot.search.clone();
+            cfg.indexer = snapshot.indexer.clone();
+        }
+        if let Err(e) = self.relay_store.save(&snapshot) {
+            warn!("Failed to persist discovery defaults: {e}");
+        }
+        added
+    }
+
     /// Read whether a discovery class is in `exclusive` mode (bypasses
     /// read relays for that lookup type). `class` is `"search"` or
     /// `"indexer"`. Unknown classes return false.

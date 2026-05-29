@@ -303,6 +303,28 @@
 		}
 	}
 
+	let restoringDefaults = $state(false);
+	/** Merge the engine's well-known indexer/search defaults. Useful
+	 *  when relays.json predates the discovery defaults (e.g. existing
+	 *  users from before Phase 3) — fresh installs already get them
+	 *  via seed_from_initial. */
+	async function restoreDefaults() {
+		restoringDefaults = true;
+		try {
+			const resp = await api.restoreDiscoveryDefaults();
+			app.pushToast(resp.message, 'success', 3000);
+			await load();
+		} catch (e) {
+			app.pushToast(
+				`Couldn't restore defaults: ${e instanceof Error ? e.message : String(e)}`,
+				'error',
+				4500
+			);
+		} finally {
+			restoringDefaults = false;
+		}
+	}
+
 	/** Prompt for a new URL and add it to a discovery class's default
 	 *  tier. The user can move it to fallback afterward with the radio. */
 	async function promptAddDiscovery(klass: DiscoveryClass) {
@@ -1510,7 +1532,17 @@
 		     subsection header controls whether the read relays are
 		     bypassed for that lookup type. -->
 		<div class="discovery">
-			<div class="discovery-header">Discovery</div>
+			<div class="discovery-header-row">
+				<span class="discovery-header">Discovery</span>
+				<button
+					class="btn-add"
+					onclick={restoreDefaults}
+					disabled={restoringDefaults}
+					title="Add the engine's well-known indexer relays (purplepag.es, user.kindpag.es) to indexer.default if missing. Idempotent — relays already present are skipped."
+				>
+					{restoringDefaults ? 'Restoring…' : 'Restore defaults'}
+				</button>
+			</div>
 			{#each ['search', 'indexer'] as klass (klass)}
 				{@const rows0 = klass === 'search' ? searchRows : indexerRows}
 				{@const excl = klass === 'search' ? searchExclusive : indexerExclusive}
@@ -1761,6 +1793,12 @@
 		margin: 12px 0;
 		padding-top: 10px;
 		border-top: 1px solid var(--panel-border);
+	}
+	.discovery-header-row {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 8px;
 	}
 	.discovery-header {
 		font-family: var(--font-mono);

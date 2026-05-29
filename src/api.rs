@@ -1649,6 +1649,11 @@ pub struct ConfigUpdateRequest {
     /// relays for that class's lookup type and uses the class's
     /// `.default` / `.fallback` sets only.
     pub set_exclusive: Option<SetExclusive>,
+    /// `true` → merge the engine's well-known indexer/search default
+    /// URLs (`crate::relay::DEFAULT_INDEXERS` / `DEFAULT_SEARCH`)
+    /// into the current `default` tiers. Idempotent. Lets existing
+    /// users opt into the same set a fresh install gets.
+    pub restore_discovery_defaults: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1739,6 +1744,12 @@ pub async fn config_update_handler(
     }
     if let Some(ex) = &req.set_exclusive {
         if engine.set_discovery_exclusive(&ex.class, ex.value) {
+            changed = true;
+        }
+    }
+    if req.restore_discovery_defaults.unwrap_or(false) {
+        let added = engine.merge_discovery_defaults();
+        if added > 0 {
             changed = true;
         }
     }

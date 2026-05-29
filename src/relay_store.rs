@@ -178,18 +178,38 @@ pub struct NamedRelaySet {
 
 impl RelaySets {
     /// Seed read/write/general sets from the bootstrap `initial_relays`
-    /// list. `broadcast` / `search` / `indexer` are deliberately left
-    /// empty: discovery and aggregator classes are opt-in, not
-    /// auto-populated from the initial seed.
+    /// list, and seed the discovery classes with the engine's
+    /// well-known defaults (`crate::relay::DEFAULT_INDEXERS` /
+    /// `DEFAULT_SEARCH`) so a fresh install has a working indexer
+    /// fallback chain without manual configuration. Broadcast stays
+    /// empty — aggregators are opt-in per-event.
+    ///
+    /// Discovery defaults only apply on **first boot** (when no
+    /// `relays.json` exists yet); subsequent loads honor the user's
+    /// stored state, including explicit-empty.
     pub fn seed_from_initial(initial: &[String]) -> Self {
         let normalized = normalize_dedup(initial);
+        let default_indexers: Vec<String> = crate::relay::DEFAULT_INDEXERS
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let default_search: Vec<String> = crate::relay::DEFAULT_SEARCH
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
         Self {
             general: normalized.clone(),
             fetch: normalized.clone(),
             publish: normalized,
             broadcast: Vec::new(),
-            search: DiscoveryClass::default(),
-            indexer: DiscoveryClass::default(),
+            search: DiscoveryClass {
+                default: normalize_dedup(&default_search),
+                fallback: Vec::new(),
+            },
+            indexer: DiscoveryClass {
+                default: normalize_dedup(&default_indexers),
+                fallback: Vec::new(),
+            },
             named: Vec::new(),
             exclusive: ExclusiveFlags::default(),
         }
@@ -254,6 +274,32 @@ impl RelaySets {
             "indexer" => Some(&self.indexer),
             _ => None,
         }
+    }
+
+    /// Merge the well-known default discovery URLs into `default`
+    /// tier for whichever class is empty. Used by the
+    /// `/api/v1/restore-defaults/indexer` style endpoints that let
+    /// existing users (with non-empty `relays.json` from before
+    /// discovery defaults existed) opt into the same set a fresh
+    /// install would get. Returns how many URLs were added across
+    /// both classes.
+    pub fn merge_discovery_defaults(&mut self) -> usize {
+        let mut added = 0;
+        for &url in crate::relay::DEFAULT_INDEXERS {
+            let u = crate::relay_url::normalize_relay_url(url);
+            if !self.indexer.contains(&u) {
+                self.indexer.default.push(u);
+                added += 1;
+            }
+        }
+        for &url in crate::relay::DEFAULT_SEARCH {
+            let u = crate::relay_url::normalize_relay_url(url);
+            if !self.search.contains(&u) {
+                self.search.default.push(u);
+                added += 1;
+            }
+        }
+        added
     }
 }
 
