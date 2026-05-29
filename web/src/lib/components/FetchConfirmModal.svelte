@@ -19,7 +19,7 @@
 	let extras = $state<string[]>([]);
 	let appendInput = $state('');
 	let appendError = $state<string | null>(null);
-	let stepsOpen = $state(false);
+	let detailsOpen = $state(false);
 
 	// Flat union of every relay listed across all composition stages
 	// (or `intent.relays` when there's no summary). Drives the
@@ -130,127 +130,18 @@
 			<button class="rf-close" onclick={cancel} aria-label="Close">×</button>
 		</header>
 
-		<!-- DSL sentence — the canonical formal-language form. Always
-		     shown when the intent carries a summary. Click → copy. -->
-		{#if intent.summary?.dsl}
-			<div class="rf-section">
-				<div class="rf-section-head-row">
-					<span class="rf-section-head">Query</span>
-					<button class="rf-copy" onclick={copyDsl} title="Copy DSL sentence">copy</button>
-				</div>
-				<code class="rf-dsl">{intent.summary.dsl}</code>
-			</div>
-		{/if}
-
-		<!-- Filters — one block per NIP-01 filter, clauses inline. -->
-		{#if intent.summary?.filters?.length}
-			<div class="rf-section">
-				<div class="rf-section-head">Filters</div>
-				{#each intent.summary.filters as f, i (i)}
-					<div class="rf-filter">
-						<span class="rf-filter-idx">#{i + 1}</span>
-						<div class="rf-filter-clauses">
-							{#if f.kinds?.length}
-								<span class="rf-clause">k:{f.kinds.join(',')}</span>
-							{/if}
-							{#if f.authors?.length}
-								<span class="rf-clause" title={f.authors.join(', ')}>
-									by:{f.authors.length === 1
-										? `${f.authors[0].slice(0, 12)}…`
-										: `${f.authors.length} authors`}
-								</span>
-							{/if}
-							{#if f.ids?.length}
-								<span class="rf-clause">ids:{f.ids.length}</span>
-							{/if}
-							{#if f.since != null}<span class="rf-clause">since:{f.since}</span>{/if}
-							{#if f.until != null}<span class="rf-clause">until:{f.until}</span>{/if}
-							{#if f.limit != null}<span class="rf-clause">limit:{f.limit}</span>{/if}
-							{#if f.search}<span class="rf-clause">~:"{f.search}"</span>{/if}
-							{#if f.tags}
-								{#each Object.entries(f.tags) as [tag, vals]}
-									<span class="rf-clause">{tag}:{vals.join(',')}</span>
-								{/each}
-							{/if}
-						</div>
-					</div>
-				{/each}
-			</div>
-		{/if}
-
-		<!-- Composition — per-stage, per-phase, per-relay. Same checkbox
-		     interaction as before but grouped so the user can see which
-		     relay belongs to which phase of the fan-out. -->
-		{#if intent.summary?.composition?.phases?.length}
-			<div class="rf-section">
-				<div class="rf-section-head">Composition</div>
-				{#each intent.summary.composition.phases as stage, i (i)}
-					<div class="rf-stage">
-						<div class="rf-stage-head">
-							<span class="rf-stage-num">{i + 1}.</span>
-							<span class="rf-stage-label">{stage.label}</span>
-							{#if stage.start_delay_ms > 0}
-								<span class="rf-stage-delay">Δ{stage.start_delay_ms}ms</span>
-							{/if}
-						</div>
-						{#each stage.members as [phase, urls]}
-							<div class="rf-phase">
-								<div class="rf-phase-label">{relayLabel(phase)}</div>
-								{#if urls.length === 0}
-									<p class="rf-empty rf-empty--small">No relays in this class.</p>
-								{:else}
-									<ul class="rf-list">
-										{#each urls as url (url)}
-											<li>
-												<label class="rf-row">
-													<input
-														type="checkbox"
-														checked={!deselected.has(url)}
-														onchange={() => toggle(url)}
-													/>
-													<code class="rf-url">{url}</code>
-												</label>
-											</li>
-										{/each}
-									</ul>
-								{/if}
-							</div>
-						{/each}
-					</div>
-				{/each}
-			</div>
-		{:else}
-			<!-- Legacy fallback: flat relay list when no summary. -->
-			<div class="rf-section">
-				<div class="rf-section-head">Relays</div>
-				{#if allRelays.length === 0}
-					<p class="rf-empty">No relays proposed — add one below.</p>
-				{:else}
-					<ul class="rf-list">
-						{#each allRelays as url (url)}
-							<li>
-								<label class="rf-row">
-									<input
-										type="checkbox"
-										checked={!deselected.has(url)}
-										onchange={() => toggle(url)}
-									/>
-									<code class="rf-url">{url}</code>
-								</label>
-							</li>
-						{/each}
-					</ul>
-				{/if}
-			</div>
-		{/if}
-
-		<!-- Per-user extras — additional relays to fetch from beyond
-		     what the engine proposed. Always available. -->
-		{#if extras.length > 0}
-			<div class="rf-section">
-				<div class="rf-section-head">Extras</div>
+		<!-- Primary action: flat relay list with per-relay
+		     deselect. This is what the user is actually deciding —
+		     "fire from these relays or not." Structured details
+		     (DSL / filters / composition) are in a collapsed
+		     section below for users who want to inspect them. -->
+		<div class="rf-section">
+			<div class="rf-section-head">Relays</div>
+			{#if allRelays.length === 0}
+				<p class="rf-empty">No relays proposed — add one below.</p>
+			{:else}
 				<ul class="rf-list">
-					{#each extras as url (url)}
+					{#each allRelays as url (url)}
 						<li>
 							<label class="rf-row">
 								<input
@@ -263,8 +154,8 @@
 						</li>
 					{/each}
 				</ul>
-			</div>
-		{/if}
+			{/if}
+		</div>
 
 		<div class="rf-append">
 			<input
@@ -284,18 +175,101 @@
 			<p class="rf-error">{appendError}</p>
 		{/if}
 
-		{#if intent.steps.length > 0}
+		<!-- Expandable details — structured summary (DSL sentence,
+		     filter clauses, composition phases) for users who want
+		     to see exactly what's being requested. Collapsed by
+		     default since the relay picker above is the action. -->
+		{#if intent.summary?.dsl || intent.summary?.filters?.length || intent.summary?.composition?.phases?.length || intent.steps.length > 0}
 			<div class="rf-section">
-				<button class="rf-steps-head" onclick={() => (stepsOpen = !stepsOpen)} aria-expanded={stepsOpen}>
-					<span class="rf-caret">{stepsOpen ? '▾' : '▸'}</span>
-					Steps ({intent.steps.length})
+				<button
+					class="rf-steps-head"
+					onclick={() => (detailsOpen = !detailsOpen)}
+					aria-expanded={detailsOpen}
+				>
+					<span class="rf-caret">{detailsOpen ? '▾' : '▸'}</span>
+					Details
 				</button>
-				{#if stepsOpen}
-					<ol class="rf-steps">
-						{#each intent.steps as step, i (i)}
-							<li>{step}</li>
-						{/each}
-					</ol>
+
+				{#if detailsOpen}
+					{#if intent.summary?.dsl}
+						<div class="rf-detail-block">
+							<div class="rf-section-head-row">
+								<span class="rf-sub-head">Query</span>
+								<button class="rf-copy" onclick={copyDsl} title="Copy DSL sentence">copy</button>
+							</div>
+							<code class="rf-dsl">{intent.summary.dsl}</code>
+						</div>
+					{/if}
+
+					{#if intent.summary?.filters?.length}
+						<div class="rf-detail-block">
+							<div class="rf-sub-head">Filters</div>
+							{#each intent.summary.filters as f, i (i)}
+								<div class="rf-filter">
+									<span class="rf-filter-idx">#{i + 1}</span>
+									<div class="rf-filter-clauses">
+										{#if f.kinds?.length}
+											<span class="rf-clause">k:{f.kinds.join(',')}</span>
+										{/if}
+										{#if f.authors?.length}
+											<span class="rf-clause" title={f.authors.join(', ')}>
+												by:{f.authors.length === 1
+													? `${f.authors[0].slice(0, 12)}…`
+													: `${f.authors.length} authors`}
+											</span>
+										{/if}
+										{#if f.ids?.length}
+											<span class="rf-clause">ids:{f.ids.length}</span>
+										{/if}
+										{#if f.since != null}<span class="rf-clause">since:{f.since}</span>{/if}
+										{#if f.until != null}<span class="rf-clause">until:{f.until}</span>{/if}
+										{#if f.limit != null}<span class="rf-clause">limit:{f.limit}</span>{/if}
+										{#if f.search}<span class="rf-clause">~:"{f.search}"</span>{/if}
+										{#if f.tags}
+											{#each Object.entries(f.tags) as [tag, vals]}
+												<span class="rf-clause">{tag}:{vals.join(',')}</span>
+											{/each}
+										{/if}
+									</div>
+								</div>
+							{/each}
+						</div>
+					{/if}
+
+					{#if intent.summary?.composition?.phases?.length}
+						<div class="rf-detail-block">
+							<div class="rf-sub-head">Composition</div>
+							{#each intent.summary.composition.phases as stage, i (i)}
+								<div class="rf-stage">
+									<div class="rf-stage-head">
+										<span class="rf-stage-num">{i + 1}.</span>
+										<span class="rf-stage-label">{stage.label}</span>
+										{#if stage.start_delay_ms > 0}
+											<span class="rf-stage-delay">Δ{stage.start_delay_ms}ms</span>
+										{/if}
+									</div>
+									{#each stage.members as [phase, urls]}
+										<div class="rf-phase">
+											<div class="rf-phase-label">
+												{relayLabel(phase)} · {urls.length} relay{urls.length === 1 ? '' : 's'}
+											</div>
+										</div>
+									{/each}
+								</div>
+							{/each}
+						</div>
+					{/if}
+
+					{#if intent.steps.length > 0}
+						<div class="rf-detail-block">
+							<div class="rf-sub-head">Steps</div>
+							<ol class="rf-steps">
+								{#each intent.steps as step, i (i)}
+									<li>{step}</li>
+								{/each}
+							</ol>
+						</div>
+					{/if}
 				{/if}
 			</div>
 		{/if}
@@ -388,6 +362,20 @@
 		justify-content: space-between;
 		align-items: baseline;
 		margin-bottom: 6px;
+	}
+	.rf-sub-head {
+		text-transform: uppercase;
+		letter-spacing: 0.06em;
+		color: var(--base5);
+		font-size: calc(var(--t-xs) - 2px);
+	}
+	.rf-detail-block {
+		padding: 6px 0;
+		border-top: 1px solid color-mix(in srgb, var(--panel-border) 50%, transparent);
+	}
+	.rf-detail-block:first-of-type {
+		border-top: none;
+		padding-top: 8px;
 	}
 	.rf-copy {
 		appearance: none;
