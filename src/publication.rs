@@ -1169,7 +1169,7 @@ impl<'a> PublicationEngine<'a> {
     /// Pass `before` timestamp for cursor-based pagination.
     pub async fn list_root_publications(
         &self,
-        _policy: FetchPolicy,
+        policy: FetchPolicy,
         limit: usize,
         before: Option<u64>,
     ) -> Result<Vec<Publication>> {
@@ -1201,8 +1201,16 @@ impl<'a> PublicationEngine<'a> {
             filter["until"] = json!(ts - 1);
         }
 
-        let response = self.engine.get_events(vec![filter], FetchPolicy::LocalOnly, None).await?;
-        tracing::debug!("list_root_publications: got {} raw 30040 events from store", response.events.len());
+        // Honor the caller's policy. The web's loadFeed() retries
+        // with FetchAlways when the local query returns zero (cold
+        // cache after purge / fresh install) — that retry only does
+        // anything if we actually fan out to relays here.
+        let response = self.engine.get_events(vec![filter], policy, None).await?;
+        tracing::debug!(
+            "list_root_publications: got {} raw 30040 events from store (policy {:?})",
+            response.events.len(),
+            policy
+        );
 
         // Read ignore list before entering blocking closure
         let ignore_list = self.engine.ignore_list().read().await.clone();

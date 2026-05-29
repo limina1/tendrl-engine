@@ -127,7 +127,19 @@
 	// driven by handlePurge tracks the ~1 second reconnect window.
 	let purgeLoading = $state(false);
 	async function requestPurge() {
-		const path = app.dataDir ?? '<unknown — engine config not loaded>';
+		// Resolve data_dir live right before the confirm. Reading from
+		// app.dataDir (populated during initialize()) was unreliable
+		// when the buffer was opened before init finished, or when the
+		// dataDir state field hadn't been hot-reloaded yet. A direct
+		// fetch here is sub-10ms and guarantees the prompt always
+		// names the actual path the engine will unlink.
+		let path = '<unknown — engine config not reachable>';
+		try {
+			const cfg = await api.getConfig();
+			if (cfg.data_dir) path = cfg.data_dir;
+		} catch {
+			/* fall back to the unknown placeholder */
+		}
 		const msg =
 			'Purge the local nostrdb cache and restart the engine?\n\n' +
 			`Files to delete:\n  ${path}/data.mdb\n  ${path}/lock.mdb\n\n` +
