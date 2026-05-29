@@ -1206,15 +1206,62 @@ impl<'a> PublicationEngine<'a> {
         // cache after purge / fresh install) — that retry only does
         // anything if we actually fan out to relays here.
         //
-        // Pass `mode_confirm: true` so the engine doesn't silently
-        // downgrade FetchAlways → LocalOnly in confirm mode. The web
-        // listing a publication feed with `fetch_always` is an
-        // explicit user-initiated request; the confirm modal should
-        // pop, not silently no-op.
-        let response = self
-            .engine
-            .get_events_with_options(vec![filter], policy, None, true)
-            .await?;
+        // For FetchAlways specifically, we route through
+        // begin_fetch_operation first so confirm mode gets its modal
+        // (and auto mode gets its activity toast). Passing
+        // mode_confirm=true to get_events would BYPASS the confirm
+        // step rather than trigger it; the modal flow lives in
+        // begin_operation. If the user declines, we fall back to
+        // LocalOnly (returns the empty result we already have).
+        let response = match policy {
+            FetchPolicy::FetchAlways => {
+                let relays: Vec<String> = self.engine.relays();
+                let label = "Feed sync — list publications".to_string();
+                match self
+                    .engine
+                    .begin_fetch_operation(
+                        crate::network::FetchPattern::Publication,
+                        label,
+                        Vec::new(),
+                        relays,
+                    )
+                    .await
+                {
+                    Ok(op) => {
+                        // User approved (or auto mode let it through).
+                        // Run the actual fan-out via get_events with
+                        // mode_confirm=true so the engine doesn't
+                        // silently downgrade now that the user has OK'd it.
+                        let chosen_relays = op.relays().to_vec();
+                        let res = self
+                            .engine
+                            .get_events_with_options(
+                                vec![filter],
+                                FetchPolicy::FetchAlways,
+                                Some(&chosen_relays),
+                                true,
+                            )
+                            .await;
+                        let count = res.as_ref().map(|r| r.events.len()).unwrap_or(0);
+                        op.complete(count);
+                        res?
+                    }
+                    Err(_) => {
+                        // User declined / timeout. Return what's in
+                        // the local cache (empty for the cold-cache
+                        // case that motivated this branch).
+                        self.engine
+                            .get_events(vec![filter], FetchPolicy::LocalOnly, None)
+                            .await?
+                    }
+                }
+            }
+            _ => {
+                self.engine
+                    .get_events(vec![filter], policy, None)
+                    .await?
+            }
+        };
         tracing::debug!(
             "list_root_publications: got {} raw 30040 events from store (policy {:?})",
             response.events.len(),
