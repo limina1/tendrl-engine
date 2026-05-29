@@ -163,9 +163,41 @@ function _createAppState() {
 	//
 	// Lightweight transient notifications for quick acknowledgments —
 	// "copied to clipboard", "publish queued", "broadcast complete", etc.
-	// Stack mounts lower-right via <ToastStack /> in the layout. Each
-	// toast auto-dismisses after `ttlMs`; the timer is cleared if the
-	// user dismisses it manually first.
+	// Stack mounts lower-right via <ToastStack /> in the layout.
+	//
+	// Two interaction modes:
+	//   1. Default: auto-dismisses after `ttlMs` with a clock-style
+	//      radial countdown visible on the toast.
+	//   2. Pinned: user clicks the toast → countdown stops, close (×)
+	//      button appears, and the toast stays until manually dismissed.
+	//      Pinned toasts with an `activity` field get an "Expand" button
+	//      that opens the FetchActivityModal for the structured detail
+	//      view (filters / composition / per-relay rows / DSL footer).
+	//
+	// SSE-driven toasts (fetch + publish operations from the engine)
+	// carry an `activity` field. Quick acknowledgment toasts (copy,
+	// settings saved, etc.) leave it undefined.
+	type RelayRowStatus =
+		| { kind: 'connecting' }
+		| { kind: 'eose'; event_count: number }
+		| { kind: 'error'; msg: string }
+		| { kind: 'timeout' }
+		| { kind: 'accepted' }
+		| { kind: 'rejected'; msg: string };
+	type ToastActivity = {
+		operation_id: string;
+		// Structured request summary from the engine's Intent event.
+		summary?: import('./types').RequestSummary;
+		// Phase the toast is rendering (typically pulled from the Intent
+		// or the first RelayStatus event). Multi-phase ops produce
+		// multiple toasts; each phase = one toast.
+		phase?: import('./types').Phase;
+		// Per-relay status rows, keyed by URL. Updated by relay_status
+		// events as they stream in.
+		relays: Record<string, RelayRowStatus>;
+		// Was this a publish or fetch? Drives the icon / label.
+		mode: 'fetch' | 'publish';
+	};
 	type Toast = {
 		id: number;
 		message: string;
@@ -173,14 +205,57 @@ function _createAppState() {
 		// soft pulse. Callers flip to `success` (green) or `error` (red)
 		// via updateToast when the operation settles.
 		kind: 'success' | 'info' | 'error' | 'pending';
+		// Pinned toasts don't auto-dismiss; the countdown UI is hidden.
+		pinned: boolean;
+		// Original TTL + start time — used to render the countdown.
+		// Frozen when `pinned = true`.
+		ttlMs: number;
+		startedAt: number;
+		// Present for SSE-driven activity toasts. Drives Expand button
+		// + modal content.
+		activity?: ToastActivity;
 	};
 	let toasts: Toast[] = $state([]);
 	let nextToastId = 1;
 	const toastTimers = new Map<number, ReturnType<typeof setTimeout>>();
+	// Which activity toast (by id) the FetchActivityModal is showing.
+	// Null = modal closed.
+	let activityModalToastId: number | null = $state(null);
 
 	function pushToast(message: string, kind: Toast['kind'] = 'success', ttlMs = 2000): number {
 		const id = nextToastId++;
-		toasts = [...toasts, { id, message, kind }];
+		toasts = [
+			...toasts,
+			{ id, message, kind, pinned: false, ttlMs, startedAt: Date.now() }
+		];
+		toastTimers.set(
+			id,
+			setTimeout(() => dismissToast(id), ttlMs)
+		);
+		return id;
+	}
+
+	/** Variant of pushToast for engine-driven SSE operations. Attaches a
+	 *  ToastActivity payload so the toast can expand into the
+	 *  FetchActivityModal with structured detail. */
+	function pushActivityToast(
+		message: string,
+		ttlMs: number,
+		activity: ToastActivity
+	): number {
+		const id = nextToastId++;
+		toasts = [
+			...toasts,
+			{
+				id,
+				message,
+				kind: 'pending',
+				pinned: false,
+				ttlMs,
+				startedAt: Date.now(),
+				activity
+			}
+		];
 		toastTimers.set(
 			id,
 			setTimeout(() => dismissToast(id), ttlMs)
@@ -195,6 +270,54 @@ function _createAppState() {
 			toastTimers.delete(id);
 		}
 		toasts = toasts.filter((t) => t.id !== id);
+		// If the activity modal was viewing this toast, close it too.
+		if (activityModalToastId === id) activityModalToastId = null;
+	}
+
+	/** Pin a toast — clears its auto-dismiss timer and flips
+	 *  `pinned = true`. Idempotent: pinning a pinned toast is a no-op.
+	 *  Click handler on the toast row calls this. */
+	function pinToast(id: number): void {
+		const existing = toastTimers.get(id);
+		if (existing) {
+			clearTimeout(existing);
+			toastTimers.delete(id);
+		}
+		toasts = toasts.map((t) => (t.id === id ? { ...t, pinned: true } : t));
+	}
+
+	/** Open the FetchActivityModal for a specific toast's activity.
+	 *  No-op if the toast doesn't have an `activity` field. */
+	function expandActivityToast(id: number): void {
+		const t = toasts.find((x) => x.id === id);
+		if (!t?.activity) return;
+		// Auto-pin on expand — otherwise the toast underneath could
+		// auto-dismiss while the modal is open, leaving an orphaned modal.
+		pinToast(id);
+		activityModalToastId = id;
+	}
+
+	function closeActivityModal(): void {
+		activityModalToastId = null;
+	}
+
+	/** Update one relay's row inside an activity toast. Called by
+	 *  fetch-events SSE handler when a `relay_status` event arrives. */
+	function updateActivityRelay(
+		operationId: string,
+		relay: string,
+		status: RelayRowStatus
+	): void {
+		toasts = toasts.map((t) => {
+			if (!t.activity || t.activity.operation_id !== operationId) return t;
+			return {
+				...t,
+				activity: {
+					...t.activity,
+					relays: { ...t.activity.relays, [relay]: status }
+				}
+			};
+		});
 	}
 
 	/**
@@ -202,6 +325,7 @@ function _createAppState() {
 	 * reset its auto-dismiss timer. Used for "tick" toasts that flip
 	 * from `info` (purple) while an async action is running to
 	 * `success` (green) when it finishes, then vanish on the new TTL.
+	 * Pinned toasts don't restart their timer (the pin is sacred).
 	 */
 	function updateToast(
 		id: number,
@@ -210,11 +334,16 @@ function _createAppState() {
 	): void {
 		toasts = toasts.map((t) => (t.id === id ? { ...t, ...patch } : t));
 		if (ttlMs !== undefined) {
+			const target = toasts.find((t) => t.id === id);
+			if (target?.pinned) return;
 			const existing = toastTimers.get(id);
 			if (existing) clearTimeout(existing);
 			toastTimers.set(
 				id,
 				setTimeout(() => dismissToast(id), ttlMs)
+			);
+			toasts = toasts.map((t) =>
+				t.id === id ? { ...t, ttlMs, startedAt: Date.now() } : t
 			);
 		}
 	}
@@ -1155,12 +1284,14 @@ function _createAppState() {
 		canSign: boolean,
 		overrides?: { pubDTag: string; sectionDTagByT: Record<string, string> }
 	) {
-		// Immediate feedback: signing N events through an external signer is
-		// slow (one round-trip per event) and otherwise gives no sign the
-		// click registered. Flip this toast to success/error when it settles.
+		// Per-site toast covers the SIGNING phase only — the broadcast
+		// phase is owned by the SSE channel (fetch-events.svelte.ts opens
+		// its own activity toast when the engine emits publish_intent).
+		// Two toasts may briefly coexist: this one for "signing", the
+		// SSE one for "broadcasting to N relays".
 		const progressToast = pushToast(
 			canSign
-				? `Publishing ${sections.length + 1} events… (signing via ${identityStatus?.source ?? 'engine'})`
+				? `Signing ${sections.length + 1} events… (${identityStatus?.source ?? 'engine'})`
 				: 'Saving locally…',
 			'pending',
 			120000
@@ -1259,16 +1390,22 @@ function _createAppState() {
 						kicker: 'live'
 					}
 				});
-				updateToast(progressToast, { message: 'Published — see relay results', kind: 'success' }, 3000);
+				// Signed and the engine kicked off the broadcast. Dismiss
+				// the signing toast quickly — the SSE-driven activity
+				// toast is now showing per-relay broadcast status.
+				updateToast(progressToast, { message: 'Signed', kind: 'success' }, 1500);
 			} else if (!canSign) {
 				updateToast(progressToast, { message: 'Saved locally — log in to sign & broadcast', kind: 'info' }, 4000);
 			} else {
-				updateToast(progressToast, { message: 'Published (no relay results returned)', kind: 'success' }, 4000);
+				// Edge case: signed but engine didn't emit broadcast SSE
+				// events (e.g. no relays configured). Keep this concise.
+				updateToast(progressToast, { message: 'Signed (no broadcast)', kind: 'info' }, 3000);
 			}
 			await loadFeed();
 		} catch (e) {
-			// Don't swallow — a failed sign/broadcast otherwise looks like
-			// "nothing happened" (no modal, no error). Surface the reason.
+			// HTTP-level failure (network, signing error, validation).
+			// Distinct from the SSE-driven broadcast failure path the
+			// activity toast already handles.
 			console.error('Publish compose failed:', e);
 			updateToast(progressToast, { message: `Publish failed: ${e instanceof Error ? e.message : String(e)}`, kind: 'error' }, 6000);
 		}
@@ -3111,8 +3248,19 @@ function _createAppState() {
 		findContainingIndexes,
 		get toasts() { return toasts; },
 		pushToast,
+		pushActivityToast,
 		updateToast,
+		updateActivityRelay,
 		dismissToast,
+		pinToast,
+		expandActivityToast,
+		closeActivityModal,
+		get activityModalToastId() { return activityModalToastId; },
+		get activityModalToast() {
+			return activityModalToastId != null
+				? toasts.find((t) => t.id === activityModalToastId) ?? null
+				: null;
+		},
 		get searchHistory() { return searchHistory; },
 		get currentEntry() { return currentEntry; },
 		get previousEntry() { return previousEntry; },
