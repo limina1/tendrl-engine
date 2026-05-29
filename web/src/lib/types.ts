@@ -387,6 +387,57 @@ export type NetworkMode = 'auto' | 'confirm';
 /** Pattern of a user-initiated fetch operation (mirrors the engine). */
 export type FetchPattern = 'event' | 'publication' | 'thread' | 'search' | 'profile' | 'custom';
 
+/** Which relay class a fetch/publish member targets — dot-notation
+ *  values match the DSL surface (`indexer.default`, `search.fallback`). */
+export type Phase =
+	| 'read'
+	| 'write'
+	| 'publish'
+	| 'broadcast'
+	| 'search.default'
+	| 'search.fallback'
+	| 'indexer.default'
+	| 'indexer.fallback';
+
+/** Per-relay lifecycle status — drives the dots in the expanded toast. */
+export type RelayStatusValue =
+	| { kind: 'connecting' }
+	| { kind: 'eose'; event_count: number }
+	| { kind: 'error'; msg: string }
+	| { kind: 'timeout' }
+	| { kind: 'accepted' }
+	| { kind: 'rejected'; msg: string };
+
+/** Structural NIP-01 filter (subset; all fields optional). */
+export interface NipFilter {
+	kinds?: number[];
+	authors?: string[];
+	ids?: string[];
+	since?: number;
+	until?: number;
+	limit?: number;
+	search?: string;
+	tags?: Record<string, string[]>;
+}
+
+/** One execution stage — members fire concurrently; stages run in order. */
+export interface PhaseStage {
+	label: string;
+	members: Array<[Phase, string[]]>;
+	start_delay_ms: number;
+}
+
+export interface CompositionShape {
+	phases: PhaseStage[];
+}
+
+/** Structured summary of a relay request — the formal-language form. */
+export interface RequestSummary {
+	filters: NipFilter[];
+	composition: CompositionShape;
+	dsl: string;
+}
+
 /** Events streamed from the engine over /api/v1/network/fetch-events. */
 export type FetchEvent =
 	| {
@@ -397,8 +448,25 @@ export type FetchEvent =
 			steps: string[];
 			relays: string[];
 			needs_confirmation: boolean;
+			summary?: RequestSummary;
+	  }
+	| {
+			type: 'publish_intent';
+			operation_id: string;
+			label: string;
+			relays: string[];
+			event_ids: string[];
+			needs_confirmation: boolean;
+			summary?: RequestSummary;
 	  }
 	| { type: 'progress'; operation_id: string; label: string; done: number; total: number | null }
+	| {
+			type: 'relay_status';
+			operation_id: string;
+			relay: string;
+			phase: Phase;
+			status: RelayStatusValue;
+	  }
 	| { type: 'completed'; operation_id: string; event_count: number }
 	| { type: 'failed'; operation_id: string; error: string };
 

@@ -2751,38 +2751,106 @@ pub async fn publish_handler(
             .map(|e| serde_json::to_string(e).unwrap())
             .collect();
 
-        let (_, _, results) = crate::relay::publish_events_to_relays(&relays, &event_jsons).await;
-
-        // Record relay provenance for every (event, relay) pair that
-        // succeeded, so a freshly-published publication stops showing as
-        // local-only without waiting to be re-fetched.
-        let by_id: std::collections::HashMap<&str, &String> = section_events
+        let event_ids: Vec<String> = section_events
             .iter()
             .chain(std::iter::once(&pub_event))
-            .zip(event_jsons.iter())
-            .filter_map(|(e, j)| e.get("id").and_then(|v| v.as_str()).map(|id| (id, j)))
+            .filter_map(|e| e.get("id").and_then(|v| v.as_str()).map(|s| s.to_string()))
             .collect();
-        for r in &results {
-            if r.success {
-                if let Some(j) = by_id.get(r.event_id.as_str()) {
-                    if let Err(e) = engine.record_event_relay(j, &r.relay_url) {
-                        debug!("record relay metadata: {e}");
+
+        // Formal-language summary — publication root + N sections.
+        let summary = crate::network::RequestSummary {
+            filters: vec![],
+            composition: crate::network::CompositionShape {
+                phases: vec![crate::network::PhaseStage {
+                    label: "primary".into(),
+                    members: vec![(crate::network::Phase::Publish, relays.clone())],
+                    start_delay_ms: 0,
+                }],
+            },
+            dsl: format!("pub k:30040,30041 ({} events) via:publish", event_jsons.len()),
+        };
+
+        let op = match engine
+            .begin_publish_operation(
+                format!(
+                    "Publishing {} events to {} relay(s)",
+                    event_jsons.len(),
+                    relays.len()
+                ),
+                relays.clone(),
+                event_ids,
+                Some(summary),
+            )
+            .await
+        {
+            Ok(op) => Some(op),
+            Err(_) => {
+                // User declined the confirm — skip broadcast leg but
+                // still return the local publish result.
+                None
+            }
+        };
+
+        if let Some(op) = op {
+            let chosen = op.relays().to_vec();
+            for url in &chosen {
+                op.relay_status(
+                    url.clone(),
+                    crate::network::RelayStatusValue::Connecting,
+                );
+            }
+
+            let (_, _, results) =
+                crate::relay::publish_events_to_relays(&chosen, &event_jsons).await;
+
+            // One Accepted/Rejected per (relay, event) — the UI's
+            // expanded toast renders them grouped by relay.
+            for r in &results {
+                let status = if r.success {
+                    crate::network::RelayStatusValue::Accepted
+                } else {
+                    crate::network::RelayStatusValue::Rejected {
+                        msg: r.message.clone().unwrap_or_default(),
+                    }
+                };
+                op.relay_status(r.relay_url.clone(), status);
+            }
+            let successful_relays = results.iter().filter(|r| r.success).count();
+            op.complete(successful_relays);
+
+            // Record relay provenance for every (event, relay) pair that
+            // succeeded, so a freshly-published publication stops showing as
+            // local-only without waiting to be re-fetched.
+            let by_id: std::collections::HashMap<&str, &String> = section_events
+                .iter()
+                .chain(std::iter::once(&pub_event))
+                .zip(event_jsons.iter())
+                .filter_map(|(e, j)| e.get("id").and_then(|v| v.as_str()).map(|id| (id, j)))
+                .collect();
+            for r in &results {
+                if r.success {
+                    if let Some(j) = by_id.get(r.event_id.as_str()) {
+                        if let Err(e) = engine.record_event_relay(j, &r.relay_url) {
+                            debug!("record relay metadata: {e}");
+                        }
                     }
                 }
             }
-        }
 
-        Some(
-            results
-                .into_iter()
-                .map(|r| BroadcastResult {
-                    relay: r.relay_url,
-                    success: r.success,
-                    message: r.message,
-                    event_id: r.event_id,
-                })
-                .collect::<Vec<_>>(),
-        )
+            Some(
+                results
+                    .into_iter()
+                    .map(|r| BroadcastResult {
+                        relay: r.relay_url,
+                        success: r.success,
+                        message: r.message,
+                        event_id: r.event_id,
+                    })
+                    .collect::<Vec<_>>(),
+            )
+        } else {
+            None
+        }
     } else {
         None
     };
@@ -3110,36 +3178,95 @@ pub async fn publish_blocks_handler(
             .chain(std::iter::once(&pub_event))
             .map(|e| serde_json::to_string(e).unwrap())
             .collect();
-        let (_, _, results) = crate::relay::publish_events_to_relays(&relays, &event_jsons).await;
-
-        // Record relay provenance for each (event, relay) pair that succeeded.
-        let by_id: std::collections::HashMap<&str, &String> = section_events
-            .iter()
-            .chain(std::iter::once(&pub_event))
-            .zip(event_jsons.iter())
-            .filter_map(|(e, j)| e.get("id").and_then(|v| v.as_str()).map(|id| (id, j)))
+        let event_ids: Vec<String> = std::iter::once(pub_id.clone())
+            .chain(section_ids.iter().cloned())
             .collect();
-        for r in &results {
-            if r.success {
-                if let Some(j) = by_id.get(r.event_id.as_str()) {
-                    if let Err(e) = engine.record_event_relay(j, &r.relay_url) {
-                        debug!("record relay metadata: {e}");
+
+        let summary = crate::network::RequestSummary {
+            filters: vec![],
+            composition: crate::network::CompositionShape {
+                phases: vec![crate::network::PhaseStage {
+                    label: "primary".into(),
+                    members: vec![(crate::network::Phase::Publish, relays.clone())],
+                    start_delay_ms: 0,
+                }],
+            },
+            dsl: format!(
+                "pub k:30040,30041 ({} blocks) via:publish",
+                event_jsons.len()
+            ),
+        };
+
+        let op = engine
+            .begin_publish_operation(
+                format!(
+                    "Publishing {} block events to {} relay(s)",
+                    event_jsons.len(),
+                    relays.len()
+                ),
+                relays.clone(),
+                event_ids,
+                Some(summary),
+            )
+            .await
+            .ok();
+
+        if let Some(op) = op {
+            let chosen = op.relays().to_vec();
+            for url in &chosen {
+                op.relay_status(
+                    url.clone(),
+                    crate::network::RelayStatusValue::Connecting,
+                );
+            }
+
+            let (_, _, results) =
+                crate::relay::publish_events_to_relays(&chosen, &event_jsons).await;
+
+            for r in &results {
+                let status = if r.success {
+                    crate::network::RelayStatusValue::Accepted
+                } else {
+                    crate::network::RelayStatusValue::Rejected {
+                        msg: r.message.clone().unwrap_or_default(),
+                    }
+                };
+                op.relay_status(r.relay_url.clone(), status);
+            }
+            let successful_relays = results.iter().filter(|r| r.success).count();
+            op.complete(successful_relays);
+
+            // Record relay provenance for each (event, relay) pair that succeeded.
+            let by_id: std::collections::HashMap<&str, &String> = section_events
+                .iter()
+                .chain(std::iter::once(&pub_event))
+                .zip(event_jsons.iter())
+                .filter_map(|(e, j)| e.get("id").and_then(|v| v.as_str()).map(|id| (id, j)))
+                .collect();
+            for r in &results {
+                if r.success {
+                    if let Some(j) = by_id.get(r.event_id.as_str()) {
+                        if let Err(e) = engine.record_event_relay(j, &r.relay_url) {
+                            debug!("record relay metadata: {e}");
+                        }
                     }
                 }
             }
-        }
 
-        Some(
-            results
-                .into_iter()
-                .map(|r| BroadcastResult {
-                    relay: r.relay_url,
-                    success: r.success,
-                    message: r.message,
-                    event_id: r.event_id,
-                })
-                .collect::<Vec<_>>(),
-        )
+            Some(
+                results
+                    .into_iter()
+                    .map(|r| BroadcastResult {
+                        relay: r.relay_url,
+                        success: r.success,
+                        message: r.message,
+                        event_id: r.event_id,
+                    })
+                    .collect::<Vec<_>>(),
+            )
+        } else {
+            None
+        }
     } else {
         None
     };
@@ -4031,9 +4158,70 @@ pub async fn broadcast_handler(
 
     let event_json = serde_json::to_string(&req.event)
         .map_err(|e| EngineError::Config(format!("event serialize: {e}")))?;
-    let results = crate::relay::publish_to_relays(&relays, &event_json).await;
-    // Record relay provenance for each relay that accepted the event.
+
+    // Build a RequestSummary so the toast/confirm modal render the
+    // formal-language form. `pub k:<kind> via:broadcast` is the
+    // canonical broadcast sentence.
+    let event_id = event
+        .get("id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let kind = event.get("kind").and_then(|v| v.as_u64()).unwrap_or(0);
+    let summary = crate::network::RequestSummary {
+        filters: vec![],
+        composition: crate::network::CompositionShape {
+            phases: vec![crate::network::PhaseStage {
+                label: "primary".into(),
+                members: vec![(crate::network::Phase::Broadcast, relays.clone())],
+                start_delay_ms: 0,
+            }],
+        },
+        dsl: format!("pub k:{kind} via:broadcast"),
+    };
+
+    // Open the publish op envelope so the UI sees the activity. If the
+    // user declines in Confirm mode, this returns FetchCancelled.
+    let op = match engine
+        .begin_publish_operation(
+            format!("Broadcasting kind {kind} to {} relay(s)", relays.len()),
+            relays.clone(),
+            vec![event_id.clone()],
+            Some(summary),
+        )
+        .await
+    {
+        Ok(op) => op,
+        Err(_) => {
+            return Err(EngineError::Config(
+                "Broadcast cancelled by user".into(),
+            ));
+        }
+    };
+    let chosen_relays = op.relays().to_vec();
+
+    // Emit Connecting per relay before the fan-out fires. (Per-relay
+    // status streaming during the call awaits a follow-up refactor of
+    // `publish_to_relays`; for now we batch-emit Accepted/Rejected
+    // after each result returns.)
+    for url in &chosen_relays {
+        op.relay_status(
+            url.clone(),
+            crate::network::RelayStatusValue::Connecting,
+        );
+    }
+
+    let results = crate::relay::publish_to_relays(&chosen_relays, &event_json).await;
+
     for r in &results {
+        let status = if r.success {
+            crate::network::RelayStatusValue::Accepted
+        } else {
+            crate::network::RelayStatusValue::Rejected {
+                msg: r.message.clone().unwrap_or_default(),
+            }
+        };
+        op.relay_status(r.relay_url.clone(), status);
         if r.success {
             if let Err(e) = engine.record_event_relay(&event_json, &r.relay_url) {
                 debug!("record relay metadata: {e}");
@@ -4042,6 +4230,7 @@ pub async fn broadcast_handler(
     }
     let successful = results.iter().filter(|r| r.success).count();
     let total = results.len();
+    op.complete(successful);
     Ok(Json(BroadcastResponse {
         successful,
         total,

@@ -489,6 +489,23 @@ impl Engine {
             .await
     }
 
+    /// Open a publish operation. Same shape as `begin_fetch_operation`
+    /// — emits a `PublishIntent` that the UI renders as a pending toast,
+    /// gates on Confirm mode, returns a `PublishOperation` handle the
+    /// caller drives through `relay_status` / `complete` / `fail`.
+    pub async fn begin_publish_operation(
+        &self,
+        label: String,
+        relays: Vec<String>,
+        event_ids: Vec<String>,
+        summary: Option<crate::network::RequestSummary>,
+    ) -> std::result::Result<crate::network::PublishOperation, crate::network::FetchCancelled>
+    {
+        self.network
+            .begin_publish_operation(label, relays, event_ids, summary)
+            .await
+    }
+
     /// Subscribe to the fetch-event stream (one receiver per SSE client).
     pub fn subscribe_fetch_events(
         &self,

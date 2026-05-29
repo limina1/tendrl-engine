@@ -234,6 +234,24 @@ impl NetworkActivity {
         steps: Vec<String>,
         relays: Vec<String>,
     ) -> std::result::Result<FetchOperation, FetchCancelled> {
+        self.begin_operation_with_summary(pattern, label, steps, relays, None)
+            .await
+    }
+
+    /// Like `begin_operation` but also carries a structured
+    /// `RequestSummary` (filters + composition + DSL sentence) on the
+    /// emitted `Intent`. The UI uses this for the expandable toast and
+    /// the confirm modal preview. New callers should prefer this form;
+    /// `begin_operation` is the back-compat shim for sites that haven't
+    /// yet built a summary.
+    pub async fn begin_operation_with_summary(
+        self: &std::sync::Arc<Self>,
+        pattern: FetchPattern,
+        label: String,
+        steps: Vec<String>,
+        relays: Vec<String>,
+        summary: Option<RequestSummary>,
+    ) -> std::result::Result<FetchOperation, FetchCancelled> {
         let operation_id = next_operation_id();
         let needs_confirmation = !self.is_auto();
         self.emit(FetchEvent::Intent {
@@ -243,6 +261,7 @@ impl NetworkActivity {
             steps,
             relays: relays.clone(),
             needs_confirmation,
+            summary,
         });
 
         let chosen = if needs_confirmation {
@@ -267,6 +286,56 @@ impl NetworkActivity {
         };
 
         Ok(FetchOperation {
+            activity: std::sync::Arc::clone(self),
+            operation_id,
+            relays: chosen,
+        })
+    }
+
+    /// Open a publish operation. Mirrors `begin_operation` but emits a
+    /// `PublishIntent` event (carries the event IDs being published so
+    /// the UI can correlate per-relay `Accepted`/`Rejected` status).
+    /// Same Confirm-mode gating as fetches.
+    pub async fn begin_publish_operation(
+        self: &std::sync::Arc<Self>,
+        label: String,
+        relays: Vec<String>,
+        event_ids: Vec<String>,
+        summary: Option<RequestSummary>,
+    ) -> std::result::Result<PublishOperation, FetchCancelled> {
+        let operation_id = next_operation_id();
+        let needs_confirmation = !self.is_auto();
+        self.emit(FetchEvent::PublishIntent {
+            operation_id: operation_id.clone(),
+            label,
+            relays: relays.clone(),
+            event_ids,
+            needs_confirmation,
+            summary,
+        });
+
+        let chosen = if needs_confirmation {
+            let rx = {
+                let (tx, rx) = oneshot::channel();
+                self.pending.lock().await.insert(operation_id.clone(), tx);
+                rx
+            };
+            match tokio::time::timeout(CONFIRM_TIMEOUT, rx).await {
+                Ok(Ok(d)) if d.approved => d.relays.unwrap_or(relays),
+                _ => {
+                    self.pending.lock().await.remove(&operation_id);
+                    self.emit(FetchEvent::Failed {
+                        operation_id,
+                        error: "cancelled".into(),
+                    });
+                    return Err(FetchCancelled);
+                }
+            }
+        } else {
+            relays
+        };
+
+        Ok(PublishOperation {
             activity: std::sync::Arc::clone(self),
             operation_id,
             relays: chosen,
@@ -406,8 +475,123 @@ pub enum FetchPattern {
     Custom,
 }
 
-/// Events streamed to the UI for every user-initiated fetch operation.
-/// `Intent` opens it; `Progress` narrates; `Completed`/`Failed` close it.
+/// Which class of relay a fetch/publish member targets — used as the
+/// `phase` tag on `RelayStatus` events so the UI can group per-relay
+/// status under the right execution stage. Includes the dot-notation
+/// values from the DSL surface (`indexer.default`, `search.fallback`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Phase {
+    #[serde(rename = "read")] Read,
+    #[serde(rename = "write")] Write,
+    #[serde(rename = "publish")] Publish,
+    #[serde(rename = "broadcast")] Broadcast,
+    #[serde(rename = "search.default")] SearchDefault,
+    #[serde(rename = "search.fallback")] SearchFallback,
+    #[serde(rename = "indexer.default")] IndexerDefault,
+    #[serde(rename = "indexer.fallback")] IndexerFallback,
+}
+
+impl Phase {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Phase::Read => "read",
+            Phase::Write => "write",
+            Phase::Publish => "publish",
+            Phase::Broadcast => "broadcast",
+            Phase::SearchDefault => "search.default",
+            Phase::SearchFallback => "search.fallback",
+            Phase::IndexerDefault => "indexer.default",
+            Phase::IndexerFallback => "indexer.fallback",
+        }
+    }
+}
+
+/// Per-relay status snapshot emitted as a relay transitions through the
+/// fetch/publish lifecycle. The UI uses these to drive the per-relay
+/// dots in the expandable toast view.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum RelayStatusValue {
+    /// WebSocket dialing or REQ sent, awaiting first event/EOSE.
+    Connecting,
+    /// EOSE received from this relay (NIP-01 end-of-stored-events).
+    Eose { event_count: usize },
+    /// Connection or protocol error.
+    Error { msg: String },
+    /// Hit the operation timeout before EOSE / OK.
+    Timeout,
+    /// Publish path — relay sent `["OK", id, true, ...]`.
+    Accepted,
+    /// Publish path — relay sent `["OK", id, false, msg]`.
+    Rejected { msg: String },
+}
+
+/// A subset of NIP-01 filter fields, expressed structurally so the UI
+/// can render each clause as a row in the expanded toast view. Not a
+/// re-implementation of nostrdb's filter type — just the shape needed
+/// for display + the confirm modal. All fields optional; absence
+/// means "no constraint on this dimension".
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct NipFilter {
+    #[serde(skip_serializing_if = "Option::is_none")] pub kinds: Option<Vec<u64>>,
+    #[serde(skip_serializing_if = "Option::is_none")] pub authors: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")] pub ids: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")] pub since: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")] pub until: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")] pub limit: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")] pub search: Option<String>,
+    /// Generic tag filters (`#e`, `#p`, `#d`, `#a`, etc.) → list of values.
+    #[serde(skip_serializing_if = "std::collections::BTreeMap::is_empty", default)]
+    pub tags: std::collections::BTreeMap<String, Vec<String>>,
+}
+
+/// One execution stage of a fetch/publish composition. Members of a
+/// stage fire concurrently (relay fan-out). Stages run in order; the
+/// next stage only starts when the previous returns zero events
+/// (sequential — typical fallback), UNLESS `start_delay_ms > 0`, in
+/// which case it begins partway through the previous stage (overlap
+/// — search default + delayed fallback).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PhaseStage {
+    /// Human label rendered in the DSL sentence — `"primary"`,
+    /// `"fallback"`, `"delayed-fallback"`, etc.
+    pub label: String,
+    /// `(phase, relays)` pairs fired concurrently. With `exclusive=off`
+    /// + a default discovery class, this can be `[(Read, …), (IndexerDefault, …)]`.
+    pub members: Vec<(Phase, Vec<String>)>,
+    /// Start-of-stage delay relative to the prior stage (0 = wait for
+    /// the prior to return zero events; >0 = overlapping start used by
+    /// search Δ).
+    pub start_delay_ms: u64,
+}
+
+/// How the relay-set fan-out is composed. Always a sequence of stages.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct CompositionShape {
+    pub phases: Vec<PhaseStage>,
+}
+
+/// Structured summary of a relay request — the formal-language form.
+/// Travels with `Intent` and `PublishIntent` events; the UI renders the
+/// canonical `dsl` string in toasts, the `filters` block in the
+/// expanded view, and the `composition` shape in the confirm modal.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct RequestSummary {
+    /// NIP-01 filters as sent on the wire (one per REQ subscription).
+    pub filters: Vec<NipFilter>,
+    /// How per-phase relay sets compose into an execution plan.
+    pub composition: CompositionShape,
+    /// Canonical DSL sentence — what the toast renders collapsed.
+    /// `RequestSummary::to_dsl` produces it; `from_dsl` parses it.
+    /// (Round-trip lands in Phase 6 — for now this is a best-effort
+    /// human-readable string built by the call site that opens the op.)
+    pub dsl: String,
+}
+
+/// Events streamed to the UI for every user-initiated relay operation
+/// — fetches AND publishes. `Intent`/`PublishIntent` open an operation,
+/// `Progress` narrates, `RelayStatus` carries per-relay updates within
+/// it, `Completed`/`Failed` close it.
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum FetchEvent {
@@ -420,12 +604,39 @@ pub enum FetchEvent {
         /// True in Confirm mode — the UI must POST a decision before the
         /// engine proceeds. False in Auto mode — informational only.
         needs_confirmation: bool,
+        /// Structured request representation — filters + composition +
+        /// DSL sentence. Optional during incremental rollout: legacy
+        /// `begin_operation` callers emit Intent with `summary: None`;
+        /// new callers via `begin_operation_with_summary` populate it.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        summary: Option<RequestSummary>,
+    },
+    /// Publish counterpart to `Intent` — opens a publish/broadcast op.
+    /// Carries the IDs being published so the UI can correlate per-relay
+    /// `Accepted`/`Rejected` status.
+    PublishIntent {
+        operation_id: String,
+        label: String,
+        relays: Vec<String>,
+        event_ids: Vec<String>,
+        needs_confirmation: bool,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        summary: Option<RequestSummary>,
     },
     Progress {
         operation_id: String,
         label: String,
         done: usize,
         total: Option<usize>,
+    },
+    /// Per-relay status update within an open operation. The UI keys
+    /// off `(operation_id, relay)` to update the matching row in the
+    /// expanded toast view.
+    RelayStatus {
+        operation_id: String,
+        relay: String,
+        phase: Phase,
+        status: RelayStatusValue,
     },
     Completed {
         operation_id: String,
@@ -501,6 +712,82 @@ impl FetchOperation {
     }
 
     /// Close the operation successfully.
+    pub fn complete(self, event_count: usize) {
+        self.activity.emit(FetchEvent::Completed {
+            operation_id: self.operation_id.clone(),
+            event_count,
+        });
+    }
+
+    /// Close the operation with an error.
+    pub fn fail(self, error: impl Into<String>) {
+        self.activity.emit(FetchEvent::Failed {
+            operation_id: self.operation_id.clone(),
+            error: error.into(),
+        });
+    }
+
+    /// Emit a per-relay status update for this operation. The UI keys
+    /// off `(operation_id, relay)` to update the expandable toast's
+    /// per-relay row.
+    pub fn relay_status(&self, relay: impl Into<String>, phase: Phase, status: RelayStatusValue) {
+        self.activity.emit(FetchEvent::RelayStatus {
+            operation_id: self.operation_id.clone(),
+            relay: relay.into(),
+            phase,
+            status,
+        });
+    }
+}
+
+/// Handle for an approved (or Auto-mode) publish operation. Mirror of
+/// `FetchOperation` — same lifecycle (`progress` → `relay_status` →
+/// `complete`/`fail`), distinguished by the `PublishIntent` event that
+/// opened it. Callers turn signed events into publish actions, then
+/// stream per-relay `Accepted`/`Rejected` status as each relay replies.
+pub struct PublishOperation {
+    activity: std::sync::Arc<NetworkActivity>,
+    operation_id: String,
+    relays: Vec<String>,
+}
+
+impl PublishOperation {
+    pub fn id(&self) -> &str {
+        &self.operation_id
+    }
+
+    /// The relay set to publish to — the engine's proposal, or the
+    /// user's override from the confirm modal.
+    pub fn relays(&self) -> &[String] {
+        &self.relays
+    }
+
+    /// Narrate a step. Same shape as fetch progress — the UI updates
+    /// the same toast.
+    pub fn progress(&self, label: impl Into<String>, done: usize, total: Option<usize>) {
+        self.activity.emit(FetchEvent::Progress {
+            operation_id: self.operation_id.clone(),
+            label: label.into(),
+            done,
+            total,
+        });
+    }
+
+    /// Emit a per-relay status update for this publish op. Typical
+    /// flow: `Connecting` → `Accepted` (relay sent `["OK", id, true]`)
+    /// or `Rejected { msg }` (relay sent `["OK", id, false, msg]`).
+    pub fn relay_status(&self, relay: impl Into<String>, status: RelayStatusValue) {
+        self.activity.emit(FetchEvent::RelayStatus {
+            operation_id: self.operation_id.clone(),
+            relay: relay.into(),
+            phase: Phase::Publish,
+            status,
+        });
+    }
+
+    /// Close the operation successfully. `event_count` is the count of
+    /// (event, relay) pairs that returned `Accepted` — i.e. how many
+    /// relays accepted at least one event in the batch.
     pub fn complete(self, event_count: usize) {
         self.activity.emit(FetchEvent::Completed {
             operation_id: self.operation_id.clone(),

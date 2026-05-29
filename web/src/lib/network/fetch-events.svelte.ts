@@ -60,19 +60,30 @@ function handleEvent(ev: FetchEvent) {
 			// Auto mode — an informational progress toast, no modal.
 			toastFor(app, ev.operation_id, ev.label);
 			break;
+		case 'publish_intent':
+			// Phase 1: surface publish ops as a basic toast (same shape as
+			// fetch intent). Phase 2 will render the structured summary
+			// + per-relay breakdown.
+			toastFor(app, ev.operation_id, ev.label);
+			break;
 		case 'progress': {
 			const id = toastFor(app, ev.operation_id, ev.label);
 			const suffix = ev.total != null ? ` ${ev.done}/${ev.total}` : '';
 			app.updateToast(id, { message: ev.label + suffix }, 120_000);
 			break;
 		}
+		case 'relay_status':
+			// Phase 1: per-relay events come through but aren't yet
+			// rendered structurally. Phase 2 wires them into the
+			// expandable toast view.
+			break;
 		case 'completed': {
 			const id = opToasts.get(ev.operation_id);
 			if (id !== undefined) {
 				const n = ev.event_count;
 				app.updateToast(
 					id,
-					{ message: `Fetched ${n} event${n === 1 ? '' : 's'}`, kind: 'success' },
+					{ message: `Done — ${n} relay${n === 1 ? '' : 's'} accepted`, kind: 'success' },
 					2500
 				);
 				opToasts.delete(ev.operation_id);
@@ -85,7 +96,7 @@ function handleEvent(ev: FetchEvent) {
 				if (ev.error === 'cancelled') {
 					app.dismissToast(id);
 				} else {
-					app.updateToast(id, { message: `Fetch failed: ${ev.error}`, kind: 'error' }, 4500);
+					app.updateToast(id, { message: `Operation failed: ${ev.error}`, kind: 'error' }, 4500);
 				}
 				opToasts.delete(ev.operation_id);
 			}
