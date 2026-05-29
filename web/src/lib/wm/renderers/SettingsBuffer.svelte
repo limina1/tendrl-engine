@@ -127,13 +127,12 @@
 	// driven by handlePurge tracks the ~1 second reconnect window.
 	let purgeLoading = $state(false);
 	async function requestPurge() {
-		if (
-			!confirm(
-				'Purge the local nostrdb cache and restart the engine?\n\nThis deletes cached events, profiles, and ingest queue. Relay state (relays.json), config.toml, and your identity ncryptsec are preserved.'
-			)
-		) {
-			return;
-		}
+		const path = app.dataDir ?? '<unknown — engine config not loaded>';
+		const msg =
+			'Purge the local nostrdb cache and restart the engine?\n\n' +
+			`Files to delete:\n  ${path}/data.mdb\n  ${path}/lock.mdb\n\n` +
+			'Preserved: relays.json (in same dir), config.toml, identity ncryptsec.';
+		if (!confirm(msg)) return;
 		purgeLoading = true;
 		try {
 			await app.handlePurge();

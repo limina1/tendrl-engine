@@ -206,10 +206,15 @@ async fn main() -> anyhow::Result<()> {
     // Config endpoint (returns pubkey etc. to the frontend)
     let config_pubkey = my_pubkey.clone();
     let config_assistant = assistant_pubkey.clone();
+    let config_data_dir = state.data_dir().to_string_lossy().to_string();
     let config_handler = move || async move {
         axum::Json(serde_json::json!({
             "my_pubkey": config_pubkey,
-            "assistant_pubkey": config_assistant
+            "assistant_pubkey": config_assistant,
+            // Expose the data dir so the Settings/Purge confirm can
+            // show exactly which path is about to be wiped before the
+            // user clicks OK.
+            "data_dir": config_data_dir,
         }))
     };
 

@@ -410,6 +410,9 @@ function _createAppState() {
 	// --- Identity ---
 	let myPubkey: string | null = $state(null);
 	let assistantPubkey: string | null = $state(null);
+	// Engine's nostrdb data directory — surfaced so the Settings/Purge
+	// confirm prompt can show exactly which path is about to be wiped.
+	let dataDir: string | null = $state(null);
 	let identityStatus: IdentityStatus | null = $state(null);
 	let identityLoading = $state(false);
 	let identityError: string | null = $state(null);
@@ -2891,6 +2894,7 @@ function _createAppState() {
 			const cfg = cfgResult.value;
 			myPubkey = cfg.my_pubkey;
 			assistantPubkey = cfg.assistant_pubkey;
+			dataDir = cfg.data_dir ?? null;
 			console.log('Config loaded, myPubkey:', myPubkey, 'assistantPubkey:', assistantPubkey);
 		} else {
 			console.warn('Config fetch failed:', cfgResult.reason);
@@ -3230,6 +3234,7 @@ function _createAppState() {
 		// Identity
 		get myPubkey() { return myPubkey; },
 		get assistantPubkey() { return assistantPubkey; },
+		get dataDir() { return dataDir; },
 		get localPubkeys() { return localPubkeys; },
 		get identityStatus() { return identityStatus; },
 		get identityLoading() { return identityLoading; },

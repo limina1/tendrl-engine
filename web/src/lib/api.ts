@@ -169,7 +169,11 @@ export function queryEvents(filters: Record<string, unknown>[], policy = 'local_
 // Config API
 
 export function getConfig() {
-	return fetchJson<{ my_pubkey: string | null; assistant_pubkey: string | null }>('/api/v1/config');
+	return fetchJson<{
+		my_pubkey: string | null;
+		assistant_pubkey: string | null;
+		data_dir: string;
+	}>('/api/v1/config');
 }
 
 // Identity API
