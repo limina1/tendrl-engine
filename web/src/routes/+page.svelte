@@ -697,11 +697,9 @@
 	});
 
 	const networkPill = $derived.by(() => {
-		// Fall back to the saved network mode (read from
-		// /api/v1/settings at init, before the live network/status
-		// arrives) so the pill renders the user's actual intent
-		// immediately on page load instead of disappearing for the
-		// ~100ms before networkStatus resolves.
+		// Live network/status wins; saved mode from config.toml is the
+		// fallback during the loading window so the button shows the
+		// user's actual intent immediately on reload.
 		const mode = app.networkStatus?.mode ?? app.savedNetworkMode ?? null;
 		const active = (app.networkStatus?.active_fetches ?? 0) > 0;
 		if (mode === 'auto') {
@@ -718,9 +716,16 @@
 				dotClass: active ? 'dot--fetching' : 'dot--offline'
 			};
 		}
-		// Neither live status nor settings have resolved yet — hide
-		// rather than showing a placeholder that looks like a state.
-		return null;
+		// Neither live status nor settings have resolved yet. Keep
+		// the button present (don't reflow the modeline) and show an
+		// explicit loading treatment so it doesn't read as a third
+		// state. The button stays clickable — toggleNetworkMode reads
+		// the engine's real state when it fires.
+		return {
+			label: 'loading',
+			pillClass: 'pill--ghost',
+			dotClass: 'dot--fetching'
+		};
 	});
 
 	const identityPill = $derived.by(() => {
