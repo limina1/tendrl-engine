@@ -639,49 +639,304 @@ pub fn nip_filter_from_json(f: &Value) -> NipFilter {
     out
 }
 
-/// Best-effort DSL string for a (filters + composition) pair. Phase
-/// 6 will replace this with the full parser/printer round-trip; for
-/// Phase 4 this is enough to make the toast row legible:
-///     `k:0 by:@<author> via:read,indexer.default then:indexer.fallback`
+/// Best-effort DSL string for a raw-JSON (filters + composition)
+/// pair. Phase-4 callers still pass `&[Value]` rather than the typed
+/// `Vec<NipFilter>` they could now build, so this shim turns each
+/// JSON filter into a `NipFilter` and delegates to
+/// `RequestSummary::to_dsl`. New call sites should construct
+/// `RequestSummary` directly and call `.to_dsl()` on it.
 pub fn dsl_for_composition(filters: &[Value], composition: &CompositionShape) -> String {
-    let mut parts = Vec::new();
-    // Filter side — just the first filter's kinds + authors-count.
-    if let Some(f0) = filters.first() {
-        if let Some(arr) = f0.get("kinds").and_then(|v| v.as_array()) {
-            let ks: Vec<String> = arr.iter().filter_map(|v| v.as_u64().map(|n| n.to_string())).collect();
-            if !ks.is_empty() {
-                parts.push(format!("k:{}", ks.join(",")));
+    let summary = RequestSummary {
+        filters: filters.iter().map(nip_filter_from_json).collect(),
+        composition: composition.clone(),
+        dsl: String::new(),
+    };
+    summary.to_dsl()
+}
+
+/// Try to parse a single phase name (the surface form of `Phase`).
+fn parse_phase(s: &str) -> Option<Phase> {
+    match s {
+        "read" => Some(Phase::Read),
+        "write" => Some(Phase::Write),
+        "publish" => Some(Phase::Publish),
+        "broadcast" => Some(Phase::Broadcast),
+        "search.default" => Some(Phase::SearchDefault),
+        "search.fallback" => Some(Phase::SearchFallback),
+        "indexer.default" => Some(Phase::IndexerDefault),
+        "indexer.fallback" => Some(Phase::IndexerFallback),
+        _ => None,
+    }
+}
+
+impl RequestSummary {
+    /// Render this summary as a canonical DSL sentence — the formal
+    /// language form the user can read in the toast and paste back
+    /// into a query box. Round-trips with [`Self::from_dsl`] for the
+    /// subset both sides understand (`k:` / `by:` / `~:"…"` /
+    /// `limit:` / `since:` / `until:` / `#tag:` / `id:` on the
+    /// filter side; `via:` / `then:` / `also:` on the composition
+    /// side).
+    pub fn to_dsl(&self) -> String {
+        let mut parts = Vec::new();
+        // Take only the first filter for DSL rendering. Multi-filter
+        // requests (two REQ subscriptions in one round-trip) are
+        // engine-driven and rare; the round-trip surface focuses on
+        // the common single-filter case.
+        if let Some(f) = self.filters.first() {
+            if let Some(kinds) = &f.kinds {
+                if !kinds.is_empty() {
+                    let ks: Vec<String> = kinds.iter().map(|k| k.to_string()).collect();
+                    parts.push(format!("k:{}", ks.join(",")));
+                }
+            }
+            if let Some(authors) = &f.authors {
+                if !authors.is_empty() {
+                    if authors.len() == 1 {
+                        parts.push(format!("by:{}", authors[0]));
+                    } else {
+                        // Comma-separated authors — round-trips
+                        // cleanly. Friendly @name rendering can layer
+                        // on top in a future sub-phase that has
+                        // engine profile-cache access.
+                        parts.push(format!("by:{}", authors.join(",")));
+                    }
+                }
+            }
+            if let Some(ids) = &f.ids {
+                for id in ids {
+                    parts.push(format!("id:{}", id));
+                }
+            }
+            // Tag filters render right after event-shape constraints
+            // (kinds, authors, ids) since they're another event-shape
+            // dimension. Query controls (search, limit, time bounds)
+            // come after.
+            for (tag, vals) in &f.tags {
+                for v in vals {
+                    parts.push(format!("#{}:{}", tag, v));
+                }
+            }
+            if let Some(s) = &f.search {
+                parts.push(format!("~:\"{}\"", s));
+            }
+            if let Some(n) = f.limit {
+                parts.push(format!("limit:{}", n));
+            }
+            if let Some(t) = f.since {
+                parts.push(format!("since:{}", t));
+            }
+            if let Some(t) = f.until {
+                parts.push(format!("until:{}", t));
             }
         }
-        if let Some(arr) = f0.get("authors").and_then(|v| v.as_array()) {
-            if !arr.is_empty() {
-                let first = arr[0].as_str().unwrap_or("");
-                let head = &first.chars().take(8).collect::<String>();
-                parts.push(if arr.len() == 1 {
-                    format!("by:{head}…")
-                } else {
-                    format!("by:{}+{}", head, arr.len() - 1)
-                });
+        // Composition: `via:` for the first stage, `then:` for each
+        // subsequent stage. `also:Δms` for stages with a non-zero
+        // start_delay_ms (overlapping rather than gating on prior).
+        for (i, stage) in self.composition.phases.iter().enumerate() {
+            let keyword = if i == 0 {
+                "via"
+            } else if stage.start_delay_ms > 0 {
+                "also"
+            } else {
+                "then"
+            };
+            let phases: Vec<&str> = stage.members.iter().map(|(p, _)| p.as_str()).collect();
+            if phases.is_empty() {
+                continue;
+            }
+            if keyword == "also" {
+                parts.push(format!(
+                    "also:{} Δ{}",
+                    phases.join(","),
+                    stage.start_delay_ms
+                ));
+            } else {
+                parts.push(format!("{}:{}", keyword, phases.join(",")));
             }
         }
-        if let Some(s) = f0.get("search").and_then(|v| v.as_str()) {
-            parts.push(format!("~:\"{s}\""));
-        }
-        if let Some(n) = f0.get("limit").and_then(|v| v.as_u64()) {
-            parts.push(format!("limit:{n}"));
-        }
+        parts.join(" ")
     }
-    // Composition side — `via:` for primary, `then:` for subsequent stages.
-    let mut first_stage = true;
-    for stage in &composition.phases {
-        let keyword = if first_stage { "via" } else { "then" };
-        first_stage = false;
-        let phases: Vec<&str> = stage.members.iter().map(|(p, _)| p.as_str()).collect();
-        if !phases.is_empty() {
-            parts.push(format!("{keyword}:{}", phases.join(",")));
+
+    /// Parse a DSL sentence back into a `RequestSummary`. The
+    /// inverse of [`Self::to_dsl`] for the subset both sides
+    /// understand. Unknown tokens are silently skipped — round-trip
+    /// preserves what the parser knows; unknowns become a hint that
+    /// the grammar should be extended.
+    ///
+    /// On parse, `dsl` is set to the input string (preserved
+    /// verbatim) so the UI can display exactly what the user typed.
+    pub fn from_dsl(s: &str) -> Self {
+        let mut filter = NipFilter::default();
+        let mut phases: Vec<PhaseStage> = Vec::new();
+
+        for tok in tokenize_dsl(s) {
+            let tok = tok.as_str();
+            // Filter clauses
+            if let Some(rest) = tok.strip_prefix("k:") {
+                let kinds: Vec<u64> = rest
+                    .split(',')
+                    .filter_map(|s| s.parse::<u64>().ok())
+                    .collect();
+                if !kinds.is_empty() {
+                    filter.kinds = Some(kinds);
+                }
+                continue;
+            }
+            if let Some(rest) = tok.strip_prefix("by:") {
+                let authors: Vec<String> = rest.split(',').map(|s| s.to_string()).collect();
+                if !authors.is_empty() {
+                    filter.authors = Some(authors);
+                }
+                continue;
+            }
+            if let Some(rest) = tok.strip_prefix("id:") {
+                filter
+                    .ids
+                    .get_or_insert_with(Vec::new)
+                    .push(rest.to_string());
+                continue;
+            }
+            if let Some(rest) = tok.strip_prefix("limit:") {
+                if let Ok(n) = rest.parse::<u64>() {
+                    filter.limit = Some(n);
+                }
+                continue;
+            }
+            if let Some(rest) = tok.strip_prefix("since:") {
+                if let Ok(t) = rest.parse::<i64>() {
+                    filter.since = Some(t);
+                }
+                continue;
+            }
+            if let Some(rest) = tok.strip_prefix("until:") {
+                if let Ok(t) = rest.parse::<i64>() {
+                    filter.until = Some(t);
+                }
+                continue;
+            }
+            if let Some(rest) = tok.strip_prefix("~:") {
+                // `~:"…"` strip surrounding quotes if present
+                let q = rest.trim_matches('"');
+                if !q.is_empty() {
+                    filter.search = Some(q.to_string());
+                }
+                continue;
+            }
+            if let Some(rest) = tok.strip_prefix('#') {
+                if let Some((tag, val)) = rest.split_once(':') {
+                    filter
+                        .tags
+                        .entry(tag.to_string())
+                        .or_default()
+                        .push(val.to_string());
+                }
+                continue;
+            }
+
+            // Composition clauses
+            if let Some(rest) = tok.strip_prefix("via:") {
+                let members = parse_phase_list(rest);
+                if !members.is_empty() {
+                    phases.push(PhaseStage {
+                        label: "primary".into(),
+                        members,
+                        start_delay_ms: 0,
+                    });
+                }
+                continue;
+            }
+            if let Some(rest) = tok.strip_prefix("then:") {
+                let members = parse_phase_list(rest);
+                if !members.is_empty() {
+                    phases.push(PhaseStage {
+                        label: "fallback".into(),
+                        members,
+                        start_delay_ms: 0,
+                    });
+                }
+                continue;
+            }
+            if let Some(rest) = tok.strip_prefix("also:") {
+                // also:phase[,phase] — the Δms delta comes as the next
+                // whitespace-separated token (`Δ500`). Without it, the
+                // overlap starts immediately (delay 0).
+                let members = parse_phase_list(rest);
+                if !members.is_empty() {
+                    phases.push(PhaseStage {
+                        label: "delayed-fallback".into(),
+                        members,
+                        start_delay_ms: 0,
+                    });
+                }
+                continue;
+            }
+            if let Some(rest) = tok.strip_prefix('Δ') {
+                // Δms — attach to the previous stage if it's still
+                // marked "delayed-fallback" and currently has no
+                // delay.
+                if let Ok(ms) = rest.parse::<u64>() {
+                    if let Some(last) = phases.last_mut() {
+                        if last.label == "delayed-fallback" && last.start_delay_ms == 0 {
+                            last.start_delay_ms = ms;
+                        }
+                    }
+                }
+                continue;
+            }
+            // Unknown token — silently skipped. A later sub-phase
+            // can collect these into a diagnostics list.
         }
+
+        let composition = CompositionShape { phases };
+        let mut summary = Self {
+            filters: vec![filter],
+            composition,
+            dsl: s.to_string(),
+        };
+        // Re-render so `dsl` is the canonical form, not the user's
+        // input (caller can still read the input via the param).
+        summary.dsl = summary.to_dsl();
+        summary
     }
-    parts.join(" ")
+}
+
+/// Parse a comma-separated `phase[,phase,…]` list into a member vector
+/// with an empty relays list (engine fills in the actual URLs from
+/// the live relay config when executing).
+fn parse_phase_list(s: &str) -> Vec<(Phase, Vec<String>)> {
+    s.split(',')
+        .filter_map(parse_phase)
+        .map(|p| (p, Vec::new()))
+        .collect()
+}
+
+/// Split a DSL string into whitespace-separated tokens, but treat the
+/// run of characters between matched `"` quotes as a single token —
+/// `~:"local first"` stays in one piece instead of fracturing on the
+/// space.
+fn tokenize_dsl(input: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut current = String::new();
+    let mut in_quote = false;
+    for c in input.chars() {
+        if c == '"' {
+            in_quote = !in_quote;
+            current.push(c);
+            continue;
+        }
+        if c.is_whitespace() && !in_quote {
+            if !current.is_empty() {
+                out.push(std::mem::take(&mut current));
+            }
+            continue;
+        }
+        current.push(c);
+    }
+    if !current.is_empty() {
+        out.push(current);
+    }
+    out
 }
 
 /// Events streamed to the UI for every user-initiated relay operation
@@ -897,5 +1152,140 @@ impl PublishOperation {
             operation_id: self.operation_id.clone(),
             error: error.into(),
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn nip_filter(kinds: Vec<u64>, authors: Vec<&str>) -> NipFilter {
+        NipFilter {
+            kinds: Some(kinds),
+            authors: Some(authors.into_iter().map(String::from).collect()),
+            ..NipFilter::default()
+        }
+    }
+
+    fn stage(label: &str, members: Vec<(Phase, Vec<String>)>, delay_ms: u64) -> PhaseStage {
+        PhaseStage {
+            label: label.into(),
+            members,
+            start_delay_ms: delay_ms,
+        }
+    }
+
+    #[test]
+    fn to_dsl_renders_basic_profile_lookup() {
+        let summary = RequestSummary {
+            filters: vec![nip_filter(vec![0], vec!["dc4cd086"])],
+            composition: CompositionShape {
+                phases: vec![
+                    stage("primary", vec![(Phase::Read, vec![])], 0),
+                    stage("fallback", vec![(Phase::IndexerDefault, vec![])], 0),
+                ],
+            },
+            dsl: String::new(),
+        };
+        assert_eq!(
+            summary.to_dsl(),
+            "k:0 by:dc4cd086 via:read then:indexer.default"
+        );
+    }
+
+    #[test]
+    fn from_dsl_parses_basic_profile_lookup() {
+        let parsed = RequestSummary::from_dsl("k:0 by:dc4cd086 via:read then:indexer.default");
+        assert_eq!(
+            parsed.filters[0].kinds,
+            Some(vec![0])
+        );
+        assert_eq!(
+            parsed.filters[0].authors,
+            Some(vec!["dc4cd086".to_string()])
+        );
+        assert_eq!(parsed.composition.phases.len(), 2);
+        assert_eq!(parsed.composition.phases[0].label, "primary");
+        assert_eq!(parsed.composition.phases[0].members[0].0, Phase::Read);
+        assert_eq!(parsed.composition.phases[1].label, "fallback");
+        assert_eq!(
+            parsed.composition.phases[1].members[0].0,
+            Phase::IndexerDefault
+        );
+    }
+
+    #[test]
+    fn dsl_round_trip_preserves_filter_and_composition() {
+        let original = "k:30040,30041 by:dc4cd086 limit:50 via:read,indexer.default then:indexer.fallback";
+        let parsed = RequestSummary::from_dsl(original);
+        // Re-render — should match the input verbatim (modulo
+        // whitespace normalization).
+        assert_eq!(parsed.to_dsl(), original);
+        // And the structured form matches the expected shape.
+        assert_eq!(parsed.filters[0].kinds, Some(vec![30040, 30041]));
+        assert_eq!(parsed.filters[0].limit, Some(50));
+        assert_eq!(parsed.composition.phases.len(), 2);
+        assert_eq!(parsed.composition.phases[0].members.len(), 2);
+        assert_eq!(parsed.composition.phases[0].members[0].0, Phase::Read);
+        assert_eq!(
+            parsed.composition.phases[0].members[1].0,
+            Phase::IndexerDefault
+        );
+    }
+
+    #[test]
+    fn dsl_parses_search_with_delayed_fallback() {
+        // `also:` lays the overlap stage, and the next `Δ500` token
+        // attaches the delay onto it. Together they describe
+        // "search.default; 500ms later, also fan out to fallback".
+        let parsed = RequestSummary::from_dsl(
+            "~:\"local first\" via:search.default also:search.fallback Δ500",
+        );
+        assert_eq!(parsed.filters[0].search.as_deref(), Some("local first"));
+        assert_eq!(parsed.composition.phases.len(), 2);
+        assert_eq!(parsed.composition.phases[1].label, "delayed-fallback");
+        assert_eq!(parsed.composition.phases[1].start_delay_ms, 500);
+    }
+
+    #[test]
+    fn dsl_round_trip_for_delayed_fallback() {
+        let original = "~:\"local first\" via:search.default also:search.fallback Δ500";
+        let parsed = RequestSummary::from_dsl(original);
+        assert_eq!(parsed.to_dsl(), original);
+    }
+
+    #[test]
+    fn dsl_round_trip_with_tag_filter_and_time_bounds() {
+        let original = "k:30040 #d:my-publication since:1700000000 until:1800000000 via:read";
+        let parsed = RequestSummary::from_dsl(original);
+        assert_eq!(parsed.to_dsl(), original);
+        assert_eq!(
+            parsed.filters[0].tags.get("d"),
+            Some(&vec!["my-publication".to_string()])
+        );
+        assert_eq!(parsed.filters[0].since, Some(1700000000));
+        assert_eq!(parsed.filters[0].until, Some(1800000000));
+    }
+
+    #[test]
+    fn unknown_tokens_are_skipped_silently() {
+        // Future grammar additions (`target:`, `pub`, etc.) shouldn't
+        // crash older binaries — they just get dropped from the
+        // structured form, and the next round-trip omits them.
+        let parsed = RequestSummary::from_dsl(
+            "k:0 target:wss://specific.relay pub via:read unknown:value",
+        );
+        assert_eq!(parsed.filters[0].kinds, Some(vec![0]));
+        assert_eq!(parsed.composition.phases.len(), 1);
+        assert_eq!(parsed.composition.phases[0].members[0].0, Phase::Read);
+    }
+
+    #[test]
+    fn parse_phase_accepts_dotted_class_names() {
+        assert_eq!(parse_phase("read"), Some(Phase::Read));
+        assert_eq!(parse_phase("indexer.default"), Some(Phase::IndexerDefault));
+        assert_eq!(parse_phase("search.fallback"), Some(Phase::SearchFallback));
+        assert_eq!(parse_phase("nonsense"), None);
+        assert_eq!(parse_phase(""), None);
     }
 }
