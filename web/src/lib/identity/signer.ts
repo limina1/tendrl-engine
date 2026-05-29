@@ -78,6 +78,12 @@ export function detectNip07(): boolean {
  * Register `window.nostr` as an external signer with the engine, then
  * open the SSE channel and start fulfilling sign requests.
  *
+ * `prefetchedPubkey`: if the caller already called `getPublicKey()` on
+ * the same `window.nostr` (e.g. to cache it in app state before
+ * registering), pass it through to avoid a second extension prompt.
+ * Most extensions cache approval, but some (soapbox-signer) prompt
+ * twice — once is enough.
+ *
  * Returns a teardown function that closes the EventSource and clears
  * the engine-side registration. Calling teardown reverses everything.
  *
@@ -85,12 +91,12 @@ export function detectNip07(): boolean {
  * POST failure, EventSource open failure) — callers should fall back
  * to `engine` source on failure.
  */
-export async function registerNip07Signer(): Promise<() => void> {
+export async function registerNip07Signer(prefetchedPubkey?: string): Promise<() => void> {
 	if (!detectNip07()) {
 		throw new Error('No window.nostr signer detected');
 	}
 	const signer = window.nostr!;
-	const pubkey = await signer.getPublicKey();
+	const pubkey = prefetchedPubkey ?? (await signer.getPublicKey());
 
 	const reg = await api.registerSigner({
 		kind: 'nip07',

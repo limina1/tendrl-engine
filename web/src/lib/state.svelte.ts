@@ -286,6 +286,16 @@ function _createAppState() {
 	let identityError: string | null = $state(null);
 	let identityPollInterval: ReturnType<typeof setInterval> | null = null;
 	let identityDisplayName: string | null = $state(null);
+	// Source last persisted via Save Settings → config.toml. Loaded from
+	// `/api/v1/settings` at init, BEFORE the auto-reconnect runs. The
+	// SettingsBuffer uses it as a fallback for `currentSource` so the
+	// radio reflects the user's intent immediately on reload, instead of
+	// flashing "engine" for ~2s while the NIP-07 reconnect is in flight.
+	let savedIdentitySource: string | null = $state(null);
+	// True while the auto-reconnect path is actively trying to detect +
+	// register window.nostr. Lets the UI render a "reconnecting…" state
+	// instead of the default engine login form during that window.
+	let identityAutoReconnecting = $state(false);
 	const localPubkeys = $derived((() => {
 		const pks: string[] = [];
 		if (myPubkey) pks.push(myPubkey);
@@ -2667,7 +2677,6 @@ function _createAppState() {
 		// reflects the user's last-saved settings (instead of resetting
 		// to hard-coded defaults). Settings page's "Save settings" writes
 		// these back via the snapshot endpoint.
-		let savedIdentitySource: string | null = null;
 		try {
 			const s = await api.getSettings();
 			editorLineNumbers = s.editor.line_numbers;
@@ -2691,27 +2700,46 @@ function _createAppState() {
 			// document_start but slow ones (and dev-mode reloads) can
 			// take ~hundreds of ms. Try a few times with increasing
 			// delays before giving up.
-			const { detectNip07 } = await import('$lib/identity/signer');
-			let detected = false;
-			for (const delay of [0, 100, 250, 500, 1000]) {
-				if (delay > 0) await new Promise((r) => setTimeout(r, delay));
-				if (detectNip07()) {
-					detected = true;
-					break;
+			identityAutoReconnecting = true;
+			try {
+				const { detectNip07 } = await import('$lib/identity/signer');
+				let detected = false;
+				for (const delay of [0, 100, 250, 500, 1000]) {
+					if (delay > 0) await new Promise((r) => setTimeout(r, delay));
+					if (detectNip07()) {
+						detected = true;
+						break;
+					}
 				}
-			}
-			if (detected) {
-				console.log('[identity] auto-reconnecting NIP-07 signer (saved in config.toml)');
-				await handleSelectNip07Source();
-				if (identityError) {
-					console.warn('[identity] auto-reconnect failed:', identityError);
+				if (detected) {
+					console.log('[identity] auto-reconnecting NIP-07 signer (saved in config.toml)');
+					await handleSelectNip07Source();
+					if (identityError) {
+						console.warn('[identity] auto-reconnect failed:', identityError);
+						pushToast(
+							`NIP-07 auto-reconnect failed: ${identityError}. Re-pick "nip07" in Settings.`,
+							'error',
+							7000
+						);
+					} else {
+						console.log(
+							'[identity] auto-reconnected:',
+							identityStatus?.source,
+							identityStatus?.npub?.slice(0, 16)
+						);
+					}
 				} else {
-					console.log('[identity] auto-reconnected:', identityStatus?.source, identityStatus?.npub?.slice(0, 16));
+					console.warn(
+						'[identity] saved source = nip07 but window.nostr not reachable after ~2s — staying on engine. Pick NIP-07 manually if the extension is now available.'
+					);
+					pushToast(
+						'NIP-07 extension not detected after 2s — saved source is nip07 but staying on engine. Re-pick in Settings once the extension is reachable.',
+						'info',
+						7000
+					);
 				}
-			} else {
-				console.warn(
-					'[identity] saved source = nip07 but window.nostr not reachable after ~2s — staying on engine. Pick NIP-07 manually if the extension is now available.'
-				);
+			} finally {
+				identityAutoReconnecting = false;
 			}
 		}
 		try {
@@ -2834,9 +2862,12 @@ function _createAppState() {
 				throw new Error('No window.nostr signer detected');
 			}
 			// Cache pubkey before registering so the UI can surface it
-			// even if the engine status hasn't refreshed yet.
+			// even if the engine status hasn't refreshed yet. Pass it
+			// through to registerNip07Signer so it doesn't re-prompt
+			// the extension — important for extensions that don't
+			// cache approval (e.g. soapbox-signer prompts twice).
 			externalSignerPubkey = await window.nostr!.getPublicKey();
-			externalSignerTeardown = await registerNip07Signer();
+			externalSignerTeardown = await registerNip07Signer(externalSignerPubkey);
 			identityStatus = await api.getIdentity();
 			myPubkey = externalSignerPubkey;
 			resolveIdentityName(externalSignerPubkey);
@@ -2957,6 +2988,9 @@ function _createAppState() {
 		get identityLoading() { return identityLoading; },
 		get identityError() { return identityError; },
 		get identityDisplayName() { return identityDisplayName; },
+		get savedIdentitySource() { return savedIdentitySource; },
+		setSavedIdentitySource(source: string | null) { savedIdentitySource = source; },
+		get identityAutoReconnecting() { return identityAutoReconnecting; },
 		set identityError(v: string | null) { identityError = v; },
 		handleIdentityLogin,
 		handleIdentityUnlock,

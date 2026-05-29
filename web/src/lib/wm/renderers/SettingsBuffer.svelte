@@ -21,8 +21,15 @@
 	let ncryptsecInput = $state('');
 	let passwordInput = $state('');
 
-	const currentSource = $derived(app.identityStatus?.source ?? 'engine');
+	// Prefer the live session source. Fall back to the source the user
+	// last persisted (config.toml [identity] source) so a fresh reload
+	// doesn't flash "engine" for the ~1–2s before the NIP-07
+	// auto-reconnect completes. Final fallback: 'engine'.
+	const currentSource = $derived(
+		app.identityStatus?.source ?? app.savedIdentitySource ?? 'engine'
+	);
 	const currentState = $derived(app.identityStatus?.state ?? 'none');
+	const isAutoReconnecting = $derived(app.identityAutoReconnecting);
 
 	async function pickSource(source: 'engine' | 'nip07') {
 		if (source === 'engine') {
@@ -56,6 +63,7 @@
 	async function saveSettings() {
 		saving = true;
 		try {
+			const sourceToPersist = app.identityStatus?.source ?? 'engine';
 			const resp = await api.snapshotConfig({
 				include_relays: true,
 				editor: {
@@ -71,8 +79,13 @@
 				network_mode: app.networkStatus?.mode ?? 'auto',
 				// Persist the current signing source so reload reconnects
 				// to the same extension/key without manual re-select.
-				identity_source: app.identityStatus?.source ?? 'engine'
+				identity_source: sourceToPersist
 			});
+			// Mirror the just-persisted value into the in-memory cache
+			// so `currentSource`'s fallback chain reflects the user's
+			// latest choice immediately — important if they don't reload
+			// right away but later look at the radio.
+			app.setSavedIdentitySource(sourceToPersist);
 			app.pushToast(resp.message, 'success', 3500);
 		} catch (e) {
 			app.pushToast(
@@ -191,14 +204,28 @@
 			{/if}
 		{:else if currentSource === 'nip07'}
 			<div class="settings-row settings-row--stack">
-				<span class="settings-hint">
-					Signing requests are routed to <strong>window.nostr</strong>; the engine never
-					sees your secret.
-				</span>
+				{#if isAutoReconnecting}
+					<span class="settings-hint">
+						Reconnecting to <strong>window.nostr</strong>… (extension prompt may appear)
+					</span>
+				{:else}
+					<span class="settings-hint">
+						Signing requests are routed to <strong>window.nostr</strong>; the engine never
+						sees your secret.
+					</span>
+				{/if}
 				{#if app.externalSignerPubkey}
 					<span class="settings-label mono">{app.externalSignerPubkey.slice(0, 16)}…</span>
 				{/if}
 				<div class="action-row">
+					<button
+						class="settings-action"
+						onclick={() => pickSource('nip07')}
+						disabled={app.identityLoading || isAutoReconnecting}
+						title="Re-register window.nostr (useful if the auto-reconnect was missed)"
+					>
+						{app.identityLoading || isAutoReconnecting ? 'Working…' : 'Reconnect'}
+					</button>
 					<button class="settings-action" onclick={() => pickSource('engine')}
 						>Disconnect</button
 					>
