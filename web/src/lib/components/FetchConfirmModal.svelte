@@ -7,11 +7,46 @@
 	// rather than a flat relay list. Falls back to the legacy flat view
 	// when summary is absent (older engine intents).
 
-	import type { FetchEvent, Phase } from '$lib/types';
+	import type { FetchEvent, NipFilter, CompositionShape, Phase } from '$lib/types';
 	import { resolveConfirm } from '$lib/network/fetch-events.svelte';
 
 	type IntentEvent = Extract<FetchEvent, { type: 'intent' }>;
 	let { intent }: { intent: IntentEvent } = $props();
+
+	/** Render a single NipFilter as a space-separated clause string.
+	 *  Mirrors the engine's filter_to_dsl_clauses ordering — event-shape
+	 *  fields first (k, by, id, tags), then query controls (search,
+	 *  limit, time bounds). */
+	function renderFilter(f: NipFilter): string {
+		const parts: string[] = [];
+		if (f.kinds?.length) parts.push(`k:${f.kinds.join(',')}`);
+		if (f.authors?.length) parts.push(`by:${f.authors.join(',')}`);
+		if (f.ids?.length) for (const id of f.ids) parts.push(`id:${id}`);
+		if (f.tags)
+			for (const [tag, vals] of Object.entries(f.tags))
+				for (const v of vals) parts.push(`#${tag}:${v}`);
+		if (f.search) parts.push(`~:"${f.search}"`);
+		if (f.limit !== undefined) parts.push(`limit:${f.limit}`);
+		if (f.since !== undefined) parts.push(`since:${f.since}`);
+		if (f.until !== undefined) parts.push(`until:${f.until}`);
+		return parts.join(' ');
+	}
+
+	/** Render the composition shape as the DSL trailing string —
+	 *  `via:read then:indexer.fallback` etc. */
+	function renderComposition(comp: CompositionShape | undefined): string {
+		if (!comp?.phases?.length) return '';
+		const parts: string[] = [];
+		for (let i = 0; i < comp.phases.length; i++) {
+			const stage = comp.phases[i];
+			const keyword = i === 0 ? 'via' : stage.start_delay_ms > 0 ? 'also' : 'then';
+			const phases = stage.members.map(([p]) => p as string).join(',');
+			if (!phases) continue;
+			if (keyword === 'also') parts.push(`also:${phases} Δ${stage.start_delay_ms}`);
+			else parts.push(`${keyword}:${phases}`);
+		}
+		return parts.join(' ');
+	}
 
 	// Every proposed relay starts selected; the user can drop any for
 	// this one operation, or append an extra.
@@ -20,6 +55,33 @@
 	let appendInput = $state('');
 	let appendError = $state<string | null>(null);
 	let detailsOpen = $state(false);
+	// Split mode: when true, render each filter as its own
+	// standalone single-filter request (each with the same composition
+	// appended) so the user can see + copy them individually. The
+	// engine still fires one multi-filter REQ either way — this is
+	// purely a display toggle.
+	let querySplit = $state(false);
+
+	// Compute the filter-by-filter forms so split mode and individual
+	// copy buttons share the same source.
+	const compositionDsl = $derived(
+		intent.summary ? renderComposition(intent.summary.composition) : ''
+	);
+	const filterDsls = $derived.by(() => {
+		if (!intent.summary?.filters?.length) return [] as string[];
+		return intent.summary.filters.map((f) => {
+			const clauses = renderFilter(f);
+			return compositionDsl ? `${clauses} ${compositionDsl}` : clauses;
+		});
+	});
+	// Wrapped joined form: filters on their own lines with the `|`
+	// separator visible, then composition on its own trailing line.
+	const joinedWrapped = $derived.by(() => {
+		if (!intent.summary?.filters?.length) return intent.summary?.dsl ?? '';
+		const filterClauses = intent.summary.filters.map(renderFilter);
+		const filterPart = filterClauses.join(' |\n');
+		return compositionDsl ? `${filterPart}\n${compositionDsl}` : filterPart;
+	});
 
 	// Flat union of every relay listed across all composition stages
 	// (or `intent.relays` when there's no summary). Drives the
@@ -93,8 +155,13 @@
 	}
 
 	function copyDsl() {
+		// Copy-all is always the canonical single-line form (the same
+		// string from_dsl round-trips with), not the wrapped display.
 		if (!intent.summary?.dsl) return;
 		navigator.clipboard?.writeText(intent.summary.dsl).catch(() => {});
+	}
+	function copyOne(s: string) {
+		navigator.clipboard?.writeText(s).catch(() => {});
 	}
 
 	function confirm() {
@@ -195,9 +262,48 @@
 						<div class="rf-detail-block">
 							<div class="rf-section-head-row">
 								<span class="rf-sub-head">Query</span>
-								<button class="rf-copy" onclick={copyDsl} title="Copy DSL sentence">copy</button>
+								<div class="rf-query-toggles">
+									<button
+										class="rf-copy"
+										onclick={copyDsl}
+										title="Copy the canonical single-line DSL — round-trips with the parser."
+									>copy all</button>
+									{#if filterDsls.length > 1}
+										<button
+											class="rf-copy"
+											onclick={() => (querySplit = !querySplit)}
+											title={querySplit
+												? 'Show as a single union request (engine fires one REQ with multiple filters)'
+												: 'Split into per-filter request lines, each individually copyable'}
+										>{querySplit ? 'join' : 'split'}</button>
+									{/if}
+								</div>
 							</div>
-							<code class="rf-dsl">{intent.summary.dsl}</code>
+							{#if querySplit && filterDsls.length > 1}
+								<!-- Split mode: each filter rendered as its
+								     own standalone single-filter request,
+								     individually copyable. Engine still
+								     fires one multi-filter REQ — this is
+								     a display + copy convenience. -->
+								<ol class="rf-query-split">
+									{#each filterDsls as one, i (i)}
+										<li>
+											<button
+												class="rf-copy rf-copy--inline"
+												onclick={() => copyOne(one)}
+												title="Copy this filter"
+											>copy</button>
+											<code class="rf-dsl rf-dsl--inline">{one}</code>
+										</li>
+									{/each}
+								</ol>
+							{:else}
+								<!-- Joined wrapped: canonical form but
+								     displayed multi-line on `|` for
+								     readability. Copy still gives the
+								     single-line canonical sentence. -->
+								<code class="rf-dsl rf-dsl--wrapped">{joinedWrapped}</code>
+							{/if}
 						</div>
 					{/if}
 
@@ -401,6 +507,41 @@
 		color: var(--fg);
 		overflow-x: auto;
 		white-space: nowrap;
+	}
+	.rf-dsl--wrapped {
+		white-space: pre-wrap;
+		word-break: break-word;
+	}
+	.rf-dsl--inline {
+		display: inline;
+		padding: 2px 6px;
+		white-space: normal;
+		word-break: break-word;
+	}
+	.rf-query-toggles {
+		display: flex;
+		gap: 4px;
+	}
+	.rf-query-split {
+		list-style: none;
+		margin: 0;
+		padding: 0;
+		display: flex;
+		flex-direction: column;
+		gap: 4px;
+	}
+	.rf-query-split li {
+		display: flex;
+		gap: 8px;
+		align-items: baseline;
+		padding: 4px 0;
+		border-top: 1px solid color-mix(in srgb, var(--panel-border) 30%, transparent);
+	}
+	.rf-query-split li:first-child {
+		border-top: none;
+	}
+	.rf-copy--inline {
+		flex-shrink: 0;
 	}
 	.rf-filter {
 		display: flex;
