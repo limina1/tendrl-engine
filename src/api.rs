@@ -3901,19 +3901,24 @@ pub async fn identity_use_source_handler(
     Json(req): Json<UseSourceRequest>,
 ) -> Result<Json<IdentityStatusResponse>, EngineError> {
     use crate::identity::IdentitySource;
+    // signer_id is REQUIRED for live nip07/nip46 registration via this
+    // endpoint — the web only calls /identity/use after it has a
+    // signer_id from /signer-register. Use the typed
+    // `IdentitySource::from_config_str` path (signer_id = None) only
+    // at engine boot from config.toml, not here.
     let new_source = match req.source.as_str() {
         "engine" => IdentitySource::Engine,
         "nip07" => {
             let signer_id = req
                 .signer_id
                 .ok_or_else(|| EngineError::Config("nip07 source requires signer_id".into()))?;
-            IdentitySource::Nip07 { signer_id }
+            IdentitySource::Nip07 { signer_id: Some(signer_id) }
         }
         "nip46" => {
             let signer_id = req
                 .signer_id
                 .ok_or_else(|| EngineError::Config("nip46 source requires signer_id".into()))?;
-            IdentitySource::Nip46 { signer_id }
+            IdentitySource::Nip46 { signer_id: Some(signer_id) }
         }
         other => {
             return Err(EngineError::Config(format!("unknown source: {other}")));

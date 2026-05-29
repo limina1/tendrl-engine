@@ -556,12 +556,22 @@ use std::time::{Duration, Instant};
 /// .env). `Nip07` / `Nip46` = route to a connected `ExternalSigner`
 /// registered under `signer_id`. The active source is per-session state
 /// — the user picks it via `POST /api/v1/identity/use`.
+///
+/// `signer_id` is `Option<String>` on the external variants so we can
+/// represent "user's saved intent is nip07/nip46, no live signer
+/// connected yet" — that's the state immediately after engine boot
+/// when config.toml has `[identity] source = "nip07"`. The Nip07
+/// variant with `signer_id: None` reports source "nip07" through the
+/// status API (correct intent) while sign() correctly fails with
+/// SignerNotConnected (no live signer to route to). The web's
+/// /identity/use call promotes None → Some(reg.signer_id) once the
+/// extension is registered.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum IdentitySource {
     Engine,
-    Nip07 { signer_id: String },
-    Nip46 { signer_id: String },
+    Nip07 { signer_id: Option<String> },
+    Nip46 { signer_id: Option<String> },
 }
 
 impl Default for IdentitySource {
@@ -582,9 +592,25 @@ impl IdentitySource {
     pub fn signer_id(&self) -> Option<&str> {
         match self {
             IdentitySource::Engine => None,
-            IdentitySource::Nip07 { signer_id } | IdentitySource::Nip46 { signer_id } => {
-                Some(signer_id)
+            IdentitySource::Nip07 { signer_id: Some(id) }
+            | IdentitySource::Nip46 { signer_id: Some(id) } => Some(id.as_str()),
+            IdentitySource::Nip07 { signer_id: None } | IdentitySource::Nip46 { signer_id: None } => {
+                None
             }
+        }
+    }
+
+    /// Parse a source string from config.toml (`"engine" | "nip07" |
+    /// "nip46"`) into an `IdentitySource`. External variants get
+    /// `signer_id: None` — the live signer_id is filled in later when
+    /// the web calls `/identity/use`. Returns `None` for unknown
+    /// strings; caller should fall back to `IdentitySource::Engine`.
+    pub fn from_config_str(s: &str) -> Option<Self> {
+        match s {
+            "engine" => Some(IdentitySource::Engine),
+            "nip07" => Some(IdentitySource::Nip07 { signer_id: None }),
+            "nip46" => Some(IdentitySource::Nip46 { signer_id: None }),
+            _ => None,
         }
     }
 }
@@ -635,14 +661,6 @@ pub struct IdentitySession {
     /// can surface a non-null pubkey when source != engine. Set by
     /// `set_source_with_pubkey`; cleared when switching back to engine.
     external_pubkey: Option<String>,
-    /// User's saved source preference (from `[identity] source` in
-    /// config.toml). Surfaced by `status()` when no live external
-    /// signer is registered yet — that way `/api/v1/identity` returns
-    /// `source: "nip07"` on engine boot, before the web has had time
-    /// to re-register the NIP-07 signer. Without this, the UI would
-    /// briefly see `source: "engine"` after every restart even when
-    /// the user's intent is nip07.
-    pending_source: Option<String>,
 }
 
 impl Default for IdentitySession {
@@ -653,6 +671,15 @@ impl Default for IdentitySession {
 
 impl IdentitySession {
     pub fn new() -> Self {
+        Self::with_source(IdentitySource::Engine)
+    }
+
+    /// Construct a session with a specific starting source. Used by
+    /// engine boot to honor `config.toml [identity] source` directly
+    /// instead of defaulting to Engine and patching later. External
+    /// variants should be constructed with `signer_id: None` here —
+    /// the web fills in the real id when it registers a signer.
+    pub fn with_source(source: IdentitySource) -> Self {
         Self {
             ncryptsec: None,
             pubkey: None,
@@ -661,17 +688,8 @@ impl IdentitySession {
             last_activity: None,
             lock_timeout: Duration::from_secs(15 * 60),
             unsigned_event_ids: Vec::new(),
-            source: IdentitySource::Engine,
-            pending_source: None,
+            source,
         }
-    }
-
-    /// Seed the user's saved source preference (config.toml
-    /// `[identity] source`). Called once on engine boot. status() will
-    /// surface this as the active source until a live external signer
-    /// is registered (at which point set_source_with_pubkey overrides).
-    pub fn set_pending_source(&mut self, source: Option<String>) {
-        self.pending_source = source;
     }
 
     /// Read the current signer source.
@@ -848,16 +866,6 @@ impl IdentitySession {
         } else {
             state
         };
-        // When the live source is Engine but the user previously saved
-        // a different source (config.toml [identity] source), surface
-        // the saved intent. This means `/api/v1/identity` returns
-        // `source: "nip07"` immediately on engine boot — the UI can
-        // render the radio correctly without waiting for the web's
-        // auto-reconnect to complete.
-        let effective_source = match (&self.source, &self.pending_source) {
-            (IdentitySource::Engine, Some(pending)) if pending != "engine" => pending.clone(),
-            _ => self.source.kind_str().to_string(),
-        };
         IdentityStatusResponse {
             state: effective_state.to_string(),
             pubkey: effective_pubkey.clone(),
@@ -865,7 +873,7 @@ impl IdentitySession {
             seconds_remaining,
             unsigned_count: self.unsigned_event_ids.len(),
             lock_timeout_minutes: self.lock_timeout.as_secs() / 60,
-            source: effective_source,
+            source: self.source.kind_str().to_string(),
             signer_id: self.source.signer_id().map(|s| s.to_string()),
         }
     }

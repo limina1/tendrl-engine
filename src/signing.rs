@@ -552,6 +552,7 @@ impl SigningController {
                 signer.sign(template).await
             }
             IdentitySource::Nip07 { signer_id } | IdentitySource::Nip46 { signer_id } => {
+                let signer_id = signer_id.ok_or(SigningError::SignerNotConnected)?;
                 let registered = self
                     .lookup_by_id(&signer_id)
                     .await
@@ -602,12 +603,10 @@ impl SigningController {
                 .lock()
                 .ok()
                 .and_then(|s| s.pubkey().map(|p| p.to_string())),
-            IdentitySource::Nip07 { signer_id } | IdentitySource::Nip46 { signer_id } => self
-                .registry
-                .read()
-                .await
-                .get(&signer_id)
-                .map(|s| s.pubkey.clone()),
+            IdentitySource::Nip07 { signer_id } | IdentitySource::Nip46 { signer_id } => {
+                let id = signer_id?;
+                self.registry.read().await.get(&id).map(|s| s.pubkey.clone())
+            }
         }
     }
 }

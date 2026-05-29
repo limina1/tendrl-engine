@@ -144,18 +144,23 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/v1/chat/load", put(api::chat_load_fragments))
         .with_state(chat_state);
 
-    // Identity session state. Seed the saved-source intent from
-    // config.toml so /api/v1/identity reports source: "nip07"
-    // immediately on boot — even before the web has had a chance to
-    // re-register the NIP-07 signer. Without this, every restart
-    // briefly reports source: "engine" (the IdentitySession default),
-    // which made the SettingsBuffer radio look "stuck on engine".
-    let mut session = IdentitySession::new();
-    session.set_pending_source(config.identity.source.clone());
-    if let Some(ref src) = config.identity.source {
-        info!("Saved identity source: {} (web will re-register signer on connect)", src);
-    }
-    let identity_state: api::IdentityAppState = Arc::new(Mutex::new(session));
+    // Identity session state. Honor `config.toml [identity] source`
+    // directly — IdentitySource::Nip07/Nip46 with signer_id: None
+    // expresses "user's intent is nip07; live signer not connected
+    // yet". The web's /identity/use call promotes signer_id to
+    // Some(reg.signer_id) once the extension is registered. Without
+    // this, every restart briefly reported source: "engine" (the
+    // hard-coded default) which made the SettingsBuffer radio look
+    // "stuck on engine" until the web finished its auto-reconnect.
+    let boot_source = config
+        .identity
+        .source
+        .as_deref()
+        .and_then(nostr_engine::identity::IdentitySource::from_config_str)
+        .unwrap_or(nostr_engine::identity::IdentitySource::Engine);
+    info!("Saved identity source: {}", boot_source.kind_str());
+    let identity_state: api::IdentityAppState =
+        Arc::new(Mutex::new(IdentitySession::with_source(boot_source)));
 
     let identity_routes = Router::new()
         .route("/api/v1/identity", get(api::identity_status_handler))
