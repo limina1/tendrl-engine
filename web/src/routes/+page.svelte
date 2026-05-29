@@ -710,20 +710,23 @@
 			};
 		}
 		if (mode === 'confirm') {
+			// Confirm = orange (id-diverged): the engine is gating
+			// fetches behind the user's explicit approval. The "warm"
+			// tint reads as a deliberate, attention-requiring posture
+			// without the alarm of red.
 			return {
 				label: active ? 'fetching' : 'confirm',
-				pillClass: 'pill--offline',
-				dotClass: active ? 'dot--fetching' : 'dot--offline'
+				pillClass: 'pill--diverged',
+				dotClass: active ? 'dot--fetching' : 'dot--diverged'
 			};
 		}
-		// Neither live status nor settings have resolved yet. Keep
-		// the button present (don't reflow the modeline) and show an
-		// explicit loading treatment so it doesn't read as a third
-		// state. The button stays clickable — toggleNetworkMode reads
-		// the engine's real state when it fires.
+		// Mode unknown (initial paint or both endpoints unreachable).
+		// Purple (id-imported) reads as "transient / system state" —
+		// distinct from the engine's two configured modes so it
+		// doesn't look like a third option.
 		return {
 			label: 'loading',
-			pillClass: 'pill--ghost',
+			pillClass: 'pill--imported',
 			dotClass: 'dot--fetching'
 		};
 	});
