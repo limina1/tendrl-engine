@@ -678,61 +678,26 @@ impl RequestSummary {
     /// filter side; `via:` / `then:` / `also:` on the composition
     /// side).
     pub fn to_dsl(&self) -> String {
-        let mut parts = Vec::new();
-        // Take only the first filter for DSL rendering. Multi-filter
-        // requests (two REQ subscriptions in one round-trip) are
-        // engine-driven and rare; the round-trip surface focuses on
-        // the common single-filter case.
-        if let Some(f) = self.filters.first() {
-            if let Some(kinds) = &f.kinds {
-                if !kinds.is_empty() {
-                    let ks: Vec<String> = kinds.iter().map(|k| k.to_string()).collect();
-                    parts.push(format!("k:{}", ks.join(",")));
-                }
-            }
-            if let Some(authors) = &f.authors {
-                if !authors.is_empty() {
-                    if authors.len() == 1 {
-                        parts.push(format!("by:{}", authors[0]));
-                    } else {
-                        // Comma-separated authors — round-trips
-                        // cleanly. Friendly @name rendering can layer
-                        // on top in a future sub-phase that has
-                        // engine profile-cache access.
-                        parts.push(format!("by:{}", authors.join(",")));
-                    }
-                }
-            }
-            if let Some(ids) = &f.ids {
-                for id in ids {
-                    parts.push(format!("id:{}", id));
-                }
-            }
-            // Tag filters render right after event-shape constraints
-            // (kinds, authors, ids) since they're another event-shape
-            // dimension. Query controls (search, limit, time bounds)
-            // come after.
-            for (tag, vals) in &f.tags {
-                for v in vals {
-                    parts.push(format!("#{}:{}", tag, v));
-                }
-            }
-            if let Some(s) = &f.search {
-                parts.push(format!("~:\"{}\"", s));
-            }
-            if let Some(n) = f.limit {
-                parts.push(format!("limit:{}", n));
-            }
-            if let Some(t) = f.since {
-                parts.push(format!("since:{}", t));
-            }
-            if let Some(t) = f.until {
-                parts.push(format!("until:{}", t));
-            }
-        }
+        // Render each filter as its own clause group. Multi-filter
+        // REQs (e.g. the feed-init that piggybacks kind 0 alongside
+        // kind 30040) join with ` | ` — matches the existing search
+        // grammar's union operator (CompoundQuery). Single-filter
+        // requests render without the pipe, so backward compatibility
+        // with the old round-trip tests holds.
+        let filter_strs: Vec<String> = self
+            .filters
+            .iter()
+            .map(filter_to_dsl_clauses)
+            .filter(|s| !s.is_empty())
+            .collect();
+        let mut sentence = filter_strs.join(" | ");
+
         // Composition: `via:` for the first stage, `then:` for each
         // subsequent stage. `also:Δms` for stages with a non-zero
-        // start_delay_ms (overlapping rather than gating on prior).
+        // start_delay_ms. Composition applies to the whole REQ, so
+        // it trails the union rather than attaching to any one
+        // filter.
+        let mut comp_parts: Vec<String> = Vec::new();
         for (i, stage) in self.composition.phases.iter().enumerate() {
             let keyword = if i == 0 {
                 "via"
@@ -746,16 +711,22 @@ impl RequestSummary {
                 continue;
             }
             if keyword == "also" {
-                parts.push(format!(
+                comp_parts.push(format!(
                     "also:{} Δ{}",
                     phases.join(","),
                     stage.start_delay_ms
                 ));
             } else {
-                parts.push(format!("{}:{}", keyword, phases.join(",")));
+                comp_parts.push(format!("{}:{}", keyword, phases.join(",")));
             }
         }
-        parts.join(" ")
+        if !comp_parts.is_empty() {
+            if !sentence.is_empty() {
+                sentence.push(' ');
+            }
+            sentence.push_str(&comp_parts.join(" "));
+        }
+        sentence
     }
 
     /// Parse a DSL sentence back into a `RequestSummary`. The
@@ -767,12 +738,29 @@ impl RequestSummary {
     /// On parse, `dsl` is set to the input string (preserved
     /// verbatim) so the UI can display exactly what the user typed.
     pub fn from_dsl(s: &str) -> Self {
+        // Multi-filter REQs join their filter clauses with ` | `. We
+        // accumulate clauses into a filters vector; encountering a
+        // `|` token finalizes the current filter and starts a new one.
+        // Composition tokens (via/then/also/Δ) ALWAYS go to the
+        // composition struct regardless of where they appear — the
+        // composition is per-REQ, not per-filter.
+        let mut filters: Vec<NipFilter> = Vec::new();
         let mut filter = NipFilter::default();
+        let mut filter_has_content = false;
         let mut phases: Vec<PhaseStage> = Vec::new();
 
         for tok in tokenize_dsl(s) {
             let tok = tok.as_str();
-            // Filter clauses
+            if tok == "|" {
+                if filter_has_content {
+                    filters.push(std::mem::take(&mut filter));
+                    filter_has_content = false;
+                }
+                continue;
+            }
+            // Filter clauses — each sets filter_has_content so the
+            // `|` finalizer (and end-of-input finalizer) know there's
+            // a filter to push.
             if let Some(rest) = tok.strip_prefix("k:") {
                 let kinds: Vec<u64> = rest
                     .split(',')
@@ -780,6 +768,7 @@ impl RequestSummary {
                     .collect();
                 if !kinds.is_empty() {
                     filter.kinds = Some(kinds);
+                    filter_has_content = true;
                 }
                 continue;
             }
@@ -787,6 +776,7 @@ impl RequestSummary {
                 let authors: Vec<String> = rest.split(',').map(|s| s.to_string()).collect();
                 if !authors.is_empty() {
                     filter.authors = Some(authors);
+                    filter_has_content = true;
                 }
                 continue;
             }
@@ -795,23 +785,27 @@ impl RequestSummary {
                     .ids
                     .get_or_insert_with(Vec::new)
                     .push(rest.to_string());
+                filter_has_content = true;
                 continue;
             }
             if let Some(rest) = tok.strip_prefix("limit:") {
                 if let Ok(n) = rest.parse::<u64>() {
                     filter.limit = Some(n);
+                    filter_has_content = true;
                 }
                 continue;
             }
             if let Some(rest) = tok.strip_prefix("since:") {
                 if let Ok(t) = rest.parse::<i64>() {
                     filter.since = Some(t);
+                    filter_has_content = true;
                 }
                 continue;
             }
             if let Some(rest) = tok.strip_prefix("until:") {
                 if let Ok(t) = rest.parse::<i64>() {
                     filter.until = Some(t);
+                    filter_has_content = true;
                 }
                 continue;
             }
@@ -820,6 +814,7 @@ impl RequestSummary {
                 let q = rest.trim_matches('"');
                 if !q.is_empty() {
                     filter.search = Some(q.to_string());
+                    filter_has_content = true;
                 }
                 continue;
             }
@@ -830,6 +825,7 @@ impl RequestSummary {
                         .entry(tag.to_string())
                         .or_default()
                         .push(val.to_string());
+                    filter_has_content = true;
                 }
                 continue;
             }
@@ -888,9 +884,19 @@ impl RequestSummary {
             // can collect these into a diagnostics list.
         }
 
+        // Finalize the trailing filter (the one after the last `|`,
+        // or the only one when there's no `|`).
+        if filter_has_content {
+            filters.push(filter);
+        } else if filters.is_empty() {
+            // No filter clauses at all — push the default so callers
+            // still see a one-entry vec for the common code path.
+            filters.push(filter);
+        }
+
         let composition = CompositionShape { phases };
         let mut summary = Self {
-            filters: vec![filter],
+            filters,
             composition,
             dsl: s.to_string(),
         };
@@ -899,6 +905,49 @@ impl RequestSummary {
         summary.dsl = summary.to_dsl();
         summary
     }
+}
+
+/// Render a single `NipFilter` as a space-separated clause string
+/// (no `via:`/`then:` — those are composition, not filter, and live
+/// outside the filter group in the DSL). Field order matches the
+/// `to_dsl` layout: event-shape first (kinds, authors, ids, tags),
+/// then query controls (search, limit, time bounds).
+fn filter_to_dsl_clauses(f: &NipFilter) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    if let Some(kinds) = &f.kinds {
+        if !kinds.is_empty() {
+            let ks: Vec<String> = kinds.iter().map(|k| k.to_string()).collect();
+            parts.push(format!("k:{}", ks.join(",")));
+        }
+    }
+    if let Some(authors) = &f.authors {
+        if !authors.is_empty() {
+            parts.push(format!("by:{}", authors.join(",")));
+        }
+    }
+    if let Some(ids) = &f.ids {
+        for id in ids {
+            parts.push(format!("id:{}", id));
+        }
+    }
+    for (tag, vals) in &f.tags {
+        for v in vals {
+            parts.push(format!("#{}:{}", tag, v));
+        }
+    }
+    if let Some(s) = &f.search {
+        parts.push(format!("~:\"{}\"", s));
+    }
+    if let Some(n) = f.limit {
+        parts.push(format!("limit:{}", n));
+    }
+    if let Some(t) = f.since {
+        parts.push(format!("since:{}", t));
+    }
+    if let Some(t) = f.until {
+        parts.push(format!("until:{}", t));
+    }
+    parts.join(" ")
 }
 
 /// Parse a comma-separated `phase[,phase,…]` list into a member vector
@@ -1276,6 +1325,28 @@ mod tests {
             "k:0 target:wss://specific.relay pub via:read unknown:value",
         );
         assert_eq!(parsed.filters[0].kinds, Some(vec![0]));
+        assert_eq!(parsed.composition.phases.len(), 1);
+        assert_eq!(parsed.composition.phases[0].members[0].0, Phase::Read);
+    }
+
+    #[test]
+    fn dsl_round_trip_multi_filter_with_pipe_separator() {
+        // The feed-init Intent piggybacks a kind-0 filter alongside
+        // the kind-30040 filter so one approval covers both. Verify
+        // the DSL renders both filters joined with ` | ` and parses
+        // back to the same structure.
+        let original = "k:30040 by:aaa,bbb limit:200 | k:0 by:aaa,bbb limit:2 via:read";
+        let parsed = RequestSummary::from_dsl(original);
+        assert_eq!(parsed.to_dsl(), original);
+        assert_eq!(parsed.filters.len(), 2);
+        assert_eq!(parsed.filters[0].kinds, Some(vec![30040]));
+        assert_eq!(parsed.filters[0].limit, Some(200));
+        assert_eq!(parsed.filters[1].kinds, Some(vec![0]));
+        assert_eq!(parsed.filters[1].limit, Some(2));
+        assert_eq!(
+            parsed.filters[0].authors,
+            Some(vec!["aaa".to_string(), "bbb".to_string()])
+        );
         assert_eq!(parsed.composition.phases.len(), 1);
         assert_eq!(parsed.composition.phases[0].members[0].0, Phase::Read);
     }
