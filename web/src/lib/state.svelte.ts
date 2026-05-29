@@ -1897,6 +1897,18 @@ function _createAppState() {
 		} finally {
 			searchLoading = false;
 		}
+
+		// Auto-fan-out to relays when the local query returned 0 hits
+		// AND the engine is in confirm mode. The modal still gates the
+		// actual relay traffic — this just removes the extra
+		// "Search via relays?" click between the empty local result
+		// and the relay-fetch confirm. The previous flow made the user
+		// click twice (search submit → local empty → click relay CTA
+		// → modal); with confirm-mode the modal is always the gating
+		// step so an auto-trigger is safe.
+		if (searchCount === 0 && networkStatus?.mode === 'confirm' && searchLastQuery) {
+			await handleSearchViaRelays();
+		}
 	}
 
 	// "Search relays" — re-run the current query with fetch_always so the

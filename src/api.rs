@@ -221,12 +221,24 @@ pub async fn search_handler(
             .relays
             .clone()
             .unwrap_or_else(|| engine.relay_config().all_urls());
+
+        // Build a structured RequestSummary so the confirm modal
+        // renders the DSL sentence + structured filter block instead
+        // of a flat opaque "Search relays: <full naddr>" label. The
+        // parse may fail (e.g. malformed input) — in that case we
+        // fall back to summary: None and the modal renders the legacy
+        // flat view. Compound (`|`) queries get parsed below and
+        // contribute one filter per branch.
+        let summary = build_search_summary(&req.query, &relays, &engine);
+        let label = short_search_label(&req.query);
+
         match engine
-            .begin_fetch_operation(
+            .begin_fetch_operation_with_summary(
                 crate::network::FetchPattern::Search,
-                format!("Search relays: {}", req.query.trim()),
+                label,
                 describe_search_steps(&req.query),
                 relays,
+                summary,
             )
             .await
         {
@@ -2463,6 +2475,67 @@ fn describe_discussion_steps(
         ));
     }
     steps
+}
+
+/// Short, screen-friendly label for the confirm modal's title. The
+/// previous form used the full query string, which produced a 500+ char
+/// header when the query was a NIP-19 entity (naddr/nevent/etc).
+/// Truncate to a head/tail snippet so the header stays one line.
+fn short_search_label(query: &str) -> String {
+    let q = query.trim();
+    if q.len() <= 48 {
+        return format!("Search · {q}");
+    }
+    let head: String = q.chars().take(14).collect();
+    let tail: String = q.chars().rev().take(8).collect::<String>().chars().rev().collect();
+    format!("Search · {head}…{tail}")
+}
+
+/// Build a structured RequestSummary for a search query. Returns
+/// None when the query fails to parse — caller falls back to the
+/// legacy flat-relay modal view. Composition is a single primary
+/// "read" stage since search.rs's existing per-class routing isn't
+/// wired through this handler yet (planned follow-up).
+fn build_search_summary(
+    query: &str,
+    relays: &[String],
+    _engine: &Engine,
+) -> Option<crate::network::RequestSummary> {
+    use crate::network::{nip_filter_from_json, CompositionShape, Phase, PhaseStage, RequestSummary};
+
+    // Try compound parse first — a `|` query splits into multiple
+    // branches that each contribute a NIP-01 filter (or several).
+    let filter_jsons: Vec<serde_json::Value> = if query.contains('|') {
+        SearchQuery::parse_compound(query)
+            .ok()?
+            .branches
+            .into_iter()
+            .flat_map(|b| b.to_nip01_filters())
+            .collect()
+    } else {
+        SearchQuery::parse(query)
+            .ok()?
+            .to_nip01_filters()
+    };
+    if filter_jsons.is_empty() {
+        return None;
+    }
+
+    let composition = CompositionShape {
+        phases: vec![PhaseStage {
+            label: "primary".into(),
+            members: vec![(Phase::Read, relays.to_vec())],
+            start_delay_ms: 0,
+        }],
+    };
+    let nip_filters: Vec<_> = filter_jsons.iter().map(nip_filter_from_json).collect();
+    let mut summary = RequestSummary {
+        filters: nip_filters,
+        composition,
+        dsl: String::new(),
+    };
+    summary.dsl = summary.to_dsl();
+    Some(summary)
 }
 
 /// Confirm-modal steps for a relay search, derived from the parsed
