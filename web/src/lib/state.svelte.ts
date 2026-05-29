@@ -2810,18 +2810,24 @@ function _createAppState() {
 		} catch (e) {
 			console.warn('Config fetch failed:', e);
 		}
-		// Load network status FIRST so the modeline's network/auto pill
-		// settles on the real state before the user sees the placeholder
-		// "—". loadFeed is slow; networkStatus is a cheap GET.
-		try {
-			networkStatus = await api.getNetworkStatus();
-		} catch {}
+		// Fire the two cheap modeline-driving GETs in parallel so the
+		// pills settle as fast as the network round-trip allows. Neither
+		// depends on the other, and either one's mode field can drive
+		// the modeline's network pill (live status wins; saved is the
+		// fallback for the loading window).
+		const [networkStatusResult, settingsResult] = await Promise.allSettled([
+			api.getNetworkStatus(),
+			api.getSettings()
+		]);
+		if (networkStatusResult.status === 'fulfilled') {
+			networkStatus = networkStatusResult.value;
+		}
 		// Hydrate editor / compose defaults from config.toml so a reload
 		// reflects the user's last-saved settings (instead of resetting
 		// to hard-coded defaults). Settings page's "Save settings" writes
 		// these back via the snapshot endpoint.
-		try {
-			const s = await api.getSettings();
+		if (settingsResult.status === 'fulfilled') {
+			const s = settingsResult.value;
 			editorLineNumbers = s.editor.line_numbers;
 			editorVimMode = s.editor.vim_mode;
 			editorInsertMode = s.editor.insert_mode as EditorInsertMode;
@@ -2832,8 +2838,6 @@ function _createAppState() {
 			if (s.network?.mode === 'auto' || s.network?.mode === 'confirm') {
 				savedNetworkMode = s.network.mode;
 			}
-		} catch {
-			// API not yet available — keep hard-coded defaults.
 		}
 		// Auto-reconnect to the previously-chosen signing source. NIP-07
 		// is a per-session connection that the browser holds; persisting
