@@ -1205,7 +1205,16 @@ impl<'a> PublicationEngine<'a> {
         // with FetchAlways when the local query returns zero (cold
         // cache after purge / fresh install) — that retry only does
         // anything if we actually fan out to relays here.
-        let response = self.engine.get_events(vec![filter], policy, None).await?;
+        //
+        // Pass `mode_confirm: true` so the engine doesn't silently
+        // downgrade FetchAlways → LocalOnly in confirm mode. The web
+        // listing a publication feed with `fetch_always` is an
+        // explicit user-initiated request; the confirm modal should
+        // pop, not silently no-op.
+        let response = self
+            .engine
+            .get_events_with_options(vec![filter], policy, None, true)
+            .await?;
         tracing::debug!(
             "list_root_publications: got {} raw 30040 events from store (policy {:?})",
             response.events.len(),
