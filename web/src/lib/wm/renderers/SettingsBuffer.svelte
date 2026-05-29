@@ -10,6 +10,33 @@
 	const app = getAppState();
 
 	let nip07Available = $state(false);
+	// Snapshot of the last-saved values from config.toml. Loaded on
+	// mount + after a successful save. Compared against the live
+	// app.* values to drive the dirty flag on the Save button.
+	type SavedBaseline = {
+		editor: { line_numbers: boolean; vim_mode: boolean; insert_mode: string };
+		compose: { default_mode: string; sync_mode: string; button_labels: string };
+		network: { mode: string };
+		identity_source: string | null;
+	};
+	let savedBaseline = $state<SavedBaseline | null>(null);
+
+	async function captureSavedBaseline() {
+		try {
+			const s = await api.getSettings();
+			savedBaseline = {
+				editor: s.editor,
+				compose: s.compose,
+				network: s.network,
+				identity_source: s.identity?.source ?? null
+			};
+		} catch {
+			// Endpoint unavailable — leave baseline null, dirty stays
+			// false (button disabled) so we don't false-claim changes.
+			savedBaseline = null;
+		}
+	}
+
 	$effect(() => {
 		// Detect once on mount; window.nostr is injected by extensions
 		// at document_start, so by the time SettingsBuffer renders it's
@@ -21,6 +48,7 @@
 		// forget — Svelte 5 re-derives `currentSource` once the state
 		// updates land.
 		app.refreshIdentity();
+		captureSavedBaseline();
 	});
 
 	// Inputs for engine login flow
@@ -66,6 +94,25 @@
 	}
 
 	let saving = $state(false);
+
+	/** True when any live setting differs from the last-saved value in
+	 *  config.toml. Drives the dirty visual + enabled state on the
+	 *  Save Settings button — nothing to save means nothing to click. */
+	const settingsDirty = $derived.by(() => {
+		const b = savedBaseline;
+		if (!b) return false;
+		if (b.editor.line_numbers !== app.editorLineNumbers) return true;
+		if (b.editor.vim_mode !== app.editorVimMode) return true;
+		if (b.editor.insert_mode !== app.editorInsertMode) return true;
+		if (b.compose.default_mode !== app.composeDefaultMode) return true;
+		if (b.compose.sync_mode !== app.syncMode) return true;
+		if (b.compose.button_labels !== app.buttonLabels) return true;
+		if (b.network.mode !== (app.networkStatus?.mode ?? 'auto')) return true;
+		const liveSource = app.identityStatus?.source ?? 'engine';
+		if ((b.identity_source ?? 'engine') !== liveSource) return true;
+		return false;
+	});
+
 	async function saveSettings() {
 		saving = true;
 		try {
@@ -93,6 +140,8 @@
 			// right away but later look at the radio.
 			app.setSavedIdentitySource(sourceToPersist);
 			app.pushToast(resp.message, 'success', 3500);
+			// Re-capture baseline so the dirty flag clears.
+			await captureSavedBaseline();
 		} catch (e) {
 			app.pushToast(
 				`Save failed: ${e instanceof Error ? e.message : String(e)}`,
@@ -106,7 +155,20 @@
 </script>
 
 <div class="settings-view">
-	<div class="settings-header">Settings</div>
+	<div class="settings-header">
+		<span class="settings-header-title">Settings</span>
+		<button
+			class="settings-save"
+			class:settings-save--dirty={settingsDirty}
+			onclick={saveSettings}
+			disabled={!settingsDirty || saving}
+			title={!settingsDirty
+				? 'No unsaved changes — current settings already match config.toml.'
+				: 'Write current identity source · editor · compose · network · relays into config.toml so the next boot starts here.'}
+		>
+			{saving ? 'Saving…' : settingsDirty ? 'Save settings *' : 'Save settings'}
+		</button>
+	</div>
 
 	<div class="settings-group">
 		<div class="settings-group-title">Identity</div>
@@ -381,14 +443,12 @@
 		</p>
 	</div>
 
-	<div class="settings-save-bar">
-		<button class="settings-save" onclick={saveSettings} disabled={saving} title="Write the current identity source · editor · compose · network · relays into config.toml so the next boot starts here. relays.json + in-memory state stay authoritative at runtime.">
-			{saving ? 'Saving…' : 'Save settings'}
-		</button>
-		<span class="settings-hint">
-			Writes editor / compose / network mode / current relay set into <code>config.toml</code>. Survives restarts and is portable to another machine.
-		</span>
-	</div>
+	<!-- Save Settings moved to the top header. Hint kept here so
+	     the explanation stays visible alongside the field group it
+	     describes. -->
+	<p class="settings-hint settings-hint--footer">
+		Save Settings writes editor / compose / network mode / current relay set into <code>config.toml</code>. Survives restarts and is portable to another machine. <code>relays.json</code> + in-memory state stay authoritative at runtime.
+	</p>
 </div>
 
 <style>
@@ -400,6 +460,10 @@
 	}
 
 	.settings-header {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 12px;
 		padding: 10px 14px;
 		font-size: var(--t-xs);
 		font-weight: 600;
@@ -407,6 +471,10 @@
 		text-transform: uppercase;
 		letter-spacing: 0.05em;
 		border-bottom: 1px solid var(--panel-border);
+	}
+	.settings-header-title {
+		flex: 1;
+		min-width: 0;
 	}
 
 	.settings-group {
@@ -548,33 +616,34 @@
 		font-family: var(--font-mono);
 	}
 
-	/* Pinned save bar at the bottom of the scrollable settings panel
-	   so the action is always reachable even when the page is long. */
-	.settings-save-bar {
-		display: flex;
-		align-items: center;
-		gap: 10px;
-		padding: 12px 14px;
-		border-top: 1px solid var(--panel-border);
-		margin-top: 12px;
-		position: sticky;
-		bottom: 0;
-		background: var(--panel-bg, var(--bg));
-		z-index: 1;
+	.settings-hint--footer {
+		padding: 12px 16px 0;
+		margin: 0;
+		font-size: var(--t-xs);
+		color: var(--muted);
 	}
 	.settings-save {
-		font-size: var(--t-sm);
-		padding: 6px 14px;
+		font-size: var(--t-xs);
+		padding: 4px 10px;
 		font-family: var(--font-mono);
-		background: color-mix(in srgb, var(--state-online) 16%, transparent);
-		border: 1px solid color-mix(in srgb, var(--state-online) 45%, transparent);
-		color: var(--state-online);
+		background: transparent;
+		border: 1px solid var(--panel-border);
+		color: var(--muted);
 		cursor: pointer;
 		border-radius: var(--r-sm);
-		font-weight: 600;
+		font-weight: 500;
+		text-transform: none;
+		letter-spacing: 0;
 	}
-	.settings-save:hover:not([disabled]) {
-		background: color-mix(in srgb, var(--state-online) 26%, transparent);
+	/* Dirty state — current in-memory settings differ from config.toml.
+	   Warm tint signals "there's something to save." */
+	.settings-save--dirty:not([disabled]) {
+		background: color-mix(in srgb, var(--id-forked) 22%, transparent);
+		border-color: var(--id-forked);
+		color: var(--id-forked);
+	}
+	.settings-save--dirty:hover:not([disabled]) {
+		background: color-mix(in srgb, var(--id-forked) 32%, transparent);
 	}
 	.settings-save[disabled] {
 		opacity: 0.5;

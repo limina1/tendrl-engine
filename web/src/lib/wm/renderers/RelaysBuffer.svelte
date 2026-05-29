@@ -973,6 +973,9 @@
 		try {
 			const resp = await api.snapshotConfig();
 			app.pushToast(resp.message, 'success', 3500);
+			// Re-load so initialRelays picks up the just-snapshotted
+			// value and the dirty-flag clears.
+			await load();
 		} catch (e) {
 			app.pushToast(
 				`Snapshot failed: ${e instanceof Error ? e.message : String(e)}`,
@@ -983,6 +986,25 @@
 			snapshotting = false;
 		}
 	}
+
+	/** True when the current relay union (general ∪ fetch ∪ publish,
+	 *  the same set that snapshotToConfig would write) differs from
+	 *  what's currently in config.toml's `initial_relays`. The Save
+	 *  Settings button uses this to disable + de-emphasize itself when
+	 *  there's nothing to save. */
+	const settingsDirty = $derived.by(() => {
+		// `rows` already deduplicates per URL across all sets, and the
+		// engine snapshot writes the same `general ∪ fetch ∪ publish`
+		// union. Comparing the sorted-normalized URL lists tells us
+		// whether a snapshot would actually change config.toml.
+		const live = rows.map((r) => normalizeRelayUrl(r.url)).sort();
+		const saved = initialRelays.map((u) => normalizeRelayUrl(u)).sort();
+		if (live.length !== saved.length) return true;
+		for (let i = 0; i < live.length; i++) {
+			if (live[i] !== saved[i]) return true;
+		}
+		return false;
+	});
 
 	function toggleExpanded(url: string) {
 		const next = new Set(expanded);
@@ -1007,8 +1029,24 @@
 
 <div class="relays-view">
 	<div class="relays-header">
-		<span>Relay configuration</span>
-		<span class="relays-hint">read/write apply live and persist · auth is cosmetic</span>
+		<div class="relays-header-title">
+			<span>Relay configuration</span>
+			<span class="relays-hint">read/write apply live and persist · auth is cosmetic</span>
+		</div>
+		<div class="relays-header-actions">
+			<button class="btn-refresh" onclick={() => load(true)}>Refresh</button>
+			<button
+				class="btn-snapshot"
+				class:btn-snapshot--dirty={settingsDirty}
+				onclick={snapshotToConfig}
+				disabled={!settingsDirty || snapshotting || rows.length === 0}
+				title={!settingsDirty
+					? 'No unsaved changes — current relays already match config.toml.'
+					: 'Snapshot the current relay set into config.toml `initial_relays` — portable bootstrap seed. relays.json stays the runtime source of truth.'}
+			>
+				{snapshotting ? 'Saving…' : settingsDirty ? 'Save settings *' : 'Save settings'}
+			</button>
+		</div>
 	</div>
 
 	<!-- Pull-from-profile: fetches the user's relay-list events
@@ -1614,19 +1652,9 @@
 			{/if}
 		</div>
 
-		<!-- Phase 5: footer collapsed to GLOBAL actions only — per-class
-		     publish buttons live in their section headers. -->
-		<div class="relays-footer">
-			<button class="btn-refresh" onclick={() => load(true)}>Refresh</button>
-			<button
-				class="btn-snapshot"
-				onclick={snapshotToConfig}
-				disabled={snapshotting || rows.length === 0}
-				title="Write the current relay set into config.toml's `initial_relays` — a portable bootstrap seed for another machine or a fresh data dir. relays.json stays the runtime source of truth."
-			>
-				{snapshotting ? 'Saving…' : 'Save settings'}
-			</button>
-		</div>
+		<!-- Phase 5+: per-class publish buttons live in their section
+		     headers; global Refresh + Save Settings moved to the top
+		     header (no more sticky bottom footer). -->
 	{/if}
 </div>
 
@@ -1640,8 +1668,9 @@
 
 	.relays-header {
 		display: flex;
-		align-items: baseline;
+		align-items: center;
 		justify-content: space-between;
+		gap: 12px;
 		padding: 10px 14px;
 		font-size: var(--t-xs);
 		font-weight: 600;
@@ -1649,6 +1678,19 @@
 		text-transform: uppercase;
 		letter-spacing: 0.05em;
 		border-bottom: 1px solid var(--panel-border);
+	}
+	.relays-header-title {
+		display: flex;
+		flex-direction: column;
+		gap: 2px;
+		min-width: 0;
+	}
+	.relays-header-actions {
+		display: flex;
+		gap: 8px;
+		text-transform: none;
+		letter-spacing: 0;
+		font-weight: 400;
 	}
 
 	.relays-hint {
@@ -1974,21 +2016,6 @@
 		filter: brightness(1.15);
 	}
 
-	.relays-footer {
-		display: flex;
-		gap: 8px;
-		padding: 10px 14px;
-		border-top: 1px solid var(--panel-border);
-		margin-top: 8px;
-		/* Pin to the bottom of the scrollable buffer so the action row
-		   (especially "Save settings") is always reachable even when
-		   the relay list scrolls. Background prevents row text from
-		   showing through. */
-		position: sticky;
-		bottom: 0;
-		background: var(--panel-bg, var(--bg));
-		z-index: 1;
-	}
 	.btn-add,
 	.btn-refresh {
 		font-size: var(--t-xs);
@@ -1999,6 +2026,16 @@
 	.btn-publish-list[disabled] {
 		opacity: 0.5;
 		cursor: not-allowed;
+	}
+	/* Dirty state — current in-memory relay set differs from
+	   config.toml. Warm tint signals "you have unsaved changes." */
+	.btn-snapshot--dirty:not([disabled]) {
+		background: color-mix(in srgb, var(--id-forked) 22%, transparent);
+		border-color: var(--id-forked);
+		color: var(--id-forked);
+	}
+	.btn-snapshot--dirty:hover:not([disabled]) {
+		background: color-mix(in srgb, var(--id-forked) 32%, transparent);
 	}
 	.btn-publish-list {
 		font-size: var(--t-xs);
