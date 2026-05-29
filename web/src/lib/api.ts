@@ -559,6 +559,15 @@ export function removeRelay(set: string, url: string) {
 	});
 }
 
+/** Toggle the `exclusive` flag for a discovery class. ON = read relays
+ *  bypassed entirely for this class's lookup type. */
+export function setDiscoveryExclusive(klass: 'search' | 'indexer', value: boolean) {
+	return fetchJson<{ updated: boolean; message: string }>('/api/v1/config/update', {
+		method: 'POST',
+		body: JSON.stringify({ set_exclusive: { class: klass, value } })
+	});
+}
+
 export interface SnapshotPayload {
 	include_relays?: boolean;
 	editor?: { line_numbers: boolean; vim_mode: boolean; insert_mode: string };

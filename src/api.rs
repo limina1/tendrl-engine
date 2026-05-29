@@ -1561,6 +1561,18 @@ pub struct ConfigUpdateRequest {
     pub add_to_named_set: Option<NamedSetMember>,
     /// Remove a relay URL from a named set.
     pub remove_from_named_set: Option<NamedSetMember>,
+    /// Toggle the `exclusive` flag for a discovery class
+    /// (`"search"` or `"indexer"`). When ON, the engine bypasses read
+    /// relays for that class's lookup type and uses the class's
+    /// `.default` / `.fallback` sets only.
+    pub set_exclusive: Option<SetExclusive>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SetExclusive {
+    /// `"search"` or `"indexer"`.
+    pub class: String,
+    pub value: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1639,6 +1651,11 @@ pub async fn config_update_handler(
     }
     if let Some(m) = &req.remove_from_named_set {
         if engine.remove_from_named_set(&m.d_tag, &m.url) {
+            changed = true;
+        }
+    }
+    if let Some(ex) = &req.set_exclusive {
+        if engine.set_discovery_exclusive(&ex.class, ex.value) {
             changed = true;
         }
     }
