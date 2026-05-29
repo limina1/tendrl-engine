@@ -2454,14 +2454,26 @@ function _createAppState() {
 
 	// ===================== Purge / Export / Import =====================
 
-	async function handlePurge() {
-		if (!confirm('This will show the command to delete the nostrdb database. Continue?')) return;
+	/** Get the engine's purge instructions — nostrdb file handles are
+	 *  open during runtime, so a true in-place purge requires engine
+	 *  restart. Returns the recommended shell command + data dir path
+	 *  so the caller can render them in a copy-friendly modal/toast
+	 *  rather than the old confirm/alert pair. */
+	async function handlePurge(): Promise<{ command: string; data_dir: string; message: string } | null> {
 		try {
 			const resp = await fetch('/api/v1/purge', { method: 'POST' });
-			const data = await resp.json();
-			alert(`To purge, stop the engine and run:\n\n${data.command}`);
+			if (!resp.ok) {
+				pushToast(`Purge request failed: ${resp.status}`, 'error', 5000);
+				return null;
+			}
+			return await resp.json();
 		} catch (e) {
-			console.error('Purge failed:', e);
+			pushToast(
+				`Purge request failed: ${e instanceof Error ? e.message : String(e)}`,
+				'error',
+				5000
+			);
+			return null;
 		}
 	}
 

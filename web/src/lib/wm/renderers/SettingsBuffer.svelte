@@ -122,6 +122,36 @@
 		return false;
 	});
 
+	// Purge modal state. Engine returns the path + shell command to
+	// run after stopping the engine (nostrdb file handles are open
+	// during runtime, so a true in-place purge isn't possible). We
+	// render the instructions in a copy-friendly inline panel rather
+	// than a browser alert().
+	let purgeOpen = $state(false);
+	let purgeInfo = $state<{ command: string; data_dir: string; message: string } | null>(null);
+	let purgeLoading = $state(false);
+	async function requestPurge() {
+		purgeLoading = true;
+		try {
+			const info = await app.handlePurge();
+			if (info) {
+				purgeInfo = info;
+				purgeOpen = true;
+			}
+		} finally {
+			purgeLoading = false;
+		}
+	}
+	async function copyPurgeCommand() {
+		if (!purgeInfo) return;
+		try {
+			await navigator.clipboard.writeText(purgeInfo.command);
+			app.pushToast('Command copied', 'success', 1500);
+		} catch {
+			app.pushToast("Couldn't copy — select manually", 'error', 3000);
+		}
+	}
+
 	async function saveSettings() {
 		saving = true;
 		try {
@@ -458,6 +488,56 @@
 	<p class="settings-hint settings-hint--footer">
 		Save Settings writes editor / compose / network mode / current relay set into <code>config.toml</code>. Survives restarts and is portable to another machine. <code>relays.json</code> + in-memory state stay authoritative at runtime.
 	</p>
+
+	<!-- Data / maintenance section. Purge requires engine restart
+	     because nostrdb file handles are open; the modal shows the
+	     exact shell command so the user can copy + run it. -->
+	<div class="settings-group">
+		<div class="settings-group-title">Data</div>
+		<div class="settings-row">
+			<span class="settings-label">Purge local cache</span>
+			<button
+				class="settings-action settings-action--danger"
+				onclick={requestPurge}
+				disabled={purgeLoading}
+				title="Get the shell command to wipe the local nostrdb cache. Useful for testing the indexer-fallback flow from a cold cache."
+			>
+				{purgeLoading ? 'Working…' : 'Purge…'}
+			</button>
+		</div>
+		<p class="settings-hint">
+			Clears the local <code>nostrdb</code> cache so the next pull walks the
+			full read → indexer.default → indexer.fallback chain. Engine restart
+			required (the running process holds open file handles on the LMDB).
+		</p>
+
+		{#if purgeOpen && purgeInfo}
+			<div class="purge-panel">
+				<div class="purge-panel-head">
+					<span class="purge-panel-title">Purge instructions</span>
+					<button class="purge-close" onclick={() => (purgeOpen = false)} aria-label="Close">×</button>
+				</div>
+				<p class="purge-panel-msg">{purgeInfo.message}</p>
+				<div class="purge-section">
+					<span class="purge-section-label">Data directory</span>
+					<code class="purge-code">{purgeInfo.data_dir}</code>
+				</div>
+				<div class="purge-section">
+					<div class="purge-section-head">
+						<span class="purge-section-label">Shell command</span>
+						<button class="settings-action" onclick={copyPurgeCommand}>copy</button>
+					</div>
+					<code class="purge-code purge-code--block">{purgeInfo.command}</code>
+				</div>
+				<p class="settings-hint">
+					Stop the engine first (Ctrl+C in its terminal), then run the
+					command above. The engine will start with an empty cache; the
+					next "Pull from your profile" will fetch all your relay-list
+					events through the indexer composition.
+				</p>
+			</div>
+		{/if}
+	</div>
 </div>
 
 <style>
@@ -630,6 +710,81 @@
 		margin: 0;
 		font-size: var(--t-xs);
 		color: var(--muted);
+	}
+
+	/* Data / purge section */
+	.settings-action--danger {
+		border-color: color-mix(in srgb, var(--state-error, var(--red)) 50%, var(--panel-border));
+		color: var(--state-error, var(--red));
+	}
+	.settings-action--danger:hover:not([disabled]) {
+		background: color-mix(in srgb, var(--state-error, var(--red)) 14%, transparent);
+	}
+	.purge-panel {
+		margin-top: 12px;
+		padding: 12px;
+		border: 1px solid var(--panel-border);
+		border-radius: var(--r-sm);
+		background: var(--panel-bg, var(--bg));
+		display: flex;
+		flex-direction: column;
+		gap: 12px;
+	}
+	.purge-panel-head {
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+	}
+	.purge-panel-title {
+		font-weight: 600;
+		font-size: var(--t-sm);
+	}
+	.purge-close {
+		appearance: none;
+		background: none;
+		border: none;
+		color: var(--muted);
+		font-size: 1.1rem;
+		cursor: pointer;
+		padding: 0 6px;
+		border-radius: 3px;
+	}
+	.purge-close:hover {
+		background: color-mix(in srgb, var(--fg) 10%, transparent);
+		color: var(--fg);
+	}
+	.purge-panel-msg {
+		margin: 0;
+		font-size: var(--t-xs);
+		color: var(--muted);
+	}
+	.purge-section {
+		display: flex;
+		flex-direction: column;
+		gap: 4px;
+	}
+	.purge-section-head {
+		display: flex;
+		justify-content: space-between;
+		align-items: baseline;
+	}
+	.purge-section-label {
+		font-size: 0.7rem;
+		text-transform: uppercase;
+		letter-spacing: 0.04em;
+		color: var(--muted);
+	}
+	.purge-code {
+		font-family: var(--font-mono);
+		font-size: var(--t-xs);
+		background: color-mix(in srgb, var(--fg) 6%, transparent);
+		border-radius: 3px;
+		padding: 4px 8px;
+		word-break: break-all;
+	}
+	.purge-code--block {
+		display: block;
+		white-space: pre-wrap;
 	}
 	.settings-save {
 		font-size: var(--t-xs);
