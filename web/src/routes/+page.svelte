@@ -697,37 +697,30 @@
 	});
 
 	const networkPill = $derived.by(() => {
-		// Live network/status wins; saved mode from config.toml is the
-		// fallback during the loading window so the button shows the
-		// user's actual intent immediately on reload.
-		const mode = app.networkStatus?.mode ?? app.savedNetworkMode ?? null;
+		// Live status wins when present; otherwise the saved mode (read
+		// synchronously from localStorage at module-load, or defaulted
+		// to 'auto' for fresh users since that's the engine default).
+		// Either way the pill renders the right colour on the first
+		// frame — no "loading" placeholder, no flash.
+		const mode = app.networkStatus?.mode ?? app.savedNetworkMode;
 		const active = (app.networkStatus?.active_fetches ?? 0) > 0;
-		if (mode === 'auto') {
-			return {
-				label: active ? 'fetching' : 'auto',
-				pillClass: 'pill--online',
-				dotClass: active ? 'dot--fetching' : 'dot--online'
-			};
-		}
 		if (mode === 'confirm') {
 			// Confirm = orange (id-diverged): the engine is gating
 			// fetches behind the user's explicit approval. The "warm"
-			// tint reads as a deliberate, attention-requiring posture
-			// without the alarm of red.
+			// tint reads as deliberate / attention-requiring without
+			// the alarm of red.
 			return {
 				label: active ? 'fetching' : 'confirm',
 				pillClass: 'pill--diverged',
 				dotClass: active ? 'dot--fetching' : 'dot--diverged'
 			};
 		}
-		// Mode unknown (initial paint or both endpoints unreachable).
-		// Purple (id-imported) reads as "transient / system state" —
-		// distinct from the engine's two configured modes so it
-		// doesn't look like a third option.
+		// 'auto' — including the localStorage fallback for fresh
+		// users where 'auto' is also the engine default.
 		return {
-			label: 'loading',
-			pillClass: 'pill--imported',
-			dotClass: 'dot--fetching'
+			label: active ? 'fetching' : 'auto',
+			pillClass: 'pill--online',
+			dotClass: active ? 'dot--fetching' : 'dot--online'
 		};
 	});
 

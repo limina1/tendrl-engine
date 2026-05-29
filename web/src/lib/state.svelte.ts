@@ -433,11 +433,17 @@ function _createAppState() {
 	// compilation can push initialize() out by seconds. Updated
 	// whenever the engine confirms a new mode (live status, settings,
 	// or a user-driven toggle).
-	let savedNetworkMode: 'auto' | 'confirm' | null = $state(
-		((): 'auto' | 'confirm' | null => {
-			if (typeof localStorage === 'undefined') return null;
+	// Default to 'auto' when the cache is empty — that's the engine's
+	// default mode (per src/network.rs NetworkMode default), so for a
+	// fresh user it matches reality without ever showing a "loading"
+	// fallback. Returning users get their actual last-known mode from
+	// localStorage. If the live state ever turns out to differ, the
+	// init/poll/toggle paths overwrite this within milliseconds.
+	let savedNetworkMode: 'auto' | 'confirm' = $state(
+		((): 'auto' | 'confirm' => {
+			if (typeof localStorage === 'undefined') return 'auto';
 			const v = localStorage.getItem('tendrl.savedNetworkMode');
-			return v === 'auto' || v === 'confirm' ? v : null;
+			return v === 'confirm' ? 'confirm' : 'auto';
 		})()
 	);
 
