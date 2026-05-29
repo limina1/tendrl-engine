@@ -736,6 +736,175 @@ impl<'a> PublicationEngine<'a> {
         .await
     }
 
+    /// Backfill missing 30041 sections + nested 30040 indexes for a
+    /// publication tree from relays, all wrapped in ONE
+    /// begin_fetch_operation so confirm mode pops a single modal
+    /// listing what's about to be fetched instead of one modal per
+    /// section. `max_depth` controls how many tree levels to walk
+    /// when collecting unresolved children.
+    ///
+    /// Flow:
+    ///   1. Load the publication tree LOCAL-ONLY.
+    ///   2. Walk to depth N collecting missing section (kind 30041)
+    ///      and index (kind 30040) addresses.
+    ///   3. If everything is already cached → return (0, 0) early.
+    ///   4. Otherwise: build per-author multi-filter REQ, route through
+    ///      begin_fetch_operation_with_summary, fetch from relays,
+    ///      report (requested, fetched) counts.
+    pub async fn backfill_publication_sections(
+        &self,
+        addr: &NAddr,
+        max_depth: usize,
+    ) -> Result<(usize, usize)> {
+        use serde_json::json;
+        use std::collections::{HashMap, HashSet};
+
+        // 1. Walk the local tree to discover what we need.
+        let local = self
+            .load_publication_tree(addr, max_depth, FetchPolicy::LocalOnly)
+            .await?;
+
+        // 2. Collect addresses that aren't yet loaded.
+        //    Sections (30041 leaves) and nested indexes (30040 stubs
+        //    whose `nested` is empty or unloaded).
+        let mut needed: HashMap<String, HashSet<(u64, String)>> = HashMap::new();
+        fn walk(pub_: &Publication, into: &mut HashMap<String, HashSet<(u64, String)>>) {
+            for section in &pub_.sections {
+                if !section.event.is_loaded() {
+                    into.entry(section.addr.pubkey.clone())
+                        .or_default()
+                        .insert((section.addr.kind, section.addr.d_tag.clone()));
+                }
+            }
+            for nested in &pub_.nested {
+                // A nested stub is "missing" if its own sections list
+                // didn't get filled in (i.e. its 30040 didn't ingest).
+                if nested.sections.is_empty() && nested.nested.is_empty() {
+                    into.entry(nested.addr.pubkey.clone())
+                        .or_default()
+                        .insert((nested.addr.kind, nested.addr.d_tag.clone()));
+                }
+                walk(nested, into);
+            }
+        }
+        walk(&local, &mut needed);
+
+        let total_needed: usize = needed.values().map(|s| s.len()).sum();
+        if total_needed == 0 {
+            return Ok((0, 0));
+        }
+
+        // 3. Build a multi-filter REQ — one filter per (author, kind)
+        //    group. Filters in one REQ are ORed, so a single
+        //    subscription brings down everything missing.
+        let mut filters: Vec<serde_json::Value> = Vec::new();
+        for (pubkey, set) in &needed {
+            // Group by kind so we don't fan out an absurd number of
+            // filters when one author has both 30040s and 30041s.
+            let mut by_kind: HashMap<u64, Vec<String>> = HashMap::new();
+            for (kind, d_tag) in set {
+                by_kind.entry(*kind).or_default().push(d_tag.clone());
+            }
+            for (kind, d_tags) in by_kind {
+                for chunk in d_tags.chunks(50) {
+                    filters.push(json!({
+                        "kinds": [kind],
+                        "authors": [pubkey],
+                        "#d": chunk,
+                        "limit": chunk.len() * 2,
+                    }));
+                }
+            }
+        }
+
+        // 4. Open the operation with a structured summary so the
+        //    confirm modal shows the DSL + filter list + composition.
+        let relays = self.engine.relays();
+        let summary = crate::network::RequestSummary {
+            filters: filters
+                .iter()
+                .map(crate::network::nip_filter_from_json)
+                .collect(),
+            composition: crate::network::CompositionShape {
+                phases: vec![crate::network::PhaseStage {
+                    label: "primary".into(),
+                    members: vec![(crate::network::Phase::Read, relays.clone())],
+                    start_delay_ms: 0,
+                }],
+            },
+            dsl: String::new(),
+        };
+        let mut summary = summary;
+        summary.dsl = summary.to_dsl();
+        let label = format!(
+            "Backfill {} section{} for {}",
+            total_needed,
+            if total_needed == 1 { "" } else { "s" },
+            addr.d_tag.chars().take(24).collect::<String>(),
+        );
+
+        let op = match self
+            .engine
+            .begin_fetch_operation_with_summary(
+                crate::network::FetchPattern::Publication,
+                label,
+                Vec::new(),
+                relays,
+                Some(summary),
+            )
+            .await
+        {
+            Ok(o) => o,
+            Err(_) => return Ok((total_needed, 0)),
+        };
+        let chosen = op.relays().to_vec();
+
+        // 5. Fan out across the approved relays. Each one ingests
+        //    into nostrdb as it streams; we just count totals for
+        //    the response.
+        let mut total_fetched = 0usize;
+        for relay_url in &chosen {
+            for filter in &filters {
+                op.relay_status(
+                    relay_url.clone(),
+                    crate::network::Phase::Read,
+                    crate::network::RelayStatusValue::Connecting,
+                );
+                match self
+                    .engine
+                    .tracked_fetch_with_options(
+                        relay_url,
+                        std::slice::from_ref(filter),
+                        crate::network::FetchTrigger::UserAction,
+                        true,
+                    )
+                    .await
+                {
+                    Ok(events) => {
+                        op.relay_status(
+                            relay_url.clone(),
+                            crate::network::Phase::Read,
+                            crate::network::RelayStatusValue::Eose {
+                                event_count: events.len(),
+                            },
+                        );
+                        total_fetched += events.len();
+                    }
+                    Err(e) => {
+                        op.relay_status(
+                            relay_url.clone(),
+                            crate::network::Phase::Read,
+                            crate::network::RelayStatusValue::Error { msg: e.to_string() },
+                        );
+                    }
+                }
+            }
+        }
+        op.complete(total_fetched);
+
+        Ok((total_needed, total_fetched))
+    }
+
     /// Recursive worker for [`load_publication_tree`]. Returns a boxed future so
     /// the async recursion has a concrete (non-infinite) type.
     fn load_tree_inner<'s>(

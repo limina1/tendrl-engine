@@ -155,8 +155,16 @@ export function getEvent(eventId: string) {
 /** Fetch an addressable event (latest version for the kind/pubkey/d_tag
  *  triple). Used by the reader to render non-30040 addressables like
  *  NIP-23 long-form articles (30023) and NKBIP-02 wikis (30818). */
-export function getAddressable(kind: number, pubkey: string, d_tag: string) {
-	return fetchJson<{ event: unknown }>(`/api/v1/addressable/${kind}/${pubkey}/${encodeURIComponent(d_tag)}`);
+export function getAddressable(
+	kind: number,
+	pubkey: string,
+	d_tag: string,
+	policy?: 'local_only' | 'local_first' | 'fetch_always'
+) {
+	const qs = policy ? `?policy=${policy}` : '';
+	return fetchJson<{ event: unknown }>(
+		`/api/v1/addressable/${kind}/${pubkey}/${encodeURIComponent(d_tag)}${qs}`
+	);
 }
 
 export function queryEvents(filters: Record<string, unknown>[], policy = 'local_first') {
@@ -475,6 +483,18 @@ export function fetchSections() {
 	return fetchJson<{ total_referenced: number; missing: number; fetched: number }>('/api/v1/fetch/sections', {
 		method: 'POST'
 	});
+}
+
+/** Batch-fetch a publication's missing 30041 sections + nested 30040
+ *  indexes from relays in ONE op (one confirm modal in confirm mode
+ *  instead of one per section). `depth` controls how many tree levels
+ *  to walk when collecting missing children. */
+export function backfillPublication(pubkey: string, d_tag: string, depth?: number) {
+	const qs = depth != null ? `?depth=${depth}` : '';
+	return fetchJson<{ requested: number; fetched: number; depth: number }>(
+		`/api/v1/publications/${pubkey}/${encodeURIComponent(d_tag)}/backfill${qs}`,
+		{ method: 'POST' }
+	);
 }
 
 /** Pull a user's relay-list events (kinds 10002 / 10007 / 10086 /

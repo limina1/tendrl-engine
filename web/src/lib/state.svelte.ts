@@ -2156,11 +2156,44 @@ function _createAppState() {
 			viewMode = 'outline';
 			currentSection = 0;
 			previewVisible = false;
+
+			// Auto-backfill missing sections + nested indexes from
+			// relays. In confirm mode the user gets ONE modal listing
+			// what's about to be fetched (instead of N modals during
+			// per-section lazy load). In auto mode the activity toast
+			// tracks per-relay progress. After the backfill ingest, the
+			// reader's lazy section getter sees fresh data.
+			backfillCurrentPublication(pubkey, d_tag).catch((e) => {
+				console.warn('Auto-backfill failed:', e);
+			});
 		} catch (e) {
 			console.error('Failed to open publication:', pubkey, d_tag, e);
 			navigateHome();
 		} finally {
 			docLoading = false;
+		}
+	}
+
+	/** Fire the backfill endpoint and, if it ingested anything new,
+	 *  reload the TOC so the lazy section reads see the fresh content. */
+	async function backfillCurrentPublication(pubkey: string, d_tag: string): Promise<void> {
+		const resp = await api.backfillPublication(pubkey, d_tag);
+		if (resp.fetched > 0 && publication?.addr.pubkey === pubkey && publication?.addr.d_tag === d_tag) {
+			// Re-load the publication tree so newly-ingested sections
+			// show up. local_first finds them in cache now.
+			try {
+				const fresh = await api.getPublication(pubkey, d_tag, 'local_first');
+				publication = fresh.publication;
+				sections = fresh.toc.map((entry, i) => ({
+					addr: entry.addr,
+					title: entry.title,
+					content: null,
+					position: i,
+					status: 'pending' as const
+				}));
+			} catch {
+				/* keep the previous TOC if re-load fails */
+			}
 		}
 	}
 

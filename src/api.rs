@@ -98,12 +98,21 @@ pub struct AddressablePath {
     pub d_tag: String,
 }
 
+/// Optional query for the addressable handler — lets the web force a
+/// `fetch_always` round-trip (per-section "fetch from relays" button in
+/// the reader outline) instead of always-local-first.
+#[derive(Debug, Deserialize, Default)]
+pub struct AddressableQuery {
+    pub policy: Option<String>,
+}
+
 /// GET /api/v1/addressable/:kind/:pubkey/:d_tag
 ///
 /// Get an addressable event by kind, pubkey, and d-tag
 pub async fn get_addressable_handler(
     State(engine): State<AppState>,
     Path(params): Path<AddressablePath>,
+    axum::extract::Query(query): axum::extract::Query<AddressableQuery>,
 ) -> Result<impl IntoResponse, EngineError> {
     debug!(
         "Get addressable request: {}:{}:{}",
@@ -117,13 +126,13 @@ pub async fn get_addressable_handler(
         ));
     }
 
+    let policy = match &query.policy {
+        Some(p) => p.parse()?,
+        None => FetchPolicy::LocalFirst,
+    };
+
     let event = engine
-        .get_addressable(
-            params.kind,
-            &params.pubkey,
-            &params.d_tag,
-            FetchPolicy::LocalFirst,
-        )
+        .get_addressable(params.kind, &params.pubkey, &params.d_tag, policy)
         .await?;
 
     match event {
@@ -619,6 +628,51 @@ pub async fn get_publication_handler(
 
 /// GET /api/v1/publications/:pubkey/:d_tag/stream
 ///
+/// POST /api/v1/publications/:pubkey/:d_tag/backfill?depth=N
+///
+/// Batch-fetch the publication's missing 30041 sections + nested
+/// 30040 indexes from relays. In confirm mode pops ONE modal listing
+/// the addresses about to be requested (rather than one modal per
+/// section). Auto mode fires silently and the activity toast tracks
+/// per-relay progress.
+#[derive(Debug, Deserialize)]
+pub struct BackfillQuery {
+    /// How many tree levels to walk when collecting missing children.
+    /// Defaults to the same DEFAULT_PUBLICATION_DEPTH used by
+    /// get_publication_handler so the backfill horizon matches what
+    /// the reader displays.
+    pub depth: Option<usize>,
+}
+
+pub async fn backfill_publication_handler(
+    State(engine): State<AppState>,
+    Path(params): Path<PublicationPath>,
+    axum::extract::Query(query): axum::extract::Query<BackfillQuery>,
+) -> Result<Json<Value>, EngineError> {
+    if params.pubkey.len() != 64 || hex::decode(&params.pubkey).is_err() {
+        return Err(EngineError::InvalidHex(
+            "Pubkey must be a 64-character hex string".to_string(),
+        ));
+    }
+
+    let depth = query
+        .depth
+        .unwrap_or(DEFAULT_PUBLICATION_DEPTH)
+        .min(MAX_PUBLICATION_DEPTH);
+    let addr = NAddr::new(KIND_PUBLICATION_INDEX, &params.pubkey, &params.d_tag);
+    let pub_engine = PublicationEngine::new(&engine);
+
+    let (requested, fetched) = pub_engine
+        .backfill_publication_sections(&addr, depth)
+        .await?;
+
+    Ok(Json(json!({
+        "requested": requested,
+        "fetched": fetched,
+        "depth": depth,
+    })))
+}
+
 /// SSE variant of `get_publication_handler`: instead of returning the whole
 /// TOC in one response, it streams one `PubLoadEvent` per node as the
 /// recursive loader resolves it, ending with a `done` event. The client builds

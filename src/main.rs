@@ -298,6 +298,10 @@ async fn main() -> anyhow::Result<()> {
             post(api::load_sections_handler),
         )
         .route(
+            "/api/v1/publications/:pubkey/:d_tag/backfill",
+            post(api::backfill_publication_handler),
+        )
+        .route(
             "/api/v1/publications/:pubkey/:d_tag/sections/:index",
             get(api::get_section_handler),
         )
