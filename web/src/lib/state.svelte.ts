@@ -426,7 +426,30 @@ function _createAppState() {
 	// arrives via `/api/v1/network/status`. The modeline pill uses
 	// it as a fallback so the pill doesn't briefly disappear (or
 	// flash an em-dash placeholder) at page load.
-	let savedNetworkMode: 'auto' | 'confirm' | null = $state(null);
+	//
+	// Seeded SYNCHRONOUSLY from localStorage at module-load so the
+	// modeline pill renders with the last-known mode before any HTTP
+	// fetch completes — important in Vite dev mode where bundle
+	// compilation can push initialize() out by seconds. Updated
+	// whenever the engine confirms a new mode (live status, settings,
+	// or a user-driven toggle).
+	let savedNetworkMode: 'auto' | 'confirm' | null = $state(
+		((): 'auto' | 'confirm' | null => {
+			if (typeof localStorage === 'undefined') return null;
+			const v = localStorage.getItem('tendrl.savedNetworkMode');
+			return v === 'auto' || v === 'confirm' ? v : null;
+		})()
+	);
+
+	function persistNetworkMode(mode: 'auto' | 'confirm') {
+		if (typeof localStorage !== 'undefined') {
+			try {
+				localStorage.setItem('tendrl.savedNetworkMode', mode);
+			} catch {
+				/* quota / privacy mode — fall back to in-memory only */
+			}
+		}
+	}
 	// True while the auto-reconnect path is actively trying to detect +
 	// register window.nostr. Lets the UI render a "reconnecting…" state
 	// instead of the default engine login form during that window.
@@ -2412,6 +2435,12 @@ function _createAppState() {
 		try {
 			await api.setNetworkMode(mode);
 			networkStatus = await api.getNetworkStatus();
+			// User-driven toggle — update the cache immediately so
+			// the next page-load instant-paints the new mode.
+			if (mode === 'auto' || mode === 'confirm') {
+				savedNetworkMode = mode;
+				persistNetworkMode(mode);
+			}
 		} catch (e) {
 			console.error('Failed to set network mode:', e);
 		}
@@ -2822,6 +2851,14 @@ function _createAppState() {
 		}
 		if (networkStatusResult.status === 'fulfilled') {
 			networkStatus = networkStatusResult.value;
+			// Mirror the live mode into the saved cache so the next
+			// reload reflects what the engine actually said, not just
+			// what config.toml hints.
+			const m = networkStatusResult.value.mode;
+			if (m === 'auto' || m === 'confirm') {
+				savedNetworkMode = m;
+				persistNetworkMode(m);
+			}
 		}
 		// Hydrate editor / compose defaults from config.toml so a reload
 		// reflects the user's last-saved settings (instead of resetting
@@ -2838,6 +2875,7 @@ function _createAppState() {
 			savedIdentitySource = s.identity?.source ?? null;
 			if (s.network?.mode === 'auto' || s.network?.mode === 'confirm') {
 				savedNetworkMode = s.network.mode;
+				persistNetworkMode(s.network.mode);
 			}
 		}
 		// Auto-reconnect to the previously-chosen signing source. NIP-07
@@ -2921,7 +2959,19 @@ function _createAppState() {
 	function startNetworkPoll() {
 		const networkPoll = setInterval(async () => {
 			if (document.hidden) return;
-			try { networkStatus = await api.getNetworkStatus(); } catch {}
+			try {
+				const ns = await api.getNetworkStatus();
+				networkStatus = ns;
+				// Keep the localStorage cache in sync with the live
+				// engine so the next reload's instant-paint matches
+				// reality (e.g. user toggled mode in a different tab).
+				if (ns.mode === 'auto' || ns.mode === 'confirm') {
+					if (savedNetworkMode !== ns.mode) {
+						savedNetworkMode = ns.mode;
+						persistNetworkMode(ns.mode);
+					}
+				}
+			} catch {}
 		}, 2000);
 		// Identity poll — detect server-side lock timeout
 		identityPollInterval = setInterval(async () => {
