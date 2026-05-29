@@ -713,7 +713,10 @@
 				dotClass: active ? 'dot--fetching' : 'dot--offline'
 			};
 		}
-		return { label: '—', pillClass: 'pill--ghost', dotClass: 'dot--offline' };
+		// networkStatus hasn't resolved yet — hide the pill entirely
+		// rather than showing a placeholder em-dash that looks like
+		// a third state.
+		return null;
 	});
 
 	const identityPill = $derived.by(() => {
@@ -911,18 +914,20 @@
 					{/if}
 				</span>
 			{/if}
-			<button
-				class="pill pill--btn {networkPill.pillClass}"
-				onclick={toggleNetworkMode}
-				oncontextmenu={(e) => {
-					e.preventDefault();
-					openRelays();
-				}}
-				title="Click to toggle auto/confirm fetching · right-click for relay configuration"
-			>
-				<span class="dot {networkPill.dotClass}"></span>
-				{networkPill.label}
-			</button>
+			{#if networkPill}
+				<button
+					class="pill pill--btn {networkPill.pillClass}"
+					onclick={toggleNetworkMode}
+					oncontextmenu={(e) => {
+						e.preventDefault();
+						openRelays();
+					}}
+					title="Click to toggle auto/confirm fetching · right-click for relay configuration"
+				>
+					<span class="dot {networkPill.dotClass}"></span>
+					{networkPill.label}
+				</button>
+			{/if}
 			{#if embeddingPill}
 				<span class="pill {embeddingPill.pillClass}" title="Embedding index">
 					<span class="dot {embeddingPill.dotClass}"></span>
