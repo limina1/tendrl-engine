@@ -54,6 +54,9 @@
 		listEl = $bindable<HTMLDivElement | undefined>(undefined),
 		canPromptRelays = false,
 		onsearchrelays,
+		hasSearched = false,
+		networkMode = 'auto',
+		relaySearchLoading = false,
 		// Refs tab — held items in the reference pool. Cursor + open/release
 		// are routed through the host (SearchBuffer) so the same nav handler
 		// drives them as the Search/KB tabs.  `heldItems` is the filtered
@@ -113,6 +116,18 @@
 		 *  that returned zero local hits. */
 		canPromptRelays?: boolean;
 		onsearchrelays?: () => void;
+		/** Whether the user has submitted a query yet this session.
+		 *  Distinguishes "no results because nothing was searched"
+		 *  from "no results found in local DB". */
+		hasSearched?: boolean;
+		/** Current engine network mode — drives the copy in the
+		 *  empty-result state. In `auto` we tell the user the relay
+		 *  fan-out already happened (or is in flight); in `confirm`
+		 *  we surface the explicit CTA. */
+		networkMode?: 'auto' | 'confirm';
+		/** True while the relay fan-out (handleSearchViaRelays) is in
+		 *  flight, distinct from the initial local search loading. */
+		relaySearchLoading?: boolean;
 		/** Held items (the reference pool). Rendered in the Refs tab.
 		 *  Already filtered by `refsQuery` upstream — render as-is. */
 		heldItems?: ContextItem[];
@@ -420,11 +435,32 @@
 			{/if}
 
 			{#if !loading && results.length === 0 && profiles.length === 0 && !isGrouped}
-				{#if canPromptRelays}
+				{#if !hasSearched}
+					<p class="empty">Search {searchContext}</p>
+				{:else if relaySearchLoading}
+					<div class="empty empty-cta">
+						<p>Not in local DB — searching relays…</p>
+					</div>
+				{:else if canPromptRelays}
+					<!-- Confirm mode: the modal will gate the fan-out;
+					     keep the explicit CTA as a re-trigger so the
+					     user can re-run if they declined the modal. -->
 					<div class="empty empty-cta">
 						<p>No events found in local DB.</p>
 						<button class="empty-cta__btn" onclick={() => onsearchrelays?.()}>
 							Search relays →
+						</button>
+					</div>
+				{:else if networkMode === 'auto'}
+					<!-- Auto mode: the fan-out ran silently and also
+					     returned zero. Tell the user explicitly so the
+					     panel doesn't read as "nothing happened". A
+					     manual retry button is still useful in case
+					     relay state has changed since. -->
+					<div class="empty empty-cta">
+						<p>Not found locally or on the connected relays.</p>
+						<button class="empty-cta__btn" onclick={() => onsearchrelays?.()}>
+							Retry relay search →
 						</button>
 					</div>
 				{:else}

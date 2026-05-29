@@ -357,6 +357,11 @@ function _createAppState() {
 	let searchLocalCount = $state(0);
 	let searchRelayCount = $state(0);
 	let searchLoading = $state(false);
+	// Separate from searchLoading so the empty-results UI can distinguish
+	// "scanning local DB" from "fanning out to relays" — they look
+	// different to the user (one is fast and local; the other waits on
+	// the network and is the answer to "is this even findable?").
+	let searchRelayLoading = $state(false);
 	// The effective query (with auto-`by:me` etc. applied) of the most
 	// recent run. The offline "Search relays?" CTA replays this exact
 	// string with bypass_offline=true so we hit the same filter set, not
@@ -1898,15 +1903,18 @@ function _createAppState() {
 			searchLoading = false;
 		}
 
-		// Auto-fan-out to relays when the local query returned 0 hits
-		// AND the engine is in confirm mode. The modal still gates the
-		// actual relay traffic — this just removes the extra
-		// "Search via relays?" click between the empty local result
-		// and the relay-fetch confirm. The previous flow made the user
-		// click twice (search submit → local empty → click relay CTA
-		// → modal); with confirm-mode the modal is always the gating
-		// step so an auto-trigger is safe.
-		if (searchCount === 0 && networkStatus?.mode === 'confirm' && searchLastQuery) {
+		// Auto-fan-out to relays when the local query returned 0 hits.
+		// Applies in BOTH modes: in auto the engine fans out silently
+		// (the previous behavior left the user staring at an empty
+		// panel with no signal); in confirm the modal pops as the
+		// approve-gate. Either way the user always learns whether
+		// relays have it, without an extra click.
+		const mode = networkStatus?.mode;
+		if (
+			searchCount === 0 &&
+			searchLastQuery &&
+			(mode === 'auto' || mode === 'confirm')
+		) {
 			await handleSearchViaRelays();
 		}
 	}
@@ -1918,7 +1926,7 @@ function _createAppState() {
 	// events, so none is pushed here.
 	async function handleSearchViaRelays() {
 		if (!searchLastQuery) return;
-		searchLoading = true;
+		searchRelayLoading = true;
 		try {
 			const resp = await api.search(
 				searchLastQuery,
@@ -1941,7 +1949,7 @@ function _createAppState() {
 		} catch (e) {
 			console.error('Relay search failed:', e);
 		} finally {
-			searchLoading = false;
+			searchRelayLoading = false;
 		}
 	}
 
@@ -3273,6 +3281,7 @@ function _createAppState() {
 		get searchLocalCount() { return searchLocalCount; },
 		get searchRelayCount() { return searchRelayCount; },
 		get searchLoading() { return searchLoading; },
+		get searchRelayLoading() { return searchRelayLoading; },
 
 		// Event view modal (structured)
 		get eventModalData() { return eventModalData; },

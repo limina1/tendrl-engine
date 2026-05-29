@@ -291,4 +291,7 @@
 		!app.searchLoading
 	}
 	onsearchrelays={app.handleSearchViaRelays}
+	hasSearched={app.searchLastQuery !== ''}
+	networkMode={app.networkStatus?.mode === 'confirm' ? 'confirm' : 'auto'}
+	relaySearchLoading={app.searchRelayLoading}
 />
