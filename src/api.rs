@@ -1906,8 +1906,22 @@ pub async fn relay_config_handler(State(engine): State<AppState>) -> Json<Value>
         "publish": { "urls": rc.publish.urls, "kinds": rc.publish.kinds },
         "fetch": { "urls": rc.fetch.urls, "kinds": rc.fetch.kinds },
         "broadcast": { "urls": rc.broadcast.urls, "kinds": rc.broadcast.kinds },
-        "search": { "urls": rc.search.urls, "kinds": rc.search.kinds },
-        "indexer": { "urls": rc.indexer.urls, "kinds": rc.indexer.kinds },
+        // Discovery classes split into default/fallback tiers. Add/remove
+        // them through /config/update with the dotted set names
+        // `search.default`, `search.fallback`, `indexer.default`,
+        // `indexer.fallback`.
+        "search": {
+            "default": rc.search.default,
+            "fallback": rc.search.fallback,
+        },
+        "indexer": {
+            "default": rc.indexer.default,
+            "fallback": rc.indexer.fallback,
+        },
+        "exclusive": {
+            "search": rc.exclusive.search,
+            "indexer": rc.exclusive.indexer,
+        },
         "named_sets": rc.named_sets,
         "authors": rc.authors_hex(),
         "initial_relays": rc.initial_relays,

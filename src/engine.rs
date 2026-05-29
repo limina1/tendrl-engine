@@ -289,16 +289,65 @@ impl Engine {
         self.relay_config.read().unwrap().broadcast.urls.clone()
     }
 
-    /// Get search relay URLs (owned clone). NIP-50-capable; used by `~:`
-    /// queries once per-class routing is wired.
+    /// Get search.default relay URLs (owned clone). The primary tier
+    /// for `~:` queries — joined into the fan-out (or replaces read
+    /// relays when `exclusive.search` is true).
     pub fn search_relays(&self) -> Vec<String> {
-        self.relay_config.read().unwrap().search.urls.clone()
+        self.relay_config.read().unwrap().search.default.clone()
     }
 
-    /// Get indexer relay URLs (owned clone). Discovery fallback for
-    /// kind 0 / 10002 / metadata lookups when the read set misses.
+    /// Get search.fallback relay URLs (owned clone). Consulted only
+    /// when the primary `~:` phase returns zero events.
+    pub fn search_fallback_relays(&self) -> Vec<String> {
+        self.relay_config.read().unwrap().search.fallback.clone()
+    }
+
+    /// Get indexer.default relay URLs (owned clone). Discovery primary
+    /// for kind 0 / 10002 / metadata lookups (joins or replaces read
+    /// relays per `exclusive.indexer`).
     pub fn indexer_relays(&self) -> Vec<String> {
-        self.relay_config.read().unwrap().indexer.urls.clone()
+        self.relay_config.read().unwrap().indexer.default.clone()
+    }
+
+    /// Get indexer.fallback relay URLs (owned clone). Consulted only
+    /// after the indexer.default phase returns zero events.
+    pub fn indexer_fallback_relays(&self) -> Vec<String> {
+        self.relay_config.read().unwrap().indexer.fallback.clone()
+    }
+
+    /// Read whether a discovery class is in `exclusive` mode (bypasses
+    /// read relays for that lookup type). `class` is `"search"` or
+    /// `"indexer"`. Unknown classes return false.
+    pub fn discovery_exclusive(&self, class: &str) -> bool {
+        let cfg = self.relay_config.read().unwrap();
+        match class {
+            "search" => cfg.exclusive.search,
+            "indexer" => cfg.exclusive.indexer,
+            _ => false,
+        }
+    }
+
+    /// Toggle the `exclusive` flag for a discovery class. Persists
+    /// through `relays.json` like other relay mutations. Returns true
+    /// if the value changed.
+    pub fn set_discovery_exclusive(&self, class: &str, value: bool) -> bool {
+        let snapshot = {
+            let mut cfg = self.relay_config.write().unwrap();
+            let slot = match class {
+                "search" => &mut cfg.exclusive.search,
+                "indexer" => &mut cfg.exclusive.indexer,
+                _ => return false,
+            };
+            if *slot == value {
+                return false;
+            }
+            *slot = value;
+            self.relay_sets_snapshot_locked(&cfg)
+        };
+        if let Err(e) = self.relay_store.save(&snapshot) {
+            warn!("Failed to persist exclusive flag ({class}={value}): {e}");
+        }
+        true
     }
 
     /// Get all named relay sets (NIP-51 kind 30002 groupings). Owned
@@ -423,9 +472,10 @@ impl Engine {
             fetch: rc.fetch.urls.clone(),
             publish: rc.publish.urls.clone(),
             broadcast: rc.broadcast.urls.clone(),
-            search: rc.search.urls.clone(),
-            indexer: rc.indexer.urls.clone(),
+            search: rc.search.clone(),
+            indexer: rc.indexer.clone(),
             named: rc.named_sets.clone(),
+            exclusive: rc.exclusive.clone(),
         }
     }
 
@@ -571,6 +621,12 @@ impl Engine {
     /// and writes through to `<data_dir>/relays.json` so the change survives
     /// a restart.
     ///
+    /// `set` accepts both flat names (`"general"`, `"publish"`, `"fetch"`,
+    /// `"broadcast"`) and dotted discovery-class names (`"search.default"`,
+    /// `"search.fallback"`, `"indexer.default"`, `"indexer.fallback"`).
+    /// For discovery classes, the per-URL mutex applies: adding to one
+    /// tier strips the URL from the other tier of the same class.
+    ///
     /// Silently ignores unknown set names so the API endpoint can stay lax
     /// about user-supplied input (matching the previous behaviour). A
     /// write-through failure is surfaced as a `tracing::warn!` rather than
@@ -584,16 +640,35 @@ impl Engine {
         // Mutate in-memory first; release the write lock before disk I/O.
         let snapshot = {
             let mut rc = self.relay_config.write().unwrap();
+            // Per-URL mutual exclusion within a discovery class —
+            // moving a URL from default to fallback (or vice versa) is
+            // a single add() call.
+            match set {
+                "search.default" => rc.search.fallback.retain(|u| u != &url),
+                "search.fallback" => rc.search.default.retain(|u| u != &url),
+                "indexer.default" => rc.indexer.fallback.retain(|u| u != &url),
+                "indexer.fallback" => rc.indexer.default.retain(|u| u != &url),
+                _ => {}
+            }
             let urls = match set {
                 "general" => &mut rc.general.urls,
                 "publish" => &mut rc.publish.urls,
                 "fetch" => &mut rc.fetch.urls,
                 "broadcast" => &mut rc.broadcast.urls,
-                "search" => &mut rc.search.urls,
-                "indexer" => &mut rc.indexer.urls,
+                "search.default" => &mut rc.search.default,
+                "search.fallback" => &mut rc.search.fallback,
+                "indexer.default" => &mut rc.indexer.default,
+                "indexer.fallback" => &mut rc.indexer.fallback,
                 _ => return false,
             };
             if urls.iter().any(|u| u == &url) {
+                // Already a member — but the sibling-strip above may
+                // have changed state. Persist anyway so disk matches.
+                let snap = self.relay_sets_snapshot_locked(&rc);
+                drop(rc);
+                if let Err(e) = self.relay_store.save(&snap) {
+                    warn!("Failed to persist relay add ({set}/{url}): {e}");
+                }
                 return false;
             }
             urls.push(url.clone());
@@ -606,7 +681,8 @@ impl Engine {
     }
 
     /// Remove a relay URL from a working set. Mirror of `add_relay` —
-    /// mutates the in-memory config and writes through to `relays.json`.
+    /// accepts the same flat and dotted set names; mutates the
+    /// in-memory config and writes through to `relays.json`.
     pub fn remove_relay(&self, set: &str, url: &str) -> bool {
         let url = crate::relay_url::normalize_relay_url(url);
         if url.is_empty() {
@@ -619,8 +695,10 @@ impl Engine {
                 "publish" => &mut rc.publish.urls,
                 "fetch" => &mut rc.fetch.urls,
                 "broadcast" => &mut rc.broadcast.urls,
-                "search" => &mut rc.search.urls,
-                "indexer" => &mut rc.indexer.urls,
+                "search.default" => &mut rc.search.default,
+                "search.fallback" => &mut rc.search.fallback,
+                "indexer.default" => &mut rc.indexer.default,
+                "indexer.fallback" => &mut rc.indexer.fallback,
                 _ => return false,
             };
             let before = urls.len();

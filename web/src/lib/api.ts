@@ -485,14 +485,23 @@ export interface NamedRelaySet {
 	urls: string[];
 }
 
+/** Two-tier membership for a discovery class — `default` joins the
+ *  primary fan-out (or replaces read with `exclusive`), `fallback`
+ *  kicks in only on default-miss. */
+export interface DiscoveryClass {
+	default: string[];
+	fallback: string[];
+}
+
 export function getRelayConfig() {
 	return fetchJson<{
 		general: { urls: string[]; kinds: number[] };
 		publish: { urls: string[]; kinds: number[] };
 		fetch: { urls: string[]; kinds: number[] };
 		broadcast: { urls: string[]; kinds: number[] };
-		search: { urls: string[]; kinds: number[] };
-		indexer: { urls: string[]; kinds: number[] };
+		search: DiscoveryClass;
+		indexer: DiscoveryClass;
+		exclusive: { search: boolean; indexer: boolean };
 		named_sets: NamedRelaySet[];
 		authors: string[];
 		initial_relays: string[];

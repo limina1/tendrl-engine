@@ -107,8 +107,15 @@
 			for (const url of cfg.fetch?.urls ?? []) ensure(url).read = true;
 			for (const url of cfg.publish?.urls ?? []) ensure(url).write = true;
 			for (const url of cfg.broadcast?.urls ?? []) ensure(url).broadcast = true;
-			for (const url of cfg.search?.urls ?? []) ensure(url).search = true;
-			for (const url of cfg.indexer?.urls ?? []) ensure(url).indexer = true;
+			// Phase 3: search/indexer are now DiscoveryClass with
+			// default/fallback tiers. For the existing main-row toggle
+			// (which is just "is this URL in the class at all?") we
+			// union both tiers. The dedicated Discovery section
+			// landing in Phase 5 will show the tier explicitly.
+			for (const url of cfg.search?.default ?? []) ensure(url).search = true;
+			for (const url of cfg.search?.fallback ?? []) ensure(url).search = true;
+			for (const url of cfg.indexer?.default ?? []) ensure(url).indexer = true;
+			for (const url of cfg.indexer?.fallback ?? []) ensure(url).indexer = true;
 			rows = [...map.values()].sort((a, b) => a.url.localeCompare(b.url));
 			// Kick off NIP-11 fetches up-front so the badges fill in
 			// without the user expanding each row.
@@ -169,8 +176,27 @@
 		if (field === 'auth') return;
 
 		try {
-			if (field === 'broadcast' || field === 'search' || field === 'indexer') {
-				await (next[field] ? api.addRelay(field, url) : api.removeRelay(field, url));
+			if (field === 'broadcast') {
+				await (next.broadcast ? api.addRelay('broadcast', url) : api.removeRelay('broadcast', url));
+			} else if (field === 'search') {
+				// Phase 3: search/indexer are split into default/fallback.
+				// The main-row toggle is a coarse "is this URL in the
+				// class at all?" — ON adds to .default; OFF removes from
+				// both tiers. The Phase-5 Discovery section is where
+				// users pick the tier explicitly.
+				if (next.search) {
+					await api.addRelay('search.default', url);
+				} else {
+					await api.removeRelay('search.default', url);
+					await api.removeRelay('search.fallback', url);
+				}
+			} else if (field === 'indexer') {
+				if (next.indexer) {
+					await api.addRelay('indexer.default', url);
+				} else {
+					await api.removeRelay('indexer.default', url);
+					await api.removeRelay('indexer.fallback', url);
+				}
 			} else {
 				// Reconcile the row's read/write into explicit fetch + publish set
 				// membership, and drop it from the legacy `general` set (which means
@@ -458,8 +484,11 @@
 			if (role === 'fetch' || role === 'both') await api.addRelay('fetch', s.url);
 			if (role === 'publish' || role === 'both') await api.addRelay('publish', s.url);
 			if (role === 'broadcast') await api.addRelay('broadcast', s.url);
-			if (role === 'search') await api.addRelay('search', s.url);
-			if (role === 'indexer') await api.addRelay('indexer', s.url);
+			// Pull-from-profile suggestions default to the `.default`
+			// tier — the user can move them to fallback later from the
+			// Phase-5 Discovery section.
+			if (role === 'search') await api.addRelay('search.default', s.url);
+			if (role === 'indexer') await api.addRelay('indexer.default', s.url);
 			app.pushToast(`Added ${shorten(s.url)} to ${role}`, 'success', 2500);
 			await load();
 		} catch (e) {
