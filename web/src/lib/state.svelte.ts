@@ -421,6 +421,12 @@ function _createAppState() {
 	// radio reflects the user's intent immediately on reload, instead of
 	// flashing "engine" for ~2s while the NIP-07 reconnect is in flight.
 	let savedIdentitySource: string | null = $state(null);
+	// Network mode last persisted in config.toml. Loaded from
+	// `/api/v1/settings` at init, BEFORE the live `networkStatus`
+	// arrives via `/api/v1/network/status`. The modeline pill uses
+	// it as a fallback so the pill doesn't briefly disappear (or
+	// flash an em-dash placeholder) at page load.
+	let savedNetworkMode: 'auto' | 'confirm' | null = $state(null);
 	// True while the auto-reconnect path is actively trying to detect +
 	// register window.nostr. Lets the UI render a "reconnecting…" state
 	// instead of the default engine login form during that window.
@@ -2823,6 +2829,9 @@ function _createAppState() {
 			syncMode = s.compose.sync_mode as SyncMode;
 			buttonLabels = s.compose.button_labels as ButtonLabels;
 			savedIdentitySource = s.identity?.source ?? null;
+			if (s.network?.mode === 'auto' || s.network?.mode === 'confirm') {
+				savedNetworkMode = s.network.mode;
+			}
 		} catch {
 			// API not yet available — keep hard-coded defaults.
 		}
@@ -3142,8 +3151,12 @@ function _createAppState() {
 			try {
 				const s = await api.getSettings();
 				savedIdentitySource = s.identity?.source ?? null;
+				if (s.network?.mode === 'auto' || s.network?.mode === 'confirm') {
+					savedNetworkMode = s.network.mode;
+				}
 			} catch {}
 		},
+		get savedNetworkMode() { return savedNetworkMode; },
 		set identityError(v: string | null) { identityError = v; },
 		handleIdentityLogin,
 		handleIdentityUnlock,

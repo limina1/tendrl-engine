@@ -697,7 +697,12 @@
 	});
 
 	const networkPill = $derived.by(() => {
-		const mode = app.networkStatus?.mode ?? null;
+		// Fall back to the saved network mode (read from
+		// /api/v1/settings at init, before the live network/status
+		// arrives) so the pill renders the user's actual intent
+		// immediately on page load instead of disappearing for the
+		// ~100ms before networkStatus resolves.
+		const mode = app.networkStatus?.mode ?? app.savedNetworkMode ?? null;
 		const active = (app.networkStatus?.active_fetches ?? 0) > 0;
 		if (mode === 'auto') {
 			return {
@@ -713,9 +718,8 @@
 				dotClass: active ? 'dot--fetching' : 'dot--offline'
 			};
 		}
-		// networkStatus hasn't resolved yet — hide the pill entirely
-		// rather than showing a placeholder em-dash that looks like
-		// a third state.
+		// Neither live status nor settings have resolved yet — hide
+		// rather than showing a placeholder that looks like a state.
 		return null;
 	});
 
