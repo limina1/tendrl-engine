@@ -434,13 +434,9 @@
 				{/each}
 			{/if}
 
-			{#if !loading && results.length === 0 && profiles.length === 0 && !isGrouped}
+			{#if !loading && !relaySearchLoading && results.length === 0 && profiles.length === 0 && !isGrouped}
 				{#if !hasSearched}
 					<p class="empty">Search {searchContext}</p>
-				{:else if relaySearchLoading}
-					<div class="empty empty-cta">
-						<p>Not in local DB — searching relays…</p>
-					</div>
 				{:else if canPromptRelays}
 					<!-- Confirm mode: the modal will gate the fan-out;
 					     keep the explicit CTA as a re-trigger so the
@@ -468,20 +464,31 @@
 				{/if}
 			{/if}
 
-			{#if loading}
-				<div class="empty search-loading">
-					<p class="search-loading__label">Searching database…</p>
+			{#if loading || relaySearchLoading}
+				{@const isRelayPhase = !loading && relaySearchLoading}
+				<div
+					class="empty search-loading"
+					class:search-loading--relay={isRelayPhase}
+				>
+					<p class="search-loading__label">
+						{isRelayPhase ? 'Searching relays…' : 'Searching database…'}
+					</p>
 					<div
 						class="search-loading__bar"
 						role="progressbar"
-						aria-label="Searching database"
+						aria-label={isRelayPhase ? 'Searching relays' : 'Searching database'}
 					>
 						<div class="search-loading__fill"></div>
 					</div>
 					<p class="search-loading__hint">
-						Scanning every event — unindexed filters have no shortcut.
-						Add a kind or a single-letter tag (e.g. <code>C:bible</code>)
-						to narrow the scan.
+						{#if isRelayPhase}
+							Asking the configured relays for events matching this query.
+							The activity toast tracks per-relay progress.
+						{:else}
+							Scanning every event — unindexed filters have no shortcut.
+							Add a kind or a single-letter tag (e.g. <code>C:bible</code>)
+							to narrow the scan.
+						{/if}
 					</p>
 				</div>
 			{/if}
@@ -1016,6 +1023,16 @@
 		border-radius: inherit;
 		background: var(--accent);
 		animation: search-scan 1.1s ease-in-out infinite;
+	}
+	/* Relay phase uses the "network" accent so the bar visually
+	 * distinguishes "scanning local DB" from "asking relays" — same
+	 * animation, different colour, matches the activity-toast palette
+	 * the user sees in confirm mode. */
+	.search-loading--relay .search-loading__fill {
+		background: var(--id-yours);
+	}
+	.search-loading--relay .search-loading__bar {
+		background: color-mix(in srgb, var(--id-yours) 18%, transparent);
 	}
 	@keyframes search-scan {
 		from { transform: translateX(-110%); }
