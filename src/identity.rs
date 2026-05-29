@@ -635,6 +635,14 @@ pub struct IdentitySession {
     /// can surface a non-null pubkey when source != engine. Set by
     /// `set_source_with_pubkey`; cleared when switching back to engine.
     external_pubkey: Option<String>,
+    /// User's saved source preference (from `[identity] source` in
+    /// config.toml). Surfaced by `status()` when no live external
+    /// signer is registered yet — that way `/api/v1/identity` returns
+    /// `source: "nip07"` on engine boot, before the web has had time
+    /// to re-register the NIP-07 signer. Without this, the UI would
+    /// briefly see `source: "engine"` after every restart even when
+    /// the user's intent is nip07.
+    pending_source: Option<String>,
 }
 
 impl Default for IdentitySession {
@@ -654,7 +662,16 @@ impl IdentitySession {
             lock_timeout: Duration::from_secs(15 * 60),
             unsigned_event_ids: Vec::new(),
             source: IdentitySource::Engine,
+            pending_source: None,
         }
+    }
+
+    /// Seed the user's saved source preference (config.toml
+    /// `[identity] source`). Called once on engine boot. status() will
+    /// surface this as the active source until a live external signer
+    /// is registered (at which point set_source_with_pubkey overrides).
+    pub fn set_pending_source(&mut self, source: Option<String>) {
+        self.pending_source = source;
     }
 
     /// Read the current signer source.
@@ -831,6 +848,16 @@ impl IdentitySession {
         } else {
             state
         };
+        // When the live source is Engine but the user previously saved
+        // a different source (config.toml [identity] source), surface
+        // the saved intent. This means `/api/v1/identity` returns
+        // `source: "nip07"` immediately on engine boot — the UI can
+        // render the radio correctly without waiting for the web's
+        // auto-reconnect to complete.
+        let effective_source = match (&self.source, &self.pending_source) {
+            (IdentitySource::Engine, Some(pending)) if pending != "engine" => pending.clone(),
+            _ => self.source.kind_str().to_string(),
+        };
         IdentityStatusResponse {
             state: effective_state.to_string(),
             pubkey: effective_pubkey.clone(),
@@ -838,7 +865,7 @@ impl IdentitySession {
             seconds_remaining,
             unsigned_count: self.unsigned_event_ids.len(),
             lock_timeout_minutes: self.lock_timeout.as_secs() / 60,
-            source: self.source.kind_str().to_string(),
+            source: effective_source,
             signer_id: self.source.signer_id().map(|s| s.to_string()),
         }
     }
