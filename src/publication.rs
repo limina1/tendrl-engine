@@ -1232,13 +1232,40 @@ impl<'a> PublicationEngine<'a> {
             FetchPolicy::FetchAlways => {
                 let relays: Vec<String> = self.engine.relays();
                 let label = "Feed sync — list publications".to_string();
+                // Build a RequestSummary so the FetchConfirmModal can
+                // render the formal-language sentence + filters block +
+                // composition block instead of just a flat URL list.
+                let summary = crate::network::RequestSummary {
+                    filters: filters_to_fetch
+                        .iter()
+                        .map(crate::network::nip_filter_from_json)
+                        .collect(),
+                    composition: crate::network::CompositionShape {
+                        phases: vec![crate::network::PhaseStage {
+                            label: "primary".into(),
+                            members: vec![(crate::network::Phase::Read, relays.clone())],
+                            start_delay_ms: 0,
+                        }],
+                    },
+                    dsl: crate::network::dsl_for_composition(
+                        &filters_to_fetch,
+                        &crate::network::CompositionShape {
+                            phases: vec![crate::network::PhaseStage {
+                                label: "primary".into(),
+                                members: vec![(crate::network::Phase::Read, relays.clone())],
+                                start_delay_ms: 0,
+                            }],
+                        },
+                    ),
+                };
                 match self
                     .engine
-                    .begin_fetch_operation(
+                    .begin_fetch_operation_with_summary(
                         crate::network::FetchPattern::Publication,
                         label,
                         Vec::new(),
                         relays,
+                        Some(summary),
                     )
                     .await
                 {

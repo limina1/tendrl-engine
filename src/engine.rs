@@ -755,6 +755,26 @@ impl Engine {
             .await
     }
 
+    /// Variant of `begin_fetch_operation` that carries a structured
+    /// `RequestSummary` on the emitted `Intent`. Callers that have
+    /// already built filters + composition (e.g. the feed-init path
+    /// in `list_root_publications`) pass it through so the confirm
+    /// modal can render the formal-language sentence + filters block
+    /// + composition block instead of falling back to the flat relay
+    /// list.
+    pub async fn begin_fetch_operation_with_summary(
+        &self,
+        pattern: crate::network::FetchPattern,
+        label: String,
+        steps: Vec<String>,
+        relays: Vec<String>,
+        summary: Option<crate::network::RequestSummary>,
+    ) -> std::result::Result<crate::network::FetchOperation, crate::network::FetchCancelled> {
+        self.network
+            .begin_operation_with_summary(pattern, label, steps, relays, summary)
+            .await
+    }
+
     /// Open a publish operation. Same shape as `begin_fetch_operation`
     /// — emits a `PublishIntent` that the UI renders as a pending toast,
     /// gates on Confirm mode, returns a `PublishOperation` handle the
