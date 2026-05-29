@@ -2991,6 +2991,28 @@ function _createAppState() {
 		get savedIdentitySource() { return savedIdentitySource; },
 		setSavedIdentitySource(source: string | null) { savedIdentitySource = source; },
 		get identityAutoReconnecting() { return identityAutoReconnecting; },
+		/** Force a fresh fetch of /api/v1/identity AND /api/v1/settings.
+		 *  Called by SettingsBuffer onmount so opening Settings always
+		 *  shows the live engine state, even if the engine was restarted
+		 *  since the last poll tick. */
+		async refreshIdentity() {
+			try {
+				identityStatus = await api.getIdentity();
+				console.log('[refreshIdentity] /identity →', identityStatus);
+				if (identityStatus.pubkey) {
+					myPubkey = identityStatus.pubkey;
+				}
+			} catch (e) {
+				console.warn('[refreshIdentity] /identity failed:', e);
+			}
+			try {
+				const s = await api.getSettings();
+				savedIdentitySource = s.identity?.source ?? null;
+				console.log('[refreshIdentity] /settings identity.source →', savedIdentitySource);
+			} catch (e) {
+				console.warn('[refreshIdentity] /settings failed:', e);
+			}
+		},
 		set identityError(v: string | null) { identityError = v; },
 		handleIdentityLogin,
 		handleIdentityUnlock,

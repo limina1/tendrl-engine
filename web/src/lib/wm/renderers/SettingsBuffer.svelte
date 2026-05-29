@@ -15,6 +15,12 @@
 		// at document_start, so by the time SettingsBuffer renders it's
 		// either there or it isn't.
 		nip07Available = detectNip07();
+		// Force a fresh /identity + /settings fetch on mount. Without
+		// this, opening Settings shortly after an engine restart shows
+		// stale identityStatus from the last 30s-poll tick. Fire and
+		// forget — Svelte 5 re-derives `currentSource` once the state
+		// updates land.
+		app.refreshIdentity();
 	});
 
 	// Inputs for engine login flow
@@ -30,6 +36,16 @@
 	);
 	const currentState = $derived(app.identityStatus?.state ?? 'none');
 	const isAutoReconnecting = $derived(app.identityAutoReconnecting);
+
+	// Diagnostic — log every recomputation so the user can verify what
+	// the component actually sees vs what /api/v1/identity returns.
+	$effect(() => {
+		console.log('[SettingsBuffer] currentSource =', currentSource, {
+			'identityStatus.source': app.identityStatus?.source,
+			savedIdentitySource: app.savedIdentitySource,
+			identityStatusFull: app.identityStatus
+		});
+	});
 
 	async function pickSource(source: 'engine' | 'nip07') {
 		if (source === 'engine') {
