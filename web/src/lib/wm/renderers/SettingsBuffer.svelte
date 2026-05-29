@@ -37,16 +37,6 @@
 	const currentState = $derived(app.identityStatus?.state ?? 'none');
 	const isAutoReconnecting = $derived(app.identityAutoReconnecting);
 
-	// Diagnostic — log every recomputation so the user can verify what
-	// the component actually sees vs what /api/v1/identity returns.
-	$effect(() => {
-		console.log('[SettingsBuffer] currentSource =', currentSource, {
-			'identityStatus.source': app.identityStatus?.source,
-			savedIdentitySource: app.savedIdentitySource,
-			identityStatusFull: app.identityStatus
-		});
-	});
-
 	async function pickSource(source: 'engine' | 'nip07') {
 		if (source === 'engine') {
 			await app.handleSelectEngineSource();

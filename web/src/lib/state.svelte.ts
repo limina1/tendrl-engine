@@ -2998,20 +2998,14 @@ function _createAppState() {
 		async refreshIdentity() {
 			try {
 				identityStatus = await api.getIdentity();
-				console.log('[refreshIdentity] /identity →', identityStatus);
 				if (identityStatus.pubkey) {
 					myPubkey = identityStatus.pubkey;
 				}
-			} catch (e) {
-				console.warn('[refreshIdentity] /identity failed:', e);
-			}
+			} catch {}
 			try {
 				const s = await api.getSettings();
 				savedIdentitySource = s.identity?.source ?? null;
-				console.log('[refreshIdentity] /settings identity.source →', savedIdentitySource);
-			} catch (e) {
-				console.warn('[refreshIdentity] /settings failed:', e);
-			}
+			} catch {}
 		},
 		set identityError(v: string | null) { identityError = v; },
 		handleIdentityLogin,
