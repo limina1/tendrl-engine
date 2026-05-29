@@ -588,6 +588,102 @@ pub struct RequestSummary {
     pub dsl: String,
 }
 
+/// Project a raw NIP-01 filter JSON into the structured `NipFilter`
+/// for `RequestSummary`. Unknown / non-matching fields are dropped —
+/// this is for display, not protocol round-tripping. Used by Phase-4
+/// fetch helpers that build a summary alongside the filter they send.
+pub fn nip_filter_from_json(f: &Value) -> NipFilter {
+    let mut out = NipFilter::default();
+    if let Some(arr) = f.get("kinds").and_then(|v| v.as_array()) {
+        out.kinds = Some(arr.iter().filter_map(|v| v.as_u64()).collect());
+    }
+    if let Some(arr) = f.get("authors").and_then(|v| v.as_array()) {
+        out.authors = Some(
+            arr.iter()
+                .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                .collect(),
+        );
+    }
+    if let Some(arr) = f.get("ids").and_then(|v| v.as_array()) {
+        out.ids = Some(
+            arr.iter()
+                .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                .collect(),
+        );
+    }
+    if let Some(v) = f.get("since").and_then(|v| v.as_i64()) {
+        out.since = Some(v);
+    }
+    if let Some(v) = f.get("until").and_then(|v| v.as_i64()) {
+        out.until = Some(v);
+    }
+    if let Some(v) = f.get("limit").and_then(|v| v.as_u64()) {
+        out.limit = Some(v);
+    }
+    if let Some(s) = f.get("search").and_then(|v| v.as_str()) {
+        out.search = Some(s.to_string());
+    }
+    if let Some(obj) = f.as_object() {
+        for (k, v) in obj {
+            if let Some(tag) = k.strip_prefix('#') {
+                if let Some(arr) = v.as_array() {
+                    let vals: Vec<String> = arr
+                        .iter()
+                        .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                        .collect();
+                    out.tags.insert(tag.to_string(), vals);
+                }
+            }
+        }
+    }
+    out
+}
+
+/// Best-effort DSL string for a (filters + composition) pair. Phase
+/// 6 will replace this with the full parser/printer round-trip; for
+/// Phase 4 this is enough to make the toast row legible:
+///     `k:0 by:@<author> via:read,indexer.default then:indexer.fallback`
+pub fn dsl_for_composition(filters: &[Value], composition: &CompositionShape) -> String {
+    let mut parts = Vec::new();
+    // Filter side — just the first filter's kinds + authors-count.
+    if let Some(f0) = filters.first() {
+        if let Some(arr) = f0.get("kinds").and_then(|v| v.as_array()) {
+            let ks: Vec<String> = arr.iter().filter_map(|v| v.as_u64().map(|n| n.to_string())).collect();
+            if !ks.is_empty() {
+                parts.push(format!("k:{}", ks.join(",")));
+            }
+        }
+        if let Some(arr) = f0.get("authors").and_then(|v| v.as_array()) {
+            if !arr.is_empty() {
+                let first = arr[0].as_str().unwrap_or("");
+                let head = &first.chars().take(8).collect::<String>();
+                parts.push(if arr.len() == 1 {
+                    format!("by:{head}…")
+                } else {
+                    format!("by:{}+{}", head, arr.len() - 1)
+                });
+            }
+        }
+        if let Some(s) = f0.get("search").and_then(|v| v.as_str()) {
+            parts.push(format!("~:\"{s}\""));
+        }
+        if let Some(n) = f0.get("limit").and_then(|v| v.as_u64()) {
+            parts.push(format!("limit:{n}"));
+        }
+    }
+    // Composition side — `via:` for primary, `then:` for subsequent stages.
+    let mut first_stage = true;
+    for stage in &composition.phases {
+        let keyword = if first_stage { "via" } else { "then" };
+        first_stage = false;
+        let phases: Vec<&str> = stage.members.iter().map(|(p, _)| p.as_str()).collect();
+        if !phases.is_empty() {
+            parts.push(format!("{keyword}:{}", phases.join(",")));
+        }
+    }
+    parts.join(" ")
+}
+
 /// Events streamed to the UI for every user-initiated relay operation
 /// — fetches AND publishes. `Intent`/`PublishIntent` open an operation,
 /// `Progress` narrates, `RelayStatus` carries per-relay updates within

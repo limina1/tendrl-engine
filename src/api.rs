@@ -1142,11 +1142,6 @@ pub async fn fetch_profiles_handler(
     State(engine): State<AppState>,
     Json(req): Json<FetchProfilesRequest>,
 ) -> Result<Json<Value>, EngineError> {
-    // Profiles can live on any configured relay — query the union of
-    // every set so an empty `general` set can't silently disable this.
-    let mut relays = engine.relay_config().all_urls();
-    let mut fetched = 0;
-
     // When force is set, query every listed pubkey unconditionally so a
     // newer kind 0 supersedes the cached one. Otherwise only pubkeys
     // missing from nostrdb are queried — the default avoids hammering
@@ -1162,63 +1157,37 @@ pub async fn fetch_profiles_handler(
         return Ok(Json(json!({ "fetched": 0, "total": req.pubkeys.len() })));
     }
 
-    // A forced profile fetch is an explicit user action — gate it.
-    // Declined → report nothing fetched (cached profiles are kept).
-    let op = if req.force {
-        match engine
-            .begin_fetch_operation(
-                crate::network::FetchPattern::Profile,
-                format!(
-                    "Fetch {} profile{}",
-                    targets.len(),
-                    if targets.len() == 1 { "" } else { "s" }
-                ),
-                describe_profile_steps(&targets),
-                relays.clone(),
-            )
-            .await
-        {
-            Ok(o) => {
-                relays = o.relays().to_vec();
-                Some(o)
-            }
-            Err(_) => {
-                return Ok(Json(json!({ "fetched": 0, "total": req.pubkeys.len() })));
-            }
-        }
-    } else {
-        None
-    };
-
-    // Batch fetch: one request per relay with ALL missing pubkeys
+    // Phase 4: profile lookups now walk the indexer composition —
+    // primary (read [∪ indexer.default]) → indexer.fallback if zero.
+    // fetch_with_composition opens the SSE op (carrying the
+    // RequestSummary so the toast renders the structured query),
+    // streams per-relay RelayStatus events, and emits Completed at
+    // the end. The whole chain shows up as one toast with phases
+    // visible in the expanded modal.
+    let composition = engine.compose_discovery_phases("indexer");
     let filter = json!({"kinds": [0], "authors": targets, "limit": targets.len()});
-    for relay_url in &relays {
-        match engine
-            .tracked_fetch_with_options(
-                relay_url,
-                &[filter.clone()],
-                FetchTrigger::ProfilePrefetch,
-                req.force,
-            )
-            .await
-        {
-            Ok(events) => {
-                fetched += events.len();
-            }
-            Err(e) => {
-                debug!("Failed to fetch profiles from {}: {}", relay_url, e);
-            }
-        }
-    }
+
+    let events = engine
+        .fetch_with_composition(
+            &composition,
+            &[filter],
+            format!(
+                "Fetch {} profile{}",
+                targets.len(),
+                if targets.len() == 1 { "" } else { "s" }
+            ),
+            crate::network::FetchPattern::Profile,
+            req.force,
+        )
+        .await;
+
+    let fetched = events.len();
 
     // Brief wait for nostrdb to process ingested events
     if fetched > 0 {
         tokio::time::sleep(std::time::Duration::from_millis(200)).await;
     }
 
-    if let Some(op) = op {
-        op.complete(fetched);
-    }
     Ok(Json(json!({
         "fetched": fetched,
         "total": req.pubkeys.len()
@@ -2353,17 +2322,6 @@ fn describe_search_steps(query: &str) -> Vec<String> {
     steps.push("Query the relays (NIP-01 / NIP-50) and ingest matches".to_string());
     steps.push("Backfill author profiles (kind 0)".to_string());
     steps
-}
-
-/// Confirm-modal steps for a forced profile fetch — names the pubkeys
-/// being requested (truncated, with an overflow count).
-fn describe_profile_steps(pubkeys: &[&str]) -> Vec<String> {
-    let shown: Vec<String> = pubkeys.iter().take(5).map(|p| short_id(p)).collect();
-    let mut step = format!("Fetch kind-0 profile metadata for {}", shown.join(", "));
-    if pubkeys.len() > 5 {
-        step.push_str(&format!(" +{} more", pubkeys.len() - 5));
-    }
-    vec![step]
 }
 
 /// POST /api/v1/discussions/list

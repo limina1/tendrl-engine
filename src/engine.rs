@@ -350,6 +350,197 @@ impl Engine {
         true
     }
 
+    /// Build the execution composition for a discovery-class lookup
+    /// (`class = "indexer"` for profile / kind 10002 / addressable;
+    /// `class = "search"` for `~:`). Returns a `CompositionShape`
+    /// matching the per-class exclusive × default × fallback matrix in
+    /// the relay-management plan:
+    ///
+    /// - `exclusive=OFF` + `default` empty + `fallback` empty: one
+    ///   stage with `(Read, fetch_urls)`.
+    /// - `exclusive=OFF` + `default` non-empty: one stage with
+    ///   `[(Read, fetch_urls), (Class.Default, default_urls)]` —
+    ///   fired concurrently.
+    /// - `exclusive=OFF` + `fallback` non-empty: a SECOND stage with
+    ///   `(Class.Fallback, fallback_urls)` after primary returns 0.
+    /// - `exclusive=ON`: read relays are excluded; primary stage is
+    ///   `(Class.Default, default_urls)` (or fallback if default is
+    ///   empty); fallback stage follows.
+    pub fn compose_discovery_phases(&self, class: &str) -> crate::network::CompositionShape {
+        use crate::network::{Phase, PhaseStage};
+        let cfg = self.relay_config.read().unwrap();
+        let read_urls = cfg.fetch.urls.clone();
+        let (default_urls, fallback_urls, default_phase, fallback_phase, exclusive) = match class {
+            "search" => (
+                cfg.search.default.clone(),
+                cfg.search.fallback.clone(),
+                Phase::SearchDefault,
+                Phase::SearchFallback,
+                cfg.exclusive.search,
+            ),
+            "indexer" => (
+                cfg.indexer.default.clone(),
+                cfg.indexer.fallback.clone(),
+                Phase::IndexerDefault,
+                Phase::IndexerFallback,
+                cfg.exclusive.indexer,
+            ),
+            _ => {
+                return crate::network::CompositionShape {
+                    phases: vec![PhaseStage {
+                        label: "primary".into(),
+                        members: vec![(Phase::Read, read_urls)],
+                        start_delay_ms: 0,
+                    }],
+                };
+            }
+        };
+        drop(cfg);
+
+        let mut phases = Vec::new();
+        // Track whether the fallback set has already been consumed by
+        // the primary stage (the degenerate exclusive+empty-default
+        // case) so we don't re-add it as a second stage.
+        let mut fallback_consumed = false;
+
+        let primary_members: Vec<(Phase, Vec<String>)> = if exclusive {
+            // Read relays bypassed entirely.
+            if !default_urls.is_empty() {
+                vec![(default_phase, default_urls)]
+            } else if !fallback_urls.is_empty() {
+                fallback_consumed = true;
+                vec![(fallback_phase, fallback_urls.clone())]
+            } else {
+                // ON with nothing configured — degrade to read so
+                // the lookup still runs.
+                vec![(Phase::Read, read_urls.clone())]
+            }
+        } else {
+            // OFF: read is the floor; default joins concurrently.
+            let mut m = vec![(Phase::Read, read_urls.clone())];
+            if !default_urls.is_empty() {
+                m.push((default_phase, default_urls));
+            }
+            m
+        };
+
+        phases.push(PhaseStage {
+            label: "primary".into(),
+            members: primary_members,
+            start_delay_ms: 0,
+        });
+
+        if !fallback_urls.is_empty() && !fallback_consumed {
+            phases.push(PhaseStage {
+                label: "fallback".into(),
+                members: vec![(fallback_phase, fallback_urls)],
+                start_delay_ms: 0,
+            });
+        }
+
+        crate::network::CompositionShape { phases }
+    }
+
+    /// Execute a multi-phase fetch against a composition. Each phase
+    /// fans out across its members concurrently; the next phase only
+    /// fires when the previous returned zero events (sequential
+    /// fallback). Per-relay `Connecting` / `Eose` / `Error` are
+    /// streamed through the SSE channel so the activity-toast +
+    /// modal show live status.
+    pub async fn fetch_with_composition(
+        &self,
+        composition: &crate::network::CompositionShape,
+        filters: &[Value],
+        label: String,
+        pattern: crate::network::FetchPattern,
+        mode_confirm: bool,
+    ) -> Vec<Value> {
+        use crate::network::{Phase, RequestSummary, RelayStatusValue};
+
+        // Flatten the composition's primary stage relays into the
+        // initial Intent's `relays` field (back-compat for clients
+        // that haven't picked up the structured summary yet).
+        let primary_relays: Vec<String> = composition
+            .phases
+            .first()
+            .map(|s| s.members.iter().flat_map(|(_, urls)| urls.clone()).collect())
+            .unwrap_or_default();
+
+        let summary = RequestSummary {
+            filters: filters
+                .iter()
+                .map(crate::network::nip_filter_from_json)
+                .collect(),
+            composition: composition.clone(),
+            dsl: crate::network::dsl_for_composition(filters, composition),
+        };
+
+        let op = match self
+            .network
+            .begin_operation_with_summary(
+                pattern,
+                label,
+                vec![],
+                primary_relays,
+                Some(summary),
+            )
+            .await
+        {
+            Ok(o) => o,
+            Err(_) => return Vec::new(),
+        };
+
+        let mut all_events: Vec<Value> = Vec::new();
+
+        for stage in &composition.phases {
+            // Skip subsequent phases if a prior returned events
+            // (fallback semantics: only escalate on zero).
+            if !all_events.is_empty() && stage.label != "primary" {
+                break;
+            }
+
+            let mut stage_events: Vec<Value> = Vec::new();
+            for (phase, urls) in &stage.members {
+                for relay_url in urls {
+                    op.relay_status(relay_url, *phase, RelayStatusValue::Connecting);
+                    match self
+                        .tracked_fetch_with_options(
+                            relay_url,
+                            filters,
+                            crate::network::FetchTrigger::ProfilePrefetch,
+                            mode_confirm,
+                        )
+                        .await
+                    {
+                        Ok(events) => {
+                            op.relay_status(
+                                relay_url,
+                                *phase,
+                                RelayStatusValue::Eose {
+                                    event_count: events.len(),
+                                },
+                            );
+                            stage_events.extend(events);
+                        }
+                        Err(e) => {
+                            op.relay_status(
+                                relay_url,
+                                *phase,
+                                RelayStatusValue::Error { msg: e.to_string() },
+                            );
+                        }
+                    }
+                }
+            }
+            all_events.extend(stage_events);
+        }
+
+        op.complete(all_events.len());
+        // Silence unused warning if Phase is referenced only above.
+        let _ = Phase::Read;
+        all_events
+    }
+
     /// Get all named relay sets (NIP-51 kind 30002 groupings). Owned
     /// clone — never hand back a reference into the lock.
     pub fn named_relay_sets(&self) -> Vec<crate::relay_store::NamedRelaySet> {
