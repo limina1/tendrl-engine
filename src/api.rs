@@ -1726,7 +1726,7 @@ pub async fn config_update_handler(
 
     Ok(Json(json!({
         "updated": changed,
-        "message": if changed { "Config updated. Restart to apply relay changes." } else { "No changes needed." }
+        "message": if changed { "Relay config updated." } else { "No changes needed." }
     })))
 }
 
