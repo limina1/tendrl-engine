@@ -940,7 +940,21 @@ function _createAppState() {
 	async function loadFeed() {
 		feedLoading = true;
 		try {
-			const resp = await api.listPublications();
+			let resp = await api.listPublications();
+			// Cold-cache fallback: if local nostrdb has nothing (fresh
+			// install, post-purge, etc.), automatically retry with
+			// `fetch_always` so the user sees content without having
+			// to manually hit a Sync button. In confirm mode the
+			// engine pops the FetchConfirmModal; in auto it fires
+			// silently and the activity toast tracks progress.
+			if (resp.publications.length === 0) {
+				try {
+					const fetched = await api.listPublications(20, 'fetch_always');
+					if (fetched.publications.length > 0) resp = fetched;
+				} catch {
+					/* relay fetch failed — keep the empty local result */
+				}
+			}
 			feed = resp.publications;
 			feedHasMore = resp.count >= 20;
 			if (!myPubkey) {
