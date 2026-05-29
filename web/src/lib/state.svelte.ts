@@ -2802,23 +2802,24 @@ function _createAppState() {
 
 	async function initialize() {
 		loadSearchConfig();
-		try {
-			const cfg = await api.getConfig();
-			myPubkey = cfg.my_pubkey;
-			assistantPubkey = cfg.assistant_pubkey;
-			console.log('Config loaded, myPubkey:', myPubkey, 'assistantPubkey:', assistantPubkey);
-		} catch (e) {
-			console.warn('Config fetch failed:', e);
-		}
-		// Fire the two cheap modeline-driving GETs in parallel so the
-		// pills settle as fast as the network round-trip allows. Neither
-		// depends on the other, and either one's mode field can drive
-		// the modeline's network pill (live status wins; saved is the
-		// fallback for the loading window).
-		const [networkStatusResult, settingsResult] = await Promise.allSettled([
+		// Fire all three cheap GETs in parallel — none depend on each
+		// other, and the modeline pills + chat composer all need this
+		// data ASAP. Previously getConfig was awaited before the other
+		// two, adding one extra round-trip's worth of wait before the
+		// network pill could light up.
+		const [cfgResult, networkStatusResult, settingsResult] = await Promise.allSettled([
+			api.getConfig(),
 			api.getNetworkStatus(),
 			api.getSettings()
 		]);
+		if (cfgResult.status === 'fulfilled') {
+			const cfg = cfgResult.value;
+			myPubkey = cfg.my_pubkey;
+			assistantPubkey = cfg.assistant_pubkey;
+			console.log('Config loaded, myPubkey:', myPubkey, 'assistantPubkey:', assistantPubkey);
+		} else {
+			console.warn('Config fetch failed:', cfgResult.reason);
+		}
 		if (networkStatusResult.status === 'fulfilled') {
 			networkStatus = networkStatusResult.value;
 		}
