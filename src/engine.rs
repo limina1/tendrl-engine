@@ -289,16 +289,281 @@ impl Engine {
         self.relay_config.read().unwrap().broadcast.urls.clone()
     }
 
-    /// Get search relay URLs (owned clone). NIP-50-capable; used by `~:`
-    /// queries once per-class routing is wired.
+    /// Get search.default relay URLs (owned clone). The primary tier
+    /// for `~:` queries — joined into the fan-out (or replaces read
+    /// relays when `exclusive.search` is true).
     pub fn search_relays(&self) -> Vec<String> {
-        self.relay_config.read().unwrap().search.urls.clone()
+        self.relay_config.read().unwrap().search.default.clone()
     }
 
-    /// Get indexer relay URLs (owned clone). Discovery fallback for
-    /// kind 0 / 10002 / metadata lookups when the read set misses.
+    /// Get search.fallback relay URLs (owned clone). Consulted only
+    /// when the primary `~:` phase returns zero events.
+    pub fn search_fallback_relays(&self) -> Vec<String> {
+        self.relay_config.read().unwrap().search.fallback.clone()
+    }
+
+    /// Get indexer.default relay URLs (owned clone). Discovery primary
+    /// for kind 0 / 10002 / metadata lookups (joins or replaces read
+    /// relays per `exclusive.indexer`).
     pub fn indexer_relays(&self) -> Vec<String> {
-        self.relay_config.read().unwrap().indexer.urls.clone()
+        self.relay_config.read().unwrap().indexer.default.clone()
+    }
+
+    /// Get indexer.fallback relay URLs (owned clone). Consulted only
+    /// after the indexer.default phase returns zero events.
+    pub fn indexer_fallback_relays(&self) -> Vec<String> {
+        self.relay_config.read().unwrap().indexer.fallback.clone()
+    }
+
+    /// Merge the engine's well-known default discovery URLs into the
+    /// current live config + persist. Idempotent — URLs already
+    /// present skip. Returns how many were added. Useful for existing
+    /// users whose relays.json predates the discovery defaults.
+    pub fn merge_discovery_defaults(&self) -> usize {
+        let mut snapshot = {
+            let cfg = self.relay_config.read().unwrap();
+            self.relay_sets_snapshot_locked(&cfg)
+        };
+        let added = snapshot.merge_discovery_defaults();
+        if added == 0 {
+            return 0;
+        }
+        // Apply back to in-memory config so the change is live.
+        {
+            let mut cfg = self.relay_config.write().unwrap();
+            cfg.search = snapshot.search.clone();
+            cfg.indexer = snapshot.indexer.clone();
+        }
+        if let Err(e) = self.relay_store.save(&snapshot) {
+            warn!("Failed to persist discovery defaults: {e}");
+        }
+        added
+    }
+
+    /// Read whether a discovery class is in `exclusive` mode (bypasses
+    /// read relays for that lookup type). `class` is `"search"` or
+    /// `"indexer"`. Unknown classes return false.
+    pub fn discovery_exclusive(&self, class: &str) -> bool {
+        let cfg = self.relay_config.read().unwrap();
+        match class {
+            "search" => cfg.exclusive.search,
+            "indexer" => cfg.exclusive.indexer,
+            _ => false,
+        }
+    }
+
+    /// Toggle the `exclusive` flag for a discovery class. Persists
+    /// through `relays.json` like other relay mutations. Returns true
+    /// if the value changed.
+    pub fn set_discovery_exclusive(&self, class: &str, value: bool) -> bool {
+        let snapshot = {
+            let mut cfg = self.relay_config.write().unwrap();
+            let slot = match class {
+                "search" => &mut cfg.exclusive.search,
+                "indexer" => &mut cfg.exclusive.indexer,
+                _ => return false,
+            };
+            if *slot == value {
+                return false;
+            }
+            *slot = value;
+            self.relay_sets_snapshot_locked(&cfg)
+        };
+        if let Err(e) = self.relay_store.save(&snapshot) {
+            warn!("Failed to persist exclusive flag ({class}={value}): {e}");
+        }
+        true
+    }
+
+    /// Build the execution composition for a discovery-class lookup
+    /// (`class = "indexer"` for profile / kind 10002 / addressable;
+    /// `class = "search"` for `~:`). Returns a `CompositionShape`
+    /// matching the per-class exclusive × default × fallback matrix in
+    /// the relay-management plan:
+    ///
+    /// - `exclusive=OFF` + `default` empty + `fallback` empty: one
+    ///   stage with `(Read, fetch_urls)`.
+    /// - `exclusive=OFF` + `default` non-empty: one stage with
+    ///   `[(Read, fetch_urls), (Class.Default, default_urls)]` —
+    ///   fired concurrently.
+    /// - `exclusive=OFF` + `fallback` non-empty: a SECOND stage with
+    ///   `(Class.Fallback, fallback_urls)` after primary returns 0.
+    /// - `exclusive=ON`: read relays are excluded; primary stage is
+    ///   `(Class.Default, default_urls)` (or fallback if default is
+    ///   empty); fallback stage follows.
+    pub fn compose_discovery_phases(&self, class: &str) -> crate::network::CompositionShape {
+        use crate::network::{Phase, PhaseStage};
+        let cfg = self.relay_config.read().unwrap();
+        let read_urls = cfg.fetch.urls.clone();
+        let (default_urls, fallback_urls, default_phase, fallback_phase, exclusive) = match class {
+            "search" => (
+                cfg.search.default.clone(),
+                cfg.search.fallback.clone(),
+                Phase::SearchDefault,
+                Phase::SearchFallback,
+                cfg.exclusive.search,
+            ),
+            "indexer" => (
+                cfg.indexer.default.clone(),
+                cfg.indexer.fallback.clone(),
+                Phase::IndexerDefault,
+                Phase::IndexerFallback,
+                cfg.exclusive.indexer,
+            ),
+            _ => {
+                return crate::network::CompositionShape {
+                    phases: vec![PhaseStage {
+                        label: "primary".into(),
+                        members: vec![(Phase::Read, read_urls)],
+                        start_delay_ms: 0,
+                    }],
+                };
+            }
+        };
+        drop(cfg);
+
+        let mut phases = Vec::new();
+        // Track whether the fallback set has already been consumed by
+        // the primary stage (the degenerate exclusive+empty-default
+        // case) so we don't re-add it as a second stage.
+        let mut fallback_consumed = false;
+
+        let primary_members: Vec<(Phase, Vec<String>)> = if exclusive {
+            // Read relays bypassed entirely.
+            if !default_urls.is_empty() {
+                vec![(default_phase, default_urls)]
+            } else if !fallback_urls.is_empty() {
+                fallback_consumed = true;
+                vec![(fallback_phase, fallback_urls.clone())]
+            } else {
+                // ON with nothing configured — degrade to read so
+                // the lookup still runs.
+                vec![(Phase::Read, read_urls.clone())]
+            }
+        } else {
+            // OFF: read is the floor; default joins concurrently.
+            let mut m = vec![(Phase::Read, read_urls.clone())];
+            if !default_urls.is_empty() {
+                m.push((default_phase, default_urls));
+            }
+            m
+        };
+
+        phases.push(PhaseStage {
+            label: "primary".into(),
+            members: primary_members,
+            start_delay_ms: 0,
+        });
+
+        if !fallback_urls.is_empty() && !fallback_consumed {
+            phases.push(PhaseStage {
+                label: "fallback".into(),
+                members: vec![(fallback_phase, fallback_urls)],
+                start_delay_ms: 0,
+            });
+        }
+
+        crate::network::CompositionShape { phases }
+    }
+
+    /// Execute a multi-phase fetch against a composition. Each phase
+    /// fans out across its members concurrently; the next phase only
+    /// fires when the previous returned zero events (sequential
+    /// fallback). Per-relay `Connecting` / `Eose` / `Error` are
+    /// streamed through the SSE channel so the activity-toast +
+    /// modal show live status.
+    pub async fn fetch_with_composition(
+        &self,
+        composition: &crate::network::CompositionShape,
+        filters: &[Value],
+        label: String,
+        pattern: crate::network::FetchPattern,
+        mode_confirm: bool,
+    ) -> Vec<Value> {
+        use crate::network::{Phase, RequestSummary, RelayStatusValue};
+
+        // Flatten the composition's primary stage relays into the
+        // initial Intent's `relays` field (back-compat for clients
+        // that haven't picked up the structured summary yet).
+        let primary_relays: Vec<String> = composition
+            .phases
+            .first()
+            .map(|s| s.members.iter().flat_map(|(_, urls)| urls.clone()).collect())
+            .unwrap_or_default();
+
+        let summary = RequestSummary {
+            filters: filters
+                .iter()
+                .map(crate::network::nip_filter_from_json)
+                .collect(),
+            composition: composition.clone(),
+            dsl: crate::network::dsl_for_composition(filters, composition),
+        };
+
+        let op = match self
+            .network
+            .begin_operation_with_summary(
+                pattern,
+                label,
+                vec![],
+                primary_relays,
+                Some(summary),
+            )
+            .await
+        {
+            Ok(o) => o,
+            Err(_) => return Vec::new(),
+        };
+
+        let mut all_events: Vec<Value> = Vec::new();
+
+        for stage in &composition.phases {
+            // Skip subsequent phases if a prior returned events
+            // (fallback semantics: only escalate on zero).
+            if !all_events.is_empty() && stage.label != "primary" {
+                break;
+            }
+
+            let mut stage_events: Vec<Value> = Vec::new();
+            for (phase, urls) in &stage.members {
+                for relay_url in urls {
+                    op.relay_status(relay_url, *phase, RelayStatusValue::Connecting);
+                    match self
+                        .tracked_fetch_with_options(
+                            relay_url,
+                            filters,
+                            crate::network::FetchTrigger::ProfilePrefetch,
+                            mode_confirm,
+                        )
+                        .await
+                    {
+                        Ok(events) => {
+                            op.relay_status(
+                                relay_url,
+                                *phase,
+                                RelayStatusValue::Eose {
+                                    event_count: events.len(),
+                                },
+                            );
+                            stage_events.extend(events);
+                        }
+                        Err(e) => {
+                            op.relay_status(
+                                relay_url,
+                                *phase,
+                                RelayStatusValue::Error { msg: e.to_string() },
+                            );
+                        }
+                    }
+                }
+            }
+            all_events.extend(stage_events);
+        }
+
+        op.complete(all_events.len());
+        // Silence unused warning if Phase is referenced only above.
+        let _ = Phase::Read;
+        all_events
     }
 
     /// Get all named relay sets (NIP-51 kind 30002 groupings). Owned
@@ -423,9 +688,10 @@ impl Engine {
             fetch: rc.fetch.urls.clone(),
             publish: rc.publish.urls.clone(),
             broadcast: rc.broadcast.urls.clone(),
-            search: rc.search.urls.clone(),
-            indexer: rc.indexer.urls.clone(),
+            search: rc.search.clone(),
+            indexer: rc.indexer.clone(),
             named: rc.named_sets.clone(),
+            exclusive: rc.exclusive.clone(),
         }
     }
 
@@ -486,6 +752,43 @@ impl Engine {
     ) -> std::result::Result<crate::network::FetchOperation, crate::network::FetchCancelled> {
         self.network
             .begin_operation(pattern, label, steps, relays)
+            .await
+    }
+
+    /// Variant of `begin_fetch_operation` that carries a structured
+    /// `RequestSummary` on the emitted `Intent`. Callers that have
+    /// already built filters + composition (e.g. the feed-init path
+    /// in `list_root_publications`) pass it through so the confirm
+    /// modal can render the formal-language sentence + filters block
+    /// + composition block instead of falling back to the flat relay
+    /// list.
+    pub async fn begin_fetch_operation_with_summary(
+        &self,
+        pattern: crate::network::FetchPattern,
+        label: String,
+        steps: Vec<String>,
+        relays: Vec<String>,
+        summary: Option<crate::network::RequestSummary>,
+    ) -> std::result::Result<crate::network::FetchOperation, crate::network::FetchCancelled> {
+        self.network
+            .begin_operation_with_summary(pattern, label, steps, relays, summary)
+            .await
+    }
+
+    /// Open a publish operation. Same shape as `begin_fetch_operation`
+    /// — emits a `PublishIntent` that the UI renders as a pending toast,
+    /// gates on Confirm mode, returns a `PublishOperation` handle the
+    /// caller drives through `relay_status` / `complete` / `fail`.
+    pub async fn begin_publish_operation(
+        &self,
+        label: String,
+        relays: Vec<String>,
+        event_ids: Vec<String>,
+        summary: Option<crate::network::RequestSummary>,
+    ) -> std::result::Result<crate::network::PublishOperation, crate::network::FetchCancelled>
+    {
+        self.network
+            .begin_publish_operation(label, relays, event_ids, summary)
             .await
     }
 
@@ -554,6 +857,12 @@ impl Engine {
     /// and writes through to `<data_dir>/relays.json` so the change survives
     /// a restart.
     ///
+    /// `set` accepts both flat names (`"general"`, `"publish"`, `"fetch"`,
+    /// `"broadcast"`) and dotted discovery-class names (`"search.default"`,
+    /// `"search.fallback"`, `"indexer.default"`, `"indexer.fallback"`).
+    /// For discovery classes, the per-URL mutex applies: adding to one
+    /// tier strips the URL from the other tier of the same class.
+    ///
     /// Silently ignores unknown set names so the API endpoint can stay lax
     /// about user-supplied input (matching the previous behaviour). A
     /// write-through failure is surfaced as a `tracing::warn!` rather than
@@ -567,16 +876,35 @@ impl Engine {
         // Mutate in-memory first; release the write lock before disk I/O.
         let snapshot = {
             let mut rc = self.relay_config.write().unwrap();
+            // Per-URL mutual exclusion within a discovery class —
+            // moving a URL from default to fallback (or vice versa) is
+            // a single add() call.
+            match set {
+                "search.default" => rc.search.fallback.retain(|u| u != &url),
+                "search.fallback" => rc.search.default.retain(|u| u != &url),
+                "indexer.default" => rc.indexer.fallback.retain(|u| u != &url),
+                "indexer.fallback" => rc.indexer.default.retain(|u| u != &url),
+                _ => {}
+            }
             let urls = match set {
                 "general" => &mut rc.general.urls,
                 "publish" => &mut rc.publish.urls,
                 "fetch" => &mut rc.fetch.urls,
                 "broadcast" => &mut rc.broadcast.urls,
-                "search" => &mut rc.search.urls,
-                "indexer" => &mut rc.indexer.urls,
+                "search.default" => &mut rc.search.default,
+                "search.fallback" => &mut rc.search.fallback,
+                "indexer.default" => &mut rc.indexer.default,
+                "indexer.fallback" => &mut rc.indexer.fallback,
                 _ => return false,
             };
             if urls.iter().any(|u| u == &url) {
+                // Already a member — but the sibling-strip above may
+                // have changed state. Persist anyway so disk matches.
+                let snap = self.relay_sets_snapshot_locked(&rc);
+                drop(rc);
+                if let Err(e) = self.relay_store.save(&snap) {
+                    warn!("Failed to persist relay add ({set}/{url}): {e}");
+                }
                 return false;
             }
             urls.push(url.clone());
@@ -589,7 +917,8 @@ impl Engine {
     }
 
     /// Remove a relay URL from a working set. Mirror of `add_relay` —
-    /// mutates the in-memory config and writes through to `relays.json`.
+    /// accepts the same flat and dotted set names; mutates the
+    /// in-memory config and writes through to `relays.json`.
     pub fn remove_relay(&self, set: &str, url: &str) -> bool {
         let url = crate::relay_url::normalize_relay_url(url);
         if url.is_empty() {
@@ -602,8 +931,10 @@ impl Engine {
                 "publish" => &mut rc.publish.urls,
                 "fetch" => &mut rc.fetch.urls,
                 "broadcast" => &mut rc.broadcast.urls,
-                "search" => &mut rc.search.urls,
-                "indexer" => &mut rc.indexer.urls,
+                "search.default" => &mut rc.search.default,
+                "search.fallback" => &mut rc.search.fallback,
+                "indexer.default" => &mut rc.indexer.default,
+                "indexer.fallback" => &mut rc.indexer.fallback,
                 _ => return false,
             };
             let before = urls.len();
@@ -996,39 +1327,102 @@ impl Engine {
         let relays = self.relays();
         let mut total_fetched = 0usize;
 
+        // Per-chunk: ask the first relay, ingest, then re-check the
+        // d-tags LOCALLY and only keep asking for what's still missing.
+        // The previous loop broke on `!events.is_empty()` even when the
+        // relay returned events that didn't match our `#d` filter (some
+        // relays silently widen the filter and return the cap of recent
+        // 30041s) — so unreachable d-tags stayed marked missing and got
+        // re-queried every cycle, forever. Verifying after each fetch
+        // means the still-pending list strictly shrinks; chunks that
+        // converge to zero short-circuit the rest of the relay fan-out.
+        let ndb_for_check = Arc::clone(&self.ndb);
+        let mut tried_empty: HashSet<(String, String)> = HashSet::new();
         for (pubkey, d_tags) in &by_pubkey {
             for chunk in d_tags.chunks(50) {
-                let filter = json!({
-                    "kinds": [30041],
-                    "authors": [pubkey],
-                    "#d": chunk,
-                    "limit": chunk.len() * 2
-                });
-
+                let mut remaining: Vec<String> = chunk.to_vec();
                 for relay_url in &relays {
+                    if remaining.is_empty() {
+                        break;
+                    }
+                    let filter = json!({
+                        "kinds": [30041],
+                        "authors": [pubkey],
+                        "#d": remaining,
+                        "limit": remaining.len() * 2
+                    });
                     match self
-                        .tracked_fetch(relay_url, &[filter.clone()], FetchTrigger::BackgroundSync)
+                        .tracked_fetch(
+                            relay_url,
+                            &[filter],
+                            FetchTrigger::BackgroundSync,
+                        )
                         .await
                     {
                         Ok(events) => {
                             if !events.is_empty() {
-                                debug!("Fetched {} sections from {}", events.len(), relay_url);
+                                debug!(
+                                    "Fetched {} sections from {} (verifying d-tag matches)",
+                                    events.len(),
+                                    relay_url
+                                );
                                 total_fetched += events.len();
-                                break;
                             }
                         }
                         Err(e) => {
-                            debug!("Failed to fetch sections from {}: {}", relay_url, e);
+                            debug!(
+                                "Failed to fetch sections from {}: {}",
+                                relay_url, e
+                            );
+                            continue;
                         }
                     }
+                    // Re-check LOCALLY which of the remaining d-tags
+                    // landed in nostrdb. Drop the ones now present; the
+                    // rest get tried against the next relay.
+                    let pubkey_s = pubkey.clone();
+                    let pending: Vec<String> = remaining.clone();
+                    let ndb_clone = Arc::clone(&ndb_for_check);
+                    let still_missing = tokio::task::spawn_blocking(move || {
+                        pending
+                            .into_iter()
+                            .filter(|d| {
+                                let f = json!({
+                                    "kinds": [30041],
+                                    "authors": [&pubkey_s],
+                                    "#d": [d],
+                                    "limit": 1
+                                });
+                                query::query_local(&ndb_clone, &[f])
+                                    .map(|e| e.is_empty())
+                                    .unwrap_or(true)
+                            })
+                            .collect::<Vec<String>>()
+                    })
+                    .await
+                    .map_err(|e| {
+                        EngineError::Database(format!("spawn_blocking: {e}"))
+                    })?;
+                    remaining = still_missing;
+                }
+                // What's left after every relay was tried stays missing
+                // — record it so the next cycle's logging can show how
+                // much of the work is structurally unreachable on the
+                // current relay set (the user can then prune or add
+                // relays). Recompute happens at the top of the next
+                // call, so this is informational only.
+                for d in remaining {
+                    tried_empty.insert((pubkey.clone(), d));
                 }
             }
         }
 
         info!(
-            "fetch_missing_sections: fetched {} of {} missing sections",
+            "fetch_missing_sections: fetched {} of {} missing sections \
+             ({} still unreachable on current relay set)",
             total_fetched,
-            missing.len()
+            missing.len(),
+            tried_empty.len()
         );
         Ok((needed_count, missing.len(), total_fetched))
     }

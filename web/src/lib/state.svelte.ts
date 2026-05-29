@@ -163,9 +163,41 @@ function _createAppState() {
 	//
 	// Lightweight transient notifications for quick acknowledgments —
 	// "copied to clipboard", "publish queued", "broadcast complete", etc.
-	// Stack mounts lower-right via <ToastStack /> in the layout. Each
-	// toast auto-dismisses after `ttlMs`; the timer is cleared if the
-	// user dismisses it manually first.
+	// Stack mounts lower-right via <ToastStack /> in the layout.
+	//
+	// Two interaction modes:
+	//   1. Default: auto-dismisses after `ttlMs` with a clock-style
+	//      radial countdown visible on the toast.
+	//   2. Pinned: user clicks the toast → countdown stops, close (×)
+	//      button appears, and the toast stays until manually dismissed.
+	//      Pinned toasts with an `activity` field get an "Expand" button
+	//      that opens the FetchActivityModal for the structured detail
+	//      view (filters / composition / per-relay rows / DSL footer).
+	//
+	// SSE-driven toasts (fetch + publish operations from the engine)
+	// carry an `activity` field. Quick acknowledgment toasts (copy,
+	// settings saved, etc.) leave it undefined.
+	type RelayRowStatus =
+		| { kind: 'connecting' }
+		| { kind: 'eose'; event_count: number }
+		| { kind: 'error'; msg: string }
+		| { kind: 'timeout' }
+		| { kind: 'accepted' }
+		| { kind: 'rejected'; msg: string };
+	type ToastActivity = {
+		operation_id: string;
+		// Structured request summary from the engine's Intent event.
+		summary?: import('./types').RequestSummary;
+		// Phase the toast is rendering (typically pulled from the Intent
+		// or the first RelayStatus event). Multi-phase ops produce
+		// multiple toasts; each phase = one toast.
+		phase?: import('./types').Phase;
+		// Per-relay status rows, keyed by URL. Updated by relay_status
+		// events as they stream in.
+		relays: Record<string, RelayRowStatus>;
+		// Was this a publish or fetch? Drives the icon / label.
+		mode: 'fetch' | 'publish';
+	};
 	type Toast = {
 		id: number;
 		message: string;
@@ -173,14 +205,57 @@ function _createAppState() {
 		// soft pulse. Callers flip to `success` (green) or `error` (red)
 		// via updateToast when the operation settles.
 		kind: 'success' | 'info' | 'error' | 'pending';
+		// Pinned toasts don't auto-dismiss; the countdown UI is hidden.
+		pinned: boolean;
+		// Original TTL + start time — used to render the countdown.
+		// Frozen when `pinned = true`.
+		ttlMs: number;
+		startedAt: number;
+		// Present for SSE-driven activity toasts. Drives Expand button
+		// + modal content.
+		activity?: ToastActivity;
 	};
 	let toasts: Toast[] = $state([]);
 	let nextToastId = 1;
 	const toastTimers = new Map<number, ReturnType<typeof setTimeout>>();
+	// Which activity toast (by id) the FetchActivityModal is showing.
+	// Null = modal closed.
+	let activityModalToastId: number | null = $state(null);
 
 	function pushToast(message: string, kind: Toast['kind'] = 'success', ttlMs = 2000): number {
 		const id = nextToastId++;
-		toasts = [...toasts, { id, message, kind }];
+		toasts = [
+			...toasts,
+			{ id, message, kind, pinned: false, ttlMs, startedAt: Date.now() }
+		];
+		toastTimers.set(
+			id,
+			setTimeout(() => dismissToast(id), ttlMs)
+		);
+		return id;
+	}
+
+	/** Variant of pushToast for engine-driven SSE operations. Attaches a
+	 *  ToastActivity payload so the toast can expand into the
+	 *  FetchActivityModal with structured detail. */
+	function pushActivityToast(
+		message: string,
+		ttlMs: number,
+		activity: ToastActivity
+	): number {
+		const id = nextToastId++;
+		toasts = [
+			...toasts,
+			{
+				id,
+				message,
+				kind: 'pending',
+				pinned: false,
+				ttlMs,
+				startedAt: Date.now(),
+				activity
+			}
+		];
 		toastTimers.set(
 			id,
 			setTimeout(() => dismissToast(id), ttlMs)
@@ -195,6 +270,54 @@ function _createAppState() {
 			toastTimers.delete(id);
 		}
 		toasts = toasts.filter((t) => t.id !== id);
+		// If the activity modal was viewing this toast, close it too.
+		if (activityModalToastId === id) activityModalToastId = null;
+	}
+
+	/** Pin a toast — clears its auto-dismiss timer and flips
+	 *  `pinned = true`. Idempotent: pinning a pinned toast is a no-op.
+	 *  Click handler on the toast row calls this. */
+	function pinToast(id: number): void {
+		const existing = toastTimers.get(id);
+		if (existing) {
+			clearTimeout(existing);
+			toastTimers.delete(id);
+		}
+		toasts = toasts.map((t) => (t.id === id ? { ...t, pinned: true } : t));
+	}
+
+	/** Open the FetchActivityModal for a specific toast's activity.
+	 *  No-op if the toast doesn't have an `activity` field. */
+	function expandActivityToast(id: number): void {
+		const t = toasts.find((x) => x.id === id);
+		if (!t?.activity) return;
+		// Auto-pin on expand — otherwise the toast underneath could
+		// auto-dismiss while the modal is open, leaving an orphaned modal.
+		pinToast(id);
+		activityModalToastId = id;
+	}
+
+	function closeActivityModal(): void {
+		activityModalToastId = null;
+	}
+
+	/** Update one relay's row inside an activity toast. Called by
+	 *  fetch-events SSE handler when a `relay_status` event arrives. */
+	function updateActivityRelay(
+		operationId: string,
+		relay: string,
+		status: RelayRowStatus
+	): void {
+		toasts = toasts.map((t) => {
+			if (!t.activity || t.activity.operation_id !== operationId) return t;
+			return {
+				...t,
+				activity: {
+					...t.activity,
+					relays: { ...t.activity.relays, [relay]: status }
+				}
+			};
+		});
 	}
 
 	/**
@@ -202,6 +325,7 @@ function _createAppState() {
 	 * reset its auto-dismiss timer. Used for "tick" toasts that flip
 	 * from `info` (purple) while an async action is running to
 	 * `success` (green) when it finishes, then vanish on the new TTL.
+	 * Pinned toasts don't restart their timer (the pin is sacred).
 	 */
 	function updateToast(
 		id: number,
@@ -210,11 +334,16 @@ function _createAppState() {
 	): void {
 		toasts = toasts.map((t) => (t.id === id ? { ...t, ...patch } : t));
 		if (ttlMs !== undefined) {
+			const target = toasts.find((t) => t.id === id);
+			if (target?.pinned) return;
 			const existing = toastTimers.get(id);
 			if (existing) clearTimeout(existing);
 			toastTimers.set(
 				id,
 				setTimeout(() => dismissToast(id), ttlMs)
+			);
+			toasts = toasts.map((t) =>
+				t.id === id ? { ...t, ttlMs, startedAt: Date.now() } : t
 			);
 		}
 	}
@@ -228,6 +357,11 @@ function _createAppState() {
 	let searchLocalCount = $state(0);
 	let searchRelayCount = $state(0);
 	let searchLoading = $state(false);
+	// Separate from searchLoading so the empty-results UI can distinguish
+	// "scanning local DB" from "fanning out to relays" — they look
+	// different to the user (one is fast and local; the other waits on
+	// the network and is the answer to "is this even findable?").
+	let searchRelayLoading = $state(false);
 	// The effective query (with auto-`by:me` etc. applied) of the most
 	// recent run. The offline "Search relays?" CTA replays this exact
 	// string with bypass_offline=true so we hit the same filter set, not
@@ -281,6 +415,9 @@ function _createAppState() {
 	// --- Identity ---
 	let myPubkey: string | null = $state(null);
 	let assistantPubkey: string | null = $state(null);
+	// Engine's nostrdb data directory — surfaced so the Settings/Purge
+	// confirm prompt can show exactly which path is about to be wiped.
+	let dataDir: string | null = $state(null);
 	let identityStatus: IdentityStatus | null = $state(null);
 	let identityLoading = $state(false);
 	let identityError: string | null = $state(null);
@@ -292,6 +429,41 @@ function _createAppState() {
 	// radio reflects the user's intent immediately on reload, instead of
 	// flashing "engine" for ~2s while the NIP-07 reconnect is in flight.
 	let savedIdentitySource: string | null = $state(null);
+	// Network mode last persisted in config.toml. Loaded from
+	// `/api/v1/settings` at init, BEFORE the live `networkStatus`
+	// arrives via `/api/v1/network/status`. The modeline pill uses
+	// it as a fallback so the pill doesn't briefly disappear (or
+	// flash an em-dash placeholder) at page load.
+	//
+	// Seeded SYNCHRONOUSLY from localStorage at module-load so the
+	// modeline pill renders with the last-known mode before any HTTP
+	// fetch completes — important in Vite dev mode where bundle
+	// compilation can push initialize() out by seconds. Updated
+	// whenever the engine confirms a new mode (live status, settings,
+	// or a user-driven toggle).
+	// Default to 'auto' when the cache is empty — that's the engine's
+	// default mode (per src/network.rs NetworkMode default), so for a
+	// fresh user it matches reality without ever showing a "loading"
+	// fallback. Returning users get their actual last-known mode from
+	// localStorage. If the live state ever turns out to differ, the
+	// init/poll/toggle paths overwrite this within milliseconds.
+	let savedNetworkMode: 'auto' | 'confirm' = $state(
+		((): 'auto' | 'confirm' => {
+			if (typeof localStorage === 'undefined') return 'auto';
+			const v = localStorage.getItem('tendrl.savedNetworkMode');
+			return v === 'confirm' ? 'confirm' : 'auto';
+		})()
+	);
+
+	function persistNetworkMode(mode: 'auto' | 'confirm') {
+		if (typeof localStorage !== 'undefined') {
+			try {
+				localStorage.setItem('tendrl.savedNetworkMode', mode);
+			} catch {
+				/* quota / privacy mode — fall back to in-memory only */
+			}
+		}
+	}
 	// True while the auto-reconnect path is actively trying to detect +
 	// register window.nostr. Lets the UI render a "reconnecting…" state
 	// instead of the default engine login form during that window.
@@ -773,7 +945,21 @@ function _createAppState() {
 	async function loadFeed() {
 		feedLoading = true;
 		try {
-			const resp = await api.listPublications();
+			let resp = await api.listPublications();
+			// Cold-cache fallback: if local nostrdb has nothing (fresh
+			// install, post-purge, etc.), automatically retry with
+			// `fetch_always` so the user sees content without having
+			// to manually hit a Sync button. In confirm mode the
+			// engine pops the FetchConfirmModal; in auto it fires
+			// silently and the activity toast tracks progress.
+			if (resp.publications.length === 0) {
+				try {
+					const fetched = await api.listPublications(20, 'fetch_always');
+					if (fetched.publications.length > 0) resp = fetched;
+				} catch {
+					/* relay fetch failed — keep the empty local result */
+				}
+			}
 			feed = resp.publications;
 			feedHasMore = resp.count >= 20;
 			if (!myPubkey) {
@@ -1155,12 +1341,14 @@ function _createAppState() {
 		canSign: boolean,
 		overrides?: { pubDTag: string; sectionDTagByT: Record<string, string> }
 	) {
-		// Immediate feedback: signing N events through an external signer is
-		// slow (one round-trip per event) and otherwise gives no sign the
-		// click registered. Flip this toast to success/error when it settles.
+		// Per-site toast covers the SIGNING phase only — the broadcast
+		// phase is owned by the SSE channel (fetch-events.svelte.ts opens
+		// its own activity toast when the engine emits publish_intent).
+		// Two toasts may briefly coexist: this one for "signing", the
+		// SSE one for "broadcasting to N relays".
 		const progressToast = pushToast(
 			canSign
-				? `Publishing ${sections.length + 1} events… (signing via ${identityStatus?.source ?? 'engine'})`
+				? `Signing ${sections.length + 1} events… (${identityStatus?.source ?? 'engine'})`
 				: 'Saving locally…',
 			'pending',
 			120000
@@ -1259,16 +1447,22 @@ function _createAppState() {
 						kicker: 'live'
 					}
 				});
-				updateToast(progressToast, { message: 'Published — see relay results', kind: 'success' }, 3000);
+				// Signed and the engine kicked off the broadcast. Dismiss
+				// the signing toast quickly — the SSE-driven activity
+				// toast is now showing per-relay broadcast status.
+				updateToast(progressToast, { message: 'Signed', kind: 'success' }, 1500);
 			} else if (!canSign) {
 				updateToast(progressToast, { message: 'Saved locally — log in to sign & broadcast', kind: 'info' }, 4000);
 			} else {
-				updateToast(progressToast, { message: 'Published (no relay results returned)', kind: 'success' }, 4000);
+				// Edge case: signed but engine didn't emit broadcast SSE
+				// events (e.g. no relays configured). Keep this concise.
+				updateToast(progressToast, { message: 'Signed (no broadcast)', kind: 'info' }, 3000);
 			}
 			await loadFeed();
 		} catch (e) {
-			// Don't swallow — a failed sign/broadcast otherwise looks like
-			// "nothing happened" (no modal, no error). Surface the reason.
+			// HTTP-level failure (network, signing error, validation).
+			// Distinct from the SSE-driven broadcast failure path the
+			// activity toast already handles.
 			console.error('Publish compose failed:', e);
 			updateToast(progressToast, { message: `Publish failed: ${e instanceof Error ? e.message : String(e)}`, kind: 'error' }, 6000);
 		}
@@ -1708,6 +1902,21 @@ function _createAppState() {
 		} finally {
 			searchLoading = false;
 		}
+
+		// Auto-fan-out to relays when the local query returned 0 hits.
+		// Applies in BOTH modes: in auto the engine fans out silently
+		// (the previous behavior left the user staring at an empty
+		// panel with no signal); in confirm the modal pops as the
+		// approve-gate. Either way the user always learns whether
+		// relays have it, without an extra click.
+		const mode = networkStatus?.mode;
+		if (
+			searchCount === 0 &&
+			searchLastQuery &&
+			(mode === 'auto' || mode === 'confirm')
+		) {
+			await handleSearchViaRelays();
+		}
 	}
 
 	// "Search relays" — re-run the current query with fetch_always so the
@@ -1717,7 +1926,7 @@ function _createAppState() {
 	// events, so none is pushed here.
 	async function handleSearchViaRelays() {
 		if (!searchLastQuery) return;
-		searchLoading = true;
+		searchRelayLoading = true;
 		try {
 			const resp = await api.search(
 				searchLastQuery,
@@ -1740,7 +1949,7 @@ function _createAppState() {
 		} catch (e) {
 			console.error('Relay search failed:', e);
 		} finally {
-			searchLoading = false;
+			searchRelayLoading = false;
 		}
 	}
 
@@ -1955,11 +2164,44 @@ function _createAppState() {
 			viewMode = 'outline';
 			currentSection = 0;
 			previewVisible = false;
+
+			// Auto-backfill missing sections + nested indexes from
+			// relays. In confirm mode the user gets ONE modal listing
+			// what's about to be fetched (instead of N modals during
+			// per-section lazy load). In auto mode the activity toast
+			// tracks per-relay progress. After the backfill ingest, the
+			// reader's lazy section getter sees fresh data.
+			backfillCurrentPublication(pubkey, d_tag).catch((e) => {
+				console.warn('Auto-backfill failed:', e);
+			});
 		} catch (e) {
 			console.error('Failed to open publication:', pubkey, d_tag, e);
 			navigateHome();
 		} finally {
 			docLoading = false;
+		}
+	}
+
+	/** Fire the backfill endpoint and, if it ingested anything new,
+	 *  reload the TOC so the lazy section reads see the fresh content. */
+	async function backfillCurrentPublication(pubkey: string, d_tag: string): Promise<void> {
+		const resp = await api.backfillPublication(pubkey, d_tag);
+		if (resp.fetched > 0 && publication?.addr.pubkey === pubkey && publication?.addr.d_tag === d_tag) {
+			// Re-load the publication tree so newly-ingested sections
+			// show up. local_first finds them in cache now.
+			try {
+				const fresh = await api.getPublication(pubkey, d_tag, 'local_first');
+				publication = fresh.publication;
+				sections = fresh.toc.map((entry, i) => ({
+					addr: entry.addr,
+					title: entry.title,
+					content: null,
+					position: i,
+					status: 'pending' as const
+				}));
+			} catch {
+				/* keep the previous TOC if re-load fails */
+			}
 		}
 	}
 
@@ -2269,6 +2511,12 @@ function _createAppState() {
 		try {
 			await api.setNetworkMode(mode);
 			networkStatus = await api.getNetworkStatus();
+			// User-driven toggle — update the cache immediately so
+			// the next page-load instant-paints the new mode.
+			if (mode === 'auto' || mode === 'confirm') {
+				savedNetworkMode = mode;
+				persistNetworkMode(mode);
+			}
 		} catch (e) {
 			console.error('Failed to set network mode:', e);
 		}
@@ -2276,15 +2524,55 @@ function _createAppState() {
 
 	// ===================== Purge / Export / Import =====================
 
-	async function handlePurge() {
-		if (!confirm('This will show the command to delete the nostrdb database. Continue?')) return;
+	/** Trigger an engine cache purge. The engine deletes its LMDB
+	 *  files and re-execs itself in-place (~1 second of unavailability).
+	 *  This shows a pending toast that resolves once the engine comes
+	 *  back, by polling /api/v1/network/status. */
+	async function handlePurge(): Promise<void> {
+		const toastId = pushToast('Purging local cache…', 'pending', 120_000);
+		let resp: Response;
 		try {
-			const resp = await fetch('/api/v1/purge', { method: 'POST' });
-			const data = await resp.json();
-			alert(`To purge, stop the engine and run:\n\n${data.command}`);
+			resp = await fetch('/api/v1/purge', { method: 'POST' });
 		} catch (e) {
-			console.error('Purge failed:', e);
+			updateToast(
+				toastId,
+				{ message: `Purge request failed: ${e instanceof Error ? e.message : String(e)}`, kind: 'error' },
+				5000
+			);
+			return;
 		}
+		if (!resp.ok) {
+			updateToast(toastId, { message: `Purge request failed: ${resp.status}`, kind: 'error' }, 5000);
+			return;
+		}
+		// Engine acknowledged; it'll re-exec in ~150ms. Poll until the
+		// new engine answers /network/status, then flip to success.
+		updateToast(toastId, { message: 'Engine restarting…' });
+		const startedAt = Date.now();
+		const deadline = startedAt + 15_000; // 15s should be plenty
+		while (Date.now() < deadline) {
+			await new Promise((r) => setTimeout(r, 300));
+			try {
+				const r = await fetch('/api/v1/network/status');
+				if (r.ok) {
+					updateToast(toastId, { message: 'Purged + reconnected', kind: 'success' }, 2500);
+					// Re-load anything the engine just lost (relay
+					// config still survives since it's in relays.json,
+					// but identity session resets — refresh it).
+					try {
+						identityStatus = await api.getIdentity();
+					} catch {}
+					return;
+				}
+			} catch {
+				/* engine still down, keep polling */
+			}
+		}
+		updateToast(
+			toastId,
+			{ message: "Engine didn't come back in 15s — check the terminal", kind: 'error' },
+			7000
+		);
 	}
 
 	async function handleExport() {
@@ -2659,26 +2947,42 @@ function _createAppState() {
 
 	async function initialize() {
 		loadSearchConfig();
-		try {
-			const cfg = await api.getConfig();
+		// Fire all three cheap GETs in parallel — none depend on each
+		// other, and the modeline pills + chat composer all need this
+		// data ASAP. Previously getConfig was awaited before the other
+		// two, adding one extra round-trip's worth of wait before the
+		// network pill could light up.
+		const [cfgResult, networkStatusResult, settingsResult] = await Promise.allSettled([
+			api.getConfig(),
+			api.getNetworkStatus(),
+			api.getSettings()
+		]);
+		if (cfgResult.status === 'fulfilled') {
+			const cfg = cfgResult.value;
 			myPubkey = cfg.my_pubkey;
 			assistantPubkey = cfg.assistant_pubkey;
+			dataDir = cfg.data_dir ?? null;
 			console.log('Config loaded, myPubkey:', myPubkey, 'assistantPubkey:', assistantPubkey);
-		} catch (e) {
-			console.warn('Config fetch failed:', e);
+		} else {
+			console.warn('Config fetch failed:', cfgResult.reason);
 		}
-		// Load network status FIRST so the modeline's network/auto pill
-		// settles on the real state before the user sees the placeholder
-		// "—". loadFeed is slow; networkStatus is a cheap GET.
-		try {
-			networkStatus = await api.getNetworkStatus();
-		} catch {}
+		if (networkStatusResult.status === 'fulfilled') {
+			networkStatus = networkStatusResult.value;
+			// Mirror the live mode into the saved cache so the next
+			// reload reflects what the engine actually said, not just
+			// what config.toml hints.
+			const m = networkStatusResult.value.mode;
+			if (m === 'auto' || m === 'confirm') {
+				savedNetworkMode = m;
+				persistNetworkMode(m);
+			}
+		}
 		// Hydrate editor / compose defaults from config.toml so a reload
 		// reflects the user's last-saved settings (instead of resetting
 		// to hard-coded defaults). Settings page's "Save settings" writes
 		// these back via the snapshot endpoint.
-		try {
-			const s = await api.getSettings();
+		if (settingsResult.status === 'fulfilled') {
+			const s = settingsResult.value;
 			editorLineNumbers = s.editor.line_numbers;
 			editorVimMode = s.editor.vim_mode;
 			editorInsertMode = s.editor.insert_mode as EditorInsertMode;
@@ -2686,8 +2990,10 @@ function _createAppState() {
 			syncMode = s.compose.sync_mode as SyncMode;
 			buttonLabels = s.compose.button_labels as ButtonLabels;
 			savedIdentitySource = s.identity?.source ?? null;
-		} catch {
-			// API not yet available — keep hard-coded defaults.
+			if (s.network?.mode === 'auto' || s.network?.mode === 'confirm') {
+				savedNetworkMode = s.network.mode;
+				persistNetworkMode(s.network.mode);
+			}
 		}
 		// Auto-reconnect to the previously-chosen signing source. NIP-07
 		// is a per-session connection that the browser holds; persisting
@@ -2770,7 +3076,19 @@ function _createAppState() {
 	function startNetworkPoll() {
 		const networkPoll = setInterval(async () => {
 			if (document.hidden) return;
-			try { networkStatus = await api.getNetworkStatus(); } catch {}
+			try {
+				const ns = await api.getNetworkStatus();
+				networkStatus = ns;
+				// Keep the localStorage cache in sync with the live
+				// engine so the next reload's instant-paint matches
+				// reality (e.g. user toggled mode in a different tab).
+				if (ns.mode === 'auto' || ns.mode === 'confirm') {
+					if (savedNetworkMode !== ns.mode) {
+						savedNetworkMode = ns.mode;
+						persistNetworkMode(ns.mode);
+					}
+				}
+			} catch {}
 		}, 2000);
 		// Identity poll — detect server-side lock timeout
 		identityPollInterval = setInterval(async () => {
@@ -2963,6 +3281,7 @@ function _createAppState() {
 		get searchLocalCount() { return searchLocalCount; },
 		get searchRelayCount() { return searchRelayCount; },
 		get searchLoading() { return searchLoading; },
+		get searchRelayLoading() { return searchRelayLoading; },
 
 		// Event view modal (structured)
 		get eventModalData() { return eventModalData; },
@@ -2983,6 +3302,7 @@ function _createAppState() {
 		// Identity
 		get myPubkey() { return myPubkey; },
 		get assistantPubkey() { return assistantPubkey; },
+		get dataDir() { return dataDir; },
 		get localPubkeys() { return localPubkeys; },
 		get identityStatus() { return identityStatus; },
 		get identityLoading() { return identityLoading; },
@@ -3005,8 +3325,12 @@ function _createAppState() {
 			try {
 				const s = await api.getSettings();
 				savedIdentitySource = s.identity?.source ?? null;
+				if (s.network?.mode === 'auto' || s.network?.mode === 'confirm') {
+					savedNetworkMode = s.network.mode;
+				}
 			} catch {}
 		},
+		get savedNetworkMode() { return savedNetworkMode; },
 		set identityError(v: string | null) { identityError = v; },
 		handleIdentityLogin,
 		handleIdentityUnlock,
@@ -3111,8 +3435,19 @@ function _createAppState() {
 		findContainingIndexes,
 		get toasts() { return toasts; },
 		pushToast,
+		pushActivityToast,
 		updateToast,
+		updateActivityRelay,
 		dismissToast,
+		pinToast,
+		expandActivityToast,
+		closeActivityModal,
+		get activityModalToastId() { return activityModalToastId; },
+		get activityModalToast() {
+			return activityModalToastId != null
+				? toasts.find((t) => t.id === activityModalToastId) ?? null
+				: null;
+		},
 		get searchHistory() { return searchHistory; },
 		get currentEntry() { return currentEntry; },
 		get previousEntry() { return previousEntry; },

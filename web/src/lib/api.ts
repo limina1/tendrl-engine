@@ -155,8 +155,16 @@ export function getEvent(eventId: string) {
 /** Fetch an addressable event (latest version for the kind/pubkey/d_tag
  *  triple). Used by the reader to render non-30040 addressables like
  *  NIP-23 long-form articles (30023) and NKBIP-02 wikis (30818). */
-export function getAddressable(kind: number, pubkey: string, d_tag: string) {
-	return fetchJson<{ event: unknown }>(`/api/v1/addressable/${kind}/${pubkey}/${encodeURIComponent(d_tag)}`);
+export function getAddressable(
+	kind: number,
+	pubkey: string,
+	d_tag: string,
+	policy?: 'local_only' | 'local_first' | 'fetch_always'
+) {
+	const qs = policy ? `?policy=${policy}` : '';
+	return fetchJson<{ event: unknown }>(
+		`/api/v1/addressable/${kind}/${pubkey}/${encodeURIComponent(d_tag)}${qs}`
+	);
 }
 
 export function queryEvents(filters: Record<string, unknown>[], policy = 'local_first') {
@@ -169,7 +177,11 @@ export function queryEvents(filters: Record<string, unknown>[], policy = 'local_
 // Config API
 
 export function getConfig() {
-	return fetchJson<{ my_pubkey: string | null; assistant_pubkey: string | null }>('/api/v1/config');
+	return fetchJson<{
+		my_pubkey: string | null;
+		assistant_pubkey: string | null;
+		data_dir: string;
+	}>('/api/v1/config');
 }
 
 // Identity API
@@ -473,6 +485,34 @@ export function fetchSections() {
 	});
 }
 
+/** Batch-fetch a publication's missing 30041 sections + nested 30040
+ *  indexes from relays in ONE op (one confirm modal in confirm mode
+ *  instead of one per section). `depth` controls how many tree levels
+ *  to walk when collecting missing children. */
+export function backfillPublication(pubkey: string, d_tag: string, depth?: number) {
+	const qs = depth != null ? `?depth=${depth}` : '';
+	return fetchJson<{ requested: number; fetched: number; depth: number }>(
+		`/api/v1/publications/${pubkey}/${encodeURIComponent(d_tag)}/backfill${qs}`,
+		{ method: 'POST' }
+	);
+}
+
+/** Pull a user's relay-list events (kinds 10002 / 10007 / 10086 /
+ *  10088 / 30002) through the engine's indexer composition — read
+ *  relays first, falling through to indexer.default → indexer.fallback
+ *  if the primary returns zero. Honors NetworkMode::Confirm via the
+ *  activity-event modal. The web reads the events back from local
+ *  nostrdb via api.search after this resolves. */
+export function pullUserData(pubkey: string, modeConfirm = true) {
+	return fetchJson<{ fetched: number; kinds: number[]; author: string }>(
+		'/api/v1/pull-user-data',
+		{
+			method: 'POST',
+			body: JSON.stringify({ pubkey, mode_confirm: modeConfirm })
+		}
+	);
+}
+
 export function fetchAuthors() {
 	return fetchJson<{ fetched: number; authors: number; relays: number }>('/api/v1/fetch/authors', {
 		method: 'POST'
@@ -485,14 +525,23 @@ export interface NamedRelaySet {
 	urls: string[];
 }
 
+/** Two-tier membership for a discovery class — `default` joins the
+ *  primary fan-out (or replaces read with `exclusive`), `fallback`
+ *  kicks in only on default-miss. */
+export interface DiscoveryClass {
+	default: string[];
+	fallback: string[];
+}
+
 export function getRelayConfig() {
 	return fetchJson<{
 		general: { urls: string[]; kinds: number[] };
 		publish: { urls: string[]; kinds: number[] };
 		fetch: { urls: string[]; kinds: number[] };
 		broadcast: { urls: string[]; kinds: number[] };
-		search: { urls: string[]; kinds: number[] };
-		indexer: { urls: string[]; kinds: number[] };
+		search: DiscoveryClass;
+		indexer: DiscoveryClass;
+		exclusive: { search: boolean; indexer: boolean };
 		named_sets: NamedRelaySet[];
 		authors: string[];
 		initial_relays: string[];
@@ -547,6 +596,24 @@ export function removeRelay(set: string, url: string) {
 	return fetchJson<{ updated: boolean; message: string }>('/api/v1/config/update', {
 		method: 'POST',
 		body: JSON.stringify({ remove_relay: { set, url } })
+	});
+}
+
+/** Toggle the `exclusive` flag for a discovery class. ON = read relays
+ *  bypassed entirely for this class's lookup type. */
+export function setDiscoveryExclusive(klass: 'search' | 'indexer', value: boolean) {
+	return fetchJson<{ updated: boolean; message: string }>('/api/v1/config/update', {
+		method: 'POST',
+		body: JSON.stringify({ set_exclusive: { class: klass, value } })
+	});
+}
+
+/** Merge the engine's well-known indexer/search defaults into the
+ *  current `default` tiers. Idempotent — already-present URLs skip. */
+export function restoreDiscoveryDefaults() {
+	return fetchJson<{ updated: boolean; message: string }>('/api/v1/config/update', {
+		method: 'POST',
+		body: JSON.stringify({ restore_discovery_defaults: true })
 	});
 }
 

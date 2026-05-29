@@ -1319,6 +1319,68 @@
 		outlineCursor = index;
 	}
 
+	// Per-section / per-nested-index "fetch from relays" affordance.
+	// Forces `fetch_always` so the engine runs through the relay path
+	// (and confirm mode pops a single-event modal). After the event
+	// lands, we patch the section in place for a leaf, or re-stream
+	// the tree for a nested index so its children become discoverable.
+	let backfillingAll = $state(false);
+	const refetchingSection = $state<Record<number, boolean>>({});
+
+	async function refetchSection(index: number) {
+		const cur = pristineSections[index];
+		if (!cur) return;
+		if (refetchingSection[index]) return;
+		refetchingSection[index] = true;
+		const wasIndex = cur.addr.kind === 30040;
+		try {
+			const resp = await api.getAddressable(
+				cur.addr.kind,
+				cur.addr.pubkey,
+				cur.addr.d_tag,
+				'fetch_always'
+			);
+			const ev = resp.event as
+				| { content?: string; tags?: string[][] }
+				| null;
+			if (wasIndex) {
+				// Nested 30040 stub got pulled — re-run the loader so its
+				// children stream in under this focus.
+				if (publication?.addr.pubkey === parsedAddr?.pubkey) runLoader();
+			} else if (ev) {
+				const titleTag = ev.tags?.find((t) => t[0] === 'title')?.[1];
+				pristineSections[index] = {
+					...pristineSections[index],
+					title: titleTag ?? pristineSections[index].title,
+					content: ev.content ?? '',
+					status: 'loaded'
+				};
+			}
+		} catch (e) {
+			pristineSections[index] = {
+				...pristineSections[index],
+				status: 'error',
+				error: String(e)
+			};
+		} finally {
+			refetchingSection[index] = false;
+		}
+	}
+
+	async function backfillAll() {
+		if (!parsedAddr || parsedAddr.kind !== 30040) return;
+		if (backfillingAll) return;
+		backfillingAll = true;
+		try {
+			const resp = await api.backfillPublication(parsedAddr.pubkey, parsedAddr.dTag);
+			if (resp.fetched > 0) runLoader();
+		} catch (e) {
+			console.warn('[ReaderBuffer] backfill failed', e);
+		} finally {
+			backfillingAll = false;
+		}
+	}
+
 	// JSON-viewer affordances. The publication-level button opens the
 	// kind-30040 index event; the per-section kebab + pager's "§ json"
 	// link opens the corresponding section event. All three resolve via
@@ -1839,6 +1901,16 @@
 			{@const pubAddr = publication.addr}
 			<div class="title">
 				<span class="title__text">{publication.title}</span>
+				{#if pubAddr.kind === 30040}
+					<button
+						class="title-fetch"
+						class:spin={backfillingAll}
+						onclick={backfillAll}
+						disabled={backfillingAll}
+						title="Fetch this publication's index + backfill all missing sections from relays"
+						aria-label="Fetch and backfill"
+					>⟳</button>
+				{/if}
 				<PoolStateBadges
 					item={app.findPoolItemByAddr(pubAddr)}
 					onpillctx={() => app.pillActionByAddr(pubAddr, 'context')}
@@ -2129,6 +2201,16 @@
 											<span class="nested-count nested-count--empty">not loaded</span>
 										{/if}
 									</button>
+									{#if !loadable}
+										<button
+											class="nested-fetch-btn"
+											class:spin={refetchingSection[i]}
+											onclick={() => refetchSection(i)}
+											disabled={refetchingSection[i]}
+											title="Fetch this nested index event from relays so its children become visible in place"
+											aria-label="Fetch nested index"
+										>⟳</button>
+									{/if}
 									<button
 										class="nested-refocus-btn"
 										onclick={() => refocus(section)}
@@ -2150,6 +2232,19 @@
 									data-cursor={i}
 									style="--depth:{section.depth ?? 0}"
 								>
+									{#if section.status !== 'loaded'}
+										<button
+											class="section-fetch"
+											class:spin={refetchingSection[i] || section.status === 'loading'}
+											onclick={(e) => {
+												e.stopPropagation();
+												refetchSection(i);
+											}}
+											disabled={refetchingSection[i] || section.status === 'loading'}
+											title="Fetch this section from relays"
+											aria-label="Fetch section"
+										>⟳</button>
+									{/if}
 									<button
 										class="lock"
 										onclick={() => ensureDraftThenToggle(i)}
@@ -2628,6 +2723,42 @@
 	.nested-refocus-btn:hover {
 		border-color: var(--id-yours);
 		background: color-mix(in srgb, var(--id-yours) 13%, transparent);
+	}
+
+	/* Per-section / per-nested-index fetch (radial arrow). Pairs with
+	 * .spin for the loading state — borrows the existing keyframe so a
+	 * pending fetch reads visually the same as a streaming tree node. */
+	.nested-fetch-btn,
+	.section-fetch,
+	.title-fetch {
+		background: none;
+		border: 1px solid var(--base3);
+		border-radius: var(--r-sm);
+		color: var(--id-yours);
+		font-family: var(--font-mono);
+		font-size: var(--t-xs);
+		padding: 0 6px;
+		min-width: 22px;
+		height: 22px;
+		line-height: 20px;
+		cursor: pointer;
+		text-align: center;
+	}
+	.title-fetch {
+		margin-left: 6px;
+		font-size: var(--t-sm);
+	}
+	.nested-fetch-btn:hover:not(:disabled),
+	.section-fetch:hover:not(:disabled),
+	.title-fetch:hover:not(:disabled) {
+		border-color: var(--id-yours);
+		background: color-mix(in srgb, var(--id-yours) 13%, transparent);
+	}
+	.nested-fetch-btn:disabled,
+	.section-fetch:disabled,
+	.title-fetch:disabled {
+		opacity: 0.6;
+		cursor: progress;
 	}
 
 	/* Outline tree controls — expand/collapse the whole hierarchy at once. */

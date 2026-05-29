@@ -234,6 +234,24 @@ impl NetworkActivity {
         steps: Vec<String>,
         relays: Vec<String>,
     ) -> std::result::Result<FetchOperation, FetchCancelled> {
+        self.begin_operation_with_summary(pattern, label, steps, relays, None)
+            .await
+    }
+
+    /// Like `begin_operation` but also carries a structured
+    /// `RequestSummary` (filters + composition + DSL sentence) on the
+    /// emitted `Intent`. The UI uses this for the expandable toast and
+    /// the confirm modal preview. New callers should prefer this form;
+    /// `begin_operation` is the back-compat shim for sites that haven't
+    /// yet built a summary.
+    pub async fn begin_operation_with_summary(
+        self: &std::sync::Arc<Self>,
+        pattern: FetchPattern,
+        label: String,
+        steps: Vec<String>,
+        relays: Vec<String>,
+        summary: Option<RequestSummary>,
+    ) -> std::result::Result<FetchOperation, FetchCancelled> {
         let operation_id = next_operation_id();
         let needs_confirmation = !self.is_auto();
         self.emit(FetchEvent::Intent {
@@ -243,6 +261,7 @@ impl NetworkActivity {
             steps,
             relays: relays.clone(),
             needs_confirmation,
+            summary,
         });
 
         let chosen = if needs_confirmation {
@@ -267,6 +286,56 @@ impl NetworkActivity {
         };
 
         Ok(FetchOperation {
+            activity: std::sync::Arc::clone(self),
+            operation_id,
+            relays: chosen,
+        })
+    }
+
+    /// Open a publish operation. Mirrors `begin_operation` but emits a
+    /// `PublishIntent` event (carries the event IDs being published so
+    /// the UI can correlate per-relay `Accepted`/`Rejected` status).
+    /// Same Confirm-mode gating as fetches.
+    pub async fn begin_publish_operation(
+        self: &std::sync::Arc<Self>,
+        label: String,
+        relays: Vec<String>,
+        event_ids: Vec<String>,
+        summary: Option<RequestSummary>,
+    ) -> std::result::Result<PublishOperation, FetchCancelled> {
+        let operation_id = next_operation_id();
+        let needs_confirmation = !self.is_auto();
+        self.emit(FetchEvent::PublishIntent {
+            operation_id: operation_id.clone(),
+            label,
+            relays: relays.clone(),
+            event_ids,
+            needs_confirmation,
+            summary,
+        });
+
+        let chosen = if needs_confirmation {
+            let rx = {
+                let (tx, rx) = oneshot::channel();
+                self.pending.lock().await.insert(operation_id.clone(), tx);
+                rx
+            };
+            match tokio::time::timeout(CONFIRM_TIMEOUT, rx).await {
+                Ok(Ok(d)) if d.approved => d.relays.unwrap_or(relays),
+                _ => {
+                    self.pending.lock().await.remove(&operation_id);
+                    self.emit(FetchEvent::Failed {
+                        operation_id,
+                        error: "cancelled".into(),
+                    });
+                    return Err(FetchCancelled);
+                }
+            }
+        } else {
+            relays
+        };
+
+        Ok(PublishOperation {
             activity: std::sync::Arc::clone(self),
             operation_id,
             relays: chosen,
@@ -406,8 +475,523 @@ pub enum FetchPattern {
     Custom,
 }
 
-/// Events streamed to the UI for every user-initiated fetch operation.
-/// `Intent` opens it; `Progress` narrates; `Completed`/`Failed` close it.
+/// Which class of relay a fetch/publish member targets — used as the
+/// `phase` tag on `RelayStatus` events so the UI can group per-relay
+/// status under the right execution stage. Includes the dot-notation
+/// values from the DSL surface (`indexer.default`, `search.fallback`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Phase {
+    #[serde(rename = "read")] Read,
+    #[serde(rename = "write")] Write,
+    #[serde(rename = "publish")] Publish,
+    #[serde(rename = "broadcast")] Broadcast,
+    #[serde(rename = "search.default")] SearchDefault,
+    #[serde(rename = "search.fallback")] SearchFallback,
+    #[serde(rename = "indexer.default")] IndexerDefault,
+    #[serde(rename = "indexer.fallback")] IndexerFallback,
+}
+
+impl Phase {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Phase::Read => "read",
+            Phase::Write => "write",
+            Phase::Publish => "publish",
+            Phase::Broadcast => "broadcast",
+            Phase::SearchDefault => "search.default",
+            Phase::SearchFallback => "search.fallback",
+            Phase::IndexerDefault => "indexer.default",
+            Phase::IndexerFallback => "indexer.fallback",
+        }
+    }
+}
+
+/// Per-relay status snapshot emitted as a relay transitions through the
+/// fetch/publish lifecycle. The UI uses these to drive the per-relay
+/// dots in the expandable toast view.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum RelayStatusValue {
+    /// WebSocket dialing or REQ sent, awaiting first event/EOSE.
+    Connecting,
+    /// EOSE received from this relay (NIP-01 end-of-stored-events).
+    Eose { event_count: usize },
+    /// Connection or protocol error.
+    Error { msg: String },
+    /// Hit the operation timeout before EOSE / OK.
+    Timeout,
+    /// Publish path — relay sent `["OK", id, true, ...]`.
+    Accepted,
+    /// Publish path — relay sent `["OK", id, false, msg]`.
+    Rejected { msg: String },
+}
+
+/// A subset of NIP-01 filter fields, expressed structurally so the UI
+/// can render each clause as a row in the expanded toast view. Not a
+/// re-implementation of nostrdb's filter type — just the shape needed
+/// for display + the confirm modal. All fields optional; absence
+/// means "no constraint on this dimension".
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct NipFilter {
+    #[serde(skip_serializing_if = "Option::is_none")] pub kinds: Option<Vec<u64>>,
+    #[serde(skip_serializing_if = "Option::is_none")] pub authors: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")] pub ids: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")] pub since: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")] pub until: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")] pub limit: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")] pub search: Option<String>,
+    /// Generic tag filters (`#e`, `#p`, `#d`, `#a`, etc.) → list of values.
+    #[serde(skip_serializing_if = "std::collections::BTreeMap::is_empty", default)]
+    pub tags: std::collections::BTreeMap<String, Vec<String>>,
+}
+
+/// One execution stage of a fetch/publish composition. Members of a
+/// stage fire concurrently (relay fan-out). Stages run in order; the
+/// next stage only starts when the previous returns zero events
+/// (sequential — typical fallback), UNLESS `start_delay_ms > 0`, in
+/// which case it begins partway through the previous stage (overlap
+/// — search default + delayed fallback).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PhaseStage {
+    /// Human label rendered in the DSL sentence — `"primary"`,
+    /// `"fallback"`, `"delayed-fallback"`, etc.
+    pub label: String,
+    /// `(phase, relays)` pairs fired concurrently. With `exclusive=off`
+    /// + a default discovery class, this can be `[(Read, …), (IndexerDefault, …)]`.
+    pub members: Vec<(Phase, Vec<String>)>,
+    /// Start-of-stage delay relative to the prior stage (0 = wait for
+    /// the prior to return zero events; >0 = overlapping start used by
+    /// search Δ).
+    pub start_delay_ms: u64,
+}
+
+/// How the relay-set fan-out is composed. Always a sequence of stages.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct CompositionShape {
+    pub phases: Vec<PhaseStage>,
+}
+
+/// Structured summary of a relay request — the formal-language form.
+/// Travels with `Intent` and `PublishIntent` events; the UI renders the
+/// canonical `dsl` string in toasts, the `filters` block in the
+/// expanded view, and the `composition` shape in the confirm modal.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct RequestSummary {
+    /// NIP-01 filters as sent on the wire (one per REQ subscription).
+    pub filters: Vec<NipFilter>,
+    /// How per-phase relay sets compose into an execution plan.
+    pub composition: CompositionShape,
+    /// Canonical DSL sentence — what the toast renders collapsed.
+    /// `RequestSummary::to_dsl` produces it; `from_dsl` parses it.
+    /// (Round-trip lands in Phase 6 — for now this is a best-effort
+    /// human-readable string built by the call site that opens the op.)
+    pub dsl: String,
+}
+
+/// Project a raw NIP-01 filter JSON into the structured `NipFilter`
+/// for `RequestSummary`. Unknown / non-matching fields are dropped —
+/// this is for display, not protocol round-tripping. Used by Phase-4
+/// fetch helpers that build a summary alongside the filter they send.
+pub fn nip_filter_from_json(f: &Value) -> NipFilter {
+    let mut out = NipFilter::default();
+    if let Some(arr) = f.get("kinds").and_then(|v| v.as_array()) {
+        out.kinds = Some(arr.iter().filter_map(|v| v.as_u64()).collect());
+    }
+    if let Some(arr) = f.get("authors").and_then(|v| v.as_array()) {
+        out.authors = Some(
+            arr.iter()
+                .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                .collect(),
+        );
+    }
+    if let Some(arr) = f.get("ids").and_then(|v| v.as_array()) {
+        out.ids = Some(
+            arr.iter()
+                .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                .collect(),
+        );
+    }
+    if let Some(v) = f.get("since").and_then(|v| v.as_i64()) {
+        out.since = Some(v);
+    }
+    if let Some(v) = f.get("until").and_then(|v| v.as_i64()) {
+        out.until = Some(v);
+    }
+    if let Some(v) = f.get("limit").and_then(|v| v.as_u64()) {
+        out.limit = Some(v);
+    }
+    if let Some(s) = f.get("search").and_then(|v| v.as_str()) {
+        out.search = Some(s.to_string());
+    }
+    if let Some(obj) = f.as_object() {
+        for (k, v) in obj {
+            if let Some(tag) = k.strip_prefix('#') {
+                if let Some(arr) = v.as_array() {
+                    let vals: Vec<String> = arr
+                        .iter()
+                        .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                        .collect();
+                    out.tags.insert(tag.to_string(), vals);
+                }
+            }
+        }
+    }
+    out
+}
+
+/// Best-effort DSL string for a raw-JSON (filters + composition)
+/// pair. Phase-4 callers still pass `&[Value]` rather than the typed
+/// `Vec<NipFilter>` they could now build, so this shim turns each
+/// JSON filter into a `NipFilter` and delegates to
+/// `RequestSummary::to_dsl`. New call sites should construct
+/// `RequestSummary` directly and call `.to_dsl()` on it.
+pub fn dsl_for_composition(filters: &[Value], composition: &CompositionShape) -> String {
+    let summary = RequestSummary {
+        filters: filters.iter().map(nip_filter_from_json).collect(),
+        composition: composition.clone(),
+        dsl: String::new(),
+    };
+    summary.to_dsl()
+}
+
+/// Try to parse a single phase name (the surface form of `Phase`).
+fn parse_phase(s: &str) -> Option<Phase> {
+    match s {
+        "read" => Some(Phase::Read),
+        "write" => Some(Phase::Write),
+        "publish" => Some(Phase::Publish),
+        "broadcast" => Some(Phase::Broadcast),
+        "search.default" => Some(Phase::SearchDefault),
+        "search.fallback" => Some(Phase::SearchFallback),
+        "indexer.default" => Some(Phase::IndexerDefault),
+        "indexer.fallback" => Some(Phase::IndexerFallback),
+        _ => None,
+    }
+}
+
+impl RequestSummary {
+    /// Render this summary as a canonical DSL sentence — the formal
+    /// language form the user can read in the toast and paste back
+    /// into a query box. Round-trips with [`Self::from_dsl`] for the
+    /// subset both sides understand (`k:` / `by:` / `~:"…"` /
+    /// `limit:` / `since:` / `until:` / `#tag:` / `id:` on the
+    /// filter side; `via:` / `then:` / `also:` on the composition
+    /// side).
+    pub fn to_dsl(&self) -> String {
+        // Render each filter as its own clause group. Multi-filter
+        // REQs (e.g. the feed-init that piggybacks kind 0 alongside
+        // kind 30040) join with ` | ` — matches the existing search
+        // grammar's union operator (CompoundQuery). Single-filter
+        // requests render without the pipe, so backward compatibility
+        // with the old round-trip tests holds.
+        let filter_strs: Vec<String> = self
+            .filters
+            .iter()
+            .map(filter_to_dsl_clauses)
+            .filter(|s| !s.is_empty())
+            .collect();
+        let mut sentence = filter_strs.join(" | ");
+
+        // Composition: `via:` for the first stage, `then:` for each
+        // subsequent stage. `also:Δms` for stages with a non-zero
+        // start_delay_ms. Composition applies to the whole REQ, so
+        // it trails the union rather than attaching to any one
+        // filter.
+        let mut comp_parts: Vec<String> = Vec::new();
+        for (i, stage) in self.composition.phases.iter().enumerate() {
+            let keyword = if i == 0 {
+                "via"
+            } else if stage.start_delay_ms > 0 {
+                "also"
+            } else {
+                "then"
+            };
+            let phases: Vec<&str> = stage.members.iter().map(|(p, _)| p.as_str()).collect();
+            if phases.is_empty() {
+                continue;
+            }
+            if keyword == "also" {
+                comp_parts.push(format!(
+                    "also:{} Δ{}",
+                    phases.join(","),
+                    stage.start_delay_ms
+                ));
+            } else {
+                comp_parts.push(format!("{}:{}", keyword, phases.join(",")));
+            }
+        }
+        if !comp_parts.is_empty() {
+            if !sentence.is_empty() {
+                sentence.push(' ');
+            }
+            sentence.push_str(&comp_parts.join(" "));
+        }
+        sentence
+    }
+
+    /// Parse a DSL sentence back into a `RequestSummary`. The
+    /// inverse of [`Self::to_dsl`] for the subset both sides
+    /// understand. Unknown tokens are silently skipped — round-trip
+    /// preserves what the parser knows; unknowns become a hint that
+    /// the grammar should be extended.
+    ///
+    /// On parse, `dsl` is set to the input string (preserved
+    /// verbatim) so the UI can display exactly what the user typed.
+    pub fn from_dsl(s: &str) -> Self {
+        // Multi-filter REQs join their filter clauses with ` | `. We
+        // accumulate clauses into a filters vector; encountering a
+        // `|` token finalizes the current filter and starts a new one.
+        // Composition tokens (via/then/also/Δ) ALWAYS go to the
+        // composition struct regardless of where they appear — the
+        // composition is per-REQ, not per-filter.
+        let mut filters: Vec<NipFilter> = Vec::new();
+        let mut filter = NipFilter::default();
+        let mut filter_has_content = false;
+        let mut phases: Vec<PhaseStage> = Vec::new();
+
+        for tok in tokenize_dsl(s) {
+            let tok = tok.as_str();
+            if tok == "|" {
+                if filter_has_content {
+                    filters.push(std::mem::take(&mut filter));
+                    filter_has_content = false;
+                }
+                continue;
+            }
+            // Filter clauses — each sets filter_has_content so the
+            // `|` finalizer (and end-of-input finalizer) know there's
+            // a filter to push.
+            if let Some(rest) = tok.strip_prefix("k:") {
+                let kinds: Vec<u64> = rest
+                    .split(',')
+                    .filter_map(|s| s.parse::<u64>().ok())
+                    .collect();
+                if !kinds.is_empty() {
+                    filter.kinds = Some(kinds);
+                    filter_has_content = true;
+                }
+                continue;
+            }
+            if let Some(rest) = tok.strip_prefix("by:") {
+                let authors: Vec<String> = rest.split(',').map(|s| s.to_string()).collect();
+                if !authors.is_empty() {
+                    filter.authors = Some(authors);
+                    filter_has_content = true;
+                }
+                continue;
+            }
+            if let Some(rest) = tok.strip_prefix("id:") {
+                filter
+                    .ids
+                    .get_or_insert_with(Vec::new)
+                    .push(rest.to_string());
+                filter_has_content = true;
+                continue;
+            }
+            if let Some(rest) = tok.strip_prefix("limit:") {
+                if let Ok(n) = rest.parse::<u64>() {
+                    filter.limit = Some(n);
+                    filter_has_content = true;
+                }
+                continue;
+            }
+            if let Some(rest) = tok.strip_prefix("since:") {
+                if let Ok(t) = rest.parse::<i64>() {
+                    filter.since = Some(t);
+                    filter_has_content = true;
+                }
+                continue;
+            }
+            if let Some(rest) = tok.strip_prefix("until:") {
+                if let Ok(t) = rest.parse::<i64>() {
+                    filter.until = Some(t);
+                    filter_has_content = true;
+                }
+                continue;
+            }
+            if let Some(rest) = tok.strip_prefix("~:") {
+                // `~:"…"` strip surrounding quotes if present
+                let q = rest.trim_matches('"');
+                if !q.is_empty() {
+                    filter.search = Some(q.to_string());
+                    filter_has_content = true;
+                }
+                continue;
+            }
+            if let Some(rest) = tok.strip_prefix('#') {
+                if let Some((tag, val)) = rest.split_once(':') {
+                    filter
+                        .tags
+                        .entry(tag.to_string())
+                        .or_default()
+                        .push(val.to_string());
+                    filter_has_content = true;
+                }
+                continue;
+            }
+
+            // Composition clauses
+            if let Some(rest) = tok.strip_prefix("via:") {
+                let members = parse_phase_list(rest);
+                if !members.is_empty() {
+                    phases.push(PhaseStage {
+                        label: "primary".into(),
+                        members,
+                        start_delay_ms: 0,
+                    });
+                }
+                continue;
+            }
+            if let Some(rest) = tok.strip_prefix("then:") {
+                let members = parse_phase_list(rest);
+                if !members.is_empty() {
+                    phases.push(PhaseStage {
+                        label: "fallback".into(),
+                        members,
+                        start_delay_ms: 0,
+                    });
+                }
+                continue;
+            }
+            if let Some(rest) = tok.strip_prefix("also:") {
+                // also:phase[,phase] — the Δms delta comes as the next
+                // whitespace-separated token (`Δ500`). Without it, the
+                // overlap starts immediately (delay 0).
+                let members = parse_phase_list(rest);
+                if !members.is_empty() {
+                    phases.push(PhaseStage {
+                        label: "delayed-fallback".into(),
+                        members,
+                        start_delay_ms: 0,
+                    });
+                }
+                continue;
+            }
+            if let Some(rest) = tok.strip_prefix('Δ') {
+                // Δms — attach to the previous stage if it's still
+                // marked "delayed-fallback" and currently has no
+                // delay.
+                if let Ok(ms) = rest.parse::<u64>() {
+                    if let Some(last) = phases.last_mut() {
+                        if last.label == "delayed-fallback" && last.start_delay_ms == 0 {
+                            last.start_delay_ms = ms;
+                        }
+                    }
+                }
+                continue;
+            }
+            // Unknown token — silently skipped. A later sub-phase
+            // can collect these into a diagnostics list.
+        }
+
+        // Finalize the trailing filter (the one after the last `|`,
+        // or the only one when there's no `|`).
+        if filter_has_content {
+            filters.push(filter);
+        } else if filters.is_empty() {
+            // No filter clauses at all — push the default so callers
+            // still see a one-entry vec for the common code path.
+            filters.push(filter);
+        }
+
+        let composition = CompositionShape { phases };
+        let mut summary = Self {
+            filters,
+            composition,
+            dsl: s.to_string(),
+        };
+        // Re-render so `dsl` is the canonical form, not the user's
+        // input (caller can still read the input via the param).
+        summary.dsl = summary.to_dsl();
+        summary
+    }
+}
+
+/// Render a single `NipFilter` as a space-separated clause string
+/// (no `via:`/`then:` — those are composition, not filter, and live
+/// outside the filter group in the DSL). Field order matches the
+/// `to_dsl` layout: event-shape first (kinds, authors, ids, tags),
+/// then query controls (search, limit, time bounds).
+fn filter_to_dsl_clauses(f: &NipFilter) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    if let Some(kinds) = &f.kinds {
+        if !kinds.is_empty() {
+            let ks: Vec<String> = kinds.iter().map(|k| k.to_string()).collect();
+            parts.push(format!("k:{}", ks.join(",")));
+        }
+    }
+    if let Some(authors) = &f.authors {
+        if !authors.is_empty() {
+            parts.push(format!("by:{}", authors.join(",")));
+        }
+    }
+    if let Some(ids) = &f.ids {
+        for id in ids {
+            parts.push(format!("id:{}", id));
+        }
+    }
+    for (tag, vals) in &f.tags {
+        for v in vals {
+            parts.push(format!("#{}:{}", tag, v));
+        }
+    }
+    if let Some(s) = &f.search {
+        parts.push(format!("~:\"{}\"", s));
+    }
+    if let Some(n) = f.limit {
+        parts.push(format!("limit:{}", n));
+    }
+    if let Some(t) = f.since {
+        parts.push(format!("since:{}", t));
+    }
+    if let Some(t) = f.until {
+        parts.push(format!("until:{}", t));
+    }
+    parts.join(" ")
+}
+
+/// Parse a comma-separated `phase[,phase,…]` list into a member vector
+/// with an empty relays list (engine fills in the actual URLs from
+/// the live relay config when executing).
+fn parse_phase_list(s: &str) -> Vec<(Phase, Vec<String>)> {
+    s.split(',')
+        .filter_map(parse_phase)
+        .map(|p| (p, Vec::new()))
+        .collect()
+}
+
+/// Split a DSL string into whitespace-separated tokens, but treat the
+/// run of characters between matched `"` quotes as a single token —
+/// `~:"local first"` stays in one piece instead of fracturing on the
+/// space.
+fn tokenize_dsl(input: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut current = String::new();
+    let mut in_quote = false;
+    for c in input.chars() {
+        if c == '"' {
+            in_quote = !in_quote;
+            current.push(c);
+            continue;
+        }
+        if c.is_whitespace() && !in_quote {
+            if !current.is_empty() {
+                out.push(std::mem::take(&mut current));
+            }
+            continue;
+        }
+        current.push(c);
+    }
+    if !current.is_empty() {
+        out.push(current);
+    }
+    out
+}
+
+/// Events streamed to the UI for every user-initiated relay operation
+/// — fetches AND publishes. `Intent`/`PublishIntent` open an operation,
+/// `Progress` narrates, `RelayStatus` carries per-relay updates within
+/// it, `Completed`/`Failed` close it.
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum FetchEvent {
@@ -420,12 +1004,39 @@ pub enum FetchEvent {
         /// True in Confirm mode — the UI must POST a decision before the
         /// engine proceeds. False in Auto mode — informational only.
         needs_confirmation: bool,
+        /// Structured request representation — filters + composition +
+        /// DSL sentence. Optional during incremental rollout: legacy
+        /// `begin_operation` callers emit Intent with `summary: None`;
+        /// new callers via `begin_operation_with_summary` populate it.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        summary: Option<RequestSummary>,
+    },
+    /// Publish counterpart to `Intent` — opens a publish/broadcast op.
+    /// Carries the IDs being published so the UI can correlate per-relay
+    /// `Accepted`/`Rejected` status.
+    PublishIntent {
+        operation_id: String,
+        label: String,
+        relays: Vec<String>,
+        event_ids: Vec<String>,
+        needs_confirmation: bool,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        summary: Option<RequestSummary>,
     },
     Progress {
         operation_id: String,
         label: String,
         done: usize,
         total: Option<usize>,
+    },
+    /// Per-relay status update within an open operation. The UI keys
+    /// off `(operation_id, relay)` to update the matching row in the
+    /// expanded toast view.
+    RelayStatus {
+        operation_id: String,
+        relay: String,
+        phase: Phase,
+        status: RelayStatusValue,
     },
     Completed {
         operation_id: String,
@@ -514,5 +1125,238 @@ impl FetchOperation {
             operation_id: self.operation_id.clone(),
             error: error.into(),
         });
+    }
+
+    /// Emit a per-relay status update for this operation. The UI keys
+    /// off `(operation_id, relay)` to update the expandable toast's
+    /// per-relay row.
+    pub fn relay_status(&self, relay: impl Into<String>, phase: Phase, status: RelayStatusValue) {
+        self.activity.emit(FetchEvent::RelayStatus {
+            operation_id: self.operation_id.clone(),
+            relay: relay.into(),
+            phase,
+            status,
+        });
+    }
+}
+
+/// Handle for an approved (or Auto-mode) publish operation. Mirror of
+/// `FetchOperation` — same lifecycle (`progress` → `relay_status` →
+/// `complete`/`fail`), distinguished by the `PublishIntent` event that
+/// opened it. Callers turn signed events into publish actions, then
+/// stream per-relay `Accepted`/`Rejected` status as each relay replies.
+pub struct PublishOperation {
+    activity: std::sync::Arc<NetworkActivity>,
+    operation_id: String,
+    relays: Vec<String>,
+}
+
+impl PublishOperation {
+    pub fn id(&self) -> &str {
+        &self.operation_id
+    }
+
+    /// The relay set to publish to — the engine's proposal, or the
+    /// user's override from the confirm modal.
+    pub fn relays(&self) -> &[String] {
+        &self.relays
+    }
+
+    /// Narrate a step. Same shape as fetch progress — the UI updates
+    /// the same toast.
+    pub fn progress(&self, label: impl Into<String>, done: usize, total: Option<usize>) {
+        self.activity.emit(FetchEvent::Progress {
+            operation_id: self.operation_id.clone(),
+            label: label.into(),
+            done,
+            total,
+        });
+    }
+
+    /// Emit a per-relay status update for this publish op. Typical
+    /// flow: `Connecting` → `Accepted` (relay sent `["OK", id, true]`)
+    /// or `Rejected { msg }` (relay sent `["OK", id, false, msg]`).
+    pub fn relay_status(&self, relay: impl Into<String>, status: RelayStatusValue) {
+        self.activity.emit(FetchEvent::RelayStatus {
+            operation_id: self.operation_id.clone(),
+            relay: relay.into(),
+            phase: Phase::Publish,
+            status,
+        });
+    }
+
+    /// Close the operation successfully. `event_count` is the count of
+    /// (event, relay) pairs that returned `Accepted` — i.e. how many
+    /// relays accepted at least one event in the batch.
+    pub fn complete(self, event_count: usize) {
+        self.activity.emit(FetchEvent::Completed {
+            operation_id: self.operation_id.clone(),
+            event_count,
+        });
+    }
+
+    /// Close the operation with an error.
+    pub fn fail(self, error: impl Into<String>) {
+        self.activity.emit(FetchEvent::Failed {
+            operation_id: self.operation_id.clone(),
+            error: error.into(),
+        });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn nip_filter(kinds: Vec<u64>, authors: Vec<&str>) -> NipFilter {
+        NipFilter {
+            kinds: Some(kinds),
+            authors: Some(authors.into_iter().map(String::from).collect()),
+            ..NipFilter::default()
+        }
+    }
+
+    fn stage(label: &str, members: Vec<(Phase, Vec<String>)>, delay_ms: u64) -> PhaseStage {
+        PhaseStage {
+            label: label.into(),
+            members,
+            start_delay_ms: delay_ms,
+        }
+    }
+
+    #[test]
+    fn to_dsl_renders_basic_profile_lookup() {
+        let summary = RequestSummary {
+            filters: vec![nip_filter(vec![0], vec!["dc4cd086"])],
+            composition: CompositionShape {
+                phases: vec![
+                    stage("primary", vec![(Phase::Read, vec![])], 0),
+                    stage("fallback", vec![(Phase::IndexerDefault, vec![])], 0),
+                ],
+            },
+            dsl: String::new(),
+        };
+        assert_eq!(
+            summary.to_dsl(),
+            "k:0 by:dc4cd086 via:read then:indexer.default"
+        );
+    }
+
+    #[test]
+    fn from_dsl_parses_basic_profile_lookup() {
+        let parsed = RequestSummary::from_dsl("k:0 by:dc4cd086 via:read then:indexer.default");
+        assert_eq!(
+            parsed.filters[0].kinds,
+            Some(vec![0])
+        );
+        assert_eq!(
+            parsed.filters[0].authors,
+            Some(vec!["dc4cd086".to_string()])
+        );
+        assert_eq!(parsed.composition.phases.len(), 2);
+        assert_eq!(parsed.composition.phases[0].label, "primary");
+        assert_eq!(parsed.composition.phases[0].members[0].0, Phase::Read);
+        assert_eq!(parsed.composition.phases[1].label, "fallback");
+        assert_eq!(
+            parsed.composition.phases[1].members[0].0,
+            Phase::IndexerDefault
+        );
+    }
+
+    #[test]
+    fn dsl_round_trip_preserves_filter_and_composition() {
+        let original = "k:30040,30041 by:dc4cd086 limit:50 via:read,indexer.default then:indexer.fallback";
+        let parsed = RequestSummary::from_dsl(original);
+        // Re-render — should match the input verbatim (modulo
+        // whitespace normalization).
+        assert_eq!(parsed.to_dsl(), original);
+        // And the structured form matches the expected shape.
+        assert_eq!(parsed.filters[0].kinds, Some(vec![30040, 30041]));
+        assert_eq!(parsed.filters[0].limit, Some(50));
+        assert_eq!(parsed.composition.phases.len(), 2);
+        assert_eq!(parsed.composition.phases[0].members.len(), 2);
+        assert_eq!(parsed.composition.phases[0].members[0].0, Phase::Read);
+        assert_eq!(
+            parsed.composition.phases[0].members[1].0,
+            Phase::IndexerDefault
+        );
+    }
+
+    #[test]
+    fn dsl_parses_search_with_delayed_fallback() {
+        // `also:` lays the overlap stage, and the next `Δ500` token
+        // attaches the delay onto it. Together they describe
+        // "search.default; 500ms later, also fan out to fallback".
+        let parsed = RequestSummary::from_dsl(
+            "~:\"local first\" via:search.default also:search.fallback Δ500",
+        );
+        assert_eq!(parsed.filters[0].search.as_deref(), Some("local first"));
+        assert_eq!(parsed.composition.phases.len(), 2);
+        assert_eq!(parsed.composition.phases[1].label, "delayed-fallback");
+        assert_eq!(parsed.composition.phases[1].start_delay_ms, 500);
+    }
+
+    #[test]
+    fn dsl_round_trip_for_delayed_fallback() {
+        let original = "~:\"local first\" via:search.default also:search.fallback Δ500";
+        let parsed = RequestSummary::from_dsl(original);
+        assert_eq!(parsed.to_dsl(), original);
+    }
+
+    #[test]
+    fn dsl_round_trip_with_tag_filter_and_time_bounds() {
+        let original = "k:30040 #d:my-publication since:1700000000 until:1800000000 via:read";
+        let parsed = RequestSummary::from_dsl(original);
+        assert_eq!(parsed.to_dsl(), original);
+        assert_eq!(
+            parsed.filters[0].tags.get("d"),
+            Some(&vec!["my-publication".to_string()])
+        );
+        assert_eq!(parsed.filters[0].since, Some(1700000000));
+        assert_eq!(parsed.filters[0].until, Some(1800000000));
+    }
+
+    #[test]
+    fn unknown_tokens_are_skipped_silently() {
+        // Future grammar additions (`target:`, `pub`, etc.) shouldn't
+        // crash older binaries — they just get dropped from the
+        // structured form, and the next round-trip omits them.
+        let parsed = RequestSummary::from_dsl(
+            "k:0 target:wss://specific.relay pub via:read unknown:value",
+        );
+        assert_eq!(parsed.filters[0].kinds, Some(vec![0]));
+        assert_eq!(parsed.composition.phases.len(), 1);
+        assert_eq!(parsed.composition.phases[0].members[0].0, Phase::Read);
+    }
+
+    #[test]
+    fn dsl_round_trip_multi_filter_with_pipe_separator() {
+        // The feed-init Intent piggybacks a kind-0 filter alongside
+        // the kind-30040 filter so one approval covers both. Verify
+        // the DSL renders both filters joined with ` | ` and parses
+        // back to the same structure.
+        let original = "k:30040 by:aaa,bbb limit:200 | k:0 by:aaa,bbb limit:2 via:read";
+        let parsed = RequestSummary::from_dsl(original);
+        assert_eq!(parsed.to_dsl(), original);
+        assert_eq!(parsed.filters.len(), 2);
+        assert_eq!(parsed.filters[0].kinds, Some(vec![30040]));
+        assert_eq!(parsed.filters[0].limit, Some(200));
+        assert_eq!(parsed.filters[1].kinds, Some(vec![0]));
+        assert_eq!(parsed.filters[1].limit, Some(2));
+        assert_eq!(
+            parsed.filters[0].authors,
+            Some(vec!["aaa".to_string(), "bbb".to_string()])
+        );
+        assert_eq!(parsed.composition.phases.len(), 1);
+        assert_eq!(parsed.composition.phases[0].members[0].0, Phase::Read);
+    }
+
+    #[test]
+    fn parse_phase_accepts_dotted_class_names() {
+        assert_eq!(parse_phase("read"), Some(Phase::Read));
+        assert_eq!(parse_phase("indexer.default"), Some(Phase::IndexerDefault));
+        assert_eq!(parse_phase("search.fallback"), Some(Phase::SearchFallback));
+        assert_eq!(parse_phase("nonsense"), None);
+        assert_eq!(parse_phase(""), None);
     }
 }

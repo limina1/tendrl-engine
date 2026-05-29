@@ -98,12 +98,21 @@ pub struct AddressablePath {
     pub d_tag: String,
 }
 
+/// Optional query for the addressable handler — lets the web force a
+/// `fetch_always` round-trip (per-section "fetch from relays" button in
+/// the reader outline) instead of always-local-first.
+#[derive(Debug, Deserialize, Default)]
+pub struct AddressableQuery {
+    pub policy: Option<String>,
+}
+
 /// GET /api/v1/addressable/:kind/:pubkey/:d_tag
 ///
 /// Get an addressable event by kind, pubkey, and d-tag
 pub async fn get_addressable_handler(
     State(engine): State<AppState>,
     Path(params): Path<AddressablePath>,
+    axum::extract::Query(query): axum::extract::Query<AddressableQuery>,
 ) -> Result<impl IntoResponse, EngineError> {
     debug!(
         "Get addressable request: {}:{}:{}",
@@ -117,13 +126,13 @@ pub async fn get_addressable_handler(
         ));
     }
 
+    let policy = match &query.policy {
+        Some(p) => p.parse()?,
+        None => FetchPolicy::LocalFirst,
+    };
+
     let event = engine
-        .get_addressable(
-            params.kind,
-            &params.pubkey,
-            &params.d_tag,
-            FetchPolicy::LocalFirst,
-        )
+        .get_addressable(params.kind, &params.pubkey, &params.d_tag, policy)
         .await?;
 
     match event {
@@ -221,12 +230,24 @@ pub async fn search_handler(
             .relays
             .clone()
             .unwrap_or_else(|| engine.relay_config().all_urls());
+
+        // Build a structured RequestSummary so the confirm modal
+        // renders the DSL sentence + structured filter block instead
+        // of a flat opaque "Search relays: <full naddr>" label. The
+        // parse may fail (e.g. malformed input) — in that case we
+        // fall back to summary: None and the modal renders the legacy
+        // flat view. Compound (`|`) queries get parsed below and
+        // contribute one filter per branch.
+        let summary = build_search_summary(&req.query, &relays, &engine);
+        let label = short_search_label(&req.query);
+
         match engine
-            .begin_fetch_operation(
+            .begin_fetch_operation_with_summary(
                 crate::network::FetchPattern::Search,
-                format!("Search relays: {}", req.query.trim()),
+                label,
                 describe_search_steps(&req.query),
                 relays,
+                summary,
             )
             .await
         {
@@ -607,6 +628,51 @@ pub async fn get_publication_handler(
 
 /// GET /api/v1/publications/:pubkey/:d_tag/stream
 ///
+/// POST /api/v1/publications/:pubkey/:d_tag/backfill?depth=N
+///
+/// Batch-fetch the publication's missing 30041 sections + nested
+/// 30040 indexes from relays. In confirm mode pops ONE modal listing
+/// the addresses about to be requested (rather than one modal per
+/// section). Auto mode fires silently and the activity toast tracks
+/// per-relay progress.
+#[derive(Debug, Deserialize)]
+pub struct BackfillQuery {
+    /// How many tree levels to walk when collecting missing children.
+    /// Defaults to the same DEFAULT_PUBLICATION_DEPTH used by
+    /// get_publication_handler so the backfill horizon matches what
+    /// the reader displays.
+    pub depth: Option<usize>,
+}
+
+pub async fn backfill_publication_handler(
+    State(engine): State<AppState>,
+    Path(params): Path<PublicationPath>,
+    axum::extract::Query(query): axum::extract::Query<BackfillQuery>,
+) -> Result<Json<Value>, EngineError> {
+    if params.pubkey.len() != 64 || hex::decode(&params.pubkey).is_err() {
+        return Err(EngineError::InvalidHex(
+            "Pubkey must be a 64-character hex string".to_string(),
+        ));
+    }
+
+    let depth = query
+        .depth
+        .unwrap_or(DEFAULT_PUBLICATION_DEPTH)
+        .min(MAX_PUBLICATION_DEPTH);
+    let addr = NAddr::new(KIND_PUBLICATION_INDEX, &params.pubkey, &params.d_tag);
+    let pub_engine = PublicationEngine::new(&engine);
+
+    let (requested, fetched) = pub_engine
+        .backfill_publication_sections(&addr, depth)
+        .await?;
+
+    Ok(Json(json!({
+        "requested": requested,
+        "fetched": fetched,
+        "depth": depth,
+    })))
+}
+
 /// SSE variant of `get_publication_handler`: instead of returning the whole
 /// TOC in one response, it streams one `PubLoadEvent` per node as the
 /// recursive loader resolves it, ending with a `done` event. The client builds
@@ -1142,11 +1208,6 @@ pub async fn fetch_profiles_handler(
     State(engine): State<AppState>,
     Json(req): Json<FetchProfilesRequest>,
 ) -> Result<Json<Value>, EngineError> {
-    // Profiles can live on any configured relay — query the union of
-    // every set so an empty `general` set can't silently disable this.
-    let mut relays = engine.relay_config().all_urls();
-    let mut fetched = 0;
-
     // When force is set, query every listed pubkey unconditionally so a
     // newer kind 0 supersedes the cached one. Otherwise only pubkeys
     // missing from nostrdb are queried — the default avoids hammering
@@ -1162,66 +1223,123 @@ pub async fn fetch_profiles_handler(
         return Ok(Json(json!({ "fetched": 0, "total": req.pubkeys.len() })));
     }
 
-    // A forced profile fetch is an explicit user action — gate it.
-    // Declined → report nothing fetched (cached profiles are kept).
-    let op = if req.force {
-        match engine
-            .begin_fetch_operation(
-                crate::network::FetchPattern::Profile,
-                format!(
-                    "Fetch {} profile{}",
-                    targets.len(),
-                    if targets.len() == 1 { "" } else { "s" }
-                ),
-                describe_profile_steps(&targets),
-                relays.clone(),
-            )
-            .await
-        {
-            Ok(o) => {
-                relays = o.relays().to_vec();
-                Some(o)
-            }
-            Err(_) => {
-                return Ok(Json(json!({ "fetched": 0, "total": req.pubkeys.len() })));
-            }
-        }
-    } else {
-        None
-    };
-
-    // Batch fetch: one request per relay with ALL missing pubkeys
+    // Phase 4: profile lookups now walk the indexer composition —
+    // primary (read [∪ indexer.default]) → indexer.fallback if zero.
+    // fetch_with_composition opens the SSE op (carrying the
+    // RequestSummary so the toast renders the structured query),
+    // streams per-relay RelayStatus events, and emits Completed at
+    // the end. The whole chain shows up as one toast with phases
+    // visible in the expanded modal.
+    let composition = engine.compose_discovery_phases("indexer");
     let filter = json!({"kinds": [0], "authors": targets, "limit": targets.len()});
-    for relay_url in &relays {
-        match engine
-            .tracked_fetch_with_options(
-                relay_url,
-                &[filter.clone()],
-                FetchTrigger::ProfilePrefetch,
-                req.force,
-            )
-            .await
-        {
-            Ok(events) => {
-                fetched += events.len();
-            }
-            Err(e) => {
-                debug!("Failed to fetch profiles from {}: {}", relay_url, e);
-            }
-        }
-    }
+
+    let events = engine
+        .fetch_with_composition(
+            &composition,
+            &[filter],
+            format!(
+                "Fetch {} profile{}",
+                targets.len(),
+                if targets.len() == 1 { "" } else { "s" }
+            ),
+            crate::network::FetchPattern::Profile,
+            req.force,
+        )
+        .await;
+
+    let fetched = events.len();
 
     // Brief wait for nostrdb to process ingested events
     if fetched > 0 {
         tokio::time::sleep(std::time::Duration::from_millis(200)).await;
     }
 
-    if let Some(op) = op {
-        op.complete(fetched);
-    }
     Ok(Json(json!({
         "fetched": fetched,
         "total": req.pubkeys.len()
+    })))
+}
+
+/// POST /api/v1/pull-user-data — fetch the user's relay-list events
+/// (kind 10002 NIP-65, 10007 search, 10086 indexer, 10088 broadcast,
+/// 30002 NIP-51 named sets) through the indexer composition.
+///
+/// Phase 4.1 wiring: instead of the previous "hit `initial_relays`
+/// directly" path, this routes through `engine.fetch_with_composition`
+/// so the read → indexer.default → indexer.fallback chain handles the
+/// "kind 10002 isn't cached locally but lives on purplepag.es" case
+/// automatically. Emits an SSE op with the structured RequestSummary
+/// so the activity toast shows the formal-language query and
+/// per-relay status; per-phase fallback shows up as ordered toasts.
+#[derive(Debug, Deserialize)]
+pub struct PullUserDataRequest {
+    /// Hex pubkey of the user whose relay-list events to fetch.
+    /// (Typically the logged-in identity, but any author is allowed —
+    /// "pull alice's named sets" is a planned secondary use case.)
+    pub pubkey: String,
+    /// Whether this is user-initiated (default true). Confirm-mode
+    /// gates the operation behind the modal when true.
+    #[serde(default = "default_pull_confirm")]
+    pub mode_confirm: bool,
+}
+
+fn default_pull_confirm() -> bool {
+    true
+}
+
+pub async fn pull_user_data_handler(
+    State(engine): State<AppState>,
+    Json(req): Json<PullUserDataRequest>,
+) -> Result<Json<Value>, EngineError> {
+    if req.pubkey.len() != 64 || hex::decode(&req.pubkey).is_err() {
+        return Err(EngineError::InvalidHex(
+            "Pubkey must be a 64-character hex string".to_string(),
+        ));
+    }
+
+    // Kinds we pull as relay-list payloads. The 100xx are Amethyst-
+    // defined PrivateTagArrayEvents; 30002 is NIP-51 named sets. The
+    // web parses each kind appropriately after the fetch lands in
+    // local nostrdb.
+    let kinds = [10002u64, 10007, 10086, 10088, 30002];
+
+    let composition = engine.compose_discovery_phases("indexer");
+    // One filter for the 100xx replaceable kinds (1 event per
+    // {author, kind}) and one for kind 30002 addressable (many per
+    // author). We send them as a single REQ subscription with two
+    // filters so relays can stream both in one round trip.
+    let filter_replaceable = json!({
+        "kinds": [10002, 10007, 10086, 10088],
+        "authors": [&req.pubkey],
+        "limit": 4,
+    });
+    let filter_addressable = json!({
+        "kinds": [30002],
+        "authors": [&req.pubkey],
+        "limit": 64,
+    });
+
+    let events = engine
+        .fetch_with_composition(
+            &composition,
+            &[filter_replaceable, filter_addressable],
+            format!("Pull relay lists for @{}", short_id(&req.pubkey)),
+            crate::network::FetchPattern::Profile,
+            req.mode_confirm,
+        )
+        .await;
+
+    let fetched = events.len();
+
+    // Brief wait for nostrdb to ingest before the web reads back.
+    if fetched > 0 {
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    }
+
+    Ok(Json(json!({
+        "fetched": fetched,
+        "kinds": kinds,
+        "author": req.pubkey,
     })))
 }
 
@@ -1592,6 +1710,23 @@ pub struct ConfigUpdateRequest {
     pub add_to_named_set: Option<NamedSetMember>,
     /// Remove a relay URL from a named set.
     pub remove_from_named_set: Option<NamedSetMember>,
+    /// Toggle the `exclusive` flag for a discovery class
+    /// (`"search"` or `"indexer"`). When ON, the engine bypasses read
+    /// relays for that class's lookup type and uses the class's
+    /// `.default` / `.fallback` sets only.
+    pub set_exclusive: Option<SetExclusive>,
+    /// `true` → merge the engine's well-known indexer/search default
+    /// URLs (`crate::relay::DEFAULT_INDEXERS` / `DEFAULT_SEARCH`)
+    /// into the current `default` tiers. Idempotent. Lets existing
+    /// users opt into the same set a fresh install gets.
+    pub restore_discovery_defaults: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SetExclusive {
+    /// `"search"` or `"indexer"`.
+    pub class: String,
+    pub value: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1673,6 +1808,17 @@ pub async fn config_update_handler(
             changed = true;
         }
     }
+    if let Some(ex) = &req.set_exclusive {
+        if engine.set_discovery_exclusive(&ex.class, ex.value) {
+            changed = true;
+        }
+    }
+    if req.restore_discovery_defaults.unwrap_or(false) {
+        let added = engine.merge_discovery_defaults();
+        if added > 0 {
+            changed = true;
+        }
+    }
 
     // Author edits still flow to config.toml — they're a separate concern
     // and not part of this migration.
@@ -1726,7 +1872,7 @@ pub async fn config_update_handler(
 
     Ok(Json(json!({
         "updated": changed,
-        "message": if changed { "Config updated. Restart to apply relay changes." } else { "No changes needed." }
+        "message": if changed { "Relay config updated." } else { "No changes needed." }
     })))
 }
 
@@ -1906,8 +2052,22 @@ pub async fn relay_config_handler(State(engine): State<AppState>) -> Json<Value>
         "publish": { "urls": rc.publish.urls, "kinds": rc.publish.kinds },
         "fetch": { "urls": rc.fetch.urls, "kinds": rc.fetch.kinds },
         "broadcast": { "urls": rc.broadcast.urls, "kinds": rc.broadcast.kinds },
-        "search": { "urls": rc.search.urls, "kinds": rc.search.kinds },
-        "indexer": { "urls": rc.indexer.urls, "kinds": rc.indexer.kinds },
+        // Discovery classes split into default/fallback tiers. Add/remove
+        // them through /config/update with the dotted set names
+        // `search.default`, `search.fallback`, `indexer.default`,
+        // `indexer.fallback`.
+        "search": {
+            "default": rc.search.default,
+            "fallback": rc.search.fallback,
+        },
+        "indexer": {
+            "default": rc.indexer.default,
+            "fallback": rc.indexer.fallback,
+        },
+        "exclusive": {
+            "search": rc.exclusive.search,
+            "indexer": rc.exclusive.indexer,
+        },
         "named_sets": rc.named_sets,
         "authors": rc.authors_hex(),
         "initial_relays": rc.initial_relays,
@@ -2023,16 +2183,73 @@ pub async fn ignore_remove_handler(
 // Purge API Endpoint
 // ============================================================================
 
-/// POST /api/v1/purge — delete nostrdb and restart fresh
+/// POST /api/v1/purge — delete nostrdb and re-exec the engine process.
+///
+/// Schedules a background task that deletes `data.mdb` + `lock.mdb`
+/// from the data directory, then re-execs the current binary with
+/// the same argv via `CommandExt::exec` (Unix). The HTTP response
+/// returns immediately so the web can show a "purging…" toast and
+/// reconnect to the fresh engine in ~1 second.
+///
+/// What's preserved: `relays.json` (relay state file, lives in the
+/// same data_dir but isn't touched), `config.toml`, the embedding
+/// index files. What's purged: the LMDB database holding events,
+/// profiles, blocks, ingest queue.
 pub async fn purge_handler(
     State(engine): State<AppState>,
 ) -> Result<Json<serde_json::Value>, EngineError> {
     let data_dir = engine.data_dir().to_path_buf();
-    // Can't actually delete while nostrdb is open — return the path for manual purge
+
+    // Schedule the destructive work AFTER this response gets sent.
+    // The browser sees a clean 200 with the message, then the engine
+    // tears down and re-execs — the SSE channels and any in-flight
+    // requests die cleanly with connection-closed rather than a
+    // mid-response crash.
+    tokio::spawn(async move {
+        // Give the HTTP layer a beat to flush this response.
+        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+
+        // Delete the LMDB files. On Linux, unlink succeeds even while
+        // the running engine still has the files mapped — the inode
+        // stays alive until the engine exits, but the directory entry
+        // is removed so the fresh post-exec engine sees an empty dir.
+        for name in ["data.mdb", "lock.mdb"] {
+            let p = data_dir.join(name);
+            if let Err(e) = std::fs::remove_file(&p) {
+                tracing::warn!("purge: failed to remove {}: {}", p.display(), e);
+            }
+        }
+
+        // Re-exec the current binary with the original argv. On Unix
+        // this replaces the process image: same PID, same parent,
+        // fresh memory + fresh file handles. `exec()` only returns on
+        // failure.
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::CommandExt;
+            let exe = match std::env::current_exe() {
+                Ok(p) => p,
+                Err(e) => {
+                    tracing::error!("purge: can't resolve current exe: {}", e);
+                    std::process::exit(1);
+                }
+            };
+            let args: Vec<_> = std::env::args().skip(1).collect();
+            let err = std::process::Command::new(exe).args(&args).exec();
+            tracing::error!("purge: exec failed: {} — aborting so a process supervisor can restart", err);
+            std::process::exit(1);
+        }
+        #[cfg(not(unix))]
+        {
+            tracing::error!("purge: in-process re-exec only supported on Unix");
+            std::process::exit(1);
+        }
+    });
+
+    let data_dir_display = engine.data_dir().to_path_buf().to_string_lossy().to_string();
     Ok(Json(json!({
-        "message": "Purge requires restart. Delete the data directory and restart the engine.",
-        "data_dir": data_dir.to_string_lossy(),
-        "command": format!("rm -rf {} && cargo run -- -c config.toml", data_dir.display())
+        "message": "Purging the local cache and re-execing the engine. Reconnect in ~1 second.",
+        "data_dir": data_dir_display,
     })))
 }
 
@@ -2314,6 +2531,67 @@ fn describe_discussion_steps(
     steps
 }
 
+/// Short, screen-friendly label for the confirm modal's title. The
+/// previous form used the full query string, which produced a 500+ char
+/// header when the query was a NIP-19 entity (naddr/nevent/etc).
+/// Truncate to a head/tail snippet so the header stays one line.
+fn short_search_label(query: &str) -> String {
+    let q = query.trim();
+    if q.len() <= 48 {
+        return format!("Search · {q}");
+    }
+    let head: String = q.chars().take(14).collect();
+    let tail: String = q.chars().rev().take(8).collect::<String>().chars().rev().collect();
+    format!("Search · {head}…{tail}")
+}
+
+/// Build a structured RequestSummary for a search query. Returns
+/// None when the query fails to parse — caller falls back to the
+/// legacy flat-relay modal view. Composition is a single primary
+/// "read" stage since search.rs's existing per-class routing isn't
+/// wired through this handler yet (planned follow-up).
+fn build_search_summary(
+    query: &str,
+    relays: &[String],
+    _engine: &Engine,
+) -> Option<crate::network::RequestSummary> {
+    use crate::network::{nip_filter_from_json, CompositionShape, Phase, PhaseStage, RequestSummary};
+
+    // Try compound parse first — a `|` query splits into multiple
+    // branches that each contribute a NIP-01 filter (or several).
+    let filter_jsons: Vec<serde_json::Value> = if query.contains('|') {
+        SearchQuery::parse_compound(query)
+            .ok()?
+            .branches
+            .into_iter()
+            .flat_map(|b| b.to_nip01_filters())
+            .collect()
+    } else {
+        SearchQuery::parse(query)
+            .ok()?
+            .to_nip01_filters()
+    };
+    if filter_jsons.is_empty() {
+        return None;
+    }
+
+    let composition = CompositionShape {
+        phases: vec![PhaseStage {
+            label: "primary".into(),
+            members: vec![(Phase::Read, relays.to_vec())],
+            start_delay_ms: 0,
+        }],
+    };
+    let nip_filters: Vec<_> = filter_jsons.iter().map(nip_filter_from_json).collect();
+    let mut summary = RequestSummary {
+        filters: nip_filters,
+        composition,
+        dsl: String::new(),
+    };
+    summary.dsl = summary.to_dsl();
+    Some(summary)
+}
+
 /// Confirm-modal steps for a relay search, derived from the parsed
 /// query — which kinds, author scope, and tag filters it carries —
 /// rather than a fixed template.
@@ -2339,17 +2617,6 @@ fn describe_search_steps(query: &str) -> Vec<String> {
     steps.push("Query the relays (NIP-01 / NIP-50) and ingest matches".to_string());
     steps.push("Backfill author profiles (kind 0)".to_string());
     steps
-}
-
-/// Confirm-modal steps for a forced profile fetch — names the pubkeys
-/// being requested (truncated, with an overflow count).
-fn describe_profile_steps(pubkeys: &[&str]) -> Vec<String> {
-    let shown: Vec<String> = pubkeys.iter().take(5).map(|p| short_id(p)).collect();
-    let mut step = format!("Fetch kind-0 profile metadata for {}", shown.join(", "));
-    if pubkeys.len() > 5 {
-        step.push_str(&format!(" +{} more", pubkeys.len() - 5));
-    }
-    vec![step]
 }
 
 /// POST /api/v1/discussions/list
@@ -2751,38 +3018,106 @@ pub async fn publish_handler(
             .map(|e| serde_json::to_string(e).unwrap())
             .collect();
 
-        let (_, _, results) = crate::relay::publish_events_to_relays(&relays, &event_jsons).await;
-
-        // Record relay provenance for every (event, relay) pair that
-        // succeeded, so a freshly-published publication stops showing as
-        // local-only without waiting to be re-fetched.
-        let by_id: std::collections::HashMap<&str, &String> = section_events
+        let event_ids: Vec<String> = section_events
             .iter()
             .chain(std::iter::once(&pub_event))
-            .zip(event_jsons.iter())
-            .filter_map(|(e, j)| e.get("id").and_then(|v| v.as_str()).map(|id| (id, j)))
+            .filter_map(|e| e.get("id").and_then(|v| v.as_str()).map(|s| s.to_string()))
             .collect();
-        for r in &results {
-            if r.success {
-                if let Some(j) = by_id.get(r.event_id.as_str()) {
-                    if let Err(e) = engine.record_event_relay(j, &r.relay_url) {
-                        debug!("record relay metadata: {e}");
+
+        // Formal-language summary — publication root + N sections.
+        let summary = crate::network::RequestSummary {
+            filters: vec![],
+            composition: crate::network::CompositionShape {
+                phases: vec![crate::network::PhaseStage {
+                    label: "primary".into(),
+                    members: vec![(crate::network::Phase::Publish, relays.clone())],
+                    start_delay_ms: 0,
+                }],
+            },
+            dsl: format!("pub k:30040,30041 ({} events) via:publish", event_jsons.len()),
+        };
+
+        let op = match engine
+            .begin_publish_operation(
+                format!(
+                    "Publishing {} events to {} relay(s)",
+                    event_jsons.len(),
+                    relays.len()
+                ),
+                relays.clone(),
+                event_ids,
+                Some(summary),
+            )
+            .await
+        {
+            Ok(op) => Some(op),
+            Err(_) => {
+                // User declined the confirm — skip broadcast leg but
+                // still return the local publish result.
+                None
+            }
+        };
+
+        if let Some(op) = op {
+            let chosen = op.relays().to_vec();
+            for url in &chosen {
+                op.relay_status(
+                    url.clone(),
+                    crate::network::RelayStatusValue::Connecting,
+                );
+            }
+
+            let (_, _, results) =
+                crate::relay::publish_events_to_relays(&chosen, &event_jsons).await;
+
+            // One Accepted/Rejected per (relay, event) — the UI's
+            // expanded toast renders them grouped by relay.
+            for r in &results {
+                let status = if r.success {
+                    crate::network::RelayStatusValue::Accepted
+                } else {
+                    crate::network::RelayStatusValue::Rejected {
+                        msg: r.message.clone().unwrap_or_default(),
+                    }
+                };
+                op.relay_status(r.relay_url.clone(), status);
+            }
+            let successful_relays = results.iter().filter(|r| r.success).count();
+            op.complete(successful_relays);
+
+            // Record relay provenance for every (event, relay) pair that
+            // succeeded, so a freshly-published publication stops showing as
+            // local-only without waiting to be re-fetched.
+            let by_id: std::collections::HashMap<&str, &String> = section_events
+                .iter()
+                .chain(std::iter::once(&pub_event))
+                .zip(event_jsons.iter())
+                .filter_map(|(e, j)| e.get("id").and_then(|v| v.as_str()).map(|id| (id, j)))
+                .collect();
+            for r in &results {
+                if r.success {
+                    if let Some(j) = by_id.get(r.event_id.as_str()) {
+                        if let Err(e) = engine.record_event_relay(j, &r.relay_url) {
+                            debug!("record relay metadata: {e}");
+                        }
                     }
                 }
             }
-        }
 
-        Some(
-            results
-                .into_iter()
-                .map(|r| BroadcastResult {
-                    relay: r.relay_url,
-                    success: r.success,
-                    message: r.message,
-                    event_id: r.event_id,
-                })
-                .collect::<Vec<_>>(),
-        )
+            Some(
+                results
+                    .into_iter()
+                    .map(|r| BroadcastResult {
+                        relay: r.relay_url,
+                        success: r.success,
+                        message: r.message,
+                        event_id: r.event_id,
+                    })
+                    .collect::<Vec<_>>(),
+            )
+        } else {
+            None
+        }
     } else {
         None
     };
@@ -3110,36 +3445,95 @@ pub async fn publish_blocks_handler(
             .chain(std::iter::once(&pub_event))
             .map(|e| serde_json::to_string(e).unwrap())
             .collect();
-        let (_, _, results) = crate::relay::publish_events_to_relays(&relays, &event_jsons).await;
-
-        // Record relay provenance for each (event, relay) pair that succeeded.
-        let by_id: std::collections::HashMap<&str, &String> = section_events
-            .iter()
-            .chain(std::iter::once(&pub_event))
-            .zip(event_jsons.iter())
-            .filter_map(|(e, j)| e.get("id").and_then(|v| v.as_str()).map(|id| (id, j)))
+        let event_ids: Vec<String> = std::iter::once(pub_id.clone())
+            .chain(section_ids.iter().cloned())
             .collect();
-        for r in &results {
-            if r.success {
-                if let Some(j) = by_id.get(r.event_id.as_str()) {
-                    if let Err(e) = engine.record_event_relay(j, &r.relay_url) {
-                        debug!("record relay metadata: {e}");
+
+        let summary = crate::network::RequestSummary {
+            filters: vec![],
+            composition: crate::network::CompositionShape {
+                phases: vec![crate::network::PhaseStage {
+                    label: "primary".into(),
+                    members: vec![(crate::network::Phase::Publish, relays.clone())],
+                    start_delay_ms: 0,
+                }],
+            },
+            dsl: format!(
+                "pub k:30040,30041 ({} blocks) via:publish",
+                event_jsons.len()
+            ),
+        };
+
+        let op = engine
+            .begin_publish_operation(
+                format!(
+                    "Publishing {} block events to {} relay(s)",
+                    event_jsons.len(),
+                    relays.len()
+                ),
+                relays.clone(),
+                event_ids,
+                Some(summary),
+            )
+            .await
+            .ok();
+
+        if let Some(op) = op {
+            let chosen = op.relays().to_vec();
+            for url in &chosen {
+                op.relay_status(
+                    url.clone(),
+                    crate::network::RelayStatusValue::Connecting,
+                );
+            }
+
+            let (_, _, results) =
+                crate::relay::publish_events_to_relays(&chosen, &event_jsons).await;
+
+            for r in &results {
+                let status = if r.success {
+                    crate::network::RelayStatusValue::Accepted
+                } else {
+                    crate::network::RelayStatusValue::Rejected {
+                        msg: r.message.clone().unwrap_or_default(),
+                    }
+                };
+                op.relay_status(r.relay_url.clone(), status);
+            }
+            let successful_relays = results.iter().filter(|r| r.success).count();
+            op.complete(successful_relays);
+
+            // Record relay provenance for each (event, relay) pair that succeeded.
+            let by_id: std::collections::HashMap<&str, &String> = section_events
+                .iter()
+                .chain(std::iter::once(&pub_event))
+                .zip(event_jsons.iter())
+                .filter_map(|(e, j)| e.get("id").and_then(|v| v.as_str()).map(|id| (id, j)))
+                .collect();
+            for r in &results {
+                if r.success {
+                    if let Some(j) = by_id.get(r.event_id.as_str()) {
+                        if let Err(e) = engine.record_event_relay(j, &r.relay_url) {
+                            debug!("record relay metadata: {e}");
+                        }
                     }
                 }
             }
-        }
 
-        Some(
-            results
-                .into_iter()
-                .map(|r| BroadcastResult {
-                    relay: r.relay_url,
-                    success: r.success,
-                    message: r.message,
-                    event_id: r.event_id,
-                })
-                .collect::<Vec<_>>(),
-        )
+            Some(
+                results
+                    .into_iter()
+                    .map(|r| BroadcastResult {
+                        relay: r.relay_url,
+                        success: r.success,
+                        message: r.message,
+                        event_id: r.event_id,
+                    })
+                    .collect::<Vec<_>>(),
+            )
+        } else {
+            None
+        }
     } else {
         None
     };
@@ -4031,9 +4425,70 @@ pub async fn broadcast_handler(
 
     let event_json = serde_json::to_string(&req.event)
         .map_err(|e| EngineError::Config(format!("event serialize: {e}")))?;
-    let results = crate::relay::publish_to_relays(&relays, &event_json).await;
-    // Record relay provenance for each relay that accepted the event.
+
+    // Build a RequestSummary so the toast/confirm modal render the
+    // formal-language form. `pub k:<kind> via:broadcast` is the
+    // canonical broadcast sentence.
+    let event_id = event
+        .get("id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let kind = event.get("kind").and_then(|v| v.as_u64()).unwrap_or(0);
+    let summary = crate::network::RequestSummary {
+        filters: vec![],
+        composition: crate::network::CompositionShape {
+            phases: vec![crate::network::PhaseStage {
+                label: "primary".into(),
+                members: vec![(crate::network::Phase::Broadcast, relays.clone())],
+                start_delay_ms: 0,
+            }],
+        },
+        dsl: format!("pub k:{kind} via:broadcast"),
+    };
+
+    // Open the publish op envelope so the UI sees the activity. If the
+    // user declines in Confirm mode, this returns FetchCancelled.
+    let op = match engine
+        .begin_publish_operation(
+            format!("Broadcasting kind {kind} to {} relay(s)", relays.len()),
+            relays.clone(),
+            vec![event_id.clone()],
+            Some(summary),
+        )
+        .await
+    {
+        Ok(op) => op,
+        Err(_) => {
+            return Err(EngineError::Config(
+                "Broadcast cancelled by user".into(),
+            ));
+        }
+    };
+    let chosen_relays = op.relays().to_vec();
+
+    // Emit Connecting per relay before the fan-out fires. (Per-relay
+    // status streaming during the call awaits a follow-up refactor of
+    // `publish_to_relays`; for now we batch-emit Accepted/Rejected
+    // after each result returns.)
+    for url in &chosen_relays {
+        op.relay_status(
+            url.clone(),
+            crate::network::RelayStatusValue::Connecting,
+        );
+    }
+
+    let results = crate::relay::publish_to_relays(&chosen_relays, &event_json).await;
+
     for r in &results {
+        let status = if r.success {
+            crate::network::RelayStatusValue::Accepted
+        } else {
+            crate::network::RelayStatusValue::Rejected {
+                msg: r.message.clone().unwrap_or_default(),
+            }
+        };
+        op.relay_status(r.relay_url.clone(), status);
         if r.success {
             if let Err(e) = engine.record_event_relay(&event_json, &r.relay_url) {
                 debug!("record relay metadata: {e}");
@@ -4042,6 +4497,7 @@ pub async fn broadcast_handler(
     }
     let successful = results.iter().filter(|r| r.success).count();
     let total = results.len();
+    op.complete(successful);
     Ok(Json(BroadcastResponse {
         successful,
         total,

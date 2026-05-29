@@ -206,10 +206,15 @@ async fn main() -> anyhow::Result<()> {
     // Config endpoint (returns pubkey etc. to the frontend)
     let config_pubkey = my_pubkey.clone();
     let config_assistant = assistant_pubkey.clone();
+    let config_data_dir = state.data_dir().to_string_lossy().to_string();
     let config_handler = move || async move {
         axum::Json(serde_json::json!({
             "my_pubkey": config_pubkey,
-            "assistant_pubkey": config_assistant
+            "assistant_pubkey": config_assistant,
+            // Expose the data dir so the Settings/Purge confirm can
+            // show exactly which path is about to be wiped before the
+            // user clicks OK.
+            "data_dir": config_data_dir,
         }))
     };
 
@@ -235,6 +240,7 @@ async fn main() -> anyhow::Result<()> {
         // Profile + relay config + fetch
         .route("/api/v1/profile/:pubkey", get(api::profile_handler))
         .route("/api/v1/profiles/fetch", post(api::fetch_profiles_handler))
+        .route("/api/v1/pull-user-data", post(api::pull_user_data_handler))
         .route("/api/v1/relays", get(api::relay_config_handler))
         .route("/api/v1/relay/info", get(api::relay_nip11_handler))
         .route("/api/v1/config/update", post(api::config_update_handler))
@@ -290,6 +296,10 @@ async fn main() -> anyhow::Result<()> {
         .route(
             "/api/v1/publications/:pubkey/:d_tag/sections",
             post(api::load_sections_handler),
+        )
+        .route(
+            "/api/v1/publications/:pubkey/:d_tag/backfill",
+            post(api::backfill_publication_handler),
         )
         .route(
             "/api/v1/publications/:pubkey/:d_tag/sections/:index",

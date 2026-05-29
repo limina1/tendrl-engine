@@ -115,14 +115,21 @@ pub struct RelayConfig {
     /// lands. See `project-relay-classes` memory.
     #[serde(skip, default = "default_broadcast")]
     pub broadcast: RelaySet,
-    /// NIP-50 search-capable relays. Used by `~:` semantic queries when
-    /// per-class routing lands.
-    #[serde(skip, default = "default_search")]
-    pub search: RelaySet,
-    /// Indexer / discovery relays (purplepag.es etc.). Fallback for
-    /// profile / kind 10002 / metadata lookups when the read set misses.
-    #[serde(skip, default = "default_indexer")]
-    pub indexer: RelaySet,
+    /// NIP-50 search-capable relays. Two-tier: `default` joins (or
+    /// replaces with `exclusive_search`) the primary `~:` fan-out;
+    /// `fallback` is consulted only when the primary returns zero.
+    /// URLs filled at runtime from `relays.json`.
+    #[serde(skip, default)]
+    pub search: crate::relay_store::DiscoveryClass,
+    /// Indexer / discovery relays (purplepag.es etc.). Same two-tier
+    /// shape as `search`. Used for kind 0 / 10002 / metadata lookups.
+    #[serde(skip, default)]
+    pub indexer: crate::relay_store::DiscoveryClass,
+    /// Per-class `exclusive` toggle. When ON, the discovery class
+    /// REPLACES the read relays for its lookup type rather than
+    /// joining them. Filled from `relays.json` at runtime.
+    #[serde(skip, default)]
+    pub exclusive: crate::relay_store::ExclusiveFlags,
     /// User-defined named relay sets (NIP-51 kind 30002). Loaded from
     /// `relays.json` at runtime; never deserialized from TOML.
     #[serde(skip, default)]
@@ -157,20 +164,6 @@ fn default_fetch() -> RelaySet {
 }
 
 fn default_broadcast() -> RelaySet {
-    RelaySet {
-        urls: Vec::new(),
-        kinds: vec![],
-    }
-}
-
-fn default_search() -> RelaySet {
-    RelaySet {
-        urls: Vec::new(),
-        kinds: vec![],
-    }
-}
-
-fn default_indexer() -> RelaySet {
     RelaySet {
         urls: Vec::new(),
         kinds: vec![],
@@ -227,8 +220,9 @@ impl Default for RelayConfig {
             publish: default_publish(),
             fetch: default_fetch(),
             broadcast: default_broadcast(),
-            search: default_search(),
-            indexer: default_indexer(),
+            search: crate::relay_store::DiscoveryClass::default(),
+            indexer: crate::relay_store::DiscoveryClass::default(),
+            exclusive: crate::relay_store::ExclusiveFlags::default(),
             named_sets: Vec::new(),
             authors: Vec::new(),
             timeout_ms: default_timeout_ms(),
@@ -254,8 +248,9 @@ impl RelayConfig {
         self.publish.urls = sets.publish.clone();
         self.fetch.urls = sets.fetch.clone();
         self.broadcast.urls = sets.broadcast.clone();
-        self.search.urls = sets.search.clone();
-        self.indexer.urls = sets.indexer.clone();
+        self.search = sets.search.clone();
+        self.indexer = sets.indexer.clone();
+        self.exclusive = sets.exclusive.clone();
         self.named_sets = sets.named.clone();
     }
 

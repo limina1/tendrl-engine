@@ -21,6 +21,25 @@ pub const DEFAULT_RELAYS: &[&str] = &[
     "wss://relay.damus.io",
 ];
 
+/// Default indexer (profile / kind-10002 discovery) relays. Used to
+/// seed `indexer.default` on first boot so a fresh install can fall
+/// back from the read set without manual configuration. Well-known
+/// purpose-built profile relays:
+///   - purplepag.es: pubkey-indexed profile + relay-list mirror
+///   - user.kindpag.es: kind-10002 / 10003 / 10006 / 10007 indexer
+/// Users can clear them via the Discovery section in RelaysBuffer
+/// if they prefer a tighter set; new entries persist to relays.json
+/// after first save so they won't be re-seeded.
+pub const DEFAULT_INDEXERS: &[&str] = &[
+    "wss://purplepag.es",
+    "wss://user.kindpag.es",
+];
+
+/// Default search relays — NIP-50-capable. Empty by default since
+/// search is opt-in and the user is more likely to have a specific
+/// search relay preference than a profile-discovery one.
+pub const DEFAULT_SEARCH: &[&str] = &[];
+
 /// Check if a local relay is available at the given URL
 /// Returns true if the relay accepts a WebSocket connection within the timeout
 pub async fn check_relay_available(relay_url: &str) -> bool {

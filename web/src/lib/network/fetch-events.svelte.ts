@@ -2,8 +2,12 @@
 //
 // The engine owns the confirm/auto decision and the gating — this
 // module is a pure renderer. An `intent` that needs confirmation
-// becomes a modal; one that doesn't (Auto mode) becomes a toast.
-// `progress`/`completed`/`failed` update that toast.
+// becomes a modal; one that doesn't (Auto mode) becomes an
+// **activity toast** (pushActivityToast). `progress`/`relay_status`
+// update that toast. `completed`/`failed` flip its kind + (re)set the
+// auto-dismiss timer. The user can click → pin, then Expand into the
+// FetchActivityModal for the full structured view (filters / phases /
+// per-relay).
 //
 // The subscription self-starts at module scope (browser only) rather
 // than from a component lifecycle hook — the stream is app-global and
@@ -21,7 +25,8 @@ type IntentEvent = Extract<FetchEvent, { type: 'intent' }>;
 /** The pending confirm intent the FetchConfirmModal renders, if any. */
 export const confirmState = $state<{ intent: IntentEvent | null }>({ intent: null });
 
-// operation_id → toast id, so progress/completed update the right toast.
+// operation_id → toast id, so progress/relay_status/completed update
+// the right toast.
 const opToasts = new Map<string, number>();
 
 /** Resolve the AppState lazily — it's created by +layout, which may run
@@ -34,22 +39,38 @@ function appOrNull(): AppState | null {
 	}
 }
 
-function toastFor(app: AppState, operationId: string, label: string): number {
+function openActivityToast(
+	app: AppState,
+	operationId: string,
+	label: string,
+	mode: 'fetch' | 'publish',
+	intent: Extract<FetchEvent, { type: 'intent' | 'publish_intent' }>
+): number {
 	let id = opToasts.get(operationId);
-	if (id === undefined) {
-		// Long TTL — the operation drives the lifecycle, not the timer.
-		id = app.pushToast(label, 'pending', 120_000);
-		opToasts.set(operationId, id);
-	}
+	if (id !== undefined) return id;
+	// Long TTL — the engine's `completed`/`failed` drives the lifecycle.
+	id = app.pushActivityToast(label, 120_000, {
+		operation_id: operationId,
+		summary: intent.summary,
+		mode,
+		// Seed relays from the intent so the modal can show pending rows
+		// before any RelayStatus events arrive.
+		relays: Object.fromEntries(intent.relays.map((r) => [r, { kind: 'connecting' as const }]))
+	});
+	opToasts.set(operationId, id);
 	return id;
 }
 
 function handleEvent(ev: FetchEvent) {
-	// `intent` confirmation only touches confirmState, so it works even
-	// before AppState exists. Toast updates need AppState — skip if not.
-	if (ev.type === 'intent' && ev.needs_confirmation) {
-		confirmState.intent = ev;
-		return;
+	// Confirm intents bypass the toast — they need the modal directly.
+	if ((ev.type === 'intent' || ev.type === 'publish_intent') && ev.needs_confirmation) {
+		// FetchConfirmModal only handles fetch intents today; publish
+		// confirmations fall through to a basic toast for now (the
+		// existing modal doesn't yet render publish summaries).
+		if (ev.type === 'intent') {
+			confirmState.intent = ev;
+			return;
+		}
 	}
 
 	const app = appOrNull();
@@ -57,13 +78,21 @@ function handleEvent(ev: FetchEvent) {
 
 	switch (ev.type) {
 		case 'intent':
-			// Auto mode — an informational progress toast, no modal.
-			toastFor(app, ev.operation_id, ev.label);
+			openActivityToast(app, ev.operation_id, ev.label, 'fetch', ev);
+			break;
+		case 'publish_intent':
+			openActivityToast(app, ev.operation_id, ev.label, 'publish', ev);
 			break;
 		case 'progress': {
-			const id = toastFor(app, ev.operation_id, ev.label);
+			const id = opToasts.get(ev.operation_id);
+			if (id === undefined) break;
 			const suffix = ev.total != null ? ` ${ev.done}/${ev.total}` : '';
-			app.updateToast(id, { message: ev.label + suffix }, 120_000);
+			app.updateToast(id, { message: ev.label + suffix });
+			break;
+		}
+		case 'relay_status': {
+			// Update the per-relay row inside the activity toast.
+			app.updateActivityRelay(ev.operation_id, ev.relay, ev.status);
 			break;
 		}
 		case 'completed': {
@@ -72,7 +101,7 @@ function handleEvent(ev: FetchEvent) {
 				const n = ev.event_count;
 				app.updateToast(
 					id,
-					{ message: `Fetched ${n} event${n === 1 ? '' : 's'}`, kind: 'success' },
+					{ message: `Done — ${n} relay${n === 1 ? '' : 's'} accepted`, kind: 'success' },
 					2500
 				);
 				opToasts.delete(ev.operation_id);
@@ -85,7 +114,11 @@ function handleEvent(ev: FetchEvent) {
 				if (ev.error === 'cancelled') {
 					app.dismissToast(id);
 				} else {
-					app.updateToast(id, { message: `Fetch failed: ${ev.error}`, kind: 'error' }, 4500);
+					app.updateToast(
+						id,
+						{ message: `Operation failed: ${ev.error}`, kind: 'error' },
+						4500
+					);
 				}
 				opToasts.delete(ev.operation_id);
 			}
@@ -98,9 +131,25 @@ function handleEvent(ev: FetchEvent) {
 	}
 }
 
-/** Open the SSE subscription. */
+/** Open the SSE subscription with explicit reconnect on error.
+ *  EventSource has built-in retry but it gives up on hard errors
+ *  (e.g. engine re-exec during a purge); without explicit reconnect
+ *  the web loses its event channel and no intents / toasts arrive
+ *  until a full reload. Exponential backoff caps at 30s. */
+let reconnectBackoffMs = 500;
+let activeEventSource: EventSource | null = null;
 function startFetchEvents() {
+	if (activeEventSource) {
+		activeEventSource.close();
+		activeEventSource = null;
+	}
 	const es = new EventSource('/api/v1/network/fetch-events');
+	activeEventSource = es;
+	es.onopen = () => {
+		// Successful (re-)connect — reset the backoff so the next
+		// drop doesn't start at 30s.
+		reconnectBackoffMs = 500;
+	};
 	es.onmessage = (msg) => {
 		try {
 			handleEvent(JSON.parse(msg.data) as FetchEvent);
@@ -108,7 +157,21 @@ function startFetchEvents() {
 			console.error('[fetch-events] bad SSE message', e);
 		}
 	};
-	es.onerror = (e) => console.error('[fetch-events] SSE connection error', e);
+	es.onerror = (e) => {
+		console.warn(
+			`[fetch-events] SSE connection error — reconnecting in ${reconnectBackoffMs}ms`,
+			e
+		);
+		es.close();
+		if (activeEventSource === es) {
+			activeEventSource = null;
+		}
+		const delay = reconnectBackoffMs;
+		reconnectBackoffMs = Math.min(reconnectBackoffMs * 2, 30_000);
+		setTimeout(() => {
+			if (browser) startFetchEvents();
+		}, delay);
+	};
 }
 
 /** The FetchConfirmModal's confirm/cancel reply. `relays` overrides the

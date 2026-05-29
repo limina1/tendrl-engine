@@ -9,6 +9,7 @@
 	import FetchConfirmModal from '$lib/components/FetchConfirmModal.svelte';
 	import SearchConfigModal from '$lib/components/SearchConfigModal.svelte';
 	import ToastStack from '$lib/components/ToastStack.svelte';
+	import FetchActivityModal from '$lib/components/FetchActivityModal.svelte';
 	// fetch-events self-starts the SSE subscription at module scope; we
 	// only need confirmState here to render the modal.
 	import { confirmState } from '$lib/network/fetch-events.svelte';
@@ -103,6 +104,8 @@
 {@render children()}
 
 <ToastStack />
+
+<FetchActivityModal />
 
 {#if app.eventModalData}
 	<EventViewModal
