@@ -1327,39 +1327,102 @@ impl Engine {
         let relays = self.relays();
         let mut total_fetched = 0usize;
 
+        // Per-chunk: ask the first relay, ingest, then re-check the
+        // d-tags LOCALLY and only keep asking for what's still missing.
+        // The previous loop broke on `!events.is_empty()` even when the
+        // relay returned events that didn't match our `#d` filter (some
+        // relays silently widen the filter and return the cap of recent
+        // 30041s) — so unreachable d-tags stayed marked missing and got
+        // re-queried every cycle, forever. Verifying after each fetch
+        // means the still-pending list strictly shrinks; chunks that
+        // converge to zero short-circuit the rest of the relay fan-out.
+        let ndb_for_check = Arc::clone(&self.ndb);
+        let mut tried_empty: HashSet<(String, String)> = HashSet::new();
         for (pubkey, d_tags) in &by_pubkey {
             for chunk in d_tags.chunks(50) {
-                let filter = json!({
-                    "kinds": [30041],
-                    "authors": [pubkey],
-                    "#d": chunk,
-                    "limit": chunk.len() * 2
-                });
-
+                let mut remaining: Vec<String> = chunk.to_vec();
                 for relay_url in &relays {
+                    if remaining.is_empty() {
+                        break;
+                    }
+                    let filter = json!({
+                        "kinds": [30041],
+                        "authors": [pubkey],
+                        "#d": remaining,
+                        "limit": remaining.len() * 2
+                    });
                     match self
-                        .tracked_fetch(relay_url, &[filter.clone()], FetchTrigger::BackgroundSync)
+                        .tracked_fetch(
+                            relay_url,
+                            &[filter],
+                            FetchTrigger::BackgroundSync,
+                        )
                         .await
                     {
                         Ok(events) => {
                             if !events.is_empty() {
-                                debug!("Fetched {} sections from {}", events.len(), relay_url);
+                                debug!(
+                                    "Fetched {} sections from {} (verifying d-tag matches)",
+                                    events.len(),
+                                    relay_url
+                                );
                                 total_fetched += events.len();
-                                break;
                             }
                         }
                         Err(e) => {
-                            debug!("Failed to fetch sections from {}: {}", relay_url, e);
+                            debug!(
+                                "Failed to fetch sections from {}: {}",
+                                relay_url, e
+                            );
+                            continue;
                         }
                     }
+                    // Re-check LOCALLY which of the remaining d-tags
+                    // landed in nostrdb. Drop the ones now present; the
+                    // rest get tried against the next relay.
+                    let pubkey_s = pubkey.clone();
+                    let pending: Vec<String> = remaining.clone();
+                    let ndb_clone = Arc::clone(&ndb_for_check);
+                    let still_missing = tokio::task::spawn_blocking(move || {
+                        pending
+                            .into_iter()
+                            .filter(|d| {
+                                let f = json!({
+                                    "kinds": [30041],
+                                    "authors": [&pubkey_s],
+                                    "#d": [d],
+                                    "limit": 1
+                                });
+                                query::query_local(&ndb_clone, &[f])
+                                    .map(|e| e.is_empty())
+                                    .unwrap_or(true)
+                            })
+                            .collect::<Vec<String>>()
+                    })
+                    .await
+                    .map_err(|e| {
+                        EngineError::Database(format!("spawn_blocking: {e}"))
+                    })?;
+                    remaining = still_missing;
+                }
+                // What's left after every relay was tried stays missing
+                // — record it so the next cycle's logging can show how
+                // much of the work is structurally unreachable on the
+                // current relay set (the user can then prune or add
+                // relays). Recompute happens at the top of the next
+                // call, so this is informational only.
+                for d in remaining {
+                    tried_empty.insert((pubkey.clone(), d));
                 }
             }
         }
 
         info!(
-            "fetch_missing_sections: fetched {} of {} missing sections",
+            "fetch_missing_sections: fetched {} of {} missing sections \
+             ({} still unreachable on current relay set)",
             total_fetched,
-            missing.len()
+            missing.len(),
+            tried_empty.len()
         );
         Ok((needed_count, missing.len(), total_fetched))
     }
