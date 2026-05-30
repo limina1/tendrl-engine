@@ -60,15 +60,18 @@ pnpm -C web check
 If any are already red on =tendrl-web=, note it — don't try to fix pre-existing failures
 inside this work.
 
-* Phase 1 — Zero-risk TypeScript deletions [0/4]
+* Phase 1 — Zero-risk TypeScript deletions [4/4] ✓ landed ae0c490
 No behavior change. Each item was =rg=-verified to have 0 import sites (see [[file:07-web-components.org][07]]).
-- [ ] Delete the 5 orphan components: [[web:src/lib/components/Toolbar.svelte][Toolbar]], [[web:src/lib/components/PanelFrame.svelte][PanelFrame]], [[web:src/lib/components/JsonPreview.svelte][JsonPreview]],
+- [X] Delete the 5 orphan components: [[web:src/lib/components/Toolbar.svelte][Toolbar]], [[web:src/lib/components/PanelFrame.svelte][PanelFrame]], [[web:src/lib/components/JsonPreview.svelte][JsonPreview]],
   [[web:src/lib/design/NetworkPill.svelte][design/NetworkPill]], [[web:src/lib/design/Rail.svelte][design/Rail]].
-- [ ] Delete the 7 dead =api.ts= fns: =addAuthor=, =removeAuthor=, =getDiscussionCounts=,
-  =getExportManifest=, =injectContext=, =loadSections=, =loadSectionsMeta= ([[web:src/lib/api.ts][api.ts]]).
-  *Keep =evictProfiles=* — it's used internally by =refreshProfiles=.
-- [ ] Remove the demo =recentlyClosed= seed at [[web:src/routes/+page.svelte::255][+page.svelte:255-258]].
-- [ ] Leave =/design/*= artboards + their components (=IdBar=/=PanelHeader=/=PubRow=)
+- [X] Delete the dead =api.ts= fns: =addAuthor=, =removeAuthor=, =getExportManifest=
+  (+ its =ExportManifest= type), =injectContext=, =loadSections=, =loadSectionsMeta=
+  (+ dropped the now-unused =SectionMeta= import) ([[web:src/lib/api.ts][api.ts]]). *Kept =evictProfiles=*
+  (used by =refreshProfiles=). DEVIATION: *kept =getDiscussionCounts=* (+
+  =DiscussionCountsResponse=) — Phase 2 wires the badges to that exact endpoint, so
+  delete-then-re-add would be churn. Delete it in Phase 2 only if that wiring doesn't use it.
+- [X] Remove the demo =recentlyClosed= seed at [[web:src/routes/+page.svelte::255][+page.svelte:255-258]].
+- [X] Leave =/design/*= artboards + their components (=IdBar=/=PanelHeader=/=PubRow=)
   ALONE — they are live design scratch (memory =project_design_handoff=). Just confirm
   they're still the only consumers; do not delete.
 - Verify :: =pnpm -C web check= clean; app builds; grep the deleted names return 0 hits.
