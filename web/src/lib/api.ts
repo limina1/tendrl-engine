@@ -14,7 +14,8 @@ import type {
 	NetworkMode,
 	DocumentFile,
 	ImportResult,
-	IdentityStatus
+	IdentityStatus,
+	RepublishDiff
 } from './types';
 
 async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
@@ -96,6 +97,23 @@ export async function encode(req: EncodeRequest): Promise<string> {
 		body: JSON.stringify(req)
 	});
 	return resp.encoded;
+}
+
+/**
+ * Detect that a same-title publication of the user's already exists and return
+ * a section-level diff (matched / added / removed by title slug) so a republish
+ * can reuse identifiers instead of forking. The slug-matching, TOC flatten, and
+ * diff all run in the engine. Returns `null` when there's no existing match
+ * (the normal first publish) or no signed-in identity.
+ */
+export function republishDiff(
+	title: string,
+	sections: { title: string; content: string }[]
+): Promise<RepublishDiff | null> {
+	return fetchJson<RepublishDiff | null>('/api/v1/publish/republish-diff', {
+		method: 'POST',
+		body: JSON.stringify({ title, sections })
+	});
 }
 
 // Publications API

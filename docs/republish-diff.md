@@ -8,12 +8,15 @@ their identifiers** so the republish *replaces*.
 
 ## How it works
 
-1. **Detect** (`state.svelte.ts::detectRepublish`) — on Publish, slugify the
-   title and look for a publication of yours whose 30040 `T` (title slug) matches.
-   Newest wins ("exact title match → highest 30040"). Fail-open: any lookup error
-   just proceeds as a normal publish.
-2. **Diff** — fetch the existing publication's `toc` and compare sections by `T`
-   (title slug):
+1. **Detect** (engine `POST /api/v1/publish/republish-diff` →
+   `PublicationEngine::detect_republish_diff`) — on Publish, the engine slugs the
+   title (reusing `ComposeState::generate_d_tag`) and looks for a publication of
+   yours whose 30040 `T` (title slug) matches; "mine" is resolved from the active
+   identity. Newest wins ("exact title match → highest 30040"). Fail-open: any
+   lookup error just proceeds as a normal publish. The web wrapper
+   (`state.svelte.ts::detectRepublish`) is a thin fail-open call to that endpoint.
+2. **Diff** — the engine loads the existing publication's tree, flattens it to its
+   leaf sections, and compares by `T` (title slug) — all in `compute_republish_diff`:
    - **matched** (same `T`) — compare content → *unchanged* / *content changed*
    - **added** — only in the new draft
    - **removed** — only in the published version
@@ -33,6 +36,11 @@ their identifiers** so the republish *replaces*.
 - [x] `d`-tag reuse so republish **replaces** (engine `d_tag` passthrough on the
       flat/nested publish path)
 - [x] Diff modal with confirm / publish-as-new / cancel
+- [x] **Slug-match + TOC flatten + diff moved to Rust** (Phase 4b) —
+      `detect_republish_diff` / `compute_republish_diff` in `publication.rs` behind
+      `POST /publish/republish-diff`; deleted the TS twins (`detectRepublish`,
+      `flattenToc`, `slug.ts`). The reuse override is now keyed by exact section
+      title (no client-side re-slug). Per the frontend/backend boundary.
 
 ## Deferred
 

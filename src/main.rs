@@ -271,6 +271,10 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/v1/publish", post(api::publish_handler))
         .route("/api/v1/publish/preview", post(api::publish_preview_handler))
         .route("/api/v1/publish/blocks", post(api::publish_blocks_handler))
+        .route(
+            "/api/v1/publish/republish-diff",
+            post(api::republish_diff_handler),
+        )
         .route("/api/v1/broadcast", post(api::broadcast_handler))
         .route("/api/v1/ingest", post(api::ingest_handler))
         // Embedding endpoints

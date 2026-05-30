@@ -386,6 +386,156 @@ pub struct TocEntry {
     pub children: Vec<TocEntry>,
 }
 
+/// One section in a republish diff, matched / added / removed by `T` — the
+/// title slug (`ComposeState::generate_d_tag`). Serialized camelCase to match
+/// the web's `RepublishDiffSection`.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RepublishDiffSection {
+    pub title: String,
+    /// Title slug — the match key.
+    pub t: String,
+    /// Existing d-tag (matched / removed only).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub d_tag: Option<String>,
+    /// Matched only: the new content differs from the published version.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub content_changed: Option<bool>,
+}
+
+/// Result of detecting that a same-title publication of the user's already
+/// exists, so a republish can reuse identifiers (replace) instead of forking
+/// with fresh d-tags. `matched` = same `T` (reuse d-tag), `added` = new only,
+/// `removed` = existing only. Serialized camelCase to match the web's
+/// `RepublishDiff` (drives `ComparePublishModal`).
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RepublishDiff {
+    pub existing_addr: NAddr,
+    pub existing_title: String,
+    /// Existing index d-tag to reuse so the 30040 replaces rather than forks.
+    pub pub_d_tag: String,
+    pub matched: Vec<RepublishDiffSection>,
+    pub added: Vec<RepublishDiffSection>,
+    pub removed: Vec<RepublishDiffSection>,
+    /// Title-slug → existing d-tag, for reusing section identifiers.
+    pub section_d_tag_by_t: std::collections::HashMap<String, String>,
+}
+
+/// One incoming section to diff against an existing publication.
+#[derive(Debug, Clone)]
+pub struct RepublishSectionInput {
+    pub title: String,
+    pub content: String,
+}
+
+/// A leaf section borrowed out of a flattened TOC tree.
+struct FlatSection<'a> {
+    title: &'a str,
+    d_tag: &'a str,
+    content: &'a str,
+}
+
+/// Flatten a TOC tree to its leaf sections (non-index entries), depth-first.
+/// Recurses into every node (nested 30040 indexes carry section children) but
+/// only collects the 30041 leaves — the inverse of `is_publication`.
+fn flatten_toc_sections(toc: &[TocEntry]) -> Vec<FlatSection<'_>> {
+    fn walk<'a>(entries: &'a [TocEntry], out: &mut Vec<FlatSection<'a>>) {
+        for e in entries {
+            if !e.is_publication {
+                out.push(FlatSection {
+                    title: &e.title,
+                    d_tag: &e.addr.d_tag,
+                    content: e.content.as_deref().unwrap_or(""),
+                });
+            }
+            if !e.children.is_empty() {
+                walk(&e.children, out);
+            }
+        }
+    }
+    let mut out = Vec::new();
+    walk(toc, &mut out);
+    out
+}
+
+/// Pure section diff: match incoming `sections` against the flattened existing
+/// sections by `T` (title slug). Split out from `detect_republish_diff` so the
+/// matched/added/removed logic is unit-testable without engine I/O. Mirrors the
+/// web's former `detectRepublish` body exactly.
+fn compute_republish_diff(
+    existing_addr: NAddr,
+    existing_title: String,
+    existing_secs: &[FlatSection<'_>],
+    sections: &[RepublishSectionInput],
+) -> RepublishDiff {
+    use crate::publication::compose::ComposeState;
+    use std::collections::{HashMap, HashSet};
+
+    // slug(title) → (d_tag, content) for the existing sections.
+    let existing_by_t: HashMap<String, (&str, &str)> = existing_secs
+        .iter()
+        .map(|e| (ComposeState::generate_d_tag(e.title), (e.d_tag, e.content)))
+        .collect();
+
+    let new_ts: HashSet<String> = sections
+        .iter()
+        .map(|s| ComposeState::generate_d_tag(&s.title))
+        .collect();
+
+    let mut matched = Vec::new();
+    let mut added = Vec::new();
+    let mut section_d_tag_by_t: HashMap<String, String> = HashMap::new();
+
+    for s in sections {
+        let t = ComposeState::generate_d_tag(&s.title);
+        if let Some((d_tag, content)) = existing_by_t.get(t.as_str()) {
+            matched.push(RepublishDiffSection {
+                title: s.title.clone(),
+                t: t.clone(),
+                d_tag: Some((*d_tag).to_string()),
+                content_changed: Some(content.trim() != s.content.trim()),
+            });
+            section_d_tag_by_t.insert(t, (*d_tag).to_string());
+        } else {
+            added.push(RepublishDiffSection {
+                title: s.title.clone(),
+                t,
+                d_tag: None,
+                content_changed: None,
+            });
+        }
+    }
+
+    let removed = existing_secs
+        .iter()
+        .filter_map(|e| {
+            let t = ComposeState::generate_d_tag(e.title);
+            (!new_ts.contains(&t)).then(|| RepublishDiffSection {
+                title: if e.title.is_empty() {
+                    "[untitled]".to_string()
+                } else {
+                    e.title.to_string()
+                },
+                t,
+                d_tag: Some(e.d_tag.to_string()),
+                content_changed: None,
+            })
+        })
+        .collect();
+
+    let pub_d_tag = existing_addr.d_tag.clone();
+    RepublishDiff {
+        existing_addr,
+        existing_title,
+        pub_d_tag,
+        matched,
+        added,
+        removed,
+        section_d_tag_by_t,
+    }
+}
+
 /// CPU-heavy publication dedup/filter/sort — runs in spawn_blocking
 fn process_root_publications(
     events: Vec<serde_json::Value>,
@@ -1334,6 +1484,61 @@ impl<'a> PublicationEngine<'a> {
         entries
     }
 
+    /// Detect that a publication of the user's with this title already exists
+    /// and build a section-level diff so a republish can reuse identifiers
+    /// (replace) instead of forking with fresh d-tags.
+    ///
+    /// Sections are matched by `T` — the title slug from `generate_d_tag`, the
+    /// same normalization the publish path uses to mint d-tags. Returns `None`
+    /// when there's no same-title publication of the user's (the normal first
+    /// publish) or when the user has no identity. Fail-open by design: a lookup
+    /// error must never block a publish, so the caller treats `Err` as "no diff".
+    pub async fn detect_republish_diff(
+        &self,
+        my_pubkey: &str,
+        title: &str,
+        sections: &[RepublishSectionInput],
+    ) -> Result<Option<RepublishDiff>> {
+        use crate::publication::compose::ComposeState;
+
+        if title.trim().is_empty() {
+            return Ok(None);
+        }
+        let title_t = ComposeState::generate_d_tag(title);
+
+        // Same-title publications of mine, newest 30040 wins.
+        let publications = self
+            .list_root_publications(FetchPolicy::LocalOnly, 50, None)
+            .await?;
+        let Some(matched_pub) = publications
+            .into_iter()
+            .filter(|p| {
+                p.author_pubkey == my_pubkey
+                    && p
+                        .title
+                        .as_deref()
+                        .is_some_and(|t| ComposeState::generate_d_tag(t) == title_t)
+            })
+            .max_by_key(|p| p.created_at)
+        else {
+            return Ok(None);
+        };
+
+        // Load the existing tree and flatten to its leaf sections (non-indexes).
+        let existing = self
+            .load_publication_tree(&matched_pub.addr, 5, FetchPolicy::LocalFirst)
+            .await?;
+        let toc = self.build_toc(&existing, 0);
+        let existing_secs = flatten_toc_sections(&toc);
+
+        Ok(Some(compute_republish_diff(
+            matched_pub.addr.clone(),
+            matched_pub.title.clone().unwrap_or_default(),
+            &existing_secs,
+            sections,
+        )))
+    }
+
     /// Query all root publications (not referenced by other 30040s)
     ///
     /// Pass `before` timestamp for cursor-based pagination.
@@ -2244,7 +2449,7 @@ fn build_block_index_event(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::publication::compose::{ComposeBlockState, SectionCompose, TagEntry};
+    use crate::publication::compose::{ComposeBlockState, SectionCompose};
 
     fn d_of(ev: &Value) -> String {
         ev["tags"]
@@ -3175,5 +3380,96 @@ mod tests {
             .stream_publication_tree(&root_idx, 5, FetchPolicy::LocalOnly, tx)
             .await;
         assert!(total <= 2, "aborted load emits almost nothing, got {total}");
+    }
+
+    // === Republish diff (pure section matching) ===
+
+    fn flat<'a>(title: &'a str, d_tag: &'a str, content: &'a str) -> FlatSection<'a> {
+        FlatSection {
+            title,
+            d_tag,
+            content,
+        }
+    }
+
+    fn sec(title: &str, content: &str) -> RepublishSectionInput {
+        RepublishSectionInput {
+            title: title.to_string(),
+            content: content.to_string(),
+        }
+    }
+
+    #[test]
+    fn republish_diff_matches_added_removed_by_slug() {
+        let addr = NAddr::new(KIND_PUBLICATION_INDEX, &test_pubkey(), "my-pub");
+        let existing = vec![
+            flat("Introduction", "d-intro", "old intro body"),
+            flat("Method", "d-method", "method body"),
+            flat("Conclusion", "d-concl", "concl body"),
+        ];
+        // New set: Introduction (changed), Method (unchanged), Results (new).
+        // Conclusion is dropped → removed.
+        let incoming = vec![
+            sec("Introduction", "NEW intro body"),
+            sec("Method", "method body"),
+            sec("Results", "fresh results"),
+        ];
+
+        let diff = compute_republish_diff(
+            addr.clone(),
+            "My Pub".to_string(),
+            &existing,
+            &incoming,
+        );
+
+        assert_eq!(diff.existing_addr, addr);
+        assert_eq!(diff.pub_d_tag, "my-pub");
+
+        // Two matched (Introduction, Method), one added (Results).
+        assert_eq!(diff.matched.len(), 2);
+        let intro = diff.matched.iter().find(|m| m.t == "introduction").unwrap();
+        assert_eq!(intro.d_tag.as_deref(), Some("d-intro"));
+        assert_eq!(intro.content_changed, Some(true));
+        let method = diff.matched.iter().find(|m| m.t == "method").unwrap();
+        assert_eq!(method.content_changed, Some(false));
+
+        assert_eq!(diff.added.len(), 1);
+        assert_eq!(diff.added[0].t, "results");
+        assert_eq!(diff.added[0].d_tag, None);
+
+        // Conclusion removed.
+        assert_eq!(diff.removed.len(), 1);
+        assert_eq!(diff.removed[0].t, "conclusion");
+        assert_eq!(diff.removed[0].d_tag.as_deref(), Some("d-concl"));
+
+        // sectionDTagByT carries the matched reuse map only.
+        assert_eq!(diff.section_d_tag_by_t.len(), 2);
+        assert_eq!(
+            diff.section_d_tag_by_t.get("introduction").map(String::as_str),
+            Some("d-intro")
+        );
+    }
+
+    #[test]
+    fn republish_diff_content_trim_insensitive() {
+        // Whitespace-only differences are not a content change (matches the TS
+        // twin's `.trim()` comparison).
+        let addr = NAddr::new(KIND_PUBLICATION_INDEX, &test_pubkey(), "p");
+        let existing = vec![flat("Intro", "d1", "  body \n")];
+        let incoming = vec![sec("Intro", "body")];
+        let diff = compute_republish_diff(addr, "P".into(), &existing, &incoming);
+        assert_eq!(diff.matched[0].content_changed, Some(false));
+    }
+
+    #[test]
+    fn republish_diff_all_added_when_no_overlap() {
+        let addr = NAddr::new(KIND_PUBLICATION_INDEX, &test_pubkey(), "p");
+        let existing = vec![flat("Old One", "d1", "x")];
+        let incoming = vec![sec("Brand New", "y")];
+        let diff = compute_republish_diff(addr, "P".into(), &existing, &incoming);
+        assert_eq!(diff.matched.len(), 0);
+        assert_eq!(diff.added.len(), 1);
+        assert_eq!(diff.removed.len(), 1);
+        assert!(diff.section_d_tag_by_t.is_empty());
     }
 }

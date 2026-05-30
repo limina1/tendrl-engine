@@ -695,6 +695,53 @@ pub async fn get_publication_handler(
     ))
 }
 
+/// POST /api/v1/publish/republish-diff body. One section is `{title, content}`
+/// — the same minimal shape the publish path consumes.
+#[derive(Debug, Deserialize)]
+pub struct RepublishDiffRequest {
+    pub title: String,
+    #[serde(default)]
+    pub sections: Vec<RepublishDiffSectionInput>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct RepublishDiffSectionInput {
+    pub title: String,
+    #[serde(default)]
+    pub content: String,
+}
+
+/// POST /api/v1/publish/republish-diff
+///
+/// Detect that a same-title publication of the user's already exists and return
+/// a section-level diff (matched / added / removed by title slug) so the UI can
+/// offer "replace" — reusing the existing 30040/30041 identifiers — instead of
+/// forking with fresh d-tags. Returns `null` when there's no match or no
+/// signed-in identity (the normal first-publish case). Fail-open: a lookup
+/// error resolves to `null`, never an error status, so it can't block a publish.
+pub async fn republish_diff_handler(
+    State(engine): State<AppState>,
+    Json(req): Json<RepublishDiffRequest>,
+) -> Result<Json<Option<crate::publication::RepublishDiff>>, EngineError> {
+    let Some(my_pubkey) = engine.my_pubkey().map(|s| s.to_string()) else {
+        return Ok(Json(None));
+    };
+    let sections: Vec<crate::publication::RepublishSectionInput> = req
+        .sections
+        .into_iter()
+        .map(|s| crate::publication::RepublishSectionInput {
+            title: s.title,
+            content: s.content,
+        })
+        .collect();
+    let pub_engine = PublicationEngine::new(&engine);
+    let diff = pub_engine
+        .detect_republish_diff(&my_pubkey, &req.title, &sections)
+        .await
+        .unwrap_or(None); // fail-open — never block a publish on a lookup error
+    Ok(Json(diff))
+}
+
 /// GET /api/v1/publications/:pubkey/:d_tag/stream
 ///
 /// POST /api/v1/publications/:pubkey/:d_tag/backfill?depth=N

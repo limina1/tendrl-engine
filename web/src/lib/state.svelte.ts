@@ -32,11 +32,8 @@ import type {
 	NAddr,
 	NostrEvent,
 	EventsModalItem,
-	TocEntry,
 	RepublishDiff,
-	RepublishDiffSection,
 } from '$lib/types';
-import { slugify } from '$lib/nostr/slug';
 import type { Buffer } from '$lib/wm/types';
 import * as api from '$lib/api';
 import { getActiveStore } from '$lib/wm/buffer-store.svelte';
@@ -1338,8 +1335,20 @@ function _createAppState() {
 		const p = republishPrompt;
 		republishPrompt = null;
 		if (!p) return;
+		// Reuse map keyed by exact section title. The diff's matched entries
+		// carry the incoming section's title alongside the existing d-tag, and
+		// executePublish republishes the same `sections` array — so a title
+		// lookup is exact and needs no client-side slug (the slug matching
+		// already happened engine-side).
 		const overrides = reuse
-			? { pubDTag: p.diff.pubDTag, sectionDTagByT: p.diff.sectionDTagByT }
+			? {
+					pubDTag: p.diff.pubDTag,
+					dTagByTitle: Object.fromEntries(
+						p.diff.matched
+							.filter((m) => m.dTag != null)
+							.map((m) => [m.title, m.dTag as string])
+					)
+				}
 			: undefined;
 		await executePublish(p.sections, p.pubTitle, p.pubTags, p.canSign, overrides);
 	}
@@ -1353,7 +1362,7 @@ function _createAppState() {
 		pubTitle: string,
 		pubTags: TagEntry[],
 		canSign: boolean,
-		overrides?: { pubDTag: string; sectionDTagByT: Record<string, string> }
+		overrides?: { pubDTag: string; dTagByTitle: Record<string, string> }
 	) {
 		// Per-site toast covers the SIGNING phase only — the broadcast
 		// phase is owned by the SSE channel (fetch-events.svelte.ts opens
@@ -1432,7 +1441,7 @@ function _createAppState() {
 						tags: s.tags.map((t) => [t.name, t.value] as [string, string]),
 						// Reuse the matched section's d-tag on republish so the
 						// 30041 replaces rather than forks.
-						d_tag: overrides?.sectionDTagByT[slugify(s.title)]
+						d_tag: overrides?.dTagByTitle[s.title]
 					})),
 					d_tag: overrides?.pubDTag,
 					sign: canSign,
@@ -1482,85 +1491,26 @@ function _createAppState() {
 		}
 	}
 
-	function flattenToc(
-		toc: TocEntry[]
-	): { title: string | null; dTag: string; content: string | null; isPublication: boolean }[] {
-		const out: { title: string | null; dTag: string; content: string | null; isPublication: boolean }[] = [];
-		const walk = (entries: TocEntry[]) => {
-			for (const e of entries) {
-				out.push({
-					title: e.title,
-					dTag: e.addr.d_tag,
-					content: e.content,
-					isPublication: e.is_publication
-				});
-				if (e.children?.length) walk(e.children);
-			}
-		};
-		walk(toc);
-		return out;
-	}
-
-	// Does a publication of mine with this title already exist? If so build a
-	// section-level diff (matched by T = title slug) so a republish can reuse
-	// identifiers and replace instead of forking. Returns null when there's
-	// no match (normal first publish) or on any lookup failure (fail-open).
+	// Does a publication of mine with this title already exist? If so the engine
+	// builds a section-level diff (matched by title slug) so a republish can
+	// reuse identifiers and replace instead of forking. The slug-matching, TOC
+	// flatten, and diff all live in Rust now (POST /publish/republish-diff);
+	// the engine resolves "mine" from the active identity. Fail-open: a lookup
+	// or network error must never block a publish, so we swallow it and treat
+	// it as "no existing match".
 	async function detectRepublish(
 		pubTitle: string,
 		sections: ContextItem[]
 	): Promise<RepublishDiff | null> {
-		if (!myPubkey || !pubTitle.trim()) return null;
-		const titleT = slugify(pubTitle);
+		if (!pubTitle.trim()) return null;
 		try {
-			const { publications } = await api.listPublications(50, 'local_only');
-			const candidates = publications.filter(
-				(p) => p.author_pubkey === myPubkey && p.title && slugify(p.title) === titleT
+			return await api.republishDiff(
+				pubTitle,
+				sections.map((s) => ({ title: s.title, content: s.content }))
 			);
-			if (!candidates.length) return null;
-			// "exact title match → highest 30040": newest wins.
-			const match = [...candidates].sort((a, b) => b.created_at - a.created_at)[0];
-
-			const { toc } = await api.getPublication(match.addr.pubkey, match.addr.d_tag, 'local_first', 5);
-			const existingSecs = flattenToc(toc).filter((e) => !e.isPublication);
-			const existingByT = new Map(existingSecs.map((e) => [slugify(e.title ?? ''), e]));
-
-			const newSecs = sections.map((s) => ({ title: s.title, content: s.content, t: slugify(s.title) }));
-			const newTs = new Set(newSecs.map((s) => s.t));
-
-			const matched: RepublishDiffSection[] = [];
-			const added: RepublishDiffSection[] = [];
-			const removed: RepublishDiffSection[] = [];
-
-			for (const s of newSecs) {
-				const ex = existingByT.get(s.t);
-				if (ex) {
-					matched.push({
-						title: s.title,
-						t: s.t,
-						dTag: ex.dTag,
-						contentChanged: (ex.content ?? '').trim() !== s.content.trim()
-					});
-				} else {
-					added.push({ title: s.title, t: s.t });
-				}
-			}
-			for (const e of existingSecs) {
-				const t = slugify(e.title ?? '');
-				if (!newTs.has(t)) removed.push({ title: e.title ?? '[untitled]', t, dTag: e.dTag });
-			}
-
-			return {
-				existingAddr: match.addr,
-				existingTitle: match.title ?? '',
-				pubDTag: match.addr.d_tag,
-				matched,
-				added,
-				removed,
-				sectionDTagByT: Object.fromEntries(matched.map((m) => [m.t, m.dTag!]))
-			};
 		} catch (e) {
 			console.warn('Republish detection skipped:', e);
-			return null; // fail-open: never block a publish on a lookup error
+			return null;
 		}
 	}
 

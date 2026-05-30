@@ -119,7 +119,7 @@ See [[file:03-tree-module.org][03]] for the full keep/drop partition.
 - Result :: −5166 loc net; =src/tree/= is now =mod.rs= + =node.rs= + =parser.rs= +
   =content.rs= (pure core only). Landed as two commits (extract, then delete).
 
-* Phase 4 — Build the missing NIP transforms in Rust [1/4]
+* Phase 4 — Build the missing NIP transforms in Rust [2/4]
 The real wins. Each is independent — do one per branch/PR off =cleanup/boundary-compliance=
 (or off =tendrl-web=). Pattern for every item: build the Rust transform + unit tests →
 expose/extend the endpoint → switch the web to consume it → *delete the TS twin* →
@@ -138,10 +138,18 @@ expose/extend the endpoint → switch the web to consume it → *delete the TS t
   event derivation). Tests: =decode(encode(x)) == x= for every variant.
   Verify :: =cargo test --lib nip19= 20 passed; =cargo test= 292 (+10); clippy 45
   (unchanged); =pnpm -C web check= 0 errors. See [[../commands.org][commands.org]] "Phase 4a verify".
-- [ ] *4b Republish-diff* — move =detectRepublish=/=flattenToc= + slug matching
-  ([[web:src/lib/state.svelte.ts::1485][state.svelte.ts:1485]]) into Rust (reuse =generate_d_tag=); return a =RepublishDiff=
-  from an endpoint (or as part of =publish/preview=). Delete TS =detectRepublish= +
-  [[web:src/lib/nostr/slug.ts][slug.ts]]. Ties to [[../republish-diff.md][republish-diff.md]] — tick its deferred items as they land.
+- [X] *4b Republish-diff* — ✓ landed. Built =detect_republish_diff= on
+  =PublicationEngine= (reuses =ComposeState::generate_d_tag= for the slug,
+  =list_root_publications= + =load_publication_tree= + =build_toc= for the existing
+  tree) with the pure matched/added/removed core split into =compute_republish_diff=
+  (3 unit tests). The engine resolves "mine" from =engine.my_pubkey()=. Exposed
+  =POST /api/v1/publish/republish-diff= returning =Option<RepublishDiff>= (camelCase
+  serde to match the web type). Switched [[web:src/lib/state.svelte.ts][state.svelte.ts]]'s =detectRepublish= to a
+  thin fail-open call to =api.republishDiff=; the reuse override is now keyed by
+  exact section title (the diff's matched entries carry the incoming title, so no
+  client re-slug). Deleted TS =flattenToc= + [[web:src/lib/nostr/slug.ts][slug.ts]]. Updated [[../republish-diff.md][republish-diff.md]].
+  Verify :: =cargo test --lib republish= 3 passed; =cargo test= 295 (+3); clippy 45;
+  =pnpm -C web check= 0 errors. See [[../commands.org][commands.org]] "Phase 4b verify".
 - [ ] *4c NIP-22 threading* — add =build_thread= over the events [[src:src/api.rs::2630][discussions/list]] already
   loads; return a nested =ThreadNode= forest (threaded mode on the existing endpoint or
   a new =/discussions/thread=). Delete [[web:src/lib/discussions/thread.ts][thread.ts]] =buildThread=; TS keeps only

@@ -1030,3 +1030,30 @@ cargo test            # 292 passed (+10 over Phase 3)
 cargo clippy          # 45 warnings (unchanged)
 pnpm -C web check     # 0 errors
 #+end_src
+
+** Phase 4b verify — republish-diff in Rust
+
+Moved =detectRepublish=/=flattenToc= + slug matching out of the web into
+=PublicationEngine::detect_republish_diff= (pure core =compute_republish_diff=),
+behind =POST /api/v1/publish/republish-diff=. Deleted =web/src/lib/nostr/slug.ts=
+and the TS =flattenToc=; =state.svelte.ts::detectRepublish= is now a thin
+fail-open call to the endpoint.
+
+#+begin_src bash
+# 1. Pure diff core is unit-tested.
+cargo test --lib republish      # 3 passed
+
+# 2. The web no longer slugs or flattens client-side (expect 0 hits).
+rg -n "slugify|flattenToc|nostr/slug" web/src
+
+# 3. Endpoint smoke test (engine running on :3030, signed-in identity).
+curl -s -X POST localhost:3030/api/v1/publish/republish-diff \
+  -H 'Content-Type: application/json' \
+  -d '{"title":"My Pub","sections":[{"title":"Intro","content":"hi"}]}'
+# -> null  (no same-title publication yet) OR a {existingAddr,matched,added,...} diff
+
+# 4. Gates.
+cargo test            # 295 passed (+3)
+cargo clippy          # 45 warnings (unchanged)
+pnpm -C web check     # 0 errors
+#+end_src
