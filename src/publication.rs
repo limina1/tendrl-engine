@@ -1826,6 +1826,46 @@ async fn resign_value_through_signer(
     signer.sign(template).await
 }
 
+/// Block-composition counterpart to [`build_signed_publication_events_via_signer`].
+///
+/// Builds the full 30040/30041 block graph *unsigned* (placeholder sigs) via
+/// [`build_block_publication_events`] — reusing the canonical fork/import tag
+/// and coordinate logic in one place — then re-signs every event through the
+/// external `Signer`. Like the flat/nested publish path, this makes the block
+/// publish source-agnostic: engine in-process, NIP-07, or NIP-46 all work
+/// through the same `SigningController`, instead of the old handler's
+/// engine-host-only secret hunt (which silently produced unsigned events for
+/// NIP-07 users).
+///
+/// Re-signing is reference-safe: `a` tags address sections by
+/// `kind:pubkey:d_tag` coordinate (deterministic from the compose state), not
+/// by event id or timestamp, so a fresh `created_at`/sig never breaks the
+/// index→section links.
+pub async fn build_signed_block_publication_events_via_signer(
+    state: &ComposeBlockState,
+    pubkey: &str,
+    signer: &dyn crate::signing::Signer,
+) -> std::result::Result<(Value, Vec<Value>), crate::signing::SigningError> {
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+
+    // Build the unsigned graph (None secret → placeholder sigs), then re-sign
+    // each event through the signer. All signed events share `timestamp`.
+    let (pub_unsigned, sections_unsigned) = build_block_publication_events(state, pubkey, None);
+
+    let mut signed_sections = Vec::with_capacity(sections_unsigned.len());
+    for ev in &sections_unsigned {
+        signed_sections.push(resign_value_through_signer(ev, pubkey, timestamp, signer).await?);
+    }
+    let pub_event = resign_value_through_signer(&pub_unsigned, pubkey, timestamp, signer).await?;
+
+    Ok((pub_event, signed_sections))
+}
+
 /// Default parse-level ceiling for nested publication emission. Sections
 /// deeper than this collapse into their nearest ancestor's a-tag chain
 /// (see `tree_emit::build_nested_publication_events`). The value is a
@@ -2635,6 +2675,71 @@ mod tests {
         }).collect();
         assert_eq!(fork_tags.len(), 1);
         assert!(fork_tags[0][1].as_str().unwrap().contains("alice"));
+    }
+
+    // Regression: a NIP-07 user publishing blocks must get SIGNED events.
+    // The old publish_blocks_handler hunted for an engine-host secret and, on
+    // a miss (exactly the NIP-07 case), fell through to None → placeholder
+    // "0".repeat(128) sigs that relays reject. The via-signer path routes
+    // through the SigningController instead. We exercise it with InProcessSigner
+    // (the engine-source Signer; the NIP-07/46 ExternalSigner satisfies the
+    // same `Signer` trait), and the key assertion is: no placeholder sigs.
+    #[tokio::test]
+    async fn signer_routed_block_publish_is_actually_signed() {
+        let secret = "0000000000000000000000000000000000000000000000000000000000000003".to_string();
+        let pubkey = crate::identity::derive_pubkey_from_secret(&secret).expect("derive pubkey");
+        let signer = crate::signing::InProcessSigner::new(pubkey.clone(), secret);
+
+        // Mixed graph: an editable section + a forked section (both emit 30041s).
+        let mut state = ComposeBlockState::new();
+        state.title = "Signed Blocks".into();
+        state.add_editable();
+        state.blocks[0].title = "Intro".into();
+        if let BlockKind::Editable {
+            ref mut content, ..
+        } = state.blocks[0].kind
+        {
+            *content = "body".into();
+        }
+        state.add_imported(
+            NAddr::new(30041, "alice", "orig"),
+            "original".into(),
+            "alice".into(),
+            "Forked".into(),
+        );
+        state.toggle_fork(1);
+
+        let (pub_event, section_events) =
+            build_signed_block_publication_events_via_signer(&state, &pubkey, &signer)
+                .await
+                .expect("signing should succeed");
+
+        let placeholder = "0".repeat(128);
+        for ev in std::iter::once(&pub_event).chain(section_events.iter()) {
+            let sig = ev["sig"].as_str().unwrap();
+            assert_eq!(sig.len(), 128, "sig must be present");
+            assert_ne!(
+                sig, placeholder,
+                "event must not carry the unsigned placeholder sig"
+            );
+            assert_eq!(
+                ev["pubkey"].as_str().unwrap(),
+                pubkey,
+                "authored by the signer"
+            );
+            // id is a 32-byte hex hash, recomputed by the signer.
+            assert_eq!(ev["id"].as_str().unwrap().len(), 64);
+        }
+        assert_eq!(pub_event["kind"], 30040);
+        assert_eq!(section_events.len(), 2, "editable + forked → two 30041s");
+        // Index still references a section by coordinate after re-signing.
+        let a_tags: Vec<_> = pub_event["tags"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|t| t[0] == "a")
+            .collect();
+        assert!(!a_tags.is_empty(), "index must reference its sections");
     }
 
     #[test]
