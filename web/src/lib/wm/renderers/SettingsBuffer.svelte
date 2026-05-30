@@ -38,10 +38,27 @@
 	}
 
 	$effect(() => {
-		// Detect once on mount; window.nostr is injected by extensions
-		// at document_start, so by the time SettingsBuffer renders it's
-		// either there or it isn't.
+		// Detect window.nostr on mount, then keep retrying for a couple
+		// of seconds. Extensions inject at document_start, but after a
+		// hard reload / cache clear the buffer can render *before* the
+		// extension finishes injecting — a one-shot check there latches
+		// the radio disabled ("no extension") forever even once the
+		// signer is live. Poll a few times (mirrors the boot-time
+		// auto-reconnect detection) and stop as soon as it appears.
 		nip07Available = detectNip07();
+		let cancelled = false;
+		if (!nip07Available) {
+			(async () => {
+				for (const delay of [100, 250, 500, 1000]) {
+					await new Promise((r) => setTimeout(r, delay));
+					if (cancelled) return;
+					if (detectNip07()) {
+						nip07Available = true;
+						return;
+					}
+				}
+			})();
+		}
 		// Force a fresh /identity + /settings fetch on mount. Without
 		// this, opening Settings shortly after an engine restart shows
 		// stale identityStatus from the last 30s-poll tick. Fire and
@@ -49,6 +66,9 @@
 		// updates land.
 		app.refreshIdentity();
 		captureSavedBaseline();
+		return () => {
+			cancelled = true;
+		};
 	});
 
 	// Inputs for engine login flow
