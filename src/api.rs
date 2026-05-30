@@ -3290,6 +3290,7 @@ pub struct PublishBlocksRequest {
 pub async fn publish_blocks_handler(
     State(engine): State<AppState>,
     Extension(identity): Extension<IdentityAppState>,
+    Extension(signing): Extension<crate::signing::SigningController>,
     Json(req): Json<PublishBlocksRequest>,
 ) -> Result<impl IntoResponse, EngineError> {
     let pubkey = {
@@ -3355,59 +3356,39 @@ pub async fn publish_blocks_handler(
         });
     }
 
-    // Resolve signing key — same fallback chain as the legacy publish handler.
-    let secret_hex: Option<String> = if req.sign {
-        let resolved = {
-            let mut session = identity.lock().unwrap();
-            if session.can_sign() {
-                session.touch();
-                Some(session.secret().unwrap().to_string())
-            } else if session.pubkey().is_some() {
-                return Err(EngineError::Locked(
-                    "Identity is locked — unlock with password first".into(),
-                ));
-            } else {
-                None
+    // Build events (signed via the SigningController, or unsigned). This is
+    // the SAME signing path publish_handler uses — engine in-process for the
+    // engine source, or the registered external signer (NIP-07 / NIP-46) over
+    // the SSE back-channel. The handler is unaware of the source. The previous
+    // implementation inlined an engine-host-only secret chain (session →
+    // keyring → .env), so a NIP-07 user — who has no secret on the engine —
+    // fell through to None and produced UNSIGNED block events (placeholder
+    // sig). See docs/bugs.org.
+    let (pub_event, section_events) = if req.sign {
+        let active_pubkey = signing.active_pubkey().await.ok_or_else(|| {
+            EngineError::Config(
+                "No identity configured (engine source needs login; nip07 needs a connected signer)"
+                    .into(),
+            )
+        })?;
+        crate::publication::build_signed_block_publication_events_via_signer(
+            &state,
+            &active_pubkey,
+            &signing,
+        )
+        .await
+        .map_err(|e| match e {
+            crate::signing::SigningError::Locked => {
+                EngineError::Locked("Identity is locked — unlock with password first".into())
             }
-        };
-        if let Some(s) = resolved {
-            Some(s)
-        } else {
-            // Fall back to keyring or .env
-            let from_keyring = crate::identity::IdentityKeyring::new()
-                .get_secret(&pubkey)
-                .ok();
-            if let Some(s) = from_keyring {
-                Some(s)
-            } else {
-                let env_content = std::fs::read_to_string(".env").ok();
-                let mut secret: Option<String> = None;
-                if let Some(content) = env_content {
-                    let mut ncryptsec: Option<String> = None;
-                    let mut password: Option<String> = None;
-                    for line in content.lines() {
-                        let line = line.trim();
-                        if let Some(val) = line.strip_prefix("NOSTR_NCRYPTSEC=") {
-                            ncryptsec = Some(val.to_string());
-                        } else if let Some(val) = line.strip_prefix("NOSTR_PASSWORD=") {
-                            password = Some(val.to_string());
-                        }
-                    }
-                    if let (Some(nc), Some(pw)) = (ncryptsec, password) {
-                        if let Ok((s_hex, _)) = crate::identity::decrypt_ncryptsec(&nc, &pw) {
-                            secret = Some(s_hex);
-                        }
-                    }
-                }
-                secret
-            }
-        }
+            crate::signing::SigningError::SignerNotConnected => EngineError::Config(
+                "External signer not connected — open a tab with the signer extension".into(),
+            ),
+            other => EngineError::Config(format!("Cannot sign: {other}")),
+        })?
     } else {
-        None
+        build_block_publication_events(&state, &pubkey, None)
     };
-
-    let (pub_event, section_events) =
-        build_block_publication_events(&state, &pubkey, secret_hex.as_deref());
 
     let pub_id = pub_event
         .get("id")

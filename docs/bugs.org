@@ -1,0 +1,66 @@
+#+TITLE: Bugs Log
+#+SUBTITLE: Discovered defects, fixed on a =bugs= branch/worktree and merged back
+#+DATE: 2026-05-30
+
+Log defects here as they're found mid-task, then fix on a dedicated =bugs=
+branch (via worktree) and merge back to the integration branch — don't fold
+unrelated bug fixes into feature/cleanup commits. Tick =FIXED= with the commit.
+
+* FIXED — /publish/blocks produced unsigned events for NIP-07 users
+:PROPERTIES:
+:found: 2026-05-30 (during docs/eval boundary-compliance cleanup)
+:branch: bugs/publish-blocks-signing
+:END:
+
+** Symptom
+A user logged in via NIP-07 (browser extension) who publishes a publication
+that contains *any* imported or forked section — or whose draft was seeded
+from a publication in the reader — emits events with an all-zeros placeholder
+signature (=\"0\".repeat(128)=). Relays reject them as invalid.
+
+** Why it bit NIP-07 specifically, and why it's the common path
+- =web/src/lib/state.svelte.ts= routes a compose publish to =/publish/blocks=
+  (vs =/publish=) whenever =hasProvenance= is true: =composeSourcePubAddr= set
+  (draft seeded from a publication) OR any section carries =source_addr= (added
+  to compose from the reference pool). The "→ compose" pill is wired across
+  feed / search / reader / profile surfaces, so for this reference-centric app
+  the block path is the *default*, not an edge case.
+- =publish_blocks_handler= (=src/api.rs=) did NOT take the =SigningController=.
+  When =sign= was requested it ran an inlined legacy secret chain — session
+  secret → keyring =get_secret= → =.env= ncryptsec decrypt — all of which only
+  find a secret key sitting *on the engine host*. A NIP-07 user has no such
+  secret (the key lives in the extension; signing happens in the browser over
+  the SSE back-channel), so the chain fell through to =None=.
+- =build_block_publication_events(.., None)= then signs each event with the
+  placeholder =\"0\".repeat(128)= sentinel (=build_section_event_internal= /
+  =build_forked_section_event= / =build_block_index_event=). Unsigned events
+  get built and broadcast.
+- Meanwhile =/publish= (=publish_handler=) already signs through the
+  =SigningController=, which abstracts the key source (engine in-process /
+  NIP-07 / NIP-46). So the two publish surfaces had divergent identity
+  semantics: the same logged-in user could publish via =/publish= but not
+  =/publish/blocks=.
+
+** Fix
+Route =publish_blocks_handler= through the =SigningController= exactly like
+=publish_handler=:
+- Add =Extension(signing): Extension<SigningController>= to the handler.
+- New =publication::build_signed_block_publication_events_via_signer= — builds
+  the full block graph *unsigned* via =build_block_publication_events(.., None)=
+  (reusing the canonical fork/import tag + coordinate logic), then re-signs
+  every event through the =Signer= using the existing
+  =resign_value_through_signer= helper. Re-signing is reference-safe because
+  =a= tags address sections by =kind:pubkey:d_tag= coordinate, not by id/timestamp.
+- Delete the inline session/keyring/.env secret chain.
+- Regression test =signer_routed_block_publish_is_actually_signed=: asserts no
+  event carries the placeholder sig (exercised with =InProcessSigner=; the
+  NIP-07/46 =ExternalSigner= satisfies the same =Signer= trait).
+
+Independent of engine in-process signing being implemented/tested — the fix
+only needs the =SigningController= path that =/publish= already uses.
+
+** Verify
+=cargo test= (incl. =signer_routed_block_publish_is_actually_signed=);
+=cargo clippy= warning count unchanged (47). Manual: on NIP-07, add a section
+from the pool to compose and publish — events go out with real signatures and
+relays accept them.
