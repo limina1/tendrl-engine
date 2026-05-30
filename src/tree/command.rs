@@ -4,7 +4,7 @@
 //! requests that the engine returns when IO is needed.
 
 use super::node::NodeId;
-use super::state::SectionCompose;
+use crate::publication::compose::SectionCompose;
 use crate::chat::{InjectedNote, LLMMessage};
 use crate::publication::NAddr;
 use crate::search::{SearchQuery, SearchResult};
@@ -885,7 +885,7 @@ pub enum AsyncRequest {
     },
     /// Save compose state as a draft
     SaveDraft {
-        compose: crate::tree::state::ComposeState,
+        compose: crate::publication::compose::ComposeState,
     },
     /// Load all drafts from storage
     LoadDrafts,

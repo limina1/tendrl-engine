@@ -2826,7 +2826,7 @@ pub async fn discussions_list_handler(
 // ============================================================================
 
 use crate::publication::{build_block_publication_events, build_publication_events};
-use crate::tree::state::{
+use crate::publication::compose::{
     BlockKind, ComposeBlock, ComposeBlockState, ComposeState, SectionCompose,
 };
 
@@ -2912,7 +2912,7 @@ pub async fn publish_handler(
     })?;
 
     // Map request to ComposeState
-    use crate::tree::state::TagEntry;
+    use crate::publication::compose::TagEntry;
     let mut compose = ComposeState::new();
     compose.title = req.title;
     for (name, value) in &req.tags {
@@ -3199,7 +3199,7 @@ pub async fn publish_preview_handler(
     .or_else(|| engine.my_pubkey().map(|s| s.to_string()))
     .unwrap_or_else(|| "<preview>".to_string());
 
-    use crate::tree::state::TagEntry;
+    use crate::publication::compose::TagEntry;
     let mut compose = ComposeState::new();
     compose.title = req.title;
     for (name, value) in &req.tags {
@@ -3334,7 +3334,7 @@ pub async fn publish_blocks_handler(
         )
     })?;
 
-    use crate::tree::state::TagEntry;
+    use crate::publication::compose::TagEntry;
     let mut state = ComposeBlockState::new();
     state.title = req.title;
     for (name, value) in &req.tags {

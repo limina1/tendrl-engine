@@ -1172,7 +1172,7 @@ impl TreeEngine {
                 CommandResult::StateChanged
             }
             TreeCommand::Publish => {
-                use crate::tree::state::ComposeState;
+                use crate::publication::compose::ComposeState;
 
                 // Handle both structured and editor compose modes
                 let compose = if state.use_editor_compose {

@@ -28,7 +28,7 @@ use serde_json::{json, Value};
 use super::{
     calculate_event_id, KIND_PUBLICATION_INDEX, KIND_PUBLICATION_SECTION,
 };
-use crate::tree::state::{ComposeState, SectionCompose};
+use crate::publication::compose::{ComposeState, SectionCompose};
 
 /// One node in the folded hierarchy.
 ///

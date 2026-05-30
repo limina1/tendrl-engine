@@ -8,7 +8,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::tree::state::ComposeState;
+use crate::publication::compose::ComposeState;
 
 /// Result type for draft operations
 pub type Result<T> = std::result::Result<T, DraftError>;
@@ -345,7 +345,7 @@ impl DraftStore {
 /// Convert a DraftComposeState back to ComposeState for editing
 impl From<&DraftComposeState> for ComposeState {
     fn from(draft: &DraftComposeState) -> Self {
-        use crate::tree::state::{TagEntry, SectionCompose as SC};
+        use crate::publication::compose::{TagEntry, SectionCompose as SC};
 
         let mut compose = ComposeState::new();
         compose.title = draft.title.clone();
@@ -450,7 +450,7 @@ mod tests {
     use tempfile::TempDir;
 
     fn create_test_compose() -> ComposeState {
-        use crate::tree::state::{TagEntry, SectionCompose as SC};
+        use crate::publication::compose::{TagEntry, SectionCompose as SC};
 
         let mut compose = ComposeState::new();
         compose.title = "Test Publication".to_string();
@@ -492,7 +492,7 @@ mod tests {
     /// events.
     #[test]
     fn test_draft_round_trip_preserves_d_tags_and_levels() {
-        use crate::tree::state::SectionCompose as SC;
+        use crate::publication::compose::SectionCompose as SC;
 
         let temp_dir = TempDir::new().unwrap();
         let store = DraftStore::new(temp_dir.path()).unwrap();

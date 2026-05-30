@@ -2584,7 +2584,7 @@ mod tests {
     #[tokio::test]
     async fn test_build_and_ingest_signed_publication() {
         use crate::publication::build_signed_publication_events;
-        use crate::tree::state::ComposeState;
+        use crate::publication::compose::ComposeState;
         use nostrdb::FilterBuilder;
 
         let dir = tempdir().unwrap();
@@ -2605,7 +2605,7 @@ mod tests {
         println!("Derived pubkey: {}", pubkey);
 
         // Create a simple publication
-        use crate::tree::state::SectionCompose;
+        use crate::publication::compose::SectionCompose;
         let mut compose = ComposeState::new();
         compose.title = "Test Publication".to_string();
         compose.sections.push(SectionCompose {
@@ -2673,7 +2673,7 @@ mod tests {
     #[tokio::test]
     async fn test_events_persist_across_restart() {
         use crate::publication::build_signed_publication_events;
-        use crate::tree::state::ComposeState;
+        use crate::publication::compose::ComposeState;
         use nostrdb::FilterBuilder;
 
         // Use a non-temp directory so we can reopen it
@@ -2700,7 +2700,7 @@ mod tests {
             let engine = Engine::with_config(&test_dir, &[], 1000).unwrap();
 
             // Create a publication
-            use crate::tree::state::SectionCompose;
+            use crate::publication::compose::SectionCompose;
             let mut compose = ComposeState::new();
             compose.title = "Persistence Test".to_string();
             compose.sections.push(SectionCompose {

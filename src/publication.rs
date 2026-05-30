@@ -15,6 +15,7 @@ use crate::error::{EngineError, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+pub mod compose;
 pub mod tree_emit;
 
 /// Kind constants for NKBIP-01 publications
@@ -1637,7 +1638,7 @@ impl<'a> PublicationEngine<'a> {
 
 // --- Event Building for Local Creation ---
 
-use crate::tree::state::{ComposeState, SectionCompose};
+use crate::publication::compose::{ComposeState, SectionCompose};
 use sha2::{Sha256, Digest};
 
 /// Build unsigned publication events from compose state
@@ -1940,7 +1941,7 @@ fn build_section_event_internal(
         tags.push(json!(["title", &section.title]));
         tags.push(json!([
             "T",
-            crate::tree::state::ComposeState::generate_d_tag(&section.title)
+            crate::publication::compose::ComposeState::generate_d_tag(&section.title)
         ]));
     }
 
@@ -1998,7 +1999,7 @@ fn build_index_event_internal(
         tags.push(json!(["title", &compose.title]));
         tags.push(json!([
             "T",
-            crate::tree::state::ComposeState::generate_d_tag(&compose.title)
+            crate::publication::compose::ComposeState::generate_d_tag(&compose.title)
         ]));
     }
 
@@ -2060,7 +2061,7 @@ fn calculate_event_id(event_array: &Value) -> String {
 
 // --- Block-aware event building ---
 
-use crate::tree::state::{BlockKind, ComposeBlock, ComposeBlockState};
+use crate::publication::compose::{BlockKind, ComposeBlock, ComposeBlockState};
 
 /// Build publication events from a block-based compose state.
 ///
@@ -2091,7 +2092,7 @@ pub fn build_block_publication_events(
                 let section = SectionCompose {
                     title: block.title.clone(),
                     content: content.clone(),
-                    tags: block.tags.iter().map(|t| crate::tree::state::TagEntry {
+                    tags: block.tags.iter().map(|t| crate::publication::compose::TagEntry {
                         name: t.name.clone(),
                         value: t.value.clone(),
                     }).collect(),
@@ -2159,7 +2160,7 @@ fn build_forked_section_event(
         tags.push(json!(["title", &block.title]));
         tags.push(json!([
             "T",
-            crate::tree::state::ComposeState::generate_d_tag(&block.title)
+            crate::publication::compose::ComposeState::generate_d_tag(&block.title)
         ]));
     }
 
@@ -2287,7 +2288,7 @@ fn build_block_index_event(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tree::state::{ComposeBlockState, SectionCompose, TagEntry};
+    use crate::publication::compose::{ComposeBlockState, SectionCompose, TagEntry};
 
     fn d_of(ev: &Value) -> String {
         ev["tags"]
@@ -2322,7 +2323,7 @@ mod tests {
     /// events with stable nanoid d-tags and consistent T/title tagging.
     #[test]
     fn build_publication_events_nested_path() {
-        use crate::tree::state::ComposeState;
+        use crate::publication::compose::ComposeState;
 
         // Outer (lvl 2) → Inner (lvl 3); presence of lvl 3 triggers the
         // nested branch in build_publication_events_internal.
@@ -2401,7 +2402,7 @@ mod tests {
     /// build_publication_events_internal must not regress this.
     #[test]
     fn build_publication_events_flat_path_unchanged() {
-        use crate::tree::state::ComposeState;
+        use crate::publication::compose::ComposeState;
 
         let mut compose = ComposeState {
             title: "Flat".to_string(),
@@ -2618,7 +2619,7 @@ mod tests {
         let mut state = ComposeBlockState::new();
         state.title = "Test Article".into();
         state.add_editable();
-        if let crate::tree::state::BlockKind::Editable { ref mut content, .. } = state.blocks[0].kind {
+        if let crate::publication::compose::BlockKind::Editable { ref mut content, .. } = state.blocks[0].kind {
             *content = "Hello world".into();
         }
         state.blocks[0].title = "Intro".into();
@@ -2750,7 +2751,7 @@ mod tests {
         // 1 editable
         state.add_editable();
         state.blocks[0].title = "My Section".into();
-        if let crate::tree::state::BlockKind::Editable { ref mut content, .. } = state.blocks[0].kind {
+        if let crate::publication::compose::BlockKind::Editable { ref mut content, .. } = state.blocks[0].kind {
             *content = "editable text".into();
         }
 
