@@ -794,10 +794,11 @@ impl Engine {
         relays: Vec<String>,
         event_ids: Vec<String>,
         summary: Option<crate::network::RequestSummary>,
+        manifest: Option<crate::network::PublishManifest>,
     ) -> std::result::Result<crate::network::PublishOperation, crate::network::FetchCancelled>
     {
         self.network
-            .begin_publish_operation(label, relays, event_ids, summary)
+            .begin_publish_operation(label, relays, event_ids, summary, manifest)
             .await
     }
 

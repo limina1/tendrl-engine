@@ -7,6 +7,7 @@
 	import EventsJsonModal from '$lib/components/EventsJsonModal.svelte';
 	import ComparePublishModal from '$lib/components/ComparePublishModal.svelte';
 	import FetchConfirmModal from '$lib/components/FetchConfirmModal.svelte';
+	import PublishConfirmModal from '$lib/components/PublishConfirmModal.svelte';
 	import SearchConfigModal from '$lib/components/SearchConfigModal.svelte';
 	import ToastStack from '$lib/components/ToastStack.svelte';
 	import FetchActivityModal from '$lib/components/FetchActivityModal.svelte';
@@ -134,8 +135,10 @@
 	/>
 {/if}
 
-{#if confirmState.intent}
+{#if confirmState.intent?.type === 'intent'}
 	<FetchConfirmModal intent={confirmState.intent} />
+{:else if confirmState.intent?.type === 'publish_intent'}
+	<PublishConfirmModal intent={confirmState.intent} />
 {/if}
 
 <SearchConfigModal />

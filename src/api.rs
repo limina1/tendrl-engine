@@ -3037,6 +3037,10 @@ pub async fn publish_handler(
             dsl: format!("pub k:30040,30041 ({} events) via:publish", event_jsons.len()),
         };
 
+        let manifest = crate::network::PublishManifest::from_events(
+            section_events.iter().chain(std::iter::once(&pub_event)),
+        );
+
         let op = match engine
             .begin_publish_operation(
                 format!(
@@ -3047,6 +3051,7 @@ pub async fn publish_handler(
                 relays.clone(),
                 event_ids,
                 Some(summary),
+                Some(manifest),
             )
             .await
         {
@@ -3464,6 +3469,10 @@ pub async fn publish_blocks_handler(
             ),
         };
 
+        let manifest = crate::network::PublishManifest::from_events(
+            section_events.iter().chain(std::iter::once(&pub_event)),
+        );
+
         let op = engine
             .begin_publish_operation(
                 format!(
@@ -3474,6 +3483,7 @@ pub async fn publish_blocks_handler(
                 relays.clone(),
                 event_ids,
                 Some(summary),
+                Some(manifest),
             )
             .await
             .ok();
@@ -4447,6 +4457,8 @@ pub async fn broadcast_handler(
         dsl: format!("pub k:{kind} via:broadcast"),
     };
 
+    let manifest = crate::network::PublishManifest::from_events(std::iter::once(&req.event));
+
     // Open the publish op envelope so the UI sees the activity. If the
     // user declines in Confirm mode, this returns FetchCancelled.
     let op = match engine
@@ -4455,6 +4467,7 @@ pub async fn broadcast_handler(
             relays.clone(),
             vec![event_id.clone()],
             Some(summary),
+            Some(manifest),
         )
         .await
     {

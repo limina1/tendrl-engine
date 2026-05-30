@@ -438,6 +438,31 @@ export interface RequestSummary {
 	dsl: string;
 }
 
+/** One event row in a {@link PublishManifest} — what the publish confirm
+ *  modal lists (collapsed by default). */
+export interface PublishEntry {
+	event_id: string;
+	kind: number;
+	title?: string;
+	d_tag?: string;
+}
+
+/** Plain-language description of what a publish replicates — the
+ *  "function / procedure" the publish confirm modal renders instead of
+ *  the raw event JSON. Travels on a `publish_intent`. */
+export interface PublishManifest {
+	/** `[kind, count]` pairs, ascending by kind. */
+	kind_counts: [number, number][];
+	total: number;
+	/** kind-30040 count (publication indices). */
+	index_count: number;
+	/** kind-30041 count (publication sections). */
+	section_count: number;
+	/** True when >1 index is present — a nested tree. */
+	nested: boolean;
+	entries: PublishEntry[];
+}
+
 /** Events streamed from the engine over /api/v1/network/fetch-events. */
 export type FetchEvent =
 	| {
@@ -458,6 +483,7 @@ export type FetchEvent =
 			event_ids: string[];
 			needs_confirmation: boolean;
 			summary?: RequestSummary;
+			manifest?: PublishManifest;
 	  }
 	| { type: 'progress'; operation_id: string; label: string; done: number; total: number | null }
 	| {

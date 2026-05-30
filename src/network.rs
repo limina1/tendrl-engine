@@ -302,6 +302,7 @@ impl NetworkActivity {
         relays: Vec<String>,
         event_ids: Vec<String>,
         summary: Option<RequestSummary>,
+        manifest: Option<PublishManifest>,
     ) -> std::result::Result<PublishOperation, FetchCancelled> {
         let operation_id = next_operation_id();
         let needs_confirmation = !self.is_auto();
@@ -312,6 +313,7 @@ impl NetworkActivity {
             event_ids,
             needs_confirmation,
             summary,
+            manifest,
         });
 
         let chosen = if needs_confirmation {
@@ -586,6 +588,97 @@ pub struct RequestSummary {
     /// (Round-trip lands in Phase 6 — for now this is a best-effort
     /// human-readable string built by the call site that opens the op.)
     pub dsl: String,
+}
+
+/// Per-event entry in a `PublishManifest` — the rows the confirm modal
+/// lists (collapsed by default). Identifies each event by kind + id and,
+/// where present, its `title` / `d` tag so the user reads titles, not
+/// hashes.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PublishEntry {
+    pub event_id: String,
+    pub kind: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub d_tag: Option<String>,
+}
+
+/// Plain-language description of *what* a publish replicates — the
+/// "function / procedure" the confirm modal renders instead of the raw
+/// event JSON (which the user can already inspect elsewhere). Travels on
+/// `PublishIntent`. For an NKBIP-01 publication this captures the
+/// index/section shape (kinds 30040 / 30041) and whether the tree is
+/// nested; for a bare broadcast it's a single-entry manifest.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct PublishManifest {
+    /// `(kind, count)` pairs, ascending by kind for stable display.
+    pub kind_counts: Vec<(u64, usize)>,
+    /// Total events being published.
+    pub total: usize,
+    /// kind-30040 count (publication indices).
+    pub index_count: usize,
+    /// kind-30041 count (publication sections).
+    pub section_count: usize,
+    /// True when more than one 30040 index is present — a nested tree
+    /// rather than a flat index + sections.
+    pub nested: bool,
+    /// One row per event, for the modal's collapsible list.
+    pub entries: Vec<PublishEntry>,
+}
+
+impl PublishManifest {
+    /// Build from the JSON events about to be broadcast. Reads `kind`,
+    /// `id`, and the `title` / `d` tags off each event — display only,
+    /// no protocol semantics.
+    pub fn from_events<'a>(events: impl IntoIterator<Item = &'a Value>) -> Self {
+        let mut m = PublishManifest::default();
+        let mut counts: std::collections::BTreeMap<u64, usize> = std::collections::BTreeMap::new();
+        for e in events {
+            let kind = e.get("kind").and_then(|v| v.as_u64()).unwrap_or(0);
+            let event_id = e
+                .get("id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let (title, d_tag) = entry_tags(e);
+            *counts.entry(kind).or_insert(0) += 1;
+            m.total += 1;
+            match kind {
+                30040 => m.index_count += 1,
+                30041 => m.section_count += 1,
+                _ => {}
+            }
+            m.entries.push(PublishEntry {
+                event_id,
+                kind,
+                title,
+                d_tag,
+            });
+        }
+        m.nested = m.index_count > 1;
+        m.kind_counts = counts.into_iter().collect();
+        m
+    }
+}
+
+/// Pull the `title` and `d` tag values off an event JSON, if present.
+fn entry_tags(e: &Value) -> (Option<String>, Option<String>) {
+    let mut title = None;
+    let mut d_tag = None;
+    if let Some(tags) = e.get("tags").and_then(|v| v.as_array()) {
+        for t in tags {
+            let Some(arr) = t.as_array() else { continue };
+            let name = arr.first().and_then(|v| v.as_str());
+            let val = arr.get(1).and_then(|v| v.as_str()).map(str::to_string);
+            match name {
+                Some("title") => title = val,
+                Some("d") => d_tag = val,
+                _ => {}
+            }
+        }
+    }
+    (title, d_tag)
 }
 
 /// Project a raw NIP-01 filter JSON into the structured `NipFilter`
@@ -1022,6 +1115,11 @@ pub enum FetchEvent {
         needs_confirmation: bool,
         #[serde(skip_serializing_if = "Option::is_none")]
         summary: Option<RequestSummary>,
+        /// Plain-language description of what's being published — kinds,
+        /// index/section shape, per-event titles. The confirm modal
+        /// renders this instead of dumping raw JSON.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        manifest: Option<PublishManifest>,
     },
     Progress {
         operation_id: String,
@@ -1222,6 +1320,40 @@ mod tests {
             members,
             start_delay_ms: delay_ms,
         }
+    }
+
+    #[test]
+    fn publish_manifest_summarizes_flat_publication() {
+        let events = vec![
+            serde_json::json!({
+                "id": "aa", "kind": 30040,
+                "tags": [["d", "my-pub"], ["title", "My Publication"]]
+            }),
+            serde_json::json!({ "id": "bb", "kind": 30041, "tags": [["title", "Intro"]] }),
+            serde_json::json!({ "id": "cc", "kind": 30041, "tags": [["title", "Body"]] }),
+        ];
+        let m = PublishManifest::from_events(events.iter());
+        assert_eq!(m.total, 3);
+        assert_eq!(m.index_count, 1);
+        assert_eq!(m.section_count, 2);
+        assert!(!m.nested, "single index is a flat publication");
+        assert_eq!(m.kind_counts, vec![(30040, 1), (30041, 2)]);
+        // title preferred, d_tag captured.
+        assert_eq!(m.entries[0].title.as_deref(), Some("My Publication"));
+        assert_eq!(m.entries[0].d_tag.as_deref(), Some("my-pub"));
+    }
+
+    #[test]
+    fn publish_manifest_flags_nested_tree() {
+        // Two indices => nested.
+        let events = vec![
+            serde_json::json!({ "id": "a", "kind": 30040, "tags": [] }),
+            serde_json::json!({ "id": "b", "kind": 30040, "tags": [] }),
+            serde_json::json!({ "id": "c", "kind": 30041, "tags": [] }),
+        ];
+        let m = PublishManifest::from_events(events.iter());
+        assert!(m.nested);
+        assert_eq!(m.index_count, 2);
     }
 
     #[test]

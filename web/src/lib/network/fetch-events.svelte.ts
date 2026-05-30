@@ -21,9 +21,15 @@ import * as api from '$lib/api';
 
 type AppState = ReturnType<typeof getAppState>;
 type IntentEvent = Extract<FetchEvent, { type: 'intent' }>;
+type PublishIntentEvent = Extract<FetchEvent, { type: 'publish_intent' }>;
 
-/** The pending confirm intent the FetchConfirmModal renders, if any. */
-export const confirmState = $state<{ intent: IntentEvent | null }>({ intent: null });
+/** The pending confirm intent a modal renders, if any. A fetch `intent`
+ *  drives FetchConfirmModal; a `publish_intent` drives
+ *  PublishConfirmModal — `+layout` branches on `.type`. Both carry an
+ *  `operation_id` and `relays`, which is all `resolveConfirm` needs. */
+export const confirmState = $state<{ intent: IntentEvent | PublishIntentEvent | null }>({
+	intent: null
+});
 
 // operation_id → toast id, so progress/relay_status/completed update
 // the right toast.
@@ -63,14 +69,11 @@ function openActivityToast(
 
 function handleEvent(ev: FetchEvent) {
 	// Confirm intents bypass the toast — they need the modal directly.
+	// `intent` → FetchConfirmModal, `publish_intent` → PublishConfirmModal
+	// (both keyed off `confirmState.intent`; +layout branches on type).
 	if ((ev.type === 'intent' || ev.type === 'publish_intent') && ev.needs_confirmation) {
-		// FetchConfirmModal only handles fetch intents today; publish
-		// confirmations fall through to a basic toast for now (the
-		// existing modal doesn't yet render publish summaries).
-		if (ev.type === 'intent') {
-			confirmState.intent = ev;
-			return;
-		}
+		confirmState.intent = ev;
+		return;
 	}
 
 	const app = appOrNull();
