@@ -1,0 +1,110 @@
+#+TITLE: Audit — Web Component Layer
+#+DATE: 2026-05-30
+#+LINK: web ../../web/%s
+Up: [[file:README.org][index]] · [[file:00-synthesis.org][synthesis]]
+
+Scope: =web/src/lib/components/*.svelte= (~50), =web/src/lib/design/*.svelte=,
+=discussions/*=, =search/*=, =fetch/*=, =network/*=, =api.ts=, =types.ts=, =Icon.svelte=,
+=web/src/routes/design/*=.
+
+* Prioritized findings
+
+** [HIGH] Five fully orphaned components — zero import sites
+   - what :: =Toolbar=, =PanelFrame=, =JsonPreview=, =NetworkPill=, =Rail= have no import
+     statement anywhere in =web/src= (verified =rg "import .*Name"= = 0; only stray
+     mentions are a code comment and a CSS class). Dead pre-WM three-panel era code:
+     =Toolbar='s props (=systemExpanded=, =contextExpanded=, =ontogglesystem=) are the
+     old chat-workbench chrome now replaced by =ChatPanel=→=SystemPrompt=/=ContextPanel=;
+     =PanelFrame= is the old collapsible panel wrapper; =JsonPreview= (47L) is superseded
+     by =EventViewModal= + =EventsJsonModal=; =NetworkPill=/=Rail= are unused primitives.
+   - action :: Delete all five.
+     - [[web:src/lib/components/Toolbar.svelte][Toolbar.svelte]]
+     - [[web:src/lib/components/PanelFrame.svelte][PanelFrame.svelte]]
+     - [[web:src/lib/components/JsonPreview.svelte][JsonPreview.svelte]]
+     - [[web:src/lib/design/NetworkPill.svelte][design/NetworkPill.svelte]]
+     - [[web:src/lib/design/Rail.svelte][design/Rail.svelte]]
+
+** [HIGH] Design-only components reachable solely from throwaway artboards
+   - where :: [[web:src/lib/design/IdBar.svelte][design/IdBar.svelte]], [[web:src/lib/design/PanelHeader.svelte][PanelHeader.svelte]], [[web:src/lib/design/PubRow.svelte][PubRow.svelte]]
+   - what :: Imported ONLY by [[web:src/routes/design/+page.svelte][routes/design/+page.svelte]] (and =PubRow= imports =IdBar=).
+     The =/design/*= routes (+page 702L, graph 304L, layouts 502L, publish 356L) are not
+     linked or navigated to from anywhere (=rg "href=.*design|goto.*design"= = 0).
+   - action :: Decide whether =design/= is kept scratch space (per memory
+     =project_design_handoff= it's live artboards). If not, these three components + the
+     four artboard routes are dead in production. NOTE: =design/graph= and =design/publish=
+     reference live components (=FocusGraph=, =PublishProgressBuffer=) — deleting the
+     routes is safe but deleting those components is not.
+
+** [MEDIUM] Six (seven) dead API client functions in api.ts
+   - what :: Never called outside =api.ts= itself (each =rg "\bname\b" web/src= returns
+     only the def line):
+     - =addAuthor= — [[web:src/lib/api.ts::660][api.ts:660]]
+     - =removeAuthor= — [[web:src/lib/api.ts::667][:667]]
+     - =getDiscussionCounts= — [[web:src/lib/api.ts::977][:977]]
+     - =getExportManifest= — [[web:src/lib/api.ts::866][:866]]
+     - =injectContext= — [[web:src/lib/api.ts::68][:68]]
+     - =loadSections= — [[web:src/lib/api.ts::129][:129]]
+     - =loadSectionsMeta= — [[web:src/lib/api.ts::136][:136]]
+   - note :: =evictProfiles= looked dead at the call-site level but IS used internally by
+     =refreshProfiles= ([[web:src/lib/api.ts::731][api.ts:731]]) — *NOT dead*.
+   - action :: Remove the seven listed; keep =evictProfiles=.
+
+** [LOW] Outline rendering duplicated between ReaderBuffer and OutlineView
+   - where :: [[web:src/lib/wm/renderers/ReaderBuffer.svelte][ReaderBuffer.svelte]] (2962L) vs [[web:src/lib/components/OutlineView.svelte][OutlineView.svelte]] (56L)
+   - what :: =ReaderBuffer= implements its own inline "outline" view mode while standalone
+     =OutlineView= (a =SectionCard= list) is used only by =DraftReader=. They diverge
+     (ReaderBuffer's adds inline comment/highlight toggles) — genuine variant, not strict
+     dup.
+   - action :: Low priority; consider extracting only if the inline block grows (the file
+     is already 2962L — a refactoring-debt smell on its own).
+
+** [LOW] Result-item rendering overlap
+   - where :: [[web:src/lib/components/PersonResultItem.svelte][PersonResultItem.svelte]] (169L) vs [[web:src/lib/components/ProfileResultItem.svelte][ProfileResultItem.svelte]] (314L)
+   - what :: Both render a kind-0 author row. Justified — different input types
+     (=ProfileResult= inline fields vs =SearchResult= which fetches the profile); both
+     document the distinction in header comments. Not a defect.
+   - action :: None; optionally share the visual row markup via a sub-component.
+
+** [INFO] Modal/view clusters are NOT redundant
+   - =EventViewModal= (1488L, rich inspector) vs =EventsJsonModal= (243L, multi-event raw
+     JSON) vs orphaned =JsonPreview= — first two are justified variants; only =JsonPreview=
+     is dead.
+   - =PublishConfirmModal= (pre-publish Confirm gate) vs =ComparePublishModal= (republish
+     diff) vs =PublishProgressBuffer= (post-publish relay results) — three lifecycle
+     stages, no overlap.
+   - =FetchConfirmModal= vs =FetchActivityModal= — confirm gate vs activity log, distinct.
+
+** [INFO] Pattern consistency is clean
+   Svelte 5 runes everywhere: zero =export let=, zero =createEventDispatcher=, zero =on:=
+   across =web/src/lib=; 58 components use =$props()=. Toast usage consistent (60
+   =pushToast= calls, no =alert()=). =DraftReaderBuffer= (36L) is a correct WM-glue
+   wrapper. =types.ts= mirrors Rust DTOs by design (API contract, not duplication).
+
+* (a) Confirmed-orphaned components
+
+| Component | Path | Import sites | Verdict |
+|-+-+-+-|
+| Toolbar | web/src/lib/components/Toolbar.svelte | 0 | Dead (pre-WM chat chrome) |
+| PanelFrame | web/src/lib/components/PanelFrame.svelte | 0 | Dead (pre-WM panel wrapper) |
+| JsonPreview | web/src/lib/components/JsonPreview.svelte | 0 | Dead (superseded by Event*Modal) |
+| NetworkPill | web/src/lib/design/NetworkPill.svelte | 0 | Dead design primitive |
+| Rail | web/src/lib/design/Rail.svelte | 0 | Dead design primitive |
+| IdBar | web/src/lib/design/IdBar.svelte | 1 (artboard + PubRow) | Artboard-only |
+| PanelHeader | web/src/lib/design/PanelHeader.svelte | 1 (artboard) | Artboard-only |
+| PubRow | web/src/lib/design/PubRow.svelte | 1 (artboard) | Artboard-only |
+
+Dead api.ts functions: =addAuthor=, =removeAuthor=, =getDiscussionCounts=,
+=getExportManifest=, =injectContext=, =loadSections=, =loadSectionsMeta= (7).
+=evictProfiles= is internally used — keep.
+
+* (b) Theme summary
+
+The web layer has cleanly completed its Svelte-5-runes migration and the WM/buffer
+paradigm is the consistent organizing principle. The main debt is leftover from the
+pre-WM three-panel workbench: five truly-dead components + three design-only components
+reachable only from unlinked =/design/*= artboards, and seven dead =api.ts= functions.
+The modal/view clusters that look redundant on the surface are in fact justified,
+distinct lifecycle/input variants — the only real cross-component overlap is mild
+(outline rendering, result-item rows) and not worth consolidating now. Highest-value
+cleanup: delete the 5 orphans + 7 dead api functions + the demo seed (see [[file:06-web-wm-buffer.org][06]]), then
+decide the fate of the =/design/*= scratch routes.

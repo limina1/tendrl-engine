@@ -1,0 +1,129 @@
+#+TITLE: Audit — Web WM/Buffer System
+#+DATE: 2026-05-30
+#+LINK: web ../../web/%s
+#+LINK: src ../../%s
+Up: [[file:README.org][index]] · [[file:00-synthesis.org][synthesis]] · related: [[file:03-tree-module.org][03 src/tree]] (the Rust engine this reimplements)
+
+Scope: =web/src/lib/wm/= (types, leader, buffer-store, BufferRenderer, registry,
+publish-progress) + =renderers/*.svelte= + =web/src/lib/state.svelte.ts= +
+=routes/+page.svelte= / =+layout.svelte=.
+
+* 1. RefsBuffer / reference pool — VERDICT: pool BUILT, standalone RefsBuffer intentionally RETIRED (not a gap)
+
+The reference pool is *fully implemented* in [[web:src/lib/state.svelte.ts][state.svelte.ts]]: the three-membership
+model (=in_context= / =in_compose= / =held=) is real — =addToPool= (line 544), =gc()=
+keeping any held item (592), =heldEntries= derived view (599), =togglePoolMembership=
+with a ='held'= path (697), =holdEvent= (734). The routes off the pool (→compose /
+→chat / →search / drop) exist.
+
+The standalone =RefsBuffer.svelte= ("currently a stub" in workbench-arch:878) was
+*deliberately folded* into [[web:src/lib/components/SearchPanel.svelte][SearchPanel.svelte]]'s "Refs" tab (research-class single buffer
+cycles Search · Refs · Import via =h=/=l=). Documented as shipped (=workbench-arch:1650=
+=[x] standalone RefsBuffer retired=; restated in =registry.ts:48-52= and
+=+page.svelte:50-51=). So the doc's RefsBuffer section is *stale narrative*, not an
+unbuilt item. Citations (NKBIP-03 mint) remain the genuinely-unbuilt downstream piece.
+
+* 2. Redundant renderers — NOT duplicates; each has a distinct role
+- =ReaderBuffer.svelte= (99KB) — the publication tree reader (depth-N TOC, pager/
+  outline/continuous, focus stack, discussions, highlights). Opened for =kind:'reader'=.
+- =DocBuffer.svelte= — slim single-event viewer for 30023/30818 (parses
+  =doc:<kind>:<pk>:<dtag>= at =:34=); drops the pager. Reachable from =ProfileBuffer:35=.
+- =DraftReader.svelte= — compose-section reader (outline/continuous/paginated of
+  =ComposeState.sections= with lock/fork state). Used inline by =ComposeView:900=.
+- =DraftReaderBuffer.svelte= — a 36-line thin wrapper adapting =DraftReader= into the
+  registry (=kind:'draft-reader'=).
+
+Verdict: no true duplication. =DraftReaderBuffer= is a legitimate adapter. Reader-vs-Doc
+overlap is defensible (different event shapes).
+
+* Prioritized findings
+
+** [high] M-x palette has ~13 declared commands with no dispatch
+   - where :: [[web:src/routes/+page.svelte::158][+page.svelte:158-194]] declares 28 commands; =executeCommand= (:314-408)
+     handles 14 with a silent =closeMinibuffer()= fallthrough at *:406-407*.
+   - what :: Non-functional via M-x: =tendrl-kill-buffer=, =find-event=, =find-draft=,
+     =split-window=, =switch-layout=, =save-layout=, =save-draft=, =publish-draft=,
+     =fork-section=, =cycle-editor-view=, =undo=, =redo=, =quit=, =refresh=. Several are
+     reachable via leader keys (=SPC b k=, =SPC f=) so they "work" through one path but
+     appear broken through the palette.
+   - action :: Wire them or drop them from the =commands= list (the list comment admits
+     it's a "representative subset").
+
+** [high] Web reimplements the Rust tree engine's flatten/depth-walk in TypeScript
+   - note :: CORRECTED by [[file:08-frontend-backend-boundary.org][08]] (an earlier draft overstated this). The stream is NOT
+     flat/out-of-order: =PubLoadEvent::Index= already carries =depth= + ordered
+     =children=, parent-before-child — assembly is done in Rust and wired. The TS here
+     is (a) a thin addr-keyed =StreamNode= re-accumulation for load-status tracking, and
+     (b) collapse/visibility logic that is *legitimately frontend*. Optional refinement:
+     stream flattened TOC rows so (a) goes away; (b) stays. Not a violation on its own.
+   - where :: [[web:src/lib/wm/renderers/ReaderBuffer.svelte::863][ReaderBuffer.svelte:863-882]] (=walk()=)
+   - what :: Depth-first flattening with a path-scoped cycle guard — exactly the job of
+     [[src:src/tree/render.rs::1][src/tree/render.rs::visible_nodes]]. The Rust =TreeEngine=/=TreeCommand=/=TreeState=/
+     =visible_nodes= system is *not referenced by api.rs or main.rs at all* (only
+     =tree::state::TagEntry=, a data type; the rest is exercised solely by the module's
+     own tests). The API serves =stream_publication_tree=/=load_publication_tree= from
+     =publication.rs= as raw nodes; the TS rebuilds the tree.
+   - why :: The central architectural promise (tree logic lives in Rust, front-ends
+     consume =VisibleNode=) is *not realized*; the TS walk is a parallel, drift-prone
+     implementation. (See [[file:03-tree-module.org][03]] for the Rust side.)
+   - action :: Either expose =visible_nodes= over HTTP and consume it, or update the
+     docs/memory to reflect that the tree command engine is currently unwired dead-ish
+     code and the web owns its own flatten.
+
+** [medium] Multi-tab "frames" model is unimplemented
+   - where :: [[web:src/lib/wm/buffer-store.svelte.ts::424][buffer-store.svelte.ts:424-444]]
+   - what :: Explicit: "Phase 1 uses a singleton — one shell instance per page", stashed
+     on =globalThis=. Exactly one =new BufferStore= ([[web:src/routes/+page.svelte::73][+page.svelte:73]]). No FrameStore,
+     no tab multiplexing, no per-frame layout state. The =q q= "quit frame" binding
+     ([[web:src/lib/wm/leader.ts::108][leader.ts:108]]) and =tendrl-quit= are *no-op stubs* (=run: () => {}=).
+   - why :: The documented frame/buffer separation (memory =project_buffer_frames=) is
+     aspirational; today there's one frame.
+   - action :: Mark frames as roadmap in memory, or remove the quit-frame affordances.
+
+** [medium] openBuffers is seeded but never the source of truth for what's mounted
+   - where :: [[web:src/lib/wm/buffer-store.svelte.ts::66][buffer-store.svelte.ts:66]]
+   - what :: =openBuffers= tracks the global list for the switcher, but rendered content
+     is =slotTrees=. =killFocused= (:294) and =cycleBufferInSlot= (:349) reconcile the
+     two, yet buffers placed directly into =slotTrees= via =setLeaf=/=splitFocused= are
+     *not added to =openBuffers=* — so a split-in buffer won't appear in =SPC b B=
+     (global switcher) or =recentlyClosed=.
+   - action :: Register =setLeaf=/=splitFocused= into =openBuffers=, or document that
+     only =openBuffer()=-routed buffers are tracked.
+
+** [low] Leader =l b=/=l s= and =SPC L= are near-empty
+   - where :: [[web:src/lib/wm/leader.ts::84][leader.ts:84-86]]; layouts at [[web:src/routes/+page.svelte::61][+page.svelte:61-71]]
+   - what :: Only one layout (=base=) exists; =l b= (base) and =l s= (save, deferred,
+     =run: () => {}=). =tendrl-switch-layout= advertises "read/write/triage/chat/zen"
+     layouts that don't exist.
+   - action :: Trim the advertised names or implement presets.
+
+** [low] Dead MinibufferMode = 'split' / openSplitPicker — verify
+   - where :: [[web:src/lib/wm/types.ts::31][types.ts:31]]; =w s= → =openSplitPicker= → =openMinibuffer('split')=
+     ([[web:src/routes/+page.svelte::632][+page.svelte:632]])
+   - what :: Wired (not dead), but worth confirming the ='split'= minibuffer branch
+     renders, since split buffers don't enter =openBuffers= (see medium finding).
+
+** [low] recentlyClosed seeded with fake demo rows in production path
+   - where :: [[web:src/routes/+page.svelte::255][+page.svelte:255-258]]
+   - what :: Seeds =store.recentlyClosed= with mock entries (=r1=/=r2=). Leftover demo
+     data shipping in the main route.
+   - action :: Remove.
+
+* 6. Pattern consistency — GOOD
+No legacy Svelte 4 patterns anywhere in =web/src/lib/wm/= (zero =export let=, =$:=,
+=svelte/store=, =on:click=). All 15 renderers use =$props= + runes. =buffer-store= keeps
+=_navHandlers= as a non-reactive =Map= with a separate =navHandlerKeys= =$state=
+snapshot to avoid an effect loop (documented at :88-96) — a deliberate, correct choice.
+
+* Themes
+1. *RefsBuffer verdict:* the reference pool is built; the standalone RefsBuffer was
+   intentionally retired into SearchPanel's Refs tab — the doc's "stub" prose is stale.
+2. *Biggest divergence:* the web reimplements tree flatten/cycle-walk in TS while the
+   Rust =src/tree= command engine is wired into nothing — the "Rust owns tree logic"
+   promise is unrealized.
+3. *Frames are not real:* single-singleton BufferStore; quit-frame and save-layout are
+   no-op stubs.
+4. *Palette drift:* ~13 M-x commands silently no-op, and =openBuffers= misses buffers
+   added via split/setLeaf.
+5. *Renderer hygiene is solid:* no duplicate renderers; runes usage uniform; cleanup
+   items are advertised-but-absent layouts and a leftover demo seed.

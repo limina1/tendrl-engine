@@ -1,0 +1,167 @@
+#+TITLE: Multi-User Architecture
+#+SUBTITLE: DRAFT — hoisting single-user globals into a per-session context
+#+DATE: 2026-05-19
+
+* Status
+
+*DRAFT.* This is a roadmap-stage design doc, not an approved plan. It
+enumerates what makes tendrl-engine single-user today and sketches the
+migration to a shared backend serving multiple users. No code has been
+written against it. Tick the roadmap checkboxes as phases ship; don't
+delete them.
+
+* Motivation
+
+The conversation that started this: /should tendrl-engine become a shared
+service — a relay-shaped backend that several users' web clients connect
+to — rather than a single-user local-first app?/
+
+Two *independent* separations were tangled in that question:
+
+1. *Runtime separation* — make the engine multi-tenant: one process, one
+   event store, N users. This doc.
+2. *Repo/branch separation* — split =web/= from =src/= so UI branches
+   can't mangle engine work. Deferred. The repo split should /follow/ the
+   runtime split, not lead it — until the API contract is forced stable
+   by multiple consumers, a monorepo with branch discipline is cheaper.
+
+* What is already multi-user-shaped
+
+The /relay half/ needs little work:
+
+- =nostrdb= is an event store. Multiple users' events already coexist;
+  it is relay-shaped by construction.
+- Ingestion (background section-fetch + embed loop) is user-agnostic.
+- The HTTP API boundary is interface-agnostic; the tree logic
+  (=src/tree/=) is pure and carries no identity.
+
+* What is baked single-user
+
+The /app-backend half/ assumes exactly one user. Each of these is a
+process-global that must become per-session.
+
+| Global                        | Where                          | Problem                                                              |
+|--------------------------------+--------------------------------+----------------------------------------------------------------------|
+| =IdentitySession=              | =main.rs:148= — one =Arc<Mutex<IdentitySession>>= for the process | One logged-in user, full stop. The central blocker.                  |
+| =SigningController=            | =signing.rs= — bound to the single =IdentityAppState=           | One signing orchestrator; one in-process ncryptsec.                  |
+| =Engine.my_pubkey=             | =engine.rs= struct field, from config                            | =by:me= resolves to a config constant, not the caller.               |
+| =Engine.assistant_pubkey=      | =engine.rs= struct field, from config                            | =by:assistant= likewise.                                             |
+| Publish pubkey fallback        | =api.rs:2351= — session, else config =[identity] pubkey=         | A logged-out request silently publishes as the config identity.      |
+| =UserData= (kind 0/3/10000/…)  | parsed "on login"                                                | Per-user contact/mute/relay lists; currently one set.                |
+| =NetworkActivity= mode         | =network.rs= — engine-global =AtomicBool=                        | =Auto= vs =Confirm= is one toggle for everyone.                      |
+| =IgnoreList=                   | =engine.rs= — =RwLock<IgnoreList>=                               | One user's filter applied to all.                                    |
+| =EmbeddingIndex=               | =engine.rs= — =Option<Arc<RwLock<…>>>=                           | Shared index is probably fine; revisit if per-user corpora matter.   |
+| Relay sets                     | =RelayConfig= — general/fetch/publish from config                | One user's relays; NIP-65 should make these per-identity.            |
+| *nostrdb read mutex*           | =query.rs= — process-wide lock                                   | Already the concurrency ceiling. Under N users it is a hard wall.    |
+
+* Target shape
+
+** A SessionContext
+
+Introduce a =SessionContext= holding everything currently global-per-user:
+
+#+begin_src rust
+struct SessionContext {
+    identity: IdentitySession,
+    signer: Box<dyn Signer>,        // in-process, NIP-07, or NIP-46
+    user_data: UserData,            // kind 0/3/10000/10002/… for this user
+    network_mode: NetworkMode,
+    ignore_list: IgnoreList,
+    relays: RelayConfig,            // seeded from NIP-65, not the TOML
+}
+#+end_src
+
+=Engine= keeps only what is genuinely shared — =ndb=, =embedding=,
+=nip11_cache=, the ingestion loop. Per-user state moves out of =Engine=
+and out of process-globals into a =SessionRegistry: HashMap<SessionId,
+SessionContext>= (or per-connection state).
+
+** Identity becomes a request input
+
+Every handler that today reads the single =IdentityAppState= instead
+resolves a =SessionId= from the request (cookie / bearer token / header)
+and looks up its =SessionContext=. =by:me= resolves to the /caller's/
+pubkey; publishing without a session is rejected, never silently
+attributed to a config identity.
+
+** Signing moves toward the client
+
+A shared backend should not hold N users' secret keys. Strongly prefer:
+
+- *NIP-07* — browser-extension signing; the engine never sees a secret.
+- *NIP-46* — remote signer; =ExternalSigner= already models this.
+
+In-process ncryptsec signing stays only for the single-user/self-hosted
+deployment. =SigningController= already keys external signers in a
+=Registry= — that registry generalizes to multi-user; the
+single-=IdentityAppState= binding does not.
+
+** The nostrdb concurrency wall
+
+The process-wide read mutex (=query.rs=) is already the throughput
+ceiling at one user. Multi-user does not /create/ this problem but makes
+it load-bearing. Options to evaluate before committing:
+
+- Keep the mutex; accept serialized reads; measure whether it holds for
+  the target user count (likely fine for tens, not thousands).
+- A read-replica / snapshot strategy if nostrdb supports it.
+- This is an *open question* — flagged, not solved here.
+
+* Deployment modes
+
+The design should collapse to the current experience when N=1:
+
+- *Self-hosted single-user* — one =SessionContext=, in-process signing,
+  config-seeded relays. Behaves exactly as today; =start.sh= unchanged.
+- *Shared multi-user* — =SessionRegistry=, client-side signing only,
+  per-user NIP-65 relays, auth in front of the API.
+
+* Open questions
+
+- Auth model: cookie session vs. bearer token vs. NIP-98 HTTP auth?
+- Session lifetime / eviction — =RegisteredSigner= already has a
+  staleness notion; reuse it?
+- Does the embedding index stay shared, or go per-user?
+- nostrdb read concurrency under load (see above).
+- Where do the SSE streams (=fetch-events=, signer channel) get scoped
+  per-session?
+
+* Roadmap
+
+Phased so each step ships behind the existing single-user behaviour
+(N=1 must keep working at every step).
+
+** Phase 0 — Design sign-off
+- [ ] Review and accept this doc
+- [ ] Pick the auth model (open question above)
+- [ ] Benchmark the nostrdb read mutex at target concurrency
+
+** Phase 1 — Introduce SessionContext (N still = 1)
+- [ ] Define =SessionContext= struct
+- [ ] Move =IdentitySession=, =UserData=, =NetworkMode=, =IgnoreList=
+      out of process-globals / =Engine= into a single =SessionContext=
+- [ ] Engine retains only shared state (=ndb=, =embedding=,
+      =nip11_cache=, ingestion loop)
+- [ ] Behaviour identical to today — one implicit session
+
+** Phase 2 — Session resolution in the API
+- [ ] Resolve a =SessionId= from each request
+- [ ] =SessionRegistry: HashMap<SessionId, SessionContext>=
+- [ ] Handlers read the caller's session, not a global
+- [ ] =by:me= / =by:assistant= resolve per-caller
+- [ ] Reject publish with no session (no config-identity fallback)
+
+** Phase 3 — Client-side signing for shared deployments
+- [ ] Generalize =SigningController= registry to multi-user
+- [ ] Require NIP-07 / NIP-46 in shared mode; in-process only for N=1
+- [ ] Scope the signer SSE channel per-session
+
+** Phase 4 — Per-user relays and lists
+- [ ] Seed =RelayConfig= from each user's NIP-65 instead of the TOML
+- [ ] Per-user ignore/mute lists applied only to that user's views
+- [ ] Scope the =fetch-events= SSE stream per-session
+
+** Phase 5 — Repo split (only after the above is stable)
+- [ ] Split =web/= into its own repo against the now-stable HTTP API
+- [ ] Version the API contract
+- [ ] Rework =start.sh= for the two-repo layout

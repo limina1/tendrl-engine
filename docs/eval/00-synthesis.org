@@ -1,0 +1,198 @@
+#+TITLE: Audit Synthesis — Cross-Referenced Findings
+#+DATE: 2026-05-30
+#+LINK: src   ../../%s
+See also: [[file:README.org][index]] · [[file:01-roadmap-intent-map.org][roadmap map]]
+
+* TL;DR
+
+The /running system/ — the parts the web UI actually exercises — is in good shape:
+clean Svelte 5 runes migration, a coherent search parser, a working reference pool,
+consistent FetchPolicy / Confirm-mode plumbing, justified (non-redundant) modal and
+view component clusters. The problems are three layers /around/ that core:
+
+1. *A large dead tier built for a front-end that no longer exists.* The TUI is gone
+   (no =ratatui=/=crossterm= dep, one =[[bin]]=), but ~5–6k loc of TUI navigation
+   engine in [[file:03-tree-module.org][src/tree/]] plus [[file:05-search-embedding-chat.org][user_data.rs (1356 loc) and drafts.rs DraftStore (590 loc)]]
+   are still compiled. They emit no dead-code warning only because the types are
+   =pub=. The web reimplements their jobs in TypeScript.
+
+2. *Docs describe a system that was superseded.* [[file:01-roadmap-intent-map.org][project-summary.org and
+   workbench-architecture.org]] still describe a three-panel layout, a standalone
+   RefsBuffer, a SQLite semantic backend, and "Online/Offline" — all replaced by the
+   WM/buffer shell, a Refs tab, usearch HNSW, and "Auto/Confirm". =CLAUDE.md= itself
+   asserts the TUI "remains functional" and that the web "consumes" =src/tree= logic;
+   both are false. This is the drift the user suspected.
+
+3. *Roadmap features that are stored + UI-exposed but not wired* — "phantom config".
+   The relay-class taxonomy lets users set broadcast/search/indexer tiers, but only
+   the =indexer= tier actually routes. See theme 3 below.
+
+Live code that /is/ wired has ordinary, fixable duplication (theme 2) and one real
+correctness bug (theme 4).
+
+* The five cross-cutting themes
+
+** Theme 1 — Dead tiers masquerading as live (HIGHEST VALUE)
+
+#+begin_quote
+*Resolution direction corrected — see [[file:08-frontend-backend-boundary.org][08]].* "Dead" splits into two kinds. The
+*TUI view-state machine* (=TreeState= navigation, =TreeEngine=, window/dialog/palette,
+=undo.rs=, =relay.rs= helpers, =list_publications_before=) is genuinely delete-able.
+But the *pure algorithmic core* — =parser.rs=, =content.rs=, =node.rs=, the flatten
+algorithm, the compose payload structs, and =user_data.rs='s NIP-01/02/51/65 parsing —
+is the *intended source of truth* under the Rust-owns-algorithms boundary; it is
+"unwired", not "wrong". For that core the fix is *revive + wire + consume from the web*
+and delete the TS twin — not delete the Rust. The table below shows what's unwired;
+[[file:08-frontend-backend-boundary.org][08]] shows which way each resolves.
+#+end_quote
+
+Independently confirmed by the tree, search, and web auditors. None of this is
+reachable from the =nostr-engine= binary; all of it survives because =pub= types
+suppress dead-code warnings.
+
+| Dead surface | Size | Evidence | Doc |
+|-+-+-+-|
+| =src/tree/= navigation engine (TreeEngine/TreeCommand/TreeState/render/node/undo/content + 2/3 of state.rs) | ~5–6k loc | =TreeEngine=/=TreeCommand=/=TreeState= have *0* external refs; exercised only by the module's own 58 tests | [[file:03-tree-module.org][03]] |
+| =src/tree/parser.rs= | 690 loc | document parsing goes to the *Python sidecar* =/parse=, not this line classifier | [[file:03-tree-module.org][03]] |
+| =user_data.rs= | 1356 loc | =AsyncRequest::LoadUserData= is *never constructed*; web parses kind 0/3/51/65 client-side | [[file:05-search-embedding-chat.org][05]] |
+| =drafts.rs= =DraftStore= + =LocalPublicationTracker= | ~590 loc | =DraftStore::new= / =save_draft= / =mark_local= have 0 callers outside tests | [[file:05-search-embedding-chat.org][05]] |
+| =relay.rs= helpers + =LOCAL_RELAY= | ~4 fns | superseded by =Engine::tracked_fetch_multiple= | [[file:02-engine-data-layer.org][02]] |
+| =PublicationEngine::list_publications_before=, =slot_in_version= | 2 fns | 0 callers | [[file:02-engine-data-layer.org][02]] |
+
+The *live* residue of =src/tree= is a small cluster of compose payload structs
+(=ComposeState=, =SectionCompose=, =TagEntry=, =BlockKind=, =ComposeBlock=,
+=ComposeBlockState= — ~140 external refs). Recommended move: extract those into
+=publication/compose.rs= (or =src/compose_types.rs=), repoint refs, then delete the
+navigation/TUI surface. Net removal across the tree + user_data + drafts findings:
+*~7,000+ loc*.
+
+Decision required before deleting =user_data.rs= / =drafts.rs=: is the Rust-side
+parsing/draft store an /intended/ home you mean to wire up, or has the web
+permanently taken over? The audit can't answer intent — see [[file:01-roadmap-intent-map.org][roadmap map]] §2
+(data-lifecycle CLI subcommands are still open and would re-need a Rust draft path).
+
+** Theme 2 — Duplication in live code
+
+All in actively-used paths, all fixable without design decisions.
+
+- *Relay set-name routing duplicated 4×* — [[src:src/engine.rs::892][engine.rs:892]], [[src:src/engine.rs::944][:944]],
+  [[src:src/relay_store.rs::241][relay_store.rs:241]], [[src:src/relay_store.rs::375][:375]]. The flat+dotted set-name match
+  (=general=/=publish=/=fetch=/=broadcast=/=search.default=/…) and the per-URL
+  mutual-exclusion rule are hand-rewritten in both layers; =RelayConfig= and
+  =RelaySets= are manually mirrored (8 fields) at [[src:src/engine.rs::694][engine.rs:694]]. Collapse to
+  one source of truth. ([[file:02-engine-data-layer.org][02]])
+- *Event hash+sign inlined 4× in publication.rs* — [[src:src/publication.rs::1922][:1922]], [[src:src/publication.rs::1991][:1991]],
+  [[src:src/publication.rs::2151][:2151]], [[src:src/publication.rs::2228][:2228]] — even though [[src:src/publication/tree_emit.rs::439][tree_emit::sign_event]] already
+  factors it out and the nested emitters reuse it. The placeholder-sig sentinel
+  =("0".repeat(128))= now lives in 6 places. ([[file:02-engine-data-layer.org][02]])
+- *Two publish handlers duplicate ~130 lines of broadcast/ingest logic* —
+  [[src:src/api.rs::2866][publish_handler]] vs [[src:src/api.rs::3290][publish_blocks_handler]]; they have *already drifted*
+  (different =dsl= strings, different =event_ids= assembly). ([[file:04-api-network-identity.org][04]])
+- *Title-tag extraction open-coded 5×*; *two near-identical relay-merge loops*
+  ([[src:src/engine.rs::2376][engine.rs:2376]] / [[src:src/engine.rs::2436][:2436]]); *profile kind-0 parsing duplicated* in
+  [[src:src/query.rs::818][query.rs:818]] instead of reusing the (otherwise-dead) =Metadata= type. ([[file:02-engine-data-layer.org][02]], [[file:05-search-embedding-chat.org][05]])
+
+** Theme 3 — Half-wired roadmap features ("phantom config")
+
+The relay-class roadmap (=docs/relay-classes-and-info-port.md=, T31) is *stored and
+UI-exposed but not routed*. Users can configure things that do nothing:
+
+- =engine.broadcast_relays()= ([[src:src/engine.rs::297][engine.rs:297]]) has *0 callers* — publish/broadcast
+  always use =publish_relays()=. ([[file:04-api-network-identity.org][04]])
+- =compose_discovery_phases("search")= is *never invoked* — only =indexer= routes.
+  =search_handler= ignores the search DiscoveryClass. ([[file:04-api-network-identity.org][04]])
+- =SignerCapabilities= (nip04/nip44) is registered + round-tripped but *never read*
+  for routing; there are no encrypt/decrypt broker endpoints. ([[file:04-api-network-identity.org][04]])
+- =IdentitySource::Nip46= is typed end-to-end with a UI radio option but has *no
+  transport* — selecting it can't produce a working signer. ([[file:04-api-network-identity.org][04]])
+- The =NIP-11 relay info page= is almost entirely an open =[ ]= checklist; the
+  Svelte side (=<RelayInfoPage>=, =supported_nips= chips, per-relay stats) is unbuilt
+  ([[file:01-roadmap-intent-map.org][roadmap map]] §2, relay classes).
+- Known-broken and documented in =user_testing.org=: *T33* (indexer relays not yet a
+  fetch fallback — toggle is cosmetic) and *T32* (engine-side NIP-44 decrypt of
+  private relay lists; only the NIP-07 client path works).
+
+Action: either finish the routing for these, or hide/disable the config surfaces so
+users aren't setting no-ops.
+
+** Theme 4 — One real bug + error-code hygiene
+
+- *Correctness bug:* [[src:src/api.rs::3358][publish_blocks_handler]] bypasses the =SigningController= and
+  inlines the legacy secret chain (session secret → keyring → =.env= parse). A user
+  logged in via *NIP-07* can publish through =/publish= but their =/publish/blocks=
+  calls fall through to =None= secret and produce *unsigned events*. The two publish
+  surfaces have divergent identity semantics. ([[file:04-api-network-identity.org][04]])
+- =EngineError::Config= (→ HTTP 500) is used for ~27 *client-input* errors (malformed
+  body, "no relays configured", "no identity") — the new =BadRequest=→400 variant is
+  used in only 3 places. The web can't distinguish "you sent bad data" from "the
+  engine broke". ([[file:04-api-network-identity.org][04]])
+- Confirm-mode gating is *inconsistent*: [[src:src/api.rs::1497][fetch_authors_handler]] calls plain
+  =tracked_fetch= which silently returns =Ok(vec![])= in Confirm mode *with no intent
+  emitted* — a dead button that reports =fetched: 0= success. ([[file:04-api-network-identity.org][04]])
+
+** Theme 5 — Web UI affordances that no-op, plus dead components
+
+- *~13 M-x palette commands silently no-op* — [[file:../../web/src/routes/+page.svelte::314][+page.svelte executeCommand]] handles
+  14 of 28 declared commands and silently falls through for the rest
+  (=split-window=, =switch-layout=, =save-draft=, =publish-draft=, =fork-section=,
+  =undo=, =redo=, =quit=, …). Some work via leader keys, so they're inconsistently
+  reachable. ([[file:06-web-wm-buffer.org][06]])
+- *Frames are not real* — =buffer-store.svelte.ts= is an explicit Phase-1 singleton;
+  the multi-tab frame model in memory =project_buffer_frames= is aspirational.
+  =q q= "quit frame" and =l s= "save layout" are no-op stubs. ([[file:06-web-wm-buffer.org][06]])
+- =openBuffers= misses buffers added via =setLeaf=/=splitFocused= → they won't show
+  in the =SPC b B= global switcher. ([[file:06-web-wm-buffer.org][06]])
+- *5 fully-orphaned components* (=Toolbar=, =PanelFrame=, =JsonPreview=, =NetworkPill=,
+  =Rail= — pre-WM three-panel chrome), *3 artboard-only* design components, and
+  *7 dead =api.ts= functions*. ([[file:07-web-components.org][07]])
+- A leftover demo seed (=recentlyClosed= mock rows) ships in the production route.
+  ([[file:06-web-wm-buffer.org][06]])
+
+* Organization smells (not bugs, but debt)
+
+- [[src:src/api.rs][api.rs]] is *4772 loc*. =chat=/=identity=/=signing= are already separate
+  sub-routers in =main.rs=; splitting their handlers into matching files sheds ~1500
+  loc immediately. Suggested =api/= module split in [[file:04-api-network-identity.org][04]].
+- [[src:src/engine.rs][engine.rs]] (3100) mixes the ~400-loc query core with ~700 loc of
+  relay-set management and ~600 loc of embedding/doc-sync orchestration. [[src:src/publication.rs][publication.rs]]
+  (3117) mixes the load/stream API with all event-building code. Natural splits in [[file:02-engine-data-layer.org][02]].
+- =ReaderBuffer.svelte= is ~2962 loc. It does *not* reimplement the tree-assembly
+  algorithm (that's Rust's =publication.rs= and wired — the SSE stream ships =depth= +
+  ordered =children=); it keeps a thin addr-keyed re-accumulation for load-status +
+  flatten, plus legitimately-frontend collapse logic. See the correction in [[file:08-frontend-backend-boundary.org][08]] §API
+  gaps. ([[file:06-web-wm-buffer.org][06]])
+
+* What is healthy (leave alone)
+
+- Search parser: every operator in =search-architecture.org= is parsed *and*
+  compiled — no drift, no NIP-19 decode duplication. ([[file:05-search-embedding-chat.org][05]])
+- =chat.rs= is genuinely IO-free; embedding dual-backend shares all index code behind
+  =#[cfg(feature="onnx")]=. ([[file:05-search-embedding-chat.org][05]])
+- Reference pool (held / in_context / in_compose) is fully built; RefsBuffer was
+  *intentionally* retired into the SearchPanel Refs tab — not a gap. ([[file:06-web-wm-buffer.org][06]])
+- Modal/view clusters (Event*Modal, the three publish modals, the reader view modes)
+  are justified distinct variants, not redundancy. ([[file:07-web-components.org][07]])
+- Svelte 5 runes migration is complete and uniform (0 =export let=, 0 =on:=). ([[file:07-web-components.org][07]])
+- FetchPolicy / Confirm-mode / LoadStatus / the nostrdb read-lock discipline are
+  applied consistently. ([[file:02-engine-data-layer.org][02]])
+
+* Recommended sequence
+
+1. *Doc truth pass (cheap, high leverage).* Fix =CLAUDE.md= (TUI is gone; web does
+   not consume =src/tree= navigation) and mark =project-summary.org= /
+   =workbench-architecture.org= stale sections (three-panel, SQLite backend,
+   RefsBuffer, Online/Offline). Prevents future work being built on false premises.
+   Detail in [[file:01-roadmap-intent-map.org][01 §3]].
+2. *Delete confirmed dead web code* (5 components + 7 api fns + demo seed) — zero risk,
+   verified orphaned. [[file:07-web-components.org][07]].
+3. *Fix the publish-blocks signing bug* (theme 4) — correctness, affects NIP-07 users.
+4. *Decide the fate of =src/tree= / =user_data.rs= / =drafts.rs=* (theme 1). If the
+   web has permanently won, this is the single biggest loc reduction in the repo.
+   Extract the live compose structs first, then delete.
+5. *De-duplicate live code* (theme 2): relay set-name routing → one source of truth;
+   =sign_event= helper for the 4 publication builders; shared broadcast/ingest helper
+   for the two publish handlers.
+6. *Resolve phantom config* (theme 3): wire or hide broadcast/search/indexer routing,
+   NIP-46, SignerCapabilities.
+7. *Split the giant files* (api.rs, engine.rs, publication.rs) once the dead code is
+   gone — the boundaries are cleaner afterward.

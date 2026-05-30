@@ -1,0 +1,104 @@
+#+TITLE: Audit — Search + Embedding + Chat/LLM + user_data + drafts
+#+DATE: 2026-05-30
+#+LINK: src ../../%s
+Up: [[file:README.org][index]] · [[file:00-synthesis.org][synthesis]]
+
+Scope: =search.rs= (1523), =embedding.rs= (580), =chat.rs= (592), =llm.rs= (277),
+=claude_sessions.rs= (493), =user_data.rs= (1356), =drafts.rs= (591).
+
+* Findings (prioritized)
+
+** [high] Entire user_data.rs module is unreachable from the binary
+   - note :: RESOLUTION per [[file:08-frontend-backend-boundary.org][08]]: kind 0/3/51/65 parsing is /algorithmic event-derivation/
+     and belongs in Rust. So the fix is *revive + wire* user_data.rs (and have the web
+     consume it) — NOT delete it in favor of the TS client-side parsing. The
+     TS-side parsing is the redundancy to remove.
+   - where :: [[src:src/user_data.rs::1][user_data.rs:1-1356]]
+   - what :: =UserData= is populated only via =AsyncRequest::LoadUserData= →
+     =AsyncResult::UserDataLoaded=. =LoadUserData= is *never constructed* (=grep= shows
+     only its def at =command.rs:893= and =.. =>= arms); =UserDataLoaded= is only
+     consumed at [[src:src/tree/engine.rs::516][engine.rs:516]], never produced. No code calls =Metadata::from_note=,
+     =FollowList::from_note=, etc. The web re-implements this parsing client-side
+     ([[src:src/api.rs::1290][pull_user_data_handler]] just fetches raw events and returns a count;
+     =RelaysBuffer.svelte= parses them in TS).
+   - why :: ~1350 loc of parser + formatter + dual-path code ships dead; no warning
+     because the types are =pub=.
+   - action :: Decide whether the Rust-side =UserData= is the intended home (then wire
+     =LoadUserData=) or delete the module + the orphaned tree plumbing. (See [[file:03-tree-module.org][03]] — this
+     is part of the same TUI-era dead tier; and [[file:01-roadmap-intent-map.org][01]] data-lifecycle CLI is still open.)
+
+** [high] drafts.rs DraftStore + LocalPublicationTracker are never instantiated
+   - where :: [[src:src/drafts.rs::95][drafts.rs:95-445]]
+   - what :: =grep= for =DraftStore::new= / =LocalPublicationTracker::new= / =save_draft=
+     / =mark_local= / =is_local= → zero hits outside drafts.rs + its tests; only doc-
+     comment mentions in =relay_store.rs=. The publish path ([[src:src/api.rs::2865][api.rs:2865]], [[src:src/api.rs::3289][:3289]]) and
+     [[src:src/tree/engine.rs::486][tree/engine.rs:486]] (=load_drafts_sync=) use a different mechanism.
+   - action :: Confirm against the actual draft flow; wire =DraftStore= in or remove. If
+     kept for a near-term feature, add a tracking note.
+
+** [medium] Both legacy from_event* user_data parsers are pure test-only duplicates
+   - where :: =user_data.rs= (=FollowList::from_event_tags= :611, =MuteList::from_event=
+     :745, =RelayList::from_event_tags= :852, =Bookmarks::from_event= :958,
+     =BlockedRelays::from_event_tags= :1027, =SearchRelays::from_event_tags= :1070,
+     =RelaySet::from_event= :1142)
+   - what :: Each type carries a =from_note= AND a legacy JSON-tags parser; the module
+     doc calls =from_note= "preferred" and =from_event*= "legacy" — but no production
+     code calls either. Legacy ones run only under =#[cfg(test)]=. The =debug_*= fields
+     on =FollowList= exist solely for the legacy debug path.
+   - action :: Drop the legacy parsers + =debug_*= fields when the module's fate is decided.
+
+** [medium] Profile kind-0 parsing duplicated instead of reusing Metadata
+   - where :: [[src:src/query.rs::818][query.rs:818-850]] vs [[src:src/user_data.rs::495][user_data.rs:495-511]]
+   - what :: =find_profiles_matching= inline-parses =name=/=display_name=/=nip05=/
+     =picture=/=about= out of kind-0 content, duplicating =Metadata::from_event_content=.
+     This is the *live* profile-search path; =Metadata= is the dead one.
+   - action :: Have =find_profiles_matching= call =Metadata::from_event_content= (keeping
+     that one type alive) instead of a second decoder.
+
+** [low] Unused file binding in get_session
+   - where :: [[src:src/claude_sessions.rs::264][claude_sessions.rs:264-265]]
+   - what :: =let file = std::fs::File::open(path)?;= but =file= is never used —
+     =parse_session_messages(path, 0)= (line 267) re-opens it. The sole =cargo build= warning.
+   - action :: Delete lines 264-265.
+
+** [low] naddr d-tag passed through tag_value_variants
+   - where :: [[src:src/search.rs::292][search.rs:292-299]] + [[src:src/search.rs::388][:388-394]]
+   - what :: The =naddr= decode injects its opaque =d_tag= as a normal =d= TagFilter;
+     =to_nip01_filters= then slug-expands it (lowercase + whitespace→=-=). An naddr
+     coordinate is exact + case-sensitive. Safe today only because NIP-01 OR-semantics
+     keep the literal, but it can surface a different event sharing the slug.
+   - action :: Skip variant expansion for =d= values originating from a decoded =naddr=.
+
+** [low] from_str shadows the std trait name
+   - where :: [[src:src/chat.rs::27][chat.rs:27]]
+   - what :: =ChatRole::from_str(&str)-> Option<Self>= is an inherent method colliding
+     conceptually with =std::str::FromStr=. Not a bug.
+   - action :: Rename to =parse_role= or impl =FromStr=. Optional.
+
+* Positives verified
+- *chat.rs is genuinely IO-free* — no reqwest/fs/tokio/std::io; claim holds.
+- *Search syntax matches docs exactly* — every operator in =search-architecture.org=
+  §10.1 (=k:=, single/multi-char tags, =by:me/assistant/npub/hex/name:/word=, =has:=,
+  =count:=, =~:=/=~:"":k=, exact, keywords, =since:=/=until:=, =|= OR) is parsed AND
+  consumed (=count:=→[[src:src/query.rs::527][query.rs:527]], =has:=→[[src:src/query.rs::597][:597]], semantic→[[src:src/engine.rs::1948][engine.rs:1948]],
+  profiles→[[src:src/engine.rs::1843][:1843]]). No parsed-but-uncompiled operators. =ResultSource::Relay=
+  correctly =#[allow(dead_code)]=-flagged as a future phase.
+- *No NIP-19 decode duplication* — search.rs delegates to =crate::nip19::decode= /
+  =strip_nostr_prefix= ([[src:src/search.rs::717][:717-743]]); npub decode → =identity::decode_npub=.
+- *Embedding dual backend shares all index/search/persistence code* — only leaf
+  =embed_via_python= / =embed_via_onnx= and the =EmbeddingBackend= enum arms diverge,
+  gated by =#[cfg(feature="onnx")]=.
+- *SearchResult.preview 200-char truncation* ([[src:src/search.rs::492][search.rs:492]]) is not fed to any
+  crypto/length-sensitive path — confirmed no violators.
+
+* Themes
+1. Dominant issue: *dead modules masked by =pub= visibility* — user_data.rs (1356) and
+   drafts.rs's DraftStore/LocalPublicationTracker (590) are unreachable because the web
+   took over their jobs; they compile warning-free.
+2. Where a dead module's logic was needed, it was *re-implemented inline*
+   (=find_profiles_matching= duplicates =Metadata=).
+3. *Dual-path bloat*: every user_data type ships a "preferred" =from_note= and a
+   "legacy" =from_event*=, neither called, plus debug-only fields.
+4. The actively-used surfaces (parser, embedding index, chat state, llm, nip19) are
+   *clean, well-tested, consistent* — no drift, chat's "no IO" holds.
+5. Only one true compiler warning (the stray =file= open); rest is low-severity polish.

@@ -38,8 +38,29 @@ make update                         # safe updates within version ranges
 indexes and sections). It runs as three cooperating processes: the Rust **engine**
 (`src/`, port 3030), a SvelteKit **web frontend** (`web/`, port 5173 dev / 5174
 preview), and an optional Python **embedding sidecar** (`sidecar/`, port 3031). The
-engine owns all data access; the web UI consumes the engine's interface-agnostic
-tree logic.
+engine owns all data access. (A ratatui TUI was the original frontend; it has been
+removed — there is no `ratatui`/`crossterm` dependency and a single `[[bin]]`
+(`nostr-engine`). The web app is the only live frontend; emacs/nvim frontends are a
+design goal, not yet built.)
+
+### Frontend/backend boundary (the governing rule)
+Keep this split when adding features — it's what makes the engine portable to future
+frontends (emacs/nvim) without re-implementing logic per-frontend:
+
+- **Rust owns** fetching, event storage/query, and **all algorithmic derivation of
+  structured data from events**: parsing/classification, document-tree assembly +
+  ordering, content-format detection, NIP-19/NIP-11 decode+encode, kind-routing, event
+  dedup/merge, slug/d-tag/coordinate generation, publish-payload emission, NIP-22
+  threading, NIP-84 highlight resolution, kind-0 author resolution.
+- **TypeScript (`web/`) owns** rendering and **ephemeral view/interaction state**
+  (focus, expansion set, scroll, selection, active view mode) — and calls Rust over
+  HTTP/SSE.
+
+When the same event-derivation logic appears in both Rust and TS, resolve it **toward
+Rust** (expose/wire the Rust, delete the TS twin) — not the reverse. Document
+*extraction* (PDF/DOCX/EPUB → text) legitimately stays in the Python sidecar;
+*classification* (text → structured sections/kinds) is Rust. See `docs/eval/` (esp.
+`08-frontend-backend-boundary.org`) for the current compliance map and open violations.
 
 ### Core Engine (`src/engine.rs`)
 The `Engine` struct owns the `nostrdb::Ndb` instance, relay config, embedding index,
@@ -77,24 +98,39 @@ loader, and publishing operations. `publication.rs` also contains `PublishPayloa
 for signing and broadcasting events.
 
 ### Tree Module (`src/tree/`)
-Interface-agnostic tree navigation for publications, with strict separation:
-- **`state.rs`**: Pure `TreeState` — all data, no IO. `AppMode` is `Feed`, `Reader`,
-  or `Compose`.
-- **`command.rs`**: `TreeCommand` enum — every possible user action
-- **`engine.rs`**: `TreeEngine` — executes commands synchronously on TreeState
-- **Async boundary**: When IO is needed, `TreeEngine::execute()` returns
-  `CommandResult::NeedsAsync(AsyncRequest)`. The UI layer handles the async work and
-  feeds results back via `apply_async_result()`. This is the key architectural
-  pattern — tree logic never does IO directly.
-- **`node.rs`**: `TreeNode` enum (`Publication` | `Section`), identified by `NodeId`
-- **`render.rs`**: Flattens tree into `Vec<VisibleNode>` for display, consumed by the web UI
-- **`content.rs`**: `ContentDetector` — detects content format from event tags/heuristics
-- **`parser.rs`**: Line-by-line classification for compose mode (headings, attributes,
-  code blocks; determines which event kind — 30040/30041 — a line generates)
-- **`undo.rs`**: `UndoStack` for tree operations (stub, expanded incrementally)
+**Status: split between a live pure core and a dead TUI state machine.** This module
+was built as the navigation engine for the (now-removed) ratatui TUI, so the
+command/state/navigation half has **no production consumer** — the web does not call
+it (no `/tree/` HTTP routes; `api.rs` imports only the compose payload structs). It
+compiles warning-free only because the types are `pub`. Treat it in two parts:
 
-The tree logic is interface-agnostic — the web UI is its consumer, and the design
-keeps room for other front-ends (e.g. Emacs).
+- **Pure core — KEEP (the intended source of truth, portable to future frontends):**
+  - **`parser.rs`**: line-by-line classification for compose (headings/attributes/code
+    blocks → which event kind 30040/30041 a line generates). Pure function, no UI state.
+  - **`content.rs`**: `ContentDetector` — content-format detection. Pure.
+  - **`node.rs`**: `TreeNode`/`NodeId` structure + accessors. Pure data.
+  - The **`render.rs` flatten algorithm** (`visible_nodes`) — pure, but currently
+    entangled with `TreeState` (reads cursor/selection/expanded); to reuse it must take
+    the expansion set as a parameter.
+  - The **compose payload structs in `state.rs`** (`ComposeState`, `SectionCompose`,
+    `TagEntry`, `BlockKind`, `ComposeBlock`, `ComposeBlockState`) — the only `state.rs`
+    types `api.rs` actually uses; they feed slug/coordinate/payload emission.
+- **TUI view-state machine — DEAD, slated to drop:** `TreeState` navigation fields,
+  `TreeEngine` + the `CommandResult::NeedsAsync` async boundary, `command.rs`
+  (`TreeCommand`), `ViewMode`/window/dialog/palette/clipboard state, `undo.rs`
+  (`UndoStack`, a never-wired stub). These hold view/interaction state that, per the
+  frontend/backend boundary above, belongs in the frontend — and the web already owns
+  its own.
+
+Note the live publication tree is **loaded/assembled by `publication.rs`** (the
+recursive depth-N loader + `build_toc` + the `stream_publication_tree` SSE stream), not
+by `tree/engine.rs` — and this is correctly engine-side: `PubLoadEvent::Index` ships
+`depth` + an ordered `children` list, parent-before-child, so `a`-tag resolution,
+ordering, dedup, and the in-horizon walk all run in Rust. The web (`ReaderBuffer.svelte`)
+re-accumulates those events into an addr-keyed map (mostly to track per-node load status
+and flatten to an outline), with collapse/expand kept as frontend view state. That
+re-accumulation is a thin twin — an optional refinement (stream flattened TOC rows to
+drop it), not a duplicated algorithm. See `docs/eval/08-frontend-backend-boundary.org`.
 
 ### HTTP API (`src/api.rs`, `src/main.rs`)
 Axum-based REST API. State is `Arc<Engine>`. Routes are mounted under `/api/v1/`;
@@ -123,7 +159,10 @@ sections and embeds new events on a 60-second interval when embeddings are enabl
 - **`nip19.rs`**: bech32 TLV decoders for `nevent`/`naddr`/`nprofile` (npub/nsec live
   in `identity.rs`); unified `decode()` returns a tagged enum for the API
 - **`user_data.rs`**: NIP-01/02/51/65 profile data — parses kind 0/3/10000/10002/
-  10003/10006/10007/30002 from nostrdb `Note`s on login
+  10003/10006/10007/30002 from nostrdb `Note`s. **Currently unwired** — the
+  `LoadUserData` path that drives it is never constructed, and the web parses these
+  kinds client-side. Per the frontend/backend boundary this parsing should live here;
+  the fix is to revive + wire it and have the web consume it, not delete it.
 - **`chat.rs`**: Pure state logic for LLM chat fragments, edit mode, context
   injection, message serialization (no IO)
 - **`llm.rs`**: Async `LLMProvider` trait — `NoopProvider` (testing) and
@@ -131,7 +170,9 @@ sections and embeds new events on a 60-second interval when embeddings are enabl
 - **`claude_sessions.rs`**: Reader for Claude Code conversation JSONL files in
   `~/.claude/projects/`
 - **`drafts.rs`**: Local JSON draft storage for unsigned NKBIP-01 publications before
-  they are signed and published
+  they are signed and published. **Note:** `DraftStore` / `LocalPublicationTracker`
+  are not currently instantiated (the live draft path differs) — confirm before
+  building on them.
 - **`relay_store.rs`**: Persistent runtime relay sets (`general` / `fetch` /
   `publish`) backed by `<data_dir>/relays.json`. The TOML config only carries the
   bootstrap `initial_relays` seed; `relays.json` is authoritative for the live

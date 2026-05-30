@@ -1,0 +1,158 @@
+#+TITLE: Execution Plan — Boundary Compliance Cleanup
+#+DATE: 2026-05-30
+#+LINK: src ../../%s
+#+LINK: web ../../web/%s
+Up: [[file:README.org][index]] · reads from: [[file:00-synthesis.org][00 synthesis]] · [[file:08-frontend-backend-boundary.org][08 boundary]]
+
+* For the worker picking this up cold
+
+You are executing the cleanup that the =docs/eval/= audit (00–08) already mapped.
+*Do not re-audit* — the evidence, file:line refs, and =rg= verification are done. Your
+job is to apply it. Read, in order: [[file:README.org][README]] → [[file:00-synthesis.org][00-synthesis]] → [[file:08-frontend-backend-boundary.org][08-frontend-backend-boundary]].
+Then [[file:03-tree-module.org][03]] and [[file:05-search-embedding-chat.org][05]] for the per-file dead-code specifics, and [[file:02-engine-data-layer.org][02]] / [[file:04-api-network-identity.org][04]] for the
+Rust duplication + the one real bug.
+
+** The governing principle (memorize this)
+- *Rust* owns fetching + events + all /algorithmic derivation of structured data/
+  (parse, assemble/order tree, decode/encode NIP-19/11, dedup, slug gen, threading,
+  highlight resolution).
+- *TypeScript* owns rendering + /ephemeral view/interaction state/ + calling Rust.
+- When the same logic exists in both, resolve *toward Rust* (build/wire Rust, delete
+  the TS twin) — never the reverse.
+
+** The two directions of "shedding" (don't conflate them)
+- The *Rust TUI state-machine* is shed FROM RUST (delete) — but keep the pure core.
+- The *NIP transforms* are missing from Rust; you BUILD them in Rust and shed the
+  *TypeScript* copies. You are not deleting a capability.
+
+** DO-NOT-DELETE guardrail (the pure Rust core to keep)
+Deleting these would re-introduce the exact mistake the audit corrected:
+- [[src:src/tree/parser.rs][parser.rs]], [[src:src/tree/content.rs][content.rs]], [[src:src/tree/node.rs][node.rs]] — pure, the intended source of truth.
+- The compose payload structs in [[src:src/tree/state.rs][state.rs]]: =ComposeState= (+ its =generate_d_tag=),
+  =SectionCompose=, =TagEntry=, =BlockKind=, =ComposeBlock=, =ComposeBlockState=.
+- All of [[src:src/publication.rs][publication.rs]] tree loading/assembly (=load_publication_tree=, =build_toc=,
+  =stream_publication_tree=). *This is already correct + wired — leave it.* The SSE
+  stream already ships ordered =children= + =depth=; it is NOT a redundancy.
+- [[src:src/user_data.rs][user_data.rs]] *parsers* — unwired, but REVIVE not delete (Phase 5).
+
+** Working conventions (from project memory — follow exactly)
+- New task → new branch first. Branch this work off =tendrl-web=:
+  =git switch tendrl-web && git switch -c cleanup/boundary-compliance=.
+- Commit at *phase boundaries* with legible history. Tick the checkboxes in this doc as
+  you land each phase (don't delete them).
+- *Never* run a bare =cargo fmt= (HEAD isn't fmt-clean under local rustfmt; it rewrites
+  ~30 files). Format only files you touched.
+- Record any new verify/test command in [[../commands.org][docs/commands.org]] (terminal paste from chat
+  mangles long strings — keep them in the file).
+- The process-wide nostrdb read lock in [[src:src/query.rs][query.rs]] is load-bearing — never remove it.
+- If you find a NEW bug mid-task: log it to the bugs org doc and fix it on a =bugs=
+  branch via worktree, then merge/pull — don't fold unrelated bug fixes into a cleanup
+  commit.
+
+** Baseline before you touch anything
+Confirm a green starting point and record the exact commands in =docs/commands.org=:
+#+begin_src bash
+cargo build
+cargo test
+cargo clippy
+pnpm -C web check
+#+end_src
+If any are already red on =tendrl-web=, note it — don't try to fix pre-existing failures
+inside this work.
+
+* Phase 1 — Zero-risk TypeScript deletions [0/4]
+No behavior change. Each item was =rg=-verified to have 0 import sites (see [[file:07-web-components.org][07]]).
+- [ ] Delete the 5 orphan components: [[web:src/lib/components/Toolbar.svelte][Toolbar]], [[web:src/lib/components/PanelFrame.svelte][PanelFrame]], [[web:src/lib/components/JsonPreview.svelte][JsonPreview]],
+  [[web:src/lib/design/NetworkPill.svelte][design/NetworkPill]], [[web:src/lib/design/Rail.svelte][design/Rail]].
+- [ ] Delete the 7 dead =api.ts= fns: =addAuthor=, =removeAuthor=, =getDiscussionCounts=,
+  =getExportManifest=, =injectContext=, =loadSections=, =loadSectionsMeta= ([[web:src/lib/api.ts][api.ts]]).
+  *Keep =evictProfiles=* — it's used internally by =refreshProfiles=.
+- [ ] Remove the demo =recentlyClosed= seed at [[web:src/routes/+page.svelte::255][+page.svelte:255-258]].
+- [ ] Leave =/design/*= artboards + their components (=IdBar=/=PanelHeader=/=PubRow=)
+  ALONE — they are live design scratch (memory =project_design_handoff=). Just confirm
+  they're still the only consumers; do not delete.
+- Verify :: =pnpm -C web check= clean; app builds; grep the deleted names return 0 hits.
+- Commit :: "chore(web): drop pre-WM orphan components + dead api client fns".
+
+* Phase 2 — Wire existing Rust (kill one TS twin) [0/1]
+- [ ] Point the discussion-count *badges* at the existing [[src:src/api.rs::2297][discussions/counts]] endpoint
+  instead of re-tallying =a=/=A= tags client-side in [[web:src/lib/wm/renderers/ReaderBuffer.svelte::164][ReaderBuffer.svelte:164-201]].
+  Keep the =discussions/list= call (it feeds inline thread rendering) — only stop the
+  TS count derivation.
+- Verify :: badge counts match before/after on a publication with comments + highlights.
+- Commit :: "refactor(web): use engine discussions/counts for badges".
+
+* Phase 3 — Shed the Rust TUI state machine [0/4]
+Pure deletion, large loc, but order matters: *extract the pure core FIRST, then delete.*
+See [[file:03-tree-module.org][03]] for the full keep/drop partition.
+- [ ] *Extract* the compose payload structs (the KEEP list above) out of
+  [[src:src/tree/state.rs][state.rs]] into a new module (=src/publication/compose.rs= or =src/compose_types.rs=).
+  Repoint the ~140 external refs in [[src:src/api.rs][api.rs]], [[src:src/engine.rs][engine.rs]], [[src:src/publication.rs][publication.rs]],
+  [[src:src/publication/tree_emit.rs][tree_emit.rs]], [[src:src/drafts.rs][drafts.rs]]. Keep =parser.rs=/=content.rs=/=node.rs= where they are.
+- [ ] *Delete* the view-state machine: =engine.rs= (=TreeEngine=), =command.rs=,
+  =render.rs= (=TreeRenderer=/=TextRenderer=/=VisibleNode=), =undo.rs=, and the dead
+  state.rs types (=TreeState=, =ViewState=, =ViewMode=, =EditorViewMode=, =FilterMode=,
+  =CommandPaletteState=, =WindowManager=/=WindowState=, =LoginDialogState=,
+  =UserDataMenuState=, =ClipboardContent=, =AppMode=). This also removes the dead
+  =AsyncRequest::LoadUserData=/=AsyncResult::UserDataLoaded= plumbing — note that
+  =user_data.rs= itself stays (revived in Phase 5).
+- [ ] Rewrite [[src:src/tree/mod.rs][mod.rs]] re-exports + its docstring to describe only what remains
+  (the pure core), and remove the stale "TreeEngine async boundary" prose.
+- [ ] Fold in the small confirmed Rust dead-code from [[file:02-engine-data-layer.org][02]] while you're here: the 4
+  unused [[src:src/relay.rs][relay.rs]] helpers + =LOCAL_RELAY=, =list_publications_before=, the stray
+  =file= open in [[src:src/claude_sessions.rs::264][claude_sessions.rs:264]], the =let _ = Phase::Read= hack
+  ([[src:src/engine.rs::574][engine.rs:574]]).
+- Verify :: =cargo build= (0 errors), =cargo test=, =cargo clippy= (warning count should
+  DROP). Confirm nothing live referenced the deleted types (=rg= the type names → only
+  internal/test hits before deleting).
+- Commit :: "refactor(tree): extract compose core, delete dead TUI state machine".
+
+* Phase 4 — Build the missing NIP transforms in Rust [0/4]
+The real wins. Each is independent — do one per branch/PR off =cleanup/boundary-compliance=
+(or off =tendrl-web=). Pattern for every item: build the Rust transform + unit tests →
+expose/extend the endpoint → switch the web to consume it → *delete the TS twin* →
+=pnpm -C web check= → commit. Smallest/clearest first.
+- [ ] *4a NIP-19 encode* — add =encode= for naddr/npub/nevent to [[src:src/nip19.rs][nip19.rs]] (it has
+  =decode= already); expose =POST /api/v1/encode= (or return pre-encoded ids on events).
+  Replace the from-scratch bech32m in [[web:src/lib/nostr/nip19.ts][nip19.ts]]; delete it. Test: =decode(encode(x)) == x=.
+- [ ] *4b Republish-diff* — move =detectRepublish=/=flattenToc= + slug matching
+  ([[web:src/lib/state.svelte.ts::1485][state.svelte.ts:1485]]) into Rust (reuse =generate_d_tag=); return a =RepublishDiff=
+  from an endpoint (or as part of =publish/preview=). Delete TS =detectRepublish= +
+  [[web:src/lib/nostr/slug.ts][slug.ts]]. Ties to [[../republish-diff.md][republish-diff.md]] — tick its deferred items as they land.
+- [ ] *4c NIP-22 threading* — add =build_thread= over the events [[src:src/api.rs::2630][discussions/list]] already
+  loads; return a nested =ThreadNode= forest (threaded mode on the existing endpoint or
+  a new =/discussions/thread=). Delete [[web:src/lib/discussions/thread.ts][thread.ts]] =buildThread=; TS keeps only
+  depth→indent rendering. Ties to [[../discussions-plan.md][discussions-plan.md]] build-order #1/#4.
+- [ ] *4d NIP-84 highlight resolution* — hardest + highest value (currently a known-wrong
+  substring placeholder; the plan's "loudest gap"). Build offset-aware span resolution
+  in Rust returning =(start,end,id,pubkey)=. Delete [[web:src/lib/discussions/highlights.ts][highlights.ts]]
+  =computeHighlightSegments=; TS renders =<mark>= spans. Unblocks the offset-pinned
+  highlights roadmap item.
+
+* Phase 5 — Revive unwired Rust parsing (decision-gated) [0/2]
+Not auto-go — decide intent first (a fresh worker should raise this, not assume).
+- [ ] *user_data.rs* — per the boundary, kind 0/3/51/65 parsing belongs in Rust. Expose
+  the parsed user-data via an endpoint and replace the client-side parsing in
+  =RelaysBuffer.svelte=. Larger than Phase 4 items; confirm it's wanted now vs later.
+- [ ] *drafts.rs* =DraftStore=/=LocalPublicationTracker= — confirm the live draft path
+  ([[src:src/api.rs][api.rs]] publish handlers); then either wire =DraftStore= in or delete it.
+
+* Out of scope for THIS plan (track separately)
+- *Correctness bug:* [[src:src/api.rs::3358][publish_blocks_handler]] bypasses the SigningController →
+  NIP-07 users get *unsigned* block publishes. This is a BUG, not cleanup — fix it on a
+  =bugs= branch/worktree per the bug workflow, ideally before Phase 4 (it touches the
+  publish path). See [[file:04-api-network-identity.org][04]].
+- *Rust duplication* (relay set-name routing 4×, =sign_event= helper for the 4 builders,
+  the ~130-line publish-handler twin) — real debt, but it's refactor-for-cleanliness;
+  schedule after the shed/build work so you're de-duping the final shape. See [[file:02-engine-data-layer.org][02]].
+- *Phantom relay-class config* (=broadcast_relays()=, search DiscoveryClass,
+  SignerCapabilities, NIP-46) — wire-or-hide; product decision. See [[file:04-api-network-identity.org][04]] + [[file:01-roadmap-intent-map.org][01]].
+- *api.rs / engine.rs / publication.rs file splits* — do LAST, after the dead code is
+  gone and the boundaries are clean.
+
+* Suggested sequencing
+Phase 1 → Phase 2 (a day of zero/low-risk wins, immediately legible) → the
+publish-blocks BUG on its own branch → Phase 3 (the big satisfying deletion) → Phase 4
+one transform at a time (4a → 4b → 4c → 4d) → reassess Phase 5. Update this doc's
+checkboxes and the relevant roadmap docs ([[../republish-diff.md][republish-diff.md]], [[../discussions-plan.md][discussions-plan.md]]) at
+each phase boundary.
