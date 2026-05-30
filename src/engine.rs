@@ -489,7 +489,7 @@ impl Engine {
         pattern: crate::network::FetchPattern,
         mode_confirm: bool,
     ) -> Vec<Value> {
-        use crate::network::{Phase, RequestSummary, RelayStatusValue};
+        use crate::network::{RequestSummary, RelayStatusValue};
 
         // Flatten the composition's primary stage relays into the
         // initial Intent's `relays` field (back-compat for clients
@@ -570,8 +570,6 @@ impl Engine {
         }
 
         op.complete(all_events.len());
-        // Silence unused warning if Phase is referenced only above.
-        let _ = Phase::Read;
         all_events
     }
 

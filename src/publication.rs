@@ -1495,50 +1495,6 @@ impl<'a> PublicationEngine<'a> {
         Ok(roots)
     }
 
-    /// List publications created before a given timestamp (for pagination)
-    pub async fn list_publications_before(
-        &self,
-        before_timestamp: u64,
-        _policy: FetchPolicy,
-        limit: usize,
-    ) -> Result<Vec<Publication>> {
-        use serde_json::json;
-
-        // Scope to known authors — same as list_root_publications
-        let mut authors: Vec<String> = self.engine.relay_config().authors_hex();
-        if let Some(me) = self.engine.my_pubkey() {
-            if !authors.contains(&me.to_string()) {
-                authors.push(me.to_string());
-            }
-        }
-        if let Some(asst) = self.engine.assistant_pubkey() {
-            if !authors.contains(&asst.to_string()) {
-                authors.push(asst.to_string());
-            }
-        }
-
-        let mut filter = json!({
-            "kinds": [KIND_PUBLICATION_INDEX],
-            "until": before_timestamp - 1,
-            "limit": limit * 5
-        });
-        if !authors.is_empty() {
-            filter["authors"] = json!(authors);
-        }
-
-        let response = self.engine.get_events(vec![filter], FetchPolicy::LocalOnly, None).await?;
-        let ignore_list = self.engine.ignore_list().read().await.clone();
-        let events = response.events;
-
-        let roots = tokio::task::spawn_blocking(move || {
-            process_root_publications(events, ignore_list, limit)
-        })
-        .await
-        .map_err(|e| crate::error::EngineError::Database(format!("spawn_blocking: {e}")))?;
-
-        Ok(roots)
-    }
-
     /// Find alternate versions of a section (for forking UI)
     pub async fn find_section_versions(
         &self,

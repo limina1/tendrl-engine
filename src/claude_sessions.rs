@@ -261,9 +261,6 @@ pub fn get_session(claude_dir: &Path, session_id: &str) -> Result<SessionDetail>
         .unwrap_or("")
         .to_string();
 
-    let file = std::fs::File::open(path)
-        .map_err(|e| EngineError::Database(format!("Failed to open session: {e}")))?;
-
     let messages = parse_session_messages(path, 0)?;
     Ok(SessionDetail { id, messages })
 }

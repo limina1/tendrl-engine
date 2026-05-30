@@ -1,58 +1,27 @@
-//! Tree navigation and manipulation for NKBIP-01 publications
+//! Pure document-structure core for NKBIP-01 publications.
 //!
-//! This module provides an interface-agnostic TreeEngine for navigating and
-//! manipulating publications (kind 30040) and sections (kind 30041) with
-//! vim-style keybindings.
+//! What remains here is the frontend-agnostic, IO-free core that any frontend
+//! (web today; emacs/nvim planned) can share as the single source of truth for
+//! turning text into structured events:
 //!
-//! # Architecture
+//! - [`node`]: the `TreeNode` data structure (publication/section nodes) and
+//!   `ContentMode`.
+//! - [`parser`]: line-by-line classification of compose input — which lines
+//!   become kind 30040 indexes vs. kind 30041 sections.
+//! - [`content`]: `ContentDetector` content-format detection.
 //!
-//! The tree module is designed with clear separation of concerns:
-//!
-//! - **Pure state** (`state.rs`): TreeState holds all tree data with no IO
-//! - **Commands** (`command.rs`): TreeCommand enum defines all operations
-//! - **Engine** (`engine.rs`): TreeEngine executes commands synchronously
-//! - **Async bridge**: When IO is needed, engine returns AsyncRequest
-//!
-//! # Example
-//!
-//! ```rust,no_run
-//! use nostr_engine::tree::{TreeEngine, TreeState, TreeCommand, CommandResult};
-//!
-//! let mut state = TreeState::new();
-//! let engine = TreeEngine::new();
-//!
-//! // Execute a navigation command
-//! match engine.execute(&mut state, TreeCommand::MoveDown) {
-//!     CommandResult::Ok => println!("Moved down"),
-//!     CommandResult::NeedsAsync(req) => {
-//!         // Handle async loading in your UI layer
-//!         println!("Need to load: {}", req.description());
-//!     }
-//!     CommandResult::Error(e) => eprintln!("Error: {}", e),
-//!     _ => {}
-//! }
-//! ```
+//! The former ratatui TUI lived here too (a `TreeState`/`TreeEngine`/
+//! `TreeCommand` navigation machine plus window/palette/clipboard view-state).
+//! It had no production consumer after the TUI was removed and was deleted in
+//! the Phase 3 boundary cleanup (docs/eval/09). View/interaction state belongs
+//! in the frontend; the compose payload types moved to
+//! [`crate::publication::compose`].
 
-pub mod command;
 pub mod content;
-pub mod engine;
 pub mod node;
 pub mod parser;
-pub mod render;
-pub mod state;
-pub mod undo;
 
-// Re-export main types
-pub use command::{
-    all_commands, AsyncRequest, AsyncResult, CommandCategory, CommandInfo, CommandResult,
-    ConfigAction, TreeCommand,
-};
+// Re-export the pure core types.
 pub use content::ContentDetector;
-pub use engine::TreeEngine;
 pub use node::{ContentMode, NodeId, PublicationNode, SectionNode, TreeNode};
-pub use render::{RenderOptions, TreeRenderer, VisibleNode};
-pub use state::{
-    AppMode, ClipboardContent, CommandPaletteState, EditorComposeState, FilterMode, TreeState, ViewMode, ViewState,
-};
 pub use parser::{LineType, ParsedDocument, ParsedLine, Section as ParsedSection};
-pub use undo::{Operation, UndoStack};

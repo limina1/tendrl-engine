@@ -11,9 +11,6 @@ use tokio::time::timeout;
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 use tracing::{debug, info, warn};
 
-/// Local relay URL (checked at startup)
-pub const LOCAL_RELAY: &str = "ws://localhost:3334";
-
 /// Default relays to fetch from (focused on publication-supporting relays)
 pub const DEFAULT_RELAYS: &[&str] = &[
     "ws://localhost:3334",
@@ -39,30 +36,6 @@ pub const DEFAULT_INDEXERS: &[&str] = &[
 /// search is opt-in and the user is more likely to have a specific
 /// search relay preference than a profile-discovery one.
 pub const DEFAULT_SEARCH: &[&str] = &[];
-
-/// Check if a local relay is available at the given URL
-/// Returns true if the relay accepts a WebSocket connection within the timeout
-pub async fn check_relay_available(relay_url: &str) -> bool {
-    match timeout(Duration::from_millis(500), connect_async(relay_url)).await {
-        Ok(Ok(_)) => {
-            info!("Local relay available at {}", relay_url);
-            true
-        }
-        Ok(Err(e)) => {
-            debug!("Local relay not available at {}: {}", relay_url, e);
-            false
-        }
-        Err(_) => {
-            debug!("Timeout connecting to local relay at {}", relay_url);
-            false
-        }
-    }
-}
-
-/// Get the list of relays to use
-pub async fn get_relays_with_local() -> Vec<String> {
-    DEFAULT_RELAYS.iter().map(|s| s.to_string()).collect()
-}
 
 /// Fetch events using NIP-01 filters from a relay
 pub async fn fetch_with_filters(
@@ -168,37 +141,6 @@ pub async fn fetch_with_filters(
     );
 
     Ok(fetched_events)
-}
-
-/// Fetch events from multiple relays and merge results
-pub async fn fetch_from_multiple_relays(
-    ndb: &Ndb,
-    relays: &[String],
-    filters: &[Value],
-) -> Result<Vec<Value>> {
-    let mut all_events = Vec::new();
-    let mut seen_ids = std::collections::HashSet::new();
-
-    for relay_url in relays {
-        match fetch_with_filters(ndb, relay_url, filters).await {
-            Ok(events) => {
-                for event in events {
-                    // Deduplicate by event ID
-                    if let Some(id) = event.get("id").and_then(|v| v.as_str()) {
-                        if seen_ids.insert(id.to_string()) {
-                            all_events.push(event);
-                        }
-                    }
-                }
-            }
-            Err(e) => {
-                warn!("Failed to fetch from {}: {}", relay_url, e);
-                // Continue with other relays
-            }
-        }
-    }
-
-    Ok(all_events)
 }
 
 /// Fetch a single event by ID from relays
