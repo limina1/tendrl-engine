@@ -3037,6 +3037,10 @@ pub async fn publish_handler(
             dsl: format!("pub k:30040,30041 ({} events) via:publish", event_jsons.len()),
         };
 
+        let manifest = crate::network::PublishManifest::from_events(
+            section_events.iter().chain(std::iter::once(&pub_event)),
+        );
+
         let op = match engine
             .begin_publish_operation(
                 format!(
@@ -3047,6 +3051,7 @@ pub async fn publish_handler(
                 relays.clone(),
                 event_ids,
                 Some(summary),
+                Some(manifest),
             )
             .await
         {
@@ -3464,6 +3469,10 @@ pub async fn publish_blocks_handler(
             ),
         };
 
+        let manifest = crate::network::PublishManifest::from_events(
+            section_events.iter().chain(std::iter::once(&pub_event)),
+        );
+
         let op = engine
             .begin_publish_operation(
                 format!(
@@ -3474,6 +3483,7 @@ pub async fn publish_blocks_handler(
                 relays.clone(),
                 event_ids,
                 Some(summary),
+                Some(manifest),
             )
             .await
             .ok();
@@ -4303,19 +4313,23 @@ pub async fn identity_use_source_handler(
     let new_source = match req.source.as_str() {
         "engine" => IdentitySource::Engine,
         "nip07" => {
-            let signer_id = req
-                .signer_id
-                .ok_or_else(|| EngineError::Config("nip07 source requires signer_id".into()))?;
+            let signer_id = req.signer_id.ok_or_else(|| {
+                EngineError::BadRequest(
+                    "nip07 source requires a signer_id — register a signer first (no extension connected?)".into(),
+                )
+            })?;
             IdentitySource::Nip07 { signer_id: Some(signer_id) }
         }
         "nip46" => {
-            let signer_id = req
-                .signer_id
-                .ok_or_else(|| EngineError::Config("nip46 source requires signer_id".into()))?;
+            let signer_id = req.signer_id.ok_or_else(|| {
+                EngineError::BadRequest(
+                    "nip46 source requires a signer_id — register a signer first".into(),
+                )
+            })?;
             IdentitySource::Nip46 { signer_id: Some(signer_id) }
         }
         other => {
-            return Err(EngineError::Config(format!("unknown source: {other}")));
+            return Err(EngineError::BadRequest(format!("unknown source: {other}")));
         }
     };
     let mut session = identity.lock().unwrap();
@@ -4447,6 +4461,8 @@ pub async fn broadcast_handler(
         dsl: format!("pub k:{kind} via:broadcast"),
     };
 
+    let manifest = crate::network::PublishManifest::from_events(std::iter::once(&req.event));
+
     // Open the publish op envelope so the UI sees the activity. If the
     // user declines in Confirm mode, this returns FetchCancelled.
     let op = match engine
@@ -4455,6 +4471,7 @@ pub async fn broadcast_handler(
             relays.clone(),
             vec![event_id.clone()],
             Some(summary),
+            Some(manifest),
         )
         .await
     {

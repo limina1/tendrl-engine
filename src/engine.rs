@@ -154,6 +154,14 @@ pub struct Engine {
     network: Arc<NetworkActivity>,
     /// NIP-11 relay information cache (process-wide, 1h TTL)
     nip11_cache: crate::nip11::Nip11Cache,
+    /// Sections (pubkey, d_tag) that the background sync tried to fetch
+    /// and NO configured relay had — mapped to the time we last tried.
+    /// Without this, `fetch_missing_sections` recomputes the missing set
+    /// from scratch every 60s and re-requests structurally-unreachable
+    /// sections from every relay forever. Entries are skipped until the
+    /// retry TTL lapses; `add_relay` clears the map so a new relay gets
+    /// an immediate shot at previously-unreachable sections.
+    unreachable_sections: std::sync::Mutex<std::collections::HashMap<(String, String), std::time::Instant>>,
 }
 
 impl Engine {
@@ -252,6 +260,7 @@ impl Engine {
             claude_sessions_dir: None,
             network: Arc::new(NetworkActivity::new(NetworkMode::Auto)),
             nip11_cache: crate::nip11::Nip11Cache::new(),
+            unreachable_sections: std::sync::Mutex::new(std::collections::HashMap::new()),
         })
     }
 
@@ -785,10 +794,11 @@ impl Engine {
         relays: Vec<String>,
         event_ids: Vec<String>,
         summary: Option<crate::network::RequestSummary>,
+        manifest: Option<crate::network::PublishManifest>,
     ) -> std::result::Result<crate::network::PublishOperation, crate::network::FetchCancelled>
     {
         self.network
-            .begin_publish_operation(label, relays, event_ids, summary)
+            .begin_publish_operation(label, relays, event_ids, summary, manifest)
             .await
     }
 
@@ -912,6 +922,11 @@ impl Engine {
         };
         if let Err(e) = self.relay_store.save(&snapshot) {
             warn!("Failed to persist relay add ({set}/{url}): {e}");
+        }
+        // A new relay may carry sections we'd written off as unreachable —
+        // clear the skip map so the next background sync retries them.
+        if let Ok(mut skip) = self.unreachable_sections.lock() {
+            skip.clear();
         }
         true
     }
@@ -1305,6 +1320,26 @@ impl Engine {
         .await
         .map_err(|e| EngineError::Database(format!("spawn_blocking: {e}")))?;
 
+        // Skip sections we already tried against the current relay set and
+        // found nowhere within the retry window. Without this, the 60s
+        // background loop recomputes `missing` from scratch and re-requests
+        // structurally-unreachable sections from every relay forever (the
+        // within-call taper below only helps when a *later* relay in the
+        // same fan-out has the section). `add_relay` clears the map so a
+        // newly added relay retries previously-unreachable sections at once.
+        const UNREACHABLE_RETRY_TTL: std::time::Duration =
+            std::time::Duration::from_secs(30 * 60);
+        let now = std::time::Instant::now();
+        let missing: Vec<(String, String)> = {
+            let mut skip = self.unreachable_sections.lock().unwrap();
+            // Expire stale entries so they get another chance.
+            skip.retain(|_, t| now.duration_since(*t) < UNREACHABLE_RETRY_TTL);
+            missing
+                .into_iter()
+                .filter(|key| !skip.contains_key(key))
+                .collect()
+        };
+
         if missing.is_empty() {
             return Ok((needed_count, 0, 0));
         }
@@ -1414,6 +1449,16 @@ impl Engine {
                 for d in remaining {
                     tried_empty.insert((pubkey.clone(), d));
                 }
+            }
+        }
+
+        // Remember what stayed unreachable so the next cycle skips it
+        // until the TTL lapses (or a relay is added) — this is what stops
+        // the every-60s re-request storm.
+        if !tried_empty.is_empty() {
+            let mut skip = self.unreachable_sections.lock().unwrap();
+            for key in tried_empty.iter() {
+                skip.insert(key.clone(), now);
             }
         }
 

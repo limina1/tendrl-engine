@@ -158,6 +158,11 @@ function _createAppState() {
 	let feedSyncing = $state(false);
 	let feedLoadingMore = $state(false);
 	let feedHasMore = $state(true);
+	// Guards the one-time cold-cache auto-fetch in loadFeed() so an empty
+	// db doesn't re-pop the fetch-confirm modal on every loadFeed() call
+	// (FeedBuffer mount, search-clear, etc.). Plain boolean, not $state —
+	// it's an internal latch, never rendered. Resets on page reload.
+	let coldFetchAttempted = false;
 
 	// --- Toasts ---
 	//
@@ -947,12 +952,21 @@ function _createAppState() {
 		try {
 			let resp = await api.listPublications();
 			// Cold-cache fallback: if local nostrdb has nothing (fresh
-			// install, post-purge, etc.), automatically retry with
-			// `fetch_always` so the user sees content without having
-			// to manually hit a Sync button. In confirm mode the
-			// engine pops the FetchConfirmModal; in auto it fires
-			// silently and the activity toast tracks progress.
-			if (resp.publications.length === 0) {
+			// install, post-purge, etc.), retry ONCE with `fetch_always`
+			// so the user sees content without manually hitting Sync. In
+			// confirm mode the engine pops the FetchConfirmModal; in auto
+			// it fires silently and the activity toast tracks progress.
+			//
+			// The `coldFetchAttempted` guard is essential: loadFeed() is
+			// called from ~10 sites — notably an $effect on every
+			// FeedBuffer mount, plus search-clear and post-publish — so
+			// without it an empty db would re-fire this fetch (and re-pop
+			// the confirm modal) on every buffer switch. We attempt the
+			// single composite query at most once per session; afterwards
+			// the empty-state's "Fetch from relays" button is the way to
+			// re-trigger it deliberately.
+			if (resp.publications.length === 0 && !coldFetchAttempted) {
+				coldFetchAttempted = true;
 				try {
 					const fetched = await api.listPublications(20, 'fetch_always');
 					if (fetched.publications.length > 0) resp = fetched;
