@@ -119,7 +119,7 @@ See [[file:03-tree-module.org][03]] for the full keep/drop partition.
 - Result :: −5166 loc net; =src/tree/= is now =mod.rs= + =node.rs= + =parser.rs= +
   =content.rs= (pure core only). Landed as two commits (extract, then delete).
 
-* Phase 4 — Build the missing NIP transforms in Rust [2/4]
+* Phase 4 — Build the missing NIP transforms in Rust [3/4]
 The real wins. Each is independent — do one per branch/PR off =cleanup/boundary-compliance=
 (or off =tendrl-web=). Pattern for every item: build the Rust transform + unit tests →
 expose/extend the endpoint → switch the web to consume it → *delete the TS twin* →
@@ -150,10 +150,21 @@ expose/extend the endpoint → switch the web to consume it → *delete the TS t
   client re-slug). Deleted TS =flattenToc= + [[web:src/lib/nostr/slug.ts][slug.ts]]. Updated [[../republish-diff.md][republish-diff.md]].
   Verify :: =cargo test --lib republish= 3 passed; =cargo test= 295 (+3); clippy 45;
   =pnpm -C web check= 0 errors. See [[../commands.org][commands.org]] "Phase 4b verify".
-- [ ] *4c NIP-22 threading* — add =build_thread= over the events [[src:src/api.rs::2630][discussions/list]] already
-  loads; return a nested =ThreadNode= forest (threaded mode on the existing endpoint or
-  a new =/discussions/thread=). Delete [[web:src/lib/discussions/thread.ts][thread.ts]] =buildThread=; TS keeps only
-  depth→indent rendering. Ties to [[../discussions-plan.md][discussions-plan.md]] build-order #1/#4.
+- [X] *4c NIP-22 threading* — ✓ landed. New pure module [[src:src/discussions.rs][src/discussions.rs]]:
+  =build_thread= (NIP-22 parent resolution — first in-set lowercase =e= tag is the
+  parent, orphans surface as roots, dedup by lowercase id, depth + =created_at=
+  sort) + =group_threads_by_address= (buckets kind-1111 comments by referenced
+  =a=/=A= address, threads each — mirrors the reader's per-section grouping). 9
+  unit tests. Extended =discussions/list= with a =threaded= flag: address queries
+  get =threads_by_address=, event-id queries get a flat =threads= forest (both
+  =skip_serializing_if= empty). Rewired all three consumers (=ReaderBuffer=,
+  =DocBuffer=, =DiscussionViewBuffer=) to consume the engine forest; =ReaderBuffer=
+  keeps its client =discussionEvents= grouping only for highlights + author
+  prefetch. Deleted =buildThread= from [[web:src/lib/discussions/thread.ts][thread.ts]] — it keeps only the type +
+  =flattenThread=/=threadContainsId=/=countThread= view helpers. Ties to
+  [[../discussions-plan.md][discussions-plan.md]] build-order #2.
+  Verify :: =cargo test --lib discussions= 9 passed; =cargo test= 304 (+9); clippy
+  45; =pnpm -C web check= 0 errors. See [[../commands.org][commands.org]] "Phase 4c verify".
 - [ ] *4d NIP-84 highlight resolution* — hardest + highest value (currently a known-wrong
   substring placeholder; the plan's "loudest gap"). Build offset-aware span resolution
   in Rust returning =(start,end,id,pubkey)=. Delete [[web:src/lib/discussions/highlights.ts][highlights.ts]]

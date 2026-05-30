@@ -6,7 +6,7 @@
 	import type { Buffer } from '../types';
 	import { getAppState } from '$lib/state.svelte';
 	import CommentThread from '$lib/components/CommentThread.svelte';
-	import { buildThread, type ThreadNode } from '$lib/discussions/thread';
+	import { type ThreadNode } from '$lib/discussions/thread';
 	import { computeHighlightSegments, type Highlight } from '$lib/discussions/highlights';
 	import { pubkeyToHighlightFill, pubkeyToHighlightStroke } from '$lib/discussions/colors';
 	import { prefetchAuthors, refreshAuthors } from '$lib/discussions/authors.svelte';
@@ -119,11 +119,13 @@
 				kinds: [1111, 9802],
 				policy: opts.policy ?? 'local_first',
 				bypassOffline: opts.bypassOffline,
-				limit: 500
+				limit: 500,
+				threaded: true
 			});
-			// kind 1111 = NIP-22 comments → threaded; kind 9802 = NIP-84
-			// highlights → overlaid on the body as <mark>s in author hues.
-			threads = buildThread(resp.events.filter((e) => e.kind === 1111));
+			// kind 1111 = NIP-22 comments → threaded engine-side, keyed by this
+			// doc's addr; kind 9802 = NIP-84 highlights → overlaid on the body as
+			// <mark>s in author hues.
+			threads = resp.threads_by_address?.[addrStr] ?? [];
 			highlights = resp.events
 				.filter((e) => e.kind === 9802)
 				.map((e) => ({ id: e.id, content: e.content ?? '', pubkey: e.pubkey }));

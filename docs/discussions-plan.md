@@ -1091,8 +1091,12 @@ web/src/lib/
 
 1. **`discussions/list` endpoint** — unlocks every read-side UI below
    without any auth or signing concerns.
-2. **NIP-22 thread builder** (`web/src/lib/discussions/thread.ts`).
-   Pure logic, testable in isolation.
+2. **NIP-22 thread builder** — ✓ shipped, and as of Phase 4b/4c **moved to
+   Rust** (`src/discussions.rs::build_thread` / `group_threads_by_address`),
+   returned by `POST /discussions/list` with `threaded: true`. Pure logic,
+   unit-tested in isolation. `web/src/lib/discussions/thread.ts` keeps only the
+   depth→indent rendering + tree-walk view helpers (the `buildThread` algorithm
+   was deleted there). Per the frontend/backend boundary.
 3. **`DiscussionsListBuffer`** — wired to (1) + (2). Now the badges
    become navigable; #1 (read everything) is done.
 4. **Inline `SectionDisclosure`** — reuses (2). Reader gains inline

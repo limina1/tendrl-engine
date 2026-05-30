@@ -17,6 +17,7 @@ import type {
 	IdentityStatus,
 	RepublishDiff
 } from './types';
+import type { ThreadNode } from './discussions/thread';
 
 async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
 	const res = await fetch(url, {
@@ -997,6 +998,14 @@ export interface DiscussionsListResponse {
 	/** Unix seconds at which the engine computed the result. Pass back
 	 *  as `since` on a subsequent call for incremental refresh. */
 	refreshed_at: number;
+	/** NIP-22 thread forest grouped by referenced address (kind-1111 only),
+	 *  built engine-side when `threaded` was set on an address query. The
+	 *  reader renders these directly instead of threading the events itself.
+	 *  Absent when `threaded` was not requested or the query was event-id-only. */
+	threads_by_address?: Record<string, ThreadNode[]>;
+	/** Flat NIP-22 thread forest, built engine-side when `threaded` was set on
+	 *  an *event-id* query (no address to group by). Absent otherwise. */
+	threads?: ThreadNode[];
 }
 
 export function getDiscussionList(
@@ -1009,6 +1018,10 @@ export function getDiscussionList(
 		since?: number;
 		bypassOffline?: boolean;
 		relays?: string[];
+		/** Ask the engine to thread the kind-1111 comments and return the
+		 *  forest (`threads_by_address` for address queries, `threads` for
+		 *  event-id queries) instead of the caller threading client-side. */
+		threaded?: boolean;
 	} = {}
 ) {
 	// POST, not GET: a deep publication tree references hundreds of
@@ -1025,7 +1038,8 @@ export function getDiscussionList(
 			limit: options.limit,
 			since: options.since,
 			mode_confirm: options.bypassOffline ?? false,
-			relays: options.relays ?? []
+			relays: options.relays ?? [],
+			threaded: options.threaded ?? false
 		})
 	});
 }

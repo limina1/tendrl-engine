@@ -2567,6 +2567,11 @@ pub struct DiscussionsListRequest {
     pub limit: Option<usize>,
     pub since: Option<i64>,
     pub mode_confirm: bool,
+    /// When true, the response also carries the NIP-22 thread forest built
+    /// engine-side (`threads_by_address` for address queries, the flat
+    /// `threads` for event-id queries). The web consumes that instead of
+    /// threading the flat `events` itself.
+    pub threaded: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -2582,6 +2587,17 @@ pub struct DiscussionsListResponse {
     /// Server's view of when the result was computed (unix seconds).
     /// The web uses this as a `since` cursor for incremental refreshes.
     pub refreshed_at: i64,
+    /// NIP-22 thread forest grouped by requested address (kind-1111 comments
+    /// only), present when `threaded` was set on an address query. Each address
+    /// maps to its root threads; the reader renders these directly. Omitted
+    /// (not just empty) when not requested or when the query was event-id-only.
+    #[serde(skip_serializing_if = "std::collections::HashMap::is_empty")]
+    pub threads_by_address:
+        std::collections::HashMap<String, Vec<crate::discussions::ThreadNode>>,
+    /// Flat NIP-22 thread forest over all kind-1111 comments, present when
+    /// `threaded` was set on an *event-id* query (no address to group by).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub threads: Vec<crate::discussions::ThreadNode>,
 }
 
 /// A bare 32-byte event id: exactly 64 hex chars.
@@ -2808,6 +2824,8 @@ pub async fn discussions_list_handler(
                 relay_count: 0,
             },
             refreshed_at: now,
+            threads_by_address: std::collections::HashMap::new(),
+            threads: vec![],
         }));
     }
 
@@ -2926,6 +2944,31 @@ pub async fn discussions_list_handler(
     // query carries no address coordinates, so counts stays empty there.
     let counts = tally_discussion_counts(&events, &addresses);
 
+    // Thread engine-side when asked. Address queries group by section
+    // (`threads_by_address`); an event-id-only query has no address to group
+    // by, so it gets the flat `threads` forest. The web consumes these instead
+    // of threading the flat `events` itself.
+    let (threads_by_address, threads) = if req.threaded {
+        if !addresses.is_empty() {
+            (
+                crate::discussions::group_threads_by_address(&events, &addresses),
+                Vec::new(),
+            )
+        } else {
+            let comments: Vec<Value> = events
+                .iter()
+                .filter(|e| e.get("kind").and_then(|v| v.as_u64()) == Some(1111))
+                .cloned()
+                .collect();
+            (
+                std::collections::HashMap::new(),
+                crate::discussions::build_thread(&comments),
+            )
+        }
+    } else {
+        (std::collections::HashMap::new(), Vec::new())
+    };
+
     if let Some(op) = op {
         op.complete(events.len());
     }
@@ -2934,6 +2977,8 @@ pub async fn discussions_list_handler(
         counts,
         source: response.source,
         refreshed_at: now,
+        threads_by_address,
+        threads,
     }))
 }
 

@@ -3,7 +3,7 @@
 	import { getActiveStore } from '../buffer-store.svelte';
 	import type { Buffer } from '../types';
 	import CommentThread from '$lib/components/CommentThread.svelte';
-	import { buildThread, type ThreadNode } from '$lib/discussions/thread';
+	import { countThread, flattenThread, type ThreadNode } from '$lib/discussions/thread';
 	import { prefetchAuthors } from '$lib/discussions/authors.svelte';
 
 	let { buffer }: { buffer: Buffer } = $props();
@@ -213,20 +213,25 @@
 		}
 	}
 
-	// Rebuild the thread tree from a fresh set of comment events. Dedups
-	// by id and always folds in the comment being viewed — relays may lag
-	// and not echo it back, but it's definitely part of the thread.
-	function applyThread(events: NostrEvent[]) {
-		const byId = new Map<string, NostrEvent>();
-		for (const e of events) {
-			if (e.kind === 1111) byId.set(e.id, e);
-		}
-		if (event) byId.set(event.id, event);
-		const comments = [...byId.values()];
-		threadNodes = buildThread(comments);
-		threadCount = comments.length;
-		const authors = new Set(comments.map((c) => c.pubkey));
+	// Apply an engine-built thread forest. The forest already includes the
+	// comment being viewed — it tags the root we queried by and is locally
+	// cached (the user is reading it), so it's in the result set without a
+	// client-side inject. Count every node and warm the authors.
+	function applyThreads(threads: ThreadNode[]) {
+		threadNodes = threads;
+		threadCount = countThread(threads);
+		const authors = new Set(flattenThread(threads).map((n) => n.event.pubkey));
+		authors.delete('');
 		if (authors.size > 0) prefetchAuthors([...authors]);
+	}
+
+	// Pick this root's forest from a threaded discussions response: address
+	// roots are grouped under their coordinate; an event-id root has no
+	// address key, so it gets the flat forest.
+	function threadsFromResp(resp: api.DiscussionsListResponse, root: ParentRef): ThreadNode[] {
+		return root.type === 'a'
+			? resp.threads_by_address?.[root.value] ?? []
+			: resp.threads ?? [];
 	}
 
 	// Pull the whole thread in two phases:
@@ -254,14 +259,15 @@
 			}
 			const baseOpts: Parameters<typeof api.getDiscussionList>[0] = {
 				kinds: [1111],
-				limit: 500
+				limit: 500,
+				threaded: true
 			};
 			if (root.type === 'a') baseOpts.addresses = [root.value];
 			else baseOpts.eventIds = [root.value];
 
 			// Phase 1 — instant local render.
 			const local = await api.getDiscussionList({ ...baseOpts, policy: 'local_only' });
-			applyThread(local.events as NostrEvent[]);
+			applyThreads(threadsFromResp(local, root));
 			// Resolve the root header from cache while we're here.
 			await loadRootEvent(root);
 
@@ -271,7 +277,7 @@
 				policy: 'fetch_always',
 				bypassOffline: true
 			});
-			applyThread(fresh.events as NostrEvent[]);
+			applyThreads(threadsFromResp(fresh, root));
 		} catch (e) {
 			threadError = e instanceof Error ? e.message : String(e);
 		} finally {

@@ -20,7 +20,7 @@
 	} from '$lib/types';
 	import type { Buffer } from '../types';
 	import { sectionState, segmentSections } from '$lib/compose/state';
-	import { buildThread, threadContainsId, type ThreadNode } from '$lib/discussions/thread';
+	import { threadContainsId, type ThreadNode } from '$lib/discussions/thread';
 	import type { Highlight } from '$lib/discussions/highlights';
 	import CommentThread from '$lib/components/CommentThread.svelte';
 	import HighlightList from '$lib/components/HighlightList.svelte';
@@ -178,7 +178,8 @@
 				kinds: [1111, 9802],
 				policy,
 				bypassOffline: options.bypassOffline,
-				limit: 500
+				limit: 500,
+				threaded: true
 			});
 			// Group the returned events by referenced address for inline thread
 			// rendering (view concern). Tag scan is grouping-only; the counts
@@ -197,6 +198,8 @@
 				for (const m of matched) byAddr[m].push(ev);
 			}
 			discussionEvents = byAddr;
+			// Per-section thread forests, built engine-side (threaded: true).
+			threadsBySection = resp.threads_by_address ?? {};
 			discussionCounts = resp.counts;
 			discussionSource = resp.source;
 			discussionRefreshedAt = Date.now();
@@ -311,17 +314,14 @@
 	const parsedHighlightId = $derived(splitBufferId(buffer.id).highlightId);
 	const parsedFocusCommentId = $derived(splitBufferId(buffer.id).focusCommentId);
 
-	// Build a thread tree per section addr from the loaded discussion
-	// events. Highlights (kind 9802) are excluded from the tree — they
-	// surface as section badges + overlays, not inline comments.
-	const threadsBySection = $derived.by(() => {
-		const out: Record<string, ThreadNode[]> = {};
-		for (const [addr, events] of Object.entries(discussionEvents)) {
-			const comments = events.filter((e) => e.kind === 1111);
-			out[addr] = buildThread(comments);
-		}
-		return out;
-	});
+	// Per-section NIP-22 thread forests, keyed by section addr. Built
+	// engine-side (`POST /discussions/list` with `threaded: true`) and stored
+	// from the response in loadDiscussionCounts — the reader renders these
+	// directly. Highlights (kind 9802) are excluded engine-side; they surface
+	// as section badges + overlays, not inline comments. The client-side
+	// `discussionEvents` grouping is kept only for those highlights + author
+	// prefetch, not for threading.
+	let threadsBySection = $state<Record<string, ThreadNode[]>>({});
 
 	function threadsForSection(addr: { kind: number; pubkey: string; d_tag: string }): ThreadNode[] {
 		return threadsBySection[addrKey(addr)] ?? [];

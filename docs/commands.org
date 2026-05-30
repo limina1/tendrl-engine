@@ -1057,3 +1057,29 @@ cargo test            # 295 passed (+3)
 cargo clippy          # 45 warnings (unchanged)
 pnpm -C web check     # 0 errors
 #+end_src
+
+** Phase 4c verify — NIP-22 threading in Rust
+
+New pure module =src/discussions.rs= (=build_thread= + =group_threads_by_address=),
+exposed via a =threaded= flag on =POST /api/v1/discussions/list=. Deleted the TS
+=buildThread= from =web/src/lib/discussions/thread.ts= (kept the view helpers).
+
+#+begin_src bash
+# 1. Threading algorithm is unit-tested.
+cargo test --lib discussions    # 9 passed
+
+# 2. The web no longer builds threads client-side (only a provenance comment left).
+rg -n "buildThread" web/src      # 1 hit: the "moved to Rust" comment in thread.ts
+
+# 3. Threaded response smoke test (engine on :3030).
+curl -s -X POST localhost:3030/api/v1/discussions/list \
+  -H 'Content-Type: application/json' \
+  -d '{"addresses":["30041:<pubkey>:<dtag>"],"kinds":[1111],"policy":"local_only","threaded":true}' \
+  | jq '.threads_by_address | keys'
+# -> the address key, mapping to its NIP-22 thread forest
+
+# 4. Gates.
+cargo test            # 304 passed (+9)
+cargo clippy          # 45 warnings (unchanged)
+pnpm -C web check     # 0 errors
+#+end_src

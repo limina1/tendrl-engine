@@ -54,6 +54,7 @@ pub mod api;
 pub mod chat;
 pub mod claude_sessions;
 pub mod config;
+pub mod discussions;
 pub mod drafts;
 pub mod embedding;
 pub mod engine;
