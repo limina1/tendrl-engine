@@ -2282,6 +2282,60 @@ pub struct DiscussionCount {
     pub highlights: usize,
 }
 
+/// Tally NIP-22 comments (kind 1111) and NIP-84 highlights (kind 9802) per
+/// referenced address. An event is counted once per address it tags via `a`
+/// or `A` — a comment carrying both the parent `a` and root `A` for the same
+/// coordinate counts once. Every requested address appears in the result, at
+/// zero if nothing references it.
+///
+/// Callers must pass events already deduplicated by id (the `#a`/`#A` filters
+/// overlap), otherwise an event matched by both filters is tallied twice. This
+/// is the single source of truth for both `discussions/counts` and the
+/// `counts` ride-along on `discussions/list`.
+fn tally_discussion_counts(
+    events: &[Value],
+    addresses: &[String],
+) -> std::collections::HashMap<String, DiscussionCount> {
+    let address_set: std::collections::HashSet<&str> =
+        addresses.iter().map(String::as_str).collect();
+    let mut counts: std::collections::HashMap<String, DiscussionCount> = addresses
+        .iter()
+        .map(|a| (a.clone(), DiscussionCount::default()))
+        .collect();
+
+    for event in events {
+        let kind = event.get("kind").and_then(|v| v.as_u64()).unwrap_or(0);
+        let Some(tags) = event.get("tags").and_then(|v| v.as_array()) else {
+            continue;
+        };
+        let mut matched: std::collections::HashSet<&str> = std::collections::HashSet::new();
+        for tag in tags {
+            let arr = match tag.as_array() {
+                Some(a) if a.len() >= 2 => a,
+                _ => continue,
+            };
+            let key = arr[0].as_str().unwrap_or("");
+            if !matches!(key, "a" | "A") {
+                continue;
+            }
+            if let Some(val) = arr[1].as_str() {
+                if let Some(&hit) = address_set.get(val) {
+                    matched.insert(hit);
+                }
+            }
+        }
+        for addr in matched {
+            let entry = counts.entry(addr.to_string()).or_default();
+            match kind {
+                1111 => entry.comments += 1,
+                9802 => entry.highlights += 1,
+                _ => {}
+            }
+        }
+    }
+    counts
+}
+
 #[derive(Debug, Serialize)]
 pub struct DiscussionCountsResponse {
     pub counts: std::collections::HashMap<String, DiscussionCount>,
@@ -2367,46 +2421,9 @@ pub async fn discussion_counts_handler(
         .await?;
     let fetched = response.events.len();
 
-    let address_set: std::collections::HashSet<&str> =
-        addresses.iter().map(String::as_str).collect();
-    let mut counts: std::collections::HashMap<String, DiscussionCount> = addresses
-        .iter()
-        .map(|a| (a.clone(), DiscussionCount::default()))
-        .collect();
-
-    for event in &response.events {
-        let kind = event.get("kind").and_then(|v| v.as_u64()).unwrap_or(0);
-        let Some(tags) = event.get("tags").and_then(|v| v.as_array()) else {
-            continue;
-        };
-        // The same comment can carry both `a` (parent) and `A` (root) tags
-        // pointing to the same addr. We bump the counter once per (event,
-        // address) by collecting matched addresses first.
-        let mut matched: std::collections::HashSet<&str> = std::collections::HashSet::new();
-        for tag in tags {
-            let arr = match tag.as_array() {
-                Some(a) if a.len() >= 2 => a,
-                _ => continue,
-            };
-            let key = arr[0].as_str().unwrap_or("");
-            if !matches!(key, "a" | "A") {
-                continue;
-            }
-            if let Some(val) = arr[1].as_str() {
-                if let Some(&hit) = address_set.get(val) {
-                    matched.insert(hit);
-                }
-            }
-        }
-        for addr in matched {
-            let entry = counts.entry(addr.to_string()).or_default();
-            match kind {
-                1111 => entry.comments += 1,
-                9802 => entry.highlights += 1,
-                _ => {}
-            }
-        }
-    }
+    // Single `#a` filter here (no `#A`), so no cross-filter duplicates to
+    // dedup before tallying. The `discussions/list` ride-along dedups first.
+    let counts = tally_discussion_counts(&response.events, &addresses);
 
     if let Some(op) = op {
         op.complete(fetched);
@@ -2439,6 +2456,12 @@ pub struct DiscussionsListRequest {
 #[derive(Debug, Serialize)]
 pub struct DiscussionsListResponse {
     pub events: Vec<Value>,
+    /// NIP-22 comment / NIP-84 highlight tallies per requested address,
+    /// computed engine-side over the same (deduped) event set. Rides along so
+    /// the reader can drive its discussion badges without re-deriving counts
+    /// from the events client-side, and without a second `discussions/counts`
+    /// round trip. Empty when the caller queried by event id only.
+    pub counts: std::collections::HashMap<String, DiscussionCount>,
     pub source: crate::engine::QuerySource,
     /// Server's view of when the result was computed (unix seconds).
     /// The web uses this as a `since` cursor for incremental refreshes.
@@ -2663,6 +2686,7 @@ pub async fn discussions_list_handler(
     if (addresses.is_empty() && event_ids.is_empty()) || kinds.is_empty() {
         return Ok(Json(DiscussionsListResponse {
             events: vec![],
+            counts: std::collections::HashMap::new(),
             source: crate::engine::QuerySource {
                 local_count: 0,
                 relay_count: 0,
@@ -2781,11 +2805,17 @@ pub async fn discussions_list_handler(
         })
         .collect();
 
+    // Tally over the deduped event set (the `#a`/`#A` filters overlap, so an
+    // event matched by both must count once). Addresses-only; an event-id-only
+    // query carries no address coordinates, so counts stays empty there.
+    let counts = tally_discussion_counts(&events, &addresses);
+
     if let Some(op) = op {
         op.complete(events.len());
     }
     Ok(Json(DiscussionsListResponse {
         events,
+        counts,
         source: response.source,
         refreshed_at: now,
     }))
@@ -4630,6 +4660,77 @@ pub async fn sign_response_handler(
         .resolve_sign_response(&req.signer_id, &req.req_id, reply)
         .await;
     Json(SignResponseResponse { resolved })
+}
+
+#[cfg(test)]
+mod discussion_tally_tests {
+    use super::*;
+
+    fn ev(kind: u64, tags: Value) -> Value {
+        json!({ "kind": kind, "tags": tags })
+    }
+
+    const A1: &str = "30041:1111111111111111111111111111111111111111111111111111111111111111:s1";
+    const A2: &str = "30041:2222222222222222222222222222222222222222222222222222222222222222:s2";
+
+    #[test]
+    fn buckets_by_kind_and_zero_fills() {
+        let addrs = vec![A1.to_string(), A2.to_string()];
+        let events = vec![
+            ev(1111, json!([["a", A1]])),
+            ev(1111, json!([["a", A1]])),
+            ev(9802, json!([["a", A1]])),
+        ];
+        let counts = tally_discussion_counts(&events, &addrs);
+        assert_eq!(counts[A1].comments, 2);
+        assert_eq!(counts[A1].highlights, 1);
+        // Unreferenced address is present at zero, not absent.
+        assert_eq!(counts[A2].comments, 0);
+        assert_eq!(counts[A2].highlights, 0);
+    }
+
+    #[test]
+    fn a_and_a_uppercase_on_same_event_count_once() {
+        let addrs = vec![A1.to_string()];
+        // A nested reply tagging the same coord as both parent `a` and root `A`.
+        let events = vec![ev(1111, json!([["a", A1], ["A", A1]]))];
+        let counts = tally_discussion_counts(&events, &addrs);
+        assert_eq!(
+            counts[A1].comments, 1,
+            "a+A on one event must not double-count"
+        );
+    }
+
+    #[test]
+    fn counts_uppercase_a_root_scope() {
+        let addrs = vec![A1.to_string()];
+        // Nested reply that only carries the uppercase root-scope `A` tag.
+        let events = vec![ev(1111, json!([["A", A1]]))];
+        let counts = tally_discussion_counts(&events, &addrs);
+        assert_eq!(counts[A1].comments, 1);
+    }
+
+    #[test]
+    fn one_event_referencing_two_addresses_bumps_both() {
+        let addrs = vec![A1.to_string(), A2.to_string()];
+        let events = vec![ev(9802, json!([["a", A1], ["a", A2]]))];
+        let counts = tally_discussion_counts(&events, &addrs);
+        assert_eq!(counts[A1].highlights, 1);
+        assert_eq!(counts[A2].highlights, 1);
+    }
+
+    #[test]
+    fn ignores_unrequested_addresses_and_other_kinds() {
+        let addrs = vec![A1.to_string()];
+        let events = vec![
+            ev(1111, json!([["a", A2]])),         // address not requested
+            ev(30023, json!([["a", A1]])),        // not a discussion kind
+            ev(1111, json!([["e", "deadbeef"]])), // wrong tag type
+        ];
+        let counts = tally_discussion_counts(&events, &addrs);
+        assert_eq!(counts[A1].comments, 0);
+        assert_eq!(counts.len(), 1);
+    }
 }
 
 #[cfg(test)]

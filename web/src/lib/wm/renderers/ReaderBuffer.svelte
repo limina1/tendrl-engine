@@ -168,9 +168,11 @@
 		const addrs = publicationAddresses();
 		if (addrs.length === 0) return;
 		try {
-			// Pull the full event payloads so we can render inline threads
-			// in addition to the badge counts. Counts are derived from the
-			// same set client-side — one round trip serves both views.
+			// Pull the full event payloads so we can render inline threads,
+			// plus the engine's per-address badge tallies (resp.counts) in the
+			// same round trip. The badge counts are NOT re-derived here — the
+			// engine reduces the same event set it returns (api.rs
+			// tally_discussion_counts), so there's one source of truth.
 			const resp = await api.getDiscussionList({
 				addresses: addrs,
 				kinds: [1111, 9802],
@@ -178,12 +180,11 @@
 				bypassOffline: options.bypassOffline,
 				limit: 500
 			});
+			// Group the returned events by referenced address for inline thread
+			// rendering (view concern). Tag scan is grouping-only; the counts
+			// come pre-computed from the engine.
 			const byAddr: Record<string, api.DiscussionEvent[]> = {};
-			const counts: Record<string, api.DiscussionCount> = {};
-			for (const a of addrs) {
-				byAddr[a] = [];
-				counts[a] = { comments: 0, highlights: 0 };
-			}
+			for (const a of addrs) byAddr[a] = [];
 			const addrSet = new Set(addrs);
 			for (const ev of resp.events) {
 				const matched = new Set<string>();
@@ -193,14 +194,10 @@
 					const value = tag[1];
 					if (addrSet.has(value)) matched.add(value);
 				}
-				for (const m of matched) {
-					byAddr[m].push(ev);
-					if (ev.kind === 1111) counts[m].comments += 1;
-					else if (ev.kind === 9802) counts[m].highlights += 1;
-				}
+				for (const m of matched) byAddr[m].push(ev);
 			}
 			discussionEvents = byAddr;
-			discussionCounts = counts;
+			discussionCounts = resp.counts;
 			discussionSource = resp.source;
 			discussionRefreshedAt = Date.now();
 

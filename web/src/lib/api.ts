@@ -915,37 +915,20 @@ export function confirmFetch(operationId: string, approved: boolean, relays?: st
 	});
 }
 
-// Discussion counts: NIP-22 comments (kind 1111) and NIP-84 highlights
-// (kind 9802) referencing the given addressable events via their `a` tag.
+// NIP-22 comment (kind 1111) / NIP-84 highlight (kind 9802) tallies per
+// addressable event, computed engine-side. Drives the reader's discussion
+// badges. Delivered as the `counts` field on the discussions/list response
+// (the engine reduces the same event set it returns), so the reader never
+// re-derives these from the events client-side.
 
 export interface DiscussionCount {
 	comments: number;
 	highlights: number;
 }
 
-export interface DiscussionCountsResponse {
-	counts: Record<string, DiscussionCount>;
-	source: { local_count: number; relay_count: number };
-}
-
-export function getDiscussionCounts(
-	addresses: string[],
-	policy: 'local_only' | 'local_first' | 'fetch_always' = 'local_first',
-	options: { bypassOffline?: boolean } = {}
-) {
-	return fetchJson<DiscussionCountsResponse>('/api/v1/discussions/counts', {
-		method: 'POST',
-		body: JSON.stringify({
-			addresses,
-			policy,
-			mode_confirm: options.bypassOffline ?? false
-		})
-	});
-}
-
-// Discussions list: full event payloads (not just counts) for the same
-// shape of query as discussions/counts. Used by DiscussionsListBuffer
-// and the inline section-disclosure to render comments + highlights.
+// Discussions list: full event payloads plus engine-computed `counts`. Used
+// by DiscussionsListBuffer and the inline section-disclosure to render
+// comments + highlights, and by the reader outline for the badge counts.
 
 export interface DiscussionEvent {
 	id: string;
@@ -959,6 +942,10 @@ export interface DiscussionEvent {
 
 export interface DiscussionsListResponse {
 	events: DiscussionEvent[];
+	/** Per-address NIP-22/84 tallies, keyed by `kind:pubkey:d-tag`. Computed
+	 *  by the engine over the same event set; the reader reads these straight
+	 *  into its badges instead of re-counting. Empty for event-id-only queries. */
+	counts: Record<string, DiscussionCount>;
 	source: { local_count: number; relay_count: number };
 	/** Unix seconds at which the engine computed the result. Pass back
 	 *  as `since` on a subsequent call for incremental refresh. */
