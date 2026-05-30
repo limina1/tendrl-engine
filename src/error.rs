@@ -41,6 +41,10 @@ pub enum EngineError {
     #[error("Configuration error: {0}")]
     Config(String),
 
+    /// Malformed / incomplete client request (missing required field, etc.)
+    #[error("Bad request: {0}")]
+    BadRequest(String),
+
     /// I/O errors
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
@@ -83,6 +87,7 @@ impl IntoResponse for EngineError {
             EngineError::Auth(msg) => (StatusCode::UNAUTHORIZED, "auth_required", msg.clone()),
             EngineError::Locked(msg) => (StatusCode::LOCKED, "identity_locked", msg.clone()),
             EngineError::Config(msg) => (StatusCode::INTERNAL_SERVER_ERROR, "config_error", msg.clone()),
+            EngineError::BadRequest(msg) => (StatusCode::BAD_REQUEST, "bad_request", msg.clone()),
             EngineError::Io(err) => (StatusCode::INTERNAL_SERVER_ERROR, "io_error", err.to_string()),
             EngineError::Other(msg) => (StatusCode::INTERNAL_SERVER_ERROR, "error", msg.clone()),
         };
