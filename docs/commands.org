@@ -961,3 +961,17 @@ done
 #+end_src
 
 After deletion: =pnpm -C web check= clean (no new errors).
+
+** Phase 2 verify — engine-side discussion badge counts
+
+The reduction now lives in =tally_discussion_counts= (api.rs) and rides along
+on the =discussions/list= response as =counts=. Unit tests:
+
+#+begin_src bash
+cargo test discussion_tally       # 5 tests: a/A dedup, kind buckets, zero-fill
+#+end_src
+
+Manual: open a publication that has comments + highlights, confirm the outline
+badge counts are unchanged vs. before, with one /list round trip (no extra
+/counts call). The /list counts also catch #A-only nested replies that the
+standalone /counts endpoint (single #a filter) does not.

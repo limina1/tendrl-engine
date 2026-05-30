@@ -77,13 +77,19 @@ No behavior change. Each item was =rg=-verified to have 0 import sites (see [[fi
 - Verify :: =pnpm -C web check= clean; app builds; grep the deleted names return 0 hits.
 - Commit :: "chore(web): drop pre-WM orphan components + dead api client fns".
 
-* Phase 2 — Wire existing Rust (kill one TS twin) [0/1]
-- [ ] Point the discussion-count *badges* at the existing [[src:src/api.rs::2297][discussions/counts]] endpoint
-  instead of re-tallying =a=/=A= tags client-side in [[web:src/lib/wm/renderers/ReaderBuffer.svelte::164][ReaderBuffer.svelte:164-201]].
-  Keep the =discussions/list= call (it feeds inline thread rendering) — only stop the
-  TS count derivation.
-- Verify :: badge counts match before/after on a publication with comments + highlights.
-- Commit :: "refactor(web): use engine discussions/counts for badges".
+* Phase 2 — Wire existing Rust (kill one TS twin) [1/1] ✓ landed 78a4db5
+- [X] Stop re-tallying =a=/=A= tags client-side in [[web:src/lib/wm/renderers/ReaderBuffer.svelte::164][ReaderBuffer.svelte:164-201]];
+  source the badge counts engine-side. REVISED APPROACH (better than the literal plan):
+  the reader already fetches =discussions/list= for inline threads, so rather than add a
+  second =discussions/counts= round trip, the engine reduces that same (deduped) event
+  set and returns a =counts= field ON the =list= response. The reader reads =resp.counts=
+  into its badges; the =a=/=A= scan it keeps is grouping-only (for inline threads), no
+  longer a count derivation. Extracted =tally_discussion_counts()= as the single source
+  of truth (both =/counts= and =/list= call it) + 5 unit tests. Deleted the now-dead TS
+  =getDiscussionCounts= + =DiscussionCountsResponse= (completes the Phase 1 deferral).
+  Bonus: =/list= counts catch =#A=-only nested replies the =/counts= single-=#a= filter missed.
+- Verify :: cargo test 303 passed (+5); clippy 47 (unchanged); =pnpm -C web check= 0 errors.
+  Manual badge before/after still worth a spot-check on a pub with comments + highlights.
 
 * Phase 3 — Shed the Rust TUI state machine [0/4]
 Pure deletion, large loc, but order matters: *extract the pure core FIRST, then delete.*
