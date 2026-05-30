@@ -28,6 +28,7 @@
 		prefetchAuthors
 	} from '$lib/discussions/authors.svelte';
 	import { pubkeyToColor } from '$lib/discussions/colors';
+	import { identityCanSign } from '$lib/identity/signer';
 
 	const app = getAppState();
 
@@ -734,11 +735,17 @@
 		return { label: 'locked', pillClass: 'pill--draft' };
 	});
 
-	// Top-left profile chip. We prefer the unlocked-session pubkey
-	// (NIP-07 or in-process) but fall back to the config-only
-	// `my_pubkey` so the chip is visible even when signing isn't wired
-	// up — clicking still routes to the user's own profile buffer.
-	const mePubkey = $derived(app.identityStatus?.pubkey ?? app.myPubkey ?? null);
+	// Top-left profile chip. Only shown when there's an active signing
+	// session — engine key unlocked, or a NIP-07/46 signer connected.
+	// `config.toml [identity] pubkey` (app.myPubkey) is just the
+	// configured authoring identity and is set at boot regardless of
+	// login, so gating on it alone made the chip look "logged in" on
+	// engine source with no unlocked key. Gate on can-sign instead;
+	// app.myPubkey still drives feed/authoring under the hood.
+	const meLoggedIn = $derived(identityCanSign(app.identityStatus));
+	const mePubkey = $derived(
+		meLoggedIn ? (app.identityStatus?.pubkey ?? app.myPubkey ?? null) : null
+	);
 	const meProfile = $derived(mePubkey ? getAuthorProfile(mePubkey) : null);
 	const meName = $derived(mePubkey ? getAuthorDisplayName(mePubkey) : '');
 	const meColor = $derived(mePubkey ? pubkeyToColor(mePubkey) : 'transparent');
