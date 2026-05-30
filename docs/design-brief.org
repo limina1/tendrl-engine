@@ -32,9 +32,9 @@ everything else.
 *Tendrl is an engine, not an app.* The Rust core (=src/=) is a Nostr
 management layer: retrieval, publication assembly, relay sync, identity,
 embedding/search. It exposes a stable HTTP API. Interfaces are *pluggable
-consumers* of that API: today the web UI (=web/=) and the TUI (=src/bin/
-nostr-tree.rs=); long-term, an Emacs integration where Emacs is the editor
-and Tendrl is the Nostr backend.
+consumers* of that API: today the web UI (=web/=) — a ratatui TUI was the
+original consumer but has since been removed; long-term, an Emacs integration
+where Emacs is the editor and Tendrl is the Nostr backend.
 
 *Why this matters for the web UI.* The web UI is being built deliberately
 Emacs-flavored because the interaction patterns worked out here are

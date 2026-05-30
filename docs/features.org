@@ -5,17 +5,18 @@
 
 * Scope
 
-Tendrl is a local-first Rust engine for Nostr publications (NKBIP-01) with
-three frontends:
+Tendrl is a local-first Rust engine for Nostr publications (NKBIP-01) with a
+web frontend and an HTTP API:
 
 - *Web app* (SvelteKit, primary) — three-panel workbench at
   =http://localhost:3030= when the engine is running
-- *TUI* (=cargo run --features tui --bin nostr-tree=) — vim-flavored terminal
-  UI, originally the primary interface
-- *HTTP API* (Axum, =/api/v1/*=) — drives both UIs and is consumed by Emacs
-  and Nvim integrations
+- *HTTP API* (Axum, =/api/v1/*=) — drives the web UI and is the integration
+  surface for the planned Emacs and Nvim frontends
 
-All three sit on the same engine: nostrdb storage, NIP-01 relay client,
+(A ratatui TUI was the original interface; it has since been removed — the web
+app is the only live frontend.)
+
+Both sit on the same engine: nostrdb storage, NIP-01 relay client,
 structured search, embedding sidecar, identity manager, and publication
 builder.
 
@@ -183,10 +184,12 @@ builder.
 - Reindex button + live event-count indicator for the embedding sidecar
 - Network-mode toggle visible in the header
 
-* TUI
+* Reader View Modes (formerly the TUI)
 
-The TUI predates the web app and remains functional, though new feature work
-goes to the web first.
+The ratatui TUI was the original frontend and has since been removed; the web
+app is the only live frontend. The reader view modes it introduced (below) now
+live in the web reader, and remain the model for the planned emacs/nvim
+frontends.
 
 ** Reader View Modes
 | Mode       | Description                    | Primary Navigation     |
@@ -279,9 +282,6 @@ cases with some external implementations.
 
 # Engine only
 cargo run -- -c config.toml
-
-# TUI
-cargo run --features tui --bin nostr-tree
 
 # Tests
 cargo test

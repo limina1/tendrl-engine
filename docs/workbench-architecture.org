@@ -3,6 +3,26 @@
 #+DATE: 2026-03-15
 #+STATUS: DESIGN — architecture and data flow
 
+#+begin_quote
+*Status note (2026-05).* The ratatui TUI that this document describes/assumes
+as an implementation target was *removed*, and its =src/tree/= navigation
+engine (=TreeState= / =TreeCommand= / =TreeEngine=, =render.rs= /
+=command.rs= / =undo.rs=, and the ratatui widgets) was *deleted in Phase 3*.
+What remains in =src/tree/= is the pure document-structure core only:
+=node.rs= (=TreeNode=), =parser.rs= (line classification), =content.rs=
+(=ContentDetector=). The compose payload types (=ComposeState=,
+=SectionCompose=, =TagEntry=, =BlockKind=, =ComposeBlock=,
+=ComposeBlockState=) now live in =crate::publication::compose=
+(=src/publication/compose.rs=).
+
+The *web app (SvelteKit) is the only live frontend*; emacs/nvim front-ends
+remain a design goal (planned, not built). The multi-frontend portability
+vision below is still valid and intentionally preserved. Passages that speak
+of "extending =TreeState=", "adding =TreeCommand= variants", or "ratatui
+widgets" therefore describe a removed implementation and are retained as
+*historical design intent*, not current code.
+#+end_quote
+
 * Overview
 
 A three-panel composition environment that treats Nostr events as a zettelkasten:
@@ -96,7 +116,9 @@ Toggle panels: =Ctrl+[= (chat), =Ctrl+]= (search).
 
 ** State Extension
 
-The workbench extends =TreeState= with panel-specific state:
+(Historical design intent — =TreeState= was removed in Phase 3; see the
+status note above.) The workbench extended =TreeState= with panel-specific
+state:
 
 #+begin_src rust
 pub struct WorkbenchState {
@@ -956,6 +978,9 @@ pub enum CommandCategory {
 
 ** New TreeCommand Variants
 
+(Historical design intent — =TreeCommand= was removed in Phase 3 along with
+the TUI navigation engine; see the status note above.)
+
 #+begin_src rust
 pub enum TreeCommand {
     // ... existing ...
@@ -1480,6 +1505,9 @@ Mixing embeddings from different models in one index produces garbage results.
 
 * Keyboard Layout (TUI)
 
+(The TUI was removed; this keymap is retained as design intent for a future
+keyboard-driven front-end, not a description of current bindings.)
+
 ** Global (any panel focused)
 
 | Key          | Action                          |
@@ -1548,7 +1576,7 @@ base sidebar.
 - [X] Implement =SearchQuery::parse()= for tag/kind/author/text syntax
 - [X] Implement =SearchQuery::to_nip01_filters()= compilation
 - [X] Add text scanning over nostrdb events (content substring match)
-- [X] Add search panel commands to =TreeCommand=
+- [X] Add search panel commands to =TreeCommand= (later removed with the TUI engine in Phase 3)
 - [X] Add =AsyncRequest::SearchEvents= and result handling
 - [X] HTTP API: =POST /api/v1/search= endpoint
 - [X] Web: search panel with results list, tag pills, tag inspector
@@ -1657,7 +1685,9 @@ Generalize the =ContextItem= pool into a neutral substrate, then build the
 ** Deferred: TUI Widgets
 
 TUI workbench panels deferred — web frontend is the primary interface for now.
-These can be revisited when the web workflow is stable.
+(Since this was written the TUI front-end and its =TreeState= engine were
+removed in Phase 3; the items below describe a future keyboard-driven
+front-end rather than work that resumes from the old =src/tree/= TUI code.)
 
 - [ ] Add =SearchState= to =TreeState= (search results, selection, query state)
 - [ ] TUI: search panel widget with query bar, results list, checkboxes
@@ -1669,12 +1699,15 @@ These can be revisited when the web workflow is stable.
 * Cross-Frontend Considerations
 
 The workbench architecture is deliberately interface-agnostic at the state
-and command layers, following the existing pattern:
+and command layers, following the existing pattern. (The TUI column is the
+removed original front-end; it is kept here as the conceptual mapping that the
+multi-frontend vision was derived from — only the Web column describes a live
+implementation, with Emacs/Nvim still planned.)
 
-| Layer              | TUI                    | Web                     | Emacs/Nvim          |
+| Layer              | TUI (removed)          | Web                     | Emacs/Nvim          |
 |--------------------+------------------------+-------------------------+---------------------|
-| State              | =WorkbenchState=         | Same (WASM or via API)  | Same (via API)      |
-| Commands           | =TreeCommand= variants   | Same, mapped from DOM   | Same, mapped from keys |
+| State              | =WorkbenchState= (gone)  | Same (WASM or via API)  | Same (via API)      |
+| Commands           | =TreeCommand= (gone)     | Same, mapped from DOM   | Same, mapped from keys |
 | Async boundary     | =AsyncRequest/Result=    | Same, HTTP/WS transport | Same, HTTP client   |
 | Panel focus        | =PanelFocus= enum        | CSS grid + JS focus     | Buffer/window focus |
 | Search rendering   | ratatui =List= widget    | HTML list + checkboxes  | Org/markdown buffer |
@@ -1721,9 +1754,12 @@ A chain of =["fork", ...]= tags could enable tracing content evolution.
 
 * References
 
-- Existing compose: =src/tree/state.rs= (ComposeState), =src/tree/tui/widgets.rs=
-- Async boundary pattern: =src/tree/command.rs= (AsyncRequest/AsyncResult)
+- Compose payload types: =src/publication/compose.rs= (=ComposeState=; moved
+  out of the removed =src/tree/state.rs= in Phase 3)
+- Async boundary pattern: =src/tree/command.rs= (AsyncRequest/AsyncResult) —
+  /removed in Phase 3; retained here as a record of the original design/
 - Publication building: =src/publication.rs= (build_signed_publication_events)
-- Editor compose: =src/tree/tui/app.rs= (editor compose patterns)
+- Editor compose: =src/tree/tui/app.rs= (editor compose patterns) —
+  /removed with the TUI in Phase 3/
 - Nostrdown syntax: =docs/nostrdown.org= (linking within/between events)
 - Zettelkasten method: atomic, linked, tagged notes as primary unit

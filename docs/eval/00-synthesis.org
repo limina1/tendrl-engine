@@ -15,6 +15,10 @@ view component clusters. The problems are three layers /around/ that core:
    engine in [[file:03-tree-module.org][src/tree/]] plus [[file:05-search-embedding-chat.org][user_data.rs (1356 loc) and drafts.rs DraftStore (590 loc)]]
    are still compiled. They emit no dead-code warning only because the types are
    =pub=. The web reimplements their jobs in TypeScript.
+   /Phase 3 (done, commits =1232732= + =f460ba3=): the =src/tree/= TUI navigation
+   engine and the small =relay.rs=/=list_publications_before= dead code are deleted;
+   the pure core (=parser=/=content=/=node=) was kept and the compose payload structs
+   moved to =crate::publication::compose=. =user_data.rs= / =drafts.rs= remain — Phase 5./
 
 2. *Docs describe a system that was superseded.* [[file:01-roadmap-intent-map.org][project-summary.org and
    workbench-architecture.org]] still describe a three-panel layout, a standalone
@@ -22,6 +26,10 @@ view component clusters. The problems are three layers /around/ that core:
    WM/buffer shell, a Refs tab, usearch HNSW, and "Auto/Confirm". =CLAUDE.md= itself
    asserts the TUI "remains functional" and that the web "consumes" =src/tree= logic;
    both are false. This is the drift the user suspected.
+   /Phase 3 doc sweep (done): =CLAUDE.md=, =features.{org,md}=, =project-summary.org=,
+   =workbench-architecture.org=, and =publication-tree-design.md= corrected — the TUI is
+   marked removed and =src/tree/= described as pure core only. Older "three-panel /
+   Online-Offline / SQLite" drift in the design docs is a separate pass./
 
 3. *Roadmap features that are stored + UI-exposed but not wired* — "phantom config".
    The relay-class taxonomy lets users set broadcast/search/indexer tiers, but only

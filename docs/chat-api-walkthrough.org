@@ -238,8 +238,8 @@ cargo test chat_api
 # All chat state tests
 cargo test chat
 
-# Full suite including TUI
-cargo test --features tui
+# Full suite
+cargo test
 #+end_src
 
 * Code Pointers

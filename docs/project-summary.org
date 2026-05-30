@@ -29,12 +29,12 @@ The system has three layers:
 #+begin_example
 ┌────────────────────────────────────────────────────────────────┐
 │  Frontends                                                     │
-│  ┌──────────┐  ┌──────────────────┐  ┌───────────────────┐    │
-│  │ TUI      │  │ Svelte Web App   │  │ Emacs / Nvim      │    │
-│  │ (ratatui)│  │ (primary UI)     │  │ (via HTTP API)    │    │
-│  └────┬─────┘  └────────┬─────────┘  └────────┬──────────┘    │
-│       │                 │                      │               │
-│       ▼                 ▼                      ▼               │
+│  ┌──────────────────┐  ┌───────────────────┐                  │
+│  │ Svelte Web App   │  │ Emacs / Nvim      │                  │
+│  │ (primary UI)     │  │ (planned, via API)│                  │
+│  └────────┬─────────┘  └────────┬──────────┘                  │
+│           │                     │                              │
+│           ▼                     ▼                              │
 │  ┌─────────────────────────────────────────────────────────┐   │
 │  │  HTTP API  (Axum)                                       │   │
 │  │  /api/v1/search, /chat, /publications, /events          │   │
@@ -128,14 +128,13 @@ LOC) with a three-panel workbench layout:
 Each panel collapses to a 32px vertical bar. The center panel (document /
 compose) gets 2fr; side panels get 1fr each.
 
-** TUI
+** TUI (removed)
 
-A ratatui terminal interface provides the same capabilities through a
-vim-flavored keybinding model: feed browsing, reader modes (tree, outline,
-continuous, paginated), compose (structured and editor modes), command palette
-(=M-x= / =Space=), identity management, and draft storage. The TUI was the
-original interface and remains functional, though the web app has become the
-primary development target for the workbench features.
+A ratatui terminal interface was the original frontend (vim-flavored feed
+browsing, reader modes, compose, command palette, identity, drafts). It has
+since been removed — the web app is the only live frontend, and the planned
+emacs/nvim frontends will consume the same HTTP API. The vim-flavored
+interaction model survives conceptually in the web workbench's keybindings.
 
 * Key Design Decisions
 
@@ -360,7 +359,6 @@ real network failures.
 | Embedding | Python sidecar (sentence-transformers) or Rust ONNX (fastembed)          |
 | LLM       | Anthropic Messages API (Claude), provider-trait abstraction        |
 | Relay I/O | tungstenite WebSocket, NIP-01 protocol                             |
-| TUI       | ratatui, crossterm                                                 |
 | Identity  | NIP-49 ncryptsec (scrypt + XChaCha20-Poly1305), OS keyring        |
 
 * Codebase
@@ -368,7 +366,7 @@ real network failures.
 | Directory        | Contents                                        | Approx. Size  |
 |------------------+-------------------------------------------------+---------------|
 | =src/=             | Rust backend                                    | ~13,000 lines |
-| =src/tree/=        | TUI state, commands, widgets                    | ~6,000 lines  |
+| =src/tree/=        | Pure document-structure core (parser/content/node) | ~1,300 lines |
 | =web/src/=         | Svelte frontend (~30 components + lib)          | ~10,000 lines |
 | =docs/=            | Architecture docs (org-mode)                    | ~3,000 lines  |
 | =tests/=           | Integration tests (search, query, engine)       | ~800 lines    |

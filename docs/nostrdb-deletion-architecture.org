@@ -63,7 +63,7 @@ NDB_NOTE_META_FLAG_DELETED = 0,
 
 ** Delete Feature Options
 
-1. *Session-only delete*: Remove from TreeState, events remain in nostrdb
+1. *Session-only delete*: Hide in the frontend's view-state, events remain in nostrdb
    - Simplest implementation
    - Events reappear on restart
 
@@ -79,9 +79,10 @@ NDB_NOTE_META_FLAG_DELETED = 0,
 
 ** Recommended Approach
 
-For ranger-like delete in the TUI:
+For ranger-like delete in the reader (the ratatui TUI this was first sketched
+for is gone; the live home is the web reader's view-state):
 
-1. Implement session-only deletion from TreeState (immediate)
+1. Implement session-only deletion in the frontend view-state (immediate)
 2. Optionally publish NIP-09 deletion for user-owned events
 3. Consider persisted hidden list for cross-session hiding
 

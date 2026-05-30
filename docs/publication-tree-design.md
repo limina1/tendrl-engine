@@ -7,6 +7,19 @@ module.
 Reference implementation: `reference/notedeck/crates/notedeck_publications/` and
 `reference/notedeck/crates/notedeck_reader/`.
 
+> **Status (2026-05, Phase 3):** The `src/tree/` navigation engine this doc maps onto
+> — `TreeState` / `TreeCommand` / `TreeEngine` (`state.rs` / `command.rs` / `engine.rs`
+> / `render.rs`) — was **removed** in Phase 3 of the boundary-compliance refactor. The
+> live publication tree is now assembled by `src/publication.rs` (a recursive depth-N
+> loader + `stream_publication_tree` SSE stream) and rendered by the web's
+> `ReaderBuffer.svelte`, which owns collapse/expand view-state. `src/tree/` now retains
+> only the pure document-structure core (`node.rs` / `parser.rs` / `content.rs`); the
+> compose payload types moved to `crate::publication::compose`. So the
+> `TreeState` / `TreeCommand` mappings below are **historical design intent** — to be
+> re-homed onto the `publication.rs` loader + web reader, not the deleted engine. The
+> notedeck comparison and the prefetch/visibility reading model remain a genuine design
+> record.
+
 ---
 
 ## 1. Goal
@@ -33,11 +46,11 @@ it maps onto the existing module.
 | Piece | File | Status |
 |-------|------|--------|
 | `TreeNode` = `Publication \| Section`, `NodeId`, `loaded`/`loading` flags | `node.rs` | ✅ exists |
-| `TreeState` — flat `HashMap<NodeId, TreeNode>`, `roots`, `expanded`, `cursor` | `state.rs` | ✅ exists |
-| `TreeCommand` enum + `TreeEngine::execute()` synchronous executor | `command.rs`, `engine.rs` | ✅ exists |
-| Async boundary — `CommandResult::NeedsAsync(AsyncRequest)` → `apply_async_result()` | `command.rs`, `engine.rs` | ✅ exists |
-| `ViewMode { Tree, Outline, Continuous, Paginated }` | `state.rs` | ✅ enum exists |
-| `visible_nodes()` → `Vec<VisibleNode>` for the UI | `render.rs` | ✅ exists |
+| `TreeState` — flat `HashMap<NodeId, TreeNode>`, `roots`, `expanded`, `cursor` | `state.rs` | ✗ removed Phase 3 — see `publication.rs` loader + web reader |
+| `TreeCommand` enum + `TreeEngine::execute()` synchronous executor | `command.rs`, `engine.rs` | ✗ removed Phase 3 — see `publication.rs` loader + web reader |
+| Async boundary — `CommandResult::NeedsAsync(AsyncRequest)` → `apply_async_result()` | `command.rs`, `engine.rs` | ✗ removed Phase 3 — replaced by `stream_publication_tree` SSE |
+| `ViewMode { Tree, Outline, Continuous, Paginated }` | `state.rs` | ✗ removed Phase 3 — view-mode state lives in the web reader |
+| `visible_nodes()` → `Vec<VisibleNode>` for the UI | `render.rs` | ✗ removed Phase 3 — flattening lives in `ReaderBuffer.svelte` |
 | `LoadStatus<T>` (`Pending → Loading → Loaded/Failed`) | `publication.rs` | ✅ exists |
 | `PublicationEngine::load_publication / load_sections / load_section` | `publication.rs` | ✅ exists |
 
@@ -524,10 +537,10 @@ stable.
 | tendrl file | Change |
 |-------------|--------|
 | `src/tree/node.rs` | `NodeStatus` enum; branch/leaf-after-resolve |
-| `src/tree/state.rs` | `PublicationView`, `resolved_version`, visibility set |
-| `src/tree/command.rs` | `Outline*` commands; `FetchAddresses` async req/result |
-| `src/tree/engine.rs` | `open_publication`, `resolve_node`, `poll_publication`, `visible_pending_addresses`, `siblings`, `hierarchy`, `LeafIterator` |
-| `src/tree/render.rs` | extend `VisibleNode`; Continuous/Paginated/Outline flattenings |
+| ~~`src/tree/state.rs`~~ (removed Phase 3) | `PublicationView`, `resolved_version`, visibility set — re-home onto `src/publication.rs` + web reader |
+| ~~`src/tree/command.rs`~~ (removed Phase 3) | `Outline*` commands; `FetchAddresses` async req/result — re-home onto `src/publication.rs` + web reader |
+| ~~`src/tree/engine.rs`~~ (removed Phase 3) | `open_publication`, `resolve_node`, `poll_publication`, `visible_pending_addresses`, `siblings`, `hierarchy`, `LeafIterator` — re-home onto `src/publication.rs` |
+| ~~`src/tree/render.rs`~~ (removed Phase 3) | extend `VisibleNode`; Continuous/Paginated/Outline flattenings — re-home onto `src/publication.rs` + web reader (`ReaderBuffer.svelte`) |
 | `src/publication.rs` | `load_publication_tree` (recursive depth-N loader, cycle guard, bounded concurrency); `build_toc` "load more" for `Pending` nested indices; `MAX_INLINE_DEPTH`; reuse `NAddr`, `LoadStatus` |
 | `src/api.rs` | endpoints in §10 |
 

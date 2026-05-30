@@ -80,6 +80,14 @@ the opposite mistake.
 
 * Type-B — Rust holding view-state (resolve → drop, web already owns it)
 
+#+begin_quote
+*DONE — Phase 3 (commits =1232732= extract, =f460ba3= delete).* Every Type-B item
+enumerated below was deleted (=state.rs=, =command.rs=, =engine.rs=, =render.rs=,
+=undo.rs=); the pure core =parser.rs=/=content.rs=/=node.rs= was kept and the compose
+payload structs moved to =crate::publication::compose=. The KEEP/revive list below
+under "The pure Rust core" stands as the forward plan for Phases 4–5.
+#+end_quote
+
 All Type-B leakage is inside the =src/tree= TUI state machine, which is dead relative
 to the web (see [[file:03-tree-module.org][03]]). So the resolution is *not* "move state to TS" (the web already
 holds its own focus/expansion/scroll) — it is *drop the TUI view-state machine and

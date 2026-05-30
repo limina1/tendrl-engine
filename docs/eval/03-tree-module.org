@@ -6,14 +6,21 @@ Up: [[file:README.org][index]] · [[file:00-synthesis.org][synthesis]] · relate
 Scope: =src/tree/{mod,state,command,engine,render,node,parser,content,undo}.rs= (~7700 loc).
 
 #+begin_quote
+*RESOLVED — Phase 3 landed this (commits =1232732= extract, =f460ba3= delete).* The
+pure core was kept and the TUI view-state machine deleted, exactly per the corrected
+partition below. =parser.rs= / =content.rs= / =node.rs= remain in =src/tree/= (the
+intended source of truth, portable to emacs/nvim); the compose payload structs moved
+to =src/publication/compose.rs= (=crate::publication::compose=), next to the publishing
+code that consumes them. Deleted: =TreeState=/=TreeEngine=, =command.rs=, =render.rs=,
+=undo.rs=, and the dead two-thirds of =state.rs= (window/dialog/palette/clipboard
+view-state). Net −5166 loc; build is warning-free; 282 tests pass. The analysis below
+is preserved as the record of *why*.
+
 *RESOLUTION CORRECTED by [[file:08-frontend-backend-boundary.org][08]].* This doc's original conclusion ("delete it, the
-web reimplements it") resolves the redundancy the *wrong way*. Per the project's
+web reimplements it") resolved the redundancy the *wrong way*. Per the project's
 frontend/backend boundary, the Rust =parser.rs= / =content.rs= / =node.rs= /
-flatten-algorithm + compose payload structs are the *pure core to KEEP* — they're the
-intended source of truth, portable to emacs/nvim. Only the *TUI view-state machine*
-(=TreeState= navigation fields, =TreeEngine=, =command.rs=, window/dialog/palette
-state, =undo.rs=) is genuinely to drop. The evidence below (what's wired vs unwired)
-is accurate; read the /KEEP vs DROP/ partition in [[file:08-frontend-backend-boundary.org][08]] for the corrected action.
+flatten-algorithm + compose payload structs are the *pure core to KEEP* — that
+corrected partition is what Phase 3 executed.
 #+end_quote
 
 * VERDICT (critical question)
