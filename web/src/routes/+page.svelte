@@ -252,11 +252,6 @@
 		await app.handleSearch(q, { scopeToMe: false });
 	}
 
-	store.recentlyClosed = [
-		{ className: 'work', buffer: { id: 'r1', kind: 'reader', label: 'reader', kicker: 'NIP-23 long-form · §2' } },
-		{ className: 'research', buffer: { id: 'r2', kind: 'search', label: 'search', kicker: 'by:fiatjaf since:30d' } }
-	];
-
 	function setLayout(name: string) {
 		store.setLayout(name);
 		composerExtraBlocks = 0;

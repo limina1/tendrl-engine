@@ -8,7 +8,6 @@ import type {
 	PublicationDetail,
 	TocEntry,
 	Section,
-	SectionMeta,
 	SearchResponse,
 	EmbeddingStatusResponse,
 	NetworkStatus,
@@ -65,11 +64,6 @@ export function setSystemPrompt(prompt: string): Promise<ChatResponse> {
 	return fetchJson<ChatResponse>(`${CHAT}/system`, { method: 'POST', body: JSON.stringify(body) });
 }
 
-export function injectContext(notes: { title: string; content: string }[]): Promise<ChatResponse> {
-	const body: InjectContextRequest = { notes };
-	return fetchJson<ChatResponse>(`${CHAT}/context`, { method: 'POST', body: JSON.stringify(body) });
-}
-
 export function replaceContext(notes: { title: string; content: string }[]): Promise<ChatResponse> {
 	const body: InjectContextRequest = { notes };
 	return fetchJson<ChatResponse>(`${CHAT}/context`, { method: 'PUT', body: JSON.stringify(body) });
@@ -123,20 +117,6 @@ export function streamPublication(
 	return new EventSource(
 		`/api/v1/publications/${pubkey}/${encodeURIComponent(d_tag)}/stream` +
 			`?policy=${policy}&depth=${depth}`
-	);
-}
-
-export function loadSections(pubkey: string, d_tag: string, policy = 'local_first') {
-	return fetchJson<{ sections: Section[]; loaded_count: number; total_count: number }>(
-		`/api/v1/publications/${pubkey}/${encodeURIComponent(d_tag)}/sections?policy=${policy}`,
-		{ method: 'POST' }
-	);
-}
-
-export function loadSectionsMeta(pubkey: string, d_tag: string, policy = 'local_only') {
-	return fetchJson<{ sections_meta: SectionMeta[]; total_count: number }>(
-		`/api/v1/publications/${pubkey}/${encodeURIComponent(d_tag)}/sections/metadata?policy=${policy}`,
-		{ method: 'POST' }
 	);
 }
 
@@ -657,20 +637,6 @@ export function getSettings() {
 	}>('/api/v1/settings');
 }
 
-export function addAuthor(author: string) {
-	return fetchJson<{ updated: boolean; message: string }>('/api/v1/config/update', {
-		method: 'POST',
-		body: JSON.stringify({ add_author: author })
-	});
-}
-
-export function removeAuthor(author: string) {
-	return fetchJson<{ updated: boolean; message: string }>('/api/v1/config/update', {
-		method: 'POST',
-		body: JSON.stringify({ remove_author: author })
-	});
-}
-
 // Profile API
 
 export interface Profile {
@@ -855,18 +821,6 @@ export function getClaudeSession(id: string, offset?: number) {
 // Network mode & activity API
 
 // Export API
-
-export interface ExportManifest {
-	event_count: number;
-	kinds: Record<string, number>;
-	authors: number;
-	embedding_count: number;
-}
-
-export function getExportManifest(kinds?: string) {
-	const params = kinds ? `?kinds=${kinds}` : '';
-	return fetchJson<ExportManifest>(`/api/v1/export/manifest${params}`);
-}
 
 export async function downloadExport(kinds?: string) {
 	const params = kinds ? `?kinds=${kinds}` : '';

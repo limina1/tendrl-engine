@@ -927,3 +927,37 @@ Hit publish (signed or unsigned). The detected-sections panel should
 show =Inner= indented one level under =Outer=. The persisted events
 have a 30040 root → 30040 for Outer → 30041 for Outer's prose + 30041
 for Inner.
+
+* Boundary-compliance cleanup — baseline + per-phase verify
+
+Branch =cleanup/boundary-compliance= (off =tendrl-web=). Run the baseline
+before touching anything; it must be green (warnings OK, no errors/failures).
+
+** Baseline (recorded 2026-05-30, all green)
+
+#+begin_src bash
+cargo build        # OK — 1 warning (unused `file`, claude_sessions.rs:264; Phase 3 removes)
+cargo test         # 298 passed, 0 failed
+cargo clippy       # 47 warnings, 0 errors (Phase 3 should DROP this count)
+pnpm -C web check  # 0 errors, 35 pre-existing warnings
+#+end_src
+
+** Phase 1 verify — orphan TS deletions are truly orphaned
+
+Each deleted name must return 0 import/usage hits before deletion. The
+component basenames and the dead api.ts fns:
+
+#+begin_src bash
+# Orphan components (expect 0 hits each, outside their own def file)
+for n in Toolbar PanelFrame JsonPreview NetworkPill Rail; do
+  echo "== $n =="; rg -n "\b$n\b" web/src --glob '!**/'"$n"'.svelte'
+done
+
+# Dead api.ts fns (expect 0 call sites outside api.ts). Keep evictProfiles.
+for f in addAuthor removeAuthor getDiscussionCounts getExportManifest \
+         injectContext loadSections loadSectionsMeta; do
+  echo "== $f =="; rg -n "\b$f\b" web/src --glob '!**/api.ts'
+done
+#+end_src
+
+After deletion: =pnpm -C web check= clean (no new errors).
