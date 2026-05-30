@@ -98,33 +98,30 @@ loader, and publishing operations. `publication.rs` also contains `PublishPayloa
 for signing and broadcasting events.
 
 ### Tree Module (`src/tree/`)
-**Status: split between a live pure core and a dead TUI state machine.** This module
-was built as the navigation engine for the (now-removed) ratatui TUI, so the
-command/state/navigation half has **no production consumer** — the web does not call
-it (no `/tree/` HTTP routes; `api.rs` imports only the compose payload structs). It
-compiles warning-free only because the types are `pub`. Treat it in two parts:
+**Status: pure core only.** This module was the navigation engine for the (now-removed)
+ratatui TUI; the dead command/state/navigation half was deleted in the Phase 3 boundary
+cleanup (see `docs/eval/09`). What remains is the frontend-agnostic, IO-free core kept
+as the source of truth for future frontends (web today; emacs/nvim planned):
 
-- **Pure core — KEEP (the intended source of truth, portable to future frontends):**
-  - **`parser.rs`**: line-by-line classification for compose (headings/attributes/code
-    blocks → which event kind 30040/30041 a line generates). Pure function, no UI state.
-  - **`content.rs`**: `ContentDetector` — content-format detection. Pure.
-  - **`node.rs`**: `TreeNode`/`NodeId` structure + accessors. Pure data.
-  - The **`render.rs` flatten algorithm** (`visible_nodes`) — pure, but currently
-    entangled with `TreeState` (reads cursor/selection/expanded); to reuse it must take
-    the expansion set as a parameter.
-  - The **compose payload structs in `state.rs`** (`ComposeState`, `SectionCompose`,
-    `TagEntry`, `BlockKind`, `ComposeBlock`, `ComposeBlockState`) — the only `state.rs`
-    types `api.rs` actually uses; they feed slug/coordinate/payload emission.
-- **TUI view-state machine — DEAD, slated to drop:** `TreeState` navigation fields,
-  `TreeEngine` + the `CommandResult::NeedsAsync` async boundary, `command.rs`
-  (`TreeCommand`), `ViewMode`/window/dialog/palette/clipboard state, `undo.rs`
-  (`UndoStack`, a never-wired stub). These hold view/interaction state that, per the
-  frontend/backend boundary above, belongs in the frontend — and the web already owns
-  its own.
+- **`parser.rs`**: line-by-line classification for compose (headings/attributes/code
+  blocks → which event kind 30040/30041 a line generates). Pure function, no UI state.
+- **`content.rs`**: `ContentDetector` — content-format detection. Pure.
+- **`node.rs`**: `TreeNode`/`NodeId` structure + accessors. Pure data.
+
+The **compose payload structs** (`ComposeState`, `SectionCompose`, `TagEntry`,
+`BlockKind`, `ComposeBlock`, `ComposeBlockState`) — which feed slug/coordinate/payload
+emission — now live in **`src/publication/compose.rs`** (`crate::publication::compose`),
+next to the publishing code that consumes them, not in the tree module.
+
+What was deleted: `TreeState`/`TreeEngine` + the `CommandResult::NeedsAsync` async
+boundary, `command.rs` (`TreeCommand`), `render.rs` (`TreeRenderer`/`VisibleNode`
+flatten), `ViewMode`/window/dialog/palette/clipboard view-state, and the never-wired
+`undo.rs` (`UndoStack`). All held view/interaction state that, per the
+frontend/backend boundary above, belongs in the frontend — and the web owns its own.
 
 Note the live publication tree is **loaded/assembled by `publication.rs`** (the
-recursive depth-N loader + `build_toc` + the `stream_publication_tree` SSE stream), not
-by `tree/engine.rs` — and this is correctly engine-side: `PubLoadEvent::Index` ships
+recursive depth-N loader + `build_toc` + the `stream_publication_tree` SSE stream) —
+and this is correctly engine-side: `PubLoadEvent::Index` ships
 `depth` + an ordered `children` list, parent-before-child, so `a`-tag resolution,
 ordering, dedup, and the in-horizon walk all run in Rust. The web (`ReaderBuffer.svelte`)
 re-accumulates those events into an addr-keyed map (mostly to track per-node load status

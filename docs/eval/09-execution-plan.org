@@ -91,30 +91,33 @@ No behavior change. Each item was =rg=-verified to have 0 import sites (see [[fi
 - Verify :: cargo test 303 passed (+5); clippy 47 (unchanged); =pnpm -C web check= 0 errors.
   Manual badge before/after still worth a spot-check on a pub with comments + highlights.
 
-* Phase 3 — Shed the Rust TUI state machine [0/4]
+* Phase 3 — Shed the Rust TUI state machine [4/4] ✓ landed 1232732 + f460ba3
 Pure deletion, large loc, but order matters: *extract the pure core FIRST, then delete.*
 See [[file:03-tree-module.org][03]] for the full keep/drop partition.
-- [ ] *Extract* the compose payload structs (the KEEP list above) out of
-  [[src:src/tree/state.rs][state.rs]] into a new module (=src/publication/compose.rs= or =src/compose_types.rs=).
-  Repoint the ~140 external refs in [[src:src/api.rs][api.rs]], [[src:src/engine.rs][engine.rs]], [[src:src/publication.rs][publication.rs]],
-  [[src:src/publication/tree_emit.rs][tree_emit.rs]], [[src:src/drafts.rs][drafts.rs]]. Keep =parser.rs=/=content.rs=/=node.rs= where they are.
-- [ ] *Delete* the view-state machine: =engine.rs= (=TreeEngine=), =command.rs=,
+- [X] *Extract* the compose payload structs (the KEEP list above) out of
+  =state.rs= into =src/publication/compose.rs= (publication-adjacent, since they
+  feed publish-payload emission). Repointed all consumers in [[src:src/api.rs][api.rs]],
+  [[src:src/engine.rs][engine.rs]], [[src:src/publication.rs][publication.rs]], [[src:src/publication/tree_emit.rs][tree_emit.rs]], [[src:src/drafts.rs][drafts.rs]] from
+  =crate::tree::state::= to =crate::publication::compose::=; moved the compose
+  unit tests alongside. Kept =parser.rs=/=content.rs=/=node.rs= where they are.
+- [X] *Delete* the view-state machine: =engine.rs= (=TreeEngine=), =command.rs=,
   =render.rs= (=TreeRenderer=/=TextRenderer=/=VisibleNode=), =undo.rs=, and the dead
   state.rs types (=TreeState=, =ViewState=, =ViewMode=, =EditorViewMode=, =FilterMode=,
   =CommandPaletteState=, =WindowManager=/=WindowState=, =LoginDialogState=,
   =UserDataMenuState=, =ClipboardContent=, =AppMode=). This also removes the dead
   =AsyncRequest::LoadUserData=/=AsyncResult::UserDataLoaded= plumbing — note that
   =user_data.rs= itself stays (revived in Phase 5).
-- [ ] Rewrite [[src:src/tree/mod.rs][mod.rs]] re-exports + its docstring to describe only what remains
-  (the pure core), and remove the stale "TreeEngine async boundary" prose.
-- [ ] Fold in the small confirmed Rust dead-code from [[file:02-engine-data-layer.org][02]] while you're here: the 4
-  unused [[src:src/relay.rs][relay.rs]] helpers + =LOCAL_RELAY=, =list_publications_before=, the stray
-  =file= open in [[src:src/claude_sessions.rs::264][claude_sessions.rs:264]], the =let _ = Phase::Read= hack
-  ([[src:src/engine.rs::574][engine.rs:574]]).
-- Verify :: =cargo build= (0 errors), =cargo test=, =cargo clippy= (warning count should
-  DROP). Confirm nothing live referenced the deleted types (=rg= the type names → only
-  internal/test hits before deleting).
-- Commit :: "refactor(tree): extract compose core, delete dead TUI state machine".
+- [X] Rewrite [[src:src/tree/mod.rs][mod.rs]] re-exports + its docstring to describe only what remains
+  (the pure core =node=/=parser=/=content=); removed the stale "TreeEngine async
+  boundary" prose.
+- [X] Fold in the small confirmed Rust dead-code from [[file:02-engine-data-layer.org][02]]: the 4 unused
+  [[src:src/relay.rs][relay.rs]] helpers + =LOCAL_RELAY=, =list_publications_before=, the stray =file=
+  open in =claude_sessions.rs=, the =let _ = Phase::Read= hack in =engine.rs=.
+- Verify :: =cargo build= 0 warnings (was 1 pre-existing — also fixed); =cargo test=
+  282 passed (304 − 22 deleted TUI/editor tests); =cargo clippy= 47 → 45. Confirmed via
+  =rg= that nothing live referenced the deleted types before deleting.
+- Result :: −5166 loc net; =src/tree/= is now =mod.rs= + =node.rs= + =parser.rs= +
+  =content.rs= (pure core only). Landed as two commits (extract, then delete).
 
 * Phase 4 — Build the missing NIP transforms in Rust [0/4]
 The real wins. Each is independent — do one per branch/PR off =cleanup/boundary-compliance=

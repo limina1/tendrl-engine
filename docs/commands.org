@@ -975,3 +975,29 @@ Manual: open a publication that has comments + highlights, confirm the outline
 badge counts are unchanged vs. before, with one /list round trip (no extra
 /counts call). The /list counts also catch #A-only nested replies that the
 standalone /counts endpoint (single #a filter) does not.
+
+** Phase 3 verify — shed the Rust TUI state machine
+
+Two commits: extract compose core to =publication::compose=, then delete the
+dead =tree::state=/=command=/=engine=/=render=/=undo= machine + small dead Rust.
+
+#+begin_src bash
+# 1. No consumer still points at the old path (expect 0 hits).
+rg -n "crate::tree::state::" src
+
+# 2. Nothing live references the deleted TUI types (expect 0 outside src/tree/**,
+#    which no longer contains them anyway).
+rg -n "TreeState|TreeEngine|TreeCommand|ViewState|EditorComposeState|WindowManager|UndoStack|TreeRenderer|VisibleNode" src --glob '!src/tree/**'
+
+# 3. The deleted dead-code symbols are gone entirely (expect 0 hits).
+rg -n "LOCAL_RELAY|check_relay_available|get_relays_with_local|fetch_from_multiple_relays|list_publications_before" src
+
+# 4. tree/ is pure core only.
+ls src/tree/          # mod.rs content.rs node.rs parser.rs
+
+# 5. Gates.
+cargo build           # 0 warnings
+cargo test            # 282 passed
+cargo test --lib compose   # 26 compose tests, now under publication::compose
+cargo clippy          # 45 warnings (was 47)
+#+end_src
