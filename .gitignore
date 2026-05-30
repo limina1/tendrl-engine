@@ -41,3 +41,6 @@ sidecar/.venv/
 
 # Generated graph preview
 scripts/collatz-graph.svg
+
+# Local engine config (use config.example.toml as the template)
+config.toml
