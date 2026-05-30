@@ -27,7 +27,7 @@ export interface PublishRelayStatus {
 
 export interface PublishEventStatus {
 	eventId: string;
-	/** `kind:pubkey:dtag` form. Render via `encodeNaddr` for display. */
+	/** `kind:pubkey:dtag` form. Encode to `naddr` via `api.encode` for display. */
 	aTag?: string;
 	kind: number;
 	title: string | null;
@@ -41,7 +41,7 @@ export interface PublishEventStatus {
 }
 
 export interface PublishProgressState {
-	/** `kind:pubkey:dtag` for the publication index. Render via `encodeNaddr`. */
+	/** `kind:pubkey:dtag` for the publication index. Encode via `api.encode`. */
 	aTag?: string;
 	title?: string;
 	authorPubkey?: string;

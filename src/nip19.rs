@@ -221,6 +221,122 @@ fn decode_naddr_payload(data: &[u8]) -> Result<Decoded, DecodeError> {
     })
 }
 
+// ============================================================================
+// Encoding (the inverse of `decode`)
+// ============================================================================
+//
+// NIP-19 specifies *bech32* (checksum constant 1) for every entity — npub /
+// nevent / naddr alike — NOT bech32m. The `bech32::encode::<Bech32>` path below
+// therefore round-trips exactly with `decode` above (see the round-trip tests).
+
+#[derive(Debug, Error)]
+pub enum EncodeError {
+    #[error("Invalid hex for {what}: {source}")]
+    Hex {
+        what: &'static str,
+        source: hex::FromHexError,
+    },
+    #[error("Expected a 32-byte {what}, got {actual} bytes")]
+    BadLength { what: &'static str, actual: usize },
+    #[error("Bech32 encode failed: {0}")]
+    Bech32(String),
+    #[error("Malformed `a`-tag coordinate (want kind:pubkey:d_tag): {0:?}")]
+    BadCoordinate(String),
+}
+
+/// Decode a 32-byte hex field, erroring with a field-named message on bad
+/// input. Used for pubkeys and event ids.
+fn hex32(s: &str, what: &'static str) -> Result<Vec<u8>, EncodeError> {
+    let bytes = hex::decode(s).map_err(|source| EncodeError::Hex { what, source })?;
+    if bytes.len() != 32 {
+        return Err(EncodeError::BadLength {
+            what,
+            actual: bytes.len(),
+        });
+    }
+    Ok(bytes)
+}
+
+/// Append one NIP-19 TLV record. Lengths are a single byte, so relay URLs and
+/// d-tags must be < 256 bytes — the same bound the decoder assumes.
+fn push_tlv(out: &mut Vec<u8>, t: u8, v: &[u8]) {
+    out.push(t);
+    out.push(v.len() as u8);
+    out.extend_from_slice(v);
+}
+
+fn bech32_encode(hrp: &str, data: &[u8]) -> Result<String, EncodeError> {
+    use bech32::{Bech32, Hrp};
+    let hrp = Hrp::parse(hrp).map_err(|e| EncodeError::Bech32(e.to_string()))?;
+    bech32::encode::<Bech32>(hrp, data).map_err(|e| EncodeError::Bech32(e.to_string()))
+}
+
+/// Encode a 32-byte hex pubkey as `npub1…` (plain bech32, no TLV).
+pub fn encode_npub(pubkey_hex: &str) -> Result<String, EncodeError> {
+    bech32_encode("npub", &hex32(pubkey_hex, "pubkey")?)
+}
+
+/// Encode a 32-byte hex event id as `note1…` (plain bech32, no TLV).
+pub fn encode_note(event_id_hex: &str) -> Result<String, EncodeError> {
+    bech32_encode("note", &hex32(event_id_hex, "event id")?)
+}
+
+/// Encode an `nevent1…`: the type-0 event id plus optional relay/author/kind
+/// hints. Mirrors `decode_nevent_payload`.
+pub fn encode_nevent(
+    event_id_hex: &str,
+    relays: &[String],
+    author: Option<&str>,
+    kind: Option<u32>,
+) -> Result<String, EncodeError> {
+    let mut tlv = Vec::new();
+    push_tlv(&mut tlv, 0x00, &hex32(event_id_hex, "event id")?);
+    for r in relays {
+        push_tlv(&mut tlv, 0x01, r.as_bytes());
+    }
+    if let Some(a) = author {
+        push_tlv(&mut tlv, 0x02, &hex32(a, "author")?);
+    }
+    if let Some(k) = kind {
+        push_tlv(&mut tlv, 0x03, &k.to_be_bytes());
+    }
+    bech32_encode("nevent", &tlv)
+}
+
+/// Encode an `naddr1…` for a `kind:pubkey:d_tag` coordinate plus optional relay
+/// hints. Mirrors `decode_naddr_payload` (type 0 = d-tag, 2 = author, 3 = kind).
+pub fn encode_naddr(
+    kind: u32,
+    pubkey_hex: &str,
+    d_tag: &str,
+    relays: &[String],
+) -> Result<String, EncodeError> {
+    let author = hex32(pubkey_hex, "pubkey")?;
+    let mut tlv = Vec::new();
+    push_tlv(&mut tlv, 0x00, d_tag.as_bytes());
+    for r in relays {
+        push_tlv(&mut tlv, 0x01, r.as_bytes());
+    }
+    push_tlv(&mut tlv, 0x02, &author);
+    push_tlv(&mut tlv, 0x03, &kind.to_be_bytes());
+    bech32_encode("naddr", &tlv)
+}
+
+/// Convenience: encode a raw `a`-tag coordinate string (`kind:pubkey:d_tag`,
+/// the d-tag may itself contain colons) into its `naddr1…` form.
+pub fn naddr_from_a_tag(a_tag: &str, relays: &[String]) -> Result<String, EncodeError> {
+    let mut parts = a_tag.splitn(3, ':');
+    let kind = parts
+        .next()
+        .and_then(|s| s.parse::<u32>().ok())
+        .ok_or_else(|| EncodeError::BadCoordinate(a_tag.to_string()))?;
+    let pubkey = parts
+        .next()
+        .ok_or_else(|| EncodeError::BadCoordinate(a_tag.to_string()))?;
+    let d_tag = parts.next().unwrap_or("");
+    encode_naddr(kind, pubkey, d_tag, relays)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -375,5 +491,145 @@ mod tests {
         let data = vec![0x00u8, 32, 1, 2, 3, 4];
         let err = parse_tlv(&data).unwrap_err();
         matches!(err, DecodeError::TruncatedTlv);
+    }
+
+    // === Encoding: the core invariant is decode(encode(x)) == x. ===
+
+    const PUBKEY: &str = "84dee6e676e5bb67b4ad4e042cf70cbd8681155db535942fcc6a0533858a7240";
+    const EVENT_ID: &str = "ae3a6f7ce2971e43cfeeda2a41f30206d205cc16542a5cd9e127cefb01d409a4";
+
+    #[test]
+    fn encode_npub_round_trips() {
+        let npub = encode_npub(PUBKEY).expect("encode npub");
+        assert!(npub.starts_with("npub1"));
+        match decode(&npub).expect("decode npub") {
+            Decoded::Npub { pubkey } => assert_eq!(pubkey, PUBKEY),
+            other => panic!("expected Npub, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn encode_npub_matches_known_vector() {
+        // The spec vector from `decode_known_npub`, in the other direction.
+        assert_eq!(
+            encode_npub(PUBKEY).unwrap(),
+            "npub1sn0wdenkukak0d9dfczzeacvhkrgz92ak56egt7vdgzn8pv2wfqqhrjdv9"
+        );
+    }
+
+    #[test]
+    fn encode_note_round_trips() {
+        match decode(&encode_note(EVENT_ID).expect("encode note")).expect("decode note") {
+            Decoded::Note { event_id } => assert_eq!(event_id, EVENT_ID),
+            other => panic!("expected Note, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn encode_nevent_id_only_round_trips() {
+        let nevent = encode_nevent(EVENT_ID, &[], None, None).expect("encode nevent");
+        match decode(&nevent).expect("decode nevent") {
+            Decoded::Nevent {
+                event_id,
+                relays,
+                author,
+                kind_int,
+            } => {
+                assert_eq!(event_id, EVENT_ID);
+                assert!(relays.is_empty());
+                assert_eq!(author, None);
+                assert_eq!(kind_int, None);
+            }
+            other => panic!("expected Nevent, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn encode_nevent_with_all_hints_round_trips() {
+        let relays = vec!["wss://relay.damus.io".to_string()];
+        let nevent =
+            encode_nevent(EVENT_ID, &relays, Some(PUBKEY), Some(1)).expect("encode nevent");
+        match decode(&nevent).expect("decode nevent") {
+            Decoded::Nevent {
+                event_id,
+                relays: r,
+                author,
+                kind_int,
+            } => {
+                assert_eq!(event_id, EVENT_ID);
+                assert_eq!(r, relays);
+                assert_eq!(author.as_deref(), Some(PUBKEY));
+                assert_eq!(kind_int, Some(1));
+            }
+            other => panic!("expected Nevent, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn encode_naddr_round_trips() {
+        let naddr = encode_naddr(30040, PUBKEY, "my-publication", &[]).expect("encode naddr");
+        assert!(naddr.starts_with("naddr1"));
+        match decode(&naddr).expect("decode naddr") {
+            Decoded::Naddr {
+                kind_int,
+                pubkey,
+                d_tag,
+                relays,
+            } => {
+                assert_eq!(kind_int, 30040);
+                assert_eq!(pubkey, PUBKEY);
+                assert_eq!(d_tag, "my-publication");
+                assert!(relays.is_empty());
+            }
+            other => panic!("expected Naddr, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn naddr_from_a_tag_handles_colons_in_dtag() {
+        // d-tags can contain colons; only the first two `:` split the coord.
+        let a_tag = format!("30041:{PUBKEY}:chapter:1:intro");
+        match decode(&naddr_from_a_tag(&a_tag, &[]).expect("encode")).expect("decode") {
+            Decoded::Naddr {
+                kind_int,
+                pubkey,
+                d_tag,
+                ..
+            } => {
+                assert_eq!(kind_int, 30041);
+                assert_eq!(pubkey, PUBKEY);
+                assert_eq!(d_tag, "chapter:1:intro");
+            }
+            other => panic!("expected Naddr, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn naddr_from_a_tag_empty_dtag() {
+        let a_tag = format!("30040:{PUBKEY}:");
+        match decode(&naddr_from_a_tag(&a_tag, &[]).expect("encode")).expect("decode") {
+            Decoded::Naddr { d_tag, .. } => assert_eq!(d_tag, ""),
+            other => panic!("expected Naddr, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn encode_rejects_bad_hex() {
+        assert!(matches!(
+            encode_npub("not-hex"),
+            Err(EncodeError::Hex { .. })
+        ));
+        assert!(matches!(
+            encode_npub("abcd"),
+            Err(EncodeError::BadLength { actual: 2, .. })
+        ));
+    }
+
+    #[test]
+    fn naddr_from_a_tag_rejects_malformed() {
+        assert!(matches!(
+            naddr_from_a_tag("not-a-coordinate", &[]),
+            Err(EncodeError::BadCoordinate(_))
+        ));
     }
 }

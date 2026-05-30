@@ -1001,3 +1001,32 @@ cargo test            # 282 passed
 cargo test --lib compose   # 26 compose tests, now under publication::compose
 cargo clippy          # 45 warnings (was 47)
 #+end_src
+
+** Phase 4a verify — NIP-19 encode in Rust
+
+Built =encode_npub/note/nevent/naddr= + =naddr_from_a_tag= in =src/nip19.rs=
+(bech32 const-1, mirrors =decode=); exposed =POST /api/v1/encode=; switched the
+web to =api.encode(...)= and deleted the from-scratch bech32m encoder from
+=web/src/lib/nostr/nip19.ts= (kept the two pure string helpers =stripNostrPrefix=
+/ =isHex64=).
+
+#+begin_src bash
+# 1. Core invariant — round-trip encode/decode tests all green.
+cargo test --lib nip19          # 20 passed (11 encode + 9 decode)
+
+# 2. The web no longer ships a bech32 implementation (expect 0 hits).
+rg -n "polymod|bech32Encode|convertBits|createChecksum" web/src
+
+# 3. No consumer imports the deleted encoders (expect 0 hits).
+rg -n "encodeNaddr|encodeNpub|encodeNevent|naddrFromATag" web/src
+
+# 4. Endpoint smoke test (engine running on :3030).
+curl -s -X POST localhost:3030/api/v1/encode -H 'Content-Type: application/json' \
+  -d '{"kind":"npub","pubkey":"84dee6e676e5bb67b4ad4e042cf70cbd8681155db535942fcc6a0533858a7240"}'
+# -> {"encoded":"npub1sn0wdenkukak0d9dfczzeacvhkrgz92ak56egt7vdgzn8pv2wfqqhrjdv9"}
+
+# 5. Gates.
+cargo test            # 292 passed (+10 over Phase 3)
+cargo clippy          # 45 warnings (unchanged)
+pnpm -C web check     # 0 errors
+#+end_src

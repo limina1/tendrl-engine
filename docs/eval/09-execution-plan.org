@@ -119,14 +119,25 @@ See [[file:03-tree-module.org][03]] for the full keep/drop partition.
 - Result :: −5166 loc net; =src/tree/= is now =mod.rs= + =node.rs= + =parser.rs= +
   =content.rs= (pure core only). Landed as two commits (extract, then delete).
 
-* Phase 4 — Build the missing NIP transforms in Rust [0/4]
+* Phase 4 — Build the missing NIP transforms in Rust [1/4]
 The real wins. Each is independent — do one per branch/PR off =cleanup/boundary-compliance=
 (or off =tendrl-web=). Pattern for every item: build the Rust transform + unit tests →
 expose/extend the endpoint → switch the web to consume it → *delete the TS twin* →
 =pnpm -C web check= → commit. Smallest/clearest first.
-- [ ] *4a NIP-19 encode* — add =encode= for naddr/npub/nevent to [[src:src/nip19.rs][nip19.rs]] (it has
-  =decode= already); expose =POST /api/v1/encode= (or return pre-encoded ids on events).
-  Replace the from-scratch bech32m in [[web:src/lib/nostr/nip19.ts][nip19.ts]]; delete it. Test: =decode(encode(x)) == x=.
+- [X] *4a NIP-19 encode* — ✓ landed. Added =encode_npub/note/nevent/naddr= +
+  =naddr_from_a_tag= to [[src:src/nip19.rs][nip19.rs]] (bech32 const-1, mirrors =decode=; this also
+  *fixes* the TS twin's latent bech32m discrepancy — NIP-19 mandates bech32);
+  exposed =POST /api/v1/encode= as the inverse of =/decode= (same =kind=-tagged
+  shape). Switched the web to =api.encode(...)=: =EventViewModal= pre-encodes
+  npub/nevent/naddr into =$state= on display so the copy click stays synchronous
+  (a =clipboard.writeText= after an =await= loses gesture activation), and its
+  p-tag click now uses =by:<hex>= directly (parser accepts bare 64-hex — no encode
+  needed); =PublishProgressBuffer= encodes its =a=-tag coordinates async into a map.
+  Deleted the from-scratch bech32m encoder from [[web:src/lib/nostr/nip19.ts][nip19.ts]] (kept the two
+  pure string helpers =stripNostrPrefix= / =isHex64= — input sanitization, not
+  event derivation). Tests: =decode(encode(x)) == x= for every variant.
+  Verify :: =cargo test --lib nip19= 20 passed; =cargo test= 292 (+10); clippy 45
+  (unchanged); =pnpm -C web check= 0 errors. See [[../commands.org][commands.org]] "Phase 4a verify".
 - [ ] *4b Republish-diff* — move =detectRepublish=/=flattenToc= + slug matching
   ([[web:src/lib/state.svelte.ts::1485][state.svelte.ts:1485]]) into Rust (reuse =generate_d_tag=); return a =RepublishDiff=
   from an endpoint (or as part of =publish/preview=). Delete TS =detectRepublish= +

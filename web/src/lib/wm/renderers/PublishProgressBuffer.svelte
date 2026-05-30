@@ -8,7 +8,7 @@
 		type PublishRelayStatus,
 		type RelayResult
 	} from '../publish-progress.svelte';
-	import { naddrFromATag } from '$lib/nostr/nip19';
+	import * as api from '$lib/api';
 	import { getAppState } from '$lib/state.svelte';
 	import type { Buffer } from '../types';
 
@@ -17,6 +17,50 @@
 	const store = getStore();
 	const app = getAppState();
 	const progress = $derived(store.current);
+
+	// naddr forms for each event's `kind:pubkey:d_tag` coordinate, encoded
+	// engine-side. Populated async into a map keyed by the raw `a`-tag so the
+	// render path stays synchronous — it just reads `naddrByATag[aTag]`, which
+	// is undefined until the encode resolves. Re-encodes when the progress (and
+	// thus its set of coordinates) changes; cleanup cancels stale in-flight work.
+	let naddrByATag = $state<Record<string, string>>({});
+
+	$effect(() => {
+		const p = store.current;
+		if (!p) {
+			naddrByATag = {};
+			return;
+		}
+		const aTags = [
+			...new Set([
+				...(p.aTag ? [p.aTag] : []),
+				...p.events.flatMap((ev) => (ev.aTag ? [ev.aTag] : []))
+			])
+		];
+		if (aTags.length === 0) {
+			naddrByATag = {};
+			return;
+		}
+		let cancelled = false;
+		(async () => {
+			const pairs = await Promise.all(
+				aTags.map(async (a) => {
+					try {
+						return [a, await api.encode({ kind: 'atag', a_tag: a })] as const;
+					} catch {
+						return null;
+					}
+				})
+			);
+			if (cancelled) return;
+			const next: Record<string, string> = {};
+			for (const pair of pairs) if (pair) next[pair[0]] = pair[1];
+			naddrByATag = next;
+		})();
+		return () => {
+			cancelled = true;
+		};
+	});
 
 	let expanded = $state(new Set<string>());
 	// Tracks the just-copied identifier so we can flash a "copied"
@@ -74,7 +118,7 @@
 	}
 
 	function naddrFor(ev: PublishEventStatus): string | null {
-		return ev.aTag ? naddrFromATag(ev.aTag) : null;
+		return ev.aTag ? naddrByATag[ev.aTag] ?? null : null;
 	}
 
 	function dotClass(state: RelayResult): string {
@@ -129,7 +173,7 @@
 		{@const agg = aggregateAcceptRatio(progress)}
 		{@const aggColor = ratioColor(agg.ratio)}
 
-		{@const headerNaddr = progress.aTag ? naddrFromATag(progress.aTag) : null}
+		{@const headerNaddr = progress.aTag ? naddrByATag[progress.aTag] ?? null : null}
 		<header class="pp-header">
 			<div class="pp-title-row">
 				<span class="pp-title">{progress.title ?? 'Publishing'}</span>

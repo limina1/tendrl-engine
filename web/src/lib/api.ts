@@ -69,6 +69,35 @@ export function replaceContext(notes: { title: string; content: string }[]): Pro
 	return fetchJson<ChatResponse>(`${CHAT}/context`, { method: 'PUT', body: JSON.stringify(body) });
 }
 
+// NIP-19 encode
+//
+// Bech32 NIP-19 derivation lives in the Rust engine (the inverse of
+// `/decode`), so every frontend gets identical, spec-correct output without
+// shipping its own bech32 implementation. `kind`-tagged to mirror the
+// `Decoded` shape the decode endpoint returns.
+
+export type EncodeRequest =
+	| { kind: 'npub'; pubkey: string }
+	| { kind: 'note'; event_id: string }
+	| {
+			kind: 'nevent';
+			event_id: string;
+			relays?: string[];
+			author?: string;
+			kind_int?: number;
+	  }
+	| { kind: 'naddr'; kind_int: number; pubkey: string; d_tag: string; relays?: string[] }
+	| { kind: 'atag'; a_tag: string; relays?: string[] };
+
+/** Encode structured fields into a NIP-19 bech32 identifier via the engine. */
+export async function encode(req: EncodeRequest): Promise<string> {
+	const resp = await fetchJson<{ encoded: string }>('/api/v1/encode', {
+		method: 'POST',
+		body: JSON.stringify(req)
+	});
+	return resp.encoded;
+}
+
 // Publications API
 
 export function listPublications(limit = 20, policy = 'local_only', before?: number) {

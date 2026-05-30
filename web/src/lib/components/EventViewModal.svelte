@@ -2,13 +2,7 @@
 	import type { NostrEvent, SearchResult, EditorInsertMode } from '$lib/types';
 	import ProfileName from './ProfileName.svelte';
 	import { getAppState } from '$lib/state.svelte';
-	import {
-		encodeNpub,
-		encodeNevent,
-		encodeNaddr,
-		isHex64,
-		stripNostrPrefix
-	} from '$lib/nostr/nip19';
+	import { isHex64, stripNostrPrefix } from '$lib/nostr/nip19';
 	import * as api from '$lib/api';
 	import { getRelayInfo, normalizeRelayUrl, type Nip11Status } from '$lib/relay/nip11';
 	import { requestRelayFocus } from '$lib/relay/focus.svelte';
@@ -106,17 +100,50 @@
 	// prefix (or closes the modal if none). t and r are bare toggles.
 	let chordPrefix: null | 'c' | 'a' | 'p' = $state(null);
 
+	// NIP-19 identifiers, encoded engine-side. We pre-encode on display (rather
+	// than per-click) so the copy handler can stay synchronous — `clipboard
+	// .writeText` after an `await` can lose the user-gesture activation and get
+	// blocked by the browser. Re-runs on every event swap; cleared first so a
+	// stale npub never copies for the wrong event.
+	let encoded = $state<{ npub?: string; nevent?: string; naddr?: string }>({});
+
+	$effect(() => {
+		const id = n.id;
+		const pubkey = n.pubkey;
+		const kind = n.kind;
+		const d = dTag;
+		const currentId = id.toLowerCase();
+		encoded = {};
+		(async () => {
+			try {
+				const [nevent, npub, naddr] = await Promise.all([
+					api.encode({ kind: 'nevent', event_id: id }),
+					api.encode({ kind: 'npub', pubkey }),
+					d
+						? api.encode({ kind: 'naddr', kind_int: kind, pubkey, d_tag: d })
+						: Promise.resolve(undefined)
+				]);
+				// Drop if the user navigated away while encoding.
+				if (n.id.toLowerCase() !== currentId) return;
+				encoded = { nevent, npub, naddr };
+			} catch {
+				// Leave `encoded` empty — copy() then surfaces an error toast.
+			}
+		})();
+	});
+
 	function copy(kind: 'id' | 'nevent' | 'naddr' | 'npub'): void {
-		try {
-			if (kind === 'id') copyText(n.id, 'id');
-			else if (kind === 'nevent') copyText(encodeNevent(n.id), 'nevent');
-			else if (kind === 'naddr') {
-				if (!dTag) return;
-				copyText(encodeNaddr({ kind: n.kind, pubkey: n.pubkey, dTag }), 'naddr');
-			} else if (kind === 'npub') copyText(encodeNpub(n.pubkey), 'npub');
-		} catch {
-			app.pushToast(`Couldn't encode ${kind}`, 'error');
+		if (kind === 'id') {
+			copyText(n.id, 'id');
+			return;
 		}
+		const value =
+			kind === 'nevent' ? encoded.nevent : kind === 'naddr' ? encoded.naddr : encoded.npub;
+		if (!value) {
+			app.pushToast(`Couldn't encode ${kind}`, 'error');
+			return;
+		}
+		copyText(value, kind);
 	}
 
 	let tagsContainer: HTMLElement | null = $state(null);
@@ -457,10 +484,9 @@
 		}
 		if (key === 'p') {
 			if (!isHex64(value)) return { kind: 'none' };
-			try {
-				const npub = encodeNpub(value.toLowerCase());
-				return { kind: 'search', query: `by:${npub}` };
-			} catch { return { kind: 'none' }; }
+			// The search parser accepts a bare 64-hex `by:` author filter, so we
+			// query by hex directly — no client-side npub encoding needed.
+			return { kind: 'search', query: `by:${value.toLowerCase()}` };
 		}
 		if (key === 'a') {
 			const parts = value.split(':');

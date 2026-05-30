@@ -180,6 +180,75 @@ pub async fn decode_handler(
         .map_err(|e| EngineError::InvalidFilter(e.to_string()))
 }
 
+/// POST /api/v1/encode body — the inverse of `DecodeRequest`. Tagged by `kind`
+/// so the shape mirrors the `Decoded` enum the decode endpoint returns.
+#[derive(Debug, Deserialize)]
+#[serde(tag = "kind", rename_all = "lowercase")]
+pub enum EncodeRequest {
+    Npub {
+        pubkey: String,
+    },
+    Note {
+        event_id: String,
+    },
+    Nevent {
+        event_id: String,
+        #[serde(default)]
+        relays: Vec<String>,
+        #[serde(default)]
+        author: Option<String>,
+        #[serde(default)]
+        kind_int: Option<u32>,
+    },
+    Naddr {
+        kind_int: u32,
+        pubkey: String,
+        d_tag: String,
+        #[serde(default)]
+        relays: Vec<String>,
+    },
+    /// Convenience: encode a raw `kind:pubkey:d_tag` `a`-tag coordinate to `naddr`.
+    Atag {
+        a_tag: String,
+        #[serde(default)]
+        relays: Vec<String>,
+    },
+}
+
+#[derive(Debug, Serialize)]
+pub struct EncodeResponse {
+    pub encoded: String,
+}
+
+/// POST /api/v1/encode
+///
+/// Encode structured fields into a NIP-19 bech32 identifier — the inverse of
+/// `/decode`. NIP-19 derivation (encode + decode) lives in Rust so every
+/// frontend gets identical, spec-correct output without its own bech32 impl.
+pub async fn encode_handler(
+    Json(req): Json<EncodeRequest>,
+) -> Result<Json<EncodeResponse>, EngineError> {
+    let encoded = match req {
+        EncodeRequest::Npub { pubkey } => nip19::encode_npub(&pubkey),
+        EncodeRequest::Note { event_id } => nip19::encode_note(&event_id),
+        EncodeRequest::Nevent {
+            event_id,
+            relays,
+            author,
+            kind_int,
+        } => nip19::encode_nevent(&event_id, &relays, author.as_deref(), kind_int),
+        EncodeRequest::Naddr {
+            kind_int,
+            pubkey,
+            d_tag,
+            relays,
+        } => nip19::encode_naddr(kind_int, &pubkey, &d_tag, &relays),
+        EncodeRequest::Atag { a_tag, relays } => nip19::naddr_from_a_tag(&a_tag, &relays),
+    }
+    .map_err(|e| EngineError::InvalidFilter(e.to_string()))?;
+    Ok(Json(EncodeResponse { encoded }))
+}
+
 // ============================================================================
 // Search API Endpoint
 // ============================================================================
