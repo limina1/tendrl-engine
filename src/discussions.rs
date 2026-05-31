@@ -13,7 +13,7 @@
 //! frontend/backend boundary (docs/eval/08). The web keeps only the
 //! depth→indent rendering and tree-walk view helpers.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
 
@@ -179,6 +179,107 @@ pub fn group_threads_by_address(
         .collect()
 }
 
+// ============================================================================
+// NIP-84 (kind 9802) highlight resolution
+// ============================================================================
+//
+// A section may carry many highlights — per-section ones tagging the 30041
+// directly, plus publication-level ones tagging the 30040 root that cascade to
+// whichever section's text they match. Each renders as its own `<mark>` span.
+//
+// Until 9802 events carry explicit offset tags, a highlight's position is found
+// by case-insensitive substring match (the same approximation the former web
+// `computeHighlightSegments` made). This is the single engine-side source of
+// truth; the web only slices the text by the returned spans and renders marks.
+
+/// One NIP-84 highlight to place in a section's text.
+#[derive(Debug, Clone, Deserialize)]
+pub struct Highlight {
+    /// kind-9802 event id.
+    pub id: String,
+    /// The highlighted text (the 9802 event's `content`).
+    pub content: String,
+    /// Author pubkey (drives per-author colour on the web).
+    pub pubkey: String,
+}
+
+/// A resolved highlight span. `start`/`end` are offsets into the section text in
+/// **UTF-16 code units**, so the web can `content.slice(start, end)` exactly
+/// (JS strings are UTF-16). A future non-web consumer wanting Unicode-scalar
+/// offsets can add a char-offset variant; the resolution logic is unit-agnostic.
+#[derive(Debug, Clone, Serialize)]
+pub struct HighlightSpan {
+    pub start: usize,
+    pub end: usize,
+    pub id: String,
+    pub pubkey: String,
+}
+
+/// First index ≥ `from` at which `needle` occurs in `hay` (UTF-16 slices), or
+/// `None`. Naive scan — highlight needles are short and rare.
+fn find_u16(hay: &[u16], needle: &[u16], from: usize) -> Option<usize> {
+    if needle.is_empty() || needle.len() > hay.len() {
+        return None;
+    }
+    (from..=hay.len() - needle.len()).find(|&i| &hay[i..i + needle.len()] == needle)
+}
+
+/// Resolve where each highlight sits in `content`, returning non-overlapping
+/// spans sorted by `start`. Longer highlights claim their span first (ties
+/// broken by id for determinism); a shorter highlight that would overlap an
+/// already-claimed span is dropped — avoiding nested `<mark>`s without losing
+/// the longer, more informative match. Mirrors the former web twin.
+pub fn resolve_highlight_spans(content: &str, highlights: &[Highlight]) -> Vec<HighlightSpan> {
+    if content.is_empty() || highlights.is_empty() {
+        return Vec::new();
+    }
+
+    // Lowercased haystack in UTF-16 units — the same unit the web slices in.
+    let hay_lower: Vec<u16> = content.to_lowercase().encode_utf16().collect();
+
+    // Longer text wins overlap arbitration; id breaks ties.
+    let mut ordered: Vec<&Highlight> = highlights.iter().collect();
+    ordered.sort_by(|a, b| {
+        b.content
+            .len()
+            .cmp(&a.content.len())
+            .then_with(|| a.id.cmp(&b.id))
+    });
+
+    let mut spans: Vec<HighlightSpan> = Vec::new();
+    for hl in ordered {
+        let needle_str = hl.content.trim();
+        if needle_str.is_empty() {
+            continue;
+        }
+        let needle_lower: Vec<u16> = needle_str.to_lowercase().encode_utf16().collect();
+        // Span length uses the ORIGINAL needle's UTF-16 length so the web slices
+        // the right number of units out of the (un-lowercased) content — exactly
+        // as the TS twin did with `content.slice(idx, idx + needle.length)`.
+        let needle_len = needle_str.encode_utf16().count();
+
+        // First occurrence that doesn't overlap an already-claimed span.
+        let mut from = 0usize;
+        while let Some(idx) = find_u16(&hay_lower, &needle_lower, from) {
+            let end = idx + needle_len;
+            let overlaps = spans.iter().any(|s| s.start < end && idx < s.end);
+            if !overlaps {
+                spans.push(HighlightSpan {
+                    start: idx,
+                    end,
+                    id: hl.id.clone(),
+                    pubkey: hl.pubkey.clone(),
+                });
+                break;
+            }
+            from = idx + 1;
+        }
+    }
+
+    spans.sort_by_key(|s| s.start);
+    spans
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -312,5 +413,83 @@ mod tests {
         highlight["kind"] = json!(9802); // NIP-84 highlight, not a comment
         let grouped = group_threads_by_address(&[highlight], &[sec.to_string()]);
         assert!(grouped[sec].is_empty());
+    }
+
+    // === NIP-84 highlight resolution ===
+
+    fn hl(id: &str, content: &str) -> Highlight {
+        Highlight {
+            id: id.to_string(),
+            content: content.to_string(),
+            pubkey: "aa".to_string(),
+        }
+    }
+
+    #[test]
+    fn no_highlights_or_empty_content_is_no_spans() {
+        assert!(resolve_highlight_spans("hello", &[]).is_empty());
+        assert!(resolve_highlight_spans("", &[hl("1", "x")]).is_empty());
+    }
+
+    #[test]
+    fn resolves_single_span_case_insensitive() {
+        let content = "The quick brown fox";
+        let spans = resolve_highlight_spans(content, &[hl("1", "QUICK")]);
+        assert_eq!(spans.len(), 1);
+        assert_eq!((spans[0].start, spans[0].end), (4, 9));
+        assert_eq!(&content[spans[0].start..spans[0].end], "quick");
+        assert_eq!(spans[0].id, "1");
+    }
+
+    #[test]
+    fn longer_highlight_wins_overlap_shorter_dropped() {
+        let content = "the quick brown fox jumps";
+        // "quick brown" overlaps "brown"; the longer one wins, "brown" dropped.
+        let spans = resolve_highlight_spans(content, &[hl("short", "brown"), hl("long", "quick brown")]);
+        assert_eq!(spans.len(), 1);
+        assert_eq!(spans[0].id, "long");
+        assert_eq!(&content[spans[0].start..spans[0].end], "quick brown");
+    }
+
+    #[test]
+    fn non_overlapping_highlights_both_kept_sorted_by_start() {
+        let content = "alpha beta gamma";
+        let spans = resolve_highlight_spans(content, &[hl("g", "gamma"), hl("a", "alpha")]);
+        assert_eq!(spans.len(), 2);
+        // Sorted by start: alpha (0) before gamma (11).
+        assert_eq!(spans[0].id, "a");
+        assert_eq!(spans[1].id, "gamma".chars().next().map(|_| "g").unwrap());
+        assert!(spans[0].start < spans[1].start);
+    }
+
+    #[test]
+    fn missing_text_yields_no_span() {
+        let spans = resolve_highlight_spans("hello world", &[hl("1", "not present")]);
+        assert!(spans.is_empty());
+    }
+
+    #[test]
+    fn second_occurrence_used_when_first_overlaps() {
+        // "ab" appears at 0 and 5. "abc" claims [0,3). "ab" at 0 overlaps, so it
+        // takes its second occurrence at 5.
+        let content = "abcxxabxx";
+        let spans = resolve_highlight_spans(content, &[hl("long", "abc"), hl("ab", "ab")]);
+        assert_eq!(spans.len(), 2);
+        let ab = spans.iter().find(|s| s.id == "ab").unwrap();
+        assert_eq!((ab.start, ab.end), (5, 7));
+    }
+
+    #[test]
+    fn utf16_offsets_account_for_astral_chars() {
+        // "😀" is one scalar but two UTF-16 code units. A highlight after it
+        // must start at offset 2, so `content.slice` works on the JS side.
+        let content = "😀ab";
+        let spans = resolve_highlight_spans(content, &[hl("1", "ab")]);
+        assert_eq!(spans.len(), 1);
+        assert_eq!((spans[0].start, spans[0].end), (2, 4));
+        // Sanity: the UTF-16 slice at those offsets is "ab".
+        let units: Vec<u16> = content.encode_utf16().collect();
+        let got = String::from_utf16(&units[spans[0].start..spans[0].end]).unwrap();
+        assert_eq!(got, "ab");
     }
 }

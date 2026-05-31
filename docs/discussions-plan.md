@@ -1107,7 +1107,14 @@ web/src/lib/
    `HighlightCapture`. Killer feature; depends only on (5)'s signing
    wiring being clean.
 7. **Offset-aware overlay** (upgrades existing renderers). Pulls
-   forward Alexandria's `highlightByOffset` algorithm.
+   forward Alexandria's `highlightByOffset` algorithm. *Phase 4d step:*
+   highlight-position resolution now lives in Rust
+   (`src/discussions.rs::resolve_highlight_spans`, batched via
+   `POST /highlights/resolve`) returning `(start,end,id,pubkey)` UTF-16 spans;
+   the web only slices + renders `<mark>`s (`segmentsFromSpans`). Still
+   substring-matched until 9802 events carry explicit offsets, but the engine
+   now owns the offset math — this is the seam Alexandria's `highlightByOffset`
+   slots into.
 8. **Per-author color + drawer.** Cosmetic but high-impact.
 9. **`DiscussionCache`** in the engine. Pure perf; can ship anytime
    after (1).

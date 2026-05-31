@@ -1,6 +1,7 @@
 <script lang="ts">
 	import type { LazySection } from '$lib/types';
 	import { getAppState } from '$lib/state.svelte';
+	import * as api from '$lib/api';
 
 	import CommentThread from './CommentThread.svelte';
 	import PoolStateBadges from './PoolStateBadges.svelte';
@@ -10,8 +11,9 @@
 		pubkeyToHighlightStroke
 	} from '$lib/discussions/colors';
 	import {
-		computeHighlightSegments,
-		type Highlight
+		segmentsFromSpans,
+		type Highlight,
+		type HighlightSpan
 	} from '$lib/discussions/highlights';
 
 	const app = getAppState();
@@ -55,6 +57,37 @@
 	function addrKey(addr: { kind: number; pubkey: string; d_tag: string }): string {
 		return `${addr.kind}:${addr.pubkey}:${addr.d_tag}`;
 	}
+
+	// Highlight spans per section, resolved engine-side in one batched round
+	// trip (POST /highlights/resolve) for every loaded section that has
+	// highlights. Stored async into a map keyed by section addr; the template
+	// slices content by these via `segmentsFromSpans`. Re-runs when the section
+	// set or any section's highlights change.
+	let spansBySection = $state<Record<string, HighlightSpan[]>>({});
+	$effect(() => {
+		const items: { key: string; content: string; highlights: Highlight[] }[] = [];
+		for (const s of sections) {
+			if (s.status !== 'loaded' || !s.content || !s.addr) continue;
+			const hls = highlightsFor ? highlightsFor(s.addr) : [];
+			if (hls.length === 0) continue;
+			items.push({ key: addrKey(s.addr), content: s.content, highlights: hls });
+		}
+		if (items.length === 0) {
+			spansBySection = {};
+			return;
+		}
+		let cancelled = false;
+		api.resolveHighlights(items)
+			.then((m) => {
+				if (!cancelled) spansBySection = m;
+			})
+			.catch(() => {
+				if (!cancelled) spansBySection = {};
+			});
+		return () => {
+			cancelled = true;
+		};
+	});
 
 	// ── Tree collapse model ─────────────────────────────────────────────
 	// `sections` is the depth-N TOC flattened depth-first: a 30040 index
@@ -288,10 +321,11 @@
 					</h3>
 				{/if}
 				{#if section.status === 'loaded' && section.content}
-					{@const hls = highlightsFor && section.addr ? highlightsFor(section.addr) : []}
-					{@const segs = hls.length > 0
-						? computeHighlightSegments(section.content, hls, focusedHighlightId)
-						: null}
+					{@const spans = section.addr ? spansBySection[addrKey(section.addr)] ?? [] : []}
+					{@const segs =
+						spans.length > 0
+							? segmentsFromSpans(section.content, spans, focusedHighlightId)
+							: null}
 					{#if segs && segs.some((s) => s.highlight !== null)}
 						<pre class="section-content">{#each segs as seg, si (si)}{#if seg.highlight}<mark class="hl-overlay" data-hl-ids={seg.highlight.id} style={styleFor(seg.highlight.pubkey, seg.highlight.focused)} title="NIP-84 highlight {seg.highlight.id.slice(0, 8)}… by {seg.highlight.pubkey.slice(0, 12)}…">{seg.text}</mark>{:else}{seg.text}{/if}{/each}</pre>
 					{:else}

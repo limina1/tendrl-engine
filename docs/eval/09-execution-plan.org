@@ -119,7 +119,7 @@ See [[file:03-tree-module.org][03]] for the full keep/drop partition.
 - Result :: −5166 loc net; =src/tree/= is now =mod.rs= + =node.rs= + =parser.rs= +
   =content.rs= (pure core only). Landed as two commits (extract, then delete).
 
-* Phase 4 — Build the missing NIP transforms in Rust [3/4]
+* Phase 4 — Build the missing NIP transforms in Rust [4/4] ✓
 The real wins. Each is independent — do one per branch/PR off =cleanup/boundary-compliance=
 (or off =tendrl-web=). Pattern for every item: build the Rust transform + unit tests →
 expose/extend the endpoint → switch the web to consume it → *delete the TS twin* →
@@ -165,11 +165,22 @@ expose/extend the endpoint → switch the web to consume it → *delete the TS t
   [[../discussions-plan.md][discussions-plan.md]] build-order #2.
   Verify :: =cargo test --lib discussions= 9 passed; =cargo test= 304 (+9); clippy
   45; =pnpm -C web check= 0 errors. See [[../commands.org][commands.org]] "Phase 4c verify".
-- [ ] *4d NIP-84 highlight resolution* — hardest + highest value (currently a known-wrong
-  substring placeholder; the plan's "loudest gap"). Build offset-aware span resolution
-  in Rust returning =(start,end,id,pubkey)=. Delete [[web:src/lib/discussions/highlights.ts][highlights.ts]]
-  =computeHighlightSegments=; TS renders =<mark>= spans. Unblocks the offset-pinned
-  highlights roadmap item.
+- [X] *4d NIP-84 highlight resolution* — ✓ landed. =resolve_highlight_spans= in
+  [[src:src/discussions.rs][src/discussions.rs]] returns non-overlapping =(start,end,id,pubkey)= spans with
+  *UTF-16 offsets* (so the web slices exactly; documented for future char-offset
+  consumers). Logic relocated as-is from the TS twin (case-insensitive substring
+  match, longer-wins overlap arbitration) — the substring approach is what the data
+  supports until 9802 events carry explicit offset tags, but it now produces clean
+  offset spans that unblock offset-pinning. 7 unit tests (incl. astral-char UTF-16).
+  Exposed batched =POST /api/v1/highlights/resolve= (key→spans, one round trip for
+  every visible section). Rewired all three render sites (=SectionCard=,
+  =ContinuousView= (batched), =DocBuffer=) to resolve spans async into =$state=, then
+  render via a pure =segmentsFromSpans= (slicing by the engine's offsets — rendering,
+  not resolution). *Focus stays a frontend concern* (the web compares span ids).
+  Deleted =computeHighlightSegments=; [[web:src/lib/discussions/highlights.ts][highlights.ts]] keeps only the types +
+  =segmentsFromSpans=.
+  Verify :: =cargo test --lib discussions= 16 passed; =cargo test= 311 (+7); clippy
+  45; =pnpm -C web check= 0 errors. See [[../commands.org][commands.org]] "Phase 4d verify".
 
 * Phase 5 — Revive unwired Rust parsing (decision-gated) [0/2]
 Not auto-go — decide intent first (a fresh worker should raise this, not assume).

@@ -1,12 +1,14 @@
 <script lang="ts">
 	import type { LazySection, SectionStatus } from '$lib/types';
+	import * as api from '$lib/api';
 	import {
 		pubkeyToHighlightFill,
 		pubkeyToHighlightStroke
 	} from '$lib/discussions/colors';
 	import {
-		computeHighlightSegments,
-		type Highlight
+		segmentsFromSpans,
+		type Highlight,
+		type HighlightSpan
 	} from '$lib/discussions/highlights';
 
 	let {
@@ -62,15 +64,35 @@
 		return section.content;
 	});
 
-	// Multi-highlight overlay: every passed highlight whose content
-	// appears in displayContent gets its own <mark> in the author's hue.
-	// In preview mode (single-line truncated cards) we skip overlays —
-	// the preview text is too short and shifted to bear them usefully.
+	// Multi-highlight overlay: spans are resolved engine-side (POST
+	// /highlights/resolve) against the exact content this card renders, async
+	// into state. In preview mode (single-line truncated cards) we skip overlays
+	// — the preview text is too short and shifted to bear them usefully.
+	let highlightSpans = $state<HighlightSpan[]>([]);
+	$effect(() => {
+		const text = displayContent;
+		const hls = highlights;
+		if (!text || preview || hls.length === 0) {
+			highlightSpans = [];
+			return;
+		}
+		let cancelled = false;
+		api.resolveHighlights([{ key: 'section', content: text, highlights: hls }])
+			.then((m) => {
+				if (!cancelled) highlightSpans = m['section'] ?? [];
+			})
+			.catch(() => {
+				if (!cancelled) highlightSpans = [];
+			});
+		return () => {
+			cancelled = true;
+		};
+	});
+
 	const highlightSegments = $derived.by(() => {
-		if (!displayContent || preview || highlights.length === 0) return null;
-		const segs = computeHighlightSegments(displayContent, highlights, focusedHighlightId);
-		const anyHighlighted = segs.some((s) => s.highlight !== null);
-		return anyHighlighted ? segs : null;
+		if (!displayContent || preview || highlightSpans.length === 0) return null;
+		const segs = segmentsFromSpans(displayContent, highlightSpans, focusedHighlightId);
+		return segs.some((s) => s.highlight !== null) ? segs : null;
 	});
 </script>
 

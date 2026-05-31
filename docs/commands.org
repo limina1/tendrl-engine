@@ -1083,3 +1083,29 @@ cargo test            # 304 passed (+9)
 cargo clippy          # 45 warnings (unchanged)
 pnpm -C web check     # 0 errors
 #+end_src
+
+** Phase 4d verify — NIP-84 highlight resolution in Rust
+
+=resolve_highlight_spans= in =src/discussions.rs= (UTF-16 offset spans), exposed
+via batched =POST /api/v1/highlights/resolve=. Deleted =computeHighlightSegments=
+from =web/src/lib/discussions/highlights.ts= (kept the types + a pure
+=segmentsFromSpans= that slices content by the engine's spans).
+
+#+begin_src bash
+# 1. Resolution is unit-tested (incl. UTF-16 astral-char offsets).
+cargo test --lib discussions    # 16 passed (9 thread + 7 highlight)
+
+# 2. The web no longer resolves highlight positions client-side (only doc refs).
+rg -n "computeHighlightSegments" web/src    # 2 hits: both doc comments
+
+# 3. Endpoint smoke test (engine on :3030).
+curl -s -X POST localhost:3030/api/v1/highlights/resolve \
+  -H 'Content-Type: application/json' \
+  -d '{"items":[{"key":"s1","content":"The quick brown fox","highlights":[{"id":"h1","content":"quick","pubkey":"aa"}]}]}'
+# -> {"spans":{"s1":[{"start":4,"end":9,"id":"h1","pubkey":"aa"}]}}
+
+# 4. Gates.
+cargo test            # 311 passed (+7)
+cargo clippy          # 45 warnings (unchanged)
+pnpm -C web check     # 0 errors
+#+end_src

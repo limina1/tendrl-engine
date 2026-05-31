@@ -7,7 +7,11 @@
 	import { getAppState } from '$lib/state.svelte';
 	import CommentThread from '$lib/components/CommentThread.svelte';
 	import { type ThreadNode } from '$lib/discussions/thread';
-	import { computeHighlightSegments, type Highlight } from '$lib/discussions/highlights';
+	import {
+		segmentsFromSpans,
+		type Highlight,
+		type HighlightSpan
+	} from '$lib/discussions/highlights';
 	import { pubkeyToHighlightFill, pubkeyToHighlightStroke } from '$lib/discussions/colors';
 	import { prefetchAuthors, refreshAuthors } from '$lib/discussions/authors.svelte';
 
@@ -61,8 +65,31 @@
 		return `background: ${fill}; box-shadow: inset 3px 0 0 ${stroke};`;
 	}
 
+	// Highlight spans resolved engine-side (POST /highlights/resolve), async
+	// into state, then sliced into render segments by `segmentsFromSpans`.
+	let highlightSpans = $state<HighlightSpan[]>([]);
+	$effect(() => {
+		const text = body;
+		const hls = highlights;
+		if (!text || hls.length === 0) {
+			highlightSpans = [];
+			return;
+		}
+		let cancelled = false;
+		api.resolveHighlights([{ key: 'doc', content: text, highlights: hls }])
+			.then((m) => {
+				if (!cancelled) highlightSpans = m['doc'] ?? [];
+			})
+			.catch(() => {
+				if (!cancelled) highlightSpans = [];
+			});
+		return () => {
+			cancelled = true;
+		};
+	});
+
 	const segments = $derived(
-		highlights.length > 0 && body ? computeHighlightSegments(body, highlights, null) : null
+		highlightSpans.length > 0 && body ? segmentsFromSpans(body, highlightSpans, null) : null
 	);
 	const hasOverlay = $derived(!!segments && segments.some((s) => s.highlight !== null));
 

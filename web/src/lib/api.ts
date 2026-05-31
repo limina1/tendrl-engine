@@ -18,6 +18,7 @@ import type {
 	RepublishDiff
 } from './types';
 import type { ThreadNode } from './discussions/thread';
+import type { Highlight, HighlightSpan } from './discussions/highlights';
 
 async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
 	const res = await fetch(url, {
@@ -115,6 +116,24 @@ export function republishDiff(
 		method: 'POST',
 		body: JSON.stringify({ title, sections })
 	});
+}
+
+/**
+ * Resolve NIP-84 highlight positions within section text, engine-side — the
+ * replacement for the former client-side `computeHighlightSegments`. Batched:
+ * pass every visible section (keyed by addr) in one round trip; the response
+ * maps each key to its non-overlapping `HighlightSpan[]` (UTF-16 offsets). The
+ * caller renders `<mark>`s via `segmentsFromSpans`.
+ */
+export async function resolveHighlights(
+	items: { key: string; content: string; highlights: Highlight[] }[]
+): Promise<Record<string, HighlightSpan[]>> {
+	if (items.length === 0) return {};
+	const resp = await fetchJson<{ spans: Record<string, HighlightSpan[]> }>(
+		'/api/v1/highlights/resolve',
+		{ method: 'POST', body: JSON.stringify({ items }) }
+	);
+	return resp.spans;
 }
 
 // Publications API

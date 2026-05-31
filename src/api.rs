@@ -220,6 +220,53 @@ pub struct EncodeResponse {
     pub encoded: String,
 }
 
+/// One section's text + the highlights to place in it. `key` is an opaque
+/// caller-chosen identifier (typically the section address) echoed back in the
+/// response so a batch can be unpacked.
+#[derive(Debug, Deserialize)]
+pub struct ResolveHighlightsItem {
+    pub key: String,
+    pub content: String,
+    #[serde(default)]
+    pub highlights: Vec<crate::discussions::Highlight>,
+}
+
+/// POST /api/v1/highlights/resolve body. Batched so the reader resolves every
+/// visible section's highlights in a single round trip.
+#[derive(Debug, Deserialize)]
+pub struct ResolveHighlightsRequest {
+    #[serde(default)]
+    pub items: Vec<ResolveHighlightsItem>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ResolveHighlightsResponse {
+    /// `key` → resolved non-overlapping spans (UTF-16 offsets), one entry per
+    /// requested item. The web slices the section text by these and renders
+    /// `<mark>`s; focus is applied client-side by comparing span ids.
+    pub spans: std::collections::HashMap<String, Vec<crate::discussions::HighlightSpan>>,
+}
+
+/// POST /api/v1/highlights/resolve
+///
+/// Resolve NIP-84 highlight positions within section text — the engine-side
+/// replacement for the web's former `computeHighlightSegments`. Pure transform
+/// (no engine state); batched over sections. Focus stays a frontend concern.
+pub async fn resolve_highlights_handler(
+    Json(req): Json<ResolveHighlightsRequest>,
+) -> Result<Json<ResolveHighlightsResponse>, EngineError> {
+    let spans = req
+        .items
+        .into_iter()
+        .map(|item| {
+            let resolved =
+                crate::discussions::resolve_highlight_spans(&item.content, &item.highlights);
+            (item.key, resolved)
+        })
+        .collect();
+    Ok(Json(ResolveHighlightsResponse { spans }))
+}
+
 /// POST /api/v1/encode
 ///
 /// Encode structured fields into a NIP-19 bech32 identifier — the inverse of
