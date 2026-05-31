@@ -19,6 +19,11 @@ view component clusters. The problems are three layers /around/ that core:
    engine and the small =relay.rs=/=list_publications_before= dead code are deleted;
    the pure core (=parser=/=content=/=node=) was kept and the compose payload structs
    moved to =crate::publication::compose=. =user_data.rs= / =drafts.rs= remain — Phase 5./
+   /Phase 4 (done): the four NIP transforms the web reimplemented in TS are now built
+   in Rust and the TS twins deleted — NIP-19 encode (=nip19.rs=, 4a), republish-diff
+   (=publication.rs=, 4b), NIP-22 threading + NIP-84 highlight resolution
+   (=discussions.rs=, 4c/4d). Only =user_data.rs= / =drafts.rs= (Phase 5, decision-gated)
+   remain on the boundary list./
 
 2. *Docs describe a system that was superseded.* [[file:01-roadmap-intent-map.org][project-summary.org and
    workbench-architecture.org]] still describe a three-panel layout, a standalone
