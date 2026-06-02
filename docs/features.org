@@ -85,10 +85,21 @@ builder.
   round-trip backup/restore
 
 ** Publishing
-- =POST /api/v1/publish= builds 30040 + 30041 events from compose state
-- Three modes: unsigned draft, signed local, signed + broadcast to publish
-  relays
-- Local ingest of broadcast events for instant feedback in the UI
+- =POST /api/v1/publish= builds + *signs* 30040 + 30041 events from compose
+  state and ingests them. The db only ever holds *signed snapshots* — the
+  passive unsigned-event path was removed; =sign:false= is rejected.
+- Three separable steps:
+  - *Save draft* (no identity) — unsigned working state in =<data_dir>/drafts/=
+    (=POST /api/v1/drafts=), survives refresh, resumable.
+  - *Sign* (identity required) — a signed local snapshot in the db. The
+    signature *is* the snapshot; nostrdb keeps every version. Re-signing a
+    same-title publication reuses its nanoid d-tag (republish-diff) so it's a
+    version update, not a fork.
+  - *Broadcast* — push a signed snapshot to the publish relays
+    (=POST /api/v1/publications/:pubkey/:d_tag/broadcast=), one op for the whole
+    publication. A =LocalPublicationTracker= marks publications local vs.
+    published; the feed renders a "local" pill until broadcast.
+- Local ingest of signed events for instant feedback in the UI
 
 * Identity
 

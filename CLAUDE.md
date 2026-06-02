@@ -176,8 +176,12 @@ sections and embeds new events on a 60-second interval when embeddings are enabl
   `/api/v1/drafts` (POST save / GET list / GET `:id` / DELETE) — it persists the full
   compose state to `<data_dir>/drafts/` so a draft survives a refresh and is
   resumable; the composer's "Save draft" + "Saved drafts" list drive it.
-  `LocalPublicationTracker` (the local-only a-tag tracker) is still **not**
-  instantiated — the signed/unsigned feed pill covers that signal for now.
+  `LocalPublicationTracker` (the local-only a-tag tracker) is **now wired**: the
+  publish handlers mark a signed snapshot local until a relay accepts it (then
+  published), and `list_publications` exposes `local` so the feed renders a
+  "local" pill. The publishing model: drafts are unsigned (DraftStore); **signing
+  is the snapshot** (the only way into the db — no passive unsigned events);
+  broadcast is a separate step.
 - **`relay_store.rs`**: Persistent runtime relay sets (`general` / `fetch` /
   `publish`) backed by `<data_dir>/relays.json`. The TOML config only carries the
   bootstrap `initial_relays` seed; `relays.json` is authoritative for the live
