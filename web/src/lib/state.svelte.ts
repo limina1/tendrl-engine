@@ -131,6 +131,10 @@ function _createAppState() {
 	// Saved drafts (engine DraftStore), newest first. Refreshed when the
 	// composer mounts and after any save/delete.
 	let composeDrafts: api.DraftSummary[] = $state([]);
+	// The current compose session's publication d-tag, once it's been saved or
+	// resumed. Threaded onto subsequent saves so they version the same
+	// publication (new snapshot, same d_tag) rather than minting a fresh draft.
+	let composeDTag: string | null = $state(null);
 	const compose = $derived<ComposeState>({
 		title: composeTitle,
 		tags: composeTags,
@@ -1558,7 +1562,7 @@ function _createAppState() {
 			return;
 		}
 		try {
-			await api.saveDraft({
+			const resp = await api.saveDraft({
 				title,
 				tags: tags.map((t) => [t.name, t.value] as [string, string]),
 				sections: sections.map((s) => ({
@@ -1566,8 +1570,12 @@ function _createAppState() {
 					content: s.content,
 					level: s.level,
 					tags: s.tags.map((t) => [t.name, t.value] as [string, string])
-				}))
+				})),
+				// Thread the session's d-tag so this save versions the same
+				// publication instead of forking a new one.
+				d_tag: composeDTag ?? undefined
 			});
+			composeDTag = resp.d_tag;
 			pushToast('Draft saved', 'success');
 			await refreshComposeDrafts();
 		} catch (e) {
@@ -1598,6 +1606,9 @@ function _createAppState() {
 			items = [...items.map((e) => ({ ...e, in_compose: false })), ...draftItems];
 			composeTitle = cs.title;
 			composeTags = cs.tags.map((t) => ({ name: t.name, value: t.value }));
+			// Resume onto the same publication identity so the next save adds a
+			// version rather than forking.
+			composeDTag = cs.d_tag ?? null;
 			composeSourcePubAddr = null;
 			composeSourcePubEventId = null;
 			composeSourceSectionOrder = [];
@@ -2470,6 +2481,7 @@ function _createAppState() {
 		];
 		composeTitle = '';
 		composeTags = [];
+		composeDTag = null; // fresh publication identity
 		previewVisible = false;
 		navigateToCompose();
 	}

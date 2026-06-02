@@ -143,9 +143,46 @@ export async function resolveHighlights(
 export interface DraftSummary {
 	draft_id: string;
 	title: string;
+	/** Publication identity — saves of one publication share it, so the web
+	 *  groups them into a version list. */
+	d_tag: string;
 	created_at: number;
 	modified_at: number;
 	section_count: number;
+}
+
+// Version diff between two draft snapshots (engine diff_draft_versions).
+
+export interface FieldChange {
+	old: string;
+	new: string;
+}
+export interface TagDiff {
+	added?: [string, string][];
+	removed?: [string, string][];
+}
+export interface SectionVersionDiff {
+	title: string;
+	/** Title slug — the match key. */
+	t: string;
+	status: 'matched' | 'added' | 'removed';
+	level: number;
+	contentChanged?: boolean;
+	levelChanged?: boolean;
+	tags?: TagDiff;
+}
+export interface VersionDiff {
+	titleChanged?: FieldChange;
+	indexTags?: TagDiff;
+	sections: SectionVersionDiff[];
+}
+
+/** Diff two draft snapshots (from_id → to_id), engine-side. */
+export function draftDiff(fromId: string, toId: string): Promise<VersionDiff> {
+	return fetchJson<VersionDiff>('/api/v1/drafts/diff', {
+		method: 'POST',
+		body: JSON.stringify({ from_id: fromId, to_id: toId })
+	});
 }
 
 export interface DraftComposeSection {
@@ -186,9 +223,12 @@ export interface SaveDraftPayload {
 	d_tag?: string;
 }
 
-/** Save (or snapshot) a draft from compose state. Returns its draft_id. */
-export function saveDraft(payload: SaveDraftPayload): Promise<{ draft_id: string }> {
-	return fetchJson<{ draft_id: string }>('/api/v1/drafts', {
+/** Save (or snapshot) a draft from compose state. Returns its draft_id and the
+ *  publication d_tag — thread the latter onto later saves to version, not fork. */
+export function saveDraft(
+	payload: SaveDraftPayload
+): Promise<{ draft_id: string; d_tag: string }> {
+	return fetchJson<{ draft_id: string; d_tag: string }>('/api/v1/drafts', {
 		method: 'POST',
 		body: JSON.stringify(payload)
 	});

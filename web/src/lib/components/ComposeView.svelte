@@ -8,6 +8,7 @@
 	import ItemBadge from './ItemBadge.svelte';
 	import TagEditor from './TagEditor.svelte';
 	import DraftReader from '$lib/wm/renderers/DraftReader.svelte';
+	import DraftVersions from './DraftVersions.svelte';
 	import CodeMirrorEditor from './CodeMirrorEditor.svelte';
 	import {
 		hasStructuralChange,
@@ -646,9 +647,6 @@
 	}
 
 	let draftsOpen = $state(false);
-	function formatDraftTime(ts: number): string {
-		return new Date(ts * 1000).toLocaleString();
-	}
 
 	// Inspect the would-be 30040/30041 events as JSON — no signing/publish.
 	function previewEvents() {
@@ -950,29 +948,13 @@
 				Saved drafts <span class="compose-drafts-count">({drafts.length})</span>
 			</button>
 			{#if draftsOpen}
-				<ul class="compose-drafts-list">
-					{#each drafts as d (d.draft_id)}
-						<li class="compose-draft-row">
-							<button
-								class="compose-draft-load"
-								onclick={() => onloaddraft?.(d.draft_id)}
-								title="Resume this draft (replaces current compose sections)"
-							>
-								<span class="compose-draft-title">{d.title || '[untitled]'}</span>
-								<span class="compose-draft-meta"
-									>{d.section_count} section{d.section_count === 1 ? '' : 's'} · {formatDraftTime(
-										d.modified_at
-									)}</span
-								>
-							</button>
-							<button
-								class="compose-draft-del"
-								onclick={() => ondeletedraft?.(d.draft_id)}
-								title="Delete this draft">✕</button
-							>
-						</li>
-					{/each}
-				</ul>
+				<div class="compose-drafts-list">
+					<DraftVersions
+						{drafts}
+						onload={(id) => onloaddraft?.(id)}
+						ondelete={(id) => ondeletedraft?.(id)}
+					/>
+				</div>
 			{/if}
 		</div>
 	{/if}
@@ -1416,55 +1398,6 @@
 		display: flex;
 		flex-direction: column;
 		gap: 4px;
-	}
-	.compose-draft-row {
-		display: flex;
-		gap: 4px;
-		align-items: stretch;
-	}
-	.compose-draft-load {
-		flex: 1;
-		min-width: 0;
-		display: flex;
-		flex-direction: column;
-		align-items: flex-start;
-		gap: 2px;
-		background: none;
-		border: 1px solid var(--border);
-		border-radius: var(--r-sm, 4px);
-		padding: 5px 9px;
-		cursor: pointer;
-		color: var(--fg);
-		text-align: left;
-	}
-	.compose-draft-load:hover {
-		border-color: var(--accent, var(--id-yours));
-		background: color-mix(in srgb, var(--accent, var(--id-yours)) 10%, transparent);
-	}
-	.compose-draft-title {
-		font-size: 0.82rem;
-		font-weight: 500;
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
-		max-width: 100%;
-	}
-	.compose-draft-meta {
-		font-size: 0.68rem;
-		color: var(--fg-muted);
-	}
-	.compose-draft-del {
-		flex-shrink: 0;
-		background: none;
-		border: 1px solid var(--border);
-		border-radius: var(--r-sm, 4px);
-		color: var(--fg-muted);
-		cursor: pointer;
-		padding: 0 8px;
-	}
-	.compose-draft-del:hover {
-		color: var(--id-draft, crimson);
-		border-color: var(--id-draft, crimson);
 	}
 
 	.publish-btn {
