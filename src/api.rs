@@ -1304,14 +1304,16 @@ fn profile_from_event(pubkey: &str, event: &Value) -> Value {
         .get("content")
         .and_then(|v| v.as_str())
         .unwrap_or("{}");
-    let profile: Value = serde_json::from_str(content).unwrap_or(json!({}));
+    // Single source of truth for kind-0 parsing (the inline twin was deleted).
+    // A non-JSON content yields all-None — same as the former `unwrap_or({})`.
+    let meta = crate::user_data::Metadata::from_event_content(content, 0).unwrap_or_default();
     json!({
         "pubkey": pubkey,
-        "name": profile.get("name").and_then(|v| v.as_str()),
-        "display_name": profile.get("display_name").and_then(|v| v.as_str()),
-        "picture": profile.get("picture").and_then(|v| v.as_str()),
-        "about": profile.get("about").and_then(|v| v.as_str()),
-        "nip05": profile.get("nip05").and_then(|v| v.as_str()),
+        "name": meta.name,
+        "display_name": meta.display_name,
+        "picture": meta.picture,
+        "about": meta.about,
+        "nip05": meta.nip05,
         "found": true
     })
 }

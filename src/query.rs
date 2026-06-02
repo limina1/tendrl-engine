@@ -816,21 +816,16 @@ pub fn find_profiles_matching(ndb: &Ndb, term: &str) -> Vec<crate::search::Profi
     let mut out: Vec<ProfileResult> = Vec::new();
     for (pubkey, (_, event)) in newest {
         let content = event.get("content").and_then(|v| v.as_str()).unwrap_or("");
-        let profile: Value = serde_json::from_str(content).unwrap_or(Value::Null);
-        let field = |key: &str| {
-            profile
-                .get(key)
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string()
-        };
-        let name = field("name");
-        let display_name = field("display_name");
-        let nip05 = field("nip05");
-        let lud16 = field("lud16");
-        let website = field("website");
-        let picture = field("picture");
-        let about = field("about");
+        // Single source of truth for kind-0 parsing (shared with the profile
+        // endpoint); the inline JSON field-picking twin was deleted.
+        let meta = crate::user_data::Metadata::from_event_content(content, 0).unwrap_or_default();
+        let name = meta.name.unwrap_or_default();
+        let display_name = meta.display_name.unwrap_or_default();
+        let nip05 = meta.nip05.unwrap_or_default();
+        let lud16 = meta.lud16.unwrap_or_default();
+        let website = meta.website.unwrap_or_default();
+        let picture = meta.picture.unwrap_or_default();
+        let about = meta.about.unwrap_or_default();
 
         // A direct hex lookup always yields its profile (strongest score);
         // a name scan requires an actual field match.
