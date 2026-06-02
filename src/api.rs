@@ -778,9 +778,10 @@ pub struct RepublishDiffSectionInput {
 /// error resolves to `null`, never an error status, so it can't block a publish.
 pub async fn republish_diff_handler(
     State(engine): State<AppState>,
+    Extension(signing): Extension<crate::signing::SigningController>,
     Json(req): Json<RepublishDiffRequest>,
 ) -> Result<Json<Option<crate::publication::RepublishDiff>>, EngineError> {
-    let Some(my_pubkey) = engine.my_pubkey().map(|s| s.to_string()) else {
+    let Some(my_pubkey) = active_or_config_pubkey(&engine, &signing).await else {
         return Ok(Json(None));
     };
     let sections: Vec<crate::publication::RepublishSectionInput> = req
@@ -3066,6 +3067,20 @@ fn draft_err(e: DraftError) -> EngineError {
     }
 }
 
+/// Resolve "my" pubkey for owner-scoped lookups (republish detection, diff vs
+/// published). Prefers the active identity — engine session OR external NIP-07/
+/// NIP-46 signer — over the config `[identity] pubkey`, because `my_pubkey()` is
+/// only set from config at startup and stays `None` for a session/NIP-07 login.
+async fn active_or_config_pubkey(
+    engine: &Engine,
+    signing: &crate::signing::SigningController,
+) -> Option<String> {
+    if let Some(pk) = signing.active_pubkey().await {
+        return Some(pk);
+    }
+    engine.my_pubkey().map(|s| s.to_string())
+}
+
 /// Tracker of locally-created publications not yet pushed to a relay — drives
 /// the feed's "local / not broadcast" pill. Marked local when a signed snapshot
 /// is ingested without (successful) broadcast, marked published once it lands.
@@ -3343,16 +3358,13 @@ fn publication_to_draft_compose(
 /// when the compose carries one, else by title slug (republish-diff style).
 /// Returns the loaded tree, or `None` if nothing's been published.
 async fn find_published_publication(
-    engine: &Engine,
     pub_engine: &PublicationEngine<'_>,
+    my_pubkey: &str,
     title: &str,
     d_tag: Option<&str>,
 ) -> Result<Option<crate::publication::Publication>, EngineError> {
-    let Some(my) = engine.my_pubkey().map(|s| s.to_string()) else {
-        return Ok(None);
-    };
     if let Some(dtag) = d_tag {
-        let addr = NAddr::new(KIND_PUBLICATION_INDEX, &my, dtag);
+        let addr = NAddr::new(KIND_PUBLICATION_INDEX, my_pubkey, dtag);
         return Ok(pub_engine
             .load_publication_tree(&addr, DEFAULT_PUBLICATION_DEPTH, FetchPolicy::LocalOnly)
             .await
@@ -3365,7 +3377,7 @@ async fn find_published_publication(
     let Some(m) = pubs
         .into_iter()
         .filter(|p| {
-            p.author_pubkey == my
+            p.author_pubkey == my_pubkey
                 && p.title
                     .as_deref()
                     .is_some_and(|t| ComposeState::generate_d_tag(t) == slug)
@@ -3389,11 +3401,16 @@ async fn find_published_publication(
 /// existingAddr}`. The diff direction is published → current.
 pub async fn diff_published_handler(
     State(engine): State<AppState>,
+    Extension(signing): Extension<crate::signing::SigningController>,
     Json(req): Json<SaveDraftRequest>,
 ) -> Result<Json<Value>, EngineError> {
+    let Some(my_pubkey) = active_or_config_pubkey(&engine, &signing).await else {
+        return Ok(Json(json!({ "published": false })));
+    };
     let pub_engine = PublicationEngine::new(&engine);
     let published =
-        find_published_publication(&engine, &pub_engine, &req.title, req.d_tag.as_deref()).await?;
+        find_published_publication(&pub_engine, &my_pubkey, &req.title, req.d_tag.as_deref())
+            .await?;
     let Some(published_pub) = published.filter(|p| p.index.is_loaded()) else {
         return Ok(Json(json!({ "published": false })));
     };

@@ -1498,7 +1498,10 @@ function _createAppState() {
 					level: s.level,
 					tags: s.tags.map((t) => [t.name, t.value] as [string, string])
 				})),
-				d_tag: composeDTag ?? undefined
+				// The PUBLISHED d-tag (when this compose was seeded from a published
+				// publication), NOT the draft's d-tag — those are independent nanoid
+				// spaces. With no source pub the engine matches by title slug.
+				d_tag: composeSourcePubAddr?.d_tag ?? undefined
 			});
 			if (!resp.published || !resp.diff) {
 				pushToast('Not published yet — nothing to compare against.', 'info', 4000);
