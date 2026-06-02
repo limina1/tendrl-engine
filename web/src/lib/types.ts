@@ -54,8 +54,13 @@ export interface PublicationSummary {
 	section_count: number;
 	/** Relays the index event has been seen on. Empty = written locally, not published. */
 	relays: string[];
-	/** False = unsigned draft (placeholder signature). */
+	/** False = unsigned draft (placeholder signature). With the signed-snapshot
+	 *  model this is effectively always true for publications. */
 	signed: boolean;
+	/** True = a signed snapshot the user created that hasn't been broadcast to
+	 *  any relay yet (engine LocalPublicationTracker). Drives the "local" pill;
+	 *  flips false once a relay accepts it. Optional on older payloads. */
+	local?: boolean;
 	/** True when the index event carries a NIP-54 `a`/`e` tag with the
 	 *  `fork` marker — drives the `fork` provenance pill. Optional on the
 	 *  type so older payloads (engine didn't emit it) don't trip

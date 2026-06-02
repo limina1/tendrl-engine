@@ -17,6 +17,7 @@
 		onpilldrop,
 		signed,
 		relays,
+		local,
 		forked,
 		orientation = 'vertical'
 	}: {
@@ -33,6 +34,10 @@
 		 *  pill suppressed. Search rows leave these unset. */
 		signed?: boolean;
 		relays?: string[];
+		/** True = a signed snapshot the host created that hasn't been broadcast
+		 *  to any relay yet. Drives the "local" pill (takes precedence over the
+		 *  relay label). undefined on surfaces that don't track it. */
+		local?: boolean;
 		/** True when the index event carries a NIP-54 e-tag with the
 		 *  `fork` marker — i.e. the publication is forked from another. */
 		forked?: boolean;
@@ -60,11 +65,15 @@
 
 <div class="psb" class:psb--horizontal={orientation === 'horizontal'}>
 	<!-- Provenance first — where the event lives in the network.
-	     draft (unsigned), relay-label or remote (signed), fork
-	     (NIP-54 e-tag with fork marker). Renders only when the host
-	     supplies signed/relays/forked; suppressed otherwise. -->
+	     local (signed but not broadcast), relay-label or remote (on relays),
+	     fork (NIP-54 e-tag with fork marker). Renders only when the host
+	     supplies signed/relays/local/forked; suppressed otherwise. The
+	     unsigned "draft" pill is legacy — the signed-snapshot model never
+	     writes unsigned events to the db, but search rows may still pass it. -->
 	{#if signed === false}
-		<span class="psb__pill psb__pill--passive psb__pill--draft" title="Unsigned draft — not yet signed">draft</span>
+		<span class="psb__pill psb__pill--passive psb__pill--draft" title="Unsigned event (placeholder signature)">unsigned</span>
+	{:else if local}
+		<span class="psb__pill psb__pill--passive psb__pill--local" title="Signed local snapshot — not broadcast to any relay yet">local</span>
 	{:else if signed === true && relays && relays.length > 0}
 		<span class="psb__pill psb__pill--passive psb__pill--remote" title={`On ${relays.length} relay(s):\n${relays.join('\n')}`}>{relayLabel(relays)}</span>
 	{:else if signed === true}
@@ -222,6 +231,12 @@
 	.psb__pill--remote {
 		background: rgba(137, 184, 194, 0.12);
 		color: var(--id-remote);
+	}
+	/* Signed but not broadcast — the user's local-only snapshot. Distinct
+	   token from draft/remote so "I haven't pushed this yet" reads at a glance. */
+	.psb__pill--local {
+		background: color-mix(in srgb, var(--id-local, var(--id-imported, var(--id-yours))) 16%, transparent);
+		color: var(--id-local, var(--id-imported, var(--id-yours)));
 	}
 	.psb__pill--fork {
 		background: color-mix(in srgb, var(--id-imported) 22%, transparent);

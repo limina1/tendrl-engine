@@ -36,8 +36,6 @@ import type {
 } from '$lib/types';
 import type { Buffer } from '$lib/wm/types';
 import * as api from '$lib/api';
-import { getActiveStore } from '$lib/wm/buffer-store.svelte';
-import { setProgress, progressFromPublish } from '$lib/wm/publish-progress.svelte';
 import { identityCanSign } from '$lib/identity/signer';
 
 /** Replaceable kind-0 events can pile up multiple historical versions in
@@ -401,7 +399,6 @@ function _createAppState() {
 		sections: ContextItem[];
 		pubTitle: string;
 		pubTags: TagEntry[];
-		canSign: boolean;
 	} | null = $state(null);
 
 	// --- Search history ---
@@ -1304,32 +1301,42 @@ function _createAppState() {
 		}
 	}
 
+	// Sign the current compose into a local snapshot in the db. Signing — not a
+	// passive unsigned write — is how a draft becomes a committed, versioned
+	// event; broadcasting to relays is a separate, later step.
 	async function handleComposePublish(
 		items: ContextItem[],
 		meta?: { title: string; tags: TagEntry[] }
 	) {
 		const sections = items.length > 0 ? items : compose.sections;
 		if (!sections.length) {
-			pushToast('Nothing to publish — no sections detected', 'error', 4000);
+			pushToast('Nothing to sign — no sections detected', 'error', 4000);
 			return;
 		}
 		// Prefer the title/tags parsed at click time (plain mode) over the
-		// reactive compose state, which can lag a same-tick edit and publish
+		// reactive compose state, which can lag a same-tick edit and sign
 		// an empty title.
 		const pubTitle = meta?.title ?? compose.title;
 		const pubTags = meta?.tags ?? compose.tags;
-		const canSign = identityCanSign(identityStatus);
 
-		// Republish guard: if a publication of yours with the same title
-		// already exists, intercept and show a diff so identifiers can be
-		// reused (replace) rather than forking with fresh nanoid d-tags.
-		const diff = await detectRepublish(pubTitle, sections);
-		if (diff) {
-			republishPrompt = { diff, sections, pubTitle, pubTags, canSign };
-			return; // ComparePublishModal drives confirm / publish-as-new / cancel
+		// Signing writes a snapshot to the db, which needs an unlocked identity.
+		// Without a signer the user's path is "Save draft" — we never write
+		// unsigned events (the engine rejects sign:false).
+		if (!identityCanSign(identityStatus)) {
+			pushToast('Signing needs an unlocked identity — log in, or Save draft.', 'error', 4500);
+			return;
 		}
 
-		await executePublish(sections, pubTitle, pubTags, canSign);
+		// Republish guard: a *signed* publication of yours with the same title
+		// already exists → show the diff so identifiers are reused (replace,
+		// same a-tag → only the latest version shows) rather than forked.
+		const diff = await detectRepublish(pubTitle, sections);
+		if (diff) {
+			republishPrompt = { diff, sections, pubTitle, pubTags };
+			return; // ComparePublishModal drives reuse / sign-as-new / cancel
+		}
+
+		await executePublish(sections, pubTitle, pubTags);
 	}
 
 	// Reuse identifiers from the matched publication (replace) or publish
@@ -1353,36 +1360,32 @@ function _createAppState() {
 					)
 				}
 			: undefined;
-		await executePublish(p.sections, p.pubTitle, p.pubTags, p.canSign, overrides);
+		await executePublish(p.sections, p.pubTitle, p.pubTags, overrides);
 	}
 
 	function cancelRepublish() {
 		republishPrompt = null;
 	}
 
+	// Sign the compose into a local snapshot — sign:true, broadcast:false. The
+	// signature is the snapshot; nostrdb keeps every version. Broadcasting is a
+	// separate, explicit step. The caller guarantees an unlocked identity.
 	async function executePublish(
 		sections: ContextItem[],
 		pubTitle: string,
 		pubTags: TagEntry[],
-		canSign: boolean,
 		overrides?: { pubDTag: string; dTagByTitle: Record<string, string> }
 	) {
-		// Per-site toast covers the SIGNING phase only — the broadcast
-		// phase is owned by the SSE channel (fetch-events.svelte.ts opens
-		// its own activity toast when the engine emits publish_intent).
-		// Two toasts may briefly coexist: this one for "signing", the
-		// SSE one for "broadcasting to N relays".
 		const progressToast = pushToast(
-			canSign
-				? `Signing ${sections.length + 1} events… (${identityStatus?.source ?? 'engine'})`
-				: 'Saving locally…',
+			`Signing ${sections.length + 1} events… (${identityStatus?.source ?? 'engine'})`,
 			'pending',
 			120000
 		);
 
 		// If any section has a source_addr OR the draft was seeded from a
 		// publication, route through the block endpoint so we emit fork-
-		// marker tags. Otherwise fall back to the legacy publish.
+		// marker tags. Otherwise use the flat publish (where republish d-tag
+		// reuse is honored).
 		const hasProvenance =
 			!!composeSourcePubAddr || sections.some((s) => !!s.source_addr);
 
@@ -1429,10 +1432,10 @@ function _createAppState() {
 					blocks,
 					source_publication_addr: composeSourcePubAddr,
 					source_publication_event_id: composeSourcePubEventId,
-					sign: canSign,
-					broadcast: canSign
+					sign: true,
+					broadcast: false
 				});
-				console.log('Published (blocks):', resp.publication_id);
+				console.log('Signed (blocks):', resp.publication_id);
 			} else {
 				resp = await api.publish({
 					title: pubTitle,
@@ -1447,50 +1450,25 @@ function _createAppState() {
 						d_tag: overrides?.dTagByTitle[s.title]
 					})),
 					d_tag: overrides?.pubDTag,
-					sign: canSign,
-					broadcast: canSign
+					sign: true,
+					broadcast: false
 				});
-				console.log('Published:', resp.publication_id);
+				console.log('Signed:', resp.publication_id);
 			}
 
-			// Surface where each event landed: build the per-event×relay
-			// grid from the broadcast results and pop the publish-progress
-			// buffer. Only when we actually broadcast (a signed publish).
-			if (resp.broadcast_results && resp.broadcast_results.length > 0) {
-				setProgress(
-					progressFromPublish(resp, {
-						title: pubTitle,
-						authorPubkey: myPubkey ?? '',
-						sections: sections.map((s) => ({ title: s.title, content: s.content }))
-					})
-				);
-				getActiveStore().openBuffer({
-					className: 'work',
-					buffer: {
-						id: 'publish-progress:current',
-						kind: 'publish-progress',
-						label: 'publish',
-						kicker: 'live'
-					}
-				});
-				// Signed and the engine kicked off the broadcast. Dismiss
-				// the signing toast quickly — the SSE-driven activity
-				// toast is now showing per-relay broadcast status.
-				updateToast(progressToast, { message: 'Signed', kind: 'success' }, 1500);
-			} else if (!canSign) {
-				updateToast(progressToast, { message: 'Saved locally — log in to sign & broadcast', kind: 'info' }, 4000);
-			} else {
-				// Edge case: signed but engine didn't emit broadcast SSE
-				// events (e.g. no relays configured). Keep this concise.
-				updateToast(progressToast, { message: 'Signed (no broadcast)', kind: 'info' }, 3000);
-			}
+			updateToast(
+				progressToast,
+				{ message: 'Signed — local snapshot. Broadcast it when ready.', kind: 'success' },
+				4000
+			);
 			await loadFeed();
 		} catch (e) {
-			// HTTP-level failure (network, signing error, validation).
-			// Distinct from the SSE-driven broadcast failure path the
-			// activity toast already handles.
-			console.error('Publish compose failed:', e);
-			updateToast(progressToast, { message: `Publish failed: ${e instanceof Error ? e.message : String(e)}`, kind: 'error' }, 6000);
+			console.error('Sign compose failed:', e);
+			updateToast(
+				progressToast,
+				{ message: `Sign failed: ${e instanceof Error ? e.message : String(e)}`, kind: 'error' },
+				6000
+			);
 		}
 	}
 

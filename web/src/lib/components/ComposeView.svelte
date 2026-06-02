@@ -1011,15 +1011,15 @@
 				title={mode === 'plain'
 					? detectedSections.length === 0
 						? 'Type a heading line to detect a section'
-						: 'Publish this draft'
+						: 'Sign a local snapshot (broadcast it separately when ready)'
 					: structuralChange
-						? 'Publish this draft'
+						? 'Sign a local snapshot (broadcast it separately when ready)'
 						: compose.source_publication_addr
-							? 'No structural change since the source publication — nothing to publish'
-							: 'Add or modify a section to enable publishing'}
-			>Publish</button>
+							? 'No structural change since the source publication — nothing to sign'
+							: 'Add or modify a section to enable signing'}
+			>Sign</button>
 			{#if checkedIds.size > 0}
-				<button class="publish-btn publish-selected" onclick={publishSelected}>Publish ({checkedIds.size})</button>
+				<button class="publish-btn publish-selected" onclick={publishSelected}>Sign ({checkedIds.size})</button>
 			{/if}
 		{/if}
 		<button onclick={oncancel}>Cancel</button>
