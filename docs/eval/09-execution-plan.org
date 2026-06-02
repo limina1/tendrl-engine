@@ -182,13 +182,27 @@ expose/extend the endpoint → switch the web to consume it → *delete the TS t
   Verify :: =cargo test --lib discussions= 16 passed; =cargo test= 311 (+7); clippy
   45; =pnpm -C web check= 0 errors. See [[../commands.org][commands.org]] "Phase 4d verify".
 
-* Phase 5 — Revive unwired Rust parsing (decision-gated) [0/2]
-Not auto-go — decide intent first (a fresh worker should raise this, not assume).
-- [ ] *user_data.rs* — per the boundary, kind 0/3/51/65 parsing belongs in Rust. Expose
-  the parsed user-data via an endpoint and replace the client-side parsing in
-  =RelaysBuffer.svelte=. Larger than Phase 4 items; confirm it's wanted now vs later.
-- [ ] *drafts.rs* =DraftStore=/=LocalPublicationTracker= — confirm the live draft path
-  ([[src:src/api.rs][api.rs]] publish handlers); then either wire =DraftStore= in or delete it.
+* Phase 5 — Revive unwired Rust parsing (decision-gated) [2/2] ✓ (scoped)
+Decided with the user (2026-06): evaluated benefits first, then took the two
+slices worth doing now — leaving the speculative parts dormant rather than
+building UI-less plumbing.
+- [X] *user_data.rs* — *partial, by design.* Consolidated kind-0 parsing onto
+  =Metadata::from_event_content= (the profile endpoint + profile search both call it
+  now; the inline twins are deleted). Did *not* move the relay-list parse
+  (10002/10007/30002) out of =RelaysBuffer.svelte=: its hard part is NIP-44 decrypt
+  of private lists, which is *signer-dependent* — under NIP-07 the key is in the
+  browser extension, so that decrypt is correctly client-side, not Rust (user's
+  call). The follow/mute/bookmark parsers (3/10000/10003/10006) stay dormant — no
+  consumer UI; wiring them now would re-make the dead-tier mistake in reverse.
+- [X] *drafts.rs* =DraftStore= — wired behind =POST/GET/DELETE /api/v1/drafts=
+  (instantiated per request from =engine.data_dir()=). Persists the full compose
+  state so a draft survives a refresh and is resumable; the composer gained a
+  "Save draft" button + a "Saved drafts" list (save / resume / delete). This was a
+  genuine new capability, not de-duplication — the prior path only dumped unsigned
+  events into nostrdb with an ephemeral compose buffer. =LocalPublicationTracker=
+  left unwired (the signed/unsigned feed pill already covers "local-only").
+  Verify :: =cargo test --lib drafts= 5 passed; smoke-tested save/list/load/delete
+  end-to-end; clippy 45; =pnpm -C web check= 0 errors. See [[../commands.org][commands.org]] "Phase 5 verify".
 
 * Out of scope for THIS plan (track separately)
 - *Correctness bug:* [[src:src/api.rs::3358][publish_blocks_handler]] bypasses the SigningController →

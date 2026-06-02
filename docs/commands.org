@@ -1109,3 +1109,32 @@ cargo test            # 311 passed (+7)
 cargo clippy          # 45 warnings (unchanged)
 pnpm -C web check     # 0 errors
 #+end_src
+
+** Phase 5 verify — kind-0 consolidation + DraftStore wiring
+
+Consolidated kind-0 parsing onto =Metadata::from_event_content= (profile endpoint
++ profile search); wired =DraftStore= behind =/api/v1/drafts= with composer
+save/list/resume. (Relay-list parse + follow/mute/bookmark parsers deliberately
+left as-is — see the execution plan for why.)
+
+#+begin_src bash
+# 1. No inline kind-0 field-picking left (expect 0 hits; the parser is Metadata).
+rg -n 'profile.get\("name"\)|field\("display_name"\)' src
+
+# 2. DraftStore tests.
+cargo test --lib drafts        # 5 passed
+
+# 3. Draft endpoints smoke test (engine running on :3055, temp data dir).
+./target/debug/nostr-engine --port 3055 --data-dir /tmp/draft-smoke &
+curl -s -X POST localhost:3055/api/v1/drafts -H 'Content-Type: application/json' \
+  -d '{"title":"D","tags":[],"sections":[{"title":"s","content":"c","level":2,"tags":[]}]}'
+# -> {"draft_id":"<nanoid>-<ts>"}
+curl -s localhost:3055/api/v1/drafts                 # -> {count:1, drafts:[...]}
+curl -s localhost:3055/api/v1/drafts/<draft_id>      # -> full draft incl compose_state
+curl -s -X DELETE localhost:3055/api/v1/drafts/<draft_id>
+
+# 4. Gates.
+cargo test            # 311 passed
+cargo clippy          # 45 warnings (unchanged)
+pnpm -C web check     # 0 errors
+#+end_src

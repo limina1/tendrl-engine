@@ -156,10 +156,15 @@ sections and embeds new events on a 60-second interval when embeddings are enabl
 - **`nip19.rs`**: bech32 TLV decoders for `nevent`/`naddr`/`nprofile` (npub/nsec live
   in `identity.rs`); unified `decode()` returns a tagged enum for the API
 - **`user_data.rs`**: NIP-01/02/51/65 profile data — parses kind 0/3/10000/10002/
-  10003/10006/10007/30002 from nostrdb `Note`s. **Currently unwired** — the
-  `LoadUserData` path that drives it is never constructed, and the web parses these
-  kinds client-side. Per the frontend/backend boundary this parsing should live here;
-  the fix is to revive + wire it and have the web consume it, not delete it.
+  10003/10006/10007/30002 from nostrdb `Note`s. **Partially wired**: `Metadata`
+  (kind 0) is the single source of truth for the profile endpoint + profile search
+  (`api.rs::profile_from_event`, `query.rs::find_profiles_matching`). The relay-list
+  kinds (10002/10007/30002) are still parsed client-side in `RelaysBuffer.svelte`
+  because the hard part (NIP-44 decrypt of private lists) is signer-dependent —
+  under NIP-07 the key lives in the browser extension, so that decrypt is rightly
+  client-side, not Rust. The follow/mute/bookmark parsers (3/10000/10003/10006)
+  remain dormant — no consumer UI yet; wire them when there is one, don't build
+  UI-less plumbing.
 - **`chat.rs`**: Pure state logic for LLM chat fragments, edit mode, context
   injection, message serialization (no IO)
 - **`llm.rs`**: Async `LLMProvider` trait — `NoopProvider` (testing) and
@@ -167,9 +172,12 @@ sections and embeds new events on a 60-second interval when embeddings are enabl
 - **`claude_sessions.rs`**: Reader for Claude Code conversation JSONL files in
   `~/.claude/projects/`
 - **`drafts.rs`**: Local JSON draft storage for unsigned NKBIP-01 publications before
-  they are signed and published. **Note:** `DraftStore` / `LocalPublicationTracker`
-  are not currently instantiated (the live draft path differs) — confirm before
-  building on them.
+  they are signed and published. **`DraftStore` is wired** behind
+  `/api/v1/drafts` (POST save / GET list / GET `:id` / DELETE) — it persists the full
+  compose state to `<data_dir>/drafts/` so a draft survives a refresh and is
+  resumable; the composer's "Save draft" + "Saved drafts" list drive it.
+  `LocalPublicationTracker` (the local-only a-tag tracker) is still **not**
+  instantiated — the signed/unsigned feed pill covers that signal for now.
 - **`relay_store.rs`**: Persistent runtime relay sets (`general` / `fetch` /
   `publish`) backed by `<data_dir>/relays.json`. The TOML config only carries the
   bootstrap `initial_relays` seed; `relays.json` is authoritative for the live
