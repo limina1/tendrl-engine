@@ -194,6 +194,25 @@ export function saveDraft(payload: SaveDraftPayload): Promise<{ draft_id: string
 	});
 }
 
+/**
+ * Broadcast an already-signed publication (its 30040 index + signed 30041
+ * sections) to the publish relays in one operation — the separate step after
+ * signing a local snapshot. No re-signing. Clears the "local" pill on success.
+ */
+export function broadcastPublication(
+	pubkey: string,
+	dTag: string
+): Promise<{
+	successful: number;
+	total: number;
+	event_count: number;
+	broadcast_results: { relay: string; success: boolean; message: string | null; event_id: string }[];
+}> {
+	return fetchJson(`/api/v1/publications/${pubkey}/${encodeURIComponent(dTag)}/broadcast`, {
+		method: 'POST'
+	});
+}
+
 /** List draft summaries, newest first. */
 export function listDrafts(): Promise<{ drafts: DraftSummary[]; count: number }> {
 	return fetchJson<{ drafts: DraftSummary[]; count: number }>('/api/v1/drafts');

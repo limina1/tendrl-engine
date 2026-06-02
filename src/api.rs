@@ -3962,6 +3962,166 @@ pub async fn publish_blocks_handler(
     }))
 }
 
+/// True iff the event carries a real (non-placeholder) signature.
+fn is_signed_event(e: &Value) -> bool {
+    e.get("sig")
+        .and_then(|v| v.as_str())
+        .map(|s| !s.is_empty() && !s.chars().all(|c| c == '0'))
+        .unwrap_or(false)
+}
+
+/// Collect every signed, loaded event in a publication tree — the 30040 index,
+/// its 30041 sections, and the same for nested publications. Unsigned/unloaded
+/// entries are skipped (only real snapshots get broadcast).
+fn collect_signed_events(pub_: &crate::publication::Publication, out: &mut Vec<Value>) {
+    if let Some(idx) = pub_.index.data() {
+        if is_signed_event(idx) {
+            out.push(idx.clone());
+        }
+    }
+    for s in &pub_.sections {
+        if let Some(ev) = s.event.data() {
+            if is_signed_event(ev) {
+                out.push(ev.clone());
+            }
+        }
+    }
+    for nested in &pub_.nested {
+        collect_signed_events(nested, out);
+    }
+}
+
+/// POST /api/v1/publications/:pubkey/:d_tag/broadcast
+///
+/// Push an already-signed publication — its 30040 index plus every loaded,
+/// signed 30041 section (including nested) — to the publish relays in one
+/// operation. The separate "broadcast a local snapshot" step: no re-signing, no
+/// new versions. Records relay provenance and clears the "local" pill (marks
+/// the publication published) once a relay accepts.
+pub async fn broadcast_publication_handler(
+    State(engine): State<AppState>,
+    Path(params): Path<PublicationPath>,
+) -> Result<Json<Value>, EngineError> {
+    if params.pubkey.len() != 64 || hex::decode(&params.pubkey).is_err() {
+        return Err(EngineError::InvalidHex(
+            "Pubkey must be a 64-character hex string".to_string(),
+        ));
+    }
+    let addr = NAddr::new(KIND_PUBLICATION_INDEX, &params.pubkey, &params.d_tag);
+    let pub_engine = PublicationEngine::new(&engine);
+    let publication = pub_engine
+        .load_publication_tree(&addr, DEFAULT_PUBLICATION_DEPTH, FetchPolicy::LocalOnly)
+        .await?;
+
+    let mut events: Vec<Value> = Vec::new();
+    collect_signed_events(&publication, &mut events);
+    if events.is_empty() {
+        return Err(EngineError::NotFound(
+            "No signed events to broadcast — sign the draft first.".to_string(),
+        ));
+    }
+
+    let relays = engine.publish_relays().to_vec();
+    if relays.is_empty() {
+        return Err(EngineError::Config(
+            "No publish relays configured — set some as 'publish' in the relays buffer.".into(),
+        ));
+    }
+    let event_jsons: Vec<String> = events
+        .iter()
+        .map(|e| serde_json::to_string(e).unwrap())
+        .collect();
+    let event_ids: Vec<String> = events
+        .iter()
+        .filter_map(|e| e.get("id").and_then(|v| v.as_str()).map(String::from))
+        .collect();
+
+    let summary = crate::network::RequestSummary {
+        filters: vec![],
+        composition: crate::network::CompositionShape {
+            phases: vec![crate::network::PhaseStage {
+                label: "primary".into(),
+                members: vec![(crate::network::Phase::Broadcast, relays.clone())],
+                start_delay_ms: 0,
+            }],
+        },
+        dsl: format!("pub k:30040,30041 ({} events) via:broadcast", events.len()),
+    };
+    let manifest = crate::network::PublishManifest::from_events(events.iter());
+
+    let op = engine
+        .begin_publish_operation(
+            format!(
+                "Broadcasting publication ({} events) to {} relay(s)",
+                events.len(),
+                relays.len()
+            ),
+            relays.clone(),
+            event_ids,
+            Some(summary),
+            Some(manifest),
+        )
+        .await
+        .map_err(|_| EngineError::BadRequest("Broadcast cancelled by user".into()))?;
+
+    let chosen = op.relays().to_vec();
+    for url in &chosen {
+        op.relay_status(url.clone(), crate::network::RelayStatusValue::Connecting);
+    }
+    let (_, _, results) = crate::relay::publish_events_to_relays(&chosen, &event_jsons).await;
+    for r in &results {
+        let status = if r.success {
+            crate::network::RelayStatusValue::Accepted
+        } else {
+            crate::network::RelayStatusValue::Rejected {
+                msg: r.message.clone().unwrap_or_default(),
+            }
+        };
+        op.relay_status(r.relay_url.clone(), status);
+    }
+    let successful = results.iter().filter(|r| r.success).count();
+    op.complete(successful);
+
+    // Record relay provenance per (event, relay) success so the events stop
+    // reading as local-only; then flip the publication's pill to published.
+    let by_id: std::collections::HashMap<&str, &String> = events
+        .iter()
+        .zip(event_jsons.iter())
+        .filter_map(|(e, j)| e.get("id").and_then(|v| v.as_str()).map(|id| (id, j)))
+        .collect();
+    for r in &results {
+        if r.success {
+            if let Some(j) = by_id.get(r.event_id.as_str()) {
+                if let Err(e) = engine.record_event_relay(j, &r.relay_url) {
+                    debug!("record relay metadata: {e}");
+                }
+            }
+        }
+    }
+    if successful > 0 {
+        if let Ok(tracker) = local_pub_tracker(&engine) {
+            let _ = tracker.mark_published(&addr.to_a_tag());
+        }
+    }
+
+    let total = results.len();
+    let broadcast_results: Vec<BroadcastResult> = results
+        .into_iter()
+        .map(|r| BroadcastResult {
+            relay: r.relay_url,
+            success: r.success,
+            message: r.message,
+            event_id: r.event_id,
+        })
+        .collect();
+    Ok(Json(json!({
+        "successful": successful,
+        "total": total,
+        "event_count": events.len(),
+        "broadcast_results": broadcast_results,
+    })))
+}
+
 // ============================================================================
 // Ingest API Endpoint
 // ============================================================================

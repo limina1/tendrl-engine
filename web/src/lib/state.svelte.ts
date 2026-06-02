@@ -1472,6 +1472,30 @@ function _createAppState() {
 		}
 	}
 
+	// Broadcast an already-signed local snapshot to the publish relays — the
+	// explicit step after Sign. No re-signing; flips the feed pill local→relay.
+	async function handleBroadcastPublication(addr: NAddr) {
+		const t = pushToast('Broadcasting…', 'pending', 60000);
+		try {
+			const resp = await api.broadcastPublication(addr.pubkey, addr.d_tag);
+			updateToast(
+				t,
+				{
+					message: `Broadcast ${resp.event_count} event${resp.event_count === 1 ? '' : 's'} — ${resp.successful}/${resp.total} relay acks`,
+					kind: resp.successful > 0 ? 'success' : 'error'
+				},
+				4500
+			);
+			await loadFeed();
+		} catch (e) {
+			updateToast(
+				t,
+				{ message: `Broadcast failed: ${e instanceof Error ? e.message : String(e)}`, kind: 'error' },
+				6000
+			);
+		}
+	}
+
 	// Does a publication of mine with this title already exist? If so the engine
 	// builds a section-level diff (matched by title slug) so a republish can
 	// reuse identifiers and replace instead of forking. The slug-matching, TOC
@@ -3457,6 +3481,7 @@ function _createAppState() {
 		handleLoadDraft,
 		handleDeleteDraft,
 		refreshComposeDrafts,
+		handleBroadcastPublication,
 		get republishPrompt() { return republishPrompt; },
 		confirmRepublish,
 		cancelRepublish,

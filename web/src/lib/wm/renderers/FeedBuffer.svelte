@@ -143,10 +143,19 @@
 							}}
 							title="Open the event menu (m)"
 						>menu</button>
-						<!-- Provenance (draft / relay / remote) now lives inside the
+						{#if pub_item.local}
+							<button
+								class="pill pill--broadcast"
+								onclick={(e) => {
+									e.stopPropagation();
+									app.handleBroadcastPublication(pub_item.addr);
+								}}
+								title="Broadcast this signed local snapshot to your publish relays"
+							>broadcast</button>
+						{/if}
+						<!-- Provenance (local / relay / remote) lives inside the
 						     unified pool-state stack so the row reads in one column.
-						     "local" state is still deferred until local-write
-						     tracking exists. -->
+						     "local" = signed but not broadcast (LocalPublicationTracker). -->
 						<PoolStateBadges
 							item={app.findPoolItemByAddr(pub_item.addr)}
 							onpillctx={() => app.pillActionByAddr(pub_item.addr, 'context')}

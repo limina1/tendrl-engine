@@ -151,6 +151,17 @@ html, body {
 .pill--json:hover {
   background: color-mix(in srgb, var(--id-yours) 22%, transparent);
 }
+/* Actionable "broadcast this local snapshot" pill — green to read as "push out". */
+.pill--broadcast {
+  background: color-mix(in srgb, var(--state-online) 16%, transparent);
+  color: var(--state-online);
+  border: none;
+  cursor: pointer;
+  font: inherit;
+}
+.pill--broadcast:hover {
+  background: color-mix(in srgb, var(--state-online) 28%, transparent);
+}
 .pill--remote { background: rgba(137,184,194,0.12); color: var(--id-remote); }
 .pill--draft { background: rgba(226,120,120,0.12); color: var(--id-draft); }
 .pill--imported { background: rgba(160,147,199,0.12); color: var(--id-imported); }

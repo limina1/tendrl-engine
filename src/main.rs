@@ -322,6 +322,10 @@ async fn main() -> anyhow::Result<()> {
             post(api::backfill_publication_handler),
         )
         .route(
+            "/api/v1/publications/:pubkey/:d_tag/broadcast",
+            post(api::broadcast_publication_handler),
+        )
+        .route(
             "/api/v1/publications/:pubkey/:d_tag/sections/:index",
             get(api::get_section_handler),
         )
