@@ -619,10 +619,19 @@ pub async fn list_publications_handler(
         .list_root_publications(policy, query.limit, query.before)
         .await?;
 
+    // "local" = a signed snapshot the user created that hasn't (successfully)
+    // been broadcast to any relay yet. Tracked engine-side; the feed renders a
+    // "local" pill off it. Tracker absence (e.g. IO error) just yields false.
+    let tracker = local_pub_tracker(&engine).ok();
+
     // Convert to summary format
     let summaries: Vec<Value> = publications
         .iter()
         .map(|p| {
+            let local = tracker
+                .as_ref()
+                .map(|t| t.is_local(&p.addr.to_a_tag()))
+                .unwrap_or(false);
             json!({
                 "addr": p.addr,
                 "title": p.title,
@@ -634,7 +643,8 @@ pub async fn list_publications_handler(
                 "section_count": p.section_count(),
                 "relays": p.relays,
                 "signed": p.signed,
-                "forked": p.forked
+                "forked": p.forked,
+                "local": local
             })
         })
         .collect();
@@ -3056,6 +3066,31 @@ fn draft_err(e: DraftError) -> EngineError {
     }
 }
 
+/// Tracker of locally-created publications not yet pushed to a relay — drives
+/// the feed's "local / not broadcast" pill. Marked local when a signed snapshot
+/// is ingested without (successful) broadcast, marked published once it lands.
+fn local_pub_tracker(
+    engine: &Engine,
+) -> std::result::Result<crate::drafts::LocalPublicationTracker, EngineError> {
+    crate::drafts::LocalPublicationTracker::new(engine.data_dir()).map_err(draft_err)
+}
+
+/// The `kind:pubkey:d_tag` coordinate of a (replaceable) event, matching
+/// `NAddr::to_a_tag`. `None` if the event carries no `d` tag.
+fn event_a_tag(event: &Value) -> Option<String> {
+    let kind = event.get("kind").and_then(|v| v.as_u64())?;
+    let pubkey = event.get("pubkey").and_then(|v| v.as_str())?;
+    let d = event.get("tags").and_then(|v| v.as_array())?.iter().find_map(|t| {
+        let arr = t.as_array()?;
+        if arr.first()?.as_str()? == "d" {
+            arr.get(1)?.as_str()
+        } else {
+            None
+        }
+    })?;
+    Some(format!("{kind}:{pubkey}:{d}"))
+}
+
 #[derive(Debug, Deserialize)]
 pub struct DraftSectionRequest {
     pub title: String,
@@ -3174,7 +3209,7 @@ pub async fn delete_draft_handler(
 // Publish API Endpoints
 // ============================================================================
 
-use crate::publication::{build_block_publication_events, build_publication_events};
+use crate::publication::build_publication_events;
 use crate::publication::compose::{
     BlockKind, ComposeBlock, ComposeBlockState, ComposeState, SectionCompose,
 };
@@ -3244,22 +3279,9 @@ pub struct BroadcastResult {
 /// POST /api/v1/publish — create a publication (draft or signed)
 pub async fn publish_handler(
     State(engine): State<AppState>,
-    Extension(identity): Extension<IdentityAppState>,
     Extension(signing): Extension<crate::signing::SigningController>,
     Json(req): Json<PublishRequest>,
 ) -> Result<impl IntoResponse, EngineError> {
-    // Resolve pubkey: prefer identity session, fall back to config
-    let pubkey = {
-        let session = identity.lock().unwrap();
-        session.pubkey().map(|s| s.to_string())
-    }
-    .or_else(|| engine.my_pubkey().map(|s| s.to_string()))
-    .ok_or_else(|| {
-        EngineError::Config(
-            "Publishing requires identity login or [identity] pubkey in config".into(),
-        )
-    })?;
-
     // Map request to ComposeState
     use crate::publication::compose::TagEntry;
     let mut compose = ComposeState::new();
@@ -3292,19 +3314,26 @@ pub async fn publish_handler(
         .collect();
     compose.d_tag = req.d_tag.clone();
 
-    // Build events (signed or unsigned)
-    let (pub_event, section_events) = if req.sign {
-        // Sign every event through the SigningController. For engine
-        // source this resolves InProcessSigner (same fallback chain as
-        // before); for nip07 / nip46 source this round-trips each
-        // template through the registered ExternalSigner via the SSE
-        // back-channel. Either way the publish handler is unaware.
-        let active_pubkey = signing.active_pubkey().await.ok_or_else(|| {
-            EngineError::Config(
-                "No identity configured (engine source needs login; nip07 needs a connected signer)"
-                    .into(),
-            )
-        })?;
+    // Publishing writes a SIGNED snapshot to the db. Unsigned working drafts
+    // are saved via POST /api/v1/drafts — we never ingest placeholder-sig
+    // events. The signature is the snapshot; nostrdb keeps every version.
+    if !req.sign {
+        return Err(EngineError::BadRequest(
+            "Publishing writes a signed snapshot; save an unsigned working draft via POST /api/v1/drafts instead."
+                .into(),
+        ));
+    }
+
+    // Sign every event through the SigningController — engine in-process signer
+    // for the engine source, or the registered external signer (NIP-07/NIP-46)
+    // over the SSE back-channel. The handler is unaware of the source.
+    let active_pubkey = signing.active_pubkey().await.ok_or_else(|| {
+        EngineError::Config(
+            "No identity configured (engine source needs login; nip07 needs a connected signer)"
+                .into(),
+        )
+    })?;
+    let (pub_event, section_events) =
         crate::publication::build_signed_publication_events_via_signer(
             &mut compose,
             &active_pubkey,
@@ -3319,28 +3348,7 @@ pub async fn publish_handler(
                 "External signer not connected — open a tab with the signer extension".into(),
             ),
             other => EngineError::Config(format!("Cannot sign: {other}")),
-        })?
-    } else {
-        // Track unsigned events if identity is present but locked
-        let should_track = {
-            let session = identity.lock().unwrap();
-            session.pubkey().is_some()
-        };
-        let events = build_publication_events(&mut compose, &pubkey);
-        if should_track {
-            let pub_id = events
-                .0
-                .get("id")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
-            if !pub_id.is_empty() {
-                let mut session = identity.lock().unwrap();
-                session.track_unsigned(pub_id);
-            }
-        }
-        events
-    };
+        })?;
 
     let pub_id = pub_event
         .get("id")
@@ -3506,6 +3514,10 @@ pub async fn publish_handler(
         None
     };
 
+    // Feed-pill state: a signed snapshot that didn't (successfully) reach any
+    // relay is "local"; once it lands it's published. Keyed by the 30040 coord.
+    track_local_publication(&engine, &pub_event, &broadcast_results);
+
     // Trigger background embedding sync so new events are searchable immediately
     if ingested && engine.embedding_index().is_some() {
         let eng = engine.clone();
@@ -3529,6 +3541,31 @@ pub async fn publish_handler(
         broadcast_results,
         events: Some(all_events),
     }))
+}
+
+/// Mark the publication's 30040 coordinate local or published in the
+/// `LocalPublicationTracker`, based on whether the broadcast leg landed on any
+/// relay. Shared by both publish handlers. Best-effort — never fails a publish.
+fn track_local_publication(
+    engine: &Engine,
+    pub_event: &Value,
+    broadcast_results: &Option<Vec<BroadcastResult>>,
+) {
+    let Some(a_tag) = event_a_tag(pub_event) else {
+        return;
+    };
+    let Ok(tracker) = local_pub_tracker(engine) else {
+        return;
+    };
+    let broadcast_ok = broadcast_results
+        .as_ref()
+        .map(|rs| rs.iter().any(|r| r.success))
+        .unwrap_or(false);
+    let _ = if broadcast_ok {
+        tracker.mark_published(&a_tag)
+    } else {
+        tracker.mark_local(&a_tag)
+    };
 }
 
 /// POST /api/v1/publish/preview — build the unsigned event graph for a
@@ -3668,20 +3705,17 @@ pub struct PublishBlocksRequest {
 /// POST /api/v1/publish/blocks — publish a block-based draft.
 pub async fn publish_blocks_handler(
     State(engine): State<AppState>,
-    Extension(identity): Extension<IdentityAppState>,
     Extension(signing): Extension<crate::signing::SigningController>,
     Json(req): Json<PublishBlocksRequest>,
 ) -> Result<impl IntoResponse, EngineError> {
-    let pubkey = {
-        let session = identity.lock().unwrap();
-        session.pubkey().map(|s| s.to_string())
+    // Publishing writes a SIGNED snapshot; unsigned working drafts go to
+    // POST /api/v1/drafts. No placeholder-sig events ever enter the db.
+    if !req.sign {
+        return Err(EngineError::BadRequest(
+            "Publishing writes a signed snapshot; save an unsigned working draft via POST /api/v1/drafts instead."
+                .into(),
+        ));
     }
-    .or_else(|| engine.my_pubkey().map(|s| s.to_string()))
-    .ok_or_else(|| {
-        EngineError::Config(
-            "Publishing requires identity login or [identity] pubkey in config".into(),
-        )
-    })?;
 
     use crate::publication::compose::TagEntry;
     let mut state = ComposeBlockState::new();
@@ -3735,21 +3769,18 @@ pub async fn publish_blocks_handler(
         });
     }
 
-    // Build events (signed via the SigningController, or unsigned). This is
-    // the SAME signing path publish_handler uses — engine in-process for the
-    // engine source, or the registered external signer (NIP-07 / NIP-46) over
-    // the SSE back-channel. The handler is unaware of the source. The previous
-    // implementation inlined an engine-host-only secret chain (session →
-    // keyring → .env), so a NIP-07 user — who has no secret on the engine —
-    // fell through to None and produced UNSIGNED block events (placeholder
-    // sig). See docs/bugs.org.
-    let (pub_event, section_events) = if req.sign {
-        let active_pubkey = signing.active_pubkey().await.ok_or_else(|| {
-            EngineError::Config(
-                "No identity configured (engine source needs login; nip07 needs a connected signer)"
-                    .into(),
-            )
-        })?;
+    // Sign through the SigningController — the SAME path publish_handler uses:
+    // engine in-process for the engine source, or the registered external
+    // signer (NIP-07 / NIP-46) over the SSE back-channel. (A prior version
+    // inlined an engine-host-only secret chain, so NIP-07 users got unsigned
+    // block events — fixed, see docs/bugs.org.)
+    let active_pubkey = signing.active_pubkey().await.ok_or_else(|| {
+        EngineError::Config(
+            "No identity configured (engine source needs login; nip07 needs a connected signer)"
+                .into(),
+        )
+    })?;
+    let (pub_event, section_events) =
         crate::publication::build_signed_block_publication_events_via_signer(
             &state,
             &active_pubkey,
@@ -3764,10 +3795,7 @@ pub async fn publish_blocks_handler(
                 "External signer not connected — open a tab with the signer extension".into(),
             ),
             other => EngineError::Config(format!("Cannot sign: {other}")),
-        })?
-    } else {
-        build_block_publication_events(&state, &pubkey, None)
-    };
+        })?;
 
     let pub_id = pub_event
         .get("id")
@@ -3907,6 +3935,9 @@ pub async fn publish_blocks_handler(
     } else {
         None
     };
+
+    // Feed-pill state: local until a relay accepts the snapshot (see publish_handler).
+    track_local_publication(&engine, &pub_event, &broadcast_results);
 
     if ingested && engine.embedding_index().is_some() {
         let eng = engine.clone();
@@ -4875,6 +4906,16 @@ pub async fn broadcast_handler(
     let successful = results.iter().filter(|r| r.success).count();
     let total = results.len();
     op.complete(successful);
+
+    // A separately-broadcast publication index is no longer local-only.
+    if successful > 0 && kind == 30040 {
+        if let Some(a_tag) = event_a_tag(&req.event) {
+            if let Ok(tracker) = local_pub_tracker(&engine) {
+                let _ = tracker.mark_published(&a_tag);
+            }
+        }
+    }
+
     Ok(Json(BroadcastResponse {
         successful,
         total,
