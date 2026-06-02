@@ -130,6 +130,9 @@ function _createAppState() {
 	let composeSourcePubAddr: NAddr | null = $state(null);
 	let composeSourcePubEventId: string | null = $state(null);
 	let composeSourceSectionOrder: NAddr[] = $state([]);
+	// Saved drafts (engine DraftStore), newest first. Refreshed when the
+	// composer mounts and after any save/delete.
+	let composeDrafts: api.DraftSummary[] = $state([]);
 	const compose = $derived<ComposeState>({
 		title: composeTitle,
 		tags: composeTags,
@@ -1526,6 +1529,91 @@ function _createAppState() {
 			id: obj.id,
 			json: ev
 		};
+	}
+
+	// ===================== Drafts (engine DraftStore) =====================
+
+	async function refreshComposeDrafts() {
+		try {
+			composeDrafts = (await api.listDrafts()).drafts;
+		} catch (e) {
+			console.warn('List drafts failed:', e);
+		}
+	}
+
+	// Save the current compose as a draft. Mirrors the publish payload (title,
+	// tags, sections) minus signing — a draft is never signed. Section d-tags
+	// are minted + persisted engine-side, so we don't supply them here.
+	async function handleComposeSaveDraft(
+		items: ContextItem[],
+		meta?: { title: string; tags: TagEntry[] }
+	) {
+		const sections = items.length > 0 ? items : compose.sections;
+		const title = meta?.title ?? compose.title;
+		const tags = meta?.tags ?? compose.tags;
+		if (!title.trim() && sections.length === 0) {
+			pushToast('Nothing to save — the draft is empty', 'error', 3000);
+			return;
+		}
+		try {
+			await api.saveDraft({
+				title,
+				tags: tags.map((t) => [t.name, t.value] as [string, string]),
+				sections: sections.map((s) => ({
+					title: s.title,
+					content: s.content,
+					level: s.level,
+					tags: s.tags.map((t) => [t.name, t.value] as [string, string])
+				}))
+			});
+			pushToast('Draft saved', 'success');
+			await refreshComposeDrafts();
+		} catch (e) {
+			pushToast(`Save draft failed: ${e instanceof Error ? e.message : String(e)}`, 'error', 5000);
+		}
+	}
+
+	// Resume a saved draft: replace any current compose sections with the
+	// draft's, restore title/tags, and open the composer. Existing context-only
+	// pool items are preserved (we only clear `in_compose`).
+	async function handleLoadDraft(draftId: string) {
+		try {
+			const draft = await api.loadDraft(draftId);
+			const cs = draft.compose_state;
+			const draftItems = cs.sections.map((s) =>
+				makeItem(
+					{
+						title: s.title,
+						content: s.content,
+						tags: s.tags.map((t) => ({ name: t.name, value: t.value })),
+						original_content: s.content,
+						origin: 'compose' as const,
+						level: s.level
+					},
+					{ compose: true }
+				)
+			);
+			items = [...items.map((e) => ({ ...e, in_compose: false })), ...draftItems];
+			composeTitle = cs.title;
+			composeTags = cs.tags.map((t) => ({ name: t.name, value: t.value }));
+			composeSourcePubAddr = null;
+			composeSourcePubEventId = null;
+			composeSourceSectionOrder = [];
+			previewVisible = false;
+			navigateToCompose();
+			pushToast(`Draft "${cs.title || 'untitled'}" loaded`, 'success');
+		} catch (e) {
+			pushToast(`Couldn't load draft: ${e instanceof Error ? e.message : String(e)}`, 'error', 5000);
+		}
+	}
+
+	async function handleDeleteDraft(draftId: string) {
+		try {
+			await api.deleteDraft(draftId);
+			await refreshComposeDrafts();
+		} catch (e) {
+			pushToast(`Delete draft failed: ${e instanceof Error ? e.message : String(e)}`, 'error', 5000);
+		}
 	}
 
 	// Build the would-be event graph for the current compose and open the
@@ -3207,6 +3295,7 @@ function _createAppState() {
 		pillActionByAddr,
 		pillActionByEventId,
 		get compose() { return compose; },
+		get composeDrafts() { return composeDrafts; },
 		get composeTitle() { return composeTitle; },
 		set composeTitle(v: string) { composeTitle = v; },
 		get composeTags() { return composeTags; },
@@ -3386,6 +3475,10 @@ function _createAppState() {
 		handleChatPublishFragments,
 		handleComposePublish,
 		handleComposePreview,
+		handleComposeSaveDraft,
+		handleLoadDraft,
+		handleDeleteDraft,
+		refreshComposeDrafts,
 		get republishPrompt() { return republishPrompt; },
 		confirmRepublish,
 		cancelRepublish,

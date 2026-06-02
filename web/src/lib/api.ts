@@ -136,6 +136,80 @@ export async function resolveHighlights(
 	return resp.spans;
 }
 
+// Drafts API — local unsigned-publication storage (engine DraftStore).
+// Persists the full compose state to <data_dir>/drafts/ so a draft survives a
+// refresh, can be listed, and resumed. A draft is never signed.
+
+export interface DraftSummary {
+	draft_id: string;
+	title: string;
+	created_at: number;
+	modified_at: number;
+	section_count: number;
+}
+
+export interface DraftComposeSection {
+	title: string;
+	content: string;
+	level: number;
+	d_tag?: string;
+	tags: { name: string; value: string }[];
+}
+
+export interface DraftComposeState {
+	title: string;
+	d_tag?: string;
+	tags: { name: string; value: string }[];
+	sections: DraftComposeSection[];
+}
+
+export interface DraftPublication {
+	draft_id: string;
+	title: string;
+	created_at: number;
+	modified_at: number;
+	index_event: unknown;
+	section_events: unknown[];
+	compose_state: DraftComposeState;
+}
+
+export interface SaveDraftPayload {
+	title: string;
+	tags: [string, string][];
+	sections: {
+		title: string;
+		content: string;
+		level?: number;
+		tags: [string, string][];
+		d_tag?: string;
+	}[];
+	d_tag?: string;
+}
+
+/** Save (or snapshot) a draft from compose state. Returns its draft_id. */
+export function saveDraft(payload: SaveDraftPayload): Promise<{ draft_id: string }> {
+	return fetchJson<{ draft_id: string }>('/api/v1/drafts', {
+		method: 'POST',
+		body: JSON.stringify(payload)
+	});
+}
+
+/** List draft summaries, newest first. */
+export function listDrafts(): Promise<{ drafts: DraftSummary[]; count: number }> {
+	return fetchJson<{ drafts: DraftSummary[]; count: number }>('/api/v1/drafts');
+}
+
+/** Load a full draft (incl. compose state) for resuming. */
+export function loadDraft(id: string): Promise<DraftPublication> {
+	return fetchJson<DraftPublication>(`/api/v1/drafts/${encodeURIComponent(id)}`);
+}
+
+export function deleteDraft(id: string): Promise<{ deleted: string }> {
+	return fetchJson<{ deleted: string }>(`/api/v1/drafts/${encodeURIComponent(id)}`, {
+		method: 'DELETE'
+	});
+}
+
 // Publications API
 
 export function listPublications(limit = 20, policy = 'local_only', before?: number) {

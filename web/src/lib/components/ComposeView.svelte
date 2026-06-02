@@ -2,6 +2,7 @@
 	import { untrack } from 'svelte';
 	import { getActiveStore } from '$lib/wm/buffer-store.svelte';
 	import type { ComposeState, ContextItem, TagEntry, SyncMode } from '$lib/types';
+	import type { DraftSummary } from '$lib/api';
 	import type { EditorView } from '@codemirror/view';
 	import ComposeSection from './ComposeSection.svelte';
 	import ItemBadge from './ItemBadge.svelte';
@@ -27,6 +28,10 @@
 		onsendtochat,
 		onpublish,
 		onpreview,
+		onsavedraft,
+		drafts = [],
+		onloaddraft,
+		ondeletedraft,
 		ondelete,
 		ondeletepermanent,
 		onsenditemtochat,
@@ -49,6 +54,12 @@
 		onsendtochat: (items: ContextItem[]) => void;
 		onpublish: (items: ContextItem[], meta?: { title: string; tags: TagEntry[] }) => void;
 		onpreview?: (items: ContextItem[], meta?: { title: string; tags: TagEntry[] }) => void;
+		/** Save the current compose as a local draft (never signed). */
+		onsavedraft?: (items: ContextItem[], meta?: { title: string; tags: TagEntry[] }) => void;
+		/** Saved drafts to list for resuming, newest first. */
+		drafts?: DraftSummary[];
+		onloaddraft?: (draftId: string) => void;
+		ondeletedraft?: (draftId: string) => void;
 		ondelete: (items: ContextItem[]) => void;
 		ondeletepermanent: (items: ContextItem[]) => void;
 		onsenditemtochat: (id: string) => void;
@@ -618,6 +629,27 @@
 		onpublish(sections, meta);
 	}
 
+	// Save the current compose as a local draft. Same section/meta resolution
+	// as publish, but never signs — so it's available regardless of identity.
+	function saveDraftAction() {
+		if (!onsavedraft) return;
+		let sections: ContextItem[];
+		let meta: { title: string; tags: TagEntry[] } | undefined;
+		if (mode === 'plain') {
+			const parsed = handlePlainFullEdit(plainText);
+			sections = parsed.sections;
+			meta = { title: parsed.title, tags: parsed.tags };
+		} else {
+			sections = compose.sections;
+		}
+		onsavedraft(sections, meta);
+	}
+
+	let draftsOpen = $state(false);
+	function formatDraftTime(ts: number): string {
+		return new Date(ts * 1000).toLocaleString();
+	}
+
 	// Inspect the would-be 30040/30041 events as JSON — no signing/publish.
 	function previewEvents() {
 		if (!onpreview) return;
@@ -907,6 +939,44 @@
 		{/if}
 	</div>
 
+	{#if drafts.length > 0}
+		<div class="compose-drafts">
+			<button
+				class="compose-drafts-head"
+				onclick={() => (draftsOpen = !draftsOpen)}
+				aria-expanded={draftsOpen}
+			>
+				<span class="ptr">{draftsOpen ? '▾' : '▸'}</span>
+				Saved drafts <span class="compose-drafts-count">({drafts.length})</span>
+			</button>
+			{#if draftsOpen}
+				<ul class="compose-drafts-list">
+					{#each drafts as d (d.draft_id)}
+						<li class="compose-draft-row">
+							<button
+								class="compose-draft-load"
+								onclick={() => onloaddraft?.(d.draft_id)}
+								title="Resume this draft (replaces current compose sections)"
+							>
+								<span class="compose-draft-title">{d.title || '[untitled]'}</span>
+								<span class="compose-draft-meta"
+									>{d.section_count} section{d.section_count === 1 ? '' : 's'} · {formatDraftTime(
+										d.modified_at
+									)}</span
+								>
+							</button>
+							<button
+								class="compose-draft-del"
+								onclick={() => ondeletedraft?.(d.draft_id)}
+								title="Delete this draft">✕</button
+							>
+						</li>
+					{/each}
+				</ul>
+			{/if}
+		</div>
+	{/if}
+
 	<div class="compose-actions">
 		{#if mode === 'full'}
 			<button onclick={addSection}>+ Section</button>
@@ -920,6 +990,16 @@
 					: compose.sections.length === 0}
 				title="Inspect the 30040/30041 events this draft would publish, as JSON"
 			>Preview events</button>
+		{/if}
+		{#if onsavedraft}
+			<button
+				class="save-draft-btn"
+				onclick={saveDraftAction}
+				disabled={mode === 'plain'
+					? detectedSections.length === 0
+					: compose.sections.length === 0}
+				title="Save this draft locally — survives refresh; resume it from the Saved drafts list"
+			>Save draft</button>
 		{/if}
 		{#if canPublish}
 			<button
@@ -1302,6 +1382,89 @@
 		padding-top: 8px;
 		border-top: 1px solid var(--border);
 		flex-shrink: 0;
+	}
+
+	/* Saved-drafts list — collapsible, sits just above the action row. */
+	.compose-drafts {
+		flex-shrink: 0;
+		border-top: 1px solid var(--border);
+		padding-top: 8px;
+	}
+	.compose-drafts-head {
+		background: none;
+		border: none;
+		color: var(--fg-muted);
+		cursor: pointer;
+		font-size: 0.78rem;
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		padding: 0;
+	}
+	.compose-drafts-head:hover {
+		color: var(--fg);
+	}
+	.compose-drafts-count {
+		color: var(--fg-muted);
+	}
+	.compose-drafts-list {
+		list-style: none;
+		margin: 6px 0 0;
+		padding: 0;
+		max-height: 180px;
+		overflow-y: auto;
+		display: flex;
+		flex-direction: column;
+		gap: 4px;
+	}
+	.compose-draft-row {
+		display: flex;
+		gap: 4px;
+		align-items: stretch;
+	}
+	.compose-draft-load {
+		flex: 1;
+		min-width: 0;
+		display: flex;
+		flex-direction: column;
+		align-items: flex-start;
+		gap: 2px;
+		background: none;
+		border: 1px solid var(--border);
+		border-radius: var(--r-sm, 4px);
+		padding: 5px 9px;
+		cursor: pointer;
+		color: var(--fg);
+		text-align: left;
+	}
+	.compose-draft-load:hover {
+		border-color: var(--accent, var(--id-yours));
+		background: color-mix(in srgb, var(--accent, var(--id-yours)) 10%, transparent);
+	}
+	.compose-draft-title {
+		font-size: 0.82rem;
+		font-weight: 500;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+		max-width: 100%;
+	}
+	.compose-draft-meta {
+		font-size: 0.68rem;
+		color: var(--fg-muted);
+	}
+	.compose-draft-del {
+		flex-shrink: 0;
+		background: none;
+		border: 1px solid var(--border);
+		border-radius: var(--r-sm, 4px);
+		color: var(--fg-muted);
+		cursor: pointer;
+		padding: 0 8px;
+	}
+	.compose-draft-del:hover {
+		color: var(--id-draft, crimson);
+		border-color: var(--id-draft, crimson);
 	}
 
 	.publish-btn {

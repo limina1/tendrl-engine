@@ -119,6 +119,11 @@
 	$effect(() => {
 		return () => untrack(() => app.setComposerActiveView(null));
 	});
+
+	// Refresh the saved-drafts list when the composer mounts.
+	$effect(() => {
+		untrack(() => app.refreshComposeDrafts());
+	});
 </script>
 
 <ComposeView
@@ -133,6 +138,10 @@
 	onsendtochat={app.handleComposeToChat}
 	onpublish={app.handleComposePublish}
 	onpreview={app.handleComposePreview}
+	onsavedraft={app.handleComposeSaveDraft}
+	drafts={app.composeDrafts}
+	onloaddraft={app.handleLoadDraft}
+	ondeletedraft={app.handleDeleteDraft}
 	ondelete={app.handleDeleteFromCompose}
 	ondeletepermanent={app.handleDeletePermanent}
 	syncMode={app.syncMode}
