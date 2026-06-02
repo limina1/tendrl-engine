@@ -3150,39 +3150,24 @@ fn compose_from_draft_request(req: SaveDraftRequest) -> ComposeState {
 
 /// POST /api/v1/drafts
 ///
-/// Save (or re-save) a draft from the current compose state. Returns the
-/// `draft_id` — a deterministic `<pub-d-tag>-<timestamp>` so saving twice keeps
-/// both snapshots; the web overwrites by passing the same `d_tag` and reusing
-/// the returned id if it wants in-place updates.
+/// Save a draft snapshot from the current compose state. Each save is a new
+/// `<d-tag>-<millis>-<seq>` snapshot (versions never overwrite); returns the
+/// `draft_id` and the publication `d_tag`. Thread that `d_tag` back onto later
+/// saves to keep them versions of the same article — its absence mints a fresh
+/// nanoid, i.e. a new article (which may share a title with another).
 pub async fn save_draft_handler(
     State(engine): State<AppState>,
     Json(req): Json<SaveDraftRequest>,
 ) -> Result<Json<Value>, EngineError> {
     let store = draft_store(&engine)?;
     let mut compose = compose_from_draft_request(req);
-    // If the client didn't thread a d-tag (e.g. after a page reload, where the
-    // in-memory session d-tag is gone), adopt an existing same-title draft's
-    // d-tag so repeated saves of one publication *version* it — group + compare
-    // — instead of minting a fresh draft every time. Title-slug match, like
-    // republish-diff. An in-session thread (req.d_tag) always takes precedence.
-    if compose.d_tag.is_none() {
-        let slug = ComposeState::generate_d_tag(&compose.title);
-        if let Ok(existing) = store.list_drafts() {
-            if let Some(prev) = existing
-                .iter()
-                .filter(|d| {
-                    d.compose_state.d_tag.is_some()
-                        && ComposeState::generate_d_tag(&d.title) == slug
-                })
-                .max_by_key(|d| d.modified_at)
-            {
-                compose.d_tag = prev.compose_state.d_tag.clone();
-            }
-        }
-    }
+    // The d-tag (nanoid) is the article's identity; the title is just a label.
+    // Versions group by d-tag, NOT title — two articles may share a title
+    // (different d-tags) and one article may be renamed (same d-tag, new title).
+    // So we never merge by title: a threaded `req.d_tag` versions that article;
+    // its absence mints a fresh nanoid (a new article). The web threads the
+    // session d-tag across saves and restores it when a draft is resumed.
     let draft_id = store.save_draft(&mut compose).map_err(draft_err)?;
-    // Return the (now-minted-or-adopted) publication d-tag so the web can thread
-    // it onto subsequent saves. save_draft mints it onto `compose.d_tag`.
     let d_tag = compose.d_tag.clone().unwrap_or_default();
     Ok(Json(json!({ "draft_id": draft_id, "d_tag": d_tag })))
 }

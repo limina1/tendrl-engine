@@ -10,6 +10,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::publication::compose::ComposeState;
 
+/// Monotonic per-process suffix that makes draft ids unique even for two saves
+/// landing in the same millisecond (so no version snapshot is ever overwritten).
+static NEXT_DRAFT_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 /// Result type for draft operations
 pub type Result<T> = std::result::Result<T, DraftError>;
 
@@ -31,9 +35,10 @@ pub struct DraftPublication {
     pub draft_id: String,
     /// Publication title
     pub title: String,
-    /// Creation timestamp (unix seconds)
+    /// Creation timestamp (unix **milliseconds** — finer than the events'
+    /// second-granularity created_at so rapid versions stay distinct + ordered).
     pub created_at: u64,
-    /// Last modified timestamp (unix seconds)
+    /// Last modified timestamp (unix milliseconds).
     pub modified_at: u64,
     /// Unsigned 30040 index event
     pub index_event: serde_json::Value,
@@ -111,23 +116,30 @@ impl DraftStore {
     /// those values so resuming the draft (or re-publishing it) uses the
     /// same addressable identity.
     pub fn save_draft(&self, compose: &mut ComposeState) -> Result<String> {
-        let now = SystemTime::now()
+        let dur = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or(0);
+            .unwrap_or_default();
+        // Nostr event timestamps are SECONDS; draft metadata (id + created/
+        // modified) uses MILLISECONDS so rapid same-second saves stay distinct,
+        // ordered, and individually time-stamped versions rather than colliding.
+        let now_secs = dur.as_secs();
+        let now_ms = dur.as_millis() as u64;
 
-        // Generate draft ID from title and timestamp
+        // The draft id is `<d-tag>-<millis>-<seq>`: millisecond granularity plus
+        // a process-lifetime counter, so two saves in the same millisecond still
+        // get distinct ids and neither version snapshot is overwritten.
         let d_tag = compose.publication_d_tag();
-        let draft_id = format!("{}-{}", d_tag, now);
+        let seq = NEXT_DRAFT_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let draft_id = format!("{}-{}-{}", d_tag, now_ms, seq);
 
         // Build unsigned 30041 events for each section first — that mints
         // any pending section d-tags so the index can reference them.
         let section_events: Vec<serde_json::Value> = (0..compose.sections.len())
-            .map(|i| self.build_section_event(compose, i, now))
+            .map(|i| self.build_section_event(compose, i, now_secs))
             .collect();
 
         // Build the unsigned 30040 event (now that section d-tags exist).
-        let index_event = self.build_index_event(compose, now);
+        let index_event = self.build_index_event(compose, now_secs);
 
         // Convert compose state to serializable form. By now the
         // build_section_event / build_index_event calls above have
@@ -167,8 +179,8 @@ impl DraftStore {
         let draft = DraftPublication {
             draft_id: draft_id.clone(),
             title: compose.title.clone(),
-            created_at: now,
-            modified_at: now,
+            created_at: now_ms,
+            modified_at: now_ms,
             index_event,
             section_events,
             compose_state,

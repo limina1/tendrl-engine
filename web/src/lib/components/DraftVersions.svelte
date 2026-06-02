@@ -54,8 +54,9 @@
 		compare = { versions: g.versions, aId, bId: latest };
 	}
 
+	// created_at/modified_at are unix milliseconds (finer than the events' secs).
 	function fmt(ts: number): string {
-		return new Date(ts * 1000).toLocaleString();
+		return new Date(ts).toLocaleString();
 	}
 </script>
 
@@ -69,6 +70,9 @@
 			>
 				<span class="dv-ptr">{expandedPubs.has(g.dTag) ? '▾' : '▸'}</span>
 				<span class="dv-pub-title">{g.title}</span>
+				<!-- Short d-tag so two articles that share a title read as distinct
+				     publications (identity is the d-tag, not the title). -->
+				<span class="dv-dtag" title={`d-tag ${g.dTag}`}>{g.dTag.slice(0, 6)}</span>
 				<span class="dv-count">{g.versions.length} version{g.versions.length === 1 ? '' : 's'}</span>
 			</button>
 
@@ -145,6 +149,14 @@
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
+	}
+	.dv-dtag {
+		font-family: var(--font-mono);
+		font-size: 0.6rem;
+		color: var(--fg-muted);
+		border: 1px solid var(--border);
+		border-radius: 3px;
+		padding: 0 4px;
 	}
 	.dv-count {
 		font-size: 0.68rem;

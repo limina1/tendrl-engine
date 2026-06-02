@@ -36,7 +36,7 @@
 	function label(id: string): string {
 		const v = byId.get(id);
 		if (!v) return id.slice(0, 8);
-		const when = new Date(v.modified_at * 1000).toLocaleString();
+		const when = new Date(v.modified_at).toLocaleString();
 		return `${when}${id === latestId ? ' · latest' : ''} · ${v.section_count} sec`;
 	}
 
