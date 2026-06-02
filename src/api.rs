@@ -3032,6 +3032,145 @@ pub async fn discussions_list_handler(
 }
 
 // ============================================================================
+// Drafts API — local unsigned-publication storage (DraftStore)
+// ============================================================================
+//
+// Drafts persist the full compose state (title, tags, sections + their content,
+// levels, and stable d-tags) to `<data_dir>/drafts/` so an in-progress
+// publication survives a browser refresh / engine restart, can be listed and
+// resumed, and is reachable from any frontend — unlike the in-memory compose
+// buffer or an unsigned event dumped into the feed. Storage + (de)serialization
+// live in `src/drafts.rs`; these handlers are the thin HTTP surface.
+
+use crate::drafts::{DraftError, DraftStore};
+
+fn draft_store(engine: &Engine) -> std::result::Result<DraftStore, EngineError> {
+    DraftStore::new(engine.data_dir()).map_err(draft_err)
+}
+
+fn draft_err(e: DraftError) -> EngineError {
+    match e {
+        DraftError::NotFound(id) => EngineError::NotFound(format!("draft: {id}")),
+        DraftError::Io(e) => EngineError::Io(e),
+        DraftError::Json(e) => EngineError::Serialization(e),
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct DraftSectionRequest {
+    pub title: String,
+    #[serde(default)]
+    pub content: String,
+    #[serde(default)]
+    pub tags: Vec<(String, String)>,
+    /// Heading depth (2 = top-level; 3+ nests at publish time). Default 2.
+    #[serde(default)]
+    pub level: Option<u8>,
+    /// Stable section d-tag to preserve on resume / republish (minted if absent).
+    #[serde(default)]
+    pub d_tag: Option<String>,
+}
+
+/// POST /api/v1/drafts body. Mirrors the compose payload `PublishRequest`
+/// carries, minus signing/broadcast — a draft is never signed.
+#[derive(Debug, Deserialize)]
+pub struct SaveDraftRequest {
+    pub title: String,
+    #[serde(default)]
+    pub tags: Vec<(String, String)>,
+    #[serde(default)]
+    pub sections: Vec<DraftSectionRequest>,
+    /// Existing publication d-tag to preserve addressable identity on resume.
+    #[serde(default)]
+    pub d_tag: Option<String>,
+}
+
+fn compose_from_draft_request(req: SaveDraftRequest) -> ComposeState {
+    let mut compose = ComposeState::new();
+    compose.title = req.title;
+    compose.d_tag = req.d_tag;
+    compose.tags = req
+        .tags
+        .into_iter()
+        .map(|(name, value)| crate::publication::compose::TagEntry { name, value })
+        .collect();
+    compose.sections = req
+        .sections
+        .into_iter()
+        .map(|s| SectionCompose {
+            title: s.title,
+            content: s.content,
+            level: s.level.unwrap_or(2),
+            d_tag: s.d_tag,
+            tags: s
+                .tags
+                .into_iter()
+                .map(|(name, value)| crate::publication::compose::TagEntry { name, value })
+                .collect(),
+            ..Default::default()
+        })
+        .collect();
+    compose
+}
+
+/// POST /api/v1/drafts
+///
+/// Save (or re-save) a draft from the current compose state. Returns the
+/// `draft_id` — a deterministic `<pub-d-tag>-<timestamp>` so saving twice keeps
+/// both snapshots; the web overwrites by passing the same `d_tag` and reusing
+/// the returned id if it wants in-place updates.
+pub async fn save_draft_handler(
+    State(engine): State<AppState>,
+    Json(req): Json<SaveDraftRequest>,
+) -> Result<Json<Value>, EngineError> {
+    let store = draft_store(&engine)?;
+    let mut compose = compose_from_draft_request(req);
+    let draft_id = store.save_draft(&mut compose).map_err(draft_err)?;
+    Ok(Json(json!({ "draft_id": draft_id })))
+}
+
+/// GET /api/v1/drafts — draft summaries, newest first (no event bodies).
+pub async fn list_drafts_handler(
+    State(engine): State<AppState>,
+) -> Result<Json<Value>, EngineError> {
+    let store = draft_store(&engine)?;
+    let drafts = store.list_drafts().map_err(draft_err)?;
+    let summaries: Vec<Value> = drafts
+        .iter()
+        .map(|d| {
+            json!({
+                "draft_id": d.draft_id,
+                "title": d.title,
+                "created_at": d.created_at,
+                "modified_at": d.modified_at,
+                "section_count": d.section_events.len(),
+            })
+        })
+        .collect();
+    Ok(Json(json!({ "drafts": summaries, "count": summaries.len() })))
+}
+
+/// GET /api/v1/drafts/:id — full draft, including the compose state to resume.
+pub async fn get_draft_handler(
+    State(engine): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<crate::drafts::DraftPublication>, EngineError> {
+    let store = draft_store(&engine)?;
+    let draft = store.load_draft(&id).map_err(draft_err)?;
+    Ok(Json(draft))
+}
+
+/// DELETE /api/v1/drafts/:id
+pub async fn delete_draft_handler(
+    State(engine): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<Value>, EngineError> {
+    let store = draft_store(&engine)?;
+    store.delete_draft(&id).map_err(draft_err)?;
+    Ok(Json(json!({ "deleted": id })))
+}
+
+// ============================================================================
 // Publish API Endpoints
 // ============================================================================
 
