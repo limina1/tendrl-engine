@@ -384,6 +384,160 @@ impl From<&DraftComposeState> for ComposeState {
     }
 }
 
+// ============================================================================
+// Version diff — compare two draft snapshots of the same publication
+// ============================================================================
+//
+// Saves of one publication (same d-tag) accumulate as timestamped snapshots.
+// The composer's Saved-drafts list groups them and shows, for each older
+// version, how it differs from the latest. Sections are matched by `T` (title
+// slug) — the same key republish-diff uses — so per-section d-tags needn't be
+// threaded. Computed from the stored compose state; the events carry the same
+// information.
+
+/// A before/after change of a single scalar field (e.g. the title).
+#[derive(Debug, Clone, Serialize)]
+pub struct FieldChange {
+    pub old: String,
+    pub new: String,
+}
+
+/// Set-based tag diff: which `(name, value)` pairs were added / removed.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct TagDiff {
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub added: Vec<(String, String)>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub removed: Vec<(String, String)>,
+}
+
+impl TagDiff {
+    fn is_empty(&self) -> bool {
+        self.added.is_empty() && self.removed.is_empty()
+    }
+}
+
+/// One section's status + changes between two versions, matched by title slug.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SectionVersionDiff {
+    pub title: String,
+    /// Title slug — the match key.
+    pub t: String,
+    /// `matched` (in both), `added` (only in the newer), `removed` (only in the
+    /// older). Heading depth is carried so the UI can indent nested sub-indexes.
+    pub status: String,
+    pub level: u8,
+    /// Matched only: the section's content differs between the two versions.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub content_changed: Option<bool>,
+    /// Matched only: the heading level (nesting) differs.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub level_changed: Option<bool>,
+    /// Matched only: per-section tag adds/removes.
+    #[serde(skip_serializing_if = "TagDiff::is_empty")]
+    pub tags: TagDiff,
+}
+
+/// The diff of one draft version (`from`) against another (`to`, typically the
+/// latest): the 30040-level changes (title + index tags) plus the contained
+/// 30041 sections, each annotated matched/added/removed.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VersionDiff {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title_changed: Option<FieldChange>,
+    #[serde(skip_serializing_if = "TagDiff::is_empty")]
+    pub index_tags: TagDiff,
+    pub sections: Vec<SectionVersionDiff>,
+}
+
+fn tag_set_diff(from: &[DraftTagEntry], to: &[DraftTagEntry]) -> TagDiff {
+    use std::collections::HashSet;
+    let pair = |t: &DraftTagEntry| (t.name.clone(), t.value.clone());
+    let from_set: HashSet<(String, String)> = from.iter().map(pair).collect();
+    let to_set: HashSet<(String, String)> = to.iter().map(pair).collect();
+    TagDiff {
+        added: to
+            .iter()
+            .map(pair)
+            .filter(|p| !from_set.contains(p))
+            .collect(),
+        removed: from
+            .iter()
+            .map(pair)
+            .filter(|p| !to_set.contains(p))
+            .collect(),
+    }
+}
+
+/// Diff two draft compose snapshots. Describes the changes to go `from` → `to`;
+/// for the "version vs latest" view the caller passes `from` = the older
+/// version, `to` = the latest. Sections are matched by `generate_d_tag(title)`.
+pub fn diff_draft_versions(from: &DraftComposeState, to: &DraftComposeState) -> VersionDiff {
+    use std::collections::HashMap;
+
+    let title_changed = (from.title != to.title).then(|| FieldChange {
+        old: from.title.clone(),
+        new: to.title.clone(),
+    });
+
+    let slug = ComposeState::generate_d_tag;
+    let from_by_t: HashMap<String, &DraftSectionCompose> =
+        from.sections.iter().map(|s| (slug(&s.title), s)).collect();
+    let to_by_t: HashMap<String, &DraftSectionCompose> =
+        to.sections.iter().map(|s| (slug(&s.title), s)).collect();
+
+    let mut sections = Vec::new();
+
+    // Follow the newer version's order for matched + added sections.
+    for s in &to.sections {
+        let t = slug(&s.title);
+        if let Some(prev) = from_by_t.get(&t) {
+            sections.push(SectionVersionDiff {
+                title: s.title.clone(),
+                t: t.clone(),
+                status: "matched".into(),
+                level: s.level,
+                content_changed: Some(prev.content.trim() != s.content.trim()),
+                level_changed: Some(prev.level != s.level),
+                tags: tag_set_diff(&prev.tags, &s.tags),
+            });
+        } else {
+            sections.push(SectionVersionDiff {
+                title: s.title.clone(),
+                t,
+                status: "added".into(),
+                level: s.level,
+                content_changed: None,
+                level_changed: None,
+                tags: TagDiff::default(),
+            });
+        }
+    }
+    // Sections the older version had that the newer dropped.
+    for s in &from.sections {
+        let t = slug(&s.title);
+        if !to_by_t.contains_key(&t) {
+            sections.push(SectionVersionDiff {
+                title: s.title.clone(),
+                t,
+                status: "removed".into(),
+                level: s.level,
+                content_changed: None,
+                level_changed: None,
+                tags: TagDiff::default(),
+            });
+        }
+    }
+
+    VersionDiff {
+        title_changed,
+        index_tags: tag_set_diff(&from.tags, &to.tags),
+        sections,
+    }
+}
+
 /// Tracks locally-created publications that haven't been published to relays yet.
 /// Stores a simple list of a-tag addresses (kind:pubkey:d_tag) in a JSON file.
 pub struct LocalPublicationTracker {
@@ -566,6 +720,96 @@ mod tests {
         assert!(store.load_draft(&draft_id).is_ok());
         store.delete_draft(&draft_id).unwrap();
         assert!(store.load_draft(&draft_id).is_err());
+    }
+
+    fn dcs(title: &str, sections: &[(&str, &str, u8)], tags: &[(&str, &str)]) -> DraftComposeState {
+        DraftComposeState {
+            title: title.to_string(),
+            d_tag: Some("fixed-dtag".to_string()),
+            tags: tags
+                .iter()
+                .map(|(n, v)| DraftTagEntry {
+                    name: n.to_string(),
+                    value: v.to_string(),
+                })
+                .collect(),
+            sections: sections
+                .iter()
+                .map(|(t, c, lvl)| DraftSectionCompose {
+                    title: t.to_string(),
+                    content: c.to_string(),
+                    tags: vec![],
+                    level: *lvl,
+                    d_tag: None,
+                })
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn version_diff_title_sections_and_tags() {
+        let from = dcs(
+            "Old Title",
+            &[("Intro", "old intro", 2), ("Dropped", "gone later", 2)],
+            &[("t", "rust")],
+        );
+        let to = dcs(
+            "New Title",
+            &[("Intro", "NEW intro", 2), ("Results", "fresh", 3)],
+            &[("t", "rust"), ("t", "nostr")],
+        );
+
+        let diff = diff_draft_versions(&from, &to);
+
+        // 30040-level
+        let tc = diff.title_changed.expect("title changed");
+        assert_eq!((tc.old.as_str(), tc.new.as_str()), ("Old Title", "New Title"));
+        assert_eq!(diff.index_tags.added, vec![("t".into(), "nostr".into())]);
+        assert!(diff.index_tags.removed.is_empty());
+
+        // Sections: Intro matched+changed, Results added (lvl 3), Dropped removed.
+        let intro = diff.sections.iter().find(|s| s.t == "intro").unwrap();
+        assert_eq!(intro.status, "matched");
+        assert_eq!(intro.content_changed, Some(true));
+        assert_eq!(intro.level_changed, Some(false));
+
+        let results = diff.sections.iter().find(|s| s.t == "results").unwrap();
+        assert_eq!(results.status, "added");
+        assert_eq!(results.level, 3);
+
+        let dropped = diff.sections.iter().find(|s| s.t == "dropped").unwrap();
+        assert_eq!(dropped.status, "removed");
+    }
+
+    #[test]
+    fn version_diff_identical_is_quiet() {
+        let v = dcs("Same", &[("A", "body", 2)], &[("t", "x")]);
+        let diff = diff_draft_versions(&v, &v);
+        assert!(diff.title_changed.is_none());
+        assert!(diff.index_tags.is_empty());
+        assert_eq!(diff.sections.len(), 1);
+        assert_eq!(diff.sections[0].status, "matched");
+        assert_eq!(diff.sections[0].content_changed, Some(false));
+        assert!(diff.sections[0].tags.is_empty());
+    }
+
+    #[test]
+    fn version_diff_section_tag_changes() {
+        let mut from = dcs("P", &[("S", "body", 2)], &[]);
+        from.sections[0].tags = vec![DraftTagEntry {
+            name: "author".into(),
+            value: "alice".into(),
+        }];
+        let mut to = dcs("P", &[("S", "body", 2)], &[]);
+        to.sections[0].tags = vec![DraftTagEntry {
+            name: "author".into(),
+            value: "bob".into(),
+        }];
+        let diff = diff_draft_versions(&from, &to);
+        let s = &diff.sections[0];
+        assert_eq!(s.content_changed, Some(false));
+        assert_eq!(s.tags.added, vec![("author".into(), "bob".into())]);
+        assert_eq!(s.tags.removed, vec![("author".into(), "alice".into())]);
     }
 
     #[test]

@@ -278,6 +278,7 @@ async fn main() -> anyhow::Result<()> {
             "/api/v1/drafts",
             post(api::save_draft_handler).get(api::list_drafts_handler),
         )
+        .route("/api/v1/drafts/diff", post(api::draft_diff_handler))
         .route(
             "/api/v1/drafts/:id",
             get(api::get_draft_handler).delete(api::delete_draft_handler),

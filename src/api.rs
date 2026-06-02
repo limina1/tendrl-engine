@@ -3161,7 +3161,11 @@ pub async fn save_draft_handler(
     let store = draft_store(&engine)?;
     let mut compose = compose_from_draft_request(req);
     let draft_id = store.save_draft(&mut compose).map_err(draft_err)?;
-    Ok(Json(json!({ "draft_id": draft_id })))
+    // Return the (now-minted) publication d-tag so the web can thread it onto
+    // subsequent saves — keeping them versions of one publication, not fresh
+    // drafts. save_draft mints it onto `compose.d_tag`.
+    let d_tag = compose.d_tag.clone().unwrap_or_default();
+    Ok(Json(json!({ "draft_id": draft_id, "d_tag": d_tag })))
 }
 
 /// GET /api/v1/drafts — draft summaries, newest first (no event bodies).
@@ -3176,6 +3180,11 @@ pub async fn list_drafts_handler(
             json!({
                 "draft_id": d.draft_id,
                 "title": d.title,
+                // Publication identity — saves of one publication share this, so
+                // the web groups them into a version list. Legacy drafts without
+                // a stored d-tag fall back to the title slug so they still group.
+                "d_tag": d.compose_state.d_tag.clone()
+                    .unwrap_or_else(|| crate::publication::compose::ComposeState::generate_d_tag(&d.title)),
                 "created_at": d.created_at,
                 "modified_at": d.modified_at,
                 "section_count": d.section_events.len(),
@@ -3203,6 +3212,32 @@ pub async fn delete_draft_handler(
     let store = draft_store(&engine)?;
     store.delete_draft(&id).map_err(draft_err)?;
     Ok(Json(json!({ "deleted": id })))
+}
+
+/// POST /api/v1/drafts/diff body — two draft ids of the same publication.
+#[derive(Debug, Deserialize)]
+pub struct DraftDiffRequest {
+    /// The older version being viewed.
+    pub from_id: String,
+    /// The version to compare against (typically the latest).
+    pub to_id: String,
+}
+
+/// POST /api/v1/drafts/diff
+///
+/// Diff two draft snapshots (`from_id` → `to_id`) — the 30040 title/tag changes
+/// plus the contained 30041 sections (matched by title slug, annotated
+/// matched/added/removed with content/tag/level diffs). Drives the composer's
+/// per-version "what changed vs latest" view.
+pub async fn draft_diff_handler(
+    State(engine): State<AppState>,
+    Json(req): Json<DraftDiffRequest>,
+) -> Result<Json<crate::drafts::VersionDiff>, EngineError> {
+    let store = draft_store(&engine)?;
+    let from = store.load_draft(&req.from_id).map_err(draft_err)?;
+    let to = store.load_draft(&req.to_id).map_err(draft_err)?;
+    let diff = crate::drafts::diff_draft_versions(&from.compose_state, &to.compose_state);
+    Ok(Json(diff))
 }
 
 // ============================================================================
