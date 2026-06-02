@@ -290,6 +290,7 @@ async fn main() -> anyhow::Result<()> {
             "/api/v1/publish/republish-diff",
             post(api::republish_diff_handler),
         )
+        .route("/api/v1/publish/diff", post(api::diff_published_handler))
         .route("/api/v1/broadcast", post(api::broadcast_handler))
         .route("/api/v1/ingest", post(api::ingest_handler))
         // Embedding endpoints

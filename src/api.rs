@@ -3244,6 +3244,169 @@ pub async fn draft_diff_handler(
     Ok(Json(diff))
 }
 
+/// Build a `DraftComposeState` from a save/compose request — the "current"
+/// (possibly unsaved) working state, for diffing against the published version.
+fn request_to_draft_compose(req: &SaveDraftRequest) -> crate::drafts::DraftComposeState {
+    use crate::drafts::{DraftComposeState, DraftSectionCompose, DraftTagEntry};
+    DraftComposeState {
+        title: req.title.clone(),
+        d_tag: req.d_tag.clone(),
+        tags: req
+            .tags
+            .iter()
+            .map(|(n, v)| DraftTagEntry {
+                name: n.clone(),
+                value: v.clone(),
+            })
+            .collect(),
+        sections: req
+            .sections
+            .iter()
+            .map(|s| DraftSectionCompose {
+                title: s.title.clone(),
+                content: s.content.clone(),
+                tags: s
+                    .tags
+                    .iter()
+                    .map(|(n, v)| DraftTagEntry {
+                        name: n.clone(),
+                        value: v.clone(),
+                    })
+                    .collect(),
+                level: s.level.unwrap_or(2),
+                d_tag: s.d_tag.clone(),
+            })
+            .collect(),
+    }
+}
+
+/// Flatten a loaded (signed) publication into the same `DraftComposeState` shape
+/// so it can be diffed against the current compose. Sections are the 30041
+/// leaves at `2 + nesting depth`; tags are the non-structural ("custom") tags on
+/// each event — the ones a user actually edits.
+fn publication_to_draft_compose(
+    pub_: &crate::publication::Publication,
+) -> crate::drafts::DraftComposeState {
+    use crate::drafts::{DraftComposeState, DraftSectionCompose, DraftTagEntry};
+    const STRUCTURAL: &[&str] = &["d", "title", "T", "a", "A", "e", "auto-update", "alt"];
+
+    fn custom_tags(ev: Option<&Value>) -> Vec<DraftTagEntry> {
+        let Some(ev) = ev else {
+            return Vec::new();
+        };
+        ev.get("tags")
+            .and_then(|v| v.as_array())
+            .map(|tags| {
+                tags.iter()
+                    .filter_map(|t| {
+                        let arr = t.as_array()?;
+                        let name = arr.first()?.as_str()?;
+                        if STRUCTURAL.contains(&name) {
+                            return None;
+                        }
+                        Some(DraftTagEntry {
+                            name: name.to_string(),
+                            value: arr.get(1).and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                        })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    fn walk(pub_: &crate::publication::Publication, level: u8, out: &mut Vec<DraftSectionCompose>) {
+        for s in &pub_.sections {
+            out.push(DraftSectionCompose {
+                title: s.title.clone().unwrap_or_default(),
+                content: s.content.clone().unwrap_or_default(),
+                tags: custom_tags(s.event.data()),
+                level,
+                d_tag: Some(s.addr.d_tag.clone()),
+            });
+        }
+        for nested in &pub_.nested {
+            walk(nested, level + 1, out);
+        }
+    }
+
+    let mut sections = Vec::new();
+    walk(pub_, 2, &mut sections);
+    DraftComposeState {
+        title: pub_.title.clone().unwrap_or_default(),
+        d_tag: Some(pub_.addr.d_tag.clone()),
+        tags: custom_tags(pub_.index.data()),
+        sections,
+    }
+}
+
+/// Find the user's last *published* (signed) version of an article — by d-tag
+/// when the compose carries one, else by title slug (republish-diff style).
+/// Returns the loaded tree, or `None` if nothing's been published.
+async fn find_published_publication(
+    engine: &Engine,
+    pub_engine: &PublicationEngine<'_>,
+    title: &str,
+    d_tag: Option<&str>,
+) -> Result<Option<crate::publication::Publication>, EngineError> {
+    let Some(my) = engine.my_pubkey().map(|s| s.to_string()) else {
+        return Ok(None);
+    };
+    if let Some(dtag) = d_tag {
+        let addr = NAddr::new(KIND_PUBLICATION_INDEX, &my, dtag);
+        return Ok(pub_engine
+            .load_publication_tree(&addr, DEFAULT_PUBLICATION_DEPTH, FetchPolicy::LocalOnly)
+            .await
+            .ok());
+    }
+    let slug = ComposeState::generate_d_tag(title);
+    let pubs = pub_engine
+        .list_root_publications(FetchPolicy::LocalOnly, 50, None)
+        .await?;
+    let Some(m) = pubs
+        .into_iter()
+        .filter(|p| {
+            p.author_pubkey == my
+                && p.title
+                    .as_deref()
+                    .is_some_and(|t| ComposeState::generate_d_tag(t) == slug)
+        })
+        .max_by_key(|p| p.created_at)
+    else {
+        return Ok(None);
+    };
+    Ok(pub_engine
+        .load_publication_tree(&m.addr, DEFAULT_PUBLICATION_DEPTH, FetchPolicy::LocalOnly)
+        .await
+        .ok())
+}
+
+/// POST /api/v1/publish/diff
+///
+/// Diff the *current* compose (the live working state in the request) against
+/// the last *published* (signed) version of that article — so the composer can
+/// show "what's different from what I published" on demand. Returns
+/// `{published:false}` if nothing's been published, else `{published:true, diff,
+/// existingAddr}`. The diff direction is published → current.
+pub async fn diff_published_handler(
+    State(engine): State<AppState>,
+    Json(req): Json<SaveDraftRequest>,
+) -> Result<Json<Value>, EngineError> {
+    let pub_engine = PublicationEngine::new(&engine);
+    let published =
+        find_published_publication(&engine, &pub_engine, &req.title, req.d_tag.as_deref()).await?;
+    let Some(published_pub) = published.filter(|p| p.index.is_loaded()) else {
+        return Ok(Json(json!({ "published": false })));
+    };
+    let from = publication_to_draft_compose(&published_pub);
+    let to = request_to_draft_compose(&req);
+    let diff = crate::drafts::diff_draft_versions(&from, &to);
+    Ok(Json(json!({
+        "published": true,
+        "diff": diff,
+        "existingAddr": published_pub.addr,
+    })))
+}
+
 // ============================================================================
 // Publish API Endpoints
 // ============================================================================

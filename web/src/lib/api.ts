@@ -185,6 +185,22 @@ export function draftDiff(fromId: string, toId: string): Promise<VersionDiff> {
 	});
 }
 
+/**
+ * Diff the current compose (the live working state) against the last *published*
+ * (signed) version of that article. `published:false` when nothing's been
+ * published yet. Diff direction is published → current.
+ */
+export function diffVsPublished(payload: SaveDraftPayload): Promise<{
+	published: boolean;
+	diff?: VersionDiff;
+	existingAddr?: { kind: number; pubkey: string; d_tag: string };
+}> {
+	return fetchJson('/api/v1/publish/diff', {
+		method: 'POST',
+		body: JSON.stringify(payload)
+	});
+}
+
 export interface DraftComposeSection {
 	title: string;
 	content: string;

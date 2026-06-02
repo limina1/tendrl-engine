@@ -1476,6 +1476,44 @@ function _createAppState() {
 		}
 	}
 
+	// Diff the current compose against the last *published* (signed) version of
+	// this article — "what have I changed since I published?". Held for the
+	// PublishedDiffModal; null = closed.
+	let publishedDiff: api.VersionDiff | null = $state(null);
+
+	async function handleComposeDiffPublished(
+		items: ContextItem[],
+		meta?: { title: string; tags: TagEntry[] }
+	) {
+		const sections = items.length > 0 ? items : compose.sections;
+		const title = meta?.title ?? compose.title;
+		const tags = meta?.tags ?? compose.tags;
+		try {
+			const resp = await api.diffVsPublished({
+				title,
+				tags: tags.map((t) => [t.name, t.value] as [string, string]),
+				sections: sections.map((s) => ({
+					title: s.title,
+					content: s.content,
+					level: s.level,
+					tags: s.tags.map((t) => [t.name, t.value] as [string, string])
+				})),
+				d_tag: composeDTag ?? undefined
+			});
+			if (!resp.published || !resp.diff) {
+				pushToast('Not published yet — nothing to compare against.', 'info', 4000);
+				return;
+			}
+			publishedDiff = resp.diff;
+		} catch (e) {
+			pushToast(`Diff failed: ${e instanceof Error ? e.message : String(e)}`, 'error', 5000);
+		}
+	}
+
+	function closePublishedDiff() {
+		publishedDiff = null;
+	}
+
 	// Broadcast an already-signed local snapshot to the publish relays — the
 	// explicit step after Sign. No re-signing; flips the feed pill local→relay.
 	async function handleBroadcastPublication(addr: NAddr) {
@@ -2539,6 +2577,13 @@ function _createAppState() {
 
 	// ===================== Embedding =====================
 
+	// Lightweight status refresh (no sync). Used when opening the
+	// Settings panel so the embedding section reflects current sidecar
+	// health / index counts without triggering a (heavy) embed pass.
+	async function refreshEmbeddingStatus() {
+		try { embeddingStatus = await api.getEmbeddingStatus(); } catch {}
+	}
+
 	async function handleSyncEmbeddings() {
 		embeddingSyncing = true;
 		const pollInterval = setInterval(async () => {
@@ -3494,6 +3539,9 @@ function _createAppState() {
 		handleDeleteDraft,
 		refreshComposeDrafts,
 		handleBroadcastPublication,
+		handleComposeDiffPublished,
+		closePublishedDiff,
+		get publishedDiff() { return publishedDiff; },
 		get republishPrompt() { return republishPrompt; },
 		confirmRepublish,
 		cancelRepublish,
@@ -3545,6 +3593,7 @@ function _createAppState() {
 		handleLoadSection,
 		handleSyncEmbeddings,
 		handleReindexEmbeddings,
+		refreshEmbeddingStatus,
 		handleSetNetworkMode,
 		handlePurge,
 		handleExport,

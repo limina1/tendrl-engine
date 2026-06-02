@@ -9,6 +9,7 @@
 	import TagEditor from './TagEditor.svelte';
 	import DraftReader from '$lib/wm/renderers/DraftReader.svelte';
 	import DraftVersions from './DraftVersions.svelte';
+	import PublishedDiffModal from './PublishedDiffModal.svelte';
 	import CodeMirrorEditor from './CodeMirrorEditor.svelte';
 	import {
 		hasStructuralChange,
@@ -646,6 +647,22 @@
 		onsavedraft(sections, meta);
 	}
 
+	// Diff the current compose against the last published version of this
+	// article. Same section/meta resolution as Sign/Save; the result opens the
+	// PublishedDiffModal (state owns it via app.publishedDiff).
+	function diffPublishedAction() {
+		let sections: ContextItem[];
+		let meta: { title: string; tags: TagEntry[] } | undefined;
+		if (mode === 'plain') {
+			const parsed = handlePlainFullEdit(plainText);
+			sections = parsed.sections;
+			meta = { title: parsed.title, tags: parsed.tags };
+		} else {
+			sections = compose.sections;
+		}
+		app.handleComposeDiffPublished(sections, meta);
+	}
+
 	let draftsOpen = $state(false);
 
 	// Inspect the would-be 30040/30041 events as JSON — no signing/publish.
@@ -983,6 +1000,14 @@
 				title="Save this draft locally — survives refresh; resume it from the Saved drafts list"
 			>Save draft</button>
 		{/if}
+		<button
+			class="diff-published-btn"
+			onclick={diffPublishedAction}
+			disabled={mode === 'plain'
+				? detectedSections.length === 0
+				: compose.sections.length === 0}
+			title="Diff the current draft against the last published version of this article"
+		>Diff vs published</button>
 		{#if canPublish}
 			<button
 				class="publish-btn"
@@ -1007,6 +1032,10 @@
 		<button onclick={oncancel}>Cancel</button>
 	</div>
 </div>
+
+{#if app.publishedDiff}
+	<PublishedDiffModal diff={app.publishedDiff} onclose={app.closePublishedDiff} />
+{/if}
 
 <style>
 	.compose-view {
