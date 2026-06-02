@@ -205,10 +205,11 @@ building UI-less plumbing.
   end-to-end; clippy 45; =pnpm -C web check= 0 errors. See [[../commands.org][commands.org]] "Phase 5 verify".
 
 * Out of scope for THIS plan (track separately)
-- *Correctness bug:* [[src:src/api.rs::3358][publish_blocks_handler]] bypasses the SigningController →
-  NIP-07 users get *unsigned* block publishes. This is a BUG, not cleanup — fix it on a
-  =bugs= branch/worktree per the bug workflow, ideally before Phase 4 (it touches the
-  publish path). See [[file:04-api-network-identity.org][04]].
+- *Correctness bug — FIXED (commit =5796a8b=, =docs/bugs.org=).* =publish_blocks_handler=
+  used to inline an engine-host-only secret chain, so NIP-07 users (no secret on the
+  host) got *unsigned* block publishes. It now signs through the =SigningController=
+  (engine in-process OR external NIP-07/NIP-46 signer), same as =publish_handler=. No
+  longer open.
 - *Rust duplication* (relay set-name routing 4×, =sign_event= helper for the 4 builders,
   the ~130-line publish-handler twin) — real debt, but it's refactor-for-cleanliness;
   schedule after the shed/build work so you're de-duping the final shape. See [[file:02-engine-data-layer.org][02]].
