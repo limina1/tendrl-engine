@@ -2111,34 +2111,14 @@ fn build_section_event_internal(
         tags.push(serde_json::to_value(tag_vec).unwrap_or(json!([])));
     }
 
-    // Build the event without id/sig first for hashing
-    let event_for_hash = json!([
-        0,
+    tree_emit::sign_event(
+        KIND_PUBLICATION_SECTION,
         pubkey,
         timestamp,
-        KIND_PUBLICATION_SECTION,
-        tags,
-        &section.content
-    ]);
-
-    let id = calculate_event_id(&event_for_hash);
-
-    // Sign with secret key if provided, otherwise use placeholder
-    let sig = if let Some(secret) = secret_hex {
-        crate::identity::sign_event_hash(&id, secret).unwrap_or_else(|_| "0".repeat(128))
-    } else {
-        "0".repeat(128)
-    };
-
-    json!({
-        "id": id,
-        "pubkey": pubkey,
-        "created_at": timestamp,
-        "kind": KIND_PUBLICATION_SECTION,
-        "tags": tags,
-        "content": &section.content,
-        "sig": sig
-    })
+        &tags,
+        &section.content,
+        secret_hex,
+    )
 }
 
 /// Build a publication index (30040) event with optional signing
@@ -2179,35 +2159,15 @@ fn build_index_event_internal(
     // Add auto-update tag
     tags.push(json!(["auto-update", compose.auto_update.as_str()]));
 
-    // Build the event without id/sig first for hashing
     // Note: 30040 events MUST have empty content
-    let event_for_hash = json!([
-        0,
+    tree_emit::sign_event(
+        KIND_PUBLICATION_INDEX,
         pubkey,
         timestamp,
-        KIND_PUBLICATION_INDEX,
-        tags,
-        ""
-    ]);
-
-    let id = calculate_event_id(&event_for_hash);
-
-    // Sign with secret key if provided, otherwise use placeholder
-    let sig = if let Some(secret) = secret_hex {
-        crate::identity::sign_event_hash(&id, secret).unwrap_or_else(|_| "0".repeat(128))
-    } else {
-        "0".repeat(128)
-    };
-
-    json!({
-        "id": id,
-        "pubkey": pubkey,
-        "created_at": timestamp,
-        "kind": KIND_PUBLICATION_INDEX,
-        "tags": tags,
-        "content": "",
-        "sig": sig
-    })
+        &tags,
+        "",
+        secret_hex,
+    )
 }
 
 /// Calculate the event ID per NIP-01
@@ -2341,32 +2301,14 @@ fn build_forked_section_event(
         tags.push(serde_json::to_value(tag_vec).unwrap_or(json!([])));
     }
 
-    let event_for_hash = json!([
-        0,
+    tree_emit::sign_event(
+        KIND_PUBLICATION_SECTION,
         pubkey,
         timestamp,
-        KIND_PUBLICATION_SECTION,
-        tags,
-        content
-    ]);
-
-    let id = calculate_event_id(&event_for_hash);
-
-    let sig = if let Some(secret) = secret_hex {
-        crate::identity::sign_event_hash(&id, secret).unwrap_or_else(|_| "0".repeat(128))
-    } else {
-        "0".repeat(128)
-    };
-
-    json!({
-        "id": id,
-        "pubkey": pubkey,
-        "created_at": timestamp,
-        "kind": KIND_PUBLICATION_SECTION,
-        "tags": tags,
-        "content": content,
-        "sig": sig
-    })
+        &tags,
+        content,
+        secret_hex,
+    )
 }
 
 /// Build a 30040 publication index event for block-based composition
@@ -2418,32 +2360,14 @@ fn build_block_index_event(
     tags.push(json!(["auto-update", state.auto_update.as_str()]));
 
     // 30040 events MUST have empty content
-    let event_for_hash = json!([
-        0,
+    tree_emit::sign_event(
+        KIND_PUBLICATION_INDEX,
         pubkey,
         timestamp,
-        KIND_PUBLICATION_INDEX,
-        tags,
-        ""
-    ]);
-
-    let id = calculate_event_id(&event_for_hash);
-
-    let sig = if let Some(secret) = secret_hex {
-        crate::identity::sign_event_hash(&id, secret).unwrap_or_else(|_| "0".repeat(128))
-    } else {
-        "0".repeat(128)
-    };
-
-    json!({
-        "id": id,
-        "pubkey": pubkey,
-        "created_at": timestamp,
-        "kind": KIND_PUBLICATION_INDEX,
-        "tags": tags,
-        "content": "",
-        "sig": sig
-    })
+        &tags,
+        "",
+        secret_hex,
+    )
 }
 
 #[cfg(test)]
@@ -2876,7 +2800,7 @@ mod tests {
                 .await
                 .expect("signing should succeed");
 
-        let placeholder = "0".repeat(128);
+        let placeholder = crate::identity::placeholder_sig();
         for ev in std::iter::once(&pub_event).chain(section_events.iter()) {
             let sig = ev["sig"].as_str().unwrap();
             assert_eq!(sig.len(), 128, "sig must be present");

@@ -295,7 +295,7 @@ impl DraftStore {
             "kind": 30040,
             "tags": pub_tags,
             "content": "",
-            "sig": "0".repeat(128)
+            "sig": crate::identity::placeholder_sig()
         })
     }
 
@@ -341,7 +341,7 @@ impl DraftStore {
             "kind": 30041,
             "tags": section_tags,
             "content": &section.content,
-            "sig": "0".repeat(128)
+            "sig": crate::identity::placeholder_sig()
         })
     }
 

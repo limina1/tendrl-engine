@@ -303,6 +303,15 @@ pub(crate) fn derive_pubkey_from_secret(secret_hex: &str) -> Result<String, KeyP
     Ok(hex::encode(x_only))
 }
 
+/// The all-zero placeholder signature (128 hex chars) carried by an
+/// unsigned event. A real Schnorr sig is never all zeros, so this is a
+/// safe sentinel for "this event has not been signed yet" that relays
+/// reject. Single source of truth — used by the event builders
+/// (`tree_emit::sign_event`) and the draft store.
+pub fn placeholder_sig() -> String {
+    "0".repeat(128)
+}
+
 /// Sign a message hash using Schnorr signature (NIP-01)
 /// Returns the signature as a 64-byte hex string
 pub fn sign_event_hash(event_id_hex: &str, secret_hex: &str) -> Result<String, KeyParseError> {

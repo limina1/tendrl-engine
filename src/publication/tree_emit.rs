@@ -434,9 +434,10 @@ fn build_section_content_event(
     )
 }
 
-/// Hash + (optionally) sign the event. Shared by every emitter above so
-/// the id/sig handling lives in one place.
-fn sign_event(
+/// Hash + (optionally) sign the event. Shared by every emitter above AND
+/// by the non-block builders in `publication.rs` (via `pub(super)`) so the
+/// id/sig handling lives in exactly one place.
+pub(super) fn sign_event(
     kind: u64,
     pubkey: &str,
     timestamp: u64,
@@ -447,9 +448,10 @@ fn sign_event(
     let event_for_hash = json!([0, pubkey, timestamp, kind, tags, content]);
     let id = calculate_event_id(&event_for_hash);
     let sig = if let Some(secret) = secret_hex {
-        crate::identity::sign_event_hash(&id, secret).unwrap_or_else(|_| "0".repeat(128))
+        crate::identity::sign_event_hash(&id, secret)
+            .unwrap_or_else(|_| crate::identity::placeholder_sig())
     } else {
-        "0".repeat(128)
+        crate::identity::placeholder_sig()
     };
 
     json!({

@@ -83,7 +83,7 @@ api.rs Config 29→16, BadRequest 6→10, Auth 4→10 (+3 sign catch-alls → Ot
   *with* Phase C3 so the doc matches shipped code rather than advertising it early.
 - Commit :: 3 commits (one per item) or one "chore: error-code + confirm-mode + nip46".
 
-* Phase B — De-duplicate live code [1/3(+1)]
+* Phase B — De-duplicate live code [2/3(+1)]
 Refactor toward the final shape (synthesis theme 2). B1 is a *prerequisite for Phase C*
 — wiring the classes is much cleaner with a single set-name resolver.
 
@@ -102,10 +102,14 @@ Refactor toward the final shape (synthesis theme 2). B1 is a *prerequisite for P
   (get), [[src:src/relay_store.rs::256][:256]] (get_mut) + [[src:src/relay_store.rs::375][:375]] (sibling strip). Plus the =RelayConfig= /
   =RelaySets= 8-field manual mirror ([[src:src/config.rs::95][config.rs:95-132]] vs relay_store). Collapse to a
   single resolver on =RelaySets= + one mutual-exclusion rule.
-- [ ] *B2 — =sign_event= helper.* [[src:src/publication.rs::2127][publication.rs:2127]], [[src:src/publication.rs::2196][:2196]], [[src:src/publication.rs::2355][:2355]], [[src:src/publication.rs::2432][:2432]]
-  each inline hash+sign though [[src:src/publication/tree_emit.rs::439][tree_emit::sign_event]] already factors it out and is
-  reused internally. Route all four through it; fold the 6× =("0".repeat(128))=
-  placeholder-sig sentinel into one =const=.
+- [X] *B2 — =sign_event= helper.* ✓ The four inline hash+sign tails in
+  =publication.rs= (=build_section_event_internal=, =build_index_event_internal=,
+  =build_forked_section_event=, =build_block_index_event=) now call
+  =tree_emit::sign_event= (made =pub(super)=) — the single id/sig assembler. Folded the
+  =("0".repeat(128))= sentinel into =crate::identity::placeholder_sig()= (used by
+  =sign_event= + the draft store + the test). =calculate_event_id= was already shared
+  (defined in publication.rs, imported by tree_emit). Verify: cargo test (publication
+  60/0, drafts 8/0), clippy 41 (unchanged); event-builder output unchanged.
 - [ ] *B3 — Publish-handler twin.* [[src:src/api.rs::3499][publish_handler]] and [[src:src/api.rs::3925][publish_blocks_handler]]
   share ~130 lines of signing/ID-extraction/ingest/broadcast and *have already drifted*
   (different =dsl= strings, different =event_ids= assembly — a latent bug). Extract a
