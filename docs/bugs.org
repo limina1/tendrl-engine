@@ -64,3 +64,46 @@ only needs the =SigningController= path that =/publish= already uses.
 =cargo clippy= warning count unchanged (47). Manual: on NIP-07, add a section
 from the pool to compose and publish — events go out with real signatures and
 relays accept them.
+
+* FIXED — per-event Broadcast sent only the bare 30040 index, not the publication
+:PROPERTIES:
+:found: 2026-06-08
+:branch: worktree-functional-finding-wind
+:commit: cf5e8f9
+:END:
+
+** Symptom
+Broadcasting a publication from the event modal's =Broadcast= action (the
+button, or the =a b= chord) pushed only the single focused event. On a
+kind-30040 publication index that meant the *index alone* went to the relays —
+its 30041 sections and any nested 30040 indices were silently dropped, so a
+reader fetching the broadcast index hit unresolvable =a= tags. The confirm
+intent reflected this too: =Replicate 1 index= / =Broadcast 1 event=.
+
+** Why
+=EventViewModal.onBroadcastAction= unconditionally called =broadcastEvent= →
+=POST /api/v1/broadcast=, which is a single-event fan-out (its legitimate job
+for kind-0 metadata, relay lists, etc.). It had no notion of a publication tree.
+The whole-tree path already existed — =broadcast_publication_handler=
+(=POST /publications/:pk/:d/broadcast=) loads the depth-N tree, =collect_signed_events=
+gathers index + sections + nested, and the =PublishManifest= on the =PublishIntent=
+describes the full structure — but only the feed's "broadcast" pill used it.
+
+** Fix
+Route a kind-30040 broadcast through the publication endpoint:
+- =EventViewModal.onBroadcastAction= branches on =n.kind === 30040 && dTag=,
+  calling =broadcastPublication(pubkey, dTag, targets)= (whole tree) instead of
+  =broadcastEvent=. Non-30040 events keep the single-event path.
+- =broadcast_publication_handler= gained an optional =relays= body
+  (=BroadcastPubRequest=) so the event modal keeps targeting the aggregator
+  *broadcast* relay set; absent/empty falls back to the *publish* set, so the
+  feed-pill broadcast is unchanged.
+- The intent now notes the full structure (index + section counts, nested flag,
+  per-event list) — it already did for the feed pill; this just routes the modal
+  through the same manifest.
+
+** Verify
+=cargo build= / =cargo clippy= (no new warnings); =svelte-check --threshold error=
+clean. Manual: open a 30040 index in the event modal, =Broadcast= — the confirm
+intent reads =Replicate 1 index + N sections= (=· nested tree= when nested) and
+=Broadcast N events=; every section + nested index lands on the relays.
