@@ -11,9 +11,10 @@
 	const app = getAppState();
 	const store = getActiveStore();
 
-	// Pull current embedding-index status once when the search buffer mounts
-	// so the bottom "Embedding settings" panel reflects sidecar health + index
-	// counts without waiting for a sync. Lightweight (no embed pass).
+	// Pull current embedding-index status once when the search buffer mounts so
+	// the mode-line embed pill reflects sidecar health + index counts. The
+	// embedding controls themselves live in the KB settings modal (the ⚙ on the
+	// search panel). Lightweight (no embed pass).
 	onMount(() => { app.refreshEmbeddingStatus(); });
 
 	// Three sibling sub-views — like the reader's outline/paginated/
@@ -299,11 +300,4 @@
 	hasSearched={app.searchLastQuery !== ''}
 	networkMode={app.networkStatus?.mode === 'confirm' ? 'confirm' : 'auto'}
 	relaySearchLoading={app.searchRelayLoading}
-	embeddingStatus={app.embeddingStatus}
-	embeddingSyncing={app.embeddingSyncing}
-	onembedmissing={app.handleSyncEmbeddings}
-	onembedreindex={app.handleReindexEmbeddings}
-	onsetembedkinds={app.handleSetEmbedKinds}
-	onsetautoembed={app.handleSetAutoEmbed}
-	onrefreshembedstatus={app.refreshEmbeddingStatus}
 />

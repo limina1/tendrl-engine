@@ -5,15 +5,12 @@
 		ContextItem,
 		DocumentFile,
 		ImportPage,
-		TagValueCount,
-		EmbeddingStatusResponse
+		TagValueCount
 	} from '$lib/types';
-	import { onMount } from 'svelte';
 	import SearchInput from './SearchInput.svelte';
 	import SearchResultItem from './SearchResultItem.svelte';
 	import PersonResultItem from './PersonResultItem.svelte';
 	import PoolStateBadges from './PoolStateBadges.svelte';
-	import EmbeddingSettings from './EmbeddingSettings.svelte';
 	import {
 		searchConfig,
 		openSearchConfig,
@@ -77,16 +74,7 @@
 		onresultpillaction,
 		refsQuery = $bindable<string>(''),
 		activeTab = $bindable<'search' | 'refs' | 'import'>('search'),
-		searchValue = $bindable<string>(''),
-		// Embedding settings — the index that powers `~:` semantic search.
-		// Status + actions come from the host (SearchBuffer → app state).
-		embeddingStatus = null,
-		embeddingSyncing = false,
-		onembedmissing,
-		onembedreindex,
-		onsetembedkinds,
-		onsetautoembed,
-		onrefreshembedstatus
+		searchValue = $bindable<string>('')
 	}: {
 		results: SearchResult[];
 		profiles?: ProfileResult[];
@@ -176,34 +164,9 @@
 		 *  already known to the engine; KB last because its pages come
 		 *  from outside the Nostr graph. */
 		activeTab?: 'search' | 'refs' | 'import';
-		/** Embedding index status (sidecar health, counts, active/available
-		 *  kinds). Null until the first status fetch resolves. */
-		embeddingStatus?: EmbeddingStatusResponse | null;
-		/** True while an embed/reindex pass is running — disables actions. */
-		embeddingSyncing?: boolean;
-		/** Embed events not yet in the index (incremental sync). */
-		onembedmissing?: () => void;
-		/** Clear the index and re-embed everything from scratch. */
-		onembedreindex?: () => void;
-		/** Persist a new set of embeddable kinds (engine-side). */
-		onsetembedkinds?: (kinds: number[]) => void;
-		/** Toggle auto-embed on retrieval + publishing (engine-side). */
-		onsetautoembed?: (enabled: boolean) => void;
-		/** Fetch current embedding status (called on mount if not yet loaded). */
-		onrefreshembedstatus?: () => void;
 	} = $props();
 
-	// Self-fetch status on mount when the host hasn't populated it yet, so the
-	// footer fills in regardless of buffer/mount timing (WM buffers persist, so
-	// relying solely on the host's mount hook is fragile).
-	onMount(() => { if (!embeddingStatus) onrefreshembedstatus?.(); });
-
 	let checkedIds: Set<string> = $state(new Set());
-
-	// Embedding-settings footer: collapsed by default (ephemeral view state —
-	// the frontend owns expansion). Expands to reveal the shared
-	// EmbeddingSettings controls (status + kinds + actions).
-	let embedPanelOpen = $state(false);
 
 	// Grouped mode: when the query had `count:NAME`, the response includes
 	// histogram buckets. We switch the panel to a folded view where the
@@ -699,50 +662,6 @@
 			{/if}
 		</div>
 	{/if}
-
-	<!-- Embedding settings — persistent footer at the bottom of the search
-	     buffer. Always rendered (even before the status fetch resolves) so it's
-	     discoverable regardless of mount timing; collapsed by default. Expands
-	     to show sidecar status, index counts, the embeddable-kind checkboxes,
-	     and the embed actions. This is the home of "what gets embedded": the
-	     engine persists the kind set. -->
-	<div class="embed-panel" class:embed-panel--open={embedPanelOpen}>
-		<button
-			class="embed-panel__bar"
-			onclick={() => (embedPanelOpen = !embedPanelOpen)}
-			aria-expanded={embedPanelOpen}
-			title="Embedding settings — the index that powers ~: semantic search"
-		>
-			<span class="embed-panel__arrow">{embedPanelOpen ? '▾' : '▸'}</span>
-			<span class="embed-panel__title">Embedding settings</span>
-			{#if embeddingStatus?.enabled}
-				<span class="embed-panel__stat">embed {embeddingStatus.indexed_count}/{embeddingStatus.total_events}</span>
-				<span
-					class="embed-panel__dot"
-					class:embed-panel__dot--ok={embeddingStatus.sidecar_available}
-					class:embed-panel__dot--off={!embeddingStatus.sidecar_available}
-					title={embeddingStatus.sidecar_available ? 'Sidecar connected' : 'Sidecar unreachable'}
-				></span>
-			{:else if embeddingStatus}
-				<span class="embed-panel__stat embed-panel__stat--off">off</span>
-			{:else}
-				<span class="embed-panel__stat embed-panel__stat--off">…</span>
-			{/if}
-		</button>
-
-		{#if embedPanelOpen}
-			<div class="embed-panel__body">
-				<EmbeddingSettings
-					status={embeddingStatus}
-					syncing={embeddingSyncing}
-					{onembedmissing}
-					{onembedreindex}
-					{onsetembedkinds}
-					{onsetautoembed}
-				/>
-			</div>
-		{/if}
-	</div>
 </div>
 
 <style>
@@ -1300,52 +1219,5 @@
 		display: flex;
 		gap: 2px;
 		flex-shrink: 0;
-	}
-
-	/* Embedding settings — collapsible footer pinned to the bottom of the
-	   search buffer. The bar stays a thin glanceable strip when collapsed. */
-	.embed-panel {
-		flex-shrink: 0;
-		border-top: 1px solid var(--panel-border);
-		background: var(--panel-bg-soft, var(--bg-surface));
-	}
-	.embed-panel__bar {
-		display: flex;
-		align-items: center;
-		gap: 8px;
-		width: 100%;
-		padding: 6px 12px;
-		background: none;
-		border: none;
-		cursor: pointer;
-		color: var(--fg-muted);
-		font-size: 0.68rem;
-		text-align: left;
-	}
-	.embed-panel__bar:hover { color: var(--fg); }
-	.embed-panel__arrow { width: 0.8em; flex-shrink: 0; }
-	.embed-panel__title {
-		text-transform: uppercase;
-		letter-spacing: 0.06em;
-		font-weight: 600;
-	}
-	.embed-panel__stat {
-		margin-left: auto;
-		font-family: var(--font-mono);
-		font-size: 0.62rem;
-		color: var(--fg-muted);
-	}
-	.embed-panel__stat--off { color: var(--fg-muted); opacity: 0.7; }
-	.embed-panel__dot {
-		width: 7px;
-		height: 7px;
-		border-radius: 50%;
-		flex-shrink: 0;
-	}
-	.embed-panel__dot--ok { background: var(--green); }
-	.embed-panel__dot--off { background: var(--red); }
-
-	.embed-panel__body {
-		padding: 4px 12px 12px;
 	}
 </style>
