@@ -303,6 +303,22 @@ impl RelaySets {
     }
 }
 
+/// The mutually-exclusive sibling tier for a discovery-class set name,
+/// or `None` for a flat/unknown name. Adding a URL to one tier strips it
+/// from its sibling so a URL is never in both `default` and `fallback`
+/// of the same class. Single source of truth shared by
+/// `RelayStore::add` (on `RelaySets`) and `Engine::add_relay` (on
+/// `RelayConfig`).
+pub(crate) fn discovery_sibling(set: &str) -> Option<&'static str> {
+    match set {
+        "search.default" => Some("search.fallback"),
+        "search.fallback" => Some("search.default"),
+        "indexer.default" => Some("indexer.fallback"),
+        "indexer.fallback" => Some("indexer.default"),
+        _ => None,
+    }
+}
+
 /// Persisted relay sets backed by a JSON file under the engine's data dir.
 ///
 /// Operations are synchronous and small — the file is rewritten in full on
@@ -372,14 +388,7 @@ impl RelayStore {
     pub fn add(&self, sets: &mut RelaySets, set: &str, url: &str) -> Result<bool> {
         // Strip from the sibling tier first so the same URL never
         // appears in both default AND fallback within a class.
-        let sibling = match set {
-            "search.default" => Some("search.fallback"),
-            "search.fallback" => Some("search.default"),
-            "indexer.default" => Some("indexer.fallback"),
-            "indexer.fallback" => Some("indexer.default"),
-            _ => None,
-        };
-        if let Some(s) = sibling {
+        if let Some(s) = discovery_sibling(set) {
             if let Ok(list) = sets.get_mut(s) {
                 list.retain(|u| u != url);
             }

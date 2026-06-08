@@ -900,23 +900,14 @@ impl Engine {
             // Per-URL mutual exclusion within a discovery class —
             // moving a URL from default to fallback (or vice versa) is
             // a single add() call.
-            match set {
-                "search.default" => rc.search.fallback.retain(|u| u != &url),
-                "search.fallback" => rc.search.default.retain(|u| u != &url),
-                "indexer.default" => rc.indexer.fallback.retain(|u| u != &url),
-                "indexer.fallback" => rc.indexer.default.retain(|u| u != &url),
-                _ => {}
+            if let Some(sibling) = crate::relay_store::discovery_sibling(set) {
+                if let Some(list) = rc.urls_mut(sibling) {
+                    list.retain(|u| u != &url);
+                }
             }
-            let urls = match set {
-                "general" => &mut rc.general.urls,
-                "publish" => &mut rc.publish.urls,
-                "fetch" => &mut rc.fetch.urls,
-                "broadcast" => &mut rc.broadcast.urls,
-                "search.default" => &mut rc.search.default,
-                "search.fallback" => &mut rc.search.fallback,
-                "indexer.default" => &mut rc.indexer.default,
-                "indexer.fallback" => &mut rc.indexer.fallback,
-                _ => return false,
+            let urls = match rc.urls_mut(set) {
+                Some(urls) => urls,
+                None => return false,
             };
             if urls.iter().any(|u| u == &url) {
                 // Already a member — but the sibling-strip above may
@@ -952,16 +943,9 @@ impl Engine {
         }
         let snapshot = {
             let mut rc = self.relay_config.write().unwrap();
-            let urls = match set {
-                "general" => &mut rc.general.urls,
-                "publish" => &mut rc.publish.urls,
-                "fetch" => &mut rc.fetch.urls,
-                "broadcast" => &mut rc.broadcast.urls,
-                "search.default" => &mut rc.search.default,
-                "search.fallback" => &mut rc.search.fallback,
-                "indexer.default" => &mut rc.indexer.default,
-                "indexer.fallback" => &mut rc.indexer.fallback,
-                _ => return false,
+            let urls = match rc.urls_mut(set) {
+                Some(urls) => urls,
+                None => return false,
             };
             let before = urls.len();
             urls.retain(|u| u != &url);

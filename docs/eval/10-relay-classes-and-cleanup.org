@@ -83,11 +83,20 @@ api.rs Config 29→16, BadRequest 6→10, Auth 4→10 (+3 sign catch-alls → Ot
   *with* Phase C3 so the doc matches shipped code rather than advertising it early.
 - Commit :: 3 commits (one per item) or one "chore: error-code + confirm-mode + nip46".
 
-* Phase B — De-duplicate live code [0/3(+1)]
+* Phase B — De-duplicate live code [1/3(+1)]
 Refactor toward the final shape (synthesis theme 2). B1 is a *prerequisite for Phase C*
 — wiring the classes is much cleaner with a single set-name resolver.
 
-- [ ] *B1 — Relay set-name routing → one source of truth.* The flat+dotted 8-case
+- [X] *B1 — Relay set-name routing → one source of truth.* ✓ Added
+  =RelayConfig::urls_mut(set)= (config.rs) — the single name→field router on the
+  engine-side struct, collapsing the two inline 8-arm matches in =Engine::add_relay=
+  / =remove_relay= into one method. Extracted =discovery_sibling(set)= (relay_store.rs)
+  as the shared mutual-exclusion rule used by *both* =RelayStore::add= and
+  =Engine::add_relay=. =RelaySets::get_mut= stays as the persistence-side router (the
+  two structs can't share one fn — flat sets here are =RelaySet { urls, kinds }= vs bare
+  =Vec=; full RelayConfig↔RelaySets unification stays deferred, blocked by =kinds=).
+  Verify: cargo test (relay 25/0), clippy 41 (unchanged), no behavior change.
+  Original duplication noted in the audit: the flat+dotted 8-case
   match (=general=/=publish=/=fetch=/=broadcast=/=search.default=/=indexer.default=/…)
   is hand-rewritten 4×: [[src:src/engine.rs::890][engine.rs:890]] (add), [[src:src/engine.rs::942][:942]] (remove), [[src:src/relay_store.rs::242][relay_store.rs:242]]
   (get), [[src:src/relay_store.rs::256][:256]] (get_mut) + [[src:src/relay_store.rs::375][:375]] (sibling strip). Plus the =RelayConfig= /

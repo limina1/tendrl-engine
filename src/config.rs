@@ -240,6 +240,31 @@ impl RelayConfig {
         urls.into_iter().collect()
     }
 
+    /// Borrow the mutable URL list for a working-set name. Accepts the
+    /// flat names (`general` / `publish` / `fetch` / `broadcast`) and the
+    /// dotted discovery-class tiers (`search.default` / `search.fallback`
+    /// / `indexer.default` / `indexer.fallback`); returns `None` for any
+    /// other name so callers can ignore stray UI input.
+    ///
+    /// Single source of truth for the set-name → field routing on
+    /// `RelayConfig` (used by `Engine::add_relay` / `remove_relay`). It
+    /// mirrors `RelaySets::get_mut`, which routes the same names on the
+    /// persistence-side struct; the two can't be one function because the
+    /// flat sets here are `RelaySet { urls, kinds }`, not bare `Vec`.
+    pub fn urls_mut(&mut self, set: &str) -> Option<&mut Vec<String>> {
+        match set {
+            "general" => Some(&mut self.general.urls),
+            "publish" => Some(&mut self.publish.urls),
+            "fetch" => Some(&mut self.fetch.urls),
+            "broadcast" => Some(&mut self.broadcast.urls),
+            "search.default" => Some(&mut self.search.default),
+            "search.fallback" => Some(&mut self.search.fallback),
+            "indexer.default" => Some(&mut self.indexer.default),
+            "indexer.fallback" => Some(&mut self.indexer.fallback),
+            _ => None,
+        }
+    }
+
     /// Apply persisted URL sets from `relays.json` onto this config. The
     /// `kinds` come from this struct's defaults — only URLs are layered in.
     /// Called by the engine on startup after loading the state file.
