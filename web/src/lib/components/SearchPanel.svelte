@@ -85,6 +85,7 @@
 		onembedmissing,
 		onembedreindex,
 		onsetembedkinds,
+		onsetautoembed,
 		onrefreshembedstatus
 	}: {
 		results: SearchResult[];
@@ -186,6 +187,8 @@
 		onembedreindex?: () => void;
 		/** Persist a new set of embeddable kinds (engine-side). */
 		onsetembedkinds?: (kinds: number[]) => void;
+		/** Toggle auto-embed on retrieval + publishing (engine-side). */
+		onsetautoembed?: (enabled: boolean) => void;
 		/** Fetch current embedding status (called on mount if not yet loaded). */
 		onrefreshembedstatus?: () => void;
 	} = $props();
@@ -735,6 +738,7 @@
 					{onembedmissing}
 					{onembedreindex}
 					{onsetembedkinds}
+					{onsetautoembed}
 				/>
 			</div>
 		{/if}

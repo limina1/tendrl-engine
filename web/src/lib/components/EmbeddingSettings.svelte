@@ -1,13 +1,14 @@
 <script lang="ts">
-	// Embedding-index controls: sidecar/index status, which kinds get embedded,
-	// and the embed-missing / full-reembed actions. Shared between the search
-	// panel's bottom "Embedding settings" bar and the search-config modal's
-	// "Embedding" section so the two never drift. Presentational — status and
-	// callbacks are passed in by the host (both pull from app state).
+	// Embedding-index controls: sidecar/index status, the auto-embed toggle,
+	// which kinds get embedded (canonical menu + custom kinds), and the
+	// embed-missing / full-reembed actions. Shared between the search panel's
+	// bottom "Embedding settings" bar and the search-config modal's "Embedding"
+	// section so the two never drift. Presentational — status and callbacks are
+	// passed in by the host (both pull from app state).
 	//
 	// Unlike the modal's search defaults (committed on Save), these act
-	// immediately: the kind set is persisted engine-side the moment a box is
-	// toggled, and the buttons kick off engine passes right away.
+	// immediately: kinds and the auto-embed flag persist engine-side the moment
+	// they change, and the buttons kick off engine passes right away.
 
 	import type { EmbeddingStatusResponse } from '$lib/types';
 	import { kindLabel } from '$lib/search/search-config.svelte';
@@ -17,23 +18,48 @@
 		syncing = false,
 		onembedmissing,
 		onembedreindex,
-		onsetembedkinds
+		onsetembedkinds,
+		onsetautoembed
 	}: {
 		status?: EmbeddingStatusResponse | null;
 		syncing?: boolean;
 		onembedmissing?: () => void;
 		onembedreindex?: () => void;
 		onsetembedkinds?: (kinds: number[]) => void;
+		onsetautoembed?: (enabled: boolean) => void;
 	} = $props();
 
-	// Toggle one kind in/out of the embeddable set and persist via the host,
-	// keeping the response's `available_kinds` order.
+	// The full rendered kind list: the canonical menu first, then any custom
+	// kinds the user has added (those in the active set but not in the menu).
+	const menu = $derived(status?.available_kinds ?? []);
+	const active = $derived(status?.embed_kinds ?? []);
+	const customKinds = $derived(active.filter((k) => !menu.includes(k)));
+
+	let newKind = $state('');
+	let addError = $state<string | null>(null);
+
+	// Toggle one kind in/out of the active set and persist via the host.
 	function toggleKind(kind: number) {
-		const active = new Set(status?.embed_kinds ?? []);
-		if (active.has(kind)) active.delete(kind);
-		else active.add(kind);
-		const menu = status?.available_kinds ?? [];
-		onsetembedkinds?.(menu.filter((k) => active.has(k)));
+		const next = new Set(active);
+		if (next.has(kind)) next.delete(kind);
+		else next.add(kind);
+		onsetembedkinds?.([...next]);
+	}
+
+	// Add a custom kind typed into the "Add kind" box.
+	function addKind() {
+		addError = null;
+		const k = Number(newKind.trim());
+		if (!Number.isInteger(k) || k < 0 || k > 65535) {
+			addError = 'Enter a kind number (0–65535)';
+			return;
+		}
+		if (active.includes(k)) {
+			addError = `k:${k} is already embedded`;
+			return;
+		}
+		onsetembedkinds?.([...active, k]);
+		newKind = '';
 	}
 
 	function fullReembed() {
@@ -66,19 +92,53 @@
 		</span>
 	</div>
 
+	<label class="es-toggle" title="Embed new events of the configured kinds as they're retrieved from relays or published">
+		<input
+			type="checkbox"
+			checked={status.auto_embed}
+			onchange={(e) => onsetautoembed?.(e.currentTarget.checked)}
+		/>
+		<span>Auto-embed on retrieval &amp; publishing</span>
+	</label>
+
 	<div class="es-kinds">
 		<span class="es-kinds-label">Kinds to embed</span>
-		{#each status.available_kinds ?? [] as k (k)}
+		{#each menu as k (k)}
 			<label class="es-kind" title={kindLabel(k)}>
 				<input
 					type="checkbox"
-					checked={(status.embed_kinds ?? []).includes(k)}
+					checked={active.includes(k)}
 					disabled={syncing}
 					onchange={() => toggleKind(k)}
 				/>
 				<span>{kindLabel(k)} <span class="es-kind-num">k:{k}</span></span>
 			</label>
 		{/each}
+		{#each customKinds as k (k)}
+			<label class="es-kind es-kind--custom" title={kindLabel(k)}>
+				<input
+					type="checkbox"
+					checked={true}
+					disabled={syncing}
+					onchange={() => toggleKind(k)}
+				/>
+				<span>{kindLabel(k)} <span class="es-kind-num">k:{k}</span></span>
+			</label>
+		{/each}
+	</div>
+
+	<div class="es-addkind">
+		<input
+			class="es-addkind-input"
+			type="text"
+			inputmode="numeric"
+			placeholder="custom kind, e.g. 30817"
+			bind:value={newKind}
+			disabled={syncing}
+			onkeydown={(e) => { if (e.key === 'Enter') addKind(); }}
+		/>
+		<button class="es-btn es-addkind-btn" onclick={addKind} disabled={syncing}>Add kind</button>
+		{#if addError}<span class="es-addkind-err">{addError}</span>{/if}
 	</div>
 
 	<div class="es-actions">
@@ -135,12 +195,22 @@
 		font-size: 0.65rem;
 		color: var(--fg-muted);
 	}
+	.es-toggle {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		font-size: 0.7rem;
+		color: var(--fg);
+		cursor: pointer;
+		margin-bottom: 10px;
+	}
+	.es-toggle input { cursor: pointer; }
 	.es-kinds {
 		display: flex;
 		align-items: center;
 		flex-wrap: wrap;
 		gap: 4px 12px;
-		margin-bottom: 10px;
+		margin-bottom: 8px;
 	}
 	.es-kinds-label {
 		font-size: 0.6rem;
@@ -164,6 +234,26 @@
 		font-size: 0.6rem;
 		color: var(--fg-muted);
 	}
+	.es-addkind {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		flex-wrap: wrap;
+		margin-bottom: 10px;
+	}
+	.es-addkind-input {
+		font-size: 0.7rem;
+		padding: 3px 8px;
+		border-radius: var(--radius);
+		border: 1px solid var(--panel-border);
+		background: var(--bg-surface);
+		color: var(--fg);
+		width: 150px;
+	}
+	.es-addkind-err {
+		font-size: 0.62rem;
+		color: var(--red);
+	}
 	.es-actions {
 		display: flex;
 		gap: 8px;
@@ -180,4 +270,5 @@
 	.es-btn:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
 	.es-btn:disabled { opacity: 0.5; cursor: default; }
 	.es-btn--danger:hover:not(:disabled) { border-color: var(--red); color: var(--red); }
+	.es-addkind-btn { padding: 3px 10px; }
 </style>

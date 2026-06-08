@@ -1021,6 +1021,15 @@ export function setEmbedKinds(kinds: number[]) {
 	});
 }
 
+/** Toggle auto-embed on retrieval + publishing. Persists engine-side and
+ *  returns the refreshed status. */
+export function setAutoEmbed(auto_embed: boolean) {
+	return fetchJson<EmbeddingStatusResponse>('/api/v1/embed/config', {
+		method: 'POST',
+		body: JSON.stringify({ auto_embed })
+	});
+}
+
 // Claude Code Sessions API
 
 import type { ClaudeSessionSummary, ClaudeSessionMessage } from './types';

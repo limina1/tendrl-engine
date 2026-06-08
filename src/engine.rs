@@ -147,6 +147,12 @@ pub struct Engine {
     /// via `set_embed_kinds` (which also writes through to `config.toml`) so
     /// the UI's Embedding-settings panel takes effect without a restart.
     embed_kinds: StdRwLock<Vec<u16>>,
+    /// Whether retrieval (relay fetch) and publishing automatically embed new
+    /// events of the configured kinds. When false, embedding only happens via
+    /// the manual `/embed/sync` + `/embed/reindex` endpoints. Seeded from
+    /// `config.embedding.auto_embed`; toggled at runtime via `set_auto_embed`
+    /// (write-through to `config.toml`).
+    auto_embed: std::sync::atomic::AtomicBool,
     /// Ignore list for filtering events
     ignore_list: RwLock<IgnoreList>,
     /// Documents folder path
@@ -260,6 +266,7 @@ impl Engine {
             assistant_pubkey: None,
             embedding: None,
             embed_kinds: StdRwLock::new(crate::embedding::DEFAULT_EMBED_KINDS.to_vec()),
+            auto_embed: std::sync::atomic::AtomicBool::new(true),
             ignore_list: RwLock::new(ignore_list),
             documents_dir: std::path::PathBuf::from("./docs"),
             sidecar_url: "http://localhost:3031".to_string(),
@@ -1118,11 +1125,13 @@ impl Engine {
             return Ok(());
         }
 
-        // Seed the live embed-kinds set from config, sanitized to the
-        // canonical menu so a stale/hand-edited list can't smuggle in
-        // unsupported kinds.
+        // Seed the live embed-kinds set from config (deduped). Custom kinds
+        // beyond the canonical menu are allowed — the menu is just the default
+        // and the checkbox list the UI offers.
         let seeded = Self::sanitize_embed_kinds(&config.embed_kinds);
         *self.embed_kinds.write().unwrap() = seeded;
+        self.auto_embed
+            .store(config.auto_embed, std::sync::atomic::Ordering::Relaxed);
 
         let index_dir = config
             .index_path
@@ -1150,55 +1159,70 @@ impl Engine {
         self.embedding.as_ref()
     }
 
-    /// The event kinds currently eligible for embedding. Returns a clone in
-    /// `DEFAULT_EMBED_KINDS` order so callers get a stable, deduped set.
+    /// The event kinds currently eligible for embedding (deduped clone).
     pub fn embed_kinds(&self) -> Vec<u16> {
         self.embed_kinds.read().unwrap().clone()
     }
 
-    /// Filter an arbitrary kind list down to the canonical, deduped set
-    /// (preserving `DEFAULT_EMBED_KINDS` order). Used to sanitize both the
-    /// seeded config and incoming `/embed/config` requests.
+    /// Whether retrieval/publishing auto-embeds new events of the configured
+    /// kinds. Gates the automatic `sync_embeddings` calls; manual sync/reindex
+    /// ignore it.
+    pub fn auto_embed(&self) -> bool {
+        self.auto_embed.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Dedupe a kind list, preserving first-occurrence order. Custom kinds
+    /// (outside `DEFAULT_EMBED_KINDS`) are allowed — the canonical set is only
+    /// the default + the UI's checkbox menu, not an allow-list.
     fn sanitize_embed_kinds(kinds: &[u16]) -> Vec<u16> {
-        crate::embedding::DEFAULT_EMBED_KINDS
-            .iter()
-            .copied()
-            .filter(|k| kinds.contains(k))
-            .collect()
+        let mut seen = std::collections::HashSet::new();
+        kinds.iter().copied().filter(|k| seen.insert(*k)).collect()
     }
 
     /// Replace the live embed-kinds set and persist it to `config.toml`'s
-    /// `[embedding] embed_kinds`. The in-memory update takes effect
-    /// immediately (next `sync_embeddings` / status read); the file write
-    /// makes it survive a restart. Unknown kinds are dropped.
+    /// `[embedding] embed_kinds`. The in-memory update takes effect immediately
+    /// (next `sync_embeddings` / status read); the file write makes it survive
+    /// a restart. The list is deduped but otherwise accepted as-is.
     pub fn set_embed_kinds(&self, kinds: Vec<u16>) -> Result<()> {
         let clean = Self::sanitize_embed_kinds(&kinds);
         *self.embed_kinds.write().unwrap() = clean.clone();
+        self.persist_embedding_setting(
+            "embed_kinds",
+            toml::Value::Array(clean.iter().map(|k| toml::Value::Integer(*k as i64)).collect()),
+        )
+    }
 
-        // Persist to config.toml under [embedding] embed_kinds. Mirrors the
-        // read→toml::Table→write pattern used for author edits in
-        // api::config_update_handler.
-        if let Some(path) = self.config_path.as_deref() {
-            let content = std::fs::read_to_string(path)
-                .map_err(|e| EngineError::Config(format!("Failed to read config: {e}")))?;
-            let mut doc: toml::Table = toml::from_str(&content)
-                .map_err(|e| EngineError::Config(format!("Failed to parse config: {e}")))?;
-            let embedding = doc
-                .entry("embedding")
-                .or_insert_with(|| toml::Value::Table(toml::Table::new()));
-            if let toml::Value::Table(tbl) = embedding {
-                tbl.insert(
-                    "embed_kinds".to_string(),
-                    toml::Value::Array(
-                        clean.iter().map(|k| toml::Value::Integer(*k as i64)).collect(),
-                    ),
-                );
-            }
-            let serialized = toml::to_string_pretty(&doc)
-                .map_err(|e| EngineError::Config(format!("Failed to serialize config: {e}")))?;
-            std::fs::write(path, serialized)
-                .map_err(|e| EngineError::Config(format!("Failed to write config: {e}")))?;
+    /// Toggle auto-embed (retrieval + publishing) and persist to
+    /// `config.toml`'s `[embedding] auto_embed`. Applies immediately to the
+    /// background loop and the post-fetch / post-publish hooks.
+    pub fn set_auto_embed(&self, enabled: bool) -> Result<()> {
+        self.auto_embed
+            .store(enabled, std::sync::atomic::Ordering::Relaxed);
+        self.persist_embedding_setting("auto_embed", toml::Value::Boolean(enabled))
+    }
+
+    /// Write a single key into the `[embedding]` table of `config.toml`,
+    /// preserving the rest of the file. Mirrors the read→toml::Table→write
+    /// pattern used for author edits in `api::config_update_handler`. No-op if
+    /// no config path is set (e.g. tests).
+    fn persist_embedding_setting(&self, key: &str, value: toml::Value) -> Result<()> {
+        let Some(path) = self.config_path.as_deref() else {
+            return Ok(());
+        };
+        let content = std::fs::read_to_string(path)
+            .map_err(|e| EngineError::Config(format!("Failed to read config: {e}")))?;
+        let mut doc: toml::Table = toml::from_str(&content)
+            .map_err(|e| EngineError::Config(format!("Failed to parse config: {e}")))?;
+        let embedding = doc
+            .entry("embedding")
+            .or_insert_with(|| toml::Value::Table(toml::Table::new()));
+        if let toml::Value::Table(tbl) = embedding {
+            tbl.insert(key.to_string(), value);
         }
+        let serialized = toml::to_string_pretty(&doc)
+            .map_err(|e| EngineError::Config(format!("Failed to serialize config: {e}")))?;
+        std::fs::write(path, serialized)
+            .map_err(|e| EngineError::Config(format!("Failed to write config: {e}")))?;
         Ok(())
     }
 

@@ -1653,7 +1653,7 @@ pub async fn fetch_relay_handler(
     }
 
     // Trigger background embedding sync for newly fetched events
-    if count > 0 && engine.embedding_index().is_some() {
+    if count > 0 && engine.auto_embed() && engine.embedding_index().is_some() {
         let eng = engine.clone();
         tokio::spawn(async move {
             if let Err(e) = eng.sync_embeddings().await {
@@ -1711,7 +1711,7 @@ pub async fn fetch_authors_handler(
     }
 
     // Trigger background embedding sync for newly fetched events
-    if total_fetched > 0 && engine.embedding_index().is_some() {
+    if total_fetched > 0 && engine.auto_embed() && engine.embedding_index().is_some() {
         let eng = engine.clone();
         tokio::spawn(async move {
             if let Err(e) = eng.sync_embeddings().await {
@@ -1734,7 +1734,7 @@ pub async fn fetch_sections_handler(
     let (total_referenced, missing, fetched) = engine.fetch_missing_sections().await?;
 
     // Trigger background embedding sync for newly fetched sections
-    if fetched > 0 && engine.embedding_index().is_some() {
+    if fetched > 0 && engine.auto_embed() && engine.embedding_index().is_some() {
         let eng = engine.clone();
         tokio::spawn(async move {
             if let Err(e) = eng.sync_embeddings().await {
@@ -3738,7 +3738,7 @@ pub async fn publish_handler(
     track_local_publication(&engine, &pub_event, &broadcast_results);
 
     // Trigger background embedding sync so new events are searchable immediately
-    if ingested && engine.embedding_index().is_some() {
+    if ingested && engine.auto_embed() && engine.embedding_index().is_some() {
         let eng = engine.clone();
         tokio::spawn(async move {
             if let Err(e) = eng.sync_embeddings().await {
@@ -4158,7 +4158,7 @@ pub async fn publish_blocks_handler(
     // Feed-pill state: local until a relay accepts the snapshot (see publish_handler).
     track_local_publication(&engine, &pub_event, &broadcast_results);
 
-    if ingested && engine.embedding_index().is_some() {
+    if ingested && engine.auto_embed() && engine.embedding_index().is_some() {
         let eng = engine.clone();
         tokio::spawn(async move {
             if let Err(e) = eng.sync_embeddings().await {
@@ -4569,6 +4569,7 @@ pub async fn embed_status_handler(
                 "model": null,
                 "embed_kinds": engine.embed_kinds(),
                 "available_kinds": crate::embedding::DEFAULT_EMBED_KINDS.to_vec(),
+                "auto_embed": engine.auto_embed(),
             })));
         }
     };
@@ -4632,6 +4633,7 @@ pub async fn embed_status_handler(
         "model": model,
         "embed_kinds": embed_kinds,
         "available_kinds": available_kinds,
+        "auto_embed": engine.auto_embed(),
     })))
 }
 
@@ -4653,25 +4655,33 @@ pub async fn embed_reindex_handler(
     Ok(Json(status))
 }
 
-/// Body for `POST /api/v1/embed/config`.
+/// Body for `POST /api/v1/embed/config`. Both fields are optional so the UI
+/// can update the kind set and the auto-embed toggle independently.
 #[derive(Deserialize)]
 pub struct EmbedConfigRequest {
-    /// The kinds to embed. Unknown kinds (outside `DEFAULT_EMBED_KINDS`) are
-    /// silently dropped by the engine.
-    pub kinds: Vec<u16>,
+    /// The kinds to embed (deduped; custom kinds allowed). Omit to leave
+    /// unchanged.
+    pub kinds: Option<Vec<u16>>,
+    /// Whether retrieval + publishing auto-embed. Omit to leave unchanged.
+    pub auto_embed: Option<bool>,
 }
 
-/// POST /api/v1/embed/config — set the kinds eligible for embedding.
+/// POST /api/v1/embed/config — update the embed-kinds set and/or the
+/// auto-embed toggle.
 ///
-/// Persists the selection to `config.toml` and applies it in-memory so the
-/// next sync/reindex (and the background auto-embed pass) honor it without a
-/// restart. Returns the refreshed status so the UI can re-render in one round
-/// trip.
+/// Persists to `config.toml` and applies in-memory so the next sync/reindex
+/// and the retrieval/publish hooks honor it without a restart. Returns the
+/// refreshed status so the UI can re-render in one round trip.
 pub async fn embed_config_handler(
     State(engine): State<AppState>,
     Json(req): Json<EmbedConfigRequest>,
 ) -> Result<Json<Value>, EngineError> {
-    engine.set_embed_kinds(req.kinds)?;
+    if let Some(kinds) = req.kinds {
+        engine.set_embed_kinds(kinds)?;
+    }
+    if let Some(auto) = req.auto_embed {
+        engine.set_auto_embed(auto)?;
+    }
     embed_status_handler(State(engine)).await
 }
 

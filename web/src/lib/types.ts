@@ -389,6 +389,8 @@ export interface EmbeddingStatusResponse {
 	embed_kinds: number[];
 	/** Full menu of embeddable kinds the UI offers as checkboxes. */
 	available_kinds: number[];
+	/** Whether retrieval + publishing auto-embed the configured kinds. */
+	auto_embed: boolean;
 }
 
 export type NetworkMode = 'auto' | 'confirm';

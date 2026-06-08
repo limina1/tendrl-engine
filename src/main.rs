@@ -375,8 +375,9 @@ async fn main() -> anyhow::Result<()> {
                     }
                 }
 
-                // Embed any unembedded events (runs regardless of online/offline)
-                if state.embedding_index().is_some() {
+                // Embed any unembedded events (runs regardless of online/offline,
+                // but only when auto-embed is on — otherwise embedding is manual).
+                if state.auto_embed() && state.embedding_index().is_some() {
                     match state.sync_embeddings().await {
                         Ok(status) => {
                             if status.indexed_count < status.total_events {

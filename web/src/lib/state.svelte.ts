@@ -2630,6 +2630,14 @@ function _createAppState() {
 		}
 	}
 
+	async function handleSetAutoEmbed(enabled: boolean) {
+		try {
+			embeddingStatus = await api.setAutoEmbed(enabled);
+		} catch (e) {
+			console.error('Set auto-embed failed:', e);
+		}
+	}
+
 	// ===================== Network =====================
 
 	async function handleSetNetworkMode(mode: NetworkMode) {
@@ -3608,6 +3616,7 @@ function _createAppState() {
 		handleSyncEmbeddings,
 		handleReindexEmbeddings,
 		handleSetEmbedKinds,
+		handleSetAutoEmbed,
 		refreshEmbeddingStatus,
 		handleSetNetworkMode,
 		handlePurge,

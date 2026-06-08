@@ -308,8 +308,10 @@ pub struct EmbeddingConfig {
     /// Custom index path (defaults to {data_dir parent}/vectors.*)
     #[serde(default)]
     pub index_path: Option<String>,
-    /// Automatically embed new events on ingest
-    #[serde(default)]
+    /// Automatically embed new events of the configured kinds on retrieval
+    /// (relay fetch) and publishing. When false, embedding only happens via
+    /// the manual sync/reindex actions. Defaults on.
+    #[serde(default = "default_auto_embed")]
     pub auto_embed: bool,
     /// Event kinds eligible for semantic embedding. Defaults to
     /// `embedding::DEFAULT_EMBED_KINDS`; editable from the UI's Embedding
@@ -324,6 +326,7 @@ fn default_sidecar_url() -> String { "http://localhost:3031".to_string() }
 fn default_embedding_model() -> String { "all-MiniLM-L6-v2".to_string() }
 fn default_dimensions() -> usize { 384 }
 fn default_embed_kinds() -> Vec<u16> { crate::embedding::DEFAULT_EMBED_KINDS.to_vec() }
+fn default_auto_embed() -> bool { true }
 
 impl Default for EmbeddingConfig {
     fn default() -> Self {
@@ -334,7 +337,7 @@ impl Default for EmbeddingConfig {
             model: default_embedding_model(),
             dimensions: default_dimensions(),
             index_path: None,
-            auto_embed: false,
+            auto_embed: default_auto_embed(),
             embed_kinds: default_embed_kinds(),
         }
     }

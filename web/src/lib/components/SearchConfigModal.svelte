@@ -593,6 +593,7 @@
 								onembedmissing={app.handleSyncEmbeddings}
 								onembedreindex={app.handleReindexEmbeddings}
 								onsetembedkinds={app.handleSetEmbedKinds}
+								onsetautoembed={app.handleSetAutoEmbed}
 							/>
 						</div>
 					{/if}
