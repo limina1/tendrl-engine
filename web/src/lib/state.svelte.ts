@@ -3296,6 +3296,21 @@ function _createAppState() {
 		}
 	}
 
+	// Set the engine auto-lock timeout (minutes; 0 = never) on the live
+	// session. Persisting it across restarts happens on "Save settings"
+	// (the snapshot carries identity_lock_timeout_minutes).
+	async function handleSetLockTimeout(minutes: number) {
+		try {
+			identityStatus = await api.setLockTimeout(minutes);
+		} catch (e) {
+			pushToast(
+				`Failed to set lock timeout: ${e instanceof Error ? e.message : String(e)}`,
+				'error',
+				4000
+			);
+		}
+	}
+
 	// --- External signer (NIP-07) state ---
 	// Registration is user-initiated from the settings buffer. The
 	// teardown closure closes the EventSource and reverts the engine
@@ -3470,6 +3485,7 @@ function _createAppState() {
 		handleIdentityUnlock,
 		handleIdentityLock,
 		handleIdentityLogout,
+		handleSetLockTimeout,
 		get externalSignerPubkey() { return externalSignerPubkey; },
 		handleSelectNip07Source,
 		handleSelectEngineSource,

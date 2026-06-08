@@ -18,6 +18,7 @@
 		compose: { default_mode: string; sync_mode: string; button_labels: string };
 		network: { mode: string };
 		identity_source: string | null;
+		identity_lock_timeout_minutes: number;
 	};
 	let savedBaseline = $state<SavedBaseline | null>(null);
 
@@ -28,7 +29,8 @@
 				editor: s.editor,
 				compose: s.compose,
 				network: s.network,
-				identity_source: s.identity?.source ?? null
+				identity_source: s.identity?.source ?? null,
+				identity_lock_timeout_minutes: s.identity?.lock_timeout_minutes ?? 0
 			};
 		} catch {
 			// Endpoint unavailable — leave baseline null, dirty stays
@@ -142,6 +144,10 @@
 		if (liveMode != null && b.network.mode !== liveMode) return true;
 		const liveSource = app.identityStatus?.source ?? 'engine';
 		if ((b.identity_source ?? 'engine') !== liveSource) return true;
+		// Live timeout is applied immediately via the lock-timeout
+		// endpoint; dirty just means it isn't persisted to config yet.
+		if (b.identity_lock_timeout_minutes !== (app.identityStatus?.lock_timeout_minutes ?? 0))
+			return true;
 		return false;
 	});
 
@@ -195,7 +201,10 @@
 				network_mode: app.networkStatus?.mode ?? 'auto',
 				// Persist the current signing source so reload reconnects
 				// to the same extension/key without manual re-select.
-				identity_source: sourceToPersist
+				identity_source: sourceToPersist,
+				// Persist the live auto-lock timeout (0 = never) so it
+				// survives a restart, matching the live session value.
+				identity_lock_timeout_minutes: app.identityStatus?.lock_timeout_minutes ?? 0
 			});
 			// Mirror the just-persisted value into the in-memory cache
 			// so `currentSource`'s fallback chain reflects the user's
@@ -276,6 +285,30 @@
 				</label>
 			</div>
 		</div>
+
+		{#if currentSource === 'engine' && currentState !== 'none'}
+			<div class="settings-row">
+				<span class="settings-label">Lock after</span>
+				<div class="radio-group">
+					{#each [0, 5, 15, 30, 60] as mins (mins)}
+						<label class="radio">
+							<input
+								type="radio"
+								name="lock-timeout"
+								value={mins}
+								checked={(app.identityStatus?.lock_timeout_minutes ?? 0) === mins}
+								onchange={() => app.handleSetLockTimeout(mins)}
+							/>
+							<span>{mins === 0 ? 'never' : `${mins}m`}</span>
+						</label>
+					{/each}
+				</div>
+			</div>
+			<p class="settings-hint">
+				Auto-locks the engine key after this much inactivity; unlocking needs the password
+				again. Only applies to the engine key — a NIP-07 signer holds its own key.
+			</p>
+		{/if}
 
 		{#if currentSource === 'engine'}
 			{#if currentState === 'none'}
