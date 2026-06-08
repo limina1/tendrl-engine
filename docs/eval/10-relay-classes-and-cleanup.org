@@ -161,6 +161,19 @@ Named sets*. (B) Broadcast is just one named set (your aggregator set) → *Read
 Named sets*, pushing wide = picking that set. (B) is tighter; (A) matches the user's
 earlier framing. Pick before building C1/C3.
 
+*** Build order + the pull/publish symmetry (decided 2026-06-08)
+*Flow first; cleanup falls out.* Do the *publishing destination flow* first (the
+substance: Write + named set(s) + Broadcast as pickable destinations, pinnable defaults,
+the relay union resolved + shown in the Confirm modal before send) — *then* the
+search/indexer cut (C0) + panel UX reorg fall out of it. Effective order: *C1
+(destinations) + C3 (publish)* → *C0 (cut) + panel cleanup* — NOT C0-first.
+
+*Mirror the existing pull pattern.* tendrl ALREADY pulls the user's relay-list events
+(10002/30002/… surfaced as suggestions — the =ce65412=/=6662fb1= path). Publishing is the
+*symmetric write side of that same pattern*: same kinds, same structure — reuse it, don't
+invent a parallel mechanism. ("Keep the existing pattern" = mirror the pull *structure*
+for the write path; search/indexer kinds 10007/10086 still get cut from the model.)
+
 *** Phase reframe (supersedes the C1/C2/C3 detail further below; those file:line anchors now mostly point at the search/indexer DELETION + the read/write/broadcast wiring)
 - *C0 — Remove ONLY search + indexer (subtraction).* Rust: delete the search/indexer
   =DiscoveryClass= usage (default/fallback tiers), =ExclusiveFlags=, and the search/
