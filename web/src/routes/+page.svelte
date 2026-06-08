@@ -28,7 +28,7 @@
 		prefetchAuthors
 	} from '$lib/discussions/authors.svelte';
 	import { pubkeyToColor } from '$lib/discussions/colors';
-	import { identityCanSign } from '$lib/identity/signer';
+	import { identityCanSign, detectNip07 } from '$lib/identity/signer';
 
 	const app = getAppState();
 
@@ -734,12 +734,29 @@
 
 	const identityPill = $derived.by(() => {
 		const id = app.identityStatus;
-		if (!id || id.state === 'none') return null;
-		if (id.state === 'unlocked') {
-			const npub = id.npub ?? '';
-			return { label: npub ? `@${npub.slice(0, 12)}` : 'unlocked', pillClass: 'pill--local' };
+		// In-flight connect (manual click or boot auto-reconnect) — show
+		// a non-interactive "connecting…" chip so the logged-out chip
+		// doesn't flash a second prompt mid-handshake.
+		if (app.identityLoading || app.identityAutoReconnecting) {
+			return { kind: 'connecting' as const, label: 'connecting…', pillClass: 'pill--draft' };
 		}
-		return { label: 'locked', pillClass: 'pill--draft' };
+		if (identityCanSign(id)) {
+			const npub = id?.npub ?? '';
+			return {
+				kind: 'me' as const,
+				label: npub ? `@${npub.slice(0, 12)}` : 'unlocked',
+				pillClass: 'pill--local'
+			};
+		}
+		// Engine key present but locked — clicking opens Settings to
+		// unlock (needs the password field).
+		if (id?.state === 'locked') {
+			return { kind: 'locked' as const, label: 'locked', pillClass: 'pill--draft' };
+		}
+		// Logged out — the top-level login affordance. `pill--connect`
+		// carries its own cursor/border, so it omits `pill--btn` (whose
+		// scoped `border: none` would otherwise win on specificity).
+		return { kind: 'connect' as const, label: 'connect', pillClass: 'pill--connect' };
 	});
 
 	// Top-left profile chip. Only shown when there's an active signing
@@ -791,6 +808,25 @@
 			className: 'work',
 			buffer: { id: 'relays', kind: 'relays', label: 'relays', kicker: 'config' }
 		});
+	}
+
+	// Top-level login affordance. NIP-07 is the common case: connect
+	// inline (getPublicKey + register the signer) without a Settings
+	// detour. Engine/ncryptsec login needs a key + password field, so
+	// when there's no extension we fall back to the Settings buffer
+	// where that form lives. A successful nip07 connect persists the
+	// source (state.svelte.ts) so the next reload auto-reconnects.
+	async function connectIdentity() {
+		if (detectNip07()) {
+			await app.handleSelectNip07Source();
+			if (app.identityError) {
+				app.pushToast(`Connect failed: ${app.identityError}`, 'error', 5000);
+				app.identityError = null;
+				openSettings();
+			}
+		} else {
+			openSettings();
+		}
 	}
 
 	const minibufferTitle = $derived.by(() => {
@@ -958,9 +994,35 @@
 				</button>
 			{/if}
 			{#if identityPill}
-				<span class="pill {identityPill.pillClass}" title="Identity">
-					{identityPill.label}
-				</span>
+				{#if identityPill.kind === 'connect'}
+					<button
+						class="pill {identityPill.pillClass}"
+						onclick={connectIdentity}
+						title="Log in — connect a NIP-07 extension, or open Settings for an engine key"
+					>
+						{identityPill.label}
+					</button>
+				{:else if identityPill.kind === 'locked'}
+					<button
+						class="pill pill--btn {identityPill.pillClass}"
+						onclick={openSettings}
+						title="Identity locked — click to unlock"
+					>
+						{identityPill.label}
+					</button>
+				{:else if identityPill.kind === 'me'}
+					<button
+						class="pill pill--btn {identityPill.pillClass}"
+						onclick={openMyProfile}
+						title="Your identity — click to open profile"
+					>
+						{identityPill.label}
+					</button>
+				{:else}
+					<span class="pill {identityPill.pillClass}" title="Identity">
+						{identityPill.label}
+					</span>
+				{/if}
 			{/if}
 		</div>
 	</div>
