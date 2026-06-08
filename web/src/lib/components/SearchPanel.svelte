@@ -13,6 +13,7 @@
 	import SearchResultItem from './SearchResultItem.svelte';
 	import PersonResultItem from './PersonResultItem.svelte';
 	import PoolStateBadges from './PoolStateBadges.svelte';
+	import EmbeddingSettings from './EmbeddingSettings.svelte';
 	import {
 		searchConfig,
 		openSearchConfig,
@@ -197,24 +198,9 @@
 	let checkedIds: Set<string> = $state(new Set());
 
 	// Embedding-settings footer: collapsed by default (ephemeral view state —
-	// the frontend owns expansion). Expands to reveal status + actions.
+	// the frontend owns expansion). Expands to reveal the shared
+	// EmbeddingSettings controls (status + kinds + actions).
 	let embedPanelOpen = $state(false);
-
-	// Toggle one kind in/out of the embeddable set and persist via the host.
-	// Keeps the response's `available_kinds` order by filtering that menu.
-	function toggleEmbedKind(kind: number) {
-		const active = new Set(embeddingStatus?.embed_kinds ?? []);
-		if (active.has(kind)) active.delete(kind);
-		else active.add(kind);
-		const menu = embeddingStatus?.available_kinds ?? [];
-		onsetembedkinds?.(menu.filter((k) => active.has(k)));
-	}
-
-	function fullReembed() {
-		if (confirm('Clear the embedding index and re-embed everything? This can take a while.')) {
-			onembedreindex?.();
-		}
-	}
 
 	// Grouped mode: when the query had `count:NAME`, the response includes
 	// histogram buckets. We switch the panel to a folded view where the
@@ -369,8 +355,8 @@
 			<button
 				class="scope-gear"
 				onclick={openSearchConfig}
-				title="Configure search defaults — kinds, limit (explicit k: in a query overrides this)"
-				aria-label="Configure search defaults"
+				title="Knowledge base — search defaults (kinds, limit, relays) and embedding settings"
+				aria-label="Knowledge base settings"
 			>⚙</button>
 		</div>
 
@@ -743,59 +729,13 @@
 
 		{#if embedPanelOpen}
 			<div class="embed-panel__body">
-				{#if !embeddingStatus}
-					<p class="embed-panel__hint">Loading embedding status…</p>
-				{:else if !embeddingStatus.enabled}
-					<p class="embed-panel__hint">
-						Embedding is disabled. Set <code>[embedding] enabled = true</code> in
-						<code>config.toml</code> (or build with <code>--features onnx</code>) to
-						enable semantic search (<code>~:query</code>).
-					</p>
-				{:else}
-					<div class="embed-panel__statusline">
-						<span
-							class="embed-pill"
-							class:embed-pill--ok={embeddingStatus.sidecar_available}
-							class:embed-pill--off={!embeddingStatus.sidecar_available}
-						>{embeddingStatus.sidecar_available ? 'connected' : 'unreachable'}</span>
-						{#if embeddingStatus.model}
-							<span class="embed-pill embed-pill--ghost">{embeddingStatus.model}</span>
-						{/if}
-						<span class="embed-panel__counts">
-							{embeddingStatus.indexed_count}/{embeddingStatus.total_events} embedded{#if embeddingStatus.stale_count > 0} · {embeddingStatus.stale_count} stale{/if}{#if embeddingStatus.missing_sections > 0} · {embeddingStatus.missing_sections} missing{/if}
-						</span>
-					</div>
-
-					<div class="embed-panel__kinds">
-						<span class="embed-panel__kinds-label">Kinds to embed</span>
-						{#each embeddingStatus.available_kinds ?? [] as k (k)}
-							<label class="embed-kind" title={kindLabel(k)}>
-								<input
-									type="checkbox"
-									checked={(embeddingStatus.embed_kinds ?? []).includes(k)}
-									disabled={embeddingSyncing}
-									onchange={() => toggleEmbedKind(k)}
-								/>
-								<span>{kindLabel(k)} <span class="embed-kind__num">k:{k}</span></span>
-							</label>
-						{/each}
-					</div>
-
-					<div class="embed-panel__actions">
-						<button
-							class="embed-btn"
-							onclick={() => onembedmissing?.()}
-							disabled={embeddingSyncing}
-							title="Embed events that aren't in the index yet"
-						>{embeddingSyncing ? 'Embedding…' : 'Embed missing'}</button>
-						<button
-							class="embed-btn embed-btn--danger"
-							onclick={fullReembed}
-							disabled={embeddingSyncing}
-							title="Clear the index and re-embed every eligible event"
-						>Full re-embed</button>
-					</div>
-				{/if}
+				<EmbeddingSettings
+					status={embeddingStatus}
+					syncing={embeddingSyncing}
+					{onembedmissing}
+					{onembedreindex}
+					{onsetembedkinds}
+				/>
 			</div>
 		{/if}
 	</div>
@@ -1402,91 +1342,6 @@
 	.embed-panel__dot--off { background: var(--red); }
 
 	.embed-panel__body {
-		display: flex;
-		flex-direction: column;
-		gap: 10px;
 		padding: 4px 12px 12px;
 	}
-	.embed-panel__hint {
-		font-size: 0.7rem;
-		color: var(--fg-muted);
-		line-height: 1.4;
-		margin: 0;
-	}
-	.embed-panel__statusline {
-		display: flex;
-		align-items: center;
-		gap: 6px;
-		flex-wrap: wrap;
-	}
-	.embed-pill {
-		font-size: 0.6rem;
-		padding: 1px 7px;
-		border-radius: var(--radius);
-		text-transform: lowercase;
-	}
-	.embed-pill--ok {
-		background: color-mix(in srgb, var(--green) 18%, transparent);
-		color: var(--green);
-	}
-	.embed-pill--off {
-		background: color-mix(in srgb, var(--red) 18%, transparent);
-		color: var(--red);
-	}
-	.embed-pill--ghost {
-		background: color-mix(in srgb, var(--fg-muted) 14%, transparent);
-		color: var(--fg-muted);
-		font-family: var(--font-mono);
-		text-transform: none;
-	}
-	.embed-panel__counts {
-		font-size: 0.65rem;
-		color: var(--fg-muted);
-	}
-
-	.embed-panel__kinds {
-		display: flex;
-		align-items: center;
-		flex-wrap: wrap;
-		gap: 4px 12px;
-	}
-	.embed-panel__kinds-label {
-		font-size: 0.6rem;
-		text-transform: uppercase;
-		letter-spacing: 0.07em;
-		color: var(--fg-muted);
-		width: 100%;
-	}
-	.embed-kind {
-		display: inline-flex;
-		align-items: center;
-		gap: 5px;
-		font-size: 0.7rem;
-		color: var(--fg);
-		cursor: pointer;
-	}
-	.embed-kind input { cursor: pointer; }
-	.embed-kind input:disabled { cursor: default; }
-	.embed-kind__num {
-		font-family: var(--font-mono);
-		font-size: 0.6rem;
-		color: var(--fg-muted);
-	}
-
-	.embed-panel__actions {
-		display: flex;
-		gap: 8px;
-	}
-	.embed-btn {
-		font-size: 0.68rem;
-		padding: 4px 12px;
-		border-radius: var(--radius);
-		border: 1px solid var(--panel-border);
-		background: var(--bg-surface);
-		color: var(--fg);
-		cursor: pointer;
-	}
-	.embed-btn:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
-	.embed-btn:disabled { opacity: 0.5; cursor: default; }
-	.embed-btn--danger:hover:not(:disabled) { border-color: var(--red); color: var(--red); }
 </style>

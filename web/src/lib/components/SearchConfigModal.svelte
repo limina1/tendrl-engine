@@ -7,6 +7,8 @@
 	// touch, while still being one click (or one typed token) away.
 
 	import * as api from '$lib/api';
+	import { getAppState } from '$lib/state.svelte';
+	import EmbeddingSettings from './EmbeddingSettings.svelte';
 	import {
 		KNOWN_KINDS,
 		searchConfig,
@@ -17,6 +19,11 @@
 		type AuthorMode
 	} from '$lib/search/search-config.svelte';
 
+	// App state for the Embedding section — the index that powers ~: search.
+	// These controls act immediately (persisted engine-side), independent of
+	// the modal's Save/Cancel which only commits the search-defaults draft.
+	const app = getAppState();
+
 	type Mode = 'form' | 'query';
 	let mode = $state<Mode>('form');
 
@@ -26,7 +33,8 @@
 		author: false,
 		time: false,
 		relays: true,
-		nip50: false
+		nip50: false,
+		embedding: false
 	});
 
 	// Local draft — committed to `searchConfig` only on Save, so Cancel
@@ -76,6 +84,8 @@
 			showNames = true;
 			mode = 'form';
 			loadConfigRelays();
+			// Pull current embedding-index status for the Embedding section.
+			app.refreshEmbeddingStatus();
 		}
 	});
 
@@ -260,13 +270,14 @@
 			tabindex="-1"
 		>
 			<header class="sc-header">
-				<h3 class="sc-title">Search defaults</h3>
+				<h3 class="sc-title">Knowledge base</h3>
 				<button class="sc-close" onclick={closeSearchConfig} aria-label="Close">×</button>
 			</header>
 
 			<p class="sc-blurb">
-				These defaults scope every search that doesn't write its own
+				Search defaults scope every search that doesn't write its own
 				token — including the offline <em>Search relays</em> fallback.
+				<em>Embedding</em>, at the bottom, controls the semantic index.
 			</p>
 
 			<div class="sc-tabs">
@@ -557,6 +568,32 @@
 								Extensions are advisory — relays without NIP-50 support ignore
 								them.
 							</p>
+						</div>
+					{/if}
+				</section>
+
+				<!-- Embedding — mode-independent KB management. Unlike the search
+				     defaults above, these act immediately (engine-persisted), not
+				     on Save. -->
+				<section class="sc-sec">
+					{@render sectionHead(
+						'embedding',
+						'Embedding',
+						app.embeddingStatus
+							? app.embeddingStatus.enabled
+								? `${app.embeddingStatus.indexed_count}/${app.embeddingStatus.total_events}`
+								: 'off'
+							: '…'
+					)}
+					{#if open.embedding}
+						<div class="sc-sec-body">
+							<EmbeddingSettings
+								status={app.embeddingStatus}
+								syncing={app.embeddingSyncing}
+								onembedmissing={app.handleSyncEmbeddings}
+								onembedreindex={app.handleReindexEmbeddings}
+								onsetembedkinds={app.handleSetEmbedKinds}
+							/>
 						</div>
 					{/if}
 				</section>
