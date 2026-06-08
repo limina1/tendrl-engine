@@ -600,16 +600,20 @@ impl IdentitySource {
         }
     }
 
-    /// Parse a source string from config.toml (`"engine" | "nip07" |
-    /// "nip46"`) into an `IdentitySource`. External variants get
+    /// Parse a source string from config.toml (`"engine" | "nip07"`)
+    /// into an `IdentitySource`. External variants get
     /// `signer_id: None` — the live signer_id is filled in later when
     /// the web calls `/identity/use`. Returns `None` for unknown
     /// strings; caller should fall back to `IdentitySource::Engine`.
+    ///
+    /// `nip46` is intentionally NOT parsed: the `Nip46` variant exists
+    /// but has no bunker transport, so selecting it could never produce
+    /// a working signer. Re-add the arm here (and in
+    /// `identity_use_source_handler`) if/when NIP-46 ships.
     pub fn from_config_str(s: &str) -> Option<Self> {
         match s {
             "engine" => Some(IdentitySource::Engine),
             "nip07" => Some(IdentitySource::Nip07 { signer_id: None }),
-            "nip46" => Some(IdentitySource::Nip46 { signer_id: None }),
             _ => None,
         }
     }

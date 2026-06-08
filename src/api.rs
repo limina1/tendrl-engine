@@ -1684,31 +1684,35 @@ pub async fn fetch_authors_handler(
     }
 
     let kinds = &rc.fetch.kinds;
-    let mut total_fetched = 0;
 
-    for relay_url in &rc.fetch.urls {
-        let mut filter = json!({"limit": 200, "authors": authors});
-        if !kinds.is_empty() {
-            filter["kinds"] = json!(kinds);
-        }
-
-        match engine
-            .tracked_fetch(relay_url, &[filter], FetchTrigger::UserAction)
-            .await
-        {
-            Ok(events) => {
-                debug!(
-                    "Fetched {} events for authors from {}",
-                    events.len(),
-                    relay_url
-                );
-                total_fetched += events.len();
-            }
-            Err(e) => {
-                debug!("Failed to fetch authors from {}: {}", relay_url, e);
-            }
-        }
+    let mut filter = json!({ "limit": 200, "authors": authors });
+    if !kinds.is_empty() {
+        filter["kinds"] = json!(kinds);
     }
+
+    // Route through fetch_with_composition — one op fanned out across
+    // all fetch relays — so Confirm mode emits a single approvable
+    // intent instead of silently returning `fetched: 0` (the dead-button
+    // bug: plain tracked_fetch short-circuits to Ok(vec![]) with no
+    // intent when not in Auto mode). This endpoint is only hit by an
+    // explicit user action, so mode_confirm = true.
+    let composition = crate::network::CompositionShape {
+        phases: vec![crate::network::PhaseStage {
+            label: "primary".into(),
+            members: vec![(crate::network::Phase::Read, rc.fetch.urls.clone())],
+            start_delay_ms: 0,
+        }],
+    };
+    let events = engine
+        .fetch_with_composition(
+            &composition,
+            &[filter],
+            format!("Fetch {} configured author(s)", authors.len()),
+            crate::network::FetchPattern::Custom,
+            true,
+        )
+        .await;
+    let total_fetched = events.len();
 
     // Trigger background embedding sync for newly fetched events
     if total_fetched > 0 && engine.auto_embed() && engine.embedding_index().is_some() {
@@ -3547,7 +3551,7 @@ pub async fn publish_handler(
     // for the engine source, or the registered external signer (NIP-07/NIP-46)
     // over the SSE back-channel. The handler is unaware of the source.
     let active_pubkey = signing.active_pubkey().await.ok_or_else(|| {
-        EngineError::Config(
+        EngineError::Auth(
             "No identity configured (engine source needs login; nip07 needs a connected signer)"
                 .into(),
         )
@@ -3563,10 +3567,10 @@ pub async fn publish_handler(
             crate::signing::SigningError::Locked => {
                 EngineError::Locked("Identity is locked — unlock with password first".into())
             }
-            crate::signing::SigningError::SignerNotConnected => EngineError::Config(
+            crate::signing::SigningError::SignerNotConnected => EngineError::Auth(
                 "External signer not connected — open a tab with the signer extension".into(),
             ),
-            other => EngineError::Config(format!("Cannot sign: {other}")),
+            other => EngineError::Other(format!("Cannot sign: {other}")),
         })?;
 
     let pub_id = pub_event
@@ -3994,7 +3998,7 @@ pub async fn publish_blocks_handler(
     // inlined an engine-host-only secret chain, so NIP-07 users got unsigned
     // block events — fixed, see docs/bugs.org.)
     let active_pubkey = signing.active_pubkey().await.ok_or_else(|| {
-        EngineError::Config(
+        EngineError::Auth(
             "No identity configured (engine source needs login; nip07 needs a connected signer)"
                 .into(),
         )
@@ -4010,10 +4014,10 @@ pub async fn publish_blocks_handler(
             crate::signing::SigningError::Locked => {
                 EngineError::Locked("Identity is locked — unlock with password first".into())
             }
-            crate::signing::SigningError::SignerNotConnected => EngineError::Config(
+            crate::signing::SigningError::SignerNotConnected => EngineError::Auth(
                 "External signer not connected — open a tab with the signer extension".into(),
             ),
-            other => EngineError::Config(format!("Cannot sign: {other}")),
+            other => EngineError::Other(format!("Cannot sign: {other}")),
         })?;
 
     let pub_id = pub_event
@@ -4242,7 +4246,7 @@ pub async fn broadcast_publication_handler(
 
     let relays = engine.publish_relays().to_vec();
     if relays.is_empty() {
-        return Err(EngineError::Config(
+        return Err(EngineError::BadRequest(
             "No publish relays configured — set some as 'publish' in the relays buffer.".into(),
         ));
     }
@@ -5098,13 +5102,13 @@ pub async fn identity_logout_handler(
 
 #[derive(Debug, Deserialize)]
 pub struct UseSourceRequest {
-    /// "engine" | "nip07" | "nip46"
+    /// "engine" | "nip07"
     pub source: String,
-    /// Required when source is nip07 / nip46 (returned by /signer-register).
+    /// Required when source is nip07 (returned by /signer-register).
     #[serde(default)]
     pub signer_id: Option<String>,
     /// Hex pubkey of the external signer. When provided alongside an
-    /// nip07/nip46 source, the session surfaces it as the active
+    /// nip07 source, the session surfaces it as the active
     /// pubkey via /identity status.
     #[serde(default)]
     pub pubkey: Option<String>,
@@ -5131,14 +5135,11 @@ pub async fn identity_use_source_handler(
             })?;
             IdentitySource::Nip07 { signer_id: Some(signer_id) }
         }
-        "nip46" => {
-            let signer_id = req.signer_id.ok_or_else(|| {
-                EngineError::BadRequest(
-                    "nip46 source requires a signer_id — register a signer first".into(),
-                )
-            })?;
-            IdentitySource::Nip46 { signer_id: Some(signer_id) }
-        }
+        // "nip46" is intentionally unsupported — the Nip46 variant has no
+        // bunker transport, so it would register a non-functional signer.
+        // It falls through to the unknown-source error below. Re-add an
+        // arm here (and in IdentitySource::from_config_str) when NIP-46
+        // ships.
         other => {
             return Err(EngineError::BadRequest(format!("unknown source: {other}")));
         }
@@ -5177,12 +5178,12 @@ pub async fn identity_sign_handler(
             EngineError::Locked("Identity is locked — unlock with password first".into())
         }
         crate::signing::SigningError::NoIdentity => {
-            EngineError::Config("No identity configured".into())
+            EngineError::Auth("No identity configured".into())
         }
-        crate::signing::SigningError::SignerNotConnected => EngineError::Config(
+        crate::signing::SigningError::SignerNotConnected => EngineError::Auth(
             "External signer not connected — open a tab with the signer extension".into(),
         ),
-        other => EngineError::Config(format!("Sign failed: {other}")),
+        other => EngineError::Other(format!("Sign failed: {other}")),
     })?;
     Ok(Json(SignTemplateResponse { signed_event }))
 }
@@ -5222,7 +5223,7 @@ pub async fn broadcast_handler(
     let event = req
         .event
         .as_object()
-        .ok_or_else(|| EngineError::Config("event must be a JSON object".into()))?;
+        .ok_or_else(|| EngineError::BadRequest("event must be a JSON object".into()))?;
     for field in [
         "id",
         "pubkey",
@@ -5233,7 +5234,7 @@ pub async fn broadcast_handler(
         "content",
     ] {
         if !event.contains_key(field) {
-            return Err(EngineError::Config(format!(
+            return Err(EngineError::BadRequest(format!(
                 "event missing required field `{field}`"
             )));
         }
@@ -5243,7 +5244,7 @@ pub async fn broadcast_handler(
         .relays
         .unwrap_or_else(|| engine.publish_relays().to_vec());
     if relays.is_empty() {
-        return Err(EngineError::Config(
+        return Err(EngineError::BadRequest(
             "no relays configured (set [relays.publish] in config or pass `relays`)".into(),
         ));
     }

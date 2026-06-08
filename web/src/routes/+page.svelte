@@ -181,7 +181,7 @@
 		{ id: 'tendrl-demo-publish-progress', name: 'tendrl-demo-publish-progress', description: 'Open the publish-progress buffer with mock data (design demo)', category: 'Configuration' },
 		{ id: 'tendrl-login', name: 'tendrl-login', description: 'Open settings buffer to login (ncryptsec or NIP-07)', category: 'Configuration', keybinding: 'SPC s i' },
 		{ id: 'tendrl-logout', name: 'tendrl-logout', description: 'Logout active identity', category: 'Configuration' },
-		{ id: 'tendrl-switch-source', name: 'tendrl-switch-source', description: 'Switch signing source (engine / nip07 / nip46)', category: 'Configuration' },
+		{ id: 'tendrl-switch-source', name: 'tendrl-switch-source', description: 'Switch signing source (engine / nip07)', category: 'Configuration' },
 		{ id: 'tendrl-edit-profile', name: 'tendrl-edit-profile', description: 'Edit your kind 0 profile metadata and broadcast', category: 'Configuration', keybinding: 'SPC s p' },
 		{ id: 'tendrl-embed-missing', name: 'tendrl-embed-missing', description: 'Embed knowledge-base events not yet in the semantic index', category: 'Configuration' },
 		{ id: 'tendrl-reembed-all', name: 'tendrl-reembed-all', description: 'Clear the semantic index and re-embed every eligible event', category: 'Configuration' },

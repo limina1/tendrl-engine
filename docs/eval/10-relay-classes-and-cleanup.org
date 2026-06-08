@@ -47,10 +47,12 @@ cargo build && cargo test && cargo clippy && pnpm -C web check
 Note current counts so deltas are legible: =EngineError::Config= 43 uses, =BadRequest=
 7; =api.rs= 5623 loc / 71 handlers; clippy 45.
 
-* Phase A — Hygiene quick wins [0/3]
+* Phase A — Hygiene quick wins [3/3] ✓ landed
 Low risk, immediately legible. No design decisions.
+Verify (2026-06-08): cargo test 314/0, clippy 41 (unchanged), svelte-check 0 errors.
+api.rs Config 29→16, BadRequest 6→10, Auth 4→10 (+3 sign catch-alls → Other).
 
-- [ ] *A1 — Error-code hygiene.* =EngineError::Config= → HTTP 500 is used *43×*,
+- [X] *A1 — Error-code hygiene.* =EngineError::Config= → HTTP 500 is used *43×*,
   =BadRequest= → 400 only *7×*. Client-input failures still surface as 500:
   [[src:src/api.rs::4245][api.rs:4245]] ("No publish relays configured"), [[src:src/api.rs::5205][:5205]] ("no relays configured"),
   [[src:src/api.rs::5139][:5139]] ("No identity configured"), and the sign-failure chain ([[src:src/api.rs::3550][:3550]], [[src:src/api.rs::3566][:3566]],
@@ -58,12 +60,15 @@ Low risk, immediately legible. No design decisions.
   add =Auth= (401) / a precondition variant (409) for auth/locked/not-connected if a
   clean variant exists in [[src:src/error.rs][error.rs]] (else just 400 vs 500). Goal: the web can tell
   "you sent bad data" from "the engine broke".
-- [ ] *A2 — Confirm-mode dead button.* [[src:src/api.rs::1673][fetch_authors_handler]] calls plain
+- [X] *A2 — Confirm-mode dead button.* [[src:src/api.rs::1673][fetch_authors_handler]] calls plain
   =tracked_fetch=, which short-circuits to =Ok(vec![])= in Confirm mode with *no intent
   emitted* ([[src:src/engine.rs::1041][engine.rs:1041]]) — reports =fetched: 0= success while doing nothing. Route it
   through the same =fetch_with_composition(..., mode_confirm)= gating its siblings
   (=fetch_profiles_handler=, =pull_user_data_handler=) use.
-- [ ] *A3 — Remove NIP-46 noise.* Drop =nip46= from the switch-source command
+- [X] *A3 — Remove NIP-46 noise.* Dropped the switch-source label mention, removed
+  the =nip46= parse arms from =from_config_str= + =identity_use_source_handler= (now
+  falls through to "unknown source"), left the dormant =IdentitySource::Nip46= variant
+  with a comment. TS unions still tolerate =nip46= harmlessly (mirror the dormant variant). Drop =nip46= from the switch-source command
   ([[web:src/routes/+page.svelte::184][+page.svelte:184]]) and the identity UI radio; the switch-source description becomes
   "engine / nip07". Decision on the Rust side: either strip the dormant
   =IdentitySource::Nip46= ([[src:src/identity.rs::27][identity.rs:27]]) + its registry-lookup arm in [[src:src/signing.rs][signing.rs]],
@@ -72,9 +77,10 @@ Low risk, immediately legible. No design decisions.
 - Verify :: =cargo test= + =clippy= + =pnpm -C web check= green; manual: a NIP-07
   publish error returns 400 not 500; fetch-authors in Confirm mode emits a visible
   intent; the source switcher shows only engine/nip07.
-- Doc :: amend the "never publishes relay-list events" wording in CLAUDE.md:189/229 and
-  =project_publishing_philosophy= to "never *auto*-publishes; deliberate per-kind
-  publish is allowed" (lands here since Phase C depends on it).
+- Doc :: =project_publishing_philosophy= memory updated now with the deliberate-per-kind
+  decision. The CLAUDE.md:189/229 "never publishes relay-list events" wording change
+  ("never *auto*-publishes; deliberate per-kind publish is allowed") is deferred to land
+  *with* Phase C3 so the doc matches shipped code rather than advertising it early.
 - Commit :: 3 commits (one per item) or one "chore: error-code + confirm-mode + nip46".
 
 * Phase B — De-duplicate live code [0/3(+1)]
