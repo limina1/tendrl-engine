@@ -292,6 +292,20 @@
 				);
 				return;
 			}
+			// A 30040 is a publication index: broadcast the *whole* structure
+			// — index + every signed 30041 section, recursing through nested
+			// indices — not the bare index event. The engine assembles the tree
+			// and raises a structure-aware intent. Sections/nested aren't
+			// addressable here, so the single-event path can't cover them.
+			if (n.kind === 30040 && dTag) {
+				const resp = await api.broadcastPublication(n.pubkey, dTag, targets);
+				app.pushToast(
+					`Broadcast ${resp.event_count} event${resp.event_count === 1 ? '' : 's'} — ${resp.successful}/${resp.total} relay ack${resp.total === 1 ? '' : 's'}`,
+					resp.successful > 0 ? 'success' : 'error',
+					4000
+				);
+				return;
+			}
 			const resp = await api.broadcastEvent({
 				event: fullEvent,
 				relays: targets
