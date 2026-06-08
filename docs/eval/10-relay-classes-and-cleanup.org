@@ -128,49 +128,92 @@ Refactor toward the final shape (synthesis theme 2). B1 is a *prerequisite for P
 - Commit :: one per item.
 
 * Phase C — Relay classes: make them real [0/3]
-Promoted from phantom-config to a feature build. Sequence *after B1*. Maps each class to
-its standard kind so "sync to all my apps" works: *10002* (NIP-65 read/write), *10007*
-(search), *10086* (indexer), *10088* (broadcast), *30002* (named sets).
 
-- [ ] *C1 — Route the classes in-app (the phantom fix).*
-  - =broadcast=: wire [[src:src/engine.rs::297][engine.broadcast_relays()]] (currently *0 callers*) into the
-    broadcast action so it targets the broadcast set, not =publish_relays()=.
-  - =read= / =write= (NIP-65 semantics): confirm reads consult read relays and publishes
-    consult write relays; repair routing where they collapse onto =fetch=/=publish=.
-  - =search=: route search queries through search-class relays —
-    =compose_discovery_phases("search")= ([[src:src/engine.rs::443][engine.rs:443]]) exists but =search_handler=
-    ignores it (only =indexer= composition is consulted today).
-  - =indexer=: wire as a fetch-path fallback on read-miss — [[src:src/engine.rs::559][engine.relays()]] returns
-    only =fetch.urls= today, so indexer is targeted for profile/metadata backfill but
-    not generic fetch. Closes *T33* ([[../user_testing.org][user_testing.org]]).
-- [ ] *C2 — Persist to config (the "saving to config" ask).* =relays.json=
-  ([[src:src/relay_store.rs][relay_store.rs]]) is already the authoritative *live* set, and Settings → Save
-  writes the working sets into config.toml ([[web:src/lib/wm/renderers/SettingsBuffer.svelte][SettingsBuffer.svelte]]). Verify all five
-  classes round-trip through *both* (live state file + boot config); fill any gaps so a
-  reload and a reboot both restore the same class assignments.
-- [ ] *C3 — Per-kind opt-in relay-list publishing (the "broadcast to all my apps"
-  ask).* A *granular, per-event-kind* publish action — *not* one bulk button. For each
-  class the user can choose to publish *that kind only*:
-  | Class        | Kind  | Tag shape                         |
-  |--------------+-------+-----------------------------------|
-  | read/write   | 10002 | =r= tags + read/write marker (NIP-65) |
-  | search       | 10007 | =relay= tags                      |
-  | indexer      | 10086 | =relay= tags                      |
-  | broadcast    | 10088 | =relay= tags                      |
-  | named sets   | 30002 | =d= + =relay= tags (NIP-51)        |
-  Build the template + sign (via =SigningController=) + broadcast through the existing
-  publish/broadcast path, reading from the local sets. *Each kind is its own explicit
-  action with its own confirm.* *Never* automatic on edit (the philosophy). Note the
-  read-side parse of these kinds already exists ([[src:src/api.rs::1440][api.rs:1440]] documents 10002/10007/
-  10086/10088/30002, =RelaysBuffer= imports them); this adds the *write* path. The
-  private-member (NIP-44) variant of 30002 stays deferred (T32 — signer-dependent).
-- Verify :: =cargo test= for new builders; manual end-to-end per kind — toggle a relay
-  to a class, confirm in-app routing changes (C1), reload+reboot restores it (C2),
-  "Publish 10002" produces a signed kind-10002 the user can see land on their relays
-  (C3); confirm *no* event is emitted on a plain edit.
-- Docs :: tick [[../relay-classes-and-info-port.md][relay-classes-and-info-port.md]] / T31 items as they land; this is the
-  long-open roadmap surface, not just cleanup.
-- Commit :: C1, C2, C3 separately (C3 ideally one commit per kind or a small series).
+** RESUME-COLD NOTE (written 2026-06-08 after Phases A+B landed)
+Branch =cleanup/relay-classes=, based on =tendrl-web=. Phases A (=1ae802c=) + B1/B2/B3
+are done and FF'd onto =tendrl-web=. Build/test green (314/0), clippy 40. File:line
+anchors below are current as of branch tip =97a3768=; re-grep if commits have landed
+since (the symbol names are the stable anchors). The big surprise this investigation
+turned up: *C3 is already ~80% built* — see C3.
+
+The five classes → standard kinds (for "sync to all my apps"): *10002* (NIP-65
+read/write), *10007* (search), *10086* (indexer), *10088* (broadcast), *30002* (named
+sets). Read-side parse of all five already exists (=RelaysBuffer.svelte=; =api.rs:1440=
+pull path).
+
+** OPEN DECISIONS to confirm with the user before building
+1. *Broadcast default + boundary.* The explicit broadcast action should target the
+   =broadcast= class. Today the *web* computes =rows.filter(r=>r.broadcast)= client-side
+   ([[web:src/lib/wm/renderers/RelaysBuffer.svelte::801][RelaysBuffer.svelte:801]]) and passes it as =req.relays=; the Rust
+   =broadcast_relays()= is unused. Two ways to fix — (a) server defaults to
+   =broadcast_relays()= (fall back to =publish= when the broadcast set is empty) AND drop
+   the web's client-side filter (boundary-correct); or (b) leave the web computing it.
+   Recommend (a). Confirm the empty-set fallback (broadcast→publish) is wanted.
+2. *Search routing semantics.* Should search-class relays *join* the read set or
+   *replace* it? There's already an =exclusive= flag per discovery class
+   (=ExclusiveFlags=). Confirm: honor =exclusive.search= (replace) else join.
+3. *T33 indexer fallback trigger.* Fall through to indexer relays only on a *local+fetch
+   read miss* (zero events), or always append indexer as a later phase? Recommend
+   miss-only (matches =compose_discovery_phases= fallback semantics).
+4. *C3 scope.* Given C3 already ships (below), is the remaining work just the
+   boundary-cleanup of the 10002 template into Rust + kind-coverage parity, or also a
+   redesign? Recommend minimal: move public-tag construction to Rust, leave NIP-44
+   encryption client-side.
+
+- [ ] *C1 — Route the classes in-app (the phantom fix).* Three independent sub-fixes:
+  - =broadcast=: [[src:src/engine.rs::310][engine.broadcast_relays()]] has *0 callers*. The broadcast actions
+    default to =publish_relays()=: [[src:src/api.rs::4088][broadcast_publication_handler:4088]] and
+    [[src:src/api.rs::5086][broadcast_handler:5086]] (=req.relays.unwrap_or(publish_relays())=). Change the
+    default to =broadcast_relays()= (empty→fall back to publish). Per decision #1 also
+    drop the web's client-side broadcast-url filter so Rust owns the choice.
+  - =search=: [[src:src/api.rs::328][search_handler]] → [[src:src/engine.rs::1755][search_with_options]] selects relays via
+    =override_relays= or =self.relays()= (= the =fetch= set, [[src:src/engine.rs::559][engine.relays():559]]).
+    =compose_discovery_phases("search")= ([[src:src/engine.rs::416][engine.rs:416]]) exists but is *never called*
+    (only =indexer= is, at [[src:src/api.rs::1409][api.rs:1409]]/[[src:src/api.rs::1482][:1482]]). Route the search fan-out through the
+    search composition (honoring =exclusive.search= per decision #2).
+  - =indexer= (T33): =engine.relays()= returns only =fetch.urls=; the generic fetch path
+    ([[src:src/engine.rs::1591][engine.rs:1591]]/[[src:src/engine.rs::1632][:1632]]/[[src:src/engine.rs::1674][:1674]]) never consults indexer. Add indexer as a
+    read-miss fallback phase (decision #3). Closes *T33* ([[../user_testing.org][user_testing.org]]).
+- [ ] *C2 — Persist to config (the "saving to config" ask).* Mostly *already works*:
+  =add_relay=/=remove_relay= write through to =relays.json= (authoritative live set), and
+  Settings→Save writes config.toml. *Task is verification:* toggle each of the five
+  classes, confirm it survives (a) a web reload (=relays.json=) and (b) an engine reboot
+  (config.toml seed + relays.json). Fill any class that doesn't round-trip. Low risk.
+- [ ] *C3 — Per-kind relay-list publishing — ALREADY ~80% BUILT; finish + boundary-fix.*
+  The "broadcast my settings to all my apps" feature *already ships*:
+  [[web:src/lib/wm/renderers/RelaysBuffer.svelte::820][publishRelayListByKind(kind)]] builds a per-kind template, calls
+  =api.signTemplate= (=POST /identity/sign=, [[src:src/main.rs::191][main.rs:191]]) then =api.broadcastEvent=
+  (=POST /broadcast=, [[src:src/main.rs::294][main.rs:294]]). Buttons exist for *10002* and *10088*. It is
+  per-kind + explicit (a button per kind, never on edit) — matches the philosophy.
+  | Kind  | Class      | Tag shape (current TS)                              | Where built today |
+  |-------+------------+----------------------------------------------------+-------------------|
+  | 10002 | read/write | public =r= tags + read/write marker (NIP-65)        | TS, =RelaysBuffer:835= |
+  | 10007 | search     | empty tags; =[["relay",url],…]= JSON, NIP-44 in =content= | TS, =:846= |
+  | 10086 | indexer    | same private-list shape                             | TS, =:846= |
+  | 10088 | broadcast  | same private-list shape                             | TS, =:846= |
+  | 30002 | named sets | NIP-51 =d= + =relay= tags                            | TS (=:986= path) |
+  Remaining work, in priority order:
+  1. *Boundary fix (the real task):* the per-kind *public* tag construction (10002
+     =r=-tag markers — pure derivation from the relay sets) belongs in *Rust*. Add a
+     =build_relay_list_template(kind, sets) -> EventTemplate= (or tags) in Rust + an
+     endpoint; web calls it instead of constructing tags in TS. This mirrors the Phase-4
+     "move NIP transform to Rust, delete the TS twin" pattern. *Keep the NIP-44
+     =content= encryption client-side* — it needs the NIP-07 key in the browser
+     (=window.nostr.nip44.encrypt=, =:855=), the same signer-dependent constraint as T32
+     / the relay-list *decrypt* decision in CLAUDE.md. So Rust builds the plaintext
+     tag-array; TS encrypts it.
+  2. *Kind-coverage parity:* confirm 10007/10086/30002 have working publish buttons
+     (10002, 10088 confirmed). Add the missing ones if absent.
+  3. *Doc amendment (lands here):* update CLAUDE.md:189/229 "never publishes relay-list
+     events" → "never *auto*-publishes; deliberate per-kind publish is supported"
+     (=project_publishing_philosophy= memory already updated). Now matches shipped code.
+- Verify :: =cargo test= for any new Rust builders; manual: C1 — toggle broadcast/search/
+  indexer and confirm the network actually targets them; C2 — reload+reboot restores
+  class assignments; C3 — Publish kind 10002/10088 lands a signed event, *no* event on a
+  plain edit. EXPECT the recurring =nip11= TTL flake (re-run).
+- Docs :: tick [[../relay-classes-and-info-port.md][relay-classes-and-info-port.md]] / T31 items as they land.
+- Commit :: C1 (3 sub-commits: broadcast / search / indexer), C2 (verify, likely tiny),
+  C3 (boundary-fix + parity + doc amendment).
 
 * Phase D — File splits [0/1(+2)]
 Do *last* — the boundaries are clean only after the dead code + dedup land.
