@@ -257,7 +257,8 @@ export function saveDraft(
  */
 export function broadcastPublication(
 	pubkey: string,
-	dTag: string
+	dTag: string,
+	relays?: string[]
 ): Promise<{
 	successful: number;
 	total: number;
@@ -265,7 +266,8 @@ export function broadcastPublication(
 	broadcast_results: { relay: string; success: boolean; message: string | null; event_id: string }[];
 }> {
 	return fetchJson(`/api/v1/publications/${pubkey}/${encodeURIComponent(dTag)}/broadcast`, {
-		method: 'POST'
+		method: 'POST',
+		body: JSON.stringify({ relays: relays ?? null })
 	});
 }
 

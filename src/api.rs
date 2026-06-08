@@ -4097,17 +4097,32 @@ fn collect_signed_events(pub_: &crate::publication::Publication, out: &mut Vec<V
     }
 }
 
+/// Optional body for `broadcast_publication_handler`. When `relays` is
+/// absent or empty the engine's publish set is used; a caller (e.g. the
+/// event modal's per-event Broadcast, which targets the aggregator
+/// "broadcast" set) may override the destination for this one operation.
+#[derive(Debug, Default, Deserialize)]
+pub struct BroadcastPubRequest {
+    #[serde(default)]
+    pub relays: Option<Vec<String>>,
+}
+
 /// POST /api/v1/publications/:pubkey/:d_tag/broadcast
 ///
 /// Push an already-signed publication — its 30040 index plus every loaded,
-/// signed 30041 section (including nested) — to the publish relays in one
-/// operation. The separate "broadcast a local snapshot" step: no re-signing, no
-/// new versions. Records relay provenance and clears the "local" pill (marks
-/// the publication published) once a relay accepts.
+/// signed 30041 section, recursing through nested 30040 indices — to the
+/// publish relays (or a caller-supplied set) in one operation. Always sends
+/// the *whole* structure, never a bare index. The separate "broadcast a local
+/// snapshot" step: no re-signing, no new versions. Records relay provenance
+/// and clears the "local" pill (marks the publication published) once a relay
+/// accepts. The `PublishIntent` it raises carries a manifest describing the
+/// full tree (index + section counts, nested flag, per-event list).
 pub async fn broadcast_publication_handler(
     State(engine): State<AppState>,
     Path(params): Path<PublicationPath>,
+    body: Option<Json<BroadcastPubRequest>>,
 ) -> Result<Json<Value>, EngineError> {
+    let req = body.map(|Json(r)| r).unwrap_or_default();
     if params.pubkey.len() != 64 || hex::decode(&params.pubkey).is_err() {
         return Err(EngineError::InvalidHex(
             "Pubkey must be a 64-character hex string".to_string(),
@@ -4127,10 +4142,13 @@ pub async fn broadcast_publication_handler(
         ));
     }
 
-    let relays = engine.publish_relays().to_vec();
+    let relays = match req.relays {
+        Some(r) if !r.is_empty() => r,
+        _ => engine.publish_relays().to_vec(),
+    };
     if relays.is_empty() {
         return Err(EngineError::BadRequest(
-            "No publish relays configured — set some as 'publish' in the relays buffer.".into(),
+            "No relays to broadcast to — pass `relays` or set some as 'publish' in the relays buffer.".into(),
         ));
     }
     let event_jsons: Vec<String> = events
