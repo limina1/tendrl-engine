@@ -3499,80 +3499,47 @@ pub struct BroadcastResult {
     pub event_id: String,
 }
 
-/// POST /api/v1/publish — create a publication (draft or signed)
-pub async fn publish_handler(
-    State(engine): State<AppState>,
-    Extension(signing): Extension<crate::signing::SigningController>,
-    Json(req): Json<PublishRequest>,
-) -> Result<impl IntoResponse, EngineError> {
-    // Map request to ComposeState
-    use crate::publication::compose::TagEntry;
-    let mut compose = ComposeState::new();
-    compose.title = req.title;
-    for (name, value) in &req.tags {
-        compose.tags.push(TagEntry {
-            name: name.clone(),
-            value: value.clone(),
-        });
+/// Map a signing error from the publish path to its HTTP error. Shared by
+/// both publish handlers so they can't drift on identity semantics.
+fn map_publish_sign_error(e: crate::signing::SigningError) -> EngineError {
+    match e {
+        crate::signing::SigningError::Locked => {
+            EngineError::Locked("Identity is locked — unlock with password first".into())
+        }
+        crate::signing::SigningError::SignerNotConnected => EngineError::Auth(
+            "External signer not connected — open a tab with the signer extension".into(),
+        ),
+        other => EngineError::Other(format!("Cannot sign: {other}")),
     }
-    compose.sections = req
-        .sections
-        .iter()
-        .map(|s| {
-            let mut sc = SectionCompose::default();
-            sc.title = s.title.clone();
-            sc.content = s.content.clone();
-            sc.level = s.level.unwrap_or(2);
-            sc.d_tag = s.d_tag.clone();
-            sc.tags = s
-                .tags
-                .iter()
-                .map(|(n, v)| TagEntry {
-                    name: n.clone(),
-                    value: v.clone(),
-                })
-                .collect();
-            sc
-        })
-        .collect();
-    compose.d_tag = req.d_tag.clone();
+}
 
-    // Publishing writes a SIGNED snapshot to the db. Unsigned working drafts
-    // are saved via POST /api/v1/drafts — we never ingest placeholder-sig
-    // events. The signature is the snapshot; nostrdb keeps every version.
-    if !req.sign {
-        return Err(EngineError::BadRequest(
-            "Publishing writes a signed snapshot; save an unsigned working draft via POST /api/v1/drafts instead."
-                .into(),
-        ));
-    }
-
-    // Sign every event through the SigningController — engine in-process signer
-    // for the engine source, or the registered external signer (NIP-07/NIP-46)
-    // over the SSE back-channel. The handler is unaware of the source.
-    let active_pubkey = signing.active_pubkey().await.ok_or_else(|| {
+/// Resolve the active signing pubkey, or the standard "no identity" 401.
+async fn require_active_pubkey(
+    signing: &crate::signing::SigningController,
+) -> Result<String, EngineError> {
+    signing.active_pubkey().await.ok_or_else(|| {
         EngineError::Auth(
             "No identity configured (engine source needs login; nip07 needs a connected signer)"
                 .into(),
         )
-    })?;
-    let (pub_event, section_events) =
-        crate::publication::build_signed_publication_events_via_signer(
-            &mut compose,
-            &active_pubkey,
-            &signing,
-        )
-        .await
-        .map_err(|e| match e {
-            crate::signing::SigningError::Locked => {
-                EngineError::Locked("Identity is locked — unlock with password first".into())
-            }
-            crate::signing::SigningError::SignerNotConnected => EngineError::Auth(
-                "External signer not connected — open a tab with the signer extension".into(),
-            ),
-            other => EngineError::Other(format!("Cannot sign: {other}")),
-        })?;
+    })
+}
 
+/// Shared tail of both publish handlers: ingest the signed events into
+/// nostrdb, optionally broadcast to relays (confirm-gated, with relay
+/// provenance), update the local/published feed-pill state, kick off an
+/// embedding sync, and assemble the response. The two handlers differ
+/// only in how they build the compose state and which signer fn they
+/// call; everything after `(pub_event, section_events)` lives here so the
+/// ingest/broadcast/response logic can't drift between them.
+async fn finalize_publish(
+    engine: &AppState,
+    pub_event: Value,
+    section_events: Vec<Value>,
+    broadcast: bool,
+    relays: Option<Vec<String>>,
+    signed: bool,
+) -> Result<Json<PublishResponse>, EngineError> {
     let pub_id = pub_event
         .get("id")
         .and_then(|v| v.as_str())
@@ -3580,17 +3547,10 @@ pub async fn publish_handler(
         .to_string();
     let section_ids: Vec<String> = section_events
         .iter()
-        .map(|e| {
-            e.get("id")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string()
-        })
+        .map(|e| e.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string())
         .collect();
 
-    // Ingest into local nostrdb
-    // process_event is async — it queues events for background processing.
-    // We ingest all events, wait for nostrdb to process them, then verify.
+    // Ingest into local nostrdb (async queue), then wait + verify.
     for event in section_events.iter().chain(std::iter::once(&pub_event)) {
         let json_str = serde_json::to_string(event)
             .map_err(|e| EngineError::Database(format!("JSON error: {e}")))?;
@@ -3598,36 +3558,23 @@ pub async fn publish_handler(
             debug!("Ingest queue warning: {}", e);
         }
     }
-
-    // Wait for nostrdb to process the queued events
     tokio::time::sleep(std::time::Duration::from_millis(300)).await;
-
-    // Verify the publication event was actually stored
     let ingested = crate::query::query_by_id(engine.ndb(), &pub_id)
         .ok()
         .flatten()
         .is_some();
     if !ingested {
-        debug!(
-            "Publication {} was not persisted by nostrdb after ingest",
-            pub_id
-        );
+        debug!("Publication {} was not persisted by nostrdb after ingest", pub_id);
     }
 
-    // Broadcast to relays if requested
-    let broadcast_results = if req.broadcast {
-        let relays = req
-            .relays
-            .as_deref()
-            .map(|r| r.to_vec())
-            .unwrap_or_else(|| engine.publish_relays().to_vec());
-
+    // Broadcast to relays if requested.
+    let broadcast_results = if broadcast {
+        let relays = relays.unwrap_or_else(|| engine.publish_relays().to_vec());
         let event_jsons: Vec<String> = section_events
             .iter()
             .chain(std::iter::once(&pub_event))
             .map(|e| serde_json::to_string(e).unwrap())
             .collect();
-
         let event_ids: Vec<String> = section_events
             .iter()
             .chain(std::iter::once(&pub_event))
@@ -3646,12 +3593,11 @@ pub async fn publish_handler(
             },
             dsl: format!("pub k:30040,30041 ({} events) via:publish", event_jsons.len()),
         };
-
         let manifest = crate::network::PublishManifest::from_events(
             section_events.iter().chain(std::iter::once(&pub_event)),
         );
 
-        let op = match engine
+        let op = engine
             .begin_publish_operation(
                 format!(
                     "Publishing {} events to {} relay(s)",
@@ -3664,29 +3610,19 @@ pub async fn publish_handler(
                 Some(manifest),
             )
             .await
-        {
-            Ok(op) => Some(op),
-            Err(_) => {
-                // User declined the confirm — skip broadcast leg but
-                // still return the local publish result.
-                None
-            }
-        };
+            .ok();
 
         if let Some(op) = op {
             let chosen = op.relays().to_vec();
             for url in &chosen {
-                op.relay_status(
-                    url.clone(),
-                    crate::network::RelayStatusValue::Connecting,
-                );
+                op.relay_status(url.clone(), crate::network::RelayStatusValue::Connecting);
             }
 
             let (_, _, results) =
                 crate::relay::publish_events_to_relays(&chosen, &event_jsons).await;
 
-            // One Accepted/Rejected per (relay, event) — the UI's
-            // expanded toast renders them grouped by relay.
+            // One Accepted/Rejected per (relay, event) — the UI's expanded
+            // toast renders them grouped by relay.
             for r in &results {
                 let status = if r.success {
                     crate::network::RelayStatusValue::Accepted
@@ -3739,9 +3675,9 @@ pub async fn publish_handler(
 
     // Feed-pill state: a signed snapshot that didn't (successfully) reach any
     // relay is "local"; once it lands it's published. Keyed by the 30040 coord.
-    track_local_publication(&engine, &pub_event, &broadcast_results);
+    track_local_publication(engine, &pub_event, &broadcast_results);
 
-    // Trigger background embedding sync so new events are searchable immediately
+    // Trigger background embedding sync so new events are searchable immediately.
     if ingested && engine.auto_embed() && engine.embedding_index().is_some() {
         let eng = engine.clone();
         tokio::spawn(async move {
@@ -3759,11 +3695,83 @@ pub async fn publish_handler(
     Ok(Json(PublishResponse {
         publication_id: pub_id,
         section_ids,
-        signed: req.sign,
+        signed,
         ingested,
         broadcast_results,
         events: Some(all_events),
     }))
+}
+
+/// POST /api/v1/publish — create a publication (draft or signed)
+pub async fn publish_handler(
+    State(engine): State<AppState>,
+    Extension(signing): Extension<crate::signing::SigningController>,
+    Json(req): Json<PublishRequest>,
+) -> Result<impl IntoResponse, EngineError> {
+    // Map request to ComposeState
+    use crate::publication::compose::TagEntry;
+    let mut compose = ComposeState::new();
+    compose.title = req.title;
+    for (name, value) in &req.tags {
+        compose.tags.push(TagEntry {
+            name: name.clone(),
+            value: value.clone(),
+        });
+    }
+    compose.sections = req
+        .sections
+        .iter()
+        .map(|s| {
+            let mut sc = SectionCompose::default();
+            sc.title = s.title.clone();
+            sc.content = s.content.clone();
+            sc.level = s.level.unwrap_or(2);
+            sc.d_tag = s.d_tag.clone();
+            sc.tags = s
+                .tags
+                .iter()
+                .map(|(n, v)| TagEntry {
+                    name: n.clone(),
+                    value: v.clone(),
+                })
+                .collect();
+            sc
+        })
+        .collect();
+    compose.d_tag = req.d_tag.clone();
+
+    // Publishing writes a SIGNED snapshot to the db. Unsigned working drafts
+    // are saved via POST /api/v1/drafts — we never ingest placeholder-sig
+    // events. The signature is the snapshot; nostrdb keeps every version.
+    if !req.sign {
+        return Err(EngineError::BadRequest(
+            "Publishing writes a signed snapshot; save an unsigned working draft via POST /api/v1/drafts instead."
+                .into(),
+        ));
+    }
+
+    // Sign through the SigningController — engine in-process for the engine
+    // source, or the registered external signer (NIP-07/NIP-46) over the SSE
+    // back-channel. The handler is unaware of the source.
+    let active_pubkey = require_active_pubkey(&signing).await?;
+    let (pub_event, section_events) =
+        crate::publication::build_signed_publication_events_via_signer(
+            &mut compose,
+            &active_pubkey,
+            &signing,
+        )
+        .await
+        .map_err(map_publish_sign_error)?;
+
+    finalize_publish(
+        &engine,
+        pub_event,
+        section_events,
+        req.broadcast,
+        req.relays,
+        req.sign,
+    )
+    .await
 }
 
 /// Mark the publication's 30040 coordinate local or published in the
@@ -3997,12 +4005,7 @@ pub async fn publish_blocks_handler(
     // signer (NIP-07 / NIP-46) over the SSE back-channel. (A prior version
     // inlined an engine-host-only secret chain, so NIP-07 users got unsigned
     // block events — fixed, see docs/bugs.org.)
-    let active_pubkey = signing.active_pubkey().await.ok_or_else(|| {
-        EngineError::Auth(
-            "No identity configured (engine source needs login; nip07 needs a connected signer)"
-                .into(),
-        )
-    })?;
+    let active_pubkey = require_active_pubkey(&signing).await?;
     let (pub_event, section_events) =
         crate::publication::build_signed_block_publication_events_via_signer(
             &state,
@@ -4010,179 +4013,17 @@ pub async fn publish_blocks_handler(
             &signing,
         )
         .await
-        .map_err(|e| match e {
-            crate::signing::SigningError::Locked => {
-                EngineError::Locked("Identity is locked — unlock with password first".into())
-            }
-            crate::signing::SigningError::SignerNotConnected => EngineError::Auth(
-                "External signer not connected — open a tab with the signer extension".into(),
-            ),
-            other => EngineError::Other(format!("Cannot sign: {other}")),
-        })?;
+        .map_err(map_publish_sign_error)?;
 
-    let pub_id = pub_event
-        .get("id")
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .to_string();
-    let section_ids: Vec<String> = section_events
-        .iter()
-        .map(|e| {
-            e.get("id")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string()
-        })
-        .collect();
-
-    for event in section_events.iter().chain(std::iter::once(&pub_event)) {
-        let json_str = serde_json::to_string(event)
-            .map_err(|e| EngineError::Database(format!("JSON error: {e}")))?;
-        if let Err(e) = engine.ingest_event(&json_str) {
-            debug!("Ingest queue warning: {}", e);
-        }
-    }
-
-    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
-
-    let ingested = crate::query::query_by_id(engine.ndb(), &pub_id)
-        .ok()
-        .flatten()
-        .is_some();
-
-    let broadcast_results = if req.broadcast {
-        let relays = req
-            .relays
-            .as_deref()
-            .map(|r| r.to_vec())
-            .unwrap_or_else(|| engine.publish_relays().to_vec());
-        let event_jsons: Vec<String> = section_events
-            .iter()
-            .chain(std::iter::once(&pub_event))
-            .map(|e| serde_json::to_string(e).unwrap())
-            .collect();
-        let event_ids: Vec<String> = std::iter::once(pub_id.clone())
-            .chain(section_ids.iter().cloned())
-            .collect();
-
-        let summary = crate::network::RequestSummary {
-            filters: vec![],
-            composition: crate::network::CompositionShape {
-                phases: vec![crate::network::PhaseStage {
-                    label: "primary".into(),
-                    members: vec![(crate::network::Phase::Publish, relays.clone())],
-                    start_delay_ms: 0,
-                }],
-            },
-            dsl: format!(
-                "pub k:30040,30041 ({} blocks) via:publish",
-                event_jsons.len()
-            ),
-        };
-
-        let manifest = crate::network::PublishManifest::from_events(
-            section_events.iter().chain(std::iter::once(&pub_event)),
-        );
-
-        let op = engine
-            .begin_publish_operation(
-                format!(
-                    "Publishing {} block events to {} relay(s)",
-                    event_jsons.len(),
-                    relays.len()
-                ),
-                relays.clone(),
-                event_ids,
-                Some(summary),
-                Some(manifest),
-            )
-            .await
-            .ok();
-
-        if let Some(op) = op {
-            let chosen = op.relays().to_vec();
-            for url in &chosen {
-                op.relay_status(
-                    url.clone(),
-                    crate::network::RelayStatusValue::Connecting,
-                );
-            }
-
-            let (_, _, results) =
-                crate::relay::publish_events_to_relays(&chosen, &event_jsons).await;
-
-            for r in &results {
-                let status = if r.success {
-                    crate::network::RelayStatusValue::Accepted
-                } else {
-                    crate::network::RelayStatusValue::Rejected {
-                        msg: r.message.clone().unwrap_or_default(),
-                    }
-                };
-                op.relay_status(r.relay_url.clone(), status);
-            }
-            let successful_relays = results.iter().filter(|r| r.success).count();
-            op.complete(successful_relays);
-
-            // Record relay provenance for each (event, relay) pair that succeeded.
-            let by_id: std::collections::HashMap<&str, &String> = section_events
-                .iter()
-                .chain(std::iter::once(&pub_event))
-                .zip(event_jsons.iter())
-                .filter_map(|(e, j)| e.get("id").and_then(|v| v.as_str()).map(|id| (id, j)))
-                .collect();
-            for r in &results {
-                if r.success {
-                    if let Some(j) = by_id.get(r.event_id.as_str()) {
-                        if let Err(e) = engine.record_event_relay(j, &r.relay_url) {
-                            debug!("record relay metadata: {e}");
-                        }
-                    }
-                }
-            }
-
-            Some(
-                results
-                    .into_iter()
-                    .map(|r| BroadcastResult {
-                        relay: r.relay_url,
-                        success: r.success,
-                        message: r.message,
-                        event_id: r.event_id,
-                    })
-                    .collect::<Vec<_>>(),
-            )
-        } else {
-            None
-        }
-    } else {
-        None
-    };
-
-    // Feed-pill state: local until a relay accepts the snapshot (see publish_handler).
-    track_local_publication(&engine, &pub_event, &broadcast_results);
-
-    if ingested && engine.auto_embed() && engine.embedding_index().is_some() {
-        let eng = engine.clone();
-        tokio::spawn(async move {
-            if let Err(e) = eng.sync_embeddings().await {
-                debug!("Background embedding sync after block publish: {}", e);
-            }
-        });
-    }
-
-    let all_events: Vec<Value> = std::iter::once(pub_event.clone())
-        .chain(section_events.iter().cloned())
-        .collect();
-
-    Ok(Json(PublishResponse {
-        publication_id: pub_id,
-        section_ids,
-        signed: req.sign,
-        ingested,
-        broadcast_results,
-        events: Some(all_events),
-    }))
+    finalize_publish(
+        &engine,
+        pub_event,
+        section_events,
+        req.broadcast,
+        req.relays,
+        req.sign,
+    )
+    .await
 }
 
 /// True iff the event carries a real (non-placeholder) signature.

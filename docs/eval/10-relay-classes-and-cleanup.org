@@ -83,7 +83,9 @@ api.rs Config 29→16, BadRequest 6→10, Auth 4→10 (+3 sign catch-alls → Ot
   *with* Phase C3 so the doc matches shipped code rather than advertising it early.
 - Commit :: 3 commits (one per item) or one "chore: error-code + confirm-mode + nip46".
 
-* Phase B — De-duplicate live code [2/3(+1)]
+* Phase B — De-duplicate live code [3/3(+1)]
+B1–B3 (the real dedup) landed. B4 (title-tag helper) is explicitly optional/low-urgency
+and deferred — three small open-coded snippets across query/search/user_data; marginal.
 Refactor toward the final shape (synthesis theme 2). B1 is a *prerequisite for Phase C*
 — wiring the classes is much cleaner with a single set-name resolver.
 
@@ -110,10 +112,15 @@ Refactor toward the final shape (synthesis theme 2). B1 is a *prerequisite for P
   =sign_event= + the draft store + the test). =calculate_event_id= was already shared
   (defined in publication.rs, imported by tree_emit). Verify: cargo test (publication
   60/0, drafts 8/0), clippy 41 (unchanged); event-builder output unchanged.
-- [ ] *B3 — Publish-handler twin.* [[src:src/api.rs::3499][publish_handler]] and [[src:src/api.rs::3925][publish_blocks_handler]]
-  share ~130 lines of signing/ID-extraction/ingest/broadcast and *have already drifted*
-  (different =dsl= strings, different =event_ids= assembly — a latent bug). Extract a
-  shared =broadcast_and_ingest()= (or similar) helper; reconcile the drift.
+- [X] *B3 — Publish-handler twin.* ✓ Extracted =finalize_publish()= (the shared
+  ingest → verify → broadcast → provenance → feed-pill → embed → response tail) plus
+  =map_publish_sign_error()= and =require_active_pubkey()= for the identical signing
+  preamble. Both =publish_handler= and =publish_blocks_handler= now build their compose
+  state + call their signer fn, then delegate to =finalize_publish=. Reconciled the
+  drift the audit flagged: the =dsl= ("blocks"→"events") and =event_ids= order
+  (sections+pub for both) — both cosmetic (activity DSL + op id list). Net =api.rs=
+  5623→5506 even with the +shared helper. Verify: cargo test 314/0 (the 1-fail seen
+  was the known nip11 TTL flake — re-ran green), clippy 41→40.
 - [ ] *B4 (optional) — Title-tag extraction helper.* 3 open-coded variants:
   [[src:src/query.rs::120][query.rs:120-132]], [[src:src/search.rs::487][search.rs:487-490]], [[src:src/user_data.rs::1113][user_data.rs:1113]]/[[src:src/user_data.rs::1152][:1152]]. Low urgency.
 - Verify :: =cargo test= + =clippy= green; *no behavior change* (pure refactor). Spot-
