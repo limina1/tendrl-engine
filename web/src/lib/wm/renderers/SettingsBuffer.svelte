@@ -66,6 +66,9 @@
 		// updates land.
 		app.refreshIdentity();
 		captureSavedBaseline();
+		// Pull a fresh embedding/sidecar status so the Embeddings section
+		// reflects live health + index counts, not the last 30s-poll tick.
+		app.refreshEmbeddingStatus();
 		return () => {
 			cancelled = true;
 		};
@@ -221,9 +224,9 @@
 			class="settings-save"
 			class:settings-save--dirty={settingsDirty}
 			onclick={saveSettings}
-			disabled={!settingsDirty || saving}
+			disabled={saving}
 			title={!settingsDirty
-				? 'No unsaved changes — current settings already match config.toml.'
+				? 'Current settings already match config.toml — click to re-write them anyway and confirm.'
 				: 'Write current identity source · editor · compose · network · relays into config.toml so the next boot starts here.'}
 		>
 			{saving ? 'Saving…' : settingsDirty ? 'Save settings *' : 'Save settings'}
@@ -503,6 +506,83 @@
 		</p>
 	</div>
 
+	<!-- Embeddings / semantic search. Status + manual sync/reindex for
+	     the HNSW vector index served by the Python sidecar (or in-process
+	     ONNX). Counts and sidecar health come from /api/v1/embed/status;
+	     the buttons drive /embed/sync and /embed/reindex. -->
+	<div class="settings-group">
+		<div class="settings-group-title">Embeddings</div>
+
+		{#if !app.embeddingStatus?.enabled}
+			<div class="settings-row">
+				<span class="settings-label">Status</span>
+				<span class="pill pill--ghost">disabled</span>
+			</div>
+			<p class="settings-hint">
+				Semantic search (<code>~:query</code>) is off — no embedding backend is
+				configured. Set <code>[embedding]</code> in <code>config.toml</code> (Python
+				sidecar on port 3031, or build with <code>--features onnx</code>) and restart.
+			</p>
+		{:else}
+			{@const e = app.embeddingStatus}
+			<div class="settings-row">
+				<span class="settings-label">Sidecar</span>
+				<div class="status-row">
+					<span class="pill {e.sidecar_available ? 'pill--online' : 'pill--ghost'}">
+						{e.sidecar_available ? 'connected' : 'unreachable'}
+					</span>
+					{#if e.model}
+						<span class="pill pill--ghost source-pill">{e.model}</span>
+					{/if}
+				</div>
+			</div>
+
+			<div class="settings-row">
+				<span class="settings-label">Index</span>
+				<span class="settings-value mono">
+					{e.indexed_count} / {e.total_events} embedded
+				</span>
+			</div>
+
+			{#if (e.stale_count ?? 0) > 0 || (e.missing_sections ?? 0) > 0}
+				<div class="settings-row">
+					<span class="settings-label">Pending</span>
+					<span class="settings-value mono">
+						{#if (e.missing_sections ?? 0) > 0}{e.missing_sections} unfetched{/if}{#if (e.missing_sections ?? 0) > 0 && (e.stale_count ?? 0) > 0}, {/if}{#if (e.stale_count ?? 0) > 0}{e.stale_count} stale{/if}
+					</span>
+				</div>
+			{/if}
+
+			<div class="settings-row">
+				<span class="settings-label">Actions</span>
+				<div class="action-row">
+					<button
+						class="settings-action"
+						onclick={app.handleSyncEmbeddings}
+						disabled={app.embeddingSyncing}
+						title="Embed any events not yet in the vector index."
+					>
+						{app.embeddingSyncing ? 'Working…' : 'Sync'}
+					</button>
+					<button
+						class="settings-action"
+						onclick={app.handleReindexEmbeddings}
+						disabled={app.embeddingSyncing}
+						title="Rebuild the entire vector index from scratch."
+					>
+						Reindex
+					</button>
+				</div>
+			</div>
+			<p class="settings-hint">
+				<strong>Sync</strong>: embed events missing from the index (also runs
+				automatically every 60s).<br />
+				<strong>Reindex</strong>: drop and rebuild the whole index — use after
+				changing the embedding model.
+			</p>
+		{/if}
+	</div>
+
 	<!-- Save Settings moved to the top header. Hint kept here so
 	     the explanation stays visible alongside the field group it
 	     describes. -->
@@ -587,6 +667,11 @@
 	.settings-label {
 		font-size: var(--t-sm);
 		color: var(--fg);
+	}
+
+	.settings-value {
+		font-size: var(--t-xs);
+		color: var(--base6);
 	}
 
 	.settings-hint {

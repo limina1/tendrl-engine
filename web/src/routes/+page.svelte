@@ -936,10 +936,14 @@
 				</button>
 			{/if}
 			{#if embeddingPill}
-				<span class="pill {embeddingPill.pillClass}" title="Embedding index">
+				<button
+					class="pill pill--btn {embeddingPill.pillClass}"
+					onclick={openSettings}
+					title="Embedding index — click for status, sync, and reindex"
+				>
 					<span class="dot {embeddingPill.dotClass}"></span>
 					{embeddingPill.label}
-				</span>
+				</button>
 			{/if}
 			{#if identityPill}
 				<span class="pill {identityPill.pillClass}" title="Identity">
