@@ -53,29 +53,35 @@ fi
 EMBED_ENABLED=$(grep -E '^\s*enabled\s*=\s*true' "$CONFIG" 2>/dev/null || true)
 
 # 1. Start embedding sidecar (if enabled)
+#
+# The sidecar is just that — a sidecar. The engine tolerates it being down:
+# search hits its HTTP endpoint on demand and embedding runs on a 60s
+# background interval, so it simply becomes available once the model finishes
+# loading. We therefore start it and poll for readiness in the *background*,
+# letting the engine and frontend come up immediately instead of blocking the
+# whole stack on the (slow) model load.
 if [[ -n "$EMBED_ENABLED" ]]; then
-    echo "Starting embedding sidecar..."
+    echo "Starting embedding sidecar (model loads in the background)..."
     bash -c 'cd sidecar && exec ./run.sh' &
+    SIDECAR_PID=$!
+    PIDS+=($SIDECAR_PID)
+    # Background readiness monitor: reports when the model is loaded without
+    # holding up startup. Model download + load can take a while.
+    (
+        for i in $(seq 1 90); do
+            if ! kill -0 "$SIDECAR_PID" 2>/dev/null; then
+                echo "ERROR: Sidecar process died. Check sidecar/run.sh output."
+                exit 0
+            fi
+            if curl -s http://localhost:3031/health > /dev/null 2>&1; then
+                echo "Sidecar ready — embeddings available."
+                exit 0
+            fi
+            sleep 1
+        done
+        echo "WARNING: Sidecar still loading after 90s; embeddings activate when ready."
+    ) &
     PIDS+=($!)
-    # Wait for sidecar to be ready (model download + load can take a while)
-    echo "Waiting for sidecar to load model..."
-    SIDECAR_READY=false
-    for i in $(seq 1 90); do
-        # Check if process is still alive
-        if ! kill -0 "${PIDS[-1]}" 2>/dev/null; then
-            echo "ERROR: Sidecar process died. Check sidecar/run.sh output."
-            break
-        fi
-        if curl -s http://localhost:3031/health > /dev/null 2>&1; then
-            echo "Sidecar ready."
-            SIDECAR_READY=true
-            break
-        fi
-        sleep 1
-    done
-    if [[ "$SIDECAR_READY" != true ]]; then
-        echo "WARNING: Sidecar not ready, continuing without embeddings."
-    fi
 fi
 
 # 2. Build and start backend
