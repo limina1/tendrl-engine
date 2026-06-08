@@ -664,8 +664,11 @@ pub struct IdentitySession {
     secret: Option<String>,
     /// When the secret was last used
     last_activity: Option<Instant>,
-    /// Auto-lock after this duration of inactivity (default 15 min)
-    lock_timeout: Duration,
+    /// Auto-lock after this duration of inactivity. `None` = never
+    /// auto-lock (the default). Opt-in via the Settings "Lock after"
+    /// control; only meaningful for the engine source, which holds the
+    /// decrypted secret in memory.
+    lock_timeout: Option<Duration>,
     /// Event IDs published unsigned while identity was locked
     unsigned_event_ids: Vec<String>,
     /// Which signer to route through. Defaults to `Engine`.
@@ -699,7 +702,7 @@ impl IdentitySession {
             external_pubkey: None,
             secret: None,
             last_activity: None,
-            lock_timeout: Duration::from_secs(15 * 60),
+            lock_timeout: None,
             unsigned_event_ids: Vec::new(),
             source,
         }
@@ -774,10 +777,15 @@ impl IdentitySession {
         self.unsigned_event_ids.clear();
     }
 
-    /// Check if the lock timeout has elapsed and auto-lock if so.
+    /// Check if the lock timeout has elapsed and auto-lock if so. A
+    /// `None` timeout means never auto-lock — the secret stays unlocked
+    /// until an explicit lock/logout.
     pub fn check_timeout(&mut self) {
+        let Some(timeout) = self.lock_timeout else {
+            return;
+        };
         if let Some(last) = self.last_activity {
-            if last.elapsed() > self.lock_timeout {
+            if last.elapsed() > timeout {
                 self.secret = None;
                 self.last_activity = None;
             }
@@ -830,9 +838,13 @@ impl IdentitySession {
         self.unsigned_event_ids.clear();
     }
 
-    /// Set the lock timeout duration.
+    /// Set the auto-lock timeout in minutes. `0` means never auto-lock.
     pub fn set_timeout_minutes(&mut self, minutes: u64) {
-        self.lock_timeout = Duration::from_secs(minutes * 60);
+        self.lock_timeout = if minutes == 0 {
+            None
+        } else {
+            Some(Duration::from_secs(minutes * 60))
+        };
     }
 
     /// Build the serializable status response.
@@ -845,17 +857,19 @@ impl IdentitySession {
         } else {
             "none"
         };
-        let seconds_remaining = if self.secret.is_some() {
-            self.last_activity.map(|last| {
+        // Only meaningful when unlocked AND a timeout is set; a `None`
+        // timeout (never auto-lock) has no countdown.
+        let seconds_remaining = match (self.secret.is_some(), self.lock_timeout, self.last_activity)
+        {
+            (true, Some(timeout), Some(last)) => {
                 let elapsed = last.elapsed();
-                if elapsed < self.lock_timeout {
-                    (self.lock_timeout - elapsed).as_secs()
+                Some(if elapsed < timeout {
+                    (timeout - elapsed).as_secs()
                 } else {
                     0
-                }
-            })
-        } else {
-            None
+                })
+            }
+            _ => None,
         };
         // When the active source is an external signer (nip07/nip46),
         // surface its pubkey rather than the (likely None) ncryptsec
@@ -885,7 +899,7 @@ impl IdentitySession {
             npub: effective_pubkey.as_deref().map(abbreviate_pubkey_hex),
             seconds_remaining,
             unsigned_count: self.unsigned_event_ids.len(),
-            lock_timeout_minutes: self.lock_timeout.as_secs() / 60,
+            lock_timeout_minutes: self.lock_timeout.map(|d| d.as_secs() / 60).unwrap_or(0),
             source: self.source.kind_str().to_string(),
             signer_id: self.source.signer_id().map(|s| s.to_string()),
         }

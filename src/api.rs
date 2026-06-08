@@ -2086,6 +2086,10 @@ pub struct ConfigSnapshotRequest {
     /// `[identity] source`. Values: `"engine"` / `"nip07"`.
     #[serde(default)]
     pub identity_source: Option<String>,
+    /// Optional engine auto-lock timeout in minutes — when present,
+    /// written to `[identity] lock_timeout_minutes`. `0` = never.
+    #[serde(default)]
+    pub identity_lock_timeout_minutes: Option<u64>,
 }
 
 fn default_include_relays() -> bool {
@@ -2172,6 +2176,19 @@ pub async fn config_snapshot_handler(
         }
     }
 
+    if let Some(minutes) = req.identity_lock_timeout_minutes {
+        let identity = doc
+            .entry("identity")
+            .or_insert_with(|| toml::Value::Table(toml::Table::new()));
+        if let toml::Value::Table(t) = identity {
+            t.insert(
+                "lock_timeout_minutes".into(),
+                toml::Value::Integer(minutes as i64),
+            );
+            wrote.push("identity.lock_timeout_minutes");
+        }
+    }
+
     if wrote.is_empty() {
         return Ok(Json(json!({
             "updated": false,
@@ -2220,6 +2237,7 @@ pub async fn settings_handler(
         },
         "identity": {
             "source": cfg.identity.source,
+            "lock_timeout_minutes": cfg.identity.lock_timeout_minutes,
         },
     })))
 }
@@ -4994,6 +5012,26 @@ pub async fn identity_use_source_handler(
         ) => session.set_source_with_pubkey(new_source, pk.clone()),
         _ => session.set_source(new_source),
     }
+    Ok(Json(session.status()))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct LockTimeoutRequest {
+    /// Minutes of inactivity before the engine key auto-locks. `0` = never.
+    pub minutes: u64,
+}
+
+/// POST /api/v1/identity/lock-timeout — set the engine auto-lock timeout
+/// on the live session. Persisting it across restarts is a separate
+/// concern: the Settings "Save" writes `[identity] lock_timeout_minutes`
+/// via the config snapshot. Only the engine source holds a secret to
+/// lock; for nip07/nip46 this just records the preference with no effect.
+pub async fn identity_lock_timeout_handler(
+    State(identity): State<IdentityAppState>,
+    Json(req): Json<LockTimeoutRequest>,
+) -> Result<Json<IdentityStatusResponse>, EngineError> {
+    let mut session = identity.lock().unwrap();
+    session.set_timeout_minutes(req.minutes);
     Ok(Json(session.status()))
 }
 

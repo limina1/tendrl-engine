@@ -310,6 +310,12 @@ pub struct IdentityConfig {
     /// `window.nostr` is reachable.
     #[serde(default)]
     pub source: Option<String>,
+    /// Auto-lock the engine (ncryptsec) key after this many minutes of
+    /// inactivity. `0` (the default) means never auto-lock. Only the
+    /// engine source holds a decrypted secret to lock — a NIP-07 signer
+    /// keeps its own key, so this is a no-op there.
+    #[serde(default)]
+    pub lock_timeout_minutes: u64,
 }
 
 /// Embedding configuration

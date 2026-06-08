@@ -161,6 +161,13 @@ async fn main() -> anyhow::Result<()> {
     info!("Saved identity source: {}", boot_source.kind_str());
     let identity_state: api::IdentityAppState =
         Arc::new(Mutex::new(IdentitySession::with_source(boot_source)));
+    // Apply the saved auto-lock timeout (0 = never) to the live session
+    // so the engine honours `[identity] lock_timeout_minutes` from the
+    // first unlock onward, not just after the web re-sends it.
+    identity_state
+        .lock()
+        .unwrap()
+        .set_timeout_minutes(config.identity.lock_timeout_minutes);
 
     let identity_routes = Router::new()
         .route("/api/v1/identity", get(api::identity_status_handler))
@@ -170,6 +177,10 @@ async fn main() -> anyhow::Result<()> {
             post(api::identity_unlock_handler),
         )
         .route("/api/v1/identity/lock", post(api::identity_lock_handler))
+        .route(
+            "/api/v1/identity/lock-timeout",
+            post(api::identity_lock_timeout_handler),
+        )
         .route(
             "/api/v1/identity/logout",
             post(api::identity_logout_handler),

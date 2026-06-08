@@ -404,6 +404,16 @@ export function lockIdentity() {
 	return fetchJson<IdentityStatus>('/api/v1/identity/lock', { method: 'POST' });
 }
 
+/** Set the engine auto-lock timeout on the live session. `0` = never.
+ *  Applies immediately; persisting across restarts is a separate
+ *  snapshotConfig({ identity_lock_timeout_minutes }) call. */
+export function setLockTimeout(minutes: number) {
+	return fetchJson<IdentityStatus>('/api/v1/identity/lock-timeout', {
+		method: 'POST',
+		body: JSON.stringify({ minutes })
+	});
+}
+
 export function logoutIdentity() {
 	return fetchJson<IdentityStatus>('/api/v1/identity/logout', { method: 'POST' });
 }
@@ -819,6 +829,7 @@ export interface SnapshotPayload {
 	compose?: { default_mode: string; sync_mode: string; button_labels: string };
 	network_mode?: string;
 	identity_source?: string;
+	identity_lock_timeout_minutes?: number;
 }
 
 /** Snapshot live state into config.toml. Pass nothing to default to
@@ -849,7 +860,7 @@ export function getSettings() {
 		editor: { line_numbers: boolean; vim_mode: boolean; insert_mode: string };
 		compose: { default_mode: string; sync_mode: string; button_labels: string };
 		network: { mode: string };
-		identity: { source: string | null };
+		identity: { source: string | null; lock_timeout_minutes?: number };
 	}>('/api/v1/settings');
 }
 
