@@ -31,7 +31,11 @@ inclusion. File:line references are org links into the source tree — click to 
    the TS reimplementations are the redundancy to resolve away. Read after 00.
 10. [[file:09-execution-plan.org][09 — Execution plan]] — *start here if you're a fresh worker executing the
     cleanup.* Self-contained: guardrails, branch strategy, and phased steps
-    (cheap→risky) with verification + commit points.
+    (cheap→risky) with verification + commit points. *Phases 1–5 all landed.*
+11. [[file:10-relay-classes-and-cleanup.org][10 — Relay-class wiring + deferred-debt cleanup]] — the *current* plan (2026-06-08).
+    Picks up 09's "out of scope" debt (Rust dedup, file splits) and promotes the
+    phantom relay-class config to a real feature: wire the classes, save to config,
+    per-kind opt-in relay-list publishing. NIP-46 dropped as noise.
 
 * Finding format
 

@@ -1,0 +1,179 @@
+#+TITLE: Execution Plan — Relay-Class Wiring + Deferred-Debt Cleanup
+#+DATE: 2026-06-08
+#+LINK: src ../../%s
+#+LINK: web ../../web/%s
+Up: [[file:README.org][index]] · follows: [[file:09-execution-plan.org][09 execution plan]] (Phases 1–5, all landed) · reads from: [[file:00-synthesis.org][00 synthesis]] (themes 2–4) · [[file:04-api-network-identity.org][04]]
+
+* For the worker picking this up cold
+
+The [[file:09-execution-plan.org][09]] plan (Phases 1–5: shed the dead TUI machine, build the missing NIP
+transforms in Rust, wire DraftStore) is *fully landed*. Its closing section "Out of
+scope for THIS plan (track separately)" named the debt this doc executes:
+*Rust duplication*, *phantom relay-class config*, and the *api.rs/engine.rs file
+splits* — all deferred until the dead code was gone, which it now is.
+
+This plan also *promotes* the phantom relay-class config from "wire-or-hide cleanup"
+to a real *feature build*, per a 2026-06-08 user decision: the relay classes
+(read/write/broadcast/search/indexer) are to be *wired*, *saved to config*, and made
+*deliberately publishable* as relay-list events so the user's other Nostr apps adopt
+the same setup. NIP-46 remote signing is *dropped as noise* (deferred design-doc
+only, never shipped).
+
+** Governing principles (carry over from 09 / the boundary rule)
+- *Rust* owns fetching + events + all algorithmic derivation; *TypeScript* owns
+  rendering + ephemeral view state. When logic exists in both, resolve toward Rust.
+- *Deliberate publishing, never spray-and-pray* (memory =project_publishing_philosophy=,
+  CLAUDE.md:189/229). Relay-list edits stay *local by default*; publishing them is an
+  *explicit, per-kind, user-initiated* action — never automatic on edit. Phase C3
+  honors this; it does not overturn it.
+
+** Working conventions (from project memory — follow exactly)
+- New task → new branch. Branch this work: =git switch tendrl-web && git switch -c
+  cleanup/relay-classes=.
+- Commit at *phase boundaries* with legible history. Tick the checkboxes here as each
+  phase lands (don't delete them).
+- *Never* run a bare =cargo fmt= — HEAD isn't fmt-clean under local rustfmt (rewrites
+  ~30 files). Format only files you touched.
+- Record any new verify/test command in [[../commands.org][docs/commands.org]].
+- The process-wide nostrdb read lock in [[src:src/query.rs][query.rs]] is load-bearing — never remove it.
+- NEW bug found mid-task → log to [[../bugs.org][bugs.org]], fix on a =bugs= worktree branch, merge/pull;
+  don't fold it into a cleanup commit.
+
+** Baseline before touching anything
+Confirm green and record exact commands in =docs/commands.org=:
+#+begin_src bash
+cargo build && cargo test && cargo clippy && pnpm -C web check
+#+end_src
+Note current counts so deltas are legible: =EngineError::Config= 43 uses, =BadRequest=
+7; =api.rs= 5623 loc / 71 handlers; clippy 45.
+
+* Phase A — Hygiene quick wins [0/3]
+Low risk, immediately legible. No design decisions.
+
+- [ ] *A1 — Error-code hygiene.* =EngineError::Config= → HTTP 500 is used *43×*,
+  =BadRequest= → 400 only *7×*. Client-input failures still surface as 500:
+  [[src:src/api.rs::4245][api.rs:4245]] ("No publish relays configured"), [[src:src/api.rs::5205][:5205]] ("no relays configured"),
+  [[src:src/api.rs::5139][:5139]] ("No identity configured"), and the sign-failure chain ([[src:src/api.rs::3550][:3550]], [[src:src/api.rs::3566][:3566]],
+  [[src:src/api.rs::3997][:3997]], [[src:src/api.rs::4013][:4013]]). Reclassify the ~27 client-input ones to =BadRequest= (400);
+  add =Auth= (401) / a precondition variant (409) for auth/locked/not-connected if a
+  clean variant exists in [[src:src/error.rs][error.rs]] (else just 400 vs 500). Goal: the web can tell
+  "you sent bad data" from "the engine broke".
+- [ ] *A2 — Confirm-mode dead button.* [[src:src/api.rs::1673][fetch_authors_handler]] calls plain
+  =tracked_fetch=, which short-circuits to =Ok(vec![])= in Confirm mode with *no intent
+  emitted* ([[src:src/engine.rs::1041][engine.rs:1041]]) — reports =fetched: 0= success while doing nothing. Route it
+  through the same =fetch_with_composition(..., mode_confirm)= gating its siblings
+  (=fetch_profiles_handler=, =pull_user_data_handler=) use.
+- [ ] *A3 — Remove NIP-46 noise.* Drop =nip46= from the switch-source command
+  ([[web:src/routes/+page.svelte::184][+page.svelte:184]]) and the identity UI radio; the switch-source description becomes
+  "engine / nip07". Decision on the Rust side: either strip the dormant
+  =IdentitySource::Nip46= ([[src:src/identity.rs::27][identity.rs:27]]) + its registry-lookup arm in [[src:src/signing.rs][signing.rs]],
+  or leave the type inert. *Recommend* removing the UI surface now and stripping the
+  type only if it's a clean cut (no other match arms break).
+- Verify :: =cargo test= + =clippy= + =pnpm -C web check= green; manual: a NIP-07
+  publish error returns 400 not 500; fetch-authors in Confirm mode emits a visible
+  intent; the source switcher shows only engine/nip07.
+- Doc :: amend the "never publishes relay-list events" wording in CLAUDE.md:189/229 and
+  =project_publishing_philosophy= to "never *auto*-publishes; deliberate per-kind
+  publish is allowed" (lands here since Phase C depends on it).
+- Commit :: 3 commits (one per item) or one "chore: error-code + confirm-mode + nip46".
+
+* Phase B — De-duplicate live code [0/3(+1)]
+Refactor toward the final shape (synthesis theme 2). B1 is a *prerequisite for Phase C*
+— wiring the classes is much cleaner with a single set-name resolver.
+
+- [ ] *B1 — Relay set-name routing → one source of truth.* The flat+dotted 8-case
+  match (=general=/=publish=/=fetch=/=broadcast=/=search.default=/=indexer.default=/…)
+  is hand-rewritten 4×: [[src:src/engine.rs::890][engine.rs:890]] (add), [[src:src/engine.rs::942][:942]] (remove), [[src:src/relay_store.rs::242][relay_store.rs:242]]
+  (get), [[src:src/relay_store.rs::256][:256]] (get_mut) + [[src:src/relay_store.rs::375][:375]] (sibling strip). Plus the =RelayConfig= /
+  =RelaySets= 8-field manual mirror ([[src:src/config.rs::95][config.rs:95-132]] vs relay_store). Collapse to a
+  single resolver on =RelaySets= + one mutual-exclusion rule.
+- [ ] *B2 — =sign_event= helper.* [[src:src/publication.rs::2127][publication.rs:2127]], [[src:src/publication.rs::2196][:2196]], [[src:src/publication.rs::2355][:2355]], [[src:src/publication.rs::2432][:2432]]
+  each inline hash+sign though [[src:src/publication/tree_emit.rs::439][tree_emit::sign_event]] already factors it out and is
+  reused internally. Route all four through it; fold the 6× =("0".repeat(128))=
+  placeholder-sig sentinel into one =const=.
+- [ ] *B3 — Publish-handler twin.* [[src:src/api.rs::3499][publish_handler]] and [[src:src/api.rs::3925][publish_blocks_handler]]
+  share ~130 lines of signing/ID-extraction/ingest/broadcast and *have already drifted*
+  (different =dsl= strings, different =event_ids= assembly — a latent bug). Extract a
+  shared =broadcast_and_ingest()= (or similar) helper; reconcile the drift.
+- [ ] *B4 (optional) — Title-tag extraction helper.* 3 open-coded variants:
+  [[src:src/query.rs::120][query.rs:120-132]], [[src:src/search.rs::487][search.rs:487-490]], [[src:src/user_data.rs::1113][user_data.rs:1113]]/[[src:src/user_data.rs::1152][:1152]]. Low urgency.
+- Verify :: =cargo test= + =clippy= green; *no behavior change* (pure refactor). Spot-
+  check a publish + a relay add/remove still route to the same sets as before.
+- Commit :: one per item.
+
+* Phase C — Relay classes: make them real [0/3]
+Promoted from phantom-config to a feature build. Sequence *after B1*. Maps each class to
+its standard kind so "sync to all my apps" works: *10002* (NIP-65 read/write), *10007*
+(search), *10086* (indexer), *10088* (broadcast), *30002* (named sets).
+
+- [ ] *C1 — Route the classes in-app (the phantom fix).*
+  - =broadcast=: wire [[src:src/engine.rs::297][engine.broadcast_relays()]] (currently *0 callers*) into the
+    broadcast action so it targets the broadcast set, not =publish_relays()=.
+  - =read= / =write= (NIP-65 semantics): confirm reads consult read relays and publishes
+    consult write relays; repair routing where they collapse onto =fetch=/=publish=.
+  - =search=: route search queries through search-class relays —
+    =compose_discovery_phases("search")= ([[src:src/engine.rs::443][engine.rs:443]]) exists but =search_handler=
+    ignores it (only =indexer= composition is consulted today).
+  - =indexer=: wire as a fetch-path fallback on read-miss — [[src:src/engine.rs::559][engine.relays()]] returns
+    only =fetch.urls= today, so indexer is targeted for profile/metadata backfill but
+    not generic fetch. Closes *T33* ([[../user_testing.org][user_testing.org]]).
+- [ ] *C2 — Persist to config (the "saving to config" ask).* =relays.json=
+  ([[src:src/relay_store.rs][relay_store.rs]]) is already the authoritative *live* set, and Settings → Save
+  writes the working sets into config.toml ([[web:src/lib/wm/renderers/SettingsBuffer.svelte][SettingsBuffer.svelte]]). Verify all five
+  classes round-trip through *both* (live state file + boot config); fill any gaps so a
+  reload and a reboot both restore the same class assignments.
+- [ ] *C3 — Per-kind opt-in relay-list publishing (the "broadcast to all my apps"
+  ask).* A *granular, per-event-kind* publish action — *not* one bulk button. For each
+  class the user can choose to publish *that kind only*:
+  | Class        | Kind  | Tag shape                         |
+  |--------------+-------+-----------------------------------|
+  | read/write   | 10002 | =r= tags + read/write marker (NIP-65) |
+  | search       | 10007 | =relay= tags                      |
+  | indexer      | 10086 | =relay= tags                      |
+  | broadcast    | 10088 | =relay= tags                      |
+  | named sets   | 30002 | =d= + =relay= tags (NIP-51)        |
+  Build the template + sign (via =SigningController=) + broadcast through the existing
+  publish/broadcast path, reading from the local sets. *Each kind is its own explicit
+  action with its own confirm.* *Never* automatic on edit (the philosophy). Note the
+  read-side parse of these kinds already exists ([[src:src/api.rs::1440][api.rs:1440]] documents 10002/10007/
+  10086/10088/30002, =RelaysBuffer= imports them); this adds the *write* path. The
+  private-member (NIP-44) variant of 30002 stays deferred (T32 — signer-dependent).
+- Verify :: =cargo test= for new builders; manual end-to-end per kind — toggle a relay
+  to a class, confirm in-app routing changes (C1), reload+reboot restores it (C2),
+  "Publish 10002" produces a signed kind-10002 the user can see land on their relays
+  (C3); confirm *no* event is emitted on a plain edit.
+- Docs :: tick [[../relay-classes-and-info-port.md][relay-classes-and-info-port.md]] / T31 items as they land; this is the
+  long-open roadmap surface, not just cleanup.
+- Commit :: C1, C2, C3 separately (C3 ideally one commit per kind or a small series).
+
+* Phase D — File splits [0/1(+2)]
+Do *last* — the boundaries are clean only after the dead code + dedup land.
+
+- [ ] *Split [[src:src/api.rs][api.rs]]* (*5623 loc / 71 handlers*) into an =api/= module mirroring the
+  chat/identity/signing sub-routers already mounted in [[src:src/main.rs][main.rs]]: =api/publish.rs=,
+  =api/discussions.rs=, =api/relays.rs=, =api/search.rs=, =api/drafts.rs=, =api/embed.rs=,
+  shared =api/mod.rs= (extractors, error mapping). Pure move; sheds ~1500 loc of
+  navigation friction.
+- [ ] *(optional) Split [[src:src/engine.rs][engine.rs]]* (3098) — query core vs ~700 loc relay-set mgmt vs
+  ~600 loc embedding/doc-sync orchestration.
+- [ ] *(optional) Split [[src:src/publication.rs][publication.rs]]* (3475) — load/stream API vs event-building.
+- Verify :: =cargo build= + =cargo test= identical; *zero behavior change*; =rg= the
+  moved handler names resolve to the new paths.
+
+* Out of scope for THIS plan (track separately)
+- *Discussions authoring* (comment + highlight write paths) — the read side is done;
+  this is the next *feature*, not cleanup ([[../discussions-plan.md][discussions-plan.md]] #2/#3).
+- *WM Phase 3* — nested reading/editing, Nostrdown ={{ }}= rendering, AsciiDoc WYSIWYG.
+- *NIP-11 info-page UI* — backend wired ([[src:src/nip11.rs][nip11.rs]] + =/relay/info=); the Svelte
+  =supported_nips= chips / per-relay stats are unbuilt.
+- *NKBIP-03 citation minting* (Reference Pool → citations) — decisions still pending.
+- *CLI subcommands* (=tendrl export/ingest/purge=).
+- *Multi-user* — now explicitly *not a priority* ([[file:01-roadmap-intent-map.org][01]]).
+- *=SignerCapabilities= dispatch* (nip04/nip44 encrypt/decrypt broker) — no consumer;
+  leave dormant (do not build UI-less plumbing).
+
+* Suggested sequencing
+Phase A (a day of low-risk wins + the doc amendment) → *B1* (the set-name resolver —
+unblocks C) → rest of B → Phase C (C1 route → C2 persist → C3 per-kind publish; the
+real feature work) → Phase D (the satisfying split, once boundaries are clean). Tick
+the checkboxes here and the T31 items in [[../relay-classes-and-info-port.md][relay-classes-and-info-port.md]] at each boundary.
