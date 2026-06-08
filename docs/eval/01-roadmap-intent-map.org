@@ -7,28 +7,28 @@ Audit of intent-as-documented (not code). Doc links jump to =docs/=.
 
 * 1. Roadmap doc inventory
 
-| Doc | Date | Purpose | Currency |
-|-+-+-+-|
-| [[doc:project-summary.org][project-summary.org]] | Apr 27 | Whole-project narrative + "what's built" through Phase 6. Describes a *three-panel layout*. | *STALE.* Self-labels CURRENT but the layout framing is superseded by the WM-shell. Best phase-by-phase narrative of engine work. |
-| [[doc:features.md][features.md]] | May 6 | Canonical current feature list; documents WM shell as the only layout. | *CURRENT* (most authoritative). States "legacy three-panel workbench has been retired". |
-| [[doc:features.org][features.org]] | Apr 27 | Older sibling of features.md. | *STALE* — superseded by features.md (still has "three-panel" in scope). |
-| [[doc:workbench-architecture.org][workbench-architecture.org]] | Mar 15→May 20 | *Central roadmap*: design + canonical Phase 1–7 checklist + Reference Pool / RefsBuffer design. | *CURRENT for phases & reference-pool*; its top-of-doc three-panel diagram and TUI keyboard layout are legacy. |
-| [[doc:wm-shell.md][wm-shell.md]] | May 6 | Active spec for the tiling-WM web UI; running ledger of WM phases. | *CURRENT* (supersedes wm-shell.org). Phase 0/1/1.5 done, Phase 2 mostly, Phase 3 open. |
-| [[doc:wm-shell.org][wm-shell.org]] | Apr 28 | Older WM spec. | *STALE.* |
-| [[doc:stability-roadmap.org][stability-roadmap.org]] | Mar 30 | Freeze diagnosis + spawn_blocking/concurrency fixes. | *CURRENT but largely realized* (P0/P1 done, P2/P3 partial). |
-| [[doc:data-lifecycle-roadmap.org][data-lifecycle-roadmap.org]] | Mar 30 | Online/offline, export, ingest, purge, reingest, status bar. | *CURRENT, mostly shipped.* |
-| [[doc:relay-classes-and-info-port.md][relay-classes-and-info-port.md]] | May 6 | Amethyst port notes: relay-role taxonomy + NIP-11 info doc + checklist. Origin of *T31*. | *CURRENT, partially executed.* Taxonomy shipped; NIP-11 info-page checklist largely unbuilt. |
-| [[doc:multi-user-architecture.org][multi-user-architecture.org]] | May 19 | Per-session refactor (SessionContext) for multi-tenant backend. | *CURRENT, DRAFT — self-labeled "No code has been written".* |
-| [[doc:event-relay-provenance-plan.md][event-relay-provenance-plan.md]] | May 20 | "Found on" relay-provenance block (W1). Phases A–D. | *CURRENT, mostly shipped* (W1). Phase C/D open. |
-| [[doc:discussions-plan.md][discussions-plan.md]] | May 13 | NIP-22 comments + NIP-84 highlights. 11-step build order. | *CURRENT, partially built.* Read-side shipped; authoring open. |
-| [[doc:identity-and-signing-plan.md][identity-and-signing-plan.md]] | May 6 | Signer trait, NIP-07 end-to-end. | *CURRENT, LANDED* (phases 1–9). NIP-46/multi-tab deferred. |
-| [[doc:search-architecture.org][search-architecture.org]] | May 15 | Amethyst-style multi-category search. 4-phase plan. | *CURRENT, partially built.* Phase 1 done; 2/3/4 open. |
-| [[doc:publication-tree-design.md][publication-tree-design.md]] | May 15 | Port notedeck lazy tree loader into src/tree/. | Design; recursive loader landed, NodeStatus proposed. |
-| [[doc:republish-diff.md][republish-diff.md]] | May 27 | Republish detection + diff so re-publish replaces not forks. | *CURRENT, shipped* (4 deferred items). |
-| [[doc:publication_creation.md][publication_creation.md]] | May 22 | *Reference doc* — reverse-engineers Alexandria's pipeline. NOT a tendrl roadmap. | CURRENT reference. |
-| [[doc:reference-pool-worksheet.md][reference-pool-worksheet.md]] | May 20 | Open design decisions for the Reference Pool. All decisions /Pending/. | CURRENT, pre-implementation. Feeds workbench Phase 7. |
-| [[doc:nostrdown.org][nostrdown.org]] | Mar 18 | ={{ }}= cross-event reference/citation markup. | Design; rendering open (WM Phase 3). |
-| [[doc:nostrdb-deletion-architecture.org][nostrdb-deletion-architecture.org]] | Jan 27 | Why no hard delete; ignore/NIP-09/purge. | CURRENT constraint doc. |
+| Doc                               | Date          | Purpose                                                                                       | Currency                                                                                                                       |
+|-----------------------------------+---------------+-----------------------------------------------------------------------------------------------+--------------------------------------------------------------------------------------------------------------------------------|
+| [[doc:project-summary.org][project-summary.org]]               | Apr 27        | Whole-project narrative + "what's built" through Phase 6. Describes a *three-panel layout*.     | *STALE.* Self-labels CURRENT but the layout framing is superseded by the WM-shell. Best phase-by-phase narrative of engine work. |
+| [[doc:features.md][features.md]]                       | May 6         | Canonical current feature list; documents WM shell as the only layout.                        | *CURRENT* (most authoritative). States "legacy three-panel workbench has been retired".                                          |
+| [[doc:features.org][features.org]]                      | Apr 27        | Older sibling of features.md.                                                                 | *STALE* — superseded by features.md (still has "three-panel" in scope).                                                          |
+| [[doc:workbench-architecture.org][workbench-architecture.org]]        | Mar 15→May 20 | *Central roadmap*: design + canonical Phase 1–7 checklist + Reference Pool / RefsBuffer design. | *CURRENT for phases & reference-pool*; its top-of-doc three-panel diagram and TUI keyboard layout are legacy.                    |
+| [[doc:wm-shell.md][wm-shell.md]]                       | May 6         | Active spec for the tiling-WM web UI; running ledger of WM phases.                            | *CURRENT* (supersedes wm-shell.org). Phase 0/1/1.5 done, Phase 2 mostly, Phase 3 open.                                           |
+| [[doc:wm-shell.org][wm-shell.org]]                      | Apr 28        | Older WM spec.                                                                                | *STALE.*                                                                                                                         |
+| [[doc:stability-roadmap.org][stability-roadmap.org]]             | Mar 30        | Freeze diagnosis + spawn_blocking/concurrency fixes.                                          | *CURRENT but largely realized* (P0/P1 done, P2/P3 partial).                                                                      |
+| [[doc:data-lifecycle-roadmap.org][data-lifecycle-roadmap.org]]        | Mar 30        | Online/offline, export, ingest, purge, reingest, status bar.                                  | *CURRENT, mostly shipped.*                                                                                                       |
+| [[doc:relay-classes-and-info-port.md][relay-classes-and-info-port.md]]    | May 6         | Amethyst port notes: relay-role taxonomy + NIP-11 info doc + checklist. Origin of *T31*.        | *CURRENT, partially executed.* Taxonomy shipped; NIP-11 info-page checklist largely unbuilt.                                     |
+| [[doc:multi-user-architecture.org][multi-user-architecture.org]]       | May 19        | Per-session refactor (SessionContext) for multi-tenant backend.                               | *CURRENT, DRAFT — self-labeled "No code has been written".*                                                                      |
+| [[doc:event-relay-provenance-plan.md][event-relay-provenance-plan.md]]    | May 20        | "Found on" relay-provenance block (W1). Phases A–D.                                           | *CURRENT, mostly shipped* (W1). Phase C/D open.                                                                                  |
+| [[doc:discussions-plan.md][discussions-plan.md]]               | May 13        | NIP-22 comments + NIP-84 highlights. 11-step build order.                                     | *CURRENT, partially built.* Read-side shipped; authoring open.                                                                   |
+| [[doc:identity-and-signing-plan.md][identity-and-signing-plan.md]]      | May 6         | Signer trait, NIP-07 end-to-end.                                                              | *CURRENT, LANDED* (phases 1–9). NIP-46/multi-tab deferred.                                                                       |
+| [[doc:search-architecture.org][search-architecture.org]]           | May 15        | Amethyst-style multi-category search. 4-phase plan.                                           | *CURRENT, partially built.* Phase 1 done; 2/3/4 open.                                                                            |
+| [[doc:publication-tree-design.md][publication-tree-design.md]]        | May 15        | Port notedeck lazy tree loader into src/tree/.                                                | Design; recursive loader landed, NodeStatus proposed.                                                                          |
+| [[doc:republish-diff.md][republish-diff.md]]                 | May 27        | Republish detection + diff so re-publish replaces not forks.                                  | *CURRENT, shipped* (4 deferred items).                                                                                           |
+| [[doc:publication_creation.md][publication_creation.md]]           | May 22        | *Reference doc* — reverse-engineers Alexandria's pipeline. NOT a tendrl roadmap.                | CURRENT reference.                                                                                                             |
+| [[doc:reference-pool-worksheet.md][reference-pool-worksheet.md]]       | May 20        | Open design decisions for the Reference Pool. All decisions /Pending/.                          | CURRENT, pre-implementation. Feeds workbench Phase 7.                                                                          |
+| [[doc:nostrdown.org][nostrdown.org]]                     | Mar 18        | ={{ }}= cross-event reference/citation markup.                                                  | Design; rendering open (WM Phase 3).                                                                                           |
+| [[doc:nostrdb-deletion-architecture.org][nostrdb-deletion-architecture.org]] | Jan 27        | Why no hard delete; ignore/NIP-09/purge.                                                      | CURRENT constraint doc.                                                                                                        |
 
 * 2. Intended feature set & phase status (by area)
 
@@ -103,9 +103,10 @@ Audit of intent-as-documented (not code). Doc links jump to =docs/=.
   citation minting* (kind 30 internal); free-standing citation authoring; =[[citation::…]]=
   markup emission + renderer. All worksheet design decisions still /Pending/.
 
-** Multi-User ([[doc:multi-user-architecture.org][multi-user-architecture]])
+** Multi-User ([[doc:multi-user-architecture.org][multi-user-architecture]]) 
 - ALL OPEN [ ]: DRAFT, no code. SessionContext, session resolution, client-side signing
   for shared mode, per-user relays/lists, repo split.
+- Not a priority
 
 ** Provenance ([[doc:event-relay-provenance-plan.md][event-relay-provenance-plan]]; W1)
 - DONE: capture-audit test + "Found on" relay block in EventViewModal (Phase A+B).
