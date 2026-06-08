@@ -304,4 +304,5 @@
 	onembedmissing={app.handleSyncEmbeddings}
 	onembedreindex={app.handleReindexEmbeddings}
 	onsetembedkinds={app.handleSetEmbedKinds}
+	onrefreshembedstatus={app.refreshEmbeddingStatus}
 />

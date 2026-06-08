@@ -8,6 +8,7 @@
 		TagValueCount,
 		EmbeddingStatusResponse
 	} from '$lib/types';
+	import { onMount } from 'svelte';
 	import SearchInput from './SearchInput.svelte';
 	import SearchResultItem from './SearchResultItem.svelte';
 	import PersonResultItem from './PersonResultItem.svelte';
@@ -82,7 +83,8 @@
 		embeddingSyncing = false,
 		onembedmissing,
 		onembedreindex,
-		onsetembedkinds
+		onsetembedkinds,
+		onrefreshembedstatus
 	}: {
 		results: SearchResult[];
 		profiles?: ProfileResult[];
@@ -183,7 +185,14 @@
 		onembedreindex?: () => void;
 		/** Persist a new set of embeddable kinds (engine-side). */
 		onsetembedkinds?: (kinds: number[]) => void;
+		/** Fetch current embedding status (called on mount if not yet loaded). */
+		onrefreshembedstatus?: () => void;
 	} = $props();
+
+	// Self-fetch status on mount when the host hasn't populated it yet, so the
+	// footer fills in regardless of buffer/mount timing (WM buffers persist, so
+	// relying solely on the host's mount hook is fragile).
+	onMount(() => { if (!embeddingStatus) onrefreshembedstatus?.(); });
 
 	let checkedIds: Set<string> = $state(new Set());
 
@@ -703,89 +712,93 @@
 	{/if}
 
 	<!-- Embedding settings — persistent footer at the bottom of the search
-	     buffer. Collapsed by default; expands to show sidecar status, index
-	     counts, the embeddable-kind checkboxes, and the embed actions. This is
-	     the home of "what gets embedded": the engine persists the kind set. -->
-	{#if embeddingStatus}
-		<div class="embed-panel" class:embed-panel--open={embedPanelOpen}>
-			<button
-				class="embed-panel__bar"
-				onclick={() => (embedPanelOpen = !embedPanelOpen)}
-				aria-expanded={embedPanelOpen}
-				title="Embedding settings — the index that powers ~: semantic search"
-			>
-				<span class="embed-panel__arrow">{embedPanelOpen ? '▾' : '▸'}</span>
-				<span class="embed-panel__title">Embedding settings</span>
-				{#if embeddingStatus.enabled}
-					<span class="embed-panel__stat">embed {embeddingStatus.indexed_count}/{embeddingStatus.total_events}</span>
-					<span
-						class="embed-panel__dot"
-						class:embed-panel__dot--ok={embeddingStatus.sidecar_available}
-						class:embed-panel__dot--off={!embeddingStatus.sidecar_available}
-						title={embeddingStatus.sidecar_available ? 'Sidecar connected' : 'Sidecar unreachable'}
-					></span>
-				{:else}
-					<span class="embed-panel__stat embed-panel__stat--off">off</span>
-				{/if}
-			</button>
-
-			{#if embedPanelOpen}
-				<div class="embed-panel__body">
-					{#if !embeddingStatus.enabled}
-						<p class="embed-panel__hint">
-							Embedding is disabled. Set <code>[embedding] enabled = true</code> in
-							<code>config.toml</code> (or build with <code>--features onnx</code>) to
-							enable semantic search (<code>~:query</code>).
-						</p>
-					{:else}
-						<div class="embed-panel__statusline">
-							<span
-								class="embed-pill"
-								class:embed-pill--ok={embeddingStatus.sidecar_available}
-								class:embed-pill--off={!embeddingStatus.sidecar_available}
-							>{embeddingStatus.sidecar_available ? 'connected' : 'unreachable'}</span>
-							{#if embeddingStatus.model}
-								<span class="embed-pill embed-pill--ghost">{embeddingStatus.model}</span>
-							{/if}
-							<span class="embed-panel__counts">
-								{embeddingStatus.indexed_count}/{embeddingStatus.total_events} embedded{#if embeddingStatus.stale_count > 0} · {embeddingStatus.stale_count} stale{/if}{#if embeddingStatus.missing_sections > 0} · {embeddingStatus.missing_sections} missing{/if}
-							</span>
-						</div>
-
-						<div class="embed-panel__kinds">
-							<span class="embed-panel__kinds-label">Kinds to embed</span>
-							{#each embeddingStatus.available_kinds as k (k)}
-								<label class="embed-kind" title={kindLabel(k)}>
-									<input
-										type="checkbox"
-										checked={embeddingStatus.embed_kinds.includes(k)}
-										disabled={embeddingSyncing}
-										onchange={() => toggleEmbedKind(k)}
-									/>
-									<span>{kindLabel(k)} <span class="embed-kind__num">k:{k}</span></span>
-								</label>
-							{/each}
-						</div>
-
-						<div class="embed-panel__actions">
-							<button
-								class="embed-btn"
-								onclick={() => onembedmissing?.()}
-								disabled={embeddingSyncing}
-								title="Embed events that aren't in the index yet"
-							>{embeddingSyncing ? 'Embedding…' : 'Embed missing'}</button>
-							<button
-								class="embed-btn embed-btn--danger"
-								onclick={fullReembed}
-								disabled={embeddingSyncing}
-								title="Clear the index and re-embed every eligible event"
-							>Full re-embed</button>
-						</div>
-					{/if}
-				</div>
+	     buffer. Always rendered (even before the status fetch resolves) so it's
+	     discoverable regardless of mount timing; collapsed by default. Expands
+	     to show sidecar status, index counts, the embeddable-kind checkboxes,
+	     and the embed actions. This is the home of "what gets embedded": the
+	     engine persists the kind set. -->
+	<div class="embed-panel" class:embed-panel--open={embedPanelOpen}>
+		<button
+			class="embed-panel__bar"
+			onclick={() => (embedPanelOpen = !embedPanelOpen)}
+			aria-expanded={embedPanelOpen}
+			title="Embedding settings — the index that powers ~: semantic search"
+		>
+			<span class="embed-panel__arrow">{embedPanelOpen ? '▾' : '▸'}</span>
+			<span class="embed-panel__title">Embedding settings</span>
+			{#if embeddingStatus?.enabled}
+				<span class="embed-panel__stat">embed {embeddingStatus.indexed_count}/{embeddingStatus.total_events}</span>
+				<span
+					class="embed-panel__dot"
+					class:embed-panel__dot--ok={embeddingStatus.sidecar_available}
+					class:embed-panel__dot--off={!embeddingStatus.sidecar_available}
+					title={embeddingStatus.sidecar_available ? 'Sidecar connected' : 'Sidecar unreachable'}
+				></span>
+			{:else if embeddingStatus}
+				<span class="embed-panel__stat embed-panel__stat--off">off</span>
+			{:else}
+				<span class="embed-panel__stat embed-panel__stat--off">…</span>
 			{/if}
-		</div>
-	{/if}
+		</button>
+
+		{#if embedPanelOpen}
+			<div class="embed-panel__body">
+				{#if !embeddingStatus}
+					<p class="embed-panel__hint">Loading embedding status…</p>
+				{:else if !embeddingStatus.enabled}
+					<p class="embed-panel__hint">
+						Embedding is disabled. Set <code>[embedding] enabled = true</code> in
+						<code>config.toml</code> (or build with <code>--features onnx</code>) to
+						enable semantic search (<code>~:query</code>).
+					</p>
+				{:else}
+					<div class="embed-panel__statusline">
+						<span
+							class="embed-pill"
+							class:embed-pill--ok={embeddingStatus.sidecar_available}
+							class:embed-pill--off={!embeddingStatus.sidecar_available}
+						>{embeddingStatus.sidecar_available ? 'connected' : 'unreachable'}</span>
+						{#if embeddingStatus.model}
+							<span class="embed-pill embed-pill--ghost">{embeddingStatus.model}</span>
+						{/if}
+						<span class="embed-panel__counts">
+							{embeddingStatus.indexed_count}/{embeddingStatus.total_events} embedded{#if embeddingStatus.stale_count > 0} · {embeddingStatus.stale_count} stale{/if}{#if embeddingStatus.missing_sections > 0} · {embeddingStatus.missing_sections} missing{/if}
+						</span>
+					</div>
+
+					<div class="embed-panel__kinds">
+						<span class="embed-panel__kinds-label">Kinds to embed</span>
+						{#each embeddingStatus.available_kinds ?? [] as k (k)}
+							<label class="embed-kind" title={kindLabel(k)}>
+								<input
+									type="checkbox"
+									checked={(embeddingStatus.embed_kinds ?? []).includes(k)}
+									disabled={embeddingSyncing}
+									onchange={() => toggleEmbedKind(k)}
+								/>
+								<span>{kindLabel(k)} <span class="embed-kind__num">k:{k}</span></span>
+							</label>
+						{/each}
+					</div>
+
+					<div class="embed-panel__actions">
+						<button
+							class="embed-btn"
+							onclick={() => onembedmissing?.()}
+							disabled={embeddingSyncing}
+							title="Embed events that aren't in the index yet"
+						>{embeddingSyncing ? 'Embedding…' : 'Embed missing'}</button>
+						<button
+							class="embed-btn embed-btn--danger"
+							onclick={fullReembed}
+							disabled={embeddingSyncing}
+							title="Clear the index and re-embed every eligible event"
+						>Full re-embed</button>
+					</div>
+				{/if}
+			</div>
+		{/if}
+	</div>
 </div>
 
 <style>
