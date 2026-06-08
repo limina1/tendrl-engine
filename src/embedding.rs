@@ -442,14 +442,19 @@ mod tests {
     use super::*;
 
     fn test_config() -> EmbeddingConfig {
+        // Spell out only the fields the tests pin; let the rest take their
+        // defaults so adding a new EmbeddingConfig field doesn't break this
+        // literal (the lib goes through serde/Default, so only test code hits
+        // an exhaustive literal like this). auto_embed stays explicit because
+        // its Default is `true` and the tests want it off.
         EmbeddingConfig {
             enabled: true,
             backend: "python".to_string(),
             sidecar_url: "http://localhost:99999".to_string(), // won't connect
             model: "test-model".to_string(),
             dimensions: 4,
-            index_path: None,
-            auto_embed: false,
+            auto_embed: false, // keep explicit — Default is `true`
+            ..Default::default() // index_path, embed_kinds, future fields
         }
     }
 
