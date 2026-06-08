@@ -3322,6 +3322,21 @@ function _createAppState() {
 			identityStatus = await api.getIdentity();
 			myPubkey = externalSignerPubkey;
 			resolveIdentityName(externalSignerPubkey);
+			// Persist the *intent* so the next reload auto-reconnects
+			// without a Settings trip. `/identity/use` only switches the
+			// in-memory session; the boot auto-reconnect keys off
+			// `config.toml [identity] source`, which is written only here
+			// (and by the Settings "Save"). Skip the write when it's
+			// already nip07 — the boot reconnect path re-enters this fn
+			// with the source already saved.
+			if (savedIdentitySource !== 'nip07') {
+				try {
+					await api.snapshotConfig({ identity_source: 'nip07' });
+					savedIdentitySource = 'nip07';
+				} catch (e) {
+					console.warn('[identity] failed to persist nip07 source:', e);
+				}
+			}
 		} catch (e: unknown) {
 			identityError = e instanceof Error ? e.message : String(e);
 			externalSignerPubkey = null;

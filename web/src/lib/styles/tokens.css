@@ -162,6 +162,19 @@ html, body {
 .pill--broadcast:hover {
   background: color-mix(in srgb, var(--state-online) 28%, transparent);
 }
+/* Top-level login affordance in the modeline — shown when logged out.
+   Tinted with --id-yours (the "your identity" blue) and outlined so it
+   reads as an actionable call-to-action, not a passive status pill. */
+.pill--connect {
+  background: color-mix(in srgb, var(--id-yours) 14%, transparent);
+  color: var(--id-yours);
+  border: 1px solid color-mix(in srgb, var(--id-yours) 40%, transparent);
+  cursor: pointer;
+  font: inherit;
+}
+.pill--connect:hover {
+  background: color-mix(in srgb, var(--id-yours) 26%, transparent);
+}
 .pill--remote { background: rgba(137,184,194,0.12); color: var(--id-remote); }
 .pill--draft { background: rgba(226,120,120,0.12); color: var(--id-draft); }
 .pill--imported { background: rgba(160,147,199,0.12); color: var(--id-imported); }
