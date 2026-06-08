@@ -446,8 +446,11 @@
 					const dTag = (ev.tags ?? []).find((t) => t[0] === 'd')?.[1] ?? '';
 					const title =
 						(ev.tags ?? []).find((t) => t[0] === 'title')?.[1] ?? dTag;
+					// NIP-51 kind 30002 relay sets carry URLs in `relay` tags
+					// (kind 10002 / NIP-65 uses `r`). Accept `r` as a tolerant
+					// fallback for non-conformant publishers.
 					const urls = (ev.tags ?? [])
-						.filter((t) => t[0] === 'r' && typeof t[1] === 'string')
+						.filter((t) => (t[0] === 'relay' || t[0] === 'r') && typeof t[1] === 'string')
 						.map((t) => t[1] as string);
 					namedSets.push({
 						d_tag: dTag,
