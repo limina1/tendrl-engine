@@ -129,50 +129,66 @@ Refactor toward the final shape (synthesis theme 2). B1 is a *prerequisite for P
 
 * Phase C — Relay classes: make them real [0/3]
 
-** ⇒ REFINED GOAL (2026-06-08, decided with the user) — READ THIS FIRST; it reframes everything below
-The relay model is *Read / Write / Broadcast + intent*. tendrl is a *publisher's tool*,
-not a social client (at least not a priority). The Amethyst-ported *discovery taxonomy is
-being REMOVED, not hidden*: =search= (NIP-50), =indexer=, =named sets= (30002), the
-=DiscoveryClass= default/fallback tiers, and =ExclusiveFlags=. The panel goes from ~6
-concepts to 3 role-lists. Broadcast is a *maintained set*, but every broadcast runs
-through the *Confirm-mode-style intent flow* — the user sees the target relays + the
-events about to go out, can *modify the targets*, then confirms (same "no surprise
-network" promise). This *shrinks* Phase C and turns much of it into deletion.
+** ⇒ REFINED GOAL (2026-06-08, decided with the user — v2) — READ THIS FIRST; it reframes everything below
+tendrl is a *publisher's tool*, not a social client (at least not a priority). *The
+dividing line is "organizing where MY work goes" (publisher — KEEP) vs "finding OTHER
+people's stuff" (social client — CUT).*
 
-Net reframe (supersedes the C1/C2/C3 detail below — but that detail's file:line anchors
-are still useful: they now point at *what to delete*):
+- *KEEP + elevate:* *Read*, *Write*, *Broadcast*, AND *Named sets (30002)*. Named sets
+  organize relays by topic/community (a "math" set, a "biology" set) and are a
+  *first-class part of the publishing process*, not a side-panel — see "Named sets in
+  the publish flow" below. *(v1 of this note wrongly lumped named sets in with discovery
+  and proposed deleting them — corrected: they are publisher-side, they stay.)*
+- *CUT (social-discovery only):* =search= (NIP-50 relay search) and =indexer=
+  (crawling strangers' profiles/relay-lists), plus their =DiscoveryClass=
+  default/fallback tiers and =ExclusiveFlags=. tendrl's search is local (embeddings);
+  indexer = discovery of others.
+- *Intent, always:* every publish/broadcast resolves the chosen destinations into the
+  actual relay list and shows it in the Confirm-mode modal *before* sending; the user
+  can edit the targets. "No surprise network."
 
-- *C0 — Remove the discovery taxonomy (the bulk; subtraction).*
-  - Rust: delete =DiscoveryClass= (search/indexer + default/fallback tiers),
-    =ExclusiveFlags=, =compose_discovery_phases= ([[src:src/engine.rs::416][engine.rs:416]]) and its callers
-    ([[src:src/api.rs::1409][api.rs:1409]]/[[src:src/api.rs::1482][:1482]]), =named_sets= (30002) + the named-set endpoints, and the
-    discovery-kind pull path ([[src:src/api.rs::1480][api.rs:1480]] — keep *10002* only, drop 10007/10086/10088/
-    30002). Collapse =RelaySets=/=RelayConfig= to *read* (= today's =general= + =fetch=) +
-    *write* (= =publish=) + *broadcast*. The B1 =discovery_sibling= helper
-    ([[src:src/relay_store.rs][relay_store.rs]]) becomes dead — remove it; =urls_mut= simplifies to 3 arms.
-  - Web: delete the search/indexer rows, the named-sets section, and the
-    pull-from-profile suggestion UI for 10007/10086/10088/30002 in
-    [[web:src/lib/wm/renderers/RelaysBuffer.svelte][RelaysBuffer.svelte]]. *This removes the just-merged 30002/pull work (=ce65412=,
-    =6662fb1=) — confirmed-by-elimination with the user; double-check on resume.*
-- *C1 — Wire Read / Write / Broadcast.* =Read= drives all fetch/read paths;
-  =Write= (=publish_relays=) drives publishes; =Broadcast= finally gives
-  [[src:src/engine.rs::310][broadcast_relays()]] a home — the explicit broadcast action targets it
-  (empty → fall back to write), *through the intent flow*. Map engine sets:
-  =general=+=fetch=→read, =publish=→write, =broadcast=→broadcast.
-- *C2 — Persist* read/write/broadcast round-trip (relays.json + config.toml). Verify.
-- *C3 — Relay-list publishing (mostly ships).* Keep *10002* (NIP-65 read/write — the
-  real "sync my relays to my other apps"); boundary-fix its public-tag construction into
-  Rust. *Decide:* does Broadcast publish a list at all? With discovery gone, the
-  encrypted 10088 broadcast-list kind is probably not worth keeping → broadcast likely
-  stays a *local-only* set, no published event. Drop 10007/10086 (deleted). Land the
-  CLAUDE.md philosophy-wording amendment here.
-- *Broadcast-with-intent* (the user's emphasis): the broadcast action reuses the
-  Confirm-mode =RequestSummary= modal (which relays + which events) and lets the user
-  *edit the target relays* before confirming. Largely exists via the publish Confirm
-  modal — wire broadcast to it + expose target editing.
+*** Named sets in the publish flow (the user's key point)
+Sets are *destinations*, not storage. A publish targets: *Write* (default) + optionally
+one or more *named sets* (math/biology) + optionally *Broadcast* (wide). A named set can
+be *pinned as a default destination* layered on top of read/write ("this series always
+goes to my math set + write relays"). The Confirm modal resolves the *union* and shows
+where it lands. This is the heart of deliberate publishing.
 
-The detailed map below was written for the *old* (keep-and-wire-everything) plan; treat
-it as an anchor index for the deletion + the read/write/broadcast wiring.
+*** OPEN STRUCTURAL DECISION (confirm on resume)
+Where does Broadcast sit vs named sets? (A) Broadcast is its own role (wide
+aggregators) + named sets are additional targeted destinations → *Read/Write/Broadcast +
+Named sets*. (B) Broadcast is just one named set (your aggregator set) → *Read/Write +
+Named sets*, pushing wide = picking that set. (B) is tighter; (A) matches the user's
+earlier framing. Pick before building C1/C3.
+
+*** Phase reframe (supersedes the C1/C2/C3 detail further below; those file:line anchors now mostly point at the search/indexer DELETION + the read/write/broadcast wiring)
+- *C0 — Remove ONLY search + indexer (subtraction).* Rust: delete the search/indexer
+  =DiscoveryClass= usage (default/fallback tiers), =ExclusiveFlags=, and the search/
+  indexer arms of =compose_discovery_phases= ([[src:src/engine.rs::416][engine.rs:416]]) + its callers
+  ([[src:src/api.rs::1409][api.rs:1409]]/[[src:src/api.rs::1482][:1482]]); drop kinds 10007/10086 from the pull path
+  ([[src:src/api.rs::1480][api.rs:1480]]). *KEEP* =named_sets= (30002) + its endpoints + the 10002/30002 pull
+  (the user's =ce65412=/=6662fb1= STAY). The B1 =discovery_sibling= covered
+  search.*/indexer.* tiers → it becomes dead, remove it. Web: delete the search +
+  indexer rows + their pull suggestions in [[web:src/lib/wm/renderers/RelaysBuffer.svelte][RelaysBuffer.svelte]]; KEEP the named-sets
+  section.
+- *C1 — Wire Read / Write / Broadcast (+ named-set destinations).* =Read= drives
+  fetch/read; =Write= drives publishes; =Broadcast= gives [[src:src/engine.rs::310][broadcast_relays()]] a
+  home (per the A/B decision). Map engine sets =general=+=fetch=→read, =publish=→write,
+  =broadcast=→broadcast. Make named sets selectable publish destinations.
+- *C2 — Persist* read/write/broadcast + named sets round-trip (relays.json +
+  config.toml). Verify.
+- *C3 — Relay-list publishing (mostly ships) + named-set publishing.* Keep *10002*
+  (NIP-65 read/write — "sync my relays to my apps"); boundary-fix its public-tag
+  construction into Rust. Named sets already publish as *30002* (NIP-51). *Decide* the
+  fate of the encrypted 10088 broadcast-list per the A/B decision. Drop 10007/10086.
+  Land the CLAUDE.md philosophy-wording amendment.
+- *Publish-with-intent:* the publish/broadcast action reuses the Confirm-mode
+  =RequestSummary= modal (resolved relay union + events) and lets the user edit targets
+  before confirming. Largely exists — wire the destination picker (write + named sets +
+  broadcast) into it.
+
+The detailed map below was written for the *old* (keep-and-wire-all-6) plan; treat it as
+an anchor index for the search/indexer deletion + the read/write/broadcast wiring.
 
 ** RESUME-COLD NOTE (written 2026-06-08 after Phases A+B landed)
 Branch =cleanup/relay-classes=, based on =tendrl-web=. Phases A (=1ae802c=) + B1/B2/B3
