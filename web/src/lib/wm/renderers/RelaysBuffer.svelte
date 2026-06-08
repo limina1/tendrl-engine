@@ -653,15 +653,32 @@
 	 *  adds each URL as a member. Idempotent at the engine level — the
 	 *  named_set CRUD already silently skips existing dups. */
 	let importingSetTag = $state<string | null>(null);
+	// Member URLs of an already-imported set that are missing from / extra to
+	// the pulled event. Empty arrays on both sides ⇒ the local copy is in sync.
+	function namedSetDrift(set: PulledNamedSet): { toAdd: string[]; toRemove: string[] } {
+		const stored = namedSets.find((s) => s.d_tag === set.d_tag);
+		const storedKeys = new Map((stored?.urls ?? []).map((u) => [normalizeRelayUrl(u), u]));
+		const pulledKeys = new Map(set.urls.map((u) => [normalizeRelayUrl(u), u]));
+		const toAdd = [...pulledKeys].filter(([k]) => !storedKeys.has(k)).map(([, u]) => u);
+		const toRemove = [...storedKeys].filter(([k]) => !pulledKeys.has(k)).map(([, u]) => u);
+		return { toAdd, toRemove };
+	}
+
+	// Import a pulled named set, or — if it already exists locally — reconcile
+	// its members to match the pulled event (add new, drop removed).
 	async function importNamedSet(set: PulledNamedSet) {
+		const existing = namedSets.some((s) => s.d_tag === set.d_tag);
 		importingSetTag = set.d_tag;
 		try {
-			await api.createNamedSet(set.d_tag, set.title);
-			for (const url of set.urls) {
-				await api.addToNamedSet(set.d_tag, url);
-			}
+			await api.createNamedSet(set.d_tag, set.title); // no-op if it already exists
+			const { toAdd, toRemove } = existing
+				? namedSetDrift(set)
+				: { toAdd: set.urls, toRemove: [] as string[] };
+			for (const url of toAdd) await api.addToNamedSet(set.d_tag, url);
+			for (const url of toRemove) await api.removeFromNamedSet(set.d_tag, url);
+			const verb = existing ? 'Updated' : 'Imported';
 			app.pushToast(
-				`Imported "${set.title}" (${set.urls.length} relay${set.urls.length === 1 ? '' : 's'})`,
+				`${verb} "${set.title}" (${set.urls.length} relay${set.urls.length === 1 ? '' : 's'})`,
 				'success',
 				2500
 			);
@@ -1154,11 +1171,22 @@
 				<div class="pulled-kind-label">kind 30002 · named sets</div>
 				{#each pulledNamedSets as set (set.d_tag)}
 					{@const alreadyImported = namedSets.some((s) => s.d_tag === set.d_tag)}
+					{@const drift = alreadyImported ? namedSetDrift(set) : { toAdd: [], toRemove: [] }}
+					{@const driftCount = drift.toAdd.length + drift.toRemove.length}
 					<div class="pulled-row pulled-row--set">
 						<span class="pulled-set-title" title={`d=${set.d_tag}`}>{set.title}</span>
 						<span class="pulled-set-meta">{set.urls.length} relay{set.urls.length === 1 ? '' : 's'}</span>
 						<div class="pulled-actions">
-							{#if alreadyImported}
+							{#if alreadyImported && driftCount > 0}
+								<button
+									class="pull-add pull-add--strong"
+									onclick={() => importNamedSet(set)}
+									disabled={importingSetTag !== null}
+									title={`Sync local set to the pulled event: +${drift.toAdd.length} / −${drift.toRemove.length} relay${driftCount === 1 ? '' : 's'}.`}
+								>
+									{importingSetTag === set.d_tag ? 'Updating…' : `↻ update (${set.urls.length})`}
+								</button>
+							{:else if alreadyImported}
 								<span class="pulled-state">already imported</span>
 							{:else}
 								<button
