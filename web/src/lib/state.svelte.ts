@@ -2619,6 +2619,17 @@ function _createAppState() {
 		}
 	}
 
+	// Persist which kinds get embedded (engine-side). The returned status
+	// reflects the new selection's total_events, so the panel re-renders in
+	// one round trip.
+	async function handleSetEmbedKinds(kinds: number[]) {
+		try {
+			embeddingStatus = await api.setEmbedKinds(kinds);
+		} catch (e) {
+			console.error('Set embed kinds failed:', e);
+		}
+	}
+
 	// ===================== Network =====================
 
 	async function handleSetNetworkMode(mode: NetworkMode) {
@@ -3596,6 +3607,7 @@ function _createAppState() {
 		handleLoadSection,
 		handleSyncEmbeddings,
 		handleReindexEmbeddings,
+		handleSetEmbedKinds,
 		refreshEmbeddingStatus,
 		handleSetNetworkMode,
 		handlePurge,

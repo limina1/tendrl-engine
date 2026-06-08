@@ -385,6 +385,10 @@ export interface EmbeddingStatusResponse {
 	missing_sections: number;
 	sidecar_available: boolean;
 	model: string | null;
+	/** Kinds currently eligible for embedding (engine-persisted selection). */
+	embed_kinds: number[];
+	/** Full menu of embeddable kinds the UI offers as checkboxes. */
+	available_kinds: number[];
 }
 
 export type NetworkMode = 'auto' | 'confirm';

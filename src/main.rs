@@ -297,6 +297,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/v1/embed/status", get(api::embed_status_handler))
         .route("/api/v1/embed/sync", post(api::embed_sync_handler))
         .route("/api/v1/embed/reindex", post(api::embed_reindex_handler))
+        .route("/api/v1/embed/config", post(api::embed_config_handler))
         // Claude Code sessions
         .route("/api/v1/claude-sessions", get(api::list_claude_sessions_handler))
         .route("/api/v1/claude-sessions/:id", get(api::get_claude_session_handler))

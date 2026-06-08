@@ -311,12 +311,19 @@ pub struct EmbeddingConfig {
     /// Automatically embed new events on ingest
     #[serde(default)]
     pub auto_embed: bool,
+    /// Event kinds eligible for semantic embedding. Defaults to
+    /// `embedding::DEFAULT_EMBED_KINDS`; editable from the UI's Embedding
+    /// settings panel (POST /api/v1/embed/config) and persisted here so the
+    /// selection survives restart and the background auto-embed pass honors it.
+    #[serde(default = "default_embed_kinds")]
+    pub embed_kinds: Vec<u16>,
 }
 
 fn default_embedding_backend() -> String { "python".to_string() }
 fn default_sidecar_url() -> String { "http://localhost:3031".to_string() }
 fn default_embedding_model() -> String { "all-MiniLM-L6-v2".to_string() }
 fn default_dimensions() -> usize { 384 }
+fn default_embed_kinds() -> Vec<u16> { crate::embedding::DEFAULT_EMBED_KINDS.to_vec() }
 
 impl Default for EmbeddingConfig {
     fn default() -> Self {
@@ -328,6 +335,7 @@ impl Default for EmbeddingConfig {
             dimensions: default_dimensions(),
             index_path: None,
             auto_embed: false,
+            embed_kinds: default_embed_kinds(),
         }
     }
 }

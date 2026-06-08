@@ -11,6 +11,13 @@ use std::path::{Path, PathBuf};
 use tracing::{debug, info, warn};
 use usearch::{Index, IndexOptions, MetricKind, ScalarKind};
 
+/// Canonical set of event kinds eligible for semantic embedding: 30041
+/// (publication sections), 30023 (long-form), 30818 (wiki), 9802
+/// (highlights). Serves three roles — the default when the user hasn't
+/// customized the selection, the menu the UI offers, and the allow-list the
+/// `/embed/config` endpoint validates against.
+pub const DEFAULT_EMBED_KINDS: [u16; 4] = [30041, 30023, 30818, 9802];
+
 /// Mapping persisted alongside the HNSW index
 #[derive(Debug, Serialize, Deserialize)]
 struct IndexMapping {

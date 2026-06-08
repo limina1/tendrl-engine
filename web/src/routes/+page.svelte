@@ -183,6 +183,8 @@
 		{ id: 'tendrl-logout', name: 'tendrl-logout', description: 'Logout active identity', category: 'Configuration' },
 		{ id: 'tendrl-switch-source', name: 'tendrl-switch-source', description: 'Switch signing source (engine / nip07 / nip46)', category: 'Configuration' },
 		{ id: 'tendrl-edit-profile', name: 'tendrl-edit-profile', description: 'Edit your kind 0 profile metadata and broadcast', category: 'Configuration', keybinding: 'SPC s p' },
+		{ id: 'tendrl-embed-missing', name: 'tendrl-embed-missing', description: 'Embed knowledge-base events not yet in the semantic index', category: 'Configuration' },
+		{ id: 'tendrl-reembed-all', name: 'tendrl-reembed-all', description: 'Clear the semantic index and re-embed every eligible event', category: 'Configuration' },
 		// View
 		{ id: 'tendrl-show-event-json', name: 'tendrl-show-event-json', description: 'Show the raw JSON of the focused event', category: 'View' },
 		// Versioning
@@ -369,6 +371,16 @@
 		}
 		if (cmd.id === 'tendrl-logout') {
 			app.handleIdentityLogout();
+			closeMinibuffer();
+			return;
+		}
+		if (cmd.id === 'tendrl-embed-missing') {
+			app.handleSyncEmbeddings();
+			closeMinibuffer();
+			return;
+		}
+		if (cmd.id === 'tendrl-reembed-all') {
+			app.handleReindexEmbeddings();
 			closeMinibuffer();
 			return;
 		}

@@ -142,6 +142,11 @@ pub struct Engine {
     assistant_pubkey: Option<String>,
     /// Optional embedding index for semantic search
     embedding: Option<Arc<RwLock<EmbeddingIndex>>>,
+    /// Event kinds eligible for embedding. Seeded from
+    /// `config.embedding.embed_kinds` in `init_embedding`; mutable at runtime
+    /// via `set_embed_kinds` (which also writes through to `config.toml`) so
+    /// the UI's Embedding-settings panel takes effect without a restart.
+    embed_kinds: StdRwLock<Vec<u16>>,
     /// Ignore list for filtering events
     ignore_list: RwLock<IgnoreList>,
     /// Documents folder path
@@ -254,6 +259,7 @@ impl Engine {
             my_pubkey: None,
             assistant_pubkey: None,
             embedding: None,
+            embed_kinds: StdRwLock::new(crate::embedding::DEFAULT_EMBED_KINDS.to_vec()),
             ignore_list: RwLock::new(ignore_list),
             documents_dir: std::path::PathBuf::from("./docs"),
             sidecar_url: "http://localhost:3031".to_string(),
@@ -1112,6 +1118,12 @@ impl Engine {
             return Ok(());
         }
 
+        // Seed the live embed-kinds set from config, sanitized to the
+        // canonical menu so a stale/hand-edited list can't smuggle in
+        // unsupported kinds.
+        let seeded = Self::sanitize_embed_kinds(&config.embed_kinds);
+        *self.embed_kinds.write().unwrap() = seeded;
+
         let index_dir = config
             .index_path
             .as_deref()
@@ -1138,6 +1150,58 @@ impl Engine {
         self.embedding.as_ref()
     }
 
+    /// The event kinds currently eligible for embedding. Returns a clone in
+    /// `DEFAULT_EMBED_KINDS` order so callers get a stable, deduped set.
+    pub fn embed_kinds(&self) -> Vec<u16> {
+        self.embed_kinds.read().unwrap().clone()
+    }
+
+    /// Filter an arbitrary kind list down to the canonical, deduped set
+    /// (preserving `DEFAULT_EMBED_KINDS` order). Used to sanitize both the
+    /// seeded config and incoming `/embed/config` requests.
+    fn sanitize_embed_kinds(kinds: &[u16]) -> Vec<u16> {
+        crate::embedding::DEFAULT_EMBED_KINDS
+            .iter()
+            .copied()
+            .filter(|k| kinds.contains(k))
+            .collect()
+    }
+
+    /// Replace the live embed-kinds set and persist it to `config.toml`'s
+    /// `[embedding] embed_kinds`. The in-memory update takes effect
+    /// immediately (next `sync_embeddings` / status read); the file write
+    /// makes it survive a restart. Unknown kinds are dropped.
+    pub fn set_embed_kinds(&self, kinds: Vec<u16>) -> Result<()> {
+        let clean = Self::sanitize_embed_kinds(&kinds);
+        *self.embed_kinds.write().unwrap() = clean.clone();
+
+        // Persist to config.toml under [embedding] embed_kinds. Mirrors the
+        // read→toml::Table→write pattern used for author edits in
+        // api::config_update_handler.
+        if let Some(path) = self.config_path.as_deref() {
+            let content = std::fs::read_to_string(path)
+                .map_err(|e| EngineError::Config(format!("Failed to read config: {e}")))?;
+            let mut doc: toml::Table = toml::from_str(&content)
+                .map_err(|e| EngineError::Config(format!("Failed to parse config: {e}")))?;
+            let embedding = doc
+                .entry("embedding")
+                .or_insert_with(|| toml::Value::Table(toml::Table::new()));
+            if let toml::Value::Table(tbl) = embedding {
+                tbl.insert(
+                    "embed_kinds".to_string(),
+                    toml::Value::Array(
+                        clean.iter().map(|k| toml::Value::Integer(*k as i64)).collect(),
+                    ),
+                );
+            }
+            let serialized = toml::to_string_pretty(&doc)
+                .map_err(|e| EngineError::Config(format!("Failed to serialize config: {e}")))?;
+            std::fs::write(path, serialized)
+                .map_err(|e| EngineError::Config(format!("Failed to write config: {e}")))?;
+        }
+        Ok(())
+    }
+
     /// Sync embeddings: find unembedded events, embed them, update index
     pub async fn sync_embeddings(&self) -> Result<EmbeddingStatus> {
         let emb = self
@@ -1147,13 +1211,14 @@ impl Engine {
 
         // CPU-heavy: query 100k events, iterate to find unembedded — offload to blocking pool
         let ndb = Arc::clone(&self.ndb);
+        let embed_kinds = self.embed_kinds();
         let indexed_ids: std::collections::HashSet<String> = {
             let index = emb.read().await;
             index.all_ids().into_iter().collect()
         };
 
         let (total_events, to_embed) = tokio::task::spawn_blocking(move || {
-            let filter = serde_json::json!({"kinds": [30041, 30023, 30818, 9802], "limit": 100000});
+            let filter = serde_json::json!({"kinds": embed_kinds, "limit": 100000});
             let all_events = query::query_local(&ndb, &[filter]).unwrap_or_default();
             let total_events = all_events.len();
 

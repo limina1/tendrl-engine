@@ -5,7 +5,8 @@
 		ContextItem,
 		DocumentFile,
 		ImportPage,
-		TagValueCount
+		TagValueCount,
+		EmbeddingStatusResponse
 	} from '$lib/types';
 	import SearchInput from './SearchInput.svelte';
 	import SearchResultItem from './SearchResultItem.svelte';
@@ -74,7 +75,14 @@
 		onresultpillaction,
 		refsQuery = $bindable<string>(''),
 		activeTab = $bindable<'search' | 'refs' | 'import'>('search'),
-		searchValue = $bindable<string>('')
+		searchValue = $bindable<string>(''),
+		// Embedding settings — the index that powers `~:` semantic search.
+		// Status + actions come from the host (SearchBuffer → app state).
+		embeddingStatus = null,
+		embeddingSyncing = false,
+		onembedmissing,
+		onembedreindex,
+		onsetembedkinds
 	}: {
 		results: SearchResult[];
 		profiles?: ProfileResult[];
@@ -164,9 +172,40 @@
 		 *  already known to the engine; KB last because its pages come
 		 *  from outside the Nostr graph. */
 		activeTab?: 'search' | 'refs' | 'import';
+		/** Embedding index status (sidecar health, counts, active/available
+		 *  kinds). Null until the first status fetch resolves. */
+		embeddingStatus?: EmbeddingStatusResponse | null;
+		/** True while an embed/reindex pass is running — disables actions. */
+		embeddingSyncing?: boolean;
+		/** Embed events not yet in the index (incremental sync). */
+		onembedmissing?: () => void;
+		/** Clear the index and re-embed everything from scratch. */
+		onembedreindex?: () => void;
+		/** Persist a new set of embeddable kinds (engine-side). */
+		onsetembedkinds?: (kinds: number[]) => void;
 	} = $props();
 
 	let checkedIds: Set<string> = $state(new Set());
+
+	// Embedding-settings footer: collapsed by default (ephemeral view state —
+	// the frontend owns expansion). Expands to reveal status + actions.
+	let embedPanelOpen = $state(false);
+
+	// Toggle one kind in/out of the embeddable set and persist via the host.
+	// Keeps the response's `available_kinds` order by filtering that menu.
+	function toggleEmbedKind(kind: number) {
+		const active = new Set(embeddingStatus?.embed_kinds ?? []);
+		if (active.has(kind)) active.delete(kind);
+		else active.add(kind);
+		const menu = embeddingStatus?.available_kinds ?? [];
+		onsetembedkinds?.(menu.filter((k) => active.has(k)));
+	}
+
+	function fullReembed() {
+		if (confirm('Clear the embedding index and re-embed everything? This can take a while.')) {
+			onembedreindex?.();
+		}
+	}
 
 	// Grouped mode: when the query had `count:NAME`, the response includes
 	// histogram buckets. We switch the panel to a folded view where the
@@ -659,6 +698,91 @@
 						</div>
 					</div>
 				{/each}
+			{/if}
+		</div>
+	{/if}
+
+	<!-- Embedding settings — persistent footer at the bottom of the search
+	     buffer. Collapsed by default; expands to show sidecar status, index
+	     counts, the embeddable-kind checkboxes, and the embed actions. This is
+	     the home of "what gets embedded": the engine persists the kind set. -->
+	{#if embeddingStatus}
+		<div class="embed-panel" class:embed-panel--open={embedPanelOpen}>
+			<button
+				class="embed-panel__bar"
+				onclick={() => (embedPanelOpen = !embedPanelOpen)}
+				aria-expanded={embedPanelOpen}
+				title="Embedding settings — the index that powers ~: semantic search"
+			>
+				<span class="embed-panel__arrow">{embedPanelOpen ? '▾' : '▸'}</span>
+				<span class="embed-panel__title">Embedding settings</span>
+				{#if embeddingStatus.enabled}
+					<span class="embed-panel__stat">embed {embeddingStatus.indexed_count}/{embeddingStatus.total_events}</span>
+					<span
+						class="embed-panel__dot"
+						class:embed-panel__dot--ok={embeddingStatus.sidecar_available}
+						class:embed-panel__dot--off={!embeddingStatus.sidecar_available}
+						title={embeddingStatus.sidecar_available ? 'Sidecar connected' : 'Sidecar unreachable'}
+					></span>
+				{:else}
+					<span class="embed-panel__stat embed-panel__stat--off">off</span>
+				{/if}
+			</button>
+
+			{#if embedPanelOpen}
+				<div class="embed-panel__body">
+					{#if !embeddingStatus.enabled}
+						<p class="embed-panel__hint">
+							Embedding is disabled. Set <code>[embedding] enabled = true</code> in
+							<code>config.toml</code> (or build with <code>--features onnx</code>) to
+							enable semantic search (<code>~:query</code>).
+						</p>
+					{:else}
+						<div class="embed-panel__statusline">
+							<span
+								class="embed-pill"
+								class:embed-pill--ok={embeddingStatus.sidecar_available}
+								class:embed-pill--off={!embeddingStatus.sidecar_available}
+							>{embeddingStatus.sidecar_available ? 'connected' : 'unreachable'}</span>
+							{#if embeddingStatus.model}
+								<span class="embed-pill embed-pill--ghost">{embeddingStatus.model}</span>
+							{/if}
+							<span class="embed-panel__counts">
+								{embeddingStatus.indexed_count}/{embeddingStatus.total_events} embedded{#if embeddingStatus.stale_count > 0} · {embeddingStatus.stale_count} stale{/if}{#if embeddingStatus.missing_sections > 0} · {embeddingStatus.missing_sections} missing{/if}
+							</span>
+						</div>
+
+						<div class="embed-panel__kinds">
+							<span class="embed-panel__kinds-label">Kinds to embed</span>
+							{#each embeddingStatus.available_kinds as k (k)}
+								<label class="embed-kind" title={kindLabel(k)}>
+									<input
+										type="checkbox"
+										checked={embeddingStatus.embed_kinds.includes(k)}
+										disabled={embeddingSyncing}
+										onchange={() => toggleEmbedKind(k)}
+									/>
+									<span>{kindLabel(k)} <span class="embed-kind__num">k:{k}</span></span>
+								</label>
+							{/each}
+						</div>
+
+						<div class="embed-panel__actions">
+							<button
+								class="embed-btn"
+								onclick={() => onembedmissing?.()}
+								disabled={embeddingSyncing}
+								title="Embed events that aren't in the index yet"
+							>{embeddingSyncing ? 'Embedding…' : 'Embed missing'}</button>
+							<button
+								class="embed-btn embed-btn--danger"
+								onclick={fullReembed}
+								disabled={embeddingSyncing}
+								title="Clear the index and re-embed every eligible event"
+							>Full re-embed</button>
+						</div>
+					{/if}
+				</div>
 			{/if}
 		</div>
 	{/if}
@@ -1220,4 +1344,136 @@
 		gap: 2px;
 		flex-shrink: 0;
 	}
+
+	/* Embedding settings — collapsible footer pinned to the bottom of the
+	   search buffer. The bar stays a thin glanceable strip when collapsed. */
+	.embed-panel {
+		flex-shrink: 0;
+		border-top: 1px solid var(--panel-border);
+		background: var(--panel-bg-soft, var(--bg-surface));
+	}
+	.embed-panel__bar {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		width: 100%;
+		padding: 6px 12px;
+		background: none;
+		border: none;
+		cursor: pointer;
+		color: var(--fg-muted);
+		font-size: 0.68rem;
+		text-align: left;
+	}
+	.embed-panel__bar:hover { color: var(--fg); }
+	.embed-panel__arrow { width: 0.8em; flex-shrink: 0; }
+	.embed-panel__title {
+		text-transform: uppercase;
+		letter-spacing: 0.06em;
+		font-weight: 600;
+	}
+	.embed-panel__stat {
+		margin-left: auto;
+		font-family: var(--font-mono);
+		font-size: 0.62rem;
+		color: var(--fg-muted);
+	}
+	.embed-panel__stat--off { color: var(--fg-muted); opacity: 0.7; }
+	.embed-panel__dot {
+		width: 7px;
+		height: 7px;
+		border-radius: 50%;
+		flex-shrink: 0;
+	}
+	.embed-panel__dot--ok { background: var(--green); }
+	.embed-panel__dot--off { background: var(--red); }
+
+	.embed-panel__body {
+		display: flex;
+		flex-direction: column;
+		gap: 10px;
+		padding: 4px 12px 12px;
+	}
+	.embed-panel__hint {
+		font-size: 0.7rem;
+		color: var(--fg-muted);
+		line-height: 1.4;
+		margin: 0;
+	}
+	.embed-panel__statusline {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		flex-wrap: wrap;
+	}
+	.embed-pill {
+		font-size: 0.6rem;
+		padding: 1px 7px;
+		border-radius: var(--radius);
+		text-transform: lowercase;
+	}
+	.embed-pill--ok {
+		background: color-mix(in srgb, var(--green) 18%, transparent);
+		color: var(--green);
+	}
+	.embed-pill--off {
+		background: color-mix(in srgb, var(--red) 18%, transparent);
+		color: var(--red);
+	}
+	.embed-pill--ghost {
+		background: color-mix(in srgb, var(--fg-muted) 14%, transparent);
+		color: var(--fg-muted);
+		font-family: var(--font-mono);
+		text-transform: none;
+	}
+	.embed-panel__counts {
+		font-size: 0.65rem;
+		color: var(--fg-muted);
+	}
+
+	.embed-panel__kinds {
+		display: flex;
+		align-items: center;
+		flex-wrap: wrap;
+		gap: 4px 12px;
+	}
+	.embed-panel__kinds-label {
+		font-size: 0.6rem;
+		text-transform: uppercase;
+		letter-spacing: 0.07em;
+		color: var(--fg-muted);
+		width: 100%;
+	}
+	.embed-kind {
+		display: inline-flex;
+		align-items: center;
+		gap: 5px;
+		font-size: 0.7rem;
+		color: var(--fg);
+		cursor: pointer;
+	}
+	.embed-kind input { cursor: pointer; }
+	.embed-kind input:disabled { cursor: default; }
+	.embed-kind__num {
+		font-family: var(--font-mono);
+		font-size: 0.6rem;
+		color: var(--fg-muted);
+	}
+
+	.embed-panel__actions {
+		display: flex;
+		gap: 8px;
+	}
+	.embed-btn {
+		font-size: 0.68rem;
+		padding: 4px 12px;
+		border-radius: var(--radius);
+		border: 1px solid var(--panel-border);
+		background: var(--bg-surface);
+		color: var(--fg);
+		cursor: pointer;
+	}
+	.embed-btn:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+	.embed-btn:disabled { opacity: 0.5; cursor: default; }
+	.embed-btn--danger:hover:not(:disabled) { border-color: var(--red); color: var(--red); }
 </style>

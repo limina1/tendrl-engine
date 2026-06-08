@@ -4567,6 +4567,8 @@ pub async fn embed_status_handler(
                 "missing_sections": 0,
                 "sidecar_available": false,
                 "model": null,
+                "embed_kinds": engine.embed_kinds(),
+                "available_kinds": crate::embedding::DEFAULT_EMBED_KINDS.to_vec(),
             })));
         }
     };
@@ -4576,8 +4578,13 @@ pub async fn embed_status_handler(
     let model = index.model().to_string();
     let indexed_count = index.len();
 
+    // The user-configurable set of kinds we embed, plus the full menu the UI
+    // offers as checkboxes (the canonical allow-list).
+    let embed_kinds = engine.embed_kinds();
+    let available_kinds = crate::embedding::DEFAULT_EMBED_KINDS.to_vec();
+
     // Count embeddable events in nostrdb (content kinds only; skip 30040 index events)
-    let filter = serde_json::json!({"kinds": [30041, 30023, 30818, 9802], "limit": 100000});
+    let filter = serde_json::json!({"kinds": embed_kinds, "limit": 100000});
     let local_events = crate::query::query_local(engine.ndb(), &[filter]).unwrap_or_default();
     let total_events = local_events.len();
 
@@ -4623,6 +4630,8 @@ pub async fn embed_status_handler(
         "missing_sections": missing_sections,
         "sidecar_available": sidecar_available,
         "model": model,
+        "embed_kinds": embed_kinds,
+        "available_kinds": available_kinds,
     })))
 }
 
@@ -4642,6 +4651,28 @@ pub async fn embed_reindex_handler(
 ) -> Result<Json<EmbeddingStatus>, EngineError> {
     let status = engine.reindex_embeddings().await?;
     Ok(Json(status))
+}
+
+/// Body for `POST /api/v1/embed/config`.
+#[derive(Deserialize)]
+pub struct EmbedConfigRequest {
+    /// The kinds to embed. Unknown kinds (outside `DEFAULT_EMBED_KINDS`) are
+    /// silently dropped by the engine.
+    pub kinds: Vec<u16>,
+}
+
+/// POST /api/v1/embed/config — set the kinds eligible for embedding.
+///
+/// Persists the selection to `config.toml` and applies it in-memory so the
+/// next sync/reindex (and the background auto-embed pass) honor it without a
+/// restart. Returns the refreshed status so the UI can re-render in one round
+/// trip.
+pub async fn embed_config_handler(
+    State(engine): State<AppState>,
+    Json(req): Json<EmbedConfigRequest>,
+) -> Result<Json<Value>, EngineError> {
+    engine.set_embed_kinds(req.kinds)?;
+    embed_status_handler(State(engine)).await
 }
 
 // ============================================================================

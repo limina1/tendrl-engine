@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { untrack } from 'svelte';
+	import { untrack, onMount } from 'svelte';
 	import { getAppState } from '$lib/state.svelte';
 	import SearchPanel from '$lib/components/SearchPanel.svelte';
 	import type { SearchResult, ContextItem } from '$lib/types';
@@ -10,6 +10,11 @@
 
 	const app = getAppState();
 	const store = getActiveStore();
+
+	// Pull current embedding-index status once when the search buffer mounts
+	// so the bottom "Embedding settings" panel reflects sidecar health + index
+	// counts without waiting for a sync. Lightweight (no embed pass).
+	onMount(() => { app.refreshEmbeddingStatus(); });
 
 	// Three sibling sub-views — like the reader's outline/paginated/
 	// continuous. h/l cycles them; j/k walks the active tab's list.
@@ -294,4 +299,9 @@
 	hasSearched={app.searchLastQuery !== ''}
 	networkMode={app.networkStatus?.mode === 'confirm' ? 'confirm' : 'auto'}
 	relaySearchLoading={app.searchRelayLoading}
+	embeddingStatus={app.embeddingStatus}
+	embeddingSyncing={app.embeddingSyncing}
+	onembedmissing={app.handleSyncEmbeddings}
+	onembedreindex={app.handleReindexEmbeddings}
+	onsetembedkinds={app.handleSetEmbedKinds}
 />

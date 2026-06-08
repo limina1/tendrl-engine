@@ -1012,6 +1012,15 @@ export function reindexEmbeddings() {
 	return fetchJson<EmbeddingStatusResponse>('/api/v1/embed/reindex', { method: 'POST' });
 }
 
+/** Set which event kinds are eligible for embedding. Persists engine-side and
+ *  returns the refreshed status. */
+export function setEmbedKinds(kinds: number[]) {
+	return fetchJson<EmbeddingStatusResponse>('/api/v1/embed/config', {
+		method: 'POST',
+		body: JSON.stringify({ kinds })
+	});
+}
+
 // Claude Code Sessions API
 
 import type { ClaudeSessionSummary, ClaudeSessionMessage } from './types';
