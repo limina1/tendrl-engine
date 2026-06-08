@@ -316,6 +316,13 @@ pub struct IdentityConfig {
     /// keeps its own key, so this is a no-op there.
     #[serde(default)]
     pub lock_timeout_minutes: u64,
+    /// Persisted engine key (NIP-49 `ncryptsec1…`). Stored encrypted at
+    /// rest — it's scrypt-encrypted by design, so the password is never
+    /// here. Written when the user logs in with a pasted key (and
+    /// cleared on logout); loaded at boot into a **locked** session so
+    /// the UI prompts for just the password instead of a re-paste.
+    #[serde(default)]
+    pub ncryptsec: Option<String>,
 }
 
 /// Embedding configuration

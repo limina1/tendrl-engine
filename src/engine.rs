@@ -1189,6 +1189,38 @@ impl Engine {
     /// preserving the rest of the file. Mirrors the read→toml::Table→write
     /// pattern used for author edits in `api::config_update_handler`. No-op if
     /// no config path is set (e.g. tests).
+    /// Write (or clear) the persisted engine key under `[identity]
+    /// ncryptsec` in config.toml. `Some(nc)` stores it; `None` removes
+    /// the key so a logout doesn't leave the secret on disk. No-op when
+    /// the engine has no config file path.
+    pub fn persist_identity_ncryptsec(&self, ncryptsec: Option<&str>) -> Result<()> {
+        let Some(path) = self.config_path.as_deref() else {
+            return Ok(());
+        };
+        let content = std::fs::read_to_string(path)
+            .map_err(|e| EngineError::Config(format!("Failed to read config: {e}")))?;
+        let mut doc: toml::Table = toml::from_str(&content)
+            .map_err(|e| EngineError::Config(format!("Failed to parse config: {e}")))?;
+        let identity = doc
+            .entry("identity")
+            .or_insert_with(|| toml::Value::Table(toml::Table::new()));
+        if let toml::Value::Table(tbl) = identity {
+            match ncryptsec {
+                Some(nc) => {
+                    tbl.insert("ncryptsec".to_string(), toml::Value::String(nc.to_string()));
+                }
+                None => {
+                    tbl.remove("ncryptsec");
+                }
+            }
+        }
+        let serialized = toml::to_string_pretty(&doc)
+            .map_err(|e| EngineError::Config(format!("Failed to serialize config: {e}")))?;
+        std::fs::write(path, serialized)
+            .map_err(|e| EngineError::Config(format!("Failed to write config: {e}")))?;
+        Ok(())
+    }
+
     fn persist_embedding_setting(&self, key: &str, value: toml::Value) -> Result<()> {
         let Some(path) = self.config_path.as_deref() else {
             return Ok(());
