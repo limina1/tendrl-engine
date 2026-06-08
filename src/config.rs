@@ -285,6 +285,13 @@ pub struct IdentityConfig {
     /// `window.nostr` is reachable.
     #[serde(default)]
     pub source: Option<String>,
+    /// Persisted engine key (NIP-49 `ncryptsec1…`). Stored encrypted at
+    /// rest — it's scrypt-encrypted by design, so the password is never
+    /// here. Written when the user logs in with a pasted key (and
+    /// cleared on logout); loaded at boot into a **locked** session so
+    /// the UI prompts for just the password instead of a re-paste.
+    #[serde(default)]
+    pub ncryptsec: Option<String>,
 }
 
 /// Embedding configuration

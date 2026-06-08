@@ -404,6 +404,18 @@ export function lockIdentity() {
 	return fetchJson<IdentityStatus>('/api/v1/identity/lock', { method: 'POST' });
 }
 
+/** Persist (or, with null, forget) the engine key in config.toml's
+ *  `[identity] ncryptsec`. The key is scrypt-encrypted; this never
+ *  sends or stores a password. Call with the pasted ncryptsec on login
+ *  so the next boot prompts for just the password, and with null on
+ *  logout to forget it. */
+export function persistIdentityKey(ncryptsec: string | null) {
+	return fetchJson<{ persisted: boolean }>('/api/v1/identity/persist-key', {
+		method: 'POST',
+		body: JSON.stringify({ ncryptsec })
+	});
+}
+
 export function logoutIdentity() {
 	return fetchJson<IdentityStatus>('/api/v1/identity/logout', { method: 'POST' });
 }

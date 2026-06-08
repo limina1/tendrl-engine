@@ -5,6 +5,12 @@
 [identity]
 # Your nostr public key (npub or hex)
 # pubkey = "npub1..."
+# ncryptsec: encrypted engine key, written automatically when you log in
+# with a pasted ncryptsec in the UI (and cleared on logout). It's
+# scrypt-encrypted, so the password is never stored — on boot the engine
+# loads it locked and the UI asks only for your password. Edit by hand
+# only to pre-seed a key.
+# ncryptsec = "ncryptsec1..."
 
 [relay]
 timeout_ms = 15000

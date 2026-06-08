@@ -161,6 +161,16 @@ async fn main() -> anyhow::Result<()> {
     info!("Saved identity source: {}", boot_source.kind_str());
     let identity_state: api::IdentityAppState =
         Arc::new(Mutex::new(IdentitySession::with_source(boot_source)));
+    // Load a persisted engine key (config.toml `[identity] ncryptsec`)
+    // into a *locked* session so the UI prompts for just the password
+    // instead of a re-paste. The key is scrypt-encrypted; unlocking
+    // still needs the password the engine never stores.
+    if let Some(nc) = config.identity.ncryptsec.as_deref().filter(|s| !s.is_empty()) {
+        match identity_state.lock().unwrap().login_ncryptsec(nc) {
+            Ok(()) => info!("Loaded persisted engine key (locked)"),
+            Err(e) => tracing::warn!("Ignoring invalid persisted [identity] ncryptsec: {e}"),
+        }
+    }
 
     let identity_routes = Router::new()
         .route("/api/v1/identity", get(api::identity_status_handler))
@@ -253,6 +263,10 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/v1/config/update", post(api::config_update_handler))
         .route("/api/v1/config/snapshot", post(api::config_snapshot_handler))
         .route("/api/v1/settings", get(api::settings_handler))
+        .route(
+            "/api/v1/identity/persist-key",
+            post(api::identity_persist_key_handler),
+        )
         .route("/api/v1/fetch", post(api::fetch_relay_handler))
         .route("/api/v1/fetch/authors", post(api::fetch_authors_handler))
         .route("/api/v1/fetch/sections", post(api::fetch_sections_handler))

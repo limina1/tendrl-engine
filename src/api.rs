@@ -2224,6 +2224,30 @@ pub async fn settings_handler(
     })))
 }
 
+#[derive(Debug, Deserialize)]
+pub struct PersistKeyRequest {
+    /// NIP-49 `ncryptsec1…` to persist, or `null`/empty to forget the
+    /// stored key (e.g. on logout).
+    #[serde(default)]
+    pub ncryptsec: Option<String>,
+}
+
+/// POST /api/v1/identity/persist-key — write or clear the engine key in
+/// config.toml's `[identity] ncryptsec`. Persisting is deliberate: the
+/// web calls this when the user logs in with a pasted key (so the next
+/// boot prompts for just the password) and again with an empty body on
+/// logout to forget it. The secret is scrypt-encrypted, so it never
+/// travels or rests in plaintext.
+pub async fn identity_persist_key_handler(
+    State(engine): State<AppState>,
+    Json(req): Json<PersistKeyRequest>,
+) -> Result<Json<Value>, EngineError> {
+    // Treat an empty string the same as null — forget the key.
+    let value = req.ncryptsec.as_deref().filter(|s| !s.is_empty());
+    engine.persist_identity_ncryptsec(value)?;
+    Ok(Json(json!({ "persisted": value.is_some() })))
+}
+
 /// GET /api/v1/relays — get relay configuration
 pub async fn relay_config_handler(State(engine): State<AppState>) -> Json<Value> {
     let rc = engine.relay_config();

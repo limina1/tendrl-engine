@@ -3255,6 +3255,16 @@ function _createAppState() {
 				myPubkey = identityStatus.pubkey;
 				resolveIdentityName(identityStatus.pubkey);
 			}
+			// Persist the pasted key so a restart prompts for just the
+			// password instead of a re-paste. Best-effort — the in-memory
+			// login already succeeded, so a persist failure only costs the
+			// remember-across-restart, not this session.
+			try {
+				await api.persistIdentityKey(ncryptsec);
+				pushToast('Key saved — next start asks only for your password', 'success', 3500);
+			} catch (e) {
+				console.warn('[identity] failed to persist engine key:', e);
+			}
 		} catch (e: unknown) {
 			identityError = e instanceof Error ? e.message : String(e);
 		} finally {
@@ -3291,6 +3301,13 @@ function _createAppState() {
 			identityStatus = await api.logoutIdentity();
 			myPubkey = null;
 			identityDisplayName = null;
+			// Forget the persisted key so logout doesn't leave the secret
+			// on disk for the next boot to reload.
+			try {
+				await api.persistIdentityKey(null);
+			} catch (e) {
+				console.warn('[identity] failed to clear persisted engine key:', e);
+			}
 		} catch (e) {
 			console.error('Logout failed:', e);
 		}

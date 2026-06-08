@@ -292,6 +292,10 @@
 					<button class="settings-action" onclick={doLogin} disabled={app.identityLoading}>
 						{app.identityLoading ? 'Working…' : 'Login'}
 					</button>
+					<span class="settings-hint">
+						Saved to <strong>config.toml</strong> (encrypted); the next start asks only for
+						your password. Logging out forgets it.
+					</span>
 				</div>
 			{:else if currentState === 'locked'}
 				<div class="settings-row settings-row--stack">
