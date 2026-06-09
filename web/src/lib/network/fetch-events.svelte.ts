@@ -26,10 +26,25 @@ type PublishIntentEvent = Extract<FetchEvent, { type: 'publish_intent' }>;
 /** The pending confirm intent a modal renders, if any. A fetch `intent`
  *  drives FetchConfirmModal; a `publish_intent` drives
  *  PublishConfirmModal — `+layout` branches on `.type`. Both carry an
- *  `operation_id` and `relays`, which is all `resolveConfirm` needs. */
-export const confirmState = $state<{ intent: IntentEvent | PublishIntentEvent | null }>({
-	intent: null
+ *  `operation_id` and `relays`, which is all `resolveConfirm` needs.
+ *
+ *  `queue` holds intents that arrived while one was already showing.
+ *  With a single slot, a second intent overwrote the first, orphaning
+ *  the engine's blocked oneshot until its 60s timeout — the user never
+ *  saw (or got to decide on) the overwritten operation. Intents are
+ *  presented strictly one at a time, FIFO. */
+export const confirmState = $state<{
+	intent: IntentEvent | PublishIntentEvent | null;
+	queue: (IntentEvent | PublishIntentEvent)[];
+}>({
+	intent: null,
+	queue: []
 });
+
+/** Show the next queued intent, if any. */
+function advanceConfirmQueue() {
+	confirmState.intent = confirmState.queue.shift() ?? null;
+}
 
 // operation_id → toast id, so progress/relay_status/completed update
 // the right toast.
@@ -72,7 +87,11 @@ function handleEvent(ev: FetchEvent) {
 	// `intent` → FetchConfirmModal, `publish_intent` → PublishConfirmModal
 	// (both keyed off `confirmState.intent`; +layout branches on type).
 	if ((ev.type === 'intent' || ev.type === 'publish_intent') && ev.needs_confirmation) {
-		confirmState.intent = ev;
+		if (confirmState.intent === null) {
+			confirmState.intent = ev;
+		} else {
+			confirmState.queue.push(ev);
+		}
 		return;
 	}
 
@@ -125,9 +144,16 @@ function handleEvent(ev: FetchEvent) {
 				}
 				opToasts.delete(ev.operation_id);
 			}
-			// If the failed/cancelled op was awaiting the modal, close it.
+			// If the failed/cancelled op was awaiting the modal, close it
+			// (and show the next queued intent, if any). A queued intent
+			// whose op died (60s confirm timeout) is dropped too, so the
+			// user isn't asked to approve an operation the engine has
+			// already abandoned.
+			confirmState.queue = confirmState.queue.filter(
+				(i) => i.operation_id !== ev.operation_id
+			);
 			if (confirmState.intent?.operation_id === ev.operation_id) {
-				confirmState.intent = null;
+				advanceConfirmQueue();
 			}
 			break;
 		}
@@ -182,7 +208,7 @@ function startFetchEvents() {
 export function resolveConfirm(approved: boolean, relays?: string[]) {
 	const intent = confirmState.intent;
 	if (!intent) return;
-	confirmState.intent = null;
+	advanceConfirmQueue();
 	api.confirmFetch(intent.operation_id, approved, relays).catch((e: unknown) => {
 		console.error('[fetch-events] confirm POST failed', e);
 	});
