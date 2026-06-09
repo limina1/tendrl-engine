@@ -54,6 +54,7 @@
 	onclaudesessionback={app.handleClaudeSessionBack}
 	onloadsessiontochat={app.handleLoadSessionToChat}
 	savedSessions={app.savedSessions}
+	activeSessionId={app.activeSessionId}
 	onsavechat={app.handleSaveChat}
 	onloadsavedsession={app.handleLoadSavedSession}
 	ondeletesavedsession={app.handleDeleteSavedSession}
