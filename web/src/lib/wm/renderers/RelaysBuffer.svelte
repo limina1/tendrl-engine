@@ -1400,6 +1400,14 @@
 						<div class="relay-detail">
 							{#if status.state === 'loading'}
 								<p class="empty muted">Fetching NIP-11…</p>
+							{:else if status.state === 'pending'}
+								<!-- Confirm mode: the engine only peeks its NIP-11 cache on
+								     render — fetching the doc is an outbound HTTP request to
+								     the relay host, so it waits for this explicit click. -->
+								<div class="failed-detail">
+									<p class="empty muted">Relay info not fetched — outbound requests wait for your go-ahead.</p>
+									<button class="btn-refresh" onclick={() => primeInfo(row.url, true)}>Fetch info</button>
+								</div>
 							{:else if status.state === 'failed'}
 								<div class="failed-detail">
 									<p class="empty error">Couldn't load NIP-11: {status.error}</p>
