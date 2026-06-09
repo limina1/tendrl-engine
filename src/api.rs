@@ -2267,14 +2267,22 @@ pub struct RelayInfoQuery {
 /// for the relay (or kick off a fetch if missing/stale and return
 /// `Loading`). See `docs/relay-classes-and-info-port.md` §4 for the
 /// caching contract.
+///
+/// Confirm mode: a plain `get` must not produce outbound HTTP — screen
+/// renders prime NIP-11 for every visible relay, which would silently
+/// ping each relay host. So without `refresh` we only `peek` the cache.
+/// `?refresh=true` is an explicit per-relay user click, which carries
+/// its own consent (same convention as `force` on profile fetches).
 pub async fn relay_nip11_handler(
     State(engine): State<AppState>,
     axum::extract::Query(q): axum::extract::Query<RelayInfoQuery>,
 ) -> Json<Value> {
     let status = if q.refresh {
         engine.nip11_cache().refresh(&q.url).await
-    } else {
+    } else if engine.is_auto() {
         engine.nip11_cache().get(&q.url).await
+    } else {
+        engine.nip11_cache().peek(&q.url).await
     };
     Json(json!({
         "url": q.url,
