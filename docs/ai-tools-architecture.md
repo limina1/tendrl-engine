@@ -375,6 +375,12 @@ the other UI settings via `/api/v1/config/snapshot` (alongside
 
 ### Auth source & billing (Claude provider)
 
+> **Status (shipped): API key only.** The `oauth`/subscription path explored
+> below was **dropped** — subscription auth doesn't work in this deployment, so
+> the engine authenticates solely with `ANTHROPIC_API_KEY`. The `auth` config
+> field, `StaticBearerCredential`, and the settings auth-channel picker were
+> removed. The rest of this section is retained as design history.
+
 There are two distinct billing channels into Claude, selected by how the
 provider authenticates. The provider config carries an explicit `auth`
 discriminator because they differ in billing, rate limits, and terms:
