@@ -504,14 +504,33 @@ impl Engine {
     ) -> Vec<Value> {
         use crate::network::{RequestSummary, RelayStatusValue};
 
-        // Flatten the composition's primary stage relays into the
-        // initial Intent's `relays` field (back-compat for clients
-        // that haven't picked up the structured summary yet).
-        let primary_relays: Vec<String> = composition
-            .phases
-            .first()
-            .map(|s| s.members.iter().flat_map(|(_, urls)| urls.clone()).collect())
-            .unwrap_or_default();
+        // Confirm-mode gate, BEFORE the intent. `mode_confirm` means
+        // "user-initiated": a background caller (reactive profile
+        // prefetch, post-search backfill) must not pop a confirm modal
+        // the user never asked for — it resolves local-only silently.
+        // User-initiated calls fall through to the intent below, where
+        // Confirm mode still gets its approval modal.
+        if !mode_confirm && !self.is_auto() {
+            return Vec::new();
+        }
+
+        // Flatten EVERY stage's relays into the Intent's `relays`
+        // field — not just the primary stage. The confirm modal builds
+        // its per-relay checkboxes from this list, so anything absent
+        // here could be contacted (on fallback escalation) without the
+        // user ever having seen or been able to deselect it. The
+        // structured summary still shows which phase each relay
+        // belongs to.
+        let mut all_relays: Vec<String> = Vec::new();
+        for stage in &composition.phases {
+            for (_, urls) in &stage.members {
+                for url in urls {
+                    if !all_relays.contains(url) {
+                        all_relays.push(url.clone());
+                    }
+                }
+            }
+        }
 
         let summary = RequestSummary {
             filters: filters
@@ -528,7 +547,7 @@ impl Engine {
                 pattern,
                 label,
                 vec![],
-                primary_relays,
+                all_relays.clone(),
                 Some(summary),
             )
             .await
@@ -536,6 +555,12 @@ impl Engine {
             Ok(o) => o,
             Err(_) => return Vec::new(),
         };
+
+        // The approved set: in Auto mode this echoes `all_relays`; in
+        // Confirm mode it's what survived the modal's checkboxes (and
+        // may include relays the user appended by hand).
+        let approved: std::collections::HashSet<&str> =
+            op.relays().iter().map(|s| s.as_str()).collect();
 
         let mut all_events: Vec<Value> = Vec::new();
 
@@ -549,13 +574,26 @@ impl Engine {
             let mut stage_events: Vec<Value> = Vec::new();
             for (phase, urls) in &stage.members {
                 for relay_url in urls {
+                    // Honor the modal's per-relay deselection — a relay
+                    // the user unchecked must not be contacted, even on
+                    // fallback escalation.
+                    if !approved.contains(relay_url.as_str()) {
+                        continue;
+                    }
                     op.relay_status(relay_url, *phase, RelayStatusValue::Connecting);
+                    // `true`, not `mode_confirm`: reaching this point
+                    // means consent exists by construction — Auto mode,
+                    // or the user approved the intent above. Re-passing
+                    // `mode_confirm` here made an approved Confirm-mode
+                    // fetch short-circuit to zero events (the inner
+                    // gate re-checked a flag the modal had already
+                    // satisfied).
                     match self
                         .tracked_fetch_with_options(
                             relay_url,
                             filters,
                             crate::network::FetchTrigger::ProfilePrefetch,
-                            mode_confirm,
+                            true,
                         )
                         .await
                     {
@@ -580,6 +618,48 @@ impl Engine {
                 }
             }
             all_events.extend(stage_events);
+        }
+
+        // Relays the user appended in the confirm modal — approved but
+        // not part of any composition stage. Treat them as extra Read
+        // sources so the append affordance actually does something on
+        // this path.
+        for relay_url in op.relays() {
+            if all_relays.contains(relay_url) {
+                continue;
+            }
+            op.relay_status(
+                relay_url,
+                crate::network::Phase::Read,
+                RelayStatusValue::Connecting,
+            );
+            match self
+                .tracked_fetch_with_options(
+                    relay_url,
+                    filters,
+                    crate::network::FetchTrigger::ProfilePrefetch,
+                    true,
+                )
+                .await
+            {
+                Ok(events) => {
+                    op.relay_status(
+                        relay_url,
+                        crate::network::Phase::Read,
+                        RelayStatusValue::Eose {
+                            event_count: events.len(),
+                        },
+                    );
+                    all_events.extend(events);
+                }
+                Err(e) => {
+                    op.relay_status(
+                        relay_url,
+                        crate::network::Phase::Read,
+                        RelayStatusValue::Error { msg: e.to_string() },
+                    );
+                }
+            }
         }
 
         op.complete(all_events.len());
