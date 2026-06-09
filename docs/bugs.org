@@ -6,6 +6,39 @@ Log defects here as they're found mid-task, then fix on a dedicated =bugs=
 branch (via worktree) and merge back to the integration branch — don't fold
 unrelated bug fixes into feature/cleanup commits. Tick =FIXED= with the commit.
 
+* FIXED — system prompt not shown until the first chat message
+:PROPERTIES:
+:found: 2026-06-08 (during AI tool-calling feature work)
+:fixed-in: feat(web): AI agent chat … (folded into the feature it belongs to)
+:END:
+
+** Symptom
+The chat's *System* view was empty on load. The system prompt (read from
+=prompt.md=) only appeared after the user sent a message — even though the
+engine had it the whole time. Expected: present as soon as the chat opens.
+
+** Why
+The system prompt is hydrated into =app.chat= by =getChat()=. On load that
+only ran in =initialize()= (=+layout= onMount), which could race the engine
+and, once stale, never re-fetched — HMR / component updates don't re-run
+=initialize()=. The chat panel mounts lazily (a wm buffer), so by the time it
+opened, =app.chat.system_prompt= was the stale =null= from the first load. A
+message *did* refresh it because =handleAgentStream= reconciles with
+=getChat()= after each turn. Compounding it: =SystemPrompt.svelte= captured
+=currentPrompt= once via =$state(currentPrompt ?? '')= (Svelte 5 — not
+reactive to later prop changes), and =chat_reset= wiped the prompt entirely.
+
+** Fix
+- Engine: =chat_get=, =chat_reset=, and each agent turn re-read =prompt.md=
+  into =chat.system_prompt= (=src/api.rs=), so =GET /chat= always reflects the
+  file (survives reset + on-disk edits).
+- Web: =ChatBuffer= calls =app.refreshChat()= (→ =getChat()=) on mount, so the
+  panel hydrates whenever it opens — not only after the first message.
+- =SystemPrompt.svelte= resyncs its buffer when =currentPrompt= changes (a
+  guarded =$effect=), without clobbering an in-progress edit.
+- =POST /chat/system= and =PUT /ai/prompt= both write =prompt.md=, keeping the
+  chat System view and the AI-settings prompt editor in sync.
+
 * FIXED — /publish/blocks produced unsigned events for NIP-07 users
 :PROPERTIES:
 :found: 2026-05-30 (during docs/eval boundary-compliance cleanup)
