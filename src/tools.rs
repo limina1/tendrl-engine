@@ -31,6 +31,9 @@ pub enum ToolCategory {
     Search,
     /// Relay fetches — gated by `NetworkMode::Confirm` inside the engine.
     Network,
+    /// Curate the shared chat context (pull events/ideas into the reference set
+    /// the user also sees and edits).
+    Context,
     /// Propose/edit sections, save drafts.
     ComposeWrite,
     /// Sign + broadcast — always opt-in, always confirmed.
@@ -148,6 +151,12 @@ pub fn catalog() -> Vec<ToolDef> {
             input_schema: schema_list_section_versions,
         },
         ToolDef {
+            name: "add_to_context",
+            description: "Pull a reference into the shared chat context — the working set of notes the user also sees and can edit. Give an event `id`, an addressable `addr` (naddr1…/kind:pubkey:d_tag), or a raw `title`+`content` to capture an idea. Call this when something you found is worth keeping in front of you both for the rest of the conversation, instead of re-searching. The item appears in the user's Context panel.",
+            category: ToolCategory::Context,
+            input_schema: schema_add_to_context,
+        },
+        ToolDef {
             name: "propose_section",
             description: "Draft a new publication section and offer it to the user's composer. Call this when the user asks you to write, draft, or outline a section. The section is added to the composer for the user to review/edit — it is NOT published.",
             category: ToolCategory::ComposeWrite,
@@ -194,6 +203,7 @@ pub async fn dispatch(engine: &Arc<Engine>, name: &str, input: Value) -> Result<
         "view_publication" => view_publication(engine, input).await,
         "view_publication_tree" => view_publication_tree(engine, input).await,
         "list_section_versions" => list_section_versions(engine, input).await,
+        "add_to_context" => add_to_context(engine, input).await,
         "propose_section" => propose_section(input).await,
         "edit_section" => edit_section(engine, input).await,
         "save_draft" => save_draft(engine, input).await,
@@ -298,6 +308,18 @@ fn schema_view_publication_tree() -> Value {
 
 fn schema_list_section_versions() -> Value {
     schema_address_only("Section address: naddr1… or kind:pubkey:d_tag.")
+}
+
+fn schema_add_to_context() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "id": { "type": "string", "description": "64-hex event id to capture from the local index." },
+            "addr": { "type": "string", "description": "Addressable coordinate to capture: naddr1… or kind:pubkey:d_tag." },
+            "title": { "type": "string", "description": "Title for the context item. Required when giving raw content; optional override otherwise." },
+            "content": { "type": "string", "description": "Raw content to capture as an idea (use instead of id/addr)." }
+        }
+    })
 }
 
 fn schema_propose_section() -> Value {
@@ -455,6 +477,63 @@ async fn list_section_versions(engine: &Arc<Engine>, input: Value) -> Result<Val
     Ok(json!({ "count": out.len(), "versions": out }))
 }
 
+/// Capture a reference into the shared chat context. Resolves an event (by id
+/// or addressable coordinate) to title+content, or accepts a raw title+content
+/// "idea". Like the compose tools, this only *emits* a structured context item;
+/// the web folds it into its pool and syncs it to the engine (boundary rule:
+/// Rust derives the item from events, the web owns the working-set view state).
+async fn add_to_context(engine: &Arc<Engine>, input: Value) -> Result<Value> {
+    let title_override = input.get("title").and_then(Value::as_str);
+
+    // Resolve the source: addressable coordinate, then event id, then raw idea.
+    let (source_addr, source_id, resolved_title, content) =
+        if let Some(addr_str) = input.get("addr").and_then(Value::as_str) {
+            let addr = parse_address(addr_str)?;
+            let ev = engine
+                .get_addressable(addr.kind, &addr.pubkey, &addr.d_tag, FetchPolicy::LocalOnly)
+                .await?
+                .ok_or_else(|| {
+                    EngineError::NotFound(format!("no local event for address {addr_str}"))
+                })?;
+            let (title, body) = event_title_content(&ev);
+            (Some(addr), None, title, body)
+        } else if let Some(id) = input.get("id").and_then(Value::as_str) {
+            let ev = engine
+                .get_by_id(id, FetchPolicy::LocalOnly)
+                .await?
+                .ok_or_else(|| EngineError::NotFound(format!("no local event with id {id}")))?;
+            let (title, body) = event_title_content(&ev);
+            (None, Some(id.to_string()), title, body)
+        } else if let Some(raw) = input.get("content").and_then(Value::as_str) {
+            (None, None, None, raw.to_string())
+        } else {
+            return Err(EngineError::BadRequest(
+                "add_to_context: provide one of 'id', 'addr', or 'content'".into(),
+            ));
+        };
+
+    let title = title_override
+        .map(str::to_string)
+        .or(resolved_title)
+        .filter(|t| !t.trim().is_empty())
+        .unwrap_or_else(|| truncate(content.trim(), 48));
+
+    // `source_addr` matches the web `NAddr` shape ({kind, pubkey, d_tag}) so the
+    // pool can dedupe an item the user may have added from search.
+    Ok(json!({
+        "type": "context",
+        "title": title,
+        "content": content,
+        "snippet": truncate(content.trim(), 200),
+        "source_event_id": source_id,
+        "source_addr": source_addr.map(|a| json!({
+            "kind": a.kind,
+            "pubkey": a.pubkey,
+            "d_tag": a.d_tag,
+        })),
+    }))
+}
+
 /// Propose a new section. Pure structuring of the model's draft — the web
 /// folds the result into the composer for the user to review (boundary rule:
 /// Rust emits structured section data; the web decides how to apply it).
@@ -482,26 +561,9 @@ async fn edit_section(engine: &Arc<Engine>, input: Value) -> Result<Value> {
     let original = engine
         .get_addressable(addr.kind, &addr.pubkey, &addr.d_tag, FetchPolicy::LocalOnly)
         .await?;
-    let (original_content, title) = match original.as_ref() {
-        Some(ev) => {
-            let oc = ev
-                .get("content")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
-            let title = ev.get("tags").and_then(|v| v.as_array()).and_then(|tags| {
-                tags.iter().find_map(|t| {
-                    let arr = t.as_array()?;
-                    if arr.first()?.as_str()? == "title" {
-                        arr.get(1)?.as_str().map(String::from)
-                    } else {
-                        None
-                    }
-                })
-            });
-            (oc, title)
-        }
-        None => (String::new(), None),
+    let (title, original_content) = match original.as_ref() {
+        Some(ev) => event_title_content(ev),
+        None => (None, String::new()),
     };
     Ok(json!({
         "type": "section",
@@ -575,6 +637,27 @@ fn require_str<'a>(input: &'a Value, key: &str) -> Result<&'a str> {
         .get(key)
         .and_then(Value::as_str)
         .ok_or_else(|| EngineError::BadRequest(format!("missing required string field '{key}'")))
+}
+
+/// Extract `(title, content)` from an event JSON: `content` is the event body,
+/// `title` is the value of the first `["title", …]` tag if present.
+fn event_title_content(ev: &Value) -> (Option<String>, String) {
+    let content = ev
+        .get("content")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    let title = ev.get("tags").and_then(Value::as_array).and_then(|tags| {
+        tags.iter().find_map(|t| {
+            let arr = t.as_array()?;
+            if arr.first()?.as_str()? == "title" {
+                arr.get(1)?.as_str().map(String::from)
+            } else {
+                None
+            }
+        })
+    });
+    (title, content)
 }
 
 fn truncate(s: &str, n: usize) -> String {
