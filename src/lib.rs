@@ -65,20 +65,22 @@ pub mod network;
 pub mod nip11;
 pub mod nip19;
 pub mod publication;
-pub mod signing;
 pub mod query;
 pub mod relay;
 pub mod relay_store;
 pub mod relay_url;
 pub mod search;
+pub mod sessions;
+pub mod signing;
+pub mod tools;
 pub mod tree;
 pub mod user_data;
 
 // Re-export main types for convenience
 pub use config::Config;
 pub use engine::{Engine, FetchPolicy, QueryResponse, QuerySource};
-pub use network::NetworkMode;
 pub use error::{EngineError, Result};
+pub use network::NetworkMode;
 pub use publication::{
     LoadStatus, NAddr, Publication, PublicationEngine, Section, SectionVersion, TocEntry,
     KIND_PUBLICATION_INDEX, KIND_PUBLICATION_SECTION,

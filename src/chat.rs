@@ -4,6 +4,7 @@
 //! and message serialization. No IO — the async wiring lives in the
 //! tree command/engine layer.
 
+use crate::llm::{AgentMessage, ContentBlock};
 use crate::publication::NAddr;
 use std::collections::HashSet;
 
@@ -34,12 +35,19 @@ impl ChatRole {
     }
 }
 
-/// A single fragment in the conversation
+/// A single fragment in the conversation.
+///
+/// `blocks` carries structured agent content (text / thinking / tool_use /
+/// tool_result) when this fragment came from the tool-calling loop; it is
+/// `None` for plain text fragments. A `User` fragment whose `blocks` hold
+/// `tool_result`s represents the results answering the preceding assistant
+/// turn (Anthropic puts tool results in a user message).
 #[derive(Debug, Clone)]
 pub struct ChatFragment {
     pub role: ChatRole,
     pub content: String,
     pub id: usize,
+    pub blocks: Option<Vec<ContentBlock>>,
 }
 
 /// A note injected as context for the LLM
@@ -116,6 +124,7 @@ impl ChatState {
             role: ChatRole::User,
             content: self.input.clone(),
             id,
+            blocks: None,
         });
         self.input.clear();
         self.input_cursor = 0;
@@ -129,7 +138,104 @@ impl ChatState {
             role: ChatRole::Assistant,
             content,
             id,
+            blocks: None,
         });
+    }
+
+    /// Append a plain User fragment (no blocks). Returns its id.
+    pub fn push_user(&mut self, content: String) -> usize {
+        let id = self.next_id();
+        self.fragments.push(ChatFragment {
+            role: ChatRole::User,
+            content,
+            id,
+            blocks: None,
+        });
+        id
+    }
+
+    /// Append a fragment with explicit role/content/blocks (used to restore a
+    /// saved session verbatim). Returns its id.
+    pub fn push_raw_fragment(
+        &mut self,
+        role: ChatRole,
+        content: String,
+        blocks: Option<Vec<ContentBlock>>,
+    ) -> usize {
+        let id = self.next_id();
+        self.fragments.push(ChatFragment {
+            role,
+            content,
+            id,
+            blocks,
+        });
+        id
+    }
+
+    /// Append a fragment carrying structured agent blocks. `content` is a
+    /// plain-text fallback (the concatenated text blocks) for display/legacy.
+    pub fn push_agent_fragment(
+        &mut self,
+        role: ChatRole,
+        content: String,
+        blocks: Vec<ContentBlock>,
+    ) -> usize {
+        let id = self.next_id();
+        self.fragments.push(ChatFragment {
+            role,
+            content,
+            id,
+            blocks: Some(blocks),
+        });
+        id
+    }
+
+    /// Build the conversation as provider-neutral [`AgentMessage`]s for the
+    /// tool-calling loop. A `User` fragment carrying `tool_result` blocks maps
+    /// to [`AgentMessage::ToolResults`] (Anthropic places results in a user
+    /// turn); assistant fragments map to [`AgentMessage::Assistant`] preserving
+    /// their `tool_use` blocks so multi-turn history is well-formed.
+    pub fn to_agent_messages(&self) -> Vec<AgentMessage> {
+        let mut messages = Vec::new();
+
+        if let Some(ref prompt) = self.system_prompt {
+            messages.push(AgentMessage::System(prompt.clone()));
+        }
+        if !self.injected_context.is_empty() {
+            let context_str: Vec<String> = self
+                .injected_context
+                .iter()
+                .map(|note| format!("# {}\n{}", note.title, note.content))
+                .collect();
+            messages.push(AgentMessage::System(format!(
+                "Reference context:\n\n{}",
+                context_str.join("\n\n---\n\n")
+            )));
+        }
+
+        for frag in &self.fragments {
+            match (&frag.role, &frag.blocks) {
+                (ChatRole::System, _) => messages.push(AgentMessage::System(frag.content.clone())),
+                (ChatRole::User, Some(blocks))
+                    if blocks
+                        .iter()
+                        .any(|b| matches!(b, ContentBlock::ToolResult { .. })) =>
+                {
+                    messages.push(AgentMessage::ToolResults(blocks.clone()));
+                }
+                (ChatRole::User, _) => messages.push(AgentMessage::User(frag.content.clone())),
+                (ChatRole::Assistant, Some(blocks)) => {
+                    messages.push(AgentMessage::Assistant(blocks.clone()))
+                }
+                (ChatRole::Assistant, None) => {
+                    messages.push(AgentMessage::Assistant(vec![ContentBlock::Text {
+                        text: frag.content.clone(),
+                    }]))
+                }
+            }
+        }
+
+        messages
     }
 
     /// Build the full message list for sending to an LLM
@@ -174,7 +280,12 @@ impl ChatState {
             .into_iter()
             .map(|(role, content)| {
                 let id = self.next_id();
-                ChatFragment { role, content, id }
+                ChatFragment {
+                    role,
+                    content,
+                    id,
+                    blocks: None,
+                }
             })
             .collect();
     }
@@ -236,7 +347,12 @@ impl ChatState {
             .into_iter()
             .map(|(role, content)| {
                 let id = self.next_id();
-                ChatFragment { role, content, id }
+                ChatFragment {
+                    role,
+                    content,
+                    id,
+                    blocks: None,
+                }
             })
             .collect();
         self.edit_mode = false;
@@ -426,8 +542,16 @@ mod tests {
     fn test_chat_inject_clear_remove_context() {
         let mut state = ChatState::new();
         state.inject_context(vec![
-            InjectedNote { addr: None, title: "A".into(), content: "aaa".into() },
-            InjectedNote { addr: None, title: "B".into(), content: "bbb".into() },
+            InjectedNote {
+                addr: None,
+                title: "A".into(),
+                content: "aaa".into(),
+            },
+            InjectedNote {
+                addr: None,
+                title: "B".into(),
+                content: "bbb".into(),
+            },
         ]);
         assert_eq!(state.injected_context.len(), 2);
 

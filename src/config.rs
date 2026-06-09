@@ -234,9 +234,15 @@ impl RelayConfig {
     /// Get all unique relay URLs across all working sets.
     pub fn all_urls(&self) -> Vec<String> {
         let mut urls = std::collections::HashSet::new();
-        for u in &self.general.urls { urls.insert(u.clone()); }
-        for u in &self.publish.urls { urls.insert(u.clone()); }
-        for u in &self.fetch.urls { urls.insert(u.clone()); }
+        for u in &self.general.urls {
+            urls.insert(u.clone());
+        }
+        for u in &self.publish.urls {
+            urls.insert(u.clone());
+        }
+        for u in &self.fetch.urls {
+            urls.insert(u.clone());
+        }
         urls.into_iter().collect()
     }
 
@@ -359,12 +365,24 @@ pub struct EmbeddingConfig {
     pub embed_kinds: Vec<u16>,
 }
 
-fn default_embedding_backend() -> String { "python".to_string() }
-fn default_sidecar_url() -> String { "http://localhost:3031".to_string() }
-fn default_embedding_model() -> String { "all-MiniLM-L6-v2".to_string() }
-fn default_dimensions() -> usize { 384 }
-fn default_embed_kinds() -> Vec<u16> { crate::embedding::DEFAULT_EMBED_KINDS.to_vec() }
-fn default_auto_embed() -> bool { true }
+fn default_embedding_backend() -> String {
+    "python".to_string()
+}
+fn default_sidecar_url() -> String {
+    "http://localhost:3031".to_string()
+}
+fn default_embedding_model() -> String {
+    "all-MiniLM-L6-v2".to_string()
+}
+fn default_dimensions() -> usize {
+    384
+}
+fn default_embed_kinds() -> Vec<u16> {
+    crate::embedding::DEFAULT_EMBED_KINDS.to_vec()
+}
+fn default_auto_embed() -> bool {
+    true
+}
 
 impl Default for EmbeddingConfig {
     fn default() -> Self {
@@ -377,6 +395,67 @@ impl Default for EmbeddingConfig {
             index_path: None,
             auto_embed: default_auto_embed(),
             embed_kinds: default_embed_kinds(),
+        }
+    }
+}
+
+/// AI / LLM provider configuration (the `[ai]` block).
+///
+/// Carries the provider selection, the agent/chat model, and the auth channel.
+/// Secrets are **never** stored here — they come from the environment
+/// (`ANTHROPIC_API_KEY` for `auth = "api_key"`, `ANTHROPIC_AUTH_TOKEN` for
+/// `auth = "oauth"`). See `docs/ai-tools-architecture.md` for the channel /
+/// billing distinction.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AiConfig {
+    /// Active provider: `"claude"` (default) or `"noop"` (echo, testing).
+    #[serde(default = "default_ai_provider")]
+    pub provider: String,
+    /// Chat/agent model id. Defaults to a strong model — agentic tool
+    /// selection is where the capability gap shows, so this is intentionally
+    /// not the cheap chat model.
+    #[serde(default = "default_ai_model")]
+    pub model: String,
+    /// Auth channel: `"api_key"` (Developer Platform, per-token) or `"oauth"`
+    /// (subscription bearer token, hand-supplied via `ANTHROPIC_AUTH_TOKEN`).
+    #[serde(default = "default_ai_auth")]
+    pub auth: String,
+    /// Hard cap on tool round-trips within a single agent turn (runaway guard).
+    #[serde(default = "default_max_tool_turns")]
+    pub max_tool_turns: usize,
+    /// Explicit enabled-tool allowlist (tool names). `None` ⇒ the default
+    /// "everything but publish" policy. Persisted by the AI Tools settings tab.
+    #[serde(default)]
+    pub enabled_tools: Option<Vec<String>>,
+    /// Path to a Markdown file prepended to the agent's system prompt, re-read
+    /// each turn so edits apply live. Relative paths resolve against the config
+    /// file's directory. Defaults to `prompt.md`.
+    #[serde(default)]
+    pub system_prompt_path: Option<String>,
+}
+
+fn default_ai_provider() -> String {
+    "claude".to_string()
+}
+fn default_ai_model() -> String {
+    "claude-sonnet-4-6".to_string()
+}
+fn default_ai_auth() -> String {
+    "api_key".to_string()
+}
+fn default_max_tool_turns() -> usize {
+    25
+}
+
+impl Default for AiConfig {
+    fn default() -> Self {
+        Self {
+            provider: default_ai_provider(),
+            model: default_ai_model(),
+            auth: default_ai_auth(),
+            max_tool_turns: default_max_tool_turns(),
+            enabled_tools: None,
+            system_prompt_path: None,
         }
     }
 }
@@ -411,6 +490,9 @@ pub struct Config {
     /// Composer UI defaults (edit mode, sync mode, button labels)
     #[serde(default)]
     pub compose: ComposeConfig,
+    /// AI / LLM provider settings (`[ai]` block)
+    #[serde(default)]
+    pub ai: AiConfig,
 }
 
 /// Editor surface defaults. Mirrors the in-memory state in
@@ -427,9 +509,15 @@ pub struct EditorConfig {
     pub insert_mode: String,
 }
 
-fn default_line_numbers() -> bool { true }
-fn default_vim_mode() -> bool { true }
-fn default_insert_mode() -> String { "cursor".to_string() }
+fn default_line_numbers() -> bool {
+    true
+}
+fn default_vim_mode() -> bool {
+    true
+}
+fn default_insert_mode() -> String {
+    "cursor".to_string()
+}
 
 impl Default for EditorConfig {
     fn default() -> Self {
@@ -455,9 +543,15 @@ pub struct ComposeConfig {
     pub button_labels: String,
 }
 
-fn default_compose_mode() -> String { "full".to_string() }
-fn default_sync_mode() -> String { "reactive".to_string() }
-fn default_button_labels() -> String { "icon".to_string() }
+fn default_compose_mode() -> String {
+    "full".to_string()
+}
+fn default_sync_mode() -> String {
+    "reactive".to_string()
+}
+fn default_button_labels() -> String {
+    "icon".to_string()
+}
 
 impl Default for ComposeConfig {
     fn default() -> Self {
