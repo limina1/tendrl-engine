@@ -151,6 +151,12 @@ pub fn catalog() -> Vec<ToolDef> {
             input_schema: schema_list_section_versions,
         },
         ToolDef {
+            name: "fetch_from_relays",
+            description: "Run a Nostr query against the network (relays), not just the local index. Use this when local search comes up empty or the user explicitly wants fresh/remote events. Takes the same query DSL as search_events but a plain Nostr filter — NOT semantic (~:) search. In Confirm network mode this pops a confirmation the user must approve before any relay is contacted; if they decline, the tool returns approved:false and you should fall back to local results.",
+            category: ToolCategory::Network,
+            input_schema: schema_fetch_from_relays,
+        },
+        ToolDef {
             name: "add_to_context",
             description: "Pull a reference into the shared chat context — the working set of notes the user also sees and can edit. Give an event `id`, an addressable `addr` (naddr1…/kind:pubkey:d_tag), or a raw `title`+`content` to capture an idea. Call this when something you found is worth keeping in front of you both for the rest of the conversation, instead of re-searching. The item appears in the user's Context panel.",
             category: ToolCategory::Context,
@@ -173,6 +179,12 @@ pub fn catalog() -> Vec<ToolDef> {
             description: "Assemble a title + sections into a local NKBIP-01 draft and persist it (unsigned, unpublished) so the user can resume it later. Call this when the user asks you to save the draft you've assembled.",
             category: ToolCategory::ComposeWrite,
             input_schema: schema_save_draft,
+        },
+        ToolDef {
+            name: "publish",
+            description: "Broadcast an event that ALREADY EXISTS locally (by its 64-hex id) to relays. This does NOT sign or create content — signing is a deliberate user action; this only performs the separate broadcast step for something already signed (e.g. a snapshot the user made). In Confirm mode it pops a publish confirmation the user must approve. Disabled by default; only call it when the user has explicitly asked to broadcast a specific local event.",
+            category: ToolCategory::Publish,
+            input_schema: schema_publish,
         },
     ]
 }
@@ -203,10 +215,12 @@ pub async fn dispatch(engine: &Arc<Engine>, name: &str, input: Value) -> Result<
         "view_publication" => view_publication(engine, input).await,
         "view_publication_tree" => view_publication_tree(engine, input).await,
         "list_section_versions" => list_section_versions(engine, input).await,
+        "fetch_from_relays" => fetch_from_relays(engine, input).await,
         "add_to_context" => add_to_context(engine, input).await,
         "propose_section" => propose_section(input).await,
         "edit_section" => edit_section(engine, input).await,
         "save_draft" => save_draft(engine, input).await,
+        "publish" => publish(engine, input).await,
         other => Err(EngineError::BadRequest(format!("unknown tool: {other}"))),
     }
 }
@@ -308,6 +322,35 @@ fn schema_view_publication_tree() -> Value {
 
 fn schema_list_section_versions() -> Value {
     schema_address_only("Section address: naddr1… or kind:pubkey:d_tag.")
+}
+
+fn schema_fetch_from_relays() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "query": {
+                "type": "string",
+                "description": "Nostr query DSL (same as search_events): 'k:30040', 'by:name:alice', '\"exact phrase\"', 'has:title', an naddr1…/nevent1…/note1… entity, etc. Do NOT use ~: semantic search here — relays only understand plain filters."
+            },
+            "limit": { "type": "integer", "description": "Max results to return." }
+        },
+        "required": ["query"]
+    })
+}
+
+fn schema_publish() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "id": { "type": "string", "description": "64-hex id of a local, already-signed event to broadcast." },
+            "relays": {
+                "type": "array",
+                "items": { "type": "string" },
+                "description": "Optional relay URLs to broadcast to (defaults to the configured publish relays)."
+            }
+        },
+        "required": ["id"]
+    })
 }
 
 fn schema_add_to_context() -> Value {
@@ -477,6 +520,53 @@ async fn list_section_versions(engine: &Arc<Engine>, input: Value) -> Result<Val
     Ok(json!({ "count": out.len(), "versions": out }))
 }
 
+/// Run a plain Nostr query against relays. Gated through the SAME flow as a
+/// user-initiated relay search: `begin_fetch_operation` emits an Intent that,
+/// in Confirm mode, blocks on the FetchConfirmModal until the user approves (or
+/// declines → `FetchCancelled`). Auto mode proceeds immediately.
+async fn fetch_from_relays(engine: &Arc<Engine>, input: Value) -> Result<Value> {
+    let q = require_str(&input, "query")?;
+    let mut query = SearchQuery::parse(q)
+        .map_err(|e| EngineError::BadRequest(format!("invalid query: {e}")))?;
+    if let Some(limit) = input.get("limit").and_then(Value::as_u64) {
+        query.limit = Some(limit as usize);
+    }
+
+    let relays = engine.relay_config().all_urls();
+    let op = match engine
+        .begin_fetch_operation(
+            crate::network::FetchPattern::Search,
+            format!("AI relay search: {}", truncate(q, 60)),
+            vec![format!("Query relays for: {q}")],
+            relays,
+        )
+        .await
+    {
+        Ok(o) => o,
+        Err(_) => {
+            return Ok(json!({
+                "approved": false,
+                "note": "The user declined the relay fetch; use local results instead.",
+            }));
+        }
+    };
+
+    let chosen = op.relays().to_vec();
+    let resp = engine
+        .search_with_options(&query, FetchPolicy::FetchAlways, Some(&chosen), true)
+        .await?;
+    op.complete(resp.count);
+
+    let results: Vec<Value> = resp.results.iter().map(compact_result).collect();
+    Ok(json!({
+        "approved": true,
+        "count": resp.count,
+        "local_count": resp.local_count,
+        "relay_count": resp.relay_count,
+        "results": results,
+    }))
+}
+
 /// Capture a reference into the shared chat context. Resolves an event (by id
 /// or addressable coordinate) to title+content, or accepts a raw title+content
 /// "idea". Like the compose tools, this only *emits* a structured context item;
@@ -625,6 +715,87 @@ async fn save_draft(engine: &Arc<Engine>, input: Value) -> Result<Value> {
         "draft_id": draft_id,
         "d_tag": compose.d_tag,
         "section_count": compose.sections.len(),
+    }))
+}
+
+/// Broadcast an already-signed local event to relays — the deliberate
+/// "broadcast" step, decoupled from signing (which stays a user action). Gated
+/// through `begin_publish_operation` (PublishConfirmModal in Confirm mode). On
+/// success, records relay provenance so the feed pill flips local → published.
+async fn publish(engine: &Arc<Engine>, input: Value) -> Result<Value> {
+    let id = require_str(&input, "id")?;
+    let event = engine
+        .get_by_id(id, FetchPolicy::LocalOnly)
+        .await?
+        .ok_or_else(|| EngineError::NotFound(format!("no local event with id {id}")))?;
+    let event_json =
+        serde_json::to_string(&event).map_err(|e| EngineError::Other(format!("serialize: {e}")))?;
+
+    let relays = input
+        .get("relays")
+        .and_then(Value::as_array)
+        .map(|a| {
+            a.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect::<Vec<_>>()
+        })
+        .filter(|v| !v.is_empty())
+        .unwrap_or_else(|| engine.publish_relays());
+
+    let op = match engine
+        .begin_publish_operation(
+            format!(
+                "AI broadcast {} to {} relay(s)",
+                truncate(id, 12),
+                relays.len()
+            ),
+            relays.clone(),
+            vec![id.to_string()],
+            None,
+            None,
+        )
+        .await
+    {
+        Ok(o) => o,
+        Err(_) => {
+            return Ok(json!({
+                "published": false,
+                "note": "The user declined to broadcast this event.",
+            }));
+        }
+    };
+
+    let chosen = op.relays().to_vec();
+    for url in &chosen {
+        op.relay_status(url.clone(), crate::network::RelayStatusValue::Connecting);
+    }
+    let (accepted, rejected, results) =
+        crate::relay::publish_events_to_relays(&chosen, &[event_json.clone()]).await;
+    for r in &results {
+        let status = if r.success {
+            crate::network::RelayStatusValue::Accepted
+        } else {
+            crate::network::RelayStatusValue::Rejected {
+                msg: r.message.clone().unwrap_or_default(),
+            }
+        };
+        op.relay_status(r.relay_url.clone(), status);
+        if r.success {
+            // Best-effort provenance — failure only delays the feed pill flip.
+            let _ = engine.record_event_relay(&event_json, &r.relay_url);
+        }
+    }
+    op.complete(accepted);
+
+    let out: Vec<Value> = results
+        .iter()
+        .map(|r| json!({ "relay": r.relay_url, "success": r.success, "message": r.message }))
+        .collect();
+    Ok(json!({
+        "published": accepted > 0,
+        "accepted": accepted,
+        "rejected": rejected,
+        "results": out,
     }))
 }
 
