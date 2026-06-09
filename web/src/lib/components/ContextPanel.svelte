@@ -33,10 +33,26 @@
 	} = $props();
 
 	let checkedIds: Set<string> = $state(new Set());
+	// "Peek" model: pristine items render as a compact snippet you can skim;
+	// click to expand into the editable textarea. Modified items always expand
+	// (you're working on them). Tracks the *explicitly* expanded ids.
+	let expandedIds: Set<string> = $state(new Set());
 	let trashPending: ContextItem[] = $state([]);
 	let trashTimer: ReturnType<typeof setTimeout> | null = $state(null);
 	let trashCountdown = $state(0);
 	let countdownInterval: ReturnType<typeof setInterval> | null = $state(null);
+
+	function togglePeek(id: string) {
+		const next = new Set(expandedIds);
+		if (next.has(id)) next.delete(id);
+		else next.add(id);
+		expandedIds = next;
+	}
+
+	function snippet(text: string): string {
+		const t = text.trim().replace(/\s+/g, ' ');
+		return t.length > 160 ? t.slice(0, 160) + '…' : t || '(empty)';
+	}
 
 	function toggleCheck(id: string) {
 		const next = new Set(checkedIds);
@@ -132,6 +148,7 @@
 	<div class="context-list">
 		{#each entries as entry (entry.id)}
 			{@const contextModified = entry.context_content !== entry.original_content}
+			{@const expanded = expandedIds.has(entry.id) || contextModified}
 			<div class="context-card" class:modified={contextModified}>
 				<div class="card-header">
 					<label class="check">
@@ -141,6 +158,13 @@
 							onchange={() => toggleCheck(entry.id)}
 						/>
 					</label>
+					<button
+						class="peek-toggle"
+						onclick={() => togglePeek(entry.id)}
+						disabled={contextModified}
+						title={contextModified ? 'Modified — always expanded' : expanded ? 'Collapse' : 'Peek / expand'}
+						aria-expanded={expanded}
+					>{expanded ? '▾' : '▸'}</button>
 					<input
 						class="card-title"
 						value={entry.title}
@@ -152,18 +176,26 @@
 					<button class="icon-btn-sm" onclick={() => onsenditemtocompose(entry.id)} disabled={disabled} title="Send to compose">□</button>
 					<button class="remove-btn" onclick={() => onremove(entry.id)} {disabled}>×</button>
 				</div>
-				<textarea
-					value={entry.context_content}
-					oninput={(e) => onupdate(entry.id, entry.title, e.currentTarget.value)}
-					placeholder="Content..."
-					rows="3"
-					disabled={disabled || entry.readonly}
-				></textarea>
-				{#if contextModified}
-					<div class="modified-banner">
-						<span>Modified</span>
-						<button class="reset-btn" onclick={() => onreset(entry.id)} {disabled}>Reset</button>
-					</div>
+				{#if expanded}
+					<textarea
+						value={entry.context_content}
+						oninput={(e) => onupdate(entry.id, entry.title, e.currentTarget.value)}
+						placeholder="Content..."
+						rows="3"
+						disabled={disabled || entry.readonly}
+					></textarea>
+					{#if contextModified}
+						<div class="modified-banner">
+							<span>Modified</span>
+							<button class="reset-btn" onclick={() => onreset(entry.id)} {disabled}>Reset</button>
+						</div>
+					{/if}
+				{:else}
+					<button
+						class="peek-snippet"
+						onclick={() => togglePeek(entry.id)}
+						title="Peek / expand"
+					>{snippet(entry.context_content)}</button>
 				{/if}
 			</div>
 		{/each}
@@ -294,6 +326,37 @@
 
 	.card-title:focus {
 		border-color: var(--accent);
+	}
+
+	.peek-toggle {
+		padding: 2px 4px;
+		font-size: 0.7rem;
+		min-width: 18px;
+		line-height: 1;
+		color: var(--fg-muted);
+	}
+
+	.peek-snippet {
+		text-align: left;
+		width: 100%;
+		font-size: 0.78rem;
+		line-height: 1.4;
+		color: var(--fg-muted);
+		background: transparent;
+		border: 1px dashed var(--border);
+		border-radius: var(--radius);
+		padding: 6px 8px;
+		cursor: pointer;
+		display: -webkit-box;
+		-webkit-line-clamp: 2;
+		line-clamp: 2;
+		-webkit-box-orient: vertical;
+		overflow: hidden;
+	}
+
+	.peek-snippet:hover {
+		border-color: var(--accent);
+		color: var(--fg);
 	}
 
 	.icon-btn-sm {
