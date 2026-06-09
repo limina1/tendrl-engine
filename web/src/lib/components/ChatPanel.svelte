@@ -1,5 +1,6 @@
 <script lang="ts">
 	import type { ChatResponse, ContextItem, Fragment, SyncMode, ClaudeSessionSummary, ClaudeSessionMessage } from '$lib/types';
+	import type { SavedSessionSummary } from '$lib/api';
 	import ChatLog from './ChatLog.svelte';
 	import ChatInput from './ChatInput.svelte';
 	import EditView from './EditView.svelte';
@@ -43,7 +44,11 @@
 		ontogglesessions,
 		onclaudesessionselect,
 		onclaudesessionback,
-		onloadsessiontochat
+		onloadsessiontochat,
+		savedSessions = [],
+		onsavechat,
+		onloadsavedsession,
+		ondeletesavedsession
 	}: {
 		chat: ChatResponse | null;
 		loading?: boolean;
@@ -81,6 +86,10 @@
 		onclaudesessionselect?: (id: string) => void;
 		onclaudesessionback?: () => void;
 		onloadsessiontochat?: (session: { id: string; messages: ClaudeSessionMessage[] }) => void;
+		savedSessions?: SavedSessionSummary[];
+		onsavechat?: () => void;
+		onloadsavedsession?: (id: string) => void;
+		ondeletesavedsession?: (id: string) => void;
 	} = $props();
 
 	let checkedFragmentIds: Set<number> = $state(new Set());
@@ -148,6 +157,11 @@
 		<button onclick={onedit} disabled={loading || (chat?.edit_mode ?? false)}>Edit</button>
 		<button onclick={onreset} disabled={loading}>Reset</button>
 		<button onclick={ontogglesessions} class:active={sessionsExpanded} disabled={loading}>Sessions</button>
+		<button
+			onclick={() => onsavechat?.()}
+			disabled={loading || visibleFragments.length === 0}
+			title="Save this chat to your sessions folder">Save</button
+		>
 		<span class="toolbar-spacer"></span>
 		<button class="sel-btn" onclick={selectAllFragments} disabled={loading || visibleFragments.length === 0} title="Select all">All</button>
 		<button class="sel-btn" onclick={invertFragmentSelection} disabled={loading || visibleFragments.length === 0} title="Invert selection">Inv</button>
@@ -184,6 +198,32 @@
 
 	{#if sessionsExpanded}
 		<div class="sessions-container">
+			<div class="saved-sessions">
+				<div class="saved-sessions-title">Saved chats</div>
+				{#if (savedSessions ?? []).length === 0}
+					<p class="saved-empty">No saved chats yet — use “Save” to keep this one.</p>
+				{:else}
+					{#each savedSessions ?? [] as s (s.id)}
+						<div class="saved-row">
+							<button
+								class="saved-load"
+								onclick={() => onloadsavedsession?.(s.id)}
+								disabled={loading}
+								title="Load this chat"
+							>
+								<span class="saved-title">{s.title}</span>
+								<span class="saved-meta">{s.message_count} msg{s.message_count === 1 ? '' : 's'}</span>
+							</button>
+							<button
+								class="saved-del"
+								onclick={() => ondeletesavedsession?.(s.id)}
+								disabled={loading}
+								title="Delete saved chat">🗑</button
+							>
+						</div>
+					{/each}
+				{/if}
+			</div>
 			<ClaudeSessionView
 				sessions={claudeSessions ?? []}
 				selectedSession={claudeSessionDetail ?? null}
@@ -290,4 +330,78 @@
 		border-bottom: 1px solid var(--border);
 	}
 
+	.saved-sessions {
+		flex-shrink: 0;
+		max-height: 40%;
+		overflow-y: auto;
+		padding: 8px;
+		border-bottom: 1px solid var(--border);
+		background: var(--bg-surface);
+	}
+
+	.saved-sessions-title {
+		font-size: 0.72rem;
+		font-weight: 600;
+		text-transform: uppercase;
+		letter-spacing: 0.05em;
+		color: var(--fg-muted);
+		margin-bottom: 6px;
+	}
+
+	.saved-empty {
+		font-size: 0.8rem;
+		color: var(--fg-muted);
+		margin: 4px 0;
+	}
+
+	.saved-row {
+		display: flex;
+		align-items: center;
+		gap: 4px;
+	}
+
+	.saved-load {
+		flex: 1;
+		min-width: 0;
+		display: flex;
+		justify-content: space-between;
+		align-items: baseline;
+		gap: 8px;
+		text-align: left;
+		padding: 5px 8px;
+		background: transparent;
+		border: none;
+		border-radius: 4px;
+		color: var(--fg);
+		cursor: pointer;
+	}
+
+	.saved-load:hover:not(:disabled) {
+		background: var(--bg-hover, rgba(127, 127, 127, 0.12));
+	}
+
+	.saved-title {
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	.saved-meta {
+		flex-shrink: 0;
+		font-size: 0.72rem;
+		color: var(--fg-muted);
+	}
+
+	.saved-del {
+		flex-shrink: 0;
+		background: transparent;
+		border: none;
+		cursor: pointer;
+		opacity: 0.6;
+		padding: 2px 4px;
+	}
+
+	.saved-del:hover:not(:disabled) {
+		opacity: 1;
+	}
 </style>

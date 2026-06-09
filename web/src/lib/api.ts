@@ -49,6 +49,134 @@ export function sendMessage(content: string): Promise<ChatResponse> {
 	return fetchJson<ChatResponse>(`${CHAT}/message`, { method: 'POST', body: JSON.stringify(body) });
 }
 
+/** A tool in the AI catalog with its live enablement. */
+export interface AiToolInfo {
+	name: string;
+	description: string;
+	category: string;
+	enabled: boolean;
+}
+
+/** Current AI assistant settings (provider/model/auth + tool catalog). */
+export interface AiSettings {
+	provider: string;
+	model: string;
+	auth: string;
+	max_tool_turns: number;
+	tools: AiToolInfo[];
+}
+
+/** Partial AI settings update; all fields optional. */
+export interface AiSettingsUpdate {
+	enabled_tools?: string[];
+	provider?: string;
+	model?: string;
+	auth?: string;
+}
+
+export function getAiSettings(): Promise<AiSettings> {
+	return fetchJson<AiSettings>('/api/v1/ai/settings');
+}
+
+export function saveAiSettings(update: AiSettingsUpdate): Promise<AiSettings> {
+	return fetchJson<AiSettings>('/api/v1/ai/settings', {
+		method: 'POST',
+		body: JSON.stringify(update)
+	});
+}
+
+/** Summary of a saved tendrl chat session (under <data_dir>/sessions/). */
+export interface SavedSessionSummary {
+	id: string;
+	title: string;
+	created_at: number;
+	modified_at: number;
+	message_count: number;
+}
+
+export function saveChatSession(title?: string): Promise<{ id: string; title: string }> {
+	return fetchJson('/api/v1/chat/sessions', {
+		method: 'POST',
+		body: JSON.stringify({ title: title ?? null })
+	});
+}
+
+export function listChatSessions(): Promise<{ sessions: SavedSessionSummary[]; count: number }> {
+	return fetchJson('/api/v1/chat/sessions');
+}
+
+export function loadChatSession(id: string): Promise<ChatResponse> {
+	return fetchJson(`/api/v1/chat/sessions/${encodeURIComponent(id)}`);
+}
+
+export function deleteChatSession(id: string): Promise<{ deleted: boolean }> {
+	return fetchJson(`/api/v1/chat/sessions/${encodeURIComponent(id)}`, { method: 'DELETE' });
+}
+
+/** The editable Markdown system prompt prepended to every agent turn. */
+export function getAiPrompt(): Promise<{ content: string; path: string }> {
+	return fetchJson('/api/v1/ai/prompt');
+}
+
+export function saveAiPrompt(content: string): Promise<{ saved: boolean; path: string }> {
+	return fetchJson('/api/v1/ai/prompt', {
+		method: 'PUT',
+		body: JSON.stringify({ content })
+	});
+}
+
+/** One event from the agent SSE stream: `{ type, data }`. */
+export interface AgentEvent {
+	type: 'text' | 'thinking' | 'tool_call' | 'tool_result' | 'done' | 'error';
+	data: Record<string, unknown>;
+}
+
+/**
+ * POST a user turn to the tool-calling agent loop and stream the transcript.
+ * The response body is an SSE stream (request-scoped — not the global
+ * fetch-events channel); each `data:` frame is one {@link AgentEvent}.
+ * `onEvent` is invoked per event; the promise resolves when the stream ends.
+ */
+export async function streamAgentTurn(
+	content: string,
+	onEvent: (ev: AgentEvent) => void
+): Promise<void> {
+	const res = await fetch(`${CHAT}/agent`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ content })
+	});
+	if (!res.ok || !res.body) {
+		const text = await res.text().catch(() => '');
+		throw new Error(`${res.status}: ${text}`);
+	}
+	const reader = res.body.getReader();
+	const decoder = new TextDecoder();
+	let buf = '';
+	for (;;) {
+		const { done, value } = await reader.read();
+		if (done) break;
+		buf += decoder.decode(value, { stream: true });
+		let sep: number;
+		// SSE frames are separated by a blank line.
+		while ((sep = buf.indexOf('\n\n')) !== -1) {
+			const frame = buf.slice(0, sep);
+			buf = buf.slice(sep + 2);
+			for (const line of frame.split('\n')) {
+				const t = line.trim();
+				if (!t.startsWith('data:')) continue;
+				const payload = t.slice(5).trim();
+				if (!payload) continue;
+				try {
+					onEvent(JSON.parse(payload) as AgentEvent);
+				} catch (e) {
+					console.error('[agent] bad SSE frame', e, payload);
+				}
+			}
+		}
+	}
+}
+
 export function enterEditMode(): Promise<ChatResponse> {
 	return fetchJson<ChatResponse>(`${CHAT}/edit`, { method: 'POST' });
 }

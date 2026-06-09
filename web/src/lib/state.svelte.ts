@@ -14,6 +14,7 @@ import type {
 	ComposeState,
 	ContextItem,
 	Fragment,
+	ClaudeSessionBlock,
 	TagEntry,
 	ViewMode,
 	DocMode,
@@ -498,6 +499,9 @@ function _createAppState() {
 	let claudeSessionsLoading = $state(false);
 	let sessionsExpanded = $state(false);
 	let sessionPollInterval: ReturnType<typeof setInterval> | null = null;
+
+	// --- Saved tendrl chat sessions (data_dir/sessions/) ---
+	let savedSessions: api.SavedSessionSummary[] = $state([]);
 	let watchingSessionId: string | null = null;
 	let loadedSessionId: string | null = null;
 	let loadedSessionMessageCount = 0;
@@ -1085,9 +1089,133 @@ function _createAppState() {
 		}
 		chatLoading = true;
 		try {
-			chat = await api.sendMessage(content);
+			await handleAgentStream(content);
 		} finally {
 			chatLoading = false;
+		}
+	}
+
+	/**
+	 * Drive one tool-calling agent turn over the SSE stream, rendering blocks
+	 * live into a transient assistant fragment, then reconcile against the
+	 * canonical persisted state (which has properly merged per-turn blocks).
+	 * The optimistic user fragment was already appended by the caller.
+	 */
+	async function handleAgentStream(content: string) {
+		if (!chat) return;
+		const liveId = Math.max(0, ...chat.fragments.map((f) => f.id)) + 1;
+		const blocks: ClaudeSessionBlock[] = [];
+		let text = '';
+
+		const render = () => {
+			if (!chat) return;
+			const frags = chat.fragments.slice();
+			const live: Fragment = { id: liveId, role: 'assistant', content: text, blocks: [...blocks] };
+			if (frags.length && frags[frags.length - 1].id === liveId) {
+				frags[frags.length - 1] = live;
+			} else {
+				frags.push(live);
+			}
+			chat = { ...chat, fragments: frags, fragment_count: frags.length };
+		};
+		render();
+
+		let streamOk = true;
+		try {
+			await api.streamAgentTurn(content, (ev) => {
+				const d = ev.data ?? {};
+				switch (ev.type) {
+					case 'text':
+						text += (d.text as string) ?? '';
+						blocks.push({ type: 'text', text: (d.text as string) ?? '' });
+						break;
+					case 'thinking':
+						blocks.push({ type: 'thinking', thinking: (d.thinking as string) ?? '' });
+						break;
+					case 'tool_call':
+						blocks.push({ type: 'tool_use', name: d.name as string, input: d.input });
+						break;
+					case 'tool_result':
+						blocks.push({ type: 'tool_result', content: (d.content as string) ?? '' });
+						applyComposeToolResult(d);
+						break;
+					case 'error':
+						blocks.push({ type: 'text', text: `⚠️ ${(d.message as string) ?? 'agent error'}` });
+						break;
+					case 'done':
+						break;
+				}
+				render();
+			});
+		} catch (e) {
+			// Surface the failure in-place instead of silently dropping the turn
+			// (e.g. a 404 from an engine without the agent route).
+			streamOk = false;
+			console.error('agent stream failed:', e);
+			blocks.push({ type: 'text', text: `⚠️ ${e instanceof Error ? e.message : String(e)}` });
+			render();
+		}
+
+		// Reconcile with the canonical persisted conversation only when the
+		// turn streamed successfully — otherwise the refetch could overwrite the
+		// optimistic message (and the error block) with stale server state.
+		if (streamOk) {
+			try {
+				chat = await api.getChat();
+			} catch {
+				/* keep the live view if the refetch fails */
+			}
+		}
+	}
+
+	/**
+	 * Fold a compose-write tool result into the composer (propose_section /
+	 * edit_section add a reviewable section to the pool) or confirm persistence
+	 * (save_draft). Boundary-compliant: the engine emitted structured section
+	 * data; the frontend decides to apply it.
+	 */
+	function applyComposeToolResult(d: Record<string, unknown>) {
+		if (d.is_error) return;
+		const name = d.name as string | undefined;
+		if (!name) return;
+		let parsed: Record<string, unknown>;
+		try {
+			parsed = JSON.parse((d.content as string) ?? '') as Record<string, unknown>;
+		} catch {
+			return;
+		}
+		if (name === 'propose_section' || name === 'edit_section') {
+			const title = (parsed.title as string) || 'Untitled section';
+			const content = (parsed.content as string) ?? '';
+			const item = makeItem(
+				{
+					title,
+					content,
+					tags: [],
+					original_content: content,
+					origin: 'compose',
+					level: typeof parsed.level === 'number' ? parsed.level : 2
+				},
+				{ compose: true }
+			);
+			items = [...items, item];
+			pushToast(`Added “${title}” to composer`, 'success', 3000);
+		} else if (name === 'save_draft' && parsed.saved) {
+			pushToast(`Draft saved (${(parsed.section_count as number) ?? 0} sections)`, 'success', 3000);
+		}
+	}
+
+	/**
+	 * Pull the canonical chat state from the engine (fragments + the system
+	 * prompt, which the engine re-reads from prompt.md). Safe to call whenever
+	 * the chat UI mounts so the system prompt is present on load, not only
+	 * after the first message.
+	 */
+	async function refreshChat() {
+		try {
+			chat = await api.getChat();
+		} catch {
+			// Backend unavailable — keep whatever we have.
 		}
 	}
 
@@ -2875,16 +3003,72 @@ function _createAppState() {
 	async function handleToggleSessions() {
 		sessionsExpanded = !sessionsExpanded;
 		if (!sessionsExpanded && !loadedSessionId) stopSessionPoll();
-		if (sessionsExpanded && claudeSessions.length === 0) {
-			claudeSessionsLoading = true;
-			try {
-				const resp = await api.listClaudeSessions();
-				claudeSessions = resp.sessions;
-			} catch (e) {
-				console.error('Failed to load Claude sessions:', e);
-			} finally {
-				claudeSessionsLoading = false;
+		if (sessionsExpanded) {
+			refreshSavedSessions();
+			if (claudeSessions.length === 0) {
+				claudeSessionsLoading = true;
+				try {
+					const resp = await api.listClaudeSessions();
+					claudeSessions = resp.sessions;
+				} catch (e) {
+					console.error('Failed to load Claude sessions:', e);
+				} finally {
+					claudeSessionsLoading = false;
+				}
 			}
+		}
+	}
+
+	async function refreshSavedSessions() {
+		try {
+			savedSessions = (await api.listChatSessions()).sessions;
+		} catch (e) {
+			console.error('Failed to list saved sessions:', e);
+		}
+	}
+
+	async function handleSaveChat() {
+		try {
+			const r = await api.saveChatSession();
+			await refreshSavedSessions();
+			pushToast(`Saved chat “${r.title}”`, 'success', 2500);
+		} catch (e) {
+			pushToast(
+				`Save failed: ${e instanceof Error ? e.message : String(e)}`,
+				'error',
+				4000
+			);
+		}
+	}
+
+	async function handleLoadSavedSession(id: string) {
+		chatLoading = true;
+		try {
+			chat = await api.loadChatSession(id);
+			loadedSessionId = null; // a tendrl session, not a Claude Code transcript
+			sessionsExpanded = false;
+			pushToast('Chat loaded', 'success', 2000);
+		} catch (e) {
+			pushToast(
+				`Load failed: ${e instanceof Error ? e.message : String(e)}`,
+				'error',
+				4000
+			);
+		} finally {
+			chatLoading = false;
+		}
+	}
+
+	async function handleDeleteSavedSession(id: string) {
+		try {
+			await api.deleteChatSession(id);
+			await refreshSavedSessions();
+		} catch (e) {
+			pushToast(
+				`Delete failed: ${e instanceof Error ? e.message : String(e)}`,
+				'error',
+				4000
+			);
 		}
 	}
 
@@ -3535,6 +3719,7 @@ function _createAppState() {
 
 		// Claude sessions
 		get claudeSessions() { return claudeSessions; },
+		get savedSessions() { return savedSessions; },
 		get claudeSessionDetail() { return claudeSessionDetail; },
 		get claudeSessionsLoading() { return claudeSessionsLoading; },
 		get sessionsExpanded() { return sessionsExpanded; },
@@ -3682,7 +3867,11 @@ function _createAppState() {
 		handleFetchAuthors,
 		handleFetchSections,
 		handleFetchFromRelay,
+		refreshChat,
 		handleToggleSessions,
+		handleSaveChat,
+		handleLoadSavedSession,
+		handleDeleteSavedSession,
 		handleSelectClaudeSession,
 		handleClaudeSessionBack,
 		handleLoadSessionToChat,
