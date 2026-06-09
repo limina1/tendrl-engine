@@ -1141,7 +1141,7 @@ function _createAppState() {
 						break;
 					case 'tool_result':
 						blocks.push({ type: 'tool_result', content: (d.content as string) ?? '' });
-						applyComposeToolResult(d);
+						applyToolResult(d);
 						break;
 					case 'error':
 						blocks.push({ type: 'text', text: `⚠️ ${(d.message as string) ?? 'agent error'}` });
@@ -1178,7 +1178,7 @@ function _createAppState() {
 	 * (save_draft). Boundary-compliant: the engine emitted structured section
 	 * data; the frontend decides to apply it.
 	 */
-	function applyComposeToolResult(d: Record<string, unknown>) {
+	function applyToolResult(d: Record<string, unknown>) {
 		if (d.is_error) return;
 		const name = d.name as string | undefined;
 		if (!name) return;
@@ -1188,7 +1188,27 @@ function _createAppState() {
 		} catch {
 			return;
 		}
-		if (name === 'propose_section' || name === 'edit_section') {
+		if (name === 'add_to_context') {
+			// The assistant pulled an event/idea into the shared context. Fold
+			// it into the pool (same path as a user "Add to context") and sync
+			// to the engine so it persists for the rest of the conversation.
+			const title = (parsed.title as string) || 'Untitled';
+			const content = (parsed.content as string) ?? '';
+			addToPool(
+				{
+					title,
+					content,
+					tags: [],
+					source_event_id: (parsed.source_event_id as string) || undefined,
+					source_addr: (parsed.source_addr as NAddr | null) ?? null,
+					original_content: content,
+					origin: 'search'
+				},
+				{ context: true }
+			);
+			syncContext();
+			pushToast(`Added “${title}” to context`, 'success', 3000);
+		} else if (name === 'propose_section' || name === 'edit_section') {
 			const title = (parsed.title as string) || 'Untitled section';
 			const content = (parsed.content as string) ?? '';
 			const item = makeItem(
