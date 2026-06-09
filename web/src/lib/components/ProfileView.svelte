@@ -373,6 +373,11 @@
 			{/if}
 		</div>
 		<span class="bar-spacer"></span>
+		<button
+			class="fetch-btn"
+			onclick={() => app.handleAddProfileToContext(pubkey, profile)}
+			title="Add this profile to the chat context"
+		>+ Context</button>
 		<button class="fetch-btn" onclick={handleFetch} disabled={fetching} title="Fetch this author's events from relays">
 			{fetching ? 'Fetching...' : '↻ Fetch'}
 		</button>

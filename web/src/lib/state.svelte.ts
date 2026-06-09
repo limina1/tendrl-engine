@@ -2218,6 +2218,29 @@ function _createAppState() {
 		syncContext();
 	}
 
+	// Capture a kind-0 profile as a context note. Profiles aren't addressable
+	// like sections, so there's no pool pill on them — this is the profile
+	// view's own "Add to context" affordance (search/reader/event already have
+	// the pill/chord). Keyed by `profile:<pubkey>` so re-adding dedupes.
+	function handleAddProfileToContext(pk: string, profile: api.Profile | null) {
+		const name = profile?.display_name || profile?.name || pk.slice(0, 12) + '…';
+		const content = [profile?.about ?? '', `npub: ${pk}`].filter(Boolean).join('\n\n');
+		addToPool(
+			{
+				title: `Profile: ${name}`,
+				content,
+				tags: [],
+				source_event_id: `profile:${pk}`,
+				source_addr: null,
+				original_content: content,
+				origin: 'search'
+			},
+			{ context: true }
+		);
+		syncContext();
+		pushToast(`Added ${name} to context`, 'success', 2500);
+	}
+
 	async function handleAddToCompose(result: SearchResult) {
 		const content = await fetchEventContent(result);
 		addToPool(resultFields(result, content), { compose: true });
@@ -3860,6 +3883,7 @@ function _createAppState() {
 		get currentEntry() { return currentEntry; },
 		get previousEntry() { return previousEntry; },
 		handleAddToContext,
+		handleAddProfileToContext,
 		handleAddToCompose,
 		handleAddManyToContext,
 		handleAddManyToCompose,
