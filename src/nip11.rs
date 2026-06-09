@@ -137,6 +137,20 @@ impl Nip11Cache {
         self.get_inner(url, true).await
     }
 
+    /// Read the cached status without ever spawning a fetch. Stale
+    /// entries are still returned — local data beats nothing when the
+    /// network is off the table. Used in Confirm mode, where a screen
+    /// render must not produce outbound HTTP; only an explicit user
+    /// `refresh` may reach the relay host.
+    pub async fn peek(&self, url: &str) -> Nip11Status {
+        let key = normalize_relay_url(url);
+        let entries = self.entries.lock().await;
+        entries
+            .get(&key)
+            .map(|e| e.status.clone())
+            .unwrap_or(Nip11Status::Pending)
+    }
+
     async fn get_inner(&self, url: &str, force: bool) -> Nip11Status {
         let key = normalize_relay_url(url);
 
