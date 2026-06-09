@@ -42,12 +42,32 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
+# Free a TCP port from a straggler of a previous run. Without this, a stale
+# engine still bound to 3030 makes the new `cargo run` fail to bind; combined
+# with `set -e` + the EXIT trap, that tears the whole fresh stack down.
+free_port() {
+    local port="$1"
+    local pid
+    pid=$(ss -ltnp 2>/dev/null | grep -E ":$port[[:space:]]" | grep -oE 'pid=[0-9]+' | head -1 | cut -d= -f2)
+    if [[ -n "$pid" ]]; then
+        echo "Port $port held by stale pid $pid — stopping it..."
+        kill "$pid" 2>/dev/null || true
+        sleep 1
+    fi
+}
+
 # Check config
 if [[ ! -f "$CONFIG" ]]; then
     echo "Config not found: $CONFIG"
     echo "Copy config.example.toml to config.toml and customize."
     exit 1
 fi
+
+# Reclaim our ports before starting so a leftover process can't block the bind
+# (and trigger the set -e / trap cascade that kills everything).
+free_port 3030
+if [[ "$DEV" == true ]]; then free_port 5173; else free_port 5174; fi
+if [[ -n "$(grep -E '^\s*enabled\s*=\s*true' "$CONFIG" 2>/dev/null || true)" ]]; then free_port 3031; fi
 
 # Check if embedding is enabled
 EMBED_ENABLED=$(grep -E '^\s*enabled\s*=\s*true' "$CONFIG" 2>/dev/null || true)
