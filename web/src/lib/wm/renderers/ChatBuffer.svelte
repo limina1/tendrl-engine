@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { onMount } from 'svelte';
 	import { getAppState } from '$lib/state.svelte';
 	import ChatPanel from '$lib/components/ChatPanel.svelte';
 	import type { Buffer } from '../types';
@@ -6,6 +7,13 @@
 	let { buffer: _buffer }: { buffer: Buffer } = $props();
 
 	const app = getAppState();
+
+	// Hydrate the chat (incl. the system prompt the engine reads from prompt.md)
+	// whenever the chat panel mounts, so it's present on load — not only after
+	// the first message.
+	onMount(() => {
+		app.refreshChat();
+	});
 </script>
 
 <ChatPanel
@@ -45,4 +53,8 @@
 	onclaudesessionselect={app.handleSelectClaudeSession}
 	onclaudesessionback={app.handleClaudeSessionBack}
 	onloadsessiontochat={app.handleLoadSessionToChat}
+	savedSessions={app.savedSessions}
+	onsavechat={app.handleSaveChat}
+	onloadsavedsession={app.handleLoadSavedSession}
+	ondeletesavedsession={app.handleDeleteSavedSession}
 />

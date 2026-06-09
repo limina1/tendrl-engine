@@ -10,6 +10,18 @@
 	} = $props();
 
 	let value = $state(currentPrompt ?? '');
+
+	// `currentPrompt` hydrates asynchronously (getChat after mount) and changes
+	// on save/load — resync the editable buffer when the upstream value
+	// changes, without clobbering the user's in-progress edits (those change
+	// `value`, not `currentPrompt`, so this effect doesn't re-run from them).
+	let lastSeen = $state(currentPrompt);
+	$effect(() => {
+		if (currentPrompt !== lastSeen) {
+			lastSeen = currentPrompt;
+			value = currentPrompt ?? '';
+		}
+	});
 </script>
 
 <div class="panel">

@@ -39,6 +39,74 @@
 		}
 	}
 
+	// --- AI assistant settings (provider/model/auth + tool policy) ---
+	let aiSettings = $state<api.AiSettings | null>(null);
+	let aiBusy = $state(false);
+
+	async function loadAiSettings() {
+		try {
+			aiSettings = await api.getAiSettings();
+		} catch {
+			aiSettings = null;
+		}
+	}
+
+	// --- Editable system prompt (prompt.md) ---
+	let aiPrompt = $state('');
+	let aiPromptPath = $state('');
+	let aiPromptDirty = $state(false);
+
+	async function loadAiPrompt() {
+		try {
+			const r = await api.getAiPrompt();
+			aiPrompt = r.content;
+			aiPromptPath = r.path;
+			aiPromptDirty = false;
+		} catch {
+			/* leave blank if unavailable */
+		}
+	}
+
+	async function saveAiPrompt() {
+		aiBusy = true;
+		try {
+			await api.saveAiPrompt(aiPrompt);
+			aiPromptDirty = false;
+			app.pushToast('System prompt saved', 'success', 2500);
+		} catch (e) {
+			app.pushToast(
+				`Prompt save failed: ${e instanceof Error ? e.message : String(e)}`,
+				'error',
+				4000
+			);
+		} finally {
+			aiBusy = false;
+		}
+	}
+
+	async function applyAiUpdate(update: api.AiSettingsUpdate) {
+		aiBusy = true;
+		try {
+			aiSettings = await api.saveAiSettings(update);
+		} catch (e) {
+			app.pushToast(
+				`AI settings save failed: ${e instanceof Error ? e.message : String(e)}`,
+				'error',
+				4000
+			);
+		} finally {
+			aiBusy = false;
+		}
+	}
+
+	function toggleAiTool(name: string, enabled: boolean) {
+		if (!aiSettings) return;
+		const names = aiSettings.tools
+			.filter((t) => (t.name === name ? enabled : t.enabled))
+			.map((t) => t.name);
+		applyAiUpdate({ enabled_tools: names });
+	}
+
 	$effect(() => {
 		// Detect window.nostr on mount, then keep retrying for a couple
 		// of seconds. Extensions inject at document_start, but after a
@@ -68,6 +136,8 @@
 		// updates land.
 		app.refreshIdentity();
 		captureSavedBaseline();
+		loadAiSettings();
+		loadAiPrompt();
 		// Pull a fresh embedding/sidecar status so the Embeddings section
 		// reflects live health + index counts, not the last 30s-poll tick.
 		app.refreshEmbeddingStatus();
@@ -543,6 +613,97 @@
 		</p>
 	</div>
 
+	<!-- AI assistant: provider/model/auth channel + per-tool policy. Tool
+	     toggles apply live (next agent turn); provider/model/auth persist to
+	     config.toml and take effect on the next engine restart. -->
+	<div class="settings-group">
+		<div class="settings-group-title">AI assistant</div>
+
+		{#if !aiSettings}
+			<p class="settings-hint">AI settings unavailable (engine not reachable).</p>
+		{:else}
+			<div class="settings-row">
+				<span class="settings-label">Model</span>
+				<input
+					class="settings-input"
+					type="text"
+					value={aiSettings.model}
+					disabled={aiBusy}
+					onchange={(e) => applyAiUpdate({ model: e.currentTarget.value.trim() })}
+				/>
+			</div>
+
+			<div class="settings-row">
+				<span class="settings-label">Auth channel</span>
+				<div class="radio-group">
+					{#each ['api_key', 'oauth'] as opt (opt)}
+						<label class="radio">
+							<input
+								type="radio"
+								name="ai-auth"
+								value={opt}
+								checked={aiSettings.auth === opt}
+								disabled={aiBusy}
+								onchange={() => applyAiUpdate({ auth: opt })}
+							/>
+							<span>{opt === 'api_key' ? 'API key' : 'Subscription'}</span>
+						</label>
+					{/each}
+				</div>
+			</div>
+			<p class="settings-hint">
+				<strong>API key</strong> ({'ANTHROPIC_API_KEY'}): per-token developer billing.<br />
+				<strong>Subscription</strong> ({'ANTHROPIC_AUTH_TOKEN'}, e.g. a <code>claude setup-token</code>):
+				draws from your monthly Agent SDK credit, then API rates or stops.<br />
+				Model/auth changes apply on engine restart.
+			</p>
+
+			<div class="settings-subtitle">System prompt</div>
+			<p class="settings-hint">
+				Prepended to every agent turn, re-read each message. Editable here or on disk
+				{#if aiPromptPath}at <code>{aiPromptPath}</code>{/if}.
+			</p>
+			<textarea
+				class="settings-textarea"
+				rows="8"
+				bind:value={aiPrompt}
+				disabled={aiBusy}
+				oninput={() => (aiPromptDirty = true)}
+			></textarea>
+			<div class="settings-row">
+				<button
+					class="settings-action"
+					onclick={saveAiPrompt}
+					disabled={aiBusy || !aiPromptDirty}>Save prompt</button
+				>
+			</div>
+
+			<div class="settings-subtitle">Tools the assistant may use</div>
+			{#each aiSettings.tools as tool (tool.name)}
+				<div class="settings-row">
+					<label class="settings-label" for={`ai-tool-${tool.name}`} title={tool.description}>
+						{tool.name}
+						<span class="ai-tool-cat">{tool.category}</span>
+					</label>
+					<label class="switch">
+						<input
+							id={`ai-tool-${tool.name}`}
+							type="checkbox"
+							checked={tool.enabled}
+							disabled={aiBusy}
+							onchange={(e) => toggleAiTool(tool.name, e.currentTarget.checked)}
+						/>
+						<span class="switch-text">{tool.enabled ? 'on' : 'off'}</span>
+					</label>
+				</div>
+			{/each}
+			<p class="settings-hint">
+				Tool changes apply immediately to the next message. <code>publish</code>-category tools
+				are off by default and broadcast signed events when enabled.
+			</p>
+		{/if}
+	</div>
+
 	<!-- Embeddings / semantic search. Status + manual sync/reindex for
 	     the HNSW vector index served by the Python sidecar (or in-process
 	     ONNX). Counts and sidecar health come from /api/v1/embed/status;
@@ -691,6 +852,48 @@
 		letter-spacing: 0.05em;
 		color: var(--base5);
 		margin-bottom: 8px;
+	}
+
+	.settings-subtitle {
+		font-size: var(--t-xs);
+		font-weight: 600;
+		color: var(--base6);
+		margin: 12px 0 4px;
+	}
+
+	.settings-textarea {
+		width: 100%;
+		box-sizing: border-box;
+		font-family: var(--font-mono, monospace);
+		font-size: var(--t-xs);
+		line-height: 1.4;
+		padding: 8px;
+		border: 1px solid var(--base3);
+		border-radius: 4px;
+		background: var(--base0);
+		color: var(--base7);
+		resize: vertical;
+	}
+
+	.settings-input {
+		flex: 1;
+		min-width: 0;
+		margin-left: 12px;
+		font-family: var(--font-mono, monospace);
+		font-size: var(--t-xs);
+		padding: 4px 8px;
+		border: 1px solid var(--base3);
+		border-radius: 4px;
+		background: var(--base0);
+		color: var(--base7);
+	}
+
+	.ai-tool-cat {
+		font-size: var(--t-2xs, 0.7rem);
+		color: var(--base5);
+		margin-left: 6px;
+		text-transform: uppercase;
+		letter-spacing: 0.04em;
 	}
 
 	.settings-row {
