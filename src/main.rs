@@ -7,7 +7,9 @@ use axum::{
     Router,
 };
 use clap::Parser;
-use nostr_engine::{api, chat::ChatState, config::Config, engine::Engine, identity::IdentitySession, llm};
+use nostr_engine::{
+    api, chat::ChatState, config::Config, engine::Engine, identity::IdentitySession, llm, tools,
+};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use tower_http::cors::{Any, CorsLayer};
@@ -54,9 +56,7 @@ async fn main() -> anyhow::Result<()> {
             .add_directive("nostr_engine=info".parse().unwrap())
     };
 
-    tracing_subscriber::fmt()
-        .with_env_filter(filter)
-        .init();
+    tracing_subscriber::fmt().with_env_filter(filter).init();
 
     // Load configuration
     let mut config = Config::load_or_default(args.config.as_deref());
@@ -79,11 +79,11 @@ async fn main() -> anyhow::Result<()> {
 
     let my_pubkey = config.pubkey_hex();
     if let Some(ref pk) = my_pubkey {
-        info!("Identity pubkey: {}...{}", &pk[..8], &pk[pk.len()-8..]);
+        info!("Identity pubkey: {}...{}", &pk[..8], &pk[pk.len() - 8..]);
     }
     let assistant_pubkey = config.assistant_pubkey_hex();
     if let Some(ref pk) = assistant_pubkey {
-        info!("Assistant pubkey: {}...{}", &pk[..8], &pk[pk.len()-8..]);
+        info!("Assistant pubkey: {}...{}", &pk[..8], &pk[pk.len() - 8..]);
     }
 
     // Create the engine
@@ -127,20 +127,59 @@ async fn main() -> anyhow::Result<()> {
         .allow_headers(Any);
 
     // Chat state + LLM provider
+    let ai_policy = match config.ai.enabled_tools.clone() {
+        Some(names) => tools::ToolPolicy::from_enabled(names),
+        None => tools::ToolPolicy::default(),
+    };
+    let prompt_path = api::resolve_prompt_path(
+        args.config.as_deref(),
+        state.data_dir(),
+        config.ai.system_prompt_path.as_deref(),
+    );
+    api::ensure_prompt_file(&prompt_path);
+    info!("AI system prompt: {}", prompt_path.display());
+    // Seed the chat's system prompt from prompt.md so the UI's System view
+    // shows it on load and the agent uses it through the normal message path.
+    let mut initial_chat = ChatState::new();
+    initial_chat.system_prompt = api::read_system_prompt(&prompt_path);
     let chat_state = api::ChatAppState {
-        chat: Arc::new(Mutex::new(ChatState::new())),
-        provider: llm::provider_from_env(),
+        chat: Arc::new(Mutex::new(initial_chat)),
+        provider: llm::provider_from_config(&config.ai),
+        engine: state.clone(),
+        max_tool_turns: config.ai.max_tool_turns,
+        policy: Arc::new(std::sync::RwLock::new(ai_policy)),
+        system_prompt_path: prompt_path,
     };
 
     let chat_routes = Router::new()
         .route("/api/v1/chat", get(api::chat_get).delete(api::chat_reset))
         .route("/api/v1/chat/message", post(api::chat_send))
+        .route("/api/v1/chat/agent", post(api::chat_agent_handler))
+        .route(
+            "/api/v1/chat/sessions",
+            get(api::session_list).post(api::session_save),
+        )
+        .route(
+            "/api/v1/chat/sessions/:id",
+            get(api::session_load).delete(api::session_delete),
+        )
+        .route(
+            "/api/v1/ai/settings",
+            get(api::ai_settings_get).post(api::ai_settings_post),
+        )
+        .route(
+            "/api/v1/ai/prompt",
+            get(api::ai_prompt_get).put(api::ai_prompt_put),
+        )
         .route(
             "/api/v1/chat/edit",
             post(api::chat_enter_edit).put(api::chat_exit_edit),
         )
         .route("/api/v1/chat/system", post(api::chat_set_system))
-        .route("/api/v1/chat/context", post(api::chat_inject_context).put(api::chat_replace_context))
+        .route(
+            "/api/v1/chat/context",
+            post(api::chat_inject_context).put(api::chat_replace_context),
+        )
         .route("/api/v1/chat/load", put(api::chat_load_fragments))
         .with_state(chat_state);
 
@@ -165,7 +204,12 @@ async fn main() -> anyhow::Result<()> {
     // into a *locked* session so the UI prompts for just the password
     // instead of a re-paste. The key is scrypt-encrypted; unlocking
     // still needs the password the engine never stores.
-    if let Some(nc) = config.identity.ncryptsec.as_deref().filter(|s| !s.is_empty()) {
+    if let Some(nc) = config
+        .identity
+        .ncryptsec
+        .as_deref()
+        .filter(|s| !s.is_empty())
+    {
         match identity_state.lock().unwrap().login_ncryptsec(nc) {
             Ok(()) => info!("Loaded persisted engine key (locked)"),
             Err(e) => tracing::warn!("Ignoring invalid persisted [identity] ncryptsec: {e}"),
@@ -205,8 +249,7 @@ async fn main() -> anyhow::Result<()> {
     // signing through the active source. Constructed once and shared
     // across the sign / signer-register / signer-channel / sign-response
     // handlers.
-    let signing_controller =
-        nostr_engine::signing::SigningController::new(identity_state.clone());
+    let signing_controller = nostr_engine::signing::SigningController::new(identity_state.clone());
 
     let signing_routes = Router::new()
         .route("/api/v1/identity/sign", post(api::identity_sign_handler))
@@ -272,7 +315,10 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/v1/relays", get(api::relay_config_handler))
         .route("/api/v1/relay/info", get(api::relay_nip11_handler))
         .route("/api/v1/config/update", post(api::config_update_handler))
-        .route("/api/v1/config/snapshot", post(api::config_snapshot_handler))
+        .route(
+            "/api/v1/config/snapshot",
+            post(api::config_snapshot_handler),
+        )
         .route("/api/v1/settings", get(api::settings_handler))
         .route(
             "/api/v1/identity/persist-key",
@@ -293,7 +339,12 @@ async fn main() -> anyhow::Result<()> {
             post(api::fetch_confirm_handler),
         )
         // Ignore list + purge
-        .route("/api/v1/ignore", get(api::ignore_list_handler).post(api::ignore_add_handler).delete(api::ignore_remove_handler))
+        .route(
+            "/api/v1/ignore",
+            get(api::ignore_list_handler)
+                .post(api::ignore_add_handler)
+                .delete(api::ignore_remove_handler),
+        )
         .route("/api/v1/purge", post(api::purge_handler))
         // Export, publish & ingest endpoints
         .route("/api/v1/export", get(api::export_handler))
@@ -309,7 +360,10 @@ async fn main() -> anyhow::Result<()> {
             get(api::get_draft_handler).delete(api::delete_draft_handler),
         )
         .route("/api/v1/publish", post(api::publish_handler))
-        .route("/api/v1/publish/preview", post(api::publish_preview_handler))
+        .route(
+            "/api/v1/publish/preview",
+            post(api::publish_preview_handler),
+        )
         .route("/api/v1/publish/blocks", post(api::publish_blocks_handler))
         .route(
             "/api/v1/publish/republish-diff",
@@ -324,9 +378,18 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/v1/embed/reindex", post(api::embed_reindex_handler))
         .route("/api/v1/embed/config", post(api::embed_config_handler))
         // Claude Code sessions
-        .route("/api/v1/claude-sessions", get(api::list_claude_sessions_handler))
-        .route("/api/v1/claude-sessions/:id", get(api::get_claude_session_handler))
-        .route("/api/v1/claude-sessions/:id/message", post(api::append_claude_session_handler))
+        .route(
+            "/api/v1/claude-sessions",
+            get(api::list_claude_sessions_handler),
+        )
+        .route(
+            "/api/v1/claude-sessions/:id",
+            get(api::get_claude_session_handler),
+        )
+        .route(
+            "/api/v1/claude-sessions/:id/message",
+            post(api::append_claude_session_handler),
+        )
         // Publication endpoints
         .route("/api/v1/publications", get(api::list_publications_handler))
         .route(
@@ -391,7 +454,10 @@ async fn main() -> anyhow::Result<()> {
                     match state.fetch_missing_sections().await {
                         Ok((_, missing, fetched)) => {
                             if fetched > 0 {
-                                info!("Background section fetch: {} fetched ({} were missing)", fetched, missing);
+                                info!(
+                                    "Background section fetch: {} fetched ({} were missing)",
+                                    fetched, missing
+                                );
                             }
                         }
                         Err(e) => {

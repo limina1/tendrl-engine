@@ -402,7 +402,12 @@ pub async fn search_handler(
             }
 
             let resp = engine
-                .search_with_options(&branch, policy, override_relays.as_deref(), req.mode_confirm)
+                .search_with_options(
+                    &branch,
+                    policy,
+                    override_relays.as_deref(),
+                    req.mode_confirm,
+                )
                 .await?;
 
             total_local += resp.local_count;
@@ -1647,7 +1652,11 @@ pub async fn fetch_relay_handler(
             Err(e) => debug!("Fetch from {} failed: {}", relay_url, e),
         }
     }
-    debug!("Fetched {} events from {} relay(s)", count, fetch_relays.len());
+    debug!(
+        "Fetched {} events from {} relay(s)",
+        count,
+        fetch_relays.len()
+    );
     if let Some(op) = op {
         op.complete(count);
     }
@@ -2119,7 +2128,13 @@ pub async fn config_snapshot_handler(
         let rc = engine.relay_config();
         let mut seen = std::collections::HashSet::new();
         let mut urls: Vec<String> = Vec::new();
-        for u in rc.fetch.urls.iter().chain(&rc.publish.urls).chain(&rc.general.urls) {
+        for u in rc
+            .fetch
+            .urls
+            .iter()
+            .chain(&rc.publish.urls)
+            .chain(&rc.general.urls)
+        {
             if seen.insert(u.clone()) {
                 urls.push(u.clone());
             }
@@ -2133,25 +2148,43 @@ pub async fn config_snapshot_handler(
                 "[relay] in config.toml is not a table".into(),
             ));
         };
-        let arr: Vec<toml::Value> = urls.iter().map(|u| toml::Value::String(u.clone())).collect();
+        let arr: Vec<toml::Value> = urls
+            .iter()
+            .map(|u| toml::Value::String(u.clone()))
+            .collect();
         relay_table.insert("initial_relays".to_string(), toml::Value::Array(arr));
         wrote.push("initial_relays");
     }
 
     if let Some(editor) = &req.editor {
         let mut t = toml::Table::new();
-        t.insert("line_numbers".into(), toml::Value::Boolean(editor.line_numbers));
+        t.insert(
+            "line_numbers".into(),
+            toml::Value::Boolean(editor.line_numbers),
+        );
         t.insert("vim_mode".into(), toml::Value::Boolean(editor.vim_mode));
-        t.insert("insert_mode".into(), toml::Value::String(editor.insert_mode.clone()));
+        t.insert(
+            "insert_mode".into(),
+            toml::Value::String(editor.insert_mode.clone()),
+        );
         doc.insert("editor".into(), toml::Value::Table(t));
         wrote.push("editor");
     }
 
     if let Some(compose) = &req.compose {
         let mut t = toml::Table::new();
-        t.insert("default_mode".into(), toml::Value::String(compose.default_mode.clone()));
-        t.insert("sync_mode".into(), toml::Value::String(compose.sync_mode.clone()));
-        t.insert("button_labels".into(), toml::Value::String(compose.button_labels.clone()));
+        t.insert(
+            "default_mode".into(),
+            toml::Value::String(compose.default_mode.clone()),
+        );
+        t.insert(
+            "sync_mode".into(),
+            toml::Value::String(compose.sync_mode.clone()),
+        );
+        t.insert(
+            "button_labels".into(),
+            toml::Value::String(compose.button_labels.clone()),
+        );
         doc.insert("compose".into(), toml::Value::Table(t));
         wrote.push("compose");
     }
@@ -2213,9 +2246,7 @@ pub async fn config_snapshot_handler(
 /// GET /api/v1/settings — return editor/compose/network defaults from the
 /// current config.toml so the web can hydrate state at boot instead of
 /// starting on hard-coded defaults that diverge from the user's last save.
-pub async fn settings_handler(
-    State(engine): State<AppState>,
-) -> Result<Json<Value>, EngineError> {
+pub async fn settings_handler(State(engine): State<AppState>) -> Result<Json<Value>, EngineError> {
     let config_path = engine.config_path();
     let cfg = match config_path {
         Some(p) => crate::config::Config::from_file(p).unwrap_or_default(),
@@ -2458,7 +2489,10 @@ pub async fn purge_handler(
             };
             let args: Vec<_> = std::env::args().skip(1).collect();
             let err = std::process::Command::new(exe).args(&args).exec();
-            tracing::error!("purge: exec failed: {} — aborting so a process supervisor can restart", err);
+            tracing::error!(
+                "purge: exec failed: {} — aborting so a process supervisor can restart",
+                err
+            );
             std::process::exit(1);
         }
         #[cfg(not(unix))]
@@ -2468,7 +2502,11 @@ pub async fn purge_handler(
         }
     });
 
-    let data_dir_display = engine.data_dir().to_path_buf().to_string_lossy().to_string();
+    let data_dir_display = engine
+        .data_dir()
+        .to_path_buf()
+        .to_string_lossy()
+        .to_string();
     Ok(Json(json!({
         "message": "Purging the local cache and re-execing the engine. Reconnect in ~1 second.",
         "data_dir": data_dir_display,
@@ -2698,8 +2736,7 @@ pub struct DiscussionsListResponse {
     /// maps to its root threads; the reader renders these directly. Omitted
     /// (not just empty) when not requested or when the query was event-id-only.
     #[serde(skip_serializing_if = "std::collections::HashMap::is_empty")]
-    pub threads_by_address:
-        std::collections::HashMap<String, Vec<crate::discussions::ThreadNode>>,
+    pub threads_by_address: std::collections::HashMap<String, Vec<crate::discussions::ThreadNode>>,
     /// Flat NIP-22 thread forest over all kind-1111 comments, present when
     /// `threaded` was set on an *event-id* query (no address to group by).
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -2802,7 +2839,14 @@ fn short_search_label(query: &str) -> String {
         return format!("Search · {q}");
     }
     let head: String = q.chars().take(14).collect();
-    let tail: String = q.chars().rev().take(8).collect::<String>().chars().rev().collect();
+    let tail: String = q
+        .chars()
+        .rev()
+        .take(8)
+        .collect::<String>()
+        .chars()
+        .rev()
+        .collect();
     format!("Search · {head}…{tail}")
 }
 
@@ -2816,7 +2860,9 @@ fn build_search_summary(
     relays: &[String],
     _engine: &Engine,
 ) -> Option<crate::network::RequestSummary> {
-    use crate::network::{nip_filter_from_json, CompositionShape, Phase, PhaseStage, RequestSummary};
+    use crate::network::{
+        nip_filter_from_json, CompositionShape, Phase, PhaseStage, RequestSummary,
+    };
 
     // Try compound parse first — a `|` query splits into multiple
     // branches that each contribute a NIP-01 filter (or several).
@@ -2828,9 +2874,7 @@ fn build_search_summary(
             .flat_map(|b| b.to_nip01_filters())
             .collect()
     } else {
-        SearchQuery::parse(query)
-            .ok()?
-            .to_nip01_filters()
+        SearchQuery::parse(query).ok()?.to_nip01_filters()
     };
     if filter_jsons.is_empty() {
         return None;
@@ -3141,14 +3185,18 @@ fn local_pub_tracker(
 fn event_a_tag(event: &Value) -> Option<String> {
     let kind = event.get("kind").and_then(|v| v.as_u64())?;
     let pubkey = event.get("pubkey").and_then(|v| v.as_str())?;
-    let d = event.get("tags").and_then(|v| v.as_array())?.iter().find_map(|t| {
-        let arr = t.as_array()?;
-        if arr.first()?.as_str()? == "d" {
-            arr.get(1)?.as_str()
-        } else {
-            None
-        }
-    })?;
+    let d = event
+        .get("tags")
+        .and_then(|v| v.as_array())?
+        .iter()
+        .find_map(|t| {
+            let arr = t.as_array()?;
+            if arr.first()?.as_str()? == "d" {
+                arr.get(1)?.as_str()
+            } else {
+                None
+            }
+        })?;
     Some(format!("{kind}:{pubkey}:{d}"))
 }
 
@@ -3256,7 +3304,9 @@ pub async fn list_drafts_handler(
             })
         })
         .collect();
-    Ok(Json(json!({ "drafts": summaries, "count": summaries.len() })))
+    Ok(Json(
+        json!({ "drafts": summaries, "count": summaries.len() }),
+    ))
 }
 
 /// GET /api/v1/drafts/:id — full draft, including the compose state to resume.
@@ -3367,7 +3417,11 @@ fn publication_to_draft_compose(
                         }
                         Some(DraftTagEntry {
                             name: name.to_string(),
-                            value: arr.get(1).and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                            value: arr
+                                .get(1)
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("")
+                                .to_string(),
                         })
                     })
                     .collect()
@@ -3589,7 +3643,12 @@ async fn finalize_publish(
         .to_string();
     let section_ids: Vec<String> = section_events
         .iter()
-        .map(|e| e.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string())
+        .map(|e| {
+            e.get("id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string()
+        })
         .collect();
 
     // Ingest into local nostrdb (async queue), then wait + verify.
@@ -3606,7 +3665,10 @@ async fn finalize_publish(
         .flatten()
         .is_some();
     if !ingested {
-        debug!("Publication {} was not persisted by nostrdb after ingest", pub_id);
+        debug!(
+            "Publication {} was not persisted by nostrdb after ingest",
+            pub_id
+        );
     }
 
     // Broadcast to relays if requested.
@@ -3633,7 +3695,10 @@ async fn finalize_publish(
                     start_delay_ms: 0,
                 }],
             },
-            dsl: format!("pub k:30040,30041 ({} events) via:publish", event_jsons.len()),
+            dsl: format!(
+                "pub k:30040,30041 ({} events) via:publish",
+                event_jsons.len()
+            ),
         };
         let manifest = crate::network::PublishManifest::from_events(
             section_events.iter().chain(std::iter::once(&pub_event)),
@@ -4698,6 +4763,15 @@ use std::sync::Mutex;
 pub struct ChatAppState {
     pub chat: Arc<Mutex<ChatState>>,
     pub provider: Arc<dyn LLMProvider>,
+    /// Engine handle, for tool dispatch in the agent loop.
+    pub engine: AppState,
+    /// Hard cap on tool round-trips per agent turn (from `[ai] max_tool_turns`).
+    pub max_tool_turns: usize,
+    /// Live tool policy (which tools the agent may call). Read by the agent
+    /// loop, written by the AI Tools settings endpoint.
+    pub policy: Arc<std::sync::RwLock<crate::tools::ToolPolicy>>,
+    /// Path to the editable Markdown system prompt, re-read each agent turn.
+    pub system_prompt_path: std::path::PathBuf,
 }
 
 /// A single fragment in the API response
@@ -4706,6 +4780,10 @@ pub struct FragmentResponse {
     pub id: usize,
     pub role: String,
     pub content: String,
+    /// Structured agent blocks (text/thinking/tool_use/tool_result) when this
+    /// fragment came from the tool-calling loop. Omitted for plain fragments.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub blocks: Option<Vec<crate::llm::ContentBlock>>,
 }
 
 /// Unified response for all chat endpoints
@@ -4728,6 +4806,7 @@ fn build_chat_response(state: &ChatState) -> ChatResponse {
             id: f.id,
             role: f.role.as_str().to_string(),
             content: f.content.clone(),
+            blocks: f.blocks.clone(),
         })
         .collect();
     let fragment_count = fragments.len();
@@ -4777,17 +4856,137 @@ pub struct InjectContextRequest {
     pub notes: Vec<NoteRequest>,
 }
 
-/// GET /api/v1/chat — get current conversation state
+/// GET /api/v1/chat — get current conversation state. The system prompt is
+/// refreshed from prompt.md so the UI always reflects the file (and survives a
+/// reset / on-disk edit).
 pub async fn chat_get(State(state): State<ChatAppState>) -> Json<ChatResponse> {
-    let chat = state.chat.lock().unwrap();
+    let mut chat = state.chat.lock().unwrap();
+    chat.system_prompt = read_system_prompt(&state.system_prompt_path);
     Json(build_chat_response(&chat))
 }
 
-/// DELETE /api/v1/chat — reset conversation
+/// DELETE /api/v1/chat — reset conversation (keeps the prompt.md system prompt).
 pub async fn chat_reset(State(state): State<ChatAppState>) -> Json<ChatResponse> {
     let mut chat = state.chat.lock().unwrap();
     *chat = ChatState::new();
+    chat.system_prompt = read_system_prompt(&state.system_prompt_path);
     Json(build_chat_response(&chat))
+}
+
+// --- Saved chat sessions (tendrl's own, under <data_dir>/sessions/) ---
+
+/// Request to save the current chat (optional explicit title; auto-named otherwise).
+#[derive(Debug, Deserialize, Default)]
+pub struct SaveSessionRequest {
+    #[serde(default)]
+    pub title: Option<String>,
+}
+
+/// POST /api/v1/chat/sessions — save the current conversation to a file.
+pub async fn session_save(
+    State(state): State<ChatAppState>,
+    body: Option<Json<SaveSessionRequest>>,
+) -> std::result::Result<Json<Value>, EngineError> {
+    let req = body.map(|Json(r)| r).unwrap_or_default();
+    let store = crate::sessions::SessionStore::new(state.engine.data_dir())?;
+
+    let (fragments, context) = {
+        let chat = state.chat.lock().unwrap();
+        let frags = chat
+            .fragments
+            .iter()
+            .map(|f| crate::sessions::SavedFragment {
+                role: f.role.as_str().to_string(),
+                content: f.content.clone(),
+                blocks: f.blocks.clone(),
+            })
+            .collect::<Vec<_>>();
+        let ctx = chat
+            .injected_context
+            .iter()
+            .map(|n| crate::sessions::SavedNote {
+                title: n.title.clone(),
+                content: n.content.clone(),
+            })
+            .collect::<Vec<_>>();
+        (frags, ctx)
+    };
+
+    if fragments.is_empty() {
+        return Err(EngineError::BadRequest(
+            "nothing to save — the chat is empty".into(),
+        ));
+    }
+
+    let title = req
+        .title
+        .filter(|t| !t.trim().is_empty())
+        .map(|t| t.trim().to_string())
+        .unwrap_or_else(|| crate::sessions::derive_title(&fragments));
+    let now = crate::sessions::now_millis();
+    let id = format!("{}-{}", now, crate::sessions::slug(&title));
+    let session = crate::sessions::SavedSession {
+        id: id.clone(),
+        title: title.clone(),
+        created_at: now,
+        modified_at: now,
+        fragments,
+        context,
+    };
+    store.save(&session)?;
+    Ok(Json(json!({ "id": id, "title": title })))
+}
+
+/// GET /api/v1/chat/sessions — list saved sessions (newest first).
+pub async fn session_list(
+    State(state): State<ChatAppState>,
+) -> std::result::Result<Json<Value>, EngineError> {
+    let store = crate::sessions::SessionStore::new(state.engine.data_dir())?;
+    let sessions = store.list()?;
+    Ok(Json(
+        json!({ "count": sessions.len(), "sessions": sessions }),
+    ))
+}
+
+/// GET /api/v1/chat/sessions/:id — load a saved session into the live chat.
+pub async fn session_load(
+    State(state): State<ChatAppState>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+) -> std::result::Result<Json<ChatResponse>, EngineError> {
+    let store = crate::sessions::SessionStore::new(state.engine.data_dir())?;
+    let saved = store.load(&id)?;
+
+    let mut chat = state.chat.lock().unwrap();
+    *chat = ChatState::new();
+    for f in &saved.fragments {
+        let role = ChatRole::from_str(&f.role).unwrap_or(ChatRole::User);
+        chat.push_raw_fragment(role, f.content.clone(), f.blocks.clone());
+    }
+    if !saved.context.is_empty() {
+        chat.inject_context(
+            saved
+                .context
+                .iter()
+                .map(|n| InjectedNote {
+                    addr: None,
+                    title: n.title.clone(),
+                    content: n.content.clone(),
+                })
+                .collect(),
+        );
+    }
+    chat.system_prompt = read_system_prompt(&state.system_prompt_path);
+    Ok(Json(build_chat_response(&chat)))
+}
+
+/// DELETE /api/v1/chat/sessions/:id — delete a saved session.
+pub async fn session_delete(
+    State(state): State<ChatAppState>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+) -> std::result::Result<Json<Value>, EngineError> {
+    let store = crate::sessions::SessionStore::new(state.engine.data_dir())?;
+    store.delete(&id)?;
+    Ok(Json(json!({ "deleted": true })))
 }
 
 /// POST /api/v1/chat/message — send message, get LLM response
@@ -4812,6 +5011,357 @@ pub async fn chat_send(
     chat.generating = false;
     chat.receive_response(response);
     Json(build_chat_response(&chat))
+}
+
+/// Build one SSE event for the agent stream: `{ "type": kind, "data": {...} }`.
+fn agent_sse(kind: &str, data: Value) -> axum::response::sse::Event {
+    let payload = json!({ "type": kind, "data": data }).to_string();
+    axum::response::sse::Event::default().data(payload)
+}
+
+/// Concatenate the text blocks of an assistant turn (plain-text fallback).
+fn assistant_text(blocks: &[crate::llm::ContentBlock]) -> String {
+    blocks
+        .iter()
+        .filter_map(|b| match b {
+            crate::llm::ContentBlock::Text { text } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("")
+}
+
+/// POST /api/v1/chat/agent — run a tool-calling agent turn, streaming the
+/// transcript over SSE.
+///
+/// The loop runs server-side: call the provider → emit text/thinking/tool_call
+/// blocks → execute any tools via `tools::dispatch` → feed results back →
+/// repeat until the model ends its turn or the tool-turn cap is hit. Relay
+/// fetches and publishes gate themselves inside the engine (the existing
+/// fetch-confirm / publish-confirm flows), so this stream is display-only.
+///
+/// SSE event shape: `{ "type": "text"|"thinking"|"tool_call"|"tool_result"|"done"|"error", "data": {...} }`.
+pub async fn chat_agent_handler(
+    State(state): State<ChatAppState>,
+    Json(req): Json<SendMessageRequest>,
+) -> axum::response::Response {
+    use axum::response::sse::{KeepAlive, Sse};
+    use axum::response::IntoResponse;
+    use futures::stream::StreamExt;
+
+    let stream = async_stream::stream! {
+        use crate::llm::{AgentMessage, ContentBlock};
+
+        // Seed the loop from history + the new user turn. Guard is dropped
+        // before any await/yield (std Mutex must never cross those). The system
+        // prompt is refreshed from prompt.md each turn (live on-disk edits).
+        let mut messages = {
+            let mut chat = state.chat.lock().unwrap();
+            chat.system_prompt = read_system_prompt(&state.system_prompt_path);
+            chat.push_user(req.content.clone());
+            chat.generating = true;
+            chat.to_agent_messages()
+        };
+
+
+        // Snapshot the live policy (guard dropped before any await/yield).
+        let tools = {
+            let policy = state.policy.read().unwrap();
+            crate::tools::definitions(&policy)
+        };
+
+        let started = tokio::time::Instant::now();
+        let budget = std::time::Duration::from_secs(600);
+        let mut turn: usize = 0;
+
+        loop {
+            turn += 1;
+            if turn > state.max_tool_turns {
+                yield agent_sse("error", json!({ "message": "max tool turns exceeded" }));
+                break;
+            }
+            if started.elapsed() > budget {
+                yield agent_sse("error", json!({ "message": "agent time budget exceeded" }));
+                break;
+            }
+
+            let out = match state.provider.run_turn(&messages, &tools, None).await {
+                Ok(o) => o,
+                Err(e) => {
+                    yield agent_sse("error", json!({ "message": e.to_string() }));
+                    break;
+                }
+            };
+
+            // Stream this turn's blocks for display.
+            for b in &out.content {
+                match b {
+                    ContentBlock::Text { text } => {
+                        yield agent_sse("text", json!({ "text": text }));
+                    }
+                    ContentBlock::Thinking { thinking } => {
+                        yield agent_sse("thinking", json!({ "thinking": thinking }));
+                    }
+                    ContentBlock::ToolUse { id, name, input } => {
+                        yield agent_sse("tool_call", json!({ "id": id, "name": name, "input": input }));
+                    }
+                    ContentBlock::ToolResult { .. } => {}
+                }
+            }
+
+            // Persist the assistant turn (with its blocks) for cross-turn history.
+            {
+                let mut chat = state.chat.lock().unwrap();
+                chat.push_agent_fragment(
+                    crate::chat::ChatRole::Assistant,
+                    assistant_text(&out.content),
+                    out.content.clone(),
+                );
+            }
+            messages.push(AgentMessage::Assistant(out.content.clone()));
+
+            // Collect tool calls this turn.
+            let tool_uses: Vec<(String, String, Value)> = out
+                .content
+                .iter()
+                .filter_map(|b| match b {
+                    ContentBlock::ToolUse { id, name, input } => {
+                        Some((id.clone(), name.clone(), input.clone()))
+                    }
+                    _ => None,
+                })
+                .collect();
+
+            if tool_uses.is_empty() {
+                break; // end of turn
+            }
+
+            // Execute each tool and stream its result.
+            let mut results: Vec<ContentBlock> = Vec::new();
+            for (id, name, input) in tool_uses {
+                let (content, is_error) =
+                    match crate::tools::dispatch(&state.engine, &name, input).await {
+                        Ok(v) => (v.to_string(), false),
+                        Err(e) => (json!({ "error": e.to_string() }).to_string(), true),
+                    };
+                yield agent_sse(
+                    "tool_result",
+                    json!({ "tool_use_id": id, "name": name, "content": content, "is_error": is_error }),
+                );
+                results.push(ContentBlock::ToolResult {
+                    tool_use_id: id,
+                    content,
+                    is_error,
+                });
+            }
+
+            // Persist tool results as a user-role fragment carrying the blocks.
+            {
+                let mut chat = state.chat.lock().unwrap();
+                chat.push_agent_fragment(crate::chat::ChatRole::User, String::new(), results.clone());
+            }
+            messages.push(AgentMessage::ToolResults(results));
+        }
+
+        {
+            let mut chat = state.chat.lock().unwrap();
+            chat.generating = false;
+        }
+        yield agent_sse("done", json!({}));
+    };
+
+    let sse_stream = stream.map(Ok::<_, std::convert::Infallible>);
+    let mut resp = Sse::new(sse_stream.boxed())
+        .keep_alive(KeepAlive::default())
+        .into_response();
+    resp.headers_mut().insert(
+        axum::http::header::CACHE_CONTROL,
+        axum::http::HeaderValue::from_static("no-cache, no-transform"),
+    );
+    resp
+}
+
+/// Default contents written to the system-prompt file when it doesn't exist.
+/// Kept in sync with the repo's `prompt.md`.
+pub const DEFAULT_SYSTEM_PROMPT: &str = "# tendrl assistant\n\nYou are an AI writing assistant embedded in **tendrl**, a local-first Nostr\nknowledge base. You help the user read, organize, and compose NKBIP-01\npublications (kind 30040 indexes referencing kind 30041 sections) and other\nNostr events.\n\n## Working with the corpus\n\nYou have tools to search and read the user's **local** index, view publications\nand their nested trees, inspect section versions, and resolve profiles. Prefer\nreading the actual events over guessing. Curate a working set by id with\n`search_events` / `semantic_search`, then expand only what you need with\n`view_publication` / `get_event`.\n\n## Writing\n\nWhen the user asks you to draft or revise, use `propose_section` (or\n`edit_section`) so the result lands in their **composer** for review — it is not\npublished. Use `save_draft` only when they ask you to save. Never claim\nsomething is published unless the user explicitly published it.\n\n## Style\n\nBe concise and concrete. Reference events by their title or address when it\nhelps. Ask before doing anything destructive or anything that reaches the\nnetwork or signs an event.\n";
+
+/// Resolve the system-prompt file path. Relative paths resolve against the
+/// config file's directory (or `data_dir` when there is no config file).
+pub fn resolve_prompt_path(
+    config_path: Option<&std::path::Path>,
+    data_dir: &std::path::Path,
+    configured: Option<&str>,
+) -> std::path::PathBuf {
+    let name = configured.unwrap_or("prompt.md");
+    let p = std::path::Path::new(name);
+    if p.is_absolute() {
+        return p.to_path_buf();
+    }
+    let base = config_path.and_then(|c| c.parent()).unwrap_or(data_dir);
+    base.join(p)
+}
+
+/// Create the system-prompt file with the default template if it's missing.
+pub fn ensure_prompt_file(path: &std::path::Path) {
+    if !path.exists() {
+        match std::fs::write(path, DEFAULT_SYSTEM_PROMPT) {
+            Ok(()) => tracing::info!("created default AI system prompt at {}", path.display()),
+            Err(e) => tracing::warn!("could not create system prompt {}: {e}", path.display()),
+        }
+    }
+}
+
+/// Read the system-prompt file, returning `None` when absent or blank.
+pub fn read_system_prompt(path: &std::path::Path) -> Option<String> {
+    let s = std::fs::read_to_string(path).ok()?;
+    let t = s.trim();
+    if t.is_empty() {
+        None
+    } else {
+        Some(t.to_string())
+    }
+}
+
+/// GET /api/v1/ai/prompt — current system-prompt file contents + path.
+pub async fn ai_prompt_get(State(state): State<ChatAppState>) -> Json<Value> {
+    let content = std::fs::read_to_string(&state.system_prompt_path).unwrap_or_default();
+    Json(json!({
+        "content": content,
+        "path": state.system_prompt_path.display().to_string(),
+    }))
+}
+
+/// Request body for writing the system prompt.
+#[derive(Debug, Deserialize)]
+pub struct PromptUpdate {
+    pub content: String,
+}
+
+/// PUT /api/v1/ai/prompt — overwrite the system-prompt file and update the
+/// live system prompt the chat UI shows + the agent uses.
+pub async fn ai_prompt_put(
+    State(state): State<ChatAppState>,
+    Json(req): Json<PromptUpdate>,
+) -> std::result::Result<Json<Value>, EngineError> {
+    std::fs::write(&state.system_prompt_path, &req.content)?;
+    {
+        let trimmed = req.content.trim();
+        let mut chat = state.chat.lock().unwrap();
+        chat.system_prompt = if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_string())
+        };
+    }
+    Ok(Json(json!({
+        "saved": true,
+        "path": state.system_prompt_path.display().to_string(),
+    })))
+}
+
+/// Request body for updating AI settings (all fields optional).
+#[derive(Debug, Deserialize, Default)]
+pub struct AiSettingsRequest {
+    #[serde(default)]
+    pub enabled_tools: Option<Vec<String>>,
+    #[serde(default)]
+    pub provider: Option<String>,
+    #[serde(default)]
+    pub model: Option<String>,
+    #[serde(default)]
+    pub auth: Option<String>,
+}
+
+/// Shape the AI settings response: config-backed provider/model/auth + the
+/// tool catalog annotated with each tool's live enablement.
+fn build_ai_settings_response(
+    engine: &crate::engine::Engine,
+    policy: &crate::tools::ToolPolicy,
+) -> Value {
+    let cfg = engine
+        .config_path()
+        .and_then(|p| crate::config::Config::from_file(p).ok())
+        .unwrap_or_default();
+    let tools: Vec<Value> = crate::tools::catalog()
+        .iter()
+        .map(|t| {
+            json!({
+                "name": t.name,
+                "description": t.description,
+                "category": t.category,
+                "enabled": policy.enabled.contains(t.name),
+            })
+        })
+        .collect();
+    json!({
+        "provider": cfg.ai.provider,
+        "model": cfg.ai.model,
+        "auth": cfg.ai.auth,
+        "max_tool_turns": cfg.ai.max_tool_turns,
+        "tools": tools,
+    })
+}
+
+/// GET /api/v1/ai/settings — current provider/model/auth + per-tool enablement.
+pub async fn ai_settings_get(State(state): State<ChatAppState>) -> Json<Value> {
+    let policy = state.policy.read().unwrap().clone();
+    Json(build_ai_settings_response(&state.engine, &policy))
+}
+
+/// POST /api/v1/ai/settings — update enabled tools (live, immediate) and
+/// persist provider/model/auth/enabled_tools to config.toml (provider/model/
+/// auth apply on next boot; the tool allowlist also restores the policy on boot).
+pub async fn ai_settings_post(
+    State(state): State<ChatAppState>,
+    Json(req): Json<AiSettingsRequest>,
+) -> std::result::Result<Json<Value>, EngineError> {
+    if let Some(names) = req.enabled_tools.clone() {
+        *state.policy.write().unwrap() = crate::tools::ToolPolicy::from_enabled(names);
+    }
+    persist_ai_config(&state.engine, &req)?;
+    let policy = state.policy.read().unwrap().clone();
+    Ok(Json(build_ai_settings_response(&state.engine, &policy)))
+}
+
+/// Persist the provided AI settings into the `[ai]` block of config.toml,
+/// preserving any keys not being changed.
+fn persist_ai_config(
+    engine: &crate::engine::Engine,
+    req: &AiSettingsRequest,
+) -> std::result::Result<(), EngineError> {
+    let path = engine
+        .config_path()
+        .ok_or_else(|| EngineError::Config("no config path to persist AI settings".into()))?;
+    let content = std::fs::read_to_string(path).unwrap_or_default();
+    let mut doc: toml::Table =
+        toml::from_str(&content).map_err(|e| EngineError::Config(format!("parse config: {e}")))?;
+    let mut ai_tbl = doc
+        .get("ai")
+        .and_then(|v| v.as_table())
+        .cloned()
+        .unwrap_or_default();
+    if let Some(v) = &req.provider {
+        ai_tbl.insert("provider".into(), toml::Value::String(v.clone()));
+    }
+    if let Some(v) = &req.model {
+        ai_tbl.insert("model".into(), toml::Value::String(v.clone()));
+    }
+    if let Some(v) = &req.auth {
+        ai_tbl.insert("auth".into(), toml::Value::String(v.clone()));
+    }
+    if let Some(names) = &req.enabled_tools {
+        let arr = names
+            .iter()
+            .map(|n| toml::Value::String(n.clone()))
+            .collect();
+        ai_tbl.insert("enabled_tools".into(), toml::Value::Array(arr));
+    }
+    doc.insert("ai".into(), toml::Value::Table(ai_tbl));
+    std::fs::write(
+        path,
+        toml::to_string_pretty(&doc).map_err(|e| EngineError::Config(e.to_string()))?,
+    )?;
+    Ok(())
 }
 
 /// POST /api/v1/chat/edit — enter edit mode
@@ -4856,11 +5406,14 @@ pub async fn chat_exit_edit(
     Json(build_chat_response(&chat))
 }
 
-/// POST /api/v1/chat/system — set system prompt
+/// POST /api/v1/chat/system — set the system prompt (also persists it to the
+/// prompt.md file so the chat System view and the AI Tools prompt editor stay
+/// in sync).
 pub async fn chat_set_system(
     State(state): State<ChatAppState>,
     Json(req): Json<SystemPromptRequest>,
 ) -> Json<ChatResponse> {
+    let _ = std::fs::write(&state.system_prompt_path, &req.prompt);
     let mut chat = state.chat.lock().unwrap();
     chat.system_prompt = Some(req.prompt);
     Json(build_chat_response(&chat))
@@ -5034,7 +5587,9 @@ pub async fn identity_use_source_handler(
                     "nip07 source requires a signer_id — register a signer first (no extension connected?)".into(),
                 )
             })?;
-            IdentitySource::Nip07 { signer_id: Some(signer_id) }
+            IdentitySource::Nip07 {
+                signer_id: Some(signer_id),
+            }
         }
         // "nip46" is intentionally unsupported — the Nip46 variant has no
         // bunker transport, so it would register a non-functional signer.
@@ -5210,9 +5765,7 @@ pub async fn broadcast_handler(
     {
         Ok(op) => op,
         Err(_) => {
-            return Err(EngineError::Config(
-                "Broadcast cancelled by user".into(),
-            ));
+            return Err(EngineError::Config("Broadcast cancelled by user".into()));
         }
     };
     let chosen_relays = op.relays().to_vec();
@@ -5222,10 +5775,7 @@ pub async fn broadcast_handler(
     // `publish_to_relays`; for now we batch-emit Accepted/Rejected
     // after each result returns.)
     for url in &chosen_relays {
-        op.relay_status(
-            url.clone(),
-            crate::network::RelayStatusValue::Connecting,
-        );
+        op.relay_status(url.clone(), crate::network::RelayStatusValue::Connecting);
     }
 
     let results = crate::relay::publish_to_relays(&chosen_relays, &event_json).await;
@@ -5452,9 +6002,17 @@ mod chat_api_tests {
 
     fn make_state() -> ChatAppState {
         use crate::llm::NoopProvider;
+        let dir = tempfile::tempdir().unwrap();
+        let prompt_path = dir.path().join("prompt.md");
+        let engine = Arc::new(crate::engine::Engine::new(dir.path()).unwrap());
+        std::mem::forget(dir); // keep the temp dir alive for the test process
         ChatAppState {
             chat: Arc::new(Mutex::new(ChatState::new())),
             provider: Arc::new(NoopProvider::echo()),
+            engine,
+            max_tool_turns: 25,
+            policy: Arc::new(std::sync::RwLock::new(crate::tools::ToolPolicy::default())),
+            system_prompt_path: prompt_path,
         }
     }
 
