@@ -5268,12 +5268,10 @@ pub struct AiSettingsRequest {
     pub provider: Option<String>,
     #[serde(default)]
     pub model: Option<String>,
-    #[serde(default)]
-    pub auth: Option<String>,
 }
 
-/// Shape the AI settings response: config-backed provider/model/auth + the
-/// tool catalog annotated with each tool's live enablement.
+/// Shape the AI settings response: config-backed provider/model + the tool
+/// catalog annotated with each tool's live enablement.
 fn build_ai_settings_response(
     engine: &crate::engine::Engine,
     policy: &crate::tools::ToolPolicy,
@@ -5296,7 +5294,6 @@ fn build_ai_settings_response(
     json!({
         "provider": cfg.ai.provider,
         "model": cfg.ai.model,
-        "auth": cfg.ai.auth,
         "max_tool_turns": cfg.ai.max_tool_turns,
         "tools": tools,
     })
@@ -5345,9 +5342,6 @@ fn persist_ai_config(
     }
     if let Some(v) = &req.model {
         ai_tbl.insert("model".into(), toml::Value::String(v.clone()));
-    }
-    if let Some(v) = &req.auth {
-        ai_tbl.insert("auth".into(), toml::Value::String(v.clone()));
     }
     if let Some(names) = &req.enabled_tools {
         let arr = names

@@ -633,29 +633,9 @@
 				/>
 			</div>
 
-			<div class="settings-row">
-				<span class="settings-label">Auth channel</span>
-				<div class="radio-group">
-					{#each ['api_key', 'oauth'] as opt (opt)}
-						<label class="radio">
-							<input
-								type="radio"
-								name="ai-auth"
-								value={opt}
-								checked={aiSettings.auth === opt}
-								disabled={aiBusy}
-								onchange={() => applyAiUpdate({ auth: opt })}
-							/>
-							<span>{opt === 'api_key' ? 'API key' : 'Subscription'}</span>
-						</label>
-					{/each}
-				</div>
-			</div>
 			<p class="settings-hint">
-				<strong>API key</strong> ({'ANTHROPIC_API_KEY'}): per-token developer billing.<br />
-				<strong>Subscription</strong> ({'ANTHROPIC_AUTH_TOKEN'}, e.g. a <code>claude setup-token</code>):
-				draws from your monthly Agent SDK credit, then API rates or stops.<br />
-				Model/auth changes apply on engine restart.
+				Auth uses <code>ANTHROPIC_API_KEY</code> from the engine's environment. Model changes
+				apply on engine restart.
 			</p>
 
 			<div class="settings-subtitle">System prompt</div>

@@ -401,11 +401,8 @@ impl Default for EmbeddingConfig {
 
 /// AI / LLM provider configuration (the `[ai]` block).
 ///
-/// Carries the provider selection, the agent/chat model, and the auth channel.
-/// Secrets are **never** stored here — they come from the environment
-/// (`ANTHROPIC_API_KEY` for `auth = "api_key"`, `ANTHROPIC_AUTH_TOKEN` for
-/// `auth = "oauth"`). See `docs/ai-tools-architecture.md` for the channel /
-/// billing distinction.
+/// Carries the provider selection and the agent/chat model. The API key is
+/// **never** stored here — it comes from `ANTHROPIC_API_KEY` in the environment.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AiConfig {
     /// Active provider: `"claude"` (default) or `"noop"` (echo, testing).
@@ -416,10 +413,6 @@ pub struct AiConfig {
     /// not the cheap chat model.
     #[serde(default = "default_ai_model")]
     pub model: String,
-    /// Auth channel: `"api_key"` (Developer Platform, per-token) or `"oauth"`
-    /// (subscription bearer token, hand-supplied via `ANTHROPIC_AUTH_TOKEN`).
-    #[serde(default = "default_ai_auth")]
-    pub auth: String,
     /// Hard cap on tool round-trips within a single agent turn (runaway guard).
     #[serde(default = "default_max_tool_turns")]
     pub max_tool_turns: usize,
@@ -440,9 +433,6 @@ fn default_ai_provider() -> String {
 fn default_ai_model() -> String {
     "claude-sonnet-4-6".to_string()
 }
-fn default_ai_auth() -> String {
-    "api_key".to_string()
-}
 fn default_max_tool_turns() -> usize {
     25
 }
@@ -452,7 +442,6 @@ impl Default for AiConfig {
         Self {
             provider: default_ai_provider(),
             model: default_ai_model(),
-            auth: default_ai_auth(),
             max_tool_turns: default_max_tool_turns(),
             enabled_tools: None,
             system_prompt_path: None,

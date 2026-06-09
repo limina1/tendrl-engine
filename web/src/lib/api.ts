@@ -57,11 +57,10 @@ export interface AiToolInfo {
 	enabled: boolean;
 }
 
-/** Current AI assistant settings (provider/model/auth + tool catalog). */
+/** Current AI assistant settings (provider/model + tool catalog). */
 export interface AiSettings {
 	provider: string;
 	model: string;
-	auth: string;
 	max_tool_turns: number;
 	tools: AiToolInfo[];
 }
@@ -71,7 +70,6 @@ export interface AiSettingsUpdate {
 	enabled_tools?: string[];
 	provider?: string;
 	model?: string;
-	auth?: string;
 }
 
 export function getAiSettings(): Promise<AiSettings> {

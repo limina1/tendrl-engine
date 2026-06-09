@@ -114,54 +114,6 @@ pub struct TurnOutput {
 }
 
 // ---------------------------------------------------------------------------
-// Credentials
-// ---------------------------------------------------------------------------
-
-/// The auth header to send on a request — exactly one of these, never both
-/// (sending both `x-api-key` and `Authorization` makes the API reject it).
-#[derive(Debug, Clone)]
-pub enum AuthHeader {
-    ApiKey(String),
-    Bearer(String),
-}
-
-/// A source of the current auth header for the Anthropic API. Mirrors the
-/// pluggable `Signer` in `signing.rs` — leaves room for a future refreshing
-/// source without changing `ClaudeProvider`.
-#[async_trait::async_trait]
-pub trait ClaudeCredential: Send + Sync {
-    /// The header to send now.
-    async fn header(&self) -> Result<AuthHeader, LLMError>;
-    /// Called on a 401 so a refreshing impl can re-mint (v1 impls no-op; the
-    /// UI surfaces a "re-supply token" prompt instead).
-    async fn invalidate(&self);
-}
-
-/// Developer-platform API key (`ANTHROPIC_API_KEY`), sent as `x-api-key`.
-pub struct ApiKeyCredential(pub String);
-
-#[async_trait::async_trait]
-impl ClaudeCredential for ApiKeyCredential {
-    async fn header(&self) -> Result<AuthHeader, LLMError> {
-        Ok(AuthHeader::ApiKey(self.0.clone()))
-    }
-    async fn invalidate(&self) {}
-}
-
-/// Hand-supplied subscription bearer (`ANTHROPIC_AUTH_TOKEN`, e.g. a
-/// `claude setup-token` 1-year token), sent as `Authorization: Bearer`. No
-/// refresh — on expiry the engine surfaces "re-supply ANTHROPIC_AUTH_TOKEN".
-pub struct StaticBearerCredential(pub String);
-
-#[async_trait::async_trait]
-impl ClaudeCredential for StaticBearerCredential {
-    async fn header(&self) -> Result<AuthHeader, LLMError> {
-        Ok(AuthHeader::Bearer(self.0.clone()))
-    }
-    async fn invalidate(&self) {}
-}
-
-// ---------------------------------------------------------------------------
 // Provider trait
 // ---------------------------------------------------------------------------
 
@@ -270,23 +222,18 @@ impl LLMProvider for NoopProvider {
 // ClaudeProvider (Anthropic Messages API)
 // ---------------------------------------------------------------------------
 
-/// Provider that calls the Anthropic Messages API
+/// Provider that calls the Anthropic Messages API (API-key auth only).
 pub struct ClaudeProvider {
-    credential: Arc<dyn ClaudeCredential>,
+    api_key: String,
     model: String,
     client: reqwest::Client,
 }
 
 impl ClaudeProvider {
-    /// Construct from a raw API key (back-compat). Wraps an `ApiKeyCredential`.
+    /// Construct from a developer-platform API key (`ANTHROPIC_API_KEY`).
     pub fn new(api_key: String) -> Self {
-        Self::with_credential(Arc::new(ApiKeyCredential(api_key)))
-    }
-
-    /// Construct from any credential source (api-key or subscription bearer).
-    pub fn with_credential(credential: Arc<dyn ClaudeCredential>) -> Self {
         Self {
-            credential,
+            api_key,
             model: "claude-haiku-4-5-20251001".to_string(),
             client: reqwest::Client::new(),
         }
@@ -403,26 +350,18 @@ impl LLMProvider for ClaudeProvider {
                 serde_json::to_value(tools).map_err(|e| LLMError::ProviderError(e.to_string()))?;
         }
 
-        let mut req = self
+        let resp = self
             .client
             .post(ANTHROPIC_URL)
             .header("anthropic-version", "2023-06-01")
-            .header("content-type", "application/json");
-        match self.credential.header().await? {
-            AuthHeader::ApiKey(k) => req = req.header("x-api-key", k),
-            AuthHeader::Bearer(t) => req = req.header("authorization", format!("Bearer {t}")),
-        }
-
-        let resp = req
+            .header("content-type", "application/json")
+            .header("x-api-key", &self.api_key)
             .json(&body)
             .send()
             .await
             .map_err(|e| LLMError::RequestFailed(e.to_string()))?;
 
         let status = resp.status();
-        if status.as_u16() == 401 {
-            self.credential.invalidate().await;
-        }
         let resp_body: Value = resp
             .json()
             .await
@@ -463,47 +402,25 @@ impl LLMProvider for ClaudeProvider {
 // Construction
 // ---------------------------------------------------------------------------
 
-/// Build a provider from the `[ai]` config block. Secrets come from the
-/// environment, never the config file. Falls back to the echo provider when no
-/// credential is available, so a missing key degrades gracefully.
+/// Build a provider from the `[ai]` config block. The API key comes from
+/// `ANTHROPIC_API_KEY` in the environment, never the config file. Falls back to
+/// the echo provider when the key is missing, so it degrades gracefully.
 pub fn provider_from_config(ai: &crate::config::AiConfig) -> Arc<dyn LLMProvider> {
     match ai.provider.as_str() {
         "noop" => {
             tracing::info!("LLM provider: noop (echo)");
             Arc::new(NoopProvider::echo())
         }
-        _ => {
-            let credential: Option<Arc<dyn ClaudeCredential>> = match ai.auth.as_str() {
-                "oauth" => std::env::var("ANTHROPIC_AUTH_TOKEN")
-                    .ok()
-                    .map(|t| Arc::new(StaticBearerCredential(t)) as Arc<dyn ClaudeCredential>),
-                _ => std::env::var("ANTHROPIC_API_KEY")
-                    .ok()
-                    .map(|k| Arc::new(ApiKeyCredential(k)) as Arc<dyn ClaudeCredential>),
-            };
-            match credential {
-                Some(c) => {
-                    tracing::info!(
-                        "LLM provider: claude (model: {}, auth: {})",
-                        ai.model,
-                        ai.auth
-                    );
-                    Arc::new(ClaudeProvider::with_credential(c).with_model(ai.model.clone()))
-                }
-                None => {
-                    tracing::warn!(
-                        "LLM provider: echo (no credential for auth={}); set {}",
-                        ai.auth,
-                        if ai.auth == "oauth" {
-                            "ANTHROPIC_AUTH_TOKEN"
-                        } else {
-                            "ANTHROPIC_API_KEY"
-                        }
-                    );
-                    Arc::new(NoopProvider::echo())
-                }
+        _ => match std::env::var("ANTHROPIC_API_KEY") {
+            Ok(key) => {
+                tracing::info!("LLM provider: claude (model: {})", ai.model);
+                Arc::new(ClaudeProvider::new(key).with_model(ai.model.clone()))
             }
-        }
+            Err(_) => {
+                tracing::warn!("LLM provider: echo (no ANTHROPIC_API_KEY set)");
+                Arc::new(NoopProvider::echo())
+            }
+        },
     }
 }
 
