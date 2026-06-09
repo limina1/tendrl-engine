@@ -4880,6 +4880,11 @@ pub async fn chat_reset(State(state): State<ChatAppState>) -> Json<ChatResponse>
 pub struct SaveSessionRequest {
     #[serde(default)]
     pub title: Option<String>,
+    /// When set, overwrite the existing session with this id (preserving its
+    /// original `created_at`) instead of minting a new one. The web sends back
+    /// the id it got from a prior save/load so re-saving updates in place.
+    #[serde(default)]
+    pub id: Option<String>,
 }
 
 /// POST /api/v1/chat/sessions — save the current conversation to a file.
@@ -4924,11 +4929,20 @@ pub async fn session_save(
         .map(|t| t.trim().to_string())
         .unwrap_or_else(|| crate::sessions::derive_title(&fragments));
     let now = crate::sessions::now_millis();
-    let id = format!("{}-{}", now, crate::sessions::slug(&title));
+
+    // Overwrite an existing session when the caller supplies its id, keeping
+    // the original creation time; otherwise mint a fresh, time-prefixed id.
+    let (id, created_at) = match req.id.filter(|s| !s.trim().is_empty()) {
+        Some(existing) => {
+            let created = store.load(&existing).map(|s| s.created_at).unwrap_or(now);
+            (existing, created)
+        }
+        None => (format!("{}-{}", now, crate::sessions::slug(&title)), now),
+    };
     let session = crate::sessions::SavedSession {
         id: id.clone(),
         title: title.clone(),
-        created_at: now,
+        created_at,
         modified_at: now,
         fragments,
         context,

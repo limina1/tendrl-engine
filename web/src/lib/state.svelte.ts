@@ -505,6 +505,10 @@ function _createAppState() {
 	let watchingSessionId: string | null = null;
 	let loadedSessionId: string | null = null;
 	let loadedSessionMessageCount = 0;
+	// The tendrl session this conversation maps to. Set on save/load so a
+	// re-save overwrites in place instead of spawning a duplicate; cleared on
+	// reset (a fresh conversation has no backing file yet).
+	let activeSessionId: string | null = $state(null);
 
 	// --- Document import ---
 	let documentFiles: DocumentFile[] = $state([]);
@@ -1226,6 +1230,7 @@ function _createAppState() {
 			loadedSessionId = null;
 			loadedSessionMessageCount = 0;
 		}
+		activeSessionId = null; // fresh conversation — next save creates a new file
 		try {
 			chat = await api.resetChat();
 		} finally {
@@ -3027,11 +3032,17 @@ function _createAppState() {
 		}
 	}
 
-	async function handleSaveChat() {
+	async function handleSaveChat(opts?: { asNew?: boolean }) {
 		try {
-			const r = await api.saveChatSession();
+			const overwrite = opts?.asNew ? null : activeSessionId;
+			const r = await api.saveChatSession(undefined, overwrite);
+			activeSessionId = r.id;
 			await refreshSavedSessions();
-			pushToast(`Saved chat “${r.title}”`, 'success', 2500);
+			pushToast(
+				overwrite ? `Updated “${r.title}”` : `Saved chat “${r.title}”`,
+				'success',
+				2500
+			);
 		} catch (e) {
 			pushToast(
 				`Save failed: ${e instanceof Error ? e.message : String(e)}`,
@@ -3046,6 +3057,7 @@ function _createAppState() {
 		try {
 			chat = await api.loadChatSession(id);
 			loadedSessionId = null; // a tendrl session, not a Claude Code transcript
+			activeSessionId = id; // re-saves overwrite this session
 			sessionsExpanded = false;
 			pushToast('Chat loaded', 'success', 2000);
 		} catch (e) {
@@ -3720,6 +3732,7 @@ function _createAppState() {
 		// Claude sessions
 		get claudeSessions() { return claudeSessions; },
 		get savedSessions() { return savedSessions; },
+		get activeSessionId() { return activeSessionId; },
 		get claudeSessionDetail() { return claudeSessionDetail; },
 		get claudeSessionsLoading() { return claudeSessionsLoading; },
 		get sessionsExpanded() { return sessionsExpanded; },

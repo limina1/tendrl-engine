@@ -92,10 +92,13 @@ export interface SavedSessionSummary {
 	message_count: number;
 }
 
-export function saveChatSession(title?: string): Promise<{ id: string; title: string }> {
+export function saveChatSession(
+	title?: string,
+	id?: string | null
+): Promise<{ id: string; title: string }> {
 	return fetchJson('/api/v1/chat/sessions', {
 		method: 'POST',
-		body: JSON.stringify({ title: title ?? null })
+		body: JSON.stringify({ title: title ?? null, id: id ?? null })
 	});
 }
 

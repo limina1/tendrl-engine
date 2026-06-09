@@ -235,7 +235,7 @@ impl ChatState {
             }
         }
 
-        messages
+        sanitize_tool_pairs(messages)
     }
 
     /// Build the full message list for sending to an LLM
@@ -445,9 +445,162 @@ pub fn parse_edit_buffer(buffer: &str) -> Vec<(ChatRole, String)> {
     results
 }
 
+/// Repair a conversation so every `tool_use` is answered by a matching
+/// `tool_result` and no `tool_result` dangles. The Anthropic API 400s if an
+/// assistant `tool_use` block is not immediately followed by a user message
+/// carrying a `tool_result` for each id (and vice-versa). Editing the chat —
+/// deleting a tool call or its result — easily produces such an imbalance, so
+/// we normalize here, at the single point where history is serialized for the
+/// model, rather than trusting every editor path to keep pairs intact.
+///
+/// Rules applied, in order:
+/// - An assistant turn left empty by editing is dropped.
+/// - For an assistant turn with `tool_use` blocks, the immediately-following
+///   `ToolResults` (if any) is consumed; results that match one of this turn's
+///   ids are kept, others discarded.
+/// - Any `tool_use` left unanswered gets a synthetic `is_error` result so the
+///   model sees the call resolved (it can recover) rather than the request 400ing.
+/// - A `ToolResults` message with no preceding `tool_use` to answer is dropped.
+fn sanitize_tool_pairs(messages: Vec<AgentMessage>) -> Vec<AgentMessage> {
+    let mut out: Vec<AgentMessage> = Vec::with_capacity(messages.len());
+    let mut i = 0;
+    while i < messages.len() {
+        match &messages[i] {
+            AgentMessage::System(s) => {
+                out.push(AgentMessage::System(s.clone()));
+                i += 1;
+            }
+            AgentMessage::User(s) => {
+                out.push(AgentMessage::User(s.clone()));
+                i += 1;
+            }
+            // Orphan results (the assistant turn they answered was edited away).
+            AgentMessage::ToolResults(_) => {
+                i += 1;
+            }
+            AgentMessage::Assistant(blocks) => {
+                if blocks.is_empty() {
+                    i += 1;
+                    continue;
+                }
+                let use_ids: Vec<String> = blocks
+                    .iter()
+                    .filter_map(|b| match b {
+                        ContentBlock::ToolUse { id, .. } => Some(id.clone()),
+                        _ => None,
+                    })
+                    .collect();
+                out.push(AgentMessage::Assistant(blocks.clone()));
+                if use_ids.is_empty() {
+                    i += 1;
+                    continue;
+                }
+
+                let mut results: Vec<ContentBlock> = Vec::new();
+                let mut answered: HashSet<String> = HashSet::new();
+                if let Some(AgentMessage::ToolResults(rblocks)) = messages.get(i + 1) {
+                    for b in rblocks {
+                        if let ContentBlock::ToolResult { tool_use_id, .. } = b {
+                            if use_ids.contains(tool_use_id) && answered.insert(tool_use_id.clone())
+                            {
+                                results.push(b.clone());
+                            }
+                        }
+                    }
+                    i += 2;
+                } else {
+                    i += 1;
+                }
+                for id in &use_ids {
+                    if !answered.contains(id) {
+                        results.push(ContentBlock::ToolResult {
+                            tool_use_id: id.clone(),
+                            content: "[tool result unavailable — removed when the conversation was edited]"
+                                .to_string(),
+                            is_error: true,
+                        });
+                    }
+                }
+                out.push(AgentMessage::ToolResults(results));
+            }
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn tool_use(id: &str) -> ContentBlock {
+        ContentBlock::ToolUse {
+            id: id.into(),
+            name: "search_events".into(),
+            input: serde_json::json!({}),
+        }
+    }
+    fn tool_result(id: &str) -> ContentBlock {
+        ContentBlock::ToolResult {
+            tool_use_id: id.into(),
+            content: "ok".into(),
+            is_error: false,
+        }
+    }
+
+    #[test]
+    fn sanitize_synthesizes_missing_tool_result() {
+        // Assistant calls a tool but its result was deleted — must not dangle.
+        let msgs = vec![
+            AgentMessage::User("hi".into()),
+            AgentMessage::Assistant(vec![tool_use("a")]),
+        ];
+        let out = sanitize_tool_pairs(msgs);
+        assert_eq!(out.len(), 3);
+        match &out[2] {
+            AgentMessage::ToolResults(blocks) => match &blocks[0] {
+                ContentBlock::ToolResult {
+                    tool_use_id,
+                    is_error,
+                    ..
+                } => {
+                    assert_eq!(tool_use_id, "a");
+                    assert!(is_error);
+                }
+                _ => panic!("expected synthetic tool_result"),
+            },
+            _ => panic!("expected ToolResults after assistant tool_use"),
+        }
+    }
+
+    #[test]
+    fn sanitize_drops_orphan_tool_result() {
+        // A tool_result whose assistant turn was deleted is dropped.
+        let msgs = vec![
+            AgentMessage::ToolResults(vec![tool_result("gone")]),
+            AgentMessage::User("hi".into()),
+        ];
+        let out = sanitize_tool_pairs(msgs);
+        assert_eq!(out.len(), 1);
+        assert!(matches!(out[0], AgentMessage::User(_)));
+    }
+
+    #[test]
+    fn sanitize_keeps_well_formed_pairs() {
+        let msgs = vec![
+            AgentMessage::User("hi".into()),
+            AgentMessage::Assistant(vec![tool_use("a")]),
+            AgentMessage::ToolResults(vec![tool_result("a")]),
+            AgentMessage::Assistant(vec![ContentBlock::Text {
+                text: "done".into(),
+            }]),
+        ];
+        let out = sanitize_tool_pairs(msgs);
+        assert_eq!(out.len(), 4);
+        match &out[2] {
+            AgentMessage::ToolResults(blocks) => assert_eq!(blocks.len(), 1),
+            _ => panic!("expected preserved ToolResults"),
+        }
+    }
 
     #[test]
     fn test_chat_state_new_defaults() {

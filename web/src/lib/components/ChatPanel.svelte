@@ -46,6 +46,7 @@
 		onclaudesessionback,
 		onloadsessiontochat,
 		savedSessions = [],
+		activeSessionId = null,
 		onsavechat,
 		onloadsavedsession,
 		ondeletesavedsession
@@ -87,7 +88,8 @@
 		onclaudesessionback?: () => void;
 		onloadsessiontochat?: (session: { id: string; messages: ClaudeSessionMessage[] }) => void;
 		savedSessions?: SavedSessionSummary[];
-		onsavechat?: () => void;
+		activeSessionId?: string | null;
+		onsavechat?: (opts?: { asNew?: boolean }) => void;
 		onloadsavedsession?: (id: string) => void;
 		ondeletesavedsession?: (id: string) => void;
 	} = $props();
@@ -160,8 +162,17 @@
 		<button
 			onclick={() => onsavechat?.()}
 			disabled={loading || visibleFragments.length === 0}
-			title="Save this chat to your sessions folder">Save</button
+			title={activeSessionId
+				? 'Update the saved session this chat is linked to'
+				: 'Save this chat to your sessions folder'}>{activeSessionId ? 'Update' : 'Save'}</button
 		>
+		{#if activeSessionId}
+			<button
+				onclick={() => onsavechat?.({ asNew: true })}
+				disabled={loading || visibleFragments.length === 0}
+				title="Save a separate copy as a new session">Save as new</button
+			>
+		{/if}
 		<span class="toolbar-spacer"></span>
 		<button class="sel-btn" onclick={selectAllFragments} disabled={loading || visibleFragments.length === 0} title="Select all">All</button>
 		<button class="sel-btn" onclick={invertFragmentSelection} disabled={loading || visibleFragments.length === 0} title="Invert selection">Inv</button>
