@@ -2270,14 +2270,13 @@ pub fn build_block_publication_events(
                 ]));
             }
             BlockKind::Imported { source_addr, .. } => {
-                // No 30041 event — reference the original directly
+                // No new event — reference the original directly, at its own
+                // kind (a linked 30023/30818 keeps its coordinate).
                 a_tags.push(serde_json::json!([
                     "a",
                     format!(
                         "{}:{}:{}",
-                        KIND_PUBLICATION_SECTION,
-                        source_addr.pubkey,
-                        source_addr.d_tag
+                        source_addr.kind, source_addr.pubkey, source_addr.d_tag
                     ),
                     ""
                 ]));
@@ -2325,12 +2324,13 @@ fn build_forked_section_event(
         ]));
     }
 
-    // Fork lineage tag — NIP-54 addressable fork marker
+    // Fork lineage tag — NIP-54 addressable fork marker. The coordinate
+    // carries the original's own kind (30041/30023/30818/…), not 30041.
     tags.push(json!([
         "a",
         format!(
             "{}:{}:{}",
-            KIND_PUBLICATION_SECTION, original_addr.pubkey, original_addr.d_tag
+            original_addr.kind, original_addr.pubkey, original_addr.d_tag
         ),
         "",
         "fork"
@@ -2968,6 +2968,56 @@ mod tests {
         );
         let (_, section_events) = build_block_publication_events(&state, "me", None);
         assert!(section_events.is_empty());
+    }
+
+    #[test]
+    fn test_build_block_imported_keeps_original_kind_in_a_tag() {
+        // A linked 30023/30818 must be referenced at its own kind — a
+        // 30041-prefixed coordinate would point at a nonexistent event.
+        let mut state = ComposeBlockState::new();
+        state.title = "Curated".into();
+        state.add_imported(
+            NAddr::new(30023, "alice", "longform-1"),
+            "content".into(),
+            "alice".into(),
+            "Long-form".into(),
+        );
+        state.add_imported(
+            NAddr::new(30818, "bob", "wiki-1"),
+            "content".into(),
+            "bob".into(),
+            "Wiki".into(),
+        );
+
+        let (pub_event, _) = build_block_publication_events(&state, "me", None);
+        let tags = pub_event["tags"].as_array().unwrap();
+        let a_values: Vec<&str> = tags
+            .iter()
+            .filter(|t| t[0] == "a")
+            .map(|t| t[1].as_str().unwrap())
+            .collect();
+        assert_eq!(a_values, vec!["30023:alice:longform-1", "30818:bob:wiki-1"]);
+    }
+
+    #[test]
+    fn test_build_block_fork_marker_keeps_original_kind() {
+        let mut state = ComposeBlockState::new();
+        state.title = "Fork of a wiki page".into();
+        state.add_imported(
+            NAddr::new(30818, "alice", "wiki-orig"),
+            "text".into(),
+            "alice".into(),
+            "T".into(),
+        );
+        state.toggle_fork(0);
+
+        let (_, section_events) = build_block_publication_events(&state, "me", None);
+        let tags = section_events[0]["tags"].as_array().unwrap();
+        let fork_a = tags
+            .iter()
+            .find(|t| t.as_array().map(|a| a.len() >= 4 && a[3] == "fork").unwrap_or(false))
+            .expect("fork marker present");
+        assert_eq!(fork_a[1].as_str().unwrap(), "30818:alice:wiki-orig");
     }
 
     #[test]

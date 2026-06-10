@@ -627,6 +627,32 @@ export function publishBlocks(req: PublishBlocksRequest) {
 	});
 }
 
+/** One annotated entry from the blocks preview: the would-be event plus its
+ *  provenance. `linked` entries carry the exact original event the 30040
+ *  will reference (null when it isn't cached locally). */
+export interface PreviewEventEntry {
+	status: 'new' | 'forked' | 'linked';
+	title: string;
+	event: unknown | null;
+	original?: {
+		addr: string;
+		kind: number;
+		pubkey: string;
+		author_name: string | null;
+		found?: boolean;
+	};
+}
+
+/** Build the unsigned event graph for a block-based compose — mirrors what
+ *  /publish/blocks will emit (fork markers, linked originals) without
+ *  signing/ingesting/broadcasting. */
+export function previewPublicationBlocks(req: PublishBlocksRequest) {
+	return fetchJson<{ events: PreviewEventEntry[] }>('/api/v1/publish/blocks/preview', {
+		method: 'POST',
+		body: JSON.stringify(req)
+	});
+}
+
 // Document Import API
 
 export function listDocuments() {

@@ -1371,6 +1371,37 @@ function _createAppState() {
 		republishPrompt = null;
 	}
 
+	// Map compose sections to publish blocks — shared by executePublish and
+	// the JSON preview so the preview shows exactly what publishing emits:
+	// no source → editable; source + diverged content → forked; source +
+	// untouched content → imported (linked in place, no new event).
+	function toPublishBlocks(sections: ContextItem[]): api.PublishBlock[] {
+		return sections.map((s) => {
+			const baseTags = s.tags.map((t) => [t.name, t.value] as [string, string]);
+			if (!s.source_addr) {
+				return { kind: 'editable', title: s.title, tags: baseTags, content: s.content };
+			}
+			if (s.content !== s.original_content) {
+				return {
+					kind: 'forked',
+					title: s.title,
+					tags: baseTags,
+					original_addr: s.source_addr,
+					content: s.content,
+					original_author: s.source_addr.pubkey
+				};
+			}
+			return {
+				kind: 'imported',
+				title: s.title,
+				tags: baseTags,
+				source_addr: s.source_addr,
+				content: s.content,
+				author: s.source_addr.pubkey
+			};
+		});
+	}
+
 	// Sign the compose into a local snapshot — sign:true, broadcast:false. The
 	// signature is the snapshot; nostrdb keeps every version. Broadcasting is a
 	// separate, explicit step. The caller guarantees an unlocked identity.
@@ -1398,38 +1429,7 @@ function _createAppState() {
 			if (hasProvenance) {
 				// NOTE: republish d-tag reuse is not wired through the block/
 				// fork path yet — see docs/republish-diff.md (deferred).
-				const blocks: api.PublishBlock[] = sections.map((s) => {
-					const baseTags = s.tags.map(
-						(t) => [t.name, t.value] as [string, string]
-					);
-					if (!s.source_addr) {
-						return {
-							kind: 'editable',
-							title: s.title,
-							tags: baseTags,
-							content: s.content
-						};
-					}
-					const diverged = s.content !== s.original_content;
-					if (diverged) {
-						return {
-							kind: 'forked',
-							title: s.title,
-							tags: baseTags,
-							original_addr: s.source_addr,
-							content: s.content,
-							original_author: s.source_addr.pubkey
-						};
-					}
-					return {
-						kind: 'imported',
-						title: s.title,
-						tags: baseTags,
-						source_addr: s.source_addr,
-						content: s.content,
-						author: s.source_addr.pubkey
-					};
-				});
+				const blocks = toPublishBlocks(sections);
 				resp = await api.publishBlocks({
 					title: pubTitle,
 					tags: pubTags.map((t) => [t.name, t.value] as [string, string]),
@@ -1670,9 +1670,35 @@ function _createAppState() {
 		}
 	}
 
+	// Map a blocks-preview entry (event + provenance) to a modal item with a
+	// forked/linked banner. Author label = kind-0 name resolved engine-side,
+	// falling back to a shortened pubkey.
+	function previewEntryToModalItem(entry: api.PreviewEventEntry, idx: number): EventsModalItem {
+		const base = entry.event
+			? eventToModalItem(entry.event, idx)
+			: {
+					label: entry.title || `event ${idx + 1}`,
+					kind: entry.original?.kind,
+					json: null
+				};
+		if (entry.status === 'new' || !entry.original) return base;
+		const o = entry.original;
+		const author = o.author_name || `${o.pubkey.slice(0, 8)}…`;
+		const text =
+			entry.status === 'forked'
+				? `forked from ${author}`
+				: o.found === false
+					? `linked — original by ${author} not cached locally`
+					: `linked — exact original by ${author}`;
+		return { ...base, banner: { status: entry.status, text, addr: o.addr } };
+	}
+
 	// Build the would-be event graph for the current compose and open the
-	// JSON inspector — no signing/ingest/broadcast. Mirrors the publish
-	// request shape so the preview matches what publishing emits.
+	// JSON inspector — no signing/ingest/broadcast. Mirrors executePublish's
+	// routing exactly: any provenance (draft seeded from a publication, or a
+	// section with a source) goes through the block preview so fork markers
+	// and linked originals show as they will publish; otherwise the flat/
+	// nested preview.
 	async function handleComposePreview(items: ContextItem[], meta?: { title: string; tags: TagEntry[] }) {
 		const sections = items.length > 0 ? items : compose.sections;
 		if (!sections.length) {
@@ -1681,22 +1707,38 @@ function _createAppState() {
 		}
 		const pubTitle = meta?.title ?? compose.title;
 		const pubTags = meta?.tags ?? compose.tags;
+		const hasProvenance = !!composeSourcePubAddr || sections.some((s) => !!s.source_addr);
 		try {
-			const resp = await api.previewPublication({
-				title: pubTitle,
-				tags: pubTags.map((t) => [t.name, t.value] as [string, string]),
-				sections: sections.map((s) => ({
-					title: s.title,
-					content: s.content,
-					level: s.level,
-					tags: s.tags.map((t) => [t.name, t.value] as [string, string])
-				})),
-				sign: false,
-				broadcast: false
-			});
+			let events: EventsModalItem[];
+			if (hasProvenance) {
+				const resp = await api.previewPublicationBlocks({
+					title: pubTitle,
+					tags: pubTags.map((t) => [t.name, t.value] as [string, string]),
+					blocks: toPublishBlocks(sections),
+					source_publication_addr: composeSourcePubAddr,
+					source_publication_event_id: composeSourcePubEventId,
+					sign: false,
+					broadcast: false
+				});
+				events = resp.events.map((e, i) => previewEntryToModalItem(e, i));
+			} else {
+				const resp = await api.previewPublication({
+					title: pubTitle,
+					tags: pubTags.map((t) => [t.name, t.value] as [string, string]),
+					sections: sections.map((s) => ({
+						title: s.title,
+						content: s.content,
+						level: s.level,
+						tags: s.tags.map((t) => [t.name, t.value] as [string, string])
+					})),
+					sign: false,
+					broadcast: false
+				});
+				events = resp.events.map((e, i) => eventToModalItem(e, i));
+			}
 			eventsModal = {
-				title: `Preview — ${pubTitle || 'untitled'} (${resp.events.length} events)`,
-				events: resp.events.map((e, i) => eventToModalItem(e, i))
+				title: `Preview — ${pubTitle || 'untitled'} (${events.length} events)`,
+				events
 			};
 		} catch (e) {
 			pushToast(`Preview failed: ${e instanceof Error ? e.message : String(e)}`, 'error', 6000);

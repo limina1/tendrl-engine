@@ -287,6 +287,10 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/v1/publish/preview", post(api::publish_preview_handler))
         .route("/api/v1/publish/blocks", post(api::publish_blocks_handler))
         .route(
+            "/api/v1/publish/blocks/preview",
+            post(api::publish_blocks_preview_handler),
+        )
+        .route(
             "/api/v1/publish/republish-diff",
             post(api::republish_diff_handler),
         )

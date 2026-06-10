@@ -3925,37 +3925,26 @@ pub struct PublishBlocksRequest {
     pub relays: Option<Vec<String>>,
 }
 
-/// POST /api/v1/publish/blocks — publish a block-based draft.
-pub async fn publish_blocks_handler(
-    State(engine): State<AppState>,
-    Extension(signing): Extension<crate::signing::SigningController>,
-    Json(req): Json<PublishBlocksRequest>,
-) -> Result<impl IntoResponse, EngineError> {
-    // Publishing writes a SIGNED snapshot; unsigned working drafts go to
-    // POST /api/v1/drafts. No placeholder-sig events ever enter the db.
-    if !req.sign {
-        return Err(EngineError::BadRequest(
-            "Publishing writes a signed snapshot; save an unsigned working draft via POST /api/v1/drafts instead."
-                .into(),
-        ));
-    }
-
+/// Convert the block-publish request payload into a `ComposeBlockState` —
+/// shared by the publish and preview handlers so both build the exact same
+/// event graph.
+fn compose_block_state_from_request(
+    title: String,
+    tags: Vec<(String, String)>,
+    blocks: Vec<PublishBlockEntry>,
+    source_publication_addr: Option<NAddrPayload>,
+    source_publication_event_id: Option<String>,
+) -> ComposeBlockState {
     use crate::publication::compose::TagEntry;
     let mut state = ComposeBlockState::new();
-    state.title = req.title;
-    for (name, value) in &req.tags {
-        state.tags.push(TagEntry {
-            name: name.clone(),
-            value: value.clone(),
-        });
+    state.title = title;
+    for (name, value) in tags {
+        state.tags.push(TagEntry { name, value });
     }
-    state.source_publication_addr = req.source_publication_addr.map(|n| n.into_naddr());
-    state.source_publication_event_id = req.source_publication_event_id;
+    state.source_publication_addr = source_publication_addr.map(|n| n.into_naddr());
+    state.source_publication_event_id = source_publication_event_id;
 
-    let mut next_id: usize = 0;
-    for entry in req.blocks {
-        let block_id = next_id;
-        next_id += 1;
+    for (block_id, entry) in blocks.into_iter().enumerate() {
         let kind = match entry.kind {
             PublishBlockKind::Editable { content } => BlockKind::Editable { content, cursor: 0 },
             PublishBlockKind::Imported {
@@ -3991,6 +3980,31 @@ pub async fn publish_blocks_handler(
             collapsed: false,
         });
     }
+    state
+}
+
+/// POST /api/v1/publish/blocks — publish a block-based draft.
+pub async fn publish_blocks_handler(
+    State(engine): State<AppState>,
+    Extension(signing): Extension<crate::signing::SigningController>,
+    Json(req): Json<PublishBlocksRequest>,
+) -> Result<impl IntoResponse, EngineError> {
+    // Publishing writes a SIGNED snapshot; unsigned working drafts go to
+    // POST /api/v1/drafts. No placeholder-sig events ever enter the db.
+    if !req.sign {
+        return Err(EngineError::BadRequest(
+            "Publishing writes a signed snapshot; save an unsigned working draft via POST /api/v1/drafts instead."
+                .into(),
+        ));
+    }
+
+    let state = compose_block_state_from_request(
+        req.title,
+        req.tags,
+        req.blocks,
+        req.source_publication_addr,
+        req.source_publication_event_id,
+    );
 
     // Sign through the SigningController — the SAME path publish_handler uses:
     // engine in-process for the engine source, or the registered external
@@ -4183,6 +4197,121 @@ pub async fn publish_blocks_handler(
         broadcast_results,
         events: Some(all_events),
     }))
+}
+
+/// Provenance descriptor attached to a preview entry: the original's
+/// coordinate plus a locally-resolved kind-0 author name (null when no
+/// profile is cached). `found` is only present for linked entries and says
+/// whether the original event itself is in the local store.
+fn preview_original_info(ndb: &nostrdb::Ndb, addr: &NAddr, found: Option<bool>) -> Value {
+    let author_name = query_profile(ndb, &addr.pubkey).and_then(|ev| {
+        let content = ev.get("content")?.as_str()?.to_string();
+        let meta = crate::user_data::Metadata::from_event_content(&content, 0)?;
+        meta.display_name().map(String::from)
+    });
+    let mut info = json!({
+        "addr": addr.to_a_tag(),
+        "kind": addr.kind,
+        "pubkey": addr.pubkey,
+        "author_name": author_name,
+    });
+    if let Some(found) = found {
+        info["found"] = json!(found);
+    }
+    info
+}
+
+/// POST /api/v1/publish/blocks/preview — build the would-be event graph for
+/// a block-based compose without signing/ingesting/broadcasting.
+///
+/// Unlike the flat /publish/preview, this mirrors what /publish/blocks will
+/// actually emit: imported blocks produce no new event (the 30040 references
+/// the original coordinate) and forked blocks carry `fork`-marker tags. Each
+/// entry is annotated with its provenance so the UI can banner it:
+///
+/// ```json
+/// { "events": [ {
+///     "status":  "new" | "forked" | "linked",
+///     "title":   "<block title — publication title for the index>",
+///     "event":   { … } | null,      // linked: the exact original event,
+///                                   // null when it isn't cached locally
+///     "original": { "addr", "kind", "pubkey", "author_name", "found"? }
+/// } ] }
+/// ```
+///
+/// The index entry comes first (status `forked` when the draft was seeded
+/// from an existing publication), then one entry per block in order.
+pub async fn publish_blocks_preview_handler(
+    State(engine): State<AppState>,
+    Extension(identity): Extension<IdentityAppState>,
+    Json(req): Json<PublishBlocksRequest>,
+) -> Result<Json<Value>, EngineError> {
+    let pubkey = {
+        let session = identity.lock().unwrap();
+        session.pubkey().map(|s| s.to_string())
+    }
+    .or_else(|| engine.my_pubkey().map(|s| s.to_string()))
+    .unwrap_or_else(|| "<preview>".to_string());
+
+    let state = compose_block_state_from_request(
+        req.title,
+        req.tags,
+        req.blocks,
+        req.source_publication_addr,
+        req.source_publication_event_id,
+    );
+
+    let (pub_event, section_events) =
+        crate::publication::build_block_publication_events(&state, &pubkey, None);
+
+    let mut entries: Vec<Value> = Vec::with_capacity(state.blocks.len() + 1);
+    entries.push(match &state.source_publication_addr {
+        Some(addr) => json!({
+            "status": "forked",
+            "title": state.title,
+            "event": pub_event,
+            "original": preview_original_info(engine.ndb(), addr, None),
+        }),
+        None => json!({ "status": "new", "title": state.title, "event": pub_event }),
+    });
+
+    let mut sections = section_events.into_iter();
+    for block in &state.blocks {
+        entries.push(match &block.kind {
+            BlockKind::Editable { .. } => json!({
+                "status": "new",
+                "title": block.title,
+                "event": sections.next(),
+            }),
+            BlockKind::Forked { original_addr, .. } => json!({
+                "status": "forked",
+                "title": block.title,
+                "event": sections.next(),
+                "original": preview_original_info(engine.ndb(), original_addr, None),
+            }),
+            BlockKind::Imported { source_addr, .. } => {
+                // Show the exact event the 30040 will reference — straight
+                // slotted in, not re-published.
+                let original = crate::query::query_addressable(
+                    engine.ndb(),
+                    source_addr.kind,
+                    &source_addr.pubkey,
+                    &source_addr.d_tag,
+                )
+                .ok()
+                .flatten();
+                let found = original.is_some();
+                json!({
+                    "status": "linked",
+                    "title": block.title,
+                    "event": original,
+                    "original": preview_original_info(engine.ndb(), source_addr, Some(found)),
+                })
+            }
+        });
+    }
+
+    Ok(Json(json!({ "events": entries })))
 }
 
 /// True iff the event carries a real (non-placeholder) signature.
