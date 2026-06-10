@@ -261,6 +261,12 @@ export interface ContextItem {
 	source_addr?: NAddr | null;
 	source_fragment_id?: number;
 	original_content: string;
+	/** Snapshot of title/tags at pool-entry time, for divergence detection
+	 *  on sourced items (content is covered by original_content). Editing
+	 *  any of the three forks the section. Absent on legacy/draft items —
+	 *  those axes then can't diverge. */
+	original_title?: string;
+	original_tags?: TagEntry[];
 	modified: boolean;
 	in_context: boolean;
 	in_compose: boolean;

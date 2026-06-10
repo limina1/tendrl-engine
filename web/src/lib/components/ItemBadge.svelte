@@ -68,8 +68,8 @@
 		srcState === 'imported'
 			? `Locked to original ${srcKind} — publishes a reference to the source event (kept under its author). Click to unlock.`
 			: srcState === 'claimed'
-				? `Unlocked but unchanged — still publishes as a reference to the original ${srcKind}. Click to re-lock.`
-				: `Diverged from the original ${srcKind} — publishes as your fork with lineage tags. Click to reset to the original and re-lock.`
+				? `Unlocked but unchanged — still publishes as a reference to the original ${srcKind}. Click to lock.`
+				: `Changed from the original ${srcKind} (content, title, or tags) — publishes as your fork with lineage tags. Use ⟲ to reset.`
 	);
 
 	// Show chat badge only when not in_context (once in context, chat badge disappears)
@@ -108,11 +108,21 @@
 		<span class="badge badge-chat">chat</span>
 	{/if}
 	{#if srcState}
-		<button
-			class="badge badge-{srcColor}"
-			onclick={() => onlocksource?.(item.id)}
-			title={srcTitle}
-		>{srcKind} {srcIcon}</button>
+		{#if srcState === 'forked'}
+			<!-- Forked is left by resetting, not by toggling the lock -->
+			<span class="badge badge-{srcColor}" title={srcTitle}>{srcKind} {srcIcon}</span>
+			<button
+				class="badge badge-readonly"
+				onclick={() => onlocksource?.(item.id)}
+				title="Reset to the original {srcKind} (content, title, tags) and lock"
+			>⟲ original</button>
+		{:else}
+			<button
+				class="badge badge-{srcColor}"
+				onclick={() => ontogglereadonly?.(item.id)}
+				title={srcTitle}
+			>{srcKind} {srcIcon}</button>
+		{/if}
 	{:else if item.origin === 'search'}
 		<button
 			class="badge badge-{originColor}"
