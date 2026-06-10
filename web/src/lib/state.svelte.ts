@@ -1245,8 +1245,12 @@ function _createAppState() {
 	function handleLockToSource(id: string) {
 		items = items.map((e) => {
 			if (e.id !== id) return e;
-			const locking = !e.readonly;
-			if (locking) {
+			// Cycle by provenance state, not the raw readonly flag: forked
+			// (diverged) and claimed (unlocked) both return to locked-original;
+			// only a clean locked item unlocks. A readonly item can still be
+			// diverged (plain mode doesn't enforce the lock while typing).
+			const diverged = e.content !== e.original_content;
+			if (diverged || !e.readonly) {
 				return {
 					...e,
 					readonly: true,
