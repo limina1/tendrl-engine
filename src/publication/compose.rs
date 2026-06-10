@@ -782,6 +782,11 @@ pub struct ComposeBlock {
     pub title: String,
     pub tags: Vec<TagEntry>,
     pub collapsed: bool,
+    /// Stable opaque d-tag (nanoid) for the 30041 this block emits. `None`
+    /// until first mint; once set it persists so re-publishing replaces the
+    /// same addressable event. Imported blocks never use it — the index
+    /// references the original's own coordinate.
+    pub d_tag: Option<String>,
 }
 
 impl ComposeBlock {
@@ -815,6 +820,10 @@ pub struct ComposeBlockState {
     pub block_cursor: usize,
     next_block_id: usize,
     pub title: String,
+    /// Stable opaque d-tag (nanoid) for the publication's 30040 — same
+    /// identity model as `ComposeState::d_tag`: `None` until first mint,
+    /// then persistent so title edits never break the addressable identity.
+    pub d_tag: Option<String>,
     pub tags: Vec<TagEntry>,
     pub auto_update: AutoUpdateMode,
     /// When this draft was seeded from an existing 30040, this is its NAddr.
@@ -833,6 +842,7 @@ impl ComposeBlockState {
             block_cursor: 0,
             next_block_id: 0,
             title: String::new(),
+            d_tag: None,
             tags: Vec::new(),
             auto_update: AutoUpdateMode::default(),
             source_publication_addr: None,
@@ -853,6 +863,7 @@ impl ComposeBlockState {
             title: String::new(),
             tags: Vec::new(),
             collapsed: false,
+            d_tag: None,
         });
         self.block_cursor = self.blocks.len() - 1;
     }
@@ -872,6 +883,7 @@ impl ComposeBlockState {
             title,
             tags: Vec::new(),
             collapsed: false,
+            d_tag: None,
         });
         self.block_cursor = self.blocks.len() - 1;
     }
@@ -955,36 +967,28 @@ impl ComposeBlockState {
         !self.title.is_empty() && !self.blocks.is_empty()
     }
 
-    /// Generate the d-tag for the publication
-    pub fn publication_d_tag(&self) -> String {
-        if self.title.is_empty() {
-            "untitled".to_string()
-        } else {
-            ComposeState::generate_d_tag(&self.title)
-        }
+    /// Get the publication d-tag, minting an opaque nanoid on first call —
+    /// the same identity model as `ComposeState::publication_d_tag`. Seed
+    /// `self.d_tag` when re-publishing an existing 30040 so it replaces
+    /// rather than forks.
+    pub fn publication_d_tag(&mut self) -> String {
+        self.d_tag
+            .get_or_insert_with(crate::publication::mint_d_tag)
+            .clone()
     }
 
-    /// Generate the d-tag for a block at the given index.
-    ///
-    /// Pattern: `pub-d-tag-section-d-tag`
-    /// For forked blocks, uses the original addr's d-tag with a "fork-" prefix.
-    pub fn block_d_tag(&self, idx: usize) -> String {
-        let pub_d_tag = self.publication_d_tag();
-        match self.blocks.get(idx) {
-            Some(block) => {
-                let section_part = if block.title.is_empty() {
-                    format!("section-{}", idx)
-                } else {
-                    ComposeState::generate_d_tag(&block.title)
-                };
-                match &block.kind {
-                    BlockKind::Forked { original_addr, .. } => {
-                        format!("{}-fork-{}", pub_d_tag, original_addr.d_tag)
-                    }
-                    _ => format!("{}-{}", pub_d_tag, section_part),
-                }
-            }
-            None => format!("{}-section-{}", pub_d_tag, idx),
+    /// Get a block's d-tag, minting an opaque nanoid on first call. Only
+    /// Editable and Forked blocks emit a 30041 that uses it — a fork copy
+    /// gets a fresh identity of its own; lineage lives in the `fork`-marker
+    /// `a` tag, not the d-tag. Out-of-range indices return a deterministic
+    /// placeholder rather than panicking.
+    pub fn block_d_tag(&mut self, idx: usize) -> String {
+        match self.blocks.get_mut(idx) {
+            Some(block) => block
+                .d_tag
+                .get_or_insert_with(crate::publication::mint_d_tag)
+                .clone(),
+            None => format!("pending-b{}", idx),
         }
     }
 }
@@ -1356,25 +1360,49 @@ mod tests {
         assert_eq!(state.block_cursor, 1); // Clamped to last
     }
 
+    /// Block d-tags are opaque nanoids (21-char URL-safe), independent of
+    /// titles, and stable across repeated calls — same rules as the
+    /// ComposeState path.
     #[test]
-    fn test_compose_block_d_tag_editable() {
+    fn test_compose_block_d_tag_is_stable_nanoid() {
+        let is_nanoid = |s: &str| {
+            s.len() == 21
+                && s.chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+        };
+
         let mut state = ComposeBlockState::new();
         state.title = "My Article".into();
         state.add_editable();
         state.blocks[0].title = "Introduction".into();
 
-        assert_eq!(state.block_d_tag(0), "my-article-introduction");
+        let pub_d = state.publication_d_tag();
+        let block_d = state.block_d_tag(0);
+        assert!(is_nanoid(&pub_d), "pub d-tag should be a nanoid: {pub_d:?}");
+        assert!(is_nanoid(&block_d), "block d-tag should be a nanoid: {block_d:?}");
+        assert_ne!(pub_d, block_d);
+
+        // Stable: a second call returns the stored value, even after a rename.
+        state.title = "Renamed".into();
+        state.blocks[0].title = "Renamed Section".into();
+        assert_eq!(state.publication_d_tag(), pub_d);
+        assert_eq!(state.block_d_tag(0), block_d);
     }
 
+    /// A forked block mints its own fresh nanoid — fork lineage is carried
+    /// by the `fork`-marker `a` tag, never encoded into the d-tag.
     #[test]
-    fn test_compose_block_d_tag_forked() {
+    fn test_compose_block_d_tag_forked_is_fresh_nanoid() {
         let mut state = ComposeBlockState::new();
         state.title = "My Article".into();
         let addr = NAddr::new(30041, "author123", "original-section");
         state.add_imported(addr, "text".into(), "alice".into(), "Title".into());
         state.toggle_fork(0); // → Forked
 
-        assert_eq!(state.block_d_tag(0), "my-article-fork-original-section");
+        let d = state.block_d_tag(0);
+        assert_eq!(d.len(), 21);
+        assert!(!d.contains("original-section"));
+        assert!(!d.contains("fork"));
     }
 
     #[test]
