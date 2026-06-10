@@ -192,6 +192,12 @@ pub struct SearchResponse {
     pub count: usize,
     pub local_count: usize,
     pub relay_count: usize,
+    /// True when this search actually queried relays — auto-mode fan-out or
+    /// an approved confirm-mode fetch. False for local-only scans AND for
+    /// confirm-mode requests the user declined, which lets the UI
+    /// distinguish "not on the connected relays either" from "relays were
+    /// never asked".
+    pub relays_queried: bool,
     /// Document page results from semantic search (separate from event results)
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub doc_results: Vec<DocPageResult>,

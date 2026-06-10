@@ -291,13 +291,8 @@
 	items={app.items}
 	localPubkeys={app.localPubkeys}
 	onviewprofile={app.handleViewProfile}
-	canPromptRelays={
-		app.networkStatus?.mode === 'confirm' &&
-		app.searchLastQuery !== '' &&
-		!app.searchLoading
-	}
 	onsearchrelays={app.handleSearchViaRelays}
 	hasSearched={app.searchLastQuery !== ''}
-	networkMode={app.networkStatus?.mode === 'confirm' ? 'confirm' : 'auto'}
+	relaysQueried={app.searchRelaysQueried}
 	relaySearchLoading={app.searchRelayLoading}
 />
