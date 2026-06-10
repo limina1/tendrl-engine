@@ -393,20 +393,25 @@
 	});
 	const detectedSections = $derived(detectedState.sections);
 
-	// Track known section IDs so we can detect external additions/removals
-	let knownSectionIds: Set<string> = $state(new Set());
+	// Fingerprint of section identity + lock/divergence state, so we can
+	// detect external changes. readonly/modified flips cover the badge
+	// lock-to-source cycle, which resets content to the original — the
+	// editor text must follow.
+	let knownSectionFp = $state('');
+	function sectionFp(): string {
+		return compose.sections
+			.map((s) => `${s.id}:${s.readonly ? 1 : 0}:${s.modified ? 1 : 0}`)
+			.join('|');
+	}
 
-	// Re-serialize when sections change externally (e.g. search → compose)
+	// Re-serialize when sections change externally (e.g. search → compose,
+	// badge lock/unlock)
 	$effect(() => {
 		if (mode !== 'plain') return;
-		const currentIds = new Set(compose.sections.map((s) => s.id));
-		const changed =
-			currentIds.size !== knownSectionIds.size ||
-			[...currentIds].some((id) => !knownSectionIds.has(id)) ||
-			[...knownSectionIds].some((id) => !currentIds.has(id));
-		if (changed) {
+		const fp = sectionFp();
+		if (fp !== knownSectionFp) {
 			plainText = serializeAll();
-			knownSectionIds = currentIds;
+			knownSectionFp = fp;
 		}
 	});
 
@@ -424,7 +429,7 @@
 			if (next === appliedMode) return;
 			if (next === 'plain') {
 				plainText = serializeAll();
-				knownSectionIds = new Set(compose.sections.map((s) => s.id));
+				knownSectionFp = sectionFp();
 				prevDelimiter = effectiveDelim();
 			} else if (appliedMode === 'plain') {
 				handlePlainFullEdit(plainText);
