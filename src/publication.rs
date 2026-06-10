@@ -2270,14 +2270,13 @@ pub fn build_block_publication_events(
                 ]));
             }
             BlockKind::Imported { source_addr, .. } => {
-                // No 30041 event — reference the original directly
+                // No new event — reference the original directly, at its own
+                // kind (30041 section, 30023 long-form, 30818 wiki, …).
                 a_tags.push(serde_json::json!([
                     "a",
                     format!(
                         "{}:{}:{}",
-                        KIND_PUBLICATION_SECTION,
-                        source_addr.pubkey,
-                        source_addr.d_tag
+                        source_addr.kind, source_addr.pubkey, source_addr.d_tag
                     ),
                     ""
                 ]));
@@ -2325,12 +2324,13 @@ fn build_forked_section_event(
         ]));
     }
 
-    // Fork lineage tag — NIP-54 addressable fork marker
+    // Fork lineage tag — NIP-54 addressable fork marker, pointing at the
+    // original at its own kind (the fork copy itself is always a 30041).
     tags.push(json!([
         "a",
         format!(
             "{}:{}:{}",
-            KIND_PUBLICATION_SECTION, original_addr.pubkey, original_addr.d_tag
+            original_addr.kind, original_addr.pubkey, original_addr.d_tag
         ),
         "",
         "fork"
@@ -2837,6 +2837,79 @@ mod tests {
         }).collect();
         assert_eq!(fork_tags.len(), 1);
         assert!(fork_tags[0][1].as_str().unwrap().contains("alice"));
+    }
+
+    // Regression: imported blocks must reference the original at its OWN
+    // kind. The emitter used to hardcode 30041, so a locked 30818 wiki or
+    // 30023 long-form article published a coordinate pointing at nothing.
+    #[test]
+    fn test_build_block_imported_wiki_and_longform_keep_their_kind() {
+        let mut state = ComposeBlockState::new();
+        state.title = "Nostr Info".into();
+        state.add_imported(
+            NAddr::new(30818, "alice", "nostr-relay"),
+            "wiki text".into(),
+            "alice".into(),
+            "Nostr Relay".into(),
+        );
+        state.add_imported(
+            NAddr::new(30023, "bob", "my-article"),
+            "article text".into(),
+            "bob".into(),
+            "Article".into(),
+        );
+
+        let (pub_event, section_events) = build_block_publication_events(&state, "pubkey1", None);
+
+        // Imported blocks never re-emit the original event.
+        assert!(section_events.is_empty());
+
+        let tags = pub_event["tags"].as_array().unwrap();
+        let a_coords: Vec<&str> = tags
+            .iter()
+            .filter(|t| t[0] == "a")
+            .map(|t| t[1].as_str().unwrap())
+            .collect();
+        assert_eq!(a_coords, vec!["30818:alice:nostr-relay", "30023:bob:my-article"]);
+    }
+
+    // Regression: a fork's lineage tag must point at the original at its own
+    // kind too (the fork copy itself is still a 30041 authored by us).
+    #[test]
+    fn test_build_block_forked_wiki_lineage_keeps_original_kind() {
+        let mut state = ComposeBlockState::new();
+        state.title = "Forked Wiki".into();
+        state.add_imported(
+            NAddr::new(30818, "alice", "nostr-relay"),
+            "wiki text".into(),
+            "alice".into(),
+            "Nostr Relay".into(),
+        );
+        state.toggle_fork(0);
+
+        let (pub_event, section_events) = build_block_publication_events(&state, "pubkey1", None);
+
+        // The fork copy is a new 30041 of ours…
+        assert_eq!(section_events.len(), 1);
+        assert_eq!(section_events[0]["kind"], 30041);
+        let index_a_tags: Vec<&str> = pub_event["tags"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|t| t[0] == "a")
+            .map(|t| t[1].as_str().unwrap())
+            .collect();
+        assert!(index_a_tags.iter().all(|c| c.starts_with("30041:pubkey1:")));
+
+        // …but its lineage marker points at the 30818 original.
+        let tags = section_events[0]["tags"].as_array().unwrap();
+        let fork_coord = tags
+            .iter()
+            .filter(|t| t.as_array().map(|a| a.len() >= 4 && a[3] == "fork").unwrap_or(false))
+            .map(|t| t[1].as_str().unwrap())
+            .next()
+            .expect("fork lineage tag present");
+        assert_eq!(fork_coord, "30818:alice:nostr-relay");
     }
 
     // Regression: a NIP-07 user publishing blocks must get SIGNED events.
