@@ -387,6 +387,7 @@ pub async fn search_handler(
         let mut seen_ids = std::collections::HashSet::new();
         let mut total_local = 0;
         let mut total_relay = 0;
+        let mut any_relays_queried = false;
         let mut profile_terms: Vec<String> = Vec::new();
 
         for mut branch in compound.branches {
@@ -412,6 +413,7 @@ pub async fn search_handler(
 
             total_local += resp.local_count;
             total_relay += resp.relay_count;
+            any_relays_queried |= resp.relays_queried;
 
             for result in resp.results {
                 if seen_ids.insert(result.event_id.clone()) {
@@ -429,6 +431,7 @@ pub async fn search_handler(
             count,
             local_count: total_local,
             relay_count: total_relay,
+            relays_queried: any_relays_queried,
             doc_results: vec![],
             tag_counts: std::collections::HashMap::new(),
         };

@@ -365,6 +365,11 @@ function _createAppState() {
 	let searchCount = $state(0);
 	let searchLocalCount = $state(0);
 	let searchRelayCount = $state(0);
+	// Whether the current query's results reflect an actual relay query
+	// (engine-reported). Drives the empty-state copy ("Not found locally
+	// or on the connected relays" vs "No events found in local DB") and
+	// the retry-CTA label — a declined confirm modal leaves this false.
+	let searchRelaysQueried = $state(false);
 	let searchLoading = $state(false);
 	// Separate from searchLoading so the empty-results UI can distinguish
 	// "scanning local DB" from "fanning out to relays" — they look
@@ -2129,6 +2134,7 @@ function _createAppState() {
 			searchCount = 0;
 			searchLocalCount = 0;
 			searchRelayCount = 0;
+			searchRelaysQueried = false;
 			searchTagCounts = {};
 			if (docMode === 'empty') await loadFeed();
 			return;
@@ -2167,6 +2173,7 @@ function _createAppState() {
 			searchCount = searchResults.length;
 			searchLocalCount = resp.local_count;
 			searchRelayCount = resp.relay_count;
+			searchRelaysQueried = resp.relays_queried ?? false;
 			searchTagCounts = resp.tag_counts ?? {};
 
 			const searchPubkeys = [...new Set(resp.results.map(r => r.author))];
@@ -2254,6 +2261,7 @@ function _createAppState() {
 			searchCount = searchResults.length;
 			searchLocalCount = resp.local_count;
 			searchRelayCount = resp.relay_count;
+			searchRelaysQueried = resp.relays_queried ?? false;
 			searchTagCounts = resp.tag_counts ?? {};
 			const pks = [...new Set(resp.results.map((r) => r.author))];
 			api.prefetchProfiles(pks);
@@ -3752,6 +3760,7 @@ function _createAppState() {
 		get searchCount() { return searchCount; },
 		get searchLocalCount() { return searchLocalCount; },
 		get searchRelayCount() { return searchRelayCount; },
+		get searchRelaysQueried() { return searchRelaysQueried; },
 		get searchLoading() { return searchLoading; },
 		get searchRelayLoading() { return searchRelayLoading; },
 

@@ -52,10 +52,9 @@
 		onviewprofile,
 		cursor = -1,
 		listEl = $bindable<HTMLDivElement | undefined>(undefined),
-		canPromptRelays = false,
 		onsearchrelays,
 		hasSearched = false,
-		networkMode = 'auto',
+		relaysQueried = false,
 		relaySearchLoading = false,
 		// Refs tab — held items in the reference pool. Cursor + open/release
 		// are routed through the host (SearchBuffer) so the same nav handler
@@ -109,22 +108,17 @@
 		onviewprofile?: (pubkey: string) => void;
 		cursor?: number;
 		listEl?: HTMLDivElement;
-		/** When true, the offline-empty CTA appears so the user can
-		 *  prompt for relays and re-run the same query against the
-		 *  network. The host (state.svelte.ts) decides when this is
-		 *  meaningful — typically offline mode + a non-empty query
-		 *  that returned zero local hits. */
-		canPromptRelays?: boolean;
 		onsearchrelays?: () => void;
 		/** Whether the user has submitted a query yet this session.
 		 *  Distinguishes "no results because nothing was searched"
 		 *  from "no results found in local DB". */
 		hasSearched?: boolean;
-		/** Current engine network mode — drives the copy in the
-		 *  empty-result state. In `auto` we tell the user the relay
-		 *  fan-out already happened (or is in flight); in `confirm`
-		 *  we surface the explicit CTA. */
-		networkMode?: 'auto' | 'confirm';
+		/** Engine-reported: the current results reflect an actual relay
+		 *  query (auto fan-out or an approved confirm fetch). Drives the
+		 *  empty-state copy — "Not found locally or on the connected
+		 *  relays" vs "No events found in local DB" — and the relay CTA
+		 *  label. A declined confirm modal leaves this false. */
+		relaysQueried?: boolean;
 		/** True while the relay fan-out (handleSearchViaRelays) is in
 		 *  flight, distinct from the initial local search loading. */
 		relaySearchLoading?: boolean;
@@ -437,22 +431,11 @@
 			{#if !loading && !relaySearchLoading && results.length === 0 && profiles.length === 0 && !isGrouped}
 				{#if !hasSearched}
 					<p class="empty">Search {searchContext}</p>
-				{:else if canPromptRelays}
-					<!-- Confirm mode: the modal will gate the fan-out;
-					     keep the explicit CTA as a re-trigger so the
-					     user can re-run if they declined the modal. -->
-					<div class="empty empty-cta">
-						<p>No events found in local DB.</p>
-						<button class="empty-cta__btn" onclick={() => onsearchrelays?.()}>
-							Search relays →
-						</button>
-					</div>
-				{:else if networkMode === 'auto'}
-					<!-- Auto mode: the fan-out ran silently and also
-					     returned zero. Tell the user explicitly so the
-					     panel doesn't read as "nothing happened". A
-					     manual retry button is still useful in case
-					     relay state has changed since. -->
+				{:else if relaysQueried}
+					<!-- Relays were actually asked (auto fan-out or an
+					     approved confirm fetch) and also returned zero.
+					     Say so explicitly — and keep a manual retry in
+					     case relay state has changed since. -->
 					<div class="empty empty-cta">
 						<p>Not found locally or on the connected relays.</p>
 						<button class="empty-cta__btn" onclick={() => onsearchrelays?.()}>
@@ -460,8 +443,27 @@
 						</button>
 					</div>
 				{:else}
-					<p class="empty">Search {searchContext}</p>
+					<!-- Local miss and relays not (yet) queried — the
+					     confirm modal was declined, or the fan-out failed.
+					     The CTA re-triggers it (confirm mode re-pops the
+					     modal). -->
+					<div class="empty empty-cta">
+						<p>No events found in local DB.</p>
+						<button class="empty-cta__btn" onclick={() => onsearchrelays?.()}>
+							Search relays →
+						</button>
+					</div>
 				{/if}
+			{:else if !loading && !relaySearchLoading && hasSearched}
+				<!-- Results exist (possibly local-only). Keep the relay
+				     fan-out reachable under every query so "found
+				     something locally" never dead-ends the search — in
+				     confirm mode this goes through the approve modal. -->
+				<div class="results-footer">
+					<button class="empty-cta__btn" onclick={() => onsearchrelays?.()}>
+						{relaysQueried ? 'Retry relay search →' : 'Search relays →'}
+					</button>
+				</div>
 			{/if}
 
 			{#if loading || relaySearchLoading}
@@ -1049,6 +1051,13 @@
 		color: var(--accent);
 	}
 	.empty-cta p { margin: 0; }
+	/* Relay CTA under a non-empty result list — same button, just laid
+	   out as a quiet footer instead of a centered empty-state. */
+	.results-footer {
+		display: flex;
+		justify-content: center;
+		padding: 10px 12px 16px;
+	}
 	.empty-cta__btn {
 		font-family: var(--font-mono);
 		font-size: var(--t-xs);

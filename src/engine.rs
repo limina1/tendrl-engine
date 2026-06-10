@@ -1946,6 +1946,19 @@ impl Engine {
             }
         };
 
+        // Whether this search actually reached relays — mirrors the gates
+        // get_events_with_options applies (network mode + policy), plus
+        // LocalFirst's local-hit short-circuit (it only fans out when the
+        // local read came up short of the requested limit). The exhaustive
+        // text path above is local-only by construction (scan_policy is
+        // LocalOnly there).
+        let relays_queried = (mode_confirm || self.is_auto())
+            && match scan_policy {
+                FetchPolicy::LocalOnly => false,
+                FetchPolicy::FetchAlways => true,
+                FetchPolicy::LocalFirst => response.source.local_count < scan_limit,
+            };
+
         // Multi-char tag filters (e.g. `author:Claude`) are applied here —
         // NIP-01 only indexes single-letter keys at the DB layer.
         let tag_filtered = if has_multi_char_tag {
@@ -2014,6 +2027,7 @@ impl Engine {
             count,
             local_count: response.source.local_count,
             relay_count: response.source.relay_count,
+            relays_queried,
             doc_results: vec![],
             tag_counts,
         })
@@ -2160,6 +2174,8 @@ impl Engine {
                 count: 0,
                 local_count: 0,
                 relay_count: 0,
+                // Semantic search runs against the local HNSW index only.
+                relays_queried: false,
                 doc_results: vec![],
                 tag_counts: std::collections::HashMap::new(),
             });
@@ -2277,6 +2293,8 @@ impl Engine {
             count,
             local_count: count,
             relay_count: 0,
+            // Semantic search runs against the local HNSW index only.
+            relays_queried: false,
             doc_results,
             tag_counts: std::collections::HashMap::new(),
         })
