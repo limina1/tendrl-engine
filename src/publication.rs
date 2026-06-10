@@ -2004,7 +2004,7 @@ async fn resign_value_through_signer(
 /// by event id or timestamp, so a fresh `created_at`/sig never breaks the
 /// index→section links.
 pub async fn build_signed_block_publication_events_via_signer(
-    state: &ComposeBlockState,
+    state: &mut ComposeBlockState,
     pubkey: &str,
     signer: &dyn crate::signing::Signer,
 ) -> std::result::Result<(Value, Vec<Value>), crate::signing::SigningError> {
@@ -2189,7 +2189,7 @@ use crate::publication::compose::{BlockKind, ComposeBlock, ComposeBlockState};
 /// Returns (publication_30040_event, section_30041_events).
 /// Imported blocks do NOT generate 30041 events — they reference the original.
 pub fn build_block_publication_events(
-    state: &ComposeBlockState,
+    state: &mut ComposeBlockState,
     pubkey: &str,
     secret_hex: Option<&str>,
 ) -> (Value, Vec<Value>) {
@@ -2201,11 +2201,16 @@ pub fn build_block_publication_events(
         .unwrap_or(0);
 
     let pub_d_tag = state.publication_d_tag();
+    // Mint every block's nanoid up front (stored on the state) so the loop
+    // below can borrow the blocks immutably.
+    let block_d_tags: Vec<String> = (0..state.blocks.len())
+        .map(|i| state.block_d_tag(i))
+        .collect();
     let mut section_events = Vec::new();
     let mut a_tags: Vec<Value> = Vec::new();
 
     for (i, block) in state.blocks.iter().enumerate() {
-        let block_d_tag = state.block_d_tag(i);
+        let block_d_tag = block_d_tags[i].clone();
 
         match &block.kind {
             BlockKind::Editable { content, .. } => {
@@ -2713,14 +2718,82 @@ mod tests {
 
     #[test]
     fn test_build_block_all_editable_regression() {
-        let state = make_block_state_all_editable();
-        let (pub_event, section_events) = build_block_publication_events(&state, "pubkey1", None);
+        let mut state = make_block_state_all_editable();
+        let (pub_event, section_events) = build_block_publication_events(&mut state, "pubkey1", None);
 
         assert_eq!(pub_event["kind"], 30040);
         assert_eq!(pub_event["content"], "");
         assert_eq!(section_events.len(), 1);
         assert_eq!(section_events[0]["kind"], 30041);
         assert_eq!(section_events[0]["content"], "Hello world");
+    }
+
+    /// Every event the block path mints — the 30040 index and each
+    /// editable/forked 30041 — must carry an opaque nanoid d-tag, stable
+    /// across rebuilds of the same state. Imported originals are referenced
+    /// at their own coordinate untouched (tendrl never mints d-tags for
+    /// events it doesn't emit, whatever their kind: 30041, 30023, 30818, …).
+    #[test]
+    fn test_build_block_d_tags_are_stable_nanoids() {
+        let d_of = |ev: &Value| -> String {
+            ev["tags"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|t| t[0] == "d")
+                .map(|t| t[1].as_str().unwrap().to_string())
+                .expect("d tag present")
+        };
+        let is_nanoid = |s: &str| {
+            s.len() == 21
+                && s.chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+        };
+
+        let mut state = make_block_state_all_editable();
+        state.add_imported(
+            NAddr::new(30023, "bob", "my-article"),
+            "article".into(),
+            "bob".into(),
+            "Article".into(),
+        );
+        state.add_imported(
+            NAddr::new(30041, "alice", "orig"),
+            "text".into(),
+            "alice".into(),
+            "Forked".into(),
+        );
+        state.toggle_fork(2);
+
+        let (pub_event, section_events) =
+            build_block_publication_events(&mut state, "pubkey1", None);
+
+        let pub_d = d_of(&pub_event);
+        assert!(is_nanoid(&pub_d), "index d-tag should be a nanoid: {pub_d:?}");
+        assert_eq!(section_events.len(), 2, "editable + forked");
+        for ev in &section_events {
+            let d = d_of(ev);
+            assert!(is_nanoid(&d), "section d-tag should be a nanoid: {d:?}");
+        }
+
+        // The imported 30023 is referenced at its original coordinate.
+        let a_coords: Vec<String> = pub_event["tags"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|t| t[0] == "a")
+            .map(|t| t[1].as_str().unwrap().to_string())
+            .collect();
+        assert!(a_coords.contains(&"30023:bob:my-article".to_string()));
+
+        // Rebuilding from the same state reuses the stored d-tags.
+        let (pub_event2, section_events2) =
+            build_block_publication_events(&mut state, "pubkey1", None);
+        assert_eq!(d_of(&pub_event2), pub_d);
+        assert_eq!(
+            section_events2.iter().map(&d_of).collect::<Vec<_>>(),
+            section_events.iter().map(&d_of).collect::<Vec<_>>()
+        );
     }
 
     #[test]
@@ -2730,7 +2803,7 @@ mod tests {
         let addr = NAddr::new(30041, "alice", "ch1");
         state.add_imported(addr, "imported content".into(), "alice".into(), "Chapter 1".into());
 
-        let (pub_event, section_events) = build_block_publication_events(&state, "pubkey1", None);
+        let (pub_event, section_events) = build_block_publication_events(&mut state, "pubkey1", None);
 
         // No section events for imported blocks
         assert!(section_events.is_empty());
@@ -2750,7 +2823,7 @@ mod tests {
         state.add_imported(addr, "original text".into(), "alice".into(), "Original".into());
         state.toggle_fork(0);
 
-        let (_, section_events) = build_block_publication_events(&state, "pubkey1", None);
+        let (_, section_events) = build_block_publication_events(&mut state, "pubkey1", None);
         assert_eq!(section_events.len(), 1);
         assert_eq!(section_events[0]["kind"], 30041);
 
@@ -2783,7 +2856,7 @@ mod tests {
             "Article".into(),
         );
 
-        let (pub_event, section_events) = build_block_publication_events(&state, "pubkey1", None);
+        let (pub_event, section_events) = build_block_publication_events(&mut state, "pubkey1", None);
 
         // Imported blocks never re-emit the original event.
         assert!(section_events.is_empty());
@@ -2811,7 +2884,7 @@ mod tests {
         );
         state.toggle_fork(0);
 
-        let (pub_event, section_events) = build_block_publication_events(&state, "pubkey1", None);
+        let (pub_event, section_events) = build_block_publication_events(&mut state, "pubkey1", None);
 
         // The fork copy is a new 30041 of ours…
         assert_eq!(section_events.len(), 1);
@@ -2869,7 +2942,7 @@ mod tests {
         state.toggle_fork(1);
 
         let (pub_event, section_events) =
-            build_signed_block_publication_events_via_signer(&state, &pubkey, &signer)
+            build_signed_block_publication_events_via_signer(&mut state, &pubkey, &signer)
                 .await
                 .expect("signing should succeed");
 
@@ -2922,7 +2995,7 @@ mod tests {
         state.add_imported(addr2, "fork source".into(), "bob".into(), "Forked".into());
         state.toggle_fork(2);
 
-        let (pub_event, section_events) = build_block_publication_events(&state, "pubkey1", None);
+        let (pub_event, section_events) = build_block_publication_events(&mut state, "pubkey1", None);
 
         // 2 section events (editable + forked), not 3
         assert_eq!(section_events.len(), 2);
@@ -2941,7 +3014,7 @@ mod tests {
         state.add_imported(addr, "text".into(), "alice".into(), "T".into());
         state.toggle_fork(0);
 
-        let (_, section_events) = build_block_publication_events(&state, "me", None);
+        let (_, section_events) = build_block_publication_events(&mut state, "me", None);
         let tags = section_events[0]["tags"].as_array().unwrap();
 
         // Should have ["a", "30041:alice:orig", "", "fork"]
@@ -2963,14 +3036,14 @@ mod tests {
             "x".into(),
             "T".into(),
         );
-        let (_, section_events) = build_block_publication_events(&state, "me", None);
+        let (_, section_events) = build_block_publication_events(&mut state, "me", None);
         assert!(section_events.is_empty());
     }
 
     #[test]
     fn test_build_block_signed_events_structure() {
-        let state = make_block_state_all_editable();
-        let (pub_event, section_events) = build_block_publication_events(&state, "pubkey1", None);
+        let mut state = make_block_state_all_editable();
+        let (pub_event, section_events) = build_block_publication_events(&mut state, "pubkey1", None);
 
         // All events should have required fields
         for event in std::iter::once(&pub_event).chain(section_events.iter()) {

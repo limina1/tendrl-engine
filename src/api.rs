@@ -4027,6 +4027,11 @@ pub struct PublishBlockEntry {
     pub title: String,
     #[serde(default)]
     pub tags: Vec<(String, String)>,
+    /// Reuse this 30041 d-tag instead of minting a fresh nanoid — set when
+    /// re-publishing so the section replaces rather than forks. Ignored for
+    /// imported blocks (they emit no event).
+    #[serde(default)]
+    pub d_tag: Option<String>,
     #[serde(flatten)]
     pub kind: PublishBlockKind,
 }
@@ -4036,6 +4041,10 @@ pub struct PublishBlocksRequest {
     pub title: String,
     #[serde(default)]
     pub tags: Vec<(String, String)>,
+    /// Reuse this index d-tag instead of minting a fresh nanoid — set when
+    /// re-publishing an existing publication.
+    #[serde(default)]
+    pub d_tag: Option<String>,
     pub blocks: Vec<PublishBlockEntry>,
     /// If set, the new 30040 emits `["a", ..., "fork"]` (and optionally
     /// `["e", ..., "fork"]`) pointing at this source publication.
@@ -4054,6 +4063,7 @@ pub struct PublishBlocksRequest {
 fn compose_block_state_from_request(
     title: String,
     tags: Vec<(String, String)>,
+    d_tag: Option<String>,
     blocks: Vec<PublishBlockEntry>,
     source_publication_addr: Option<NAddrPayload>,
     source_publication_event_id: Option<String>,
@@ -4061,6 +4071,7 @@ fn compose_block_state_from_request(
     use crate::publication::compose::TagEntry;
     let mut state = ComposeBlockState::new();
     state.title = title;
+    state.d_tag = d_tag;
     for (name, value) in tags {
         state.tags.push(TagEntry { name, value });
     }
@@ -4101,6 +4112,7 @@ fn compose_block_state_from_request(
                 .map(|(name, value)| TagEntry { name, value })
                 .collect(),
             collapsed: false,
+            d_tag: entry.d_tag,
         });
     }
     state
@@ -4121,9 +4133,10 @@ pub async fn publish_blocks_handler(
         ));
     }
 
-    let state = compose_block_state_from_request(
+    let mut state = compose_block_state_from_request(
         req.title,
         req.tags,
+        req.d_tag,
         req.blocks,
         req.source_publication_addr,
         req.source_publication_event_id,
@@ -4137,7 +4150,7 @@ pub async fn publish_blocks_handler(
     let active_pubkey = require_active_pubkey(&signing).await?;
     let (pub_event, section_events) =
         crate::publication::build_signed_block_publication_events_via_signer(
-            &state,
+            &mut state,
             &active_pubkey,
             &signing,
         )
@@ -4209,16 +4222,17 @@ pub async fn publish_blocks_preview_handler(
     .or_else(|| engine.my_pubkey().map(|s| s.to_string()))
     .unwrap_or_else(|| "<preview>".to_string());
 
-    let state = compose_block_state_from_request(
+    let mut state = compose_block_state_from_request(
         req.title,
         req.tags,
+        req.d_tag,
         req.blocks,
         req.source_publication_addr,
         req.source_publication_event_id,
     );
 
     let (pub_event, section_events) =
-        crate::publication::build_block_publication_events(&state, &pubkey, None);
+        crate::publication::build_block_publication_events(&mut state, &pubkey, None);
 
     let mut entries: Vec<Value> = Vec::with_capacity(state.blocks.len() + 1);
     entries.push(match &state.source_publication_addr {
