@@ -556,6 +556,9 @@ export interface EventsModalItem {
 	kind?: number;
 	id?: string;
 	json: unknown;
+	/** Provenance banner for compose previews: forked vs linked original.
+	 *  `addr` is the original's `kind:pubkey:d_tag` coordinate. */
+	banner?: { status: 'forked' | 'linked'; text: string; addr?: string };
 }
 
 /** A section in the republish diff, matched/added/removed by `T` (title slug). */

@@ -54,7 +54,8 @@
 
 	function copyAll() {
 		if (!data) return;
-		copy(pretty(data.events.map((e) => e.json)), 'all');
+		// Linked-but-uncached entries have no JSON body — skip them.
+		copy(pretty(data.events.filter((e) => e.json != null).map((e) => e.json)), 'all');
 	}
 
 	function close() {
@@ -64,6 +65,9 @@
 	function kindLabel(kind?: number): string {
 		if (kind === 30040) return '30040 index';
 		if (kind === 30041) return '30041 section';
+		if (kind === 30023) return '30023 long-form';
+		if (kind === 30818) return '30818 wiki';
+		if (kind === 30817) return '30817 wiki';
 		return kind != null ? String(kind) : 'event';
 	}
 </script>
@@ -97,15 +101,27 @@
 								<span class="ejm-chevron">{open ? '▾' : '▸'}</span>
 								<span class="ejm-kind">{kindLabel(ev.kind)}</span>
 								<span class="ejm-label">{ev.label}</span>
+								{#if ev.banner}
+									<span class="ejm-banner ejm-banner--{ev.banner.status}" title={ev.banner.addr}>
+										{ev.banner.status === 'forked' ? '⑂' : '⮑'} {ev.banner.text}
+									</span>
+								{/if}
 							</button>
 							{#if open}
 								<div class="ejm-json-wrap">
-									<button
-										class="ejm-copy"
-										onclick={() => copy(pretty(ev.json), `e${i}`)}
-										title="Copy this event's JSON"
-									>{copiedKey === `e${i}` ? 'Copied ✓' : 'Copy'}</button>
-									<pre class="ejm-json">{pretty(ev.json)}</pre>
+									{#if ev.json != null}
+										<button
+											class="ejm-copy"
+											onclick={() => copy(pretty(ev.json), `e${i}`)}
+											title="Copy this event's JSON"
+										>{copiedKey === `e${i}` ? 'Copied ✓' : 'Copy'}</button>
+										<pre class="ejm-json">{pretty(ev.json)}</pre>
+									{:else}
+										<p class="ejm-missing">
+											Original event isn't cached locally — the 30040 references it as
+											<code>{ev.banner?.addr ?? 'unknown address'}</code>.
+										</p>
+									{/if}
 								</div>
 							{/if}
 						</div>
@@ -212,6 +228,39 @@
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
+	}
+	.ejm-banner {
+		font-family: var(--font-mono);
+		font-size: var(--t-xs);
+		padding: 1px 6px;
+		border-radius: var(--r-sm);
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		margin-left: auto;
+		flex-shrink: 1;
+		min-width: 0;
+	}
+	.ejm-banner--forked {
+		color: var(--yellow);
+		background: color-mix(in srgb, var(--yellow) 12%, transparent);
+	}
+	.ejm-banner--linked {
+		color: var(--blue);
+		background: color-mix(in srgb, var(--blue) 12%, transparent);
+	}
+	.ejm-missing {
+		margin: 0;
+		font-size: var(--t-xs);
+		color: var(--base5);
+		background: var(--bg-surface);
+		border: 1px dashed var(--panel-border);
+		border-radius: var(--r-sm);
+		padding: 10px 12px;
+	}
+	.ejm-missing code {
+		font-family: var(--font-mono);
+		word-break: break-all;
 	}
 	.ejm-json-wrap {
 		position: relative;

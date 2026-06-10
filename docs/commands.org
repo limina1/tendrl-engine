@@ -1167,3 +1167,40 @@ cd web
 
 Note: running =pnpm= here may rewrite =web/pnpm-workspace.yaml= (adds an
 =allowBuilds:= stub) — discard that artifact with =git checkout -- web/pnpm-workspace.yaml=.
+
+* Compose JSON preview — provenance-aware (branch =compose-json-preview=)
+
+** Verify
+
+#+begin_src bash
+cargo test --lib publication::tests::test_build_block   # 9 tests, incl. 30023/30818 coordinate kinds
+cargo clippy                                            # 40 warnings (down from 41), 0 errors
+cd web && ./node_modules/.bin/svelte-kit sync && ./node_modules/.bin/svelte-check --tsconfig ./tsconfig.json  # 0 errors, 35 warnings
+#+end_src
+
+** Endpoint smoke test (engine running)
+
+#+begin_src bash
+curl -s localhost:3030/api/v1/publish/blocks/preview -H 'Content-Type: application/json' -d '{
+  "title": "Preview test", "tags": [],
+  "blocks": [
+    {"kind": "editable", "title": "New section", "tags": [], "content": "hello"},
+    {"kind": "imported", "title": "Linked wiki", "tags": [], "content": "x",
+     "source_addr": {"kind": 30818, "pubkey": "<64-hex>", "d_tag": "some-page"}, "author": "<64-hex>"},
+    {"kind": "forked", "title": "Forked section", "tags": [], "content": "edited",
+     "original_addr": {"kind": 30041, "pubkey": "<64-hex>", "d_tag": "orig"}, "original_author": "<64-hex>"}
+  ]
+}' | jq '.events[] | {status, title, has_event: (.event != null), original}'
+#+end_src
+
+Expected: index entry first (=status: new=, or =forked= when
+=source_publication_addr= is set), then one entry per block: editable → =new= with
+event; imported → =linked=, event = the exact original (null + =found:false= when not
+cached); forked → =forked= with fork-marker =a= tag at the original's own kind.
+
+** UI verification
+
+In a compose buffer (plain or full mode), press the preview-events action: the JSON
+inspector banners =⑂ forked from <name>= (yellow) and =⮑ linked — exact original by
+<name>= (blue) on provenance rows; a linked original that isn't cached locally shows
+its =kind:pubkey:d_tag= coordinate instead of JSON.
