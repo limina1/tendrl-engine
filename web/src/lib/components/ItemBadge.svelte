@@ -1,5 +1,6 @@
 <script lang="ts">
 	import type { ContextItem, SyncMode } from '$lib/types';
+	import { sectionState, sourceKindLabel } from '$lib/compose/state';
 
 	let {
 		item,
@@ -52,6 +53,25 @@
 	// Origin badge color
 	const originColor = $derived(item.readonly ? 'readonly' : 'synced');
 
+	// Provenance badge for sourced items (imported via nevent/naddr or pulled
+	// from search): kind label + lock state. Drives the user-facing
+	// imported/claimed/forked signal in the compose Detected panel.
+	const srcState = $derived(item.source_addr ? sectionState(item) : null);
+	const srcKind = $derived(item.source_addr ? sourceKindLabel(item.source_addr.kind) : '');
+	const srcIcon = $derived(
+		srcState === 'imported' ? '🔒' : srcState === 'claimed' ? '🔓' : '⑂'
+	);
+	const srcColor = $derived(
+		srcState === 'imported' ? 'readonly' : srcState === 'claimed' ? 'modified' : 'forked'
+	);
+	const srcTitle = $derived(
+		srcState === 'imported'
+			? `Locked to original ${srcKind} — publishes a reference to the source event (kept under its author). Click to unlock.`
+			: srcState === 'claimed'
+				? `Unlocked but unchanged — still publishes as a reference to the original ${srcKind}. Click to re-lock.`
+				: `Diverged from the original ${srcKind} — publishes as your fork with lineage tags. Click to reset to the original and re-lock.`
+	);
+
 	// Show chat badge only when not in_context (once in context, chat badge disappears)
 	const showChatBadge = $derived(item.origin === 'chat' && !item.in_context);
 
@@ -87,7 +107,13 @@
 	{#if showChatBadge}
 		<span class="badge badge-chat">chat</span>
 	{/if}
-	{#if item.origin === 'search'}
+	{#if srcState}
+		<button
+			class="badge badge-{srcColor}"
+			onclick={() => onlocksource?.(item.id)}
+			title={srcTitle}
+		>{srcKind} {srcIcon}</button>
+	{:else if item.origin === 'search'}
 		<button
 			class="badge badge-{originColor}"
 			onclick={() => onlocksource?.(item.id)}
@@ -146,6 +172,11 @@
 	.badge-readonly {
 		background: color-mix(in srgb, var(--badge-readonly) 20%, transparent);
 		color: var(--badge-readonly);
+	}
+
+	.badge-forked {
+		background: color-mix(in srgb, var(--id-forked) 20%, transparent);
+		color: var(--id-forked);
 	}
 
 	.badge-armed {

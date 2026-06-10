@@ -21,6 +21,23 @@ export function sectionState(item: ContextItem): SectionState {
 	return item.readonly ? 'imported' : 'claimed';
 }
 
+/** Human label for a source event's kind, shown on provenance badges. */
+export function sourceKindLabel(kind: number): string {
+	switch (kind) {
+		case 30041:
+			return 'section';
+		case 30023:
+			return 'article';
+		case 30818:
+		case 30817:
+			return 'wiki';
+		case 30040:
+			return 'index';
+		default:
+			return `k${kind}`;
+	}
+}
+
 /** Did the user change anything that warrants a new 30040?
  *
  * Triggers:
