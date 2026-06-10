@@ -240,6 +240,9 @@ export interface SearchResponse {
 	count: number;
 	local_count: number;
 	relay_count: number;
+	/** True when the engine actually queried relays for this search —
+	 *  false for local-only scans and declined confirm-mode fetches. */
+	relays_queried: boolean;
 	doc_results?: DocPageResult[];
 	/** Histograms from `count:NAME` operators. Keyed by tag name; each list
 	 *  is sorted by count desc. Omitted from the JSON when empty. */
