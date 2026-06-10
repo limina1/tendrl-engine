@@ -744,7 +744,14 @@ export function previewPublication(req: PublishRequest) {
 // `a`/`e` tags pointing at the parent publication.
 
 export type PublishBlock =
-	| { kind: 'editable'; title: string; tags: [string, string][]; content: string }
+	| {
+			kind: 'editable';
+			title: string;
+			tags: [string, string][];
+			content: string;
+			/** Reuse this 30041 d-tag (nanoid) on republish; omit to mint fresh. */
+			d_tag?: string;
+	  }
 	| {
 			kind: 'imported';
 			title: string;
@@ -760,11 +767,15 @@ export type PublishBlock =
 			original_addr: { kind: number; pubkey: string; d_tag: string };
 			content: string;
 			original_author: string;
+			/** Reuse this 30041 d-tag (nanoid) on republish; omit to mint fresh. */
+			d_tag?: string;
 	  };
 
 export interface PublishBlocksRequest {
 	title: string;
 	tags: [string, string][];
+	/** Reuse this index d-tag (nanoid) on republish; omit to mint fresh. */
+	d_tag?: string;
 	blocks: PublishBlock[];
 	source_publication_addr?: { kind: number; pubkey: string; d_tag: string } | null;
 	source_publication_event_id?: string | null;
