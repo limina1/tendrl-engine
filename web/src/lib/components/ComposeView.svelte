@@ -13,7 +13,8 @@
 	import CodeMirrorEditor from './CodeMirrorEditor.svelte';
 	import {
 		hasStructuralChange,
-		claimedUntouchedSections
+		claimedUntouchedSections,
+		sectionDiverged
 	} from '$lib/compose/state';
 	import { getAppState } from '$lib/state.svelte';
 
@@ -400,7 +401,7 @@
 	let knownSectionFp = $state('');
 	function sectionFp(): string {
 		return compose.sections
-			.map((s) => `${s.id}:${s.readonly ? 1 : 0}:${s.modified ? 1 : 0}`)
+			.map((s) => `${s.id}:${s.readonly ? 1 : 0}:${sectionDiverged(s) ? 1 : 0}`)
 			.join('|');
 	}
 

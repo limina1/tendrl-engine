@@ -37,6 +37,7 @@ import type {
 import type { Buffer } from '$lib/wm/types';
 import * as api from '$lib/api';
 import { identityCanSign } from '$lib/identity/signer';
+import { sectionDiverged } from '$lib/compose/state';
 
 /** Replaceable kind-0 events can pile up multiple historical versions in
  *  the DB / relay results. A search should surface only the *current*
@@ -555,6 +556,10 @@ function _createAppState() {
 			...fields,
 			id: crypto.randomUUID(),
 			context_content: fields.content,
+			// Snapshot title/tags alongside original_content so divergence
+			// (→ fork) is detected on every axis the publish payload carries.
+			original_title: fields.original_title ?? fields.title,
+			original_tags: fields.original_tags ?? fields.tags.map((t) => ({ ...t })),
 			modified: false,
 			// Sections imported from a published 30040 default to locked —
 			// this matches the read-mode default ("I'm transcluding the
@@ -1245,17 +1250,17 @@ function _createAppState() {
 	function handleLockToSource(id: string) {
 		items = items.map((e) => {
 			if (e.id !== id) return e;
-			// Cycle by provenance state, not the raw readonly flag: forked
-			// (diverged) and claimed (unlocked) both return to locked-original;
-			// only a clean locked item unlocks. A readonly item can still be
-			// diverged (plain mode doesn't enforce the lock while typing).
-			const diverged = e.content !== e.original_content;
-			if (diverged || !e.readonly) {
+			// Reset-to-original: forked (diverged on any axis) and claimed
+			// (unlocked) both return to locked-original — content, title, and
+			// tags restored; only a clean locked item unlocks.
+			if (sectionDiverged(e) || !e.readonly) {
 				return {
 					...e,
 					readonly: true,
 					content: e.original_content,
 					context_content: e.original_content,
+					title: e.original_title ?? e.title,
+					tags: e.original_tags ? e.original_tags.map((t) => ({ ...t })) : e.tags,
 					modified: false
 				};
 			}
@@ -1414,7 +1419,9 @@ function _createAppState() {
 							content: s.content
 						};
 					}
-					const diverged = s.content !== s.original_content;
+					// Any divergence — content, title, or tags — forces a fork;
+					// an imported reference can't carry edits.
+					const diverged = sectionDiverged(s);
 					if (diverged) {
 						return {
 							kind: 'forked',
