@@ -19,11 +19,6 @@
     "vite": "^6.0.0"
   },
   "type": "module",
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "esbuild"
-    ]
-  },
   "dependencies": {
     "@codemirror/commands": "^6.10.3",
     "@codemirror/state": "^6.6.0",
