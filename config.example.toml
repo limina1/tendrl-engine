@@ -1,16 +1,44 @@
 # tendrl-engine configuration
 # Copy to config.toml and customize, then run:
 #   cargo run -- -c config.toml
+# or start the whole stack (engine + web + sidecar):
+#   ./start.sh
+#
+# Note: the Settings page's "Save settings" rewrites config.toml in place
+# (sections come back alphabetized). Comments in your copy will not survive
+# the first save — this file is the documented reference.
 
 [identity]
-# Your nostr public key (npub or hex)
+# Your nostr public key (npub or hex). Drives `by:me` search, feed scoping,
+# and which events the UI treats as yours.
 # pubkey = "npub1..."
-# ncryptsec: encrypted engine key, written automatically when you log in
-# with a pasted ncryptsec in the UI (and cleared on logout). It's
+
+# A second pubkey treated as "the assistant" (`by:assistant` search, feed
+# scoping). Optional.
+# assistant = "npub1..."
+
+# Last-chosen signing source: "engine" (key held by the engine, below) or
+# "nip07" (browser extension). Written by Save Settings; with "nip07" the
+# web auto-reconnects to the extension on reload.
+# source = "engine"
+
+# Auto-lock the unlocked engine key after N minutes of inactivity.
+# 0 = never auto-lock. Only meaningful for the engine source.
+# lock_timeout_minutes = 0
+
+# ncryptsec: encrypted engine key (NIP-49), written automatically when you
+# log in with a pasted ncryptsec in the UI (and cleared on logout). It's
 # scrypt-encrypted, so the password is never stored — on boot the engine
 # loads it locked and the UI asks only for your password. Edit by hand
 # only to pre-seed a key.
 # ncryptsec = "ncryptsec1..."
+
+[network]
+# "auto"    — fetch from relays automatically.
+# "confirm" — every user-initiated relay fetch/publish pops a confirmation
+#             modal in the UI before the engine touches the network.
+# Engine default is "auto" when this section is absent.
+mode = "confirm"
 
 [relay]
 timeout_ms = 15000
@@ -30,12 +58,42 @@ initial_relays = [
 
 # Embedding / vector search (optional)
 # Start the sidecar first: cd sidecar && ./run.sh
+# (./start.sh does this for you when enabled = true)
 [embedding]
 enabled = false
 backend = "python"                    # "python" or "onnx" (--features onnx)
 sidecar_url = "http://localhost:3031"
 model = "all-MiniLM-L6-v2"
 dimensions = 384
+
+# AI assistant (optional). The Anthropic API key is NEVER stored here —
+# set ANTHROPIC_API_KEY in the environment. Without it the chat falls
+# back to a no-op echo provider.
+# [ai]
+# provider = "claude"                 # "claude" or "noop" (echo, testing)
+# model = "claude-sonnet-4-6"
+# max_tool_turns = 25                 # cap on tool round-trips per turn
+# system_prompt_path = "prompt.md"    # Markdown prepended to the system
+#                                     # prompt, re-read each turn; relative
+#                                     # to this config file
+# enabled_tools = ["search_events"]   # omit for the default policy
+#                                     # (everything except publish)
+
+# Editor defaults (written by Save Settings; shown here for reference)
+# [editor]
+# line_numbers = true
+# vim_mode = false
+# insert_mode = "append"
+
+# Composer defaults (written by Save Settings)
+# [compose]
+# default_mode = "plain"
+# sync_mode = "explicit"
+# button_labels = "icon"
+
+# Documents folder for local imports (optional)
+# [documents]
+# path = "./docs"
 
 # Server settings (optional)
 # [server]
