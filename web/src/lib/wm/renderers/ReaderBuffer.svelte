@@ -1057,6 +1057,42 @@
 		);
 	}
 
+	// Upward containment: the kind-30040 indexes that reference the *current
+	// focus* as a child. The downward structure (NESTED/graph) is the reader's
+	// existing axis; this is the reverse — "what is this part of". Recomputed
+	// per focus (a sub-publication can be contained somewhere its parent isn't).
+	let containedIn = $state<{ id: string; pubkey: string; d_tag: string; title: string }[]>([]);
+	$effect(() => {
+		const focus = focusStack[focusMarker];
+		if (!focus) {
+			containedIn = [];
+			return;
+		}
+		const coord = { kind: 30040, pubkey: focus.pubkey, d_tag: focus.d_tag };
+		untrack(() => {
+			app.containingByCoord(coord).then((idx) => {
+				// The focus may have moved while the query was in flight.
+				const cur = focusStack[focusMarker];
+				if (cur && cur.pubkey === coord.pubkey && cur.d_tag === coord.d_tag) {
+					containedIn = idx;
+				}
+			});
+		});
+	});
+
+	/** "part of N" pill → find the publications that contain the current focus.
+	 *  Mirrors the feed badge: reveal the search buffer and run the reverse
+	 *  a-tag query so all containers (cross-author) list out. */
+	function findContainers() {
+		const focus = focusStack[focusMarker];
+		if (!focus) return;
+		store.openBuffer({
+			className: 'research',
+			buffer: { id: 'search', kind: 'search', label: 'search', kicker: 'containing' }
+		});
+		app.searchFor(`k:30040 a:30040:${focus.pubkey}:${focus.d_tag}`);
+	}
+
 	// Graph-panel inputs — addr-keyed so they line up with `focusGraph`.
 	const crumbGraphKey = (c: FocusCrumb) =>
 		addrKey({ kind: 30040, pubkey: c.pubkey, d_tag: c.d_tag });
@@ -1779,6 +1815,13 @@
 			disabled={!publication}
 			title="Open this publication's event menu (m)"
 		>menu</button>
+		{#if containedIn.length > 0}
+			<button
+				class="pill pill--containment"
+				onclick={findContainers}
+				title={`Part of ${containedIn.length} publication${containedIn.length === 1 ? '' : 's'}: ${containedIn.map((c) => c.title).join(', ')} — click to find the containing publications`}
+			>⊂ part of {containedIn.length}</button>
+		{/if}
 		{#if parsedAddr?.kind === 30040 && rootLoaded}
 			{#if hasGraph}
 				<!-- Nested: this index references child 30040 sub-publications.
@@ -2880,6 +2923,17 @@
 	}
 
 	/* Depth stepper in the toolbar. */
+	/* The global .pill--containment (tokens.css) loses to `.toolbar button` on
+	   specificity, so restore its purple here. Clicking finds the containers. */
+	.toolbar button.pill--containment {
+		background: color-mix(in srgb, var(--id-imported) 14%, transparent);
+		color: var(--id-imported);
+		border: none;
+		margin-left: 4px;
+	}
+	.toolbar button.pill--containment:hover {
+		background: color-mix(in srgb, var(--id-imported) 26%, transparent);
+	}
 	/* Flat/nested level tag sitting where the depth control used to live. */
 	.level-hint {
 		display: inline-flex;
