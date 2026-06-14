@@ -101,8 +101,8 @@
 				e.stopPropagation();
 				onpartof?.();
 			}}
-			title={`Part of ${containedIn} publication${containedIn === 1 ? '' : 's'} — click to find them`}
-		>⊂ part of {containedIn}</button>
+			title={`In ${containedIn} ${containedIn === 1 ? 'index' : 'indices'} — click to find the containing publications`}
+		>⊂ in {containedIn} {containedIn === 1 ? 'index' : 'indices'}</button>
 	{/if}
 	<!-- Pool routing actions — clickable toggles. -->
 	{#if onpillctx}
@@ -264,15 +264,15 @@
 		background: color-mix(in srgb, var(--id-imported) 22%, transparent);
 		color: var(--id-imported);
 	}
-	/* Containment — clickable, structural purple like fork/refs since it
-	   points at the publications this event belongs to. */
+	/* Containment — clickable, green (same token as the active ctx/cmp pills)
+	   since it points at the publications this event belongs to. */
 	.psb__pill--partof {
-		background: color-mix(in srgb, var(--id-imported) 16%, transparent);
-		color: var(--id-imported);
+		background: #22c55e33;
+		color: #22c55e;
 		cursor: pointer;
 	}
 	.psb__pill--partof:hover {
-		background: color-mix(in srgb, var(--id-imported) 30%, transparent);
+		background: #22c55e55;
 	}
 
 	.psb__lock {
