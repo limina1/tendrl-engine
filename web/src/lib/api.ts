@@ -418,9 +418,15 @@ export function deleteDraft(id: string): Promise<{ deleted: string }> {
 
 // Publications API
 
-export function listPublications(limit = 20, policy = 'local_only', before?: number) {
+export function listPublications(
+	limit = 20,
+	policy = 'local_only',
+	before?: number,
+	general = false
+) {
 	let url = `/api/v1/publications?limit=${limit}&policy=${policy}`;
 	if (before) url += `&before=${before}`;
+	if (general) url += `&general=true`;
 	return fetchJson<{ publications: PublicationSummary[]; count: number }>(url);
 }
 
