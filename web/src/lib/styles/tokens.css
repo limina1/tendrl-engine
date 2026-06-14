@@ -1,5 +1,12 @@
 /* Iceberg Dark — Tendrl design tokens */
 :root {
+  /* Root scaling anchor. 1rem = 13px at a 16px browser default (13/16 =
+     81.25%), but expressed relatively so the whole UI scales as one unit
+     with the user's browser/OS font-size preference and text-only zoom.
+     Every token below is rem, so type, spacing, and chrome scale together
+     off this single knob — change it (or zoom) and nothing spills. */
+  font-size: 81.25%;
+
   /* Base scale (Iceberg) */
   --bg:        #161821;
   --bg-alt:   #0f1117;
@@ -57,15 +64,18 @@
   --font-mono: ui-monospace, "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
   --font-serif: "Iowan Old Style", "Charter", "Source Serif Pro", Georgia, serif;
 
-  /* Type scale */
-  --t-xs:   11px;
-  --t-sm:   12px;
-  --t-base: 13px;
-  --t-md:   14px;
-  --t-lg:   16px;
-  --t-xl:   19px;
-  --t-2xl:  24px;
-  --t-3xl:  32px;
+  /* Type scale — rem, anchored to the :root font-size above.
+     px comments are the resolved size at the 13px default. */
+  --t-3xs:  0.692rem; /*  9px */
+  --t-2xs:  0.769rem; /* 10px */
+  --t-xs:   0.846rem; /* 11px */
+  --t-sm:   0.923rem; /* 12px */
+  --t-base: 1rem;     /* 13px */
+  --t-md:   1.077rem; /* 14px */
+  --t-lg:   1.231rem; /* 16px */
+  --t-xl:   1.462rem; /* 19px */
+  --t-2xl:  1.846rem; /* 24px */
+  --t-3xl:  2.462rem; /* 32px */
 
   /* Line heights */
   --lh-tight: 1.25;
@@ -73,27 +83,27 @@
   --lh-base:  1.55;
   --lh-loose: 1.7;
 
-  /* Spacing — 4px rhythm */
-  --s-1: 4px;
-  --s-2: 8px;
-  --s-3: 12px;
-  --s-4: 16px;
-  --s-5: 20px;
-  --s-6: 24px;
-  --s-8: 32px;
-  --s-10: 40px;
-  --s-12: 48px;
+  /* Spacing — 4px rhythm, in rem so padding/gaps scale with text. */
+  --s-1: 0.308rem; /*  4px */
+  --s-2: 0.615rem; /*  8px */
+  --s-3: 0.923rem; /* 12px */
+  --s-4: 1.231rem; /* 16px */
+  --s-5: 1.538rem; /* 20px */
+  --s-6: 1.846rem; /* 24px */
+  --s-8: 2.462rem; /* 32px */
+  --s-10: 3.077rem; /* 40px */
+  --s-12: 3.692rem; /* 48px */
 
-  /* Radii */
+  /* Radii — stay px; corners shouldn't scale with text. */
   --r-sm: 2px;
   --r-md: 3px;
   --r-lg: 5px;
 
-  /* Chrome */
-  --rail-w: 28px;
-  --header-h: 36px;
-  --statusbar-h: 22px;
-  --panel-header-h: 28px;
+  /* Chrome — rem so bar heights grow with their text instead of clipping. */
+  --rail-w: 2.154rem;       /* 28px */
+  --header-h: 2.769rem;     /* 36px */
+  --statusbar-h: 1.692rem;  /* 22px */
+  --panel-header-h: 2.154rem; /* 28px */
 }
 
 * { box-sizing: border-box; }
@@ -104,10 +114,12 @@ html, body {
   background: var(--bg);
   color: var(--fg);
   font-family: var(--font-sans);
-  font-size: var(--t-base);
   line-height: var(--lh-base);
   -webkit-font-smoothing: antialiased;
 }
+/* Body text rides the scale. Root font-size (the rem anchor) lives on
+   :root above; setting it here too would be self-referential. */
+body { font-size: var(--t-base); }
 
 /* Scrollbars — thin, iceberg-toned */
 ::-webkit-scrollbar { width: 8px; height: 8px; }
@@ -218,7 +230,7 @@ html, body {
 /* Keys */
 .kbd {
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: var(--t-2xs);
   padding: 1px 4px;
   border: 1px solid var(--base3);
   border-bottom-width: 2px;
@@ -288,7 +300,7 @@ html, body {
 .rail-label {
   writing-mode: vertical-rl;
   transform: rotate(180deg);
-  font-size: 10px;
+  font-size: var(--t-2xs);
   font-family: var(--font-mono);
   letter-spacing: 0.16em;
   color: var(--base5);
@@ -298,7 +310,7 @@ html, body {
 .rail-spacer { flex: 1; }
 .rail-key {
   font-family: var(--font-mono);
-  font-size: 9px;
+  font-size: var(--t-3xs);
   color: var(--base4);
   margin-top: 2px;
 }
@@ -503,7 +515,7 @@ html, body {
   background: var(--bg-alt);
   border-top: 1px solid var(--panel-border);
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: var(--t-2xs);
   color: var(--base5);
   letter-spacing: 0.04em;
 }
@@ -533,7 +545,7 @@ html, body {
   border: 1px solid var(--base3);
   color: var(--base6);
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: var(--t-2xs);
   padding: 2px 8px;
   border-radius: 999px;
   cursor: pointer;
@@ -561,7 +573,7 @@ html, body {
   padding: 14px 8px 14px 0;
   text-align: right;
   color: var(--base4);
-  font-size: 10px;
+  font-size: var(--t-2xs);
   line-height: 1.7;
   user-select: none;
   background: var(--bg-alt);
@@ -628,11 +640,11 @@ html, body {
   cursor: pointer;
   border-radius: var(--r-sm);
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: var(--t-2xs);
 }
 .wbar__btn:hover { background: var(--base1); color: var(--fg); }
 .wbar__btn--active { background: var(--base2); color: var(--blue); }
-.wbar__btn--wide { width: auto; padding: 0 6px; gap: 4px; font-size: 10px; }
+.wbar__btn--wide { width: auto; padding: 0 6px; gap: 4px; font-size: var(--t-2xs); }
 
 /* Floating bubble toolbar */
 .bubble {
@@ -677,7 +689,7 @@ html, body {
   gap: 6px;
   border-bottom: 1px solid var(--panel-border);
 }
-.picker__tabs { display: flex; gap: 2px; padding: 4px 6px; border-bottom: 1px solid var(--panel-border); font-family: var(--font-mono); font-size: 10px; }
+.picker__tabs { display: flex; gap: 2px; padding: 4px 6px; border-bottom: 1px solid var(--panel-border); font-family: var(--font-mono); font-size: var(--t-2xs); }
 .picker__tab { padding: 2px 6px; border-radius: 2px; cursor: pointer; color: var(--base5); }
 .picker__tab--active { background: var(--base2); color: var(--blue); }
 .picker__row { display: flex; align-items: center; gap: 8px; padding: 6px 10px; cursor: pointer; }
@@ -717,7 +729,7 @@ html, body {
   margin: 0 auto;
   padding: 48px 32px 96px;
   font-family: var(--font-serif);
-  font-size: 18px;
+  font-size: 1.385rem; /* 18px — reader prose, scales with the root anchor */
   line-height: 1.7;
   color: var(--base7);
 }
