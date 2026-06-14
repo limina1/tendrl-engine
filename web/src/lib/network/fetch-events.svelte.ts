@@ -256,3 +256,14 @@ export function reissueConfirm() {
 if (browser) {
 	startFetchEvents();
 }
+
+// HMR cleanliness: this module owns a live SSE subscription. Without this, a
+// hot-swap loads the new module but the OLD EventSource keeps running with the
+// stale `handleEvent` — so edits here appear not to take effect until a full
+// reload. Close the old stream on dispose so the new module takes over.
+if (import.meta.hot) {
+	import.meta.hot.dispose(() => {
+		activeEventSource?.close();
+		activeEventSource = null;
+	});
+}
