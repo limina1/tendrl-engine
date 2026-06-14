@@ -9,6 +9,7 @@
 
 	import type { FetchEvent, NipFilter, CompositionShape, Phase } from '$lib/types';
 	import { resolveConfirm } from '$lib/network/fetch-events.svelte';
+	import * as api from '$lib/api';
 
 	type IntentEvent = Extract<FetchEvent, { type: 'intent' }>;
 	let { intent }: { intent: IntentEvent } = $props();
@@ -55,6 +56,11 @@
 	let appendInput = $state('');
 	let appendError = $state<string | null>(null);
 	let detailsOpen = $state(false);
+	// When on, confirming ALSO pulls a broad, un-author-scoped feed (recent
+	// kind-30040 publications from all authors) from the selected relays — the
+	// "include feed stream" option, on top of the scoped by:me/by:assistant
+	// fetch the intent proposes.
+	let includeGeneral = $state(false);
 	// Split mode: when true, render each filter as its own
 	// standalone single-filter request (each with the same composition
 	// appended) so the user can see + copy them individually. The
@@ -167,6 +173,14 @@
 	function confirm() {
 		if (selectedRelays.length === 0) return;
 		resolveConfirm(true, selectedRelays);
+		if (includeGeneral) {
+			// Also pull a broad, un-author-scoped feed of recent publications
+			// (kind 30040, all authors) from the selected relays. modeConfirm
+			// bypasses the confirm gate so this doesn't pop a second modal.
+			api
+				.fetchFromRelay(selectedRelays, [30040], [], 200, { modeConfirm: true })
+				.catch((e: unknown) => console.error('[fetch-confirm] broad feed pull failed', e));
+		}
 	}
 	function cancel() {
 		resolveConfirm(false);
@@ -237,6 +251,15 @@
 				}}
 			/>
 			<button class="rf-append-btn" onclick={addExtra}>Add relay</button>
+		</div>
+		<div class="rf-general">
+			<button
+				class="rf-append-btn rf-general-btn"
+				class:rf-general-btn--on={includeGeneral}
+				onclick={() => (includeGeneral = !includeGeneral)}
+				aria-pressed={includeGeneral}
+				title="When on, also pull a broad feed of recent publications (all authors) from the selected relays — not just yours"
+			>{includeGeneral ? '✓' : '○'} General feed</button>
 		</div>
 		{#if appendError}
 			<p class="rf-error">{appendError}</p>
@@ -691,6 +714,21 @@
 		color: var(--base6);
 		border-radius: var(--r-sm);
 		cursor: pointer;
+	}
+	/* "General feed" toggle — styled like Add relay, sits beneath it, and
+	   clicks green when on (confirming then also pulls a broad feed). */
+	.rf-general {
+		display: flex;
+		justify-content: flex-end;
+		padding: 0 14px 10px;
+	}
+	.rf-general-btn--on {
+		background: rgba(180, 190, 130, 0.14);
+		color: var(--state-online);
+		border-color: color-mix(in srgb, var(--state-online) 50%, transparent);
+	}
+	.rf-general-btn--on:hover {
+		background: rgba(180, 190, 130, 0.22);
 	}
 	.rf-append-btn:hover {
 		border-color: var(--state-online);
