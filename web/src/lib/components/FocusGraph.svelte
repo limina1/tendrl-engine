@@ -530,7 +530,7 @@
 		color: var(--id-yours);
 	}
 	.fg__hint {
-		font-size: 9px;
+		font-size: var(--t-3xs);
 		color: var(--base5);
 	}
 	.fg__close {
@@ -601,7 +601,7 @@
 	.fg__label {
 		fill: var(--fg);
 		font-family: var(--font-mono);
-		font-size: 11px;
+		font-size: var(--t-xs);
 		pointer-events: none;
 	}
 	.fg__node:hover .fg__box { stroke: var(--id-yours); }
@@ -630,7 +630,7 @@
 	.fg__tab text {
 		fill: var(--base5);
 		font-family: var(--font-mono);
-		font-size: 13px;
+		font-size: var(--t-base);
 		font-weight: 700;
 		pointer-events: none;
 	}
