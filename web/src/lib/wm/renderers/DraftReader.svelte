@@ -268,7 +268,7 @@
 	.rail {
 		font-family: var(--font-mono);
 		color: var(--green);
-		font-size: 14px;
+		font-size: var(--t-md);
 		line-height: 1;
 		padding-top: 6px;
 	}
@@ -278,7 +278,7 @@
 		background: transparent;
 		border: 1px solid var(--base3);
 		border-radius: var(--r-sm);
-		font-size: 12px;
+		font-size: var(--t-sm);
 		padding: 0 6px;
 		cursor: pointer;
 		color: var(--base6);
@@ -305,7 +305,7 @@
 		background: transparent;
 		border: 1px solid var(--base3);
 		border-radius: var(--r-sm);
-		font-size: 11px;
+		font-size: var(--t-xs);
 		padding: 0 6px;
 		cursor: pointer;
 		color: var(--base5);

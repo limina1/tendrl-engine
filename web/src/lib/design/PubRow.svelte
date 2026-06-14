@@ -67,5 +67,5 @@
 	}
 	.row__author { color: var(--base6); }
 	.row__sep { color: var(--base4); }
-	.row__tag { font-size: 10px; }
+	.row__tag { font-size: var(--t-2xs); }
 </style>
