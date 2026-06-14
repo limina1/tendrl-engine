@@ -9,29 +9,20 @@
 # the first save — this file is the documented reference.
 
 [identity]
-# Your nostr public key (npub or hex). Drives `by:me` search, feed scoping,
-# and which events the UI treats as yours.
-# pubkey = "npub1..."
+# Signer *preferences* only — no keys, no pubkeys live here. Identity is
+# established at runtime: the user signs via NIP-07 or a pasted ncryptsec; the
+# assistant via a pasted nsec/ncryptsec persisted in the OS keyring. `by:me` /
+# `by:assistant` resolve from whoever is logged in. (A stale `pubkey` /
+# `assistant` / `ncryptsec` from an older config is ignored.)
 
-# A second pubkey treated as "the assistant" (`by:assistant` search, feed
-# scoping). Optional.
-# assistant = "npub1..."
-
-# Last-chosen signing source: "engine" (key held by the engine, below) or
-# "nip07" (browser extension). Written by Save Settings; with "nip07" the
-# web auto-reconnects to the extension on reload.
+# Last-chosen signing source: "engine" (key pasted into the engine) or "nip07"
+# (browser extension). Written by Save Settings; lets the engine know which
+# signer to reattach to on startup so a NIP-07 user doesn't flash "engine".
 # source = "engine"
 
 # Auto-lock the unlocked engine key after N minutes of inactivity.
 # 0 = never auto-lock. Only meaningful for the engine source.
 # lock_timeout_minutes = 0
-
-# ncryptsec: encrypted engine key (NIP-49), written automatically when you
-# log in with a pasted ncryptsec in the UI (and cleared on logout). It's
-# scrypt-encrypted, so the password is never stored — on boot the engine
-# loads it locked and the UI asks only for your password. Edit by hand
-# only to pre-seed a key.
-# ncryptsec = "ncryptsec1..."
 
 [network]
 # "auto"    — fetch from relays automatically.

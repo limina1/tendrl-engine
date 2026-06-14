@@ -541,21 +541,24 @@ fn resolve_author(
 ) -> Result<(), EngineError> {
     match &query.author_filter {
         Some(AuthorFilter::CurrentUser) => {
-            let pk = req.my_pubkey.as_deref().or_else(|| engine.my_pubkey());
+            // Resolve "me" from the logged-in user session (engine secret or
+            // NIP-07 signer), with the request's my_pubkey as a client hint.
+            let pk = req.my_pubkey.clone().or_else(|| engine.my_pubkey());
             if let Some(pk) = pk {
-                query.author_filter = Some(AuthorFilter::Pubkeys(vec![pk.to_string()]));
+                query.author_filter = Some(AuthorFilter::Pubkeys(vec![pk]));
             } else {
                 return Err(EngineError::InvalidFilter(
-                    "by:me requires pubkey in config or request".to_string(),
+                    "by:me requires a logged-in identity".to_string(),
                 ));
             }
         }
         Some(AuthorFilter::AssistantUser) => {
+            // Resolve from the live assistant identity session.
             if let Some(pk) = engine.assistant_pubkey() {
-                query.author_filter = Some(AuthorFilter::Pubkeys(vec![pk.to_string()]));
+                query.author_filter = Some(AuthorFilter::Pubkeys(vec![pk]));
             } else {
                 return Err(EngineError::InvalidFilter(
-                    "by:assistant requires identity.assistant in config".to_string(),
+                    "by:assistant requires a logged-in assistant identity".to_string(),
                 ));
             }
         }
@@ -2309,33 +2312,6 @@ pub async fn settings_handler(State(engine): State<AppState>) -> Result<Json<Val
             "lock_timeout_minutes": cfg.identity.lock_timeout_minutes,
         },
     })))
-}
-
-#[derive(Debug, Deserialize)]
-pub struct PersistKeyRequest {
-    /// NIP-49 `ncryptsec1…` to persist, or `null`/empty to forget the
-    /// stored key (e.g. on logout).
-    #[serde(default)]
-    pub ncryptsec: Option<String>,
-}
-
-/// POST /api/v1/identity/persist-key — write or clear the engine key in
-/// config.toml's `[identity] ncryptsec`. Persisting is deliberate: the
-/// web calls this when the user logs in with a pasted key (so the next
-/// boot prompts for just the password) and again with an empty body on
-/// logout to forget it. The secret is scrypt-encrypted, so it never
-/// travels or rests in plaintext.
-pub async fn identity_persist_key_handler(
-    State(engine): State<AppState>,
-    Json(_req): Json<PersistKeyRequest>,
-) -> Result<Json<Value>, EngineError> {
-    // The engine no longer persists secrets to config.toml — the user signs in
-    // each session with a pasted ncryptsec or via NIP-07. We ignore any key in
-    // the request and only ever *clear* (strips a key left by an older build),
-    // so the secret never rests in the config file. Kept as a no-op endpoint so
-    // the web's existing login/logout calls don't 404.
-    engine.persist_identity_ncryptsec(None)?;
-    Ok(Json(json!({ "persisted": false })))
 }
 
 /// GET /api/v1/relays — get relay configuration
@@ -5752,6 +5728,162 @@ pub async fn identity_logout_handler(
     let mut session = identity.lock().unwrap();
     session.logout();
     Json(session.status())
+}
+
+// ---------------------------------------------------------------------------
+// Assistant identity — a SECOND identity, established by pasting a key (nsec
+// plaintext or ncryptsec). Full signer; persisted in the OS keyring (pubkey
+// always, encrypted ncryptsec optionally) — never config, never a raw nsec at
+// rest. Drives `by:assistant` / feed scoping via the engine's live session.
+// ---------------------------------------------------------------------------
+
+/// Assistant identity state: a dedicated session plus whether the OS keyring is
+/// usable for persistence on this host (surfaced in status so the UI can warn
+/// that a key won't survive a restart).
+#[derive(Clone)]
+pub struct AssistantIdentity {
+    pub session: IdentityAppState,
+    pub keyring_available: bool,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AssistantLoginRequest {
+    /// `nsec1…` (plaintext → live full signer) or `ncryptsec1…` (encrypted →
+    /// locked, needs a subsequent /unlock).
+    pub key: String,
+}
+
+/// What we persist for the assistant in the OS keyring: the public pubkey (so
+/// `by:assistant` survives a restart) and, only if the user pasted an
+/// ncryptsec, the encrypted key (so signing can be restored after unlock). A
+/// raw nsec is NEVER written here (ncryptsec-only at rest).
+#[derive(Debug, Default, Serialize, Deserialize)]
+struct AssistantPersist {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pubkey: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    ncryptsec: Option<String>,
+}
+
+/// Best-effort keyring write of the assistant blob. No-op when the keyring is
+/// unavailable; logs (never fails the request) on error.
+fn persist_assistant(asst: &AssistantIdentity, blob: &AssistantPersist) {
+    if !asst.keyring_available {
+        return;
+    }
+    match serde_json::to_string(blob) {
+        Ok(json) => {
+            if let Err(e) = crate::identity::IdentityKeyring::new().store_last_assistant(&json) {
+                tracing::warn!("Could not persist assistant identity to keyring: {e}");
+            }
+        }
+        Err(e) => tracing::warn!("Could not serialize assistant identity: {e}"),
+    }
+}
+
+/// Build the assistant status with the keyring-availability flag attached.
+fn assistant_status_json(asst: &AssistantIdentity) -> IdentityStatusResponse {
+    let mut session = asst.session.lock().unwrap();
+    let mut status = session.status();
+    status.keyring_available = Some(asst.keyring_available);
+    status
+}
+
+/// GET /api/v1/assistant-identity — current assistant identity status.
+pub async fn assistant_identity_status_handler(
+    State(asst): State<AssistantIdentity>,
+) -> Json<IdentityStatusResponse> {
+    Json(assistant_status_json(&asst))
+}
+
+/// POST /api/v1/assistant-identity/login — paste a key to establish the
+/// assistant. `nsec1…` derives a live signer immediately; `ncryptsec1…` loads
+/// locked and needs /unlock. Persists pubkey (+ encrypted key for ncryptsec)
+/// to the keyring; a raw nsec is never persisted.
+pub async fn assistant_identity_login_handler(
+    State(asst): State<AssistantIdentity>,
+    Json(req): Json<AssistantLoginRequest>,
+) -> Result<Json<IdentityStatusResponse>, EngineError> {
+    let key = req.key.trim();
+    if key.starts_with("nsec1") {
+        let pubkey = {
+            let mut session = asst.session.lock().unwrap();
+            session
+                .login_nsec(key)
+                .map_err(|e| EngineError::InvalidFilter(e.to_string()))?
+        };
+        persist_assistant(
+            &asst,
+            &AssistantPersist {
+                pubkey: Some(pubkey),
+                ncryptsec: None,
+            },
+        );
+    } else if key.starts_with("ncryptsec1") {
+        {
+            let mut session = asst.session.lock().unwrap();
+            session
+                .login_ncryptsec(key)
+                .map_err(|e| EngineError::InvalidFilter(e.to_string()))?;
+        }
+        // Persist the encrypted key now; the pubkey is added on unlock.
+        persist_assistant(
+            &asst,
+            &AssistantPersist {
+                pubkey: None,
+                ncryptsec: Some(key.to_string()),
+            },
+        );
+    } else {
+        return Err(EngineError::BadRequest(
+            "assistant key must be an nsec1… or ncryptsec1…".into(),
+        ));
+    }
+    Ok(Json(assistant_status_json(&asst)))
+}
+
+/// POST /api/v1/assistant-identity/unlock — decrypt an ncryptsec assistant.
+pub async fn assistant_identity_unlock_handler(
+    State(asst): State<AssistantIdentity>,
+    Json(req): Json<UnlockRequest>,
+) -> Result<Json<IdentityStatusResponse>, EngineError> {
+    let password = req.password.clone();
+    let session_arc = asst.session.clone();
+    let result = tokio::task::spawn_blocking(move || {
+        let mut session = session_arc.lock().unwrap();
+        session.unlock(&password)
+    })
+    .await
+    .map_err(|e| EngineError::Other(format!("Task join error: {e}")))?;
+    match result {
+        Ok(pubkey) => {
+            let ncryptsec = asst.session.lock().unwrap().ncryptsec();
+            persist_assistant(
+                &asst,
+                &AssistantPersist {
+                    pubkey: Some(pubkey),
+                    ncryptsec,
+                },
+            );
+            Ok(Json(assistant_status_json(&asst)))
+        }
+        Err(e) => Err(EngineError::Auth(format!("Assistant unlock failed: {e}"))),
+    }
+}
+
+/// POST /api/v1/assistant-identity/logout — clear the assistant identity and
+/// its persisted keyring entry.
+pub async fn assistant_identity_logout_handler(
+    State(asst): State<AssistantIdentity>,
+) -> Json<IdentityStatusResponse> {
+    {
+        let mut session = asst.session.lock().unwrap();
+        session.logout();
+    }
+    if asst.keyring_available {
+        let _ = crate::identity::IdentityKeyring::new().clear_last_assistant();
+    }
+    Json(assistant_status_json(&asst))
 }
 
 #[derive(Debug, Deserialize)]

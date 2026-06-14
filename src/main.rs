@@ -46,6 +46,43 @@ struct Args {
     no_open: bool,
 }
 
+/// Restore a persisted assistant identity from the OS keyring into `session`.
+/// Best-effort: a missing/unavailable keyring or a malformed blob just leaves
+/// the assistant unset. An ncryptsec restores to a *locked* signer (pubkey
+/// hinted so `by:assistant` scopes before unlock); a pubkey-only blob (from a
+/// session-only nsec) restores scoping but not signing — re-paste the nsec to
+/// sign again.
+fn restore_assistant_identity(session: &api::IdentityAppState, keyring_available: bool) {
+    if !keyring_available {
+        return;
+    }
+    let Ok(blob) = nostr_engine::identity::IdentityKeyring::new().get_last_assistant() else {
+        return;
+    };
+    #[derive(serde::Deserialize)]
+    struct Persist {
+        pubkey: Option<String>,
+        ncryptsec: Option<String>,
+    }
+    let Ok(p) = serde_json::from_str::<Persist>(&blob) else {
+        return;
+    };
+    let mut s = session.lock().unwrap();
+    if let Some(nc) = p.ncryptsec.as_deref() {
+        if s.login_ncryptsec(nc).is_ok() {
+            if let Some(pk) = p.pubkey {
+                s.set_pubkey_hint(pk);
+            }
+            info!("Restored assistant identity (locked) from keyring");
+            return;
+        }
+    }
+    if let Some(pk) = p.pubkey {
+        s.set_pubkey_hint(pk);
+        info!("Restored assistant pubkey (scope-only) from keyring");
+    }
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
@@ -97,23 +134,47 @@ async fn main() -> anyhow::Result<()> {
     // <data_dir>/relays.json (seeded from initial_relays on first boot).
     let relay_config = config.relay.clone();
 
-    let my_pubkey = config.pubkey_hex();
-    if let Some(ref pk) = my_pubkey {
-        info!("Identity pubkey: {}...{}", &pk[..8], &pk[pk.len() - 8..]);
-    }
-    let assistant_pubkey = config.assistant_pubkey_hex();
-    if let Some(ref pk) = assistant_pubkey {
-        info!("Assistant pubkey: {}...{}", &pk[..8], &pk[pk.len() - 8..]);
-    }
-
     // Create the engine
     let data_path = PathBuf::from(&config.database.data_dir);
     let mut engine = Engine::with_relay_config(&data_path, &relay_config)?;
     // Same path we loaded from — settings persist to and reload from one file.
     engine.set_config_path(config_path);
     engine.set_documents_path(std::path::PathBuf::from(&config.documents.path));
-    engine.set_my_pubkey(my_pubkey.clone());
-    engine.set_assistant_pubkey(assistant_pubkey.clone());
+
+    // --- Identity sessions (runtime, never config) -------------------------
+    // Identity is no longer seeded from config. The user identity boots at the
+    // saved signer source (config keeps only the non-secret `[identity] source`
+    // preference, so the engine knows which signer to reattach to); the key is
+    // provided at runtime via NIP-07 or a pasted ncryptsec. The assistant
+    // identity is restored from the OS keyring if present. Both sessions are
+    // wired into the engine so `by:me` / `by:assistant` resolve from the live
+    // session rather than a config seed.
+    let boot_source = config
+        .identity
+        .source
+        .as_deref()
+        .and_then(nostr_engine::identity::IdentitySource::from_config_str)
+        .unwrap_or(nostr_engine::identity::IdentitySource::Engine);
+    info!("Saved identity source: {}", boot_source.kind_str());
+    let user_session: api::IdentityAppState =
+        Arc::new(Mutex::new(IdentitySession::with_source(boot_source)));
+    // Honor the saved auto-lock timeout (0 = never) from the first unlock on.
+    user_session
+        .lock()
+        .unwrap()
+        .set_timeout_minutes(config.identity.lock_timeout_minutes);
+
+    let keyring_available = nostr_engine::identity::IdentityKeyring::new().is_available();
+    if !keyring_available {
+        tracing::warn!(
+            "OS keyring unavailable — assistant identity will not persist across restarts"
+        );
+    }
+    let assistant_session: api::IdentityAppState = Arc::new(Mutex::new(IdentitySession::new()));
+    restore_assistant_identity(&assistant_session, keyring_available);
+
+    engine.set_user_session(user_session.clone());
+    engine.set_assistant_session(assistant_session.clone());
 
     // Resolve Claude Code sessions directory from cwd
     let cwd = std::env::current_dir().unwrap_or_default();
@@ -201,46 +262,10 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/v1/chat/load", put(api::chat_load_fragments))
         .with_state(chat_state);
 
-    // Identity session state. Honor `config.toml [identity] source`
-    // directly — IdentitySource::Nip07/Nip46 with signer_id: None
-    // expresses "user's intent is nip07; live signer not connected
-    // yet". The web's /identity/use call promotes signer_id to
-    // Some(reg.signer_id) once the extension is registered. Without
-    // this, every restart briefly reported source: "engine" (the
-    // hard-coded default) which made the SettingsBuffer radio look
-    // "stuck on engine" until the web finished its auto-reconnect.
-    let boot_source = config
-        .identity
-        .source
-        .as_deref()
-        .and_then(nostr_engine::identity::IdentitySource::from_config_str)
-        .unwrap_or(nostr_engine::identity::IdentitySource::Engine);
-    info!("Saved identity source: {}", boot_source.kind_str());
-    let identity_state: api::IdentityAppState =
-        Arc::new(Mutex::new(IdentitySession::with_source(boot_source)));
-    // The engine no longer stores secrets in config.toml. If an older build
-    // left an `[identity] ncryptsec` behind, strip it now (one-time migration)
-    // and do NOT auto-load it. Sign in each session with a pasted ncryptsec or
-    // via NIP-07; the key never rests in the config file.
-    if config
-        .identity
-        .ncryptsec
-        .as_deref()
-        .is_some_and(|s| !s.is_empty())
-    {
-        match state.persist_identity_ncryptsec(None) {
-            Ok(()) => info!("Removed persisted [identity] ncryptsec from config (no longer stored)"),
-            Err(e) => tracing::warn!("Could not strip persisted ncryptsec from config: {e}"),
-        }
-    }
-    // Apply the saved auto-lock timeout (0 = never) to the live session
-    // so the engine honours `[identity] lock_timeout_minutes` from the
-    // first unlock onward, not just after the web re-sends it.
-    identity_state
-        .lock()
-        .unwrap()
-        .set_timeout_minutes(config.identity.lock_timeout_minutes);
-
+    // Identity routes operate on the user session created above (boot source +
+    // auto-lock timeout already applied). The session source honors
+    // `[identity] source` so a nip07 user reattaches without the modeline
+    // flickering to "engine" on every restart.
     let identity_routes = Router::new()
         .route("/api/v1/identity", get(api::identity_status_handler))
         .route("/api/v1/identity/login", post(api::identity_login_handler))
@@ -261,13 +286,13 @@ async fn main() -> anyhow::Result<()> {
             "/api/v1/identity/use",
             post(api::identity_use_source_handler),
         )
-        .with_state(identity_state.clone());
+        .with_state(user_session.clone());
 
     // SigningController owns the external-signer registry and routes
     // signing through the active source. Constructed once and shared
     // across the sign / signer-register / signer-channel / sign-response
     // handlers.
-    let signing_controller = nostr_engine::signing::SigningController::new(identity_state.clone());
+    let signing_controller = nostr_engine::signing::SigningController::new(user_session.clone());
 
     let signing_routes = Router::new()
         .route("/api/v1/identity/sign", post(api::identity_sign_handler))
@@ -285,17 +310,39 @@ async fn main() -> anyhow::Result<()> {
         )
         .with_state(signing_controller.clone());
 
-    // Config endpoint (returns pubkey etc. to the frontend)
-    let config_pubkey = my_pubkey.clone();
-    let config_assistant = assistant_pubkey.clone();
+    // Assistant identity routes — a second session, paste-to-establish
+    // (nsec/ncryptsec), persisted in the OS keyring. Publish-as-assistant is
+    // intentionally NOT exposed here: the signing capability stays gated until
+    // an explicit, confirmed publish path exists.
+    let assistant_routes = Router::new()
+        .route(
+            "/api/v1/assistant-identity",
+            get(api::assistant_identity_status_handler),
+        )
+        .route(
+            "/api/v1/assistant-identity/login",
+            post(api::assistant_identity_login_handler),
+        )
+        .route(
+            "/api/v1/assistant-identity/unlock",
+            post(api::assistant_identity_unlock_handler),
+        )
+        .route(
+            "/api/v1/assistant-identity/logout",
+            post(api::assistant_identity_logout_handler),
+        )
+        .with_state(api::AssistantIdentity {
+            session: assistant_session.clone(),
+            keyring_available,
+        });
+
+    // Config endpoint — only the data dir now. Identity pubkeys come from the
+    // live /identity and /assistant-identity status endpoints, not config.
     let config_data_dir = state.data_dir().to_string_lossy().to_string();
     let config_handler = move || async move {
         axum::Json(serde_json::json!({
-            "my_pubkey": config_pubkey,
-            "assistant_pubkey": config_assistant,
-            // Expose the data dir so the Settings/Purge confirm can
-            // show exactly which path is about to be wiped before the
-            // user clicks OK.
+            // Expose the data dir so the Settings/Purge confirm can show
+            // exactly which path is about to be wiped before the user clicks OK.
             "data_dir": config_data_dir,
         }))
     };
@@ -339,10 +386,6 @@ async fn main() -> anyhow::Result<()> {
         )
         .route("/api/v1/config/export", get(api::config_export_handler))
         .route("/api/v1/settings", get(api::settings_handler))
-        .route(
-            "/api/v1/identity/persist-key",
-            post(api::identity_persist_key_handler),
-        )
         .route("/api/v1/fetch", post(api::fetch_relay_handler))
         .route("/api/v1/fetch/authors", post(api::fetch_authors_handler))
         .route("/api/v1/fetch/sections", post(api::fetch_sections_handler))
@@ -459,9 +502,10 @@ async fn main() -> anyhow::Result<()> {
         .merge(chat_routes)
         .merge(identity_routes)
         .merge(signing_routes)
+        .merge(assistant_routes)
         // Serve the embedded SPA for everything that is not an API route.
         .fallback(static_assets::static_handler)
-        .layer(axum::Extension(identity_state.clone()))
+        .layer(axum::Extension(user_session.clone()))
         .layer(axum::Extension(signing_controller.clone()))
         .layer(axum::extract::DefaultBodyLimit::max(50 * 1024 * 1024)) // 50MB for JSONL import
         .layer(cors);

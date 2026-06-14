@@ -26,8 +26,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::sync::{oneshot, RwLock};
 
 use crate::identity::{
-    decrypt_ncryptsec, sign_event_hash, IdentityKeyring, IdentitySession, IdentitySource,
-    KeyParseError,
+    sign_event_hash, IdentityKeyring, IdentitySession, IdentitySource, KeyParseError,
 };
 
 /// Type alias for the shared identity state used across handlers
@@ -54,8 +53,6 @@ pub enum SigningError {
     External(String),
     #[error("crypto error: {0}")]
     Key(#[from] KeyParseError),
-    #[error("environment fallback failed: {0}")]
-    EnvFallback(String),
     #[error("template / signer mismatch: {0}")]
     Mismatch(String),
 }
@@ -110,12 +107,16 @@ pub trait Signer: Send + Sync {
 /// session-level lifetime is governed by `IdentitySession`'s lock timer.
 pub struct InProcessSigner {
     pubkey_hex: String,
-    secret_hex: String,
+    /// Decrypted secret, wiped from memory when this signer drops.
+    secret_hex: zeroize::Zeroizing<String>,
 }
 
 impl InProcessSigner {
     pub fn new(pubkey_hex: String, secret_hex: String) -> Self {
-        Self { pubkey_hex, secret_hex }
+        Self {
+            pubkey_hex,
+            secret_hex: zeroize::Zeroizing::new(secret_hex),
+        }
     }
 
     /// Inherent pubkey accessor (mirrors `Signer::pubkey`), provided so
@@ -173,25 +174,9 @@ impl InProcessSigner {
             }
         }
 
-        // 3. `.env` fallback.
-        if let Ok(content) = std::fs::read_to_string(".env") {
-            let mut ncryptsec = None;
-            let mut password = None;
-            for line in content.lines() {
-                let line = line.trim();
-                if let Some(v) = line.strip_prefix("NOSTR_NCRYPTSEC=") {
-                    ncryptsec = Some(v.to_string());
-                } else if let Some(v) = line.strip_prefix("NOSTR_PASSWORD=") {
-                    password = Some(v.to_string());
-                }
-            }
-            if let (Some(nc), Some(pw)) = (ncryptsec, password) {
-                let (secret, pubkey) = decrypt_ncryptsec(&nc, &pw)
-                    .map_err(|e| SigningError::EnvFallback(e.to_string()))?;
-                return Ok(Self::new(pubkey, secret));
-            }
-        }
-
+        // No live session, no keyring entry → no identity. (The former `.env`
+        // plaintext-key fallback was removed: keys come only from the live
+        // session or the OS keyring, never a plaintext file on disk.)
         Err(SigningError::NoIdentity)
     }
 }
