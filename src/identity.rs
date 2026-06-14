@@ -544,6 +544,52 @@ impl IdentityKeyring {
             .and_then(|e| e.delete_credential());
         Ok(())
     }
+
+    /// Store the assistant identity in a dedicated slot so it can never
+    /// collide with the user's `last_identity`. `data` is a small JSON blob
+    /// `{ "pubkey": ..., "ncryptsec"?: ... }` — the public pubkey is always
+    /// present (so `by:assistant` scoping survives a restart); the encrypted
+    /// ncryptsec is present only when the user opted into persisted signing.
+    /// A raw nsec is never written here (see Part 5d / ncryptsec-only at rest).
+    pub fn store_last_assistant(&self, data: &str) -> Result<(), KeyringError> {
+        let entry = keyring::Entry::new(&self.service, "last_assistant_data")
+            .map_err(|e| KeyringError::Keyring(e.to_string()))?;
+        entry.set_password(data)
+            .map_err(|e| KeyringError::Keyring(e.to_string()))
+    }
+
+    /// Retrieve the persisted assistant identity blob (JSON), if any.
+    pub fn get_last_assistant(&self) -> Result<String, KeyringError> {
+        let entry = keyring::Entry::new(&self.service, "last_assistant_data")
+            .map_err(|e| KeyringError::Keyring(e.to_string()))?;
+        entry.get_password().map_err(|e| match e {
+            keyring::Error::NoEntry => KeyringError::NotFound,
+            _ => KeyringError::Keyring(e.to_string()),
+        })
+    }
+
+    /// Clear the persisted assistant identity.
+    pub fn clear_last_assistant(&self) -> Result<(), KeyringError> {
+        let _ = keyring::Entry::new(&self.service, "last_assistant_data")
+            .and_then(|e| e.delete_credential());
+        Ok(())
+    }
+
+    /// Best-effort probe: is the OS keyring actually usable on this host?
+    /// Headless / container / single-exe bundle runs may lack a Secret
+    /// Service, in which case persistence silently degrades to session-only —
+    /// callers surface this to the UI so the user knows a key won't survive a
+    /// restart. Round-trips a throwaway probe entry.
+    pub fn is_available(&self) -> bool {
+        match keyring::Entry::new(&self.service, "__availability_probe__") {
+            Ok(entry) => {
+                let ok = entry.set_password("1").is_ok();
+                let _ = entry.delete_credential();
+                ok
+            }
+            Err(_) => false,
+        }
+    }
 }
 
 impl Default for IdentityKeyring {
@@ -649,6 +695,12 @@ pub struct IdentityStatusResponse {
     /// Signer registry id when source is external. None for engine source.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub signer_id: Option<String>,
+    /// Whether the OS keyring is usable for persistence on this host. Only
+    /// populated for the assistant identity (the user identity doesn't persist
+    /// secrets); `None` elsewhere. `Some(false)` ⇒ the key won't survive a
+    /// restart and the UI should warn.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub keyring_available: Option<bool>,
 }
 
 /// Mutable identity session — holds ncryptsec, decrypted secret, and lock timer.
@@ -746,6 +798,21 @@ impl IdentitySession {
         self.pubkey = None;
         self.ncryptsec = Some(ncryptsec.to_string());
         Ok(())
+    }
+
+    /// Log in with a raw (unencrypted) nsec — derive the pubkey and hold the
+    /// secret immediately, with no locked state or unlock step. Allowed for the
+    /// assistant identity, which is engine-resident and may need to sign
+    /// unattended. Returns the derived pubkey hex.
+    pub fn login_nsec(&mut self, nsec: &str) -> Result<String, KeyParseError> {
+        let secret_hex = decode_nsec(nsec)?;
+        let pubkey_hex = derive_pubkey_from_secret(&secret_hex)?;
+        self.ncryptsec = None;
+        self.external_pubkey = None;
+        self.secret = Some(secret_hex);
+        self.pubkey = Some(pubkey_hex.clone());
+        self.last_activity = Some(Instant::now());
+        Ok(pubkey_hex)
     }
 
     /// Decrypt the stored ncryptsec with a password.
@@ -848,6 +915,33 @@ impl IdentitySession {
     }
 
     /// Build the serializable status response.
+    /// The pubkey this identity currently represents, accounting for source:
+    /// engine source → the unlocked/derived (or hinted) key; external
+    /// (nip07/nip46) → the registered signer's pubkey, falling back to any
+    /// derived key. Used by the engine to resolve `by:me` / `by:assistant`
+    /// from the live session without an async signer round-trip.
+    pub fn effective_pubkey(&self) -> Option<String> {
+        match self.source {
+            IdentitySource::Engine => self.pubkey.clone(),
+            IdentitySource::Nip07 { .. } | IdentitySource::Nip46 { .. } => {
+                self.external_pubkey.clone().or_else(|| self.pubkey.clone())
+            }
+        }
+    }
+
+    /// Set the known pubkey without a secret — used to restore a persisted
+    /// assistant identity to a *locked* state on boot so `by:assistant`
+    /// scoping works before (or without) an unlock.
+    pub fn set_pubkey_hint(&mut self, pubkey: String) {
+        self.pubkey = Some(pubkey);
+    }
+
+    /// The stored ncryptsec (encrypted key), if any. Used to re-persist the
+    /// assistant identity blob with its pubkey after a successful unlock.
+    pub fn ncryptsec(&self) -> Option<String> {
+        self.ncryptsec.clone()
+    }
+
     pub fn status(&mut self) -> IdentityStatusResponse {
         self.check_timeout();
         let state = if self.secret.is_some() {
@@ -874,12 +968,7 @@ impl IdentitySession {
         // When the active source is an external signer (nip07/nip46),
         // surface its pubkey rather than the (likely None) ncryptsec
         // pubkey. Engine source falls through to self.pubkey as before.
-        let effective_pubkey = match self.source {
-            IdentitySource::Engine => self.pubkey.clone(),
-            IdentitySource::Nip07 { .. } | IdentitySource::Nip46 { .. } => {
-                self.external_pubkey.clone().or_else(|| self.pubkey.clone())
-            }
-        };
+        let effective_pubkey = self.effective_pubkey();
         // External signers are always "live" — the registered signer
         // either exists (state = unlocked from the engine's POV) or
         // doesn't (callers should re-register). Report "unlocked" so
@@ -902,6 +991,7 @@ impl IdentitySession {
             lock_timeout_minutes: self.lock_timeout.map(|d| d.as_secs() / 60).unwrap_or(0),
             source: self.source.kind_str().to_string(),
             signer_id: self.source.signer_id().map(|s| s.to_string()),
+            keyring_available: None,
         }
     }
 }

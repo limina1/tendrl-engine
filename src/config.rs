@@ -302,33 +302,26 @@ impl RelayConfig {
     }
 }
 
-/// Identity configuration
+/// Identity configuration — signer *preferences* only (no keys, no pubkeys).
+/// Identity itself lives at runtime: the user signs via NIP-07 or a pasted
+/// ncryptsec, the assistant via a pasted nsec/ncryptsec persisted in the OS
+/// keyring — never in config. A stale `[identity]` table from an older config
+/// (with `pubkey` / `assistant` / `ncryptsec`) parses fine and is ignored
+/// (serde ignores unknown fields).
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct IdentityConfig {
-    /// User's public key (npub1... or hex)
-    pub pubkey: Option<String>,
-    /// Assistant's public key (npub1... or hex)
-    pub assistant: Option<String>,
-    /// Last-chosen signing source — `"engine"` or `"nip07"`. Persisted
-    /// by the SettingsBuffer's Save Settings so a reload reconnects
-    /// to the same signer. Engine boots as `"engine"` regardless; the
-    /// web layer re-registers a NIP-07 signer when this is set and
-    /// `window.nostr` is reachable.
+    /// Last-chosen signing source — `"engine"` or `"nip07"`. Persisted by
+    /// Save Settings so a reload reconnects to the same signer. Engine boots
+    /// as `"engine"` regardless; the web re-registers a NIP-07 signer when
+    /// this is set and `window.nostr` is reachable. Kept so the engine knows
+    /// which signer to reattach to on startup.
     #[serde(default)]
     pub source: Option<String>,
-    /// Auto-lock the engine (ncryptsec) key after this many minutes of
-    /// inactivity. `0` (the default) means never auto-lock. Only the
-    /// engine source holds a decrypted secret to lock — a NIP-07 signer
-    /// keeps its own key, so this is a no-op there.
+    /// Auto-lock the engine key after this many minutes of inactivity. `0`
+    /// (default) = never. Only the engine source holds a decrypted secret to
+    /// lock — a NIP-07 signer keeps its own key, so this is a no-op there.
     #[serde(default)]
     pub lock_timeout_minutes: u64,
-    /// DEPRECATED — the engine no longer stores keys in config.toml. This
-    /// field is retained only so old configs still parse and so boot can
-    /// detect a leftover key and **strip it** (one-time migration in
-    /// `main.rs`). It is never written. Sign in each session with a pasted
-    /// ncryptsec or via NIP-07; the secret never rests in the config file.
-    #[serde(default)]
-    pub ncryptsec: Option<String>,
 }
 
 /// Embedding configuration
@@ -583,27 +576,6 @@ impl Default for DocumentsConfig {
 }
 
 impl Config {
-    /// Resolve the configured pubkey to hex format (handles npub1... bech32)
-    pub fn pubkey_hex(&self) -> Option<String> {
-        Self::resolve_pubkey(self.identity.pubkey.as_deref())
-    }
-
-    /// Resolve the configured assistant pubkey to hex format
-    pub fn assistant_pubkey_hex(&self) -> Option<String> {
-        Self::resolve_pubkey(self.identity.assistant.as_deref())
-    }
-
-    fn resolve_pubkey(raw: Option<&str>) -> Option<String> {
-        let raw = raw?;
-        if raw.starts_with("npub1") {
-            crate::identity::decode_npub(raw).ok()
-        } else if raw.len() == 64 && hex::decode(raw).is_ok() {
-            Some(raw.to_string())
-        } else {
-            None
-        }
-    }
-
     /// Load configuration from a TOML file
     pub fn from_file(path: &Path) -> Result<Self> {
         let content = std::fs::read_to_string(path)?;

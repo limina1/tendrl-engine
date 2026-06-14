@@ -136,10 +136,11 @@ pub struct Engine {
     data_dir: std::path::PathBuf,
     /// Config file path (for saving changes from UI)
     config_path: Option<std::path::PathBuf>,
-    /// Configured user pubkey (hex) for resolving by:me
-    my_pubkey: Option<String>,
-    /// Configured assistant pubkey (hex) for resolving by:assistant
-    assistant_pubkey: Option<String>,
+    /// Live user identity session — source of truth for `by:me` and owner
+    /// scoping. Wired once at boot; replaces the former config-seeded pubkey.
+    user_session: Option<crate::signing::IdentityHandle>,
+    /// Live assistant identity session — source of truth for `by:assistant`.
+    assistant_session: Option<crate::signing::IdentityHandle>,
     /// Optional embedding index for semantic search
     embedding: Option<Arc<RwLock<EmbeddingIndex>>>,
     /// Event kinds eligible for embedding. Seeded from
@@ -260,8 +261,8 @@ impl Engine {
             relay_store,
             data_dir: data_path.to_path_buf(),
             config_path: None,
-            my_pubkey: None,
-            assistant_pubkey: None,
+            user_session: None,
+            assistant_session: None,
             embedding: None,
             embed_kinds: StdRwLock::new(crate::embedding::DEFAULT_EMBED_KINDS.to_vec()),
             auto_embed: std::sync::atomic::AtomicBool::new(true),
@@ -797,24 +798,29 @@ impl Engine {
         &self.data_dir
     }
 
-    /// Set the configured user pubkey (hex)
-    pub fn set_my_pubkey(&mut self, pubkey: Option<String>) {
-        self.my_pubkey = pubkey;
+    /// Wire the live user identity session (set once at boot).
+    pub fn set_user_session(&mut self, handle: crate::signing::IdentityHandle) {
+        self.user_session = Some(handle);
     }
 
-    /// Get the configured user pubkey
-    pub fn my_pubkey(&self) -> Option<&str> {
-        self.my_pubkey.as_deref()
+    /// Live user pubkey (engine secret or external nip07), read from the
+    /// session. Replaces the former config-seeded `my_pubkey`; `None` until a
+    /// user is logged in.
+    pub fn my_pubkey(&self) -> Option<String> {
+        let session = self.user_session.as_ref()?.lock().ok()?;
+        session.effective_pubkey()
     }
 
-    /// Set the configured assistant pubkey (hex)
-    pub fn set_assistant_pubkey(&mut self, pubkey: Option<String>) {
-        self.assistant_pubkey = pubkey;
+    /// Wire the live assistant identity session (set once at boot).
+    pub fn set_assistant_session(&mut self, handle: crate::signing::IdentityHandle) {
+        self.assistant_session = Some(handle);
     }
 
-    /// Get the configured assistant pubkey
-    pub fn assistant_pubkey(&self) -> Option<&str> {
-        self.assistant_pubkey.as_deref()
+    /// Live assistant pubkey, read from the assistant session. `None` until an
+    /// assistant identity is established.
+    pub fn assistant_pubkey(&self) -> Option<String> {
+        let session = self.assistant_session.as_ref()?.lock().ok()?;
+        session.effective_pubkey()
     }
 
     /// Get the network activity tracker
@@ -1368,41 +1374,6 @@ impl Engine {
     /// preserving the rest of the file. Mirrors the read→toml::Table→write
     /// pattern used for author edits in `api::config_update_handler`. No-op if
     /// no config path is set (e.g. tests).
-    /// Write (or clear) the persisted engine key under `[identity]
-    /// ncryptsec` in config.toml. `Some(nc)` stores it; `None` removes
-    /// the key so a logout doesn't leave the secret on disk. No-op when
-    /// the engine has no config file path.
-    pub fn persist_identity_ncryptsec(&self, ncryptsec: Option<&str>) -> Result<()> {
-        let Some(path) = self.config_path.as_deref() else {
-            return Ok(());
-        };
-        let content = match std::fs::read_to_string(path) {
-            Ok(c) => c,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
-            Err(e) => return Err(EngineError::Config(format!("Failed to read config: {e}"))),
-        };
-        let mut doc: toml::Table = toml::from_str(&content)
-            .map_err(|e| EngineError::Config(format!("Failed to parse config: {e}")))?;
-        let identity = doc
-            .entry("identity")
-            .or_insert_with(|| toml::Value::Table(toml::Table::new()));
-        if let toml::Value::Table(tbl) = identity {
-            match ncryptsec {
-                Some(nc) => {
-                    tbl.insert("ncryptsec".to_string(), toml::Value::String(nc.to_string()));
-                }
-                None => {
-                    tbl.remove("ncryptsec");
-                }
-            }
-        }
-        let serialized = toml::to_string_pretty(&doc)
-            .map_err(|e| EngineError::Config(format!("Failed to serialize config: {e}")))?;
-        std::fs::write(path, serialized)
-            .map_err(|e| EngineError::Config(format!("Failed to write config: {e}")))?;
-        Ok(())
-    }
-
     fn persist_embedding_setting(&self, key: &str, value: toml::Value) -> Result<()> {
         let Some(path) = self.config_path.as_deref() else {
             return Ok(());
