@@ -22,10 +22,11 @@
 	--badge-chat: var(--orange);
 	--badge-readonly: var(--blue);
 
-	/* Modeline height (22px content + 1px border-top). Modal backdrops
-	   stop short of this so the search-history pill + network pill stay
-	   clickable while a modal is open. */
-	--modeline-h: 23px;
+	/* Modeline height (statusbar content + 1px border-top). Derived from the
+	   rem statusbar token so it tracks the scale. Modal backdrops stop short
+	   of this so the search-history pill + network pill stay clickable while
+	   a modal is open. */
+	--modeline-h: calc(var(--statusbar-h) + 1px);
 }
 
 *,
