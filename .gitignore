@@ -2,6 +2,10 @@
 /target/
 **/*.rs.bk
 
+# In-process ONNX embedding model cache (fastembed)
+.fastembed_cache/
+**/fastembed_cache/
+
 # IDE
 .idea/
 .vscode/

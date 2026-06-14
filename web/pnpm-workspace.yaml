@@ -1,1 +1,7 @@
-approveBuilds: esbuild
+# pnpm 11+ reads allowBuilds; onlyBuiltDependencies kept for pnpm 10.
+allowBuilds:
+  esbuild: true
+onlyBuiltDependencies:
+  - esbuild
+# start.sh runs pnpm without a TTY; never block on the purge prompt.
+confirmModulesPurge: false
