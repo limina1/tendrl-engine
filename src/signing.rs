@@ -107,12 +107,16 @@ pub trait Signer: Send + Sync {
 /// session-level lifetime is governed by `IdentitySession`'s lock timer.
 pub struct InProcessSigner {
     pubkey_hex: String,
-    secret_hex: String,
+    /// Decrypted secret, wiped from memory when this signer drops.
+    secret_hex: zeroize::Zeroizing<String>,
 }
 
 impl InProcessSigner {
     pub fn new(pubkey_hex: String, secret_hex: String) -> Self {
-        Self { pubkey_hex, secret_hex }
+        Self {
+            pubkey_hex,
+            secret_hex: zeroize::Zeroizing::new(secret_hex),
+        }
     }
 
     /// Inherent pubkey accessor (mirrors `Signer::pubkey`), provided so

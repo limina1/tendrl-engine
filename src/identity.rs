@@ -4,6 +4,7 @@
 //! Uses the OS keyring for secure storage of secrets.
 
 use thiserror::Error;
+use zeroize::Zeroizing;
 
 /// Errors that can occur during key parsing
 #[derive(Debug, Error)]
@@ -712,8 +713,10 @@ pub struct IdentitySession {
     ncryptsec: Option<String>,
     /// Derived pubkey hex (available once ncryptsec is provided, even when locked)
     pubkey: Option<String>,
-    /// Decrypted secret key hex (only present when unlocked)
-    secret: Option<String>,
+    /// Decrypted secret key hex (only present when unlocked). `Zeroizing` wipes
+    /// it from memory on drop — i.e. on lock/logout/reassignment — so the key
+    /// doesn't linger in the heap.
+    secret: Option<Zeroizing<String>>,
     /// When the secret was last used
     last_activity: Option<Instant>,
     /// Auto-lock after this duration of inactivity. `None` = never
@@ -809,7 +812,7 @@ impl IdentitySession {
         let pubkey_hex = derive_pubkey_from_secret(&secret_hex)?;
         self.ncryptsec = None;
         self.external_pubkey = None;
-        self.secret = Some(secret_hex);
+        self.secret = Some(Zeroizing::new(secret_hex));
         self.pubkey = Some(pubkey_hex.clone());
         self.last_activity = Some(Instant::now());
         Ok(pubkey_hex)
@@ -823,7 +826,7 @@ impl IdentitySession {
             .as_ref()
             .ok_or(DecryptError::InvalidFormat)?;
         let (secret_hex, pubkey_hex) = decrypt_ncryptsec(ncryptsec, password)?;
-        self.secret = Some(secret_hex);
+        self.secret = Some(Zeroizing::new(secret_hex));
         self.pubkey = Some(pubkey_hex.clone());
         self.last_activity = Some(Instant::now());
         Ok(pubkey_hex)
@@ -892,7 +895,7 @@ impl IdentitySession {
     /// Get the secret if unlocked (for building signed events).
     pub fn secret(&mut self) -> Option<&str> {
         self.check_timeout();
-        self.secret.as_deref()
+        self.secret.as_ref().map(|z| z.as_str())
     }
 
     /// Track an event ID that was published unsigned.
