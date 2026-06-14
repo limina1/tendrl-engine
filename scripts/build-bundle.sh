@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+# Build the single-executable tendrl-engine bundle.
+#
+# Produces one binary (target/release/nostr-engine) with:
+#   - the SvelteKit SPA embedded (rust-embed, from web/build/)
+#   - in-process ONNX embeddings (--features onnx, no Python sidecar)
+#
+# The embedding model is NOT baked in; fastembed downloads it from HuggingFace
+# on first use and caches it. Run the binary, then open the browser it launches.
+#
+# Usage: scripts/build-bundle.sh
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+echo "==> Building web frontend (pnpm)…"
+pnpm -C web install --frozen-lockfile
+# esbuild installs its native binary via a postinstall "build script". pnpm gates
+# those behind approval (web/pnpm-workspace.yaml), but an already-populated
+# node_modules won't re-run an approved script on reinstall — so force it. No-op
+# once the binary is present; without it, `vite build` fails to load esbuild.
+pnpm -C web rebuild esbuild
+# Invoke vite directly rather than `pnpm run build`: the package script is just
+# `vite build`, and `pnpm run` does a pre-run deps-status check that can spuriously
+# re-trigger (and fail) install in CI/fresh environments. `exec` skips that.
+pnpm -C web exec vite build
+
+if [[ ! -f web/build/index.html ]]; then
+    echo "ERROR: web/build/index.html missing after pnpm build." >&2
+    exit 1
+fi
+
+echo "==> Building engine (cargo release, onnx)…"
+# Touch web/build so build.rs' rerun-if-changed picks up the fresh SPA.
+touch web/build
+cargo build --release --features onnx
+
+echo ""
+echo "Done: target/release/nostr-engine"
+echo "Run it:  ./target/release/nostr-engine"
+echo "(opens http://127.0.0.1:3030/ — log in with a NIP-07 browser extension)"

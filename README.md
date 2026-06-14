@@ -68,6 +68,50 @@ cd sidecar && ./run.sh              # embedding sidecar only
 pnpm -C web dev                     # web dev server only
 ```
 
+## Single-executable bundle
+
+For distribution, the whole stack collapses into **one binary** — no Node, no
+Python, no separate processes, no config file required:
+
+```bash
+scripts/build-bundle.sh             # pnpm build → cargo build --release --features onnx
+./target/release/nostr-engine       # runs, then opens your browser at :3030
+```
+
+The bundle:
+
+- **embeds the SvelteKit SPA** into the binary (`rust-embed`) and serves it from
+  the engine's own origin, so the UI and API share `http://127.0.0.1:3030`;
+- **runs embeddings in-process** via ONNX (`--features onnx`) — the Python
+  sidecar is gone. A binary built this way defaults `[embedding] backend` to
+  `"onnx"`, so enabling semantic search needs only `enabled = true`;
+- **opens the browser on launch** (pass `--no-open` to skip, e.g. on a server).
+
+Log in with a **NIP-07** browser extension (e.g. Alby, nos2x) — the key stays in
+the extension; the engine never handles it. The multi-process `start.sh` flow
+above remains the path for development (Vite hot-reload, Python sidecar).
+
+### Enabling embeddings (in-process ONNX)
+
+Add to `config.toml` (the one at `<data_dir>/config.toml`, printed at startup):
+
+```toml
+[embedding]
+enabled = true
+```
+
+The model is **not** baked into the binary — it's fetched once and cached under
+`<data_dir>/fastembed_cache`. fastembed's built-in downloader is slow (often
+stalling) on HuggingFace's Xet-backed repos, so pre-seed the cache with a fast
+download first:
+
+```bash
+scripts/fetch-embedding-model.sh    # curl the model into the engine's cache
+```
+
+Then restart — the engine loads the model from cache (no in-app download). If you
+skip the script, the engine will still download on first use, just slowly.
+
 ## Updating dependencies
 
 A `Makefile` drives all three package managers (cargo / pnpm / uv) plus the

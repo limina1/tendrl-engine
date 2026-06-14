@@ -378,6 +378,13 @@ pub async fn search_handler(
         }
     }
 
+    // Persist any user-introduced search relays into the fetch set so they
+    // stick for the session + across restarts (mirrors to config.toml too).
+    // No-op for relays already known — only brand-new ones are added.
+    if let Some(relays) = override_relays.as_deref() {
+        engine.persist_discovered_relays(relays);
+    }
+
     // Check for compound query (contains |)
     if req.query.contains('|') {
         let compound = SearchQuery::parse_compound(&req.query)
@@ -1640,6 +1647,10 @@ pub async fn fetch_relay_handler(
         None => targets,
     };
 
+    // A relay the user brought into this fetch should stick: add any new ones
+    // to the working fetch set (persists to relays.json + config.toml).
+    engine.persist_discovered_relays(&fetch_relays);
+
     let mut count = 0usize;
     for relay_url in &fetch_relays {
         match engine
@@ -2019,8 +2030,11 @@ pub async fn config_update_handler(
             EngineError::Config("No config file path set (use -c config.toml)".into())
         })?;
 
-        let content = std::fs::read_to_string(config_path)
-            .map_err(|e| EngineError::Config(format!("Failed to read config: {e}")))?;
+        let content = match std::fs::read_to_string(config_path) {
+            Ok(c) => c,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+            Err(e) => return Err(EngineError::Config(format!("Failed to read config: {e}"))),
+        };
         let mut doc: toml::Table = toml::from_str(&content)
             .map_err(|e| EngineError::Config(format!("Failed to parse config: {e}")))?;
 
@@ -2119,8 +2133,13 @@ pub async fn config_snapshot_handler(
         .ok_or_else(|| EngineError::Config("No config file path set (use -c config.toml)".into()))?
         .to_path_buf();
 
-    let content = std::fs::read_to_string(&config_path)
-        .map_err(|e| EngineError::Config(format!("Failed to read config: {e}")))?;
+    // Tolerate a not-yet-created config (zero-config run): start from an empty
+    // table and let the write below create the file.
+    let content = match std::fs::read_to_string(&config_path) {
+        Ok(c) => c,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(e) => return Err(EngineError::Config(format!("Failed to read config: {e}"))),
+    };
     let mut doc: toml::Table = toml::from_str(&content)
         .map_err(|e| EngineError::Config(format!("Failed to parse config: {e}")))?;
 
@@ -2246,6 +2265,55 @@ pub async fn config_snapshot_handler(
     })))
 }
 
+/// GET /api/v1/config/export — download the active config.toml as a portable
+/// file. The encrypted engine key (`[identity] ncryptsec`) is **stripped**: the
+/// user authenticates via a pasted ncryptsec or NIP-07, so the stored key is
+/// not part of a portable/backup copy and must never leave the machine in one.
+///
+/// Source is the on-disk config the engine reads/writes; if nothing has been
+/// saved yet, the serialized defaults are exported so the download is never
+/// blank. (Live relay-set edits live in relays.json — snapshot first if you
+/// want them folded into the exported `[relay] initial_relays` seed.)
+pub async fn config_export_handler(
+    State(engine): State<AppState>,
+) -> Result<impl IntoResponse, EngineError> {
+    let content = match engine.config_path() {
+        Some(p) => match std::fs::read_to_string(p) {
+            Ok(c) => c,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+            Err(e) => return Err(EngineError::Config(format!("Failed to read config: {e}"))),
+        },
+        None => String::new(),
+    };
+
+    // Empty (nothing saved yet) → export defaults so the file is meaningful.
+    let mut doc: toml::Table = if content.trim().is_empty() {
+        let defaults = toml::to_string_pretty(&crate::config::Config::default())
+            .map_err(|e| EngineError::Config(format!("Failed to serialize defaults: {e}")))?;
+        toml::from_str(&defaults)
+            .map_err(|e| EngineError::Config(format!("Failed to parse defaults: {e}")))?
+    } else {
+        toml::from_str(&content)
+            .map_err(|e| EngineError::Config(format!("Failed to parse config: {e}")))?
+    };
+
+    // Redact the secret.
+    if let Some(toml::Value::Table(identity)) = doc.get_mut("identity") {
+        identity.remove("ncryptsec");
+    }
+
+    let output = toml::to_string_pretty(&doc)
+        .map_err(|e| EngineError::Config(format!("Failed to serialize config: {e}")))?;
+
+    let mut headers = axum::http::HeaderMap::new();
+    headers.insert("content-type", "application/toml".parse().unwrap());
+    headers.insert(
+        "content-disposition",
+        "attachment; filename=\"config.toml\"".parse().unwrap(),
+    );
+    Ok((headers, output))
+}
+
 /// GET /api/v1/settings — return editor/compose/network defaults from the
 /// current config.toml so the web can hydrate state at boot instead of
 /// starting on hard-coded defaults that diverge from the user's last save.
@@ -2292,12 +2360,15 @@ pub struct PersistKeyRequest {
 /// travels or rests in plaintext.
 pub async fn identity_persist_key_handler(
     State(engine): State<AppState>,
-    Json(req): Json<PersistKeyRequest>,
+    Json(_req): Json<PersistKeyRequest>,
 ) -> Result<Json<Value>, EngineError> {
-    // Treat an empty string the same as null — forget the key.
-    let value = req.ncryptsec.as_deref().filter(|s| !s.is_empty());
-    engine.persist_identity_ncryptsec(value)?;
-    Ok(Json(json!({ "persisted": value.is_some() })))
+    // The engine no longer persists secrets to config.toml — the user signs in
+    // each session with a pasted ncryptsec or via NIP-07. We ignore any key in
+    // the request and only ever *clear* (strips a key left by an older build),
+    // so the secret never rests in the config file. Kept as a no-op endpoint so
+    // the web's existing login/logout calls don't 404.
+    engine.persist_identity_ncryptsec(None)?;
+    Ok(Json(json!({ "persisted": false })))
 }
 
 /// GET /api/v1/relays — get relay configuration

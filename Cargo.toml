@@ -79,6 +79,12 @@ usearch = "2"
 # ONNX embeddings (optional, for --features onnx)
 fastembed = { version = "4", optional = true }
 
+# Single-exe bundling: embed the built SPA (web/build/) into the binary and
+# open the browser on launch. In debug builds rust-embed reads from disk so the
+# UI hot-reloads without a rebuild; release builds bake the assets in.
+rust-embed = { version = "8", features = ["mime-guess"] }
+webbrowser = "1"
+
 [dev-dependencies]
 tempfile = "3.24.0"
 tokio-test = "0.4"

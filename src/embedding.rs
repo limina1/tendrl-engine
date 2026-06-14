@@ -366,9 +366,29 @@ impl EmbeddingIndex {
             #[cfg(feature = "onnx")]
             "onnx" => {
                 use fastembed::{InitOptions, TextEmbedding};
+                // The shared default model name "all-MiniLM-L6-v2" is the
+                // sentence-transformers id the python sidecar uses; fastembed
+                // identifies the same model by its own code. Translate the
+                // common friendly names so the default config "just works"
+                // with the in-process backend instead of erroring. Anything
+                // unrecognized passes through, so explicit fastembed codes
+                // still work.
+                let code = match config.model.as_str() {
+                    "all-MiniLM-L6-v2" | "sentence-transformers/all-MiniLM-L6-v2" => {
+                        "Qdrant/all-MiniLM-L6-v2-onnx"
+                    }
+                    "all-MiniLM-L12-v2" | "sentence-transformers/all-MiniLM-L12-v2" => {
+                        "Xenova/all-MiniLM-L12-v2"
+                    }
+                    other => other,
+                };
                 let model = TextEmbedding::try_new(
-                    InitOptions::new(config.model.clone().try_into().map_err(|_| {
-                        EngineError::Config(format!("Unknown fastembed model: {}", config.model))
+                    InitOptions::new(code.to_string().try_into().map_err(|_| {
+                        EngineError::Config(format!(
+                            "Unknown fastembed model: '{}' (resolved to '{}'). \
+                             Set [embedding] model to a fastembed model code.",
+                            config.model, code
+                        ))
                     })?)
                     .with_show_download_progress(true),
                 )
