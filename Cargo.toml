@@ -68,6 +68,9 @@ chacha20poly1305 = "0.10"
 scrypt = "0.11"
 secp256k1 = { version = "0.29", features = ["global-context"] }
 unicode-normalization = "0.1"
+# Wipe decrypted secret keys from memory on drop (lock/logout) so they don't
+# linger in the heap/swap.
+zeroize = "1"
 
 # CLI argument parsing
 clap = { version = "4", features = ["derive"] }
