@@ -436,6 +436,10 @@ function _createAppState() {
 	let identityError: string | null = $state(null);
 	let identityPollInterval: ReturnType<typeof setInterval> | null = null;
 	let identityDisplayName: string | null = $state(null);
+	// Assistant identity — second keyring-backed session (nsec/ncryptsec).
+	let assistantStatus: IdentityStatus | null = $state(null);
+	let assistantLoading = $state(false);
+	let assistantError: string | null = $state(null);
 	// Source last persisted via Save Settings → config.toml. Loaded from
 	// `/api/v1/settings` at init, BEFORE the auto-reconnect runs. The
 	// SettingsBuffer uses it as a fallback for `currentSource` so the
@@ -995,12 +999,6 @@ function _createAppState() {
 			}
 			feed = resp.publications;
 			feedHasMore = resp.count >= 20;
-			if (!myPubkey) {
-				try {
-					const cfg = await api.getConfig();
-					myPubkey = cfg.my_pubkey;
-				} catch { /* ignore */ }
-			}
 			const pubkeys = [...new Set(resp.publications.map(p => p.author_pubkey))];
 			if (myPubkey) pubkeys.push(myPubkey);
 			api.prefetchProfiles(pubkeys);
@@ -3390,11 +3388,9 @@ function _createAppState() {
 			api.getSettings()
 		]);
 		if (cfgResult.status === 'fulfilled') {
-			const cfg = cfgResult.value;
-			myPubkey = cfg.my_pubkey;
-			assistantPubkey = cfg.assistant_pubkey;
-			dataDir = cfg.data_dir ?? null;
-			console.log('Config loaded, myPubkey:', myPubkey, 'assistantPubkey:', assistantPubkey);
+			// Identity pubkeys are no longer in config — they come from the
+			// live /identity and /assistant-identity status (loaded below).
+			dataDir = cfgResult.value.data_dir ?? null;
 		} else {
 			console.warn('Config fetch failed:', cfgResult.reason);
 		}
@@ -3503,6 +3499,11 @@ function _createAppState() {
 				resolveIdentityName(identityStatus.pubkey);
 			}
 		} catch {}
+		// Load assistant identity (separate keyring-backed session)
+		try {
+			assistantStatus = await api.getAssistantIdentity();
+			assistantPubkey = assistantStatus.pubkey;
+		} catch {}
 	}
 
 	function startNetworkPoll() {
@@ -3554,16 +3555,6 @@ function _createAppState() {
 				myPubkey = identityStatus.pubkey;
 				resolveIdentityName(identityStatus.pubkey);
 			}
-			// Persist the pasted key so a restart prompts for just the
-			// password instead of a re-paste. Best-effort — the in-memory
-			// login already succeeded, so a persist failure only costs the
-			// remember-across-restart, not this session.
-			try {
-				await api.persistIdentityKey(ncryptsec);
-				pushToast('Key saved — next start asks only for your password', 'success', 3500);
-			} catch (e) {
-				console.warn('[identity] failed to persist engine key:', e);
-			}
 		} catch (e: unknown) {
 			identityError = e instanceof Error ? e.message : String(e);
 		} finally {
@@ -3600,15 +3591,43 @@ function _createAppState() {
 			identityStatus = await api.logoutIdentity();
 			myPubkey = null;
 			identityDisplayName = null;
-			// Forget the persisted key so logout doesn't leave the secret
-			// on disk for the next boot to reload.
-			try {
-				await api.persistIdentityKey(null);
-			} catch (e) {
-				console.warn('[identity] failed to clear persisted engine key:', e);
-			}
 		} catch (e) {
 			console.error('Logout failed:', e);
+		}
+	}
+
+	async function handleAssistantLogin(key: string) {
+		assistantError = null;
+		assistantLoading = true;
+		try {
+			assistantStatus = await api.loginAssistantIdentity(key);
+			assistantPubkey = assistantStatus.pubkey;
+		} catch (e: unknown) {
+			assistantError = e instanceof Error ? e.message : String(e);
+		} finally {
+			assistantLoading = false;
+		}
+	}
+
+	async function handleAssistantUnlock(password: string) {
+		assistantError = null;
+		assistantLoading = true;
+		try {
+			assistantStatus = await api.unlockAssistantIdentity(password);
+			assistantPubkey = assistantStatus.pubkey;
+		} catch (e: unknown) {
+			assistantError = e instanceof Error ? e.message : String(e);
+		} finally {
+			assistantLoading = false;
+		}
+	}
+
+	async function handleAssistantLogout() {
+		try {
+			assistantStatus = await api.logoutAssistantIdentity();
+			assistantPubkey = null;
+		} catch (e) {
+			console.error('Assistant logout failed:', e);
 		}
 	}
 
@@ -3821,6 +3840,15 @@ function _createAppState() {
 		get externalSignerPubkey() { return externalSignerPubkey; },
 		handleSelectNip07Source,
 		handleSelectEngineSource,
+
+		// Assistant identity (second keyring-backed session)
+		get assistantStatus() { return assistantStatus; },
+		get assistantLoading() { return assistantLoading; },
+		get assistantError() { return assistantError; },
+		set assistantError(v: string | null) { assistantError = v; },
+		handleAssistantLogin,
+		handleAssistantUnlock,
+		handleAssistantLogout,
 
 		// Embedding
 		get embeddingStatus() { return embeddingStatus; },
