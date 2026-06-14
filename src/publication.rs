@@ -1566,7 +1566,7 @@ impl<'a> PublicationEngine<'a> {
 
         // Same-title publications of mine, newest 30040 wins.
         let publications = self
-            .list_root_publications(FetchPolicy::LocalOnly, 50, None)
+            .list_root_publications(FetchPolicy::LocalOnly, 50, None, false)
             .await?;
         let Some(matched_pub) = publications
             .into_iter()
@@ -1641,6 +1641,7 @@ impl<'a> PublicationEngine<'a> {
         policy: FetchPolicy,
         limit: usize,
         before: Option<u64>,
+        general: bool,
     ) -> Result<Vec<Publication>> {
         use serde_json::json;
 
@@ -1658,31 +1659,40 @@ impl<'a> PublicationEngine<'a> {
             }
         }
 
-        let query_limit = if authors.is_empty() { limit * 5 } else { limit * 10 };
-        let mut filter = json!({
-            "kinds": [KIND_PUBLICATION_INDEX],
-            "limit": query_limit
-        });
+        // Two independent axes, kept separate so the feed/profile split holds:
+        //   - SCOPED 30040 (the user's + configured authors) + their k:0
+        //     profiles, piggybacked on the same fetch so confirm mode doesn't
+        //     pop a second modal when `prefetchProfiles` flushes.
+        //   - BROAD ("general feed") 30040 from ALL authors, when `general` is
+        //     on, or always when there's no one to scope to (logged out).
+        //     Profiles for these foreign authors backfill separately via the
+        //     web's prefetchProfiles — that's the feed/profile separation.
+        let mut filters_to_fetch: Vec<serde_json::Value> = Vec::new();
         if !authors.is_empty() {
-            filter["authors"] = json!(authors);
-        }
-        if let Some(ts) = before {
-            filter["until"] = json!(ts - 1);
-        }
-
-        // Piggyback a kind-0 filter for known authors so the same fetch
-        // that brings in publications also brings in their profiles.
-        // Without this, confirm mode would pop a second modal 300ms
-        // later when the web's `prefetchProfiles` queue flushes —
-        // easy to miss / dismiss, leaving profile names blank in the
-        // feed.
-        let mut filters_to_fetch = vec![filter];
-        if !authors.is_empty() {
+            let mut scoped = json!({
+                "kinds": [KIND_PUBLICATION_INDEX],
+                "limit": limit * 10,
+                "authors": authors.clone(),
+            });
+            if let Some(ts) = before {
+                scoped["until"] = json!(ts - 1);
+            }
+            filters_to_fetch.push(scoped);
             filters_to_fetch.push(json!({
                 "kinds": [0],
-                "authors": authors,
+                "authors": authors.clone(),
                 "limit": authors.len(),
             }));
+        }
+        if general || authors.is_empty() {
+            let mut broad = json!({
+                "kinds": [KIND_PUBLICATION_INDEX],
+                "limit": limit * 5,
+            });
+            if let Some(ts) = before {
+                broad["until"] = json!(ts - 1);
+            }
+            filters_to_fetch.push(broad);
         }
 
         // Honor the caller's policy. The web's loadFeed() retries

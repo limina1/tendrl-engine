@@ -609,6 +609,11 @@ pub struct PublicationsQuery {
     pub policy: Option<String>,
     /// Cursor: only return publications created before this timestamp
     pub before: Option<u64>,
+    /// Include the broad "general feed" — recent kind-30040 from ALL authors,
+    /// not just the scoped by:user(s). Default off (scoped). Logged out the
+    /// engine fetches broad regardless (there's no one to scope to).
+    #[serde(default)]
+    pub general: bool,
 }
 
 fn default_limit() -> usize {
@@ -634,7 +639,7 @@ pub async fn list_publications_handler(
 
     let pub_engine = PublicationEngine::new(&engine);
     let publications = pub_engine
-        .list_root_publications(policy, query.limit, query.before)
+        .list_root_publications(policy, query.limit, query.before, query.general)
         .await?;
 
     // "local" = a signed snapshot the user created that hasn't (successfully)
@@ -3512,7 +3517,7 @@ async fn find_published_publication(
     }
     let slug = ComposeState::generate_d_tag(title);
     let pubs = pub_engine
-        .list_root_publications(FetchPolicy::LocalOnly, 50, None)
+        .list_root_publications(FetchPolicy::LocalOnly, 50, None, false)
         .await?;
     let Some(m) = pubs
         .into_iter()

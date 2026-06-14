@@ -8,10 +8,20 @@
 	// when summary is absent (older engine intents).
 
 	import type { FetchEvent, NipFilter, CompositionShape, Phase } from '$lib/types';
-	import { resolveConfirm } from '$lib/network/fetch-events.svelte';
+	import { resolveConfirm, reissueConfirm } from '$lib/network/fetch-events.svelte';
 
 	type IntentEvent = Extract<FetchEvent, { type: 'intent' }>;
-	let { intent }: { intent: IntentEvent } = $props();
+	let {
+		intent,
+		general = false,
+		onToggleGeneral
+	}: {
+		intent: IntentEvent;
+		/** Live "general feed" preference (app.feedGeneral). */
+		general?: boolean;
+		/** Flip the preference + re-run the feed sync (re-composes the query). */
+		onToggleGeneral?: () => void;
+	} = $props();
 
 	/** Render a single NipFilter as a space-separated clause string.
 	 *  Mirrors the engine's filter_to_dsl_clauses ordering — event-shape
@@ -55,6 +65,29 @@
 	let appendInput = $state('');
 	let appendError = $state<string | null>(null);
 	let detailsOpen = $state(false);
+	// "General feed" — the broad, un-author-scoped pull is now part of the
+	// engine-composed query (the `general` flag threads through listPublications
+	// → list_root_publications). This toggle just reflects the live preference
+	// and re-requests on change:
+	//   - logged out → the query has no author scope, so it's already broad:
+	//     toggle forced on (green) + disabled (nothing to narrow to).
+	//   - logged in → reflects app.feedGeneral; toggling re-runs the sync, which
+	//     re-composes the query (scoped ± broad) into a fresh confirm intent.
+	const isScopedQuery = $derived(
+		(intent.summary?.filters ?? []).some((f) => (f.authors?.length ?? 0) > 0)
+	);
+	// Only a feed-list intent (kind 30040) has a meaningful general toggle.
+	const isFeedIntent = $derived(
+		(intent.summary?.filters ?? []).some((f) => f.kinds?.includes(30040))
+	);
+	const generalOn = $derived(isScopedQuery ? general : true);
+
+	function toggleGeneral() {
+		// Decline this intent, then let the app flip feedGeneral and re-run the
+		// sync — which re-composes the query and pops a fresh confirm intent.
+		resolveConfirm(false);
+		onToggleGeneral?.();
+	}
 	// Split mode: when true, render each filter as its own
 	// standalone single-filter request (each with the same composition
 	// appended) so the user can see + copy them individually. The
@@ -166,6 +199,8 @@
 
 	function confirm() {
 		if (selectedRelays.length === 0) return;
+		// The broad "general feed" pull (when on) is already part of this
+		// intent's composed query, so a plain confirm covers it.
 		resolveConfirm(true, selectedRelays);
 	}
 	function cancel() {
@@ -238,6 +273,20 @@
 			/>
 			<button class="rf-append-btn" onclick={addExtra}>Add relay</button>
 		</div>
+		{#if isFeedIntent}
+			<div class="rf-general">
+				<button
+					class="rf-append-btn rf-general-btn"
+					class:rf-general-btn--on={generalOn}
+					onclick={toggleGeneral}
+					disabled={!isScopedQuery}
+					aria-pressed={generalOn}
+					title={isScopedQuery
+						? 'General feed: also pull recent publications from all authors, not just yours. Toggling re-runs the fetch.'
+						: 'Logged out — the feed is already broad (all authors)'}
+				>{generalOn ? '✓' : '○'} General feed</button>
+			</div>
+		{/if}
 		{#if appendError}
 			<p class="rf-error">{appendError}</p>
 		{/if}
@@ -691,6 +740,27 @@
 		color: var(--base6);
 		border-radius: var(--r-sm);
 		cursor: pointer;
+	}
+	/* "General feed" toggle — styled like Add relay, sits beneath it, and
+	   clicks green when on (confirming then also pulls a broad feed). */
+	.rf-general {
+		display: flex;
+		justify-content: flex-end;
+		padding: 0 14px 10px;
+	}
+	.rf-general-btn--on {
+		background: rgba(180, 190, 130, 0.14);
+		color: var(--state-online);
+		border-color: color-mix(in srgb, var(--state-online) 50%, transparent);
+	}
+	.rf-general-btn--on:hover {
+		background: rgba(180, 190, 130, 0.22);
+	}
+	/* Logged out → the toggle is forced on + disabled, but should still read as
+	   on (green), not dimmed like a normal disabled button. */
+	.rf-general-btn--on:disabled {
+		opacity: 1;
+		cursor: default;
 	}
 	.rf-append-btn:hover {
 		border-color: var(--state-online);
