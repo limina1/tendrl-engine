@@ -1815,13 +1815,6 @@
 			disabled={!publication}
 			title="Open this publication's event menu (m)"
 		>menu</button>
-		{#if containedIn.length > 0}
-			<button
-				class="pill pill--containment"
-				onclick={findContainers}
-				title={`Part of ${containedIn.length} publication${containedIn.length === 1 ? '' : 's'}: ${containedIn.map((c) => c.title).join(', ')} — click to find the containing publications`}
-			>⊂ part of {containedIn.length}</button>
-		{/if}
 		{#if parsedAddr?.kind === 30040 && rootLoaded}
 			{#if hasGraph}
 				<!-- Nested: this index references child 30040 sub-publications.
@@ -1985,6 +1978,8 @@
 					signed={publication.signed}
 					relays={publication.relays}
 					forked={publication.forked}
+					containedIn={containedIn.length}
+					onpartof={findContainers}
 					orientation="horizontal"
 				/>
 			</div>
@@ -2923,17 +2918,6 @@
 	}
 
 	/* Depth stepper in the toolbar. */
-	/* The global .pill--containment (tokens.css) loses to `.toolbar button` on
-	   specificity, so restore its purple here. Clicking finds the containers. */
-	.toolbar button.pill--containment {
-		background: color-mix(in srgb, var(--id-imported) 14%, transparent);
-		color: var(--id-imported);
-		border: none;
-		margin-left: 4px;
-	}
-	.toolbar button.pill--containment:hover {
-		background: color-mix(in srgb, var(--id-imported) 26%, transparent);
-	}
 	/* Flat/nested level tag sitting where the depth control used to live. */
 	.level-hint {
 		display: inline-flex;

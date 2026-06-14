@@ -19,6 +19,8 @@
 		relays,
 		local,
 		forked,
+		containedIn,
+		onpartof,
 		orientation = 'vertical'
 	}: {
 		item: ContextItem | null;
@@ -41,6 +43,14 @@
 		/** True when the index event carries a NIP-54 e-tag with the
 		 *  `fork` marker — i.e. the publication is forked from another. */
 		forked?: boolean;
+		/** How many publications reference this event as a child (reverse
+		 *  a-tag). Drives the clickable "part of N" pill — the upward
+		 *  counterpart to provenance. Suppressed when 0/undefined or when
+		 *  `onpartof` isn't wired. */
+		containedIn?: number;
+		/** Click handler for the "part of N" pill — typically a search for
+		 *  the containing publications. */
+		onpartof?: () => void;
 		/** Vertical (default) stacks pills column-wise — works on row-style
 		 *  surfaces (feed/profile/search rows). Horizontal lays them inline
 		 *  for header surfaces where a column would push content down
@@ -81,6 +91,18 @@
 	{/if}
 	{#if forked}
 		<span class="psb__pill psb__pill--passive psb__pill--fork" title="Forked from another publication (NIP-54 e-tag with fork marker)">fork</span>
+	{/if}
+	<!-- Containment — the upward "what is this part of" relationship. Clickable:
+	     opens a search for the containing publications. -->
+	{#if onpartof && containedIn && containedIn > 0}
+		<button
+			class="psb__pill psb__pill--partof"
+			onclick={(e) => {
+				e.stopPropagation();
+				onpartof?.();
+			}}
+			title={`Part of ${containedIn} publication${containedIn === 1 ? '' : 's'} — click to find them`}
+		>⊂ part of {containedIn}</button>
 	{/if}
 	<!-- Pool routing actions — clickable toggles. -->
 	{#if onpillctx}
@@ -241,6 +263,16 @@
 	.psb__pill--fork {
 		background: color-mix(in srgb, var(--id-imported) 22%, transparent);
 		color: var(--id-imported);
+	}
+	/* Containment — clickable, structural purple like fork/refs since it
+	   points at the publications this event belongs to. */
+	.psb__pill--partof {
+		background: color-mix(in srgb, var(--id-imported) 16%, transparent);
+		color: var(--id-imported);
+		cursor: pointer;
+	}
+	.psb__pill--partof:hover {
+		background: color-mix(in srgb, var(--id-imported) 30%, transparent);
 	}
 
 	.psb__lock {

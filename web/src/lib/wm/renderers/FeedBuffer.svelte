@@ -154,16 +154,6 @@
 							}}
 							title="Open the event menu (m)"
 						>menu</button>
-						{#if pub_item.contained_in && pub_item.contained_in.length > 0}
-							<button
-								class="pill pill--containment"
-								onclick={(e) => {
-									e.stopPropagation();
-									findContainers(pub_item.addr);
-								}}
-								title={`Part of ${pub_item.contained_in.length} publication${pub_item.contained_in.length === 1 ? '' : 's'} — click to find the containing publications`}
-							>⊂ part of {pub_item.contained_in.length}</button>
-						{/if}
 						{#if pub_item.local}
 							<button
 								class="pill pill--broadcast"
@@ -186,6 +176,8 @@
 							relays={pub_item.relays}
 							local={pub_item.local}
 							forked={pub_item.forked}
+							containedIn={pub_item.contained_in?.length ?? 0}
+							onpartof={() => findContainers(pub_item.addr)}
 						/>
 						<span class="meta">{pub_item.section_count} sections</span>
 					</div>
