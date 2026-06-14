@@ -642,6 +642,16 @@ pub async fn list_publications_handler(
     // "local" pill off it. Tracker absence (e.g. IO error) just yields false.
     let tracker = local_pub_tracker(&engine).ok();
 
+    // Reverse a-tag lookup: which publications contain each of these. A feed
+    // row that is nested under an off-window parent shows up here as a false
+    // root, so this is what lets the UI badge it as "part of N". Local-only.
+    let coords: Vec<crate::publication::NAddr> =
+        publications.iter().map(|p| p.addr.clone()).collect();
+    let containing = pub_engine
+        .containing_publications(&coords)
+        .await
+        .unwrap_or_default();
+
     // Convert to summary format
     let summaries: Vec<Value> = publications
         .iter()
@@ -650,6 +660,10 @@ pub async fn list_publications_handler(
                 .as_ref()
                 .map(|t| t.is_local(&p.addr.to_a_tag()))
                 .unwrap_or(false);
+            let contained_in = containing
+                .get(&p.addr.to_a_tag())
+                .cloned()
+                .unwrap_or_default();
             json!({
                 "addr": p.addr,
                 "title": p.title,
@@ -662,7 +676,8 @@ pub async fn list_publications_handler(
                 "relays": p.relays,
                 "signed": p.signed,
                 "forked": p.forked,
-                "local": local
+                "local": local,
+                "contained_in": contained_in
             })
         })
         .collect();

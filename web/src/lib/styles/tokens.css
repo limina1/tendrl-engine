@@ -187,6 +187,19 @@ body { font-size: var(--t-base); }
 .pill--connect:hover {
   background: color-mix(in srgb, var(--id-yours) 26%, transparent);
 }
+/* Actionable "this publication is nested inside others" pill — tinted with
+   --id-imported (the "part of a larger composed work" purple). Clicking runs a
+   reverse a-tag search for the containing 30040 indexes. */
+.pill--containment {
+  background: color-mix(in srgb, var(--id-imported) 14%, transparent);
+  color: var(--id-imported);
+  border: none;
+  cursor: pointer;
+  font: inherit;
+}
+.pill--containment:hover {
+  background: color-mix(in srgb, var(--id-imported) 26%, transparent);
+}
 .pill--remote { background: rgba(137,184,194,0.12); color: var(--id-remote); }
 .pill--draft { background: rgba(226,120,120,0.12); color: var(--id-draft); }
 .pill--imported { background: rgba(160,147,199,0.12); color: var(--id-imported); }

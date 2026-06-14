@@ -628,6 +628,64 @@ fn process_root_publications(
     roots
 }
 
+/// Build the child-coordinate → containing-publications map from a set of
+/// candidate kind-30040 events (those carrying an `a` tag for one of `wanted`).
+///
+/// Pure so it can be tested without an `Engine`/nostrdb; [`PublicationEngine::
+/// containing_publications`] is just this over a local `#a` query. Parents are
+/// deduped across the replaceable versions nostrdb keeps, and a publication is
+/// never reported as containing itself.
+fn map_containing_parents(
+    events: &[serde_json::Value],
+    wanted: &std::collections::HashSet<String>,
+) -> std::collections::HashMap<String, Vec<NAddr>> {
+    use std::collections::{HashMap, HashSet};
+
+    let mut map: HashMap<String, Vec<NAddr>> = HashMap::new();
+    let mut seen: HashMap<String, HashSet<String>> = HashMap::new();
+    for event in events {
+        let pubkey = event.get("pubkey").and_then(|v| v.as_str()).unwrap_or("");
+        let tags = match event.get("tags").and_then(|v| v.as_array()) {
+            Some(t) => t,
+            None => continue,
+        };
+        let d_tag = tags
+            .iter()
+            .find_map(|tag| {
+                let arr = tag.as_array()?;
+                if arr.first()?.as_str()? == "d" {
+                    arr.get(1)?.as_str()
+                } else {
+                    None
+                }
+            })
+            .unwrap_or("");
+        let parent = NAddr::new(KIND_PUBLICATION_INDEX, pubkey, d_tag);
+        let parent_key = parent.to_a_tag();
+        for tag in tags {
+            let arr = match tag.as_array() {
+                Some(a) => a,
+                None => continue,
+            };
+            if arr.first().and_then(|v| v.as_str()) != Some("a") {
+                continue;
+            }
+            let val = match arr.get(1).and_then(|v| v.as_str()) {
+                Some(v) => v,
+                None => continue,
+            };
+            // Only the coordinates we asked about, and never self-containment.
+            if !wanted.contains(val) || val == parent_key {
+                continue;
+            }
+            if seen.entry(val.to_string()).or_default().insert(parent_key.clone()) {
+                map.entry(val.to_string()).or_default().push(parent.clone());
+            }
+        }
+    }
+    map
+}
+
 /// A child reference inside a streamed [`PubLoadEvent::Index`] — enough for the
 /// client to allocate a tree slot and decide whether the child counts toward
 /// the load total `N`.
@@ -1537,6 +1595,42 @@ impl<'a> PublicationEngine<'a> {
             &existing_secs,
             sections,
         )))
+    }
+
+    /// Reverse `a`-tag lookup: for each child coordinate, which kind-30040
+    /// publication indexes reference it as a child.
+    ///
+    /// This is the inverse of the child-filtering in [`process_root_publications`]:
+    /// instead of "is this a child of anything in the window", it answers "what
+    /// contains this", against the whole local store. A publication that leaks
+    /// into the feed as a false root (its parent isn't in the same page) still
+    /// gets an accurate containment count this way.
+    ///
+    /// Local-only by design — this enriches an already-fetched feed page and must
+    /// never fan out to relays. Returns a map keyed by the child's `a`-tag string
+    /// (`30040:pubkey:d_tag`); absent keys mean "contained in nothing".
+    pub async fn containing_publications(
+        &self,
+        child_coords: &[NAddr],
+    ) -> Result<std::collections::HashMap<String, Vec<NAddr>>> {
+        use serde_json::json;
+        use std::collections::{HashMap, HashSet};
+
+        if child_coords.is_empty() {
+            return Ok(HashMap::new());
+        }
+        let wanted: HashSet<String> = child_coords.iter().map(|a| a.to_a_tag()).collect();
+        let filter = json!({
+            "kinds": [KIND_PUBLICATION_INDEX],
+            "#a": wanted.iter().cloned().collect::<Vec<_>>(),
+            "limit": 1000,
+        });
+        let response = self
+            .engine
+            .get_events(vec![filter], FetchPolicy::LocalOnly, None)
+            .await?;
+
+        Ok(map_containing_parents(&response.events, &wanted))
     }
 
     /// Query all root publications (not referenced by other 30040s)
@@ -2583,6 +2677,59 @@ mod tests {
         assert_eq!(pub_.section_count(), 2);
         assert_eq!(pub_.sections[0].addr.d_tag, "section-1");
         assert_eq!(pub_.sections[1].addr.d_tag, "section-2");
+    }
+
+    #[test]
+    fn test_map_containing_parents() {
+        use std::collections::HashSet;
+
+        let pk = "deadbeef";
+        // Two parent 30040 indexes reference the child `30040:deadbeef:child`.
+        // `outer-a` does so twice (two replaceable versions) — must dedup to one.
+        let outer_a_v1 = serde_json::json!({
+            "pubkey": pk, "kind": 30040,
+            "tags": [["d", "outer-a"], ["a", "30040:deadbeef:child"]]
+        });
+        let outer_a_v2 = serde_json::json!({
+            "pubkey": pk, "kind": 30040,
+            "tags": [["d", "outer-a"], ["a", "30040:deadbeef:child"], ["a", "30041:deadbeef:s1"]]
+        });
+        let outer_b = serde_json::json!({
+            "pubkey": pk, "kind": 30040,
+            "tags": [["d", "outer-b"], ["a", "30040:deadbeef:child"]]
+        });
+        // References a different child we didn't ask about — must be ignored.
+        let unrelated = serde_json::json!({
+            "pubkey": pk, "kind": 30040,
+            "tags": [["d", "outer-c"], ["a", "30040:deadbeef:other"]]
+        });
+        // Self-reference (a malformed index pointing at itself) — must not
+        // report a publication as containing itself.
+        let self_ref = serde_json::json!({
+            "pubkey": pk, "kind": 30040,
+            "tags": [["d", "self"], ["a", "30040:deadbeef:self"]]
+        });
+
+        let mut wanted = HashSet::new();
+        wanted.insert("30040:deadbeef:child".to_string());
+        wanted.insert("30040:deadbeef:self".to_string());
+
+        let events = vec![outer_a_v1, outer_a_v2, outer_b, unrelated, self_ref];
+        let map = map_containing_parents(&events, &wanted);
+
+        // `child` is contained in outer-a and outer-b (deduped, two distinct).
+        let mut parents: Vec<String> = map
+            .get("30040:deadbeef:child")
+            .unwrap()
+            .iter()
+            .map(|a| a.d_tag.clone())
+            .collect();
+        parents.sort();
+        assert_eq!(parents, vec!["outer-a".to_string(), "outer-b".to_string()]);
+        // The self-reference produced no entry.
+        assert!(map.get("30040:deadbeef:self").is_none());
+        // The unrelated child we never asked about isn't present either.
+        assert!(map.get("30040:deadbeef:other").is_none());
     }
 
     #[test]

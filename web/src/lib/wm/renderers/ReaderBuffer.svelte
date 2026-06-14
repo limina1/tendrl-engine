@@ -1068,7 +1068,16 @@
 		focusStack.slice(0, focusMarker + 1).map(crumbGraphKey)
 	);
 	// The graph is worth showing once it has more than the root node.
+	// `hasGraph` doubles as the flat/nested signal: the root index always seeds
+	// one node, and a *nested* publication seeds stub nodes for each child 30040
+	// it references — so >1 node ⟺ nested. A flat publication (index → 30041
+	// sections only) never adds a second node.
 	const hasGraph = $derived(Object.keys(focusGraph).length > 1);
+	// True once the root index has streamed in (parent-before-child ordering
+	// guarantees it's the first graph node). Until then the flat/nested verdict
+	// is unknown, so the toolbar shows neither hint — avoiding a SINGLE LEVEL →
+	// NESTED flip as the root resolves.
+	const rootLoaded = $derived(Object.keys(focusGraph).length >= 1);
 
 	/** Move the focus marker to breadcrumb crumb `index` and reload it. */
 	function breadcrumbTo(index: number) {
@@ -1770,26 +1779,43 @@
 			disabled={!publication}
 			title="Open this publication's event menu (m)"
 		>menu</button>
-		{#if parsedAddr?.kind === 30040}
-			<span
-				class="depth-knob"
-				title="Levels of nested 30040 indexes the loader walks toward. The buttons stay live during loading; past depth {MAX_DEPTH} you refocus into a sub-publication."
-			>
-				<span class="depth-knob__label">depth</span>
-				<button
-					class="depth-knob__step"
-					onclick={() => setDepth(treeDepth - 1)}
-					disabled={treeDepth <= 1}
-					aria-label="Decrease depth"
-				>−</button>
-				<span class="depth-knob__val">{treeDepth}</span>
-				<button
-					class="depth-knob__step"
-					onclick={() => setDepth(treeDepth + 1)}
-					disabled={treeDepth >= MAX_DEPTH}
-					aria-label="Increase depth"
-				>+</button>
-			</span>
+		{#if parsedAddr?.kind === 30040 && rootLoaded}
+			{#if hasGraph}
+				<!-- Nested: this index references child 30040 sub-publications.
+				     Show the NESTED tag + the depth knob (how many levels the
+				     loader walks); the graph button lives later, in the nav. -->
+				<span
+					class="level-hint level-hint--nested"
+					title="Nested publication — its index references child 30040 sub-publications. Set how many levels deep the loader walks below; the ⊞ graph button (in the nav) maps the structure."
+				>NESTED</span>
+				<span
+					class="depth-knob"
+					title="Levels of nested 30040 indexes the loader walks toward. The buttons stay live during loading; past depth {MAX_DEPTH} you refocus into a sub-publication."
+				>
+					<span class="depth-knob__label">depth</span>
+					<button
+						class="depth-knob__step"
+						onclick={() => setDepth(treeDepth - 1)}
+						disabled={treeDepth <= 1}
+						aria-label="Decrease depth"
+					>−</button>
+					<span class="depth-knob__val">{treeDepth}</span>
+					<button
+						class="depth-knob__step"
+						onclick={() => setDepth(treeDepth + 1)}
+						disabled={treeDepth >= MAX_DEPTH}
+						aria-label="Increase depth"
+					>+</button>
+				</span>
+			{:else}
+				<!-- Flat: the index references only 30041 sections. It loads in
+				     one shot — there's nothing for a depth control to walk, so
+				     drop it and just mark the level. -->
+				<span
+					class="level-hint level-hint--flat"
+					title="Single-level publication — its index references only 30041 sections, no nested sub-publications. The whole thing loads at once; there's no depth to set."
+				>SINGLE LEVEL</span>
+			{/if}
 		{/if}
 		<span class="sp"></span>
 		{#if isDraftMode}
@@ -2854,6 +2880,28 @@
 	}
 
 	/* Depth stepper in the toolbar. */
+	/* Flat/nested level tag sitting where the depth control used to live. */
+	.level-hint {
+		display: inline-flex;
+		align-items: center;
+		margin-left: 4px;
+		padding: 1px 6px;
+		border-radius: var(--r-md);
+		font-family: var(--font-mono);
+		font-size: var(--t-xs);
+		letter-spacing: 0.06em;
+		white-space: nowrap;
+	}
+	/* Flat = green, reads "self-contained, loaded whole". */
+	.level-hint--flat {
+		background: color-mix(in srgb, var(--state-online) 14%, transparent);
+		color: var(--state-online);
+	}
+	/* Nested = the structural purple, paired with the depth knob beside it. */
+	.level-hint--nested {
+		background: color-mix(in srgb, var(--id-imported) 14%, transparent);
+		color: var(--id-imported);
+	}
 	.depth-knob {
 		display: inline-flex;
 		align-items: center;
