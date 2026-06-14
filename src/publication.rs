@@ -998,8 +998,32 @@ impl<'a> PublicationEngine<'a> {
         }
         walk(&local, &mut needed);
 
+        // Collect every distinct author in the tree (root + nested index
+        // authors + section authors) so the same intent that backfills
+        // missing content also backfills the kind-0 profiles those events
+        // reference — otherwise author names render blank. Only profiles
+        // still missing locally are fetched.
+        fn collect_authors(pub_: &Publication, into: &mut HashSet<String>) {
+            into.insert(pub_.addr.pubkey.clone());
+            for section in &pub_.sections {
+                into.insert(section.addr.pubkey.clone());
+            }
+            for nested in &pub_.nested {
+                collect_authors(nested, into);
+            }
+        }
+        let mut tree_authors: HashSet<String> = HashSet::new();
+        collect_authors(&local, &mut tree_authors);
+        let missing_profiles: Vec<String> = tree_authors
+            .into_iter()
+            .filter(|pk| pk.len() == 64 && !self.engine.has_cached_profile(pk))
+            .collect();
+
         let total_needed: usize = needed.values().map(|s| s.len()).sum();
-        if total_needed == 0 {
+        // Nothing to do only when there are neither missing sections nor
+        // missing profiles — a fully-loaded tree whose authors still lack
+        // kind-0 metadata must still fetch the profiles.
+        if total_needed == 0 && missing_profiles.is_empty() {
             return Ok((0, 0));
         }
 
@@ -1026,6 +1050,17 @@ impl<'a> PublicationEngine<'a> {
             }
         }
 
+        // Piggyback the kind-0 profiles for the tree's authors into the
+        // same REQ so they ride one confirm intent — no separate modal,
+        // and identical behavior in Auto and Confirm.
+        if !missing_profiles.is_empty() {
+            filters.push(json!({
+                "kinds": [0],
+                "authors": missing_profiles.clone(),
+                "limit": missing_profiles.len(),
+            }));
+        }
+
         // 4. Open the operation with a structured summary so the
         //    confirm modal shows the DSL + filter list + composition.
         let relays = self.engine.relays();
@@ -1045,12 +1080,24 @@ impl<'a> PublicationEngine<'a> {
         };
         let mut summary = summary;
         summary.dsl = summary.to_dsl();
-        let label = format!(
-            "Backfill {} section{} for {}",
-            total_needed,
-            if total_needed == 1 { "" } else { "s" },
-            addr.d_tag.chars().take(24).collect::<String>(),
-        );
+        let label = {
+            let d = addr.d_tag.chars().take(24).collect::<String>();
+            let p = missing_profiles.len();
+            let s = total_needed;
+            let plural = |n: usize| if n == 1 { "" } else { "s" };
+            match (s, p) {
+                (0, p) => format!("Backfill {} profile{} for {}", p, plural(p), d),
+                (s, 0) => format!("Backfill {} section{} for {}", s, plural(s), d),
+                (s, p) => format!(
+                    "Backfill {} section{} + {} profile{} for {}",
+                    s,
+                    plural(s),
+                    p,
+                    plural(p),
+                    d
+                ),
+            }
+        };
 
         let op = match self
             .engine
@@ -1251,6 +1298,12 @@ impl<'a> PublicationEngine<'a> {
         tx: tokio::sync::mpsc::Sender<PubLoadEvent>,
     ) -> usize {
         let counter = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        // Accumulates every distinct author seen while walking the tree
+        // (index + section authors), so once the tree is streamed we can
+        // resolve their kind-0 profiles in one batched follow-up.
+        let authors = std::sync::Arc::new(std::sync::Mutex::new(
+            std::collections::HashSet::<String>::new(),
+        ));
         self.stream_tree_inner(
             addr.clone(),
             0,
@@ -1260,10 +1313,27 @@ impl<'a> PublicationEngine<'a> {
             std::collections::HashSet::new(),
             tx.clone(),
             counter.clone(),
+            authors.clone(),
         )
         .await;
         let total = counter.load(std::sync::atomic::Ordering::Relaxed);
         let _ = tx.send(PubLoadEvent::Done { total }).await;
+
+        // Kind-0 follow-up (Auto path). Resolve profiles for every author
+        // in the tree so names don't render blank. `backfill_missing_profiles`
+        // only fetches the ones missing locally, and its `is_auto()` gate
+        // fetches in Auto mode and skips in Confirm — where the explicit
+        // `backfill_publication_sections` path piggybacks the same profiles
+        // under its confirm intent. A local-only stream never reaches relays,
+        // so it skips the follow-up too. This keeps the follow-up uniform:
+        // profiles resolve whenever the section data did, under one gate.
+        if !matches!(policy, FetchPolicy::LocalOnly) {
+            let authors_vec: Vec<String> =
+                authors.lock().unwrap().iter().cloned().collect();
+            if !authors_vec.is_empty() {
+                self.engine.backfill_missing_profiles(authors_vec, false).await;
+            }
+        }
         total
     }
 
@@ -1281,6 +1351,7 @@ impl<'a> PublicationEngine<'a> {
         ancestors: std::collections::HashSet<NAddr>,
         tx: tokio::sync::mpsc::Sender<PubLoadEvent>,
         counter: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+        authors: std::sync::Arc<std::sync::Mutex<std::collections::HashSet<String>>>,
     ) -> futures::future::BoxFuture<'s, ()> {
         /// Max nested indexes streamed concurrently at a single tree level.
         const MAX_CONCURRENT_INDEX_FETCHES: usize = 8;
@@ -1336,6 +1407,17 @@ impl<'a> PublicationEngine<'a> {
                     return;
                 }
             };
+
+            // Record this index's author and its sections' authors for the
+            // post-stream kind-0 follow-up. Nested-index authors are recorded
+            // by their own recursive call below.
+            {
+                let mut seen = authors.lock().unwrap();
+                seen.insert(addr.pubkey.clone());
+                for section in &pub_.sections {
+                    seen.insert(section.addr.pubkey.clone());
+                }
+            }
 
             // The current node joins the ancestor set for the cycle guard.
             let mut child_ancestors = ancestors;
@@ -1473,6 +1555,7 @@ impl<'a> PublicationEngine<'a> {
                             let ancestors = child_ancestors.clone();
                             let tx = tx.clone();
                             let counter = counter.clone();
+                            let authors = authors.clone();
                             async move {
                                 self.stream_tree_inner(
                                     child_addr,
@@ -1483,6 +1566,7 @@ impl<'a> PublicationEngine<'a> {
                                     ancestors,
                                     tx,
                                     counter,
+                                    authors,
                                 )
                                 .await
                             }

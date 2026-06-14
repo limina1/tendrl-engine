@@ -2133,6 +2133,14 @@ impl Engine {
             .collect()
     }
 
+    /// True if a kind-0 profile for `pubkey` is already cached locally.
+    /// Lets callers piggyback a kind-0 fetch only for authors still
+    /// missing a profile — e.g. the publication backfill folds the
+    /// missing ones into its confirm-gated REQ.
+    pub fn has_cached_profile(&self, pubkey: &str) -> bool {
+        query::profile_exists(&self.ndb, pubkey)
+    }
+
     /// Ensure a kind-0 profile is cached for each of `pubkeys` — fetch
     /// the ones missing locally in a single batched REQ across every
     /// configured relay. Best-effort; returns the count of profile
