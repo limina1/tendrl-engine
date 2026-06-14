@@ -478,7 +478,7 @@ async fn list_publications(engine: &Arc<Engine>, input: Value) -> Result<Value> 
     let limit = input.get("limit").and_then(Value::as_u64).unwrap_or(50) as usize;
     let pe = PublicationEngine::new(engine);
     let pubs = pe
-        .list_root_publications(FetchPolicy::LocalOnly, limit, None)
+        .list_root_publications(FetchPolicy::LocalOnly, limit, None, false)
         .await?;
     let publications: Vec<Value> = pubs.iter().map(compact_pub_summary).collect();
     Ok(json!({ "count": publications.len(), "publications": publications }))

@@ -136,7 +136,11 @@
 {/if}
 
 {#if confirmState.intent?.type === 'intent'}
-	<FetchConfirmModal intent={confirmState.intent} />
+	<FetchConfirmModal
+		intent={confirmState.intent}
+		general={app.feedGeneral}
+		onToggleGeneral={app.toggleFeedGeneral}
+	/>
 {:else if confirmState.intent?.type === 'publish_intent'}
 	<PublishConfirmModal intent={confirmState.intent} />
 {/if}

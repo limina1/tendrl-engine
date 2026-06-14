@@ -162,6 +162,12 @@ function _createAppState() {
 	let feedSyncing = $state(false);
 	let feedLoadingMore = $state(false);
 	let feedHasMore = $state(true);
+	// "General feed": include the broad, un-author-scoped pull (recent 30040
+	// from all authors). Default on — logged in it appends to the by:user(s)
+	// scope; logged out the engine fetches broad regardless. Threaded into
+	// every listPublications call so the composed query (and its confirm
+	// intent) reflect it. Toggled live from the fetch-confirm modal.
+	let feedGeneral = $state(true);
 	// Guards the one-time cold-cache auto-fetch in loadFeed() so an empty
 	// db doesn't re-pop the fetch-confirm modal on every loadFeed() call
 	// (FeedBuffer mount, search-clear, etc.). Plain boolean, not $state —
@@ -979,7 +985,7 @@ function _createAppState() {
 	async function loadFeed() {
 		feedLoading = true;
 		try {
-			let resp = await api.listPublications();
+			let resp = await api.listPublications(20, 'local_only', undefined, feedGeneral);
 			// Cold-cache fallback: if local nostrdb has nothing (fresh
 			// install, post-purge, etc.), retry ONCE with `fetch_always`
 			// so the user sees content without manually hitting Sync. In
@@ -997,7 +1003,7 @@ function _createAppState() {
 			if (resp.publications.length === 0 && !coldFetchAttempted) {
 				coldFetchAttempted = true;
 				try {
-					const fetched = await api.listPublications(20, 'fetch_always');
+					const fetched = await api.listPublications(20, 'fetch_always', undefined, feedGeneral);
 					if (fetched.publications.length > 0) resp = fetched;
 				} catch {
 					/* relay fetch failed — keep the empty local result */
@@ -1018,7 +1024,7 @@ function _createAppState() {
 	async function handleFeedSync() {
 		feedSyncing = true;
 		try {
-			const resp = await api.listPublications(20, 'fetch_always');
+			const resp = await api.listPublications(20, 'fetch_always', undefined, feedGeneral);
 			feed = resp.publications;
 			feedHasMore = resp.count >= 20;
 			api.prefetchProfiles([...new Set(resp.publications.map(p => p.author_pubkey))]);
@@ -1029,12 +1035,20 @@ function _createAppState() {
 		}
 	}
 
+	// Flip the general-feed preference and re-run the sync so the composed
+	// query (and its confirm intent) reflect the change. Called from the
+	// fetch-confirm modal's toggle; the modal cancels the current intent first.
+	async function toggleFeedGeneral() {
+		feedGeneral = !feedGeneral;
+		await handleFeedSync();
+	}
+
 	async function handleFeedLoadMore() {
 		if (feedLoadingMore || !feedHasMore || feed.length === 0) return;
 		feedLoadingMore = true;
 		try {
 			const oldest = Math.min(...feed.map(p => p.created_at));
-			const resp = await api.listPublications(20, 'local_only', oldest);
+			const resp = await api.listPublications(20, 'local_only', oldest, feedGeneral);
 			if (resp.count === 0) {
 				feedHasMore = false;
 			} else {
@@ -3827,6 +3841,7 @@ function _createAppState() {
 		get feedSyncing() { return feedSyncing; },
 		get feedLoadingMore() { return feedLoadingMore; },
 		get feedHasMore() { return feedHasMore; },
+		get feedGeneral() { return feedGeneral; },
 
 		// Search
 		get searchResults() { return searchResults; },
@@ -4081,6 +4096,7 @@ function _createAppState() {
 		handleClaudeSessionBack,
 		handleLoadSessionToChat,
 		handleFeedSync,
+		toggleFeedGeneral,
 		handleFeedLoadMore,
 		loadFeed,
 		openPublication,

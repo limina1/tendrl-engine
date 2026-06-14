@@ -9,10 +9,19 @@
 
 	import type { FetchEvent, NipFilter, CompositionShape, Phase } from '$lib/types';
 	import { resolveConfirm } from '$lib/network/fetch-events.svelte';
-	import * as api from '$lib/api';
 
 	type IntentEvent = Extract<FetchEvent, { type: 'intent' }>;
-	let { intent }: { intent: IntentEvent } = $props();
+	let {
+		intent,
+		general = false,
+		onToggleGeneral
+	}: {
+		intent: IntentEvent;
+		/** Live "general feed" preference (app.feedGeneral). */
+		general?: boolean;
+		/** Flip the preference + re-run the feed sync (re-composes the query). */
+		onToggleGeneral?: () => void;
+	} = $props();
 
 	/** Render a single NipFilter as a space-separated clause string.
 	 *  Mirrors the engine's filter_to_dsl_clauses ordering — event-shape
@@ -56,19 +65,29 @@
 	let appendInput = $state('');
 	let appendError = $state<string | null>(null);
 	let detailsOpen = $state(false);
-	// "General feed" — include a broad, un-author-scoped pull (recent kind
-	// 30040 from all authors). The default tracks the query, consistent with
-	// how auto/confirm behave:
-	//   - logged out → the query has no author scope, so it's already the
-	//     general feed: toggle on (green) + disabled (nothing to narrow to).
-	//   - logged in → the query is scoped to by:user(s); toggle off by
-	//     default, and turning it on APPENDS the broad pull on top.
+	// "General feed" — the broad, un-author-scoped pull is now part of the
+	// engine-composed query (the `general` flag threads through listPublications
+	// → list_root_publications). This toggle just reflects the live preference
+	// and re-requests on change:
+	//   - logged out → the query has no author scope, so it's already broad:
+	//     toggle forced on (green) + disabled (nothing to narrow to).
+	//   - logged in → reflects app.feedGeneral; toggling re-runs the sync, which
+	//     re-composes the query (scoped ± broad) into a fresh confirm intent.
 	const isScopedQuery = $derived(
 		(intent.summary?.filters ?? []).some((f) => (f.authors?.length ?? 0) > 0)
 	);
-	// null = follow the query default; set once the user clicks (scoped only).
-	let generalOverride = $state<boolean | null>(null);
-	const includeGeneral = $derived(isScopedQuery ? (generalOverride ?? false) : true);
+	// Only a feed-list intent (kind 30040) has a meaningful general toggle.
+	const isFeedIntent = $derived(
+		(intent.summary?.filters ?? []).some((f) => f.kinds?.includes(30040))
+	);
+	const generalOn = $derived(isScopedQuery ? general : true);
+
+	function toggleGeneral() {
+		// Decline this intent, then let the app flip feedGeneral and re-run the
+		// sync — which re-composes the query and pops a fresh confirm intent.
+		resolveConfirm(false);
+		onToggleGeneral?.();
+	}
 	// Split mode: when true, render each filter as its own
 	// standalone single-filter request (each with the same composition
 	// appended) so the user can see + copy them individually. The
@@ -180,18 +199,9 @@
 
 	function confirm() {
 		if (selectedRelays.length === 0) return;
+		// The broad "general feed" pull (when on) is already part of this
+		// intent's composed query, so a plain confirm covers it.
 		resolveConfirm(true, selectedRelays);
-		// Append a broad pull only when the query is SCOPED and the user opted
-		// in — a broad (logged-out) query already IS the general feed, so
-		// confirming it covers that without a second request.
-		if (includeGeneral && isScopedQuery) {
-			// Pull recent publications (kind 30040, all authors) from the
-			// selected relays. modeConfirm bypasses the confirm gate so this
-			// doesn't pop a second modal.
-			api
-				.fetchFromRelay(selectedRelays, [30040], [], 200, { modeConfirm: true })
-				.catch((e: unknown) => console.error('[fetch-confirm] broad feed pull failed', e));
-		}
 	}
 	function cancel() {
 		resolveConfirm(false);
@@ -263,18 +273,20 @@
 			/>
 			<button class="rf-append-btn" onclick={addExtra}>Add relay</button>
 		</div>
-		<div class="rf-general">
-			<button
-				class="rf-append-btn rf-general-btn"
-				class:rf-general-btn--on={includeGeneral}
-				onclick={() => (generalOverride = !includeGeneral)}
-				disabled={!isScopedQuery}
-				aria-pressed={includeGeneral}
-				title={isScopedQuery
-					? 'When on, also pull a broad feed (all authors) from the selected relays, on top of your scoped fetch'
-					: 'Logged out — the feed is already broad (all authors)'}
-			>{includeGeneral ? '✓' : '○'} General feed</button>
-		</div>
+		{#if isFeedIntent}
+			<div class="rf-general">
+				<button
+					class="rf-append-btn rf-general-btn"
+					class:rf-general-btn--on={generalOn}
+					onclick={toggleGeneral}
+					disabled={!isScopedQuery}
+					aria-pressed={generalOn}
+					title={isScopedQuery
+						? 'General feed: also pull recent publications from all authors, not just yours. Toggling re-runs the fetch.'
+						: 'Logged out — the feed is already broad (all authors)'}
+				>{generalOn ? '✓' : '○'} General feed</button>
+			</div>
+		{/if}
 		{#if appendError}
 			<p class="rf-error">{appendError}</p>
 		{/if}
