@@ -9,6 +9,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 cargo build                         # debug build
 cargo build --release               # release build
 cargo build --features onnx         # with in-process ONNX embeddings
+scripts/build-bundle.sh             # single-exe: SPA embedded + onnx, opens browser on run
 
 # Run
 cargo run -- -c config.toml         # run engine with config

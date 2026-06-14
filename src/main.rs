@@ -8,7 +8,8 @@ use axum::{
 };
 use clap::Parser;
 use nostr_engine::{
-    api, chat::ChatState, config::Config, engine::Engine, identity::IdentitySession, llm, tools,
+    api, chat::ChatState, config::Config, engine::Engine, identity::IdentitySession, llm,
+    static_assets, tools,
 };
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -39,6 +40,10 @@ struct Args {
     /// Enable verbose logging
     #[arg(short, long)]
     verbose: bool,
+
+    /// Do not open a browser on startup (for headless/server use)
+    #[arg(long)]
+    no_open: bool,
 }
 
 #[tokio::main]
@@ -58,8 +63,23 @@ async fn main() -> anyhow::Result<()> {
 
     tracing_subscriber::fmt().with_env_filter(filter).init();
 
-    // Load configuration
-    let mut config = Config::load_or_default(args.config.as_deref());
+    // Resolve the config path up front so load and save agree on ONE file.
+    // Explicit `-c` wins; otherwise <data_dir>/config.toml, where data_dir is
+    // `--data-dir` if given else the built-in default. This is what makes a
+    // zero-config run persist *and* reload settings (network mode, etc.) —
+    // previously boot loaded hardcoded defaults while saves went to disk
+    // unread, so nothing round-tripped without `-c`.
+    let config_path = args.config.clone().unwrap_or_else(|| {
+        let dir = args
+            .data_dir
+            .clone()
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_else(nostr_engine::config::default_data_dir);
+        PathBuf::from(dir).join("config.toml")
+    });
+
+    // Load configuration from that path (falls back to defaults if absent).
+    let mut config = Config::load_or_default(Some(&config_path));
 
     // CLI args override config file
     config.server.port = args.port;
@@ -89,9 +109,8 @@ async fn main() -> anyhow::Result<()> {
     // Create the engine
     let data_path = PathBuf::from(&config.database.data_dir);
     let mut engine = Engine::with_relay_config(&data_path, &relay_config)?;
-    if let Some(ref config_path) = args.config {
-        engine.set_config_path(config_path.clone());
-    }
+    // Same path we loaded from — settings persist to and reload from one file.
+    engine.set_config_path(config_path);
     engine.set_documents_path(std::path::PathBuf::from(&config.documents.path));
     engine.set_sidecar_url(config.embedding.sidecar_url.clone());
     engine.set_my_pubkey(my_pubkey.clone());
@@ -200,19 +219,19 @@ async fn main() -> anyhow::Result<()> {
     info!("Saved identity source: {}", boot_source.kind_str());
     let identity_state: api::IdentityAppState =
         Arc::new(Mutex::new(IdentitySession::with_source(boot_source)));
-    // Load a persisted engine key (config.toml `[identity] ncryptsec`)
-    // into a *locked* session so the UI prompts for just the password
-    // instead of a re-paste. The key is scrypt-encrypted; unlocking
-    // still needs the password the engine never stores.
-    if let Some(nc) = config
+    // The engine no longer stores secrets in config.toml. If an older build
+    // left an `[identity] ncryptsec` behind, strip it now (one-time migration)
+    // and do NOT auto-load it. Sign in each session with a pasted ncryptsec or
+    // via NIP-07; the key never rests in the config file.
+    if config
         .identity
         .ncryptsec
         .as_deref()
-        .filter(|s| !s.is_empty())
+        .is_some_and(|s| !s.is_empty())
     {
-        match identity_state.lock().unwrap().login_ncryptsec(nc) {
-            Ok(()) => info!("Loaded persisted engine key (locked)"),
-            Err(e) => tracing::warn!("Ignoring invalid persisted [identity] ncryptsec: {e}"),
+        match state.persist_identity_ncryptsec(None) {
+            Ok(()) => info!("Removed persisted [identity] ncryptsec from config (no longer stored)"),
+            Err(e) => tracing::warn!("Could not strip persisted ncryptsec from config: {e}"),
         }
     }
     // Apply the saved auto-lock timeout (0 = never) to the live session
@@ -319,6 +338,7 @@ async fn main() -> anyhow::Result<()> {
             "/api/v1/config/snapshot",
             post(api::config_snapshot_handler),
         )
+        .route("/api/v1/config/export", get(api::config_export_handler))
         .route("/api/v1/settings", get(api::settings_handler))
         .route(
             "/api/v1/identity/persist-key",
@@ -440,6 +460,8 @@ async fn main() -> anyhow::Result<()> {
         .merge(chat_routes)
         .merge(identity_routes)
         .merge(signing_routes)
+        // Serve the embedded SPA for everything that is not an API route.
+        .fallback(static_assets::static_handler)
         .layer(axum::Extension(identity_state.clone()))
         .layer(axum::Extension(signing_controller.clone()))
         .layer(axum::extract::DefaultBodyLimit::max(50 * 1024 * 1024)) // 50MB for JSONL import
@@ -496,6 +518,22 @@ async fn main() -> anyhow::Result<()> {
     info!("Listening on http://{}", bind_addr);
 
     let listener = tokio::net::TcpListener::bind(&bind_addr).await?;
+
+    // Open the browser to the bundled UI once we're bound. The host is the bind
+    // address (127.0.0.1 by default); for a non-loopback bind we skip it, since
+    // that's a server deployment where popping a local browser makes no sense.
+    if !args.no_open {
+        let host = config.server.host.as_str();
+        let is_loopback = host == "127.0.0.1" || host == "localhost" || host == "::1";
+        if is_loopback {
+            let url = format!("http://{}/", bind_addr);
+            info!("Opening browser at {}", url);
+            if let Err(e) = webbrowser::open(&url) {
+                tracing::warn!("Could not open browser ({e}); navigate to {url} manually");
+            }
+        }
+    }
+
     axum::serve(listener, app).await?;
 
     Ok(())

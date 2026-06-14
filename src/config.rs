@@ -42,7 +42,7 @@ pub struct DatabaseConfig {
     pub data_dir: String,
 }
 
-fn default_data_dir() -> String {
+pub fn default_data_dir() -> String {
     if let Some(data_home) = std::env::var_os("XDG_DATA_HOME") {
         let path = Path::new(&data_home).join("nostr-engine").join("nostrdb");
         return path.to_string_lossy().to_string();
@@ -322,11 +322,11 @@ pub struct IdentityConfig {
     /// keeps its own key, so this is a no-op there.
     #[serde(default)]
     pub lock_timeout_minutes: u64,
-    /// Persisted engine key (NIP-49 `ncryptsec1…`). Stored encrypted at
-    /// rest — it's scrypt-encrypted by design, so the password is never
-    /// here. Written when the user logs in with a pasted key (and
-    /// cleared on logout); loaded at boot into a **locked** session so
-    /// the UI prompts for just the password instead of a re-paste.
+    /// DEPRECATED — the engine no longer stores keys in config.toml. This
+    /// field is retained only so old configs still parse and so boot can
+    /// detect a leftover key and **strip it** (one-time migration in
+    /// `main.rs`). It is never written. Sign in each session with a pasted
+    /// ncryptsec or via NIP-07; the secret never rests in the config file.
     #[serde(default)]
     pub ncryptsec: Option<String>,
 }
@@ -366,7 +366,17 @@ pub struct EmbeddingConfig {
 }
 
 fn default_embedding_backend() -> String {
-    "python".to_string()
+    // A binary built with in-process ONNX (the single-exe bundle) defaults to
+    // the onnx backend, so enabling embeddings needs only `enabled = true` —
+    // no Python sidecar. Plain builds default to the sidecar.
+    #[cfg(feature = "onnx")]
+    {
+        "onnx".to_string()
+    }
+    #[cfg(not(feature = "onnx"))]
+    {
+        "python".to_string()
+    }
 }
 fn default_sidecar_url() -> String {
     "http://localhost:3031".to_string()
@@ -561,7 +571,10 @@ pub struct NetworkConfig {
 }
 
 fn default_network_mode() -> String {
-    "auto".to_string()
+    // Confirm-first by default: a fresh / zero-config boot gates relay
+    // fetches behind the approval modal rather than auto-fetching. Local-first
+    // is the deliberate posture; opt into "auto" explicitly.
+    "confirm".to_string()
 }
 
 impl Default for NetworkConfig {

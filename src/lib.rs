@@ -72,6 +72,7 @@ pub mod relay_url;
 pub mod search;
 pub mod sessions;
 pub mod signing;
+pub mod static_assets;
 pub mod tools;
 pub mod tree;
 pub mod user_data;

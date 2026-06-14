@@ -37,7 +37,7 @@
 # "auto"    — fetch from relays automatically.
 # "confirm" — every user-initiated relay fetch/publish pops a confirmation
 #             modal in the UI before the engine touches the network.
-# Engine default is "auto" when this section is absent.
+# Engine default is "confirm" when this section is absent.
 mode = "confirm"
 
 [relay]
