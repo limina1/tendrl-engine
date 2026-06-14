@@ -4,6 +4,7 @@
 //! Uses the OS keyring for secure storage of secrets.
 
 use thiserror::Error;
+use zeroize::Zeroizing;
 
 /// Errors that can occur during key parsing
 #[derive(Debug, Error)]
@@ -544,6 +545,52 @@ impl IdentityKeyring {
             .and_then(|e| e.delete_credential());
         Ok(())
     }
+
+    /// Store the assistant identity in a dedicated slot so it can never
+    /// collide with the user's `last_identity`. `data` is a small JSON blob
+    /// `{ "pubkey": ..., "ncryptsec"?: ... }` — the public pubkey is always
+    /// present (so `by:assistant` scoping survives a restart); the encrypted
+    /// ncryptsec is present only when the user opted into persisted signing.
+    /// A raw nsec is never written here (see Part 5d / ncryptsec-only at rest).
+    pub fn store_last_assistant(&self, data: &str) -> Result<(), KeyringError> {
+        let entry = keyring::Entry::new(&self.service, "last_assistant_data")
+            .map_err(|e| KeyringError::Keyring(e.to_string()))?;
+        entry.set_password(data)
+            .map_err(|e| KeyringError::Keyring(e.to_string()))
+    }
+
+    /// Retrieve the persisted assistant identity blob (JSON), if any.
+    pub fn get_last_assistant(&self) -> Result<String, KeyringError> {
+        let entry = keyring::Entry::new(&self.service, "last_assistant_data")
+            .map_err(|e| KeyringError::Keyring(e.to_string()))?;
+        entry.get_password().map_err(|e| match e {
+            keyring::Error::NoEntry => KeyringError::NotFound,
+            _ => KeyringError::Keyring(e.to_string()),
+        })
+    }
+
+    /// Clear the persisted assistant identity.
+    pub fn clear_last_assistant(&self) -> Result<(), KeyringError> {
+        let _ = keyring::Entry::new(&self.service, "last_assistant_data")
+            .and_then(|e| e.delete_credential());
+        Ok(())
+    }
+
+    /// Best-effort probe: is the OS keyring actually usable on this host?
+    /// Headless / container / single-exe bundle runs may lack a Secret
+    /// Service, in which case persistence silently degrades to session-only —
+    /// callers surface this to the UI so the user knows a key won't survive a
+    /// restart. Round-trips a throwaway probe entry.
+    pub fn is_available(&self) -> bool {
+        match keyring::Entry::new(&self.service, "__availability_probe__") {
+            Ok(entry) => {
+                let ok = entry.set_password("1").is_ok();
+                let _ = entry.delete_credential();
+                ok
+            }
+            Err(_) => false,
+        }
+    }
 }
 
 impl Default for IdentityKeyring {
@@ -649,6 +696,12 @@ pub struct IdentityStatusResponse {
     /// Signer registry id when source is external. None for engine source.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub signer_id: Option<String>,
+    /// Whether the OS keyring is usable for persistence on this host. Only
+    /// populated for the assistant identity (the user identity doesn't persist
+    /// secrets); `None` elsewhere. `Some(false)` ⇒ the key won't survive a
+    /// restart and the UI should warn.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub keyring_available: Option<bool>,
 }
 
 /// Mutable identity session — holds ncryptsec, decrypted secret, and lock timer.
@@ -660,8 +713,10 @@ pub struct IdentitySession {
     ncryptsec: Option<String>,
     /// Derived pubkey hex (available once ncryptsec is provided, even when locked)
     pubkey: Option<String>,
-    /// Decrypted secret key hex (only present when unlocked)
-    secret: Option<String>,
+    /// Decrypted secret key hex (only present when unlocked). `Zeroizing` wipes
+    /// it from memory on drop — i.e. on lock/logout/reassignment — so the key
+    /// doesn't linger in the heap.
+    secret: Option<Zeroizing<String>>,
     /// When the secret was last used
     last_activity: Option<Instant>,
     /// Auto-lock after this duration of inactivity. `None` = never
@@ -748,6 +803,21 @@ impl IdentitySession {
         Ok(())
     }
 
+    /// Log in with a raw (unencrypted) nsec — derive the pubkey and hold the
+    /// secret immediately, with no locked state or unlock step. Allowed for the
+    /// assistant identity, which is engine-resident and may need to sign
+    /// unattended. Returns the derived pubkey hex.
+    pub fn login_nsec(&mut self, nsec: &str) -> Result<String, KeyParseError> {
+        let secret_hex = decode_nsec(nsec)?;
+        let pubkey_hex = derive_pubkey_from_secret(&secret_hex)?;
+        self.ncryptsec = None;
+        self.external_pubkey = None;
+        self.secret = Some(Zeroizing::new(secret_hex));
+        self.pubkey = Some(pubkey_hex.clone());
+        self.last_activity = Some(Instant::now());
+        Ok(pubkey_hex)
+    }
+
     /// Decrypt the stored ncryptsec with a password.
     /// On success, stores the secret and pubkey and starts the lock timer.
     pub fn unlock(&mut self, password: &str) -> Result<String, DecryptError> {
@@ -756,7 +826,7 @@ impl IdentitySession {
             .as_ref()
             .ok_or(DecryptError::InvalidFormat)?;
         let (secret_hex, pubkey_hex) = decrypt_ncryptsec(ncryptsec, password)?;
-        self.secret = Some(secret_hex);
+        self.secret = Some(Zeroizing::new(secret_hex));
         self.pubkey = Some(pubkey_hex.clone());
         self.last_activity = Some(Instant::now());
         Ok(pubkey_hex)
@@ -825,7 +895,7 @@ impl IdentitySession {
     /// Get the secret if unlocked (for building signed events).
     pub fn secret(&mut self) -> Option<&str> {
         self.check_timeout();
-        self.secret.as_deref()
+        self.secret.as_ref().map(|z| z.as_str())
     }
 
     /// Track an event ID that was published unsigned.
@@ -848,6 +918,33 @@ impl IdentitySession {
     }
 
     /// Build the serializable status response.
+    /// The pubkey this identity currently represents, accounting for source:
+    /// engine source → the unlocked/derived (or hinted) key; external
+    /// (nip07/nip46) → the registered signer's pubkey, falling back to any
+    /// derived key. Used by the engine to resolve `by:me` / `by:assistant`
+    /// from the live session without an async signer round-trip.
+    pub fn effective_pubkey(&self) -> Option<String> {
+        match self.source {
+            IdentitySource::Engine => self.pubkey.clone(),
+            IdentitySource::Nip07 { .. } | IdentitySource::Nip46 { .. } => {
+                self.external_pubkey.clone().or_else(|| self.pubkey.clone())
+            }
+        }
+    }
+
+    /// Set the known pubkey without a secret — used to restore a persisted
+    /// assistant identity to a *locked* state on boot so `by:assistant`
+    /// scoping works before (or without) an unlock.
+    pub fn set_pubkey_hint(&mut self, pubkey: String) {
+        self.pubkey = Some(pubkey);
+    }
+
+    /// The stored ncryptsec (encrypted key), if any. Used to re-persist the
+    /// assistant identity blob with its pubkey after a successful unlock.
+    pub fn ncryptsec(&self) -> Option<String> {
+        self.ncryptsec.clone()
+    }
+
     pub fn status(&mut self) -> IdentityStatusResponse {
         self.check_timeout();
         let state = if self.secret.is_some() {
@@ -874,12 +971,7 @@ impl IdentitySession {
         // When the active source is an external signer (nip07/nip46),
         // surface its pubkey rather than the (likely None) ncryptsec
         // pubkey. Engine source falls through to self.pubkey as before.
-        let effective_pubkey = match self.source {
-            IdentitySource::Engine => self.pubkey.clone(),
-            IdentitySource::Nip07 { .. } | IdentitySource::Nip46 { .. } => {
-                self.external_pubkey.clone().or_else(|| self.pubkey.clone())
-            }
-        };
+        let effective_pubkey = self.effective_pubkey();
         // External signers are always "live" — the registered signer
         // either exists (state = unlocked from the engine's POV) or
         // doesn't (callers should re-register). Report "unlocked" so
@@ -902,6 +994,7 @@ impl IdentitySession {
             lock_timeout_minutes: self.lock_timeout.map(|d| d.as_secs() / 60).unwrap_or(0),
             source: self.source.kind_str().to_string(),
             signer_id: self.source.signer_id().map(|s| s.to_string()),
+            keyring_available: None,
         }
     }
 }
@@ -909,6 +1002,32 @@ impl IdentitySession {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn login_nsec_derives_pubkey_and_can_sign() {
+        use bech32::{Bech32, Hrp};
+        // Build a valid nsec from a known secret (round-trips the same bech32
+        // lib decode_nsec uses), then confirm login derives the matching pubkey.
+        let secret_hex = "67dea2ed018072d675f5415ecfaed7d2597555e202d85b3d65ea4e58d2d92ffa";
+        let bytes = hex::decode(secret_hex).unwrap();
+        let nsec = bech32::encode::<Bech32>(Hrp::parse("nsec").unwrap(), &bytes).unwrap();
+        let expected = derive_pubkey_from_secret(secret_hex).unwrap();
+
+        let mut s = IdentitySession::new();
+        let pk = s.login_nsec(&nsec).expect("nsec login should derive a pubkey");
+        assert_eq!(pk, expected);
+        // by:assistant / by:me scope off effective_pubkey; an nsec is live.
+        assert_eq!(s.effective_pubkey().as_deref(), Some(pk.as_str()));
+        assert!(s.can_sign());
+        assert!(s.secret().is_some());
+    }
+
+    #[test]
+    fn login_nsec_rejects_non_nsec() {
+        let mut s = IdentitySession::new();
+        assert!(s.login_nsec("npub1xxx").is_err());
+        assert!(s.effective_pubkey().is_none());
+    }
 
     #[test]
     fn test_parse_npub() {

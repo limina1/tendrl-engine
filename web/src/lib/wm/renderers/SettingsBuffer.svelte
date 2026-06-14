@@ -149,6 +149,24 @@
 	// Inputs for engine login flow
 	let ncryptsecInput = $state('');
 	let passwordInput = $state('');
+	// Inputs for the assistant identity flow
+	let assistantKeyInput = $state('');
+	let assistantPasswordInput = $state('');
+	const assistantState = $derived(app.assistantStatus?.state ?? 'none');
+
+	async function doAssistantLogin() {
+		const v = assistantKeyInput.trim();
+		if (!v) return;
+		await app.handleAssistantLogin(v);
+		assistantKeyInput = '';
+	}
+
+	async function doAssistantUnlock() {
+		const v = assistantPasswordInput;
+		if (!v) return;
+		await app.handleAssistantUnlock(v);
+		assistantPasswordInput = '';
+	}
 
 	// Prefer the live session source. Fall back to the source the user
 	// last persisted (config.toml [identity] source) so a fresh reload
@@ -396,8 +414,8 @@
 						{app.identityLoading ? 'Working…' : 'Login'}
 					</button>
 					<span class="settings-hint">
-						Saved to <strong>config.toml</strong> (encrypted); the next start asks only for
-						your password. Logging out forgets it.
+						Held for this session only — the key never rests in config.toml. Sign in
+						again (or via NIP-07) after a restart.
 					</span>
 				</div>
 			{:else if currentState === 'locked'}
@@ -473,6 +491,80 @@
 
 		{#if app.identityError}
 			<p class="settings-error">{app.identityError}</p>
+		{/if}
+	</div>
+
+	<div class="settings-group">
+		<div class="settings-group-title">Assistant identity</div>
+		{#if assistantState === 'none'}
+			<div class="settings-row settings-row--stack">
+				<label class="settings-label" for="assistant-key-input">nsec or ncryptsec</label>
+				<textarea
+					id="assistant-key-input"
+					class="settings-textarea"
+					bind:value={assistantKeyInput}
+					placeholder="nsec1… or ncryptsec1…"
+					rows="2"
+					spellcheck="false"
+				></textarea>
+				<button class="settings-action" onclick={doAssistantLogin} disabled={app.assistantLoading}>
+					{app.assistantLoading ? 'Working…' : 'Set assistant'}
+				</button>
+				<span class="settings-hint">
+					Establishes the <strong>by:assistant</strong> identity. An nsec is live
+					immediately; an ncryptsec loads locked and needs a password. Stored in your OS
+					keyring (never config); a raw nsec is never written to disk.
+				</span>
+				{#if app.assistantStatus && app.assistantStatus.keyring_available === false}
+					<span class="settings-error">
+						OS keyring unavailable — the assistant won't persist across a restart.
+					</span>
+				{/if}
+			</div>
+		{:else if assistantState === 'locked'}
+			<div class="settings-row settings-row--stack">
+				{#if app.assistantStatus?.npub}
+					<span class="settings-label mono">{app.assistantStatus.npub}</span>
+				{/if}
+				<input
+					id="assistant-password-input"
+					class="settings-input"
+					type="password"
+					bind:value={assistantPasswordInput}
+					placeholder="Password"
+					onkeydown={(e) => e.key === 'Enter' && doAssistantUnlock()}
+				/>
+				<div class="action-row">
+					<button
+						class="settings-action"
+						onclick={doAssistantUnlock}
+						disabled={app.assistantLoading}
+					>
+						{app.assistantLoading ? 'Working…' : 'Unlock'}
+					</button>
+					<button class="settings-action settings-action--danger" onclick={app.handleAssistantLogout}
+						>Remove</button
+					>
+				</div>
+				<span class="settings-hint">
+					Scoping (<strong>by:assistant</strong>) works while locked; unlock to publish as
+					the assistant.
+				</span>
+			</div>
+		{:else}
+			<div class="settings-row settings-row--stack">
+				{#if app.assistantStatus?.npub}
+					<span class="settings-label mono">{app.assistantStatus.npub}</span>
+				{/if}
+				<div class="action-row">
+					<button class="settings-action settings-action--danger" onclick={app.handleAssistantLogout}
+						>Remove</button
+					>
+				</div>
+			</div>
+		{/if}
+		{#if app.assistantError}
+			<p class="settings-error">{app.assistantError}</p>
 		{/if}
 	</div>
 

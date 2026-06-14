@@ -551,6 +551,9 @@ export interface IdentityStatus {
 	source: IdentitySourceKind;
 	/** Set when source is nip07 / nip46. */
 	signer_id?: string;
+	/** Only present on the assistant identity status: whether the OS keyring
+	 *  is usable for persistence. `false` ⇒ the key won't survive a restart. */
+	keyring_available?: boolean;
 }
 
 /** One row in the multi-event JSON inspector (EventsJsonModal). */
