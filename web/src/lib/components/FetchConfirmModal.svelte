@@ -83,9 +83,13 @@
 	const generalOn = $derived(isScopedQuery ? general : true);
 
 	function toggleGeneral() {
-		// Decline this intent, then let the app flip feedGeneral and re-run the
-		// sync — which re-composes the query and pops a fresh confirm intent.
-		resolveConfirm(false);
+		// Cancel this intent IN PLACE — reissueConfirm keeps the modal mounted
+		// (pendingReplace stops the cancel's `failed` event from nulling the
+		// slot), so when the app flips feedGeneral and re-runs the sync the
+		// re-composed intent REPLACES the open modal instead of closing +
+		// reopening it. Using resolveConfirm(false) here unmounts the modal
+		// (visible flicker / "the component closes").
+		reissueConfirm();
 		onToggleGeneral?.();
 	}
 	// Split mode: when true, render each filter as its own
