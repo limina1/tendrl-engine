@@ -505,8 +505,6 @@ export function queryEvents(filters: Record<string, unknown>[], policy = 'local_
 
 export function getConfig() {
 	return fetchJson<{
-		my_pubkey: string | null;
-		assistant_pubkey: string | null;
 		data_dir: string;
 	}>('/api/v1/config');
 }
@@ -545,20 +543,36 @@ export function setLockTimeout(minutes: number) {
 	});
 }
 
-/** Persist (or, with null, forget) the engine key in config.toml's
- *  `[identity] ncryptsec`. The key is scrypt-encrypted; this never
- *  sends or stores a password. Call with the pasted ncryptsec on login
- *  so the next boot prompts for just the password, and with null on
- *  logout to forget it. */
-export function persistIdentityKey(ncryptsec: string | null) {
-	return fetchJson<{ persisted: boolean }>('/api/v1/identity/persist-key', {
+export function logoutIdentity() {
+	return fetchJson<IdentityStatus>('/api/v1/identity/logout', { method: 'POST' });
+}
+
+// Assistant identity API — a second identity established by pasting a key
+// (nsec or ncryptsec), persisted in the OS keyring (never config). Drives
+// `by:assistant` / feed scoping.
+
+export function getAssistantIdentity() {
+	return fetchJson<IdentityStatus>('/api/v1/assistant-identity');
+}
+
+/** Establish the assistant identity. `key` is an `nsec1…` (plaintext → live
+ *  signer immediately) or `ncryptsec1…` (encrypted → locked, needs unlock). */
+export function loginAssistantIdentity(key: string) {
+	return fetchJson<IdentityStatus>('/api/v1/assistant-identity/login', {
 		method: 'POST',
-		body: JSON.stringify({ ncryptsec })
+		body: JSON.stringify({ key })
 	});
 }
 
-export function logoutIdentity() {
-	return fetchJson<IdentityStatus>('/api/v1/identity/logout', { method: 'POST' });
+export function unlockAssistantIdentity(password: string) {
+	return fetchJson<IdentityStatus>('/api/v1/assistant-identity/unlock', {
+		method: 'POST',
+		body: JSON.stringify({ password })
+	});
+}
+
+export function logoutAssistantIdentity() {
+	return fetchJson<IdentityStatus>('/api/v1/assistant-identity/logout', { method: 'POST' });
 }
 
 // External signer / signing-source API (Phase 3 + 4 of identity plan)
