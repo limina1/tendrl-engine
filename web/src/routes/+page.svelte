@@ -75,7 +75,7 @@
 	setActiveStore(store);
 
 	// Redirect AppState navigation calls to spawn buffers in the shell
-	// instead of route-navigating away from /design/shell.
+	// instead of route-navigating away from the single-page app.
 	app.setNavigationHandlers({
 		onPublication: (pubkey, d_tag) => {
 			store.openBuffer({
