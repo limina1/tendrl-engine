@@ -1,8 +1,12 @@
 <script lang="ts">
+	import { untrack } from 'svelte';
 	import type { SearchResult, ContextItem } from '$lib/types';
+	import { getAppState } from '$lib/state.svelte';
 	import ProfileName from './ProfileName.svelte';
 	import ProfileResultItem from './ProfileResultItem.svelte';
 	import PoolStateBadges from './PoolStateBadges.svelte';
+
+	const app = getAppState();
 
 	let {
 		result,
@@ -40,6 +44,35 @@
 	const poolMatch = $derived(
 		items.find((e) => e.source_event_id === result.event_id) ?? null
 	);
+
+	// Containment for publication hits (kind 30040): the publications that
+	// reference this one as a child. Computed client-side from the result's
+	// coordinate — the feed gets this from the engine, but search results
+	// don't carry it. Restricted to 30040 so it matches the feed's "part of N"
+	// semantics rather than firing on every section (which is always in an index).
+	let partOf = $state(0);
+	$effect(() => {
+		const addr = result.addr;
+		if (!addr || result.kind !== 30040) {
+			partOf = 0;
+			return;
+		}
+		untrack(() => {
+			app
+				.containingByCoord({ kind: result.kind, pubkey: addr.pubkey, d_tag: addr.d_tag })
+				.then((idx) => {
+					if (result.addr === addr) partOf = idx.length;
+				});
+		});
+	});
+
+	/** "part of N" pill → replace the current search with the containing
+	 *  publications. No buffer reveal: we're already in the search view. */
+	function openContainingSearch() {
+		const addr = result.addr;
+		if (!addr) return;
+		app.searchFor(`k:30040 a:${result.kind}:${addr.pubkey}:${addr.d_tag}`);
+	}
 
 	let tagsExpanded = $state(false);
 	let menuOpen = $state(false);
@@ -172,6 +205,8 @@
 		onpillctx={() => onpillaction?.(result, 'context')}
 		onpillcmp={() => onpillaction?.(result, 'compose')}
 		onpilldrop={() => onpillaction?.(result, 'drop')}
+		containedIn={partOf}
+		onpartof={openContainingSearch}
 	/>
 </div>
 {/if}
