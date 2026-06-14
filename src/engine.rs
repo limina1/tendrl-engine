@@ -1005,6 +1005,7 @@ impl Engine {
         if let Err(e) = self.relay_store.save(&snapshot) {
             warn!("Failed to persist relay add ({set}/{url}): {e}");
         }
+        self.persist_relay_sets_to_config();
         // A new relay may carry sections we'd written off as unreachable —
         // clear the skip map so the next background sync retries them.
         if let Ok(mut skip) = self.unreachable_sections.lock() {
@@ -1037,7 +1038,109 @@ impl Engine {
         if let Err(e) = self.relay_store.save(&snapshot) {
             warn!("Failed to persist relay remove ({set}/{url}): {e}");
         }
+        self.persist_relay_sets_to_config();
         true
+    }
+
+    /// Mirror the live general/fetch/publish working sets into config.toml as
+    /// per-set `[relay.<name>].urls` tables. relays.json stays the runtime
+    /// store; this keeps config.toml a complete, exportable source of truth for
+    /// relays (and, later, importable). Best-effort: warns rather than failing
+    /// the mutation, matching `add_relay`'s write-through philosophy.
+    fn persist_relay_sets_to_config(&self) {
+        let Some(path) = self.config_path.clone() else {
+            return;
+        };
+        let (general, fetch, publish) = {
+            let rc = self.relay_config.read().unwrap();
+            (
+                rc.general.urls.clone(),
+                rc.fetch.urls.clone(),
+                rc.publish.urls.clone(),
+            )
+        };
+        let content = match std::fs::read_to_string(&path) {
+            Ok(c) => c,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+            Err(e) => {
+                warn!("Mirror relays → config: read failed: {e}");
+                return;
+            }
+        };
+        let mut doc: toml::Table = match toml::from_str(&content) {
+            Ok(d) => d,
+            Err(e) => {
+                warn!("Mirror relays → config: parse failed: {e}");
+                return;
+            }
+        };
+        let relay = doc
+            .entry("relay")
+            .or_insert_with(|| toml::Value::Table(toml::Table::new()));
+        let toml::Value::Table(relay_t) = relay else {
+            warn!("Mirror relays → config: [relay] is not a table");
+            return;
+        };
+        for (name, urls) in [("general", &general), ("fetch", &fetch), ("publish", &publish)] {
+            let arr = urls.iter().cloned().map(toml::Value::String).collect();
+            let mut set_t = toml::Table::new();
+            set_t.insert("urls".into(), toml::Value::Array(arr));
+            relay_t.insert(name.into(), toml::Value::Table(set_t));
+        }
+        match toml::to_string_pretty(&doc) {
+            Ok(out) => {
+                if let Err(e) = std::fs::write(&path, out) {
+                    warn!("Mirror relays → config: write failed: {e}");
+                }
+            }
+            Err(e) => warn!("Mirror relays → config: serialize failed: {e}"),
+        }
+    }
+
+    /// Add user-introduced relays (those brand new to general/fetch/publish)
+    /// into the working `fetch` set, persisting once to relays.json **and**
+    /// config.toml. Called from the fetch/search/confirm entry points so a
+    /// relay a user brings into a single operation sticks for the session and
+    /// across restarts, rather than being used once and discarded. Relays
+    /// already known to any set are left as-is (no set churn). Returns the
+    /// number newly added.
+    pub fn persist_discovered_relays(&self, urls: &[String]) -> usize {
+        let mut added = 0usize;
+        let snapshot = {
+            let mut rc = self.relay_config.write().unwrap();
+            let known: std::collections::HashSet<String> = rc
+                .general
+                .urls
+                .iter()
+                .chain(&rc.fetch.urls)
+                .chain(&rc.publish.urls)
+                .cloned()
+                .collect();
+            for url in urls {
+                let url = crate::relay_url::normalize_relay_url(url);
+                if url.is_empty() || known.contains(&url) {
+                    continue;
+                }
+                if let Some(list) = rc.urls_mut("fetch") {
+                    if !list.iter().any(|u| u == &url) {
+                        list.push(url);
+                        added += 1;
+                    }
+                }
+            }
+            if added == 0 {
+                return 0;
+            }
+            self.relay_sets_snapshot_locked(&rc)
+        };
+        if let Err(e) = self.relay_store.save(&snapshot) {
+            warn!("Failed to persist discovered relays: {e}");
+        }
+        self.persist_relay_sets_to_config();
+        if let Ok(mut skip) = self.unreachable_sections.lock() {
+            skip.clear();
+        }
+        added
     }
 
     /// Add an author to the follow list
@@ -1208,6 +1311,15 @@ impl Engine {
                     .to_path_buf()
             });
 
+        // Give fastembed (onnx backend) a stable model cache next to the index
+        // so the model downloads once, not re-fetched per working directory —
+        // its default is a CWD-relative `.fastembed_cache`. Honors an explicit
+        // user override. This is also the path `scripts/fetch-embedding-model.sh`
+        // pre-seeds to skip fastembed's slow built-in downloader.
+        if std::env::var_os("FASTEMBED_CACHE_DIR").is_none() {
+            std::env::set_var("FASTEMBED_CACHE_DIR", index_dir.join("fastembed_cache"));
+        }
+
         let index = EmbeddingIndex::load(&index_dir, config)?;
         info!(
             "Embedding index: {} vectors, model={}",
@@ -1277,8 +1389,11 @@ impl Engine {
         let Some(path) = self.config_path.as_deref() else {
             return Ok(());
         };
-        let content = std::fs::read_to_string(path)
-            .map_err(|e| EngineError::Config(format!("Failed to read config: {e}")))?;
+        let content = match std::fs::read_to_string(path) {
+            Ok(c) => c,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+            Err(e) => return Err(EngineError::Config(format!("Failed to read config: {e}"))),
+        };
         let mut doc: toml::Table = toml::from_str(&content)
             .map_err(|e| EngineError::Config(format!("Failed to parse config: {e}")))?;
         let identity = doc
@@ -1305,8 +1420,11 @@ impl Engine {
         let Some(path) = self.config_path.as_deref() else {
             return Ok(());
         };
-        let content = std::fs::read_to_string(path)
-            .map_err(|e| EngineError::Config(format!("Failed to read config: {e}")))?;
+        let content = match std::fs::read_to_string(path) {
+            Ok(c) => c,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+            Err(e) => return Err(EngineError::Config(format!("Failed to read config: {e}"))),
+        };
         let mut doc: toml::Table = toml::from_str(&content)
             .map_err(|e| EngineError::Config(format!("Failed to parse config: {e}")))?;
         let embedding = doc
