@@ -56,11 +56,19 @@
 	let appendInput = $state('');
 	let appendError = $state<string | null>(null);
 	let detailsOpen = $state(false);
-	// When on, confirming ALSO pulls a broad, un-author-scoped feed (recent
-	// kind-30040 publications from all authors) from the selected relays — the
-	// "include feed stream" option, on top of the scoped by:me/by:assistant
-	// fetch the intent proposes.
-	let includeGeneral = $state(false);
+	// "General feed" — include a broad, un-author-scoped pull (recent kind
+	// 30040 from all authors). The default tracks the query, consistent with
+	// how auto/confirm behave:
+	//   - logged out → the query has no author scope, so it's already the
+	//     general feed: toggle on (green) + disabled (nothing to narrow to).
+	//   - logged in → the query is scoped to by:user(s); toggle off by
+	//     default, and turning it on APPENDS the broad pull on top.
+	const isScopedQuery = $derived(
+		(intent.summary?.filters ?? []).some((f) => (f.authors?.length ?? 0) > 0)
+	);
+	// null = follow the query default; set once the user clicks (scoped only).
+	let generalOverride = $state<boolean | null>(null);
+	const includeGeneral = $derived(isScopedQuery ? (generalOverride ?? false) : true);
 	// Split mode: when true, render each filter as its own
 	// standalone single-filter request (each with the same composition
 	// appended) so the user can see + copy them individually. The
@@ -173,10 +181,13 @@
 	function confirm() {
 		if (selectedRelays.length === 0) return;
 		resolveConfirm(true, selectedRelays);
-		if (includeGeneral) {
-			// Also pull a broad, un-author-scoped feed of recent publications
-			// (kind 30040, all authors) from the selected relays. modeConfirm
-			// bypasses the confirm gate so this doesn't pop a second modal.
+		// Append a broad pull only when the query is SCOPED and the user opted
+		// in — a broad (logged-out) query already IS the general feed, so
+		// confirming it covers that without a second request.
+		if (includeGeneral && isScopedQuery) {
+			// Pull recent publications (kind 30040, all authors) from the
+			// selected relays. modeConfirm bypasses the confirm gate so this
+			// doesn't pop a second modal.
 			api
 				.fetchFromRelay(selectedRelays, [30040], [], 200, { modeConfirm: true })
 				.catch((e: unknown) => console.error('[fetch-confirm] broad feed pull failed', e));
@@ -256,9 +267,12 @@
 			<button
 				class="rf-append-btn rf-general-btn"
 				class:rf-general-btn--on={includeGeneral}
-				onclick={() => (includeGeneral = !includeGeneral)}
+				onclick={() => (generalOverride = !includeGeneral)}
+				disabled={!isScopedQuery}
 				aria-pressed={includeGeneral}
-				title="When on, also pull a broad feed of recent publications (all authors) from the selected relays — not just yours"
+				title={isScopedQuery
+					? 'When on, also pull a broad feed (all authors) from the selected relays, on top of your scoped fetch'
+					: 'Logged out — the feed is already broad (all authors)'}
 			>{includeGeneral ? '✓' : '○'} General feed</button>
 		</div>
 		{#if appendError}
@@ -729,6 +743,12 @@
 	}
 	.rf-general-btn--on:hover {
 		background: rgba(180, 190, 130, 0.22);
+	}
+	/* Logged out → the toggle is forced on + disabled, but should still read as
+	   on (green), not dimmed like a normal disabled button. */
+	.rf-general-btn--on:disabled {
+		opacity: 1;
+		cursor: default;
 	}
 	.rf-append-btn:hover {
 		border-color: var(--state-online);
