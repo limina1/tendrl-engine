@@ -627,6 +627,24 @@ mod tests {
     use super::*;
 
     #[test]
+    fn stale_identity_table_parses_and_is_ignored() {
+        // An older config.toml with the now-removed identity *data* fields must
+        // still parse (no deny_unknown_fields), keep the signer preferences,
+        // and silently drop pubkey/assistant/ncryptsec.
+        let toml_text = r#"
+[identity]
+pubkey = "npub1abc"
+assistant = "npub1def"
+ncryptsec = "ncryptsec1ghi"
+source = "nip07"
+lock_timeout_minutes = 5
+"#;
+        let config: Config = toml::from_str(toml_text).expect("stale [identity] should parse");
+        assert_eq!(config.identity.source.as_deref(), Some("nip07"));
+        assert_eq!(config.identity.lock_timeout_minutes, 5);
+    }
+
+    #[test]
     fn legacy_relay_urls_unions_three_sections_dedup_preserve_order() {
         let toml_text = r#"
 [relay]
