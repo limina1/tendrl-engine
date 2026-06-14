@@ -7,14 +7,17 @@ description = "Standalone local Nostr backend with HTTP API - query nostrdb and 
 repository = "https://github.com/youruser/nostr-engine"
 keywords = ["nostr", "relay", "database", "api"]
 categories = ["database", "web-programming"]
-default-run = "nostr-engine"
+default-run = "tendrl-engine"
 
 [lib]
 name = "nostr_engine"
 path = "src/lib.rs"
 
+# Executable is `tendrl-engine`; the internal lib crate stays `nostr_engine`
+# (all `use nostr_engine::` imports), and the on-disk data dir + keyring
+# service keep the `nostr-engine` name so existing installs aren't orphaned.
 [[bin]]
-name = "nostr-engine"
+name = "tendrl-engine"
 path = "src/main.rs"
 
 [features]

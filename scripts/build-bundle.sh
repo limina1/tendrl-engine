@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Build the single-executable tendrl-engine bundle.
 #
-# Produces one binary (target/release/nostr-engine) with:
+# Produces one binary (target/release/tendrl-engine) with:
 #   - the SvelteKit SPA embedded (rust-embed, from web/build/)
 #   - in-process ONNX embeddings (built in, no Python sidecar)
 #
@@ -35,6 +35,6 @@ touch web/build
 cargo build --release
 
 echo ""
-echo "Done: target/release/nostr-engine"
-echo "Run it:  ./target/release/nostr-engine"
+echo "Done: target/release/tendrl-engine"
+echo "Run it:  ./target/release/tendrl-engine"
 echo "(opens http://127.0.0.1:3030/ — log in with a NIP-07 browser extension)"

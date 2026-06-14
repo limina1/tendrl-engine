@@ -11,10 +11,14 @@
 
 NOSTRDB_REPO := https://github.com/damus-io/nostrdb-rs
 
+# Where `make install` drops the symlink. Override with `make install BINDIR=...`.
+BINDIR ?= $(HOME)/.local/bin
+BIN    := tendrl-engine
+
 .DEFAULT_GOAL := check
 .PHONY: help check check-rust check-nostrdb check-web \
         update update-latest update-rust update-rust-latest update-nostrdb \
-        update-web update-web-latest tools
+        update-web update-web-latest tools install uninstall
 
 help:
 	@echo "tendrl-engine dependency workflow"
@@ -26,6 +30,8 @@ help:
 	@echo ""
 	@echo "  make update-nostrdb    repin the nostrdb crate to upstream HEAD"
 	@echo "  make tools             install optional helpers (cargo-outdated, cargo-edit)"
+	@echo "  make install           symlink target/release/$(BIN) into $(BINDIR)"
+	@echo "  make uninstall         remove that symlink"
 	@echo ""
 	@echo "  per-manager checks:    check-rust  check-nostrdb  check-web"
 	@echo "  per-manager updates:   update-rust  update-rust-latest"
@@ -125,3 +131,27 @@ tools:
 	@echo "==> Installing optional Rust helpers (cargo-outdated, cargo-edit)"
 	cargo install cargo-outdated cargo-edit
 	@command -v pnpm >/dev/null 2>&1 || echo "WARNING: pnpm not found — see https://pnpm.io/"
+
+# ---------------------------------------------------------------------------
+# install — symlink the release binary onto PATH (~/.local/bin by default)
+# ---------------------------------------------------------------------------
+# A symlink (not a copy) so a later `scripts/build-bundle.sh` / `cargo build
+# --release` is reflected immediately — no reinstall. Build first; this only
+# wires up the link.
+
+install:
+	@if [ ! -x target/release/$(BIN) ]; then \
+		echo "target/release/$(BIN) not found — build it first:"; \
+		echo "  scripts/build-bundle.sh   (full single-exe with the web SPA)"; \
+		echo "  cargo build --release     (engine only, placeholder SPA)"; \
+		exit 1; \
+	fi
+	@mkdir -p "$(BINDIR)"
+	@ln -sf "$(CURDIR)/target/release/$(BIN)" "$(BINDIR)/$(BIN)"
+	@echo "==> Linked $(BINDIR)/$(BIN) -> $(CURDIR)/target/release/$(BIN)"
+	@command -v $(BIN) >/dev/null 2>&1 || \
+		echo "NOTE: $(BINDIR) is not on your PATH — add it to run '$(BIN)' from anywhere."
+
+uninstall:
+	@rm -f "$(BINDIR)/$(BIN)"
+	@echo "==> Removed $(BINDIR)/$(BIN)"
