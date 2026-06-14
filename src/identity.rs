@@ -1004,6 +1004,32 @@ mod tests {
     use super::*;
 
     #[test]
+    fn login_nsec_derives_pubkey_and_can_sign() {
+        use bech32::{Bech32, Hrp};
+        // Build a valid nsec from a known secret (round-trips the same bech32
+        // lib decode_nsec uses), then confirm login derives the matching pubkey.
+        let secret_hex = "67dea2ed018072d675f5415ecfaed7d2597555e202d85b3d65ea4e58d2d92ffa";
+        let bytes = hex::decode(secret_hex).unwrap();
+        let nsec = bech32::encode::<Bech32>(Hrp::parse("nsec").unwrap(), &bytes).unwrap();
+        let expected = derive_pubkey_from_secret(secret_hex).unwrap();
+
+        let mut s = IdentitySession::new();
+        let pk = s.login_nsec(&nsec).expect("nsec login should derive a pubkey");
+        assert_eq!(pk, expected);
+        // by:assistant / by:me scope off effective_pubkey; an nsec is live.
+        assert_eq!(s.effective_pubkey().as_deref(), Some(pk.as_str()));
+        assert!(s.can_sign());
+        assert!(s.secret().is_some());
+    }
+
+    #[test]
+    fn login_nsec_rejects_non_nsec() {
+        let mut s = IdentitySession::new();
+        assert!(s.login_nsec("npub1xxx").is_err());
+        assert!(s.effective_pubkey().is_none());
+    }
+
+    #[test]
     fn test_parse_npub() {
         let npub = "npub1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq6gkaet";
         let result = parse_key(npub);
