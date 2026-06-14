@@ -2005,6 +2005,53 @@ function _createAppState() {
 		return `${event.kind}:${event.pubkey}:${d}`;
 	}
 
+	/** Collapse candidate containing 30040 events to one row per *coordinate*,
+	 *  newest version wins. 30040s are replaceable: every version is a distinct
+	 *  event id but the same `pubkey:d_tag`, so deduping by id (as we used to)
+	 *  listed the same publication twice. Caps at 5 rows. */
+	function dedupContainingEvents(events: NostrEvent[]): ContainingResult['indexes'] {
+		const byCoord = new Map<string, NostrEvent>();
+		for (const e of events) {
+			const title = e.tags.find((t: string[]) => t[0] === 'title')?.[1];
+			const d_tag = e.tags.find((t: string[]) => t[0] === 'd')?.[1];
+			if (!title || !d_tag) continue;
+			const coord = `${e.pubkey}:${d_tag}`;
+			const prev = byCoord.get(coord);
+			if (!prev || (e.created_at ?? 0) > (prev.created_at ?? 0)) byCoord.set(coord, e);
+		}
+		return [...byCoord.values()]
+			.map((e) => ({
+				id: e.id,
+				pubkey: e.pubkey,
+				d_tag: e.tags.find((t: string[]) => t[0] === 'd')![1],
+				title: e.tags.find((t: string[]) => t[0] === 'title')![1]
+			}))
+			.slice(0, 5);
+	}
+
+	/** Containment by coordinate: the kind-30040 indexes that reference this
+	 *  `kind:pubkey:d_tag` via an `a` tag. The reader's "part of N" pill uses
+	 *  this — it has a coordinate, not a full event. Local-only, cached. */
+	async function containingByCoord(coord: {
+		kind: number;
+		pubkey: string;
+		d_tag: string;
+	}): Promise<ContainingResult['indexes']> {
+		const aRef = `${coord.kind}:${coord.pubkey}:${coord.d_tag}`;
+		const cacheKey = `coord:${aRef}`;
+		const cached = containingCache.get(cacheKey);
+		if (cached && cached.status === 'loaded') return cached.indexes;
+		try {
+			const byA = await api.queryEvents([{ kinds: [30040], '#a': [aRef] }], 'local_only');
+			const indexes = dedupContainingEvents((byA?.events ?? []) as NostrEvent[]);
+			containingCache.set(cacheKey, { status: 'loaded', indexes });
+			return indexes;
+		} catch (e) {
+			console.error('containingByCoord failed:', e);
+			return [];
+		}
+	}
+
 	async function findContainingIndexes(
 		event: NostrEvent | SearchResult
 	): Promise<ContainingResult> {
@@ -2041,18 +2088,10 @@ function _createAppState() {
 					: Promise.resolve({ events: [] }),
 				api.queryEvents([{ kinds: [30040], '#e': [id] }], 'local_only')
 			]);
-			const seen = new Set<string>();
-			const indexes: ContainingResult['indexes'] = [];
-			for (const ev of [...(byA?.events ?? []), ...(byE?.events ?? [])]) {
-				const e = ev as NostrEvent;
-				if (seen.has(e.id)) continue;
-				seen.add(e.id);
-				const title = e.tags.find((t: string[]) => t[0] === 'title')?.[1];
-				const d_tag = e.tags.find((t: string[]) => t[0] === 'd')?.[1];
-				if (!title || !d_tag) continue;
-				indexes.push({ id: e.id, pubkey: e.pubkey, d_tag, title });
-				if (indexes.length >= 5) break;
-			}
+			const indexes = dedupContainingEvents([
+				...((byA?.events ?? []) as NostrEvent[]),
+				...((byE?.events ?? []) as NostrEvent[])
+			]);
 			const result: ContainingResult = { status: 'loaded', indexes };
 			containingCache.set(id, result);
 			return result;
@@ -3972,6 +4011,7 @@ function _createAppState() {
 		getEventForModal,
 		openAddressableInModal,
 		findContainingIndexes,
+		containingByCoord,
 		get toasts() { return toasts; },
 		pushToast,
 		pushActivityToast,
