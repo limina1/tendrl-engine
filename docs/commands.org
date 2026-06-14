@@ -716,21 +716,21 @@ cd web && pnpm dev
 
 * Dependency updates
 
-One entrypoint — the root =Makefile= — drives all three package managers
-(cargo, pnpm, uv) plus the git-pinned =nostrdb= crate. Bare =make= only
+One entrypoint — the root =Makefile= — drives both package managers
+(cargo, pnpm) plus the git-pinned =nostrdb= crate. Bare =make= only
 reports; nothing is written until you ask for an =update*= target.
 
 ** Report what is outdated (no files touched)
 
 #+begin_src bash
 make            # = make check
-make check-rust # or check-nostrdb / check-web / check-sidecar individually
+make check-rust # or check-nostrdb / check-web individually
 #+end_src
 
 ** Safe updates — stay within the version ranges in each manifest
 
-Updates =Cargo.lock=, =web/pnpm-lock.yaml=, =sidecar/requirements.lock=,
-and repins =nostrdb= to upstream HEAD. Build + test afterward.
+Updates =Cargo.lock= and =web/pnpm-lock.yaml=, and repins =nostrdb= to
+upstream HEAD. Build + test afterward.
 
 #+begin_src bash
 make update
@@ -751,18 +751,7 @@ make update-latest
 #+begin_src bash
 make update-rust         make update-rust-latest
 make update-web          make update-web-latest
-make update-sidecar      # recompiles the lock + syncs sidecar/.venv
 make update-nostrdb      # repin the git rev only
-#+end_src
-
-** Sidecar lockfile
-
-=sidecar/requirements.txt= is the unpinned input; =requirements.lock= is
-the compiled, pinned output that =sidecar/run.sh= installs from. Recreate
-it after editing =requirements.txt=:
-
-#+begin_src bash
-make lock-sidecar
 #+end_src
 
 * Slice — Confirm/Auto network mode

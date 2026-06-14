@@ -329,7 +329,7 @@ tendrl-engine's search is implemented in Rust across:
 *** 10.3 Semantic search
 
 =engine.semantic_search()= embeds the query string, queries the HNSW index
-(=embedding.rs=, usearch — Python sidecar or in-process ONNX), over-fetches
+(=embedding.rs=, usearch — in-process ONNX), over-fetches
 =k*5=–=k*10= to survive post-filtering, splits hits into event results and
 document-page results, applies kind/author/text post-filters, sorts by score.
 

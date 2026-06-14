@@ -2817,7 +2817,7 @@ function _createAppState() {
 	// ===================== Embedding =====================
 
 	// Lightweight status refresh (no sync). Used when opening the
-	// Settings panel so the embedding section reflects current sidecar
+	// Settings panel so the embedding section reflects current model
 	// health / index counts without triggering a (heavy) embed pass.
 	async function refreshEmbeddingStatus() {
 		try { embeddingStatus = await api.getEmbeddingStatus(); } catch {}

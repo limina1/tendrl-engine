@@ -17,7 +17,7 @@ web frontend and an HTTP API:
 app is the only live frontend.)
 
 Both sit on the same engine: nostrdb storage, NIP-01 relay client,
-structured search, embedding sidecar, identity manager, and publication
+structured search, in-process embeddings, identity manager, and publication
 builder.
 
 * Core Engine
@@ -60,21 +60,18 @@ builder.
 - Query language: =k:30041 by:npub1... t:python "exact phrase" ~semantic= and
   =|= for OR/union
 - Compiles to NIP-01 filters with text post-filtering over nostrdb content
-- Semantic search via embedding sidecar; over-fetches k×10 from HNSW when
-  kind/author filters are present
+- Semantic search via in-process ONNX embeddings; over-fetches k×10 from HNSW
+  when kind/author filters are present
 - Search results split by type: publications routed to the feed, document
   pages into their own tab with badges
 
-** Embedding Sidecar
-- Two backends:
-  - *Python sidecar* (sentence-transformers / Flask) — default, dev-friendly,
-    runs at =http://localhost:3031= via =start.sh=
-  - *Rust ONNX* (=--features onnx=) — in-process, single-binary deployment
+** Embeddings
+- In-process ONNX (fastembed) — the only backend; single-binary, no extra
+  services. The model loads lazily on first embed and is cached on disk
+  (=<data_dir>/fastembed_cache=).
 - usearch HNSW index, persisted to =vectors.idx= + =vectors.map=
 - =POST /api/v1/embed/sync= for incremental, =/reindex= for full
-- =GET /api/v1/embed/status= for health + index size
-- Reliability fixes: persistent venv, =HF_HUB_OFFLINE=1= so the sidecar
-  doesn't block on Hugging Face Hub on startup
+- =GET /api/v1/embed/status= for model health + index size
 
 ** Document Import
 - Parsers for PDF, DOCX, EPUB, HTML, TXT (=POST /api/v1/import=)
@@ -290,7 +287,7 @@ inside the corresponding buffer renderer. Deep-link routing
 ** Settings & Operations
 - Relay sets editable from the UI
 - Per-relay / per-author / per-section manual fetch buttons
-- Reindex button + live event-count indicator for the embedding sidecar
+- Reindex button + live event-count indicator for embeddings
 - Network-mode toggle visible in the header
 
 * Reader View Modes (formerly the TUI)
@@ -349,9 +346,9 @@ Cycle modes with =v=.
 * Operations
 
 ** start.sh
-=./start.sh= launches sidecar + engine; =--dev= also starts the SvelteKit dev
-server. Waits for sidecar health, detects embedding readiness, applies
-=HF_HUB_OFFLINE= so it doesn't hang on a missing network.
+=./start.sh= launches the engine + web preview; =--dev= uses the SvelteKit dev
+server instead. Embeddings (when enabled) run in-process — nothing extra to
+start or wait for.
 
 ** Purge & Reingest
 - =POST /api/v1/purge= clears local data
@@ -373,7 +370,7 @@ nostrdb does not support deleting individual events. Workarounds:
 See =docs/nostrdb-deletion-architecture.org=.
 
 ** Bulk Ingest Throughput
-=sync_embeddings()= per-event can overwhelm the sidecar around ~350 events.
+=sync_embeddings()= per-event can be slow around ~350 events.
 Tracked separately; batching is the planned fix.
 
 ** ncryptsec Compatibility
@@ -383,7 +380,7 @@ cases with some external implementations.
 * Running the Application
 
 #+begin_src bash
-# Full stack (sidecar + engine)
+# Full stack (engine + web)
 ./start.sh
 
 # Full stack + web dev server

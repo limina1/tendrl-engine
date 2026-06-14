@@ -157,8 +157,6 @@ pub struct Engine {
     ignore_list: RwLock<IgnoreList>,
     /// Documents folder path
     documents_dir: std::path::PathBuf,
-    /// Sidecar URL
-    sidecar_url: String,
     /// Claude Code sessions directory
     claude_sessions_dir: Option<std::path::PathBuf>,
     /// Network activity tracker (mode + fetch log)
@@ -269,7 +267,6 @@ impl Engine {
             auto_embed: std::sync::atomic::AtomicBool::new(true),
             ignore_list: RwLock::new(ignore_list),
             documents_dir: std::path::PathBuf::from("./docs"),
-            sidecar_url: "http://localhost:3031".to_string(),
             claude_sessions_dir: None,
             network: Arc::new(NetworkActivity::new(NetworkMode::Auto)),
             nip11_cache: crate::nip11::Nip11Cache::new(),
@@ -1166,16 +1163,6 @@ impl Engine {
         self.documents_dir = path;
     }
 
-    /// Get the sidecar URL
-    pub fn sidecar_url(&self) -> &str {
-        &self.sidecar_url
-    }
-
-    /// Set the sidecar URL
-    pub fn set_sidecar_url(&mut self, url: String) {
-        self.sidecar_url = url;
-    }
-
     /// Get the Claude Code sessions directory
     pub fn claude_sessions_dir(&self) -> Option<&std::path::Path> {
         self.claude_sessions_dir.as_deref()
@@ -1510,7 +1497,7 @@ impl Engine {
                 enabled: true,
                 indexed_count: index.len(),
                 total_events,
-                sidecar_available: true,
+                embedding_available: true,
                 model: Some(model),
             });
         }
@@ -1566,7 +1553,7 @@ impl Engine {
             enabled: true,
             indexed_count,
             total_events,
-            sidecar_available: true,
+            embedding_available: true,
             model: Some(model),
         })
     }
@@ -2315,7 +2302,7 @@ impl Engine {
 
                     // Load page content from the docs folder
                     let doc_path = self.documents_dir.join(&filename);
-                    let content = if let Ok(pages) = self.load_doc_page(&doc_path, page_num).await {
+                    let content = if let Ok(pages) = self.load_doc_page(&doc_path, page_num) {
                         pages
                     } else {
                         format!("[Page {} of {}]", page_num, filename)
@@ -2430,7 +2417,6 @@ impl Engine {
             return Ok(0);
         }
 
-        let sidecar = &self.sidecar_url;
         let mut total_embedded = 0;
 
         let entries: Vec<_> = std::fs::read_dir(docs_dir)
@@ -2468,53 +2454,28 @@ impl Engine {
                 }
             }
 
-            // Parse via sidecar
+            // Parse in-process (no sidecar)
             let file_bytes = match std::fs::read(&path) {
                 Ok(b) => b,
                 Err(_) => continue,
             };
 
-            let part = reqwest::multipart::Part::bytes(file_bytes)
-                .file_name(filename.clone())
-                .mime_str("application/octet-stream")
-                .unwrap();
-            let form = reqwest::multipart::Form::new().part("file", part);
-
-            let resp = match reqwest::Client::new()
-                .post(format!("{sidecar}/parse"))
-                .multipart(form)
-                .timeout(std::time::Duration::from_secs(60))
-                .send()
-                .await
-            {
-                Ok(r) => r,
+            let parsed = match crate::document::parse_document(&filename, &file_bytes) {
+                Ok(p) => p,
                 Err(e) => {
                     warn!("Failed to parse {}: {}", filename, e);
                     continue;
                 }
             };
 
-            let parsed: serde_json::Value = match resp.json().await {
-                Ok(v) => v,
-                Err(e) => {
-                    warn!("Invalid parse response for {}: {}", filename, e);
-                    continue;
-                }
-            };
-
-            let pages = match parsed.get("pages").and_then(|p| p.as_array()) {
-                Some(p) => p,
-                None => continue,
-            };
-
             // Embed each page
             let mut texts = Vec::new();
             let mut keys = Vec::new();
 
-            for page in pages {
-                let page_num = page.get("page_num").and_then(|v| v.as_u64()).unwrap_or(0);
-                let content = page.get("content").and_then(|v| v.as_str()).unwrap_or("");
-                let title = page.get("title").and_then(|v| v.as_str()).unwrap_or("");
+            for page in &parsed.pages {
+                let page_num = page.page_num;
+                let content = page.content.as_str();
+                let title = page.title.as_deref().unwrap_or("");
 
                 if content.trim().is_empty() {
                     continue;
@@ -2580,8 +2541,8 @@ impl Engine {
         Ok(total_embedded)
     }
 
-    /// Load a specific page's content from a parsed document (via sidecar)
-    async fn load_doc_page(&self, doc_path: &std::path::Path, page_num: usize) -> Result<String> {
+    /// Load a specific page's content from a parsed document (in-process)
+    fn load_doc_page(&self, doc_path: &std::path::Path, page_num: usize) -> Result<String> {
         let file_bytes = std::fs::read(doc_path)
             .map_err(|e| EngineError::Database(format!("Failed to read doc: {e}")))?;
         let filename = doc_path
@@ -2589,43 +2550,14 @@ impl Engine {
             .and_then(|n| n.to_str())
             .unwrap_or("unknown");
 
-        let part = reqwest::multipart::Part::bytes(file_bytes)
-            .file_name(filename.to_string())
-            .mime_str("application/octet-stream")
-            .unwrap();
-        let form = reqwest::multipart::Form::new().part("file", part);
+        let parsed = crate::document::parse_document(filename, &file_bytes)?;
 
-        let parsed: serde_json::Value = reqwest::Client::new()
-            .post(format!("{}/parse", self.sidecar_url))
-            .multipart(form)
-            .timeout(std::time::Duration::from_secs(30))
-            .send()
-            .await
-            .map_err(|e| EngineError::Database(format!("Sidecar parse failed: {e}")))?
-            .json()
-            .await
-            .map_err(|e| EngineError::Database(format!("Invalid response: {e}")))?;
-
-        let pages = parsed
-            .get("pages")
-            .and_then(|p| p.as_array())
-            .ok_or_else(|| EngineError::Database("No pages in response".into()))?;
-
-        for page in pages {
-            let pn = page.get("page_num").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
-            if pn == page_num {
-                return Ok(page
-                    .get("content")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_string());
-            }
-        }
-
-        Err(EngineError::Database(format!(
-            "Page {} not found",
-            page_num
-        )))
+        parsed
+            .pages
+            .into_iter()
+            .find(|page| page.page_num as usize == page_num)
+            .map(|page| page.content)
+            .ok_or_else(|| EngineError::Database(format!("Page {} not found", page_num)))
     }
 
     // ---- Private helper methods ----

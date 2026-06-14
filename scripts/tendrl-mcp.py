@@ -245,7 +245,7 @@ TOOLS = [
     },
     {
         "name": "tendrl_publish_document",
-        "description": "Parse a document from the knowledgebase using the sidecar, then publish as a Nostr publication (30040 index + 30041 sections). Parses org/adoc/md files into structured sections with metadata.",
+        "description": "Parse a document from the knowledgebase (in-process), then publish as a Nostr publication (30040 index + 30041 sections). Parses org/adoc/md files into structured sections with metadata.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -457,14 +457,14 @@ def handle_tool_call(name, args):
         if not os.path.exists(filepath):
             return f"File not found: {kb_path}"
         filename = os.path.basename(filepath)
-        # Copy to docs folder for sidecar parsing
+        # Copy to docs folder for the engine to parse (in-process)
         import shutil
         docs_dir = os.path.join(PROJECT_ROOT, "docs")
         os.makedirs(docs_dir, exist_ok=True)
         tmp_name = f"_kb_{filename}"
         shutil.copy2(filepath, os.path.join(docs_dir, tmp_name))
         try:
-            # Parse via sidecar
+            # Parse in-process via the engine
             parsed = api("/api/v1/documents/parse", "POST", {"filename": tmp_name}, timeout=60)
             if "error" in parsed:
                 return json.dumps(parsed)

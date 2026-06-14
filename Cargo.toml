@@ -19,7 +19,6 @@ path = "src/main.rs"
 
 [features]
 default = []
-onnx = ["fastembed"]
 
 [dependencies]
 # Nostr database
@@ -76,14 +75,22 @@ clap = { version = "4", features = ["derive"] }
 # Vector search
 usearch = "2"
 
-# ONNX embeddings (optional, for --features onnx)
-fastembed = { version = "4", optional = true }
+# In-process ONNX embeddings (the only embedding backend)
+fastembed = "4"
 
 # Single-exe bundling: embed the built SPA (web/build/) into the binary and
 # open the browser on launch. In debug builds rust-embed reads from disk so the
 # UI hot-reloads without a rebuild; release builds bake the assets in.
 rust-embed = { version = "8", features = ["mime-guess"] }
 webbrowser = "1"
+# In-process document text extraction (replaces the Python sidecar /parse).
+pdf-extract = "0.10.0"
+epub = "2.1.5"
+html2text = "0.17.1"
+# DOCX is a zip of XML; only the deflate codec is needed, so drop zip's heavy
+# default codecs (zstd/bzip2 and their C builds) to keep the build light.
+zip = { version = "8.6.0", default-features = false, features = ["deflate"] }
+quick-xml = "0.40.1"
 
 [dev-dependencies]
 tempfile = "3.24.0"

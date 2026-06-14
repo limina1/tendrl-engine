@@ -1636,7 +1636,7 @@ The chat's powerful editing capabilities.
 Vector embeddings, publication feed, lazy loading, publish flow.
 
 - [X] =EmbeddingIndex= struct wrapping usearch HNSW with event_id mapping
-- [X] Dual backend: Python sidecar (sentence-transformers) or Rust ONNX (=--features onnx=)
+- [X] In-process ONNX embedding backend (fastembed) — model loaded lazily, cached on disk
 - [X] =sync_embeddings()= and =reindex_embeddings()= with batch processing
 - [X] Model mismatch detection on index load (warning + dimension check)
 - [X] =~:"phrase":k= syntax (quotes after prefix, consistent with other patterns)

@@ -1229,27 +1229,9 @@ pub async fn parse_document_handler(
     let file_bytes = std::fs::read(&file_path)
         .map_err(|e| EngineError::Database(format!("Failed to read file: {e}")))?;
 
-    let sidecar = engine.sidecar_url();
-
-    // Send to sidecar /parse as multipart
-    let part = reqwest::multipart::Part::bytes(file_bytes)
-        .file_name(req.filename.clone())
-        .mime_str("application/octet-stream")
-        .unwrap();
-    let form = reqwest::multipart::Form::new().part("file", part);
-
-    let resp: Value = reqwest::Client::new()
-        .post(format!("{sidecar}/parse"))
-        .multipart(form)
-        .timeout(std::time::Duration::from_secs(60))
-        .send()
-        .await
-        .map_err(|e| EngineError::Database(format!("Sidecar parse failed: {e}")))?
-        .json()
-        .await
-        .map_err(|e| EngineError::Database(format!("Invalid parse response: {e}")))?;
-
-    Ok(Json(resp))
+    // Parse in-process (no sidecar)
+    let parsed = crate::document::parse_document(&req.filename, &file_bytes)?;
+    Ok(Json(serde_json::to_value(parsed)?))
 }
 
 /// POST /api/v1/import — upload file, save to docs folder, parse
@@ -1289,24 +1271,9 @@ pub async fn import_document_handler(
     std::fs::write(&dest, &file_bytes)
         .map_err(|e| EngineError::Database(format!("Failed to save file: {e}")))?;
 
-    // Parse via sidecar
-    let sidecar = engine.sidecar_url();
-    let part = reqwest::multipart::Part::bytes(file_bytes)
-        .file_name(filename.clone())
-        .mime_str("application/octet-stream")
-        .unwrap();
-    let form = reqwest::multipart::Form::new().part("file", part);
-
-    let resp: Value = reqwest::Client::new()
-        .post(format!("{sidecar}/parse"))
-        .multipart(form)
-        .timeout(std::time::Duration::from_secs(60))
-        .send()
-        .await
-        .map_err(|e| EngineError::Database(format!("Sidecar parse failed: {e}")))?
-        .json()
-        .await
-        .map_err(|e| EngineError::Database(format!("Invalid parse response: {e}")))?;
+    // Parse in-process (no sidecar)
+    let parsed = crate::document::parse_document(&filename, &file_bytes)?;
+    let resp = serde_json::to_value(parsed)?;
 
     // Trigger background doc embedding sync
     if engine.embedding_index().is_some() {
@@ -4760,7 +4727,7 @@ pub async fn embed_status_handler(
                 "total_events": 0,
                 "stale_count": 0,
                 "missing_sections": 0,
-                "sidecar_available": false,
+                "embedding_available": false,
                 "model": null,
                 "embed_kinds": engine.embed_kinds(),
                 "available_kinds": crate::embedding::DEFAULT_EMBED_KINDS.to_vec(),
@@ -4770,7 +4737,7 @@ pub async fn embed_status_handler(
     };
 
     let index = emb.read().await;
-    let sidecar_available = index.health_check().await.is_ok();
+    let embedding_available = index.health_check().await.is_ok();
     let model = index.model().to_string();
     let indexed_count = index.len();
 
@@ -4824,7 +4791,7 @@ pub async fn embed_status_handler(
         "total_events": total_events,
         "stale_count": stale_count,
         "missing_sections": missing_sections,
-        "sidecar_available": sidecar_available,
+        "embedding_available": embedding_available,
         "model": model,
         "embed_kinds": embed_kinds,
         "available_kinds": available_kinds,

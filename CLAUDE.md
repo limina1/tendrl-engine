@@ -7,13 +7,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ```bash
 # Build
 cargo build                         # debug build
-cargo build --release               # release build
-cargo build --features onnx         # with in-process ONNX embeddings
-scripts/build-bundle.sh             # single-exe: SPA embedded + onnx, opens browser on run
+cargo build --release               # release build (in-process ONNX embeddings built in)
+scripts/build-bundle.sh             # single-exe: SPA embedded, opens browser on run
 
 # Run
 cargo run -- -c config.toml         # run engine with config
-./start.sh                          # start all services (sidecar + engine + web preview)
+./start.sh                          # start all services (engine + web preview)
 ./start.sh --dev                    # use the Vite dev server (hot reload) for the web UI
 ./start.sh --build                  # rebuild web/build/ before starting preview
 
@@ -28,7 +27,7 @@ cargo clippy
 cargo fmt --check
 pnpm -C web check                   # Svelte / TypeScript checks
 
-# Dependency updates (cargo + pnpm + uv + git-pinned nostrdb)
+# Dependency updates (cargo + pnpm + git-pinned nostrdb)
 make                                # report outdated deps — changes nothing
 make update                         # safe updates within version ranges
 ```
@@ -36,10 +35,11 @@ make update                         # safe updates within version ranges
 ## Architecture
 
 **tendrl-engine** is a local-first Nostr backend implementing NKBIP-01 (publication
-indexes and sections). It runs as three cooperating processes: the Rust **engine**
-(`src/`, port 3030), a SvelteKit **web frontend** (`web/`, port 5173 dev / 5174
-preview), and an optional Python **embedding sidecar** (`sidecar/`, port 3031). The
-engine owns all data access. (A ratatui TUI was the original frontend; it has been
+indexes and sections). It runs as two cooperating processes: the Rust **engine**
+(`src/`, port 3030) and a SvelteKit **web frontend** (`web/`, port 5173 dev / 5174
+preview). The engine owns all data access; embeddings and document text
+extraction both run in-process (no external services). (A ratatui TUI was the
+original frontend; it has been
 removed — there is no `ratatui`/`crossterm` dependency and a single `[[bin]]`
 (`nostr-engine`). The web app is the only live frontend; emacs/nvim frontends are a
 design goal, not yet built.)
@@ -59,9 +59,10 @@ frontends (emacs/nvim) without re-implementing logic per-frontend:
 
 When the same event-derivation logic appears in both Rust and TS, resolve it **toward
 Rust** (expose/wire the Rust, delete the TS twin) — not the reverse. Document
-*extraction* (PDF/DOCX/EPUB → text) legitimately stays in the Python sidecar;
-*classification* (text → structured sections/kinds) is Rust. See `docs/eval/` (esp.
-`08-frontend-backend-boundary.org`) for the current compliance map and open violations.
+*extraction* (PDF/DOCX/EPUB → text) now runs in-process in Rust (`src/document.rs`,
+pure-Rust crates — no native libs), as does *classification* (text → structured
+sections/kinds). See `docs/eval/` (esp. `08-frontend-backend-boundary.org`) for the
+current compliance map and open violations.
 
 ### Core Engine (`src/engine.rs`)
 The `Engine` struct owns the `nostrdb::Ndb` instance, relay config, embedding index,
@@ -143,8 +144,12 @@ sections and embeds new events on a 60-second interval when embeddings are enabl
   nostrdb's heap and abort the process; do not remove this lock.
 - **`relay.rs`**: WebSocket relay fetching, NIP-01 REQ/EVENT/EOSE protocol
 - **`search.rs`**: Structured query parser — see *Search syntax* below
-- **`embedding.rs`**: HNSW vector index (usearch) with dual backends: Python sidecar
-  (HTTP at port 3031) or in-process ONNX (`--features onnx`)
+- **`embedding.rs`**: HNSW vector index (usearch) with in-process ONNX embeddings
+  (fastembed); the model loads lazily on first embed and is cached next to the index
+- **`document.rs`**: in-process document text extraction (PDF via `pdf-extract`, DOCX
+  via `zip`+`quick-xml`, EPUB via `epub`, HTML via `html2text`, plus the plain-text
+  family) — replaces the former Python sidecar `/parse`; emits ordered `{title,
+  content}` pages
 - **`config.rs`**: TOML config — `initial_relays` (bootstrap seed only),
   `timeout_ms`, authors, embedding, identity. The live `general`/`fetch`/`publish`
   URL sets are populated at runtime from `relay_store.rs`, not from TOML.
@@ -212,7 +217,6 @@ alias for the `by:` publishing-pubkey filter.
 
 - `src/` — Rust engine (library + the `nostr-engine` binary)
 - `web/` — SvelteKit frontend (Svelte 5, pnpm, static adapter, served from `web/build/`)
-- `sidecar/` — Python embedding server (sentence-transformers, Flask, uv for venv)
 - `config.example.toml` — reference config; copy to `config.toml`
 - `scripts/` — utility scripts (MCP server, publishing helpers)
 - `knowledgebase/` — local documents for import

@@ -5,22 +5,21 @@ indexes and sections — with an HTTP API and a web frontend.
 
 ## Architecture
 
-Three processes cooperate:
+Two processes cooperate:
 
 | Component | Path | Default port | Description |
 |-----------|------|--------------|-------------|
-| **Engine** | `src/` | `3030` | Rust backend: nostrdb store, relay fetching, REST API |
+| **Engine** | `src/` | `3030` | Rust backend: nostrdb store, relay fetching, REST API, in-process embeddings + document parsing |
 | **Web frontend** | `web/` | `5173` dev / `5174` preview | SvelteKit UI (window-manager paradigm) |
-| **Embedding sidecar** | `sidecar/` | `3031` | Python vector-search server — optional |
 
 The engine owns all data access; the web UI consumes its interface-agnostic
-tree logic. See [`CLAUDE.md`](CLAUDE.md) for the architecture in depth.
+tree logic. Embeddings (ONNX) and document text extraction both run in-process —
+no external services. See [`CLAUDE.md`](CLAUDE.md) for the architecture in depth.
 
 ## Prerequisites
 
 - **Rust** (stable, edition 2021) — <https://rustup.rs>
 - **pnpm** — <https://pnpm.io> (web frontend)
-- **uv** — <https://docs.astral.sh/uv/> (Python sidecar; only if you enable embeddings)
 
 ## Setup
 
@@ -37,10 +36,9 @@ pnpm -C web install
 pnpm -C web build           # produces web/build/ for preview mode
 ```
 
-The embedding sidecar's virtualenv is created automatically on first run
-(`sidecar/run.sh` builds it from `sidecar/requirements.lock`). Embeddings
-are **disabled by default** — set `[embedding] enabled = true` in
-`config.toml` to use semantic search.
+Embeddings are **disabled by default** — set `[embedding] enabled = true` in
+`config.toml` to use semantic search. They run in-process via ONNX (the model
+downloads once and is cached); no extra services or setup required.
 
 ## Running
 
@@ -48,7 +46,7 @@ The simplest path is `start.sh`, which launches every enabled service and
 tears them all down on `Ctrl+C`:
 
 ```bash
-./start.sh                  # sidecar (if enabled) + engine + web preview
+./start.sh                  # engine + web preview
 ./start.sh --dev            # use the Vite dev server (hot reload) for the web UI
 ./start.sh --build          # rebuild web/build/ before starting preview
 ./start.sh -c other.toml    # use a non-default config
@@ -58,13 +56,11 @@ Once up:
 
 - Backend API — <http://localhost:3030> (`/api/v1/...`)
 - Frontend — <http://localhost:5173> (`--dev`) or <http://localhost:5174> (preview)
-- Sidecar — <http://localhost:3031> (when embeddings are enabled)
 
 ### Running components individually
 
 ```bash
 cargo run -- -c config.toml         # engine only
-cd sidecar && ./run.sh              # embedding sidecar only
 pnpm -C web dev                     # web dev server only
 ```
 
@@ -74,7 +70,7 @@ For distribution, the whole stack collapses into **one binary** — no Node, no
 Python, no separate processes, no config file required:
 
 ```bash
-scripts/build-bundle.sh             # pnpm build → cargo build --release --features onnx
+scripts/build-bundle.sh             # pnpm build → cargo build --release
 ./target/release/nostr-engine       # runs, then opens your browser at :3030
 ```
 
@@ -82,14 +78,14 @@ The bundle:
 
 - **embeds the SvelteKit SPA** into the binary (`rust-embed`) and serves it from
   the engine's own origin, so the UI and API share `http://127.0.0.1:3030`;
-- **runs embeddings in-process** via ONNX (`--features onnx`) — the Python
-  sidecar is gone. A binary built this way defaults `[embedding] backend` to
-  `"onnx"`, so enabling semantic search needs only `enabled = true`;
+- **runs embeddings in-process** via ONNX (built in) and **parses documents
+  in-process** (PDF/DOCX/EPUB/HTML/text) — no Python, no separate processes;
+  enabling semantic search needs only `[embedding] enabled = true`;
 - **opens the browser on launch** (pass `--no-open` to skip, e.g. on a server).
 
 Log in with a **NIP-07** browser extension (e.g. Alby, nos2x) — the key stays in
 the extension; the engine never handles it. The multi-process `start.sh` flow
-above remains the path for development (Vite hot-reload, Python sidecar).
+above remains the path for development (Vite hot-reload).
 
 ### Enabling embeddings (in-process ONNX)
 
@@ -114,7 +110,7 @@ skip the script, the engine will still download on first use, just slowly.
 
 ## Updating dependencies
 
-A `Makefile` drives all three package managers (cargo / pnpm / uv) plus the
+A `Makefile` drives both package managers (cargo / pnpm) plus the
 git-pinned `nostrdb` crate from one entrypoint:
 
 ```bash
@@ -141,7 +137,6 @@ pnpm -C web check           # Svelte / TypeScript checks
 ```
 src/        Rust engine (library + the nostr-engine binary)
 web/        SvelteKit frontend
-sidecar/    Python embedding server
 nips/       Nostr protocol specs (NIP references and custom NKBIPs)
 docs/       Design notes, roadmaps, command reference
 scripts/    Utility scripts (MCP server, publishing helpers)

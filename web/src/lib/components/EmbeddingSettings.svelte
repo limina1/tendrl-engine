@@ -1,5 +1,5 @@
 <script lang="ts">
-	// Embedding-index controls: sidecar/index status, the auto-embed toggle,
+	// Embedding-index controls: index status, the auto-embed toggle,
 	// which kinds get embedded (canonical menu + custom kinds), and the
 	// embed-missing / full-reembed actions. Shared between the search panel's
 	// bottom "Embedding settings" bar and the search-config modal's "Embedding"
@@ -74,16 +74,16 @@
 {:else if !status.enabled}
 	<p class="es-hint">
 		Embedding is disabled. Set <code>[embedding] enabled = true</code> in
-		<code>config.toml</code> (or build with <code>--features onnx</code>) to enable
-		semantic search (<code>~:query</code>).
+		<code>config.toml</code> to enable semantic search (<code>~:query</code>).
+		Embeddings run in-process — no extra services.
 	</p>
 {:else}
 	<div class="es-status">
 		<span
 			class="es-pill"
-			class:es-pill--ok={status.sidecar_available}
-			class:es-pill--off={!status.sidecar_available}
-		>{status.sidecar_available ? 'connected' : 'unreachable'}</span>
+			class:es-pill--ok={status.embedding_available}
+			class:es-pill--off={!status.embedding_available}
+		>{status.embedding_available ? 'connected' : 'unreachable'}</span>
 		{#if status.model}
 			<span class="es-pill es-pill--ghost">{status.model}</span>
 		{/if}
