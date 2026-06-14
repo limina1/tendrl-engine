@@ -2391,7 +2391,7 @@
 	.toolbar .sp { flex: 1; }
 	.toolbar .draft-pill {
 		font-family: var(--font-mono);
-		font-size: 9px;
+		font-size: var(--t-3xs);
 		font-weight: 700;
 		letter-spacing: 0.08em;
 		padding: 1px 6px;
@@ -2698,7 +2698,7 @@
 	.nested-count {
 		margin-left: auto;
 		font-family: var(--font-mono);
-		font-size: 9px;
+		font-size: var(--t-3xs);
 		color: var(--fg-muted);
 		white-space: nowrap;
 	}
@@ -2710,7 +2710,7 @@
 		border-radius: var(--r-sm);
 		color: var(--id-yours);
 		font-family: var(--font-mono);
-		font-size: 9px;
+		font-size: var(--t-3xs);
 		text-transform: uppercase;
 		letter-spacing: 0.07em;
 		padding: 0 8px;
@@ -2767,7 +2767,7 @@
 	}
 	.outline-treebar__label {
 		font-family: var(--font-mono);
-		font-size: 9px;
+		font-size: var(--t-3xs);
 		text-transform: uppercase;
 		letter-spacing: 0.07em;
 		color: var(--fg-muted);
@@ -2778,7 +2778,7 @@
 		border: 1px solid var(--panel-border);
 		color: var(--fg-muted);
 		font-family: var(--font-mono);
-		font-size: 9px;
+		font-size: var(--t-3xs);
 		text-transform: uppercase;
 		letter-spacing: 0.05em;
 		padding: 2px 8px;
@@ -2893,7 +2893,7 @@
 	.rail {
 		font-family: var(--font-mono);
 		color: var(--green);
-		font-size: 14px;
+		font-size: var(--t-md);
 		line-height: 1;
 		padding-top: 6px;
 	}
@@ -2902,7 +2902,7 @@
 		background: transparent;
 		border: 1px solid var(--base3);
 		border-radius: var(--r-sm);
-		font-size: 12px;
+		font-size: var(--t-sm);
 		padding: 0 6px;
 		cursor: pointer;
 		color: var(--base6);
@@ -2931,7 +2931,7 @@
 		background: transparent;
 		border: 1px solid var(--base3);
 		border-radius: var(--r-sm);
-		font-size: 10px;
+		font-size: var(--t-2xs);
 		padding: 0 4px;
 		min-width: 22px;
 		cursor: pointer;
