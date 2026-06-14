@@ -115,6 +115,18 @@
 	// tab without running the query.
 	let searchValue = $state('');
 
+	// Echo a programmatic search (app.searchFor — e.g. the feed "part of N"
+	// badge) into the input box. Keyed on the seed's nonce so re-running the
+	// same query still updates, and so normal typing — which never bumps the
+	// nonce — is left untouched.
+	let seenSeedNonce = 0;
+	$effect(() => {
+		const seed = app.searchSeed;
+		if (seed.nonce === seenSeedNonce) return;
+		seenSeedNonce = seed.nonce;
+		untrack(() => { searchValue = seed.query; });
+	});
+
 	/** Refs row "ctx" — toggle in_context. */
 	function routeRefToContext(item: ContextItem) {
 		const wasIn = item.in_context;

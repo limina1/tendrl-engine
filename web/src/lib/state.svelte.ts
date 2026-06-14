@@ -381,6 +381,12 @@ function _createAppState() {
 	// string with bypass_offline=true so we hit the same filter set, not
 	// whatever's currently typed in the input.
 	let searchLastQuery = $state('');
+	// Seed for the search input box: bumped by `searchFor()` so a
+	// programmatically-launched search (e.g. the feed "part of N" badge) echoes
+	// its query into the visible input instead of running invisibly. Carries a
+	// monotonic `nonce` so re-running the identical query still pushes a fresh
+	// value the SearchBuffer effect can react to.
+	let searchSeed = $state<{ query: string; nonce: number }>({ query: '', nonce: 0 });
 	// Populated only when the query contained a `count:NAME` operator.
 	// Switches the SearchPanel into "grouped" view: top-level rows are the
 	// histogram buckets, each unfolds to its contributing events.
@@ -2235,6 +2241,17 @@ function _createAppState() {
 		}
 	}
 
+	/** Launch a search from elsewhere in the app (a badge, a link) and surface
+	 *  it in the search input. Seeds the visible box so the user sees *what* was
+	 *  searched, then runs it cross-author (`scopeToMe: false`) — the caller has
+	 *  already written an explicit query (e.g. `k:30040 a:…`) and doesn't want
+	 *  the "me" author default folded in. The buffer-reveal is the caller's job
+	 *  (it owns its window store); this only drives query + results. */
+	function searchFor(query: string) {
+		searchSeed = { query, nonce: searchSeed.nonce + 1 };
+		void handleSearch(query, { scopeToMe: false });
+	}
+
 	// "Search relays" — re-run the current query with fetch_always so the
 	// engine reaches relays. In Confirm mode the engine emits a confirm
 	// Intent (rendered by the SSE-driven modal); in Auto mode it fetches
@@ -3948,6 +3965,8 @@ function _createAppState() {
 		handleComposeUpdate,
 		handleSearch,
 		handleSearchViaRelays,
+		searchFor,
+		get searchSeed() { return searchSeed; },
 		get searchLastQuery() { return searchLastQuery; },
 		pushHistoryEntry,
 		getEventForModal,

@@ -66,6 +66,11 @@ export interface PublicationSummary {
 	 *  type so older payloads (engine didn't emit it) don't trip
 	 *  destructuring; PoolStateBadges treats `undefined` as "not forked". */
 	forked?: boolean;
+	/** Publications (kind 30040) that reference this one as a child via an `a`
+	 *  tag — i.e. the works this publication is part of. Computed engine-side
+	 *  (reverse a-tag lookup, local store). Empty/absent = contained in nothing;
+	 *  drives the "part of N" badge, which searches for the containers on click. */
+	contained_in?: NAddr[];
 }
 
 export interface PublicationDetail {

@@ -42,6 +42,17 @@
 		});
 	}
 
+	/** "part of N" badge → find the publications that contain this one. Reveals
+	 *  the search buffer and runs a reverse a-tag query (`k:30040 a:<coord>`),
+	 *  which lists every 30040 index referencing this publication as a child. */
+	function findContainers(addr: { kind: number; pubkey: string; d_tag: string }) {
+		store.openBuffer({
+			className: 'research',
+			buffer: { id: 'search', kind: 'search', label: 'search', kicker: 'containing' }
+		});
+		app.searchFor(`k:30040 a:${addr.kind}:${addr.pubkey}:${addr.d_tag}`);
+	}
+
 	function scrollCursorIntoView() {
 		if (!listEl) return;
 		const row = listEl.querySelector<HTMLDivElement>(`.row[data-cursor="${cursor}"]`);
@@ -143,6 +154,16 @@
 							}}
 							title="Open the event menu (m)"
 						>menu</button>
+						{#if pub_item.contained_in && pub_item.contained_in.length > 0}
+							<button
+								class="pill pill--containment"
+								onclick={(e) => {
+									e.stopPropagation();
+									findContainers(pub_item.addr);
+								}}
+								title={`Part of ${pub_item.contained_in.length} publication${pub_item.contained_in.length === 1 ? '' : 's'} — click to find the containing publications`}
+							>⊂ part of {pub_item.contained_in.length}</button>
+						{/if}
 						{#if pub_item.local}
 							<button
 								class="pill pill--broadcast"
