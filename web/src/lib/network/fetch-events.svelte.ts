@@ -46,6 +46,12 @@ function advanceConfirmQueue() {
 	confirmState.intent = confirmState.queue.shift() ?? null;
 }
 
+/** When a `reissueConfirm` is in flight, the next arriving intent REPLACES the
+ *  current modal slot in place (instead of queueing or being preceded by a
+ *  null), so re-composing the query — e.g. flipping the General-feed toggle —
+ *  updates the open modal without closing + reopening it. */
+let pendingReplace = false;
+
 // operation_id → toast id, so progress/relay_status/completed update
 // the right toast.
 const opToasts = new Map<string, number>();
@@ -87,7 +93,12 @@ function handleEvent(ev: FetchEvent) {
 	// `intent` → FetchConfirmModal, `publish_intent` → PublishConfirmModal
 	// (both keyed off `confirmState.intent`; +layout branches on type).
 	if ((ev.type === 'intent' || ev.type === 'publish_intent') && ev.needs_confirmation) {
-		if (confirmState.intent === null) {
+		if (pendingReplace) {
+			// A reissue is in flight — swap this re-composed intent into the
+			// open modal in place. No close/reopen.
+			pendingReplace = false;
+			confirmState.intent = ev;
+		} else if (confirmState.intent === null) {
 			confirmState.intent = ev;
 		} else {
 			confirmState.queue.push(ev);
@@ -153,7 +164,10 @@ function handleEvent(ev: FetchEvent) {
 				(i) => i.operation_id !== ev.operation_id
 			);
 			if (confirmState.intent?.operation_id === ev.operation_id) {
-				advanceConfirmQueue();
+				// Mid-reissue: this is the op WE just cancelled to re-compose the
+				// query. Keep the modal showing it until the replacement lands,
+				// so the toggle updates in place rather than flickering closed.
+				if (!pendingReplace) advanceConfirmQueue();
 			}
 			break;
 		}
@@ -208,10 +222,33 @@ function startFetchEvents() {
 export function resolveConfirm(approved: boolean, relays?: string[]) {
 	const intent = confirmState.intent;
 	if (!intent) return;
+	pendingReplace = false;
 	advanceConfirmQueue();
 	api.confirmFetch(intent.operation_id, approved, relays).catch((e: unknown) => {
 		console.error('[fetch-events] confirm POST failed', e);
 	});
+}
+
+/** Re-compose the current confirm intent in place: silently cancel the current
+ *  operation but keep the modal open, so the caller can re-run the request
+ *  (e.g. flipping a query option) and have the new intent REPLACE the open one
+ *  without a close/reopen. Used by the General-feed toggle. */
+export function reissueConfirm() {
+	const intent = confirmState.intent;
+	if (!intent) return;
+	pendingReplace = true;
+	api.confirmFetch(intent.operation_id, false).catch((e: unknown) => {
+		console.error('[fetch-events] reissue cancel failed', e);
+	});
+	// Safety net: if no replacement arrives (e.g. mode flipped to auto so the
+	// re-run doesn't need confirmation), don't leave the modal stuck on a
+	// cancelled intent.
+	setTimeout(() => {
+		if (pendingReplace) {
+			pendingReplace = false;
+			if (confirmState.intent === intent) advanceConfirmQueue();
+		}
+	}, 5000);
 }
 
 // Self-start in the browser. Module scope is guaranteed to run on

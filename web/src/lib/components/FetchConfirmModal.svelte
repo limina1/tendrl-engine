@@ -8,7 +8,7 @@
 	// when summary is absent (older engine intents).
 
 	import type { FetchEvent, NipFilter, CompositionShape, Phase } from '$lib/types';
-	import { resolveConfirm } from '$lib/network/fetch-events.svelte';
+	import { resolveConfirm, reissueConfirm } from '$lib/network/fetch-events.svelte';
 
 	type IntentEvent = Extract<FetchEvent, { type: 'intent' }>;
 	let {
