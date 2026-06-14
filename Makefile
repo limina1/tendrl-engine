@@ -1,9 +1,8 @@
 # Makefile — dependency update workflow for tendrl-engine
 #
-# Three package managers behind one entrypoint:
+# Two package managers behind one entrypoint:
 #   cargo  — Rust engine          (Cargo.toml / Cargo.lock)
 #   pnpm   — web frontend         (web/package.json / web/pnpm-lock.yaml)
-#   uv     — Python sidecar       (sidecar/requirements.txt -> requirements.lock)
 # Plus nostrdb: a git-pinned crate that `cargo update` cannot move on its own,
 # so it is repinned to upstream HEAD explicitly.
 #
@@ -11,12 +10,11 @@
 # Run `make help` for the full target list.
 
 NOSTRDB_REPO := https://github.com/damus-io/nostrdb-rs
-SIDECAR_VENV := sidecar/.venv
 
 .DEFAULT_GOAL := check
-.PHONY: help check check-rust check-nostrdb check-web check-sidecar \
+.PHONY: help check check-rust check-nostrdb check-web \
         update update-latest update-rust update-rust-latest update-nostrdb \
-        update-web update-web-latest update-sidecar lock-sidecar tools
+        update-web update-web-latest tools
 
 help:
 	@echo "tendrl-engine dependency workflow"
@@ -27,19 +25,17 @@ help:
 	@echo "  make update-latest     aggressive: bump manifests to newest major versions"
 	@echo ""
 	@echo "  make update-nostrdb    repin the nostrdb crate to upstream HEAD"
-	@echo "  make lock-sidecar      (re)generate sidecar/requirements.lock from requirements.txt"
 	@echo "  make tools             install optional helpers (cargo-outdated, cargo-edit)"
 	@echo ""
-	@echo "  per-manager checks:    check-rust  check-nostrdb  check-web  check-sidecar"
+	@echo "  per-manager checks:    check-rust  check-nostrdb  check-web"
 	@echo "  per-manager updates:   update-rust  update-rust-latest"
 	@echo "                         update-web   update-web-latest"
-	@echo "                         update-sidecar"
 
 # ---------------------------------------------------------------------------
 # check — report only, no files touched
 # ---------------------------------------------------------------------------
 
-check: check-rust check-nostrdb check-web check-sidecar
+check: check-rust check-nostrdb check-web
 	@echo ""
 	@echo "==> Check complete. 'make update' for safe updates, 'make update-latest' to bump majors."
 
@@ -69,26 +65,11 @@ check-web:
 	@echo "==> Web packages (web/package.json)"
 	@pnpm -C web outdated || true
 
-check-sidecar:
-	@echo "==> Python sidecar (sidecar/requirements.txt)"
-	@if [ ! -f sidecar/requirements.lock ]; then \
-		echo "  no lockfile yet — run 'make lock-sidecar' to create sidecar/requirements.lock"; \
-	else \
-		uv pip compile --quiet --upgrade sidecar/requirements.txt -o /tmp/tendrl-sidecar-check.lock 2>/dev/null; \
-		if diff <(grep -v '^#' sidecar/requirements.lock) <(grep -v '^#' /tmp/tendrl-sidecar-check.lock) >/dev/null 2>&1; then \
-			echo "  up to date"; \
-		else \
-			echo "  updates available ('<' current lock, '>' newest):"; \
-			diff <(grep -v '^#' sidecar/requirements.lock) <(grep -v '^#' /tmp/tendrl-sidecar-check.lock) | grep -E '^[<>]' || true; \
-		fi; \
-		rm -f /tmp/tendrl-sidecar-check.lock; \
-	fi
-
 # ---------------------------------------------------------------------------
 # update — safe: stay within the version ranges declared in each manifest
 # ---------------------------------------------------------------------------
 
-update: update-rust update-nostrdb update-web update-sidecar
+update: update-rust update-nostrdb update-web
 	@echo ""
 	@echo "==> Safe update done. Review lockfile diffs, then 'cargo build' / 'cargo test' / 'pnpm -C web check'."
 
@@ -100,21 +81,11 @@ update-web:
 	@echo "==> pnpm update (within ranges in web/package.json)"
 	pnpm -C web update
 
-update-sidecar:
-	@echo "==> Recompiling sidecar/requirements.lock with newest allowed versions"
-	uv pip compile --upgrade sidecar/requirements.txt -o sidecar/requirements.lock
-	@if [ -d $(SIDECAR_VENV) ]; then \
-		echo "==> Syncing $(SIDECAR_VENV) to the new lockfile"; \
-		uv pip sync --python $(SIDECAR_VENV)/bin/python sidecar/requirements.lock; \
-	else \
-		echo "  ($(SIDECAR_VENV) not present — ./sidecar/run.sh will build it from the lockfile)"; \
-	fi
-
 # ---------------------------------------------------------------------------
 # update-latest — aggressive: bump manifests to newest major versions
 # ---------------------------------------------------------------------------
 
-update-latest: update-rust-latest update-nostrdb update-web-latest update-sidecar
+update-latest: update-rust-latest update-nostrdb update-web-latest
 	@echo ""
 	@echo "==> Major-version bump done. Breakage is expected — build and test everything now."
 
@@ -147,15 +118,10 @@ update-nostrdb:
 	fi
 
 # ---------------------------------------------------------------------------
-# sidecar lockfile + optional helper tools
+# optional helper tools
 # ---------------------------------------------------------------------------
-
-lock-sidecar:
-	@echo "==> Compiling sidecar/requirements.lock from requirements.txt"
-	uv pip compile sidecar/requirements.txt -o sidecar/requirements.lock
 
 tools:
 	@echo "==> Installing optional Rust helpers (cargo-outdated, cargo-edit)"
 	cargo install cargo-outdated cargo-edit
-	@command -v uv   >/dev/null 2>&1 || echo "WARNING: uv not found — see https://docs.astral.sh/uv/"
 	@command -v pnpm >/dev/null 2>&1 || echo "WARNING: pnpm not found — see https://pnpm.io/"

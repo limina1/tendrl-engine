@@ -1,7 +1,7 @@
 # tendrl-engine configuration
 # Copy to config.toml and customize, then run:
 #   cargo run -- -c config.toml
-# or start the whole stack (engine + web + sidecar):
+# or start the whole stack (engine + web):
 #   ./start.sh
 #
 # Note: the Settings page's "Save settings" rewrites config.toml in place
@@ -56,14 +56,12 @@ initial_relays = [
 # Authors to follow — fetch their events from fetch relays.
 # authors = ["npub1..."]
 
-# Embedding / vector search (optional)
-# Start the sidecar first: cd sidecar && ./run.sh
-# (./start.sh does this for you when enabled = true)
+# Embedding / vector search (optional). Embeddings run in-process via ONNX —
+# no extra services. The model downloads on first use and is cached next to the
+# index. Just set enabled = true.
 [embedding]
 enabled = false
-backend = "python"                    # "python" or "onnx" (--features onnx)
-sidecar_url = "http://localhost:3031"
-model = "all-MiniLM-L6-v2"
+model = "all-MiniLM-L6-v2"            # friendly name or an explicit fastembed code
 dimensions = 384
 
 # AI assistant (optional). The Anthropic API key is NEVER stored here —

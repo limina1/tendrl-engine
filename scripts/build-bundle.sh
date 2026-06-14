@@ -3,7 +3,7 @@
 #
 # Produces one binary (target/release/nostr-engine) with:
 #   - the SvelteKit SPA embedded (rust-embed, from web/build/)
-#   - in-process ONNX embeddings (--features onnx, no Python sidecar)
+#   - in-process ONNX embeddings (built in, no Python sidecar)
 #
 # The embedding model is NOT baked in; fastembed downloads it from HuggingFace
 # on first use and caches it. Run the binary, then open the browser it launches.
@@ -29,10 +29,10 @@ if [[ ! -f web/build/index.html ]]; then
     exit 1
 fi
 
-echo "==> Building engine (cargo release, onnx)…"
+echo "==> Building engine (cargo release)…"
 # Touch web/build so build.rs' rerun-if-changed picks up the fresh SPA.
 touch web/build
-cargo build --release --features onnx
+cargo build --release
 
 echo ""
 echo "Done: target/release/nostr-engine"

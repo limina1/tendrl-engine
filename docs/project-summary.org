@@ -98,7 +98,7 @@ All state manipulation flows through a REST API so any frontend can drive it:
 | =GET /api/v1/relays=                             | GET    | Resolved relay sets (general/fetch/pub)|
 | =POST /api/v1/config/update=                     | POST   | Edit config.toml from UI               |
 | =POST /api/v1/fetch[/authors|/sections]=         | POST   | Per-relay/per-author/per-section pulls |
-| =GET /api/v1/embed/status=                       | GET    | Embedding sidecar + index health       |
+| =GET /api/v1/embed/status=                       | GET    | Embedding model + index health         |
 | =POST /api/v1/embed/sync=, =/reindex=              | POST   | Sync new events / full reindex         |
 
 ** Svelte Web Frontend
@@ -292,8 +292,8 @@ design.
   broadcast
 - Compose ▸ / Doc ▸ / Chat ▸ publish handlers wired
 - OR/union queries with =|= operator: =k:30041 python | k:30040 by:me=
-- Semantic search via embedding sidecar:
-  - Python sidecar (sentence-transformers) for dev, Rust ONNX (=--features onnx=) for prod
+- Semantic search via in-process ONNX embeddings (fastembed):
+  - Single binary, no extra services; model loads lazily and is cached on disk
   - usearch HNSW index (in-memory, persisted to disk as =vectors.idx= + =vectors.map=)
   - =~:concept=, =~:"multi word":k= syntax with text+semantic intersection
   - Over-fetch k×10 from HNSW when kind/author filters present, truncate after
@@ -356,7 +356,7 @@ real network failures.
 | Backend   | Rust, Axum (HTTP), nostrdb (C via FFI), tokio (async)              |
 | Frontend  | Svelte 5, SvelteKit 2, TypeScript, Vite 6                         |
 | Database  | nostrdb (events), filesystem JSON (drafts), usearch HNSW (embeddings)    |
-| Embedding | Python sidecar (sentence-transformers) or Rust ONNX (fastembed)          |
+| Embedding | In-process ONNX (fastembed); document parsing via pure-Rust crates       |
 | LLM       | Anthropic Messages API (Claude), provider-trait abstraction        |
 | Relay I/O | tungstenite WebSocket, NIP-01 protocol                             |
 | Identity  | NIP-49 ncryptsec (scrypt + XChaCha20-Poly1305), OS keyring        |

@@ -1,7 +1,7 @@
 //! Embedding index for semantic search
 //!
-//! Wraps usearch HNSW index with an event_id mapping and dual-backend
-//! embedding support (Python sidecar or in-process ONNX).
+//! Wraps usearch HNSW index with an event_id mapping. Embeddings are generated
+//! in-process via ONNX (fastembed) — the only backend.
 
 use crate::config::EmbeddingConfig;
 use crate::error::{EngineError, Result};
@@ -33,23 +33,14 @@ struct IndexMapping {
     next_key: u64,
 }
 
-/// Backend for generating embeddings
-enum EmbeddingBackend {
-    /// Python sidecar over HTTP
-    Python {
-        url: String,
-        client: reqwest::Client,
-    },
-    /// In-process ONNX via fastembed (requires --features onnx)
-    #[cfg(feature = "onnx")]
-    Onnx {
-        model: fastembed::TextEmbedding,
-    },
+/// In-process ONNX embedding backend (fastembed).
+struct EmbeddingBackend {
+    model: fastembed::TextEmbedding,
 }
 
-/// Health information from the embedding backend
+/// Health information about the in-process embedding model.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SidecarHealth {
+pub struct EmbeddingHealth {
     pub status: String,
     pub model: String,
     pub dimensions: usize,
@@ -61,7 +52,7 @@ pub struct EmbeddingStatus {
     pub enabled: bool,
     pub indexed_count: usize,
     pub total_events: usize,
-    pub sidecar_available: bool,
+    pub embedding_available: bool,
     pub model: Option<String>,
 }
 
@@ -69,7 +60,12 @@ pub struct EmbeddingStatus {
 pub struct EmbeddingIndex {
     index: Index,
     mapping: IndexMapping,
-    backend: EmbeddingBackend,
+    /// The ONNX model is heavy to load (downloads weights on first use), so it
+    /// is initialized lazily on the first embed — opening the index stays
+    /// cheap and tests that only exercise the HNSW store never load a model.
+    backend: std::sync::OnceLock<EmbeddingBackend>,
+    /// fastembed model code resolved from `config.model` at construction.
+    model_code: String,
     data_dir: PathBuf,
 }
 
@@ -90,8 +86,6 @@ impl EmbeddingIndex {
             .reserve(100_000)
             .map_err(|e| EngineError::Database(format!("Failed to reserve HNSW capacity: {e}")))?;
 
-        let backend = Self::create_backend(config)?;
-
         let mapping = IndexMapping {
             model: config.model.clone(),
             dimensions: config.dimensions,
@@ -103,7 +97,8 @@ impl EmbeddingIndex {
         Ok(Self {
             index,
             mapping,
-            backend,
+            backend: std::sync::OnceLock::new(),
+            model_code: Self::resolve_model_code(&config.model),
             data_dir: data_dir.to_path_buf(),
         })
     }
@@ -155,8 +150,6 @@ impl EmbeddingIndex {
             .load(idx_path.to_str().unwrap())
             .map_err(|e| EngineError::Database(format!("Failed to load vectors.idx: {e}")))?;
 
-        let backend = Self::create_backend(config)?;
-
         info!(
             "Loaded embedding index: {} vectors, model={}",
             mapping.id_to_key.len(),
@@ -166,7 +159,8 @@ impl EmbeddingIndex {
         Ok(Self {
             index,
             mapping,
-            backend,
+            backend: std::sync::OnceLock::new(),
+            model_code: Self::resolve_model_code(&config.model),
             data_dir: data_dir.to_path_buf(),
         })
     }
@@ -289,15 +283,13 @@ impl EmbeddingIndex {
         &self.mapping.model
     }
 
-    /// Embed a batch of texts using the configured backend
+    /// Embed a batch of texts using the in-process ONNX model
     pub async fn embed_texts(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
-        match &self.backend {
-            EmbeddingBackend::Python { url, client } => {
-                Self::embed_via_python(client, url, texts).await
-            }
-            #[cfg(feature = "onnx")]
-            EmbeddingBackend::Onnx { model } => Self::embed_via_onnx(model, texts),
-        }
+        let refs: Vec<&str> = texts.iter().map(|s| s.as_str()).collect();
+        self.backend()?
+            .model
+            .embed(refs, None)
+            .map_err(|e| EngineError::Database(format!("ONNX embedding failed: {e}")))
     }
 
     /// Embed a single text
@@ -309,28 +301,15 @@ impl EmbeddingIndex {
             .ok_or_else(|| EngineError::Database("Empty embedding response".into()))
     }
 
-    /// Check if the backend is available
-    pub async fn health_check(&self) -> Result<SidecarHealth> {
-        match &self.backend {
-            EmbeddingBackend::Python { url, client } => {
-                let resp: SidecarHealth = client
-                    .get(format!("{url}/health"))
-                    .timeout(std::time::Duration::from_secs(5))
-                    .send()
-                    .await
-                    .map_err(|e| EngineError::Database(format!("Sidecar health check failed: {e}")))?
-                    .json()
-                    .await
-                    .map_err(|e| EngineError::Database(format!("Invalid health response: {e}")))?;
-                Ok(resp)
-            }
-            #[cfg(feature = "onnx")]
-            EmbeddingBackend::Onnx { model: _ } => Ok(SidecarHealth {
-                status: "ok".to_string(),
-                model: self.mapping.model.clone(),
-                dimensions: self.mapping.dimensions,
-            }),
-        }
+    /// Report the in-process model's health. The ONNX model is loaded eagerly
+    /// when the index is constructed, so this is always available once the
+    /// index exists.
+    pub async fn health_check(&self) -> Result<EmbeddingHealth> {
+        Ok(EmbeddingHealth {
+            status: "ok".to_string(),
+            model: self.mapping.model.clone(),
+            dimensions: self.mapping.dimensions,
+        })
     }
 
     /// Clear the index (for reindex)
@@ -357,103 +336,49 @@ impl EmbeddingIndex {
 
     // --- Private helpers ---
 
-    fn create_backend(config: &EmbeddingConfig) -> Result<EmbeddingBackend> {
-        match config.backend.as_str() {
-            "python" => Ok(EmbeddingBackend::Python {
-                url: config.sidecar_url.clone(),
-                client: reqwest::Client::new(),
-            }),
-            #[cfg(feature = "onnx")]
-            "onnx" => {
-                use fastembed::{InitOptions, TextEmbedding};
-                // The shared default model name "all-MiniLM-L6-v2" is the
-                // sentence-transformers id the python sidecar uses; fastembed
-                // identifies the same model by its own code. Translate the
-                // common friendly names so the default config "just works"
-                // with the in-process backend instead of erroring. Anything
-                // unrecognized passes through, so explicit fastembed codes
-                // still work.
-                let code = match config.model.as_str() {
-                    "all-MiniLM-L6-v2" | "sentence-transformers/all-MiniLM-L6-v2" => {
-                        "Qdrant/all-MiniLM-L6-v2-onnx"
-                    }
-                    "all-MiniLM-L12-v2" | "sentence-transformers/all-MiniLM-L12-v2" => {
-                        "Xenova/all-MiniLM-L12-v2"
-                    }
-                    other => other,
-                };
-                let model = TextEmbedding::try_new(
-                    InitOptions::new(code.to_string().try_into().map_err(|_| {
-                        EngineError::Config(format!(
-                            "Unknown fastembed model: '{}' (resolved to '{}'). \
-                             Set [embedding] model to a fastembed model code.",
-                            config.model, code
-                        ))
-                    })?)
-                    .with_show_download_progress(true),
-                )
-                .map_err(|e| EngineError::Config(format!("Failed to load ONNX model: {e}")))?;
-                Ok(EmbeddingBackend::Onnx { model })
+    /// Map `config.model` to a fastembed model code. fastembed identifies
+    /// models by its own codes; translate the common sentence-transformers
+    /// friendly names (carried over as the default `model`) so the default
+    /// config "just works". Anything unrecognized passes through, so explicit
+    /// fastembed codes still work.
+    fn resolve_model_code(model: &str) -> String {
+        match model {
+            "all-MiniLM-L6-v2" | "sentence-transformers/all-MiniLM-L6-v2" => {
+                "Qdrant/all-MiniLM-L6-v2-onnx"
             }
-            #[cfg(not(feature = "onnx"))]
-            "onnx" => Err(EngineError::Config(
-                "ONNX backend requires --features onnx".into(),
-            )),
-            other => Err(EngineError::Config(format!(
-                "Unknown embedding backend: '{other}'. Use 'python' or 'onnx'"
-            ))),
+            "all-MiniLM-L12-v2" | "sentence-transformers/all-MiniLM-L12-v2" => {
+                "Xenova/all-MiniLM-L12-v2"
+            }
+            other => other,
         }
+        .to_string()
     }
 
-    async fn embed_via_python(
-        client: &reqwest::Client,
-        url: &str,
-        texts: &[String],
-    ) -> Result<Vec<Vec<f32>>> {
-        #[derive(Serialize)]
-        struct EmbedRequest<'a> {
-            texts: &'a [String],
+    /// Lazily load (once) and return the in-process ONNX backend.
+    fn backend(&self) -> Result<&EmbeddingBackend> {
+        if let Some(b) = self.backend.get() {
+            return Ok(b);
         }
-        #[derive(Deserialize)]
-        struct EmbedResponse {
-            vectors: Vec<Vec<f32>>,
-        }
-
-        let resp: EmbedResponse = client
-            .post(format!("{url}/embed"))
-            .json(&EmbedRequest { texts })
-            .timeout(std::time::Duration::from_secs(300))
-            .send()
-            .await
-            .map_err(|e| {
-                EngineError::Database(format!("Embedding sidecar request failed: {e}"))
-            })?
-            .json()
-            .await
-            .map_err(|e| {
-                EngineError::Database(format!("Invalid embedding response: {e}"))
-            })?;
-
-        if resp.vectors.len() != texts.len() {
-            return Err(EngineError::Database(format!(
-                "Sidecar returned {} vectors for {} texts",
-                resp.vectors.len(),
-                texts.len()
-            )));
-        }
-
-        Ok(resp.vectors)
+        let backend = Self::load_model(&self.model_code)?;
+        // A concurrent caller may have set it first; either way one model wins
+        // and the loser is dropped.
+        let _ = self.backend.set(backend);
+        Ok(self.backend.get().expect("backend set above"))
     }
 
-    #[cfg(feature = "onnx")]
-    fn embed_via_onnx(
-        model: &fastembed::TextEmbedding,
-        texts: &[String],
-    ) -> Result<Vec<Vec<f32>>> {
-        let refs: Vec<&str> = texts.iter().map(|s| s.as_str()).collect();
-        model
-            .embed(refs, None)
-            .map_err(|e| EngineError::Database(format!("ONNX embedding failed: {e}")))
+    fn load_model(code: &str) -> Result<EmbeddingBackend> {
+        use fastembed::{InitOptions, TextEmbedding};
+        let model = TextEmbedding::try_new(
+            InitOptions::new(code.to_string().try_into().map_err(|_| {
+                EngineError::Config(format!(
+                    "Unknown fastembed model: '{code}'. \
+                     Set [embedding] model to a fastembed model code."
+                ))
+            })?)
+            .with_show_download_progress(true),
+        )
+        .map_err(|e| EngineError::Config(format!("Failed to load ONNX model: {e}")))?;
+        Ok(EmbeddingBackend { model })
     }
 }
 
@@ -469,8 +394,6 @@ mod tests {
         // its Default is `true` and the tests want it off.
         EmbeddingConfig {
             enabled: true,
-            backend: "python".to_string(),
-            sidecar_url: "http://localhost:99999".to_string(), // won't connect
             model: "test-model".to_string(),
             dimensions: 4,
             auto_embed: false, // keep explicit — Default is `true`

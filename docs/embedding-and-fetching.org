@@ -1,12 +1,13 @@
-#+TITLE: Embedding Sidecar & Event Fetching
-#+DESCRIPTION: How the embedding sidecar works, how events are fetched from relays, and when the engine is online vs offline
+#+TITLE: Embeddings & Event Fetching
+#+DESCRIPTION: How in-process embeddings work, how events are fetched from relays, and when the engine is online vs offline
 
 * Overview
 
 Two systems that interact but serve different purposes:
 
 1. *Event fetching* — pulling Nostr events from relays into the local nostrdb
-2. *Embedding sidecar* — computing vector embeddings of events for semantic search
+2. *Embeddings* — computing vector embeddings of events for semantic search,
+   in-process via ONNX
 
 The engine has no boolean "offline mode" toggle. Instead, every query
 carries a ~FetchPolicy~ that determines whether it touches relays.
@@ -83,8 +84,8 @@ loop (every 60s):
   2. sync_embeddings()         — embed any unembedded events
 #+end_src
 
-This is the main automatic relay activity. It starts 10 seconds after
-boot to let the sidecar warm up.
+This is the main automatic relay activity. It starts a couple of seconds
+after boot; the ONNX model loads in-process on first embed.
 
 ** 3. Manual fetch endpoints
 
@@ -158,53 +159,34 @@ crash mid-fetch still preserves events received so far.
 For multiple relays, ~fetch_from_multiple_relays()~ iterates each URL,
 deduplicates by event ID, and continues on failure.
 
-* Embedding sidecar
+* Embeddings
 
 ** Architecture
 
-Two backends (configured via ~embedding.backend~):
+Embeddings run *in-process* via ONNX (fastembed) — there is no separate
+service. =src/embedding.rs= owns the backend; the model loads lazily on
+the first embed (so opening the index is cheap) and is cached on disk next
+to the index (=<data_dir>/fastembed_cache=). Enabling embeddings needs only
+~[embedding] enabled = true~ in config.toml.
 
-- ~python~ (default) — external Flask HTTP server in =sidecar/=
-- ~onnx~ (compile with ~--features onnx~) — in-process via fastembed
+The configured ~model~ (default ~all-MiniLM-L6-v2~) is mapped to a fastembed
+model code; friendly sentence-transformers names are translated, and explicit
+fastembed codes pass through unchanged.
 
-The Python sidecar is the primary path. It runs as a separate process
-on ~localhost:3031~.
+** Document parsing
 
-** Startup
+Document text extraction also runs in-process, in =src/document.rs= (no
+sidecar, no native libraries):
 
-#+begin_src sh
-cd sidecar && ./run.sh [--model MODEL] [--port PORT]
-#+end_src
+- *PDF* — ~pdf-extract~ (per page)
+- *DOCX* — ~zip~ + ~quick-xml~ (heading-aware sections)
+- *EPUB* — ~epub~ crate → HTML-to-text per spine item
+- *HTML* — ~html2text~
+- *Markdown / Org / AsciiDoc / plain text* — heading-split by markup family
 
-The script:
-1. Creates a persistent Python venv via ~uv~ (reused across restarts)
-2. Installs: ~sentence-transformers~, ~flask~, ~torch~, ~pymupdf~, ~python-docx~, ~ebooklib~
-3. Sets ~HF_HUB_OFFLINE=1~ — uses cached model, no HuggingFace Hub calls
-4. Launches Flask on port 3031
-
-** Sidecar API
-
-Three endpoints in =sidecar/embed.py=:
-
-*** ~GET /health~
-
-Returns model name and vector dimensions. Used by the engine's health
-check and status endpoints.
-
-*** ~POST /embed~
-
-#+begin_src json
-{ "texts": ["text 1", "text 2", ...] }
-→ { "vectors": [[0.12, -0.34, ...], ...] }
-#+end_src
-
-Batch embedding. Internally sub-batches at 512 texts to avoid OOM.
-Uses ~sentence_transformers.SentenceTransformer.encode(normalize_embeddings=True)~.
-
-*** ~POST /parse~
-
-Multipart file upload → structured pages with title and content.
-Supports: PDF, DOCX, EPUB, HTML, Markdown, Org-mode, AsciiDoc, plain text.
+~parse_document(filename, bytes)~ returns ordered pages of
+~{page_num, title, content}~. The ~POST /api/v1/documents/parse~ and
+~POST /api/v1/import~ handlers call it directly.
 
 ** Model
 
@@ -244,14 +226,15 @@ Key operations:
    (note: 30040 indexes are skipped — no prose content)
 2. For each event not in the HNSW index:
    extract title + content → batch of texts
-3. Send to sidecar in chunks of 64
+3. Embed in-process (ONNX) in chunks of 64
 4. Insert returned vectors into index
 5. Save index to disk after each chunk
 #+end_example
 
 Document embedding (~sync_doc_embeddings~) follows the same pattern
-but reads files from the =docs/= folder, parses via ~POST /parse~,
-and indexes pages with composite keys like ~doc:filename:page_num~.
+but reads files from the =docs/= folder, parses them in-process via
+=src/document.rs=, and indexes pages with composite keys like
+~doc:filename:page_num~.
 
 ** When embedding sync runs
 
@@ -273,7 +256,7 @@ Query syntax: ~~:concept~, ~~:concept:5~, ~~:"multi-word query":10~
 1. Parse query → SemanticFilter { query, k }
 2. Over-fetch: if post-filters exist (kind, author, text),
    multiply k by 10; otherwise by 5
-3. Embed query text via sidecar → Vec<f32>
+3. Embed query text in-process (ONNX) → Vec<f32>
 4. HNSW search → top-k (event_id, similarity) pairs
 5. Split results:
    - "doc:..." keys → document page results
@@ -341,16 +324,14 @@ To ensure zero relay connections:
    relay lookups for missing sections
 
 The engine will work entirely from its nostrdb cache. Semantic search
-still works against the existing HNSW index (the sidecar only needs to
-be running for the query embedding call).
+still works against the existing HNSW index (embedding the query runs
+in-process, no network).
 
 * Configuration reference
 
 #+begin_src toml
 [embedding]
-enabled = true                          # false = no background sync, no embedding endpoints
-backend = "python"                      # "python" or "onnx"
-sidecar_url = "http://localhost:3031"   # sidecar HTTP address
-model = "all-MiniLM-L6-v2"             # sentence-transformers model name
-dimensions = 384                        # must match model output
+enabled = true                # false = no background sync, no embedding endpoints
+model = "all-MiniLM-L6-v2"    # friendly name or an explicit fastembed model code
+dimensions = 384              # must match model output
 #+end_src

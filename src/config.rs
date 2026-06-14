@@ -337,13 +337,8 @@ pub struct EmbeddingConfig {
     /// Enable embedding index
     #[serde(default)]
     pub enabled: bool,
-    /// Backend: "python" (sidecar) or "onnx" (in-process, requires --features onnx)
-    #[serde(default = "default_embedding_backend")]
-    pub backend: String,
-    /// Python sidecar URL
-    #[serde(default = "default_sidecar_url")]
-    pub sidecar_url: String,
-    /// Sentence transformer model name
+    /// Embedding model. Resolved to a fastembed model code; the in-process ONNX
+    /// backend is the only backend.
     #[serde(default = "default_embedding_model")]
     pub model: String,
     /// Embedding dimensions (must match model)
@@ -365,22 +360,6 @@ pub struct EmbeddingConfig {
     pub embed_kinds: Vec<u16>,
 }
 
-fn default_embedding_backend() -> String {
-    // A binary built with in-process ONNX (the single-exe bundle) defaults to
-    // the onnx backend, so enabling embeddings needs only `enabled = true` —
-    // no Python sidecar. Plain builds default to the sidecar.
-    #[cfg(feature = "onnx")]
-    {
-        "onnx".to_string()
-    }
-    #[cfg(not(feature = "onnx"))]
-    {
-        "python".to_string()
-    }
-}
-fn default_sidecar_url() -> String {
-    "http://localhost:3031".to_string()
-}
 fn default_embedding_model() -> String {
     "all-MiniLM-L6-v2".to_string()
 }
@@ -398,8 +377,6 @@ impl Default for EmbeddingConfig {
     fn default() -> Self {
         Self {
             enabled: false,
-            backend: default_embedding_backend(),
-            sidecar_url: default_sidecar_url(),
             model: default_embedding_model(),
             dimensions: default_dimensions(),
             index_path: None,

@@ -12,7 +12,7 @@
 	const store = getActiveStore();
 
 	// Pull current embedding-index status once when the search buffer mounts so
-	// the mode-line embed pill reflects sidecar health + index counts. The
+	// the mode-line embed pill reflects model health + index counts. The
 	// embedding controls themselves live in the KB settings modal (the ⚙ on the
 	// search panel). Lightweight (no embed pass).
 	onMount(() => { app.refreshEmbeddingStatus(); });

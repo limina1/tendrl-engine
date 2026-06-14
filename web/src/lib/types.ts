@@ -392,7 +392,7 @@ export interface EmbeddingStatusResponse {
 	total_events: number;
 	stale_count: number;
 	missing_sections: number;
-	sidecar_available: boolean;
+	embedding_available: boolean;
 	model: string | null;
 	/** Kinds currently eligible for embedding (engine-persisted selection). */
 	embed_kinds: number[];

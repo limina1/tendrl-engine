@@ -138,7 +138,7 @@
 		captureSavedBaseline();
 		loadAiSettings();
 		loadAiPrompt();
-		// Pull a fresh embedding/sidecar status so the Embeddings section
+		// Pull a fresh embedding status so the Embeddings section
 		// reflects live health + index counts, not the last 30s-poll tick.
 		app.refreshEmbeddingStatus();
 		return () => {
@@ -685,9 +685,9 @@
 	</div>
 
 	<!-- Embeddings / semantic search. Status + manual sync/reindex for
-	     the HNSW vector index served by the Python sidecar (or in-process
-	     ONNX). Counts and sidecar health come from /api/v1/embed/status;
-	     the buttons drive /embed/sync and /embed/reindex. -->
+	     the HNSW vector index, embedded in-process via ONNX. Counts and model
+	     health come from /api/v1/embed/status; the buttons drive /embed/sync
+	     and /embed/reindex. -->
 	<div class="settings-group">
 		<div class="settings-group-title">Embeddings</div>
 
@@ -697,17 +697,18 @@
 				<span class="pill pill--ghost">disabled</span>
 			</div>
 			<p class="settings-hint">
-				Semantic search (<code>~:query</code>) is off — no embedding backend is
-				configured. Set <code>[embedding]</code> in <code>config.toml</code> (Python
-				sidecar on port 3031, or build with <code>--features onnx</code>) and restart.
+				Semantic search (<code>~:query</code>) is off. Set
+				<code>enabled = true</code> under <code>[embedding]</code> in
+				<code>config.toml</code> and restart — embeddings run in-process (ONNX),
+				no extra services required.
 			</p>
 		{:else}
 			{@const e = app.embeddingStatus}
 			<div class="settings-row">
-				<span class="settings-label">Sidecar</span>
+				<span class="settings-label">Embeddings</span>
 				<div class="status-row">
-					<span class="pill {e.sidecar_available ? 'pill--online' : 'pill--ghost'}">
-						{e.sidecar_available ? 'connected' : 'unreachable'}
+					<span class="pill {e.embedding_available ? 'pill--online' : 'pill--ghost'}">
+						{e.embedding_available ? 'ready' : 'unavailable'}
 					</span>
 					{#if e.model}
 						<span class="pill pill--ghost source-pill">{e.model}</span>

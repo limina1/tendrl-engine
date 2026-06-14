@@ -1,7 +1,0 @@
-sentence-transformers
-flask
-torch
-pymupdf
-python-docx
-ebooklib
-lxml

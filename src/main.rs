@@ -112,7 +112,6 @@ async fn main() -> anyhow::Result<()> {
     // Same path we loaded from — settings persist to and reload from one file.
     engine.set_config_path(config_path);
     engine.set_documents_path(std::path::PathBuf::from(&config.documents.path));
-    engine.set_sidecar_url(config.embedding.sidecar_url.clone());
     engine.set_my_pubkey(my_pubkey.clone());
     engine.set_assistant_pubkey(assistant_pubkey.clone());
 
@@ -470,8 +469,9 @@ async fn main() -> anyhow::Result<()> {
     // Background sync — fetch missing sections and embed new events
     if config.embedding.enabled {
         tokio::spawn(async move {
-            // Wait for sidecar to start up
-            tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+            // Let startup settle before the first background pass. The ONNX
+            // model loads in-process on first embed (no sidecar to wait for).
+            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
             let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
             loop {
                 interval.tick().await;
