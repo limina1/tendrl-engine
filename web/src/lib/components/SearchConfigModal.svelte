@@ -653,7 +653,7 @@
 	.sc-title {
 		margin: 0;
 		font-size: var(--t-sm);
-		color: var(--base7);
+		color: var(--affordance-settings);
 	}
 	.sc-close {
 		background: transparent;

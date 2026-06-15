@@ -59,6 +59,12 @@
   --state-fetching:  #e9b189;
   --state-error:     #e27878;
 
+  /* Chrome affordance roles — the two recurring "open a panel" glyphs.
+     One hue each so a settings (gear) and a help (?) control read the
+     same wherever they appear in the app, and never look alike. */
+  --affordance-settings: #a093c7;  /* magenta — config / settings */
+  --affordance-help:     #e4c787;  /* yellow  — help / syntax / info */
+
   /* Type */
   --font-sans: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", system-ui, sans-serif;
   --font-mono: ui-monospace, "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
@@ -226,6 +232,40 @@ body { font-size: var(--t-base); }
 .btn--primary:hover { background: var(--blue); border-color: var(--blue); }
 .btn--icon { padding: 3px 6px; }
 .btn--sm { padding: 1px 6px; font-size: var(--t-xs); }
+
+/* Settings / help affordances — the gear and question-mark glyph buttons.
+   One pattern app-wide: a small transparent icon button that sits dim
+   (a darker tone of its role hue) at rest and lifts to the full hue with
+   a faint tinted wash on hover/focus. Pair `.affordance` with exactly one
+   role modifier so the colour signals the kind: magenta = settings,
+   yellow = help. */
+.affordance {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 3px;
+  background: transparent;
+  border: none;
+  border-radius: var(--r-sm);
+  cursor: pointer;
+  line-height: 1;
+  font-family: var(--font-mono);
+  font-size: var(--t-sm);
+}
+.affordance--settings { color: color-mix(in srgb, var(--affordance-settings) 60%, var(--base3)); }
+.affordance--settings:hover,
+.affordance--settings:focus-visible {
+  color: var(--affordance-settings);
+  background: color-mix(in srgb, var(--affordance-settings) 16%, transparent);
+}
+.affordance--help { color: color-mix(in srgb, var(--affordance-help) 60%, var(--base3)); }
+.affordance--help:hover,
+.affordance--help:focus-visible {
+  color: var(--affordance-help);
+  background: color-mix(in srgb, var(--affordance-help) 16%, transparent);
+}
 
 /* Keys */
 .kbd {
