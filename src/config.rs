@@ -538,6 +538,12 @@ pub struct NetworkConfig {
     /// "auto" or "confirm" (legacy "online"/"offline" still parse)
     #[serde(default = "default_network_mode")]
     pub mode: String,
+    /// Whether the user has made an explicit first-run network-mode choice.
+    /// Defaults false so a fresh install raises the one-time "choose your
+    /// default mode" modal before any relay fetch. Flipped true (and
+    /// persisted) the first time the mode is set through the UI.
+    #[serde(default)]
+    pub mode_chosen: bool,
 }
 
 fn default_network_mode() -> String {
@@ -551,6 +557,7 @@ impl Default for NetworkConfig {
     fn default() -> Self {
         Self {
             mode: default_network_mode(),
+            mode_chosen: false,
         }
     }
 }

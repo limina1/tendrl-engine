@@ -191,10 +191,15 @@ async fn main() -> anyhow::Result<()> {
         }
     }
 
-    // Set initial network mode from config
+    // Set initial network mode from config. `mode_chosen` is false on a fresh
+    // install, which raises the one-time "choose your default mode" modal in
+    // the UI before any relay fetch.
     if let Ok(mode) = config.network.mode.parse::<nostr_engine::NetworkMode>() {
-        engine.set_initial_network_mode(mode);
-        info!("Network mode: {}", mode);
+        engine.set_initial_network_mode(mode, config.network.mode_chosen);
+        info!(
+            "Network mode: {} (chosen: {})",
+            mode, config.network.mode_chosen
+        );
     }
 
     let state = Arc::new(engine);

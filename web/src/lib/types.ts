@@ -535,6 +535,9 @@ export interface FetchRecord {
 
 export interface NetworkStatus {
 	mode: NetworkMode;
+	/** False until the user makes an explicit first-run mode choice. Drives
+	 *  the one-time "choose your default network mode" modal. */
+	mode_chosen: boolean;
 	active_fetches: number;
 	total_events_fetched: number;
 	last_fetch_timestamp: number;
