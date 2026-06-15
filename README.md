@@ -61,13 +61,19 @@ The recommended build is the **single-executable bundle**: one binary with the
 SvelteKit UI embedded — no Node, no Python, no separate processes at runtime.
 
 ```bash
-# 1. Build the bundle (pnpm web build → cargo build --release)
-scripts/build-bundle.sh
+# In the folder you want to install tendrl, clone the repository
+git clone https://github.com/limina1/tendrl-engine.git
 
-# 2. Pre-fetch the embedding model (only if you want semantic search)
-scripts/fetch-embedding-model.sh
+# move into the tendrl directory
+cd tendrl-engine
 
-# 3. Run it — opens http://127.0.0.1:3030 in your browser
+# Build the bundle (pnpm web build → cargo build --release)
+./scripts/build-bundle.sh
+
+#  Pre-fetch the embedding model (only if you want semantic search)
+./scripts/fetch-embedding-model.sh
+
+# Run it — opens http://127.0.0.1:3030 in your browser
 ./target/release/tendrl-engine
 ```
 
