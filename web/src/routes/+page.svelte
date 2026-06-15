@@ -29,7 +29,7 @@
 	} from '$lib/discussions/authors.svelte';
 	import { pubkeyToColor } from '$lib/discussions/colors';
 	import { identityCanSign, detectNip07 } from '$lib/identity/signer';
-	import { startWalkthrough, trigger as triggerTip } from '$lib/wm/discovery.svelte';
+	import { replayWalkthrough, trigger as triggerTip } from '$lib/wm/discovery.svelte';
 
 	const app = getAppState();
 
@@ -785,6 +785,20 @@
 		if (mePubkey) prefetchAuthors([mePubkey]);
 	});
 
+	// Walkthrough: the moment a sign-in lands (false→true), point at the me-chip
+	// to explain the name-less pubkey. Guarded so it fires once per login, not on
+	// every reactive re-run; resets on logout. trigger() itself no-ops when the
+	// walkthrough is off or this tip is already seen.
+	let signedInTipFired = false;
+	$effect(() => {
+		if (mePubkey && !signedInTipFired) {
+			signedInTipFired = true;
+			triggerTip('signed-in-noname');
+		} else if (!mePubkey) {
+			signedInTipFired = false;
+		}
+	});
+
 	function openMyProfile() {
 		if (!mePubkey) return;
 		app.navigateToProfile(mePubkey);
@@ -861,6 +875,7 @@
 		<div class="shell__header">
 			<button
 				class="shell__brand"
+				data-tour="home"
 				onclick={() => store.openBuffer({
 					className: 'work',
 					buffer: { id: 'feed', kind: 'feed', label: 'feed' }
@@ -870,6 +885,7 @@
 			{#if mePubkey}
 				<button
 					class="me-chip"
+					data-tour="me-chip"
 					onclick={openMyProfile}
 					title="Open my profile ({mePubkey.slice(0, 12)}…)"
 				>
@@ -883,12 +899,13 @@
 			{/if}
 			<button
 				class="affordance affordance--walkthrough lt-walk"
-				onclick={() => startWalkthrough()}
+				onclick={() => replayWalkthrough()}
 				title="Run the walkthrough — a live, click-through tour of the interface. Re-runs any time; always dismissable."
 				aria-label="Run walkthrough"
 			>W</button>
 			<button
 				class="lt lt--settings"
+				data-tour="settings"
 				onclick={openSettings}
 				title="Open settings buffer (SPC s s)"
 			>settings</button>

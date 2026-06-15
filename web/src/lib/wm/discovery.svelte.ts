@@ -1,14 +1,17 @@
 // Contextual walkthrough — small "coachmark" tips that point at real UI as the
 // user first discovers it. Not a forced linear tour: each tip fires the first
-// time its surface is encountered (a buffer gains focus, a feature first
-// appears), is descriptive up front, and is always dismissable (an X marks it
-// seen so it never nags again). Deeper tips may carry a "try it" action.
+// time its surface is encountered (a modal opens, a sign-in succeeds, a feature
+// first appears), is descriptive up front, and is always dismissable (an X marks
+// it seen so it never nags again). Deeper tips may carry a "try it" action.
 //
-// Two ways tips surface, both driven by `trigger(key)`:
-//   - the intro sequence (`INTRO_SEQUENCE`) is enqueued on first load after the
-//     network-mode choice, and by the "Run walkthrough" / "W" affordances;
-//   - every other tip fires from its own discovery point in the UI (e.g. the
-//     search-history pill the first time a search result appears).
+// The first-run flow is the "feed sync" login walk: the Confirm-mode fetch modal
+// explains the broad pull → points at Settings to sign in → notes the name-less
+// pubkey once signed in → sends you home → shows that "General feed" is now an
+// optional, narrowable pull. It is *event-gated*, not a pre-queued stepper: tips
+// 3/5 depend on the user actually signing in / reopening the modal, so each fires
+// from its real point. Where the next surface is reliably present (modal→Settings,
+// me-chip→home) a tip carries `next` and chains on dismiss; auto-skip (anchor
+// never mounts) runs the same dismiss path, so the chain self-heals.
 //
 // This is pure frontend view/interaction state (per the engine/web boundary):
 // the engine owns no part of it. "Seen" + "enabled" persist to localStorage so
@@ -33,28 +36,61 @@ export type TourTip = {
 	body: string;
 	/** Where the card sits relative to its anchor. Default 'top'. */
 	placement?: 'top' | 'bottom' | 'left' | 'right';
+	/** Next tip to surface when this one is dismissed — used to chain a guided
+	 *  segment where the next surface is reliably on screen (modal→Settings,
+	 *  me-chip→home). Omit when the next step is event-gated (sign-in, modal
+	 *  reopen) and fires from its own trigger instead. */
+	next?: string;
 	/** Optional "try it" affordance — present only on deeper tips. */
 	action?: TourAction;
 };
 
-// Registry. Copy + the full surface list are mapped out collaboratively
-// (step 4); seeded here with the first-load surfaces so the click-through and
-// the on-discovery flow are both live and testable end-to-end.
+// Registry. The first-run "feed sync" login walk (feed-sync → sign-in →
+// signed-in → home → general-feed) plus standalone discovery tips. `ENTRY_TIP`
+// is what the "Run walkthrough" / "W" affordances kick off; everything else
+// fires from its own discovery point (see the per-surface triggers in +page /
+// +layout).
 export const TIPS: Record<string, TourTip> = {
-	modeline: {
-		key: 'modeline',
-		anchor: 'modeline',
-		title: 'The mode-line',
-		body: 'Your status bar: the current layout (L:), the focused slot (@class), the active buffer, the network mode, and the relay & search pills all live here.',
-		placement: 'top'
+	// ── First-run login walk ─────────────────────────────────────────────
+	'feed-sync': {
+		key: 'feed-sync',
+		anchor: 'feed-sync',
+		title: 'Feed sync',
+		body: "Nothing is fetched until you approve it — this panel shows exactly what tendrl will pull, and from which relays. You're logged out, so this is the broad public feed: recent publications from these relays. Open Details to see the precise query and how many. When you're ready, close this (Esc) — let's sign in.",
+		placement: 'right',
+		next: 'sign-in'
 	},
-	feed: {
-		key: 'feed',
-		anchor: 'feed',
-		title: 'The feed',
-		body: 'Your stream of publications. Move with j / k, open with Enter. This is home base — everything else opens from here.',
+	'sign-in': {
+		key: 'sign-in',
+		anchor: 'settings',
+		title: 'Sign in',
+		body: 'Open Settings here and sign in — a NIP-07 browser extension, or paste an ncryptsec key with its password. Heads up: the moment you sign in you\'ll see your pubkey but no name yet.',
 		placement: 'bottom'
 	},
+	'signed-in-noname': {
+		key: 'signed-in-noname',
+		anchor: 'me-chip',
+		title: 'Signed in — no name yet',
+		body: "There you are: a pubkey, but no display name or avatar. That's expected — your profile (a kind 0 event) lives on a relay you haven't pulled from yet. Fetching the feed will bring it in.",
+		placement: 'bottom',
+		next: 'go-home'
+	},
+	'go-home': {
+		key: 'go-home',
+		anchor: 'home',
+		title: 'Back to the feed',
+		body: 'Head home — click the tendrl logo (or the feed tab) to return to your feed, then sync it again.',
+		placement: 'bottom'
+	},
+	'general-feed': {
+		key: 'general-feed',
+		anchor: 'general-feed',
+		title: 'General feed — now optional',
+		body: "Now that you're signed in, the query is scoped to you. “General feed” adds the broad public pull on top — toggle it off to fetch only the relays and authors you choose. Open Details to watch the query change (it now carries by:‹you›).",
+		placement: 'left'
+	},
+
+	// ── Standalone discovery tips (fire from their own surface) ───────────
 	'search-history': {
 		key: 'search-history',
 		anchor: 'search-history',
@@ -64,9 +100,10 @@ export const TIPS: Record<string, TourTip> = {
 	}
 };
 
-/** Ordered intro sequence — fired on first load and by "Run walkthrough".
- *  Other tips fire from their own discovery triggers, not from this list. */
-export const INTRO_SEQUENCE: string[] = ['modeline', 'feed'];
+/** The tip the "Run walkthrough" / "W" affordances kick off. On first run the
+ *  Confirm-mode fetch modal is already open so this resolves immediately; with
+ *  the modal closed it auto-skips and chains straight to `sign-in`. */
+export const ENTRY_TIP = 'feed-sync';
 
 type DiscoveryState = {
 	/** Master switch. False = never show tips (user opted out / not chosen). */
@@ -127,14 +164,18 @@ export function trigger(key: string) {
 	discovery.queue.push(key);
 }
 
-/** Dismiss the active tip (the X, Esc, or a "try it" action): mark it seen and
- *  advance to the next queued tip. */
+/** Dismiss the active tip (the X, Esc, Next, or a "try it" action): mark it seen
+ *  and advance. Also covers the overlay's auto-skip when an anchor never mounts,
+ *  so a guided segment self-heals over an absent surface. If the tip declares a
+ *  `next` and the queue is now empty, chain to it. */
 export function dismissActive() {
 	const key = discovery.queue[0];
 	if (!key) return;
 	if (!discovery.seen.includes(key)) discovery.seen.push(key);
 	discovery.queue.shift();
 	persist();
+	const nextKey = TIPS[key]?.next;
+	if (nextKey && discovery.queue.length === 0) trigger(nextKey);
 }
 
 /** Close the walkthrough entirely — drop every queued tip but leave them
@@ -151,15 +192,24 @@ export function setWalkthroughEnabled(on: boolean) {
 	persist();
 }
 
-/** Re-arm and run from the top: enable, clear seen + queue, then enqueue the
- *  intro sequence. Backs the first-run modal (when the toggle is on), the
- *  mode-line "W" button, and the Settings "Run walkthrough" control. */
+/** Arm the walkthrough from the top: enable, clear seen + queue. Does NOT push a
+ *  tip — the surfaces drive themselves (on first run the fetch modal mounts and
+ *  triggers `feed-sync` exactly when it appears, with no auto-skip race). Backs
+ *  the first-run modal's "Run walkthrough" toggle. */
 export function startWalkthrough() {
 	discovery.enabled = true;
 	discovery.seen = [];
 	discovery.queue = [];
 	persist();
-	for (const key of INTRO_SEQUENCE) trigger(key);
+}
+
+/** Arm + immediately surface the entry tip — for an on-demand replay (the
+ *  mode-line "W" button) where no surface is about to mount on its own. With the
+ *  fetch modal open `feed-sync` resolves; with it closed the entry auto-skips and
+ *  chains straight to `sign-in` (the always-present Settings button). */
+export function replayWalkthrough() {
+	startWalkthrough();
+	trigger(ENTRY_TIP);
 }
 
 /** Clear the seen set without starting the intro — discovery tips can fire

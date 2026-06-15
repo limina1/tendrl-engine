@@ -54,6 +54,7 @@
 					<span class="nm-kw">fine-grained control</span> and for building an
 					<span class="nm-kw">understanding of how Nostr works</span> under the hood.
 				</span>
+				<span class="nm-choice-tip">New here and want to explore? Pick Confirm — the walkthrough is built around it.</span>
 			</button>
 
 			<button class="nm-choice" onclick={() => pick('auto')} disabled={submitting}>
@@ -186,6 +187,14 @@
 		white-space: normal;
 		overflow-wrap: break-word;
 		word-break: break-word;
+	}
+	/* Short, friendly nudge for first-timers — the walkthrough's dull-grey hue
+	   so it reads as a guided-tour aside, not part of the mode description. */
+	.nm-choice-tip {
+		margin-top: 2px;
+		color: var(--affordance-walkthrough);
+		font-size: calc(var(--t-xs) - 1px);
+		font-style: italic;
 	}
 	/* Keyword highlighting: verbs/actions in the accent, key concepts in the
 	   "online" green, the trade-off phrase in the muted draft tone. Kept

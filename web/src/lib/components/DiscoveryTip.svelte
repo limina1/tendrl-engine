@@ -23,6 +23,9 @@
 
 	const tip = $derived(activeTip());
 	const remaining = $derived(discovery.queue.length);
+	// A guided segment chains one tip at a time (queue length 1) via `next`, so
+	// "more is coming" is either a stacked queue or a declared next link.
+	const hasMore = $derived(remaining > 1 || !!tip?.next);
 
 	function locate() {
 		if (typeof window === 'undefined') return;
@@ -127,6 +130,8 @@
 						<span class="dt-dot {i === 0 ? 'dt-dot--on' : ''}"></span>
 					{/each}
 				</div>
+			{/if}
+			{#if hasMore}
 				<button class="dt-skip" onclick={endWalkthrough}>Skip the rest</button>
 			{/if}
 			<span class="dt-foot-spacer"></span>
@@ -134,7 +139,7 @@
 				<button class="dt-try" onclick={runAction}>{tip.action.label}</button>
 			{/if}
 			<button class="dt-next" onclick={dismissActive}>
-				{remaining > 1 ? 'Next' : 'Got it'}
+				{hasMore ? 'Next' : 'Got it'}
 			</button>
 		</footer>
 	</div>

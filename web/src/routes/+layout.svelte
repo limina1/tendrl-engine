@@ -17,12 +17,25 @@
 	// fetch-events self-starts the SSE subscription at module scope; we
 	// only need confirmState here to render the modal.
 	import { confirmState } from '$lib/network/fetch-events.svelte';
+	import { trigger as triggerTip } from '$lib/wm/discovery.svelte';
 	import type { NostrEvent, SearchResult } from '$lib/types';
 	import { getActiveStore } from '$lib/wm/buffer-store.svelte';
 
 	let { children } = $props();
 
 	const app = createAppState();
+
+	// Walkthrough: the "feed sync" confirm modal is the first surface of the
+	// login walk. When a fetch intent opens it, point at it — `feed-sync` while
+	// the pull is still broad (logged out / unscoped), `general-feed` once the
+	// query carries an author scope (signed in), which is the later "now it's
+	// optional" beat. Both no-op unless the walkthrough is armed + unseen.
+	$effect(() => {
+		const intent = confirmState.intent;
+		if (intent?.type !== 'intent') return;
+		const scoped = (intent.summary?.filters ?? []).some((f) => (f.authors?.length ?? 0) > 0);
+		triggerTip(scoped ? 'general-feed' : 'feed-sync');
+	});
 
 	// One-time client setup: kick off initialization and start the network
 	// poll, returning the poll's teardown for unmount.
