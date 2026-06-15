@@ -11,16 +11,20 @@
 	let {
 		onchoose
 	}: {
-		/** Persist the picked mode + close. Wired to app.chooseNetworkMode. */
-		onchoose: (mode: NetworkMode) => void;
+		/** Persist the picked mode + close, and either start or suppress the
+		 *  contextual walkthrough per the toggle. Wired to app.chooseNetworkMode. */
+		onchoose: (mode: NetworkMode, runWalkthrough: boolean) => void;
 	} = $props();
 
 	let submitting = $state(false);
+	// Default ON — most first-run users benefit from the guided tour. Unchecking
+	// means "never show tips" until re-armed from Settings or the W button.
+	let runWalkthrough = $state(true);
 
 	function pick(mode: NetworkMode) {
 		if (submitting) return;
 		submitting = true;
-		onchoose(mode);
+		onchoose(mode, runWalkthrough);
 	}
 </script>
 
@@ -69,7 +73,16 @@
 		</div>
 
 		<footer class="nm-footer">
-			<span class="nm-foot-note">Pick one to continue — no fetching happens until you do.</span>
+			<button
+				type="button"
+				class="nm-walk"
+				class:nm-walk--on={runWalkthrough}
+				aria-pressed={runWalkthrough}
+				onclick={() => (runWalkthrough = !runWalkthrough)}
+				disabled={submitting}
+				title="Run a short, click-through walkthrough of the interface as you go. Always dismissable; you can re-run it any time from the W button or Settings."
+			>{runWalkthrough ? '✓' : '○'} Run walkthrough</button>
+			<span class="nm-foot-note">Pick a mode to continue — no fetching happens until you do.</span>
 		</footer>
 	</div>
 </div>
@@ -190,11 +203,45 @@
 		font-weight: 500;
 	}
 	.nm-footer {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 12px;
 		padding: 10px 18px 14px;
 		border-top: 1px solid var(--panel-border);
 	}
 	.nm-foot-note {
 		color: var(--base5);
 		font-size: calc(var(--t-xs) - 1px);
+	}
+	/* "Run walkthrough" toggle — mirrors the ✓/○ "General feed" toggle pattern
+	   from the fetch-confirm modal: transparent at rest, lifts to the
+	   walkthrough's dull-grey role hue when on. */
+	.nm-walk {
+		font: inherit;
+		font-size: var(--t-xs);
+		padding: 4px 10px;
+		background: transparent;
+		border: 1px solid var(--panel-border);
+		color: var(--base6);
+		border-radius: var(--r-sm);
+		cursor: pointer;
+		white-space: nowrap;
+	}
+	.nm-walk:hover:not(:disabled) {
+		border-color: var(--affordance-walkthrough);
+		color: var(--affordance-walkthrough);
+	}
+	.nm-walk--on {
+		background: color-mix(in srgb, var(--affordance-walkthrough) 14%, transparent);
+		color: var(--affordance-walkthrough);
+		border-color: color-mix(in srgb, var(--affordance-walkthrough) 50%, transparent);
+	}
+	.nm-walk--on:hover:not(:disabled) {
+		background: color-mix(in srgb, var(--affordance-walkthrough) 22%, transparent);
+	}
+	.nm-walk:disabled {
+		opacity: 0.55;
+		cursor: default;
 	}
 </style>

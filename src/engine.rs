@@ -850,6 +850,15 @@ impl Engine {
         self.network.set_mode_chosen(true);
     }
 
+    /// Re-arm the first-run experience: clear the "mode chosen" flag so the
+    /// one-time network-mode choice modal shows again on the next load. Used
+    /// by the Settings "reset first-run setup" control — for fresh demos and
+    /// for users who want to re-pick from scratch. The mode value itself is
+    /// left as-is; only the chosen flag is reset.
+    pub fn reset_mode_choice(&self) {
+        self.network.set_mode_chosen(false);
+    }
+
     /// Open a user-initiated fetch operation — the confirm/auto gate.
     /// In Auto mode returns immediately; in Confirm mode emits an intent
     /// and blocks until the UI approves (or `Err(FetchCancelled)`).

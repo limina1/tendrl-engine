@@ -29,8 +29,15 @@
 	} from '$lib/discussions/authors.svelte';
 	import { pubkeyToColor } from '$lib/discussions/colors';
 	import { identityCanSign, detectNip07 } from '$lib/identity/signer';
+	import { startWalkthrough, trigger as triggerTip } from '$lib/wm/discovery.svelte';
 
 	const app = getAppState();
+
+	// Fire the search-history walkthrough tip the first time a search lands —
+	// pointing the user at the history pill that just appeared on the mode-line.
+	$effect(() => {
+		if (app.searchHistory.length > 0) triggerTip('search-history');
+	});
 
 	// Singleton buffers seeded on every frame.
 	const chatBuf: Buffer = { id: 'chat', kind: 'chat', label: 'chat' };
@@ -875,6 +882,12 @@
 				</button>
 			{/if}
 			<button
+				class="affordance affordance--walkthrough lt-walk"
+				onclick={() => startWalkthrough()}
+				title="Run the walkthrough — a live, click-through tour of the interface. Re-runs any time; always dismissable."
+				aria-label="Run walkthrough"
+			>W</button>
+			<button
 				class="lt lt--settings"
 				onclick={openSettings}
 				title="Open settings buffer (SPC s s)"
@@ -907,7 +920,7 @@
 			{@render minibufferStrip()}
 		{/if}
 
-		<div class="shell__modeline">
+		<div class="shell__modeline" data-tour="modeline">
 			<span class="ml__mode ml__mode--{mode}">-- {mode.toUpperCase()} --</span>
 			<span class="ml__seg ml__seg--text">L:{store.currentLayout.name}</span>
 			{#if store.focusedSlotClass()}
@@ -936,7 +949,7 @@
 				<span class="ml__seg ml__status">{store.modelineStatus(focusedBuffer.id)}</span>
 			{/if}
 			{#if app.searchHistory.length > 0}
-				<span class="hs-pill-wrap" bind:this={hsWrapEl}>
+				<span class="hs-pill-wrap" data-tour="search-history" bind:this={hsWrapEl}>
 					<button
 						class="pill pill--btn pill--hs"
 						onclick={() => (historyPopoverOpen = !historyPopoverOpen)}

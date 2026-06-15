@@ -64,6 +64,7 @@
      same wherever they appear in the app, and never look alike. */
   --affordance-settings: #a093c7;  /* magenta — config / settings */
   --affordance-help:     #e4c787;  /* yellow  — help / syntax / info */
+  --affordance-walkthrough: #8b91a3; /* dull grey — guided walkthrough (W) */
 
   /* Type */
   --font-sans: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", system-ui, sans-serif;
@@ -265,6 +266,17 @@ body { font-size: var(--t-base); }
 .affordance--help:focus-visible {
   color: var(--affordance-help);
   background: color-mix(in srgb, var(--affordance-help) 16%, transparent);
+}
+/* Walkthrough (W) — a dull-grey sibling. Distinct purpose from help (?):
+   help dumps everything at once; the walkthrough is a live click-through. */
+.affordance--walkthrough {
+  color: color-mix(in srgb, var(--affordance-walkthrough) 70%, var(--base3));
+  font-weight: 700;
+}
+.affordance--walkthrough:hover,
+.affordance--walkthrough:focus-visible {
+  color: var(--affordance-walkthrough);
+  background: color-mix(in srgb, var(--affordance-walkthrough) 16%, transparent);
 }
 
 /* Keys */

@@ -4,6 +4,11 @@ import {
 	loadSearchConfig,
 	applySearchDefaults
 } from '$lib/search/search-config.svelte';
+import {
+	loadDiscovery,
+	startWalkthrough,
+	setWalkthroughEnabled
+} from '$lib/wm/discovery.svelte';
 import type {
 	ChatResponse,
 	SearchResult,
@@ -2984,11 +2989,38 @@ function _createAppState() {
 	/** First-run choice handler. Persists the picked mode (which flips the
 	 *  engine's `mode_chosen` flag, closing the choice modal), then runs the
 	 *  now-permitted feed load: in auto it fetches silently; in confirm the
-	 *  per-fetch approval modal takes over — exactly what the user opted into. */
-	async function chooseNetworkMode(mode: 'auto' | 'confirm') {
+	 *  per-fetch approval modal takes over — exactly what the user opted into.
+	 *
+	 *  `runWalkthrough` carries the modal's toggle: on → kick off the contextual
+	 *  walkthrough; off → record "never show tips" so nothing fires until the
+	 *  user re-arms it from the W button or Settings. */
+	async function chooseNetworkMode(mode: 'auto' | 'confirm', runWalkthrough = true) {
 		await handleSetNetworkMode(mode);
+		if (runWalkthrough) {
+			startWalkthrough();
+		} else {
+			setWalkthroughEnabled(false);
+		}
 		coldFetchAttempted = false;
 		await loadFeed();
+	}
+
+	/** Re-arm the first-run experience from Settings: clears the engine's
+	 *  `mode_chosen` flag so the mode-choice modal returns on next load, and
+	 *  resets the walkthrough so its tips can show again too. Mimics a fresh
+	 *  install without touching any data. */
+	async function resetNetworkModeChoice() {
+		try {
+			await api.resetNetworkModeChoice();
+			setWalkthroughEnabled(true);
+			if (typeof localStorage !== 'undefined') {
+				localStorage.removeItem('tendrl.walkthrough.seen');
+			}
+			pushToast('First-run setup will run on next load', 'info');
+		} catch (e) {
+			console.error('Failed to reset first-run setup:', e);
+			pushToast('Could not reset first-run setup', 'error');
+		}
 	}
 
 	// ===================== Purge / Export / Import =====================
@@ -3479,6 +3511,7 @@ function _createAppState() {
 
 	async function initialize() {
 		loadSearchConfig();
+		loadDiscovery();
 		// Fire all three cheap GETs in parallel — none depend on each
 		// other, and the modeline pills + chat composer all need this
 		// data ASAP. Previously getConfig was awaited before the other
@@ -4114,6 +4147,7 @@ function _createAppState() {
 		refreshEmbeddingStatus,
 		handleSetNetworkMode,
 		chooseNetworkMode,
+		resetNetworkModeChoice,
 		handlePurge,
 		handleExport,
 		handleImport,

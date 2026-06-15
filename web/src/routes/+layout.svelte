@@ -9,6 +9,7 @@
 	import FetchConfirmModal from '$lib/components/FetchConfirmModal.svelte';
 	import PublishConfirmModal from '$lib/components/PublishConfirmModal.svelte';
 	import NetworkModeChoiceModal from '$lib/components/NetworkModeChoiceModal.svelte';
+	import DiscoveryTip from '$lib/components/DiscoveryTip.svelte';
 	import SearchConfigModal from '$lib/components/SearchConfigModal.svelte';
 	import SearchHelpModal from '$lib/components/SearchHelpModal.svelte';
 	import ToastStack from '$lib/components/ToastStack.svelte';
@@ -116,8 +117,15 @@
 <!-- First-run, one-time network-mode choice. Renders above everything and
      gates relay fetching until the user picks (engine: mode_chosen=false). -->
 {#if app.needsNetworkModeChoice}
-	<NetworkModeChoiceModal onchoose={(mode) => app.chooseNetworkMode(mode)} />
+	<NetworkModeChoiceModal
+		onchoose={(mode, runWalkthrough) => app.chooseNetworkMode(mode, runWalkthrough)}
+	/>
 {/if}
+
+<!-- Contextual walkthrough coachmark — floats over the app, points at the
+     surface for the active tip. Self-gated: renders nothing unless a tip is
+     queued (walkthrough enabled + an unseen surface was triggered). -->
+<DiscoveryTip />
 
 <ToastStack />
 

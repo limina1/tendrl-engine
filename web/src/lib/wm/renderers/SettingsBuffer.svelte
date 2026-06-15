@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { getAppState } from '$lib/state.svelte';
 	import { detectNip07 } from '$lib/identity/signer';
+	import { discovery, rearmDiscovery, setWalkthroughEnabled } from '$lib/wm/discovery.svelte';
 	import * as api from '$lib/api';
 	import type { Buffer } from '../types';
 	import type { EditorInsertMode, SyncMode, ButtonLabels, ComposeDefaultMode } from '$lib/types';
@@ -702,6 +703,37 @@
 		<p class="settings-hint">
 			<strong>auto</strong>: relay fetches run without confirmation.<br />
 			<strong>confirm</strong>: every relay fetch raises a confirm modal — useful when bandwidth, privacy, or rate-limits matter.
+		</p>
+
+		<div class="settings-row">
+			<label class="settings-label" for="walkthrough-toggle">Walkthrough</label>
+			<label class="switch">
+				<input
+					id="walkthrough-toggle"
+					type="checkbox"
+					checked={discovery.enabled}
+					onchange={(e) =>
+						e.currentTarget.checked ? rearmDiscovery() : setWalkthroughEnabled(false)}
+				/>
+				<span class="switch-text">{discovery.enabled ? 'on' : 'off'}</span>
+			</label>
+		</div>
+
+		<div class="settings-row">
+			<span class="settings-label">Reset first-run setup</span>
+			<button
+				class="settings-action"
+				onclick={() => app.resetNetworkModeChoice()}
+				title="Re-arm the mode-choice modal + walkthrough for the next load (no data is touched)"
+			>
+				Reset…
+			</button>
+		</div>
+		<p class="settings-hint">
+			<strong>Walkthrough</strong>: contextual tips that point out features the first
+			time you reach them. Toggling on (re)arms them; off silences them. The mode-line
+			<strong>W</strong> button replays them any time.<br />
+			<strong>Reset first-run setup</strong>: re-arms the mode-choice modal + walkthrough so they reappear on next load, as if freshly installed (no data is touched).
 		</p>
 	</div>
 

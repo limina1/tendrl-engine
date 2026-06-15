@@ -118,7 +118,7 @@
 	});
 </script>
 
-<div class="feed-wrap">
+<div class="feed-wrap" data-tour="feed">
 	{#if app.feedLoading}
 		<div class="empty"><p>Loading publications…</p></div>
 	{:else if app.feed.length > 0}
