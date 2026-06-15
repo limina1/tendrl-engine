@@ -1,13 +1,14 @@
 <script lang="ts">
 	import '$lib/styles/tokens.css';
 	import '../app.css';
-	import { onMount } from 'svelte';
+	import { untrack } from 'svelte';
 	import { createAppState } from '$lib/state.svelte';
 	import EventViewModal from '$lib/components/EventViewModal.svelte';
 	import EventsJsonModal from '$lib/components/EventsJsonModal.svelte';
 	import ComparePublishModal from '$lib/components/ComparePublishModal.svelte';
 	import FetchConfirmModal from '$lib/components/FetchConfirmModal.svelte';
 	import PublishConfirmModal from '$lib/components/PublishConfirmModal.svelte';
+	import NetworkModeChoiceModal from '$lib/components/NetworkModeChoiceModal.svelte';
 	import SearchConfigModal from '$lib/components/SearchConfigModal.svelte';
 	import ToastStack from '$lib/components/ToastStack.svelte';
 	import FetchActivityModal from '$lib/components/FetchActivityModal.svelte';
@@ -21,14 +22,21 @@
 
 	const app = createAppState();
 
-	// One-time setup. Must be onMount, not $effect — an $effect that both
-	// reads and writes a guard flag re-runs itself, and the re-run's
-	// cleanup would tear down the network poll and SSE subscription the
-	// moment they're created.
-	onMount(() => {
-		app.initialize();
-		return app.startNetworkPoll();
-	});
+	// One-time client setup: kick off initialization and start the network
+	// poll, returning the poll's teardown for unmount.
+	//
+	// Implemented as `$effect` + `untrack` rather than `onMount`: in this build
+	// the compiler was dropping the `onMount` callback entirely (its body never
+	// reached the bundle), so initialization never ran and `networkStatus`
+	// stayed null. `untrack` makes the effect register no reactive dependencies,
+	// so it runs exactly once on mount (no re-run that would tear down the poll
+	// and SSE subscription) — matching the original onMount semantics.
+	$effect(() =>
+		untrack(() => {
+			app.initialize();
+			return app.startNetworkPoll();
+		})
+	);
 
 	function spawnReader(pubkey: string, d_tag: string, label: string | null) {
 		try {
@@ -103,6 +111,12 @@
 </script>
 
 {@render children()}
+
+<!-- First-run, one-time network-mode choice. Renders above everything and
+     gates relay fetching until the user picks (engine: mode_chosen=false). -->
+{#if app.needsNetworkModeChoice}
+	<NetworkModeChoiceModal onchoose={(mode) => app.chooseNetworkMode(mode)} />
+{/if}
 
 <ToastStack />
 

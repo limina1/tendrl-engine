@@ -1806,6 +1806,9 @@ pub async fn set_network_mode_handler(
                         .or_insert_with(|| toml::Value::Table(toml::Table::new()));
                     if let toml::Value::Table(table) = network {
                         table.insert("mode".into(), toml::Value::String(mode_str));
+                        // Record that the user has explicitly chosen a mode so
+                        // the first-run modal never re-appears on this machine.
+                        table.insert("mode_chosen".into(), toml::Value::Boolean(true));
                     }
                     if let Ok(serialized) = toml::to_string_pretty(&doc) {
                         let _ = std::fs::write(&config_path, serialized);
@@ -2207,6 +2210,8 @@ pub async fn config_snapshot_handler(
             .or_insert_with(|| toml::Value::Table(toml::Table::new()));
         if let toml::Value::Table(t) = network {
             t.insert("mode".into(), toml::Value::String(mode.clone()));
+            // Saving settings is an explicit choice — never re-prompt.
+            t.insert("mode_chosen".into(), toml::Value::Boolean(true));
             wrote.push("network");
         }
     }

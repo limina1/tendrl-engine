@@ -269,7 +269,12 @@ impl Engine {
             ignore_list: RwLock::new(ignore_list),
             documents_dir: std::path::PathBuf::from("./docs"),
             claude_sessions_dir: None,
-            network: Arc::new(NetworkActivity::new(NetworkMode::Auto)),
+            // Confirm-first by construction: relay fetches stay gated behind
+            // the approval modal until something explicitly opts into Auto.
+            // main.rs still overrides this from `config.network.mode`, but the
+            // pre-config default must be Confirm so a fresh / zero-config / parse-
+            // failed boot never auto-fetches (matches config.rs's default_network_mode).
+            network: Arc::new(NetworkActivity::new(NetworkMode::Confirm)),
             nip11_cache: crate::nip11::Nip11Cache::new(),
             unreachable_sections: std::sync::Mutex::new(std::collections::HashMap::new()),
         })
@@ -838,9 +843,11 @@ impl Engine {
         self.network.is_auto()
     }
 
-    /// Set the network mode
+    /// Set the network mode from an explicit user action. Marks the mode as
+    /// chosen so the first-run "pick your default" modal never shows again.
     pub fn set_network_mode(&self, mode: NetworkMode) {
         self.network.set_mode(mode);
+        self.network.set_mode_chosen(true);
     }
 
     /// Open a user-initiated fetch operation — the confirm/auto gate.
@@ -1179,9 +1186,13 @@ impl Engine {
         self.claude_sessions_dir = path;
     }
 
-    /// Set the initial network mode (called during startup from config)
-    pub fn set_initial_network_mode(&self, mode: NetworkMode) {
+    /// Set the initial network mode (called during startup from config).
+    /// `chosen` carries the persisted `[network] mode_chosen` flag so a
+    /// returning user who already picked never re-sees the first-run modal,
+    /// while a fresh install (chosen=false) does.
+    pub fn set_initial_network_mode(&self, mode: NetworkMode, chosen: bool) {
         self.network.set_mode(mode);
+        self.network.set_mode_chosen(chosen);
     }
 
     /// Fetch from a single relay with activity tracking.

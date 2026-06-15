@@ -200,7 +200,7 @@
 		passwordInput = '';
 	}
 
-	const networkMode = $derived(app.networkStatus?.mode ?? 'auto');
+	const networkMode = $derived(app.networkStatus?.mode ?? 'confirm');
 	async function setNetworkMode(mode: 'auto' | 'confirm') {
 		if (networkMode === mode) return;
 		await app.handleSetNetworkMode(mode);
@@ -286,7 +286,7 @@
 					sync_mode: app.syncMode,
 					button_labels: app.buttonLabels
 				},
-				network_mode: app.networkStatus?.mode ?? 'auto',
+				network_mode: app.networkStatus?.mode ?? 'confirm',
 				// Persist the current signing source so reload reconnects
 				// to the same extension/key without manual re-select.
 				identity_source: sourceToPersist,

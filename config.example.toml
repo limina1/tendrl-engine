@@ -30,6 +30,11 @@
 #             modal in the UI before the engine touches the network.
 # Engine default is "confirm" when this section is absent.
 mode = "confirm"
+# Whether the user has made an explicit first-run mode choice. Left false
+# (or absent) on a fresh install so the UI shows a one-time "choose your
+# default network mode" modal before any relay fetch. Set true automatically
+# once a mode is picked in the UI — you normally don't edit this by hand.
+# mode_chosen = false
 
 [relay]
 timeout_ms = 15000

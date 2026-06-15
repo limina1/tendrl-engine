@@ -92,6 +92,10 @@ pub struct FetchRecord {
 #[derive(Debug, Serialize)]
 pub struct NetworkStatus {
     pub mode: NetworkMode,
+    /// `false` until the user has made an explicit first-run network-mode
+    /// choice. The frontend shows the one-time "choose your default mode"
+    /// modal — and suppresses the cold-cache feed fetch — while this is false.
+    pub mode_chosen: bool,
     pub active_fetches: u64,
     pub total_events_fetched: u64,
     pub last_fetch_timestamp: u64,
@@ -104,6 +108,10 @@ pub struct NetworkStatus {
 
 pub struct NetworkActivity {
     mode: AtomicBool, // true = auto
+    /// Whether the user has made an explicit first-run mode choice. Seeded
+    /// from `[network] mode_chosen` in config.toml; flipped true (and
+    /// persisted) the first time the mode is set through the UI.
+    mode_chosen: AtomicBool,
     log: Mutex<VecDeque<FetchRecord>>,
     active_fetches: AtomicU64,
     next_id: AtomicU64,
@@ -120,6 +128,7 @@ impl NetworkActivity {
         let (events, _) = broadcast::channel(FETCH_EVENT_CAP);
         Self {
             mode: AtomicBool::new(matches!(initial_mode, NetworkMode::Auto)),
+            mode_chosen: AtomicBool::new(false),
             log: Mutex::new(VecDeque::with_capacity(MAX_LOG_ENTRIES)),
             active_fetches: AtomicU64::new(0),
             next_id: AtomicU64::new(1),
@@ -145,6 +154,17 @@ impl NetworkActivity {
     pub fn set_mode(&self, mode: NetworkMode) {
         self.mode
             .store(matches!(mode, NetworkMode::Auto), Ordering::Relaxed);
+    }
+
+    /// Whether the user has made an explicit first-run mode choice.
+    pub fn mode_chosen(&self) -> bool {
+        self.mode_chosen.load(Ordering::Relaxed)
+    }
+
+    /// Record whether the mode has been explicitly chosen (seeded from config
+    /// at boot, set true on the first UI-driven mode change).
+    pub fn set_mode_chosen(&self, chosen: bool) {
+        self.mode_chosen.store(chosen, Ordering::Relaxed);
     }
 
     pub fn active_count(&self) -> u64 {
@@ -195,6 +215,7 @@ impl NetworkActivity {
         };
         NetworkStatus {
             mode: self.mode(),
+            mode_chosen: self.mode_chosen(),
             active_fetches: self.active_fetches.load(Ordering::Relaxed),
             total_events_fetched: self.total_events_fetched.load(Ordering::Relaxed),
             last_fetch_timestamp: self.last_fetch_timestamp.load(Ordering::Relaxed),

@@ -470,17 +470,18 @@ function _createAppState() {
 	// compilation can push initialize() out by seconds. Updated
 	// whenever the engine confirms a new mode (live status, settings,
 	// or a user-driven toggle).
-	// Default to 'auto' when the cache is empty — that's the engine's
-	// default mode (per src/network.rs NetworkMode default), so for a
-	// fresh user it matches reality without ever showing a "loading"
-	// fallback. Returning users get their actual last-known mode from
-	// localStorage. If the live state ever turns out to differ, the
-	// init/poll/toggle paths overwrite this within milliseconds.
+	// Default to 'confirm' when the cache is empty — that's the engine's
+	// confirm-first default (config.rs default_network_mode + the engine's
+	// pre-config NetworkActivity seed), so for a fresh user it matches reality
+	// without ever showing a "loading" fallback or flashing 'auto'. Returning
+	// users get their actual last-known mode from localStorage. If the live
+	// state ever turns out to differ, the init/poll/toggle paths overwrite
+	// this within milliseconds.
 	let savedNetworkMode: 'auto' | 'confirm' = $state(
 		((): 'auto' | 'confirm' => {
-			if (typeof localStorage === 'undefined') return 'auto';
+			if (typeof localStorage === 'undefined') return 'confirm';
 			const v = localStorage.getItem('tendrl.savedNetworkMode');
-			return v === 'confirm' ? 'confirm' : 'auto';
+			return v === 'auto' ? 'auto' : 'confirm';
 		})()
 	);
 
@@ -510,6 +511,13 @@ function _createAppState() {
 
 	// --- Network ---
 	let networkStatus: NetworkStatus | null = $state(null);
+	// First-run gate. The engine reports `mode_chosen: false` until the user
+	// makes an explicit network-mode choice (fresh install). While true, the
+	// app shows the one-time "choose your default mode" modal AND suppresses
+	// the cold-cache feed fetch, so nothing touches relays before the user
+	// picks. Null status (engine hasn't answered yet) → don't prompt; the
+	// init/poll paths fill it in within milliseconds.
+	const needsNetworkModeChoice = $derived.by(() => networkStatus?.mode_chosen === false);
 
 	// --- Relay config ---
 	let fetchRelayUrls: string[] = $state([]);
@@ -1000,7 +1008,17 @@ function _createAppState() {
 			// single composite query at most once per session; afterwards
 			// the empty-state's "Fetch from relays" button is the way to
 			// re-trigger it deliberately.
-			if (resp.publications.length === 0 && !coldFetchAttempted) {
+			// Hold the cold-cache fetch until we POSITIVELY know the user has
+			// chosen a mode (mode_chosen === true). While networkStatus is still
+			// null (engine hasn't answered) or mode_chosen is false, we never hit
+			// relays — the first-run choice modal must come first. initialize()
+			// re-runs loadFeed() once status arrives, and chooseNetworkMode()
+			// runs it after a fresh pick.
+			if (
+				resp.publications.length === 0 &&
+				!coldFetchAttempted &&
+				networkStatus?.mode_chosen === true
+			) {
 				coldFetchAttempted = true;
 				try {
 					const fetched = await api.listPublications(20, 'fetch_always', undefined, feedGeneral);
@@ -2959,6 +2977,16 @@ function _createAppState() {
 		}
 	}
 
+	/** First-run choice handler. Persists the picked mode (which flips the
+	 *  engine's `mode_chosen` flag, closing the choice modal), then runs the
+	 *  now-permitted feed load: in auto it fetches silently; in confirm the
+	 *  per-fetch approval modal takes over — exactly what the user opted into. */
+	async function chooseNetworkMode(mode: 'auto' | 'confirm') {
+		await handleSetNetworkMode(mode);
+		coldFetchAttempted = false;
+		await loadFeed();
+	}
+
 	// ===================== Purge / Export / Import =====================
 
 	/** Trigger an engine cache purge. The engine deletes its LMDB
@@ -3474,6 +3502,14 @@ function _createAppState() {
 				savedNetworkMode = m;
 				persistNetworkMode(m);
 			}
+			// FeedBuffer's mount may have called loadFeed() before this status
+			// arrived, when the cold-cache gate couldn't yet fire (mode unknown).
+			// Now that we know the choice was made, run it so a returning user's
+			// empty db still backfills. A fresh install (mode_chosen=false) gets
+			// the choice modal instead — chooseNetworkMode() loads the feed after.
+			if (networkStatusResult.value.mode_chosen) {
+				void loadFeed();
+			}
 		}
 		// Hydrate editor / compose defaults from config.toml so a reload
 		// reflects the user's last-saved settings (instead of resetting
@@ -3927,6 +3963,7 @@ function _createAppState() {
 
 		// Network
 		get networkStatus() { return networkStatus; },
+		get needsNetworkModeChoice() { return needsNetworkModeChoice; },
 
 		// Relay config
 		get fetchRelayUrls() { return fetchRelayUrls; },
@@ -4072,6 +4109,7 @@ function _createAppState() {
 		handleSetAutoEmbed,
 		refreshEmbeddingStatus,
 		handleSetNetworkMode,
+		chooseNetworkMode,
 		handlePurge,
 		handleExport,
 		handleImport,
