@@ -34,6 +34,9 @@ export type TourTip = {
 	/** `data-tour` value of the element this tip points at. */
 	anchor: string;
 	title: string;
+	/** Description. May contain `{token}` placeholders filled at trigger time
+	 *  from the tip's runtime vars (see `trigger` / `setTipVars`) — used for
+	 *  data-driven tips like "this publication contains {sections}". */
 	body: string;
 	/** Where the card sits relative to its anchor. Default 'top'. */
 	placement?: 'top' | 'bottom' | 'left' | 'right';
@@ -47,8 +50,8 @@ export type TourTip = {
 };
 
 // Registry. The first-run "feed sync" login walk (feed-sync → sign-in →
-// sign-in-methods → signed-in → home → general-feed) plus standalone discovery
-// tips. `ENTRY_TIP`
+// sign-in-methods → signed-in → home → general-feed → feed-first-pub →
+// feed-first-badges) plus standalone discovery tips. `ENTRY_TIP`
 // is what the "Run walkthrough" / "W" affordances kick off; everything else
 // fires from its own discovery point (see the per-surface triggers in +page /
 // +layout).
@@ -98,6 +101,22 @@ export const TIPS: Record<string, TourTip> = {
 		body: "Now that you're signed in, the query is scoped to you. “General feed” adds the broad public pull on top — toggle it off to fetch only the relays and authors you choose. Open Details to watch the query change (it now carries by:‹you›).",
 		placement: 'left'
 	},
+	// ── After the first fetch: the feed has events ────────────────────────
+	'feed-first-pub': {
+		key: 'feed-first-pub',
+		anchor: 'feed-first-pub',
+		title: 'A publication is a book',
+		body: 'A publication is like a book — a kind-30040 index that orders a set of sections (kind 30041) into a whole. This first one, “{title}”, gathers {sections}.',
+		placement: 'bottom',
+		next: 'feed-first-badges'
+	},
+	'feed-first-badges': {
+		key: 'feed-first-badges',
+		anchor: 'feed-first-badges',
+		title: 'Provenance & actions',
+		body: 'These pills show provenance — where the event lives in the network. The top one says it’s on {relays} right now. Click the row body to read the publication, or the “menu” pill to work with the raw event in depth.',
+		placement: 'bottom'
+	},
 
 	// ── Standalone discovery tips (fire from their own surface) ───────────
 	'search-history': {
@@ -114,6 +133,8 @@ export const TIPS: Record<string, TourTip> = {
  *  the modal closed it auto-skips and chains straight to `sign-in`. */
 export const ENTRY_TIP = 'feed-sync';
 
+type TipVars = Record<string, string | number>;
+
 type DiscoveryState = {
 	/** Master switch. False = never show tips (user opted out / not chosen). */
 	enabled: boolean;
@@ -121,17 +142,35 @@ type DiscoveryState = {
 	seen: string[];
 	/** Pending tip keys; `queue[0]` is the one currently on screen. */
 	queue: string[];
+	/** Per-tip `{token}` substitutions, set at trigger time. Ephemeral — not
+	 *  persisted; a data-driven tip restocks them each time its surface fires. */
+	vars: Record<string, TipVars>;
 };
 
 /** Live walkthrough state. `enabled` defaults true so a fresh load with the
  *  modal's toggle left checked runs the intro; `loadDiscovery()` reconciles it
  *  with any persisted preference. */
-export const discovery = $state<DiscoveryState>({ enabled: true, seen: [], queue: [] });
+export const discovery = $state<DiscoveryState>({ enabled: true, seen: [], queue: [], vars: {} });
 
 /** The tip currently on screen, or null when the queue is empty. */
 export function activeTip(): TourTip | null {
 	const key = discovery.queue[0];
 	return key ? (TIPS[key] ?? null) : null;
+}
+
+/** A tip's body with its `{token}` placeholders resolved from runtime vars.
+ *  Unknown tokens are left intact so a missing var reads as a visible gap
+ *  rather than silently vanishing. */
+export function renderBody(tip: TourTip): string {
+	const vars = discovery.vars[tip.key];
+	if (!vars) return tip.body;
+	return tip.body.replace(/\{(\w+)\}/g, (m, k) => (k in vars ? String(vars[k]) : m));
+}
+
+/** Stash `{token}` values for a tip without queuing it — for a tip reached via
+ *  a `next` chain, whose data is known now but which surfaces only later. */
+export function setTipVars(key: string, vars: TipVars) {
+	discovery.vars[key] = vars;
 }
 
 function persist() {
@@ -165,7 +204,8 @@ export function loadDiscovery() {
 /** Queue a tip if it's enabled, unseen, known, and not already queued. The
  *  overlay resolves the anchor and skips (auto-advances) if it's not mounted,
  *  so callers can fire triggers freely without checking the DOM. */
-export function trigger(key: string) {
+export function trigger(key: string, vars?: TipVars) {
+	if (vars) discovery.vars[key] = vars;
 	if (!discovery.enabled) return;
 	if (discovery.seen.includes(key)) return;
 	if (!TIPS[key]) return;
