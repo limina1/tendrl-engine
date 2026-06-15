@@ -808,6 +808,77 @@
 		{/if}
 	</div>
 
+	<!-- AI assistant: provider/model/auth channel + per-tool policy. Tool
+	     toggles apply live (next agent turn); provider/model/auth persist to
+	     config.toml and take effect on the next engine restart. -->
+	<div class="settings-group">
+		<div class="settings-group-title">AI assistant</div>
+
+		{#if !aiSettings}
+			<p class="settings-hint">AI settings unavailable (engine not reachable).</p>
+		{:else}
+			<div class="settings-row">
+				<span class="settings-label">Model</span>
+				<input
+					class="settings-input"
+					type="text"
+					value={aiSettings.model}
+					disabled={aiBusy}
+					onchange={(e) => applyAiUpdate({ model: e.currentTarget.value.trim() })}
+				/>
+			</div>
+
+			<p class="settings-hint">
+				Auth uses <code>ANTHROPIC_API_KEY</code> from the engine's environment. Model changes
+				apply on engine restart.
+			</p>
+
+			<div class="settings-subtitle">System prompt</div>
+			<p class="settings-hint">
+				Prepended to every agent turn, re-read each message. Editable here or on disk
+				{#if aiPromptPath}at <code>{aiPromptPath}</code>{/if}.
+			</p>
+			<textarea
+				class="settings-textarea"
+				rows="8"
+				bind:value={aiPrompt}
+				disabled={aiBusy}
+				oninput={() => (aiPromptDirty = true)}
+			></textarea>
+			<div class="settings-row">
+				<button
+					class="settings-action"
+					onclick={saveAiPrompt}
+					disabled={aiBusy || !aiPromptDirty}>Save prompt</button
+				>
+			</div>
+
+			<div class="settings-subtitle">Tools the assistant may use</div>
+			{#each aiSettings.tools as tool (tool.name)}
+				<div class="settings-row">
+					<label class="settings-label" for={`ai-tool-${tool.name}`} title={tool.description}>
+						{tool.name}
+						<span class="ai-tool-cat">{tool.category}</span>
+					</label>
+					<label class="switch">
+						<input
+							id={`ai-tool-${tool.name}`}
+							type="checkbox"
+							checked={tool.enabled}
+							disabled={aiBusy}
+							onchange={(e) => toggleAiTool(tool.name, e.currentTarget.checked)}
+						/>
+						<span class="switch-text">{tool.enabled ? 'on' : 'off'}</span>
+					</label>
+				</div>
+			{/each}
+			<p class="settings-hint">
+				Tool changes apply immediately to the next message. <code>publish</code>-category tools
+				are off by default and broadcast signed events when enabled.
+			</p>
+		{/if}
+	</div>
+
 	<!-- Embeddings / semantic search. Status + manual sync/reindex for
 	     the HNSW vector index, embedded in-process via ONNX. Counts and model
 	     health come from /api/v1/embed/status; the buttons drive /embed/sync
