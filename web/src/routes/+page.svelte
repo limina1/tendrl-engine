@@ -29,7 +29,8 @@
 	} from '$lib/discussions/authors.svelte';
 	import { pubkeyToColor } from '$lib/discussions/colors';
 	import { identityCanSign, detectNip07 } from '$lib/identity/signer';
-	import { replayWalkthrough, trigger as triggerTip } from '$lib/wm/discovery.svelte';
+	import { replayWalkthrough, runTour, trigger as triggerTip } from '$lib/wm/discovery.svelte';
+	import { openModelineHelp } from '$lib/wm/modeline-help.svelte';
 
 	const app = getAppState();
 
@@ -938,7 +939,7 @@
 		{/if}
 
 		<div class="shell__modeline" data-tour="modeline">
-			<span class="ml__mode ml__mode--{mode}">-- {mode.toUpperCase()} --</span>
+			<span class="ml__mode ml__mode--{mode}" data-tour="ml-mode">-- {mode.toUpperCase()} --</span>
 			<span class="ml__seg ml__seg--text">L:{store.currentLayout.name}</span>
 			{#if store.focusedSlotClass()}
 				<span class="ml__seg ml__seg--text">@{store.focusedSlotClass()}</span>
@@ -956,6 +957,7 @@
 			     visible center of the modeline rather than the right edge. -->
 			<button
 				class="pill pill--btn pill--relays"
+				data-tour="ml-pills"
 				onclick={openRelays}
 				title="Relay configuration · read/write toggles · NIP-11 details"
 			>
@@ -1054,6 +1056,20 @@
 					</span>
 				{/if}
 			{/if}
+			<!-- Mode-line's own affordances, mirroring search's ? / ⚙ pair:
+			     W runs the on-demand mode-line tour, ? opens the reference. -->
+			<button
+				class="affordance affordance--walkthrough"
+				onclick={() => runTour('modeline-overview')}
+				title="Tour the mode-line — a guided walk through each segment"
+				aria-label="Mode-line walkthrough"
+			>W</button>
+			<button
+				class="affordance affordance--help"
+				onclick={openModelineHelp}
+				title="Mode-line reference — what each segment means and the global keys"
+				aria-label="Mode-line help"
+			>?</button>
 		</div>
 	</div>
 

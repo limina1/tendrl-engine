@@ -12,6 +12,7 @@
 	import DiscoveryTip from '$lib/components/DiscoveryTip.svelte';
 	import SearchConfigModal from '$lib/components/SearchConfigModal.svelte';
 	import SearchHelpModal from '$lib/components/SearchHelpModal.svelte';
+	import ModelineHelpModal from '$lib/components/ModelineHelpModal.svelte';
 	import ToastStack from '$lib/components/ToastStack.svelte';
 	import FetchActivityModal from '$lib/components/FetchActivityModal.svelte';
 	// fetch-events self-starts the SSE subscription at module scope; we
@@ -184,6 +185,7 @@
 <SearchConfigModal />
 
 <SearchHelpModal />
+<ModelineHelpModal />
 
 <EventsJsonModal />
 

@@ -125,6 +125,33 @@ export const TIPS: Record<string, TourTip> = {
 		title: 'Search history',
 		body: 'Every search you run is kept here. Click the pill to reopen and replay any past query.',
 		placement: 'top'
+	},
+
+	// ── Mode-line tour (on demand: the mode-line's own W chip) ────────────
+	// Not part of the login walk and never auto-fired — `runTour` surfaces it
+	// only when the user taps W on the mode-line, then it chains through itself.
+	'modeline-overview': {
+		key: 'modeline-overview',
+		anchor: 'modeline',
+		title: 'The mode-line',
+		body: 'This bottom strip is the mode-line — a live status bar (Emacs-style). It never interrupts you: tap W here for this quick tour, or ? for the full reference. Left half tells you where you are; right half is live status with quick toggles.',
+		placement: 'top',
+		next: 'modeline-focus'
+	},
+	'modeline-focus': {
+		key: 'modeline-focus',
+		anchor: 'ml-mode',
+		title: 'Where you are',
+		body: 'Your current mode and active layout (L:name), then the focused slot-class (@work / @chat / @research) and buffer. Switch buffers with SPC b b; pick layouts from the SPC leader.',
+		placement: 'top',
+		next: 'modeline-status'
+	},
+	'modeline-status': {
+		key: 'modeline-status',
+		anchor: 'ml-pills',
+		title: 'Status & toggles',
+		body: 'Live engine state, much of it clickable: relay config, fetch mode (click to flip auto / confirm), embedding health, and your identity. The 🔍 pill replays past searches.',
+		placement: 'top'
 	}
 };
 
@@ -259,6 +286,24 @@ export function startWalkthrough() {
 export function replayWalkthrough() {
 	startWalkthrough();
 	trigger(ENTRY_TIP);
+}
+
+/** Run a specific tour now, on demand (the mode-line's W chip): enable tips,
+ *  clear the queue, and un-see this tour's `next` chain so it replays in full,
+ *  then surface its entry. Leaves every other tip's seen-state untouched, so a
+ *  component tour doesn't disturb the first-run login walk. */
+export function runTour(entryKey: string) {
+	discovery.enabled = true;
+	discovery.queue = [];
+	const chain = new Set<string>();
+	let k: string | undefined = entryKey;
+	while (k && !chain.has(k)) {
+		chain.add(k);
+		k = TIPS[k]?.next;
+	}
+	discovery.seen = discovery.seen.filter((s) => !chain.has(s));
+	persist();
+	trigger(entryKey);
 }
 
 /** Clear the seen set without starting the intro — discovery tips can fire
