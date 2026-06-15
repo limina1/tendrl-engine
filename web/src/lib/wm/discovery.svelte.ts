@@ -73,8 +73,8 @@ export const TIPS: Record<string, TourTip> = {
 		key: 'sign-in-methods',
 		anchor: 'identity-source',
 		title: 'Two ways in',
-		body: "Engine key — paste an ncryptsec below and unlock it with its password; held for this session only, never written to disk. Or NIP-07 — a browser signer extension holds the key, and the engine never sees it. Says “no extension”? Click your extension in the browser to enable or unlock it — this lights up on its own the moment it's reachable, no need to come back.",
-		placement: 'right'
+		body: 'Engine — paste an ncryptsec below and unlock it with its password; held for this session only, never written to disk. NIP-07 — a browser extension holds the key and the engine never sees it. To connect one: (1) make sure your extension is activated/unlocked, (2) pick nip07 and press Reconnect, (3) your signer pops up asking to read your public key — Authorize, or Authorize forever.',
+		placement: 'bottom'
 	},
 	'signed-in-noname': {
 		key: 'signed-in-noname',
