@@ -5,11 +5,12 @@
 // it seen so it never nags again). Deeper tips may carry a "try it" action.
 //
 // The first-run flow is the "feed sync" login walk: the Confirm-mode fetch modal
-// explains the broad pull → points at Settings to sign in → notes the name-less
-// pubkey once signed in → sends you home → shows that "General feed" is now an
-// optional, narrowable pull. It is *event-gated*, not a pre-queued stepper: tips
-// 3/5 depend on the user actually signing in / reopening the modal, so each fires
-// from its real point. Where the next surface is reliably present (modal→Settings,
+// explains the broad pull → points at Settings to sign in → (once Settings opens)
+// shows the two ways in at the source controls → notes the name-less pubkey once
+// signed in → sends you home → shows that "General feed" is now an optional,
+// narrowable pull. It is *event-gated*, not a pre-queued stepper: the
+// open-Settings / sign-in / reopen-modal beats depend on the user actually doing
+// them, so each fires from its real point. Where the next surface is reliably present (modal→Settings,
 // me-chip→home) a tip carries `next` and chains on dismiss; auto-skip (anchor
 // never mounts) runs the same dismiss path, so the chain self-heals.
 //
@@ -46,7 +47,8 @@ export type TourTip = {
 };
 
 // Registry. The first-run "feed sync" login walk (feed-sync → sign-in →
-// signed-in → home → general-feed) plus standalone discovery tips. `ENTRY_TIP`
+// sign-in-methods → signed-in → home → general-feed) plus standalone discovery
+// tips. `ENTRY_TIP`
 // is what the "Run walkthrough" / "W" affordances kick off; everything else
 // fires from its own discovery point (see the per-surface triggers in +page /
 // +layout).
@@ -66,6 +68,13 @@ export const TIPS: Record<string, TourTip> = {
 		title: 'Sign in',
 		body: 'Open Settings here and sign in — a NIP-07 browser extension, or paste an ncryptsec key with its password. Heads up: the moment you sign in you\'ll see your pubkey but no name yet.',
 		placement: 'bottom'
+	},
+	'sign-in-methods': {
+		key: 'sign-in-methods',
+		anchor: 'identity-source',
+		title: 'Two ways in',
+		body: "Engine key — paste an ncryptsec below and unlock it with its password; held for this session only, never written to disk. Or NIP-07 — a browser signer extension holds the key, and the engine never sees it. Says “no extension”? Click your extension in the browser to enable or unlock it — this lights up on its own the moment it's reachable, no need to come back.",
+		placement: 'right'
 	},
 	'signed-in-noname': {
 		key: 'signed-in-noname',

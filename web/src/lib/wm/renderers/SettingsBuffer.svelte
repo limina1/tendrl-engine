@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { getAppState } from '$lib/state.svelte';
-	import { detectNip07 } from '$lib/identity/signer';
+	import { nip07, startNip07Watch } from '$lib/identity/nip07.svelte';
+	import { trigger as triggerTip } from '$lib/wm/discovery.svelte';
 	import { discovery, rearmDiscovery, setWalkthroughEnabled } from '$lib/wm/discovery.svelte';
 	import * as api from '$lib/api';
 	import type { Buffer } from '../types';
@@ -10,7 +11,6 @@
 
 	const app = getAppState();
 
-	let nip07Available = $state(false);
 	// Snapshot of the last-saved values from config.toml. Loaded on
 	// mount + after a successful save. Compared against the live
 	// app.* values to drive the dirty flag on the Save button.
@@ -109,27 +109,14 @@
 	}
 
 	$effect(() => {
-		// Detect window.nostr on mount, then keep retrying for a couple
-		// of seconds. Extensions inject at document_start, but after a
-		// hard reload / cache clear the buffer can render *before* the
-		// extension finishes injecting — a one-shot check there latches
-		// the radio disabled ("no extension") forever even once the
-		// signer is live. Poll a few times (mirrors the boot-time
-		// auto-reconnect detection) and stop as soon as it appears.
-		nip07Available = detectNip07();
-		let cancelled = false;
-		if (!nip07Available) {
-			(async () => {
-				for (const delay of [100, 250, 500, 1000]) {
-					await new Promise((r) => setTimeout(r, delay));
-					if (cancelled) return;
-					if (detectNip07()) {
-						nip07Available = true;
-						return;
-					}
-				}
-			})();
-		}
+		// Keep window.nostr detection live + reactive: the watcher bursts now
+		// (covers the document_start inject race) and re-checks on return-to-tab,
+		// so enabling/unlocking the extension *after* Settings is open lights up
+		// the radio on its own — no leave-and-return needed.
+		startNip07Watch();
+		// Walkthrough: opening Settings is the "sign in" beat. Point at the
+		// source controls (no-ops unless the walkthrough is armed + unseen).
+		triggerTip('sign-in-methods');
 		// Force a fresh /identity + /settings fetch on mount. Without
 		// this, opening Settings shortly after an engine restart shows
 		// stale identityStatus from the last 30s-poll tick. Fire and
@@ -142,9 +129,6 @@
 		// Pull a fresh embedding status so the Embeddings section
 		// reflects live health + index counts, not the last 30s-poll tick.
 		app.refreshEmbeddingStatus();
-		return () => {
-			cancelled = true;
-		};
 	});
 
 	// Inputs for engine login flow
@@ -350,7 +334,7 @@
 
 		<div class="settings-row">
 			<span class="settings-label">Source</span>
-			<div class="radio-group">
+			<div class="radio-group" data-tour="identity-source">
 				<label class="radio">
 					<input
 						type="radio"
@@ -361,16 +345,16 @@
 					/>
 					<span>engine</span>
 				</label>
-				<label class="radio" class:radio--disabled={!nip07Available}>
+				<label class="radio" class:radio--disabled={!nip07.available}>
 					<input
 						type="radio"
 						name="identity-source"
 						value="nip07"
-						disabled={!nip07Available}
+						disabled={!nip07.available}
 						checked={currentSource === 'nip07'}
 						onchange={() => pickSource('nip07')}
 					/>
-					<span>nip07{nip07Available ? '' : ' (no extension)'}</span>
+					<span>nip07{nip07.available ? '' : ' (no extension)'}</span>
 				</label>
 			</div>
 		</div>
