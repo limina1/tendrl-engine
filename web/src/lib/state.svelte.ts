@@ -2818,6 +2818,10 @@ function _createAppState() {
 	}
 
 	function handleViewProfile(pubkey: string) {
+		// Navigating to a profile dismisses the transient event-detail overlay
+		// so "View profile" from inside it doesn't leave the modal stacked over
+		// the profile we just opened.
+		eventModalData = null;
 		if (!pubkey) {
 			navigateHome();
 			return;

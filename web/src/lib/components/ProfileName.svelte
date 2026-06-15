@@ -7,10 +7,17 @@
 	//   resolved — kind-0 known: renders the display name; clicking it
 	//     opens the profile modal (kind-0 detail + "view profile").
 	import { getProfile, refreshProfiles, onProfileUpdate, type Profile } from '$lib/api';
+	import { getAppState } from '$lib/state.svelte';
 	import ProfileModal from './ProfileModal.svelte';
 
 	let { pubkey, onviewprofile }: { pubkey: string; onviewprofile?: (pubkey: string) => void } =
 		$props();
+
+	// "View profile" is canonical for every resolved name. Default to the
+	// global navigator so call sites can't silently drop it (the drift that
+	// left the event-detail and relay-operator names without the button).
+	const app = getAppState();
+	const viewProfile = $derived(onviewprofile ?? app.handleViewProfile);
 
 	let profile = $state<Profile | null>(null);
 	let name = $state<string | null>(null);
@@ -79,7 +86,7 @@
 {/if}
 
 {#if showModal && profile}
-	<ProfileModal {profile} onclose={() => (showModal = false)} {onviewprofile} />
+	<ProfileModal {profile} onclose={() => (showModal = false)} onviewprofile={viewProfile} />
 {/if}
 
 <style>
