@@ -99,6 +99,18 @@ export function closeSearchConfig() {
 	searchConfigUI.open = false;
 }
 
+/** Visibility flag for the search-syntax help modal — mounted once in
+ *  +layout.svelte, opened from the search panel's `?` button (sits right
+ *  before the gear that opens the knowledge-base settings). */
+export const searchHelpUI = $state<{ open: boolean }>({ open: false });
+
+export function openSearchHelp() {
+	searchHelpUI.open = true;
+}
+export function closeSearchHelp() {
+	searchHelpUI.open = false;
+}
+
 export function loadSearchConfig() {
 	if (!browser) return;
 	try {

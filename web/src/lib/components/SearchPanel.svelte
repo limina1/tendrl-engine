@@ -14,6 +14,7 @@
 	import {
 		searchConfig,
 		openSearchConfig,
+		openSearchHelp,
 		kindLabel
 	} from '$lib/search/search-config.svelte';
 
@@ -313,7 +314,13 @@
 			{/if}
 			<span class="scope-spacer"></span>
 			<button
-				class="scope-gear"
+				class="affordance affordance--help"
+				onclick={openSearchHelp}
+				title="Search syntax help — semantic, text, kinds, entities, operators"
+				aria-label="Search syntax help"
+			>?</button>
+			<button
+				class="affordance affordance--settings"
 				onclick={openSearchConfig}
 				title="Knowledge base — search defaults (kinds, limit, relays) and embedding settings"
 				aria-label="Knowledge base settings"
@@ -735,18 +742,6 @@
 	}
 	.scope-spacer {
 		flex: 1;
-	}
-	.scope-gear {
-		background: none;
-		border: none;
-		color: var(--fg-muted);
-		cursor: pointer;
-		font-size: 0.8rem;
-		padding: 0 2px;
-		line-height: 1;
-	}
-	.scope-gear:hover {
-		color: var(--accent);
 	}
 
 	.search-results {

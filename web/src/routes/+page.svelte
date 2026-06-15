@@ -875,7 +875,7 @@
 				</button>
 			{/if}
 			<button
-				class="lt"
+				class="lt lt--settings"
 				onclick={openSettings}
 				title="Open settings buffer (SPC s s)"
 			>settings</button>
@@ -1438,6 +1438,9 @@
 		transition: color 100ms, background 100ms, border-color 100ms;
 	}
 	.lt:hover { color: var(--fg); background: var(--base1); }
+	/* The settings entry carries the app-wide settings hue (magenta) so it
+	   reads as the same affordance as the search gear. */
+	.lt--settings:hover { color: var(--affordance-settings); }
 	.lt--on {
 		background: var(--base2);
 		color: var(--fg);
