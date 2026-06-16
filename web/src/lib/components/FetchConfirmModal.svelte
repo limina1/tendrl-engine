@@ -223,6 +223,7 @@
 <div class="rf-backdrop" onclick={cancel} role="presentation">
 	<div
 		class="rf-modal"
+		data-tour="feed-sync"
 		onclick={(e) => e.stopPropagation()}
 		role="dialog"
 		aria-modal="true"
@@ -278,7 +279,7 @@
 			<button class="rf-append-btn" onclick={addExtra}>Add relay</button>
 		</div>
 		{#if isFeedIntent}
-			<div class="rf-general">
+			<div class="rf-general" data-tour="general-feed">
 				<button
 					class="rf-append-btn rf-general-btn"
 					class:rf-general-btn--on={generalOn}

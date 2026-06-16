@@ -29,8 +29,16 @@
 	} from '$lib/discussions/authors.svelte';
 	import { pubkeyToColor } from '$lib/discussions/colors';
 	import { identityCanSign, detectNip07 } from '$lib/identity/signer';
+	import { replayWalkthrough, runTour, trigger as triggerTip } from '$lib/wm/discovery.svelte';
+	import { openModelineHelp } from '$lib/wm/modeline-help.svelte';
 
 	const app = getAppState();
+
+	// Fire the search-history walkthrough tip the first time a search lands —
+	// pointing the user at the history pill that just appeared on the mode-line.
+	$effect(() => {
+		if (app.searchHistory.length > 0) triggerTip('search-history');
+	});
 
 	// Singleton buffers seeded on every frame.
 	const chatBuf: Buffer = { id: 'chat', kind: 'chat', label: 'chat' };
@@ -778,6 +786,20 @@
 		if (mePubkey) prefetchAuthors([mePubkey]);
 	});
 
+	// Walkthrough: the moment a sign-in lands (false→true), point at the me-chip
+	// to explain the name-less pubkey. Guarded so it fires once per login, not on
+	// every reactive re-run; resets on logout. trigger() itself no-ops when the
+	// walkthrough is off or this tip is already seen.
+	let signedInTipFired = false;
+	$effect(() => {
+		if (mePubkey && !signedInTipFired) {
+			signedInTipFired = true;
+			triggerTip('signed-in-noname');
+		} else if (!mePubkey) {
+			signedInTipFired = false;
+		}
+	});
+
 	function openMyProfile() {
 		if (!mePubkey) return;
 		app.navigateToProfile(mePubkey);
@@ -854,6 +876,7 @@
 		<div class="shell__header">
 			<button
 				class="shell__brand"
+				data-tour="home"
 				onclick={() => store.openBuffer({
 					className: 'work',
 					buffer: { id: 'feed', kind: 'feed', label: 'feed' }
@@ -863,6 +886,7 @@
 			{#if mePubkey}
 				<button
 					class="me-chip"
+					data-tour="me-chip"
 					onclick={openMyProfile}
 					title="Open my profile ({mePubkey.slice(0, 12)}…)"
 				>
@@ -875,7 +899,14 @@
 				</button>
 			{/if}
 			<button
+				class="affordance affordance--walkthrough lt-walk"
+				onclick={() => replayWalkthrough()}
+				title="Run the walkthrough — a live, click-through tour of the interface. Re-runs any time; always dismissable."
+				aria-label="Run walkthrough"
+			>W</button>
+			<button
 				class="lt lt--settings"
+				data-tour="settings"
 				onclick={openSettings}
 				title="Open settings buffer (SPC s s)"
 			>settings</button>
@@ -907,8 +938,8 @@
 			{@render minibufferStrip()}
 		{/if}
 
-		<div class="shell__modeline">
-			<span class="ml__mode ml__mode--{mode}">-- {mode.toUpperCase()} --</span>
+		<div class="shell__modeline" data-tour="modeline">
+			<span class="ml__mode ml__mode--{mode}" data-tour="ml-mode">-- {mode.toUpperCase()} --</span>
 			<span class="ml__seg ml__seg--text">L:{store.currentLayout.name}</span>
 			{#if store.focusedSlotClass()}
 				<span class="ml__seg ml__seg--text">@{store.focusedSlotClass()}</span>
@@ -926,6 +957,7 @@
 			     visible center of the modeline rather than the right edge. -->
 			<button
 				class="pill pill--btn pill--relays"
+				data-tour="ml-pills"
 				onclick={openRelays}
 				title="Relay configuration · read/write toggles · NIP-11 details"
 			>
@@ -936,7 +968,7 @@
 				<span class="ml__seg ml__status">{store.modelineStatus(focusedBuffer.id)}</span>
 			{/if}
 			{#if app.searchHistory.length > 0}
-				<span class="hs-pill-wrap" bind:this={hsWrapEl}>
+				<span class="hs-pill-wrap" data-tour="search-history" bind:this={hsWrapEl}>
 					<button
 						class="pill pill--btn pill--hs"
 						onclick={() => (historyPopoverOpen = !historyPopoverOpen)}
@@ -1024,6 +1056,20 @@
 					</span>
 				{/if}
 			{/if}
+			<!-- Mode-line's own affordances, mirroring search's ? / ⚙ pair:
+			     W runs the on-demand mode-line tour, ? opens the reference. -->
+			<button
+				class="affordance affordance--walkthrough"
+				onclick={() => runTour('modeline-overview')}
+				title="Tour the mode-line — a guided walk through each segment"
+				aria-label="Mode-line walkthrough"
+			>W</button>
+			<button
+				class="affordance affordance--help"
+				onclick={openModelineHelp}
+				title="Mode-line reference — what each segment means and the global keys"
+				aria-label="Mode-line help"
+			>?</button>
 		</div>
 	</div>
 

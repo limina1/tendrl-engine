@@ -398,6 +398,10 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/v1/network/status", get(api::network_status_handler))
         .route("/api/v1/network/mode", post(api::set_network_mode_handler))
         .route(
+            "/api/v1/network/reset-mode-choice",
+            post(api::reset_mode_choice_handler),
+        )
+        .route(
             "/api/v1/network/fetch-events",
             get(api::fetch_events_handler),
         )

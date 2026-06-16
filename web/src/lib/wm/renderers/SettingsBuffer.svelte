@@ -1,6 +1,8 @@
 <script lang="ts">
 	import { getAppState } from '$lib/state.svelte';
-	import { detectNip07 } from '$lib/identity/signer';
+	import { nip07, startNip07Watch } from '$lib/identity/nip07.svelte';
+	import { trigger as triggerTip } from '$lib/wm/discovery.svelte';
+	import { discovery, rearmDiscovery, setWalkthroughEnabled } from '$lib/wm/discovery.svelte';
 	import * as api from '$lib/api';
 	import type { Buffer } from '../types';
 	import type { EditorInsertMode, SyncMode, ButtonLabels, ComposeDefaultMode } from '$lib/types';
@@ -9,7 +11,6 @@
 
 	const app = getAppState();
 
-	let nip07Available = $state(false);
 	// Snapshot of the last-saved values from config.toml. Loaded on
 	// mount + after a successful save. Compared against the live
 	// app.* values to drive the dirty flag on the Save button.
@@ -108,27 +109,14 @@
 	}
 
 	$effect(() => {
-		// Detect window.nostr on mount, then keep retrying for a couple
-		// of seconds. Extensions inject at document_start, but after a
-		// hard reload / cache clear the buffer can render *before* the
-		// extension finishes injecting — a one-shot check there latches
-		// the radio disabled ("no extension") forever even once the
-		// signer is live. Poll a few times (mirrors the boot-time
-		// auto-reconnect detection) and stop as soon as it appears.
-		nip07Available = detectNip07();
-		let cancelled = false;
-		if (!nip07Available) {
-			(async () => {
-				for (const delay of [100, 250, 500, 1000]) {
-					await new Promise((r) => setTimeout(r, delay));
-					if (cancelled) return;
-					if (detectNip07()) {
-						nip07Available = true;
-						return;
-					}
-				}
-			})();
-		}
+		// Keep window.nostr detection live + reactive: the watcher bursts now
+		// (covers the document_start inject race) and re-checks on return-to-tab,
+		// so enabling/unlocking the extension *after* Settings is open lights up
+		// the radio on its own — no leave-and-return needed.
+		startNip07Watch();
+		// Walkthrough: opening Settings is the "sign in" beat. Point at the
+		// source controls (no-ops unless the walkthrough is armed + unseen).
+		triggerTip('sign-in-methods');
 		// Force a fresh /identity + /settings fetch on mount. Without
 		// this, opening Settings shortly after an engine restart shows
 		// stale identityStatus from the last 30s-poll tick. Fire and
@@ -141,9 +129,6 @@
 		// Pull a fresh embedding status so the Embeddings section
 		// reflects live health + index counts, not the last 30s-poll tick.
 		app.refreshEmbeddingStatus();
-		return () => {
-			cancelled = true;
-		};
 	});
 
 	// Inputs for engine login flow
@@ -349,7 +334,7 @@
 
 		<div class="settings-row">
 			<span class="settings-label">Source</span>
-			<div class="radio-group">
+			<div class="radio-group" data-tour="identity-source">
 				<label class="radio">
 					<input
 						type="radio"
@@ -360,16 +345,16 @@
 					/>
 					<span>engine</span>
 				</label>
-				<label class="radio" class:radio--disabled={!nip07Available}>
+				<label class="radio" class:radio--disabled={!nip07.available}>
 					<input
 						type="radio"
 						name="identity-source"
 						value="nip07"
-						disabled={!nip07Available}
+						disabled={!nip07.available}
 						checked={currentSource === 'nip07'}
 						onchange={() => pickSource('nip07')}
 					/>
-					<span>nip07{nip07Available ? '' : ' (no extension)'}</span>
+					<span>nip07{nip07.available ? '' : ' (no extension)'}</span>
 				</label>
 			</div>
 		</div>
@@ -703,6 +688,108 @@
 			<strong>auto</strong>: relay fetches run without confirmation.<br />
 			<strong>confirm</strong>: every relay fetch raises a confirm modal — useful when bandwidth, privacy, or rate-limits matter.
 		</p>
+
+		<div class="settings-row">
+			<label class="settings-label" for="walkthrough-toggle">Walkthrough</label>
+			<label class="switch">
+				<input
+					id="walkthrough-toggle"
+					type="checkbox"
+					checked={discovery.enabled}
+					onchange={(e) =>
+						e.currentTarget.checked ? rearmDiscovery() : setWalkthroughEnabled(false)}
+				/>
+				<span class="switch-text">{discovery.enabled ? 'on' : 'off'}</span>
+			</label>
+		</div>
+
+		<div class="settings-row">
+			<span class="settings-label">Reset first-run setup</span>
+			<button
+				class="settings-action"
+				onclick={() => app.resetNetworkModeChoice()}
+				title="Re-arm the mode-choice modal + walkthrough for the next load (no data is touched)"
+			>
+				Reset…
+			</button>
+		</div>
+		<p class="settings-hint">
+			<strong>Walkthrough</strong>: contextual tips that point out features the first
+			time you reach them. Toggling on (re)arms them; off silences them. The mode-line
+			<strong>W</strong> button replays them any time.<br />
+			<strong>Reset first-run setup</strong>: re-arms the mode-choice modal + walkthrough so they reappear on next load, as if freshly installed (no data is touched).
+		</p>
+	</div>
+
+	<!-- AI assistant: provider/model/auth channel + per-tool policy. Tool
+	     toggles apply live (next agent turn); provider/model/auth persist to
+	     config.toml and take effect on the next engine restart. -->
+	<div class="settings-group">
+		<div class="settings-group-title">AI assistant</div>
+
+		{#if !aiSettings}
+			<p class="settings-hint">AI settings unavailable (engine not reachable).</p>
+		{:else}
+			<div class="settings-row">
+				<span class="settings-label">Model</span>
+				<input
+					class="settings-input"
+					type="text"
+					value={aiSettings.model}
+					disabled={aiBusy}
+					onchange={(e) => applyAiUpdate({ model: e.currentTarget.value.trim() })}
+				/>
+			</div>
+
+			<p class="settings-hint">
+				Auth uses <code>ANTHROPIC_API_KEY</code> from the engine's environment. Model changes
+				apply on engine restart.
+			</p>
+
+			<div class="settings-subtitle">System prompt</div>
+			<p class="settings-hint">
+				Prepended to every agent turn, re-read each message. Editable here or on disk
+				{#if aiPromptPath}at <code>{aiPromptPath}</code>{/if}.
+			</p>
+			<textarea
+				class="settings-textarea"
+				rows="8"
+				bind:value={aiPrompt}
+				disabled={aiBusy}
+				oninput={() => (aiPromptDirty = true)}
+			></textarea>
+			<div class="settings-row">
+				<button
+					class="settings-action"
+					onclick={saveAiPrompt}
+					disabled={aiBusy || !aiPromptDirty}>Save prompt</button
+				>
+			</div>
+
+			<div class="settings-subtitle">Tools the assistant may use</div>
+			{#each aiSettings.tools as tool (tool.name)}
+				<div class="settings-row">
+					<label class="settings-label" for={`ai-tool-${tool.name}`} title={tool.description}>
+						{tool.name}
+						<span class="ai-tool-cat">{tool.category}</span>
+					</label>
+					<label class="switch">
+						<input
+							id={`ai-tool-${tool.name}`}
+							type="checkbox"
+							checked={tool.enabled}
+							disabled={aiBusy}
+							onchange={(e) => toggleAiTool(tool.name, e.currentTarget.checked)}
+						/>
+						<span class="switch-text">{tool.enabled ? 'on' : 'off'}</span>
+					</label>
+				</div>
+			{/each}
+			<p class="settings-hint">
+				Tool changes apply immediately to the next message. <code>publish</code>-category tools
+				are off by default and broadcast signed events when enabled.
+			</p>
+		{/if}
 	</div>
 
 	<!-- AI assistant: provider/model/auth channel + per-tool policy. Tool

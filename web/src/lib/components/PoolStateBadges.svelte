@@ -21,7 +21,8 @@
 		forked,
 		containedIn,
 		onpartof,
-		orientation = 'vertical'
+		orientation = 'vertical',
+		anchor
 	}: {
 		item: ContextItem | null;
 		/** Click handler for the ctx pill. If omitted, the pill is hidden.
@@ -56,6 +57,9 @@
 		 *  for header surfaces where a column would push content down
 		 *  (paginated section title, reader publication header). */
 		orientation?: 'vertical' | 'horizontal';
+		/** Optional `data-tour` value for the walkthrough to anchor a coachmark
+		 *  at this pill stack (e.g. the feed's first row). Omitted = no anchor. */
+		anchor?: string;
 	} = $props();
 
 	/** Compact relay-label: "first-host +N" when multiple, just the host
@@ -73,7 +77,7 @@
 	);
 </script>
 
-<div class="psb" class:psb--horizontal={orientation === 'horizontal'}>
+<div class="psb" class:psb--horizontal={orientation === 'horizontal'} data-tour={anchor}>
 	<!-- Provenance first — where the event lives in the network.
 	     local (signed but not broadcast), relay-label or remote (on relays),
 	     fork (NIP-54 e-tag with fork marker). Renders only when the host

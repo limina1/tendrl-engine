@@ -17,6 +17,8 @@
 		sectionDiverged
 	} from '$lib/compose/state';
 	import { getAppState } from '$lib/state.svelte';
+	import { runTour } from '$lib/wm/discovery.svelte';
+	import { openComposeHelp } from '$lib/wm/compose-help.svelte';
 
 	const app = getAppState();
 
@@ -714,13 +716,13 @@
 </script>
 
 <div class="compose-view">
-	<div class="compose-mode-bar">
+	<div class="compose-mode-bar" data-tour="compose-modebar">
 		<!-- Mode is set by the user's compose-default setting and toggled
 		     via h/l in normal mode; no visible toggle button. The current
 		     mode is rendered as a static label so the user knows where
 		     they are. -->
 		<div class="mode-label">{mode}</div>
-		<div class="delim-group">
+		<div class="delim-group" data-tour="compose-nest">
 			<span class="delim-label">delim</span>
 			<input
 				class="delim-input"
@@ -789,6 +791,22 @@
 			class:active={mode === 'preview'}
 			title="Preview the draft in a separate buffer"
 		>Read</button>
+		<!-- Composer's own affordances, mirroring the mode-line's W / ? pair:
+		     W runs the on-demand composer tour, ? opens the reference. The tour
+		     is mode-aware — it walks the section cards in Full, the text buffer
+		     in Plain — so the W in each view tours that view. -->
+		<button
+			class="affordance affordance--walkthrough"
+			onclick={() => runTour(mode === 'plain' ? 'compose-plain-overview' : 'compose-overview')}
+			title="Tour the composer — a guided walk through this view, sections, and publishing"
+			aria-label="Composer walkthrough"
+		>W</button>
+		<button
+			class="affordance affordance--help"
+			onclick={openComposeHelp}
+			title="Composer reference — modes, the section model, and draft → sign → broadcast"
+			aria-label="Composer help"
+		>?</button>
 	</div>
 
 	<!-- Edit chrome (title/tags + selection toolbar) is hidden in
@@ -820,7 +838,7 @@
 	{/if}
 
 	{#if mode !== 'preview'}
-		<div class="compose-toolbar">
+		<div class="compose-toolbar" data-tour="compose-toolbar">
 			<button class="sel-btn" onclick={toolbarSelectAll} disabled={compose.sections.length === 0} title="Select all">All</button>
 			<button class="sel-btn" onclick={toolbarInvert} disabled={compose.sections.length === 0} title="Invert selection">Inv</button>
 			<button class="icon-btn" onclick={toolbarSendToChat} disabled={checkedIds.size === 0} title="Send to chat">◂</button>
@@ -847,7 +865,7 @@
 
 	<div class="compose-content">
 		{#if mode === 'full'}
-			<div class="compose-sections" bind:this={sectionsListEl}>
+			<div class="compose-sections" data-tour="compose-sections" bind:this={sectionsListEl}>
 				{#each compose.sections as section, i (section.id)}
 					<div
 						class="compose-section-row"
@@ -877,7 +895,7 @@
 				{/each}
 			</div>
 		{:else if mode === 'plain'}
-			<div class="plain-layout">
+			<div class="plain-layout" data-tour="compose-plain">
 				<div class="plain-editor-wrap">
 					<CodeMirrorEditor
 						bind:value={plainText}
@@ -982,7 +1000,7 @@
 		</div>
 	{/if}
 
-	<div class="compose-actions">
+	<div class="compose-actions" data-tour="compose-actions">
 		{#if mode === 'full'}
 			<button onclick={addSection}>+ Section</button>
 		{/if}

@@ -11,16 +11,20 @@
 	let {
 		onchoose
 	}: {
-		/** Persist the picked mode + close. Wired to app.chooseNetworkMode. */
-		onchoose: (mode: NetworkMode) => void;
+		/** Persist the picked mode + close, and either start or suppress the
+		 *  contextual walkthrough per the toggle. Wired to app.chooseNetworkMode. */
+		onchoose: (mode: NetworkMode, runWalkthrough: boolean) => void;
 	} = $props();
 
 	let submitting = $state(false);
+	// Default ON — most first-run users benefit from the guided tour. Unchecking
+	// means "never show tips" until re-armed from Settings or the W button.
+	let runWalkthrough = $state(true);
 
 	function pick(mode: NetworkMode) {
 		if (submitting) return;
 		submitting = true;
-		onchoose(mode);
+		onchoose(mode, runWalkthrough);
 	}
 </script>
 
@@ -50,6 +54,7 @@
 					<span class="nm-kw">fine-grained control</span> and for building an
 					<span class="nm-kw">understanding of how Nostr works</span> under the hood.
 				</span>
+				<span class="nm-choice-tip">New here and want to explore? Pick Confirm — the walkthrough is built around it.</span>
 			</button>
 
 			<button class="nm-choice" onclick={() => pick('auto')} disabled={submitting}>
@@ -69,7 +74,16 @@
 		</div>
 
 		<footer class="nm-footer">
-			<span class="nm-foot-note">Pick one to continue — no fetching happens until you do.</span>
+			<button
+				type="button"
+				class="nm-walk"
+				class:nm-walk--on={runWalkthrough}
+				aria-pressed={runWalkthrough}
+				onclick={() => (runWalkthrough = !runWalkthrough)}
+				disabled={submitting}
+				title="Run a short, click-through walkthrough of the interface as you go. Always dismissable; you can re-run it any time from the W button or Settings."
+			>{runWalkthrough ? '✓' : '○'} Run walkthrough</button>
+			<span class="nm-foot-note">Pick a mode to continue — no fetching happens until you do.</span>
 		</footer>
 	</div>
 </div>
@@ -174,6 +188,14 @@
 		overflow-wrap: break-word;
 		word-break: break-word;
 	}
+	/* Short, friendly nudge for first-timers — the walkthrough's dull-grey hue
+	   so it reads as a guided-tour aside, not part of the mode description. */
+	.nm-choice-tip {
+		margin-top: 2px;
+		color: var(--affordance-walkthrough);
+		font-size: calc(var(--t-xs) - 1px);
+		font-style: italic;
+	}
 	/* Keyword highlighting: verbs/actions in the accent, key concepts in the
 	   "online" green, the trade-off phrase in the muted draft tone. Kept
 	   weight-500 so they read as emphasis, not links. */
@@ -190,11 +212,45 @@
 		font-weight: 500;
 	}
 	.nm-footer {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 12px;
 		padding: 10px 18px 14px;
 		border-top: 1px solid var(--panel-border);
 	}
 	.nm-foot-note {
 		color: var(--base5);
 		font-size: calc(var(--t-xs) - 1px);
+	}
+	/* "Run walkthrough" toggle — mirrors the ✓/○ "General feed" toggle pattern
+	   from the fetch-confirm modal: transparent at rest, lifts to the
+	   walkthrough's dull-grey role hue when on. */
+	.nm-walk {
+		font: inherit;
+		font-size: var(--t-xs);
+		padding: 4px 10px;
+		background: transparent;
+		border: 1px solid var(--panel-border);
+		color: var(--base6);
+		border-radius: var(--r-sm);
+		cursor: pointer;
+		white-space: nowrap;
+	}
+	.nm-walk:hover:not(:disabled) {
+		border-color: var(--affordance-walkthrough);
+		color: var(--affordance-walkthrough);
+	}
+	.nm-walk--on {
+		background: color-mix(in srgb, var(--affordance-walkthrough) 14%, transparent);
+		color: var(--affordance-walkthrough);
+		border-color: color-mix(in srgb, var(--affordance-walkthrough) 50%, transparent);
+	}
+	.nm-walk--on:hover:not(:disabled) {
+		background: color-mix(in srgb, var(--affordance-walkthrough) 22%, transparent);
+	}
+	.nm-walk:disabled {
+		opacity: 0.55;
+		cursor: default;
 	}
 </style>

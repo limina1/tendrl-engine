@@ -5,6 +5,11 @@
 	import PoolStateBadges from '$lib/components/PoolStateBadges.svelte';
 	import { getActiveStore, type NavAction } from '../buffer-store.svelte';
 	import type { Buffer } from '../types';
+	import {
+		discovery,
+		trigger as triggerTip,
+		setTipVars
+	} from '$lib/wm/discovery.svelte';
 
 	let { buffer }: { buffer: Buffer } = $props();
 
@@ -23,6 +28,32 @@
 	$effect(() => {
 		// Clamp cursor when feed length changes.
 		if (cursor >= app.feed.length) cursor = Math.max(0, app.feed.length - 1);
+	});
+
+	// Walkthrough: once the feed has events (the user fetched), introduce the
+	// top publication + its provenance pills. Gated on `general-feed` already
+	// seen so these fire *after* the login walk's fetch beat, not on an initial
+	// local load. Fires once; trigger() itself no-ops when not armed.
+	let feedTipFired = false;
+	$effect(() => {
+		const top = app.feed[0];
+		if (!top) return;
+		untrack(() => {
+			if (feedTipFired) return;
+			if (!discovery.enabled || discovery.seen.includes('feed-first-pub')) return;
+			if (!discovery.seen.includes('general-feed')) return;
+			feedTipFired = true;
+			const s = top.section_count;
+			const r = top.relays.length;
+			triggerTip('feed-first-pub', {
+				title: top.title ?? '[Untitled]',
+				sections: `${s} section${s === 1 ? '' : 's'}`
+			});
+			// Pre-stash the chained badges tip's relay count (it surfaces via `next`).
+			setTipVars('feed-first-badges', {
+				relays: r === 0 ? 'no relays yet' : `${r} relay${r === 1 ? '' : 's'}`
+			});
+		});
 	});
 
 	function formatTime(ts: number): string {
@@ -118,7 +149,7 @@
 	});
 </script>
 
-<div class="feed-wrap">
+<div class="feed-wrap" data-tour="feed">
 	{#if app.feedLoading}
 		<div class="empty"><p>Loading publications…</p></div>
 	{:else if app.feed.length > 0}
@@ -135,6 +166,7 @@
 					class="row"
 					class:row--cursor={i === cursor}
 					data-cursor={i}
+					data-tour={i === 0 ? 'feed-first-pub' : undefined}
 					onclick={() => { cursor = i; openPub(pub_item); }}
 					onkeydown={(e) => {
 						if (e.key === 'Enter') openPub(pub_item);
@@ -168,6 +200,7 @@
 						     unified pool-state stack so the row reads in one column.
 						     "local" = signed but not broadcast (LocalPublicationTracker). -->
 						<PoolStateBadges
+							anchor={i === 0 ? 'feed-first-badges' : undefined}
 							item={app.findPoolItemByAddr(pub_item.addr)}
 							onpillctx={() => app.pillActionByAddr(pub_item.addr, 'context')}
 							onpillcmp={() => app.pillActionByAddr(pub_item.addr, 'compose')}

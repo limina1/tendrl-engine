@@ -1822,6 +1822,39 @@ pub async fn set_network_mode_handler(
     Ok(Json(json!({ "mode": mode })))
 }
 
+/// POST /api/v1/network/reset-mode-choice — re-arm the first-run modal
+///
+/// Clears the `mode_chosen` flag (engine state + config.toml) so the one-time
+/// network-mode choice modal shows again on the next load. The mode value
+/// itself is left untouched. Backs the Settings "reset first-run setup" button.
+pub async fn reset_mode_choice_handler(
+    State(engine): State<AppState>,
+) -> Result<Json<Value>, EngineError> {
+    engine.reset_mode_choice();
+
+    // Persist the cleared flag in a blocking task to avoid stalling the runtime.
+    if let Some(config_path) = engine.config_path() {
+        let config_path = config_path.to_path_buf();
+        tokio::task::spawn_blocking(move || {
+            if let Ok(content) = std::fs::read_to_string(&config_path) {
+                if let Ok(mut doc) = content.parse::<toml::Table>() {
+                    let network = doc
+                        .entry("network")
+                        .or_insert_with(|| toml::Value::Table(toml::Table::new()));
+                    if let toml::Value::Table(table) = network {
+                        table.insert("mode_chosen".into(), toml::Value::Boolean(false));
+                    }
+                    if let Ok(serialized) = toml::to_string_pretty(&doc) {
+                        let _ = std::fs::write(&config_path, serialized);
+                    }
+                }
+            }
+        });
+    }
+
+    Ok(Json(json!({ "mode_chosen": false })))
+}
+
 /// GET /api/v1/network/fetch-events
 ///
 /// Long-lived SSE stream of fetch-operation events (`intent`,

@@ -1351,6 +1351,14 @@ export function setNetworkMode(mode: NetworkMode) {
 	});
 }
 
+/** Re-arm the first-run network-mode choice modal: clears the engine's
+ *  `mode_chosen` flag so the one-time picker shows again on next load. */
+export function resetNetworkModeChoice() {
+	return fetchJson<{ mode_chosen: boolean }>('/api/v1/network/reset-mode-choice', {
+		method: 'POST'
+	});
+}
+
 /** Reply to a confirm Intent — approve or decline a pending fetch
  *  operation, optionally overriding the relay set. */
 export function confirmFetch(operationId: string, approved: boolean, relays?: string[]) {

@@ -5,6 +5,7 @@
 	import type { SearchResult, ContextItem } from '$lib/types';
 	import { getActiveStore, type NavAction } from '../buffer-store.svelte';
 	import type { Buffer } from '../types';
+	import { registerSearchRunner, clearSearchRunner } from '$lib/search/search-tour';
 
 	let { buffer }: { buffer: Buffer } = $props();
 
@@ -16,6 +17,16 @@
 	// embedding controls themselves live in the KB settings modal (the ⚙ on the
 	// search panel). Lightweight (no embed pass).
 	onMount(() => { app.refreshEmbeddingStatus(); });
+
+	// Bridge the search tour's "Try it" exercises to the live box: searchFor
+	// echoes the example query into the input AND runs it. Registered while a
+	// search buffer is mounted, cleared on unmount so a stale closure can't
+	// fire into a disposed view.
+	$effect(() => {
+		const run = (q: string) => app.searchFor(q);
+		untrack(() => registerSearchRunner(run));
+		return () => untrack(() => clearSearchRunner(run));
+	});
 
 	// Three sibling sub-views — like the reader's outline/paginated/
 	// continuous. h/l cycles them; j/k walks the active tab's list.
