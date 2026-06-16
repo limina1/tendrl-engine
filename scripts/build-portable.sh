@@ -54,6 +54,15 @@ docker run --rm -t \
       curl --proto "=https" --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
     fi
     source "$HOME/.cargo/env"
+    # onnxruntime (prebuilt via fastembed ort-download-binaries) is compiled
+    # against a newer libstdc++ whose headers reference __libc_single_threaded,
+    # a symbol that only exists in glibc >= 2.32. Linking here against glibc 2.28
+    # leaves it undefined. Supply a weak fallback (0 = "not single-threaded",
+    # forcing the always-correct atomic paths); on a newer-glibc host libc`s
+    # strong symbol takes precedence. Keeps the 2.28 portability floor intact.
+    printf "char __libc_single_threaded __attribute__((weak)) = 0;\n" > /tmp/glibc_compat.c
+    gcc -c -O2 -fPIC /tmp/glibc_compat.c -o /tmp/glibc_compat.o
+    export RUSTFLAGS="${RUSTFLAGS:-} -Clink-arg=/tmp/glibc_compat.o"
     cargo build --release
     chown -R "${HOST_UID}:${HOST_GID}" "/src/'"${TARGET_SUBDIR}"'"
   '
