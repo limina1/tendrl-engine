@@ -17,6 +17,7 @@
 		openSearchHelp,
 		kindLabel
 	} from '$lib/search/search-config.svelte';
+	import { runTour } from '$lib/wm/discovery.svelte';
 
 	let {
 		results,
@@ -298,7 +299,9 @@
 	</div>
 
 	{#if activeTab === 'search'}
-		<SearchInput {onsearch} bind:value={searchValue} />
+		<div data-tour="search-input">
+			<SearchInput {onsearch} bind:value={searchValue} />
+		</div>
 
 		<!-- Scope strip: the kinds a search runs against when the query
 		     itself has no `k:` token. Makes the otherwise-invisible
@@ -313,6 +316,16 @@
 				<span class="scope-chip scope-chip--all" title="No kind filter — every kind matches">all kinds</span>
 			{/if}
 			<span class="scope-spacer"></span>
+			<!-- Search's own affordances. W runs the hands-on search tour (each
+			     step's "Try it" runs a live example), ? opens the syntax
+			     reference, ⚙ the KB/search settings — same family as the
+			     mode-line and composer W / ? chips. -->
+			<button
+				class="affordance affordance--walkthrough"
+				onclick={() => runTour('search-tour-intro')}
+				title="Search tour — a hands-on walk through text, kinds, authors, entities, semantic & tag search"
+				aria-label="Search walkthrough"
+			>W</button>
 			<button
 				class="affordance affordance--help"
 				onclick={openSearchHelp}

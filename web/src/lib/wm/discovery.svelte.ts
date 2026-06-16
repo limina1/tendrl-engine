@@ -19,6 +19,7 @@
 // the experience doesn't repeat across reloads; the Settings reset clears them.
 
 import { browser } from '$app/environment';
+import { runSearchExample } from '$lib/search/search-tour';
 
 const ENABLED_KEY = 'tendrl.walkthrough.enabled';
 const SEEN_KEY = 'tendrl.walkthrough.seen';
@@ -56,12 +57,14 @@ export type TourTip = {
 // fires from its own discovery point (see the per-surface triggers in +page /
 // +layout).
 //
-// Two component tours hang off the feed's "read or work with the event" fork:
-// the reader tour (reader-open → reader-menu → reader-edit) is event-gated —
-// it fires once when a publication first opens; the composer tour
-// (compose-overview → compose-modes → compose-build → compose-publish) and the
-// mode-line tour are on-demand only, surfaced by their component's own W chip
-// via `runTour` (never auto-thrown).
+// Component tours hang off the feed's "read or work with the event" fork: the
+// reader tour (reader-open → reader-menu → reader-edit) is event-gated — it
+// fires once when a publication first opens. The composer tour
+// (compose-overview → …), the mode-line tour, and the hands-on search tour
+// (search-tour-intro → text → kind → author → nip19 → publication → compose →
+// semantic → tags → relays) are on-demand only, surfaced by their component's
+// own W chip via `runTour` (never auto-thrown). The search tour's steps carry
+// "Try it" actions that run a real example query through the live box.
 export const TIPS: Record<string, TourTip> = {
 	// ── First-run login walk ─────────────────────────────────────────────
 	'feed-sync': {
@@ -223,6 +226,98 @@ export const TIPS: Record<string, TourTip> = {
 		title: 'Draft → sign → broadcast',
 		body: 'Save draft keeps an unsigned copy locally (it survives a refresh). Sign turns the draft into a signed snapshot — the only way an event enters the db. Broadcasting to relays is a separate, deliberate step afterwards. Preview events shows the exact JSON first.',
 		placement: 'top'
+	},
+
+	// ── Search tour (on demand: the search panel's own W chip) ────────────
+	// A hands-on drill: each step points at the search box and its "Try it"
+	// runs a real example query (via `runSearchExample` → app.searchFor, which
+	// fills the box and executes), then chains to the next. Surfaced only by
+	// the search panel's W chip; the ? chip is the full syntax reference.
+	'search-tour-intro': {
+		key: 'search-tour-intro',
+		anchor: 'search-input',
+		title: 'Searching the pool',
+		body: 'This box queries your local pool first; you can then extend a search out to relays. Filters compose with spaces. Tap ? any time for the full syntax — here we’ll run a few live. Each step’s “Try it” fills the box and runs it.',
+		placement: 'bottom',
+		next: 'search-tour-text'
+	},
+	'search-tour-text': {
+		key: 'search-tour-text',
+		anchor: 'search-input',
+		title: 'Exact text',
+		body: 'A quoted "phrase" matches that text exactly inside event content. Bare words are looser. Try the exact-phrase form:',
+		placement: 'bottom',
+		next: 'search-tour-kind',
+		action: { label: 'Try "nostr"', run: () => runSearchExample('"nostr"') }
+	},
+	'search-tour-kind': {
+		key: 'search-tour-kind',
+		anchor: 'search-input',
+		title: 'By kind — incl. 30023',
+		body: 'k:N filters by event kind. k:30023 is NIP-23 long-form articles; k:1 short notes; k:0 profiles; k:30040 publication indexes. Pull the long-form articles in your pool:',
+		placement: 'bottom',
+		next: 'search-tour-author',
+		action: { label: 'Try k:30023', run: () => runSearchExample('k:30023') }
+	},
+	'search-tour-author': {
+		key: 'search-tour-author',
+		anchor: 'search-input',
+		title: 'By author / npub',
+		body: 'by: filters on the publishing key: by:npub1… for a specific person, by:name:alice for a profile-name partial, or by:me for yourself. Try your own events (swap in any by:npub1… for someone else):',
+		placement: 'bottom',
+		next: 'search-tour-nip19',
+		action: { label: 'Try by:me', run: () => runSearchExample('by:me') }
+	},
+	'search-tour-nip19': {
+		key: 'search-tour-nip19',
+		anchor: 'search-input',
+		title: 'Paste an entity',
+		body: 'Paste any NIP-19 entity and it decodes to a precise filter: note1…/nevent1… jumps to one event, npub1…/nprofile1… to a person, naddr1… retrieves a specific publication. id:<64-hex> does the same as a raw event id. (No example to auto-run — paste your own.)',
+		placement: 'bottom',
+		next: 'search-tour-publication'
+	},
+	'search-tour-publication': {
+		key: 'search-tour-publication',
+		anchor: 'search-input',
+		title: 'Retrieve a publication',
+		body: 'k:30040 lists publication indexes — the “books” from the feed. Open one to read it, or address an exact one with its naddr1…. List the publications in your pool:',
+		placement: 'bottom',
+		next: 'search-tour-compose',
+		action: { label: 'Try k:30040', run: () => runSearchExample('k:30040') }
+	},
+	'search-tour-compose': {
+		key: 'search-tour-compose',
+		anchor: 'search-input',
+		title: 'Compose filters',
+		body: 'Tokens AND together with spaces, so you narrow by stacking them: kind + text, author + kind, kind + time bound (since:/until:). Combine a kind with an exact phrase:',
+		placement: 'bottom',
+		next: 'search-tour-semantic',
+		action: { label: 'Try k:30023 "nostr"', run: () => runSearchExample('k:30023 "nostr"') }
+	},
+	'search-tour-semantic': {
+		key: 'search-tour-semantic',
+		anchor: 'search-input',
+		title: 'Semantic search',
+		body: '~:concept finds events by meaning, not keywords — ~:"a longer phrase":15 caps the result count. It needs the embedding index (the ⚙ enables it; the mode-line pill shows its health). Try a concept:',
+		placement: 'bottom',
+		next: 'search-tour-tags',
+		action: { label: 'Try ~:nostr', run: () => runSearchExample('~:nostr') }
+	},
+	'search-tour-tags': {
+		key: 'search-tour-tags',
+		anchor: 'search-input',
+		title: 'Tag operators',
+		body: 'has:NAME matches any event carrying a NAME tag; NAME:value (a bare key — no #) filters on a tag’s value, e.g. t:nostr. Find everything with a title tag:',
+		placement: 'bottom',
+		next: 'search-tour-relays',
+		action: { label: 'Try has:title', run: () => runSearchExample('has:title') }
+	},
+	'search-tour-relays': {
+		key: 'search-tour-relays',
+		anchor: 'search-input',
+		title: 'Local first, then relays',
+		body: 'Every search hits your local pool first — instant, offline. When the results look thin, the panel offers to extend the same query out to relays and pull what’s missing into the pool. That’s the whole loop: query local, reach out when needed, read or work with what you find.',
+		placement: 'bottom'
 	}
 };
 
