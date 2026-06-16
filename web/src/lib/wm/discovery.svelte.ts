@@ -59,12 +59,15 @@ export type TourTip = {
 //
 // Component tours hang off the feed's "read or work with the event" fork: the
 // reader tour (reader-open → reader-menu → reader-edit) is event-gated — it
-// fires once when a publication first opens. The composer tour
-// (compose-overview → …), the mode-line tour, and the hands-on search tour
-// (search-tour-intro → text → kind → author → nip19 → publication → compose →
-// semantic → tags → relays) are on-demand only, surfaced by their component's
-// own W chip via `runTour` (never auto-thrown). The search tour's steps carry
-// "Try it" actions that run a real example query through the live box.
+// fires once when a publication first opens. The rest are on-demand only,
+// surfaced by their component's own W chip via `runTour` (never auto-thrown):
+//   • composer — mode-aware: the W chip routes to the Full chain
+//     (compose-overview → modes → full → build → publish) or the Plain chain
+//     (compose-plain-overview → plain → …), which merge at compose-build.
+//   • mode-line (modeline-overview → focus → status).
+//   • search — a hands-on drill whose steps carry "Try it" actions that run a
+//     real example query through the live box.
+//   • event menu (menu-overview → copy → actions → pool → found).
 export const TIPS: Record<string, TourTip> = {
 	// ── First-run login walk ─────────────────────────────────────────────
 	'feed-sync': {
@@ -210,6 +213,14 @@ export const TIPS: Record<string, TourTip> = {
 		title: 'Outline → structure',
 		body: 'Full shows each section as a card; Plain is one text buffer (h/l flips between them); Read previews the result. delim and nest control how your headings parse into nested 30040 indices — flat keeps one index over a flat list, each tier folds one more heading level into a sub-index.',
 		placement: 'bottom',
+		next: 'compose-full'
+	},
+	'compose-full': {
+		key: 'compose-full',
+		anchor: 'compose-sections',
+		title: 'Full view — section cards',
+		body: 'Each section is an editable card — title, content, and its own tags. Drag to reorder, collapse to titles for a quick outline, and check cards to act on a selection. Imported sections arrive locked; claim one (it turns yellow) to edit it.',
+		placement: 'top',
 		next: 'compose-build'
 	},
 	'compose-build': {
@@ -226,6 +237,25 @@ export const TIPS: Record<string, TourTip> = {
 		title: 'Draft → sign → broadcast',
 		body: 'Save draft keeps an unsigned copy locally (it survives a refresh). Sign turns the draft into a signed snapshot — the only way an event enters the db. Broadcasting to relays is a separate, deliberate step afterwards. Preview events shows the exact JSON first.',
 		placement: 'top'
+	},
+	// Plain-view branch of the composer tour — the W chip routes here when the
+	// composer is in Plain mode. Forks from its own overview, then merges back
+	// into compose-build → compose-publish (the toolbar/actions are shared).
+	'compose-plain-overview': {
+		key: 'compose-plain-overview',
+		anchor: 'compose-modebar',
+		title: 'The composer — Plain view',
+		body: "You're in Plain view: the whole publication as one text buffer (Markdown / Org / AsciiDoc). h/l flips to Full's section cards; Read previews it. Tap ? any time for the reference.",
+		placement: 'bottom',
+		next: 'compose-plain'
+	},
+	'compose-plain': {
+		key: 'compose-plain',
+		anchor: 'compose-plain',
+		title: 'One buffer → live sections',
+		body: 'Write freely on the left; your headings parse live into the Detected panel on the right — each becomes a 30041 section, the document a 30040 index. delim and nest (in the bar above) control how deep headings fold into nested sub-indices. Nothing is split until you sign.',
+		placement: 'top',
+		next: 'compose-build'
 	},
 
 	// ── Search tour (on demand: the search panel's own W chip) ────────────
@@ -318,6 +348,50 @@ export const TIPS: Record<string, TourTip> = {
 		title: 'Local first, then relays',
 		body: 'Every search hits your local pool first — instant, offline. When the results look thin, the panel offers to extend the same query out to relays and pull what’s missing into the pool. That’s the whole loop: query local, reach out when needed, read or work with what you find.',
 		placement: 'bottom'
+	},
+
+	// ── Event-menu tour (on demand: the menu modal's own W chip) ──────────
+	// The "work with the event" branch from the feed/search. The menu is a
+	// keyboard-chord surface (c/a/p prefixes); this walk names each section.
+	// Anchored on the modal's own sections — surfaced only by its W chip.
+	'menu-overview': {
+		key: 'menu-overview',
+		anchor: 'menu-header',
+		title: 'The event menu',
+		body: 'Everything you can do with one event, in one place. It’s keyboard-driven: press a section’s letter (c, a, p) then the inner key — e.g. c then i copies the id. Or just click. Esc closes.',
+		placement: 'bottom',
+		next: 'menu-copy'
+	},
+	'menu-copy': {
+		key: 'menu-copy',
+		anchor: 'menu-copy',
+		title: 'Copy as',
+		body: 'Grab the event’s identifiers: i the hex id, e an nevent1…, a an naddr1… (for replaceables like publications), n the author’s npub1…. These are exactly what the search box and others decode.',
+		placement: 'right',
+		next: 'menu-actions'
+	},
+	'menu-actions': {
+		key: 'menu-actions',
+		anchor: 'menu-actions',
+		title: 'Actions',
+		body: 'r reads it (opens the reader), f finds the publications that contain this section, i inserts it into your draft, and b broadcasts it to your configured relays — a deliberate per-event push, never automatic.',
+		placement: 'right',
+		next: 'menu-pool'
+	},
+	'menu-pool': {
+		key: 'menu-pool',
+		anchor: 'menu-pool',
+		title: 'The working pool',
+		body: 'Route the event into your pool: context (chat), compose (a draft), or refs (held, no routing). The lock marks an import claimed vs. locked-to-source; drop removes it from every pool.',
+		placement: 'right',
+		next: 'menu-found'
+	},
+	'menu-found': {
+		key: 'menu-found',
+		anchor: 'menu-found',
+		title: 'Found on',
+		body: 'Provenance: which relays this event has actually been seen on (or broadcast to), plus the always-present local cache. Click a relay chip for its NIP-11 info.',
+		placement: 'top'
 	}
 };
 

@@ -7,6 +7,8 @@
 	import { getRelayInfo, normalizeRelayUrl, type Nip11Status } from '$lib/relay/nip11';
 	import { requestRelayFocus } from '$lib/relay/focus.svelte';
 	import { getActiveStore } from '$lib/wm/buffer-store.svelte';
+	import { runTour } from '$lib/wm/discovery.svelte';
+	import { openMenuHelp } from '$lib/wm/menu-help.svelte';
 
 	let {
 		event,
@@ -658,10 +660,25 @@
 		tabindex="-1"
 		use:focusModal
 	>
-		<header class="evm__header">
+		<header class="evm__header" data-tour="menu-header">
 			<div class="evm__title-row">
 				<span class="evm__title">{n.title ?? '[Untitled]'}</span>
 				<span class="evm__kind">{KIND_LABEL[n.kind] ?? `kind ${n.kind}`}</span>
+				<!-- Menu's own affordances, mirroring the mode-line / composer /
+				     search W / ? pair: W tours the menu's sections, ? opens the
+				     reference (chord keys + what each section does). -->
+				<button
+					class="affordance affordance--walkthrough"
+					onclick={() => runTour('menu-overview')}
+					title="Tour the event menu — copy, actions, pool, provenance"
+					aria-label="Event menu walkthrough"
+				>W</button>
+				<button
+					class="affordance affordance--help"
+					onclick={openMenuHelp}
+					title="Event menu reference — the chord keys and what each section does"
+					aria-label="Event menu help"
+				>?</button>
 				<button class="evm__close" onclick={onclose} title="Close (Esc)">✕</button>
 			</div>
 			<div class="evm__meta">
@@ -682,7 +699,7 @@
 			</nav>
 		{/if}
 
-		<section class="evm__section" class:evm__section--active={chordPrefix === 'c'}>
+		<section class="evm__section" data-tour="menu-copy" class:evm__section--active={chordPrefix === 'c'}>
 			<h3 class="evm__heading">
 				<span class="evm__key evm__key--head" class:evm__key--active={chordPrefix === 'c'}>c</span>
 				Copy as
@@ -725,7 +742,7 @@
 			</div>
 		</section>
 
-		<section class="evm__section" class:evm__section--active={chordPrefix === 'a'}>
+		<section class="evm__section" data-tour="menu-actions" class:evm__section--active={chordPrefix === 'a'}>
 			<h3 class="evm__heading">
 				<span class="evm__key evm__key--head" class:evm__key--active={chordPrefix === 'a'}>a</span>
 				Actions
@@ -765,7 +782,7 @@
 		     Lock reflects the item's `readonly` and is only interactive
 		     once the item is in the pool. Drop removes every flag and
 		     gc()s the item out. -->
-		<section class="evm__section" class:evm__section--active={chordPrefix === 'p'}>
+		<section class="evm__section" data-tour="menu-pool" class:evm__section--active={chordPrefix === 'p'}>
 			<h3 class="evm__heading">
 				<span class="evm__key evm__key--head" class:evm__key--active={chordPrefix === 'p'}>p</span>
 				Pool
@@ -851,7 +868,7 @@
 		     `event.relays` (only present on full NostrEvent; absent on
 		     SearchResult, deliberately). Order matches nostrdb insertion;
 		     no sort. Collapsed past five chips with an "expand all" link. -->
-		<section class="evm__section">
+		<section class="evm__section" data-tour="menu-found">
 			<h3 class="evm__heading">
 				Found on
 				<span class="evm__heading-meta">

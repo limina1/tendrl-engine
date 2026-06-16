@@ -792,11 +792,13 @@
 			title="Preview the draft in a separate buffer"
 		>Read</button>
 		<!-- Composer's own affordances, mirroring the mode-line's W / ? pair:
-		     W runs the on-demand composer tour, ? opens the reference. -->
+		     W runs the on-demand composer tour, ? opens the reference. The tour
+		     is mode-aware — it walks the section cards in Full, the text buffer
+		     in Plain — so the W in each view tours that view. -->
 		<button
 			class="affordance affordance--walkthrough"
-			onclick={() => runTour('compose-overview')}
-			title="Tour the composer — a guided walk through modes, sections, and publishing"
+			onclick={() => runTour(mode === 'plain' ? 'compose-plain-overview' : 'compose-overview')}
+			title="Tour the composer — a guided walk through this view, sections, and publishing"
 			aria-label="Composer walkthrough"
 		>W</button>
 		<button
@@ -863,7 +865,7 @@
 
 	<div class="compose-content">
 		{#if mode === 'full'}
-			<div class="compose-sections" bind:this={sectionsListEl}>
+			<div class="compose-sections" data-tour="compose-sections" bind:this={sectionsListEl}>
 				{#each compose.sections as section, i (section.id)}
 					<div
 						class="compose-section-row"
@@ -893,7 +895,7 @@
 				{/each}
 			</div>
 		{:else if mode === 'plain'}
-			<div class="plain-layout">
+			<div class="plain-layout" data-tour="compose-plain">
 				<div class="plain-editor-wrap">
 					<CodeMirrorEditor
 						bind:value={plainText}
