@@ -38,9 +38,9 @@
 
 			<p class="mhm-blurb">
 				Everything you can do with one event. It's keyboard-driven: press a
-				section's letter to arm it, then the inner key. <strong>c i</strong>
-				copies the id; <strong>a r</strong> reads it. Or just click. Tap
-				<strong>W</strong> for a guided walk.
+				section's letter to arm it, then the inner key. <code>c i</code>
+				copies the id; <code>a r</code> reads it. Or just click. Tap
+				<code>W</code> for a guided walk.
 			</p>
 
 			<div class="mhm-scroll">
@@ -127,6 +127,14 @@
 		color: var(--base6);
 		font-size: var(--t-xs);
 		line-height: 1.55;
+	}
+	.mhm-blurb code {
+		font-family: inherit;
+		color: var(--affordance-help);
+		background: color-mix(in srgb, var(--affordance-help) 12%, transparent);
+		padding: 0 3px;
+		border-radius: var(--r-sm);
+		font-weight: 600;
 	}
 	.mhm-scroll {
 		overflow-y: auto;

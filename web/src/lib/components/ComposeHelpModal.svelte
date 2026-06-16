@@ -37,9 +37,9 @@
 			</header>
 
 			<p class="ch-blurb">
-				You're assembling a publication — a <strong>kind-30040</strong> index over
-				an ordered list of <strong>kind-30041</strong> sections. Tap
-				<strong>W</strong> for a guided walk through these.
+				You're assembling a publication — a <code>kind-30040</code> index over
+				an ordered list of <code>kind-30041</code> sections. Tap
+				<code>W</code> for a guided walk through these.
 			</p>
 
 			<div class="ch-scroll">
@@ -49,8 +49,12 @@
 				{@render row('Read', 'preview the rendered result')}
 				{@render row('h / l', 'cycle between Full and Plain')}
 
-				<div class="ch-group">Structure</div>
-				{@render row('delim', 'attribute delimiter for the outline parser')}
+				<div class="ch-group">Plain-mode structure</div>
+				{@render row('= Title', 'level 1 — the publication itself (one, at top)')}
+				{@render row('== Heading', 'level 2 — starts a section')}
+				{@render row('=== Sub', 'level 3+ — nested sub-publication (optional)')}
+				{@render row(':key: value', 'a tag under the preceding heading')}
+				{@render row('delim', 'the heading delimiter character (= by default)')}
 				{@render row('nest', 'how deep headings fold into nested 30040 indices')}
 				{@render row('+ Section', 'append a new section (Full mode)')}
 
@@ -123,6 +127,14 @@
 		color: var(--base6);
 		font-size: var(--t-xs);
 		line-height: 1.55;
+	}
+	.ch-blurb code {
+		font-family: inherit;
+		color: var(--affordance-help);
+		background: color-mix(in srgb, var(--affordance-help) 12%, transparent);
+		padding: 0 3px;
+		border-radius: var(--r-sm);
+		font-weight: 600;
 	}
 	.ch-scroll {
 		overflow-y: auto;

@@ -10,7 +10,7 @@
 	import {
 		discovery,
 		activeTip,
-		renderBody,
+		renderBodyHtml,
 		dismissActive,
 		endWalkthrough
 	} from '$lib/wm/discovery.svelte';
@@ -23,7 +23,7 @@
 	let vh = $state(0);
 
 	const tip = $derived(activeTip());
-	const body = $derived(tip ? renderBody(tip) : '');
+	const body = $derived(tip ? renderBodyHtml(tip) : '');
 	const remaining = $derived(discovery.queue.length);
 	// A guided segment chains one tip at a time (queue length 1) via `next`, so
 	// "more is coming" is either a stacked queue or a declared next link.
@@ -124,7 +124,7 @@
 			<h4 class="dt-title">{tip.title}</h4>
 			<button class="dt-x" onclick={dismissActive} title="Dismiss" aria-label="Dismiss">×</button>
 		</header>
-		<p class="dt-body">{body}</p>
+		<p class="dt-body">{@html body}</p>
 		<footer class="dt-foot">
 			{#if remaining > 1}
 				<div class="dt-dots" aria-hidden="true">
@@ -216,6 +216,22 @@
 		color: var(--base6);
 		font-size: var(--t-xs);
 		line-height: 1.55;
+	}
+	/* Inline keyword / action chips — same accent as the search help panel's
+	   tokens, so syntax and action names pop without shouting. */
+	.dt-body :global(.dt-kw) {
+		font-family: var(--font-mono);
+		color: var(--id-yours);
+		background: color-mix(in srgb, var(--id-yours) 12%, transparent);
+		padding: 0 3px;
+		border-radius: var(--r-sm);
+		font-size: 0.95em;
+		white-space: nowrap;
+	}
+	.dt-body :global(.dt-em) {
+		font-style: normal;
+		color: var(--base7);
+		font-weight: 600;
 	}
 	.dt-foot {
 		display: flex;

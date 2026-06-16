@@ -74,7 +74,7 @@ export const TIPS: Record<string, TourTip> = {
 		key: 'feed-sync',
 		anchor: 'feed-sync',
 		title: 'Feed sync',
-		body: "Nothing is fetched until you approve it — this panel shows exactly what tendrl will pull, and from which relays. You're logged out, so this is the broad public feed: recent publications from these relays. Open Details to see the precise query and how many. When you're ready, close this (Esc) — let's sign in.",
+		body: "Nothing is fetched until you approve it — this panel shows exactly what tendrl will pull, and from which relays. You're logged out, so this is the broad public feed: recent publications from these relays. Open *Details* to see the precise query and how many. When you're ready, close this (`Esc`) — let's sign in.",
 		placement: 'right',
 		next: 'sign-in'
 	},
@@ -82,21 +82,21 @@ export const TIPS: Record<string, TourTip> = {
 		key: 'sign-in',
 		anchor: 'settings',
 		title: 'Sign in',
-		body: 'Open Settings here and sign in — a NIP-07 browser extension, or paste an ncryptsec key with its password. Heads up: the moment you sign in you\'ll see your pubkey but no name yet.',
+		body: 'Open *Settings* here and sign in — a `NIP-07` browser extension, or paste an `ncryptsec` key with its password. Heads up: the moment you sign in you\'ll see your pubkey but no name yet.',
 		placement: 'bottom'
 	},
 	'sign-in-methods': {
 		key: 'sign-in-methods',
 		anchor: 'identity-source',
 		title: 'Two ways in',
-		body: 'Engine — paste an ncryptsec below and unlock it with its password; held for this session only, never written to disk. NIP-07 — a browser extension holds the key and the engine never sees it. To connect one: (1) make sure your extension is activated/unlocked, (2) pick nip07 and press Reconnect, (3) your signer pops up asking to read your public key — Authorize, or Authorize forever.',
+		body: '*Engine* — paste an `ncryptsec` below and unlock it with its password; held for this session only, never written to disk. *NIP-07* — a browser extension holds the key and the engine never sees it. To connect one: (1) make sure your extension is activated/unlocked, (2) pick `nip07` and press `Reconnect`, (3) your signer pops up asking to read your public key — `Authorize`, or `Authorize forever`.',
 		placement: 'bottom'
 	},
 	'signed-in-noname': {
 		key: 'signed-in-noname',
 		anchor: 'me-chip',
 		title: 'Signed in — no name yet',
-		body: "There you are: a pubkey, but no display name or avatar. That's expected — your profile (a kind 0 event) lives on a relay you haven't pulled from yet. Fetching the feed will bring it in.",
+		body: "There you are: a pubkey, but no display name or avatar. That's expected — your profile (a `kind 0` event) lives on a relay you haven't pulled from yet. Fetching the feed will bring it in.",
 		placement: 'bottom',
 		next: 'go-home'
 	},
@@ -104,14 +104,14 @@ export const TIPS: Record<string, TourTip> = {
 		key: 'go-home',
 		anchor: 'home',
 		title: 'Back to the feed',
-		body: 'Head home — click the tendrl logo (or the feed tab) to return to your feed, then sync it again.',
+		body: 'Head home — click the *tendrl* logo (or the feed tab) to return to your feed, then sync it again.',
 		placement: 'bottom'
 	},
 	'general-feed': {
 		key: 'general-feed',
 		anchor: 'general-feed',
 		title: 'General feed — now optional',
-		body: "Now that you're signed in, the query is scoped to you. “General feed” adds the broad public pull on top — toggle it off to fetch only the relays and authors you choose. Open Details to watch the query change (it now carries by:‹you›).",
+		body: "Now that you're signed in, the query is scoped to you. *General feed* adds the broad public pull on top — toggle it off to fetch only the relays and authors you choose. Open *Details* to watch the query change (it now carries `by:‹you›`).",
 		placement: 'left'
 	},
 	// ── After the first fetch: the feed has events ────────────────────────
@@ -119,7 +119,7 @@ export const TIPS: Record<string, TourTip> = {
 		key: 'feed-first-pub',
 		anchor: 'feed-first-pub',
 		title: 'A publication is a book',
-		body: 'A publication is like a book — a kind-30040 index that orders a set of sections (kind 30041) into a whole. This first one, “{title}”, gathers {sections}.',
+		body: 'A publication is like a book — a `kind-30040` index that orders a set of sections (`kind 30041`) into a whole. This first one, *{title}*, gathers {sections}.',
 		placement: 'bottom',
 		next: 'feed-first-badges'
 	},
@@ -127,7 +127,7 @@ export const TIPS: Record<string, TourTip> = {
 		key: 'feed-first-badges',
 		anchor: 'feed-first-badges',
 		title: 'Provenance & actions',
-		body: 'These pills show provenance — where the event lives in the network. The top one says it’s on {relays} right now. Click the row body to read the publication, or the “menu” pill to work with the raw event in depth.',
+		body: 'These pills show provenance — where the event lives in the network. The top one says it’s on *{relays}* right now. Click the row body to *read* the publication, or the `menu` pill to work with the raw event in depth.',
 		placement: 'bottom'
 	},
 
@@ -139,7 +139,7 @@ export const TIPS: Record<string, TourTip> = {
 		key: 'reader-open',
 		anchor: 'reader-toolbar',
 		title: 'Reading a publication',
-		body: 'You opened the reader. The same publication renders three ways: Outline (the table of contents — sections in order), Paginated (one section at a time), and Continuous (the whole thing as one scroll). h/l cycles between them.',
+		body: 'You opened the reader. The same publication renders three ways: `Outline` (the table of contents — sections in order), `Paginated` (one section at a time), and `Continuous` (the whole thing as one scroll). `h`/`l` cycles between them.',
 		placement: 'bottom',
 		next: 'reader-menu'
 	},
@@ -147,7 +147,7 @@ export const TIPS: Record<string, TourTip> = {
 		key: 'reader-menu',
 		anchor: 'reader-menu',
 		title: 'The raw event',
-		body: 'menu opens the event tools for this publication — inspect the raw 30040 JSON, copy its naddr, or find everything that references it. The reader shows the document; this is the event underneath.',
+		body: '`menu` opens the event tools for this publication — inspect the raw `30040` JSON, copy its `naddr`, or find everything that references it. The reader shows the document; this is the event underneath.',
 		placement: 'bottom',
 		next: 'reader-edit'
 	},
@@ -155,7 +155,7 @@ export const TIPS: Record<string, TourTip> = {
 		key: 'reader-edit',
 		anchor: 'reader-edit',
 		title: 'Edit in the composer',
-		body: 'Edit pulls the whole publication into the composer to revise it. Imported sections arrive locked (yellow once you claim one) — unlock just the ones you want to change, then sign a new snapshot. The composer has its own W tour.',
+		body: '`Edit` pulls the whole publication into the composer to revise it. Imported sections arrive *locked* (yellow once you claim one) — unlock just the ones you want to change, then sign a new snapshot. The composer has its own `W` tour.',
 		placement: 'bottom'
 	},
 
@@ -164,7 +164,7 @@ export const TIPS: Record<string, TourTip> = {
 		key: 'search-history',
 		anchor: 'search-history',
 		title: 'Search history',
-		body: 'Every search you run is kept here. Click the pill to reopen and replay any past query.',
+		body: 'Every search you run is kept here. Click the `🔍` pill to reopen and replay any past query.',
 		placement: 'top'
 	},
 
@@ -175,7 +175,7 @@ export const TIPS: Record<string, TourTip> = {
 		key: 'modeline-overview',
 		anchor: 'modeline',
 		title: 'The mode-line',
-		body: 'This bottom strip is the mode-line — a live status bar (Emacs-style). It never interrupts you: tap W here for this quick tour, or ? for the full reference. Left half tells you where you are; right half is live status with quick toggles.',
+		body: 'This bottom strip is the mode-line — a live status bar (Emacs-style). It never interrupts you: tap `W` here for this quick tour, or `?` for the full reference. Left half tells you *where you are*; right half is *live status* with quick toggles.',
 		placement: 'top',
 		next: 'modeline-focus'
 	},
@@ -183,7 +183,7 @@ export const TIPS: Record<string, TourTip> = {
 		key: 'modeline-focus',
 		anchor: 'ml-mode',
 		title: 'Where you are',
-		body: 'Your current mode and active layout (L:name), then the focused slot-class (@work / @chat / @research) and buffer. Switch buffers with SPC b b; pick layouts from the SPC leader.',
+		body: 'Your current mode and active layout (`L:name`), then the focused slot-class (`@work` / `@chat` / `@research`) and buffer. Switch buffers with `SPC b b`; pick layouts from the `SPC` leader.',
 		placement: 'top',
 		next: 'modeline-status'
 	},
@@ -191,7 +191,7 @@ export const TIPS: Record<string, TourTip> = {
 		key: 'modeline-status',
 		anchor: 'ml-pills',
 		title: 'Status & toggles',
-		body: 'Live engine state, much of it clickable: relay config, fetch mode (click to flip auto / confirm), embedding health, and your identity. The 🔍 pill replays past searches.',
+		body: 'Live engine state, much of it clickable: relay config, fetch mode (click to flip `auto` / `confirm`), embedding health, and your identity. The `🔍` pill replays past searches.',
 		placement: 'top'
 	},
 
@@ -203,7 +203,7 @@ export const TIPS: Record<string, TourTip> = {
 		key: 'compose-overview',
 		anchor: 'compose-modebar',
 		title: 'The composer',
-		body: "You're building a publication: a kind-30040 index over an ordered list of kind-30041 sections. Nothing is signed or sent yet — this is a working draft. Tap ? any time for the reference.",
+		body: "You're building a publication: a `kind-30040` index over an ordered list of `kind-30041` sections. Nothing is signed or sent yet — this is a *working draft*. Tap `?` any time for the reference.",
 		placement: 'bottom',
 		next: 'compose-modes'
 	},
@@ -211,7 +211,7 @@ export const TIPS: Record<string, TourTip> = {
 		key: 'compose-modes',
 		anchor: 'compose-nest',
 		title: 'Outline → structure',
-		body: 'Full shows each section as a card; Plain is one text buffer (h/l flips between them); Read previews the result. delim and nest control how your headings parse into nested 30040 indices — flat keeps one index over a flat list, each tier folds one more heading level into a sub-index.',
+		body: '`Full` shows each section as a card; `Plain` is one text buffer (`h`/`l` flips between them); `Read` previews the result. `delim` and `nest` control how your headings parse into nested `30040` indices — `flat` keeps one index over a flat list, each tier folds one more heading level into a sub-index.',
 		placement: 'bottom',
 		next: 'compose-full'
 	},
@@ -219,7 +219,7 @@ export const TIPS: Record<string, TourTip> = {
 		key: 'compose-full',
 		anchor: 'compose-sections',
 		title: 'Full view — section cards',
-		body: 'Each section is an editable card — title, content, and its own tags. Drag to reorder, collapse to titles for a quick outline, and check cards to act on a selection. Imported sections arrive locked; claim one (it turns yellow) to edit it.',
+		body: 'Each section is an editable card — title, content, and its own tags. *Drag* to reorder, *collapse* to titles for a quick outline, and *check* cards to act on a selection. Imported sections arrive *locked*; claim one (it turns yellow) to edit it.',
 		placement: 'top',
 		next: 'compose-build'
 	},
@@ -227,7 +227,7 @@ export const TIPS: Record<string, TourTip> = {
 		key: 'compose-build',
 		anchor: 'compose-toolbar',
 		title: 'Working with sections',
-		body: 'Each section becomes a 30041 event. Select sections (All / Inv) to send the selection to chat (◂), publish them (▸), or remove them (🗑). Collapse all (▸ all) to reorder the outline quickly.',
+		body: 'Each section becomes a `30041` event. Select sections (`All` / `Inv`) to send the selection to chat (`◂`), publish them (`▸`), or remove them (`🗑`). Collapse all (`▸ all`) to reorder the outline quickly.',
 		placement: 'bottom',
 		next: 'compose-publish'
 	},
@@ -235,7 +235,7 @@ export const TIPS: Record<string, TourTip> = {
 		key: 'compose-publish',
 		anchor: 'compose-actions',
 		title: 'Draft → sign → broadcast',
-		body: 'Save draft keeps an unsigned copy locally (it survives a refresh). Sign turns the draft into a signed snapshot — the only way an event enters the db. Broadcasting to relays is a separate, deliberate step afterwards. Preview events shows the exact JSON first.',
+		body: '`Save draft` keeps an unsigned copy locally (it survives a refresh). `Sign` turns the draft into a signed snapshot — the only way an event enters the db. *Broadcasting* to relays is a separate, deliberate step afterwards. `Preview events` shows the exact JSON first.',
 		placement: 'top'
 	},
 	// Plain-view branch of the composer tour — the W chip routes here when the
@@ -245,7 +245,7 @@ export const TIPS: Record<string, TourTip> = {
 		key: 'compose-plain-overview',
 		anchor: 'compose-modebar',
 		title: 'The composer — Plain view',
-		body: "You're in Plain view: the whole publication as one text buffer (Markdown / Org / AsciiDoc). h/l flips to Full's section cards; Read previews it. Tap ? any time for the reference.",
+		body: "You're in *Plain* view: the whole publication as one text buffer (Markdown / Org / AsciiDoc). `h`/`l` flips to `Full`'s section cards; `Read` previews it. Tap `?` any time for the reference.",
 		placement: 'bottom',
 		next: 'compose-plain'
 	},
@@ -253,7 +253,15 @@ export const TIPS: Record<string, TourTip> = {
 		key: 'compose-plain',
 		anchor: 'compose-plain',
 		title: 'One buffer → live sections',
-		body: 'Write freely on the left; your headings parse live into the Detected panel on the right — each becomes a 30041 section, the document a 30040 index. delim and nest (in the bar above) control how deep headings fold into nested sub-indices. Nothing is split until you sign.',
+		body: 'Write freely on the left; your headings parse live into the *Detected* panel on the right — each becomes a `30041` section, the document a `30040` index. Nothing is split until you sign.',
+		placement: 'top',
+		next: 'compose-plain-syntax'
+	},
+	'compose-plain-syntax': {
+		key: 'compose-plain-syntax',
+		anchor: 'compose-plain',
+		title: 'Writing the structure',
+		body: 'Headings use the delimiter (`=` by default). One `= Title` line at the top is the *publication* itself; every `== Heading` starts a *section*. Nesting is optional — `=== Subheading` becomes a nested sub-publication, but only when you raise `nest` above `flat`; otherwise it just stays as text inside the section. Add `:key: value` lines under a heading for tags.',
 		placement: 'top',
 		next: 'compose-build'
 	},
@@ -267,7 +275,7 @@ export const TIPS: Record<string, TourTip> = {
 		key: 'search-tour-intro',
 		anchor: 'search-input',
 		title: 'Searching the pool',
-		body: 'This box queries your local pool first; you can then extend a search out to relays. Filters compose with spaces. Tap ? any time for the full syntax — here we’ll run a few live. Each step’s “Try it” fills the box and runs it.',
+		body: 'This box queries your local pool first; you can then extend a search out to relays. Filters compose with spaces. Tap `?` any time for the full syntax — here we’ll run a few live. Each step’s *Try it* fills the box and runs it.',
 		placement: 'bottom',
 		next: 'search-tour-text'
 	},
@@ -275,7 +283,7 @@ export const TIPS: Record<string, TourTip> = {
 		key: 'search-tour-text',
 		anchor: 'search-input',
 		title: 'Exact text',
-		body: 'A quoted "phrase" matches that text exactly inside event content. Bare words are looser. Try the exact-phrase form:',
+		body: 'A quoted `"phrase"` matches that text exactly inside event content. Bare words are looser. Try the exact-phrase form:',
 		placement: 'bottom',
 		next: 'search-tour-kind',
 		action: { label: 'Try "nostr"', run: () => runSearchExample('"nostr"') }
@@ -284,7 +292,7 @@ export const TIPS: Record<string, TourTip> = {
 		key: 'search-tour-kind',
 		anchor: 'search-input',
 		title: 'By kind — incl. 30023',
-		body: 'k:N filters by event kind. k:30023 is NIP-23 long-form articles; k:1 short notes; k:0 profiles; k:30040 publication indexes. Pull the long-form articles in your pool:',
+		body: '`k:N` filters by event kind. `k:30023` is NIP-23 long-form articles; `k:1` short notes; `k:0` profiles; `k:30040` publication indexes. Pull the long-form articles in your pool:',
 		placement: 'bottom',
 		next: 'search-tour-author',
 		action: { label: 'Try k:30023', run: () => runSearchExample('k:30023') }
@@ -293,7 +301,7 @@ export const TIPS: Record<string, TourTip> = {
 		key: 'search-tour-author',
 		anchor: 'search-input',
 		title: 'By author / npub',
-		body: 'by: filters on the publishing key: by:npub1… for a specific person, by:name:alice for a profile-name partial, or by:me for yourself. Try your own events (swap in any by:npub1… for someone else):',
+		body: '`by:` filters on the publishing key: `by:npub1…` for a specific person, `by:name:alice` for a profile-name partial, or `by:me` for yourself. Try your own events (swap in any `by:npub1…` for someone else):',
 		placement: 'bottom',
 		next: 'search-tour-nip19',
 		action: { label: 'Try by:me', run: () => runSearchExample('by:me') }
@@ -302,7 +310,7 @@ export const TIPS: Record<string, TourTip> = {
 		key: 'search-tour-nip19',
 		anchor: 'search-input',
 		title: 'Paste an entity',
-		body: 'Paste any NIP-19 entity and it decodes to a precise filter: note1…/nevent1… jumps to one event, npub1…/nprofile1… to a person, naddr1… retrieves a specific publication. id:<64-hex> does the same as a raw event id. (No example to auto-run — paste your own.)',
+		body: 'Paste any NIP-19 entity and it decodes to a precise filter: `note1…`/`nevent1…` jumps to one event, `npub1…`/`nprofile1…` to a person, `naddr1…` retrieves a specific publication. `id:<64-hex>` does the same as a raw event id. (No example to auto-run — paste your own.)',
 		placement: 'bottom',
 		next: 'search-tour-publication'
 	},
@@ -310,7 +318,7 @@ export const TIPS: Record<string, TourTip> = {
 		key: 'search-tour-publication',
 		anchor: 'search-input',
 		title: 'Retrieve a publication',
-		body: 'k:30040 lists publication indexes — the “books” from the feed. Open one to read it, or address an exact one with its naddr1…. List the publications in your pool:',
+		body: '`k:30040` lists publication indexes — the “books” from the feed. Open one to read it, or address an exact one with its `naddr1…`. List the publications in your pool:',
 		placement: 'bottom',
 		next: 'search-tour-compose',
 		action: { label: 'Try k:30040', run: () => runSearchExample('k:30040') }
@@ -319,7 +327,7 @@ export const TIPS: Record<string, TourTip> = {
 		key: 'search-tour-compose',
 		anchor: 'search-input',
 		title: 'Compose filters',
-		body: 'Tokens AND together with spaces, so you narrow by stacking them: kind + text, author + kind, kind + time bound (since:/until:). Combine a kind with an exact phrase:',
+		body: 'Tokens *AND* together with spaces, so you narrow by stacking them: kind + text, author + kind, kind + time bound (`since:`/`until:`). Combine a kind with an exact phrase:',
 		placement: 'bottom',
 		next: 'search-tour-semantic',
 		action: { label: 'Try k:30023 "nostr"', run: () => runSearchExample('k:30023 "nostr"') }
@@ -328,7 +336,7 @@ export const TIPS: Record<string, TourTip> = {
 		key: 'search-tour-semantic',
 		anchor: 'search-input',
 		title: 'Semantic search',
-		body: '~:concept finds events by meaning, not keywords — ~:"a longer phrase":15 caps the result count. It needs the embedding index (the ⚙ enables it; the mode-line pill shows its health). Try a concept:',
+		body: '`~:concept` finds events by *meaning*, not keywords — `~:"a longer phrase":15` caps the result count. It needs the embedding index (the `⚙` enables it; the mode-line pill shows its health). Try a concept:',
 		placement: 'bottom',
 		next: 'search-tour-tags',
 		action: { label: 'Try ~:nostr', run: () => runSearchExample('~:nostr') }
@@ -337,7 +345,7 @@ export const TIPS: Record<string, TourTip> = {
 		key: 'search-tour-tags',
 		anchor: 'search-input',
 		title: 'Tag operators',
-		body: 'has:NAME matches any event carrying a NAME tag; NAME:value (a bare key — no #) filters on a tag’s value, e.g. t:nostr. Find everything with a title tag:',
+		body: '`has:NAME` matches any event carrying a NAME tag; `NAME:value` (a bare key — *no* `#`) filters on a tag’s value, e.g. `t:nostr`. Find everything with a title tag:',
 		placement: 'bottom',
 		next: 'search-tour-relays',
 		action: { label: 'Try has:title', run: () => runSearchExample('has:title') }
@@ -346,7 +354,7 @@ export const TIPS: Record<string, TourTip> = {
 		key: 'search-tour-relays',
 		anchor: 'search-input',
 		title: 'Local first, then relays',
-		body: 'Every search hits your local pool first — instant, offline. When the results look thin, the panel offers to extend the same query out to relays and pull what’s missing into the pool. That’s the whole loop: query local, reach out when needed, read or work with what you find.',
+		body: 'Every search hits your *local pool* first — instant, offline. When the results look thin, the panel offers to *extend to relays* and pull what’s missing into the pool. That’s the whole loop: query local, reach out when needed, read or work with what you find.',
 		placement: 'bottom'
 	},
 
@@ -358,7 +366,7 @@ export const TIPS: Record<string, TourTip> = {
 		key: 'menu-overview',
 		anchor: 'menu-header',
 		title: 'The event menu',
-		body: 'Everything you can do with one event, in one place. It’s keyboard-driven: press a section’s letter (c, a, p) then the inner key — e.g. c then i copies the id. Or just click. Esc closes.',
+		body: 'Everything you can do with one event, in one place. It’s keyboard-driven: press a section’s letter (`c`, `a`, `p`) then the inner key — e.g. `c` then `i` copies the id. Or just click. `Esc` closes.',
 		placement: 'bottom',
 		next: 'menu-copy'
 	},
@@ -366,7 +374,7 @@ export const TIPS: Record<string, TourTip> = {
 		key: 'menu-copy',
 		anchor: 'menu-copy',
 		title: 'Copy as',
-		body: 'Grab the event’s identifiers: i the hex id, e an nevent1…, a an naddr1… (for replaceables like publications), n the author’s npub1…. These are exactly what the search box and others decode.',
+		body: 'Grab the event’s identifiers: `i` the hex id, `e` an `nevent1…`, `a` an `naddr1…` (for replaceables like publications), `n` the author’s `npub1…`. These are exactly what the search box and others decode.',
 		placement: 'right',
 		next: 'menu-actions'
 	},
@@ -374,7 +382,7 @@ export const TIPS: Record<string, TourTip> = {
 		key: 'menu-actions',
 		anchor: 'menu-actions',
 		title: 'Actions',
-		body: 'r reads it (opens the reader), f finds the publications that contain this section, i inserts it into your draft, and b broadcasts it to your configured relays — a deliberate per-event push, never automatic.',
+		body: '`r` reads it (opens the reader), `f` finds the publications that contain this section, `i` inserts it into your draft, and `b` *broadcasts* it to your configured relays — a deliberate per-event push, never automatic.',
 		placement: 'right',
 		next: 'menu-pool'
 	},
@@ -382,7 +390,7 @@ export const TIPS: Record<string, TourTip> = {
 		key: 'menu-pool',
 		anchor: 'menu-pool',
 		title: 'The working pool',
-		body: 'Route the event into your pool: context (chat), compose (a draft), or refs (held, no routing). The lock marks an import claimed vs. locked-to-source; drop removes it from every pool.',
+		body: 'Route the event into your pool: `context` (chat), `compose` (a draft), or `refs` (held, no routing). The *lock* marks an import claimed vs. locked-to-source; `drop` removes it from every pool.',
 		placement: 'right',
 		next: 'menu-found'
 	},
@@ -390,7 +398,7 @@ export const TIPS: Record<string, TourTip> = {
 		key: 'menu-found',
 		anchor: 'menu-found',
 		title: 'Found on',
-		body: 'Provenance: which relays this event has actually been seen on (or broadcast to), plus the always-present local cache. Click a relay chip for its NIP-11 info.',
+		body: '*Provenance*: which relays this event has actually been seen on (or broadcast to), plus the always-present `local cache`. Click a relay chip for its NIP-11 info.',
 		placement: 'top'
 	}
 };
@@ -438,6 +446,27 @@ export function renderBody(tip: TourTip): string {
  *  a `next` chain, whose data is known now but which surfaces only later. */
 export function setTipVars(key: string, vars: TipVars) {
 	discovery.vars[key] = vars;
+}
+
+function escapeHtml(s: string): string {
+	return s.replace(
+		/[&<>"]/g,
+		(c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c] ?? c
+	);
+}
+
+/** A tip body rendered to safe HTML for `{@html}`: vars are interpolated, the
+ *  whole string is HTML-escaped (titles etc. are untrusted), then our own
+ *  inline markup is applied last so its tags survive — `` `token` `` becomes a
+ *  highlighted keyword/action chip (matching the search help panel's accent),
+ *  `*word*` becomes emphasis. Order matters: escape before markup so a literal
+ *  `<` in a title can't inject, and the backtick/asterisk delimiters (not HTML)
+ *  pass through the escape untouched. */
+export function renderBodyHtml(tip: TourTip): string {
+	const esc = escapeHtml(renderBody(tip));
+	return esc
+		.replace(/`([^`]+)`/g, '<code class="dt-kw">$1</code>')
+		.replace(/\*([^*]+)\*/g, '<em class="dt-em">$1</em>');
 }
 
 function persist() {

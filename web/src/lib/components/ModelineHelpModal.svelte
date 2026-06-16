@@ -38,7 +38,7 @@
 			<p class="mh-blurb">
 				The bottom status bar. The left half tells you <em>where you are</em>;
 				the right half is <em>live status</em>, much of it clickable. Tap
-				<strong>W</strong> for a guided tour of these.
+				<code>W</code> for a guided tour of these.
 			</p>
 
 			<div class="mh-scroll">
@@ -118,6 +118,19 @@
 		color: var(--base6);
 		font-size: var(--t-xs);
 		line-height: 1.55;
+	}
+	.mh-blurb code {
+		font-family: inherit;
+		color: var(--affordance-help);
+		background: color-mix(in srgb, var(--affordance-help) 12%, transparent);
+		padding: 0 3px;
+		border-radius: var(--r-sm);
+		font-weight: 600;
+	}
+	.mh-blurb em {
+		font-style: normal;
+		color: var(--base7);
+		font-weight: 600;
 	}
 	.mh-scroll {
 		overflow-y: auto;
