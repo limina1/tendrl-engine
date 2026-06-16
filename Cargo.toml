@@ -36,7 +36,7 @@ tokio = { version = "1", features = ["full"] }
 futures = "0.3"
 
 # WebSocket client for relay fetching
-tokio-tungstenite = { version = "0.21", features = ["native-tls"] }
+tokio-tungstenite = { version = "0.21", features = ["rustls-tls-native-roots"] }
 
 # Serialization
 serde = { version = "1", features = ["derive"] }
@@ -54,7 +54,9 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 # HTTP client (for LLM API calls)
-reqwest = { version = "0.12", features = ["json", "native-tls", "multipart"] }
+# default-features off to drop `default-tls` (native-tls/OpenSSL); rustls-tls is
+# the only TLS backend so the distributable binary needs no system libssl.
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "multipart", "charset", "http2"] }
 
 # Utilities
 hex = "0.4"
@@ -81,8 +83,11 @@ clap = { version = "4", features = ["derive"] }
 # Vector search
 usearch = "2"
 
-# In-process ONNX embeddings (the only embedding backend)
-fastembed = "4"
+# In-process ONNX embeddings (the only embedding backend).
+# default-features off to swap hf-hub's TLS from native-tls (OpenSSL) to rustls
+# so the distributable binary carries no libssl/libcrypto dependency;
+# ort-download-binaries is re-enabled to keep onnxruntime statically linked in.
+fastembed = { version = "4", default-features = false, features = ["ort-download-binaries", "hf-hub-rustls-tls"] }
 
 # Single-exe bundling: embed the built SPA (web/build/) into the binary and
 # open the browser on launch. In debug builds rust-embed reads from disk so the

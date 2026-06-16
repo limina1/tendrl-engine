@@ -1,0 +1,69 @@
+#!/usr/bin/env bash
+# Build a PORTABLE single-executable tendrl-engine for distribution.
+#
+# `scripts/build-bundle.sh` links against the build host's glibc/OpenSSL. On a
+# bleeding-edge distro (Arch, glibc 2.43) the result won't start on normal
+# systems ("version `GLIBC_2.43' not found"). This script instead compiles the
+# engine inside an OLD-glibc container (manylinux_2_28 = AlmaLinux 8, glibc
+# 2.28) with a real gcc, so ONE binary runs on RHEL 8/9, Debian, Ubuntu LTS,
+# Arch, etc.
+#
+# Why a container and not cargo-zigbuild: usearch's `numkong` SIMD kernels use
+# AVX-512 intrinsics that zig's bundled clang rejects (the evex512 split). Real
+# gcc compiles them fine, so we build natively against an old glibc instead.
+#
+# What makes the output portable:
+#   - glibc 2.28 floor (forward-compatible: runs on every newer glibc too)
+#   - TLS is rustls (pure Rust) everywhere incl. fastembed's HF downloader —
+#     no libssl/libcrypto dependency at all
+#   - onnxruntime is statically linked in (no libonnxruntime.so to ship)
+# The embedding MODEL is still downloaded from HuggingFace on first run.
+#
+# Prereqs:  docker, pnpm/node (host, for the SPA)
+# Usage:    scripts/build-portable.sh
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+IMAGE="quay.io/pypa/manylinux_2_28_x86_64"
+TARGET_SUBDIR="target/portable"
+OUT="${TARGET_SUBDIR}/release/tendrl-engine"
+
+command -v docker >/dev/null || { echo "ERROR: docker not found" >&2; exit 1; }
+command -v pnpm   >/dev/null || { echo "ERROR: pnpm not found (needed to build the SPA)" >&2; exit 1; }
+
+echo "==> Building web frontend on host (rust-embed bakes web/build/ into the binary)…"
+pnpm -C web install --frozen-lockfile
+pnpm -C web rebuild esbuild
+pnpm -C web exec vite build
+[[ -f web/build/index.html ]] || { echo "ERROR: web/build/index.html missing after build." >&2; exit 1; }
+touch web/build   # let build.rs' rerun-if-changed pick up the fresh SPA
+
+echo "==> Compiling engine in ${IMAGE} (glibc 2.28 floor)…"
+# A named volume caches the container's cargo registry + rustup across runs and
+# keeps them out of the host's ~/.cargo. CARGO_TARGET_DIR lands the output on the
+# mounted source tree; we chown it back to the host user at the end.
+docker run --rm -t \
+  -v "$PWD":/src -w /src \
+  -v tendrl-portable-cargo:/root/.cargo \
+  -e CARGO_TARGET_DIR="/src/${TARGET_SUBDIR}" \
+  -e HOST_UID="$(id -u)" -e HOST_GID="$(id -g)" \
+  "$IMAGE" bash -euo pipefail -c '
+    source /opt/rh/gcc-toolset-*/enable 2>/dev/null || true   # modern gcc for numkong AVX-512
+    export CC=gcc CXX=g++
+    if ! command -v cargo >/dev/null; then
+      curl --proto "=https" --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
+    fi
+    source "$HOME/.cargo/env"
+    cargo build --release
+    chown -R "${HOST_UID}:${HOST_GID}" "/src/'"${TARGET_SUBDIR}"'"
+  '
+
+echo ""
+echo "==> Portability report for ${OUT}:"
+echo "--- size ---"; ls -lh "${OUT}" | awk '{print "    "$5}'
+echo "--- NEEDED shared libs ---"; objdump -p "${OUT}" | awk '/NEEDED/ {print "    "$2}'
+echo -n "--- GLIBC   max required: "; objdump -T "${OUT}" | grep -oP 'GLIBC_\d+\.\d+'  | sort -V | tail -1
+echo -n "--- GLIBCXX max required: "; objdump -T "${OUT}" | grep -oP 'GLIBCXX_\d+\.\d+' | sort -V | tail -1 || echo "(none)"
+echo ""
+echo "Done: ${OUT}"
+echo "Ship that single file. Run it:  ./tendrl-engine   (opens http://127.0.0.1:3030/)"
