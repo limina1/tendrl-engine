@@ -55,6 +55,13 @@ export type TourTip = {
 // is what the "Run walkthrough" / "W" affordances kick off; everything else
 // fires from its own discovery point (see the per-surface triggers in +page /
 // +layout).
+//
+// Two component tours hang off the feed's "read or work with the event" fork:
+// the reader tour (reader-open → reader-menu → reader-edit) is event-gated —
+// it fires once when a publication first opens; the composer tour
+// (compose-overview → compose-modes → compose-build → compose-publish) and the
+// mode-line tour are on-demand only, surfaced by their component's own W chip
+// via `runTour` (never auto-thrown).
 export const TIPS: Record<string, TourTip> = {
 	// ── First-run login walk ─────────────────────────────────────────────
 	'feed-sync': {
@@ -118,6 +125,34 @@ export const TIPS: Record<string, TourTip> = {
 		placement: 'bottom'
 	},
 
+	// ── Reader tour (event-gated: fires when a publication first opens) ───
+	// The "read the publication" branch from the feed — clicking a row body
+	// spawns the reader. This chain fires once, the first time any reader
+	// mounts (seen-gated), then never nags again.
+	'reader-open': {
+		key: 'reader-open',
+		anchor: 'reader-toolbar',
+		title: 'Reading a publication',
+		body: 'You opened the reader. The same publication renders three ways: Outline (the table of contents — sections in order), Paginated (one section at a time), and Continuous (the whole thing as one scroll). h/l cycles between them.',
+		placement: 'bottom',
+		next: 'reader-menu'
+	},
+	'reader-menu': {
+		key: 'reader-menu',
+		anchor: 'reader-menu',
+		title: 'The raw event',
+		body: 'menu opens the event tools for this publication — inspect the raw 30040 JSON, copy its naddr, or find everything that references it. The reader shows the document; this is the event underneath.',
+		placement: 'bottom',
+		next: 'reader-edit'
+	},
+	'reader-edit': {
+		key: 'reader-edit',
+		anchor: 'reader-edit',
+		title: 'Edit in the composer',
+		body: 'Edit pulls the whole publication into the composer to revise it. Imported sections arrive locked (yellow once you claim one) — unlock just the ones you want to change, then sign a new snapshot. The composer has its own W tour.',
+		placement: 'bottom'
+	},
+
 	// ── Standalone discovery tips (fire from their own surface) ───────────
 	'search-history': {
 		key: 'search-history',
@@ -151,6 +186,42 @@ export const TIPS: Record<string, TourTip> = {
 		anchor: 'ml-pills',
 		title: 'Status & toggles',
 		body: 'Live engine state, much of it clickable: relay config, fetch mode (click to flip auto / confirm), embedding health, and your identity. The 🔍 pill replays past searches.',
+		placement: 'top'
+	},
+
+	// ── Composer tour (on demand: the composer's own W chip) ──────────────
+	// Like the mode-line tour, never auto-fired — `runTour('compose-overview')`
+	// surfaces it only when the user taps W on the compose mode-bar, then it
+	// chains through itself.
+	'compose-overview': {
+		key: 'compose-overview',
+		anchor: 'compose-modebar',
+		title: 'The composer',
+		body: "You're building a publication: a kind-30040 index over an ordered list of kind-30041 sections. Nothing is signed or sent yet — this is a working draft. Tap ? any time for the reference.",
+		placement: 'bottom',
+		next: 'compose-modes'
+	},
+	'compose-modes': {
+		key: 'compose-modes',
+		anchor: 'compose-nest',
+		title: 'Outline → structure',
+		body: 'Full shows each section as a card; Plain is one text buffer (h/l flips between them); Read previews the result. delim and nest control how your headings parse into nested 30040 indices — flat keeps one index over a flat list, each tier folds one more heading level into a sub-index.',
+		placement: 'bottom',
+		next: 'compose-build'
+	},
+	'compose-build': {
+		key: 'compose-build',
+		anchor: 'compose-toolbar',
+		title: 'Working with sections',
+		body: 'Each section becomes a 30041 event. Select sections (All / Inv) to send the selection to chat (◂), publish them (▸), or remove them (🗑). Collapse all (▸ all) to reorder the outline quickly.',
+		placement: 'bottom',
+		next: 'compose-publish'
+	},
+	'compose-publish': {
+		key: 'compose-publish',
+		anchor: 'compose-actions',
+		title: 'Draft → sign → broadcast',
+		body: 'Save draft keeps an unsigned copy locally (it survives a refresh). Sign turns the draft into a signed snapshot — the only way an event enters the db. Broadcasting to relays is a separate, deliberate step afterwards. Preview events shows the exact JSON first.',
 		placement: 'top'
 	}
 };

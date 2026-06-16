@@ -28,6 +28,7 @@
 		type DrawerHighlight
 	} from '$lib/components/HighlightsDrawer.svelte';
 	import { prefetchAuthors, refreshAuthors } from '$lib/discussions/authors.svelte';
+	import { trigger as triggerTip } from '$lib/wm/discovery.svelte';
 
 	let { buffer }: { buffer: Buffer } = $props();
 
@@ -36,6 +37,14 @@
 
 	let publication = $state<PublicationDetail | null>(null);
 	let pristineSections = $state<LazySection[]>([]);
+
+	// Walkthrough: the "read the publication" branch from the feed. The first
+	// time any reader has a loaded publication, point at the view-mode toolbar
+	// and chain through menu → edit. Seen-gated, so it fires once and never
+	// nags; no-ops entirely unless the walkthrough is enabled.
+	$effect(() => {
+		if (publication) triggerTip('reader-open');
+	});
 
 	// Cross-publication navigation has two axes.
 	//
@@ -1793,7 +1802,7 @@
 </script>
 
 <div class="reader-wrap">
-	<div class="toolbar">
+	<div class="toolbar" data-tour="reader-toolbar">
 		<!-- Order matches the h/l drill axis: outline → paginated → continuous.
 		     l/→ cycles right, h/← cycles left. Outline's l/→ is special —
 		     it drills into paginated with the cursored section loaded. -->
@@ -1811,6 +1820,7 @@
 		>
 		<button
 			class="json-btn"
+			data-tour="reader-menu"
 			onclick={openPublicationJson}
 			disabled={!publication}
 			title="Open this publication's event menu (m)"
@@ -1879,6 +1889,7 @@
 		{/if}
 		<button
 			class="edit"
+			data-tour="reader-edit"
 			onclick={editInComposer}
 			disabled={!publication}
 			title={isDraftMode ? 'Continue editing this draft' : 'Open this publication in the composer'}
