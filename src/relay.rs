@@ -58,7 +58,7 @@ pub async fn fetch_with_filters(
     }
     let req_msg = Value::Array(req);
 
-    ws.send(Message::Text(req_msg.to_string()))
+    ws.send(Message::Text(req_msg.to_string().into()))
         .await
         .map_err(|e| EngineError::Relay(format!("Failed to send REQ: {}", e)))?;
 
@@ -130,7 +130,7 @@ pub async fn fetch_with_filters(
 
     // Close subscription
     let close = json!(["CLOSE", sub_id]);
-    let _ = ws.send(Message::Text(close.to_string())).await;
+    let _ = ws.send(Message::Text(close.to_string().into())).await;
     let _ = ws.close(None).await;
 
     info!(
@@ -195,7 +195,7 @@ pub async fn publish_event(relay_url: &str, event_json: &str) -> PublishResult {
             .map_err(|e| format!("Invalid event JSON: {}", e))?;
         let msg = json!(["EVENT", event]);
 
-        ws.send(Message::Text(msg.to_string()))
+        ws.send(Message::Text(msg.to_string().into()))
             .await
             .map_err(|e| format!("Failed to send: {}", e))?;
 
