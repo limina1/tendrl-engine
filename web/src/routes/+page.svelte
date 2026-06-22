@@ -94,17 +94,37 @@
 	const modelineWalkState = $derived(walkState('modeline-overview'));
 
 	type GuideEntry = { key: string; label: string; done: boolean; run: () => void };
+	// Running a tour brings up the buffer it describes so it starts immediately
+	// rather than waiting for the user to navigate there themselves.
+	function openForTour(kind: string) {
+		if (kind === 'composer') store.openBuffer({ className: 'work', buffer: composerBuf });
+		else if (kind === 'settings')
+			store.openBuffer({
+				className: 'work',
+				buffer: { id: 'settings', kind: 'settings', label: 'settings' }
+			});
+		else if (kind === 'search') store.openBuffer({ className: 'research', buffer: searchBuf });
+		// reader/etc. need a loaded document — leave those to an already-open buffer.
+	}
 	function guidesForClass(cls: ClassName): GuideEntry[] {
-		return toursForClass(cls).map(({ tour }) => ({
+		return toursForClass(cls).map(({ kind, tour }) => ({
 			key: tour,
 			label: TIPS[tour]?.title ?? tour,
 			done: discovery.seen.includes(tour),
-			run: () => runTour(tour)
+			run: () => {
+				openForTour(kind);
+				runTour(tour);
+			}
 		}));
 	}
-	// The logo dropdown: the first-run walk (done once `walk-done` is seen) plus
-	// every tour in the work/center window.
+	// True once the user is set up — a signer connected and a populated pool.
+	const onboarded = $derived(identityCanSign(app.identityStatus) && app.feed.length > 0);
+	// The logo dropdown: the work/center window's tours, prefixed by the
+	// first-run walk — but only while the user isn't already set up (a fully
+	// onboarded user has nothing to gain from the intro, so it's omitted).
 	function logoGuides(): GuideEntry[] {
+		const work = guidesForClass('work');
+		if (onboarded) return work;
 		return [
 			{
 				key: '__first_run__',
@@ -112,7 +132,7 @@
 				done: discovery.seen.includes('walk-done'),
 				run: () => replayWalkthrough()
 			},
-			...guidesForClass('work')
+			...work
 		];
 	}
 	function menuAggState(entries: GuideEntry[]): 'new' | 'done' | 'none' {
@@ -873,7 +893,10 @@
 	// walkthrough is off or this tip is already seen.
 	let signedInTipFired = false;
 	$effect(() => {
-		if (mePubkey && !signedInTipFired) {
+		// Only when there's genuinely no name yet — the tip literally explains the
+		// name-less pubkey, so showing it to someone whose profile is already
+		// resolved (e.g. an established user replaying the walk) is wrong.
+		if (mePubkey && !meName && !signedInTipFired) {
 			signedInTipFired = true;
 			triggerTip('signed-in-noname');
 		} else if (!mePubkey) {

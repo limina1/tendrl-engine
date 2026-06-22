@@ -89,6 +89,21 @@
 		dragOffset = null;
 	});
 
+	// Click anywhere outside the card to dismiss. Deferred a tick so the click
+	// that opened the tip doesn't immediately close it; non-blocking (no
+	// backdrop) so the app underneath stays usable.
+	$effect(() => {
+		if (!tip) return;
+		const onDown = (e: PointerEvent) => {
+			if (cardEl && !cardEl.contains(e.target as Node)) dismissActive();
+		};
+		const id = setTimeout(() => window.addEventListener('pointerdown', onDown), 0);
+		return () => {
+			clearTimeout(id);
+			window.removeEventListener('pointerdown', onDown);
+		};
+	});
+
 	// Keep the measured card size live as its content (text / footer) changes,
 	// so the clamping below reflects the real box rather than a guess.
 	$effect(() => {
@@ -102,8 +117,9 @@
 	});
 
 	function onHandleDown(e: PointerEvent) {
-		// Don't start a drag from the dismiss button.
-		if ((e.target as HTMLElement).closest('.dt-x')) return;
+		// Drag from the empty header space only — leave the dismiss button and the
+		// title text alone so the title stays selectable (copy/paste).
+		if ((e.target as HTMLElement).closest('.dt-x, .dt-title')) return;
 		e.preventDefault();
 		const startX = e.clientX;
 		const startY = e.clientY;
@@ -268,6 +284,9 @@
 		flex: 1;
 		font-size: var(--t-sm);
 		color: var(--base7);
+		/* Selectable so it can be copied; not part of the drag handle. */
+		user-select: text;
+		cursor: text;
 	}
 	.dt-x {
 		background: transparent;

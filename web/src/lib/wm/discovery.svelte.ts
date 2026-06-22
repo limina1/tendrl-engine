@@ -561,14 +561,15 @@ export function trigger(key: string, vars?: TipVars, opts?: { force?: boolean })
 	if (!tip) return;
 	if (discovery.queue.includes(key)) return;
 	// Precondition: if the goal this beat teaches is already accomplished, never
-	// show it — mark it seen silently and chain straight to its `next`, so the
-	// auto walk collapses over everything the user has already done (signed in,
-	// pool populated) and only surfaces what's actually new to them. Skipped for
-	// `force` (an on-demand W tour the user asked for explicitly — they want it
-	// regardless of whether they've already done the thing it explains).
+	// show it — skip straight to its `next`, so the auto walk collapses over
+	// everything the user has already done (signed in, pool populated) and only
+	// surfaces what's actually new. We do NOT mark it `seen`: suppression is not
+	// completion, and `seen` drives the "done" checkmark on the opt-in W menus —
+	// marking a never-shown tour seen would wrongly tick it off. The predicate
+	// is re-evaluated on every trigger, so it stays suppressed while the
+	// condition holds without needing the seen flag. Skipped for `force` (an
+	// on-demand W tour the user asked for explicitly).
 	if (!opts?.force && tip.relevantWhen && !tip.relevantWhen(world())) {
-		discovery.seen.push(key);
-		persist();
 		if (tip.next) trigger(tip.next);
 		return;
 	}
