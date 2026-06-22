@@ -7,7 +7,7 @@
 
 	let {
 		value = $bindable<string>(''),
-		vimMode = true,
+		vimMode = false,
 		lineNumbers = false,
 		onLeave,
 		onBlur,
@@ -48,7 +48,7 @@
 		// Snapshot toggles once for initial config; later changes flow through
 		// the sync $effects via their compartments.
 		let initialLineNumbers = false;
-		let initialVimMode = true;
+		let initialVimMode = false;
 		untrack(() => {
 			initialLineNumbers = !!lineNumbers;
 			initialVimMode = !!vimMode;

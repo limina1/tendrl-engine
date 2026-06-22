@@ -768,6 +768,17 @@
 		prefixPath = ['SPC'];
 	}
 
+	// The mode-line doubles as the leader trigger: clicking empty space or a
+	// passive text segment opens (or closes) the `menu` (SPC leader). The
+	// interactive pills inside it — relays, fetch mode, identity, search
+	// history, the W/? affordances — keep their own clicks, so ignore anything
+	// that lands on a button/link/input or inside the history popover wrap.
+	function onModelineClick(e: MouseEvent) {
+		if ((e.target as HTMLElement).closest('button, a, input, .hs-pill-wrap')) return;
+		if (leaderOpen) prefixPath = [];
+		else openLeader();
+	}
+
 	function leaderDescend(key: string) {
 		const node = currentLeaderNode;
 		if (!node || node.type !== 'prefix') {
@@ -809,7 +820,11 @@
 	const focusedBufferText = $derived.by(() => {
 		if (!focusedBuffer) return '';
 		const star = focusedBuffer.modified ? ' *' : '';
-		const kicker = focusedBuffer.kicker ? ` (${focusedBuffer.kicker})` : '';
+		// Suppress a kicker that just repeats the label (e.g. "settings (settings)").
+		const kicker =
+			focusedBuffer.kicker && focusedBuffer.kicker !== focusedBuffer.label
+				? ` (${focusedBuffer.kicker})`
+				: '';
 		return `${focusedBuffer.label}${star}${kicker}`;
 	});
 
@@ -966,7 +981,7 @@
 		}
 		if (mb.mode === 'global') return `Switch buffer · global · ${minibufferEntries.length} open`;
 		if (mb.mode === 'recent') return `Recently closed · ${minibufferEntries.length}`;
-		if (mb.mode === 'mx') return `M-x · ${mxEntries.length} commands`;
+		if (mb.mode === 'mx') return `Commands · ${mxEntries.length}`;
 		return '';
 	});
 </script>
@@ -1013,9 +1028,9 @@
 			<button
 				class="px {leaderOpen ? 'px--on' : ''}"
 				onclick={() => (leaderOpen ? (prefixPath = []) : openLeader())}
-				title="SPC — leader prefix (which-key popup)"
-			>SPC</button>
-			<button class="shell__mx {mb.mode === 'mx' ? 'shell__mx--on' : ''}" onclick={() => openMinibuffer('mx')} title="M-x · command palette">M-x</button>
+				title="Menu — the SPC leader (which-key popup); also opens by clicking the mode-line"
+			>menu</button>
+			<button class="shell__mx {mb.mode === 'mx' ? 'shell__mx--on' : ''}" onclick={() => openMinibuffer('mx')} title="Commands · run an app command (SPC :)">commands</button>
 		</div>
 
 		<div class="shell__body">
@@ -1037,11 +1052,17 @@
 			{@render minibufferStrip()}
 		{/if}
 
-		<div class="shell__modeline" data-tour="modeline">
-			<span class="ml__mode ml__mode--{mode}" data-tour="ml-mode">-- {mode.toUpperCase()} --</span>
-			<span class="ml__seg ml__seg--text">L:{store.currentLayout.name}</span>
+		<!-- svelte-ignore a11y_click_events_have_key_events -->
+		<!-- svelte-ignore a11y_no_static_element_interactions -->
+		<div
+			class="shell__modeline"
+			data-tour="modeline"
+			onclick={onModelineClick}
+			title="Click to open the menu (SPC)"
+		>
 			{#if store.focusedSlotClass()}
-				<span class="ml__seg ml__seg--text">@{store.focusedSlotClass()}</span>
+				{@const focusedClass = store.focusedSlotClass()}
+				<span class="ml__class ml__class--{focusedClass}" data-tour="ml-mode">{focusedClass}</span>
 			{/if}
 			{#if focusedBufferText}
 				<span class="ml__seg ml__seg--buf">{focusedBufferText}</span>
@@ -1488,7 +1509,7 @@
 		</div>
 		<div class="mb__input-row">
 			<span class="mb__title">{minibufferTitle}</span>
-			<span class="mb__prompt">{mb.mode === 'global' ? 'B>' : mb.mode === 'recent' ? 'r>' : mb.mode === 'mx' ? 'M-x' : mb.mode === 'split' ? 's>' : 'b>'}</span>
+			<span class="mb__prompt">{mb.mode === 'global' ? 'B>' : mb.mode === 'recent' ? 'r>' : mb.mode === 'mx' ? 'cmd>' : mb.mode === 'split' ? 's>' : 'b>'}</span>
 			<!-- svelte-ignore a11y_autofocus -->
 			<input
 				class="mb__input"
@@ -2041,6 +2062,7 @@
 	.shell__modeline {
 		height: 22px;
 		background: var(--panel-bg-soft);
+		cursor: pointer;
 		border-top: 1px solid var(--panel-border);
 		font-family: var(--font-mono);
 		font-size: var(--t-xs);
@@ -2051,7 +2073,25 @@
 		flex-shrink: 0;
 		gap: var(--s-3);
 	}
+	/* The whole strip is a leader trigger (see onModelineClick) — lift it on
+	   hover so the click affordance reads. */
+	.shell__modeline:hover { background: color-mix(in srgb, var(--fg) 7%, var(--panel-bg-soft)); }
 	.ml__spacer { flex: 1; }
+	/* Focused slot-class badge — restyled from the old vim-mode badge into a
+	   colored pill. Three classes, three accents: chat purple, work blue,
+	   research green. */
+	.ml__class {
+		font-family: var(--font-mono);
+		font-size: var(--t-xs);
+		font-weight: 600;
+		text-transform: uppercase;
+		letter-spacing: 0.04em;
+		padding: 0 var(--s-2);
+		border-radius: var(--r-sm);
+	}
+	.ml__class--chat { background: color-mix(in srgb, var(--id-imported) 25%, transparent); color: var(--id-imported); }
+	.ml__class--work { background: color-mix(in srgb, var(--id-yours) 25%, transparent); color: var(--id-yours); }
+	.ml__class--research { background: color-mix(in srgb, var(--state-online) 25%, transparent); color: var(--state-online); }
 	.ml__seg { color: var(--base6); }
 	.ml__seg--buf { color: var(--fg); }
 	.ml__seg--prefix { color: var(--id-yours); }
@@ -2069,22 +2109,6 @@
 		background: color-mix(in srgb, var(--id-remote, var(--id-yours)) 14%, transparent);
 		color: var(--id-remote, var(--fg));
 	}
-	.ml__mode {
-		font-family: var(--font-mono);
-		font-size: var(--t-xs);
-		font-weight: 600;
-		padding: 0 var(--s-2);
-		border-radius: var(--r-sm);
-	}
-	.ml__mode--normal {
-		background: color-mix(in srgb, var(--state-online) 25%, transparent);
-		color: var(--state-online);
-	}
-	.ml__mode--insert {
-		background: color-mix(in srgb, var(--id-yours) 25%, transparent);
-		color: var(--id-yours);
-	}
-
 	/* Leader popup (which-key) */
 	.lp {
 		border-top: 1px solid var(--base3);

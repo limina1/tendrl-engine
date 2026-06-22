@@ -37,14 +37,13 @@
 
 			<p class="mh-blurb">
 				The bottom status bar. The left half tells you <em>where you are</em>;
-				the right half is <em>live status</em>, much of it clickable. Tap
-				<code>W</code> for a guided tour of these.
+				the right half is <em>live status</em>, much of it clickable. Click
+				any empty part of it to open the <em>menu</em> (the <code>SPC</code>
+				leader). Tap <code>W</code> for a guided tour of these.
 			</p>
 
 			<div class="mh-scroll">
 				<div class="mh-group">Where you are</div>
-				{@render row('-- MODE --', 'current interaction mode')}
-				{@render row('L:name', 'active layout — pick others from the SPC leader')}
 				{@render row('@class', 'focused slot class: work · chat · research')}
 				{@render row('buffer', 'the focused buffer — switch with SPC b b')}
 				{@render row('SPC- / mb:', 'an open leader prefix / minibuffer mode')}
@@ -57,9 +56,9 @@
 				{@render row('identity', 'your login — click for profile (or to unlock)')}
 
 				<div class="mh-group">Global keys</div>
-				{@render row('SPC', 'leader prefix (which-key popup)')}
+				{@render row('SPC', 'menu — the leader (which-key popup); also opens by clicking the mode-line')}
 				{@render row('SPC b b', 'switch buffer (B = by class, r = recent)')}
-				{@render row('M-x', 'command palette')}
+				{@render row('SPC :', 'commands — run an app command')}
 				{@render row('W · ?', 'this mode-line tour · this reference')}
 			</div>
 		</div>

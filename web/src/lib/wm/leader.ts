@@ -108,7 +108,7 @@ export function buildLeaderRoot(ctx: LeaderContext): SubPrefix {
 					q: { type: 'leaf', desc: 'quit frame', category: 'Application', kind: 'client', run: () => {} }
 				}
 			},
-			':': { type: 'leaf', desc: 'M-x', category: 'Application', kind: 'client', run: () => ctx.openMinibuffer('mx') }
+			':': { type: 'leaf', desc: 'commands', category: 'Application', kind: 'client', run: () => ctx.openMinibuffer('mx') }
 		}
 	};
 }

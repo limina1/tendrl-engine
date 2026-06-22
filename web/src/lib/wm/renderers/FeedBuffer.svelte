@@ -246,6 +246,10 @@
 	.feed-wrap { display: flex; flex-direction: column; height: 100%; min-height: 0; }
 	.feed-list { flex: 1; overflow-y: auto; }
 	.feed-header {
+		position: sticky;
+		top: 0;
+		z-index: 1;
+		background: var(--panel-bg);
 		padding: 8px 12px;
 		font-size: var(--t-xs);
 		font-weight: 600;
