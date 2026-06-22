@@ -114,13 +114,6 @@
 	const isAtomic = $derived(composeKind !== 30040);
 	const isCustomKind = $derived(!PRESET_KINDS.has(composeKind));
 
-	// Within Publication (30040) mode, a sub-mode: 'publication' bundles the
-	// sections under a 30040 index; 'notes' publishes each detected section as a
-	// standalone 30041 with no index ("scattered notes"). Auto-parsed the same
-	// way — the only difference is the missing index at publish time.
-	let pubMode = $state<'publication' | 'notes'>('publication');
-	const isNotes = $derived(!isAtomic && pubMode === 'notes');
-
 	function onKindSelect(e: Event) {
 		const v = +(e.currentTarget as HTMLSelectElement).value;
 		// -1 = "Custom…": keep the current kind if it's already custom, else
@@ -527,6 +520,17 @@
 				: compose.sections.length === 0
 	);
 
+	// Publication vs Notes is AUTO-DETECTED from the document title (the level-1
+	// `=` heading in plain mode, the title field in full mode). With a title the
+	// sections bind into one Publication (30040 index + 30041s); with no title
+	// they're scattered Notes — each section a standalone 30041, no index. The
+	// mode-bar shows which, so the user sees what a Sign will publish.
+	const effectiveTitle = $derived(mode === 'plain' ? detectedState.title : compose.title);
+	const hasSections = $derived(
+		mode === 'plain' ? detectedSections.length > 0 : compose.sections.length > 0
+	);
+	const isNotes = $derived(!isAtomic && hasSections && effectiveTitle.trim().length === 0);
+
 	// Fingerprint of section identity + lock/divergence state, so we can
 	// detect external changes. readonly/modified flips cover the badge
 	// lock-to-source cycle, which resets content to the original — the
@@ -889,23 +893,18 @@
 			{/if}
 		</label>
 		{#if !isAtomic}
-			<!-- Output shape within the Publication kind: bundle the sections under
-			     a 30040 index (Publication), or publish each as a standalone 30041
-			     with no index (Notes). Same parsed sections either way. -->
-			<div class="mode-toggle pub-toggle" role="group" aria-label="Output shape">
-				<button
-					class="mode-seg"
-					class:mode-seg--on={pubMode === 'publication'}
-					onclick={() => (pubMode = 'publication')}
-					title="Publication — one 30040 index over the parsed 30041 sections"
-				>publication</button>
-				<button
-					class="mode-seg"
-					class:mode-seg--on={pubMode === 'notes'}
-					onclick={() => (pubMode = 'notes')}
-					title="Notes — publish each parsed section as a standalone 30041, no index over them"
-				>notes</button>
-			</div>
+			<!-- Output shape, AUTO-DETECTED from the document title and shown read-
+			     only so the user can see what a Sign will publish: a title binds
+			     the sections into one Publication (30040 index + 30041s); no title
+			     means scattered Notes (each section a standalone 30041, no index).
+			     Same parsed sections either way. -->
+			<span
+				class="pub-shape"
+				class:pub-shape--notes={isNotes}
+				title={isNotes
+					? 'Notes — no document title, so each section publishes as a standalone 30041 (no 30040 index). Add a title to bind them into one Publication.'
+					: 'Publication — one 30040 index over the parsed 30041 sections. Remove the title to publish them as standalone Notes instead.'}
+			>{isNotes ? 'Notes' : 'Publication'}</span>
 			<!-- The view starts on the user's compose-default setting (full/plain)
 			     and stays switchable here. Normal-mode h/l still toggles it; this
 			     segmented control gives a click target that doesn't depend on vim
@@ -1267,7 +1266,7 @@
 				title="Save this draft locally — survives refresh; resume it from the Saved drafts list"
 			>Save draft</button>
 		{/if}
-		{#if !isAtomic}
+		{#if !isAtomic && !isNotes}
 			<button
 				class="diff-published-btn"
 				onclick={diffPublishedAction}
@@ -1385,6 +1384,28 @@
 		font-family: var(--font-mono);
 		font-size: 0.8rem;
 		padding: 3px 6px;
+	}
+
+	/* Read-only output-shape indicator — auto-detected Publication vs Notes.
+	   Notes is the attention state (no index), so it's tinted accent. */
+	.pub-shape {
+		font-family: var(--font-mono);
+		font-size: 0.7rem;
+		text-transform: uppercase;
+		letter-spacing: 0.05em;
+		font-weight: 600;
+		padding: 2px 8px;
+		border-radius: var(--radius);
+		border: 1px solid var(--border);
+		color: var(--fg-muted);
+		cursor: default;
+		user-select: none;
+		white-space: nowrap;
+	}
+	.pub-shape--notes {
+		color: var(--accent);
+		border-color: var(--accent);
+		background: color-mix(in srgb, var(--accent) 14%, transparent);
 	}
 
 	/* Atomic body editor — fills the scroll region under the sticky header,
