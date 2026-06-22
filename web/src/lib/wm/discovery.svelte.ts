@@ -227,7 +227,7 @@ export const TIPS: Record<string, TourTip> = {
 		key: 'modeline-overview',
 		anchor: 'modeline',
 		title: 'The mode-line',
-		body: 'This bottom strip is the mode-line — a live status bar (Emacs-style). It never interrupts you: tap `W` here for this quick tour, or `?` for the full reference. Left half tells you *where you are*; right half is *live status* with quick toggles.',
+		body: 'This bottom strip is the mode-line — a live status bar (Emacs-style). Click any empty part of it to open the `menu` (the `SPC` leader). It never interrupts you: tap `W` here for this quick tour, or `?` for the full reference. Left half tells you *where you are*; right half is *live status* with quick toggles.',
 		placement: 'top',
 		next: 'modeline-focus'
 	},
@@ -235,7 +235,7 @@ export const TIPS: Record<string, TourTip> = {
 		key: 'modeline-focus',
 		anchor: 'ml-mode',
 		title: 'Where you are',
-		body: 'Your current mode and active layout (`L:name`), then the focused slot-class (`@work` / `@chat` / `@research`) and buffer. Switch buffers with `SPC b b`; pick layouts from the `SPC` leader.',
+		body: 'The focused slot-class (`@work` / `@chat` / `@research`) and the focused buffer. Switch buffers with `SPC b b`.',
 		placement: 'top',
 		next: 'modeline-status'
 	},
@@ -652,5 +652,34 @@ export function runTour(entryKey: string) {
 export function rearmDiscovery() {
 	discovery.enabled = true;
 	discovery.seen = [];
+	persist();
+}
+
+/** The first-run onboarding walk: the fixed set of tips that auto-fire (in
+ *  order, event-gated) the first time through, ending at `walk-done`. It is not
+ *  a single `next` chain — most beats are surfaced by their surface mounting —
+ *  so it's enumerated here. Everything else in `TIPS` is an on-demand "feature
+ *  tour" replayed from a panel's `W` chip. Listed explicitly so the two groups
+ *  can be re-armed independently (see `rearmFeatureTours`). Add a new onboarding
+ *  beat here; new panel/feature tours need no change (they're the complement). */
+const ONBOARDING_TIPS = new Set<string>([
+	'feed-sync',
+	'sign-in',
+	'sign-in-methods',
+	'signed-in-noname',
+	'go-home',
+	'general-feed',
+	'feed-first-pub',
+	'feed-first-badges',
+	'walk-done'
+]);
+
+/** Re-arm only the on-demand feature tours — the panel `W`-chip walks (mode-line,
+ *  reader, composer, search, event menus) — by un-seeing every tip that isn't
+ *  part of the first-run onboarding walk. Each panel's `W` glows "new" again and
+ *  replays in full; the onboarding walk's seen-state is left untouched. */
+export function rearmFeatureTours() {
+	discovery.enabled = true;
+	discovery.seen = discovery.seen.filter((s) => ONBOARDING_TIPS.has(s));
 	persist();
 }

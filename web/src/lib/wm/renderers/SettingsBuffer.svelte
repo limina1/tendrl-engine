@@ -2,7 +2,7 @@
 	import { getAppState } from '$lib/state.svelte';
 	import { nip07, startNip07Watch } from '$lib/identity/nip07.svelte';
 	import { trigger as triggerTip } from '$lib/wm/discovery.svelte';
-	import { discovery, rearmDiscovery, setWalkthroughEnabled } from '$lib/wm/discovery.svelte';
+	import { discovery, rearmDiscovery, rearmFeatureTours, setWalkthroughEnabled } from '$lib/wm/discovery.svelte';
 	import * as api from '$lib/api';
 	import type { Buffer } from '../types';
 	import type { EditorInsertMode, SyncMode, ButtonLabels, ComposeDefaultMode } from '$lib/types';
@@ -712,7 +712,21 @@
 			<button
 				class="settings-action"
 				onclick={() => app.resetNetworkModeChoice()}
-				title="Re-arm the mode-choice modal + walkthrough for the next load (no data is touched)"
+				title="Re-arm the mode-choice modal + first-run walkthrough for the next load (no data is touched)"
+			>
+				Reset…
+			</button>
+		</div>
+
+		<div class="settings-row">
+			<span class="settings-label">Reset feature tours</span>
+			<button
+				class="settings-action"
+				onclick={() => {
+					rearmFeatureTours();
+					app.pushToast('Feature tours re-armed — each panel’s W glows again', 'info');
+				}}
+				title="Re-arm the on-demand panel tours (mode-line · reader · composer · search · menus) so each W chip replays in full"
 			>
 				Reset…
 			</button>
@@ -721,7 +735,8 @@
 			<strong>Walkthrough</strong>: contextual tips that point out features the first
 			time you reach them. Toggling on (re)arms them; off silences them. The mode-line
 			<strong>W</strong> button replays them any time.<br />
-			<strong>Reset first-run setup</strong>: re-arms the mode-choice modal + walkthrough so they reappear on next load, as if freshly installed (no data is touched).
+			<strong>Reset first-run setup</strong>: re-arms the mode-choice modal + first-run walkthrough so they reappear on next load, as if freshly installed (no data is touched).<br />
+			<strong>Reset feature tours</strong>: re-arms the on-demand panel walkthroughs — mode-line, reader, composer, search, and event menus — so each <strong>W</strong> chip glows and replays in full. Leaves the first-run walkthrough alone.
 		</p>
 	</div>
 
