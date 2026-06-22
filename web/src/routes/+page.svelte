@@ -29,7 +29,14 @@
 	} from '$lib/discussions/authors.svelte';
 	import { pubkeyToColor } from '$lib/discussions/colors';
 	import { identityCanSign, detectNip07 } from '$lib/identity/signer';
-	import { replayWalkthrough, runTour, trigger as triggerTip, discovery, TIPS } from '$lib/wm/discovery.svelte';
+	import {
+		replayWalkthrough,
+		runTour,
+		trigger as triggerTip,
+		armSurfaceTour,
+		discovery,
+		TIPS
+	} from '$lib/wm/discovery.svelte';
 	import { openModelineHelp } from '$lib/wm/modeline-help.svelte';
 
 	const app = getAppState();
@@ -126,9 +133,30 @@
 	// The logo dropdown: the work/center window's tours, prefixed by the
 	// first-run walk — but only while the user isn't already set up (a fully
 	// onboarded user has nothing to gain from the intro, so it's omitted).
+	// The event menu is a modal, not a work buffer, so it isn't in the registry's
+	// class map — but its tour belongs in the global W. If a menu is already open
+	// run it straight; otherwise arm it and point the user at a feed row's `menu`
+	// pill (menu-open), and EventViewModal resumes the tour when it mounts.
+	function menuGuide(): GuideEntry {
+		return {
+			key: 'menu-overview',
+			label: TIPS['menu-overview']?.title ?? 'The event menu',
+			buffer: 'menu',
+			done: discovery.seen.includes('menu-overview'),
+			run: () => {
+				if (app.eventModalData) {
+					runTour('menu-overview');
+				} else {
+					armSurfaceTour('menu-overview');
+					runTour('menu-open');
+				}
+			}
+		};
+	}
 	function logoGuides(): GuideEntry[] {
 		const work = guidesForClass('work');
-		if (onboarded) return work;
+		const menu = menuGuide();
+		if (onboarded) return [...work, menu];
 		return [
 			{
 				key: '__first_run__',
@@ -136,7 +164,8 @@
 				done: discovery.seen.includes('walk-done'),
 				run: () => replayWalkthrough()
 			},
-			...work
+			...work,
+			menu
 		];
 	}
 	function menuAggState(entries: GuideEntry[]): 'new' | 'done' | 'none' {

@@ -451,10 +451,20 @@ export const TIPS: Record<string, TourTip> = {
 		next: 'search-history'
 	},
 
-	// ── Event-menu tour (on demand: the menu modal's own W chip) ──────────
+	// ── Event-menu tour ───────────────────────────────────────────────────
 	// The "work with the event" branch from the feed/search. The menu is a
 	// keyboard-chord surface (c/a/p prefixes); this walk names each section.
-	// Anchored on the modal's own sections — surfaced only by its W chip.
+	// Surfaced two ways: the modal's own W chip (modal already open → straight
+	// to `menu-overview`), and the global logo W (modal closed → `menu-open`
+	// points at a feed row's `menu` pill and the chain resumes once the modal
+	// mounts, via the armed-surface-tour flag — see `armSurfaceTour`).
+	'menu-open': {
+		key: 'menu-open',
+		anchor: 'menu-pill',
+		title: 'Open an event menu',
+		body: 'This walkthrough lives *inside* an event’s menu. Click the `menu` pill on any article to open it — the tour picks up there automatically.',
+		placement: 'right'
+	},
 	'menu-overview': {
 		key: 'menu-overview',
 		anchor: 'menu-header',
@@ -513,12 +523,39 @@ type DiscoveryState = {
 	/** Per-tip `{token}` substitutions, set at trigger time. Ephemeral — not
 	 *  persisted; a data-driven tip restocks them each time its surface fires. */
 	vars: Record<string, TipVars>;
+	/** A tour armed to start when its surface next mounts. Set when a tour is
+	 *  launched from afar (the global W) but its anchors live in a surface the
+	 *  user must open first — e.g. the event menu. The surface clears it via
+	 *  `consumeArmedTour` on mount and runs the tour then. Ephemeral. */
+	armed: string | null;
 };
 
 /** Live walkthrough state. `enabled` defaults true so a fresh load with the
  *  modal's toggle left checked runs the intro; `loadDiscovery()` reconciles it
  *  with any persisted preference. */
-export const discovery = $state<DiscoveryState>({ enabled: true, seen: [], queue: [], vars: {} });
+export const discovery = $state<DiscoveryState>({
+	enabled: true,
+	seen: [],
+	queue: [],
+	vars: {},
+	armed: null
+});
+
+/** Arm a tour to fire when its surface next mounts (see `armed`). Used by the
+ *  global W's "Event menu" entry: the menu modal isn't open, so we point the
+ *  user at the `menu` pill (`menu-open`) and arm `menu-overview` to run once the
+ *  modal appears. */
+export function armSurfaceTour(key: string) {
+	discovery.armed = key;
+}
+
+/** If `key` is the armed tour, clear the flag and return true so the caller
+ *  (the mounting surface) runs it. A no-op otherwise. */
+export function consumeArmedTour(key: string): boolean {
+	if (discovery.armed !== key) return false;
+	discovery.armed = null;
+	return true;
+}
 
 /** The tip currently on screen, or null when the queue is empty. */
 export function activeTip(): TourTip | null {

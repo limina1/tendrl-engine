@@ -7,7 +7,7 @@
 	import { getRelayInfo, normalizeRelayUrl, type Nip11Status } from '$lib/relay/nip11';
 	import { requestRelayFocus } from '$lib/relay/focus.svelte';
 	import { getActiveStore } from '$lib/wm/buffer-store.svelte';
-	import { runTour } from '$lib/wm/discovery.svelte';
+	import { runTour, consumeArmedTour } from '$lib/wm/discovery.svelte';
 	import { openMenuHelp } from '$lib/wm/menu-help.svelte';
 
 	let {
@@ -30,6 +30,14 @@
 	} = $props();
 
 	const app = getAppState();
+
+	// If the menu walkthrough was armed from afar (the global W, with no menu
+	// open), it asked the user to open a menu — now that we've mounted, run it.
+	// `consumeArmedTour` self-clears, so the re-run on the next reactive pass is
+	// a no-op (it can't double-fire).
+	$effect(() => {
+		if (consumeArmedTour('menu-overview')) runTour('menu-overview');
+	});
 
 	// Breadcrumb of events visited via chained nav within this modal session.
 	// Reset when the displayed event id doesn't match the most recent nav

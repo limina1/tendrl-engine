@@ -180,6 +180,7 @@
 						<span class="title">{pub_item.title ?? '[Untitled]'}</span>
 						<button
 							class="pill pill--menu"
+							data-tour={i === 0 ? 'menu-pill' : undefined}
 							onclick={(e) => {
 								e.stopPropagation();
 								app.openAddressableInModal(pub_item.addr);
