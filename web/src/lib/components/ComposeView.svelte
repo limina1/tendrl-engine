@@ -49,7 +49,7 @@
 		sectionsListEl = $bindable<HTMLDivElement | undefined>(undefined),
 		plainCmView = $bindable<EditorView | null>(null),
 		lineNumbers = false,
-		vimMode = true
+		vimMode = false
 	}: {
 		compose: ComposeState;
 		syncMode: SyncMode;
@@ -717,11 +717,24 @@
 
 <div class="compose-view">
 	<div class="compose-mode-bar" data-tour="compose-modebar">
-		<!-- Mode is set by the user's compose-default setting and toggled
-		     via h/l in normal mode; no visible toggle button. The current
-		     mode is rendered as a static label so the user knows where
-		     they are. -->
-		<div class="mode-label">{mode}</div>
+		<!-- The view starts on the user's compose-default setting (full/plain)
+		     and stays switchable here. Normal-mode h/l still toggles it; this
+		     segmented control gives a click target that doesn't depend on vim
+		     mode. Preview is its own toggle (the Read button on the right). -->
+		<div class="mode-toggle" role="group" aria-label="Editor view">
+			<button
+				class="mode-seg"
+				class:mode-seg--on={mode === 'full'}
+				onclick={() => (mode = 'full')}
+				title="Full view — structured section cards"
+			>full</button>
+			<button
+				class="mode-seg"
+				class:mode-seg--on={mode === 'plain'}
+				onclick={() => (mode = 'plain')}
+				title="Plain view — one plain-text editor with a live detected-section outline"
+			>plain</button>
+		</div>
 		<div class="delim-group" data-tour="compose-nest">
 			<span class="delim-label">delim</span>
 			<input
@@ -809,10 +822,11 @@
 		>?</button>
 	</div>
 
-	<!-- Edit chrome (title/tags + selection toolbar) is hidden in
-	     preview so the read view fills the buffer. The mode bar above
-	     stays so the user can flip back to Full/Plain. -->
-	{#if mode !== 'plain' && mode !== 'preview'}
+	<!-- Title + tags and the selection toolbar are factored into snippets so
+	     full mode can anchor them (sticky) at the top of its single scroll
+	     region (feed-style), while plain mode renders just the toolbar and
+	     preview renders neither. -->
+	{#snippet composeHeader()}
 		<div class="compose-header" class:compose-header--collapsed={headerCollapsed}>
 			<div class="compose-title-row">
 				<button
@@ -835,9 +849,9 @@
 				<TagEditor tags={compose.tags} onupdate={updateTags} />
 			{/if}
 		</div>
-	{/if}
+	{/snippet}
 
-	{#if mode !== 'preview'}
+	{#snippet composeToolbar()}
 		<div class="compose-toolbar" data-tour="compose-toolbar">
 			<button class="sel-btn" onclick={toolbarSelectAll} disabled={compose.sections.length === 0} title="Select all">All</button>
 			<button class="sel-btn" onclick={toolbarInvert} disabled={compose.sections.length === 0} title="Invert selection">Inv</button>
@@ -861,10 +875,17 @@
 				title={allCollapsed ? 'Expand all sections' : 'Collapse all sections to titles'}
 			>{allCollapsed ? '▾ all' : '▸ all'}</button>
 		</div>
-	{/if}
+	{/snippet}
 
-	<div class="compose-content">
-		{#if mode === 'full'}
+	<!-- Full mode = the feed's shape: title + tags and the selection toolbar
+	     anchored (sticky) at the top of one scroll region; sections appended
+	     below and scrolling under them. One window, not two competing panes. -->
+	{#if mode === 'full'}
+		<div class="compose-content compose-content--scroll">
+			<div class="compose-stick">
+				{@render composeHeader()}
+				{@render composeToolbar()}
+			</div>
 			<div class="compose-sections" data-tour="compose-sections" bind:this={sectionsListEl}>
 				{#each compose.sections as section, i (section.id)}
 					<div
@@ -894,7 +915,10 @@
 					</div>
 				{/each}
 			</div>
-		{:else if mode === 'plain'}
+		</div>
+	{:else if mode === 'plain'}
+		{@render composeToolbar()}
+		<div class="compose-content">
 			<div class="plain-layout" data-tour="compose-plain">
 				<div class="plain-editor-wrap">
 					<CodeMirrorEditor
@@ -963,7 +987,9 @@
 					{/if}
 				</div>
 			</div>
-		{:else}
+		</div>
+	{:else}
+		<div class="compose-content">
 			<!-- Preview = the read view of the current draft. Same lock/
 			     unlock/reorder affordances as ReaderBuffer; the surrounding
 			     edit chrome (title/tags + selection toolbar) is hidden so
@@ -975,8 +1001,8 @@
 				onunlockall={unlockAllImported}
 				onlockall={lockAllUnlocked}
 			/>
-		{/if}
-	</div>
+		</div>
+	{/if}
 
 	{#if drafts.length > 0}
 		<div class="compose-drafts">
@@ -1080,15 +1106,33 @@
 		flex-shrink: 0;
 	}
 
-	.mode-label {
+	/* Segmented full/plain switch — a click target independent of vim mode. */
+	.mode-toggle {
+		display: inline-flex;
+		border: 1px solid var(--border);
+		border-radius: var(--radius);
+		overflow: hidden;
+	}
+	.mode-seg {
 		font-family: var(--font-mono);
 		font-size: 0.7rem;
 		color: var(--fg-muted);
 		text-transform: uppercase;
 		letter-spacing: 0.05em;
-		padding: 2px 6px;
-		border: 1px solid var(--border);
-		border-radius: var(--radius);
+		padding: 2px 8px;
+		background: transparent;
+		border: none;
+		cursor: pointer;
+	}
+	.mode-seg + .mode-seg {
+		border-left: 1px solid var(--border);
+	}
+	.mode-seg:hover {
+		color: var(--fg);
+	}
+	.mode-seg--on {
+		background: color-mix(in srgb, var(--id-yours) 22%, transparent);
+		color: var(--id-yours);
 	}
 
 	.delim-group {
@@ -1242,10 +1286,30 @@
 		background: var(--bg-surface);
 	}
 
-	.compose-sections {
-		flex: 1;
-		min-height: 0;
+	/* Full mode: the content box itself scrolls (feed pattern) so the title +
+	   toolbar can stick to its top and the sections fill the rest. */
+	.compose-content--scroll {
 		overflow-y: auto;
+	}
+	.compose-stick {
+		position: sticky;
+		top: 0;
+		z-index: 2;
+		display: flex;
+		flex-direction: column;
+		gap: 8px;
+		padding: 12px 12px 8px;
+		background: var(--bg-surface);
+		border-bottom: 1px solid var(--border);
+	}
+	/* Inside the sticky header the title/tags no longer compete with the
+	   sections for height — drop the viewport cap, keep a generous scroll
+	   ceiling only so a huge tag list can't dominate. */
+	.compose-stick .compose-header {
+		max-height: 40vh;
+	}
+
+	.compose-sections {
 		display: flex;
 		flex-direction: column;
 		gap: 12px;

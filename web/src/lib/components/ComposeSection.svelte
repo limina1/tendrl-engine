@@ -99,7 +99,7 @@
 			value={section.content}
 			oninput={(e) => onupdate(section.id, section.title, e.currentTarget.value)}
 			placeholder="Section content..."
-			rows="6"
+			rows="8"
 			disabled={section.readonly}
 		></textarea>
 		<TagEditor tags={section.tags} onupdate={(tags) => onupdatetags(section.id, tags)} disabled={section.readonly} />
@@ -203,6 +203,10 @@
 		width: 100%;
 		font-size: 0.85rem;
 		line-height: 1.5;
+		/* Taller by default so a section reads as a real editing surface, not a
+		   squished bar; users can still drag it to whatever height they want. */
+		min-height: 9rem;
+		resize: vertical;
 	}
 
 	.modified-banner {
