@@ -93,7 +93,10 @@
 	}
 	const modelineWalkState = $derived(walkState('modeline-overview'));
 
-	type GuideEntry = { key: string; label: string; done: boolean; run: () => void };
+	// `buffer` is the owning buffer's label, shown as an opaque tag in the logo
+	// `W` (which aggregates every buffer's tours) so you can see where each tour
+	// lives. Omitted by single-scope menus (Chat / Research pane heads).
+	type GuideEntry = { key: string; label: string; buffer?: string; done: boolean; run: () => void };
 	// Running a tour brings up the buffer it describes so it starts immediately
 	// rather than waiting for the user to navigate there themselves.
 	function openForTour(kind: string) {
@@ -107,13 +110,14 @@
 		// reader/etc. need a loaded document — leave those to an already-open buffer.
 	}
 	function guidesForClass(cls: ClassName): GuideEntry[] {
-		return toursForClass(cls).map(({ kind, tour }) => ({
-			key: tour,
-			label: TIPS[tour]?.title ?? tour,
-			done: discovery.seen.includes(tour),
+		return toursForClass(cls).map(({ kind, label, key }) => ({
+			key,
+			label: TIPS[key]?.title ?? key,
+			buffer: label,
+			done: discovery.seen.includes(key),
 			run: () => {
 				openForTour(kind);
-				runTour(tour);
+				runTour(key);
 			}
 		}));
 	}
@@ -1259,6 +1263,7 @@
 							>{g.done ? '✓' : ''}</span
 						>
 						<span class="walk-menu__label">{g.label}</span>
+						{#if g.buffer}<span class="walk-menu__buffer">{g.buffer}</span>{/if}
 					</button>
 				{/each}
 			</div>
@@ -1963,6 +1968,17 @@
 		white-space: nowrap;
 		overflow: hidden;
 		text-overflow: ellipsis;
+	}
+	/* Opaque buffer tag — which surface a tour lives on (composer/reader/…),
+	   shown only in the aggregate logo menu so the source is legible. */
+	.walk-menu__buffer {
+		flex: 0 0 auto;
+		font-family: var(--font-mono);
+		font-size: 0.58rem;
+		text-transform: lowercase;
+		letter-spacing: 0.03em;
+		color: var(--fg-muted);
+		opacity: 0.7;
 	}
 
 	.hs-popover {

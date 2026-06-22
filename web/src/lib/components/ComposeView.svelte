@@ -17,10 +17,26 @@
 		sectionDiverged
 	} from '$lib/compose/state';
 	import { getAppState } from '$lib/state.svelte';
-	import { runTour } from '$lib/wm/discovery.svelte';
+	import { runTour, discovery, TIPS } from '$lib/wm/discovery.svelte';
+	import { toursForKind } from '$lib/wm/registry';
 	import { openComposeHelp } from '$lib/wm/compose-help.svelte';
 
 	const app = getAppState();
+
+	// Composer walkthrough dropdown. The in-chrome `W` lists every composer
+	// tutorial (registry's `composer.tours`); picking one switches the editor to
+	// the tour's view (when it has one) and runs it. Mirrors the logo `W`'s
+	// guide menu, scoped to this buffer.
+	const composerTours = toursForKind('composer');
+	let walkMenuOpen = $state(false);
+	function runComposeTour(t: { key: string; mode?: 'full' | 'plain' }) {
+		// A `mode`-tagged tour walks a specific view — switch to it first so its
+		// anchors are mounted when the tip resolves. View-agnostic tours leave the
+		// current view untouched. (No-op under an atomic kind, which has no views.)
+		if (t.mode && !isAtomic) mode = t.mode;
+		walkMenuOpen = false;
+		runTour(t.key);
+	}
 
 	type ComposeMode = 'full' | 'plain' | 'preview';
 
@@ -870,7 +886,7 @@
 		     section graph; Blog/Wiki/Custom publish the whole body as a single
 		     atomic event of that kind. The numeric input lets the user pick any
 		     replaceable kind directly. -->
-		<label class="kind-group" title="Output kind — Publication (30040/41 section graph) or a single atomic event (blog/wiki/custom)">
+		<label class="kind-group" data-tour="compose-kind" title="Output kind — Publication (30040/41 section graph) or a single atomic event (blog/wiki/custom)">
 			<span class="kind-label">kind</span>
 			<select
 				class="kind-select"
@@ -900,6 +916,7 @@
 			     Same parsed sections either way. -->
 			<span
 				class="pub-shape"
+				data-tour="compose-shape"
 				class:pub-shape--notes={isNotes}
 				title={isNotes
 					? 'Notes — no document title, so each section publishes as a standalone 30041 (no 30040 index). Add a title to bind them into one Publication.'
@@ -909,7 +926,7 @@
 			     and stays switchable here. Normal-mode h/l still toggles it; this
 			     segmented control gives a click target that doesn't depend on vim
 			     mode. Preview is its own toggle (the Read button on the right). -->
-			<div class="mode-toggle" role="group" aria-label="Editor view">
+			<div class="mode-toggle" role="group" aria-label="Editor view" data-tour="compose-view">
 				<button
 					class="mode-seg"
 					class:mode-seg--on={mode === 'full'}
@@ -995,17 +1012,38 @@
 				title="Preview the draft in a separate buffer"
 			>Read</button>
 		{/if}
-		<!-- Composer's own affordances, mirroring the mode-line's W / ? pair:
-		     W runs the on-demand composer tour, ? opens the reference. The tour
-		     is mode-aware — it walks the section cards in Full, the text buffer
-		     in Plain — so the W in each view tours that view. -->
+		<!-- Composer's own affordances, mirroring the mode-line's W / ? pair: W
+		     opens this buffer's walkthrough menu (every composer tutorial), ?
+		     opens the flat reference. Each menu row carries a plain/full tag and,
+		     when picked, switches the editor to that view before running. -->
 		{#if !isAtomic}
-			<button
-				class="affordance affordance--walkthrough"
-				onclick={() => runTour(mode === 'plain' ? 'compose-plain-overview' : 'compose-overview')}
-				title="Tour the composer — a guided walk through this view, sections, and publishing"
-				aria-label="Composer walkthrough"
-			>W</button>
+			<div class="compose-walk">
+				<button
+					class="affordance affordance--walkthrough"
+					onclick={() => (walkMenuOpen = !walkMenuOpen)}
+					title="Composer walkthroughs — pick a guided tour"
+					aria-label="Composer walkthroughs"
+					aria-expanded={walkMenuOpen}
+				>W</button>
+				{#if walkMenuOpen}
+					<!-- svelte-ignore a11y_click_events_have_key_events -->
+					<div class="walk-backdrop" onclick={() => (walkMenuOpen = false)} role="presentation"></div>
+					<div class="walk-menu" role="menu">
+						<div class="walk-head">Composer walkthroughs</div>
+						{#each composerTours as t (t.key)}
+							<button class="walk-row" role="menuitem" onclick={() => runComposeTour(t)}>
+								<span
+									class="walk-check"
+									class:walk-check--on={discovery.seen.includes(t.key)}
+									title={discovery.seen.includes(t.key) ? 'Run before' : 'Not run yet'}
+								>{discovery.seen.includes(t.key) ? '✓' : '·'}</span>
+								<span class="walk-title">{TIPS[t.key]?.title ?? t.key}</span>
+								{#if t.mode}<span class="walk-mode">{t.mode}</span>{/if}
+							</button>
+						{/each}
+					</div>
+				{/if}
+			</div>
 		{/if}
 		<button
 			class="affordance affordance--help"
@@ -1147,7 +1185,7 @@
 						onBlur={handlePlainBlur}
 					/>
 				</div>
-				<div class="detected-sections">
+				<div class="detected-sections" data-tour="compose-detected">
 					<div class="detected-header">Detected</div>
 					<div class="detected-row detected-doc-title">
 						<span class="detected-label">title</span>
@@ -1884,5 +1922,89 @@
 		background: var(--green);
 		color: var(--bg);
 		border-color: var(--green);
+	}
+
+	/* Composer walkthrough dropdown — the in-chrome W's menu of every composer
+	   tutorial. The W button itself uses the global `.affordance` styling shared
+	   with the mode-line; only the menu is local. */
+	.compose-walk {
+		position: relative;
+		display: inline-flex;
+	}
+	.walk-backdrop {
+		position: fixed;
+		inset: 0;
+		z-index: 40;
+	}
+	.walk-menu {
+		position: absolute;
+		top: calc(100% + 4px);
+		right: 0;
+		z-index: 41;
+		min-width: 232px;
+		max-width: 300px;
+		padding: 4px;
+		background: var(--bg);
+		border: 1px solid var(--panel-border-strong, var(--border));
+		border-radius: var(--radius);
+		box-shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
+		display: flex;
+		flex-direction: column;
+		gap: 1px;
+	}
+	.walk-head {
+		font-size: 0.6rem;
+		font-weight: 700;
+		text-transform: uppercase;
+		letter-spacing: 0.05em;
+		color: var(--fg-muted);
+		padding: 4px 8px 5px;
+	}
+	.walk-row {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		width: 100%;
+		text-align: left;
+		padding: 5px 8px;
+		background: transparent;
+		border: none;
+		border-radius: var(--r-sm, 4px);
+		color: var(--fg);
+		font-size: 0.78rem;
+		cursor: pointer;
+	}
+	.walk-row:hover {
+		background: color-mix(in srgb, var(--accent) 14%, transparent);
+	}
+	.walk-check {
+		flex: 0 0 auto;
+		width: 12px;
+		text-align: center;
+		color: var(--fg-muted);
+		opacity: 0.5;
+	}
+	.walk-check--on {
+		color: var(--green);
+		opacity: 1;
+	}
+	.walk-title {
+		flex: 1;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+	/* Opaque view tag — which editor view the tour applies to (plain/full).
+	   Absent for view-agnostic tours. */
+	.walk-mode {
+		flex: 0 0 auto;
+		font-family: var(--font-mono);
+		font-size: 0.6rem;
+		text-transform: uppercase;
+		letter-spacing: 0.04em;
+		color: var(--fg-muted);
+		background: color-mix(in srgb, var(--fg-muted) 16%, transparent);
+		padding: 0 5px;
+		border-radius: var(--r-sm, 4px);
 	}
 </style>

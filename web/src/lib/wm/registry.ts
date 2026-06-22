@@ -19,20 +19,33 @@ export type RendererProps = {
 	buffer: Buffer;
 };
 
+/** One on-demand walkthrough offered by a buffer kind. `key` is its entry into
+ *  `TIPS` (see discovery.svelte.ts); the menu title is resolved from that tip.
+ *  `mode` ties a tour to a composer view — selecting it from the in-chrome `W`
+ *  dropdown switches the editor to that view first (and the row shows a `plain`
+ *  / `full` tag). Omit `mode` for view-agnostic tours (they keep the current
+ *  view and show no tag). */
+export type BufferTour = {
+	key: string;
+	mode?: 'full' | 'plain';
+};
+
 export type BufferKindEntry = {
 	kind: string;
 	className: ClassName;
 	component: Component<RendererProps>;
 	defaultLabel?: string;
-	/** The on-demand walkthrough this buffer kind offers — an entry key into
-	 *  `TIPS` (see discovery.svelte.ts). Single source of truth for "what
-	 *  tutorial applies to this surface": the mode-line `W` runs the focused
-	 *  buffer's `tour` and colours itself by whether it exists / has been run.
-	 *  Surfaces with a richer in-chrome `W` chip (composer's mode-aware routing,
-	 *  search's hands-on drill) still point here so the map reads them as
-	 *  covered; the chip drives the nuanced behaviour. Omit only when a surface
+	/** The buffer kind's *primary* walkthrough — an entry key into `TIPS` (see
+	 *  discovery.svelte.ts). Backs the mode-line `W` (runs the focused buffer's
+	 *  tour) and its tri-state colour. When the kind offers several tours
+	 *  (`tours` below), this is the first/overview one. Omit only when a surface
 	 *  genuinely has no tour yet (it then reads grey — author one). */
 	tour?: string;
+	/** The full set of walkthroughs this buffer kind offers, for surfaces with a
+	 *  richer in-chrome `W` *dropdown* (the composer lists all of these; the
+	 *  logo `W` aggregates every buffer's, tagged by `defaultLabel`). When
+	 *  absent, the single `tour` is the whole list. */
+	tours?: BufferTour[];
 };
 
 const entries: BufferKindEntry[] = [
@@ -46,10 +59,25 @@ const entries: BufferKindEntry[] = [
 	// no pager/outline, just body + comments.
 	{ kind: 'doc', className: 'work', component: DocBuffer, defaultLabel: 'doc' },
 	{ kind: 'draft-reader', className: 'work', component: DraftReaderBuffer, defaultLabel: 'draft' },
-	// composer's in-chrome W chip is mode-aware (Full vs Plain chains); the
-	// registry points at the Full overview so the mode-line map reads it as
-	// covered (not grey) — the dedicated chip still routes by mode.
-	{ kind: 'composer', className: 'work', component: ComposerBuffer, defaultLabel: 'composer', tour: 'compose-overview' },
+	// The composer offers six discrete tutorials (not one chain). Its in-chrome
+	// W is a dropdown listing all of them; selecting a `mode`-tagged tour
+	// switches the editor to that view first. `tour` is the overview (Output),
+	// so the mode-line map reads the composer as covered (not grey).
+	{
+		kind: 'composer',
+		className: 'work',
+		component: ComposerBuffer,
+		defaultLabel: 'composer',
+		tour: 'compose-output',
+		tours: [
+			{ key: 'compose-output' },
+			{ key: 'compose-views' },
+			{ key: 'compose-plain', mode: 'plain' },
+			{ key: 'compose-detected', mode: 'plain' },
+			{ key: 'compose-sections', mode: 'full' },
+			{ key: 'compose-publish' }
+		]
+	},
 	{ kind: 'profile', className: 'work', component: ProfileBuffer, defaultLabel: 'profile' },
 	{ kind: 'ignored', className: 'work', component: IgnoredBuffer, defaultLabel: 'ignored' },
 	{ kind: 'settings', className: 'work', component: SettingsBuffer, defaultLabel: 'settings', tour: 'sign-in-methods' },
@@ -83,17 +111,34 @@ export function tourForKind(kind: string | undefined): string | undefined {
 	return kind ? byKind[kind]?.tour : undefined;
 }
 
-/** The distinct walkthroughs available within a window-class — every buffer
- *  kind in that class that declares a `tour`, deduped. Backs the per-window
- *  `W` guide menu (Chat / Research): the menu lists these, each runnable. An
- *  empty list means the window has no tours yet (its `W` reads grey). */
-export function toursForClass(className: ClassName): { kind: string; tour: string }[] {
+/** Every walkthrough a buffer kind offers, in order — its `tours` list, or a
+ *  one-entry list synthesised from the single `tour`. Backs the composer's
+ *  in-chrome `W` dropdown (each row carries its `mode` for the tag + view
+ *  switch). Empty when the kind declares no tour. */
+export function toursForKind(kind: string | undefined): BufferTour[] {
+	const e = kind ? byKind[kind] : undefined;
+	if (!e) return [];
+	if (e.tours && e.tours.length) return e.tours;
+	return e.tour ? [{ key: e.tour }] : [];
+}
+
+/** Every walkthrough available within a window-class, flattened across its
+ *  buffer kinds and deduped by tour key. Each row carries the owning buffer's
+ *  `label` (its `defaultLabel`) so the logo `W` can tag where a tour lives.
+ *  Backs the per-window `W` guide menus (logo / Chat / Research); an empty list
+ *  means the window has no tours yet (its `W` reads grey). */
+export function toursForClass(
+	className: ClassName
+): { kind: string; label: string; key: string; mode?: 'full' | 'plain' }[] {
 	const seen = new Set<string>();
-	const out: { kind: string; tour: string }[] = [];
+	const out: { kind: string; label: string; key: string; mode?: 'full' | 'plain' }[] = [];
 	for (const e of entries) {
-		if (e.className !== className || !e.tour || seen.has(e.tour)) continue;
-		seen.add(e.tour);
-		out.push({ kind: e.kind, tour: e.tour });
+		if (e.className !== className) continue;
+		for (const t of toursForKind(e.kind)) {
+			if (seen.has(t.key)) continue;
+			seen.add(t.key);
+			out.push({ kind: e.kind, label: e.defaultLabel ?? e.kind, key: t.key, mode: t.mode });
+		}
 	}
 	return out;
 }

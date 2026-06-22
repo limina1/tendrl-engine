@@ -39,24 +39,35 @@
 			<p class="ch-blurb">
 				You're assembling a publication — a <code>kind-30040</code> index over
 				an ordered list of <code>kind-30041</code> sections. Tap
-				<code>W</code> for a guided walk through these.
+				<code>W</code> for the guided walkthroughs of each piece below.
 			</p>
 
 			<div class="ch-scroll">
+				<div class="ch-group">Output</div>
+				{@render row('kind', 'Publication (30040/41 graph) · Blog (30023) · Wiki (30818) · Custom')}
+				{@render row('atomic kinds', 'Blog/Wiki/Custom publish the whole body as one event')}
+				{@render row('Publication', 'a title present → sections bind under one 30040 index')}
+				{@render row('Notes', 'no title → each section a standalone 30041, no index')}
+
 				<div class="ch-group">View modes</div>
 				{@render row('Full', 'each section as an editable card')}
-				{@render row('Plain', 'one text buffer for the whole draft')}
-				{@render row('Read', 'preview the rendered result')}
-				{@render row('h / l', 'cycle between Full and Plain')}
+				{@render row('Plain', 'one text buffer + a live detected-section outline')}
+				{@render row('Read', 'preview the rendered result in its own buffer')}
 
 				<div class="ch-group">Plain-mode structure</div>
 				{@render row('= Title', 'level 1 — the publication itself (one, at top)')}
 				{@render row('== Heading', 'level 2 — starts a section')}
-				{@render row('=== Sub', 'level 3+ — nested sub-publication (optional)')}
-				{@render row(':key: value', 'a tag under the preceding heading')}
-				{@render row('delim', 'the heading delimiter character (= by default)')}
-				{@render row('nest', 'how deep headings fold into nested 30040 indices')}
+				{@render row('=== Sub', 'level 3+ — nested sub-index (when nest > flat)')}
+				{@render row('delim', 'the heading delimiter character (= default, # Markdown)')}
+				{@render row('nest', 'flat, or fold deeper headings into nested 30040 indices')}
+				{@render row(':key: value', 'a ["key","value"] tag — works in every mode')}
+				{@render row(':tags: a, b', 'expands to t tags (#a #b) — works in every mode')}
 				{@render row('+ Section', 'append a new section (Full mode)')}
+
+				<div class="ch-group">Sections (Full)</div>
+				{@render row('locked', 'imported / new sections arrive locked — claim (yellow) to edit')}
+				{@render row('Unlock / Lock all', 'bulk claim / re-lock against a source publication')}
+				{@render row('drag', 'reorder; collapse a card to its title')}
 
 				<div class="ch-group">Selection toolbar</div>
 				{@render row('All / Inv', 'select all sections / invert the selection')}
@@ -65,10 +76,12 @@
 				{@render row('🗑', 'remove from compose (arm again to delete everywhere)')}
 				{@render row('▸ all', 'collapse / expand every section')}
 
-				<div class="ch-group">Draft → sign → broadcast</div>
-				{@render row('Save draft', 'unsigned local copy — survives a refresh')}
-				{@render row('Preview events', 'inspect the 30040/30041 JSON first')}
+				<div class="ch-group">Sign → broadcast</div>
+				{@render row('Preview events', 'inspect the exact JSON first')}
 				{@render row('Sign', 'sign a snapshot — the only way into the db')}
+				{@render row('Sign (N)', 'sign just the checked sections')}
+				{@render row('Diff vs published', 'compare to the last published version')}
+				{@render row('republish / fork', 'same title reuses identifiers & replaces; else new')}
 				{@render row('broadcast', 'sending to relays is a separate, later step')}
 			</div>
 		</div>
