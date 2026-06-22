@@ -30,6 +30,29 @@ export type TourAction = {
 	run: () => void;
 };
 
+/** World-state the walkthrough reads to decide whether a beat is still
+ *  relevant. Injected by the app shell via `setWalkthroughWorld` so this
+ *  module stays decoupled from the app state store (no circular import). */
+export type WalkthroughWorld = {
+	/** A signer is connected — the user has an identity. */
+	hasIdentity: boolean;
+	/** The local pool already holds events (the feed is non-empty). */
+	dbHasEvents: boolean;
+};
+
+let worldFn: (() => WalkthroughWorld) | null = null;
+
+/** Register the world accessor. Call once from the app shell on mount. */
+export function setWalkthroughWorld(fn: () => WalkthroughWorld) {
+	worldFn = fn;
+}
+
+/** Current world-state, or a pessimistic default (nothing done yet) before the
+ *  accessor is registered — so a beat is never wrongly suppressed at boot. */
+function world(): WalkthroughWorld {
+	return worldFn?.() ?? { hasIdentity: false, dbHasEvents: false };
+}
+
 export type TourTip = {
 	key: string;
 	/** `data-tour` value of the element this tip points at. */
@@ -48,6 +71,13 @@ export type TourTip = {
 	next?: string;
 	/** Optional "try it" affordance — present only on deeper tips. */
 	action?: TourAction;
+	/** Precondition: return `false` when the goal this beat teaches is already
+	 *  accomplished (e.g. already signed in, db already populated). A beat whose
+	 *  `relevantWhen` is false is *silently* marked seen and skipped — never
+	 *  shown — and its `next` chains on, so the auto walk only ever teaches what
+	 *  the user hasn't already done. Omit for beats that are always relevant
+	 *  (and for on-demand `W` tours, which the user asked for explicitly). */
+	relevantWhen?: (w: WalkthroughWorld) => boolean;
 };
 
 // Registry. The first-run "feed sync" login walk (feed-sync → sign-in →
@@ -76,21 +106,30 @@ export const TIPS: Record<string, TourTip> = {
 		title: 'Feed sync',
 		body: "Nothing is fetched until you approve it — this panel shows exactly what tendrl will pull, and from which relays. You're logged out, so this is the broad public feed: recent publications from these relays. Open *Details* to see the precise query and how many. When you're ready, close this (`Esc`) — let's sign in.",
 		placement: 'right',
-		next: 'sign-in'
+		next: 'sign-in',
+		// A populated pool means the user has fetched before — skip the
+		// "here's your first sync" beat entirely.
+		relevantWhen: (w) => !w.dbHasEvents
 	},
 	'sign-in': {
 		key: 'sign-in',
 		anchor: 'settings',
 		title: 'Sign in',
 		body: 'Open *Settings* here and sign in — a `NIP-07` browser extension, or paste an `ncryptsec` key with its password. Heads up: the moment you sign in you\'ll see your pubkey but no name yet.',
-		placement: 'bottom'
+		placement: 'bottom',
+		// Already signed in (e.g. a key auto-loaded from the keyring)? Don't
+		// teach signing in. Skips this and the source-controls beat below.
+		relevantWhen: (w) => !w.hasIdentity
 	},
 	'sign-in-methods': {
 		key: 'sign-in-methods',
 		anchor: 'identity-source',
 		title: 'Two ways in',
 		body: '*Engine* — paste an `ncryptsec` below and unlock it with its password; held for this session only, never written to disk. *NIP-07* — a browser extension holds the key and the engine never sees it. To connect one: (1) make sure your extension is activated/unlocked, (2) pick `nip07` and press `Reconnect`, (3) your signer pops up asking to read your public key — `Authorize`, or `Authorize forever`.',
-		placement: 'bottom'
+		placement: 'bottom',
+		// Same gate: no point explaining the sign-in methods to someone already
+		// signed in. (Reachable on demand via Settings' walkthrough regardless.)
+		relevantWhen: (w) => !w.hasIdentity
 	},
 	'signed-in-noname': {
 		key: 'signed-in-noname',
@@ -128,7 +167,17 @@ export const TIPS: Record<string, TourTip> = {
 		anchor: 'feed-first-badges',
 		title: 'Provenance & actions',
 		body: 'These pills show provenance — where the event lives in the network. The top one says it’s on *{relays}* right now. Click the row body to *read* the publication, or the `menu` pill to work with the raw event in depth.',
-		placement: 'bottom'
+		placement: 'bottom',
+		next: 'walk-done'
+	},
+	// Closing card of the one auto walk — hands off to the opt-in affordances so
+	// the user knows where every other tour lives. The last thing they see.
+	'walk-done': {
+		key: 'walk-done',
+		anchor: 'modeline',
+		title: "You're all set",
+		body: "That's the guided tour. From here, every panel has its own walkthrough — tap `W` (and `?` for the full reference) on the mode-line, reader, composer, search, and event menus to go deeper whenever you want. They never interrupt; they wait for you to ask.",
+		placement: 'top'
 	},
 
 	// ── Reader tour (event-gated: fires when a publication first opens) ───
@@ -159,12 +208,15 @@ export const TIPS: Record<string, TourTip> = {
 		placement: 'bottom'
 	},
 
-	// ── Standalone discovery tips (fire from their own surface) ───────────
+	// ── Search history (closing beat of the search tour, opt-in only) ─────
+	// Formerly auto-fired the first time any search landed; now it's the tail
+	// of the on-demand search tour (search-tour-relays → here), so it surfaces
+	// only when the user runs that tour — not unbidden on a stray search.
 	'search-history': {
 		key: 'search-history',
 		anchor: 'search-history',
 		title: 'Search history',
-		body: 'Every search you run is kept here. Click the `🔍` pill to reopen and replay any past query.',
+		body: 'And every search you run is kept here. Click the `🔍` pill on the mode-line to reopen and replay any past query.',
 		placement: 'top'
 	},
 
@@ -355,7 +407,8 @@ export const TIPS: Record<string, TourTip> = {
 		anchor: 'search-input',
 		title: 'Local first, then relays',
 		body: 'Every search hits your *local pool* first — instant, offline. When the results look thin, the panel offers to *extend to relays* and pull what’s missing into the pool. That’s the whole loop: query local, reach out when needed, read or work with what you find.',
-		placement: 'bottom'
+		placement: 'bottom',
+		next: 'search-history'
 	},
 
 	// ── Event-menu tour (on demand: the menu modal's own W chip) ──────────
@@ -500,12 +553,25 @@ export function loadDiscovery() {
 /** Queue a tip if it's enabled, unseen, known, and not already queued. The
  *  overlay resolves the anchor and skips (auto-advances) if it's not mounted,
  *  so callers can fire triggers freely without checking the DOM. */
-export function trigger(key: string, vars?: TipVars) {
+export function trigger(key: string, vars?: TipVars, opts?: { force?: boolean }) {
 	if (vars) discovery.vars[key] = vars;
 	if (!discovery.enabled) return;
 	if (discovery.seen.includes(key)) return;
-	if (!TIPS[key]) return;
+	const tip = TIPS[key];
+	if (!tip) return;
 	if (discovery.queue.includes(key)) return;
+	// Precondition: if the goal this beat teaches is already accomplished, never
+	// show it — mark it seen silently and chain straight to its `next`, so the
+	// auto walk collapses over everything the user has already done (signed in,
+	// pool populated) and only surfaces what's actually new to them. Skipped for
+	// `force` (an on-demand W tour the user asked for explicitly — they want it
+	// regardless of whether they've already done the thing it explains).
+	if (!opts?.force && tip.relevantWhen && !tip.relevantWhen(world())) {
+		discovery.seen.push(key);
+		persist();
+		if (tip.next) trigger(tip.next);
+		return;
+	}
 	discovery.queue.push(key);
 }
 
@@ -549,12 +615,14 @@ export function startWalkthrough() {
 }
 
 /** Arm + immediately surface the entry tip — for an on-demand replay (the
- *  mode-line "W" button) where no surface is about to mount on its own. With the
- *  fetch modal open `feed-sync` resolves; with it closed the entry auto-skips and
- *  chains straight to `sign-in` (the always-present Settings button). */
+ *  header "Run walkthrough" button) where no surface is about to mount on its
+ *  own. Forced past preconditions: this is an explicit "show me the walk again"
+ *  request, so the entry appears even for an established user (signed in, pool
+ *  populated) who would otherwise have every first-run beat self-suppress. The
+ *  later beats remain event-gated (they fire as the user navigates). */
 export function replayWalkthrough() {
 	startWalkthrough();
-	trigger(ENTRY_TIP);
+	trigger(ENTRY_TIP, undefined, { force: true });
 }
 
 /** Run a specific tour now, on demand (the mode-line's W chip): enable tips,
@@ -572,7 +640,10 @@ export function runTour(entryKey: string) {
 	}
 	discovery.seen = discovery.seen.filter((s) => !chain.has(s));
 	persist();
-	trigger(entryKey);
+	// Force past any precondition: an on-demand tour is explicit user intent, so
+	// show it even when its goal is already met (e.g. the sign-in-methods tour
+	// for someone already signed in).
+	trigger(entryKey, undefined, { force: true });
 }
 
 /** Clear the seen set without starting the intro — discovery tips can fire

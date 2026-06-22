@@ -267,16 +267,32 @@ body { font-size: var(--t-base); }
   color: var(--affordance-help);
   background: color-mix(in srgb, var(--affordance-help) 16%, transparent);
 }
-/* Walkthrough (W) — a dull-grey sibling. Distinct purpose from help (?):
-   help dumps everything at once; the walkthrough is a live click-through. */
+/* Walkthrough (W) — distinct purpose from help (?): help dumps everything at
+   once; the walkthrough is a live click-through. The buffer-aware mode-line W
+   is a tri-state coverage map (pair `.affordance--walkthrough` with one
+   `.walk--*` state):
+     • walk--new  — brightest white: a tour exists for the focused panel and
+                    hasn't been run yet (go try it).
+     • walk--done — normal white: the tour exists and has been run.
+     • walk--none — dull grey: no tour for this surface yet (needs authoring);
+                    the W falls back to the mode-line tour.
+   Component-local W chips that always have a tour default to the `--new` tone. */
 .affordance--walkthrough {
-  color: color-mix(in srgb, var(--affordance-walkthrough) 70%, var(--base3));
+  color: var(--base8);
   font-weight: 700;
 }
+/* Three clearly separable states. Colour alone (base8 vs fg) is too close to
+   read on a tiny glyph, so each state also carries an opacity step: a fresh
+   tour glows at full white, a run one is a faded white, and an absent one is a
+   dim grey. Hover always lifts to full so the button reads as live. */
+.affordance--walkthrough.walk--new  { color: var(--base8); opacity: 1; }
+.affordance--walkthrough.walk--done { color: var(--fg); opacity: 0.45; }
+.affordance--walkthrough.walk--none { color: var(--base5); opacity: 0.6; }
 .affordance--walkthrough:hover,
 .affordance--walkthrough:focus-visible {
-  color: var(--affordance-walkthrough);
-  background: color-mix(in srgb, var(--affordance-walkthrough) 16%, transparent);
+  color: var(--base8);
+  opacity: 1;
+  background: color-mix(in srgb, var(--base8) 14%, transparent);
 }
 
 /* Keys */

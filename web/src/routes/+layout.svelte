@@ -20,7 +20,8 @@
 	// fetch-events self-starts the SSE subscription at module scope; we
 	// only need confirmState here to render the modal.
 	import { confirmState } from '$lib/network/fetch-events.svelte';
-	import { trigger as triggerTip } from '$lib/wm/discovery.svelte';
+	import { trigger as triggerTip, setWalkthroughWorld } from '$lib/wm/discovery.svelte';
+	import { identityCanSign } from '$lib/identity/signer';
 	import type { NostrEvent, SearchResult } from '$lib/types';
 	import { getActiveStore } from '$lib/wm/buffer-store.svelte';
 
@@ -51,6 +52,13 @@
 	// and SSE subscription) — matching the original onMount semantics.
 	$effect(() =>
 		untrack(() => {
+			// Let the walkthrough read live world-state so its first-run beats can
+			// self-suppress when their goal is already met (already signed in,
+			// pool already populated). Read lazily at trigger time, not reactively.
+			setWalkthroughWorld(() => ({
+				hasIdentity: identityCanSign(app.identityStatus),
+				dbHasEvents: app.feed.length > 0
+			}));
 			app.initialize();
 			return app.startNetworkPoll();
 		})

@@ -20,7 +20,7 @@
 	} from '$lib/wm/leader';
 	import { BufferStore, setActiveStore, type NavAction } from '$lib/wm/buffer-store.svelte';
 	import BufferRenderer from '$lib/wm/BufferRenderer.svelte';
-	import { rendererFor } from '$lib/wm/registry';
+	import { rendererFor, toursForClass } from '$lib/wm/registry';
 	import { getAppState, type ModalNavEntry } from '$lib/state.svelte';
 	import {
 		getAuthorDisplayName,
@@ -29,16 +29,13 @@
 	} from '$lib/discussions/authors.svelte';
 	import { pubkeyToColor } from '$lib/discussions/colors';
 	import { identityCanSign, detectNip07 } from '$lib/identity/signer';
-	import { replayWalkthrough, runTour, trigger as triggerTip } from '$lib/wm/discovery.svelte';
+	import { replayWalkthrough, runTour, trigger as triggerTip, discovery, TIPS } from '$lib/wm/discovery.svelte';
 	import { openModelineHelp } from '$lib/wm/modeline-help.svelte';
 
 	const app = getAppState();
 
-	// Fire the search-history walkthrough tip the first time a search lands —
-	// pointing the user at the history pill that just appeared on the mode-line.
-	$effect(() => {
-		if (app.searchHistory.length > 0) triggerTip('search-history');
-	});
+	// The `search-history` tip no longer auto-fires on the first search — it's
+	// now the closing beat of the opt-in search tour (run from the search W).
 
 	// Singleton buffers seeded on every frame.
 	const chatBuf: Buffer = { id: 'chat', kind: 'chat', label: 'chat' };
@@ -81,6 +78,49 @@
 	const store = new BufferStore(layouts, 'base');
 	store.seed(openBuffers);
 	setActiveStore(store);
+
+	// Walkthrough affordances:
+	//   • mode-line W — permanent single button, always the mode-line tour.
+	//   • logo W      — a dropdown of all top-level tutorials (the first-run
+	//                   walk + the work/center window's tours).
+	//   • per-window W (Chat / Research panes) — a dropdown of that window's
+	//                   tours.
+	// Every dropdown row carries a ✓ once its tour has been run; the glyph
+	// colours by aggregate state (bright = something unrun, faded = all run,
+	// grey = nothing here yet).
+	function walkState(tour: string | undefined): 'new' | 'done' | 'none' {
+		return !tour ? 'none' : discovery.seen.includes(tour) ? 'done' : 'new';
+	}
+	const modelineWalkState = $derived(walkState('modeline-overview'));
+
+	type GuideEntry = { key: string; label: string; done: boolean; run: () => void };
+	function guidesForClass(cls: ClassName): GuideEntry[] {
+		return toursForClass(cls).map(({ tour }) => ({
+			key: tour,
+			label: TIPS[tour]?.title ?? tour,
+			done: discovery.seen.includes(tour),
+			run: () => runTour(tour)
+		}));
+	}
+	// The logo dropdown: the first-run walk (done once `walk-done` is seen) plus
+	// every tour in the work/center window.
+	function logoGuides(): GuideEntry[] {
+		return [
+			{
+				key: '__first_run__',
+				label: 'First-run walkthrough',
+				done: discovery.seen.includes('walk-done'),
+				run: () => replayWalkthrough()
+			},
+			...guidesForClass('work')
+		];
+	}
+	function menuAggState(entries: GuideEntry[]): 'new' | 'done' | 'none' {
+		if (!entries.length) return 'none';
+		return entries.some((e) => !e.done) ? 'new' : 'done';
+	}
+	// Which W dropdown is open (by id), or null.
+	let walkMenuOpen = $state<string | null>(null);
 
 	// Redirect AppState navigation calls to spawn buffers in the shell
 	// instead of route-navigating away from the single-page app.
@@ -898,12 +938,7 @@
 					<span class="me-chip__name">{meName}</span>
 				</button>
 			{/if}
-			<button
-				class="affordance affordance--walkthrough lt-walk"
-				onclick={() => replayWalkthrough()}
-				title="Run the walkthrough — a live, click-through tour of the interface. Re-runs any time; always dismissable."
-				aria-label="Run walkthrough"
-			>W</button>
+			{@render walkMenu('logo', 'Walkthroughs', logoGuides(), null, 'lt-walk')}
 			<button
 				class="lt lt--settings"
 				data-tour="settings"
@@ -1056,10 +1091,11 @@
 					</span>
 				{/if}
 			{/if}
-			<!-- Mode-line's own affordances, mirroring search's ? / ⚙ pair:
-			     W runs the on-demand mode-line tour, ? opens the reference. -->
+			<!-- Mode-line's own affordances, mirroring search's ? / ⚙ pair: W is
+			     permanent and always tours the mode-line itself; ? opens the
+			     reference. (Per-panel tours live on the logo W and window Ws.) -->
 			<button
-				class="affordance affordance--walkthrough"
+				class="affordance affordance--walkthrough walk--{modelineWalkState}"
 				onclick={() => runTour('modeline-overview')}
 				title="Tour the mode-line — a guided walk through each segment"
 				aria-label="Mode-line walkthrough"
@@ -1085,6 +1121,59 @@
 	>
 		{@render renderTree(slot.tree, slot, pos, true)}
 	</div>
+{/snippet}
+
+<!-- Generic walkthrough dropdown — used by the logo (all top-level tours) and
+     the Chat / Research pane heads (that window's tours). Each row shows a ✓
+     once run; the glyph colours by aggregate state. `pos` (when given) focuses
+     that slot on open; `extra` adds a layout class. Grey + inert when empty. -->
+{#snippet walkMenu(
+	menuId: string,
+	title: string,
+	entries: GuideEntry[],
+	pos: Position | null,
+	extra: string = ''
+)}
+	{@const st = menuAggState(entries)}
+	{@const pending = entries.filter((e) => !e.done).length}
+	<span class="walk-wrap">
+		<button
+			class="affordance affordance--walkthrough {extra} walk--{st}"
+			onclick={(e) => {
+				e.stopPropagation();
+				if (pos) store.focusSlot(pos);
+				if (!entries.length) return;
+				walkMenuOpen = walkMenuOpen === menuId ? null : menuId;
+			}}
+			title={entries.length ? `${title} — ${pending} not yet run` : 'No walkthroughs here yet'}
+			aria-label={title}
+		>W</button>
+		{#if walkMenuOpen === menuId && entries.length}
+			<!-- svelte-ignore a11y_click_events_have_key_events -->
+			<!-- svelte-ignore a11y_no_static_element_interactions -->
+			<div class="walk-backdrop" onclick={() => (walkMenuOpen = null)}></div>
+			<div class="walk-menu" role="menu">
+				<div class="walk-menu__head">{title}</div>
+				{#each entries as g (g.key)}
+					<button
+						class="walk-menu__row"
+						role="menuitem"
+						onclick={(e) => {
+							e.stopPropagation();
+							walkMenuOpen = null;
+							g.run();
+						}}
+						title={g.done ? 'Done — click to replay' : 'Not yet run'}
+					>
+						<span class="walk-menu__check {g.done ? 'walk-menu__check--done' : ''}"
+							>{g.done ? '✓' : ''}</span
+						>
+						<span class="walk-menu__label">{g.label}</span>
+					</button>
+				{/each}
+			</div>
+		{/if}
+	</span>
 {/snippet}
 
 {#snippet renderTree(node: SplitNode, slot: Slot, pos: Position, isRoot: boolean)}
@@ -1117,6 +1206,14 @@
 					<span class="pane__mod" title="Modified">●</span>
 				{/if}
 				<div class="pane__sp"></div>
+				{#if isRoot && slot.className !== 'work'}
+					{@render walkMenu(
+						slot.className,
+						`${slot.className} guides`,
+						guidesForClass(slot.className),
+						pos
+					)}
+				{/if}
 				{#if isRoot}
 					<button
 						class="pane__x"
@@ -1713,6 +1810,73 @@
 	/* Slice 3 popover — anchored above the pill (bottom: 100%). z-index 120
 	   keeps it above every modal backdrop (100–110) so it stays clickable
 	   while a modal is open (Slice 4: backdrops clip to the modeline). */
+	/* Per-window walkthrough guide menu (Chat / Research pane heads). */
+	.walk-wrap {
+		position: relative;
+		display: inline-flex;
+	}
+	.walk-backdrop {
+		position: fixed;
+		inset: 0;
+		z-index: 119;
+	}
+	.walk-menu {
+		position: absolute;
+		top: calc(100% + 6px);
+		right: 0;
+		z-index: 120;
+		min-width: 220px;
+		max-width: 320px;
+		background: var(--panel-bg);
+		border: 1px solid var(--panel-border);
+		border-radius: var(--r-md);
+		box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+		font-family: var(--font-sans);
+		padding: var(--s-1) 0;
+	}
+	.walk-menu__head {
+		padding: 4px var(--s-3) 6px;
+		font-size: var(--t-xs);
+		text-transform: uppercase;
+		letter-spacing: 0.04em;
+		color: var(--base5);
+		border-bottom: 1px solid var(--panel-border);
+		margin-bottom: var(--s-1);
+	}
+	.walk-menu__row {
+		display: flex;
+		align-items: center;
+		gap: var(--s-2);
+		width: 100%;
+		padding: 5px var(--s-3);
+		background: transparent;
+		border: none;
+		text-align: left;
+		cursor: pointer;
+		color: var(--fg);
+		font-size: var(--t-sm);
+	}
+	.walk-menu__row:hover {
+		background: var(--base1);
+	}
+	.walk-menu__check {
+		width: 1em;
+		flex: 0 0 auto;
+		text-align: center;
+		font-size: 0.9em;
+		line-height: 1;
+		color: transparent;
+	}
+	.walk-menu__check--done {
+		color: var(--green);
+	}
+	.walk-menu__label {
+		flex: 1;
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+
 	.hs-popover {
 		position: absolute;
 		bottom: calc(100% + 6px);

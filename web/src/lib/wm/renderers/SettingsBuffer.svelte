@@ -114,8 +114,12 @@
 		// so enabling/unlocking the extension *after* Settings is open lights up
 		// the radio on its own — no leave-and-return needed.
 		startNip07Watch();
-		// Walkthrough: opening Settings is the "sign in" beat. Point at the
-		// source controls (no-ops unless the walkthrough is armed + unseen).
+		// Walkthrough: opening Settings is the "two ways in" beat of the one auto
+		// walk. It's precondition-gated (`relevantWhen: !hasIdentity`), so it
+		// self-suppresses for anyone already signed in — an established user
+		// opening Settings to change a relay is no longer interrupted — and
+		// seen-gating stops it re-nagging. Also this buffer's opt-in registry
+		// `tour`, replayable from the mode-line W.
 		triggerTip('sign-in-methods');
 		// Force a fresh /identity + /settings fetch on mount. Without
 		// this, opening Settings shortly after an engine restart shows

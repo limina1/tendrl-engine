@@ -28,7 +28,6 @@
 		type DrawerHighlight
 	} from '$lib/components/HighlightsDrawer.svelte';
 	import { prefetchAuthors, refreshAuthors } from '$lib/discussions/authors.svelte';
-	import { trigger as triggerTip } from '$lib/wm/discovery.svelte';
 
 	let { buffer }: { buffer: Buffer } = $props();
 
@@ -38,13 +37,9 @@
 	let publication = $state<PublicationDetail | null>(null);
 	let pristineSections = $state<LazySection[]>([]);
 
-	// Walkthrough: the "read the publication" branch from the feed. The first
-	// time any reader has a loaded publication, point at the view-mode toolbar
-	// and chain through menu → edit. Seen-gated, so it fires once and never
-	// nags; no-ops entirely unless the walkthrough is enabled.
-	$effect(() => {
-		if (publication) triggerTip('reader-open');
-	});
+	// Walkthrough: the reader tour (reader-open → menu → edit) is opt-in only —
+	// it's declared as this buffer kind's `tour` in the WM registry and runs
+	// from the mode-line W, never auto-thrown on every publication load.
 
 	// Cross-publication navigation has two axes.
 	//

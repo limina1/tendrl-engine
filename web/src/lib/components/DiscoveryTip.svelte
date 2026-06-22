@@ -16,11 +16,23 @@
 	} from '$lib/wm/discovery.svelte';
 
 	const GAP = 10; // px between anchor and card
-	const CARD_W = 300;
+	const MARGIN = 8; // px min gap from any viewport edge
 
 	let rect = $state<DOMRect | null>(null);
 	let vw = $state(0);
 	let vh = $state(0);
+
+	// The card's own measured size — positioning clamps against these so the
+	// card (footer + Next button included) never spills off-screen. Re-measured
+	// on every content change via a ResizeObserver, so geometry stays reactive
+	// as the tip text and footer change between beats.
+	let cardEl = $state<HTMLElement | null>(null);
+	let cardW = $state(300);
+	let cardH = $state(0);
+
+	// User-drag offset, applied on top of the anchored position. Reset whenever
+	// the active tip changes so each beat starts glued to its anchor again.
+	let dragOffset = $state<{ x: number; y: number } | null>(null);
 
 	const tip = $derived(activeTip());
 	const body = $derived(tip ? renderBodyHtml(tip) : '');
@@ -70,6 +82,43 @@
 		};
 	});
 
+	// Each new beat starts re-anchored (drop any drag the user applied to the
+	// previous one). Depends only on the tip key, so dragging doesn't re-trigger.
+	$effect(() => {
+		tip?.key;
+		dragOffset = null;
+	});
+
+	// Keep the measured card size live as its content (text / footer) changes,
+	// so the clamping below reflects the real box rather than a guess.
+	$effect(() => {
+		if (!cardEl) return;
+		const ro = new ResizeObserver(() => {
+			cardW = cardEl?.offsetWidth ?? cardW;
+			cardH = cardEl?.offsetHeight ?? cardH;
+		});
+		ro.observe(cardEl);
+		return () => ro.disconnect();
+	});
+
+	function onHandleDown(e: PointerEvent) {
+		// Don't start a drag from the dismiss button.
+		if ((e.target as HTMLElement).closest('.dt-x')) return;
+		e.preventDefault();
+		const startX = e.clientX;
+		const startY = e.clientY;
+		const base = dragOffset ?? { x: 0, y: 0 };
+		const move = (ev: PointerEvent) => {
+			dragOffset = { x: base.x + (ev.clientX - startX), y: base.y + (ev.clientY - startY) };
+		};
+		const up = () => {
+			window.removeEventListener('pointermove', move);
+			window.removeEventListener('pointerup', up);
+		};
+		window.addEventListener('pointermove', move);
+		window.addEventListener('pointerup', up);
+	}
+
 	function onKey(e: KeyboardEvent) {
 		if (e.key === 'Escape' && tip) {
 			e.preventDefault();
@@ -83,27 +132,35 @@
 		dismissActive();
 	}
 
-	// Card geometry, derived from the anchor rect + chosen placement, clamped so
-	// the card never spills off-screen.
+	// Card geometry, derived from the anchor rect + chosen placement, clamped
+	// against the *measured* card size so the whole card (Next button included)
+	// always stays on-screen, then nudged by any user drag.
 	const placement = $derived(tip?.placement ?? 'top');
 	const cardStyle = $derived.by(() => {
 		if (!rect) return 'visibility:hidden;';
 		const cx = rect.left + rect.width / 2;
-		let left = cx - CARD_W / 2;
-		left = Math.max(8, Math.min(left, vw - CARD_W - 8));
-		let vertical: string;
+		let left: number;
+		let top: number;
 		if (placement === 'bottom') {
-			vertical = `top:${Math.min(rect.bottom + GAP, vh - 8)}px;`;
+			top = rect.bottom + GAP;
+			left = cx - cardW / 2;
 		} else if (placement === 'top') {
-			vertical = `bottom:${Math.max(vh - rect.top + GAP, 8)}px;`;
+			top = rect.top - GAP - cardH;
+			left = cx - cardW / 2;
 		} else if (placement === 'left') {
-			vertical = `top:${Math.max(8, rect.top)}px;`;
-			left = Math.max(8, rect.left - CARD_W - GAP);
+			top = rect.top;
+			left = rect.left - cardW - GAP;
 		} else {
-			vertical = `top:${Math.max(8, rect.top)}px;`;
-			left = Math.min(vw - CARD_W - 8, rect.right + GAP);
+			top = rect.top;
+			left = rect.right + GAP;
 		}
-		return `left:${left}px;${vertical}width:${CARD_W}px;`;
+		// Clamp both axes to the viewport using the real card box.
+		left = Math.max(MARGIN, Math.min(left, vw - cardW - MARGIN));
+		top = Math.max(MARGIN, Math.min(top, vh - cardH - MARGIN));
+		const drag = dragOffset
+			? `transform:translate(${dragOffset.x}px,${dragOffset.y}px);`
+			: '';
+		return `left:${left}px;top:${top}px;${drag}`;
 	});
 
 	const ringStyle = $derived.by(() => {
@@ -118,8 +175,11 @@
 	<!-- Spotlight ring: visual only, never intercepts clicks. -->
 	<div class="dt-ring" style={ringStyle}></div>
 
-	<div class="dt-card" style={cardStyle} role="dialog" aria-label={tip.title}>
-		<header class="dt-head">
+	<div class="dt-card" bind:this={cardEl} style={cardStyle} role="dialog" aria-label={tip.title}>
+		<!-- Header doubles as the drag handle so a wonky auto-placement can be
+		     nudged out of the way. -->
+		<!-- svelte-ignore a11y_no_static_element_interactions -->
+		<header class="dt-head" onpointerdown={onHandleDown} title="Drag to reposition">
 			<span class="dt-badge">W</span>
 			<h4 class="dt-title">{tip.title}</h4>
 			<button class="dt-x" onclick={dismissActive} title="Dismiss" aria-label="Dismiss">×</button>
@@ -165,6 +225,11 @@
 	.dt-card {
 		position: fixed;
 		z-index: 291;
+		/* Content-sized within bounds so the box adapts reactively to the tip
+		   text rather than forcing a fixed width that buttons can overflow. */
+		width: max-content;
+		min-width: 240px;
+		max-width: min(340px, calc(100vw - 16px));
 		background: var(--bg);
 		border: 1px solid var(--panel-border-strong);
 		border-radius: var(--r-md);
@@ -178,6 +243,12 @@
 		align-items: center;
 		gap: 8px;
 		padding: 9px 10px 6px 11px;
+		cursor: grab;
+		touch-action: none;
+		user-select: none;
+	}
+	.dt-head:active {
+		cursor: grabbing;
 	}
 	.dt-badge {
 		display: inline-flex;
@@ -236,12 +307,15 @@
 	.dt-foot {
 		display: flex;
 		align-items: center;
+		flex-wrap: wrap;
 		gap: 8px;
+		row-gap: 6px;
 		padding: 8px 10px 10px;
 		border-top: 1px solid var(--panel-border);
 	}
 	.dt-foot-spacer {
-		flex: 1;
+		flex: 1 1 0;
+		min-width: 0;
 	}
 	.dt-dots {
 		display: flex;
@@ -276,8 +350,16 @@
 		padding: 4px 11px;
 		border-radius: var(--r-sm);
 		cursor: pointer;
+		max-width: 100%;
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+	.dt-next {
+		flex: 0 0 auto;
 	}
 	.dt-try {
+		flex: 0 1 auto;
 		background: transparent;
 		border: 1px solid var(--panel-border);
 		color: var(--base6);
