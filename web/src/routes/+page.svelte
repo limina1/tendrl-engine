@@ -119,8 +119,49 @@
 		if (!entries.length) return 'none';
 		return entries.some((e) => !e.done) ? 'new' : 'done';
 	}
-	// Which W dropdown is open (by id), or null.
+	// Which W dropdown is open (by id), or null. The open menu is positioned
+	// fixed and clamped to the viewport from the trigger button's rect, so it
+	// never spills off-screen regardless of which corner the button sits in.
 	let walkMenuOpen = $state<string | null>(null);
+	let walkBtnRect = $state<DOMRect | null>(null);
+	let walkMenuEl = $state<HTMLElement | null>(null);
+	let walkMenuW = $state(240);
+	let walkMenuH = $state(0);
+	let winW = $state(0);
+	let winH = $state(0);
+
+	$effect(() => {
+		winW = window.innerWidth;
+		winH = window.innerHeight;
+		const onResize = () => {
+			winW = window.innerWidth;
+			winH = window.innerHeight;
+		};
+		window.addEventListener('resize', onResize);
+		return () => window.removeEventListener('resize', onResize);
+	});
+
+	$effect(() => {
+		if (!walkMenuEl) return;
+		const ro = new ResizeObserver(() => {
+			walkMenuW = walkMenuEl?.offsetWidth ?? walkMenuW;
+			walkMenuH = walkMenuEl?.offsetHeight ?? walkMenuH;
+		});
+		ro.observe(walkMenuEl);
+		return () => ro.disconnect();
+	});
+
+	const walkMenuStyle = $derived.by(() => {
+		if (!walkBtnRect) return 'visibility:hidden;';
+		const m = 8;
+		const left = Math.max(m, Math.min(walkBtnRect.left, winW - walkMenuW - m));
+		let top = walkBtnRect.bottom + 6;
+		if (top + walkMenuH > winH - m) {
+			const above = walkBtnRect.top - 6 - walkMenuH;
+			top = above >= m ? above : Math.max(m, winH - walkMenuH - m);
+		}
+		return `left:${left}px;top:${top}px;`;
+	});
 
 	// Redirect AppState navigation calls to spawn buffers in the shell
 	// instead of route-navigating away from the single-page app.
@@ -1143,7 +1184,12 @@
 				e.stopPropagation();
 				if (pos) store.focusSlot(pos);
 				if (!entries.length) return;
-				walkMenuOpen = walkMenuOpen === menuId ? null : menuId;
+				if (walkMenuOpen === menuId) {
+					walkMenuOpen = null;
+				} else {
+					walkBtnRect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+					walkMenuOpen = menuId;
+				}
 			}}
 			title={entries.length ? `${title} — ${pending} not yet run` : 'No walkthroughs here yet'}
 			aria-label={title}
@@ -1152,7 +1198,7 @@
 			<!-- svelte-ignore a11y_click_events_have_key_events -->
 			<!-- svelte-ignore a11y_no_static_element_interactions -->
 			<div class="walk-backdrop" onclick={() => (walkMenuOpen = null)}></div>
-			<div class="walk-menu" role="menu">
+			<div class="walk-menu" role="menu" bind:this={walkMenuEl} style={walkMenuStyle}>
 				<div class="walk-menu__head">{title}</div>
 				{#each entries as g (g.key)}
 					<button
@@ -1821,12 +1867,10 @@
 		z-index: 119;
 	}
 	.walk-menu {
-		position: absolute;
-		top: calc(100% + 6px);
-		right: 0;
+		position: fixed;
 		z-index: 120;
 		min-width: 220px;
-		max-width: 320px;
+		max-width: min(320px, calc(100vw - 16px));
 		background: var(--panel-bg);
 		border: 1px solid var(--panel-border);
 		border-radius: var(--r-md);
