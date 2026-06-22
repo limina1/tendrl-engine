@@ -2832,6 +2832,49 @@ mod tests {
         assert_eq!(event["tags"][0][1], "existing-d");
     }
 
+    /// Notes mode publishes the 30041 section events with no 30040 index over
+    /// them, so each section must already be a self-contained, standalone
+    /// event: its own `d` + `title` + content, and no `a` tag tying it to an
+    /// index. (The index→section `a` tags live only on the 30040.)
+    #[test]
+    fn notes_section_events_are_standalone() {
+        use crate::publication::compose::ComposeState;
+
+        let mut compose = ComposeState {
+            title: "Scratch".to_string(),
+            sections: vec![
+                SectionCompose {
+                    title: "Idea one".to_string(),
+                    content: "first".to_string(),
+                    level: 2,
+                    ..Default::default()
+                },
+                SectionCompose {
+                    title: "Idea two".to_string(),
+                    content: "second".to_string(),
+                    level: 2,
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        };
+        let pubkey = "feedface".repeat(8);
+
+        // Notes = the section events alone (the handler drops `_index`).
+        let (_index, notes) = build_publication_events(&mut compose, &pubkey);
+
+        assert_eq!(notes.len(), 2);
+        for (note, expected) in notes.iter().zip(["Idea one", "Idea two"]) {
+            assert_eq!(note["kind"], 30041);
+            let tags = note["tags"].as_array().unwrap();
+            assert_eq!(tags[0][0], "d");
+            assert!(tags.iter().any(|t| t[0] == "title" && t[1] == expected));
+            // No index linkage on a standalone note.
+            assert!(!tags.iter().any(|t| t[0] == "a"));
+            assert!(!note["content"].as_str().unwrap().is_empty());
+        }
+    }
+
     #[test]
     fn test_naddr_parsing() {
         let addr = NAddr::from_a_tag("30041:abc123:my-section").unwrap();

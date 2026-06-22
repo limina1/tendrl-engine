@@ -1527,7 +1527,7 @@ function _createAppState() {
 	// event; broadcasting to relays is a separate, later step.
 	async function handleComposePublish(
 		items: ContextItem[],
-		meta?: { title: string; tags: TagEntry[]; kind?: number; content?: string }
+		meta?: { title: string; tags: TagEntry[]; kind?: number; content?: string; notes?: boolean }
 	) {
 		// Atomic kinds (NIP-23 blog, NIP-54 wiki, or a custom kind) publish a
 		// single event — the editor body is the content, not a section graph.
@@ -1551,6 +1551,13 @@ function _createAppState() {
 		// unsigned events (the engine rejects sign:false).
 		if (!identityCanSign(identityStatus)) {
 			pushToast('Signing needs an unlocked identity — log in, or Save draft.', 'error', 4500);
+			return;
+		}
+
+		// Notes mode: each section publishes as a standalone 30041, no index —
+		// there's no single publication to republish, so skip the diff guard.
+		if (meta?.notes) {
+			await executePublish(sections, pubTitle, pubTags, undefined, true);
 			return;
 		}
 
@@ -1633,20 +1640,22 @@ function _createAppState() {
 		sections: ContextItem[],
 		pubTitle: string,
 		pubTags: TagEntry[],
-		overrides?: { pubDTag: string; dTagByTitle: Record<string, string> }
+		overrides?: { pubDTag: string; dTagByTitle: Record<string, string> },
+		notes = false
 	) {
 		const progressToast = pushToast(
-			`Signing ${sections.length + 1} events… (${identityStatus?.source ?? 'engine'})`,
+			`Signing ${sections.length + (notes ? 0 : 1)} events… (${identityStatus?.source ?? 'engine'})`,
 			'pending',
 			120000
 		);
 
 		// If any section has a source_addr OR the draft was seeded from a
 		// publication, route through the block endpoint so we emit fork-
-		// marker tags. Otherwise use the flat publish (where republish d-tag
+		// marker tags. Notes are always from-scratch standalone sections, so
+		// they take the flat publish. Otherwise flat publish (republish d-tag
 		// reuse is honored).
 		const hasProvenance =
-			!!composeSourcePubAddr || sections.some((s) => !!s.source_addr);
+			!notes && (!!composeSourcePubAddr || sections.some((s) => !!s.source_addr));
 
 		try {
 			let resp: api.PublishResponse;
@@ -1678,10 +1687,11 @@ function _createAppState() {
 						d_tag: overrides?.dTagByTitle[s.title]
 					})),
 					d_tag: overrides?.pubDTag,
+					notes,
 					sign: true,
 					broadcast: false
 				});
-				console.log('Signed:', resp.publication_id);
+				console.log(notes ? 'Signed (notes):' : 'Signed:', resp.publication_id);
 			}
 
 			updateToast(
@@ -1998,7 +2008,7 @@ function _createAppState() {
 	// nested preview.
 	async function handleComposePreview(
 		items: ContextItem[],
-		meta?: { title: string; tags: TagEntry[]; kind?: number; content?: string }
+		meta?: { title: string; tags: TagEntry[]; kind?: number; content?: string; notes?: boolean }
 	) {
 		// Atomic kinds preview as a single event built from the editor body.
 		if (meta?.kind && meta.kind !== 30040) {
@@ -2034,7 +2044,10 @@ function _createAppState() {
 		}
 		const pubTitle = meta?.title ?? compose.title;
 		const pubTags = meta?.tags ?? compose.tags;
-		const hasProvenance = !!composeSourcePubAddr || sections.some((s) => !!s.source_addr);
+		const notes = meta?.notes ?? false;
+		// Notes are standalone sections — never the fork/block path.
+		const hasProvenance =
+			!notes && (!!composeSourcePubAddr || sections.some((s) => !!s.source_addr));
 		try {
 			let events: EventsModalItem[];
 			if (hasProvenance) {
@@ -2058,13 +2071,16 @@ function _createAppState() {
 						level: s.level,
 						tags: s.tags.map((t) => [t.name, t.value] as [string, string])
 					})),
+					notes,
 					sign: false,
 					broadcast: false
 				});
 				events = resp.events.map((e, i) => eventToModalItem(e, i));
 			}
 			eventsModal = {
-				title: `Preview — ${pubTitle || 'untitled'} (${events.length} events)`,
+				title: notes
+					? `Preview — ${events.length} note${events.length === 1 ? '' : 's'} (30041, no index)`
+					: `Preview — ${pubTitle || 'untitled'} (${events.length} events)`,
 				events
 			};
 		} catch (e) {

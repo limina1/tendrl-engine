@@ -3651,6 +3651,11 @@ pub struct PublishRequest {
     /// editor text becomes the event's `.content`; no section splitting.
     #[serde(default)]
     pub content: Option<String>,
+    /// Notes mode (within the 30040/41 path): publish each detected section as
+    /// a standalone 30041 with NO 30040 index over them. Auto-parsed from the
+    /// same text as a publication; the only difference is the missing index.
+    #[serde(default)]
+    pub notes: bool,
     /// Reuse this index `d` tag instead of minting a fresh nanoid — set on
     /// republish so the 30040 replaces the existing one rather than forking.
     #[serde(default)]
@@ -3739,19 +3744,17 @@ async fn require_active_pubkey(
 /// only in how they build the compose state and which signer fn they
 /// call; everything after `(pub_event, section_events)` lives here so the
 /// ingest/broadcast/response logic can't drift between them.
+///
+/// `pub_event` is the 30040 index when present; `None` is the *Notes* case —
+/// the 30041 section events are published standalone, with no index over them.
 async fn finalize_publish(
     engine: &AppState,
-    pub_event: Value,
+    pub_event: Option<Value>,
     section_events: Vec<Value>,
     broadcast: bool,
     relays: Option<Vec<String>>,
     signed: bool,
 ) -> Result<Json<PublishResponse>, EngineError> {
-    let pub_id = pub_event
-        .get("id")
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .to_string();
     let section_ids: Vec<String> = section_events
         .iter()
         .map(|e| {
@@ -3761,9 +3764,17 @@ async fn finalize_publish(
                 .to_string()
         })
         .collect();
+    // Response id: the index when there is one, else the first note. The
+    // verify-after-ingest check below keys off whichever this is.
+    let pub_id = pub_event
+        .as_ref()
+        .and_then(|e| e.get("id").and_then(|v| v.as_str()))
+        .map(str::to_string)
+        .or_else(|| section_ids.first().cloned())
+        .unwrap_or_default();
 
     // Ingest into local nostrdb (async queue), then wait + verify.
-    for event in section_events.iter().chain(std::iter::once(&pub_event)) {
+    for event in section_events.iter().chain(pub_event.iter()) {
         let json_str = serde_json::to_string(event)
             .map_err(|e| EngineError::Database(format!("JSON error: {e}")))?;
         if let Err(e) = engine.ingest_event(&json_str) {
@@ -3787,16 +3798,21 @@ async fn finalize_publish(
         let relays = relays.unwrap_or_else(|| engine.publish_relays().to_vec());
         let event_jsons: Vec<String> = section_events
             .iter()
-            .chain(std::iter::once(&pub_event))
+            .chain(pub_event.iter())
             .map(|e| serde_json::to_string(e).unwrap())
             .collect();
         let event_ids: Vec<String> = section_events
             .iter()
-            .chain(std::iter::once(&pub_event))
+            .chain(pub_event.iter())
             .filter_map(|e| e.get("id").and_then(|v| v.as_str()).map(|s| s.to_string()))
             .collect();
 
-        // Formal-language summary — publication root + N sections.
+        // Formal-language summary — index + sections, or standalone notes.
+        let dsl_kinds = if pub_event.is_some() {
+            "30040,30041"
+        } else {
+            "30041"
+        };
         let summary = crate::network::RequestSummary {
             filters: vec![],
             composition: crate::network::CompositionShape {
@@ -3806,13 +3822,10 @@ async fn finalize_publish(
                     start_delay_ms: 0,
                 }],
             },
-            dsl: format!(
-                "pub k:30040,30041 ({} events) via:publish",
-                event_jsons.len()
-            ),
+            dsl: format!("pub k:{} ({} events) via:publish", dsl_kinds, event_jsons.len()),
         };
         let manifest = crate::network::PublishManifest::from_events(
-            section_events.iter().chain(std::iter::once(&pub_event)),
+            section_events.iter().chain(pub_event.iter()),
         );
 
         let op = engine
@@ -3859,7 +3872,7 @@ async fn finalize_publish(
             // local-only without waiting to be re-fetched.
             let by_id: std::collections::HashMap<&str, &String> = section_events
                 .iter()
-                .chain(std::iter::once(&pub_event))
+                .chain(pub_event.iter())
                 .zip(event_jsons.iter())
                 .filter_map(|(e, j)| e.get("id").and_then(|v| v.as_str()).map(|id| (id, j)))
                 .collect();
@@ -3892,8 +3905,17 @@ async fn finalize_publish(
     };
 
     // Feed-pill state: a signed snapshot that didn't (successfully) reach any
-    // relay is "local"; once it lands it's published. Keyed by the 30040 coord.
-    track_local_publication(engine, &pub_event, &broadcast_results);
+    // relay is "local"; once it lands it's published. For a publication this is
+    // the 30040 coord; in the Notes case (no index) each standalone 30041
+    // carries its own pill.
+    match &pub_event {
+        Some(idx) => track_local_publication(engine, idx, &broadcast_results),
+        None => {
+            for note in &section_events {
+                track_local_publication(engine, note, &broadcast_results);
+            }
+        }
+    }
 
     // Trigger background embedding sync so new events are searchable immediately.
     if ingested && engine.auto_embed() && engine.embedding_index().is_some() {
@@ -3905,8 +3927,11 @@ async fn finalize_publish(
         });
     }
 
-    // Index first, then sections — the order the inspector lists them.
-    let all_events: Vec<Value> = std::iter::once(pub_event.clone())
+    // Index first (when present), then sections — the order the inspector
+    // lists them. Notes have no index, so they're just the section events.
+    let all_events: Vec<Value> = pub_event
+        .iter()
+        .cloned()
         .chain(section_events.iter().cloned())
         .collect();
 
@@ -3961,7 +3986,8 @@ pub async fn publish_handler(
         .await
         .map_err(map_publish_sign_error)?;
 
-        return finalize_publish(&engine, event, vec![], req.broadcast, req.relays, req.sign).await;
+        return finalize_publish(&engine, Some(event), vec![], req.broadcast, req.relays, req.sign)
+            .await;
     }
 
     // Map request to ComposeState
@@ -4018,9 +4044,28 @@ pub async fn publish_handler(
         .await
         .map_err(map_publish_sign_error)?;
 
+    // Notes mode: publish the standalone 30041 section events with no 30040
+    // index over them — "scattered notes" rather than a bound publication.
+    if req.notes {
+        if section_events.is_empty() {
+            return Err(EngineError::BadRequest(
+                "No notes detected — add at least one section.".into(),
+            ));
+        }
+        return finalize_publish(
+            &engine,
+            None,
+            section_events,
+            req.broadcast,
+            req.relays,
+            req.sign,
+        )
+        .await;
+    }
+
     finalize_publish(
         &engine,
-        pub_event,
+        Some(pub_event),
         section_events,
         req.broadcast,
         req.relays,
@@ -4134,9 +4179,14 @@ pub async fn publish_preview_handler(
     compose.d_tag = req.d_tag.clone();
 
     let (pub_event, section_events) = build_publication_events(&mut compose, &pubkey);
-    let events: Vec<Value> = std::iter::once(pub_event)
-        .chain(section_events.into_iter())
-        .collect();
+    // Notes mode previews just the standalone 30041 events — no 30040 index.
+    let events: Vec<Value> = if req.notes {
+        section_events
+    } else {
+        std::iter::once(pub_event)
+            .chain(section_events.into_iter())
+            .collect()
+    };
     Ok(Json(json!({ "events": events })))
 }
 
@@ -4330,7 +4380,7 @@ pub async fn publish_blocks_handler(
 
     finalize_publish(
         &engine,
-        pub_event,
+        Some(pub_event),
         section_events,
         req.broadcast,
         req.relays,

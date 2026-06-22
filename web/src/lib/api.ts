@@ -731,6 +731,9 @@ export interface PublishRequest {
 	 *  30040 keeps the section-graph path; `content` carries the body. */
 	kind?: number;
 	content?: string;
+	/** Notes mode: publish each detected section as a standalone 30041 with no
+	 *  30040 index over them. Within the publication path; sections unchanged. */
+	notes?: boolean;
 }
 
 export interface PublishResponse {
