@@ -2447,8 +2447,23 @@ pub async fn relay_nip11_handler(
 pub struct IgnoreListResponse {
     pub ignored_event_count: usize,
     pub ignored_pubkey_count: usize,
+    pub ignored_coordinate_count: usize,
     pub event_ids: Vec<String>,
     pub pubkeys: Vec<String>,
+    pub coordinates: Vec<String>,
+}
+
+impl IgnoreListResponse {
+    fn from_list(list: &crate::engine::IgnoreList) -> Self {
+        Self {
+            ignored_event_count: list.event_ids.len(),
+            ignored_pubkey_count: list.pubkeys.len(),
+            ignored_coordinate_count: list.coordinates.len(),
+            event_ids: list.event_ids.iter().cloned().collect(),
+            pubkeys: list.pubkeys.iter().cloned().collect(),
+            coordinates: list.coordinates.iter().cloned().collect(),
+        }
+    }
 }
 
 /// GET /api/v1/ignore — get current ignore list
@@ -2456,12 +2471,7 @@ pub async fn ignore_list_handler(
     State(engine): State<AppState>,
 ) -> Result<Json<IgnoreListResponse>, EngineError> {
     let list = engine.ignore_list().read().await;
-    Ok(Json(IgnoreListResponse {
-        ignored_event_count: list.event_ids.len(),
-        ignored_pubkey_count: list.pubkeys.len(),
-        event_ids: list.event_ids.iter().cloned().collect(),
-        pubkeys: list.pubkeys.iter().cloned().collect(),
-    }))
+    Ok(Json(IgnoreListResponse::from_list(&list)))
 }
 
 /// Request to ignore/unignore
@@ -2473,9 +2483,13 @@ pub struct IgnoreRequest {
     /// Pubkeys to add to ignore list
     #[serde(default)]
     pub pubkeys: Vec<String>,
+    /// Addressable coordinates (`kind:pubkey:d_tag`) to add to ignore list —
+    /// hides a replaceable publication across all versions.
+    #[serde(default)]
+    pub coordinates: Vec<String>,
 }
 
-/// POST /api/v1/ignore — add events/pubkeys to ignore list
+/// POST /api/v1/ignore — add events/pubkeys/coordinates to ignore list
 pub async fn ignore_add_handler(
     State(engine): State<AppState>,
     Json(req): Json<IgnoreRequest>,
@@ -2486,16 +2500,14 @@ pub async fn ignore_add_handler(
     for pk in &req.pubkeys {
         engine.ignore_pubkey(pk).await?;
     }
+    for coord in &req.coordinates {
+        engine.ignore_coordinate(coord).await?;
+    }
     let list = engine.ignore_list().read().await;
-    Ok(Json(IgnoreListResponse {
-        ignored_event_count: list.event_ids.len(),
-        ignored_pubkey_count: list.pubkeys.len(),
-        event_ids: list.event_ids.iter().cloned().collect(),
-        pubkeys: list.pubkeys.iter().cloned().collect(),
-    }))
+    Ok(Json(IgnoreListResponse::from_list(&list)))
 }
 
-/// DELETE /api/v1/ignore — remove events/pubkeys from ignore list
+/// DELETE /api/v1/ignore — remove events/pubkeys/coordinates from ignore list
 pub async fn ignore_remove_handler(
     State(engine): State<AppState>,
     Json(req): Json<IgnoreRequest>,
@@ -2506,13 +2518,11 @@ pub async fn ignore_remove_handler(
     for pk in &req.pubkeys {
         engine.unignore_pubkey(pk).await?;
     }
+    for coord in &req.coordinates {
+        engine.unignore_coordinate(coord).await?;
+    }
     let list = engine.ignore_list().read().await;
-    Ok(Json(IgnoreListResponse {
-        ignored_event_count: list.event_ids.len(),
-        ignored_pubkey_count: list.pubkeys.len(),
-        event_ids: list.event_ids.iter().cloned().collect(),
-        pubkeys: list.pubkeys.iter().cloned().collect(),
-    }))
+    Ok(Json(IgnoreListResponse::from_list(&list)))
 }
 
 // ============================================================================

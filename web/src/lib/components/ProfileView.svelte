@@ -381,6 +381,11 @@
 		<button class="fetch-btn" onclick={handleFetch} disabled={fetching} title="Fetch this author's events from relays">
 			{fetching ? 'Fetching...' : '↻ Fetch'}
 		</button>
+		<button
+			class="fetch-btn fetch-btn--danger"
+			onclick={() => app.ignoreAuthor(pubkey, profile?.display_name || profile?.name || undefined)}
+			title="Hide this author — ignore every event from this pubkey (undo in the ignored buffer)"
+		>Ignore</button>
 	</div>
 
 	{#snippet tabCell(t: Tab, label: string, count: number)}
@@ -706,6 +711,16 @@
 	.fetch-btn:disabled {
 		opacity: 0.5;
 		cursor: default;
+	}
+
+	/* Destructive variant — the red "Ignore" (hide author) button. */
+	.fetch-btn--danger {
+		border-color: var(--state-error);
+		color: var(--state-error);
+	}
+	.fetch-btn--danger:hover:not(:disabled) {
+		background: var(--state-error);
+		color: white;
 	}
 
 	.tabs {

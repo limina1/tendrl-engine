@@ -585,7 +585,7 @@ fn process_root_publications(
             })
         }).unwrap_or("");
         let a_tag = format!("{}:{}:{}", KIND_PUBLICATION_INDEX, pubkey, d_tag);
-        if ignore_list.event_ids.contains(&a_tag) {
+        if ignore_list.is_coordinate_ignored(&a_tag) {
             skipped_ignored += 1;
             continue;
         }

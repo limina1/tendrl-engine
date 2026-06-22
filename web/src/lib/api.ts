@@ -1187,25 +1187,37 @@ async function flushPrefetch() {
 export interface IgnoreListResponse {
 	ignored_event_count: number;
 	ignored_pubkey_count: number;
+	ignored_coordinate_count: number;
 	event_ids: string[];
 	pubkeys: string[];
+	/** Addressable coordinates (`kind:pubkey:d_tag`) — hidden publications,
+	 *  across every version. */
+	coordinates: string[];
 }
 
 export function getIgnoreList() {
 	return fetchJson<IgnoreListResponse>('/api/v1/ignore');
 }
 
-export function ignoreEvents(event_ids: string[] = [], pubkeys: string[] = []) {
+export function ignoreEvents(
+	event_ids: string[] = [],
+	pubkeys: string[] = [],
+	coordinates: string[] = []
+) {
 	return fetchJson<IgnoreListResponse>('/api/v1/ignore', {
 		method: 'POST',
-		body: JSON.stringify({ event_ids, pubkeys })
+		body: JSON.stringify({ event_ids, pubkeys, coordinates })
 	});
 }
 
-export function unignoreEvents(event_ids: string[] = [], pubkeys: string[] = []) {
+export function unignoreEvents(
+	event_ids: string[] = [],
+	pubkeys: string[] = [],
+	coordinates: string[] = []
+) {
 	return fetchJson<IgnoreListResponse>('/api/v1/ignore', {
 		method: 'DELETE',
-		body: JSON.stringify({ event_ids, pubkeys })
+		body: JSON.stringify({ event_ids, pubkeys, coordinates })
 	});
 }
 

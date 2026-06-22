@@ -10,8 +10,21 @@
 
 <div class="ignored-view">
 	<div class="ignored-header">
-		<span>Hidden ({app.ignoredEventIds.length} events, {app.ignoredPubkeys.length} authors)</span>
+		<span>Hidden ({app.ignoredEventIds.length} events, {app.ignoredPubkeys.length} authors, {app.ignoredCoordinates.length} publications)</span>
 	</div>
+	{#if app.ignoredCoordinates.length > 0}
+		<div class="ignored-section-title">Publications</div>
+		{#each app.ignoredCoordinates as coord (coord)}
+			{@const parts = coord.split(':')}
+			<div class="ignored-item">
+				<span class="ignored-id">
+					{parts.slice(2).join(':') || '(no d-tag)'}
+					<span class="ignored-by">by <ProfileName pubkey={parts[1] ?? ''} onviewprofile={app.handleViewProfile} /></span>
+				</span>
+				<button class="unignore" onclick={() => app.handleUnignore('coordinate', coord)}>Unblock</button>
+			</div>
+		{/each}
+	{/if}
 	{#if app.ignoredEventIds.length > 0}
 		<div class="ignored-section-title">Events</div>
 		{#each app.ignoredEventIds as id (id)}
@@ -30,8 +43,8 @@
 			</div>
 		{/each}
 	{/if}
-	{#if app.ignoredEventIds.length === 0 && app.ignoredPubkeys.length === 0}
-		<div class="empty"><p>No hidden events or authors</p></div>
+	{#if app.ignoredEventIds.length === 0 && app.ignoredPubkeys.length === 0 && app.ignoredCoordinates.length === 0}
+		<div class="empty"><p>No hidden publications, events, or authors</p></div>
 	{/if}
 </div>
 
@@ -61,6 +74,7 @@
 		border-bottom: 1px solid var(--panel-border);
 	}
 	.ignored-id { font-size: var(--t-xs); font-family: var(--font-mono); color: var(--base6); }
+	.ignored-by { color: var(--base5); margin-left: 6px; }
 	.unignore {
 		font-family: var(--font-mono);
 		font-size: var(--t-xs);

@@ -100,7 +100,7 @@
 	// Top-level keys c / a / p enter a prefix; the next key dispatches to
 	// the prefix's sub-action and clears the prefix. Esc clears an active
 	// prefix (or closes the modal if none). t and r are bare toggles.
-	let chordPrefix: null | 'c' | 'a' | 'p' = $state(null);
+	let chordPrefix: null | 'c' | 'a' | 'p' | 'i' = $state(null);
 
 	// NIP-19 identifiers, encoded engine-side. We pre-encode on display (rather
 	// than per-click) so the copy handler can stay synchronous — `clipboard
@@ -265,6 +265,22 @@
 		oninsert?.(ev, mode);
 	}
 
+	// Ignore (hide) actions. `i p` hides this publication/event by id; `i n`
+	// hides its author by pubkey (all their events). Both update the feed
+	// optimistically via the shared app handlers and close the modal, since the
+	// event the menu describes is now hidden. Un-hide from the `ignored` buffer.
+	function onIgnorePublicationAction() {
+		const id = n.id;
+		const coord = addrRef ?? undefined;
+		app.ignorePublication(id, coord);
+		onclose();
+	}
+	function onIgnoreAuthorAction() {
+		const pk = n.pubkey;
+		app.ignoreAuthor(pk);
+		onclose();
+	}
+
 	// Per-event broadcast. Explicit, user-initiated — pushes the signed
 	// event to the configured broadcast set (nostr.land etc.) without
 	// going through the auto-publish path. Aligns with [[project-
@@ -352,6 +368,17 @@
 			}
 			return;
 		}
+		if (chordPrefix === 'i') {
+			chordPrefix = null;
+			if (k === 'p') {
+				e.preventDefault();
+				onIgnorePublicationAction();
+			} else if (k === 'n') {
+				e.preventDefault();
+				onIgnoreAuthorAction();
+			}
+			return;
+		}
 		if (chordPrefix === 'a') {
 			chordPrefix = null;
 			if (k === 'r') {
@@ -401,6 +428,9 @@
 		} else if (k === 'p') {
 			e.preventDefault();
 			chordPrefix = 'p';
+		} else if (k === 'i') {
+			e.preventDefault();
+			chordPrefix = 'i';
 		} else if (k === 't') {
 			e.preventDefault();
 			tagsOpen = !tagsOpen;
@@ -699,7 +729,7 @@
 			</nav>
 		{/if}
 
-		<section class="evm__section" data-tour="menu-copy" class:evm__section--active={chordPrefix === 'c'}>
+		<section class="evm__section" data-tour="menu-copy" class:evm__section--active={chordPrefix === 'c' || chordPrefix === 'i'}>
 			<h3 class="evm__heading">
 				<span class="evm__key evm__key--head" class:evm__key--active={chordPrefix === 'c'}>c</span>
 				Copy as
@@ -738,6 +768,28 @@
 				>
 					<span class="evm__key">n</span>
 					<span class="evm__copy-label">npub</span>
+				</button>
+				<!-- Ignore (hide) — right-aligned, destructive. `i p` hides this
+				     publication, `i n` hides its author. Two keycaps so the chord
+				     reads unambiguously next to the single-key copy pills. -->
+				<span class="evm__copy-spacer"></span>
+				<button
+					class="evm__copy-pill evm__copy-pill--danger"
+					onclick={onIgnorePublicationAction}
+					title="Hide this publication — drops it (and any re-published version) from the feed (undo in the ignored buffer)"
+				>
+					<span class="evm__key">i</span>
+					<span class="evm__key">p</span>
+					<span class="evm__copy-label">hide</span>
+				</button>
+				<button
+					class="evm__copy-pill evm__copy-pill--danger"
+					onclick={onIgnoreAuthorAction}
+					title="Hide this author — ignore every event from this pubkey (undo in the ignored buffer)"
+				>
+					<span class="evm__key">i</span>
+					<span class="evm__key">n</span>
+					<span class="evm__copy-label">hide author</span>
 				</button>
 			</div>
 		</section>
@@ -1395,6 +1447,24 @@
 	}
 	.evm__copy-label {
 		font-weight: 500;
+	}
+
+	/* Push the ignore pills to the right edge of the copy row. */
+	.evm__copy-spacer {
+		margin-left: auto;
+	}
+	/* Destructive ignore pills — red, to read as "hide / remove". */
+	.evm__copy-pill--danger {
+		background: color-mix(in srgb, var(--state-error) 10%, transparent);
+		border-color: color-mix(in srgb, var(--state-error) 30%, transparent);
+		color: var(--state-error);
+	}
+	.evm__copy-pill--danger:hover {
+		background: color-mix(in srgb, var(--state-error) 20%, transparent);
+		border-color: var(--state-error);
+	}
+	.evm__copy-pill--danger:active {
+		background: color-mix(in srgb, var(--state-error) 30%, transparent);
 	}
 
 	/* Tag chips */

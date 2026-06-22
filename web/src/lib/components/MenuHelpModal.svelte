@@ -50,6 +50,10 @@
 				{@render row('a', 'naddr1… — replaceables (publications, articles)')}
 				{@render row('n', "author's npub1…")}
 
+				<div class="mhm-group">i · Ignore (hide)</div>
+				{@render row('p', 'hide this publication — drops it from the feed')}
+				{@render row('n', 'hide its author — ignore all their events')}
+
 				<div class="mhm-group">a · Actions</div>
 				{@render row('r', 'read — open in the reader')}
 				{@render row('f', 'find publications that contain this section')}

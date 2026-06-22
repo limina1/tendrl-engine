@@ -555,6 +555,7 @@ function _createAppState() {
 	let ignoredCount = $state(0);
 	let ignoredEventIds: string[] = $state([]);
 	let ignoredPubkeys: string[] = $state([]);
+	let ignoredCoordinates: string[] = $state([]);
 
 	// --- Settings ---
 	let syncMode: SyncMode = $state('explicit');
@@ -562,7 +563,7 @@ function _createAppState() {
 	let buttonLabels: ButtonLabels = $state('icon');
 	let editorInsertMode: EditorInsertMode = $state('append');
 	let editorLineNumbers: boolean = $state(true);
-	let editorVimMode: boolean = $state(true);
+	let editorVimMode: boolean = $state(false);
 	let composeDefaultMode: ComposeDefaultMode = $state('full');
 
 	// --- Panel collapse ---
@@ -1093,9 +1094,11 @@ function _createAppState() {
 	async function refreshIgnoreList() {
 		try {
 			const il = await api.getIgnoreList();
-			ignoredCount = il.ignored_event_count + il.ignored_pubkey_count;
+			ignoredCount =
+				il.ignored_event_count + il.ignored_pubkey_count + (il.ignored_coordinate_count ?? 0);
 			ignoredEventIds = il.event_ids;
 			ignoredPubkeys = il.pubkeys;
+			ignoredCoordinates = il.coordinates ?? [];
 		} catch {}
 	}
 
@@ -1104,12 +1107,14 @@ function _createAppState() {
 		goto('/ignored');
 	}
 
-	async function handleUnignore(type: 'event' | 'pubkey', id: string) {
+	async function handleUnignore(type: 'event' | 'pubkey' | 'coordinate', id: string) {
 		try {
 			if (type === 'event') {
 				await api.unignoreEvents([id]);
-			} else {
+			} else if (type === 'pubkey') {
 				await api.unignoreEvents([], [id]);
+			} else {
+				await api.unignoreEvents([], [], [id]);
 			}
 			await refreshIgnoreList();
 			if (ignoredCount === 0) {
@@ -4024,6 +4029,7 @@ function _createAppState() {
 		get ignoredCount() { return ignoredCount; },
 		get ignoredEventIds() { return ignoredEventIds; },
 		get ignoredPubkeys() { return ignoredPubkeys; },
+		get ignoredCoordinates() { return ignoredCoordinates; },
 
 		// Settings
 		get syncMode() { return syncMode; },
@@ -4194,20 +4200,45 @@ function _createAppState() {
 		initialize,
 		startNetworkPoll,
 
-		// Feed ignore inline handlers
-		async ignoreEvent(id: string) {
+		// Ignore handlers — shared by the feed, the event menu, and profiles.
+		// The backend ignores by event id and by author pubkey (see IgnoreList);
+		// the local feed is keyed by the `kind:pubkey:d_tag` coordinate, so an
+		// event-scoped ignore takes the coordinate separately for the optimistic
+		// removal. Manage the resulting hidden list in the Hidden buffer.
+		async ignorePublication(eventId: string, coordinate?: string) {
 			try {
-				await api.ignoreEvents([id]);
+				// Prefer the addressable coordinate (kind:pubkey:d_tag) so the hide
+				// survives a re-publish under a new event id; fall back to the raw
+				// event id for non-addressable events.
+				if (coordinate) {
+					await api.ignoreEvents([], [], [coordinate]);
+				} else {
+					await api.ignoreEvents([eventId]);
+				}
 				await refreshIgnoreList();
-				feed = feed.filter(p => `${p.addr.kind}:${p.addr.pubkey}:${p.addr.d_tag}` !== id);
-			} catch {}
+				if (coordinate)
+					feed = feed.filter(
+						(p) => `${p.addr.kind}:${p.addr.pubkey}:${p.addr.d_tag}` !== coordinate
+					);
+				pushToast('Publication hidden — manage in Hidden', 'info');
+			} catch (e) {
+				console.error('Ignore publication failed:', e);
+				pushToast('Could not hide publication', 'error');
+			}
 		},
-		async ignorePubkey(pk: string) {
+		async ignoreAuthor(pk: string, name?: string) {
 			try {
 				await api.ignoreEvents([], [pk]);
 				await refreshIgnoreList();
-				feed = feed.filter(p => p.author_pubkey !== pk);
-			} catch {}
+				feed = feed.filter((p) => p.author_pubkey !== pk);
+				searchResults = searchResults.filter((r) => r.author !== pk);
+				searchProfiles = searchProfiles.filter((p) => p.pubkey !== pk);
+				searchCount = searchResults.length;
+				pushToast(`Hidden ${name?.trim() || 'author'} — manage in Hidden`, 'info');
+			} catch (e) {
+				console.error('Ignore author failed:', e);
+				pushToast('Could not hide author', 'error');
+			}
 		}
 	};
 }

@@ -88,6 +88,12 @@ pub struct IgnoreList {
     pub event_ids: std::collections::HashSet<String>,
     /// Pubkeys to ignore (hex) — all events from these authors
     pub pubkeys: std::collections::HashSet<String>,
+    /// Addressable coordinates to ignore (`kind:pubkey:d_tag`) — hides a
+    /// replaceable publication across every version, so a re-publish under a
+    /// new event id stays hidden. `#[serde(default)]` keeps older
+    /// `ignored.json` files (which lack this field) loadable.
+    #[serde(default)]
+    pub coordinates: std::collections::HashSet<String>,
 }
 
 impl IgnoreList {
@@ -115,6 +121,13 @@ impl IgnoreList {
 
     pub fn is_ignored(&self, event_id: &str, pubkey: &str) -> bool {
         self.event_ids.contains(event_id) || self.pubkeys.contains(pubkey)
+    }
+
+    /// True if the addressable coordinate (`kind:pubkey:d_tag`) is hidden.
+    /// Also honours the legacy convention of stuffing the coordinate into
+    /// `event_ids` (pre-`coordinates` builds) so old state keeps working.
+    pub fn is_coordinate_ignored(&self, coordinate: &str) -> bool {
+        self.coordinates.contains(coordinate) || self.event_ids.contains(coordinate)
     }
 }
 
@@ -219,12 +232,15 @@ impl Engine {
         info!("Opened nostrdb at {:?}", data_path);
 
         let ignore_list = IgnoreList::load(data_path);
-        let ignored_count = ignore_list.event_ids.len() + ignore_list.pubkeys.len();
+        let ignored_count = ignore_list.event_ids.len()
+            + ignore_list.pubkeys.len()
+            + ignore_list.coordinates.len();
         if ignored_count > 0 {
             info!(
-                "Loaded ignore list: {} events, {} pubkeys",
+                "Loaded ignore list: {} events, {} pubkeys, {} publications",
                 ignore_list.event_ids.len(),
-                ignore_list.pubkeys.len()
+                ignore_list.pubkeys.len(),
+                ignore_list.coordinates.len()
             );
         }
 
@@ -954,6 +970,23 @@ impl Engine {
     pub async fn unignore_pubkey(&self, pubkey: &str) -> Result<()> {
         let mut list = self.ignore_list.write().await;
         list.pubkeys.remove(pubkey);
+        list.save(&self.data_dir)
+    }
+
+    /// Add an addressable coordinate (`kind:pubkey:d_tag`) to the ignore list —
+    /// hides a replaceable publication across all of its versions.
+    pub async fn ignore_coordinate(&self, coordinate: &str) -> Result<()> {
+        let mut list = self.ignore_list.write().await;
+        list.coordinates.insert(coordinate.to_string());
+        list.save(&self.data_dir)
+    }
+
+    /// Remove an addressable coordinate from the ignore list. Also clears any
+    /// legacy copy stored in `event_ids` so an old-style hide fully lifts.
+    pub async fn unignore_coordinate(&self, coordinate: &str) -> Result<()> {
+        let mut list = self.ignore_list.write().await;
+        list.coordinates.remove(coordinate);
+        list.event_ids.remove(coordinate);
         list.save(&self.data_dir)
     }
 
