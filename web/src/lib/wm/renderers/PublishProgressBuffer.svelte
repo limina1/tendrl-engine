@@ -165,7 +165,7 @@
 				see per-relay status, accept/reject reasons, and the event's address.
 			</p>
 			<p class="muted">
-				Run <code>M-x tendrl-demo-publish-progress</code> to load a representative
+				Run the <code>tendrl-demo-publish-progress</code> command (<code>SPC :</code>) to load a representative
 				snapshot of mock data while we're not signed in.
 			</p>
 		</div>
