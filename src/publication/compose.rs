@@ -118,6 +118,12 @@ pub struct ComposeState {
     /// index event survives renames. Seeded from `source_publication_addr`
     /// when loading an existing publication for edit.
     pub d_tag: Option<String>,
+    /// Output kind. `None`/`Some(30040)` = NKBIP-01 publication (30040 index +
+    /// 30041 sections). `Some(k)` for any other addressable kind (NIP-23 blog
+    /// 30023, NIP-54 wiki 30818, or custom) marks an *atomic* draft — one event
+    /// whose body is the whole compose, not a section graph. Persisted so a
+    /// resumed draft reopens in the right mode (cf. NIP-37's `k` tag).
+    pub kind: Option<u32>,
     /// Tags for the publication (30040)
     pub tags: Vec<TagEntry>,
     /// Sections (30041 events)

@@ -142,6 +142,10 @@ function _createAppState() {
 	// resumed. Threaded onto subsequent saves so they version the same
 	// publication (new snapshot, same d_tag) rather than minting a fresh draft.
 	let composeDTag: string | null = $state(null);
+	// Output kind for the composer: 30040 = NKBIP-01 publication (default),
+	// 30023 blog / 30818 wiki / custom = a single atomic event. Owned here (not
+	// in ComposeView) so resuming a draft can restore the editor's mode.
+	let composeKind = $state(30040);
 	const compose = $derived<ComposeState>({
 		title: composeTitle,
 		tags: composeTags,
@@ -1523,8 +1527,14 @@ function _createAppState() {
 	// event; broadcasting to relays is a separate, later step.
 	async function handleComposePublish(
 		items: ContextItem[],
-		meta?: { title: string; tags: TagEntry[] }
+		meta?: { title: string; tags: TagEntry[]; kind?: number; content?: string }
 	) {
+		// Atomic kinds (NIP-23 blog, NIP-54 wiki, or a custom kind) publish a
+		// single event — the editor body is the content, not a section graph.
+		if (meta?.kind && meta.kind !== 30040) {
+			await executeAtomicPublish(meta.kind, meta.title, meta.content ?? '', meta.tags);
+			return;
+		}
 		const sections = items.length > 0 ? items : compose.sections;
 		if (!sections.length) {
 			pushToast('Nothing to sign — no sections detected', 'error', 4000);
@@ -1690,6 +1700,60 @@ function _createAppState() {
 		}
 	}
 
+	// Sign a single atomic event (NIP-23 long-form, NIP-54 wiki, or a custom
+	// kind) — one signed snapshot, broadcast:false, mirroring executePublish.
+	// The backend derives the `d` tag from the title slug, so re-signing the
+	// same title naturally replaces (addressable) rather than forking.
+	async function executeAtomicPublish(
+		kind: number,
+		title: string,
+		content: string,
+		tags: TagEntry[]
+	) {
+		if (!content.trim()) {
+			pushToast('Nothing to sign — the editor is empty', 'error', 4000);
+			return;
+		}
+		if (!title.trim()) {
+			pushToast('A title is required — it becomes the event identifier', 'error', 4000);
+			return;
+		}
+		if (!identityCanSign(identityStatus)) {
+			pushToast('Signing needs an unlocked identity — log in, or Save draft.', 'error', 4500);
+			return;
+		}
+		const progressToast = pushToast(
+			`Signing 1 event… (${identityStatus?.source ?? 'engine'})`,
+			'pending',
+			120000
+		);
+		try {
+			const resp = await api.publish({
+				title,
+				tags: tags.map((t) => [t.name, t.value] as [string, string]),
+				sections: [],
+				kind,
+				content,
+				sign: true,
+				broadcast: false
+			});
+			console.log('Signed (atomic):', resp.publication_id);
+			updateToast(
+				progressToast,
+				{ message: 'Signed — local snapshot. Broadcast it when ready.', kind: 'success' },
+				4000
+			);
+			await loadFeed();
+		} catch (e) {
+			console.error('Sign atomic failed:', e);
+			updateToast(
+				progressToast,
+				{ message: `Sign failed: ${e instanceof Error ? e.message : String(e)}`, kind: 'error' },
+				6000
+			);
+		}
+	}
+
 	// Diff the current compose against the last *published* (signed) version of
 	// this article — "what have I changed since I published?". Held for the
 	// PublishedDiffModal; null = closed.
@@ -1807,9 +1871,22 @@ function _createAppState() {
 	// are minted + persisted engine-side, so we don't supply them here.
 	async function handleComposeSaveDraft(
 		items: ContextItem[],
-		meta?: { title: string; tags: TagEntry[] }
+		meta?: { title: string; tags: TagEntry[]; kind?: number; content?: string }
 	) {
-		const sections = items.length > 0 ? items : compose.sections;
+		// Atomic kinds have no section graph — persist the body as a single
+		// section so the draft round-trips (kind is re-chosen on resume).
+		const atomic = !!meta?.kind && meta.kind !== 30040;
+		const sections = atomic
+			? [
+					{
+						title: meta!.title,
+						content: meta!.content ?? '',
+						tags: meta!.tags
+					} as unknown as ContextItem
+				]
+			: items.length > 0
+				? items
+				: compose.sections;
 		const title = meta?.title ?? compose.title;
 		const tags = meta?.tags ?? compose.tags;
 		if (!title.trim() && sections.length === 0) {
@@ -1828,7 +1905,11 @@ function _createAppState() {
 				})),
 				// Thread the session's d-tag so this save versions the same
 				// publication instead of forking a new one.
-				d_tag: composeDTag ?? undefined
+				d_tag: composeDTag ?? undefined,
+				// Persist the output kind so resuming reopens the right mode.
+				// 30040 (publication) is the implicit default; send only when
+				// it's an atomic kind to keep publication drafts unchanged.
+				kind: atomic ? meta!.kind : undefined
 			});
 			composeDTag = resp.d_tag;
 			pushToast('Draft saved', 'success');
@@ -1864,6 +1945,8 @@ function _createAppState() {
 			// Resume onto the same publication identity so the next save adds a
 			// version rather than forking.
 			composeDTag = cs.d_tag ?? null;
+			// Restore the output kind so an atomic draft reopens atomic.
+			composeKind = cs.kind ?? 30040;
 			composeSourcePubAddr = null;
 			composeSourcePubEventId = null;
 			composeSourceSectionOrder = [];
@@ -1913,7 +1996,37 @@ function _createAppState() {
 	// section with a source) goes through the block preview so fork markers
 	// and linked originals show as they will publish; otherwise the flat/
 	// nested preview.
-	async function handleComposePreview(items: ContextItem[], meta?: { title: string; tags: TagEntry[] }) {
+	async function handleComposePreview(
+		items: ContextItem[],
+		meta?: { title: string; tags: TagEntry[]; kind?: number; content?: string }
+	) {
+		// Atomic kinds preview as a single event built from the editor body.
+		if (meta?.kind && meta.kind !== 30040) {
+			const content = meta.content ?? '';
+			if (!content.trim()) {
+				pushToast('Nothing to preview — the editor is empty', 'error', 4000);
+				return;
+			}
+			try {
+				const resp = await api.previewPublication({
+					title: meta.title,
+					tags: meta.tags.map((t) => [t.name, t.value] as [string, string]),
+					sections: [],
+					kind: meta.kind,
+					content,
+					sign: false,
+					broadcast: false
+				});
+				const events = resp.events.map((e, i) => eventToModalItem(e, i));
+				eventsModal = {
+					title: `Preview — ${meta.title || 'untitled'} (kind ${meta.kind})`,
+					events
+				};
+			} catch (e) {
+				pushToast(`Preview failed: ${e instanceof Error ? e.message : String(e)}`, 'error', 6000);
+			}
+			return;
+		}
 		const sections = items.length > 0 ? items : compose.sections;
 		if (!sections.length) {
 			pushToast('Nothing to preview — no sections detected', 'error', 4000);
@@ -2859,6 +2972,7 @@ function _createAppState() {
 		composeTitle = '';
 		composeTags = [];
 		composeDTag = null; // fresh publication identity
+		composeKind = 30040; // default back to publication
 		previewVisible = false;
 		navigateToCompose();
 	}
@@ -4046,6 +4160,8 @@ function _createAppState() {
 		set editorVimMode(v: boolean) { editorVimMode = v; },
 		get composeDefaultMode() { return composeDefaultMode; },
 		set composeDefaultMode(v: ComposeDefaultMode) { composeDefaultMode = v; },
+		get composeKind() { return composeKind; },
+		set composeKind(v: number) { composeKind = v; },
 
 		// Panel collapse
 		get chatCollapsed() { return chatCollapsed; },

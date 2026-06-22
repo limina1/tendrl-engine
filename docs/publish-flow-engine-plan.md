@@ -267,3 +267,32 @@ Steps 1–4 are the architectural commitment; 5–7 are mechanical;
 - NIP-42 auth flow during publish — separate identity work.
 - "Publish to outbox relays of the recipient" — NIP-65 routing,
   separate work tracked in the relay port doc.
+
+## Roadmap: portable drafts (NIP-37)
+
+The composer's output kind is now selectable — `30040` publication (the
+30040/30041 section graph) or a single atomic event (`30023` blog, `30818`
+wiki, or any custom kind). The local `DraftStore` persists that kind, so a
+resumed draft reopens in the right mode. Today drafts are **local JSON only**
+(`<data_dir>/drafts/`, never a Nostr event).
+
+The next step makes drafts **portable and cross-client** via NIP-37:
+
+- [ ] **NIP-44 encrypt/decrypt** — implement for the in-process engine key and
+  add `encrypt`/`decrypt` to the `Signer` trait so NIP-07/46 identities route
+  through the external signer (the key isn't in the engine). The capability
+  flags (`nip44_encrypt`/`nip44_decrypt`) already exist in `signing.rs`;
+  `chacha20poly1305` is already a dependency. This is the gating primitive.
+- [ ] **kind 31234 draft events** — build/sign one per draft:
+  `content = nip44_encrypt(payload)`, `["d", <draft-id>]`, `["k", <kind>]`.
+  Decided payload model: wrap **our compose/draft JSON**, so a whole 30040/41
+  publication (or an atomic event) is a *single* portable encrypted event —
+  not the standard one-unsigned-event-per-wrapper.
+- [ ] **kind 10013 draft-relay list** — where 31234 events are published/read.
+- [ ] **Remote draft load** — query 31234 by author, decrypt, list alongside
+  local drafts; a blanked `.content` signals deletion.
+- [ ] **UI** — a "portable / synced draft" affordance distinct from the local
+  Save draft.
+
+Must-have tests before anything touches a relay: the NIP-44 encrypt→decrypt
+round-trip and the 31234 wrap/unwrap.

@@ -341,6 +341,9 @@ export interface DraftComposeSection {
 export interface DraftComposeState {
 	title: string;
 	d_tag?: string;
+	/** Output kind — absent/30040 = publication; any other kind = atomic draft
+	 *  (blog/wiki/custom) so resume reopens the composer in the right mode. */
+	kind?: number;
 	tags: { name: string; value: string }[];
 	sections: DraftComposeSection[];
 }
@@ -366,6 +369,9 @@ export interface SaveDraftPayload {
 		d_tag?: string;
 	}[];
 	d_tag?: string;
+	/** Output kind — absent/30040 = publication; other kinds mark an atomic
+	 *  draft so resume reopens in the right mode. */
+	kind?: number;
 }
 
 /** Save (or snapshot) a draft from compose state. Returns its draft_id and the
@@ -720,6 +726,11 @@ export interface PublishRequest {
 	relays?: string[];
 	/** Reuse this index d-tag (republish replace) instead of minting. */
 	d_tag?: string;
+	/** Emit a single atomic event of this kind (NIP-23 30023, NIP-54 30818, or
+	 *  any custom replaceable kind) instead of the 30040/30041 graph. Absent or
+	 *  30040 keeps the section-graph path; `content` carries the body. */
+	kind?: number;
+	content?: string;
 }
 
 export interface PublishResponse {

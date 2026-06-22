@@ -2002,6 +2002,69 @@ pub fn build_publication_events(
     build_publication_events_internal(compose, pubkey, None)
 }
 
+/// Build a single *atomic* addressable event — NIP-23 long-form (`30023`),
+/// NIP-54 wiki (`30818`), or any custom replaceable kind — from a
+/// title/content/tags triple. Unlike the 30040/30041 publication graph this
+/// emits ONE event whose `.content` is the whole body; the composer routes
+/// here when the user picks a non-`30040` kind from the mode dropdown.
+///
+/// The `d` tag reuses a caller-supplied identifier (republish / resume) or,
+/// failing that, a normalized title slug — matching NIP-54's `d`-tag rules so
+/// a wiki article collates with others on the same subject. `secret_hex` signs
+/// in-process (`Some`) or leaves a placeholder sig for preview (`None`).
+#[allow(clippy::too_many_arguments)]
+pub fn build_atomic_event(
+    kind: u32,
+    title: &str,
+    content: &str,
+    tags: &[crate::publication::compose::TagEntry],
+    d_tag: Option<&str>,
+    pubkey: &str,
+    timestamp: u64,
+    secret_hex: Option<&str>,
+) -> Value {
+    use serde_json::json;
+
+    let d = d_tag
+        .map(str::to_string)
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| ComposeState::generate_d_tag(title));
+
+    let mut ev_tags: Vec<Value> = vec![json!(["d", d])];
+    if !title.is_empty() {
+        ev_tags.push(json!(["title", title]));
+    }
+    for tag_vec in ComposeState::tags_to_nostr_format(tags) {
+        ev_tags.push(serde_json::to_value(tag_vec).unwrap_or(json!([])));
+    }
+
+    tree_emit::sign_event(kind as u64, pubkey, timestamp, &ev_tags, content, secret_hex)
+}
+
+/// Signer-routed counterpart to [`build_atomic_event`]: build the event
+/// unsigned (placeholder sig), then re-sign it through the active `Signer` so
+/// the atomic-publish path is source-agnostic (engine / NIP-07 / NIP-46), just
+/// like the publication-graph path.
+pub async fn build_signed_atomic_event_via_signer(
+    kind: u32,
+    title: &str,
+    content: &str,
+    tags: &[crate::publication::compose::TagEntry],
+    d_tag: Option<&str>,
+    pubkey: &str,
+    signer: &dyn crate::signing::Signer,
+) -> std::result::Result<Value, crate::signing::SigningError> {
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+
+    let unsigned = build_atomic_event(kind, title, content, tags, d_tag, pubkey, timestamp, None);
+    resign_value_through_signer(&unsigned, pubkey, timestamp as i64, signer).await
+}
+
 /// Build publication events with proper Schnorr signatures using the
 /// engine's in-process key material directly. Kept for the synchronous / test
 /// paths that don't need to route through the SigningController; live
@@ -2709,6 +2772,64 @@ mod tests {
         for c in &children {
             assert_eq!(c["kind"], 30041);
         }
+    }
+
+    #[test]
+    fn atomic_event_is_single_addressable_event() {
+        use crate::publication::compose::TagEntry;
+
+        let pubkey = "feedface".repeat(8);
+        let tags = vec![TagEntry {
+            name: "tags".to_string(),
+            value: "rust, nostr".to_string(),
+        }];
+        let event = build_atomic_event(
+            30023,
+            "My First Post",
+            "Hello **world**.",
+            &tags,
+            None,
+            &pubkey,
+            1_700_000_000,
+            None,
+        );
+
+        assert_eq!(event["kind"], 30023);
+        assert_eq!(event["content"], "Hello **world**.");
+
+        let tag_arr = event["tags"].as_array().unwrap();
+        // d-tag is a title slug when none is supplied (NIP-54 normalization).
+        assert_eq!(tag_arr[0][0], "d");
+        assert_eq!(tag_arr[0][1], "my-first-post");
+        // title display tag present.
+        assert!(tag_arr
+            .iter()
+            .any(|t| t[0] == "title" && t[1] == "My First Post"));
+        // `tags` value expanded into individual `t` tags.
+        let t_values: Vec<&str> = tag_arr
+            .iter()
+            .filter(|t| t[0] == "t")
+            .map(|t| t[1].as_str().unwrap())
+            .collect();
+        assert_eq!(t_values, vec!["rust", "nostr"]);
+    }
+
+    #[test]
+    fn atomic_event_reuses_supplied_d_tag() {
+        let pubkey = "feedface".repeat(8);
+        let event = build_atomic_event(
+            30818,
+            "Thin-shell Structure",
+            "A wiki body.",
+            &[],
+            Some("existing-d"),
+            &pubkey,
+            1_700_000_000,
+            None,
+        );
+        assert_eq!(event["kind"], 30818);
+        assert_eq!(event["tags"][0][0], "d");
+        assert_eq!(event["tags"][0][1], "existing-d");
     }
 
     #[test]

@@ -60,6 +60,11 @@ pub struct DraftComposeState {
     /// carry one so re-publishing keeps the addressable identity.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub d_tag: Option<String>,
+    /// Output kind. `None`/`30040` = NKBIP-01 publication; any other kind marks
+    /// an atomic draft (blog 30023, wiki 30818, custom). Persisted so resuming
+    /// reopens the composer in the right mode. Legacy drafts default to `None`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<u32>,
 }
 
 /// Serializable tag entry
@@ -148,6 +153,7 @@ impl DraftStore {
         let compose_state = DraftComposeState {
             title: compose.title.clone(),
             d_tag: compose.d_tag.clone(),
+            kind: compose.kind,
             tags: compose
                 .tags
                 .iter()
@@ -365,6 +371,7 @@ impl From<&DraftComposeState> for ComposeState {
         // same addressable events. Legacy drafts (d_tag == None) will
         // mint fresh nanoids on next emission.
         compose.d_tag = draft.d_tag.clone();
+        compose.kind = draft.kind;
         compose.tags = draft
             .tags
             .iter()
@@ -651,6 +658,39 @@ mod tests {
         assert_eq!(loaded.compose_state.sections.len(), 2);
     }
 
+    /// A publication draft carries no explicit kind (None == 30040); an atomic
+    /// draft persists its kind so resuming reopens the composer in the right
+    /// mode, and the round-trip back to ComposeState restores it.
+    #[test]
+    fn test_draft_persists_atomic_kind() {
+        use crate::publication::compose::SectionCompose as SC;
+
+        let temp_dir = TempDir::new().unwrap();
+        let store = DraftStore::new(temp_dir.path()).unwrap();
+
+        // Publication draft: kind stays None.
+        let mut pub_compose = create_test_compose();
+        let pub_id = store.save_draft(&mut pub_compose).unwrap();
+        assert_eq!(store.load_draft(&pub_id).unwrap().compose_state.kind, None);
+
+        // Atomic (NIP-54 wiki) draft: kind round-trips through save → load →
+        // back into ComposeState.
+        let mut wiki = ComposeState::new();
+        wiki.title = "Wiki Subject".to_string();
+        wiki.kind = Some(30818);
+        wiki.sections.push(SC {
+            title: "Wiki Subject".to_string(),
+            content: "A wiki body.".to_string(),
+            ..Default::default()
+        });
+        let wiki_id = store.save_draft(&mut wiki).unwrap();
+
+        let loaded = store.load_draft(&wiki_id).unwrap();
+        assert_eq!(loaded.compose_state.kind, Some(30818));
+        let resumed: ComposeState = (&loaded.compose_state).into();
+        assert_eq!(resumed.kind, Some(30818));
+    }
+
     /// Saving a draft mints d-tags on the in-memory compose state, and
     /// the persisted DraftComposeState carries them forward. Round-tripping
     /// through `From<&DraftComposeState> for ComposeState` must preserve
@@ -738,6 +778,7 @@ mod tests {
         DraftComposeState {
             title: title.to_string(),
             d_tag: Some("fixed-dtag".to_string()),
+            kind: None,
             tags: tags
                 .iter()
                 .map(|(n, v)| DraftTagEntry {

@@ -24,6 +24,26 @@
 
 	type ComposeMode = 'full' | 'plain' | 'preview';
 
+	/** Publish/preview/save payload. `kind`/`content` are set only for atomic
+	 *  kinds (NIP-23 blog, NIP-54 wiki, custom) — then the whole editor body is
+	 *  one event and the section graph is bypassed. */
+	type PublishMeta = {
+		title: string;
+		tags: TagEntry[];
+		kind?: number;
+		content?: string;
+	};
+
+	// Output-kind presets for the mode dropdown. 30040 (Publication) keeps the
+	// section-parsing path; the rest publish a single atomic event of that kind.
+	// `-1` is the "Custom…" sentinel that reveals a free numeric kind input.
+	const KIND_PRESETS = [
+		{ kind: 30040, label: 'Publication' },
+		{ kind: 30023, label: 'Blog' },
+		{ kind: 30818, label: 'Wiki' },
+		{ kind: -1, label: 'Custom…' }
+	];
+
 	let {
 		compose,
 		syncMode,
@@ -57,10 +77,10 @@
 		onupdate: (state: ComposeState) => void;
 		oncancel: () => void;
 		onsendtochat: (items: ContextItem[]) => void;
-		onpublish: (items: ContextItem[], meta?: { title: string; tags: TagEntry[] }) => void;
-		onpreview?: (items: ContextItem[], meta?: { title: string; tags: TagEntry[] }) => void;
+		onpublish: (items: ContextItem[], meta?: PublishMeta) => void;
+		onpreview?: (items: ContextItem[], meta?: PublishMeta) => void;
 		/** Save the current compose as a local draft (never signed). */
-		onsavedraft?: (items: ContextItem[], meta?: { title: string; tags: TagEntry[] }) => void;
+		onsavedraft?: (items: ContextItem[], meta?: PublishMeta) => void;
 		/** Saved drafts to list for resuming, newest first. */
 		drafts?: DraftSummary[];
 		onloaddraft?: (draftId: string) => void;
@@ -83,6 +103,53 @@
 	let checkedIds: Set<string> = $state(new Set());
 	let collapsedIds: Set<string> = $state(new Set());
 	let headerCollapsed = $state(false);
+
+	// --- Output kind (Publication vs atomic blog/wiki/custom) ---
+	// Owned by app state so resuming a draft can restore the editor mode. The
+	// select reflects it; a non-preset kind shows the free numeric input.
+	const PRESET_KINDS = new Set(KIND_PRESETS.filter((p) => p.kind !== -1).map((p) => p.kind));
+	const composeKind = $derived(app.composeKind);
+	const isAtomic = $derived(composeKind !== 30040);
+	const isCustomKind = $derived(!PRESET_KINDS.has(composeKind));
+
+	function onKindSelect(e: Event) {
+		const v = +(e.currentTarget as HTMLSelectElement).value;
+		// -1 = "Custom…": keep the current kind if it's already custom, else
+		// seed a non-preset default (1 = a plain note) the user can edit.
+		app.composeKind = v === -1 ? (isCustomKind ? composeKind : 1) : v;
+	}
+	function onCustomKind(e: Event) {
+		app.composeKind = +(e.currentTarget as HTMLInputElement).value || 0;
+	}
+	// Body for atomic kinds. Seeded once from the section contents the first
+	// time the user switches to an atomic kind, so a part-written publication
+	// isn't lost; thereafter it's the independent source of truth.
+	let atomicContent = $state('');
+	let atomicCmView = $state<EditorView | null>(null);
+	let atomicSeeded = $state(false);
+
+	$effect(() => {
+		if (!isAtomic) return;
+		untrack(() => {
+			if (atomicSeeded) return;
+			if (!atomicContent.trim()) {
+				atomicContent = compose.sections
+					.map((s) => s.content)
+					.filter((c) => c.trim().length > 0)
+					.join('\n\n');
+			}
+			atomicSeeded = true;
+		});
+	});
+
+	const atomicCanPublish = $derived(
+		isAtomic && compose.title.trim().length > 0 && atomicContent.trim().length > 0
+	);
+
+	function atomicMeta(): PublishMeta {
+		return { title: compose.title, tags: compose.tags, kind: composeKind, content: atomicContent };
+	}
+
 	let delimiter = $state('');
 	// Parse level — the heading depth at which sections stop being their
 	// own 30040 indices and fold into the nearest ancestor's 30041 content.
@@ -396,6 +463,16 @@
 	});
 	const detectedSections = $derived(detectedState.sections);
 
+	// "Nothing to act on" gate for Preview/Save: atomic needs a title + body;
+	// plain needs a detected section; full needs a section card.
+	const noContent = $derived(
+		isAtomic
+			? !atomicCanPublish
+			: mode === 'plain'
+				? detectedSections.length === 0
+				: compose.sections.length === 0
+	);
+
 	// Fingerprint of section identity + lock/divergence state, so we can
 	// detect external changes. readonly/modified flips cover the badge
 	// lock-to-source cycle, which resets content to the original — the
@@ -615,6 +692,10 @@
 	}
 
 	function publishAll() {
+		if (isAtomic) {
+			onpublish([], atomicMeta());
+			return;
+		}
 		// In plain mode `compose.sections`/`compose.title` only commit on
 		// blur, so parse the live text here and publish title+tags+sections
 		// directly — otherwise the prop is stale (empty title / no sections)
@@ -643,6 +724,10 @@
 	// as publish, but never signs — so it's available regardless of identity.
 	function saveDraftAction() {
 		if (!onsavedraft) return;
+		if (isAtomic) {
+			onsavedraft([], atomicMeta());
+			return;
+		}
 		let sections: ContextItem[];
 		let meta: { title: string; tags: TagEntry[] } | undefined;
 		if (mode === 'plain') {
@@ -676,6 +761,10 @@
 	// Inspect the would-be 30040/30041 events as JSON — no signing/publish.
 	function previewEvents() {
 		if (!onpreview) return;
+		if (isAtomic) {
+			onpreview([], atomicMeta());
+			return;
+		}
 		let sections: ContextItem[];
 		let meta: { title: string; tags: TagEntry[] } | undefined;
 		if (mode === 'plain') {
@@ -717,51 +806,79 @@
 
 <div class="compose-view">
 	<div class="compose-mode-bar" data-tour="compose-modebar">
-		<!-- The view starts on the user's compose-default setting (full/plain)
-		     and stays switchable here. Normal-mode h/l still toggles it; this
-		     segmented control gives a click target that doesn't depend on vim
-		     mode. Preview is its own toggle (the Read button on the right). -->
-		<div class="mode-toggle" role="group" aria-label="Editor view">
-			<button
-				class="mode-seg"
-				class:mode-seg--on={mode === 'full'}
-				onclick={() => (mode = 'full')}
-				title="Full view — structured section cards"
-			>full</button>
-			<button
-				class="mode-seg"
-				class:mode-seg--on={mode === 'plain'}
-				onclick={() => (mode = 'plain')}
-				title="Plain view — one plain-text editor with a live detected-section outline"
-			>plain</button>
-		</div>
-		<div class="delim-group" data-tour="compose-nest">
-			<span class="delim-label">delim</span>
-			<input
-				class="delim-input"
-				bind:value={delimiter}
-				placeholder="="
-				maxlength="2"
-			/>
-		</div>
-		<label
-			class="nest-group"
-			title="Parse level — how deep the outline nests into 30040 indices. flat = one index over a flat list of sections (deeper headings stay as content); each higher level turns one more heading tier into nested sub-indices and folds anything below it into content."
-		>
-			<span class="nest-label">nest</span>
-			<select class="nest-select" bind:value={parseLevel}>
-				<option value={2}>flat</option>
-				<option value={3}>1 tier</option>
-				<option value={4}>2 tiers</option>
-				<option value={5}>3 tiers</option>
+		<!-- Output kind. Publication parses the editor into a 30040/30041
+		     section graph; Blog/Wiki/Custom publish the whole body as a single
+		     atomic event of that kind. The numeric input lets the user pick any
+		     replaceable kind directly. -->
+		<label class="kind-group" title="Output kind — Publication (30040/41 section graph) or a single atomic event (blog/wiki/custom)">
+			<span class="kind-label">kind</span>
+			<select
+				class="kind-select"
+				value={isCustomKind ? -1 : composeKind}
+				onchange={onKindSelect}
+			>
+				{#each KIND_PRESETS as preset (preset.kind)}
+					<option value={preset.kind}>{preset.label}</option>
+				{/each}
 			</select>
+			{#if isCustomKind}
+				<input
+					class="kind-input"
+					type="number"
+					min="0"
+					value={composeKind}
+					oninput={onCustomKind}
+					title="Event kind number"
+				/>
+			{/if}
 		</label>
+		{#if !isAtomic}
+			<!-- The view starts on the user's compose-default setting (full/plain)
+			     and stays switchable here. Normal-mode h/l still toggles it; this
+			     segmented control gives a click target that doesn't depend on vim
+			     mode. Preview is its own toggle (the Read button on the right). -->
+			<div class="mode-toggle" role="group" aria-label="Editor view">
+				<button
+					class="mode-seg"
+					class:mode-seg--on={mode === 'full'}
+					onclick={() => (mode = 'full')}
+					title="Full view — structured section cards"
+				>full</button>
+				<button
+					class="mode-seg"
+					class:mode-seg--on={mode === 'plain'}
+					onclick={() => (mode = 'plain')}
+					title="Plain view — one plain-text editor with a live detected-section outline"
+				>plain</button>
+			</div>
+			<div class="delim-group" data-tour="compose-nest">
+				<span class="delim-label">delim</span>
+				<input
+					class="delim-input"
+					bind:value={delimiter}
+					placeholder="="
+					maxlength="2"
+				/>
+			</div>
+			<label
+				class="nest-group"
+				title="Parse level — how deep the outline nests into 30040 indices. flat = one index over a flat list of sections (deeper headings stay as content); each higher level turns one more heading tier into nested sub-indices and folds anything below it into content."
+			>
+				<span class="nest-label">nest</span>
+				<select class="nest-select" bind:value={parseLevel}>
+					<option value={2}>flat</option>
+					<option value={3}>1 tier</option>
+					<option value={4}>2 tiers</option>
+					<option value={5}>3 tiers</option>
+				</select>
+			</label>
+		{/if}
 		<span class="bar-sp"></span>
 		<!-- Bulk lock/unlock mirrors ReaderBuffer's draft toolbar so the
 		     read↔edit transition keeps the same affordances at the same
 		     on-screen level. Gated on a source publication since there's
 		     nothing to lock against in a from-scratch draft. -->
-		{#if compose.source_publication_addr}
+		{#if compose.source_publication_addr && !isAtomic}
 			<button
 				class="bulk-btn"
 				onclick={unlockAllImported}
@@ -780,40 +897,44 @@
 		     a single mode toggle. When a source pub exists we navigate to
 		     its ReaderBuffer; for from-scratch drafts we fall back to
 		     inline DraftReader. Green to signal "read view" symmetric to
-		     Edit. -->
-		<button
-			class="read-btn"
-			onclick={() => {
-				if (mode === 'plain') handlePlainFullEdit(plainText);
-				try {
-					const store = getActiveStore();
-					store.openBuffer({
-						className: 'work',
-						buffer: {
-							id: 'draft-reader:current',
-							kind: 'draft-reader',
-							label: 'draft',
-							kicker: compose.title || 'preview'
-						}
-					});
-				} catch {
-					// No WM store — inline preview as fallback.
-					mode = 'preview';
-				}
-			}}
-			class:active={mode === 'preview'}
-			title="Preview the draft in a separate buffer"
-		>Read</button>
+		     Edit. Publication-only: an atomic event has no section tree to read. -->
+		{#if !isAtomic}
+			<button
+				class="read-btn"
+				onclick={() => {
+					if (mode === 'plain') handlePlainFullEdit(plainText);
+					try {
+						const store = getActiveStore();
+						store.openBuffer({
+							className: 'work',
+							buffer: {
+								id: 'draft-reader:current',
+								kind: 'draft-reader',
+								label: 'draft',
+								kicker: compose.title || 'preview'
+							}
+						});
+					} catch {
+						// No WM store — inline preview as fallback.
+						mode = 'preview';
+					}
+				}}
+				class:active={mode === 'preview'}
+				title="Preview the draft in a separate buffer"
+			>Read</button>
+		{/if}
 		<!-- Composer's own affordances, mirroring the mode-line's W / ? pair:
 		     W runs the on-demand composer tour, ? opens the reference. The tour
 		     is mode-aware — it walks the section cards in Full, the text buffer
 		     in Plain — so the W in each view tours that view. -->
-		<button
-			class="affordance affordance--walkthrough"
-			onclick={() => runTour(mode === 'plain' ? 'compose-plain-overview' : 'compose-overview')}
-			title="Tour the composer — a guided walk through this view, sections, and publishing"
-			aria-label="Composer walkthrough"
-		>W</button>
+		{#if !isAtomic}
+			<button
+				class="affordance affordance--walkthrough"
+				onclick={() => runTour(mode === 'plain' ? 'compose-plain-overview' : 'compose-overview')}
+				title="Tour the composer — a guided walk through this view, sections, and publishing"
+				aria-label="Composer walkthrough"
+			>W</button>
+		{/if}
 		<button
 			class="affordance affordance--help"
 			onclick={openComposeHelp}
@@ -877,10 +998,27 @@
 		</div>
 	{/snippet}
 
+	<!-- Atomic mode = one title + tags header over a single body editor. No
+	     section parsing, delimiter, or nesting — the whole body is one event of
+	     the selected kind (blog/wiki/custom). -->
+	{#if isAtomic}
+		<div class="compose-content compose-content--scroll">
+			<div class="compose-stick">
+				{@render composeHeader()}
+			</div>
+			<div class="atomic-editor-wrap" data-tour="compose-atomic">
+				<CodeMirrorEditor
+					bind:value={atomicContent}
+					bind:editorView={atomicCmView}
+					{lineNumbers}
+					{vimMode}
+				/>
+			</div>
+		</div>
 	<!-- Full mode = the feed's shape: title + tags and the selection toolbar
 	     anchored (sticky) at the top of one scroll region; sections appended
 	     below and scrolling under them. One window, not two competing panes. -->
-	{#if mode === 'full'}
+	{:else if mode === 'full'}
 		<div class="compose-content compose-content--scroll">
 			<div class="compose-stick">
 				{@render composeHeader()}
@@ -1027,53 +1165,59 @@
 	{/if}
 
 	<div class="compose-actions" data-tour="compose-actions">
-		{#if mode === 'full'}
+		{#if mode === 'full' && !isAtomic}
 			<button onclick={addSection}>+ Section</button>
 		{/if}
 		{#if onpreview}
 			<button
 				class="preview-events-btn"
 				onclick={previewEvents}
-				disabled={mode === 'plain'
-					? detectedSections.length === 0
-					: compose.sections.length === 0}
-				title="Inspect the 30040/30041 events this draft would publish, as JSON"
+				disabled={noContent}
+				title={isAtomic
+					? `Inspect the kind ${composeKind} event this draft would publish, as JSON`
+					: 'Inspect the 30040/30041 events this draft would publish, as JSON'}
 			>Preview events</button>
 		{/if}
 		{#if onsavedraft}
 			<button
 				class="save-draft-btn"
 				onclick={saveDraftAction}
-				disabled={mode === 'plain'
-					? detectedSections.length === 0
-					: compose.sections.length === 0}
+				disabled={noContent}
 				title="Save this draft locally — survives refresh; resume it from the Saved drafts list"
 			>Save draft</button>
 		{/if}
-		<button
-			class="diff-published-btn"
-			onclick={diffPublishedAction}
-			disabled={mode === 'plain'
-				? detectedSections.length === 0
-				: compose.sections.length === 0}
-			title="Diff the current draft against the last published version of this article"
-		>Diff vs published</button>
+		{#if !isAtomic}
+			<button
+				class="diff-published-btn"
+				onclick={diffPublishedAction}
+				disabled={mode === 'plain'
+					? detectedSections.length === 0
+					: compose.sections.length === 0}
+				title="Diff the current draft against the last published version of this article"
+			>Diff vs published</button>
+		{/if}
 		{#if canPublish}
 			<button
 				class="publish-btn"
 				onclick={publishAll}
-				disabled={mode === 'plain'
-					? detectedSections.length === 0
-					: compose.sections.length === 0 || !structuralChange}
-				title={mode === 'plain'
-					? detectedSections.length === 0
-						? 'Type a heading line to detect a section'
-						: 'Sign a local snapshot (broadcast it separately when ready)'
-					: structuralChange
+				disabled={isAtomic
+					? !atomicCanPublish
+					: mode === 'plain'
+						? detectedSections.length === 0
+						: compose.sections.length === 0 || !structuralChange}
+				title={isAtomic
+					? atomicCanPublish
 						? 'Sign a local snapshot (broadcast it separately when ready)'
-						: compose.source_publication_addr
-							? 'No structural change since the source publication — nothing to sign'
-							: 'Add or modify a section to enable signing'}
+						: 'Add a title and body to enable signing'
+					: mode === 'plain'
+						? detectedSections.length === 0
+							? 'Type a heading line to detect a section'
+							: 'Sign a local snapshot (broadcast it separately when ready)'
+						: structuralChange
+							? 'Sign a local snapshot (broadcast it separately when ready)'
+							: compose.source_publication_addr
+								? 'No structural change since the source publication — nothing to sign'
+								: 'Add or modify a section to enable signing'}
 			>Sign</button>
 			{#if checkedIds.size > 0}
 				<button class="publish-btn publish-selected" onclick={publishSelected}>Sign ({checkedIds.size})</button>
@@ -1133,6 +1277,43 @@
 	.mode-seg--on {
 		background: color-mix(in srgb, var(--id-yours) 22%, transparent);
 		color: var(--id-yours);
+	}
+
+	.kind-group {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		cursor: pointer;
+		user-select: none;
+	}
+	.kind-label {
+		font-size: 0.75rem;
+		color: var(--fg-muted);
+		font-weight: 600;
+		text-transform: uppercase;
+		letter-spacing: 0.05em;
+	}
+	.kind-select {
+		font-family: var(--font-mono);
+		font-size: 0.8rem;
+		padding: 3px 6px;
+		cursor: pointer;
+	}
+	.kind-input {
+		width: 72px;
+		font-family: var(--font-mono);
+		font-size: 0.8rem;
+		padding: 3px 6px;
+	}
+
+	/* Atomic body editor — fills the scroll region under the sticky header,
+	   same framing as the plain editor wrap. */
+	.atomic-editor-wrap {
+		flex: 1;
+		display: flex;
+		flex-direction: column;
+		min-height: 0;
+		padding: 12px;
 	}
 
 	.delim-group {

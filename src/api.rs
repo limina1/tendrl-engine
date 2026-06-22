@@ -3320,12 +3320,17 @@ pub struct SaveDraftRequest {
     /// Existing publication d-tag to preserve addressable identity on resume.
     #[serde(default)]
     pub d_tag: Option<String>,
+    /// Output kind — `None`/`30040` = publication; any other kind marks an
+    /// atomic draft (blog/wiki/custom) so resume reopens in the right mode.
+    #[serde(default)]
+    pub kind: Option<u32>,
 }
 
 fn compose_from_draft_request(req: SaveDraftRequest) -> ComposeState {
     let mut compose = ComposeState::new();
     compose.title = req.title;
     compose.d_tag = req.d_tag;
+    compose.kind = req.kind;
     compose.tags = req
         .tags
         .into_iter()
@@ -3455,6 +3460,7 @@ fn request_to_draft_compose(req: &SaveDraftRequest) -> crate::drafts::DraftCompo
     DraftComposeState {
         title: req.title.clone(),
         d_tag: req.d_tag.clone(),
+        kind: req.kind,
         tags: req
             .tags
             .iter()
@@ -3542,6 +3548,8 @@ fn publication_to_draft_compose(
     DraftComposeState {
         title: pub_.title.clone().unwrap_or_default(),
         d_tag: Some(pub_.addr.d_tag.clone()),
+        // A loaded publication flattened for diffing is always the 30040 graph.
+        kind: None,
         tags: custom_tags(pub_.index.data()),
         sections,
     }
@@ -3632,7 +3640,17 @@ pub struct PublishRequest {
     pub title: String,
     #[serde(default)]
     pub tags: Vec<(String, String)>,
+    #[serde(default)]
     pub sections: Vec<PublishSectionRequest>,
+    /// Emit a single *atomic* event of this kind (NIP-23 `30023`, NIP-54
+    /// `30818`, or any custom replaceable kind) instead of the 30040/30041
+    /// publication graph. Absent or `30040` keeps the section-graph path.
+    #[serde(default)]
+    pub kind: Option<u32>,
+    /// Body for the atomic event (used only when `kind` is set). The whole
+    /// editor text becomes the event's `.content`; no section splitting.
+    #[serde(default)]
+    pub content: Option<String>,
     /// Reuse this index `d` tag instead of minting a fresh nanoid — set on
     /// republish so the 30040 replaces the existing one rather than forking.
     #[serde(default)]
@@ -3908,8 +3926,45 @@ pub async fn publish_handler(
     Extension(signing): Extension<crate::signing::SigningController>,
     Json(req): Json<PublishRequest>,
 ) -> Result<impl IntoResponse, EngineError> {
-    // Map request to ComposeState
     use crate::publication::compose::TagEntry;
+
+    // Atomic single-event kinds (NIP-23 long-form, NIP-54 wiki, or any custom
+    // addressable kind) publish ONE event whose content is the whole body —
+    // not the 30040/30041 section graph. `30040`/absent falls through to the
+    // publication path below.
+    if let Some(kind) = req.kind.filter(|k| *k != KIND_PUBLICATION_INDEX as u32) {
+        if !req.sign {
+            return Err(EngineError::BadRequest(
+                "Publishing writes a signed snapshot; save an unsigned working draft via POST /api/v1/drafts instead."
+                    .into(),
+            ));
+        }
+        let active_pubkey = require_active_pubkey(&signing).await?;
+        let tags: Vec<TagEntry> = req
+            .tags
+            .iter()
+            .map(|(n, v)| TagEntry {
+                name: n.clone(),
+                value: v.clone(),
+            })
+            .collect();
+        let content = req.content.unwrap_or_default();
+        let event = crate::publication::build_signed_atomic_event_via_signer(
+            kind,
+            &req.title,
+            &content,
+            &tags,
+            req.d_tag.as_deref(),
+            &active_pubkey,
+            &signing,
+        )
+        .await
+        .map_err(map_publish_sign_error)?;
+
+        return finalize_publish(&engine, event, vec![], req.broadcast, req.relays, req.sign).await;
+    }
+
+    // Map request to ComposeState
     let mut compose = ComposeState::new();
     compose.title = req.title;
     for (name, value) in &req.tags {
@@ -4017,6 +4072,37 @@ pub async fn publish_preview_handler(
     .unwrap_or_else(|| "<preview>".to_string());
 
     use crate::publication::compose::TagEntry;
+
+    // Atomic kinds preview as a single unsigned event (placeholder sig),
+    // mirroring the publish branch so the JSON inspector shows exactly what
+    // an atomic publish will emit.
+    if let Some(kind) = req.kind.filter(|k| *k != KIND_PUBLICATION_INDEX as u32) {
+        let tags: Vec<TagEntry> = req
+            .tags
+            .iter()
+            .map(|(n, v)| TagEntry {
+                name: n.clone(),
+                value: v.clone(),
+            })
+            .collect();
+        let content = req.content.clone().unwrap_or_default();
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let event = crate::publication::build_atomic_event(
+            kind,
+            &req.title,
+            &content,
+            &tags,
+            req.d_tag.as_deref(),
+            &pubkey,
+            timestamp,
+            None,
+        );
+        return Ok(Json(json!({ "events": [event] })));
+    }
+
     let mut compose = ComposeState::new();
     compose.title = req.title;
     for (name, value) in &req.tags {
