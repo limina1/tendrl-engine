@@ -102,7 +102,10 @@ else
     fi
     sleep 1
     echo "Starting frontend preview on 5174..."
-    (cd web && pnpm preview -- --port 5174 --strictPort) &
+    # Invoke vite directly: `pnpm preview -- ...` forwards the `--` literally,
+    # so vite sees `vite preview -- --port 5174` and ignores the flags (falling
+    # back to its default :4173). `pnpm exec` runs the binary with real args.
+    (cd web && pnpm exec vite preview --port 5174 --strictPort) &
     PIDS+=($!)
     FRONTEND_URL="http://localhost:5174"
 fi
