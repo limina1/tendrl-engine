@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { untrack } from 'svelte';
 	import { getAppState } from '$lib/state.svelte';
 	import { nip07, startNip07Watch } from '$lib/identity/nip07.svelte';
 	import { trigger as triggerTip } from '$lib/wm/discovery.svelte';
@@ -108,31 +109,35 @@
 		applyAiUpdate({ enabled_tools: names });
 	}
 
+	// Mount-once setup. Wrapped in `untrack` because the body reads reactive
+	// state synchronously (triggerTip reads the discovery queue; the loaders'
+	// async writes land in aiSettings/identity/embedding/baseline) — without it,
+	// every load's write re-runs the effect and re-fires every fetch, a cascade
+	// that storms /identity, /ai/settings, /ai/prompt, /embed/status and
+	// /settings until the browser refuses new connections (ERR_INSUFFICIENT_
+	// RESOURCES). untrack makes it run exactly once when the buffer mounts.
 	$effect(() => {
-		// Keep window.nostr detection live + reactive: the watcher bursts now
-		// (covers the document_start inject race) and re-checks on return-to-tab,
-		// so enabling/unlocking the extension *after* Settings is open lights up
-		// the radio on its own — no leave-and-return needed.
-		startNip07Watch();
-		// Walkthrough: opening Settings is the "two ways in" beat of the one auto
-		// walk. It's precondition-gated (`relevantWhen: !hasIdentity`), so it
-		// self-suppresses for anyone already signed in — an established user
-		// opening Settings to change a relay is no longer interrupted — and
-		// seen-gating stops it re-nagging. Also this buffer's opt-in registry
-		// `tour`, replayable from the mode-line W.
-		triggerTip('sign-in-methods');
-		// Force a fresh /identity + /settings fetch on mount. Without
-		// this, opening Settings shortly after an engine restart shows
-		// stale identityStatus from the last 30s-poll tick. Fire and
-		// forget — Svelte 5 re-derives `currentSource` once the state
-		// updates land.
-		app.refreshIdentity();
-		captureSavedBaseline();
-		loadAiSettings();
-		loadAiPrompt();
-		// Pull a fresh embedding status so the Embeddings section
-		// reflects live health + index counts, not the last 30s-poll tick.
-		app.refreshEmbeddingStatus();
+		untrack(() => {
+			// Keep window.nostr detection live: the watcher bursts now (covers the
+			// document_start inject race) and re-checks on return-to-tab via its own
+			// listeners, so enabling/unlocking the extension *after* Settings is
+			// open lights up the radio on its own — no effect re-run needed.
+			startNip07Watch();
+			// Walkthrough: opening Settings is the "two ways in" beat of the one
+			// auto walk. Precondition-gated (`relevantWhen: !hasIdentity`), so it
+			// self-suppresses for anyone already signed in; seen-gating stops it
+			// re-nagging. Also this buffer's opt-in registry `tour`.
+			triggerTip('sign-in-methods');
+			// Force a fresh /identity + /settings fetch on mount so a recent engine
+			// restart doesn't leave stale status from the last 30s-poll tick.
+			app.refreshIdentity();
+			captureSavedBaseline();
+			loadAiSettings();
+			loadAiPrompt();
+			// Fresh embedding status so the Embeddings section reflects live health
+			// + index counts, not the last 30s-poll tick.
+			app.refreshEmbeddingStatus();
+		});
 	});
 
 	// Inputs for engine login flow
