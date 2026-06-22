@@ -246,7 +246,10 @@
 
 	/** If `line` starts with one of the heading prefixes for the active
 	 *  delimiter (level 1..6), return that level and the title; else null.
-	 *  Counts leading delimiter chars on the line and requires a space. */
+	 *  Counts leading delimiter chars and requires a trailing space. An *empty*
+	 *  title (`= ` with nothing after) is still a heading — so a fresh draft's
+	 *  lone `= ` round-trips through Full↔Plain instead of being misread as
+	 *  content (which would explode into a stray `=`/`==`/`=` on re-serialize). */
 	function parseHeadingLine(line: string, d: string): { level: number; title: string } | null {
 		if (line.length === 0 || line[0] !== d) return null;
 		let i = 0;
@@ -254,7 +257,6 @@
 		if (i < 1 || i > 6) return null;
 		if (line[i] !== ' ') return null;
 		const title = line.slice(i + 1).trimEnd();
-		if (!title) return null;
 		return { level: i, title };
 	}
 
@@ -369,10 +371,20 @@
 	// any heading level >= 2 as a section; level 1 is reserved for the
 	// publication title. Per-section level rides through to compose so
 	// the engine can emit the nested 30040/30041 graph.
-	function parseAll(text: string): { title: string; tags: TagEntry[]; sections: ParsedSection[] } {
+	function parseAll(text: string): {
+		title: string;
+		hasTitle: boolean;
+		tags: TagEntry[];
+		sections: ParsedSection[];
+	} {
 		const d = effectiveDelim();
 		const lines = text.split('\n');
 		let docTitle = '';
+		// Whether a level-1 `=` heading LINE was seen — distinct from `docTitle`
+		// being non-empty. An explicit but empty `= ` sets this true (→ Publication
+		// shape); a doc with only `==` sections and no `=` line leaves it false
+		// (→ Notes). Drives the auto-detected shape, not the title text.
+		let hasTitle = false;
 		const docTags: TagEntry[] = [];
 		const sections: ParsedSection[] = [];
 		let current: {
@@ -387,8 +399,9 @@
 
 		for (const line of lines) {
 			const head = parseHeadingLine(line, d);
-			if (inDocHeader && !docTitle && head && head.level === 1) {
+			if (inDocHeader && !hasTitle && head && head.level === 1) {
 				docTitle = head.title;
+				hasTitle = true;
 				continue;
 			}
 			// Sections at levels 2..parseLevel become their own segments;
@@ -451,7 +464,7 @@
 				level: current.level
 			});
 		}
-		return { title: docTitle, tags: docTags, sections };
+		return { title: docTitle, hasTitle, tags: docTags, sections };
 	}
 
 	// Reconcile parsed sections with existing compose sections. Carries
@@ -505,6 +518,7 @@
 		if (mode !== 'plain')
 			return {
 				title: '',
+				hasTitle: false,
 				tags: [] as TagEntry[],
 				sections: [] as {
 					title: string;
@@ -517,6 +531,7 @@
 		const oldSections = compose.sections;
 		return {
 			title: parsed.title,
+			hasTitle: parsed.hasTitle,
 			tags: parsed.tags,
 			sections: parsed.sections.map((p, i) => {
 				const existing = i < oldSections.length ? oldSections[i] : null;
@@ -541,11 +556,17 @@
 	// sections bind into one Publication (30040 index + 30041s); with no title
 	// they're scattered Notes — each section a standalone 30041, no index. The
 	// mode-bar shows which, so the user sees what a Sign will publish.
-	const effectiveTitle = $derived(mode === 'plain' ? detectedState.title : compose.title);
 	const hasSections = $derived(
 		mode === 'plain' ? detectedSections.length > 0 : compose.sections.length > 0
 	);
-	const isNotes = $derived(!isAtomic && hasSections && effectiveTitle.trim().length === 0);
+	// Keyed on the title LINE's presence, not its text: an explicit but empty
+	// `= ` heading still counts as a title (→ Publication), so a fresh plain
+	// draft (just `=`) doesn't read as Notes. Notes is the genuine no-`=`-line
+	// case (only `==` sections), or an empty title field in full mode.
+	const hasDocTitle = $derived(
+		mode === 'plain' ? detectedState.hasTitle : compose.title.trim().length > 0
+	);
+	const isNotes = $derived(!isAtomic && hasSections && !hasDocTitle);
 
 	// Fingerprint of section identity + lock/divergence state, so we can
 	// detect external changes. readonly/modified flips cover the badge
