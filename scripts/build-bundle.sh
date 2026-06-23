@@ -34,7 +34,16 @@ echo "==> Building engine (cargo release)…"
 touch web/build
 cargo build --release
 
+# Stamp a versioned, release-named copy for handing to testers. The version is
+# read from Cargo.toml so it can never drift from the actual build. Linux-only
+# for now — no arch/triple in the name; keep it short.
+version=$(grep -m1 '^version' Cargo.toml | sed -E 's/version *= *"([^"]+)".*/\1/')
+mkdir -p dist
+release_name="tendrl-engine-${version}"
+cp target/release/tendrl-engine "dist/${release_name}"
+
 echo ""
 echo "Done: target/release/tendrl-engine"
-echo "Run it:  ./target/release/tendrl-engine"
+echo "Release: dist/${release_name}  (hand this to testers)"
+echo "Run it:  ./dist/${release_name}"
 echo "(opens http://127.0.0.1:3030/ — log in with a NIP-07 browser extension)"
