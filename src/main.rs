@@ -581,13 +581,48 @@ async fn main() -> anyhow::Result<()> {
         if is_loopback {
             let url = format!("http://{}/", bind_addr);
             info!("Opening browser at {}", url);
-            if let Err(e) = webbrowser::open(&url) {
-                tracing::warn!("Could not open browser ({e}); navigate to {url} manually");
-            }
+            open_default_browser(&url);
         }
     }
 
     axum::serve(listener, app).await?;
 
     Ok(())
+}
+
+/// Open `url` in the user's **default** browser.
+///
+/// On Linux we route through `$BROWSER` (explicit user override) then
+/// `xdg-open`, which honor the desktop's `x-scheme-handler/http` association —
+/// i.e. whatever the user actually set as their default. The `webbrowser`
+/// crate's Linux path can otherwise bypass that and launch a hardcoded browser
+/// (the "wrong browser" testers reported). macOS/Windows defer to the crate,
+/// whose `open` / `start` already respect the system default. If the platform
+/// opener is missing or fails, fall back to the crate's heuristics.
+fn open_default_browser(url: &str) {
+    #[cfg(target_os = "linux")]
+    {
+        use std::process::{Command, Stdio};
+        let spawn = |prog: &str| {
+            Command::new(prog)
+                .arg(url)
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+                .is_ok()
+        };
+        // Explicit $BROWSER wins; otherwise the desktop default via xdg-open.
+        if let Ok(b) = std::env::var("BROWSER") {
+            if !b.is_empty() && spawn(&b) {
+                return;
+            }
+        }
+        if spawn("xdg-open") {
+            return;
+        }
+        // Neither worked — fall through to the crate.
+    }
+    if let Err(e) = webbrowser::open(url) {
+        tracing::warn!("Could not open browser ({e}); navigate to {url} manually");
+    }
 }
