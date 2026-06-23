@@ -1,3 +1,11 @@
+<script module lang="ts">
+	// Cross-instance throttle for the mount-load batch: caps the heavy
+	// /settings, /ai/*, /embed and /identity loads to once/second across all
+	// instances, so a remount can never storm those endpoints. Belt-and-braces
+	// behind the real fix (idempotent BufferStore.openBuffer).
+	let lastSettingsLoadAt = 0;
+</script>
+
 <script lang="ts">
 	import { untrack } from 'svelte';
 	import { getAppState } from '$lib/state.svelte';
@@ -118,6 +126,13 @@
 	// RESOURCES). untrack makes it run exactly once when the buffer mounts.
 	$effect(() => {
 		untrack(() => {
+			// Safety net: coalesce the batch to once/second across instances. The
+			// real fix for the old remount storm is `BufferStore.openBuffer` being
+			// idempotent (re-opening the focused buffer is a no-op); this stays as
+			// cheap insurance so a future remount regression can't storm the engine.
+			const now = Date.now();
+			if (now - lastSettingsLoadAt < 1000) return;
+			lastSettingsLoadAt = now;
 			// Keep window.nostr detection live: the watcher bursts now (covers the
 			// document_start inject race) and re-checks on return-to-tab via its own
 			// listeners, so enabling/unlocking the extension *after* Settings is

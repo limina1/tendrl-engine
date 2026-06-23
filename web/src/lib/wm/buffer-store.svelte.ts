@@ -397,6 +397,23 @@ export class BufferStore {
 	}
 
 	openBuffer(entry: OpenBuf): boolean {
+		// Idempotent fast-path: if this buffer is already the focused leaf of an
+		// open slot, opening it again is a pure no-op — NO state writes. Without
+		// this, a reactive caller (an `$effect`/derived that opens a buffer) drives
+		// an infinite loop: openBuffer → selectBuffer → setLeaf rebuilds the leaf →
+		// the component re-mounts → the effect re-runs → openBuffer again. Compare
+		// by id (for singletons like settings/feed that's identity), focus, and
+		// open-state so a genuine switch/restore still falls through.
+		const cur = this.findSlotForClass(entry.className);
+		if (
+			cur &&
+			this.focusedSlot === cur &&
+			this.slotStates[cur] === 'open' &&
+			this.focusedLeaf(cur)?.buffer.id === entry.buffer.id &&
+			this.openBuffers.some((b) => b.buffer.id === entry.buffer.id)
+		) {
+			return true;
+		}
 		const idx = this.openBuffers.findIndex((b) => b.buffer.id === entry.buffer.id);
 		if (idx === -1) {
 			this.openBuffers = [...this.openBuffers, entry];
