@@ -74,5 +74,24 @@ echo "--- NEEDED shared libs ---"; objdump -p "${OUT}" | awk '/NEEDED/ {print " 
 echo -n "--- GLIBC   max required: "; objdump -T "${OUT}" | grep -oP 'GLIBC_\d+\.\d+'  | sort -V | tail -1
 echo -n "--- GLIBCXX max required: "; objdump -T "${OUT}" | grep -oP 'GLIBCXX_\d+\.\d+' | sort -V | tail -1 || echo "(none)"
 echo ""
-echo "Done: ${OUT}"
-echo "Ship that single file. Run it:  ./tendrl-engine   (opens http://127.0.0.1:3030/)"
+# Ship the embedding model alongside the binary so end users get embeddings with
+# no first-run HuggingFace download. `--fetch-model` downloads it into a `models/`
+# folder next to the executable (the engine auto-detects that folder at runtime).
+# The weights are platform-agnostic ONNX, so fetching with the just-built binary
+# on this host is fine. Needs network here (the build host), not on the user's.
+OUT_DIR="$(dirname "${OUT}")"
+echo "==> Fetching embedding model beside the binary…"
+"${OUT}" --fetch-model
+
+echo "==> Packaging distributable tarball (binary + models/)…"
+TARBALL="${TARGET_SUBDIR}/tendrl-engine.tar.gz"
+tar -C "${OUT_DIR}" -czf "${TARBALL}" tendrl-engine models
+
+echo ""
+echo "Done."
+echo "  Single binary : ${OUT}"
+echo "  Model folder  : ${OUT_DIR}/models  (ships beside the binary)"
+echo "  Distributable : ${TARBALL}  ← share this"
+echo ""
+echo "Testers: extract it, then  ./tendrl-engine   (opens http://127.0.0.1:3030/)."
+echo "The 'models' folder must stay next to the binary; no model download needed."

@@ -67,6 +67,9 @@ pub struct EmbeddingIndex {
     /// fastembed model code resolved from `config.model` at construction.
     model_code: String,
     data_dir: PathBuf,
+    /// Where fastembed loads/caches the model weights. `None` = fastembed's own
+    /// default cache. Resolved once at construction (see `resolve_cache_dir`).
+    cache_dir: Option<PathBuf>,
 }
 
 impl EmbeddingIndex {
@@ -100,6 +103,7 @@ impl EmbeddingIndex {
             backend: std::sync::OnceLock::new(),
             model_code: Self::resolve_model_code(&config.model),
             data_dir: data_dir.to_path_buf(),
+            cache_dir: Self::resolve_cache_dir(config),
         })
     }
 
@@ -162,6 +166,7 @@ impl EmbeddingIndex {
             backend: std::sync::OnceLock::new(),
             model_code: Self::resolve_model_code(&config.model),
             data_dir: data_dir.to_path_buf(),
+            cache_dir: Self::resolve_cache_dir(config),
         })
     }
 
@@ -354,30 +359,64 @@ impl EmbeddingIndex {
         .to_string()
     }
 
+    /// Resolve the fastembed model cache directory.
+    ///
+    /// Priority: an explicit `config.cache_dir`, else a `models/` folder shipped
+    /// next to the executable (the portable bundle ships one, so testers get
+    /// embeddings with no first-run HuggingFace download), else `None` — letting
+    /// fastembed use its own default cache (unchanged behavior for source runs).
+    fn resolve_cache_dir(config: &EmbeddingConfig) -> Option<PathBuf> {
+        if let Some(dir) = &config.cache_dir {
+            return Some(PathBuf::from(dir));
+        }
+        if let Ok(exe) = std::env::current_exe() {
+            if let Some(parent) = exe.parent() {
+                let shipped = parent.join("models");
+                if shipped.is_dir() {
+                    return Some(shipped);
+                }
+            }
+        }
+        None
+    }
+
+    /// Download (if absent) the model weights into `cache_dir` and verify they
+    /// load — used by the `--fetch-model` CLI to pre-populate the `models/`
+    /// folder shipped beside the portable binary.
+    pub fn prefetch_model(model: &str, cache_dir: &Path) -> Result<()> {
+        std::fs::create_dir_all(cache_dir)
+            .map_err(|e| EngineError::Config(format!("Failed to create model cache dir: {e}")))?;
+        let code = Self::resolve_model_code(model);
+        Self::load_model(&code, Some(cache_dir))?;
+        Ok(())
+    }
+
     /// Lazily load (once) and return the in-process ONNX backend.
     fn backend(&self) -> Result<&EmbeddingBackend> {
         if let Some(b) = self.backend.get() {
             return Ok(b);
         }
-        let backend = Self::load_model(&self.model_code)?;
+        let backend = Self::load_model(&self.model_code, self.cache_dir.as_deref())?;
         // A concurrent caller may have set it first; either way one model wins
         // and the loser is dropped.
         let _ = self.backend.set(backend);
         Ok(self.backend.get().expect("backend set above"))
     }
 
-    fn load_model(code: &str) -> Result<EmbeddingBackend> {
+    fn load_model(code: &str, cache_dir: Option<&Path>) -> Result<EmbeddingBackend> {
         use fastembed::{InitOptions, TextEmbedding};
-        let model = TextEmbedding::try_new(
-            InitOptions::new(code.to_string().try_into().map_err(|_| {
-                EngineError::Config(format!(
-                    "Unknown fastembed model: '{code}'. \
-                     Set [embedding] model to a fastembed model code."
-                ))
-            })?)
-            .with_show_download_progress(true),
-        )
-        .map_err(|e| EngineError::Config(format!("Failed to load ONNX model: {e}")))?;
+        let mut opts = InitOptions::new(code.to_string().try_into().map_err(|_| {
+            EngineError::Config(format!(
+                "Unknown fastembed model: '{code}'. \
+                 Set [embedding] model to a fastembed model code."
+            ))
+        })?)
+        .with_show_download_progress(true);
+        if let Some(dir) = cache_dir {
+            opts = opts.with_cache_dir(dir.to_path_buf());
+        }
+        let model = TextEmbedding::try_new(opts)
+            .map_err(|e| EngineError::Config(format!("Failed to load ONNX model: {e}")))?;
         Ok(EmbeddingBackend { model })
     }
 }

@@ -44,6 +44,12 @@ struct Args {
     /// Do not open a browser on startup (for headless/server use)
     #[arg(long)]
     no_open: bool,
+
+    /// Download the embedding model into a `models/` folder next to the binary,
+    /// then exit. Pre-populates the portable bundle so it ships with the model —
+    /// end users get embeddings with no first-run HuggingFace download.
+    #[arg(long)]
+    fetch_model: bool,
 }
 
 /// Restore a persisted assistant identity from the OS keyring into `session`.
@@ -124,6 +130,25 @@ async fn main() -> anyhow::Result<()> {
 
     if let Some(data_dir) = args.data_dir {
         config.database.data_dir = data_dir.to_string_lossy().to_string();
+    }
+
+    // `--fetch-model`: pre-download the embedding model into a `models/` folder
+    // next to the executable, then exit. The portable bundle ships that folder so
+    // end users get embeddings with no first-run HuggingFace download. Runs before
+    // any server/db setup.
+    if args.fetch_model {
+        let dir = std::env::current_exe()
+            .ok()
+            .and_then(|p| p.parent().map(|d| d.join("models")))
+            .unwrap_or_else(|| PathBuf::from("models"));
+        info!(
+            "Fetching embedding model '{}' into {}",
+            config.embedding.model,
+            dir.display()
+        );
+        nostr_engine::embedding::EmbeddingIndex::prefetch_model(&config.embedding.model, &dir)?;
+        info!("Model cached at {} — ship this folder beside the binary.", dir.display());
+        return Ok(());
     }
 
     info!("Starting nostr-engine v{}", env!("CARGO_PKG_VERSION"));

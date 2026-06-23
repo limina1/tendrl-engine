@@ -340,6 +340,13 @@ pub struct EmbeddingConfig {
     /// Custom index path (defaults to {data_dir parent}/vectors.*)
     #[serde(default)]
     pub index_path: Option<String>,
+    /// Where fastembed caches the ONNX model weights. Unset (the default) lets
+    /// fastembed use its own cache — EXCEPT the engine auto-detects a `models/`
+    /// folder shipped next to the executable (the portable bundle ships one), so
+    /// testers get embeddings with no first-run HuggingFace download. Set this to
+    /// pin an explicit cache location.
+    #[serde(default)]
+    pub cache_dir: Option<String>,
     /// Automatically embed new events of the configured kinds on retrieval
     /// (relay fetch) and publishing. When false, embedding only happens via
     /// the manual sync/reindex actions. Defaults on.
@@ -373,6 +380,7 @@ impl Default for EmbeddingConfig {
             model: default_embedding_model(),
             dimensions: default_dimensions(),
             index_path: None,
+            cache_dir: None,
             auto_embed: default_auto_embed(),
             embed_kinds: default_embed_kinds(),
         }
