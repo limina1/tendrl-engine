@@ -84,7 +84,10 @@ echo "==> Fetching embedding model beside the binary…"
 "${OUT}" --fetch-model
 
 echo "==> Packaging distributable tarball (binary + models/)…"
-TARBALL="${TARGET_SUBDIR}/tendrl-engine.tar.gz"
+# Version-stamp the tarball name from Cargo.toml so the release filename can't
+# drift from the build. Tag the matching commit `v<version>` when you ship.
+version=$(grep -m1 '^version' Cargo.toml | sed -E 's/version *= *"([^"]+)".*/\1/')
+TARBALL="${TARGET_SUBDIR}/tendrl-engine-${version}.tar.gz"
 tar -C "${OUT_DIR}" -czf "${TARBALL}" tendrl-engine models
 
 echo ""
