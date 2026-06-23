@@ -10,7 +10,7 @@
 //! hiding it. All ids are matched lowercase (relays return mixed case).
 //!
 //! Moved from the web's `discussions/thread.ts::buildThread` per the
-//! frontend/backend boundary (docs/eval/08). The web keeps only the
+//! frontend/backend boundary. The web keeps only the
 //! depth→indent rendering and tree-walk view helpers.
 
 use serde::{Deserialize, Serialize};

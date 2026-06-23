@@ -13,7 +13,7 @@
 //! The former ratatui TUI lived here too (a `TreeState`/`TreeEngine`/
 //! `TreeCommand` navigation machine plus window/palette/clipboard view-state).
 //! It had no production consumer after the TUI was removed and was deleted in
-//! the Phase 3 boundary cleanup (docs/eval/09). View/interaction state belongs
+//! the Phase 3 boundary cleanup. View/interaction state belongs
 //! in the frontend; the compose payload types moved to
 //! [`crate::publication::compose`].
 

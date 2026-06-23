@@ -1,0 +1,39 @@
+#+TITLE: tendrl-engine — docs index
+#+DATE: 2026-06-22
+
+Everything in this directory is meant to be *current and true*. Finished plans
+and superseded designs have been moved to [[file:archive/][=archive/=]] (kept for provenance; full
+history is in git). The point-in-time =docs/eval/= boundary-compliance audit was
+completed and its findings folded into the code and these docs — it no longer
+exists; see the boundary rule in =CLAUDE.md=.
+
+* Start here (canon)
+- [[file:project-summary.org][project-summary.org]] — what the project is, architecture, design decisions, status
+- [[file:features.org][features.org]] — the single canonical feature inventory
+- =../CLAUDE.md= — module map + the frontend/backend boundary rule (the governing rule)
+
+* Subsystem references (current)
+- [[file:wm-shell.md][wm-shell.md]] — the WM/buffer shell spec (the web UI)
+- [[file:search-architecture.org][search-architecture.org]] — search parser + query model
+- [[file:embedding-and-fetching.org][embedding-and-fetching.org]] — FetchPolicy + embedding/HNSW
+- [[file:publication-architecture.org][publication-architecture.org]] — NKBIP-01 kinds 30040/30041 + tree
+- [[file:nostrdb-deletion-architecture.org][nostrdb-deletion-architecture.org]] — deletion constraints + workarounds
+- [[file:relay-classes-and-info-port.md][relay-classes-and-info-port.md]] — relay-role taxonomy (routing partly open)
+- [[file:ai-tools-architecture.md][ai-tools-architecture.md]] · [[file:ai-assistant-status.md][ai-assistant-status.md]] — LLM tool-calling design + status
+- [[file:chat-api-walkthrough.org][chat-api-walkthrough.org]] — chat HTTP endpoints
+- [[file:publication_creation.md][publication_creation.md]] — compose → publish pipeline
+- [[file:portable-build.md][portable-build.md]] — single-exe / portable Linux build
+- [[file:nostrdown.org][nostrdown.org]] — proposed ={{ }}= cross-event reference syntax (design)
+
+* Open roadmaps
+- [[file:publish-flow-engine-plan.md][publish-flow-engine-plan.md]] — publish-session orchestration
+- [[file:discussions-plan.md][discussions-plan.md]] — discussions write-side (comments, highlights)
+- [[file:multi-user-architecture.org][multi-user-architecture.org]] — multi-user direction (draft)
+- [[file:reading-editing-workflow.md][reading-editing-workflow.md]] — transclusion / nested-30040 vision
+- [[file:data-lifecycle-roadmap.org][data-lifecycle-roadmap.org]] · [[file:stability-roadmap.org][stability-roadmap.org]] — data + stability work
+- [[file:ui-improvements.org][ui-improvements.org]] — running web-UI improvement list
+
+* Logs
+- [[file:bugs.org][bugs.org]] — bug log (open + fixed)
+- [[file:commands.org][commands.org]] — verify/test command reference (keep long commands here, not in chat)
+- [[file:user_testing.org][user_testing.org]] — manual validation checklist

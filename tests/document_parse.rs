@@ -60,7 +60,7 @@ fn docx_splits_on_headings_and_resolves_entities() {
 #[test]
 fn pdf_extracts_text_when_sample_present() {
     // Repo sample; skip gracefully in checkouts that don't carry it.
-    let bytes = match std::fs::read("docs/initiatory_sound.pdf") {
+    let bytes = match std::fs::read("tests/fixtures/initiatory_sound.pdf") {
         Ok(b) => b,
         Err(_) => return,
     };

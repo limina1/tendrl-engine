@@ -7,7 +7,7 @@
 //! so every frontend (web, future emacs/nvim) shares one source of truth.
 //!
 //! Extracted from the former `tree::state` ratatui TUI state machine as part
-//! of the frontend/backend boundary cleanup (docs/eval/09).
+//! of the frontend/backend boundary cleanup.
 
 use crate::publication::NAddr;
 

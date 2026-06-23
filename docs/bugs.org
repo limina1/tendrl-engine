@@ -41,7 +41,7 @@ reactive to later prop changes), and =chat_reset= wiped the prompt entirely.
 
 * FIXED — /publish/blocks produced unsigned events for NIP-07 users
 :PROPERTIES:
-:found: 2026-05-30 (during docs/eval boundary-compliance cleanup)
+:found: 2026-05-30 (during the boundary-compliance cleanup)
 :branch: bugs/publish-blocks-signing
 :END:
 
