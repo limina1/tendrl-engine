@@ -173,8 +173,8 @@ same set — which is exactly the intended "shared space."
    already exist as pool items (`chatFragmentItems`). Verify/finish promoting a
    selected chat message into a pinned context note if not already smooth.
 4. **Boundary refinement:** stream a flattened TOC from the engine to drop
-   `ReaderBuffer`'s addr-keyed re-accumulation twin (see
-   `docs/eval/08-frontend-backend-boundary.org`).
+   `ReaderBuffer`'s addr-keyed re-accumulation twin (an optional refinement, not a
+   true duplicated algorithm — see the boundary rule in `CLAUDE.md`).
 5. **End-to-end verification with a real key + live relays** — exercise
    `fetch_from_relays` in Confirm mode (modal pops, decline → `approved:false`
    fallback) and a `publish` round-trip.

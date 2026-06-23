@@ -61,8 +61,9 @@ When the same event-derivation logic appears in both Rust and TS, resolve it **t
 Rust** (expose/wire the Rust, delete the TS twin) — not the reverse. Document
 *extraction* (PDF/DOCX/EPUB → text) now runs in-process in Rust (`src/document.rs`,
 pure-Rust crates — no native libs), as does *classification* (text → structured
-sections/kinds). See `docs/eval/` (esp. `08-frontend-backend-boundary.org`) for the
-current compliance map and open violations.
+sections/kinds). The cross-language audit that drove this split has been completed and
+its findings folded into the code; the boundary is now enforced (the TS twins were
+deleted as the Rust transforms landed).
 
 ### Core Engine (`src/engine.rs`)
 The `Engine` struct owns the `nostrdb::Ndb` instance, relay config, embedding index,
@@ -102,7 +103,7 @@ for signing and broadcasting events.
 ### Tree Module (`src/tree/`)
 **Status: pure core only.** This module was the navigation engine for the (now-removed)
 ratatui TUI; the dead command/state/navigation half was deleted in the Phase 3 boundary
-cleanup (see `docs/eval/09`). What remains is the frontend-agnostic, IO-free core kept
+cleanup. What remains is the frontend-agnostic, IO-free core kept
 as the source of truth for future frontends (web today; emacs/nvim planned):
 
 - **`parser.rs`**: line-by-line classification for compose (headings/attributes/code
@@ -129,7 +130,7 @@ ordering, dedup, and the in-horizon walk all run in Rust. The web (`ReaderBuffer
 re-accumulates those events into an addr-keyed map (mostly to track per-node load status
 and flatten to an outline), with collapse/expand kept as frontend view state. That
 re-accumulation is a thin twin — an optional refinement (stream flattened TOC rows to
-drop it), not a duplicated algorithm. See `docs/eval/08-frontend-backend-boundary.org`.
+drop it), not a duplicated algorithm.
 
 ### HTTP API (`src/api.rs`, `src/main.rs`)
 Axum-based REST API. State is `Arc<Engine>`. Routes are mounted under `/api/v1/`;

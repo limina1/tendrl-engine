@@ -1129,7 +1129,8 @@ pnpm -C web check     # 0 errors
 #+end_src
 
 * Plan 10 — relay-classes + cleanup: baseline + per-phase verify
-See [[file:eval/10-relay-classes-and-cleanup.org][docs/eval/10]]. Branch =cleanup/relay-classes= off =tendrl-web=.
+The open relay-class routing work (wire-or-hide broadcast/search/indexer tiers,
+SignerCapabilities, NIP-46). Branch =cleanup/relay-classes= off =tendrl-web=.
 
 ** Baseline (recorded 2026-06-08, on tendrl-web 91fda63)
 

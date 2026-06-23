@@ -1,0 +1,27 @@
+#+TITLE: docs/archive — historical snapshots
+#+DATE: 2026-06-22
+
+These are *landed plans* and *superseded designs*, kept for provenance. They are
+**not** a guide to the current system — for that, read =../README.org=,
+=../project-summary.org=, =../features.org=, and =../../CLAUDE.md=. Full history
+is in git.
+
+* Landed plans (the work shipped)
+- =identity-and-signing-plan.md= — identity + signing; all phases landed
+- =republish-diff.md= — same-title republish detection + diff; engine-side
+- =publication-fetch.org= — recursive depth-N publication loader; shipped
+- =event-view-modal-plan.md= · =event-view-modal-worksheet.md= — event modal; shipped
+- =event-relay-provenance-plan.md= — provenance badge; shipped (local-state deferred)
+- =reference-pool-worksheet.md= — reference pool; shipped
+
+* Superseded designs (replaced by newer docs/code)
+- =workbench-architecture.org= — the three-panel workbench, replaced by the WM
+  shell (=../wm-shell.md=)
+- =publication-tree-design.md= — the =TreeState=/=TreeEngine= TUI navigation
+  machine, deleted in the boundary cleanup; the live tree loader is in
+  =src/publication.rs=
+- =wm-shell.org= — older draft of the WM spec; the current one is =../wm-shell.md=
+- =design-brief.org= · =design-brief-compose.org= — early orientation briefs;
+  the compose surface has since moved to CodeMirror 6
+- =alexandria-publishing-documentation.org= — early publish-flow reference;
+  superseded by =../publish-flow-engine-plan.md=
