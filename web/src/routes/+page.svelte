@@ -1178,7 +1178,10 @@
 					{embeddingPill.label}
 				</button>
 			{/if}
-			{#if identityPill}
+			<!-- The signed-in `@npub…` identity is shown by the top-left me-chip;
+			     don't mirror it here (kind 'me' is skipped). This pill stays for
+			     the logged-out / locked / connecting affordances only. -->
+			{#if identityPill && identityPill.kind !== 'me'}
 				{#if identityPill.kind === 'connect'}
 					<button
 						class="pill {identityPill.pillClass}"
@@ -1192,14 +1195,6 @@
 						class="pill pill--btn {identityPill.pillClass}"
 						onclick={openSettings}
 						title="Identity locked — click to unlock"
-					>
-						{identityPill.label}
-					</button>
-				{:else if identityPill.kind === 'me'}
-					<button
-						class="pill pill--btn {identityPill.pillClass}"
-						onclick={openMyProfile}
-						title="Your identity — click to open profile"
 					>
 						{identityPill.label}
 					</button>

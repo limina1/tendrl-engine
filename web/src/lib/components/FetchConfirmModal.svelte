@@ -9,6 +9,10 @@
 
 	import type { FetchEvent, NipFilter, CompositionShape, Phase } from '$lib/types';
 	import { resolveConfirm, reissueConfirm } from '$lib/network/fetch-events.svelte';
+	import { addRelay } from '$lib/api';
+	import { getAppState } from '$lib/state.svelte';
+
+	const app = getAppState();
 
 	type IntentEvent = Extract<FetchEvent, { type: 'intent' }>;
 	let {
@@ -189,6 +193,16 @@
 		extras = [...extras, v];
 		appendInput = '';
 		appendError = null;
+		// For a feed sync, "Add relay" is a persistent edit to the read set —
+		// not a one-shot for this fetch. Persist immediately so closing the
+		// modal (Cancel / ×) keeps it and the next sync proposes it too. Feed
+		// pulls compose from the `fetch` set (engine.relays()). Other patterns
+		// (search/thread/event) keep the addition ephemeral — their relay set
+		// is ambiguous, so we don't write it through.
+		if (isFeedIntent) {
+			addRelay('fetch', v).catch(() => {});
+			app.pushToast(`Saved ${v.replace(/^wss?:\/\//, '')} to your read set`, 'success', 2500);
+		}
 	}
 
 	function copyDsl() {
@@ -203,8 +217,10 @@
 
 	function confirm() {
 		if (selectedRelays.length === 0) return;
-		// The broad "general feed" pull (when on) is already part of this
-		// intent's composed query, so a plain confirm covers it.
+		// Appended relays were already persisted to the read set at Add-relay
+		// time (see addExtra), so a plain confirm just fires the fetch. The
+		// broad "general feed" pull (when on) is already part of this intent's
+		// composed query.
 		resolveConfirm(true, selectedRelays);
 	}
 	function cancel() {

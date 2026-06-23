@@ -1076,18 +1076,41 @@ function _createAppState() {
 		feedLoadingMore = true;
 		try {
 			const oldest = Math.min(...feed.map(p => p.created_at));
-			const resp = await api.listPublications(20, 'local_only', oldest, feedGeneral);
-			if (resp.count === 0) {
-				feedHasMore = false;
-			} else {
-				const existing = new Set(feed.map(p => `${p.addr.pubkey}:${p.addr.d_tag}`));
-				const newPubs = resp.publications.filter(p => !existing.has(`${p.addr.pubkey}:${p.addr.d_tag}`));
-				feed = [...feed, ...newPubs];
-				feedHasMore = resp.count >= 20;
-				api.prefetchProfiles([...new Set(newPubs.map(p => p.author_pubkey))]);
+			const existing = new Set(feed.map(p => `${p.addr.pubkey}:${p.addr.d_tag}`));
+			const merge = (resp: { publications: PublicationSummary[] }): number => {
+				const fresh = resp.publications.filter(
+					p => !existing.has(`${p.addr.pubkey}:${p.addr.d_tag}`)
+				);
+				for (const p of fresh) existing.add(`${p.addr.pubkey}:${p.addr.d_tag}`);
+				if (fresh.length) {
+					feed = [...feed, ...fresh];
+					api.prefetchProfiles([...new Set(fresh.map(p => p.author_pubkey))]);
+				}
+				return fresh.length;
+			};
+
+			// Page the local store first — cheap, no relay round-trip.
+			const local = await api.listPublications(20, 'local_only', oldest, feedGeneral);
+			merge(local);
+			if (local.count >= 20) {
+				// More local rows remain at this depth; keep paging locally.
+				feedHasMore = true;
+				return;
 			}
+
+			// Local store is exhausted past `oldest` — backfill from relays rather
+			// than dead-ending the feed. This is a fetch_always pull, so in Confirm
+			// mode it raises the fetch-confirm modal and blocks until approved; in
+			// Auto mode it fetches straight away. The response carries the newly
+			// fetched events, so we merge them inline.
+			const remote = await api.listPublications(20, 'fetch_always', oldest, feedGeneral);
+			const added = merge(remote);
+			// Keep "Load more" alive only if the backfill actually advanced us past
+			// the local floor; if the relays returned nothing new, we've caught up.
+			feedHasMore = added > 0;
 		} catch {
-			// silent
+			// silent — a cancelled/timed-out confirm rejects here; leave feedHasMore
+			// as-is so the button stays for a retry.
 		} finally {
 			feedLoadingMore = false;
 		}
