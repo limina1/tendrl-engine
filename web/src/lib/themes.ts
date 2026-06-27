@@ -23,7 +23,15 @@ export const THEMES: ThemeDef[] = [
 	{ id: 'solarized-dark', family: 'solarized', familyLabel: 'Solarized', mode: 'dark' },
 	{ id: 'solarized-light', family: 'solarized', familyLabel: 'Solarized', mode: 'light' },
 	{ id: 'gruvbox-dark', family: 'gruvbox', familyLabel: 'Gruvbox', mode: 'dark' },
-	{ id: 'gruvbox-light', family: 'gruvbox', familyLabel: 'Gruvbox', mode: 'light' }
+	{ id: 'gruvbox-light', family: 'gruvbox', familyLabel: 'Gruvbox', mode: 'light' },
+	{ id: 'tokyonight-dark', family: 'tokyonight', familyLabel: 'Tokyo Night', mode: 'dark' },
+	{ id: 'tokyonight-light', family: 'tokyonight', familyLabel: 'Tokyo Night', mode: 'light' },
+	{ id: 'catppuccin-dark', family: 'catppuccin', familyLabel: 'Catppuccin', mode: 'dark' },
+	{ id: 'catppuccin-light', family: 'catppuccin', familyLabel: 'Catppuccin', mode: 'light' },
+	{ id: 'nord-dark', family: 'nord', familyLabel: 'Nord', mode: 'dark' },
+	{ id: 'nord-light', family: 'nord', familyLabel: 'Nord', mode: 'light' },
+	{ id: 'dracula-dark', family: 'dracula', familyLabel: 'Dracula', mode: 'dark' },
+	{ id: 'dracula-light', family: 'dracula', familyLabel: 'Dracula', mode: 'light' }
 ];
 
 // Themes grouped by family, in declaration order — for the Settings dropdown's

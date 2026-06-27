@@ -522,6 +522,574 @@
   --affordance-walkthrough: #7c6f64;
 }
 
+/* ── Tokyo Night (Night) ───────────────────────────────────────────── */
+:root[data-theme='tokyonight-dark'] {
+  --bg:        #1a1b26;
+  --bg-alt:    #16161e;
+  --base0:     #16161e;
+  --base1:     #1f2335;
+  --base2:     #292e42;
+  --base3:     #3b4261;
+  --base4:     #414868;
+  --base5:     #565f89;
+  --base6:     #737aa2;
+  --base7:     #a9b1d6;
+  --base8:     #c0caf5;
+  --fg:        #c0caf5;
+  --fg-alt:    #a9b1d6;
+
+  --red:        #f7768e;
+  --orange:     #ff9e64;
+  --green:      #9ece6a;
+  --teal:       #1abc9c;
+  --yellow:     #e0af68;
+  --blue:       #7aa2f7;
+  --dark-blue:  #3d59a1;
+  --magenta:    #bb9af7;
+  --violet:     #9d7cd8;
+  --cyan:       #7dcfff;
+  --dark-cyan:  #2ac3de;
+
+  --panel-bg:            #1a1b26;
+  --panel-bg-soft:       #1f2335;
+  --panel-border:        #292e42;
+  --panel-border-strong: #3b4261;
+  --panel-rail-bg:       #16161e;
+  --panel-header-bg:     #1f2335;
+  --content-bg:          #1a1b26;
+
+  --id-yours:    #7aa2f7;
+  --id-imported: #bb9af7;
+  --id-forked:   #9d7cd8;
+  --id-diverged: #ff9e64;
+  --id-local:    #e0af68;
+  --id-remote:   #7dcfff;
+  --id-draft:    #f7768e;
+
+  --state-online:   #9ece6a;
+  --state-offline:  #565f89;
+  --state-fetching: #e0af68;
+  --state-error:    #f7768e;
+
+  --danger:        #f7768e;
+  --danger-strong: #db4b6a;
+  --success:       #9ece6a;
+  --warning:       #e0af68;
+  --selection:     #3d59a1;
+  --match:         #ff9e64;
+
+  --warn-fg:     #e0af68;
+  --warn-bg:     #2a2435;
+  --warn-border: #3b4261;
+
+  --scrim:          rgba(0, 0, 0, 0.55);
+  --spotlight-mask: rgba(0, 0, 0, 0.32);
+  --shadow-sm:      0 2px 8px rgba(0, 0, 0, 0.2);
+  --shadow-md:      0 8px 24px rgba(0, 0, 0, 0.35);
+  --shadow-lg:      0 12px 40px rgba(0, 0, 0, 0.5);
+
+  --affordance-settings:    #bb9af7;
+  --affordance-help:        #e0af68;
+  --affordance-walkthrough: #737aa2;
+}
+
+/* ── Tokyo Night (Day) ─────────────────────────────────────────────── */
+:root[data-theme='tokyonight-light'] {
+  --bg:        #e1e2e7;
+  --bg-alt:    #d0d5e3;
+  --base0:     #e9e9ed;
+  --base1:     #d0d5e3;
+  --base2:     #c4c8da;
+  --base3:     #a8aecb;
+  --base4:     #8990b3;
+  --base5:     #68709a;
+  --base6:     #848cb5;
+  --base7:     #6172b0;
+  --base8:     #2c2e40;
+  --fg:        #3760bf;
+  --fg-alt:    #6172b0;
+
+  --red:        #f52a65;
+  --orange:     #b15c00;
+  --green:      #587539;
+  --teal:       #118c74;
+  --yellow:     #8c6c3e;
+  --blue:       #2e7de9;
+  --dark-blue:  #2e5db8;
+  --magenta:    #9854f1;
+  --violet:     #7847bd;
+  --cyan:       #007197;
+  --dark-cyan:  #006a8e;
+
+  --panel-bg:            #e1e2e7;
+  --panel-bg-soft:       #d0d5e3;
+  --panel-border:        #c4c8da;
+  --panel-border-strong: #a8aecb;
+  --panel-rail-bg:       #d0d5e3;
+  --panel-header-bg:     #d8dbe6;
+  --content-bg:          #e1e2e7;
+
+  --id-yours:    #2e7de9;
+  --id-imported: #9854f1;
+  --id-forked:   #7847bd;
+  --id-diverged: #b15c00;
+  --id-local:    #8c6c3e;
+  --id-remote:   #007197;
+  --id-draft:    #f52a65;
+
+  --state-online:   #587539;
+  --state-offline:  #848cb5;
+  --state-fetching: #8c6c3e;
+  --state-error:    #f52a65;
+
+  --danger:        #f52a65;
+  --danger-strong: #c01048;
+  --success:       #587539;
+  --warning:       #b15c00;
+  --selection:     #2e7de9;
+  --match:         #b15c00;
+
+  --warn-fg:     #7a5300;
+  --warn-bg:     #f0e6cf;
+  --warn-border: #d8c08a;
+
+  --scrim:          rgba(0, 0, 0, 0.35);
+  --spotlight-mask: rgba(0, 0, 0, 0.2);
+  --shadow-sm:      0 2px 8px rgba(44, 46, 64, 0.12);
+  --shadow-md:      0 8px 24px rgba(44, 46, 64, 0.16);
+  --shadow-lg:      0 12px 40px rgba(44, 46, 64, 0.22);
+
+  --affordance-settings:    #9854f1;
+  --affordance-help:        #8c6c3e;
+  --affordance-walkthrough: #848cb5;
+}
+
+/* ── Catppuccin Mocha ──────────────────────────────────────────────── */
+:root[data-theme='catppuccin-dark'] {
+  --bg:        #1e1e2e;
+  --bg-alt:    #181825;
+  --base0:     #11111b;
+  --base1:     #181825;
+  --base2:     #313244;
+  --base3:     #45475a;
+  --base4:     #585b70;
+  --base5:     #6c7086;
+  --base6:     #9399b2;
+  --base7:     #bac2de;
+  --base8:     #cdd6f4;
+  --fg:        #cdd6f4;
+  --fg-alt:    #bac2de;
+
+  --red:        #f38ba8;
+  --orange:     #fab387;
+  --green:      #a6e3a1;
+  --teal:       #94e2d5;
+  --yellow:     #f9e2af;
+  --blue:       #89b4fa;
+  --dark-blue:  #5a7fd6;
+  --magenta:    #f5c2e7;
+  --violet:     #cba6f7;
+  --cyan:       #89dceb;
+  --dark-cyan:  #74c7ec;
+
+  --panel-bg:            #1e1e2e;
+  --panel-bg-soft:       #181825;
+  --panel-border:        #313244;
+  --panel-border-strong: #45475a;
+  --panel-rail-bg:       #181825;
+  --panel-header-bg:     #313244;
+  --content-bg:          #1e1e2e;
+
+  --id-yours:    #89b4fa;
+  --id-imported: #f5c2e7;
+  --id-forked:   #cba6f7;
+  --id-diverged: #fab387;
+  --id-local:    #f9e2af;
+  --id-remote:   #89dceb;
+  --id-draft:    #f38ba8;
+
+  --state-online:   #a6e3a1;
+  --state-offline:  #6c7086;
+  --state-fetching: #f9e2af;
+  --state-error:    #f38ba8;
+
+  --danger:        #f38ba8;
+  --danger-strong: #e64d6f;
+  --success:       #a6e3a1;
+  --warning:       #f9e2af;
+  --selection:     #89b4fa;
+  --match:         #fab387;
+
+  --warn-fg:     #f9e2af;
+  --warn-bg:     #302d3d;
+  --warn-border: #45475a;
+
+  --scrim:          rgba(0, 0, 0, 0.55);
+  --spotlight-mask: rgba(0, 0, 0, 0.32);
+  --shadow-sm:      0 2px 8px rgba(0, 0, 0, 0.2);
+  --shadow-md:      0 8px 24px rgba(0, 0, 0, 0.35);
+  --shadow-lg:      0 12px 40px rgba(0, 0, 0, 0.5);
+
+  --affordance-settings:    #cba6f7;
+  --affordance-help:        #f9e2af;
+  --affordance-walkthrough: #9399b2;
+}
+
+/* ── Catppuccin Latte ──────────────────────────────────────────────── */
+:root[data-theme='catppuccin-light'] {
+  --bg:        #eff1f5;
+  --bg-alt:    #e6e9ef;
+  --base0:     #eff1f5;
+  --base1:     #e6e9ef;
+  --base2:     #ccd0da;
+  --base3:     #bcc0cc;
+  --base4:     #acb0be;
+  --base5:     #6c6f85;
+  --base6:     #8c8fa1;
+  --base7:     #5c5f77;
+  --base8:     #4c4f69;
+  --fg:        #4c4f69;
+  --fg-alt:    #5c5f77;
+
+  --red:        #d20f39;
+  --orange:     #fe640b;
+  --green:      #40a02b;
+  --teal:       #179299;
+  --yellow:     #df8e1d;
+  --blue:       #1e66f5;
+  --dark-blue:  #1e50c0;
+  --magenta:    #ea76cb;
+  --violet:     #8839ef;
+  --cyan:       #04a5e5;
+  --dark-cyan:  #179299;
+
+  --panel-bg:            #eff1f5;
+  --panel-bg-soft:       #e6e9ef;
+  --panel-border:        #ccd0da;
+  --panel-border-strong: #acb0be;
+  --panel-rail-bg:       #e6e9ef;
+  --panel-header-bg:     #e9ecf1;
+  --content-bg:          #eff1f5;
+
+  --id-yours:    #1e66f5;
+  --id-imported: #ea76cb;
+  --id-forked:   #8839ef;
+  --id-diverged: #fe640b;
+  --id-local:    #df8e1d;
+  --id-remote:   #04a5e5;
+  --id-draft:    #d20f39;
+
+  --state-online:   #40a02b;
+  --state-offline:  #8c8fa1;
+  --state-fetching: #df8e1d;
+  --state-error:    #d20f39;
+
+  --danger:        #d20f39;
+  --danger-strong: #a80c2e;
+  --success:       #40a02b;
+  --warning:       #df8e1d;
+  --selection:     #1e66f5;
+  --match:         #fe640b;
+
+  --warn-fg:     #8a5a00;
+  --warn-bg:     #f3ead1;
+  --warn-border: #ddc488;
+
+  --scrim:          rgba(0, 0, 0, 0.35);
+  --spotlight-mask: rgba(0, 0, 0, 0.2);
+  --shadow-sm:      0 2px 8px rgba(76, 79, 105, 0.12);
+  --shadow-md:      0 8px 24px rgba(76, 79, 105, 0.16);
+  --shadow-lg:      0 12px 40px rgba(76, 79, 105, 0.22);
+
+  --affordance-settings:    #8839ef;
+  --affordance-help:        #b07d12;
+  --affordance-walkthrough: #8c8fa1;
+}
+
+/* ── Nord (Polar Night) ────────────────────────────────────────────── */
+:root[data-theme='nord-dark'] {
+  --bg:        #2e3440;
+  --bg-alt:    #2a2f3a;
+  --base0:     #292e38;
+  --base1:     #3b4252;
+  --base2:     #434c5e;
+  --base3:     #4c566a;
+  --base4:     #616e88;
+  --base5:     #6c7a96;
+  --base6:     #8b95a8;
+  --base7:     #d8dee9;
+  --base8:     #eceff4;
+  --fg:        #d8dee9;
+  --fg-alt:    #c0c8d6;
+
+  --red:        #bf616a;
+  --orange:     #d08770;
+  --green:      #a3be8c;
+  --teal:       #8fbcbb;
+  --yellow:     #ebcb8b;
+  --blue:       #81a1c1;
+  --dark-blue:  #5e81ac;
+  --magenta:    #b48ead;
+  --violet:     #a884b0;
+  --cyan:       #88c0d0;
+  --dark-cyan:  #6a9fb5;
+
+  --panel-bg:            #2e3440;
+  --panel-bg-soft:       #3b4252;
+  --panel-border:        #434c5e;
+  --panel-border-strong: #4c566a;
+  --panel-rail-bg:       #292e38;
+  --panel-header-bg:     #3b4252;
+  --content-bg:          #2e3440;
+
+  --id-yours:    #81a1c1;
+  --id-imported: #b48ead;
+  --id-forked:   #a884b0;
+  --id-diverged: #d08770;
+  --id-local:    #ebcb8b;
+  --id-remote:   #88c0d0;
+  --id-draft:    #bf616a;
+
+  --state-online:   #a3be8c;
+  --state-offline:  #6c7a96;
+  --state-fetching: #ebcb8b;
+  --state-error:    #bf616a;
+
+  --danger:        #bf616a;
+  --danger-strong: #a54e57;
+  --success:       #a3be8c;
+  --warning:       #ebcb8b;
+  --selection:     #5e81ac;
+  --match:         #d08770;
+
+  --warn-fg:     #ebcb8b;
+  --warn-bg:     #3a3d3a;
+  --warn-border: #4c566a;
+
+  --scrim:          rgba(0, 0, 0, 0.55);
+  --spotlight-mask: rgba(0, 0, 0, 0.32);
+  --shadow-sm:      0 2px 8px rgba(0, 0, 0, 0.2);
+  --shadow-md:      0 8px 24px rgba(0, 0, 0, 0.35);
+  --shadow-lg:      0 12px 40px rgba(0, 0, 0, 0.5);
+
+  --affordance-settings:    #b48ead;
+  --affordance-help:        #ebcb8b;
+  --affordance-walkthrough: #8b95a8;
+}
+
+/* ── Nord (Snow Storm) ─────────────────────────────────────────────── */
+:root[data-theme='nord-light'] {
+  --bg:        #eceff4;
+  --bg-alt:    #e5e9f0;
+  --base0:     #eceff4;
+  --base1:     #e5e9f0;
+  --base2:     #d8dee9;
+  --base3:     #c2ccda;
+  --base4:     #aab6c8;
+  --base5:     #4c566a;
+  --base6:     #7b88a1;
+  --base7:     #3b4252;
+  --base8:     #2e3440;
+  --fg:        #2e3440;
+  --fg-alt:    #434c5e;
+
+  --red:        #b0434d;
+  --orange:     #bf6a4f;
+  --green:      #6f8c52;
+  --teal:       #4f8b8a;
+  --yellow:     #a3801f;
+  --blue:       #5e81ac;
+  --dark-blue:  #46688f;
+  --magenta:    #97678f;
+  --violet:     #8c6a93;
+  --cyan:       #5b8a9e;
+  --dark-cyan:  #4a7488;
+
+  --panel-bg:            #eceff4;
+  --panel-bg-soft:       #e5e9f0;
+  --panel-border:        #d8dee9;
+  --panel-border-strong: #c2ccda;
+  --panel-rail-bg:       #e5e9f0;
+  --panel-header-bg:     #e8ebf1;
+  --content-bg:          #eceff4;
+
+  --id-yours:    #5e81ac;
+  --id-imported: #97678f;
+  --id-forked:   #8c6a93;
+  --id-diverged: #bf6a4f;
+  --id-local:    #a3801f;
+  --id-remote:   #5b8a9e;
+  --id-draft:    #b0434d;
+
+  --state-online:   #6f8c52;
+  --state-offline:  #7b88a1;
+  --state-fetching: #a3801f;
+  --state-error:    #b0434d;
+
+  --danger:        #b0434d;
+  --danger-strong: #8f343d;
+  --success:       #6f8c52;
+  --warning:       #a3801f;
+  --selection:     #5e81ac;
+  --match:         #bf6a4f;
+
+  --warn-fg:     #7a5a00;
+  --warn-bg:     #efe9d4;
+  --warn-border: #d4c48f;
+
+  --scrim:          rgba(0, 0, 0, 0.35);
+  --spotlight-mask: rgba(0, 0, 0, 0.2);
+  --shadow-sm:      0 2px 8px rgba(46, 52, 64, 0.12);
+  --shadow-md:      0 8px 24px rgba(46, 52, 64, 0.16);
+  --shadow-lg:      0 12px 40px rgba(46, 52, 64, 0.22);
+
+  --affordance-settings:    #97678f;
+  --affordance-help:        #a3801f;
+  --affordance-walkthrough: #7b88a1;
+}
+
+/* ── Dracula ───────────────────────────────────────────────────────── */
+:root[data-theme='dracula-dark'] {
+  --bg:        #282a36;
+  --bg-alt:    #21222c;
+  --base0:     #1e1f29;
+  --base1:     #343746;
+  --base2:     #44475a;
+  --base3:     #565973;
+  --base4:     #6272a4;
+  --base5:     #6272a4;
+  --base6:     #8a90c0;
+  --base7:     #c8cce0;
+  --base8:     #f8f8f2;
+  --fg:        #f8f8f2;
+  --fg-alt:    #d8dae8;
+
+  --red:        #ff5555;
+  --orange:     #ffb86c;
+  --green:      #50fa7b;
+  --teal:       #4be0c0;
+  --yellow:     #f1fa8c;
+  --blue:       #79c0ff;
+  --dark-blue:  #6272a4;
+  --magenta:    #ff79c6;
+  --violet:     #bd93f9;
+  --cyan:       #8be9fd;
+  --dark-cyan:  #62c9d6;
+
+  --panel-bg:            #282a36;
+  --panel-bg-soft:       #343746;
+  --panel-border:        #44475a;
+  --panel-border-strong: #565973;
+  --panel-rail-bg:       #21222c;
+  --panel-header-bg:     #343746;
+  --content-bg:          #282a36;
+
+  --id-yours:    #79c0ff;
+  --id-imported: #ff79c6;
+  --id-forked:   #bd93f9;
+  --id-diverged: #ffb86c;
+  --id-local:    #f1fa8c;
+  --id-remote:   #8be9fd;
+  --id-draft:    #ff5555;
+
+  --state-online:   #50fa7b;
+  --state-offline:  #6272a4;
+  --state-fetching: #f1fa8c;
+  --state-error:    #ff5555;
+
+  --danger:        #ff5555;
+  --danger-strong: #e23d3d;
+  --success:       #50fa7b;
+  --warning:       #f1fa8c;
+  --selection:     #6272a4;
+  --match:         #ffb86c;
+
+  --warn-fg:     #f1fa8c;
+  --warn-bg:     #353648;
+  --warn-border: #565973;
+
+  --scrim:          rgba(0, 0, 0, 0.55);
+  --spotlight-mask: rgba(0, 0, 0, 0.32);
+  --shadow-sm:      0 2px 8px rgba(0, 0, 0, 0.2);
+  --shadow-md:      0 8px 24px rgba(0, 0, 0, 0.35);
+  --shadow-lg:      0 12px 40px rgba(0, 0, 0, 0.5);
+
+  --affordance-settings:    #bd93f9;
+  --affordance-help:        #f1fa8c;
+  --affordance-walkthrough: #8a90c0;
+}
+
+/* ── Dracula (Alucard light) ───────────────────────────────────────── */
+:root[data-theme='dracula-light'] {
+  --bg:        #f4f4f2;
+  --bg-alt:    #e8e8e4;
+  --base0:     #f4f4f2;
+  --base1:     #e8e8e4;
+  --base2:     #d6d6d0;
+  --base3:     #bcbcb4;
+  --base4:     #9a9a90;
+  --base5:     #565973;
+  --base6:     #7a7a90;
+  --base7:     #2f2f3a;
+  --base8:     #1f1f29;
+  --fg:        #1f1f29;
+  --fg-alt:    #44475a;
+
+  --red:        #cb3a2a;
+  --orange:     #a34d14;
+  --green:      #14710a;
+  --teal:       #036a96;
+  --yellow:     #846e15;
+  --blue:       #2c6fb3;
+  --dark-blue:  #225a96;
+  --magenta:    #a3144d;
+  --violet:     #644ac9;
+  --cyan:       #036a96;
+  --dark-cyan:  #035a82;
+
+  --panel-bg:            #f4f4f2;
+  --panel-bg-soft:       #e8e8e4;
+  --panel-border:        #d6d6d0;
+  --panel-border-strong: #bcbcb4;
+  --panel-rail-bg:       #e8e8e4;
+  --panel-header-bg:     #eeeeea;
+  --content-bg:          #f4f4f2;
+
+  --id-yours:    #2c6fb3;
+  --id-imported: #a3144d;
+  --id-forked:   #644ac9;
+  --id-diverged: #a34d14;
+  --id-local:    #846e15;
+  --id-remote:   #036a96;
+  --id-draft:    #cb3a2a;
+
+  --state-online:   #14710a;
+  --state-offline:  #7a7a90;
+  --state-fetching: #846e15;
+  --state-error:    #cb3a2a;
+
+  --danger:        #cb3a2a;
+  --danger-strong: #a82a1c;
+  --success:       #14710a;
+  --warning:       #846e15;
+  --selection:     #644ac9;
+  --match:         #a34d14;
+
+  --warn-fg:     #7a5e00;
+  --warn-bg:     #f0ead2;
+  --warn-border: #d4c48a;
+
+  --scrim:          rgba(0, 0, 0, 0.35);
+  --spotlight-mask: rgba(0, 0, 0, 0.2);
+  --shadow-sm:      0 2px 8px rgba(31, 31, 41, 0.12);
+  --shadow-md:      0 8px 24px rgba(31, 31, 41, 0.16);
+  --shadow-lg:      0 12px 40px rgba(31, 31, 41, 0.22);
+
+  --affordance-settings:    #644ac9;
+  --affordance-help:        #846e15;
+  --affordance-walkthrough: #7a7a90;
+}
+
 /* ── High contrast ──────────────────────────────────────────────────
    Accessibility modifier, orthogonal to the theme: `data-contrast="high"`
    on <html> pushes text to the extreme and lifts the muted greys + borders
@@ -578,6 +1146,70 @@
   --panel-border:        #bdae93;
   --panel-border-strong: #928374;
 }
+:root[data-theme='tokyonight-dark'][data-contrast='high'] {
+  --fg:                  #ffffff;
+  --fg-alt:              #d5dbf5;
+  --base6:               #9aa2cc;
+  --base5:               #7780ad;
+  --panel-border:        #3b4261;
+  --panel-border-strong: #545d80;
+}
+:root[data-theme='tokyonight-light'][data-contrast='high'] {
+  --fg:                  #1a1b26;
+  --fg-alt:              #2c2e40;
+  --base6:               #5a6291;
+  --base5:               #3a4470;
+  --panel-border:        #aab0cb;
+  --panel-border-strong: #828ab0;
+}
+:root[data-theme='catppuccin-dark'][data-contrast='high'] {
+  --fg:                  #ffffff;
+  --fg-alt:              #d9e0f5;
+  --base6:               #b0b6cf;
+  --base5:               #8b90ad;
+  --panel-border:        #45475a;
+  --panel-border-strong: #5c5f78;
+}
+:root[data-theme='catppuccin-light'][data-contrast='high'] {
+  --fg:                  #2c2e40;
+  --fg-alt:              #3a3c52;
+  --base6:               #6c6f85;
+  --base5:               #393b52;
+  --panel-border:        #acb0be;
+  --panel-border-strong: #8c8fa1;
+}
+:root[data-theme='nord-dark'][data-contrast='high'] {
+  --fg:                  #ffffff;
+  --fg-alt:              #e0e6f0;
+  --base6:               #aab4c8;
+  --base5:               #889ab5;
+  --panel-border:        #4c566a;
+  --panel-border-strong: #647089;
+}
+:root[data-theme='nord-light'][data-contrast='high'] {
+  --fg:                  #1c222e;
+  --fg-alt:              #2e3440;
+  --base6:               #5a6678;
+  --base5:               #2e3440;
+  --panel-border:        #c2ccda;
+  --panel-border-strong: #99a6ba;
+}
+:root[data-theme='dracula-dark'][data-contrast='high'] {
+  --fg:                  #ffffff;
+  --fg-alt:              #e8e8f4;
+  --base6:               #aab0d8;
+  --base5:               #7c84b4;
+  --panel-border:        #565973;
+  --panel-border-strong: #6e7290;
+}
+:root[data-theme='dracula-light'][data-contrast='high'] {
+  --fg:                  #15151c;
+  --fg-alt:              #1f1f29;
+  --base6:               #5a5a70;
+  --base5:               #2f2f3a;
+  --panel-border:        #bcbcb4;
+  --panel-border-strong: #9a9a90;
+}
 
 * { box-sizing: border-box; }
 
@@ -605,7 +1237,11 @@ body { font-size: var(--t-base); }
 /* On light, base8 is dark — keep the selected glyph light over the deep blue. */
 :root[data-theme='iceberg-light'] ::selection,
 :root[data-theme='solarized-light'] ::selection,
-:root[data-theme='gruvbox-light'] ::selection { color: #f8fcfd; }
+:root[data-theme='gruvbox-light'] ::selection,
+:root[data-theme='tokyonight-light'] ::selection,
+:root[data-theme='catppuccin-light'] ::selection,
+:root[data-theme='nord-light'] ::selection,
+:root[data-theme='dracula-light'] ::selection { color: #f8fcfd; }
 
 /* Utility */
 .mono { font-family: var(--font-mono); }
