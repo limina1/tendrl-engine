@@ -103,6 +103,28 @@ onnxruntime, and uses rustls throughout (no `libssl`/`libcrypto` dependency at a
 the resulting `target/portable/release/tendrl-engine` runs on RHEL 8/9, Debian, Ubuntu
 LTS, Arch, etc. The embedding model is still downloaded from HuggingFace on first run.
 
+### Cutting a release
+
+`Cargo.toml`'s `[package]` version is the single source of the release number — the
+build scripts stamp it onto the artifact name. Pass `--bump` to a build to increment
+it and regenerate the changelog in one step:
+
+```bash
+./scripts/build-portable.sh --bump patch   # 0.1.0 -> 0.1.1, then build  (or: minor | major | X.Y.Z)
+```
+
+That runs `scripts/bump-version.sh` (rewrites `Cargo.toml`, syncs `Cargo.lock`) and
+`scripts/release-notes.sh` (prepends a `CHANGELOG.md` section listing every commit
+since the last `v*` tag), then builds. Review the diff, commit, and tag:
+
+```bash
+git commit -am "release: v0.1.1" && git tag v0.1.1
+```
+
+The same `--bump` flag works on `build-bundle.sh`. Run the two release scripts
+standalone for just the version bump or just the changelog (`release-notes.sh --print`
+previews without writing).
+
 ### Put it on your PATH (optional)
 
 ```bash

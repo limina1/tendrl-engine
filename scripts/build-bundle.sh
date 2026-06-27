@@ -8,9 +8,22 @@
 # The embedding model is NOT baked in; fastembed downloads it from HuggingFace
 # on first use and caches it. Run the binary, then open the browser it launches.
 #
-# Usage: scripts/build-bundle.sh
+# Usage:
+#   scripts/build-bundle.sh                       # build at the current version
+#   scripts/build-bundle.sh --bump patch|minor|major   # bump first, then build
+#   scripts/build-bundle.sh --version X.Y.Z       # set an exact version, then build
 set -euo pipefail
 cd "$(dirname "$0")/.."
+
+# Optional version bump before building. The release name below is derived from
+# Cargo.toml, so bumping here stamps the new number onto this build's artifact;
+# release-notes.sh then records the commits landed since the last release tag.
+case "${1:-}" in
+    --bump)    scripts/bump-version.sh "${2:?--bump needs major|minor|patch}"; scripts/release-notes.sh ;;
+    --version) scripts/bump-version.sh "${2:?--version needs X.Y.Z}"; scripts/release-notes.sh ;;
+    "")        ;;
+    *) echo "Usage: $0 [--bump major|minor|patch | --version X.Y.Z]" >&2; exit 1 ;;
+esac
 
 echo "==> Building web frontend (pnpm)…"
 pnpm -C web install --frozen-lockfile

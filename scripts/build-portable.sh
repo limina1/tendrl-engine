@@ -20,9 +20,22 @@
 # The embedding MODEL is still downloaded from HuggingFace on first run.
 #
 # Prereqs:  docker, pnpm/node (host, for the SPA)
-# Usage:    scripts/build-portable.sh
+# Usage:
+#   scripts/build-portable.sh                          # build at the current version
+#   scripts/build-portable.sh --bump patch|minor|major # bump first, then build
+#   scripts/build-portable.sh --version X.Y.Z          # set an exact version, then build
 set -euo pipefail
 cd "$(dirname "$0")/.."
+
+# Optional version bump before building (Cargo.toml is the single source of the
+# release number; the tarball/binary are stamped from it downstream). The bump is
+# followed by a CHANGELOG entry covering the commits since the last release tag.
+case "${1:-}" in
+    --bump)    scripts/bump-version.sh "${2:?--bump needs major|minor|patch}"; scripts/release-notes.sh ;;
+    --version) scripts/bump-version.sh "${2:?--version needs X.Y.Z}"; scripts/release-notes.sh ;;
+    "")        ;;
+    *) echo "Usage: $0 [--bump major|minor|patch | --version X.Y.Z]" >&2; exit 1 ;;
+esac
 
 IMAGE="quay.io/pypa/manylinux_2_28_x86_64"
 TARGET_SUBDIR="target/portable"

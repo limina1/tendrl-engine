@@ -11,6 +11,12 @@ cargo build --release               # release build (in-process ONNX embeddings 
 scripts/build-bundle.sh             # single-exe: SPA embedded, opens browser on run
 scripts/build-portable.sh           # release artifact: manylinux glibc-2.28 floor, static onnxruntime, rustls — runs everywhere
 
+# Releases (Cargo.toml [package] version is the single source of the release number)
+scripts/build-portable.sh --bump patch   # bump (major|minor|patch|X.Y.Z), regen CHANGELOG, then build — same flag on build-bundle.sh
+scripts/bump-version.sh minor            # bump the version only (also syncs Cargo.lock); prints current version with no args
+scripts/release-notes.sh                 # prepend a CHANGELOG.md section: commits since the last v* tag (--print to preview)
+# then: review the diff, commit, and  git tag v<version>
+
 # Run
 cargo run -- -c config.toml         # run engine with config
 ./start.sh                          # start all services (engine + web preview)
