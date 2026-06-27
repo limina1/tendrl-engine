@@ -10,12 +10,12 @@ import {
 	setWalkthroughEnabled
 } from '$lib/wm/discovery.svelte';
 import {
-	THEMES,
 	DEFAULT_THEME,
 	THEME_STORAGE_KEY,
 	CONTRAST_STORAGE_KEY,
 	isValidTheme,
 	themeById,
+	variantFor,
 	applyThemeAttribute,
 	prefersMoreContrast,
 	applyContrastAttribute
@@ -600,14 +600,16 @@ function _createAppState() {
 				/* quota / privacy mode — fall back to in-memory only */
 			}
 		}
-		pushToast(`Theme: ${themeById(id)?.label ?? id}`, 'success');
+		const t = themeById(id);
+		pushToast(`Theme: ${t ? `${t.familyLabel} ${t.mode}` : id}`, 'success');
 	}
 
-	// Sun/moon quick toggle: jump to the first theme whose mode is opposite the
-	// current one (so it generalises past two themes).
+	// Sun/moon quick toggle: flip light↔dark within the current theme family
+	// (so "Solarized Dark" toggles to "Solarized Light", not some other theme).
 	function toggleTheme() {
-		const curMode = themeById(currentTheme)?.mode ?? 'dark';
-		const target = THEMES.find((t) => t.mode !== curMode);
+		const cur = themeById(currentTheme);
+		if (!cur) return;
+		const target = variantFor(cur.family, cur.mode === 'dark' ? 'light' : 'dark');
 		if (target) setTheme(target.id);
 	}
 

@@ -3,20 +3,60 @@
 // every other theme in a `:root[data-theme='<id>']` block. Adding a theme is
 // two steps — one tokens.css block + one entry here.
 //
-// `mode` drives the sun/moon quick toggle (it flips to the first theme of the
-// opposite mode) and lets Settings group themes if we ever want to.
+// Each theme belongs to a `family` (the named palette, e.g. "Iceberg") and has
+// a `mode` (its light/dark variant). The Settings dropdown groups by family;
+// `mode` drives the sun/moon quick toggle, which flips the variant within the
+// current family. Adding a theme is two steps — one tokens.css block + one
+// entry here.
 export type ThemeMode = 'dark' | 'light';
 
 export interface ThemeDef {
 	id: string;
-	label: string;
+	family: string;
+	familyLabel: string;
 	mode: ThemeMode;
 }
 
 export const THEMES: ThemeDef[] = [
-	{ id: 'iceberg-dark', label: 'Iceberg Dark', mode: 'dark' },
-	{ id: 'iceberg-light', label: 'Iceberg Light', mode: 'light' }
+	{ id: 'iceberg-dark', family: 'iceberg', familyLabel: 'Iceberg', mode: 'dark' },
+	{ id: 'iceberg-light', family: 'iceberg', familyLabel: 'Iceberg', mode: 'light' },
+	{ id: 'solarized-dark', family: 'solarized', familyLabel: 'Solarized', mode: 'dark' },
+	{ id: 'solarized-light', family: 'solarized', familyLabel: 'Solarized', mode: 'light' },
+	{ id: 'gruvbox-dark', family: 'gruvbox', familyLabel: 'Gruvbox', mode: 'dark' },
+	{ id: 'gruvbox-light', family: 'gruvbox', familyLabel: 'Gruvbox', mode: 'light' }
 ];
+
+// Themes grouped by family, in declaration order — for the Settings dropdown's
+// <optgroup>s. Each family lists its variants (dark/light).
+export interface ThemeFamily {
+	family: string;
+	label: string;
+	variants: ThemeDef[];
+}
+
+export function themeFamilies(): ThemeFamily[] {
+	const out: ThemeFamily[] = [];
+	for (const t of THEMES) {
+		let fam = out.find((f) => f.family === t.family);
+		if (!fam) {
+			fam = { family: t.family, label: t.familyLabel, variants: [] };
+			out.push(fam);
+		}
+		fam.variants.push(t);
+	}
+	return out;
+}
+
+// The variant of `family` matching `mode`, falling back to the family's first
+// variant (then any theme of that mode) — used by the sun/moon toggle to stay
+// in-family when flipping light↔dark.
+export function variantFor(family: string, mode: ThemeMode): ThemeDef | undefined {
+	return (
+		THEMES.find((t) => t.family === family && t.mode === mode) ??
+		THEMES.find((t) => t.family === family) ??
+		THEMES.find((t) => t.mode === mode)
+	);
+}
 
 // The default theme uses no `data-theme` attribute, so it matches both the
 // :root token defaults and the pre-paint state (no attribute set). Keep this

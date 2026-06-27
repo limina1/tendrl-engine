@@ -364,26 +364,39 @@
 		<div class="settings-group-body">
 
 		<div class="settings-row">
-			<span class="settings-label">Theme</span>
-			<div class="radio-group">
-				{#each THEMES as theme (theme.id)}
-					<label class="radio">
-						<input
-							type="radio"
-							name="theme"
-							value={theme.id}
-							checked={app.currentTheme === theme.id}
-							onchange={() => app.setTheme(theme.id)}
-						/>
-						<span>{theme.label}</span>
-					</label>
-				{/each}
-			</div>
+			<label
+				class="settings-label"
+				for="high-contrast"
+				title="Boosts text and borders over the current theme for readability. Defaults to your OS “increase contrast” setting."
+			>High contrast</label>
+			<label class="switch">
+				<input
+					id="high-contrast"
+					type="checkbox"
+					checked={app.highContrast}
+					onchange={(e) => app.setHighContrast(e.currentTarget.checked)}
+				/>
+				<span class="switch-text">{app.highContrast ? 'on' : 'off'}</span>
+			</label>
 		</div>
-		<p class="settings-hint">
-			Color scheme for the whole interface. The sun/moon button in the header
-			toggles dark ⇄ light; your choice is remembered on this device.
-		</p>
+
+		<div class="settings-row">
+			<label
+				class="settings-label"
+				for="theme-select"
+				title="Color scheme for the whole interface. The sun/moon button in the header toggles dark ⇄ light; your choice is remembered on this device."
+			>Theme</label>
+			<select
+				id="theme-select"
+				class="settings-select"
+				value={app.currentTheme}
+				onchange={(e) => app.setTheme(e.currentTarget.value)}
+			>
+				{#each THEMES as t (t.id)}
+					<option value={t.id}>{t.familyLabel} {t.mode === 'dark' ? 'Dark' : 'Light'}</option>
+				{/each}
+			</select>
+		</div>
 
 		<div class="settings-row">
 			<span class="settings-label">Text size</span>
@@ -405,23 +418,6 @@
 		<p class="settings-hint">
 			Scales the whole interface. Applies instantly and is saved on this device —
 			it isn't part of the engine config and doesn't sync across machines.
-		</p>
-
-		<div class="settings-row">
-			<label class="settings-label" for="high-contrast">High contrast</label>
-			<label class="switch">
-				<input
-					id="high-contrast"
-					type="checkbox"
-					checked={app.highContrast}
-					onchange={(e) => app.setHighContrast(e.currentTarget.checked)}
-				/>
-				<span class="switch-text">{app.highContrast ? 'on' : 'off'}</span>
-			</label>
-		</div>
-		<p class="settings-hint">
-			Boosts text and borders over the current theme for readability. Defaults
-			to your OS “increase contrast” setting.
 		</p>
 		</div>
 	</details>
@@ -1227,6 +1223,24 @@
 
 	.radio input[type='radio']:checked + span {
 		color: var(--id-yours);
+	}
+
+	.settings-select {
+		font-family: var(--font-mono);
+		font-size: var(--t-xs);
+		color: var(--fg);
+		background: var(--panel-bg-soft);
+		border: 1px solid var(--panel-border);
+		border-radius: var(--r-sm);
+		padding: 3px 8px;
+		cursor: pointer;
+	}
+	.settings-select:hover {
+		border-color: var(--panel-border-strong);
+	}
+	.settings-select:focus-visible {
+		outline: 1px solid var(--id-yours);
+		outline-offset: 1px;
 	}
 
 	.radio--disabled {
