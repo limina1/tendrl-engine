@@ -406,6 +406,23 @@
 			Scales the whole interface. Applies instantly and is saved on this device —
 			it isn't part of the engine config and doesn't sync across machines.
 		</p>
+
+		<div class="settings-row">
+			<label class="settings-label" for="high-contrast">High contrast</label>
+			<label class="switch">
+				<input
+					id="high-contrast"
+					type="checkbox"
+					checked={app.highContrast}
+					onchange={(e) => app.setHighContrast(e.currentTarget.checked)}
+				/>
+				<span class="switch-text">{app.highContrast ? 'on' : 'off'}</span>
+			</label>
+		</div>
+		<p class="settings-hint">
+			Boosts text and borders over the current theme for readability. Defaults
+			to your OS “increase contrast” setting.
+		</p>
 		</div>
 	</details>
 
