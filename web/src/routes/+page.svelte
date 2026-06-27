@@ -1204,6 +1204,9 @@
 					</span>
 				{/if}
 			{/if}
+			{#if app.engineVersion}
+				<span class="ml__seg ml__version" title="Engine build version">v{app.engineVersion}</span>
+			{/if}
 			<!-- Mode-line's own affordances, mirroring search's ? / ⚙ pair: W is
 			     permanent and always tours the mode-line itself; ? opens the
 			     reference. (Per-panel tours live on the logo W and window Ws.) -->
@@ -2137,6 +2140,8 @@
 	.ml__seg--prefix { color: var(--id-yours); }
 	/* Right-justified loading indicator — sits after .ml__spacer (flex:1). */
 	.ml__status { color: var(--base6); font-variant-numeric: tabular-nums; }
+	/* Engine version — quiet, far-right informational tag. */
+	.ml__version { color: var(--base5, var(--base6)); font-variant-numeric: tabular-nums; opacity: 0.75; }
 	.pill--btn {
 		border: none;
 		cursor: pointer;
