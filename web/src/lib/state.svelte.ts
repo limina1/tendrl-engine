@@ -514,6 +514,11 @@ function _createAppState() {
 		return new Set(pks);
 	})());
 
+	// --- Engine ---
+	// The running engine build's version (from /health). Shown in the mode-line
+	// and Settings; null until the first fetch resolves.
+	let engineVersion: string | null = $state(null);
+
 	// --- Embedding ---
 	let embeddingStatus: EmbeddingStatusResponse | null = $state(null);
 	let embeddingSyncing = $state(false);
@@ -3670,6 +3675,9 @@ function _createAppState() {
 	async function initialize() {
 		loadSearchConfig();
 		loadDiscovery();
+		// Engine version for the mode-line / Settings. Fire-and-forget — it's
+		// purely informational, so a failure just leaves the segment hidden.
+		api.getHealth().then((h) => { engineVersion = h.version; }).catch(() => {});
 		// Fire all three cheap GETs in parallel — none depend on each
 		// other, and the modeline pills + chat composer all need this
 		// data ASAP. Previously getConfig was awaited before the other
@@ -4151,6 +4159,9 @@ function _createAppState() {
 		handleAssistantLogin,
 		handleAssistantUnlock,
 		handleAssistantLogout,
+
+		// Engine
+		get engineVersion() { return engineVersion; },
 
 		// Embedding
 		get embeddingStatus() { return embeddingStatus; },

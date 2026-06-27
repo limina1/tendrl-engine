@@ -340,6 +340,22 @@
 	</div>
 
 	<div class="settings-group">
+		<div class="settings-group-title">Engine</div>
+
+		<div class="settings-row">
+			<span class="settings-label">Version</span>
+			<div class="status-row">
+				{#if app.engineVersion}
+					<span class="pill pill--ghost source-pill">v{app.engineVersion}</span>
+					<span class="pill pill--online">ok</span>
+				{:else}
+					<span class="pill pill--ghost source-pill">connecting…</span>
+				{/if}
+			</div>
+		</div>
+	</div>
+
+	<div class="settings-group">
 		<div class="settings-group-title">Identity</div>
 
 		<div class="settings-row">

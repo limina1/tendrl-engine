@@ -15,7 +15,8 @@ import type {
 	DocumentFile,
 	ImportResult,
 	IdentityStatus,
-	RepublishDiff
+	RepublishDiff,
+	HealthResponse
 } from './types';
 import type { ThreadNode } from './discussions/thread';
 import type { Highlight, HighlightSpan } from './discussions/highlights';
@@ -519,6 +520,11 @@ export function getConfig() {
 	return fetchJson<{
 		data_dir: string;
 	}>('/api/v1/config');
+}
+
+/** Engine liveness + the running build's version (env!("CARGO_PKG_VERSION")). */
+export function getHealth(): Promise<HealthResponse> {
+	return fetchJson<HealthResponse>('/health');
 }
 
 // Identity API
