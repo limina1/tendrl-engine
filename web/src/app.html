@@ -20,6 +20,16 @@
 				}
 			})();
 		</script>
+		<!-- No-flash theme: apply the saved theme before first paint to avoid a
+		     dark→light flash. Default ('iceberg-dark') uses no attribute; keep in
+		     sync with lib/themes.ts. -->
+		<script>
+			try {
+				var t = localStorage.getItem('tendrl.theme');
+				if (t && t !== 'iceberg-dark')
+					document.documentElement.setAttribute('data-theme', t);
+			} catch (e) {}
+		</script>
 		%sveltekit.head%
 	</head>
 	<body data-sveltekit-preload-data="hover">

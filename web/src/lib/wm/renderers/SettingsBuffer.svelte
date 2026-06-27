@@ -16,6 +16,7 @@
 	import { textScale, setTextScale, TEXT_SCALE_PRESETS } from '$lib/theme/text-scale.svelte';
 	import type { Buffer } from '../types';
 	import type { EditorInsertMode, SyncMode, ButtonLabels, ComposeDefaultMode } from '$lib/types';
+	import { THEMES } from '$lib/themes';
 
 	let { buffer: _buffer }: { buffer: Buffer } = $props();
 
@@ -354,6 +355,32 @@
 				{/if}
 			</div>
 		</div>
+	</div>
+
+	<div class="settings-group">
+		<div class="settings-group-title">Appearance</div>
+
+		<div class="settings-row">
+			<span class="settings-label">Theme</span>
+			<div class="radio-group">
+				{#each THEMES as theme (theme.id)}
+					<label class="radio">
+						<input
+							type="radio"
+							name="theme"
+							value={theme.id}
+							checked={app.currentTheme === theme.id}
+							onchange={() => app.setTheme(theme.id)}
+						/>
+						<span>{theme.label}</span>
+					</label>
+				{/each}
+			</div>
+		</div>
+		<p class="settings-hint">
+			Color scheme for the whole interface. The sun/moon button in the header
+			toggles dark ⇄ light; your choice is remembered on this device.
+		</p>
 	</div>
 
 	<div class="settings-group">

@@ -9,6 +9,14 @@ import {
 	startWalkthrough,
 	setWalkthroughEnabled
 } from '$lib/wm/discovery.svelte';
+import {
+	THEMES,
+	DEFAULT_THEME,
+	THEME_STORAGE_KEY,
+	isValidTheme,
+	themeById,
+	applyThemeAttribute
+} from '$lib/themes';
 import type {
 	ChatResponse,
 	SearchResult,
@@ -565,6 +573,40 @@ function _createAppState() {
 	let ignoredEventIds: string[] = $state([]);
 	let ignoredPubkeys: string[] = $state([]);
 	let ignoredCoordinates: string[] = $state([]);
+
+	// --- Theme ---
+	// Seeded from localStorage so it agrees with the pre-paint bootstrap in
+	// app.html (which already set <html data-theme> before this ran). Falls back
+	// to the dark default for a fresh user or an unknown stored id.
+	let currentTheme: string = $state(
+		((): string => {
+			if (typeof localStorage === 'undefined') return DEFAULT_THEME;
+			const v = localStorage.getItem(THEME_STORAGE_KEY);
+			return isValidTheme(v) ? v : DEFAULT_THEME;
+		})()
+	);
+
+	function setTheme(id: string) {
+		if (!isValidTheme(id) || id === currentTheme) return;
+		currentTheme = id;
+		applyThemeAttribute(id);
+		if (typeof localStorage !== 'undefined') {
+			try {
+				localStorage.setItem(THEME_STORAGE_KEY, id);
+			} catch {
+				/* quota / privacy mode — fall back to in-memory only */
+			}
+		}
+		pushToast(`Theme: ${themeById(id)?.label ?? id}`, 'success');
+	}
+
+	// Sun/moon quick toggle: jump to the first theme whose mode is opposite the
+	// current one (so it generalises past two themes).
+	function toggleTheme() {
+		const curMode = themeById(currentTheme)?.mode ?? 'dark';
+		const target = THEMES.find((t) => t.mode !== curMode);
+		if (target) setTheme(target.id);
+	}
 
 	// --- Settings ---
 	let syncMode: SyncMode = $state('explicit');
@@ -4194,6 +4236,11 @@ function _createAppState() {
 		get ignoredEventIds() { return ignoredEventIds; },
 		get ignoredPubkeys() { return ignoredPubkeys; },
 		get ignoredCoordinates() { return ignoredCoordinates; },
+
+		// Theme
+		get currentTheme() { return currentTheme; },
+		setTheme,
+		toggleTheme,
 
 		// Settings
 		get syncMode() { return syncMode; },
