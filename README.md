@@ -9,7 +9,7 @@ Two processes cooperate:
 
 | Component | Path | Default port | Description |
 |-----------|------|--------------|-------------|
-| **Engine** | `src/` | `3030` | Rust backend: nostrdb store, relay fetching, REST API, in-process embeddings + document parsing |
+| **Engine** | `src/` | `3030` | Rust backend: nostrdb store, relay fetching, REST API, in-process embeddings + document parsing, rustls TLS |
 | **Web frontend** | `web/` | `5173` dev / `5174` preview | SvelteKit UI (window-manager paradigm) |
 
 The engine owns all data access; the web UI consumes its interface-agnostic
@@ -18,15 +18,15 @@ no external services. See [`CLAUDE.md`](CLAUDE.md) for the architecture in depth
 
 ## Prerequisites
 
-Building compiles native code — nostrdb (C), usearch (C++), OpenSSL-backed TLS, and
-`bindgen` — so every distro needs a C/C++ toolchain, `libclang`, `pkg-config`, and
-the OpenSSL development headers, alongside the **Rust** (stable, edition 2021) and
-**pnpm** toolchains. Pick your distro:
+Building compiles native code — nostrdb (C), usearch (C++), and `bindgen` — so every
+distro needs a C/C++ toolchain, `libclang`, and `pkg-config`, alongside the **Rust**
+(stable, edition 2021) and **pnpm** toolchains. TLS is pure-Rust (rustls) everywhere,
+so no OpenSSL/`libssl` development headers are required. Pick your distro:
 
 **Arch** — everything is in the official repos, one command:
 
 ```bash
-sudo pacman -S --needed base-devel pkgconf openssl clang git curl rust pnpm
+sudo pacman -S --needed base-devel pkgconf clang git curl rust pnpm
 ```
 
 **Debian / Ubuntu** — system libs and toolchains all from apt (`cargo` pulls
@@ -34,7 +34,7 @@ sudo pacman -S --needed base-devel pkgconf openssl clang git curl rust pnpm
 
 ```bash
 sudo apt update
-sudo apt install -y build-essential pkg-config libssl-dev clang git curl \
+sudo apt install -y build-essential pkg-config clang git curl \
                     cargo nodejs npm
 sudo corepack enable pnpm        # or: sudo npm install -g pnpm
 ```
@@ -47,7 +47,7 @@ sudo corepack enable pnpm        # or: sudo npm install -g pnpm
 take that one from upstream:
 
 ```bash
-sudo dnf install -y gcc gcc-c++ make pkgconf-pkg-config openssl-devel clang \
+sudo dnf install -y gcc gcc-c++ make pkgconf-pkg-config clang \
                     git curl nodejs npm
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh   # Rust
 sudo corepack enable pnpm
@@ -86,6 +86,22 @@ required to start.
 Log in with a **NIP-07** browser extension (Alby, nos2x, …) — the key stays in the
 extension; the engine never handles it. Pass `--no-open` to skip the browser launch
 (e.g. on a server), or `-c config.toml` to use a non-default config.
+
+### Portable release build (for distribution)
+
+`build-bundle.sh` links against the **build host's** glibc, so a binary built on a
+bleeding-edge distro (e.g. Arch, glibc 2.43) won't start on older systems. To produce
+**one binary that runs everywhere** — the artifact handed to testers — use the portable
+build instead:
+
+```bash
+./scripts/build-portable.sh          # needs docker + pnpm/node on the host
+```
+
+It compiles inside a `manylinux_2_28` container (glibc 2.28 floor), statically links
+onnxruntime, and uses rustls throughout (no `libssl`/`libcrypto` dependency at all), so
+the resulting `target/portable/release/tendrl-engine` runs on RHEL 8/9, Debian, Ubuntu
+LTS, Arch, etc. The embedding model is still downloaded from HuggingFace on first run.
 
 ### Put it on your PATH (optional)
 

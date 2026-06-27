@@ -9,6 +9,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 cargo build                         # debug build
 cargo build --release               # release build (in-process ONNX embeddings built in)
 scripts/build-bundle.sh             # single-exe: SPA embedded, opens browser on run
+scripts/build-portable.sh           # release artifact: manylinux glibc-2.28 floor, static onnxruntime, rustls — runs everywhere
 
 # Run
 cargo run -- -c config.toml         # run engine with config
@@ -41,7 +42,8 @@ preview). The engine owns all data access; embeddings and document text
 extraction both run in-process (no external services). (A ratatui TUI was the
 original frontend; it has been
 removed — there is no `ratatui`/`crossterm` dependency and a single `[[bin]]`
-(`nostr-engine`). The web app is the only live frontend; emacs/nvim frontends are a
+(`tendrl-engine`; the package/lib are still named `nostr-engine`/`nostr_engine` so
+existing installs aren't orphaned). The web app is the only live frontend; emacs/nvim frontends are a
 design goal, not yet built.)
 
 ### Frontend/backend boundary (the governing rule)
@@ -216,7 +218,7 @@ alias for the `by:` publishing-pubkey filter.
 
 ## Project Layout
 
-- `src/` — Rust engine (library + the `nostr-engine` binary)
+- `src/` — Rust engine (library + the `tendrl-engine` binary)
 - `web/` — SvelteKit frontend (Svelte 5, pnpm, static adapter, served from `web/build/`)
 - `config.example.toml` — reference config; copy to `config.toml`
 - `scripts/` — utility scripts (MCP server, publishing helpers)
