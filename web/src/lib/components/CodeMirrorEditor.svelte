@@ -152,7 +152,7 @@
 		flex: 1;
 		min-width: 0;
 		font-family: var(--font-mono);
-		font-size: 0.85rem;
+		font-size: var(--t-xs);
 		background: var(--bg-surface, var(--bg));
 		color: var(--fg);
 	}

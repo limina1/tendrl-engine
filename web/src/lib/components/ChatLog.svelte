@@ -61,7 +61,7 @@
 		color: var(--fg-muted);
 		text-align: center;
 		margin-top: 40px;
-		font-size: 0.9rem;
+		font-size: var(--t-sm);
 	}
 
 	.loading {

@@ -159,7 +159,7 @@
 
 <style>
 	.es-hint {
-		font-size: 0.7rem;
+		font-size: var(--t-3xs);
 		color: var(--fg-muted);
 		line-height: 1.4;
 		margin: 0;
@@ -172,7 +172,7 @@
 		margin-bottom: 10px;
 	}
 	.es-pill {
-		font-size: 0.6rem;
+		font-size: var(--t-3xs);
 		padding: 1px 7px;
 		border-radius: var(--radius);
 		text-transform: lowercase;
@@ -192,14 +192,14 @@
 		text-transform: none;
 	}
 	.es-counts {
-		font-size: 0.65rem;
+		font-size: var(--t-3xs);
 		color: var(--fg-muted);
 	}
 	.es-toggle {
 		display: flex;
 		align-items: center;
 		gap: 6px;
-		font-size: 0.7rem;
+		font-size: var(--t-3xs);
 		color: var(--fg);
 		cursor: pointer;
 		margin-bottom: 10px;
@@ -213,7 +213,7 @@
 		margin-bottom: 8px;
 	}
 	.es-kinds-label {
-		font-size: 0.6rem;
+		font-size: var(--t-3xs);
 		text-transform: uppercase;
 		letter-spacing: 0.07em;
 		color: var(--fg-muted);
@@ -223,7 +223,7 @@
 		display: inline-flex;
 		align-items: center;
 		gap: 5px;
-		font-size: 0.7rem;
+		font-size: var(--t-3xs);
 		color: var(--fg);
 		cursor: pointer;
 	}
@@ -231,7 +231,7 @@
 	.es-kind input:disabled { cursor: default; }
 	.es-kind-num {
 		font-family: var(--font-mono);
-		font-size: 0.6rem;
+		font-size: var(--t-3xs);
 		color: var(--fg-muted);
 	}
 	.es-addkind {
@@ -242,7 +242,7 @@
 		margin-bottom: 10px;
 	}
 	.es-addkind-input {
-		font-size: 0.7rem;
+		font-size: var(--t-3xs);
 		padding: 3px 8px;
 		border-radius: var(--radius);
 		border: 1px solid var(--panel-border);
@@ -251,7 +251,7 @@
 		width: 150px;
 	}
 	.es-addkind-err {
-		font-size: 0.62rem;
+		font-size: var(--t-3xs);
 		color: var(--red);
 	}
 	.es-actions {
@@ -259,7 +259,7 @@
 		gap: 8px;
 	}
 	.es-btn {
-		font-size: 0.68rem;
+		font-size: var(--t-3xs);
 		padding: 4px 12px;
 		border-radius: var(--radius);
 		border: 1px solid var(--panel-border);

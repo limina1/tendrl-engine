@@ -55,7 +55,7 @@
 	.tag-row input {
 		flex: 1;
 		font-family: inherit;
-		font-size: 0.8rem;
+		font-size: var(--t-2xs);
 		border: 1px solid var(--border);
 		border-radius: var(--radius);
 		background: var(--bg-surface);
@@ -70,12 +70,12 @@
 
 	.tag-remove {
 		padding: 2px 8px;
-		font-size: 0.75rem;
+		font-size: var(--t-2xs);
 	}
 
 	.tag-add {
 		align-self: flex-start;
-		font-size: 0.8rem;
+		font-size: var(--t-2xs);
 		padding: 2px 10px;
 	}
 </style>

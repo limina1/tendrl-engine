@@ -178,14 +178,14 @@
 	}
 
 	.role {
-		font-size: 0.75rem;
+		font-size: var(--t-2xs);
 		color: var(--fg-muted);
 		text-transform: uppercase;
 		letter-spacing: 0.05em;
 	}
 
 	.compose-badge {
-		font-size: 0.6rem;
+		font-size: var(--t-3xs);
 		padding: 0 5px;
 		border-radius: 4px;
 		font-weight: 600;
@@ -202,7 +202,7 @@
 	.content {
 		white-space: pre-wrap;
 		font-family: var(--font-sans);
-		font-size: 0.9rem;
+		font-size: var(--t-sm);
 		line-height: 1.5;
 		margin: 0;
 	}
@@ -222,7 +222,7 @@
 
 	.chat-thinking summary {
 		padding: 4px 10px;
-		font-size: 0.7rem;
+		font-size: var(--t-3xs);
 		color: var(--fg-muted);
 		cursor: pointer;
 		background: color-mix(in srgb, var(--bg-surface) 50%, transparent);
@@ -231,7 +231,7 @@
 
 	.chat-thinking-content {
 		padding: 8px 10px;
-		font-size: 0.75rem;
+		font-size: var(--t-2xs);
 		line-height: 1.4;
 		white-space: pre-wrap;
 		word-wrap: break-word;
@@ -253,7 +253,7 @@
 
 	.chat-tool-block summary {
 		padding: 4px 10px;
-		font-size: 0.7rem;
+		font-size: var(--t-3xs);
 		color: var(--fg-muted);
 		cursor: pointer;
 		background: color-mix(in srgb, var(--bg-surface) 50%, transparent);
@@ -268,7 +268,7 @@
 	.chat-tool-name {
 		display: block;
 		padding: 4px 10px 0;
-		font-size: 0.7rem;
+		font-size: var(--t-3xs);
 		font-weight: 600;
 		font-family: var(--font-mono);
 		color: var(--accent);
@@ -276,7 +276,7 @@
 
 	.chat-tool-input {
 		padding: 4px 10px 8px;
-		font-size: 0.7rem;
+		font-size: var(--t-3xs);
 		line-height: 1.3;
 		white-space: pre-wrap;
 		word-wrap: break-word;
@@ -298,7 +298,7 @@
 	.output-toggle {
 		flex-shrink: 0;
 		padding: 3px 6px;
-		font-size: 0.65rem;
+		font-size: var(--t-3xs);
 		font-family: var(--font-mono);
 		background: none;
 		border: 1px solid var(--border);
@@ -332,7 +332,7 @@
 		align-items: center;
 		justify-content: space-between;
 		padding: 3px 10px;
-		font-size: 0.65rem;
+		font-size: var(--t-3xs);
 		font-family: var(--font-mono);
 		text-transform: uppercase;
 		letter-spacing: 0.05em;
@@ -346,7 +346,7 @@
 		border: none;
 		color: var(--fg-muted);
 		cursor: pointer;
-		font-size: 0.85rem;
+		font-size: var(--t-xs);
 		padding: 0 2px;
 		line-height: 1;
 	}
@@ -357,7 +357,7 @@
 
 	.tool-output-content {
 		padding: 8px 10px;
-		font-size: 0.75rem;
+		font-size: var(--t-2xs);
 		line-height: 1.4;
 		white-space: pre-wrap;
 		word-wrap: break-word;

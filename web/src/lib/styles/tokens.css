@@ -1,11 +1,21 @@
 /* Iceberg Dark — Tendrl design tokens */
 :root {
+  /* User text-size control. Settings → Appearance writes this multiplier
+     (Compact 1.0 / Default 1.08 / Large 1.23 / X-Large 1.38 — see
+     text-scale.svelte.ts); a no-flash inline script in app.html applies the
+     saved value to documentElement before first paint. 1.0 == the documented
+     13px grid below; the shipped default 1.08 lands the comfortable ≈14px.
+     The default also lives in the var() fallback so the grid still resolves
+     if JS never runs. Keep this in sync with the 'default' preset factor. */
+  --text-scale: 1.08;
+
   /* Root scaling anchor. 1rem = 13px at a 16px browser default (13/16 =
      81.25%), but expressed relatively so the whole UI scales as one unit
      with the user's browser/OS font-size preference and text-only zoom.
      Every token below is rem, so type, spacing, and chrome scale together
-     off this single knob — change it (or zoom) and nothing spills. */
-  font-size: 81.25%;
+     off this single knob — multiplied by --text-scale for the user control,
+     so changing the preset (or zooming) rescales everything and nothing spills. */
+  font-size: calc(81.25% * var(--text-scale, 1.08));
 
   /* Base scale (Iceberg) */
   --bg:        #161821;
@@ -797,7 +807,7 @@ body { font-size: var(--t-base); }
   margin: 0 auto;
   padding: 48px 32px 96px;
   font-family: var(--font-serif);
-  font-size: 1.385rem; /* 18px — reader prose, scales with the root anchor */
+  font-size: var(--t-xl); /* reader prose (≈19px) — on the token scale, rides --text-scale */
   line-height: 1.7;
   color: var(--base7);
 }

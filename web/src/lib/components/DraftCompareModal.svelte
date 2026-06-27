@@ -155,14 +155,14 @@
 	}
 	.dcm-title {
 		font-weight: 600;
-		font-size: 0.9rem;
+		font-size: var(--t-sm);
 	}
 	.dcm-close {
 		background: none;
 		border: none;
 		color: var(--fg-muted);
 		cursor: pointer;
-		font-size: 0.9rem;
+		font-size: var(--t-sm);
 	}
 	.dcm-close:hover {
 		color: var(--fg);
@@ -182,7 +182,7 @@
 	}
 	.dcm-side-label {
 		font-weight: 700;
-		font-size: 0.7rem;
+		font-size: var(--t-3xs);
 		border-radius: 3px;
 		padding: 1px 6px;
 	}
@@ -203,7 +203,7 @@
 		border-radius: var(--r-sm, 4px);
 		padding: 3px 6px;
 		font: inherit;
-		font-size: 0.74rem;
+		font-size: var(--t-2xs);
 	}
 	.dcm-swap {
 		flex-shrink: 0;
@@ -213,7 +213,7 @@
 		color: var(--fg);
 		cursor: pointer;
 		padding: 3px 9px;
-		font-size: 0.9rem;
+		font-size: var(--t-sm);
 	}
 	.dcm-swap:hover {
 		border-color: var(--accent, var(--id-yours));
@@ -222,7 +222,7 @@
 	.dcm-direction {
 		margin: 0;
 		padding: 0 13px 8px;
-		font-size: 0.7rem;
+		font-size: var(--t-3xs);
 		color: var(--fg-muted);
 	}
 	.dcm-body {
@@ -231,7 +231,7 @@
 		display: flex;
 		flex-direction: column;
 		gap: 4px;
-		font-size: 0.74rem;
+		font-size: var(--t-2xs);
 		border-top: 1px solid var(--border);
 	}
 	.dcm-muted {

@@ -1814,7 +1814,7 @@
 		font-weight: 600;
 	}
 	.pane__kicker { color: var(--base5); font-family: var(--font-sans); text-transform: none; letter-spacing: 0; }
-	.pane__mod { color: var(--id-draft); font-size: 0.615rem; }
+	.pane__mod { color: var(--id-draft); font-size: var(--t-3xs); }
 	.pane__sp { flex: 1; }
 	.pane__x {
 		background: transparent;
@@ -1998,7 +1998,7 @@
 	.walk-menu__buffer {
 		flex: 0 0 auto;
 		font-family: var(--font-mono);
-		font-size: 0.58rem;
+		font-size: var(--t-3xs);
 		text-transform: lowercase;
 		letter-spacing: 0.03em;
 		color: var(--fg-muted);

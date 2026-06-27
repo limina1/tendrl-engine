@@ -47,7 +47,7 @@
 
 	.panel-header {
 		padding: 8px 16px;
-		font-size: 0.8rem;
+		font-size: var(--t-2xs);
 		font-weight: 600;
 		color: var(--fg-muted);
 		text-transform: uppercase;
@@ -60,7 +60,7 @@
 		border-radius: 0;
 		border-top: 1px solid var(--border);
 		border-bottom: 1px solid var(--border);
-		font-size: 0.85rem;
+		font-size: var(--t-xs);
 	}
 
 	.panel-actions {

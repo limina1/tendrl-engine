@@ -95,7 +95,7 @@
 		background: var(--bg-surface);
 		border: 1px solid var(--border);
 		color: var(--fg-muted);
-		font-size: 1rem;
+		font-size: var(--t-base);
 		text-transform: uppercase;
 	}
 
@@ -111,7 +111,7 @@
 	}
 
 	.person-name {
-		font-size: 0.85rem;
+		font-size: var(--t-xs);
 		font-weight: 600;
 		overflow: hidden;
 		text-overflow: ellipsis;
@@ -119,12 +119,12 @@
 	}
 
 	.person-handle {
-		font-size: 0.72rem;
+		font-size: var(--t-3xs);
 		color: var(--fg-muted);
 	}
 
 	.person-local {
-		font-size: 0.6rem;
+		font-size: var(--t-3xs);
 		padding: 0 5px;
 		border-radius: 3px;
 		background: #f9731633;
@@ -133,13 +133,13 @@
 	}
 
 	.person-nip05 {
-		font-size: 0.72rem;
+		font-size: var(--t-3xs);
 		color: var(--accent);
 		margin-top: 1px;
 	}
 
 	.person-about {
-		font-size: 0.76rem;
+		font-size: var(--t-2xs);
 		color: var(--fg-muted);
 		line-height: 1.4;
 		margin: 3px 0 0;
@@ -152,7 +152,7 @@
 
 	.person-view {
 		flex-shrink: 0;
-		font-size: 0.7rem;
+		font-size: var(--t-3xs);
 		padding: 3px 10px;
 		border-radius: 4px;
 		background: none;

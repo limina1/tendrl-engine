@@ -463,7 +463,7 @@
 		align-items: center;
 		justify-content: center;
 		font-family: var(--font-mono);
-		font-size: 0.65rem;
+		font-size: var(--t-3xs);
 		color: var(--fg);
 		mix-blend-mode: difference;
 	}
@@ -496,12 +496,12 @@
 	}
 
 	.pp-disclosure {
-		font-size: 0.75rem;
+		font-size: var(--t-2xs);
 		color: var(--fg-muted);
 	}
 
 	.kind-pill {
-		font-size: 0.65rem;
+		font-size: var(--t-3xs);
 		text-transform: uppercase;
 		letter-spacing: 0.05em;
 	}
@@ -596,7 +596,7 @@
 	}
 
 	.pp-relay-tag {
-		font-size: 0.55rem;
+		font-size: var(--t-3xs);
 		padding: 0 4px;
 		text-transform: uppercase;
 	}
