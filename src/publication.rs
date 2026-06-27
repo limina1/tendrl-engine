@@ -1983,6 +1983,254 @@ impl<'a> PublicationEngine<'a> {
 
         Ok(())
     }
+
+    /// Resolve every nostrdown `{{ }}` reference found in `content`.
+    ///
+    /// `publication_atag` — the containing index coordinate (`"30040:pubkey:dtag"`);
+    /// `ref:` and slug `embed:` targets are matched against that index's ordered
+    /// sections and nested indexes. `author` (hex pubkey) is the preferred author
+    /// for `wiki:` lookups. Each returned [`ResolvedRef`] carries UTF-16 span
+    /// offsets for the web overlay; unresolved tokens come back with
+    /// `found: false` so the renderer can still show their label. The engine half
+    /// of the nostrdown split — the pure tokenizer lives in [`crate::nostrdown`],
+    /// mirroring the NIP-84 highlight resolver.
+    pub async fn resolve_refs(
+        &self,
+        content: &str,
+        publication_atag: Option<&str>,
+        author: Option<&str>,
+        policy: FetchPolicy,
+    ) -> Vec<crate::nostrdown::ResolvedRef> {
+        use crate::nostrdown::{self, RefKind};
+
+        let refs = nostrdown::parse(content);
+        if refs.is_empty() {
+            return Vec::new();
+        }
+
+        // Load the containing index once; ref:/slug-embed: resolve against its
+        // sections + nested indexes.
+        let publication = match publication_atag.and_then(NAddr::from_a_tag) {
+            Some(addr) => self.load_publication(&addr, policy).await.ok(),
+            None => None,
+        };
+
+        let mut out = Vec::with_capacity(refs.len());
+        for r in &refs {
+            let (start, end) = r.utf16_span(content);
+            let display_given = r.display.is_some();
+            let mut resolved = nostrdown::ResolvedRef {
+                kind: r.kind,
+                start,
+                end,
+                target: r.target.clone(),
+                fragment: r.fragment.clone(),
+                label: r.display.clone().unwrap_or_else(|| r.raw_target.clone()),
+                found: false,
+                naddr: None,
+                event_kind: None,
+                content: None,
+            };
+
+            match r.kind {
+                RefKind::Ref => {
+                    if let Some(addr) =
+                        publication.as_ref().and_then(|p| find_sibling(p, &r.target))
+                    {
+                        // The TOC lists this sibling, so the link is valid even
+                        // before its event is fetched.
+                        resolved.found = true;
+                        resolved.naddr =
+                            crate::nip19::naddr_from_a_tag(&addr.to_a_tag(), &[]).ok();
+                        resolved.event_kind = Some(addr.kind);
+                        if let Some(ev) = self.load_event_by_addr(&addr, policy).await {
+                            apply_event(&mut resolved, &ev, false, display_given);
+                        }
+                    }
+                }
+                RefKind::Embed if !r.is_entity => {
+                    if let Some(addr) =
+                        publication.as_ref().and_then(|p| find_sibling(p, &r.target))
+                    {
+                        resolved.found = true;
+                        resolved.naddr =
+                            crate::nip19::naddr_from_a_tag(&addr.to_a_tag(), &[]).ok();
+                        resolved.event_kind = Some(addr.kind);
+                        if let Some(ev) = self.load_event_by_addr(&addr, policy).await {
+                            apply_event(&mut resolved, &ev, true, display_given);
+                        }
+                    }
+                }
+                RefKind::Embed => {
+                    self.fill_from_entity(&r.target, &mut resolved, true, display_given, policy)
+                        .await;
+                }
+                RefKind::Wiki => {
+                    if let Some(ev) = self.find_wiki_event(&r.target, author, policy).await {
+                        resolved.naddr = event_naddr(&ev);
+                        apply_event(&mut resolved, &ev, false, display_given);
+                    }
+                }
+            }
+
+            out.push(resolved);
+        }
+        out
+    }
+
+    /// Load an addressable event for `addr`, swallowing errors to `None`.
+    async fn load_event_by_addr(&self, addr: &NAddr, policy: FetchPolicy) -> Option<Value> {
+        self.engine
+            .get_addressable(addr.kind, &addr.pubkey, &addr.d_tag, policy)
+            .await
+            .ok()
+            .flatten()
+    }
+
+    /// Resolve an `embed:` whose target is a bech32 NIP-19 entity.
+    async fn fill_from_entity(
+        &self,
+        entity: &str,
+        resolved: &mut crate::nostrdown::ResolvedRef,
+        want_content: bool,
+        display_given: bool,
+        policy: FetchPolicy,
+    ) {
+        use crate::nip19::Decoded;
+        let Ok(decoded) = crate::nip19::decode(entity) else {
+            return;
+        };
+        match decoded {
+            Decoded::Naddr {
+                kind_int,
+                pubkey,
+                d_tag,
+                relays,
+            } => {
+                resolved.naddr = crate::nip19::encode_naddr(kind_int, &pubkey, &d_tag, &relays)
+                    .ok()
+                    .or_else(|| Some(entity.to_string()));
+                resolved.event_kind = Some(kind_int as u64);
+                let addr = NAddr::new(kind_int as u64, &pubkey, &d_tag);
+                if let Some(ev) = self.load_event_by_addr(&addr, policy).await {
+                    apply_event(resolved, &ev, want_content, display_given);
+                } else {
+                    // Address is valid; the event just isn't local yet.
+                    resolved.found = true;
+                }
+            }
+            Decoded::Nevent { event_id, .. } | Decoded::Note { event_id } => {
+                resolved.naddr = Some(entity.to_string());
+                if let Some(ev) = self.engine.get_by_id(&event_id, policy).await.ok().flatten() {
+                    apply_event(resolved, &ev, want_content, display_given);
+                }
+            }
+            // Profiles aren't transcludable content.
+            Decoded::Npub { .. } | Decoded::Nprofile { .. } => {}
+        }
+    }
+
+    /// Find the best event for a `wiki:` topic, querying kinds 30818 (wiki),
+    /// 30023 (article), and 30041 (section) by normalized `d` tag. Prefers the
+    /// given author, then a wiki kind, then the most recent.
+    async fn find_wiki_event(
+        &self,
+        d_tag: &str,
+        author: Option<&str>,
+        policy: FetchPolicy,
+    ) -> Option<Value> {
+        let filter = serde_json::json!({
+            "kinds": [30818, 30023, 30041],
+            "#d": [d_tag],
+            "limit": 50,
+        });
+        let mut events = self
+            .engine
+            .get_events(vec![filter], policy, None)
+            .await
+            .ok()?
+            .events;
+        if events.is_empty() {
+            return None;
+        }
+        let score = |e: &Value| -> (u8, u8, i64) {
+            let author_match = author
+                .map(|a| e.get("pubkey").and_then(Value::as_str) == Some(a))
+                .unwrap_or(false);
+            let kind = e.get("kind").and_then(Value::as_u64).unwrap_or(0);
+            let kind_pref = match kind {
+                30818 => 2,
+                30023 => 1,
+                _ => 0,
+            };
+            let created = e.get("created_at").and_then(Value::as_i64).unwrap_or(0);
+            (author_match as u8, kind_pref, created)
+        };
+        events.sort_by(|a, b| score(b).cmp(&score(a)));
+        events.into_iter().next()
+    }
+}
+
+/// Recursively find a section or nested index in `pubn` whose d-tag matches.
+fn find_sibling(pubn: &Publication, d_tag: &str) -> Option<NAddr> {
+    if let Some(s) = pubn.sections.iter().find(|s| s.addr.d_tag == d_tag) {
+        return Some(s.addr.clone());
+    }
+    for nested in &pubn.nested {
+        if nested.addr.d_tag == d_tag {
+            return Some(nested.addr.clone());
+        }
+        if let Some(a) = find_sibling(nested, d_tag) {
+            return Some(a);
+        }
+    }
+    None
+}
+
+/// First value of the `name` tag on `event`, if present.
+fn first_tag_value(event: &Value, name: &str) -> Option<String> {
+    event.get("tags")?.as_array()?.iter().find_map(|t| {
+        let a = t.as_array()?;
+        if a.first()?.as_str()? == name {
+            a.get(1)?.as_str().map(str::to_string)
+        } else {
+            None
+        }
+    })
+}
+
+/// Build an `naddr` for an addressable `event` from its kind/pubkey/`d` tag.
+fn event_naddr(event: &Value) -> Option<String> {
+    let kind = event.get("kind")?.as_u64()? as u32;
+    let pubkey = event.get("pubkey")?.as_str()?;
+    let d_tag = first_tag_value(event, "d").unwrap_or_default();
+    crate::nip19::encode_naddr(kind, pubkey, &d_tag, &[]).ok()
+}
+
+/// Stamp a resolved event onto `resolved`: mark found, capture kind, lift the
+/// title into `label` (unless an explicit display was given), and — for embeds —
+/// pull in the content to transclude.
+fn apply_event(
+    resolved: &mut crate::nostrdown::ResolvedRef,
+    event: &Value,
+    want_content: bool,
+    display_given: bool,
+) {
+    resolved.found = true;
+    if let Some(kind) = event.get("kind").and_then(Value::as_u64) {
+        resolved.event_kind = Some(kind);
+    }
+    if !display_given {
+        if let Some(title) = first_tag_value(event, "title").filter(|t| !t.is_empty()) {
+            resolved.label = title;
+        }
+    }
+    if want_content {
+        resolved.content = event
+            .get("content")
+            .and_then(Value::as_str)
+            .map(str::to_string);
+    }
 }
 
 // --- Event Building for Local Creation ---
@@ -3686,6 +3934,72 @@ mod tests {
             !b_node.nested[0].index.is_loaded(),
             "ancestor A not re-recursed (cycle guard)"
         );
+    }
+
+    // --- resolve_refs (nostrdown {{ }} resolution) ---
+
+    #[tokio::test]
+    async fn test_resolve_refs() {
+        let pk_owned = test_pubkey();
+        let pk = pk_owned.as_str();
+        let intro = NAddr::new(KIND_PUBLICATION_SECTION, pk, "intro");
+        let ch3 = NAddr::new(KIND_PUBLICATION_SECTION, pk, "chapter-3");
+        let root_idx = NAddr::new(KIND_PUBLICATION_INDEX, pk, "root-idx");
+        let wiki = fixture_event(
+            pk,
+            30818,
+            serde_json::json!([["d", "fable"], ["title", "Fable"]]),
+            "A fable is a short story.",
+        );
+
+        let (engine, _dir) = engine_with_events(&[
+            fixture_section(pk, "intro", "Introduction", "the intro body"),
+            fixture_section(pk, "chapter-3", "Chapter Three", "ch3 body"),
+            fixture_index(pk, "root-idx", "Root", &[&intro, &ch3]),
+            wiki,
+        ])
+        .await;
+        let pe = PublicationEngine::new(&engine);
+
+        let content = "See {{ref:chapter-3|Ch. 3}} and {{wiki:fable}}; \
+                       embed {{embed:intro}}; missing {{ref:nope}}.";
+        let refs = pe
+            .resolve_refs(
+                content,
+                Some(&root_idx.to_a_tag()),
+                Some(pk),
+                FetchPolicy::LocalOnly,
+            )
+            .await;
+        assert_eq!(refs.len(), 4, "one resolved ref per token, in source order");
+
+        // ref: resolves to the sibling section, keeps the explicit display label.
+        let r0 = &refs[0];
+        assert_eq!(r0.kind, crate::nostrdown::RefKind::Ref);
+        assert!(r0.found);
+        assert_eq!(r0.label, "Ch. 3");
+        assert!(r0.naddr.as_deref().unwrap().starts_with("naddr1"));
+        assert_eq!(r0.event_kind, Some(KIND_PUBLICATION_SECTION));
+
+        // wiki: resolves to the 30818 article; its title lifts into the label.
+        let r1 = &refs[1];
+        assert_eq!(r1.kind, crate::nostrdown::RefKind::Wiki);
+        assert!(r1.found);
+        assert_eq!(r1.label, "Fable");
+        assert_eq!(r1.event_kind, Some(30818));
+
+        // embed: pulls the sibling section's content for transclusion.
+        let r2 = &refs[2];
+        assert_eq!(r2.kind, crate::nostrdown::RefKind::Embed);
+        assert!(r2.found);
+        assert_eq!(r2.content.as_deref(), Some("the intro body"));
+        assert_eq!(r2.label, "Introduction");
+
+        // unresolved ref: still returned so the renderer can show its label.
+        let r3 = &refs[3];
+        assert!(!r3.found);
+        assert_eq!(r3.label, "nope");
+        assert!(r3.naddr.is_none());
     }
 
     // --- stream_publication_tree (streaming loader) ---

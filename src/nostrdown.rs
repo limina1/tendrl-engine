@@ -98,6 +98,38 @@ impl NostrdownRef {
     }
 }
 
+/// A [`NostrdownRef`] after the engine has resolved its target — the shape the
+/// web renderer consumes. `start`/`end` are **UTF-16** offsets (the unit JS
+/// slices in, matching `HighlightSpan`), spanning the whole `{{…}}` token so the
+/// renderer replaces it wholesale. An unresolved token still comes back (with
+/// `found: false`) so the renderer can show its `label`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ResolvedRef {
+    pub kind: RefKind,
+    pub start: usize,
+    pub end: usize,
+    /// Canonical lookup target (normalized slug or bech32 entity).
+    pub target: String,
+    /// Heading anchor to scroll to after navigation, if any.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fragment: Option<String>,
+    /// Text to render: explicit `|display`, else the resolved title, else the
+    /// raw target as written.
+    pub label: String,
+    /// `true` when the target resolved to a known address/event.
+    pub found: bool,
+    /// NIP-19 `naddr`/`nevent`/`note` to navigate to, when resolved.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub naddr: Option<String>,
+    /// Kind of the resolved event, when known.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub event_kind: Option<u64>,
+    /// Transcluded content for `embed` (depth-1 — nested embeds are not expanded;
+    /// tracked as a follow-up). `None` for `ref`/`wiki`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub content: Option<String>,
+}
+
 /// Optional `nostr:` URI prefix, case-insensitive, stripped for entity tests.
 fn strip_nostr_prefix(s: &str) -> &str {
     s.strip_prefix("nostr:")

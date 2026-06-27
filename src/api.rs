@@ -599,6 +599,75 @@ fn resolve_pubkeys_by_name(ndb: &nostrdb::Ndb, partial: &str) -> Vec<String> {
 
 use crate::publication::{NAddr, PublicationEngine, KIND_PUBLICATION_INDEX};
 
+// ----------------------------------------------------------------------------
+// Nostrdown reference resolution
+// ----------------------------------------------------------------------------
+
+/// One section's content + the context needed to resolve its nostrdown `{{ }}`
+/// references. `key` (typically the section address) is echoed back so a batch
+/// can be unpacked.
+#[derive(Debug, Deserialize)]
+pub struct ResolveNostrdownItem {
+    pub key: String,
+    pub content: String,
+    /// The containing publication index coordinate (`"30040:pubkey:dtag"`), for
+    /// `ref:`/sibling-`embed:` resolution. Omitted for atomic articles.
+    #[serde(default)]
+    pub publication: Option<String>,
+    /// Section author pubkey (hex) — the preferred author for `wiki:` lookups.
+    #[serde(default)]
+    pub author: Option<String>,
+}
+
+/// POST /api/v1/nostrdown/resolve body. Batched so the reader resolves every
+/// visible section's references in one round trip (mirrors highlights/resolve).
+#[derive(Debug, Deserialize)]
+pub struct ResolveNostrdownRequest {
+    #[serde(default)]
+    pub items: Vec<ResolveNostrdownItem>,
+    /// Fetch policy (optional, defaults to local_first).
+    #[serde(default)]
+    pub policy: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ResolveNostrdownResponse {
+    /// `key` → resolved references (UTF-16 spans), one entry per requested item.
+    /// The web slices section text by these spans and renders links/embeds.
+    pub refs: std::collections::HashMap<String, Vec<crate::nostrdown::ResolvedRef>>,
+}
+
+/// POST /api/v1/nostrdown/resolve
+///
+/// Resolve nostrdown `{{ref|wiki|embed:…}}` references within section text — the
+/// engine-side parse + lookup so every frontend renders identical links and
+/// transclusions. Batched over visible sections; reads only (no engine
+/// mutation). The pure tokenizer lives in [`crate::nostrdown`]; resolution in
+/// [`PublicationEngine::resolve_refs`].
+pub async fn resolve_nostrdown_handler(
+    State(engine): State<AppState>,
+    Json(req): Json<ResolveNostrdownRequest>,
+) -> Result<Json<ResolveNostrdownResponse>, EngineError> {
+    let policy = match &req.policy {
+        Some(p) => p.parse()?,
+        None => FetchPolicy::LocalFirst,
+    };
+    let pub_engine = PublicationEngine::new(&engine);
+    let mut refs = std::collections::HashMap::new();
+    for item in req.items {
+        let resolved = pub_engine
+            .resolve_refs(
+                &item.content,
+                item.publication.as_deref(),
+                item.author.as_deref(),
+                policy,
+            )
+            .await;
+        refs.insert(item.key, resolved);
+    }
+    Ok(Json(ResolveNostrdownResponse { refs }))
+}
+
 /// Query parameters for publications list
 #[derive(Debug, Deserialize)]
 pub struct PublicationsQuery {
