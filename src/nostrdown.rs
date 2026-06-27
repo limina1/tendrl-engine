@@ -121,6 +121,10 @@ pub struct ResolvedRef {
     /// NIP-19 `naddr`/`nevent`/`note` to navigate to, when resolved.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub naddr: Option<String>,
+    /// Addressable coordinate `"kind:pubkey:dtag"` for in-app navigation, when
+    /// the target is an addressable event. `None` for `nevent`/`note` embeds.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub coord: Option<String>,
     /// Kind of the resolved event, when known.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub event_kind: Option<u64>,

@@ -2028,6 +2028,7 @@ impl<'a> PublicationEngine<'a> {
                 label: r.display.clone().unwrap_or_else(|| r.raw_target.clone()),
                 found: false,
                 naddr: None,
+                coord: None,
                 event_kind: None,
                 content: None,
             };
@@ -2042,6 +2043,7 @@ impl<'a> PublicationEngine<'a> {
                         resolved.found = true;
                         resolved.naddr =
                             crate::nip19::naddr_from_a_tag(&addr.to_a_tag(), &[]).ok();
+                        resolved.coord = Some(addr.to_a_tag());
                         resolved.event_kind = Some(addr.kind);
                         if let Some(ev) = self.load_event_by_addr(&addr, policy).await {
                             apply_event(&mut resolved, &ev, false, display_given);
@@ -2055,6 +2057,7 @@ impl<'a> PublicationEngine<'a> {
                         resolved.found = true;
                         resolved.naddr =
                             crate::nip19::naddr_from_a_tag(&addr.to_a_tag(), &[]).ok();
+                        resolved.coord = Some(addr.to_a_tag());
                         resolved.event_kind = Some(addr.kind);
                         if let Some(ev) = self.load_event_by_addr(&addr, policy).await {
                             apply_event(&mut resolved, &ev, true, display_given);
@@ -2068,6 +2071,7 @@ impl<'a> PublicationEngine<'a> {
                 RefKind::Wiki => {
                     if let Some(ev) = self.find_wiki_event(&r.target, author, policy).await {
                         resolved.naddr = event_naddr(&ev);
+                        resolved.coord = event_coord(&ev);
                         apply_event(&mut resolved, &ev, false, display_given);
                     }
                 }
@@ -2112,6 +2116,7 @@ impl<'a> PublicationEngine<'a> {
                     .or_else(|| Some(entity.to_string()));
                 resolved.event_kind = Some(kind_int as u64);
                 let addr = NAddr::new(kind_int as u64, &pubkey, &d_tag);
+                resolved.coord = Some(addr.to_a_tag());
                 if let Some(ev) = self.load_event_by_addr(&addr, policy).await {
                     apply_event(resolved, &ev, want_content, display_given);
                 } else {
@@ -2205,6 +2210,14 @@ fn event_naddr(event: &Value) -> Option<String> {
     let pubkey = event.get("pubkey")?.as_str()?;
     let d_tag = first_tag_value(event, "d").unwrap_or_default();
     crate::nip19::encode_naddr(kind, pubkey, &d_tag, &[]).ok()
+}
+
+/// Build a `"kind:pubkey:dtag"` coordinate for an addressable `event`.
+fn event_coord(event: &Value) -> Option<String> {
+    let kind = event.get("kind")?.as_u64()?;
+    let pubkey = event.get("pubkey")?.as_str()?;
+    let d_tag = first_tag_value(event, "d").unwrap_or_default();
+    Some(format!("{kind}:{pubkey}:{d_tag}"))
 }
 
 /// Stamp a resolved event onto `resolved`: mark found, capture kind, lift the
@@ -3979,6 +3992,10 @@ mod tests {
         assert!(r0.found);
         assert_eq!(r0.label, "Ch. 3");
         assert!(r0.naddr.as_deref().unwrap().starts_with("naddr1"));
+        assert_eq!(
+            r0.coord.as_deref(),
+            Some(format!("{KIND_PUBLICATION_SECTION}:{pk}:chapter-3").as_str())
+        );
         assert_eq!(r0.event_kind, Some(KIND_PUBLICATION_SECTION));
 
         // wiki: resolves to the 30818 article; its title lifts into the label.

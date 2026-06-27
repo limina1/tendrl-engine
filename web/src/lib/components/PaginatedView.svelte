@@ -19,7 +19,8 @@
 		highlightsFor = null,
 		focusedHighlightId = null,
 		threadsFor = null,
-		focusedCommentId = null
+		focusedCommentId = null,
+		publicationAtag = undefined
 	}: {
 		sections: LazySection[];
 		currentSection?: number;
@@ -40,6 +41,9 @@
 		 *  render beneath it. Pass null to suppress inline threads. */
 		threadsFor?: ((addr: { kind: number; pubkey: string; d_tag: string }) => ThreadNode[]) | null;
 		focusedCommentId?: string | null;
+		/** Containing publication coordinate ("30040:pubkey:dtag") — context for
+		 *  resolving nostrdown `{{ref:…}}` sibling references. */
+		publicationAtag?: string | undefined;
 	} = $props();
 
 	const section = $derived(sections[currentSection]);
@@ -131,7 +135,7 @@
 				<span class="nested-page__hint">Nested publication — refocus ⟳</span>
 			</button>
 		{:else if section}
-			<SectionCard {section} {highlights} {focusedHighlightId} />
+			<SectionCard {section} {highlights} {focusedHighlightId} {publicationAtag} />
 			{#if threads.length > 0}
 				<div class="paginated-threads">
 					<button

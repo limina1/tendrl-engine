@@ -19,6 +19,7 @@ import type {
 } from './types';
 import type { ThreadNode } from './discussions/thread';
 import type { Highlight, HighlightSpan } from './discussions/highlights';
+import type { ResolvedRef } from './nostr/nostrdown';
 
 async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
 	const res = await fetch(url, {
@@ -263,6 +264,27 @@ export async function resolveHighlights(
 		{ method: 'POST', body: JSON.stringify({ items }) }
 	);
 	return resp.spans;
+}
+
+/**
+ * Resolve nostrdown `{{ref|wiki|embed:…}}` references within section text,
+ * engine-side — parsing + target lookup so every frontend renders identical
+ * links and transclusions (the nostrdown analogue of `resolveHighlights`).
+ * Batched: pass every visible section (keyed by addr) plus its context — the
+ * containing publication coordinate (`"30040:pubkey:dtag"`) for sibling `ref:`
+ * resolution and the section author for `wiki:` scoping. The response maps each
+ * key to its `ResolvedRef[]` (UTF-16 offsets); the caller renders via
+ * `buildSegments`.
+ */
+export async function resolveNostrdown(
+	items: { key: string; content: string; publication?: string; author?: string }[]
+): Promise<Record<string, ResolvedRef[]>> {
+	if (items.length === 0) return {};
+	const resp = await fetchJson<{ refs: Record<string, ResolvedRef[]> }>(
+		'/api/v1/nostrdown/resolve',
+		{ method: 'POST', body: JSON.stringify({ items }) }
+	);
+	return resp.refs;
 }
 
 // Drafts API — local unsigned-publication storage (engine DraftStore).

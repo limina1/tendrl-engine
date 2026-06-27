@@ -2392,6 +2392,7 @@
 						title: publication.title,
 						summary: publication.summary
 					}}
+					publicationAtag={`${publication.addr.kind}:${publication.addr.pubkey}:${publication.addr.d_tag}`}
 					onload={isDraftMode ? undefined : handleLoadSection}
 					onviewjson={openSectionJsonBySection}
 					highlightsFor={highlightsForSection}
@@ -2411,6 +2412,7 @@
 					focusedHighlightId={parsedHighlightId}
 					threadsFor={threadsForSection}
 					focusedCommentId={parsedFocusCommentId}
+					publicationAtag={`${publication.addr.kind}:${publication.addr.pubkey}:${publication.addr.d_tag}`}
 				/>
 			{/if}
 		</div>
