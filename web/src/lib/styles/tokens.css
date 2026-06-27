@@ -238,6 +238,31 @@
   --affordance-walkthrough: #6b7a8f;  /* dull slate */
 }
 
+/* ── High contrast ──────────────────────────────────────────────────
+   Accessibility modifier, orthogonal to the theme: `data-contrast="high"`
+   on <html> pushes text to the extreme and lifts the muted greys + borders
+   so dim text and structure stop disappearing. One block per theme because
+   the push direction depends on whether the base is dark or light; future
+   themes add their own [data-theme='x'][data-contrast='high'] block. This is
+   a tuned boost over the palette, not a full repaint — accents stay as-is. */
+:root[data-contrast='high']:not([data-theme]) {
+  --fg:                  #ffffff;
+  --fg-alt:              #e2e5ed;
+  --base7:               #dadce4;
+  --base6:               #b9bdca;  /* dim text — was #9a9ca5 */
+  --base5:               #969cb4;  /* muted text / offline — was #6b7089 */
+  --panel-border:        #444b60;  /* was #282a36 */
+  --panel-border-strong: #616a82;
+}
+:root[data-theme='iceberg-light'][data-contrast='high'] {
+  --fg:                  #000000;
+  --fg-alt:              #1b2330;
+  --base6:               #586377;  /* dim text — was #9099ab */
+  --base5:               #2c3342;  /* muted text — was #4c566a */
+  --panel-border:        #9aa1ae;  /* was #c6c8d1 */
+  --panel-border-strong: #6b7280;
+}
+
 * { box-sizing: border-box; }
 
 html, body {

@@ -13,9 +13,12 @@ import {
 	THEMES,
 	DEFAULT_THEME,
 	THEME_STORAGE_KEY,
+	CONTRAST_STORAGE_KEY,
 	isValidTheme,
 	themeById,
-	applyThemeAttribute
+	applyThemeAttribute,
+	prefersMoreContrast,
+	applyContrastAttribute
 } from '$lib/themes';
 import type {
 	ChatResponse,
@@ -606,6 +609,37 @@ function _createAppState() {
 		const curMode = themeById(currentTheme)?.mode ?? 'dark';
 		const target = THEMES.find((t) => t.mode !== curMode);
 		if (target) setTheme(target.id);
+	}
+
+	// High-contrast modifier — orthogonal to the theme. Stored value 'high' /
+	// 'normal' is the user's explicit choice; absent → follow the OS
+	// prefers-contrast setting. Agrees with the pre-paint bootstrap in app.html.
+	let highContrast: boolean = $state(
+		((): boolean => {
+			if (typeof localStorage === 'undefined') return false;
+			const v = localStorage.getItem(CONTRAST_STORAGE_KEY);
+			if (v === 'high') return true;
+			if (v === 'normal') return false;
+			return prefersMoreContrast();
+		})()
+	);
+
+	function setHighContrast(on: boolean) {
+		if (on === highContrast) return;
+		highContrast = on;
+		applyContrastAttribute(on);
+		if (typeof localStorage !== 'undefined') {
+			try {
+				localStorage.setItem(CONTRAST_STORAGE_KEY, on ? 'high' : 'normal');
+			} catch {
+				/* quota / privacy mode — fall back to in-memory only */
+			}
+		}
+		pushToast(`High contrast ${on ? 'on' : 'off'}`, 'success');
+	}
+
+	function toggleHighContrast() {
+		setHighContrast(!highContrast);
 	}
 
 	// --- Settings ---
@@ -4241,6 +4275,9 @@ function _createAppState() {
 		get currentTheme() { return currentTheme; },
 		setTheme,
 		toggleTheme,
+		get highContrast() { return highContrast; },
+		setHighContrast,
+		toggleHighContrast,
 
 		// Settings
 		get syncMode() { return syncMode; },

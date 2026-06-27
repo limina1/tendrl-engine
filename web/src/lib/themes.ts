@@ -41,3 +41,28 @@ export function applyThemeAttribute(id: string): void {
 	if (id === DEFAULT_THEME) root.removeAttribute('data-theme');
 	else root.setAttribute('data-theme', id);
 }
+
+// --- High contrast ---------------------------------------------------------
+// An accessibility modifier orthogonal to the theme: `data-contrast="high"`
+// on <html> lifts text/border tokens toward WCAG AAA over whatever theme is
+// active (see the [data-contrast='high'] blocks in tokens.css). Stored
+// separately from the theme so it composes with every palette.
+export const CONTRAST_STORAGE_KEY = 'tendrl.contrast';
+
+// The OS-level "increase contrast" setting (Windows/macOS/GNOME), exposed to
+// the web as the prefers-contrast media query. Seeds the default when the
+// user hasn't made an explicit choice.
+export function prefersMoreContrast(): boolean {
+	return (
+		typeof window !== 'undefined' &&
+		typeof window.matchMedia === 'function' &&
+		window.matchMedia('(prefers-contrast: more)').matches
+	);
+}
+
+export function applyContrastAttribute(high: boolean): void {
+	if (typeof document === 'undefined') return;
+	const root = document.documentElement;
+	if (high) root.setAttribute('data-contrast', 'high');
+	else root.removeAttribute('data-contrast');
+}
