@@ -224,7 +224,7 @@
 	}
 
 	.context-label {
-		font-size: 0.8rem;
+		font-size: var(--t-2xs);
 		font-weight: 600;
 		color: var(--fg-muted);
 		text-transform: uppercase;
@@ -237,7 +237,7 @@
 	.badge {
 		background: var(--accent);
 		color: white;
-		font-size: 0.7rem;
+		font-size: var(--t-3xs);
 		padding: 1px 7px;
 		border-radius: 10px;
 	}
@@ -249,19 +249,19 @@
 	}
 
 	.sel-btn {
-		font-size: 0.65rem;
+		font-size: var(--t-3xs);
 		padding: 2px 6px;
 		color: var(--fg-muted);
 	}
 
 	.icon-btn {
-		font-size: 0.85rem;
+		font-size: var(--t-xs);
 		padding: 4px 8px;
 		min-width: 28px;
 	}
 
 	.trash-btn {
-		font-size: 0.75rem;
+		font-size: var(--t-2xs);
 	}
 
 	.trash-armed {
@@ -271,7 +271,7 @@
 	}
 
 	.trash-warn {
-		font-size: 0.7rem;
+		font-size: var(--t-3xs);
 		color: #dc2626;
 		font-weight: 600;
 		white-space: nowrap;
@@ -314,7 +314,7 @@
 	.card-title {
 		flex: 1;
 		font-family: inherit;
-		font-size: 0.85rem;
+		font-size: var(--t-xs);
 		font-weight: 600;
 		border: 1px solid var(--border);
 		border-radius: var(--radius);
@@ -330,7 +330,7 @@
 
 	.peek-toggle {
 		padding: 2px 4px;
-		font-size: 0.7rem;
+		font-size: var(--t-3xs);
 		min-width: 18px;
 		line-height: 1;
 		color: var(--fg-muted);
@@ -339,7 +339,7 @@
 	.peek-snippet {
 		text-align: left;
 		width: 100%;
-		font-size: 0.78rem;
+		font-size: var(--t-2xs);
 		line-height: 1.4;
 		color: var(--fg-muted);
 		background: transparent;
@@ -361,19 +361,19 @@
 
 	.icon-btn-sm {
 		padding: 2px 6px;
-		font-size: 0.75rem;
+		font-size: var(--t-2xs);
 		min-width: 22px;
 	}
 
 	.remove-btn {
 		padding: 2px 8px;
-		font-size: 0.85rem;
+		font-size: var(--t-xs);
 		line-height: 1;
 	}
 
 	textarea {
 		width: 100%;
-		font-size: 0.8rem;
+		font-size: var(--t-2xs);
 		line-height: 1.4;
 	}
 
@@ -385,13 +385,13 @@
 		border-radius: 4px;
 		background: var(--modified-bg);
 		color: var(--modified-fg);
-		font-size: 0.75rem;
+		font-size: var(--t-2xs);
 		font-weight: 600;
 		border: 1px solid var(--modified-border);
 	}
 
 	.reset-btn {
-		font-size: 0.7rem;
+		font-size: var(--t-3xs);
 		padding: 2px 8px;
 	}
 
@@ -399,6 +399,6 @@
 		color: var(--fg-muted);
 		text-align: center;
 		margin-top: 16px;
-		font-size: 0.8rem;
+		font-size: var(--t-2xs);
 	}
 </style>

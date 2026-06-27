@@ -263,7 +263,7 @@
 	}
 
 	.result-title {
-		font-size: 0.85rem;
+		font-size: var(--t-xs);
 		font-weight: 600;
 		overflow: hidden;
 		text-overflow: ellipsis;
@@ -272,7 +272,7 @@
 	}
 
 	.kind-badge {
-		font-size: 0.7rem;
+		font-size: var(--t-3xs);
 		padding: 1px 6px;
 		border-radius: 4px;
 		background: var(--border);
@@ -281,7 +281,7 @@
 	}
 
 	.local-badge {
-		font-size: 0.6rem;
+		font-size: var(--t-3xs);
 		padding: 0 5px;
 		border-radius: 3px;
 		background: #f9731633;
@@ -291,7 +291,7 @@
 	}
 
 	.score-badge {
-		font-size: 0.65rem;
+		font-size: var(--t-3xs);
 		padding: 1px 5px;
 		border-radius: 4px;
 		background: #22c55e33;
@@ -301,7 +301,7 @@
 	}
 
 	.result-preview {
-		font-size: 0.8rem;
+		font-size: var(--t-2xs);
 		color: var(--fg-muted);
 		line-height: 1.4;
 		margin-bottom: 4px;
@@ -317,7 +317,7 @@
 		background: none;
 		border: none;
 		color: var(--fg-muted);
-		font-size: 0.7rem;
+		font-size: var(--t-3xs);
 		cursor: pointer;
 		padding: 2px 0;
 		margin-bottom: 4px;
@@ -328,11 +328,11 @@
 	}
 
 	.tag-arrow {
-		font-size: 0.6rem;
+		font-size: var(--t-3xs);
 	}
 
 	.tag-count {
-		font-size: 0.65rem;
+		font-size: var(--t-3xs);
 	}
 
 	.tag-inspector {
@@ -349,7 +349,7 @@
 	.tag-inspector-row {
 		display: flex;
 		gap: 8px;
-		font-size: 0.7rem;
+		font-size: var(--t-3xs);
 		font-family: var(--font-mono);
 	}
 
@@ -369,7 +369,7 @@
 		display: flex;
 		align-items: center;
 		gap: 6px;
-		font-size: 0.7rem;
+		font-size: var(--t-3xs);
 		color: var(--fg-muted);
 	}
 
@@ -378,7 +378,7 @@
 	}
 
 	.action-btn {
-		font-size: 0.65rem;
+		font-size: var(--t-3xs);
 		padding: 1px 6px;
 		border-radius: 4px;
 		background: var(--border);
@@ -398,7 +398,7 @@
 	}
 
 	.menu-btn {
-		font-size: 0.9rem;
+		font-size: var(--t-sm);
 		min-width: 20px;
 		text-align: center;
 		line-height: 1;
@@ -433,7 +433,7 @@
 		width: 100%;
 		text-align: left;
 		padding: 6px 12px;
-		font-size: 0.75rem;
+		font-size: var(--t-2xs);
 		background: none;
 		border: none;
 		color: var(--fg);

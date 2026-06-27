@@ -186,7 +186,7 @@
 	}
 	.psb__pill {
 		font-family: var(--font-mono);
-		font-size: 0.6rem;
+		font-size: var(--t-3xs);
 		line-height: 1.4;
 		padding: 0 6px;
 		border-radius: 3px;

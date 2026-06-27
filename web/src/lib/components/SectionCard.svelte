@@ -160,7 +160,7 @@
 	}
 
 	.section-title {
-		font-size: 0.95rem;
+		font-size: var(--t-sm);
 		font-weight: 600;
 		margin-bottom: 6px;
 		display: flex;
@@ -172,7 +172,7 @@
 		background: none;
 		border: none;
 		color: var(--fg-muted);
-		font-size: 1rem;
+		font-size: var(--t-base);
 		line-height: 1;
 		padding: 0 6px;
 		border-radius: var(--radius);
@@ -189,7 +189,7 @@
 	}
 
 	.status-indicator {
-		font-size: 0.75rem;
+		font-size: var(--t-2xs);
 		margin-left: 6px;
 	}
 
@@ -211,7 +211,7 @@
 	.section-content {
 		white-space: pre-wrap;
 		font-family: var(--font-sans);
-		font-size: 0.85rem;
+		font-size: var(--t-xs);
 		line-height: 1.5;
 		color: var(--fg);
 		margin: 0;
@@ -230,13 +230,13 @@
 
 	.section-pending {
 		color: var(--fg-muted);
-		font-size: 0.8rem;
+		font-size: var(--t-2xs);
 		font-style: italic;
 	}
 
 	.section-error {
 		color: #ef4444;
-		font-size: 0.8rem;
+		font-size: var(--t-2xs);
 	}
 	.hl-overlay {
 		color: inherit;

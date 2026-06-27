@@ -161,7 +161,7 @@
 
 	.paginated-title {
 		padding: 10px 16px;
-		font-size: 0.95rem;
+		font-size: var(--t-sm);
 		font-weight: 700;
 		border-bottom: 1px solid var(--border);
 		display: flex;
@@ -189,7 +189,7 @@
 		border: 1px solid var(--border);
 		color: var(--id-yours);
 		font-family: var(--font-mono);
-		font-size: 0.72rem;
+		font-size: var(--t-3xs);
 		padding: 2px 8px;
 		border-radius: var(--radius);
 		cursor: pointer;
@@ -200,7 +200,7 @@
 	}
 
 	.page-counter {
-		font-size: 0.8rem;
+		font-size: var(--t-2xs);
 		color: var(--fg-muted);
 		min-width: 60px;
 		text-align: center;
@@ -208,7 +208,7 @@
 
 	.section-label {
 		margin-left: 8px;
-		font-size: 0.75rem;
+		font-size: var(--t-2xs);
 		color: var(--fg-muted);
 		opacity: 0.7;
 	}
@@ -232,11 +232,11 @@
 		background: color-mix(in srgb, var(--id-yours) 12%, transparent);
 	}
 	.nested-page:disabled { cursor: default; opacity: 0.7; }
-	.nested-page__icon { font-size: 1.4rem; color: var(--id-yours); }
-	.nested-page__title { font-size: 1rem; font-weight: 700; }
+	.nested-page__icon { font-size: var(--t-xl); color: var(--id-yours); }
+	.nested-page__title { font-size: var(--t-base); font-weight: 700; }
 	.nested-page__hint {
 		font-family: var(--font-mono);
-		font-size: 0.72rem;
+		font-size: var(--t-3xs);
 		text-transform: uppercase;
 		letter-spacing: 0.06em;
 		color: var(--id-yours);

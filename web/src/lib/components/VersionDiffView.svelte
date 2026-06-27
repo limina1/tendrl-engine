@@ -66,7 +66,7 @@
 		display: flex;
 		flex-direction: column;
 		gap: 4px;
-		font-size: 0.74rem;
+		font-size: var(--t-2xs);
 	}
 	.vdv-index,
 	.vdv-sec {
@@ -77,7 +77,7 @@
 	}
 	.vdv-kind {
 		font-family: var(--font-mono);
-		font-size: 0.62rem;
+		font-size: var(--t-3xs);
 		color: var(--fg-muted);
 		border: 1px solid var(--border);
 		border-radius: 3px;
@@ -94,7 +94,7 @@
 		font-style: italic;
 	}
 	.vdv-status {
-		font-size: 0.6rem;
+		font-size: var(--t-3xs);
 		font-weight: 600;
 		border-radius: 3px;
 		padding: 0 4px;
@@ -114,7 +114,7 @@
 		background: color-mix(in srgb, var(--id-draft, crimson) 14%, transparent);
 	}
 	.vdv-chip {
-		font-size: 0.62rem;
+		font-size: var(--t-3xs);
 		color: var(--id-diverged, var(--id-yours));
 		background: color-mix(in srgb, var(--id-diverged, var(--id-yours)) 14%, transparent);
 		border-radius: 3px;
@@ -126,7 +126,7 @@
 	}
 	.vdv-tag {
 		font-family: var(--font-mono);
-		font-size: 0.62rem;
+		font-size: var(--t-3xs);
 		border-radius: 3px;
 		padding: 0 4px;
 	}

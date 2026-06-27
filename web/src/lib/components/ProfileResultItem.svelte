@@ -171,7 +171,7 @@
 		background: var(--bg-surface);
 		border: 1px solid var(--border);
 		color: var(--fg-muted);
-		font-size: 1.1rem;
+		font-size: var(--t-md);
 		text-transform: uppercase;
 	}
 
@@ -187,7 +187,7 @@
 	}
 
 	.pr-name {
-		font-size: 0.88rem;
+		font-size: var(--t-xs);
 		font-weight: 600;
 		overflow: hidden;
 		text-overflow: ellipsis;
@@ -195,7 +195,7 @@
 	}
 
 	.pr-kind {
-		font-size: 0.7rem;
+		font-size: var(--t-3xs);
 		padding: 1px 6px;
 		border-radius: 4px;
 		background: var(--border);
@@ -204,7 +204,7 @@
 	}
 
 	.pr-local {
-		font-size: 0.6rem;
+		font-size: var(--t-3xs);
 		padding: 0 5px;
 		border-radius: 3px;
 		background: #f9731633;
@@ -215,7 +215,7 @@
 	.pr-sub {
 		display: flex;
 		gap: 8px;
-		font-size: 0.72rem;
+		font-size: var(--t-3xs);
 		margin-top: 1px;
 	}
 
@@ -228,7 +228,7 @@
 	}
 
 	.pr-about {
-		font-size: 0.78rem;
+		font-size: var(--t-2xs);
 		color: var(--fg-muted);
 		line-height: 1.4;
 		margin: 4px 0 0;
@@ -248,7 +248,7 @@
 	}
 
 	.pr-btn {
-		font-size: 0.7rem;
+		font-size: var(--t-3xs);
 		padding: 3px 10px;
 		border-radius: 4px;
 		background: var(--border);
@@ -283,7 +283,7 @@
 	}
 
 	.pr-arrow {
-		font-size: 0.6rem;
+		font-size: var(--t-3xs);
 	}
 
 	.pr-json {
@@ -299,7 +299,7 @@
 		margin: 0;
 		padding: 8px 10px;
 		font-family: var(--font-mono);
-		font-size: 0.7rem;
+		font-size: var(--t-3xs);
 		color: var(--fg-muted);
 		white-space: pre-wrap;
 		word-break: break-word;
@@ -308,7 +308,7 @@
 	.pr-json-loading {
 		display: block;
 		padding: 8px 10px;
-		font-size: 0.72rem;
+		font-size: var(--t-3xs);
 		color: var(--fg-muted);
 	}
 </style>

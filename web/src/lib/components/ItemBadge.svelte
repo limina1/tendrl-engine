@@ -150,7 +150,7 @@
 	}
 
 	.badge {
-		font-size: 0.6rem;
+		font-size: var(--t-3xs);
 		padding: 0 5px;
 		border-radius: 4px;
 		white-space: nowrap;

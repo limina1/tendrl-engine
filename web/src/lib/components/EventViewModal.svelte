@@ -1109,14 +1109,14 @@
 	.evm__title {
 		flex: 1;
 		font-weight: 600;
-		font-size: 0.95rem;
+		font-size: var(--t-sm);
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
 	}
 
 	.evm__kind {
-		font-size: 0.65rem;
+		font-size: var(--t-3xs);
 		padding: 1px 6px;
 		border-radius: 4px;
 		background: var(--border);
@@ -1129,7 +1129,7 @@
 		border: none;
 		color: var(--fg-muted);
 		cursor: pointer;
-		font-size: 0.9rem;
+		font-size: var(--t-sm);
 		padding: 2px 6px;
 	}
 
@@ -1142,7 +1142,7 @@
 		align-items: center;
 		gap: 10px;
 		margin-top: 4px;
-		font-size: 0.75rem;
+		font-size: var(--t-2xs);
 		color: var(--fg-muted);
 	}
 
@@ -1155,7 +1155,7 @@
 		padding: 6px 14px;
 		border-bottom: 1px solid var(--border);
 		background: color-mix(in srgb, var(--id-yours) 6%, transparent);
-		font-size: 0.72rem;
+		font-size: var(--t-3xs);
 		flex-wrap: wrap;
 	}
 	.evm__crumb {
@@ -1184,7 +1184,7 @@
 	}
 	.evm__crumb-sep {
 		color: var(--fg-muted);
-		font-size: 0.85rem;
+		font-size: var(--t-xs);
 	}
 
 	.evm__section {
@@ -1197,7 +1197,7 @@
 	}
 
 	.evm__heading {
-		font-size: 0.7rem;
+		font-size: var(--t-3xs);
 		text-transform: uppercase;
 		letter-spacing: 0.06em;
 		color: var(--fg-muted);
@@ -1210,7 +1210,7 @@
 	}
 
 	.evm__placeholder {
-		font-size: 0.75rem;
+		font-size: var(--t-2xs);
 		color: var(--fg-muted);
 		font-style: italic;
 	}
@@ -1239,7 +1239,7 @@
 		text-align: left;
 		cursor: pointer;
 		color: var(--fg);
-		font-size: 0.78rem;
+		font-size: var(--t-2xs);
 	}
 	.evm__containing-btn:hover {
 		background: color-mix(in srgb, var(--id-yours) 12%, transparent);
@@ -1253,7 +1253,7 @@
 		padding: 0 10px;
 		cursor: pointer;
 		color: var(--fg-muted);
-		font-size: 0.72rem;
+		font-size: var(--t-3xs);
 	}
 	.evm__containing-read:hover {
 		color: var(--id-yours);
@@ -1268,7 +1268,7 @@
 	}
 	.evm__containing-dtag {
 		font-family: var(--font-mono);
-		font-size: 0.68rem;
+		font-size: var(--t-3xs);
 		color: var(--fg-muted);
 		max-width: 200px;
 		overflow: hidden;
@@ -1294,7 +1294,7 @@
 		text-align: center;
 		cursor: pointer;
 		color: var(--fg);
-		font-size: 0.75rem;
+		font-size: var(--t-2xs);
 		line-height: 1.3;
 	}
 	.evm__action:hover {
@@ -1309,7 +1309,7 @@
 	.evm__key {
 		flex-shrink: 0;
 		font-family: var(--font-mono);
-		font-size: 0.6rem;
+		font-size: var(--t-3xs);
 		color: var(--fg-muted);
 		border: 1px solid var(--border);
 		border-radius: 3px;
@@ -1317,7 +1317,7 @@
 		line-height: 1.5;
 	}
 	.evm__key--head {
-		font-size: 0.62rem;
+		font-size: var(--t-3xs);
 		font-weight: 600;
 	}
 	.evm__key--active {
@@ -1355,7 +1355,7 @@
 		padding: 4px 9px;
 		cursor: pointer;
 		color: var(--fg-muted);
-		font-size: 0.75rem;
+		font-size: var(--t-2xs);
 	}
 	.evm__pool-sq:hover {
 		border-color: var(--id-yours);
@@ -1366,7 +1366,7 @@
 		background: color-mix(in srgb, var(--id-yours) 12%, transparent);
 	}
 	.evm__pool-box {
-		font-size: 0.85rem;
+		font-size: var(--t-xs);
 		line-height: 1;
 		color: var(--id-yours);
 	}
@@ -1377,7 +1377,7 @@
 		border-radius: var(--r-sm);
 		padding: 4px 9px;
 		cursor: pointer;
-		font-size: 0.72rem;
+		font-size: var(--t-3xs);
 		color: var(--fg-muted);
 	}
 	.evm__pool-lock:hover,
@@ -1441,7 +1441,7 @@
 		border: 1px solid color-mix(in srgb, var(--id-yours) 30%, transparent);
 		color: var(--id-yours);
 		font-family: var(--font-mono);
-		font-size: 0.72rem;
+		font-size: var(--t-3xs);
 		padding: 2px 8px;
 		border-radius: var(--r-sm);
 		cursor: pointer;
@@ -1491,7 +1491,7 @@
 		border-radius: var(--r-sm);
 		padding: 2px 6px;
 		font-family: var(--font-mono);
-		font-size: 0.7rem;
+		font-size: var(--t-3xs);
 		max-width: 100%;
 	}
 	.evm__chip--clickable {
@@ -1503,7 +1503,7 @@
 	}
 	.evm__chip-key {
 		color: var(--fg-muted);
-		font-size: 0.65rem;
+		font-size: var(--t-3xs);
 		font-weight: 600;
 	}
 	.evm__chip-val {
@@ -1541,7 +1541,7 @@
 		align-items: center;
 		gap: 6px;
 		font-family: var(--font-mono);
-		font-size: 0.72rem;
+		font-size: var(--t-3xs);
 		padding: 2px 8px;
 		border-radius: var(--r-sm);
 		border: 1px solid var(--border);
@@ -1580,7 +1580,7 @@
 	}
 	.evm__relay-more {
 		font-family: var(--font-mono);
-		font-size: 0.72rem;
+		font-size: var(--t-3xs);
 		padding: 2px 8px;
 		border-radius: var(--r-sm);
 		background: color-mix(in srgb, var(--accent, var(--id-yours)) 10%, transparent);
@@ -1599,7 +1599,7 @@
 		border: none;
 		color: var(--fg);
 		cursor: pointer;
-		font-size: 0.8rem;
+		font-size: var(--t-2xs);
 		font-weight: 500;
 		padding: 0;
 		display: flex;
@@ -1609,13 +1609,13 @@
 
 	.evm__raw-arrow {
 		display: inline-block;
-		font-size: 0.7rem;
+		font-size: var(--t-3xs);
 	}
 
 	.evm__raw {
 		margin-top: 8px;
 		font-family: var(--font-mono);
-		font-size: 0.7rem;
+		font-size: var(--t-3xs);
 		color: var(--fg-muted);
 		white-space: pre-wrap;
 		word-break: break-all;

@@ -296,7 +296,7 @@
 		align-items: center;
 		justify-content: center;
 		color: var(--fg-muted);
-		font-size: 0.85rem;
+		font-size: var(--t-xs);
 		padding: 24px;
 		text-align: center;
 	}
@@ -318,21 +318,21 @@
 	}
 
 	.doc-kind {
-		font-size: 0.65rem;
+		font-size: var(--t-3xs);
 		text-transform: uppercase;
 		letter-spacing: 0.06em;
 		color: var(--fg-muted);
 	}
 
 	.doc-title {
-		font-size: 1.05rem;
+		font-size: var(--t-md);
 		font-weight: 700;
 		margin: 2px 0 0;
 		line-height: 1.3;
 	}
 
 	.doc-summary {
-		font-size: 0.8rem;
+		font-size: var(--t-2xs);
 		color: var(--fg-muted);
 		font-style: italic;
 		margin: 4px 0 0;
@@ -344,7 +344,7 @@
 		background: none;
 		border: 1px solid var(--border);
 		color: var(--fg-muted);
-		font-size: 0.9rem;
+		font-size: var(--t-sm);
 		line-height: 1;
 		padding: 4px 8px;
 		border-radius: var(--radius);
@@ -397,11 +397,11 @@
 		justify-content: center;
 		background: var(--border);
 		color: var(--fg-muted);
-		font-size: 0.8rem;
+		font-size: var(--t-2xs);
 	}
 
 	.author-name {
-		font-size: 0.8rem;
+		font-size: var(--t-2xs);
 		font-weight: 600;
 		color: var(--fg);
 		overflow: hidden;
@@ -418,7 +418,7 @@
 	.doc-body {
 		white-space: pre-wrap;
 		font-family: var(--font-sans);
-		font-size: 0.88rem;
+		font-size: var(--t-xs);
 		line-height: 1.6;
 		color: var(--fg);
 		margin: 0;
@@ -470,7 +470,7 @@
 		display: inline-block;
 	}
 	.doc-comments-empty {
-		font-size: 0.8rem;
+		font-size: var(--t-2xs);
 		color: var(--fg-muted);
 		font-style: italic;
 		margin: 4px 0 0;

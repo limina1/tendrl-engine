@@ -216,14 +216,14 @@
 		padding: 10px 14px;
 		border-bottom: 1px solid var(--panel-border);
 		font-weight: 600;
-		font-size: 0.85rem;
+		font-size: var(--t-xs);
 	}
 	.fam-close {
 		appearance: none;
 		background: none;
 		border: none;
 		color: var(--muted);
-		font-size: 1.1rem;
+		font-size: var(--t-md);
 		cursor: pointer;
 		padding: 2px 6px;
 		border-radius: 3px;
@@ -239,7 +239,7 @@
 		display: flex;
 		flex-direction: column;
 		gap: 16px;
-		font-size: 0.82rem;
+		font-size: var(--t-xs);
 	}
 	.fam-section {
 		display: flex;
@@ -252,7 +252,7 @@
 		align-items: baseline;
 	}
 	.fam-label {
-		font-size: 0.72rem;
+		font-size: var(--t-3xs);
 		text-transform: uppercase;
 		letter-spacing: 0.04em;
 		color: var(--muted);
@@ -263,7 +263,7 @@
 		border: 1px solid var(--panel-border);
 		border-radius: 3px;
 		color: var(--muted);
-		font-size: 0.7rem;
+		font-size: var(--t-3xs);
 		padding: 2px 6px;
 		cursor: pointer;
 	}
@@ -273,7 +273,7 @@
 	}
 	.fam-dsl {
 		font-family: var(--font-mono);
-		font-size: 0.78rem;
+		font-size: var(--t-2xs);
 		background: var(--panel-bg);
 		border: 1px solid var(--panel-border);
 		border-radius: 3px;
@@ -290,7 +290,7 @@
 	.fam-filter-idx {
 		color: var(--muted);
 		font-family: var(--font-mono);
-		font-size: 0.7rem;
+		font-size: var(--t-3xs);
 		min-width: 18px;
 	}
 	.fam-filter-clauses {
@@ -300,7 +300,7 @@
 	}
 	.fam-clause {
 		font-family: var(--font-mono);
-		font-size: 0.76rem;
+		font-size: var(--t-2xs);
 	}
 	.fam-stage {
 		display: flex;
@@ -321,7 +321,7 @@
 	.fam-stage-num {
 		color: var(--muted);
 		font-family: var(--font-mono);
-		font-size: 0.72rem;
+		font-size: var(--t-3xs);
 	}
 	.fam-stage-label {
 		font-weight: 500;
@@ -329,7 +329,7 @@
 	.fam-stage-delay {
 		color: var(--muted);
 		font-family: var(--font-mono);
-		font-size: 0.7rem;
+		font-size: var(--t-3xs);
 	}
 	.fam-phase {
 		padding-left: 22px;
@@ -338,7 +338,7 @@
 		gap: 2px;
 	}
 	.fam-phase-label {
-		font-size: 0.72rem;
+		font-size: var(--t-3xs);
 		color: var(--muted);
 		margin-top: 4px;
 	}
@@ -379,7 +379,7 @@
 		border: none;
 		color: var(--fg);
 		font-family: var(--font-mono);
-		font-size: 0.76rem;
+		font-size: var(--t-2xs);
 		text-align: left;
 		padding: 0;
 		cursor: pointer;
@@ -392,7 +392,7 @@
 	}
 	.fam-relay-status {
 		color: var(--muted);
-		font-size: 0.72rem;
+		font-size: var(--t-3xs);
 		font-family: var(--font-mono);
 	}
 	.fam-footer {
@@ -405,7 +405,7 @@
 	}
 	.fam-op-id {
 		font-family: var(--font-mono);
-		font-size: 0.7rem;
+		font-size: var(--t-3xs);
 		color: var(--muted);
 	}
 	@keyframes relay-pulse {

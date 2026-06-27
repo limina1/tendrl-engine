@@ -114,7 +114,7 @@
 		border-radius: var(--r-md);
 		padding: 6px 10px 6px 12px;
 		font-family: var(--font-sans);
-		font-size: 0.78rem;
+		font-size: var(--t-2xs);
 		color: var(--fg);
 		box-shadow: 0 4px 14px rgba(0, 0, 0, 0.3);
 		cursor: pointer;
@@ -157,7 +157,7 @@
 		background: none;
 		border: none;
 		color: var(--muted);
-		font-size: 0.95rem;
+		font-size: var(--t-sm);
 		line-height: 1;
 		padding: 2px 4px;
 		cursor: pointer;

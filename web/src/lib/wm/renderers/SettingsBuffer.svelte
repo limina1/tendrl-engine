@@ -13,6 +13,7 @@
 	import { trigger as triggerTip } from '$lib/wm/discovery.svelte';
 	import { discovery, rearmDiscovery, rearmFeatureTours, setWalkthroughEnabled } from '$lib/wm/discovery.svelte';
 	import * as api from '$lib/api';
+	import { textScale, setTextScale, TEXT_SCALE_PRESETS } from '$lib/theme/text-scale.svelte';
 	import type { Buffer } from '../types';
 	import type { EditorInsertMode, SyncMode, ButtonLabels, ComposeDefaultMode } from '$lib/types';
 
@@ -575,6 +576,32 @@
 		{#if app.assistantError}
 			<p class="settings-error">{app.assistantError}</p>
 		{/if}
+	</div>
+
+	<div class="settings-group">
+		<div class="settings-group-title">Appearance</div>
+
+		<div class="settings-row">
+			<span class="settings-label">Text size</span>
+			<div class="radio-group">
+				{#each TEXT_SCALE_PRESETS as preset (preset.id)}
+					<label class="radio">
+						<input
+							type="radio"
+							name="text-scale"
+							value={preset.id}
+							checked={textScale.id === preset.id}
+							onchange={() => setTextScale(preset.id)}
+						/>
+						<span>{preset.label}</span>
+					</label>
+				{/each}
+			</div>
+		</div>
+		<p class="settings-hint">
+			Scales the whole interface. Applies instantly and is saved on this device —
+			it isn't part of the engine config and doesn't sync across machines.
+		</p>
 	</div>
 
 	<div class="settings-group">

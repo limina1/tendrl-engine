@@ -212,7 +212,7 @@
 	.ejm-chevron {
 		color: var(--fg-muted);
 		min-width: 12px;
-		font-size: 0.8rem;
+		font-size: var(--t-2xs);
 	}
 	.ejm-kind {
 		font-family: var(--font-mono);

@@ -2755,9 +2755,9 @@
 	.nested-caret {
 		min-width: 1ch;
 		color: var(--id-yours);
-		font-size: 0.72rem;
+		font-size: var(--t-3xs);
 	}
-	.nested-icon { color: var(--id-yours); font-size: 1rem; line-height: 1; }
+	.nested-icon { color: var(--id-yours); font-size: var(--t-base); line-height: 1; }
 	.nested-title {
 		font-weight: 600;
 		font-size: var(--t-sm);

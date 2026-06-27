@@ -56,7 +56,7 @@
 	input {
 		width: 100%;
 		font-family: inherit;
-		font-size: 0.85rem;
+		font-size: var(--t-xs);
 		border: 1px solid var(--border);
 		border-radius: var(--radius);
 		background: var(--bg-surface);
@@ -78,7 +78,7 @@
 		border: none;
 		color: var(--fg-muted);
 		cursor: pointer;
-		font-size: 0.8rem;
+		font-size: var(--t-2xs);
 		padding: 2px 6px;
 	}
 </style>
