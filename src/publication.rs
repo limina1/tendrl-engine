@@ -2015,6 +2015,19 @@ impl<'a> PublicationEngine<'a> {
             None => None,
         };
 
+        // Section d-tags are opaque nanoids, so a human `{{ref:slug}}` can't
+        // match by d-tag. Build a sibling index that maps each section to its
+        // human handles — title-slug (the `T` tag / normalized title) plus the
+        // literal d-tag — and match the slug against those. Built once (bounded
+        // by sibling count) and only when a slug-based ref is actually present.
+        let needs_siblings = refs.iter().any(|r| {
+            matches!(r.kind, RefKind::Ref) || (matches!(r.kind, RefKind::Embed) && !r.is_entity)
+        });
+        let siblings = match (needs_siblings, &publication) {
+            (true, Some(p)) => self.load_sibling_index(p, policy).await,
+            _ => Vec::new(),
+        };
+
         let mut out = Vec::with_capacity(refs.len());
         for r in &refs {
             let (start, end) = r.utf16_span(content);
@@ -2035,33 +2048,15 @@ impl<'a> PublicationEngine<'a> {
 
             match r.kind {
                 RefKind::Ref => {
-                    if let Some(addr) =
-                        publication.as_ref().and_then(|p| find_sibling(p, &r.target))
-                    {
+                    if let Some(s) = siblings.iter().find(|s| s.matches(&r.target)) {
                         // The TOC lists this sibling, so the link is valid even
-                        // before its event is fetched.
-                        resolved.found = true;
-                        resolved.naddr =
-                            crate::nip19::naddr_from_a_tag(&addr.to_a_tag(), &[]).ok();
-                        resolved.coord = Some(addr.to_a_tag());
-                        resolved.event_kind = Some(addr.kind);
-                        if let Some(ev) = self.load_event_by_addr(&addr, policy).await {
-                            apply_event(&mut resolved, &ev, false, display_given);
-                        }
+                        // when its event isn't local.
+                        s.fill(&mut resolved, false, display_given);
                     }
                 }
                 RefKind::Embed if !r.is_entity => {
-                    if let Some(addr) =
-                        publication.as_ref().and_then(|p| find_sibling(p, &r.target))
-                    {
-                        resolved.found = true;
-                        resolved.naddr =
-                            crate::nip19::naddr_from_a_tag(&addr.to_a_tag(), &[]).ok();
-                        resolved.coord = Some(addr.to_a_tag());
-                        resolved.event_kind = Some(addr.kind);
-                        if let Some(ev) = self.load_event_by_addr(&addr, policy).await {
-                            apply_event(&mut resolved, &ev, true, display_given);
-                        }
+                    if let Some(s) = siblings.iter().find(|s| s.matches(&r.target)) {
+                        s.fill(&mut resolved, true, display_given);
                     }
                 }
                 RefKind::Embed => {
@@ -2078,6 +2073,34 @@ impl<'a> PublicationEngine<'a> {
             }
 
             out.push(resolved);
+        }
+        out
+    }
+
+    /// Build the sibling index for a publication: every section and nested
+    /// index, each loaded once and tagged with its human handles (title-slug
+    /// plus literal d-tag) so `{{ref:slug}}` / slug `{{embed:slug}}` can match.
+    async fn load_sibling_index(&self, pubn: &Publication, policy: FetchPolicy) -> Vec<SiblingEntry> {
+        let mut addrs = Vec::new();
+        collect_sibling_addrs(pubn, &mut addrs);
+        let mut out = Vec::with_capacity(addrs.len());
+        for addr in addrs {
+            let event = self.load_event_by_addr(&addr, policy).await;
+            // Handles to match against: literal d-tag, the `T` tag (normalized
+            // title slug emitted at publish), and the normalized title itself.
+            let mut slugs = vec![addr.d_tag.clone()];
+            if let Some(ev) = &event {
+                if let Some(t) = first_tag_value(ev, "T").filter(|t| !t.is_empty()) {
+                    slugs.push(t);
+                }
+                if let Some(title) = first_tag_value(ev, "title") {
+                    let slug = crate::publication::compose::ComposeState::generate_d_tag(&title);
+                    if !slug.is_empty() {
+                        slugs.push(slug);
+                    }
+                }
+            }
+            out.push(SiblingEntry { addr, event, slugs });
         }
         out
     }
@@ -2176,20 +2199,42 @@ impl<'a> PublicationEngine<'a> {
     }
 }
 
-/// Recursively find a section or nested index in `pubn` whose d-tag matches.
-fn find_sibling(pubn: &Publication, d_tag: &str) -> Option<NAddr> {
-    if let Some(s) = pubn.sections.iter().find(|s| s.addr.d_tag == d_tag) {
-        return Some(s.addr.clone());
+/// One section/index in a publication, loaded and indexed by the human handles
+/// (title-slug + literal d-tag) a `{{ref:slug}}` might use to address it.
+struct SiblingEntry {
+    addr: NAddr,
+    event: Option<Value>,
+    slugs: Vec<String>,
+}
+
+impl SiblingEntry {
+    /// Does `target` name this sibling (by any of its handles)?
+    fn matches(&self, target: &str) -> bool {
+        self.slugs.iter().any(|s| s == target)
+    }
+
+    /// Stamp this sibling onto a resolved ref: address, kind, and — if its event
+    /// is loaded — title/content via [`apply_event`].
+    fn fill(&self, resolved: &mut crate::nostrdown::ResolvedRef, want_content: bool, display_given: bool) {
+        resolved.found = true;
+        resolved.naddr = crate::nip19::naddr_from_a_tag(&self.addr.to_a_tag(), &[]).ok();
+        resolved.coord = Some(self.addr.to_a_tag());
+        resolved.event_kind = Some(self.addr.kind);
+        if let Some(ev) = &self.event {
+            apply_event(resolved, ev, want_content, display_given);
+        }
+    }
+}
+
+/// Collect every section + nested-index address in `pubn`, depth-first.
+fn collect_sibling_addrs(pubn: &Publication, out: &mut Vec<NAddr>) {
+    for s in &pubn.sections {
+        out.push(s.addr.clone());
     }
     for nested in &pubn.nested {
-        if nested.addr.d_tag == d_tag {
-            return Some(nested.addr.clone());
-        }
-        if let Some(a) = find_sibling(nested, d_tag) {
-            return Some(a);
-        }
+        out.push(nested.addr.clone());
+        collect_sibling_addrs(nested, out);
     }
-    None
 }
 
 /// First value of the `name` tag on `event`, if present.
@@ -2621,6 +2666,16 @@ fn build_section_event_internal(
     // Add section-specific tags
     for tag_vec in ComposeState::tags_to_nostr_format(&section.tags) {
         tags.push(serde_json::to_value(tag_vec).unwrap_or(json!([])));
+    }
+
+    // Nostrdown `{{wiki:topic}}` references → NKBIP-01 `wikilink` tags (deduped,
+    // normalized). Mirrors `tree_emit::build_section_content_event`.
+    let mut wikilinks: Vec<String> = Vec::new();
+    for nref in crate::nostrdown::parse(&section.content) {
+        if nref.kind == crate::nostrdown::RefKind::Wiki && !wikilinks.contains(&nref.target) {
+            wikilinks.push(nref.target.clone());
+            tags.push(json!(["wikilink", nref.target]));
+        }
     }
 
     tree_emit::sign_event(
@@ -3955,8 +4010,11 @@ mod tests {
     async fn test_resolve_refs() {
         let pk_owned = test_pubkey();
         let pk = pk_owned.as_str();
+        // Real section d-tags are opaque nanoids — `{{ref:chapter-three}}` must
+        // resolve via the title-slug, not the d-tag. Use a non-slug d-tag here
+        // to prove that path (the section is titled "Chapter Three").
         let intro = NAddr::new(KIND_PUBLICATION_SECTION, pk, "intro");
-        let ch3 = NAddr::new(KIND_PUBLICATION_SECTION, pk, "chapter-3");
+        let ch3 = NAddr::new(KIND_PUBLICATION_SECTION, pk, "sec-7h2x9");
         let root_idx = NAddr::new(KIND_PUBLICATION_INDEX, pk, "root-idx");
         let wiki = fixture_event(
             pk,
@@ -3967,14 +4025,14 @@ mod tests {
 
         let (engine, _dir) = engine_with_events(&[
             fixture_section(pk, "intro", "Introduction", "the intro body"),
-            fixture_section(pk, "chapter-3", "Chapter Three", "ch3 body"),
+            fixture_section(pk, "sec-7h2x9", "Chapter Three", "ch3 body"),
             fixture_index(pk, "root-idx", "Root", &[&intro, &ch3]),
             wiki,
         ])
         .await;
         let pe = PublicationEngine::new(&engine);
 
-        let content = "See {{ref:chapter-3|Ch. 3}} and {{wiki:fable}}; \
+        let content = "See {{ref:chapter-three|Ch. 3}} and {{wiki:fable}}; \
                        embed {{embed:intro}}; missing {{ref:nope}}.";
         let refs = pe
             .resolve_refs(
@@ -3986,15 +4044,16 @@ mod tests {
             .await;
         assert_eq!(refs.len(), 4, "one resolved ref per token, in source order");
 
-        // ref: resolves to the sibling section, keeps the explicit display label.
+        // ref: resolves to the sibling by TITLE-slug (d-tag is a nanoid), keeps
+        // the explicit display label.
         let r0 = &refs[0];
         assert_eq!(r0.kind, crate::nostrdown::RefKind::Ref);
-        assert!(r0.found);
+        assert!(r0.found, "ref resolved via title-slug despite nanoid d-tag");
         assert_eq!(r0.label, "Ch. 3");
         assert!(r0.naddr.as_deref().unwrap().starts_with("naddr1"));
         assert_eq!(
             r0.coord.as_deref(),
-            Some(format!("{KIND_PUBLICATION_SECTION}:{pk}:chapter-3").as_str())
+            Some(format!("{KIND_PUBLICATION_SECTION}:{pk}:sec-7h2x9").as_str())
         );
         assert_eq!(r0.event_kind, Some(KIND_PUBLICATION_SECTION));
 

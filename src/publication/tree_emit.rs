@@ -424,6 +424,20 @@ fn build_section_content_event(
         tags.push(serde_json::to_value(tag_vec).unwrap_or(json!([])));
     }
 
+    // Nostrdown `{{wiki:topic}}` references in the prose → NKBIP-01 `wikilink`
+    // resolution tags, so the event self-describes its wiki references and other
+    // NKBIP-01 clients can resolve them without re-parsing the content. Deduped;
+    // targets are already NIP-54-normalized by the parser. (`ref:`/`embed:` hint
+    // tags are deferred — our resolver matches siblings by title-slug at read
+    // time, so they'd have no consumer yet.)
+    let mut wikilinks: Vec<String> = Vec::new();
+    for nref in crate::nostrdown::parse(&section_content) {
+        if nref.kind == crate::nostrdown::RefKind::Wiki && !wikilinks.contains(&nref.target) {
+            wikilinks.push(nref.target.clone());
+            tags.push(json!(["wikilink", nref.target]));
+        }
+    }
+
     sign_event(
         KIND_PUBLICATION_SECTION,
         pubkey,
@@ -740,6 +754,44 @@ mod tests {
         for ev in &children {
             assert!(is_nanoid(&tag_value(ev, "d").unwrap()));
         }
+    }
+
+    #[test]
+    fn emit_wikilink_tags_from_wiki_refs() {
+        let mut compose = make_compose(vec![SectionCompose {
+            title: "Intro".into(),
+            content: "A {{wiki:The Fable}}, again {{wiki:the fable}}, plus {{ref:other}}.".into(),
+            level: 2,
+            ..Default::default()
+        }]);
+        let pub_d = compose.publication_d_tag();
+        let pubkey = "abcd".repeat(16);
+        let (_root, children) =
+            build_nested_publication_events(&mut compose, &pub_d, &pubkey, 1_700_000_000, 3, None);
+
+        let content_ev = children
+            .iter()
+            .find(|e| e["kind"] == 30041)
+            .expect("a 30041 content event");
+
+        let wikilinks: Vec<String> = content_ev["tags"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|t| {
+                let a = t.as_array()?;
+                (a.first()?.as_str()? == "wikilink").then(|| a.get(1)?.as_str())?
+            })
+            .map(String::from)
+            .collect();
+
+        // Both `{{wiki:The Fable}}` and `{{wiki:the fable}}` normalize to the
+        // same slug and dedupe to a single tag.
+        assert_eq!(wikilinks, vec!["the-fable".to_string()]);
+
+        // The `{{ref:other}}` token does NOT emit a tag (resolved by title-slug
+        // at read time; ref hint tags are deferred).
+        assert!(get_tag(content_ev, "ref").is_none());
     }
 
     /// Re-running the emitter on the same ComposeState must produce the
