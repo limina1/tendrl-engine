@@ -3,6 +3,36 @@
 #+DATE: 2026-02-27
 #+STATUS: DRAFT — evocative, iterative, not a spec
 
+* Implementation Status (Tier 1 shipped — 2026-06-27)
+
+Tier 1 is implemented end-to-end, ={{ }}=-only (the =[[ ]]= / =[[book::]]= forms
+are *not* parsed — they clash with Org-mode, which is the whole reason nostrdown
+exists). The split follows the engine's frontend/backend boundary, mirroring the
+NIP-84 highlight pipeline:
+
+- *Parser* (=src/nostrdown.rs=): pure, IO-free tokenizer for
+  ={{ref|wiki|embed:target#fragment|display}}=, with NIP-54 slug normalization.
+  Unknown prefixes (=cite=/=@=/=term=/=media=) and malformed tokens degrade to
+  literal text.
+- *Resolver* (=PublicationEngine::resolve_refs= → =POST /api/v1/nostrdown/resolve=):
+  =ref:= → a sibling section in the containing 30040, matched by *title-slug*
+  (section d-tags are opaque nanoids, so the human slug matches the =T= tag /
+  normalized title, not the d-tag); =wiki:= → kind 30818/30023/30041 by
+  normalized d-tag (author-preferred); =embed:= → an naddr/nevent entity or a
+  sibling section's content (depth-1 transclusion). Returns UTF-16 spans +
+  naddr/coord/title for the renderer.
+- *Rendering* (=web/.../RichContent.svelte=): merges resolved refs with NIP-84
+  highlight spans onto one segmentation; =ref=/=wiki= render as inline links
+  (open the target), =embed= as an inline transclusion block.
+- *Publish* (=tree_emit.rs=): =\{\{wiki:\}\}= references emit NKBIP-01
+  =["wikilink", topic]= tags so events self-describe for other clients.
+
+Open follow-ups: fragment scroll-to-heading; =ref:=/=embed:= hint-tag emission
+(read-time title-slug matching covers them today); embed recursion beyond
+depth 1; deeper-than-one-level sibling loading; =\{\{wiki\}\}= on atomic
+30023/30818 events. Tiers 2–3 (citations, mentions, glossary, media) are not
+built — see the roadmap below.
+
 * Overview
 
 A markup-agnostic syntax layer for Nostr content that links events together,
@@ -417,24 +447,26 @@ but powerful for knowledge graphs.
 
 ** Tier 1 — Build First
 
-- ={{ref:}}= internal references (most needed day-to-day)
-- ={{wiki:}}= markup-agnostic wikilinks (replaces broken =[[ ]]=)
-- ={{embed:}}= transclusion (enables modular publications)
-- =nostr:naddr#heading= fragment anchors
+- [X] ={{ref:}}= internal references (most needed day-to-day)
+- [X] ={{wiki:}}= markup-agnostic wikilinks (replaces broken =[[ ]]=)
+- [X] ={{embed:}}= transclusion (enables modular publications)
+- [-] =nostr:naddr#heading= fragment anchors — /parsed and carried through
+  resolution; the web does not yet scroll to the heading anchor/
 
 ** Tier 2 — Build Second
 
-- ={{cite:}}= citations (drawing from NKBIP-03)
-- ={{@name}}= profile mention shorthand
-- Citation events (kind 30030) with rich metadata
-- Publication-level citation style tags
+- [ ] ={{cite:}}= citations (drawing from NKBIP-03)
+- [ ] ={{@name}}= profile mention shorthand
+- [ ] Citation events with rich metadata (kind TBD — *not* 30030, which is
+  NIP-51 "Emoji sets"; NKBIP-03 reserves 30–33 but those are non-replaceable)
+- [ ] Publication-level citation style tags
 
 ** Tier 3 — Build Later
 
-- ={{term:}}= glossary references
-- ={{media:}}= nostr-native media embedding
-- Backlink discovery / graph view (client feature)
-- Collaborative annotations
+- [ ] ={{term:}}= glossary references
+- [ ] ={{media:}}= nostr-native media embedding
+- [ ] Backlink discovery / graph view (client feature)
+- [ ] Collaborative annotations
 
 * Parser Design Notes
 

@@ -170,6 +170,17 @@ sections and embeds new events on a 60-second interval when embeddings are enabl
   normalized URL keys, 1-hour TTL)
 - **`nip19.rs`**: bech32 TLV decoders for `nevent`/`naddr`/`nprofile` (npub/nsec live
   in `identity.rs`); unified `decode()` returns a tagged enum for the API
+- **`nostrdown.rs`**: pure, IO-free tokenizer for the `{{ }}` inline-reference
+  layer (see `docs/nostrdown.org`). Scans content for
+  `{{ref|wiki|embed:target#fragment|display}}` (Tier 1; `{{ }}`-only — never `[[ ]]`)
+  and returns typed `NostrdownRef`s with byte offsets + NIP-54 slug normalization.
+  Resolution is engine-side (`PublicationEngine::resolve_refs` →
+  `POST /api/v1/nostrdown/resolve`): `ref:`→sibling section by **title-slug** (d-tags
+  are opaque nanoids, so the human slug matches the `T` tag/normalized title),
+  `wiki:`→kind 30818/30023/30041 by normalized d-tag, `embed:`→naddr/sibling
+  transclusion. The web (`RichContent.svelte`) merges resolved spans with NIP-84
+  highlight spans onto one overlay — the same parse/resolve/render split as
+  highlights. Publish emits NKBIP-01 `["wikilink", topic]` tags for `{{wiki:}}`.
 - **`user_data.rs`**: NIP-01/02/51/65 profile data — parses kind 0/3/10000/10002/
   10003/10006/10007/30002 from nostrdb `Note`s. **Partially wired**: `Metadata`
   (kind 0) is the single source of truth for the profile endpoint + profile search

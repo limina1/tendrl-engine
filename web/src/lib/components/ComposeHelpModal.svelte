@@ -64,6 +64,13 @@
 				{@render row(':tags: a, b', 'expands to t tags (#a #b) — works in every mode')}
 				{@render row('+ Section', 'append a new section (Full mode)')}
 
+				<div class="ch-group">Nostrdown references</div>
+				{@render row('{{ref:slug}}', 'link a sibling section by its title-slug')}
+				{@render row('{{wiki:topic}}', 'wikilink → kind 30818 / 30023 / 30041 by topic')}
+				{@render row('{{embed:target}}', 'transclude a sibling section or naddr inline')}
+				{@render row('|Display', 'append to override the link label')}
+				{@render row('#heading', 'append to target a heading anchor')}
+
 				<div class="ch-group">Sections (Full)</div>
 				{@render row('locked', 'imported / new sections arrive locked — claim (yellow) to edit')}
 				{@render row('Unlock / Lock all', 'bulk claim / re-lock against a source publication')}
