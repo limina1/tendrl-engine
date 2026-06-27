@@ -140,7 +140,7 @@
 	.profile-result {
 		padding: 10px 12px;
 		border-bottom: 1px solid var(--border);
-		border-right: 3px solid #a093c7;
+		border-right: 3px solid var(--id-imported);
 	}
 
 	.pr-main {
@@ -207,8 +207,8 @@
 		font-size: var(--t-3xs);
 		padding: 0 5px;
 		border-radius: 3px;
-		background: #f9731633;
-		color: #f97316;
+		background: color-mix(in srgb, var(--match) 20%, transparent);
+		color: var(--match);
 		font-weight: 600;
 	}
 
@@ -274,12 +274,12 @@
 
 	.pr-btn--danger {
 		margin-left: auto;
-		color: #ef4444;
+		color: var(--danger);
 	}
 
 	.pr-btn--danger:hover {
-		background: #ef444415;
-		color: #ef4444;
+		background: color-mix(in srgb, var(--danger) 8%, transparent);
+		color: var(--danger);
 	}
 
 	.pr-arrow {

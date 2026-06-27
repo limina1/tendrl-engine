@@ -131,7 +131,7 @@
 		position: fixed;
 		inset: 0 0 var(--modeline-h, 0) 0;
 		z-index: 120;
-		background: rgba(0, 0, 0, 0.5);
+		background: var(--scrim);
 		display: flex;
 		align-items: center;
 		justify-content: center;
@@ -187,8 +187,8 @@
 		padding: 1px 6px;
 	}
 	.dcm-side-label--a {
-		color: var(--id-imported, #a093c7);
-		background: color-mix(in srgb, var(--id-imported, #a093c7) 16%, transparent);
+		color: var(--id-imported);
+		background: color-mix(in srgb, var(--id-imported) 16%, transparent);
 	}
 	.dcm-side-label--b {
 		color: var(--state-online);

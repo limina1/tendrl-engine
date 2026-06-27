@@ -71,13 +71,13 @@
 		gap: 10px;
 		padding: 9px 12px;
 		border-bottom: 1px solid var(--border);
-		border-right: 3px solid #a093c7;
+		border-right: 3px solid var(--id-imported);
 		cursor: pointer;
 		text-align: left;
 	}
 
 	.person:hover {
-		background: color-mix(in srgb, #a093c7 8%, transparent);
+		background: color-mix(in srgb, var(--id-imported) 8%, transparent);
 	}
 
 	.person-avatar {
@@ -127,8 +127,8 @@
 		font-size: var(--t-3xs);
 		padding: 0 5px;
 		border-radius: 3px;
-		background: #f9731633;
-		color: #f97316;
+		background: color-mix(in srgb, var(--match) 20%, transparent);
+		color: var(--match);
 		font-weight: 600;
 	}
 

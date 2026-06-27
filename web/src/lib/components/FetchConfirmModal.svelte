@@ -467,7 +467,7 @@
 	.rf-backdrop {
 		position: fixed;
 		inset: 0;
-		background: rgba(0, 0, 0, 0.55);
+		background: var(--scrim);
 		z-index: 250;
 		display: flex;
 		align-items: center;
@@ -770,12 +770,12 @@
 		padding: 0 14px 10px;
 	}
 	.rf-general-btn--on {
-		background: rgba(180, 190, 130, 0.14);
+		background: color-mix(in srgb, var(--green) 14%, transparent);
 		color: var(--state-online);
 		border-color: color-mix(in srgb, var(--state-online) 50%, transparent);
 	}
 	.rf-general-btn--on:hover {
-		background: rgba(180, 190, 130, 0.22);
+		background: color-mix(in srgb, var(--green) 22%, transparent);
 	}
 	/* Logged out → the toggle is forced on + disabled, but should still read as
 	   on (green), not dimmed like a normal disabled button. */

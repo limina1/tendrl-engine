@@ -309,7 +309,7 @@
 	}
 
 	.toolbar-badge {
-		background: rgba(255, 255, 255, 0.3);
+		background: color-mix(in srgb, var(--base8) 30%, transparent);
 		font-size: var(--t-3xs);
 		padding: 0 5px;
 		border-radius: 8px;
@@ -388,7 +388,7 @@
 	}
 
 	.saved-load:hover:not(:disabled) {
-		background: var(--bg-hover, rgba(127, 127, 127, 0.12));
+		background: var(--bg-hover, color-mix(in srgb, var(--base6) 12%, transparent));
 	}
 
 	.saved-title {

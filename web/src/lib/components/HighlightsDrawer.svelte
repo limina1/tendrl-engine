@@ -176,7 +176,7 @@
 		border-radius: var(--r-md);
 		display: flex;
 		flex-direction: column;
-		box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+		box-shadow: var(--shadow-md);
 		transform: translateX(calc(100% + 32px));
 		transition: transform 180ms ease;
 		z-index: 200;

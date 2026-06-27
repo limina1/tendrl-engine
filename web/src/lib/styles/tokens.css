@@ -1,4 +1,8 @@
-/* Iceberg Dark — Tendrl design tokens */
+/* Iceberg — Tendrl design tokens.
+   :root is iceberg-dark (the default). A second palette, iceberg-light,
+   lives below and activates via `data-theme="iceberg-light"` on <html>.
+   Only color tokens are themed; type, spacing, radii, and chrome
+   dimensions are shared. */
 :root {
   /* User text-size control. Settings → Appearance writes this multiplier
      (Compact 1.0 / Default 1.08 / Large 1.23 / X-Large 1.38 — see
@@ -69,6 +73,29 @@
   --state-fetching:  #e9b189;
   --state-error:     #e27878;
 
+  /* Vivid action & state accents — deliberately brighter than the muted
+     Iceberg base so interactive affordances and live states pop. Each
+     names one role; every theme supplies its own value. */
+  --danger:        #ef4444;  /* destructive / error / remove accent */
+  --danger-strong: #dc2626;  /* heavier error fill — banners, buttons */
+  --success:       #22c55e;  /* connected / online / added */
+  --warning:       #eab308;  /* degraded / pending / caution state */
+  --selection:     #3b82f6;  /* active/selected affordance ring */
+  --match:         #f97316;  /* search-term match highlight */
+
+  /* Inline-notice banner (compose/edit warnings) */
+  --warn-fg:       #fcd34d;
+  --warn-bg:       #292524;
+  --warn-border:   #44403c;
+
+  /* Modal scrim, spotlight mask, and elevation shadows — black-based for
+     the dark theme today; a light theme overrides these like any token. */
+  --scrim:         rgba(0, 0, 0, 0.55);
+  --spotlight-mask: rgba(0, 0, 0, 0.32);
+  --shadow-sm:     0 2px 8px rgba(0, 0, 0, 0.2);
+  --shadow-md:     0 8px 24px rgba(0, 0, 0, 0.35);
+  --shadow-lg:     0 12px 40px rgba(0, 0, 0, 0.5);
+
   /* Chrome affordance roles — the two recurring "open a panel" glyphs.
      One hue each so a settings (gear) and a help (?) control read the
      same wherever they appear in the app, and never look alike. */
@@ -123,6 +150,94 @@
   --panel-header-h: 2.154rem; /* 28px */
 }
 
+/* ── Iceberg Light ──────────────────────────────────────────────────
+   Activated by `data-theme="iceberg-light"` on <html>. Overrides every
+   color token; hue associations match iceberg-dark (e.g. --id-imported =
+   magenta, --state-online = green) — only the palette values flip. Note
+   the light base ramp inverts polarity (base0 light → base8 dark), so the
+   panel/border roles are hand-tuned for "stronger = darker" rather than
+   tracking a base index the way the dark theme can. */
+:root[data-theme='iceberg-light'] {
+  /* Base scale (Iceberg Light) */
+  --bg:        #e8e9ec;
+  --bg-alt:    #dde1e6;
+  --base0:     #dcdfe7;
+  --base1:     #c6c8d1;
+  --base2:     #a5c9d4;
+  --base3:     #f8fcfd;
+  --base4:     #6b7a8f;
+  --base5:     #4c566a;
+  --base6:     #9099ab;
+  --base7:     #33374c;
+  --base8:     #1b2b3c;
+  --fg:        #161821;
+  --fg-alt:    #6b7089;
+
+  /* Semantic color — enhanced for contrast on a light ground */
+  --red:        #cc3850;
+  --orange:     #cc7833;
+  --green:      #457c03;
+  --teal:       #289999;
+  --yellow:     #be9117;
+  --blue:       #4271ae;
+  --dark-blue:  #0a4cbe;
+  --magenta:    #8959a8;
+  --violet:     #7a63ee;
+  --cyan:       #3e999f;
+  --dark-cyan:  #2c7088;
+
+  /* Roles — "stronger" means darker/more visible on light, the opposite
+     of the dark ramp, so these are picked explicitly. */
+  --panel-bg:            #e8e9ec;
+  --panel-bg-soft:       #dde1e6;
+  --panel-border:        #c6c8d1;
+  --panel-border-strong: #9099ab;
+  --panel-rail-bg:       #dde1e6;
+  --panel-header-bg:     #e1e4e8;
+  --content-bg:          #e8e9ec;
+
+  /* Identity strip — same hue associations as dark */
+  --id-yours:    #4271ae;  /* blue */
+  --id-imported: #8959a8;  /* magenta */
+  --id-forked:   #7a63ee;  /* violet */
+  --id-diverged: #cc7833;  /* orange */
+  --id-local:    #be9117;  /* yellow */
+  --id-remote:   #3e999f;  /* cyan */
+  --id-draft:    #cc3850;  /* red */
+
+  /* State */
+  --state-online:   #457c03;  /* green */
+  --state-offline:  #4c566a;  /* muted slate */
+  --state-fetching: #be9117;  /* yellow */
+  --state-error:    #cc3850;  /* red */
+
+  /* Vivid action & state accents — error/success/warning/selection map to
+     the palette's face categories. */
+  --danger:        #cc2f45;
+  --danger-strong: #b01f38;
+  --success:       #457c03;  /* green */
+  --warning:       #be9117;  /* yellow */
+  --selection:     #0a4cbe;  /* dark-blue */
+  --match:         #cc7833;  /* orange */
+
+  /* Inline-notice banner — dark amber on a pale amber wash */
+  --warn-fg:     #7a5b00;
+  --warn-bg:     #fbf1d2;
+  --warn-border: #e3c677;
+
+  /* Scrim, spotlight, elevation — lighter scrim + cool, soft shadows */
+  --scrim:          rgba(0, 0, 0, 0.35);
+  --spotlight-mask: rgba(0, 0, 0, 0.2);
+  --shadow-sm:      0 2px 8px rgba(27, 43, 60, 0.12);
+  --shadow-md:      0 8px 24px rgba(27, 43, 60, 0.16);
+  --shadow-lg:      0 12px 40px rgba(27, 43, 60, 0.22);
+
+  /* Chrome affordances */
+  --affordance-settings:    #8959a8;  /* magenta */
+  --affordance-help:        #a87c1a;  /* gold */
+  --affordance-walkthrough: #6b7a8f;  /* dull slate */
+}
+
 * { box-sizing: border-box; }
 
 html, body {
@@ -146,6 +261,8 @@ body { font-size: var(--t-base); }
 
 /* Selection */
 ::selection { background: var(--dark-blue); color: var(--base8); }
+/* On light, base8 is dark — keep the selected glyph light over the deep blue. */
+:root[data-theme='iceberg-light'] ::selection { color: #f8fcfd; }
 
 /* Utility */
 .mono { font-family: var(--font-mono); }
@@ -166,7 +283,7 @@ body { font-size: var(--t-base); }
   white-space: nowrap;
 }
 .pill--ghost { border: 1px solid var(--base3); color: var(--base6); }
-.pill--local { background: rgba(233,177,137,0.12); color: var(--id-local); }
+.pill--local { background: color-mix(in srgb, var(--id-local) 12%, transparent); color: var(--id-local); }
 /* `json` action pill — clickable, opens the row's underlying event in
    the structured EventViewModal. Tinted with --id-yours to match the
    other modal/nav affordances (history popover, kebab hovers). */
@@ -204,19 +321,19 @@ body { font-size: var(--t-base); }
 .pill--connect:hover {
   background: color-mix(in srgb, var(--id-yours) 26%, transparent);
 }
-.pill--remote { background: rgba(137,184,194,0.12); color: var(--id-remote); }
-.pill--draft { background: rgba(226,120,120,0.12); color: var(--id-draft); }
-.pill--imported { background: rgba(160,147,199,0.12); color: var(--id-imported); }
-.pill--forked { background: rgba(178,148,187,0.12); color: var(--id-forked); }
-.pill--diverged { background: rgba(226,164,120,0.12); color: var(--id-diverged); }
-.pill--online { background: rgba(180,190,130,0.14); color: var(--state-online); }
-.pill--offline { background: rgba(107,112,137,0.18); color: var(--state-offline); }
+.pill--remote { background: color-mix(in srgb, var(--id-remote) 12%, transparent); color: var(--id-remote); }
+.pill--draft { background: color-mix(in srgb, var(--id-draft) 12%, transparent); color: var(--id-draft); }
+.pill--imported { background: color-mix(in srgb, var(--id-imported) 12%, transparent); color: var(--id-imported); }
+.pill--forked { background: color-mix(in srgb, var(--id-forked) 12%, transparent); color: var(--id-forked); }
+.pill--diverged { background: color-mix(in srgb, var(--id-diverged) 12%, transparent); color: var(--id-diverged); }
+.pill--online { background: color-mix(in srgb, var(--state-online) 14%, transparent); color: var(--state-online); }
+.pill--offline { background: color-mix(in srgb, var(--state-offline) 18%, transparent); color: var(--state-offline); }
 
 /* Dot */
 .dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; }
-.dot--online { background: var(--state-online); box-shadow: 0 0 6px rgba(180,190,130,0.5); }
+.dot--online { background: var(--state-online); box-shadow: 0 0 6px color-mix(in srgb, var(--state-online) 50%, transparent); }
 .dot--offline { background: var(--state-offline); }
-.dot--diverged { background: var(--id-diverged); box-shadow: 0 0 6px rgba(226,164,120,0.5); }
+.dot--diverged { background: var(--id-diverged); box-shadow: 0 0 6px color-mix(in srgb, var(--id-diverged) 50%, transparent); }
 .dot--fetching { background: var(--state-fetching); animation: pulse 1.2s infinite ease-in-out; }
 @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
 
@@ -425,7 +542,7 @@ body { font-size: var(--t-base); }
   align-items: stretch;
 }
 .row:hover { background: var(--base1); }
-.row--selected { background: rgba(132,160,198,0.08); }
+.row--selected { background: color-mix(in srgb, var(--blue) 8%, transparent); }
 .row__body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
 .row__title { font-size: var(--t-md); color: var(--fg); font-weight: 500; line-height: 1.3; }
 .row__meta { display: flex; gap: 8px; align-items: center; font-size: var(--t-xs); color: var(--base5); font-family: var(--font-mono); }
@@ -659,7 +776,7 @@ body { font-size: var(--t-base); }
   align-self: flex-start;
 }
 .editor__gutter-line { padding: 0 4px 0 12px; }
-.editor__gutter-line.cur { color: var(--blue); background: rgba(132,160,198,0.06); }
+.editor__gutter-line.cur { color: var(--blue); background: color-mix(in srgb, var(--blue) 6%, transparent); }
 .editor__gutter-fold { color: var(--base5); cursor: pointer; padding: 0 4px; }
 .editor__buf {
   flex: 1;
@@ -672,7 +789,7 @@ body { font-size: var(--t-base); }
 }
 .editor__buf .editor__line { min-height: 1.7em; }
 .editor__line { position: relative; padding: 0 6px; margin: 0 -6px; border-radius: 2px; }
-.editor__line.cur { background: rgba(132,160,198,0.06); }
+.editor__line.cur { background: color-mix(in srgb, var(--blue) 6%, transparent); }
 
 /* Plain-mode syntax tokens */
 .tok-h1 { color: var(--green); }
@@ -680,8 +797,8 @@ body { font-size: var(--t-base); }
 .tok-attr { color: var(--orange); }
 .tok-attr-key { color: var(--orange); }
 .tok-attr-val { color: var(--fg-alt); }
-.tok-cite { background: rgba(160,147,199,0.14); color: var(--magenta); padding: 0 4px; border-radius: 2px; }
-.tok-ref { background: rgba(132,160,198,0.14); color: var(--blue); padding: 0 4px; border-radius: 2px; }
+.tok-cite { background: color-mix(in srgb, var(--magenta) 14%, transparent); color: var(--magenta); padding: 0 4px; border-radius: 2px; }
+.tok-ref { background: color-mix(in srgb, var(--blue) 14%, transparent); color: var(--blue); padding: 0 4px; border-radius: 2px; }
 .tok-author { color: var(--magenta); }
 .tok-fold { color: var(--base4); cursor: pointer; }
 
@@ -689,7 +806,7 @@ body { font-size: var(--t-base); }
 .detected__title { font-size: var(--t-md); color: var(--fg); font-weight: 500; padding: 8px 10px; border-bottom: 1px solid var(--panel-border); }
 .detected__sec { display: flex; align-items: center; gap: 6px; padding: 5px 10px; cursor: pointer; font-size: var(--t-sm); }
 .detected__sec:hover { background: var(--base1); }
-.detected__sec--cur { background: rgba(132,160,198,0.06); }
+.detected__sec--cur { background: color-mix(in srgb, var(--blue) 6%, transparent); }
 .detected__sec input { accent-color: var(--blue); margin: 0; }
 
 /* WYSIWYG button bar — secondary horizontal strip beneath the panel header */
@@ -778,7 +895,7 @@ body { font-size: var(--t-base); }
 .modal-bg {
   position: absolute;
   inset: 0;
-  background: rgba(12,14,19,0.7);
+  background: color-mix(in srgb, var(--base0) 70%, transparent);
   display: flex;
   align-items: center;
   justify-content: center;

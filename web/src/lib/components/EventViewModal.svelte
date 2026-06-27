@@ -1075,7 +1075,7 @@
 		   clickable while the modal is open. */
 		inset: 0 0 var(--modeline-h, 0) 0;
 		z-index: 100;
-		background: rgba(0, 0, 0, 0.5);
+		background: var(--scrim);
 		display: flex;
 		align-items: center;
 		justify-content: center;

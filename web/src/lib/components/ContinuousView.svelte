@@ -559,7 +559,7 @@
 	}
 
 	.section-error {
-		color: #ef4444;
+		color: var(--danger);
 		font-size: var(--t-2xs);
 	}
 

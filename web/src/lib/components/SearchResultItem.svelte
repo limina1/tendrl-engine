@@ -229,11 +229,11 @@
 	.result-item__body { flex: 1; min-width: 0; }
 
 	.result-item.kind-index {
-		border-right-color: #3b82f6;
+		border-right-color: var(--selection);
 	}
 
 	.result-item.kind-section {
-		border-right-color: #22c55e;
+		border-right-color: var(--success);
 	}
 
 	.result-header {
@@ -284,8 +284,8 @@
 		font-size: var(--t-3xs);
 		padding: 0 5px;
 		border-radius: 3px;
-		background: #f9731633;
-		color: #f97316;
+		background: color-mix(in srgb, var(--match) 20%, transparent);
+		color: var(--match);
 		white-space: nowrap;
 		font-weight: 600;
 	}
@@ -294,8 +294,8 @@
 		font-size: var(--t-3xs);
 		padding: 1px 5px;
 		border-radius: 4px;
-		background: #22c55e33;
-		color: #22c55e;
+		background: color-mix(in srgb, var(--success) 20%, transparent);
+		color: var(--success);
 		font-weight: 600;
 		white-space: nowrap;
 	}
@@ -354,7 +354,7 @@
 	}
 
 	.tag-name {
-		color: #22c55e;
+		color: var(--success);
 		min-width: 40px;
 	}
 
@@ -418,7 +418,7 @@
 		background: var(--bg);
 		border: 1px solid var(--border);
 		border-radius: var(--radius);
-		box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+		box-shadow: var(--shadow-sm);
 		min-width: 120px;
 		padding: 4px 0;
 	}
@@ -445,11 +445,11 @@
 	}
 
 	.menu-item-danger {
-		color: #ef4444;
+		color: var(--danger);
 	}
 
 	.menu-item-danger:hover {
-		background: #ef444415;
+		background: color-mix(in srgb, var(--danger) 8%, transparent);
 	}
 
 	/* Membership / state badges previously lived here as .loc-* — moved

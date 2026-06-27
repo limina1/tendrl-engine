@@ -799,7 +799,7 @@
 
 	.pub-item {
 		cursor: pointer;
-		border-left: 3px solid #3b82f6;
+		border-left: 3px solid var(--selection);
 	}
 
 	.pub-item:hover {

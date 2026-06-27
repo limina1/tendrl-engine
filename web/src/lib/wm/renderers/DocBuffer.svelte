@@ -301,7 +301,7 @@
 		text-align: center;
 	}
 	.doc-status--error {
-		color: #ef4444;
+		color: var(--danger);
 	}
 
 	.doc-bar {

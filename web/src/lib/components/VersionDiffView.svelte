@@ -121,8 +121,8 @@
 		padding: 0 4px;
 	}
 	.vdv-chip--content {
-		color: var(--id-diverged, #e2a478);
-		background: color-mix(in srgb, var(--id-diverged, #e2a478) 16%, transparent);
+		color: var(--id-diverged);
+		background: color-mix(in srgb, var(--id-diverged) 16%, transparent);
 	}
 	.vdv-tag {
 		font-family: var(--font-mono);

@@ -624,7 +624,7 @@
 	/* Reuse global .dot but add result-specific classes. */
 	:global(.dot--ok) {
 		background: var(--state-online);
-		box-shadow: 0 0 6px rgba(180, 190, 130, 0.5);
+		box-shadow: 0 0 6px color-mix(in srgb, var(--green) 50%, transparent);
 	}
 	:global(.dot--err) {
 		background: var(--id-draft);

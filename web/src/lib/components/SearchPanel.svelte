@@ -893,7 +893,7 @@
 		align-items: center;
 		gap: 8px;
 		padding: 6px 12px;
-		background: color-mix(in srgb, #a093c7 12%, transparent);
+		background: color-mix(in srgb, var(--id-imported) 12%, transparent);
 		border-bottom: 1px solid var(--border);
 		font-size: var(--t-3xs);
 		text-transform: uppercase;
@@ -901,7 +901,7 @@
 	}
 	.people-header__label {
 		flex: 1;
-		color: #a093c7;
+		color: var(--id-imported);
 		font-weight: 600;
 	}
 	.people-header__count {
@@ -1084,8 +1084,8 @@
 	.semantic-summary {
 		padding: 4px 12px;
 		font-size: var(--t-3xs);
-		color: #22c55e;
-		background: #22c55e10;
+		color: var(--success);
+		background: color-mix(in srgb, var(--success) 6%, transparent);
 		text-align: center;
 		border-bottom: 1px solid var(--border);
 	}

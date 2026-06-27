@@ -199,7 +199,7 @@
 	}
 
 	.status-error {
-		color: #ef4444;
+		color: var(--danger);
 		font-weight: 700;
 	}
 
@@ -235,7 +235,7 @@
 	}
 
 	.section-error {
-		color: #ef4444;
+		color: var(--danger);
 		font-size: var(--t-2xs);
 	}
 	.hl-overlay {

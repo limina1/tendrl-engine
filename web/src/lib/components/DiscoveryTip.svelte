@@ -234,7 +234,7 @@
 		border-radius: var(--r-md);
 		box-shadow:
 			0 0 0 2px color-mix(in srgb, var(--affordance-walkthrough) 30%, transparent),
-			0 0 0 9999px rgba(0, 0, 0, 0.32);
+			0 0 0 9999px var(--spotlight-mask);
 		pointer-events: none;
 		transition: all 140ms ease;
 	}
@@ -250,7 +250,7 @@
 		border: 1px solid var(--panel-border-strong);
 		border-radius: var(--r-md);
 		font-family: var(--font-mono);
-		box-shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
+		box-shadow: var(--shadow-md);
 		display: flex;
 		flex-direction: column;
 	}

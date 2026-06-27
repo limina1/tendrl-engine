@@ -116,14 +116,14 @@
 		font-family: var(--font-sans);
 		font-size: var(--t-2xs);
 		color: var(--fg);
-		box-shadow: 0 4px 14px rgba(0, 0, 0, 0.3);
+		box-shadow: var(--shadow-md);
 		cursor: pointer;
 		max-width: 360px;
 	}
 	.toast--pinned {
 		cursor: default;
 		/* A subtle indicator that this toast won't auto-dismiss. */
-		box-shadow: 0 4px 14px rgba(0, 0, 0, 0.3), 0 0 0 1px var(--panel-border-strong, var(--panel-border));
+		box-shadow: var(--shadow-md), 0 0 0 1px var(--panel-border-strong, var(--panel-border));
 	}
 	.toast__dot {
 		display: inline-block;

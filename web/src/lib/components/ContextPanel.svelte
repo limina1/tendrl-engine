@@ -265,14 +265,14 @@
 	}
 
 	.trash-armed {
-		background: #dc2626;
-		border-color: #dc2626;
+		background: var(--danger-strong);
+		border-color: var(--danger-strong);
 		color: white;
 	}
 
 	.trash-warn {
 		font-size: var(--t-3xs);
-		color: #dc2626;
+		color: var(--danger-strong);
 		font-weight: 600;
 		white-space: nowrap;
 	}

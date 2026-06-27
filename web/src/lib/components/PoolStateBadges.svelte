@@ -211,12 +211,12 @@
 		background: color-mix(in srgb, var(--id-yours) 12%, transparent);
 	}
 	.psb__pill--on {
-		background: #22c55e33;
-		color: #22c55e;
+		background: color-mix(in srgb, var(--success) 20%, transparent);
+		color: var(--success);
 	}
 	.psb__pill--on:hover {
-		background: #22c55e55;
-		color: #22c55e;
+		background: color-mix(in srgb, var(--success) 33%, transparent);
+		color: var(--success);
 	}
 
 	.psb__pill--drop {
@@ -234,8 +234,8 @@
 		color: var(--id-imported);
 	}
 	.psb__pill--mod {
-		background: #eab30833;
-		color: #eab308;
+		background: color-mix(in srgb, var(--warning) 20%, transparent);
+		color: var(--warning);
 	}
 	.psb__pill--lock {
 		background: color-mix(in srgb, var(--id-imported) 18%, transparent);
@@ -251,11 +251,11 @@
 	   migration is visually invisible. fork uses imported-accent
 	   since it points back to another event. */
 	.psb__pill--draft {
-		background: rgba(226, 120, 120, 0.12);
+		background: color-mix(in srgb, var(--red) 12%, transparent);
 		color: var(--id-draft);
 	}
 	.psb__pill--remote {
-		background: rgba(137, 184, 194, 0.12);
+		background: color-mix(in srgb, var(--cyan) 12%, transparent);
 		color: var(--id-remote);
 	}
 	/* Signed but not broadcast — the user's local-only snapshot. Distinct
@@ -271,12 +271,12 @@
 	/* Containment — clickable, green (same token as the active ctx/cmp pills)
 	   since it points at the publications this event belongs to. */
 	.psb__pill--partof {
-		background: #22c55e33;
-		color: #22c55e;
+		background: color-mix(in srgb, var(--success) 20%, transparent);
+		color: var(--success);
 		cursor: pointer;
 	}
 	.psb__pill--partof:hover {
-		background: #22c55e55;
+		background: color-mix(in srgb, var(--success) 33%, transparent);
 	}
 
 	.psb__lock {

@@ -68,7 +68,7 @@
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		background: rgba(0, 0, 0, 0.5);
+		background: var(--scrim);
 	}
 
 	.modal-card {

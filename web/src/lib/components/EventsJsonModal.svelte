@@ -136,7 +136,7 @@
 	.ejm-backdrop {
 		position: fixed;
 		inset: 0;
-		background: rgba(0, 0, 0, 0.55);
+		background: var(--scrim);
 		display: flex;
 		align-items: center;
 		justify-content: center;
@@ -218,7 +218,7 @@
 		font-family: var(--font-mono);
 		font-size: var(--t-xs);
 		color: var(--id-remote);
-		background: rgba(137, 184, 194, 0.12);
+		background: color-mix(in srgb, var(--cyan) 12%, transparent);
 		padding: 1px 6px;
 		border-radius: var(--r-sm);
 		white-space: nowrap;

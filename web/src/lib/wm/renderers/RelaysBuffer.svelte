@@ -1994,7 +1994,7 @@
 		color: var(--fg);
 	}
 	.toggle-pill--on {
-		background: rgba(180, 190, 130, 0.14);
+		background: color-mix(in srgb, var(--green) 14%, transparent);
 		color: var(--state-online);
 		border-color: color-mix(in srgb, var(--state-online) 50%, transparent);
 	}
@@ -2089,7 +2089,7 @@
 		border-radius: var(--r-md);
 		font-family: var(--font-mono);
 		font-size: var(--t-xs);
-		background: rgba(137, 184, 194, 0.12);
+		background: color-mix(in srgb, var(--cyan) 12%, transparent);
 		color: var(--id-remote);
 		text-decoration: none;
 	}

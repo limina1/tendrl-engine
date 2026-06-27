@@ -92,7 +92,7 @@
 	.nm-backdrop {
 		position: fixed;
 		inset: 0;
-		background: rgba(0, 0, 0, 0.62);
+		background: var(--scrim);
 		z-index: 300; /* above the per-fetch confirm modal (250) */
 		display: flex;
 		align-items: center;
