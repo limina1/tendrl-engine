@@ -297,6 +297,82 @@ pub fn parse(content: &str) -> Vec<NostrdownRef> {
     refs
 }
 
+/// Derive the resolution/reference tags a composed event should carry for the
+/// `{{ }}` references in its content — the "tag resolution pattern". So the
+/// event self-describes its references and other clients can resolve them.
+///
+/// - `{{wiki:topic}}`     → `["wikilink", topic]` (NKBIP-01)
+/// - `{{ref:slug}}` / slug `{{embed:slug}}` → `["ref", slug]` (sibling handle)
+/// - `{{embed:naddr…}}`   → `["a", "kind:pubkey:dtag", relay?]`
+/// - `{{embed:nevent/note}}` → `["q", id, relay?, pubkey?]` (NIP-18 quote)
+/// - `{{embed:npub/nprofile}}` → `["p", pubkey, relay?]`
+///
+/// Deduplicated on (tag-name, value). Pure — NIP-19 decoding is IO-free.
+pub fn reference_tags(content: &str) -> Vec<Vec<String>> {
+    use crate::nip19::Decoded;
+    let mut out: Vec<Vec<String>> = Vec::new();
+    let mut seen: Vec<(String, String)> = Vec::new();
+    let mut push = |out: &mut Vec<Vec<String>>, seen: &mut Vec<(String, String)>, tag: Vec<String>| {
+        let key = (tag[0].clone(), tag.get(1).cloned().unwrap_or_default());
+        if !seen.contains(&key) {
+            seen.push(key);
+            out.push(tag);
+        }
+    };
+    for r in parse(content) {
+        match r.kind {
+            RefKind::Wiki => push(&mut out, &mut seen, vec!["wikilink".into(), r.target]),
+            RefKind::Ref => push(&mut out, &mut seen, vec!["ref".into(), r.target]),
+            RefKind::Embed if !r.is_entity => {
+                push(&mut out, &mut seen, vec!["ref".into(), r.target])
+            }
+            RefKind::Embed => {
+                let Ok(decoded) = crate::nip19::decode(&r.target) else {
+                    continue;
+                };
+                let tag = match decoded {
+                    Decoded::Naddr {
+                        kind_int,
+                        pubkey,
+                        d_tag,
+                        relays,
+                    } => {
+                        let mut t = vec!["a".into(), format!("{kind_int}:{pubkey}:{d_tag}")];
+                        if let Some(relay) = relays.into_iter().next() {
+                            t.push(relay);
+                        }
+                        t
+                    }
+                    Decoded::Nevent {
+                        event_id,
+                        relays,
+                        author,
+                        ..
+                    } => {
+                        let relay = relays.into_iter().next().unwrap_or_default();
+                        let mut t = vec!["q".into(), event_id, relay];
+                        if let Some(pk) = author {
+                            t.push(pk);
+                        }
+                        t
+                    }
+                    Decoded::Note { event_id } => vec!["q".into(), event_id],
+                    Decoded::Npub { pubkey } => vec!["p".into(), pubkey],
+                    Decoded::Nprofile { pubkey, relays } => {
+                        let mut t = vec!["p".into(), pubkey];
+                        if let Some(relay) = relays.into_iter().next() {
+                            t.push(relay);
+                        }
+                        t
+                    }
+                };
+                push(&mut out, &mut seen, tag);
+            }
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -425,6 +501,26 @@ mod tests {
         // "日本語 " is 4 UTF-16 units (3 BMP CJK + space)
         assert_eq!(s, 4);
         assert_eq!(e, 4 + "{{ref:topic}}".encode_utf16().count());
+    }
+
+    #[test]
+    fn reference_tags_per_kind() {
+        let pk = "ab".repeat(32);
+        let naddr = crate::nip19::encode_naddr(30041, &pk, "sec-1", &[]).unwrap();
+        let npub = crate::nip19::encode_npub(&pk).unwrap();
+        let content = String::from("a {{wiki:The Fable}}, b {{ref:Chapter One}}, c {{embed:")
+            + &naddr
+            + "}}, d {{embed:"
+            + &npub
+            + "}}, e {{wiki:the fable}}.";
+        let tags = reference_tags(&content);
+
+        assert!(tags.contains(&vec!["wikilink".to_string(), "the-fable".to_string()]));
+        assert!(tags.contains(&vec!["ref".to_string(), "chapter-one".to_string()]));
+        assert!(tags.contains(&vec!["a".to_string(), format!("30041:{pk}:sec-1")]));
+        assert!(tags.contains(&vec!["p".to_string(), pk.clone()]));
+        // The two `{{wiki:…}}` dedupe to a single wikilink tag.
+        assert_eq!(tags.iter().filter(|t| t[0] == "wikilink").count(), 1);
     }
 
     #[test]

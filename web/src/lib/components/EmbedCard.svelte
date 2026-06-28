@@ -150,5 +150,6 @@
 		font-style: italic;
 		color: var(--fg-muted);
 		font-size: var(--t-2xs);
+		overflow-wrap: anywhere;
 	}
 </style>

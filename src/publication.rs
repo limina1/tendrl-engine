@@ -2728,14 +2728,10 @@ fn build_section_event_internal(
         tags.push(serde_json::to_value(tag_vec).unwrap_or(json!([])));
     }
 
-    // Nostrdown `{{wiki:topic}}` references → NKBIP-01 `wikilink` tags (deduped,
-    // normalized). Mirrors `tree_emit::build_section_content_event`.
-    let mut wikilinks: Vec<String> = Vec::new();
-    for nref in crate::nostrdown::parse(&section.content) {
-        if nref.kind == crate::nostrdown::RefKind::Wiki && !wikilinks.contains(&nref.target) {
-            wikilinks.push(nref.target.clone());
-            tags.push(json!(["wikilink", nref.target]));
-        }
+    // Nostrdown `{{ }}` references → resolution tags (wikilink / ref / a / q / p).
+    // Mirrors `tree_emit::build_section_content_event`; see `reference_tags`.
+    for tag in crate::nostrdown::reference_tags(&section.content) {
+        tags.push(json!(tag));
     }
 
     tree_emit::sign_event(

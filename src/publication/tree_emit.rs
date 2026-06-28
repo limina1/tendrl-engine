@@ -424,18 +424,11 @@ fn build_section_content_event(
         tags.push(serde_json::to_value(tag_vec).unwrap_or(json!([])));
     }
 
-    // Nostrdown `{{wiki:topic}}` references in the prose → NKBIP-01 `wikilink`
-    // resolution tags, so the event self-describes its wiki references and other
-    // NKBIP-01 clients can resolve them without re-parsing the content. Deduped;
-    // targets are already NIP-54-normalized by the parser. (`ref:`/`embed:` hint
-    // tags are deferred — our resolver matches siblings by title-slug at read
-    // time, so they'd have no consumer yet.)
-    let mut wikilinks: Vec<String> = Vec::new();
-    for nref in crate::nostrdown::parse(&section_content) {
-        if nref.kind == crate::nostrdown::RefKind::Wiki && !wikilinks.contains(&nref.target) {
-            wikilinks.push(nref.target.clone());
-            tags.push(json!(["wikilink", nref.target]));
-        }
+    // Nostrdown `{{ }}` references → resolution tags (wikilink / ref / a / q / p)
+    // so the event self-describes its references and they show in the preview
+    // events. Deduped; see `nostrdown::reference_tags`.
+    for tag in crate::nostrdown::reference_tags(&section_content) {
+        tags.push(json!(tag));
     }
 
     sign_event(
@@ -789,9 +782,13 @@ mod tests {
         // same slug and dedupe to a single tag.
         assert_eq!(wikilinks, vec!["the-fable".to_string()]);
 
-        // The `{{ref:other}}` token does NOT emit a tag (resolved by title-slug
-        // at read time; ref hint tags are deferred).
-        assert!(get_tag(content_ev, "ref").is_none());
+        // `{{ref:other}}` emits a `["ref", "other"]` resolution tag.
+        assert_eq!(
+            get_tag(content_ev, "ref")
+                .and_then(|t| t.get(1))
+                .and_then(|v| v.as_str()),
+            Some("other")
+        );
     }
 
     /// Re-running the emitter on the same ComposeState must produce the
