@@ -16,7 +16,7 @@
 	import { textScale, setTextScale, TEXT_SCALE_PRESETS } from '$lib/theme/text-scale.svelte';
 	import type { Buffer } from '../types';
 	import type { EditorInsertMode, SyncMode, ButtonLabels, ComposeDefaultMode } from '$lib/types';
-	import { THEMES } from '$lib/themes';
+	import ThemePicker from '$lib/components/ThemePicker.svelte';
 
 	let { buffer: _buffer }: { buffer: Buffer } = $props();
 
@@ -381,21 +381,11 @@
 		</div>
 
 		<div class="settings-row">
-			<label
+			<span
 				class="settings-label"
-				for="theme-select"
-				title="Color scheme for the whole interface. The sun/moon button in the header toggles dark ⇄ light; your choice is remembered on this device."
-			>Theme</label>
-			<select
-				id="theme-select"
-				class="settings-select"
-				value={app.currentTheme}
-				onchange={(e) => app.setTheme(e.currentTarget.value)}
-			>
-				{#each THEMES as t (t.id)}
-					<option value={t.id}>{t.familyLabel} {t.mode === 'dark' ? 'Dark' : 'Light'}</option>
-				{/each}
-			</select>
+				title="Color scheme for the whole interface. Hover a theme to preview it live; click to keep it. The sun/moon button in the header toggles dark ⇄ light; your choice is remembered on this device."
+			>Theme</span>
+			<ThemePicker current={app.currentTheme} oncommit={(id) => app.setTheme(id)} />
 		</div>
 
 		<div class="settings-row">
@@ -1225,23 +1215,6 @@
 		color: var(--id-yours);
 	}
 
-	.settings-select {
-		font-family: var(--font-mono);
-		font-size: var(--t-xs);
-		color: var(--fg);
-		background: var(--panel-bg-soft);
-		border: 1px solid var(--panel-border);
-		border-radius: var(--r-sm);
-		padding: 3px 8px;
-		cursor: pointer;
-	}
-	.settings-select:hover {
-		border-color: var(--panel-border-strong);
-	}
-	.settings-select:focus-visible {
-		outline: 1px solid var(--id-yours);
-		outline-offset: 1px;
-	}
 
 	.radio--disabled {
 		cursor: not-allowed;
