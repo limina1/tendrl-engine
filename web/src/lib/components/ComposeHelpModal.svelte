@@ -68,6 +68,7 @@
 				{@render row('{{ref:slug}}', 'link a sibling section by its title-slug')}
 				{@render row('{{wiki:topic}}', 'wikilink → kind 30818 / 30023 / 30041 by topic')}
 				{@render row('{{embed:target}}', 'transclude a sibling section or naddr inline')}
+				{@render row('{{quote:naddr|text}}', 'quote a passage (text inline) — NIP-84-style, attributed')}
 				{@render row('|Display', 'append to override the link label')}
 				{@render row('#heading', 'append to target a heading anchor')}
 				{@render row('⌘/Ctrl-click', 'follow a recognized {{…}} reference in the editor')}

@@ -207,7 +207,7 @@ export interface NostrdownCompletionSources {
 	openEmbedBuilder: (range: { from: number; to: number }) => void;
 }
 
-const PREFIXES = ['ref', 'wiki', 'embed'];
+const PREFIXES = ['ref', 'wiki', 'embed', 'quote'];
 const CONTEXT_RE = /\{\{([a-zA-Z]*)(:?)([^}|]*)$/;
 
 /** Insert `value` at [from,to], appending `}}` unless it's already there, and

@@ -38,6 +38,10 @@ pub enum RefKind {
     Wiki,
     /// `{{embed:target}}` — inline transclusion of another event.
     Embed,
+    /// `{{quote:source|text}}` — a markup-agnostic, self-contained quote: the
+    /// excerpt text travels inline (after `|`), `target` references the source
+    /// for attribution. Modeled on NIP-84 highlights (text + `a`/`e`/`p`).
+    Quote,
 }
 
 impl RefKind {
@@ -46,16 +50,18 @@ impl RefKind {
             "ref" => Some(RefKind::Ref),
             "wiki" => Some(RefKind::Wiki),
             "embed" => Some(RefKind::Embed),
+            "quote" => Some(RefKind::Quote),
             _ => None,
         }
     }
 
-    /// The prefix string this kind serialises to (`"ref"`, `"wiki"`, `"embed"`).
+    /// The prefix string this kind serialises to.
     pub fn prefix(self) -> &'static str {
         match self {
             RefKind::Ref => "ref",
             RefKind::Wiki => "wiki",
             RefKind::Embed => "embed",
+            RefKind::Quote => "quote",
         }
     }
 }
@@ -368,6 +374,61 @@ pub fn reference_tags(content: &str) -> Vec<Vec<String>> {
                 };
                 push(&mut out, &mut seen, tag);
             }
+            // A quote: source reference (`a`/`e`) + author attribution (`p` with
+            // an "author" role), per NIP-84. The excerpt itself lives inline.
+            RefKind::Quote => {
+                let Ok(decoded) = crate::nip19::decode(&r.target) else {
+                    continue;
+                };
+                match decoded {
+                    Decoded::Naddr {
+                        kind_int,
+                        pubkey,
+                        d_tag,
+                        relays,
+                    } => {
+                        let relay = relays.into_iter().next().unwrap_or_default();
+                        let mut a = vec!["a".into(), format!("{kind_int}:{pubkey}:{d_tag}")];
+                        if !relay.is_empty() {
+                            a.push(relay.clone());
+                        }
+                        push(&mut out, &mut seen, a);
+                        push(
+                            &mut out,
+                            &mut seen,
+                            vec!["p".into(), pubkey, relay, "author".into()],
+                        );
+                    }
+                    Decoded::Nevent {
+                        event_id,
+                        relays,
+                        author,
+                        ..
+                    } => {
+                        let relay = relays.into_iter().next().unwrap_or_default();
+                        let mut e = vec!["e".into(), event_id];
+                        if !relay.is_empty() {
+                            e.push(relay.clone());
+                        }
+                        push(&mut out, &mut seen, e);
+                        if let Some(pk) = author {
+                            push(
+                                &mut out,
+                                &mut seen,
+                                vec!["p".into(), pk, relay, "author".into()],
+                            );
+                        }
+                    }
+                    Decoded::Note { event_id } => {
+                        push(&mut out, &mut seen, vec!["e".into(), event_id])
+                    }
+                    Decoded::Npub { pubkey } | Decoded::Nprofile { pubkey, .. } => push(
+                        &mut out,
+                        &mut seen,
+                        vec!["p".into(), pubkey, String::new(), "author".into()],
+                    ),
+                }
+            }
         }
     }
     out
@@ -521,6 +582,34 @@ mod tests {
         assert!(tags.contains(&vec!["p".to_string(), pk.clone()]));
         // The two `{{wiki:…}}` dedupe to a single wikilink tag.
         assert_eq!(tags.iter().filter(|t| t[0] == "wikilink").count(), 1);
+    }
+
+    #[test]
+    fn quote_parses_and_tags() {
+        let pk = "cd".repeat(32);
+        let naddr = crate::nip19::encode_naddr(30041, &pk, "book-vii", &[]).unwrap();
+        let content = String::from("As Socrates says, {{quote:")
+            + &naddr
+            + "|the prison-house is the world of sight}} — a key claim.";
+
+        let refs = parse(&content);
+        assert_eq!(refs.len(), 1);
+        assert_eq!(refs[0].kind, RefKind::Quote);
+        assert!(refs[0].is_entity);
+        assert_eq!(
+            refs[0].display.as_deref(),
+            Some("the prison-house is the world of sight")
+        );
+
+        // Source `a` tag + author `p` tag (with the "author" role), per NIP-84.
+        let tags = reference_tags(&content);
+        assert!(tags.contains(&vec!["a".to_string(), format!("30041:{pk}:book-vii")]));
+        assert!(tags.contains(&vec![
+            "p".to_string(),
+            pk.clone(),
+            String::new(),
+            "author".to_string()
+        ]));
     }
 
     #[test]

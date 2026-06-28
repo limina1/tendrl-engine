@@ -458,7 +458,15 @@ but powerful for knowledge graphs.
 - [X] ={{wiki:}}= markup-agnostic wikilinks (replaces broken =[[ ]]=)
 - [X] ={{embed:}}= transclusion (enables modular publications)
 - [-] =nostr:naddr#heading= fragment anchors — /parsed and carried through
-  resolution; the web does not yet scroll to the heading anchor/
+  resolution; the web does not yet scroll to the heading anchor. Superseded for
+  sub-event references by ={{quote:}}= below: headings are markup-specific and
+  brittle, so to reference a passage you carry the excerpt text inline (a
+  highlight), not a heading pointer./
+- [X] ={{quote:source|text}}= — a markup-agnostic, self-contained quote (NIP-84
+  model): the excerpt travels inline, =source= attributes it. Renders as an
+  attributed blockquote (collapsible); publish emits =["a"/"e", source]= +
+  =["p", author, "", "author"]= on the section. /Inline model — the quote lives
+  in the prose; minting a real kind-9802 highlight is a possible upgrade./
 
 ** Tier 2 — Build Second
 

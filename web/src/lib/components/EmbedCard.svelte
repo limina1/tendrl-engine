@@ -22,8 +22,15 @@
 
 	// Don't dump a raw bech32 entity as the title — fall back to a kind name.
 	const title = $derived(
-		ref.title || (isEntityLabel(ref.label) ? KIND_LABEL[ref.event_kind ?? -1] ?? 'embed' : ref.label)
+		ref.title ||
+			(ref.kind === 'quote'
+				? 'quote'
+				: isEntityLabel(ref.label)
+					? KIND_LABEL[ref.event_kind ?? -1] ?? 'embed'
+					: ref.label)
 	);
+	// A quote card uses a quotation glyph; everything else the transclusion mark.
+	const glyph = $derived(ref.kind === 'quote' ? '❝' : '⧉');
 	const body = $derived(ref.content || ref.summary || '');
 	const canOpen = $derived(!!ref.coord || (ref.event_kind === 0 && !!ref.author_pubkey));
 
@@ -65,7 +72,7 @@
 	}
 </script>
 
-<span class="nd-embed" class:nd-unresolved={!ref.found}><span class="nd-embed__head">{#if ref.image && (ref.event_kind === 0 || body)}<img class="nd-embed__img" class:nd-embed__img--avatar={ref.event_kind === 0} src={ref.image} alt="" referrerpolicy="no-referrer" loading="lazy" />{/if}<span class="nd-embed__titles"><span class="nd-embed__label">⧉ {title}</span>{#if byline}<span class="nd-embed__by">{byline}</span>{/if}</span>{#if canOpen && onopen}<button class="nd-embed__open" onclick={() => onopen?.(ref)} title={openTitle()}>{ref.event_kind === 0 ? 'profile' : 'open'}</button>{/if}</span>{#if ref.found}{#if body}<blockquote class="nd-embed__body">{shownBody}</blockquote>{#if isLong}<button class="nd-embed__more" onclick={() => (expanded = !expanded)}>{expanded ? 'show less' : 'show more'}</button>{/if}{:else if ref.image && ref.event_kind !== 0}<img class="nd-embed__cover" src={ref.image} alt="" referrerpolicy="no-referrer" loading="lazy" />{/if}{:else}<span class="nd-embed__missing">embed unavailable — {ref.target}</span>{/if}</span>
+<span class="nd-embed" class:nd-unresolved={!ref.found}><span class="nd-embed__head">{#if ref.image && (ref.event_kind === 0 || body)}<img class="nd-embed__img" class:nd-embed__img--avatar={ref.event_kind === 0} src={ref.image} alt="" referrerpolicy="no-referrer" loading="lazy" />{/if}<span class="nd-embed__titles"><span class="nd-embed__label">{glyph} {title}</span>{#if byline}<span class="nd-embed__by">{byline}</span>{/if}</span>{#if canOpen && onopen}<button class="nd-embed__open" onclick={() => onopen?.(ref)} title={openTitle()}>{ref.event_kind === 0 ? 'profile' : 'open'}</button>{/if}</span>{#if ref.found}{#if body}<blockquote class="nd-embed__body">{shownBody}</blockquote>{#if isLong}<button class="nd-embed__more" onclick={() => (expanded = !expanded)}>{expanded ? 'show less' : 'show more'}</button>{/if}{:else if ref.image && ref.event_kind !== 0}<img class="nd-embed__cover" src={ref.image} alt="" referrerpolicy="no-referrer" loading="lazy" />{/if}{:else}<span class="nd-embed__missing">embed unavailable — {ref.target}</span>{/if}</span>
 
 <style>
 	.nd-embed {

@@ -2076,6 +2076,18 @@ impl<'a> PublicationEngine<'a> {
                         apply_event(&mut resolved, &ev, false, display_given);
                     }
                 }
+                RefKind::Quote => {
+                    // Resolve the source for attribution only (title/author/coord);
+                    // the quoted body is the inline `|text`, not the source content.
+                    if r.is_entity {
+                        self.fill_from_entity(&r.target, &mut resolved, false, true, policy)
+                            .await;
+                    }
+                    // Header falls back to a kind name (not the long excerpt) when
+                    // the source has no title / isn't local.
+                    resolved.label = r.raw_target.clone();
+                    resolved.content = r.display.clone();
+                }
             }
 
             out.push(resolved);
