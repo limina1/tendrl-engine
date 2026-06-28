@@ -14,11 +14,14 @@
 
 	let {
 		open = false,
+		initialTab = 'ref',
 		sectionTitles = [],
 		oninsert,
 		onclose
 	}: {
 		open?: boolean;
+		/** Tab to show each time the modal opens. */
+		initialTab?: 'ref' | 'wiki' | 'embed';
 		/** Titles of the other sections in the current draft (for `ref:`). */
 		sectionTitles?: string[];
 		oninsert: (token: string) => void;
@@ -27,6 +30,12 @@
 
 	type Tab = 'ref' | 'wiki' | 'embed';
 	let tab = $state<Tab>('ref');
+	// Snap to the requested tab each time the modal opens.
+	let wasOpen = false;
+	$effect(() => {
+		if (open && !wasOpen) tab = initialTab;
+		wasOpen = open;
+	});
 
 	// ── ref: filter the draft's own section titles ──────────────────────────
 	let refFilter = $state('');

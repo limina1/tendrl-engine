@@ -3,12 +3,14 @@
 	import { getActiveStore } from '$lib/wm/buffer-store.svelte';
 	import type { ComposeState, ContextItem, TagEntry, SyncMode } from '$lib/types';
 	import type { DraftSummary } from '$lib/api';
-	import { resolveNostrdown, getProfile } from '$lib/api';
+	import { resolveNostrdown, getProfile, search } from '$lib/api';
 	import type { EditorView } from '@codemirror/view';
 	import {
 		nostrdownEditor,
+		nostrdownCompletion,
 		type NostrdownToken,
-		type NostrdownPreview
+		type NostrdownPreview,
+		type NdSuggestion
 	} from '$lib/editor/nostrdown-cm';
 	import { normalizeSlug } from '$lib/nostr/nostrdown';
 	import ComposeSection from './ComposeSection.svelte';
@@ -107,13 +109,14 @@
 		app.pushToast(`Unresolved ${token.kind}: ${token.target}`, 'info');
 	}
 
-	const nostrdownExt = [
-		nostrdownEditor({ onActivate: followNostrdown, onPreview: previewNostrdown })
-	];
-
-	// "Insert reference" builder modal — open state (the deps-bearing
-	// `refSectionTitles` derived lives below, after `detectedSections`).
+	// Inline autocomplete toggle (the mode-bar {{ }} button) + the embed builder
+	// modal it hands off to. The CM extension array (`nostrdownExt`) is assembled
+	// below, after `refSectionTitles`/`insertNostrdownToken` are in scope.
+	let autocompleteOn = $state(true);
 	let refBuilderOpen = $state(false);
+	// When the embed builder is opened mid-token from autocomplete, the
+	// in-progress `{{embed:…` range it should replace on insert.
+	let embedRange = $state<{ from: number; to: number } | null>(null);
 
 	// Composer walkthrough dropdown. The in-chrome `W` lists every composer
 	// tutorial (registry's `composer.tours`); picking one switches the editor to
@@ -653,15 +656,58 @@
 		if (!view) {
 			app.pushToast('Switch to Plain mode (or an atomic body) to insert a reference', 'info');
 			refBuilderOpen = false;
+			embedRange = null;
 			return;
 		}
+		// Replace the in-progress `{{embed:…` range when the builder was opened
+		// mid-token from autocomplete; otherwise insert at the cursor.
 		const sel = view.state.selection.main;
+		const range = embedRange ?? { from: sel.from, to: sel.to };
 		view.dispatch({
-			changes: { from: sel.from, to: sel.to, insert: token },
-			selection: { anchor: sel.from + token.length }
+			changes: { from: range.from, to: range.to, insert: token },
+			selection: { anchor: range.from + token.length }
 		});
 		view.focus();
+		embedRange = null;
 	}
+
+	// Inline autocomplete data sources + the CM extension array passed to both
+	// editors. `ref:` completes the draft's own section titles instantly; `wiki:`
+	// searches existing titles; `embed:` hands off to the builder modal.
+	async function wikiSuggestions(partial: string): Promise<NdSuggestion[]> {
+		const q = partial.trim();
+		if (!q) return [];
+		try {
+			const resp = await search(`k:30818 k:30023 ${q}`, 12);
+			return (resp.results ?? [])
+				.filter((r) => r.addr && r.title)
+				.map((r) => ({
+					label: r.title as string,
+					detail: r.kind === 30818 ? 'wiki' : 'article',
+					value: r.addr?.d_tag ?? normalizeSlug(r.title as string)
+				}));
+		} catch {
+			return [];
+		}
+	}
+
+	const nostrdownExt = [
+		nostrdownEditor({ onActivate: followNostrdown, onPreview: previewNostrdown }),
+		nostrdownCompletion({
+			enabled: () => autocompleteOn,
+			ref: (partial) => {
+				const q = normalizeSlug(partial);
+				return refSectionTitles
+					.filter((t) => !q || normalizeSlug(t).includes(q))
+					.map((t) => ({ label: t, value: t }));
+			},
+			wiki: wikiSuggestions,
+			openEmbedBuilder: (range) => {
+				embedRange = range;
+				refBuilderOpen = true;
+			}
+		})
+	];
 
 	// "Nothing to act on" gate for Preview/Save: atomic needs a title + body;
 	// plain needs a detected section; full needs a section card.
@@ -1190,9 +1236,11 @@
 		{/if}
 		<button
 			class="affordance affordance--ref"
-			onclick={() => (refBuilderOpen = true)}
-			title="Insert a nostrdown reference — ref / wiki / embed, built with autocomplete"
-			aria-label="Insert reference"
+			class:affordance--on={autocompleteOn}
+			onclick={() => (autocompleteOn = !autocompleteOn)}
+			title="Reference autocomplete — suggest ref / wiki / embed as you type the brace syntax in the editor"
+			aria-label="Toggle reference autocomplete"
+			aria-pressed={autocompleteOn}
 		>&lbrace;&lbrace; &rbrace;&rbrace;</button>
 		<button
 			class="affordance affordance--help"
@@ -1502,9 +1550,13 @@
 
 <ReferenceBuilderModal
 	open={refBuilderOpen}
+	initialTab="embed"
 	sectionTitles={refSectionTitles}
 	oninsert={insertNostrdownToken}
-	onclose={() => (refBuilderOpen = false)}
+	onclose={() => {
+		refBuilderOpen = false;
+		embedRange = null;
+	}}
 />
 
 <style>
@@ -2088,6 +2140,13 @@
 	.compose-walk {
 		position: relative;
 		display: inline-flex;
+	}
+	/* Reference-autocomplete toggle — lit when on (shares the global
+	   `.affordance` base with W / ?). */
+	.affordance--on {
+		border-color: var(--id-yours);
+		color: var(--id-yours);
+		background: color-mix(in srgb, var(--id-yours) 14%, transparent);
 	}
 	.walk-backdrop {
 		position: fixed;

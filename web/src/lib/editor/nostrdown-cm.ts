@@ -22,6 +22,13 @@ import {
 	type Tooltip
 } from '@codemirror/view';
 import { StateEffect, StateField, type Extension } from '@codemirror/state';
+import {
+	autocompletion,
+	startCompletion,
+	type Completion,
+	type CompletionContext,
+	type CompletionResult
+} from '@codemirror/autocomplete';
 
 /** Tier-1 token shape: `{{ref|wiki|embed:target(#fragment)?(|display)?}}`. */
 const TOKEN_RE = /\{\{(ref|wiki|embed):([^}|#]+)(?:#([^}|]+))?(?:\|([^}]+))?\}\}/g;
@@ -292,6 +299,110 @@ export function nostrdownEditor(
 	});
 
 	return [highlighter, theme, tooltipField, handlers];
+}
+
+// ── inline autocomplete ─────────────────────────────────────────────────────
+// Typing `{{` pops a dropdown at the cursor whose contents are detected from the
+// prefix: `{{` → ref:/wiki:/embed:; `{{ref:` → sibling titles; `{{wiki:` → title
+// search; `{{embed:` → opens the coordinate builder (a coordinate is too much to
+// type inline). The host injects the data sources + the builder opener.
+
+/** A neutral suggestion the host returns; the extension wraps insertion + `}}`. */
+export interface NdSuggestion {
+	label: string;
+	detail?: string;
+	/** Value to insert (ref/wiki) — the token target. */
+	value: string;
+}
+
+export interface NostrdownCompletionSources {
+	/** Gate — return false to disable the dropdown (the mode-bar toggle). */
+	enabled: () => boolean;
+	/** Sibling section titles in the current draft, filtered to `partial`. */
+	ref: (partial: string) => NdSuggestion[];
+	/** Wiki/article titles matching `partial` (async search). */
+	wiki: (partial: string) => Promise<NdSuggestion[]>;
+	/** Open the embed coordinate builder; `range` is the in-progress `{{embed:…`
+	 *  token to replace once the builder produces a token. */
+	openEmbedBuilder: (range: { from: number; to: number }) => void;
+}
+
+const PREFIXES = ['ref', 'wiki', 'embed'];
+const CONTEXT_RE = /\{\{([a-zA-Z]*)(:?)([^}|]*)$/;
+
+/** Insert `value` at [from,to], appending `}}` unless it's already there, and
+ *  park the cursor after the value (before any `}}`). */
+function applyValue(view: EditorView, from: number, to: number, value: string) {
+	const hasClose = view.state.sliceDoc(to, to + 2) === '}}';
+	const text = hasClose ? value : value + '}}';
+	view.dispatch({
+		changes: { from, to, insert: text },
+		selection: { anchor: from + value.length + (hasClose ? 0 : 2) }
+	});
+}
+
+export function nostrdownCompletion(sources: NostrdownCompletionSources): Extension {
+	async function source(ctx: CompletionContext): Promise<CompletionResult | null> {
+		if (!sources.enabled()) return null;
+		const before = ctx.matchBefore(CONTEXT_RE);
+		if (!before) return null;
+		const m = CONTEXT_RE.exec(before.text);
+		if (!m) return null;
+		const [, word, colon, partial] = m;
+		const openFrom = before.from + 2; // just past `{{`
+
+		// Prefix stage: complete ref:/wiki:/embed:.
+		if (!colon) {
+			const w = word.toLowerCase();
+			const options: Completion[] = PREFIXES.filter((p) => p.startsWith(w)).map((p) => ({
+				label: `${p}:`,
+				type: 'keyword',
+				apply: (view, _c, from, to) => {
+					view.dispatch({
+						changes: { from, to, insert: `${p}:` },
+						selection: { anchor: from + p.length + 1 }
+					});
+					startCompletion(view); // chain straight into the value suggestions
+				}
+			}));
+			return options.length ? { from: openFrom, options, filter: false } : null;
+		}
+
+		const kind = word.toLowerCase();
+		const valueFrom = openFrom + word.length + 1; // just past `{{prefix:`
+
+		if (kind === 'embed') {
+			// A coordinate is too much to type — hand off to the builder form,
+			// which replaces this whole in-progress `{{embed:…` token.
+			const range = { from: before.from, to: ctx.pos };
+			return {
+				from: valueFrom,
+				filter: false,
+				options: [
+					{
+						label: 'build embed coordinate…',
+						type: 'function',
+						apply: () => sources.openEmbedBuilder(range)
+					}
+				]
+			};
+		}
+
+		let suggestions: NdSuggestion[] = [];
+		if (kind === 'ref') suggestions = sources.ref(partial);
+		else if (kind === 'wiki') suggestions = await sources.wiki(partial);
+		else return null;
+
+		const options: Completion[] = suggestions.map((s) => ({
+			label: s.label,
+			detail: s.detail,
+			type: 'text',
+			apply: (view, _c, from, to) => applyValue(view, from, to, s.value)
+		}));
+		return { from: valueFrom, options, filter: false };
+	}
+
+	return autocompletion({ override: [source], activateOnTyping: true });
 }
 
 function makeTooltip(
