@@ -644,6 +644,27 @@ function _createAppState() {
 		setHighContrast(!highContrast);
 	}
 
+	// Live theme preview on hover in the picker. Off by default — the rapid
+	// re-skinning as the cursor sweeps the list is jarring unless opted into.
+	let themePreview: boolean = $state(
+		((): boolean => {
+			if (typeof localStorage === 'undefined') return false;
+			return localStorage.getItem('tendrl.themePreview') === 'on';
+		})()
+	);
+
+	function setThemePreview(on: boolean) {
+		if (on === themePreview) return;
+		themePreview = on;
+		if (typeof localStorage !== 'undefined') {
+			try {
+				localStorage.setItem('tendrl.themePreview', on ? 'on' : 'off');
+			} catch {
+				/* quota / privacy mode — fall back to in-memory only */
+			}
+		}
+	}
+
 	// --- Settings ---
 	let syncMode: SyncMode = $state('explicit');
 	let passthrough = $state(false);
@@ -4280,6 +4301,8 @@ function _createAppState() {
 		get highContrast() { return highContrast; },
 		setHighContrast,
 		toggleHighContrast,
+		get themePreview() { return themePreview; },
+		setThemePreview,
 
 		// Settings
 		get syncMode() { return syncMode; },
