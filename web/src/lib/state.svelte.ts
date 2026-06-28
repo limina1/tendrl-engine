@@ -1811,7 +1811,10 @@ function _createAppState() {
 						tags: s.tags.map((t) => [t.name, t.value] as [string, string]),
 						// Reuse the matched section's d-tag on republish so the
 						// 30041 replaces rather than forks.
-						d_tag: overrides?.dTagByTitle[s.title]
+						d_tag: overrides?.dTagByTitle[s.title],
+						// Block-level transclude slot → the engine emits an a-tag
+						// to the existing 30040/30041 and mints no 30041 here.
+						slot: s.slot
 					})),
 					d_tag: overrides?.pubDTag,
 					notes,
@@ -2196,7 +2199,8 @@ function _createAppState() {
 						title: s.title,
 						content: s.content,
 						level: s.level,
-						tags: s.tags.map((t) => [t.name, t.value] as [string, string])
+						tags: s.tags.map((t) => [t.name, t.value] as [string, string]),
+						slot: s.slot
 					})),
 					notes,
 					sign: false,

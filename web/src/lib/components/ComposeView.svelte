@@ -449,11 +449,17 @@
 	function serializeParsed(
 		title: string,
 		tags: TagEntry[],
-		sections: { title: string; tags: TagEntry[]; content: string; level: number }[]
+		sections: ParsedSection[]
 	): string {
 		let out = `${headFor(1)}${title}\n`;
 		out += serializeTagBlock(tags);
 		for (const s of sections) {
+			if (s.slot) {
+				// A slot round-trips as its own `{{slot:…}}` line — no heading,
+				// tags, or body — so reorder/move preserves it like any block.
+				out += `\n{{slot:${s.slot}}}\n`;
+				continue;
+			}
 			out += `\n${headFor(s.level)}${s.title}\n`;
 			out += serializeTagBlock(s.tags);
 			out += `\n${s.content}\n`;
@@ -476,6 +482,10 @@
 		content: string;
 		/** Heading depth — 2 for `== Title`, 3 for `=== Subtitle`, … */
 		level: number;
+		/** Set when this item is a block-level `{{slot:target}}` transclude —
+		 *  the naddr/coordinate of an existing 30040/30041 to reference as a
+		 *  child of the index (no title/content/heading of its own). */
+		slot?: string;
 	}
 
 	// Parse full text blob back into title/tags + sections. Recognises
@@ -536,6 +546,25 @@
 					inTags: true,
 					level: head.level
 				};
+				continue;
+			}
+			// A standalone `{{slot:target}}` line is a block-level transclude
+			// slot: it ends the current section and becomes its own ordered
+			// item (no heading, no body). Its identity is the target, in the
+			// text — so it reorders / round-trips like any other block.
+			const slotMatch = line.trim().match(/^\{\{slot:([^}|#]+)\}\}$/);
+			if (slotMatch) {
+				if (current) {
+					sections.push({
+						title: current.title,
+						tags: current.tags,
+						content: current.contentLines.join('\n').trim(),
+						level: current.level
+					});
+					current = null;
+				}
+				inDocHeader = false;
+				sections.push({ title: '', tags: [], content: '', level: 2, slot: slotMatch[1].trim() });
 				continue;
 			}
 			if (inDocHeader) {
@@ -599,6 +628,7 @@
 					content: p.content,
 					tags: p.tags,
 					level: p.level,
+					slot: p.slot,
 					modified: p.content !== existing.original_content
 				};
 			}
@@ -609,6 +639,7 @@
 				context_content: p.content,
 				tags: p.tags,
 				level: p.level,
+				slot: p.slot,
 				original_content: '',
 				modified: true,
 				in_context: false,
