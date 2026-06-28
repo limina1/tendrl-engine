@@ -1191,9 +1191,10 @@
 			class="affordance affordance--ref"
 			class:affordance--on={autocompleteOn}
 			onclick={() => (autocompleteOn = !autocompleteOn)}
-			title="Reference autocomplete — suggest ref / wiki / embed as you type the brace syntax in the editor"
+			title="Reference autocomplete — suggest ref / wiki / embed / quote as you type the brace syntax in the editor"
 			aria-label="Toggle reference autocomplete"
 			aria-pressed={autocompleteOn}
+			data-tour="compose-ref"
 		>&lbrace;&lbrace; &rbrace;&rbrace;</button>
 		<!-- Read mirrors ReaderBuffer's "Edit" button — same on-screen
 		     position (toolbar far-right) so the Edit↔Read swap reads as

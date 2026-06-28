@@ -74,6 +74,7 @@ const entries: BufferKindEntry[] = [
 			{ key: 'compose-views' },
 			{ key: 'compose-plain', mode: 'plain' },
 			{ key: 'compose-detected', mode: 'plain' },
+			{ key: 'compose-nostrdown', mode: 'plain' },
 			{ key: 'compose-sections', mode: 'full' },
 			{ key: 'compose-publish' }
 		]
