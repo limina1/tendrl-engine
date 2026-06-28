@@ -748,6 +748,10 @@ export interface PublishRequest {
 		level?: number;
 		/** Reuse this section d-tag (republish replace) instead of minting. */
 		d_tag?: string;
+		/** Transclude *slot*: an naddr or kind:pubkey:d-tag (a 30040/30041) to
+		 *  reference as a child of the index here, instead of authoring content.
+		 *  The engine emits an ["a", coord] in the 30040 and mints no 30041. */
+		slot?: string;
 	}[];
 	sign: boolean;
 	broadcast: boolean;
