@@ -42,6 +42,19 @@
 
 	const segments = $derived(segmentSections(compose));
 
+	// Inline sibling context for nostrdown `{{ref:…}}` resolution in the preview.
+	// A draft has no events in nostrdb, so the engine can't load its sections to
+	// match a ref slug — we pass each section's title (the human slug source) +
+	// its d-tag (real if imported, else the synthetic compose id) so the engine
+	// resolves refs against the draft itself. Mirrors the editor's local
+	// `findHeading`, but keeps the title→slug match engine-side.
+	const draftSiblings = $derived(
+		compose.sections.map((s) => ({
+			title: s.title || undefined,
+			d_tag: s.source_addr?.d_tag ?? s.id
+		}))
+	);
+
 	function itemAt(index: number): ContextItem | null {
 		return compose.sections[index] ?? null;
 	}
@@ -165,11 +178,12 @@
 			</p>
 		</div>
 	{:else if viewMode === 'continuous'}
-		<ContinuousView {sections} publication={null} />
+		<ContinuousView {sections} publication={null} siblings={draftSiblings} />
 	{:else}
 		<PaginatedView
 			{sections}
 			{currentSection}
+			siblings={draftSiblings}
 			onnavigate={(i) => (currentSection = i)}
 		/>
 	{/if}

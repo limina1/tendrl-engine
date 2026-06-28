@@ -1999,6 +1999,7 @@ impl<'a> PublicationEngine<'a> {
         content: &str,
         publication_atag: Option<&str>,
         author: Option<&str>,
+        draft_siblings: &[DraftSibling],
         policy: FetchPolicy,
     ) -> Vec<crate::nostrdown::ResolvedRef> {
         use crate::nostrdown::{self, RefKind};
@@ -2023,10 +2024,34 @@ impl<'a> PublicationEngine<'a> {
         let needs_siblings = refs.iter().any(|r| {
             matches!(r.kind, RefKind::Ref) || (matches!(r.kind, RefKind::Embed) && !r.is_entity)
         });
-        let siblings = match (needs_siblings, &publication) {
+        let mut siblings = match (needs_siblings, &publication) {
             (true, Some(p)) => self.load_sibling_index(p, policy).await,
             _ => Vec::new(),
         };
+
+        // Draft siblings: an unsigned, in-composer publication has no events in
+        // nostrdb, so its sections can't be loaded above. The frontend passes the
+        // draft's own sections (title + synthetic d-tag) inline so `{{ref:slug}}`
+        // resolves against them in the draft-reader preview — the same title-slug
+        // match, just sourced from the request instead of the db. Appended after
+        // the published siblings so a real event still wins when both exist.
+        if needs_siblings {
+            for ds in draft_siblings {
+                let mut slugs = vec![ds.d_tag.clone()];
+                if let Some(t) = ds.title.as_deref().filter(|t| !t.is_empty()) {
+                    let slug = crate::publication::compose::ComposeState::generate_d_tag(t);
+                    if !slug.is_empty() {
+                        slugs.push(slug);
+                    }
+                }
+                siblings.push(SiblingEntry {
+                    addr: NAddr::new(KIND_PUBLICATION_SECTION, "", &ds.d_tag),
+                    event: None,
+                    slugs,
+                    title: ds.title.clone(),
+                });
+            }
+        }
 
         let mut out = Vec::with_capacity(refs.len());
         for r in &refs {
@@ -2118,7 +2143,12 @@ impl<'a> PublicationEngine<'a> {
                     }
                 }
             }
-            out.push(SiblingEntry { addr, event, slugs });
+            out.push(SiblingEntry {
+                addr,
+                event,
+                slugs,
+                title: None,
+            });
         }
         out
     }
@@ -2251,6 +2281,10 @@ struct SiblingEntry {
     addr: NAddr,
     event: Option<Value>,
     slugs: Vec<String>,
+    /// Human title for entries that have no loaded event (draft siblings) — so
+    /// the preview can still render a titled, resolved card. `None` for db-loaded
+    /// siblings, whose title comes from [`apply_event`].
+    title: Option<String>,
 }
 
 impl SiblingEntry {
@@ -2260,7 +2294,9 @@ impl SiblingEntry {
     }
 
     /// Stamp this sibling onto a resolved ref: address, kind, and — if its event
-    /// is loaded — title/content via [`apply_event`].
+    /// is loaded — title/content via [`apply_event`]. A draft sibling (no event)
+    /// still resolves: it carries its title so the card isn't blank, but no real
+    /// naddr/coord (the section isn't published yet).
     fn fill(&self, resolved: &mut crate::nostrdown::ResolvedRef, want_content: bool, display_given: bool) {
         resolved.found = true;
         resolved.naddr = crate::nip19::naddr_from_a_tag(&self.addr.to_a_tag(), &[]).ok();
@@ -2268,8 +2304,24 @@ impl SiblingEntry {
         resolved.event_kind = Some(self.addr.kind);
         if let Some(ev) = &self.event {
             apply_event(resolved, ev, want_content, display_given);
+        } else if let Some(t) = self.title.as_deref().filter(|t| !t.is_empty()) {
+            resolved.title = Some(t.to_string());
+            if !display_given {
+                resolved.label = t.to_string();
+            }
         }
     }
+}
+
+/// A section of an unsigned, in-composer draft, passed inline to
+/// [`PublicationEngine::resolve_refs`] so `{{ref:slug}}` resolves in the
+/// draft-reader preview before anything is published. `d_tag` is the section's
+/// synthetic id; `title` supplies the human slug + the card label.
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct DraftSibling {
+    #[serde(default)]
+    pub title: Option<String>,
+    pub d_tag: String,
 }
 
 /// Collect every section + nested-index address in `pubn`, depth-first.
@@ -4201,6 +4253,7 @@ mod tests {
                 content,
                 Some(&root_idx.to_a_tag()),
                 Some(pk),
+                &[],
                 FetchPolicy::LocalOnly,
             )
             .await;

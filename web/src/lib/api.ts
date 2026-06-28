@@ -278,7 +278,16 @@ export async function resolveHighlights(
  * `buildSegments`.
  */
 export async function resolveNostrdown(
-	items: { key: string; content: string; publication?: string; author?: string }[]
+	items: {
+		key: string;
+		content: string;
+		publication?: string;
+		author?: string;
+		/** Sibling sections of an unsigned draft (title + synthetic d-tag) so
+		 *  `{{ref:slug}}` resolves in the composer's draft-reader preview before
+		 *  anything is published. Omit for published reads. */
+		siblings?: { title?: string; d_tag: string }[];
+	}[]
 ): Promise<Record<string, ResolvedRef[]>> {
 	if (items.length === 0) return {};
 	const resp = await fetchJson<{ refs: Record<string, ResolvedRef[]> }>(

@@ -617,6 +617,12 @@ pub struct ResolveNostrdownItem {
     /// Section author pubkey (hex) — the preferred author for `wiki:` lookups.
     #[serde(default)]
     pub author: Option<String>,
+    /// Sibling sections of an unsigned draft (title + synthetic d-tag), for
+    /// `{{ref:slug}}` resolution in the composer's draft-reader preview before
+    /// anything is published. Empty for published reads (which resolve against
+    /// nostrdb via `publication`).
+    #[serde(default)]
+    pub siblings: Vec<crate::publication::DraftSibling>,
 }
 
 /// POST /api/v1/nostrdown/resolve body. Batched so the reader resolves every
@@ -660,6 +666,7 @@ pub async fn resolve_nostrdown_handler(
                 &item.content,
                 item.publication.as_deref(),
                 item.author.as_deref(),
+                &item.siblings,
                 policy,
             )
             .await;

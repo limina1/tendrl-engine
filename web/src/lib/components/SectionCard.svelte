@@ -14,7 +14,8 @@
 		onviewjson = undefined,
 		highlights = [],
 		focusedHighlightId = null,
-		publicationAtag = undefined
+		publicationAtag = undefined,
+		siblings = undefined
 	}: {
 		section: LazySection;
 		truncate?: boolean;
@@ -33,6 +34,9 @@
 		/** Containing publication coordinate ("30040:pubkey:dtag") — context for
 		 *  resolving nostrdown `{{ref:…}}` sibling references. */
 		publicationAtag?: string | undefined;
+		/** Unsigned-draft siblings (title + synthetic d-tag) so `{{ref:…}}`
+		 *  resolves against the draft's sections in the preview, pre-publish. */
+		siblings?: { title?: string; d_tag: string }[] | undefined;
 	} = $props();
 
 	const status: SectionStatus = $derived(section.status ?? 'loaded');
@@ -88,7 +92,13 @@
 		}
 		let cancelled = false;
 		api.resolveNostrdown([
-			{ key: 'section', content: text, publication: publicationAtag, author: section.addr?.pubkey }
+			{
+				key: 'section',
+				content: text,
+				publication: publicationAtag,
+				author: section.addr?.pubkey,
+				siblings
+			}
 		])
 			.then((m) => {
 				if (!cancelled) nostrdownRefs = m['section'] ?? [];

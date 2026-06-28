@@ -22,7 +22,8 @@
 		focusedHighlightId = null,
 		threadsFor = null,
 		focusedCommentId = null,
-		publicationAtag = undefined
+		publicationAtag = undefined,
+		siblings = undefined
 	}: {
 		sections: LazySection[];
 		publication?: { title: string | null; summary: string | null } | null;
@@ -41,6 +42,10 @@
 		/** Containing publication coordinate ("30040:pubkey:dtag") — context for
 		 *  resolving nostrdown `{{ref:…}}` sibling references. */
 		publicationAtag?: string | undefined;
+		/** Unsigned-draft siblings (title + synthetic d-tag) so `{{ref:…}}`
+		 *  resolves against the draft's own sections in the preview, before
+		 *  anything is published. Mutually exclusive with `publicationAtag`. */
+		siblings?: { title?: string; d_tag: string }[] | undefined;
 	} = $props();
 
 	function addrKey(addr: { kind: number; pubkey: string; d_tag: string }): string {
@@ -85,7 +90,13 @@
 	// sibling lookups; each section's own pubkey scopes `wiki:`.
 	let refsBySection = $state<Record<string, ResolvedRef[]>>({});
 	$effect(() => {
-		const items: { key: string; content: string; publication?: string; author?: string }[] = [];
+		const items: {
+			key: string;
+			content: string;
+			publication?: string;
+			author?: string;
+			siblings?: { title?: string; d_tag: string }[];
+		}[] = [];
 		for (const s of sections) {
 			if (s.status !== 'loaded' || !s.content || !s.addr) continue;
 			if (!s.content.includes('{{')) continue;
@@ -93,7 +104,8 @@
 				key: addrKey(s.addr),
 				content: s.content,
 				publication: publicationAtag,
-				author: s.addr.pubkey
+				author: s.addr.pubkey,
+				siblings
 			});
 		}
 		if (items.length === 0) {

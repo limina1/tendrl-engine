@@ -20,7 +20,8 @@
 		focusedHighlightId = null,
 		threadsFor = null,
 		focusedCommentId = null,
-		publicationAtag = undefined
+		publicationAtag = undefined,
+		siblings = undefined
 	}: {
 		sections: LazySection[];
 		currentSection?: number;
@@ -44,6 +45,9 @@
 		/** Containing publication coordinate ("30040:pubkey:dtag") — context for
 		 *  resolving nostrdown `{{ref:…}}` sibling references. */
 		publicationAtag?: string | undefined;
+		/** Unsigned-draft siblings (title + synthetic d-tag) so `{{ref:…}}`
+		 *  resolves against the draft's sections in the preview, pre-publish. */
+		siblings?: { title?: string; d_tag: string }[] | undefined;
 	} = $props();
 
 	const section = $derived(sections[currentSection]);
@@ -135,7 +139,7 @@
 				<span class="nested-page__hint">Nested publication — refocus ⟳</span>
 			</button>
 		{:else if section}
-			<SectionCard {section} {highlights} {focusedHighlightId} {publicationAtag} />
+			<SectionCard {section} {highlights} {focusedHighlightId} {publicationAtag} {siblings} />
 			{#if threads.length > 0}
 				<div class="paginated-threads">
 					<button
