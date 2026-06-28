@@ -8,7 +8,11 @@
 	// the value handed to setAttribute is always from a trusted allowlist.
 	import { THEMES, themeFamilies, applyThemeAttribute } from '$lib/themes';
 
-	let { current, oncommit }: { current: string; oncommit: (id: string) => void } = $props();
+	let {
+		current,
+		oncommit,
+		livePreview = false
+	}: { current: string; oncommit: (id: string) => void; livePreview?: boolean } = $props();
 
 	let open = $state(false);
 	// Set to `current` each time the menu opens (see openMenu); not seeded from
@@ -24,10 +28,10 @@
 
 	function preview(id: string) {
 		highlighted = id;
-		applyThemeAttribute(id); // live preview — does not persist
+		if (livePreview) applyThemeAttribute(id); // live preview — does not persist
 	}
 	function revert() {
-		applyThemeAttribute(current); // back to the committed theme
+		if (livePreview) applyThemeAttribute(current); // back to the committed theme
 	}
 	function openMenu() {
 		highlighted = current;
@@ -84,7 +88,7 @@
 	// while a menu is open), don't leave a dangling preview applied.
 	$effect(() => {
 		return () => {
-			if (open) applyThemeAttribute(current);
+			if (open && livePreview) applyThemeAttribute(current);
 		};
 	});
 </script>

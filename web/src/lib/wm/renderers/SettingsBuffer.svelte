@@ -381,11 +381,32 @@
 		</div>
 
 		<div class="settings-row">
+			<label
+				class="settings-label"
+				for="theme-preview"
+				title="When on, hovering a theme in the picker re-skins the app live so you can preview before choosing. Off by default — the sweep of colors can be jarring."
+			>Live preview</label>
+			<label class="switch">
+				<input
+					id="theme-preview"
+					type="checkbox"
+					checked={app.themePreview}
+					onchange={(e) => app.setThemePreview(e.currentTarget.checked)}
+				/>
+				<span class="switch-text">{app.themePreview ? 'on' : 'off'}</span>
+			</label>
+		</div>
+
+		<div class="settings-row">
 			<span
 				class="settings-label"
-				title="Color scheme for the whole interface. Hover a theme to preview it live; click to keep it. The sun/moon button in the header toggles dark ⇄ light; your choice is remembered on this device."
+				title="Color scheme for the whole interface. Click a theme to keep it (turn on Live preview to preview on hover). The sun/moon button in the header toggles dark ⇄ light; your choice is remembered on this device."
 			>Theme</span>
-			<ThemePicker current={app.currentTheme} oncommit={(id) => app.setTheme(id)} />
+			<ThemePicker
+				current={app.currentTheme}
+				livePreview={app.themePreview}
+				oncommit={(id) => app.setTheme(id)}
+			/>
 		</div>
 
 		<div class="settings-row">
