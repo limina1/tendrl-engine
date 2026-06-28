@@ -434,6 +434,12 @@
 		let out = `${headFor(1)}${compose.title}\n`;
 		out += serializeTagBlock(compose.tags);
 		for (const s of compose.sections) {
+			if (s.slot) {
+				// A slot serializes back as its `{{slot:…}}` line — so a resumed
+				// draft / mode switch reconstructs it as a block, not a section.
+				out += `\n{{slot:${s.slot}}}\n`;
+				continue;
+			}
 			const level = s.level ?? 2;
 			out += `\n${headFor(level)}${s.title}\n`;
 			out += serializeTagBlock(s.tags);

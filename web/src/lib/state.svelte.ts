@@ -2041,7 +2041,8 @@ function _createAppState() {
 					title: s.title,
 					content: s.content,
 					level: s.level,
-					tags: s.tags.map((t) => [t.name, t.value] as [string, string])
+					tags: s.tags.map((t) => [t.name, t.value] as [string, string]),
+					slot: s.slot
 				})),
 				// Thread the session's d-tag so this save versions the same
 				// publication instead of forking a new one.
@@ -2074,7 +2075,8 @@ function _createAppState() {
 						tags: s.tags.map((t) => ({ name: t.name, value: t.value })),
 						original_content: s.content,
 						origin: 'compose' as const,
-						level: s.level
+						level: s.level,
+						slot: s.slot
 					},
 					{ compose: true }
 				)

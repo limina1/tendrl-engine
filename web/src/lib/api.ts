@@ -359,6 +359,9 @@ export interface DraftComposeSection {
 	level: number;
 	d_tag?: string;
 	tags: { name: string; value: string }[];
+	/** Transclude slot target (naddr/coordinate) — set when this item is a slot,
+	 *  restored on resume so the `{{slot:…}}` line comes back. */
+	slot?: string;
 }
 
 export interface DraftComposeState {
@@ -390,6 +393,8 @@ export interface SaveDraftPayload {
 		level?: number;
 		tags: [string, string][];
 		d_tag?: string;
+		/** Transclude slot target (naddr/coordinate to a 30040/30041). */
+		slot?: string;
 	}[];
 	d_tag?: string;
 	/** Output kind — absent/30040 = publication; other kinds mark an atomic

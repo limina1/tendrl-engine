@@ -88,6 +88,10 @@ pub struct DraftSectionCompose {
     /// `None` on legacy drafts.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub d_tag: Option<String>,
+    /// Transclude slot target (naddr/coordinate to a 30040/30041). When set this
+    /// item is a slot, not authored content. `None` on legacy drafts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub slot: Option<String>,
 }
 
 fn default_section_level() -> u8 {
@@ -170,6 +174,7 @@ impl DraftStore {
                     content: s.content.clone(),
                     level: s.level,
                     d_tag: s.d_tag.clone(),
+                    slot: s.slot_coord.clone(),
                     tags: s
                         .tags
                         .iter()
@@ -794,6 +799,7 @@ mod tests {
                     tags: vec![],
                     level: *lvl,
                     d_tag: None,
+                    slot: None,
                 })
                 .collect(),
         }

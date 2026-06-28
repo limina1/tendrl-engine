@@ -3375,6 +3375,10 @@ pub struct DraftSectionRequest {
     /// Stable section d-tag to preserve on resume / republish (minted if absent).
     #[serde(default)]
     pub d_tag: Option<String>,
+    /// Transclude slot target (naddr or coordinate to a 30040/30041) — persisted
+    /// so a resumed draft restores the slot rather than an empty section.
+    #[serde(default)]
+    pub slot: Option<String>,
 }
 
 /// POST /api/v1/drafts body. Mirrors the compose payload `PublishRequest`
@@ -3413,6 +3417,10 @@ fn compose_from_draft_request(req: SaveDraftRequest) -> ComposeState {
             content: s.content,
             level: s.level.unwrap_or(2),
             d_tag: s.d_tag,
+            slot_coord: s
+                .slot
+                .as_deref()
+                .and_then(crate::publication::compose::normalize_slot_coord),
             tags: s
                 .tags
                 .into_iter()
@@ -3554,6 +3562,7 @@ fn request_to_draft_compose(req: &SaveDraftRequest) -> crate::drafts::DraftCompo
                     .collect(),
                 level: s.level.unwrap_or(2),
                 d_tag: s.d_tag.clone(),
+                slot: s.slot.clone(),
             })
             .collect(),
     }
@@ -3605,6 +3614,8 @@ fn publication_to_draft_compose(
                 tags: custom_tags(s.event.data()),
                 level,
                 d_tag: Some(s.addr.d_tag.clone()),
+                // A flattened published section is real content, never a slot.
+                slot: None,
             });
         }
         for nested in &pub_.nested {
