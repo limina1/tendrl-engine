@@ -491,9 +491,17 @@ but powerful for knowledge graphs.
 
 ** Tier 1 — Build First
 
-- [X] ={{ref:}}= internal references (most needed day-to-day)
+- [X] ={{ref:}}= internal references (most needed day-to-day). /Also resolves in
+  the composer's draft-reader preview before publish: the web passes the draft's
+  own sections inline (=DraftSibling { title, d_tag }=) and the engine matches the
+  title-slug against them, the same path as published siblings./
 - [X] ={{wiki:}}= markup-agnostic wikilinks (replaces broken =[[ ]]=)
-- [X] ={{embed:}}= transclusion (enables modular publications)
+- [X] ={{embed:}}= transclusion (enables modular publications). /A not-local
+  entity embed resolves =pending= (LocalOnly — never blocks a render) and the card
+  fetches it from the *search relays*: auto in Auto mode (a "fetching…" note),
+  a "Fetch from search relays" button in Confirm mode (routed through the network
+  intent flow). The composer click-preview renders the shared =EmbedCard=
+  declaratively — manual =mount()= breaks the prerendered build./
 - [-] =nostr:naddr#heading= fragment anchors — /parsed and carried through
   resolution; the web does not yet scroll to the heading anchor. Superseded for
   sub-event references by ={{quote:}}= below: headings are markup-specific and
