@@ -106,9 +106,39 @@
 		if (r.author_pubkey) return authorNames[r.author_pubkey] || r.author_pubkey.slice(0, 10) + '…';
 		return '';
 	}
+
+	// Hover preview for ref/wiki links — the same field-driven card the embed
+	// renders inline, shown floating beside the link (resolution data is already
+	// in hand). Click still navigates; hover just peeks.
+	let preview = $state<{ ref: ResolvedRef; x: number; y: number } | null>(null);
+	let previewTimer: ReturnType<typeof setTimeout> | undefined;
+	function showPreview(e: MouseEvent | FocusEvent, ref: ResolvedRef) {
+		if (!ref.found) return;
+		const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+		clearTimeout(previewTimer);
+		preview = { ref, x: Math.max(8, Math.min(r.left, window.innerWidth - 348)), y: r.bottom + 4 };
+	}
+	function cancelHide() {
+		clearTimeout(previewTimer);
+	}
+	function hidePreview() {
+		clearTimeout(previewTimer);
+		previewTimer = setTimeout(() => (preview = null), 120);
+	}
 </script>
 
-<pre class="section-content" class:muted>{#each segments as seg, i (i)}{#if seg.type === 'highlight'}<mark class="hl-overlay" data-hl-ids={seg.highlight.id} style={styleFor(seg.highlight.pubkey, seg.highlight.focused)} title="NIP-84 highlight {seg.highlight.id.slice(0, 8)}… by {seg.highlight.pubkey.slice(0, 12)}…">{seg.text}</mark>{:else if seg.type === 'ref'}{#if seg.ref.kind === 'embed'}<span class="nd-embed" class:nd-unresolved={!seg.ref.found}><span class="nd-embed__head">{#if seg.ref.image}<img class="nd-embed__img" class:nd-embed__img--avatar={seg.ref.event_kind === 0} src={seg.ref.image} alt="" referrerpolicy="no-referrer" loading="lazy" />{/if}<span class="nd-embed__titles"><span class="nd-embed__label">⧉ {embedTitle(seg.ref)}</span>{#if byline(seg.ref)}<span class="nd-embed__by">{byline(seg.ref)}</span>{/if}</span>{#if canOpen(seg.ref)}<button class="nd-embed__open" onclick={() => openRef(seg.ref)} title={refTitle(seg.ref)}>{seg.ref.event_kind === 0 ? 'profile' : 'open'}</button>{/if}</span>{#if seg.ref.found}{#if embedBody(seg.ref)}<span class="nd-embed__body">{embedBody(seg.ref)}</span>{/if}{:else}<span class="nd-embed__missing">embed unavailable — {seg.ref.target}</span>{/if}</span>{:else}<button class="nd-ref nd-ref--{seg.ref.kind}" class:nd-unresolved={!seg.ref.found} onclick={() => openRef(seg.ref)} disabled={!seg.ref.coord} title={refTitle(seg.ref)}>{seg.ref.label}{#if seg.ref.fragment}<span class="nd-ref__frag">#{seg.ref.fragment}</span>{/if}</button>{/if}{:else}{seg.text}{/if}{/each}</pre>
+{#snippet cardInner(ref: ResolvedRef)}<span class="nd-embed__head">{#if ref.image && (ref.event_kind === 0 || embedBody(ref))}<img class="nd-embed__img" class:nd-embed__img--avatar={ref.event_kind === 0} src={ref.image} alt="" referrerpolicy="no-referrer" loading="lazy" />{/if}<span class="nd-embed__titles"><span class="nd-embed__label">⧉ {embedTitle(ref)}</span>{#if byline(ref)}<span class="nd-embed__by">{byline(ref)}</span>{/if}</span>{#if canOpen(ref)}<button class="nd-embed__open" onclick={() => openRef(ref)} title={refTitle(ref)}>{ref.event_kind === 0 ? 'profile' : 'open'}</button>{/if}</span>{#if ref.found}{#if embedBody(ref)}<span class="nd-embed__body">{embedBody(ref)}</span>{:else if ref.image && ref.event_kind !== 0}<img class="nd-embed__cover" src={ref.image} alt="" referrerpolicy="no-referrer" loading="lazy" />{/if}{:else}<span class="nd-embed__missing">embed unavailable — {ref.target}</span>{/if}{/snippet}
+<pre class="section-content" class:muted>{#each segments as seg, i (i)}{#if seg.type === 'highlight'}<mark class="hl-overlay" data-hl-ids={seg.highlight.id} style={styleFor(seg.highlight.pubkey, seg.highlight.focused)} title="NIP-84 highlight {seg.highlight.id.slice(0, 8)}… by {seg.highlight.pubkey.slice(0, 12)}…">{seg.text}</mark>{:else if seg.type === 'ref'}{#if seg.ref.kind === 'embed'}<span class="nd-embed" class:nd-unresolved={!seg.ref.found}>{@render cardInner(seg.ref)}</span>{:else}<button class="nd-ref nd-ref--{seg.ref.kind}" class:nd-unresolved={!seg.ref.found} onclick={() => openRef(seg.ref)} onmouseenter={(e) => showPreview(e, seg.ref)} onmouseleave={hidePreview} onfocus={(e) => showPreview(e, seg.ref)} onblur={hidePreview} disabled={!seg.ref.coord} title={refTitle(seg.ref)}>{seg.ref.label}{#if seg.ref.fragment}<span class="nd-ref__frag">#{seg.ref.fragment}</span>{/if}</button>{/if}{:else}{seg.text}{/if}{/each}</pre>
+{#if preview}
+	<!-- svelte-ignore a11y_no_static_element_interactions -->
+	<div
+		class="nd-embed nd-preview"
+		style="left:{preview.x}px; top:{preview.y}px"
+		onmouseenter={cancelHide}
+		onmouseleave={hidePreview}
+		role="tooltip"
+	>{@render cardInner(preview.ref)}</div>
+{/if}
 
 <style>
 	.section-content {
@@ -179,6 +209,16 @@
 		background: color-mix(in srgb, var(--id-yours) 5%, transparent);
 		padding: 6px 10px;
 	}
+	/* Floating hover preview for ref/wiki links — same card, solid + anchored. */
+	.nd-preview {
+		position: fixed;
+		z-index: 200;
+		width: min(340px, 90vw);
+		margin: 0;
+		background: var(--bg);
+		border: 1px solid var(--panel-border-strong, var(--panel-border));
+		box-shadow: var(--shadow-lg, 0 8px 30px rgba(0, 0, 0, 0.4));
+	}
 	.nd-embed__head {
 		display: flex;
 		align-items: center;
@@ -236,6 +276,16 @@
 		white-space: pre-wrap;
 		overflow-wrap: anywhere;
 		color: var(--fg);
+	}
+	/* Cover art for media embeds (music tracks, pictures) — events that carry an
+	   image but no text body. */
+	.nd-embed__cover {
+		display: block;
+		max-width: 100%;
+		max-height: 180px;
+		object-fit: contain;
+		border-radius: var(--r-sm, 3px);
+		border: 1px solid var(--border);
 	}
 	.nd-embed__missing {
 		display: block;
