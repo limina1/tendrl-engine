@@ -2046,6 +2046,7 @@ impl<'a> PublicationEngine<'a> {
                 content: None,
                 title: None,
                 summary: None,
+                image: None,
                 author: None,
                 author_pubkey: None,
                 created_at: None,
@@ -2158,8 +2159,36 @@ impl<'a> PublicationEngine<'a> {
                     apply_event(resolved, &ev, want_content, display_given);
                 }
             }
-            // Profiles aren't transcludable content.
-            Decoded::Npub { .. } | Decoded::Nprofile { .. } => {}
+            // A user embed — resolve the kind-0 profile into a card (name +
+            // picture + bio). The npub is valid even if the profile isn't local.
+            Decoded::Npub { pubkey } | Decoded::Nprofile { pubkey, .. } => {
+                resolved.naddr = Some(entity.to_string());
+                resolved.event_kind = Some(0);
+                resolved.author_pubkey = Some(pubkey.clone());
+                resolved.found = true;
+                let filter = serde_json::json!({ "kinds": [0], "authors": [pubkey], "limit": 1 });
+                if let Ok(resp) = self.engine.get_events(vec![filter], policy, None).await {
+                    if let Some(ev) = resp.events.into_iter().next() {
+                        let content = ev.get("content").and_then(Value::as_str).unwrap_or("");
+                        let created = ev.get("created_at").and_then(Value::as_u64).unwrap_or(0);
+                        if let Some(meta) =
+                            crate::user_data::Metadata::from_event_content(content, created)
+                        {
+                            if !display_given {
+                                if let Some(name) = meta.display_name() {
+                                    resolved.label = name.to_string();
+                                }
+                            }
+                            resolved.title = meta.display_name().map(str::to_string);
+                            resolved.summary = meta
+                                .about
+                                .filter(|a| !a.is_empty())
+                                .map(|a| cap_chars(&a, 280));
+                            resolved.image = meta.picture.filter(|p| !p.is_empty());
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -2296,6 +2325,9 @@ fn apply_event(
         .filter(|s| !s.is_empty())
         .map(|s| cap_chars(&s, 280));
     resolved.author = first_tag_value(event, "author").filter(|a| !a.is_empty());
+    resolved.image = first_tag_value(event, "image")
+        .or_else(|| first_tag_value(event, "thumb"))
+        .filter(|s| !s.is_empty());
     resolved.author_pubkey = event
         .get("pubkey")
         .and_then(Value::as_str)

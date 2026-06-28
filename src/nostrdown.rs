@@ -141,6 +141,10 @@ pub struct ResolvedRef {
     /// The resolved event's `summary`/`description` tag, capped for a preview.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub summary: Option<String>,
+    /// An image for the embed card: a document's `image`/`thumb` tag, or a
+    /// profile's picture (for an `npub`/`nprofile` user embed).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub image: Option<String>,
     /// The cited work's author — the `["author", …]` tag (e.g. "Plato").
     #[serde(skip_serializing_if = "Option::is_none")]
     pub author: Option<String>,

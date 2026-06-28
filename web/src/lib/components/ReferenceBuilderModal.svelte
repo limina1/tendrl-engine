@@ -81,6 +81,16 @@
 		close();
 	}
 
+	// ── embed: paste any entity directly ────────────────────────────────────
+	let pasteEntity = $state('');
+	const ENTITY_RE = /^(nostr:)?(naddr1|nevent1|note1|npub1|nprofile1)[a-z0-9]+$/i;
+	const pasteValid = $derived(ENTITY_RE.test(pasteEntity.trim()));
+	function insertEntity() {
+		if (!pasteValid) return;
+		oninsert(`{{embed:${pasteEntity.trim().replace(/^nostr:/i, '')}}}`);
+		close();
+	}
+
 	// ── embed: coordinate builder ───────────────────────────────────────────
 	let authorText = $state('');
 	let authorPubkey = $state<string | null>(null);
@@ -283,6 +293,18 @@
 				</div>
 			{:else}
 				<div class="rb-body">
+					<!-- paste any entity directly: naddr / nevent / note / npub / nprofile -->
+					<div class="rb-field">
+						<span class="rb-label">paste:</span>
+						<input
+							class="rb-input rb-input--inline"
+							placeholder="naddr / nevent / note / npub …"
+							bind:value={pasteEntity}
+							onkeydown={(e) => e.key === 'Enter' && insertEntity()}
+						/>
+						<button class="rb-go" disabled={!pasteValid} onclick={insertEntity}>embed</button>
+					</div>
+					<div class="rb-or">or build a coordinate by search:</div>
 					<!-- author -->
 					<label class="rb-field">
 						<span class="rb-label">by:</span>
@@ -458,6 +480,30 @@
 		display: flex;
 		align-items: center;
 		gap: 6px;
+	}
+	.rb-go {
+		flex: 0 0 auto;
+		font-family: var(--font-mono);
+		font-size: var(--t-2xs);
+		padding: 4px 10px;
+		border: 1px solid var(--id-yours);
+		border-radius: var(--r-sm);
+		background: color-mix(in srgb, var(--id-yours) 12%, transparent);
+		color: var(--id-yours);
+		cursor: pointer;
+	}
+	.rb-go:disabled {
+		opacity: 0.5;
+		cursor: default;
+		border-color: var(--panel-border);
+		background: var(--bg-surface);
+		color: var(--fg-muted);
+	}
+	.rb-or {
+		font-size: var(--t-2xs);
+		color: var(--fg-muted);
+		font-style: italic;
+		margin: 2px 0;
 	}
 	.rb-label {
 		font-family: var(--font-mono);

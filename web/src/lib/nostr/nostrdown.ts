@@ -66,6 +66,8 @@ export interface ResolvedRef {
 	title?: string;
 	/** The resolved event's `summary`/`description`, capped. */
 	summary?: string;
+	/** Embed-card image: a document's image/thumb tag, or a profile picture. */
+	image?: string;
 	/** Cited work author — the `["author", …]` tag. */
 	author?: string;
 	/** Publishing pubkey (the "index author"). */

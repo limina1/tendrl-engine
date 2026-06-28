@@ -6,6 +6,7 @@
 	// renderable runs. Purely presentational — resolution happens in the parent
 	// (which calls `api.resolveHighlights` / `api.resolveNostrdown`).
 	import { getAppState } from '$lib/state.svelte';
+	import { getProfile } from '$lib/api';
 	import { pubkeyToHighlightFill, pubkeyToHighlightStroke } from '$lib/discussions/colors';
 	import type { HighlightSpan } from '$lib/discussions/highlights';
 	import { buildSegments, type ResolvedRef } from '$lib/nostr/nostrdown';
@@ -37,11 +38,15 @@
 		return `background: ${fill}; box-shadow: inset 3px 0 0 ${stroke};`;
 	}
 
-	// Open a resolved reference in the reader (publication reader for a 30040,
-	// single-event reader buffer for a section/article/wiki). Fragment-scroll
-	// within the target is a follow-up.
+	// Open a resolved reference: an addressable in the reader (publication /
+	// section / article / wiki), or a user (npub embed) in the profile view.
+	// nevent/note embeds have no addressable coordinate — preview only, for now.
 	function openRef(ref: ResolvedRef) {
 		if (ref.coord) app.openCoord(ref.coord);
+		else if (ref.event_kind === 0 && ref.author_pubkey) app.navigateToProfile(ref.author_pubkey);
+	}
+	function canOpen(ref: ResolvedRef): boolean {
+		return !!ref.coord || (ref.event_kind === 0 && !!ref.author_pubkey);
 	}
 
 	function refTitle(ref: ResolvedRef): string {
@@ -50,9 +55,44 @@
 		const frag = ref.fragment ? ` #${ref.fragment}` : '';
 		return `${ref.kind}: ${ref.target}${kind}${frag}`;
 	}
+
+	// Field-driven embed card: show whatever the resolved event carries.
+	const embedTitle = (r: ResolvedRef) => r.title || r.label;
+	const embedBody = (r: ResolvedRef) => r.content || r.summary || '';
+
+	// Byline for non-profile embeds: the `author` tag, else the publisher's
+	// resolved kind-0 name, else a short pubkey. (Profiles put the name in title.)
+	let authorNames = $state<Record<string, string>>({});
+	$effect(() => {
+		const pubkeys = new Set<string>();
+		for (const r of refs) {
+			if (r.kind === 'embed' && r.found && r.event_kind !== 0 && !r.author && r.author_pubkey) {
+				pubkeys.add(r.author_pubkey);
+			}
+		}
+		let cancelled = false;
+		for (const pk of pubkeys) {
+			if (authorNames[pk]) continue;
+			getProfile(pk)
+				.then((p) => {
+					const name = p.display_name || p.name;
+					if (!cancelled && name) authorNames = { ...authorNames, [pk]: name };
+				})
+				.catch(() => {});
+		}
+		return () => {
+			cancelled = true;
+		};
+	});
+	function byline(r: ResolvedRef): string {
+		if (r.event_kind === 0) return '';
+		if (r.author) return r.author;
+		if (r.author_pubkey) return authorNames[r.author_pubkey] || r.author_pubkey.slice(0, 10) + '…';
+		return '';
+	}
 </script>
 
-<pre class="section-content" class:muted>{#each segments as seg, i (i)}{#if seg.type === 'highlight'}<mark class="hl-overlay" data-hl-ids={seg.highlight.id} style={styleFor(seg.highlight.pubkey, seg.highlight.focused)} title="NIP-84 highlight {seg.highlight.id.slice(0, 8)}… by {seg.highlight.pubkey.slice(0, 12)}…">{seg.text}</mark>{:else if seg.type === 'ref'}{#if seg.ref.kind === 'embed'}<span class="nd-embed" class:nd-unresolved={!seg.ref.found}><span class="nd-embed__head"><span class="nd-embed__label">⧉ {seg.ref.label}</span>{#if seg.ref.coord}<button class="nd-embed__open" onclick={() => openRef(seg.ref)} title={refTitle(seg.ref)}>open</button>{/if}</span>{#if seg.ref.found && seg.ref.content}<span class="nd-embed__body">{seg.ref.content}</span>{:else}<span class="nd-embed__missing">embed unavailable — {seg.ref.target}</span>{/if}</span>{:else}<button class="nd-ref nd-ref--{seg.ref.kind}" class:nd-unresolved={!seg.ref.found} onclick={() => openRef(seg.ref)} disabled={!seg.ref.coord} title={refTitle(seg.ref)}>{seg.ref.label}{#if seg.ref.fragment}<span class="nd-ref__frag">#{seg.ref.fragment}</span>{/if}</button>{/if}{:else}{seg.text}{/if}{/each}</pre>
+<pre class="section-content" class:muted>{#each segments as seg, i (i)}{#if seg.type === 'highlight'}<mark class="hl-overlay" data-hl-ids={seg.highlight.id} style={styleFor(seg.highlight.pubkey, seg.highlight.focused)} title="NIP-84 highlight {seg.highlight.id.slice(0, 8)}… by {seg.highlight.pubkey.slice(0, 12)}…">{seg.text}</mark>{:else if seg.type === 'ref'}{#if seg.ref.kind === 'embed'}<span class="nd-embed" class:nd-unresolved={!seg.ref.found}><span class="nd-embed__head">{#if seg.ref.image}<img class="nd-embed__img" class:nd-embed__img--avatar={seg.ref.event_kind === 0} src={seg.ref.image} alt="" referrerpolicy="no-referrer" loading="lazy" />{/if}<span class="nd-embed__titles"><span class="nd-embed__label">⧉ {embedTitle(seg.ref)}</span>{#if byline(seg.ref)}<span class="nd-embed__by">{byline(seg.ref)}</span>{/if}</span>{#if canOpen(seg.ref)}<button class="nd-embed__open" onclick={() => openRef(seg.ref)} title={refTitle(seg.ref)}>{seg.ref.event_kind === 0 ? 'profile' : 'open'}</button>{/if}</span>{#if seg.ref.found}{#if embedBody(seg.ref)}<span class="nd-embed__body">{embedBody(seg.ref)}</span>{/if}{:else}<span class="nd-embed__missing">embed unavailable — {seg.ref.target}</span>{/if}</span>{:else}<button class="nd-ref nd-ref--{seg.ref.kind}" class:nd-unresolved={!seg.ref.found} onclick={() => openRef(seg.ref)} disabled={!seg.ref.coord} title={refTitle(seg.ref)}>{seg.ref.label}{#if seg.ref.fragment}<span class="nd-ref__frag">#{seg.ref.fragment}</span>{/if}</button>{/if}{:else}{seg.text}{/if}{/each}</pre>
 
 <style>
 	.section-content {
@@ -127,12 +167,36 @@
 		gap: 8px;
 		margin-bottom: 4px;
 	}
+	.nd-embed__img {
+		flex: 0 0 auto;
+		width: 36px;
+		height: 36px;
+		object-fit: cover;
+		border-radius: var(--r-sm, 3px);
+		border: 1px solid var(--border);
+	}
+	.nd-embed__img--avatar {
+		border-radius: 50%;
+	}
+	.nd-embed__titles {
+		display: flex;
+		flex-direction: column;
+		gap: 1px;
+		min-width: 0;
+	}
 	.nd-embed__label {
 		font-family: var(--font-mono);
 		font-size: var(--t-2xs);
 		text-transform: uppercase;
 		letter-spacing: 0.05em;
 		color: var(--id-yours);
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+	.nd-embed__by {
+		font-size: var(--t-2xs);
+		color: var(--fg-muted);
 	}
 	.nd-embed__open {
 		margin-left: auto;
