@@ -497,6 +497,13 @@ but powerful for knowledge graphs.
   attributed blockquote (collapsible); publish emits =["a"/"e", source]= +
   =["p", author, "", "author"]= on the section. /Inline model — the quote lives
   in the prose; minting a real kind-9802 highlight is a possible upgrade./
+- [ ] ={{transclude:naddr}}= — a /block-level/ slot (own line, not inline): the
+  referenced *30040/30041* becomes a child node, emitted as an =["a", coord]= in
+  the enclosing 30040 index at that position — /not/ a span in a section's
+  content. Addressable-only (=a=-tags, 30040/30041) for consistency; a
+  non-addressable note wants inline =embed=, not a slot. Structural inclusion by
+  reference — the third rung after =quote= (a passage) and =embed= (a whole event
+  inline). /Compose-side wiring in progress./
 
 ** Tier 2 — Build Second
 

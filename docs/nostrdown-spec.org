@@ -39,7 +39,8 @@ Three commitments follow from "markup-agnostic":
 
 #+begin_example
 reference  =  "{{" prefix ":" target [ "#" fragment ] [ "|" modifier ] "}}"
-prefix     =  "ref" | "wiki" | "embed" | "quote" | "cite"   ; reserved: book, @, term, media
+prefix     =  "ref" | "wiki" | "embed" | "quote" | "cite"   ; inline ; reserved: book, @, term, media
+           |  "transclude"                                  ; block-level (own line) — see The prefixes
 target     =  a slug  |  a NIP-19 entity (naddr/nevent/note/npub/nprofile, "nostr:" optional)
 fragment   =  an anchor into the target (a heading)         ; NIP-54-normalized
 modifier   =  a presentation hint, a display label, or inline text
@@ -69,6 +70,12 @@ prefix shares.
 *Normalization.* Slugs and fragments are NIP-54-normalized (lowercase, spaces →
 =-=, punctuation stripped). The parser works in /bytes/; offsets handed to a
 renderer are converted to /UTF-16/ code units (the browser's unit).
+
+*Inline vs. block.* Every prefix above is /inline/ — it sits inside a section's
+prose and resolves to a span or a card, and the referenced event stays external.
+One prefix, =transclude=, is /block-level/: it occupies a whole line and is
+consumed into the publication's /structure/ rather than rendered inline. See
+*The prefixes → transclude*.
 
 * The prefixes
 
@@ -144,6 +151,43 @@ text plus rich bibliographic metadata (author, title, dates, DOI, URL, …).
 carries an excerpt /in-event/ (inline text); =cite= references an excerpt held
 /ex-event/ in a reusable 30161 record. Same family, three resiliencies.
 
+** transclude: — slot a whole event as a child  (block-level)
+
+The one /block-level/ prefix. The inline prefixes live inside prose and render as
+a span or card while the referenced event stays external; =transclude= is
+/structural/ — on its own line, it makes an existing event a *child node* of the
+publication.
+
+#+begin_example
+== Methods
+
+{{transclude:naddr1…shared-protocol}}
+
+== Results
+#+end_example
+
+- *Target* — a naddr or =kind:pubkey:d-tag= coordinate resolving to a *30040 or
+  30041*. Addressable publication events /only/: the slot is an =a=-tag, so for
+  consistency non-addressable events (nevent / note) are out of scope — =quote=
+  or =embed= those inline instead.
+- *Consumed at compose time* — the line does /not/ become a section, and the
+  token does /not/ survive in any published content. It is lifted into the
+  enclosing *kind-30040 index* as an =["a", "kind:pubkey:d-tag", relay?]= entry,
+  at that ordinal position, interleaved with the minted-section =a=-tags.
+- *The child keeps its own identity* — author, address, version. You point at it,
+  you do not copy it. The reader's publication-tree loader already walks index
+  =a=-tags parent-before-child, so a slotted event renders as its own node /
+  subtree with nothing new required on the read side.
+
+It is /inclusion by reference/, distinct from inline =embed= (which copies an
+event's content into prose). Three rungs of reuse:
+
+| rung         | what          | where it lands                              |
+|--------------+---------------+---------------------------------------------|
+| =quote=      | a passage     | inline, in a section's prose                |
+| =embed=      | a whole event | inline, in a section's prose (a card)       |
+| =transclude= | a whole event | a child node — an =a=-tag in the 30040 index |
+
 * The tag-resolution pattern
 
 The reference in the content is short and human; the /coordinate/ rides in a tag
@@ -160,6 +204,7 @@ deduplicate on =(name, value)=.
 | =\{\{embed:npub\}\}=  | =["p", pubkey]=                                            |
 | =\{\{quote:naddr\vert…\}\}= | =["a", coord]= + =["p", author, relay, "author"]=  (NIP-84) |
 | =\{\{cite:d-tag\}\}=  | =["cite", d-tag, "30161:pk:d-tag", relay?]=   (NKBIP-03)   |
+| =\{\{transclude:naddr\}\}= (own line) | =["a", "kind:pubkey:d-tag", relay?]= on the *30040 index* (not the section) |
 
 * Presentation: what, not how
 
@@ -204,6 +249,8 @@ The editor's token /recognition/ is the one legitimate TS copy of the grammar
 
 - *Tier 1 — shipped*: =ref=, =wiki=, =embed= (any naddr / nevent / note / npub /
   nprofile), =quote=.
+- *transclude* (block-level slot): an =a=-tag into the 30040 for an existing
+  30040 / 30041; addressable-only. Compose-side wiring in progress.
 - *cite* (NKBIP-03): kind-30161 citation records; grammar reserved, resolver +
   emission planned.
 - *book* (NKBIP-08): port =[[book::collection:title chapter:section | version]]=
