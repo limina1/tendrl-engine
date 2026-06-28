@@ -124,6 +124,13 @@ pub struct ResolvedRef {
     pub label: String,
     /// `true` when the target resolved to a known address/event.
     pub found: bool,
+    /// `true` when the target is a valid event address (`found`) but the event
+    /// itself isn't in the local db yet — the renderer offers a relay fetch
+    /// (auto in Auto mode, a click in Confirm mode). Cleared once the event is
+    /// fetched and the card is filled. Always `false` for `ref`/`wiki` (those
+    /// resolve against local sections/articles, not a remote fetch).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub pending: bool,
     /// NIP-19 `naddr`/`nevent`/`note` to navigate to, when resolved.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub naddr: Option<String>,

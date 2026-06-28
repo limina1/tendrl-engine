@@ -297,6 +297,22 @@ export async function resolveNostrdown(
 	return resp.refs;
 }
 
+/** Force-fetch one nostrdown `embed` entity (naddr/nevent/note) from the search
+ *  relays and return its (re)resolved ref. Drives the EmbedCard's "fetch from
+ *  search relays" action: `FetchAlways`, so in Confirm mode the engine raises a
+ *  network intent the FetchConfirmModal must approve (this call blocks until
+ *  then). On success `pending` clears and the card fills with the event. */
+export async function fetchNostrdownEntity(
+	entity: string,
+	wantContent = true
+): Promise<ResolvedRef> {
+	const resp = await fetchJson<{ ref: ResolvedRef }>('/api/v1/nostrdown/fetch-entity', {
+		method: 'POST',
+		body: JSON.stringify({ entity, want_content: wantContent })
+	});
+	return resp.ref;
+}
+
 // Drafts API — local unsigned-publication storage (engine DraftStore).
 // Persists the full compose state to <data_dir>/drafts/ so a draft survives a
 // refresh, can be listed, and resumed. A draft is never signed.

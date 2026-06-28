@@ -404,6 +404,10 @@ async fn main() -> anyhow::Result<()> {
             "/api/v1/nostrdown/resolve",
             post(api::resolve_nostrdown_handler),
         )
+        .route(
+            "/api/v1/nostrdown/fetch-entity",
+            post(api::fetch_nostrdown_entity_handler),
+        )
         // Documents
         .route("/api/v1/documents", get(api::list_documents_handler))
         .route("/api/v1/documents/parse", post(api::parse_document_handler))

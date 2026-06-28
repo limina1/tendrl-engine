@@ -675,6 +675,46 @@ pub async fn resolve_nostrdown_handler(
     Ok(Json(ResolveNostrdownResponse { refs }))
 }
 
+/// POST /api/v1/nostrdown/fetch-entity body. The card's "fetch from search
+/// relays" action for a single `embed` entity (naddr/nevent/note).
+#[derive(Debug, Deserialize)]
+pub struct FetchNostrdownEntityRequest {
+    /// The bech32 entity (`naddr…`/`nevent…`/`note…`), optionally `nostr:`-prefixed.
+    pub entity: String,
+    /// Whether to pull the event body for transclusion (true for an inline embed).
+    #[serde(default = "default_true")]
+    pub want_content: bool,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+#[derive(Debug, Serialize)]
+pub struct FetchNostrdownEntityResponse {
+    /// The (re)resolved reference — `pending` cleared and fields filled if the
+    /// fetch landed the event; still `pending` if the relays had nothing.
+    pub r#ref: crate::nostrdown::ResolvedRef,
+}
+
+/// POST /api/v1/nostrdown/fetch-entity
+///
+/// Force-fetch one nostrdown `embed` entity from the search relays and return
+/// its filled [`crate::nostrdown::ResolvedRef`]. Uses `FetchAlways`, so in
+/// Confirm mode the engine emits a network intent the UI must approve before the
+/// fetch proceeds (the request blocks on that decision). The card swaps the
+/// returned ref in to render the now-loaded event.
+pub async fn fetch_nostrdown_entity_handler(
+    State(engine): State<AppState>,
+    Json(req): Json<FetchNostrdownEntityRequest>,
+) -> Result<Json<FetchNostrdownEntityResponse>, EngineError> {
+    let pub_engine = PublicationEngine::new(&engine);
+    let resolved = pub_engine
+        .fetch_entity_ref(&req.entity, req.want_content)
+        .await;
+    Ok(Json(FetchNostrdownEntityResponse { r#ref: resolved }))
+}
+
 /// Query parameters for publications list
 #[derive(Debug, Deserialize)]
 pub struct PublicationsQuery {

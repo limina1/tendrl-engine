@@ -2065,6 +2065,7 @@ impl<'a> PublicationEngine<'a> {
                 fragment: r.fragment.clone(),
                 label: r.display.clone().unwrap_or_else(|| r.raw_target.clone()),
                 found: false,
+                pending: false,
                 naddr: None,
                 coord: None,
                 event_kind: None,
@@ -2091,8 +2092,17 @@ impl<'a> PublicationEngine<'a> {
                     }
                 }
                 RefKind::Embed => {
-                    self.fill_from_entity(&r.target, &mut resolved, true, display_given, policy)
-                        .await;
+                    // Entity embeds resolve as a *local* read so resolve never
+                    // blocks on relays; a not-local event comes back `pending` and
+                    // the card fetches it (auto in Auto mode, click in Confirm).
+                    self.fill_from_entity(
+                        &r.target,
+                        &mut resolved,
+                        true,
+                        display_given,
+                        FetchPolicy::LocalOnly,
+                    )
+                    .await;
                 }
                 RefKind::Wiki => {
                     if let Some(ev) = self.find_wiki_event(&r.target, author, policy).await {
@@ -2105,8 +2115,14 @@ impl<'a> PublicationEngine<'a> {
                     // Resolve the source for attribution only (title/author/coord);
                     // the quoted body is the inline `|text`, not the source content.
                     if r.is_entity {
-                        self.fill_from_entity(&r.target, &mut resolved, false, true, policy)
-                            .await;
+                        self.fill_from_entity(
+                            &r.target,
+                            &mut resolved,
+                            false,
+                            true,
+                            FetchPolicy::LocalOnly,
+                        )
+                        .await;
                     }
                     // Header falls back to a kind name (not the long excerpt) when
                     // the source has no title / isn't local.
@@ -2118,6 +2134,43 @@ impl<'a> PublicationEngine<'a> {
             out.push(resolved);
         }
         out
+    }
+
+    /// Force-fetch a single `embed` entity (naddr/nevent/note) and return its
+    /// filled [`ResolvedRef`]. This is the card's "fetch from search relays"
+    /// action: it resolves with `FetchAlways`, so in Confirm mode it routes
+    /// through the network-intent flow (the confirm modal), and aims at the
+    /// search relay set. On success `pending` clears and the card fills with the
+    /// fetched event's title/content; if the relays had nothing it stays pending.
+    pub async fn fetch_entity_ref(
+        &self,
+        entity: &str,
+        want_content: bool,
+    ) -> crate::nostrdown::ResolvedRef {
+        use crate::nostrdown::RefKind;
+        let mut resolved = crate::nostrdown::ResolvedRef {
+            kind: RefKind::Embed,
+            start: 0,
+            end: 0,
+            target: entity.to_string(),
+            fragment: None,
+            label: entity.to_string(),
+            found: false,
+            pending: false,
+            naddr: None,
+            coord: None,
+            event_kind: None,
+            content: None,
+            title: None,
+            summary: None,
+            image: None,
+            author: None,
+            author_pubkey: None,
+            created_at: None,
+        };
+        self.fill_from_entity(entity, &mut resolved, want_content, false, FetchPolicy::FetchAlways)
+            .await;
+        resolved
     }
 
     /// Build the sibling index for a publication: every section and nested
@@ -2188,17 +2241,46 @@ impl<'a> PublicationEngine<'a> {
                 resolved.event_kind = Some(kind_int as u64);
                 let addr = NAddr::new(kind_int as u64, &pubkey, &d_tag);
                 resolved.coord = Some(addr.to_a_tag());
-                if let Some(ev) = self.load_event_by_addr(&addr, policy).await {
+                // Route through `get_events` (not `get_addressable`) so a
+                // FetchAlways fetch goes through the Confirm intent flow, and aim
+                // it at the search relay set.
+                let search = self.engine.search_relays();
+                let over = (!search.is_empty()).then_some(search.as_slice());
+                let filter = serde_json::json!({
+                    "kinds": [kind_int], "authors": [pubkey], "#d": [d_tag], "limit": 1,
+                });
+                let ev = self
+                    .engine
+                    .get_events(vec![filter], policy, over)
+                    .await
+                    .ok()
+                    .and_then(|r| r.events.into_iter().next());
+                if let Some(ev) = ev {
                     apply_event(resolved, &ev, want_content, display_given);
                 } else {
-                    // Address is valid; the event just isn't local yet.
+                    // Address is valid; the event just isn't local yet — the card
+                    // offers a relay fetch.
                     resolved.found = true;
+                    resolved.pending = true;
                 }
             }
             Decoded::Nevent { event_id, .. } | Decoded::Note { event_id } => {
                 resolved.naddr = Some(entity.to_string());
-                if let Some(ev) = self.engine.get_by_id(&event_id, policy).await.ok().flatten() {
+                let search = self.engine.search_relays();
+                let over = (!search.is_empty()).then_some(search.as_slice());
+                let filter = serde_json::json!({ "ids": [event_id], "limit": 1 });
+                let ev = self
+                    .engine
+                    .get_events(vec![filter], policy, over)
+                    .await
+                    .ok()
+                    .and_then(|r| r.events.into_iter().next());
+                if let Some(ev) = ev {
                     apply_event(resolved, &ev, want_content, display_given);
+                } else {
+                    // Valid event id, just not local yet.
+                    resolved.found = true;
+                    resolved.pending = true;
                 }
             }
             // A user embed — resolve the kind-0 profile into a card (name +
@@ -4294,6 +4376,81 @@ mod tests {
         assert!(!r3.found);
         assert_eq!(r3.label, "nope");
         assert!(r3.naddr.is_none());
+    }
+
+    /// A draft (no events in nostrdb, no publication coordinate) still resolves
+    /// `{{ref:slug}}` against the inline sibling list the composer's draft-reader
+    /// passes — the title-slug match, sourced from the request. This is the path
+    /// the draft preview uses before anything is signed/published.
+    #[tokio::test]
+    async fn test_resolve_refs_draft_siblings() {
+        // Empty db — nothing is published; resolution must come from the inline
+        // siblings alone.
+        let (engine, _dir) = engine_with_events(&[]).await;
+        let pe = PublicationEngine::new(&engine);
+
+        let siblings = vec![
+            DraftSibling {
+                title: Some("The Ascent".to_string()),
+                d_tag: "sec-abc123".to_string(),
+            },
+            DraftSibling {
+                title: Some("The Return".to_string()),
+                d_tag: "sec-def456".to_string(),
+            },
+        ];
+
+        let content = "Everything in {{ref:The Ascent}} turns; see {{ref:nope}}.";
+        let refs = pe
+            .resolve_refs(content, None, None, &siblings, FetchPolicy::LocalOnly)
+            .await;
+        assert_eq!(refs.len(), 2);
+
+        // ref: resolves against the draft sibling by title-slug; the title lifts
+        // into the label so the preview card isn't blank. No naddr — the section
+        // isn't published yet — but a synthetic coord for in-draft navigation.
+        let r0 = &refs[0];
+        assert!(r0.found, "ref resolved against the inline draft sibling");
+        assert_eq!(r0.label, "The Ascent");
+        assert_eq!(r0.title.as_deref(), Some("The Ascent"));
+        assert_eq!(r0.event_kind, Some(KIND_PUBLICATION_SECTION));
+        assert_eq!(
+            r0.coord.as_deref(),
+            Some(format!("{KIND_PUBLICATION_SECTION}::sec-abc123").as_str())
+        );
+
+        // A ref naming no draft sibling stays unresolved.
+        assert!(!refs[1].found);
+    }
+
+    /// An entity `{{embed:naddr…}}` whose event isn't local resolves as a valid
+    /// *address* (`found`) but `pending` — the card then offers a relay fetch.
+    /// Resolve itself never touches the network (LocalOnly), so a missing embed
+    /// can't stall a page render.
+    #[tokio::test]
+    async fn test_resolve_refs_entity_pending() {
+        let pk_owned = test_pubkey();
+        let pk = pk_owned.as_str();
+        let (engine, _dir) = engine_with_events(&[]).await; // empty db
+        let pe = PublicationEngine::new(&engine);
+
+        let naddr =
+            crate::nip19::encode_naddr(KIND_PUBLICATION_SECTION as u32, pk, "ghost-section", &[])
+                .expect("encode naddr");
+        let content = format!("see {{{{embed:{naddr}}}}}");
+        let refs = pe
+            .resolve_refs(&content, None, None, &[], FetchPolicy::LocalOnly)
+            .await;
+        assert_eq!(refs.len(), 1);
+        let r = &refs[0];
+        assert!(r.found, "the naddr is a valid address");
+        assert!(r.pending, "event not local → pending a fetch");
+        assert!(r.content.is_none(), "nothing transcluded yet");
+        assert_eq!(r.event_kind, Some(KIND_PUBLICATION_SECTION));
+        assert_eq!(
+            r.coord.as_deref(),
+            Some(format!("{KIND_PUBLICATION_SECTION}:{pk}:ghost-section").as_str())
+        );
     }
 
     // --- stream_publication_tree (streaming loader) ---

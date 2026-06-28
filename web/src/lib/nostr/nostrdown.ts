@@ -52,6 +52,9 @@ export interface ResolvedRef {
 	label: string;
 	/** True when the target resolved to a known address/event. */
 	found: boolean;
+	/** True when the address is valid (`found`) but the event isn't local yet —
+	 *  the card offers a relay fetch (auto in Auto mode, a click in Confirm). */
+	pending?: boolean;
 	/** NIP-19 entity to navigate to, when resolved. */
 	naddr?: string;
 	/** `"kind:pubkey:dtag"` coordinate for in-app navigation, when addressable. */
