@@ -2424,6 +2424,26 @@ function _createAppState() {
 		}
 	}
 
+	/** Open an addressable coordinate (`"kind:pubkey:dtag"`) in the *reader* —
+	 *  a 30040 in the publication reader, any other addressable (30041 section,
+	 *  30023 article, 30818 wiki) as a single-event reader buffer (which
+	 *  `ReaderBuffer.loadAddressable` wraps uniformly). The structured-event
+	 *  popup counterpart is `openAddressableInModal`. Used by nostrdown refs. */
+	function openCoord(coord: string) {
+		const i1 = coord.indexOf(':');
+		const i2 = coord.indexOf(':', i1 + 1);
+		if (i1 < 0 || i2 < 0) return;
+		const kind = parseInt(coord.slice(0, i1), 10);
+		const pubkey = coord.slice(i1 + 1, i2);
+		const d_tag = coord.slice(i2 + 1);
+		if (kind === 30040) {
+			navigateToPublication(pubkey, d_tag);
+			return;
+		}
+		const short = d_tag.length > 24 ? d_tag.slice(0, 24) + '…' : d_tag;
+		navigateToReader(`reader:${kind}:${pubkey}:${d_tag}`, 'event', short);
+	}
+
 	async function getEventForModal(eventId: string) {
 		const id = eventId.toLowerCase();
 		try {
@@ -4357,6 +4377,7 @@ function _createAppState() {
 		pushHistoryEntry,
 		getEventForModal,
 		openAddressableInModal,
+		openCoord,
 		findContainingIndexes,
 		containingByCoord,
 		get toasts() { return toasts; },

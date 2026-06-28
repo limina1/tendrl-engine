@@ -27,17 +27,6 @@
 	const app = getAppState();
 
 	// ── Nostrdown: recognize {{ }} refs in the editor and follow on mod-click ──
-	function openCoord(coord: string) {
-		const i1 = coord.indexOf(':');
-		const i2 = coord.indexOf(':', i1 + 1);
-		if (i1 < 0 || i2 < 0) return;
-		app.openAddressableInModal({
-			kind: Number(coord.slice(0, i1)),
-			pubkey: coord.slice(i1 + 1, i2),
-			d_tag: coord.slice(i2 + 1)
-		});
-	}
-
 	/** Char offset of the heading line whose title-slug equals `slug`, else null. */
 	function findHeadingPos(doc: string, slug: string): number | null {
 		const d = effectiveDelim();
@@ -68,7 +57,7 @@
 			const resolved = await resolveNostrdown([{ key: 'k', content: token.raw }]);
 			const r = resolved['k']?.[0];
 			if (r?.found && r.coord) {
-				openCoord(r.coord);
+				app.openCoord(r.coord);
 				return;
 			}
 		} catch {

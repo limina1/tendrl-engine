@@ -37,19 +37,11 @@
 		return `background: ${fill}; box-shadow: inset 3px 0 0 ${stroke};`;
 	}
 
-	// Open a resolved reference in the structured-event modal. `coord` is a
-	// "kind:pubkey:dtag" a-tag; the d-tag itself may contain colons, so split on
-	// only the first two. Fragment-scroll within the target is a follow-up.
+	// Open a resolved reference in the reader (publication reader for a 30040,
+	// single-event reader buffer for a section/article/wiki). Fragment-scroll
+	// within the target is a follow-up.
 	function openRef(ref: ResolvedRef) {
-		if (!ref.coord) return;
-		const i1 = ref.coord.indexOf(':');
-		const i2 = ref.coord.indexOf(':', i1 + 1);
-		if (i1 < 0 || i2 < 0) return;
-		app.openAddressableInModal({
-			kind: Number(ref.coord.slice(0, i1)),
-			pubkey: ref.coord.slice(i1 + 1, i2),
-			d_tag: ref.coord.slice(i2 + 1)
-		});
+		if (ref.coord) app.openCoord(ref.coord);
 	}
 
 	function refTitle(ref: ResolvedRef): string {
