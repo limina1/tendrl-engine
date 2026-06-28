@@ -15,14 +15,16 @@ import {
 	Decoration,
 	type DecorationSet,
 	EditorView,
+	keymap,
 	MatchDecorator,
 	ViewPlugin,
 	type ViewUpdate,
 	showTooltip,
 	type Tooltip
 } from '@codemirror/view';
-import { StateEffect, StateField, type Extension } from '@codemirror/state';
+import { Prec, StateEffect, StateField, type Extension } from '@codemirror/state';
 import {
+	acceptCompletion,
 	autocompletion,
 	startCompletion,
 	type Completion,
@@ -402,7 +404,13 @@ export function nostrdownCompletion(sources: NostrdownCompletionSources): Extens
 		return { from: valueFrom, options, filter: false };
 	}
 
-	return autocompletion({ override: [source], activateOnTyping: true });
+	return [
+		autocompletion({ override: [source], activateOnTyping: true }),
+		// Tab accepts the highlighted suggestion (same as Enter — for embed it
+		// runs the "build coordinate…" hand-off). `acceptCompletion` returns false
+		// when no dropdown is open, so Tab keeps its normal behaviour otherwise.
+		Prec.highest(keymap.of([{ key: 'Tab', run: acceptCompletion }]))
+	];
 }
 
 function makeTooltip(

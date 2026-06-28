@@ -1170,6 +1170,15 @@
 				title="Re-lock unlocked sections that haven't been modified"
 			>Lock all</button>
 		{/if}
+		<!-- Reference autocomplete toggle — leads the affordance cluster. -->
+		<button
+			class="affordance affordance--ref"
+			class:affordance--on={autocompleteOn}
+			onclick={() => (autocompleteOn = !autocompleteOn)}
+			title="Reference autocomplete — suggest ref / wiki / embed as you type the brace syntax in the editor"
+			aria-label="Toggle reference autocomplete"
+			aria-pressed={autocompleteOn}
+		>&lbrace;&lbrace; &rbrace;&rbrace;</button>
 		<!-- Read mirrors ReaderBuffer's "Edit" button — same on-screen
 		     position (toolbar far-right) so the Edit↔Read swap reads as
 		     a single mode toggle. When a source pub exists we navigate to
@@ -1234,14 +1243,6 @@
 				{/if}
 			</div>
 		{/if}
-		<button
-			class="affordance affordance--ref"
-			class:affordance--on={autocompleteOn}
-			onclick={() => (autocompleteOn = !autocompleteOn)}
-			title="Reference autocomplete — suggest ref / wiki / embed as you type the brace syntax in the editor"
-			aria-label="Toggle reference autocomplete"
-			aria-pressed={autocompleteOn}
-		>&lbrace;&lbrace; &rbrace;&rbrace;</button>
 		<button
 			class="affordance affordance--help"
 			onclick={openComposeHelp}
