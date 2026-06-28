@@ -6,7 +6,7 @@
 	// renderable runs. Purely presentational — resolution happens in the parent
 	// (which calls `api.resolveHighlights` / `api.resolveNostrdown`).
 	import { getAppState } from '$lib/state.svelte';
-	import { getProfile } from '$lib/api';
+	import EmbedCard from './EmbedCard.svelte';
 	import { pubkeyToHighlightFill, pubkeyToHighlightStroke } from '$lib/discussions/colors';
 	import type { HighlightSpan } from '$lib/discussions/highlights';
 	import { buildSegments, type ResolvedRef } from '$lib/nostr/nostrdown';
@@ -45,9 +45,6 @@
 		if (ref.coord) app.openCoord(ref.coord);
 		else if (ref.event_kind === 0 && ref.author_pubkey) app.navigateToProfile(ref.author_pubkey);
 	}
-	function canOpen(ref: ResolvedRef): boolean {
-		return !!ref.coord || (ref.event_kind === 0 && !!ref.author_pubkey);
-	}
 
 	function refTitle(ref: ResolvedRef): string {
 		if (!ref.found) return `Unresolved ${ref.kind}: ${ref.target}`;
@@ -56,60 +53,15 @@
 		return `${ref.kind}: ${ref.target}${kind}${frag}`;
 	}
 
-	// Field-driven embed card: show whatever the resolved event carries.
-	const KIND_LABEL: Record<number, string> = {
-		0: 'profile',
-		1: 'note',
-		30023: 'article',
-		30040: 'publication',
-		30041: 'section',
-		30818: 'wiki'
-	};
-	const isEntityLabel = (s: string) =>
-		/^(nostr:)?(naddr1|nevent1|note1|npub1|nprofile1)/i.test(s);
-	// Don't dump a raw 110-char nevent/naddr as the title — when the event has no
-	// title tag (e.g. a kind-1 note), fall back to a kind name.
-	function embedTitle(r: ResolvedRef): string {
-		if (r.title) return r.title;
-		if (isEntityLabel(r.label)) return KIND_LABEL[r.event_kind ?? -1] ?? 'embed';
-		return r.label;
-	}
-	const embedBody = (r: ResolvedRef) => r.content || r.summary || '';
-
-	// Byline for non-profile embeds: the `author` tag, else the publisher's
-	// resolved kind-0 name, else a short pubkey. (Profiles put the name in title.)
-	let authorNames = $state<Record<string, string>>({});
-	$effect(() => {
-		const pubkeys = new Set<string>();
-		for (const r of refs) {
-			if (r.kind === 'embed' && r.found && r.event_kind !== 0 && !r.author && r.author_pubkey) {
-				pubkeys.add(r.author_pubkey);
-			}
-		}
-		let cancelled = false;
-		for (const pk of pubkeys) {
-			if (authorNames[pk]) continue;
-			getProfile(pk)
-				.then((p) => {
-					const name = p.display_name || p.name;
-					if (!cancelled && name) authorNames = { ...authorNames, [pk]: name };
-				})
-				.catch(() => {});
-		}
-		return () => {
-			cancelled = true;
-		};
-	});
-	function byline(r: ResolvedRef): string {
-		if (r.event_kind === 0) return '';
-		if (r.author) return r.author;
-		if (r.author_pubkey) return authorNames[r.author_pubkey] || r.author_pubkey.slice(0, 10) + '…';
-		return '';
+	// Portal the hover popover to <body> so a scrolling (continuous) view or a
+	// transformed ancestor can't clip the fixed-position card.
+	function portal(node: HTMLElement) {
+		document.body.appendChild(node);
+		return { destroy: () => node.remove() };
 	}
 
-	// Hover preview for ref/wiki links — the same field-driven card the embed
-	// renders inline, shown floating beside the link (resolution data is already
-	// in hand). Click still navigates; hover just peeks.
+	// Hover preview for ref/wiki links — the same EmbedCard the reader renders
+	// inline, floated beside the link. Click still navigates; hover just peeks.
 	let preview = $state<{ ref: ResolvedRef; x: number; y: number } | null>(null);
 	let previewTimer: ReturnType<typeof setTimeout> | undefined;
 	function showPreview(e: MouseEvent | FocusEvent, ref: ResolvedRef) {
@@ -127,17 +79,17 @@
 	}
 </script>
 
-{#snippet cardInner(ref: ResolvedRef)}<span class="nd-embed__head">{#if ref.image && (ref.event_kind === 0 || embedBody(ref))}<img class="nd-embed__img" class:nd-embed__img--avatar={ref.event_kind === 0} src={ref.image} alt="" referrerpolicy="no-referrer" loading="lazy" />{/if}<span class="nd-embed__titles"><span class="nd-embed__label">⧉ {embedTitle(ref)}</span>{#if byline(ref)}<span class="nd-embed__by">{byline(ref)}</span>{/if}</span>{#if canOpen(ref)}<button class="nd-embed__open" onclick={() => openRef(ref)} title={refTitle(ref)}>{ref.event_kind === 0 ? 'profile' : 'open'}</button>{/if}</span>{#if ref.found}{#if embedBody(ref)}<span class="nd-embed__body">{embedBody(ref)}</span>{:else if ref.image && ref.event_kind !== 0}<img class="nd-embed__cover" src={ref.image} alt="" referrerpolicy="no-referrer" loading="lazy" />{/if}{:else}<span class="nd-embed__missing">embed unavailable — {ref.target}</span>{/if}{/snippet}
-<pre class="section-content" class:muted>{#each segments as seg, i (i)}{#if seg.type === 'highlight'}<mark class="hl-overlay" data-hl-ids={seg.highlight.id} style={styleFor(seg.highlight.pubkey, seg.highlight.focused)} title="NIP-84 highlight {seg.highlight.id.slice(0, 8)}… by {seg.highlight.pubkey.slice(0, 12)}…">{seg.text}</mark>{:else if seg.type === 'ref'}{#if seg.ref.kind === 'embed'}<span class="nd-embed" class:nd-unresolved={!seg.ref.found}>{@render cardInner(seg.ref)}</span>{:else}<button class="nd-ref nd-ref--{seg.ref.kind}" class:nd-unresolved={!seg.ref.found} onclick={() => openRef(seg.ref)} onmouseenter={(e) => showPreview(e, seg.ref)} onmouseleave={hidePreview} onfocus={(e) => showPreview(e, seg.ref)} onblur={hidePreview} disabled={!seg.ref.coord} title={refTitle(seg.ref)}>{seg.ref.label}{#if seg.ref.fragment}<span class="nd-ref__frag">#{seg.ref.fragment}</span>{/if}</button>{/if}{:else}{seg.text}{/if}{/each}</pre>
+<pre class="section-content" class:muted>{#each segments as seg, i (i)}{#if seg.type === 'highlight'}<mark class="hl-overlay" data-hl-ids={seg.highlight.id} style={styleFor(seg.highlight.pubkey, seg.highlight.focused)} title="NIP-84 highlight {seg.highlight.id.slice(0, 8)}… by {seg.highlight.pubkey.slice(0, 12)}…">{seg.text}</mark>{:else if seg.type === 'ref'}{#if seg.ref.kind === 'embed'}<EmbedCard ref={seg.ref} onopen={openRef} />{:else}<button class="nd-ref nd-ref--{seg.ref.kind}" class:nd-unresolved={!seg.ref.found} onclick={() => openRef(seg.ref)} onmouseenter={(e) => showPreview(e, seg.ref)} onmouseleave={hidePreview} onfocus={(e) => showPreview(e, seg.ref)} onblur={hidePreview} disabled={!seg.ref.coord} title={refTitle(seg.ref)}>{seg.ref.label}{#if seg.ref.fragment}<span class="nd-ref__frag">#{seg.ref.fragment}</span>{/if}</button>{/if}{:else}{seg.text}{/if}{/each}</pre>
 {#if preview}
 	<!-- svelte-ignore a11y_no_static_element_interactions -->
 	<div
-		class="nd-embed nd-preview"
+		class="nd-preview"
 		style="left:{preview.x}px; top:{preview.y}px"
+		use:portal
 		onmouseenter={cancelHide}
 		onmouseleave={hidePreview}
 		role="tooltip"
-	>{@render cardInner(preview.ref)}</div>
+	><EmbedCard ref={preview.ref} onopen={openRef} /></div>
 {/if}
 
 <style>
@@ -189,108 +141,27 @@
 		opacity: 0.65;
 		font-size: 0.9em;
 	}
-	.nd-ref.nd-unresolved,
-	.nd-embed.nd-unresolved {
+	.nd-ref.nd-unresolved {
 		color: var(--fg-muted);
 		background: none;
 		border-bottom: 1px dotted var(--fg-muted);
 		cursor: default;
 	}
 
-	/* Nostrdown embed / transclusion — a block box carrying another event's
-	   content inline (depth-1; nested embeds are not expanded yet). */
-	.nd-embed {
-		display: block;
-		margin: 8px 0;
-		max-width: 100%;
-		overflow: hidden;
-		border-left: 3px solid var(--id-yours);
-		border-radius: var(--r-sm, 3px);
-		background: color-mix(in srgb, var(--id-yours) 5%, transparent);
-		padding: 6px 10px;
-	}
-	/* Floating hover preview for ref/wiki links — same card, solid + anchored. */
+	/* Floating wrapper for the ref/wiki hover preview (portaled to <body>). The
+	   card itself is EmbedCard; this just positions + lifts it. */
 	.nd-preview {
 		position: fixed;
 		z-index: 200;
 		width: min(340px, 90vw);
-		margin: 0;
 		background: var(--bg);
 		border: 1px solid var(--panel-border-strong, var(--panel-border));
+		border-radius: var(--r-sm, 3px);
 		box-shadow: var(--shadow-lg, 0 8px 30px rgba(0, 0, 0, 0.4));
-	}
-	.nd-embed__head {
-		display: flex;
-		align-items: center;
-		gap: 8px;
-		margin-bottom: 4px;
-	}
-	.nd-embed__img {
-		flex: 0 0 auto;
-		width: 36px;
-		height: 36px;
-		object-fit: cover;
-		border-radius: var(--r-sm, 3px);
-		border: 1px solid var(--border);
-	}
-	.nd-embed__img--avatar {
-		border-radius: 50%;
-	}
-	.nd-embed__titles {
-		display: flex;
-		flex-direction: column;
-		gap: 1px;
-		flex: 1;
-		min-width: 0;
-	}
-	.nd-embed__label {
-		font-family: var(--font-mono);
-		font-size: var(--t-2xs);
-		text-transform: uppercase;
-		letter-spacing: 0.05em;
-		color: var(--id-yours);
 		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
 	}
-	.nd-embed__by {
-		font-size: var(--t-2xs);
-		color: var(--fg-muted);
-	}
-	.nd-embed__open {
-		margin-left: auto;
-		font-family: var(--font-mono);
-		font-size: var(--t-3xs);
-		border: 1px solid var(--border);
-		background: var(--bg-surface);
-		color: var(--id-yours);
-		border-radius: var(--radius);
-		padding: 0 6px;
-		cursor: pointer;
-	}
-	.nd-embed__open:hover {
-		border-color: var(--id-yours);
-	}
-	.nd-embed__body {
-		display: block;
-		white-space: pre-wrap;
-		overflow-wrap: anywhere;
-		color: var(--fg);
-	}
-	/* Cover art for media embeds (music tracks, pictures) — events that carry an
-	   image but no text body. */
-	.nd-embed__cover {
-		display: block;
-		max-width: 100%;
-		max-height: 180px;
-		object-fit: contain;
-		border-radius: var(--r-sm, 3px);
-		border: 1px solid var(--border);
-	}
-	.nd-embed__missing {
-		display: block;
-		font-style: italic;
-		color: var(--fg-muted);
-		font-size: var(--t-2xs);
+	/* Neutralize EmbedCard's own block margin inside the popover. */
+	.nd-preview :global(.nd-embed) {
+		margin: 0;
 	}
 </style>

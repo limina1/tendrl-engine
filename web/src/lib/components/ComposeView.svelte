@@ -3,16 +3,17 @@
 	import { getActiveStore } from '$lib/wm/buffer-store.svelte';
 	import type { ComposeState, ContextItem, TagEntry, SyncMode } from '$lib/types';
 	import type { DraftSummary } from '$lib/api';
-	import { resolveNostrdown, getProfile, search } from '$lib/api';
+	import { mount, unmount } from 'svelte';
+	import { resolveNostrdown, search } from '$lib/api';
 	import type { EditorView } from '@codemirror/view';
 	import {
 		nostrdownEditor,
 		nostrdownCompletion,
 		type NostrdownToken,
-		type NostrdownPreview,
 		type NdSuggestion
 	} from '$lib/editor/nostrdown-cm';
-	import { normalizeSlug } from '$lib/nostr/nostrdown';
+	import { normalizeSlug, type ResolvedRef } from '$lib/nostr/nostrdown';
+	import EmbedCard from './EmbedCard.svelte';
 	import ComposeSection from './ComposeSection.svelte';
 	import ReferenceBuilderModal from './ReferenceBuilderModal.svelte';
 	import ItemBadge from './ItemBadge.svelte';
@@ -49,39 +50,54 @@
 
 	const NOSTR_ENTITY_RE = /^(nostr:)?(naddr1|nevent1|note1)/i;
 
-	// Plain-click preview card: a sibling heading in this draft (unpublished), or
-	// the resolved event's metadata + its publisher's profile name.
-	async function previewNostrdown(token: NostrdownToken): Promise<NostrdownPreview | null> {
+	// Resolve a token to a ResolvedRef for the preview card: a sibling heading in
+	// this draft (unpublished, no event yet) or the engine's resolution.
+	async function previewRefFor(token: NostrdownToken, view: EditorView): Promise<ResolvedRef | null> {
 		if ((token.kind === 'ref' || token.kind === 'embed') && !NOSTR_ENTITY_RE.test(token.target)) {
-			const hit = findHeading(plainText, normalizeSlug(token.target));
-			if (hit) return { found: true, inDraft: true, title: hit.title };
+			const hit = findHeading(view.state.doc.toString(), normalizeSlug(token.target));
+			if (hit) {
+				return {
+					kind: 'embed',
+					start: 0,
+					end: 0,
+					target: token.target,
+					label: hit.title,
+					found: true,
+					event_kind: 30041,
+					title: hit.title
+				} as ResolvedRef;
+			}
 		}
 		try {
-			const resolved = await resolveNostrdown([{ key: 'k', content: token.raw }]);
-			const r = resolved['k']?.[0];
-			if (!r?.found) return { found: false };
-			let authorName: string | undefined;
-			if (r.author_pubkey) {
-				try {
-					const p = await getProfile(r.author_pubkey);
-					authorName = p.display_name || p.name || undefined;
-				} catch {
-					/* leave the short pubkey */
-				}
-			}
-			return {
-				found: true,
-				eventKind: r.event_kind,
-				title: r.title,
-				author: r.author,
-				authorPubkey: r.author_pubkey,
-				authorName,
-				summary: r.summary,
-				createdAt: r.created_at
-			};
+			const m = await resolveNostrdown([{ key: 'k', content: token.raw }]);
+			return m['k']?.[0] ?? null;
 		} catch {
-			return { found: false };
+			return null;
 		}
+	}
+
+	// Plain-click preview: mount the shared EmbedCard into the CodeMirror tooltip,
+	// so the composer preview is identical to the reader's card.
+	function renderPreview(token: NostrdownToken, container: HTMLElement, view: EditorView): () => void {
+		let comp: ReturnType<typeof mount> | null = null;
+		let cancelled = false;
+		previewRefFor(token, view).then((ref) => {
+			if (cancelled || !ref) return;
+			comp = mount(EmbedCard, {
+				target: container,
+				props: {
+					ref,
+					onopen: (r: ResolvedRef) => {
+						if (r.coord) app.openCoord(r.coord);
+						else if (r.event_kind === 0 && r.author_pubkey) app.navigateToProfile(r.author_pubkey);
+					}
+				}
+			});
+		});
+		return () => {
+			cancelled = true;
+			if (comp) unmount(comp);
+		};
 	}
 
 	// mod-click on a recognized token: jump to a sibling heading in this buffer
@@ -692,7 +708,7 @@
 	}
 
 	const nostrdownExt = [
-		nostrdownEditor({ onActivate: followNostrdown, onPreview: previewNostrdown }),
+		nostrdownEditor({ onActivate: followNostrdown, onPreview: renderPreview }),
 		nostrdownCompletion({
 			enabled: () => autocompleteOn,
 			ref: (partial) => {

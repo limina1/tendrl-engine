@@ -48,22 +48,6 @@ export interface NostrdownToken {
 	to: number;
 }
 
-/** Preview metadata the host resolves for the popover card. */
-export interface NostrdownPreview {
-	found: boolean;
-	/** A ref/embed-slug pointing at a heading in the current (unpublished) draft. */
-	inDraft?: boolean;
-	eventKind?: number;
-	title?: string;
-	/** Cited work author — the `["author", …]` tag (e.g. "Plato"). */
-	author?: string;
-	/** Publishing pubkey (the "index author") + its resolved kind-0 name. */
-	authorPubkey?: string;
-	authorName?: string;
-	summary?: string;
-	createdAt?: number;
-}
-
 function tokenFromMatch(m: RegExpMatchArray, from: number): NostrdownToken {
 	return {
 		kind: m[1] as NostrdownToken['kind'],
@@ -87,49 +71,17 @@ const theme = EditorView.baseTheme({
 		textUnderlineOffset: '2px',
 		cursor: 'pointer'
 	},
-	'.cm-tooltip.cm-nd-card': {
+	// The preview popover hosts a mounted EmbedCard (same card the reader uses);
+	// this just frames it and strips the card's own block margin.
+	'.cm-tooltip.cm-nd-pop': {
 		background: 'var(--bg)',
 		border: '1px solid var(--panel-border-strong, var(--panel-border))',
 		borderRadius: 'var(--r-md, 6px)',
 		boxShadow: 'var(--shadow-lg, 0 8px 30px rgba(0,0,0,0.4))',
-		padding: '8px 10px',
-		maxWidth: '340px',
-		fontFamily: 'var(--font-sans)'
+		width: 'min(340px, 90vw)',
+		overflow: 'hidden'
 	},
-	'.cm-nd-card__head': { display: 'flex', alignItems: 'baseline', gap: '6px' },
-	'.cm-nd-card__badge': {
-		fontFamily: 'var(--font-mono)',
-		fontSize: 'var(--t-3xs, 0.69rem)',
-		textTransform: 'uppercase',
-		letterSpacing: '0.05em',
-		color: 'var(--id-yours)',
-		border: '1px solid var(--panel-border)',
-		borderRadius: 'var(--r-sm, 3px)',
-		padding: '0 4px',
-		flex: '0 0 auto'
-	},
-	'.cm-nd-card__title': {
-		fontWeight: '600',
-		fontSize: 'var(--t-sm, 0.92rem)',
-		color: 'var(--fg)'
-	},
-	'.cm-nd-card__meta': {
-		marginTop: '3px',
-		fontSize: 'var(--t-2xs, 0.77rem)',
-		color: 'var(--fg-muted)'
-	},
-	'.cm-nd-card__summary': {
-		marginTop: '5px',
-		fontSize: 'var(--t-xs, 0.85rem)',
-		color: 'var(--fg)',
-		lineHeight: '1.45'
-	},
-	'.cm-nd-card__hint': {
-		marginTop: '6px',
-		fontSize: 'var(--t-3xs, 0.69rem)',
-		color: 'var(--fg-muted)',
-		fontStyle: 'italic'
-	}
+	'.cm-nd-pop .nd-embed': { margin: '0', borderRadius: '0' }
 });
 
 /** The token under document position `pos`, if any (re-scans just that line). */
@@ -145,86 +97,6 @@ function tokenAt(view: EditorView, pos: number): NostrdownToken | null {
 	return null;
 }
 
-// ── preview card rendering ────────────────────────────────────────────────
-
-function elem(tag: string, cls?: string, text?: string): HTMLElement {
-	const e = document.createElement(tag);
-	if (cls) e.className = cls;
-	if (text != null) e.textContent = text;
-	return e;
-}
-
-function kindLabel(eventKind: number | undefined, prefix: NostrdownToken['kind']): string {
-	switch (eventKind) {
-		case 30040:
-			return 'publication';
-		case 30041:
-			return 'section';
-		case 30023:
-			return 'article';
-		case 30818:
-			return 'wiki';
-		default:
-			return prefix;
-	}
-}
-
-function shortPubkey(pk: string): string {
-	return pk.length > 12 ? pk.slice(0, 8) + '…' + pk.slice(-4) : pk;
-}
-
-function fmtDate(ts: number): string {
-	try {
-		return new Date(ts * 1000).toLocaleDateString(undefined, {
-			year: 'numeric',
-			month: 'short',
-			day: 'numeric'
-		});
-	} catch {
-		return '';
-	}
-}
-
-function renderCard(token: NostrdownToken, data: NostrdownPreview | null): HTMLElement {
-	const card = elem('div', 'cm-nd-card');
-	if (!data) {
-		card.appendChild(elem('div', 'cm-nd-card__meta', 'Resolving…'));
-		return card;
-	}
-	if (data.inDraft) {
-		const head = elem('div', 'cm-nd-card__head');
-		head.appendChild(elem('span', 'cm-nd-card__badge', 'section'));
-		head.appendChild(elem('span', 'cm-nd-card__title', data.title || token.target));
-		card.appendChild(head);
-		card.appendChild(elem('div', 'cm-nd-card__meta', 'in this draft · not published yet'));
-		return card;
-	}
-	if (!data.found) {
-		card.appendChild(
-			elem('div', 'cm-nd-card__meta', `couldn't resolve ${token.kind}: ${token.target}`)
-		);
-		card.appendChild(elem('div', 'cm-nd-card__hint', '⌘/Ctrl-click to search relays in the reader'));
-		return card;
-	}
-	const head = elem('div', 'cm-nd-card__head');
-	head.appendChild(elem('span', 'cm-nd-card__badge', kindLabel(data.eventKind, token.kind)));
-	head.appendChild(elem('span', 'cm-nd-card__title', data.title || token.target));
-	card.appendChild(head);
-
-	const meta: string[] = [];
-	if (data.author) meta.push(data.author);
-	const publisher = data.authorName || (data.authorPubkey ? shortPubkey(data.authorPubkey) : '');
-	if (publisher) meta.push(`pub: ${publisher}`);
-	if (data.createdAt) {
-		const d = fmtDate(data.createdAt);
-		if (d) meta.push(d);
-	}
-	if (meta.length) card.appendChild(elem('div', 'cm-nd-card__meta', meta.join(' · ')));
-	if (data.summary) card.appendChild(elem('div', 'cm-nd-card__summary', data.summary));
-	card.appendChild(elem('div', 'cm-nd-card__hint', '⌘/Ctrl-click to open in the reader'));
-	return card;
-}
-
 // ── extension ─────────────────────────────────────────────────────────────
 
 const setPreview = StateEffect.define<{ pos: number; token: NostrdownToken } | null>();
@@ -232,12 +104,18 @@ const setPreview = StateEffect.define<{ pos: number; token: NostrdownToken } | n
 /**
  * Build the nostrdown editor extension.
  * - `onActivate(token, view)` — invoked on ⌘/Ctrl-click to *follow* a token.
- * - `onPreview(token)` — resolves the popover data shown on a plain click.
+ * - `onPreview(token, container, view)` — renders the click-preview into
+ *   `container` (the host mounts the shared EmbedCard); returns a cleanup run on
+ *   dismiss.
  */
 export function nostrdownEditor(
 	opts: {
 		onActivate?: (token: NostrdownToken, view: EditorView) => void;
-		onPreview?: (token: NostrdownToken) => Promise<NostrdownPreview | null>;
+		onPreview?: (
+			token: NostrdownToken,
+			container: HTMLElement,
+			view: EditorView
+		) => (() => void) | void;
 	} = {}
 ): Extension {
 	const highlighter = ViewPlugin.fromClass(
@@ -416,21 +294,22 @@ export function nostrdownCompletion(sources: NostrdownCompletionSources): Extens
 function makeTooltip(
 	pos: number,
 	token: NostrdownToken,
-	opts: { onPreview?: (token: NostrdownToken) => Promise<NostrdownPreview | null> }
+	opts: {
+		onPreview?: (
+			token: NostrdownToken,
+			container: HTMLElement,
+			view: EditorView
+		) => (() => void) | void;
+	}
 ): Tooltip {
 	return {
 		pos,
 		above: true,
-		create() {
-			const dom = elem('div', 'cm-nd-card');
-			dom.append(...renderCard(token, null).childNodes);
-			if (opts.onPreview) {
-				opts
-					.onPreview(token)
-					.then((data) => dom.replaceChildren(...renderCard(token, data).childNodes))
-					.catch(() => dom.replaceChildren(...renderCard(token, { found: false }).childNodes));
-			}
-			return { dom };
+		create(view) {
+			const dom = document.createElement('div');
+			dom.className = 'cm-nd-pop';
+			const cleanup = opts.onPreview?.(token, dom, view);
+			return { dom, destroy: () => cleanup?.() };
 		}
 	};
 }
