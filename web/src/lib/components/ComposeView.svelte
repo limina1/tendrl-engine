@@ -667,6 +667,7 @@
 					item: ContextItem | null;
 					index: number;
 					level: number;
+					slot?: string;
 				}[]
 			};
 		const parsed = parseAll(plainText);
@@ -677,11 +678,21 @@
 			tags: parsed.tags,
 			sections: parsed.sections.map((p, i) => {
 				const existing = i < oldSections.length ? oldSections[i] : null;
-				return { title: p.title, item: existing, index: i, level: p.level };
+				return { title: p.title, item: existing, index: i, level: p.level, slot: p.slot };
 			})
 		};
 	});
 	const detectedSections = $derived(detectedState.sections);
+
+	// Compact, readable label for a slot target in the outline. A coordinate
+	// (kind:pubkey:d-tag) shows `kind · d-tag`; an naddr/other shows a truncation.
+	function slotLabel(slot: string): string {
+		const parts = slot.split(':');
+		if (parts.length >= 3 && /^\d+$/.test(parts[0])) {
+			return `${parts[0]} · ${parts.slice(2).join(':')}`;
+		}
+		return slot.length > 26 ? `${slot.slice(0, 14)}…${slot.slice(-6)}` : slot;
+	}
 
 	// Reference builder: titles of the other sections in the current draft (the
 	// `{{ref:}}` candidates) + insertion into the active CodeMirror surface
@@ -1449,9 +1460,12 @@
 						<div
 							class="detected-row"
 							class:detected-row--nested={det.level > 2}
+							class:detected-row--slot={!!det.slot}
 							style="--depth: {Math.max(0, det.level - 2)}"
 						>
-							{#if det.item}
+							{#if det.slot}
+								<span class="detected-title detected-slot" title={det.slot}>⧉ slot · {slotLabel(det.slot)}</span>
+							{:else if det.item}
 								<label class="check">
 									<input
 										type="checkbox"
@@ -1999,6 +2013,19 @@
 	.detected-new {
 		color: var(--fg-muted);
 		font-style: italic;
+	}
+
+	/* A transclude slot in the outline — an existing event referenced by the
+	   index, not an authored section. Tinted to read as "borrowed". */
+	.detected-slot {
+		color: var(--id-yours);
+		font-weight: 600;
+		font-family: var(--font-mono);
+		font-size: var(--t-3xs);
+	}
+	.detected-row--slot {
+		background: color-mix(in srgb, var(--id-yours) 7%, transparent);
+		border-radius: var(--r-sm, 3px);
 	}
 
 	.detected-label {
