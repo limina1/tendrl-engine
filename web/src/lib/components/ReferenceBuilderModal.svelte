@@ -247,7 +247,7 @@
 				<div class="rb-tabs" role="tablist">
 					<button class="rb-tab" class:active={tab === 'ref'} role="tab" aria-selected={tab === 'ref'} onclick={() => (tab = 'ref')}>Ref</button>
 					<button class="rb-tab" class:active={tab === 'wiki'} role="tab" aria-selected={tab === 'wiki'} onclick={() => (tab = 'wiki')}>Wiki</button>
-					<button class="rb-tab" class:active={tab === 'embed'} role="tab" aria-selected={tab === 'embed'} onclick={() => (tab = 'embed')}>Embed</button>
+					<button class="rb-tab" class:active={tab === 'embed'} role="tab" aria-selected={tab === 'embed'} onclick={() => (tab = 'embed')}>{embedPrefix === 'slot' ? 'Slot' : 'Embed'}</button>
 				</div>
 				<button class="rb-close" onclick={close} aria-label="Close">×</button>
 			</header>
