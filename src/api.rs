@@ -3754,6 +3754,13 @@ pub struct PublishSectionRequest {
     /// replaces rather than forks.
     #[serde(default)]
     pub d_tag: Option<String>,
+    /// When set, this item is a transclude *slot*: an `naddr…` or
+    /// `kind:pubkey:d-tag` (a 30040/30041) to reference as a child of the
+    /// index, instead of authoring content. Emits an `["a", coord]` in the
+    /// 30040 at this position and mints no 30041. Invalid/non-addressable
+    /// targets are ignored.
+    #[serde(default)]
+    pub slot: Option<String>,
 }
 
 /// Response from publish endpoint
@@ -4077,6 +4084,10 @@ pub async fn publish_handler(
             sc.content = s.content.clone();
             sc.level = s.level.unwrap_or(2);
             sc.d_tag = s.d_tag.clone();
+            sc.slot_coord = s
+                .slot
+                .as_deref()
+                .and_then(crate::publication::compose::normalize_slot_coord);
             sc.tags = s
                 .tags
                 .iter()
@@ -4234,6 +4245,10 @@ pub async fn publish_preview_handler(
             sc.content = s.content.clone();
             sc.level = s.level.unwrap_or(2);
             sc.d_tag = s.d_tag.clone();
+            sc.slot_coord = s
+                .slot
+                .as_deref()
+                .and_then(crate::publication::compose::normalize_slot_coord);
             sc.tags = s
                 .tags
                 .iter()

@@ -85,6 +85,12 @@ pub struct SectionCompose {
     pub current_tag_name: String,
     /// Current tag value being typed
     pub current_tag_value: String,
+    /// When set, this item is a *transclude slot* rather than authored content:
+    /// the canonical `kind:pubkey:d-tag` coordinate (a 30040/30041) of an
+    /// existing event. The emitter places it as an `["a", coord]` in the
+    /// enclosing 30040 index at this ordinal position and mints NO 30041 of its
+    /// own. See `normalize_slot_coord` and `docs/nostrdown-spec.org`.
+    pub slot_coord: Option<String>,
 }
 
 impl Default for SectionCompose {
@@ -98,8 +104,34 @@ impl Default for SectionCompose {
             tag_mode: false,
             current_tag_name: String::new(),
             current_tag_value: String::new(),
+            slot_coord: None,
         }
     }
+}
+
+/// Normalize a transclude target — an `naddr…` or a raw `kind:pubkey:d-tag`
+/// coordinate — to a canonical publication coordinate, accepting only the
+/// addressable publication kinds *30040 / 30041*. Slots are `a`-tags, so
+/// non-addressable events (nevent/note) and other kinds are rejected (use an
+/// inline `{{embed:}}` for those). Returns `kind:pubkey:d-tag`, or `None`.
+pub fn normalize_slot_coord(target: &str) -> Option<String> {
+    let coord = match crate::nip19::decode(target.trim()) {
+        Ok(crate::nip19::Decoded::Naddr {
+            kind_int,
+            pubkey,
+            d_tag,
+            ..
+        }) => format!("{kind_int}:{pubkey}:{d_tag}"),
+        _ => target.trim().to_string(),
+    };
+    let mut parts = coord.splitn(3, ':');
+    let kind: u32 = parts.next()?.parse().ok()?;
+    let pubkey = parts.next()?;
+    let d_tag = parts.next()?;
+    let kind_ok = kind == crate::publication::KIND_PUBLICATION_INDEX as u32
+        || kind == crate::publication::KIND_PUBLICATION_SECTION as u32;
+    let pubkey_ok = pubkey.len() == 64 && pubkey.chars().all(|c| c.is_ascii_hexdigit());
+    (kind_ok && pubkey_ok && !d_tag.is_empty()).then_some(coord)
 }
 
 /// State for compose mode (NKBIP-01 publications)
@@ -1002,6 +1034,25 @@ impl ComposeBlockState {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn normalize_slot_coord_accepts_only_30040_30041() {
+        let pk = "ab".repeat(32);
+        // naddr to a 30041 → canonical coordinate.
+        let naddr = crate::nip19::encode_naddr(30041, &pk, "sec-1", &[]).unwrap();
+        assert_eq!(
+            normalize_slot_coord(&naddr),
+            Some(format!("30041:{pk}:sec-1"))
+        );
+        // raw 30040 coordinate passes through.
+        let coord = format!("30040:{pk}:my-index");
+        assert_eq!(normalize_slot_coord(&coord), Some(coord.clone()));
+        // wrong kinds and junk are rejected (slots are 30040/30041 only).
+        assert_eq!(normalize_slot_coord(&format!("30023:{pk}:article")), None);
+        assert_eq!(normalize_slot_coord(&format!("1:{pk}:note")), None);
+        assert_eq!(normalize_slot_coord("not-a-coord"), None);
+        assert_eq!(normalize_slot_coord(&format!("30041:tooshort:d")), None);
+    }
 
     #[test]
     fn test_compose_state_text_editing() {

@@ -221,6 +221,13 @@ fn emit_node(
     child_events: &mut Vec<Value>,
     parent_a_tags: &mut Vec<Value>,
 ) {
+    // A transclude slot references an existing event: contribute its `a` tag to
+    // the parent index and emit nothing of its own. A slot is always a leaf.
+    if let Some(coord) = compose.sections[node.section_idx].slot_coord.clone() {
+        parent_a_tags.push(json!(["a", coord, ""]));
+        return;
+    }
+
     let promote_to_index = node.has_children() && node.level < parse_level;
 
     // Mint this node's d-tag once; both branches use it.

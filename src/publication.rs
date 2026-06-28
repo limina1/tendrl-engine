@@ -2699,10 +2699,14 @@ fn build_publication_events_internal(
         );
     }
 
-    // Flat path (unchanged): build section events first (need their
-    // d-tags for references), then the single 30040 index.
+    // Flat path: build section events first (need their d-tags for
+    // references), then the single 30040 index. Transclude slots reference an
+    // existing event — they mint no 30041 (the index just points at them).
     let mut section_events = Vec::new();
     for i in 0..compose.sections.len() {
+        if compose.sections[i].slot_coord.is_some() {
+            continue;
+        }
         let section_d_tag = compose.section_d_tag(i);
         let section_event = build_section_event_internal(&compose.sections[i], &section_d_tag, pubkey, timestamp, secret_hex);
         section_events.push(section_event);
@@ -2784,10 +2788,15 @@ fn build_index_event_internal(
         tags.push(serde_json::to_value(tag_vec).unwrap_or(json!([])));
     }
 
-    // Add section references (a-tags)
+    // Add section references (a-tags). A transclude slot points at its existing
+    // coordinate; a normal section points at its (minted) 30041.
     for i in 0..compose.sections.len() {
-        let section_d_tag = compose.section_d_tag(i);
-        let a_tag_value = format!("{}:{}:{}", KIND_PUBLICATION_SECTION, pubkey, section_d_tag);
+        let a_tag_value = if let Some(coord) = compose.sections[i].slot_coord.clone() {
+            coord
+        } else {
+            let section_d_tag = compose.section_d_tag(i);
+            format!("{}:{}:{}", KIND_PUBLICATION_SECTION, pubkey, section_d_tag)
+        };
         tags.push(json!(["a", a_tag_value, ""]));
     }
 
@@ -3014,6 +3023,91 @@ fn build_block_index_event(
 mod tests {
     use super::*;
     use crate::publication::compose::{ComposeBlockState, SectionCompose};
+
+    fn a_coords(index: &Value) -> Vec<String> {
+        index["tags"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|t| t[0] == "a")
+            .map(|t| t[1].as_str().unwrap().to_string())
+            .collect()
+    }
+
+    #[test]
+    fn flat_transclude_slot_emits_external_a_tag() {
+        let pubkey = "ab".repeat(32);
+        let ext = "12".repeat(32);
+        let slot = format!("30041:{ext}:existing-section");
+        let mut compose = ComposeState {
+            title: "Doc".into(),
+            sections: vec![
+                SectionCompose {
+                    title: "One".into(),
+                    content: "first".into(),
+                    level: 2,
+                    ..Default::default()
+                },
+                SectionCompose {
+                    slot_coord: Some(slot.clone()),
+                    level: 2,
+                    ..Default::default()
+                },
+                SectionCompose {
+                    title: "Two".into(),
+                    content: "second".into(),
+                    level: 2,
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        };
+        let (index, sections) = build_publication_events(&mut compose, &pubkey);
+
+        // The slot mints no 30041 — only the two authored sections do.
+        assert_eq!(sections.len(), 2);
+        // The index points at section-one, the EXTERNAL slot, section-two — in
+        // that ordinal order.
+        let coords = a_coords(&index);
+        assert_eq!(coords.len(), 3);
+        assert!(coords[0].starts_with(&format!("30041:{pubkey}:")));
+        assert_eq!(coords[1], slot);
+        assert!(coords[2].starts_with(&format!("30041:{pubkey}:")));
+    }
+
+    #[test]
+    fn nested_transclude_slot_emits_external_a_tag() {
+        let pubkey = "ab".repeat(32);
+        let ext = "12".repeat(32);
+        let slot = format!("30040:{ext}:existing-index");
+        // A nested publication (a level-3 child forces the recursive emitter)
+        // with a top-level slot among the sections.
+        let mut compose = ComposeState {
+            title: "Doc".into(),
+            sections: vec![
+                SectionCompose {
+                    title: "Parent".into(),
+                    level: 2,
+                    ..Default::default()
+                },
+                SectionCompose {
+                    title: "Child".into(),
+                    content: "deep".into(),
+                    level: 3,
+                    ..Default::default()
+                },
+                SectionCompose {
+                    slot_coord: Some(slot.clone()),
+                    level: 2,
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        };
+        let (index, _children) = build_publication_events(&mut compose, &pubkey);
+        // The root index references the slot's external coordinate verbatim.
+        assert!(a_coords(&index).contains(&slot));
+    }
 
     fn d_of(ev: &Value) -> String {
         ev["tags"]
