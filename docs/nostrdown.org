@@ -9,6 +9,11 @@ Shipped end-to-end, ={{ }}=-only (=[[ ]]= / =[[book::]]= are *not* parsed — th
 clash with Org-mode, the reason nostrdown exists). The split follows the engine's
 frontend/backend boundary, mirroring the NIP-84 highlight pipeline.
 
+The /normative/ grammar + per-prefix reference now lives in
+=docs/nostrdown-spec.org=; the citation design lives in *NKBIP-03 (revised 2)*
+(=nips/NKBIP-03-revised-2.adoc=). This file stays the evocative brainstorm those
+were distilled from — read it for the /why/, those for the /what/.
+
 - *Parser* (=src/nostrdown.rs=): pure, IO-free tokenizer for
   ={{ref|wiki|embed|quote:target#fragment|display}}=, NIP-54 slug normalization.
   Unknown prefixes (=cite=/=@=/=term=/=media=) degrade to literal text.
@@ -217,6 +222,16 @@ Low priority — standard URLs work fine for now.
 
 * Citations — Drawing from NKBIP-03
 
+#+begin_quote
+*Superseded — kept for provenance.* The reasoning below drove
+*NKBIP-03 (revised 2)* (=nips/NKBIP-03-revised-2.adoc=), which is now the spec.
+Two things changed from these notes: the kind is *30161* (not =30030=, which is
+NIP-51 "Emoji sets"), and the source type is carried by the NKBIP-06 =M= tag
+(=["M", "citation/nostr/replaceable"]=) rather than a bespoke =["source-type",
+…]= tag. The ={{cite:d-tag|modifier}}= grammar and presentation-separation below
+survived intact.
+#+end_quote
+
 NKBIP-03 proposes citations as first-class Nostr events. The core idea is
 strong; some details need refinement.
 
@@ -323,15 +338,25 @@ the {{wiki:fable}} tradition (see {{@aesop}}) suggests...
 
 #+begin_src json
 "tags": [
-    ["cite", "smith-2024", "30030:<pubkey>:smith-2024"],
+    ["cite", "smith-2024", "30161:<pubkey>:smith-2024"],
     ["ref", "chapter-3", "30041:<pubkey>:chapter-3"],
-    ["wikilink", "fable", "<pubkey>", "<relay>", "<event-id>"],
+    ["wikilink", "fable"],
     ["p", "<aesop-pubkey>", "<relay>", "aesop"]
 ]
 #+end_src
 
+The =embed= and =quote= prefixes follow the same pattern, by target type:
+=\{\{embed:naddr\}\}= → =["a", coord, relay?]=; =\{\{embed:nevent\}\}= →
+=["q", id, relay?, pubkey?]=; =\{\{embed:npub\}\}= → =["p", pubkey]=;
+=\{\{quote:naddr\vert…\}\}= → =["a", coord]= + =["p", author, relay, "author"]=.
+
 Content stays concise and human-readable. Tags are machine-readable resolution
 hints. Tags can be updated (event republished) without changing content text.
+
+NOTE: the engine emits the /short/ =["wikilink", "fable"]= (topic only). NKBIP-01
+/ NKBIP-06 also allow a resolved-coordinate form
+=["wikilink", "fable", "<pubkey>", "<relay>", "<event-id>"]=; adopting it is an
+open call (more resolution detail vs. a coordinate that can go stale).
 
 * Inspirations & Related Work
 
@@ -475,11 +500,12 @@ but powerful for knowledge graphs.
 
 ** Tier 2 — Build Second
 
-- [ ] ={{cite:}}= citations (drawing from NKBIP-03)
+- [ ] ={{cite:}}= citations → kind *30161* (NKBIP-03-revised-2), with a
+  =["cite", d-tag, "30161:pk:d-tag"]= tag; resolver + emission mirror =quote=
 - [ ] ={{@name}}= profile mention shorthand
-- [ ] Citation events with rich metadata (kind TBD — *not* 30030, which is
-  NIP-51 "Emoji sets"; NKBIP-03 reserves 30–33 but those are non-replaceable)
-- [ ] Publication-level citation style tags
+- [ ] Citation events with rich metadata — kind *30161*, source type via the
+  NKBIP-06 =M= tag (settled; was an open "kind TBD — not 30030 = Emoji sets")
+- [ ] Publication-level citation style tags (=["citation-style", …]= on the 30040)
 
 ** Tier 3 — Build Later
 
@@ -501,10 +527,10 @@ The nostrdown parser needs to:
 A rough grammar:
 
 #+begin_example
-nostrdown_ref  := '{{' prefix ':' identifier ('|' display_text)? '}}'
-prefix         := 'ref' | 'wiki' | 'cite' | 'embed' | '@' | 'term' | 'media'
-identifier     := [a-zA-Z0-9_-]+ ('#' heading_slug)?
-display_text   := [^}]+
+nostrdown_ref  := '{{' prefix ':' identifier ('|' modifier)? '}}'
+prefix         := 'ref' | 'wiki' | 'embed' | 'quote' | 'cite' | '@' | 'term' | 'media'
+identifier     := [a-zA-Z0-9_-]+ ('#' heading_slug)?   ; or a NIP-19 entity
+modifier       := [^}]+                                ; display label, hint, or inline text
 #+end_example
 
 This parser runs /before/ the markup-specific parser (Markdown, Org, AsciiDoc)
@@ -522,6 +548,9 @@ markup, or with rendered HTML/terminal output directly.
 | NIP-27  | Inline references in content — overlaps            |
 | NIP-36  | Sensitive content — could affect transclusion      |
 | NIP-54  | Wiki (kind 30818) — wikilink resolution target     |
+| NIP-84  | Highlights (kind 9802) — =quote= model + shared render overlay |
 | NIP-94  | File metadata — media references                   |
 | NKBIP-01 | Publications (30040/30041) — primary context       |
-| NKBIP-03 | Citations — incorporated and amended               |
+| NKBIP-03 | Citations — revised to kind 30161 + =M= tag (=NKBIP-03-revised-2=) |
+| NKBIP-06 | MIME =m= / =M= tags — carries the citation source type |
+| NKBIP-08 | Book references — the reserved =book:= prefix (not yet built) |
