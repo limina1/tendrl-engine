@@ -42,6 +42,13 @@ were distilled from — read it for the /why/, those for the /what/.
   ⌘/Ctrl-click follows; plain-click shows the preview card. A reference-builder
   modal builds an embed coordinate (=by:name= author autocomplete + =kind= +
   =T|d|custom= tag) or takes a pasted entity.
+- *Slot* (=\{\{slot:naddr\}\}=, /block-level/, not via the resolver): a standalone
+  line slots an existing 30040/30041 into the enclosing 30040 index as an
+  =["a", coord]= child (no 30041 minted) — emitted by both the flat and nested
+  builders, validated to 30040/30041. Plain-mode parse/serialize round-trips it
+  (reorders like any block via parse→swap→serialize), shows as a pill in the
+  Detected outline, is built via the coordinate picker (=Slot= tab), and persists
+  across draft save/resume.
 
 Open follow-ups: fragment scroll-to-heading (superseded by ={{quote}}= for
 passages); deeper-than-one-level sibling loading; embed recursion beyond depth 1;
@@ -497,13 +504,15 @@ but powerful for knowledge graphs.
   attributed blockquote (collapsible); publish emits =["a"/"e", source]= +
   =["p", author, "", "author"]= on the section. /Inline model — the quote lives
   in the prose; minting a real kind-9802 highlight is a possible upgrade./
-- [ ] ={{slot:naddr}}= — a /block-level/ slot (own line, not inline): the
+- [X] ={{slot:naddr}}= — a /block-level/ slot (own line, not inline): the
   referenced *30040/30041* becomes a child node, emitted as an =["a", coord]= in
   the enclosing 30040 index at that position — /not/ a span in a section's
   content. Addressable-only (=a=-tags, 30040/30041) for consistency; a
   non-addressable note wants inline =embed=, not a slot. Structural inclusion by
   reference — the third rung after =quote= (a passage) and =embed= (a whole event
-  inline). /Compose-side wiring in progress./
+  inline). /Shipped end-to-end: engine emission (flat + nested) + validation,
+  plain-mode parse/serialize (reorders like any block), the Detected-outline
+  pill, the autocomplete coordinate builder, and draft save/resume persistence./
 
 ** Tier 2 — Build Second
 

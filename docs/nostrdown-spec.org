@@ -249,9 +249,11 @@ The editor's token /recognition/ is the one legitimate TS copy of the grammar
 * Tiers & status
 
 - *Tier 1 — shipped*: =ref=, =wiki=, =embed= (any naddr / nevent / note / npub /
-  nprofile), =quote=.
-- *slot* (block-level): an =a=-tag into the 30040 for an existing
-  30040 / 30041; addressable-only. Compose-side wiring in progress.
+  nprofile), =quote=, =slot=.
+- *slot* (block-level) — /shipped/: an =a=-tag into the 30040 for an existing
+  30040 / 30041 (addressable-only). Flat + nested emission with validation;
+  plain-mode parse/serialize (reorders like any block); Detected-outline pill;
+  coordinate-builder autocomplete; draft save/resume persistence.
 - *cite* (NKBIP-03): kind-30161 citation records; grammar reserved, resolver +
   emission planned.
 - *book* (NKBIP-08): port =[[book::collection:title chapter:section | version]]=
