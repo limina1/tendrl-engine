@@ -18,11 +18,9 @@ import {
 	keymap,
 	MatchDecorator,
 	ViewPlugin,
-	type ViewUpdate,
-	showTooltip,
-	type Tooltip
+	type ViewUpdate
 } from '@codemirror/view';
-import { Prec, StateEffect, StateField, type Extension } from '@codemirror/state';
+import { Prec, type Extension } from '@codemirror/state';
 import {
 	acceptCompletion,
 	autocompletion,
@@ -70,18 +68,7 @@ const theme = EditorView.baseTheme({
 		textDecorationStyle: 'dotted',
 		textUnderlineOffset: '2px',
 		cursor: 'pointer'
-	},
-	// The preview popover hosts a mounted EmbedCard (same card the reader uses);
-	// this just frames it and strips the card's own block margin.
-	'.cm-tooltip.cm-nd-pop': {
-		background: 'var(--bg)',
-		border: '1px solid var(--panel-border-strong, var(--panel-border))',
-		borderRadius: 'var(--r-md, 6px)',
-		boxShadow: 'var(--shadow-lg, 0 8px 30px rgba(0,0,0,0.4))',
-		width: 'min(340px, 90vw)',
-		overflow: 'hidden'
-	},
-	'.cm-nd-pop .nd-embed': { margin: '0', borderRadius: '0' }
+	}
 });
 
 /** The token under document position `pos`, if any (re-scans just that line). */
@@ -99,23 +86,29 @@ function tokenAt(view: EditorView, pos: number): NostrdownToken | null {
 
 // ── extension ─────────────────────────────────────────────────────────────
 
-const setPreview = StateEffect.define<{ pos: number; token: NostrdownToken } | null>();
+/** Viewport coordinates of a clicked token, for the host to position a card. */
+export interface PreviewAnchor {
+	left: number;
+	bottom: number;
+}
 
 /**
  * Build the nostrdown editor extension.
  * - `onActivate(token, view)` — invoked on ⌘/Ctrl-click to *follow* a token.
- * - `onPreview(token, container, view)` — renders the click-preview into
- *   `container` (the host mounts the shared EmbedCard); returns a cleanup run on
- *   dismiss.
+ * - `onPreview(token, anchor, view)` — plain-click peek. The host renders the
+ *   shared EmbedCard declaratively at `anchor` (a fixed-position screen rect);
+ *   called with `(null, null)` to dismiss. (We hand the host coordinates rather
+ *   than a DOM node so it can render the Svelte card itself — manual `mount()`
+ *   into a CM tooltip is unavailable in the prerendered build.)
  */
 export function nostrdownEditor(
 	opts: {
 		onActivate?: (token: NostrdownToken, view: EditorView) => void;
 		onPreview?: (
-			token: NostrdownToken,
-			container: HTMLElement,
+			token: NostrdownToken | null,
+			anchor: PreviewAnchor | null,
 			view: EditorView
-		) => (() => void) | void;
+		) => void;
 	} = {}
 ): Extension {
 	const highlighter = ViewPlugin.fromClass(
@@ -131,21 +124,10 @@ export function nostrdownEditor(
 		{ decorations: (v) => v.decorations }
 	);
 
-	const tooltipField = StateField.define<Tooltip | null>({
-		create: () => null,
-		update(value, tr) {
-			for (const e of tr.effects) {
-				if (e.is(setPreview)) {
-					value = e.value ? makeTooltip(e.value.pos, e.value.token, opts) : null;
-				}
-			}
-			// Any edit dismisses the popover so it can't dangle at a stale spot.
-			if (value && tr.docChanged) value = null;
-			return value;
-		},
-		provide: (f) => showTooltip.from(f)
-	});
-
+	// Plain-click peek: hand the host the token + its screen rect so it can float
+	// the EmbedCard there (rendered declaratively — see the onPreview doc). Click
+	// off a token dismisses. A doc edit can't leave a stale card because every
+	// edit re-runs the host's preview state via a fresh click.
 	const handlers = EditorView.domEventHandlers({
 		mousedown(e, view) {
 			const pos = view.posAtCoords({ x: e.clientX, y: e.clientY });
@@ -158,27 +140,26 @@ export function nostrdownEditor(
 				}
 				return false;
 			}
-			// Plain click: open the preview over a token, dismiss it off one. The
-			// cursor still lands where clicked (we don't preventDefault).
-			view.dispatch({ effects: setPreview.of(token ? { pos: token.from, token } : null) });
-			return false;
-		},
-		keydown(e, view) {
-			if (e.key === 'Escape' && view.state.field(tooltipField, false)) {
-				view.dispatch({ effects: setPreview.of(null) });
-				return true;
+			// Plain click: peek a token, dismiss off one. The cursor still lands
+			// where clicked (we don't preventDefault).
+			if (token) {
+				const c = view.coordsAtPos(token.from);
+				opts.onPreview?.(token, c ? { left: c.left, bottom: c.bottom } : null, view);
+			} else {
+				opts.onPreview?.(null, null, view);
 			}
 			return false;
 		},
-		blur(_e, view) {
-			if (view.state.field(tooltipField, false)) {
-				view.dispatch({ effects: setPreview.of(null) });
+		keydown(e, view) {
+			if (e.key === 'Escape') {
+				opts.onPreview?.(null, null, view);
+				return false;
 			}
 			return false;
 		}
 	});
 
-	return [highlighter, theme, tooltipField, handlers];
+	return [highlighter, theme, handlers];
 }
 
 // ── inline autocomplete ─────────────────────────────────────────────────────
@@ -292,25 +273,3 @@ export function nostrdownCompletion(sources: NostrdownCompletionSources): Extens
 	];
 }
 
-function makeTooltip(
-	pos: number,
-	token: NostrdownToken,
-	opts: {
-		onPreview?: (
-			token: NostrdownToken,
-			container: HTMLElement,
-			view: EditorView
-		) => (() => void) | void;
-	}
-): Tooltip {
-	return {
-		pos,
-		above: true,
-		create(view) {
-			const dom = document.createElement('div');
-			dom.className = 'cm-nd-pop';
-			const cleanup = opts.onPreview?.(token, dom, view);
-			return { dom, destroy: () => cleanup?.() };
-		}
-	};
-}

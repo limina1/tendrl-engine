@@ -3,14 +3,14 @@
 	import { getActiveStore } from '$lib/wm/buffer-store.svelte';
 	import type { ComposeState, ContextItem, TagEntry, SyncMode } from '$lib/types';
 	import type { DraftSummary } from '$lib/api';
-	import { mount, unmount } from 'svelte';
 	import { resolveNostrdown, search } from '$lib/api';
 	import type { EditorView } from '@codemirror/view';
 	import {
 		nostrdownEditor,
 		nostrdownCompletion,
 		type NostrdownToken,
-		type NdSuggestion
+		type NdSuggestion,
+		type PreviewAnchor
 	} from '$lib/editor/nostrdown-cm';
 	import { normalizeSlug, type ResolvedRef } from '$lib/nostr/nostrdown';
 	import EmbedCard from './EmbedCard.svelte';
@@ -76,28 +76,51 @@
 		}
 	}
 
-	// Plain-click preview: mount the shared EmbedCard into the CodeMirror tooltip,
-	// so the composer preview is identical to the reader's card.
-	function renderPreview(token: NostrdownToken, container: HTMLElement, view: EditorView): () => void {
-		let comp: ReturnType<typeof mount> | null = null;
-		let cancelled = false;
-		previewRefFor(token, view).then((ref) => {
-			if (cancelled || !ref) return;
-			comp = mount(EmbedCard, {
-				target: container,
-				props: {
-					ref,
-					onopen: (r: ResolvedRef) => {
-						if (r.coord) app.openCoord(r.coord);
-						else if (r.event_kind === 0 && r.author_pubkey) app.navigateToProfile(r.author_pubkey);
-					}
-				}
-			});
-		});
-		return () => {
-			cancelled = true;
-			if (comp) unmount(comp);
+	// Plain-click preview: float the shared EmbedCard beside the clicked token —
+	// the same card the reader renders, but declared in the template (below)
+	// rather than imperatively `mount()`ed, which is unavailable in the
+	// prerendered build. The CM extension hands us the token + its screen rect;
+	// we resolve it and drop a fixed-position card there.
+	let preview = $state<{ ref: ResolvedRef; x: number; y: number } | null>(null);
+	let previewSeq = 0;
+	let previewHideTimer: ReturnType<typeof setTimeout> | undefined;
+	async function showPreview(
+		token: NostrdownToken | null,
+		anchor: PreviewAnchor | null,
+		view: EditorView
+	) {
+		clearTimeout(previewHideTimer);
+		const seq = ++previewSeq;
+		if (!token || !anchor) {
+			preview = null;
+			return;
+		}
+		const ref = await previewRefFor(token, view);
+		if (seq !== previewSeq) return; // a newer click superseded this resolve
+		if (!ref || !ref.found) {
+			preview = null;
+			return;
+		}
+		preview = {
+			ref,
+			x: Math.max(8, Math.min(anchor.left, window.innerWidth - 348)),
+			y: anchor.bottom + 4
 		};
+	}
+	function openPreview(r: ResolvedRef) {
+		if (r.coord) app.openCoord(r.coord);
+		else if (r.event_kind === 0 && r.author_pubkey) app.navigateToProfile(r.author_pubkey);
+		preview = null;
+	}
+	function scheduleHidePreview() {
+		clearTimeout(previewHideTimer);
+		previewHideTimer = setTimeout(() => (preview = null), 140);
+	}
+	// Portal the card to <body> so the editor's scroll/transform ancestors can't
+	// clip the fixed-position popover (mirrors RichContent's reader preview).
+	function previewPortal(node: HTMLElement) {
+		document.body.appendChild(node);
+		return { destroy: () => node.remove() };
 	}
 
 	// mod-click on a recognized token: jump to a sibling heading in this buffer
@@ -759,7 +782,7 @@
 	}
 
 	const nostrdownExt = [
-		nostrdownEditor({ onActivate: followNostrdown, onPreview: renderPreview }),
+		nostrdownEditor({ onActivate: followNostrdown, onPreview: showPreview }),
 		nostrdownCompletion({
 			enabled: () => autocompleteOn,
 			ref: (partial) => {
@@ -1633,7 +1656,36 @@
 	}}
 />
 
+{#if preview}
+	<!-- svelte-ignore a11y_no_static_element_interactions -->
+	<div
+		class="nd-preview"
+		style="left:{preview.x}px; top:{preview.y}px"
+		use:previewPortal
+		onmouseenter={() => clearTimeout(previewHideTimer)}
+		onmouseleave={scheduleHidePreview}
+		role="tooltip"
+	><EmbedCard ref={preview.ref} onopen={openPreview} /></div>
+{/if}
+
 <style>
+	/* Floating wrapper for the click-preview card (portaled to <body>). The card
+	   itself is EmbedCard; this frames + lifts it. Mirrors RichContent's reader
+	   preview so the composer peek looks identical. */
+	.nd-preview {
+		position: fixed;
+		z-index: 200;
+		width: min(340px, 90vw);
+		background: var(--bg);
+		border: 1px solid var(--panel-border-strong, var(--panel-border));
+		border-radius: var(--r-sm, 3px);
+		box-shadow: var(--shadow-lg, 0 8px 30px rgba(0, 0, 0, 0.4));
+		overflow: hidden;
+	}
+	.nd-preview :global(.nd-embed) {
+		margin: 0;
+	}
+
 	.compose-view {
 		flex: 1;
 		display: flex;
