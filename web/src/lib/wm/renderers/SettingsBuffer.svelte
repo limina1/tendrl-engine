@@ -363,50 +363,52 @@
 		<summary class="settings-group-title">Appearance</summary>
 		<div class="settings-group-body">
 
-		<div class="settings-row">
-			<label
-				class="settings-label"
-				for="high-contrast"
-				title="Boosts text and borders over the current theme for readability. Defaults to your OS “increase contrast” setting."
-			>High contrast</label>
-			<label class="switch">
-				<input
-					id="high-contrast"
-					type="checkbox"
-					checked={app.highContrast}
-					onchange={(e) => app.setHighContrast(e.currentTarget.checked)}
-				/>
-				<span class="switch-text">{app.highContrast ? 'on' : 'off'}</span>
-			</label>
-		</div>
+		<div class="appearance-controls">
+			<div class="appearance-field">
+				<label
+					class="appearance-field__label"
+					for="high-contrast"
+					title="Boosts text and borders over the current theme for readability. Defaults to your OS “increase contrast” setting."
+				>High contrast</label>
+				<label class="switch">
+					<input
+						id="high-contrast"
+						type="checkbox"
+						checked={app.highContrast}
+						onchange={(e) => app.setHighContrast(e.currentTarget.checked)}
+					/>
+					<span class="switch-text">{app.highContrast ? 'on' : 'off'}</span>
+				</label>
+			</div>
 
-		<div class="settings-row">
-			<label
-				class="settings-label"
-				for="theme-preview"
-				title="When on, hovering a theme in the picker re-skins the app live so you can preview before choosing. Off by default — the sweep of colors can be jarring."
-			>Live preview</label>
-			<label class="switch">
-				<input
-					id="theme-preview"
-					type="checkbox"
-					checked={app.themePreview}
-					onchange={(e) => app.setThemePreview(e.currentTarget.checked)}
-				/>
-				<span class="switch-text">{app.themePreview ? 'on' : 'off'}</span>
-			</label>
-		</div>
+			<div class="appearance-field">
+				<label
+					class="appearance-field__label"
+					for="theme-preview"
+					title="When on, hovering a theme in the picker re-skins the app live so you can preview before choosing. Off by default — the sweep of colors can be jarring."
+				>Live preview</label>
+				<label class="switch">
+					<input
+						id="theme-preview"
+						type="checkbox"
+						checked={app.themePreview}
+						onchange={(e) => app.setThemePreview(e.currentTarget.checked)}
+					/>
+					<span class="switch-text">{app.themePreview ? 'on' : 'off'}</span>
+				</label>
+			</div>
 
-		<div class="settings-row">
-			<span
-				class="settings-label"
-				title="Color scheme for the whole interface. Click a theme to keep it (turn on Live preview to preview on hover). The sun/moon button in the header toggles dark ⇄ light; your choice is remembered on this device."
-			>Theme</span>
-			<ThemePicker
-				current={app.currentTheme}
-				livePreview={app.themePreview}
-				oncommit={(id) => app.setTheme(id)}
-			/>
+			<div class="appearance-field">
+				<span
+					class="appearance-field__label"
+					title="Color scheme for the whole interface. Click a theme to keep it (turn on Live preview to preview on hover). The sun/moon button in the header toggles dark ⇄ light; your choice is remembered on this device."
+				>Theme</span>
+				<ThemePicker
+					current={app.currentTheme}
+					livePreview={app.themePreview}
+					oncommit={(id) => app.setTheme(id)}
+				/>
+			</div>
 		</div>
 
 		<div class="settings-row">
@@ -1181,6 +1183,27 @@
 	.settings-label {
 		font-size: var(--t-sm);
 		color: var(--fg);
+	}
+
+	/* Appearance toggles laid out on one horizontal line (wraps on narrow
+	   panels) instead of stacked rows. Each field is its own label+control
+	   cluster. */
+	.appearance-controls {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 10px 24px;
+		padding: 6px 0;
+	}
+	.appearance-field {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+	}
+	.appearance-field__label {
+		font-size: var(--t-sm);
+		color: var(--fg);
+		white-space: nowrap;
 	}
 
 	/* Fixed label column for the standard (non-stacked) rows so every
