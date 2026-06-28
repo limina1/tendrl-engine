@@ -32,11 +32,11 @@ import {
 	type CompletionResult
 } from '@codemirror/autocomplete';
 
-/** Tier-1 token shape: `{{ref|wiki|embed:target(#fragment)?(|display)?}}`. */
-const TOKEN_RE = /\{\{(ref|wiki|embed):([^}|#]+)(?:#([^}|]+))?(?:\|([^}]+))?\}\}/g;
+/** Tier-1 token shape: `{{ref|wiki|embed|quote:target(#fragment)?(|modifier)?}}`. */
+const TOKEN_RE = /\{\{(ref|wiki|embed|quote):([^}|#]+)(?:#([^}|]+))?(?:\|([^}]+))?\}\}/g;
 
 export interface NostrdownToken {
-	kind: 'ref' | 'wiki' | 'embed';
+	kind: 'ref' | 'wiki' | 'embed' | 'quote';
 	/** Target as written (trimmed) — normalize before matching slugs. */
 	target: string;
 	fragment?: string;

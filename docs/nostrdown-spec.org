@@ -1,0 +1,224 @@
+#+TITLE: Nostrdown — Inline Reference Syntax for Nostr
+#+SUBTITLE: A markup-agnostic {{ }} layer for linking, embedding, quoting, and citing events
+#+STATUS: SPEC (normative) — Tier 1 shipped; cite / book reserved
+#+DATE: 2026-06-28
+
+One sentence: /Obsidian-style linking, but for a distributed event network
+instead of a local file vault./
+
+Nostrdown is a thin syntax layer that lets prose in *any* markup — Markdown,
+AsciiDoc, Org-mode, plain text — point at other Nostr events with short,
+human-readable tokens. Those pointers resolve to real coordinates, render as
+links / cards / quotes, and travel as machine-readable tags on the signed event.
+
+It is the shared grammar beneath several NKBIPs: NKBIP-01 wikilinks
+(=\{\{wiki:\}\}=), NKBIP-03 citations (=\{\{cite:\}\}=), NKBIP-08 book references
+(=\{\{book:\}\}=). Each is one *prefix* in the one grammar defined here.
+
+The evocative brainstorm this was distilled from lives in =docs/nostrdown.org=.
+This file is the normative reference; the implementation is =src/nostrdown.rs=
+(parser), =src/publication.rs= (resolver + tag emission), and the web renderer.
+
+* Why {{ }} and not [[ ]]
+
+Org-mode already owns =[[ ]]= — it is link syntax there. Nostrdown exists
+/because/ authors write in Org and other markups; a reference layer that reused
+=[[ ]]= would fight the very host markup it is meant to ride on top of. So
+nostrdown is *={\{ }\}=-only*. (Triple-brace =\{\{\{ \}\}\}= is an Org macro;
+double-brace is free.)
+
+Three commitments follow from "markup-agnostic":
+
+- *Stable* — the token means the same thing in every markup.
+- *Graceful* — an unknown prefix or a malformed token is left as literal text,
+  never an error. Nostrdown degrades to readable prose.
+- *Declarative* — it says /what/ to reference, not /how/ to render it (see
+  *Presentation*).
+
+* The grammar
+
+#+begin_example
+reference  =  "{{" prefix ":" target [ "#" fragment ] [ "|" modifier ] "}}"
+prefix     =  "ref" | "wiki" | "embed" | "quote" | "cite"   ; reserved: book, @, term, media
+target     =  a slug  |  a NIP-19 entity (naddr/nevent/note/npub/nprofile, "nostr:" optional)
+fragment   =  an anchor into the target (a heading)         ; NIP-54-normalized
+modifier   =  a presentation hint, a display label, or inline text
+#+end_example
+
+Three separators, three orthogonal questions, each parsed by a single split:
+
+| delim | answers       | rule                                                         |
+|-------+---------------+--------------------------------------------------------------|
+| =:=   | /what kind/   | one colon after the prefix; split on the *first* colon only  |
+| =#=   | /which part/  | optional; an anchor into the target                          |
+| =\vert= | /how / label/ | optional; runs to the closing =\}\}=                       |
+
+Splitting on the *first* colon is what lets a target keep its own colons: a
+coordinate is =kind:pubkey:d-tag=, a URI is =nostr:naddr1…= — both colon-laden,
+both preserved intact as the target.
+
+*Not =::=.* The retired form (=citation::foot::nevent=, in =[[ ]]=) used a
+double-colon /positional field list/. That is worse on every axis: slot order
+must be memorized, optional slots become empty gaps (=citation::::nevent=), it
+collides with the colons inside coordinates and with the AsciiDoc block-macro
+form (=name::target[]=, e.g. =book::=), and it /fuses/ a reference's identity
+with its presentation. One =:= prefix plus one optional =\vert= modifier keeps
+kind, target, and presentation independent — and reuses the single grammar every
+prefix shares.
+
+*Normalization.* Slugs and fragments are NIP-54-normalized (lowercase, spaces →
+=-=, punctuation stripped). The parser works in /bytes/; offsets handed to a
+renderer are converted to /UTF-16/ code units (the browser's unit).
+
+* The prefixes
+
+Each prefix is the same grammar with a different /resolution/ — what the target
+means, what it renders as, and what tag it leaves on the event.
+
+** ref: — a sibling section
+
+A cross-link to another section /within the same publication/.
+
+- *Target* — a title-slug. Section =d=-tags are opaque nanoids, so the resolver
+  matches by the human slug: the =T= tag, or the normalized title.
+- *Renders* — an inline link; hover shows a preview card; click opens the section.
+- *Tag* — =["ref", slug]=.
+
+** wiki: — a topic
+
+A wiki/article lookup by topic, author-preferred.
+
+- *Target* — a normalized =d=-tag / topic.
+- *Resolves* — kind 30818 (wiki) → 30023 (long-form) → 30041 (section).
+- *Renders* — an inline link + hover card.
+- *Tag* — =["wikilink", topic]= (NKBIP-01).
+
+** embed: — transclude any event
+
+Inline transclusion of /any/ Nostr event, shown as a field-driven card.
+
+- *Target* — an naddr (publication / section / article / wiki), an nevent / note
+  (any event, including a kind-1 note), an npub / nprofile (a user → their
+  kind-0 name, picture, bio), or a sibling slug (depth-1 transclusion).
+- *Renders* — a card composed from whatever fields resolved: image (avatar /
+  cover / thumb), title, byline, and a collapsible body.
+- *Tag* — by target type:
+  - naddr → =["a", "kind:pubkey:d-tag", relay?]=
+  - nevent / note → =["q", id, relay?, pubkey?]=  (NIP-18 quote)
+  - npub / nprofile → =["p", pubkey, relay?]=
+  - sibling slug → =["ref", slug]=
+
+** quote: — a passage, inline
+
+A markup-agnostic, self-contained quotation. Instead of pointing /into/ an event
+by heading (heading anchors are markup-specific and brittle), you carry the
+excerpt text /inline/ and attribute it to the source — the NIP-84 highlight
+model.
+
+#+begin_example
+{{quote:naddr1…book-vii | And now, let me show in a figure how far our
+nature is enlightened or unenlightened… }}
+#+end_example
+
+- *Target* — the source entity (naddr / nevent / note). The =\vert text= /is/ the
+  quoted excerpt.
+- *Resolves* — the source, for /attribution only/ (title, author, coordinate).
+  The quoted body is the inline text, not the source's content — so it survives
+  even if the source is unavailable.
+- *Renders* — an attributed, collapsible *blockquote* card (same component as
+  =embed=).
+- *Tag* — source =["a", coord]= or =["e", id]= + attribution
+  =["p", author, relay, "author"]= (NIP-84).
+
+** cite: — a citation record  (NKBIP-03, reserved)
+
+A reference to a reusable /citation event/ (kind 30161), which holds the cited
+text plus rich bibliographic metadata (author, title, dates, DOI, URL, …).
+
+- *Target* — the citation's =d=-tag.
+- *Modifier* — an optional render override: =\vert foot=, =\vert end=,
+  =\vert quote=.
+- *Tag* — =["cite", "<d-tag>", "30161:<pubkey>:<d-tag>", relay?]=.
+
+=embed= vs =quote= vs =cite=: =embed= transcludes a /whole/ event; =quote=
+carries an excerpt /in-event/ (inline text); =cite= references an excerpt held
+/ex-event/ in a reusable 30161 record. Same family, three resiliencies.
+
+* The tag-resolution pattern
+
+The reference in the content is short and human; the /coordinate/ rides in a tag
+on the signed event. The event therefore self-describes — other clients resolve
+the reference without re-parsing prose — and the prose stays readable. Tags
+deduplicate on =(name, value)=.
+
+| in content            | tag emitted on the event                                  |
+|-----------------------+-----------------------------------------------------------|
+| =\{\{ref:slug\}\}=    | =["ref", slug]=                                            |
+| =\{\{wiki:topic\}\}=  | =["wikilink", topic]=                                      |
+| =\{\{embed:naddr\}\}= | =["a", "kind:pubkey:d-tag", relay?]=                       |
+| =\{\{embed:nevent\}\}=| =["q", id, relay?, pubkey?]=   (NIP-18)                    |
+| =\{\{embed:npub\}\}=  | =["p", pubkey]=                                            |
+| =\{\{quote:naddr\vert…\}\}= | =["a", coord]= + =["p", author, relay, "author"]=  (NIP-84) |
+| =\{\{cite:d-tag\}\}=  | =["cite", d-tag, "30161:pk:d-tag", relay?]=   (NKBIP-03)   |
+
+* Presentation: what, not how
+
+Render style — footnote, endnote, in-line parenthetical, block quote, card — is
+/downstream/ of the reference, decided in this order of precedence:
+
+1. a per-reference modifier (=\{\{cite:smith-2024\vert foot\}\}=), used only when
+   the author has a specific reason;
+2. a publication-level tag on the kind-30040 index
+   (=["citation-style", "chicago"]=);
+3. client / reader preference.
+
+So a document flips footnotes ↔ endnotes by changing /one/ tag on its index, not
+by editing every reference. The reference says /cite Smith 2024/; the document
+says /render citations as footnotes/.
+
+* Resolution & rendering — the engine/frontend split
+
+Nostrdown obeys the engine's frontend/backend boundary and mirrors the NIP-84
+highlight pipeline:
+
+- *Parse* — pure, IO-free, Rust (=src/nostrdown.rs=): tokenize → typed refs with
+  byte offsets. Unknown prefixes degrade to literal text.
+- *Resolve* — engine, Rust (=resolve_refs= → =POST /api/v1/nostrdown/resolve=):
+  =ref= by title-slug, =wiki= by d-tag, =embed= by entity/sibling, =quote= by
+  source attribution + inline text. Returns UTF-16 spans + coord / naddr / title
+  / author / image / content.
+- *Emit* — engine, Rust (=reference_tags=): the tag-resolution table above, at
+  publish, so the tags appear in the composer's *Preview events*.
+- *Render* — web, TS: merge ref spans with NIP-84 highlight spans onto one pass;
+  =ref= / =wiki= → inline links (+ hover card), =embed= / =quote= → an
+  attributed, collapsible card. /One/ card component everywhere — reader inline,
+  reader hover, composer preview.
+- *Author* — web, TS (CodeMirror): recognizes tokens; inline autocomplete (prefix
+  → ref / wiki / embed / quote; =ref=→sibling titles; =wiki=→search;
+  =embed=→coordinate builder); preview on click; follow on ⌘/Ctrl-click.
+
+The editor's token /recognition/ is the one legitimate TS copy of the grammar
+(an editor-view-state concern); everything /semantic/ resolves in Rust.
+
+* Tiers & status
+
+- *Tier 1 — shipped*: =ref=, =wiki=, =embed= (any naddr / nevent / note / npub /
+  nprofile), =quote=.
+- *cite* (NKBIP-03): kind-30161 citation records; grammar reserved, resolver +
+  emission planned.
+- *book* (NKBIP-08): port =[[book::collection:title chapter:section | version]]=
+  to =\{\{book:collection:title chapter:section \vert version\}\}=.
+- *Reserved prefixes*: =@name= (profile mention), =term= (glossary), =media=
+  (NIP-94 attachment).
+
+* Related specs
+
+- *NKBIP-01* — publication index / section (30040 / 30041); the =wikilink= tag.
+- *NKBIP-03* — citations (the =cite:= prefix, kind 30161).
+- *NKBIP-06* — =m= / =M= MIME tags (how =cite= distinguishes source types).
+- *NKBIP-08* — book references (the =book:= prefix).
+- *NIP-19* — bech32 entities (=embed= / =quote= targets).
+- *NIP-54* — normalization (slugs, anchors).
+- *NIP-84* — highlights (=quote= is modeled on these; rendering shares the overlay).
+- *NIP-18* — the =q= quote tag (for =nevent= embeds).
+- *NIP-23* — long-form 30023 (a =wiki= / =embed= target).
