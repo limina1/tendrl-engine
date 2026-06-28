@@ -1090,6 +1090,148 @@
   --affordance-walkthrough: #7a7a90;
 }
 
+/* ── Paper (sepia) — warm, low-blue-light, tuned for long-form reading ─ */
+:root[data-theme='paper-light'] {
+  --bg:        #f4ecd8;
+  --bg-alt:    #ece2c8;
+  --base0:     #f4ecd8;
+  --base1:     #ece2c8;
+  --base2:     #ddd0b0;
+  --base3:     #c9b896;
+  --base4:     #b3a079;
+  --base5:     #6b5a44;
+  --base6:     #8a755a;
+  --base7:     #4a3a2a;
+  --base8:     #3a2d1f;
+  --fg:        #4a3a2a;
+  --fg-alt:    #6b5a44;
+
+  --red:        #a13d2d;
+  --orange:     #b5651d;
+  --green:      #5c6e2a;
+  --teal:       #3d7068;
+  --yellow:     #9a7d1a;
+  --blue:       #3a5f8a;
+  --dark-blue:  #2e4d73;
+  --magenta:    #8a4f6d;
+  --violet:     #6f5b8e;
+  --cyan:       #3d7d82;
+  --dark-cyan:  #2e6469;
+
+  --panel-bg:            #f4ecd8;
+  --panel-bg-soft:       #ece2c8;
+  --panel-border:        #ddd0b0;
+  --panel-border-strong: #c9b896;
+  --panel-rail-bg:       #ece2c8;
+  --panel-header-bg:     #efe6cf;
+  --content-bg:          #f4ecd8;
+
+  --id-yours:    #3a5f8a;
+  --id-imported: #8a4f6d;
+  --id-forked:   #6f5b8e;
+  --id-diverged: #b5651d;
+  --id-local:    #9a7d1a;
+  --id-remote:   #3d7d82;
+  --id-draft:    #a13d2d;
+
+  --state-online:   #5c6e2a;
+  --state-offline:  #8a755a;
+  --state-fetching: #9a7d1a;
+  --state-error:    #a13d2d;
+
+  --danger:        #a13d2d;
+  --danger-strong: #82301f;
+  --success:       #5c6e2a;
+  --warning:       #9a7d1a;
+  --selection:     #3a5f8a;
+  --match:         #b5651d;
+
+  --warn-fg:     #7a5b00;
+  --warn-bg:     #f0e3c0;
+  --warn-border: #d8c290;
+
+  --scrim:          rgba(40, 30, 20, 0.38);
+  --spotlight-mask: rgba(40, 30, 20, 0.2);
+  --shadow-sm:      0 2px 8px rgba(74, 58, 42, 0.12);
+  --shadow-md:      0 8px 24px rgba(74, 58, 42, 0.16);
+  --shadow-lg:      0 12px 40px rgba(74, 58, 42, 0.22);
+
+  --affordance-settings:    #8a4f6d;
+  --affordance-help:        #9a7d1a;
+  --affordance-walkthrough: #8a755a;
+}
+
+/* ── Paper (night) — warm dark, the same reading palette inverted ───── */
+:root[data-theme='paper-dark'] {
+  --bg:        #2b2620;
+  --bg-alt:    #211d18;
+  --base0:     #1c1813;
+  --base1:     #332d25;
+  --base2:     #443c31;
+  --base3:     #5a4f40;
+  --base4:     #6f6250;
+  --base5:     #8a7a64;
+  --base6:     #a99a82;
+  --base7:     #cabfa6;
+  --base8:     #efe6d2;
+  --fg:        #ddd0b8;
+  --fg-alt:    #cabfa6;
+
+  --red:        #d97559;
+  --orange:     #d68a4c;
+  --green:      #a3b06a;
+  --teal:       #6fb0a4;
+  --yellow:     #d9b56a;
+  --blue:       #7d9cc0;
+  --dark-blue:  #5e7da3;
+  --magenta:    #c089a3;
+  --violet:     #a594c0;
+  --cyan:       #79b3b8;
+  --dark-cyan:  #5e9499;
+
+  --panel-bg:            #2b2620;
+  --panel-bg-soft:       #332d25;
+  --panel-border:        #443c31;
+  --panel-border-strong: #5a4f40;
+  --panel-rail-bg:       #1c1813;
+  --panel-header-bg:     #332d25;
+  --content-bg:          #2b2620;
+
+  --id-yours:    #7d9cc0;
+  --id-imported: #c089a3;
+  --id-forked:   #a594c0;
+  --id-diverged: #d68a4c;
+  --id-local:    #d9b56a;
+  --id-remote:   #79b3b8;
+  --id-draft:    #d97559;
+
+  --state-online:   #a3b06a;
+  --state-offline:  #8a7a64;
+  --state-fetching: #d9b56a;
+  --state-error:    #d97559;
+
+  --danger:        #d97559;
+  --danger-strong: #c05a3f;
+  --success:       #a3b06a;
+  --warning:       #d9b56a;
+  --selection:     #5e7da3;
+  --match:         #d68a4c;
+
+  --warn-fg:     #d9b56a;
+  --warn-bg:     #352b20;
+  --warn-border: #5a4f40;
+
+  --scrim:          rgba(0, 0, 0, 0.55);
+  --spotlight-mask: rgba(0, 0, 0, 0.32);
+  --shadow-sm:      0 2px 8px rgba(0, 0, 0, 0.2);
+  --shadow-md:      0 8px 24px rgba(0, 0, 0, 0.35);
+  --shadow-lg:      0 12px 40px rgba(0, 0, 0, 0.5);
+
+  --affordance-settings:    #c089a3;
+  --affordance-help:        #d9b56a;
+  --affordance-walkthrough: #a99a82;
+}
+
 /* ── High contrast ──────────────────────────────────────────────────
    Accessibility modifier, orthogonal to the theme: `data-contrast="high"`
    on <html> pushes text to the extreme and lifts the muted greys + borders
@@ -1210,6 +1352,22 @@
   --panel-border:        #bcbcb4;
   --panel-border-strong: #9a9a90;
 }
+:root[data-theme='paper-light'][data-contrast='high'] {
+  --fg:                  #2a2017;
+  --fg-alt:              #3a2d1f;
+  --base6:               #6b5a44;
+  --base5:               #3a2d1f;
+  --panel-border:        #c9b896;
+  --panel-border-strong: #9a8866;
+}
+:root[data-theme='paper-dark'][data-contrast='high'] {
+  --fg:                  #fdf6e6;
+  --fg-alt:              #efe6d2;
+  --base6:               #c6b89c;
+  --base5:               #a3917a;
+  --panel-border:        #5a4f40;
+  --panel-border-strong: #75674f;
+}
 
 * { box-sizing: border-box; }
 
@@ -1241,7 +1399,8 @@ body { font-size: var(--t-base); }
 :root[data-theme='tokyonight-light'] ::selection,
 :root[data-theme='catppuccin-light'] ::selection,
 :root[data-theme='nord-light'] ::selection,
-:root[data-theme='dracula-light'] ::selection { color: #f8fcfd; }
+:root[data-theme='dracula-light'] ::selection,
+:root[data-theme='paper-light'] ::selection { color: #f8fcfd; }
 
 /* Utility */
 .mono { font-family: var(--font-mono); }

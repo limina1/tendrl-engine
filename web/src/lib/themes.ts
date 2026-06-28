@@ -31,7 +31,9 @@ export const THEMES: ThemeDef[] = [
 	{ id: 'nord-dark', family: 'nord', familyLabel: 'Nord', mode: 'dark' },
 	{ id: 'nord-light', family: 'nord', familyLabel: 'Nord', mode: 'light' },
 	{ id: 'dracula-dark', family: 'dracula', familyLabel: 'Dracula', mode: 'dark' },
-	{ id: 'dracula-light', family: 'dracula', familyLabel: 'Dracula', mode: 'light' }
+	{ id: 'dracula-light', family: 'dracula', familyLabel: 'Dracula', mode: 'light' },
+	{ id: 'paper-dark', family: 'paper', familyLabel: 'Paper', mode: 'dark' },
+	{ id: 'paper-light', family: 'paper', familyLabel: 'Paper', mode: 'light' }
 ];
 
 // Themes grouped by family, in declaration order — for the Settings dropdown's
