@@ -27,6 +27,13 @@
 	const body = $derived(ref.content || ref.summary || '');
 	const canOpen = $derived(!!ref.coord || (ref.event_kind === 0 && !!ref.author_pubkey));
 
+	// Quote a long transcluded body (a whole section is huge) as a collapsed
+	// excerpt with a show-more toggle, so the embed stays a readable quotation.
+	const QUOTE_CAP = 360;
+	let expanded = $state(false);
+	const isLong = $derived(body.length > QUOTE_CAP);
+	const shownBody = $derived(isLong && !expanded ? body.slice(0, QUOTE_CAP).trimEnd() + '…' : body);
+
 	// Byline for non-profile cards: the author tag, else the publisher's kind-0
 	// name (resolved), else a short pubkey. (Profiles put the name in the title.)
 	let authorName = $state<string | undefined>(undefined);
@@ -58,7 +65,7 @@
 	}
 </script>
 
-<span class="nd-embed" class:nd-unresolved={!ref.found}><span class="nd-embed__head">{#if ref.image && (ref.event_kind === 0 || body)}<img class="nd-embed__img" class:nd-embed__img--avatar={ref.event_kind === 0} src={ref.image} alt="" referrerpolicy="no-referrer" loading="lazy" />{/if}<span class="nd-embed__titles"><span class="nd-embed__label">⧉ {title}</span>{#if byline}<span class="nd-embed__by">{byline}</span>{/if}</span>{#if canOpen && onopen}<button class="nd-embed__open" onclick={() => onopen?.(ref)} title={openTitle()}>{ref.event_kind === 0 ? 'profile' : 'open'}</button>{/if}</span>{#if ref.found}{#if body}<span class="nd-embed__body">{body}</span>{:else if ref.image && ref.event_kind !== 0}<img class="nd-embed__cover" src={ref.image} alt="" referrerpolicy="no-referrer" loading="lazy" />{/if}{:else}<span class="nd-embed__missing">embed unavailable — {ref.target}</span>{/if}</span>
+<span class="nd-embed" class:nd-unresolved={!ref.found}><span class="nd-embed__head">{#if ref.image && (ref.event_kind === 0 || body)}<img class="nd-embed__img" class:nd-embed__img--avatar={ref.event_kind === 0} src={ref.image} alt="" referrerpolicy="no-referrer" loading="lazy" />{/if}<span class="nd-embed__titles"><span class="nd-embed__label">⧉ {title}</span>{#if byline}<span class="nd-embed__by">{byline}</span>{/if}</span>{#if canOpen && onopen}<button class="nd-embed__open" onclick={() => onopen?.(ref)} title={openTitle()}>{ref.event_kind === 0 ? 'profile' : 'open'}</button>{/if}</span>{#if ref.found}{#if body}<blockquote class="nd-embed__body">{shownBody}</blockquote>{#if isLong}<button class="nd-embed__more" onclick={() => (expanded = !expanded)}>{expanded ? 'show less' : 'show more'}</button>{/if}{:else if ref.image && ref.event_kind !== 0}<img class="nd-embed__cover" src={ref.image} alt="" referrerpolicy="no-referrer" loading="lazy" />{/if}{:else}<span class="nd-embed__missing">embed unavailable — {ref.target}</span>{/if}</span>
 
 <style>
 	.nd-embed {
@@ -131,11 +138,30 @@
 	.nd-embed__open:hover {
 		border-color: var(--id-yours);
 	}
+	/* The transcluded text reads as a quotation: a slim rule + slight indent,
+	   set apart from the source attribution in the header above. */
 	.nd-embed__body {
 		display: block;
+		margin: 4px 0 0;
+		padding-left: 8px;
+		border-left: 2px solid color-mix(in srgb, var(--id-yours) 35%, transparent);
 		white-space: pre-wrap;
 		overflow-wrap: anywhere;
 		color: var(--fg);
+		font-style: italic;
+	}
+	.nd-embed__more {
+		margin-top: 4px;
+		font-family: var(--font-mono);
+		font-size: var(--t-3xs);
+		background: none;
+		border: none;
+		color: var(--id-yours);
+		cursor: pointer;
+		padding: 0;
+	}
+	.nd-embed__more:hover {
+		text-decoration: underline;
 	}
 	.nd-embed__cover {
 		display: block;
