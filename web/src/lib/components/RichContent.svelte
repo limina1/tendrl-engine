@@ -57,7 +57,23 @@
 	}
 
 	// Field-driven embed card: show whatever the resolved event carries.
-	const embedTitle = (r: ResolvedRef) => r.title || r.label;
+	const KIND_LABEL: Record<number, string> = {
+		0: 'profile',
+		1: 'note',
+		30023: 'article',
+		30040: 'publication',
+		30041: 'section',
+		30818: 'wiki'
+	};
+	const isEntityLabel = (s: string) =>
+		/^(nostr:)?(naddr1|nevent1|note1|npub1|nprofile1)/i.test(s);
+	// Don't dump a raw 110-char nevent/naddr as the title — when the event has no
+	// title tag (e.g. a kind-1 note), fall back to a kind name.
+	function embedTitle(r: ResolvedRef): string {
+		if (r.title) return r.title;
+		if (isEntityLabel(r.label)) return KIND_LABEL[r.event_kind ?? -1] ?? 'embed';
+		return r.label;
+	}
 	const embedBody = (r: ResolvedRef) => r.content || r.summary || '';
 
 	// Byline for non-profile embeds: the `author` tag, else the publisher's
@@ -156,6 +172,8 @@
 	.nd-embed {
 		display: block;
 		margin: 8px 0;
+		max-width: 100%;
+		overflow: hidden;
 		border-left: 3px solid var(--id-yours);
 		border-radius: var(--r-sm, 3px);
 		background: color-mix(in srgb, var(--id-yours) 5%, transparent);
@@ -182,6 +200,7 @@
 		display: flex;
 		flex-direction: column;
 		gap: 1px;
+		flex: 1;
 		min-width: 0;
 	}
 	.nd-embed__label {
@@ -215,6 +234,7 @@
 	.nd-embed__body {
 		display: block;
 		white-space: pre-wrap;
+		overflow-wrap: anywhere;
 		color: var(--fg);
 	}
 	.nd-embed__missing {
