@@ -3,42 +3,47 @@
 #+DATE: 2026-02-27
 #+STATUS: DRAFT — evocative, iterative, not a spec
 
-* Implementation Status (Tier 1 shipped — 2026-06-27)
+* Implementation Status (Tier 1 + extensions shipped — 2026-06-28)
 
-Tier 1 is implemented end-to-end, ={{ }}=-only (the =[[ ]]= / =[[book::]]= forms
-are *not* parsed — they clash with Org-mode, which is the whole reason nostrdown
-exists). The split follows the engine's frontend/backend boundary, mirroring the
-NIP-84 highlight pipeline:
+Shipped end-to-end, ={{ }}=-only (=[[ ]]= / =[[book::]]= are *not* parsed — they
+clash with Org-mode, the reason nostrdown exists). The split follows the engine's
+frontend/backend boundary, mirroring the NIP-84 highlight pipeline.
 
 - *Parser* (=src/nostrdown.rs=): pure, IO-free tokenizer for
-  ={{ref|wiki|embed:target#fragment|display}}=, with NIP-54 slug normalization.
-  Unknown prefixes (=cite=/=@=/=term=/=media=) and malformed tokens degrade to
-  literal text.
-- *Resolver* (=PublicationEngine::resolve_refs= → =POST /api/v1/nostrdown/resolve=):
-  =ref:= → a sibling section in the containing 30040, matched by *title-slug*
-  (section d-tags are opaque nanoids, so the human slug matches the =T= tag /
-  normalized title, not the d-tag); =wiki:= → kind 30818/30023/30041 by
-  normalized d-tag (author-preferred); =embed:= → an naddr/nevent entity or a
-  sibling section's content (depth-1 transclusion). Returns UTF-16 spans +
-  naddr/coord/title for the renderer.
-- *Rendering* (=web/.../RichContent.svelte=): merges resolved refs with NIP-84
-  highlight spans onto one segmentation; =ref=/=wiki= render as inline links
-  (open the target), =embed= as an inline transclusion block.
-- *Publish* (=tree_emit.rs=): =\{\{wiki:\}\}= references emit NKBIP-01
-  =["wikilink", topic]= tags so events self-describe for other clients.
-- *Authoring* (=web/.../editor/nostrdown-cm.ts=): a CodeMirror extension
-  recognizes (highlights) ={{ }}= tokens as you type and follows them on
-  ⌘/Ctrl-click — =ref:=/slug =embed:= jump to a sibling heading in the buffer
-  (works while drafting), =wiki:=/=naddr= resolve against the db and open the
-  target. Scoped to the CodeMirror surfaces (plain mode + atomic body); the
-  Full-mode section textareas and an autocomplete/completion source are the
-  next authoring steps.
+  ={{ref|wiki|embed|quote:target#fragment|display}}=, NIP-54 slug normalization.
+  Unknown prefixes (=cite=/=@=/=term=/=media=) degrade to literal text.
+- *Resolver* (=resolve_refs= → =POST /api/v1/nostrdown/resolve=):
+  - =ref:= → sibling section by *title-slug* (the =T= tag — section d-tags are
+    opaque nanoids, so the human slug matches the normalized title).
+  - =wiki:= → kind 30818/30023/30041 by normalized d-tag (author-preferred).
+  - =embed:= → *any* entity: naddr (publication/section/article/wiki), nevent/note
+    (any event incl. kind-1 notes), npub/nprofile (a user → kind-0 name + picture
+    + bio). Field-driven (title/summary/author/image/content).
+  - =quote:= → the source resolved for *attribution only*; the excerpt is the
+    inline =|text=.
+- *Rendering* (web): one =EmbedCard= everywhere — reader inline embeds, reader
+  =ref=/=wiki= hover previews, and the composer click-preview (mounted into the CM
+  tooltip) — so all previews are identical. Field-driven: image (avatar / cover /
+  thumb), title, byline (resolved kind-0 name), an attributed, collapsible
+  *blockquote* body. =ref=/=wiki= render as inline links; =embed=/=quote= as cards.
+  Merged with NIP-84 highlight spans onto one segmentation.
+- *Publish* (=reference_tags=): every reference emits a resolution tag, so the
+  event self-describes and the tags appear in the *Preview events* —
+  =wikilink= / =ref= / =a= / =q= / =p=, and for =quote= the NIP-84 source (=a=/=e=)
+  + author (=p= … =author=).
+- *Authoring* (editor): CM extension recognizes ={{ }}= tokens; inline
+  autocomplete (mode-bar toggle; ={{= → prefixes, ={{ref:= → sibling titles,
+  ={{wiki:= → title search, ={{embed:= → the builder) with Tab/Enter accept;
+  ⌘/Ctrl-click follows; plain-click shows the preview card. A reference-builder
+  modal builds an embed coordinate (=by:name= author autocomplete + =kind= +
+  =T|d|custom= tag) or takes a pasted entity.
 
-Open follow-ups: fragment scroll-to-heading; =ref:=/=embed:= hint-tag emission
-(read-time title-slug matching covers them today); embed recursion beyond
-depth 1; deeper-than-one-level sibling loading; =\{\{wiki\}\}= on atomic
-30023/30818 events. Tiers 2–3 (citations, mentions, glossary, media) are not
-built — see the roadmap below.
+Open follow-ups: fragment scroll-to-heading (superseded by ={{quote}}= for
+passages); deeper-than-one-level sibling loading; embed recursion beyond depth 1;
+references inside *atomic* 30023/30818 bodies; the kind-9802 highlight upgrade for
+={{quote}}=; Full-mode section textareas → CodeMirror (so recognition / autocomplete
+/ preview work in section cards too); a =quote= builder (pick source → fill text).
+Tiers 2–3 (cite, @name, term, media) are not built — see the roadmap below.
 
 * Overview
 
