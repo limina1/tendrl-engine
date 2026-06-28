@@ -132,6 +132,25 @@ pub struct ResolvedRef {
     /// tracked as a follow-up). `None` for `ref`/`wiki`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub content: Option<String>,
+
+    // ── Preview metadata (for an editor hover/click card) ──────────────────
+    /// The resolved event's own `title` tag (distinct from `label`, which may be
+    /// an author-chosen display override).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    /// The resolved event's `summary`/`description` tag, capped for a preview.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub summary: Option<String>,
+    /// The cited work's author — the `["author", …]` tag (e.g. "Plato").
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub author: Option<String>,
+    /// The publishing pubkey of the resolved event (the "index author" for a
+    /// 30040) — the web resolves its kind-0 display name for the card.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub author_pubkey: Option<String>,
+    /// The resolved event's `created_at`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub created_at: Option<u64>,
 }
 
 /// Optional `nostr:` URI prefix, case-insensitive, stripped for entity tests.

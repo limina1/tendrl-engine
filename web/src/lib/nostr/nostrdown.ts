@@ -60,6 +60,18 @@ export interface ResolvedRef {
 	event_kind?: number;
 	/** Transcluded content for `embed` (depth-1). */
 	content?: string;
+
+	// Preview metadata for an editor hover/click card.
+	/** The resolved event's own `title` tag (distinct from `label`). */
+	title?: string;
+	/** The resolved event's `summary`/`description`, capped. */
+	summary?: string;
+	/** Cited work author — the `["author", …]` tag. */
+	author?: string;
+	/** Publishing pubkey (the "index author"). */
+	author_pubkey?: string;
+	/** The resolved event's `created_at`. */
+	created_at?: number;
 }
 
 /** One renderable run of a section's content. */

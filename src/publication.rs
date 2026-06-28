@@ -2044,6 +2044,11 @@ impl<'a> PublicationEngine<'a> {
                 coord: None,
                 event_kind: None,
                 content: None,
+                title: None,
+                summary: None,
+                author: None,
+                author_pubkey: None,
+                created_at: None,
             };
 
             match r.kind {
@@ -2278,17 +2283,40 @@ fn apply_event(
     if let Some(kind) = event.get("kind").and_then(Value::as_u64) {
         resolved.event_kind = Some(kind);
     }
+    let title = first_tag_value(event, "title").filter(|t| !t.is_empty());
     if !display_given {
-        if let Some(title) = first_tag_value(event, "title").filter(|t| !t.is_empty()) {
-            resolved.label = title;
+        if let Some(t) = &title {
+            resolved.label = t.clone();
         }
     }
+    // Preview metadata for the editor card.
+    resolved.title = title;
+    resolved.summary = first_tag_value(event, "summary")
+        .or_else(|| first_tag_value(event, "description"))
+        .filter(|s| !s.is_empty())
+        .map(|s| cap_chars(&s, 280));
+    resolved.author = first_tag_value(event, "author").filter(|a| !a.is_empty());
+    resolved.author_pubkey = event
+        .get("pubkey")
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    resolved.created_at = event.get("created_at").and_then(Value::as_u64);
     if want_content {
         resolved.content = event
             .get("content")
             .and_then(Value::as_str)
             .map(str::to_string);
     }
+}
+
+/// Truncate `s` to at most `max` chars on a char boundary, appending `…`.
+fn cap_chars(s: &str, max: usize) -> String {
+    if s.chars().count() <= max {
+        return s.to_string();
+    }
+    let mut out: String = s.chars().take(max).collect();
+    out.push('…');
+    out
 }
 
 // --- Event Building for Local Creation ---
@@ -4063,6 +4091,9 @@ mod tests {
         assert!(r1.found);
         assert_eq!(r1.label, "Fable");
         assert_eq!(r1.event_kind, Some(30818));
+        // Preview metadata populated from the resolved event.
+        assert_eq!(r1.title.as_deref(), Some("Fable"));
+        assert_eq!(r1.author_pubkey.as_deref(), Some(pk));
 
         // embed: pulls the sibling section's content for transclusion.
         let r2 = &refs[2];

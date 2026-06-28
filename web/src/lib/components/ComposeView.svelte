@@ -3,9 +3,13 @@
 	import { getActiveStore } from '$lib/wm/buffer-store.svelte';
 	import type { ComposeState, ContextItem, TagEntry, SyncMode } from '$lib/types';
 	import type { DraftSummary } from '$lib/api';
-	import { resolveNostrdown } from '$lib/api';
+	import { resolveNostrdown, getProfile } from '$lib/api';
 	import type { EditorView } from '@codemirror/view';
-	import { nostrdownEditor, type NostrdownToken } from '$lib/editor/nostrdown-cm';
+	import {
+		nostrdownEditor,
+		type NostrdownToken,
+		type NostrdownPreview
+	} from '$lib/editor/nostrdown-cm';
 	import { normalizeSlug } from '$lib/nostr/nostrdown';
 	import ComposeSection from './ComposeSection.svelte';
 	import ItemBadge from './ItemBadge.svelte';
@@ -26,14 +30,15 @@
 
 	const app = getAppState();
 
-	// ── Nostrdown: recognize {{ }} refs in the editor and follow on mod-click ──
-	/** Char offset of the heading line whose title-slug equals `slug`, else null. */
-	function findHeadingPos(doc: string, slug: string): number | null {
+	// ── Nostrdown: recognize {{ }} refs, preview on click, follow on mod-click ──
+	/** The matching sibling heading in this draft (by title-slug): its char offset
+	 *  and title, else null. */
+	function findHeading(doc: string, slug: string): { pos: number; title: string } | null {
 		const d = effectiveDelim();
 		let offset = 0;
 		for (const line of doc.split('\n')) {
 			const head = parseHeadingLine(line, d);
-			if (head && normalizeSlug(head.title) === slug) return offset;
+			if (head && normalizeSlug(head.title) === slug) return { pos: offset, title: head.title };
 			offset += line.length + 1; // + newline
 		}
 		return null;
@@ -41,14 +46,49 @@
 
 	const NOSTR_ENTITY_RE = /^(nostr:)?(naddr1|nevent1|note1)/i;
 
+	// Plain-click preview card: a sibling heading in this draft (unpublished), or
+	// the resolved event's metadata + its publisher's profile name.
+	async function previewNostrdown(token: NostrdownToken): Promise<NostrdownPreview | null> {
+		if ((token.kind === 'ref' || token.kind === 'embed') && !NOSTR_ENTITY_RE.test(token.target)) {
+			const hit = findHeading(plainText, normalizeSlug(token.target));
+			if (hit) return { found: true, inDraft: true, title: hit.title };
+		}
+		try {
+			const resolved = await resolveNostrdown([{ key: 'k', content: token.raw }]);
+			const r = resolved['k']?.[0];
+			if (!r?.found) return { found: false };
+			let authorName: string | undefined;
+			if (r.author_pubkey) {
+				try {
+					const p = await getProfile(r.author_pubkey);
+					authorName = p.display_name || p.name || undefined;
+				} catch {
+					/* leave the short pubkey */
+				}
+			}
+			return {
+				found: true,
+				eventKind: r.event_kind,
+				title: r.title,
+				author: r.author,
+				authorPubkey: r.author_pubkey,
+				authorName,
+				summary: r.summary,
+				createdAt: r.created_at
+			};
+		} catch {
+			return { found: false };
+		}
+	}
+
 	// mod-click on a recognized token: jump to a sibling heading in this buffer
 	// (works while drafting, before anything is published), else resolve against
 	// the db and open the target event.
 	async function followNostrdown(token: NostrdownToken, view: EditorView) {
 		if ((token.kind === 'ref' || token.kind === 'embed') && !NOSTR_ENTITY_RE.test(token.target)) {
-			const pos = findHeadingPos(view.state.doc.toString(), normalizeSlug(token.target));
-			if (pos != null) {
-				view.dispatch({ selection: { anchor: pos }, scrollIntoView: true });
+			const hit = findHeading(view.state.doc.toString(), normalizeSlug(token.target));
+			if (hit) {
+				view.dispatch({ selection: { anchor: hit.pos }, scrollIntoView: true });
 				view.focus();
 				return;
 			}
@@ -66,7 +106,9 @@
 		app.pushToast(`Unresolved ${token.kind}: ${token.target}`, 'info');
 	}
 
-	const nostrdownExt = [nostrdownEditor({ onActivate: followNostrdown })];
+	const nostrdownExt = [
+		nostrdownEditor({ onActivate: followNostrdown, onPreview: previewNostrdown })
+	];
 
 	// Composer walkthrough dropdown. The in-chrome `W` lists every composer
 	// tutorial (registry's `composer.tours`); picking one switches the editor to
