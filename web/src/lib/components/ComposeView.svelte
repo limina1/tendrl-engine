@@ -12,6 +12,7 @@
 	} from '$lib/editor/nostrdown-cm';
 	import { normalizeSlug } from '$lib/nostr/nostrdown';
 	import ComposeSection from './ComposeSection.svelte';
+	import ReferenceBuilderModal from './ReferenceBuilderModal.svelte';
 	import ItemBadge from './ItemBadge.svelte';
 	import TagEditor from './TagEditor.svelte';
 	import DraftReader from '$lib/wm/renderers/DraftReader.svelte';
@@ -109,6 +110,10 @@
 	const nostrdownExt = [
 		nostrdownEditor({ onActivate: followNostrdown, onPreview: previewNostrdown })
 	];
+
+	// "Insert reference" builder modal — open state (the deps-bearing
+	// `refSectionTitles` derived lives below, after `detectedSections`).
+	let refBuilderOpen = $state(false);
 
 	// Composer walkthrough dropdown. The in-chrome `W` lists every composer
 	// tutorial (registry's `composer.tours`); picking one switches the editor to
@@ -627,6 +632,36 @@
 		};
 	});
 	const detectedSections = $derived(detectedState.sections);
+
+	// Reference builder: titles of the other sections in the current draft (the
+	// `{{ref:}}` candidates) + insertion into the active CodeMirror surface
+	// (plain mode or the atomic body; Full-mode section textareas aren't CM).
+	const refSectionTitles = $derived(
+		(mode === 'plain' ? detectedSections.map((s) => s.title) : compose.sections.map((s) => s.title))
+			.map((t) => (t ?? '').trim())
+			.filter((t) => t.length > 0)
+	);
+
+	function activeCmView(): EditorView | null {
+		if (isAtomic) return atomicCmView ?? null;
+		if (mode === 'plain') return plainCmView ?? null;
+		return null;
+	}
+
+	function insertNostrdownToken(token: string) {
+		const view = activeCmView();
+		if (!view) {
+			app.pushToast('Switch to Plain mode (or an atomic body) to insert a reference', 'info');
+			refBuilderOpen = false;
+			return;
+		}
+		const sel = view.state.selection.main;
+		view.dispatch({
+			changes: { from: sel.from, to: sel.to, insert: token },
+			selection: { anchor: sel.from + token.length }
+		});
+		view.focus();
+	}
 
 	// "Nothing to act on" gate for Preview/Save: atomic needs a title + body;
 	// plain needs a detected section; full needs a section card.
@@ -1154,6 +1189,12 @@
 			</div>
 		{/if}
 		<button
+			class="affordance affordance--ref"
+			onclick={() => (refBuilderOpen = true)}
+			title="Insert a nostrdown reference — ref / wiki / embed, built with autocomplete"
+			aria-label="Insert reference"
+		>&lbrace;&lbrace; &rbrace;&rbrace;</button>
+		<button
 			class="affordance affordance--help"
 			onclick={openComposeHelp}
 			title="Composer reference — modes, the section model, and draft → sign → broadcast"
@@ -1458,6 +1499,13 @@
 {#if app.publishedDiff}
 	<PublishedDiffModal diff={app.publishedDiff} onclose={app.closePublishedDiff} />
 {/if}
+
+<ReferenceBuilderModal
+	open={refBuilderOpen}
+	sectionTitles={refSectionTitles}
+	oninsert={insertNostrdownToken}
+	onclose={() => (refBuilderOpen = false)}
+/>
 
 <style>
 	.compose-view {
