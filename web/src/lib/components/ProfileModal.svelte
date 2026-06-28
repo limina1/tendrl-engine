@@ -68,7 +68,7 @@
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		background: rgba(0, 0, 0, 0.5);
+		background: var(--scrim);
 	}
 
 	.modal-card {
@@ -90,7 +90,7 @@
 		background: none;
 		border: none;
 		color: var(--fg-muted);
-		font-size: 1.1rem;
+		font-size: var(--t-md);
 		cursor: pointer;
 		padding: 4px 8px;
 	}
@@ -121,7 +121,7 @@
 		background: var(--bg-surface);
 		border: 1px solid var(--border);
 		color: var(--fg-muted);
-		font-size: 1.5rem;
+		font-size: var(--t-xl);
 	}
 
 	.profile-identity {
@@ -129,24 +129,24 @@
 	}
 
 	.display-name {
-		font-size: 1.15rem;
+		font-size: var(--t-md);
 		font-weight: 600;
 	}
 
 	.username {
 		color: var(--fg-muted);
-		font-size: 0.9rem;
+		font-size: var(--t-sm);
 	}
 
 	.nip05 {
 		color: var(--accent);
-		font-size: 0.85rem;
+		font-size: var(--t-xs);
 		margin-top: 2px;
 	}
 
 	.profile-about {
 		margin-bottom: 16px;
-		font-size: 0.9rem;
+		font-size: var(--t-sm);
 		line-height: 1.5;
 		white-space: pre-wrap;
 		word-break: break-word;
@@ -159,7 +159,7 @@
 	.view-profile-btn {
 		width: 100%;
 		padding: 8px;
-		font-size: 0.85rem;
+		font-size: var(--t-xs);
 		background: none;
 		border: 1px solid var(--accent);
 		border-radius: var(--radius);
@@ -181,7 +181,7 @@
 	}
 
 	.pubkey-label {
-		font-size: 0.75rem;
+		font-size: var(--t-2xs);
 		color: var(--fg-muted);
 		text-transform: uppercase;
 		letter-spacing: 0.05em;
@@ -189,7 +189,7 @@
 
 	.pubkey-value {
 		font-family: var(--font-mono);
-		font-size: 0.75rem;
+		font-size: var(--t-2xs);
 		word-break: break-all;
 		color: var(--fg-muted);
 	}

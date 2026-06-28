@@ -13,8 +13,10 @@
 	import { trigger as triggerTip } from '$lib/wm/discovery.svelte';
 	import { discovery, rearmDiscovery, rearmFeatureTours, setWalkthroughEnabled } from '$lib/wm/discovery.svelte';
 	import * as api from '$lib/api';
+	import { textScale, setTextScale, TEXT_SCALE_PRESETS } from '$lib/theme/text-scale.svelte';
 	import type { Buffer } from '../types';
 	import type { EditorInsertMode, SyncMode, ButtonLabels, ComposeDefaultMode } from '$lib/types';
+	import { THEMES } from '$lib/themes';
 
 	let { buffer: _buffer }: { buffer: Buffer } = $props();
 
@@ -339,8 +341,90 @@
 		</button>
 	</div>
 
-	<div class="settings-group">
-		<div class="settings-group-title">Identity</div>
+	<details class="settings-group">
+		<summary class="settings-group-title">Engine</summary>
+		<div class="settings-group-body">
+
+		<div class="settings-row">
+			<span class="settings-label">Version</span>
+			<div class="status-row">
+				{#if app.engineVersion}
+					<span class="pill pill--ghost source-pill">v{app.engineVersion}</span>
+					<span class="pill pill--online">ok</span>
+				{:else}
+					<span class="pill pill--ghost source-pill">connecting…</span>
+				{/if}
+			</div>
+		</div>
+		</div>
+	</details>
+
+	<details class="settings-group" open>
+		<summary class="settings-group-title">Appearance</summary>
+		<div class="settings-group-body">
+
+		<div class="settings-row">
+			<label
+				class="settings-label"
+				for="high-contrast"
+				title="Boosts text and borders over the current theme for readability. Defaults to your OS “increase contrast” setting."
+			>High contrast</label>
+			<label class="switch">
+				<input
+					id="high-contrast"
+					type="checkbox"
+					checked={app.highContrast}
+					onchange={(e) => app.setHighContrast(e.currentTarget.checked)}
+				/>
+				<span class="switch-text">{app.highContrast ? 'on' : 'off'}</span>
+			</label>
+		</div>
+
+		<div class="settings-row">
+			<label
+				class="settings-label"
+				for="theme-select"
+				title="Color scheme for the whole interface. The sun/moon button in the header toggles dark ⇄ light; your choice is remembered on this device."
+			>Theme</label>
+			<select
+				id="theme-select"
+				class="settings-select"
+				value={app.currentTheme}
+				onchange={(e) => app.setTheme(e.currentTarget.value)}
+			>
+				{#each THEMES as t (t.id)}
+					<option value={t.id}>{t.familyLabel} {t.mode === 'dark' ? 'Dark' : 'Light'}</option>
+				{/each}
+			</select>
+		</div>
+
+		<div class="settings-row">
+			<span class="settings-label">Text size</span>
+			<div class="radio-group">
+				{#each TEXT_SCALE_PRESETS as preset (preset.id)}
+					<label class="radio">
+						<input
+							type="radio"
+							name="text-scale"
+							value={preset.id}
+							checked={textScale.id === preset.id}
+							onchange={() => setTextScale(preset.id)}
+						/>
+						<span>{preset.label}</span>
+					</label>
+				{/each}
+			</div>
+		</div>
+		<p class="settings-hint">
+			Scales the whole interface. Applies instantly and is saved on this device —
+			it isn't part of the engine config and doesn't sync across machines.
+		</p>
+		</div>
+	</details>
+
+	<details class="settings-group" open>
+		<summary class="settings-group-title">Identity</summary>
+		<div class="settings-group-body">
 
 		<div class="settings-row">
 			<span class="settings-label">Status</span>
@@ -501,10 +585,12 @@
 		{#if app.identityError}
 			<p class="settings-error">{app.identityError}</p>
 		{/if}
-	</div>
+		</div>
+	</details>
 
-	<div class="settings-group">
-		<div class="settings-group-title">Assistant identity</div>
+	<details class="settings-group">
+		<summary class="settings-group-title">Assistant identity</summary>
+		<div class="settings-group-body">
 		{#if assistantState === 'none'}
 			<div class="settings-row settings-row--stack">
 				<label class="settings-label" for="assistant-key-input">nsec or ncryptsec</label>
@@ -575,10 +661,12 @@
 		{#if app.assistantError}
 			<p class="settings-error">{app.assistantError}</p>
 		{/if}
-	</div>
+		</div>
+	</details>
 
-	<div class="settings-group">
-		<div class="settings-group-title">Editor</div>
+	<details class="settings-group">
+		<summary class="settings-group-title">Editor</summary>
+		<div class="settings-group-body">
 
 		<div class="settings-row">
 			<label class="settings-label" for="line-numbers">Line numbers</label>
@@ -628,10 +716,12 @@
 			when plain mode isn't active).<br />
 			<strong>append</strong>: append at the bottom of the document or as a new section block.
 		</p>
-	</div>
+		</div>
+	</details>
 
-	<div class="settings-group">
-		<div class="settings-group-title">Compose</div>
+	<details class="settings-group">
+		<summary class="settings-group-title">Compose</summary>
+		<div class="settings-group-body">
 
 		<div class="settings-row">
 			<span class="settings-label">Default edit mode</span>
@@ -686,10 +776,12 @@
 				{/each}
 			</div>
 		</div>
-	</div>
+		</div>
+	</details>
 
-	<div class="settings-group">
-		<div class="settings-group-title">Network</div>
+	<details class="settings-group">
+		<summary class="settings-group-title">Network</summary>
+		<div class="settings-group-body">
 
 		<div class="settings-row">
 			<span class="settings-label">Default mode</span>
@@ -758,13 +850,15 @@
 			<strong>Reset first-run setup</strong>: re-arms the mode-choice modal + first-run walkthrough so they reappear on next load, as if freshly installed (no data is touched).<br />
 			<strong>Reset feature tours</strong>: re-arms the on-demand panel walkthroughs — mode-line, reader, composer, search, and event menus — so each <strong>W</strong> chip glows and replays in full. Leaves the first-run walkthrough alone.
 		</p>
-	</div>
+		</div>
+	</details>
 
 	<!-- AI assistant: provider/model/auth channel + per-tool policy. Tool
 	     toggles apply live (next agent turn); provider/model/auth persist to
 	     config.toml and take effect on the next engine restart. -->
-	<div class="settings-group">
-		<div class="settings-group-title">AI assistant</div>
+	<details class="settings-group">
+		<summary class="settings-group-title">AI assistant</summary>
+		<div class="settings-group-body">
 
 		{#if !aiSettings}
 			<p class="settings-hint">AI settings unavailable (engine not reachable).</p>
@@ -829,14 +923,16 @@
 				are off by default and broadcast signed events when enabled.
 			</p>
 		{/if}
-	</div>
+		</div>
+	</details>
 
 	<!-- Embeddings / semantic search. Status + manual sync/reindex for
 	     the HNSW vector index, embedded in-process via ONNX. Counts and model
 	     health come from /api/v1/embed/status; the buttons drive /embed/sync
 	     and /embed/reindex. -->
-	<div class="settings-group">
-		<div class="settings-group-title">Embeddings</div>
+	<details class="settings-group">
+		<summary class="settings-group-title">Embeddings</summary>
+		<div class="settings-group-body">
 
 		{#if !app.embeddingStatus?.enabled}
 			<div class="settings-row">
@@ -907,7 +1003,8 @@
 				changing the embedding model.
 			</p>
 		{/if}
-	</div>
+		</div>
+	</details>
 
 	<!-- Save Settings moved to the top header. Hint kept here so
 	     the explanation stays visible alongside the field group it
@@ -919,8 +1016,9 @@
 	<!-- Data / maintenance. Purge wipes the local LMDB cache and
 	     re-execs the engine in place (~1 second of unavailability).
 	     Relays.json, config.toml, identity ncryptsec are preserved. -->
-	<div class="settings-group">
-		<div class="settings-group-title">Data</div>
+	<details class="settings-group" open>
+		<summary class="settings-group-title">Data</summary>
+		<div class="settings-group-body">
 		<div class="settings-row">
 			<span class="settings-label">Purge local cache</span>
 			<button
@@ -939,7 +1037,8 @@
 			chain from a cold cache. <code>relays.json</code>, <code>config.toml</code>,
 			and the identity ncryptsec are preserved.
 		</p>
-	</div>
+		</div>
+	</details>
 </div>
 
 <style>
@@ -969,17 +1068,49 @@
 	}
 
 	.settings-group {
-		padding: 14px 16px 6px;
 		border-bottom: 1px solid var(--panel-border);
 	}
 
+	/* Collapsed section header — the whole row is the click target. The
+	   ::before chevron is the disclosure affordance (native marker hidden);
+	   it rotates when the <details> is open. */
 	.settings-group-title {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		padding: 12px 16px;
 		font-size: var(--t-xs);
 		font-weight: 600;
 		text-transform: uppercase;
 		letter-spacing: 0.05em;
 		color: var(--base5);
-		margin-bottom: 8px;
+		cursor: pointer;
+		user-select: none;
+		list-style: none;
+	}
+	.settings-group-title::-webkit-details-marker {
+		display: none;
+	}
+	.settings-group-title::before {
+		content: '▸';
+		font-size: 0.85em;
+		line-height: 1;
+		color: var(--base5);
+		transition: transform 0.12s ease;
+	}
+	.settings-group[open] > .settings-group-title::before {
+		transform: rotate(90deg);
+	}
+	.settings-group-title:hover {
+		color: var(--fg);
+		background: color-mix(in srgb, var(--fg) 4%, transparent);
+	}
+	.settings-group[open] > .settings-group-title {
+		color: var(--base6);
+	}
+
+	.settings-group-body {
+		padding: 2px 16px 12px;
 	}
 
 	.settings-subtitle {
@@ -1092,6 +1223,24 @@
 
 	.radio input[type='radio']:checked + span {
 		color: var(--id-yours);
+	}
+
+	.settings-select {
+		font-family: var(--font-mono);
+		font-size: var(--t-xs);
+		color: var(--fg);
+		background: var(--panel-bg-soft);
+		border: 1px solid var(--panel-border);
+		border-radius: var(--r-sm);
+		padding: 3px 8px;
+		cursor: pointer;
+	}
+	.settings-select:hover {
+		border-color: var(--panel-border-strong);
+	}
+	.settings-select:focus-visible {
+		outline: 1px solid var(--id-yours);
+		outline-offset: 1px;
 	}
 
 	.radio--disabled {

@@ -22,6 +22,7 @@
 	import BufferRenderer from '$lib/wm/BufferRenderer.svelte';
 	import { rendererFor, toursForClass } from '$lib/wm/registry';
 	import { getAppState, type ModalNavEntry } from '$lib/state.svelte';
+	import { themeById } from '$lib/themes';
 	import {
 		getAuthorDisplayName,
 		getAuthorProfile,
@@ -40,6 +41,10 @@
 	import { openModelineHelp } from '$lib/wm/modeline-help.svelte';
 
 	const app = getAppState();
+
+	// Drives the sun/moon toggle glyph: show the sun while dark (click → light)
+	// and the moon while light (click → dark).
+	const themeMode = $derived(themeById(app.currentTheme)?.mode ?? 'dark');
 
 	// The `search-history` tip no longer auto-fires on the first search — it's
 	// now the closing beat of the opt-in search tour (run from the search W).
@@ -1059,6 +1064,23 @@
 			>settings</button>
 			<div class="shell__layout-desc">{store.currentLayout.desc}</div>
 			<button
+				class="lt lt--theme"
+				onclick={() => app.toggleTheme()}
+				title={themeMode === 'light' ? 'Switch to dark theme' : 'Switch to light theme'}
+				aria-label="Toggle light / dark theme"
+			>
+				{#if themeMode === 'light'}
+					<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+						<path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
+					</svg>
+				{:else}
+					<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+						<circle cx="12" cy="12" r="4" />
+						<path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41" />
+					</svg>
+				{/if}
+			</button>
+			<button
 				class="px {leaderOpen ? 'px--on' : ''}"
 				onclick={() => (leaderOpen ? (prefixPath = []) : openLeader())}
 				title="Menu — the SPC leader (which-key popup); also opens by clicking the mode-line"
@@ -1203,6 +1225,9 @@
 						{identityPill.label}
 					</span>
 				{/if}
+			{/if}
+			{#if app.engineVersion}
+				<span class="ml__seg ml__version" title="Engine build version">v{app.engineVersion}</span>
 			{/if}
 			<!-- Mode-line's own affordances, mirroring search's ? / ⚙ pair: W is
 			     permanent and always tours the mode-line itself; ? opens the
@@ -1703,6 +1728,16 @@
 	/* The settings entry carries the app-wide settings hue (magenta) so it
 	   reads as the same affordance as the search gear. */
 	.lt--settings:hover { color: var(--affordance-settings); }
+	/* Sun/moon theme toggle — square, icon-centred; warm hover so it reads as
+	   the "light/dark" affordance. */
+	.lt--theme {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		padding: 4px 7px;
+	}
+	.lt--theme:hover { color: var(--affordance-help); }
+	.lt--theme svg { display: block; }
 	.lt--on {
 		background: var(--base2);
 		color: var(--fg);
@@ -1814,7 +1849,7 @@
 		font-weight: 600;
 	}
 	.pane__kicker { color: var(--base5); font-family: var(--font-sans); text-transform: none; letter-spacing: 0; }
-	.pane__mod { color: var(--id-draft); font-size: 0.615rem; }
+	.pane__mod { color: var(--id-draft); font-size: var(--t-3xs); }
 	.pane__sp { flex: 1; }
 	.pane__x {
 		background: transparent;
@@ -1947,7 +1982,7 @@
 		background: var(--panel-bg);
 		border: 1px solid var(--panel-border);
 		border-radius: var(--r-md);
-		box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+		box-shadow: var(--shadow-md);
 		font-family: var(--font-sans);
 		padding: var(--s-1) 0;
 	}
@@ -1998,7 +2033,7 @@
 	.walk-menu__buffer {
 		flex: 0 0 auto;
 		font-family: var(--font-mono);
-		font-size: 0.58rem;
+		font-size: var(--t-3xs);
 		text-transform: lowercase;
 		letter-spacing: 0.03em;
 		color: var(--fg-muted);
@@ -2015,7 +2050,7 @@
 		background: var(--panel-bg);
 		border: 1px solid var(--panel-border);
 		border-radius: var(--r-md);
-		box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+		box-shadow: var(--shadow-md);
 		font-family: var(--font-sans);
 	}
 	.hs-popover__list {
@@ -2137,6 +2172,8 @@
 	.ml__seg--prefix { color: var(--id-yours); }
 	/* Right-justified loading indicator — sits after .ml__spacer (flex:1). */
 	.ml__status { color: var(--base6); font-variant-numeric: tabular-nums; }
+	/* Engine version — quiet, far-right informational tag. */
+	.ml__version { color: var(--base5, var(--base6)); font-variant-numeric: tabular-nums; opacity: 0.75; }
 	.pill--btn {
 		border: none;
 		cursor: pointer;

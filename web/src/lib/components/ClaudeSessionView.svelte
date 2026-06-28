@@ -209,14 +209,14 @@
 		align-items: center;
 		justify-content: center;
 		color: var(--fg-muted);
-		font-size: 0.85rem;
+		font-size: var(--t-xs);
 	}
 
 	/* Session list */
 
 	.sessions-header {
 		padding: 10px 16px;
-		font-size: 0.8rem;
+		font-size: var(--t-2xs);
 		font-weight: 600;
 		color: var(--fg-muted);
 		text-transform: uppercase;
@@ -249,19 +249,19 @@
 	}
 
 	.session-item-id {
-		font-size: 0.8rem;
+		font-size: var(--t-2xs);
 		font-weight: 600;
 		font-family: var(--font-mono);
 	}
 
 	.session-item-meta {
-		font-size: 0.7rem;
+		font-size: var(--t-3xs);
 		color: var(--fg-muted);
 		white-space: nowrap;
 	}
 
 	.session-item-prompt {
-		font-size: 0.8rem;
+		font-size: var(--t-2xs);
 		color: var(--fg-muted);
 		line-height: 1.4;
 		margin: 2px 0;
@@ -272,7 +272,7 @@
 	}
 
 	.session-item-footer {
-		font-size: 0.7rem;
+		font-size: var(--t-3xs);
 		color: var(--fg-muted);
 		margin-top: 4px;
 	}
@@ -289,7 +289,7 @@
 	}
 
 	.back-btn {
-		font-size: 0.75rem;
+		font-size: var(--t-2xs);
 		padding: 2px 8px;
 		background: none;
 		border: 1px solid var(--border);
@@ -304,20 +304,20 @@
 	}
 
 	.session-id {
-		font-size: 0.8rem;
+		font-size: var(--t-2xs);
 		font-family: var(--font-mono);
 		color: var(--fg-muted);
 	}
 
 	.session-count {
-		font-size: 0.7rem;
+		font-size: var(--t-3xs);
 		color: var(--fg-muted);
 		flex: 1;
 		text-align: right;
 	}
 
 	.load-btn {
-		font-size: 0.7rem;
+		font-size: var(--t-3xs);
 		padding: 2px 10px;
 		background: var(--accent);
 		color: white;
@@ -347,7 +347,7 @@
 	}
 
 	.message-role {
-		font-size: 0.65rem;
+		font-size: var(--t-3xs);
 		font-weight: 600;
 		text-transform: uppercase;
 		color: var(--fg-muted);
@@ -360,7 +360,7 @@
 	}
 
 	.message-content {
-		font-size: 0.82rem;
+		font-size: var(--t-xs);
 		line-height: 1.5;
 		white-space: pre-wrap;
 		word-wrap: break-word;
@@ -384,7 +384,7 @@
 
 	.thinking-block summary {
 		padding: 4px 10px;
-		font-size: 0.7rem;
+		font-size: var(--t-3xs);
 		color: var(--fg-muted);
 		cursor: pointer;
 		background: var(--bg-surface);
@@ -397,7 +397,7 @@
 
 	.thinking-content {
 		padding: 8px 10px;
-		font-size: 0.75rem;
+		font-size: var(--t-2xs);
 		line-height: 1.4;
 		white-space: pre-wrap;
 		word-wrap: break-word;
@@ -424,7 +424,7 @@
 
 	.tool-block summary {
 		padding: 4px 10px;
-		font-size: 0.7rem;
+		font-size: var(--t-3xs);
 		color: var(--fg-muted);
 		cursor: pointer;
 		background: var(--bg-surface);
@@ -443,7 +443,7 @@
 	.tool-name {
 		display: block;
 		padding: 4px 10px 0;
-		font-size: 0.7rem;
+		font-size: var(--t-3xs);
 		font-weight: 600;
 		font-family: var(--font-mono);
 		color: var(--accent);
@@ -451,7 +451,7 @@
 
 	.tool-input {
 		padding: 4px 10px 8px;
-		font-size: 0.7rem;
+		font-size: var(--t-3xs);
 		line-height: 1.3;
 		white-space: pre-wrap;
 		word-wrap: break-word;
@@ -473,7 +473,7 @@
 	.output-toggle {
 		flex-shrink: 0;
 		padding: 3px 6px;
-		font-size: 0.65rem;
+		font-size: var(--t-3xs);
 		font-family: var(--font-mono);
 		background: none;
 		border: 1px solid var(--border);
@@ -507,7 +507,7 @@
 		align-items: center;
 		justify-content: space-between;
 		padding: 3px 10px;
-		font-size: 0.65rem;
+		font-size: var(--t-3xs);
 		font-family: var(--font-mono);
 		text-transform: uppercase;
 		letter-spacing: 0.05em;
@@ -521,7 +521,7 @@
 		border: none;
 		color: var(--fg-muted);
 		cursor: pointer;
-		font-size: 0.85rem;
+		font-size: var(--t-xs);
 		padding: 0 2px;
 		line-height: 1;
 	}
@@ -532,7 +532,7 @@
 
 	.tool-output-content {
 		padding: 8px 10px;
-		font-size: 0.75rem;
+		font-size: var(--t-2xs);
 		line-height: 1.4;
 		white-space: pre-wrap;
 		word-wrap: break-word;

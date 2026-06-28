@@ -114,16 +114,16 @@
 		border-radius: var(--r-md);
 		padding: 6px 10px 6px 12px;
 		font-family: var(--font-sans);
-		font-size: 0.78rem;
+		font-size: var(--t-2xs);
 		color: var(--fg);
-		box-shadow: 0 4px 14px rgba(0, 0, 0, 0.3);
+		box-shadow: var(--shadow-md);
 		cursor: pointer;
 		max-width: 360px;
 	}
 	.toast--pinned {
 		cursor: default;
 		/* A subtle indicator that this toast won't auto-dismiss. */
-		box-shadow: 0 4px 14px rgba(0, 0, 0, 0.3), 0 0 0 1px var(--panel-border-strong, var(--panel-border));
+		box-shadow: var(--shadow-md), 0 0 0 1px var(--panel-border-strong, var(--panel-border));
 	}
 	.toast__dot {
 		display: inline-block;
@@ -157,7 +157,7 @@
 		background: none;
 		border: none;
 		color: var(--muted);
-		font-size: 0.95rem;
+		font-size: var(--t-sm);
 		line-height: 1;
 		padding: 2px 4px;
 		cursor: pointer;

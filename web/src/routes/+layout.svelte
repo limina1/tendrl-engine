@@ -225,7 +225,7 @@
 		   stays clickable while a modal is open. */
 		inset: 0 0 var(--modeline-h, 0) 0;
 		z-index: 100;
-		background: rgba(0, 0, 0, 0.5);
+		background: var(--scrim);
 		display: flex;
 		align-items: center;
 		justify-content: center;
@@ -249,7 +249,7 @@
 		padding: 10px 14px;
 		border-bottom: 1px solid var(--border);
 		font-weight: 600;
-		font-size: 0.85rem;
+		font-size: var(--t-xs);
 	}
 
 	.json-modal-body {
@@ -258,7 +258,7 @@
 		padding: 14px;
 		margin: 0;
 		font-family: var(--font-mono);
-		font-size: 0.8rem;
+		font-size: var(--t-2xs);
 		line-height: 1.5;
 		white-space: pre-wrap;
 		word-break: break-all;

@@ -407,6 +407,12 @@ export interface EmbeddingStatusResponse {
 	auto_embed: boolean;
 }
 
+/** GET /health — engine liveness + the running build's version. */
+export interface HealthResponse {
+	status: string;
+	version: string;
+}
+
 export type NetworkMode = 'auto' | 'confirm';
 
 /** Pattern of a user-initiated fetch operation (mirrors the engine). */

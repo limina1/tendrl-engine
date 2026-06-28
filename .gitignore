@@ -48,3 +48,6 @@ scripts/collatz-graph.svg
 
 # Local engine config (use config.example.toml as the template)
 config.toml
+
+# Local build/test artifacts (portable binary + tarball + downloaded models)
+/test/

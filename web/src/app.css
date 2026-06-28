@@ -5,15 +5,15 @@
 
 :root {
 	--bg-surface: var(--base1);
-	--bg-edit: rgba(233, 177, 137, 0.08);
+	--bg-edit: color-mix(in srgb, var(--yellow) 8%, transparent);
 	--fg-muted: var(--base6);
 	--accent: var(--blue);
 	--border: var(--panel-border);
-	--user-bg: rgba(132, 160, 198, 0.08);
+	--user-bg: color-mix(in srgb, var(--blue) 8%, transparent);
 	--assistant-bg: var(--base1);
 	--radius: var(--r-md);
 
-	--modified-bg: rgba(226, 164, 120, 0.12);
+	--modified-bg: color-mix(in srgb, var(--orange) 12%, transparent);
 	--modified-fg: var(--orange);
 	--modified-border: var(--orange);
 

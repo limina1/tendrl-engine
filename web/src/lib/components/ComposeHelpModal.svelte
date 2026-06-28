@@ -101,7 +101,7 @@
 		position: fixed;
 		inset: 0;
 		z-index: 320;
-		background: rgba(0, 0, 0, 0.5);
+		background: var(--scrim);
 		display: flex;
 		align-items: center;
 		justify-content: center;
@@ -115,7 +115,7 @@
 		background: var(--bg);
 		border: 1px solid var(--panel-border-strong);
 		border-radius: var(--r-md);
-		box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
+		box-shadow: var(--shadow-lg);
 		font-family: var(--font-mono);
 	}
 	.ch-header {

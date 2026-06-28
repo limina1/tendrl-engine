@@ -121,7 +121,7 @@
 	}
 	.dv-ptr {
 		color: var(--fg-muted);
-		font-size: 0.7rem;
+		font-size: var(--t-3xs);
 		width: 0.9em;
 		display: inline-block;
 	}
@@ -144,7 +144,7 @@
 	.dv-pub-title {
 		flex: 1;
 		min-width: 0;
-		font-size: 0.82rem;
+		font-size: var(--t-xs);
 		font-weight: 500;
 		overflow: hidden;
 		text-overflow: ellipsis;
@@ -152,14 +152,14 @@
 	}
 	.dv-dtag {
 		font-family: var(--font-mono);
-		font-size: 0.6rem;
+		font-size: var(--t-3xs);
 		color: var(--fg-muted);
 		border: 1px solid var(--border);
 		border-radius: 3px;
 		padding: 0 4px;
 	}
 	.dv-count {
-		font-size: 0.68rem;
+		font-size: var(--t-3xs);
 		color: var(--fg-muted);
 	}
 	.dv-versions {
@@ -181,11 +181,11 @@
 		display: flex;
 		align-items: center;
 		gap: 6px;
-		font-size: 0.74rem;
+		font-size: var(--t-2xs);
 		overflow: hidden;
 	}
 	.dv-latest {
-		font-size: 0.62rem;
+		font-size: var(--t-3xs);
 		color: var(--state-online);
 		border: 1px solid color-mix(in srgb, var(--state-online) 40%, transparent);
 		border-radius: 3px;
@@ -193,7 +193,7 @@
 	}
 	.dv-secs {
 		color: var(--fg-muted);
-		font-size: 0.66rem;
+		font-size: var(--t-3xs);
 	}
 	.dv-btn {
 		flex-shrink: 0;
@@ -203,7 +203,7 @@
 		color: var(--fg-muted);
 		cursor: pointer;
 		padding: 1px 7px;
-		font-size: 0.7rem;
+		font-size: var(--t-3xs);
 	}
 	.dv-btn:hover:not(:disabled) {
 		color: var(--accent, var(--id-yours));

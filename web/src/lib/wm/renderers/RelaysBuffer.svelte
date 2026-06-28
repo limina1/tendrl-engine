@@ -1944,7 +1944,7 @@
 		background: transparent;
 		border: none;
 		color: var(--fg-muted);
-		font-size: 0.8rem;
+		font-size: var(--t-2xs);
 		min-width: 18px;
 		cursor: pointer;
 		padding: 0;
@@ -1994,7 +1994,7 @@
 		color: var(--fg);
 	}
 	.toggle-pill--on {
-		background: rgba(180, 190, 130, 0.14);
+		background: color-mix(in srgb, var(--green) 14%, transparent);
 		color: var(--state-online);
 		border-color: color-mix(in srgb, var(--state-online) 50%, transparent);
 	}
@@ -2089,7 +2089,7 @@
 		border-radius: var(--r-md);
 		font-family: var(--font-mono);
 		font-size: var(--t-xs);
-		background: rgba(137, 184, 194, 0.12);
+		background: color-mix(in srgb, var(--cyan) 12%, transparent);
 		color: var(--id-remote);
 		text-decoration: none;
 	}
@@ -2275,7 +2275,7 @@
 		cursor: not-allowed;
 	}
 	.btn-pull--small {
-		font-size: 0.7rem;
+		font-size: var(--t-3xs);
 		padding: 2px 8px;
 	}
 	.pull-hint {
@@ -2315,7 +2315,7 @@
 		margin-bottom: 2px;
 	}
 	.pulled-kind-label {
-		font-size: 0.7rem;
+		font-size: var(--t-3xs);
 		font-family: var(--font-mono);
 		color: var(--base5);
 		margin-top: 6px;
@@ -2338,7 +2338,7 @@
 		gap: 4px 10px;
 		padding: 4px 14px 10px;
 		border-bottom: 1px solid var(--panel-border);
-		font-size: 0.7rem;
+		font-size: var(--t-3xs);
 		font-family: var(--font-mono);
 	}
 	.pull-diag--ok { color: var(--state-online); }
@@ -2350,7 +2350,7 @@
 		gap: 2px 10px;
 		margin: 4px 0 0;
 		font-family: var(--font-mono);
-		font-size: 0.7rem;
+		font-size: var(--t-3xs);
 	}
 	.decrypt-errors dt { color: var(--id-draft); }
 	.decrypt-errors dd { color: var(--base6); margin: 0; }
@@ -2374,7 +2374,7 @@
 	.pulled-set-meta {
 		color: var(--muted);
 		font-family: var(--font-mono);
-		font-size: 0.7rem;
+		font-size: var(--t-3xs);
 	}
 	.pulled-url {
 		font-family: var(--font-mono);
@@ -2387,11 +2387,11 @@
 	.pulled-marker {
 		font-family: var(--font-mono);
 		color: var(--base5);
-		font-size: 0.7rem;
+		font-size: var(--t-3xs);
 	}
 	.pulled-state {
 		font-family: var(--font-mono);
-		font-size: 0.7rem;
+		font-size: var(--t-3xs);
 		color: var(--base5);
 		font-style: italic;
 	}
@@ -2400,7 +2400,7 @@
 		gap: 4px;
 	}
 	.pull-add {
-		font-size: 0.7rem;
+		font-size: var(--t-3xs);
 		padding: 2px 7px;
 		font-family: var(--font-mono);
 		background: none;

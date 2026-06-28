@@ -642,7 +642,7 @@
 		background: none;
 		border: none;
 		color: var(--fg-muted);
-		font-size: 1.1rem;
+		font-size: var(--t-md);
 		cursor: pointer;
 		padding: 2px 6px;
 	}
@@ -666,7 +666,7 @@
 		background: var(--bg-surface);
 		border: 1px solid var(--border);
 		color: var(--fg-muted);
-		font-size: 1rem;
+		font-size: var(--t-base);
 	}
 
 	.identity {
@@ -677,11 +677,11 @@
 
 	.name {
 		font-weight: 600;
-		font-size: 0.95rem;
+		font-size: var(--t-sm);
 	}
 
 	.about {
-		font-size: 0.75rem;
+		font-size: var(--t-2xs);
 		color: var(--fg-muted);
 		overflow: hidden;
 		text-overflow: ellipsis;
@@ -693,7 +693,7 @@
 	}
 
 	.fetch-btn {
-		font-size: 0.7rem;
+		font-size: var(--t-3xs);
 		padding: 4px 10px;
 		background: none;
 		border: 1px solid var(--accent);
@@ -742,7 +742,7 @@
 	.tab-label {
 		flex: 1;
 		padding: 8px 4px 8px 12px;
-		font-size: 0.75rem;
+		font-size: var(--t-2xs);
 		background: none;
 		border: none;
 		color: var(--fg-muted);
@@ -766,7 +766,7 @@
 		border: none;
 		color: var(--base5);
 		cursor: pointer;
-		font-size: 0.85rem;
+		font-size: var(--t-xs);
 		line-height: 1;
 		opacity: 0.6;
 		transition: opacity 100ms;
@@ -789,7 +789,7 @@
 		padding: 24px;
 		text-align: center;
 		color: var(--fg-muted);
-		font-size: 0.85rem;
+		font-size: var(--t-xs);
 	}
 
 	.item {
@@ -799,7 +799,7 @@
 
 	.pub-item {
 		cursor: pointer;
-		border-left: 3px solid #3b82f6;
+		border-left: 3px solid var(--selection);
 	}
 
 	.pub-item:hover {
@@ -826,7 +826,7 @@
 	}
 
 	.item-title {
-		font-size: 0.9rem;
+		font-size: var(--t-sm);
 		font-weight: 600;
 		overflow: hidden;
 		text-overflow: ellipsis;
@@ -835,13 +835,13 @@
 	}
 
 	.item-meta {
-		font-size: 0.7rem;
+		font-size: var(--t-3xs);
 		color: var(--fg-muted);
 		white-space: nowrap;
 	}
 
 	.item-preview {
-		font-size: 0.8rem;
+		font-size: var(--t-2xs);
 		color: var(--fg-muted);
 		line-height: 1.4;
 		margin: 2px 0;
@@ -852,7 +852,7 @@
 	}
 
 	.item-content {
-		font-size: 0.85rem;
+		font-size: var(--t-xs);
 		line-height: 1.5;
 		margin: 4px 0;
 		white-space: pre-wrap;
@@ -866,13 +866,13 @@
 	}
 
 	.item-ref {
-		font-size: 0.7rem;
+		font-size: var(--t-3xs);
 		color: var(--accent);
 		font-family: var(--font-mono);
 	}
 
 	.item-time {
-		font-size: 0.7rem;
+		font-size: var(--t-3xs);
 		color: var(--fg-muted);
 	}
 
@@ -888,7 +888,7 @@
 		border-radius: var(--radius);
 		color: var(--fg-muted);
 		font-family: var(--font-mono);
-		font-size: 0.62rem;
+		font-size: var(--t-3xs);
 		padding: 1px 6px;
 		cursor: pointer;
 		line-height: 1.5;

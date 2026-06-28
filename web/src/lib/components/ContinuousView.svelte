@@ -396,13 +396,13 @@
 	}
 
 	.pub-title {
-		font-size: 1.1rem;
+		font-size: var(--t-md);
 		font-weight: 700;
 		margin: 0 0 8px 0;
 	}
 
 	.pub-summary {
-		font-size: 0.85rem;
+		font-size: var(--t-xs);
 		color: var(--fg-muted);
 		font-style: italic;
 		margin: 0 0 12px 0;
@@ -426,7 +426,7 @@
 	}
 	.cv-treebar__label {
 		font-family: var(--font-mono);
-		font-size: 0.68rem;
+		font-size: var(--t-3xs);
 		text-transform: uppercase;
 		letter-spacing: 0.06em;
 		color: var(--fg-muted);
@@ -437,7 +437,7 @@
 		border: 1px solid var(--border);
 		color: var(--fg-muted);
 		font-family: var(--font-mono);
-		font-size: 0.68rem;
+		font-size: var(--t-3xs);
 		text-transform: uppercase;
 		letter-spacing: 0.04em;
 		padding: 2px 8px;
@@ -489,12 +489,12 @@
 	.cv-index__caret {
 		min-width: 1ch;
 		color: var(--id-yours);
-		font-size: 0.8rem;
+		font-size: var(--t-2xs);
 	}
-	.cv-index__icon { color: var(--id-yours); font-size: 1.1rem; }
+	.cv-index__icon { color: var(--id-yours); font-size: var(--t-md); }
 	.cv-index__title {
 		font-weight: 600;
-		font-size: 0.9rem;
+		font-size: var(--t-sm);
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
@@ -502,7 +502,7 @@
 	.cv-index__count {
 		margin-left: auto;
 		font-family: var(--font-mono);
-		font-size: 0.68rem;
+		font-size: var(--t-3xs);
 		color: var(--fg-muted);
 		white-space: nowrap;
 	}
@@ -513,7 +513,7 @@
 		border-radius: var(--radius);
 		color: var(--id-yours);
 		font-family: var(--font-mono);
-		font-size: 0.66rem;
+		font-size: var(--t-3xs);
 		text-transform: uppercase;
 		letter-spacing: 0.05em;
 		padding: 0 8px;
@@ -526,7 +526,7 @@
 	}
 
 	.section-title {
-		font-size: 0.95rem;
+		font-size: var(--t-sm);
 		font-weight: 600;
 		margin-bottom: 6px;
 		display: flex;
@@ -574,8 +574,8 @@
 	}
 
 	.section-error {
-		color: #ef4444;
-		font-size: 0.8rem;
+		color: var(--danger);
+		font-size: var(--t-2xs);
 	}
 
 	.section-divider {
@@ -589,7 +589,7 @@
 		color: var(--fg-muted);
 		text-align: center;
 		margin-top: 40px;
-		font-size: 0.85rem;
+		font-size: var(--t-xs);
 	}
 	.cv-threads {
 		margin-top: 10px;

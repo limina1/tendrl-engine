@@ -1,11 +1,25 @@
-/* Iceberg Dark — Tendrl design tokens */
+/* Iceberg — Tendrl design tokens.
+   :root is iceberg-dark (the default). A second palette, iceberg-light,
+   lives below and activates via `data-theme="iceberg-light"` on <html>.
+   Only color tokens are themed; type, spacing, radii, and chrome
+   dimensions are shared. */
 :root {
+  /* User text-size control. Settings → Appearance writes this multiplier
+     (Compact 1.0 / Default 1.08 / Large 1.23 / X-Large 1.38 — see
+     text-scale.svelte.ts); a no-flash inline script in app.html applies the
+     saved value to documentElement before first paint. 1.0 == the documented
+     13px grid below; the shipped default 1.08 lands the comfortable ≈14px.
+     The default also lives in the var() fallback so the grid still resolves
+     if JS never runs. Keep this in sync with the 'default' preset factor. */
+  --text-scale: 1.08;
+
   /* Root scaling anchor. 1rem = 13px at a 16px browser default (13/16 =
      81.25%), but expressed relatively so the whole UI scales as one unit
      with the user's browser/OS font-size preference and text-only zoom.
      Every token below is rem, so type, spacing, and chrome scale together
-     off this single knob — change it (or zoom) and nothing spills. */
-  font-size: 81.25%;
+     off this single knob — multiplied by --text-scale for the user control,
+     so changing the preset (or zooming) rescales everything and nothing spills. */
+  font-size: calc(81.25% * var(--text-scale, 1.08));
 
   /* Base scale (Iceberg) */
   --bg:        #161821;
@@ -58,6 +72,29 @@
   --state-offline:   #6b7089;
   --state-fetching:  #e9b189;
   --state-error:     #e27878;
+
+  /* Vivid action & state accents — deliberately brighter than the muted
+     Iceberg base so interactive affordances and live states pop. Each
+     names one role; every theme supplies its own value. */
+  --danger:        #ef4444;  /* destructive / error / remove accent */
+  --danger-strong: #dc2626;  /* heavier error fill — banners, buttons */
+  --success:       #22c55e;  /* connected / online / added */
+  --warning:       #eab308;  /* degraded / pending / caution state */
+  --selection:     #3b82f6;  /* active/selected affordance ring */
+  --match:         #f97316;  /* search-term match highlight */
+
+  /* Inline-notice banner (compose/edit warnings) */
+  --warn-fg:       #fcd34d;
+  --warn-bg:       #292524;
+  --warn-border:   #44403c;
+
+  /* Modal scrim, spotlight mask, and elevation shadows — black-based for
+     the dark theme today; a light theme overrides these like any token. */
+  --scrim:         rgba(0, 0, 0, 0.55);
+  --spotlight-mask: rgba(0, 0, 0, 0.32);
+  --shadow-sm:     0 2px 8px rgba(0, 0, 0, 0.2);
+  --shadow-md:     0 8px 24px rgba(0, 0, 0, 0.35);
+  --shadow-lg:     0 12px 40px rgba(0, 0, 0, 0.5);
 
   /* Chrome affordance roles — the two recurring "open a panel" glyphs.
      One hue each so a settings (gear) and a help (?) control read the
@@ -113,6 +150,1067 @@
   --panel-header-h: 2.154rem; /* 28px */
 }
 
+/* ── Iceberg Light ──────────────────────────────────────────────────
+   Activated by `data-theme="iceberg-light"` on <html>. Overrides every
+   color token; hue associations match iceberg-dark (e.g. --id-imported =
+   magenta, --state-online = green) — only the palette values flip. Note
+   the light base ramp inverts polarity (base0 light → base8 dark), so the
+   panel/border roles are hand-tuned for "stronger = darker" rather than
+   tracking a base index the way the dark theme can. */
+:root[data-theme='iceberg-light'] {
+  /* Base scale (Iceberg Light) */
+  --bg:        #e8e9ec;
+  --bg-alt:    #dde1e6;
+  --base0:     #dcdfe7;
+  --base1:     #c6c8d1;
+  --base2:     #a5c9d4;
+  --base3:     #f8fcfd;
+  --base4:     #6b7a8f;
+  --base5:     #4c566a;
+  --base6:     #9099ab;
+  --base7:     #33374c;
+  --base8:     #1b2b3c;
+  --fg:        #161821;
+  --fg-alt:    #6b7089;
+
+  /* Semantic color — enhanced for contrast on a light ground */
+  --red:        #cc3850;
+  --orange:     #cc7833;
+  --green:      #457c03;
+  --teal:       #289999;
+  --yellow:     #be9117;
+  --blue:       #4271ae;
+  --dark-blue:  #0a4cbe;
+  --magenta:    #8959a8;
+  --violet:     #7a63ee;
+  --cyan:       #3e999f;
+  --dark-cyan:  #2c7088;
+
+  /* Roles — "stronger" means darker/more visible on light, the opposite
+     of the dark ramp, so these are picked explicitly. */
+  --panel-bg:            #e8e9ec;
+  --panel-bg-soft:       #dde1e6;
+  --panel-border:        #c6c8d1;
+  --panel-border-strong: #9099ab;
+  --panel-rail-bg:       #dde1e6;
+  --panel-header-bg:     #e1e4e8;
+  --content-bg:          #e8e9ec;
+
+  /* Identity strip — same hue associations as dark */
+  --id-yours:    #4271ae;  /* blue */
+  --id-imported: #8959a8;  /* magenta */
+  --id-forked:   #7a63ee;  /* violet */
+  --id-diverged: #cc7833;  /* orange */
+  --id-local:    #be9117;  /* yellow */
+  --id-remote:   #3e999f;  /* cyan */
+  --id-draft:    #cc3850;  /* red */
+
+  /* State */
+  --state-online:   #457c03;  /* green */
+  --state-offline:  #4c566a;  /* muted slate */
+  --state-fetching: #be9117;  /* yellow */
+  --state-error:    #cc3850;  /* red */
+
+  /* Vivid action & state accents — error/success/warning/selection map to
+     the palette's face categories. */
+  --danger:        #cc2f45;
+  --danger-strong: #b01f38;
+  --success:       #457c03;  /* green */
+  --warning:       #be9117;  /* yellow */
+  --selection:     #0a4cbe;  /* dark-blue */
+  --match:         #cc7833;  /* orange */
+
+  /* Inline-notice banner — dark amber on a pale amber wash */
+  --warn-fg:     #7a5b00;
+  --warn-bg:     #fbf1d2;
+  --warn-border: #e3c677;
+
+  /* Scrim, spotlight, elevation — lighter scrim + cool, soft shadows */
+  --scrim:          rgba(0, 0, 0, 0.35);
+  --spotlight-mask: rgba(0, 0, 0, 0.2);
+  --shadow-sm:      0 2px 8px rgba(27, 43, 60, 0.12);
+  --shadow-md:      0 8px 24px rgba(27, 43, 60, 0.16);
+  --shadow-lg:      0 12px 40px rgba(27, 43, 60, 0.22);
+
+  /* Chrome affordances */
+  --affordance-settings:    #8959a8;  /* magenta */
+  --affordance-help:        #a87c1a;  /* gold */
+  --affordance-walkthrough: #6b7a8f;  /* dull slate */
+}
+
+/* ── Solarized Dark (Ethan Schoonover) ─────────────────────────────── */
+:root[data-theme='solarized-dark'] {
+  --bg:        #002b36;
+  --bg-alt:    #00252e;
+  --base0:     #00212b;
+  --base1:     #073642;
+  --base2:     #0a3f4d;
+  --base3:     #1a5a6b;
+  --base4:     #456b73;
+  --base5:     #586e75;
+  --base6:     #657b83;
+  --base7:     #93a1a1;
+  --base8:     #eee8d5;
+  --fg:        #839496;
+  --fg-alt:    #93a1a1;
+
+  --red:        #dc322f;
+  --orange:     #cb4b16;
+  --green:      #859900;
+  --teal:       #2aa198;
+  --yellow:     #b58900;
+  --blue:       #268bd2;
+  --dark-blue:  #1a6ca8;
+  --magenta:    #d33682;
+  --violet:     #6c71c4;
+  --cyan:       #2aa198;
+  --dark-cyan:  #21807a;
+
+  --panel-bg:            #002b36;
+  --panel-bg-soft:       #073642;
+  --panel-border:        #0a3f4d;
+  --panel-border-strong: #1a5a6b;
+  --panel-rail-bg:       #00212b;
+  --panel-header-bg:     #073642;
+  --content-bg:          #002b36;
+
+  --id-yours:    #268bd2;
+  --id-imported: #d33682;
+  --id-forked:   #6c71c4;
+  --id-diverged: #cb4b16;
+  --id-local:    #b58900;
+  --id-remote:   #2aa198;
+  --id-draft:    #dc322f;
+
+  --state-online:   #859900;
+  --state-offline:  #586e75;
+  --state-fetching: #b58900;
+  --state-error:    #dc322f;
+
+  --danger:        #dc322f;
+  --danger-strong: #b5281f;
+  --success:       #859900;
+  --warning:       #b58900;
+  --selection:     #1a6ca8;
+  --match:         #cb4b16;
+
+  --warn-fg:     #d9b54a;
+  --warn-bg:     #0c333d;
+  --warn-border: #3a5560;
+
+  --scrim:          rgba(0, 0, 0, 0.55);
+  --spotlight-mask: rgba(0, 0, 0, 0.32);
+  --shadow-sm:      0 2px 8px rgba(0, 0, 0, 0.2);
+  --shadow-md:      0 8px 24px rgba(0, 0, 0, 0.35);
+  --shadow-lg:      0 12px 40px rgba(0, 0, 0, 0.5);
+
+  --affordance-settings:    #d33682;
+  --affordance-help:        #b58900;
+  --affordance-walkthrough: #657b83;
+}
+
+/* ── Solarized Light ───────────────────────────────────────────────── */
+:root[data-theme='solarized-light'] {
+  --bg:        #fdf6e3;
+  --bg-alt:    #f4edd8;
+  --base0:     #fdf6e3;
+  --base1:     #eee8d5;
+  --base2:     #ddd6bf;
+  --base3:     #c9c2a8;
+  --base4:     #93a1a1;
+  --base5:     #586e75;
+  --base6:     #93a1a1;
+  --base7:     #073642;
+  --base8:     #002b36;
+  --fg:        #586e75;
+  --fg-alt:    #657b83;
+
+  --red:        #dc322f;
+  --orange:     #cb4b16;
+  --green:      #859900;
+  --teal:       #2aa198;
+  --yellow:     #b58900;
+  --blue:       #268bd2;
+  --dark-blue:  #0a6ca8;
+  --magenta:    #d33682;
+  --violet:     #6c71c4;
+  --cyan:       #2aa198;
+  --dark-cyan:  #21807a;
+
+  --panel-bg:            #fdf6e3;
+  --panel-bg-soft:       #f4edd8;
+  --panel-border:        #ddd6bf;
+  --panel-border-strong: #b5ae93;
+  --panel-rail-bg:       #f4edd8;
+  --panel-header-bg:     #f7f0dd;
+  --content-bg:          #fdf6e3;
+
+  --id-yours:    #268bd2;
+  --id-imported: #d33682;
+  --id-forked:   #6c71c4;
+  --id-diverged: #cb4b16;
+  --id-local:    #b58900;
+  --id-remote:   #2aa198;
+  --id-draft:    #dc322f;
+
+  --state-online:   #859900;
+  --state-offline:  #93a1a1;
+  --state-fetching: #b58900;
+  --state-error:    #dc322f;
+
+  --danger:        #dc322f;
+  --danger-strong: #b5281f;
+  --success:       #859900;
+  --warning:       #b58900;
+  --selection:     #268bd2;
+  --match:         #cb4b16;
+
+  --warn-fg:     #7a5b00;
+  --warn-bg:     #f6edc8;
+  --warn-border: #e0cf8a;
+
+  --scrim:          rgba(0, 0, 0, 0.35);
+  --spotlight-mask: rgba(0, 0, 0, 0.2);
+  --shadow-sm:      0 2px 8px rgba(0, 43, 54, 0.12);
+  --shadow-md:      0 8px 24px rgba(0, 43, 54, 0.16);
+  --shadow-lg:      0 12px 40px rgba(0, 43, 54, 0.22);
+
+  --affordance-settings:    #d33682;
+  --affordance-help:        #a8800f;
+  --affordance-walkthrough: #93a1a1;
+}
+
+/* ── Gruvbox Dark (medium) ─────────────────────────────────────────── */
+:root[data-theme='gruvbox-dark'] {
+  --bg:        #282828;
+  --bg-alt:    #1d2021;
+  --base0:     #1d2021;
+  --base1:     #3c3836;
+  --base2:     #504945;
+  --base3:     #665c54;
+  --base4:     #7c6f64;
+  --base5:     #928374;
+  --base6:     #a89984;
+  --base7:     #d5c4a1;
+  --base8:     #fbf1c7;
+  --fg:        #ebdbb2;
+  --fg-alt:    #d5c4a1;
+
+  --red:        #fb4934;
+  --orange:     #fe8019;
+  --green:      #b8bb26;
+  --teal:       #8ec07c;
+  --yellow:     #fabd2f;
+  --blue:       #83a598;
+  --dark-blue:  #458588;
+  --magenta:    #d3869b;
+  --violet:     #b16286;
+  --cyan:       #8ec07c;
+  --dark-cyan:  #689d6a;
+
+  --panel-bg:            #282828;
+  --panel-bg-soft:       #3c3836;
+  --panel-border:        #504945;
+  --panel-border-strong: #665c54;
+  --panel-rail-bg:       #1d2021;
+  --panel-header-bg:     #3c3836;
+  --content-bg:          #282828;
+
+  --id-yours:    #83a598;
+  --id-imported: #d3869b;
+  --id-forked:   #b16286;
+  --id-diverged: #fe8019;
+  --id-local:    #fabd2f;
+  --id-remote:   #8ec07c;
+  --id-draft:    #fb4934;
+
+  --state-online:   #b8bb26;
+  --state-offline:  #928374;
+  --state-fetching: #fabd2f;
+  --state-error:    #fb4934;
+
+  --danger:        #fb4934;
+  --danger-strong: #cc241d;
+  --success:       #b8bb26;
+  --warning:       #fabd2f;
+  --selection:     #458588;
+  --match:         #fe8019;
+
+  --warn-fg:     #fabd2f;
+  --warn-bg:     #3c3836;
+  --warn-border: #665c54;
+
+  --scrim:          rgba(0, 0, 0, 0.55);
+  --spotlight-mask: rgba(0, 0, 0, 0.32);
+  --shadow-sm:      0 2px 8px rgba(0, 0, 0, 0.2);
+  --shadow-md:      0 8px 24px rgba(0, 0, 0, 0.35);
+  --shadow-lg:      0 12px 40px rgba(0, 0, 0, 0.5);
+
+  --affordance-settings:    #d3869b;
+  --affordance-help:        #fabd2f;
+  --affordance-walkthrough: #928374;
+}
+
+/* ── Gruvbox Light (faded accents on cream) ────────────────────────── */
+:root[data-theme='gruvbox-light'] {
+  --bg:        #fbf1c7;
+  --bg-alt:    #f2e5bc;
+  --base0:     #fbf1c7;
+  --base1:     #ebdbb2;
+  --base2:     #d5c4a1;
+  --base3:     #bdae93;
+  --base4:     #a89984;
+  --base5:     #7c6f64;
+  --base6:     #928374;
+  --base7:     #504945;
+  --base8:     #282828;
+  --fg:        #3c3836;
+  --fg-alt:    #504945;
+
+  --red:        #9d0006;
+  --orange:     #af3a03;
+  --green:      #79740e;
+  --teal:       #427b58;
+  --yellow:     #b57614;
+  --blue:       #076678;
+  --dark-blue:  #076678;
+  --magenta:    #b16286;
+  --violet:     #8f3f71;
+  --cyan:       #427b58;
+  --dark-cyan:  #427b58;
+
+  --panel-bg:            #fbf1c7;
+  --panel-bg-soft:       #f2e5bc;
+  --panel-border:        #d5c4a1;
+  --panel-border-strong: #bdae93;
+  --panel-rail-bg:       #f2e5bc;
+  --panel-header-bg:     #f6ecbf;
+  --content-bg:          #fbf1c7;
+
+  --id-yours:    #076678;
+  --id-imported: #b16286;
+  --id-forked:   #8f3f71;
+  --id-diverged: #af3a03;
+  --id-local:    #b57614;
+  --id-remote:   #427b58;
+  --id-draft:    #9d0006;
+
+  --state-online:   #79740e;
+  --state-offline:  #928374;
+  --state-fetching: #b57614;
+  --state-error:    #9d0006;
+
+  --danger:        #9d0006;
+  --danger-strong: #790000;
+  --success:       #79740e;
+  --warning:       #b57614;
+  --selection:     #076678;
+  --match:         #af3a03;
+
+  --warn-fg:     #7a4a00;
+  --warn-bg:     #f6ead0;
+  --warn-border: #d9b772;
+
+  --scrim:          rgba(0, 0, 0, 0.35);
+  --spotlight-mask: rgba(0, 0, 0, 0.2);
+  --shadow-sm:      0 2px 8px rgba(40, 40, 40, 0.12);
+  --shadow-md:      0 8px 24px rgba(40, 40, 40, 0.16);
+  --shadow-lg:      0 12px 40px rgba(40, 40, 40, 0.22);
+
+  --affordance-settings:    #8f3f71;
+  --affordance-help:        #b57614;
+  --affordance-walkthrough: #7c6f64;
+}
+
+/* ── Tokyo Night (Night) ───────────────────────────────────────────── */
+:root[data-theme='tokyonight-dark'] {
+  --bg:        #1a1b26;
+  --bg-alt:    #16161e;
+  --base0:     #16161e;
+  --base1:     #1f2335;
+  --base2:     #292e42;
+  --base3:     #3b4261;
+  --base4:     #414868;
+  --base5:     #565f89;
+  --base6:     #737aa2;
+  --base7:     #a9b1d6;
+  --base8:     #c0caf5;
+  --fg:        #c0caf5;
+  --fg-alt:    #a9b1d6;
+
+  --red:        #f7768e;
+  --orange:     #ff9e64;
+  --green:      #9ece6a;
+  --teal:       #1abc9c;
+  --yellow:     #e0af68;
+  --blue:       #7aa2f7;
+  --dark-blue:  #3d59a1;
+  --magenta:    #bb9af7;
+  --violet:     #9d7cd8;
+  --cyan:       #7dcfff;
+  --dark-cyan:  #2ac3de;
+
+  --panel-bg:            #1a1b26;
+  --panel-bg-soft:       #1f2335;
+  --panel-border:        #292e42;
+  --panel-border-strong: #3b4261;
+  --panel-rail-bg:       #16161e;
+  --panel-header-bg:     #1f2335;
+  --content-bg:          #1a1b26;
+
+  --id-yours:    #7aa2f7;
+  --id-imported: #bb9af7;
+  --id-forked:   #9d7cd8;
+  --id-diverged: #ff9e64;
+  --id-local:    #e0af68;
+  --id-remote:   #7dcfff;
+  --id-draft:    #f7768e;
+
+  --state-online:   #9ece6a;
+  --state-offline:  #565f89;
+  --state-fetching: #e0af68;
+  --state-error:    #f7768e;
+
+  --danger:        #f7768e;
+  --danger-strong: #db4b6a;
+  --success:       #9ece6a;
+  --warning:       #e0af68;
+  --selection:     #3d59a1;
+  --match:         #ff9e64;
+
+  --warn-fg:     #e0af68;
+  --warn-bg:     #2a2435;
+  --warn-border: #3b4261;
+
+  --scrim:          rgba(0, 0, 0, 0.55);
+  --spotlight-mask: rgba(0, 0, 0, 0.32);
+  --shadow-sm:      0 2px 8px rgba(0, 0, 0, 0.2);
+  --shadow-md:      0 8px 24px rgba(0, 0, 0, 0.35);
+  --shadow-lg:      0 12px 40px rgba(0, 0, 0, 0.5);
+
+  --affordance-settings:    #bb9af7;
+  --affordance-help:        #e0af68;
+  --affordance-walkthrough: #737aa2;
+}
+
+/* ── Tokyo Night (Day) ─────────────────────────────────────────────── */
+:root[data-theme='tokyonight-light'] {
+  --bg:        #e1e2e7;
+  --bg-alt:    #d0d5e3;
+  --base0:     #e9e9ed;
+  --base1:     #d0d5e3;
+  --base2:     #c4c8da;
+  --base3:     #a8aecb;
+  --base4:     #8990b3;
+  --base5:     #68709a;
+  --base6:     #848cb5;
+  --base7:     #6172b0;
+  --base8:     #2c2e40;
+  --fg:        #3760bf;
+  --fg-alt:    #6172b0;
+
+  --red:        #f52a65;
+  --orange:     #b15c00;
+  --green:      #587539;
+  --teal:       #118c74;
+  --yellow:     #8c6c3e;
+  --blue:       #2e7de9;
+  --dark-blue:  #2e5db8;
+  --magenta:    #9854f1;
+  --violet:     #7847bd;
+  --cyan:       #007197;
+  --dark-cyan:  #006a8e;
+
+  --panel-bg:            #e1e2e7;
+  --panel-bg-soft:       #d0d5e3;
+  --panel-border:        #c4c8da;
+  --panel-border-strong: #a8aecb;
+  --panel-rail-bg:       #d0d5e3;
+  --panel-header-bg:     #d8dbe6;
+  --content-bg:          #e1e2e7;
+
+  --id-yours:    #2e7de9;
+  --id-imported: #9854f1;
+  --id-forked:   #7847bd;
+  --id-diverged: #b15c00;
+  --id-local:    #8c6c3e;
+  --id-remote:   #007197;
+  --id-draft:    #f52a65;
+
+  --state-online:   #587539;
+  --state-offline:  #848cb5;
+  --state-fetching: #8c6c3e;
+  --state-error:    #f52a65;
+
+  --danger:        #f52a65;
+  --danger-strong: #c01048;
+  --success:       #587539;
+  --warning:       #b15c00;
+  --selection:     #2e7de9;
+  --match:         #b15c00;
+
+  --warn-fg:     #7a5300;
+  --warn-bg:     #f0e6cf;
+  --warn-border: #d8c08a;
+
+  --scrim:          rgba(0, 0, 0, 0.35);
+  --spotlight-mask: rgba(0, 0, 0, 0.2);
+  --shadow-sm:      0 2px 8px rgba(44, 46, 64, 0.12);
+  --shadow-md:      0 8px 24px rgba(44, 46, 64, 0.16);
+  --shadow-lg:      0 12px 40px rgba(44, 46, 64, 0.22);
+
+  --affordance-settings:    #9854f1;
+  --affordance-help:        #8c6c3e;
+  --affordance-walkthrough: #848cb5;
+}
+
+/* ── Catppuccin Mocha ──────────────────────────────────────────────── */
+:root[data-theme='catppuccin-dark'] {
+  --bg:        #1e1e2e;
+  --bg-alt:    #181825;
+  --base0:     #11111b;
+  --base1:     #181825;
+  --base2:     #313244;
+  --base3:     #45475a;
+  --base4:     #585b70;
+  --base5:     #6c7086;
+  --base6:     #9399b2;
+  --base7:     #bac2de;
+  --base8:     #cdd6f4;
+  --fg:        #cdd6f4;
+  --fg-alt:    #bac2de;
+
+  --red:        #f38ba8;
+  --orange:     #fab387;
+  --green:      #a6e3a1;
+  --teal:       #94e2d5;
+  --yellow:     #f9e2af;
+  --blue:       #89b4fa;
+  --dark-blue:  #5a7fd6;
+  --magenta:    #f5c2e7;
+  --violet:     #cba6f7;
+  --cyan:       #89dceb;
+  --dark-cyan:  #74c7ec;
+
+  --panel-bg:            #1e1e2e;
+  --panel-bg-soft:       #181825;
+  --panel-border:        #313244;
+  --panel-border-strong: #45475a;
+  --panel-rail-bg:       #181825;
+  --panel-header-bg:     #313244;
+  --content-bg:          #1e1e2e;
+
+  --id-yours:    #89b4fa;
+  --id-imported: #f5c2e7;
+  --id-forked:   #cba6f7;
+  --id-diverged: #fab387;
+  --id-local:    #f9e2af;
+  --id-remote:   #89dceb;
+  --id-draft:    #f38ba8;
+
+  --state-online:   #a6e3a1;
+  --state-offline:  #6c7086;
+  --state-fetching: #f9e2af;
+  --state-error:    #f38ba8;
+
+  --danger:        #f38ba8;
+  --danger-strong: #e64d6f;
+  --success:       #a6e3a1;
+  --warning:       #f9e2af;
+  --selection:     #89b4fa;
+  --match:         #fab387;
+
+  --warn-fg:     #f9e2af;
+  --warn-bg:     #302d3d;
+  --warn-border: #45475a;
+
+  --scrim:          rgba(0, 0, 0, 0.55);
+  --spotlight-mask: rgba(0, 0, 0, 0.32);
+  --shadow-sm:      0 2px 8px rgba(0, 0, 0, 0.2);
+  --shadow-md:      0 8px 24px rgba(0, 0, 0, 0.35);
+  --shadow-lg:      0 12px 40px rgba(0, 0, 0, 0.5);
+
+  --affordance-settings:    #cba6f7;
+  --affordance-help:        #f9e2af;
+  --affordance-walkthrough: #9399b2;
+}
+
+/* ── Catppuccin Latte ──────────────────────────────────────────────── */
+:root[data-theme='catppuccin-light'] {
+  --bg:        #eff1f5;
+  --bg-alt:    #e6e9ef;
+  --base0:     #eff1f5;
+  --base1:     #e6e9ef;
+  --base2:     #ccd0da;
+  --base3:     #bcc0cc;
+  --base4:     #acb0be;
+  --base5:     #6c6f85;
+  --base6:     #8c8fa1;
+  --base7:     #5c5f77;
+  --base8:     #4c4f69;
+  --fg:        #4c4f69;
+  --fg-alt:    #5c5f77;
+
+  --red:        #d20f39;
+  --orange:     #fe640b;
+  --green:      #40a02b;
+  --teal:       #179299;
+  --yellow:     #df8e1d;
+  --blue:       #1e66f5;
+  --dark-blue:  #1e50c0;
+  --magenta:    #ea76cb;
+  --violet:     #8839ef;
+  --cyan:       #04a5e5;
+  --dark-cyan:  #179299;
+
+  --panel-bg:            #eff1f5;
+  --panel-bg-soft:       #e6e9ef;
+  --panel-border:        #ccd0da;
+  --panel-border-strong: #acb0be;
+  --panel-rail-bg:       #e6e9ef;
+  --panel-header-bg:     #e9ecf1;
+  --content-bg:          #eff1f5;
+
+  --id-yours:    #1e66f5;
+  --id-imported: #ea76cb;
+  --id-forked:   #8839ef;
+  --id-diverged: #fe640b;
+  --id-local:    #df8e1d;
+  --id-remote:   #04a5e5;
+  --id-draft:    #d20f39;
+
+  --state-online:   #40a02b;
+  --state-offline:  #8c8fa1;
+  --state-fetching: #df8e1d;
+  --state-error:    #d20f39;
+
+  --danger:        #d20f39;
+  --danger-strong: #a80c2e;
+  --success:       #40a02b;
+  --warning:       #df8e1d;
+  --selection:     #1e66f5;
+  --match:         #fe640b;
+
+  --warn-fg:     #8a5a00;
+  --warn-bg:     #f3ead1;
+  --warn-border: #ddc488;
+
+  --scrim:          rgba(0, 0, 0, 0.35);
+  --spotlight-mask: rgba(0, 0, 0, 0.2);
+  --shadow-sm:      0 2px 8px rgba(76, 79, 105, 0.12);
+  --shadow-md:      0 8px 24px rgba(76, 79, 105, 0.16);
+  --shadow-lg:      0 12px 40px rgba(76, 79, 105, 0.22);
+
+  --affordance-settings:    #8839ef;
+  --affordance-help:        #b07d12;
+  --affordance-walkthrough: #8c8fa1;
+}
+
+/* ── Nord (Polar Night) ────────────────────────────────────────────── */
+:root[data-theme='nord-dark'] {
+  --bg:        #2e3440;
+  --bg-alt:    #2a2f3a;
+  --base0:     #292e38;
+  --base1:     #3b4252;
+  --base2:     #434c5e;
+  --base3:     #4c566a;
+  --base4:     #616e88;
+  --base5:     #6c7a96;
+  --base6:     #8b95a8;
+  --base7:     #d8dee9;
+  --base8:     #eceff4;
+  --fg:        #d8dee9;
+  --fg-alt:    #c0c8d6;
+
+  --red:        #bf616a;
+  --orange:     #d08770;
+  --green:      #a3be8c;
+  --teal:       #8fbcbb;
+  --yellow:     #ebcb8b;
+  --blue:       #81a1c1;
+  --dark-blue:  #5e81ac;
+  --magenta:    #b48ead;
+  --violet:     #a884b0;
+  --cyan:       #88c0d0;
+  --dark-cyan:  #6a9fb5;
+
+  --panel-bg:            #2e3440;
+  --panel-bg-soft:       #3b4252;
+  --panel-border:        #434c5e;
+  --panel-border-strong: #4c566a;
+  --panel-rail-bg:       #292e38;
+  --panel-header-bg:     #3b4252;
+  --content-bg:          #2e3440;
+
+  --id-yours:    #81a1c1;
+  --id-imported: #b48ead;
+  --id-forked:   #a884b0;
+  --id-diverged: #d08770;
+  --id-local:    #ebcb8b;
+  --id-remote:   #88c0d0;
+  --id-draft:    #bf616a;
+
+  --state-online:   #a3be8c;
+  --state-offline:  #6c7a96;
+  --state-fetching: #ebcb8b;
+  --state-error:    #bf616a;
+
+  --danger:        #bf616a;
+  --danger-strong: #a54e57;
+  --success:       #a3be8c;
+  --warning:       #ebcb8b;
+  --selection:     #5e81ac;
+  --match:         #d08770;
+
+  --warn-fg:     #ebcb8b;
+  --warn-bg:     #3a3d3a;
+  --warn-border: #4c566a;
+
+  --scrim:          rgba(0, 0, 0, 0.55);
+  --spotlight-mask: rgba(0, 0, 0, 0.32);
+  --shadow-sm:      0 2px 8px rgba(0, 0, 0, 0.2);
+  --shadow-md:      0 8px 24px rgba(0, 0, 0, 0.35);
+  --shadow-lg:      0 12px 40px rgba(0, 0, 0, 0.5);
+
+  --affordance-settings:    #b48ead;
+  --affordance-help:        #ebcb8b;
+  --affordance-walkthrough: #8b95a8;
+}
+
+/* ── Nord (Snow Storm) ─────────────────────────────────────────────── */
+:root[data-theme='nord-light'] {
+  --bg:        #eceff4;
+  --bg-alt:    #e5e9f0;
+  --base0:     #eceff4;
+  --base1:     #e5e9f0;
+  --base2:     #d8dee9;
+  --base3:     #c2ccda;
+  --base4:     #aab6c8;
+  --base5:     #4c566a;
+  --base6:     #7b88a1;
+  --base7:     #3b4252;
+  --base8:     #2e3440;
+  --fg:        #2e3440;
+  --fg-alt:    #434c5e;
+
+  --red:        #b0434d;
+  --orange:     #bf6a4f;
+  --green:      #6f8c52;
+  --teal:       #4f8b8a;
+  --yellow:     #a3801f;
+  --blue:       #5e81ac;
+  --dark-blue:  #46688f;
+  --magenta:    #97678f;
+  --violet:     #8c6a93;
+  --cyan:       #5b8a9e;
+  --dark-cyan:  #4a7488;
+
+  --panel-bg:            #eceff4;
+  --panel-bg-soft:       #e5e9f0;
+  --panel-border:        #d8dee9;
+  --panel-border-strong: #c2ccda;
+  --panel-rail-bg:       #e5e9f0;
+  --panel-header-bg:     #e8ebf1;
+  --content-bg:          #eceff4;
+
+  --id-yours:    #5e81ac;
+  --id-imported: #97678f;
+  --id-forked:   #8c6a93;
+  --id-diverged: #bf6a4f;
+  --id-local:    #a3801f;
+  --id-remote:   #5b8a9e;
+  --id-draft:    #b0434d;
+
+  --state-online:   #6f8c52;
+  --state-offline:  #7b88a1;
+  --state-fetching: #a3801f;
+  --state-error:    #b0434d;
+
+  --danger:        #b0434d;
+  --danger-strong: #8f343d;
+  --success:       #6f8c52;
+  --warning:       #a3801f;
+  --selection:     #5e81ac;
+  --match:         #bf6a4f;
+
+  --warn-fg:     #7a5a00;
+  --warn-bg:     #efe9d4;
+  --warn-border: #d4c48f;
+
+  --scrim:          rgba(0, 0, 0, 0.35);
+  --spotlight-mask: rgba(0, 0, 0, 0.2);
+  --shadow-sm:      0 2px 8px rgba(46, 52, 64, 0.12);
+  --shadow-md:      0 8px 24px rgba(46, 52, 64, 0.16);
+  --shadow-lg:      0 12px 40px rgba(46, 52, 64, 0.22);
+
+  --affordance-settings:    #97678f;
+  --affordance-help:        #a3801f;
+  --affordance-walkthrough: #7b88a1;
+}
+
+/* ── Dracula ───────────────────────────────────────────────────────── */
+:root[data-theme='dracula-dark'] {
+  --bg:        #282a36;
+  --bg-alt:    #21222c;
+  --base0:     #1e1f29;
+  --base1:     #343746;
+  --base2:     #44475a;
+  --base3:     #565973;
+  --base4:     #6272a4;
+  --base5:     #6272a4;
+  --base6:     #8a90c0;
+  --base7:     #c8cce0;
+  --base8:     #f8f8f2;
+  --fg:        #f8f8f2;
+  --fg-alt:    #d8dae8;
+
+  --red:        #ff5555;
+  --orange:     #ffb86c;
+  --green:      #50fa7b;
+  --teal:       #4be0c0;
+  --yellow:     #f1fa8c;
+  --blue:       #79c0ff;
+  --dark-blue:  #6272a4;
+  --magenta:    #ff79c6;
+  --violet:     #bd93f9;
+  --cyan:       #8be9fd;
+  --dark-cyan:  #62c9d6;
+
+  --panel-bg:            #282a36;
+  --panel-bg-soft:       #343746;
+  --panel-border:        #44475a;
+  --panel-border-strong: #565973;
+  --panel-rail-bg:       #21222c;
+  --panel-header-bg:     #343746;
+  --content-bg:          #282a36;
+
+  --id-yours:    #79c0ff;
+  --id-imported: #ff79c6;
+  --id-forked:   #bd93f9;
+  --id-diverged: #ffb86c;
+  --id-local:    #f1fa8c;
+  --id-remote:   #8be9fd;
+  --id-draft:    #ff5555;
+
+  --state-online:   #50fa7b;
+  --state-offline:  #6272a4;
+  --state-fetching: #f1fa8c;
+  --state-error:    #ff5555;
+
+  --danger:        #ff5555;
+  --danger-strong: #e23d3d;
+  --success:       #50fa7b;
+  --warning:       #f1fa8c;
+  --selection:     #6272a4;
+  --match:         #ffb86c;
+
+  --warn-fg:     #f1fa8c;
+  --warn-bg:     #353648;
+  --warn-border: #565973;
+
+  --scrim:          rgba(0, 0, 0, 0.55);
+  --spotlight-mask: rgba(0, 0, 0, 0.32);
+  --shadow-sm:      0 2px 8px rgba(0, 0, 0, 0.2);
+  --shadow-md:      0 8px 24px rgba(0, 0, 0, 0.35);
+  --shadow-lg:      0 12px 40px rgba(0, 0, 0, 0.5);
+
+  --affordance-settings:    #bd93f9;
+  --affordance-help:        #f1fa8c;
+  --affordance-walkthrough: #8a90c0;
+}
+
+/* ── Dracula (Alucard light) ───────────────────────────────────────── */
+:root[data-theme='dracula-light'] {
+  --bg:        #f4f4f2;
+  --bg-alt:    #e8e8e4;
+  --base0:     #f4f4f2;
+  --base1:     #e8e8e4;
+  --base2:     #d6d6d0;
+  --base3:     #bcbcb4;
+  --base4:     #9a9a90;
+  --base5:     #565973;
+  --base6:     #7a7a90;
+  --base7:     #2f2f3a;
+  --base8:     #1f1f29;
+  --fg:        #1f1f29;
+  --fg-alt:    #44475a;
+
+  --red:        #cb3a2a;
+  --orange:     #a34d14;
+  --green:      #14710a;
+  --teal:       #036a96;
+  --yellow:     #846e15;
+  --blue:       #2c6fb3;
+  --dark-blue:  #225a96;
+  --magenta:    #a3144d;
+  --violet:     #644ac9;
+  --cyan:       #036a96;
+  --dark-cyan:  #035a82;
+
+  --panel-bg:            #f4f4f2;
+  --panel-bg-soft:       #e8e8e4;
+  --panel-border:        #d6d6d0;
+  --panel-border-strong: #bcbcb4;
+  --panel-rail-bg:       #e8e8e4;
+  --panel-header-bg:     #eeeeea;
+  --content-bg:          #f4f4f2;
+
+  --id-yours:    #2c6fb3;
+  --id-imported: #a3144d;
+  --id-forked:   #644ac9;
+  --id-diverged: #a34d14;
+  --id-local:    #846e15;
+  --id-remote:   #036a96;
+  --id-draft:    #cb3a2a;
+
+  --state-online:   #14710a;
+  --state-offline:  #7a7a90;
+  --state-fetching: #846e15;
+  --state-error:    #cb3a2a;
+
+  --danger:        #cb3a2a;
+  --danger-strong: #a82a1c;
+  --success:       #14710a;
+  --warning:       #846e15;
+  --selection:     #644ac9;
+  --match:         #a34d14;
+
+  --warn-fg:     #7a5e00;
+  --warn-bg:     #f0ead2;
+  --warn-border: #d4c48a;
+
+  --scrim:          rgba(0, 0, 0, 0.35);
+  --spotlight-mask: rgba(0, 0, 0, 0.2);
+  --shadow-sm:      0 2px 8px rgba(31, 31, 41, 0.12);
+  --shadow-md:      0 8px 24px rgba(31, 31, 41, 0.16);
+  --shadow-lg:      0 12px 40px rgba(31, 31, 41, 0.22);
+
+  --affordance-settings:    #644ac9;
+  --affordance-help:        #846e15;
+  --affordance-walkthrough: #7a7a90;
+}
+
+/* ── High contrast ──────────────────────────────────────────────────
+   Accessibility modifier, orthogonal to the theme: `data-contrast="high"`
+   on <html> pushes text to the extreme and lifts the muted greys + borders
+   so dim text and structure stop disappearing. One block per theme because
+   the push direction depends on whether the base is dark or light; future
+   themes add their own [data-theme='x'][data-contrast='high'] block. This is
+   a tuned boost over the palette, not a full repaint — accents stay as-is. */
+:root[data-contrast='high']:not([data-theme]) {
+  --fg:                  #ffffff;
+  --fg-alt:              #e2e5ed;
+  --base7:               #dadce4;
+  --base6:               #b9bdca;  /* dim text — was #9a9ca5 */
+  --base5:               #969cb4;  /* muted text / offline — was #6b7089 */
+  --panel-border:        #444b60;  /* was #282a36 */
+  --panel-border-strong: #616a82;
+}
+:root[data-theme='iceberg-light'][data-contrast='high'] {
+  --fg:                  #000000;
+  --fg-alt:              #1b2330;
+  --base6:               #586377;  /* dim text — was #9099ab */
+  --base5:               #2c3342;  /* muted text — was #4c566a */
+  --panel-border:        #9aa1ae;  /* was #c6c8d1 */
+  --panel-border-strong: #6b7280;
+}
+:root[data-theme='solarized-dark'][data-contrast='high'] {
+  --fg:                  #fdf6e3;
+  --fg-alt:              #eee8d5;
+  --base6:               #93a1a1;
+  --base5:               #839496;
+  --panel-border:        #2d5260;
+  --panel-border-strong: #41687a;
+}
+:root[data-theme='solarized-light'][data-contrast='high'] {
+  --fg:                  #002b36;
+  --fg-alt:              #073642;
+  --base6:               #586e75;
+  --base5:               #073642;
+  --panel-border:        #c9c2a8;
+  --panel-border-strong: #93a1a1;
+}
+:root[data-theme='gruvbox-dark'][data-contrast='high'] {
+  --fg:                  #fbf1c7;
+  --fg-alt:              #ebdbb2;
+  --base6:               #c4b59a;
+  --base5:               #a89984;
+  --panel-border:        #665c54;
+  --panel-border-strong: #837567;
+}
+:root[data-theme='gruvbox-light'][data-contrast='high'] {
+  --fg:                  #1d2021;
+  --fg-alt:              #282828;
+  --base6:               #665c54;
+  --base5:               #3c3836;
+  --panel-border:        #bdae93;
+  --panel-border-strong: #928374;
+}
+:root[data-theme='tokyonight-dark'][data-contrast='high'] {
+  --fg:                  #ffffff;
+  --fg-alt:              #d5dbf5;
+  --base6:               #9aa2cc;
+  --base5:               #7780ad;
+  --panel-border:        #3b4261;
+  --panel-border-strong: #545d80;
+}
+:root[data-theme='tokyonight-light'][data-contrast='high'] {
+  --fg:                  #1a1b26;
+  --fg-alt:              #2c2e40;
+  --base6:               #5a6291;
+  --base5:               #3a4470;
+  --panel-border:        #aab0cb;
+  --panel-border-strong: #828ab0;
+}
+:root[data-theme='catppuccin-dark'][data-contrast='high'] {
+  --fg:                  #ffffff;
+  --fg-alt:              #d9e0f5;
+  --base6:               #b0b6cf;
+  --base5:               #8b90ad;
+  --panel-border:        #45475a;
+  --panel-border-strong: #5c5f78;
+}
+:root[data-theme='catppuccin-light'][data-contrast='high'] {
+  --fg:                  #2c2e40;
+  --fg-alt:              #3a3c52;
+  --base6:               #6c6f85;
+  --base5:               #393b52;
+  --panel-border:        #acb0be;
+  --panel-border-strong: #8c8fa1;
+}
+:root[data-theme='nord-dark'][data-contrast='high'] {
+  --fg:                  #ffffff;
+  --fg-alt:              #e0e6f0;
+  --base6:               #aab4c8;
+  --base5:               #889ab5;
+  --panel-border:        #4c566a;
+  --panel-border-strong: #647089;
+}
+:root[data-theme='nord-light'][data-contrast='high'] {
+  --fg:                  #1c222e;
+  --fg-alt:              #2e3440;
+  --base6:               #5a6678;
+  --base5:               #2e3440;
+  --panel-border:        #c2ccda;
+  --panel-border-strong: #99a6ba;
+}
+:root[data-theme='dracula-dark'][data-contrast='high'] {
+  --fg:                  #ffffff;
+  --fg-alt:              #e8e8f4;
+  --base6:               #aab0d8;
+  --base5:               #7c84b4;
+  --panel-border:        #565973;
+  --panel-border-strong: #6e7290;
+}
+:root[data-theme='dracula-light'][data-contrast='high'] {
+  --fg:                  #15151c;
+  --fg-alt:              #1f1f29;
+  --base6:               #5a5a70;
+  --base5:               #2f2f3a;
+  --panel-border:        #bcbcb4;
+  --panel-border-strong: #9a9a90;
+}
+
 * { box-sizing: border-box; }
 
 html, body {
@@ -136,6 +1234,14 @@ body { font-size: var(--t-base); }
 
 /* Selection */
 ::selection { background: var(--dark-blue); color: var(--base8); }
+/* On light, base8 is dark — keep the selected glyph light over the deep blue. */
+:root[data-theme='iceberg-light'] ::selection,
+:root[data-theme='solarized-light'] ::selection,
+:root[data-theme='gruvbox-light'] ::selection,
+:root[data-theme='tokyonight-light'] ::selection,
+:root[data-theme='catppuccin-light'] ::selection,
+:root[data-theme='nord-light'] ::selection,
+:root[data-theme='dracula-light'] ::selection { color: #f8fcfd; }
 
 /* Utility */
 .mono { font-family: var(--font-mono); }
@@ -156,7 +1262,7 @@ body { font-size: var(--t-base); }
   white-space: nowrap;
 }
 .pill--ghost { border: 1px solid var(--base3); color: var(--base6); }
-.pill--local { background: rgba(233,177,137,0.12); color: var(--id-local); }
+.pill--local { background: color-mix(in srgb, var(--id-local) 12%, transparent); color: var(--id-local); }
 /* `json` action pill — clickable, opens the row's underlying event in
    the structured EventViewModal. Tinted with --id-yours to match the
    other modal/nav affordances (history popover, kebab hovers). */
@@ -194,19 +1300,19 @@ body { font-size: var(--t-base); }
 .pill--connect:hover {
   background: color-mix(in srgb, var(--id-yours) 26%, transparent);
 }
-.pill--remote { background: rgba(137,184,194,0.12); color: var(--id-remote); }
-.pill--draft { background: rgba(226,120,120,0.12); color: var(--id-draft); }
-.pill--imported { background: rgba(160,147,199,0.12); color: var(--id-imported); }
-.pill--forked { background: rgba(178,148,187,0.12); color: var(--id-forked); }
-.pill--diverged { background: rgba(226,164,120,0.12); color: var(--id-diverged); }
-.pill--online { background: rgba(180,190,130,0.14); color: var(--state-online); }
-.pill--offline { background: rgba(107,112,137,0.18); color: var(--state-offline); }
+.pill--remote { background: color-mix(in srgb, var(--id-remote) 12%, transparent); color: var(--id-remote); }
+.pill--draft { background: color-mix(in srgb, var(--id-draft) 12%, transparent); color: var(--id-draft); }
+.pill--imported { background: color-mix(in srgb, var(--id-imported) 12%, transparent); color: var(--id-imported); }
+.pill--forked { background: color-mix(in srgb, var(--id-forked) 12%, transparent); color: var(--id-forked); }
+.pill--diverged { background: color-mix(in srgb, var(--id-diverged) 12%, transparent); color: var(--id-diverged); }
+.pill--online { background: color-mix(in srgb, var(--state-online) 14%, transparent); color: var(--state-online); }
+.pill--offline { background: color-mix(in srgb, var(--state-offline) 18%, transparent); color: var(--state-offline); }
 
 /* Dot */
 .dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; }
-.dot--online { background: var(--state-online); box-shadow: 0 0 6px rgba(180,190,130,0.5); }
+.dot--online { background: var(--state-online); box-shadow: 0 0 6px color-mix(in srgb, var(--state-online) 50%, transparent); }
 .dot--offline { background: var(--state-offline); }
-.dot--diverged { background: var(--id-diverged); box-shadow: 0 0 6px rgba(226,164,120,0.5); }
+.dot--diverged { background: var(--id-diverged); box-shadow: 0 0 6px color-mix(in srgb, var(--id-diverged) 50%, transparent); }
 .dot--fetching { background: var(--state-fetching); animation: pulse 1.2s infinite ease-in-out; }
 @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
 
@@ -415,7 +1521,7 @@ body { font-size: var(--t-base); }
   align-items: stretch;
 }
 .row:hover { background: var(--base1); }
-.row--selected { background: rgba(132,160,198,0.08); }
+.row--selected { background: color-mix(in srgb, var(--blue) 8%, transparent); }
 .row__body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
 .row__title { font-size: var(--t-md); color: var(--fg); font-weight: 500; line-height: 1.3; }
 .row__meta { display: flex; gap: 8px; align-items: center; font-size: var(--t-xs); color: var(--base5); font-family: var(--font-mono); }
@@ -649,7 +1755,7 @@ body { font-size: var(--t-base); }
   align-self: flex-start;
 }
 .editor__gutter-line { padding: 0 4px 0 12px; }
-.editor__gutter-line.cur { color: var(--blue); background: rgba(132,160,198,0.06); }
+.editor__gutter-line.cur { color: var(--blue); background: color-mix(in srgb, var(--blue) 6%, transparent); }
 .editor__gutter-fold { color: var(--base5); cursor: pointer; padding: 0 4px; }
 .editor__buf {
   flex: 1;
@@ -662,7 +1768,7 @@ body { font-size: var(--t-base); }
 }
 .editor__buf .editor__line { min-height: 1.7em; }
 .editor__line { position: relative; padding: 0 6px; margin: 0 -6px; border-radius: 2px; }
-.editor__line.cur { background: rgba(132,160,198,0.06); }
+.editor__line.cur { background: color-mix(in srgb, var(--blue) 6%, transparent); }
 
 /* Plain-mode syntax tokens */
 .tok-h1 { color: var(--green); }
@@ -670,8 +1776,8 @@ body { font-size: var(--t-base); }
 .tok-attr { color: var(--orange); }
 .tok-attr-key { color: var(--orange); }
 .tok-attr-val { color: var(--fg-alt); }
-.tok-cite { background: rgba(160,147,199,0.14); color: var(--magenta); padding: 0 4px; border-radius: 2px; }
-.tok-ref { background: rgba(132,160,198,0.14); color: var(--blue); padding: 0 4px; border-radius: 2px; }
+.tok-cite { background: color-mix(in srgb, var(--magenta) 14%, transparent); color: var(--magenta); padding: 0 4px; border-radius: 2px; }
+.tok-ref { background: color-mix(in srgb, var(--blue) 14%, transparent); color: var(--blue); padding: 0 4px; border-radius: 2px; }
 .tok-author { color: var(--magenta); }
 .tok-fold { color: var(--base4); cursor: pointer; }
 
@@ -679,7 +1785,7 @@ body { font-size: var(--t-base); }
 .detected__title { font-size: var(--t-md); color: var(--fg); font-weight: 500; padding: 8px 10px; border-bottom: 1px solid var(--panel-border); }
 .detected__sec { display: flex; align-items: center; gap: 6px; padding: 5px 10px; cursor: pointer; font-size: var(--t-sm); }
 .detected__sec:hover { background: var(--base1); }
-.detected__sec--cur { background: rgba(132,160,198,0.06); }
+.detected__sec--cur { background: color-mix(in srgb, var(--blue) 6%, transparent); }
 .detected__sec input { accent-color: var(--blue); margin: 0; }
 
 /* WYSIWYG button bar — secondary horizontal strip beneath the panel header */
@@ -768,7 +1874,7 @@ body { font-size: var(--t-base); }
 .modal-bg {
   position: absolute;
   inset: 0;
-  background: rgba(12,14,19,0.7);
+  background: color-mix(in srgb, var(--base0) 70%, transparent);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -797,7 +1903,7 @@ body { font-size: var(--t-base); }
   margin: 0 auto;
   padding: 48px 32px 96px;
   font-family: var(--font-serif);
-  font-size: 1.385rem; /* 18px — reader prose, scales with the root anchor */
+  font-size: var(--t-xl); /* reader prose (≈19px) — on the token scale, rides --text-scale */
   line-height: 1.7;
   color: var(--base7);
 }

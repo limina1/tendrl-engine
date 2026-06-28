@@ -1456,7 +1456,7 @@
 	}
 	.mode-seg {
 		font-family: var(--font-mono);
-		font-size: 0.7rem;
+		font-size: var(--t-3xs);
 		color: var(--fg-muted);
 		text-transform: uppercase;
 		letter-spacing: 0.05em;
@@ -1484,7 +1484,7 @@
 		user-select: none;
 	}
 	.kind-label {
-		font-size: 0.75rem;
+		font-size: var(--t-2xs);
 		color: var(--fg-muted);
 		font-weight: 600;
 		text-transform: uppercase;
@@ -1492,14 +1492,14 @@
 	}
 	.kind-select {
 		font-family: var(--font-mono);
-		font-size: 0.8rem;
+		font-size: var(--t-2xs);
 		padding: 3px 6px;
 		cursor: pointer;
 	}
 	.kind-input {
 		width: 72px;
 		font-family: var(--font-mono);
-		font-size: 0.8rem;
+		font-size: var(--t-2xs);
 		padding: 3px 6px;
 	}
 
@@ -1507,7 +1507,7 @@
 	   Notes is the attention state (no index), so it's tinted accent. */
 	.pub-shape {
 		font-family: var(--font-mono);
-		font-size: 0.7rem;
+		font-size: var(--t-3xs);
 		text-transform: uppercase;
 		letter-spacing: 0.05em;
 		font-weight: 600;
@@ -1546,7 +1546,7 @@
 		flex-shrink: 0;
 	}
 	.atomic-detected-label {
-		font-size: 0.6rem;
+		font-size: var(--t-3xs);
 		font-weight: 600;
 		color: var(--fg-muted);
 		text-transform: uppercase;
@@ -1554,7 +1554,7 @@
 	}
 	.atomic-tag-chip {
 		font-family: var(--font-mono);
-		font-size: 0.7rem;
+		font-size: var(--t-3xs);
 		padding: 1px 6px;
 		border-radius: 4px;
 		background: color-mix(in srgb, var(--accent) 16%, transparent);
@@ -1568,7 +1568,7 @@
 	}
 
 	.delim-label {
-		font-size: 0.75rem;
+		font-size: var(--t-2xs);
 		color: var(--fg-muted);
 		font-weight: 600;
 		text-transform: uppercase;
@@ -1579,7 +1579,7 @@
 		width: 36px;
 		text-align: center;
 		font-family: var(--font-mono);
-		font-size: 0.85rem;
+		font-size: var(--t-xs);
 		font-weight: 700;
 		padding: 4px 6px;
 	}
@@ -1592,7 +1592,7 @@
 		user-select: none;
 	}
 	.nest-label {
-		font-size: 0.75rem;
+		font-size: var(--t-2xs);
 		color: var(--fg-muted);
 		font-weight: 600;
 		text-transform: uppercase;
@@ -1600,7 +1600,7 @@
 	}
 	.nest-select {
 		font-family: var(--font-mono);
-		font-size: 0.8rem;
+		font-size: var(--t-2xs);
 		padding: 3px 6px;
 		cursor: pointer;
 	}
@@ -1629,7 +1629,7 @@
 	.compose-title-row .compose-title { flex: 1; }
 
 	.collapse-toggle {
-		font-size: 0.75rem;
+		font-size: var(--t-2xs);
 		padding: 0 4px;
 		min-width: 18px;
 		background: transparent;
@@ -1640,7 +1640,7 @@
 	.collapse-toggle:hover { color: var(--fg); }
 
 	.header-tag-count {
-		font-size: 0.7rem;
+		font-size: var(--t-3xs);
 		color: var(--fg-muted);
 		font-family: var(--font-mono);
 		text-transform: uppercase;
@@ -1649,7 +1649,7 @@
 
 	.compose-title {
 		font-family: inherit;
-		font-size: 1.1rem;
+		font-size: var(--t-md);
 		font-weight: 700;
 		border: 1px solid var(--border);
 		border-radius: var(--radius);
@@ -1671,30 +1671,30 @@
 	}
 
 	.sel-btn {
-		font-size: 0.65rem;
+		font-size: var(--t-3xs);
 		padding: 2px 6px;
 		color: var(--fg-muted);
 	}
 
 	.icon-btn {
 		padding: 4px 8px;
-		font-size: 0.85rem;
+		font-size: var(--t-xs);
 		min-width: 28px;
 	}
 
 	.trash-btn {
-		font-size: 0.75rem;
+		font-size: var(--t-2xs);
 	}
 
 	.trash-armed {
-		background: #dc2626;
-		border-color: #dc2626;
+		background: var(--danger-strong);
+		border-color: var(--danger-strong);
 		color: white;
 	}
 
 	.trash-warn {
-		font-size: 0.7rem;
-		color: #dc2626;
+		font-size: var(--t-3xs);
+		color: var(--danger-strong);
 		font-weight: 600;
 		white-space: nowrap;
 	}
@@ -1778,7 +1778,7 @@
 	}
 
 	.detected-header {
-		font-size: 0.7rem;
+		font-size: var(--t-3xs);
 		font-weight: 600;
 		color: var(--fg-muted);
 		text-transform: uppercase;
@@ -1793,7 +1793,7 @@
 		padding: 4px 10px;
 		padding-left: calc(10px + var(--depth, 0) * 14px);
 		border-bottom: 1px solid var(--border);
-		font-size: 0.75rem;
+		font-size: var(--t-2xs);
 	}
 
 	.detected-row--nested {
@@ -1813,7 +1813,7 @@
 		text-overflow: ellipsis;
 		white-space: nowrap;
 		font-weight: 600;
-		font-size: 0.75rem;
+		font-size: var(--t-2xs);
 	}
 
 	.detected-new {
@@ -1822,7 +1822,7 @@
 	}
 
 	.detected-label {
-		font-size: 0.6rem;
+		font-size: var(--t-3xs);
 		font-weight: 600;
 		color: var(--fg-muted);
 		text-transform: uppercase;
@@ -1837,7 +1837,7 @@
 	.detected-empty {
 		padding: 12px 10px;
 		color: var(--fg-muted);
-		font-size: 0.75rem;
+		font-size: var(--t-2xs);
 		font-style: italic;
 	}
 
@@ -1848,12 +1848,12 @@
 
 	.icon-btn-sm {
 		padding: 2px 6px;
-		font-size: 0.75rem;
+		font-size: var(--t-2xs);
 		min-width: 22px;
 	}
 
 	.badge-new {
-		font-size: 0.6rem;
+		font-size: var(--t-3xs);
 		padding: 0 5px;
 		border-radius: 4px;
 		font-weight: 600;
@@ -1878,7 +1878,7 @@
 		padding: 4px 10px;
 		background: var(--bg);
 		border-bottom: 1px solid var(--border);
-		font-size: 0.75rem;
+		font-size: var(--t-2xs);
 		flex-shrink: 0;
 	}
 
@@ -1889,7 +1889,7 @@
 	.editor-pane {
 		flex: 1;
 		font-family: var(--font-mono);
-		font-size: 0.85rem;
+		font-size: var(--t-xs);
 		line-height: 1.6;
 		padding: 4px 0;
 		margin: 0;
@@ -1920,7 +1920,7 @@
 		border: none;
 		color: var(--fg-muted);
 		cursor: pointer;
-		font-size: 0.78rem;
+		font-size: var(--t-2xs);
 		display: flex;
 		align-items: center;
 		gap: 6px;
@@ -2026,13 +2026,13 @@
 		background: var(--bg);
 		border: 1px solid var(--panel-border-strong, var(--border));
 		border-radius: var(--radius);
-		box-shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
+		box-shadow: var(--shadow-md);
 		display: flex;
 		flex-direction: column;
 		gap: 1px;
 	}
 	.walk-head {
-		font-size: 0.6rem;
+		font-size: var(--t-3xs);
 		font-weight: 700;
 		text-transform: uppercase;
 		letter-spacing: 0.05em;
@@ -2050,7 +2050,7 @@
 		border: none;
 		border-radius: var(--r-sm, 4px);
 		color: var(--fg);
-		font-size: 0.78rem;
+		font-size: var(--t-2xs);
 		cursor: pointer;
 	}
 	.walk-row:hover {
@@ -2078,7 +2078,7 @@
 	.walk-mode {
 		flex: 0 0 auto;
 		font-family: var(--font-mono);
-		font-size: 0.6rem;
+		font-size: var(--t-3xs);
 		text-transform: uppercase;
 		letter-spacing: 0.04em;
 		color: var(--fg-muted);

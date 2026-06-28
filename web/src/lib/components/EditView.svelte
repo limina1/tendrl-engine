@@ -35,25 +35,17 @@
 
 	.edit-banner {
 		padding: 8px 16px;
-		font-size: 0.8rem;
+		font-size: var(--t-2xs);
 		font-weight: 600;
-		color: #92400e;
-		background: #fef3c7;
-		border-bottom: 1px solid #fcd34d;
-	}
-
-	@media (prefers-color-scheme: dark) {
-		.edit-banner {
-			color: #fcd34d;
-			background: #292524;
-			border-bottom-color: #44403c;
-		}
+		color: var(--warn-fg);
+		background: var(--warn-bg);
+		border-bottom: 1px solid var(--warn-border);
 	}
 
 	.edit-textarea {
 		flex: 1;
 		font-family: var(--font-mono);
-		font-size: 0.85rem;
+		font-size: var(--t-xs);
 		line-height: 1.6;
 		padding: 16px;
 		border: none;

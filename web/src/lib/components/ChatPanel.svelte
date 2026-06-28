@@ -309,27 +309,27 @@
 	}
 
 	.toolbar-badge {
-		background: rgba(255, 255, 255, 0.3);
-		font-size: 0.7rem;
+		background: color-mix(in srgb, var(--base8) 30%, transparent);
+		font-size: var(--t-3xs);
 		padding: 0 5px;
 		border-radius: 8px;
 		margin-left: 2px;
 	}
 
 	.sel-btn {
-		font-size: 0.65rem;
+		font-size: var(--t-3xs);
 		padding: 2px 6px;
 		color: var(--fg-muted);
 	}
 
 	.icon-btn {
 		padding: 4px 8px;
-		font-size: 0.85rem;
+		font-size: var(--t-xs);
 		min-width: 28px;
 	}
 
 	.trash-btn {
-		font-size: 0.75rem;
+		font-size: var(--t-2xs);
 	}
 
 	.sessions-container {
@@ -351,7 +351,7 @@
 	}
 
 	.saved-sessions-title {
-		font-size: 0.72rem;
+		font-size: var(--t-3xs);
 		font-weight: 600;
 		text-transform: uppercase;
 		letter-spacing: 0.05em;
@@ -360,7 +360,7 @@
 	}
 
 	.saved-empty {
-		font-size: 0.8rem;
+		font-size: var(--t-2xs);
 		color: var(--fg-muted);
 		margin: 4px 0;
 	}
@@ -388,7 +388,7 @@
 	}
 
 	.saved-load:hover:not(:disabled) {
-		background: var(--bg-hover, rgba(127, 127, 127, 0.12));
+		background: var(--bg-hover, color-mix(in srgb, var(--base6) 12%, transparent));
 	}
 
 	.saved-title {
@@ -399,7 +399,7 @@
 
 	.saved-meta {
 		flex-shrink: 0;
-		font-size: 0.72rem;
+		font-size: var(--t-3xs);
 		color: var(--fg-muted);
 	}
 

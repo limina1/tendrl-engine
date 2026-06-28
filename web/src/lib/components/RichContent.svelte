@@ -66,7 +66,7 @@
 	.section-content {
 		white-space: pre-wrap;
 		font-family: var(--font-sans);
-		font-size: 0.85rem;
+		font-size: var(--t-xs);
 		line-height: 1.5;
 		color: var(--fg);
 		margin: 0;
@@ -137,7 +137,7 @@
 	}
 	.nd-embed__label {
 		font-family: var(--font-mono);
-		font-size: 0.72rem;
+		font-size: var(--t-2xs);
 		text-transform: uppercase;
 		letter-spacing: 0.05em;
 		color: var(--id-yours);
@@ -145,7 +145,7 @@
 	.nd-embed__open {
 		margin-left: auto;
 		font-family: var(--font-mono);
-		font-size: 0.66rem;
+		font-size: var(--t-3xs);
 		border: 1px solid var(--border);
 		background: var(--bg-surface);
 		color: var(--id-yours);
@@ -165,6 +165,6 @@
 		display: block;
 		font-style: italic;
 		color: var(--fg-muted);
-		font-size: 0.8rem;
+		font-size: var(--t-2xs);
 	}
 </style>

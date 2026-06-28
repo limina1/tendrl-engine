@@ -9,6 +9,17 @@ import {
 	startWalkthrough,
 	setWalkthroughEnabled
 } from '$lib/wm/discovery.svelte';
+import {
+	DEFAULT_THEME,
+	THEME_STORAGE_KEY,
+	CONTRAST_STORAGE_KEY,
+	isValidTheme,
+	themeById,
+	variantFor,
+	applyThemeAttribute,
+	prefersMoreContrast,
+	applyContrastAttribute
+} from '$lib/themes';
 import type {
 	ChatResponse,
 	SearchResult,
@@ -514,6 +525,11 @@ function _createAppState() {
 		return new Set(pks);
 	})());
 
+	// --- Engine ---
+	// The running engine build's version (from /health). Shown in the mode-line
+	// and Settings; null until the first fetch resolves.
+	let engineVersion: string | null = $state(null);
+
 	// --- Embedding ---
 	let embeddingStatus: EmbeddingStatusResponse | null = $state(null);
 	let embeddingSyncing = $state(false);
@@ -560,6 +576,73 @@ function _createAppState() {
 	let ignoredEventIds: string[] = $state([]);
 	let ignoredPubkeys: string[] = $state([]);
 	let ignoredCoordinates: string[] = $state([]);
+
+	// --- Theme ---
+	// Seeded from localStorage so it agrees with the pre-paint bootstrap in
+	// app.html (which already set <html data-theme> before this ran). Falls back
+	// to the dark default for a fresh user or an unknown stored id.
+	let currentTheme: string = $state(
+		((): string => {
+			if (typeof localStorage === 'undefined') return DEFAULT_THEME;
+			const v = localStorage.getItem(THEME_STORAGE_KEY);
+			return isValidTheme(v) ? v : DEFAULT_THEME;
+		})()
+	);
+
+	function setTheme(id: string) {
+		if (!isValidTheme(id) || id === currentTheme) return;
+		currentTheme = id;
+		applyThemeAttribute(id);
+		if (typeof localStorage !== 'undefined') {
+			try {
+				localStorage.setItem(THEME_STORAGE_KEY, id);
+			} catch {
+				/* quota / privacy mode — fall back to in-memory only */
+			}
+		}
+		const t = themeById(id);
+		pushToast(`Theme: ${t ? `${t.familyLabel} ${t.mode}` : id}`, 'success');
+	}
+
+	// Sun/moon quick toggle: flip light↔dark within the current theme family
+	// (so "Solarized Dark" toggles to "Solarized Light", not some other theme).
+	function toggleTheme() {
+		const cur = themeById(currentTheme);
+		if (!cur) return;
+		const target = variantFor(cur.family, cur.mode === 'dark' ? 'light' : 'dark');
+		if (target) setTheme(target.id);
+	}
+
+	// High-contrast modifier — orthogonal to the theme. Stored value 'high' /
+	// 'normal' is the user's explicit choice; absent → follow the OS
+	// prefers-contrast setting. Agrees with the pre-paint bootstrap in app.html.
+	let highContrast: boolean = $state(
+		((): boolean => {
+			if (typeof localStorage === 'undefined') return false;
+			const v = localStorage.getItem(CONTRAST_STORAGE_KEY);
+			if (v === 'high') return true;
+			if (v === 'normal') return false;
+			return prefersMoreContrast();
+		})()
+	);
+
+	function setHighContrast(on: boolean) {
+		if (on === highContrast) return;
+		highContrast = on;
+		applyContrastAttribute(on);
+		if (typeof localStorage !== 'undefined') {
+			try {
+				localStorage.setItem(CONTRAST_STORAGE_KEY, on ? 'high' : 'normal');
+			} catch {
+				/* quota / privacy mode — fall back to in-memory only */
+			}
+		}
+		pushToast(`High contrast ${on ? 'on' : 'off'}`, 'success');
+	}
+
+	function toggleHighContrast() {
+		setHighContrast(!highContrast);
+	}
 
 	// --- Settings ---
 	let syncMode: SyncMode = $state('explicit');
@@ -3670,6 +3753,9 @@ function _createAppState() {
 	async function initialize() {
 		loadSearchConfig();
 		loadDiscovery();
+		// Engine version for the mode-line / Settings. Fire-and-forget — it's
+		// purely informational, so a failure just leaves the segment hidden.
+		api.getHealth().then((h) => { engineVersion = h.version; }).catch(() => {});
 		// Fire all three cheap GETs in parallel — none depend on each
 		// other, and the modeline pills + chat composer all need this
 		// data ASAP. Previously getConfig was awaited before the other
@@ -4152,6 +4238,9 @@ function _createAppState() {
 		handleAssistantUnlock,
 		handleAssistantLogout,
 
+		// Engine
+		get engineVersion() { return engineVersion; },
+
 		// Embedding
 		get embeddingStatus() { return embeddingStatus; },
 		get embeddingSyncing() { return embeddingSyncing; },
@@ -4183,6 +4272,14 @@ function _createAppState() {
 		get ignoredEventIds() { return ignoredEventIds; },
 		get ignoredPubkeys() { return ignoredPubkeys; },
 		get ignoredCoordinates() { return ignoredCoordinates; },
+
+		// Theme
+		get currentTheme() { return currentTheme; },
+		setTheme,
+		toggleTheme,
+		get highContrast() { return highContrast; },
+		setHighContrast,
+		toggleHighContrast,
 
 		// Settings
 		get syncMode() { return syncMode; },

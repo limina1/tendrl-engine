@@ -168,7 +168,7 @@
 	}
 
 	.section-title {
-		font-size: 0.95rem;
+		font-size: var(--t-sm);
 		font-weight: 600;
 		margin-bottom: 6px;
 		display: flex;
@@ -180,7 +180,7 @@
 		background: none;
 		border: none;
 		color: var(--fg-muted);
-		font-size: 1rem;
+		font-size: var(--t-base);
 		line-height: 1;
 		padding: 0 6px;
 		border-radius: var(--radius);
@@ -197,7 +197,7 @@
 	}
 
 	.status-indicator {
-		font-size: 0.75rem;
+		font-size: var(--t-2xs);
 		margin-left: 6px;
 	}
 
@@ -207,7 +207,7 @@
 	}
 
 	.status-error {
-		color: #ef4444;
+		color: var(--danger);
 		font-weight: 700;
 	}
 
@@ -228,12 +228,12 @@
 
 	.section-pending {
 		color: var(--fg-muted);
-		font-size: 0.8rem;
+		font-size: var(--t-2xs);
 		font-style: italic;
 	}
 
 	.section-error {
-		color: #ef4444;
-		font-size: 0.8rem;
+		color: var(--danger);
+		font-size: var(--t-2xs);
 	}
 </style>

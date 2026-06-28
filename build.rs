@@ -32,5 +32,32 @@ fn main() {
     }
 
     // Re-run if the bundle is rebuilt so release binaries pick up fresh assets.
-    println!("cargo:rerun-if-changed=web/build");
+    //
+    // A shallow `rerun-if-changed=web/build` only fires when a *top-level* entry
+    // is added/removed — it misses content edits to index.html and changes to the
+    // hashed bundles under `_app/immutable/`. That left the portable build (a
+    // separate `target/portable` dir compiled in Docker) silently re-embedding a
+    // STALE SPA: the bundle build picked up changes via the scripts' `touch
+    // web/build`, but the portable build did not. Walk the tree and watch every
+    // file + directory so any `pnpm build` reliably re-embeds.
+    emit_rerun_recursive(build_dir);
+}
+
+/// Emit `cargo:rerun-if-changed` for `dir` and everything under it. Watching
+/// each file (not just the directory) means a content edit to an existing asset
+/// invalidates the embed; watching directories catches add/remove of the hashed
+/// bundles vite emits with fresh filenames each build.
+fn emit_rerun_recursive(dir: &Path) {
+    println!("cargo:rerun-if-changed={}", dir.display());
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            emit_rerun_recursive(&path);
+        } else {
+            println!("cargo:rerun-if-changed={}", path.display());
+        }
+    }
 }

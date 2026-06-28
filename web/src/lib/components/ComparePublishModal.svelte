@@ -95,7 +95,7 @@
 	.cpm-backdrop {
 		position: fixed;
 		inset: 0;
-		background: rgba(0, 0, 0, 0.55);
+		background: var(--scrim);
 		display: flex;
 		align-items: center;
 		justify-content: center;
@@ -222,7 +222,7 @@
 		padding: 6px 12px;
 	}
 	.cpm-btn--primary {
-		background: rgba(180, 190, 130, 0.16);
+		background: color-mix(in srgb, var(--green) 16%, transparent);
 		color: var(--state-online);
 		border-color: color-mix(in srgb, var(--state-online) 50%, transparent);
 		font-weight: 600;

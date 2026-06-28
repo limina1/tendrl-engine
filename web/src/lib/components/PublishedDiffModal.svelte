@@ -45,7 +45,7 @@
 		position: fixed;
 		inset: 0 0 var(--modeline-h, 0) 0;
 		z-index: 120;
-		background: rgba(0, 0, 0, 0.5);
+		background: var(--scrim);
 		display: flex;
 		align-items: center;
 		justify-content: center;
@@ -69,14 +69,14 @@
 	}
 	.pdm-title {
 		font-weight: 600;
-		font-size: 0.9rem;
+		font-size: var(--t-sm);
 	}
 	.pdm-close {
 		background: none;
 		border: none;
 		color: var(--fg-muted);
 		cursor: pointer;
-		font-size: 0.9rem;
+		font-size: var(--t-sm);
 	}
 	.pdm-close:hover {
 		color: var(--fg);
@@ -84,7 +84,7 @@
 	.pdm-direction {
 		margin: 0;
 		padding: 8px 13px;
-		font-size: 0.7rem;
+		font-size: var(--t-3xs);
 		color: var(--fg-muted);
 		border-bottom: 1px solid var(--border);
 	}

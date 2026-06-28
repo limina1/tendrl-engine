@@ -127,7 +127,7 @@
 	}
 
 	.collapse-toggle {
-		font-size: 0.75rem;
+		font-size: var(--t-2xs);
 		padding: 0 4px;
 		min-width: 18px;
 		background: transparent;
@@ -179,7 +179,7 @@
 	.compose-section-title {
 		flex: 1;
 		font-family: inherit;
-		font-size: 0.9rem;
+		font-size: var(--t-sm);
 		font-weight: 600;
 		border: 1px solid var(--border);
 		border-radius: var(--radius);
@@ -195,13 +195,13 @@
 
 	.icon-btn-sm {
 		padding: 2px 6px;
-		font-size: 0.75rem;
+		font-size: var(--t-2xs);
 		min-width: 22px;
 	}
 
 	textarea {
 		width: 100%;
-		font-size: 0.85rem;
+		font-size: var(--t-xs);
 		line-height: 1.5;
 		/* Taller by default so a section reads as a real editing surface, not a
 		   squished bar; users can still drag it to whatever height they want. */
@@ -217,13 +217,13 @@
 		border-radius: 4px;
 		background: var(--modified-bg);
 		color: var(--modified-fg);
-		font-size: 0.75rem;
+		font-size: var(--t-2xs);
 		font-weight: 600;
 		border: 1px solid var(--modified-border);
 	}
 
 	.reset-btn {
-		font-size: 0.7rem;
+		font-size: var(--t-3xs);
 		padding: 2px 8px;
 	}
 </style>
