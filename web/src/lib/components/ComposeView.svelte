@@ -130,6 +130,9 @@
 	// below, after `refSectionTitles`/`insertNostrdownToken` are in scope.
 	let autocompleteOn = $state(true);
 	let refBuilderOpen = $state(false);
+	// Which prefix the coordinate builder should emit — `embed` (inline) or
+	// `slot` (block-level transclude), set when it's opened from autocomplete.
+	let builderPrefix = $state<'embed' | 'slot'>('embed');
 	// When the embed builder is opened mid-token from autocomplete, the
 	// in-progress `{{embed:…` range it should replace on insert.
 	let embedRange = $state<{ from: number; to: number } | null>(null);
@@ -766,8 +769,9 @@
 					.map((t) => ({ label: t, value: t }));
 			},
 			wiki: wikiSuggestions,
-			openEmbedBuilder: (range) => {
+			openEmbedBuilder: (range, kind) => {
 				embedRange = range;
+				builderPrefix = kind;
 				refBuilderOpen = true;
 			}
 		})
@@ -1620,6 +1624,7 @@
 <ReferenceBuilderModal
 	open={refBuilderOpen}
 	initialTab="embed"
+	embedPrefix={builderPrefix}
 	sectionTitles={refSectionTitles}
 	oninsert={insertNostrdownToken}
 	onclose={() => {

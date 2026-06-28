@@ -202,12 +202,13 @@ export interface NostrdownCompletionSources {
 	ref: (partial: string) => NdSuggestion[];
 	/** Wiki/article titles matching `partial` (async search). */
 	wiki: (partial: string) => Promise<NdSuggestion[]>;
-	/** Open the embed coordinate builder; `range` is the in-progress `{{embed:…`
-	 *  token to replace once the builder produces a token. */
-	openEmbedBuilder: (range: { from: number; to: number }) => void;
+	/** Open the coordinate builder; `range` is the in-progress `{{embed:…` /
+	 *  `{{slot:…` token to replace once the builder produces a token. `kind`
+	 *  selects which prefix the builder emits (inline embed vs block-level slot). */
+	openEmbedBuilder: (range: { from: number; to: number }, kind: 'embed' | 'slot') => void;
 }
 
-const PREFIXES = ['ref', 'wiki', 'embed', 'quote'];
+const PREFIXES = ['ref', 'wiki', 'embed', 'quote', 'slot'];
 const CONTEXT_RE = /\{\{([a-zA-Z]*)(:?)([^}|]*)$/;
 
 /** Insert `value` at [from,to], appending `}}` unless it's already there, and
@@ -251,18 +252,18 @@ export function nostrdownCompletion(sources: NostrdownCompletionSources): Extens
 		const kind = word.toLowerCase();
 		const valueFrom = openFrom + word.length + 1; // just past `{{prefix:`
 
-		if (kind === 'embed') {
+		if (kind === 'embed' || kind === 'slot') {
 			// A coordinate is too much to type — hand off to the builder form,
-			// which replaces this whole in-progress `{{embed:…` token.
+			// which replaces this whole in-progress `{{embed:…`/`{{slot:…` token.
 			const range = { from: before.from, to: ctx.pos };
 			return {
 				from: valueFrom,
 				filter: false,
 				options: [
 					{
-						label: 'build embed coordinate…',
+						label: `build ${kind} coordinate…`,
 						type: 'function',
-						apply: () => sources.openEmbedBuilder(range)
+						apply: () => sources.openEmbedBuilder(range, kind)
 					}
 				]
 			};

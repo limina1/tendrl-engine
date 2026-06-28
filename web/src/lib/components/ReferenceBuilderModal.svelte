@@ -15,6 +15,7 @@
 	let {
 		open = false,
 		initialTab = 'ref',
+		embedPrefix = 'embed',
 		sectionTitles = [],
 		oninsert,
 		onclose
@@ -22,6 +23,9 @@
 		open?: boolean;
 		/** Tab to show each time the modal opens. */
 		initialTab?: 'ref' | 'wiki' | 'embed';
+		/** Prefix the coordinate (Embed) tab emits — `embed` (inline card) or
+		 *  `slot` (block-level transclude → an a-tag in the 30040). */
+		embedPrefix?: 'embed' | 'slot';
 		/** Titles of the other sections in the current draft (for `ref:`). */
 		sectionTitles?: string[];
 		oninsert: (token: string) => void;
@@ -87,7 +91,7 @@
 	const pasteValid = $derived(ENTITY_RE.test(pasteEntity.trim()));
 	function insertEntity() {
 		if (!pasteValid) return;
-		oninsert(`{{embed:${pasteEntity.trim().replace(/^nostr:/i, '')}}}`);
+		oninsert(`{{${embedPrefix}:${pasteEntity.trim().replace(/^nostr:/i, '')}}}`);
 		close();
 	}
 
@@ -140,6 +144,14 @@
 		{ v: 0, label: 'any kind' }
 	];
 	let kindSel = $state(30041);
+	// Slots reference addressable publication events only (a-tags), so the
+	// coordinate tab restricts to 30040/30041 in slot mode.
+	const kindOptions = $derived(
+		embedPrefix === 'slot' ? KINDS.filter((k) => k.v === 30040 || k.v === 30041) : KINDS
+	);
+	$effect(() => {
+		if (embedPrefix === 'slot' && kindSel !== 30040 && kindSel !== 30041) kindSel = 30041;
+	});
 
 	type TagMode = 'T' | 'd' | 'custom';
 	let tagMode = $state<TagMode>('T');
@@ -187,7 +199,7 @@
 				pubkey: r.addr.pubkey,
 				d_tag: r.addr.d_tag
 			});
-			oninsert(`{{embed:${naddr}}}`);
+			oninsert(`{{${embedPrefix}:${naddr}}}`);
 			close();
 		} catch {
 			// leave the modal open so the user can retry / pick another
@@ -335,7 +347,7 @@
 						<label class="rb-field">
 							<span class="rb-label">kind:</span>
 							<select class="rb-select" bind:value={kindSel} onchange={runEmbedSearch}>
-								{#each KINDS as k (k.v)}
+								{#each kindOptions as k (k.v)}
 									<option value={k.v}>{k.label}</option>
 								{/each}
 							</select>
