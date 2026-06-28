@@ -70,6 +70,7 @@
 				{@render row('{{embed:target}}', 'transclude a sibling section or naddr inline')}
 				{@render row('|Display', 'append to override the link label')}
 				{@render row('#heading', 'append to target a heading anchor')}
+				{@render row('⌘/Ctrl-click', 'follow a recognized {{…}} reference in the editor')}
 
 				<div class="ch-group">Sections (Full)</div>
 				{@render row('locked', 'imported / new sections arrive locked — claim (yellow) to edit')}

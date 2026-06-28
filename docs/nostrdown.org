@@ -26,6 +26,13 @@ NIP-84 highlight pipeline:
   (open the target), =embed= as an inline transclusion block.
 - *Publish* (=tree_emit.rs=): =\{\{wiki:\}\}= references emit NKBIP-01
   =["wikilink", topic]= tags so events self-describe for other clients.
+- *Authoring* (=web/.../editor/nostrdown-cm.ts=): a CodeMirror extension
+  recognizes (highlights) ={{ }}= tokens as you type and follows them on
+  ⌘/Ctrl-click — =ref:=/slug =embed:= jump to a sibling heading in the buffer
+  (works while drafting), =wiki:=/=naddr= resolve against the db and open the
+  target. Scoped to the CodeMirror surfaces (plain mode + atomic body); the
+  Full-mode section textareas and an autocomplete/completion source are the
+  next authoring steps.
 
 Open follow-ups: fragment scroll-to-heading; =ref:=/=embed:= hint-tag emission
 (read-time title-slug matching covers them today); embed recursion beyond

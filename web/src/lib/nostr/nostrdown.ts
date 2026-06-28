@@ -11,6 +11,31 @@
 
 import type { HighlightSpan } from '$lib/discussions/highlights';
 
+/**
+ * NIP-54 slug normalization — a JS mirror of the engine's `nostrdown::normalize`
+ * (the Rust side is the source of truth for *stored* data; this is used only for
+ * editor-side matching, e.g. resolving a `{{ref:slug}}` against a heading title
+ * while drafting). Lowercase; whitespace and `-`/`_` collapse to a single `-`;
+ * other punctuation dropped; trailing `-` trimmed; non-ASCII letters preserved.
+ */
+export function normalizeSlug(s: string): string {
+	let out = '';
+	let lastDash = false;
+	for (const ch of s.toLowerCase()) {
+		if (/[\p{L}\p{N}]/u.test(ch)) {
+			out += ch;
+			lastDash = false;
+		} else if (/\s/.test(ch) || ch === '-' || ch === '_') {
+			if (out && !lastDash) {
+				out += '-';
+				lastDash = true;
+			}
+		}
+		// other punctuation/symbols are dropped without a separator
+	}
+	return out.replace(/-+$/, '');
+}
+
 /** A `{{ }}` reference after engine resolution. `start`/`end` are UTF-16
  *  code-unit offsets into the section text spanning the whole token, so the
  *  renderer can replace `content.slice(start, end)` wholesale. */

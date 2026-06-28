@@ -3,7 +3,10 @@
 	import { getActiveStore } from '$lib/wm/buffer-store.svelte';
 	import type { ComposeState, ContextItem, TagEntry, SyncMode } from '$lib/types';
 	import type { DraftSummary } from '$lib/api';
+	import { resolveNostrdown } from '$lib/api';
 	import type { EditorView } from '@codemirror/view';
+	import { nostrdownEditor, type NostrdownToken } from '$lib/editor/nostrdown-cm';
+	import { normalizeSlug } from '$lib/nostr/nostrdown';
 	import ComposeSection from './ComposeSection.svelte';
 	import ItemBadge from './ItemBadge.svelte';
 	import TagEditor from './TagEditor.svelte';
@@ -22,6 +25,59 @@
 	import { openComposeHelp } from '$lib/wm/compose-help.svelte';
 
 	const app = getAppState();
+
+	// ── Nostrdown: recognize {{ }} refs in the editor and follow on mod-click ──
+	function openCoord(coord: string) {
+		const i1 = coord.indexOf(':');
+		const i2 = coord.indexOf(':', i1 + 1);
+		if (i1 < 0 || i2 < 0) return;
+		app.openAddressableInModal({
+			kind: Number(coord.slice(0, i1)),
+			pubkey: coord.slice(i1 + 1, i2),
+			d_tag: coord.slice(i2 + 1)
+		});
+	}
+
+	/** Char offset of the heading line whose title-slug equals `slug`, else null. */
+	function findHeadingPos(doc: string, slug: string): number | null {
+		const d = effectiveDelim();
+		let offset = 0;
+		for (const line of doc.split('\n')) {
+			const head = parseHeadingLine(line, d);
+			if (head && normalizeSlug(head.title) === slug) return offset;
+			offset += line.length + 1; // + newline
+		}
+		return null;
+	}
+
+	const NOSTR_ENTITY_RE = /^(nostr:)?(naddr1|nevent1|note1)/i;
+
+	// mod-click on a recognized token: jump to a sibling heading in this buffer
+	// (works while drafting, before anything is published), else resolve against
+	// the db and open the target event.
+	async function followNostrdown(token: NostrdownToken, view: EditorView) {
+		if ((token.kind === 'ref' || token.kind === 'embed') && !NOSTR_ENTITY_RE.test(token.target)) {
+			const pos = findHeadingPos(view.state.doc.toString(), normalizeSlug(token.target));
+			if (pos != null) {
+				view.dispatch({ selection: { anchor: pos }, scrollIntoView: true });
+				view.focus();
+				return;
+			}
+		}
+		try {
+			const resolved = await resolveNostrdown([{ key: 'k', content: token.raw }]);
+			const r = resolved['k']?.[0];
+			if (r?.found && r.coord) {
+				openCoord(r.coord);
+				return;
+			}
+		} catch {
+			/* fall through to the toast */
+		}
+		app.pushToast(`Unresolved ${token.kind}: ${token.target}`, 'info');
+	}
+
+	const nostrdownExt = [nostrdownEditor({ onActivate: followNostrdown })];
 
 	// Composer walkthrough dropdown. The in-chrome `W` lists every composer
 	// tutorial (registry's `composer.tours`); picking one switches the editor to
@@ -1151,6 +1207,7 @@
 					bind:editorView={atomicCmView}
 					{lineNumbers}
 					{vimMode}
+					extensions={nostrdownExt}
 				/>
 			</div>
 		</div>
@@ -1204,6 +1261,7 @@
 						{lineNumbers}
 						{vimMode}
 						onBlur={handlePlainBlur}
+						extensions={nostrdownExt}
 					/>
 				</div>
 				<div class="detected-sections" data-tour="compose-detected">
