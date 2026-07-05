@@ -1,0 +1,624 @@
+#+TITLE: Orientation Decisions — Intake Form
+#+SUBTITLE: Mission, docs, nostrdown, features, roadmap: check what goes in, annotate what changes
+#+DATE: 2026-07-05
+#+STATUS: FORM — fill in checkboxes and Notes; answers drive the doc rewrite + roadmap update
+
+* How to use this document
+
+Each leaf item is a short pitch: what it is, why it may be needed, what
+already exists to build on. Mark the checkboxes, set a priority where one
+is offered, and write freely under =Notes:= — reasoning, modifications,
+clarifications, formalizations, counter-proposals. Anything unchecked with
+empty notes is treated as "defer, revisit later," not "rejected."
+
+Priority vocabulary: =near= (next few work sessions) / =mid= (this quarter)
+/ =long= (someday, keep on roadmap) / =never= (explicitly out).
+
+When you're done, hand the file back and the accepted items become:
+(a) edits to the canon docs, (b) entries in a refreshed roadmap, and
+(c) formalized spec text where marked.
+
+* 1. Mission & identity
+
+** The mission statement
+
+The headline self-description in README.md, CLAUDE.md, project-summary.org,
+and features.org still says "publication engine." Whatever wording is
+chosen here gets hoisted into all four. Proposed text:
+
+#+begin_quote
+Tendrl is a local-first *reader, writer, and reference manager* built on
+Nostr: read structured publications, research across a distributed event
+network (structured search, semantic embeddings, social discovery), compose
+and publish NKBIP-01 publications, and manage references through the
+nostrdown reference language. Fetching is algorithmic and reader-driven —
+not only author-side tags, but post-hoc labels: when someone you trust
+reads a document and labels it =#biology=, that label becomes a retrieval
+signal for you.
+#+end_quote
+
+- [ ] Accept as-is
+- [ ] Accept with edits (write them below)
+- [ ] Rework entirely (sketch below)
+Notes:
+
+** Emphasis ordering: reader-first, writer-first, or research-first?
+
+The three words in "reader, writer, reference manager" are not neutral —
+the order implies where UI defaults and roadmap energy go. The current
+codebase is strongest as a *writer* (compose is the most mature surface);
+the missing-pattern analysis says the biggest gaps are in the *reader loop*
+(triage, resurfacing, relatedness, backlinks); the novel differentiators
+(WoT × embeddings, post-hoc labeling) are *research* features. Picking an
+emphasis decides, e.g., whether the default landing buffer is the feed
+(reader), the composer (writer), or search (research), and which quarter
+gets which feature cluster.
+
+- [ ] Reader-first
+- [ ] Writer-first
+- [ ] Research-first
+- [ ] Deliberately balanced (no default emphasis)
+Notes:
+
+** Anti-goals, formalized
+
+The publishing philosophy ("deliberate publishing + reference management,
+NOT social broadcast") exists as a working principle but isn't written into
+canon. Formalizing anti-goals prevents drift and makes review decisions
+cheaper ("does this feature serve broadcast? then no"). Candidate
+anti-goals, each its own checkbox:
+
+- [ ] *Not a social broadcast client* — no engagement mechanics, no
+  auto-publishing of lists/relay sets, no notification treadmill.
+- [ ] *Not a relay browser* — tendrl reads what its policies fetched, and
+  makes the partiality visible; it does not promise "the whole network."
+- [ ] *Not a hosted service* — fully valuable at n=1, offline; the local
+  copy is the archive (the Pinboard/Pocket lesson).
+- [ ] *No global graph visualization* — local 2-hop neighborhood views
+  only, if any (the Obsidian hairball lesson).
+- [ ] Other anti-goals (write below)
+Notes:
+
+* 2. Documentation reconciliation
+
+** The mission hoist (four files)
+
+Replace the publication-engine framing at README.md:3, CLAUDE.md:44,
+project-summary.org:8, features.org:12 with the §1 wording (NKBIP-01
+becomes the mechanism sentence, not the identity sentence). Low effort,
+removes the single most consistent drift found in the audit.
+
+- [ ] Include
+Priority:
+Notes:
+
+** features.org catch-up
+
+features.org claims to be "the single canonical feature list" but predates
+2026-06-27: it is missing the entire Appearance/theme system (10+ themes,
+high-contrast, sun/moon, text size), the walkthrough/tour system, the
+discussions read-side (counts, DiscussionViewBuffer, highlight overlays),
+and the engine-version display. If features.org is to stay canonical it
+needs a "features land here in the same PR" convention (see §7).
+
+- [ ] Include
+Priority:
+Notes:
+
+** project-summary.org open-work list correction
+
+The summary lists LLM tool-calling and discussions write-side as open;
+tool-calling is shipped (=src/tools.rs=, agentic loop, ToolPolicy) and
+discussions read-side is shipped. Correct the status list so the summary
+can be trusted as a status document.
+
+- [ ] Include
+Priority:
+Notes:
+
+** Auto/Confirm rename sweep + sidecar removal
+
+data-lifecycle-roadmap.org, stability-roadmap.org, search-architecture.org,
+and embedding-and-fetching.org still use the Offline/Online naming (shipped
+as =Confirm=/=Auto=) and data-lifecycle still motivates work by "thousands of
+concurrent HTTP requests to the sidecar (Python, port 3031)" — a process
+that no longer exists. Mechanical rename + delete the dead rationale +
+tick the roadmap phases that actually shipped (data-lifecycle Phases 1–2,
+stability P0–P2).
+
+- [ ] Include
+Priority:
+Notes:
+
+** embedding-and-fetching.org relay-config correction
+
+Its "Relay configuration" section shows the live relay sets living in
+config.toml (=[relay.fetch]= etc.); the shipped model is =relays.json=
+authoritative with TOML =initial_relays= as a one-shot bootstrap seed.
+Correct it; also drop the =POST /api/v1/documents/parse= reference.
+
+- [ ] Include
+Priority:
+Notes:
+
+** Archive moves
+
+Two docs describe things that don't exist here anymore and should move to
+=docs/archive/= (tick-don't-delete, provenance preserved):
+=publication-architecture.org= (Jan 2026 — dead structs: =PublicationTree*=,
+=NodeStatus=, a WebSocket =set_visible= API) and =publication_creation.md=
+(documents Alexandria's internal pipeline, an external reference client).
+
+- [ ] Archive publication-architecture.org
+- [ ] Archive publication_creation.md
+Priority:
+Notes:
+
+** Broken-pointer fixes
+
+wm-shell.md points at =design-brief*.org= (now in archive/), =features.md=
+(it's =.org=), and =/design/shell= (removed by its own Phase 2); its SPC
+leader tree still shows the retired five layouts and "online/offline."
+ui-improvements.org points at =workbench-architecture.org= (now archive/).
+chat-api-walkthrough.org documents the NoopProvider echo harness without
+saying so — add a pointer to ai-assistant-status.md as the live truth.
+
+- [ ] Include (all of the above)
+Priority:
+Notes:
+
+** Doc lifecycle conventions
+
+The audit worked because some docs carry =#+STATUS:= headers and some
+don't. Proposal to formalize: every doc in docs/ declares one of
+=CURRENT= / =DESIGN= (vision, unshipped) / =PLAN= (committed intent) /
+=REPORT= (point-in-time) / =LOG= (append-only), plus a rule: when a plan
+ships, its doc either updates to CURRENT or moves to archive/ in the same
+PR. This is what keeps the next audit from finding the same rot.
+
+- [ ] Include
+Priority:
+Notes:
+
+* 3. Nostrdown: branch decisions
+
+** Commit the uncommitted work
+
+The entire =[[ ]]= wikilink alias (parser, tests, web decoration), the spec
+conversion (=nostrdown-spec.org= → =.md=), and the NKBIP-03-revised-2 edits
+exist only in the worktree's dirty state. Until committed, the branch's
+recorded state lacks its own headline feature. This is a prerequisite for
+everything else in this section.
+
+- [ ] Include
+Priority:
+Notes:
+
+** Merge nostrdown → tendrl-web
+
+The branch fast-forwards cleanly (tendrl-web is a direct ancestor). Tier 1
+is shipped and tested; merging puts ={{ref:}}=/={{wiki:}}=/={{embed:}}=/
+={{quote:}}=/={{slot:}}= in the live product and unblocks the reader-loop
+features (§4) that build on the emitted =w=/=ref=/=a=/=q=/=p= tags. On merge:
+fix the stale CLAUDE.md note (=["wikilink", …]= → =["w", …]=) and mark
+docs/nostrdown.org superseded-as-spec by nostrdown-spec.md.
+
+- [ ] Merge after committing
+- [ ] Hold for more work first (say what below)
+Priority:
+Notes:
+
+** Boundary-debt resolution
+
+=web/src/lib/nostr/nostrdown.ts= duplicates Rust algorithms: =normalizeSlug=
+(NIP-54 twin), =isMarkupLinkTarget= + =parseWikilink= (line-for-line ports),
+and the token regexes exist in two disagreeing TS copies. Options: (a)
+expose a lightweight Rust parse endpoint / ship parsed token spans with
+resolve responses and delete the TS logic; (b) accept a *documented*
+carve-out for editor decoration only, but collapse the two TS copies into
+one module so they can't diverge. (a) is pure per the boundary rule but
+adds a round-trip on every keystroke-adjacent path; (b) is pragmatic.
+
+- [ ] Option (a): Rust parse endpoint, delete TS twins
+- [ ] Option (b): documented carve-out, single TS module
+Priority:
+Notes:
+
+** Heading-anchor navigation
+
+=#fragment= parses and survives resolution, but nothing scrolls. The spec
+itself de-emphasizes anchors ("reference the child, not parent+child").
+Decide: implement scroll-to-anchor in the reader, or formally demote
+fragments to display-only and note it in the spec.
+
+- [ ] Implement scroll-to-anchor
+- [ ] Demote to display-only (spec note)
+Priority:
+Notes:
+
+** The @mention drift
+
+nostrdown-spec.md lists =@= mention as shipped, but the engine tokenizer
+rejects ={{@…}}= (mentions only work via ={{embed:npub…}}=). Either implement
+=RefKind::Mention= or correct the spec's status block. Small either way;
+the point is spec and code must agree before the spec is shown to anyone.
+
+- [ ] Implement ={{@…}}=
+- [ ] Correct the spec status block
+Priority:
+Notes:
+
+** Formalize: pin-vs-live embed semantics
+
+The distinction already falls out of the addressing (={{embed:nevent…}}= =
+pinned immutable snapshot; ={{embed:naddr…}}= = live latest version) but the
+spec never states it as a *semantic contract*, and the reader gives no
+version-state feedback. Proposal: spec language declaring the pin/live
+contract + a "newer version exists" staleness affordance (substrate:
+=load_section_versions()=). MediaWiki's =$wgEnableScaryTranscluding= is the
+cautionary tale for silent live inclusion.
+
+- [ ] Formalize in spec
+- [ ] Also build the staleness chip (see §4)
+Priority:
+Notes:
+
+** Formalize: wiki resolution scoping
+
+The brainstorm left resolution order open. Current code scores
+author-match > wiki-kind > recency over kinds 30818/30023/30041. Proposal
+to formalize the ladder: same publication → same author → follows (1 hop)
+→ WoT (k hops) → network, with the ladder position shown in the resolution
+UI so the reader knows *why* this target won. This is also where WoT (§6)
+first touches nostrdown.
+
+- [ ] Formalize the ladder in spec
+- [ ] Keep current heuristic, document it as-is
+Priority:
+Notes:
+
+** Formalize: citation d-tag conventions
+
+If 30161 citations are coming (§5), the d-tag convention decides whether
+citations are shareable/deduplicatable across authors. Candidate:
+=author-year-slug= (=smith-2024-truth-about-time=), NIP-54-normalized, with
+DOI-derived d-tags (=doi-10-1234-…=) when a DOI exists so two people citing
+the same paper mint the same coordinate.
+
+- [ ] Formalize (comment on the candidate below)
+- [ ] Defer until citations are implemented
+Notes:
+
+* 4. Reader-loop features
+
+** Backlinks / "referenced by" panel
+
+The Obsidian pattern: store links one-way, render them two-way via a
+derived reverse index. The forward edges already exist — the publish path
+appends =w=/=ref=/=a=/=q=/=p= tags to every signed section — and nostrdb can
+answer the reverse query. Engine work: a backlinks endpoint (reverse index
+over =e=/=a=/=q=/=w= tags for a given id/naddr); web work: a reader side-pane.
+Pure Rust derivation, no new stored state, and it's the feature that makes
+the reference graph *visible* rather than write-only.
+
+- [ ] Include
+Priority:
+Notes:
+
+** Semantic "See Also" pane + promote-to-ref gesture
+
+DEVONthink's See Also (passive relatedness) fused with Obsidian's unlinked
+mentions (discovery → one-click promotion to explicit link), upgraded by
+embeddings we already run: while reading or composing a section, a side
+rail shows k-nearest events from the HNSW index; one gesture inserts a
+={{ref:}}=/={{embed:}}= to a neighbor into the current draft. This closes the
+research→writing loop and is the first feature that makes the embedding
+index *ambient* instead of query-gated.
+
+- [ ] Include
+Priority:
+Notes:
+
+** Reading states: inbox / later / archive
+
+The Readwise triage pattern: separate "is this worth my time" from reading
+it; archive without guilt (archive ≠ delete, stays searchable). Today the
+feed has no per-item reading state and the ignore list is the only triage
+tool. Design question to settle in Notes: local-only view state (cheap,
+private, no protocol surface) vs. NIP-51 lists (portable across clients,
+but publishing reading behavior collides with the deliberate-publishing
+philosophy — could be local-first with explicit opt-in publish).
+
+- [ ] Include
+Priority:
+Notes:
+
+** Resurfacing / deliberate review
+
+The counterweight to a write-only archive (Readwise Daily Review): a small
+scheduled dose of past highlights/quotes/sections, with keep/discard
+feedback and tunable decay. Without it, the highlight and quote layer
+accumulates and is never seen again. Fits naturally as a buffer type in
+the WM shell ("review buffer"), fed by an engine endpoint that samples from
+9802s/quotes/notes weighted by age.
+
+- [ ] Include
+Priority:
+Notes:
+
+** Live-embed staleness chips + version diff view
+
+Companion to the §3 pin/live formalization: naddr-addressed embeds and
+imported reference blocks get a "newer version exists" chip; clicking shows
+a version diff (substrate: =load_section_versions()= + the republish-diff
+transform already in Rust). Readers see drift instead of silently reading
+stale transclusions; authors see when their imports moved.
+
+- [ ] Include
+Priority:
+Notes:
+
+** Publication status & confidence metadata
+
+Gwern's pattern: every long-lived document carries visible status
+(draft / in-progress / finished), a confidence marker, and a date range —
+"perpetual drafts" made legible. Nostr gives the revision chain for free;
+this adds a small tag vocabulary on 30040s (e.g. =["status", "draft"]=,
+=["confidence", "likely"]=) rendered in the reader header and feed cards.
+Cheap, and it sets cultural expectations for accretive writing.
+
+- [ ] Include
+Priority:
+Notes:
+
+* 5. Reference-manager features
+
+** Implement citations (kind 30161)
+
+The spec (NKBIP-03-revised-2) is done; the code is absent — ={{cite:}}=
+parses as literal text. Work: =RefKind::Cite= in the parser, citation-event
+emission from the composer (a "cite this" flow that mints or reuses a 30161
+with title/author/published_on/accessed_on and the quoted passage in
+content), resolution + rendering per the =citation-style= precedence. This
+is the feature that makes "reference manager" true in the Zotero sense
+rather than aspirational.
+
+- [ ] Include
+Priority:
+Notes:
+
+** Typed citation intents
+
+scite.ai's finding: ~92.6% of citations merely mention; the rare
+supporting (6.5%) and contradicting (0.8%) edges carry nearly all the
+signal. As a nostrdown modifier — ={{cite:smith-2024|supports}}= /
+=|contradicts= / =|extends= — the intent is author-asserted and signed
+(more reliable per-edge than scite's ML), and aggregates per target into a
+"3 supporting / 1 contradicting" badge on any cited event. Differentiating
+and cheap once 30161 exists; also the semantic-roles idea from the original
+brainstorm, landed in its minimal viable form.
+
+- [ ] Include
+Priority:
+Notes:
+
+** Registry metadata resolution on import
+
+Zotero's deepest moat: metadata arrives at reading speed. When
+=document.rs= extracts text, scan the first pages for DOI/ISBN, query
+CrossRef/OpenAlex, and mint the 30161 citation event (and index metadata
+tags) automatically — the imported PDF arrives *already citable*. Network
+access must respect Confirm mode (registry queries are fetch intents like
+any other). Without this, every citation is hand-typed and the reference
+manager loses to Zotero on day one for academic corpora.
+
+- [ ] Include
+Priority:
+Notes:
+
+** Materialized citation export (BibTeX / CSL-JSON)
+
+Better BibTeX's lesson: stable human-meaningful keys + continuously
+materialized export is what plugs a reference manager into external
+toolchains (LaTeX, pandoc, Typst). A =GET /api/v1/citations/export= (bibtex
+| csl-json) over local 30161 events, with the nostrdown d-tag as the
+citekey, makes tendrl a usable bibliography source without any editor
+integration work.
+
+- [ ] Include
+Priority:
+Notes:
+
+** Annotation anchoring robustness + orphan state
+
+Hypothesis's engineering lesson: no single selector survives document
+change; store an ensemble (exact quote + prefix/suffix + position) and
+re-anchor through a strategy cascade; when confidence fails, the
+annotation becomes *orphaned* — kept and flagged, never silently lost.
+Tendrl's immutable event sources sidestep most drift, but highlights on
+live (naddr) content face it on every republish. Work: store quote+offset
+selectors on 9802s we create, re-anchor across versions, add an orphaned
+display state.
+
+- [ ] Include
+Priority:
+Notes:
+
+* 6. Social discovery & post-hoc labeling
+
+** Labeler subscription + hydration join (the core architecture)
+
+Bluesky's stackable moderation, generalized to enrichment, is the
+architecture worth stealing wholesale: labels are signed third-party
+events about content the labeler doesn't own; clients *choose* labelers;
+an AppView joins labels onto content at hydration time. Tendrl's engine is
+positioned to be its own AppView: (1) the user designates trusted labeler
+pubkeys; (2) the engine subscribes to their label streams; (3) labels are
+indexed locally; (4) every event the API serves carries its known labels,
+joined at query time in Rust. This is the machinery under the original
+use case: someone reads a document, comments =#biology=, and that becomes a
+retrieval signal.
+
+- [ ] Include
+Priority:
+Notes:
+
+** Which events count as labels?
+
+Sub-decision for the above. NIP-32 kind-1985 events are the formal
+analogue of a Bluesky label (namespaced =L=/=l= tags, explicit target).
+But the original tendrl use case is *comments* — a NIP-22 (kind 1111)
+reply carrying =#biology= or a =t= tag. Options, checkable independently:
+
+- [ ] kind-1985 (NIP-32) label events — the formal channel
+- [ ] NIP-22 comments carrying =t= tags / hashtags — the organic channel
+- [ ] kind-1 quotes/mentions with hashtags — noisier, wider net
+- [ ] 30040 index membership — "someone included this in a curated index"
+  as an implicit label (strongest signal of all: curation as labeling)
+Notes:
+
+** =label:= search operator + fetch-by-label mode
+
+The retrieval surface for the label layer: =label:biology= (optionally
+=label:biology@npub…= scoped to a labeler) as a search token compiling to a
+1985/tag filter + target hydration, and a fetch mode "pull events that my
+labelers marked X" as a first-class algorithmic fetch alongside
+LocalFirst/FetchAlways. Free-form vocabulary, per the folksonomy evidence
+(per-object tag distributions converge without enforcement) — aggregate
+and display, don't gate.
+
+- [ ] Include
+Priority:
+Notes:
+
+** WoT weighting
+
+The sybil answer for an open network: weight labels, search results, and
+discovery by the labeler's position in *your* social graph. Insertion
+points, checkable independently:
+
+- [ ] Query-time scope filter: only labels/results from ≤k hops (local
+  follow-graph walk over kind-3s — no external dependency)
+- [ ] Ranking multiplier: hop-distance or personalized-PageRank score
+  weights label counts and search order
+- [ ] External WoT service (Vertex-style DVM) as an *optional* provider —
+  keep the local walk as the default so n=1 still works
+- [ ] Wiki/nostrdown resolution ladder position (ties into §3 scoping)
+
+The intersection play — "semantically near my query AND labeled/written
+within 2 hops" — is a discovery primitive none of the surveyed systems
+ships, and both halves (HNSW index, kind-3 graph in nostrdb) are already
+local.
+
+Priority:
+Notes:
+
+** Algorithmic feeds as 30040 indexes
+
+Bluesky's deepest structural idea: a feed generator returns only an
+ordered list of references; hydration happens elsewhere. In tendrl, a
+curated reading list, a Map of Content, and an algorithmic feed are
+already the same data type — a 30040 over event addresses. Proposal: any
+internal algorithm (semantic neighbors, label queries, WoT-scoped
+discovery) can *emit its results as a local 30040*, making algorithm output
+saveable, publishable (deliberately), diffable, and subscribable like any
+other publication. Curation becomes an artifact, not a session.
+
+- [ ] Include
+Priority:
+Notes:
+
+** Annotation follows the identifier (badge join everywhere)
+
+PubPeer's pattern: the annotation layer travels with the identifier, not
+the venue — wherever the paper appears, the "has comments" badge appears.
+Generalized: whenever *any* event renders anywhere in tendrl (feed card,
+search result, embed card, reader header), join and badge its known
+post-hoc layer — comment count (shipped for sections), labels, highlight
+count, supporting/contradicting citation tally. One engine-side join, one
+badge row component, applied uniformly.
+
+- [ ] Include
+Priority:
+Notes:
+
+* 7. Process & workflow conventions
+
+** Where accepted items land
+
+The accepted feature items above need a home. Proposal: a single
+=docs/roadmap.org= as the living ledger (checkbox items, tick-don't-delete,
+grouped by the §4–§6 categories), replacing the scattered
+data-lifecycle/stability/ui-improvements roadmaps — those get their done
+items ticked and are either absorbed or archived. One ledger means one
+place to check "what's next" and one place the changelog draws from.
+
+- [ ] Single roadmap.org ledger
+- [ ] Keep per-subsystem roadmap docs, just reconcile them
+Notes:
+
+** Features.org same-PR convention
+
+Standing rule candidate for CLAUDE.md: a PR that ships a user-visible
+feature updates features.org in the same PR (one line is enough). This is
+the cheap version of "docs can't rot if they move with the code," and it
+would have prevented the themes/walkthroughs gap the audit found.
+
+- [ ] Include (add to CLAUDE.md)
+Notes:
+
+** CLAUDE.md standing-guidance additions
+
+Beyond the mission hoist, candidates for the instructions file, checkable
+independently:
+
+- [ ] The doc lifecycle convention (§2) — STATUS header vocabulary + the
+  ships-then-updates rule
+- [ ] The anti-goals (§1) as review criteria
+- [ ] A one-paragraph pointer to the label/WoT architecture (§6) once
+  accepted, so future work builds on the hydration-join model rather than
+  inventing parallel plumbing
+Notes:
+
+* 8. Open questions (no proposal attached — text entry only)
+
+** Private / encrypted layers
+
+Everything above assumes public events. Private highlights, private
+reading states, private labels (NIP-44-encrypted, signer-dependent —
+under NIP-07 the decrypt lives in the browser) are architecturally
+different enough that retrofitting is painful. When does private-layer
+support enter the roadmap, and which layer first (highlights? reading
+states? labels?)?
+
+Notes:
+
+** Multi-user direction vs. the reference-manager framing
+
+docs/multi-user-architecture.org sketches multi-tenant directions. A
+reference manager is intensely personal (n=1); group libraries (Zotero
+groups, Hypothesis groups) are the collaborative variant. Does the
+multi-user work serve "shared library" semantics, or hosting convenience,
+or both — and does it change any §6 decisions (e.g., whose follow graph
+scopes WoT in a shared instance)?
+
+Notes:
+
+** The knowledgebase/ directory's future
+
+Local documents for import exist alongside the event store. Once registry
+metadata resolution (§5) and citations exist, is knowledgebase/ a staging
+area (import → events → done), or a permanent parallel store the reference
+manager must also index and cite?
+
+Notes:
+
+** Emacs/nvim frontends' first target
+
+The engine API is kept frontend-portable for planned emacs/nvim clients.
+Given the new orientation: which slice would a first emacs client target —
+reader (org-rendered publications), reference manager (citation insertion
+into org buffers — org-cite integration would be a natural wedge), or
+capture (daily-note → section refactoring)?
+
+Notes:
