@@ -67,7 +67,7 @@ completes. Remaining accepted tasks (tracked in
 On branch =relay-deletion=; spec in
 [[file:idea-relay-deletion-and-sync.org][the idea note]]:
 - [X] phase 1: per-row local delete + sync badges (frontend only)
-- [ ] phase 2: diff-gate the existing relay-list publish (10002/30002)
+- [X] phase 2: diff-gate the existing relay-list publish (10002/30002)
 
 * Ideas — captured, not scheduled
 

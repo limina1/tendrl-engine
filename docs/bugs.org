@@ -140,3 +140,32 @@ Route a kind-30040 broadcast through the publication endpoint:
 clean. Manual: open a 30040 index in the event modal, =Broadcast= — the confirm
 intent reads =Replicate 1 index + N sections= (=· nested tree= when nested) and
 =Broadcast N events=; every section + nested index lands on the relays.
+
+* OPEN — kind 30002 published with =r= member tags instead of NIP-51 =relay=
+:PROPERTIES:
+:found: 2026-07-06 (during relay-deletion feature work)
+:END:
+
+** Symptom
+=publishNamedSet= (RelaysBuffer.svelte) composes member relays as =["r", url]=
+tags. NIP-51 specifies =["relay", url]= for kind 30002 relay sets — other
+clients (Amethyst et al.) won't see our members. Ironically the pull side's own
+comment documents this ("30002 carries URLs in `relay` tags; accept `r` as a
+tolerant fallback").
+
+** Note
+The publish-diff endpoint (src/relay_diff.rs) already accepts both tag names
+on both sides, so fixing the emit won't churn diffs. Fix = one-line tag-name
+change + accept both on readers; consider re-publishing guidance for anyone
+who already pushed an =r=-tagged set.
+
+* OPEN — =emit_wikilink_tags_from_wiki_refs= fails on tendrl-web
+:PROPERTIES:
+:found: 2026-07-06 (pre-existing at e8b6481; confirmed in a clean worktree)
+:END:
+
+** Symptom
+=cargo test= fails: =publication::tree_emit::tests::emit_wikilink_tags_from_wiki_refs=
+asserts =["the-fable"]= but gets =[]= (tree_emit.rs:790). Belongs to the
+in-flight nostrdown epoch (=[[ ]]= wikilink emit, commit f09a965); noting here
+so other branches rebasing onto tendrl-web don't chase it as their own.

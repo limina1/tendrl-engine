@@ -69,6 +69,7 @@ pub mod nostrdown;
 pub mod publication;
 pub mod query;
 pub mod relay;
+pub mod relay_diff;
 pub mod relay_store;
 pub mod relay_url;
 pub mod search;

@@ -50,7 +50,7 @@ only by an explicit, diff-gated publish.
     =drifted=), computed against the pulled kind 10002 (only shown
     after a pull that found one; broadcast-only rows aren't badged —
     they're not part of a 10002).
-- Phase 2 — diff-gate the publish:
+- Phase 2 — diff-gate the publish — *shipped*:
   - correction from the code: explicit publish *already exists*
     (=publishRelayListByKind= for 10002/10088, =publishNamedSet= for
     30002 in =RelaysBuffer.svelte=) — user-initiated, per the

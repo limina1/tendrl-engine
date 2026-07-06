@@ -1240,3 +1240,51 @@ curl -s localhost:3030/api/v1/relays | jq '[.general,.fetch,.publish,.broadcast]
 pnpm -C web check    # 0 errors
 pnpm -C web build    # prod compile (embedded-SPA regressions surface here)
 #+end_src
+
+* Relay-list overwrite gate (phase 2, branch =relay-deletion=)
+
+Every relay-list publish (10002 / 10088 / 30002) now refreshes the local
+copy, asks =POST /api/v1/relays/publish-diff= what it would overwrite, and
+shows a confirmation modal. Pure diff core in =src/relay_diff.rs=.
+
+** Unit tests
+
+#+begin_src bash
+cargo test --lib relay_diff     # 6 passed
+#+end_src
+
+** Endpoint smoke test (scratch engine, nak)
+
+#+begin_src bash
+# Scratch engine on :3031 (config with its own data_dir), then:
+SEC=$(nak key generate); PUB=$(echo $SEC | nak key public)
+nak event -q -k 10002 -t "r=wss://keep.example" -t "r=wss://gone.example;read" \
+  -t "client=amethyst" -c "" --sec $SEC > ev.json
+curl -s -X POST localhost:3031/api/v1/ingest -H 'Content-Type: application/json' -d @ev.json
+
+# Identity: register a NIP-07-style external signer, then activate it.
+SID=$(curl -s -X POST localhost:3031/api/v1/identity/signer-register \
+  -H 'Content-Type: application/json' -d "{\"kind\":\"nip07\",\"pubkey\":\"$PUB\"}" | jq -r .signer_id)
+curl -s -X POST localhost:3031/api/v1/identity/use \
+  -H 'Content-Type: application/json' -d "{\"source\":\"nip07\",\"signer_id\":\"$SID\"}"
+
+curl -s -X POST localhost:3031/api/v1/relays/publish-diff -H 'Content-Type: application/json' \
+  -d '{"kind":10002,"proposed_tags":[["r","wss://keep.example"],["r","wss://new.example","write"]]}' | jq
+# -> added: [new.example], removed: [gone.example], unchanged: 1,
+#    dropped_tags: [["client","amethyst"]]
+# No current event (e.g. unknown 30002 d_tag) -> null (first publish, no gate).
+# Encrypted current (10088 with content, no current_urls) -> current_opaque: true.
+#+end_src
+
+** UI verification
+
+Publish kind 10002 / 10088 / a named set: after the refresh, a modal lists
+added/removed/marker changes, foreign tags that would drop, and warns on
+encrypted content (drops_content) or an unreadable current list
+(current_opaque). Cancel aborts before any signing/extension prompt;
+Escape and backdrop click cancel. First publish (nothing published yet)
+skips the modal entirely.
+
+** Known-failing on tendrl-web (pre-existing, not this branch)
+
+=emit_wikilink_tags_from_wiki_refs= fails at e8b6481 — see docs/bugs.org.

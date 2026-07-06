@@ -859,6 +859,63 @@
 	type PublishableKind = 10002 | 10007 | 10086 | 10088;
 	let publishingKind = $state<PublishableKind | null>(null);
 
+	// ------------------------------------------------------------------
+	// Overwrite gate: replaceable events replace wholesale, so every
+	// relay-list publish first refreshes the local copy of the current
+	// event, asks the engine what would be overwritten, and shows the
+	// diff for confirmation. Fail-open on lookup errors (a broken diff
+	// must not block publishing); `null` diff = first publish, no gate.
+	// ------------------------------------------------------------------
+	let publishGate = $state<{
+		label: string;
+		diff: api.RelayListDiff;
+		resolve: (ok: boolean) => void;
+	} | null>(null);
+
+	function resolveGate(ok: boolean) {
+		publishGate?.resolve(ok);
+		publishGate = null;
+	}
+
+	/** Client-decrypted membership of the current private list, if the
+	 *  last pull parsed it — the engine can't read NIP-44 content, so
+	 *  this is the only way the diff sees inside an encrypted list. */
+	function currentUrlsFromPull(kind: PublishableKind): string[] | undefined {
+		if (kind === 10002) return undefined; // public — engine reads the tags
+		if (pullKindResults?.[kind] !== 'parsed') return undefined;
+		return (pulled ?? []).filter((s) => s.source_kind === kind).map((s) => s.url);
+	}
+
+	/** Refresh the current event, diff, and (when overwriting) wait for
+	 *  the user's confirmation. True = go ahead and publish. */
+	async function confirmOverwrite(req: {
+		kind: number;
+		label: string;
+		d_tag?: string;
+		proposed_tags?: string[][];
+		proposed_urls?: string[];
+		current_urls?: string[];
+	}): Promise<boolean> {
+		let diff: api.RelayListDiff | null = null;
+		try {
+			// Refresh the local copy so the diff is against the latest
+			// published state, not a stale cache. Confirm-mode network
+			// intents surface through the usual fetch-approval UI.
+			if (app.myPubkey) await api.pullUserData(app.myPubkey);
+		} catch {
+			// Fetch trouble = diff against whatever is cached locally.
+		}
+		try {
+			diff = await api.relayListPublishDiff(req);
+		} catch {
+			return true; // fail-open — never block a publish on the gate
+		}
+		if (!diff) return true; // nothing published yet, nothing overwritten
+		return new Promise((resolve) => {
+			publishGate = { label: req.label, diff: diff!, resolve };
+		});
+	}
+
 	function relaysForPublish(kind: PublishableKind): string[] {
 		if (kind === 10002) {
 			return rows.filter((r) => r.read || r.write).map((r) => r.url);
@@ -894,18 +951,32 @@
 			return;
 		}
 
+		// Compose the public tags up front so the overwrite gate can diff
+		// exactly what would be signed. NIP-65: r-tags with markers.
+		const tags: string[][] = [];
+		if (kind === 10002) {
+			for (const r of rows) {
+				if (r.read && r.write) tags.push(['r', r.url]);
+				else if (r.read) tags.push(['r', r.url, 'read']);
+				else if (r.write) tags.push(['r', r.url, 'write']);
+			}
+		}
+
+		// Gate BEFORE the NIP-44 encrypt so a cancelled publish never
+		// bothers the extension. Private kinds diff by plaintext URL list.
+		const ok = await confirmOverwrite({
+			kind,
+			label: `kind ${kind} (${classLabelForPublish(kind)})`,
+			proposed_tags: kind === 10002 ? tags : undefined,
+			proposed_urls: kind === 10002 ? undefined : urls,
+			current_urls: currentUrlsFromPull(kind)
+		});
+		if (!ok) return;
+
 		publishingKind = kind;
 		try {
-			let tags: string[][] = [];
 			let content = '';
-			if (kind === 10002) {
-				// NIP-65: public r-tags with read/write markers.
-				for (const r of rows) {
-					if (r.read && r.write) tags.push(['r', r.url]);
-					else if (r.read) tags.push(['r', r.url, 'read']);
-					else if (r.write) tags.push(['r', r.url, 'write']);
-				}
-			} else {
+			if (kind !== 10002) {
 				// Amethyst PrivateTagArrayEvent convention: tags array is
 				// empty, the relay list lives in NIP-44-encrypted content
 				// as a JSON tag-array of ["relay", url] entries.
@@ -1037,18 +1108,27 @@
 			app.pushToast(`"${set.title}" has no relays.`, 'info', 3000);
 			return;
 		}
+		// NIP-51 kind 30002: `d` for the addressable id, `title` for
+		// the human label, `r` tags for each public relay entry. We
+		// publish the public form; encrypted private members would
+		// go in NIP-44-encrypted content (deferred).
+		const tags: string[][] = [
+			['d', set.d_tag],
+			['title', set.title],
+			['alt', `Relay set: ${set.title}`],
+			...set.urls.map((url) => ['r', url])
+		];
+
+		const ok = await confirmOverwrite({
+			kind: 30002,
+			label: `"${set.title}" (kind 30002)`,
+			d_tag: set.d_tag,
+			proposed_tags: tags
+		});
+		if (!ok) return;
+
 		publishingSetTag = set.d_tag;
 		try {
-			// NIP-51 kind 30002: `d` for the addressable id, `title` for
-			// the human label, `r` tags for each public relay entry. We
-			// publish the public form; encrypted private members would
-			// go in NIP-44-encrypted content (deferred).
-			const tags: string[][] = [
-				['d', set.d_tag],
-				['title', set.title],
-				['alt', `Relay set: ${set.title}`],
-				...set.urls.map((url) => ['r', url])
-			];
 			const { signed_event } = await api.signTemplate({
 				template: {
 					kind: 30002,
@@ -1138,6 +1218,8 @@
 		return s.state === 'loaded' ? s.doc : null;
 	}
 </script>
+
+<svelte:window onkeydown={(e) => publishGate && e.key === 'Escape' && resolveGate(false)} />
 
 <div class="relays-view">
 	<div class="relays-header">
@@ -1809,6 +1891,92 @@
 		     headers; global Refresh + Save Settings moved to the top
 		     header (no more sticky bottom footer). -->
 	{/if}
+
+	<!-- Overwrite gate: what publishing this replaceable event replaces.
+	     Rendered declaratively (no manual mount — breaks the prerendered
+	     build); shown while a publish awaits the user's confirmation. -->
+	{#if publishGate}
+		{@const d = publishGate.diff}
+		<!-- svelte-ignore a11y_click_events_have_key_events -->
+		<div class="gate-backdrop" role="presentation" onclick={() => resolveGate(false)}>
+			<div
+				class="gate-modal"
+				role="dialog"
+				aria-modal="true"
+				aria-label="Confirm overwrite of published relay list"
+				tabindex="-1"
+				onclick={(e) => e.stopPropagation()}
+			>
+				<div class="gate-title">Overwrite published list?</div>
+				<p class="gate-sub">
+					Publishing {publishGate.label} replaces your currently published event
+					{#if d.current_created_at}
+						(from {new Date(d.current_created_at * 1000).toLocaleString()})
+					{/if}
+					wholesale on every relay that accepts it.
+				</p>
+
+				{#if d.current_opaque}
+					<p class="gate-warn">
+						The current published list is <strong>encrypted</strong> and couldn't be read —
+						you'd be overwriting contents unknown to this app. Run "Pull from your profile"
+						(with your NIP-07 extension unlocked) to see them first.
+					</p>
+				{/if}
+
+				{#if d.added.length > 0}
+					<div class="gate-section gate-section--added">
+						<div class="gate-section-label">+ added ({d.added.length})</div>
+						{#each d.added as url (url)}<div class="gate-url">{shorten(url)}</div>{/each}
+					</div>
+				{/if}
+				{#if d.removed.length > 0}
+					<div class="gate-section gate-section--removed">
+						<div class="gate-section-label">− removed ({d.removed.length})</div>
+						{#each d.removed as url (url)}<div class="gate-url">{shorten(url)}</div>{/each}
+					</div>
+				{/if}
+				{#if d.changed.length > 0}
+					<div class="gate-section gate-section--changed">
+						<div class="gate-section-label">~ markers changed ({d.changed.length})</div>
+						{#each d.changed as c (c.url)}
+							<div class="gate-url">{shorten(c.url)}: {c.current} → {c.proposed}</div>
+						{/each}
+					</div>
+				{/if}
+				{#if d.unchanged > 0}
+					<p class="gate-muted">{d.unchanged} relay{d.unchanged === 1 ? '' : 's'} unchanged.</p>
+				{/if}
+				{#if d.added.length === 0 && d.removed.length === 0 && d.changed.length === 0 && !d.current_opaque}
+					<p class="gate-muted">Same relay list as the published event.</p>
+				{/if}
+
+				{#if d.dropped_tags.length > 0}
+					<div class="gate-section gate-section--dropped">
+						<div class="gate-section-label">
+							dropped — tags on the published event this app doesn't carry
+						</div>
+						{#each d.dropped_tags as t, i (i)}
+							<div class="gate-url">[{t.join(', ')}]</div>
+						{/each}
+					</div>
+				{/if}
+				{#if d.drops_content}
+					<p class="gate-warn">
+						The published event carries <strong>content</strong> (e.g. encrypted private
+						members) that the new event won't — it will be dropped.
+					</p>
+				{/if}
+
+				<div class="gate-actions">
+					<button class="gate-btn" onclick={() => resolveGate(false)}>Cancel</button>
+					<button class="gate-btn gate-btn--danger" onclick={() => resolveGate(true)}>
+						Publish &amp; overwrite
+					</button>
+				</div>
+			</div>
+		</div>
+	{/if}
 </div>
 
 <style>
@@ -2133,6 +2301,91 @@
 		background: color-mix(in srgb, var(--id-draft) 14%, transparent);
 		color: var(--id-draft);
 		border: 1px solid color-mix(in srgb, var(--id-draft) 50%, transparent);
+	}
+
+	/* Overwrite gate modal */
+	.gate-backdrop {
+		position: fixed;
+		inset: 0;
+		background: color-mix(in srgb, var(--bg, #000) 60%, transparent);
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		z-index: 300;
+	}
+	.gate-modal {
+		background: var(--bg-surface);
+		border: 1px solid var(--panel-border);
+		border-radius: var(--r-md);
+		padding: 16px 18px;
+		max-width: 520px;
+		width: min(92vw, 520px);
+		max-height: 80vh;
+		overflow-y: auto;
+		display: flex;
+		flex-direction: column;
+		gap: 8px;
+	}
+	.gate-title {
+		font-weight: 600;
+	}
+	.gate-sub,
+	.gate-muted {
+		color: var(--fg-muted);
+		font-size: var(--t-sm);
+		margin: 0;
+	}
+	.gate-warn {
+		color: var(--id-draft);
+		font-size: var(--t-sm);
+		border: 1px solid color-mix(in srgb, var(--id-draft) 40%, transparent);
+		border-radius: var(--r-md);
+		padding: 6px 8px;
+		margin: 0;
+	}
+	.gate-section {
+		font-size: var(--t-sm);
+		border-left: 2px solid var(--base3);
+		padding-left: 8px;
+	}
+	.gate-section--added {
+		border-left-color: var(--state-online);
+	}
+	.gate-section--removed {
+		border-left-color: var(--red);
+	}
+	.gate-section--changed,
+	.gate-section--dropped {
+		border-left-color: var(--id-draft);
+	}
+	.gate-section-label {
+		color: var(--fg-muted);
+		margin-bottom: 2px;
+	}
+	.gate-url {
+		font-family: var(--font-mono);
+		overflow-wrap: anywhere;
+	}
+	.gate-actions {
+		display: flex;
+		justify-content: flex-end;
+		gap: 8px;
+		margin-top: 6px;
+	}
+	.gate-btn {
+		border: 1px solid var(--base3);
+		background: transparent;
+		color: var(--fg);
+		cursor: pointer;
+		padding: 4px 12px;
+		border-radius: var(--r-md);
+	}
+	.gate-btn:hover {
+		background: var(--bg-hover, color-mix(in srgb, var(--fg) 8%, transparent));
+	}
+	.gate-btn--danger {
+		border-color: color-mix(in srgb, var(--red) 60%, transparent);
+		color: var(--red);
 	}
 
 	.relay-detail {

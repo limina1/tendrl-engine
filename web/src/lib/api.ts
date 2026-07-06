@@ -1081,6 +1081,35 @@ export function removeRelay(set: string, url: string) {
 	});
 }
 
+/** What publishing a relay-list event would overwrite (replaceable
+ *  events replace wholesale). `null` = no current event, nothing to
+ *  overwrite. Computed engine-side (src/relay_diff.rs). */
+export interface RelayListDiff {
+	kind: number;
+	current_event_id: string | null;
+	current_created_at: number | null;
+	added: string[];
+	removed: string[];
+	changed: { url: string; current: string; proposed: string }[];
+	unchanged: number;
+	dropped_tags: string[][];
+	drops_content: boolean;
+	current_opaque: boolean;
+}
+
+export function relayListPublishDiff(req: {
+	kind: number;
+	d_tag?: string;
+	proposed_tags?: string[][];
+	proposed_urls?: string[];
+	current_urls?: string[];
+}) {
+	return fetchJson<RelayListDiff | null>('/api/v1/relays/publish-diff', {
+		method: 'POST',
+		body: JSON.stringify(req)
+	});
+}
+
 /** Toggle the `exclusive` flag for a discovery class. ON = read relays
  *  bypassed entirely for this class's lookup type. */
 export function setDiscoveryExclusive(klass: 'search' | 'indexer', value: boolean) {

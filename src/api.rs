@@ -954,6 +954,90 @@ pub async fn republish_diff_handler(
     Ok(Json(diff))
 }
 
+/// POST /api/v1/relays/publish-diff body. Public kinds (10002 / 30002)
+/// send `proposed_tags`; the Amethyst private-list kinds send the
+/// pre-encryption `proposed_urls` (their published tags are empty).
+/// `current_urls` is the client-decrypted membership of the currently
+/// published event, for kinds whose list lives in NIP-44 `content` —
+/// that plaintext only exists next to the NIP-07 signer.
+#[derive(Debug, Deserialize)]
+pub struct RelayListDiffRequest {
+    pub kind: u64,
+    /// Addressable id for kind 30002.
+    pub d_tag: Option<String>,
+    #[serde(default)]
+    pub proposed_tags: Vec<Vec<String>>,
+    pub proposed_urls: Option<Vec<String>>,
+    pub current_urls: Option<Vec<String>>,
+}
+
+/// POST /api/v1/relays/publish-diff
+///
+/// Compare a proposed relay-list event against the newest one of the
+/// user's in the local store and report what publishing would overwrite
+/// (replaceable events replace wholesale — see `relay_diff`). Returns
+/// `null` when there's no current event or no signed-in identity — a
+/// first publish overwrites nothing. Fail-open like the republish diff:
+/// a lookup error resolves to `null`, never blocks the publish. The
+/// caller is expected to refresh the local copy first (the pull
+/// endpoint) so the diff is against the latest published state.
+pub async fn relay_list_diff_handler(
+    State(engine): State<AppState>,
+    Extension(signing): Extension<crate::signing::SigningController>,
+    Json(req): Json<RelayListDiffRequest>,
+) -> Result<Json<Option<crate::relay_diff::RelayListDiff>>, EngineError> {
+    let Some(my_pubkey) = active_or_config_pubkey(&engine, &signing).await else {
+        return Ok(Json(None));
+    };
+
+    let current_value: Option<serde_json::Value> = if req.kind == 30002 {
+        match &req.d_tag {
+            Some(d_tag) => {
+                crate::query::query_addressable(engine.ndb(), 30002, &my_pubkey, d_tag)
+                    .unwrap_or(None)
+            }
+            None => None,
+        }
+    } else {
+        let filter = serde_json::json!({
+            "kinds": [req.kind],
+            "authors": [my_pubkey],
+            "limit": 5,
+        });
+        crate::query::query_local(engine.ndb(), &[filter])
+            .unwrap_or_default()
+            .into_iter()
+            .max_by_key(|ev| ev.get("created_at").and_then(|v| v.as_u64()).unwrap_or(0))
+    };
+
+    let current = current_value.map(|ev| crate::relay_diff::CurrentEvent {
+        id: ev
+            .get("id")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string()),
+        created_at: ev.get("created_at").and_then(|v| v.as_u64()),
+        tags: ev
+            .get("tags")
+            .cloned()
+            .and_then(|t| serde_json::from_value(t).ok())
+            .unwrap_or_default(),
+        content: ev
+            .get("content")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_string(),
+    });
+
+    let diff = crate::relay_diff::compute_relay_list_diff(
+        req.kind,
+        current.as_ref(),
+        req.current_urls.as_deref(),
+        &req.proposed_tags,
+        req.proposed_urls.as_deref(),
+    );
+    Ok(Json(diff))
+}
+
 /// GET /api/v1/publications/:pubkey/:d_tag/stream
 ///
 /// POST /api/v1/publications/:pubkey/:d_tag/backfill?depth=N
