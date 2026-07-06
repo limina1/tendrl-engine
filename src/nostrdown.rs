@@ -60,6 +60,13 @@ pub enum RefKind {
     /// profile card `embed` gives) and emits `["p", pubkey, relay?]`. Entity-only:
     /// `@name` (mention by name, needing contact resolution) stays reserved.
     Mention,
+    /// `{{slot:naddr…}}` — a *block-level* transclude: the referenced 30040/30041
+    /// becomes a child node of the enclosing index. The index `a`-tag is emitted by
+    /// the compose/index path (`slot_coord` → `tree_emit`), **not** inline here — so
+    /// [`reference_tags`] deliberately emits nothing for a slot. Recognised by the
+    /// tokenizer only so it *renders* (a chip / a resolved card in the preview);
+    /// resolution treats it like an `embed` of the target.
+    Slot,
 }
 
 impl RefKind {
@@ -69,6 +76,7 @@ impl RefKind {
             "wiki" => Some(RefKind::Wiki),
             "embed" => Some(RefKind::Embed),
             "quote" => Some(RefKind::Quote),
+            "slot" => Some(RefKind::Slot),
             _ => None,
         }
     }
@@ -81,6 +89,7 @@ impl RefKind {
             RefKind::Embed => "embed",
             RefKind::Quote => "quote",
             RefKind::Mention => "mention",
+            RefKind::Slot => "slot",
         }
     }
 }
@@ -657,6 +666,10 @@ pub fn reference_tags(content: &str) -> Vec<Vec<String>> {
                 };
                 push(&mut out, &mut seen, tag);
             }
+            // A slot's `a`-tag is emitted on the *index* by the compose path
+            // (`slot_coord` → `tree_emit`), never inline on the section — so a slot
+            // token in content contributes no inline tag here.
+            RefKind::Slot => {}
         }
     }
     out
@@ -810,6 +823,17 @@ mod tests {
         );
         assert_eq!(toks[1].kind, RefKind::Wiki);
         assert_eq!(toks[1].target, "two-topic");
+    }
+
+    #[test]
+    fn slot_parses_but_emits_no_inline_tag() {
+        let naddr = crate::nip19::encode_naddr(30041, &"ab".repeat(32), "sec", &[]).unwrap();
+        let refs = parse(&format!("{{{{slot:{naddr}}}}}"));
+        assert_eq!(refs.len(), 1);
+        assert_eq!(refs[0].kind, RefKind::Slot);
+        assert!(refs[0].is_entity);
+        // The index a-tag is emitted by the compose path, not inline here.
+        assert!(reference_tags(&format!("{{{{slot:{naddr}}}}}")).is_empty());
     }
 
     #[test]

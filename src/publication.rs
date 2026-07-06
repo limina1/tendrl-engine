@@ -2110,6 +2110,23 @@ impl<'a> PublicationEngine<'a> {
                         apply_event(&mut resolved, &ev, false, display_given);
                     }
                 }
+                RefKind::Slot => {
+                    // Block-level transclude of a 30040/30041 — resolve the target
+                    // like an embed so the preview shows the slotted work as a card
+                    // (the actual index a-tag is emitted by the compose path).
+                    if r.is_entity {
+                        self.fill_from_entity(
+                            &r.target,
+                            &mut resolved,
+                            true,
+                            display_given,
+                            FetchPolicy::LocalOnly,
+                        )
+                        .await;
+                    } else if let Some(s) = siblings.iter().find(|s| s.matches(&r.target)) {
+                        s.fill(&mut resolved, true, display_given);
+                    }
+                }
                 RefKind::Mention => {
                     // Resolve the kind-0 profile for the handle; the entity is
                     // always valid so `found` is set even with no local profile.
