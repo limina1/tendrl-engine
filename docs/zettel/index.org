@@ -62,6 +62,13 @@ completes. Remaining accepted tasks (tracked in
 - [ ] implement ={{@…}}= mentions (=RefKind::Mention=)
 - [ ] Rust parse endpoint; delete the TS grammar twins
 
+* In flight — relay deletion & list sync
+
+On branch =relay-deletion=; spec in
+[[file:idea-relay-deletion-and-sync.org][the idea note]]:
+- [ ] phase 1: per-row local delete + sync badges (frontend only)
+- [ ] phase 2: diff-gated "push relay list" publish (10002/30002)
+
 * Ideas — captured, not scheduled
 
 Brainstorm notes articulating data → representation → UI/UX. Promotion
