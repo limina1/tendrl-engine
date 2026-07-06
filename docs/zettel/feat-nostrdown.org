@@ -36,6 +36,21 @@ Markdown/Org/AsciiDoc/plain content. Normative grammar:
   30041.
 - Web: RichContent overlay rendering, EmbedCard, ReferenceBuilderModal,
   CodeMirror decoration + autocomplete.
+- Reader/UX polish (2026-07-06):
+  - =slot= is recognised inline (=RefKind::Slot=, header-only resolve) and renders
+    as a card; the draft preview maps a slot-*section* back to a ={{slot:…}}=
+    reference so it actually shows (published, it stays an =a=-tag child node of
+    the index, never inline content).
+  - ={{@…}}= mention click follows to the profile (reader *and* editor); an
+    unresolved =wiki= / =[[ ]]= click opens the search frame seeded with the topic
+    (=app.openSearchFor= + an =onSearch= nav handler) — Auto auto-fetches, Confirm
+    searches local and offers relays, the standing
+    [[file:feat-network.org][network intent]] flow.
+  - Resolution-progress bar in the reader toolbar (=ReaderBuffer= + =DraftReader=):
+    a per-reader tracker *prop-threaded* to the embed cards — never context, per
+    the [[file:feat-shell.org][shell lifecycle constraint]]. Each embed/quote/slot
+    card reports itself resolved once it's done fetching, so the =N/M refs= count
+    tracks the real relay-fetch work, not the instant =/resolve=.
 
 * Accepted tasks (this feature epoch) — complete
 

@@ -98,6 +98,9 @@ path: [[file:conventions.org][conventions]].
 - [[file:idea-feeds-as-indexes.org][Feeds as 30040 indexes]] — algorithm output as artifact
 - [[file:idea-event-badges.org][Event badges]] — annotation follows the identifier, + relay provenance
 
+** Substrate & network
+- [[file:idea-entity-hinted-relay-intent.org][Entity-hinted relay intent]] — surface a naddr/nevent's TLV relays in the Confirm modal; hinted-vs-full choice
+
 * Tooling & fixtures
 
 - [[file:tool-collatz-fixture.org][Collatz graph fixture]] — regenerable
