@@ -1314,3 +1314,18 @@ curl -s localhost:3031/api/v1/relays | jq '{publish:.publish.urls, broadcast:.br
 
 UI: "Reset to defaults" in the relay buffer header is a two-step armed
 button (click → "Really reset?" for 4s → click) — no browser alert.
+
+* Relay buffer: no browser dialogs (branch =relay-deletion=)
+
+All =window.prompt= / =window.confirm= usage in RelaysBuffer replaced:
+URL/name entry is an in-app modal (same backdrop pattern as the
+overwrite gate; autofocus, Enter confirms, Escape/backdrop cancels,
+confirm disabled while empty); set-delete is a two-step armed button.
+
+#+begin_src bash
+rg -n "window.prompt|window.confirm|window.alert" web/src   # comments only
+pnpm -C web check                                           # 0 errors
+#+end_src
+
+UI: "+ Add relay", discovery "+ add", "+ New set", set rename (click
+title), "+ add relay" inside a set — all pop the in-app prompt.
