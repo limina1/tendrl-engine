@@ -774,13 +774,14 @@ mod tests {
             .find(|e| e["kind"] == 30041)
             .expect("a 30041 content event");
 
+        // Wiki refs emit the single-letter, relay-indexable `["w", topic]` tag.
         let wikilinks: Vec<String> = content_ev["tags"]
             .as_array()
             .unwrap()
             .iter()
             .filter_map(|t| {
                 let a = t.as_array()?;
-                (a.first()?.as_str()? == "wikilink").then(|| a.get(1)?.as_str())?
+                (a.first()?.as_str()? == "w").then(|| a.get(1)?.as_str())?
             })
             .map(String::from)
             .collect();
