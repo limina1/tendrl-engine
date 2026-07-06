@@ -30,9 +30,10 @@ edits are never auto-published as Nostr events.
   vs. the pulled kind 10002) — 2026-07-06, see
   [[file:idea-relay-deletion-and-sync.org][relay deletion & list sync]].
 - Overwrite gate on every relay-list publish (10002/10088/30002):
-  refresh → =POST /api/v1/relays/publish-diff= (pure core
+  =POST /api/v1/relays/publish-diff= against the local copy (pure core
   =src/relay_diff.rs=) → confirmation modal showing added/removed/marker
-  changes, foreign tags and encrypted content that would drop —
+  changes, foreign tags and encrypted content that would drop, plus a
+  "lists last synced N ago" staleness line with on-demand refetch —
   2026-07-06.
 
 * Gaps / open edges

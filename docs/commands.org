@@ -1229,8 +1229,9 @@ curl -s localhost:3030/api/v1/relays | jq '[.general,.fetch,.publish,.broadcast]
 
 ** UI verification
 
-- Relay buffer: each row ends in a =×=; confirm dialog says the removal is
-  tendrl-only; row disappears optimistically and stays gone after Refresh.
+- Relay buffer: each row ends in a =×= that removes immediately (no
+  confirm; tooltip states it's tendrl-only); row disappears optimistically
+  and stays gone after Refresh.
 - Sync badges appear only after "Pull from your profile" finds a kind
   10002: =synced= (green, markers match), =drifted= (yellow, markers
   differ — hover explains what publishing would overwrite), =local only=
@@ -1278,12 +1279,16 @@ curl -s -X POST localhost:3031/api/v1/relays/publish-diff -H 'Content-Type: appl
 
 ** UI verification
 
-Publish kind 10002 / 10088 / a named set: after the refresh, a modal lists
+Publish kind 10002 / 10088 / a named set: a modal diffs against the LOCAL
+copy (no automatic fetch — no confirm-mode intent per publish) and lists
 added/removed/marker changes, foreign tags that would drop, and warns on
 encrypted content (drops_content) or an unreadable current list
-(current_opaque). Cancel aborts before any signing/extension prompt;
-Escape and backdrop click cancel. First publish (nothing published yet)
-skips the modal entirely.
+(current_opaque). A staleness line ("lists last synced N ago", persisted
+per pubkey) offers "refetch from relays", which pulls and re-diffs in
+place. Cancel aborts before any signing/extension prompt; Escape and
+backdrop click cancel. First publish after a sync (nothing published)
+skips the modal; never-synced with no local copy shows a "publishing
+blind" warning instead.
 
 ** Known-failing on tendrl-web (pre-existing, not this branch)
 
