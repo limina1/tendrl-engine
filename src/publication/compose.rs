@@ -89,7 +89,7 @@ pub struct SectionCompose {
     /// the canonical `kind:pubkey:d-tag` coordinate (a 30040/30041) of an
     /// existing event. The emitter places it as an `["a", coord]` in the
     /// enclosing 30040 index at this ordinal position and mints NO 30041 of its
-    /// own. See `normalize_slot_coord` and `docs/nostrdown-spec.adoc`.
+    /// own. See `normalize_slot_coord` and `docs/nostrdown-spec.md`.
     pub slot_coord: Option<String>,
 }
 

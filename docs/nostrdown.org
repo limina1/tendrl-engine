@@ -15,7 +15,7 @@ and is left untouched. That keeps Nostr linking renderable by a bare tokenizer
 frontend/backend boundary, mirroring the NIP-84 highlight pipeline.
 
 The /normative/ grammar + per-prefix reference now lives in
-=docs/nostrdown-spec.adoc=; the citation design lives in *NKBIP-03 (revised 2)*
+=docs/nostrdown-spec.md=; the citation design lives in *NKBIP-03 (revised 2)*
 (=nips/NKBIP-03-revised-2.adoc=). This file stays the evocative brainstorm those
 were distilled from — read it for the /why/, those for the /what/.
 
@@ -39,7 +39,7 @@ were distilled from — read it for the /why/, those for the /what/.
   Merged with NIP-84 highlight spans onto one segmentation.
 - *Publish* (=reference_tags=): every reference emits a resolution tag, so the
   event self-describes and the tags appear in the *Preview events* —
-  =wikilink= / =ref= / =a= / =q= / =p=, and for =quote= the NIP-84 source (=a=/=e=)
+  =w= / =ref= / =a= / =q= / =p=, and for =quote= the NIP-84 source (=a=/=e=)
   + author (=p= … =author=).
 - *Authoring* (editor): CM extension recognizes ={{ }}= tokens; inline
   autocomplete (mode-bar toggle; ={{= → prefixes, ={{ref:= → sibling titles,
@@ -363,7 +363,7 @@ the {{wiki:fable}} tradition (see {{@aesop}}) suggests...
 "tags": [
     ["cite", "smith-2024", "30161:<pubkey>:smith-2024"],
     ["ref", "chapter-3", "30041:<pubkey>:chapter-3"],
-    ["wikilink", "fable"],
+    ["w", "fable"],
     ["p", "<aesop-pubkey>", "<relay>", "aesop"]
 ]
 #+end_src
@@ -376,9 +376,10 @@ The =embed= and =quote= prefixes follow the same pattern, by target type:
 Content stays concise and human-readable. Tags are machine-readable resolution
 hints. Tags can be updated (event republished) without changing content text.
 
-NOTE: the engine emits the /short/ =["wikilink", "fable"]= (topic only). NKBIP-01
-/ NKBIP-06 also allow a resolved-coordinate form
-=["wikilink", "fable", "<pubkey>", "<relay>", "<event-id>"]=; adopting it is an
+NOTE: the engine emits the /short/ single-letter =["w", "fable"]= (topic only;
+NKBIP-01 originally named the tag =wikilink= — we renamed it to the relay-indexable
+=w=). NKBIP-01 / NKBIP-06 also allow a resolved-coordinate form
+=["w", "fable", "<pubkey>", "<relay>", "<event-id>"]=; adopting it is an
 open call (more resolution detail vs. a coordinate that can go stale).
 
 * Inspirations & Related Work
@@ -511,7 +512,10 @@ but powerful for knowledge graphs.
   the composer's draft-reader preview before publish: the web passes the draft's
   own sections inline (=DraftSibling { title, d_tag }=) and the engine matches the
   title-slug against them, the same path as published siblings./
-- [X] ={{wiki:}}= markup-agnostic wikilinks (replaces broken =[[ ]]=)
+- [X] ={{wiki:}}= markup-agnostic wikilinks (replaces broken =[[ ]]=). /Also:
+  =[[topic]]= / =[[d-tag][display]]= / =[[topic\vert alias]]= are now recognized as
+  an alias for ={{wiki:}}= (bare topics only — a markup-native link/image/path
+  target is left to the host markup); both emit the same =["w", topic]= tag./
 - [X] ={{embed:}}= transclusion (enables modular publications). /A not-local
   entity embed resolves =pending= (LocalOnly — never blocks a render) and the card
   fetches it from the *search relays*: auto in Auto mode (a "fetching…" note),
