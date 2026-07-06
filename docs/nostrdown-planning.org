@@ -1,0 +1,654 @@
+#+TITLE: Nostrdown Planning Worksheet
+#+SUBTITLE: A fill-in decision record — reconciliation, patterns, features, roadmap, open questions
+#+DATE: 2026-07-05
+#+STATUS: WORKSHEET — mark it up, hand it back; approved items become the to-do + design record
+
+* How to use this document
+
+Each entry below is a candidate change: a doc fix, a pattern worth codifying, a
+feature, a roadmap item, an open question, or a workflow. Every entry has the same
+shape:
+
+- a paragraph — /what it is/, /why it may be needed/, /what changes if adopted/, and
+  any risk or tradeoff;
+- =- [ ] Include= — tick to accept the item into the work/design record; leave blank
+  to defer or drop;
+- a =:NOTES:= drawer — type your reasoning, a modification, a clarification, a
+  formalization, or "defer because…". This is where your intent gets captured, not
+  just the yes/no.
+
+Nothing on disk changes from ticking a box here — this worksheet is the input to the
+work, not the work. When you hand it back, the ticked items with their notes become
+the authoritative plan; the drift items in section B are the only ones that touch
+existing files, and only once approved.
+
+Scope: the nostrdown reference layer /and/ the systems it touches — NKBIP-03/06/08
+citations, NIP-84 highlights, the publication tree, and the relay/publish flow.
+
+* A. Mission & Framing
+
+** A.1 Hoist a one-line mission statement for the nostrdown layer
+
+Nostrdown is documented across a brainstorm (=nostrdown.org=), a normative spec
+(=nostrdown-spec.md=), and an NKBIP, but nowhere does a single sentence say what the
+layer /is for/. A mission line — e.g. "the semantic reference layer over =nostr:=
+URIs: markup-agnostic pointers that carry a role and emit a tag" — would anchor every
+downstream decision and give the README/CLAUDE.md a hook. Needed because the recent
+reader/writer/reference-manager reframe (orientation report) makes references a
+first-class pillar, not an afterthought, and the layer should announce that.
+
+- [ ] Include
+:NOTES:
+
+:END:
+
+** A.2 Position nostrdown within the reader / writer / reference-manager framing
+
+The orientation reframe recast the engine as a reader + writer + reference manager,
+not a "publication engine". Nostrdown /is/ the reference-manager surface — but the
+docs still frame it as a publications feature. Stating the mapping explicitly (linking
+is the reference-manager verb; embed/quote/cite are its object types) would make the
+layer legible as the thing that satisfies that pillar, and would guide which prefixes
+earn priority.
+
+- [ ] Include
+:NOTES:
+
+:END:
+
+** A.3 Write an explicit "what nostrdown is / is not" scope boundary
+
+The single sharpest design rule — ={{ }}= is the Nostr-/event/ layer, =[[ ]]= is the
+Nostr /wiki/ link, and neither ever overrides the host markup's own links/images — is
+currently spread across three files as prose. A short, quotable boundary statement
+("nostrdown adds only what the markup cannot express: pointers to Nostr data") would
+stop future features from creeping into markup's territory and make the
+=is_markup_link_target= skip self-evident.
+
+- [ ] Include
+:NOTES:
+
+:END:
+
+* B. Documentation Reconciliation (must-fix drift)
+
+** B.1 Dangling spec-file pointers (=.adoc= that does not exist)
+
+The normative spec was renamed =docs/nostrdown-spec.org= → =docs/nostrdown-spec.md=
+(the =.org= is staged-deleted, the =.md= is untracked), but two references name a
+/third/ extension: =src/publication/compose.rs:92= and =docs/nostrdown.org:18= both
+point at =docs/nostrdown-spec.adoc=. Both pointers are broken. Fix = repoint them at
+=.md= (or settle on the final extension first — see B.5).
+
+- [ ] Include
+:NOTES:
+
+:END:
+
+** B.2 =wikilink= → =w= tag lag in the docs
+
+The parser now emits =["w", topic]= (single-letter, relay-indexed), but the prose
+still describes the old tag: =CLAUDE.md:187= says "Publish emits NKBIP-01 =["wikilink",
+topic]= tags", and =docs/nostrdown.org= (lines 40, 366, 379–381, 437) still narrates
+=wikilink=. Code and docs contradict each other on a protocol-visible detail. Fix =
+update the prose to =w=, and decide whether to keep the historical =["wikilink", …]=
+note as provenance.
+
+- [ ] Include
+:NOTES:
+
+:END:
+
+** B.3 Three-way fragment-grammar disagreement
+
+=nostrdown-spec.md= dropped =#fragment= from the grammar entirely, and the NKBIP-03
+diff removed it from citations — but =src/nostrdown.rs= still parses fragments and
+=nostrdown.org= still tracks fragment anchors as =[-]=. The three sources disagree on
+whether =#fragment= is part of the grammar at all. This overlaps with the design
+question in H.6 (keep / drop / quote-only); B.3 is just "make the three files agree
+once H.6 is decided".
+
+- [ ] Include
+:NOTES:
+
+:END:
+
+** B.4 Roadmap tick for the in-flight =[[ ]]= / =w= / token-chip phase
+
+The uncommitted working tree ships =[[ ]]= recognition, the =w= tag, and the
+pre-resolution token chip — all tested (22/22) — but the roadmap in =nostrdown.org=
+still says the layer is =\{\{ \}\}=-only, so this shipped work is undocumented. Fix =
+add =[[ ]]= recognition to the Implementation Status + roadmap as shipped, per the
+tick-don't-delete convention.
+
+- [ ] Include
+:NOTES:
+
+:END:
+
+** B.5 Settle the spec's final format (=.md= vs =.adoc= vs =.org=)
+
+Underlying B.1: the spec has now existed as =.org=, is being referenced as =.adoc=,
+and lives on disk as =.md=. The NKBIPs are =.adoc=; the design notes are =.org=; the
+new spec is =.md=. Pick one and make every pointer match. Needed so the normative
+document has a stable, findable home.
+
+- [ ] Include
+:NOTES:
+
+:END:
+
+* C. Patterns to Codify (candidates for CLAUDE.md "Key Patterns")
+
+** C.1 The tag-resolution pattern
+
+The unifying principle — /content carries a short human reference, event tags carry
+the machine-readable resolution hint/ — governs every prefix but is only written down
+in the brainstorm. Promoting it to a named pattern would make new prefixes fall out
+consistently (every prefix answers: what does the content show, what tag resolves it)
+and would explain why tags can be re-published without touching content.
+
+- [ ] Include
+:NOTES:
+
+:END:
+
+** C.2 Parse / resolve / render split mirroring NIP-84 highlights
+
+Nostrdown deliberately reuses the highlight pipeline's shape: pure parse (Rust) →
+engine-side resolve → web overlay-merge onto one segmentation. This is the concrete
+expression of the frontend/backend boundary for reference-like features, and the next
+overlay feature (annotations, backlinks) should follow it rather than reinvent. Worth
+naming so it is copied, not re-derived.
+
+- [ ] Include
+:NOTES:
+
+:END:
+
+** C.3 The pre-resolution "token chip" pattern (new)
+
+The in-flight work adds a =token= segment: a raw ={{ }}=/=[[ ]]= rendered as a pulsing
+"resolving…" chip at priority 0, so a resolved =ref= always wins and the syntax never
+flashes as prose in the async gap. This is a reusable idea for any
+render-before-resolution surface (embeds fetched from relays, lazy profiles). Codify it
+as "always give unresolved-but-recognized syntax a low-priority placeholder segment".
+
+- [ ] Include
+:NOTES:
+
+:END:
+
+** C.4 Graceful degradation to plain text
+
+Every malformed or unknown token is left verbatim in the source, so content stays
+readable in any plain renderer. This is a load-bearing invariant (it is why =cite=/=@=
+can be reserved without breaking anything), and it constrains the parser: never consume
+input you cannot classify. Worth stating as a rule so a future eager parser does not
+violate it.
+
+- [ ] Include
+:NOTES:
+
+:END:
+
+** C.5 The markup-native skip (=is_markup_link_target=) as a boundary rule
+
+=[[ ]]= is claimed only for bare topics; a =scheme:=, =://=, path, or image target is
+handed back to the host markup. This one predicate is what lets nostrdown coexist with
+Org/Markdown/AsciiDoc links without a markup parser. It is mirrored in Rust and TS
+(=parseWikilink=), which is itself a boundary risk (two copies of one rule — see H.9).
+Codifying it names the invariant both copies must uphold.
+
+- [ ] Include
+:NOTES:
+
+:END:
+
+* D. Shipped Features to Ratify & Formalize
+
+** D.1 =[[ ]]= wikilink alias (scoped to Nostr wiki links)
+
+Ratify the decision to recognize =[[topic]]= / =[[d-tag][display]]= / =[[topic|alias]]=
+as a =wiki= reference, skipping markup-native targets. It is built and tested; this is
+about blessing it in the spec's Status section and the NKBIP, and confirming the three
+display forms are the final set (no =[[page^block]]= block-ref form, no =![[embed]]=
+transclusion form — those stay ={{ }}=).
+
+- [ ] Include
+:NOTES:
+
+:END:
+
+** D.2 The =w= single-letter tag (protocol-level decision)
+
+Ratify emitting =["w", topic]= instead of =["wikilink", topic]=: single-letter,
+relay-indexed, so =\{"#w":[topic]\}= returns backlinks, matching NIP-54's
+author-agnostic outgoing-usage model. This is a wire-format choice other clients will
+see — it deserves an explicit note in the NKBIP and a decision on whether to /also/
+accept the legacy =wikilink= tag on read for interop (see H.10).
+
+- [ ] Include
+:NOTES:
+
+:END:
+
+** D.3 The pre-resolution resolving chip
+
+Ratify the =token= segment + its CSS (pulse, reduced-motion fallback, per-kind glyphs
+↗/❝/⧉). Built and rendering. Decision points: is the pulse the right affordance, should
+a resolution /failure/ (not just a pending state) surface differently from "resolving",
+and should the chip be clickable before resolution.
+
+- [ ] Include
+:NOTES:
+
+:END:
+
+* E. Roadmap — Tier 2 (next to build)
+
+** E.1 ={{cite:}}= citations → kind 30161
+
+The last major reference type. Grammar and the NKBIP-03-revised-2 spec already exist;
+the resolver + emission would mirror =quote= (resolve the =d-tag= to a 30161 record,
+emit =["cite", d-tag, "30161:pk:d-tag"]=). Needed to make nostrdown a real
+reference-manager surface — citations are the reference-manager's core object. Largest
+single Tier-2 lift; everything else in E depends on the citation record existing.
+
+- [ ] Include
+:NOTES:
+
+:END:
+
+** E.2 Citation events (kind 30161) with rich metadata
+
+The reusable record =cite:= points at: =d=, the NKBIP-06 =M= source-type tag
+(=citation/nostr/replaceable= etc.), title/author/published_on/accessed_on, DOI,
+publisher, and the quoted passage in =content=. Needed before E.1's resolver has
+anything to resolve. Decision: minimal viable tag set for v1 vs the full NKBIP-03
+taxonomy (nostr / web / hardcopy / prompt).
+
+- [ ] Include
+:NOTES:
+
+:END:
+
+** E.3 ={{@name}}= mention-by-name shorthand
+
+Today ={{@npub1…}}= works (mention by entity); ={{@aesop}}= (mention by /name/) is
+reserved. It needs a name→pubkey resolution step (contacts / kind-0 search), which is
+ambiguous in a way entity mentions are not. Useful for authoring ergonomics, but the
+ambiguity (which "aesop"?) is a real design cost — likely wants a disambiguation step
+in the composer, not silent resolution.
+
+- [ ] Include
+:NOTES:
+
+:END:
+
+** E.4 Publication-level citation-style tags
+
+=["citation-style", "chicago"]= on the 30040 index sets the document's default render
+style for citations, overridable per-reference (={{cite:x|foot}}=). This is the
+presentation-separation principle made concrete. Cheap to emit; the cost is the
+renderer that /honours/ styles (footnote/endnote/inline numbering), which is a larger
+piece. Decide whether v1 ships the tag but renders one fixed style.
+
+- [ ] Include
+:NOTES:
+
+:END:
+
+* F. Roadmap — Tier 3 (later)
+
+** F.1 ={{term:}}= glossary references
+
+A reference that resolves to a glossary/definition event and renders as a
+hover-definition. Overlaps heavily with =wiki= (both resolve a concept by slug); the
+open question is whether =term= is a distinct prefix or just =wiki= with a
+glossary-scoped render. Probably defer until there is a glossary event kind to point at.
+
+- [ ] Include
+:NOTES:
+
+:END:
+
+** F.2 ={{media:}}= Nostr-native media embedding
+
+Embed kind-1063 file-metadata / blossom media with provenance, vs a bare URL. Marked
+low priority in the brainstorm because standard URLs already work. Worth it only when
+verifiable/relay-independent media provenance becomes a goal.
+
+- [ ] Include
+:NOTES:
+
+:END:
+
+** F.3 Backlink discovery / graph view
+
+Not a syntax feature — emergent from the tag graph. The =w=/=ref=/=a=/=q= tags already
+make "cited by" / "embedded in" queryable; this is the client feature that surfaces
+them (a graph view, a "referenced by" panel). The =w= tag decision (D.2) was made
+partly to enable exactly this. High value for the reference-manager framing.
+
+- [ ] Include
+:NOTES:
+
+:END:
+
+** F.4 Collaborative annotations
+
+Reader-attached marginalia referencing a section + passage — distributed Hypothesis,
+related to NIP-28 and the NIP-84 quote model. This is the natural extension of the
+highlight/quote pipeline (C.2) to third-party, non-author overlays. Large; belongs
+after the read-side overlay infra is proven.
+
+- [ ] Include
+:NOTES:
+
+:END:
+
+* G. Adjacent Systems
+
+** G.1 NKBIP-03-revised-2 alignment (citation spec vs implementation)
+
+The NKBIP is being edited in the working tree (dropping =#fragment=, clarifying
+in-event vs structured citations). Before building E.1/E.2, confirm the spec is final:
+kind 30161, source type via NKBIP-06 =M= tag, =\{\{cite:d-tag|modifier\}\}= grammar. Any
+remaining open item in the NKBIP is a blocker for the Tier-2 build.
+
+- [ ] Include
+:NOTES:
+
+:END:
+
+** G.2 NKBIP-06 =M=-tag source typing
+
+Citations carry their source type (=nostr= / =web= / =hardcopy= / =prompt=) via the
+NKBIP-06 =M= tag rather than a bespoke =source-type= tag. Confirm the exact =M= values
+and that the engine's tag emission will use them. Needed so citation records are
+queryable by source type with one filter.
+
+- [ ] Include
+:NOTES:
+
+:END:
+
+** G.3 NKBIP-08 =book:= prefix (reserved)
+
+=book:= is reserved for book references (NKBIP-08) but not built, and =[[book::]]= is
+explicitly /not/ parsed. Decide whether =book:= is a future ={{ }}= prefix, a
+specialization of =cite=, or its own thing — and record why it is reserved rather than
+dropped. Keeps the prefix namespace intentional.
+
+- [ ] Include
+:NOTES:
+
+:END:
+
+** G.4 NIP-84: upgrade ={{quote}}= to a real kind-9802 highlight
+
+Today =quote= carries the excerpt inline and emits =a=/=e= + =p author= on the section
+— an inline model. Minting an actual kind-9802 highlight event would make quotes
+first-class, independently addressable, and reusable (and would feed F.4 annotations).
+Tradeoff: a second event per quote vs. self-contained inline text. Decide whether the
+upgrade is opt-in or replaces the inline model.
+
+- [ ] Include
+:NOTES:
+
+:END:
+
+** G.5 Publication tree: stream flattened TOC rows (drop the TS twin)
+
+=ReaderBuffer.svelte= re-accumulates the tree SSE into an addr-keyed map — a thin twin
+of the Rust assembly, flagged in CLAUDE.md as an optional refinement. Streaming
+already-flattened TOC rows from the engine would delete the twin and tighten the
+boundary. Relevant to nostrdown because =slot= inclusion lands in this same tree.
+
+- [ ] Include
+:NOTES:
+
+:END:
+
+** G.6 Relay/publish: surface =broadcast_results= for reference-bearing events
+
+The engine returns per-relay broadcast results but the web discards them (known wiring
+gap). For nostrdown this matters when an embed/quote/cite points at an event that must
+also be reachable on the reader's relays — publish feedback should say where the
+references and their targets actually landed. Ties nostrdown into the publish-flow work.
+
+- [ ] Include
+:NOTES:
+
+:END:
+
+* H. Open Design Questions (record a decision)
+
+** H.1 Automatic vs tag-mediated resolution
+
+Should a client resolve references by /querying/ (find the sibling/wiki itself) or only
+via the =["ref"/"w"/"a", …]= tags the author emitted? Today it is tag-first with query
+fallback. The tradeoff is authored-intent stability vs. staleness. Record the policy so
+other clients interoperate the same way.
+
+- [ ] Include
+:NOTES:
+
+:END:
+
+** H.2 Wiki resolution scope
+
+=\{\{wiki:topic\}\}= resolves =d-tag= across 30818/30040/41 — but /whose/? Same
+publication → same author → network → web-of-trust? Current behaviour is
+author-preferred. This decides whether a wikilink means "my definition" or "the
+network's", which is a substantive semantic choice for collaborative content.
+
+- [ ] Include
+:NOTES:
+
+:END:
+
+** H.3 Embed recursion depth & snapshot vs latest
+
+Embeds resolve at depth 1 today. Should embedded content that itself embeds recurse,
+with what depth limit, and should an embed snapshot the version at publish time or
+always show latest? Immutability vs freshness. Needed before embeds compose deeply
+(the "textbook embeds shared exercises" use case).
+
+- [ ] Include
+:NOTES:
+
+:END:
+
+** H.4 Deeper-than-one-level sibling loading
+
+=ref=/=embed= against siblings resolves one level of the publication tree. References
+into grandchild sections or across nested indexes are unresolved. Decide whether to
+load the full in-horizon tree for resolution or keep it one-level and require an =naddr=
+for anything deeper.
+
+- [ ] Include
+:NOTES:
+
+:END:
+
+** H.5 Version references (=\{\{ref:…@nevent\}\}=)
+
+Replaceable events update; should nostrdown pin a reference to a specific version
+(=chapter-3@nevent1…=) vs. always-latest? Matters for citations and quotes where the
+referenced text must not silently change. Syntax cost vs. citation integrity.
+
+- [ ] Include
+:NOTES:
+
+:END:
+
+** H.6 Fragment anchors: keep, drop, or quote-only
+
+=#fragment= is parsed and carried but the web never scrolls to the heading; the
+brainstorm calls it superseded by =quote= for passages. Decide: keep it (and build the
+scroll), drop it from the grammar (and stop parsing), or restrict it to quote-only.
+This decision unblocks B.3 (make the three files agree).
+
+- [ ] Include
+:NOTES:
+
+:END:
+
+** H.7 Citation d-tag convention & bibliography sections
+
+Should a 30161 =d-tag= follow =author-year-slug=? How does a bibliography render — a
+special 30041 tagged =["role", "bibliography"]=, or client-aggregated from =cite= tags?
+Affects E.1/E.2 ergonomics and whether citations aggregate.
+
+- [ ] Include
+:NOTES:
+
+:END:
+
+** H.8 Standards interop (CSL / BibTeX)
+
+Should citations import/export CSL or BibTeX? This is what makes 30161 useful to
+existing reference managers (Zotero et al.) — a bridge, not a walled garden. Large;
+decide whether it is a v1 goal or a "designed-for, built-later" affordance.
+
+- [ ] Include
+:NOTES:
+
+:END:
+
+** H.9 The Rust/TS parser twin (=is_markup_link_target= / =parseWikilink=)
+
+The wikilink-skip logic now exists in both =nostrdown.rs= and =nostrdown.ts=. Per the
+frontend/backend boundary this should resolve toward Rust, but the TS copy exists so the
+editor/reader can mark syntax /before/ the engine round-trips. Decide the acceptable
+duplication boundary: is the TS copy a sanctioned "display-only pre-scan", or should the
+engine expose a parse endpoint the editor calls?
+
+- [ ] Include
+:NOTES:
+
+:END:
+
+** H.10 =wikilink= tag: short topic vs resolved 5-tuple, and legacy read-interop
+
+The engine emits the short =["w", topic]=; NKBIP-01/06 also allow
+=["wikilink", topic, pubkey, relay, event-id]=. Adopting the resolved form adds
+resolution detail but a coordinate that can go stale. Also: should the reader still
+/accept/ the legacy =["wikilink", …]= tag from other clients on read? Interop vs.
+simplicity.
+
+- [ ] Include
+:NOTES:
+
+:END:
+
+* I. Authoring Workflows
+
+** I.1 Full-mode section textareas → CodeMirror
+
+In Full compose mode, section bodies are plain textareas, so ={{ }}= recognition /
+autocomplete / preview only work in the flat editor, not per-section cards. Migrating
+them to CodeMirror would make authoring references uniform everywhere. Known follow-up;
+the single biggest authoring-parity gap.
+
+- [ ] Include
+:NOTES:
+
+:END:
+
+** I.2 A ={{quote}}= builder
+
+Pick a source event → fetch it → select/paste the excerpt → emit the quote token +
+tags. Today quotes are hand-typed. A builder makes the NIP-84 quote model usable without
+knowing the tag mechanics. Mirrors the existing embed reference-builder modal.
+
+- [ ] Include
+:NOTES:
+
+:END:
+
+** I.3 A ={{cite:}}= builder
+
+Compose or pick a 30161 record, then insert =\{\{cite:d-tag\}\}=. Depends on E.1/E.2.
+The builder is where the citation's rich metadata gets entered — likely the primary way
+citations are created, so its UX shapes the whole citation feature.
+
+- [ ] Include
+:NOTES:
+
+:END:
+
+** I.4 Autocomplete beyond siblings (wiki topics, mentions, cites)
+
+Autocomplete covers ={{ref:= siblings, ={{wiki:= title search, ={{embed:= builder.
+Extending it to =[[= wiki topics, ={{@= contacts, and ={{cite:= existing records would
+make every reference type typeable. Incremental; each source plugs into the existing
+completion machinery.
+
+- [ ] Include
+:NOTES:
+
+:END:
+
+* J. Unexplored / Speculative (park or promote)
+
+** J.1 Semantic roles (=\{\{supports:\}\}= / =\{\{contradicts:\}\}= / =\{\{extends:\}\}=)
+
+References that express a /relationship/, not just a link — evidence supporting or
+contradicting a claim, work that extends or corrects another. Powerful for knowledge
+graphs, likely too heavy for now. Park with a note, or promote one role (e.g.
+=supports=) as an experiment.
+
+- [ ] Include
+:NOTES:
+
+:END:
+
+** J.2 Conditional content (=\{\{if:subscribed\}\}…\{\{/if\}\}=)
+
+Content that renders by context, backed by encrypted sections (NIP-04/44). Flagged as
+probable over-engineering in the brainstorm. Park unless a concrete gated-content use
+case appears.
+
+- [ ] Include
+:NOTES:
+
+:END:
+
+** J.3 Content addressing (reference by hash)
+
+Reference content by hash (IPFS CID / NIP-94 style) for immutable, relay-independent,
+verifiable pointers. Interesting for citation integrity (H.5 overlaps). Park as a
+research direction.
+
+- [ ] Include
+:NOTES:
+
+:END:
+
+** J.4 Structured-data embedding (=\{\{data:\}\}= / =\{\{formula:\}\}=)
+
+Embed a data table or a named equation as a referenceable unit. Specialized; noted as
+worth recording, not building. Park.
+
+- [ ] Include
+:NOTES:
+
+:END:
+
+* Sign-off
+
+When you have marked the boxes and filled the drawers, hand this back. I will: (1)
+apply the section-B drift fixes for the items you ticked; (2) fold the ticked patterns
+(C) into CLAUDE.md and the ratified features (D) into the spec/NKBIP; (3) turn the
+ticked roadmap/workflow items (E/F/I) into checkboxed roadmap entries; (4) record the
+ticked open-question decisions (H) inline where the code/spec references them; and (5)
+leave the unticked items here as a standing backlog.
+
+- [ ] I have reviewed every section
+- [ ] Ready for the changes above to be applied
+:NOTES:
+
+:END:

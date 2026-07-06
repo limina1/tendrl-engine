@@ -1983,6 +1983,518 @@ impl<'a> PublicationEngine<'a> {
 
         Ok(())
     }
+
+    /// Resolve every nostrdown `{{ }}` reference found in `content`.
+    ///
+    /// `publication_atag` — the containing index coordinate (`"30040:pubkey:dtag"`);
+    /// `ref:` and slug `embed:` targets are matched against that index's ordered
+    /// sections and nested indexes. `author` (hex pubkey) is the preferred author
+    /// for `wiki:` lookups. Each returned [`ResolvedRef`] carries UTF-16 span
+    /// offsets for the web overlay; unresolved tokens come back with
+    /// `found: false` so the renderer can still show their label. The engine half
+    /// of the nostrdown split — the pure tokenizer lives in [`crate::nostrdown`],
+    /// mirroring the NIP-84 highlight resolver.
+    pub async fn resolve_refs(
+        &self,
+        content: &str,
+        publication_atag: Option<&str>,
+        author: Option<&str>,
+        draft_siblings: &[DraftSibling],
+        policy: FetchPolicy,
+    ) -> Vec<crate::nostrdown::ResolvedRef> {
+        use crate::nostrdown::{self, RefKind};
+
+        let refs = nostrdown::parse(content);
+        if refs.is_empty() {
+            return Vec::new();
+        }
+
+        // Load the containing index once; ref:/slug-embed: resolve against its
+        // sections + nested indexes.
+        let publication = match publication_atag.and_then(NAddr::from_a_tag) {
+            Some(addr) => self.load_publication(&addr, policy).await.ok(),
+            None => None,
+        };
+
+        // Section d-tags are opaque nanoids, so a human `{{ref:slug}}` can't
+        // match by d-tag. Build a sibling index that maps each section to its
+        // human handles — title-slug (the `T` tag / normalized title) plus the
+        // literal d-tag — and match the slug against those. Built once (bounded
+        // by sibling count) and only when a slug-based ref is actually present.
+        let needs_siblings = refs.iter().any(|r| {
+            matches!(r.kind, RefKind::Ref) || (matches!(r.kind, RefKind::Embed) && !r.is_entity)
+        });
+        let mut siblings = match (needs_siblings, &publication) {
+            (true, Some(p)) => self.load_sibling_index(p, policy).await,
+            _ => Vec::new(),
+        };
+
+        // Draft siblings: an unsigned, in-composer publication has no events in
+        // nostrdb, so its sections can't be loaded above. The frontend passes the
+        // draft's own sections (title + synthetic d-tag) inline so `{{ref:slug}}`
+        // resolves against them in the draft-reader preview — the same title-slug
+        // match, just sourced from the request instead of the db. Appended after
+        // the published siblings so a real event still wins when both exist.
+        if needs_siblings {
+            for ds in draft_siblings {
+                let mut slugs = vec![ds.d_tag.clone()];
+                if let Some(t) = ds.title.as_deref().filter(|t| !t.is_empty()) {
+                    let slug = crate::publication::compose::ComposeState::generate_d_tag(t);
+                    if !slug.is_empty() {
+                        slugs.push(slug);
+                    }
+                }
+                siblings.push(SiblingEntry {
+                    addr: NAddr::new(KIND_PUBLICATION_SECTION, "", &ds.d_tag),
+                    event: None,
+                    slugs,
+                    title: ds.title.clone(),
+                });
+            }
+        }
+
+        let mut out = Vec::with_capacity(refs.len());
+        for r in &refs {
+            let (start, end) = r.utf16_span(content);
+            let display_given = r.display.is_some();
+            let mut resolved = nostrdown::ResolvedRef {
+                kind: r.kind,
+                start,
+                end,
+                target: r.target.clone(),
+                fragment: r.fragment.clone(),
+                label: r.display.clone().unwrap_or_else(|| r.raw_target.clone()),
+                found: false,
+                pending: false,
+                naddr: None,
+                coord: None,
+                event_kind: None,
+                content: None,
+                title: None,
+                summary: None,
+                image: None,
+                author: None,
+                author_pubkey: None,
+                created_at: None,
+            };
+
+            match r.kind {
+                RefKind::Ref => {
+                    if let Some(s) = siblings.iter().find(|s| s.matches(&r.target)) {
+                        // The TOC lists this sibling, so the link is valid even
+                        // when its event isn't local.
+                        s.fill(&mut resolved, false, display_given);
+                    }
+                }
+                RefKind::Embed if !r.is_entity => {
+                    if let Some(s) = siblings.iter().find(|s| s.matches(&r.target)) {
+                        s.fill(&mut resolved, true, display_given);
+                    }
+                }
+                RefKind::Embed => {
+                    // Entity embeds resolve as a *local* read so resolve never
+                    // blocks on relays; a not-local event comes back `pending` and
+                    // the card fetches it (auto in Auto mode, click in Confirm).
+                    self.fill_from_entity(
+                        &r.target,
+                        &mut resolved,
+                        true,
+                        display_given,
+                        FetchPolicy::LocalOnly,
+                    )
+                    .await;
+                }
+                RefKind::Wiki => {
+                    if let Some(ev) = self.find_wiki_event(&r.target, author, policy).await {
+                        resolved.naddr = event_naddr(&ev);
+                        resolved.coord = event_coord(&ev);
+                        apply_event(&mut resolved, &ev, false, display_given);
+                    }
+                }
+                RefKind::Quote => {
+                    // Resolve the source for attribution only (title/author/coord);
+                    // the quoted body is the inline `|text`, not the source content.
+                    if r.is_entity {
+                        self.fill_from_entity(
+                            &r.target,
+                            &mut resolved,
+                            false,
+                            true,
+                            FetchPolicy::LocalOnly,
+                        )
+                        .await;
+                    }
+                    // Header falls back to a kind name (not the long excerpt) when
+                    // the source has no title / isn't local.
+                    resolved.label = r.raw_target.clone();
+                    resolved.content = r.display.clone();
+                }
+            }
+
+            out.push(resolved);
+        }
+        out
+    }
+
+    /// Force-fetch a single `embed` entity (naddr/nevent/note) and return its
+    /// filled [`ResolvedRef`]. This is the card's "fetch from search relays"
+    /// action: it resolves with `FetchAlways`, so in Confirm mode it routes
+    /// through the network-intent flow (the confirm modal), and aims at the
+    /// search relay set. On success `pending` clears and the card fills with the
+    /// fetched event's title/content; if the relays had nothing it stays pending.
+    pub async fn fetch_entity_ref(
+        &self,
+        entity: &str,
+        want_content: bool,
+    ) -> crate::nostrdown::ResolvedRef {
+        use crate::nostrdown::RefKind;
+        let mut resolved = crate::nostrdown::ResolvedRef {
+            kind: RefKind::Embed,
+            start: 0,
+            end: 0,
+            target: entity.to_string(),
+            fragment: None,
+            label: entity.to_string(),
+            found: false,
+            pending: false,
+            naddr: None,
+            coord: None,
+            event_kind: None,
+            content: None,
+            title: None,
+            summary: None,
+            image: None,
+            author: None,
+            author_pubkey: None,
+            created_at: None,
+        };
+        self.fill_from_entity(entity, &mut resolved, want_content, false, FetchPolicy::FetchAlways)
+            .await;
+        resolved
+    }
+
+    /// Build the sibling index for a publication: every section and nested
+    /// index, each loaded once and tagged with its human handles (title-slug
+    /// plus literal d-tag) so `{{ref:slug}}` / slug `{{embed:slug}}` can match.
+    async fn load_sibling_index(&self, pubn: &Publication, policy: FetchPolicy) -> Vec<SiblingEntry> {
+        let mut addrs = Vec::new();
+        collect_sibling_addrs(pubn, &mut addrs);
+        let mut out = Vec::with_capacity(addrs.len());
+        for addr in addrs {
+            let event = self.load_event_by_addr(&addr, policy).await;
+            // Handles to match against: literal d-tag, the `T` tag (normalized
+            // title slug emitted at publish), and the normalized title itself.
+            let mut slugs = vec![addr.d_tag.clone()];
+            if let Some(ev) = &event {
+                if let Some(t) = first_tag_value(ev, "T").filter(|t| !t.is_empty()) {
+                    slugs.push(t);
+                }
+                if let Some(title) = first_tag_value(ev, "title") {
+                    let slug = crate::publication::compose::ComposeState::generate_d_tag(&title);
+                    if !slug.is_empty() {
+                        slugs.push(slug);
+                    }
+                }
+            }
+            out.push(SiblingEntry {
+                addr,
+                event,
+                slugs,
+                title: None,
+            });
+        }
+        out
+    }
+
+    /// Load an addressable event for `addr`, swallowing errors to `None`.
+    async fn load_event_by_addr(&self, addr: &NAddr, policy: FetchPolicy) -> Option<Value> {
+        self.engine
+            .get_addressable(addr.kind, &addr.pubkey, &addr.d_tag, policy)
+            .await
+            .ok()
+            .flatten()
+    }
+
+    /// Resolve an `embed:` whose target is a bech32 NIP-19 entity.
+    async fn fill_from_entity(
+        &self,
+        entity: &str,
+        resolved: &mut crate::nostrdown::ResolvedRef,
+        want_content: bool,
+        display_given: bool,
+        policy: FetchPolicy,
+    ) {
+        use crate::nip19::Decoded;
+        let Ok(decoded) = crate::nip19::decode(entity) else {
+            return;
+        };
+        match decoded {
+            Decoded::Naddr {
+                kind_int,
+                pubkey,
+                d_tag,
+                relays,
+            } => {
+                resolved.naddr = crate::nip19::encode_naddr(kind_int, &pubkey, &d_tag, &relays)
+                    .ok()
+                    .or_else(|| Some(entity.to_string()));
+                resolved.event_kind = Some(kind_int as u64);
+                let addr = NAddr::new(kind_int as u64, &pubkey, &d_tag);
+                resolved.coord = Some(addr.to_a_tag());
+                // Route through `get_events` (not `get_addressable`) so a
+                // FetchAlways fetch goes through the Confirm intent flow, and aim
+                // it at the search relay set.
+                let search = self.engine.search_relays();
+                let over = (!search.is_empty()).then_some(search.as_slice());
+                let filter = serde_json::json!({
+                    "kinds": [kind_int], "authors": [pubkey], "#d": [d_tag], "limit": 1,
+                });
+                let ev = self
+                    .engine
+                    .get_events(vec![filter], policy, over)
+                    .await
+                    .ok()
+                    .and_then(|r| r.events.into_iter().next());
+                if let Some(ev) = ev {
+                    apply_event(resolved, &ev, want_content, display_given);
+                } else {
+                    // Address is valid; the event just isn't local yet — the card
+                    // offers a relay fetch.
+                    resolved.found = true;
+                    resolved.pending = true;
+                }
+            }
+            Decoded::Nevent { event_id, .. } | Decoded::Note { event_id } => {
+                resolved.naddr = Some(entity.to_string());
+                let search = self.engine.search_relays();
+                let over = (!search.is_empty()).then_some(search.as_slice());
+                let filter = serde_json::json!({ "ids": [event_id], "limit": 1 });
+                let ev = self
+                    .engine
+                    .get_events(vec![filter], policy, over)
+                    .await
+                    .ok()
+                    .and_then(|r| r.events.into_iter().next());
+                if let Some(ev) = ev {
+                    apply_event(resolved, &ev, want_content, display_given);
+                } else {
+                    // Valid event id, just not local yet.
+                    resolved.found = true;
+                    resolved.pending = true;
+                }
+            }
+            // A user embed — resolve the kind-0 profile into a card (name +
+            // picture + bio). The npub is valid even if the profile isn't local.
+            Decoded::Npub { pubkey } | Decoded::Nprofile { pubkey, .. } => {
+                resolved.naddr = Some(entity.to_string());
+                resolved.event_kind = Some(0);
+                resolved.author_pubkey = Some(pubkey.clone());
+                resolved.found = true;
+                let filter = serde_json::json!({ "kinds": [0], "authors": [pubkey], "limit": 1 });
+                if let Ok(resp) = self.engine.get_events(vec![filter], policy, None).await {
+                    if let Some(ev) = resp.events.into_iter().next() {
+                        let content = ev.get("content").and_then(Value::as_str).unwrap_or("");
+                        let created = ev.get("created_at").and_then(Value::as_u64).unwrap_or(0);
+                        if let Some(meta) =
+                            crate::user_data::Metadata::from_event_content(content, created)
+                        {
+                            if !display_given {
+                                if let Some(name) = meta.display_name() {
+                                    resolved.label = name.to_string();
+                                }
+                            }
+                            resolved.title = meta.display_name().map(str::to_string);
+                            resolved.summary = meta
+                                .about
+                                .filter(|a| !a.is_empty())
+                                .map(|a| cap_chars(&a, 280));
+                            resolved.image = meta.picture.filter(|p| !p.is_empty());
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Find the best event for a `wiki:` topic, querying kinds 30818 (wiki),
+    /// 30023 (article), and 30041 (section) by normalized `d` tag. Prefers the
+    /// given author, then a wiki kind, then the most recent.
+    async fn find_wiki_event(
+        &self,
+        d_tag: &str,
+        author: Option<&str>,
+        policy: FetchPolicy,
+    ) -> Option<Value> {
+        let filter = serde_json::json!({
+            "kinds": [30818, 30023, 30041],
+            "#d": [d_tag],
+            "limit": 50,
+        });
+        let mut events = self
+            .engine
+            .get_events(vec![filter], policy, None)
+            .await
+            .ok()?
+            .events;
+        if events.is_empty() {
+            return None;
+        }
+        let score = |e: &Value| -> (u8, u8, i64) {
+            let author_match = author
+                .map(|a| e.get("pubkey").and_then(Value::as_str) == Some(a))
+                .unwrap_or(false);
+            let kind = e.get("kind").and_then(Value::as_u64).unwrap_or(0);
+            let kind_pref = match kind {
+                30818 => 2,
+                30023 => 1,
+                _ => 0,
+            };
+            let created = e.get("created_at").and_then(Value::as_i64).unwrap_or(0);
+            (author_match as u8, kind_pref, created)
+        };
+        events.sort_by(|a, b| score(b).cmp(&score(a)));
+        events.into_iter().next()
+    }
+}
+
+/// One section/index in a publication, loaded and indexed by the human handles
+/// (title-slug + literal d-tag) a `{{ref:slug}}` might use to address it.
+struct SiblingEntry {
+    addr: NAddr,
+    event: Option<Value>,
+    slugs: Vec<String>,
+    /// Human title for entries that have no loaded event (draft siblings) — so
+    /// the preview can still render a titled, resolved card. `None` for db-loaded
+    /// siblings, whose title comes from [`apply_event`].
+    title: Option<String>,
+}
+
+impl SiblingEntry {
+    /// Does `target` name this sibling (by any of its handles)?
+    fn matches(&self, target: &str) -> bool {
+        self.slugs.iter().any(|s| s == target)
+    }
+
+    /// Stamp this sibling onto a resolved ref: address, kind, and — if its event
+    /// is loaded — title/content via [`apply_event`]. A draft sibling (no event)
+    /// still resolves: it carries its title so the card isn't blank, but no real
+    /// naddr/coord (the section isn't published yet).
+    fn fill(&self, resolved: &mut crate::nostrdown::ResolvedRef, want_content: bool, display_given: bool) {
+        resolved.found = true;
+        resolved.naddr = crate::nip19::naddr_from_a_tag(&self.addr.to_a_tag(), &[]).ok();
+        resolved.coord = Some(self.addr.to_a_tag());
+        resolved.event_kind = Some(self.addr.kind);
+        if let Some(ev) = &self.event {
+            apply_event(resolved, ev, want_content, display_given);
+        } else if let Some(t) = self.title.as_deref().filter(|t| !t.is_empty()) {
+            resolved.title = Some(t.to_string());
+            if !display_given {
+                resolved.label = t.to_string();
+            }
+        }
+    }
+}
+
+/// A section of an unsigned, in-composer draft, passed inline to
+/// [`PublicationEngine::resolve_refs`] so `{{ref:slug}}` resolves in the
+/// draft-reader preview before anything is published. `d_tag` is the section's
+/// synthetic id; `title` supplies the human slug + the card label.
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct DraftSibling {
+    #[serde(default)]
+    pub title: Option<String>,
+    pub d_tag: String,
+}
+
+/// Collect every section + nested-index address in `pubn`, depth-first.
+fn collect_sibling_addrs(pubn: &Publication, out: &mut Vec<NAddr>) {
+    for s in &pubn.sections {
+        out.push(s.addr.clone());
+    }
+    for nested in &pubn.nested {
+        out.push(nested.addr.clone());
+        collect_sibling_addrs(nested, out);
+    }
+}
+
+/// First value of the `name` tag on `event`, if present.
+fn first_tag_value(event: &Value, name: &str) -> Option<String> {
+    event.get("tags")?.as_array()?.iter().find_map(|t| {
+        let a = t.as_array()?;
+        if a.first()?.as_str()? == name {
+            a.get(1)?.as_str().map(str::to_string)
+        } else {
+            None
+        }
+    })
+}
+
+/// Build an `naddr` for an addressable `event` from its kind/pubkey/`d` tag.
+fn event_naddr(event: &Value) -> Option<String> {
+    let kind = event.get("kind")?.as_u64()? as u32;
+    let pubkey = event.get("pubkey")?.as_str()?;
+    let d_tag = first_tag_value(event, "d").unwrap_or_default();
+    crate::nip19::encode_naddr(kind, pubkey, &d_tag, &[]).ok()
+}
+
+/// Build a `"kind:pubkey:dtag"` coordinate for an addressable `event`.
+fn event_coord(event: &Value) -> Option<String> {
+    let kind = event.get("kind")?.as_u64()?;
+    let pubkey = event.get("pubkey")?.as_str()?;
+    let d_tag = first_tag_value(event, "d").unwrap_or_default();
+    Some(format!("{kind}:{pubkey}:{d_tag}"))
+}
+
+/// Stamp a resolved event onto `resolved`: mark found, capture kind, lift the
+/// title into `label` (unless an explicit display was given), and — for embeds —
+/// pull in the content to transclude.
+fn apply_event(
+    resolved: &mut crate::nostrdown::ResolvedRef,
+    event: &Value,
+    want_content: bool,
+    display_given: bool,
+) {
+    resolved.found = true;
+    if let Some(kind) = event.get("kind").and_then(Value::as_u64) {
+        resolved.event_kind = Some(kind);
+    }
+    let title = first_tag_value(event, "title").filter(|t| !t.is_empty());
+    if !display_given {
+        if let Some(t) = &title {
+            resolved.label = t.clone();
+        }
+    }
+    // Preview metadata for the editor card.
+    resolved.title = title;
+    resolved.summary = first_tag_value(event, "summary")
+        .or_else(|| first_tag_value(event, "description"))
+        .filter(|s| !s.is_empty())
+        .map(|s| cap_chars(&s, 280));
+    resolved.author = first_tag_value(event, "author").filter(|a| !a.is_empty());
+    resolved.image = first_tag_value(event, "image")
+        .or_else(|| first_tag_value(event, "thumb"))
+        .filter(|s| !s.is_empty());
+    resolved.author_pubkey = event
+        .get("pubkey")
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    resolved.created_at = event.get("created_at").and_then(Value::as_u64);
+    if want_content {
+        resolved.content = event
+            .get("content")
+            .and_then(Value::as_str)
+            .map(str::to_string);
+    }
+}
+
+/// Truncate `s` to at most `max` chars on a char boundary, appending `…`.
+fn cap_chars(s: &str, max: usize) -> String {
+    if s.chars().count() <= max {
+        return s.to_string();
+    }
+    let mut out: String = s.chars().take(max).collect();
+    out.push('…');
+    out
 }
 
 // --- Event Building for Local Creation ---
@@ -2321,10 +2833,14 @@ fn build_publication_events_internal(
         );
     }
 
-    // Flat path (unchanged): build section events first (need their
-    // d-tags for references), then the single 30040 index.
+    // Flat path: build section events first (need their d-tags for
+    // references), then the single 30040 index. Transclude slots reference an
+    // existing event — they mint no 30041 (the index just points at them).
     let mut section_events = Vec::new();
     for i in 0..compose.sections.len() {
+        if compose.sections[i].slot_coord.is_some() {
+            continue;
+        }
         let section_d_tag = compose.section_d_tag(i);
         let section_event = build_section_event_internal(&compose.sections[i], &section_d_tag, pubkey, timestamp, secret_hex);
         section_events.push(section_event);
@@ -2360,6 +2876,12 @@ fn build_section_event_internal(
     // Add section-specific tags
     for tag_vec in ComposeState::tags_to_nostr_format(&section.tags) {
         tags.push(serde_json::to_value(tag_vec).unwrap_or(json!([])));
+    }
+
+    // Nostrdown `{{ }}` references → resolution tags (wikilink / ref / a / q / p).
+    // Mirrors `tree_emit::build_section_content_event`; see `reference_tags`.
+    for tag in crate::nostrdown::reference_tags(&section.content) {
+        tags.push(json!(tag));
     }
 
     tree_emit::sign_event(
@@ -2400,10 +2922,15 @@ fn build_index_event_internal(
         tags.push(serde_json::to_value(tag_vec).unwrap_or(json!([])));
     }
 
-    // Add section references (a-tags)
+    // Add section references (a-tags). A transclude slot points at its existing
+    // coordinate; a normal section points at its (minted) 30041.
     for i in 0..compose.sections.len() {
-        let section_d_tag = compose.section_d_tag(i);
-        let a_tag_value = format!("{}:{}:{}", KIND_PUBLICATION_SECTION, pubkey, section_d_tag);
+        let a_tag_value = if let Some(coord) = compose.sections[i].slot_coord.clone() {
+            coord
+        } else {
+            let section_d_tag = compose.section_d_tag(i);
+            format!("{}:{}:{}", KIND_PUBLICATION_SECTION, pubkey, section_d_tag)
+        };
         tags.push(json!(["a", a_tag_value, ""]));
     }
 
@@ -2630,6 +3157,91 @@ fn build_block_index_event(
 mod tests {
     use super::*;
     use crate::publication::compose::{ComposeBlockState, SectionCompose};
+
+    fn a_coords(index: &Value) -> Vec<String> {
+        index["tags"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|t| t[0] == "a")
+            .map(|t| t[1].as_str().unwrap().to_string())
+            .collect()
+    }
+
+    #[test]
+    fn flat_transclude_slot_emits_external_a_tag() {
+        let pubkey = "ab".repeat(32);
+        let ext = "12".repeat(32);
+        let slot = format!("30041:{ext}:existing-section");
+        let mut compose = ComposeState {
+            title: "Doc".into(),
+            sections: vec![
+                SectionCompose {
+                    title: "One".into(),
+                    content: "first".into(),
+                    level: 2,
+                    ..Default::default()
+                },
+                SectionCompose {
+                    slot_coord: Some(slot.clone()),
+                    level: 2,
+                    ..Default::default()
+                },
+                SectionCompose {
+                    title: "Two".into(),
+                    content: "second".into(),
+                    level: 2,
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        };
+        let (index, sections) = build_publication_events(&mut compose, &pubkey);
+
+        // The slot mints no 30041 — only the two authored sections do.
+        assert_eq!(sections.len(), 2);
+        // The index points at section-one, the EXTERNAL slot, section-two — in
+        // that ordinal order.
+        let coords = a_coords(&index);
+        assert_eq!(coords.len(), 3);
+        assert!(coords[0].starts_with(&format!("30041:{pubkey}:")));
+        assert_eq!(coords[1], slot);
+        assert!(coords[2].starts_with(&format!("30041:{pubkey}:")));
+    }
+
+    #[test]
+    fn nested_transclude_slot_emits_external_a_tag() {
+        let pubkey = "ab".repeat(32);
+        let ext = "12".repeat(32);
+        let slot = format!("30040:{ext}:existing-index");
+        // A nested publication (a level-3 child forces the recursive emitter)
+        // with a top-level slot among the sections.
+        let mut compose = ComposeState {
+            title: "Doc".into(),
+            sections: vec![
+                SectionCompose {
+                    title: "Parent".into(),
+                    level: 2,
+                    ..Default::default()
+                },
+                SectionCompose {
+                    title: "Child".into(),
+                    content: "deep".into(),
+                    level: 3,
+                    ..Default::default()
+                },
+                SectionCompose {
+                    slot_coord: Some(slot.clone()),
+                    level: 2,
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        };
+        let (index, _children) = build_publication_events(&mut compose, &pubkey);
+        // The root index references the slot's external coordinate verbatim.
+        assert!(a_coords(&index).contains(&slot));
+    }
 
     fn d_of(ev: &Value) -> String {
         ev["tags"]
@@ -3685,6 +4297,159 @@ mod tests {
         assert!(
             !b_node.nested[0].index.is_loaded(),
             "ancestor A not re-recursed (cycle guard)"
+        );
+    }
+
+    // --- resolve_refs (nostrdown {{ }} resolution) ---
+
+    #[tokio::test]
+    async fn test_resolve_refs() {
+        let pk_owned = test_pubkey();
+        let pk = pk_owned.as_str();
+        // Real section d-tags are opaque nanoids — `{{ref:chapter-three}}` must
+        // resolve via the title-slug, not the d-tag. Use a non-slug d-tag here
+        // to prove that path (the section is titled "Chapter Three").
+        let intro = NAddr::new(KIND_PUBLICATION_SECTION, pk, "intro");
+        let ch3 = NAddr::new(KIND_PUBLICATION_SECTION, pk, "sec-7h2x9");
+        let root_idx = NAddr::new(KIND_PUBLICATION_INDEX, pk, "root-idx");
+        let wiki = fixture_event(
+            pk,
+            30818,
+            serde_json::json!([["d", "fable"], ["title", "Fable"]]),
+            "A fable is a short story.",
+        );
+
+        let (engine, _dir) = engine_with_events(&[
+            fixture_section(pk, "intro", "Introduction", "the intro body"),
+            fixture_section(pk, "sec-7h2x9", "Chapter Three", "ch3 body"),
+            fixture_index(pk, "root-idx", "Root", &[&intro, &ch3]),
+            wiki,
+        ])
+        .await;
+        let pe = PublicationEngine::new(&engine);
+
+        let content = "See {{ref:chapter-three|Ch. 3}} and {{wiki:fable}}; \
+                       embed {{embed:intro}}; missing {{ref:nope}}.";
+        let refs = pe
+            .resolve_refs(
+                content,
+                Some(&root_idx.to_a_tag()),
+                Some(pk),
+                &[],
+                FetchPolicy::LocalOnly,
+            )
+            .await;
+        assert_eq!(refs.len(), 4, "one resolved ref per token, in source order");
+
+        // ref: resolves to the sibling by TITLE-slug (d-tag is a nanoid), keeps
+        // the explicit display label.
+        let r0 = &refs[0];
+        assert_eq!(r0.kind, crate::nostrdown::RefKind::Ref);
+        assert!(r0.found, "ref resolved via title-slug despite nanoid d-tag");
+        assert_eq!(r0.label, "Ch. 3");
+        assert!(r0.naddr.as_deref().unwrap().starts_with("naddr1"));
+        assert_eq!(
+            r0.coord.as_deref(),
+            Some(format!("{KIND_PUBLICATION_SECTION}:{pk}:sec-7h2x9").as_str())
+        );
+        assert_eq!(r0.event_kind, Some(KIND_PUBLICATION_SECTION));
+
+        // wiki: resolves to the 30818 article; its title lifts into the label.
+        let r1 = &refs[1];
+        assert_eq!(r1.kind, crate::nostrdown::RefKind::Wiki);
+        assert!(r1.found);
+        assert_eq!(r1.label, "Fable");
+        assert_eq!(r1.event_kind, Some(30818));
+        // Preview metadata populated from the resolved event.
+        assert_eq!(r1.title.as_deref(), Some("Fable"));
+        assert_eq!(r1.author_pubkey.as_deref(), Some(pk));
+
+        // embed: pulls the sibling section's content for transclusion.
+        let r2 = &refs[2];
+        assert_eq!(r2.kind, crate::nostrdown::RefKind::Embed);
+        assert!(r2.found);
+        assert_eq!(r2.content.as_deref(), Some("the intro body"));
+        assert_eq!(r2.label, "Introduction");
+
+        // unresolved ref: still returned so the renderer can show its label.
+        let r3 = &refs[3];
+        assert!(!r3.found);
+        assert_eq!(r3.label, "nope");
+        assert!(r3.naddr.is_none());
+    }
+
+    /// A draft (no events in nostrdb, no publication coordinate) still resolves
+    /// `{{ref:slug}}` against the inline sibling list the composer's draft-reader
+    /// passes — the title-slug match, sourced from the request. This is the path
+    /// the draft preview uses before anything is signed/published.
+    #[tokio::test]
+    async fn test_resolve_refs_draft_siblings() {
+        // Empty db — nothing is published; resolution must come from the inline
+        // siblings alone.
+        let (engine, _dir) = engine_with_events(&[]).await;
+        let pe = PublicationEngine::new(&engine);
+
+        let siblings = vec![
+            DraftSibling {
+                title: Some("The Ascent".to_string()),
+                d_tag: "sec-abc123".to_string(),
+            },
+            DraftSibling {
+                title: Some("The Return".to_string()),
+                d_tag: "sec-def456".to_string(),
+            },
+        ];
+
+        let content = "Everything in {{ref:The Ascent}} turns; see {{ref:nope}}.";
+        let refs = pe
+            .resolve_refs(content, None, None, &siblings, FetchPolicy::LocalOnly)
+            .await;
+        assert_eq!(refs.len(), 2);
+
+        // ref: resolves against the draft sibling by title-slug; the title lifts
+        // into the label so the preview card isn't blank. No naddr — the section
+        // isn't published yet — but a synthetic coord for in-draft navigation.
+        let r0 = &refs[0];
+        assert!(r0.found, "ref resolved against the inline draft sibling");
+        assert_eq!(r0.label, "The Ascent");
+        assert_eq!(r0.title.as_deref(), Some("The Ascent"));
+        assert_eq!(r0.event_kind, Some(KIND_PUBLICATION_SECTION));
+        assert_eq!(
+            r0.coord.as_deref(),
+            Some(format!("{KIND_PUBLICATION_SECTION}::sec-abc123").as_str())
+        );
+
+        // A ref naming no draft sibling stays unresolved.
+        assert!(!refs[1].found);
+    }
+
+    /// An entity `{{embed:naddr…}}` whose event isn't local resolves as a valid
+    /// *address* (`found`) but `pending` — the card then offers a relay fetch.
+    /// Resolve itself never touches the network (LocalOnly), so a missing embed
+    /// can't stall a page render.
+    #[tokio::test]
+    async fn test_resolve_refs_entity_pending() {
+        let pk_owned = test_pubkey();
+        let pk = pk_owned.as_str();
+        let (engine, _dir) = engine_with_events(&[]).await; // empty db
+        let pe = PublicationEngine::new(&engine);
+
+        let naddr =
+            crate::nip19::encode_naddr(KIND_PUBLICATION_SECTION as u32, pk, "ghost-section", &[])
+                .expect("encode naddr");
+        let content = format!("see {{{{embed:{naddr}}}}}");
+        let refs = pe
+            .resolve_refs(&content, None, None, &[], FetchPolicy::LocalOnly)
+            .await;
+        assert_eq!(refs.len(), 1);
+        let r = &refs[0];
+        assert!(r.found, "the naddr is a valid address");
+        assert!(r.pending, "event not local → pending a fetch");
+        assert!(r.content.is_none(), "nothing transcluded yet");
+        assert_eq!(r.event_kind, Some(KIND_PUBLICATION_SECTION));
+        assert_eq!(
+            r.coord.as_deref(),
+            Some(format!("{KIND_PUBLICATION_SECTION}:{pk}:ghost-section").as_str())
         );
     }
 

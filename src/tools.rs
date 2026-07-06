@@ -701,6 +701,7 @@ async fn save_draft(engine: &Arc<Engine>, input: Value) -> Result<Value> {
             tag_mode: false,
             current_tag_name: String::new(),
             current_tag_value: String::new(),
+            slot_coord: None,
         });
     }
 

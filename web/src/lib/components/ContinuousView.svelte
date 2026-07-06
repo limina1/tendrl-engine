@@ -5,16 +5,10 @@
 
 	import CommentThread from './CommentThread.svelte';
 	import PoolStateBadges from './PoolStateBadges.svelte';
+	import RichContent from './RichContent.svelte';
 	import { threadContainsId, type ThreadNode } from '$lib/discussions/thread';
-	import {
-		pubkeyToHighlightFill,
-		pubkeyToHighlightStroke
-	} from '$lib/discussions/colors';
-	import {
-		segmentsFromSpans,
-		type Highlight,
-		type HighlightSpan
-	} from '$lib/discussions/highlights';
+	import { type Highlight, type HighlightSpan } from '$lib/discussions/highlights';
+	import type { ResolvedRef } from '$lib/nostr/nostrdown';
 
 	const app = getAppState();
 
@@ -27,7 +21,9 @@
 		highlightsFor = null,
 		focusedHighlightId = null,
 		threadsFor = null,
-		focusedCommentId = null
+		focusedCommentId = null,
+		publicationAtag = undefined,
+		siblings = undefined
 	}: {
 		sections: LazySection[];
 		publication?: { title: string | null; summary: string | null } | null;
@@ -43,16 +39,14 @@
 		/** Lookup: section addr → thread tree. Pass null to suppress. */
 		threadsFor?: ((addr: { kind: number; pubkey: string; d_tag: string }) => ThreadNode[]) | null;
 		focusedCommentId?: string | null;
+		/** Containing publication coordinate ("30040:pubkey:dtag") — context for
+		 *  resolving nostrdown `{{ref:…}}` sibling references. */
+		publicationAtag?: string | undefined;
+		/** Unsigned-draft siblings (title + synthetic d-tag) so `{{ref:…}}`
+		 *  resolves against the draft's own sections in the preview, before
+		 *  anything is published. Mutually exclusive with `publicationAtag`. */
+		siblings?: { title?: string; d_tag: string }[] | undefined;
 	} = $props();
-
-	function styleFor(pubkey: string, focused: boolean): string {
-		const fill = pubkeyToHighlightFill(pubkey);
-		const stroke = pubkeyToHighlightStroke(pubkey);
-		if (focused) {
-			return `background: ${fill}; box-shadow: inset 3px 0 0 ${stroke}, 0 0 0 2px var(--state-online);`;
-		}
-		return `background: ${fill}; box-shadow: inset 3px 0 0 ${stroke};`;
-	}
 
 	function addrKey(addr: { kind: number; pubkey: string; d_tag: string }): string {
 		return `${addr.kind}:${addr.pubkey}:${addr.d_tag}`;
@@ -83,6 +77,48 @@
 			})
 			.catch(() => {
 				if (!cancelled) spansBySection = {};
+			});
+		return () => {
+			cancelled = true;
+		};
+	});
+
+	// Nostrdown `{{ }}` references per section, resolved engine-side in one
+	// batched round trip (POST /nostrdown/resolve) for every loaded section whose
+	// content carries a `{{` token. Keyed by section addr; `RichContent` merges
+	// these with the highlight spans. The publication coordinate scopes `ref:`
+	// sibling lookups; each section's own pubkey scopes `wiki:`.
+	let refsBySection = $state<Record<string, ResolvedRef[]>>({});
+	$effect(() => {
+		const items: {
+			key: string;
+			content: string;
+			publication?: string;
+			author?: string;
+			siblings?: { title?: string; d_tag: string }[];
+		}[] = [];
+		for (const s of sections) {
+			if (s.status !== 'loaded' || !s.content || !s.addr) continue;
+			if (!s.content.includes('{{')) continue;
+			items.push({
+				key: addrKey(s.addr),
+				content: s.content,
+				publication: publicationAtag,
+				author: s.addr.pubkey,
+				siblings
+			});
+		}
+		if (items.length === 0) {
+			refsBySection = {};
+			return;
+		}
+		let cancelled = false;
+		api.resolveNostrdown(items)
+			.then((m) => {
+				if (!cancelled) refsBySection = m;
+			})
+			.catch(() => {
+				if (!cancelled) refsBySection = {};
 			});
 		return () => {
 			cancelled = true;
@@ -321,16 +357,13 @@
 					</h3>
 				{/if}
 				{#if section.status === 'loaded' && section.content}
-					{@const spans = section.addr ? spansBySection[addrKey(section.addr)] ?? [] : []}
-					{@const segs =
-						spans.length > 0
-							? segmentsFromSpans(section.content, spans, focusedHighlightId)
-							: null}
-					{#if segs && segs.some((s) => s.highlight !== null)}
-						<pre class="section-content">{#each segs as seg, si (si)}{#if seg.highlight}<mark class="hl-overlay" data-hl-ids={seg.highlight.id} style={styleFor(seg.highlight.pubkey, seg.highlight.focused)} title="NIP-84 highlight {seg.highlight.id.slice(0, 8)}… by {seg.highlight.pubkey.slice(0, 12)}…">{seg.text}</mark>{:else}{seg.text}{/if}{/each}</pre>
-					{:else}
-						<pre class="section-content">{section.content}</pre>
-					{/if}
+					{@const k = section.addr ? addrKey(section.addr) : ''}
+					<RichContent
+						content={section.content}
+						spans={k ? spansBySection[k] ?? [] : []}
+						refs={k ? refsBySection[k] ?? [] : []}
+						{focusedHighlightId}
+					/>
 				{:else if section.status === 'loading'}
 					<div class="skeleton"></div>
 				{:else if section.status === 'error'}
@@ -533,14 +566,8 @@
 		color: var(--id-yours);
 	}
 
-	.section-content {
-		white-space: pre-wrap;
-		font-family: var(--font-sans);
-		font-size: var(--t-xs);
-		line-height: 1.5;
-		color: var(--fg);
-		margin: 0;
-	}
+	/* Section body now renders via RichContent (owns `.section-content` +
+	   highlight/nostrdown overlay styles). */
 
 	.skeleton {
 		height: 60px;
@@ -576,19 +603,6 @@
 		margin-top: 40px;
 		font-size: var(--t-xs);
 	}
-	.hl-overlay {
-		color: inherit;
-		padding: 1px 2px;
-		border-radius: 2px;
-	}
-	@keyframes hl-flash {
-		0%, 100% { filter: brightness(1) saturate(1); }
-		30%      { filter: brightness(1.5) saturate(1.6); }
-	}
-	:global(.hl-overlay.hl-flash) {
-		animation: hl-flash 1.2s ease-in-out;
-	}
-
 	.cv-threads {
 		margin-top: 10px;
 		padding-top: 8px;

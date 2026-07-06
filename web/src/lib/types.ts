@@ -290,6 +290,11 @@ export interface ContextItem {
 	 *  sibling. Drives the engine's nested-30040 emission at publish
 	 *  time. Optional/legacy items default to 2 when absent. */
 	level?: number;
+	/** When set, this item is a block-level transclude *slot*: the
+	 *  naddr/coordinate of an existing 30040/30041 to reference as a child of
+	 *  the index, rather than authored content. Carried to the publish request
+	 *  as `slot`; the engine emits an `a`-tag and mints no 30041. */
+	slot?: string;
 }
 
 export type SyncMode = 'reactive' | 'explicit';

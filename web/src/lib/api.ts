@@ -20,6 +20,7 @@ import type {
 } from './types';
 import type { ThreadNode } from './discussions/thread';
 import type { Highlight, HighlightSpan } from './discussions/highlights';
+import type { ResolvedRef } from './nostr/nostrdown';
 
 async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
 	const res = await fetch(url, {
@@ -266,6 +267,52 @@ export async function resolveHighlights(
 	return resp.spans;
 }
 
+/**
+ * Resolve nostrdown `{{ref|wiki|embed:…}}` references within section text,
+ * engine-side — parsing + target lookup so every frontend renders identical
+ * links and transclusions (the nostrdown analogue of `resolveHighlights`).
+ * Batched: pass every visible section (keyed by addr) plus its context — the
+ * containing publication coordinate (`"30040:pubkey:dtag"`) for sibling `ref:`
+ * resolution and the section author for `wiki:` scoping. The response maps each
+ * key to its `ResolvedRef[]` (UTF-16 offsets); the caller renders via
+ * `buildSegments`.
+ */
+export async function resolveNostrdown(
+	items: {
+		key: string;
+		content: string;
+		publication?: string;
+		author?: string;
+		/** Sibling sections of an unsigned draft (title + synthetic d-tag) so
+		 *  `{{ref:slug}}` resolves in the composer's draft-reader preview before
+		 *  anything is published. Omit for published reads. */
+		siblings?: { title?: string; d_tag: string }[];
+	}[]
+): Promise<Record<string, ResolvedRef[]>> {
+	if (items.length === 0) return {};
+	const resp = await fetchJson<{ refs: Record<string, ResolvedRef[]> }>(
+		'/api/v1/nostrdown/resolve',
+		{ method: 'POST', body: JSON.stringify({ items }) }
+	);
+	return resp.refs;
+}
+
+/** Force-fetch one nostrdown `embed` entity (naddr/nevent/note) from the search
+ *  relays and return its (re)resolved ref. Drives the EmbedCard's "fetch from
+ *  search relays" action: `FetchAlways`, so in Confirm mode the engine raises a
+ *  network intent the FetchConfirmModal must approve (this call blocks until
+ *  then). On success `pending` clears and the card fills with the event. */
+export async function fetchNostrdownEntity(
+	entity: string,
+	wantContent = true
+): Promise<ResolvedRef> {
+	const resp = await fetchJson<{ ref: ResolvedRef }>('/api/v1/nostrdown/fetch-entity', {
+		method: 'POST',
+		body: JSON.stringify({ entity, want_content: wantContent })
+	});
+	return resp.ref;
+}
+
 // Drafts API — local unsigned-publication storage (engine DraftStore).
 // Persists the full compose state to <data_dir>/drafts/ so a draft survives a
 // refresh, can be listed, and resumed. A draft is never signed.
@@ -337,6 +384,9 @@ export interface DraftComposeSection {
 	level: number;
 	d_tag?: string;
 	tags: { name: string; value: string }[];
+	/** Transclude slot target (naddr/coordinate) — set when this item is a slot,
+	 *  restored on resume so the `{{slot:…}}` line comes back. */
+	slot?: string;
 }
 
 export interface DraftComposeState {
@@ -368,6 +418,8 @@ export interface SaveDraftPayload {
 		level?: number;
 		tags: [string, string][];
 		d_tag?: string;
+		/** Transclude slot target (naddr/coordinate to a 30040/30041). */
+		slot?: string;
 	}[];
 	d_tag?: string;
 	/** Output kind — absent/30040 = publication; other kinds mark an atomic
@@ -726,6 +778,10 @@ export interface PublishRequest {
 		level?: number;
 		/** Reuse this section d-tag (republish replace) instead of minting. */
 		d_tag?: string;
+		/** Transclude *slot*: an naddr or kind:pubkey:d-tag (a 30040/30041) to
+		 *  reference as a child of the index here, instead of authoring content.
+		 *  The engine emits an ["a", coord] in the 30040 and mints no 30041. */
+		slot?: string;
 	}[];
 	sign: boolean;
 	broadcast: boolean;

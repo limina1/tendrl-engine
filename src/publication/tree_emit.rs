@@ -221,6 +221,13 @@ fn emit_node(
     child_events: &mut Vec<Value>,
     parent_a_tags: &mut Vec<Value>,
 ) {
+    // A transclude slot references an existing event: contribute its `a` tag to
+    // the parent index and emit nothing of its own. A slot is always a leaf.
+    if let Some(coord) = compose.sections[node.section_idx].slot_coord.clone() {
+        parent_a_tags.push(json!(["a", coord, ""]));
+        return;
+    }
+
     let promote_to_index = node.has_children() && node.level < parse_level;
 
     // Mint this node's d-tag once; both branches use it.
@@ -422,6 +429,13 @@ fn build_section_content_event(
 
     for tag_vec in ComposeState::tags_to_nostr_format(&section_tags_vec) {
         tags.push(serde_json::to_value(tag_vec).unwrap_or(json!([])));
+    }
+
+    // Nostrdown `{{ }}` references → resolution tags (wikilink / ref / a / q / p)
+    // so the event self-describes its references and they show in the preview
+    // events. Deduped; see `nostrdown::reference_tags`.
+    for tag in crate::nostrdown::reference_tags(&section_content) {
+        tags.push(json!(tag));
     }
 
     sign_event(
@@ -740,6 +754,48 @@ mod tests {
         for ev in &children {
             assert!(is_nanoid(&tag_value(ev, "d").unwrap()));
         }
+    }
+
+    #[test]
+    fn emit_wikilink_tags_from_wiki_refs() {
+        let mut compose = make_compose(vec![SectionCompose {
+            title: "Intro".into(),
+            content: "A {{wiki:The Fable}}, again {{wiki:the fable}}, plus {{ref:other}}.".into(),
+            level: 2,
+            ..Default::default()
+        }]);
+        let pub_d = compose.publication_d_tag();
+        let pubkey = "abcd".repeat(16);
+        let (_root, children) =
+            build_nested_publication_events(&mut compose, &pub_d, &pubkey, 1_700_000_000, 3, None);
+
+        let content_ev = children
+            .iter()
+            .find(|e| e["kind"] == 30041)
+            .expect("a 30041 content event");
+
+        let wikilinks: Vec<String> = content_ev["tags"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|t| {
+                let a = t.as_array()?;
+                (a.first()?.as_str()? == "wikilink").then(|| a.get(1)?.as_str())?
+            })
+            .map(String::from)
+            .collect();
+
+        // Both `{{wiki:The Fable}}` and `{{wiki:the fable}}` normalize to the
+        // same slug and dedupe to a single tag.
+        assert_eq!(wikilinks, vec!["the-fable".to_string()]);
+
+        // `{{ref:other}}` emits a `["ref", "other"]` resolution tag.
+        assert_eq!(
+            get_tag(content_ev, "ref")
+                .and_then(|t| t.get(1))
+                .and_then(|v| v.as_str()),
+            Some("other")
+        );
     }
 
     /// Re-running the emitter on the same ComposeState must produce the

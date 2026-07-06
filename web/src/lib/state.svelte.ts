@@ -1811,7 +1811,10 @@ function _createAppState() {
 						tags: s.tags.map((t) => [t.name, t.value] as [string, string]),
 						// Reuse the matched section's d-tag on republish so the
 						// 30041 replaces rather than forks.
-						d_tag: overrides?.dTagByTitle[s.title]
+						d_tag: overrides?.dTagByTitle[s.title],
+						// Block-level transclude slot → the engine emits an a-tag
+						// to the existing 30040/30041 and mints no 30041 here.
+						slot: s.slot
 					})),
 					d_tag: overrides?.pubDTag,
 					notes,
@@ -2038,7 +2041,8 @@ function _createAppState() {
 					title: s.title,
 					content: s.content,
 					level: s.level,
-					tags: s.tags.map((t) => [t.name, t.value] as [string, string])
+					tags: s.tags.map((t) => [t.name, t.value] as [string, string]),
+					slot: s.slot
 				})),
 				// Thread the session's d-tag so this save versions the same
 				// publication instead of forking a new one.
@@ -2071,7 +2075,8 @@ function _createAppState() {
 						tags: s.tags.map((t) => ({ name: t.name, value: t.value })),
 						original_content: s.content,
 						origin: 'compose' as const,
-						level: s.level
+						level: s.level,
+						slot: s.slot
 					},
 					{ compose: true }
 				)
@@ -2196,7 +2201,8 @@ function _createAppState() {
 						title: s.title,
 						content: s.content,
 						level: s.level,
-						tags: s.tags.map((t) => [t.name, t.value] as [string, string])
+						tags: s.tags.map((t) => [t.name, t.value] as [string, string]),
+						slot: s.slot
 					})),
 					notes,
 					sign: false,
@@ -2443,6 +2449,26 @@ function _createAppState() {
 		} catch (e) {
 			console.error('openAddressableInModal failed:', e);
 		}
+	}
+
+	/** Open an addressable coordinate (`"kind:pubkey:dtag"`) in the *reader* —
+	 *  a 30040 in the publication reader, any other addressable (30041 section,
+	 *  30023 article, 30818 wiki) as a single-event reader buffer (which
+	 *  `ReaderBuffer.loadAddressable` wraps uniformly). The structured-event
+	 *  popup counterpart is `openAddressableInModal`. Used by nostrdown refs. */
+	function openCoord(coord: string) {
+		const i1 = coord.indexOf(':');
+		const i2 = coord.indexOf(':', i1 + 1);
+		if (i1 < 0 || i2 < 0) return;
+		const kind = parseInt(coord.slice(0, i1), 10);
+		const pubkey = coord.slice(i1 + 1, i2);
+		const d_tag = coord.slice(i2 + 1);
+		if (kind === 30040) {
+			navigateToPublication(pubkey, d_tag);
+			return;
+		}
+		const short = d_tag.length > 24 ? d_tag.slice(0, 24) + '…' : d_tag;
+		navigateToReader(`reader:${kind}:${pubkey}:${d_tag}`, 'event', short);
 	}
 
 	async function getEventForModal(eventId: string) {
@@ -4380,6 +4406,7 @@ function _createAppState() {
 		pushHistoryEntry,
 		getEventForModal,
 		openAddressableInModal,
+		openCoord,
 		findContainingIndexes,
 		containingByCoord,
 		get toasts() { return toasts; },

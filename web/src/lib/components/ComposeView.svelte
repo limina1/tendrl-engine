@@ -3,8 +3,19 @@
 	import { getActiveStore } from '$lib/wm/buffer-store.svelte';
 	import type { ComposeState, ContextItem, TagEntry, SyncMode } from '$lib/types';
 	import type { DraftSummary } from '$lib/api';
+	import { resolveNostrdown, search } from '$lib/api';
 	import type { EditorView } from '@codemirror/view';
+	import {
+		nostrdownEditor,
+		nostrdownCompletion,
+		type NostrdownToken,
+		type NdSuggestion,
+		type PreviewAnchor
+	} from '$lib/editor/nostrdown-cm';
+	import { normalizeSlug, type ResolvedRef } from '$lib/nostr/nostrdown';
+	import EmbedCard from './EmbedCard.svelte';
 	import ComposeSection from './ComposeSection.svelte';
+	import ReferenceBuilderModal from './ReferenceBuilderModal.svelte';
 	import ItemBadge from './ItemBadge.svelte';
 	import TagEditor from './TagEditor.svelte';
 	import DraftReader from '$lib/wm/renderers/DraftReader.svelte';
@@ -22,6 +33,132 @@
 	import { openComposeHelp } from '$lib/wm/compose-help.svelte';
 
 	const app = getAppState();
+
+	// ── Nostrdown: recognize {{ }} refs, preview on click, follow on mod-click ──
+	/** The matching sibling heading in this draft (by title-slug): its char offset
+	 *  and title, else null. */
+	function findHeading(doc: string, slug: string): { pos: number; title: string } | null {
+		const d = effectiveDelim();
+		let offset = 0;
+		for (const line of doc.split('\n')) {
+			const head = parseHeadingLine(line, d);
+			if (head && normalizeSlug(head.title) === slug) return { pos: offset, title: head.title };
+			offset += line.length + 1; // + newline
+		}
+		return null;
+	}
+
+	const NOSTR_ENTITY_RE = /^(nostr:)?(naddr1|nevent1|note1)/i;
+
+	// Resolve a token to a ResolvedRef for the preview card: a sibling heading in
+	// this draft (unpublished, no event yet) or the engine's resolution.
+	async function previewRefFor(token: NostrdownToken, view: EditorView): Promise<ResolvedRef | null> {
+		if ((token.kind === 'ref' || token.kind === 'embed') && !NOSTR_ENTITY_RE.test(token.target)) {
+			const hit = findHeading(view.state.doc.toString(), normalizeSlug(token.target));
+			if (hit) {
+				return {
+					kind: 'embed',
+					start: 0,
+					end: 0,
+					target: token.target,
+					label: hit.title,
+					found: true,
+					event_kind: 30041,
+					title: hit.title
+				} as ResolvedRef;
+			}
+		}
+		try {
+			const m = await resolveNostrdown([{ key: 'k', content: token.raw }]);
+			return m['k']?.[0] ?? null;
+		} catch {
+			return null;
+		}
+	}
+
+	// Plain-click preview: float the shared EmbedCard beside the clicked token —
+	// the same card the reader renders, but declared in the template (below)
+	// rather than imperatively `mount()`ed, which is unavailable in the
+	// prerendered build. The CM extension hands us the token + its screen rect;
+	// we resolve it and drop a fixed-position card there.
+	let preview = $state<{ ref: ResolvedRef; x: number; y: number } | null>(null);
+	let previewSeq = 0;
+	let previewHideTimer: ReturnType<typeof setTimeout> | undefined;
+	async function showPreview(
+		token: NostrdownToken | null,
+		anchor: PreviewAnchor | null,
+		view: EditorView
+	) {
+		clearTimeout(previewHideTimer);
+		const seq = ++previewSeq;
+		if (!token || !anchor) {
+			preview = null;
+			return;
+		}
+		const ref = await previewRefFor(token, view);
+		if (seq !== previewSeq) return; // a newer click superseded this resolve
+		if (!ref || !ref.found) {
+			preview = null;
+			return;
+		}
+		preview = {
+			ref,
+			x: Math.max(8, Math.min(anchor.left, window.innerWidth - 348)),
+			y: anchor.bottom + 4
+		};
+	}
+	function openPreview(r: ResolvedRef) {
+		if (r.coord) app.openCoord(r.coord);
+		else if (r.event_kind === 0 && r.author_pubkey) app.navigateToProfile(r.author_pubkey);
+		preview = null;
+	}
+	function scheduleHidePreview() {
+		clearTimeout(previewHideTimer);
+		previewHideTimer = setTimeout(() => (preview = null), 140);
+	}
+	// Portal the card to <body> so the editor's scroll/transform ancestors can't
+	// clip the fixed-position popover (mirrors RichContent's reader preview).
+	function previewPortal(node: HTMLElement) {
+		document.body.appendChild(node);
+		return { destroy: () => node.remove() };
+	}
+
+	// mod-click on a recognized token: jump to a sibling heading in this buffer
+	// (works while drafting, before anything is published), else resolve against
+	// the db and open the target event.
+	async function followNostrdown(token: NostrdownToken, view: EditorView) {
+		if ((token.kind === 'ref' || token.kind === 'embed') && !NOSTR_ENTITY_RE.test(token.target)) {
+			const hit = findHeading(view.state.doc.toString(), normalizeSlug(token.target));
+			if (hit) {
+				view.dispatch({ selection: { anchor: hit.pos }, scrollIntoView: true });
+				view.focus();
+				return;
+			}
+		}
+		try {
+			const resolved = await resolveNostrdown([{ key: 'k', content: token.raw }]);
+			const r = resolved['k']?.[0];
+			if (r?.found && r.coord) {
+				app.openCoord(r.coord);
+				return;
+			}
+		} catch {
+			/* fall through to the toast */
+		}
+		app.pushToast(`Unresolved ${token.kind}: ${token.target}`, 'info');
+	}
+
+	// Inline autocomplete toggle (the mode-bar {{ }} button) + the embed builder
+	// modal it hands off to. The CM extension array (`nostrdownExt`) is assembled
+	// below, after `refSectionTitles`/`insertNostrdownToken` are in scope.
+	let autocompleteOn = $state(true);
+	let refBuilderOpen = $state(false);
+	// Which prefix the coordinate builder should emit — `embed` (inline) or
+	// `slot` (block-level transclude), set when it's opened from autocomplete.
+	let builderPrefix = $state<'embed' | 'slot'>('embed');
+	// When the embed builder is opened mid-token from autocomplete, the
+	// in-progress `{{embed:…` range it should replace on insert.
+	let embedRange = $state<{ from: number; to: number } | null>(null);
 
 	// Composer walkthrough dropdown. The in-chrome `W` lists every composer
 	// tutorial (registry's `composer.tours`); picking one switches the editor to
@@ -323,6 +460,12 @@
 		let out = `${headFor(1)}${compose.title}\n`;
 		out += serializeTagBlock(compose.tags);
 		for (const s of compose.sections) {
+			if (s.slot) {
+				// A slot serializes back as its `{{slot:…}}` line — so a resumed
+				// draft / mode switch reconstructs it as a block, not a section.
+				out += `\n{{slot:${s.slot}}}\n`;
+				continue;
+			}
 			const level = s.level ?? 2;
 			out += `\n${headFor(level)}${s.title}\n`;
 			out += serializeTagBlock(s.tags);
@@ -338,11 +481,17 @@
 	function serializeParsed(
 		title: string,
 		tags: TagEntry[],
-		sections: { title: string; tags: TagEntry[]; content: string; level: number }[]
+		sections: ParsedSection[]
 	): string {
 		let out = `${headFor(1)}${title}\n`;
 		out += serializeTagBlock(tags);
 		for (const s of sections) {
+			if (s.slot) {
+				// A slot round-trips as its own `{{slot:…}}` line — no heading,
+				// tags, or body — so reorder/move preserves it like any block.
+				out += `\n{{slot:${s.slot}}}\n`;
+				continue;
+			}
 			out += `\n${headFor(s.level)}${s.title}\n`;
 			out += serializeTagBlock(s.tags);
 			out += `\n${s.content}\n`;
@@ -365,6 +514,10 @@
 		content: string;
 		/** Heading depth — 2 for `== Title`, 3 for `=== Subtitle`, … */
 		level: number;
+		/** Set when this item is a block-level `{{slot:target}}` transclude —
+		 *  the naddr/coordinate of an existing 30040/30041 to reference as a
+		 *  child of the index (no title/content/heading of its own). */
+		slot?: string;
 	}
 
 	// Parse full text blob back into title/tags + sections. Recognises
@@ -425,6 +578,25 @@
 					inTags: true,
 					level: head.level
 				};
+				continue;
+			}
+			// A standalone `{{slot:target}}` line is a block-level transclude
+			// slot: it ends the current section and becomes its own ordered
+			// item (no heading, no body). Its identity is the target, in the
+			// text — so it reorders / round-trips like any other block.
+			const slotMatch = line.trim().match(/^\{\{slot:([^}|#]+)\}\}$/);
+			if (slotMatch) {
+				if (current) {
+					sections.push({
+						title: current.title,
+						tags: current.tags,
+						content: current.contentLines.join('\n').trim(),
+						level: current.level
+					});
+					current = null;
+				}
+				inDocHeader = false;
+				sections.push({ title: '', tags: [], content: '', level: 2, slot: slotMatch[1].trim() });
 				continue;
 			}
 			if (inDocHeader) {
@@ -488,6 +660,7 @@
 					content: p.content,
 					tags: p.tags,
 					level: p.level,
+					slot: p.slot,
 					modified: p.content !== existing.original_content
 				};
 			}
@@ -498,6 +671,7 @@
 				context_content: p.content,
 				tags: p.tags,
 				level: p.level,
+				slot: p.slot,
 				original_content: '',
 				modified: true,
 				in_context: false,
@@ -525,6 +699,7 @@
 					item: ContextItem | null;
 					index: number;
 					level: number;
+					slot?: string;
 				}[]
 			};
 		const parsed = parseAll(plainText);
@@ -535,11 +710,95 @@
 			tags: parsed.tags,
 			sections: parsed.sections.map((p, i) => {
 				const existing = i < oldSections.length ? oldSections[i] : null;
-				return { title: p.title, item: existing, index: i, level: p.level };
+				return { title: p.title, item: existing, index: i, level: p.level, slot: p.slot };
 			})
 		};
 	});
 	const detectedSections = $derived(detectedState.sections);
+
+	// Compact, readable label for a slot target in the outline. A coordinate
+	// (kind:pubkey:d-tag) shows `kind · d-tag`; an naddr/other shows a truncation.
+	function slotLabel(slot: string): string {
+		const parts = slot.split(':');
+		if (parts.length >= 3 && /^\d+$/.test(parts[0])) {
+			return `${parts[0]} · ${parts.slice(2).join(':')}`;
+		}
+		return slot.length > 26 ? `${slot.slice(0, 14)}…${slot.slice(-6)}` : slot;
+	}
+
+	// Reference builder: titles of the other sections in the current draft (the
+	// `{{ref:}}` candidates) + insertion into the active CodeMirror surface
+	// (plain mode or the atomic body; Full-mode section textareas aren't CM).
+	const refSectionTitles = $derived(
+		(mode === 'plain' ? detectedSections.map((s) => s.title) : compose.sections.map((s) => s.title))
+			.map((t) => (t ?? '').trim())
+			.filter((t) => t.length > 0)
+	);
+
+	function activeCmView(): EditorView | null {
+		if (isAtomic) return atomicCmView ?? null;
+		if (mode === 'plain') return plainCmView ?? null;
+		return null;
+	}
+
+	function insertNostrdownToken(token: string) {
+		const view = activeCmView();
+		if (!view) {
+			app.pushToast('Switch to Plain mode (or an atomic body) to insert a reference', 'info');
+			refBuilderOpen = false;
+			embedRange = null;
+			return;
+		}
+		// Replace the in-progress `{{embed:…` range when the builder was opened
+		// mid-token from autocomplete; otherwise insert at the cursor.
+		const sel = view.state.selection.main;
+		const range = embedRange ?? { from: sel.from, to: sel.to };
+		view.dispatch({
+			changes: { from: range.from, to: range.to, insert: token },
+			selection: { anchor: range.from + token.length }
+		});
+		view.focus();
+		embedRange = null;
+	}
+
+	// Inline autocomplete data sources + the CM extension array passed to both
+	// editors. `ref:` completes the draft's own section titles instantly; `wiki:`
+	// searches existing titles; `embed:` hands off to the builder modal.
+	async function wikiSuggestions(partial: string): Promise<NdSuggestion[]> {
+		const q = partial.trim();
+		if (!q) return [];
+		try {
+			const resp = await search(`k:30818 k:30023 ${q}`, 12);
+			return (resp.results ?? [])
+				.filter((r) => r.addr && r.title)
+				.map((r) => ({
+					label: r.title as string,
+					detail: r.kind === 30818 ? 'wiki' : 'article',
+					value: r.addr?.d_tag ?? normalizeSlug(r.title as string)
+				}));
+		} catch {
+			return [];
+		}
+	}
+
+	const nostrdownExt = [
+		nostrdownEditor({ onActivate: followNostrdown, onPreview: showPreview }),
+		nostrdownCompletion({
+			enabled: () => autocompleteOn,
+			ref: (partial) => {
+				const q = normalizeSlug(partial);
+				return refSectionTitles
+					.filter((t) => !q || normalizeSlug(t).includes(q))
+					.map((t) => ({ label: t, value: t }));
+			},
+			wiki: wikiSuggestions,
+			openEmbedBuilder: (range, kind) => {
+				embedRange = range;
+				builderPrefix = kind;
+				refBuilderOpen = true;
+			}
+		})
+	];
 
 	// "Nothing to act on" gate for Preview/Save: atomic needs a title + body;
 	// plain needs a detected section; full needs a section card.
@@ -1002,6 +1261,16 @@
 				title="Re-lock unlocked sections that haven't been modified"
 			>Lock all</button>
 		{/if}
+		<!-- Reference autocomplete toggle — leads the affordance cluster. -->
+		<button
+			class="affordance affordance--ref"
+			class:affordance--on={autocompleteOn}
+			onclick={() => (autocompleteOn = !autocompleteOn)}
+			title="Reference autocomplete — suggest ref / wiki / embed / quote as you type the brace syntax in the editor"
+			aria-label="Toggle reference autocomplete"
+			aria-pressed={autocompleteOn}
+			data-tour="compose-ref"
+		>&lbrace;&lbrace; &rbrace;&rbrace;</button>
 		<!-- Read mirrors ReaderBuffer's "Edit" button — same on-screen
 		     position (toolbar far-right) so the Edit↔Read swap reads as
 		     a single mode toggle. When a source pub exists we navigate to
@@ -1151,6 +1420,7 @@
 					bind:editorView={atomicCmView}
 					{lineNumbers}
 					{vimMode}
+					extensions={nostrdownExt}
 				/>
 			</div>
 		</div>
@@ -1204,6 +1474,7 @@
 						{lineNumbers}
 						{vimMode}
 						onBlur={handlePlainBlur}
+						extensions={nostrdownExt}
 					/>
 				</div>
 				<div class="detected-sections" data-tour="compose-detected">
@@ -1222,9 +1493,12 @@
 						<div
 							class="detected-row"
 							class:detected-row--nested={det.level > 2}
+							class:detected-row--slot={!!det.slot}
 							style="--depth: {Math.max(0, det.level - 2)}"
 						>
-							{#if det.item}
+							{#if det.slot}
+								<span class="detected-title detected-slot" title={det.slot}>⧉ slot · {slotLabel(det.slot)}</span>
+							{:else if det.item}
 								<label class="check">
 									<input
 										type="checkbox"
@@ -1370,7 +1644,48 @@
 	<PublishedDiffModal diff={app.publishedDiff} onclose={app.closePublishedDiff} />
 {/if}
 
+<ReferenceBuilderModal
+	open={refBuilderOpen}
+	initialTab="embed"
+	embedPrefix={builderPrefix}
+	sectionTitles={refSectionTitles}
+	oninsert={insertNostrdownToken}
+	onclose={() => {
+		refBuilderOpen = false;
+		embedRange = null;
+	}}
+/>
+
+{#if preview}
+	<!-- svelte-ignore a11y_no_static_element_interactions -->
+	<div
+		class="nd-preview"
+		style="left:{preview.x}px; top:{preview.y}px"
+		use:previewPortal
+		onmouseenter={() => clearTimeout(previewHideTimer)}
+		onmouseleave={scheduleHidePreview}
+		role="tooltip"
+	><EmbedCard ref={preview.ref} onopen={openPreview} /></div>
+{/if}
+
 <style>
+	/* Floating wrapper for the click-preview card (portaled to <body>). The card
+	   itself is EmbedCard; this frames + lifts it. Mirrors RichContent's reader
+	   preview so the composer peek looks identical. */
+	.nd-preview {
+		position: fixed;
+		z-index: 200;
+		width: min(340px, 90vw);
+		background: var(--bg);
+		border: 1px solid var(--panel-border-strong, var(--panel-border));
+		border-radius: var(--r-sm, 3px);
+		box-shadow: var(--shadow-lg, 0 8px 30px rgba(0, 0, 0, 0.4));
+		overflow: hidden;
+	}
+	.nd-preview :global(.nd-embed) {
+		margin: 0;
+	}
+
 	.compose-view {
 		flex: 1;
 		display: flex;
@@ -1763,6 +2078,19 @@
 		font-style: italic;
 	}
 
+	/* A transclude slot in the outline — an existing event referenced by the
+	   index, not an authored section. Tinted to read as "borrowed". */
+	.detected-slot {
+		color: var(--id-yours);
+		font-weight: 600;
+		font-family: var(--font-mono);
+		font-size: var(--t-3xs);
+	}
+	.detected-row--slot {
+		background: color-mix(in srgb, var(--id-yours) 7%, transparent);
+		border-radius: var(--r-sm, 3px);
+	}
+
 	.detected-label {
 		font-size: var(--t-3xs);
 		font-weight: 600;
@@ -1951,6 +2279,13 @@
 	.compose-walk {
 		position: relative;
 		display: inline-flex;
+	}
+	/* Reference-autocomplete toggle — lit when on (shares the global
+	   `.affordance` base with W / ?). */
+	.affordance--on {
+		border-color: var(--id-yours);
+		color: var(--id-yours);
+		background: color-mix(in srgb, var(--id-yours) 14%, transparent);
 	}
 	.walk-backdrop {
 		position: fixed;

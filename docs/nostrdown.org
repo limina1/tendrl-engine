@@ -3,6 +3,65 @@
 #+DATE: 2026-02-27
 #+STATUS: DRAFT — evocative, iterative, not a spec
 
+* Implementation Status (Tier 1 + extensions shipped — 2026-06-28)
+
+Shipped end-to-end. ={{ }}= is the Nostr-/event/ layer (=ref=/=embed=/=quote=/
+=slot=) and never collides with the host markup. ={{book::}}= is /not/ parsed.
+={[}[ ]]= /is/ recognized — but *only* as the de-facto Nostr *wikilink* (=[[topic]]=
+/ =[[d-tag][display]]= / =[[topic\vert alias]]=), and *only* for a bare topic: a
+real link/image/path (=scheme:=, =://=, =foo.png=) belongs to Org/Markdown/AsciiDoc
+and is left untouched. That keeps Nostr linking renderable by a bare tokenizer
+(no markup parser) without overriding the formats. The split follows the engine's
+frontend/backend boundary, mirroring the NIP-84 highlight pipeline.
+
+The /normative/ grammar + per-prefix reference now lives in
+=docs/nostrdown-spec.adoc=; the citation design lives in *NKBIP-03 (revised 2)*
+(=nips/NKBIP-03-revised-2.adoc=). This file stays the evocative brainstorm those
+were distilled from — read it for the /why/, those for the /what/.
+
+- *Parser* (=src/nostrdown.rs=): pure, IO-free tokenizer for
+  ={{ref|wiki|embed|quote:target#fragment|display}}=, NIP-54 slug normalization.
+  Unknown prefixes (=cite=/=@=/=term=/=media=) degrade to literal text.
+- *Resolver* (=resolve_refs= → =POST /api/v1/nostrdown/resolve=):
+  - =ref:= → sibling section by *title-slug* (the =T= tag — section d-tags are
+    opaque nanoids, so the human slug matches the normalized title).
+  - =wiki:= → kind 30818/30023/30041 by normalized d-tag (author-preferred).
+  - =embed:= → *any* entity: naddr (publication/section/article/wiki), nevent/note
+    (any event incl. kind-1 notes), npub/nprofile (a user → kind-0 name + picture
+    + bio). Field-driven (title/summary/author/image/content).
+  - =quote:= → the source resolved for *attribution only*; the excerpt is the
+    inline =|text=.
+- *Rendering* (web): one =EmbedCard= everywhere — reader inline embeds, reader
+  =ref=/=wiki= hover previews, and the composer click-preview (mounted into the CM
+  tooltip) — so all previews are identical. Field-driven: image (avatar / cover /
+  thumb), title, byline (resolved kind-0 name), an attributed, collapsible
+  *blockquote* body. =ref=/=wiki= render as inline links; =embed=/=quote= as cards.
+  Merged with NIP-84 highlight spans onto one segmentation.
+- *Publish* (=reference_tags=): every reference emits a resolution tag, so the
+  event self-describes and the tags appear in the *Preview events* —
+  =wikilink= / =ref= / =a= / =q= / =p=, and for =quote= the NIP-84 source (=a=/=e=)
+  + author (=p= … =author=).
+- *Authoring* (editor): CM extension recognizes ={{ }}= tokens; inline
+  autocomplete (mode-bar toggle; ={{= → prefixes, ={{ref:= → sibling titles,
+  ={{wiki:= → title search, ={{embed:= → the builder) with Tab/Enter accept;
+  ⌘/Ctrl-click follows; plain-click shows the preview card. A reference-builder
+  modal builds an embed coordinate (=by:name= author autocomplete + =kind= +
+  =T|d|custom= tag) or takes a pasted entity.
+- *Slot* (=\{\{slot:naddr\}\}=, /block-level/, not via the resolver): a standalone
+  line slots an existing 30040/30041 into the enclosing 30040 index as an
+  =["a", coord]= child (no 30041 minted) — emitted by both the flat and nested
+  builders, validated to 30040/30041. Plain-mode parse/serialize round-trips it
+  (reorders like any block via parse→swap→serialize), shows as a pill in the
+  Detected outline, is built via the coordinate picker (=Slot= tab), and persists
+  across draft save/resume.
+
+Open follow-ups: fragment scroll-to-heading (superseded by ={{quote}}= for
+passages); deeper-than-one-level sibling loading; embed recursion beyond depth 1;
+references inside *atomic* 30023/30818 bodies; the kind-9802 highlight upgrade for
+={{quote}}=; Full-mode section textareas → CodeMirror (so recognition / autocomplete
+/ preview work in section cards too); a =quote= builder (pick source → fill text).
+Tiers 2–3 (cite, @name, term, media) are not built — see the roadmap below.
+
 * Overview
 
 A markup-agnostic syntax layer for Nostr content that links events together,
@@ -30,14 +89,25 @@ reference them inline.
 
 | Delimiter | Markdown | AsciiDoc   | Org-mode     | Safe? |
 |-----------+----------+------------+--------------+-------|
-| =[[ ]]=     | unused   | anchor def | *link syntax*  | NO    |
+| =[[ ]]=     | unused   | anchor def | *link syntax*  | wiki-only |
 | =(( ))=     | unused   | *index term* | unused       | NO    |
 | ={{ }}=     | unused   | unused     | unused       | *YES*   |
 | =<< >>=     | unused   | *cross-ref*  | *radio target* | NO    |
 
 ={{ }}= is the only double-bracket pair safe across all three major markup
-languages. MediaWiki uses it for transclusion, so there's precedent for "pull
-in content from elsewhere."
+languages, so it carries the Nostr-/event/ layer (=ref=/=embed=/=quote=/=slot=).
+MediaWiki uses it for transclusion, so there's precedent for "pull in content
+from elsewhere."
+
+=[[ ]]= is *=wiki-only=* (the "NO" became a scoped "yes"): it /is/ link syntax in
+Org and an anchor def in AsciiDoc, but it is also the de-facto *Nostr* wikilink
+(NIP-54 / kind 30818, kind-1 clients, NKBIP-01 publications, Obsidian imports) —
+so it is in publication content whether we like it or not, and rendering it as raw
+prose mangles it. We recognize =[[topic]]= / =[[d-tag][display]]= / =[[topic\vert
+alias]]= as a wiki reference, but *skip any markup-native target* (=scheme:=,
+=://=, a path, an image file) so we never override Org/Markdown/AsciiDoc's own
+links or images. Org bare =[[heading]]= links are the accepted casualty. Net: a
+client with only a tokenizer (no markup parser) still renders the Nostr links.
 
 ** Open Question: Alternative Delimiters?
 
@@ -175,6 +245,16 @@ Low priority — standard URLs work fine for now.
 
 * Citations — Drawing from NKBIP-03
 
+#+begin_quote
+*Superseded — kept for provenance.* The reasoning below drove
+*NKBIP-03 (revised 2)* (=nips/NKBIP-03-revised-2.adoc=), which is now the spec.
+Two things changed from these notes: the kind is *30161* (not =30030=, which is
+NIP-51 "Emoji sets"), and the source type is carried by the NKBIP-06 =M= tag
+(=["M", "citation/nostr/replaceable"]=) rather than a bespoke =["source-type",
+…]= tag. The ={{cite:d-tag|modifier}}= grammar and presentation-separation below
+survived intact.
+#+end_quote
+
 NKBIP-03 proposes citations as first-class Nostr events. The core idea is
 strong; some details need refinement.
 
@@ -281,15 +361,25 @@ the {{wiki:fable}} tradition (see {{@aesop}}) suggests...
 
 #+begin_src json
 "tags": [
-    ["cite", "smith-2024", "30030:<pubkey>:smith-2024"],
+    ["cite", "smith-2024", "30161:<pubkey>:smith-2024"],
     ["ref", "chapter-3", "30041:<pubkey>:chapter-3"],
-    ["wikilink", "fable", "<pubkey>", "<relay>", "<event-id>"],
+    ["wikilink", "fable"],
     ["p", "<aesop-pubkey>", "<relay>", "aesop"]
 ]
 #+end_src
 
+The =embed= and =quote= prefixes follow the same pattern, by target type:
+=\{\{embed:naddr\}\}= → =["a", coord, relay?]=; =\{\{embed:nevent\}\}= →
+=["q", id, relay?, pubkey?]=; =\{\{embed:npub\}\}= → =["p", pubkey]=;
+=\{\{quote:naddr\vert…\}\}= → =["a", coord]= + =["p", author, relay, "author"]=.
+
 Content stays concise and human-readable. Tags are machine-readable resolution
 hints. Tags can be updated (event republished) without changing content text.
+
+NOTE: the engine emits the /short/ =["wikilink", "fable"]= (topic only). NKBIP-01
+/ NKBIP-06 also allow a resolved-coordinate form
+=["wikilink", "fable", "<pubkey>", "<relay>", "<event-id>"]=; adopting it is an
+open call (more resolution detail vs. a coordinate that can go stale).
 
 * Inspirations & Related Work
 
@@ -417,24 +507,52 @@ but powerful for knowledge graphs.
 
 ** Tier 1 — Build First
 
-- ={{ref:}}= internal references (most needed day-to-day)
-- ={{wiki:}}= markup-agnostic wikilinks (replaces broken =[[ ]]=)
-- ={{embed:}}= transclusion (enables modular publications)
-- =nostr:naddr#heading= fragment anchors
+- [X] ={{ref:}}= internal references (most needed day-to-day). /Also resolves in
+  the composer's draft-reader preview before publish: the web passes the draft's
+  own sections inline (=DraftSibling { title, d_tag }=) and the engine matches the
+  title-slug against them, the same path as published siblings./
+- [X] ={{wiki:}}= markup-agnostic wikilinks (replaces broken =[[ ]]=)
+- [X] ={{embed:}}= transclusion (enables modular publications). /A not-local
+  entity embed resolves =pending= (LocalOnly — never blocks a render) and the card
+  fetches it from the *search relays*: auto in Auto mode (a "fetching…" note),
+  a "Fetch from search relays" button in Confirm mode (routed through the network
+  intent flow). The composer click-preview renders the shared =EmbedCard=
+  declaratively — manual =mount()= breaks the prerendered build./
+- [-] =nostr:naddr#heading= fragment anchors — /parsed and carried through
+  resolution; the web does not yet scroll to the heading anchor. Superseded for
+  sub-event references by ={{quote:}}= below: headings are markup-specific and
+  brittle, so to reference a passage you carry the excerpt text inline (a
+  highlight), not a heading pointer./
+- [X] ={{quote:source|text}}= — a markup-agnostic, self-contained quote (NIP-84
+  model): the excerpt travels inline, =source= attributes it. Renders as an
+  attributed blockquote (collapsible); publish emits =["a"/"e", source]= +
+  =["p", author, "", "author"]= on the section. /Inline model — the quote lives
+  in the prose; minting a real kind-9802 highlight is a possible upgrade./
+- [X] ={{slot:naddr}}= — a /block-level/ slot (own line, not inline): the
+  referenced *30040/30041* becomes a child node, emitted as an =["a", coord]= in
+  the enclosing 30040 index at that position — /not/ a span in a section's
+  content. Addressable-only (=a=-tags, 30040/30041) for consistency; a
+  non-addressable note wants inline =embed=, not a slot. Structural inclusion by
+  reference — the third rung after =quote= (a passage) and =embed= (a whole event
+  inline). /Shipped end-to-end: engine emission (flat + nested) + validation,
+  plain-mode parse/serialize (reorders like any block), the Detected-outline
+  pill, the autocomplete coordinate builder, and draft save/resume persistence./
 
 ** Tier 2 — Build Second
 
-- ={{cite:}}= citations (drawing from NKBIP-03)
-- ={{@name}}= profile mention shorthand
-- Citation events (kind 30030) with rich metadata
-- Publication-level citation style tags
+- [ ] ={{cite:}}= citations → kind *30161* (NKBIP-03-revised-2), with a
+  =["cite", d-tag, "30161:pk:d-tag"]= tag; resolver + emission mirror =quote=
+- [ ] ={{@name}}= profile mention shorthand
+- [ ] Citation events with rich metadata — kind *30161*, source type via the
+  NKBIP-06 =M= tag (settled; was an open "kind TBD — not 30030 = Emoji sets")
+- [ ] Publication-level citation style tags (=["citation-style", …]= on the 30040)
 
 ** Tier 3 — Build Later
 
-- ={{term:}}= glossary references
-- ={{media:}}= nostr-native media embedding
-- Backlink discovery / graph view (client feature)
-- Collaborative annotations
+- [ ] ={{term:}}= glossary references
+- [ ] ={{media:}}= nostr-native media embedding
+- [ ] Backlink discovery / graph view (client feature)
+- [ ] Collaborative annotations
 
 * Parser Design Notes
 
@@ -449,10 +567,10 @@ The nostrdown parser needs to:
 A rough grammar:
 
 #+begin_example
-nostrdown_ref  := '{{' prefix ':' identifier ('|' display_text)? '}}'
-prefix         := 'ref' | 'wiki' | 'cite' | 'embed' | '@' | 'term' | 'media'
-identifier     := [a-zA-Z0-9_-]+ ('#' heading_slug)?
-display_text   := [^}]+
+nostrdown_ref  := '{{' prefix ':' identifier ('|' modifier)? '}}'
+prefix         := 'ref' | 'wiki' | 'embed' | 'quote' | 'cite' | '@' | 'term' | 'media'
+identifier     := [a-zA-Z0-9_-]+ ('#' heading_slug)?   ; or a NIP-19 entity
+modifier       := [^}]+                                ; display label, hint, or inline text
 #+end_example
 
 This parser runs /before/ the markup-specific parser (Markdown, Org, AsciiDoc)
@@ -470,6 +588,9 @@ markup, or with rendered HTML/terminal output directly.
 | NIP-27  | Inline references in content — overlaps            |
 | NIP-36  | Sensitive content — could affect transclusion      |
 | NIP-54  | Wiki (kind 30818) — wikilink resolution target     |
+| NIP-84  | Highlights (kind 9802) — =quote= model + shared render overlay |
 | NIP-94  | File metadata — media references                   |
 | NKBIP-01 | Publications (30040/30041) — primary context       |
-| NKBIP-03 | Citations — incorporated and amended               |
+| NKBIP-03 | Citations — revised to kind 30161 + =M= tag (=NKBIP-03-revised-2=) |
+| NKBIP-06 | MIME =m= / =M= tags — carries the citation source type |
+| NKBIP-08 | Book references — the reserved =book:= prefix (not yet built) |

@@ -599,6 +599,122 @@ fn resolve_pubkeys_by_name(ndb: &nostrdb::Ndb, partial: &str) -> Vec<String> {
 
 use crate::publication::{NAddr, PublicationEngine, KIND_PUBLICATION_INDEX};
 
+// ----------------------------------------------------------------------------
+// Nostrdown reference resolution
+// ----------------------------------------------------------------------------
+
+/// One section's content + the context needed to resolve its nostrdown `{{ }}`
+/// references. `key` (typically the section address) is echoed back so a batch
+/// can be unpacked.
+#[derive(Debug, Deserialize)]
+pub struct ResolveNostrdownItem {
+    pub key: String,
+    pub content: String,
+    /// The containing publication index coordinate (`"30040:pubkey:dtag"`), for
+    /// `ref:`/sibling-`embed:` resolution. Omitted for atomic articles.
+    #[serde(default)]
+    pub publication: Option<String>,
+    /// Section author pubkey (hex) — the preferred author for `wiki:` lookups.
+    #[serde(default)]
+    pub author: Option<String>,
+    /// Sibling sections of an unsigned draft (title + synthetic d-tag), for
+    /// `{{ref:slug}}` resolution in the composer's draft-reader preview before
+    /// anything is published. Empty for published reads (which resolve against
+    /// nostrdb via `publication`).
+    #[serde(default)]
+    pub siblings: Vec<crate::publication::DraftSibling>,
+}
+
+/// POST /api/v1/nostrdown/resolve body. Batched so the reader resolves every
+/// visible section's references in one round trip (mirrors highlights/resolve).
+#[derive(Debug, Deserialize)]
+pub struct ResolveNostrdownRequest {
+    #[serde(default)]
+    pub items: Vec<ResolveNostrdownItem>,
+    /// Fetch policy (optional, defaults to local_first).
+    #[serde(default)]
+    pub policy: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ResolveNostrdownResponse {
+    /// `key` → resolved references (UTF-16 spans), one entry per requested item.
+    /// The web slices section text by these spans and renders links/embeds.
+    pub refs: std::collections::HashMap<String, Vec<crate::nostrdown::ResolvedRef>>,
+}
+
+/// POST /api/v1/nostrdown/resolve
+///
+/// Resolve nostrdown `{{ref|wiki|embed:…}}` references within section text — the
+/// engine-side parse + lookup so every frontend renders identical links and
+/// transclusions. Batched over visible sections; reads only (no engine
+/// mutation). The pure tokenizer lives in [`crate::nostrdown`]; resolution in
+/// [`PublicationEngine::resolve_refs`].
+pub async fn resolve_nostrdown_handler(
+    State(engine): State<AppState>,
+    Json(req): Json<ResolveNostrdownRequest>,
+) -> Result<Json<ResolveNostrdownResponse>, EngineError> {
+    let policy = match &req.policy {
+        Some(p) => p.parse()?,
+        None => FetchPolicy::LocalFirst,
+    };
+    let pub_engine = PublicationEngine::new(&engine);
+    let mut refs = std::collections::HashMap::new();
+    for item in req.items {
+        let resolved = pub_engine
+            .resolve_refs(
+                &item.content,
+                item.publication.as_deref(),
+                item.author.as_deref(),
+                &item.siblings,
+                policy,
+            )
+            .await;
+        refs.insert(item.key, resolved);
+    }
+    Ok(Json(ResolveNostrdownResponse { refs }))
+}
+
+/// POST /api/v1/nostrdown/fetch-entity body. The card's "fetch from search
+/// relays" action for a single `embed` entity (naddr/nevent/note).
+#[derive(Debug, Deserialize)]
+pub struct FetchNostrdownEntityRequest {
+    /// The bech32 entity (`naddr…`/`nevent…`/`note…`), optionally `nostr:`-prefixed.
+    pub entity: String,
+    /// Whether to pull the event body for transclusion (true for an inline embed).
+    #[serde(default = "default_true")]
+    pub want_content: bool,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+#[derive(Debug, Serialize)]
+pub struct FetchNostrdownEntityResponse {
+    /// The (re)resolved reference — `pending` cleared and fields filled if the
+    /// fetch landed the event; still `pending` if the relays had nothing.
+    pub r#ref: crate::nostrdown::ResolvedRef,
+}
+
+/// POST /api/v1/nostrdown/fetch-entity
+///
+/// Force-fetch one nostrdown `embed` entity from the search relays and return
+/// its filled [`crate::nostrdown::ResolvedRef`]. Uses `FetchAlways`, so in
+/// Confirm mode the engine emits a network intent the UI must approve before the
+/// fetch proceeds (the request blocks on that decision). The card swaps the
+/// returned ref in to render the now-loaded event.
+pub async fn fetch_nostrdown_entity_handler(
+    State(engine): State<AppState>,
+    Json(req): Json<FetchNostrdownEntityRequest>,
+) -> Result<Json<FetchNostrdownEntityResponse>, EngineError> {
+    let pub_engine = PublicationEngine::new(&engine);
+    let resolved = pub_engine
+        .fetch_entity_ref(&req.entity, req.want_content)
+        .await;
+    Ok(Json(FetchNostrdownEntityResponse { r#ref: resolved }))
+}
+
 /// Query parameters for publications list
 #[derive(Debug, Deserialize)]
 pub struct PublicationsQuery {
@@ -3306,6 +3422,10 @@ pub struct DraftSectionRequest {
     /// Stable section d-tag to preserve on resume / republish (minted if absent).
     #[serde(default)]
     pub d_tag: Option<String>,
+    /// Transclude slot target (naddr or coordinate to a 30040/30041) — persisted
+    /// so a resumed draft restores the slot rather than an empty section.
+    #[serde(default)]
+    pub slot: Option<String>,
 }
 
 /// POST /api/v1/drafts body. Mirrors the compose payload `PublishRequest`
@@ -3344,6 +3464,10 @@ fn compose_from_draft_request(req: SaveDraftRequest) -> ComposeState {
             content: s.content,
             level: s.level.unwrap_or(2),
             d_tag: s.d_tag,
+            slot_coord: s
+                .slot
+                .as_deref()
+                .and_then(crate::publication::compose::normalize_slot_coord),
             tags: s
                 .tags
                 .into_iter()
@@ -3485,6 +3609,7 @@ fn request_to_draft_compose(req: &SaveDraftRequest) -> crate::drafts::DraftCompo
                     .collect(),
                 level: s.level.unwrap_or(2),
                 d_tag: s.d_tag.clone(),
+                slot: s.slot.clone(),
             })
             .collect(),
     }
@@ -3536,6 +3661,8 @@ fn publication_to_draft_compose(
                 tags: custom_tags(s.event.data()),
                 level,
                 d_tag: Some(s.addr.d_tag.clone()),
+                // A flattened published section is real content, never a slot.
+                slot: None,
             });
         }
         for nested in &pub_.nested {
@@ -3685,6 +3812,13 @@ pub struct PublishSectionRequest {
     /// replaces rather than forks.
     #[serde(default)]
     pub d_tag: Option<String>,
+    /// When set, this item is a transclude *slot*: an `naddr…` or
+    /// `kind:pubkey:d-tag` (a 30040/30041) to reference as a child of the
+    /// index, instead of authoring content. Emits an `["a", coord]` in the
+    /// 30040 at this position and mints no 30041. Invalid/non-addressable
+    /// targets are ignored.
+    #[serde(default)]
+    pub slot: Option<String>,
 }
 
 /// Response from publish endpoint
@@ -4008,6 +4142,10 @@ pub async fn publish_handler(
             sc.content = s.content.clone();
             sc.level = s.level.unwrap_or(2);
             sc.d_tag = s.d_tag.clone();
+            sc.slot_coord = s
+                .slot
+                .as_deref()
+                .and_then(crate::publication::compose::normalize_slot_coord);
             sc.tags = s
                 .tags
                 .iter()
@@ -4165,6 +4303,10 @@ pub async fn publish_preview_handler(
             sc.content = s.content.clone();
             sc.level = s.level.unwrap_or(2);
             sc.d_tag = s.d_tag.clone();
+            sc.slot_coord = s
+                .slot
+                .as_deref()
+                .and_then(crate::publication::compose::normalize_slot_coord);
             sc.tags = s
                 .tags
                 .iter()

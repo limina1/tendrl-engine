@@ -1,15 +1,9 @@
 <script lang="ts">
 	import type { LazySection, SectionStatus } from '$lib/types';
 	import * as api from '$lib/api';
-	import {
-		pubkeyToHighlightFill,
-		pubkeyToHighlightStroke
-	} from '$lib/discussions/colors';
-	import {
-		segmentsFromSpans,
-		type Highlight,
-		type HighlightSpan
-	} from '$lib/discussions/highlights';
+	import { type Highlight, type HighlightSpan } from '$lib/discussions/highlights';
+	import type { ResolvedRef } from '$lib/nostr/nostrdown';
+	import RichContent from './RichContent.svelte';
 
 	let {
 		section,
@@ -19,7 +13,9 @@
 		onclick = undefined,
 		onviewjson = undefined,
 		highlights = [],
-		focusedHighlightId = null
+		focusedHighlightId = null,
+		publicationAtag = undefined,
+		siblings = undefined
 	}: {
 		section: LazySection;
 		truncate?: boolean;
@@ -35,20 +31,13 @@
 		highlights?: Highlight[];
 		/** Id of the highlight to emphasize (from ?highlight= marker). */
 		focusedHighlightId?: string | null;
+		/** Containing publication coordinate ("30040:pubkey:dtag") — context for
+		 *  resolving nostrdown `{{ref:…}}` sibling references. */
+		publicationAtag?: string | undefined;
+		/** Unsigned-draft siblings (title + synthetic d-tag) so `{{ref:…}}`
+		 *  resolves against the draft's sections in the preview, pre-publish. */
+		siblings?: { title?: string; d_tag: string }[] | undefined;
 	} = $props();
-
-	function styleFor(pubkey: string, focused: boolean): string {
-		const fill = pubkeyToHighlightFill(pubkey);
-		const stroke = pubkeyToHighlightStroke(pubkey);
-		// Inset stripe anchored to the left edge per the plan's recipe.
-		// Focused (`?highlight=<id>` or drawer click-to-scroll) adds an
-		// outer green ring so the user can find the scrolled-to mark
-		// even when it shares a hue with neighbours.
-		if (focused) {
-			return `background: ${fill}; box-shadow: inset 3px 0 0 ${stroke}, 0 0 0 2px var(--state-online);`;
-		}
-		return `background: ${fill}; box-shadow: inset 3px 0 0 ${stroke};`;
-	}
 
 	const status: SectionStatus = $derived(section.status ?? 'loaded');
 
@@ -89,10 +78,37 @@
 		};
 	});
 
-	const highlightSegments = $derived.by(() => {
-		if (!displayContent || preview || highlightSpans.length === 0) return null;
-		const segs = segmentsFromSpans(displayContent, highlightSpans, focusedHighlightId);
-		return segs.some((s) => s.highlight !== null) ? segs : null;
+	// Nostrdown `{{ }}` references, resolved engine-side (POST
+	// /nostrdown/resolve) against the same content this card renders. Skipped in
+	// preview/truncate (shifted/short text can't bear them) and when the content
+	// carries no `{{` token (avoids a needless round trip). `RichContent` merges
+	// these with the highlight spans onto one segmentation.
+	let nostrdownRefs = $state<ResolvedRef[]>([]);
+	$effect(() => {
+		const text = displayContent;
+		if (!text || preview || !text.includes('{{')) {
+			nostrdownRefs = [];
+			return;
+		}
+		let cancelled = false;
+		api.resolveNostrdown([
+			{
+				key: 'section',
+				content: text,
+				publication: publicationAtag,
+				author: section.addr?.pubkey,
+				siblings
+			}
+		])
+			.then((m) => {
+				if (!cancelled) nostrdownRefs = m['section'] ?? [];
+			})
+			.catch(() => {
+				if (!cancelled) nostrdownRefs = [];
+			});
+		return () => {
+			cancelled = true;
+		};
 	});
 </script>
 
@@ -127,11 +143,13 @@
 		{/if}
 	</h3>
 	{#if status === 'loaded' && displayContent}
-		{#if highlightSegments}
-			<pre class="section-content" class:muted={preview}>{#each highlightSegments as seg, i (i)}{#if seg.highlight}<mark class="hl-overlay" data-hl-ids={seg.highlight.id} style={styleFor(seg.highlight.pubkey, seg.highlight.focused)} title="NIP-84 highlight {seg.highlight.id.slice(0, 8)}… by {seg.highlight.pubkey.slice(0, 12)}…">{seg.text}</mark>{:else}{seg.text}{/if}{/each}</pre>
-		{:else}
-			<pre class="section-content" class:muted={preview}>{displayContent}</pre>
-		{/if}
+		<RichContent
+			content={displayContent}
+			spans={highlightSpans}
+			refs={nostrdownRefs}
+			{focusedHighlightId}
+			muted={preview}
+		/>
 	{:else if status === 'loading'}
 		<div class="skeleton"></div>
 	{:else if status === 'error'}
@@ -208,18 +226,8 @@
 		50% { opacity: 1; }
 	}
 
-	.section-content {
-		white-space: pre-wrap;
-		font-family: var(--font-sans);
-		font-size: var(--t-xs);
-		line-height: 1.5;
-		color: var(--fg);
-		margin: 0;
-	}
-
-	.section-content.muted {
-		color: var(--fg-muted);
-	}
+	/* Section body (content + its highlight/nostrdown overlays) now renders via
+	   RichContent, which owns the `.section-content` <pre> and overlay styles. */
 
 	.skeleton {
 		height: 40px;
@@ -237,21 +245,5 @@
 	.section-error {
 		color: var(--danger);
 		font-size: var(--t-2xs);
-	}
-	.hl-overlay {
-		color: inherit;
-		padding: 1px 2px;
-		border-radius: 2px;
-	}
-	/* Drawer's flash animation — applied imperatively when the user
-	   clicks a row in the highlights drawer. Brightness/saturation
-	   pulse so it works with whatever per-author hue is already
-	   painted on the mark. */
-	@keyframes hl-flash {
-		0%, 100% { filter: brightness(1) saturate(1); }
-		30%      { filter: brightness(1.5) saturate(1.6); }
-	}
-	.hl-overlay.hl-flash {
-		animation: hl-flash 1.2s ease-in-out;
 	}
 </style>
