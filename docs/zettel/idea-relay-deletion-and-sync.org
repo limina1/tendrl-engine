@@ -1,0 +1,74 @@
+#+TITLE: Relay Deletion & List Sync
+#+TYPE: idea
+#+STATUS: plan
+#+DATE: 2026-07-06
+
+The relay buffer has no way to delete a relay, and no way to see or edit
+the relationship between tendrl's working sets and the user's *published*
+relay-list events. Two different deletions hide in that gap — remove from
+this app vs. rewrite a replaceable Nostr event — and conflating them is
+how other clients silently clobber relay lists. Tendrl's stance: the
+app's relays are its own settings (workbench state, may legitimately
+differ from the user's social relays); the published lists are touched
+only by an explicit, diff-gated publish.
+
+* Data
+
+- Local truth: =relays.json= working sets (=general= / =fetch= /
+  =publish= / =broadcast=, discovery classes, named sets). Engine already
+  has full removal (=Engine::remove_relay=, =POST /api/v1/config/update=).
+- Nostr truth: kind 10002 (NIP-65, public =r= tags), kind 30002 (NIP-51
+  named sets, =relay= tags), encrypted lists 10007/10086/10088 (NIP-44;
+  signer-dependent, out of scope for writing).
+- Replaceable-event hazard: publishing a new 10002/30002 replaces the old
+  event *wholesale* on every relay that accepts it. Tags tendrl doesn't
+  model (other clients decorate these events) are lost unless carried
+  forward or surfaced as "will be dropped."
+
+* Representation
+
+- Sync state per working-set relay, derived by comparing local sets
+  against the latest pulled 10002: =synced= (both, markers agree),
+  =local-only= (the default; honest label for "the app has its own
+  settings"), =drifted= (both, markers differ). =nostr-only= is already
+  the suggestions section.
+- Diff: =toAdd= / =toRemove= / marker changes / unmodeled-tags-dropped,
+  computed between the composed replacement event and the *freshly
+  re-fetched* current event (=FetchAlways= — never diff against a stale
+  pull). =namedSetDrift= in =RelaysBuffer.svelte= is this computation in
+  the pull direction. Boundary note: diff + payload composition belong in
+  Rust (events in → structured diff out); under NIP-07 the frontend
+  supplies the current event when only the browser can fetch/decrypt it.
+
+* UI/UX
+
+- Phase 1 — local delete + badges (no new backend) — *shipped*:
+  - per-row =×= in the relay buffer: removes URL from
+    =general= + =fetch= + =publish= + =broadcast=; confirm dialog
+    states it's tendrl-only.
+  - sync badges on working-set rows (=synced= / =local only= /
+    =drifted=), computed against the pulled kind 10002 (only shown
+    after a pull that found one; broadcast-only rows aren't badged —
+    they're not part of a 10002).
+- Phase 2 — diff-gate the publish — *shipped*:
+  - correction from the code: explicit publish *already exists*
+    (=publishRelayListByKind= for 10002/10088, =publishNamedSet= for
+    30002 in =RelaysBuffer.svelte=) — user-initiated, per the
+    philosophy, but it signs and broadcasts with *no look at what it
+    replaces*. Phase 2 is retrofitting the gate, not building publish:
+    re-fetch latest → diff (incl. unmodeled tags that would drop) →
+    confirm → existing sign/broadcast path.
+  - follow =detect_republish_diff= as the pattern: pure Rust core +
+    =POST= endpoint (=compute_republish_diff= /
+    =/api/v1/publish/republish-diff= did this for publications).
+  - deleting a relay "from Nostr" is not a per-row button: delete
+    locally, then publish — one overwrite path, always diff-gated.
+- Later / noted: NIP-09 kind-5 deletion request for retiring a whole
+  30002 set.
+
+* Related
+
+- [[file:index.org][Index]]
+- [[file:feat-relays.org][Relay management]]
+- [[file:feat-publishing.org][Publishing]] — deliberate-publishing stance
+- [[file:feat-identity.org][Identity]] — signer-dependent decrypt/fetch
