@@ -2213,6 +2213,11 @@ pub struct ConfigUpdateRequest {
     /// into the current `default` tiers. Idempotent. Lets existing
     /// users opt into the same set a fresh install gets.
     pub restore_discovery_defaults: Option<bool>,
+    /// `true` → reset ALL relay working sets to the first-boot default
+    /// configuration (re-seed from `initial_relays`, broadcast cleared,
+    /// discovery classes back to built-ins). Named sets are preserved.
+    /// Local-only — never touches published relay-list events.
+    pub reset_relays: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -2311,6 +2316,10 @@ pub async fn config_update_handler(
         if added > 0 {
             changed = true;
         }
+    }
+    if req.reset_relays.unwrap_or(false) {
+        engine.reset_relays_to_defaults();
+        changed = true;
     }
 
     // Author edits still flow to config.toml — they're a separate concern

@@ -1094,6 +1094,39 @@ impl Engine {
         true
     }
 
+    /// Reset the relay working sets to their first-boot default
+    /// configuration: general/fetch/publish re-seeded from the config's
+    /// bootstrap `initial_relays`, broadcast emptied, discovery classes
+    /// back to the engine's well-known defaults, exclusive flags off.
+    /// Named sets are PRESERVED — they're user-curated groupings, not
+    /// functional configuration. Local-only like every relay mutation:
+    /// writes through to `relays.json`, never touches published lists.
+    pub fn reset_relays_to_defaults(&self) {
+        let snapshot = {
+            let mut rc = self.relay_config.write().unwrap();
+            let mut sets =
+                crate::relay_store::RelaySets::seed_from_initial(&rc.initial_relays);
+            sets.named = rc.named_sets.clone();
+            rc.general.urls = sets.general.clone();
+            rc.fetch.urls = sets.fetch.clone();
+            rc.publish.urls = sets.publish.clone();
+            rc.broadcast.urls = sets.broadcast.clone();
+            rc.search = sets.search.clone();
+            rc.indexer = sets.indexer.clone();
+            rc.exclusive = sets.exclusive.clone();
+            sets
+        };
+        if let Err(e) = self.relay_store.save(&snapshot) {
+            warn!("Failed to persist relay reset: {e}");
+        }
+        self.persist_relay_sets_to_config();
+        // The reset may (re)introduce relays that carry sections we'd
+        // written off as unreachable — retry them on the next sync.
+        if let Ok(mut skip) = self.unreachable_sections.lock() {
+            skip.clear();
+        }
+    }
+
     /// Mirror the live general/fetch/publish working sets into config.toml as
     /// per-set `[relay.<name>].urls` tables. relays.json stays the runtime
     /// store; this keeps config.toml a complete, exportable source of truth for
@@ -3379,5 +3412,44 @@ mod tests {
 
         // Remove of a missing relay is a no-op.
         assert!(!engine.remove_relay("publish", "wss://never-added"));
+    }
+
+    /// `reset_relays_to_defaults` restores the first-boot seed (general/
+    /// fetch/publish from `initial_relays`, broadcast empty, discovery
+    /// back to built-ins) while PRESERVING user-curated named sets, in
+    /// memory and on disk.
+    #[tokio::test]
+    async fn test_reset_relays_to_defaults_reseeds_and_keeps_named_sets() {
+        let temp_dir = tempdir().expect("temp dir");
+        let cfg = RelayConfig {
+            initial_relays: vec!["wss://seed.relay".to_string()],
+            ..RelayConfig::default()
+        };
+        let engine = Engine::with_relay_config(temp_dir.path(), &cfg).expect("engine");
+
+        // Drift away from the defaults: extra relays, a broadcast target,
+        // a curated named set.
+        assert!(engine.add_relay("publish", "wss://extra.relay"));
+        assert!(engine.add_relay("broadcast", "wss://cast.relay"));
+        assert!(engine.remove_relay("fetch", "wss://seed.relay"));
+        assert!(engine.create_named_set("research", "Research"));
+        assert!(engine.add_to_named_set("research", "wss://curated.relay"));
+
+        engine.reset_relays_to_defaults();
+
+        // Working sets are back to the seed…
+        assert_eq!(engine.relays(), vec!["wss://seed.relay".to_string()]);
+        assert_eq!(engine.publish_relays(), vec!["wss://seed.relay".to_string()]);
+
+        // …on disk too, with broadcast cleared, discovery re-defaulted,
+        // and the named set intact.
+        let store = crate::relay_store::RelayStore::new(temp_dir.path()).expect("store");
+        let sets = store.load().expect("load");
+        assert_eq!(sets.general, vec!["wss://seed.relay".to_string()]);
+        assert!(sets.broadcast.is_empty());
+        assert!(!sets.indexer.default.is_empty(), "built-in indexers restored");
+        assert_eq!(sets.named.len(), 1);
+        assert_eq!(sets.named[0].d_tag, "research");
+        assert_eq!(sets.named[0].urls, vec!["wss://curated.relay".to_string()]);
     }
 }
