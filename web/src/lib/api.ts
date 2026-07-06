@@ -20,7 +20,7 @@ import type {
 } from './types';
 import type { ThreadNode } from './discussions/thread';
 import type { Highlight, HighlightSpan } from './discussions/highlights';
-import type { ResolvedRef } from './nostr/nostrdown';
+import type { ResolvedRef, ParsedToken } from './nostr/nostrdown';
 
 async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
 	const res = await fetch(url, {
@@ -295,6 +295,39 @@ export async function resolveNostrdown(
 		{ method: 'POST', body: JSON.stringify({ items }) }
 	);
 	return resp.refs;
+}
+
+/**
+ * Locate + classify nostrdown `{{ }}`/`[[ ]]` tokens in text — the engine's pure
+ * tokenizer, no resolution. The single home of the grammar: the editor decorates
+ * these spans and the reader chips them before `/resolve` lands, so no frontend
+ * re-implements the token regexes. Batched (key → content) like `resolveNostrdown`.
+ */
+export async function parseNostrdown(
+	items: { key: string; content: string }[]
+): Promise<Record<string, ParsedToken[]>> {
+	if (items.length === 0) return {};
+	const map = Object.fromEntries(items.map((i) => [i.key, i.content]));
+	const resp = await fetchJson<{ tokens: Record<string, ParsedToken[]> }>(
+		'/api/v1/nostrdown/parse',
+		{ method: 'POST', body: JSON.stringify({ items: map }) }
+	);
+	return resp.tokens;
+}
+
+/**
+ * NIP-54-normalize a batch of strings to slugs, engine-side — the single home of
+ * slug normalization, matching the tokenizer's own `target` normalization exactly.
+ * The composer uses it for slug matching (sibling-title filter, heading scroll,
+ * autocomplete). Positionally aligned with `values`.
+ */
+export async function normalizeNostrdown(values: string[]): Promise<string[]> {
+	if (values.length === 0) return [];
+	const resp = await fetchJson<{ slugs: string[] }>('/api/v1/nostrdown/normalize', {
+		method: 'POST',
+		body: JSON.stringify({ values })
+	});
+	return resp.slugs;
 }
 
 /** Force-fetch one nostrdown `embed` entity (naddr/nevent/note) from the search

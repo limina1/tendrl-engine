@@ -2,7 +2,7 @@
 	import type { LazySection, SectionStatus } from '$lib/types';
 	import * as api from '$lib/api';
 	import { type Highlight, type HighlightSpan } from '$lib/discussions/highlights';
-	import type { ResolvedRef } from '$lib/nostr/nostrdown';
+	import type { ResolvedRef, ParsedToken } from '$lib/nostr/nostrdown';
 	import RichContent from './RichContent.svelte';
 
 	let {
@@ -84,13 +84,26 @@
 	// carries no `{{` token (avoids a needless round trip). `RichContent` merges
 	// these with the highlight spans onto one segmentation.
 	let nostrdownRefs = $state<ResolvedRef[]>([]);
+	// Engine-parsed token spans for the pre-resolution "resolving" chips. Fetched
+	// in parallel with resolve (parse is pure + fast, so chips land first; the
+	// slower resolve then supersedes them). A `[[ ]]` wikilink also parses, so the
+	// gate below covers both delimiters.
+	let nostrdownTokens = $state<ParsedToken[]>([]);
 	$effect(() => {
 		const text = displayContent;
-		if (!text || preview || !text.includes('{{')) {
+		if (!text || preview || !(text.includes('{{') || text.includes('[['))) {
 			nostrdownRefs = [];
+			nostrdownTokens = [];
 			return;
 		}
 		let cancelled = false;
+		api.parseNostrdown([{ key: 'section', content: text }])
+			.then((m) => {
+				if (!cancelled) nostrdownTokens = m['section'] ?? [];
+			})
+			.catch(() => {
+				if (!cancelled) nostrdownTokens = [];
+			});
 		api.resolveNostrdown([
 			{
 				key: 'section',
@@ -147,6 +160,7 @@
 			content={displayContent}
 			spans={highlightSpans}
 			refs={nostrdownRefs}
+			tokens={nostrdownTokens}
 			{focusedHighlightId}
 			muted={preview}
 		/>

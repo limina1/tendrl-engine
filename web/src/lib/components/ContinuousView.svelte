@@ -8,7 +8,7 @@
 	import RichContent from './RichContent.svelte';
 	import { threadContainsId, type ThreadNode } from '$lib/discussions/thread';
 	import { type Highlight, type HighlightSpan } from '$lib/discussions/highlights';
-	import type { ResolvedRef } from '$lib/nostr/nostrdown';
+	import type { ResolvedRef, ParsedToken } from '$lib/nostr/nostrdown';
 
 	const app = getAppState();
 
@@ -89,6 +89,9 @@
 	// these with the highlight spans. The publication coordinate scopes `ref:`
 	// sibling lookups; each section's own pubkey scopes `wiki:`.
 	let refsBySection = $state<Record<string, ResolvedRef[]>>({});
+	// Pre-resolution "resolving" chip spans, parsed engine-side in parallel with
+	// resolve (parse is pure + fast, so chips land first; resolve supersedes).
+	let tokensBySection = $state<Record<string, ParsedToken[]>>({});
 	$effect(() => {
 		const items: {
 			key: string;
@@ -99,7 +102,7 @@
 		}[] = [];
 		for (const s of sections) {
 			if (s.status !== 'loaded' || !s.content || !s.addr) continue;
-			if (!s.content.includes('{{')) continue;
+			if (!(s.content.includes('{{') || s.content.includes('[['))) continue;
 			items.push({
 				key: addrKey(s.addr),
 				content: s.content,
@@ -110,9 +113,17 @@
 		}
 		if (items.length === 0) {
 			refsBySection = {};
+			tokensBySection = {};
 			return;
 		}
 		let cancelled = false;
+		api.parseNostrdown(items.map((i) => ({ key: i.key, content: i.content })))
+			.then((m) => {
+				if (!cancelled) tokensBySection = m;
+			})
+			.catch(() => {
+				if (!cancelled) tokensBySection = {};
+			});
 		api.resolveNostrdown(items)
 			.then((m) => {
 				if (!cancelled) refsBySection = m;
@@ -362,6 +373,7 @@
 						content={section.content}
 						spans={k ? spansBySection[k] ?? [] : []}
 						refs={k ? refsBySection[k] ?? [] : []}
+						tokens={k ? tokensBySection[k] ?? [] : []}
 						{focusedHighlightId}
 					/>
 				{:else if section.status === 'loading'}

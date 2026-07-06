@@ -91,14 +91,21 @@ export type ContentSegment =
 	 *  reads as a reference, not plain text, before the resolved `ref` lands. */
 	| { type: 'token'; kind: string; target: string; display?: string; raw: string };
 
-/** Tier-1 `{{kind:target(#fragment)?(|display)?}}` token — a display-side mirror
- *  of the engine tokenizer, used only to mark syntax before resolution. */
-const TOKEN_RE = /\{\{(ref|wiki|embed|quote|slot):([^}|#]+)(?:#([^}|]+))?(?:\|([^}]+))?\}\}/g;
-
-/** `[[ ]]` wikilink — the de-facto Nostr/Obsidian wikilink, recognised as a wiki
- *  ref (mirror of `nostrdown::parse_wikilink_inner`). `.+?` so the Nostr/Org
- *  `[[d-tag][display]]` form (a `]` inside) still closes on the trailing `]]`. */
-const WIKILINK_RE = /\[\[(.+?)\]\]/g;
+/** A parsed `{{ }}`/`[[ ]]` token from the engine (`POST /api/v1/nostrdown/parse`)
+ *  — the locate-and-classify surface, UTF-16 offsets. The engine grammar is the
+ *  single source; the reader marks these as "resolving" chips before `/resolve`
+ *  lands, the editor decorates them. Mirrors Rust `nostrdown::ParsedToken`. */
+export interface ParsedToken {
+	kind: 'ref' | 'wiki' | 'embed' | 'quote' | 'mention';
+	/** Normalized lookup target (NIP-54 slug or bech32 entity). */
+	target: string;
+	/** Target exactly as written (trimmed), pre-normalization. */
+	raw_target: string;
+	display?: string;
+	/** UTF-16 offsets spanning the whole token, delimiters included. */
+	start: number;
+	end: number;
+}
 
 /** Does a `[[ ]]` target name markup-native content (URL / scheme / path / image)
  *  the host markup owns? Mirrors the Rust `is_markup_link_target` so the editor
@@ -157,6 +164,7 @@ export function buildSegments(
 	content: string,
 	spans: HighlightSpan[],
 	refs: ResolvedRef[],
+	tokens: ParsedToken[] = [],
 	focusedId: string | null = null
 ): ContentSegment[] {
 	if (!content) return [{ type: 'text', text: '' }];
@@ -166,31 +174,23 @@ export function buildSegments(
 	for (const ref of refs) {
 		overlays.push({ start: ref.start, end: ref.end, prio: 2, make: () => ({ type: 'ref', ref }) });
 	}
-	// Raw `{{ }}` tokens the engine hasn't resolved yet — lowest priority, so a
-	// resolved `ref` (or highlight) covering the same span always wins and these
-	// only surface in the pre-resolution window (or if resolution failed). Scanned
-	// here, on the same UTF-16 offsets refs use, so the merge below is uniform.
-	TOKEN_RE.lastIndex = 0;
-	for (let m = TOKEN_RE.exec(content); m; m = TOKEN_RE.exec(content)) {
-		const raw = m[0];
-		const kind = m[1];
-		const target = m[2].trim();
-		const display = m[4]?.trim() || undefined;
-		const start = m.index;
-		const end = start + raw.length;
-		overlays.push({ start, end, prio: 0, make: () => ({ type: 'token', kind, target, display, raw }) });
-	}
-	// `[[ ]]` wikilinks — same chip, kind 'wiki'. Markup-native links are skipped
-	// (parseWikilink returns null) so we never style a real link/image.
-	WIKILINK_RE.lastIndex = 0;
-	for (let m = WIKILINK_RE.exec(content); m; m = WIKILINK_RE.exec(content)) {
-		const parsed = parseWikilink(m[1]);
-		if (!parsed) continue;
-		const raw = m[0];
-		const start = m.index;
-		const end = start + raw.length;
-		const { target, display } = parsed;
-		overlays.push({ start, end, prio: 0, make: () => ({ type: 'token', kind: 'wiki', target, display, raw }) });
+	// Engine-parsed `{{ }}`/`[[ ]]` tokens the resolver hasn't returned yet —
+	// lowest priority, so a resolved `ref` (or highlight) covering the same span
+	// always wins and these only surface in the pre-resolution window. Offsets are
+	// the same UTF-16 unit refs use, so the merge below is uniform.
+	for (const t of tokens) {
+		overlays.push({
+			start: t.start,
+			end: t.end,
+			prio: 0,
+			make: () => ({
+				type: 'token',
+				kind: t.kind,
+				target: t.target,
+				display: t.display,
+				raw: content.slice(t.start, t.end)
+			})
+		});
 	}
 	if (overlays.length === 0) return [{ type: 'text', text: content }];
 	for (const s of spans) {

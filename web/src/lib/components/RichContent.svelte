@@ -9,7 +9,7 @@
 	import EmbedCard from './EmbedCard.svelte';
 	import { pubkeyToHighlightFill, pubkeyToHighlightStroke } from '$lib/discussions/colors';
 	import type { HighlightSpan } from '$lib/discussions/highlights';
-	import { buildSegments, type ResolvedRef } from '$lib/nostr/nostrdown';
+	import { buildSegments, type ResolvedRef, type ParsedToken } from '$lib/nostr/nostrdown';
 
 	const app = getAppState();
 
@@ -17,17 +17,21 @@
 		content,
 		spans = [],
 		refs = [],
+		tokens = [],
 		focusedHighlightId = null,
 		muted = false
 	}: {
 		content: string;
 		spans?: HighlightSpan[];
 		refs?: ResolvedRef[];
+		/** Engine-parsed token spans for the pre-resolution "resolving" chips
+		 *  (from `api.parseNostrdown`); superseded by `refs` once `/resolve` lands. */
+		tokens?: ParsedToken[];
 		focusedHighlightId?: string | null;
 		muted?: boolean;
 	} = $props();
 
-	const segments = $derived(buildSegments(content, spans, refs, focusedHighlightId));
+	const segments = $derived(buildSegments(content, spans, refs, tokens, focusedHighlightId));
 
 	function styleFor(pubkey: string, focused: boolean): string {
 		const fill = pubkeyToHighlightFill(pubkey);
