@@ -37,8 +37,10 @@ Markdown/Org/AsciiDoc/plain content. Normative grammar:
 * Not implemented (spec'd or open)
 
 - ={{cite:}}= / kind 30161 — [[file:idea-citations.org][idea zettel]]
-- =#fragment= navigation — [[file:q-heading-anchors.org][open question]]
 - pin/live version semantics — [[file:idea-version-semantics.org][idea zettel]]
+
+=#fragment= navigation was *dropped from the grammar* (decided) —
+[[file:q-heading-anchors.org][q-heading-anchors]].
 
 * Related
 

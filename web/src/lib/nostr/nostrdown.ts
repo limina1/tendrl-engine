@@ -45,8 +45,6 @@ export interface ResolvedRef {
 	end: number;
 	/** Canonical lookup target (normalized slug or bech32 entity). */
 	target: string;
-	/** Heading anchor to scroll to after navigation, if any. */
-	fragment?: string;
 	/** Text to render: explicit `|display`, else the resolved title, else the
 	 *  raw target as written. */
 	label: string;

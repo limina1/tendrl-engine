@@ -114,8 +114,7 @@
 	function openTitle(): string {
 		if (!view.found) return `Unresolved ${view.kind}: ${view.target}`;
 		const k = view.event_kind ? ` (kind ${view.event_kind})` : '';
-		const frag = view.fragment ? ` #${view.fragment}` : '';
-		return `${view.kind}: ${view.target}${k}${frag}`;
+		return `${view.kind}: ${view.target}${k}`;
 	}
 </script>
 

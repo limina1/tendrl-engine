@@ -53,6 +53,8 @@ exists (with code paths), gaps.
 
 - [[file:decision-nostrdown-parsing.org][Nostrdown parsing lives in Rust]]
   — markup-agnostic grammar is data-layer, not display-layer
+- [[file:q-heading-anchors.org][Heading anchors dropped from the grammar]]
+  — sub-section addressing belongs to the markup engine; make it a 30041 instead
 
 * In flight — the nostrdown feature epoch
 
@@ -91,7 +93,6 @@ path: [[file:conventions.org][conventions]].
 
 * Open questions
 
-- [[file:q-heading-anchors.org][Heading anchors]] — does sub-section addressing belong in nostrdown?
 - [[file:q-knowledgebase.org][knowledgebase/]] — staging area or permanent parallel store?
 
 * Software we model off of

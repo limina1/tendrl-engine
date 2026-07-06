@@ -20,7 +20,7 @@ The /normative/ grammar + per-prefix reference now lives in
 were distilled from — read it for the /why/, those for the /what/.
 
 - *Parser* (=src/nostrdown.rs=): pure, IO-free tokenizer for
-  ={{ref|wiki|embed|quote:target#fragment|display}}=, NIP-54 slug normalization.
+  ={{ref|wiki|embed|quote:target|display}}=, NIP-54 slug normalization.
   Unknown prefixes (=cite=/=@=/=term=/=media=) degrade to literal text.
 - *Resolver* (=resolve_refs= → =POST /api/v1/nostrdown/resolve=):
   - =ref:= → sibling section by *title-slug* (the =T= tag — section d-tags are
@@ -55,8 +55,7 @@ were distilled from — read it for the /why/, those for the /what/.
   Detected outline, is built via the coordinate picker (=Slot= tab), and persists
   across draft save/resume.
 
-Open follow-ups: fragment scroll-to-heading (superseded by ={{quote}}= for
-passages); deeper-than-one-level sibling loading; embed recursion beyond depth 1;
+Open follow-ups: deeper-than-one-level sibling loading; embed recursion beyond depth 1;
 references inside *atomic* 30023/30818 bodies; the kind-9802 highlight upgrade for
 ={{quote}}=; Full-mode section textareas → CodeMirror (so recognition / autocomplete
 / preview work in section cards too); a =quote= builder (pick source → fill text).
@@ -522,11 +521,12 @@ but powerful for knowledge graphs.
   a "Fetch from search relays" button in Confirm mode (routed through the network
   intent flow). The composer click-preview renders the shared =EmbedCard=
   declaratively — manual =mount()= breaks the prerendered build./
-- [-] =nostr:naddr#heading= fragment anchors — /parsed and carried through
-  resolution; the web does not yet scroll to the heading anchor. Superseded for
-  sub-event references by ={{quote:}}= below: headings are markup-specific and
-  brittle, so to reference a passage you carry the excerpt text inline (a
-  highlight), not a heading pointer./
+- [X] ~=nostr:naddr#heading= fragment anchors~ — /*dropped from the grammar*
+  (decided, see [[file:zettel/q-heading-anchors.org][q-heading-anchors]], option 1):
+  a heading is not an event but structure inside one markup's rendering, so
+  sub-event addressing belongs to the markup engine, not nostrdown. To reference a
+  smaller unit, make it a 30041 section (NKBIP-01's atomicity answer) or carry the
+  passage inline with ={{quote:}}=. A =#= in a target is now ordinary text./
 - [X] ={{quote:source|text}}= — a markup-agnostic, self-contained quote (NIP-84
   model): the excerpt travels inline, =source= attributes it. Renders as an
   attributed blockquote (collapsible); publish emits =["a"/"e", source]= +

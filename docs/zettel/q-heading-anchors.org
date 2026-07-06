@@ -1,10 +1,22 @@
 #+TITLE: Open question: do heading anchors belong in nostrdown?
 #+TYPE: question
-#+STATUS: open
+#+STATUS: decided
 #+DATE: 2026-07-05
+#+DECIDED: 2026-07-05
 
-=#fragment= currently parses and survives resolution (={{ref:sec#heading}}=),
-but nothing navigates, and the spec already de-emphasizes it ("reference
+*Decision (option 1): drop =#fragment= from the grammar entirely.* The parser no
+longer splits on =#= — a =#= is ordinary target text, NIP-54-normalized like any
+other punctuation. The layering argument won: a heading is not an event but
+structure inside one markup's rendering of a section, so sub-event addressing
+belongs to the markup engine, not nostrdown; NKBIP-01's own answer to "address a
+smaller unit" is *make it a 30041 section*. Landed across =src/nostrdown.rs=
+(field + parse + tests removed), =src/publication.rs= (=ResolvedRef= no longer
+carries it), the web (=ResolvedRef= type + =RichContent=/=EmbedCard= readers), and
+=docs/nostrdown.org= (roadmap ticked as dropped). The spec grammar already omitted
+it. The options considered are kept below as provenance.
+
+=#fragment= previously parsed and survived resolution (={{ref:sec#heading}}=),
+but nothing navigated, and the spec already de-emphasized it ("reference
 the child, not parent+child").
 
 The unresolved question is *layer placement*. Nostrdown references

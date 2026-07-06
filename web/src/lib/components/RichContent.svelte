@@ -49,8 +49,7 @@
 	function refTitle(ref: ResolvedRef): string {
 		if (!ref.found) return `Unresolved ${ref.kind}: ${ref.target}`;
 		const kind = ref.event_kind ? ` (kind ${ref.event_kind})` : '';
-		const frag = ref.fragment ? ` #${ref.fragment}` : '';
-		return `${ref.kind}: ${ref.target}${kind}${frag}`;
+		return `${ref.kind}: ${ref.target}${kind}`;
 	}
 
 	// Portal the hover popover to <body> so a scrolling (continuous) view or a
@@ -79,7 +78,7 @@
 	}
 </script>
 
-<pre class="section-content" class:muted>{#each segments as seg, i (i)}{#if seg.type === 'highlight'}<mark class="hl-overlay" data-hl-ids={seg.highlight.id} style={styleFor(seg.highlight.pubkey, seg.highlight.focused)} title="NIP-84 highlight {seg.highlight.id.slice(0, 8)}… by {seg.highlight.pubkey.slice(0, 12)}…">{seg.text}</mark>{:else if seg.type === 'ref'}{#if seg.ref.kind === 'embed' || seg.ref.kind === 'quote'}<EmbedCard ref={seg.ref} onopen={openRef} />{:else}<button class="nd-ref nd-ref--{seg.ref.kind}" class:nd-unresolved={!seg.ref.found} onclick={() => openRef(seg.ref)} onmouseenter={(e) => showPreview(e, seg.ref)} onmouseleave={hidePreview} onfocus={(e) => showPreview(e, seg.ref)} onblur={hidePreview} disabled={!seg.ref.coord} title={refTitle(seg.ref)}>{seg.ref.label}{#if seg.ref.fragment}<span class="nd-ref__frag">#{seg.ref.fragment}</span>{/if}</button>{/if}{:else if seg.type === 'token'}<span class="nd-token nd-token--{seg.kind}" title="{seg.kind}: {seg.target} — resolving…">{seg.display || seg.target}</span>{:else}{seg.text}{/if}{/each}</pre>
+<pre class="section-content" class:muted>{#each segments as seg, i (i)}{#if seg.type === 'highlight'}<mark class="hl-overlay" data-hl-ids={seg.highlight.id} style={styleFor(seg.highlight.pubkey, seg.highlight.focused)} title="NIP-84 highlight {seg.highlight.id.slice(0, 8)}… by {seg.highlight.pubkey.slice(0, 12)}…">{seg.text}</mark>{:else if seg.type === 'ref'}{#if seg.ref.kind === 'embed' || seg.ref.kind === 'quote'}<EmbedCard ref={seg.ref} onopen={openRef} />{:else}<button class="nd-ref nd-ref--{seg.ref.kind}" class:nd-unresolved={!seg.ref.found} onclick={() => openRef(seg.ref)} onmouseenter={(e) => showPreview(e, seg.ref)} onmouseleave={hidePreview} onfocus={(e) => showPreview(e, seg.ref)} onblur={hidePreview} disabled={!seg.ref.coord} title={refTitle(seg.ref)}>{seg.ref.label}</button>{/if}{:else if seg.type === 'token'}<span class="nd-token nd-token--{seg.kind}" title="{seg.kind}: {seg.target} — resolving…">{seg.display || seg.target}</span>{:else}{seg.text}{/if}{/each}</pre>
 {#if preview}
 	<!-- svelte-ignore a11y_no_static_element_interactions -->
 	<div
@@ -136,10 +135,6 @@
 	.nd-ref:hover:not(:disabled) {
 		background: color-mix(in srgb, var(--id-yours) 18%, transparent);
 		text-decoration: underline;
-	}
-	.nd-ref__frag {
-		opacity: 0.65;
-		font-size: 0.9em;
 	}
 	.nd-ref.nd-unresolved {
 		color: var(--fg-muted);

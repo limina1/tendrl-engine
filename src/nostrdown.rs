@@ -2,7 +2,7 @@
 //!
 //! A pure, IO-free tokenizer for the inline reference layer described in
 //! `docs/nostrdown.org`. It scans section content for
-//! `{{ prefix:target(#fragment)?(|display)? }}` tokens and returns typed
+//! `{{ prefix:target(|display)? }}` tokens and returns typed
 //! references with byte offsets into the source. It does **not** resolve them —
 //! looking a target up against sibling events, the local db, or relays is
 //! engine-side work (see the `/api/v1/nostrdown/resolve` endpoint), mirroring the
@@ -96,8 +96,6 @@ pub struct NostrdownRef {
     pub raw_target: String,
     /// `true` when `target` is a bech32 NIP-19 entity rather than a slug.
     pub is_entity: bool,
-    /// Heading anchor after `#`, NIP-54-normalized (e.g. `the-first-theorem`).
-    pub fragment: Option<String>,
     /// Explicit display text after `|`, verbatim (trimmed).
     pub display: Option<String>,
     pub start: usize,
@@ -127,9 +125,6 @@ pub struct ResolvedRef {
     pub end: usize,
     /// Canonical lookup target (normalized slug or bech32 entity).
     pub target: String,
-    /// Heading anchor to scroll to after navigation, if any.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub fragment: Option<String>,
     /// Text to render: explicit `|display`, else the resolved title, else the
     /// raw target as written.
     pub label: String,
@@ -256,19 +251,14 @@ fn parse_inner(inner: &str, start: usize, end: usize) -> Option<NostrdownRef> {
     let kind = RefKind::from_prefix(inner[..colon].trim())?;
     let rest = inner[colon + 1..].trim();
 
-    // `target(#fragment)?(|display)?` — display is split off first so a `#` in
-    // display text (after `|`) is never mistaken for a fragment.
-    let (head, display) = match rest.split_once('|') {
+    // `target(|display)?` — `#` is not special: sub-event/heading addressing is
+    // out of scope (reference the child section, not `parent#heading`), so a `#`
+    // is left in the target text and NIP-54-normalized like any other punctuation.
+    let (target_raw, display) = match rest.split_once('|') {
         Some((h, d)) => (h.trim(), Some(d.trim())),
         None => (rest, None),
     };
     let display = display.filter(|d| !d.is_empty()).map(str::to_string);
-
-    let (target_raw, fragment) = match head.split_once('#') {
-        Some((t, f)) => (t.trim(), Some(normalize(f.trim()))),
-        None => (head, None),
-    };
-    let fragment = fragment.filter(|f| !f.is_empty());
 
     if target_raw.is_empty() {
         return None;
@@ -290,7 +280,6 @@ fn parse_inner(inner: &str, start: usize, end: usize) -> Option<NostrdownRef> {
         target,
         raw_target: target_raw.to_string(),
         is_entity,
-        fragment,
         display,
         start,
         end,
@@ -343,7 +332,6 @@ fn parse_wikilink_inner(inner: &str, start: usize, end: usize) -> Option<Nostrdo
         target,
         raw_target: target_raw.to_string(),
         is_entity: false,
-        fragment: None,
         display,
         start,
         end,
@@ -583,7 +571,6 @@ mod tests {
         assert_eq!(r.kind, RefKind::Ref);
         assert_eq!(r.target, "chapter-3");
         assert!(!r.is_entity);
-        assert_eq!(r.fragment, None);
         assert_eq!(r.display, None);
         // span covers the whole token including braces
         assert_eq!(&"See {{ref:chapter-3}} for details."[r.start..r.end], "{{ref:chapter-3}}");
@@ -658,25 +645,25 @@ mod tests {
     }
 
     #[test]
-    fn parses_fragment() {
+    fn hash_in_target_is_not_special() {
+        // `#fragment` was dropped from the grammar: a `#` is ordinary target text,
+        // NIP-54-normalized like any other punctuation — not a heading anchor.
         let r = one("{{ref:chapter-3#The First Theorem}}");
-        assert_eq!(r.target, "chapter-3");
-        assert_eq!(r.fragment.as_deref(), Some("the-first-theorem"));
+        assert_eq!(r.target, "chapter-3the-first-theorem");
+        assert_eq!(r.display, None);
     }
 
     #[test]
-    fn fragment_and_display_together() {
+    fn display_still_splits_after_a_hash_target() {
         let r = one("{{ref:chapter-3#intro|Read the intro}}");
-        assert_eq!(r.target, "chapter-3");
-        assert_eq!(r.fragment.as_deref(), Some("intro"));
+        assert_eq!(r.target, "chapter-3intro");
         assert_eq!(r.display.as_deref(), Some("Read the intro"));
     }
 
     #[test]
-    fn hash_in_display_is_not_a_fragment() {
+    fn hash_in_display_is_verbatim() {
         let r = one("{{wiki:fable|see #3 below}}");
         assert_eq!(r.target, "fable");
-        assert_eq!(r.fragment, None);
         assert_eq!(r.display.as_deref(), Some("see #3 below"));
     }
 
