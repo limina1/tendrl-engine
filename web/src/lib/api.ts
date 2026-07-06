@@ -213,6 +213,7 @@ export function replaceContext(notes: { title: string; content: string }[]): Pro
 export type EncodeRequest =
 	| { kind: 'npub'; pubkey: string }
 	| { kind: 'note'; event_id: string }
+	| { kind: 'nprofile'; pubkey: string; relays?: string[] }
 	| {
 			kind: 'nevent';
 			event_id: string;

@@ -191,6 +191,11 @@ pub enum EncodeRequest {
     Note {
         event_id: String,
     },
+    Nprofile {
+        pubkey: String,
+        #[serde(default)]
+        relays: Vec<String>,
+    },
     Nevent {
         event_id: String,
         #[serde(default)]
@@ -278,6 +283,7 @@ pub async fn encode_handler(
     let encoded = match req {
         EncodeRequest::Npub { pubkey } => nip19::encode_npub(&pubkey),
         EncodeRequest::Note { event_id } => nip19::encode_note(&event_id),
+        EncodeRequest::Nprofile { pubkey, relays } => nip19::encode_nprofile(&pubkey, &relays),
         EncodeRequest::Nevent {
             event_id,
             relays,

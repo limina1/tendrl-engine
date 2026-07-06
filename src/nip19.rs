@@ -281,6 +281,17 @@ pub fn encode_note(event_id_hex: &str) -> Result<String, EncodeError> {
     bech32_encode("note", &hex32(event_id_hex, "event id")?)
 }
 
+/// Encode an `nprofile1…`: the type-0 pubkey plus optional relay hints.
+/// Mirrors `decode_nprofile_payload`.
+pub fn encode_nprofile(pubkey_hex: &str, relays: &[String]) -> Result<String, EncodeError> {
+    let mut tlv = Vec::new();
+    push_tlv(&mut tlv, 0x00, &hex32(pubkey_hex, "pubkey")?);
+    for r in relays {
+        push_tlv(&mut tlv, 0x01, r.as_bytes());
+    }
+    bech32_encode("nprofile", &tlv)
+}
+
 /// Encode an `nevent1…`: the type-0 event id plus optional relay/author/kind
 /// hints. Mirrors `decode_nevent_payload`.
 pub fn encode_nevent(
@@ -522,6 +533,20 @@ mod tests {
         match decode(&encode_note(EVENT_ID).expect("encode note")).expect("decode note") {
             Decoded::Note { event_id } => assert_eq!(event_id, EVENT_ID),
             other => panic!("expected Note, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn encode_nprofile_round_trips() {
+        let relays = vec!["wss://relay.damus.io".to_string()];
+        let nprofile = encode_nprofile(PUBKEY, &relays).expect("encode nprofile");
+        assert!(nprofile.starts_with("nprofile1"));
+        match decode(&nprofile).expect("decode nprofile") {
+            Decoded::Nprofile { pubkey, relays: r } => {
+                assert_eq!(pubkey, PUBKEY);
+                assert_eq!(r, relays);
+            }
+            other => panic!("expected Nprofile, got {:?}", other),
         }
     }
 
