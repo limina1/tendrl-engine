@@ -21,6 +21,7 @@ import {
 	type ViewUpdate
 } from '@codemirror/view';
 import { Prec, type Extension } from '@codemirror/state';
+import { parseWikilink } from '$lib/nostr/nostrdown';
 import {
 	acceptCompletion,
 	autocompletion,
@@ -30,8 +31,11 @@ import {
 	type CompletionResult
 } from '@codemirror/autocomplete';
 
-/** Tier-1 token shape: `{{ref|wiki|embed|quote:target(#fragment)?(|modifier)?}}`. */
-const TOKEN_RE = /\{\{(ref|wiki|embed|quote):([^}|#]+)(?:#([^}|]+))?(?:\|([^}]+))?\}\}/g;
+/** Token shape: a `{{ref|wiki|embed|quote:target(#fragment)?(|modifier)?}}` event
+ *  reference, or a `[[topic]]` / `[[d-tag][display]]` / `[[topic|alias]]` Nostr
+ *  wikilink (last alternative, group 5). */
+const TOKEN_RE =
+	/\{\{(ref|wiki|embed|quote):([^}|#]+)(?:#([^}|]+))?(?:\|([^}]+))?\}\}|\[\[(.+?)\]\]/g;
 
 export interface NostrdownToken {
 	kind: 'ref' | 'wiki' | 'embed' | 'quote';
@@ -39,27 +43,37 @@ export interface NostrdownToken {
 	target: string;
 	fragment?: string;
 	display?: string;
-	/** The full `{{…}}` text, for handing to the engine resolver verbatim. */
+	/** The full `{{…}}` / `[[…]]` text, for handing to the engine resolver verbatim. */
 	raw: string;
-	/** Document offsets of the token (braces included). */
+	/** Document offsets of the token (delimiters included). */
 	from: number;
 	to: number;
 }
 
-function tokenFromMatch(m: RegExpMatchArray, from: number): NostrdownToken {
+/** Build a token from a regex match, or `null` for a `[[ ]]` that names
+ *  markup-native content (a URL/scheme/image/path) we must not claim. */
+function tokenFromMatch(m: RegExpMatchArray, from: number): NostrdownToken | null {
+	const base = { raw: m[0], from, to: from + m[0].length };
+	if (m[5] !== undefined) {
+		const parsed = parseWikilink(m[5]);
+		if (!parsed) return null;
+		return { kind: 'wiki', target: parsed.target, display: parsed.display, ...base };
+	}
 	return {
 		kind: m[1] as NostrdownToken['kind'],
 		target: m[2].trim(),
 		fragment: m[3]?.trim() || undefined,
 		display: m[4]?.trim() || undefined,
-		raw: m[0],
-		from,
-		to: from + m[0].length
+		...base
 	};
 }
 
 const refMark = Decoration.mark({ class: 'cm-nd' });
-const decorator = new MatchDecorator({ regexp: TOKEN_RE, decoration: () => refMark });
+const decorator = new MatchDecorator({
+	regexp: TOKEN_RE,
+	// Skip a `[[ ]]` that resolves to a markup-native link (tokenFromMatch → null).
+	decoration: (m) => (tokenFromMatch(m, 0) ? refMark : null)
+});
 
 const theme = EditorView.baseTheme({
 	'.cm-nd': {
@@ -79,7 +93,10 @@ function tokenAt(view: EditorView, pos: number): NostrdownToken | null {
 	while ((m = re.exec(line.text))) {
 		const from = line.from + m.index;
 		const to = from + m[0].length;
-		if (pos >= from && pos <= to) return tokenFromMatch(m, from);
+		if (pos >= from && pos <= to) {
+			const token = tokenFromMatch(m, from);
+			if (token) return token;
+		}
 	}
 	return null;
 }

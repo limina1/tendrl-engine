@@ -19,9 +19,20 @@
 //!             normalized d-tag
 //! - `embed` — transclusion of another event's content inline
 //!
-//! `cite`, `@name`, `term`, and `media` are deferred (see the nostrdown roadmap),
-//! as are the `[[ ]]` / `[[book::]]` syntaxes (NKBIP-01/08) — this layer is
-//! `{{ }}`-only by design, so it never conflicts with Markdown, AsciiDoc, or Org.
+//! `cite`, `@name`, `term`, and `media` are deferred (see the nostrdown roadmap).
+//!
+//! ## `[[ ]]` wikilinks — recognised, scoped to Nostr links only
+//!
+//! `[[topic]]` / `[[d-tag][display]]` / `[[topic|alias]]` are *also* scanned, as
+//! [`RefKind::Wiki`] — the de-facto wikilink across the Nostr wiki ecosystem
+//! (NIP-54 / kind 30818, kind-1 clients, NKBIP-01 publications) and Obsidian
+//! imports, so it travels in content regardless. Recognising it lets any client
+//! render the Nostr link with a bare tokenizer, no markup parser required. The
+//! split with the host markup is by *target*: a real link/image (`scheme:`,
+//! `://`, a path, an image file) belongs to Markdown/AsciiDoc/Org and is left
+//! untouched (`is_markup_link_target`); only a bare topic resolves as a wiki
+//! reference. `{{ }}` stays exclusively for Nostr *events* (`ref`/`embed`/
+//! `quote`/`slot`); `[[ ]]` is the Nostr *wiki* link.
 //!
 //! A token whose prefix is unrecognised, or that is malformed, is left untouched
 //! in the source — nostrdown degrades gracefully to readable plain text.
@@ -221,13 +232,14 @@ pub fn normalize(s: &str) -> String {
     out
 }
 
-/// Find the byte index of the first `}}` at or after `from`, returning the index
-/// of its first `}`.
-fn find_close(content: &str, from: usize) -> Option<usize> {
+/// Find the byte index of the first `bb` doubled-delimiter at or after `from`,
+/// returning the index of its first byte. `b` is a single ASCII delimiter byte
+/// (`}` for `{{ }}`, `]` for `[[ ]]`).
+fn find_double(content: &str, from: usize, b: u8) -> Option<usize> {
     let bytes = content.as_bytes();
     let mut i = from;
     while i + 1 < bytes.len() {
-        if bytes[i] == b'}' && bytes[i + 1] == b'}' {
+        if bytes[i] == b && bytes[i + 1] == b {
             return Some(i);
         }
         i += 1;
@@ -285,20 +297,132 @@ fn parse_inner(inner: &str, start: usize, end: usize) -> Option<NostrdownRef> {
     })
 }
 
-/// Scan `content` and return every well-formed `{{ }}` reference, in source
-/// order. Malformed or unknown-prefix tokens are skipped (left in place for the
-/// renderer to show literally).
+/// Parse the inner text of a `[[…]]` wikilink (brackets excluded) into a
+/// [`RefKind::Wiki`] reference, or `None` if it names markup-native content we
+/// must not claim (a URL/scheme/image/path) or is empty.
+///
+/// `[[ ]]` is the de-facto wikilink across the Nostr wiki ecosystem (NIP-54 /
+/// kind 30818, kind-1 clients, NKBIP-01 publications) and Obsidian imports — so
+/// it travels in publication content regardless. We recognise it as a Nostr wiki
+/// link (the same resolution + `["w", topic]` tag as `{{wiki:}}`) so any
+/// client renders the Nostr link with a bare tokenizer, no markup parser needed.
+/// Three display forms, mapped to one ref:
+///
+/// - `[[topic]]`              → wiki, label = topic
+/// - `[[d-tag][display]]`     → wiki (Nostr/Alexandria + Org form)
+/// - `[[topic|display]]`      → wiki (Obsidian form)
+///
+/// A target that is a real link (`scheme:` / `://` / a path / an image file)
+/// belongs to the host markup (Markdown/Org/AsciiDoc), not nostrdown — we leave
+/// it untouched so we never override the format's own links or images.
+fn parse_wikilink_inner(inner: &str, start: usize, end: usize) -> Option<NostrdownRef> {
+    let inner = inner.trim();
+    if inner.is_empty() {
+        return None;
+    }
+    // Display split: the Nostr/Org `][` form first, then the Obsidian `|` form.
+    let (target_raw, display) = if let Some((t, d)) = inner.split_once("][") {
+        (t.trim(), Some(d.trim()))
+    } else if let Some((t, d)) = inner.split_once('|') {
+        (t.trim(), Some(d.trim()))
+    } else {
+        (inner, None)
+    };
+    let display = display.filter(|d| !d.is_empty()).map(str::to_string);
+
+    if target_raw.is_empty() || is_markup_link_target(target_raw) {
+        return None;
+    }
+    let target = normalize(target_raw);
+    if target.is_empty() {
+        return None;
+    }
+
+    Some(NostrdownRef {
+        kind: RefKind::Wiki,
+        target,
+        raw_target: target_raw.to_string(),
+        is_entity: false,
+        fragment: None,
+        display,
+        start,
+        end,
+    })
+}
+
+/// Does `t` (a `[[ ]]` target) name markup-native content — a URL, a `scheme:`
+/// link, a file path, or an image/media file — that the host markup owns? Such
+/// `[[ ]]` belongs to Org/AsciiDoc/Markdown, not the Nostr wiki layer, so we skip
+/// it. A bare topic (`[[Hayek's Knowledge Problem]]`) is *not* a link target and
+/// resolves as a wiki reference.
+fn is_markup_link_target(t: &str) -> bool {
+    let lower = t.to_ascii_lowercase();
+    if lower.contains("://") {
+        return true;
+    }
+    // Known link schemes (Org link types + web/mail). A bare title with a stray
+    // `:` (`Plato: Republic`) doesn't match — these are concrete prefixes.
+    const SCHEMES: &[&str] = &[
+        "http:",
+        "https:",
+        "ftp:",
+        "mailto:",
+        "tel:",
+        "file:",
+        "id:",
+        "attachment:",
+        "info:",
+        "news:",
+        "doi:",
+        "elisp:",
+        "shell:",
+    ];
+    if SCHEMES.iter().any(|s| lower.starts_with(s)) {
+        return true;
+    }
+    // Org-internal targets (heading `*`, custom-id `#`, search `/`) and paths.
+    if t.starts_with('*')
+        || t.starts_with('#')
+        || t.starts_with('/')
+        || t.starts_with('~')
+        || t.starts_with("./")
+        || t.starts_with("../")
+        || t.contains('/')
+    {
+        return true;
+    }
+    // Image / media files — the markup renders these inline.
+    const EXTS: &[&str] = &[
+        ".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp", ".avif", ".bmp", ".pdf", ".mp4", ".mp3",
+        ".webm", ".mov", ".ogg", ".wav",
+    ];
+    EXTS.iter().any(|e| lower.ends_with(e))
+}
+
+/// Scan `content` and return every well-formed `{{ }}` reference or `[[ ]]`
+/// wikilink, in source order. Malformed / unknown-prefix `{{ }}` tokens and
+/// markup-native `[[ ]]` links are skipped (left in place for the renderer to
+/// show literally).
 pub fn parse(content: &str) -> Vec<NostrdownRef> {
     let bytes = content.as_bytes();
     let mut refs = Vec::new();
     let mut i = 0;
     while i + 1 < bytes.len() {
-        // `{` is ASCII, so a byte match is a true `{{` open — UTF-8 continuation
-        // bytes are all >= 0x80 and never collide with it.
+        // `{` / `[` are ASCII, so a byte match is a true `{{` / `[[` open —
+        // UTF-8 continuation bytes are all >= 0x80 and never collide with them.
         if bytes[i] == b'{' && bytes[i + 1] == b'{' {
-            if let Some(close) = find_close(content, i + 2) {
+            if let Some(close) = find_double(content, i + 2, b'}') {
                 let token_end = close + 2;
                 if let Some(r) = parse_inner(&content[i + 2..close], i, token_end) {
+                    refs.push(r);
+                    i = token_end;
+                    continue;
+                }
+            }
+        } else if bytes[i] == b'[' && bytes[i + 1] == b'[' {
+            if let Some(close) = find_double(content, i + 2, b']') {
+                let token_end = close + 2;
+                if let Some(r) = parse_wikilink_inner(&content[i + 2..close], i, token_end) {
                     refs.push(r);
                     i = token_end;
                     continue;
@@ -314,7 +438,9 @@ pub fn parse(content: &str) -> Vec<NostrdownRef> {
 /// `{{ }}` references in its content — the "tag resolution pattern". So the
 /// event self-describes its references and other clients can resolve them.
 ///
-/// - `{{wiki:topic}}`     → `["wikilink", topic]` (NKBIP-01)
+/// - `{{wiki:topic}}` / `[[topic]]` → `["w", topic]` (single-letter, relay-indexed
+///   like `d`, so `{"#w":[topic]}` returns backlinks; topic only — author-agnostic
+///   per NIP-54, no pinned version)
 /// - `{{ref:slug}}` / slug `{{embed:slug}}` → `["ref", slug]` (sibling handle)
 /// - `{{embed:naddr…}}`   → `["a", "kind:pubkey:dtag", relay?]`
 /// - `{{embed:nevent/note}}` → `["q", id, relay?, pubkey?]` (NIP-18 quote)
@@ -334,7 +460,7 @@ pub fn reference_tags(content: &str) -> Vec<Vec<String>> {
     };
     for r in parse(content) {
         match r.kind {
-            RefKind::Wiki => push(&mut out, &mut seen, vec!["wikilink".into(), r.target]),
+            RefKind::Wiki => push(&mut out, &mut seen, vec!["w".into(), r.target]),
             RefKind::Ref => push(&mut out, &mut seen, vec!["ref".into(), r.target]),
             RefKind::Embed if !r.is_entity => {
                 push(&mut out, &mut seen, vec!["ref".into(), r.target])
@@ -471,6 +597,67 @@ mod tests {
     }
 
     #[test]
+    fn parses_wikilink_bare() {
+        let r = one("See [[Hayek's Knowledge Problem]] for more.");
+        assert_eq!(r.kind, RefKind::Wiki);
+        assert_eq!(r.target, "hayeks-knowledge-problem");
+        assert_eq!(r.display, None);
+        assert_eq!(
+            &"See [[Hayek's Knowledge Problem]] for more."[r.start..r.end],
+            "[[Hayek's Knowledge Problem]]"
+        );
+    }
+
+    #[test]
+    fn parses_wikilink_nostr_display_form() {
+        // The Nostr/Alexandria + Org `][` display form.
+        let r = one("[[hayeks-knowledge-problem][Hayek's Knowledge Problem]]");
+        assert_eq!(r.kind, RefKind::Wiki);
+        assert_eq!(r.target, "hayeks-knowledge-problem");
+        assert_eq!(r.display.as_deref(), Some("Hayek's Knowledge Problem"));
+    }
+
+    #[test]
+    fn parses_wikilink_obsidian_display_form() {
+        let r = one("[[justice|On Justice]]");
+        assert_eq!(r.kind, RefKind::Wiki);
+        assert_eq!(r.target, "justice");
+        assert_eq!(r.display.as_deref(), Some("On Justice"));
+    }
+
+    #[test]
+    fn skips_markup_link_wikilinks() {
+        // Real links / images / paths / anchors belong to the host markup — never
+        // claimed as Nostr wiki refs.
+        for s in [
+            "[[https://example.com][site]]",
+            "[[http://x.org]]",
+            "[[file:notes.org]]",
+            "[[id:abc-123]]",
+            "[[mailto:a@b.com]]",
+            "[[*Some Heading]]",
+            "[[#custom-id]]",
+            "[[./relative/path.org]]",
+            "[[images/cover.png]]",
+            "[[diagram.svg]]",
+        ] {
+            assert!(
+                parse(s).is_empty(),
+                "{s:?} is markup-native and must not be a wiki ref"
+            );
+        }
+    }
+
+    #[test]
+    fn wikilink_and_brace_tokens_coexist() {
+        let refs = parse("A {{ref:intro}} then a [[justice]] wiki link.");
+        assert_eq!(refs.len(), 2);
+        assert_eq!(refs[0].kind, RefKind::Ref);
+        assert_eq!(refs[1].kind, RefKind::Wiki);
+        assert_eq!(refs[1].target, "justice");
+    }
+
+    #[test]
     fn parses_fragment() {
         let r = one("{{ref:chapter-3#The First Theorem}}");
         assert_eq!(r.target, "chapter-3");
@@ -583,12 +770,12 @@ mod tests {
             + "}}, e {{wiki:the fable}}.";
         let tags = reference_tags(&content);
 
-        assert!(tags.contains(&vec!["wikilink".to_string(), "the-fable".to_string()]));
+        assert!(tags.contains(&vec!["w".to_string(), "the-fable".to_string()]));
         assert!(tags.contains(&vec!["ref".to_string(), "chapter-one".to_string()]));
         assert!(tags.contains(&vec!["a".to_string(), format!("30041:{pk}:sec-1")]));
         assert!(tags.contains(&vec!["p".to_string(), pk.clone()]));
-        // The two `{{wiki:…}}` dedupe to a single wikilink tag.
-        assert_eq!(tags.iter().filter(|t| t[0] == "wikilink").count(), 1);
+        // The two `{{wiki:…}}` dedupe to a single `w` tag.
+        assert_eq!(tags.iter().filter(|t| t[0] == "w").count(), 1);
     }
 
     #[test]

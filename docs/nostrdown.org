@@ -5,12 +5,17 @@
 
 * Implementation Status (Tier 1 + extensions shipped — 2026-06-28)
 
-Shipped end-to-end, ={{ }}=-only (=[[ ]]= / =[[book::]]= are *not* parsed — they
-clash with Org-mode, the reason nostrdown exists). The split follows the engine's
+Shipped end-to-end. ={{ }}= is the Nostr-/event/ layer (=ref=/=embed=/=quote=/
+=slot=) and never collides with the host markup. ={{book::}}= is /not/ parsed.
+={[}[ ]]= /is/ recognized — but *only* as the de-facto Nostr *wikilink* (=[[topic]]=
+/ =[[d-tag][display]]= / =[[topic\vert alias]]=), and *only* for a bare topic: a
+real link/image/path (=scheme:=, =://=, =foo.png=) belongs to Org/Markdown/AsciiDoc
+and is left untouched. That keeps Nostr linking renderable by a bare tokenizer
+(no markup parser) without overriding the formats. The split follows the engine's
 frontend/backend boundary, mirroring the NIP-84 highlight pipeline.
 
 The /normative/ grammar + per-prefix reference now lives in
-=docs/nostrdown-spec.org=; the citation design lives in *NKBIP-03 (revised 2)*
+=docs/nostrdown-spec.adoc=; the citation design lives in *NKBIP-03 (revised 2)*
 (=nips/NKBIP-03-revised-2.adoc=). This file stays the evocative brainstorm those
 were distilled from — read it for the /why/, those for the /what/.
 
@@ -84,14 +89,25 @@ reference them inline.
 
 | Delimiter | Markdown | AsciiDoc   | Org-mode     | Safe? |
 |-----------+----------+------------+--------------+-------|
-| =[[ ]]=     | unused   | anchor def | *link syntax*  | NO    |
+| =[[ ]]=     | unused   | anchor def | *link syntax*  | wiki-only |
 | =(( ))=     | unused   | *index term* | unused       | NO    |
 | ={{ }}=     | unused   | unused     | unused       | *YES*   |
 | =<< >>=     | unused   | *cross-ref*  | *radio target* | NO    |
 
 ={{ }}= is the only double-bracket pair safe across all three major markup
-languages. MediaWiki uses it for transclusion, so there's precedent for "pull
-in content from elsewhere."
+languages, so it carries the Nostr-/event/ layer (=ref=/=embed=/=quote=/=slot=).
+MediaWiki uses it for transclusion, so there's precedent for "pull in content
+from elsewhere."
+
+=[[ ]]= is *=wiki-only=* (the "NO" became a scoped "yes"): it /is/ link syntax in
+Org and an anchor def in AsciiDoc, but it is also the de-facto *Nostr* wikilink
+(NIP-54 / kind 30818, kind-1 clients, NKBIP-01 publications, Obsidian imports) —
+so it is in publication content whether we like it or not, and rendering it as raw
+prose mangles it. We recognize =[[topic]]= / =[[d-tag][display]]= / =[[topic\vert
+alias]]= as a wiki reference, but *skip any markup-native target* (=scheme:=,
+=://=, a path, an image file) so we never override Org/Markdown/AsciiDoc's own
+links or images. Org bare =[[heading]]= links are the accepted casualty. Net: a
+client with only a tokenizer (no markup parser) still renders the Nostr links.
 
 ** Open Question: Alternative Delimiters?
 

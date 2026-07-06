@@ -87,7 +87,55 @@ export type ContentSegment =
 			text: string;
 			highlight: { id: string; pubkey: string; focused: boolean };
 	  }
-	| { type: 'ref'; ref: ResolvedRef };
+	| { type: 'ref'; ref: ResolvedRef }
+	/** A raw `{{ }}` token the engine hasn't resolved yet (resolution is async,
+	 *  or hasn't run). Rendered as a "resolving" reference chip so the syntax
+	 *  reads as a reference, not plain text, before the resolved `ref` lands. */
+	| { type: 'token'; kind: string; target: string; display?: string; raw: string };
+
+/** Tier-1 `{{kind:target(#fragment)?(|display)?}}` token — a display-side mirror
+ *  of the engine tokenizer, used only to mark syntax before resolution. */
+const TOKEN_RE = /\{\{(ref|wiki|embed|quote|slot):([^}|#]+)(?:#([^}|]+))?(?:\|([^}]+))?\}\}/g;
+
+/** `[[ ]]` wikilink — the de-facto Nostr/Obsidian wikilink, recognised as a wiki
+ *  ref (mirror of `nostrdown::parse_wikilink_inner`). `.+?` so the Nostr/Org
+ *  `[[d-tag][display]]` form (a `]` inside) still closes on the trailing `]]`. */
+const WIKILINK_RE = /\[\[(.+?)\]\]/g;
+
+/** Does a `[[ ]]` target name markup-native content (URL / scheme / path / image)
+ *  the host markup owns? Mirrors the Rust `is_markup_link_target` so the editor
+ *  and reader skip exactly what the engine skips. */
+function isMarkupLinkTarget(t: string): boolean {
+	const lower = t.toLowerCase();
+	if (lower.includes('://')) return true;
+	const schemes = ['http:', 'https:', 'ftp:', 'mailto:', 'tel:', 'file:', 'id:', 'attachment:', 'info:', 'news:', 'doi:', 'elisp:', 'shell:'];
+	if (schemes.some((s) => lower.startsWith(s))) return true;
+	if (/^[*#/~]/.test(t) || t.startsWith('./') || t.startsWith('../') || t.includes('/')) return true;
+	const exts = ['.png', '.jpg', '.jpeg', '.gif', '.svg', '.webp', '.avif', '.bmp', '.pdf', '.mp4', '.mp3', '.webm', '.mov', '.ogg', '.wav'];
+	return exts.some((e) => lower.endsWith(e));
+}
+
+/** Split a `[[ ]]` inner into `{ target, display }` (Nostr/Org `][` form, then
+ *  Obsidian `|`), or `null` if it's empty or a markup-native link to skip. */
+export function parseWikilink(inner: string): { target: string; display?: string } | null {
+	const s = inner.trim();
+	if (!s) return null;
+	let targetRaw = s;
+	let display: string | undefined;
+	const sep = s.indexOf('][');
+	const pipe = s.indexOf('|');
+	if (sep >= 0) {
+		targetRaw = s.slice(0, sep).trim();
+		display = s.slice(sep + 2).trim() || undefined;
+	} else if (pipe >= 0) {
+		targetRaw = s.slice(0, pipe).trim();
+		display = s.slice(pipe + 1).trim() || undefined;
+	}
+	if (!targetRaw || isMarkupLinkTarget(targetRaw)) return null;
+	const target = normalizeSlug(targetRaw);
+	if (!target) return null;
+	return { target, display };
+}
 
 interface Overlay {
 	start: number;
@@ -114,13 +162,39 @@ export function buildSegments(
 	focusedId: string | null = null
 ): ContentSegment[] {
 	if (!content) return [{ type: 'text', text: '' }];
-	if (spans.length === 0 && refs.length === 0) return [{ type: 'text', text: content }];
 
 	const focusedLower = focusedId ? focusedId.toLowerCase() : null;
 	const overlays: Overlay[] = [];
 	for (const ref of refs) {
 		overlays.push({ start: ref.start, end: ref.end, prio: 2, make: () => ({ type: 'ref', ref }) });
 	}
+	// Raw `{{ }}` tokens the engine hasn't resolved yet — lowest priority, so a
+	// resolved `ref` (or highlight) covering the same span always wins and these
+	// only surface in the pre-resolution window (or if resolution failed). Scanned
+	// here, on the same UTF-16 offsets refs use, so the merge below is uniform.
+	TOKEN_RE.lastIndex = 0;
+	for (let m = TOKEN_RE.exec(content); m; m = TOKEN_RE.exec(content)) {
+		const raw = m[0];
+		const kind = m[1];
+		const target = m[2].trim();
+		const display = m[4]?.trim() || undefined;
+		const start = m.index;
+		const end = start + raw.length;
+		overlays.push({ start, end, prio: 0, make: () => ({ type: 'token', kind, target, display, raw }) });
+	}
+	// `[[ ]]` wikilinks — same chip, kind 'wiki'. Markup-native links are skipped
+	// (parseWikilink returns null) so we never style a real link/image.
+	WIKILINK_RE.lastIndex = 0;
+	for (let m = WIKILINK_RE.exec(content); m; m = WIKILINK_RE.exec(content)) {
+		const parsed = parseWikilink(m[1]);
+		if (!parsed) continue;
+		const raw = m[0];
+		const start = m.index;
+		const end = start + raw.length;
+		const { target, display } = parsed;
+		overlays.push({ start, end, prio: 0, make: () => ({ type: 'token', kind: 'wiki', target, display, raw }) });
+	}
+	if (overlays.length === 0) return [{ type: 'text', text: content }];
 	for (const s of spans) {
 		overlays.push({
 			start: s.start,

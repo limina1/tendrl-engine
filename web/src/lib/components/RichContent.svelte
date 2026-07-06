@@ -79,7 +79,7 @@
 	}
 </script>
 
-<pre class="section-content" class:muted>{#each segments as seg, i (i)}{#if seg.type === 'highlight'}<mark class="hl-overlay" data-hl-ids={seg.highlight.id} style={styleFor(seg.highlight.pubkey, seg.highlight.focused)} title="NIP-84 highlight {seg.highlight.id.slice(0, 8)}… by {seg.highlight.pubkey.slice(0, 12)}…">{seg.text}</mark>{:else if seg.type === 'ref'}{#if seg.ref.kind === 'embed' || seg.ref.kind === 'quote'}<EmbedCard ref={seg.ref} onopen={openRef} />{:else}<button class="nd-ref nd-ref--{seg.ref.kind}" class:nd-unresolved={!seg.ref.found} onclick={() => openRef(seg.ref)} onmouseenter={(e) => showPreview(e, seg.ref)} onmouseleave={hidePreview} onfocus={(e) => showPreview(e, seg.ref)} onblur={hidePreview} disabled={!seg.ref.coord} title={refTitle(seg.ref)}>{seg.ref.label}{#if seg.ref.fragment}<span class="nd-ref__frag">#{seg.ref.fragment}</span>{/if}</button>{/if}{:else}{seg.text}{/if}{/each}</pre>
+<pre class="section-content" class:muted>{#each segments as seg, i (i)}{#if seg.type === 'highlight'}<mark class="hl-overlay" data-hl-ids={seg.highlight.id} style={styleFor(seg.highlight.pubkey, seg.highlight.focused)} title="NIP-84 highlight {seg.highlight.id.slice(0, 8)}… by {seg.highlight.pubkey.slice(0, 12)}…">{seg.text}</mark>{:else if seg.type === 'ref'}{#if seg.ref.kind === 'embed' || seg.ref.kind === 'quote'}<EmbedCard ref={seg.ref} onopen={openRef} />{:else}<button class="nd-ref nd-ref--{seg.ref.kind}" class:nd-unresolved={!seg.ref.found} onclick={() => openRef(seg.ref)} onmouseenter={(e) => showPreview(e, seg.ref)} onmouseleave={hidePreview} onfocus={(e) => showPreview(e, seg.ref)} onblur={hidePreview} disabled={!seg.ref.coord} title={refTitle(seg.ref)}>{seg.ref.label}{#if seg.ref.fragment}<span class="nd-ref__frag">#{seg.ref.fragment}</span>{/if}</button>{/if}{:else if seg.type === 'token'}<span class="nd-token nd-token--{seg.kind}" title="{seg.kind}: {seg.target} — resolving…">{seg.display || seg.target}</span>{:else}{seg.text}{/if}{/each}</pre>
 {#if preview}
 	<!-- svelte-ignore a11y_no_static_element_interactions -->
 	<div
@@ -146,6 +146,46 @@
 		background: none;
 		border-bottom: 1px dotted var(--fg-muted);
 		cursor: default;
+	}
+
+	/* A `{{ }}` token before the engine resolves it: reads as a reference (not
+	   plain text) with a faint pulse to signal "resolving", so the syntax never
+	   flashes as raw prose. Replaced in place once the resolved ref lands. */
+	.nd-token {
+		font: inherit;
+		color: var(--id-yours);
+		background: color-mix(in srgb, var(--id-yours) 7%, transparent);
+		border-radius: var(--r-sm, 3px);
+		padding: 0 3px;
+		border-bottom: 1px dotted color-mix(in srgb, var(--id-yours) 55%, transparent);
+		animation: nd-token-pulse 1.4s ease-in-out infinite;
+	}
+	.nd-token::before {
+		content: '⧉ ';
+		opacity: 0.6;
+		font-size: 0.85em;
+	}
+	.nd-token--ref::before,
+	.nd-token--wiki::before {
+		content: '↗ ';
+	}
+	.nd-token--quote::before {
+		content: '❝ ';
+	}
+	@keyframes nd-token-pulse {
+		0%,
+		100% {
+			opacity: 0.62;
+		}
+		50% {
+			opacity: 1;
+		}
+	}
+	@media (prefers-reduced-motion: reduce) {
+		.nd-token {
+			animation: none;
+			opacity: 0.78;
+		}
 	}
 
 	/* Floating wrapper for the ref/wiki hover preview (portaled to <body>). The

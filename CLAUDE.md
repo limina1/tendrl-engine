@@ -172,8 +172,12 @@ sections and embeds new events on a 60-second interval when embeddings are enabl
   in `identity.rs`); unified `decode()` returns a tagged enum for the API
 - **`nostrdown.rs`**: pure, IO-free tokenizer for the `{{ }}` inline-reference
   layer (see `docs/nostrdown.org`). Scans content for
-  `{{ref|wiki|embed:target#fragment|display}}` (Tier 1; `{{ }}`-only — never `[[ ]]`)
-  and returns typed `NostrdownRef`s with byte offsets + NIP-54 slug normalization.
+  `{{ref|wiki|embed|quote|slot:target#fragment|display}}` (the Nostr-*event*
+  layer) **and** `[[topic]]` / `[[d-tag][display]]` / `[[topic|alias]]` (the
+  de-facto Nostr *wikilink* → a `wiki` ref) — but a `[[ ]]` whose target is a
+  markup-native link/image/path (`scheme:`, `://`, `foo.png`, …) is skipped
+  (`is_markup_link_target`) so it never overrides Markdown/Org/AsciiDoc's own
+  links. Returns typed `NostrdownRef`s with byte offsets + NIP-54 slug normalization.
   Resolution is engine-side (`PublicationEngine::resolve_refs` →
   `POST /api/v1/nostrdown/resolve`): `ref:`→sibling section by **title-slug** (d-tags
   are opaque nanoids, so the human slug matches the `T` tag/normalized title),

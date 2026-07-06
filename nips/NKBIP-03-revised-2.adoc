@@ -9,13 +9,17 @@ It covers internal (to Nostr addresses) and external (to the wider web or printe
 NOTE: This revision (1) collapses the four source-type kinds (30–33) into a single
 addressable kind `30161`, distinguished by the `M` tag from [[NKBIP-06]]; and (2)
 formalizes the in-line *Reference Syntax* on the shared nostrdown `{{ }}` grammar
-— a single `:` prefix plus optional `#` and `|` parts, *not* the former
+— a single `:` prefix plus an optional `|` part, *not* the former
 `[[citation::foot::…]]` double-colon form. See *Event Kind* and *Reference
 Syntax* below for the rationale.
 
 *In-Event References*
 
-The fixed citations MAY be documented in-event, in whichever format the event normally handles, such as plain-text, Markdown, or Asciidoc. In-event references to nostr addresses MUST be formulated with similar information as in `kind 30161` (see below), according to the following format:
+A citation MAY instead be written *in-event* — as prose in the document's own markup, carrying the same information as a `kind 30161` record. This is a display convenience, not a structured one: the text is read as written, and only its `nostr:` URIs resolve (NIP-21, linkified per NIP-27).
+
+For a structured, reusable, queryable citation, mint a `30161` and reference it with `{{cite:<d-tag>}}` (see *Reference Syntax*).
+
+Recommended form:
 
 [source]
 ----
@@ -169,45 +173,31 @@ Prompt reference:
 
 *Reference Syntax*
 
-Citations use the shared *nostrdown* reference grammar — the same `{{ }}` token
-as `{{ref:}}`, `{{wiki:}}`, `{{embed:}}`, and `{{quote:}}` — so one parser
-handles every reference type uniformly across Markdown, AsciiDoc, and Org-mode.
-The `{{ }}` delimiter is used in place of `[[ ]]` because `[[ ]]` collides with
-Org-mode link syntax.
-
-The grammar:
+Citations use the shared *nostrdown* `{{ }}` grammar — the same token as
+`{{ref:}}`, `{{wiki:}}`, `{{embed:}}`, `{{quote:}}`, and `{{slot:}}` — so one
+parser handles every reference uniformly, independent of the host markup. The
+grammar is normative in the Nostrdown specification; a citation reference is:
 
 ----
-reference  = "{{" prefix ":" target [ "#" fragment ] [ "|" modifier ] "}}"
-prefix     = "cite" | "ref" | "wiki" | "embed" | "quote"
-target     = the citation d-tag (or a NIP-19 entity for direct event references)
-fragment   = an optional in-target anchor
-modifier   = an optional presentation hint or display text
+{{cite:<target>[|modifier]}}
 ----
 
-Each delimiter answers one orthogonal question and is parsed by a single split:
+`target` is the citation's `d`-tag, or a NIP-19 entity for a direct event
+reference. Split on the *first* `:` (so colon-bearing targets — a
+`kind:pubkey:d-tag` coordinate, a `nostr:` URI — stay intact); `|` is optional
+and splits once.
 
-* `:` — *what kind* of reference. Exactly one colon, immediately after the
-  prefix; everything after it is the target. Parsers MUST split on the *first*
-  colon only, so colon-bearing targets stay intact — a coordinate is
-  `kind:pubkey:d-tag` and a URI is `nostr:naddr1…`, both full of colons.
-* `#` — *which part* of the target (an optional sub-location / anchor).
-* `|` — *how, or which label* (an optional presentation modifier or display
-  text). Parsers split on the first `|`; the modifier runs to the closing
-  `}}`.
+`{{ }}` replaces the former `[[citation::foot::…]]` form. The double-colon field
+separator is *not* used: `::` is positional (slot order must be memorized, optional
+slots become empty gaps), it collides with the colons inside coordinates and with
+the block-macro form `name::target[]` (e.g. `book::`) some markups use, and it fuses
+a reference's identity with its presentation. A single `:` prefix plus an optional
+`|` modifier keeps kind, target, and presentation independent. `{{ }}` is also free
+across the common markups, whereas `[[ ]]` is link/anchor syntax in several of them.
 
-The double-colon field separator of the former scheme
-(`[[citation::foot::nevent…]]`) is *not* used. `::` is *positional* — the slot
-order (type / style / target) must be memorized and optional slots become empty
-gaps; it *collides* with the colons inside coordinates and with the AsciiDoc
-block-macro form `name::target[]` (e.g. `book::`); and it *fuses* the reference's
-identity with its presentation. The single-`:` prefix plus optional `|` modifier
-keeps the reference kind, the target, and the presentation independent, and reuses
-the one grammar shared by every nostrdown prefix.
-
-The citing event resolves the reference via a tag carrying the citation
-coordinate (the nostrdown "tag resolution pattern" — short reference in the
-content, machine-readable coordinate in a tag):
+The citing event resolves the reference via a tag carrying the citation coordinate
+(the nostrdown tag-resolution pattern — short reference in the content,
+machine-readable coordinate in a tag):
 
 [source, json]
 ----
