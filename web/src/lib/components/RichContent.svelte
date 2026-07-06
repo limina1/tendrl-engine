@@ -5,13 +5,19 @@
 	// UTF-16 offsets into the same `content`; `buildSegments` slices them into
 	// renderable runs. Purely presentational — resolution happens in the parent
 	// (which calls `api.resolveHighlights` / `api.resolveNostrdown`).
+	import { onDestroy } from 'svelte';
 	import { getAppState } from '$lib/state.svelte';
 	import EmbedCard from './EmbedCard.svelte';
 	import { pubkeyToHighlightFill, pubkeyToHighlightStroke } from '$lib/discussions/colors';
 	import type { HighlightSpan } from '$lib/discussions/highlights';
 	import { buildSegments, type ResolvedRef, type ParsedToken } from '$lib/nostr/nostrdown';
+	import { useResolutionTracker, nextResolutionId } from '$lib/nostr/resolution-progress.svelte';
 
 	const app = getAppState();
+
+	// Enclosing reader's resolution tracker (absent outside a reader → no-op).
+	const resolution = useResolutionTracker();
+	const resolutionId = nextResolutionId();
 
 	let {
 		content,
@@ -33,6 +39,16 @@
 
 	const segments = $derived(buildSegments(content, spans, refs, tokens, focusedHighlightId));
 
+	// Report progress to the reader: total = parsed tokens; resolved = references
+	// the engine has returned a resolution for. (A not-local embed comes back
+	// `pending` and finishes fetching inside its own card, which shows its own
+	// "fetching…" state — so we count it resolved here to keep the aggregate bar
+	// completable rather than stuck on a card-local fetch.)
+	$effect(() => {
+		resolution?.report(resolutionId, tokens.length, Math.min(refs.length, tokens.length));
+	});
+	onDestroy(() => resolution?.remove(resolutionId));
+
 	function styleFor(pubkey: string, focused: boolean): string {
 		const fill = pubkeyToHighlightFill(pubkey);
 		const stroke = pubkeyToHighlightStroke(pubkey);
@@ -48,10 +64,16 @@
 	function openRef(ref: ResolvedRef) {
 		if (ref.coord) app.openCoord(ref.coord);
 		else if (ref.event_kind === 0 && ref.author_pubkey) app.navigateToProfile(ref.author_pubkey);
+		// An unresolved wiki link doesn't dead-end — open the search frame seeded
+		// with the topic (Auto auto-fetches, Confirm searches local + offers relays).
+		else if (ref.kind === 'wiki') app.openSearchFor(`k:30818 d:${ref.target}`, ref.target);
 	}
 
 	function refTitle(ref: ResolvedRef): string {
-		if (!ref.found) return `Unresolved ${ref.kind}: ${ref.target}`;
+		if (!ref.found)
+			return ref.kind === 'wiki'
+				? `Search for “${ref.target}”`
+				: `Unresolved ${ref.kind}: ${ref.target}`;
 		const kind = ref.event_kind ? ` (kind ${ref.event_kind})` : '';
 		return `${ref.kind}: ${ref.target}${kind}`;
 	}
@@ -82,7 +104,7 @@
 	}
 </script>
 
-<pre class="section-content" class:muted>{#each segments as seg, i (i)}{#if seg.type === 'highlight'}<mark class="hl-overlay" data-hl-ids={seg.highlight.id} style={styleFor(seg.highlight.pubkey, seg.highlight.focused)} title="NIP-84 highlight {seg.highlight.id.slice(0, 8)}… by {seg.highlight.pubkey.slice(0, 12)}…">{seg.text}</mark>{:else if seg.type === 'ref'}{#if seg.ref.kind === 'embed' || seg.ref.kind === 'quote'}<EmbedCard ref={seg.ref} onopen={openRef} />{:else}<button class="nd-ref nd-ref--{seg.ref.kind}" class:nd-unresolved={!seg.ref.found} onclick={() => openRef(seg.ref)} onmouseenter={(e) => showPreview(e, seg.ref)} onmouseleave={hidePreview} onfocus={(e) => showPreview(e, seg.ref)} onblur={hidePreview} disabled={!seg.ref.coord && !(seg.ref.event_kind === 0 && seg.ref.author_pubkey)} title={refTitle(seg.ref)}>{seg.ref.kind === 'mention' ? '@' : ''}{seg.ref.label}</button>{/if}{:else if seg.type === 'token'}<span class="nd-token nd-token--{seg.kind}" title="{seg.kind}: {seg.target} — resolving…">{seg.display || seg.target}</span>{:else}{seg.text}{/if}{/each}</pre>
+<pre class="section-content" class:muted>{#each segments as seg, i (i)}{#if seg.type === 'highlight'}<mark class="hl-overlay" data-hl-ids={seg.highlight.id} style={styleFor(seg.highlight.pubkey, seg.highlight.focused)} title="NIP-84 highlight {seg.highlight.id.slice(0, 8)}… by {seg.highlight.pubkey.slice(0, 12)}…">{seg.text}</mark>{:else if seg.type === 'ref'}{#if seg.ref.kind === 'embed' || seg.ref.kind === 'quote' || seg.ref.kind === 'slot'}<EmbedCard ref={seg.ref} onopen={openRef} />{:else}<button class="nd-ref nd-ref--{seg.ref.kind}" class:nd-unresolved={!seg.ref.found} onclick={() => openRef(seg.ref)} onmouseenter={(e) => showPreview(e, seg.ref)} onmouseleave={hidePreview} onfocus={(e) => showPreview(e, seg.ref)} onblur={hidePreview} disabled={!seg.ref.coord && !(seg.ref.event_kind === 0 && seg.ref.author_pubkey) && seg.ref.kind !== 'wiki'} title={refTitle(seg.ref)}>{seg.ref.kind === 'mention' ? '@' : ''}{seg.ref.label}</button>{/if}{:else if seg.type === 'token'}<span class="nd-token nd-token--{seg.kind}" title="{seg.kind}: {seg.target} — resolving…">{seg.display || seg.target}</span>{:else}{seg.text}{/if}{/each}</pre>
 {#if preview}
 	<!-- svelte-ignore a11y_no_static_element_interactions -->
 	<div

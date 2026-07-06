@@ -15,7 +15,7 @@ import type { HighlightSpan } from '$lib/discussions/highlights';
  *  code-unit offsets into the section text spanning the whole token, so the
  *  renderer can replace `content.slice(start, end)` wholesale. */
 export interface ResolvedRef {
-	kind: 'ref' | 'wiki' | 'embed' | 'quote' | 'mention';
+	kind: 'ref' | 'wiki' | 'embed' | 'quote' | 'mention' | 'slot';
 	start: number;
 	end: number;
 	/** Canonical lookup target (normalized slug or bech32 entity). */
@@ -71,7 +71,7 @@ export type ContentSegment =
  *  single source; the reader marks these as "resolving" chips before `/resolve`
  *  lands, the editor decorates them. Mirrors Rust `nostrdown::ParsedToken`. */
 export interface ParsedToken {
-	kind: 'ref' | 'wiki' | 'embed' | 'quote' | 'mention';
+	kind: 'ref' | 'wiki' | 'embed' | 'quote' | 'mention' | 'slot';
 	/** Normalized lookup target (NIP-54 slug or bech32 entity). */
 	target: string;
 	/** Target exactly as written (trimmed), pre-normalization. */

@@ -148,6 +148,20 @@
 				app.openCoord(r.coord);
 				return;
 			}
+			// A profile mention (`{{@npub…}}`) resolves found + kind-0 but has no
+			// addressable coord — follow it to the profile, same as the reader.
+			if (r?.found && r.event_kind === 0 && r.author_pubkey) {
+				app.navigateToProfile(r.author_pubkey);
+				return;
+			}
+			// An unresolved wiki reference: don't dead-end on a toast — open the
+			// search frame seeded with the topic so the user can find (or, in Auto
+			// mode, auto-fetch) the defining event. Confirm mode searches local with
+			// the relay-fetch option, per the standing network-intent pattern.
+			if (token.kind === 'wiki') {
+				app.openSearchFor(`k:30818 d:${token.target}`, token.target);
+				return;
+			}
 		} catch {
 			/* fall through to the toast */
 		}

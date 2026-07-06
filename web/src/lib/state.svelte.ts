@@ -2615,6 +2615,16 @@ function _createAppState() {
 		void handleSearch(query, { scopeToMe: false });
 	}
 
+	/** Reveal the search frame *and* run `query` — the "go look for it" action a
+	 *  reference takes when it can't resolve (e.g. an unresolved wiki link). The
+	 *  WM reveals the buffer (via `onSearch`); relay behaviour follows the standing
+	 *  Auto/Confirm pattern (Auto auto-fetches, Confirm searches local + offers a
+	 *  relay fetch). `kicker` labels the search buffer with the topic. */
+	function openSearchFor(query: string, kicker?: string) {
+		navHandlers?.onSearch?.(kicker);
+		searchFor(query);
+	}
+
 	// "Search relays" — re-run the current query with fetch_always so the
 	// engine reaches relays. In Confirm mode the engine emits a confirm
 	// Intent (rendered by the SSE-driven modal); in Auto mode it fetches
@@ -3723,6 +3733,10 @@ function _createAppState() {
 		 *  needs to carry a marker (`?focus_comment=`, `?highlight=`)
 		 *  that the structured handlers above can't express. */
 		onReader?: (buffer_id: string, label: string, kicker: string) => void;
+		/** Reveal/focus the search buffer (the query itself is seeded separately by
+		 *  `searchFor`). Used when a reference resolves to "go look for it" — e.g.
+		 *  an unresolved wiki link. */
+		onSearch?: (kicker?: string) => void;
 		onHome?: () => void;
 	};
 	let navHandlers: NavigationHandlers | null = null;
@@ -4401,6 +4415,7 @@ function _createAppState() {
 		handleSearch,
 		handleSearchViaRelays,
 		searchFor,
+		openSearchFor,
 		get searchSeed() { return searchSeed; },
 		get searchLastQuery() { return searchLastQuery; },
 		pushHistoryEntry,

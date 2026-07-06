@@ -31,7 +31,7 @@ import {
 } from '@codemirror/autocomplete';
 
 export interface NostrdownToken {
-	kind: 'ref' | 'wiki' | 'embed' | 'quote' | 'mention';
+	kind: 'ref' | 'wiki' | 'embed' | 'quote' | 'mention' | 'slot';
 	/** Normalized target (engine-side NIP-54 slug or bech32 entity). */
 	target: string;
 	display?: string;

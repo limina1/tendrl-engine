@@ -268,6 +268,12 @@
 				}
 			});
 		},
+		onSearch: (kicker) => {
+			store.openBuffer({
+				className: 'research',
+				buffer: { id: 'search', kind: 'search', label: 'search', kicker: kicker ?? '' }
+			});
+		},
 		onCompose: () => {
 			store.openBuffer({
 				className: 'work',
