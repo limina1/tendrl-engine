@@ -27,6 +27,18 @@ navigation. Full spec: =docs/wm-shell.md=; shell root in
   search, compose; =h= / =l= drill axis per buffer.
 - Multi-frame model: multiple tabs share one global buffer list; layouts and
   windows are per-frame (Emacs frame semantics).
+- Shell-wide dialog primitives — the shell never uses browser dialogs
+  (=window.prompt= / =confirm= / =alert=; grep stays clean):
+  - =promptText()= (=web/src/lib/wm/text-prompt.svelte.ts=): global
+    promise-based text entry; the single =<TextPromptModal />= in
+    =+layout= renders whatever is active (toast pattern — leaf state
+    module + declarative renderer, no manual mount, no registry import
+    cycles). Autofocus, Enter confirms, Escape/backdrop cancels, confirm
+    disabled while empty.
+  - Two-step armed buttons for destructive clicks ("delete" → "really
+    delete?", 4s disarm) — see the relay buffer's reset / set-delete.
+  - Diff-gated confirm modals for overwrites — the relay publish gate
+    pattern ([[file:feat-relays.org][relay sets]]).
 
 * Gaps / open edges
 - Per =docs/wm-shell.md=: deep-link routing (=/p/<pk>/<dtag>= → buffer),
