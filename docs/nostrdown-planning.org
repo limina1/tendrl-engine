@@ -1,7 +1,12 @@
 #+TITLE: Nostrdown Epoch — Decision Surface
 #+SUBTITLE: A thin fill-in for the in-flight nostrdown epoch; the durable map is the kasten
 #+DATE: 2026-07-05
-#+STATUS: PLAN
+#+STATUS: EXECUTED (2026-07-05)
+
+# EXECUTED: every ticked item below is done — 1.1/1.2 (accepted tasks) and
+# 2.1/2.2/2.3 (drift + #fragment dropped via q-heading-anchors option 1). 2.4
+# (token-chip doc) was left unticked. The epoch is complete; the durable record
+# is the kasten (feat-nostrdown STATUS: implemented). Kept for provenance.
 
 * How to use this document
 

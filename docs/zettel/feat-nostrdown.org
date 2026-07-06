@@ -1,6 +1,6 @@
 #+TITLE: Feature: nostrdown reference layer
 #+TYPE: feature
-#+STATUS: partial
+#+STATUS: implemented
 #+DATE: 2026-07-05
 
 The markup-agnostic ={{ }}= reference syntax linking Nostr events across
@@ -26,15 +26,22 @@ Markdown/Org/AsciiDoc/plain content. Normative grammar:
 - Tag emission on signing (=reference_tags()=): =w= (wiki), =ref=, =a=/=q=/=p=
   per reference kind — the substrate for [[file:idea-backlinks.org][backlinks]]
   and [[file:idea-event-badges.org][badges]].
+- Grammar is engine-only (=POST /nostrdown/parse= → =ParsedToken= spans;
+  =POST /nostrdown/normalize= → NIP-54 slugs). The reader chips from =/parse=,
+  the editor decorates via a debounced =/parse= (=StateField=-held, remapped
+  through edits), the composer's slug matching uses a cached =/normalize=
+  (=slugs.ts=). No TS grammar/slug twins remain —
+  [[file:decision-nostrdown-parsing.org][the parsing decision]] is done.
 - =slot= transclusion: contributes an =a= tag to the parent index, mints no
   30041.
 - Web: RichContent overlay rendering, EmbedCard, ReferenceBuilderModal,
   CodeMirror decoration + autocomplete.
 
-* Accepted tasks (this feature epoch, before ff into tendrl-web)
+* Accepted tasks (this feature epoch) — complete
 
-- Boundary cleanup: Rust parse endpoint, delete the TS twins — see
-  [[file:decision-nostrdown-parsing.org][decision]].
+Both epoch tasks landed (2026-07-05): ={{@…}}= mentions and the parsing-boundary
+cleanup (parse/normalize endpoints + TS twins deleted). The epoch is done; this
+branch is ready to fast-forward into =tendrl-web=.
 
 * Not implemented (spec'd or open)
 

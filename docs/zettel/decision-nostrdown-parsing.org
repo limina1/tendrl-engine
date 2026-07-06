@@ -1,13 +1,25 @@
 #+TITLE: Decision: nostrdown parsing lives in Rust
 #+TYPE: decision
-#+STATUS: current (cleanup pending)
+#+STATUS: done
 #+DATE: 2026-07-05
+#+DONE: 2026-07-05
 
 *Decision:* option (a) — expose a lightweight Rust parse surface (either a
 parse endpoint or parsed token spans shipped with resolve responses) and
 delete the TS twins: =normalizeSlug=, =isMarkupLinkTarget=, =parseWikilink=,
 and the duplicated token regexes in =nostrdown.ts= / =nostrdown-cm.ts=
 (which already disagree about =slot=).
+
+*Landed (2026-07-05):* two endpoints — =POST /api/v1/nostrdown/parse=
+(=ParsedToken= spans, UTF-16) and =POST /api/v1/nostrdown/normalize= (batch
+NIP-54 slugs). The reader chips from =/parse= (parallel to resolve); the editor
+decorates via a debounced =/parse= fetch held in a =StateField= (positions
+remapped through edits); the composer's slug matching goes through a cached
+=/normalize= client (=web/src/lib/nostr/slugs.ts=). All four twins deleted —
+=normalizeSlug=, =isMarkupLinkTarget=, =parseWikilink=, and both token regexes.
+The engine is the single grammar home; slug normalization was included in the
+deletion (full-scope, per the aggressive option — keystroke paths are debounced/
+cached rather than kept local).
 
 *Rationale — the generalization argument:* nostrdown is markup-agnostic,
 and tendrl is focused on *data representation that generalizes across

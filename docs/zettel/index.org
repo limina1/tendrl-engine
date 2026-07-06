@@ -58,11 +58,11 @@ exists (with code paths), gaps.
 
 * In flight — the nostrdown feature epoch
 
-Merged on this branch; fast-forwards into =tendrl-web= when the epoch
-completes. Remaining accepted tasks (tracked in
+Both accepted tasks landed (2026-07-05); the epoch is *complete* and this branch
+is ready to fast-forward into =tendrl-web= (tracked in
 [[file:feat-nostrdown.org][the feature note]]):
 - [X] implement ={{@…}}= mentions (=RefKind::Mention=)
-- [ ] Rust parse endpoint; delete the TS grammar twins
+- [X] Rust parse endpoint; delete the TS grammar twins
 
 * Ideas — captured, not scheduled
 
