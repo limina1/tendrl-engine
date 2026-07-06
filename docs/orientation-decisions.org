@@ -16,7 +16,7 @@ Priority vocabulary: =near= (next few work sessions) / =mid= (this quarter)
 
 When you're done, hand the file back and the accepted items become:
 (a) edits to the canon docs, (b) entries in a refreshed roadmap, and
-(c) formalized spec text where marked.
+(c) formalized spec text where iarked.
 
 * 1. Mission & identity
 
@@ -38,9 +38,11 @@ signal for you.
 #+end_quote
 
 - [ ] Accept as-is
-- [ ] Accept with edits (write them below)
+- [X] Accept with edits (write them below)
 - [ ] Rework entirely (sketch below)
 Notes:
+Algorithmic fetching is a feature, not a mission statement, move that into a planning/features/roadmap document
+
 
 ** Emphasis ordering: reader-first, writer-first, or research-first?
 
@@ -57,8 +59,9 @@ gets which feature cluster.
 - [ ] Reader-first
 - [ ] Writer-first
 - [ ] Research-first
-- [ ] Deliberately balanced (no default emphasis)
+- [X] Deliberately balanced (no default emphasis, but Writer/Research as top tier, reader as secondary tier - a reader is an aesthetic focus, deferred)
 Notes:
+We're not dealing with WOT implementation - searching by author, event/coordinate/tag are the strongest signal, WOT is inter
 
 ** Anti-goals, formalized
 
@@ -78,6 +81,12 @@ anti-goals, each its own checkbox:
   only, if any (the Obsidian hairball lesson).
 - [ ] Other anti-goals (write below)
 Notes:
+Engagement metrics are options
+Relay browsing is possible, through relay provenence and deliberate searching, these are data management issues
+Not a hosted service - the architecture is modular - swap out the data store (nostrdb) and we may be able to have multiple users on a hosted service, not a priority though
+Graph visualization - tentative, knowledge navigation priority, visualization is an add if useful
+
+/In summary, none of these options are full exclude, but possibilities which change according to our orientation/
 
 * 2. Documentation reconciliation
 
@@ -88,7 +97,7 @@ project-summary.org:8, features.org:12 with the §1 wording (NKBIP-01
 becomes the mechanism sentence, not the identity sentence). Low effort,
 removes the single most consistent drift found in the audit.
 
-- [ ] Include
+- [X] Include
 Priority:
 Notes:
 
@@ -102,8 +111,8 @@ and the engine-version display. If features.org is to stay canonical it
 needs a "features land here in the same PR" convention (see §7).
 
 - [ ] Include
-Priority:
-Notes:
+Priority: Features.org should be hierarchically organized and cross referenced rather than a single monolithic organization. Turn features into a Zettelkasten folder with a single index organizing the ideas
+Notes: This will be a map of tendrl, what exists, what is implemented, ideas, notes, software to model off of, where similarities exist.
 
 ** project-summary.org open-work list correction
 
@@ -112,9 +121,9 @@ tool-calling is shipped (=src/tools.rs=, agentic loop, ToolPolicy) and
 discussions read-side is shipped. Correct the status list so the summary
 can be trusted as a status document.
 
-- [ ] Include
+- [X] Include
 Priority:
-Notes:
+Notes: Continue to make note of any missing capabilities of tool use that a user can do - an LLM assistant may be able to use these functions in parallel for their own publishing, knowledge management and helping with the user
 
 ** Auto/Confirm rename sweep + sidecar removal
 
@@ -149,8 +158,8 @@ Two docs describe things that don't exist here anymore and should move to
 =NodeStatus=, a WebSocket =set_visible= API) and =publication_creation.md=
 (documents Alexandria's internal pipeline, an external reference client).
 
-- [ ] Archive publication-architecture.org
-- [ ] Archive publication_creation.md
+- [X] Archive publication-architecture.org
+- [X] Archive publication_creation.md
 Priority:
 Notes:
 
@@ -163,7 +172,7 @@ ui-improvements.org points at =workbench-architecture.org= (now archive/).
 chat-api-walkthrough.org documents the NoopProvider echo harness without
 saying so — add a pointer to ai-assistant-status.md as the live truth.
 
-- [ ] Include (all of the above)
+- [X] Include (all of the above)
 Priority:
 Notes:
 
@@ -176,9 +185,9 @@ don't. Proposal to formalize: every doc in docs/ declares one of
 ships, its doc either updates to CURRENT or moves to archive/ in the same
 PR. This is what keeps the next audit from finding the same rot.
 
-- [ ] Include
+- [X] Include
 Priority:
-Notes:
+Notes: This also mixes in with the tendrl zettelkasten composition. good to formalize the ideas.
 
 * 3. Nostrdown: branch decisions
 
@@ -190,9 +199,9 @@ exist only in the worktree's dirty state. Until committed, the branch's
 recorded state lacks its own headline feature. This is a prerequisite for
 everything else in this section.
 
-- [ ] Include
+- [X] Include
 Priority:
-Notes:
+Notes: Use the most recent versions - the idea was to publish the specs to nostr, so what ever is recently edited is the current version. Fastforward into orientation-report worktree, and then when we're done fastforward into tendrl-web branch so other branches can work from it. This is after we're done with our evaluation and reconfiguration
 
 ** Merge nostrdown → tendrl-web
 
@@ -204,8 +213,8 @@ fix the stale CLAUDE.md note (=["wikilink", …]= → =["w", …]=) and mark
 docs/nostrdown.org superseded-as-spec by nostrdown-spec.md.
 
 - [ ] Merge after committing
-- [ ] Hold for more work first (say what below)
-Priority:
+- [X] Hold for more work first (say what below)
+Priority: Will fastforward when this feature epoch of nostrdown is completed
 Notes:
 
 ** Boundary-debt resolution
@@ -219,9 +228,9 @@ carve-out for editor decoration only, but collapse the two TS copies into
 one module so they can't diverge. (a) is pure per the boundary rule but
 adds a round-trip on every keystroke-adjacent path; (b) is pragmatic.
 
-- [ ] Option (a): Rust parse endpoint, delete TS twins
+- [X] Option (a): Rust parse endpoint, delete TS twins
 - [ ] Option (b): documented carve-out, single TS module
-Priority:
+Priority: A question, which my response has presupposed: Nostrdown - if we're markup agnostic, and tendrl is focused on data representation, to generalize across frontends, does this mean using rust is better? ts as display layer seems to have confused that.
 Notes:
 
 ** Heading-anchor navigation
@@ -233,7 +242,7 @@ fragments to display-only and note it in the spec.
 
 - [ ] Implement scroll-to-anchor
 - [ ] Demote to display-only (spec note)
-Priority:
+Priority: This needs further justification. I'm still unsure what #fragment would help out here, if we are markup agnostic, referencing events, rather than sections within text - that could be syntax within the markup engine that uses (for example an adoc engine could reference subsections from parsed adoc in the composed document, but that is not nostr specific)
 Notes:
 
 ** The @mention drift
@@ -243,7 +252,7 @@ rejects ={{@…}}= (mentions only work via ={{embed:npub…}}=). Either implemen
 =RefKind::Mention= or correct the spec's status block. Small either way;
 the point is spec and code must agree before the spec is shown to anyone.
 
-- [ ] Implement ={{@…}}=
+- [X] Implement ={{@…}}=
 - [ ] Correct the spec status block
 Priority:
 Notes:
@@ -260,7 +269,7 @@ cautionary tale for silent live inclusion.
 
 - [ ] Formalize in spec
 - [ ] Also build the staleness chip (see §4)
-Priority:
+Priority: Defer, but formalize ideas. Staleness is important to keep track of, the key is how. replaceable events are /should/ never guaranteed, and document relays may preserve 30040 events and provide a revision history, so referencing older versions are possible, noting their specific event reference. carbon copying is also a possibility, where we replace content events with normal ones, so they always stay around... again something to formalize
 Notes:
 
 ** Formalize: wiki resolution scoping
@@ -274,7 +283,7 @@ first touches nostrdown.
 
 - [ ] Formalize the ladder in spec
 - [ ] Keep current heuristic, document it as-is
-Priority:
+Priority: Forget Wot for now, that's an opt in beyond mechanics which we're focusing on.
 Notes:
 
 ** Formalize: citation d-tag conventions
@@ -286,7 +295,7 @@ DOI-derived d-tags (=doi-10-1234-…=) when a DOI exists so two people citing
 the same paper mint the same coordinate.
 
 - [ ] Formalize (comment on the candidate below)
-- [ ] Defer until citations are implemented
+- [X] Defer until citations are implemented, but note the issues
 Notes:
 
 * 4. Reader-loop features
@@ -302,7 +311,7 @@ Pure Rust derivation, no new stored state, and it's the feature that makes
 the reference graph *visible* rather than write-only.
 
 - [ ] Include
-Priority:
+Priority: Unpack this in your zettelkasten construction, ideas that are still less clear to me. right now, this is less clear so you can turn this into a suggestion/request with a knowledge document articulating what it means in terms of data, representation/UI/UX
 Notes:
 
 ** Semantic "See Also" pane + promote-to-ref gesture
@@ -316,8 +325,8 @@ research→writing loop and is the first feature that makes the embedding
 index *ambient* instead of query-gated.
 
 - [ ] Include
-Priority:
-Notes:
+Priority: Unpack this in your zettelkasten construction, ideas that are still less clear to me. right now, this is less clear so you can turn this into a suggestion/request with a knowledge document articulating what it means in terms of data, representation/UI/UX
+Notes: This is good to brainstorm, out of scope but important to know about.
 
 ** Reading states: inbox / later / archive
 
@@ -330,8 +339,8 @@ but publishing reading behavior collides with the deliberate-publishing
 philosophy — could be local-first with explicit opt-in publish).
 
 - [ ] Include
-Priority:
-Notes:
+Priority: Unpack this in your zettelkasten construction, ideas that are still less clear to me. right now, this is less clear so you can turn this into a suggestion/request with a knowledge document articulating what it means in terms of data, representation/UI/UX
+Notes: This is good to brainstorm, out of scope but important to know about.
 
 ** Resurfacing / deliberate review
 
@@ -343,8 +352,8 @@ the WM shell ("review buffer"), fed by an engine endpoint that samples from
 9802s/quotes/notes weighted by age.
 
 - [ ] Include
-Priority:
-Notes:
+Priority: Unpack this in your zettelkasten construction, ideas that are still less clear to me. right now, this is less clear so you can turn this into a suggestion/request with a knowledge document articulating what it means in terms of data, representation/UI/UX
+Notes: This is good to brainstorm, out of scope but important to know about.
 
 ** Live-embed staleness chips + version diff view
 
@@ -355,8 +364,8 @@ transform already in Rust). Readers see drift instead of silently reading
 stale transclusions; authors see when their imports moved.
 
 - [ ] Include
-Priority:
-Notes:
+Priority: Unpack this in your zettelkasten construction, ideas that are still less clear to me. right now, this is less clear so you can turn this into a suggestion/request with a knowledge document articulating what it means in terms of data, representation/UI/UX
+Notes: This is good to brainstorm, out of scope but important to know about.
 
 ** Publication status & confidence metadata
 
@@ -368,8 +377,8 @@ this adds a small tag vocabulary on 30040s (e.g. =["status", "draft"]=,
 Cheap, and it sets cultural expectations for accretive writing.
 
 - [ ] Include
-Priority:
-Notes:
+Priority: Unpack this in your zettelkasten construction, ideas that are still less clear to me. right now, this is less clear so you can turn this into a suggestion/request with a knowledge document articulating what it means in terms of data, representation/UI/UX
+Notes: This is good to brainstorm, out of scope but important to know about.
 
 * 5. Reference-manager features
 
@@ -384,7 +393,7 @@ is the feature that makes "reference manager" true in the Zotero sense
 rather than aspirational.
 
 - [ ] Include
-Priority:
+Priority: Defer, with a document on what is being formalized and open questions
 Notes:
 
 ** Typed citation intents
@@ -399,8 +408,9 @@ and cheap once 30161 exists; also the semantic-roles idea from the original
 brainstorm, landed in its minimal viable form.
 
 - [ ] Include
-Priority:
-Notes:
+
+Priority: Unpack this in your zettelkasten construction, ideas that are still less clear to me. right now, this is less clear so you can turn this into a suggestion/request with a knowledge document articulating what it means in terms of data, representation/UI/UX
+Notes: This is good to brainstorm, out of scope but important to know about.
 
 ** Registry metadata resolution on import
 
@@ -413,7 +423,7 @@ any other). Without this, every citation is hand-typed and the reference
 manager loses to Zotero on day one for academic corpora.
 
 - [ ] Include
-Priority:
+Priority: Unpack, make a comparison to Zotero, formalize your brainstorm for this on what this would mean
 Notes:
 
 ** Materialized citation export (BibTeX / CSL-JSON)
@@ -426,7 +436,7 @@ citekey, makes tendrl a usable bibliography source without any editor
 integration work.
 
 - [ ] Include
-Priority:
+Priority: Unpack, make a comparison, formalize your brainstorm for this on what this would mean
 Notes:
 
 ** Annotation anchoring robustness + orphan state
@@ -441,8 +451,8 @@ selectors on 9802s we create, re-anchor across versions, add an orphaned
 display state.
 
 - [ ] Include
-Priority:
-Notes:
+Priority: Unpack this in your zettelkasten construction, ideas that are still less clear to me. right now, this is less clear so you can turn this into a suggestion/request with a knowledge document articulating what it means in terms of data, representation/UI/UX
+Notes: This is good to brainstorm, out of scope but important to know about.
 
 * 6. Social discovery & post-hoc labeling
 
@@ -460,7 +470,7 @@ use case: someone reads a document, comments =#biology=, and that becomes a
 retrieval signal.
 
 - [ ] Include
-Priority:
+Priority: Review and formalize this. It is different from my own perspective, but important to understand what already exists. another zettel point
 Notes:
 
 ** Which events count as labels?
@@ -470,12 +480,12 @@ analogue of a Bluesky label (namespaced =L=/=l= tags, explicit target).
 But the original tendrl use case is *comments* — a NIP-22 (kind 1111)
 reply carrying =#biology= or a =t= tag. Options, checkable independently:
 
-- [ ] kind-1985 (NIP-32) label events — the formal channel
-- [ ] NIP-22 comments carrying =t= tags / hashtags — the organic channel
-- [ ] kind-1 quotes/mentions with hashtags — noisier, wider net
-- [ ] 30040 index membership — "someone included this in a curated index"
+- [X] kind-1985 (NIP-32) label events — the formal channel
+- [X] NIP-22 comments carrying =t= tags / hashtags — the organic channel
+- [X] kind-1 quotes/mentions with hashtags — noisier, wider net
+- [X] 30040 index membership — "someone included this in a curated index"
   as an implicit label (strongest signal of all: curation as labeling)
-Notes:
+Notes: Very good initial brainstorming, there may be more things to consider. I was initially thinking about kind-1 and NIP-22 comments
 
 ** =label:= search operator + fetch-by-label mode
 
@@ -488,7 +498,7 @@ LocalFirst/FetchAlways. Free-form vocabulary, per the folksonomy evidence
 and display, don't gate.
 
 - [ ] Include
-Priority:
+Priority: Defer, unpack if this is different from what we've already brainstormed
 Notes:
 
 ** WoT weighting
@@ -510,7 +520,7 @@ within 2 hops" — is a discovery primitive none of the surveyed systems
 ships, and both halves (HNSW index, kind-3 graph in nostrdb) are already
 local.
 
-Priority:
+Priority: Out of scope
 Notes:
 
 ** Algorithmic feeds as 30040 indexes
@@ -525,7 +535,7 @@ saveable, publishable (deliberately), diffable, and subscribable like any
 other publication. Curation becomes an artifact, not a session.
 
 - [ ] Include
-Priority:
+Priority: Yes. Unpack and add as a feature request in the zettelkasten. Formalize the possibilities. It essentially is an export of another's reading list, and aggregation - related to labeling. Good
 Notes:
 
 ** Annotation follows the identifier (badge join everywhere)
@@ -539,7 +549,7 @@ count, supporting/contradicting citation tally. One engine-side join, one
 badge row component, applied uniformly.
 
 - [ ] Include
-Priority:
+Priority: yes, with relay provenece. we should again, map this out in the zettelkasten
 Notes:
 
 * 7. Process & workflow conventions
@@ -556,6 +566,7 @@ place to check "what's next" and one place the changelog draws from.
 - [ ] Single roadmap.org ledger
 - [ ] Keep per-subsystem roadmap docs, just reconcile them
 Notes:
+we're reorganizing it into an indexed zettelkasten
 
 ** Features.org same-PR convention
 
@@ -564,7 +575,7 @@ feature updates features.org in the same PR (one line is enough). This is
 the cheap version of "docs can't rot if they move with the code," and it
 would have prevented the themes/walkthroughs gap the audit found.
 
-- [ ] Include (add to CLAUDE.md)
+- [ ] Include (add to CLAUDE.md) tentative... again, working with the zettelkasten, things might be better organized
 Notes:
 
 ** CLAUDE.md standing-guidance additions
@@ -578,7 +589,7 @@ independently:
 - [ ] A one-paragraph pointer to the label/WoT architecture (§6) once
   accepted, so future work builds on the hydration-join model rather than
   inventing parallel plumbing
-Notes:
+Notes: Linking to org files in the zettelkasten would help out, especially if the docs are easy and shorter, rather than completely reproducing them in the single file
 
 * 8. Open questions (no proposal attached — text entry only)
 
@@ -591,18 +602,13 @@ different enough that retrofitting is painful. When does private-layer
 support enter the roadmap, and which layer first (highlights? reading
 states? labels?)?
 
-Notes:
+Notes: This is less a priority right now - we're working on the mechanistic parts of knowledge management on nostr. the social layer, which maps cleanly to nostr's private replies, private drafts, private reactions. they are giftwrapped and we can get that when the time comes
 
 ** Multi-user direction vs. the reference-manager framing
 
-docs/multi-user-architecture.org sketches multi-tenant directions. A
-reference manager is intensely personal (n=1); group libraries (Zotero
-groups, Hypothesis groups) are the collaborative variant. Does the
-multi-user work serve "shared library" semantics, or hosting convenience,
-or both — and does it change any §6 decisions (e.g., whose follow graph
-scopes WoT in a shared instance)?
++docs/multi-user-architecture.org sketches multi-tenant directions. A reference manager is intensely personal (n=1); group libraries (Zotero groups, Hypothesis groups) are the collaborative variant. Does the multi-user work serve "shared library" semantics, or hosting convenience,or both — and does it change any §6 decisions (e.g., whose follow graph scopes WoT in a shared instance)?+
 
-Notes:
+Notes: don't worry about that. this is out of scope, maybe even move it into something that is important to remember but out of scope
 
 ** The knowledgebase/ directory's future
 
@@ -611,7 +617,7 @@ metadata resolution (§5) and citations exist, is knowledgebase/ a staging
 area (import → events → done), or a permanent parallel store the reference
 manager must also index and cite?
 
-Notes:
+Notes: undefined, unsure
 
 ** Emacs/nvim frontends' first target
 
@@ -621,4 +627,4 @@ reader (org-rendered publications), reference manager (citation insertion
 into org buffers — org-cite integration would be a natural wedge), or
 capture (daily-note → section refactoring)?
 
-Notes:
+Notes: We're unpacking everything in terms of data on the nostr engine which can approach any other front end like emacs/nvim, it comes along. no need to document it, you can even remove the references to it.
