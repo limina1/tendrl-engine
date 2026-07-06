@@ -14,8 +14,23 @@
 
 	type ComposeMode = 'full' | 'plain' | 'preview';
 
-	let cursor = $state(0);
-	let mode = $state<ComposeMode>(app.composeDefaultMode);
+	// View state survives buffer switches: a remount restores the last mode +
+	// cursor from the store's per-buffer stash instead of resetting to the
+	// settings default.
+	type ComposerViewState = { mode: ComposeMode; cursor: number };
+	// The initial-value capture is deliberate: BufferRenderer keys this
+	// component on buffer.id, so a different id is a fresh mount anyway.
+	// svelte-ignore state_referenced_locally
+	const savedView = store.bufferState.get(buffer.id) as ComposerViewState | undefined;
+
+	let cursor = $state(savedView?.cursor ?? 0);
+	let mode = $state<ComposeMode>(savedView?.mode ?? app.composeDefaultMode);
+
+	$effect(() => {
+		return () => {
+			store.bufferState.set(buffer.id, { mode, cursor } satisfies ComposerViewState);
+		};
+	});
 	let sectionsListEl: HTMLDivElement | undefined = $state();
 	let plainCmView: EditorView | null = $state(null);
 

@@ -298,27 +298,26 @@
 	}
 	// Body for atomic kinds. Seeded once from the section contents the first
 	// time the user switches to an atomic kind, so a part-written publication
-	// isn't lost; thereafter it's the independent source of truth.
-	let atomicContent = $state('');
+	// isn't lost; thereafter it's the independent source of truth. Lives in
+	// app state (composeAtomicBody) so a buffer switch doesn't drop it.
 	let atomicCmView = $state<EditorView | null>(null);
-	let atomicSeeded = $state(false);
 
 	$effect(() => {
 		if (!isAtomic) return;
 		untrack(() => {
-			if (atomicSeeded) return;
-			if (!atomicContent.trim()) {
-				atomicContent = compose.sections
+			if (app.composeAtomicSeeded) return;
+			if (!app.composeAtomicBody.trim()) {
+				app.composeAtomicBody = compose.sections
 					.map((s) => s.content)
 					.filter((c) => c.trim().length > 0)
 					.join('\n\n');
 			}
-			atomicSeeded = true;
+			app.composeAtomicSeeded = true;
 		});
 	});
 
 	const atomicCanPublish = $derived(
-		isAtomic && compose.title.trim().length > 0 && atomicContent.trim().length > 0
+		isAtomic && compose.title.trim().length > 0 && app.composeAtomicBody.trim().length > 0
 	);
 
 	/** Pull a leading run of `:name: value` tag lines off the atomic body — the
@@ -358,7 +357,7 @@
 	// Live view of what the body's leading tag block parses to — drives the
 	// "detected tags" hint and the publish payload so they can't drift.
 	const atomicParsed = $derived(
-		isAtomic ? parseAtomicBody(atomicContent) : { tags: [] as TagEntry[], content: '' }
+		isAtomic ? parseAtomicBody(app.composeAtomicBody) : { tags: [] as TagEntry[], content: '' }
 	);
 
 	function atomicMeta(): PublishMeta {
@@ -891,6 +890,16 @@
 			}
 			appliedMode = next;
 		});
+	});
+
+	// A buffer switch unmounts the composer with no blur or mode transition —
+	// commit any uncommitted plain-mode text so it survives the round trip.
+	// (Full/atomic modes commit per keystroke; plain only commits on blur or
+	// on leaving the mode.)
+	$effect(() => {
+		return () => {
+			if (appliedMode === 'plain') handlePlainFullEdit(plainText);
+		};
 	});
 
 	// --- Trash state ---
@@ -1437,7 +1446,7 @@
 					</div>
 				{/if}
 				<CodeMirrorEditor
-					bind:value={atomicContent}
+					bind:value={app.composeAtomicBody}
 					bind:editorView={atomicCmView}
 					{lineNumbers}
 					{vimMode}

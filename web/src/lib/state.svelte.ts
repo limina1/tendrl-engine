@@ -157,6 +157,11 @@ function _createAppState() {
 	// 30023 blog / 30818 wiki / custom = a single atomic event. Owned here (not
 	// in ComposeView) so resuming a draft can restore the editor's mode.
 	let composeKind = $state(30040);
+	// Body for atomic kinds. Owned here (not in ComposeView) so a buffer
+	// switch doesn't drop a part-written atomic body; ComposeView seeds it
+	// from the section contents on first switch to an atomic kind.
+	let composeAtomicBody = $state('');
+	let composeAtomicSeeded = $state(false);
 	const compose = $derived<ComposeState>({
 		title: composeTitle,
 		tags: composeTags,
@@ -2089,6 +2094,10 @@ function _createAppState() {
 			composeDTag = cs.d_tag ?? null;
 			// Restore the output kind so an atomic draft reopens atomic.
 			composeKind = cs.kind ?? 30040;
+			// Blank + unseeded so ComposeView re-seeds the atomic body from the
+			// freshly loaded sections rather than showing a stale one.
+			composeAtomicBody = '';
+			composeAtomicSeeded = false;
 			composeSourcePubAddr = null;
 			composeSourcePubEventId = null;
 			composeSourceSectionOrder = [];
@@ -3152,6 +3161,8 @@ function _createAppState() {
 		composeTags = [];
 		composeDTag = null; // fresh publication identity
 		composeKind = 30040; // default back to publication
+		composeAtomicBody = '';
+		composeAtomicSeeded = false;
 		previewVisible = false;
 		navigateToCompose();
 	}
@@ -4361,6 +4372,10 @@ function _createAppState() {
 		set composeDefaultMode(v: ComposeDefaultMode) { composeDefaultMode = v; },
 		get composeKind() { return composeKind; },
 		set composeKind(v: number) { composeKind = v; },
+		get composeAtomicBody() { return composeAtomicBody; },
+		set composeAtomicBody(v: string) { composeAtomicBody = v; },
+		get composeAtomicSeeded() { return composeAtomicSeeded; },
+		set composeAtomicSeeded(v: boolean) { composeAtomicSeeded = v; },
 
 		// Panel collapse
 		get chatCollapsed() { return chatCollapsed; },

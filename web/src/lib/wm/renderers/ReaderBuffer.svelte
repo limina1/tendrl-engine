@@ -1486,14 +1486,30 @@
 	async function seedDraftFromPublication(): Promise<boolean> {
 		if (isDraftMode) return true;
 		const existingSrc = app.compose.source_publication_addr;
-		const hasOtherDraft =
+		// A draft for THIS publication is already in progress: continue it as-is.
+		// Re-seeding here would clearComposePool + re-import pristine sections,
+		// silently wiping the user's edits — "Continue editing this draft" must
+		// actually continue.
+		const sameDraft =
 			!!existingSrc &&
-			parsedAddr &&
-			(existingSrc.pubkey.toLowerCase() !== parsedAddr.pubkey ||
-				existingSrc.d_tag !== parsedAddr.dTag);
+			!!parsedAddr &&
+			existingSrc.pubkey.toLowerCase() === parsedAddr.pubkey.toLowerCase() &&
+			existingSrc.d_tag === parsedAddr.dTag;
+		if (sameDraft) return true;
+		// Clobber guard: a draft seeded from a *different* publication, or a
+		// from-scratch draft with actual content, both die in clearComposePool
+		// below. (A pristine empty composer — one blank section — doesn't count.)
+		const hasOtherDraft =
+			(!!existingSrc && !!parsedAddr) ||
+			(!existingSrc &&
+				(app.compose.title.trim().length > 0 ||
+					app.compose.sections.some(
+						(s) => s.title.trim().length > 0 || s.content.trim().length > 0
+					)));
 		if (hasOtherDraft) {
+			const label = existingSrc ? `for "${existingSrc.d_tag}"` : '(unsaved)';
 			const ok = confirm(
-				`A draft is already in progress for "${existingSrc!.d_tag}". Discard it and start a new draft for this publication?`
+				`A draft is already in progress ${label}. Discard it and start a new draft for this publication?`
 			);
 			if (!ok) return false;
 		}
