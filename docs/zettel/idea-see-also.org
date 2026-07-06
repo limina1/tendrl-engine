@@ -1,0 +1,60 @@
+#+TITLE: Idea: semantic "See Also" + promote-to-ref
+#+TYPE: idea
+#+STATUS: brainstorm — out of scope, captured for orientation
+#+DATE: 2026-07-05
+
+* What it means
+
+Two patterns fused. DEVONthink's *See Also*: while you read a document, a
+side panel passively shows the most similar documents in your library —
+discovery as a side effect of reading, no query typed. Obsidian's
+*unlinked mentions*: things that /could/ be links are surfaced with a
+one-click gesture to make them real links. The fusion: our embedding
+index finds the neighbors (better than DEVONthink's bag-of-words or
+Obsidian's string match), and one gesture turns a discovered neighbor
+into a durable ={{ref:}}= / ={{embed:}}= in the current draft.
+
+The significance: it closes the research→writing loop, and it makes the
+embedding index *ambient* instead of query-gated (today semantic search
+only fires when you type =~:…=).
+
+* Data (nothing new stored)
+
+The HNSW index over event embeddings already exists. The query is
+k-nearest-neighbors for the embedding of the currently-read/edited
+section (or the paragraph at cursor). Promotion writes nothing until the
+draft is signed — then it is an ordinary nostrdown ref with its tags.
+
+* Representation (engine)
+
+- =GET /api/v1/events/:id/similar?k=10= (or POST with raw text for
+  unsaved compose content) → ranked neighbors with score + snippet.
+  LocalOnly; embeds only what's already indexed.
+- Optional: exclude events already referenced by the current draft
+  (needs the draft's ref list in the request — cheap).
+
+* UI/UX
+
+- A "See Also" rail in reader and compose buffers (WM shell: a =research=
+  class slot fits naturally). Collapsed by default in reader; live in
+  compose.
+- Row: title, author, similarity hint, provenance chrome.
+- Gestures: =Enter= preview (EmbedCard), =i= insert ={{ref:}}= at cursor,
+  =e= insert ={{embed:}}=. Discovery output is always one keystroke from
+  durable structure.
+- Refresh policy: on section change / on idle, debounced — never on every
+  keystroke.
+
+* Open questions
+
+- Granularity: whole-section embedding vs paragraph-at-cursor (the latter
+  is better for writing, needs on-the-fly embedding of draft text).
+- Score threshold vs fixed k (avoid confidently-irrelevant neighbors).
+- Does this pane also show *lexical* unlinked mentions (title substring
+  matches) as a second, cheaper tier?
+
+* Related
+
+- [[file:index.org][Index]]
+- [[file:feat-embeddings.org][Feature: embeddings]]
+- [[file:cmp-library-tools.org][DEVONthink/Recoll]] · [[file:cmp-pkm.org][PKM (unlinked mentions)]]

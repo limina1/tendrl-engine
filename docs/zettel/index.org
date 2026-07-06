@@ -1,0 +1,106 @@
+#+TITLE: The Tendrl Map
+#+TYPE: meta
+#+STATUS: current
+#+DATE: 2026-07-05
+
+The single index of the tendrl zettelkasten: what exists, what is
+implemented, ideas, decisions, open questions, and the software we model
+off of. One idea per note; links do the organizing. Format and
+maintenance rules: [[file:conventions.org][conventions]].
+
+* Orientation
+
+- [[file:mission.org][Mission]] — reader, writer, reference manager on
+  Nostr; emphasis tiers (writer/research first); orientation dials
+- [[file:conventions.org][Conventions]] — zettel format, doc lifecycle,
+  maintenance rules
+- [[file:scope-boundaries.org][Scope boundaries]] — WoT, multi-user,
+  private layers, named frontends: remembered, not built
+- [[file:../orientation-report.org][Orientation report (2026-07-05)]] and
+  [[file:../orientation-decisions.org][decision intake]] — the review this
+  kasten grew from
+
+* What exists — the feature map
+
+The engine and web surface as shipped. Each note: what it is, what
+exists (with code paths), gaps.
+
+** Research
+- [[file:feat-search.org][Search]] — structured query parser, profile search
+- [[file:feat-embeddings.org][Embeddings]] — in-process ONNX + HNSW, =~:= semantic search
+- [[file:feat-profiles.org][Profiles]] — kind-0 resolution, profile views
+
+** Writing & publishing
+- [[file:feat-compose.org][Compose]] — markup-agnostic full/plain modes, drafts, forking
+- [[file:feat-nostrdown.org][Nostrdown]] — the ={{ }}= / =[[ ]]= reference layer (partial; epoch in flight)
+- [[file:feat-publishing.org][Publishing]] — signing-is-the-snapshot, broadcast, local tracking
+- [[file:feat-identity.org][Identity & signing]] — NIP-49, keyring, NIP-07
+
+** Reading
+- [[file:feat-feed.org][Feed]] — publication cards, provenance
+- [[file:feat-reader.org][Reader]] — view modes, nested TOCs, highlights
+- [[file:feat-discussions.org][Discussions & highlights]] — read-side (write-side planned)
+
+** Substrate
+- [[file:feat-network.org][Network modes]] — FetchPolicy, Auto/Confirm intents
+- [[file:feat-relays.org][Relay sets]] — general/fetch/publish, relays.json
+- [[file:feat-import.org][Document import]] — PDF/DOCX/EPUB/HTML → events, JSONL ingest/export
+- [[file:feat-assistant.org][LLM assistant]] — chat fragments, agentic tool-calling
+- [[file:feat-shell.org][WM shell]] — buffers, slots, modal nav
+- [[file:feat-appearance.org][Appearance]] — themes, walkthroughs
+
+* Decisions
+
+- [[file:decision-nostrdown-parsing.org][Nostrdown parsing lives in Rust]]
+  — markup-agnostic grammar is data-layer, not display-layer
+
+* In flight — the nostrdown feature epoch
+
+Merged on this branch; fast-forwards into =tendrl-web= when the epoch
+completes. Remaining accepted tasks (tracked in
+[[file:feat-nostrdown.org][the feature note]]):
+- [ ] implement ={{@…}}= mentions (=RefKind::Mention=)
+- [ ] Rust parse endpoint; delete the TS grammar twins
+
+* Ideas — captured, not scheduled
+
+Brainstorm notes articulating data → representation → UI/UX. Promotion
+path: [[file:conventions.org][conventions]].
+
+** Reader loop
+- [[file:idea-backlinks.org][Backlinks panel]] — derived reverse index; cheapest high-value join
+- [[file:idea-see-also.org][Semantic "See Also"]] — ambient relatedness + promote-to-ref
+- [[file:idea-reading-states.org][Reading states]] — inbox/later/archive triage
+- [[file:idea-resurfacing.org][Resurfacing]] — deliberate review of the knowledge layer
+- [[file:idea-status-metadata.org][Status & confidence metadata]] — perpetual drafts made legible
+
+** Reference manager
+- [[file:idea-citations.org][Citations (kind 30161)]] — spec'd, deferred; open issues noted
+- [[file:idea-citation-intents.org][Typed citation intents]] — supports/contradicts edges
+- [[file:idea-registry-metadata.org][Registry metadata resolution]] — DOI/ISBN → citable on import
+- [[file:idea-citation-export.org][Citation export]] — BibTeX/CSL-JSON, materialized
+- [[file:idea-annotation-anchoring.org][Annotation anchoring]] — selector ensembles, orphan state
+
+** Reference semantics
+- [[file:idea-version-semantics.org][Pin-vs-live & staleness]] — version contract, carbon copying
+
+** Social discovery
+- [[file:idea-post-hoc-labeling.org][Post-hoc labeling]] — labels as retrieval signals; hydration join
+- [[file:idea-feeds-as-indexes.org][Feeds as 30040 indexes]] — algorithm output as artifact
+- [[file:idea-event-badges.org][Event badges]] — annotation follows the identifier, + relay provenance
+
+* Open questions
+
+- [[file:q-heading-anchors.org][Heading anchors]] — does sub-section addressing belong in nostrdown?
+- [[file:q-knowledgebase.org][knowledgebase/]] — staging area or permanent parallel store?
+
+* Software we model off of
+
+- [[file:cmp-zotero.org][Zotero]] — metadata at reading speed; orthogonal axes; CSL; BBT export
+- [[file:cmp-citavi.org][Citavi]] — knowledge items + outline-as-composition (our closest ancestor)
+- [[file:cmp-readwise.org][Readwise Reader]] — triage, universal highlights, daily review; the Pocket warning
+- [[file:cmp-hypothesis.org][Hypothesis / W3C annotation]] — selector ensembles, orphans, layered visibility
+- [[file:cmp-pkm.org][PKM lineage]] — Obsidian/Roam/Zettelkasten/Xanadu/Gwern
+- [[file:cmp-bluesky.org][Bluesky / AT]] — labelers, feed generators, the hydration join
+- [[file:cmp-folksonomy.org][Folksonomy]] — del.icio.us/Pinboard, hashtag failure modes
+- [[file:cmp-library-tools.org][DEVONthink / Recoll / Calibre]] — see-also, search layers, managed library

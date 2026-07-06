@@ -1,0 +1,41 @@
+#+TITLE: Comparison: Zotero (+ Better BibTeX)
+#+TYPE: comparison
+#+STATUS: current
+#+DATE: 2026-07-05
+
+The reference-manager incumbent. Load-bearing patterns:
+
+- *Metadata at reading speed.* Browser translators scrape site metadata;
+  identifiers resolve against registries (DOI→CrossRef, ISBN→WorldCat,
+  PMID→PubMed); orphan PDFs are salvaged by scanning early pages for an
+  identifier. File and metadata-record are separate objects, so metadata
+  can be retrofitted. → [[file:idea-registry-metadata.org][registry resolution]]
+- *Orthogonal organization axes*: collections are set-membership
+  playlists (item in many; delete a collection, items survive), tags are
+  a second portable axis, saved searches are live virtual collections,
+  "related items" are manual bidirectional links. Hierarchy is a view,
+  never the storage model. Tendrl analog: 30040 indexes are the
+  collections axis, tags the second, search the third.
+- *CSL*: citation data fully separated from formatting; 10k+ community
+  styles interpret one data model. The separation (data vs style) is the
+  part we adopt; the style engine is the part we export to
+  (→ [[file:idea-citation-export.org][citation export]]).
+- *Better BibTeX*: pinned deterministic human citekeys + continuously
+  materialized =.bib= export as the integration contract with external
+  toolchains.
+- *Annotation extraction*: PDF highlights are database objects extractable
+  into notes with page-linked backlinks — highlights-as-data.
+
+Pain points instructive for us: chronic sync-conflict storms (mutable
+records — our signed immutable events don't have this), translator
+breakage treadmill, collections that don't survive export as well as
+tags.
+
+Where tendrl differs on purpose: our "items" are addressable signed
+events on an open network; sharing a citation is publishing an event,
+not syncing a proprietary library.
+
+* Related
+
+- [[file:index.org][Index]]
+- [[file:idea-citations.org][Idea: citations]] · [[file:idea-registry-metadata.org][Idea: registry resolution]] · [[file:idea-citation-export.org][Idea: citation export]]

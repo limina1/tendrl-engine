@@ -1,0 +1,38 @@
+#+TITLE: Discussions & Highlights
+#+TYPE: feature
+#+STATUS: partial
+#+DATE: 2026-07-05
+
+Reading the conversation around a publication: NIP-22 comments (kind 1111)
+and NIP-84 highlights (kind 9802) attached to sections and indexes. The
+read side is shipped; the write side (authoring comments and highlights) is
+planned — see =docs/discussions-plan.md=.
+
+* What exists
+- =POST /api/v1/discussions/counts= and =/discussions/list= (=src/api.rs=):
+  per-address comment/highlight tallies, deduped engine-side, Confirm-mode
+  gated like any fetch; counts ride along on list responses.
+- NIP-22 threading runs engine-side (uppercase =A/E/K/P= root scope,
+  lowercase =a/e/k/p= parent), per the frontend/backend boundary.
+- NIP-84 highlight span resolution in =src/discussions.rs=
+  (=resolve_highlight_spans=); the reader renders overlays via a
+  =?highlight=<id>= buffer suffix (=web/src/lib/components/RichContent.svelte=,
+  =HighlightList.svelte=, =HighlightsDrawer.svelte=).
+- Per-section discussion badges in the reader (two-phase hydration), plus a
+  "Refresh discussions" action.
+- =DiscussionViewBuffer= (=web/src/lib/wm/renderers/DiscussionViewBuffer.svelte=):
+  single-event view surfacing root/parent refs, loading sibling threads on
+  demand; =CommentThread.svelte= renders trees.
+
+* Gaps / open edges
+- Write side unbuilt: posting comments/replies, capturing a selection as a
+  highlight with =["offset", start, end]= anchoring, local-first authoring
+  through the publish pipeline — all planned in =docs/discussions-plan.md=.
+- NIP-25 reactions, notifications, and encrypted comments are explicitly out
+  of scope for that pass.
+
+* Related
+- [[file:index.org][Index]]
+- [[file:idea-annotation-anchoring.org][Annotation anchoring]]
+- [[file:idea-event-badges.org][Event badges]]
+- [[file:feat-reader.org][Reader]]

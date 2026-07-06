@@ -1,0 +1,61 @@
+#+TITLE: Idea: algorithmic feeds as 30040 indexes
+#+TYPE: idea
+#+STATUS: brainstorm — accepted as a feature request; formalize
+#+DATE: 2026-07-05
+
+* What it means
+
+Bluesky's deepest structural idea: a feed generator returns only an
+*ordered list of references*; content, identity, and labels are hydrated
+elsewhere. In tendrl that separation is already native — a curated
+reading list, a Map of Content, and an algorithmic feed are the same
+data type: a kind 30040 index over event addresses.
+
+The proposal: any internal algorithm — semantic neighbors, a label
+query, a search — can *emit its result set as a local 30040*. Algorithm
+output stops being a transient session and becomes an artifact:
+saveable, diffable (re-run the query, republish-diff shows what moved),
+publishable (deliberately, like anything else), and *subscribable* —
+importing someone else's published index is exactly "an export of
+another's reading list," and reading others' curation is aggregation.
+This is the dual of [[file:idea-post-hoc-labeling.org][post-hoc labeling]]:
+inclusion in an index is the strongest label there is.
+
+* Data
+
+Nothing new. A 30040 whose =a=/=e= tags are the result set, plus
+provenance tags recording *how it was made*, e.g.
+=["generator", "search", "~:mycorrhizal networks k:30041"]= — so a feed
+can be re-run, and a reader can see the recipe. Local-first: it sits in
+nostrdb unsigned-draft or signed-local like any publication; broadcast
+is the same deliberate step.
+
+* Representation (engine)
+
+- "Save as index" on any result set: search results, label query,
+  See-Also neighbors → mint a draft 30040 through the existing compose
+  emission path (imported-reference blocks, no content copying).
+- "Refresh" on a generated index: re-run the recorded generator query,
+  produce the new event, republish-diff against the old.
+
+* UI/UX
+
+- A =Save as reading list= action in search/label/see-also result panes.
+- Generated indexes appear in the feed like any publication, with a
+  small "generated" chip + the recipe on hover.
+- Subscribing = the existing act of fetching someone's 30040 and syncing
+  it; no new subscription machinery.
+
+* Open questions
+
+- Refresh semantics: replace (same d-tag, new version) vs append-only
+  snapshots (dated d-tags)? Interacts with
+  [[file:idea-version-semantics.org][version semantics]].
+- Should the generator tag be standardized (mini-NKBIP) so other clients
+  can re-run recipes, or stay a tendrl convention?
+
+* Related
+
+- [[file:index.org][Index]]
+- [[file:cmp-bluesky.org][Bluesky/AT]] · [[file:cmp-pkm.org][PKM (MOCs)]]
+- [[file:feat-feed.org][Feature: feed]] · [[file:feat-search.org][Feature: search]]

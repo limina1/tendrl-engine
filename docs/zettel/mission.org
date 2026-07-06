@@ -1,0 +1,48 @@
+#+TITLE: Mission
+#+TYPE: meta
+#+STATUS: current
+#+DATE: 2026-07-05
+
+Tendrl is a local-first *reader, writer, and reference manager* built on
+Nostr: read structured publications, research across a distributed event
+network (structured search + semantic embeddings), compose and publish
+NKBIP-01 publications, and manage references through the nostrdown
+reference language.
+
+Algorithmic, reader-driven fetching (post-hoc labels as retrieval signals)
+is a *feature* of this mission, not part of it — see
+[[file:idea-post-hoc-labeling.org][post-hoc labeling]].
+
+* Emphasis tiers
+
+Deliberately balanced, with a working order:
+
+- *Top tier: writer + research.* Compose is the most mature surface;
+  search/embeddings and the nostrdown layer are where the differentiating
+  work is. Mechanics of knowledge management on Nostr come first.
+- *Secondary tier: reader.* A reader is an aesthetic focus — important,
+  but deferred. Reader-loop ideas are captured as brainstorm zettels
+  (=idea-*.org=), not scheduled work.
+
+* Orientation dials (not hard anti-goals)
+
+None of these are absolute exclusions; they are dials whose setting follows
+from the orientation above:
+
+- *Social broadcast* — not the model; deliberate publishing is. Engagement
+  metrics remain an option, never a default.
+- *Relay browsing* — possible through relay provenance and deliberate
+  searching; treated as a data-management concern, not a discovery feed.
+- *Hosted service* — not a priority, but the architecture stays modular
+  (swap the data store and multi-user hosting becomes possible). Fully
+  valuable at n=1, offline, local copy is the archive.
+- *Graph visualization* — knowledge *navigation* is the priority;
+  visualization is an add-on if it proves useful (local neighborhoods
+  only — see [[file:cmp-pkm.org][PKM comparison]] on the global-graph failure).
+
+* Related
+
+- [[file:index.org][Index]]
+- [[file:conventions.org][Conventions]]
+- [[file:scope-boundaries.org][Scope boundaries]]
+- [[file:../orientation-report.org][Orientation report (2026-07-05)]]

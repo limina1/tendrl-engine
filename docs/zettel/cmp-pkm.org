@@ -1,0 +1,46 @@
+#+TITLE: Comparison: PKM & networked thought (Obsidian/Roam/Zettelkasten/Xanadu/Gwern)
+#+TYPE: comparison
+#+STATUS: current
+#+DATE: 2026-07-05
+
+The linking-and-transclusion lineage, condensed to what transfers.
+
+- *Backlinks (Obsidian):* links stored one-way, rendered two-way via a
+  derived reverse index; the panel, not the link, is the killer UI.
+  Unlinked mentions add discovery-with-promotion.
+  → [[file:idea-backlinks.org][backlinks]], [[file:idea-see-also.org][see-also]]
+- *Blocks with stable IDs (Roam/Logseq):* the unit of reference is the
+  block, not the page — but app-local UUIDs are ugly, break on
+  cut/paste, and don't travel. 30041 sections are blocks with *global
+  signed addresses*: strictly better primitive. The granularity lesson
+  (users want to cite smaller than the authored unit) reappears in
+  [[file:q-heading-anchors.org][heading anchors]].
+- *Zettelkasten (Luhmann):* atomic notes, stable IDs, links over
+  hierarchy; the register indexes *entry points*, not everything —
+  traversal does the rest. Structure notes / Maps of Content are
+  emergent, plural, late-binding indexes over the same notes: exactly a
+  30040 ([[file:idea-feeds-as-indexes.org][feeds-as-indexes]]). This
+  folder follows the same method.
+- *Transclusion lineage (Xanadu → MediaWiki → Obsidian):* Xanadu died
+  insisting on solving versioning+copyright+payment simultaneously; ship
+  the reference layer first. MediaWiki runs the largest working
+  transclusion deployment and gates cross-site inclusion behind
+  =$wgEnableScaryTranscluding= — live inclusion of content you don't
+  control needs explicit version semantics
+  ([[file:idea-version-semantics.org][pin vs live]]). Signed immutable
+  events give tendrl the two Xanadu properties the web never got:
+  durable versions and author provenance on every fragment.
+- *Graph view (negative result):* global force-directed graphs become
+  hairballs past a few hundred nodes; what survives is the 1–2-hop
+  *local* neighborhood and orphan-detection. Informs the
+  [[file:mission.org][visualization dial]].
+- *Evergreen/Long Content (Matuschak, Gwern):* knowledge work should
+  accrete; fleeting capture is a feeder layer that gets *processed* into
+  durable notes; long-lived pages carry status/confidence metadata and
+  revision history. → [[file:idea-status-metadata.org][status metadata]],
+  [[file:idea-resurfacing.org][resurfacing]]
+
+* Related
+
+- [[file:index.org][Index]]
+- [[file:feat-nostrdown.org][Feature: nostrdown]] · [[file:feat-compose.org][Feature: compose]]

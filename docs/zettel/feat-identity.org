@@ -1,0 +1,33 @@
+#+TITLE: Identity & Signing
+#+TYPE: feature
+#+STATUS: implemented
+#+DATE: 2026-07-05
+
+Nostr key management and event signing. The engine is the signing
+orchestrator: callers hand it an =EventTemplate= and get a =SignedEvent= back
+without knowing where the key lives.
+
+* What exists
+- Key formats (=src/identity.rs=): npub (read-only), nsec (discouraged),
+  ncryptsec — NIP-49 encrypted secret (scrypt + XChaCha20-Poly1305), the
+  default flow. Password decrypts in memory only.
+- OS keyring stores the *encrypted* blob (never the plaintext key); optional
+  session restoration on startup.
+- Idle-lock timer: the signer auto-locks after configurable inactivity;
+  auto-signing while unlocked means publish flows don't re-prompt mid-session.
+- Endpoints: =GET /api/v1/identity= (none / locked / unlocked),
+  =/login=, =/lock=.
+- Pluggable =Signer= trait (=src/signing.rs=): =InProcessSigner= (engine
+  ncryptsec) today; NIP-07 (browser extension) is wired for the web; NIP-46
+  is typed but transport-less.
+- Web: ncryptsec entry modal; identity badge in the modeline
+  (=web/src/lib/identity/=).
+
+* Gaps / open edges
+- NIP-46 remote signing has types but no transport.
+- NIP-49 decryption passes official test vectors but may hit edge cases with
+  some external implementations (noted in =docs/features.org=).
+
+* Related
+- [[file:index.org][Index]]
+- [[file:feat-publishing.org][Publishing]]

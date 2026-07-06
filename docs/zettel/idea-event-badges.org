@@ -1,0 +1,60 @@
+#+TITLE: Idea: annotation follows the identifier (badge join + provenance)
+#+TYPE: idea
+#+STATUS: brainstorm — accepted direction; map out
+#+DATE: 2026-07-05
+
+* What it means
+
+PubPeer's pattern: the annotation layer travels with the *identifier*,
+not the venue — wherever a paper appears, its "has comments" badge
+appears, because a browser extension joins on the DOI. Generalized to
+tendrl: whenever /any/ event renders /anywhere/ (feed card, search
+result, embed card, reader header, backlink row), join and display its
+known post-hoc layer, keyed by id/naddr:
+
+- comment count (shipped for publication sections — generalize it)
+- labels ([[file:idea-post-hoc-labeling.org][post-hoc labeling]])
+- highlight count
+- supporting/contradicting citation tally
+  ([[file:idea-citation-intents.org][typed intents]])
+- *relay provenance* — which relays this event came from
+  (=note.relays()=, already rendered on feed cards; belongs in the same
+  badge row so "what we know about this event" and "where it came from"
+  read together)
+
+* Data
+
+Nothing new stored — every badge is a local join over events already in
+nostrdb. The badge row is honest about partiality by construction: it
+counts what *your* store knows (relay provenance makes that visible).
+
+* Representation (engine)
+
+One enrichment join, one shape: =GET /api/v1/events/:addr/annotations=
+(or an =annotations= block inlined into existing card/list responses)
+returning ={comments, labels[], highlights, cite_tally, relays[]}=.
+Backlink-family machinery ([[file:idea-backlinks.org][backlinks]]) —
+same reverse-tag index, different grouping. Batch variant for feed/search
+lists so it's one query per page, not per card.
+
+* UI/UX
+
+- One =BadgeRow= component used uniformly by feed cards, search rows,
+  EmbedCard, and the reader header — same order, same icons everywhere,
+  so the eye learns it once.
+- Badges are entry points: click comments → discussion buffer; click a
+  label → =label:= search; click relay chip → provenance detail.
+- Density discipline: chips collapse to counts; zero-count badges don't
+  render.
+
+* Open questions
+
+- Inline in list responses vs separate batched endpoint (latency vs
+  chattiness).
+- Cache/invalidation as new events arrive over sync (SSE nudge?).
+
+* Related
+
+- [[file:index.org][Index]]
+- [[file:idea-backlinks.org][Idea: backlinks]] (shared machinery)
+- [[file:feat-feed.org][Feature: feed]] · [[file:feat-discussions.org][Feature: discussions]]

@@ -1,0 +1,50 @@
+#+TITLE: Idea: publication status & confidence metadata
+#+TYPE: idea
+#+STATUS: brainstorm — out of scope, captured for orientation
+#+DATE: 2026-07-05
+
+* What it means
+
+Gwern's "Long Content" pattern: long-lived documents are *perpetual
+drafts*, and honesty about that is metadata — every page shows its status
+(draft / in progress / finished), a confidence marker, and a date range.
+Readers calibrate trust; authors get cultural permission to publish
+unfinished thinking and improve it for years. Nostr already gives the
+hard part free (signed, timestamped revision chains on replaceable
+events); this is a thin tag vocabulary on top.
+
+* Data
+
+Tags on the 30040 (and optionally 30041), e.g.:
+=["status", "draft" | "in-progress" | "finished"]=,
+=["confidence", "speculative" | "likely" | "certain"]= — vocabulary small
+and fixed, values free to extend later. Set in the composer; travel with
+the event; readable by any client.
+
+* Representation (engine)
+
+Nearly nothing: parse the tags into the publication metadata the API
+already returns. Optionally expose as search tokens (=status:draft=) via
+the existing generic tag filter (=status:draft= already works today with
+no code change — the feature is mostly /convention/ + rendering).
+
+* UI/UX
+
+- Reader header + feed cards render a small status/confidence chip
+  beside the date; the version count (revision chain) sits next to it —
+  "draft · v4 · updated 2026-06".
+- Composer: a status selector in the publish flow (default: draft).
+
+* Open questions
+
+- Standardize the vocabulary in a small NKBIP note so other clients can
+  render it, or keep it a tendrl convention until proven?
+- Does =finished= interact with [[file:idea-version-semantics.org][carbon
+  copying]] (finishing a work = minting its durable snapshot)?
+
+* Related
+
+- [[file:index.org][Index]]
+- [[file:feat-publishing.org][Feature: publishing]]
+- [[file:idea-version-semantics.org][Idea: version semantics]]
+- [[file:cmp-pkm.org][PKM comparison]] (Gwern / Matuschak)

@@ -1,0 +1,31 @@
+#+TITLE: Open question: what is knowledgebase/ ?
+#+TYPE: question
+#+STATUS: open
+#+DATE: 2026-07-05
+
+=knowledgebase/= holds local documents for import, alongside the event
+store. Its long-term role is undefined. Two candidate readings:
+
+1. *Staging area* — import → events → done. The directory is a loading
+   dock; once a document is extracted into 30040/30041 events (and, later,
+   a citation event), the file has served its purpose. The event store is
+   the library.
+2. *Permanent parallel store* — the source files (PDFs, EPUBs) remain
+   first-class objects the reference manager must index, open, and cite;
+   events reference back to them. This is the Zotero/Calibre model
+   (metadata record ≠ attachment file; see [[file:cmp-zotero.org][Zotero]],
+   [[file:cmp-library-tools.org][Calibre]]).
+
+Considerations when this gets decided:
+- Fidelity: extraction is lossy (figures, layout, math). If the reader
+  ever needs the *original*, option 1 is not enough.
+- Citations: a 30161 citation of a hardcopy/PDF source
+  ([[file:idea-citations.org][zettel]]) wants a stable pointer to the file
+  or its hash — which looks like option 2's attachment model.
+- Portability: files don't travel over relays; a pure-event library does.
+
+* Related
+
+- [[file:index.org][Index]]
+- [[file:feat-import.org][Feature: document import]]
+- [[file:idea-registry-metadata.org][Idea: registry metadata resolution]]

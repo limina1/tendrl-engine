@@ -1,0 +1,65 @@
+#+TITLE: Idea: pin-vs-live reference semantics & staleness
+#+TYPE: idea
+#+STATUS: deferred — formalize before citations/transclusion mature
+#+DATE: 2026-07-05
+
+* Why
+
+Transclusion of content you don't control needs explicit version
+semantics — MediaWiki gates cross-wiki transclusion behind a flag
+literally named =$wgEnableScaryTranscluding=. Nostr gives us both poles
+natively: an event *id* is a pinned immutable snapshot; an naddr
+*coordinate* is a live pointer to the latest replaceable version. What's
+missing is the contract and the reader feedback.
+
+* The complication (why this isn't trivial)
+
+Replaceable events are /never guaranteed/: relays may keep only the
+latest, or several, or none. So:
+- "Live" (naddr) can silently change under a reader — or silently vanish.
+- "Pinned" (event id) can become unfetchable if no relay retained that
+  version.
+- Document relays that preserve 30040/30041 revisions give a *revision
+  history* — referencing older versions by specific event id is possible
+  when such a relay is in the fetch set, but it's a relay property, not a
+  protocol guarantee.
+- *Carbon copying* is a candidate mechanism: replace (or shadow)
+  replaceable content events with regular (non-replaceable) ones so a
+  cited/embedded version always stays around. Trade-off: event
+  proliferation vs durability. Needs formalization — possibly a tag
+  linking the carbon copy to the coordinate it snapshots.
+
+* Data
+
+- ={{embed:nevent…}}= / =e=-tag refs → pinned. ={{embed:naddr…}}= / =a=-tag
+  refs → live. Spec language should state this as the contract.
+- Substrate that exists: =load_section_versions()= (version chains),
+  republish-diff (Rust), signed timestamps on every revision.
+
+* Representation / engine
+
+- Resolve responses could carry version state: ={resolved_version,
+  latest_version, is_stale}= for live refs; ={available: bool}= for pins.
+- A carbon-copy emit path in publishing, if adopted.
+
+* UI/UX
+
+- Staleness chip on live embeds/imports: "newer version exists" → click
+  for version diff (republish-diff already computes it).
+- Reference builder surfaces the pin/live choice at insertion time
+  instead of burying it in entity type.
+
+* Open questions
+
+- Carbon copy: kind choice, tagging convention, when minted (at cite
+  time? at embed time? user gesture?).
+- Should a live ref record the version seen at authoring time (a =seen=
+  hint tag) so staleness is computable even offline?
+
+* Related
+
+- [[file:index.org][Index]]
+- [[file:feat-nostrdown.org][Feature: nostrdown]]
+- [[file:idea-citations.org][Idea: citations]] (quoted text preserved in
+  the citation event is a partial hedge)
+- [[file:cmp-pkm.org][PKM comparison]] (Xanadu/MediaWiki transclusion lineage)

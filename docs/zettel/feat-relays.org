@@ -1,0 +1,37 @@
+#+TITLE: Relay Management
+#+TYPE: feature
+#+STATUS: implemented
+#+DATE: 2026-07-05
+
+Persistent, local-only relay working sets. Tendrl is a deliberate-publishing
+client: relay sets are workbench state, not social broadcast — relay-list
+edits are never auto-published as Nostr events.
+
+* What exists
+- =src/relay_store.rs=: runtime relay sets persisted to
+  =<data_dir>/relays.json= (authoritative) — =general= (profiles, contacts,
+  NIP-65 lists), =fetch= (publication content), =publish= (where signed
+  events go), plus a =broadcast= set (reserved for explicit per-event
+  "also broadcast" opt-in), =search= / =indexer= discovery classes
+  (two-tier default/fallback membership, off by default), and named sets
+  (user groupings publishable as kind 30002 for sharing/backup).
+- The TOML config carries only a one-shot =initial_relays= bootstrap seed;
+  =relays.json= is rewritten on every UI relay add/remove
+  (=engine.add_relay= / =remove_relay=, =POST /api/v1/config/update=).
+- NIP-01 WebSocket client (=src/relay.rs=): parallel multi-relay REQ/EVENT/
+  EOSE with dedup; local relay auto-detection at =ws://localhost:3334=.
+- NIP-11 relay information documents fetched + cached process-wide with
+  normalized URL keys and a 1-hour TTL (=src/nip11.rs=).
+- Web: relay sets editable from =web/src/lib/wm/renderers/RelaysBuffer.svelte=;
+  kind 10002/10007/30002 lists parsed client-side there (NIP-44 decrypt of
+  private lists is signer-dependent under NIP-07).
+
+* Gaps / open edges
+- Pulling a user's published 10002/30002 as *suggestions* is the intended
+  flow; the discovery classes are configured but their consumer surface is
+  still thin ("phantom relay-class config" per the May 2026 audit).
+
+* Related
+- [[file:index.org][Index]]
+- [[file:feat-network.org][Network modes]]
+- [[file:feat-publishing.org][Publishing]]

@@ -1,0 +1,40 @@
+#+TITLE: Reader
+#+TYPE: feature
+#+STATUS: implemented
+#+DATE: 2026-07-05
+
+The reading surface for NKBIP-01 publications. One buffer, three view modes,
+fed by an engine-side tree stream so ordering, dedup, and a-tag resolution
+never happen in the browser.
+
+* What exists
+- Three view modes cycled with =h= / =l=: outline (cursored TOC + provenance
+  borders), paginated (one section, prev/next bar), continuous (full doc,
+  page-scroll on =j= / =k=) — =web/src/lib/wm/renderers/ReaderBuffer.svelte=.
+- TOC via the SSE =stream_publication_tree= (=src/publication.rs=): the
+  depth-N loader ships ordered =children= parent-before-child, so nested
+  30040 sub-publications resolve engine-side.
+- Eager-loads all sections once the TOC arrives (continuous mode's
+  IntersectionObserver still covers very long publications).
+- Standalone-section reader: =reader:event:<id>= synthesizes a one-section
+  publication from any event id, forced paginated.
+- =Edit= / =Edit §= import the publication (or the cursored section) into
+  the compose pool as default-locked blocks and open the composer.
+- Always pristine: a published 30040 shows the engine's view even if a draft
+  was seeded from it (draft preview lives in =draft-reader:current=).
+- Highlight overlays: a =?highlight=<id>= buffer suffix renders NIP-84 spans
+  over content (=web/src/lib/components/RichContent.svelte=; span resolution
+  engine-side in =src/discussions.rs=).
+
+* Gaps / open edges
+- Nested-publication packed cards, drill-in with breadcrumbs, and parent
+  navigation are Phase 3 roadmap (=docs/wm-shell.md=).
+- =ReaderBuffer='s addr-keyed re-accumulation of tree events is a thin twin
+  a flattened-TOC stream would drop (optional refinement).
+
+* Related
+- [[file:index.org][Index]]
+- [[file:feat-nostrdown.org][Nostrdown]]
+- [[file:idea-backlinks.org][Backlinks]]
+- [[file:idea-event-badges.org][Event badges]]
+- [[file:feat-discussions.org][Discussions]]

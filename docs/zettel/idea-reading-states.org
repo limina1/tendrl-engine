@@ -1,0 +1,59 @@
+#+TITLE: Idea: reading states — inbox / later / archive
+#+TYPE: idea
+#+STATUS: brainstorm — out of scope, captured for orientation
+#+DATE: 2026-07-05
+
+* What it means
+
+The Readwise/Instapaper triage pattern: separate the decision "is this
+worth my time?" from the act of reading. Everything captured lands in an
+*inbox*; a fast keyboard triage pass moves items to *later* (the reading
+queue) or *archive* (kept, searchable, out of the way — archive is never
+delete). The feed today has no per-item reading state; the ignore list is
+the only triage tool, and it's a blunt one (author-level exclusion, not
+item-level deferral).
+
+* Data — the real design decision
+
+Where does the state live?
+1. *Local view state* (engine-side store or web state): cheap, private,
+   no protocol surface. Doesn't travel to other clients.
+2. *NIP-51 lists* (e.g. bookmark-style sets per state): portable across
+   clients — but publishing reading behavior collides with the
+   deliberate-publishing philosophy.
+3. *Local-first with explicit opt-in publish* (the likely synthesis):
+   states are local data (=<data_dir>/=, like relays.json), with a
+   deliberate "publish this list" action if ever wanted. Consistent with
+   how relay sets are handled today.
+Private gift-wrapped lists are the eventual private-layer answer — see
+[[file:scope-boundaries.org][scope boundaries]].
+
+* Representation (engine)
+
+A small reading-state store keyed by event id/coordinate
+(=inbox|later|archive|none= + timestamps), exposed as a filter on the feed
+endpoint and a =state:later= search token. Deliberately dumb: it's a
+per-item flag, not a workflow engine.
+
+* UI/UX
+
+- Feed gains scope tabs or a filter chip: Inbox / Later / Archive / All.
+- Single-key triage in the feed's modal nav (e.g. =t l= later, =t a=
+  archive, =t i= back to inbox) — the triage pass should feel like a
+  keyboard game, per Readwise's Superhuman-inspired design.
+- Archive stays fully searchable; nothing ever disappears.
+
+* Open questions
+
+- Does a *newly fetched* event enter "inbox" implicitly, or only ones
+  surfaced in the feed? (Implicit-everything makes the inbox unbounded.)
+- Per-publication vs per-section state (probably publication-level only).
+- Interaction with the ignore list (ignore = author-level, states =
+  item-level; keep orthogonal).
+
+* Related
+
+- [[file:index.org][Index]]
+- [[file:feat-feed.org][Feature: feed]]
+- [[file:idea-resurfacing.org][Idea: resurfacing]] (the other half of the loop)
+- [[file:cmp-readwise.org][Readwise]]

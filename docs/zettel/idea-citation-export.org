@@ -1,0 +1,51 @@
+#+TITLE: Idea: materialized citation export (BibTeX / CSL-JSON)
+#+TYPE: idea
+#+STATUS: brainstorm — depends on citations landing
+#+DATE: 2026-07-05
+
+* What it means — the Better BibTeX comparison
+
+Stock Zotero generates BibTeX keys at export time, non-deterministically;
+the Better BibTeX plugin became indispensable by making citekeys
+*pinned, deterministic, human-meaningful*, and by *auto-export*: a =.bib=
+file registered as "keep updated" is rewritten on every library change.
+That materialized file is the integration contract with LaTeX, pandoc,
+Typst, Org-cite — the toolchains never talk to Zotero, they read the
+artifact. The lesson: stable keys + a continuously fresh export file is
+how a reference manager plugs into everything without per-editor
+integrations.
+
+* Data
+
+Kind 30161 citation events are the library. The nostrdown d-tag is
+already the stable human-meaningful key (=smith-2024-truth-about-time= is
+a better citekey than anything auto-generated). Mapping 30161 tags →
+CSL-JSON fields / BibTeX entries is mechanical; source-type tag chooses
+the entry type.
+
+* Representation (engine)
+
+- =GET /api/v1/citations/export?format=bibtex|csl-json[&scope=…]= over
+  local 30161s (scope: all / by publication / by tag).
+- Optional *materialized* mode: engine keeps =<data_dir>/library.bib=
+  fresh on every citation change (the BBT auto-export pattern) so
+  external tools just point at a path.
+
+* UI/UX
+
+Minimal: an export action in a citations/library buffer; a settings
+toggle for the materialized file + its path. The feature's real UI is
+other people's editors.
+
+* Open questions
+
+- CSL style rendering is /not/ needed here (export is data; styles are
+  the consumer's problem) — confirm we resist building a style engine.
+- Round-trip: import a =.bib= *into* 30161 events? (Powerful for
+  migration from Zotero; separate idea if pursued.)
+
+* Related
+
+- [[file:index.org][Index]]
+- [[file:idea-citations.org][Idea: citations (30161)]]
+- [[file:cmp-zotero.org][Zotero / Better BibTeX]]

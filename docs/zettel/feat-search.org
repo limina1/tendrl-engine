@@ -1,0 +1,38 @@
+#+TITLE: Search
+#+TYPE: feature
+#+STATUS: implemented
+#+DATE: 2026-07-05
+
+Structured search over the local nostrdb corpus. One query string mixes typed
+filters with free text; the parser compiles it to NIP-01 filters plus text
+post-filtering, so the same syntax works for exact lookup, tag queries, and
+semantic retrieval.
+
+* What exists
+- Query parser (=src/search.rs=): =k:N= kind, =by:me= / =by:npub1…= /
+  =by:name:<partial>= author, =id:<64-hex>=, =~:concept= / =~:"phrase":k=
+  semantic, ="exact phrase"=, NIP-19 entities (=note1= / =nevent1= / =naddr1= /
+  =npub1= / =nprofile1=, optional =nostr:= prefix), =since:= / =until:=,
+  =has:NAME= tag presence, bare =NAME:value= generic tag filter, =|= for union.
+- =author:= is a *tag* filter (events carrying an =["author", …]= tag), not an
+  alias for =by:= (the publishing-pubkey filter).
+- Local query execution in =src/query.rs= (all nostrdb reads serialized through
+  a process-wide mutex); profile search via =find_profiles_matching=.
+- =POST /api/v1/search=; results split by type (publications routed to the
+  feed, document pages to their own tab).
+- Web surface: =web/src/lib/components/SearchPanel.svelte= +
+  =web/src/lib/wm/renderers/SearchBuffer.svelte= — vim search loop, ranger nav
+  over results, and an action modal (=r= read, =f= find containing
+  publications via an =a:KIND:PUBKEY:DTAG= query, =i= insert into compose).
+
+* Gaps / open edges
+- =SearchResult.preview= is truncated to 200 chars — never feed it to
+  length-sensitive code; fetch the full event by id.
+- Heterogeneous result display (publications, sections, profiles, pages mixed)
+  is still listed as a design item in =docs/wm-shell.md=.
+
+* Related
+- [[file:index.org][Index]]
+- [[file:idea-see-also.org][See-also]]
+- [[file:feat-embeddings.org][Embeddings]]
+- [[file:feat-profiles.org][Profiles]]

@@ -1,0 +1,36 @@
+#+TITLE: Comparison: Readwise Reader (and the read-it-later class)
+#+TYPE: comparison
+#+STATUS: current
+#+DATE: 2026-07-05
+
+The state of the art in the *reader loop*. Load-bearing patterns:
+
+- *Capture → inbox → triage.* Everything captured lands in an inbox; a
+  fast keyboard-driven triage pass (Superhuman-inspired, deliberately
+  game-like) moves items to Later or Archive; reading draws from Later.
+  Archive ≠ delete. → [[file:idea-reading-states.org][reading states]]
+- *Universal highlight layer.* One document+highlight schema across web,
+  RSS, email newsletters, PDFs, EPUBs, YouTube transcripts, Kindle —
+  heterogeneous sources normalized so downstream features are
+  source-agnostic. Tendrl analog: everything becomes events; =document.rs=
+  import is our normalizer.
+- *Daily Review.* Spaced resurfacing of past highlights with tunable
+  decay tiers — the fix for write-only highlight graveyards.
+  → [[file:idea-resurfacing.org][resurfacing]]
+- *Ghostreader*: LLM assistance in the reading flow (define, summarize,
+  Q&A against the surrounding document) — no app switch. Tendrl's chat
+  with context injection is the same move, local-first.
+- *Export-as-integration*: continuous Markdown/JSON sync out to
+  Obsidian/Notion; the pipeline, not captivity, is the product.
+
+The category's structural warning: *Pocket* (Mozilla) shut down July
+2025; unexported reading lists were permanently lost, and the export was
+a flat CSV. Hosted read-it-later dies with its company. The durable
+asset is the highlight/annotation corpus in an open format — which is
+tendrl's native posture (local nostrdb + JSONL export + open protocol).
+
+* Related
+
+- [[file:index.org][Index]]
+- [[file:idea-reading-states.org][Idea: reading states]] · [[file:idea-resurfacing.org][Idea: resurfacing]]
+- [[file:feat-assistant.org][Feature: assistant]] · [[file:mission.org][Mission (n=1 dial)]]

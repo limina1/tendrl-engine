@@ -1,0 +1,60 @@
+#+TITLE: Idea: registry metadata resolution on import
+#+TYPE: idea
+#+STATUS: brainstorm — out of scope, captured for orientation
+#+DATE: 2026-07-05
+
+* What it means — the Zotero comparison
+
+Zotero's deepest moat is that *metadata arrives at reading speed, not
+typing speed*: browser translators scrape structured metadata; bare
+identifiers resolve against authoritative registries (DOI → CrossRef,
+ISBN → WorldCat, PMID → PubMed); orphan PDFs are salvaged by scanning
+the first ~80 lines for a DOI/ISBN and querying, with a Google Scholar
+fallback. Crucially, the *file* and the *metadata record* are separate
+objects, so metadata can be retrofitted onto a file later ("Create
+Parent Item from identifier"). Without an equivalent, every tendrl
+citation is hand-typed and the reference manager loses to Zotero on
+day one for any academic corpus.
+
+* Data
+
+- Input: the text =document.rs= already extracts on import.
+- Identifier scan: DOI/ISBN regexes over the first pages (Zotero's
+  heuristic, well-proven).
+- Registry response (CrossRef/OpenAlex are open, no-auth JSON) → a kind
+  30161 citation event (title/author/published_on/DOI tags, source-type
+  =hardcopy=/=web=) + metadata tags on the minted index event. The imported
+  document arrives *already citable*.
+
+* Representation (engine)
+
+- A resolution step in the import pipeline, plus a retrofit endpoint
+  ("resolve metadata for this existing publication") for the
+  parent-item-later pattern.
+- *Network discipline:* registry queries are external fetches — they must
+  ride the same Confirm-mode intent flow as relay fetches. In Confirm
+  mode an import completes locally and offers "resolve metadata (1
+  request to api.crossref.org)?" as an approvable intent.
+
+* UI/UX
+
+- Import flow shows the resolved record for confirmation before minting
+  (registry data is occasionally wrong; the user is the last check).
+- Unresolved imports get a visible "no metadata" state with a manual
+  resolve action (paste DOI/ISBN) — the retrofit gesture.
+
+* Open questions
+
+- Which registries first? CrossRef + OpenAlex cover DOIs; ISBN needs
+  OpenLibrary/WorldCat; arXiv IDs are common in our likely corpora.
+- Dedup: importing a paper twice should find the existing 30161
+  (d-tag convention dependency — [[file:idea-citations.org][citations]]).
+- Does the registry response itself get archived (provenance of the
+  metadata claim)?
+
+* Related
+
+- [[file:index.org][Index]]
+- [[file:feat-import.org][Feature: document import]]
+- [[file:idea-citations.org][Idea: citations]] · [[file:cmp-zotero.org][Zotero]]
+- [[file:q-knowledgebase.org][Open: knowledgebase/ future]]

@@ -1,0 +1,39 @@
+#+TITLE: Comparison: folksonomy heritage (del.icio.us → Pinboard) & hashtag failure modes
+#+TYPE: comparison
+#+STATUS: current
+#+DATE: 2026-07-05
+
+The prior art for reader-side tagging, positive and negative.
+
+- *del.icio.us* was the first mass post-hoc labeling system: the
+  /bookmarker/, not the page author, tagged content; the URL was the
+  join key ("who else saved this? what did they call it? follow their
+  stream"). On Nostr the event id/naddr plays the URL's role.
+- *Uncontrolled vocabularies converge.* The classic pathologies are real
+  (synonyms, polysemy, plural chaos, no hierarchy) — but Golder &
+  Huberman's finding on delicious data is the design key: per-object tag
+  distributions stabilize after fewer than ~100 taggers, a power-law
+  consensus with minority tags coexisting. So: don't gate labels on a
+  controlled vocabulary; *aggregate and display the distribution*.
+  Caveat carried forward: Nostr taggers are sybil-cheap, unlike
+  delicious accounts — which is why labeler *choice* (whose labels count)
+  is the load-bearing control, with WoT weighting deferred
+  ([[file:scope-boundaries.org][scope]]).
+- *Tag gardens*: folksonomies stay usable where renaming/merging one's
+  own tags is cheap. A label browser needs bulk-rename from day one.
+- *Hashtag discovery's failure modes (Fediverse)*: author-side,
+  self-asserted, unranked, viewpoint-dependent (you see only what your
+  instance federated), fragmenting vocabularies, spam at equal weight
+  with expertise. Post-hoc labels from chosen readers fix each of these
+  — and tendrl's explicit fetch intents at least make the
+  viewpoint-partiality /visible/, which Mastodon never did.
+- *Pinboard's survival lessons*: personal archive value must not depend
+  on network effects (worth it at n=1); the reader's copy outlives the
+  platform; boring, small, sustainable beats viral. Delicious died of
+  acquisitions; Pinboard bought the corpse for $35k.
+
+* Related
+
+- [[file:index.org][Index]]
+- [[file:idea-post-hoc-labeling.org][Idea: post-hoc labeling]]
+- [[file:cmp-bluesky.org][Bluesky/AT]] · [[file:mission.org][Mission (n=1)]]

@@ -1,0 +1,37 @@
+#+TITLE: Comparison: Hypothesis / W3C Web Annotation
+#+TYPE: comparison
+#+STATUS: current
+#+DATE: 2026-07-05
+
+A decade of engineering on one problem: attaching annotations to
+documents you don't control.
+
+- *Annotations as standalone addressable resources* (the W3C Web
+  Annotation model): an annotation is body + target, where target =
+  source + selectors. Marks are never embedded in the document — the
+  annotation survives independently of the document store. This is
+  exactly the Nostr shape: a 9802 highlight is a signed event
+  *referencing* its target.
+- *Redundant selector ensembles.* Each anchor stores quote + position +
+  structural selectors together; re-anchoring cascades exact → position
+  → context-guided fuzzy → full fuzzy. No single selector survives
+  document mutation; the ensemble usually does.
+- *The orphan state.* When re-anchoring confidence fails, the annotation
+  is kept, flagged, and listed — never silently lost or misplaced. Their
+  worst bug class is /silent/ anchoring failure.
+  → [[file:idea-annotation-anchoring.org][anchoring robustness]]
+- *Layered visibility on one substrate*: Only-Me / private group / public
+  are the same annotation object under different ACLs — collaboration as
+  a visibility property, not separate architecture. Nostr analog: keys +
+  relays + (later) gift-wrap; see [[file:scope-boundaries.org][private layers]].
+
+Tendrl's structural advantage: annotations pinned to event *ids* target
+immutable content and can never drift — most of Hypothesis's machinery
+exists because the web mutates. The machinery becomes relevant exactly
+where we reintroduce liveness (naddr targets across republishes).
+
+* Related
+
+- [[file:index.org][Index]]
+- [[file:idea-annotation-anchoring.org][Idea: anchoring]] · [[file:idea-version-semantics.org][Idea: version semantics]]
+- [[file:feat-discussions.org][Feature: discussions & highlights]]

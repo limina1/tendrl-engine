@@ -1,0 +1,55 @@
+#+TITLE: Idea: citations (kind 30161)
+#+TYPE: idea
+#+STATUS: spec — deferred; NKBIP-03-revised-2 done, code absent
+#+DATE: 2026-07-05
+
+* Why
+
+Citations are what make "reference manager" true in the Zotero sense: a
+citation is a *reusable event* (many publications cite one source without
+duplicating metadata), with the quoted passage preserved in content — so
+the evidence survives even if the source disappears.
+
+* What is formalized (NKBIP-03-revised-2)
+
+- One addressable kind *30161* (collapsing upstream NKBIP-03's kinds
+  30–33), typed by the =M= tag's use-case slot:
+  =citation/nostr|web|hardcopy|prompt/replaceable= (NKBIP-06 vocabulary).
+- Reference syntax rides nostrdown: ={{cite:<d-tag>|modifier}}=; resolution
+  tag =["cite", d-tag, "30161:pk:d-tag", relay]=.
+- Presentation separated from data: render style (footnote / endnote /
+  inline / quote) comes from per-cite modifier → publication
+  =citation-style= tag → reader preference. Never encoded in the markup.
+- Prompt citations (LLM provenance: model, version, accessed_on) kept
+  from the original NKBIP-03 — forward-looking and cheap.
+
+* What implementation will need (when promoted)
+
+- =RefKind::Cite= in the parser (today ={{cite:}}= is literal text).
+- Composer "cite this" flow: mint-or-reuse a 30161 from a selection or an
+  imported document; emission on signing.
+- Resolution + rendering per the style precedence; a bibliography
+  surface (a 30041 tagged as bibliography, or generated at render time —
+  open).
+
+* Open issues (noted now, decided at implementation)
+
+- *d-tag convention* decides cross-author dedup: =author-year-slug=
+  (=smith-2024-truth-about-time=, NIP-54-normalized) is readable;
+  DOI-derived (=doi-10-1234-…=) makes two people citing the same paper
+  mint the same coordinate. Possibly both: DOI-derived when a DOI
+  exists, author-year-slug otherwise. Collisions and disambiguation
+  (=-2=, =-3=?) unresolved.
+- Aggregation: citation lists / bibliographies as first-class events?
+- Version pinning of the cited source — interacts with
+  [[file:idea-version-semantics.org][version semantics]] (carbon copy is
+  attractive precisely for citations).
+- Interop: CSL / BibTeX export — [[file:idea-citation-export.org][zettel]].
+
+* Related
+
+- [[file:index.org][Index]]
+- [[file:feat-nostrdown.org][Feature: nostrdown]]
+- [[file:idea-citation-intents.org][Idea: typed citation intents]]
+- [[file:idea-registry-metadata.org][Idea: registry metadata resolution]]
+- [[file:cmp-zotero.org][Zotero]] · [[file:cmp-citavi.org][Citavi]]

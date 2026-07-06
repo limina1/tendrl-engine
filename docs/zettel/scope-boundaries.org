@@ -1,0 +1,46 @@
+#+TITLE: Scope Boundaries — remembered, not built
+#+TYPE: meta
+#+STATUS: current
+#+DATE: 2026-07-05
+
+Things we have deliberately placed outside the current work. Each entry
+records *why* and *what would reopen it*, so the boundary is a decision,
+not amnesia.
+
+* Web of Trust (out of scope)
+
+Searching by author, event/coordinate, and tag are the strongest signals
+and are what we build on. WoT (hop-distance scoping, PageRank weighting,
+external services like Vertex) is an opt-in layer *beyond* mechanics — we
+are focused on the mechanics. Reopen when post-hoc labeling
+([[file:idea-post-hoc-labeling.org][zettel]]) matures enough that labeler
+trust becomes the binding problem (sybil-weighted label aggregation).
+
+* Multi-user / hosted (out of scope, remember)
+
+A reference manager is intensely personal (n=1). The architecture stays
+modular — swap the data store (nostrdb) and a hosted multi-user service
+becomes possible — but it is not a priority and drives no current design.
+Prior sketch: =docs/multi-user-architecture.org=.
+
+* Private / encrypted layers (deferred)
+
+Private highlights, reading states, labels map cleanly onto Nostr's
+gift-wrapped private replies, private drafts, private reactions. We take
+that when the time comes; the current work is the mechanistic public
+layer. Retrofitting risk is acknowledged: when an =idea-*= zettel involving
+annotations or reading states is promoted, note its private-variant story
+at design time rather than after.
+
+* Named frontends (emacs/nvim) — dissolved as a goal
+
+Everything is unpacked as *data on the Nostr engine*; any frontend can
+approach it. The frontend/backend boundary rule stays (it is what makes
+this true), but no specific client is a tracked goal and docs should not
+promise one.
+
+* Related
+
+- [[file:index.org][Index]]
+- [[file:mission.org][Mission]]
+- [[file:q-knowledgebase.org][Open: knowledgebase/ future]]

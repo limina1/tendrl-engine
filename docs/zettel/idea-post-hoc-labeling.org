@@ -1,0 +1,91 @@
+#+TITLE: Idea: post-hoc labeling & label-driven fetching
+#+TYPE: idea
+#+STATUS: brainstorm — review/formalize; the flagship research feature
+#+DATE: 2026-07-05
+
+* What it means
+
+The original tendrl use case: someone reads a document and *comments* on
+it with =#biology= — a reference to an event that can be pulled in later.
+The label is post-hoc and third-party: applied by a /reader/, not the
+author. Author-side hashtags are self-asserted, unrankable, and gameable
+(the Fediverse's discovery failure); reader-side labels can be scoped to
+people you choose, cover content the author never tagged, and can't be
+gamed by the author.
+
+Two perspectives to reconcile (deliberately kept side by side):
+
+1. *The comment-centric view (ours, organic):* labels emerge from normal
+   reading activity — replies and comments that happen to carry tags.
+   Nothing new is authored; the signal is a byproduct.
+2. *The labeler-service view (Bluesky's, formal):* labels are dedicated
+   signed events from services/people you subscribe to; the client
+   (AppView) *joins labels onto content at hydration time*. Anyone can run
+   a labeler; users stack up to 20. This is proven architecture for the
+   same shape of problem — worth understanding even where we diverge.
+
+The synthesis: treat "what counts as a label" as pluggable (see below),
+and steal the *hydration join* — the engine indexes label-events from
+chosen sources locally and attaches them to events at query time. The
+engine is its own AppView; no central service, reader-side join (the
+durable version of this pattern — centralized annotation buses like
+Crossref Event Data died of economics).
+
+* What counts as a label (all accepted as candidate channels)
+
+- NIP-32 kind-1985 label events — the formal channel (namespaced =L=/=l=)
+- NIP-22 (kind 1111) comments carrying =t= tags / hashtags — the organic
+  channel, the original use case
+- kind-1 quotes/mentions with hashtags — noisier, wider net
+- *30040 index membership* — someone included this event in a curated
+  index: curation as labeling, arguably the strongest signal
+  ([[file:idea-feeds-as-indexes.org][feeds-as-indexes]] is this idea's dual)
+- More to consider: highlights (9802) as implicit "worth attention";
+  reactions; bookmark lists (10003).
+
+* Data
+
+Label sources are events we already know how to fetch and store. New
+state is only /configuration/: whose labels count (a pubkey list — start
+with follows + explicit adds; WoT weighting is deliberately out of scope,
+see [[file:scope-boundaries.org][scope boundaries]]) and which channels are
+enabled.
+
+* Representation (engine)
+
+- Subscription: background fetch of enabled label-channel kinds from the
+  configured pubkeys (rides existing FetchPolicy/Confirm machinery).
+- Index: label → target-event edges (a tag join, backlink-family
+  machinery — [[file:idea-backlinks.org][backlinks]]).
+- Hydration: events served by the API carry their known labels
+  ={label, labeler, channel, event_id}=.
+- Retrieval: =label:biology= (optionally =label:biology@npub…=) as a search
+  token; "fetch events my labelers marked X" as an explicit fetch action
+  (filter on label events → hydrate targets). Free-form vocabulary —
+  folksonomy evidence says per-object tag distributions converge without
+  enforcement; aggregate and display, don't gate
+  ([[file:cmp-folksonomy.org][folksonomy]]).
+
+* UI/UX
+
+- Label chips on event cards/readers (with labeler attribution on
+  hover — provenance always visible).
+- A label browser: my labelers, their vocabularies, tag distributions
+  per event.
+- Search integration is the main surface; a "label watch" (standing
+  fetch for a label) is the algorithmic-fetching endgame.
+
+* Open questions
+
+- Channel weighting: is an index-membership worth more than a hashtag
+  comment? (Display the channel; defer scoring.)
+- Label freshness/retraction: labels on deleted/edited targets.
+- When labeler lists deserve to be publishable (deliberately) vs local.
+
+* Related
+
+- [[file:index.org][Index]]
+- [[file:cmp-bluesky.org][Bluesky/AT]] · [[file:cmp-folksonomy.org][Folksonomy]]
+- [[file:idea-feeds-as-indexes.org][Idea: feeds as indexes]]
+- [[file:idea-event-badges.org][Idea: event badges]]
+- [[file:feat-network.org][Feature: network modes]]

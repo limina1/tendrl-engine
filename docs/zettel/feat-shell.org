@@ -1,0 +1,40 @@
+#+TITLE: WM Shell
+#+TYPE: feature
+#+STATUS: implemented
+#+DATE: 2026-07-05
+
+The web UI's frame: an Emacs/i3-flavored tiling window manager. Everything in
+the app is a buffer living in a class-typed slot, driven by vim-style modal
+navigation. Full spec: =docs/wm-shell.md=; shell root in
+=web/src/routes/+page.svelte=, machinery under =web/src/lib/wm/=.
+
+* What exists
+- Class-typed slots: =chat= (left), =work= (center — feed/reader/composer/
+  profile/ignored), =research= (right — search/kb/refs). Each slot is =open=
+  or =rail= (collapsed bar); one base layout, collapsible on the fly.
+- Stable-ID buffers: =reader:30040:<pk>:<dtag>=, =reader:event:<id>=,
+  =composer:current=, =draft-reader:current=, =profile:<pk>=, plus singletons
+  (=chat=, =feed=, =search:default=, =settings=, …). Registry + renderers in
+  =web/src/lib/wm/registry.ts= and =web/src/lib/wm/renderers/=.
+- Splits: =SPC w s= splits the focused leaf with a same-class buffer picker;
+  =j= / =k= cycles leaves. Buffer switching =SPC b b= (class) / =SPC b B=
+  (global) / =SPC b r= (recently closed, cap 20); =SPC b k= kills.
+- SPC leader with Doom-style which-key popup; M-x fuzzy command palette
+  (=:=); modeline with layout, focused buffer, and segmented network /
+  embedding / identity status pills.
+- Modal nav: normal/insert modes; editable focus implies insert, Esc / =C-[=
+  / =C-g= escape; ranger cursor (=j=/=k=, =gg=/=G=) across feed, reader,
+  search, compose; =h= / =l= drill axis per buffer.
+- Multi-frame model: multiple tabs share one global buffer list; layouts and
+  windows are per-frame (Emacs frame semantics).
+
+* Gaps / open edges
+- Per =docs/wm-shell.md=: deep-link routing (=/p/<pk>/<dtag>= → buffer),
+  cross-tab BroadcastChannel sync, user-savable perspectives, and Shell
+  extraction into a reusable component are still open.
+
+* Related
+- [[file:index.org][Index]]
+- [[file:feat-reader.org][Reader]]
+- [[file:feat-compose.org][Compose]]
+- [[file:feat-feed.org][Feed]]

@@ -1,0 +1,41 @@
+#+TITLE: Comparison: Citavi (Knowledge Organizer)
+#+TYPE: comparison
+#+STATUS: current
+#+DATE: 2026-07-05
+
+The closest commercial ancestor of tendrl's composition model, and the
+category's best *writing* workflow.
+
+- *Knowledge items as first-class atomic objects.* Not notes-on-a-
+  reference: direct quotations, paraphrases, summaries, image quotations,
+  and source-less "thoughts" are individual records, each automatically
+  carrying its source + page number. Reading produces pre-cited building
+  blocks.
+- *The category tree is the manuscript.* A hierarchical outline holds
+  knowledge items (multi-assignment allowed, manually orderable);
+  export produces a document ordered by the tree, every quotation
+  dropping in with citation and bibliography intact. Writing becomes
+  arranging evidence.
+- *The inversion that matters:* the unit of writing is the idea/evidence
+  *fragment*, not the source; sources become provenance metadata on
+  fragments.
+
+Mapping to tendrl: this is NKBIP-01, generalized — 30041 sections are
+the knowledge items (with ={{quote:}}= carrying source attribution), a
+30040 index is the category tree, and compose *is* the arranging. Where
+tendrl goes further: Citavi's items live in a proprietary single-project
+silo; ours are signed, globally addressable, reusable across
+publications and authors, with fork lineage.
+
+What Citavi has that we lack: the friction-free quotation capture flow
+(select in source → knowledge item with locator, one gesture) — worth
+holding as the bar for our highlight→section promotion
+([[file:idea-annotation-anchoring.org][anchoring]], [[file:idea-see-also.org][promote gestures]]).
+
+Cautionary notes: Windows-only, proprietary format, subscription drift
+after acquisition — the exit-rights lesson from the other side.
+
+* Related
+
+- [[file:index.org][Index]]
+- [[file:feat-compose.org][Feature: compose]] · [[file:idea-citations.org][Idea: citations]]

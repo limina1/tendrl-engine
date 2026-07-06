@@ -1,0 +1,37 @@
+#+TITLE: Open question: do heading anchors belong in nostrdown?
+#+TYPE: question
+#+STATUS: open
+#+DATE: 2026-07-05
+
+=#fragment= currently parses and survives resolution (={{ref:sec#heading}}=),
+but nothing navigates, and the spec already de-emphasizes it ("reference
+the child, not parent+child").
+
+The unresolved question is *layer placement*. Nostrdown references
+*events*. A heading is not an event — it is structure *inside* one
+markup's rendering of a section's content. If we are markup-agnostic,
+sub-section addressing arguably belongs to the markup engine (an AsciiDoc
+engine can reference subsections of parsed adoc in the composed document;
+Org has its own anchor forms) — that capability is not Nostr-specific and
+importing it into nostrdown blurs the layer.
+
+Counterpoint to keep on file: NKBIP-01's own answer to "I need to address
+a smaller unit" is *make it a section* — atomicity is the addressing
+mechanism ([[file:cmp-pkm.org][Roam's lesson]]: the unit of reference is
+the block). If a heading is worth referencing, it may be worth being a
+30041.
+
+Options when this is picked up:
+1. Drop =#fragment= from the grammar entirely (markup engines own it).
+2. Keep it parsed but define it as a *display hint only*, never a
+   resolution input (current de-facto behavior, formalized).
+3. Implement scroll-to-anchor in the reader (commits nostrdown to knowing
+   about markup-internal structure — the option the layering argument
+   disfavors).
+
+* Related
+
+- [[file:index.org][Index]]
+- [[file:feat-nostrdown.org][Feature: nostrdown]]
+- [[file:idea-version-semantics.org][Idea: version semantics]] (the other
+  pending nostrdown formalization)

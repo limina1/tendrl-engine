@@ -1,0 +1,47 @@
+#+TITLE: Feature: nostrdown reference layer
+#+TYPE: feature
+#+STATUS: partial
+#+DATE: 2026-07-05
+
+The markup-agnostic ={{ }}= reference syntax linking Nostr events across
+Markdown/Org/AsciiDoc/plain content. Normative grammar:
+=docs/nostrdown-spec.md=; citations: =nips/NKBIP-03-revised-2.adoc= (kind
+30161); MIME =m=/=M= tag vocabulary: =nips/NKBIP-06.adoc=; design provenance:
+=docs/nostrdown.org=; working plan: =docs/nostrdown-planning.org=.
+
+* What exists (merged on this branch)
+
+- Parser (=src/nostrdown.rs=): ={{ref|wiki|embed|quote|slot:target|display}}=
+  plus the =[[ ]]= wikilink alias (markup-native link targets skipped);
+  NIP-54 slug normalization; byte + UTF-16 spans; ~15 unit tests.
+- Resolution (=publication.rs::resolve_refs=, =POST /api/v1/nostrdown/resolve=):
+  =ref= → sibling sections by title-slug (draft siblings resolve pre-publish);
+  =embed= → entity, LocalOnly with pending→fetch via Confirm intents
+  (=/nostrdown/fetch-entity=); =wiki= → kinds 30818/30023/30041 by normalized
+  d-tag, scored author > wiki-kind > recency.
+- Tag emission on signing (=reference_tags()=): =w= (wiki), =ref=, =a=/=q=/=p=
+  per reference kind — the substrate for [[file:idea-backlinks.org][backlinks]]
+  and [[file:idea-event-badges.org][badges]].
+- =slot= transclusion: contributes an =a= tag to the parent index, mints no
+  30041.
+- Web: RichContent overlay rendering, EmbedCard, ReferenceBuilderModal,
+  CodeMirror decoration + autocomplete.
+
+* Accepted tasks (this feature epoch, before ff into tendrl-web)
+
+- Implement ={{@…}}= mentions (=RefKind::Mention=) — spec lists it shipped,
+  tokenizer rejects it; make code match spec.
+- Boundary cleanup: Rust parse endpoint, delete the TS twins — see
+  [[file:decision-nostrdown-parsing.org][decision]].
+
+* Not implemented (spec'd or open)
+
+- ={{cite:}}= / kind 30161 — [[file:idea-citations.org][idea zettel]]
+- =#fragment= navigation — [[file:q-heading-anchors.org][open question]]
+- pin/live version semantics — [[file:idea-version-semantics.org][idea zettel]]
+
+* Related
+
+- [[file:index.org][Index]]
+- [[file:feat-compose.org][Feature: compose]]
+- [[file:feat-reader.org][Feature: reader]]

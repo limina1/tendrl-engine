@@ -1,0 +1,36 @@
+#+TITLE: Comparison: DEVONthink, Recoll, Calibre (library machinery)
+#+TYPE: comparison
+#+STATUS: current
+#+DATE: 2026-07-05
+
+Three tools, three pieces of library machinery.
+
+- *DEVONthink — "See Also".* A persistent inspector showing documents
+  statistically similar to the one you're reading, across the whole
+  database: relatedness as a passive side effect of reading, the
+  discovery mechanism manual links can't provide ("unknown unknowns").
+  Its weakness — a proprietary bag-of-words black box users can't
+  interrogate — is our opening: embedding similarity with visible
+  scores. → [[file:idea-see-also.org][see-also]]
+- *Recoll — the clean three-layer split.* Format-extraction filters →
+  unified index (stemming, Unicode normalization, incremental updates) →
+  typed query language. Tendrl already mirrors it exactly:
+  =document.rs= → nostrdb + usearch → =search.rs=. The lesson is to *keep*
+  the layers separable as features accrete.
+- *Calibre — the managed library.* Metadata lives *outside* the book
+  files in one authoritative store, rebuildable from per-item sidecars,
+  readable by third-party tools; one metadata record owns multiple
+  format instances. Nostr analog: event tags + kind-0s are the metadata
+  store; the open question is whether source files ever become
+  first-class attachments ([[file:q-knowledgebase.org][knowledgebase/]]).
+  Its hub-and-spoke conversion pipeline (any→intermediate→any, n+m
+  instead of n×m converters) is the pattern if export-to-document-formats
+  ever lands.
+  Cautionary tale: =metadata.db= corruption under folder-sync tools —
+  the same concurrent-writer class as our nostrdb read lock; immutable
+  events + single-writer engine is the structural fix we already have.
+
+* Related
+
+- [[file:index.org][Index]]
+- [[file:feat-embeddings.org][Feature: embeddings]] · [[file:feat-import.org][Feature: import]] · [[file:feat-search.org][Feature: search]]

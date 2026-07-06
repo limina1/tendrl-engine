@@ -1,0 +1,39 @@
+#+TITLE: Appearance & Onboarding
+#+TYPE: feature
+#+STATUS: implemented
+#+DATE: 2026-07-05
+
+Theming, accessibility, and first-encounter guidance for the web shell. This
+area postdates =docs/features.org= (shipped v0.2–v0.3, 2026-06/07); ground
+truth is =web/src/lib/themes.ts=, =web/src/lib/wm/discovery.svelte.ts=, and
+the =feat(web/theme)= commit series.
+
+* What exists
+- Theme system (=web/src/lib/themes.ts=): eight families, each with light and
+  dark variants — Iceberg (default), Solarized, Gruvbox, Tokyo Night,
+  Catppuccin, Nord, Dracula, and Paper (sepia reading: warm light + warm-dark
+  night). Sun/moon toggle flips mode within the current family.
+- High-contrast switch, orthogonal to theme (=data-contrast="high"= blocks in
+  tokens.css) — any theme can run high-contrast.
+- Theme picker (=web/src/lib/components/ThemePicker.svelte=) with live
+  hover/keyboard preview, gated behind an opt-in "Live preview" toggle;
+  Appearance toggles laid out on one settings row.
+- Configurable text size (=web/src/lib/theme/text-scale.svelte.ts=): one
+  =--text-scale= custom property multiplies the single =:root= font-size
+  anchor, persisted to localStorage.
+- Engine-version pill in Settings (=v{app.engineVersion}= in
+  =web/src/lib/wm/renderers/SettingsBuffer.svelte=).
+- Walkthrough/tour system (W button): event-gated contextual coachmarks, not
+  a linear stepper — =web/src/lib/wm/discovery.svelte.ts= store +
+  =DiscoveryTip.svelte= overlay + =data-tour= anchors; first-run "feed sync"
+  login walk, per-view tours (search examples via
+  =web/src/lib/search/search-tour.ts=, composer ={{ }}= walkthrough).
+  Seen/enabled state persists to localStorage; Settings can reset it. Pure
+  frontend view state per the engine/web boundary.
+
+* Gaps / open edges
+- The walkthrough registry is seeded but the full tip map is a TODO.
+
+* Related
+- [[file:index.org][Index]]
+- [[file:feat-shell.org][WM Shell]]

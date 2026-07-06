@@ -1,0 +1,33 @@
+#+TITLE: Decision: nostrdown parsing lives in Rust
+#+TYPE: decision
+#+STATUS: current (cleanup pending)
+#+DATE: 2026-07-05
+
+*Decision:* option (a) — expose a lightweight Rust parse surface (either a
+parse endpoint or parsed token spans shipped with resolve responses) and
+delete the TS twins: =normalizeSlug=, =isMarkupLinkTarget=, =parseWikilink=,
+and the duplicated token regexes in =nostrdown.ts= / =nostrdown-cm.ts=
+(which already disagree about =slot=).
+
+*Rationale — the generalization argument:* nostrdown is markup-agnostic,
+and tendrl is focused on *data representation that generalizes across
+frontends*. The grammar is therefore part of the data layer, not the
+display layer. If the tokenizer lives in TS, every future frontend
+re-implements the grammar and they drift (the two TS copies drifting from
+each other inside one frontend is the proof). TS-as-display had blurred
+this; the boundary rule already says it: parsing/classification is
+algorithmic derivation, Rust owns it.
+
+*What TS keeps:* purely visual concerns — rendering resolved spans,
+decoration styling, cursor/selection state. The editor's need for
+low-latency token marking is served by parsed spans returned from the
+engine (debounced), not by a local grammar.
+
+*Status:* accepted; scheduled within the current nostrdown feature epoch
+(before the branch fast-forwards into tendrl-web).
+
+* Related
+
+- [[file:index.org][Index]]
+- [[file:feat-nostrdown.org][Feature: nostrdown]]
+- CLAUDE.md — the frontend/backend boundary rule

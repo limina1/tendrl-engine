@@ -1,0 +1,34 @@
+#+TITLE: Profiles
+#+TYPE: feature
+#+STATUS: implemented
+#+DATE: 2026-07-05
+
+Author identity resolution: kind-0 metadata parsed once, engine-side, and
+served to every surface that shows a name — so usernames resolve everywhere
+without per-component fetch logic.
+
+* What exists
+- Engine-side kind-0 resolution as the single source of truth:
+  =Metadata::from_event_content= in =src/user_data.rs=, consumed by
+  =api.rs::profile_from_event= for the profile endpoint.
+- Endpoints: =GET /api/v1/profile/:pubkey= (local-first, falls back to the
+  general relays on miss) and =POST /api/v1/profiles/fetch= (batch prefetch —
+  run on every event fetch so names resolve without UI churn).
+- Profile search: =query.rs::find_profiles_matching= backs =by:name:<partial>=
+  and bare-word author resolution in the search syntax.
+- Web surfaces: =ProfileName.svelte= used everywhere (reactive across batch
+  updates); profile view buffers =profile:<pk>=
+  (=web/src/lib/wm/renderers/ProfileBuffer.svelte=, =ProfileEditBuffer.svelte=)
+  plus =ProfileView= / =ProfileModal= / =PersonResultItem= components.
+- A profile can be captured into the assistant's shared context via the
+  "+ Context" button on the profile bar.
+
+* Gaps / open edges
+- The follow/mute/bookmark parsers in =user_data.rs= (kinds 3/10000/10003/
+  10006) are dormant — parsed types exist but no consumer UI; wire them when
+  a UI exists.
+
+* Related
+- [[file:index.org][Index]]
+- [[file:feat-search.org][Search]]
+- [[file:feat-feed.org][Feed]]

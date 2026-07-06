@@ -1,0 +1,40 @@
+#+TITLE: Compose
+#+TYPE: feature
+#+STATUS: implemented
+#+DATE: 2026-07-05
+
+The writing surface: assemble NKBIP-01 publications from section blocks, or
+write standalone notes — two editing modes over one compose state, with a
+lossless switch between them.
+
+* What exists
+- Two modes (=h= / =l= toggles; default in settings): *full* (structured
+  section cards, =web/src/lib/components/ComposeSection.svelte=) and *plain*
+  (one CodeMirror 6 + =@replit/codemirror-vim= buffer over the delimited
+  document, double-Esc stack); switching serializes / re-parses without loss.
+  =web/src/lib/components/ComposeView.svelte= hosts both.
+- Markup-agnostic: sections carry Markdown, Org, AsciiDoc, or plain text
+  (detection engine-side, =src/tree/content.rs=); configurable plain
+  delimiter; tag lines serialize as =:name: value=.
+- Block model (=src/publication/compose.rs=): editable, imported (default-
+  locked read-only reference — the transclusion model), forked (=a= / =e=
+  lineage tags, NIP-54 marker); =Lock all= / =Unlock all= bulk controls.
+- Notes mode: publish each section as a standalone 30041 with no index.
+- Output-kind selection with auto-detect (long-form vs NKBIP-01 index/section).
+- Drafts: full compose state persists to =<data_dir>/drafts/= via
+  =/api/v1/drafts= (=src/drafts.rs=); "Save draft" / "Saved drafts" resume
+  across refreshes; preview renders in the =draft-reader:current= buffer.
+- Nostrdown authoring: ={{ }}= reference builder modal
+  (=web/src/lib/components/ReferenceBuilderModal.svelte=) + CM6 autocomplete
+  (=web/src/lib/editor/nostrdown-cm.ts=) — reference layer detailed in the
+  nostrdown zettel.
+
+* Gaps / open edges
+- AsciiDoc WYSIWYG editor and per-section CM6 "repotting" remain roadmap items
+  (=docs/wm-shell.md= Phase 3).
+
+* Related
+- [[file:index.org][Index]]
+- [[file:feat-nostrdown.org][Nostrdown]]
+- [[file:feat-publishing.org][Publishing]]
+- [[file:cmp-citavi.org][Citavi comparison]]

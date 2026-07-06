@@ -1,0 +1,40 @@
+#+TITLE: AI Assistant
+#+TYPE: feature
+#+STATUS: partial
+#+DATE: 2026-07-05
+
+A writing assistant with server-side tool-calling over the Nostr corpus: the
+engine runs an agentic loop (Anthropic Messages API, API-key only) in which
+the model searches, reads, curates shared context, composes, fetches from
+relays, and (opt-in) publishes. Shipped per =docs/ai-assistant-status.md=;
+active work continues on branch =ai-context-tools=.
+
+* What exists
+- Typed chat fragments (system/user/assistant) with edit mode — collapse to a
+  single delimited buffer, edit freely, re-parse on exit (=src/chat.rs=, pure
+  state; =sanitize_tool_pairs= keeps tool_use/tool_result pairing valid).
+- Context injection: the web's =ContextItem= pool is the source of truth;
+  =PUT /api/v1/chat/context= pushes resolved notes into the system message
+  (=web/src/lib/components/ContextPanel.svelte=).
+- =LLMProvider= trait (=src/llm.rs=): =ClaudeProvider= + =NoopProvider=;
+  provider-neutral =ContentBlock= / =AgentMessage= / =run_turn()= types.
+- Agentic loop: =chat_agent_handler= (=src/api.rs=, =POST /api/v1/chat/agent=,
+  SSE); tool catalog + dispatch in =src/tools.rs= (15 tools: search, read,
+  NKBIP-01 views, =fetch_from_relays=, =add_to_context=, compose-write,
+  =publish=). =ToolPolicy= filters the catalog before the provider call —
+  default is everything but publish; surfaced in the AI Tools settings tab.
+- Gating reuses the Confirm-mode modals; saved sessions (=src/sessions.rs=);
+  editable =prompt.md= system prompt.
+
+* Gaps / open edges
+- Standing note — *tool-use parity*: any capability a user has through the
+  API that the assistant cannot invoke as a tool is a gap to log here. The
+  assistant should be able to publish, search, and manage knowledge in
+  parallel with the user.
+- =publish= is broadcast-only (cannot sign); AI-authored signing is a pending
+  decision. Live-reference and compact-handle context modes unbuilt.
+
+* Related
+- [[file:index.org][Index]]
+- [[file:feat-search.org][Search]]
+- [[file:feat-compose.org][Compose]]

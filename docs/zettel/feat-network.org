@@ -1,0 +1,34 @@
+#+TITLE: Network Modes & Fetch Policy
+#+TYPE: feature
+#+STATUS: implemented
+#+DATE: 2026-07-05
+
+Local-first network control: the user decides when the engine talks to
+relays, per-query (fetch policy) and globally (network mode). Nothing hits
+the network without either a policy that allows it or an explicit approval.
+
+* What exists
+- =FetchPolicy= (=src/engine.rs=): =LocalOnly= (nostrdb only, instant,
+  offline), =LocalFirst= (local, then relay backfill if under limit — the
+  default), =FetchAlways= (always hit relays, merge with local).
+- =NetworkMode= (=src/network.rs=): =Auto= — user-initiated relay fetches run
+  automatically; =Confirm= — every user-initiated fetch emits an *intent* the
+  UI must approve before the engine proceeds. Note: older docs called these
+  "Online" / "Offline"; =Auto= / =Confirm= are the current names.
+- Intents + live fetch activity stream to clients over SSE
+  (=GET /fetch-events=); approval via a confirm endpoint;
+  =GET /api/v1/network/status= / =POST /network/mode= for state.
+- =FetchGuard= RAII tracks in-flight relay requests in a ring buffer
+  (=NetworkActivity=) so the UI shows live activity.
+- Web: network-mode toggle in the header, modeline network pill with a
+  pulsing "fetching" dot, =FetchConfirmModal= and =FetchActivityModal=
+  (=web/src/lib/network/=, =web/src/lib/components/=). The AI assistant's
+  =fetch_from_relays= tool gates through the same Confirm flow.
+
+* Gaps / open edges
+- No per-source or per-kind fetch policies — the mode is engine-global.
+
+* Related
+- [[file:index.org][Index]]
+- [[file:feat-relays.org][Relays]]
+- [[file:idea-post-hoc-labeling.org][Post-hoc labeling]]

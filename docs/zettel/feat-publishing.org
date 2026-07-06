@@ -1,0 +1,35 @@
+#+TITLE: Publishing
+#+TYPE: feature
+#+STATUS: implemented
+#+DATE: 2026-07-05
+
+Deliberate, staged publishing. The model: drafts are unsigned; *signing is the
+snapshot* — the only way into the database, so no passive unsigned events ever
+land in nostrdb; broadcast to relays is a separate, explicit step.
+
+* What exists
+- Draft stage: unsigned compose state in =DraftStore= (=src/drafts.rs=,
+  =/api/v1/drafts= POST/GET/DELETE), stored under =<data_dir>/drafts/=.
+- Sign stage: =POST /api/v1/publish= builds + signs the 30040/30041 event set
+  atomically and ingests it as a signed local snapshot (=sign:false= is
+  rejected). Payload emission lives in =src/publication.rs=
+  (=PublishPayload=).
+- Republish-diff: re-signing a same-title publication reuses its nanoid d-tag
+  engine-side, so it's a version update rather than a fork; nostrdb keeps
+  every version (=load_section_versions=).
+- Broadcast stage: =POST /api/v1/publications/:pubkey/:d_tag/broadcast= pushes
+  a signed snapshot to the publish relays as one operation.
+- =LocalPublicationTracker= (=src/drafts.rs=) marks a snapshot local until a
+  relay accepts it; =list_publications= exposes =local= so the feed renders a
+  "local" pill.
+
+* Gaps / open edges
+- The engine returns per-relay =broadcast_results= but the web still discards
+  them — the rejection/relay-status UI (iterated at =/design/publish=) is a
+  known wiring gap.
+
+* Related
+- [[file:index.org][Index]]
+- [[file:feat-compose.org][Compose]]
+- [[file:idea-version-semantics.org][Version semantics]]
+- [[file:feat-relays.org][Relays]]

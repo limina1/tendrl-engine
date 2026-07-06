@@ -1,0 +1,34 @@
+#+TITLE: Document Import & Data Round-trip
+#+TYPE: feature
+#+STATUS: implemented
+#+DATE: 2026-07-05
+
+Getting external documents and bulk event data into (and out of) the local
+database. Extraction runs entirely in-process — pure-Rust crates, no native
+libraries, no sidecar.
+
+* What exists
+- =src/document.rs=: text extraction for PDF (=pdf-extract=), DOCX
+  (=zip= + =quick-xml=), EPUB (=epub=), HTML (=html2text=), and the
+  plain-text family — emits ordered ={title, content}= pages.
+- =POST /api/v1/import=: each document becomes kind 30041 events with
+  per-page chunks, ready for embedding and search.
+- Bulk JSONL ingest: =POST /api/v1/ingest= with
+  =Content-Type: application/x-ndjson= — streaming, duplicate-skipping, with
+  progress UI; runs a single =sync_embeddings()= at the end instead of
+  per-event.
+- Export: =GET /api/v1/export= (JSONL) plus an export manifest endpoint —
+  combined with =POST /api/v1/purge=, gives a backup → wipe → reingest loop.
+- =knowledgebase/= directory holds local documents for import; the =kb=
+  buffer in the web shell browses it.
+
+* Gaps / open edges
+- Imported document pages are flat 30041s; no automatic 30040 index assembly
+  per document yet.
+- Extraction quality is bounded by the pure-Rust parsers (notably complex
+  PDF layouts).
+
+* Related
+- [[file:index.org][Index]]
+- [[file:idea-registry-metadata.org][Registry metadata]]
+- [[file:feat-embeddings.org][Embeddings]]

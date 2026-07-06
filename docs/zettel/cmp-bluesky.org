@@ -1,0 +1,40 @@
+#+TITLE: Comparison: Bluesky / AT Protocol (labelers & feed generators)
+#+TYPE: comparison
+#+STATUS: current
+#+DATE: 2026-07-05
+
+The strongest *architectural* comparison for the social-discovery layer —
+studied for structure, not adopted wholesale (their trust/WoT layer is
+out of our current scope).
+
+- *Labelers = third-party post-hoc annotation services.* A label is
+  signed metadata ={src, uri, val, timestamp}= published by a service
+  about content it doesn't own. Anyone can run one; users subscribe to
+  up to 20; labels carry client-side behaviors (hide/warn/inform). In
+  practice labelers drifted from moderation into general *enrichment*
+  (verified-journalist tags, fandom tags, language) — post-hoc labeling
+  as an annotation bus. Nostr analogue: NIP-32 kind-1985.
+- *The hydration join.* Clients declare accepted labelers; the AppView
+  attaches matching labels to content at response time. Nostr has no
+  AppView — *the tendrl engine plays that role locally*: subscribe,
+  index, join at query time. The single most transferable mechanism.
+  → [[file:idea-post-hoc-labeling.org][post-hoc labeling]]
+- *Feed generators: curation separated from content.* A feed service
+  answers with a bare ordered list of post URIs; hydration happens
+  elsewhere; users pick feeds from a marketplace. Five separately
+  swappable layers (content / distribution / curation / annotation /
+  presentation). Tendrl's collapse of this: an ordered reference list
+  *is already our native data type* — a 30040 — so "algorithm output as
+  subscribable artifact" needs no new protocol.
+  → [[file:idea-feeds-as-indexes.org][feeds as indexes]]
+
+Contrast worth remembering: Bluesky's layers are services run by
+operators; tendrl's versions are local joins over a personal store —
+reader-side, n=1-valuable, no operator to defund (the Crossref Event
+Data lesson: centralized annotation buses die of economics).
+
+* Related
+
+- [[file:index.org][Index]]
+- [[file:idea-post-hoc-labeling.org][Idea: post-hoc labeling]] · [[file:idea-feeds-as-indexes.org][Idea: feeds as indexes]]
+- [[file:cmp-folksonomy.org][Folksonomy]] · [[file:scope-boundaries.org][Scope: WoT]]

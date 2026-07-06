@@ -1,0 +1,34 @@
+#+TITLE: Embeddings
+#+TYPE: feature
+#+STATUS: implemented
+#+DATE: 2026-07-05
+
+Semantic search over the event corpus, fully in-process — no sidecar, no
+external service. Vectors are computed by an ONNX model and stored in an HNSW
+index; the =~:= search operator queries it.
+
+* What exists
+- =src/embedding.rs=: usearch HNSW index persisted to =vectors.idx= +
+  =vectors.map=; in-process ONNX embeddings via fastembed. The model loads
+  lazily on first embed, is cached on disk (=<data_dir>/fastembed_cache=), and
+  the release build ships it beside the binary.
+- Search integration: =~:concept= / =~:"phrase":k= (default k=10) in
+  =src/search.rs=; over-fetches k×10 from HNSW when kind/author filters are
+  present, then post-filters.
+- Endpoints: =GET /api/v1/embed/status= (model health + index size),
+  =POST /api/v1/embed/sync= (incremental), =POST /api/v1/embed/reindex= (full).
+- Background task in =src/main.rs=: embeds new events (and fetches missing
+  sections) on a 60-second interval when embeddings are enabled.
+- Web: reindex button + live event-count indicator in settings
+  (=web/src/lib/components/EmbeddingSettings.svelte=); score badges on
+  semantic results; embedding pill in the modeline.
+
+* Gaps / open edges
+- Per-event =sync_embeddings()= is slow on large batches; bulk JSONL ingest
+  works around it with a single sync at the end.
+
+* Related
+- [[file:index.org][Index]]
+- [[file:idea-see-also.org][See-also]]
+- [[file:cmp-library-tools.org][Library tools comparison]]
+- [[file:feat-search.org][Search]]

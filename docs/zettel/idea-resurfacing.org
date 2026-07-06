@@ -1,0 +1,52 @@
+#+TITLE: Idea: resurfacing / deliberate review
+#+TYPE: idea
+#+STATUS: brainstorm — out of scope, captured for orientation
+#+DATE: 2026-07-05
+
+* What it means
+
+The counterweight to a write-only archive. The universal failure of
+highlight/note systems is that captured material is never seen again;
+Readwise's Daily Review attacks it directly: a small scheduled dose
+(5–15 items) of past highlights resurfaced on a spaced-repetition-ish
+schedule, with lightweight feedback (keep / discard / favorite) and
+user-tunable decay tiers. The point is not flashcard mastery — it is
+that the knowledge layer stays /alive/.
+
+* Data
+
+Sources to sample from already exist as events: 9802 highlights,
+={{quote:}}= quotes, standalone note 30041s, bookmarked items. Feedback
+(discard/favorite/snooze tier) is local state, same store family as
+[[file:idea-reading-states.org][reading states]] — publishing one's review
+behavior is nobody's business (private layer later, gift-wrapped).
+
+* Representation (engine)
+
+- =GET /api/v1/review/sample?n=10= — weighted sampling over the knowledge
+  layer: older + less-recently-resurfaced + favorited weigh up;
+  discarded weighs to zero. A simple decay function first; real SRS
+  scheduling only if the feature earns it.
+- =POST /api/v1/review/feedback= — {id, action: keep|discard|favorite}.
+
+* UI/UX
+
+- A *review buffer* in the WM shell (research class): one item at a time,
+  full provenance chrome, jump-to-source, and the promote gestures from
+  [[file:idea-see-also.org][See Also]] (a resurfaced quote can become a ref
+  in today's draft — review feeds writing).
+- Entry point, not interruption: a modeline count ("12 to review"), never
+  a notification (see [[file:mission.org][orientation dials]]).
+
+* Open questions
+
+- Sampling weights: age-based decay only, or engagement-informed?
+- Does review include *sections you wrote* (self-review of drafts) or
+  only captured material?
+- Frequency cap / session length defaults.
+
+* Related
+
+- [[file:index.org][Index]]
+- [[file:idea-reading-states.org][Idea: reading states]]
+- [[file:cmp-readwise.org][Readwise]]

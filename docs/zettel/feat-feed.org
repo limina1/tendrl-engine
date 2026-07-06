@@ -1,0 +1,33 @@
+#+TITLE: Feed
+#+TYPE: feature
+#+STATUS: implemented
+#+DATE: 2026-07-05
+
+The library view: a card list of publications known to the local database,
+with provenance so the user can tell at a glance what is local-only versus
+seen on relays.
+
+* What exists
+- Publication cards with title, author, summary, and section count
+  (=web/src/lib/wm/renderers/FeedBuffer.svelte=; data from
+  =GET /api/v1/publications=).
+- Provenance badge: relay provenance via nostrdb =note.relays()=, plus a
+  "local" pill driven by =LocalPublicationTracker= — shown until a relay
+  accepts the broadcast.
+- =Sync all= pulls fresh data from the fetch relays (Confirm-mode gated like
+  any other user-initiated fetch).
+- Per-item hamburger menu: open, copy address, ignore.
+- Ignore list filtering: ignored =kind:pubkey:d_tag= identifiers are hidden
+  here, in search, and in semantic results; the Ignored buffer manages them.
+- Pagination raised to 5000 items for large libraries; feed lives in the
+  =work= slot of the WM shell (main content surface).
+
+* Gaps / open edges
+- No read/unread or reading-progress state on cards yet.
+- Feed is a flat list; no user-defined feed groupings or saved queries.
+
+* Related
+- [[file:index.org][Index]]
+- [[file:idea-reading-states.org][Reading states]]
+- [[file:idea-event-badges.org][Event badges]]
+- [[file:idea-feeds-as-indexes.org][Feeds as indexes]]
