@@ -30,7 +30,7 @@
 	} from '$lib/compose/state';
 	import { getAppState } from '$lib/state.svelte';
 	import { runTour, discovery, TIPS } from '$lib/wm/discovery.svelte';
-	import { toursForKind } from '$lib/wm/registry';
+	import { toursForKind } from '$lib/wm/tours';
 	import { openComposeHelp } from '$lib/wm/compose-help.svelte';
 
 	const app = getAppState();
