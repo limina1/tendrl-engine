@@ -22,6 +22,15 @@ without per-component fetch logic.
   plus =ProfileView= / =ProfileModal= / =PersonResultItem= components.
 - A profile can be captured into the assistant's shared context via the
   "+ Context" button on the profile bar.
+- Profile-bar hamburger menu (2026-07-06, branch =profile-view-menu=):
+  copy npub / copy nprofile / ignore author. nprofile encoding added
+  engine-side (=nip19::encode_nprofile=, =EncodeRequest::Nprofile= on
+  =POST /api/v1/encode=); strings pre-encoded on pubkey change so copy
+  stays inside the clipboard user-gesture.
+- Profile tabs beyond publications/articles/wikis/sections/comments:
+  *highlights* (NIP-84 kind 9802 by author, rows open in the discussion
+  view) and *specs* (kind 30817 community-authored NIPs, routed to
+  =DocBuffer= like wikis). Both kinds are in the profile fetch union.
 
 * Gaps / open edges
 - The follow/mute/bookmark parsers in =user_data.rs= (kinds 3/10000/10003/
