@@ -47,6 +47,8 @@ exists (with code paths), gaps.
 - [[file:feat-import.org][Document import]] — PDF/DOCX/EPUB/HTML → events, JSONL ingest/export
 - [[file:feat-assistant.org][LLM assistant]] — chat fragments, agentic tool-calling
 - [[file:feat-shell.org][WM shell]] — buffers, slots, modal nav
+- [[file:feat-ui-patterns.org][UI patterns]] — the interaction-pattern
+  catalog: blessed primitives, divergence ledger, relay-entry case study
 - [[file:feat-appearance.org][Appearance]] — themes, walkthroughs
 
 * Decisions

@@ -1,0 +1,198 @@
+#+TITLE: UI/UX Pattern Language
+#+TYPE: feature
+#+STATUS: partial
+#+DATE: 2026-07-06
+
+The catalog of interaction patterns the web shell actually uses: what the
+canonical implementation of each is, where it lives, and where the codebase
+diverges from itself. Written so that anyone (human or AI) building new UI
+conforms to an existing pattern instead of inventing a parallel one — the
+motivating incident was a menu entry that raised a native =window.prompt=
+to add a relay instead of using the app's own entry patterns. STATUS is
+=partial= because the patterns exist but are not yet uniformly applied;
+the divergence ledger below is the consolidation worklist.
+
+* The blessed primitives (reach for these first)
+
+- *Text prompt* — =promptText()= in =web/src/lib/wm/text-prompt.svelte.ts=;
+  a single =<TextPromptModal />= in =+layout= renders whatever prompt is
+  active (leaf state module + declarative renderer — the toast pattern; no
+  manual =mount()=, no registry import cycles). Promise-based: any buffer
+  can =await promptText({title, placeholder, hint, confirmLabel})=. This is
+  the =window.prompt= replacement; see [[file:feat-shell.org][WM shell]].
+- *Toast* — =app.pushToast(msg, kind?)= (=web/src/lib/state.svelte.ts=) →
+  lower-right =ToastStack= (=aria-live=, RAF countdown, pin, kinds
+  success/info/error/pending). The single non-blocking acknowledgment
+  channel (~100 call sites). SSE-driven =pushActivityToast= adds per-relay
+  lifecycle dots with an Expand → =FetchActivityModal=.
+- *Two-step armed button* — destructive-but-local clicks: first click arms
+  ("really delete? (Ns)"), second executes, timer disarms. Sites:
+  relay-set delete + reset-to-defaults (=RelaysBuffer=), context trash
+  (=ContextPanel=), compose trash (=ComposeView=), armed copy
+  (=ItemBadge=). This replaces =window.confirm=.
+- *Diff-gated confirm modal* — for overwriting shared/published state:
+  show the concrete diff, then confirm. Canonical: the relay-list publish
+  gate (=RelaysBuffer= =publishGate= backed by
+  =POST /api/v1/relays/publish-diff=) showing added/removed/changed/dropped
+  plus a staleness line with on-demand refetch.
+- *Intent-confirm modal* — engine-emitted network intents awaiting
+  approval: =FetchConfirmModal= / =PublishConfirmModal= (deliberately
+  twinned chrome). Checkbox relay list + inline append input + collapsible
+  details; resolving hands the approved relay list back to the operation.
+  =NetworkModeChoiceModal= is the intentionally non-dismissable variant
+  (a mode must be chosen; no backdrop-close, no Escape).
+
+* Overlays (modal/dialog) — pattern without a primitive
+
+~19 components carry =role="dialog"= but there is *no shared Modal
+component, no portal, no modal-stack manager*. Each hand-rolls a fixed
+backdrop (click-to-close via =e.target === e.currentTarget=) wrapping a
+=role="dialog" aria-modal="true"= card, mounted at the bottom of
+=routes/+layout.svelte= and driven by nullable =app=-store fields
+(=eventModalData=, =jsonModalData=, …). Consequences: divergent class
+families (=.modal-backdrop=, =.rf-*=, =.nm-*=, =.gate-*=, =.evm__*=),
+inconsistent Escape handling (some =svelte:window onkeydown=, some
+Enter-only), and nothing prevents two modals overlapping. When adding a
+modal, copy =FetchConfirmModal='s structure and mount it in =+layout=.
+
+* Menus — four coexisting idioms
+
+1. Mode-line click → SPC leader (which-key popup) — the app's "menu bar".
+2. The =menu= pill on event rows → =EventViewModal=, the universal event
+   menu (feed, profile, reader, sections; keybind =m=). It is really a
+   modal, not a menu.
+3. Walkthrough "W" dropdowns in pane heads (=walkMenu= snippet,
+   =role="menu"=, hand-positioned via =getBoundingClientRect=).
+4. =ThemePicker= dropdown (=role="listbox"=, hover-preview with revert).
+No shared popover primitive; positioning and ARIA roles differ per menu.
+Prefer idioms 1–2 for new actions; a new dropdown means extending this
+divergence.
+
+* Keyboard & selection conventions
+
+- SPC leader tree (=web/src/lib/wm/leader.ts=) + M-x minibuffer
+  (=routes/+page.svelte=): every new command should register in the leader
+  tree and/or M-x, not as a bespoke hotkey. (Divergence: the M-x
+  =commands= list is still a hardcoded representative subset.)
+- Text fields carry =data-entry= — the implicit contract the focus system
+  (=focusEntryFieldIn=) and insert-mode detection rely on. A new input
+  without it breaks modal navigation.
+- Lists are keyboard-cursor lists: =j/k= + Enter, =data-cursor={i}= rows,
+  =--cursor= highlight, scroll-into-view. Checkbox multi-select
+  (=checkedIds= + batch bar) coexists on search/context surfaces — two
+  selection models on one surface is a known confusion point.
+
+* Pills, badges, status
+
+Families: mode-line =.pill= segments (relays, network, embedding,
+identity); =PoolStateBadges= (pool membership + provenance: local,
+relay-label, fork, part-of-N); =ItemBadge= (cross-panel provenance
+icons + armed copy); kind/category chips (minibuffer, leader, NIP-11
+flags). Naming drifts (=.pill--*=, =.psb__pill--*=, =.badge-*=,
+=.nm-badge--*=) though palettes were aligned to the legacy =.pill= look.
+Legacy =unsigned/draft= pill survives in =PoolStateBadges= even though
+the signed-snapshot model never writes unsigned events.
+
+* Loading, progress, empty, error
+
+- Loading is expressed four ways: =SectionStatus=
+  (pending/loading/loaded/error) + skeleton bars (reader/continuous view);
+  boolean =loading= + =.spin= CSS; SSE progress frames
+  (={type:'progress', done, total}=, per-relay
+  pending/sending/accepted/rejected/timeout in
+  =publish-progress.svelte.ts= — still mock data, not wired); and
+  =ResolutionTracker= for nostrdown embeds. No shared spinner/skeleton
+  component.
+- Empty states are per-component =.empty= blocks with local copy; no
+  shared component, no consistent CTA convention.
+- Errors travel four unrelated channels: toast (most common), inline
+  section-error state, embed-local retry text (=EmbedCard=), and native
+  =alert()= (divergence — see ledger).
+
+* Discovery layer
+
+Every substantive new surface gets a =data-tour= anchor and, where it
+introduces a concept, a tip in =web/src/lib/wm/discovery.svelte.ts=
+(event-gated coachmarks rendered by =DiscoveryTip=, localStorage-persisted,
+chainable, launched from the "W" menus). 40+ anchors exist; an unanchored
+surface is invisible to the walkthrough system. See
+[[file:feat-appearance.org][Appearance]].
+
+* Case study: relay entry — five surfaces, three philosophies
+
+Where a relay URL can be entered/selected, and why each differs:
+
+1. =RelaysBuffer= (working sets, discovery classes, named sets) — entry
+   via =promptText()=; *lenient* validation: =normalizeRelayUrl= (bare
+   hostname → =wss://=, lowercase, strip default ports); persists to the
+   engine (=POST /api/v1/config/update= → =relays.json=).
+2. =FetchConfirmModal= (intent approval) — checkbox list + inline append
+   input; *strict* validation (must match =^wss?://=, no normalization);
+   feed-intent additions persist to the =fetch= set, all others are
+   ephemeral for that one fetch.
+3. =PublishConfirmModal= (destination picker) — same chrome and strict
+   validation as 2; *never* persists; the chosen set applies to the one
+   publish/broadcast and feeds relay provenance.
+4. =SearchConfigModal= — toggle *chips* (not checkboxes) + inline input;
+   strict validation; persists to the *client-side* =searchConfig= store
+   only (drives the offline search-relay fallback), never the engine.
+5. =EventViewModal= "Found on" — display-only chips; click focuses the
+   relay's row in =RelaysBuffer= (=requestRelayFocus=), no entry.
+
+Evaluated: the *persistence* differences are justified — durable working
+sets (1) vs. one-shot operation overrides (2, 3) vs. a client-side view
+preference (4) are genuinely different lifecycles, and the intent modals
+deliberately share chrome. The *validation* split is not justified: three
+surfaces reject the bare hostnames the fourth happily normalizes. All
+entry points should route through =normalizeRelayUrl= (=$lib/relay/nip11=,
+mirroring Rust's =normalize_relay_url=). The chip-vs-checkbox widget split
+between 4 and 2/3 is cosmetic drift, worth unifying whenever one is
+touched.
+
+* Divergence ledger (consolidation candidates)
+
+- *Native browser dialogs* — 7 call sites contradict the no-browser-dialog
+  rule and the existing primitives: =confirm()= in
+  =EmbeddingSettings.svelte= (clear index), =SettingsBuffer.svelte=,
+  =ComposeView.svelte= ×2 (unlocked-section publish),
+  =ReaderBuffer.svelte= (draft in progress); =alert()= ×3 in
+  =state.svelte.ts= (export/import results). Replace with armed buttons /
+  =promptText=-style confirm / toasts.
+- *Relay URL validation split* — strict-regex vs. =normalizeRelayUrl=
+  (case study above).
+- *Missing primitives* — Modal/Dialog, Menu/Popover, EmptyState are
+  hand-rolled per component; the text prompt shows the extraction shape
+  (leaf state module + one declarative renderer in =+layout=).
+- *Toast TTLs* — ad-hoc magic numbers (1500–4500ms) per call site; no
+  semantic durations.
+- *Mock chrome in production paths* — M-x =commands= subset;
+  =publish-progress.svelte.ts= mock data.
+- *Dual navigation code paths* — =try getActiveStore() catch legacy=
+  fallbacks in =+layout.svelte=.
+- *Dead state* — the =unsigned= pill in =PoolStateBadges=.
+
+* Rules of thumb for new UI
+
+- Never =window.prompt/confirm/alert=. Text entry → =promptText()=;
+  destructive-local → two-step armed; overwrite of shared state →
+  diff-gated modal; network side effects → intent confirm.
+- Quick acknowledgment → =app.pushToast=; never a blocking dialog.
+- Relay URL input → =normalizeRelayUrl=, accept bare hostnames.
+- New text input → =data-entry=. New list → =j/k= cursor + =data-cursor=.
+- New command → leader tree / M-x, not a bespoke hotkey.
+- New surface → =data-tour= anchor (+ discovery tip if it introduces a
+  concept).
+- New modal → copy =FetchConfirmModal='s backdrop/dialog structure, mount
+  in =+layout= (until a shared Modal primitive exists).
+- Buffer components: no Svelte lifecycle hooks, no wm/registry import
+  cycles — props + =$effect= teardown, leaf state modules.
+
+* Related
+
+- [[file:index.org][Index]]
+- [[file:feat-shell.org][WM shell]] — the frame these patterns live in
+- [[file:feat-relays.org][Relay sets]] — the case-study subject
+- [[file:feat-network.org][Network modes]] — source of fetch intents
+- [[file:feat-search.org][Search]] — search-relay config surface
+- [[file:feat-appearance.org][Appearance]] — themes + walkthrough system
+- [[file:feat-compose.org][Compose]] — carries two of the native confirms

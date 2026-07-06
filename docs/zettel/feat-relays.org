@@ -59,3 +59,4 @@ edits are never auto-published as Nostr events.
 - [[file:index.org][Index]]
 - [[file:feat-network.org][Network modes]]
 - [[file:feat-publishing.org][Publishing]]
+- [[file:feat-ui-patterns.org][UI patterns]] — relay entry is its case study

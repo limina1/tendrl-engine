@@ -27,8 +27,10 @@ navigation. Full spec: =docs/wm-shell.md=; shell root in
   search, compose; =h= / =l= drill axis per buffer.
 - Multi-frame model: multiple tabs share one global buffer list; layouts and
   windows are per-frame (Emacs frame semantics).
-- Shell-wide dialog primitives — the shell never uses browser dialogs
-  (=window.prompt= / =confirm= / =alert=; grep stays clean):
+- Shell-wide dialog primitives — the rule is no browser dialogs
+  (=window.prompt= / =confirm= / =alert=). =window.prompt= is fully
+  eliminated; 7 native =confirm=/=alert= call sites remain outside the
+  relay buffer — ledger in [[file:feat-ui-patterns.org][UI patterns]]:
   - =promptText()= (=web/src/lib/wm/text-prompt.svelte.ts=): global
     promise-based text entry; the single =<TextPromptModal />= in
     =+layout= renders whatever is active (toast pattern — leaf state
@@ -47,6 +49,7 @@ navigation. Full spec: =docs/wm-shell.md=; shell root in
 
 * Related
 - [[file:index.org][Index]]
+- [[file:feat-ui-patterns.org][UI patterns]] — the interaction-pattern catalog
 - [[file:feat-reader.org][Reader]]
 - [[file:feat-compose.org][Compose]]
 - [[file:feat-feed.org][Feed]]
