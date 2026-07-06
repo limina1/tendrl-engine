@@ -12,8 +12,12 @@ Markdown/Org/AsciiDoc/plain content. Normative grammar:
 * What exists (merged on this branch)
 
 - Parser (=src/nostrdown.rs=): ={{ref|wiki|embed|quote|slot:target|display}}=
-  plus the =[[ ]]= wikilink alias (markup-native link targets skipped);
-  NIP-54 slug normalization; byte + UTF-16 spans; ~15 unit tests.
+  plus the =[[ ]]= wikilink alias (markup-native link targets skipped) and the
+  ={{@npub}}=/={{@nprofile}}= mention shorthand; NIP-54 slug normalization;
+  byte + UTF-16 spans; ~27 unit tests.
+- Mentions (=RefKind::Mention=): ={{@npub…}}=/={{@nprofile…}}= resolve the kind-0
+  profile and render inline as an =@handle= link (not the full card), emitting
+  =["p", pubkey, relay?]=; ={{@name}}= by contact name stays reserved.
 - Resolution (=publication.rs::resolve_refs=, =POST /api/v1/nostrdown/resolve=):
   =ref= → sibling sections by title-slug (draft siblings resolve pre-publish);
   =embed= → entity, LocalOnly with pending→fetch via Confirm intents
@@ -29,8 +33,6 @@ Markdown/Org/AsciiDoc/plain content. Normative grammar:
 
 * Accepted tasks (this feature epoch, before ff into tendrl-web)
 
-- Implement ={{@…}}= mentions (=RefKind::Mention=) — spec lists it shipped,
-  tokenizer rejects it; make code match spec.
 - Boundary cleanup: Rust parse endpoint, delete the TS twins — see
   [[file:decision-nostrdown-parsing.org][decision]].
 

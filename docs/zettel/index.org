@@ -61,7 +61,7 @@ exists (with code paths), gaps.
 Merged on this branch; fast-forwards into =tendrl-web= when the epoch
 completes. Remaining accepted tasks (tracked in
 [[file:feat-nostrdown.org][the feature note]]):
-- [ ] implement ={{@…}}= mentions (=RefKind::Mention=)
+- [X] implement ={{@…}}= mentions (=RefKind::Mention=)
 - [ ] Rust parse endpoint; delete the TS grammar twins
 
 * Ideas — captured, not scheduled

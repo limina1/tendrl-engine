@@ -546,7 +546,9 @@ but powerful for knowledge graphs.
 
 - [ ] ={{cite:}}= citations → kind *30161* (NKBIP-03-revised-2), with a
   =["cite", d-tag, "30161:pk:d-tag"]= tag; resolver + emission mirror =quote=
-- [ ] ={{@name}}= profile mention shorthand
+- [X] ={{@npub}}= / ={{@nprofile}}= profile mention — /inline =@handle= link (not
+  the full =embed= card), emits =["p", pubkey, relay?]=; click navigates to the
+  profile. Entity-only; ={{@name}}= (mention by contact name) stays reserved./
 - [ ] Citation events with rich metadata — kind *30161*, source type via the
   NKBIP-06 =M= tag (settled; was an open "kind TBD — not 30030 = Emoji sets")
 - [ ] Publication-level citation style tags (=["citation-style", …]= on the 30040)

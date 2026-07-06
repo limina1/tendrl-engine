@@ -2110,6 +2110,26 @@ impl<'a> PublicationEngine<'a> {
                         apply_event(&mut resolved, &ev, false, display_given);
                     }
                 }
+                RefKind::Mention => {
+                    // Resolve the kind-0 profile for the handle; the entity is
+                    // always valid so `found` is set even with no local profile.
+                    // Renders inline as `@handle` (the web prepends the `@`); a
+                    // click navigates to the profile via `event_kind == 0`.
+                    self.fill_from_entity(
+                        &r.target,
+                        &mut resolved,
+                        false,
+                        display_given,
+                        FetchPolicy::LocalOnly,
+                    )
+                    .await;
+                    // No local profile → the label is still the raw entity; show a
+                    // truncated `npub1abcd…wxyz` rather than the full 63-char bech32.
+                    if !display_given && resolved.title.is_none() && resolved.label.len() > 20 {
+                        let l = &resolved.label;
+                        resolved.label = format!("{}…{}", &l[..10], &l[l.len() - 4..]);
+                    }
+                }
                 RefKind::Quote => {
                     // Resolve the source for attribution only (title/author/coord);
                     // the quoted body is the inline `|text`, not the source content.

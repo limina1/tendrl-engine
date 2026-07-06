@@ -19,7 +19,9 @@
 //!             normalized d-tag
 //! - `embed` — transclusion of another event's content inline
 //!
-//! `cite`, `@name`, `term`, and `media` are deferred (see the nostrdown roadmap).
+//! `{{@npub…}}`/`{{@nprofile…}}` profile mentions are also recognised (an inline
+//! `@handle` emitting a `p` tag). `cite`, `@name` (mention by contact name),
+//! `term`, and `media` are deferred (see the nostrdown roadmap).
 //!
 //! ## `[[ ]]` wikilinks — recognised, scoped to Nostr links only
 //!
@@ -53,6 +55,11 @@ pub enum RefKind {
     /// excerpt text travels inline (after `|`), `target` references the source
     /// for attribution. Modeled on NIP-84 highlights (text + `a`/`e`/`p`).
     Quote,
+    /// `{{@npub…}}` / `{{@nprofile…}}` — an inline profile mention. The `@` is
+    /// shorthand for the prefix; it renders an `@handle` link (not the full
+    /// profile card `embed` gives) and emits `["p", pubkey, relay?]`. Entity-only:
+    /// `@name` (mention by name, needing contact resolution) stays reserved.
+    Mention,
 }
 
 impl RefKind {
@@ -73,6 +80,7 @@ impl RefKind {
             RefKind::Wiki => "wiki",
             RefKind::Embed => "embed",
             RefKind::Quote => "quote",
+            RefKind::Mention => "mention",
         }
     }
 }
@@ -247,6 +255,10 @@ fn find_double(content: &str, from: usize, b: u8) -> Option<usize> {
 /// are the byte offsets of the surrounding token (braces included).
 fn parse_inner(inner: &str, start: usize, end: usize) -> Option<NostrdownRef> {
     let inner = inner.trim();
+    // `{{@…}}` mention shorthand: the `@` stands in for `prefix:`.
+    if let Some(rest) = inner.strip_prefix('@') {
+        return parse_mention(rest.trim(), start, end);
+    }
     let colon = inner.find(':')?;
     let kind = RefKind::from_prefix(inner[..colon].trim())?;
     let rest = inner[colon + 1..].trim();
@@ -280,6 +292,40 @@ fn parse_inner(inner: &str, start: usize, end: usize) -> Option<NostrdownRef> {
         target,
         raw_target: target_raw.to_string(),
         is_entity,
+        display,
+        start,
+        end,
+    })
+}
+
+/// Parse a `{{@…}}` mention body (the text after `@`) into a
+/// [`RefKind::Mention`], or `None` if the target is not an npub/nprofile entity.
+/// Entity-only: a bare `@name` (mention by contact name) is reserved and left as
+/// literal text, as is any non-profile entity (`@naddr`/`@nevent`/`@note`).
+fn parse_mention(rest: &str, start: usize, end: usize) -> Option<NostrdownRef> {
+    let (target_raw, display) = match rest.split_once('|') {
+        Some((t, d)) => (t.trim(), Some(d.trim())),
+        None => (rest, None),
+    };
+    let display = display.filter(|d| !d.is_empty()).map(str::to_string);
+    if target_raw.is_empty() {
+        return None;
+    }
+    // Only a profile entity mentions cleanly to a `p` tag.
+    let stripped = strip_nostr_prefix(target_raw);
+    let is_profile = ["npub1", "nprofile1"].iter().any(|hrp| {
+        stripped.len() > hrp.len()
+            && stripped[..hrp.len()].eq_ignore_ascii_case(hrp)
+            && stripped[hrp.len()..].chars().all(|c| c.is_ascii_alphanumeric())
+    });
+    if !is_profile {
+        return None;
+    }
+    Some(NostrdownRef {
+        kind: RefKind::Mention,
+        target: stripped.to_string(),
+        raw_target: target_raw.to_string(),
+        is_entity: true,
         display,
         start,
         end,
@@ -550,6 +596,26 @@ pub fn reference_tags(content: &str) -> Vec<Vec<String>> {
                     ),
                 }
             }
+            // A profile mention: a plain `["p", pubkey, relay?]` tag — the same
+            // marker `{{embed:npub…}}` emits, since a mention is just a lighter
+            // render of the same reference.
+            RefKind::Mention => {
+                let Ok(decoded) = crate::nip19::decode(&r.target) else {
+                    continue;
+                };
+                let tag = match decoded {
+                    Decoded::Npub { pubkey } => vec!["p".into(), pubkey],
+                    Decoded::Nprofile { pubkey, relays } => {
+                        let mut t = vec!["p".into(), pubkey];
+                        if let Some(relay) = relays.into_iter().next() {
+                            t.push(relay);
+                        }
+                        t
+                    }
+                    _ => continue,
+                };
+                push(&mut out, &mut seen, tag);
+            }
         }
     }
     out
@@ -642,6 +708,49 @@ mod tests {
         assert_eq!(refs[0].kind, RefKind::Ref);
         assert_eq!(refs[1].kind, RefKind::Wiki);
         assert_eq!(refs[1].target, "justice");
+    }
+
+    #[test]
+    fn parses_mention_npub() {
+        let pk = "cd".repeat(32);
+        let npub = crate::nip19::encode_npub(&pk).unwrap();
+        let r = one(&format!("hi {{{{@{npub}}}}} there"));
+        assert_eq!(r.kind, RefKind::Mention);
+        assert!(r.is_entity);
+        assert_eq!(r.target, npub);
+        assert_eq!(r.display, None);
+    }
+
+    #[test]
+    fn mention_strips_nostr_prefix_and_takes_display() {
+        let pk = "ef".repeat(32);
+        let npub = crate::nip19::encode_npub(&pk).unwrap();
+        let r = one(&format!("{{{{@nostr:{npub}|Aesop}}}}"));
+        assert_eq!(r.kind, RefKind::Mention);
+        assert_eq!(r.target, npub);
+        assert_eq!(r.raw_target, format!("nostr:{npub}"));
+        assert_eq!(r.display.as_deref(), Some("Aesop"));
+    }
+
+    #[test]
+    fn mention_by_bare_name_is_reserved() {
+        // `@name` needs contact resolution — left as literal text for now.
+        assert!(parse("say hi to {{@aesop}} please").is_empty());
+    }
+
+    #[test]
+    fn mention_of_non_profile_entity_is_ignored() {
+        // `@naddr`/`@nevent` aren't profiles — a mention only makes a `p` tag.
+        let naddr = crate::nip19::encode_naddr(30041, &"ab".repeat(32), "s", &[]).unwrap();
+        assert!(parse(&format!("{{{{@{naddr}}}}}")).is_empty());
+    }
+
+    #[test]
+    fn mention_emits_p_tag() {
+        let pk = "12".repeat(32);
+        let npub = crate::nip19::encode_npub(&pk).unwrap();
+        let tags = reference_tags(&format!("cc {{{{@{npub}}}}}"));
+        assert!(tags.contains(&vec!["p".to_string(), pk]));
     }
 
     #[test]

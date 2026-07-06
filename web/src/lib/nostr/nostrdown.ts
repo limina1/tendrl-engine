@@ -40,7 +40,7 @@ export function normalizeSlug(s: string): string {
  *  code-unit offsets into the section text spanning the whole token, so the
  *  renderer can replace `content.slice(start, end)` wholesale. */
 export interface ResolvedRef {
-	kind: 'ref' | 'wiki' | 'embed' | 'quote';
+	kind: 'ref' | 'wiki' | 'embed' | 'quote' | 'mention';
 	start: number;
 	end: number;
 	/** Canonical lookup target (normalized slug or bech32 entity). */
