@@ -16,12 +16,11 @@ import {
 	type DecorationSet,
 	EditorView,
 	keymap,
-	MatchDecorator,
 	ViewPlugin,
 	type ViewUpdate
 } from '@codemirror/view';
-import { Prec, type Extension } from '@codemirror/state';
-import { parseWikilink } from '$lib/nostr/nostrdown';
+import { Prec, StateEffect, StateField, type Extension } from '@codemirror/state';
+import { parseNostrdown } from '$lib/api';
 import {
 	acceptCompletion,
 	autocompletion,
@@ -31,49 +30,106 @@ import {
 	type CompletionResult
 } from '@codemirror/autocomplete';
 
-/** Token shape: a `{{ref|wiki|embed|quote:target(#fragment)?(|modifier)?}}` event
- *  reference, or a `[[topic]]` / `[[d-tag][display]]` / `[[topic|alias]]` Nostr
- *  wikilink (last alternative, group 5). */
-const TOKEN_RE =
-	/\{\{(ref|wiki|embed|quote):([^}|#]+)(?:#([^}|]+))?(?:\|([^}]+))?\}\}|\[\[(.+?)\]\]/g;
-
 export interface NostrdownToken {
-	kind: 'ref' | 'wiki' | 'embed' | 'quote';
-	/** Target as written (trimmed) — normalize before matching slugs. */
+	kind: 'ref' | 'wiki' | 'embed' | 'quote' | 'mention';
+	/** Normalized target (engine-side NIP-54 slug or bech32 entity). */
 	target: string;
-	fragment?: string;
 	display?: string;
 	/** The full `{{…}}` / `[[…]]` text, for handing to the engine resolver verbatim. */
 	raw: string;
-	/** Document offsets of the token (delimiters included). */
+	/** Document offsets of the token (delimiters included). CM positions are
+	 *  UTF-16 code units, matching the engine's `ParsedToken` span unit. */
 	from: number;
 	to: number;
 }
 
-/** Build a token from a regex match, or `null` for a `[[ ]]` that names
- *  markup-native content (a URL/scheme/image/path) we must not claim. */
-function tokenFromMatch(m: RegExpMatchArray, from: number): NostrdownToken | null {
-	const base = { raw: m[0], from, to: from + m[0].length };
-	if (m[5] !== undefined) {
-		const parsed = parseWikilink(m[5]);
-		if (!parsed) return null;
-		return { kind: 'wiki', target: parsed.target, display: parsed.display, ...base };
-	}
-	return {
-		kind: m[1] as NostrdownToken['kind'],
-		target: m[2].trim(),
-		fragment: m[3]?.trim() || undefined,
-		display: m[4]?.trim() || undefined,
-		...base
-	};
+const refMark = Decoration.mark({ class: 'cm-nd' });
+
+// Async decorations: the grammar lives in the engine (`/api/v1/nostrdown/parse`),
+// so we can't decorate synchronously as the doc changes. Instead a debounced
+// ViewPlugin fetches token spans and dispatches them via `setTokens`; a StateField
+// holds them, remapping positions through every edit so decorations + click
+// metadata stay aligned between fetches. Stale fetches (doc moved on) are dropped.
+const setTokens = StateEffect.define<NostrdownToken[]>();
+
+interface TokenState {
+	tokens: NostrdownToken[];
+	deco: DecorationSet;
 }
 
-const refMark = Decoration.mark({ class: 'cm-nd' });
-const decorator = new MatchDecorator({
-	regexp: TOKEN_RE,
-	// Skip a `[[ ]]` that resolves to a markup-native link (tokenFromMatch → null).
-	decoration: (m) => (tokenFromMatch(m, 0) ? refMark : null)
+function decoOf(tokens: NostrdownToken[]): DecorationSet {
+	return Decoration.set(
+		tokens.filter((t) => t.to > t.from).map((t) => refMark.range(t.from, t.to)),
+		true
+	);
+}
+
+const tokenField = StateField.define<TokenState>({
+	create: () => ({ tokens: [], deco: Decoration.none }),
+	update(value, tr) {
+		if (tr.docChanged) {
+			// Keep spans aligned with the text until the next fetch lands.
+			const tokens = value.tokens
+				.map((t) => ({ ...t, from: tr.changes.mapPos(t.from), to: tr.changes.mapPos(t.to, 1) }))
+				.filter((t) => t.to > t.from);
+			value = { tokens, deco: value.deco.map(tr.changes) };
+		}
+		for (const e of tr.effects) {
+			if (e.is(setTokens)) value = { tokens: e.value, deco: decoOf(e.value) };
+		}
+		return value;
+	},
+	provide: (f) => EditorView.decorations.from(f, (v) => v.deco)
 });
+
+/** Debounced engine-parse of the whole doc → token spans. Skips docs with no
+ *  `{{`/`[[`, and drops a result if the doc changed while the request was in
+ *  flight (a newer fetch is already scheduled). */
+function tokenFetcher() {
+	return ViewPlugin.fromClass(
+		class {
+			timer: ReturnType<typeof setTimeout> | undefined;
+			constructor(view: EditorView) {
+				this.schedule(view);
+			}
+			update(u: ViewUpdate) {
+				if (u.docChanged) this.schedule(u.view);
+			}
+			schedule(view: EditorView) {
+				clearTimeout(this.timer);
+				this.timer = setTimeout(() => void this.run(view), 150);
+			}
+			async run(view: EditorView) {
+				const text = view.state.doc.toString();
+				if (!(text.includes('{{') || text.includes('[['))) {
+					if (view.state.field(tokenField).tokens.length)
+						view.dispatch({ effects: setTokens.of([]) });
+					return;
+				}
+				let parsed: Awaited<ReturnType<typeof parseNostrdown>>;
+				try {
+					parsed = await parseNostrdown([{ key: 'doc', content: text }]);
+				} catch {
+					return;
+				}
+				if (view.state.doc.toString() !== text) return; // stale; a newer fetch is pending
+				const spans = parsed['doc'] ?? [];
+				const tokens: NostrdownToken[] = spans.map((s) => ({
+					kind: s.kind,
+					target: s.target,
+					display: s.display,
+					raw: text.slice(s.start, s.end),
+					from: s.start,
+					to: s.end
+				}));
+				view.dispatch({ effects: setTokens.of(tokens) });
+			}
+			destroy() {
+				clearTimeout(this.timer);
+			}
+		}
+	);
+}
 
 const theme = EditorView.baseTheme({
 	'.cm-nd': {
@@ -85,20 +141,11 @@ const theme = EditorView.baseTheme({
 	}
 });
 
-/** The token under document position `pos`, if any (re-scans just that line). */
+/** The token under document position `pos`, if any — read from the last engine
+ *  parse (remapped through edits by `tokenField`), no local re-scan. */
 function tokenAt(view: EditorView, pos: number): NostrdownToken | null {
-	const line = view.state.doc.lineAt(pos);
-	const re = new RegExp(TOKEN_RE.source, 'g'); // own lastIndex
-	let m: RegExpExecArray | null;
-	while ((m = re.exec(line.text))) {
-		const from = line.from + m.index;
-		const to = from + m[0].length;
-		if (pos >= from && pos <= to) {
-			const token = tokenFromMatch(m, from);
-			if (token) return token;
-		}
-	}
-	return null;
+	const { tokens } = view.state.field(tokenField);
+	return tokens.find((t) => pos >= t.from && pos <= t.to) ?? null;
 }
 
 // ── extension ─────────────────────────────────────────────────────────────
@@ -128,19 +175,6 @@ export function nostrdownEditor(
 		) => void;
 	} = {}
 ): Extension {
-	const highlighter = ViewPlugin.fromClass(
-		class {
-			decorations: DecorationSet;
-			constructor(view: EditorView) {
-				this.decorations = decorator.createDeco(view);
-			}
-			update(u: ViewUpdate) {
-				this.decorations = decorator.updateDeco(u, this.decorations);
-			}
-		},
-		{ decorations: (v) => v.decorations }
-	);
-
 	// Plain-click peek: hand the host the token + its screen rect so it can float
 	// the EmbedCard there (rendered declaratively — see the onPreview doc). Click
 	// off a token dismisses. A doc edit can't leave a stale card because every
@@ -176,7 +210,7 @@ export function nostrdownEditor(
 		}
 	});
 
-	return [highlighter, theme, handlers];
+	return [tokenField, tokenFetcher(), theme, handlers];
 }
 
 // ── inline autocomplete ─────────────────────────────────────────────────────
