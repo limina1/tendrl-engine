@@ -15,7 +15,7 @@ listed at the bottom and tracked in =wm-shell.md= as roadmap items.
 Adjacent docs:
 - =docs/nostrdown.org= — the ={{ }}= reference syntax and parser model
 - =docs/wm-shell.md= — the running WM shell roadmap
-- =docs/publication-architecture.org= — kind 30040 / 30041 semantics
+- =docs/archive/publication-architecture.org= — kind 30040 / 30041 semantics
 
 * Three composable primitives
 

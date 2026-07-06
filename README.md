@@ -1,7 +1,10 @@
 # tendrl-engine
 
-A local-first Nostr backend implementing [NKBIP-01](nips/) — publication
-indexes and sections — with an HTTP API and a web frontend.
+A local-first **reader, writer, and reference manager** built on Nostr: read
+structured publications, research across a distributed event network
+(structured search + semantic embeddings), compose and publish
+[NKBIP-01](nips/) publications (indexes + sections), and manage references
+through the nostrdown reference language. Rust engine + HTTP API + web frontend.
 
 ## Architecture
 

@@ -10,7 +10,7 @@ tiling window manager. It captures resolved decisions, what we're
 building right now, and what's deferred.
 
 For high-level context (what tendrl is, why a redesign, the engine/
-interface separation, the data model), read =docs/design-brief.org=.
+interface separation, the data model), read =docs/archive/design-brief.org=.
 This doc is the working spec; the brief is the orientation packet.
 
 * Roadmap
@@ -52,7 +52,7 @@ running ledger of what was promised vs what shipped.
 
 Tracked here as a single line per work cluster — see commits
 ~872d1cb..3852a74~ for the per-feature granularity, and
-=docs/features.md= for the user-facing summary.
+=docs/zettel/index.org= for the user-facing summary.
 
 - [X] Per-buffer NavHandler registry on BufferStore; non-reactive Map +
       reactive snapshot for diagnostics; singleton on =globalThis= so
@@ -350,7 +350,9 @@ buffer; =kill-buffer= is just Emacs's built-in).
 - =/design= — visual system showcase (typography, color, components).
 - =/design/layouts= — A/B comparison page that resolved layout-scoping
   to Option A.
-- =/design/shell= — interactive WM shell with class-typed slots, five
+- =/design/shell= — *removed in Phase 2* (was a duplicate of root; the
+  WM shell now mounts at root =/+page.svelte=). Kept here for the
+  historical record of what the artboard proved out: class-typed slots,
   layouts, splits, buffer switcher (class/global/recent), M-x, modal
   navigation, =SPC w c= toggle, focused-rail visual.
 
@@ -379,10 +381,10 @@ SPC
 │   ├── d — find-draft
 │   └── p — find-publication
 ├── l — layout
-│   ├── r / w / t / c / z — switch to read/write/triage/chat/zen
+│   ├── (named layouts retired — one base layout; slots toggle/collapse)
 │   └── s — save current as named layout
 ├── t — toggle
-│   └── n — network mode (online/offline)
+│   └── n — network mode (Auto/Confirm)
 ├── q — quit
 │   └── q — quit frame
 └── : — immediate M-x
@@ -412,7 +414,7 @@ Deferred-indefinitely.
 
 * Out of scope (broader product roadmap)
 
-These were flagged in =design-brief.org= but are not part of the WM
+These were flagged in =docs/archive/design-brief.org= but are not part of the WM
 shell work — they're broader product concerns:
 
 - First-run / login UX redesign (encrypted keys, ncryptsec).
@@ -423,6 +425,6 @@ shell work — they're broader product concerns:
 - Visual language polish beyond iceberg tokens (typography hierarchy
   in reader/composer, density tuning).
 - Compose flow internal modes (button/plain/wysiwyg/preview) — see
-  =design-brief-compose.org=. Orthogonal to the WM shell; the composer
+  =docs/archive/design-brief-compose.org=. Orthogonal to the WM shell; the composer
   buffer hosts these modes inside it.
 - Mobile / narrow viewport.

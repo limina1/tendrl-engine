@@ -5,8 +5,11 @@
 
 * What This Project Is
 
-Tendrl Engine is a composition environment for long-form writing on the Nostr
-protocol. It treats Nostr events as a zettelkasten — atomic, tagged, addressable
+Tendrl is a local-first *reader, writer, and reference manager* built on the
+Nostr protocol: read structured publications, research across a distributed
+event network (structured search + semantic embeddings), compose and publish
+NKBIP-01 publications, and manage references through the nostrdown reference
+language. It treats Nostr events as a zettelkasten — atomic, tagged, addressable
 notes that can be searched, discussed with an LLM, and assembled into
 publications.
 
@@ -31,8 +34,8 @@ and the SvelteKit web frontend (=web/=) — over an HTTP/SSE API:
 ┌────────────────────────────────────────────────────────────────┐
 │  Frontends                                                      │
 │  ┌──────────────────┐  ┌───────────────────┐                   │
-│  │ Svelte Web App   │  │ Emacs / Nvim      │                   │
-│  │ (WM/buffer shell)│  │ (planned, via API)│                   │
+│  │ Svelte Web App   │  │ Other frontends   │                   │
+│  │ (WM/buffer shell)│  │ (via API)         │                   │
 │  └────────┬─────────┘  └────────┬──────────┘                   │
 │           ▼                     ▼                               │
 │  ┌─────────────────────────────────────────────────────────┐   │
@@ -47,7 +50,7 @@ and the SvelteKit web frontend (=web/=) — over an HTTP/SSE API:
 #+end_example
 
 ** The governing rule — frontend/backend boundary
-This split is what keeps the engine portable to future frontends (emacs/nvim)
+This split is what keeps the engine portable to any future frontend
 without re-implementing logic per-frontend:
 
 - *Rust owns* fetching, event storage/query, and *all algorithmic derivation of
@@ -124,8 +127,7 @@ The earlier three-panel workbench and the per-route pages (=/p/=, =/compose=,
 A ratatui terminal interface was the original frontend. It has been removed —
 there is no =ratatui=/=crossterm= dependency and a single =[[bin]]=. Its
 vim-flavored interaction model survives conceptually in the web shell's modal
-navigation and keybindings; the planned emacs/nvim frontends will consume the
-same HTTP API.
+navigation and keybindings; any future frontend will consume the same HTTP API.
 
 * Key Design Decisions
 
@@ -189,8 +191,10 @@ exercised by the web UI (full inventory in =docs/features.org=).
   UI-exposed but only the indexer tier routes; wire-or-hide (=docs/relay-classes-and-info-port.md=).
 - *NIP-46* signer transport; *SignerCapabilities* routing.
 - *Publish-flow orchestration* (=docs/publish-flow-engine-plan.md=),
-  *discussions write-side* (=docs/discussions-plan.md=), *deep-link routing*.
-- *LLM tool-calling* (=docs/ai-tools-architecture.md=).
+  *discussions* — read-side shipped, *write-side* remains open
+  (=docs/discussions-plan.md=), *deep-link routing*.
+- *Nostrdown reference layer* — Tier 1 (ref/wiki/embed/quote/slot) is merged on
+  this branch; citations (kind 30161) are spec'd but unimplemented.
 - *Stability + data-lifecycle* items (=docs/stability-roadmap.org=,
   =docs/data-lifecycle-roadmap.org=).
 
@@ -208,9 +212,11 @@ exercised by the web UI (full inventory in =docs/features.org=).
 
 * Where To Read More
 
+- =docs/zettel/index.org= — the tendrl zettelkasten: mission, feature map,
+  ideas, comparisons (the living map of the project)
 - =docs/features.org= — the canonical feature inventory
 - =CLAUDE.md= — architecture + the frontend/backend boundary rule, module map
 - =docs/wm-shell.md= — the WM/buffer shell spec
 - =docs/search-architecture.org=, =docs/embedding-and-fetching.org=,
-  =docs/publication-architecture.org= — subsystem references
+  =docs/archive/publication-architecture.org= — subsystem references
 - =docs/archive/= — landed plans and superseded designs, kept for provenance

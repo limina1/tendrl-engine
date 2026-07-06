@@ -41,20 +41,22 @@ make update                         # safe updates within version ranges
 
 ## Architecture
 
-**tendrl-engine** is a local-first Nostr backend implementing NKBIP-01 (publication
-indexes and sections). It runs as two cooperating processes: the Rust **engine**
+**tendrl-engine** is the engine of a local-first **reader, writer, and reference
+manager** built on Nostr; it implements NKBIP-01 structured publications (indexes
+and sections), structured + semantic search, and the nostrdown reference layer.
+It runs as two cooperating processes: the Rust **engine**
 (`src/`, port 3030) and a SvelteKit **web frontend** (`web/`, port 5173 dev / 5174
 preview). The engine owns all data access; embeddings and document text
 extraction both run in-process (no external services). (A ratatui TUI was the
 original frontend; it has been
 removed — there is no `ratatui`/`crossterm` dependency and a single `[[bin]]`
 (`tendrl-engine`; the package/lib are still named `nostr-engine`/`nostr_engine` so
-existing installs aren't orphaned). The web app is the only live frontend; emacs/nvim frontends are a
-design goal, not yet built.)
+existing installs aren't orphaned). The web app is the only live frontend; the
+engine-owns-data architecture keeps the door open to other frontends.)
 
 ### Frontend/backend boundary (the governing rule)
-Keep this split when adding features — it's what makes the engine portable to future
-frontends (emacs/nvim) without re-implementing logic per-frontend:
+Keep this split when adding features — it's what makes the engine portable to any
+future frontend without re-implementing logic per-frontend:
 
 - **Rust owns** fetching, event storage/query, and **all algorithmic derivation of
   structured data from events**: parsing/classification, document-tree assembly +
@@ -112,7 +114,7 @@ for signing and broadcasting events.
 **Status: pure core only.** This module was the navigation engine for the (now-removed)
 ratatui TUI; the dead command/state/navigation half was deleted in the Phase 3 boundary
 cleanup. What remains is the frontend-agnostic, IO-free core kept
-as the source of truth for future frontends (web today; emacs/nvim planned):
+as the source of truth for any future frontend (web today; others via the API):
 
 - **`parser.rs`**: line-by-line classification for compose (headings/attributes/code
   blocks → which event kind 30040/30041 a line generates). Pure function, no UI state.
@@ -184,7 +186,9 @@ sections and embeds new events on a 60-second interval when embeddings are enabl
   `wiki:`→kind 30818/30023/30041 by normalized d-tag, `embed:`→naddr/sibling
   transclusion. The web (`RichContent.svelte`) merges resolved spans with NIP-84
   highlight spans onto one overlay — the same parse/resolve/render split as
-  highlights. Publish emits NKBIP-01 `["wikilink", topic]` tags for `{{wiki:}}`.
+  highlights. Publish emits `["w", topic]` tags (single-letter, relay-indexable)
+  for `{{wiki:}}` / `[[ ]]` refs, plus `ref`/`a`/`q`/`p` tags per reference kind
+  (`reference_tags()`).
 - **`user_data.rs`**: NIP-01/02/51/65 profile data — parses kind 0/3/10000/10002/
   10003/10006/10007/30002 from nostrdb `Note`s. **Partially wired**: `Metadata`
   (kind 0) is the single source of truth for the profile endpoint + profile search
@@ -245,7 +249,9 @@ alias for the `by:` publishing-pubkey filter.
 - `scripts/` — utility scripts (MCP server, publishing helpers)
 - `knowledgebase/` — local documents for import
 - `nips/` — Nostr protocol specs (NIP references and custom NKBIPs)
-- `docs/` — design notes, roadmaps, and `commands.org` (verify/test command reference)
+- `docs/` — design notes, roadmaps, `commands.org` (verify/test command reference),
+  and `docs/zettel/` — the tendrl zettelkasten (mission, feature map, ideas,
+  comparisons; start at `docs/zettel/index.org`)
 
 ## Key Patterns
 

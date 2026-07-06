@@ -16,12 +16,12 @@ exists; see the boundary rule in =CLAUDE.md=.
 - [[file:wm-shell.md][wm-shell.md]] — the WM/buffer shell spec (the web UI)
 - [[file:search-architecture.org][search-architecture.org]] — search parser + query model
 - [[file:embedding-and-fetching.org][embedding-and-fetching.org]] — FetchPolicy + embedding/HNSW
-- [[file:publication-architecture.org][publication-architecture.org]] — NKBIP-01 kinds 30040/30041 + tree
+- [[file:archive/publication-architecture.org][archive/publication-architecture.org]] — NKBIP-01 kinds 30040/30041 + tree (archived)
 - [[file:nostrdb-deletion-architecture.org][nostrdb-deletion-architecture.org]] — deletion constraints + workarounds
 - [[file:relay-classes-and-info-port.md][relay-classes-and-info-port.md]] — relay-role taxonomy (routing partly open)
 - [[file:ai-tools-architecture.md][ai-tools-architecture.md]] · [[file:ai-assistant-status.md][ai-assistant-status.md]] — LLM tool-calling design + status
 - [[file:chat-api-walkthrough.org][chat-api-walkthrough.org]] — chat HTTP endpoints
-- [[file:publication_creation.md][publication_creation.md]] — compose → publish pipeline
+- [[file:archive/publication_creation.md][archive/publication_creation.md]] — compose → publish pipeline (archived)
 - [[file:portable-build.md][portable-build.md]] — single-exe / portable Linux build
 - [[file:nostrdown.org][nostrdown.org]] — proposed ={{ }}= cross-event reference syntax (design)
 

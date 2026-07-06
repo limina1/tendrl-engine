@@ -27,4 +27,4 @@ keep enough context that a future session can pick one up cold.
 The bigger picture behind the deferred item above — collect events into a
 neutral pool, then route them (bookmark / transclude-fork / LLM context /
 cite / append-to-search) — is captured as a design section and *Phase 7* in
-=docs/workbench-architecture.org=. Not duplicated here; that doc is the home.
+=docs/archive/workbench-architecture.org=. Not duplicated here; that doc is the home.

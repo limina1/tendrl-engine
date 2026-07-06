@@ -1,6 +1,10 @@
 #+TITLE: Chat API Walkthrough
 #+DESCRIPTION: Hands-on guide to the chat test harness HTTP API
 
+Note: this walkthrough documents the =NoopProvider= echo harness and the
+endpoint round-trips. The live agentic assistant (server-side
+tool-calling) is documented in =docs/ai-assistant-status.md=.
+
 * Overview
 
 Seven endpoints exposing ~ChatState~ round-trips over HTTP. The backend

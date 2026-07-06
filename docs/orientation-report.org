@@ -38,12 +38,12 @@ This report does four things:
 
 Every mature tool in this category decomposes into the same four stores:
 
-| Store                      | Zotero            | Readwise         | Obsidian        | Tendrl (Nostr)                                    |
-|----------------------------+-------------------+------------------+-----------------+---------------------------------------------------|
-| Source documents           | attachments       | docs/feeds       | vault files     | events in nostrdb (+ =document.rs= import)          |
-| Metadata records           | items             | doc metadata     | frontmatter     | event tags, kind 0 profiles, (spec'd) 30161 cites  |
-| Annotation / knowledge layer | notes+annotations | highlights       | (notes)         | 9802 highlights, NIP-22 comments, 1985 labels, ={{quote:}}= |
-| Organization graph         | collections/tags/related | tags/views | links/backlinks | 30040 indexes, nostrdown refs, tags, follow graph  |
+| Store                        | Zotero                   | Readwise     | Obsidian        | Tendrl (Nostr)                                            |
+|------------------------------+--------------------------+--------------+-----------------+-----------------------------------------------------------|
+| Source documents             | attachments              | docs/feeds   | vault files     | events in nostrdb (+ =document.rs= import)                  |
+| Metadata records             | items                    | doc metadata | frontmatter     | event tags, kind 0 profiles, (spec'd) 30161 cites         |
+| Annotation / knowledge layer | notes+annotations        | highlights   | (notes)         | 9802 highlights, NIP-22 comments, 1985 labels, ={{quote:}}= |
+| Organization graph           | collections/tags/related | tags/views   | links/backlinks | 30040 indexes, nostrdown refs, tags, follow graph         |
 
 The historically *painful* parts of the category are exactly what Nostr's
 model natively solves:
