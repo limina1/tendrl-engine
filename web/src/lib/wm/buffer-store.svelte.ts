@@ -79,6 +79,19 @@ export class BufferStore {
 	flashSlot = $state<Position | null>(null);
 	bufferState = new Map<string, unknown>();
 
+	// Buffer ids in most-recently-viewed-first order — the "go back" stack
+	// for kill-buffer. Touched whenever a buffer becomes the visible/focused
+	// one; killed buffers pop out. Non-reactive: only consulted on kill.
+	private visitOrder: string[] = [];
+
+	private touchVisit(id: string) {
+		this.visitOrder = [id, ...this.visitOrder.filter((v) => v !== id)].slice(0, 100);
+	}
+
+	private dropVisit(id: string) {
+		this.visitOrder = this.visitOrder.filter((v) => v !== id);
+	}
+
 	// Per-buffer modeline status line — small transient text (loading
 	// indicators etc.) shown ONLY in the WM modeline. Deliberately separate
 	// from `Buffer.kicker`, which also renders in pane headers and the buffer
@@ -189,6 +202,8 @@ export class BufferStore {
 
 	focusSlot(pos: Position) {
 		this.focusedSlot = pos;
+		const buf = this.focusedLeaf(pos)?.buffer;
+		if (buf) this.touchVisit(buf.id);
 	}
 
 	// Replace the buffer at the focused leaf within `pos`.
@@ -201,6 +216,7 @@ export class BufferStore {
 			[pos]: replaceAt(tree, path, () => ({ type: 'leaf', buffer: buf }))
 		};
 		this.focusedLeafPath = { ...this.focusedLeafPath, [pos]: path };
+		this.touchVisit(buf.id);
 	}
 
 	// Set / clear a buffer's modeline status line (see `_modelineStatus`).
@@ -253,6 +269,8 @@ export class BufferStore {
 		const curIdx = paths.findIndex((p) => p.length === curPath.length && p.every((v, i) => v === curPath[i]));
 		const nextIdx = (curIdx + dir + paths.length) % paths.length;
 		this.focusedLeafPath = { ...this.focusedLeafPath, [pos]: paths[nextIdx] };
+		const buf = this.focusedLeaf(pos)?.buffer;
+		if (buf) this.touchVisit(buf.id);
 	}
 
 	findSlotForClass(cls: ClassName): Position | null {
@@ -291,6 +309,19 @@ export class BufferStore {
 		return null;
 	}
 
+	// Kill-replacement policy: go back to the most recently *viewed* open
+	// buffer of the class (the visit stack), else the most recently *opened*
+	// one. Class-scoped because slots are class-typed. Callers fall back to
+	// classDefault when this returns null.
+	private mruReplacement(cls: ClassName): Buffer | null {
+		const byId = new Map(this.openBuffers.map((b) => [b.buffer.id, b]));
+		for (const id of this.visitOrder) {
+			const cand = byId.get(id);
+			if (cand && cand.className === cls) return cand.buffer;
+		}
+		return [...this.openBuffers].reverse().find((b) => b.className === cls)?.buffer ?? null;
+	}
+
 	killFocused() {
 		const cur = this.focusedLeaf(this.focusedSlot);
 		if (!cur) return;
@@ -300,6 +331,7 @@ export class BufferStore {
 			this.killBuffer(buf.id);
 			return;
 		}
+		this.dropVisit(buf.id);
 
 		// Buffer not registered in openBuffers (transient leaf) — just swap
 		// the focused leaf to another buffer of the slot's class.
@@ -308,11 +340,9 @@ export class BufferStore {
 			this.flash(this.focusedSlot);
 			return;
 		}
-		const replacement = this.openBuffers.find(
-			(b) => b.className === cls && b.buffer.id !== buf.id
-		);
+		const replacement = this.mruReplacement(cls);
 		if (replacement) {
-			this.setLeaf(this.focusedSlot, replacement.buffer);
+			this.setLeaf(this.focusedSlot, replacement);
 			this.flash(this.focusedSlot);
 			return;
 		}
@@ -325,18 +355,20 @@ export class BufferStore {
 	}
 
 	// Kill a specific open buffer by id (the tab ×, and the registered-buffer
-	// path of killFocused). Same replacement policy as killFocused — prefer
-	// another open buffer of the class, else restore the class default — but
-	// it doesn't require focus: every leaf currently showing the killed
-	// buffer (any slot, any split) is swapped to the replacement.
+	// path of killFocused). Same replacement policy as killFocused — the most
+	// recently viewed buffer of the class, then the most recently opened,
+	// else restore the class default — but it doesn't require focus: every
+	// leaf currently showing the killed buffer (any slot, any split) is
+	// swapped to the replacement.
 	killBuffer(id: string) {
 		const entry = this.openBuffers.find((b) => b.buffer.id === id);
 		if (!entry) return;
 		this.openBuffers = this.openBuffers.filter((b) => b.buffer.id !== id);
 		this.recentlyClosed = [entry, ...this.recentlyClosed].slice(0, 20);
+		this.dropVisit(id);
 
 		const cls = entry.className;
-		let replacement = this.openBuffers.find((b) => b.className === cls)?.buffer ?? null;
+		let replacement = this.mruReplacement(cls);
 		if (!replacement) {
 			const fallback = this.classDefault(cls);
 			if (fallback) {
@@ -346,6 +378,7 @@ export class BufferStore {
 		}
 		if (!replacement) return;
 
+		let swapped = false;
 		for (const pos of POSITION_ORDER) {
 			const tree = this.slotTrees[pos];
 			if (!tree) continue;
@@ -362,8 +395,11 @@ export class BufferStore {
 			if (changed) {
 				this.slotTrees = { ...this.slotTrees, [pos]: next };
 				this.flash(pos);
+				swapped = true;
 			}
 		}
+		// The replacement is now the visible buffer where the kill happened.
+		if (swapped) this.touchVisit(replacement.id);
 	}
 
 	registerNavHandler(bufferId: string, handler: NavHandler) {
@@ -418,6 +454,8 @@ export class BufferStore {
 		}
 		const next = visible[(idx + dir + visible.length) % visible.length];
 		this.focusedSlot = next;
+		const buf = this.focusedLeaf(next)?.buffer;
+		if (buf) this.touchVisit(buf.id);
 		this.flash(next);
 	}
 
