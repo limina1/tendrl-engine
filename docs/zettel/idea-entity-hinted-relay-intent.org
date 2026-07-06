@@ -1,0 +1,47 @@
+#+TITLE: Idea: entity-hinted relays in the fetch intent
+#+TYPE: idea
+#+STATUS: open
+#+DATE: 2026-07-06
+
+A =naddr= / =nevent= is not just an address — its NIP-19 TLV carries *relay
+hints*: "you'll find this event *here*." When a nostrdown =embed= / =quote= /
+=slot= references such an entity and the event isn't local, the fetch should be
+able to honour those hints, and the Confirm-mode intent should make them legible:
+show *what* is being retrieved and *from where*, with the entity's own relay(s)
+called out distinctly from the generic set.
+
+* The gap today
+- The entity fetch (=fill_from_entity= → =FetchAlways=) aims at the *search relay
+  set*, ignoring the hints the entity itself carries.
+- The [[file:feat-network.org][fetch intent]] shows that proposed set as a flat
+  list — nothing says "this reference points *there*."
+
+* The proposal
+- *Engine:* decode the entity's TLV relays (=Decoded::Naddr.relays= /
+  =Nevent.relays=, already parsed by =nip19=), aim the fetch at them, and put
+  them on =FetchEvent::Intent= as a *distinct* field (e.g. =hinted_relays=)
+  separate from the generic proposed set.
+- *Web (=FetchConfirmModal=):* render the hinted relay(s) as a highlighted group
+  labelled "this reference points here," with a quick *hinted-only / all-relays*
+  toggle on top of the existing per-relay checkboxes.
+
+* Why it's worth doing
+Makes a relay fetch *legible and intentional* — you see the source and the
+reason, and you choose the publisher's hint or the wider net. It's a small,
+outbox-flavoured step (respect where the author said the event lives) without
+committing to full NIP-65 routing.
+
+* Feasibility — most of it already exists
+- =FetchEvent::Intent= already carries a proposed =relays= list + a
+  =RequestSummary=.
+- =ConfirmDecision.relays= already lets the modal send back the *chosen* set,
+  which =begin_operation= honours (=d.relays.unwrap_or(relays)=).
+- =FetchConfirmModal= already does per-relay selection + add-relay.
+Missing: the *hinted-vs-generic* distinction (engine field + fetch aim) and the
+grouping/toggle (web). ~80% of the plumbing is in place.
+
+* Related
+- [[file:feat-network.org][Network modes & fetch policy]] (the intent pattern)
+- [[file:feat-nostrdown.org][Nostrdown]] (the embed/quote/slot entity fetch)
+- [[file:feat-relays.org][Relay sets]]
+- [[file:index.org][Index]]

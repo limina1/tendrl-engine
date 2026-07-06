@@ -47,6 +47,25 @@ navigation. Full spec: =docs/wm-shell.md=; shell root in
   cross-tab BroadcastChannel sync, user-savable perspectives, and Shell
   extraction into a reusable component are still open.
 
+* Constraints when building buffer features (learned the hard way, 2026-07-06)
+Two non-obvious traps in the buffer render path — each cost multiple
+reader-breaking iterations. Anything mounting *inside* a buffer must respect them:
+
+- *No component-lifecycle hooks.* =getContext= / =setContext= / =onDestroy= throw
+  =lifecycle_outside_component= when a buffer mounts — the render path doesn't
+  establish a reliable component-init context. Share per-buffer state by
+  *prop-threading* it down, and clean up with an *=$effect= teardown return*,
+  never =onDestroy=. (This is why the reader's resolution-progress tracker is
+  passed as a prop, not a context — see [[file:feat-nostrdown.org][nostrdown]].)
+- *No import cycles through =wm/registry=.* =registry.ts= imports every buffer
+  renderer, so a component that imports =registry= closes a cycle that throws
+  =Cannot access <X> before initialization= — but *only under =--build=* (bundled
+  module-init order); =--dev= (native ESM) hides it, so it reads as a
+  "renders differently in dev vs build" ghost. Keep shared metadata in *leaf
+  modules* a component can import without dragging in the renderers (e.g.
+  =wm/tours.ts= holds the tour/class data; =ComposeView= imports *that*, not
+  =registry=).
+
 * Related
 - [[file:index.org][Index]]
 - [[file:feat-ui-patterns.org][UI patterns]] — the interaction-pattern catalog

@@ -25,6 +25,28 @@ the network without either a policy that allows it or an explicit approval.
   (=web/src/lib/network/=, =web/src/lib/components/=). The AI assistant's
   =fetch_from_relays= tool gates through the same Confirm flow.
 
+* The intent pattern (the app's Confirm-mode surface)
+The unit the UI approves is an *intent*: a user-initiated action emits a
+structured "here is what I'll fetch and from where" *before* touching the
+network; Confirm mode gates on it, Auto passes it through as an informational
+toast. One shape, several callers — this is the place to track them:
+- *Fetch intent* (=FetchEvent::Intent=, =begin_operation_with_summary=): a REQ.
+  Carries the proposed relay set + a =RequestSummary= (filters / composition /
+  DSL sentence). =FetchConfirmModal= renders it; the user drops/adds relays and
+  =ConfirmDecision.relays= overrides the set the engine uses.
+- *Publish intent* (=FetchEvent::PublishIntent=): the broadcast counterpart —
+  carries the event ids + destination relays so the UI correlates per-relay
+  Accepted / Rejected.
+- Nostrdown =embed= / =quote= / =slot= entity fetches ride the *fetch* intent
+  (=FetchAlways= → Confirm), which is why a not-local reference's relay pull
+  surfaces here — see [[file:feat-nostrdown.org][nostrdown]].
+
+Open refinements:
+- [[file:idea-entity-hinted-relay-intent.org][Entity-hinted relays in the intent]]
+  — a =naddr= / =nevent= carries relay hints in its NIP-19 TLV; surface them in
+  the modal *distinctly* (grouped/highlighted as "this reference points here") and
+  offer a hinted-relay(s)-vs-full-set choice.
+
 * Gaps / open edges
 - No per-source or per-kind fetch policies — the mode is engine-global.
 
