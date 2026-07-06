@@ -387,12 +387,11 @@
 	/** Prompt for a new URL and add it to a discovery class's default
 	 *  tier. The user can move it to fallback afterward with the radio. */
 	async function promptAddDiscovery(klass: DiscoveryClass) {
-		const raw = window.prompt(
-			`New ${klass} relay URL (will land in ${klass}.default — move to fallback after if desired):`,
-			''
-		);
-		if (!raw) return;
-		const url = raw.trim();
+		const url = await promptText({
+			title: `Add ${klass} relay`,
+			placeholder: 'wss://relay.example.org',
+			hint: `Lands in ${klass}.default — move it to fallback after with the radio.`
+		});
 		if (!url) return;
 		// Local dedup against the current rows
 		if (rowsFor(klass).some((r) => normalizeRelayUrl(r.url) === normalizeRelayUrl(url))) {
@@ -854,13 +853,16 @@
 	// Add a new relay via the prompt — defaults to read+write so the
 	// relay is fully active; user can toggle either side off after.
 	async function promptAdd() {
-		const raw = window.prompt('Relay URL (bare hostname OK — wss:// is added if missing):');
+		const raw = await promptText({
+			title: 'Add relay',
+			placeholder: 'relay.example.org',
+			hint: 'Bare hostname OK — wss:// is added if missing. Starts as read + write; toggle either off after.',
+			confirmLabel: 'Add relay'
+		});
 		if (!raw) return;
-		const trimmed = raw.trim();
-		if (!trimmed) return;
 		// Client-side normalization for nice display; the engine
 		// normalizes again on the receiving end, so this is purely UX.
-		const url = normalizeRelayUrl(trimmed);
+		const url = normalizeRelayUrl(raw);
 		if (rows.some((r) => normalizeRelayUrl(r.url) === url)) {
 			app.pushToast(`${shorten(url)} is already configured`, 'info', 2500);
 			return;
@@ -917,6 +919,50 @@
 		publishGate?.resolve(ok);
 		publishGate = null;
 	}
+
+	// ------------------------------------------------------------------
+	// In-app text prompt — replaces window.prompt(). Browser dialogs
+	// don't belong in the wm shell; this mirrors the overwrite gate /
+	// fetch-confirm modal pattern (backdrop, Escape/Enter, autofocus).
+	// ------------------------------------------------------------------
+	let textPrompt = $state<{
+		title: string;
+		placeholder: string;
+		hint: string | null;
+		confirmLabel: string;
+		value: string;
+		resolve: (v: string | null) => void;
+	} | null>(null);
+	let textPromptEl: HTMLInputElement | undefined = $state(undefined);
+
+	function promptText(opts: {
+		title: string;
+		placeholder?: string;
+		hint?: string;
+		confirmLabel?: string;
+		initial?: string;
+	}): Promise<string | null> {
+		return new Promise((resolve) => {
+			textPrompt = {
+				title: opts.title,
+				placeholder: opts.placeholder ?? '',
+				hint: opts.hint ?? null,
+				confirmLabel: opts.confirmLabel ?? 'Add',
+				value: opts.initial ?? '',
+				resolve
+			};
+		});
+	}
+	function resolveTextPrompt(ok: boolean) {
+		if (!textPrompt) return;
+		const v = textPrompt.value.trim();
+		textPrompt.resolve(ok && v ? v : null);
+		textPrompt = null;
+	}
+	// Focus the input once the modal is in the DOM.
+	$effect(() => {
+		if (textPrompt) queueMicrotask(() => textPromptEl?.focus());
+	});
 
 	// When the relay-list events were last synced from the network —
 	// persisted per pubkey so "how stale is my local copy" survives a
@@ -1102,12 +1148,17 @@
 
 	// ---- Named sets (NIP-51 kind 30002) ---------------------------------
 	async function promptNewSet() {
-		const title = window.prompt('Name for the new relay set (e.g. "research", "friends"):');
-		if (!title || !title.trim()) return;
+		const title = await promptText({
+			title: 'New relay set',
+			placeholder: 'research',
+			hint: 'A NIP-51 kind 30002 grouping — publishable later for sharing/backup.',
+			confirmLabel: 'Create'
+		});
+		if (!title) return;
 		const d_tag = crypto.randomUUID();
 		try {
-			await api.createNamedSet(d_tag, title.trim());
-			app.pushToast(`Created set "${title.trim()}"`, 'success', 2000);
+			await api.createNamedSet(d_tag, title);
+			app.pushToast(`Created set "${title}"`, 'success', 2000);
 			await load();
 			expandedSet = d_tag;
 		} catch (e) {
@@ -1120,9 +1171,12 @@
 	}
 
 	async function promptAddToSet(d_tag: string) {
-		const raw = window.prompt('Relay URL to add to this set:');
-		if (!raw || !raw.trim()) return;
-		const url = normalizeRelayUrl(raw.trim());
+		const raw = await promptText({
+			title: 'Add relay to set',
+			placeholder: 'wss://relay.example.org'
+		});
+		if (!raw) return;
+		const url = normalizeRelayUrl(raw);
 		try {
 			await api.addToNamedSet(d_tag, url);
 			app.pushToast(`Added ${shorten(url)}`, 'success', 2000);
@@ -1149,10 +1203,21 @@
 		}
 	}
 
+	// Two-step armed delete (no browser confirm): first click arms this
+	// set's button for a few seconds, the second click deletes. Local
+	// only — taking a published 30002 down from Nostr would be a NIP-09
+	// delete event, not done here.
+	let armedDeleteSet = $state<string | null>(null);
+	let deleteSetTimer: ReturnType<typeof setTimeout> | null = null;
 	async function deleteSet(d_tag: string, title: string) {
-		if (!window.confirm(`Delete the "${title}" relay set?\n\n(This only removes it locally. To take it down from Nostr you'd publish a delete event — not done here.)`)) {
+		if (armedDeleteSet !== d_tag) {
+			armedDeleteSet = d_tag;
+			if (deleteSetTimer) clearTimeout(deleteSetTimer);
+			deleteSetTimer = setTimeout(() => (armedDeleteSet = null), 4000);
 			return;
 		}
+		if (deleteSetTimer) clearTimeout(deleteSetTimer);
+		armedDeleteSet = null;
 		try {
 			await api.deleteNamedSet(d_tag);
 			app.pushToast(`Deleted set "${title}"`, 'info', 2000);
@@ -1168,10 +1233,14 @@
 	}
 
 	async function renameSet(d_tag: string, currentTitle: string) {
-		const next = window.prompt('Rename set:', currentTitle);
-		if (!next || !next.trim() || next.trim() === currentTitle) return;
+		const next = await promptText({
+			title: 'Rename set',
+			initial: currentTitle,
+			confirmLabel: 'Rename'
+		});
+		if (!next || next === currentTitle) return;
 		try {
-			await api.renameNamedSet(d_tag, next.trim());
+			await api.renameNamedSet(d_tag, next);
 			await load();
 		} catch (e) {
 			app.pushToast(
@@ -1301,7 +1370,13 @@
 	}
 </script>
 
-<svelte:window onkeydown={(e) => publishGate && e.key === 'Escape' && resolveGate(false)} />
+<svelte:window
+	onkeydown={(e) => {
+		if (e.key !== 'Escape') return;
+		if (textPrompt) resolveTextPrompt(false);
+		else if (publishGate) resolveGate(false);
+	}}
+/>
 
 <div class="relays-view">
 	<div class="relays-header">
@@ -1950,9 +2025,10 @@
 								</button>
 								<button
 									class="pull-add"
+									class:btn-reset--armed={armedDeleteSet === set.d_tag}
 									onclick={() => deleteSet(set.d_tag, set.title)}
 									title="Delete this set locally (does not publish a delete event)"
-								>delete</button>
+								>{armedDeleteSet === set.d_tag ? 'really delete?' : 'delete'}</button>
 							</div>
 						</div>
 						{#if expandedSet === set.d_tag}
@@ -2089,6 +2165,45 @@
 					<button class="gate-btn" onclick={() => resolveGate(false)}>Cancel</button>
 					<button class="gate-btn gate-btn--danger" onclick={() => resolveGate(true)}>
 						{d ? 'Publish & overwrite' : lastPulledAt ? 'Publish' : 'Publish anyway'}
+					</button>
+				</div>
+			</div>
+		</div>
+	{/if}
+
+	<!-- In-app text prompt — the wm-shell replacement for window.prompt.
+	     Same backdrop/dialog pattern as the overwrite gate. -->
+	{#if textPrompt}
+		<!-- svelte-ignore a11y_click_events_have_key_events -->
+		<div class="gate-backdrop" role="presentation" onclick={() => resolveTextPrompt(false)}>
+			<div
+				class="gate-modal gate-modal--prompt"
+				role="dialog"
+				aria-modal="true"
+				aria-label={textPrompt.title}
+				tabindex="-1"
+				onclick={(e) => e.stopPropagation()}
+			>
+				<div class="gate-title">{textPrompt.title}</div>
+				{#if textPrompt.hint}
+					<p class="gate-muted">{textPrompt.hint}</p>
+				{/if}
+				<input
+					class="gate-input"
+					type="text"
+					bind:this={textPromptEl}
+					bind:value={textPrompt.value}
+					placeholder={textPrompt.placeholder}
+					onkeydown={(e) => e.key === 'Enter' && resolveTextPrompt(true)}
+				/>
+				<div class="gate-actions">
+					<button class="gate-btn" onclick={() => resolveTextPrompt(false)}>Cancel</button>
+					<button
+						class="gate-btn gate-btn--primary"
+						onclick={() => resolveTextPrompt(true)}
+						disabled={!textPrompt.value.trim()}
+					>
+						{textPrompt.confirmLabel}
 					</button>
 				</div>
 			</div>
@@ -2511,6 +2626,31 @@
 	.gate-btn--danger {
 		border-color: color-mix(in srgb, var(--red) 60%, transparent);
 		color: var(--red);
+	}
+	.gate-btn--primary {
+		border-color: color-mix(in srgb, var(--state-online) 60%, transparent);
+		color: var(--state-online);
+	}
+	.gate-btn[disabled] {
+		opacity: 0.5;
+		cursor: default;
+	}
+	.gate-modal--prompt {
+		max-width: 420px;
+	}
+	.gate-input {
+		background: var(--bg, transparent);
+		border: 1px solid var(--base3);
+		border-radius: var(--r-md);
+		color: var(--fg);
+		font-family: var(--font-mono);
+		font-size: var(--t-sm);
+		padding: 6px 8px;
+		width: 100%;
+	}
+	.gate-input:focus {
+		outline: none;
+		border-color: color-mix(in srgb, var(--state-online) 60%, transparent);
 	}
 
 	.relay-detail {
