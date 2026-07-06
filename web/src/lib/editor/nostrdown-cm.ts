@@ -230,8 +230,9 @@ export interface NdSuggestion {
 export interface NostrdownCompletionSources {
 	/** Gate — return false to disable the dropdown (the mode-bar toggle). */
 	enabled: () => boolean;
-	/** Sibling section titles in the current draft, filtered to `partial`. */
-	ref: (partial: string) => NdSuggestion[];
+	/** Sibling section titles in the current draft, filtered to `partial`. Async
+	 *  because slug normalization is engine-side (cached). */
+	ref: (partial: string) => NdSuggestion[] | Promise<NdSuggestion[]>;
 	/** Wiki/article titles matching `partial` (async search). */
 	wiki: (partial: string) => Promise<NdSuggestion[]>;
 	/** Open the coordinate builder; `range` is the in-progress `{{embed:…` /
@@ -302,7 +303,7 @@ export function nostrdownCompletion(sources: NostrdownCompletionSources): Extens
 		}
 
 		let suggestions: NdSuggestion[] = [];
-		if (kind === 'ref') suggestions = sources.ref(partial);
+		if (kind === 'ref') suggestions = await sources.ref(partial);
 		else if (kind === 'wiki') suggestions = await sources.wiki(partial);
 		else return null;
 

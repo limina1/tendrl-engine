@@ -12,7 +12,8 @@
 		type NdSuggestion,
 		type PreviewAnchor
 	} from '$lib/editor/nostrdown-cm';
-	import { normalizeSlug, type ResolvedRef } from '$lib/nostr/nostrdown';
+	import type { ResolvedRef } from '$lib/nostr/nostrdown';
+	import { cachedSlug, ensureSlugs, slug } from '$lib/nostr/slugs';
 	import EmbedCard from './EmbedCard.svelte';
 	import ComposeSection from './ComposeSection.svelte';
 	import ReferenceBuilderModal from './ReferenceBuilderModal.svelte';
@@ -37,15 +38,20 @@
 	// ── Nostrdown: recognize {{ }} refs, preview on click, follow on mod-click ──
 	/** The matching sibling heading in this draft (by title-slug): its char offset
 	 *  and title, else null. */
-	function findHeading(doc: string, slug: string): { pos: number; title: string } | null {
+	async function findHeading(
+		doc: string,
+		targetSlug: string
+	): Promise<{ pos: number; title: string } | null> {
 		const d = effectiveDelim();
+		const heads: { pos: number; title: string }[] = [];
 		let offset = 0;
 		for (const line of doc.split('\n')) {
 			const head = parseHeadingLine(line, d);
-			if (head && normalizeSlug(head.title) === slug) return { pos: offset, title: head.title };
+			if (head) heads.push({ pos: offset, title: head.title });
 			offset += line.length + 1; // + newline
 		}
-		return null;
+		await ensureSlugs(heads.map((h) => h.title));
+		return heads.find((h) => cachedSlug(h.title) === targetSlug) ?? null;
 	}
 
 	const NOSTR_ENTITY_RE = /^(nostr:)?(naddr1|nevent1|note1)/i;
@@ -54,7 +60,7 @@
 	// this draft (unpublished, no event yet) or the engine's resolution.
 	async function previewRefFor(token: NostrdownToken, view: EditorView): Promise<ResolvedRef | null> {
 		if ((token.kind === 'ref' || token.kind === 'embed') && !NOSTR_ENTITY_RE.test(token.target)) {
-			const hit = findHeading(view.state.doc.toString(), normalizeSlug(token.target));
+			const hit = await findHeading(view.state.doc.toString(), await slug(token.target));
 			if (hit) {
 				return {
 					kind: 'embed',
@@ -128,7 +134,7 @@
 	// the db and open the target event.
 	async function followNostrdown(token: NostrdownToken, view: EditorView) {
 		if ((token.kind === 'ref' || token.kind === 'embed') && !NOSTR_ENTITY_RE.test(token.target)) {
-			const hit = findHeading(view.state.doc.toString(), normalizeSlug(token.target));
+			const hit = await findHeading(view.state.doc.toString(), await slug(token.target));
 			if (hit) {
 				view.dispatch({ selection: { anchor: hit.pos }, scrollIntoView: true });
 				view.focus();
@@ -769,13 +775,13 @@
 		if (!q) return [];
 		try {
 			const resp = await search(`k:30818 k:30023 ${q}`, 12);
-			return (resp.results ?? [])
-				.filter((r) => r.addr && r.title)
-				.map((r) => ({
-					label: r.title as string,
-					detail: r.kind === 30818 ? 'wiki' : 'article',
-					value: r.addr?.d_tag ?? normalizeSlug(r.title as string)
-				}));
+			const results = (resp.results ?? []).filter((r) => r.addr && r.title);
+			await ensureSlugs(results.map((r) => r.title as string));
+			return results.map((r) => ({
+				label: r.title as string,
+				detail: r.kind === 30818 ? 'wiki' : 'article',
+				value: r.addr?.d_tag ?? cachedSlug(r.title as string)
+			}));
 		} catch {
 			return [];
 		}
@@ -785,10 +791,11 @@
 		nostrdownEditor({ onActivate: followNostrdown, onPreview: showPreview }),
 		nostrdownCompletion({
 			enabled: () => autocompleteOn,
-			ref: (partial) => {
-				const q = normalizeSlug(partial);
+			ref: async (partial) => {
+				const q = await slug(partial);
+				await ensureSlugs(refSectionTitles);
 				return refSectionTitles
-					.filter((t) => !q || normalizeSlug(t).includes(q))
+					.filter((t) => !q || cachedSlug(t).includes(q))
 					.map((t) => ({ label: t, value: t }));
 			},
 			wiki: wikiSuggestions,

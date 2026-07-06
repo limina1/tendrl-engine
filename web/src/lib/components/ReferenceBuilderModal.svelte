@@ -10,7 +10,7 @@
 	// `profiles[]` for author lookup) and `api.encode` (coordinate → naddr).
 	import * as api from '$lib/api';
 	import type { SearchResult, ProfileResult } from '$lib/types';
-	import { normalizeSlug } from '$lib/nostr/nostrdown';
+	import { cachedSlug, ensureSlugs, slug } from '$lib/nostr/slugs';
 
 	let {
 		open = false,
@@ -42,10 +42,27 @@
 	});
 
 	// ── ref: filter the draft's own section titles ──────────────────────────
+	// Slugs come from the engine (cached): prefetch the candidate titles, and
+	// normalize the live query into `refQ`; the filter then runs synchronously
+	// against the cache.
 	let refFilter = $state('');
+	let titleSlugs = $state<Record<string, string>>({});
+	let refQ = $state('');
+	$effect(() => {
+		const titles = sectionTitles;
+		ensureSlugs(titles).then(() => {
+			titleSlugs = Object.fromEntries(titles.map((t) => [t, cachedSlug(t)]));
+		});
+	});
+	$effect(() => {
+		const v = refFilter;
+		slug(v).then((s) => {
+			if (v === refFilter) refQ = s;
+		});
+	});
 	const refMatches = $derived.by(() => {
-		const q = normalizeSlug(refFilter);
-		return sectionTitles.filter((t) => !q || normalizeSlug(t).includes(q));
+		const q = refQ;
+		return sectionTitles.filter((t) => !q || (titleSlugs[t] ?? '').includes(q));
 	});
 
 	function insertRef(title: string) {
@@ -58,6 +75,14 @@
 	let wikiResults = $state<SearchResult[]>([]);
 	let wikiBusy = $state(false);
 	let wikiTimer: ReturnType<typeof setTimeout> | undefined;
+	// Live slug preview of the typed wiki topic (engine-normalized).
+	let wikiSlug = $state('');
+	$effect(() => {
+		const v = wikiQuery;
+		slug(v).then((s) => {
+			if (v === wikiQuery) wikiSlug = s;
+		});
+	});
 
 	function onWikiInput() {
 		clearTimeout(wikiTimer);
@@ -79,9 +104,9 @@
 		}, 200);
 	}
 
-	function insertWiki(target: string) {
-		const slug = normalizeSlug(target);
-		if (slug) oninsert(`{{wiki:${slug}}}`);
+	async function insertWiki(target: string) {
+		const s = await slug(target);
+		if (s) oninsert(`{{wiki:${s}}}`);
 		close();
 	}
 
@@ -298,7 +323,7 @@
 						{#if wikiQuery.trim() && !wikiBusy}
 							<button class="rb-row rb-row--free" onclick={() => insertWiki(wikiQuery)}>
 								<span class="rb-badge">topic</span>
-								<span class="rb-row__title">use “{normalizeSlug(wikiQuery)}”</span>
+								<span class="rb-row__title">use “{wikiSlug}”</span>
 							</button>
 						{/if}
 					</div>

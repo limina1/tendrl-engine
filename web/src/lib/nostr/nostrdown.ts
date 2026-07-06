@@ -11,31 +11,6 @@
 
 import type { HighlightSpan } from '$lib/discussions/highlights';
 
-/**
- * NIP-54 slug normalization — a JS mirror of the engine's `nostrdown::normalize`
- * (the Rust side is the source of truth for *stored* data; this is used only for
- * editor-side matching, e.g. resolving a `{{ref:slug}}` against a heading title
- * while drafting). Lowercase; whitespace and `-`/`_` collapse to a single `-`;
- * other punctuation dropped; trailing `-` trimmed; non-ASCII letters preserved.
- */
-export function normalizeSlug(s: string): string {
-	let out = '';
-	let lastDash = false;
-	for (const ch of s.toLowerCase()) {
-		if (/[\p{L}\p{N}]/u.test(ch)) {
-			out += ch;
-			lastDash = false;
-		} else if (/\s/.test(ch) || ch === '-' || ch === '_') {
-			if (out && !lastDash) {
-				out += '-';
-				lastDash = true;
-			}
-		}
-		// other punctuation/symbols are dropped without a separator
-	}
-	return out.replace(/-+$/, '');
-}
-
 /** A `{{ }}` reference after engine resolution. `start`/`end` are UTF-16
  *  code-unit offsets into the section text spanning the whole token, so the
  *  renderer can replace `content.slice(start, end)` wholesale. */
@@ -105,41 +80,6 @@ export interface ParsedToken {
 	/** UTF-16 offsets spanning the whole token, delimiters included. */
 	start: number;
 	end: number;
-}
-
-/** Does a `[[ ]]` target name markup-native content (URL / scheme / path / image)
- *  the host markup owns? Mirrors the Rust `is_markup_link_target` so the editor
- *  and reader skip exactly what the engine skips. */
-function isMarkupLinkTarget(t: string): boolean {
-	const lower = t.toLowerCase();
-	if (lower.includes('://')) return true;
-	const schemes = ['http:', 'https:', 'ftp:', 'mailto:', 'tel:', 'file:', 'id:', 'attachment:', 'info:', 'news:', 'doi:', 'elisp:', 'shell:'];
-	if (schemes.some((s) => lower.startsWith(s))) return true;
-	if (/^[*#/~]/.test(t) || t.startsWith('./') || t.startsWith('../') || t.includes('/')) return true;
-	const exts = ['.png', '.jpg', '.jpeg', '.gif', '.svg', '.webp', '.avif', '.bmp', '.pdf', '.mp4', '.mp3', '.webm', '.mov', '.ogg', '.wav'];
-	return exts.some((e) => lower.endsWith(e));
-}
-
-/** Split a `[[ ]]` inner into `{ target, display }` (Nostr/Org `][` form, then
- *  Obsidian `|`), or `null` if it's empty or a markup-native link to skip. */
-export function parseWikilink(inner: string): { target: string; display?: string } | null {
-	const s = inner.trim();
-	if (!s) return null;
-	let targetRaw = s;
-	let display: string | undefined;
-	const sep = s.indexOf('][');
-	const pipe = s.indexOf('|');
-	if (sep >= 0) {
-		targetRaw = s.slice(0, sep).trim();
-		display = s.slice(sep + 2).trim() || undefined;
-	} else if (pipe >= 0) {
-		targetRaw = s.slice(0, pipe).trim();
-		display = s.slice(pipe + 1).trim() || undefined;
-	}
-	if (!targetRaw || isMarkupLinkTarget(targetRaw)) return null;
-	const target = normalizeSlug(targetRaw);
-	if (!target) return null;
-	return { target, display };
 }
 
 interface Overlay {
