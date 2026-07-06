@@ -113,14 +113,22 @@
 			const resp = await api.getAddressable(p.kind, p.pubkey, p.dTag);
 			const ev = resp.event as DocEvent | null;
 			if (!ev) {
-				const noun = p.kind === 30023 ? 'Article' : p.kind === 30818 ? 'Wiki page' : 'Document';
+				const noun =
+					p.kind === 30023 ? 'Article'
+					: p.kind === 30818 ? 'Wiki page'
+					: p.kind === 30817 ? 'Spec'
+					: 'Document';
 				error = `${noun} not found locally — fetch the author from their profile (↻ Fetch).`;
 				return;
 			}
 			const tag = (n: string) => ev.tags.find((t) => t[0] === n)?.[1] ?? null;
 			authorPubkey = ev.pubkey || p.pubkey;
-			kindLabel = p.kind === 30023 ? 'article' : p.kind === 30818 ? 'wiki' : `kind ${p.kind}`;
-			title = tag('title') ?? (p.kind === 30818 ? p.dTag : null);
+			kindLabel =
+				p.kind === 30023 ? 'article'
+				: p.kind === 30818 ? 'wiki'
+				: p.kind === 30817 ? 'spec'
+				: `kind ${p.kind}`;
+			title = tag('title') ?? (p.kind === 30818 || p.kind === 30817 ? p.dTag : null);
 			summary = tag('summary');
 			body = ev.content ?? '';
 			// Discussions and the author profile are secondary — let the body

@@ -24,16 +24,16 @@
 
 	function openAddr(addr: { kind: number; pubkey: string; d_tag: string }, title: string | null) {
 		const kicker = title ?? addr.d_tag ?? '[Untitled]';
-		// Long-form articles (30023) and wiki pages (30818) are single
-		// documents — route them to the slim DocBuffer, which drops the
-		// reader's pager/outline chrome.
-		if (addr.kind === 30023 || addr.kind === 30818) {
+		// Long-form articles (30023), wiki pages (30818), and NIP specs
+		// (30817) are single documents — route them to the slim DocBuffer,
+		// which drops the reader's pager/outline chrome.
+		if (addr.kind === 30023 || addr.kind === 30818 || addr.kind === 30817) {
 			store.openBuffer({
 				className: 'work',
 				buffer: {
 					id: `doc:${addr.kind}:${addr.pubkey}:${addr.d_tag}`,
 					kind: 'doc',
-					label: addr.kind === 30023 ? 'article' : 'wiki',
+					label: addr.kind === 30023 ? 'article' : addr.kind === 30817 ? 'spec' : 'wiki',
 					kicker
 				}
 			});
@@ -53,14 +53,20 @@
 		});
 	}
 
-	function openComment(event: { id: string; content: string }) {
-		// A NIP-22 comment isn't a standalone reader destination — route it
-		// to the DiscussionViewBuffer, which resolves the thread it belongs
-		// to. Mirrors +page.svelte's `onDiscussion` handler.
+	function openComment(event: { id: string; content: string; kind?: number }) {
+		// A NIP-22 comment or NIP-84 highlight isn't a standalone reader
+		// destination — route it to the DiscussionViewBuffer, which resolves
+		// the thread / highlighted target it belongs to. Mirrors
+		// +page.svelte's `onDiscussion` handler.
 		const kicker = event.content.trim().slice(0, 32) || event.id.slice(0, 8) + '…';
 		store.openBuffer({
 			className: 'work',
-			buffer: { id: `discussion:${event.id}`, kind: 'discussion-view', label: 'comment', kicker }
+			buffer: {
+				id: `discussion:${event.id}`,
+				kind: 'discussion-view',
+				label: event.kind === 9802 ? 'highlight' : 'comment',
+				kicker
+			}
 		});
 	}
 </script>

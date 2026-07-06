@@ -37,7 +37,7 @@
 		onback: () => void;
 	} = $props();
 
-	type Tab = 'publications' | 'articles' | 'wikis' | 'sections' | 'comments';
+	type Tab = 'publications' | 'articles' | 'wikis' | 'specs' | 'sections' | 'highlights' | 'comments';
 	let activeTab: Tab = $state('publications');
 	let profile = $state<Profile | null>(null);
 	let publications = $state<PublicationSummary[]>([]);
@@ -58,7 +58,12 @@
 	};
 	let articles = $state<AddressableSummary[]>([]);
 	let wikis = $state<AddressableSummary[]>([]);
+	// NIP specifications (kind 30817) — community-authored protocol specs.
+	// Addressable markdown documents, same shape as wikis.
+	let specs = $state<AddressableSummary[]>([]);
 	let sections = $state<NostrEvent[]>([]);
+	// NIP-84 highlights (kind 9802) this author has made on other content.
+	let highlights = $state<NostrEvent[]>([]);
 	let comments = $state<NostrEvent[]>([]);
 	let loading = $state(true);
 	let fetching = $state(false);
@@ -103,14 +108,17 @@
 	}
 
 	async function loadLocal(pk: string) {
-		const [prof, pubResult, artResult, wikiResult, secResult, comResult] = await Promise.all([
-			api.getProfile(pk),
-			api.queryEvents([{ kinds: [30040], authors: [pk], limit: 500 }], 'local_only'),
-			api.queryEvents([{ kinds: [30023], authors: [pk], limit: 200 }], 'local_only'),
-			api.queryEvents([{ kinds: [30818], authors: [pk], limit: 200 }], 'local_only'),
-			api.queryEvents([{ kinds: [30041], authors: [pk], limit: 200 }], 'local_only'),
-			api.queryEvents([{ kinds: [1111], authors: [pk], limit: 200 }], 'local_only')
-		]);
+		const [prof, pubResult, artResult, wikiResult, specResult, secResult, hlResult, comResult] =
+			await Promise.all([
+				api.getProfile(pk),
+				api.queryEvents([{ kinds: [30040], authors: [pk], limit: 500 }], 'local_only'),
+				api.queryEvents([{ kinds: [30023], authors: [pk], limit: 200 }], 'local_only'),
+				api.queryEvents([{ kinds: [30818], authors: [pk], limit: 200 }], 'local_only'),
+				api.queryEvents([{ kinds: [30817], authors: [pk], limit: 200 }], 'local_only'),
+				api.queryEvents([{ kinds: [30041], authors: [pk], limit: 200 }], 'local_only'),
+				api.queryEvents([{ kinds: [9802], authors: [pk], limit: 200 }], 'local_only'),
+				api.queryEvents([{ kinds: [1111], authors: [pk], limit: 200 }], 'local_only')
+			]);
 		profile = prof.found ? prof : null;
 		// 30040 publications: same dedup, but kept as the existing
 		// PublicationSummary shape so the openpub callback contract
@@ -141,6 +149,7 @@
 		publications = [...byDtag.values()].sort((a, b) => b.created_at - a.created_at);
 		articles = dedupAddressable(artResult.events as NostrEvent[], 30023);
 		wikis = dedupAddressable(wikiResult.events as NostrEvent[], 30818);
+		specs = dedupAddressable(specResult.events as NostrEvent[], 30817);
 		// Sections are replaceable (kind 30041) — collapse versions by
 		// d-tag, newest wins, so a section isn't listed once per edit.
 		const secByDtag = new Map<string, NostrEvent>();
@@ -151,6 +160,7 @@
 			secByDtag.set(d_tag, e);
 		}
 		sections = [...secByDtag.values()].sort((a, b) => b.created_at - a.created_at);
+		highlights = (hlResult.events as NostrEvent[]).sort((a, b) => b.created_at - a.created_at);
 		comments = (comResult.events as NostrEvent[]).sort((a, b) => b.created_at - a.created_at);
 	}
 
@@ -162,14 +172,18 @@
 		publications: [30040],
 		articles: [30023],
 		wikis: [30818],
+		specs: [30817],
 		sections: [30041],
+		highlights: [9802],
 		comments: [1111]
 	};
 	const TAB_LABEL: Record<Tab, string> = {
 		publications: 'publications',
 		articles: 'articles',
 		wikis: 'wikis',
+		specs: 'specs',
 		sections: 'sections',
+		highlights: 'highlights',
 		comments: 'comments'
 	};
 
@@ -202,7 +216,7 @@
 		try {
 			await runFetch({
 				title: `Fetch all events for ${profile?.display_name || profile?.name || pubkey.slice(0, 12) + '…'}`,
-				kinds: [0, 30040, 30023, 30818, 30041, 1111]
+				kinds: [0, 30040, 30023, 30818, 30817, 30041, 9802, 1111]
 			});
 			// Profile prefetch hits general relays unconditionally — names
 			// don't go through the prompted flow because they're a side
@@ -237,7 +251,9 @@
 		publications = [];
 		articles = [];
 		wikis = [];
+		specs = [];
 		sections = [];
+		highlights = [];
 		comments = [];
 
 		loadLocal(pk).catch(() => {}).finally(() => { loading = false; });
@@ -262,7 +278,9 @@
 		if (activeTab === 'publications') return publications;
 		if (activeTab === 'articles') return articles;
 		if (activeTab === 'wikis') return wikis;
+		if (activeTab === 'specs') return specs;
 		if (activeTab === 'sections') return sections;
+		if (activeTab === 'highlights') return highlights;
 		return comments;
 	}
 
@@ -285,7 +303,7 @@
 		if (!item) return;
 		if (activeTab === 'publications') {
 			onopenpub?.(item as PublicationSummary);
-		} else if (activeTab === 'articles' || activeTab === 'wikis') {
+		} else if (activeTab === 'articles' || activeTab === 'wikis' || activeTab === 'specs') {
 			const x = item as { addr: { kind: number; pubkey: string; d_tag: string }; title: string | null };
 			onopenaddr?.(x.addr, x.title);
 		} else if (activeTab === 'sections') {
@@ -294,6 +312,8 @@
 			const title = getTag(sec, 'title') || dTag || '[Untitled]';
 			onopenaddr?.({ kind: 30041, pubkey: sec.pubkey, d_tag: dTag }, title);
 		} else {
+			// Comments and highlights both route to the discussion view — it
+			// resolves the thread / highlighted target the event points at.
 			oncomment?.(item as NostrEvent);
 		}
 	}
@@ -302,8 +322,9 @@
 		const list = activeList();
 		const item = list[cursor];
 		if (!item) return;
-		if (activeTab === 'comments') {
-			// Comments aren't addressable — feed the modal the raw event.
+		if (activeTab === 'comments' || activeTab === 'highlights') {
+			// Comments and highlights aren't addressable — feed the modal the
+			// raw event.
 			app.eventModalData = item as NostrEvent;
 		} else if (activeTab === 'sections') {
 			const sec = item as NostrEvent;
@@ -356,7 +377,44 @@
 		untrack(() => store.registerNavHandler(id, handler));
 		return () => untrack(() => store.unregisterNavHandler(id));
 	});
+
+	// ----- Profile-bar hamburger menu -----
+	// Copy npub / copy nprofile / ignore author. NIP-19 strings are
+	// pre-encoded engine-side when the pubkey changes so copy() stays
+	// synchronous — awaiting inside the click handler would lose the
+	// clipboard user-gesture (same pattern as EventViewModal).
+
+	let barMenuOpen = $state(false);
+	let npub = $state('');
+	let nprofile = $state('');
+
+	$effect(() => {
+		const pk = pubkey;
+		npub = '';
+		nprofile = '';
+		Promise.all([
+			api.encode({ kind: 'npub', pubkey: pk }),
+			api.encode({ kind: 'nprofile', pubkey: pk })
+		])
+			.then(([n, np]) => {
+				if (pk !== pubkey) return; // stale — pubkey swapped mid-flight
+				npub = n;
+				nprofile = np;
+			})
+			.catch(() => {});
+	});
+
+	function copyText(s: string, label: string) {
+		if (!s) return;
+		navigator.clipboard?.writeText(s);
+		app.pushToast(`${label} copied`, 'success');
+	}
 </script>
+
+<svelte:window
+	onclick={() => { if (barMenuOpen) barMenuOpen = false; }}
+	onkeydown={(e) => { if (barMenuOpen && e.key === 'Escape') barMenuOpen = false; }}
+/>
 
 <div class="profile-view">
 	<div class="profile-bar">
@@ -381,11 +439,40 @@
 		<button class="fetch-btn" onclick={handleFetch} disabled={fetching} title="Fetch this author's events from relays">
 			{fetching ? 'Fetching...' : '↻ Fetch'}
 		</button>
-		<button
-			class="fetch-btn fetch-btn--danger"
-			onclick={() => app.ignoreAuthor(pubkey, profile?.display_name || profile?.name || undefined)}
-			title="Hide this author — ignore every event from this pubkey (undo in the ignored buffer)"
-		>Ignore</button>
+		<div class="bar-menu">
+			<button
+				class="fetch-btn"
+				onclick={(e) => { e.stopPropagation(); barMenuOpen = !barMenuOpen; }}
+				aria-haspopup="menu"
+				aria-expanded={barMenuOpen}
+				title="Profile actions"
+			>☰</button>
+			{#if barMenuOpen}
+				<div class="bar-menu__list" role="menu">
+					<button
+						class="bar-menu__item"
+						role="menuitem"
+						disabled={!npub}
+						onclick={() => { barMenuOpen = false; copyText(npub, 'npub'); }}
+					>Copy npub</button>
+					<button
+						class="bar-menu__item"
+						role="menuitem"
+						disabled={!nprofile}
+						onclick={() => { barMenuOpen = false; copyText(nprofile, 'nprofile'); }}
+					>Copy nprofile</button>
+					<button
+						class="bar-menu__item bar-menu__item--danger"
+						role="menuitem"
+						onclick={() => {
+							barMenuOpen = false;
+							app.ignoreAuthor(pubkey, profile?.display_name || profile?.name || undefined);
+						}}
+						title="Hide this author — ignore every event from this pubkey (undo in the ignored buffer)"
+					>Ignore author</button>
+				</div>
+			{/if}
+		</div>
 	</div>
 
 	{#snippet tabCell(t: Tab, label: string, count: number)}
@@ -420,7 +507,9 @@
 		{@render tabCell('publications', 'Publications', publications.length)}
 		{@render tabCell('articles', 'Articles', articles.length)}
 		{@render tabCell('wikis', 'Wikis', wikis.length)}
+		{@render tabCell('specs', 'Specs', specs.length)}
 		{@render tabCell('sections', 'Sections', sections.length)}
+		{@render tabCell('highlights', 'Highlights', highlights.length)}
 		{@render tabCell('comments', 'Comments', comments.length)}
 	</div>
 
@@ -536,6 +625,42 @@
 					</div>
 				{/each}
 			{/if}
+		{:else if activeTab === 'specs'}
+			{#if specs.length === 0}
+				<div class="empty">No specs</div>
+			{:else}
+				{#each specs as spec, i (`${spec.addr.pubkey}:${spec.addr.d_tag}`)}
+					<!-- svelte-ignore a11y_no_static_element_interactions -->
+					<div
+						class="item pub-item"
+						class:item--cursor={i === cursor}
+						data-cursor={i}
+						onclick={() => { cursor = i; onopenaddr?.(spec.addr, spec.title); }}
+						onkeydown={(e) => { if (e.key === 'Enter') onopenaddr?.(spec.addr, spec.title); }}
+						onfocus={() => (cursor = i)}
+						role="button"
+						tabindex="0"
+					>
+						<div class="item-header">
+							<span class="item-title">{spec.title ?? spec.addr.d_tag ?? '[Untitled]'}</span>
+							<PoolStateBadges
+								item={app.findPoolItemByAddr(spec.addr)}
+								onpillctx={() => app.pillActionByAddr(spec.addr, 'context')}
+								onpillcmp={() => app.pillActionByAddr(spec.addr, 'compose')}
+								onpilldrop={() => app.pillActionByAddr(spec.addr, 'drop')}
+								signed={spec.signed}
+								relays={spec.relays}
+							/>
+							<span class="item-meta">spec</span>
+							{@render menuBtn(() => app.openAddressableInModal(spec.addr))}
+						</div>
+						{#if spec.summary}
+							<p class="item-preview">{spec.summary}</p>
+						{/if}
+						<span class="item-time">{formatTime(spec.created_at)}</span>
+					</div>
+				{/each}
+			{/if}
 		{:else if activeTab === 'sections'}
 			{#if sections.length === 0}
 				<div class="empty">No sections</div>
@@ -577,6 +702,46 @@
 							{/if}
 							<span class="item-time">{formatTime(sec.created_at)}</span>
 						</div>
+					</div>
+				{/each}
+			{/if}
+		{:else if activeTab === 'highlights'}
+			{#if highlights.length === 0}
+				<div class="empty">No highlights</div>
+			{:else}
+				{#each highlights as hl, i (hl.id)}
+					{@const sourceAddr = getTag(hl, 'a') || getTag(hl, 'e')}
+					{@const annotation = getTag(hl, 'comment')}
+					<!-- svelte-ignore a11y_no_static_element_interactions -->
+					<div
+						class="item pub-item"
+						class:item--cursor={i === cursor}
+						data-cursor={i}
+						onclick={() => { cursor = i; oncomment?.(hl); }}
+						onkeydown={(e) => { if (e.key === 'Enter') oncomment?.(hl); }}
+						onfocus={() => (cursor = i)}
+						role="button"
+						tabindex="0"
+					>
+						<div class="item-header">
+							{#if sourceAddr}
+								<span class="item-ref">on {sourceAddr.split(':').pop()}</span>
+							{/if}
+							<PoolStateBadges
+								item={app.findPoolItemByEventId(hl.id)}
+								onpillctx={() => app.pillActionByEventId(hl.id, 'context')}
+								onpillcmp={() => app.pillActionByEventId(hl.id, 'compose')}
+								onpilldrop={() => app.pillActionByEventId(hl.id, 'drop')}
+								signed={isEventSigned(hl.sig)}
+								relays={hl.relays ?? []}
+							/>
+							{@render menuBtn(() => (app.eventModalData = hl))}
+						</div>
+						<p class="item-content item-content--highlight">{hl.content}</p>
+						{#if annotation}
+							<p class="item-preview">{annotation}</p>
+						{/if}
+						<span class="item-time">{formatTime(hl.created_at)}</span>
 					</div>
 				{/each}
 			{/if}
@@ -713,14 +878,49 @@
 		cursor: default;
 	}
 
-	/* Destructive variant — the red "Ignore" (hide author) button. */
-	.fetch-btn--danger {
-		border-color: var(--state-error);
-		color: var(--state-error);
+	/* Profile-bar hamburger menu — copy npub / copy nprofile / ignore
+	   author. Anchored dropdown (position: relative wrapper), closed by
+	   outside click or Escape via svelte:window. */
+	.bar-menu {
+		position: relative;
 	}
-	.fetch-btn--danger:hover:not(:disabled) {
-		background: var(--state-error);
-		color: white;
+	.bar-menu__list {
+		position: absolute;
+		top: calc(100% + 4px);
+		right: 0;
+		z-index: 20;
+		display: flex;
+		flex-direction: column;
+		min-width: 140px;
+		background: var(--bg-surface);
+		border: 1px solid var(--border);
+		border-radius: var(--radius);
+		box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+		overflow: hidden;
+	}
+	.bar-menu__item {
+		background: none;
+		border: none;
+		text-align: left;
+		font-size: 0.75rem;
+		padding: 7px 12px;
+		color: var(--fg);
+		cursor: pointer;
+		white-space: nowrap;
+	}
+	.bar-menu__item:hover:not(:disabled) {
+		background: color-mix(in srgb, var(--accent) 15%, transparent);
+	}
+	.bar-menu__item:disabled {
+		opacity: 0.5;
+		cursor: default;
+	}
+	.bar-menu__item--danger {
+		color: var(--state-error);
+		border-top: 1px solid var(--border);
+	}
+	.bar-menu__item--danger:hover:not(:disabled) {
+		background: color-mix(in srgb, var(--state-error) 15%, transparent);
 	}
 
 	.tabs {
@@ -857,6 +1057,15 @@
 		margin: 4px 0;
 		white-space: pre-wrap;
 		word-break: break-word;
+	}
+
+	/* The highlighted excerpt itself — quoted, with the same tint the
+	   discussion-count "hl" pills use so highlights read consistently. */
+	.item-content--highlight {
+		border-left: 3px solid var(--state-online);
+		background: color-mix(in srgb, var(--state-online) 10%, transparent);
+		padding: 4px 8px;
+		font-style: italic;
 	}
 
 	.item-footer {
