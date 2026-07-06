@@ -38,3 +38,4 @@ never happen in the browser.
 - [[file:idea-backlinks.org][Backlinks]]
 - [[file:idea-event-badges.org][Event badges]]
 - [[file:feat-discussions.org][Discussions]]
+- [[file:tool-collatz-fixture.org][Collatz graph fixture]] — test data for the graph panel
