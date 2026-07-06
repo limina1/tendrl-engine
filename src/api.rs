@@ -675,6 +675,70 @@ pub async fn resolve_nostrdown_handler(
     Ok(Json(ResolveNostrdownResponse { refs }))
 }
 
+/// POST /api/v1/nostrdown/parse body. Batched (key → content) like resolve, so
+/// the reader can locate tokens across visible sections in one round trip; the
+/// editor passes a single item.
+#[derive(Debug, Deserialize)]
+pub struct ParseNostrdownRequest {
+    #[serde(default)]
+    pub items: std::collections::HashMap<String, String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ParseNostrdownResponse {
+    /// `key` → parsed tokens (UTF-16 spans). The editor marks and the reader chips
+    /// these before (or instead of) full resolution.
+    pub tokens: std::collections::HashMap<String, Vec<crate::nostrdown::ParsedToken>>,
+}
+
+/// POST /api/v1/nostrdown/parse
+///
+/// Locate and classify nostrdown `{{ }}`/`[[ ]]` tokens in text — the pure
+/// tokenizer surface, no resolution. This is the single home of the grammar the
+/// editor's live decoration and the reader's pre-resolution chips consume, so no
+/// frontend re-implements the token regexes. Pure over [`crate::nostrdown::parse_tokens`].
+pub async fn parse_nostrdown_handler(
+    Json(req): Json<ParseNostrdownRequest>,
+) -> Json<ParseNostrdownResponse> {
+    let tokens = req
+        .items
+        .into_iter()
+        .map(|(k, content)| (k, crate::nostrdown::parse_tokens(&content)))
+        .collect();
+    Json(ParseNostrdownResponse { tokens })
+}
+
+/// POST /api/v1/nostrdown/normalize body — a batch of strings to NIP-54 slug-
+/// normalize. The composer uses it for slug matching (sibling-title filtering,
+/// heading scroll, autocomplete) now that the TS normalizer is gone.
+#[derive(Debug, Deserialize)]
+pub struct NormalizeNostrdownRequest {
+    #[serde(default)]
+    pub values: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct NormalizeNostrdownResponse {
+    /// Normalized slugs, positionally aligned with the request's `values`.
+    pub slugs: Vec<String>,
+}
+
+/// POST /api/v1/nostrdown/normalize
+///
+/// NIP-54-normalize a batch of strings (lowercase; spaces/separators → `-`; other
+/// punctuation dropped). The single home of slug normalization, matching the
+/// tokenizer's own `target` normalization exactly. Pure over [`crate::nostrdown::normalize`].
+pub async fn normalize_nostrdown_handler(
+    Json(req): Json<NormalizeNostrdownRequest>,
+) -> Json<NormalizeNostrdownResponse> {
+    let slugs = req
+        .values
+        .iter()
+        .map(|v| crate::nostrdown::normalize(v))
+        .collect();
+    Json(NormalizeNostrdownResponse { slugs })
+}
+
 /// POST /api/v1/nostrdown/fetch-entity body. The card's "fetch from search
 /// relays" action for a single `embed` entity (naddr/nevent/note).
 #[derive(Debug, Deserialize)]

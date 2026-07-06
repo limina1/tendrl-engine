@@ -437,6 +437,47 @@ fn is_markup_link_target(t: &str) -> bool {
 /// wikilink, in source order. Malformed / unknown-prefix `{{ }}` tokens and
 /// markup-native `[[ ]]` links are skipped (left in place for the renderer to
 /// show literally).
+/// A parsed token with **UTF-16** offsets — the locate-and-classify surface the
+/// editor (live decoration, click gestures) and the reader (pre-resolution chips)
+/// consume when they need to find and label `{{ }}`/`[[ ]]` tokens but not resolve
+/// them. This is the engine-owned replacement for the former TS token regexes:
+/// the grammar has exactly one home (`POST /api/v1/nostrdown/parse`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ParsedToken {
+    pub kind: RefKind,
+    /// Normalized lookup target (NIP-54 slug or bech32 entity).
+    pub target: String,
+    /// Target exactly as written (trimmed), pre-normalization.
+    pub raw_target: String,
+    /// Explicit display text after `|`, if any.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub display: Option<String>,
+    /// UTF-16 offsets spanning the whole token, delimiters included (the unit JS
+    /// slices strings in).
+    pub start: usize,
+    pub end: usize,
+}
+
+/// Parse `content` into UTF-16-offset [`ParsedToken`]s. Pure; the same scan as
+/// [`parse`] but emitting the web's span unit so the editor and reader can locate
+/// and mark tokens without re-implementing the grammar in TS.
+pub fn parse_tokens(content: &str) -> Vec<ParsedToken> {
+    parse(content)
+        .into_iter()
+        .map(|r| {
+            let (start, end) = r.utf16_span(content);
+            ParsedToken {
+                kind: r.kind,
+                target: r.target,
+                raw_target: r.raw_target,
+                display: r.display,
+                start,
+                end,
+            }
+        })
+        .collect()
+}
+
 pub fn parse(content: &str) -> Vec<NostrdownRef> {
     let bytes = content.as_bytes();
     let mut refs = Vec::new();
@@ -485,7 +526,7 @@ pub fn reference_tags(content: &str) -> Vec<Vec<String>> {
     use crate::nip19::Decoded;
     let mut out: Vec<Vec<String>> = Vec::new();
     let mut seen: Vec<(String, String)> = Vec::new();
-    let mut push = |out: &mut Vec<Vec<String>>, seen: &mut Vec<(String, String)>, tag: Vec<String>| {
+    let push = |out: &mut Vec<Vec<String>>, seen: &mut Vec<(String, String)>, tag: Vec<String>| {
         let key = (tag[0].clone(), tag.get(1).cloned().unwrap_or_default());
         if !seen.contains(&key) {
             seen.push(key);
@@ -751,6 +792,24 @@ mod tests {
         let npub = crate::nip19::encode_npub(&pk).unwrap();
         let tags = reference_tags(&format!("cc {{{{@{npub}}}}}"));
         assert!(tags.contains(&vec!["p".to_string(), pk]));
+    }
+
+    #[test]
+    fn parse_tokens_emit_utf16_spans_for_both_delimiters() {
+        // A wide char before the tokens shifts UTF-16 offsets vs bytes.
+        let content = "日 {{ref:One}} and [[Two Topic]] end";
+        let toks = parse_tokens(content);
+        assert_eq!(toks.len(), 2);
+        assert_eq!(toks[0].kind, RefKind::Ref);
+        assert_eq!(toks[0].target, "one");
+        // "日 " is 2 UTF-16 units; the `{{` opens at unit 2.
+        assert_eq!(toks[0].start, 2);
+        assert_eq!(
+            content.encode_utf16().skip(toks[0].start).take(toks[0].end - toks[0].start).collect::<Vec<_>>(),
+            "{{ref:One}}".encode_utf16().collect::<Vec<_>>()
+        );
+        assert_eq!(toks[1].kind, RefKind::Wiki);
+        assert_eq!(toks[1].target, "two-topic");
     }
 
     #[test]
