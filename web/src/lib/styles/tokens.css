@@ -1435,6 +1435,23 @@ body { font-size: var(--t-base); }
 .pill--json:hover {
   background: color-mix(in srgb, var(--id-yours) 22%, transparent);
 }
+/* Universal event-menu pill — the `m` affordance on rows (feed, reader
+   outline, profile). Neutral bordered chip that picks up the action
+   accent on hover; sits LAST in every row's action cluster so it lines
+   up as a column across rows. */
+.pill--menu {
+  background: transparent;
+  border: 1px solid var(--panel-border);
+  color: var(--fg);
+  cursor: pointer;
+  font: inherit;
+  font-family: var(--font-mono);
+  font-size: var(--t-xs);
+}
+.pill--menu:hover {
+  border-color: var(--id-yours);
+  color: var(--id-yours);
+}
 /* Actionable "broadcast this local snapshot" pill — green to read as "push out". */
 .pill--broadcast {
   background: color-mix(in srgb, var(--state-online) 16%, transparent);

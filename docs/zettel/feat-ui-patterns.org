@@ -93,6 +93,17 @@ flags). Naming drifts (=.pill--*=, =.psb__pill--*=, =.badge-*=,
 Legacy =unsigned/draft= pill survives in =PoolStateBadges= even though
 the signed-snapshot model never writes unsigned events.
 
+*Row action-cluster order* (2026-07-06): every event row (feed, reader
+outline) ends in the same right-aligned cluster, in this fixed order —
+provenance/pool pills (=PoolStateBadges=), discussion counts, count meta,
+then the =menu= pill *last* — so menu forms a column across rows.
+Discussion counts render as quiet =PoolStateBadges=-scale pills (=hl n= /
+=cmt n=, tinted =--state-online= / =--id-yours=, full wording in the
+tooltip) at both the per-section (outline =.section-action=) and
+publication (=.ds-badge=) levels. The =menu= chip is the global
+=.pill--menu= in =tokens.css= (it was previously referenced but never
+defined).
+
 * Loading, progress, empty, error
 
 - Loading is expressed four ways: =SectionStatus=

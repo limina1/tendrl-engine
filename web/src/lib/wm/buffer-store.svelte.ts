@@ -296,21 +296,18 @@ export class BufferStore {
 		if (!cur) return;
 		const buf = cur.buffer;
 
-		const wasOpen = this.openBuffers.find((b) => b.buffer.id === buf.id);
-		if (wasOpen) {
-			this.openBuffers = this.openBuffers.filter((b) => b.buffer.id !== buf.id);
-			this.recentlyClosed = [wasOpen, ...this.recentlyClosed].slice(0, 20);
+		if (this.openBuffers.some((b) => b.buffer.id === buf.id)) {
+			this.killBuffer(buf.id);
+			return;
 		}
 
-		const cls = wasOpen?.className ?? this.classFor(this.focusedSlot);
+		// Buffer not registered in openBuffers (transient leaf) — just swap
+		// the focused leaf to another buffer of the slot's class.
+		const cls = this.classFor(this.focusedSlot);
 		if (!cls) {
 			this.flash(this.focusedSlot);
 			return;
 		}
-
-		// Replace the focused leaf with another buffer of the same class.
-		// Prefer something already in openBuffers; otherwise restore the
-		// class default singleton.
 		const replacement = this.openBuffers.find(
 			(b) => b.className === cls && b.buffer.id !== buf.id
 		);
@@ -319,13 +316,54 @@ export class BufferStore {
 			this.flash(this.focusedSlot);
 			return;
 		}
-
 		const fallback = this.classDefault(cls);
 		if (fallback) {
 			this.openBuffers = [...this.openBuffers, { className: cls, buffer: fallback }];
 			this.setLeaf(this.focusedSlot, fallback);
 		}
 		this.flash(this.focusedSlot);
+	}
+
+	// Kill a specific open buffer by id (the tab ×, and the registered-buffer
+	// path of killFocused). Same replacement policy as killFocused — prefer
+	// another open buffer of the class, else restore the class default — but
+	// it doesn't require focus: every leaf currently showing the killed
+	// buffer (any slot, any split) is swapped to the replacement.
+	killBuffer(id: string) {
+		const entry = this.openBuffers.find((b) => b.buffer.id === id);
+		if (!entry) return;
+		this.openBuffers = this.openBuffers.filter((b) => b.buffer.id !== id);
+		this.recentlyClosed = [entry, ...this.recentlyClosed].slice(0, 20);
+
+		const cls = entry.className;
+		let replacement = this.openBuffers.find((b) => b.className === cls)?.buffer ?? null;
+		if (!replacement) {
+			const fallback = this.classDefault(cls);
+			if (fallback) {
+				this.openBuffers = [...this.openBuffers, { className: cls, buffer: fallback }];
+				replacement = fallback;
+			}
+		}
+		if (!replacement) return;
+
+		for (const pos of POSITION_ORDER) {
+			const tree = this.slotTrees[pos];
+			if (!tree) continue;
+			let next = tree;
+			let changed = false;
+			for (const path of leafPaths(tree)) {
+				const n = nodeAt(next, path);
+				if (n?.type === 'leaf' && n.buffer.id === id) {
+					const buf = replacement;
+					next = replaceAt(next, path, () => ({ type: 'leaf', buffer: buf }));
+					changed = true;
+				}
+			}
+			if (changed) {
+				this.slotTrees = { ...this.slotTrees, [pos]: next };
+				this.flash(pos);
+			}
+		}
 	}
 
 	registerNavHandler(bufferId: string, handler: NavHandler) {

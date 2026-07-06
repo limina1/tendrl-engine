@@ -1335,15 +1335,26 @@
 				{#if isRoot && classBuffers.length > 1}
 					<div class="pane__tabs">
 						{#each classBuffers as ob (ob.buffer.id)}
-							<button
-								class="pane__tab {ob.buffer.id === node.buffer.id ? 'pane__tab--on' : ''}"
-								onclick={(e) => {
-									e.stopPropagation();
-									store.focusSlot(pos);
-									if (ob.buffer.id !== node.buffer.id) store.setLeaf(pos, ob.buffer);
-								}}
-								title={ob.buffer.kicker ?? ob.buffer.label}
-							>{ob.buffer.label}</button>
+							<span class="pane__tab {ob.buffer.id === node.buffer.id ? 'pane__tab--on' : ''}">
+								<button
+									class="pane__tab-go"
+									onclick={(e) => {
+										e.stopPropagation();
+										store.focusSlot(pos);
+										if (ob.buffer.id !== node.buffer.id) store.setLeaf(pos, ob.buffer);
+									}}
+									title={ob.buffer.kicker ?? ob.buffer.label}
+								>{ob.buffer.label}</button>
+								<button
+									class="pane__tab-x"
+									onclick={(e) => {
+										e.stopPropagation();
+										store.killBuffer(ob.buffer.id);
+									}}
+									title="Close this buffer (SPC b k)"
+									aria-label={`Close ${ob.buffer.label}`}
+								>×</button>
+							</span>
 						{/each}
 					</div>
 				{:else}
@@ -1854,7 +1865,18 @@
 		color: var(--fg);
 		font-weight: 600;
 	}
-	.pane__kicker { color: var(--base5); font-family: var(--font-sans); text-transform: none; letter-spacing: 0; }
+	/* Kicker often carries a full publication title — let it shrink and
+	   ellipsize instead of pushing the W/× affordances off the header. */
+	.pane__kicker {
+		color: var(--base5);
+		font-family: var(--font-sans);
+		text-transform: none;
+		letter-spacing: 0;
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
 	.pane__mod { color: var(--id-draft); font-size: var(--t-3xs); }
 	.pane__sp { flex: 1; }
 	.pane__x {
@@ -1871,18 +1893,19 @@
 		display: flex;
 		gap: 2px;
 		align-items: center;
+		min-width: 0;
+		overflow-x: auto;
+		scrollbar-width: none;
 	}
+	/* Tab = wrapper span holding the switch button + the close ×, so the
+	   border/active tint frames both without nesting buttons. */
 	.pane__tab {
-		background: transparent;
+		display: inline-flex;
+		align-items: center;
 		border: 1px solid transparent;
 		border-radius: var(--r-sm);
 		color: var(--base5);
-		cursor: pointer;
-		font-family: var(--font-mono);
-		font-size: var(--t-2xs);
-		text-transform: uppercase;
-		letter-spacing: 0.05em;
-		padding: 1px 6px;
+		flex-shrink: 0;
 	}
 	.pane__tab:hover { color: var(--fg); border-color: var(--base3); }
 	.pane__tab--on {
@@ -1891,6 +1914,33 @@
 		background: color-mix(in srgb, var(--id-yours) 10%, transparent);
 		font-weight: 600;
 	}
+	.pane__tab-go {
+		background: transparent;
+		border: none;
+		color: inherit;
+		cursor: pointer;
+		font-family: var(--font-mono);
+		font-size: var(--t-2xs);
+		font-weight: inherit;
+		text-transform: uppercase;
+		letter-spacing: 0.05em;
+		padding: 1px 2px 1px 6px;
+		max-width: 18ch;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+	.pane__tab-x {
+		background: transparent;
+		border: none;
+		color: var(--base4);
+		cursor: pointer;
+		font-size: var(--t-xs);
+		line-height: 1;
+		padding: 1px 5px 1px 3px;
+		border-radius: var(--r-sm);
+	}
+	.pane__tab-x:hover { color: var(--red, var(--fg)); }
 	.pane__body {
 		flex: 1;
 		padding: var(--s-3);
@@ -2173,11 +2223,26 @@
 	.ml__class--chat { background: color-mix(in srgb, var(--id-imported) 25%, transparent); color: var(--id-imported); }
 	.ml__class--work { background: color-mix(in srgb, var(--id-yours) 25%, transparent); color: var(--id-yours); }
 	.ml__class--research { background: color-mix(in srgb, var(--state-online) 25%, transparent); color: var(--state-online); }
-	.ml__seg { color: var(--base6); }
-	.ml__seg--buf { color: var(--fg); }
+	.ml__seg { color: var(--base6); white-space: nowrap; }
+	/* The buf segment carries the buffer label + kicker — for a reader
+	   that's the full publication title. It's the one segment allowed to
+	   shrink (overflow:hidden lifts the min-width:auto floor) so a long
+	   title ellipsizes instead of pushing the pills off the strip. */
+	.ml__seg--buf {
+		color: var(--fg);
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
 	.ml__seg--prefix { color: var(--id-yours); }
 	/* Right-justified loading indicator — sits after .ml__spacer (flex:1). */
-	.ml__status { color: var(--base6); font-variant-numeric: tabular-nums; }
+	.ml__status {
+		color: var(--base6);
+		font-variant-numeric: tabular-nums;
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
 	/* Engine version — quiet, far-right informational tag. */
 	.ml__version { color: var(--base5, var(--base6)); font-variant-numeric: tabular-nums; opacity: 0.75; }
 	.pill--btn {

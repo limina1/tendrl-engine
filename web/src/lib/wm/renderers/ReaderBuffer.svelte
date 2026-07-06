@@ -2033,21 +2033,23 @@
 						</span>
 					{/if}
 				{:else}
-					<span class="ds-badge ds-badge--comments">
-						{totalDiscussion.comments} comment{totalDiscussion.comments === 1 ? '' : 's'}
+					<span
+						class="ds-badge ds-badge--comments"
+						title="{totalDiscussion.comments} comment{totalDiscussion.comments === 1 ? '' : 's'} across the publication and its sections"
+					>
+						cmt {totalDiscussion.comments}
 					</span>
-					<span class="ds-sep">·</span>
 					<button
 						class="ds-badge ds-badge--highlights ds-badge--button"
 						onclick={() => (drawerOpen = !drawerOpen)}
-						title={drawerOpen ? 'Hide highlights drawer' : 'Open highlights drawer (grouped by author, click to scroll)'}
+						title="{totalDiscussion.highlights} highlight{totalDiscussion.highlights === 1 ? '' : 's'} — {drawerOpen ? 'hide highlights drawer' : 'open highlights drawer (grouped by author, click to scroll)'}"
 					>
-						{totalDiscussion.highlights} highlight{totalDiscussion.highlights === 1 ? '' : 's'}
+						hl {totalDiscussion.highlights}
 					</button>
 					{#if publicationDiscussion.comments > 0 || publicationDiscussion.highlights > 0}
 						<span class="ds-sep">·</span>
 						<span class="ds-on-index" title="Comments/highlights on the publication index itself (kind 30040)">
-							index: c {publicationDiscussion.comments} h {publicationDiscussion.highlights}
+							index: cmt {publicationDiscussion.comments} · hl {publicationDiscussion.highlights}
 						</span>
 					{/if}
 					{#if discussionSource}
@@ -2364,7 +2366,7 @@
 												toggleOutlineHighlights(i);
 											}}
 											title="{highlightsOpen ? 'Hide' : 'Show'} the {highlightN} highlight{highlightN === 1 ? '' : 's'} on this section"
-										>highlights {highlightN}</button>
+										>hl {highlightN}</button>
 									{/if}
 									{#if commentN > 0}
 										<button
@@ -2374,11 +2376,11 @@
 												e.stopPropagation();
 												toggleOutlineComments(i);
 											}}
-											title="{commentsOpen ? 'Hide' : 'Show'} the threaded comments on this section"
-										>comments {commentN}</button>
+											title="{commentsOpen ? 'Hide' : 'Show'} the {commentN} threaded comment{commentN === 1 ? '' : 's'} on this section"
+										>cmt {commentN}</button>
 									{/if}
 									<button
-										class="section-action section-action--menu"
+										class="pill pill--menu"
 										onclick={(e) => {
 											e.stopPropagation();
 											openSectionJsonBySection(section);
@@ -2563,25 +2565,43 @@
 		border-bottom: 1px solid var(--panel-border);
 		flex-shrink: 0;
 	}
-	.ds-badge { color: var(--base6); }
-	.ds-badge--comments { color: var(--id-yours, var(--base7)); }
-	.ds-badge--highlights { color: var(--state-online, var(--base6)); }
-	.ds-badge--empty { color: var(--base5); font-style: italic; }
+	/* Publication-level discussion counts — same quiet pill family as the
+	   outline's per-section `hl n` / `cmt n` chips (and PoolStateBadges),
+	   so counts read the same at every level. */
+	.ds-badge {
+		color: var(--base6);
+		font-family: var(--font-mono);
+		font-size: var(--t-3xs);
+		font-weight: 600;
+		padding: 0 6px;
+		border-radius: 3px;
+		line-height: 1.6;
+		white-space: nowrap;
+	}
+	.ds-badge--comments {
+		background: color-mix(in srgb, var(--id-yours) 12%, transparent);
+		color: var(--id-yours, var(--base7));
+	}
+	.ds-badge--highlights {
+		background: color-mix(in srgb, var(--state-online) 12%, transparent);
+		color: var(--state-online, var(--base6));
+	}
+	.ds-badge--empty { color: var(--base5); font-style: italic; padding: 0; }
 	.ds-sep { color: var(--base4); }
 	.ds-on-index { color: var(--base5); }
 	.ds-source { color: var(--base4); font-size: calc(var(--t-xs) - 1px); }
 
 	/* The highlights badge is interactive — toggles the drawer. */
 	.ds-badge--button {
-		background: transparent;
-		border: 1px solid transparent;
-		padding: 1px 6px;
-		border-radius: var(--r-sm);
+		border: none;
 		cursor: pointer;
 		font: inherit;
+		font-family: var(--font-mono);
+		font-size: var(--t-3xs);
+		font-weight: 600;
 	}
 	.ds-badge--button:hover {
-		border-color: var(--state-online);
+		background: color-mix(in srgb, var(--state-online) 28%, transparent);
 	}
 
 	.pub-threads {
@@ -2647,44 +2667,36 @@
 		flex-shrink: 0;
 		align-self: center;
 	}
+	/* Discussion-count toggles — sized and tinted like the PoolStateBadges
+	   pills next to them so the cluster reads as one family, not a CTA
+	   strip. `hl n` / `cmt n`; the tooltip carries the full wording. */
 	.section-action {
 		font-family: var(--font-mono);
-		font-size: var(--t-xs);
-		padding: 1px 6px;
-		border-radius: var(--r-sm);
-		border: 1px solid var(--panel-border);
-		background: var(--bg-surface);
-		color: var(--base6);
+		font-size: var(--t-3xs);
+		font-weight: 600;
+		padding: 0 6px;
+		border-radius: 3px;
+		border: none;
 		line-height: 1.4;
+		white-space: nowrap;
 		cursor: pointer;
 	}
 	.section-action:hover {
 		filter: brightness(1.2);
 	}
 	.section-action--highlights {
-		border-color: var(--state-online);
+		background: color-mix(in srgb, var(--state-online) 12%, transparent);
 		color: var(--state-online);
 	}
 	.section-action--highlights.open {
-		background: color-mix(in srgb, var(--state-online) 18%, transparent);
+		background: color-mix(in srgb, var(--state-online) 28%, transparent);
 	}
 	.section-action--comments {
-		border-color: var(--id-yours);
+		background: color-mix(in srgb, var(--id-yours) 12%, transparent);
 		color: var(--id-yours);
 	}
 	.section-action--comments.open {
-		background: color-mix(in srgb, var(--id-yours) 18%, transparent);
-	}
-	/* Section-level menu chip — matches the feed's pill--menu styling
-	   so the affordance reads the same across surfaces. Neutral border
-	   with a pop on hover, no special tint (highlights and comments
-	   already carry their own colors). */
-	.section-action--menu {
-		color: var(--fg);
-	}
-	.section-action--menu:hover {
-		border-color: var(--id-yours);
-		color: var(--id-yours);
+		background: color-mix(in srgb, var(--id-yours) 28%, transparent);
 	}
 
 	.outline-detail {
@@ -2709,7 +2721,15 @@
 		flex-shrink: 0;
 		display: flex;
 		align-items: center;
+		flex-wrap: wrap;
 		gap: 8px;
+	}
+	/* Long publication titles wrap (this is the content surface — don't
+	   ellipsize) instead of forcing the badges out of the pane. */
+	.title__text {
+		flex: 1;
+		min-width: 0;
+		overflow-wrap: anywhere;
 	}
 	.content { flex: 1; overflow: auto; min-height: 0; }
 	.empty {
@@ -2932,6 +2952,10 @@
 		border-radius: var(--r-sm);
 		color: var(--id-yours);
 		cursor: pointer;
+		max-width: 36ch;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
 	}
 	.crumb:hover { border-color: var(--id-yours); }
 	.crumb--current {

@@ -176,17 +176,11 @@
 				>
 					<span class="cursor-marker" aria-hidden="true">{i === cursor ? '›' : ' '}</span>
 					<div class="row-body">
+					<!-- Row action cluster reads in one fixed order everywhere
+					     (feed + reader outline): provenance/pool pills, counts,
+					     menu last — so the menu pill lines up row to row. -->
 					<div class="row-head">
 						<span class="title">{pub_item.title ?? '[Untitled]'}</span>
-						<button
-							class="pill pill--menu"
-							data-tour={i === 0 ? 'menu-pill' : undefined}
-							onclick={(e) => {
-								e.stopPropagation();
-								app.openAddressableInModal(pub_item.addr);
-							}}
-							title="Open the event menu (m)"
-						>menu</button>
 						{#if pub_item.local}
 							<button
 								class="pill pill--broadcast"
@@ -214,6 +208,15 @@
 							onpartof={() => findContainers(pub_item.addr)}
 						/>
 						<span class="meta">{pub_item.section_count} sections</span>
+						<button
+							class="pill pill--menu"
+							data-tour={i === 0 ? 'menu-pill' : undefined}
+							onclick={(e) => {
+								e.stopPropagation();
+								app.openAddressableInModal(pub_item.addr);
+							}}
+							title="Open the event menu (m)"
+						>menu</button>
 					</div>
 					{#if pub_item.summary}
 						<p class="summary">{pub_item.summary}</p>
@@ -305,7 +308,16 @@
 	.row:not(.row--cursor) .cursor-marker { color: transparent; }
 	.row-head { display: flex; align-items: center; gap: 8px; margin-bottom: 2px; }
 	.title { font-size: var(--t-sm); font-weight: 600; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-	.meta { font-size: var(--t-xs); color: var(--base5); white-space: nowrap; }
+	/* Fixed-width, right-aligned count so "N sections" forms a column
+	   across rows regardless of how many pills precede it. */
+	.meta {
+		font-size: var(--t-xs);
+		color: var(--base5);
+		white-space: nowrap;
+		min-width: 9ch;
+		text-align: right;
+		font-variant-numeric: tabular-nums;
+	}
 	.summary {
 		font-size: var(--t-xs);
 		color: var(--base6);

@@ -18,7 +18,10 @@ navigation. Full spec: =docs/wm-shell.md=; shell root in
   =web/src/lib/wm/registry.ts= and =web/src/lib/wm/renderers/=.
 - Splits: =SPC w s= splits the focused leaf with a same-class buffer picker;
   =j= / =k= cycles leaves. Buffer switching =SPC b b= (class) / =SPC b B=
-  (global) / =SPC b r= (recently closed, cap 20); =SPC b k= kills.
+  (global) / =SPC b r= (recently closed, cap 20); =SPC b k= kills. Each
+  pane-head tab also carries a mouse × (=store.killBuffer(id)= — kills any
+  open buffer, swapping every leaf that shows it to a same-class
+  replacement or the class default).
 - SPC leader with Doom-style which-key popup; M-x fuzzy command palette
   (=:=); modeline with layout, focused buffer, and segmented network /
   embedding / identity status pills.
