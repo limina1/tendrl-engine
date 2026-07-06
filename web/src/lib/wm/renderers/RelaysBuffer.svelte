@@ -3,6 +3,9 @@
 	import { getAppState } from '$lib/state.svelte';
 	import { getRelayInfo, normalizeRelayUrl, type Nip11Status, type Nip11Doc } from '$lib/relay/nip11';
 	import { relayFocus, consumeRelayFocus } from '$lib/relay/focus.svelte';
+	// Global in-app prompt (window.prompt replacement) — the modal
+	// itself renders once in +layout; we just await promptText().
+	import { promptText, textPrompt } from '$lib/wm/text-prompt.svelte';
 	import ProfileName from '$lib/components/ProfileName.svelte';
 	import type { Buffer } from '../types';
 
@@ -920,49 +923,6 @@
 		publishGate = null;
 	}
 
-	// ------------------------------------------------------------------
-	// In-app text prompt — replaces window.prompt(). Browser dialogs
-	// don't belong in the wm shell; this mirrors the overwrite gate /
-	// fetch-confirm modal pattern (backdrop, Escape/Enter, autofocus).
-	// ------------------------------------------------------------------
-	let textPrompt = $state<{
-		title: string;
-		placeholder: string;
-		hint: string | null;
-		confirmLabel: string;
-		value: string;
-		resolve: (v: string | null) => void;
-	} | null>(null);
-	let textPromptEl: HTMLInputElement | undefined = $state(undefined);
-
-	function promptText(opts: {
-		title: string;
-		placeholder?: string;
-		hint?: string;
-		confirmLabel?: string;
-		initial?: string;
-	}): Promise<string | null> {
-		return new Promise((resolve) => {
-			textPrompt = {
-				title: opts.title,
-				placeholder: opts.placeholder ?? '',
-				hint: opts.hint ?? null,
-				confirmLabel: opts.confirmLabel ?? 'Add',
-				value: opts.initial ?? '',
-				resolve
-			};
-		});
-	}
-	function resolveTextPrompt(ok: boolean) {
-		if (!textPrompt) return;
-		const v = textPrompt.value.trim();
-		textPrompt.resolve(ok && v ? v : null);
-		textPrompt = null;
-	}
-	// Focus the input once the modal is in the DOM.
-	$effect(() => {
-		if (textPrompt) queueMicrotask(() => textPromptEl?.focus());
-	});
 
 	// When the relay-list events were last synced from the network —
 	// persisted per pubkey so "how stale is my local copy" survives a
@@ -1370,12 +1330,11 @@
 	}
 </script>
 
+<!-- The global TextPromptModal owns Escape while a prompt is open;
+     only the overwrite gate is handled here. -->
 <svelte:window
-	onkeydown={(e) => {
-		if (e.key !== 'Escape') return;
-		if (textPrompt) resolveTextPrompt(false);
-		else if (publishGate) resolveGate(false);
-	}}
+	onkeydown={(e) =>
+		publishGate && !textPrompt.active && e.key === 'Escape' && resolveGate(false)}
 />
 
 <div class="relays-view">
@@ -2171,44 +2130,6 @@
 		</div>
 	{/if}
 
-	<!-- In-app text prompt — the wm-shell replacement for window.prompt.
-	     Same backdrop/dialog pattern as the overwrite gate. -->
-	{#if textPrompt}
-		<!-- svelte-ignore a11y_click_events_have_key_events -->
-		<div class="gate-backdrop" role="presentation" onclick={() => resolveTextPrompt(false)}>
-			<div
-				class="gate-modal gate-modal--prompt"
-				role="dialog"
-				aria-modal="true"
-				aria-label={textPrompt.title}
-				tabindex="-1"
-				onclick={(e) => e.stopPropagation()}
-			>
-				<div class="gate-title">{textPrompt.title}</div>
-				{#if textPrompt.hint}
-					<p class="gate-muted">{textPrompt.hint}</p>
-				{/if}
-				<input
-					class="gate-input"
-					type="text"
-					bind:this={textPromptEl}
-					bind:value={textPrompt.value}
-					placeholder={textPrompt.placeholder}
-					onkeydown={(e) => e.key === 'Enter' && resolveTextPrompt(true)}
-				/>
-				<div class="gate-actions">
-					<button class="gate-btn" onclick={() => resolveTextPrompt(false)}>Cancel</button>
-					<button
-						class="gate-btn gate-btn--primary"
-						onclick={() => resolveTextPrompt(true)}
-						disabled={!textPrompt.value.trim()}
-					>
-						{textPrompt.confirmLabel}
-					</button>
-				</div>
-			</div>
-		</div>
-	{/if}
 </div>
 
 <style>
@@ -2626,31 +2547,6 @@
 	.gate-btn--danger {
 		border-color: color-mix(in srgb, var(--red) 60%, transparent);
 		color: var(--red);
-	}
-	.gate-btn--primary {
-		border-color: color-mix(in srgb, var(--state-online) 60%, transparent);
-		color: var(--state-online);
-	}
-	.gate-btn[disabled] {
-		opacity: 0.5;
-		cursor: default;
-	}
-	.gate-modal--prompt {
-		max-width: 420px;
-	}
-	.gate-input {
-		background: var(--bg, transparent);
-		border: 1px solid var(--base3);
-		border-radius: var(--r-md);
-		color: var(--fg);
-		font-family: var(--font-mono);
-		font-size: var(--t-sm);
-		padding: 6px 8px;
-		width: 100%;
-	}
-	.gate-input:focus {
-		outline: none;
-		border-color: color-mix(in srgb, var(--state-online) 60%, transparent);
 	}
 
 	.relay-detail {

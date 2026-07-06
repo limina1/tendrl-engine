@@ -16,6 +16,7 @@
 	import ComposeHelpModal from '$lib/components/ComposeHelpModal.svelte';
 	import MenuHelpModal from '$lib/components/MenuHelpModal.svelte';
 	import ToastStack from '$lib/components/ToastStack.svelte';
+	import TextPromptModal from '$lib/components/TextPromptModal.svelte';
 	import FetchActivityModal from '$lib/components/FetchActivityModal.svelte';
 	// fetch-events self-starts the SSE subscription at module scope; we
 	// only need confirmState here to render the modal.
@@ -152,6 +153,10 @@
 <DiscoveryTip />
 
 <ToastStack />
+
+<!-- Global in-app text prompt (window.prompt replacement) — renders
+     nothing unless some caller has a promptText() pending. -->
+<TextPromptModal />
 
 <FetchActivityModal />
 
