@@ -100,6 +100,38 @@
 	// and why. Cleared with the pulled state.
 	let pullDecryptErrors = $state<Record<number, string>>({});
 
+	// Reset ALL working sets to the first-boot defaults (engine-side:
+	// re-seed from initial_relays, broadcast cleared, discovery
+	// built-ins, named sets kept). Two-step arm instead of a browser
+	// confirm — first click arms for a few seconds, second executes.
+	let resetArmed = $state(false);
+	let resetting = $state(false);
+	let resetArmTimer: ReturnType<typeof setTimeout> | null = null;
+	async function resetToDefaults() {
+		if (!resetArmed) {
+			resetArmed = true;
+			if (resetArmTimer) clearTimeout(resetArmTimer);
+			resetArmTimer = setTimeout(() => (resetArmed = false), 4000);
+			return;
+		}
+		if (resetArmTimer) clearTimeout(resetArmTimer);
+		resetArmed = false;
+		resetting = true;
+		try {
+			await api.resetRelaysToDefaults();
+			app.pushToast('Relay sets reset to defaults (named sets kept)', 'success', 3000);
+			await load(true);
+		} catch (e) {
+			app.pushToast(
+				`Couldn't reset: ${e instanceof Error ? e.message : String(e)}`,
+				'error',
+				5000
+			);
+		} finally {
+			resetting = false;
+		}
+	}
+
 	async function load(force = false) {
 		loading = true;
 		try {
@@ -1278,6 +1310,15 @@
 			<span class="relays-hint">read/write apply live and persist · auth is cosmetic</span>
 		</div>
 		<div class="relays-header-actions">
+			<button
+				class="btn-refresh btn-reset"
+				class:btn-reset--armed={resetArmed}
+				onclick={resetToDefaults}
+				disabled={resetting}
+				title="Reset all relay sets to the first-boot defaults: read/write re-seeded from initial_relays, broadcast cleared, discovery back to built-ins. Named sets are kept. Local only — your published relay lists are untouched."
+			>
+				{resetting ? 'Resetting…' : resetArmed ? 'Really reset?' : 'Reset to defaults'}
+			</button>
 			<button class="btn-refresh" onclick={() => load(true)}>Refresh</button>
 			<button
 				class="btn-snapshot"
@@ -2554,6 +2595,13 @@
 		font-size: var(--t-xs);
 		padding: 4px 10px;
 		font-family: var(--font-mono);
+	}
+	/* Armed state of the two-step reset — reads as "this is the
+	   destructive click". */
+	.btn-reset--armed {
+		background: color-mix(in srgb, var(--red) 14%, transparent);
+		color: var(--red);
+		border-color: color-mix(in srgb, var(--red) 50%, transparent);
 	}
 	.btn-snapshot[disabled],
 	.btn-publish-list[disabled] {

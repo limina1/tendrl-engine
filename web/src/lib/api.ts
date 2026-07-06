@@ -1114,6 +1114,16 @@ export function removeRelay(set: string, url: string) {
 	});
 }
 
+/** Reset ALL relay working sets to the first-boot defaults (re-seed
+ *  from `initial_relays`, broadcast cleared, discovery built-ins).
+ *  Named sets survive. Local-only — published lists untouched. */
+export function resetRelaysToDefaults() {
+	return fetchJson<{ updated: boolean; message: string }>('/api/v1/config/update', {
+		method: 'POST',
+		body: JSON.stringify({ reset_relays: true })
+	});
+}
+
 /** What publishing a relay-list event would overwrite (replaceable
  *  events replace wholesale). `null` = no current event, nothing to
  *  overwrite. Computed engine-side (src/relay_diff.rs). */

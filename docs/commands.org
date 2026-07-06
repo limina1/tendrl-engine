@@ -1293,3 +1293,24 @@ blind" warning instead.
 ** Known-failing on tendrl-web (pre-existing, not this branch)
 
 =emit_wikilink_tags_from_wiki_refs= fails at e8b6481 — see docs/bugs.org.
+
+* Relay reset-to-defaults (branch =relay-deletion=)
+
+=Engine::reset_relays_to_defaults= behind =reset_relays= on
+=/api/v1/config/update=: first-boot seed (general/fetch/publish from
+=initial_relays=), broadcast cleared, discovery built-ins restored,
+exclusive flags off, named sets PRESERVED. Local-only.
+
+#+begin_src bash
+cargo test --lib test_reset_relays   # in-memory + disk + named-set survival
+
+# Endpoint smoke (scratch engine): drift the sets, then
+curl -s -X POST localhost:3031/api/v1/config/update \
+  -H 'Content-Type: application/json' -d '{"reset_relays":true}'
+curl -s localhost:3031/api/v1/relays | jq '{publish:.publish.urls, broadcast:.broadcast.urls, indexer:.indexer.default, named:[.named_sets[].d_tag]}'
+# publish/broadcast back to seed/empty, indexer.default = purplepag.es +
+# user.kindpag.es, named sets still listed.
+#+end_src
+
+UI: "Reset to defaults" in the relay buffer header is a two-step armed
+button (click → "Really reset?" for 4s → click) — no browser alert.
