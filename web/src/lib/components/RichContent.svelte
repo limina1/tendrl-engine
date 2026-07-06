@@ -5,19 +5,13 @@
 	// UTF-16 offsets into the same `content`; `buildSegments` slices them into
 	// renderable runs. Purely presentational — resolution happens in the parent
 	// (which calls `api.resolveHighlights` / `api.resolveNostrdown`).
-	import { onDestroy } from 'svelte';
 	import { getAppState } from '$lib/state.svelte';
 	import EmbedCard from './EmbedCard.svelte';
 	import { pubkeyToHighlightFill, pubkeyToHighlightStroke } from '$lib/discussions/colors';
 	import type { HighlightSpan } from '$lib/discussions/highlights';
 	import { buildSegments, type ResolvedRef, type ParsedToken } from '$lib/nostr/nostrdown';
-	import { useResolutionTracker, nextResolutionId } from '$lib/nostr/resolution-progress.svelte';
 
 	const app = getAppState();
-
-	// Enclosing reader's resolution tracker (absent outside a reader → no-op).
-	const resolution = useResolutionTracker();
-	const resolutionId = nextResolutionId();
 
 	let {
 		content,
@@ -38,16 +32,6 @@
 	} = $props();
 
 	const segments = $derived(buildSegments(content, spans, refs, tokens, focusedHighlightId));
-
-	// Report progress to the reader: total = parsed tokens; resolved = references
-	// the engine has returned a resolution for. (A not-local embed comes back
-	// `pending` and finishes fetching inside its own card, which shows its own
-	// "fetching…" state — so we count it resolved here to keep the aggregate bar
-	// completable rather than stuck on a card-local fetch.)
-	$effect(() => {
-		resolution?.report(resolutionId, tokens.length, Math.min(refs.length, tokens.length));
-	});
-	onDestroy(() => resolution?.remove(resolutionId));
 
 	function styleFor(pubkey: string, focused: boolean): string {
 		const fill = pubkeyToHighlightFill(pubkey);
