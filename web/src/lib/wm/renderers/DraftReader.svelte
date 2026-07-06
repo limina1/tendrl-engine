@@ -40,7 +40,10 @@
 				d_tag: s.id
 			},
 			title: s.title || null,
-			content: s.content,
+			// A block-level slot has no authored body — surface it in the preview
+			// by rendering its target as a `{{slot:…}}` reference, so the reader
+			// resolves it to a card (published, it becomes an a-tag child node).
+			content: s.slot ? `{{slot:${s.slot}}}` : s.content,
 			position: i,
 			status: 'loaded' as const
 		}))

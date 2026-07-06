@@ -10,7 +10,7 @@
 	import { pubkeyToHighlightFill, pubkeyToHighlightStroke } from '$lib/discussions/colors';
 	import type { HighlightSpan } from '$lib/discussions/highlights';
 	import { buildSegments, type ResolvedRef, type ParsedToken } from '$lib/nostr/nostrdown';
-	import { type ResolutionTracker, nextResolutionId } from '$lib/nostr/resolution-progress.svelte';
+	import type { ResolutionTracker } from '$lib/nostr/resolution-progress.svelte';
 
 	const app = getAppState();
 
@@ -38,18 +38,10 @@
 
 	const segments = $derived(buildSegments(content, spans, refs, tokens, focusedHighlightId));
 
-	// Report resolution progress to the enclosing reader (if any): total = parsed
-	// tokens; resolved = references the engine has returned an entry for. Done with
-	// `$effect` (re-reports when the counts change) + a separate effect whose
-	// teardown removes this section on unmount — no lifecycle hooks, which don't
-	// hold up in this WM's buffer rendering.
-	const rid = nextResolutionId();
-	$effect(() => {
-		resolution?.report(rid, tokens.length, Math.min(refs.length, tokens.length));
-	});
-	$effect(() => {
-		return () => resolution?.remove(rid);
-	});
+	// Progress is reported by the embed/quote/slot cards themselves (each knows
+	// when it's still fetching a not-local event from relays — the actually-slow
+	// step), so the tracker is passed straight through to EmbedCard below. Inline
+	// ref/wiki/mention links resolve instantly and aren't counted.
 
 	function styleFor(pubkey: string, focused: boolean): string {
 		const fill = pubkeyToHighlightFill(pubkey);
@@ -106,7 +98,7 @@
 	}
 </script>
 
-<pre class="section-content" class:muted>{#each segments as seg, i (i)}{#if seg.type === 'highlight'}<mark class="hl-overlay" data-hl-ids={seg.highlight.id} style={styleFor(seg.highlight.pubkey, seg.highlight.focused)} title="NIP-84 highlight {seg.highlight.id.slice(0, 8)}… by {seg.highlight.pubkey.slice(0, 12)}…">{seg.text}</mark>{:else if seg.type === 'ref'}{#if seg.ref.kind === 'embed' || seg.ref.kind === 'quote' || seg.ref.kind === 'slot'}<EmbedCard ref={seg.ref} onopen={openRef} />{:else}<button class="nd-ref nd-ref--{seg.ref.kind}" class:nd-unresolved={!seg.ref.found} onclick={() => openRef(seg.ref)} onmouseenter={(e) => showPreview(e, seg.ref)} onmouseleave={hidePreview} onfocus={(e) => showPreview(e, seg.ref)} onblur={hidePreview} disabled={!seg.ref.coord && !(seg.ref.event_kind === 0 && seg.ref.author_pubkey) && seg.ref.kind !== 'wiki'} title={refTitle(seg.ref)}>{seg.ref.kind === 'mention' ? '@' : ''}{seg.ref.label}</button>{/if}{:else if seg.type === 'token'}<span class="nd-token nd-token--{seg.kind}" title="{seg.kind}: {seg.target} — resolving…">{seg.display || seg.target}</span>{:else}{seg.text}{/if}{/each}</pre>
+<pre class="section-content" class:muted>{#each segments as seg, i (i)}{#if seg.type === 'highlight'}<mark class="hl-overlay" data-hl-ids={seg.highlight.id} style={styleFor(seg.highlight.pubkey, seg.highlight.focused)} title="NIP-84 highlight {seg.highlight.id.slice(0, 8)}… by {seg.highlight.pubkey.slice(0, 12)}…">{seg.text}</mark>{:else if seg.type === 'ref'}{#if seg.ref.kind === 'embed' || seg.ref.kind === 'quote' || seg.ref.kind === 'slot'}<EmbedCard ref={seg.ref} onopen={openRef} {resolution} />{:else}<button class="nd-ref nd-ref--{seg.ref.kind}" class:nd-unresolved={!seg.ref.found} onclick={() => openRef(seg.ref)} onmouseenter={(e) => showPreview(e, seg.ref)} onmouseleave={hidePreview} onfocus={(e) => showPreview(e, seg.ref)} onblur={hidePreview} disabled={!seg.ref.coord && !(seg.ref.event_kind === 0 && seg.ref.author_pubkey) && seg.ref.kind !== 'wiki'} title={refTitle(seg.ref)}>{seg.ref.kind === 'mention' ? '@' : ''}{seg.ref.label}</button>{/if}{:else if seg.type === 'token'}<span class="nd-token nd-token--{seg.kind}" title="{seg.kind}: {seg.target} — resolving…">{seg.display || seg.target}</span>{:else}{seg.text}{/if}{/each}</pre>
 {#if preview}
 	<!-- svelte-ignore a11y_no_static_element_interactions -->
 	<div

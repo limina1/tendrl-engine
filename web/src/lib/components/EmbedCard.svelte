@@ -7,8 +7,20 @@
 	import { getProfile, fetchNostrdownEntity } from '$lib/api';
 	import { getAppState } from '$lib/state.svelte';
 	import type { ResolvedRef } from '$lib/nostr/nostrdown';
+	import { type ResolutionTracker, nextResolutionId } from '$lib/nostr/resolution-progress.svelte';
 
-	let { ref, onopen }: { ref: ResolvedRef; onopen?: (ref: ResolvedRef) => void } = $props();
+	let {
+		ref,
+		onopen,
+		resolution = undefined
+	}: {
+		ref: ResolvedRef;
+		onopen?: (ref: ResolvedRef) => void;
+		/** The reader's resolution-progress tracker (threaded, not context). When
+		 *  present, this card counts as one reference and reports itself resolved
+		 *  once it's no longer fetching a not-local event. */
+		resolution?: ResolutionTracker;
+	} = $props();
 
 	const app = getAppState();
 
@@ -27,6 +39,20 @@
 		!!view.pending && view.event_kind !== 0 && (!!view.naddr || !!view.coord)
 	);
 	const fetchEntity = $derived(view.naddr ?? view.target);
+
+	// Resolution progress: this card is "done" once it's no longer waiting on a
+	// relay fetch (local/instant, fetched, or the fetch failed). Reports 1 ref to
+	// the reader's tracker — the count reflects the slow embed fetches, not the
+	// instant resolve. Removed on unmount via an `$effect` teardown (no lifecycle
+	// hooks — they don't hold up in this WM).
+	const fetchDone = $derived(!needsFetch || fetchFailed);
+	const rid = nextResolutionId();
+	$effect(() => {
+		resolution?.report(rid, 1, fetchDone ? 1 : 0);
+	});
+	$effect(() => {
+		return () => resolution?.remove(rid);
+	});
 
 	async function doFetch() {
 		if (fetching || !needsFetch) return;
