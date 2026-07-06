@@ -224,6 +224,38 @@
 		}
 	}
 
+	// Delete a relay from ALL of tendrl's working sets (general / fetch /
+	// publish / broadcast). Local-only by design: relays.json changes,
+	// the user's published relay-list events don't. Removing a URL from
+	// the published kind 10002 is a separate, deliberate publish (see
+	// docs/zettel/idea-relay-deletion-and-sync.org).
+	async function deleteRelay(url: string) {
+		if (
+			!window.confirm(
+				`Remove ${shorten(url)} from tendrl?\n\nThis only changes this app's relay sets — your published relay lists on Nostr are untouched. (To change those, edit here and use "Publish kind 10002".)`
+			)
+		)
+			return;
+		const prev = rows;
+		rows = rows.filter((r) => r.url !== url); // optimistic
+		try {
+			// remove_relay is a no-op (false) for sets the URL isn't in.
+			await api.removeRelay('general', url);
+			await api.removeRelay('fetch', url);
+			await api.removeRelay('publish', url);
+			await api.removeRelay('broadcast', url);
+			app.pushToast(`Removed ${shorten(url)} from tendrl`, 'info', 2500);
+			await load();
+		} catch (e) {
+			rows = prev; // revert on failure
+			app.pushToast(
+				`Couldn't remove ${shorten(url)}: ${e instanceof Error ? e.message : String(e)}`,
+				'error',
+				5000
+			);
+		}
+	}
+
 	// ------------------------------------------------------------------
 	// Discovery section — Search + Indexer subsections
 	// ------------------------------------------------------------------
@@ -746,6 +778,40 @@
 		for (const s of pulled ?? []) groups[s.source_kind].push(s);
 		return groups;
 	});
+
+	// ------------------------------------------------------------------
+	// Sync state vs. the published kind 10002 — only meaningful after a
+	// pull that actually found one. `synced` = URL present with matching
+	// read/write markers; `drifted` = present, markers differ;
+	// `local-only` = not in the published list (the honest default for
+	// "this app has its own relays"). The reverse direction (published
+	// but not local) is already the suggestions section above.
+	// ------------------------------------------------------------------
+	type SyncState = 'synced' | 'drifted' | 'local-only';
+	const pulled10002 = $derived.by(() => {
+		const map = new Map<string, PulledRelay>();
+		for (const s of pulled ?? []) {
+			if (s.source_kind === 10002) map.set(normalizeRelayUrl(s.url), s);
+		}
+		return map;
+	});
+	function syncStateFor(row: RelayRow): SyncState | null {
+		if (pullKindResults?.[10002] !== 'parsed') return null;
+		// Broadcast-only rows aren't part of a kind 10002; don't badge them.
+		if (!row.read && !row.write) return null;
+		const p = pulled10002.get(normalizeRelayUrl(row.url));
+		if (!p) return 'local-only';
+		return !!p.read === row.read && !!p.write === row.write ? 'synced' : 'drifted';
+	}
+	function syncTitleFor(state: SyncState, row: RelayRow): string {
+		if (state === 'synced') return 'In your published kind 10002 with the same read/write markers.';
+		if (state === 'local-only')
+			return "Only in this app's relay sets — not in your published kind 10002. That's fine: tendrl's relays are its own settings.";
+		const p = pulled10002.get(normalizeRelayUrl(row.url));
+		const pub = p?.read && p?.write ? 'read+write' : p?.read ? 'read' : 'write';
+		const loc = row.read && row.write ? 'read+write' : row.read ? 'read' : 'write';
+		return `In your published kind 10002, but the markers differ — published ${pub}, local ${loc}. "Publish kind 10002" would overwrite the published event with the local state.`;
+	}
 
 	function classNameForKind(k: 10002 | 10007 | 10086 | 10088): string {
 		return k === 10002
@@ -1335,6 +1401,7 @@
 				{@const status = statusFor(row.url)}
 				{@const doc = docFor(row.url)}
 				{@const lim = doc?.limitation}
+				{@const sync = syncStateFor(row)}
 				<div class="relay-card" class:relay-card--expanded={expanded.has(row.url)} bind:this={rowEls[row.url]}>
 					<div class="relay-row">
 						<button
@@ -1347,6 +1414,11 @@
 						<div class="relay-id">
 							<span class="relay-url">{shorten(row.url)}</span>
 							<div class="relay-flags">
+								{#if sync}
+									<span class="pill sync-pill sync-pill--{sync}" title={syncTitleFor(sync, row)}>
+										{sync === 'local-only' ? 'local only' : sync}
+									</span>
+								{/if}
 								{#if status.state === 'loading'}
 									<span class="pill pill--ghost"><span class="dot dot--fetching"></span>info</span>
 								{:else if status.state === 'failed'}
@@ -1394,6 +1466,12 @@
 								title="Authenticate (NIP-42) when this relay challenges"
 							>auth</button>
 						</div>
+
+						<button
+							class="relay-remove"
+							onclick={() => deleteRelay(row.url)}
+							title="Remove this relay from tendrl (all working sets). Local only — never touches your published relay lists."
+						>×</button>
 					</div>
 
 					{#if expanded.has(row.url)}
@@ -2018,6 +2096,43 @@
 	}
 	.toggle-pill--on:hover {
 		filter: brightness(1.15);
+	}
+
+	/* Row delete — quiet until hovered; removal is local-only (working
+	   sets), never the published relay lists. */
+	.relay-remove {
+		background: transparent;
+		border: none;
+		color: var(--fg-muted);
+		cursor: pointer;
+		font-size: var(--t-sm);
+		line-height: 1;
+		padding: 0 4px;
+		flex-shrink: 0;
+	}
+	.relay-remove:hover {
+		color: var(--red, var(--fg));
+	}
+
+	/* Sync state vs. the published kind 10002 (shown after a pull).
+	   local-only is the calm default; drifted is the "publishing would
+	   overwrite" warning tint. */
+	.sync-pill {
+		font-family: var(--font-mono);
+	}
+	.sync-pill--synced {
+		background: color-mix(in srgb, var(--green) 14%, transparent);
+		color: var(--state-online);
+		border: 1px solid color-mix(in srgb, var(--state-online) 50%, transparent);
+	}
+	.sync-pill--local-only {
+		border: 1px solid var(--base3);
+		color: var(--base6);
+	}
+	.sync-pill--drifted {
+		background: color-mix(in srgb, var(--id-draft) 14%, transparent);
+		color: var(--id-draft);
+		border: 1px solid color-mix(in srgb, var(--id-draft) 50%, transparent);
 	}
 
 	.relay-detail {

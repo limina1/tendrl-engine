@@ -42,19 +42,27 @@ only by an explicit, diff-gated publish.
 
 * UI/UX
 
-- Phase 1 — local delete + badges (no new backend):
-  - per-row delete in the relay buffer: removes URL from
-    =general= + =fetch= + =publish= + =broadcast=; small confirm,
-    labeled as tendrl-only.
-  - sync badges on working-set rows (=synced= / =local-only= /
-    =drifted=), computed from the existing pull.
-- Phase 2 — deliberate publish ("push relay list"):
-  - explicit action, never triggered by local edits
-    (deliberate-publishing philosophy: no auto-published relay lists).
-  - re-fetch → compose kind 10002 (or 30002 for a named set) → show diff
-    incl. dropped tags → existing signing flow. Public lists only.
+- Phase 1 — local delete + badges (no new backend) — *shipped*:
+  - per-row =×= in the relay buffer: removes URL from
+    =general= + =fetch= + =publish= + =broadcast=; confirm dialog
+    states it's tendrl-only.
+  - sync badges on working-set rows (=synced= / =local only= /
+    =drifted=), computed against the pulled kind 10002 (only shown
+    after a pull that found one; broadcast-only rows aren't badged —
+    they're not part of a 10002).
+- Phase 2 — diff-gate the publish:
+  - correction from the code: explicit publish *already exists*
+    (=publishRelayListByKind= for 10002/10088, =publishNamedSet= for
+    30002 in =RelaysBuffer.svelte=) — user-initiated, per the
+    philosophy, but it signs and broadcasts with *no look at what it
+    replaces*. Phase 2 is retrofitting the gate, not building publish:
+    re-fetch latest → diff (incl. unmodeled tags that would drop) →
+    confirm → existing sign/broadcast path.
+  - follow =detect_republish_diff= as the pattern: pure Rust core +
+    =POST= endpoint (=compute_republish_diff= /
+    =/api/v1/publish/republish-diff= did this for publications).
   - deleting a relay "from Nostr" is not a per-row button: delete
-    locally, then push — one overwrite path, always diff-gated.
+    locally, then publish — one overwrite path, always diff-gated.
 - Later / noted: NIP-09 kind-5 deletion request for retiring a whole
   30002 set.
 

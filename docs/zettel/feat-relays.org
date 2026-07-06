@@ -25,14 +25,18 @@ edits are never auto-published as Nostr events.
 - Web: relay sets editable from =web/src/lib/wm/renderers/RelaysBuffer.svelte=;
   kind 10002/10007/30002 lists parsed client-side there (NIP-44 decrypt of
   private lists is signer-dependent under NIP-07).
+- Per-row relay deletion (local-only: all working sets, never the
+  published lists) + sync badges (=synced= / =local only= / =drifted=
+  vs. the pulled kind 10002) — 2026-07-06, see
+  [[file:idea-relay-deletion-and-sync.org][relay deletion & list sync]].
 
 * Gaps / open edges
 - Pulling a user's published 10002/30002 as *suggestions* is the intended
   flow; the discovery classes are configured but their consumer surface is
   still thin ("phantom relay-class config" per the May 2026 audit).
-- No relay deletion in the UI, and no path from local sets back to the
-  published lists — spec'd in
-  [[file:idea-relay-deletion-and-sync.org][relay deletion & list sync]]
+- The relay-list publish buttons (kind 10002/10088/30002) sign and
+  broadcast without showing what they replace — the diff gate is phase 2
+  of [[file:idea-relay-deletion-and-sync.org][relay deletion & list sync]]
   (in flight on =relay-deletion=).
 
 * Related
