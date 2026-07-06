@@ -98,6 +98,11 @@ path: [[file:conventions.org][conventions]].
 - [[file:idea-feeds-as-indexes.org][Feeds as 30040 indexes]] — algorithm output as artifact
 - [[file:idea-event-badges.org][Event badges]] — annotation follows the identifier, + relay provenance
 
+* Tooling & fixtures
+
+- [[file:tool-collatz-fixture.org][Collatz graph fixture]] — regenerable
+  cyclic test publication for the reader graph (local ingest only)
+
 * Open questions
 
 - [[file:q-knowledgebase.org][knowledgebase/]] — staging area or permanent parallel store?

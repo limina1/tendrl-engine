@@ -15,6 +15,7 @@ a type prefix so a link's nature is explicit:
 - =cmp-*= — software we model off of; where similarities exist
 - =decision-*= — a choice made, with rationale
 - =q-*= — open question, unresolved
+- =tool-*= — dev tooling / test fixtures (regenerable, not user-facing)
 - =scope-*=, =mission=, =conventions=, =index= — meta
 
 Header block on every zettel:

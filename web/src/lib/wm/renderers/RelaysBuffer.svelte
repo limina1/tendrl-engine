@@ -228,14 +228,9 @@
 	// publish / broadcast). Local-only by design: relays.json changes,
 	// the user's published relay-list events don't. Removing a URL from
 	// the published kind 10002 is a separate, deliberate publish (see
-	// docs/zettel/idea-relay-deletion-and-sync.org).
+	// docs/zettel/idea-relay-deletion-and-sync.org). No confirm: it's
+	// reversible (re-add the URL) and the row's tooltip says the scope.
 	async function deleteRelay(url: string) {
-		if (
-			!window.confirm(
-				`Remove ${shorten(url)} from tendrl?\n\nThis only changes this app's relay sets — your published relay lists on Nostr are untouched. (To change those, edit here and use "Publish kind 10002".)`
-			)
-		)
-			return;
 		const prev = rows;
 		rows = rows.filter((r) => r.url !== url); // optimistic
 		try {
@@ -423,6 +418,7 @@
 			const kinds = [10002, 10007, 10086, 10088, 30002] as const;
 			const fetchResult = await api.pullUserData(pubkey);
 			pullFetchedCount = fetchResult.fetched;
+			markPulled();
 
 			// Try decrypt whenever a NIP-07 extension is reachable. We try
 			// nip44 first (current Amethyst convention), then fall back to
@@ -861,20 +857,86 @@
 
 	// ------------------------------------------------------------------
 	// Overwrite gate: replaceable events replace wholesale, so every
-	// relay-list publish first refreshes the local copy of the current
-	// event, asks the engine what would be overwritten, and shows the
-	// diff for confirmation. Fail-open on lookup errors (a broken diff
-	// must not block publishing); `null` diff = first publish, no gate.
+	// relay-list publish asks the engine what would be overwritten and
+	// shows the diff for confirmation. The diff runs against the LOCAL
+	// copy — no automatic network fetch (which would raise a confirm-
+	// mode intent on every publish). The modal shows how stale that
+	// copy might be (last-synced stamp, persisted per pubkey) and
+	// offers an on-demand refetch that re-diffs in place. Fail-open on
+	// lookup errors (a broken gate must not block publishing).
 	// ------------------------------------------------------------------
+	type GateRequest = {
+		kind: number;
+		d_tag?: string;
+		proposed_tags?: string[][];
+		proposed_urls?: string[];
+		current_urls?: string[];
+	};
 	let publishGate = $state<{
 		label: string;
-		diff: api.RelayListDiff;
+		req: GateRequest;
+		// null = no local copy of a published list (unknown vs. relays).
+		diff: api.RelayListDiff | null;
 		resolve: (ok: boolean) => void;
 	} | null>(null);
+	let gateRefetching = $state(false);
 
 	function resolveGate(ok: boolean) {
 		publishGate?.resolve(ok);
 		publishGate = null;
+	}
+
+	// When the relay-list events were last synced from the network —
+	// persisted per pubkey so "how stale is my local copy" survives a
+	// reload. Stamped by pullFromProfile and the gate's refetch.
+	let lastPulledAt = $state<number | null>(null);
+	function pullStampKey(): string | null {
+		return app.myPubkey ? `tendrl:relay-lists-pulled:${app.myPubkey}` : null;
+	}
+	$effect(() => {
+		const key = pullStampKey();
+		if (!key) {
+			lastPulledAt = null;
+			return;
+		}
+		const raw = localStorage.getItem(key);
+		const ts = raw ? Number(raw) : NaN;
+		lastPulledAt = Number.isFinite(ts) && ts > 0 ? ts : null;
+	});
+	function markPulled() {
+		const key = pullStampKey();
+		if (!key) return;
+		lastPulledAt = Math.floor(Date.now() / 1000);
+		localStorage.setItem(key, String(lastPulledAt));
+	}
+
+	function agoLabel(ts: number): string {
+		const s = Math.max(0, Math.floor(Date.now() / 1000) - ts);
+		if (s < 60) return 'just now';
+		if (s < 3600) return `${Math.floor(s / 60)} min ago`;
+		if (s < 86400) return `${Math.floor(s / 3600)} h ago`;
+		return `${Math.floor(s / 86400)} d ago`;
+	}
+
+	/** Pull the relay-list events from the network and re-diff the open
+	 *  gate in place — the modal's "refetch" button. */
+	async function gateRefetch() {
+		if (!publishGate || !app.myPubkey) return;
+		gateRefetching = true;
+		try {
+			await api.pullUserData(app.myPubkey);
+			markPulled();
+			const diff = await api.relayListPublishDiff(publishGate.req);
+			if (publishGate) publishGate = { ...publishGate, diff };
+		} catch (e) {
+			app.pushToast(
+				`Refetch failed: ${e instanceof Error ? e.message : String(e)}`,
+				'error',
+				4000
+			);
+		} finally {
+			gateRefetching = false;
+		}
 	}
 
 	/** Client-decrypted membership of the current private list, if the
@@ -886,33 +948,23 @@
 		return (pulled ?? []).filter((s) => s.source_kind === kind).map((s) => s.url);
 	}
 
-	/** Refresh the current event, diff, and (when overwriting) wait for
-	 *  the user's confirmation. True = go ahead and publish. */
-	async function confirmOverwrite(req: {
-		kind: number;
-		label: string;
-		d_tag?: string;
-		proposed_tags?: string[][];
-		proposed_urls?: string[];
-		current_urls?: string[];
-	}): Promise<boolean> {
+	/** Diff the proposed event against the local copy of the published
+	 *  one and (when overwriting or unknown) wait for the user's
+	 *  confirmation. True = go ahead and publish. */
+	async function confirmOverwrite(label: string, req: GateRequest): Promise<boolean> {
 		let diff: api.RelayListDiff | null = null;
-		try {
-			// Refresh the local copy so the diff is against the latest
-			// published state, not a stale cache. Confirm-mode network
-			// intents surface through the usual fetch-approval UI.
-			if (app.myPubkey) await api.pullUserData(app.myPubkey);
-		} catch {
-			// Fetch trouble = diff against whatever is cached locally.
-		}
 		try {
 			diff = await api.relayListPublishDiff(req);
 		} catch {
 			return true; // fail-open — never block a publish on the gate
 		}
-		if (!diff) return true; // nothing published yet, nothing overwritten
+		// No local copy, but we HAVE synced from the network before:
+		// genuinely nothing published — first publish, no gate. With no
+		// sync ever, "no local copy" means "unknown", so the gate opens
+		// and offers the refetch.
+		if (!diff && lastPulledAt !== null) return true;
 		return new Promise((resolve) => {
-			publishGate = { label: req.label, diff: diff!, resolve };
+			publishGate = { label, req, diff, resolve };
 		});
 	}
 
@@ -964,9 +1016,8 @@
 
 		// Gate BEFORE the NIP-44 encrypt so a cancelled publish never
 		// bothers the extension. Private kinds diff by plaintext URL list.
-		const ok = await confirmOverwrite({
+		const ok = await confirmOverwrite(`kind ${kind} (${classLabelForPublish(kind)})`, {
 			kind,
-			label: `kind ${kind} (${classLabelForPublish(kind)})`,
 			proposed_tags: kind === 10002 ? tags : undefined,
 			proposed_urls: kind === 10002 ? undefined : urls,
 			current_urls: currentUrlsFromPull(kind)
@@ -1119,9 +1170,8 @@
 			...set.urls.map((url) => ['r', url])
 		];
 
-		const ok = await confirmOverwrite({
+		const ok = await confirmOverwrite(`"${set.title}" (kind 30002)`, {
 			kind: 30002,
-			label: `"${set.title}" (kind 30002)`,
 			d_tag: set.d_tag,
 			proposed_tags: tags
 		});
@@ -1907,71 +1957,97 @@
 				tabindex="-1"
 				onclick={(e) => e.stopPropagation()}
 			>
-				<div class="gate-title">Overwrite published list?</div>
+				<div class="gate-title">
+					{d ? 'Overwrite published list?' : 'Publish without checking?'}
+				</div>
 				<p class="gate-sub">
-					Publishing {publishGate.label} replaces your currently published event
-					{#if d.current_created_at}
-						(from {new Date(d.current_created_at * 1000).toLocaleString()})
-					{/if}
-					wholesale on every relay that accepts it.
+					Publishing {publishGate.label} replaces your currently published event wholesale
+					on every relay that accepts it.
 				</p>
 
-				{#if d.current_opaque}
-					<p class="gate-warn">
-						The current published list is <strong>encrypted</strong> and couldn't be read —
-						you'd be overwriting contents unknown to this app. Run "Pull from your profile"
-						(with your NIP-07 extension unlocked) to see them first.
-					</p>
-				{/if}
+				<!-- Freshness: the diff runs against the LOCAL copy — say how
+				     stale that might be and offer the (deliberate) refetch. -->
+				<div class="gate-fresh">
+					<span class="gate-muted">
+						{#if d?.current_created_at}
+							local copy published {new Date(d.current_created_at * 1000).toLocaleString()} ·
+						{/if}
+						lists last synced {lastPulledAt ? agoLabel(lastPulledAt) : 'never'}
+					</span>
+					<button class="pull-add" onclick={gateRefetch} disabled={gateRefetching}>
+						{gateRefetching ? 'refetching…' : '↻ refetch from relays'}
+					</button>
+				</div>
 
-				{#if d.added.length > 0}
-					<div class="gate-section gate-section--added">
-						<div class="gate-section-label">+ added ({d.added.length})</div>
-						{#each d.added as url (url)}<div class="gate-url">{shorten(url)}</div>{/each}
-					</div>
-				{/if}
-				{#if d.removed.length > 0}
-					<div class="gate-section gate-section--removed">
-						<div class="gate-section-label">− removed ({d.removed.length})</div>
-						{#each d.removed as url (url)}<div class="gate-url">{shorten(url)}</div>{/each}
-					</div>
-				{/if}
-				{#if d.changed.length > 0}
-					<div class="gate-section gate-section--changed">
-						<div class="gate-section-label">~ markers changed ({d.changed.length})</div>
-						{#each d.changed as c (c.url)}
-							<div class="gate-url">{shorten(c.url)}: {c.current} → {c.proposed}</div>
-						{/each}
-					</div>
-				{/if}
-				{#if d.unchanged > 0}
-					<p class="gate-muted">{d.unchanged} relay{d.unchanged === 1 ? '' : 's'} unchanged.</p>
-				{/if}
-				{#if d.added.length === 0 && d.removed.length === 0 && d.changed.length === 0 && !d.current_opaque}
-					<p class="gate-muted">Same relay list as the published event.</p>
-				{/if}
+				{#if !d}
+					{#if lastPulledAt}
+						<p class="gate-muted">
+							No published list found on your relays — nothing to overwrite.
+						</p>
+					{:else}
+						<p class="gate-warn">
+							No local copy of your published lists, and they've never been fetched — if
+							another client published one, this would overwrite it unseen. Refetch to check.
+						</p>
+					{/if}
+				{:else}
+					{#if d.current_opaque}
+						<p class="gate-warn">
+							The current published list is <strong>encrypted</strong> and couldn't be read —
+							you'd be overwriting contents unknown to this app. Run "Pull from your profile"
+							(with your NIP-07 extension unlocked) to see them first.
+						</p>
+					{/if}
 
-				{#if d.dropped_tags.length > 0}
-					<div class="gate-section gate-section--dropped">
-						<div class="gate-section-label">
-							dropped — tags on the published event this app doesn't carry
+					{#if d.added.length > 0}
+						<div class="gate-section gate-section--added">
+							<div class="gate-section-label">+ added ({d.added.length})</div>
+							{#each d.added as url (url)}<div class="gate-url">{shorten(url)}</div>{/each}
 						</div>
-						{#each d.dropped_tags as t, i (i)}
-							<div class="gate-url">[{t.join(', ')}]</div>
-						{/each}
-					</div>
-				{/if}
-				{#if d.drops_content}
-					<p class="gate-warn">
-						The published event carries <strong>content</strong> (e.g. encrypted private
-						members) that the new event won't — it will be dropped.
-					</p>
+					{/if}
+					{#if d.removed.length > 0}
+						<div class="gate-section gate-section--removed">
+							<div class="gate-section-label">− removed ({d.removed.length})</div>
+							{#each d.removed as url (url)}<div class="gate-url">{shorten(url)}</div>{/each}
+						</div>
+					{/if}
+					{#if d.changed.length > 0}
+						<div class="gate-section gate-section--changed">
+							<div class="gate-section-label">~ markers changed ({d.changed.length})</div>
+							{#each d.changed as c (c.url)}
+								<div class="gate-url">{shorten(c.url)}: {c.current} → {c.proposed}</div>
+							{/each}
+						</div>
+					{/if}
+					{#if d.unchanged > 0}
+						<p class="gate-muted">{d.unchanged} relay{d.unchanged === 1 ? '' : 's'} unchanged.</p>
+					{/if}
+					{#if d.added.length === 0 && d.removed.length === 0 && d.changed.length === 0 && !d.current_opaque}
+						<p class="gate-muted">Same relay list as the published event.</p>
+					{/if}
+
+					{#if d.dropped_tags.length > 0}
+						<div class="gate-section gate-section--dropped">
+							<div class="gate-section-label">
+								dropped — tags on the published event this app doesn't carry
+							</div>
+							{#each d.dropped_tags as t, i (i)}
+								<div class="gate-url">[{t.join(', ')}]</div>
+							{/each}
+						</div>
+					{/if}
+					{#if d.drops_content}
+						<p class="gate-warn">
+							The published event carries <strong>content</strong> (e.g. encrypted private
+							members) that the new event won't — it will be dropped.
+						</p>
+					{/if}
 				{/if}
 
 				<div class="gate-actions">
 					<button class="gate-btn" onclick={() => resolveGate(false)}>Cancel</button>
 					<button class="gate-btn gate-btn--danger" onclick={() => resolveGate(true)}>
-						Publish &amp; overwrite
+						{d ? 'Publish & overwrite' : lastPulledAt ? 'Publish' : 'Publish anyway'}
 					</button>
 				</div>
 			</div>
@@ -2361,6 +2437,14 @@
 	.gate-section-label {
 		color: var(--fg-muted);
 		margin-bottom: 2px;
+	}
+	.gate-fresh {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 8px;
+		font-size: var(--t-sm);
+		flex-wrap: wrap;
 	}
 	.gate-url {
 		font-family: var(--font-mono);

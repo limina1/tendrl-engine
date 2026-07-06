@@ -44,8 +44,8 @@ only by an explicit, diff-gated publish.
 
 - Phase 1 — local delete + badges (no new backend) — *shipped*:
   - per-row =×= in the relay buffer: removes URL from
-    =general= + =fetch= + =publish= + =broadcast=; confirm dialog
-    states it's tendrl-only.
+    =general= + =fetch= + =publish= + =broadcast= immediately (no
+    confirm — reversible, and the tooltip states it's tendrl-only).
   - sync badges on working-set rows (=synced= / =local only= /
     =drifted=), computed against the pulled kind 10002 (only shown
     after a pull that found one; broadcast-only rows aren't badged —
@@ -56,8 +56,14 @@ only by an explicit, diff-gated publish.
     30002 in =RelaysBuffer.svelte=) — user-initiated, per the
     philosophy, but it signs and broadcasts with *no look at what it
     replaces*. Phase 2 is retrofitting the gate, not building publish:
-    re-fetch latest → diff (incl. unmodeled tags that would drop) →
-    confirm → existing sign/broadcast path.
+    diff (incl. unmodeled tags that would drop) → confirm → existing
+    sign/broadcast path.
+  - refined after use: the gate diffs against the *local* copy — no
+    automatic network fetch (that raised a confirm-mode intent on
+    every publish). The modal shows staleness instead ("lists last
+    synced N ago", persisted per pubkey in localStorage) with an
+    on-demand "refetch from relays" that re-diffs in place. Never
+    synced + no local copy = explicit "publishing blind" warning.
   - follow =detect_republish_diff= as the pattern: pure Rust core +
     =POST= endpoint (=compute_republish_diff= /
     =/api/v1/publish/republish-diff= did this for publications).

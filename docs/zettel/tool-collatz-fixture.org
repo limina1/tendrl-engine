@@ -1,0 +1,52 @@
+#+TITLE: Collatz graph fixture
+#+TYPE: meta
+#+STATUS: current
+#+DATE: 2026-07-06
+
+Regenerable NKBIP-01 test publication for the reader's graph panel —
+=scripts/publish-collatz.py=. Deliberately messy: a deep, branching
+hierarchy with cycles, built to exercise edge cases the real corpus
+rarely produces. It drove the gutter-routed FocusGraph layout
+(=93b8abb=; script added in =118c3c0=).
+
+* What it builds
+
+The inverse odd-Collatz tree rooted at =collatz-1=: ~64 events, where
+any number that references something (tree child or back-edge) is a
+30040 index and pure leaves are 30041 sections; parent → child pairs
+become =a= tags, content is the number's actual Collatz sequence. On
+top of the acyclic tree, a =CYCLES= dict (~35 entries) adds deliberate
+back-edges to ancestors — including the longest branch looping to the
+root — giving the graph panel's cycle routing something to draw. Both
+dicts are freely trimmable/extendable.
+
+* Local-only by design
+
+=--publish= never touches relays: it signs each event with =nak= (key
+from =.env=) and POSTs to =http://localhost:3030/api/v1/ingest= —
+straight into local nostrdb. Broadcast stays a separate deliberate
+step, so the fixture is noise-free by construction. Replaceable events
+keyed by =d= tag mean re-running overwrites the same coordinates; a db
+wipe is fully recoverable by re-running.
+
+* Use
+
+- =python scripts/publish-collatz.py= — dry run, prints the whole tree.
+- =python scripts/publish-collatz.py --publish= — sign + ingest
+  (engine must be running); then open
+  =reader:30040:<pubkey>:collatz-1=.
+- =python scripts/publish-collatz.py --svg= — no engine needed; writes
+  =scripts/collatz-graph.svg=, a Python port of FocusGraph.svelte's
+  exact geometry (BFS depth → columns, forward edges green, back-edges
+  yellow-dashed in packed orthogonal lanes) for offline layout
+  iteration.
+
+If embeddings are enabled the 60s background task will embed the
+fixture events, so they surface in =~:= semantic search — harmless,
+but expect them there.
+
+* Related
+
+- [[file:index.org][Index]]
+- [[file:feat-reader.org][Reader]]
+- [[file:feat-import.org][Document import]] — the ingest endpoint it rides
