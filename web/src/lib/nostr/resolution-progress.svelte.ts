@@ -14,28 +14,28 @@ import { getContext, setContext } from 'svelte';
 const KEY = Symbol('nd-resolution-progress');
 
 export class ResolutionTracker {
-	#byId = $state<Record<string, { total: number; resolved: number }>>({});
+	byId = $state<Record<string, { total: number; resolved: number }>>({});
 
 	/** Report a section's counts. `total` = parsed reference tokens; `resolved` =
 	 *  references that have finished resolving (found or definitively not-found —
 	 *  a still-fetching `pending` ref does not count until it settles). */
 	report(id: string, total: number, resolved: number) {
-		this.#byId[id] = { total, resolved };
+		this.byId[id] = { total, resolved };
 	}
 
 	remove(id: string) {
-		if (id in this.#byId) {
-			const next = { ...this.#byId };
+		if (id in this.byId) {
+			const next = { ...this.byId };
 			delete next[id];
-			this.#byId = next;
+			this.byId = next;
 		}
 	}
 
 	get total(): number {
-		return Object.values(this.#byId).reduce((a, x) => a + x.total, 0);
+		return Object.values(this.byId).reduce((a, x) => a + x.total, 0);
 	}
 	get resolved(): number {
-		return Object.values(this.#byId).reduce((a, x) => a + x.resolved, 0);
+		return Object.values(this.byId).reduce((a, x) => a + x.resolved, 0);
 	}
 	/** True while at least one reference is still resolving. */
 	get resolving(): boolean {
