@@ -9,6 +9,7 @@
 	import ProfileName from '$lib/components/ProfileName.svelte';
 	import PoolStateBadges from '$lib/components/PoolStateBadges.svelte';
 	import { getActiveStore, type NavAction } from '../buffer-store.svelte';
+	import { ResolutionTracker } from '$lib/nostr/resolution-progress.svelte';
 	import type {
 		LazySection,
 		NAddr,
@@ -32,6 +33,12 @@
 	let { buffer }: { buffer: Buffer } = $props();
 
 	const app = getAppState();
+
+	// Aggregate nostrdown reference-resolution progress across this reader's
+	// sections (each RichContent reports in via the `resolution` prop). Drives the
+	// "N/M refs" indicator so a reference-heavy document shows it's still resolving
+	// — the not-local embeds fetch from relays and can take a while.
+	const resolution = new ResolutionTracker();
 	const store = getActiveStore();
 
 	let publication = $state<PublicationDetail | null>(null);
@@ -1813,6 +1820,16 @@
 			class:active={viewMode === 'continuous'}
 			onclick={() => (viewMode = 'continuous')}>Continuous</button
 		>
+		{#if resolution.resolving}
+			<span
+				class="nd-resolving"
+				title="Resolving nostrdown references — {resolution.resolved} of {resolution.total} done (not-local embeds fetch from relays)"
+				style="--nd-frac: {resolution.fraction}"
+			>
+				<span class="nd-resolving__track"><span class="nd-resolving__fill"></span></span>
+				<span class="nd-resolving__label">{resolution.resolved}/{resolution.total} refs</span>
+			</span>
+		{/if}
 		<button
 			class="json-btn"
 			data-tour="reader-menu"
@@ -2399,6 +2416,7 @@
 					focusedHighlightId={parsedHighlightId}
 					threadsFor={threadsForSection}
 					focusedCommentId={parsedFocusCommentId}
+					{resolution}
 				/>
 			{:else}
 				<PaginatedView
@@ -2413,6 +2431,7 @@
 					threadsFor={threadsForSection}
 					focusedCommentId={parsedFocusCommentId}
 					publicationAtag={`${publication.addr.kind}:${publication.addr.pubkey}:${publication.addr.d_tag}`}
+					{resolution}
 				/>
 			{/if}
 		</div>
@@ -2501,6 +2520,37 @@
 		font-size: var(--t-xs);
 	}
 	.toolbar .discussions-refresh:disabled { opacity: 0.5; cursor: not-allowed; }
+
+	/* Reference-resolution progress: a slim bar + count, shown only while
+	   references are still resolving (fetching not-local embeds, etc.). */
+	.nd-resolving {
+		display: inline-flex;
+		align-items: center;
+		gap: 6px;
+		margin-left: 6px;
+		font-family: var(--font-mono);
+		font-size: var(--t-xs);
+		color: var(--fg-muted);
+	}
+	.nd-resolving__track {
+		display: inline-block;
+		width: 48px;
+		height: 4px;
+		border-radius: 2px;
+		background: var(--border, rgba(127, 127, 127, 0.25));
+		overflow: hidden;
+	}
+	.nd-resolving__fill {
+		display: block;
+		height: 100%;
+		width: calc(var(--nd-frac, 0) * 100%);
+		background: var(--accent, var(--id-yours));
+		transition: width 0.2s ease;
+	}
+	.nd-resolving__label { white-space: nowrap; }
+	@media (prefers-reduced-motion: reduce) {
+		.nd-resolving__fill { transition: none; }
+	}
 
 	.discussion-summary {
 		display: flex;

@@ -4,6 +4,7 @@
 	import type { Highlight } from '$lib/discussions/highlights';
 	import { getAppState } from '$lib/state.svelte';
 	import SectionCard from './SectionCard.svelte';
+	import type { ResolutionTracker } from '$lib/nostr/resolution-progress.svelte';
 	import CommentThread from './CommentThread.svelte';
 	import PoolStateBadges from './PoolStateBadges.svelte';
 
@@ -21,7 +22,8 @@
 		threadsFor = null,
 		focusedCommentId = null,
 		publicationAtag = undefined,
-		siblings = undefined
+		siblings = undefined,
+		resolution = undefined
 	}: {
 		sections: LazySection[];
 		currentSection?: number;
@@ -48,6 +50,8 @@
 		/** Unsigned-draft siblings (title + synthetic d-tag) so `{{ref:…}}`
 		 *  resolves against the draft's sections in the preview, pre-publish. */
 		siblings?: { title?: string; d_tag: string }[] | undefined;
+		/** The reader's resolution-progress tracker (threaded, not context). */
+		resolution?: ResolutionTracker;
 	} = $props();
 
 	const section = $derived(sections[currentSection]);
@@ -139,7 +143,7 @@
 				<span class="nested-page__hint">Nested publication — refocus ⟳</span>
 			</button>
 		{:else if section}
-			<SectionCard {section} {highlights} {focusedHighlightId} {publicationAtag} {siblings} />
+			<SectionCard {section} {highlights} {focusedHighlightId} {publicationAtag} {siblings} {resolution} />
 			{#if threads.length > 0}
 				<div class="paginated-threads">
 					<button

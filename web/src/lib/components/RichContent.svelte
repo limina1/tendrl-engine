@@ -10,6 +10,7 @@
 	import { pubkeyToHighlightFill, pubkeyToHighlightStroke } from '$lib/discussions/colors';
 	import type { HighlightSpan } from '$lib/discussions/highlights';
 	import { buildSegments, type ResolvedRef, type ParsedToken } from '$lib/nostr/nostrdown';
+	import { type ResolutionTracker, nextResolutionId } from '$lib/nostr/resolution-progress.svelte';
 
 	const app = getAppState();
 
@@ -18,6 +19,7 @@
 		spans = [],
 		refs = [],
 		tokens = [],
+		resolution = undefined,
 		focusedHighlightId = null,
 		muted = false
 	}: {
@@ -27,11 +29,27 @@
 		/** Engine-parsed token spans for the pre-resolution "resolving" chips
 		 *  (from `api.parseNostrdown`); superseded by `refs` once `/resolve` lands. */
 		tokens?: ParsedToken[];
+		/** The enclosing reader's resolution tracker (threaded as a prop, not
+		 *  context — see resolution-progress). Absent → inert. */
+		resolution?: ResolutionTracker;
 		focusedHighlightId?: string | null;
 		muted?: boolean;
 	} = $props();
 
 	const segments = $derived(buildSegments(content, spans, refs, tokens, focusedHighlightId));
+
+	// Report resolution progress to the enclosing reader (if any): total = parsed
+	// tokens; resolved = references the engine has returned an entry for. Done with
+	// `$effect` (re-reports when the counts change) + a separate effect whose
+	// teardown removes this section on unmount — no lifecycle hooks, which don't
+	// hold up in this WM's buffer rendering.
+	const rid = nextResolutionId();
+	$effect(() => {
+		resolution?.report(rid, tokens.length, Math.min(refs.length, tokens.length));
+	});
+	$effect(() => {
+		return () => resolution?.remove(rid);
+	});
 
 	function styleFor(pubkey: string, focused: boolean): string {
 		const fill = pubkeyToHighlightFill(pubkey);

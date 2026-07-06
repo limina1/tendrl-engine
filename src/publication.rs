@@ -2111,20 +2111,22 @@ impl<'a> PublicationEngine<'a> {
                     }
                 }
                 RefKind::Slot => {
-                    // Block-level transclude of a 30040/30041 — resolve the target
-                    // like an embed so the preview shows the slotted work as a card
-                    // (the actual index a-tag is emitted by the compose path).
+                    // Block-level transclude of a 30040/30041 — resolve only the
+                    // *header* (title / summary / cover), not the body: a slot adds
+                    // the whole work as a child node of the index (one a-tag emitted
+                    // by the compose path), so the preview is a lightweight card, not
+                    // a content transclusion. `want_content: false` keeps it cheap.
                     if r.is_entity {
                         self.fill_from_entity(
                             &r.target,
                             &mut resolved,
-                            true,
+                            false,
                             display_given,
                             FetchPolicy::LocalOnly,
                         )
                         .await;
                     } else if let Some(s) = siblings.iter().find(|s| s.matches(&r.target)) {
-                        s.fill(&mut resolved, true, display_given);
+                        s.fill(&mut resolved, false, display_given);
                     }
                 }
                 RefKind::Mention => {

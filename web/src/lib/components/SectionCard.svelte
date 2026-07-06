@@ -3,6 +3,7 @@
 	import * as api from '$lib/api';
 	import { type Highlight, type HighlightSpan } from '$lib/discussions/highlights';
 	import type { ResolvedRef, ParsedToken } from '$lib/nostr/nostrdown';
+	import type { ResolutionTracker } from '$lib/nostr/resolution-progress.svelte';
 	import RichContent from './RichContent.svelte';
 
 	let {
@@ -15,7 +16,8 @@
 		highlights = [],
 		focusedHighlightId = null,
 		publicationAtag = undefined,
-		siblings = undefined
+		siblings = undefined,
+		resolution = undefined
 	}: {
 		section: LazySection;
 		truncate?: boolean;
@@ -37,6 +39,9 @@
 		/** Unsigned-draft siblings (title + synthetic d-tag) so `{{ref:…}}`
 		 *  resolves against the draft's sections in the preview, pre-publish. */
 		siblings?: { title?: string; d_tag: string }[] | undefined;
+		/** The enclosing reader's resolution-progress tracker (threaded, not
+		 *  context). Passed to RichContent so it reports; absent outside a reader. */
+		resolution?: ResolutionTracker;
 	} = $props();
 
 	const status: SectionStatus = $derived(section.status ?? 'loaded');
@@ -161,6 +166,7 @@
 			spans={highlightSpans}
 			refs={nostrdownRefs}
 			tokens={nostrdownTokens}
+			{resolution}
 			{focusedHighlightId}
 			muted={preview}
 		/>

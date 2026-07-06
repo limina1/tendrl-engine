@@ -5,6 +5,7 @@
 	import SectionCard from '$lib/components/SectionCard.svelte';
 	import type { ComposeState, LazySection, ViewMode, ContextItem } from '$lib/types';
 	import { sectionState, segmentSections } from '$lib/compose/state';
+	import { ResolutionTracker } from '$lib/nostr/resolution-progress.svelte';
 
 	let {
 		compose,
@@ -22,6 +23,11 @@
 
 	let viewMode = $state<ViewMode>('outline');
 	let currentSection = $state(0);
+
+	// Nostrdown reference-resolution progress for the draft preview — the embeds/
+	// quotes resolve against the db and fetch not-local ones from relays, which is
+	// what makes the preview feel slow. The indicator shows it's working.
+	const resolution = new ResolutionTracker();
 
 	// Adapter: ComposeState.sections (ContextItem[]) → LazySection[].
 	// New sections without a source_addr get a synthetic addr so the
@@ -87,6 +93,16 @@
 		<button class:active={viewMode === 'outline'} onclick={() => (viewMode = 'outline')}>Outline</button>
 		<button class:active={viewMode === 'continuous'} onclick={() => (viewMode = 'continuous')}>Continuous</button>
 		<button class:active={viewMode === 'paginated'} onclick={() => (viewMode = 'paginated')}>Paginated</button>
+		{#if resolution.resolving}
+			<span
+				class="nd-resolving"
+				title="Resolving nostrdown references — {resolution.resolved} of {resolution.total} done (not-local embeds fetch from relays)"
+				style="--nd-frac: {resolution.fraction}"
+			>
+				<span class="nd-resolving__track"><span class="nd-resolving__fill"></span></span>
+				<span class="nd-resolving__label">{resolution.resolved}/{resolution.total} refs</span>
+			</span>
+		{/if}
 		<span class="sp"></span>
 		{#if onunlockall}
 			<button
@@ -178,13 +194,14 @@
 			</p>
 		</div>
 	{:else if viewMode === 'continuous'}
-		<ContinuousView {sections} publication={null} siblings={draftSiblings} />
+		<ContinuousView {sections} publication={null} siblings={draftSiblings} {resolution} />
 	{:else}
 		<PaginatedView
 			{sections}
 			{currentSection}
 			siblings={draftSiblings}
 			onnavigate={(i) => (currentSection = i)}
+			{resolution}
 		/>
 	{/if}
 </div>
@@ -216,6 +233,35 @@
 	}
 	.toolbar .sp { flex: 1; }
 	.toolbar .bulk:disabled { opacity: 0.4; cursor: not-allowed; }
+
+	.nd-resolving {
+		display: inline-flex;
+		align-items: center;
+		gap: 6px;
+		margin-left: 6px;
+		font-family: var(--font-mono);
+		font-size: var(--t-xs);
+		color: var(--base5);
+	}
+	.nd-resolving__track {
+		display: inline-block;
+		width: 48px;
+		height: 4px;
+		border-radius: 2px;
+		background: var(--base3, rgba(127, 127, 127, 0.25));
+		overflow: hidden;
+	}
+	.nd-resolving__fill {
+		display: block;
+		height: 100%;
+		width: calc(var(--nd-frac, 0) * 100%);
+		background: var(--id-yours);
+		transition: width 0.2s ease;
+	}
+	.nd-resolving__label { white-space: nowrap; }
+	@media (prefers-reduced-motion: reduce) {
+		.nd-resolving__fill { transition: none; }
+	}
 
 	.empty {
 		flex: 1;

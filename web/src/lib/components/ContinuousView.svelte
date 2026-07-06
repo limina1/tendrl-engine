@@ -9,6 +9,7 @@
 	import { threadContainsId, type ThreadNode } from '$lib/discussions/thread';
 	import { type Highlight, type HighlightSpan } from '$lib/discussions/highlights';
 	import type { ResolvedRef, ParsedToken } from '$lib/nostr/nostrdown';
+	import type { ResolutionTracker } from '$lib/nostr/resolution-progress.svelte';
 
 	const app = getAppState();
 
@@ -23,7 +24,8 @@
 		threadsFor = null,
 		focusedCommentId = null,
 		publicationAtag = undefined,
-		siblings = undefined
+		siblings = undefined,
+		resolution = undefined
 	}: {
 		sections: LazySection[];
 		publication?: { title: string | null; summary: string | null } | null;
@@ -46,6 +48,8 @@
 		 *  resolves against the draft's own sections in the preview, before
 		 *  anything is published. Mutually exclusive with `publicationAtag`. */
 		siblings?: { title?: string; d_tag: string }[] | undefined;
+		/** The reader's resolution-progress tracker (threaded, not context). */
+		resolution?: ResolutionTracker;
 	} = $props();
 
 	function addrKey(addr: { kind: number; pubkey: string; d_tag: string }): string {
@@ -374,6 +378,7 @@
 						spans={k ? spansBySection[k] ?? [] : []}
 						refs={k ? refsBySection[k] ?? [] : []}
 						tokens={k ? tokensBySection[k] ?? [] : []}
+						{resolution}
 						{focusedHighlightId}
 					/>
 				{:else if section.status === 'loading'}
