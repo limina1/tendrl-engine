@@ -1,42 +1,49 @@
-= Curated Publications Specification
-
-*NKBIP-01*
+// Local copy of the NKBIP-01 wiki page (kind 30818, d:nkbip-01) by
+// fd208ee8c8f283780a9552896e4823cc9dc6bfd442063889577106940fd927c1,
+// created_at 1783369923 (2026-07-06), fetched via
+// nevent1qqswzad3j6me8rkun0tn40eqr3tkx3h6k0vyygus3r5ph873zd2rl5cl4tcvu
+= NKBIP-01: Curated Publications
 
 This NIP defines the minimum specification for curated publication - ordered, optionally-hierarchical assemblies of Nostr events. Publications provide a standard way to organize and present related content, similar to how books organize chapters or journals organize articles.
 
-*Event Kinds*
+== Event Kinds
 
 This NIP defines two primary event kinds:
 
-* `30040`: Publication Index
-* `30041`: Publication Content
+* 30040: Publication Index
+* 30041: Publication Content
 
-KIND 30040: Publication Index
+== KIND 30040: Publication Index
 
 A publication index defines the structure and metadata of a publication. It serves as a table of contents that references the actual content sections.
 
 Requirements:
 
-* The `content` field MUST be empty
+* The content field MUST be empty
 * MUST include a `title` tag containing the full title of the publication
 * MUST be uniquely identifiable by the combination of:
-** `d` tag
+** `d` tag (normalized to lowercase letters, numbers, and hyphens, analog to NIP-54)
 ** `pubkey`
 ** `kind`
 * MUST include `a` tags listing the events in desired display order.
-** Format: `["a", "<kind:pubkey:dtag>", "<relay hint>", "<event id>"]`
-*** Optional event ID field enables version tracking while maintaining updateable references
-*** Referenced events SHOULD be kind 30041 sections or nested kind 30040 indices
-*** Additional event kinds MAY be supported, especially 30818 and 30023
-* MUST include an `auto-update` tag specifying update behavior:
-** Format: `["auto-update", "<yes|ask|no>"]`
-** Controls whether clients should automatically update to newer versions
+** Format:
+
+[source,json]
+----
+["a", "<kind:pubkey:dtag>", "<relay hint>", "<event id>"]
+----
+
+** Optional event ID field enables version tracking while maintaining updateable references
+** Referenced events SHOULD be kind 30041 sections or nested kind 30040 indices
+** Additional event kinds MAY be supported, especially 300817, 30818, and 30023
 * For derivative works:
 ** MUST include a `p` tag identifying the original author
 ** MUST include an `E` tag referencing the original event immediately after the `p` tag
-* MAY contain the tag "source", which defines a URL which contains the location of the original text, and/or an `i` tag.
-* MAY contain the tag "version", which describes the edition.
-* MAY contain the tag "type" indicates how the publication should be displayed in the viewer/reader. Some suggested types are:
+* MAY contain the tag `source`, which defines a URL which contains the location of the original text, and/or an `i` tag.
+* MAY contain the tag `version`, which describes the edition.
+* MAY contain the tag `T`, which is the title-tag text, normalized like a d-tag
+* MAY contain the tag `N`, which is the author-tag text, normalized like a d-tag
+* MAY contain the tag `type` indicates how the publication should be displayed in the viewer/reader. Some suggested types are:
 ** book (default)
 ** illustrated
 ** magazine
@@ -44,9 +51,9 @@ Requirements:
 ** academic
 ** blog
 
-Example Index:
+=== Example Index
 
-[source, json]
+[source,json]
 ----
 {
     "id": "<event_id>",
@@ -56,7 +63,9 @@ Example Index:
     "tags": [
         ["d", "aesop's-fables-by-aesop"],
         ["title", "Aesop's Fables"],
+        ["T", "aesops-fables"],
         ["author", "Aesop"],
+        ["N", "aesop"],
         ["i", "isbn:9780765382030"],
         ["t", "fables"],
         ["t", "classical"],
@@ -70,7 +79,6 @@ Example Index:
         ["summary", "Collection of selected fables from the ancient Greek philosopher, known as Aesop."],
         ["a", "<kind:pubkey:dtag>", "<relay hint>", "<event id>"],
         ["a", "<kind:pubkey:dtag>", "<relay hint>", "<event id>"],
-        ["auto-update", "<yes|ask|no>"],
         ["p", "<pubkey_0>"],
         ["E", "<original_event_id>", "<relay_url>", "<pubkey>"]
     ],
@@ -78,7 +86,7 @@ Example Index:
 }
 ----
 
-KIND 30041: Publication Content
+== KIND 30041: Publication Content
 
 Also known as sections, zettels, episodes, or chapters contain the actual content that makes up a publication.
 
@@ -86,14 +94,15 @@ Requirements:
 
 * MUST include a `d` tag
 * MUST include a `title` tag describing the section (e.g., "Introduction", "Chapter 1", etc.)
-* The `content` field:
+* MAY include a `T` tag, containing the title tag text, normalized like a d-tag
+* The content field:
 ** MUST contain text meant for display to the end user
 ** MAY contain AsciiDoc markup
 ** MAY contain wikilinks (denoted by double brackets)
 
-Example Section:
+=== Example Section
 
-[source, json]
+[source,json]
 ----
 {
     "id": "<event_id>",
@@ -102,22 +111,22 @@ Example Section:
     "kind": 30041,
     "tags": [
         ["title", "The Farmer and The Snake"],
-        ["d", "aesop's-fables-by-aesop-the-farmer-and-the-snake"],
-        ["wikilink", "fable", "<pubkey>", "wss://thecitadel.nostr1.com", "<event id>"]
+        ["T", "the-farmer-and-the-snake"],
+        ["d", "aesops-fables-by-aesop-the-farmer-and-the-snake"]
     ],
-    "content": "The Farmer and The Snake\nA [[fable]], by Aesop.\nONE WINTER a Farmer found a Snake stiff and frozen with cold. He had compassion on it, and taking it up, placed it in his bosom. The Snake was quickly revived by the warmth, and resuming its natural instincts, bit its benefactor, inflicting on him a mortal wound. 'Oh,' cried the Farmer with his last breath, 'I am rightly served for pitying a scoundrel.'\nThe greatest kindness will not bind the ungrateful.",
+    "content": "The Farmer and The Snake\nA fable, by [[Aesop]].\nONE WINTER a Farmer found a Snake stiff and frozen with cold. He had compassion on it, and taking it up, placed it in his bosom. The Snake was quickly revived by the warmth, and resuming its natural instincts, bit its benefactor, inflicting on him a mortal wound. 'Oh,' cried the Farmer with his last breath, 'I am rightly served for pitying a scoundrel.'\nThe greatest kindness will not bind the ungrateful.",
     "sig": "49cab8c75fb35cec71d07258..."
 }
 ----
 
-*Extensions*
+== Extensions
 
 Publications are flexible and can be extended for different types of content. Examples include:
 
-- Books
-- Academic journals
-- Course materials
-- Documentation
-- Blogs, including those from different npubs
+* Books
+* Academic journals
+* Course materials
+* Documentation
+* Blogs/Magazines, including those from different npubs. These utilize kind 30023 as leaves, rather than kind 30041.
 
 Additional tags relevant to the specific content type MAY be included in both index and section events.

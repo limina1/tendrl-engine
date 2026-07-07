@@ -645,6 +645,27 @@ impl ComposeState {
         result
     }
 
+    /// NKBIP-01 `N` tags: the indexable twin of `author`, as `T` is of
+    /// `title` — one `["N", <slug>]` per author value in the converted
+    /// custom tags (multi-value `author` tags contribute one each),
+    /// normalized like a d-tag and deduped. The raw `author` tag is
+    /// kept alongside; `N` never replaces it.
+    pub fn author_n_tags(nostr_tags: &[Vec<String>]) -> Vec<Vec<String>> {
+        let mut out: Vec<Vec<String>> = Vec::new();
+        for tag in nostr_tags {
+            if tag.first().map(String::as_str) != Some("author") {
+                continue;
+            }
+            for value in tag.iter().skip(1) {
+                let slug = Self::generate_d_tag(value);
+                if !slug.is_empty() && !out.iter().any(|t| t[1] == slug) {
+                    out.push(vec!["N".to_string(), slug]);
+                }
+            }
+        }
+        out
+    }
+
     /// Check if there's any content to publish
     /// For NKBIP-01, we need at least a title and one section
     pub fn has_content(&self) -> bool {
@@ -722,8 +743,12 @@ impl ComposeState {
             pub_tags.push(json!(["T", Self::generate_d_tag(&self.title)]));
         }
 
-        // Add custom tags
-        for tag_vec in Self::tags_to_nostr_format(&self.tags) {
+        // Add custom tags, plus `N` twins for any `author` tags
+        let custom_tags = Self::tags_to_nostr_format(&self.tags);
+        for tag_vec in &custom_tags {
+            pub_tags.push(json!(tag_vec));
+        }
+        for tag_vec in Self::author_n_tags(&custom_tags) {
             pub_tags.push(json!(tag_vec));
         }
 
@@ -770,8 +795,12 @@ impl ComposeState {
             section_tags.push(json!(["T", Self::generate_d_tag(&section.title)]));
         }
 
-        // Add section-specific tags
-        for tag_vec in Self::tags_to_nostr_format(&section.tags) {
+        // Add section-specific tags, plus `N` twins for any `author` tags
+        let custom_tags = Self::tags_to_nostr_format(&section.tags);
+        for tag_vec in &custom_tags {
+            section_tags.push(json!(tag_vec));
+        }
+        for tag_vec in Self::author_n_tags(&custom_tags) {
             section_tags.push(json!(tag_vec));
         }
 
@@ -1320,6 +1349,30 @@ mod tests {
 
         // Unicode (accented characters are kept since is_alphanumeric() returns true)
         assert_eq!(ComposeState::generate_d_tag("Café au Lait"), "café-au-lait");
+    }
+
+    #[test]
+    fn test_author_n_tags() {
+        // Simple author tag → one N twin, normalized like a d-tag
+        let tags = vec![vec!["author".to_string(), "Aesop".to_string()]];
+        assert_eq!(ComposeState::author_n_tags(&tags), vec![vec!["N".to_string(), "aesop".to_string()]]);
+
+        // Multi-value author tag → one N per value; duplicates collapse
+        let tags = vec![
+            vec!["author".to_string(), "Jane Austen".to_string(), "AESOP".to_string()],
+            vec!["author".to_string(), "Aesop".to_string()],
+            vec!["t".to_string(), "fables".to_string()],
+        ];
+        assert_eq!(
+            ComposeState::author_n_tags(&tags),
+            vec![
+                vec!["N".to_string(), "jane-austen".to_string()],
+                vec!["N".to_string(), "aesop".to_string()],
+            ]
+        );
+
+        // No author tag → no N tags
+        assert!(ComposeState::author_n_tags(&[vec!["t".to_string(), "fables".to_string()]]).is_empty());
     }
     // --- ComposeBlockState tests ---
 

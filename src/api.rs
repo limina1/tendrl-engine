@@ -3786,7 +3786,7 @@ fn publication_to_draft_compose(
     pub_: &crate::publication::Publication,
 ) -> crate::drafts::DraftComposeState {
     use crate::drafts::{DraftComposeState, DraftSectionCompose, DraftTagEntry};
-    const STRUCTURAL: &[&str] = &["d", "title", "T", "a", "A", "e", "auto-update", "alt"];
+    const STRUCTURAL: &[&str] = &["d", "title", "T", "N", "a", "A", "e", "auto-update", "alt"];
 
     fn custom_tags(ev: Option<&Value>) -> Vec<DraftTagEntry> {
         let Some(ev) = ev else {

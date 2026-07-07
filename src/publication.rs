@@ -2694,9 +2694,10 @@ pub async fn build_signed_publication_events_via_signer(
             tags.push(vec!["title".into(), section_title.clone()]);
             tags.push(vec!["T".into(), ComposeState::generate_d_tag(&section_title)]);
         }
-        for tag_vec in ComposeState::tags_to_nostr_format(&section_tags) {
-            tags.push(tag_vec);
-        }
+        let custom_tags = ComposeState::tags_to_nostr_format(&section_tags);
+        let n_tags = ComposeState::author_n_tags(&custom_tags);
+        tags.extend(custom_tags);
+        tags.extend(n_tags);
 
         let template = EventTemplate {
             kind: KIND_PUBLICATION_SECTION as u32,
@@ -2717,9 +2718,10 @@ pub async fn build_signed_publication_events_via_signer(
         tags.push(vec!["title".into(), compose.title.clone()]);
         tags.push(vec!["T".into(), ComposeState::generate_d_tag(&compose.title)]);
     }
-    for tag_vec in ComposeState::tags_to_nostr_format(&compose.tags) {
-        tags.push(tag_vec);
-    }
+    let custom_tags = ComposeState::tags_to_nostr_format(&compose.tags);
+    let n_tags = ComposeState::author_n_tags(&custom_tags);
+    tags.extend(custom_tags);
+    tags.extend(n_tags);
     for i in 0..compose.sections.len() {
         let section_d_tag = compose.section_d_tag(i);
         let a_tag_value = format!("{}:{}:{}", KIND_PUBLICATION_SECTION, pubkey, section_d_tag);
@@ -2910,9 +2912,13 @@ fn build_section_event_internal(
         ]));
     }
 
-    // Add section-specific tags
-    for tag_vec in ComposeState::tags_to_nostr_format(&section.tags) {
+    // Add section-specific tags, plus `N` twins for any `author` tags
+    let custom_tags = ComposeState::tags_to_nostr_format(&section.tags);
+    for tag_vec in &custom_tags {
         tags.push(serde_json::to_value(tag_vec).unwrap_or(json!([])));
+    }
+    for tag_vec in ComposeState::author_n_tags(&custom_tags) {
+        tags.push(json!(tag_vec));
     }
 
     // Nostrdown `{{ }}` references → resolution tags (wikilink / ref / a / q / p).
@@ -2954,9 +2960,13 @@ fn build_index_event_internal(
         ]));
     }
 
-    // Add custom tags
-    for tag_vec in ComposeState::tags_to_nostr_format(&compose.tags) {
+    // Add custom tags, plus `N` twins for any `author` tags
+    let custom_tags = ComposeState::tags_to_nostr_format(&compose.tags);
+    for tag_vec in &custom_tags {
         tags.push(serde_json::to_value(tag_vec).unwrap_or(json!([])));
+    }
+    for tag_vec in ComposeState::author_n_tags(&custom_tags) {
+        tags.push(json!(tag_vec));
     }
 
     // Add section references (a-tags). A transclude slot points at its existing
@@ -3116,9 +3126,13 @@ fn build_forked_section_event(
         "fork"
     ]));
 
-    // Custom tags from block
-    for tag_vec in ComposeState::tags_to_nostr_format(&block.tags) {
+    // Custom tags from block, plus `N` twins for any `author` tags
+    let custom_tags = ComposeState::tags_to_nostr_format(&block.tags);
+    for tag_vec in &custom_tags {
         tags.push(serde_json::to_value(tag_vec).unwrap_or(json!([])));
+    }
+    for tag_vec in ComposeState::author_n_tags(&custom_tags) {
+        tags.push(json!(tag_vec));
     }
 
     tree_emit::sign_event(
@@ -3150,9 +3164,13 @@ fn build_block_index_event(
         tags.push(json!(["T", ComposeState::generate_d_tag(&state.title)]));
     }
 
-    // Custom tags
-    for tag_vec in ComposeState::tags_to_nostr_format(&state.tags) {
+    // Custom tags, plus `N` twins for any `author` tags
+    let custom_tags = ComposeState::tags_to_nostr_format(&state.tags);
+    for tag_vec in &custom_tags {
         tags.push(serde_json::to_value(tag_vec).unwrap_or(json!([])));
+    }
+    for tag_vec in ComposeState::author_n_tags(&custom_tags) {
+        tags.push(json!(tag_vec));
     }
 
     // Fork lineage (NIP-54): if this draft was seeded from an existing

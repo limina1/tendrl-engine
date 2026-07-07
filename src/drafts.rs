@@ -279,11 +279,15 @@ impl DraftStore {
         if !compose.title.is_empty() {
             // `title` = display; `T` = indexable title for search/discovery.
             pub_tags.push(json!(["title", &compose.title]));
-            pub_tags.push(json!(["T", &compose.title]));
+            pub_tags.push(json!(["T", ComposeState::generate_d_tag(&compose.title)]));
         }
 
-        // Add custom tags
-        for tag_vec in ComposeState::tags_to_nostr_format(&compose.tags) {
+        // Add custom tags, plus `N` twins for any `author` tags
+        let custom_tags = ComposeState::tags_to_nostr_format(&compose.tags);
+        for tag_vec in &custom_tags {
+            pub_tags.push(json!(tag_vec));
+        }
+        for tag_vec in ComposeState::author_n_tags(&custom_tags) {
             pub_tags.push(json!(tag_vec));
         }
 
@@ -331,11 +335,15 @@ impl DraftStore {
         if !section.title.is_empty() {
             // `title` = display; `T` = indexable title for search/discovery.
             section_tags.push(json!(["title", &section.title]));
-            section_tags.push(json!(["T", &section.title]));
+            section_tags.push(json!(["T", ComposeState::generate_d_tag(&section.title)]));
         }
 
-        // Add section-specific tags
-        for tag_vec in ComposeState::tags_to_nostr_format(&section.tags) {
+        // Add section-specific tags, plus `N` twins for any `author` tags
+        let custom_tags = ComposeState::tags_to_nostr_format(&section.tags);
+        for tag_vec in &custom_tags {
+            section_tags.push(json!(tag_vec));
+        }
+        for tag_vec in ComposeState::author_n_tags(&custom_tags) {
             section_tags.push(json!(tag_vec));
         }
 

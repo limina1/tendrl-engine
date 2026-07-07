@@ -335,8 +335,12 @@ fn build_root_index_event(
         tags.push(json!(["T", ComposeState::generate_d_tag(&compose.title)]));
     }
 
-    for tag_vec in ComposeState::tags_to_nostr_format(&compose.tags) {
+    let custom_tags = ComposeState::tags_to_nostr_format(&compose.tags);
+    for tag_vec in &custom_tags {
         tags.push(serde_json::to_value(tag_vec).unwrap_or(json!([])));
+    }
+    for tag_vec in ComposeState::author_n_tags(&custom_tags) {
+        tags.push(json!(tag_vec));
     }
 
     tags.extend(a_tags.iter().cloned());
@@ -387,8 +391,12 @@ fn build_section_index_event(
         tags.push(json!(["T", ComposeState::generate_d_tag(&section_title)]));
     }
 
-    for tag_vec in ComposeState::tags_to_nostr_format(&section_tags_vec) {
+    let custom_tags = ComposeState::tags_to_nostr_format(&section_tags_vec);
+    for tag_vec in &custom_tags {
         tags.push(serde_json::to_value(tag_vec).unwrap_or(json!([])));
+    }
+    for tag_vec in ComposeState::author_n_tags(&custom_tags) {
+        tags.push(json!(tag_vec));
     }
 
     tags.extend(a_tags.iter().cloned());
@@ -427,8 +435,12 @@ fn build_section_content_event(
         tags.push(json!(["T", ComposeState::generate_d_tag(&section_title)]));
     }
 
-    for tag_vec in ComposeState::tags_to_nostr_format(&section_tags_vec) {
+    let custom_tags = ComposeState::tags_to_nostr_format(&section_tags_vec);
+    for tag_vec in &custom_tags {
         tags.push(serde_json::to_value(tag_vec).unwrap_or(json!([])));
+    }
+    for tag_vec in ComposeState::author_n_tags(&custom_tags) {
+        tags.push(json!(tag_vec));
     }
 
     // Nostrdown `{{ }}` references → resolution tags (wikilink / ref / a / q / p)
@@ -482,6 +494,7 @@ pub(super) fn sign_event(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::publication::compose::TagEntry;
 
     fn section(title: &str, level: u8) -> SectionCompose {
         SectionCompose {
@@ -578,6 +591,34 @@ mod tests {
                     .collect()
             })
             .unwrap_or_default()
+    }
+
+    /// An `author` custom tag must be emitted raw AND as its normalized
+    /// `N` twin (NKBIP-01), just as `title` pairs with `T` — neither
+    /// normalized tag replaces the display tag.
+    #[test]
+    fn emit_author_tag_gets_n_twin() {
+        let mut compose = make_compose(vec![section("Only", 2)]);
+        compose.tags.push(TagEntry {
+            name: "author".into(),
+            value: "Jane Austen".into(),
+        });
+        let pub_d = compose.publication_d_tag();
+        let pubkey = "feedface".repeat(8);
+
+        let (root, _children) = build_nested_publication_events(
+            &mut compose,
+            &pub_d,
+            &pubkey,
+            1_700_000_000,
+            2,
+            None,
+        );
+
+        assert_eq!(tag_value(&root, "title").as_deref(), Some("Root Pub"));
+        assert_eq!(tag_value(&root, "T").as_deref(), Some("root-pub"));
+        assert_eq!(tag_value(&root, "author").as_deref(), Some("Jane Austen"));
+        assert_eq!(tag_value(&root, "N").as_deref(), Some("jane-austen"));
     }
 
     /// One root + one level-2 section with a level-3 child → with
