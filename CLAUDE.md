@@ -250,8 +250,7 @@ alias for the `by:` publishing-pubkey filter.
 - `knowledgebase/` — local documents for import
 - `nips/` — Nostr protocol specs (NIP references and custom NKBIPs)
 - `docs/` — design notes, roadmaps, `commands.org` (verify/test command reference),
-  and `docs/zettel/` — the tendrl zettelkasten (mission, feature map, ideas,
-  comparisons; start at `docs/zettel/index.org`)
+  and `docs/zettel/` — the tendrl zettelkasten (mission, feature map, ideas,  comparisons; start at `docs/zettel/index.org`). After confirming with the user upon a feature/task completion - you should do a mini recap of the ideas and work you added, as a proposed outline of topics you might include or edit within the zettelkasten.
 
 ## Key Patterns
 

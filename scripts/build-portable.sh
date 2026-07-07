@@ -58,13 +58,25 @@ echo "==> Compiling engine in ${IMAGE} (glibc 2.28 floor)…"
 docker run --rm -t \
   -v "$PWD":/src -w /src \
   -v tendrl-portable-cargo:/root/.cargo \
+  -v tendrl-portable-rustup:/root/.rustup \
   -e CARGO_TARGET_DIR="/src/${TARGET_SUBDIR}" \
   -e HOST_UID="$(id -u)" -e HOST_GID="$(id -g)" \
   "$IMAGE" bash -euo pipefail -c '
     source /opt/rh/gcc-toolset-*/enable 2>/dev/null || true   # modern gcc for numkong AVX-512
     export CC=gcc CXX=g++
     if ! command -v cargo >/dev/null; then
-      curl --proto "=https" --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
+      # Download rustup-init directly with a retry loop: the ~20 MB transfer
+      # gets cut off (curl error 18) often enough that one shot is flaky, and
+      # the container base curl is too old for --retry-all-errors.
+      for attempt in 1 2 3 4 5; do
+        curl --proto "=https" --tlsv1.2 -fsSL -o /tmp/rustup-init \
+          "https://static.rust-lang.org/rustup/dist/x86_64-unknown-linux-gnu/rustup-init" && break
+        echo "rustup-init download failed (attempt ${attempt}/5), retrying in 5s…" >&2
+        [ "$attempt" = 5 ] && exit 1
+        sleep 5
+      done
+      chmod +x /tmp/rustup-init
+      /tmp/rustup-init -y --profile minimal
     fi
     source "$HOME/.cargo/env"
     # onnxruntime (prebuilt via fastembed ort-download-binaries) is compiled

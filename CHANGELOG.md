@@ -1,3 +1,205 @@
+## v0.5.0 — 2026-07-06
+
+- feat(web): profile hamburger menu + highlights and specs tabs
+- feat(nip19): nprofile encode variant on /api/v1/encode
+- docs(zettel): profiles — hamburger menu, highlights + specs tabs
+- feat(web): kill-buffer pops back to the last-viewed buffer
+- fix(web): composer no longer loses its draft on buffer round trips
+- ui(wm): tab close ×, modeline overflow guards, unified row pill clusters
+- docs(zettel): UI/UX pattern-language catalog
+- refactor(wm): promote the text prompt to a shell-wide primitive
+- refactor(relays): in-app prompt modal replaces every browser dialog
+- docs(zettel): capture this session's durable lessons
+- feat(relays): reset working sets to first-boot defaults
+- docs(nostrdown): add AsciiDoc example report (markup-agnostic twin)
+- fix(nostrdown): render draft slot cards + report progress from the embed cards
+- fix(nostrdown): stop resolution tracker from looping the render
+- docs(zettel): document the Collatz graph fixture (tool-* prefix)
+- refactor(relays): instant row delete; gate diffs locally with staleness + refetch
+- feat(nostrdown): re-add resolution progress indicator (prop-threaded) + lighten slot
+- revert(nostrdown): remove resolution-progress indicator (broke all readers)
+- fix(nostrdown): use public $state field in ResolutionTracker
+- fix(wm): break registry<->ComposeView import cycle (build-only TDZ)
+- feat(relays): diff-gate relay-list publishes (what will this overwrite)
+- fix(nostrdown): unresolved-wiki search, mention follow, slot card, resolve progress
+- feat(nostrdown): recognize {{slot:…}} in the inline tokenizer
+- feat(relays): per-row local delete + kind-10002 sync badges
+- docs(zettel): spec relay deletion & list sync (idea → plan, in flight)
+- docs(nostrdown): add example reference report (GitCitadel library)
+- docs(nostrdown): add example reference report (GitCitadel library)
+- test(publication): assert wiki refs emit the w tag, not wikilink
+- docs(nostrdown): epoch complete — parsing decision done, feature implemented
+- refactor(nostrdown): composer slugs via engine /normalize; delete TS twins
+- refactor(nostrdown): editor decorates via debounced engine parse
+- refactor(nostrdown): reader sources token chips from engine /parse
+- feat(nostrdown): add /parse + /normalize endpoints (the grammar's one home)
+- feat(nostrdown): implement {{@…}} profile mentions (RefKind::Mention)
+- feat(nostrdown): drop #fragment heading anchors from the grammar
+- docs(nostrdown): reconcile doc drift with shipped behavior
+- docs: mission hoist + reconciliation (accepted orientation decisions)
+- docs(zettel): construct the tendrl zettelkasten — 45 notes + single index
+- docs: filled-in orientation decisions (user pass)
+- feat(nostrdown): [[ ]] wikilink alias, spec conversion to markdown, NKBIP-03 revisions
+- docs: orientation decision intake form — checkboxes + notes over mission, docs, nostrdown, features, roadmap
+- docs: orientation report — reader/writer/reference-manager framing, pattern survey, nostrdown state, doc reconciliation plan
+- docs(nostrdown): note draft-preview {{ref:}}, declarative preview, and pending-embed fetch as shipped
+- feat(nostrdown): fetch not-local embeds from the search relays
+- fix(nostrdown): render composer click-preview declaratively (manual mount breaks the prod build)
+- fix(nostrdown): resolve {{ref:}} against inline draft siblings in the composer preview
+- docs(nostrdown): tick {{slot}} as shipped end-to-end
+- fix(slot): label the coordinate-builder tab 'Slot' in slot mode
+- feat(slot): autocomplete + coordinate builder for {{slot:}}
+- feat(slot): persist transclude slots through save/resume of drafts
+- feat(slot): show transclude slots in the detected-outline panel
+- feat(slot): rename transclude→slot + wire the web compose path end-to-end
+- feat(transclude): add slot field to the web PublishRequest contract
+- feat(transclude): engine emits a-tag slots for existing 30040/30041 (no minted 30041)
+- docs(nostrdown): spec the transclude rung — block-level slot (a-tag into 30040)
+- docs(nostrdown): reconcile design notes with shipped + revised decisions
+- docs(nostrdown): normative spec (docs/nostrdown-spec.org) + recognize {{quote}} in editor
+- docs(nkbip): NKBIP-03 revised 2 — formalize the nostrdown reference grammar
+- docs(nostrdown): composer walkthrough + guide for {{ }} syntax
+- docs(nkbip): add NKBIP-06 Nostr MIME types (m/M tags)
+- docs(nostrdown): reconcile Implementation Status with shipped scope
+- docs(nkbip): add revised NKBIP-03 citations draft
+- feat(nostrdown): {{quote:source|text}} — markup-agnostic highlight-as-reference
+- feat(nostrdown): quote scheme for embedded content — blockquote + collapse
+- feat(nostrdown): emit reference tags (a/q/p/wikilink/ref); wrap unresolved card
+- refactor(nostrdown): one EmbedCard for reader + composer; portal previews
+- feat(web/theme): lay Appearance toggles on one horizontal row
+- feat(nostrdown): media cover art + hover previews on reader ref/wiki links
+- fix(nostrdown): compact embed card for entity refs; contain overflow
+- feat(nostrdown): generalized embeds — any naddr/nevent/npub, tag-driven cards
+- feat(nostrdown): Tab accepts a completion; lead the mode-bar with {{ }}
+- feat(nostrdown): inline autocomplete in the composer
+- feat(nostrdown): reference builder modal in the composer
+- feat(web/theme): gate hover preview behind an opt-in "Live preview" toggle
+- feat(web/theme): live hover/keyboard preview theme picker
+- feat(nostrdown): preview card on click in the composer
+- feat(nostrdown): open resolved refs in the reader, not the modal
+- feat(web/theme): add Paper (sepia reading) — warm light + warm-dark night
+- feat(nostrdown): recognize {{ }} refs in the composer (CodeMirror)
+- chore(release): bump to v0.1.1 + changelog
+- chore(gitignore): ignore local test/ build artifacts
+- fix(build): re-embed the SPA on every rebuild (recursive rerun-if-changed)
+- feat(web/theme): add Tokyo Night, Catppuccin, Nord, Dracula (light/dark)
+- docs(nostrdown): mark Tier 1 shipped; composer help + CLAUDE.md
+- feat(nostrdown): resolve ref: by title-slug; emit wikilink tags
+- feat(web/theme): add Solarized + Gruvbox (light/dark); theme dropdown by name
+- feat(nostrdown): render resolved {{ }} references in the reader
+- feat(web/theme): High contrast switch in Appearance settings
+- feat(nostrdown): engine resolver + POST /api/v1/nostrdown/resolve
+- feat(web/settings): collapsible sections; Identity/Appearance/Data open by default
+- feat(nostrdown): pure {{ }} reference parser (Tier 1)
+- feat(web/theme): high-contrast mechanism (orthogonal to theme)
+- feat(web/theme): sun/moon theme toggle + Appearance settings selector
+- refactor(web/theme): route all hardcoded colors through design tokens; add iceberg-light palette
+- feat(web): surface the engine version in the mode-line and Settings
+- feat(web): configurable UI text size + migrate font-sizes to tokens
+- build(release): version-bump + changelog scripts wired into the builds
+- docs: reconcile build/release docs to rustls + portable build
+
+## v0.4.0 — 2026-07-06
+
+- feat(web): profile hamburger menu + highlights and specs tabs
+- feat(nip19): nprofile encode variant on /api/v1/encode
+- docs(zettel): profiles — hamburger menu, highlights + specs tabs
+- feat(web): kill-buffer pops back to the last-viewed buffer
+- fix(web): composer no longer loses its draft on buffer round trips
+- ui(wm): tab close ×, modeline overflow guards, unified row pill clusters
+- docs(zettel): UI/UX pattern-language catalog
+- refactor(wm): promote the text prompt to a shell-wide primitive
+- refactor(relays): in-app prompt modal replaces every browser dialog
+- docs(zettel): capture this session's durable lessons
+- feat(relays): reset working sets to first-boot defaults
+- docs(nostrdown): add AsciiDoc example report (markup-agnostic twin)
+- fix(nostrdown): render draft slot cards + report progress from the embed cards
+- fix(nostrdown): stop resolution tracker from looping the render
+- docs(zettel): document the Collatz graph fixture (tool-* prefix)
+- refactor(relays): instant row delete; gate diffs locally with staleness + refetch
+- feat(nostrdown): re-add resolution progress indicator (prop-threaded) + lighten slot
+- revert(nostrdown): remove resolution-progress indicator (broke all readers)
+- fix(nostrdown): use public $state field in ResolutionTracker
+- fix(wm): break registry<->ComposeView import cycle (build-only TDZ)
+- feat(relays): diff-gate relay-list publishes (what will this overwrite)
+- fix(nostrdown): unresolved-wiki search, mention follow, slot card, resolve progress
+- feat(nostrdown): recognize {{slot:…}} in the inline tokenizer
+- feat(relays): per-row local delete + kind-10002 sync badges
+- docs(zettel): spec relay deletion & list sync (idea → plan, in flight)
+- docs(nostrdown): add example reference report (GitCitadel library)
+- docs(nostrdown): add example reference report (GitCitadel library)
+- test(publication): assert wiki refs emit the w tag, not wikilink
+- docs(nostrdown): epoch complete — parsing decision done, feature implemented
+- refactor(nostrdown): composer slugs via engine /normalize; delete TS twins
+- refactor(nostrdown): editor decorates via debounced engine parse
+- refactor(nostrdown): reader sources token chips from engine /parse
+- feat(nostrdown): add /parse + /normalize endpoints (the grammar's one home)
+- feat(nostrdown): implement {{@…}} profile mentions (RefKind::Mention)
+- feat(nostrdown): drop #fragment heading anchors from the grammar
+- docs(nostrdown): reconcile doc drift with shipped behavior
+- docs: mission hoist + reconciliation (accepted orientation decisions)
+- docs(zettel): construct the tendrl zettelkasten — 45 notes + single index
+- docs: filled-in orientation decisions (user pass)
+- feat(nostrdown): [[ ]] wikilink alias, spec conversion to markdown, NKBIP-03 revisions
+- docs: orientation decision intake form — checkboxes + notes over mission, docs, nostrdown, features, roadmap
+- docs: orientation report — reader/writer/reference-manager framing, pattern survey, nostrdown state, doc reconciliation plan
+- docs(nostrdown): note draft-preview {{ref:}}, declarative preview, and pending-embed fetch as shipped
+- feat(nostrdown): fetch not-local embeds from the search relays
+- fix(nostrdown): render composer click-preview declaratively (manual mount breaks the prod build)
+- fix(nostrdown): resolve {{ref:}} against inline draft siblings in the composer preview
+- docs(nostrdown): tick {{slot}} as shipped end-to-end
+- fix(slot): label the coordinate-builder tab 'Slot' in slot mode
+- feat(slot): autocomplete + coordinate builder for {{slot:}}
+- feat(slot): persist transclude slots through save/resume of drafts
+- feat(slot): show transclude slots in the detected-outline panel
+- feat(slot): rename transclude→slot + wire the web compose path end-to-end
+- feat(transclude): add slot field to the web PublishRequest contract
+- feat(transclude): engine emits a-tag slots for existing 30040/30041 (no minted 30041)
+- docs(nostrdown): spec the transclude rung — block-level slot (a-tag into 30040)
+- docs(nostrdown): reconcile design notes with shipped + revised decisions
+- docs(nostrdown): normative spec (docs/nostrdown-spec.org) + recognize {{quote}} in editor
+- docs(nkbip): NKBIP-03 revised 2 — formalize the nostrdown reference grammar
+- docs(nostrdown): composer walkthrough + guide for {{ }} syntax
+- docs(nkbip): add NKBIP-06 Nostr MIME types (m/M tags)
+- docs(nostrdown): reconcile Implementation Status with shipped scope
+- docs(nkbip): add revised NKBIP-03 citations draft
+- feat(nostrdown): {{quote:source|text}} — markup-agnostic highlight-as-reference
+- feat(nostrdown): quote scheme for embedded content — blockquote + collapse
+- feat(nostrdown): emit reference tags (a/q/p/wikilink/ref); wrap unresolved card
+- refactor(nostrdown): one EmbedCard for reader + composer; portal previews
+- feat(web/theme): lay Appearance toggles on one horizontal row
+- feat(nostrdown): media cover art + hover previews on reader ref/wiki links
+- fix(nostrdown): compact embed card for entity refs; contain overflow
+- feat(nostrdown): generalized embeds — any naddr/nevent/npub, tag-driven cards
+- feat(nostrdown): Tab accepts a completion; lead the mode-bar with {{ }}
+- feat(nostrdown): inline autocomplete in the composer
+- feat(nostrdown): reference builder modal in the composer
+- feat(web/theme): gate hover preview behind an opt-in "Live preview" toggle
+- feat(web/theme): live hover/keyboard preview theme picker
+- feat(nostrdown): preview card on click in the composer
+- feat(nostrdown): open resolved refs in the reader, not the modal
+- feat(web/theme): add Paper (sepia reading) — warm light + warm-dark night
+- feat(nostrdown): recognize {{ }} refs in the composer (CodeMirror)
+- chore(release): bump to v0.1.1 + changelog
+- chore(gitignore): ignore local test/ build artifacts
+- fix(build): re-embed the SPA on every rebuild (recursive rerun-if-changed)
+- feat(web/theme): add Tokyo Night, Catppuccin, Nord, Dracula (light/dark)
+- docs(nostrdown): mark Tier 1 shipped; composer help + CLAUDE.md
+- feat(nostrdown): resolve ref: by title-slug; emit wikilink tags
+- feat(web/theme): add Solarized + Gruvbox (light/dark); theme dropdown by name
+- feat(nostrdown): render resolved {{ }} references in the reader
+- feat(web/theme): High contrast switch in Appearance settings
+- feat(nostrdown): engine resolver + POST /api/v1/nostrdown/resolve
+- feat(web/settings): collapsible sections; Identity/Appearance/Data open by default
+- feat(nostrdown): pure {{ }} reference parser (Tier 1)
+- feat(web/theme): high-contrast mechanism (orthogonal to theme)
+- feat(web/theme): sun/moon theme toggle + Appearance settings selector
+- refactor(web/theme): route all hardcoded colors through design tokens; add iceberg-light palette
+- feat(web): surface the engine version in the mode-line and Settings
+- feat(web): configurable UI text size + migrate font-sizes to tokens
+- build(release): version-bump + changelog scripts wired into the builds
+- docs: reconcile build/release docs to rustls + portable build
+
 ## v0.3.0 — 2026-06-27
 
 - feat(web/theme): add Tokyo Night, Catppuccin, Nord, Dracula (light/dark)
