@@ -114,6 +114,10 @@
 							<div class="sh-group">Time</div>
 							{@render row('since:<ts>', 'on/after a unix timestamp')}
 							{@render row('until:<ts>', 'on/before a unix timestamp')}
+
+							<div class="sh-group">Scope</div>
+							{@render row('limit:50', 'cap the result count from the query itself')}
+							{@render row('relay:nos.lol', 'query these relays instead of your sets (repeatable; wss:// optional)')}
 						</div>
 					{/if}
 				</section>

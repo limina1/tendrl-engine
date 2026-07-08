@@ -99,6 +99,11 @@ pub struct SearchQuery {
     pub limit: Option<usize>,
     pub since: Option<u64>,
     pub until: Option<u64>,
+    /// Relay override from `relay:<url>` tokens (repeatable). Empty = no
+    /// override — the engine's configured sets apply. Makes a search
+    /// string carry the same information as a kind-777 spell's `relays`
+    /// tag, so the two serializations stay losslessly convertible.
+    pub relays: Vec<String>,
 }
 
 /// A compound query: one or more sub-queries joined by | (OR / union)
@@ -223,6 +228,8 @@ impl SearchQuery {
     /// - `by:<64-hex>` → AuthorFilter::Pubkeys (direct)
     /// - `~:concept` → SemanticFilter { query, k: 10 }
     /// - `~:concept:5` → SemanticFilter { query, k: 5 }
+    /// - `limit:50` → per-query result cap (request-level limit fills absence)
+    /// - `relay:wss://nos.lol` / `relay:nos.lol` → relay override (repeatable)
     /// - `"quoted string"` → TextFilter::Exact
     /// - `"~:multi word"` → SemanticFilter (quoted semantic)
     /// - bare words → TextFilter::Keywords
@@ -270,6 +277,8 @@ impl SearchQuery {
         let mut keywords: Vec<String> = Vec::new();
         let mut since: Option<u64> = None;
         let mut until: Option<u64> = None;
+        let mut limit: Option<usize> = None;
+        let mut relays: Vec<String> = Vec::new();
 
         for token in tokens {
             match classify_token(&token) {
@@ -329,6 +338,14 @@ impl SearchQuery {
                 TokenClass::Until(ts) => {
                     until = Some(ts);
                 }
+                TokenClass::Limit(n) => {
+                    limit = Some(n); // last token wins
+                }
+                TokenClass::Relay(url) => {
+                    if !relays.contains(&url) {
+                        relays.push(url);
+                    }
+                }
                 TokenClass::Exact(phrase) => {
                     text_filter = Some(TextFilter::Exact(phrase));
                 }
@@ -360,9 +377,10 @@ impl SearchQuery {
             author_filter,
             text_filter,
             semantic_filter,
-            limit: None,
+            limit,
             since,
             until,
+            relays,
         })
     }
 
@@ -552,6 +570,11 @@ enum TokenClass {
     Since(u64),
     /// `until:<unix>` — upper time bound (NIP-01 `until`).
     Until(u64),
+    /// `relay:<url>` — target relay override (repeatable; bare domains
+    /// normalize to `wss://`).
+    Relay(String),
+    /// `limit:<n>` — result cap carried in the query string itself.
+    Limit(usize),
     Exact(String),
     Keyword(String),
     InvalidKind(String),
@@ -759,6 +782,27 @@ fn classify_token(token: &Token) -> TokenClass {
     if let Some(rest) = text.strip_prefix("until:") {
         if let Ok(ts) = rest.parse::<u64>() {
             return TokenClass::Until(ts);
+        }
+    }
+
+    // limit: prefix → per-query result cap. Non-numeric falls through to
+    // the generic tag dispatch (same convention as since:/until:).
+    if let Some(rest) = text.strip_prefix("limit:") {
+        if let Ok(n) = rest.parse::<usize>() {
+            return TokenClass::Limit(n);
+        }
+    }
+
+    // relay: prefix → relay override. Bare domains get wss:// prepended
+    // (normalize_relay_url), so `relay:nos.lol` and `relay:wss://nos.lol`
+    // are the same token. Must precede the generic tag dispatch — the
+    // URL value would otherwise classify as Tag("relay", …).
+    if let Some(rest) = text.strip_prefix("relay:") {
+        if !rest.is_empty() {
+            let url = crate::relay_url::normalize_relay_url(rest);
+            if !url.is_empty() {
+                return TokenClass::Relay(url);
+            }
         }
     }
 
@@ -1160,6 +1204,57 @@ mod tests {
         let q = SearchQuery::parse("k:30041 has:imeta").unwrap();
         assert_eq!(q.kind_filter, Some(vec![30041]));
         assert_eq!(q.has_tags, vec!["imeta".to_string()]);
+    }
+
+    #[test]
+    fn test_parse_limit_token() {
+        let q = SearchQuery::parse("k:1 limit:25").unwrap();
+        assert_eq!(q.limit, Some(25));
+        assert!(q.tag_filters.is_empty());
+    }
+
+    #[test]
+    fn test_parse_limit_non_numeric_falls_through() {
+        // Same convention as since:/until: — a non-numeric value is an
+        // ordinary tag filter, not a parse error.
+        let q = SearchQuery::parse("limit:soon").unwrap();
+        assert_eq!(q.limit, None);
+        assert_eq!(q.tag_filters.len(), 1);
+        assert_eq!(q.tag_filters[0].tag_name, "limit");
+    }
+
+    #[test]
+    fn test_parse_relay_token() {
+        let q = SearchQuery::parse("k:777 relay:wss://nos.lol").unwrap();
+        assert_eq!(q.relays, vec!["wss://nos.lol".to_string()]);
+        assert!(q.tag_filters.is_empty());
+    }
+
+    #[test]
+    fn test_parse_relay_bare_domain_normalizes() {
+        // Bare domains get wss:// prepended; dupes (post-normalization)
+        // collapse; order is preserved.
+        let q = SearchQuery::parse(
+            "relay:nos.lol relay:wss://nos.lol relay:relay.damus.io",
+        )
+        .unwrap();
+        assert_eq!(
+            q.relays,
+            vec![
+                "wss://nos.lol".to_string(),
+                "wss://relay.damus.io".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn test_parse_relay_limit_per_compound_branch() {
+        let c = SearchQuery::parse_compound("k:1 relay:nos.lol limit:5 | k:7").unwrap();
+        assert_eq!(c.branches.len(), 2);
+        assert_eq!(c.branches[0].relays, vec!["wss://nos.lol".to_string()]);
+        assert_eq!(c.branches[0].limit, Some(5));
+        assert!(c.branches[1].relays.is_empty());
+        assert_eq!(c.branches[1].limit, None);
     }
 
     #[test]

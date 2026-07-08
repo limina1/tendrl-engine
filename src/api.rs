@@ -342,16 +342,48 @@ pub async fn search_handler(
         None => FetchPolicy::default(),
     };
 
+    // Parse up front — `relay:`/`limit:` tokens participate in relay
+    // selection and the confirm modal below. Compound (`|`) queries carry
+    // per-branch tokens; the confirm modal sees the union.
+    let is_compound = req.query.contains('|');
+    let branches: Vec<SearchQuery> = if is_compound {
+        SearchQuery::parse_compound(&req.query)
+            .map_err(|e| EngineError::InvalidFilter(e.to_string()))?
+            .branches
+    } else {
+        vec![SearchQuery::parse(&req.query)
+            .map_err(|e| EngineError::InvalidFilter(e.to_string()))?]
+    };
+    let mut token_relays: Vec<String> = Vec::new();
+    for branch in &branches {
+        for r in &branch.relays {
+            if !token_relays.contains(r) {
+                token_relays.push(r.clone());
+            }
+        }
+    }
+
     // An explicit relay search is a user-initiated fetch operation —
     // gate it. In Auto mode this returns at once; in Confirm mode it
     // blocks for the modal. Declined → fall back to a local-only search.
     let mut op: Option<crate::network::FetchOperation> = None;
     let mut override_relays = req.relays.clone();
     if req.mode_confirm {
-        let relays = req
-            .relays
-            .clone()
-            .unwrap_or_else(|| engine.relay_config().all_urls());
+        // Base list: explicit request relays, else the configured union;
+        // `relay:` tokens always join so the modal shows everything the
+        // query intends to touch.
+        let mut relays = req.relays.clone().unwrap_or_else(|| {
+            if token_relays.is_empty() {
+                engine.relay_config().all_urls()
+            } else {
+                Vec::new()
+            }
+        });
+        for r in &token_relays {
+            if !relays.contains(r) {
+                relays.push(r.clone());
+            }
+        }
 
         // Build a structured RequestSummary so the confirm modal
         // renders the DSL sentence + structured filter block instead
@@ -390,12 +422,18 @@ pub async fn search_handler(
     if let Some(relays) = override_relays.as_deref() {
         engine.persist_discovered_relays(relays);
     }
+    if !token_relays.is_empty() {
+        engine.persist_discovered_relays(&token_relays);
+    }
 
-    // Check for compound query (contains |)
-    if req.query.contains('|') {
-        let compound = SearchQuery::parse_compound(&req.query)
-            .map_err(|e| EngineError::InvalidFilter(e.to_string()))?;
+    // Once the user has approved a relay set in the confirm modal, that
+    // set wins even over per-branch `relay:` tokens (they were already in
+    // the modal's list — a trim there is deliberate). Otherwise a branch's
+    // own tokens beat the request-level override.
+    let approved = op.is_some();
 
+    // Compound query path (contains |)
+    if is_compound {
         let mut all_results = Vec::new();
         let mut seen_ids = std::collections::HashSet::new();
         let mut total_local = 0;
@@ -403,9 +441,10 @@ pub async fn search_handler(
         let mut any_relays_queried = false;
         let mut profile_terms: Vec<String> = Vec::new();
 
-        for mut branch in compound.branches {
-            if let Some(limit) = req.limit {
-                branch.limit = Some(limit);
+        for mut branch in branches {
+            // Token wins; the request-level limit fills absence.
+            if branch.limit.is_none() {
+                branch.limit = req.limit;
             }
             resolve_author(&mut branch, &req, &engine)?;
 
@@ -415,13 +454,13 @@ pub async fn search_handler(
                 }
             }
 
+            let branch_relays: Option<&[String]> = if !approved && !branch.relays.is_empty() {
+                Some(branch.relays.as_slice())
+            } else {
+                override_relays.as_deref()
+            };
             let resp = engine
-                .search_with_options(
-                    &branch,
-                    policy,
-                    override_relays.as_deref(),
-                    req.mode_confirm,
-                )
+                .search_with_options(&branch, policy, branch_relays, req.mode_confirm)
                 .await?;
 
             total_local += resp.local_count;
@@ -456,17 +495,25 @@ pub async fn search_handler(
     }
 
     // Single query path
-    let mut query =
-        SearchQuery::parse(&req.query).map_err(|e| EngineError::InvalidFilter(e.to_string()))?;
+    let mut query = branches
+        .into_iter()
+        .next()
+        .expect("non-compound parse yields one branch");
 
-    if let Some(limit) = req.limit {
-        query.limit = Some(limit);
+    // Token wins; the request-level limit fills absence.
+    if query.limit.is_none() {
+        query.limit = req.limit;
     }
 
     resolve_author(&mut query, &req, &engine)?;
 
+    let query_relays: Option<&[String]> = if !approved && !query.relays.is_empty() {
+        Some(query.relays.as_slice())
+    } else {
+        override_relays.as_deref()
+    };
     let mut response = engine
-        .search_with_options(&query, policy, override_relays.as_deref(), req.mode_confirm)
+        .search_with_options(&query, policy, query_relays, req.mode_confirm)
         .await?;
 
     // Fan out to the people category: any free-text term also scans
