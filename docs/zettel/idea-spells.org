@@ -1,7 +1,22 @@
 #+TITLE: Idea: spells — portable, composable saved queries (kind 777)
 #+TYPE: idea
-#+STATUS: brainstorm — language sketched; extends draft NIP-A7
+#+STATUS: partial — engine core implemented 2026-07-08; spellbooks + web UI unbuilt
 #+DATE: 2026-07-08
+
+* What exists (engine core, 2026-07-08)
+
+=src/spell.rs=: kind-777 parsing (NIP-A7 + the extension below), the three
+variable namespaces, projection expansion with union/dedup/500-cap,
+=SpellEngine= execution (REQ/COUNT, PIPE with map/join, closure chains
+with depth guard, =$contacts= via kind-3 fetch) — all fetches ride
+=get_events_with_options=, so FetchPolicy and Confirm gating apply.
+API: =POST /api/v1/spell/inspect= (params, partial flag, filter preview)
+and =POST /api/v1/spell/execute= (events + auxiliary + provenance +
+per-stage reports; accepts signed ids or unsigned inline events, so local
+saved-searches run before publishing). Verified end-to-end against live
+relays: labels→roots pipeline, closure arg binding, pass-through,
+provenance accumulation. Unbuilt: spellbook NIP-51 sets, search.rs ↔
+spell compile, web buffers.
 
 * What it means
 

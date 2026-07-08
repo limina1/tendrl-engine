@@ -9,7 +9,7 @@ use axum::{
 use clap::Parser;
 use nostr_engine::{
     api, chat::ChatState, config::Config, engine::Engine, identity::IdentitySession, llm,
-    static_assets, tools,
+    spell, static_assets, tools,
 };
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -550,6 +550,8 @@ async fn main() -> anyhow::Result<()> {
             "/api/v1/discussions/list",
             post(api::discussions_list_handler),
         )
+        .route("/api/v1/spell/inspect", post(spell::inspect_handler))
+        .route("/api/v1/spell/execute", post(spell::execute_handler))
         .with_state(state.clone())
         .merge(chat_routes)
         .merge(identity_routes)

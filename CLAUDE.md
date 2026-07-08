@@ -199,6 +199,16 @@ sections and embeds new events on a 60-second interval when embeddings are enabl
   client-side, not Rust. The follow/mute/bookmark parsers (3/10000/10003/10006)
   remain dormant — no consumer UI yet; wire them when there is one, don't build
   UI-less plumbing.
+- **`spell.rs`**: NIP-A7 kind-777 "spells" — saved queries as events — plus the
+  tendrl composition extension (design: `docs/zettel/idea-spells.org`): `param`
+  declarations bound via `$arg.*`, pipeline projections (`$in.ids/pubkeys/
+  tag.<letter>[:marker]`), `PIPE` spells whose stages reference other spells by
+  id with `map` (replace with referents; pointer-less events pass through) /
+  `join` (auxiliary enrichment) combinators, and closures (arg-binding `e`
+  forks). Parsing/resolution pure; `SpellEngine` executes via
+  `get_events_with_options` (FetchPolicy + Confirm gating apply). API:
+  `POST /api/v1/spell/inspect` + `/spell/execute` (signed id or unsigned
+  inline event). Spellbook sets, search↔spell compile, and web UI: not built.
 - **`chat.rs`**: Pure state logic for LLM chat fragments, edit mode, context
   injection, message serialization (no IO)
 - **`llm.rs`**: Async `LLMProvider` trait — `NoopProvider` (testing) and
@@ -266,6 +276,7 @@ alias for the `by:` publishing-pubkey filter.
   detected from event tags.
 - **nostrdb read lock**: Never run nostrdb queries concurrently — `query.rs` holds a
   global mutex for a reason (see module docs).
-- **Nostr event kinds used**: 0 (metadata), 3 (contacts), 10000/10002/10003/10006/
+- **Nostr event kinds used**: 0 (metadata), 3 (contacts), 777 (spells — saved
+  queries, NIP-A7 draft), 10000/10002/10003/10006/
   10007 (NIP-51/65 lists), 30002 (relay sets), 30023 (long-form), 30040 (publication
   index), 30041 (publication section), 30817/30818 (wiki), 9802 (highlight).
