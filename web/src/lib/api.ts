@@ -686,6 +686,37 @@ export function inspectSpell(req: {
 	});
 }
 
+export interface SpellComposeResponse {
+	/** Unsigned kind-777 template for /api/v1/identity/sign. */
+	template: SignTemplateRequest['template'];
+	spell: SpellInfo;
+	clauses: SpellClause[];
+	query_string: string;
+	/** What degraded in translation (multi-char tags, text → NIP-50, …). */
+	warnings: string[];
+}
+
+export function composeSpell(req: {
+	query: string;
+	name?: string;
+	description?: string;
+	topics?: string[];
+	params?: { name: string; prompt?: string; value: string }[];
+}) {
+	return fetchJson<SpellComposeResponse>('/api/v1/spell/compose', {
+		method: 'POST',
+		body: JSON.stringify(req)
+	});
+}
+
+/** Ingest one signed event into local nostrdb (local-first save). */
+export function ingestEvent(event: unknown) {
+	return fetchJson<{ ingested: number; errors: number }>('/api/v1/ingest', {
+		method: 'POST',
+		body: JSON.stringify(event)
+	});
+}
+
 export interface SpellStageReport {
 	spell_id: string | null;
 	name: string | null;

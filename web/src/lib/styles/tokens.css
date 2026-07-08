@@ -1549,6 +1549,18 @@ body { font-size: var(--t-base); }
   color: var(--affordance-help);
   background: color-mix(in srgb, var(--affordance-help) 16%, transparent);
 }
+/* Spell (777) — save the current query as a kind-777 spell. Accent hue:
+   it creates an artifact, unlike the passive help/settings pair. */
+.affordance--spell { color: color-mix(in srgb, var(--accent) 60%, var(--base3)); }
+.affordance--spell:hover,
+.affordance--spell:focus-visible {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+}
+.affordance--spell:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
 /* Walkthrough (W) — distinct purpose from help (?): help dumps everything at
    once; the walkthrough is a live click-through. The buffer-aware mode-line W
    is a tri-state coverage map (pair `.affordance--walkthrough` with one

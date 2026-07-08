@@ -717,6 +717,169 @@ impl Spell {
             .join(" ")
     }
 
+    /// Compile a parsed search query into a spell — the other half of the
+    /// search ↔ spell equivalence (`to_clauses` renders the reverse
+    /// direction). Pure; returns degradation warnings for the parts of
+    /// the search language that don't travel (multi-char tag post-filters,
+    /// text → NIP-50, dropped `has:`/`count:`). Semantic (`~:`) queries
+    /// refuse to compile: a published spell must not silently mean
+    /// something weaker than what the author ran.
+    ///
+    /// `by:name:` / `by:assistant` must be pre-resolved to pubkeys by the
+    /// caller (they need engine state); `by:me` compiles to the portable
+    /// `$me` variable.
+    pub fn from_search_query(
+        q: &crate::search::SearchQuery,
+    ) -> Result<(Spell, Vec<String>)> {
+        use crate::search::{AuthorFilter, TextFilter};
+
+        if q.semantic_filter.is_some() {
+            return Err(EngineError::BadRequest(
+                "semantic (~:) search has no portable spell equivalent — \
+                 remove the ~: clause to compose a spell"
+                    .into(),
+            ));
+        }
+
+        let mut warnings: Vec<String> = Vec::new();
+        let mut spell = Spell {
+            id: None,
+            cmd: SpellCmd::Req,
+            name: None,
+            description: String::new(),
+            params: Vec::new(),
+            kinds: q.kind_filter.clone().unwrap_or_default(),
+            authors: Vec::new(),
+            ids: q.ids.clone().unwrap_or_default(),
+            tag_filters: Vec::new(),
+            limit: q.limit.map(|l| l as u64),
+            since: q.since.map(|t| t.to_string()),
+            until: q.until.map(|t| t.to_string()),
+            search: None,
+            relays: q.relays.clone(),
+            close_on_eose: false,
+            topics: Vec::new(),
+            stages: Vec::new(),
+            args: BTreeMap::new(),
+            parent: None,
+        };
+
+        match &q.author_filter {
+            None => {}
+            Some(AuthorFilter::CurrentUser) => spell.authors.push("$me".into()),
+            Some(AuthorFilter::Pubkeys(pks)) => spell.authors.extend(pks.iter().cloned()),
+            Some(AuthorFilter::Name(partial)) => {
+                return Err(EngineError::BadRequest(format!(
+                    "by:name:{partial} must resolve to a pubkey before composing"
+                )));
+            }
+            Some(AuthorFilter::AssistantUser) => {
+                return Err(EngineError::BadRequest(
+                    "by:assistant must resolve to a pubkey before composing".into(),
+                ));
+            }
+        }
+
+        for tf in &q.tag_filters {
+            if tf.tag_name.chars().count() > 1 {
+                warnings.push(format!(
+                    "{}: is a multi-character tag — relays can't index it, so \
+                     other clients will over-fetch and must post-filter",
+                    tf.tag_name
+                ));
+            }
+            spell.tag_filters.push(TagFilterSpec {
+                tag: tf.tag_name.clone(),
+                values: tf.values.clone(),
+            });
+        }
+
+        match &q.text_filter {
+            None => {}
+            Some(TextFilter::Keywords(words)) => {
+                spell.search = Some(words.join(" "));
+                warnings.push(
+                    "free-text words compile to a NIP-50 search tag — only \
+                     NIP-50 relays will honor them"
+                        .into(),
+                );
+            }
+            Some(TextFilter::Exact(phrase)) => {
+                spell.search = Some(phrase.clone());
+                warnings.push(
+                    "exact phrase compiles to a NIP-50 search tag — relays run \
+                     plain text search, not exact matching"
+                        .into(),
+                );
+            }
+        }
+        for t in &q.has_tags {
+            warnings.push(format!("has:{t} has no spell equivalent — dropped"));
+        }
+        for t in &q.count_tags {
+            warnings.push(format!("count:{t} has no spell equivalent — dropped"));
+        }
+
+        if !spell.has_filter_condition() {
+            return Err(EngineError::InvalidFilter(
+                "query compiles to an empty filter — nothing to save".into(),
+            ));
+        }
+        Ok((spell, warnings))
+    }
+
+    /// Promote a literal to a declared parameter: every exact occurrence
+    /// of `value` across authors/ids/tag values becomes `$arg.<name>`.
+    /// This is how "Filed under #asknostr" generalizes to
+    /// "Filed under #{tag}" at authoring time.
+    pub fn parameterize(
+        &mut self,
+        name: &str,
+        prompt: Option<&str>,
+        value: &str,
+    ) -> Result<usize> {
+        if name.is_empty()
+            || !name
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+        {
+            return Err(EngineError::BadRequest(format!(
+                "bad parameter name {name:?} (use alphanumerics, _ or -)"
+            )));
+        }
+        if self.params.iter().any(|p| p.name == name) {
+            return Err(EngineError::BadRequest(format!(
+                "parameter {name:?} is already declared"
+            )));
+        }
+        let var = format!("$arg.{name}");
+        let mut replaced = 0usize;
+        for v in self.authors.iter_mut().chain(self.ids.iter_mut()) {
+            if v == value {
+                *v = var.clone();
+                replaced += 1;
+            }
+        }
+        for tf in &mut self.tag_filters {
+            for v in &mut tf.values {
+                if v == value {
+                    *v = var.clone();
+                    replaced += 1;
+                }
+            }
+        }
+        if replaced == 0 {
+            return Err(EngineError::BadRequest(format!(
+                "literal {value:?} not found in the query — nothing to parameterize"
+            )));
+        }
+        self.params.push(SpellParam {
+            name: name.to_string(),
+            prompt: prompt.map(str::to_string),
+        });
+        Ok(replaced)
+    }
+
     /// Serialize back to kind-777 event tags (for composing/publishing a
     /// spell from a saved search).
     pub fn to_tags(&self) -> Vec<Vec<String>> {
@@ -1103,6 +1266,18 @@ impl<'a> SpellEngine<'a> {
         Self { engine }
     }
 
+    /// Policy for loading spell *definitions* (the 777 events themselves,
+    /// stage spells, closure parents). The caller's policy governs the
+    /// result fetch; definitions always check local first — FetchAlways
+    /// would skip the local db in `get_by_id` and make a locally-saved,
+    /// never-broadcast spell unloadable.
+    fn definition_policy(policy: FetchPolicy) -> FetchPolicy {
+        match policy {
+            FetchPolicy::FetchAlways => FetchPolicy::LocalFirst,
+            p => p,
+        }
+    }
+
     pub async fn execute_by_id(
         &self,
         id: &str,
@@ -1112,7 +1287,7 @@ impl<'a> SpellEngine<'a> {
     ) -> Result<SpellOutcome> {
         let event = self
             .engine
-            .get_by_id(id, policy)
+            .get_by_id(id, Self::definition_policy(policy))
             .await?
             .ok_or_else(|| EngineError::NotFound(format!("spell event {id} not found")))?;
         self.execute_event(&event, args, policy, mode_confirm).await
@@ -1151,7 +1326,7 @@ impl<'a> SpellEngine<'a> {
             })?;
             let parent = self
                 .engine
-                .get_by_id(&parent_id, policy)
+                .get_by_id(&parent_id, Self::definition_policy(policy))
                 .await?
                 .ok_or_else(|| {
                     EngineError::NotFound(format!("parent spell {parent_id} not found"))
@@ -1237,7 +1412,7 @@ impl<'a> SpellEngine<'a> {
         for stage in &pipe.stages {
             let event = self
                 .engine
-                .get_by_id(&stage.spell_id, policy)
+                .get_by_id(&stage.spell_id, Self::definition_policy(policy))
                 .await?
                 .ok_or_else(|| {
                     EngineError::NotFound(format!(
@@ -1643,6 +1818,113 @@ pub async fn list_handler(
 
     let count = entries.len();
     Ok(Json(SpellListResponse { entries, count }))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ComposeParamRequest {
+    pub name: String,
+    pub prompt: Option<String>,
+    /// The literal in the query to replace with `$arg.<name>`.
+    pub value: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SpellComposeRequest {
+    /// A tendrl search string (single query — compound `|` not supported).
+    pub query: String,
+    pub name: Option<String>,
+    pub description: Option<String>,
+    #[serde(default)]
+    pub topics: Vec<String>,
+    #[serde(default)]
+    pub params: Vec<ComposeParamRequest>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct SpellComposeResponse {
+    /// Unsigned kind-777 template, ready for /api/v1/identity/sign.
+    pub template: crate::signing::EventTemplate,
+    pub spell: Spell,
+    pub clauses: Vec<SpellClause>,
+    pub query_string: String,
+    /// What degraded in translation (multi-char tags, text → NIP-50, …).
+    pub warnings: Vec<String>,
+}
+
+/// POST /api/v1/spell/compose — compile a search string into an unsigned
+/// kind-777 template. No signing, no persistence: the caller signs via
+/// the generic identity/sign path and ingests/broadcasts deliberately.
+pub async fn compose_handler(
+    State(engine): State<Arc<Engine>>,
+    Json(req): Json<SpellComposeRequest>,
+) -> Result<Json<SpellComposeResponse>> {
+    if req.query.contains('|') {
+        return Err(EngineError::BadRequest(
+            "compound (|) queries can't compose to a single spell yet — \
+             save each branch separately"
+                .into(),
+        ));
+    }
+    let mut query = crate::search::SearchQuery::parse(&req.query)
+        .map_err(|e| EngineError::InvalidFilter(e.to_string()))?;
+
+    // Resolve the engine-dependent author forms here; `by:me` stays the
+    // portable `$me` (from_search_query maps it).
+    use crate::search::AuthorFilter;
+    match &query.author_filter {
+        Some(AuthorFilter::Name(partial)) => {
+            let matches: Vec<String> =
+                crate::query::find_profiles_matching(engine.ndb(), partial)
+                    .into_iter()
+                    .map(|p| p.pubkey)
+                    .collect();
+            if matches.is_empty() {
+                return Err(EngineError::BadRequest(format!(
+                    "by:name:{partial} matches no known profile — resolve it \
+                     before composing"
+                )));
+            }
+            query.author_filter = Some(AuthorFilter::Pubkeys(matches));
+        }
+        Some(AuthorFilter::AssistantUser) => {
+            let pk = engine.assistant_pubkey().ok_or_else(|| {
+                EngineError::BadRequest(
+                    "by:assistant requires a logged-in assistant identity".into(),
+                )
+            })?;
+            query.author_filter = Some(AuthorFilter::Pubkeys(vec![pk]));
+        }
+        _ => {}
+    }
+
+    let (mut spell, mut warnings) = Spell::from_search_query(&query)?;
+    if let Some(AuthorFilter::Pubkeys(pks)) = &query.author_filter {
+        if pks.len() > 1 {
+            warnings.push(format!("author resolved to {} pubkeys — all included", pks.len()));
+        }
+    }
+    for p in &req.params {
+        spell.parameterize(&p.name, p.prompt.as_deref(), &p.value)?;
+    }
+    spell.name = req.name.clone();
+    spell.description = req.description.clone().unwrap_or_default();
+    spell.topics = req.topics.clone();
+
+    let template = crate::signing::EventTemplate {
+        kind: KIND_SPELL as u32,
+        created_at: unix_now() as i64,
+        tags: spell.to_tags(),
+        content: spell.description.clone(),
+        pubkey: engine.my_pubkey(),
+    };
+
+    Ok(Json(SpellComposeResponse {
+        template,
+        clauses: spell.to_clauses(),
+        query_string: spell.query_string(),
+        warnings,
+        spell,
+    }))
 }
 
 /// POST /api/v1/spell/execute — run a spell (or pipeline) and return the
@@ -2144,6 +2426,67 @@ mod tests {
             q.author_filter,
             Some(crate::search::AuthorFilter::CurrentUser)
         ));
+    }
+
+    // -- compose (SearchQuery → Spell) -----------------------------------------
+
+    #[test]
+    fn compose_from_search_query_maps_fields() {
+        let q = crate::search::SearchQuery::parse(
+            "k:1 k:1111 t:asknostr by:me since:1704067200 limit:100 relay:nos.lol",
+        )
+        .unwrap();
+        let (spell, warnings) = Spell::from_search_query(&q).unwrap();
+        assert_eq!(spell.kinds, vec![1, 1111]);
+        assert_eq!(spell.authors, vec!["$me"]);
+        assert_eq!(spell.tag_filters.len(), 1);
+        assert_eq!(spell.tag_filters[0].values, vec!["asknostr"]);
+        assert_eq!(spell.limit, Some(100));
+        assert_eq!(spell.since.as_deref(), Some("1704067200"));
+        assert_eq!(spell.relays, vec!["wss://nos.lol"]);
+        assert!(warnings.is_empty(), "{warnings:?}");
+        // Full loop: compile → tags → reparse → clauses → search parser.
+        let tags = spell.to_tags();
+        let reparsed = Spell::from_tags(None, "", &tags).unwrap();
+        let q2 = crate::search::SearchQuery::parse(&reparsed.query_string()).unwrap();
+        assert_eq!(q2.kind_filter, Some(vec![1, 1111]));
+        assert_eq!(q2.limit, Some(100));
+        assert_eq!(q2.relays, vec!["wss://nos.lol"]);
+    }
+
+    #[test]
+    fn compose_refuses_semantic_and_warns_on_degradation() {
+        let semantic = crate::search::SearchQuery::parse("~:emergence k:30041").unwrap();
+        assert!(Spell::from_search_query(&semantic).is_err());
+
+        let degraded = crate::search::SearchQuery::parse(
+            "k:1 subject:meeting has:imeta \"deep work\"",
+        )
+        .unwrap();
+        let (spell, warnings) = Spell::from_search_query(&degraded).unwrap();
+        assert_eq!(spell.search.as_deref(), Some("deep work"));
+        assert!(warnings.iter().any(|w| w.contains("subject")));
+        assert!(warnings.iter().any(|w| w.contains("has:imeta")));
+        assert!(warnings.iter().any(|w| w.contains("NIP-50")));
+
+        let empty = crate::search::SearchQuery::parse("has:imeta").unwrap();
+        assert!(Spell::from_search_query(&empty).is_err());
+    }
+
+    #[test]
+    fn parameterize_replaces_literals() {
+        let q = crate::search::SearchQuery::parse("k:1 k:1111 t:asknostr limit:100").unwrap();
+        let (mut spell, _) = Spell::from_search_query(&q).unwrap();
+        let n = spell
+            .parameterize("tag", Some("hashtag to look up"), "asknostr")
+            .unwrap();
+        assert_eq!(n, 1);
+        assert_eq!(spell.tag_filters[0].values, vec!["$arg.tag"]);
+        assert_eq!(spell.required_args(), vec!["tag"]);
+        assert_eq!(spell.params[0].prompt.as_deref(), Some("hashtag to look up"));
+        // duplicate param name and missing literal both refuse
+        assert!(spell.parameterize("tag", None, "whatever").is_err());
+        assert!(spell.parameterize("other", None, "not-present").is_err());
     }
 
     // -- emission -------------------------------------------------------------
