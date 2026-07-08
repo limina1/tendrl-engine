@@ -216,7 +216,11 @@
 			comments: false
 		};
 	}
-	let tabLimits = $state<Record<Tab, number>>({ ...TAB_BASE_LIMIT });
+	// Deliberately NOT $state: no template reads it — it's imperative
+	// paging bookkeeping consumed by loadLocal. Making it reactive loops
+	// the load $effect (loadLocal's read re-arms the effect that resets
+	// it, even under untrack — the ERR_INSUFFICIENT_RESOURCES flood).
+	let tabLimits: Record<Tab, number> = { ...TAB_BASE_LIMIT };
 	let exhausted = $state<Record<Tab, boolean>>(freshTabFlags());
 	let loadingOlder = $state(false);
 
@@ -324,7 +328,7 @@
 	}
 
 	$effect(() => {
-		const pk = pubkey;
+		const pk = pubkey; // sole dependency — reload only on profile switch
 		loading = true;
 		profile = null;
 		publications = [];
@@ -336,13 +340,7 @@
 		comments = [];
 		tabLimits = { ...TAB_BASE_LIMIT };
 		exhausted = freshTabFlags();
-
-		// untrack: loadLocal reads `tabLimits` synchronously, and this
-		// effect resets `tabLimits` above — a tracked read here would
-		// make the effect its own dependency and loop forever (the
-		// ERR_INSUFFICIENT_RESOURCES query flood). Only `pubkey` may
-		// retrigger this effect.
-		untrack(() => loadLocal(pk)).catch(() => {}).finally(() => { loading = false; });
+		loadLocal(pk).catch(() => {}).finally(() => { loading = false; });
 	});
 
 	// ----- Cursor + nav handler -----
