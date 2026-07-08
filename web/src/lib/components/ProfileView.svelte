@@ -334,12 +334,15 @@
 		sections = [];
 		highlights = [];
 		comments = [];
-		untrack(() => {
-			tabLimits = { ...TAB_BASE_LIMIT };
-			exhausted = freshTabFlags();
-		});
+		tabLimits = { ...TAB_BASE_LIMIT };
+		exhausted = freshTabFlags();
 
-		loadLocal(pk).catch(() => {}).finally(() => { loading = false; });
+		// untrack: loadLocal reads `tabLimits` synchronously, and this
+		// effect resets `tabLimits` above — a tracked read here would
+		// make the effect its own dependency and loop forever (the
+		// ERR_INSUFFICIENT_RESOURCES query flood). Only `pubkey` may
+		// retrigger this effect.
+		untrack(() => loadLocal(pk)).catch(() => {}).finally(() => { loading = false; });
 	});
 
 	// ----- Cursor + nav handler -----
