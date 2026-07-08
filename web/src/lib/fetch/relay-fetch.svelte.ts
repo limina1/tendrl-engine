@@ -17,6 +17,8 @@ export type RelayFetchOpts = {
 	limit?: number;
 	/** NIP-50 free-text search string. */
 	search?: string;
+	/** NIP-01 `until` bound — backfill cursor for paging older events. */
+	until?: number;
 };
 
 export type RelayFetchResult = {
@@ -41,7 +43,8 @@ export async function fetchFromRelaysWithPrompt(
 	try {
 		const r = await api.fetchFromRelay(relays, opts.kinds, opts.authors, opts.limit ?? 500, {
 			modeConfirm: true,
-			search: opts.search
+			search: opts.search,
+			until: opts.until
 		});
 		return { relays: r.relays ?? relays, total_fetched: r.fetched };
 	} catch (e) {

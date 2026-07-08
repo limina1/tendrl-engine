@@ -977,7 +977,7 @@ export function fetchFromRelay(
 	kinds: number[],
 	authors: string[] = [],
 	limit = 200,
-	options: { modeConfirm?: boolean; search?: string } = {}
+	options: { modeConfirm?: boolean; search?: string; until?: number } = {}
 ) {
 	const body: Record<string, unknown> = {
 		relays,
@@ -989,6 +989,9 @@ export function fetchFromRelay(
 	// NIP-50: include `search` only when set so relays that don't
 	// implement the spec aren't confused by an empty-string filter.
 	if (options.search && options.search.length > 0) body.search = options.search;
+	// Backfill cursor — NIP-01 `until` bound (callers pass oldest - 1
+	// to page strictly older events).
+	if (options.until != null) body.until = options.until;
 	return fetchJson<{ fetched: number; relays: string[]; kinds: number[] }>('/api/v1/fetch', {
 		method: 'POST',
 		body: JSON.stringify(body)

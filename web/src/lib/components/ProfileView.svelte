@@ -111,13 +111,13 @@
 		const [prof, pubResult, artResult, wikiResult, specResult, secResult, hlResult, comResult] =
 			await Promise.all([
 				api.getProfile(pk),
-				api.queryEvents([{ kinds: [30040], authors: [pk], limit: 500 }], 'local_only'),
-				api.queryEvents([{ kinds: [30023], authors: [pk], limit: 200 }], 'local_only'),
-				api.queryEvents([{ kinds: [30818], authors: [pk], limit: 200 }], 'local_only'),
-				api.queryEvents([{ kinds: [30817], authors: [pk], limit: 200 }], 'local_only'),
-				api.queryEvents([{ kinds: [30041], authors: [pk], limit: 200 }], 'local_only'),
-				api.queryEvents([{ kinds: [9802], authors: [pk], limit: 200 }], 'local_only'),
-				api.queryEvents([{ kinds: [1111], authors: [pk], limit: 200 }], 'local_only')
+				api.queryEvents([{ kinds: [30040], authors: [pk], limit: tabLimits.publications }], 'local_only'),
+				api.queryEvents([{ kinds: [30023], authors: [pk], limit: tabLimits.articles }], 'local_only'),
+				api.queryEvents([{ kinds: [30818], authors: [pk], limit: tabLimits.wikis }], 'local_only'),
+				api.queryEvents([{ kinds: [30817], authors: [pk], limit: tabLimits.specs }], 'local_only'),
+				api.queryEvents([{ kinds: [30041], authors: [pk], limit: tabLimits.sections }], 'local_only'),
+				api.queryEvents([{ kinds: [9802], authors: [pk], limit: tabLimits.highlights }], 'local_only'),
+				api.queryEvents([{ kinds: [1111], authors: [pk], limit: tabLimits.comments }], 'local_only')
 			]);
 		profile = prof.found ? prof : null;
 		// 30040 publications: same dedup, but kept as the existing
@@ -189,6 +189,83 @@
 
 	let tabFetchingKinds = $state<number | null>(null);
 
+	// ----- Backfill ("Load older") -----
+	// Same local-first model as the feed: deepen the local query page
+	// first; only when that surfaces nothing new, hit relays with an
+	// `until` cursor at the oldest event shown. A tab is "exhausted"
+	// when a relay round-trip adds nothing — cleared again by any
+	// explicit fetch or a pubkey change.
+	const BACKFILL_PAGE = 50;
+	const TAB_BASE_LIMIT: Record<Tab, number> = {
+		publications: 500,
+		articles: 200,
+		wikis: 200,
+		specs: 200,
+		sections: 200,
+		highlights: 200,
+		comments: 200
+	};
+	function freshTabFlags(): Record<Tab, boolean> {
+		return {
+			publications: false,
+			articles: false,
+			wikis: false,
+			specs: false,
+			sections: false,
+			highlights: false,
+			comments: false
+		};
+	}
+	let tabLimits = $state<Record<Tab, number>>({ ...TAB_BASE_LIMIT });
+	let exhausted = $state<Record<Tab, boolean>>(freshTabFlags());
+	let loadingOlder = $state(false);
+
+	function listFor(tab: Tab): Array<{ created_at: number }> {
+		if (tab === 'publications') return publications;
+		if (tab === 'articles') return articles;
+		if (tab === 'wikis') return wikis;
+		if (tab === 'specs') return specs;
+		if (tab === 'sections') return sections;
+		if (tab === 'highlights') return highlights;
+		return comments;
+	}
+
+	async function handleLoadOlder() {
+		const tab = activeTab;
+		const list = listFor(tab);
+		if (loadingOlder || list.length === 0) return;
+		loadingOlder = true;
+		try {
+			const before = list.length;
+			const oldest = Math.min(...list.map((e) => e.created_at));
+			// Deepen the local page — older events may already be in the
+			// db beyond the current query cap.
+			tabLimits[tab] += BACKFILL_PAGE;
+			await loadLocal(pubkey);
+			if (listFor(tab).length > before) return;
+			// Nothing new locally — page relays strictly older than what
+			// is shown. Goes through the same confirm-gated fetch path as
+			// the refresh buttons.
+			await fetchFromRelaysWithPrompt(
+				{
+					title: `Load older ${TAB_LABEL[tab]}`,
+					kinds: TAB_KINDS[tab],
+					authors: [pubkey],
+					limit: BACKFILL_PAGE,
+					until: oldest - 1
+				},
+				{ isOnline }
+			);
+			await new Promise((r) => setTimeout(r, 400));
+			await loadLocal(pubkey);
+			if (listFor(tab).length <= before) exhausted[tab] = true;
+		} catch (e) {
+			console.error('Load older failed:', e);
+		} finally {
+			loadingOlder = false;
+		}
+	}
+
 	const isOnline = $derived(app.networkStatus?.mode === 'auto');
 
 	async function runFetch(opts: { title: string; kinds: number[] }) {
@@ -213,6 +290,7 @@
 
 	async function handleFetch() {
 		fetching = true;
+		exhausted = freshTabFlags();
 		try {
 			await runFetch({
 				title: `Fetch all events for ${profile?.display_name || profile?.name || pubkey.slice(0, 12) + '…'}`,
@@ -232,6 +310,7 @@
 	async function handleTabFetch(tab: Tab) {
 		const kinds = TAB_KINDS[tab];
 		tabFetchingKinds = kinds[0];
+		exhausted[tab] = false;
 		try {
 			await runFetch({
 				title: `Fetch ${TAB_LABEL[tab]} for ${profile?.display_name || profile?.name || pubkey.slice(0, 12) + '…'}`,
@@ -255,6 +334,10 @@
 		sections = [];
 		highlights = [];
 		comments = [];
+		untrack(() => {
+			tabLimits = { ...TAB_BASE_LIMIT };
+			exhausted = freshTabFlags();
+		});
 
 		loadLocal(pk).catch(() => {}).finally(() => { loading = false; });
 	});
@@ -275,13 +358,7 @@
 	});
 
 	function activeList(): Array<unknown> {
-		if (activeTab === 'publications') return publications;
-		if (activeTab === 'articles') return articles;
-		if (activeTab === 'wikis') return wikis;
-		if (activeTab === 'specs') return specs;
-		if (activeTab === 'sections') return sections;
-		if (activeTab === 'highlights') return highlights;
-		return comments;
+		return listFor(activeTab);
 	}
 
 	function scrollCursorIntoView() {
@@ -532,8 +609,14 @@
 						role="button"
 						tabindex="0"
 					>
-						<div class="item-header">
+						<div class="item-main">
 							<span class="item-title">{pub_item.title ?? '[Untitled]'}</span>
+							{#if pub_item.summary}
+								<p class="item-preview">{pub_item.summary}</p>
+							{/if}
+							<span class="item-time">{formatTime(pub_item.created_at)}</span>
+						</div>
+						<div class="item-rail">
 							<PoolStateBadges
 								item={app.findPoolItemByAddr(pub_item.addr)}
 								onpillctx={() => app.pillActionByAddr(pub_item.addr, 'context')}
@@ -546,10 +629,6 @@
 							<span class="item-meta">{pub_item.section_count} sections</span>
 							{@render menuBtn(() => app.openAddressableInModal(pub_item.addr))}
 						</div>
-						{#if pub_item.summary}
-							<p class="item-preview">{pub_item.summary}</p>
-						{/if}
-						<span class="item-time">{formatTime(pub_item.created_at)}</span>
 					</div>
 				{/each}
 			{/if}
@@ -569,8 +648,14 @@
 						role="button"
 						tabindex="0"
 					>
-						<div class="item-header">
+						<div class="item-main">
 							<span class="item-title">{art.title ?? '[Untitled]'}</span>
+							{#if art.summary}
+								<p class="item-preview">{art.summary}</p>
+							{/if}
+							<span class="item-time">{formatTime(art.created_at)}</span>
+						</div>
+						<div class="item-rail">
 							<PoolStateBadges
 								item={app.findPoolItemByAddr(art.addr)}
 								onpillctx={() => app.pillActionByAddr(art.addr, 'context')}
@@ -582,10 +667,6 @@
 							<span class="item-meta">long-form</span>
 							{@render menuBtn(() => app.openAddressableInModal(art.addr))}
 						</div>
-						{#if art.summary}
-							<p class="item-preview">{art.summary}</p>
-						{/if}
-						<span class="item-time">{formatTime(art.created_at)}</span>
 					</div>
 				{/each}
 			{/if}
@@ -605,8 +686,14 @@
 						role="button"
 						tabindex="0"
 					>
-						<div class="item-header">
+						<div class="item-main">
 							<span class="item-title">{wiki.title ?? wiki.addr.d_tag ?? '[Untitled]'}</span>
+							{#if wiki.summary}
+								<p class="item-preview">{wiki.summary}</p>
+							{/if}
+							<span class="item-time">{formatTime(wiki.created_at)}</span>
+						</div>
+						<div class="item-rail">
 							<PoolStateBadges
 								item={app.findPoolItemByAddr(wiki.addr)}
 								onpillctx={() => app.pillActionByAddr(wiki.addr, 'context')}
@@ -618,10 +705,6 @@
 							<span class="item-meta">wiki</span>
 							{@render menuBtn(() => app.openAddressableInModal(wiki.addr))}
 						</div>
-						{#if wiki.summary}
-							<p class="item-preview">{wiki.summary}</p>
-						{/if}
-						<span class="item-time">{formatTime(wiki.created_at)}</span>
 					</div>
 				{/each}
 			{/if}
@@ -641,8 +724,14 @@
 						role="button"
 						tabindex="0"
 					>
-						<div class="item-header">
+						<div class="item-main">
 							<span class="item-title">{spec.title ?? spec.addr.d_tag ?? '[Untitled]'}</span>
+							{#if spec.summary}
+								<p class="item-preview">{spec.summary}</p>
+							{/if}
+							<span class="item-time">{formatTime(spec.created_at)}</span>
+						</div>
+						<div class="item-rail">
 							<PoolStateBadges
 								item={app.findPoolItemByAddr(spec.addr)}
 								onpillctx={() => app.pillActionByAddr(spec.addr, 'context')}
@@ -654,10 +743,6 @@
 							<span class="item-meta">spec</span>
 							{@render menuBtn(() => app.openAddressableInModal(spec.addr))}
 						</div>
-						{#if spec.summary}
-							<p class="item-preview">{spec.summary}</p>
-						{/if}
-						<span class="item-time">{formatTime(spec.created_at)}</span>
 					</div>
 				{/each}
 			{/if}
@@ -681,8 +766,19 @@
 						role="button"
 						tabindex="0"
 					>
-						<div class="item-header">
+						<div class="item-main">
 							<span class="item-title">{title}</span>
+							{#if sec.content}
+								<p class="item-preview">{sec.content.slice(0, 200)}</p>
+							{/if}
+							<div class="item-footer">
+								{#if parentAddr}
+									<span class="item-ref">{parentAddr.split(':').pop()}</span>
+								{/if}
+								<span class="item-time">{formatTime(sec.created_at)}</span>
+							</div>
+						</div>
+						<div class="item-rail">
 							<PoolStateBadges
 								item={app.findPoolItemByAddr(addr)}
 								onpillctx={() => app.pillActionByAddr(addr, 'context')}
@@ -692,15 +788,6 @@
 								relays={sec.relays ?? []}
 							/>
 							{@render menuBtn(() => app.openAddressableInModal(addr))}
-						</div>
-						{#if sec.content}
-							<p class="item-preview">{sec.content.slice(0, 200)}</p>
-						{/if}
-						<div class="item-footer">
-							{#if parentAddr}
-								<span class="item-ref">{parentAddr.split(':').pop()}</span>
-							{/if}
-							<span class="item-time">{formatTime(sec.created_at)}</span>
 						</div>
 					</div>
 				{/each}
@@ -723,10 +810,17 @@
 						role="button"
 						tabindex="0"
 					>
-						<div class="item-header">
+						<div class="item-main">
 							{#if sourceAddr}
 								<span class="item-ref">on {sourceAddr.split(':').pop()}</span>
 							{/if}
+							<p class="item-content item-content--highlight">{hl.content}</p>
+							{#if annotation}
+								<p class="item-preview">{annotation}</p>
+							{/if}
+							<span class="item-time">{formatTime(hl.created_at)}</span>
+						</div>
+						<div class="item-rail">
 							<PoolStateBadges
 								item={app.findPoolItemByEventId(hl.id)}
 								onpillctx={() => app.pillActionByEventId(hl.id, 'context')}
@@ -737,11 +831,6 @@
 							/>
 							{@render menuBtn(() => (app.eventModalData = hl))}
 						</div>
-						<p class="item-content item-content--highlight">{hl.content}</p>
-						{#if annotation}
-							<p class="item-preview">{annotation}</p>
-						{/if}
-						<span class="item-time">{formatTime(hl.created_at)}</span>
 					</div>
 				{/each}
 			{/if}
@@ -763,10 +852,14 @@
 						role="button"
 						tabindex="0"
 					>
-						<div class="item-header">
+						<div class="item-main">
 							{#if rootAddr}
 								<span class="item-ref">on {rootKind ? `k:${rootKind}` : ''} {rootAddr.split(':').pop()}</span>
 							{/if}
+							<p class="item-content">{comment.content}</p>
+							<span class="item-time">{formatTime(comment.created_at)}</span>
+						</div>
+						<div class="item-rail">
 							<PoolStateBadges
 								item={app.findPoolItemByEventId(comment.id)}
 								onpillctx={() => app.pillActionByEventId(comment.id, 'context')}
@@ -777,11 +870,20 @@
 							/>
 							{@render menuBtn(() => (app.eventModalData = comment))}
 						</div>
-						<p class="item-content">{comment.content}</p>
-						<span class="item-time">{formatTime(comment.created_at)}</span>
 					</div>
 				{/each}
 			{/if}
+		{/if}
+		{#if !loading && activeList().length > 0}
+			<div class="load-older">
+				<button onclick={handleLoadOlder} disabled={loadingOlder || exhausted[activeTab]}>
+					{loadingOlder
+						? 'Loading…'
+						: exhausted[activeTab]
+							? 'No older events found'
+							: 'Load older'}
+				</button>
+			</div>
 		{/if}
 	</div>
 </div>
@@ -995,6 +1097,26 @@
 	.item {
 		padding: 10px 16px;
 		border-bottom: 1px solid var(--border);
+		/* Two columns: text content (truncating) | controls rail. The rail
+		   is fixed-width so previews/content can never run under the
+		   pills/menu, whatever the pane width. */
+		display: flex;
+		align-items: flex-start;
+		gap: 8px;
+	}
+
+	.item-main {
+		flex: 1;
+		min-width: 0;
+	}
+
+	.item-rail {
+		flex-shrink: 0;
+		display: flex;
+		flex-direction: column;
+		align-items: flex-end;
+		gap: 3px;
+		max-width: 22ch;
 	}
 
 	.pub-item {
@@ -1017,21 +1139,14 @@
 	}
 	.item--cursor .item-title { color: var(--fg); font-weight: 700; }
 
-	.item-header {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		gap: 8px;
-		margin-bottom: 2px;
-	}
-
 	.item-title {
+		display: block;
 		font-size: var(--t-sm);
 		font-weight: 600;
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
-		flex: 1;
+		margin-bottom: 2px;
 	}
 
 	.item-meta {
@@ -1048,7 +1163,10 @@
 		overflow: hidden;
 		display: -webkit-box;
 		-webkit-line-clamp: 2;
+		line-clamp: 2;
 		-webkit-box-orient: vertical;
+		/* Unbroken runs (URLs, naddrs) wrap instead of clipping wide. */
+		overflow-wrap: anywhere;
 	}
 
 	.item-content {
@@ -1090,7 +1208,6 @@
 	   stopPropagation keeps clicks off the card, which otherwise routes
 	   to the reader / discussion view. */
 	.item-menu {
-		margin-left: auto;
 		flex-shrink: 0;
 		background: none;
 		border: 1px solid var(--border);
@@ -1105,5 +1222,25 @@
 	.item-menu:hover {
 		color: var(--accent);
 		border-color: var(--accent);
+	}
+
+	/* Backfill footer — same affordance as the feed's "Load more". */
+	.load-older {
+		padding: 12px;
+		text-align: center;
+	}
+	.load-older button {
+		font-family: var(--font-mono);
+		font-size: var(--t-xs);
+		padding: 4px 16px;
+		background: transparent;
+		border: 1px solid var(--base3);
+		border-radius: var(--r-sm);
+		color: var(--fg);
+		cursor: pointer;
+	}
+	.load-older button:disabled {
+		color: var(--fg-muted);
+		cursor: default;
 	}
 </style>

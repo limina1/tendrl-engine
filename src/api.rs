@@ -1825,6 +1825,10 @@ pub struct FetchRelayRequest {
     /// and against profile name/display_name/nip05 for kind 0). Relays
     /// that don't support NIP-50 ignore the field per the spec.
     pub search: Option<String>,
+    /// NIP-01 `until` bound — backfill cursor. Callers paging older
+    /// events pass the oldest timestamp they already hold (exclusive:
+    /// send `oldest - 1`).
+    pub until: Option<u64>,
 }
 
 fn default_fetch_limit() -> usize {
@@ -1866,6 +1870,9 @@ pub async fn fetch_relay_handler(
             filter["search"] = json!(s);
         }
     }
+    if let Some(until) = req.until {
+        filter["until"] = json!(until);
+    }
 
     // One confirm operation covers the whole relay set — gate once.
     let op = if req.mode_confirm {
@@ -1878,6 +1885,9 @@ pub async fn fetch_relay_handler(
         }
         if let Some(s) = req.search.as_deref().filter(|s| !s.is_empty()) {
             steps.push(format!("NIP-50 search: {s}"));
+        }
+        if let Some(until) = req.until {
+            steps.push(format!("older than {until}"));
         }
         steps.push(format!("limit {}", req.limit));
         match engine

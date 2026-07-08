@@ -176,11 +176,24 @@
 				>
 					<span class="cursor-marker" aria-hidden="true">{i === cursor ? '›' : ' '}</span>
 					<div class="row-body">
-					<!-- Row action cluster reads in one fixed order everywhere
-					     (feed + reader outline): provenance/pool pills, counts,
-					     menu last — so the menu pill lines up row to row. -->
-					<div class="row-head">
+					<!-- Two columns: text (title/summary/footer, truncating) on
+					     the left, the controls rail on the right. The rail is a
+					     fixed-width column so preview text can never run under
+					     the pills/menu, whatever the pane width. -->
+					<div class="row-main">
 						<span class="title">{pub_item.title ?? '[Untitled]'}</span>
+						{#if pub_item.summary}
+							<p class="summary">{pub_item.summary}</p>
+						{/if}
+						<div class="row-foot">
+							<span class="author"><ProfileName pubkey={pub_item.author_pubkey} onviewprofile={app.handleViewProfile} /></span>
+							<span class="time">{formatTime(pub_item.created_at)}</span>
+						</div>
+					</div>
+					<!-- Rail reads in one fixed order everywhere (feed + reader
+					     outline): provenance/pool pills, counts, menu last — so
+					     the menu pill lines up row to row. -->
+					<div class="row-rail">
 						{#if pub_item.local}
 							<button
 								class="pill pill--broadcast"
@@ -217,13 +230,6 @@
 							}}
 							title="Open the event menu (m)"
 						>menu</button>
-					</div>
-					{#if pub_item.summary}
-						<p class="summary">{pub_item.summary}</p>
-					{/if}
-					<div class="row-foot">
-						<span class="author"><ProfileName pubkey={pub_item.author_pubkey} onviewprofile={app.handleViewProfile} /></span>
-						<span class="time">{formatTime(pub_item.created_at)}</span>
 					</div>
 					</div>
 				</div>
@@ -286,7 +292,18 @@
 		gap: 6px;
 	}
 	.row:hover { background: var(--panel-bg-soft); }
-	.row-body { flex: 1; min-width: 0; }
+	.row-body { flex: 1; min-width: 0; display: flex; align-items: flex-start; gap: 8px; }
+	.row-main { flex: 1; min-width: 0; }
+	/* Controls rail — pills, counts, menu. Fixed (non-shrinking) column,
+	   right-aligned, bounded so a long relay label can't widen it. */
+	.row-rail {
+		flex-shrink: 0;
+		display: flex;
+		flex-direction: column;
+		align-items: flex-end;
+		gap: 3px;
+		max-width: 22ch;
+	}
 	/* ranger-style selection: high-contrast bar + leading caret. The
 	   highlight is bright enough to read from a glance even with the
 	   list scrolling. */
@@ -306,8 +323,7 @@
 		font-size: var(--t-sm);
 	}
 	.row:not(.row--cursor) .cursor-marker { color: transparent; }
-	.row-head { display: flex; align-items: center; gap: 8px; margin-bottom: 2px; }
-	.title { font-size: var(--t-sm); font-weight: 600; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+	.title { display: block; font-size: var(--t-sm); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-bottom: 2px; }
 	/* Fixed-width, right-aligned count so "N sections" forms a column
 	   across rows regardless of how many pills precede it. */
 	.meta {
@@ -326,7 +342,10 @@
 		overflow: hidden;
 		display: -webkit-box;
 		-webkit-line-clamp: 2;
+		line-clamp: 2;
 		-webkit-box-orient: vertical;
+		/* Unbroken runs (URLs, naddrs) wrap instead of clipping wide. */
+		overflow-wrap: anywhere;
 	}
 	.row-foot {
 		display: flex;

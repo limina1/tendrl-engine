@@ -257,6 +257,14 @@
 	.psb__pill--remote {
 		background: color-mix(in srgb, var(--cyan) 12%, transparent);
 		color: var(--id-remote);
+		/* Relay hostnames are unbounded — cap the pill so a long host
+		   can never widen the rail and push row controls out of the
+		   card. inline-block (not flex) so text-overflow applies; the
+		   full relay list stays readable in the title attr. */
+		display: inline-block;
+		max-width: 18ch;
+		overflow: hidden;
+		text-overflow: ellipsis;
 	}
 	/* Signed but not broadcast — the user's local-only snapshot. Distinct
 	   token from draft/remote so "I haven't pushed this yet" reads at a glance. */
