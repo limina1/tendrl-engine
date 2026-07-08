@@ -8,6 +8,7 @@
 	import { getAppState } from '$lib/state.svelte';
 	import PoolStateBadges from './PoolStateBadges.svelte';
 	import SpellClauseBlock from './SpellClauseBlock.svelte';
+	import ProfileName from './ProfileName.svelte';
 	import { getActiveStore, type NavAction } from '$lib/wm/buffer-store.svelte';
 
 	const app = getAppState();
@@ -71,8 +72,69 @@
 	// (/api/v1/spell/list); clicking one runs it and shows its result feed
 	// in place.
 	let spells = $state<api.SpellEntry[]>([]);
+	// Spellbooks (kind 30777): the user's curated sets, entries by any
+	// author. The tab renders one merged flat list — book entries ∪
+	// authored spells, deduped by event id — with per-row provenance
+	// (author byline when foreign, book marker when curated).
+	let spellBooks = $state<api.SpellBookView[]>([]);
 	let spellResults = $state<api.SpellOutcome | null>(null);
 	let spellRunning = $state<string | null>(null);
+
+	type SpellRow = {
+		/** Resolved spell — null for a book reference we can't resolve locally. */
+		entry: api.SpellEntry | null;
+		ref: api.SpellbookEntryRef | null;
+		/** Book title/d when the row came from a book. */
+		fromBook: string | null;
+	};
+	const spellRows = $derived.by<SpellRow[]>(() => {
+		const rows: SpellRow[] = [];
+		const seen = new Set<string>();
+		for (const view of spellBooks) {
+			const label = view.book.title || view.book.d;
+			for (const be of view.entries) {
+				const id = be.entry?.event.id ?? be.reference.event_id;
+				if (seen.has(id)) continue;
+				seen.add(id);
+				rows.push({ entry: be.entry, ref: be.reference, fromBook: label });
+			}
+		}
+		for (const entry of spells) {
+			if (seen.has(entry.event.id)) continue;
+			seen.add(entry.event.id);
+			rows.push({ entry, ref: null, fromBook: null });
+		}
+		return rows.sort(
+			(a, b) => (b.entry?.event.created_at ?? 0) - (a.entry?.event.created_at ?? 0)
+		);
+	});
+
+	// "Add to my book" — bookmark any spell into my default book:
+	// engine derives the next book version, we sign it, save local-first.
+	async function addToMyBook(entry: api.SpellEntry) {
+		try {
+			const t = await api.spellBookTemplate({ action: 'add', spell_event_id: entry.event.id });
+			const { signed_event } = await api.signTemplate({ template: t.template });
+			await api.saveSpellBook({ event: signed_event, broadcast: false });
+			app.pushToast(
+				t.created ? 'Spellbook created — broadcast it when ready' : 'Added to your spellbook',
+				'success'
+			);
+		} catch (e) {
+			app.pushToast(e instanceof Error ? e.message : 'Add to book failed', 'error');
+		}
+	}
+
+	async function broadcastBook(view: api.SpellBookView) {
+		try {
+			const res = await api.saveSpellBook({ event: view.event, broadcast: true });
+			const ok = res.broadcast_results?.filter((r) => r.success).length ?? 0;
+			app.pushToast(`Book broadcast — accepted by ${ok} relay${ok === 1 ? '' : 's'}`, ok > 0 ? 'success' : 'error');
+			await loadLocal(pubkey);
+		} catch (e) {
+			app.pushToast(e instanceof Error ? e.message : 'Broadcast failed', 'error');
+		}
+	}
 	// PIPE-card `v` chevron: per-spell expanded flag + fetched stage
 	// blocks (inspect is local-only; fetched once per card, on demand).
 	let spellStagesOpen = $state<Record<string, boolean>>({});
@@ -129,7 +191,7 @@
 	}
 
 	async function loadLocal(pk: string) {
-		const [prof, pubResult, artResult, wikiResult, specResult, secResult, hlResult, comResult, spellResult] =
+		const [prof, pubResult, artResult, wikiResult, specResult, secResult, hlResult, comResult, spellResult, bookResult] =
 			await Promise.all([
 				api.getProfile(pk),
 				api.queryEvents([{ kinds: [30040], authors: [pk], limit: tabLimits.publications }], 'local_only'),
@@ -139,7 +201,8 @@
 				api.queryEvents([{ kinds: [30041], authors: [pk], limit: tabLimits.sections }], 'local_only'),
 				api.queryEvents([{ kinds: [9802], authors: [pk], limit: tabLimits.highlights }], 'local_only'),
 				api.queryEvents([{ kinds: [1111], authors: [pk], limit: tabLimits.comments }], 'local_only'),
-				api.listSpells(pk, tabLimits.spells, 'local_only')
+				api.listSpells(pk, tabLimits.spells, 'local_only'),
+				api.getSpellBooks(pk, 'local_only')
 			]);
 		profile = prof.found ? prof : null;
 		// 30040 publications: same dedup, but kept as the existing
@@ -185,6 +248,7 @@
 		highlights = (hlResult.events as NostrEvent[]).sort((a, b) => b.created_at - a.created_at);
 		comments = (comResult.events as NostrEvent[]).sort((a, b) => b.created_at - a.created_at);
 		spells = spellResult.entries; // engine returns newest-first
+		spellBooks = bookResult.books;
 	}
 
 	// Tab → which event kinds to pull. The top-bar Fetch button pulls
@@ -199,7 +263,7 @@
 		sections: [30041],
 		highlights: [9802],
 		comments: [1111],
-		spells: [777]
+		spells: [777, 30777]
 	};
 	const TAB_LABEL: Record<Tab, string> = {
 		publications: 'publications',
@@ -260,8 +324,11 @@
 		if (tab === 'highlights') return highlights;
 		if (tab === 'spells') {
 			// While a spell's result feed is shown, the cursor walks the
-			// results; otherwise it walks the spellbook itself.
-			return spellResults ? spellResults.events : spells.map((s) => s.event);
+			// results; otherwise it walks the merged book+authored rows
+			// (unresolved book references count as rows with no timestamp).
+			return spellResults
+				? spellResults.events
+				: spellRows.map((r) => ({ created_at: r.entry?.event.created_at ?? 0 }));
 		}
 		return comments;
 	}
@@ -333,7 +400,7 @@
 		try {
 			await runFetch({
 				title: `Fetch all events for ${profile?.display_name || profile?.name || pubkey.slice(0, 12) + '…'}`,
-				kinds: [0, 30040, 30023, 30818, 30817, 30041, 9802, 1111, 777]
+				kinds: [0, 30040, 30023, 30818, 30817, 30041, 9802, 1111, 777, 30777]
 			});
 			// Profile prefetch hits general relays unconditionally — names
 			// don't go through the prompted flow because they're a side
@@ -426,6 +493,7 @@
 		highlights = [];
 		comments = [];
 		spells = [];
+		spellBooks = [];
 		spellResults = null;
 		spellStagesOpen = {};
 		spellStageCache = {};
@@ -492,8 +560,8 @@
 			if (spellResults) {
 				app.eventModalData = item as NostrEvent;
 			} else {
-				const entry = spells[cursor];
-				if (entry) runSpell(entry);
+				const row = spellRows[cursor];
+				if (row?.entry) runSpell(row.entry);
 			}
 		} else {
 			// Comments and highlights both route to the discussion view — it
@@ -506,10 +574,15 @@
 		const list = activeList();
 		const item = list[cursor];
 		if (!item) return;
-		if (activeTab === 'comments' || activeTab === 'highlights' || activeTab === 'spells') {
-			// Comments, highlights, and spells aren't addressable — feed the
-			// modal the raw event (for spells: the 777 event or, when a result
-			// feed is showing, the cursored result).
+		if (activeTab === 'spells') {
+			// The 777 event, or the cursored result while a feed is showing.
+			const event = spellResults
+				? (item as NostrEvent)
+				: spellRows[cursor]?.entry?.event;
+			if (event) app.eventModalData = event;
+		} else if (activeTab === 'comments' || activeTab === 'highlights') {
+			// Comments and highlights aren't addressable — feed the modal the
+			// raw event.
 			app.eventModalData = item as NostrEvent;
 		} else if (activeTab === 'sections') {
 			const sec = item as NostrEvent;
@@ -706,7 +779,7 @@
 		{@render tabCell('sections', 'Sections', sections.length)}
 		{@render tabCell('highlights', 'Highlights', highlights.length)}
 		{@render tabCell('comments', 'Comments', comments.length)}
-		{@render tabCell('spells', 'Spells', spells.length)}
+		{@render tabCell('spells', 'Spells', spellRows.length)}
 	</div>
 
 	<div class="tab-content" bind:this={listEl}>
@@ -1043,10 +1116,32 @@
 						</div>
 					{/each}
 				{/if}
-			{:else if spells.length === 0}
+			{:else if spellRows.length === 0}
 				<div class="empty">No spells</div>
 			{:else}
-				{#each spells as entry, i (entry.event.id)}
+				{#each spellBooks.filter((v) => v.local) as view (view.book.d)}
+					<div class="spell-results-head">
+						<span class="spell-results-label">
+							book “{view.book.title || view.book.d}” is local-only
+						</span>
+						<button class="spell-back" onclick={() => broadcastBook(view)}>
+							Broadcast book
+						</button>
+					</div>
+				{/each}
+				{#each spellRows as row, i (row.entry?.event.id ?? row.ref?.event_id ?? i)}
+					{#if !row.entry}
+						<div class="item pub-item" data-cursor={i} class:item--cursor={i === cursor}>
+							<div class="item-main">
+								<span class="item-ref">in “{row.fromBook}” · not fetched</span>
+								<span class="item-title">{(row.ref?.event_id ?? '').slice(0, 16)}…</span>
+								{#if row.ref?.author_hint}
+									<p class="item-preview">by <ProfileName pubkey={row.ref.author_hint} /></p>
+								{/if}
+							</div>
+						</div>
+					{:else}
+					{@const entry = row.entry}
 					{@const s = entry.spell}
 					<!-- svelte-ignore a11y_no_static_element_interactions -->
 					<div
@@ -1061,8 +1156,11 @@
 					>
 						<div class="item-main">
 							<span class="item-ref">
-								{s ? s.cmd : 'invalid'}{s && s.stages.length ? ` · ${s.stages.length}-stage pipeline` : ''}{entry.partial ? ' · partial' : ''}{entry.needs_identity ? ' · uses your identity' : ''}
+								{s ? s.cmd : 'invalid'}{s && s.stages.length ? ` · ${s.stages.length}-stage pipeline` : ''}{entry.partial ? ' · partial' : ''}{entry.needs_identity ? ' · uses your identity' : ''}{row.fromBook ? ` · in “${row.fromBook}”` : ''}
 							</span>
+							{#if entry.event.pubkey !== pubkey}
+								<span class="spell-byline">by <ProfileName pubkey={entry.event.pubkey} /></span>
+							{/if}
 							<span class="item-title">{s?.name ?? '[Unnamed spell]'}</span>
 							{#if s?.description}
 								<p class="item-preview">{s.description}</p>
@@ -1114,9 +1212,16 @@
 								signed={isEventSigned(entry.event.sig)}
 								relays={entry.event.relays ?? []}
 							/>
+							<button
+								class="spell-bookmark"
+								onclick={(e) => { e.stopPropagation(); addToMyBook(entry); }}
+								onkeydown={(e) => e.stopPropagation()}
+								title="Add this spell to your spellbook (kind 30777)"
+							>+book</button>
 							{@render menuBtn(() => (app.eventModalData = entry.event))}
 						</div>
 					</div>
+					{/if}
 				{/each}
 			{/if}
 		{/if}
@@ -1534,6 +1639,26 @@
 		font-size: var(--t-2xs);
 		color: var(--fg-muted);
 		font-style: italic;
+	}
+	.spell-byline {
+		font-size: var(--t-2xs);
+		color: var(--fg-muted);
+	}
+	.spell-bookmark {
+		flex-shrink: 0;
+		background: none;
+		border: 1px solid var(--border);
+		border-radius: var(--radius);
+		color: var(--fg-muted);
+		font-family: var(--font-mono);
+		font-size: var(--t-3xs);
+		padding: 1px 6px;
+		cursor: pointer;
+		line-height: 1.5;
+	}
+	.spell-bookmark:hover {
+		color: var(--accent);
+		border-color: var(--accent);
 	}
 
 	/* Backfill footer — same affordance as the feed's "Load more". */

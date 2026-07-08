@@ -717,6 +717,76 @@ export function ingestEvent(event: unknown) {
 	});
 }
 
+// Spellbooks (kind 30777): addressable e-tag sets referencing spells by
+// any author. "Bookmark" = add someone's spell to my book.
+
+export interface SpellbookEntryRef {
+	event_id: string;
+	relay_hint?: string;
+	author_hint?: string;
+}
+
+export interface Spellbook {
+	id: string | null;
+	author: string;
+	d: string;
+	title: string | null;
+	description: string | null;
+	created_at: number;
+	entries: SpellbookEntryRef[];
+}
+
+export interface BookEntry {
+	reference: SpellbookEntryRef;
+	entry: SpellEntry | null;
+	missing: boolean;
+}
+
+export interface SpellBookView {
+	book: Spellbook;
+	/** Raw newest 30777 event — used to re-broadcast a local book. */
+	event: NostrEvent;
+	entries: BookEntry[];
+	/** Signed+ingested but not yet accepted by any relay. */
+	local: boolean;
+}
+
+export function getSpellBooks(pubkey: string, policy = 'local_only', d?: string) {
+	return fetchJson<{ books: SpellBookView[] }>('/api/v1/spell/book', {
+		method: 'POST',
+		body: JSON.stringify({ pubkey, policy, d })
+	});
+}
+
+export function spellBookTemplate(req: {
+	action: 'add' | 'remove' | 'create';
+	spell_event_id?: string;
+	d?: string;
+	title?: string;
+	description?: string;
+}) {
+	return fetchJson<{
+		template: SignTemplateRequest['template'];
+		book: Spellbook;
+		created: boolean;
+	}>('/api/v1/spell/book/template', {
+		method: 'POST',
+		body: JSON.stringify(req)
+	});
+}
+
+export function saveSpellBook(req: { event: unknown; broadcast: boolean; relays?: string[] }) {
+	return fetchJson<{
+		ingested: boolean;
+		coordinate: string;
+		local: boolean;
+		broadcast_results: { relay_url: string; success: boolean; message: string }[] | null;
+	}>('/api/v1/spell/book/save', {
+		method: 'POST',
+		body: JSON.stringify(req)
+	});
+}
+
 export interface SpellStageReport {
 	spell_id: string | null;
 	name: string | null;

@@ -1582,6 +1582,107 @@ impl<'a> SpellEngine<'a> {
 }
 
 // ---------------------------------------------------------------------------
+// Spellbooks (kind 30777)
+// ---------------------------------------------------------------------------
+
+/// Addressable spellbook set: `d` names the book, `e` tags reference spell
+/// events by any author. NIP-51-style; local-until-broadcast via the
+/// `LocalPublicationTracker` coordinate.
+pub const KIND_SPELLBOOK: u64 = 30777;
+
+/// One `e` entry of a spellbook: `["e", <spell-id>, <relay-hint|"">,
+/// <author-pubkey-hint>]` — hints optional, parser tolerant of 2–4
+/// elements. The author hint gives byline attribution without a fetch.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct SpellbookEntryRef {
+    pub event_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub relay_hint: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub author_hint: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct Spellbook {
+    pub id: Option<String>,
+    pub author: String,
+    pub d: String,
+    pub title: Option<String>,
+    pub description: Option<String>,
+    pub created_at: u64,
+    pub entries: Vec<SpellbookEntryRef>,
+}
+
+impl Spellbook {
+    pub fn from_event(event: &Value) -> Result<Spellbook> {
+        let kind = event.get("kind").and_then(Value::as_u64);
+        if kind != Some(KIND_SPELLBOOK) {
+            return Err(EngineError::BadRequest(format!(
+                "not a spellbook: kind {kind:?} (expected {KIND_SPELLBOOK})"
+            )));
+        }
+        let author = event
+            .get("pubkey")
+            .and_then(Value::as_str)
+            .ok_or_else(|| EngineError::BadRequest("spellbook event has no pubkey".into()))?
+            .to_string();
+        let mut book = Spellbook {
+            id: event.get("id").and_then(Value::as_str).map(str::to_string),
+            author,
+            d: String::new(),
+            title: None,
+            description: None,
+            created_at: event.get("created_at").and_then(Value::as_u64).unwrap_or(0),
+            entries: Vec::new(),
+        };
+        for tag in json_tags(event) {
+            let Some(key) = tag.first() else { continue };
+            match key.as_str() {
+                "d" => book.d = tag.get(1).cloned().unwrap_or_default(),
+                "title" => book.title = tag.get(1).cloned(),
+                "description" => book.description = tag.get(1).cloned(),
+                "e" => {
+                    if let Some(id) = tag.get(1) {
+                        book.entries.push(SpellbookEntryRef {
+                            event_id: id.clone(),
+                            relay_hint: tag.get(2).filter(|s| !s.is_empty()).cloned(),
+                            author_hint: tag.get(3).filter(|s| !s.is_empty()).cloned(),
+                        });
+                    }
+                }
+                _ => {}
+            }
+        }
+        Ok(book)
+    }
+
+    pub fn coordinate(&self) -> String {
+        format!("{KIND_SPELLBOOK}:{}:{}", self.author, self.d)
+    }
+
+    pub fn to_tags(&self) -> Vec<Vec<String>> {
+        let mut tags = vec![vec!["d".to_string(), self.d.clone()]];
+        if let Some(t) = &self.title {
+            tags.push(vec!["title".into(), t.clone()]);
+        }
+        if let Some(d) = &self.description {
+            tags.push(vec!["description".into(), d.clone()]);
+        }
+        for e in &self.entries {
+            let mut tag = vec!["e".to_string(), e.event_id.clone()];
+            if e.relay_hint.is_some() || e.author_hint.is_some() {
+                tag.push(e.relay_hint.clone().unwrap_or_default());
+            }
+            if let Some(a) = &e.author_hint {
+                tag.push(a.clone());
+            }
+            tags.push(tag);
+        }
+        tags
+    }
+}
+
+// ---------------------------------------------------------------------------
 // HTTP API
 // ---------------------------------------------------------------------------
 
@@ -1739,7 +1840,7 @@ pub struct SpellListRequest {
     pub mode_confirm: bool,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct SpellListEntry {
     /// The raw kind-777 event (id, sig, relays — provenance for the UI).
     pub event: Value,
@@ -1764,6 +1865,37 @@ pub struct SpellListResponse {
 /// POST /api/v1/spell/list — an author's spellbook: their kind-777 events,
 /// newest first, each parsed engine-side so the UI renders cards without
 /// re-implementing spell parsing.
+/// Parse one kind-777 event into a list entry (shared by the author list
+/// and spellbook resolution). Unparseable events surface their error on
+/// the entry rather than failing the request.
+fn entry_from_event(event: Value) -> SpellListEntry {
+    match Spell::from_event(&event) {
+        Ok(spell) => {
+            let (needs_me, needs_contacts) = spell.references_identity();
+            SpellListEntry {
+                event,
+                required_args: spell.required_args(),
+                partial: spell.references_input(),
+                needs_identity: needs_me || needs_contacts,
+                clauses: spell.to_clauses(),
+                query_string: Some(spell.query_string()),
+                spell: Some(spell),
+                error: None,
+            }
+        }
+        Err(e) => SpellListEntry {
+            event,
+            spell: None,
+            required_args: Vec::new(),
+            partial: false,
+            needs_identity: false,
+            error: Some(e.to_string()),
+            clauses: Vec::new(),
+            query_string: None,
+        },
+    }
+}
+
 pub async fn list_handler(
     State(engine): State<Arc<Engine>>,
     Json(req): Json<SpellListRequest>,
@@ -1787,37 +1919,352 @@ pub async fn list_handler(
         std::cmp::Reverse(e.get("created_at").and_then(Value::as_u64).unwrap_or(0))
     });
 
-    let entries: Vec<SpellListEntry> = events
-        .into_iter()
-        .map(|event| match Spell::from_event(&event) {
-            Ok(spell) => {
-                let (needs_me, needs_contacts) = spell.references_identity();
-                SpellListEntry {
-                    event,
-                    required_args: spell.required_args(),
-                    partial: spell.references_input(),
-                    needs_identity: needs_me || needs_contacts,
-                    clauses: spell.to_clauses(),
-                    query_string: Some(spell.query_string()),
-                    spell: Some(spell),
-                    error: None,
-                }
-            }
-            Err(e) => SpellListEntry {
-                event,
-                spell: None,
-                required_args: Vec::new(),
-                partial: false,
-                needs_identity: false,
-                error: Some(e.to_string()),
-                clauses: Vec::new(),
-                query_string: None,
-            },
-        })
-        .collect();
+    let entries: Vec<SpellListEntry> = events.into_iter().map(entry_from_event).collect();
 
     let count = entries.len();
     Ok(Json(SpellListResponse { entries, count }))
+}
+
+// ---------------------------------------------------------------------------
+// Spellbook endpoints
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Deserialize)]
+pub struct SpellBookRequest {
+    /// Whose books to load.
+    pub pubkey: String,
+    /// Restrict to one book (`d` tag); absent = all their books.
+    pub d: Option<String>,
+    pub policy: Option<String>,
+    #[serde(default)]
+    pub mode_confirm: bool,
+}
+
+#[derive(Debug, Serialize)]
+pub struct BookEntry {
+    pub reference: SpellbookEntryRef,
+    /// Resolved spell (parsed like a list entry) — `None` when the
+    /// referenced event isn't available under the request policy.
+    pub entry: Option<SpellListEntry>,
+    pub missing: bool,
+}
+
+#[derive(Debug, Serialize)]
+pub struct SpellBookView {
+    pub book: Spellbook,
+    /// The raw newest 30777 event (needed to re-broadcast a local book).
+    pub event: Value,
+    pub entries: Vec<BookEntry>,
+    /// True when this book is signed+ingested but not yet accepted by any
+    /// relay (LocalPublicationTracker on the addressable coordinate).
+    pub local: bool,
+}
+
+#[derive(Debug, Serialize)]
+pub struct SpellBookResponse {
+    pub books: Vec<SpellBookView>,
+}
+
+fn book_tracker(engine: &Engine) -> Option<crate::drafts::LocalPublicationTracker> {
+    crate::drafts::LocalPublicationTracker::new(engine.data_dir()).ok()
+}
+
+/// POST /api/v1/spell/book — an author's spellbooks with entries resolved:
+/// each `e` reference batch-fetched (one `ids` filter) and parsed. Entries
+/// may reference spells by any author — that's the point.
+pub async fn book_handler(
+    State(engine): State<Arc<Engine>>,
+    Json(req): Json<SpellBookRequest>,
+) -> Result<Json<SpellBookResponse>> {
+    let policy = match &req.policy {
+        Some(p) => p.parse()?,
+        None => FetchPolicy::default(),
+    };
+    let mut filter = json!({
+        "kinds": [KIND_SPELLBOOK],
+        "authors": [req.pubkey],
+        "limit": 50,
+    });
+    if let Some(d) = &req.d {
+        filter["#d"] = json!([d]);
+    }
+    let response = engine
+        .get_events_with_options(vec![filter], policy, None, req.mode_confirm)
+        .await?;
+
+    // Replaceable: keep the newest version per d.
+    let mut newest: BTreeMap<String, (Spellbook, Value)> = BTreeMap::new();
+    for event in &response.events {
+        if let Ok(book) = Spellbook::from_event(event) {
+            let replace = newest
+                .get(&book.d)
+                .map(|(b, _)| b.created_at < book.created_at)
+                .unwrap_or(true);
+            if replace {
+                newest.insert(book.d.clone(), (book, event.clone()));
+            }
+        }
+    }
+    let books: Vec<(Spellbook, Value)> = newest.into_values().collect();
+
+    // One batched fetch for every referenced spell across all books.
+    let ids: Vec<String> = {
+        let mut v = Vec::new();
+        for (book, _) in &books {
+            for e in &book.entries {
+                if !v.contains(&e.event_id) {
+                    v.push(e.event_id.clone());
+                }
+            }
+        }
+        v
+    };
+    let mut by_id: HashMap<String, SpellListEntry> = HashMap::new();
+    if !ids.is_empty() {
+        let fetched = engine
+            .get_events_with_options(
+                vec![json!({"ids": ids, "limit": ids.len()})],
+                policy,
+                None,
+                req.mode_confirm,
+            )
+            .await?;
+        for event in fetched.events {
+            if let Some(id) = event.get("id").and_then(Value::as_str) {
+                by_id.insert(id.to_string(), entry_from_event(event.clone()));
+            }
+        }
+    }
+
+    let tracker = book_tracker(&engine);
+    let views = books
+        .into_iter()
+        .map(|(book, event)| {
+            let entries = book
+                .entries
+                .iter()
+                .map(|reference| {
+                    let entry = by_id.get(&reference.event_id).cloned();
+                    BookEntry {
+                        missing: entry.is_none(),
+                        entry,
+                        reference: reference.clone(),
+                    }
+                })
+                .collect();
+            let local = tracker
+                .as_ref()
+                .map(|t| t.is_local(&book.coordinate()))
+                .unwrap_or(false);
+            SpellBookView {
+                entries,
+                local,
+                event,
+                book,
+            }
+        })
+        .collect();
+
+    Ok(Json(SpellBookResponse { books: views }))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SpellBookTemplateRequest {
+    /// `add` | `remove` | `create`.
+    pub action: String,
+    /// The spell to add/remove (required for those actions).
+    pub spell_event_id: Option<String>,
+    /// Book name; defaults to "spellbook".
+    pub d: Option<String>,
+    pub title: Option<String>,
+    pub description: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct SpellBookTemplateResponse {
+    pub template: crate::signing::EventTemplate,
+    pub book: Spellbook,
+    /// True when this template creates the book (no prior version found).
+    pub created: bool,
+}
+
+/// POST /api/v1/spell/book/template — derive the next version of MY book
+/// (read-modify-republish for the addressable set). `add` on an absent
+/// book creates it implicitly. Returns an unsigned template; the caller
+/// signs and then hits /spell/book/save.
+pub async fn book_template_handler(
+    State(engine): State<Arc<Engine>>,
+    Json(req): Json<SpellBookTemplateRequest>,
+) -> Result<Json<SpellBookTemplateResponse>> {
+    let me = engine.my_pubkey().ok_or_else(|| {
+        EngineError::BadRequest("editing a spellbook requires an active identity".into())
+    })?;
+    let d = req.d.clone().unwrap_or_else(|| "spellbook".to_string());
+
+    // Latest local version of my book (own books are local-first state).
+    let existing = crate::query::query_addressable(engine.ndb(), KIND_SPELLBOOK, &me, &d)?;
+    let created = existing.is_none();
+    let mut book = match &existing {
+        Some(event) => Spellbook::from_event(event)?,
+        None => Spellbook {
+            id: None,
+            author: me.clone(),
+            d: d.clone(),
+            title: None,
+            description: None,
+            created_at: 0,
+            entries: Vec::new(),
+        },
+    };
+    if let Some(t) = &req.title {
+        book.title = Some(t.clone());
+    }
+    if let Some(desc) = &req.description {
+        book.description = Some(desc.clone());
+    }
+
+    match req.action.as_str() {
+        "create" => {
+            if !created {
+                return Err(EngineError::BadRequest(format!(
+                    "book {d:?} already exists — add to it instead"
+                )));
+            }
+        }
+        "add" => {
+            let spell_id = req.spell_event_id.as_deref().ok_or_else(|| {
+                EngineError::BadRequest("add requires spell_event_id".into())
+            })?;
+            if book.entries.iter().any(|e| e.event_id == spell_id) {
+                return Err(EngineError::BadRequest(
+                    "spell is already in this book".into(),
+                ));
+            }
+            // Fill hints from the locally-known spell event; a spell you're
+            // bookmarking is one you've seen, so local-first suffices.
+            let spell_event = engine
+                .get_by_id(spell_id, FetchPolicy::LocalFirst)
+                .await?
+                .ok_or_else(|| {
+                    EngineError::NotFound(format!("spell event {spell_id} not found"))
+                })?;
+            if spell_event.get("kind").and_then(Value::as_u64) != Some(KIND_SPELL) {
+                return Err(EngineError::BadRequest(
+                    "referenced event is not a kind-777 spell".into(),
+                ));
+            }
+            book.entries.push(SpellbookEntryRef {
+                event_id: spell_id.to_string(),
+                relay_hint: None,
+                author_hint: spell_event
+                    .get("pubkey")
+                    .and_then(Value::as_str)
+                    .map(str::to_string),
+            });
+        }
+        "remove" => {
+            let spell_id = req.spell_event_id.as_deref().ok_or_else(|| {
+                EngineError::BadRequest("remove requires spell_event_id".into())
+            })?;
+            let before = book.entries.len();
+            book.entries.retain(|e| e.event_id != spell_id);
+            if book.entries.len() == before {
+                return Err(EngineError::BadRequest(
+                    "spell is not in this book".into(),
+                ));
+            }
+        }
+        other => {
+            return Err(EngineError::BadRequest(format!(
+                "unknown action {other:?} (expected add, remove, or create)"
+            )));
+        }
+    }
+
+    // Replaceable same-second race guard: strictly newer than the version
+    // we derived from.
+    let created_at = std::cmp::max(unix_now(), book.created_at + 1);
+    let template = crate::signing::EventTemplate {
+        kind: KIND_SPELLBOOK as u32,
+        created_at: created_at as i64,
+        tags: book.to_tags(),
+        content: String::new(),
+        pubkey: Some(me),
+    };
+    book.created_at = created_at;
+
+    Ok(Json(SpellBookTemplateResponse {
+        template,
+        book,
+        created,
+    }))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SpellBookSaveRequest {
+    /// The signed kind-30777 event.
+    pub event: Value,
+    #[serde(default)]
+    pub broadcast: bool,
+    pub relays: Option<Vec<String>>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct SpellBookSaveResponse {
+    pub ingested: bool,
+    pub coordinate: String,
+    /// True while no relay has accepted the book (local-until-broadcast).
+    pub local: bool,
+    pub broadcast_results: Option<Vec<crate::relay::PublishResult>>,
+}
+
+/// POST /api/v1/spell/book/save — ingest a signed book locally, optionally
+/// broadcast, and track local-until-broadcast on the coordinate (the
+/// 30777 analogue of publication tracking). Never routes through
+/// /api/v1/publish — that path forces publication framing.
+pub async fn book_save_handler(
+    State(engine): State<Arc<Engine>>,
+    Json(req): Json<SpellBookSaveRequest>,
+) -> Result<Json<SpellBookSaveResponse>> {
+    for field in ["id", "pubkey", "sig", "kind", "created_at", "tags", "content"] {
+        if req.event.get(field).is_none() {
+            return Err(EngineError::BadRequest(format!(
+                "signed event is missing {field:?}"
+            )));
+        }
+    }
+    let book = Spellbook::from_event(&req.event)?;
+    let coordinate = book.coordinate();
+
+    let event_json = serde_json::to_string(&req.event)?;
+    engine.ingest_event(&event_json)?;
+
+    let mut broadcast_results = None;
+    let mut accepted = false;
+    if req.broadcast {
+        let relays = req
+            .relays
+            .clone()
+            .unwrap_or_else(|| engine.publish_relays());
+        let results = crate::relay::publish_to_relays(&relays, &event_json).await;
+        accepted = results.iter().any(|r| r.success);
+        broadcast_results = Some(results);
+    }
+
+    if let Some(tracker) = book_tracker(&engine) {
+        if accepted {
+            let _ = tracker.mark_published(&coordinate);
+        } else {
+            let _ = tracker.mark_local(&coordinate);
+        }
+    }
+
+    Ok(Json(SpellBookSaveResponse {
+        ingested: true,
+        coordinate,
+        local: !accepted,
+        broadcast_results,
+    }))
 }
 
 #[derive(Debug, Deserialize)]
@@ -2487,6 +2934,50 @@ mod tests {
         // duplicate param name and missing literal both refuse
         assert!(spell.parameterize("tag", None, "whatever").is_err());
         assert!(spell.parameterize("other", None, "not-present").is_err());
+    }
+
+    // -- spellbooks -------------------------------------------------------------
+
+    #[test]
+    fn spellbook_parses_and_roundtrips() {
+        let event = json!({
+            "kind": KIND_SPELLBOOK,
+            "id": "bb".repeat(32),
+            "pubkey": "cc".repeat(32),
+            "created_at": 1700000000,
+            "content": "",
+            "tags": [
+                ["d", "spellbook"],
+                ["title", "Git stuff"],
+                ["description", "Repo queries I use"],
+                ["e", "11".repeat(32)],
+                ["e", "22".repeat(32), "wss://nos.lol"],
+                ["e", "33".repeat(32), "", "dd".repeat(32)]
+            ]
+        });
+        let book = Spellbook::from_event(&event).unwrap();
+        assert_eq!(book.d, "spellbook");
+        assert_eq!(book.title.as_deref(), Some("Git stuff"));
+        assert_eq!(book.entries.len(), 3);
+        assert_eq!(book.entries[0].relay_hint, None);
+        assert_eq!(book.entries[1].relay_hint.as_deref(), Some("wss://nos.lol"));
+        assert_eq!(book.entries[2].author_hint.as_deref(), Some("dd".repeat(32).as_str()));
+        assert_eq!(
+            book.coordinate(),
+            format!("{KIND_SPELLBOOK}:{}:spellbook", "cc".repeat(32))
+        );
+        // to_tags → parse again preserves entries and hints
+        let mut event2 = event.clone();
+        event2["tags"] = json!(book.to_tags());
+        let book2 = Spellbook::from_event(&event2).unwrap();
+        assert_eq!(book2.entries, book.entries);
+        assert_eq!(book2.title, book.title);
+        assert_eq!(book2.description, book.description);
+
+        // wrong kind refuses
+        let mut wrong = event.clone();
+        wrong["kind"] = json!(777);
+        assert!(Spellbook::from_event(&wrong).is_err());
     }
 
     // -- emission -------------------------------------------------------------
