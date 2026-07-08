@@ -16,7 +16,8 @@ import type {
 	ImportResult,
 	IdentityStatus,
 	RepublishDiff,
-	HealthResponse
+	HealthResponse,
+	NostrEvent
 } from './types';
 import type { ThreadNode } from './discussions/thread';
 import type { Highlight, HighlightSpan } from './discussions/highlights';
@@ -597,6 +598,81 @@ export function queryEvents(filters: Record<string, unknown>[], policy = 'local_
 	return fetchJson<{ events: unknown[]; count: number; source: { local_count: number; relay_count: number } }>('/api/v1/query', {
 		method: 'POST',
 		body: JSON.stringify({ filters, policy })
+	});
+}
+
+// Spell API (kind 777 — NIP-A7 saved queries + tendrl composition extension).
+// Parsing happens engine-side; the web only renders what these return.
+
+export interface SpellParamInfo {
+	name: string;
+	prompt: string | null;
+}
+
+export interface SpellInfo {
+	id: string | null;
+	cmd: 'REQ' | 'COUNT' | 'PIPE';
+	name: string | null;
+	description: string;
+	params: SpellParamInfo[];
+	kinds: number[];
+	topics: string[];
+	stages: { spell_id: string; combinator: 'map' | 'join' | null }[];
+	relays: string[];
+	limit: number | null;
+	since: string | null;
+	until: string | null;
+	search: string | null;
+}
+
+export interface SpellEntry {
+	event: NostrEvent;
+	/** Parsed spell, null when the kind-777 event doesn't parse. */
+	spell: SpellInfo | null;
+	required_args: string[];
+	/** References $in.* — only runnable as a pipeline stage. */
+	partial: boolean;
+	needs_identity: boolean;
+	error: string | null;
+}
+
+export function listSpells(pubkey: string, limit = 50, policy = 'local_only') {
+	return fetchJson<{ entries: SpellEntry[]; count: number }>('/api/v1/spell/list', {
+		method: 'POST',
+		body: JSON.stringify({ pubkey, limit, policy })
+	});
+}
+
+export interface SpellStageReport {
+	spell_id: string | null;
+	name: string | null;
+	combinator: 'map' | 'join' | null;
+	fetched: number;
+	output: number;
+	truncated: boolean;
+}
+
+export interface SpellOutcome {
+	cmd: string;
+	name: string | null;
+	count: number;
+	events: NostrEvent[];
+	auxiliary: NostrEvent[];
+	/** Referent event id → labeling event ids (map-stage provenance). */
+	provenance: Record<string, string[]>;
+	stages: SpellStageReport[];
+}
+
+export function executeSpell(req: {
+	id?: string;
+	event?: unknown;
+	args?: Record<string, string>;
+	policy?: string;
+	mode_confirm?: boolean;
+}) {
+	return fetchJson<SpellOutcome>('/api/v1/spell/execute', {
+		method: 'POST',
+		body: JSON.stringify(req)
 	});
 }
 

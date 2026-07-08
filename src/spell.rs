@@ -1362,6 +1362,89 @@ pub async fn inspect_handler(
     }))
 }
 
+#[derive(Debug, Deserialize)]
+pub struct SpellListRequest {
+    /// Author whose spellbook to list.
+    pub pubkey: String,
+    pub limit: Option<u64>,
+    pub policy: Option<String>,
+    #[serde(default)]
+    pub mode_confirm: bool,
+}
+
+#[derive(Debug, Serialize)]
+pub struct SpellListEntry {
+    /// The raw kind-777 event (id, sig, relays — provenance for the UI).
+    pub event: Value,
+    /// Parsed spell, or `None` when the event doesn't parse.
+    pub spell: Option<Spell>,
+    pub required_args: Vec<String>,
+    pub partial: bool,
+    pub needs_identity: bool,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct SpellListResponse {
+    pub entries: Vec<SpellListEntry>,
+    pub count: usize,
+}
+
+/// POST /api/v1/spell/list — an author's spellbook: their kind-777 events,
+/// newest first, each parsed engine-side so the UI renders cards without
+/// re-implementing spell parsing.
+pub async fn list_handler(
+    State(engine): State<Arc<Engine>>,
+    Json(req): Json<SpellListRequest>,
+) -> Result<Json<SpellListResponse>> {
+    let policy = match &req.policy {
+        Some(p) => p.parse()?,
+        None => FetchPolicy::default(),
+    };
+    let limit = req.limit.unwrap_or(50);
+    let filter = json!({
+        "kinds": [KIND_SPELL],
+        "authors": [req.pubkey],
+        "limit": limit,
+    });
+    let response = engine
+        .get_events_with_options(vec![filter], policy, None, req.mode_confirm)
+        .await?;
+
+    let mut events = response.events;
+    events.sort_by_key(|e| {
+        std::cmp::Reverse(e.get("created_at").and_then(Value::as_u64).unwrap_or(0))
+    });
+
+    let entries: Vec<SpellListEntry> = events
+        .into_iter()
+        .map(|event| match Spell::from_event(&event) {
+            Ok(spell) => {
+                let (needs_me, needs_contacts) = spell.references_identity();
+                SpellListEntry {
+                    event,
+                    required_args: spell.required_args(),
+                    partial: spell.references_input(),
+                    needs_identity: needs_me || needs_contacts,
+                    spell: Some(spell),
+                    error: None,
+                }
+            }
+            Err(e) => SpellListEntry {
+                event,
+                spell: None,
+                required_args: Vec::new(),
+                partial: false,
+                needs_identity: false,
+                error: Some(e.to_string()),
+            },
+        })
+        .collect();
+
+    let count = entries.len();
+    Ok(Json(SpellListResponse { entries, count }))
+}
+
 /// POST /api/v1/spell/execute — run a spell (or pipeline) and return the
 /// final result set with provenance and per-stage reports.
 pub async fn execute_handler(

@@ -31,6 +31,13 @@ without per-component fetch logic.
   *highlights* (NIP-84 kind 9802 by author, rows open in the discussion
   view) and *specs* (kind 30817 community-authored NIPs, routed to
   =DocBuffer= like wikis). Both kinds are in the profile fetch union.
+- *Spells* tab (2026-07-08): the author's spellbook — kind-777 events
+  parsed engine-side (=POST /api/v1/spell/list=) and rendered as cards
+  (cmd, pipeline stages, declared args, partial flag). Clicking a spell
+  runs it (=promptText= per declared arg, =mode_confirm= through the
+  engine's intent gate) and shows the result feed in place with
+  filed-by provenance counts and a back affordance. Kind 777 is in the
+  profile fetch union. See [[file:idea-spells.org][idea-spells]].
 
 * Gaps / open edges
 - The follow/mute/bookmark parsers in =user_data.rs= (kinds 3/10000/10003/

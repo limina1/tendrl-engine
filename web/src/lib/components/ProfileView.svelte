@@ -4,6 +4,7 @@
 	import * as api from '$lib/api';
 	import type { Profile } from '$lib/api';
 	import { fetchFromRelaysWithPrompt } from '$lib/fetch/relay-fetch.svelte';
+	import { promptText } from '$lib/wm/text-prompt.svelte';
 	import { getAppState } from '$lib/state.svelte';
 	import PoolStateBadges from './PoolStateBadges.svelte';
 	import { getActiveStore, type NavAction } from '$lib/wm/buffer-store.svelte';
@@ -37,7 +38,7 @@
 		onback: () => void;
 	} = $props();
 
-	type Tab = 'publications' | 'articles' | 'wikis' | 'specs' | 'sections' | 'highlights' | 'comments';
+	type Tab = 'publications' | 'articles' | 'wikis' | 'specs' | 'sections' | 'highlights' | 'comments' | 'spells';
 	let activeTab: Tab = $state('publications');
 	let profile = $state<Profile | null>(null);
 	let publications = $state<PublicationSummary[]>([]);
@@ -65,6 +66,12 @@
 	// NIP-84 highlights (kind 9802) this author has made on other content.
 	let highlights = $state<NostrEvent[]>([]);
 	let comments = $state<NostrEvent[]>([]);
+	// NIP-A7 spells (kind 777) — the author's spellbook. Parsed engine-side
+	// (/api/v1/spell/list); clicking one runs it and shows its result feed
+	// in place.
+	let spells = $state<api.SpellEntry[]>([]);
+	let spellResults = $state<api.SpellOutcome | null>(null);
+	let spellRunning = $state<string | null>(null);
 	let loading = $state(true);
 	let fetching = $state(false);
 
@@ -108,7 +115,7 @@
 	}
 
 	async function loadLocal(pk: string) {
-		const [prof, pubResult, artResult, wikiResult, specResult, secResult, hlResult, comResult] =
+		const [prof, pubResult, artResult, wikiResult, specResult, secResult, hlResult, comResult, spellResult] =
 			await Promise.all([
 				api.getProfile(pk),
 				api.queryEvents([{ kinds: [30040], authors: [pk], limit: tabLimits.publications }], 'local_only'),
@@ -117,7 +124,8 @@
 				api.queryEvents([{ kinds: [30817], authors: [pk], limit: tabLimits.specs }], 'local_only'),
 				api.queryEvents([{ kinds: [30041], authors: [pk], limit: tabLimits.sections }], 'local_only'),
 				api.queryEvents([{ kinds: [9802], authors: [pk], limit: tabLimits.highlights }], 'local_only'),
-				api.queryEvents([{ kinds: [1111], authors: [pk], limit: tabLimits.comments }], 'local_only')
+				api.queryEvents([{ kinds: [1111], authors: [pk], limit: tabLimits.comments }], 'local_only'),
+				api.listSpells(pk, tabLimits.spells, 'local_only')
 			]);
 		profile = prof.found ? prof : null;
 		// 30040 publications: same dedup, but kept as the existing
@@ -162,6 +170,7 @@
 		sections = [...secByDtag.values()].sort((a, b) => b.created_at - a.created_at);
 		highlights = (hlResult.events as NostrEvent[]).sort((a, b) => b.created_at - a.created_at);
 		comments = (comResult.events as NostrEvent[]).sort((a, b) => b.created_at - a.created_at);
+		spells = spellResult.entries; // engine returns newest-first
 	}
 
 	// Tab → which event kinds to pull. The top-bar Fetch button pulls
@@ -175,7 +184,8 @@
 		specs: [30817],
 		sections: [30041],
 		highlights: [9802],
-		comments: [1111]
+		comments: [1111],
+		spells: [777]
 	};
 	const TAB_LABEL: Record<Tab, string> = {
 		publications: 'publications',
@@ -184,7 +194,8 @@
 		specs: 'specs',
 		sections: 'sections',
 		highlights: 'highlights',
-		comments: 'comments'
+		comments: 'comments',
+		spells: 'spells'
 	};
 
 	let tabFetchingKinds = $state<number | null>(null);
@@ -203,7 +214,8 @@
 		specs: 200,
 		sections: 200,
 		highlights: 200,
-		comments: 200
+		comments: 200,
+		spells: 200
 	};
 	function freshTabFlags(): Record<Tab, boolean> {
 		return {
@@ -213,7 +225,8 @@
 			specs: false,
 			sections: false,
 			highlights: false,
-			comments: false
+			comments: false,
+			spells: false
 		};
 	}
 	// Deliberately NOT $state: no template reads it — it's imperative
@@ -231,11 +244,19 @@
 		if (tab === 'specs') return specs;
 		if (tab === 'sections') return sections;
 		if (tab === 'highlights') return highlights;
+		if (tab === 'spells') {
+			// While a spell's result feed is shown, the cursor walks the
+			// results; otherwise it walks the spellbook itself.
+			return spellResults ? spellResults.events : spells.map((s) => s.event);
+		}
 		return comments;
 	}
 
 	async function handleLoadOlder() {
 		const tab = activeTab;
+		// A spell's result feed isn't a paged tab list — its size is the
+		// spell's own limit, not ours to deepen.
+		if (tab === 'spells' && spellResults) return;
 		const list = listFor(tab);
 		if (loadingOlder || list.length === 0) return;
 		loadingOlder = true;
@@ -298,7 +319,7 @@
 		try {
 			await runFetch({
 				title: `Fetch all events for ${profile?.display_name || profile?.name || pubkey.slice(0, 12) + '…'}`,
-				kinds: [0, 30040, 30023, 30818, 30817, 30041, 9802, 1111]
+				kinds: [0, 30040, 30023, 30818, 30817, 30041, 9802, 1111, 777]
 			});
 			// Profile prefetch hits general relays unconditionally — names
 			// don't go through the prompted flow because they're a side
@@ -327,6 +348,58 @@
 		}
 	}
 
+	// ----- Running a spell -----
+	// Clicking a spellbook entry executes it: prompt for each declared
+	// argument (promptText — never window.prompt), run through the engine
+	// with mode_confirm so Confirm mode raises the fetch-intent modal, and
+	// show the result feed in place of the spellbook list.
+	async function runSpell(entry: api.SpellEntry) {
+		if (!entry.spell || entry.error) {
+			// Unparseable spell — the raw event is all there is to show.
+			app.eventModalData = entry.event;
+			return;
+		}
+		if (entry.partial) {
+			app.pushToast('Partial spell ($in.*) — only runs inside a pipeline', 'info');
+			return;
+		}
+		if (spellRunning) return;
+		const args: Record<string, string> = {};
+		for (const name of entry.required_args) {
+			const declared = entry.spell.params.find((p) => p.name === name);
+			const value = await promptText({
+				title: `Spell argument: ${name}`,
+				placeholder: declared?.prompt ?? name,
+				confirmLabel: 'Bind'
+			});
+			if (value === null) return; // cancelled
+			args[name] = value;
+		}
+		spellRunning = entry.event.id;
+		try {
+			const outcome = await api.executeSpell({
+				id: entry.event.id,
+				args,
+				policy: 'local_first',
+				mode_confirm: true
+			});
+			spellResults = outcome;
+			cursor = 0;
+			const label = outcome.name || entry.spell.name || 'spell';
+			app.pushToast(
+				outcome.cmd === 'COUNT'
+					? `${label}: count ${outcome.count}`
+					: `${label}: ${outcome.count} event${outcome.count === 1 ? '' : 's'}`,
+				'success'
+			);
+		} catch (e) {
+			console.error('Spell execution failed:', e);
+			app.pushToast(e instanceof Error ? e.message : 'Spell failed', 'error');
+		} finally {
+			spellRunning = null;
+		}
+	}
+
 	$effect(() => {
 		const pk = pubkey; // sole dependency — reload only on profile switch
 		loading = true;
@@ -338,6 +411,8 @@
 		sections = [];
 		highlights = [];
 		comments = [];
+		spells = [];
+		spellResults = null;
 		tabLimits = { ...TAB_BASE_LIMIT };
 		exhausted = freshTabFlags();
 		loadLocal(pk).catch(() => {}).finally(() => { loading = false; });
@@ -397,6 +472,13 @@
 			const dTag = getTag(sec, 'd') || '';
 			const title = getTag(sec, 'title') || dTag || '[Untitled]';
 			onopenaddr?.({ kind: 30041, pubkey: sec.pubkey, d_tag: dTag }, title);
+		} else if (activeTab === 'spells') {
+			if (spellResults) {
+				app.eventModalData = item as NostrEvent;
+			} else {
+				const entry = spells[cursor];
+				if (entry) runSpell(entry);
+			}
 		} else {
 			// Comments and highlights both route to the discussion view — it
 			// resolves the thread / highlighted target the event points at.
@@ -408,9 +490,10 @@
 		const list = activeList();
 		const item = list[cursor];
 		if (!item) return;
-		if (activeTab === 'comments' || activeTab === 'highlights') {
-			// Comments and highlights aren't addressable — feed the modal the
-			// raw event.
+		if (activeTab === 'comments' || activeTab === 'highlights' || activeTab === 'spells') {
+			// Comments, highlights, and spells aren't addressable — feed the
+			// modal the raw event (for spells: the 777 event or, when a result
+			// feed is showing, the cursored result).
 			app.eventModalData = item as NostrEvent;
 		} else if (activeTab === 'sections') {
 			const sec = item as NostrEvent;
@@ -607,6 +690,7 @@
 		{@render tabCell('sections', 'Sections', sections.length)}
 		{@render tabCell('highlights', 'Highlights', highlights.length)}
 		{@render tabCell('comments', 'Comments', comments.length)}
+		{@render tabCell('spells', 'Spells', spells.length)}
 	</div>
 
 	<div class="tab-content" bind:this={listEl}>
@@ -892,8 +976,107 @@
 					</div>
 				{/each}
 			{/if}
+		{:else if activeTab === 'spells'}
+			{#if spellResults}
+				<div class="spell-results-head">
+					<button class="spell-back" onclick={() => { spellResults = null; cursor = 0; }}>
+						← spellbook
+					</button>
+					<span class="spell-results-label">
+						{spellResults.name || 'spell'} — {spellResults.count}
+						{spellResults.cmd === 'COUNT' ? 'matched' : `event${spellResults.count === 1 ? '' : 's'}`}
+						{spellResults.auxiliary.length ? ` (+${spellResults.auxiliary.length} auxiliary)` : ''}
+					</span>
+				</div>
+				{#if spellResults.events.length === 0}
+					<div class="empty">
+						{spellResults.cmd === 'COUNT' ? `Count: ${spellResults.count}` : 'No events matched'}
+					</div>
+				{:else}
+					{#each spellResults.events as ev, i (ev.id)}
+						{@const filedBy = spellResults.provenance[ev.id]?.length ?? 0}
+						<!-- svelte-ignore a11y_no_static_element_interactions -->
+						<div
+							class="item pub-item"
+							class:item--cursor={i === cursor}
+							data-cursor={i}
+							onclick={() => { cursor = i; app.eventModalData = ev; }}
+							onkeydown={(e) => { if (e.key === 'Enter') (app.eventModalData = ev); }}
+							onfocus={() => (cursor = i)}
+							role="button"
+							tabindex="0"
+						>
+							<div class="item-main">
+								<span class="item-ref">
+									k:{ev.kind}{filedBy ? ` · filed by ${filedBy} label${filedBy === 1 ? '' : 's'}` : ''}
+								</span>
+								<p class="item-content">{ev.content.slice(0, 240)}</p>
+								<span class="item-time">{formatTime(ev.created_at)}</span>
+							</div>
+							<div class="item-rail">
+								<PoolStateBadges
+									item={app.findPoolItemByEventId(ev.id)}
+									onpillctx={() => app.pillActionByEventId(ev.id, 'context')}
+									onpillcmp={() => app.pillActionByEventId(ev.id, 'compose')}
+									onpilldrop={() => app.pillActionByEventId(ev.id, 'drop')}
+									signed={isEventSigned(ev.sig)}
+									relays={ev.relays ?? []}
+								/>
+								{@render menuBtn(() => (app.eventModalData = ev))}
+							</div>
+						</div>
+					{/each}
+				{/if}
+			{:else if spells.length === 0}
+				<div class="empty">No spells</div>
+			{:else}
+				{#each spells as entry, i (entry.event.id)}
+					{@const s = entry.spell}
+					<!-- svelte-ignore a11y_no_static_element_interactions -->
+					<div
+						class="item pub-item"
+						class:item--cursor={i === cursor}
+						data-cursor={i}
+						onclick={() => { cursor = i; runSpell(entry); }}
+						onkeydown={(e) => { if (e.key === 'Enter') runSpell(entry); }}
+						onfocus={() => (cursor = i)}
+						role="button"
+						tabindex="0"
+					>
+						<div class="item-main">
+							<span class="item-ref">
+								{s ? s.cmd : 'invalid'}{s && s.stages.length ? ` · ${s.stages.length}-stage pipeline` : ''}{entry.partial ? ' · partial' : ''}{entry.needs_identity ? ' · uses your identity' : ''}
+							</span>
+							<span class="item-title">{s?.name ?? '[Unnamed spell]'}</span>
+							{#if s?.description}
+								<p class="item-preview">{s.description}</p>
+							{/if}
+							{#if entry.error}
+								<p class="item-preview">{entry.error}</p>
+							{/if}
+							{#if entry.required_args.length}
+								<p class="item-preview">args: {entry.required_args.join(', ')}</p>
+							{/if}
+							<span class="item-time">
+								{spellRunning === entry.event.id ? 'running…' : formatTime(entry.event.created_at)}
+							</span>
+						</div>
+						<div class="item-rail">
+							<PoolStateBadges
+								item={app.findPoolItemByEventId(entry.event.id)}
+								onpillctx={() => app.pillActionByEventId(entry.event.id, 'context')}
+								onpillcmp={() => app.pillActionByEventId(entry.event.id, 'compose')}
+								onpilldrop={() => app.pillActionByEventId(entry.event.id, 'drop')}
+								signed={isEventSigned(entry.event.sig)}
+								relays={entry.event.relays ?? []}
+							/>
+							{@render menuBtn(() => (app.eventModalData = entry.event))}
+						</div>
+					</div>
+				{/each}
+			{/if}
 		{/if}
-		{#if !loading && activeList().length > 0}
+		{#if !loading && activeList().length > 0 && !(activeTab === 'spells' && spellResults)}
 			<div class="load-older">
 				<button onclick={handleLoadOlder} disabled={loadingOlder || exhausted[activeTab]}>
 					{loadingOlder
@@ -1248,6 +1431,33 @@
 	.item-menu:hover {
 		color: var(--accent);
 		border-color: var(--accent);
+	}
+
+	/* Spell result feed header — back affordance + run summary. */
+	.spell-results-head {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		padding: 6px 12px;
+		border-bottom: 1px solid var(--border);
+		font-family: var(--font-mono);
+		font-size: var(--t-xs);
+	}
+	.spell-back {
+		background: none;
+		border: 1px solid var(--border);
+		border-radius: var(--radius);
+		color: var(--accent);
+		font-family: var(--font-mono);
+		font-size: var(--t-xs);
+		padding: 2px 8px;
+		cursor: pointer;
+	}
+	.spell-back:hover {
+		border-color: var(--accent);
+	}
+	.spell-results-label {
+		color: var(--fg-muted);
 	}
 
 	/* Backfill footer — same affordance as the feed's "Load more". */

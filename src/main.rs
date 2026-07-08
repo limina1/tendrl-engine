@@ -552,6 +552,7 @@ async fn main() -> anyhow::Result<()> {
         )
         .route("/api/v1/spell/inspect", post(spell::inspect_handler))
         .route("/api/v1/spell/execute", post(spell::execute_handler))
+        .route("/api/v1/spell/list", post(spell::list_handler))
         .with_state(state.clone())
         .merge(chat_routes)
         .merge(identity_routes)

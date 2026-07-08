@@ -15,8 +15,12 @@ and =POST /api/v1/spell/execute= (events + auxiliary + provenance +
 per-stage reports; accepts signed ids or unsigned inline events, so local
 saved-searches run before publishing). Verified end-to-end against live
 relays: labels→roots pipeline, closure arg binding, pass-through,
-provenance accumulation. Unbuilt: spellbook NIP-51 sets, search.rs ↔
-spell compile, web buffers.
+provenance accumulation. =POST /api/v1/spell/list= returns an author's
+spellbook parsed engine-side; the web profile view renders it as a
+*Spells* tab — cards with cmd/stages/args, click-to-run (arg prompts,
+confirm-gated fetch), result feed in place with filed-by provenance
+([[file:feat-profiles.org][profiles]]). Unbuilt: spellbook NIP-51 sets,
+search.rs ↔ spell compile, a standalone spell feed buffer.
 
 * What it means
 
