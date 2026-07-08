@@ -351,6 +351,14 @@
 
 	let cursor = $state(0);
 	let listEl: HTMLDivElement | undefined = $state();
+	let tabsEl: HTMLDivElement | undefined = $state();
+
+	// Keep the active tab visible as the rail scrolls — matters once
+	// there are more kind-feeds than fit the pane width.
+	$effect(() => {
+		void activeTab;
+		tabsEl?.querySelector('.tab.active')?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+	});
 
 	$effect(() => {
 		// Reset cursor when the active tab swaps.
@@ -581,7 +589,17 @@
 		>menu</button>
 	{/snippet}
 
-	<div class="tabs">
+	<div
+		class="tabs"
+		bind:this={tabsEl}
+		onwheel={(e) => {
+			// Vertical wheel drives the horizontal rail — the bar has no
+			// vertical scroll of its own, so this steals nothing.
+			if (!e.deltaX && tabsEl && tabsEl.scrollWidth > tabsEl.clientWidth) {
+				tabsEl.scrollLeft += e.deltaY;
+			}
+		}}
+	>
 		{@render tabCell('publications', 'Publications', publications.length)}
 		{@render tabCell('articles', 'Articles', articles.length)}
 		{@render tabCell('wikis', 'Wikis', wikis.length)}
@@ -1029,15 +1047,22 @@
 	.tabs {
 		display: flex;
 		border-bottom: 1px solid var(--border);
+		/* Horizontal rail: tabs fill the width while they fit; past that
+		   the bar scrolls instead of crushing labels, so new kind-feeds
+		   can keep being added. */
+		overflow-x: auto;
+		scrollbar-width: thin;
+		scrollbar-color: var(--base3) transparent;
 	}
 
 	.tab {
-		flex: 1;
+		/* Grow to share spare width, but never shrink below the label —
+		   overflow goes to the rail's scroll instead. */
+		flex: 1 0 auto;
 		display: flex;
 		align-items: stretch;
 		justify-content: center;
 		border-bottom: 2px solid transparent;
-		min-width: 0;
 	}
 	.tab.active {
 		border-bottom-color: var(--accent);
