@@ -7,6 +7,7 @@
 	import { promptText } from '$lib/wm/text-prompt.svelte';
 	import { getAppState } from '$lib/state.svelte';
 	import PoolStateBadges from './PoolStateBadges.svelte';
+	import SpellClauseBlock from './SpellClauseBlock.svelte';
 	import { getActiveStore, type NavAction } from '$lib/wm/buffer-store.svelte';
 
 	const app = getAppState();
@@ -72,6 +73,19 @@
 	let spells = $state<api.SpellEntry[]>([]);
 	let spellResults = $state<api.SpellOutcome | null>(null);
 	let spellRunning = $state<string | null>(null);
+	// PIPE-card `v` chevron: per-spell expanded flag + fetched stage
+	// blocks (inspect is local-only; fetched once per card, on demand).
+	let spellStagesOpen = $state<Record<string, boolean>>({});
+	let spellStageCache = $state<Record<string, api.StageInspection[]>>({});
+
+	function toggleSpellStages(id: string) {
+		spellStagesOpen[id] = !spellStagesOpen[id];
+		if (spellStagesOpen[id] && !spellStageCache[id]) {
+			api.inspectSpell({ id, policy: 'local_only' })
+				.then((r) => { spellStageCache[id] = r.stages ?? []; })
+				.catch(() => { spellStageCache[id] = []; });
+		}
+	}
 	let loading = $state(true);
 	let fetching = $state(false);
 
@@ -413,6 +427,8 @@
 		comments = [];
 		spells = [];
 		spellResults = null;
+		spellStagesOpen = {};
+		spellStageCache = {};
 		tabLimits = { ...TAB_BASE_LIMIT };
 		exhausted = freshTabFlags();
 		loadLocal(pk).catch(() => {}).finally(() => { loading = false; });
@@ -1054,6 +1070,34 @@
 							{#if entry.error}
 								<p class="item-preview">{entry.error}</p>
 							{/if}
+							<SpellClauseBlock clauses={entry.clauses} />
+							{#if s && s.cmd === 'PIPE' && s.stages.length}
+								<button
+									class="stage-toggle"
+									onclick={(e) => { e.stopPropagation(); toggleSpellStages(entry.event.id); }}
+									onkeydown={(e) => e.stopPropagation()}
+									title="Unpack pipeline stages"
+								>
+									{spellStagesOpen[entry.event.id] ? '⌃' : '⌄'}
+									{s.stages.length} stage{s.stages.length === 1 ? '' : 's'}
+									({s.stages.map((st) => st.combinator ?? 'source').join(' → ')})
+								</button>
+								{#if spellStagesOpen[entry.event.id]}
+									{#each spellStageCache[entry.event.id] ?? [] as st, si (st.spell_id + si)}
+										<div class="stage-block">
+											<span class="stage-head">
+												stage {si + 1}{st.combinator ? ` · ${st.combinator}` : ''}:
+												{st.name ?? st.spell_id.slice(0, 12) + '…'}
+											</span>
+											{#if st.error}
+												<span class="stage-error">{st.error}</span>
+											{:else}
+												<SpellClauseBlock clauses={st.clauses} />
+											{/if}
+										</div>
+									{/each}
+								{/if}
+							{/if}
 							{#if entry.required_args.length}
 								<p class="item-preview">args: {entry.required_args.join(', ')}</p>
 							{/if}
@@ -1458,6 +1502,38 @@
 	}
 	.spell-results-label {
 		color: var(--fg-muted);
+	}
+
+	/* Pipeline unpack: the `v` chevron + per-stage clause blocks. */
+	.stage-toggle {
+		align-self: flex-start;
+		background: none;
+		border: none;
+		color: var(--accent);
+		font-family: var(--font-mono);
+		font-size: var(--t-2xs);
+		padding: 0;
+		cursor: pointer;
+	}
+	.stage-toggle:hover {
+		text-decoration: underline;
+	}
+	.stage-block {
+		display: flex;
+		flex-direction: column;
+		border-left: 2px solid var(--border);
+		padding-left: 8px;
+		margin: 2px 0;
+	}
+	.stage-head {
+		font-family: var(--font-mono);
+		font-size: var(--t-2xs);
+		color: var(--fg-muted);
+	}
+	.stage-error {
+		font-size: var(--t-2xs);
+		color: var(--fg-muted);
+		font-style: italic;
 	}
 
 	/* Backfill footer — same affordance as the feed's "Load more". */

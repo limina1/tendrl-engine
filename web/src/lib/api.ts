@@ -625,6 +625,12 @@ export interface SpellInfo {
 	search: string | null;
 }
 
+/** One preview line: a search-DSL clause + optional non-literal note. */
+export interface SpellClause {
+	clause: string;
+	annotation?: string;
+}
+
 export interface SpellEntry {
 	event: NostrEvent;
 	/** Parsed spell, null when the kind-777 event doesn't parse. */
@@ -634,12 +640,49 @@ export interface SpellEntry {
 	partial: boolean;
 	needs_identity: boolean;
 	error: string | null;
+	/** Search-DSL preview (empty for PIPE — stages unpack via inspect). */
+	clauses: SpellClause[];
+	query_string: string | null;
 }
 
 export function listSpells(pubkey: string, limit = 50, policy = 'local_only') {
 	return fetchJson<{ entries: SpellEntry[]; count: number }>('/api/v1/spell/list', {
 		method: 'POST',
 		body: JSON.stringify({ pubkey, limit, policy })
+	});
+}
+
+export interface StageInspection {
+	spell_id: string;
+	combinator: 'map' | 'join' | null;
+	name: string | null;
+	clauses: SpellClause[];
+	query_string: string | null;
+	error: string | null;
+}
+
+export interface SpellInspection {
+	spell: SpellInfo;
+	required_args: string[];
+	partial: boolean;
+	needs_identity: boolean;
+	filter: Record<string, unknown> | null;
+	unresolved: string | null;
+	clauses: SpellClause[];
+	query_string: string;
+	/** PIPE only: per-stage clause blocks. */
+	stages: StageInspection[] | null;
+}
+
+export function inspectSpell(req: {
+	id?: string;
+	event?: unknown;
+	args?: Record<string, string>;
+	policy?: string;
+}) {
+	return fetchJson<SpellInspection>('/api/v1/spell/inspect', {
+		method: 'POST',
+		body: JSON.stringify(req)
 	});
 }
 

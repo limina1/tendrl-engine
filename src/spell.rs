@@ -213,6 +213,15 @@ pub struct SpellParam {
     pub prompt: Option<String>,
 }
 
+/// One line of the spell preview: a search-DSL clause plus an optional
+/// annotation for the non-literal parts (variables, relative times).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct SpellClause {
+    pub clause: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub annotation: Option<String>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Combinator {
@@ -585,6 +594,127 @@ impl Spell {
             filter: Value::Object(obj),
             truncated,
         })
+    }
+
+    /// Render the spell as search-DSL clauses — the human-readable preview
+    /// IS the query language. One clause per semantic move; `annotation`
+    /// only where a clause isn't literal (variables, relative times,
+    /// relay-side search). Literal REQ spells round-trip:
+    /// `SearchQuery::parse(&spell.query_string())` reproduces the filter.
+    pub fn to_clauses(&self) -> Vec<SpellClause> {
+        let mut out: Vec<SpellClause> = Vec::new();
+        let mut push = |clause: String, annotation: Option<String>| {
+            out.push(SpellClause { clause, annotation });
+        };
+
+        if self.cmd == SpellCmd::Count {
+            push(
+                "COUNT".into(),
+                Some("returns a count, not the events".into()),
+            );
+        }
+        for k in &self.kinds {
+            push(format!("k:{k}"), None);
+        }
+        for a in &self.authors {
+            match parse_var(a) {
+                Ok(Some(VarRef::Me)) => push("by:me".into(), None),
+                Ok(Some(VarRef::Contacts)) => push(
+                    "by:$contacts".into(),
+                    Some("resolved at run time from your contact list".into()),
+                ),
+                Ok(Some(VarRef::Arg(name))) => {
+                    push(format!("by:$arg.{name}"), Some(self.arg_annotation(&name)))
+                }
+                Ok(Some(VarRef::In(_))) => push(
+                    format!("by:{a}"),
+                    Some("piped from the previous stage".into()),
+                ),
+                _ => push(format!("by:{a}"), None),
+            }
+        }
+        for id in &self.ids {
+            match parse_var(id) {
+                Ok(Some(VarRef::In(_))) => push(
+                    format!("id:{id}"),
+                    Some("piped from the previous stage".into()),
+                ),
+                Ok(Some(VarRef::Arg(name))) => {
+                    push(format!("id:$arg.{name}"), Some(self.arg_annotation(&name)))
+                }
+                _ => push(format!("id:{id}"), None),
+            }
+        }
+        for tf in &self.tag_filters {
+            for v in &tf.values {
+                let rendered = if v.chars().any(char::is_whitespace) {
+                    format!("{}:\"{}\"", tf.tag, v)
+                } else {
+                    format!("{}:{}", tf.tag, v)
+                };
+                match parse_var(v) {
+                    Ok(Some(VarRef::Arg(name))) => {
+                        push(rendered, Some(self.arg_annotation(&name)))
+                    }
+                    Ok(Some(VarRef::In(_))) => {
+                        push(rendered, Some("piped from the previous stage".into()))
+                    }
+                    Ok(Some(VarRef::Me)) => {
+                        push(rendered, Some("your pubkey — resolved at run time".into()))
+                    }
+                    Ok(Some(VarRef::Contacts)) => push(
+                        rendered,
+                        Some("resolved at run time from your contact list".into()),
+                    ),
+                    _ => push(rendered, None),
+                }
+            }
+        }
+        for (key, value) in [("since", &self.since), ("until", &self.until)] {
+            if let Some(v) = value {
+                let annotation = match parse_time_value(v) {
+                    Ok(TimeValue::Absolute(_)) => None, // round-trips as-is
+                    _ => Some("relative — resolved at run time".into()),
+                };
+                push(format!("{key}:{v}"), annotation);
+            }
+        }
+        if let Some(limit) = self.limit {
+            push(format!("limit:{limit}"), None);
+        }
+        for r in &self.relays {
+            push(format!("relay:{r}"), None);
+        }
+        if let Some(search) = &self.search {
+            push(
+                format!("\"{search}\""),
+                Some("NIP-50 relay-side search — locally an exact text match".into()),
+            );
+        }
+        out
+    }
+
+    fn arg_annotation(&self, name: &str) -> String {
+        match self
+            .params
+            .iter()
+            .find(|p| p.name == name)
+            .and_then(|p| p.prompt.as_deref())
+        {
+            Some(prompt) => format!("argument — prompts \"{prompt}\""),
+            None => "argument — bound at run time".into(),
+        }
+    }
+
+    /// The search-syntax equivalent: the clauses joined. Lossless for
+    /// literal REQ spells (post `relay:`/`limit:` tokens); variables and
+    /// relative times stay in spell notation, flagged by annotations.
+    pub fn query_string(&self) -> String {
+        self.to_clauses()
+            .into_iter()
+            .map(|c| c.clause)
+            .collect::<Vec<_>>()
+            .join(" ")
     }
 
     /// Serialize back to kind-777 event tags (for composing/publishing a
@@ -1309,6 +1439,26 @@ pub struct SpellInspection {
     pub filter: Option<Value>,
     /// Why `filter` is absent, when it is.
     pub unresolved: Option<String>,
+    /// The spell rendered as search-DSL clauses — the preview language.
+    pub clauses: Vec<SpellClause>,
+    /// Clauses joined: the search-syntax equivalent of the filter.
+    pub query_string: String,
+    /// For PIPE spells: each stage unpacked into its own clause block
+    /// (loaded per the request policy, default local-only — a preview
+    /// endpoint never hits the network silently).
+    pub stages: Option<Vec<StageInspection>>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct StageInspection {
+    pub spell_id: String,
+    pub combinator: Option<Combinator>,
+    pub name: Option<String>,
+    pub clauses: Vec<SpellClause>,
+    pub query_string: Option<String>,
+    /// Set when the stage spell couldn't be loaded or parsed; the
+    /// inspection itself still succeeds.
+    pub error: Option<String>,
 }
 
 /// POST /api/v1/spell/inspect — parse a spell and preview its resolution.
@@ -1316,11 +1466,17 @@ pub async fn inspect_handler(
     State(engine): State<Arc<Engine>>,
     Json(req): Json<SpellRequest>,
 ) -> Result<Json<SpellInspection>> {
+    // Previews default to local-only — inspect must never hit the network
+    // unless the caller opts in via `policy`.
+    let policy = match &req.policy {
+        Some(p) => p.parse()?,
+        None => FetchPolicy::LocalOnly,
+    };
     let spell = match (&req.event, &req.id) {
         (Some(event), _) => Spell::from_event(event)?,
         (None, Some(id)) => {
             let event = engine
-                .get_by_id(id, FetchPolicy::LocalFirst)
+                .get_by_id(id, policy)
                 .await?
                 .ok_or_else(|| {
                     EngineError::NotFound(format!("spell event {id} not found"))
@@ -1352,12 +1508,48 @@ pub async fn inspect_handler(
         }
     };
 
+    // Unpack PIPE stages into their own clause blocks (the `v` chevron
+    // content on spell cards). A missing/unparseable stage is reported on
+    // the stage, never a failed inspection.
+    let stages = if spell.cmd == SpellCmd::Pipe && !spell.stages.is_empty() {
+        let mut out = Vec::with_capacity(spell.stages.len());
+        for stage in &spell.stages {
+            let mut si = StageInspection {
+                spell_id: stage.spell_id.clone(),
+                combinator: stage.combinator,
+                name: None,
+                clauses: Vec::new(),
+                query_string: None,
+                error: None,
+            };
+            match engine.get_by_id(&stage.spell_id, policy).await {
+                Ok(Some(event)) => match Spell::from_event(&event) {
+                    Ok(s) => {
+                        si.name = s.name.clone();
+                        si.clauses = s.to_clauses();
+                        si.query_string = Some(s.query_string());
+                    }
+                    Err(e) => si.error = Some(e.to_string()),
+                },
+                Ok(None) => si.error = Some("stage spell not found locally".into()),
+                Err(e) => si.error = Some(e.to_string()),
+            }
+            out.push(si);
+        }
+        Some(out)
+    } else {
+        None
+    };
+
     Ok(Json(SpellInspection {
         required_args: spell.required_args(),
         partial,
         needs_identity: needs_me || needs_contacts,
         filter,
         unresolved,
+        clauses: spell.to_clauses(),
+        query_string: spell.query_string(),
+        stages,
         spell,
     }))
 }
@@ -1382,6 +1574,10 @@ pub struct SpellListEntry {
     pub partial: bool,
     pub needs_identity: bool,
     pub error: Option<String>,
+    /// Search-DSL clause preview (empty for unparseable events and for
+    /// PIPE spells, whose clauses live per stage — expand via inspect).
+    pub clauses: Vec<SpellClause>,
+    pub query_string: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -1426,6 +1622,8 @@ pub async fn list_handler(
                     required_args: spell.required_args(),
                     partial: spell.references_input(),
                     needs_identity: needs_me || needs_contacts,
+                    clauses: spell.to_clauses(),
+                    query_string: Some(spell.query_string()),
                     spell: Some(spell),
                     error: None,
                 }
@@ -1437,6 +1635,8 @@ pub async fn list_handler(
                 partial: false,
                 needs_identity: false,
                 error: Some(e.to_string()),
+                clauses: Vec::new(),
+                query_string: None,
             },
         })
         .collect();
@@ -1849,6 +2049,101 @@ mod tests {
         );
         assert_eq!(out[0]["id"], "idx1");
         assert_eq!(prov.get("idx1").unwrap(), &vec!["n2".to_string()]);
+    }
+
+    // -- clause rendering -------------------------------------------------------
+
+    #[test]
+    fn clauses_render_literal_spell_and_roundtrip_through_search_parser() {
+        let event = spell_event(
+            "Repo stuff",
+            json!([
+                ["cmd", "REQ"],
+                ["name", "Repo Stuff"],
+                ["k", "30617"],
+                ["k", "1621"],
+                ["limit", "200"],
+                ["relays", "wss://thecitadel.nostr1.com", "wss://nostr.land"],
+                ["since", "1704067200"],
+                ["t", "repo, gitstr, gnostr"]
+            ]),
+        );
+        let spell = Spell::from_event(&event).unwrap();
+        let clauses = spell.to_clauses();
+        // Every clause of a literal spell is annotation-free.
+        assert!(clauses.iter().all(|c| c.annotation.is_none()), "{clauses:?}");
+        assert_eq!(
+            spell.query_string(),
+            "k:30617 k:1621 since:1704067200 limit:200 \
+             relay:wss://thecitadel.nostr1.com relay:wss://nostr.land"
+        );
+        // The query string parses back to the same filter shape.
+        let q = crate::search::SearchQuery::parse(&spell.query_string()).unwrap();
+        assert_eq!(q.kind_filter, Some(vec![30617, 1621]));
+        assert_eq!(q.limit, Some(200));
+        assert_eq!(q.since, Some(1704067200));
+        assert_eq!(
+            q.relays,
+            vec![
+                "wss://thecitadel.nostr1.com".to_string(),
+                "wss://nostr.land".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn clauses_annotate_variables_and_relative_times() {
+        let event = spell_event(
+            "",
+            json!([
+                ["cmd", "REQ"],
+                ["name", "Filed under #{tag}"],
+                ["param", "tag", "hashtag to collect labels for"],
+                ["k", "1"],
+                ["authors", "$contacts"],
+                ["tag", "t", "$arg.tag"],
+                ["since", "30d"]
+            ]),
+        );
+        let spell = Spell::from_event(&event).unwrap();
+        let clauses = spell.to_clauses();
+        let find = |c: &str| {
+            clauses
+                .iter()
+                .find(|x| x.clause == c)
+                .unwrap_or_else(|| panic!("missing clause {c} in {clauses:?}"))
+                .annotation
+                .clone()
+        };
+        assert!(find("by:$contacts").unwrap().contains("contact list"));
+        assert!(find("t:$arg.tag").unwrap().contains("hashtag to collect"));
+        assert!(find("since:30d").unwrap().contains("relative"));
+        assert_eq!(find("k:1"), None);
+    }
+
+    #[test]
+    fn clauses_render_me_count_and_quoted_values() {
+        let event = spell_event(
+            "",
+            json!([
+                ["cmd", "COUNT"],
+                ["k", "1"],
+                ["authors", "$me"],
+                ["tag", "title", "deep work"]
+            ]),
+        );
+        let spell = Spell::from_event(&event).unwrap();
+        let clauses = spell.to_clauses();
+        assert_eq!(clauses[0].clause, "COUNT");
+        assert!(clauses[0].annotation.is_some());
+        assert!(clauses.iter().any(|c| c.clause == "by:me" && c.annotation.is_none()));
+        assert!(clauses.iter().any(|c| c.clause == "title:\"deep work\""));
+        // by:me round-trips to the current-user author filter.
+        let q = crate::search::SearchQuery::parse("by:me k:1").unwrap();
+        assert!(matches!(
+            q.author_filter,
+            Some(crate::search::AuthorFilter::CurrentUser)
+        ));
     }
 
     // -- emission -------------------------------------------------------------
