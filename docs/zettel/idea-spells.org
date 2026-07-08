@@ -116,12 +116,14 @@ runner keeps the inverse mapping (root ← labeling events) as provenance
 
 Four features; 1 → 2 → 3 are a dependency spine, 4 lands in parallel.
 
-- [ ] *Spell narration + query-string equivalence* (=inspect=): derived
-  =narrative= (line-by-line breakdown — relay override, per-clause filter
-  lines with variable dependencies, close behavior) and =query_string=
-  (the search-syntax equivalent, engine-compiled). PIPE previews unpack
-  recursively: fetch stage spells, narrate each inline with combinator
-  semantics; closures narrate as "runs <parent> with <args>". Web: card
+- [ ] *Spell narration + query-string equivalence* (=inspect=): the
+  preview quotes the spell *in our search syntax* — one clause per line
+  (=k:30617= / =limit:200= / =relay:wss://…=), annotated only where a
+  clause isn't literal (=by:$contacts — resolved at run time=,
+  =t:$arg.tag — prompts "hashtag"=). The DSL is the human-readable
+  form; =query_string= is just the clauses joined. PIPE spells unpack
+  behind a =v= chevron on the card: collapsed = stage names +
+  combinators, expanded = each stage spell's clause block. Web: card
   expand on the Spells tab; the composer reuses the same preview.
 - [ ] *Relay syntax in search* (=search.rs=): repeatable =relay:wss://…=
   token → relay override, plus =limit:N=. Makes search ↔ spell mapping
@@ -134,11 +136,19 @@ Four features; 1 → 2 → 3 are a dependency spine, 4 lands in parallel.
   *parameterization* (promote a query literal to =$arg.<name>= with a
   prompt string). =~:= semantic queries don't compile portably —
   degrade to NIP-50 =search= with a warning, or refuse.
-- [ ] *Spell bookmarks + spellbook*: bookmark from another author's
-  Spells tab; spellbook = authored ∪ bookmarked, authorship always
-  visible (used-not-authored legible). Local-first storage beside
-  =relays.json=; publishing the book as a NIP-51 =e=-tag set is a
-  separate deliberate act. Arg re-binding on a foreign spell = closure
+- [ ] *Spellbooks as the primary object* (supersedes bookmarks-as-
+  afterthought): the profile Spells tab pulls the user's *book* — a
+  NIP-51-style set (proposed *kind 30777*: addressable, =d= names the
+  book so one user can keep several, =title=/=description= metadata,
+  =e= tags → spell events *regardless of author*) — and resolves its
+  entries with authorship visible per entry (used-not-authored
+  legible). "Bookmark" = "add someone's spell to my book" from their
+  profile tab. Authored-only kind-777 query is the fallback when no
+  book exists; open call: book-first with an "Authored" section below
+  (lean yes — curation is the signal, own spells shouldn't vanish).
+  Local-first via the existing model: unpublished book = local draft;
+  publishing it is the deliberate act (signing-is-the-snapshot — no
+  bespoke spellbook.json). Arg re-binding on a foreign spell = closure
   fork with =e= provenance (already engine-side).
 
 * Spellbooks
