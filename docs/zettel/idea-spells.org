@@ -1,6 +1,6 @@
 #+TITLE: Idea: spells — portable, composable saved queries (kind 777)
 #+TYPE: idea
-#+STATUS: partial — engine core implemented 2026-07-08; spellbooks + web UI unbuilt
+#+STATUS: partial — engine core + composer epoch shipped 2026-07-09 (narration, relay:/limit: tokens, composer, 30777 spellbooks); standalone spell-feed buffer unbuilt
 #+DATE: 2026-07-08
 
 * What exists (engine core, 2026-07-08)
@@ -19,8 +19,23 @@ provenance accumulation. =POST /api/v1/spell/list= returns an author's
 spellbook parsed engine-side; the web profile view renders it as a
 *Spells* tab — cards with cmd/stages/args, click-to-run (arg prompts,
 confirm-gated fetch), result feed in place with filed-by provenance
-([[file:feat-profiles.org][profiles]]). Unbuilt: spellbook NIP-51 sets,
-search.rs ↔ spell compile, a standalone spell feed buffer.
+([[file:feat-profiles.org][profiles]]).
+
+Composer epoch (2026-07-09, all four roadmap items below shipped):
+clause renderer (=to_clauses=/=query_string= — the preview IS the DSL;
+=inspect= unpacks PIPE stages, local-only default), =relay:=/=limit:=
+search tokens (lossless search ↔ spell mapping), the composer
+(=POST /api/v1/spell/compose= + the =777= affordance in the search
+scope strip → =SpellComposerModal=: live clause preview, literal→param
+promotion, ~: refused, sign→ingest local-first), and kind-30777
+spellbooks (=/spell/book= + =/book/template= + =/book/save=; profile
+Spells tab = one merged flat list of book entries ∪ authored spells
+with author bylines + book markers; =+book= bookmarks any spell;
+local books get a Broadcast affordance, tracked on the coordinate).
+Decisions taken: *merged flat list* (not book-first sections);
+*~: refuses to compile* (no silent semantic→text degrade).
+Unbuilt: a standalone spell-feed buffer; compound-query compilation;
+multi-book write UI.
 
 * What it means
 
@@ -116,7 +131,7 @@ runner keeps the inverse mapping (root ← labeling events) as provenance
 
 Four features; 1 → 2 → 3 are a dependency spine, 4 lands in parallel.
 
-- [ ] *Spell narration + query-string equivalence* (=inspect=): the
+- [X] *Spell narration + query-string equivalence* (=inspect=): the
   preview quotes the spell *in our search syntax* — one clause per line
   (=k:30617= / =limit:200= / =relay:wss://…=), annotated only where a
   clause isn't literal (=by:$contacts — resolved at run time=,
@@ -125,18 +140,18 @@ Four features; 1 → 2 → 3 are a dependency spine, 4 lands in parallel.
   behind a =v= chevron on the card: collapsed = stage names +
   combinators, expanded = each stage spell's clause block. Web: card
   expand on the Spells tab; the composer reuses the same preview.
-- [ ] *Relay syntax in search* (=search.rs=): repeatable =relay:wss://…=
+- [X] *Relay syntax in search* (=search.rs=): repeatable =relay:wss://…=
   token → relay override, plus =limit:N=. Makes search ↔ spell mapping
   lossless both ways (=close-on-eose= stays implicit — our fetch path is
   already one-shot REQ→EOSE→CLOSE).
-- [ ] *Spell composer*: =SearchQuery → Spell= compile (=to_tags()= is the
+- [X] *Spell composer*: =SearchQuery → Spell= compile (=to_tags()= is the
   emission half) → unsigned 777 template → existing signing flow
   (signing-is-the-snapshot; publish deliberate). Web: "Save as spell"
   from the search bar; composer pass = name/description/topics +
   *parameterization* (promote a query literal to =$arg.<name>= with a
   prompt string). =~:= semantic queries don't compile portably —
   degrade to NIP-50 =search= with a warning, or refuse.
-- [ ] *Spellbooks as the primary object* (supersedes bookmarks-as-
+- [X] *Spellbooks as the primary object* (supersedes bookmarks-as-
   afterthought): the profile Spells tab pulls the user's *book* — a
   NIP-51-style set (proposed *kind 30777*: addressable, =d= names the
   book so one user can keep several, =title=/=description= metadata,

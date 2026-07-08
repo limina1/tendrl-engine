@@ -31,13 +31,18 @@ without per-component fetch logic.
   *highlights* (NIP-84 kind 9802 by author, rows open in the discussion
   view) and *specs* (kind 30817 community-authored NIPs, routed to
   =DocBuffer= like wikis). Both kinds are in the profile fetch union.
-- *Spells* tab (2026-07-08): the author's spellbook — kind-777 events
-  parsed engine-side (=POST /api/v1/spell/list=) and rendered as cards
-  (cmd, pipeline stages, declared args, partial flag). Clicking a spell
-  runs it (=promptText= per declared arg, =mode_confirm= through the
-  engine's intent gate) and shows the result feed in place with
-  filed-by provenance counts and a back affordance. Kind 777 is in the
-  profile fetch union. See [[file:idea-spells.org][idea-spells]].
+- *Spells* tab (2026-07-08, reworked 2026-07-09): one merged flat list —
+  the profile's kind-30777 spellbook entries (spells by /any/ author,
+  resolved + parsed engine-side via =POST /api/v1/spell/book=) ∪ their
+  authored kind-777s, deduped, newest first. Per-row provenance: author
+  byline when foreign, =in "book"= marker when curated, not-fetched
+  stubs for unresolved refs. Cards show the clause preview (the search
+  DSL) with a chevron unpacking PIPE stages; clicking runs the spell
+  (=promptText= per declared arg, =mode_confirm= through the intent
+  gate) into an in-place result feed with filed-by provenance. =+book=
+  on any card bookmarks it into your default book (template → sign →
+  local save); local-only books get a Broadcast affordance. Kinds
+  777 + 30777 in the fetch union. See [[file:idea-spells.org][idea-spells]].
 
 * Gaps / open edges
 - The follow/mute/bookmark parsers in =user_data.rs= (kinds 3/10000/10003/

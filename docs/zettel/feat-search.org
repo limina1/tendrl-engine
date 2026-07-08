@@ -14,6 +14,13 @@ semantic retrieval.
   semantic, ="exact phrase"=, NIP-19 entities (=note1= / =nevent1= / =naddr1= /
   =npub1= / =nprofile1=, optional =nostr:= prefix), =since:= / =until:=,
   =has:NAME= tag presence, bare =NAME:value= generic tag filter, =|= for union.
+- =limit:N= and =relay:<url>= tokens (2026-07-09): the result cap and the
+  relay override live in the query string itself (bare domains normalize to
+  =wss://=; repeatable; per-branch in compound queries; token wins,
+  request-level fills absence; approved Confirm-modal sets win over
+  tokens). Closes the lossless search ↔ kind-777 spell mapping — the =777=
+  affordance on the search panel saves the query as a spell
+  ([[file:idea-spells.org][spells]]).
 - =author:= is a *tag* filter (events carrying an =["author", …]= tag), not an
   alias for =by:= (the publishing-pubkey filter).
 - Local query execution in =src/query.rs= (all nostrdb reads serialized through

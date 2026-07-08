@@ -206,9 +206,16 @@ sections and embeds new events on a 60-second interval when embeddings are enabl
   id with `map` (replace with referents; pointer-less events pass through) /
   `join` (auxiliary enrichment) combinators, and closures (arg-binding `e`
   forks). Parsing/resolution pure; `SpellEngine` executes via
-  `get_events_with_options` (FetchPolicy + Confirm gating apply). API:
-  `POST /api/v1/spell/inspect` + `/spell/execute` (signed id or unsigned
-  inline event). Spellbook sets, search↔spell compile, and web UI: not built.
+  `get_events_with_options` (FetchPolicy + Confirm gating apply). The
+  search↔spell mapping is lossless and bidirectional: `to_clauses()`/
+  `query_string()` render a spell as search-DSL clauses (the UI preview),
+  `from_search_query()` + `parameterize()` compile a search into a 777
+  template (`~:` refuses — no silent semantic→text degrade). Spellbooks =
+  kind 30777 addressable `e`-tag sets referencing spells by any author,
+  local-until-broadcast on the coordinate. API: `POST /api/v1/spell/`
+  `inspect` / `execute` / `list` / `compose` / `book` / `book/template` /
+  `book/save`. Web: profile Spells tab (merged book ∪ authored list,
+  run-in-place), `777` save-as-spell affordance on the search panel.
 - **`chat.rs`**: Pure state logic for LLM chat fragments, edit mode, context
   injection, message serialization (no IO)
 - **`llm.rs`**: Async `LLMProvider` trait — `NoopProvider` (testing) and
@@ -244,6 +251,9 @@ The parser (`search.rs`) tokenizes a query string into typed filters:
 - `note1…` / `nevent1…` / `naddr1…` / `npub1…` / `nprofile1…` (optionally
   `nostr:`-prefixed) — NIP-19 entities decoded to precise filters
 - `since:<ts>` / `until:<ts>` — NIP-01 time bounds
+- `limit:N` — per-query result cap (token wins; request-level `limit` fills absence)
+- `relay:<url>` — relay override, repeatable; bare domains normalize to `wss://`
+  (per-branch in `|` compounds; a Confirm-modal-approved set wins over tokens)
 - `has:NAME` — tag-presence operator (matches any event carrying a `NAME` tag)
 - `NAME:value` — generic tag filter (**bare key — no `#` prefix**; `#NAME:value` is
   NIP-01 raw-filter notation and parses as a literal text token here)
