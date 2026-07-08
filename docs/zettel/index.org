@@ -99,6 +99,7 @@ path: [[file:conventions.org][conventions]].
 - [[file:idea-post-hoc-labeling.org][Post-hoc labeling]] — labels as retrieval signals; hydration join
 - [[file:idea-feeds-as-indexes.org][Feeds as 30040 indexes]] — algorithm output as artifact
 - [[file:idea-event-badges.org][Event badges]] — annotation follows the identifier, + relay provenance
+- [[file:idea-spells.org][Spells (kind 777)]] — portable, composable saved queries; pipelines, spellbooks
 
 ** Substrate & network
 - [[file:idea-entity-hinted-relay-intent.org][Entity-hinted relay intent]] — surface a naddr/nevent's TLV relays in the Confirm modal; hinted-vs-full choice
