@@ -9,6 +9,7 @@
 	} from '$lib/types';
 	import SearchInput from './SearchInput.svelte';
 	import SpellComposerModal from './SpellComposerModal.svelte';
+	import SpellBuilderModal from './SpellBuilderModal.svelte';
 	import SearchResultItem from './SearchResultItem.svelte';
 	import PersonResultItem from './PersonResultItem.svelte';
 	import PoolStateBadges from './PoolStateBadges.svelte';
@@ -165,9 +166,11 @@
 
 	let checkedIds: Set<string> = $state(new Set());
 
-	// "Save as spell" (the 777 affordance): compiles the current query
-	// into a kind-777 template via the engine and signs/saves it.
+	// Spell affordance: with a query typed it reads +🪄 (save the query as
+	// a kind-777 spell); empty it reads 🪄 (open the structured spell
+	// builder — forms + pipeline stages, no syntax required).
 	let spellComposerOpen = $state(false);
+	let spellBuilderOpen = $state(false);
 
 	// Grouped mode: when the query had `count:NAME`, the response includes
 	// histogram buckets. We switch the panel to a folded view where the
@@ -310,6 +313,9 @@
 				onclose={() => (spellComposerOpen = false)}
 			/>
 		{/if}
+		{#if spellBuilderOpen}
+			<SpellBuilderModal onclose={() => (spellBuilderOpen = false)} />
+		{/if}
 		<div data-tour="search-input">
 			<SearchInput {onsearch} bind:value={searchValue} />
 		</div>
@@ -327,18 +333,20 @@
 				<span class="scope-chip scope-chip--all" title="No kind filter — every kind matches">all kinds</span>
 			{/if}
 			<span class="scope-spacer"></span>
-			<!-- Search's own affordances. 777 saves the current query as a
-			     kind-777 spell, W runs the hands-on search tour (each
-			     step's "Try it" runs a live example), ? opens the syntax
-			     reference, ⚙ the KB/search settings — same family as the
-			     mode-line and composer W / ? chips. -->
+			<!-- Search's own affordances. The wand saves the current query as
+			     a kind-777 spell (+🪄) or, with an empty query, opens the
+			     structured spell builder (🪄). W runs the hands-on search
+			     tour, ? opens the syntax reference, ⚙ the KB/search
+			     settings — same family as the mode-line W / ? chips. -->
 			<button
 				class="affordance affordance--spell"
-				onclick={() => (spellComposerOpen = true)}
-				disabled={!searchValue.trim()}
-				title="Save this query as a spell (kind 777) — a portable, shareable saved search"
-				aria-label="Save query as spell"
-			>777</button>
+				onclick={() =>
+					searchValue.trim() ? (spellComposerOpen = true) : (spellBuilderOpen = true)}
+				title={searchValue.trim()
+					? 'Save this query as a spell (kind 777) — a portable, shareable saved search'
+					: 'Spell builder — build a spell (or a composed pipeline) from forms, no syntax needed'}
+				aria-label={searchValue.trim() ? 'Save query as spell' : 'Open spell builder'}
+			>{searchValue.trim() ? '+🪄' : '🪄'}</button>
 			<button
 				class="affordance affordance--walkthrough"
 				onclick={() => runTour('search-tour-intro')}

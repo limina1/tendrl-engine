@@ -34,6 +34,14 @@ with author bylines + book markers; =+book= bookmarks any spell;
 local books get a Broadcast affordance, tracked on the coordinate).
 Decisions taken: *merged flat list* (not book-first sections);
 *~: refuses to compile* (no silent semantic→text degrade).
+Builder (2026-07-09): the search-panel wand is dual — =+🪄= saves the
+typed query (composer), =🪄= on an empty query opens the *spell
+builder* (=SpellBuilderModal=): form-driven kinds/authors ($me,
+$contacts)/tags/window/limit/relays/COUNT, and a *pipeline mode* that
+makes composed spells buildable in the UI — ordered stage ids with
+map/join, declared params, per-stage clause previews. Compose endpoint
+grew matching fields (raw authors, relative since/until, cmd, stages,
+declaration-only params).
 Unbuilt: a standalone spell-feed buffer; compound-query compilation;
 multi-book write UI.
 

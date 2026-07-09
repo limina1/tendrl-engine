@@ -880,6 +880,30 @@ impl Spell {
         Ok(replaced)
     }
 
+    /// Declare a parameter without replacing a literal — used by pipeline
+    /// spells, whose `$arg.*` references live in their stage spells.
+    pub fn declare_param(&mut self, name: &str, prompt: Option<&str>) -> Result<()> {
+        if name.is_empty()
+            || !name
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+        {
+            return Err(EngineError::BadRequest(format!(
+                "bad parameter name {name:?} (use alphanumerics, _ or -)"
+            )));
+        }
+        if self.params.iter().any(|p| p.name == name) {
+            return Err(EngineError::BadRequest(format!(
+                "parameter {name:?} is already declared"
+            )));
+        }
+        self.params.push(SpellParam {
+            name: name.to_string(),
+            prompt: prompt.map(str::to_string),
+        });
+        Ok(())
+    }
+
     /// Serialize back to kind-777 event tags (for composing/publishing a
     /// spell from a saved search).
     pub fn to_tags(&self) -> Vec<Vec<String>> {
@@ -1737,6 +1761,40 @@ pub struct StageInspection {
     pub error: Option<String>,
 }
 
+/// Resolve each pipeline stage into its clause block. A missing or
+/// unparseable stage is an `error` on that stage, never a request failure.
+async fn stage_inspections(
+    engine: &Engine,
+    stages: &[SpellStage],
+    policy: FetchPolicy,
+) -> Vec<StageInspection> {
+    let mut out = Vec::with_capacity(stages.len());
+    for stage in stages {
+        let mut si = StageInspection {
+            spell_id: stage.spell_id.clone(),
+            combinator: stage.combinator,
+            name: None,
+            clauses: Vec::new(),
+            query_string: None,
+            error: None,
+        };
+        match engine.get_by_id(&stage.spell_id, policy).await {
+            Ok(Some(event)) => match Spell::from_event(&event) {
+                Ok(s) => {
+                    si.name = s.name.clone();
+                    si.clauses = s.to_clauses();
+                    si.query_string = Some(s.query_string());
+                }
+                Err(e) => si.error = Some(e.to_string()),
+            },
+            Ok(None) => si.error = Some("stage spell not found locally".into()),
+            Err(e) => si.error = Some(e.to_string()),
+        }
+        out.push(si);
+    }
+    out
+}
+
 /// POST /api/v1/spell/inspect — parse a spell and preview its resolution.
 pub async fn inspect_handler(
     State(engine): State<Arc<Engine>>,
@@ -1788,31 +1846,7 @@ pub async fn inspect_handler(
     // content on spell cards). A missing/unparseable stage is reported on
     // the stage, never a failed inspection.
     let stages = if spell.cmd == SpellCmd::Pipe && !spell.stages.is_empty() {
-        let mut out = Vec::with_capacity(spell.stages.len());
-        for stage in &spell.stages {
-            let mut si = StageInspection {
-                spell_id: stage.spell_id.clone(),
-                combinator: stage.combinator,
-                name: None,
-                clauses: Vec::new(),
-                query_string: None,
-                error: None,
-            };
-            match engine.get_by_id(&stage.spell_id, policy).await {
-                Ok(Some(event)) => match Spell::from_event(&event) {
-                    Ok(s) => {
-                        si.name = s.name.clone();
-                        si.clauses = s.to_clauses();
-                        si.query_string = Some(s.query_string());
-                    }
-                    Err(e) => si.error = Some(e.to_string()),
-                },
-                Ok(None) => si.error = Some("stage spell not found locally".into()),
-                Err(e) => si.error = Some(e.to_string()),
-            }
-            out.push(si);
-        }
-        Some(out)
+        Some(stage_inspections(&engine, &spell.stages, policy).await)
     } else {
         None
     };
@@ -2271,13 +2305,24 @@ pub async fn book_save_handler(
 pub struct ComposeParamRequest {
     pub name: String,
     pub prompt: Option<String>,
-    /// The literal in the query to replace with `$arg.<name>`.
-    pub value: String,
+    /// The literal in the query to replace with `$arg.<name>`. Absent =
+    /// declaration only (pipeline spells declare params whose `$arg.*`
+    /// references live in their stages).
+    pub value: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ComposeStageRequest {
+    pub spell_id: String,
+    /// `map` | `join`; absent on the source stage.
+    pub combinator: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct SpellComposeRequest {
     /// A tendrl search string (single query — compound `|` not supported).
+    /// Empty when composing a pipeline (`stages`) — the two are exclusive.
+    #[serde(default)]
     pub query: String,
     pub name: Option<String>,
     pub description: Option<String>,
@@ -2285,6 +2330,21 @@ pub struct SpellComposeRequest {
     pub topics: Vec<String>,
     #[serde(default)]
     pub params: Vec<ComposeParamRequest>,
+    /// `REQ` (default) or `COUNT`.
+    pub cmd: Option<String>,
+    /// Raw spell time values (`7d`, `now`, unix) — override the query's
+    /// absolute bounds, letting the builder emit relative windows.
+    pub since: Option<String>,
+    pub until: Option<String>,
+    /// Extra raw author values appended to the filter: `$me`, `$contacts`,
+    /// or 64-hex pubkeys (the builder's author picker — the query string
+    /// has no `$contacts` token).
+    #[serde(default)]
+    pub authors: Vec<String>,
+    /// Pipeline stages — when present, this composes a PIPE spell and
+    /// `query` must be empty.
+    #[serde(default)]
+    pub stages: Vec<ComposeStageRequest>,
 }
 
 #[derive(Debug, Serialize)]
@@ -2296,6 +2356,8 @@ pub struct SpellComposeResponse {
     pub query_string: String,
     /// What degraded in translation (multi-char tags, text → NIP-50, …).
     pub warnings: Vec<String>,
+    /// Pipeline preview: each stage's clause block (local-only lookup).
+    pub stages: Option<Vec<StageInspection>>,
 }
 
 /// POST /api/v1/spell/compose — compile a search string into an unsigned
@@ -2305,57 +2367,192 @@ pub async fn compose_handler(
     State(engine): State<Arc<Engine>>,
     Json(req): Json<SpellComposeRequest>,
 ) -> Result<Json<SpellComposeResponse>> {
-    if req.query.contains('|') {
-        return Err(EngineError::BadRequest(
-            "compound (|) queries can't compose to a single spell yet — \
-             save each branch separately"
-                .into(),
-        ));
-    }
-    let mut query = crate::search::SearchQuery::parse(&req.query)
-        .map_err(|e| EngineError::InvalidFilter(e.to_string()))?;
-
-    // Resolve the engine-dependent author forms here; `by:me` stays the
-    // portable `$me` (from_search_query maps it).
-    use crate::search::AuthorFilter;
-    match &query.author_filter {
-        Some(AuthorFilter::Name(partial)) => {
-            let matches: Vec<String> =
-                crate::query::find_profiles_matching(engine.ndb(), partial)
-                    .into_iter()
-                    .map(|p| p.pubkey)
-                    .collect();
-            if matches.is_empty() {
+    let (mut spell, mut warnings) = if !req.stages.is_empty() {
+        // Pipeline path: stages, not a filter query.
+        if !req.query.trim().is_empty() {
+            return Err(EngineError::BadRequest(
+                "a pipeline spell has stages, not a filter query — clear one \
+                 of the two"
+                    .into(),
+            ));
+        }
+        let mut stages = Vec::with_capacity(req.stages.len());
+        for (i, s) in req.stages.iter().enumerate() {
+            let id = s.spell_id.trim();
+            if id.len() != 64 || !id.chars().all(|c| c.is_ascii_hexdigit()) {
                 return Err(EngineError::BadRequest(format!(
-                    "by:name:{partial} matches no known profile — resolve it \
-                     before composing"
+                    "stage {} spell id must be a 64-hex event id",
+                    i + 1
                 )));
             }
-            query.author_filter = Some(AuthorFilter::Pubkeys(matches));
+            let combinator = match &s.combinator {
+                Some(c) => Some(Combinator::parse(c)?),
+                None => None,
+            };
+            stages.push(SpellStage {
+                spell_id: id.to_lowercase(),
+                combinator,
+            });
         }
-        Some(AuthorFilter::AssistantUser) => {
-            let pk = engine.assistant_pubkey().ok_or_else(|| {
-                EngineError::BadRequest(
-                    "by:assistant requires a logged-in assistant identity".into(),
-                )
-            })?;
-            query.author_filter = Some(AuthorFilter::Pubkeys(vec![pk]));
+        let spell = Spell {
+            id: None,
+            cmd: SpellCmd::Pipe,
+            name: None,
+            description: String::new(),
+            params: Vec::new(),
+            kinds: Vec::new(),
+            authors: Vec::new(),
+            ids: Vec::new(),
+            tag_filters: Vec::new(),
+            limit: None,
+            since: None,
+            until: None,
+            search: None,
+            relays: Vec::new(),
+            close_on_eose: false,
+            topics: Vec::new(),
+            stages,
+            args: BTreeMap::new(),
+            parent: None,
+        };
+        (spell, Vec::new())
+    } else if req.query.trim().is_empty() {
+        // Builder path with no query text: the filter comes entirely from
+        // the override fields (authors/since/until/cmd). The final
+        // has_filter_condition check rejects a truly empty spell.
+        let spell = Spell {
+            id: None,
+            cmd: SpellCmd::Req,
+            name: None,
+            description: String::new(),
+            params: Vec::new(),
+            kinds: Vec::new(),
+            authors: Vec::new(),
+            ids: Vec::new(),
+            tag_filters: Vec::new(),
+            limit: None,
+            since: None,
+            until: None,
+            search: None,
+            relays: Vec::new(),
+            close_on_eose: false,
+            topics: Vec::new(),
+            stages: Vec::new(),
+            args: BTreeMap::new(),
+            parent: None,
+        };
+        (spell, Vec::new())
+    } else {
+        // Filter path: compile the search string.
+        if req.query.contains('|') {
+            return Err(EngineError::BadRequest(
+                "compound (|) queries can't compose to a single spell yet — \
+                 save each branch separately"
+                    .into(),
+            ));
         }
-        _ => {}
+        let mut query = crate::search::SearchQuery::parse(&req.query)
+            .map_err(|e| EngineError::InvalidFilter(e.to_string()))?;
+
+        // Resolve the engine-dependent author forms here; `by:me` stays the
+        // portable `$me` (from_search_query maps it).
+        use crate::search::AuthorFilter;
+        match &query.author_filter {
+            Some(AuthorFilter::Name(partial)) => {
+                let matches: Vec<String> =
+                    crate::query::find_profiles_matching(engine.ndb(), partial)
+                        .into_iter()
+                        .map(|p| p.pubkey)
+                        .collect();
+                if matches.is_empty() {
+                    return Err(EngineError::BadRequest(format!(
+                        "by:name:{partial} matches no known profile — resolve it \
+                         before composing"
+                    )));
+                }
+                query.author_filter = Some(AuthorFilter::Pubkeys(matches));
+            }
+            Some(AuthorFilter::AssistantUser) => {
+                let pk = engine.assistant_pubkey().ok_or_else(|| {
+                    EngineError::BadRequest(
+                        "by:assistant requires a logged-in assistant identity".into(),
+                    )
+                })?;
+                query.author_filter = Some(AuthorFilter::Pubkeys(vec![pk]));
+            }
+            _ => {}
+        }
+
+        let (spell, mut warnings) = Spell::from_search_query(&query)?;
+        if let Some(AuthorFilter::Pubkeys(pks)) = &query.author_filter {
+            if pks.len() > 1 {
+                warnings
+                    .push(format!("author resolved to {} pubkeys — all included", pks.len()));
+            }
+        }
+        (spell, warnings)
+    };
+
+    // Builder overrides: raw author values, relative time windows, COUNT.
+    for author in &req.authors {
+        let valid = match parse_var(author)? {
+            Some(VarRef::Me) | Some(VarRef::Contacts) => true,
+            Some(_) => false, // $arg/$in enter via parameterize, not here
+            None => author.len() == 64 && author.chars().all(|c| c.is_ascii_hexdigit()),
+        };
+        if !valid {
+            return Err(EngineError::BadRequest(format!(
+                "bad author value {author:?} (use $me, $contacts, or a 64-hex pubkey)"
+            )));
+        }
+        if !spell.authors.contains(author) {
+            spell.authors.push(author.clone());
+        }
+    }
+    if let Some(since) = &req.since {
+        parse_time_value(since)?;
+        spell.since = Some(since.clone());
+    }
+    if let Some(until) = &req.until {
+        parse_time_value(until)?;
+        spell.until = Some(until.clone());
+    }
+    if let Some(cmd) = &req.cmd {
+        let cmd = SpellCmd::parse(cmd)?;
+        if cmd == SpellCmd::Pipe {
+            return Err(EngineError::BadRequest(
+                "compose PIPE spells by passing stages, not cmd".into(),
+            ));
+        }
+        if spell.cmd != SpellCmd::Pipe {
+            spell.cmd = cmd;
+        }
+    }
+    if spell.cmd != SpellCmd::Pipe && !spell.has_filter_condition() {
+        return Err(EngineError::InvalidFilter(
+            "nothing to save — the spell has no filter conditions".into(),
+        ));
     }
 
-    let (mut spell, mut warnings) = Spell::from_search_query(&query)?;
-    if let Some(AuthorFilter::Pubkeys(pks)) = &query.author_filter {
-        if pks.len() > 1 {
-            warnings.push(format!("author resolved to {} pubkeys — all included", pks.len()));
-        }
-    }
     for p in &req.params {
-        spell.parameterize(&p.name, p.prompt.as_deref(), &p.value)?;
+        match &p.value {
+            Some(value) => {
+                spell.parameterize(&p.name, p.prompt.as_deref(), value)?;
+            }
+            None => spell.declare_param(&p.name, p.prompt.as_deref())?,
+        }
     }
     spell.name = req.name.clone();
     spell.description = req.description.clone().unwrap_or_default();
     spell.topics = req.topics.clone();
+
+    // Pipeline preview: unpack the referenced stages (local-only — this is
+    // a preview, same contract as inspect).
+    let stages = if spell.cmd == SpellCmd::Pipe {
+        Some(stage_inspections(&engine, &spell.stages, FetchPolicy::LocalOnly).await)
+    } else {
+        None
+    };
 
     let template = crate::signing::EventTemplate {
         kind: KIND_SPELL as u32,
@@ -2370,6 +2567,7 @@ pub async fn compose_handler(
         clauses: spell.to_clauses(),
         query_string: spell.query_string(),
         warnings,
+        stages,
         spell,
     }))
 }

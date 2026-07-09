@@ -694,14 +694,27 @@ export interface SpellComposeResponse {
 	query_string: string;
 	/** What degraded in translation (multi-char tags, text → NIP-50, …). */
 	warnings: string[];
+	/** Pipeline preview: per-stage clause blocks (local-only lookup). */
+	stages: StageInspection[] | null;
 }
 
 export function composeSpell(req: {
-	query: string;
+	/** Search string (filter spells) — empty when composing a pipeline. */
+	query?: string;
 	name?: string;
 	description?: string;
 	topics?: string[];
-	params?: { name: string; prompt?: string; value: string }[];
+	/** value present = replace that literal with $arg; absent = declare only. */
+	params?: { name: string; prompt?: string; value?: string }[];
+	/** 'REQ' (default) or 'COUNT'. */
+	cmd?: string;
+	/** Raw spell time values: '7d', 'now', or unix seconds. */
+	since?: string;
+	until?: string;
+	/** Raw author values: $me, $contacts, or 64-hex pubkeys. */
+	authors?: string[];
+	/** Pipeline stages — composes a PIPE spell (query must be empty). */
+	stages?: { spell_id: string; combinator?: 'map' | 'join' }[];
 }) {
 	return fetchJson<SpellComposeResponse>('/api/v1/spell/compose', {
 		method: 'POST',
