@@ -2484,7 +2484,11 @@ function _createAppState() {
 		const id = eventId.toLowerCase();
 		try {
 			const resp = await api.getEvent(id);
-			const ev = resp.event as NostrEvent;
+			const ev = resp.event as NostrEvent | null;
+			if (!ev) {
+				pushToast('Event not found locally', 'error');
+				return;
+			}
 			eventModalData = ev;
 			const titleTag = Array.isArray(ev?.tags)
 				? ev.tags.find((t: string[]) => t[0] === 'title')
@@ -2848,7 +2852,7 @@ function _createAppState() {
 	async function handleViewJson(result: SearchResult) {
 		try {
 			const resp = await api.getEvent(result.event_id);
-			eventModalData = resp.event as NostrEvent;
+			eventModalData = (resp.event ?? result) as NostrEvent;
 		} catch {
 			eventModalData = result;
 		}

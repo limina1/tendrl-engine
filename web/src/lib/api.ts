@@ -589,8 +589,40 @@ export function getSection(pubkey: string, d_tag: string, index: number, policy 
 
 // Events API
 
-export function getEvent(eventId: string) {
-	return fetchJson<{ event: unknown }>(`/api/v1/events/${eventId}`);
+/** Single-event lookups resolve a miss to `{ event: null }` instead of
+ *  throwing — the engine's 404 carries that body already, and every
+ *  caller branches on a null event rather than a raised string. Other
+ *  statuses still throw. */
+async function fetchEventOrNull(url: string): Promise<{ event: unknown | null }> {
+	try {
+		return await fetchJson<{ event: unknown }>(url);
+	} catch (e) {
+		const raw = e instanceof Error ? e.message : String(e);
+		if (/^404:/.test(raw)) return { event: null };
+		throw e;
+	}
+}
+
+/** Build the `?policy=…&confirm=true` suffix shared by the single-event
+ *  endpoints. `bypassOffline` maps to `confirm=true`: the engine treats
+ *  the request as user-initiated and runs the Confirm-mode intent flow
+ *  (modal approval) instead of silently downgrading to a local read. */
+function eventFetchQs(opts: {
+	policy?: 'local_only' | 'local_first' | 'fetch_always';
+	bypassOffline?: boolean;
+}): string {
+	const params = new URLSearchParams();
+	if (opts.policy) params.set('policy', opts.policy);
+	if (opts.bypassOffline) params.set('confirm', 'true');
+	const qs = params.toString();
+	return qs ? `?${qs}` : '';
+}
+
+export function getEvent(
+	eventId: string,
+	opts: { policy?: 'local_only' | 'local_first' | 'fetch_always'; bypassOffline?: boolean } = {}
+) {
+	return fetchEventOrNull(`/api/v1/events/${eventId}${eventFetchQs(opts)}`);
 }
 
 /** Fetch an addressable event (latest version for the kind/pubkey/d_tag
@@ -600,10 +632,11 @@ export function getAddressable(
 	kind: number,
 	pubkey: string,
 	d_tag: string,
-	policy?: 'local_only' | 'local_first' | 'fetch_always'
+	policy?: 'local_only' | 'local_first' | 'fetch_always',
+	opts: { bypassOffline?: boolean } = {}
 ) {
-	const qs = policy ? `?policy=${policy}` : '';
-	return fetchJson<{ event: unknown }>(
+	const qs = eventFetchQs({ policy, bypassOffline: opts.bypassOffline });
+	return fetchEventOrNull(
 		`/api/v1/addressable/${kind}/${pubkey}/${encodeURIComponent(d_tag)}${qs}`
 	);
 }

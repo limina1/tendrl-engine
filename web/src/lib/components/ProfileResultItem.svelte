@@ -54,7 +54,7 @@
 			jsonLoading = true;
 			try {
 				const r = await getEvent(result.event_id);
-				rawEvent = r.event;
+				rawEvent = r.event ?? { error: 'Event not found' };
 			} catch (e) {
 				rawEvent = { error: e instanceof Error ? e.message : String(e) };
 			} finally {
