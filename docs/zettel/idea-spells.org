@@ -56,6 +56,13 @@ authors); chained cards unpack the input chain behind the same chevron
 as PIPE stages. The whole extension (=param=/=$arg=/=$in=/=in=/=PIPE=/
 closures) is now written up as a spec: [[file:../../nips/A7-composition.md][nips/A7-composition.md]],
 beside the vendored [[file:../../nips/A7.md][NIP-A7 draft]].
+Result feeds are real feeds (2026-07-09): execute takes =until= and
+returns =oldest_source= (the *source* stage's oldest created_at — later
+stages query referents, whose timestamps don't paginate), so "load
+older" re-runs the spell with =until = oldest_source - 1= and appends;
+and the ignore list is honored by list/book/execute (plus an =ignore=
+affordance on spell cards and result rows) — a mis-specced spell event
+drops out everywhere and stays gone.
 Unbuilt: a standalone spell-feed buffer; compound-query compilation;
 multi-book write UI; a "pick from my spells" selector for the
 chain/stage id fields.

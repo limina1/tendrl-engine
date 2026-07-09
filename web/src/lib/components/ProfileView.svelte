@@ -78,6 +78,10 @@
 	// (author byline when foreign, book marker when curated).
 	let spellBooks = $state<api.SpellBookView[]>([]);
 	let spellResults = $state<api.SpellOutcome | null>(null);
+	// How the current results were produced — replayed with an `until`
+	// cursor by "load older" (the engine pages the spell's source stage).
+	let spellRunContext = $state<{ id: string; args: Record<string, string> } | null>(null);
+	let spellResultsExhausted = $state(false);
 	let spellRunning = $state<string | null>(null);
 
 	type SpellRow = {
@@ -333,11 +337,49 @@
 		return comments;
 	}
 
+	// Page a spell's result feed: re-run the spell with `until` set to just
+	// before the source stage's oldest event, append what's new.
+	async function loadOlderSpellResults() {
+		const results = spellResults;
+		if (!results || !spellRunContext || results.cmd === 'COUNT' || loadingOlder) return;
+		if (results.oldest_source == null) {
+			spellResultsExhausted = true;
+			return;
+		}
+		loadingOlder = true;
+		try {
+			const older = await api.executeSpell({
+				id: spellRunContext.id,
+				args: spellRunContext.args,
+				policy: 'local_first',
+				mode_confirm: true,
+				until: results.oldest_source - 1
+			});
+			const seen = new Set(results.events.map((e) => e.id));
+			const fresh = older.events.filter((e) => !seen.has(e.id));
+			const auxSeen = new Set(results.auxiliary.map((e) => e.id));
+			const freshAux = older.auxiliary.filter((e) => !auxSeen.has(e.id));
+			if (fresh.length === 0) spellResultsExhausted = true;
+			spellResults = {
+				...results,
+				events: [...results.events, ...fresh],
+				auxiliary: [...results.auxiliary, ...freshAux],
+				count: results.events.length + fresh.length,
+				provenance: { ...results.provenance, ...older.provenance },
+				oldest_source: older.oldest_source
+			};
+			if (older.oldest_source == null) spellResultsExhausted = true;
+		} catch (e) {
+			console.error('Spell load older failed:', e);
+			app.pushToast(api.errorMessage(e, 'Load older failed'), 'error');
+		} finally {
+			loadingOlder = false;
+		}
+	}
+
 	async function handleLoadOlder() {
 		const tab = activeTab;
-		// A spell's result feed isn't a paged tab list — its size is the
-		// spell's own limit, not ours to deepen.
-		if (tab === 'spells' && spellResults) return;
+		if (tab === 'spells' && spellResults) return loadOlderSpellResults();
 		const list = listFor(tab);
 		if (loadingOlder || list.length === 0) return;
 		loadingOlder = true;
@@ -465,6 +507,8 @@
 				mode_confirm: true
 			});
 			spellResults = outcome;
+			spellRunContext = { id: entry.event.id, args };
+			spellResultsExhausted = false;
 			cursor = 0;
 			const label = outcome.name || entry.spell.name || 'spell';
 			app.pushToast(
@@ -478,6 +522,36 @@
 			app.pushToast(api.errorMessage(e, 'Spell failed'), 'error');
 		} finally {
 			spellRunning = null;
+		}
+	}
+
+	// Ignore is engine-persistent: list/book/execute all honor the ignore
+	// list, so a mis-specced spell (or junk result) stays gone across
+	// reloads and re-runs. Reversible from the ignore list.
+	async function ignoreSpell(entry: api.SpellEntry) {
+		try {
+			await api.ignoreEvents([entry.event.id]);
+			spells = spells.filter((e) => e.event.id !== entry.event.id);
+			spellBooks = spellBooks.map((v) => ({
+				...v,
+				entries: v.entries.filter((en) => en.reference.event_id !== entry.event.id)
+			}));
+			app.pushToast('Spell ignored', 'info');
+		} catch (e) {
+			app.pushToast(api.errorMessage(e, 'Ignore failed'), 'error');
+		}
+	}
+
+	async function ignoreResultEvent(ev: NostrEvent) {
+		try {
+			await api.ignoreEvents([ev.id]);
+			if (spellResults) {
+				const events = spellResults.events.filter((x) => x.id !== ev.id);
+				spellResults = { ...spellResults, events, count: events.length };
+			}
+			app.pushToast('Event ignored', 'info');
+		} catch (e) {
+			app.pushToast(api.errorMessage(e, 'Ignore failed'), 'error');
 		}
 	}
 
@@ -495,6 +569,8 @@
 		spells = [];
 		spellBooks = [];
 		spellResults = null;
+		spellRunContext = null;
+		spellResultsExhausted = false;
 		spellStagesOpen = {};
 		spellStageCache = {};
 		tabLimits = { ...TAB_BASE_LIMIT };
@@ -1068,7 +1144,15 @@
 		{:else if activeTab === 'spells'}
 			{#if spellResults}
 				<div class="spell-results-head">
-					<button class="spell-back" onclick={() => { spellResults = null; cursor = 0; }}>
+					<button
+						class="spell-back"
+						onclick={() => {
+							spellResults = null;
+							spellRunContext = null;
+							spellResultsExhausted = false;
+							cursor = 0;
+						}}
+					>
 						← spellbook
 					</button>
 					<span class="spell-results-label">
@@ -1111,6 +1195,12 @@
 									signed={isEventSigned(ev.sig)}
 									relays={ev.relays ?? []}
 								/>
+								<button
+									class="spell-bookmark"
+									onclick={(e) => { e.stopPropagation(); ignoreResultEvent(ev); }}
+									onkeydown={(e) => e.stopPropagation()}
+									title="Ignore this event — hides it from feeds, search, and future runs"
+								>ignore</button>
 								{@render menuBtn(() => (app.eventModalData = ev))}
 							</div>
 						</div>
@@ -1230,6 +1320,12 @@
 								onkeydown={(e) => e.stopPropagation()}
 								title="Add this spell to your spellbook (kind 30777)"
 							>+book</button>
+							<button
+								class="spell-bookmark"
+								onclick={(e) => { e.stopPropagation(); ignoreSpell(entry); }}
+								onkeydown={(e) => e.stopPropagation()}
+								title="Ignore this spell event — drops it from lists, books, and results"
+							>ignore</button>
 							{@render menuBtn(() => (app.eventModalData = entry.event))}
 						</div>
 					</div>
@@ -1237,12 +1333,14 @@
 				{/each}
 			{/if}
 		{/if}
-		{#if !loading && activeList().length > 0 && !(activeTab === 'spells' && spellResults)}
+		{#if !loading && activeList().length > 0 && !(activeTab === 'spells' && spellResults?.cmd === 'COUNT')}
+			{@const olderExhausted =
+				activeTab === 'spells' && spellResults ? spellResultsExhausted : exhausted[activeTab]}
 			<div class="load-older">
-				<button onclick={handleLoadOlder} disabled={loadingOlder || exhausted[activeTab]}>
+				<button onclick={handleLoadOlder} disabled={loadingOlder || olderExhausted}>
 					{loadingOlder
 						? 'Loading…'
-						: exhausted[activeTab]
+						: olderExhausted
 							? 'No older events found'
 							: 'Load older'}
 				</button>

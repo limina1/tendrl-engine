@@ -838,6 +838,9 @@ export interface SpellOutcome {
 	/** Referent event id → labeling event ids (map-stage provenance). */
 	provenance: Record<string, string[]>;
 	stages: SpellStageReport[];
+	/** Oldest created_at the source stage fetched — the load-older cursor
+	 * (re-run with until = oldest_source - 1); null when it fetched nothing. */
+	oldest_source: number | null;
 }
 
 export function executeSpell(req: {
@@ -846,6 +849,8 @@ export function executeSpell(req: {
 	args?: Record<string, string>;
 	policy?: string;
 	mode_confirm?: boolean;
+	/** Page the source stage: only events at or before this timestamp. */
+	until?: number;
 }) {
 	return fetchJson<SpellOutcome>('/api/v1/spell/execute', {
 		method: 'POST',

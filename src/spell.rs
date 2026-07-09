@@ -1284,6 +1284,13 @@ fn json_tags(event: &Value) -> Vec<Vec<String>> {
         .unwrap_or_default()
 }
 
+fn oldest_created_at(events: &[Value]) -> Option<u64> {
+    events
+        .iter()
+        .filter_map(|e| e.get("created_at").and_then(Value::as_u64))
+        .min()
+}
+
 fn unix_now() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -1327,6 +1334,10 @@ pub struct SpellOutcome {
     /// at it, from `map` stages.
     pub provenance: BTreeMap<String, Vec<String>>,
     pub stages: Vec<StageReport>,
+    /// Oldest `created_at` among the *source* stage's fetched events —
+    /// the "load older" cursor (re-run with `until = oldest_source - 1`).
+    /// `None` when the source returned nothing.
+    pub oldest_source: Option<u64>,
 }
 
 impl<'a> SpellEngine<'a> {
@@ -1352,13 +1363,15 @@ impl<'a> SpellEngine<'a> {
         args: &BTreeMap<String, String>,
         policy: FetchPolicy,
         mode_confirm: bool,
+        until: Option<u64>,
     ) -> Result<SpellOutcome> {
         let event = self
             .engine
             .get_by_id(id, Self::definition_policy(policy))
             .await?
             .ok_or_else(|| EngineError::NotFound(format!("spell event {id} not found")))?;
-        self.execute_event(&event, args, policy, mode_confirm).await
+        self.execute_event(&event, args, policy, mode_confirm, until)
+            .await
     }
 
     pub async fn execute_event(
@@ -1367,8 +1380,9 @@ impl<'a> SpellEngine<'a> {
         args: &BTreeMap<String, String>,
         policy: FetchPolicy,
         mode_confirm: bool,
+        until: Option<u64>,
     ) -> Result<SpellOutcome> {
-        self.execute_event_depth(event, args, policy, mode_confirm, 0)
+        self.execute_event_depth(event, args, policy, mode_confirm, until, 0)
             .await
     }
 
@@ -1381,6 +1395,7 @@ impl<'a> SpellEngine<'a> {
         args: &'b BTreeMap<String, String>,
         policy: FetchPolicy,
         mode_confirm: bool,
+        until: Option<u64>,
         chain_depth: usize,
     ) -> std::pin::Pin<
         Box<dyn std::future::Future<Output = Result<SpellOutcome>> + Send + 'b>,
@@ -1424,15 +1439,22 @@ impl<'a> SpellEngine<'a> {
 
             let mut outcome = match spell.cmd {
                 SpellCmd::Pipe => {
-                    self.execute_pipeline(&spell, &merged_args, policy, mode_confirm)
+                    self.execute_pipeline(&spell, &merged_args, policy, mode_confirm, until)
                         .await?
                 }
                 _ if spell.input.is_some() => {
-                    self.execute_chained(&spell, &merged_args, policy, mode_confirm, chain_depth)
-                        .await?
+                    self.execute_chained(
+                        &spell,
+                        &merged_args,
+                        policy,
+                        mode_confirm,
+                        until,
+                        chain_depth,
+                    )
+                    .await?
                 }
                 _ => {
-                    self.execute_single(&spell, &merged_args, policy, mode_confirm)
+                    self.execute_single(&spell, &merged_args, policy, mode_confirm, until)
                         .await?
                 }
             };
@@ -1454,6 +1476,7 @@ impl<'a> SpellEngine<'a> {
         args: &BTreeMap<String, String>,
         policy: FetchPolicy,
         mode_confirm: bool,
+        until: Option<u64>,
         chain_depth: usize,
     ) -> Result<SpellOutcome> {
         if chain_depth >= MAX_CHAIN_DEPTH {
@@ -1469,8 +1492,11 @@ impl<'a> SpellEngine<'a> {
             .ok_or_else(|| {
                 EngineError::NotFound(format!("input spell {input_id} not found"))
             })?;
+        // `until` pages the chain's *source* — it rides down to the
+        // innermost spell; this spell's own filter queries referents,
+        // whose timestamps don't follow the source's pagination.
         let upstream = self
-            .execute_event_depth(&input_event, args, policy, mode_confirm, chain_depth + 1)
+            .execute_event_depth(&input_event, args, policy, mode_confirm, until, chain_depth + 1)
             .await?;
 
         let (me, contacts) = self
@@ -1483,7 +1509,9 @@ impl<'a> SpellEngine<'a> {
             input: Some(&upstream.events),
             now: unix_now(),
         };
-        let (fetched, truncated) = self.run_filter(spell, &ctx, policy, mode_confirm).await?;
+        let (fetched, truncated) = self
+            .run_filter(spell, &ctx, policy, mode_confirm, None)
+            .await?;
         let fetched_len = fetched.len();
 
         let mut provenance = upstream.provenance;
@@ -1513,6 +1541,7 @@ impl<'a> SpellEngine<'a> {
             auxiliary: upstream.auxiliary,
             provenance,
             stages,
+            oldest_source: upstream.oldest_source,
         })
     }
 
@@ -1522,6 +1551,7 @@ impl<'a> SpellEngine<'a> {
         args: &BTreeMap<String, String>,
         policy: FetchPolicy,
         mode_confirm: bool,
+        until: Option<u64>,
     ) -> Result<SpellOutcome> {
         if spell.references_input() {
             return Err(EngineError::BadRequest(
@@ -1540,7 +1570,9 @@ impl<'a> SpellEngine<'a> {
             input: None,
             now: unix_now(),
         };
-        let (fetched, truncated) = self.run_filter(spell, &ctx, policy, mode_confirm).await?;
+        let (fetched, truncated) = self
+            .run_filter(spell, &ctx, policy, mode_confirm, until)
+            .await?;
         let report = StageReport {
             spell_id: spell.id.clone(),
             name: spell.name.clone(),
@@ -1550,6 +1582,7 @@ impl<'a> SpellEngine<'a> {
             truncated,
         };
         let count = fetched.len();
+        let oldest_source = oldest_created_at(&fetched);
         let events = match spell.cmd {
             SpellCmd::Count => Vec::new(),
             _ => fetched,
@@ -1562,6 +1595,7 @@ impl<'a> SpellEngine<'a> {
             auxiliary: Vec::new(),
             provenance: BTreeMap::new(),
             stages: vec![report],
+            oldest_source,
         })
     }
 
@@ -1571,6 +1605,7 @@ impl<'a> SpellEngine<'a> {
         args: &BTreeMap<String, String>,
         policy: FetchPolicy,
         mode_confirm: bool,
+        until: Option<u64>,
     ) -> Result<SpellOutcome> {
         // Load and parse every stage spell up front.
         let mut stages: Vec<(Spell, Option<Combinator>)> = Vec::new();
@@ -1616,6 +1651,7 @@ impl<'a> SpellEngine<'a> {
         let mut aux_seen: HashSet<String> = HashSet::new();
         let mut provenance: BTreeMap<String, Vec<String>> = BTreeMap::new();
         let mut reports: Vec<StageReport> = Vec::new();
+        let mut oldest_source: Option<u64> = None;
 
         for (i, (spell, combinator)) in stages.iter().enumerate() {
             let ctx = ResolutionContext {
@@ -1625,9 +1661,16 @@ impl<'a> SpellEngine<'a> {
                 input: if i == 0 { None } else { Some(events.as_slice()) },
                 now,
             };
-            let (fetched, truncated) =
-                self.run_filter(spell, &ctx, policy, mode_confirm).await?;
+            // `until` pages the source stage only — later stages query
+            // referents, whose timestamps don't follow the pagination.
+            let stage_until = if i == 0 { until } else { None };
+            let (fetched, truncated) = self
+                .run_filter(spell, &ctx, policy, mode_confirm, stage_until)
+                .await?;
             let fetched_len = fetched.len();
+            if i == 0 {
+                oldest_source = oldest_created_at(&fetched);
+            }
 
             let combinator = if i == 0 {
                 None
@@ -1672,6 +1715,7 @@ impl<'a> SpellEngine<'a> {
             auxiliary,
             provenance,
             stages: reports,
+            oldest_source,
         })
     }
 
@@ -1681,8 +1725,17 @@ impl<'a> SpellEngine<'a> {
         ctx: &ResolutionContext<'_>,
         policy: FetchPolicy,
         mode_confirm: bool,
+        until: Option<u64>,
     ) -> Result<(Vec<Value>, bool)> {
-        let resolved = spell.to_filter(ctx)?;
+        let mut resolved = spell.to_filter(ctx)?;
+        if let Some(u) = until {
+            // Pagination narrows, never widens, the spell's own bound.
+            let effective = match resolved.filter.get("until").and_then(Value::as_u64) {
+                Some(own) => own.min(u),
+                None => u,
+            };
+            resolved.filter["until"] = json!(effective);
+        }
         let override_relays: Option<Vec<String>> = if spell.relays.is_empty() {
             None
         } else {
@@ -1873,6 +1926,10 @@ pub struct SpellRequest {
     /// even in Confirm mode (same contract as search).
     #[serde(default)]
     pub mode_confirm: bool,
+    /// Page the *source* stage: only events at or before this unix
+    /// timestamp. The feed's "load older" passes `oldest_source - 1`
+    /// from the previous outcome. Ignored by inspect.
+    pub until: Option<u64>,
 }
 
 #[derive(Debug, Serialize)]
@@ -2153,6 +2210,12 @@ pub async fn list_handler(
         .await?;
 
     let mut events = response.events;
+    let ignore = engine.ignore_list().read().await.clone();
+    events.retain(|e| {
+        let id = e.get("id").and_then(Value::as_str).unwrap_or("");
+        let pk = e.get("pubkey").and_then(Value::as_str).unwrap_or("");
+        !ignore.is_ignored(id, pk)
+    });
     events.sort_by_key(|e| {
         std::cmp::Reverse(e.get("created_at").and_then(Value::as_u64).unwrap_or(0))
     });
@@ -2275,12 +2338,20 @@ pub async fn book_handler(
     }
 
     let tracker = book_tracker(&engine);
+    let ignore = engine.ignore_list().read().await.clone();
     let views = books
         .into_iter()
         .map(|(book, event)| {
             let entries = book
                 .entries
                 .iter()
+                .filter(|reference| {
+                    // An ignored spell drops out of the book view too —
+                    // the author hint covers pubkey-level ignores when
+                    // the event itself never resolved.
+                    let hint = reference.author_hint.as_deref().unwrap_or("");
+                    !ignore.is_ignored(&reference.event_id, hint)
+                })
                 .map(|reference| {
                     let entry = by_id.get(&reference.event_id).cloned();
                     BookEntry {
@@ -2879,15 +2950,15 @@ pub async fn execute_handler(
         None => FetchPolicy::default(),
     };
     let spells = SpellEngine::new(&engine);
-    let outcome = match (&req.event, &req.id) {
+    let mut outcome = match (&req.event, &req.id) {
         (Some(event), _) => {
             spells
-                .execute_event(event, &req.args, policy, req.mode_confirm)
+                .execute_event(event, &req.args, policy, req.mode_confirm, req.until)
                 .await?
         }
         (None, Some(id)) => {
             spells
-                .execute_by_id(id, &req.args, policy, req.mode_confirm)
+                .execute_by_id(id, &req.args, policy, req.mode_confirm, req.until)
                 .await?
         }
         (None, None) => {
@@ -2896,6 +2967,20 @@ pub async fn execute_handler(
             ))
         }
     };
+
+    // Results are a feed: honor the ignore list like the publications
+    // feed does (a mis-specced spell's junk shouldn't keep resurfacing).
+    let ignore = engine.ignore_list().read().await.clone();
+    let keep = |e: &Value| {
+        let id = e.get("id").and_then(Value::as_str).unwrap_or("");
+        let pk = e.get("pubkey").and_then(Value::as_str).unwrap_or("");
+        !ignore.is_ignored(id, pk)
+    };
+    outcome.events.retain(keep);
+    outcome.auxiliary.retain(keep);
+    if outcome.cmd != SpellCmd::Count {
+        outcome.count = outcome.events.len();
+    }
     Ok(Json(outcome))
 }
 
