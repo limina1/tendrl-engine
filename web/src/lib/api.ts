@@ -632,6 +632,8 @@ export interface SpellInfo {
 	kinds: number[];
 	topics: string[];
 	stages: { spell_id: string; combinator: 'map' | 'join' | null }[];
+	/** `in` chaining: input spell whose results feed this spell's $in.*. */
+	input: string | null;
 	relays: string[];
 	limit: number | null;
 	since: string | null;
@@ -650,7 +652,7 @@ export interface SpellEntry {
 	/** Parsed spell, null when the kind-777 event doesn't parse. */
 	spell: SpellInfo | null;
 	required_args: string[];
-	/** References $in.* — only runnable as a pipeline stage. */
+	/** References $in.* with no `in` input — only runs as a pipeline stage. */
 	partial: boolean;
 	needs_identity: boolean;
 	error: string | null;
@@ -729,6 +731,10 @@ export function composeSpell(req: {
 	authors?: string[];
 	/** Pipeline stages — composes a PIPE spell (query must be empty). */
 	stages?: { spell_id: string; combinator?: 'map' | 'join' }[];
+	/** `in` chaining: input spell event id (exclusive with stages). */
+	input?: string;
+	/** Raw id values: 64-hex ids or $in.* projections (need `input`). */
+	ids?: string[];
 }) {
 	return fetchJson<SpellComposeResponse>('/api/v1/spell/compose', {
 		method: 'POST',

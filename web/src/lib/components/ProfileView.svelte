@@ -1156,7 +1156,7 @@
 					>
 						<div class="item-main">
 							<span class="item-ref">
-								{s ? s.cmd : 'invalid'}{s && s.stages.length ? ` · ${s.stages.length}-stage pipeline` : ''}{entry.partial ? ' · partial' : ''}{entry.needs_identity ? ' · uses your identity' : ''}{row.fromBook ? ` · in “${row.fromBook}”` : ''}
+								{s ? s.cmd : 'invalid'}{s && s.stages.length ? ` · ${s.stages.length}-stage pipeline` : ''}{s?.input ? ' · chained' : ''}{entry.partial ? ' · partial' : ''}{entry.needs_identity ? ' · uses your identity' : ''}{row.fromBook ? ` · in “${row.fromBook}”` : ''}
 							</span>
 							{#if entry.event.pubkey !== pubkey}
 								<span class="spell-byline">by <ProfileName pubkey={entry.event.pubkey} /></span>
@@ -1169,16 +1169,20 @@
 								<p class="item-preview">{entry.error}</p>
 							{/if}
 							<SpellClauseBlock clauses={entry.clauses} />
-							{#if s && s.cmd === 'PIPE' && s.stages.length}
+							{#if s && ((s.cmd === 'PIPE' && s.stages.length) || s.input)}
 								<button
 									class="stage-toggle"
 									onclick={(e) => { e.stopPropagation(); toggleSpellStages(entry.event.id); }}
 									onkeydown={(e) => e.stopPropagation()}
-									title="Unpack pipeline stages"
+									title={s.input ? 'Unpack the input chain' : 'Unpack pipeline stages'}
 								>
 									{spellStagesOpen[entry.event.id] ? '⌃' : '⌄'}
-									{s.stages.length} stage{s.stages.length === 1 ? '' : 's'}
-									({s.stages.map((st) => st.combinator ?? 'source').join(' → ')})
+									{#if s.input}
+										input chain
+									{:else}
+										{s.stages.length} stage{s.stages.length === 1 ? '' : 's'}
+										({s.stages.map((st) => st.combinator ?? 'source').join(' → ')})
+									{/if}
 								</button>
 								{#if spellStagesOpen[entry.event.id]}
 									{#each spellStageCache[entry.event.id] ?? [] as st, si (st.spell_id + si)}

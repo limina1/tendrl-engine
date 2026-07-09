@@ -42,6 +42,14 @@
 		{ id: '', combinator: 'map' }
 	]);
 	let paramRows = $state<{ name: string; prompt: string }[]>([]);
+	// `in` chaining: apply this spell to a previous spell's results.
+	let inputId = $state('');
+	let projRoots = $state(false); // $in.tag.E + $in.tag.e:root → ids
+	let projRefs = $state(false); // $in.tag.e → ids
+	let projIds = $state(false); // $in.ids → ids
+	let projAuthors = $state(false); // $in.pubkeys → authors
+
+	const HEX64 = /^[0-9a-f]{64}$/i;
 
 	let name = $state('');
 	let description = $state('');
@@ -100,10 +108,20 @@
 		for (const line of authorsText.split(/\s+/).map((s) => s.trim()).filter(Boolean)) {
 			authors.push(line);
 		}
+		const chained = HEX64.test(inputId.trim());
+		const ids: string[] = [];
+		if (chained) {
+			if (projRoots) ids.push('$in.tag.E', '$in.tag.e:root');
+			if (projRefs) ids.push('$in.tag.e');
+			if (projIds) ids.push('$in.ids');
+			if (projAuthors) authors.push('$in.pubkeys');
+		}
 		return {
 			...shared,
 			query: parts.join(' '),
 			authors,
+			input: chained ? inputId.trim().toLowerCase() : undefined,
+			ids: ids.length ? ids : undefined,
 			since: timeWindow === 'any' ? undefined : timeWindow,
 			cmd: countMode ? 'COUNT' : undefined
 		};
@@ -113,6 +131,10 @@
 	// request actually filters something (or has a stage).
 	function requestIsEmpty(req: Parameters<typeof api.composeSpell>[0]): boolean {
 		if (req.stages !== undefined) return req.stages.length === 0;
+		if (req.input) {
+			// A chain with nothing pulled from it isn't previewable yet.
+			return !(req.ids?.length || req.authors?.some((a) => a.startsWith('$in.')));
+		}
 		return !req.query?.trim() && !(req.authors?.length) && !req.since && !req.cmd;
 	}
 
@@ -120,10 +142,17 @@
 		void pipelineMode; void countMode; void kinds; void authorMe; void authorContacts;
 		void authorsText; void searchText; void timeWindow; void limitText; void relaysText;
 		void name; void description; void topics;
+		void inputId; void projRoots; void projRefs; void projIds; void projAuthors;
 		void tagRows.map((r) => r.name + r.value).join();
 		void stageRows.map((r) => r.id + r.combinator).join();
 		void paramRows.map((p) => p.name + p.prompt).join();
 		const t = setTimeout(() => {
+			const chainId = inputId.trim();
+			if (!pipelineMode && chainId && !HEX64.test(chainId)) {
+				preview = null;
+				composeError = 'input spell id must be a full 64-hex event id';
+				return;
+			}
 			const req = composeRequest();
 			if (requestIsEmpty(req)) {
 				preview = null;
@@ -251,6 +280,39 @@
 				</div>
 			{:else}
 				<div class="sb-section">
+					<div class="sb-section-head">
+						<span>Apply to a spell — chain: run it first, this spell reads its results</span>
+					</div>
+					<input
+						class="sb-stage-id"
+						bind:value={inputId}
+						placeholder="input spell event id (64-hex, optional)"
+					/>
+					{#if inputId.trim()}
+						<div class="sb-chips">
+							<button
+								class="sb-chip"
+								class:sb-chip--on={projRoots}
+								onclick={() => (projRoots = !projRoots)}
+							>root references <code>$in.tag.E e:root</code></button>
+							<button
+								class="sb-chip"
+								class:sb-chip--on={projRefs}
+								onclick={() => (projRefs = !projRefs)}
+							>referenced events <code>$in.tag.e</code></button>
+							<button
+								class="sb-chip"
+								class:sb-chip--on={projIds}
+								onclick={() => (projIds = !projIds)}
+							>the events themselves <code>$in.ids</code></button>
+							<button
+								class="sb-chip"
+								class:sb-chip--on={projAuthors}
+								onclick={() => (projAuthors = !projAuthors)}
+							>their authors <code>$in.pubkeys</code></button>
+						</div>
+					{/if}
+
 					<div class="sb-section-head"><span>Kinds</span></div>
 					<div class="sb-chips">
 						{#each KIND_CHIPS as [k, label] (k)}
@@ -347,7 +409,9 @@
 					<p class="sb-muted">
 						{pipelineMode
 							? 'Add a stage (a spell event id) to preview the pipeline'
-							: 'Pick kinds, authors, tags, or a time window to preview the spell'}
+							: inputId.trim()
+								? 'Pick what to pull from the input spell’s results — roots, referenced events, or authors'
+								: 'Pick kinds, authors, tags, or a time window to preview the spell'}
 					</p>
 				{/if}
 			</div>

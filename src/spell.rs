@@ -33,6 +33,10 @@ pub const MAX_EXPANSION: usize = 500;
 /// this many hops before we assume a cycle.
 pub const MAX_CLOSURE_DEPTH: usize = 4;
 
+/// Maximum length of an `in` chain (spell → input spell → …). Cycles and
+/// runaway chains fail legibly instead of recursing forever.
+pub const MAX_CHAIN_DEPTH: usize = 4;
+
 // ---------------------------------------------------------------------------
 // Command / time values / variables
 // ---------------------------------------------------------------------------
@@ -293,6 +297,10 @@ pub struct Spell {
     pub topics: Vec<String>,
     /// `PIPE` stages, in order.
     pub stages: Vec<SpellStage>,
+    /// `in` chaining (`["in", <spell-event-id>]`): the input spell whose
+    /// results feed this spell's `$in.*` projections — the minimal
+    /// composition form, a two-stage map pipeline in one event.
+    pub input: Option<String>,
     /// Closure bindings (`["arg", name, value]`) — defaults merged under
     /// caller-supplied args.
     pub args: BTreeMap<String, String>,
@@ -344,6 +352,7 @@ impl Spell {
             close_on_eose: false,
             topics: Vec::new(),
             stages: Vec::new(),
+            input: None,
             args: BTreeMap::new(),
             parent: None,
         };
@@ -439,6 +448,12 @@ impl Spell {
                         combinator,
                     });
                 }
+                "in" => {
+                    let id = values.first().ok_or_else(|| {
+                        EngineError::InvalidFilter("in tag has no spell id".into())
+                    })?;
+                    spell.input = Some(id.clone());
+                }
                 "arg" => {
                     let (Some(name), Some(value)) = (values.first(), values.get(1)) else {
                         return Err(EngineError::InvalidFilter(
@@ -472,11 +487,25 @@ impl Spell {
                         "PIPE spell has neither stages nor a parent to close over".into(),
                     ));
                 }
+                if spell.input.is_some() {
+                    return Err(EngineError::InvalidFilter(
+                        "a PIPE composes via stages — `in` chaining applies to \
+                         REQ/COUNT spells"
+                            .into(),
+                    ));
+                }
             }
             _ => {
                 if !spell.has_filter_condition() {
                     return Err(EngineError::InvalidFilter(
                         "spell has no filter tags".into(),
+                    ));
+                }
+                if spell.input.is_some() && !spell.references_input() {
+                    return Err(EngineError::InvalidFilter(
+                        "spell declares an `in` input but no filter value \
+                         references $in.* — nothing consumes the input"
+                            .into(),
                     ));
                 }
             }
@@ -515,11 +544,16 @@ impl Spell {
         names.into_iter().collect()
     }
 
-    /// True if any filter value references `$in.*` — the spell is partial
-    /// and only runnable as a pipeline stage.
+    /// True if any filter value references `$in.*`.
     pub fn references_input(&self) -> bool {
         self.filter_values()
             .any(|v| matches!(parse_var(v), Ok(Some(VarRef::In(_)))))
+    }
+
+    /// True if the spell references `$in.*` without naming its own `in`
+    /// input — partial, runnable only as a pipeline stage.
+    pub fn is_partial(&self) -> bool {
+        self.references_input() && self.input.is_none()
     }
 
     fn references_identity(&self) -> (bool, bool) {
@@ -611,6 +645,12 @@ impl Spell {
             push(
                 "COUNT".into(),
                 Some("returns a count, not the events".into()),
+            );
+        }
+        if let Some(input) = &self.input {
+            push(
+                format!("in:{input}"),
+                Some("chained — runs that spell first; $in.* reads its results".into()),
             );
         }
         for k in &self.kinds {
@@ -760,6 +800,7 @@ impl Spell {
             close_on_eose: false,
             topics: Vec::new(),
             stages: Vec::new(),
+            input: None,
             args: BTreeMap::new(),
             parent: None,
         };
@@ -966,6 +1007,9 @@ impl Spell {
                 t.push(c.as_str().into());
             }
             tags.push(t);
+        }
+        if let Some(input) = &self.input {
+            tags.push(vec!["in".into(), input.clone()]);
         }
         for (name, value) in &self.args {
             tags.push(vec!["arg".into(), name.clone(), value.clone()]);
@@ -1324,56 +1368,152 @@ impl<'a> SpellEngine<'a> {
         policy: FetchPolicy,
         mode_confirm: bool,
     ) -> Result<SpellOutcome> {
-        let mut spell = Spell::from_event(event)?;
-        let mut merged_args = args.clone();
-        // A closure's own name ("Referents of #devstr") labels the outcome,
-        // not the parent it closes over.
-        let display_name = spell.name.clone();
+        self.execute_event_depth(event, args, policy, mode_confirm, 0)
+            .await
+    }
 
-        // Follow closure chains: a PIPE with no stages closes over its
-        // parent, contributing arg bindings as defaults (caller args win).
-        let mut depth = 0;
-        while spell.cmd == SpellCmd::Pipe && spell.stages.is_empty() {
-            depth += 1;
-            if depth > MAX_CLOSURE_DEPTH {
-                return Err(EngineError::InvalidFilter(format!(
-                    "closure chain exceeds {MAX_CLOSURE_DEPTH} hops (cycle?)"
-                )));
-            }
-            for (k, v) in &spell.args {
-                merged_args.entry(k.clone()).or_insert_with(|| v.clone());
-            }
-            let parent_id = spell.parent.clone().ok_or_else(|| {
-                EngineError::InvalidFilter(
-                    "PIPE spell has neither stages nor a parent".into(),
-                )
-            })?;
-            let parent = self
-                .engine
-                .get_by_id(&parent_id, Self::definition_policy(policy))
-                .await?
-                .ok_or_else(|| {
-                    EngineError::NotFound(format!("parent spell {parent_id} not found"))
+    /// Depth-carrying core of [`execute_event`]. `chain_depth` counts `in`
+    /// hops; boxed because chaining recurses (a spell executes its input
+    /// spell through this same path).
+    fn execute_event_depth<'b>(
+        &'b self,
+        event: &'b Value,
+        args: &'b BTreeMap<String, String>,
+        policy: FetchPolicy,
+        mode_confirm: bool,
+        chain_depth: usize,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<SpellOutcome>> + Send + 'b>,
+    > {
+        Box::pin(async move {
+            let mut spell = Spell::from_event(event)?;
+            let mut merged_args = args.clone();
+            // A closure's own name ("Referents of #devstr") labels the
+            // outcome, not the parent it closes over.
+            let display_name = spell.name.clone();
+
+            // Follow closure chains: a PIPE with no stages closes over its
+            // parent, contributing arg bindings as defaults (caller args win).
+            let mut depth = 0;
+            while spell.cmd == SpellCmd::Pipe && spell.stages.is_empty() {
+                depth += 1;
+                if depth > MAX_CLOSURE_DEPTH {
+                    return Err(EngineError::InvalidFilter(format!(
+                        "closure chain exceeds {MAX_CLOSURE_DEPTH} hops (cycle?)"
+                    )));
+                }
+                for (k, v) in &spell.args {
+                    merged_args.entry(k.clone()).or_insert_with(|| v.clone());
+                }
+                let parent_id = spell.parent.clone().ok_or_else(|| {
+                    EngineError::InvalidFilter(
+                        "PIPE spell has neither stages nor a parent".into(),
+                    )
                 })?;
-            spell = Spell::from_event(&parent)?;
-            // A closure may also bind args over a plain REQ/COUNT spell —
-            // the loop exits as soon as cmd != PIPE or stages are present.
-        }
+                let parent = self
+                    .engine
+                    .get_by_id(&parent_id, Self::definition_policy(policy))
+                    .await?
+                    .ok_or_else(|| {
+                        EngineError::NotFound(format!("parent spell {parent_id} not found"))
+                    })?;
+                spell = Spell::from_event(&parent)?;
+                // A closure may also bind args over a plain REQ/COUNT spell —
+                // the loop exits as soon as cmd != PIPE or stages are present.
+            }
 
-        let mut outcome = match spell.cmd {
-            SpellCmd::Pipe => {
-                self.execute_pipeline(&spell, &merged_args, policy, mode_confirm)
-                    .await?
+            let mut outcome = match spell.cmd {
+                SpellCmd::Pipe => {
+                    self.execute_pipeline(&spell, &merged_args, policy, mode_confirm)
+                        .await?
+                }
+                _ if spell.input.is_some() => {
+                    self.execute_chained(&spell, &merged_args, policy, mode_confirm, chain_depth)
+                        .await?
+                }
+                _ => {
+                    self.execute_single(&spell, &merged_args, policy, mode_confirm)
+                        .await?
+                }
+            };
+            if display_name.is_some() {
+                outcome.name = display_name;
             }
-            _ => {
-                self.execute_single(&spell, &merged_args, policy, mode_confirm)
-                    .await?
-            }
-        };
-        if display_name.is_some() {
-            outcome.name = display_name;
+            Ok(outcome)
+        })
+    }
+
+    /// `in` chaining: execute the input spell through the full path (it may
+    /// itself be a closure, pipeline, or another chained spell), then apply
+    /// this spell as a `map` stage over its results — expand `$in.*`, run
+    /// the filter, and replace upstream events with their referents (the
+    /// pass-through rule keeps events that contribute no projection values).
+    async fn execute_chained(
+        &self,
+        spell: &Spell,
+        args: &BTreeMap<String, String>,
+        policy: FetchPolicy,
+        mode_confirm: bool,
+        chain_depth: usize,
+    ) -> Result<SpellOutcome> {
+        if chain_depth >= MAX_CHAIN_DEPTH {
+            return Err(EngineError::InvalidFilter(format!(
+                "in-chain exceeds {MAX_CHAIN_DEPTH} hops (cycle?)"
+            )));
         }
-        Ok(outcome)
+        let input_id = spell.input.as_deref().expect("caller checked input");
+        let input_event = self
+            .engine
+            .get_by_id(input_id, Self::definition_policy(policy))
+            .await?
+            .ok_or_else(|| {
+                EngineError::NotFound(format!("input spell {input_id} not found"))
+            })?;
+        let upstream = self
+            .execute_event_depth(&input_event, args, policy, mode_confirm, chain_depth + 1)
+            .await?;
+
+        let (me, contacts) = self
+            .identity_context(std::slice::from_ref(spell), policy, mode_confirm)
+            .await?;
+        let ctx = ResolutionContext {
+            me,
+            contacts,
+            args: args.clone(),
+            input: Some(&upstream.events),
+            now: unix_now(),
+        };
+        let (fetched, truncated) = self.run_filter(spell, &ctx, policy, mode_confirm).await?;
+        let fetched_len = fetched.len();
+
+        let mut provenance = upstream.provenance;
+        let projections = spell.input_projections();
+        let events = apply_map(&upstream.events, &fetched, &projections, &mut provenance);
+
+        let mut stages = upstream.stages;
+        stages.push(StageReport {
+            spell_id: spell.id.clone(),
+            name: spell.name.clone(),
+            combinator: Some(Combinator::Map),
+            fetched: fetched_len,
+            output: events.len(),
+            truncated,
+        });
+
+        let count = events.len();
+        let events = match spell.cmd {
+            SpellCmd::Count => Vec::new(),
+            _ => events,
+        };
+        Ok(SpellOutcome {
+            cmd: spell.cmd,
+            name: spell.name.clone().or(upstream.name),
+            count,
+            events,
+            auxiliary: upstream.auxiliary,
+            provenance,
+            stages,
+        })
     }
 
     async fn execute_single(
@@ -1385,7 +1525,8 @@ impl<'a> SpellEngine<'a> {
     ) -> Result<SpellOutcome> {
         if spell.references_input() {
             return Err(EngineError::BadRequest(
-                "spell references $in.* — it is partial and only runs as a pipeline stage"
+                "spell references $in.* but names no input — chain it with an \
+                 `in` tag or run it as a pipeline stage"
                     .into(),
             ));
         }
@@ -1448,6 +1589,13 @@ impl<'a> SpellEngine<'a> {
             if spell.cmd == SpellCmd::Pipe {
                 return Err(EngineError::InvalidFilter(format!(
                     "stage spell {} is a PIPE — nested pipelines are not supported",
+                    stage.spell_id
+                )));
+            }
+            if spell.input.is_some() {
+                return Err(EngineError::InvalidFilter(format!(
+                    "stage spell {} declares its own `in` input — a chained \
+                     spell runs directly, not as a stage",
                     stage.spell_id
                 )));
             }
@@ -1795,6 +1943,55 @@ async fn stage_inspections(
     out
 }
 
+/// Resolve an `in` chain into stage inspections, source-first — the same
+/// chevron content as PIPE stages, so chained and piped spells unpack
+/// identically in the UI. Depth-guarded; a missing or unparseable link
+/// ends the walk with an `error` on that entry.
+async fn chain_inspections(
+    engine: &Engine,
+    first_input: &str,
+    policy: FetchPolicy,
+) -> Vec<StageInspection> {
+    let mut out: Vec<StageInspection> = Vec::new();
+    let mut next = Some(first_input.to_string());
+    while let Some(id) = next.take() {
+        let mut si = StageInspection {
+            spell_id: id.clone(),
+            combinator: None,
+            name: None,
+            clauses: Vec::new(),
+            query_string: None,
+            error: None,
+        };
+        if out.len() >= MAX_CHAIN_DEPTH {
+            si.error = Some(format!("in-chain exceeds {MAX_CHAIN_DEPTH} hops (cycle?)"));
+            out.push(si);
+            break;
+        }
+        match engine.get_by_id(&id, policy).await {
+            Ok(Some(event)) => match Spell::from_event(&event) {
+                Ok(s) => {
+                    si.name = s.name.clone();
+                    si.clauses = s.to_clauses();
+                    si.query_string = Some(s.query_string());
+                    next = s.input.clone();
+                }
+                Err(e) => si.error = Some(e.to_string()),
+            },
+            Ok(None) => si.error = Some("input spell not found locally".into()),
+            Err(e) => si.error = Some(e.to_string()),
+        }
+        out.push(si);
+    }
+    // The walk collects consumer-first; display is source-first, with each
+    // downstream link marked as the map it applies.
+    out.reverse();
+    for (i, si) in out.iter_mut().enumerate() {
+        si.combinator = if i == 0 { None } else { Some(Combinator::Map) };
+    }
+    out
+}
+
 /// POST /api/v1/spell/inspect — parse a spell and preview its resolution.
 pub async fn inspect_handler(
     State(engine): State<Arc<Engine>>,
@@ -1825,9 +2022,14 @@ pub async fn inspect_handler(
     };
 
     let (needs_me, needs_contacts) = spell.references_identity();
-    let partial = spell.references_input();
+    let partial = spell.is_partial();
     let (filter, unresolved) = if spell.cmd == SpellCmd::Pipe {
         (None, Some("PIPE spells resolve per stage at execution".into()))
+    } else if spell.input.is_some() {
+        (
+            None,
+            Some("chained — $in.* resolves against the input spell's results at execution".into()),
+        )
     } else {
         let ctx = ResolutionContext {
             me: engine.my_pubkey(),
@@ -1842,11 +2044,13 @@ pub async fn inspect_handler(
         }
     };
 
-    // Unpack PIPE stages into their own clause blocks (the `v` chevron
-    // content on spell cards). A missing/unparseable stage is reported on
-    // the stage, never a failed inspection.
+    // Unpack PIPE stages — or an `in` chain — into their own clause blocks
+    // (the `v` chevron content on spell cards). A missing/unparseable
+    // stage is reported on the stage, never a failed inspection.
     let stages = if spell.cmd == SpellCmd::Pipe && !spell.stages.is_empty() {
         Some(stage_inspections(&engine, &spell.stages, policy).await)
+    } else if let Some(input) = &spell.input {
+        Some(chain_inspections(&engine, input, policy).await)
     } else {
         None
     };
@@ -1909,7 +2113,7 @@ fn entry_from_event(event: Value) -> SpellListEntry {
             SpellListEntry {
                 event,
                 required_args: spell.required_args(),
-                partial: spell.references_input(),
+                partial: spell.is_partial(),
                 needs_identity: needs_me || needs_contacts,
                 clauses: spell.to_clauses(),
                 query_string: Some(spell.query_string()),
@@ -2345,6 +2549,15 @@ pub struct SpellComposeRequest {
     /// `query` must be empty.
     #[serde(default)]
     pub stages: Vec<ComposeStageRequest>,
+    /// `in` chaining: event id of the input spell whose results this
+    /// spell applies to (the builder's "apply to a previous spell").
+    /// Exclusive with `stages`.
+    pub input: Option<String>,
+    /// Raw id-filter values: 64-hex event ids or `$in.*` projections
+    /// (`$in.ids`, `$in.tag.e:root`, …) — the builder's projection chips.
+    /// `$in.*` values require `input`.
+    #[serde(default)]
+    pub ids: Vec<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -2367,6 +2580,13 @@ pub async fn compose_handler(
     State(engine): State<Arc<Engine>>,
     Json(req): Json<SpellComposeRequest>,
 ) -> Result<Json<SpellComposeResponse>> {
+    if req.input.is_some() && !req.stages.is_empty() {
+        return Err(EngineError::BadRequest(
+            "`input` chaining and pipeline `stages` are exclusive — pick one \
+             composition form"
+                .into(),
+        ));
+    }
     let (mut spell, mut warnings) = if !req.stages.is_empty() {
         // Pipeline path: stages, not a filter query.
         if !req.query.trim().is_empty() {
@@ -2412,6 +2632,7 @@ pub async fn compose_handler(
             close_on_eose: false,
             topics: Vec::new(),
             stages,
+            input: None,
             args: BTreeMap::new(),
             parent: None,
         };
@@ -2438,6 +2659,7 @@ pub async fn compose_handler(
             close_on_eose: false,
             topics: Vec::new(),
             stages: Vec::new(),
+            input: None,
             args: BTreeMap::new(),
             parent: None,
         };
@@ -2493,20 +2715,53 @@ pub async fn compose_handler(
         (spell, warnings)
     };
 
-    // Builder overrides: raw author values, relative time windows, COUNT.
+    // `in` chaining: the builder names an input spell; $in.* projections
+    // in the ids/authors overrides consume its results.
+    if let Some(input) = &req.input {
+        let id = input.trim();
+        if id.len() != 64 || !id.chars().all(|c| c.is_ascii_hexdigit()) {
+            return Err(EngineError::BadRequest(
+                "input spell id must be a 64-hex event id".into(),
+            ));
+        }
+        spell.input = Some(id.to_lowercase());
+    }
+
+    // Builder overrides: raw author values, id projections, relative time
+    // windows, COUNT.
     for author in &req.authors {
         let valid = match parse_var(author)? {
             Some(VarRef::Me) | Some(VarRef::Contacts) => true,
-            Some(_) => false, // $arg/$in enter via parameterize, not here
+            Some(VarRef::In(_)) => spell.input.is_some(),
+            Some(_) => false, // $arg enters via parameterize, not here
             None => author.len() == 64 && author.chars().all(|c| c.is_ascii_hexdigit()),
         };
         if !valid {
             return Err(EngineError::BadRequest(format!(
-                "bad author value {author:?} (use $me, $contacts, or a 64-hex pubkey)"
+                "bad author value {author:?} (use $me, $contacts, a 64-hex \
+                 pubkey, or $in.* with an input spell)"
             )));
         }
         if !spell.authors.contains(author) {
             spell.authors.push(author.clone());
+        }
+    }
+    for id_value in &req.ids {
+        let v = id_value.trim();
+        let valid = match parse_var(v)? {
+            Some(VarRef::In(_)) => spell.input.is_some(),
+            Some(_) => false,
+            None => v.len() == 64 && v.chars().all(|c| c.is_ascii_hexdigit()),
+        };
+        if !valid {
+            return Err(EngineError::BadRequest(format!(
+                "bad id value {v:?} (use a 64-hex event id, or $in.* with an \
+                 input spell)"
+            )));
+        }
+        let v = v.to_string();
+        if !spell.ids.contains(&v) {
+            spell.ids.push(v);
         }
     }
     if let Some(since) = &req.since {
@@ -2533,6 +2788,45 @@ pub async fn compose_handler(
             "nothing to save — the spell has no filter conditions".into(),
         ));
     }
+    if spell.input.is_some() && !spell.references_input() {
+        return Err(EngineError::BadRequest(
+            "an input spell is set but no $in.* projection consumes it — \
+             add a projection (ids, authors, or a tag value)"
+                .into(),
+        ));
+    }
+
+    // Escalate the input spell's declared params into this spell's
+    // signature, so a chained run prompts once at the top. Local-only —
+    // composing is a preview path and must not hit the network.
+    if let Some(input_id) = spell.input.clone() {
+        let upstream = match engine.get_by_id(&input_id, FetchPolicy::LocalOnly).await {
+            Ok(Some(event)) => Spell::from_event(&event).ok(),
+            _ => None,
+        };
+        match upstream {
+            Some(upstream) => {
+                for name in upstream.required_args() {
+                    if spell.params.iter().any(|p| p.name == name)
+                        || req.params.iter().any(|p| p.name == name)
+                    {
+                        continue;
+                    }
+                    let prompt = upstream
+                        .params
+                        .iter()
+                        .find(|p| p.name == name)
+                        .and_then(|p| p.prompt.clone());
+                    spell.declare_param(&name, prompt.as_deref())?;
+                }
+            }
+            None => warnings.push(
+                "input spell not found locally — its parameters (if any) \
+                 can't be escalated into this spell"
+                    .into(),
+            ),
+        }
+    }
 
     for p in &req.params {
         match &p.value {
@@ -2546,10 +2840,12 @@ pub async fn compose_handler(
     spell.description = req.description.clone().unwrap_or_default();
     spell.topics = req.topics.clone();
 
-    // Pipeline preview: unpack the referenced stages (local-only — this is
-    // a preview, same contract as inspect).
+    // Pipeline/chain preview: unpack the referenced stages or the `in`
+    // chain (local-only — this is a preview, same contract as inspect).
     let stages = if spell.cmd == SpellCmd::Pipe {
         Some(stage_inspections(&engine, &spell.stages, FetchPolicy::LocalOnly).await)
+    } else if let Some(input) = &spell.input {
+        Some(chain_inspections(&engine, input, FetchPolicy::LocalOnly).await)
     } else {
         None
     };
@@ -2807,6 +3103,64 @@ mod tests {
 
         let dangling = spell_event("", json!([["cmd", "PIPE"], ["name", "nothing"]]));
         assert!(Spell::from_event(&dangling).is_err());
+    }
+
+    #[test]
+    fn parses_in_chaining() {
+        // A chained spell: apply this filter to the input spell's results.
+        let chained = spell_event(
+            "",
+            json!([
+                ["cmd", "REQ"],
+                ["name", "…their roots"],
+                ["in", "44".repeat(32)],
+                ["k", "1"],
+                ["ids", "$in.tag.E", "$in.tag.e:root"]
+            ]),
+        );
+        let spell = Spell::from_event(&chained).unwrap();
+        assert_eq!(spell.input.as_deref(), Some("44".repeat(32).as_str()));
+        // Chained ≠ partial: the input is named, so it runs standalone.
+        assert!(spell.references_input());
+        assert!(!spell.is_partial());
+
+        // to_tags roundtrips the `in` tag.
+        let reparsed = Spell::from_tags(None, "", &spell.to_tags()).unwrap();
+        assert_eq!(reparsed.input, spell.input);
+
+        // The clause preview leads with the chain reference, annotated.
+        let clauses = spell.to_clauses();
+        assert_eq!(clauses[0].clause, format!("in:{}", "44".repeat(32)));
+        assert!(clauses[0].annotation.is_some());
+
+        // Without an `in` tag the same filter is partial, not runnable.
+        let partial = spell_event(
+            "",
+            json!([["cmd", "REQ"], ["k", "1"], ["ids", "$in.tag.E"]]),
+        );
+        let partial = Spell::from_event(&partial).unwrap();
+        assert!(partial.is_partial());
+    }
+
+    #[test]
+    fn rejects_bad_in_chaining() {
+        // An input nothing consumes is an authoring mistake, not a spell.
+        let unconsumed = spell_event(
+            "",
+            json!([["cmd", "REQ"], ["in", "44".repeat(32)], ["k", "1"]]),
+        );
+        assert!(Spell::from_event(&unconsumed).is_err());
+
+        // PIPE composes via stages; `in` is the REQ/COUNT chaining form.
+        let pipe_with_in = spell_event(
+            "",
+            json!([
+                ["cmd", "PIPE"],
+                ["stage", "11".repeat(32)],
+                ["in", "44".repeat(32)]
+            ]),
+        );
+        assert!(Spell::from_event(&pipe_with_in).is_err());
     }
 
     // -- resolution ----------------------------------------------------------
