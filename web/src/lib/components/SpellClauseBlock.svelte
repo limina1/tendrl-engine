@@ -1,52 +1,42 @@
 <script lang="ts">
 	import type { SpellClause } from '$lib/api';
 
-	// The spell preview IS the search DSL: one clause per line, with a dim
-	// annotation only where a clause isn't literal (variables, relative
-	// times, relay-side search). Shared by spell cards and the composer.
+	// The spell preview IS the search DSL: rendered as one wrapped
+	// monospace line, exactly like a query string. Non-literal clauses
+	// (variables, relative times, relay-side search) carry their
+	// annotation as a hover tooltip — dotted underline marks them.
 	let { clauses }: { clauses: SpellClause[] } = $props();
 </script>
 
 {#if clauses.length > 0}
 	<div class="clauses">
-		{#each clauses as c (c.clause + (c.annotation ?? ''))}
-			<div class="clause-line">
-				<code class="clause">{c.clause}</code>
-				{#if c.annotation}
-					<span class="clause-note">— {c.annotation}</span>
-				{/if}
-			</div>
-		{/each}
+		{#each clauses as c (c.clause + (c.annotation ?? ''))}<!--
+		--><span
+				class="clause"
+				class:clause--annotated={!!c.annotation}
+				title={c.annotation}
+			>{c.clause}</span>{' '}<!--
+		-->{/each}
 	</div>
 {/if}
 
 <style>
 	.clauses {
-		display: flex;
-		flex-direction: column;
-		gap: 1px;
-		padding: 4px 0;
-	}
-	.clause-line {
-		display: flex;
-		align-items: baseline;
-		gap: 6px;
-		min-width: 0;
-	}
-	.clause {
 		font-family: var(--font-mono);
 		font-size: var(--t-xs);
+		line-height: 1.6;
+		padding: 2px 0;
+		overflow-wrap: anywhere;
+	}
+	.clause {
 		color: var(--fg);
 		background: color-mix(in srgb, var(--accent) 8%, transparent);
 		border-radius: var(--radius);
-		padding: 0 4px;
-		white-space: nowrap;
+		padding: 0 3px;
 	}
-	.clause-note {
-		font-size: var(--t-2xs);
-		color: var(--fg-muted);
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
+	.clause--annotated {
+		text-decoration: underline dotted var(--fg-muted);
+		text-underline-offset: 3px;
+		cursor: help;
 	}
 </style>
