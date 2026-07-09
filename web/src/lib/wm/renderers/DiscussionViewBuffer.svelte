@@ -4,6 +4,7 @@
 	import { getActiveStore } from '../buffer-store.svelte';
 	import type { Buffer } from '../types';
 	import CommentThread from '$lib/components/CommentThread.svelte';
+	import PoolStateBadges from '$lib/components/PoolStateBadges.svelte';
 	import { countThread, flattenThread, type ThreadNode } from '$lib/discussions/thread';
 	import { prefetchAuthors } from '$lib/discussions/authors.svelte';
 
@@ -18,6 +19,7 @@
 		created_at: number;
 		content: string;
 		tags: string[][];
+		relays?: string[];
 	};
 
 	type ParentRef =
@@ -111,6 +113,10 @@
 	);
 	const isComment = $derived(event?.kind === 1111);
 	const isHighlight = $derived(event?.kind === 9802);
+	// Pool state for the header action cluster. Comments/highlights aren't
+	// addressable, so the pool keys by event id — the same path
+	// EventViewModal's pool row uses (findPoolItem/togglePoolMembership).
+	const poolItem = $derived(event ? app.findPoolItem(event) : null);
 
 	async function load() {
 		if (!eventId) {
@@ -428,6 +434,25 @@
 			<span class="dv-meta">
 				by <code>{short(event.pubkey, 12)}</code> · {fmtTime(event.created_at)}
 			</span>
+			<!-- Standard action cluster (comments just have no title):
+			     provenance/pool pills, then menu LAST — feat-ui-patterns
+			     row order, same as feed/reader/doc views. -->
+			<div class="dv-actions">
+				<PoolStateBadges
+					item={poolItem}
+					onpillctx={() => event && app.togglePoolMembership(event, 'context')}
+					onpillcmp={() => event && app.togglePoolMembership(event, 'compose')}
+					onpilldrop={poolItem ? () => app.dropPoolItem(poolItem.id) : undefined}
+					signed={true}
+					relays={event.relays ?? []}
+					orientation="horizontal"
+				/>
+				<button
+					class="pill pill--menu"
+					onclick={() => event && app.getEventForModal(event.id)}
+					title="Open this event's menu (m)"
+				>menu</button>
+			</div>
 		</div>
 
 		{#if refs.root || refs.parent}
@@ -552,6 +577,13 @@
 		margin-top: 6px;
 		font-family: var(--font-mono);
 		font-size: var(--t-xs);
+	}
+
+	.dv-actions {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		margin-left: auto;
 	}
 
 	.dv-header {
