@@ -3067,6 +3067,23 @@ pub struct DiscussionCount {
 /// overlap), otherwise an event matched by both filters is tallied twice. This
 /// is the single source of truth for both `discussions/counts` and the
 /// `counts` ride-along on `discussions/list`.
+/// Drop duplicate events by id, keeping first occurrence. The `#a`/`#A`
+/// discussion filters overlap (a top-level comment carries both tags for the
+/// same coordinate), so the same event comes back once per matching filter;
+/// both discussion handlers dedup through here before tallying/threading.
+fn dedup_events_by_id(events: Vec<Value>) -> Vec<Value> {
+    let mut seen = std::collections::HashSet::new();
+    events
+        .into_iter()
+        .filter(|e| {
+            e.get("id")
+                .and_then(|v| v.as_str())
+                .map(|id| seen.insert(id.to_string()))
+                .unwrap_or(true)
+        })
+        .collect()
+}
+
 fn tally_discussion_counts(
     events: &[Value],
     addresses: &[String],
@@ -3185,20 +3202,28 @@ pub async fn discussion_counts_handler(
         }
     }
 
-    // One combined relay REQ for both kinds keeps roundtrips minimal.
-    let filters = vec![json!({
-        "kinds": [1111, 9802],
-        "#a": addresses,
-    })];
+    // Both tag cases, mirroring `discussions_list_handler`: `#a` catches
+    // top-level comments (which carry the address as parent), `#A` catches
+    // nested replies — those carry the root address ONLY in uppercase, so an
+    // `#a`-only query undercounts by the entire reply set.
+    let filters = vec![
+        json!({
+            "kinds": [1111, 9802],
+            "#a": addresses,
+        }),
+        json!({
+            "kinds": [1111, 9802],
+            "#A": addresses,
+        }),
+    ];
 
     let response = engine
         .get_events_with_options(filters, policy, req.relays.as_deref(), req.mode_confirm)
         .await?;
     let fetched = response.events.len();
 
-    // Single `#a` filter here (no `#A`), so no cross-filter duplicates to
-    // dedup before tallying. The `discussions/list` ride-along dedups first.
-    let counts = tally_discussion_counts(&response.events, &addresses);
+    let events = dedup_events_by_id(response.events);
+    let counts = tally_discussion_counts(&events, &addresses);
 
     if let Some(op) = op {
         op.complete(fetched);
@@ -3589,20 +3614,7 @@ pub async fn discussions_list_handler(
         .get_events_with_options(filters, policy, relays_opt, req.mode_confirm)
         .await?;
 
-    // The `#a` and `#A` filters overlap — a comment that tags the
-    // address as both parent and root matches both, so it comes back
-    // twice. Dedup by id before returning.
-    let mut seen = std::collections::HashSet::new();
-    let events: Vec<Value> = response
-        .events
-        .into_iter()
-        .filter(|e| {
-            e.get("id")
-                .and_then(|v| v.as_str())
-                .map(|id| seen.insert(id.to_string()))
-                .unwrap_or(true)
-        })
-        .collect();
+    let events = dedup_events_by_id(response.events);
 
     // Tally over the deduped event set (the `#a`/`#A` filters overlap, so an
     // event matched by both must count once). Addresses-only; an event-id-only
@@ -6977,6 +6989,23 @@ mod discussion_tally_tests {
         let counts = tally_discussion_counts(&events, &addrs);
         assert_eq!(counts[A1].comments, 0);
         assert_eq!(counts.len(), 1);
+    }
+
+    #[test]
+    fn dedup_then_tally_counts_reply_once() {
+        let addrs = vec![A1.to_string()];
+        // What the overlapping #a/#A filters return for one top-level comment
+        // (matched by both filters → two copies) plus one nested reply
+        // (uppercase A only → one copy). The counts handler must see 2, not 3.
+        let top = json!({ "id": "aa", "kind": 1111, "tags": [["a", A1], ["A", A1]] });
+        let reply = json!({ "id": "bb", "kind": 1111, "tags": [["A", A1]] });
+        let fetched = vec![top.clone(), reply, top];
+
+        let events = dedup_events_by_id(fetched);
+        assert_eq!(events.len(), 2, "duplicate top-level comment dropped");
+
+        let counts = tally_discussion_counts(&events, &addrs);
+        assert_eq!(counts[A1].comments, 2, "top-level once + reply once");
     }
 }
 
