@@ -170,10 +170,11 @@ asserts =["the-fable"]= but gets =[]= (tree_emit.rs:790). Belongs to the
 in-flight nostrdown epoch (=[[ ]]= wikilink emit, commit f09a965); noting here
 so other branches rebasing onto tendrl-web don't chase it as their own.
 
-* OPEN — discussion view: raw event JSON has no copy affordance
+* FIXED — discussion view: raw event JSON has no copy affordance
 :PROPERTIES:
 :found: 2026-07-09 (reading kind-1111 comments on a 30023 article)
 :branch: bugs/reader-discussion-fetch
+:fixed-in: 0e5fb44 fix(web): copy button on the discussion view's raw event JSON
 :END:
 
 ** Symptom
@@ -191,10 +192,11 @@ copy-button + toast pattern (=EventViewModal.copyText= →
 Copy button inside the =<summary>= (preventDefault/stopPropagation so it
 doesn't toggle), reusing the =copyText= pattern.
 
-* OPEN — root/parent event fetch dies with raw =404= — never reaches relays in Confirm mode
+* FIXED — root/parent event fetch dies with raw =404= — never reaches relays in Confirm mode
 :PROPERTIES:
 :found: 2026-07-09 (clicking the 30023 root ref of a kind-1111 comment)
 :branch: bugs/reader-discussion-fetch
+:fixed-in: 442267d (engine/API intent gate) + 079e818 (web two-phase reader load)
 :END:
 
 ** Symptom
@@ -221,10 +223,11 @@ FetchConfirmModal intent flow applies. Web wrappers normalize 404 to
 ={event: null}=; ReaderBuffer does a two-phase local→relay load with a status
 line and a human not-found message.
 
-* OPEN — clicking a parent comment opens the generic reader, not the comment view
+* FIXED — clicking a parent comment opens the generic reader, not the comment view
 :PROPERTIES:
 :found: 2026-07-09 (climbing a kind-1111 thread)
 :branch: bugs/reader-discussion-fetch
+:fixed-in: d8c7ae1 (k/K kind routing) + e9a31ad (discussion buffer confirm-gated load)
 :END:
 
 ** Symptom
