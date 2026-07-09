@@ -268,6 +268,17 @@
 				}
 			});
 		},
+		onDoc: (buffer_id, kicker) => {
+			store.openBuffer({
+				className: 'work',
+				buffer: {
+					id: buffer_id,
+					kind: 'doc',
+					label: 'doc',
+					kicker
+				}
+			});
+		},
 		onSearch: (kicker) => {
 			store.openBuffer({
 				className: 'research',

@@ -14,6 +14,7 @@
 	} from '$lib/discussions/highlights';
 	import { pubkeyToHighlightFill, pubkeyToHighlightStroke } from '$lib/discussions/colors';
 	import { prefetchAuthors, refreshAuthors } from '$lib/discussions/authors.svelte';
+	import PoolStateBadges from '$lib/components/PoolStateBadges.svelte';
 
 	// A slim viewer for single addressable documents — NIP-23 long-form
 	// articles (kind 30023) and NKBIP-02 wiki pages (kind 30818). The
@@ -31,12 +32,27 @@
 		created_at: number;
 		content: string;
 		tags: string[][];
+		relays?: string[];
 	};
 
 	const parsed = $derived(parseBufferId(buffer.id));
+	// `?focus_comment=<id>` / `?highlight=<id>` suffixes arrive when a
+	// discussion card or highlight sends the user here to see the source
+	// with its full thread — same marker convention as ReaderBuffer.
+	const focusCommentId = $derived(bufferMarker(buffer.id, 'focus_comment'));
+	const focusHighlightId = $derived(bufferMarker(buffer.id, 'highlight'));
+
+	function bufferMarker(id: string, name: string): string | null {
+		const q = id.indexOf('?');
+		if (q < 0) return null;
+		const v = new URLSearchParams(id.slice(q + 1)).get(name);
+		return v && /^[0-9a-fA-F]{64}$/.test(v) ? v.toLowerCase() : null;
+	}
 
 	function parseBufferId(id: string): { kind: number; pubkey: string; dTag: string } | null {
-		const m = id.match(/^doc:(\d+):([0-9a-fA-F]{64}):(.+)$/);
+		const q = id.indexOf('?');
+		const core = q < 0 ? id : id.slice(0, q);
+		const m = core.match(/^doc:(\d+):([0-9a-fA-F]{64}):(.+)$/);
 		if (!m) return null;
 		const kind = parseInt(m[1], 10);
 		if (!Number.isFinite(kind)) return null;
@@ -44,8 +60,10 @@
 	}
 
 	let loading = $state(true);
+	let loadingStatus = $state<string | null>(null);
 	let error = $state<string | null>(null);
 	let title = $state<string | null>(null);
+	let docRelays = $state<string[]>([]);
 	let summary = $state<string | null>(null);
 	let body = $state('');
 	let kindLabel = $state('');
@@ -89,8 +107,24 @@
 	});
 
 	const segments = $derived(
-		highlightSpans.length > 0 && body ? segmentsFromSpans(body, highlightSpans, null) : null
+		highlightSpans.length > 0 && body
+			? segmentsFromSpans(body, highlightSpans, focusHighlightId)
+			: null
 	);
+
+	// When arriving via ?highlight=<id>, scroll the focused <mark> into
+	// view once the overlay has rendered (same deferred-frame trick as
+	// CommentThread's focused-node scroll).
+	let wrapEl = $state<HTMLElement | null>(null);
+	$effect(() => {
+		const id = focusHighlightId;
+		if (!id || !segments || !wrapEl) return;
+		requestAnimationFrame(() => {
+			const mark = wrapEl?.querySelector(`[data-hl-ids*="${id}"]`);
+			mark?.scrollIntoView({ behavior: 'auto', block: 'center' });
+			mark?.classList.add('hl-flash');
+		});
+	});
 	const hasOverlay = $derived(!!segments && segments.some((s) => s.highlight !== null));
 
 	const authorName = $derived(
@@ -101,16 +135,28 @@
 
 	async function loadDoc(p: { kind: number; pubkey: string; dTag: string }) {
 		loading = true;
+		loadingStatus = null;
 		error = null;
 		title = null;
 		summary = null;
 		body = '';
+		docRelays = [];
 		threads = [];
 		highlights = [];
 		authorProfile = null;
 		authorPubkey = '';
 		try {
-			const resp = await api.getAddressable(p.kind, p.pubkey, p.dTag);
+			// Two-phase load (the reader's pattern): local cache first, then a
+			// confirm-gated relay fetch — this buffer is the canonical target
+			// for comment root/parent refs, so an uncached doc must reach
+			// relays instead of dead-ending.
+			let resp = await api.getAddressable(p.kind, p.pubkey, p.dTag, 'local_only');
+			if (!resp.event) {
+				loadingStatus = 'Not in local cache — fetching from relays…';
+				resp = await api.getAddressable(p.kind, p.pubkey, p.dTag, 'fetch_always', {
+					bypassOffline: true
+				});
+			}
 			const ev = resp.event as DocEvent | null;
 			if (!ev) {
 				const noun =
@@ -118,11 +164,12 @@
 					: p.kind === 30818 ? 'Wiki page'
 					: p.kind === 30817 ? 'Spec'
 					: 'Document';
-				error = `${noun} not found locally — fetch the author from their profile (↻ Fetch).`;
+				error = `${noun} not found locally or on your relays.`;
 				return;
 			}
 			const tag = (n: string) => ev.tags.find((t) => t[0] === n)?.[1] ?? null;
 			authorPubkey = ev.pubkey || p.pubkey;
+			docRelays = ev.relays ?? [];
 			kindLabel =
 				p.kind === 30023 ? 'article'
 				: p.kind === 30818 ? 'wiki'
@@ -137,9 +184,10 @@
 			void loadDiscussions(addr);
 			void loadAuthor(authorPubkey);
 		} catch (e) {
-			error = String(e);
+			error = api.errorMessage(e);
 		} finally {
 			loading = false;
+			loadingStatus = null;
 		}
 	}
 
@@ -216,9 +264,14 @@
 	});
 </script>
 
-<div class="doc-wrap">
+<div class="doc-wrap" bind:this={wrapEl}>
 	{#if loading}
-		<div class="doc-status">Loading…</div>
+		<div class="doc-status">
+			Loading…
+			{#if loadingStatus}
+				<div class="doc-loading-status">{loadingStatus}</div>
+			{/if}
+		</div>
 	{:else if error}
 		<div class="doc-status doc-status--error">{error}</div>
 	{:else}
@@ -230,6 +283,28 @@
 					<p class="doc-summary">{summary}</p>
 				{/if}
 			</div>
+			{#if parsed}
+				{@const addr = { kind: parsed.kind, pubkey: parsed.pubkey, d_tag: parsed.dTag }}
+				<!-- Action cluster, feat-ui-patterns order: provenance/pool
+				     pills → menu LAST. Refresh sits past the cluster as a
+				     fetch affordance, not a row action. -->
+				<div class="doc-actions">
+					<PoolStateBadges
+						item={app.findPoolItemByAddr(addr)}
+						onpillctx={() => app.pillActionByAddr(addr, 'context')}
+						onpillcmp={() => app.pillActionByAddr(addr, 'compose')}
+						onpilldrop={() => app.pillActionByAddr(addr, 'drop')}
+						signed={true}
+						relays={docRelays}
+						orientation="horizontal"
+					/>
+					<button
+						class="pill pill--menu"
+						onclick={() => app.openAddressableInModal(addr)}
+						title="Open this document's event menu (m)"
+					>menu</button>
+				</div>
+			{/if}
 			<button
 				class="doc-refresh"
 				class:spinning={refreshing}
@@ -280,7 +355,7 @@
 				</button>
 				{#if commentsOpen}
 					{#if threads.length > 0}
-						<CommentThread nodes={threads} focusedEventId={null} />
+						<CommentThread nodes={threads} focusedEventId={focusCommentId} />
 					{:else}
 						<p class="doc-comments-empty">No comments yet.</p>
 					{/if}
@@ -310,6 +385,19 @@
 	}
 	.doc-status--error {
 		color: var(--danger);
+	}
+	.doc-loading-status {
+		margin-top: 6px;
+		font-family: var(--font-mono);
+		font-size: var(--t-2xs);
+	}
+
+	.doc-actions {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		flex-shrink: 0;
+		padding-top: 2px;
 	}
 
 	.doc-bar {

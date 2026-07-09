@@ -4,6 +4,7 @@
 	import { getActiveStore } from '../buffer-store.svelte';
 	import type { Buffer } from '../types';
 	import CommentThread from '$lib/components/CommentThread.svelte';
+	import PoolStateBadges from '$lib/components/PoolStateBadges.svelte';
 	import { countThread, flattenThread, type ThreadNode } from '$lib/discussions/thread';
 	import { prefetchAuthors } from '$lib/discussions/authors.svelte';
 
@@ -18,6 +19,7 @@
 		created_at: number;
 		content: string;
 		tags: string[][];
+		relays?: string[];
 	};
 
 	type ParentRef =
@@ -111,6 +113,10 @@
 	);
 	const isComment = $derived(event?.kind === 1111);
 	const isHighlight = $derived(event?.kind === 9802);
+	// Pool state for the header action cluster. Comments/highlights aren't
+	// addressable, so the pool keys by event id — the same path
+	// EventViewModal's pool row uses (findPoolItem/togglePoolMembership).
+	const poolItem = $derived(event ? app.findPoolItem(event) : null);
 
 	async function load() {
 		if (!eventId) {
@@ -198,7 +204,14 @@
 		openInReader(ref);
 	}
 
+	// The root/source view is the canonical place to read a thread: it
+	// shows the full content with the whole thread underneath, so ref
+	// clicks carry `?focus_comment=<this comment>` and the target scrolls
+	// to where the user came from. 30040 publications keep the reader;
+	// every other addressable (article/wiki/spec) opens the doc view —
+	// one chrome per document, regardless of entry point.
 	function openInReader(ref: ParentRef) {
+		const marker = event ? `?focus_comment=${event.id}` : '';
 		if (ref.type === 'a') {
 			// kind:pubkey:d_tag
 			const parts = ref.value.split(':');
@@ -210,25 +223,19 @@
 				store.openBuffer({
 					className: 'work',
 					buffer: {
-						id: `reader:30040:${pubkey}:${d_tag}`,
+						id: `reader:30040:${pubkey}:${d_tag}${marker}`,
 						kind: 'reader',
 						label: 'reader',
 						kicker: d_tag
 					}
 				});
 			} else {
-				// Non-publication addressable: open as event reader of the
-				// matching addressable note. The reader buffer's parser
-				// understands the publication form; for arbitrary kinds
-				// we still go through that route — the reader will fall
-				// back to "no publication" and show the addressable as a
-				// standalone if needed.
 				store.openBuffer({
 					className: 'work',
 					buffer: {
-						id: `reader:${kind}:${pubkey}:${d_tag}`,
-						kind: 'reader',
-						label: 'reader',
+						id: `doc:${kind}:${pubkey}:${d_tag}${marker}`,
+						kind: 'doc',
+						label: 'doc',
 						kicker: d_tag.slice(0, 16)
 					}
 				});
@@ -261,15 +268,14 @@
 			const kind = parseInt(parts[0], 10);
 			const pubkey = parts[1];
 			const d_tag = parts.slice(2).join(':');
-			const baseId = kind === 30040
-				? `reader:30040:${pubkey}:${d_tag}`
-				: `reader:${kind}:${pubkey}:${d_tag}`;
+			// 30040 → reader; other addressables → the canonical doc view.
+			const isPub = kind === 30040;
 			store.openBuffer({
 				className: 'work',
 				buffer: {
-					id: `${baseId}?highlight=${event.id}`,
-					kind: 'reader',
-					label: 'reader',
+					id: `${isPub ? 'reader' : 'doc'}:${kind}:${pubkey}:${d_tag}?highlight=${event.id}`,
+					kind: isPub ? 'reader' : 'doc',
+					label: isPub ? 'reader' : 'doc',
 					kicker: 'highlighted'
 				}
 			});
@@ -428,6 +434,25 @@
 			<span class="dv-meta">
 				by <code>{short(event.pubkey, 12)}</code> · {fmtTime(event.created_at)}
 			</span>
+			<!-- Standard action cluster (comments just have no title):
+			     provenance/pool pills, then menu LAST — feat-ui-patterns
+			     row order, same as feed/reader/doc views. -->
+			<div class="dv-actions">
+				<PoolStateBadges
+					item={poolItem}
+					onpillctx={() => event && app.togglePoolMembership(event, 'context')}
+					onpillcmp={() => event && app.togglePoolMembership(event, 'compose')}
+					onpilldrop={poolItem ? () => app.dropPoolItem(poolItem.id) : undefined}
+					signed={true}
+					relays={event.relays ?? []}
+					orientation="horizontal"
+				/>
+				<button
+					class="pill pill--menu"
+					onclick={() => event && app.getEventForModal(event.id)}
+					title="Open this event's menu (m)"
+				>menu</button>
+			</div>
 		</div>
 
 		{#if refs.root || refs.parent}
@@ -552,6 +577,13 @@
 		margin-top: 6px;
 		font-family: var(--font-mono);
 		font-size: var(--t-xs);
+	}
+
+	.dv-actions {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		margin-left: auto;
 	}
 
 	.dv-header {

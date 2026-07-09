@@ -1190,7 +1190,7 @@
 				resp = await api.getEvent(eventId, { policy: 'fetch_always', bypassOffline: true });
 			}
 			const ev = resp.event as
-				| { kind?: number; pubkey?: string; tags?: string[][]; content?: string; created_at?: number }
+				| { kind?: number; pubkey?: string; tags?: string[][]; content?: string; created_at?: number; relays?: string[] }
 				| null;
 			if (!ev) {
 				error = 'Event not found locally or on your relays.';
@@ -1212,7 +1212,9 @@
 				author_pubkey: ev.pubkey ?? '',
 				version: null,
 				created_at: ev.created_at ?? 0,
-				index: ev
+				index: ev,
+				relays: ev.relays ?? [],
+				signed: true
 			};
 			pristineSections = [
 				{
@@ -1220,7 +1222,8 @@
 					title: titleTag,
 					content: ev.content ?? '',
 					position: 0,
-					status: 'loaded' as const
+					status: 'loaded' as const,
+					relays: ev.relays ?? []
 				}
 			];
 			viewMode = 'paginated';
@@ -1250,7 +1253,7 @@
 				});
 			}
 			const ev = resp.event as
-				| { id?: string; kind?: number; pubkey?: string; tags?: string[][]; content?: string; created_at?: number }
+				| { id?: string; kind?: number; pubkey?: string; tags?: string[][]; content?: string; created_at?: number; relays?: string[] }
 				| null;
 			if (!ev) {
 				error = `${kind === 30023 ? 'Article' : kind === 30818 ? 'Wiki' : 'Addressable event'} not found locally or on your relays.`;
@@ -1269,7 +1272,9 @@
 				author_pubkey: ev.pubkey ?? pubkey,
 				version: null,
 				created_at: ev.created_at ?? 0,
-				index: ev
+				index: ev,
+				relays: ev.relays ?? [],
+				signed: true
 			};
 			pristineSections = [
 				{
@@ -1277,7 +1282,8 @@
 					title: titleTag ?? (kind === 30818 ? dTag : null),
 					content: ev.content ?? '',
 					position: 0,
-					status: 'loaded' as const
+					status: 'loaded' as const,
+					relays: ev.relays ?? []
 				}
 			];
 			viewMode = 'paginated';
@@ -2024,10 +2030,15 @@
 				onclose={() => (graphOpen = false)}
 			/>
 		{/if}
-		{#if publication.title}
+		<!-- Header row renders even for untitled events: the pill cluster
+		     (provenance / context / compose) is chrome every view carries,
+		     title or not — see feat-ui-patterns "row action-cluster order". -->
+		{#if publication}
 			{@const pubAddr = publication.addr}
 			<div class="title">
-				<span class="title__text">{publication.title}</span>
+				{#if publication.title}
+					<span class="title__text">{publication.title}</span>
+				{/if}
 				{#if pubAddr.kind === 30040}
 					<button
 						class="title-fetch"
