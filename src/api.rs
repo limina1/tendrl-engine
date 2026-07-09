@@ -63,12 +63,54 @@ pub async fn query_handler(
     Ok(Json(response))
 }
 
+/// Optional query for the single-event handler — mirrors
+/// `AddressableQuery`: `policy` picks the fetch policy (default
+/// local-first), `confirm=true` marks the request user-initiated so it
+/// goes through the Confirm-mode intent/approval flow instead of the
+/// silent local-only downgrade.
+#[derive(Debug, Deserialize, Default)]
+pub struct EventQuery {
+    pub policy: Option<String>,
+    pub confirm: Option<bool>,
+}
+
+/// A single-event fetch is a user-initiated operation when
+/// `confirm=true` — gate it exactly like `discussions_list_handler`:
+/// in Auto mode `begin_fetch_operation` returns at once; in Confirm
+/// mode it blocks for the modal; declined → local-only read. Returns
+/// the (possibly downgraded) policy, the open operation, and whether
+/// consent stands.
+async fn begin_single_fetch_gate(
+    engine: &AppState,
+    confirm: bool,
+    policy: FetchPolicy,
+    label: String,
+    steps: Vec<String>,
+) -> (FetchPolicy, Option<crate::network::FetchOperation>, bool) {
+    if !confirm {
+        return (policy, None, false);
+    }
+    match engine
+        .begin_fetch_operation(
+            crate::network::FetchPattern::Event,
+            label,
+            steps,
+            engine.relay_config().all_urls(),
+        )
+        .await
+    {
+        Ok(op) => (policy, Some(op), true),
+        Err(_) => (FetchPolicy::LocalOnly, None, false),
+    }
+}
+
 /// GET /api/v1/events/:id
 ///
 /// Get a single event by its ID
 pub async fn get_event_handler(
     State(engine): State<AppState>,
     Path(event_id): Path<String>,
+    axum::extract::Query(query): axum::extract::Query<EventQuery>,
 ) -> Result<impl IntoResponse, EngineError> {
     debug!("Get event request: {}", event_id);
 
@@ -79,7 +121,26 @@ pub async fn get_event_handler(
         ));
     }
 
-    let event = engine.get_by_id(&event_id, FetchPolicy::LocalFirst).await?;
+    let policy = match &query.policy {
+        Some(p) => p.parse()?,
+        None => FetchPolicy::LocalFirst,
+    };
+    let (policy, op, mode_confirm) = begin_single_fetch_gate(
+        &engine,
+        query.confirm.unwrap_or(false),
+        policy,
+        format!("Fetch event {}…", &event_id[..8]),
+        vec![format!("Query the relays for event id {event_id}")],
+    )
+    .await;
+    let chosen: Option<Vec<String>> = op.as_ref().map(|o| o.relays().to_vec());
+
+    let event = engine
+        .get_by_id_with_options(&event_id, policy, chosen.as_deref(), mode_confirm)
+        .await?;
+    if let Some(op) = op {
+        op.complete(event.is_some() as usize);
+    }
 
     match event {
         Some(e) => Ok((StatusCode::OK, Json(json!({ "event": e })))),
@@ -104,6 +165,7 @@ pub struct AddressablePath {
 #[derive(Debug, Deserialize, Default)]
 pub struct AddressableQuery {
     pub policy: Option<String>,
+    pub confirm: Option<bool>,
 }
 
 /// GET /api/v1/addressable/:kind/:pubkey/:d_tag
@@ -130,10 +192,34 @@ pub async fn get_addressable_handler(
         Some(p) => p.parse()?,
         None => FetchPolicy::LocalFirst,
     };
+    let (policy, op, mode_confirm) = begin_single_fetch_gate(
+        &engine,
+        query.confirm.unwrap_or(false),
+        policy,
+        format!("Fetch kind {} by address", params.kind),
+        vec![format!(
+            "Query the relays for {}:{}…:{}",
+            params.kind,
+            &params.pubkey[..8],
+            params.d_tag
+        )],
+    )
+    .await;
+    let chosen: Option<Vec<String>> = op.as_ref().map(|o| o.relays().to_vec());
 
     let event = engine
-        .get_addressable(params.kind, &params.pubkey, &params.d_tag, policy)
+        .get_addressable_with_options(
+            params.kind,
+            &params.pubkey,
+            &params.d_tag,
+            policy,
+            chosen.as_deref(),
+            mode_confirm,
+        )
         .await?;
+    if let Some(op) = op {
+        op.complete(event.is_some() as usize);
+    }
 
     match event {
         Some(e) => Ok((StatusCode::OK, Json(json!({ "event": e })))),
