@@ -44,12 +44,19 @@
 	let paramRows = $state<{ name: string; prompt: string }[]>([]);
 	// `in` chaining: apply this spell to a previous spell's results.
 	let inputId = $state('');
+	let inputRelays = $state(''); // "find the spell on these relays"
 	let projRoots = $state(false); // $in.tag.E + $in.tag.e:root → ids
 	let projRefs = $state(false); // $in.tag.e → ids
 	let projIds = $state(false); // $in.ids → ids
 	let projAuthors = $state(false); // $in.pubkeys → authors
 
 	const HEX64 = /^[0-9a-f]{64}$/i;
+	// Loose client gate — the engine does the real decode. An nevent's
+	// relay hints unpack server-side into "find the spell on these relays".
+	const NIP19_REF = /^(nostr:)?(nevent1|note1)[023456789acdefghjklmnpqrstuvwxyz]+$/i;
+	function isSpellRef(s: string): boolean {
+		return HEX64.test(s) || NIP19_REF.test(s);
+	}
 
 	let name = $state('');
 	let description = $state('');
@@ -108,7 +115,7 @@
 		for (const line of authorsText.split(/\s+/).map((s) => s.trim()).filter(Boolean)) {
 			authors.push(line);
 		}
-		const chained = HEX64.test(inputId.trim());
+		const chained = isSpellRef(inputId.trim());
 		const ids: string[] = [];
 		if (chained) {
 			if (projRoots) ids.push('$in.tag.E', '$in.tag.e:root');
@@ -120,7 +127,10 @@
 			...shared,
 			query: parts.join(' '),
 			authors,
-			input: chained ? inputId.trim().toLowerCase() : undefined,
+			input: chained ? inputId.trim() : undefined,
+			input_relays: chained
+				? inputRelays.split(',').map((s) => s.trim()).filter(Boolean)
+				: undefined,
 			ids: ids.length ? ids : undefined,
 			since: timeWindow === 'any' ? undefined : timeWindow,
 			cmd: countMode ? 'COUNT' : undefined
@@ -142,15 +152,15 @@
 		void pipelineMode; void countMode; void kinds; void authorMe; void authorContacts;
 		void authorsText; void searchText; void timeWindow; void limitText; void relaysText;
 		void name; void description; void topics;
-		void inputId; void projRoots; void projRefs; void projIds; void projAuthors;
+		void inputId; void inputRelays; void projRoots; void projRefs; void projIds; void projAuthors;
 		void tagRows.map((r) => r.name + r.value).join();
 		void stageRows.map((r) => r.id + r.combinator).join();
 		void paramRows.map((p) => p.name + p.prompt).join();
 		const t = setTimeout(() => {
 			const chainId = inputId.trim();
-			if (!pipelineMode && chainId && !HEX64.test(chainId)) {
+			if (!pipelineMode && chainId && !isSpellRef(chainId)) {
 				preview = null;
-				composeError = 'input spell id must be a full 64-hex event id';
+				composeError = 'enter a 64-hex event id, note1…, or nevent1…';
 				return;
 			}
 			const req = composeRequest();
@@ -244,7 +254,7 @@
 					{#each stageRows as row, i (i)}
 						<div class="sb-row">
 							<span class="sb-row-label">{i + 1}.</span>
-							<input class="sb-stage-id" bind:value={row.id} placeholder="spell event id (64-hex)" />
+							<input class="sb-stage-id" bind:value={row.id} placeholder="spell event id or nevent" />
 							{#if i === 0}
 								<span class="sb-row-note">source</span>
 							{:else}
@@ -289,8 +299,14 @@
 					<input
 						class="sb-stage-id"
 						bind:value={inputId}
-						placeholder="input spell event id (64-hex, optional)"
+						placeholder="input spell — event id or nevent (relay hints unpack), optional"
 					/>
+					{#if inputId.trim()}
+						<input
+							bind:value={inputRelays}
+							placeholder="find the spell on these relays — comma,separated (optional)"
+						/>
+					{/if}
 					{#if inputId.trim()}
 						<div class="sb-chips">
 							<button

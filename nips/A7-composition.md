@@ -66,11 +66,13 @@ other.
 ## `in` Chaining (minimal form)
 
 ```
-["in", <spell-event-id>]
+["in", <spell-event-id>, <relay-url>…]
 ```
 
-A REQ or COUNT spell MAY reference another spell as its **input**. To
-execute a chained spell:
+A REQ or COUNT spell MAY reference another spell as its **input**.
+Trailing values are optional relay hints: where to find the input spell
+when it isn't already available (clients composing from an `nevent`
+SHOULD carry its relay hints here). To execute a chained spell:
 
 1. Execute the input spell in full (it may itself be chained, a closure,
    or a pipeline). Arguments supplied by the caller flow down the chain.
@@ -94,6 +96,9 @@ Constraints:
   stage.
 - Implementations MUST bound chain depth (tendrl: 4 hops) to fail
   legibly on cycles.
+- Definition resolution: check local storage first; if absent, fetch by
+  id from the reference's relay hints, falling back to the client's
+  relay set when there are none.
 - Executors SHOULD keep the inverse mapping (referent ← input events
   that pointed at it) as provenance — presentation data, not wire format.
 
@@ -106,9 +111,14 @@ time, so one prompt binds the whole chain.
 A pipeline is a kind 777 with `["cmd", "PIPE"]` and ordered stage tags:
 
 ```
-["stage", <spell-event-id>]                  first stage: the source
-["stage", <spell-event-id>, <combinator>]    later stages
+["stage", <spell-event-id>]                        first stage: the source
+["stage", <spell-event-id>, <combinator>]          later stages
+["stage", <spell-event-id>, <combinator|"">, <relay-url>…]
 ```
+
+Values past the combinator are relay hints for finding the stage spell;
+a source stage carrying hints uses `""` as a combinator placeholder to
+keep positions stable.
 
 Combinators (deliberately tiny — every combinator is something all
 clients must implement or degrade around):

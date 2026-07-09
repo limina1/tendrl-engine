@@ -63,9 +63,17 @@ older" re-runs the spell with =until = oldest_source - 1= and appends;
 and the ignore list is honored by list/book/execute (plus an =ignore=
 affordance on spell cards and result rows) — a mis-specced spell event
 drops out everywhere and stays gone.
+Spell references travel with their relays (2026-07-09): the builder's
+chain/stage fields accept =nevent= (and =note1=/hex; =nostr:= prefix
+ok) — an nevent's relay hints unpack onto the =in=/=stage= tags
+(=["in", id, relay…]=, stages use a ="" = combinator placeholder), plus
+an explicit "find the spell on these relays" entry. Definition loads
+are local-first, then hint-relays (=load_spell_definition= — chains and
+stages resolve even off the engine's relay set).
 Unbuilt: a standalone spell-feed buffer; compound-query compilation;
 multi-book write UI; a "pick from my spells" selector for the
-chain/stage id fields.
+chain/stage id fields; relay-hint-targeted *spellbook entry* fetch
+(the =e= entries' hints are parsed but the batch fetch ignores them).
 
 * What it means
 

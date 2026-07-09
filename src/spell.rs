@@ -261,6 +261,9 @@ pub struct SpellStage {
     pub spell_id: String,
     /// Absent on the first (source) stage; later stages default to `map`.
     pub combinator: Option<Combinator>,
+    /// Relay hints for finding the stage spell (`["stage", <id>,
+    /// <combinator|"">, <relay…>]`) — e.g. unpacked from an nevent.
+    pub relays: Vec<String>,
 }
 
 /// One filter condition on event tags: `["tag", <letter>, <values…>]`.
@@ -297,10 +300,12 @@ pub struct Spell {
     pub topics: Vec<String>,
     /// `PIPE` stages, in order.
     pub stages: Vec<SpellStage>,
-    /// `in` chaining (`["in", <spell-event-id>]`): the input spell whose
-    /// results feed this spell's `$in.*` projections — the minimal
-    /// composition form, a two-stage map pipeline in one event.
+    /// `in` chaining (`["in", <spell-event-id>, <relay…>]`): the input
+    /// spell whose results feed this spell's `$in.*` projections — the
+    /// minimal composition form, a two-stage map pipeline in one event.
     pub input: Option<String>,
+    /// Relay hints for finding the input spell (trailing `in` tag values).
+    pub input_relays: Vec<String>,
     /// Closure bindings (`["arg", name, value]`) — defaults merged under
     /// caller-supplied args.
     pub args: BTreeMap<String, String>,
@@ -353,6 +358,7 @@ impl Spell {
             topics: Vec::new(),
             stages: Vec::new(),
             input: None,
+            input_relays: Vec::new(),
             args: BTreeMap::new(),
             parent: None,
         };
@@ -439,13 +445,16 @@ impl Spell {
                     let spell_id = values.first().ok_or_else(|| {
                         EngineError::InvalidFilter("stage tag has no spell id".into())
                     })?;
-                    let combinator = match values.get(1) {
+                    // An empty combinator slot ("") is a placeholder so the
+                    // source stage can still carry relay hints.
+                    let combinator = match values.get(1).map(String::as_str) {
+                        Some("") | None => None,
                         Some(c) => Some(Combinator::parse(c)?),
-                        None => None,
                     };
                     spell.stages.push(SpellStage {
                         spell_id: spell_id.clone(),
                         combinator,
+                        relays: values.get(2..).unwrap_or_default().to_vec(),
                     });
                 }
                 "in" => {
@@ -453,6 +462,7 @@ impl Spell {
                         EngineError::InvalidFilter("in tag has no spell id".into())
                     })?;
                     spell.input = Some(id.clone());
+                    spell.input_relays = values.get(1..).unwrap_or_default().to_vec();
                 }
                 "arg" => {
                     let (Some(name), Some(value)) = (values.first(), values.get(1)) else {
@@ -648,10 +658,15 @@ impl Spell {
             );
         }
         if let Some(input) = &self.input {
-            push(
-                format!("in:{input}"),
-                Some("chained — runs that spell first; $in.* reads its results".into()),
-            );
+            let annotation = if self.input_relays.is_empty() {
+                "chained — runs that spell first; $in.* reads its results".to_string()
+            } else {
+                format!(
+                    "chained — runs that spell first (find it via {})",
+                    self.input_relays.join(", ")
+                )
+            };
+            push(format!("in:{input}"), Some(annotation));
         }
         for k in &self.kinds {
             push(format!("k:{k}"), None);
@@ -801,6 +816,7 @@ impl Spell {
             topics: Vec::new(),
             stages: Vec::new(),
             input: None,
+            input_relays: Vec::new(),
             args: BTreeMap::new(),
             parent: None,
         };
@@ -1003,13 +1019,19 @@ impl Spell {
         }
         for stage in &self.stages {
             let mut t = vec!["stage".into(), stage.spell_id.clone()];
-            if let Some(c) = stage.combinator {
-                t.push(c.as_str().into());
+            match stage.combinator {
+                Some(c) => t.push(c.as_str().into()),
+                // Placeholder keeps relay hints at a stable position.
+                None if !stage.relays.is_empty() => t.push(String::new()),
+                None => {}
             }
+            t.extend(stage.relays.iter().cloned());
             tags.push(t);
         }
         if let Some(input) = &self.input {
-            tags.push(vec!["in".into(), input.clone()]);
+            let mut t = vec!["in".into(), input.clone()];
+            t.extend(self.input_relays.iter().cloned());
+            tags.push(t);
         }
         for (name, value) in &self.args {
             tags.push(vec!["arg".into(), name.clone(), value.clone()]);
@@ -1284,6 +1306,38 @@ fn json_tags(event: &Value) -> Vec<Vec<String>> {
         .unwrap_or_default()
 }
 
+/// Load a spell definition by id: local first, then — when the policy
+/// allows network — the reference's relay hints (falling back to the
+/// engine's relay set when there are none). Hints are what make a chain
+/// or stage resolvable when the referenced spell lives on relays the
+/// engine doesn't normally read.
+async fn load_spell_definition(
+    engine: &Engine,
+    id: &str,
+    hints: &[String],
+    policy: FetchPolicy,
+    mode_confirm: bool,
+) -> Result<Option<Value>> {
+    if hints.is_empty() {
+        return engine.get_by_id(id, policy).await;
+    }
+    if let Some(event) = engine.get_by_id(id, FetchPolicy::LocalOnly).await? {
+        return Ok(Some(event));
+    }
+    if policy == FetchPolicy::LocalOnly {
+        return Ok(None);
+    }
+    let response = engine
+        .get_events_with_options(
+            vec![json!({"ids": [id], "limit": 1})],
+            policy,
+            Some(hints),
+            mode_confirm,
+        )
+        .await?;
+    Ok(response.events.into_iter().next())
+}
+
 fn oldest_created_at(events: &[Value]) -> Option<u64> {
     events
         .iter()
@@ -1485,13 +1539,17 @@ impl<'a> SpellEngine<'a> {
             )));
         }
         let input_id = spell.input.as_deref().expect("caller checked input");
-        let input_event = self
-            .engine
-            .get_by_id(input_id, Self::definition_policy(policy))
-            .await?
-            .ok_or_else(|| {
-                EngineError::NotFound(format!("input spell {input_id} not found"))
-            })?;
+        let input_event = load_spell_definition(
+            self.engine,
+            input_id,
+            &spell.input_relays,
+            Self::definition_policy(policy),
+            mode_confirm,
+        )
+        .await?
+        .ok_or_else(|| {
+            EngineError::NotFound(format!("input spell {input_id} not found"))
+        })?;
         // `until` pages the chain's *source* — it rides down to the
         // innermost spell; this spell's own filter queries referents,
         // whose timestamps don't follow the source's pagination.
@@ -1610,16 +1668,20 @@ impl<'a> SpellEngine<'a> {
         // Load and parse every stage spell up front.
         let mut stages: Vec<(Spell, Option<Combinator>)> = Vec::new();
         for stage in &pipe.stages {
-            let event = self
-                .engine
-                .get_by_id(&stage.spell_id, Self::definition_policy(policy))
-                .await?
-                .ok_or_else(|| {
-                    EngineError::NotFound(format!(
-                        "stage spell {} not found",
-                        stage.spell_id
-                    ))
-                })?;
+            let event = load_spell_definition(
+                self.engine,
+                &stage.spell_id,
+                &stage.relays,
+                Self::definition_policy(policy),
+                mode_confirm,
+            )
+            .await?
+            .ok_or_else(|| {
+                EngineError::NotFound(format!(
+                    "stage spell {} not found",
+                    stage.spell_id
+                ))
+            })?;
             let spell = Spell::from_event(&event)?;
             if spell.cmd == SpellCmd::Pipe {
                 return Err(EngineError::InvalidFilter(format!(
@@ -1983,7 +2045,8 @@ async fn stage_inspections(
             query_string: None,
             error: None,
         };
-        match engine.get_by_id(&stage.spell_id, policy).await {
+        match load_spell_definition(engine, &stage.spell_id, &stage.relays, policy, false).await
+        {
             Ok(Some(event)) => match Spell::from_event(&event) {
                 Ok(s) => {
                     si.name = s.name.clone();
@@ -2007,11 +2070,12 @@ async fn stage_inspections(
 async fn chain_inspections(
     engine: &Engine,
     first_input: &str,
+    first_hints: &[String],
     policy: FetchPolicy,
 ) -> Vec<StageInspection> {
     let mut out: Vec<StageInspection> = Vec::new();
-    let mut next = Some(first_input.to_string());
-    while let Some(id) = next.take() {
+    let mut next = Some((first_input.to_string(), first_hints.to_vec()));
+    while let Some((id, hints)) = next.take() {
         let mut si = StageInspection {
             spell_id: id.clone(),
             combinator: None,
@@ -2025,13 +2089,13 @@ async fn chain_inspections(
             out.push(si);
             break;
         }
-        match engine.get_by_id(&id, policy).await {
+        match load_spell_definition(engine, &id, &hints, policy, false).await {
             Ok(Some(event)) => match Spell::from_event(&event) {
                 Ok(s) => {
                     si.name = s.name.clone();
                     si.clauses = s.to_clauses();
                     si.query_string = Some(s.query_string());
-                    next = s.input.clone();
+                    next = s.input.clone().map(|i| (i, s.input_relays.clone()));
                 }
                 Err(e) => si.error = Some(e.to_string()),
             },
@@ -2107,7 +2171,7 @@ pub async fn inspect_handler(
     let stages = if spell.cmd == SpellCmd::Pipe && !spell.stages.is_empty() {
         Some(stage_inspections(&engine, &spell.stages, policy).await)
     } else if let Some(input) = &spell.input {
-        Some(chain_inspections(&engine, input, policy).await)
+        Some(chain_inspections(&engine, input, &spell.input_relays, policy).await)
     } else {
         None
     };
@@ -2620,10 +2684,15 @@ pub struct SpellComposeRequest {
     /// `query` must be empty.
     #[serde(default)]
     pub stages: Vec<ComposeStageRequest>,
-    /// `in` chaining: event id of the input spell whose results this
-    /// spell applies to (the builder's "apply to a previous spell").
-    /// Exclusive with `stages`.
+    /// `in` chaining: the input spell whose results this spell applies to
+    /// (the builder's "apply to a previous spell"). Accepts a 64-hex event
+    /// id, `note1…`, or `nevent1…` — an nevent's relay hints unpack into
+    /// "find the spell on these relays". Exclusive with `stages`.
     pub input: Option<String>,
+    /// Explicit relay hints for finding the input spell, merged with any
+    /// unpacked from an nevent. Bare domains normalize to `wss://`.
+    #[serde(default)]
+    pub input_relays: Vec<String>,
     /// Raw id-filter values: 64-hex event ids or `$in.*` projections
     /// (`$in.ids`, `$in.tag.e:root`, …) — the builder's projection chips.
     /// `$in.*` values require `input`.
@@ -2642,6 +2711,39 @@ pub struct SpellComposeResponse {
     pub warnings: Vec<String>,
     /// Pipeline preview: each stage's clause block (local-only lookup).
     pub stages: Option<Vec<StageInspection>>,
+}
+
+/// Parse a spell reference as typed in the composer: a 64-hex event id,
+/// a `note1…`, or an `nevent1…` (optionally `nostr:`-prefixed). An
+/// nevent's relay hints unpack into "find the spell on these relays"
+/// (normalized; bare domains become `wss://`).
+fn parse_spell_ref(raw: &str) -> Result<(String, Vec<String>)> {
+    let s = crate::nip19::strip_nostr_prefix(raw);
+    if s.len() == 64 && s.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Ok((s.to_lowercase(), Vec::new()));
+    }
+    if s.starts_with("nevent1") || s.starts_with("note1") {
+        return match crate::nip19::decode(s) {
+            Ok(crate::nip19::Decoded::Nevent { event_id, relays, .. }) => {
+                let relays = relays
+                    .iter()
+                    .map(|r| crate::relay_url::normalize_relay_url(r))
+                    .filter(|r| !r.is_empty())
+                    .collect();
+                Ok((event_id, relays))
+            }
+            Ok(crate::nip19::Decoded::Note { event_id }) => Ok((event_id, Vec::new())),
+            Ok(_) => Err(EngineError::BadRequest(format!(
+                "{raw:?} decodes to something other than an event reference"
+            ))),
+            Err(e) => Err(EngineError::BadRequest(format!(
+                "bad spell reference {raw:?}: {e}"
+            ))),
+        };
+    }
+    Err(EngineError::BadRequest(format!(
+        "bad spell reference {raw:?} (use a 64-hex event id, note1…, or nevent1…)"
+    )))
 }
 
 /// POST /api/v1/spell/compose — compile a search string into an unsigned
@@ -2668,21 +2770,16 @@ pub async fn compose_handler(
             ));
         }
         let mut stages = Vec::with_capacity(req.stages.len());
-        for (i, s) in req.stages.iter().enumerate() {
-            let id = s.spell_id.trim();
-            if id.len() != 64 || !id.chars().all(|c| c.is_ascii_hexdigit()) {
-                return Err(EngineError::BadRequest(format!(
-                    "stage {} spell id must be a 64-hex event id",
-                    i + 1
-                )));
-            }
+        for s in &req.stages {
+            let (spell_id, relays) = parse_spell_ref(s.spell_id.trim())?;
             let combinator = match &s.combinator {
                 Some(c) => Some(Combinator::parse(c)?),
                 None => None,
             };
             stages.push(SpellStage {
-                spell_id: id.to_lowercase(),
+                spell_id,
                 combinator,
+                relays,
             });
         }
         let spell = Spell {
@@ -2704,6 +2801,7 @@ pub async fn compose_handler(
             topics: Vec::new(),
             stages,
             input: None,
+            input_relays: Vec::new(),
             args: BTreeMap::new(),
             parent: None,
         };
@@ -2731,6 +2829,7 @@ pub async fn compose_handler(
             topics: Vec::new(),
             stages: Vec::new(),
             input: None,
+            input_relays: Vec::new(),
             args: BTreeMap::new(),
             parent: None,
         };
@@ -2787,15 +2886,23 @@ pub async fn compose_handler(
     };
 
     // `in` chaining: the builder names an input spell; $in.* projections
-    // in the ids/authors overrides consume its results.
+    // in the ids/authors overrides consume its results. An nevent's relay
+    // hints — and any explicit "find spell on these relays" entries —
+    // ride along on the `in` tag so the chain resolves off-relay-set.
     if let Some(input) = &req.input {
-        let id = input.trim();
-        if id.len() != 64 || !id.chars().all(|c| c.is_ascii_hexdigit()) {
-            return Err(EngineError::BadRequest(
-                "input spell id must be a 64-hex event id".into(),
-            ));
+        let (id, mut relays) = parse_spell_ref(input.trim())?;
+        for r in req
+            .input_relays
+            .iter()
+            .map(|r| crate::relay_url::normalize_relay_url(r))
+            .filter(|r| !r.is_empty())
+        {
+            if !relays.contains(&r) {
+                relays.push(r);
+            }
         }
-        spell.input = Some(id.to_lowercase());
+        spell.input = Some(id);
+        spell.input_relays = relays;
     }
 
     // Builder overrides: raw author values, id projections, relative time
@@ -2916,7 +3023,7 @@ pub async fn compose_handler(
     let stages = if spell.cmd == SpellCmd::Pipe {
         Some(stage_inspections(&engine, &spell.stages, FetchPolicy::LocalOnly).await)
     } else if let Some(input) = &spell.input {
-        Some(chain_inspections(&engine, input, FetchPolicy::LocalOnly).await)
+        Some(chain_inspections(&engine, input, &spell.input_relays, FetchPolicy::LocalOnly).await)
     } else {
         None
     };
@@ -3225,6 +3332,59 @@ mod tests {
         );
         let partial = Spell::from_event(&partial).unwrap();
         assert!(partial.is_partial());
+    }
+
+    #[test]
+    fn spell_refs_accept_nevent_and_carry_relay_hints() {
+        // `in` tag relay hints roundtrip.
+        let chained = spell_event(
+            "",
+            json!([
+                ["cmd", "REQ"],
+                ["in", "44".repeat(32), "wss://relay.example.com"],
+                ["k", "1"],
+                ["ids", "$in.tag.E"]
+            ]),
+        );
+        let spell = Spell::from_event(&chained).unwrap();
+        assert_eq!(spell.input_relays, vec!["wss://relay.example.com"]);
+        let reparsed = Spell::from_tags(None, "", &spell.to_tags()).unwrap();
+        assert_eq!(reparsed.input_relays, spell.input_relays);
+
+        // A source stage carries hints behind the "" combinator placeholder.
+        let pipe = spell_event(
+            "",
+            json!([
+                ["cmd", "PIPE"],
+                ["stage", "11".repeat(32), "", "wss://relay.example.com"],
+                ["stage", "22".repeat(32), "map", "wss://other.example.com"]
+            ]),
+        );
+        let pipe = Spell::from_event(&pipe).unwrap();
+        assert_eq!(pipe.stages[0].combinator, None);
+        assert_eq!(pipe.stages[0].relays, vec!["wss://relay.example.com"]);
+        assert_eq!(pipe.stages[1].combinator, Some(Combinator::Map));
+        assert_eq!(pipe.stages[1].relays, vec!["wss://other.example.com"]);
+        let reparsed = Spell::from_tags(None, "", &pipe.to_tags()).unwrap();
+        assert_eq!(reparsed.stages, pipe.stages);
+
+        // An nevent unpacks to id + relay hints; hex and note1 stay bare.
+        let nevent = crate::nip19::encode_nevent(
+            &"44".repeat(32),
+            &["relay.example.com".to_string()],
+            None,
+            Some(777),
+        )
+        .unwrap();
+        let (id, relays) = parse_spell_ref(&format!("nostr:{nevent}")).unwrap();
+        assert_eq!(id, "44".repeat(32));
+        assert_eq!(relays, vec!["wss://relay.example.com"]);
+        let (id, relays) = parse_spell_ref(&"AB".repeat(32)).unwrap();
+        assert_eq!(id, "ab".repeat(32));
+        assert!(relays.is_empty());
+
+        assert!(parse_spell_ref("npub1nothanks").is_err());
+        assert!(parse_spell_ref("not-a-ref").is_err());
     }
 
     #[test]

@@ -631,9 +631,11 @@ export interface SpellInfo {
 	params: SpellParamInfo[];
 	kinds: number[];
 	topics: string[];
-	stages: { spell_id: string; combinator: 'map' | 'join' | null }[];
+	stages: { spell_id: string; combinator: 'map' | 'join' | null; relays: string[] }[];
 	/** `in` chaining: input spell whose results feed this spell's $in.*. */
 	input: string | null;
+	/** Relay hints for finding the input spell (from an nevent or explicit). */
+	input_relays: string[];
 	relays: string[];
 	limit: number | null;
 	since: string | null;
@@ -729,10 +731,14 @@ export function composeSpell(req: {
 	until?: string;
 	/** Raw author values: $me, $contacts, or 64-hex pubkeys. */
 	authors?: string[];
-	/** Pipeline stages — composes a PIPE spell (query must be empty). */
+	/** Pipeline stages — composes a PIPE spell (query must be empty).
+	 * spell_id accepts a 64-hex id, note1…, or nevent1… (relay hints unpack). */
 	stages?: { spell_id: string; combinator?: 'map' | 'join' }[];
-	/** `in` chaining: input spell event id (exclusive with stages). */
+	/** `in` chaining: input spell — 64-hex id, note1…, or nevent1…
+	 * (an nevent's relay hints unpack). Exclusive with stages. */
 	input?: string;
+	/** Explicit "find the input spell on these relays" hints. */
+	input_relays?: string[];
 	/** Raw id values: 64-hex ids or $in.* projections (need `input`). */
 	ids?: string[];
 }) {
