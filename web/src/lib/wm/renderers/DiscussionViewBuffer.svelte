@@ -1,5 +1,6 @@
 <script lang="ts">
 	import * as api from '$lib/api';
+	import { getAppState } from '$lib/state.svelte';
 	import { getActiveStore } from '../buffer-store.svelte';
 	import type { Buffer } from '../types';
 	import CommentThread from '$lib/components/CommentThread.svelte';
@@ -8,6 +9,7 @@
 
 	let { buffer }: { buffer: Buffer } = $props();
 	const store = getActiveStore();
+	const app = getAppState();
 
 	type NostrEvent = {
 		id: string;
@@ -319,6 +321,16 @@
 			: ''
 	);
 
+	function copyRaw(): void {
+		if (!event) return;
+		try {
+			navigator.clipboard?.writeText(JSON.stringify(event, null, 2));
+			app.pushToast('Raw event copied', 'success');
+		} catch {
+			app.pushToast("Couldn't copy raw event", 'error');
+		}
+	}
+
 	function short(s: string, n = 12): string {
 		return s.length > n ? `${s.slice(0, n)}…` : s;
 	}
@@ -413,7 +425,18 @@
 		</div>
 
 		<details class="dv-raw">
-			<summary>Raw event</summary>
+			<summary>
+				Raw event
+				<button
+					class="dv-raw-copy"
+					title="Copy raw event JSON"
+					onclick={(e) => {
+						e.preventDefault();
+						e.stopPropagation();
+						copyRaw();
+					}}>copy</button
+				>
+			</summary>
 			<pre class="dv-raw-pre">{JSON.stringify(event, null, 2)}</pre>
 		</details>
 	{/if}
@@ -607,6 +630,21 @@
 		font-size: var(--t-xs);
 		color: var(--base5);
 		margin-top: 8px;
+	}
+	.dv-raw-copy {
+		margin-left: 8px;
+		font-family: var(--font-mono);
+		font-size: calc(var(--t-xs) - 1px);
+		padding: 1px 8px;
+		border: 1px solid var(--panel-border);
+		border-radius: var(--r-sm);
+		background: transparent;
+		color: var(--base5);
+		cursor: pointer;
+	}
+	.dv-raw-copy:hover {
+		border-color: var(--id-yours);
+		color: var(--id-yours);
 	}
 	.dv-raw-pre {
 		font-family: var(--font-mono);
