@@ -42,8 +42,23 @@ makes composed spells buildable in the UI — ordered stage ids with
 map/join, declared params, per-stage clause previews. Compose endpoint
 grew matching fields (raw authors, relative since/until, cmd, stages,
 declaration-only params).
+=in= chaining (2026-07-09): the minimal composition form —
+=["in", <spell-event-id>]= on a REQ/COUNT spell names its input; the
+spell's =$in.*= projections read that spell's results, with map
+semantics (pass-through + provenance) applied. One event instead of a
+three-event pipeline. Executes recursively (a chain's input may itself
+be chained/a closure; depth-capped at 4); compose escalates the input
+spell's =param= declarations so one prompt binds the whole chain; a
+chained spell is *complete* (only =$in.*= without =in= is partial).
+Builder: filter mode grew an "Apply to a spell" field + projection
+chips (root references / referenced events / the events / their
+authors); chained cards unpack the input chain behind the same chevron
+as PIPE stages. The whole extension (=param=/=$arg=/=$in=/=in=/=PIPE=/
+closures) is now written up as a spec: [[file:../../nips/A7-composition.md][nips/A7-composition.md]],
+beside the vendored [[file:../../nips/A7.md][NIP-A7 draft]].
 Unbuilt: a standalone spell-feed buffer; compound-query compilation;
-multi-book write UI.
+multi-book write UI; a "pick from my spells" selector for the
+chain/stage id fields.
 
 * What it means
 
@@ -89,10 +104,17 @@ projection = "ids" | "pubkeys" | "tag." letter [":" marker]
 
 * Composition
 
-A pipeline is itself a kind 777 with =["cmd", "PIPE"]= and ordered
-=["stage", <spell-event-id>, <combinator>]= tags. Combinator algebra —
-deliberately tiny (every combinator is something all clients must
-implement or degrade around):
+Two forms, one semantics. The *minimal* form is =in= chaining: a
+REQ/COUNT spell carries =["in", <spell-event-id>]= and applies its own
+filter to that spell's results — "previously defined: retrieve events
+with tag X; current: of those events, pull the root references". No new
+terminology beyond the tag mirroring the =$in= namespace; the chain is
+one event.
+
+The *general* form: a pipeline is itself a kind 777 with =["cmd",
+"PIPE"]= and ordered =["stage", <spell-event-id>, <combinator>]= tags.
+Combinator algebra — deliberately tiny (every combinator is something
+all clients must implement or degrade around):
 
 - =map= — replace results with their referents. *Pass-through rule:* an
   upstream event contributing no projection values is its own referent
@@ -208,8 +230,9 @@ from the network beside the hand-picked ones.
 - Where does the label-source allowlist from
   [[file:idea-post-hoc-labeling.org][post-hoc labeling]] meet spells — an
   =$labelers= identity variable?
-- Upstream: propose =param=/=$arg.*=/=$in.*=/=PIPE= as a NIP-A7
-  extension, or incubate in tendrl first?
+- Upstream: the extension (=param=/=$arg.*=/=$in.*=/=in=/=PIPE=) is now
+  drafted as [[file:../../nips/A7-composition.md][nips/A7-composition.md]] — remaining question is when to
+  propose it upstream vs. keep incubating.
 
 * Related
 

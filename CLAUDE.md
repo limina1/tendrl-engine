@@ -200,9 +200,13 @@ sections and embeds new events on a 60-second interval when embeddings are enabl
   remain dormant — no consumer UI yet; wire them when there is one, don't build
   UI-less plumbing.
 - **`spell.rs`**: NIP-A7 kind-777 "spells" — saved queries as events — plus the
-  tendrl composition extension (design: `docs/zettel/idea-spells.org`): `param`
+  tendrl composition extension (spec: `nips/A7-composition.md`, beside the
+  vendored `nips/A7.md`; design: `docs/zettel/idea-spells.org`): `param`
   declarations bound via `$arg.*`, pipeline projections (`$in.ids/pubkeys/
-  tag.<letter>[:marker]`), `PIPE` spells whose stages reference other spells by
+  tag.<letter>[:marker]`), `in` chaining (`["in", <spell-id>]` — a REQ/COUNT
+  spell names its input spell and applies its filter to that spell's results;
+  map semantics, recursive, depth-capped at 4, input params escalate at
+  compose), `PIPE` spells whose stages reference other spells by
   id with `map` (replace with referents; pointer-less events pass through) /
   `join` (auxiliary enrichment) combinators, and closures (arg-binding `e`
   forks). Parsing/resolution pure; `SpellEngine` executes via
@@ -215,7 +219,9 @@ sections and embeds new events on a 60-second interval when embeddings are enabl
   local-until-broadcast on the coordinate. API: `POST /api/v1/spell/`
   `inspect` / `execute` / `list` / `compose` / `book` / `book/template` /
   `book/save`. Web: profile Spells tab (merged book ∪ authored list,
-  run-in-place), `777` save-as-spell affordance on the search panel.
+  run-in-place, chevron unpacks PIPE stages and `in` chains), dual wand on
+  the search panel (`+🪄` saves the typed query, `🪄` opens the form-driven
+  spell builder incl. pipeline mode and chain-to-a-spell projections).
 - **`chat.rs`**: Pure state logic for LLM chat fragments, edit mode, context
   injection, message serialization (no IO)
 - **`llm.rs`**: Async `LLMProvider` trait — `NoopProvider` (testing) and
