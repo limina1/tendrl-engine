@@ -1056,11 +1056,18 @@
 		{/if}
 
 		<section class="evm__section">
-			<button class="evm__raw-toggle" onclick={() => (rawOpen = !rawOpen)}>
-				<span class="evm__raw-arrow" class:open={rawOpen}>{rawOpen ? '▾' : '▸'}</span>
-				<span class="evm__key evm__key--head">r</span>
-				Raw JSON
-			</button>
+			<div class="evm__raw-head">
+				<button class="evm__raw-toggle" onclick={() => (rawOpen = !rawOpen)}>
+					<span class="evm__raw-arrow" class:open={rawOpen}>{rawOpen ? '▾' : '▸'}</span>
+					<span class="evm__key evm__key--head">r</span>
+					Raw JSON
+				</button>
+				<button
+					class="evm__raw-copy"
+					title="Copy raw event JSON"
+					onclick={() => copyText(JSON.stringify(event, null, 2), 'Raw JSON')}
+				>copy</button>
+			</div>
 			{#if rawOpen}
 				<pre class="evm__raw">{JSON.stringify(event, null, 2)}</pre>
 			{/if}
@@ -1594,6 +1601,12 @@
 		border-color: var(--accent, var(--id-yours));
 	}
 
+	.evm__raw-head {
+		display: flex;
+		align-items: center;
+		gap: 10px;
+	}
+
 	.evm__raw-toggle {
 		background: none;
 		border: none;
@@ -1605,6 +1618,21 @@
 		display: flex;
 		align-items: center;
 		gap: 6px;
+	}
+
+	.evm__raw-copy {
+		font-family: var(--font-mono);
+		font-size: var(--t-3xs);
+		padding: 1px 8px;
+		border: 1px solid var(--border);
+		border-radius: var(--r-sm, 4px);
+		background: transparent;
+		color: var(--fg-muted, var(--fg));
+		cursor: pointer;
+	}
+	.evm__raw-copy:hover {
+		border-color: var(--accent, var(--id-yours));
+		color: var(--accent, var(--id-yours));
 	}
 
 	.evm__raw-arrow {

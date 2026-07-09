@@ -7,6 +7,9 @@
 
 	import type { SearchResult } from '$lib/types';
 	import { getProfile, getEvent, onProfileUpdate, type Profile } from '$lib/api';
+	import { getAppState } from '$lib/state.svelte';
+
+	const app = getAppState();
 
 	let {
 		result,
@@ -130,6 +133,18 @@
 			{#if jsonLoading}
 				<span class="pr-json-loading">Loading event…</span>
 			{:else}
+				<button
+					class="pr-json-copy"
+					title="Copy raw event JSON"
+					onclick={() => {
+						try {
+							navigator.clipboard?.writeText(JSON.stringify(rawEvent, null, 2));
+							app.pushToast('Raw JSON copied', 'success');
+						} catch {
+							app.pushToast("Couldn't copy raw JSON", 'error');
+						}
+					}}>copy</button
+				>
 				<pre>{JSON.stringify(rawEvent, null, 2)}</pre>
 			{/if}
 		</div>
@@ -287,12 +302,32 @@
 	}
 
 	.pr-json {
+		position: relative;
 		margin: 8px 0 0 50px;
 		border: 1px solid var(--border);
 		border-radius: 4px;
 		background: var(--bg-surface);
 		max-height: 240px;
 		overflow: auto;
+	}
+
+	.pr-json-copy {
+		position: sticky;
+		top: 4px;
+		float: right;
+		margin: 4px;
+		font-family: var(--font-mono);
+		font-size: var(--t-3xs);
+		padding: 1px 8px;
+		border: 1px solid var(--border);
+		border-radius: 4px;
+		background: var(--bg-surface);
+		color: var(--fg-muted, var(--fg));
+		cursor: pointer;
+	}
+	.pr-json-copy:hover {
+		border-color: var(--accent, var(--id-yours));
+		color: var(--accent, var(--id-yours));
 	}
 
 	.pr-json pre {
