@@ -111,8 +111,11 @@
 				<input bind:value={description} placeholder="What this query collects (event content)" />
 			</label>
 			<label class="sc-field">
-				<span>Topics</span>
-				<input bind:value={topics} placeholder="comma,separated — categorize the spell itself" />
+				<span>Topics — label the spell itself, not a filter</span>
+				<input
+					bind:value={topics}
+					placeholder="comma,separated (to match #hashtags in events, use t: in the query)"
+				/>
 			</label>
 
 			<div class="sc-params">

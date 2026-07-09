@@ -1169,6 +1169,14 @@
 								<p class="item-preview">{entry.error}</p>
 							{/if}
 							<SpellClauseBlock clauses={entry.clauses} />
+							{#if s?.topics.length}
+								<p
+									class="spell-topics"
+									title="Topics label the spell itself (NIP-A7 top-level t) — they are not filter conditions"
+								>
+									topics: {s.topics.map((t) => `#${t}`).join(' ')}
+								</p>
+							{/if}
 							{#if s && ((s.cmd === 'PIPE' && s.stages.length) || s.input)}
 								<button
 									class="stage-toggle"
@@ -1647,6 +1655,13 @@
 	.spell-byline {
 		font-size: var(--t-2xs);
 		color: var(--fg-muted);
+	}
+	.spell-topics {
+		margin: 2px 0 0;
+		font-family: var(--font-mono);
+		font-size: var(--t-2xs);
+		color: var(--fg-muted);
+		opacity: 0.8;
 	}
 	.spell-bookmark {
 		flex-shrink: 0;

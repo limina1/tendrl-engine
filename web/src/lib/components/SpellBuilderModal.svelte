@@ -225,8 +225,11 @@
 				<input bind:value={description} placeholder="What it collects (event content)" />
 			</label>
 			<label class="sb-field">
-				<span>Topics</span>
-				<input bind:value={topics} placeholder="comma,separated discovery tags" />
+				<span>Topics — label the spell itself, not a filter</span>
+				<input
+					bind:value={topics}
+					placeholder="comma,separated (to match #hashtags in events, add a tag condition below)"
+				/>
 			</label>
 
 			{#if pipelineMode}
