@@ -49,6 +49,13 @@ if $print_only; then
   exit 0
 fi
 
+# Never stack a duplicate section: a re-run at the same version (accidental
+# double --bump, rebuild of an already-noted release) leaves the file alone.
+if grep -q "^## v${version//./\\.} " CHANGELOG.md 2>/dev/null; then
+  echo "==> CHANGELOG.md already has a v${version} section — leaving it as is."
+  exit 0
+fi
+
 # Prepend the new section so the newest release sits at the top of the file.
 touch CHANGELOG.md
 { printf '%s\n' "$entry"; cat CHANGELOG.md; } >CHANGELOG.md.tmp && mv CHANGELOG.md.tmp CHANGELOG.md

@@ -44,6 +44,34 @@ if [[ "$new" == "$current" ]]; then
   exit 0
 fi
 
+# --- Guards against accidental bumps (shell-history replays, habitual --bump) ---
+
+# 1. Refuse to stack a bump on an unreleased one: if the working tree's version
+#    already differs from HEAD's, a previous bump is sitting uncommitted — a
+#    second bump would silently skip version numbers (0.1.0->0.3.0 happened).
+head_version=$(git show HEAD:Cargo.toml 2>/dev/null | grep -m1 '^version' | sed -E 's/version *= *"([^"]+)".*/\1/' || true)
+if [[ -n "$head_version" && "$head_version" != "$current" ]]; then
+  echo "ERROR: Cargo.toml already carries an uncommitted bump (HEAD is ${head_version}, tree is ${current})." >&2
+  echo "       Commit/release that first, or revert it:  git checkout -- Cargo.toml Cargo.lock" >&2
+  exit 1
+fi
+
+# 2. Refuse when there is nothing to release: no commits since the last v* tag
+#    means a rebuild is wanted, not a new version — run the build without --bump.
+last_tag=$(git tag --list 'v*' --sort=-version:refname | head -1)
+if [[ -n "$last_tag" ]] && git rev-parse -q --verify "$last_tag" >/dev/null \
+   && [[ -z "$(git log --oneline "${last_tag}..HEAD" | head -1)" ]]; then
+  echo "ERROR: no commits since ${last_tag} — nothing to release." >&2
+  echo "       Rebuilding the same version? Run the build script without --bump." >&2
+  exit 1
+fi
+
+# 3. Interactive confirmation, so a stray up-arrow re-run can't bump on its own.
+if [[ -t 0 ]]; then
+  read -r -p "==> bump version ${current} -> ${new}? [y/N] " reply
+  [[ "$reply" =~ ^[Yy] ]] || { echo "aborted — version stays ${current}"; exit 1; }
+fi
+
 # Rewrite only the first (package) version line. GNU sed: 0,/re/ bounds the range
 # to the first match; s//…/ reuses that same regex as the substitution pattern.
 sed -i -E "0,/^version *= *\"[^\"]+\"/s//version = \"${new}\"/" "$manifest"
