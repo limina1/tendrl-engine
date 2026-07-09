@@ -54,8 +54,11 @@ Builder: filter mode grew an "Apply to a spell" field + projection
 chips (root references / referenced events / the events / their
 authors); chained cards unpack the input chain behind the same chevron
 as PIPE stages. The whole extension (=param=/=$arg=/=$in=/=in=/=PIPE=/
-closures) is now written up as a spec: [[file:../../nips/A7-composition.md][nips/A7-composition.md]],
-beside the vendored [[file:../../nips/A7.md][NIP-A7 draft]].
+closures) is now written up as a spec — twice, by design:
+[[file:../../nips/A7-composition.md][nips/A7-composition.md]] is the *delta* (what composition adds), and
+[[file:../../nips/A7v2.md][nips/A7v2.md]] is the *integrated revision* (base text + extension,
+section order mirroring the vendored [[file:../../nips/A7.md][NIP-A7 draft]] for side-by-side
+comparison — the upstream-proposal artifact).
 Result feeds are real feeds (2026-07-09): execute takes =until= and
 returns =oldest_source= (the *source* stage's oldest created_at — later
 stages query referents, whose timestamps don't paginate), so "load

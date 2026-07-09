@@ -6,6 +6,10 @@ Composable Spells
 
 `draft` `optional` `tendrl extension to` [NIP-A7](A7.md)
 
+> This document is the *delta* — what composition adds to the base
+> spec. The integrated revision, base text plus this extension in one
+> readable spec, is [A7v2.md](A7v2.md).
+
 ## Abstract
 
 [NIP-A7](A7.md) spells encode one REQ/COUNT filter per event. Nostr filters
