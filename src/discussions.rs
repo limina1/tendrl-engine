@@ -12,6 +12,11 @@
 //! Moved from the web's `discussions/thread.ts::buildThread` per the
 //! frontend/backend boundary. The web keeps only the
 //! depth→indent rendering and tree-walk view helpers.
+//!
+//! Also home to the authoring side: NIP-22 comment / NIP-84 highlight /
+//! NIP-09 deletion template builders (see the Authoring section below), so
+//! read-side threading and write-side tag construction share one module and
+//! one test suite.
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -280,6 +285,442 @@ pub fn resolve_highlight_spans(content: &str, highlights: &[Highlight]) -> Vec<H
     spans
 }
 
+// ============================================================================
+// Authoring — NIP-22 / NIP-84 / NIP-09 template construction
+// ============================================================================
+//
+// The single place tendrl builds discussion event tags (design:
+// docs/discussions-authoring-spec.md §3; decisions:
+// docs/discussions-authoring-worksheet.org). Pure functions from typed inputs
+// to `EventTemplate` — signing, ingest, and broadcast live in the API handlers.
+//
+// Wire-format decisions these functions encode:
+// - Strict NIP-22 tags on write (no Alexandria-compat quirks); reads stay
+//   lenient elsewhere (worksheet A2).
+// - Kind 1111 for EVERY comment target, kind-1 notes included — the ecosystem
+//   is converging on 1111 and the NIP-10 fork was deliberately dropped
+//   (worksheet A5).
+// - A comment on a highlight roots at the 9802 itself, matching Amethyst's
+//   wire format (worksheet A7).
+// - External targets (NIP-73) are normalized HERE so two tendrl clients can
+//   never split a thread over id spelling (worksheet A6).
+
+use crate::signing::EventTemplate;
+
+/// A Nostr-event discussion target, resolved by the caller (handler) from the
+/// request plus local nostrdb lookups.
+#[derive(Debug, Clone)]
+pub struct DiscussionTarget {
+    /// `kind:pubkey:d` coordinate — required for addressable kinds, optional
+    /// (composed) for replaceable ones, unused for regular events.
+    pub address: Option<String>,
+    /// Concrete event id — required for regular events; for addressable
+    /// targets it pins the exact version (the highlight-offset frame).
+    pub event_id: Option<String>,
+    pub kind: u32,
+    pub pubkey: String,
+}
+
+/// What a comment is scoped to — any Nostr event, or a NIP-73 external id.
+#[derive(Debug, Clone)]
+pub enum CommentScope {
+    Event(DiscussionTarget),
+    External {
+        /// NIP-73 id, canonical form (`normalize_external_id` output).
+        id: String,
+        /// NIP-73 id kind: "web", "isbn", "doi", "geo", "podcast:item:guid", …
+        id_kind: String,
+        /// Optional web-page hint URL (NIP-73 `i`/`I` tag position 3).
+        hint: Option<String>,
+    },
+}
+
+/// Identity of the comment being replied to (always a regular event — kind
+/// 1111 in practice). Lowercase parent tags are built from this; the root
+/// scope comes from `root_scope_from_parent`.
+#[derive(Debug, Clone)]
+pub struct ParentComment {
+    pub event_id: String,
+    pub kind: u32,
+    pub pubkey: String,
+}
+
+/// NIP-01 kind classes. Addressable events are referenced by coordinate with
+/// a `d` tag; replaceable ones by the empty-`d` coordinate `kind:pubkey:`.
+fn is_addressable_kind(kind: u32) -> bool {
+    (30000..40000).contains(&kind)
+}
+
+fn is_replaceable_kind(kind: u32) -> bool {
+    kind == 0 || kind == 3 || (10000..20000).contains(&kind)
+}
+
+/// `[name, value]` — or `[name, value, relay]` when a hint is present.
+fn tag_with_relay(name: &str, value: &str, relay: &str) -> Vec<String> {
+    if relay.is_empty() {
+        vec![name.to_string(), value.to_string()]
+    } else {
+        vec![name.to_string(), value.to_string(), relay.to_string()]
+    }
+}
+
+/// An `e`/`E` tag carrying the referenced event's pubkey in position 4 (per
+/// NIP-22). Position 3 keeps an empty-string placeholder when there is no
+/// relay hint so the pubkey stays in its defined slot.
+fn event_ref_tag(name: &str, id: &str, relay: &str, pubkey: &str) -> Vec<String> {
+    vec![
+        name.to_string(),
+        id.to_string(),
+        relay.to_string(),
+        pubkey.to_string(),
+    ]
+}
+
+/// The coordinate a target is referenced by, for addressable/replaceable
+/// kinds. Addressable targets must arrive with their address (the `d` tag is
+/// not derivable); replaceable ones compose the empty-`d` form.
+fn target_coordinate(target: &DiscussionTarget) -> Result<String, String> {
+    if let Some(addr) = &target.address {
+        return Ok(addr.clone());
+    }
+    if is_replaceable_kind(target.kind) {
+        return Ok(format!("{}:{}:", target.kind, target.pubkey));
+    }
+    Err(format!(
+        "addressable target (kind {}) requires an address coordinate",
+        target.kind
+    ))
+}
+
+/// Root-scope tags (uppercase `A`/`E`/`I` + `K` + `P`) for a comment.
+fn root_scope_tags(root: &CommentScope, relay_hint: &str) -> Result<Vec<Vec<String>>, String> {
+    let mut tags = Vec::new();
+    match root {
+        CommentScope::Event(t) => {
+            if is_addressable_kind(t.kind) || is_replaceable_kind(t.kind) {
+                tags.push(tag_with_relay("A", &target_coordinate(t)?, relay_hint));
+            } else {
+                let id = t
+                    .event_id
+                    .as_deref()
+                    .ok_or("regular target requires an event id")?;
+                tags.push(event_ref_tag("E", id, relay_hint, &t.pubkey));
+            }
+            tags.push(vec!["K".to_string(), t.kind.to_string()]);
+            tags.push(tag_with_relay("P", &t.pubkey, relay_hint));
+        }
+        CommentScope::External { id, id_kind, hint } => {
+            tags.push(tag_with_relay("I", id, hint.as_deref().unwrap_or("")));
+            tags.push(vec!["K".to_string(), id_kind.clone()]);
+            // No P — an external id has no Nostr author.
+        }
+    }
+    Ok(tags)
+}
+
+/// Parent-scope tags for a TOP-LEVEL comment: the lowercase mirror of the
+/// root (same target). Addressable/replaceable targets additionally pin the
+/// concrete event version with a lowercase `e` when the id is known.
+fn parent_scope_tags_from_root(
+    root: &CommentScope,
+    relay_hint: &str,
+) -> Result<Vec<Vec<String>>, String> {
+    let mut tags = Vec::new();
+    match root {
+        CommentScope::Event(t) => {
+            if is_addressable_kind(t.kind) || is_replaceable_kind(t.kind) {
+                tags.push(tag_with_relay("a", &target_coordinate(t)?, relay_hint));
+                if let Some(id) = &t.event_id {
+                    tags.push(event_ref_tag("e", id, relay_hint, &t.pubkey));
+                }
+            } else {
+                let id = t
+                    .event_id
+                    .as_deref()
+                    .ok_or("regular target requires an event id")?;
+                tags.push(event_ref_tag("e", id, relay_hint, &t.pubkey));
+            }
+            tags.push(vec!["k".to_string(), t.kind.to_string()]);
+            tags.push(tag_with_relay("p", &t.pubkey, relay_hint));
+        }
+        CommentScope::External { id, id_kind, hint } => {
+            tags.push(tag_with_relay("i", id, hint.as_deref().unwrap_or("")));
+            tags.push(vec!["k".to_string(), id_kind.clone()]);
+        }
+    }
+    Ok(tags)
+}
+
+/// Build a kind-1111 comment template per NIP-22: uppercase tags = root
+/// scope, lowercase = immediate parent. `parent: None` is a top-level comment
+/// (parent scope mirrors the root); `Some` is a reply (parent scope is the
+/// comment's `e`/`k`/`p` — no lowercase `a`, comments aren't addressable).
+///
+/// The caller (handler) sets the author on the returned template and derives
+/// `root` for replies via `root_scope_from_parent` — never by recomputing.
+pub fn build_comment_template(
+    root: &CommentScope,
+    parent: Option<&ParentComment>,
+    content: &str,
+    relay_hint: &str,
+    created_at: i64,
+) -> Result<EventTemplate, String> {
+    let mut tags = root_scope_tags(root, relay_hint)?;
+    match parent {
+        None => tags.extend(parent_scope_tags_from_root(root, relay_hint)?),
+        Some(p) => {
+            tags.push(event_ref_tag("e", &p.event_id, relay_hint, &p.pubkey));
+            tags.push(vec!["k".to_string(), p.kind.to_string()]);
+            tags.push(tag_with_relay("p", &p.pubkey, relay_hint));
+        }
+    }
+    Ok(EventTemplate {
+        kind: 1111,
+        created_at,
+        tags,
+        content: content.to_string(),
+        pubkey: None,
+    })
+}
+
+/// Derive a reply's root scope by chasing the parent's own tags.
+///
+/// A 1111 parent already carries its root as uppercase `A`/`E`/`I` (+ `K`,
+/// `P`) — copy that scope; the parent was never the root. Any other kind IS
+/// the root: build the scope from the parent event itself.
+pub fn root_scope_from_parent(parent_event: &Value) -> Result<CommentScope, String> {
+    let kind = parent_event
+        .get("kind")
+        .and_then(|v| v.as_u64())
+        .ok_or("parent event has no kind")? as u32;
+    let pubkey = parent_event
+        .get("pubkey")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let tags = parent_event
+        .get("tags")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+
+    let tag_value = |name: &str, pos: usize| -> Option<String> {
+        tags.iter().find_map(|t| {
+            let arr = t.as_array()?;
+            if arr.first()?.as_str()? != name {
+                return None;
+            }
+            arr.get(pos)?.as_str().map(str::to_string)
+        })
+    };
+
+    if kind == 1111 {
+        let root_kind: Option<u32> = tag_value("K", 1).and_then(|k| k.parse().ok());
+        if let Some(addr) = tag_value("A", 1) {
+            // Coordinate is kind:pubkey:d — fall back to its own fields when
+            // K/P are absent (lenient read).
+            let mut parts = addr.splitn(3, ':');
+            let coord_kind: Option<u32> = parts.next().and_then(|k| k.parse().ok());
+            let coord_pubkey = parts.next().unwrap_or("").to_string();
+            return Ok(CommentScope::Event(DiscussionTarget {
+                address: Some(addr.clone()),
+                event_id: None,
+                kind: root_kind
+                    .or(coord_kind)
+                    .ok_or("root A coordinate has no kind")?,
+                pubkey: tag_value("P", 1).unwrap_or(coord_pubkey),
+            }));
+        }
+        if let Some(id) = tag_value("E", 1) {
+            return Ok(CommentScope::Event(DiscussionTarget {
+                address: None,
+                event_id: Some(id),
+                kind: root_kind.ok_or("root E scope requires a K tag")?,
+                pubkey: tag_value("E", 3)
+                    .or_else(|| tag_value("P", 1))
+                    .unwrap_or_default(),
+            }));
+        }
+        if let Some(id) = tag_value("I", 1) {
+            return Ok(CommentScope::External {
+                id,
+                id_kind: tag_value("K", 1).ok_or("root I scope requires a K tag")?,
+                hint: tag_value("I", 2),
+            });
+        }
+        return Err("parent 1111 carries no root scope tags (A/E/I)".to_string());
+    }
+
+    // Non-comment parent IS the root.
+    if is_addressable_kind(kind) {
+        let d = tag_value("d", 1).unwrap_or_default();
+        return Ok(CommentScope::Event(DiscussionTarget {
+            address: Some(format!("{kind}:{pubkey}:{d}")),
+            event_id: parent_event
+                .get("id")
+                .and_then(|v| v.as_str())
+                .map(str::to_string),
+            kind,
+            pubkey,
+        }));
+    }
+    Ok(CommentScope::Event(DiscussionTarget {
+        address: None,
+        event_id: parent_event
+            .get("id")
+            .and_then(|v| v.as_str())
+            .map(str::to_string),
+        kind,
+        pubkey,
+    }))
+}
+
+/// Build a kind-9802 highlight template per NIP-84 (+ tendrl's offset
+/// extension). `content` is the selected text verbatim; `offset` is UTF-16
+/// code units into the `.content` of the version pinned by the `e` tag
+/// (spec §4 — advisory, self-verifying on read). `comment` makes it a quote
+/// highlight.
+pub fn build_highlight_template(
+    target: &DiscussionTarget,
+    content: &str,
+    offset: Option<(u64, u64)>,
+    context: Option<&str>,
+    comment: Option<&str>,
+    relay_hint: &str,
+    created_at: i64,
+) -> Result<EventTemplate, String> {
+    if target.address.is_none() && target.event_id.is_none() {
+        return Err("highlight target requires an address or event id".to_string());
+    }
+    let mut tags: Vec<Vec<String>> = Vec::new();
+    if let Some(addr) = &target.address {
+        tags.push(tag_with_relay("a", addr, relay_hint));
+    }
+    if let Some(id) = &target.event_id {
+        tags.push(tag_with_relay("e", id, relay_hint));
+    }
+    // Author attribution with the NIP-84 role marker (position 4).
+    tags.push(vec![
+        "p".to_string(),
+        target.pubkey.clone(),
+        relay_hint.to_string(),
+        "author".to_string(),
+    ]);
+    tags.push(vec!["k".to_string(), target.kind.to_string()]);
+    if let Some((start, end)) = offset {
+        tags.push(vec![
+            "offset".to_string(),
+            start.to_string(),
+            end.to_string(),
+        ]);
+    }
+    if let Some(ctx) = context.map(str::trim).filter(|c| !c.is_empty()) {
+        tags.push(vec!["context".to_string(), ctx.to_string()]);
+    }
+    if let Some(c) = comment.map(str::trim).filter(|c| !c.is_empty()) {
+        tags.push(vec!["comment".to_string(), c.to_string()]);
+    }
+    Ok(EventTemplate {
+        kind: 9802,
+        created_at,
+        tags,
+        content: content.to_string(),
+        pubkey: None,
+    })
+}
+
+/// Build a kind-5 deletion request (NIP-09) for one event.
+pub fn build_deletion_template(
+    event_id: &str,
+    event_kind: u32,
+    address: Option<&str>,
+    reason: &str,
+    created_at: i64,
+) -> EventTemplate {
+    let mut tags = vec![vec!["e".to_string(), event_id.to_string()]];
+    if let Some(addr) = address {
+        tags.push(vec!["a".to_string(), addr.to_string()]);
+    }
+    tags.push(vec!["k".to_string(), event_kind.to_string()]);
+    EventTemplate {
+        kind: 5,
+        created_at,
+        tags,
+        content: reason.to_string(),
+        pubkey: None,
+    }
+}
+
+/// Canonicalize a NIP-73 external id so identical targets can never split a
+/// thread over spelling (worksheet A6). Accepts bare or prefixed forms and
+/// returns the canonical prefixed form (URLs stay bare, per NIP-73).
+pub fn normalize_external_id(id: &str, id_kind: &str) -> String {
+    /// Case-insensitive prefix strip — ids arrive with whatever casing the
+    /// user pasted ("GEO:...", "Isbn:...").
+    fn strip_ci<'a>(raw: &'a str, prefix: &str) -> Option<&'a str> {
+        raw.get(..prefix.len())
+            .filter(|head| head.eq_ignore_ascii_case(prefix))
+            .map(|_| &raw[prefix.len()..])
+    }
+
+    let raw = id.trim();
+    match id_kind {
+        "web" => normalize_web_url(raw),
+        "isbn" => {
+            let bare = strip_ci(raw, "isbn:").unwrap_or(raw);
+            let digits: String = bare.chars().filter(|c| !matches!(c, '-' | ' ')).collect();
+            format!("isbn:{digits}")
+        }
+        "doi" => {
+            let bare = strip_ci(raw, "doi:")
+                .or_else(|| strip_ci(raw, "https://doi.org/"))
+                .or_else(|| strip_ci(raw, "http://doi.org/"))
+                .unwrap_or(raw);
+            format!("doi:{}", bare.to_lowercase())
+        }
+        "geo" => {
+            let bare = strip_ci(raw, "geo:").unwrap_or(raw);
+            format!("geo:{}", bare.to_lowercase())
+        }
+        "iso3166" => {
+            let bare = strip_ci(raw, "iso3166:").unwrap_or(raw);
+            format!("iso3166:{}", bare.to_uppercase())
+        }
+        "#" => {
+            let bare = raw.strip_prefix('#').unwrap_or(raw);
+            format!("#{}", bare.to_lowercase())
+        }
+        // podcast:*:guid, blockchain ids, unknown kinds: pass through trimmed.
+        _ => raw.to_string(),
+    }
+}
+
+/// NIP-73 web normalization: drop the fragment and obvious tracker params,
+/// keep everything else. `url::Url` lowercases scheme/host for us. A string
+/// that doesn't parse as a URL passes through trimmed.
+fn normalize_web_url(raw: &str) -> String {
+    const TRACKER_PARAMS: &[&str] = &[
+        "fbclid", "gclid", "gbraid", "wbraid", "msclkid", "mc_eid", "igshid", "si",
+    ];
+    let Ok(mut url) = url::Url::parse(raw) else {
+        return raw.to_string();
+    };
+    url.set_fragment(None);
+    let kept: Vec<(String, String)> = url
+        .query_pairs()
+        .filter(|(k, _)| !k.starts_with("utm_") && !TRACKER_PARAMS.contains(&k.as_ref()))
+        .map(|(k, v)| (k.into_owned(), v.into_owned()))
+        .collect();
+    if kept.is_empty() {
+        url.set_query(None);
+    } else {
+        let mut serializer = url::form_urlencoded::Serializer::new(String::new());
+        serializer.extend_pairs(kept);
+        url.set_query(Some(&serializer.finish()));
+    }
+    url.to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -391,8 +832,7 @@ mod tests {
             comment("a-reply", 2, Some("a-root"), Some(sec_a)),
             comment("b-root", 1, None, Some(sec_b)),
         ];
-        let grouped =
-            group_threads_by_address(&evs, &[sec_a.to_string(), sec_b.to_string()]);
+        let grouped = group_threads_by_address(&evs, &[sec_a.to_string(), sec_b.to_string()]);
 
         let a = &grouped[sec_a];
         assert_eq!(ids(a), vec!["a-root"]);
@@ -445,7 +885,8 @@ mod tests {
     fn longer_highlight_wins_overlap_shorter_dropped() {
         let content = "the quick brown fox jumps";
         // "quick brown" overlaps "brown"; the longer one wins, "brown" dropped.
-        let spans = resolve_highlight_spans(content, &[hl("short", "brown"), hl("long", "quick brown")]);
+        let spans =
+            resolve_highlight_spans(content, &[hl("short", "brown"), hl("long", "quick brown")]);
         assert_eq!(spans.len(), 1);
         assert_eq!(spans[0].id, "long");
         assert_eq!(&content[spans[0].start..spans[0].end], "quick brown");
@@ -491,5 +932,420 @@ mod tests {
         let units: Vec<u16> = content.encode_utf16().collect();
         let got = String::from_utf16(&units[spans[0].start..spans[0].end]).unwrap();
         assert_eq!(got, "ab");
+    }
+}
+
+#[cfg(test)]
+mod authoring_tests {
+    use super::*;
+    use serde_json::json;
+
+    const RELAY: &str = "wss://example.relay";
+    const PK: &str = "3c9849383bdea883b0bd16fece1ed36d37e37cdde3ce43b17ea4e9192ec11289";
+    const ID: &str = "5b4fc7fed15672fefe65d2426f67197b71ccc82aa0cc8a9e94f683eb78e07651";
+
+    fn t(parts: &[&str]) -> Vec<String> {
+        parts.iter().map(|s| s.to_string()).collect()
+    }
+
+    fn addressable(kind: u32, d: &str, event_id: Option<&str>) -> DiscussionTarget {
+        DiscussionTarget {
+            address: Some(format!("{kind}:{PK}:{d}")),
+            event_id: event_id.map(str::to_string),
+            kind,
+            pubkey: PK.to_string(),
+        }
+    }
+
+    fn regular(kind: u32, id: &str) -> DiscussionTarget {
+        DiscussionTarget {
+            address: None,
+            event_id: Some(id.to_string()),
+            kind,
+            pubkey: PK.to_string(),
+        }
+    }
+
+    // nips/22.md "comment on a blog post": top-level 1111 on an addressable
+    // 30023, root A/K/P mirrored as a/e/k/p (we always carry the parent
+    // pubkey in the e tag's 4th slot, which the spec's general format allows).
+    #[test]
+    fn top_level_comment_on_addressable() {
+        let addr = format!("30023:{PK}:f9347ca7");
+        let root = CommentScope::Event(addressable(30023, "f9347ca7", Some(ID)));
+        let tpl = build_comment_template(&root, None, "Great blog post!", RELAY, 1000).unwrap();
+        assert_eq!(tpl.kind, 1111);
+        assert_eq!(tpl.content, "Great blog post!");
+        assert_eq!(
+            tpl.tags,
+            vec![
+                t(&["A", &addr, RELAY]),
+                t(&["K", "30023"]),
+                t(&["P", PK, RELAY]),
+                t(&["a", &addr, RELAY]),
+                t(&["e", ID, RELAY, PK]),
+                t(&["k", "30023"]),
+                t(&["p", PK, RELAY]),
+            ]
+        );
+    }
+
+    // nips/22.md "comment on a NIP-94 file": regular event root → E/e.
+    #[test]
+    fn top_level_comment_on_regular_event() {
+        let root = CommentScope::Event(regular(1063, ID));
+        let tpl = build_comment_template(&root, None, "Great file!", "", 1000).unwrap();
+        assert_eq!(
+            tpl.tags,
+            vec![
+                t(&["E", ID, "", PK]),
+                t(&["K", "1063"]),
+                t(&["P", PK]),
+                t(&["e", ID, "", PK]),
+                t(&["k", "1063"]),
+                t(&["p", PK]),
+            ]
+        );
+    }
+
+    // nips/22.md "reply to a comment": root unchanged, parent = the comment's
+    // e/k/p, and crucially NO lowercase `a` (1111 isn't addressable) and no
+    // NIP-10 "reply" marker — the two Alexandria bugs this module exists to
+    // not have (worksheet A2).
+    #[test]
+    fn reply_to_comment_keeps_root_and_points_parent_at_comment() {
+        let parent_pk = "93ef2ebaaf9554661f33e79949007900bbc535d239a4c801c33a4d67d3e7f546";
+        let parent_id = "5c83da77af1dec6d7289834998ad7aafbd9e2191396d75ec3cc27f5a77226f36";
+        let root = CommentScope::Event(regular(1063, ID));
+        let parent = ParentComment {
+            event_id: parent_id.to_string(),
+            kind: 1111,
+            pubkey: parent_pk.to_string(),
+        };
+        let tpl =
+            build_comment_template(&root, Some(&parent), "This is a reply", RELAY, 1000).unwrap();
+        assert_eq!(
+            tpl.tags,
+            vec![
+                t(&["E", ID, RELAY, PK]),
+                t(&["K", "1063"]),
+                t(&["P", PK, RELAY]),
+                t(&["e", parent_id, RELAY, parent_pk]),
+                t(&["k", "1111"]),
+                t(&["p", parent_pk, RELAY]),
+            ]
+        );
+        assert!(
+            !tpl.tags.iter().any(|tag| tag[0] == "a"),
+            "reply must not carry a lowercase `a` for a 1111 parent"
+        );
+    }
+
+    // nips/22.md "comment on a website's url": external I/K + i/k, no P/p.
+    #[test]
+    fn top_level_comment_on_external_url() {
+        let root = CommentScope::External {
+            id: "https://abc.com/articles/1".to_string(),
+            id_kind: "web".to_string(),
+            hint: None,
+        };
+        let tpl = build_comment_template(&root, None, "Nice article!", RELAY, 1000).unwrap();
+        assert_eq!(
+            tpl.tags,
+            vec![
+                t(&["I", "https://abc.com/articles/1"]),
+                t(&["K", "web"]),
+                t(&["i", "https://abc.com/articles/1"]),
+                t(&["k", "web"]),
+            ]
+        );
+    }
+
+    // nips/22.md "reply to a podcast comment": external root + comment parent.
+    #[test]
+    fn reply_under_external_root() {
+        let guid = "podcast:item:guid:d98d189b-dc7b-45b1-8720-d4b98690f31f";
+        let hint = "https://fountain.fm/episode/z1y9TMQRuqXl2awyrQxg";
+        let parent_pk = "252f10c83610ebca1a059c0bae8255eba2f95be4d1d7bcfa89d7248a82d9f111";
+        let parent_id = "80c48d992a38f9c445b943a9c9f1010b396676013443765750431a9004bdac05";
+        let root = CommentScope::External {
+            id: guid.to_string(),
+            id_kind: "podcast:item:guid".to_string(),
+            hint: Some(hint.to_string()),
+        };
+        let parent = ParentComment {
+            event_id: parent_id.to_string(),
+            kind: 1111,
+            pubkey: parent_pk.to_string(),
+        };
+        let tpl = build_comment_template(&root, Some(&parent), "replying", RELAY, 1000).unwrap();
+        assert_eq!(
+            tpl.tags,
+            vec![
+                t(&["I", guid, hint]),
+                t(&["K", "podcast:item:guid"]),
+                t(&["e", parent_id, RELAY, parent_pk]),
+                t(&["k", "1111"]),
+                t(&["p", parent_pk, RELAY]),
+            ]
+        );
+    }
+
+    // Worksheet A5: kind-1 notes get a 1111 like every other regular event —
+    // there is deliberately no NIP-10 fork.
+    #[test]
+    fn kind_1_target_gets_1111() {
+        let root = CommentScope::Event(regular(1, ID));
+        let tpl = build_comment_template(&root, None, "hot take", "", 1000).unwrap();
+        assert_eq!(tpl.kind, 1111);
+        assert_eq!(tpl.tags[0], t(&["E", ID, "", PK]));
+        assert_eq!(tpl.tags[1], t(&["K", "1"]));
+    }
+
+    // Worksheet A7: the Amethyst capture — a top-level comment on a highlight
+    // roots at the 9802 (E/K/P) with parent e/k/p at the same event.
+    #[test]
+    fn comment_on_highlight_matches_amethyst_shape() {
+        let hl_id = "2286119821e06a4329b501ea4a72c8f283201d1125a30e3bfb143526951c4f9f";
+        let hl_pk = "dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06";
+        let root = CommentScope::Event(DiscussionTarget {
+            address: None,
+            event_id: Some(hl_id.to_string()),
+            kind: 9802,
+            pubkey: hl_pk.to_string(),
+        });
+        let tpl = build_comment_template(&root, None, "Very Ostromian.", RELAY, 1000).unwrap();
+        assert_eq!(
+            tpl.tags,
+            vec![
+                t(&["E", hl_id, RELAY, hl_pk]),
+                t(&["K", "9802"]),
+                t(&["P", hl_pk, RELAY]),
+                t(&["e", hl_id, RELAY, hl_pk]),
+                t(&["k", "9802"]),
+                t(&["p", hl_pk, RELAY]),
+            ]
+        );
+    }
+
+    // Replaceable kinds use the empty-d coordinate.
+    #[test]
+    fn replaceable_target_uses_empty_d_coordinate() {
+        let root = CommentScope::Event(DiscussionTarget {
+            address: None,
+            event_id: None,
+            kind: 0,
+            pubkey: PK.to_string(),
+        });
+        let tpl = build_comment_template(&root, None, "nice profile", "", 1000).unwrap();
+        assert_eq!(tpl.tags[0], t(&["A", &format!("0:{PK}:")]));
+        assert_eq!(tpl.tags[1], t(&["K", "0"]));
+    }
+
+    #[test]
+    fn addressable_without_address_errors() {
+        let root = CommentScope::Event(DiscussionTarget {
+            address: None,
+            event_id: Some(ID.to_string()),
+            kind: 30023,
+            pubkey: PK.to_string(),
+        });
+        assert!(build_comment_template(&root, None, "x", "", 1000).is_err());
+    }
+
+    // --- root_scope_from_parent -------------------------------------------
+
+    #[test]
+    fn root_chase_copies_a_scope_from_1111_parent() {
+        let addr = format!("30041:{PK}:section-1");
+        let parent = json!({
+            "id": ID, "kind": 1111, "pubkey": "someone",
+            "tags": [["A", addr, RELAY], ["K", "30041"], ["P", PK, RELAY],
+                     ["e", "aaaa"], ["k", "1111"], ["p", "someone"]],
+        });
+        match root_scope_from_parent(&parent).unwrap() {
+            CommentScope::Event(tgt) => {
+                assert_eq!(tgt.address.as_deref(), Some(addr.as_str()));
+                assert_eq!(tgt.kind, 30041);
+                assert_eq!(tgt.pubkey, PK);
+            }
+            other => panic!("expected Event scope, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn root_chase_copies_e_scope_from_1111_parent() {
+        let parent = json!({
+            "id": "bbbb", "kind": 1111, "pubkey": "someone",
+            "tags": [["E", ID, RELAY, PK], ["K", "9802"], ["P", PK]],
+        });
+        match root_scope_from_parent(&parent).unwrap() {
+            CommentScope::Event(tgt) => {
+                assert_eq!(tgt.event_id.as_deref(), Some(ID));
+                assert_eq!(tgt.kind, 9802);
+                assert_eq!(tgt.pubkey, PK);
+            }
+            other => panic!("expected Event scope, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn root_chase_non_comment_addressable_parent_is_root() {
+        let parent = json!({
+            "id": ID, "kind": 30023, "pubkey": PK,
+            "tags": [["d", "my-post"], ["title", "My Post"]],
+        });
+        match root_scope_from_parent(&parent).unwrap() {
+            CommentScope::Event(tgt) => {
+                assert_eq!(
+                    tgt.address.as_deref(),
+                    Some(format!("30023:{PK}:my-post").as_str())
+                );
+                assert_eq!(tgt.event_id.as_deref(), Some(ID));
+            }
+            other => panic!("expected Event scope, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn root_chase_regular_parent_is_root() {
+        let parent = json!({ "id": ID, "kind": 9802, "pubkey": PK, "tags": [] });
+        match root_scope_from_parent(&parent).unwrap() {
+            CommentScope::Event(tgt) => {
+                assert_eq!(tgt.event_id.as_deref(), Some(ID));
+                assert_eq!(tgt.kind, 9802);
+                assert!(tgt.address.is_none());
+            }
+            other => panic!("expected Event scope, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn root_chase_external_scope_from_1111_parent() {
+        let parent = json!({
+            "id": "cccc", "kind": 1111, "pubkey": "someone",
+            "tags": [["I", "doi:10.1000/xyz", "https://doi.org/10.1000/xyz"], ["K", "doi"]],
+        });
+        match root_scope_from_parent(&parent).unwrap() {
+            CommentScope::External { id, id_kind, hint } => {
+                assert_eq!(id, "doi:10.1000/xyz");
+                assert_eq!(id_kind, "doi");
+                assert_eq!(hint.as_deref(), Some("https://doi.org/10.1000/xyz"));
+            }
+            other => panic!("expected External scope, got {other:?}"),
+        }
+    }
+
+    // --- highlights ---------------------------------------------------------
+
+    #[test]
+    fn highlight_template_full_shape() {
+        let addr = format!("30041:{PK}:section-1");
+        let target = addressable(30041, "section-1", Some(ID));
+        let tpl = build_highlight_template(
+            &target,
+            "the selected text",
+            Some((120, 137)),
+            Some("the paragraph around the selected text"),
+            Some("my annotation"),
+            RELAY,
+            1000,
+        )
+        .unwrap();
+        assert_eq!(tpl.kind, 9802);
+        assert_eq!(tpl.content, "the selected text");
+        assert_eq!(
+            tpl.tags,
+            vec![
+                t(&["a", &addr, RELAY]),
+                t(&["e", ID, RELAY]),
+                t(&["p", PK, RELAY, "author"]),
+                t(&["k", "30041"]),
+                t(&["offset", "120", "137"]),
+                t(&["context", "the paragraph around the selected text"]),
+                t(&["comment", "my annotation"]),
+            ]
+        );
+    }
+
+    #[test]
+    fn highlight_optional_tags_omitted() {
+        let target = addressable(30041, "s", None);
+        let tpl =
+            build_highlight_template(&target, "text", None, None, Some("  "), "", 1000).unwrap();
+        let names: Vec<&str> = tpl.tags.iter().map(|t| t[0].as_str()).collect();
+        assert_eq!(names, vec!["a", "p", "k"]);
+    }
+
+    #[test]
+    fn highlight_requires_some_target_ref() {
+        let target = DiscussionTarget {
+            address: None,
+            event_id: None,
+            kind: 30041,
+            pubkey: PK.to_string(),
+        };
+        assert!(build_highlight_template(&target, "x", None, None, None, "", 1000).is_err());
+    }
+
+    // --- deletion -----------------------------------------------------------
+
+    #[test]
+    fn deletion_template_shape() {
+        let tpl = build_deletion_template(ID, 1111, None, "user deleted comment", 1000);
+        assert_eq!(tpl.kind, 5);
+        assert_eq!(tpl.content, "user deleted comment");
+        assert_eq!(tpl.tags, vec![t(&["e", ID]), t(&["k", "1111"])]);
+    }
+
+    // --- NIP-73 normalization ------------------------------------------------
+
+    #[test]
+    fn normalize_web_strips_fragment_and_trackers() {
+        assert_eq!(
+            normalize_external_id(
+                "https://Example.com/post?utm_source=x&id=7&fbclid=abc#section-2",
+                "web"
+            ),
+            "https://example.com/post?id=7"
+        );
+        // No query/fragment → untouched.
+        assert_eq!(
+            normalize_external_id("https://abc.com/articles/1", "web"),
+            "https://abc.com/articles/1"
+        );
+        // All params were trackers → the `?` goes too.
+        assert_eq!(
+            normalize_external_id("https://abc.com/a?utm_campaign=x", "web"),
+            "https://abc.com/a"
+        );
+    }
+
+    #[test]
+    fn normalize_isbn_doi_geo_hashtag() {
+        assert_eq!(
+            normalize_external_id("978-0-7653-8203-0", "isbn"),
+            "isbn:9780765382030"
+        );
+        assert_eq!(
+            normalize_external_id("isbn:978 0765382030", "isbn"),
+            "isbn:9780765382030"
+        );
+        assert_eq!(
+            normalize_external_id("https://doi.org/10.1038/NPHYS1170", "doi"),
+            "doi:10.1038/nphys1170"
+        );
+        assert_eq!(normalize_external_id("GEO:EZS42", "geo"), "geo:ezs42");
+        assert_eq!(normalize_external_id("Bitcoin", "#"), "#bitcoin");
+        assert_eq!(normalize_external_id("#Bitcoin", "#"), "#bitcoin");
+        assert_eq!(
+            normalize_external_id("iso3166:us-ca", "iso3166"),
+            "iso3166:US-CA"
+        );
+        // Unknown kinds pass through.
+        assert_eq!(
+            normalize_external_id("podcast:item:guid:d98d189b", "podcast:item:guid"),
+            "podcast:item:guid:d98d189b"
+        );
     }
 }
