@@ -48,7 +48,7 @@
 		const t = setTimeout(() => {
 			api.composeSpell(composeRequest())
 				.then((r) => { preview = r; composeError = null; })
-				.catch((e) => { preview = null; composeError = e instanceof Error ? e.message : String(e); });
+				.catch((e) => { preview = null; composeError = api.errorMessage(e); });
 		}, 250);
 		return () => clearTimeout(t);
 	});
@@ -73,7 +73,7 @@
 			}
 			onclose();
 		} catch (e) {
-			app.pushToast(e instanceof Error ? e.message : 'Save failed', 'error');
+			app.pushToast(api.errorMessage(e, 'Save failed'), 'error');
 		} finally {
 			saving = false;
 		}

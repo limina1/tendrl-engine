@@ -35,6 +35,20 @@ async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
 	return res.json();
 }
 
+/** Human-readable message from a fetchJson error: unwraps the engine's
+ *  `{"error":{"message":…}}` body out of the `<status>: <body>` string. */
+export function errorMessage(e: unknown, fallback = 'Request failed'): string {
+	const raw = e instanceof Error ? e.message : String(e);
+	const body = raw.replace(/^\d{3}:\s*/, '');
+	try {
+		const parsed = JSON.parse(body);
+		if (typeof parsed?.error?.message === 'string') return parsed.error.message;
+	} catch {
+		// not JSON — fall through
+	}
+	return body || fallback;
+}
+
 // Chat API
 
 const CHAT = '/api/v1/chat';

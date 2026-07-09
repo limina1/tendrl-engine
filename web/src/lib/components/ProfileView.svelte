@@ -121,7 +121,7 @@
 				'success'
 			);
 		} catch (e) {
-			app.pushToast(e instanceof Error ? e.message : 'Add to book failed', 'error');
+			app.pushToast(api.errorMessage(e, 'Add to book failed'), 'error');
 		}
 	}
 
@@ -132,7 +132,7 @@
 			app.pushToast(`Book broadcast — accepted by ${ok} relay${ok === 1 ? '' : 's'}`, ok > 0 ? 'success' : 'error');
 			await loadLocal(pubkey);
 		} catch (e) {
-			app.pushToast(e instanceof Error ? e.message : 'Broadcast failed', 'error');
+			app.pushToast(api.errorMessage(e, 'Broadcast failed'), 'error');
 		}
 	}
 	// PIPE-card `v` chevron: per-spell expanded flag + fetched stage
@@ -475,7 +475,7 @@
 			);
 		} catch (e) {
 			console.error('Spell execution failed:', e);
-			app.pushToast(e instanceof Error ? e.message : 'Spell failed', 'error');
+			app.pushToast(api.errorMessage(e, 'Spell failed'), 'error');
 		} finally {
 			spellRunning = null;
 		}

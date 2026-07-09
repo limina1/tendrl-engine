@@ -109,6 +109,13 @@
 		};
 	}
 
+	// An untouched form isn't an error state — skip the compile until the
+	// request actually filters something (or has a stage).
+	function requestIsEmpty(req: Parameters<typeof api.composeSpell>[0]): boolean {
+		if (req.stages !== undefined) return req.stages.length === 0;
+		return !req.query?.trim() && !(req.authors?.length) && !req.since && !req.cmd;
+	}
+
 	$effect(() => {
 		void pipelineMode; void countMode; void kinds; void authorMe; void authorContacts;
 		void authorsText; void searchText; void timeWindow; void limitText; void relaysText;
@@ -117,9 +124,15 @@
 		void stageRows.map((r) => r.id + r.combinator).join();
 		void paramRows.map((p) => p.name + p.prompt).join();
 		const t = setTimeout(() => {
-			api.composeSpell(composeRequest())
+			const req = composeRequest();
+			if (requestIsEmpty(req)) {
+				preview = null;
+				composeError = null;
+				return;
+			}
+			api.composeSpell(req)
 				.then((r) => { preview = r; composeError = null; })
-				.catch((e) => { preview = null; composeError = e instanceof Error ? e.message : String(e); });
+				.catch((e) => { preview = null; composeError = api.errorMessage(e); });
 		}, 250);
 		return () => clearTimeout(t);
 	});
@@ -142,7 +155,7 @@
 			}
 			onclose();
 		} catch (e) {
-			app.pushToast(e instanceof Error ? e.message : 'Save failed', 'error');
+			app.pushToast(api.errorMessage(e, 'Save failed'), 'error');
 		} finally {
 			saving = false;
 		}
@@ -331,7 +344,11 @@
 						<p class="sb-warning">⚠ {w}</p>
 					{/each}
 				{:else}
-					<p class="sb-muted">compiling…</p>
+					<p class="sb-muted">
+						{pipelineMode
+							? 'Add a stage (a spell event id) to preview the pipeline'
+							: 'Pick kinds, authors, tags, or a time window to preview the spell'}
+					</p>
 				{/if}
 			</div>
 		</div>
