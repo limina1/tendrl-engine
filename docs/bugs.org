@@ -169,3 +169,81 @@ who already pushed an =r=-tagged set.
 asserts =["the-fable"]= but gets =[]= (tree_emit.rs:790). Belongs to the
 in-flight nostrdown epoch (=[[ ]]= wikilink emit, commit f09a965); noting here
 so other branches rebasing onto tendrl-web don't chase it as their own.
+
+* FIXED — discussion view: raw event JSON has no copy affordance
+:PROPERTIES:
+:found: 2026-07-09 (reading kind-1111 comments on a 30023 article)
+:branch: bugs/reader-discussion-fetch
+:fixed-in: 0e5fb44 fix(web): copy button on the discussion view's raw event JSON
+:END:
+
+** Symptom
+The =Raw event= disclosure in =DiscussionViewBuffer.svelte= renders the event
+as a bare =<details><pre>= — no copy button, and the cramped
+=word-break: break-all= / =max-height= pre makes manual selection awkward.
+There is no practical way to get the event JSON out of the view.
+
+** Why
+The disclosure was added as a debug affordance without the blessed
+copy-button + toast pattern (=EventViewModal.copyText= →
+=navigator.clipboard= + =app.pushToast=).
+
+** Fix
+Copy button inside the =<summary>= (preventDefault/stopPropagation so it
+doesn't toggle), reusing the =copyText= pattern.
+
+* FIXED — root/parent event fetch dies with raw =404= — never reaches relays in Confirm mode
+:PROPERTIES:
+:found: 2026-07-09 (clicking the 30023 root ref of a kind-1111 comment)
+:branch: bugs/reader-discussion-fetch
+:fixed-in: 442267d (engine/API intent gate) + 079e818 (web two-phase reader load)
+:END:
+
+** Symptom
+Clicking a comment's root (a 30023 coordinate) shows
+=Error: 404: {"event":null,"message":"Addressable event not found"}= — a raw
+exception string, no loading state, no relay attempt, no way to retry. The
+event is a perfectly fetchable addressable event.
+
+** Why
+=Engine::get_addressable= / =get_by_id= take no =mode_confirm= param, so they
+hardcode a downgrade to =LocalOnly= whenever the engine isn't in Auto mode —
+they can never emit a fetch Intent and never reach relays (unlike
+=get_events_with_options=, which honors =mode_confirm || is_auto()=). Their
+relay path also called =relay::fetch_addressable= directly, bypassing
+FetchGuard activity tracking. On the web side, =fetchJson= throws
+=`404: {...}`= and =ReaderBuffer= renders =String(e)=; its friendlier
+not-found branch was dead code (the endpoint never returns 200-with-null).
+
+** Fix
+=get_by_id_with_options= / =get_addressable_with_options= delegating to
+=get_events_with_options=; handlers grow =?confirm= and gate through
+=begin_fetch_operation= (the =discussions_list_handler= pattern) so the
+FetchConfirmModal intent flow applies. Web wrappers normalize 404 to
+={event: null}=; ReaderBuffer does a two-phase local→relay load with a status
+line and a human not-found message.
+
+* FIXED — clicking a parent comment opens the generic reader, not the comment view
+:PROPERTIES:
+:found: 2026-07-09 (climbing a kind-1111 thread)
+:branch: bugs/reader-discussion-fetch
+:fixed-in: d8c7ae1 (k/K kind routing) + e9a31ad (discussion buffer confirm-gated load)
+:END:
+
+** Symptom
+A comment's =parent= ref that is itself a kind-1111 opens as
+=reader:event:<id>= — the comment gets wrapped as a fake single-section
+publication (Prev/Next pager, =§= menu, "No comments or highlights found"),
+with no root/parent rows, so the thread can't be climbed hop by hop.
+
+** Why
+=DiscussionViewBuffer.openInReader= routes /every/ =e=/=E= ref to a reader
+buffer; there is no branch for "the target is itself a comment". The comment's
+own NIP-22 =k= (parent kind) / =K= (root kind) tags already say what the
+target is — no fetch needed to route correctly.
+
+** Fix
+Route by kind hint: =e=-refs with =k=/=K= = 1111/9802 open a
+=discussion:<id>= buffer (same card, climbable); missing hint falls back to a
+local-first =getEvent= kind check; everything else keeps the reader. Rule:
+thread nodes → discussion view, true root → reader.

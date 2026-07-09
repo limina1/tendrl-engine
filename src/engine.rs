@@ -12,7 +12,7 @@ use crate::search::{self, SearchQuery, SearchResponse};
 use crate::{query, relay};
 use nostrdb::{Config, IngestMetadata, Ndb};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{json, Value};
 use std::path::Path;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -1886,28 +1886,30 @@ impl Engine {
 
     /// Get a single event by its ID
     pub async fn get_by_id(&self, event_id: &str, policy: FetchPolicy) -> Result<Option<Value>> {
-        let policy = if self.is_auto() {
-            policy
-        } else {
-            FetchPolicy::LocalOnly
-        };
+        self.get_by_id_with_options(event_id, policy, None, false)
+            .await
+    }
 
-        // Try local first (unless FetchAlways)
-        if policy != FetchPolicy::FetchAlways {
-            if let Some(event) = query::query_by_id(&self.ndb, event_id)? {
-                debug!("Found event {} locally", event_id);
-                return Ok(Some(event));
-            }
-        }
-
-        // Fetch from relays if needed
-        if policy != FetchPolicy::LocalOnly {
-            debug!("Fetching event {} from relays", event_id);
-            let fetch_relays = self.relays();
-            return relay::fetch_event_by_id(&self.ndb, &fetch_relays, event_id).await;
-        }
-
-        Ok(None)
+    /// Variant of `get_by_id` that can bypass the offline-mode policy
+    /// downgrade — same contract as `get_events_with_options`: pass
+    /// `mode_confirm = true` only for explicit user-initiated fetches
+    /// (the caller is expected to have opened a fetch operation, so the
+    /// Confirm-mode intent/approval flow has already run).
+    pub async fn get_by_id_with_options(
+        &self,
+        event_id: &str,
+        policy: FetchPolicy,
+        override_relays: Option<&[String]>,
+        mode_confirm: bool,
+    ) -> Result<Option<Value>> {
+        let filters = vec![json!({ "ids": [event_id], "limit": 1 })];
+        let response = self
+            .get_events_with_options(filters, policy, override_relays, mode_confirm)
+            .await?;
+        Ok(response
+            .events
+            .into_iter()
+            .find(|e| e.get("id").and_then(|v| v.as_str()) == Some(event_id)))
     }
 
     /// Get an addressable event by kind, pubkey, and d-tag
@@ -1918,45 +1920,36 @@ impl Engine {
         d_tag: &str,
         policy: FetchPolicy,
     ) -> Result<Option<Value>> {
-        let policy = if self.is_auto() {
-            policy
-        } else {
-            FetchPolicy::LocalOnly
-        };
+        self.get_addressable_with_options(kind, pubkey, d_tag, policy, None, false)
+            .await
+    }
 
-        // Try local first (unless FetchAlways)
-        if policy != FetchPolicy::FetchAlways {
-            if let Some(event) = query::query_addressable(&self.ndb, kind, pubkey, d_tag)? {
-                debug!(
-                    "Found addressable event {}:{}:{}... locally",
-                    kind,
-                    &pubkey.chars().take(8).collect::<String>(),
-                    d_tag
-                );
-                return Ok(Some(event));
-            }
-        }
-
-        // Fetch from relays if needed
-        if policy != FetchPolicy::LocalOnly {
-            debug!(
-                "Fetching addressable event {}:{}:{}... from relays",
-                kind,
-                &pubkey.chars().take(8).collect::<String>(),
-                d_tag
-            );
-            let fetch_relays = self.relays();
-            return relay::fetch_addressable(
-                &self.ndb,
-                &fetch_relays,
-                kind,
-                pubkey,
-                d_tag,
-            )
-            .await;
-        }
-
-        Ok(None)
+    /// Variant of `get_addressable` that can bypass the offline-mode
+    /// policy downgrade (see `get_by_id_with_options`).
+    pub async fn get_addressable_with_options(
+        &self,
+        kind: u64,
+        pubkey: &str,
+        d_tag: &str,
+        policy: FetchPolicy,
+        override_relays: Option<&[String]>,
+        mode_confirm: bool,
+    ) -> Result<Option<Value>> {
+        let filters = vec![json!({
+            "kinds": [kind],
+            "authors": [pubkey],
+            "#d": [d_tag],
+            "limit": 1
+        })];
+        let response = self
+            .get_events_with_options(filters, policy, override_relays, mode_confirm)
+            .await?;
+        // LocalFirst merges local before relay events, so the requested
+        // version may not be first — addressables resolve latest-wins.
+        Ok(response
+            .events
+            .into_iter()
+            .max_by_key(|e| e.get("created_at").and_then(|v| v.as_i64()).unwrap_or(0)))
     }
 
     /// Ingest a raw event JSON string into nostrdb
@@ -3286,6 +3279,61 @@ mod tests {
             .unwrap();
 
         assert!(response.results.len() <= 3);
+    }
+
+    /// Addressables resolve latest-wins: with two ingested versions of
+    /// the same kind:pubkey:d coordinate, `get_addressable` must return
+    /// the newer one regardless of local result ordering.
+    #[tokio::test]
+    async fn test_get_addressable_returns_latest_version() {
+        let dir = tempdir().unwrap();
+        let engine = Engine::with_config(dir.path(), &[], 1000).unwrap();
+
+        let old = build_test_event(
+            30023,
+            "first draft",
+            vec![vec!["d", "my-article"]],
+            1_700_000_000,
+        );
+        let new = build_test_event(
+            30023,
+            "revised article",
+            vec![vec!["d", "my-article"]],
+            1_700_000_100,
+        );
+        let pubkey = serde_json::from_str::<Value>(&old).unwrap()["pubkey"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        ingest_and_wait(&engine, &[old, new]).await;
+
+        let event = engine
+            .get_addressable(30023, &pubkey, "my-article", FetchPolicy::LocalOnly)
+            .await
+            .unwrap()
+            .expect("addressable event found");
+        assert_eq!(event["content"].as_str(), Some("revised article"));
+        assert_eq!(event["created_at"].as_i64(), Some(1_700_000_100));
+    }
+
+    /// In Confirm mode (the default), a fetch without `mode_confirm`
+    /// consent must downgrade to a local-only read — a missing id
+    /// resolves to `Ok(None)` without a relay attempt, even under
+    /// `FetchAlways`.
+    #[tokio::test]
+    async fn test_get_by_id_downgrades_without_confirm_consent() {
+        let dir = tempdir().unwrap();
+        let engine = Engine::with_config(dir.path(), &[], 1000).unwrap();
+        assert!(!engine.is_auto(), "fresh engine should be in Confirm mode");
+
+        let missing = "f".repeat(64);
+        let result = engine
+            .get_by_id_with_options(&missing, FetchPolicy::FetchAlways, None, false)
+            .await
+            .unwrap();
+        assert!(result.is_none());
+        // The downgrade means no fetch was ever recorded in the activity log.
+        assert!(engine.network.status().recent.is_empty());
     }
 
     /// `record_event_relay` must persist the source relay against the event

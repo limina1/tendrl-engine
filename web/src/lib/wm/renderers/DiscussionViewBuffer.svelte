@@ -1,5 +1,6 @@
 <script lang="ts">
 	import * as api from '$lib/api';
+	import { getAppState } from '$lib/state.svelte';
 	import { getActiveStore } from '../buffer-store.svelte';
 	import type { Buffer } from '../types';
 	import CommentThread from '$lib/components/CommentThread.svelte';
@@ -8,6 +9,7 @@
 
 	let { buffer }: { buffer: Buffer } = $props();
 	const store = getActiveStore();
+	const app = getAppState();
 
 	type NostrEvent = {
 		id: string;
@@ -24,6 +26,7 @@
 
 	let event = $state<NostrEvent | null>(null);
 	let loading = $state(true);
+	let loadingStatus = $state<string | null>(null);
 	let error = $state<string | null>(null);
 
 	// "Pull thread" state — the thread tree built from every kind-1111
@@ -65,17 +68,29 @@
 	// NIP-22 + NIP-84 tag conventions:
 	//   uppercase A/E = root scope (the top of the thread)
 	//   lowercase a/e = parent (immediate ancestor)
+	//   uppercase K / lowercase k = the kind of the root / parent event
 	// For a top-level comment they're identical. For a nested reply they
 	// diverge — root is the article, parent is the comment being replied to.
+	// The kind tags let ref clicks route without fetching the target: a
+	// parent that is itself a comment opens as a discussion buffer, not
+	// as a generic reader page.
 	//
 	// The ref value is validated before use: some clients write malformed
 	// tags (a relay URL in the value slot). An unvalidated value would flow
 	// into the thread-pull filter as a bogus `#e`/`#a`, degenerate it into
 	// an unconstrained `kinds:[1111]` query, and dump 500 unrelated
 	// comments. Skipping a bad tag lets a later well-formed one still match.
-	function extractRefs(ev: NostrEvent): { root: ParentRef | null; parent: ParentRef | null } {
+	type Refs = {
+		root: ParentRef | null;
+		parent: ParentRef | null;
+		rootKind: number | null;
+		parentKind: number | null;
+	};
+	function extractRefs(ev: NostrEvent): Refs {
 		let root: ParentRef | null = null;
 		let parent: ParentRef | null = null;
+		let rootKind: number | null = null;
+		let parentKind: number | null = null;
 		for (const tag of ev.tags) {
 			if (!tag || tag.length < 2) continue;
 			const [name, value, relay, pk] = tag as [string, string, string?, string?];
@@ -83,11 +98,17 @@
 			else if (name === 'E' && !root && isHexId(value)) root = { type: 'e', value, relay, pubkey: pk };
 			else if (name === 'a' && !parent && isAddr(value)) parent = { type: 'a', value, relay };
 			else if (name === 'e' && !parent && isHexId(value)) parent = { type: 'e', value, relay, pubkey: pk };
+			else if (name === 'K' && rootKind === null && /^\d+$/.test(value)) rootKind = parseInt(value, 10);
+			else if (name === 'k' && parentKind === null && /^\d+$/.test(value)) parentKind = parseInt(value, 10);
 		}
-		return { root, parent };
+		return { root, parent, rootKind, parentKind };
 	}
 
-	const refs = $derived(event ? extractRefs(event) : { root: null, parent: null });
+	const refs = $derived(
+		event
+			? extractRefs(event)
+			: ({ root: null, parent: null, rootKind: null, parentKind: null } satisfies Refs)
+	);
 	const isComment = $derived(event?.kind === 1111);
 	const isHighlight = $derived(event?.kind === 9802);
 
@@ -98,6 +119,7 @@
 			return;
 		}
 		loading = true;
+		loadingStatus = null;
 		error = null;
 		// Drop any thread pulled for a previously-viewed comment.
 		threadNodes = [];
@@ -106,17 +128,25 @@
 		threadOpen = false;
 		threadError = null;
 		try {
-			const resp = await api.getEvent(eventId);
+			// Two-phase load (same shape as the reader): local cache first,
+			// then a confirm-gated relay fetch — so climbing a thread past
+			// what's cached keeps working instead of dead-ending.
+			let resp = await api.getEvent(eventId, { policy: 'local_only' });
+			if (!resp.event) {
+				loadingStatus = 'Not in local cache — fetching from relays…';
+				resp = await api.getEvent(eventId, { policy: 'fetch_always', bypassOffline: true });
+			}
 			const ev = resp.event as NostrEvent | null;
 			if (!ev) {
-				error = 'Event not found in local DB. Try a Refresh on the source article first.';
+				error = 'Comment not found locally or on your relays.';
 			} else {
 				event = ev;
 			}
 		} catch (e) {
-			error = e instanceof Error ? e.message : String(e);
+			error = api.errorMessage(e);
 		} finally {
 			loading = false;
+			loadingStatus = null;
 		}
 	}
 
@@ -124,6 +154,49 @@
 		buffer.id;
 		load();
 	});
+
+	// A ref whose target is itself a thread node (kind-1111 comment or
+	// kind-9802 highlight) opens as another discussion buffer — same card,
+	// same root/parent rows — so the thread can be climbed hop by hop.
+	// Only a true root (article, publication, note, …) goes to the reader.
+	function isThreadNodeKind(kind: number | null | undefined): boolean {
+		return kind === 1111 || kind === 9802;
+	}
+
+	function openDiscussion(id: string, kind: number | null) {
+		store.openBuffer({
+			className: 'work',
+			buffer: {
+				id: `discussion:${id}`,
+				kind: 'discussion-view',
+				label: kind === 9802 ? 'highlight' : 'comment',
+				kicker: id.slice(0, 8) + '…'
+			}
+		});
+	}
+
+	// Route a root/parent ref by the kind its NIP-22 `K`/`k` tag declares.
+	// A missing kind hint (older clients) falls back to a local-first
+	// lookup of the target; an unresolvable target keeps the reader route,
+	// whose two-phase load surfaces the fetch/not-found flow.
+	async function openRef(ref: ParentRef, kindHint: number | null) {
+		if (ref.type === 'e') {
+			let kind = kindHint;
+			if (kind === null) {
+				try {
+					const resp = await api.getEvent(ref.value);
+					kind = (resp.event as NostrEvent | null)?.kind ?? null;
+				} catch {
+					kind = null;
+				}
+			}
+			if (isThreadNodeKind(kind)) {
+				openDiscussion(ref.value, kind);
+				return;
+			}
+		}
+		openInReader(ref);
+	}
 
 	function openInReader(ref: ParentRef) {
 		if (ref.type === 'a') {
@@ -319,6 +392,16 @@
 			: ''
 	);
 
+	function copyRaw(): void {
+		if (!event) return;
+		try {
+			navigator.clipboard?.writeText(JSON.stringify(event, null, 2));
+			app.pushToast('Raw event copied', 'success');
+		} catch {
+			app.pushToast("Couldn't copy raw event", 'error');
+		}
+	}
+
 	function short(s: string, n = 12): string {
 		return s.length > n ? `${s.slice(0, n)}…` : s;
 	}
@@ -329,7 +412,12 @@
 
 <div class="dv">
 	{#if loading}
-		<div class="dv-empty">Loading…</div>
+		<div class="dv-empty">
+			Loading…
+			{#if loadingStatus}
+				<div class="dv-loading-status">{loadingStatus}</div>
+			{/if}
+		</div>
 	{:else if error}
 		<div class="dv-empty dv-error">{error}</div>
 	{:else if event}
@@ -345,13 +433,23 @@
 		{#if refs.root || refs.parent}
 			<div class="dv-refs">
 				{#if refs.root}
-					<button class="dv-ref" onclick={() => openInReader(refs.root!)} title="Open root in reader">
+					<button
+						class="dv-ref"
+						onclick={() => openRef(refs.root!, refs.rootKind)}
+						title={isThreadNodeKind(refs.rootKind) ? 'Open root comment' : 'Open root in reader'}
+					>
 						<span class="dv-ref-label">root</span>
 						<code class="dv-ref-value">{short(refs.root.value, 48)}</code>
 					</button>
 				{/if}
 				{#if refs.parent && (!refs.root || refs.parent.value !== refs.root.value)}
-					<button class="dv-ref" onclick={() => openInReader(refs.parent!)} title="Open parent (immediate ancestor) in reader">
+					<button
+						class="dv-ref"
+						onclick={() => openRef(refs.parent!, refs.parentKind)}
+						title={isThreadNodeKind(refs.parentKind)
+							? 'Open parent comment'
+							: 'Open parent (immediate ancestor) in reader'}
+					>
 						<span class="dv-ref-label">parent</span>
 						<code class="dv-ref-value">{short(refs.parent.value, 48)}</code>
 					</button>
@@ -391,7 +489,7 @@
 									class="dv-root-card"
 									onclick={() => {
 										const r = refs.root ?? refs.parent;
-										if (r) openInReader(r);
+										if (r) openRef(r, refs.root ? refs.rootKind : refs.parentKind);
 									}}
 									title="Open the root in the reader"
 								>
@@ -413,7 +511,18 @@
 		</div>
 
 		<details class="dv-raw">
-			<summary>Raw event</summary>
+			<summary>
+				Raw event
+				<button
+					class="dv-raw-copy"
+					title="Copy raw event JSON"
+					onclick={(e) => {
+						e.preventDefault();
+						e.stopPropagation();
+						copyRaw();
+					}}>copy</button
+				>
+			</summary>
 			<pre class="dv-raw-pre">{JSON.stringify(event, null, 2)}</pre>
 		</details>
 	{/if}
@@ -438,6 +547,11 @@
 	.dv-error {
 		color: var(--id-draft);
 		font-family: var(--font-mono);
+	}
+	.dv-loading-status {
+		margin-top: 6px;
+		font-family: var(--font-mono);
+		font-size: var(--t-xs);
 	}
 
 	.dv-header {
@@ -607,6 +721,21 @@
 		font-size: var(--t-xs);
 		color: var(--base5);
 		margin-top: 8px;
+	}
+	.dv-raw-copy {
+		margin-left: 8px;
+		font-family: var(--font-mono);
+		font-size: calc(var(--t-xs) - 1px);
+		padding: 1px 8px;
+		border: 1px solid var(--panel-border);
+		border-radius: var(--r-sm);
+		background: transparent;
+		color: var(--base5);
+		cursor: pointer;
+	}
+	.dv-raw-copy:hover {
+		border-color: var(--id-yours);
+		color: var(--id-yours);
 	}
 	.dv-raw-pre {
 		font-family: var(--font-mono);

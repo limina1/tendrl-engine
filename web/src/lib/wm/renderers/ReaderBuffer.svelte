@@ -141,6 +141,9 @@
 	let viewMode = $state<ViewMode>('outline');
 	let currentSection = $state(0);
 	let loading = $state(true);
+	// Secondary line under "Loading…" while a standalone event/addressable
+	// falls through the local cache to a relay round-trip.
+	let loadingStatus = $state<string | null>(null);
 	let error = $state<string | null>(null);
 
 	// NIP-22 comments + NIP-84 highlights referencing each event. Keyed by
@@ -1171,15 +1174,26 @@
 	// Standalone-event reader: a `reader:event:<id>` buffer renders one
 	// section, no TOC walk, and defaults to paginated view so the user
 	// reads exactly the event they searched for.
+	//
+	// Two-phase load (same shape as DiscussionViewBuffer.pullThread):
+	// phase 1 reads the local cache only; a miss falls through to a
+	// relay round-trip with `bypassOffline` so the engine runs its
+	// Confirm-mode intent flow (modal approval) instead of silently
+	// failing. A declined modal degrades to the local miss.
 	async function loadEvent(eventId: string) {
 		loading = true;
+		loadingStatus = null;
 		try {
-			const resp = await api.getEvent(eventId);
+			let resp = await api.getEvent(eventId, { policy: 'local_only' });
+			if (!resp.event) {
+				loadingStatus = 'Not in local cache — fetching from relays…';
+				resp = await api.getEvent(eventId, { policy: 'fetch_always', bypassOffline: true });
+			}
 			const ev = resp.event as
 				| { kind?: number; pubkey?: string; tags?: string[][]; content?: string; created_at?: number }
 				| null;
 			if (!ev) {
-				error = 'Event not found';
+				error = 'Event not found locally or on your relays.';
 				return;
 			}
 			const tags = ev.tags ?? [];
@@ -1211,9 +1225,10 @@
 			];
 			viewMode = 'paginated';
 		} catch (e) {
-			error = String(e);
+			error = api.errorMessage(e);
 		} finally {
 			loading = false;
+			loadingStatus = null;
 		}
 	}
 
@@ -1222,15 +1237,23 @@
 	// render it as a single-section view. Reuses the same publication
 	// shape as loadEvent so the downstream rendering paths (paginated,
 	// continuous, discussion overlay) don't have to special-case kinds.
+	// Same two-phase local→relay load as loadEvent.
 	async function loadAddressable(kind: number, pubkey: string, dTag: string) {
 		loading = true;
+		loadingStatus = null;
 		try {
-			const resp = await api.getAddressable(kind, pubkey, dTag);
+			let resp = await api.getAddressable(kind, pubkey, dTag, 'local_only');
+			if (!resp.event) {
+				loadingStatus = 'Not in local cache — fetching from relays…';
+				resp = await api.getAddressable(kind, pubkey, dTag, 'fetch_always', {
+					bypassOffline: true
+				});
+			}
 			const ev = resp.event as
 				| { id?: string; kind?: number; pubkey?: string; tags?: string[][]; content?: string; created_at?: number }
 				| null;
 			if (!ev) {
-				error = `${kind === 30023 ? 'Article' : kind === 30818 ? 'Wiki' : 'Addressable event'} not found locally — try fetching the author from their profile (↻ Fetch).`;
+				error = `${kind === 30023 ? 'Article' : kind === 30818 ? 'Wiki' : 'Addressable event'} not found locally or on your relays.`;
 				return;
 			}
 			const tags = ev.tags ?? [];
@@ -1259,9 +1282,10 @@
 			];
 			viewMode = 'paginated';
 		} catch (e) {
-			error = String(e);
+			error = api.errorMessage(e);
 		} finally {
 			loading = false;
+			loadingStatus = null;
 		}
 	}
 
@@ -1935,7 +1959,12 @@
 	</div>
 
 	{#if loading}
-		<div class="empty"><p>Loading…</p></div>
+		<div class="empty">
+			<p>Loading…</p>
+			{#if loadingStatus}
+				<p class="loading-status">{loadingStatus}</p>
+			{/if}
+		</div>
 	{:else if error}
 		<div class="empty"><p>Error: {error}</p></div>
 	{:else if !publication}
@@ -2751,10 +2780,17 @@
 	.empty {
 		flex: 1;
 		display: flex;
+		flex-direction: column;
+		gap: 6px;
 		align-items: center;
 		justify-content: center;
 		color: var(--base5);
 		font-size: var(--t-sm);
+	}
+	.loading-status {
+		font-family: var(--font-mono);
+		font-size: var(--t-xs);
+		color: var(--base5);
 	}
 
 	/* Outline-overlay layout (used by both draft and pristine modes). */
