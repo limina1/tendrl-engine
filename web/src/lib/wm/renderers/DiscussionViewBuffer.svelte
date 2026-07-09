@@ -67,17 +67,29 @@
 	// NIP-22 + NIP-84 tag conventions:
 	//   uppercase A/E = root scope (the top of the thread)
 	//   lowercase a/e = parent (immediate ancestor)
+	//   uppercase K / lowercase k = the kind of the root / parent event
 	// For a top-level comment they're identical. For a nested reply they
 	// diverge — root is the article, parent is the comment being replied to.
+	// The kind tags let ref clicks route without fetching the target: a
+	// parent that is itself a comment opens as a discussion buffer, not
+	// as a generic reader page.
 	//
 	// The ref value is validated before use: some clients write malformed
 	// tags (a relay URL in the value slot). An unvalidated value would flow
 	// into the thread-pull filter as a bogus `#e`/`#a`, degenerate it into
 	// an unconstrained `kinds:[1111]` query, and dump 500 unrelated
 	// comments. Skipping a bad tag lets a later well-formed one still match.
-	function extractRefs(ev: NostrEvent): { root: ParentRef | null; parent: ParentRef | null } {
+	type Refs = {
+		root: ParentRef | null;
+		parent: ParentRef | null;
+		rootKind: number | null;
+		parentKind: number | null;
+	};
+	function extractRefs(ev: NostrEvent): Refs {
 		let root: ParentRef | null = null;
 		let parent: ParentRef | null = null;
+		let rootKind: number | null = null;
+		let parentKind: number | null = null;
 		for (const tag of ev.tags) {
 			if (!tag || tag.length < 2) continue;
 			const [name, value, relay, pk] = tag as [string, string, string?, string?];
@@ -85,11 +97,17 @@
 			else if (name === 'E' && !root && isHexId(value)) root = { type: 'e', value, relay, pubkey: pk };
 			else if (name === 'a' && !parent && isAddr(value)) parent = { type: 'a', value, relay };
 			else if (name === 'e' && !parent && isHexId(value)) parent = { type: 'e', value, relay, pubkey: pk };
+			else if (name === 'K' && rootKind === null && /^\d+$/.test(value)) rootKind = parseInt(value, 10);
+			else if (name === 'k' && parentKind === null && /^\d+$/.test(value)) parentKind = parseInt(value, 10);
 		}
-		return { root, parent };
+		return { root, parent, rootKind, parentKind };
 	}
 
-	const refs = $derived(event ? extractRefs(event) : { root: null, parent: null });
+	const refs = $derived(
+		event
+			? extractRefs(event)
+			: ({ root: null, parent: null, rootKind: null, parentKind: null } satisfies Refs)
+	);
 	const isComment = $derived(event?.kind === 1111);
 	const isHighlight = $derived(event?.kind === 9802);
 
@@ -126,6 +144,49 @@
 		buffer.id;
 		load();
 	});
+
+	// A ref whose target is itself a thread node (kind-1111 comment or
+	// kind-9802 highlight) opens as another discussion buffer — same card,
+	// same root/parent rows — so the thread can be climbed hop by hop.
+	// Only a true root (article, publication, note, …) goes to the reader.
+	function isThreadNodeKind(kind: number | null | undefined): boolean {
+		return kind === 1111 || kind === 9802;
+	}
+
+	function openDiscussion(id: string, kind: number | null) {
+		store.openBuffer({
+			className: 'work',
+			buffer: {
+				id: `discussion:${id}`,
+				kind: 'discussion-view',
+				label: kind === 9802 ? 'highlight' : 'comment',
+				kicker: id.slice(0, 8) + '…'
+			}
+		});
+	}
+
+	// Route a root/parent ref by the kind its NIP-22 `K`/`k` tag declares.
+	// A missing kind hint (older clients) falls back to a local-first
+	// lookup of the target; an unresolvable target keeps the reader route,
+	// whose two-phase load surfaces the fetch/not-found flow.
+	async function openRef(ref: ParentRef, kindHint: number | null) {
+		if (ref.type === 'e') {
+			let kind = kindHint;
+			if (kind === null) {
+				try {
+					const resp = await api.getEvent(ref.value);
+					kind = (resp.event as NostrEvent | null)?.kind ?? null;
+				} catch {
+					kind = null;
+				}
+			}
+			if (isThreadNodeKind(kind)) {
+				openDiscussion(ref.value, kind);
+				return;
+			}
+		}
+		openInReader(ref);
+	}
 
 	function openInReader(ref: ParentRef) {
 		if (ref.type === 'a') {
@@ -357,13 +418,23 @@
 		{#if refs.root || refs.parent}
 			<div class="dv-refs">
 				{#if refs.root}
-					<button class="dv-ref" onclick={() => openInReader(refs.root!)} title="Open root in reader">
+					<button
+						class="dv-ref"
+						onclick={() => openRef(refs.root!, refs.rootKind)}
+						title={isThreadNodeKind(refs.rootKind) ? 'Open root comment' : 'Open root in reader'}
+					>
 						<span class="dv-ref-label">root</span>
 						<code class="dv-ref-value">{short(refs.root.value, 48)}</code>
 					</button>
 				{/if}
 				{#if refs.parent && (!refs.root || refs.parent.value !== refs.root.value)}
-					<button class="dv-ref" onclick={() => openInReader(refs.parent!)} title="Open parent (immediate ancestor) in reader">
+					<button
+						class="dv-ref"
+						onclick={() => openRef(refs.parent!, refs.parentKind)}
+						title={isThreadNodeKind(refs.parentKind)
+							? 'Open parent comment'
+							: 'Open parent (immediate ancestor) in reader'}
+					>
 						<span class="dv-ref-label">parent</span>
 						<code class="dv-ref-value">{short(refs.parent.value, 48)}</code>
 					</button>
@@ -403,7 +474,7 @@
 									class="dv-root-card"
 									onclick={() => {
 										const r = refs.root ?? refs.parent;
-										if (r) openInReader(r);
+										if (r) openRef(r, refs.root ? refs.rootKind : refs.parentKind);
 									}}
 									title="Open the root in the reader"
 								>
