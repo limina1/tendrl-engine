@@ -192,10 +192,18 @@ pub fn group_threads_by_address(
 // directly, plus publication-level ones tagging the 30040 root that cascade to
 // whichever section's text they match. Each renders as its own `<mark>` span.
 //
-// Until 9802 events carry explicit offset tags, a highlight's position is found
-// by case-insensitive substring match (the same approximation the former web
-// `computeHighlightSegments` made). This is the single engine-side source of
-// truth; the web only slices the text by the returned spans and renders marks.
+// Position resolution, per highlight (spec §4.2):
+//   1. A verified `offset` tag — UTF-16 units into the pinned version's
+//      content, trusted only when the slice still reproduces the highlighted
+//      text (self-verifying, so stale offsets from edited sections are safe).
+//      Tendrl-authored highlights carry these; they pin the right occurrence
+//      of repeated phrases.
+//   2. Case-insensitive substring match, preferring the occurrence inside the
+//      event's `context` window when the needle repeats.
+//   3. First-occurrence substring match — the historical approximation (the
+//      former web `computeHighlightSegments`), covering foreign events.
+// This is the single engine-side source of truth; the web only slices the
+// text by the returned spans and renders marks.
 
 /// One NIP-84 highlight to place in a section's text.
 #[derive(Debug, Clone, Deserialize)]
@@ -206,6 +214,57 @@ pub struct Highlight {
     pub content: String,
     /// Author pubkey (drives per-author colour on the web).
     pub pubkey: String,
+    /// The event's `offset` tag — advisory UTF-16 `(start, end)` into the
+    /// pinned version's content; verified against `content` before use.
+    #[serde(default)]
+    pub offset: Option<(usize, usize)>,
+    /// The event's `context` tag — surrounding text, used to pick the right
+    /// occurrence when the highlighted phrase repeats.
+    #[serde(default)]
+    pub context: Option<String>,
+}
+
+/// Extract a resolver input from a raw kind-9802 event. Returns `None` for
+/// non-9802 kinds or events with no id/content.
+pub fn highlight_from_event(ev: &Value) -> Option<Highlight> {
+    if ev.get("kind").and_then(|v| v.as_u64()) != Some(9802) {
+        return None;
+    }
+    let id = ev.get("id")?.as_str()?.to_string();
+    let content = ev.get("content")?.as_str()?.to_string();
+    let pubkey = ev
+        .get("pubkey")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+
+    let mut offset = None;
+    let mut context = None;
+    if let Some(tags) = ev.get("tags").and_then(|v| v.as_array()) {
+        for tag in tags {
+            let Some(arr) = tag.as_array() else { continue };
+            match arr.first().and_then(|v| v.as_str()) {
+                Some("offset") if arr.len() >= 3 => {
+                    let start = arr[1].as_str().and_then(|s| s.parse::<usize>().ok());
+                    let end = arr[2].as_str().and_then(|s| s.parse::<usize>().ok());
+                    if let (Some(s), Some(e)) = (start, end) {
+                        offset = Some((s, e));
+                    }
+                }
+                Some("context") if arr.len() >= 2 => {
+                    context = arr[1].as_str().map(str::to_string);
+                }
+                _ => {}
+            }
+        }
+    }
+    Some(Highlight {
+        id,
+        content,
+        pubkey,
+        offset,
+        context,
+    })
 }
 
 /// A resolved highlight span. `start`/`end` are offsets into the section text in
@@ -229,11 +288,31 @@ fn find_u16(hay: &[u16], needle: &[u16], from: usize) -> Option<usize> {
     (from..=hay.len() - needle.len()).find(|&i| &hay[i..i + needle.len()] == needle)
 }
 
+/// Every occurrence of `needle` in `hay` (UTF-16 indices), capped so a
+/// pathological one-char needle can't blow up the candidate list.
+fn all_occurrences_u16(hay: &[u16], needle: &[u16]) -> Vec<usize> {
+    const CAP: usize = 64;
+    let mut out = Vec::new();
+    let mut from = 0usize;
+    while let Some(idx) = find_u16(hay, needle, from) {
+        out.push(idx);
+        if out.len() >= CAP {
+            break;
+        }
+        from = idx + 1;
+    }
+    out
+}
+
 /// Resolve where each highlight sits in `content`, returning non-overlapping
-/// spans sorted by `start`. Longer highlights claim their span first (ties
-/// broken by id for determinism); a shorter highlight that would overlap an
-/// already-claimed span is dropped — avoiding nested `<mark>`s without losing
-/// the longer, more informative match. Mirrors the former web twin.
+/// spans sorted by `start`.
+///
+/// Verified offsets place first (an exact pin must never lose its spot to a
+/// fuzzy match); substring-resolved highlights follow, longer text winning
+/// overlap arbitration (ties broken by id), each preferring the occurrence
+/// inside its `context` window. A highlight that would overlap an
+/// already-claimed span takes its next occurrence or is dropped — avoiding
+/// nested `<mark>`s without losing the longer, more informative match.
 pub fn resolve_highlight_spans(content: &str, highlights: &[Highlight]) -> Vec<HighlightSpan> {
     if content.is_empty() || highlights.is_empty() {
         return Vec::new();
@@ -241,17 +320,56 @@ pub fn resolve_highlight_spans(content: &str, highlights: &[Highlight]) -> Vec<H
 
     // Lowercased haystack in UTF-16 units — the same unit the web slices in.
     let hay_lower: Vec<u16> = content.to_lowercase().encode_utf16().collect();
+    // Original (un-lowercased) units for offset verification.
+    let content_units: Vec<u16> = content.encode_utf16().collect();
 
-    // Longer text wins overlap arbitration; id breaks ties.
-    let mut ordered: Vec<&Highlight> = highlights.iter().collect();
-    ordered.sort_by(|a, b| {
+    let overlap_free = |spans: &[HighlightSpan], start: usize, end: usize| {
+        !spans.iter().any(|s| s.start < end && start < s.end)
+    };
+
+    let by_length_then_id = |a: &&Highlight, b: &&Highlight| {
         b.content
             .len()
             .cmp(&a.content.len())
             .then_with(|| a.id.cmp(&b.id))
-    });
+    };
 
     let mut spans: Vec<HighlightSpan> = Vec::new();
+    let mut placed: HashSet<&str> = HashSet::new();
+
+    // Pass 1 — verified offsets. Trust the pin only when the slice still
+    // reproduces the highlighted text (trim + casefold); an edited section
+    // fails the check and the highlight falls through to substring matching.
+    let mut pinned: Vec<&Highlight> = highlights.iter().filter(|h| h.offset.is_some()).collect();
+    pinned.sort_by(by_length_then_id);
+    for hl in pinned {
+        let (start, end) = hl.offset.expect("filtered on is_some");
+        if start >= end || end > content_units.len() {
+            continue;
+        }
+        let slice = String::from_utf16_lossy(&content_units[start..end]);
+        if slice.trim().to_lowercase() != hl.content.trim().to_lowercase() {
+            continue; // stale pin — substring pass takes over
+        }
+        if overlap_free(&spans, start, end) {
+            spans.push(HighlightSpan {
+                start,
+                end,
+                id: hl.id.clone(),
+                pubkey: hl.pubkey.clone(),
+            });
+            placed.insert(hl.id.as_str());
+        }
+    }
+
+    // Pass 2 — substring resolution for everything not pinned. Longer text
+    // wins overlap arbitration; id breaks ties.
+    let mut ordered: Vec<&Highlight> = highlights
+        .iter()
+        .filter(|h| !placed.contains(h.id.as_str()))
+        .collect();
+    ordered.sort_by(by_length_then_id);
+
     for hl in ordered {
         let needle_str = hl.content.trim();
         if needle_str.is_empty() {
@@ -263,12 +381,41 @@ pub fn resolve_highlight_spans(content: &str, highlights: &[Highlight]) -> Vec<H
         // as the TS twin did with `content.slice(idx, idx + needle.length)`.
         let needle_len = needle_str.encode_utf16().count();
 
-        // First occurrence that doesn't overlap an already-claimed span.
-        let mut from = 0usize;
-        while let Some(idx) = find_u16(&hay_lower, &needle_lower, from) {
+        let occurrences = all_occurrences_u16(&hay_lower, &needle_lower);
+        if occurrences.is_empty() {
+            continue;
+        }
+
+        // A repeated phrase with a context tag: prefer the occurrence that
+        // falls inside the context's own position in the text.
+        let preferred: Option<usize> = if occurrences.len() > 1 {
+            hl.context
+                .as_deref()
+                .map(str::trim)
+                .filter(|c| !c.is_empty())
+                .and_then(|ctx| {
+                    let ctx_lower: Vec<u16> = ctx.to_lowercase().encode_utf16().collect();
+                    let ctx_start = find_u16(&hay_lower, &ctx_lower, 0)?;
+                    let ctx_end = ctx_start + ctx_lower.len();
+                    occurrences
+                        .iter()
+                        .find(|&&i| i >= ctx_start && i + needle_len <= ctx_end)
+                        .copied()
+                })
+        } else {
+            None
+        };
+
+        // Try the context-preferred occurrence first, then the rest in order.
+        let candidates = preferred.into_iter().chain(
+            occurrences
+                .iter()
+                .copied()
+                .filter(|i| Some(*i) != preferred),
+        );
+        for idx in candidates {
             let end = idx + needle_len;
-            let overlaps = spans.iter().any(|s| s.start < end && idx < s.end);
-            if !overlaps {
+            if overlap_free(&spans, idx, end) {
                 spans.push(HighlightSpan {
                     start: idx,
                     end,
@@ -277,7 +424,6 @@ pub fn resolve_highlight_spans(content: &str, highlights: &[Highlight]) -> Vec<H
                 });
                 break;
             }
-            from = idx + 1;
         }
     }
 
@@ -862,7 +1008,109 @@ mod tests {
             id: id.to_string(),
             content: content.to_string(),
             pubkey: "aa".to_string(),
+            offset: None,
+            context: None,
         }
+    }
+
+    fn hl_pinned(id: &str, content: &str, offset: (usize, usize)) -> Highlight {
+        Highlight {
+            offset: Some(offset),
+            ..hl(id, content)
+        }
+    }
+
+    fn hl_ctx(id: &str, content: &str, context: &str) -> Highlight {
+        Highlight {
+            context: Some(context.to_string()),
+            ..hl(id, content)
+        }
+    }
+
+    #[test]
+    fn verified_offset_pins_repeated_phrase() {
+        // "the cat" appears twice; the offset pins the second occurrence,
+        // which substring matching alone would never pick.
+        let content = "the cat sat. the cat ran.";
+        let spans = resolve_highlight_spans(content, &[hl_pinned("h1", "the cat", (13, 20))]);
+        assert_eq!(spans.len(), 1);
+        assert_eq!((spans[0].start, spans[0].end), (13, 20));
+    }
+
+    #[test]
+    fn stale_offset_falls_back_to_substring() {
+        // The pinned slice no longer matches (section was edited) — the
+        // highlight must fall through to first-occurrence substring match
+        // rather than render the wrong text.
+        let content = "the cat sat. the cat ran.";
+        let spans = resolve_highlight_spans(content, &[hl_pinned("h1", "the cat", (5, 12))]);
+        assert_eq!(spans.len(), 1);
+        assert_eq!((spans[0].start, spans[0].end), (0, 7));
+    }
+
+    #[test]
+    fn out_of_bounds_offset_falls_back() {
+        let content = "short text";
+        let spans = resolve_highlight_spans(content, &[hl_pinned("h1", "text", (100, 200))]);
+        assert_eq!(spans.len(), 1);
+        assert_eq!((spans[0].start, spans[0].end), (6, 10));
+    }
+
+    #[test]
+    fn verified_offset_claims_before_longer_substring() {
+        // A verified pin must never lose its spot to a longer fuzzy match:
+        // the pinned "cd" takes 2..4, the substring-resolved "abcdef" then
+        // overlaps everywhere and is dropped.
+        let content = "abcdef";
+        let spans = resolve_highlight_spans(
+            content,
+            &[hl("long", "abcdef"), hl_pinned("pin", "cd", (2, 4))],
+        );
+        assert_eq!(spans.len(), 1);
+        assert_eq!(spans[0].id, "pin");
+    }
+
+    #[test]
+    fn context_disambiguates_repeated_phrase() {
+        let content = "alpha beta gamma. delta beta epsilon.";
+        let spans = resolve_highlight_spans(content, &[hl_ctx("h1", "beta", "delta beta epsilon")]);
+        assert_eq!(spans.len(), 1);
+        // Second "beta", inside the context window — not the first at 6.
+        assert_eq!(spans[0].start, 24);
+    }
+
+    #[test]
+    fn unmatched_context_falls_back_to_first_occurrence() {
+        let content = "alpha beta gamma. delta beta epsilon.";
+        let spans = resolve_highlight_spans(content, &[hl_ctx("h1", "beta", "no such paragraph")]);
+        assert_eq!(spans.len(), 1);
+        assert_eq!(spans[0].start, 6);
+    }
+
+    #[test]
+    fn highlight_from_event_extracts_offset_and_context() {
+        let ev = json!({
+            "id": "abc", "kind": 9802, "pubkey": "pk",
+            "content": "the text",
+            "tags": [
+                ["a", "30041:pk:d"],
+                ["offset", "12", "20"],
+                ["context", "around the text here"],
+            ],
+        });
+        let h = highlight_from_event(&ev).unwrap();
+        assert_eq!(h.id, "abc");
+        assert_eq!(h.content, "the text");
+        assert_eq!(h.offset, Some((12, 20)));
+        assert_eq!(h.context.as_deref(), Some("around the text here"));
+
+        // Non-9802 kinds and malformed offsets are rejected/ignored.
+        assert!(highlight_from_event(&json!({"id": "x", "kind": 1111, "content": "c"})).is_none());
+        let bad = json!({
+            "id": "abc", "kind": 9802, "pubkey": "pk", "content": "t",
+            "tags": [["offset", "notanum", "20"]],
+        });
+        assert_eq!(highlight_from_event(&bad).unwrap().offset, None);
     }
 
     #[test]
