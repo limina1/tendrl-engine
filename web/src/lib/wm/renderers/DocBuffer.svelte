@@ -36,9 +36,23 @@
 	};
 
 	const parsed = $derived(parseBufferId(buffer.id));
+	// `?focus_comment=<id>` / `?highlight=<id>` suffixes arrive when a
+	// discussion card or highlight sends the user here to see the source
+	// with its full thread — same marker convention as ReaderBuffer.
+	const focusCommentId = $derived(bufferMarker(buffer.id, 'focus_comment'));
+	const focusHighlightId = $derived(bufferMarker(buffer.id, 'highlight'));
+
+	function bufferMarker(id: string, name: string): string | null {
+		const q = id.indexOf('?');
+		if (q < 0) return null;
+		const v = new URLSearchParams(id.slice(q + 1)).get(name);
+		return v && /^[0-9a-fA-F]{64}$/.test(v) ? v.toLowerCase() : null;
+	}
 
 	function parseBufferId(id: string): { kind: number; pubkey: string; dTag: string } | null {
-		const m = id.match(/^doc:(\d+):([0-9a-fA-F]{64}):(.+)$/);
+		const q = id.indexOf('?');
+		const core = q < 0 ? id : id.slice(0, q);
+		const m = core.match(/^doc:(\d+):([0-9a-fA-F]{64}):(.+)$/);
 		if (!m) return null;
 		const kind = parseInt(m[1], 10);
 		if (!Number.isFinite(kind)) return null;
@@ -93,8 +107,24 @@
 	});
 
 	const segments = $derived(
-		highlightSpans.length > 0 && body ? segmentsFromSpans(body, highlightSpans, null) : null
+		highlightSpans.length > 0 && body
+			? segmentsFromSpans(body, highlightSpans, focusHighlightId)
+			: null
 	);
+
+	// When arriving via ?highlight=<id>, scroll the focused <mark> into
+	// view once the overlay has rendered (same deferred-frame trick as
+	// CommentThread's focused-node scroll).
+	let wrapEl = $state<HTMLElement | null>(null);
+	$effect(() => {
+		const id = focusHighlightId;
+		if (!id || !segments || !wrapEl) return;
+		requestAnimationFrame(() => {
+			const mark = wrapEl?.querySelector(`[data-hl-ids*="${id}"]`);
+			mark?.scrollIntoView({ behavior: 'auto', block: 'center' });
+			mark?.classList.add('hl-flash');
+		});
+	});
 	const hasOverlay = $derived(!!segments && segments.some((s) => s.highlight !== null));
 
 	const authorName = $derived(
@@ -234,7 +264,7 @@
 	});
 </script>
 
-<div class="doc-wrap">
+<div class="doc-wrap" bind:this={wrapEl}>
 	{#if loading}
 		<div class="doc-status">
 			Loading…
@@ -325,7 +355,7 @@
 				</button>
 				{#if commentsOpen}
 					{#if threads.length > 0}
-						<CommentThread nodes={threads} focusedEventId={null} />
+						<CommentThread nodes={threads} focusedEventId={focusCommentId} />
 					{:else}
 						<p class="doc-comments-empty">No comments yet.</p>
 					{/if}

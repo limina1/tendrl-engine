@@ -2460,11 +2460,11 @@ function _createAppState() {
 		}
 	}
 
-	/** Open an addressable coordinate (`"kind:pubkey:dtag"`) in the *reader* —
-	 *  a 30040 in the publication reader, any other addressable (30041 section,
-	 *  30023 article, 30818 wiki) as a single-event reader buffer (which
-	 *  `ReaderBuffer.loadAddressable` wraps uniformly). The structured-event
-	 *  popup counterpart is `openAddressableInModal`. Used by nostrdown refs. */
+	/** Open an addressable coordinate (`"kind:pubkey:dtag"`) — a 30040 in
+	 *  the publication reader, any other addressable (30023 article, 30818
+	 *  wiki, 30817 spec, 30041 section) in the canonical doc view. The
+	 *  structured-event popup counterpart is `openAddressableInModal`.
+	 *  Used by nostrdown refs. */
 	function openCoord(coord: string) {
 		const i1 = coord.indexOf(':');
 		const i2 = coord.indexOf(':', i1 + 1);
@@ -2477,7 +2477,7 @@ function _createAppState() {
 			return;
 		}
 		const short = d_tag.length > 24 ? d_tag.slice(0, 24) + '…' : d_tag;
-		navigateToReader(`reader:${kind}:${pubkey}:${d_tag}`, 'event', short);
+		navigateToDoc(`doc:${kind}:${pubkey}:${d_tag}`, short);
 	}
 
 	async function getEventForModal(eventId: string) {
@@ -2991,12 +2991,15 @@ function _createAppState() {
 					const kind = parseInt(parts[0], 10);
 					const pubkey = parts[1];
 					const d_tag = parts.slice(2).join(':');
-					const bufId = `reader:${kind}:${pubkey}:${d_tag}?${marker}`;
-					navigateToReader(
-						bufId,
-						kind === 30040 ? 'reader' : 'event',
-						d_tag.length > 24 ? d_tag.slice(0, 24) + '…' : d_tag
-					);
+					const kicker = d_tag.length > 24 ? d_tag.slice(0, 24) + '…' : d_tag;
+					// 30040 publications keep the reader; every other
+					// addressable (article/wiki/spec) opens the canonical
+					// doc view — same chrome regardless of entry point.
+					if (kind === 30040) {
+						navigateToReader(`reader:${kind}:${pubkey}:${d_tag}?${marker}`, 'reader', kicker);
+					} else {
+						navigateToDoc(`doc:${kind}:${pubkey}:${d_tag}?${marker}`, kicker);
+					}
 					return;
 				}
 			}
@@ -3748,6 +3751,9 @@ function _createAppState() {
 		 *  needs to carry a marker (`?focus_comment=`, `?highlight=`)
 		 *  that the structured handlers above can't express. */
 		onReader?: (buffer_id: string, label: string, kicker: string) => void;
+		/** Open a doc buffer (`doc:kind:pubkey:d_tag[?marker]`) — the
+		 *  canonical single-document view for non-30040 addressables. */
+		onDoc?: (buffer_id: string, kicker: string) => void;
 		/** Reveal/focus the search buffer (the query itself is seeded separately by
 		 *  `searchFor`). Used when a reference resolves to "go look for it" — e.g.
 		 *  an unresolved wiki link. */
@@ -3791,6 +3797,15 @@ function _createAppState() {
 			// No-op fallback when running outside the shell — there isn't a
 			// route that maps to arbitrary reader buffer ids today.
 			console.warn('navigateToReader: no handler registered', buffer_id);
+		}
+	}
+
+	function navigateToDoc(buffer_id: string, kicker: string) {
+		docMode = 'reading';
+		if (navHandlers?.onDoc) {
+			navHandlers.onDoc(buffer_id, kicker);
+		} else {
+			console.warn('navigateToDoc: no handler registered', buffer_id);
 		}
 	}
 
