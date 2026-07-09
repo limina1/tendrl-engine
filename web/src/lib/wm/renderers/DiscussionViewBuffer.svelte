@@ -26,6 +26,7 @@
 
 	let event = $state<NostrEvent | null>(null);
 	let loading = $state(true);
+	let loadingStatus = $state<string | null>(null);
 	let error = $state<string | null>(null);
 
 	// "Pull thread" state — the thread tree built from every kind-1111
@@ -118,6 +119,7 @@
 			return;
 		}
 		loading = true;
+		loadingStatus = null;
 		error = null;
 		// Drop any thread pulled for a previously-viewed comment.
 		threadNodes = [];
@@ -126,17 +128,25 @@
 		threadOpen = false;
 		threadError = null;
 		try {
-			const resp = await api.getEvent(eventId);
+			// Two-phase load (same shape as the reader): local cache first,
+			// then a confirm-gated relay fetch — so climbing a thread past
+			// what's cached keeps working instead of dead-ending.
+			let resp = await api.getEvent(eventId, { policy: 'local_only' });
+			if (!resp.event) {
+				loadingStatus = 'Not in local cache — fetching from relays…';
+				resp = await api.getEvent(eventId, { policy: 'fetch_always', bypassOffline: true });
+			}
 			const ev = resp.event as NostrEvent | null;
 			if (!ev) {
-				error = 'Event not found in local DB. Try a Refresh on the source article first.';
+				error = 'Comment not found locally or on your relays.';
 			} else {
 				event = ev;
 			}
 		} catch (e) {
-			error = e instanceof Error ? e.message : String(e);
+			error = api.errorMessage(e);
 		} finally {
 			loading = false;
+			loadingStatus = null;
 		}
 	}
 
@@ -402,7 +412,12 @@
 
 <div class="dv">
 	{#if loading}
-		<div class="dv-empty">Loading…</div>
+		<div class="dv-empty">
+			Loading…
+			{#if loadingStatus}
+				<div class="dv-loading-status">{loadingStatus}</div>
+			{/if}
+		</div>
 	{:else if error}
 		<div class="dv-empty dv-error">{error}</div>
 	{:else if event}
@@ -532,6 +547,11 @@
 	.dv-error {
 		color: var(--id-draft);
 		font-family: var(--font-mono);
+	}
+	.dv-loading-status {
+		margin-top: 6px;
+		font-family: var(--font-mono);
+		font-size: var(--t-xs);
 	}
 
 	.dv-header {
