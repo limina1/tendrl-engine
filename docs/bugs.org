@@ -247,3 +247,25 @@ Route by kind hint: =e=-refs with =k=/=K= = 1111/9802 open a
 =discussion:<id>= buffer (same card, climbable); missing hint falls back to a
 local-first =getEvent= kind check; everything else keeps the reader. Rule:
 thread nodes → discussion view, true root → reader.
+
+* FIXED — raw JSON copy missing from the event menu (and other JSON fold-outs)
+:PROPERTIES:
+:found: 2026-07-09 (follow-up to the discussion-view copy fix — the report's "menu view" meant EventViewModal)
+:branch: bugs/raw-json-copy
+:fixed-in: see branch commit
+:END:
+
+** Symptom
+The first fix added copy only to DiscussionViewBuffer's =Raw event=
+disclosure. The user's "menu" — EventViewModal's =▸ r Raw JSON= section —
+still had no copy affordance, nor did the legacy Raw JSON modal
+(+layout.svelte) or ProfileResultItem's JSON fold-out.
+
+** Why
+The original report named two surfaces ("raw event" + "the menu view");
+only the first was audited for the copy affordance.
+
+** Fix
+=copy= button beside every raw-JSON surface, all through the
+clipboard+toast pattern: EventViewModal (reuses its =copyText=), the
+legacy json-modal header, and ProfileResultItem's fold-out.

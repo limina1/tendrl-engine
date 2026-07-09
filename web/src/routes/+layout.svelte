@@ -216,7 +216,19 @@
 		<div class="json-modal" onclick={(e) => e.stopPropagation()} role="dialog" tabindex="-1">
 			<div class="json-modal-header">
 				<span>Raw JSON</span>
-				<button onclick={() => (app.jsonModalData = null)}>Close</button>
+				<div class="json-modal-actions">
+					<button
+						onclick={() => {
+							try {
+								navigator.clipboard?.writeText(JSON.stringify(app.jsonModalData, null, 2));
+								app.pushToast('Raw JSON copied', 'success');
+							} catch {
+								app.pushToast("Couldn't copy raw JSON", 'error');
+							}
+						}}>Copy</button
+					>
+					<button onclick={() => (app.jsonModalData = null)}>Close</button>
+				</div>
 			</div>
 			<pre class="json-modal-body">{JSON.stringify(app.jsonModalData, null, 2)}</pre>
 		</div>
@@ -255,6 +267,11 @@
 		border-bottom: 1px solid var(--border);
 		font-weight: 600;
 		font-size: var(--t-xs);
+	}
+
+	.json-modal-actions {
+		display: flex;
+		gap: 8px;
 	}
 
 	.json-modal-body {
