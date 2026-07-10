@@ -1,3 +1,76 @@
+## v0.5.1 — 2026-07-09
+
+- feat(publish): stamp ["client", "tendrl"] on every signed event
+- fix(web): emit highlight context sparingly — Amethyst renders it as the quote
+- docs(discussions): authoring spec + decision worksheet
+- feat(web): highlight mode — capture selections into NIP-84 events
+- feat(web): comment authoring across every discussion surface
+- feat(web): segments carry source offsets into the rendered DOM
+- feat(discussions): comment / highlight / delete authoring endpoints
+- feat(discussions): offset-verified, context-aware highlight resolution
+- feat(discussions): NIP-22/84/09 template builders
+- fix(discussions): count replies in discussion badges
+- feat(web): doc view is the canonical source+thread surface for non-30040 addressables
+- feat(web): discussion cards carry the standard action cluster
+- feat(web): DocBuffer header gets the standard action cluster + two-phase load
+- feat(web): standalone reader events carry provenance + always-on header row
+- fix(web): copy button on every raw-JSON surface
+- docs(bugs): tick the three discussion-view defects FIXED
+- fix(web): discussion buffer loads uncached comments via the confirm-gated fetch
+- fix(web): thread refs route by NIP-22 kind — comments stay in the discussion view
+- fix(web): two-phase reader load with confirm-gated relay fallback
+- fix(engine): single-event fetches honor the Confirm-mode intent flow
+- fix(web): copy button on the discussion view's raw event JSON
+- docs(bugs): log discussion-view copy, confirm-fetch 404, and parent-routing defects
+- docs(nips): A7v2 — integrated spell spec revision
+- feat(spell): nevent spell references — relay hints on `in`/`stage` tags
+- feat(spell): load-older pagination + ignore-list honor on spell feeds
+- fix(web): spell topics are visible and labeled as non-filters
+- fix(release): guard version bumps against accidental re-runs
+- docs(nips): vendor NIP-A7 draft; spec the composition extension
+- feat(spell): `in` chaining — a spell applies its filter to another spell's results
+- fix(web): empty spell builder shows a hint, not a 400; unwrap engine error messages
+- feat(spell): spell builder — form-driven spells incl. pipelines; wand affordance
+- fix(web): spell clause preview reads as one query string, not stacked lines
+- docs: composer epoch shipped — tick roadmap, update feat zettels + CLAUDE.md
+- feat(spell): spellbooks (kind 30777) — curated spell sets as the profile feed
+- feat(spell): composer — save a search as a kind-777 spell
+- feat(spell): clause renderer — spell preview is the search DSL itself
+- feat(search): relay: and limit: query tokens — search strings carry relay scope
+- docs(zettel): idea-spells — refine roadmap: DSL-as-narration, spellbooks (kind 30777) as primary object
+- docs(zettel): idea-spells — composer-epoch roadmap (narration, relay syntax, composer, bookmarks)
+- feat(web+spell): profile Spells tab — author spellbook as a runnable feed
+- feat(spell): NIP-A7 kind-777 spells — parser, pipeline executor, HTTP API
+- docs(zettel): idea-spells — composable kind-777 queries, pipelines, spellbooks
+- feat(web): profile tab bar becomes a horizontal scroll rail
+- fix(web): profile query flood — make tab paging limits non-reactive
+- fix(web): profile view $effect loop — untrack loadLocal tabLimits read
+- feat(web): profile-tab backfill + two-column event cards
+- feat(publish): NKBIP-01 N tag — normalized author twin, spec revision sync
+
+## v0.7.0 — 2026-07-09
+
+- docs(nips): vendor NIP-A7 draft; spec the composition extension
+- feat(spell): `in` chaining — a spell applies its filter to another spell's results
+- fix(web): empty spell builder shows a hint, not a 400; unwrap engine error messages
+- feat(spell): spell builder — form-driven spells incl. pipelines; wand affordance
+- fix(web): spell clause preview reads as one query string, not stacked lines
+- docs: composer epoch shipped — tick roadmap, update feat zettels + CLAUDE.md
+- feat(spell): spellbooks (kind 30777) — curated spell sets as the profile feed
+- feat(spell): composer — save a search as a kind-777 spell
+- feat(spell): clause renderer — spell preview is the search DSL itself
+- feat(search): relay: and limit: query tokens — search strings carry relay scope
+- docs(zettel): idea-spells — refine roadmap: DSL-as-narration, spellbooks (kind 30777) as primary object
+- docs(zettel): idea-spells — composer-epoch roadmap (narration, relay syntax, composer, bookmarks)
+- feat(web+spell): profile Spells tab — author spellbook as a runnable feed
+- feat(spell): NIP-A7 kind-777 spells — parser, pipeline executor, HTTP API
+- docs(zettel): idea-spells — composable kind-777 queries, pipelines, spellbooks
+- feat(web): profile tab bar becomes a horizontal scroll rail
+- fix(web): profile query flood — make tab paging limits non-reactive
+- fix(web): profile view $effect loop — untrack loadLocal tabLimits read
+- feat(web): profile-tab backfill + two-column event cards
+- feat(publish): NKBIP-01 N tag — normalized author twin, spec revision sync
+
 ## v0.5.0 — 2026-07-06
 
 - feat(web): profile hamburger menu + highlights and specs tabs
