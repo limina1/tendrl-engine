@@ -100,18 +100,35 @@
 		return null;
 	}
 
-	/** NIP-84 context: the paragraph around the selection — nearest blank-line
-	 *  boundaries, capped so the tag stays reasonable. */
+	/** NIP-84 context — emitted SPARINGLY. Several clients (Amethyst) render
+	 *  the `context` tag as the quote body, so a wide context displays as if
+	 *  far more than the selection were highlighted. It's only genuinely
+	 *  needed when the selected text repeats in the section (so a reader that
+	 *  ignores our offset tag can still pick the right occurrence), and even
+	 *  then a tight sentence window suffices — never the whole paragraph. */
 	function contextAround(content: string, start: number, end: number): string | undefined {
-		const MAX = 400;
-		let from = content.lastIndexOf('\n\n', start);
-		from = from < 0 ? 0 : from + 2;
-		let to = content.indexOf('\n\n', end);
-		if (to < 0) to = content.length;
+		const text = content.slice(start, end).trim().toLowerCase();
+		if (!text) return undefined;
+		const hay = content.toLowerCase();
+		// Unique in the section → content + offset identify it; no context.
+		if (hay.indexOf(text) === hay.lastIndexOf(text)) return undefined;
+
+		// Sentence-ish window around the selection, tightly capped.
+		const MAX_PAD = 80;
+		const isBoundary = (ch: string) => ch === '\n' || ch === '.' || ch === '!' || ch === '?';
+		let from = start;
+		for (let i = start - 1; i >= Math.max(0, start - MAX_PAD); i--) {
+			if (isBoundary(content[i])) break;
+			from = i;
+		}
+		let to = end;
+		for (let i = end; i < Math.min(content.length, end + MAX_PAD); i++) {
+			to = i + 1;
+			if (isBoundary(content[i])) break;
+		}
 		const ctx = content.slice(from, to).trim();
-		if (!ctx || ctx.length > MAX) return undefined;
-		// The context tag is for disambiguation — useless if it IS the selection.
-		if (ctx === content.slice(start, end).trim()) return undefined;
+		// Still useless if it adds nothing beyond the selection itself.
+		if (!ctx || ctx.toLowerCase() === text) return undefined;
 		return ctx;
 	}
 
@@ -144,6 +161,10 @@
 			let end = offsetAt(container, range.endContainer, range.endOffset, 'end');
 			if (start === null || end === null) return;
 			if (start > end) [start, end] = [end, start];
+			// Trim whitespace off the selection edges, offsets adjusted in step
+			// so the slice==content invariant (which the engine enforces) holds.
+			while (start < end && /\s/.test(info.content[start])) start++;
+			while (end > start && /\s/.test(info.content[end - 1])) end--;
 			const text = info.content.slice(start, end);
 			if (text.trim().length < 3) return;
 

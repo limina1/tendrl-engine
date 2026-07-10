@@ -503,6 +503,12 @@ Post: `api.publishHighlight({ target: { address, event_id }, content,
 offset: [start, end], context, comment? })`. On 200, append the returned
 event to the reader's `discussions.events`; the existing `$effect` →
 `api.resolveHighlights` → `RichContent` pipeline re-renders the overlay.
+The `context` tag is emitted **sparingly**: only when the selected text
+repeats within the section (so offset-ignorant readers can disambiguate),
+and then as a tight sentence window — never the enclosing paragraph.
+Field-tested reason: clients like Amethyst render `context` as the quote
+body, so a paragraph-wide context displays as if the whole section were
+highlighted.
 Sign-in gating per worksheet C7: the modeline pill (a persistent
 affordance) renders disabled with a "sign in to highlight" tooltip when
 `identityCanSign` is false; the mode itself can't be entered.
