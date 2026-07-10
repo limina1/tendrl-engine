@@ -3614,12 +3614,195 @@ pub async fn discussions_list_handler(
         .get_events_with_options(filters, policy, relays_opt, req.mode_confirm)
         .await?;
 
-    let events = dedup_events_by_id(response.events);
+    let mut events = dedup_events_by_id(response.events);
 
-    // Tally over the deduped event set (the `#a`/`#A` filters overlap, so an
-    // event matched by both must count once). Addresses-only; an event-id-only
-    // query carries no address coordinates, so counts stays empty there.
-    let counts = tally_discussion_counts(&events, &addresses);
+    // Second hop (worksheet A7): a comment on a highlight roots at the 9802
+    // itself and carries no section address at all, so the address filters
+    // above can never return it. Walk the thread with `#e`: a top-level
+    // highlight comment e-tags the 9802, its replies e-tag the comment above
+    // them, so an iterative frontier covers the whole subtree. (`#e` rather
+    // than `#E` deliberately: nostrdb stores 64-hex tag values in its id
+    // index, which the string-tag query behind `#E` can't reach — and `#e`
+    // is also the filter every relay indexes.)
+    if kinds.contains(&1111) {
+        let mut known: std::collections::HashSet<String> = events
+            .iter()
+            .filter_map(|e| e.get("id").and_then(|v| v.as_str()).map(str::to_string))
+            .collect();
+        let mut frontier: Vec<String> = events
+            .iter()
+            .filter(|e| e.get("kind").and_then(|v| v.as_u64()) == Some(9802))
+            .filter_map(|e| e.get("id").and_then(|v| v.as_str()).map(str::to_string))
+            .collect();
+        for _ in 0..4 {
+            if frontier.is_empty() {
+                break;
+            }
+            let hop = engine
+                .get_events_with_options(
+                    vec![json!({"kinds": [1111], "#e": frontier, "limit": limit})],
+                    policy,
+                    relays_opt,
+                    req.mode_confirm,
+                )
+                .await?;
+            let mut next = Vec::new();
+            for ev in hop.events {
+                let Some(id) = ev.get("id").and_then(|v| v.as_str()).map(str::to_string) else {
+                    continue;
+                };
+                if known.insert(id.clone()) {
+                    next.push(id);
+                    events.push(ev);
+                }
+            }
+            frontier = next;
+        }
+    }
+
+    // Ignore list: a muted pubkey's comments/highlights neither render nor
+    // count. Single chokepoint for both this handler's events and the tallies
+    // derived from them below.
+    {
+        let ignored = engine.ignore_list().read().await;
+        if !ignored.pubkeys.is_empty() || !ignored.event_ids.is_empty() {
+            events.retain(|e| {
+                let pk = e.get("pubkey").and_then(|v| v.as_str()).unwrap_or("");
+                let id = e.get("id").and_then(|v| v.as_str()).unwrap_or("");
+                !ignored.pubkeys.contains(pk) && !ignored.event_ids.contains(id)
+            });
+        }
+    }
+
+    // NIP-09 tombstones: nostrdb never physically deletes, so hide any event
+    // whose author has a local kind-5 naming it. Local-only lookup — deletion
+    // requests the engine authored or has already ingested.
+    {
+        let ids: Vec<String> = events
+            .iter()
+            .filter_map(|e| e.get("id").and_then(|v| v.as_str()).map(str::to_string))
+            .collect();
+        if !ids.is_empty() {
+            let dels = engine
+                .get_events_with_options(
+                    vec![json!({"kinds": [5], "#e": ids})],
+                    FetchPolicy::LocalOnly,
+                    None,
+                    false,
+                )
+                .await?;
+            let author_of: std::collections::HashMap<&str, &str> = events
+                .iter()
+                .filter_map(|e| {
+                    Some((
+                        e.get("id")?.as_str()?,
+                        e.get("pubkey").and_then(|v| v.as_str()).unwrap_or(""),
+                    ))
+                })
+                .collect();
+            let mut tombstoned: std::collections::HashSet<String> =
+                std::collections::HashSet::new();
+            for del in &dels.events {
+                let del_pk = del.get("pubkey").and_then(|v| v.as_str()).unwrap_or("");
+                let Some(tags) = del.get("tags").and_then(|v| v.as_array()) else {
+                    continue;
+                };
+                for tag in tags {
+                    let Some(arr) = tag.as_array() else { continue };
+                    if arr.len() >= 2 && arr[0].as_str() == Some("e") {
+                        if let Some(eid) = arr[1].as_str() {
+                            // Only the author's own deletion request counts.
+                            if author_of.get(eid) == Some(&del_pk) {
+                                tombstoned.insert(eid.to_string());
+                            }
+                        }
+                    }
+                }
+            }
+            if !tombstoned.is_empty() {
+                events.retain(|e| {
+                    e.get("id")
+                        .and_then(|v| v.as_str())
+                        .map(|id| !tombstoned.contains(id))
+                        .unwrap_or(true)
+                });
+            }
+        }
+    }
+
+    // Tally over the deduped, filtered event set (the `#a`/`#A` filters
+    // overlap, so an event matched by both must count once). Addresses-only;
+    // an event-id-only query carries no address coordinates, so counts stays
+    // empty there.
+    let mut counts = tally_discussion_counts(&events, &addresses);
+
+    // Attribute highlight-rooted comments to the section(s) their root
+    // highlight references — they carry no address tags of their own (their
+    // root scope is the 9802), so the tally above can't see them, but a
+    // reader looking at the section should still count that conversation.
+    if !addresses.is_empty() {
+        let address_set: std::collections::HashSet<&str> =
+            addresses.iter().map(String::as_str).collect();
+        let tag_values = |e: &Value, names: &[&str]| -> Vec<String> {
+            e.get("tags")
+                .and_then(|v| v.as_array())
+                .map(|tags| {
+                    tags.iter()
+                        .filter_map(|t| {
+                            let arr = t.as_array()?;
+                            let name = arr.first()?.as_str()?;
+                            if names.contains(&name) {
+                                arr.get(1)?.as_str().map(str::to_string)
+                            } else {
+                                None
+                            }
+                        })
+                        .collect()
+                })
+                .unwrap_or_default()
+        };
+        // Which requested address(es) each returned highlight belongs to.
+        let mut hl_addrs: std::collections::HashMap<String, Vec<String>> =
+            std::collections::HashMap::new();
+        for e in &events {
+            if e.get("kind").and_then(|v| v.as_u64()) != Some(9802) {
+                continue;
+            }
+            let Some(id) = e.get("id").and_then(|v| v.as_str()) else {
+                continue;
+            };
+            let addrs: Vec<String> = tag_values(e, &["a", "A"])
+                .into_iter()
+                .filter(|a| address_set.contains(a.as_str()))
+                .collect();
+            if !addrs.is_empty() {
+                hl_addrs.insert(id.to_string(), addrs);
+            }
+        }
+        if !hl_addrs.is_empty() {
+            for e in &events {
+                if e.get("kind").and_then(|v| v.as_u64()) != Some(1111) {
+                    continue;
+                }
+                // Already counted via its own address tags? Skip.
+                if tag_values(e, &["a", "A"])
+                    .iter()
+                    .any(|a| address_set.contains(a.as_str()))
+                {
+                    continue;
+                }
+                for root_id in tag_values(e, &["E"]) {
+                    if let Some(addrs) = hl_addrs.get(&root_id) {
+                        for addr in addrs {
+                            if let Some(entry) = counts.get_mut(addr) {
+                                entry.comments += 1;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     // Thread engine-side when asked. Address queries group by section
     // (`threads_by_address`); an event-id-only query has no address to group
@@ -3657,6 +3840,587 @@ pub async fn discussions_list_handler(
         threads_by_address,
         threads,
     }))
+}
+
+// ============================================================================
+// Discussion authoring — comment / highlight / delete
+// ============================================================================
+//
+// The write half of the discussions API (spec:
+// docs/discussions-authoring-spec.md §3.3). Tag construction is
+// `crate::discussions` (pure, tested); these handlers compose the existing
+// pieces: build → sign (SigningController) → ingest into nostrdb FIRST
+// (local-first: the event must be queryable even if every relay rejects it)
+// → broadcast to the publish relay set → respond with the signed event plus
+// per-relay results.
+
+/// Relays commonly cap whole events around 64–512 KB; a comment near that is
+/// pathological, so reject early with a clear error.
+const MAX_DISCUSSION_CONTENT_BYTES: usize = 64 * 1024;
+
+/// The root a comment scopes to. Exactly one of the three forms:
+/// - `address` — an addressable/replaceable coordinate `kind:pubkey:d`;
+/// - `event_id` (+ `kind`/`pubkey` when the event isn't cached locally) — a
+///   regular event;
+/// - `external` + `id_kind` (+ optional `hint` URL) — a NIP-73 external id.
+#[derive(Debug, Deserialize, Default)]
+#[serde(default)]
+pub struct CommentRootRef {
+    pub address: Option<String>,
+    pub event_id: Option<String>,
+    pub kind: Option<u32>,
+    pub pubkey: Option<String>,
+    pub external: Option<String>,
+    pub id_kind: Option<String>,
+    pub hint: Option<String>,
+}
+
+/// The comment being replied to. Hybrid resolution (worksheet B1): the engine
+/// prefers its own nostrdb copy of `event_id` and falls back to the supplied
+/// `event` JSON — the client is literally rendering the parent, so a reply
+/// must never fail on "event not found".
+#[derive(Debug, Deserialize)]
+pub struct CommentParentRef {
+    pub event_id: String,
+    #[serde(default)]
+    pub event: Option<Value>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct DiscussionCommentRequest {
+    #[serde(default)]
+    pub root: Option<CommentRootRef>,
+    /// Present = reply; the root scope is chased from the parent's own tags
+    /// and `root` is ignored.
+    #[serde(default)]
+    pub parent: Option<CommentParentRef>,
+    pub content: String,
+    /// Broadcast override; defaults to the engine's publish set.
+    #[serde(default)]
+    pub relays: Option<Vec<String>>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct HighlightTargetRef {
+    #[serde(default)]
+    pub address: Option<String>,
+    /// The exact event version the selection was made against — the offset
+    /// reference frame.
+    #[serde(default)]
+    pub event_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct DiscussionHighlightRequest {
+    pub target: HighlightTargetRef,
+    /// The selected text, verbatim (the web slices it from the source
+    /// content, so `offset` and `content` agree by construction).
+    pub content: String,
+    /// UTF-16 code units into the pinned version's content.
+    #[serde(default)]
+    pub offset: Option<(u64, u64)>,
+    #[serde(default)]
+    pub context: Option<String>,
+    /// Optional annotation → quote highlight (NIP-84 `comment` tag).
+    #[serde(default)]
+    pub comment: Option<String>,
+    #[serde(default)]
+    pub relays: Option<Vec<String>>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct DiscussionDeleteRequest {
+    pub event_id: String,
+    #[serde(default)]
+    pub reason: Option<String>,
+    #[serde(default)]
+    pub relays: Option<Vec<String>>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct DiscussionPublishResponse {
+    /// The signed event — already ingested locally, so a follow-up
+    /// `discussions/list {policy: local_only}` includes it immediately.
+    pub event: Value,
+    pub broadcast: BroadcastResponse,
+}
+
+fn unix_now_i64() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
+}
+
+/// First configured general relay — the NIP-22 tag hint should name a relay
+/// where the *target* is readable (the fetch side), not our publish set
+/// (worksheet B2). Empty string when none; the tag builders then omit the
+/// hint slot where the format allows.
+fn discussion_relay_hint(engine: &AppState) -> String {
+    engine.general_relays().first().cloned().unwrap_or_default()
+}
+
+/// Shared tail of the three discussion authoring handlers.
+async fn sign_ingest_broadcast(
+    engine: &AppState,
+    signing: &crate::signing::SigningController,
+    mut template: crate::signing::EventTemplate,
+    relays_override: Option<Vec<String>>,
+) -> Result<DiscussionPublishResponse, EngineError> {
+    let active_pubkey = require_active_pubkey(signing).await?;
+    template.pubkey = Some(active_pubkey);
+    let kind = template.kind;
+
+    let signed = signing
+        .sign(template)
+        .await
+        .map_err(map_publish_sign_error)?;
+    let event_json = serde_json::to_string(&signed)
+        .map_err(|e| EngineError::Other(format!("event serialize: {e}")))?;
+    let event_id = signed
+        .get("id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+
+    // Local-first ingest, verified. nostrdb processes asynchronously (the
+    // publish path sleeps a blind 300ms before its check); poll with a short
+    // backoff so the common case returns in one tick.
+    engine.ingest_event(&event_json)?;
+    let mut persisted = false;
+    for _ in 0..20 {
+        if crate::query::query_by_id(engine.ndb(), &event_id)?.is_some() {
+            persisted = true;
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    if !persisted {
+        return Err(EngineError::Database(
+            "signed event did not persist to nostrdb".into(),
+        ));
+    }
+
+    // Broadcast. Unlike /broadcast, an empty relay set is NOT an error and a
+    // declined confirm doesn't fail the request — the event is already local;
+    // the response's 0/N results tell the client it hasn't propagated.
+    let relays = relays_override.unwrap_or_else(|| engine.publish_relays().to_vec());
+    let results: Vec<crate::relay::PublishResult> = if relays.is_empty() {
+        Vec::new()
+    } else {
+        let summary = crate::network::RequestSummary {
+            filters: vec![],
+            composition: crate::network::CompositionShape {
+                phases: vec![crate::network::PhaseStage {
+                    label: "primary".into(),
+                    members: vec![(crate::network::Phase::Broadcast, relays.clone())],
+                    start_delay_ms: 0,
+                }],
+            },
+            dsl: format!("pub k:{kind} via:discussions"),
+        };
+        let manifest = crate::network::PublishManifest::from_events(std::iter::once(&signed));
+        match engine
+            .begin_publish_operation(
+                format!("Publishing kind {kind} to {} relay(s)", relays.len()),
+                relays.clone(),
+                vec![event_id.clone()],
+                Some(summary),
+                Some(manifest),
+            )
+            .await
+        {
+            Ok(op) => {
+                let chosen = op.relays().to_vec();
+                for url in &chosen {
+                    op.relay_status(url.clone(), crate::network::RelayStatusValue::Connecting);
+                }
+                let results = crate::relay::publish_to_relays(&chosen, &event_json).await;
+                for r in &results {
+                    let status = if r.success {
+                        crate::network::RelayStatusValue::Accepted
+                    } else {
+                        crate::network::RelayStatusValue::Rejected {
+                            msg: r.message.clone().unwrap_or_default(),
+                        }
+                    };
+                    op.relay_status(r.relay_url.clone(), status);
+                    if r.success {
+                        if let Err(e) = engine.record_event_relay(&event_json, &r.relay_url) {
+                            debug!("record relay metadata: {e}");
+                        }
+                    }
+                }
+                op.complete(results.iter().filter(|r| r.success).count());
+                results
+            }
+            // User declined the broadcast in Confirm mode — local-only post.
+            Err(_) => Vec::new(),
+        }
+    };
+
+    let successful = results.iter().filter(|r| r.success).count();
+    let total = results.len();
+    Ok(DiscussionPublishResponse {
+        event: signed,
+        broadcast: BroadcastResponse {
+            successful,
+            total,
+            results,
+        },
+    })
+}
+
+/// Resolve a `CommentRootRef` to a typed scope, filling what nostrdb knows
+/// locally (never a network fetch inside a publish handler).
+async fn resolve_comment_root(
+    engine: &AppState,
+    r: &CommentRootRef,
+) -> Result<crate::discussions::CommentScope, EngineError> {
+    use crate::discussions::{normalize_external_id, CommentScope, DiscussionTarget};
+
+    if let Some(external) = &r.external {
+        let id_kind = r
+            .id_kind
+            .clone()
+            .ok_or_else(|| EngineError::BadRequest("external root requires `id_kind`".into()))?;
+        return Ok(CommentScope::External {
+            id: normalize_external_id(external, &id_kind),
+            id_kind,
+            hint: r.hint.clone(),
+        });
+    }
+
+    if let Some(addr) = &r.address {
+        if !is_addr_coord(addr) {
+            return Err(EngineError::BadRequest(format!(
+                "malformed address coordinate `{addr}`"
+            )));
+        }
+        let mut parts = addr.splitn(3, ':');
+        let kind: u32 = parts
+            .next()
+            .and_then(|k| k.parse().ok())
+            .ok_or_else(|| EngineError::BadRequest("address kind must be numeric".into()))?;
+        let pubkey = parts.next().unwrap_or("").to_string();
+        let d_tag = parts.next().unwrap_or("");
+        // Version pin from the local cache only.
+        let event_id = engine
+            .get_addressable(kind as u64, &pubkey, d_tag, FetchPolicy::LocalOnly)
+            .await
+            .ok()
+            .flatten()
+            .and_then(|ev| ev.get("id").and_then(|v| v.as_str()).map(str::to_string));
+        return Ok(CommentScope::Event(DiscussionTarget {
+            address: Some(addr.clone()),
+            event_id,
+            kind,
+            pubkey,
+        }));
+    }
+
+    if let Some(id) = &r.event_id {
+        if !is_hex64(id) {
+            return Err(EngineError::BadRequest(
+                "event_id must be 64-char hex".into(),
+            ));
+        }
+        // `root_scope_from_parent` on a non-1111 event builds the scope from
+        // the event itself (coordinate for addressable kinds, E for regular)
+        // — exactly what "this event is the root" means.
+        if let Some(ev) = crate::query::query_by_id(engine.ndb(), id)? {
+            return crate::discussions::root_scope_from_parent(&ev)
+                .map_err(EngineError::BadRequest);
+        }
+        let kind = r.kind.ok_or_else(|| {
+            EngineError::BadRequest(
+                "event root not cached locally — supply `kind` and `pubkey`".into(),
+            )
+        })?;
+        let pubkey = r.pubkey.clone().ok_or_else(|| {
+            EngineError::BadRequest(
+                "event root not cached locally — supply `kind` and `pubkey`".into(),
+            )
+        })?;
+        return Ok(CommentScope::Event(DiscussionTarget {
+            address: None,
+            event_id: Some(id.clone()),
+            kind,
+            pubkey,
+        }));
+    }
+
+    Err(EngineError::BadRequest(
+        "root requires `address`, `event_id`, or `external`".into(),
+    ))
+}
+
+/// POST /api/v1/discussions/comment — publish a NIP-22 comment (kind 1111)
+/// against any root: publication/section/article coordinates, regular events
+/// of any kind (kind-1 notes included — worksheet A5), or NIP-73 external
+/// ids. With `parent`, publishes a threaded reply whose root scope is chased
+/// from the parent's own tags.
+///
+/// Convenience routing: a `root.event_id` that resolves to a local kind-1111
+/// event is treated as a reply to that comment — the universal "(c) comment"
+/// action can pass whatever event it's looking at and get correct threading.
+pub async fn discussion_comment_handler(
+    State(engine): State<AppState>,
+    Extension(signing): Extension<crate::signing::SigningController>,
+    Json(req): Json<DiscussionCommentRequest>,
+) -> Result<Json<DiscussionPublishResponse>, EngineError> {
+    use crate::discussions::{build_comment_template, root_scope_from_parent, ParentComment};
+
+    let content = req.content.trim().to_string();
+    if content.is_empty() {
+        return Err(EngineError::BadRequest("comment content is empty".into()));
+    }
+    if content.len() > MAX_DISCUSSION_CONTENT_BYTES {
+        return Err(EngineError::BadRequest(format!(
+            "comment content exceeds {MAX_DISCUSSION_CONTENT_BYTES} bytes"
+        )));
+    }
+
+    // Normalize the "commenting on a comment" case into a reply.
+    let mut parent_ref = req.parent;
+    if parent_ref.is_none() {
+        if let Some(id) = req.root.as_ref().and_then(|r| r.event_id.as_deref()) {
+            if let Ok(Some(ev)) = crate::query::query_by_id(engine.ndb(), id) {
+                if ev.get("kind").and_then(|v| v.as_u64()) == Some(1111) {
+                    parent_ref = Some(CommentParentRef {
+                        event_id: id.to_string(),
+                        event: Some(ev),
+                    });
+                }
+            }
+        }
+    }
+
+    let relay_hint = discussion_relay_hint(&engine);
+
+    let (root, parent) = match &parent_ref {
+        Some(p) => {
+            if !is_hex64(&p.event_id) {
+                return Err(EngineError::BadRequest(
+                    "parent event_id must be 64-char hex".into(),
+                ));
+            }
+            let parent_event = crate::query::query_by_id(engine.ndb(), &p.event_id)?
+                .or_else(|| p.event.clone())
+                .ok_or_else(|| {
+                    EngineError::NotFound(
+                        "parent event not cached locally — include `parent.event`".into(),
+                    )
+                })?;
+            let root = root_scope_from_parent(&parent_event).map_err(EngineError::BadRequest)?;
+            let kind = parent_event
+                .get("kind")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(1111) as u32;
+            let pubkey = parent_event
+                .get("pubkey")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            (
+                root,
+                Some(ParentComment {
+                    event_id: p.event_id.clone(),
+                    kind,
+                    pubkey,
+                }),
+            )
+        }
+        None => {
+            let r = req.root.as_ref().ok_or_else(|| {
+                EngineError::BadRequest("either `root` or `parent` is required".into())
+            })?;
+            (resolve_comment_root(&engine, r).await?, None)
+        }
+    };
+
+    let template = build_comment_template(
+        &root,
+        parent.as_ref(),
+        &content,
+        &relay_hint,
+        unix_now_i64(),
+    )
+    .map_err(EngineError::BadRequest)?;
+
+    let resp = sign_ingest_broadcast(&engine, &signing, template, req.relays).await?;
+    Ok(Json(resp))
+}
+
+/// POST /api/v1/discussions/highlight — publish a NIP-84 highlight
+/// (kind 9802). When `offset` is supplied and the pinned version is cached,
+/// the content must equal the slice — corrupt offsets are rejected at write
+/// time instead of entering the permanent record (worksheet B6).
+pub async fn discussion_highlight_handler(
+    State(engine): State<AppState>,
+    Extension(signing): Extension<crate::signing::SigningController>,
+    Json(req): Json<DiscussionHighlightRequest>,
+) -> Result<Json<DiscussionPublishResponse>, EngineError> {
+    use crate::discussions::{build_highlight_template, DiscussionTarget};
+
+    if req.content.trim().is_empty() {
+        return Err(EngineError::BadRequest("highlight content is empty".into()));
+    }
+    if req.content.len() > MAX_DISCUSSION_CONTENT_BYTES {
+        return Err(EngineError::BadRequest(format!(
+            "highlight content exceeds {MAX_DISCUSSION_CONTENT_BYTES} bytes"
+        )));
+    }
+
+    let target = match (&req.target.address, &req.target.event_id) {
+        (Some(addr), pin) => {
+            if !is_addr_coord(addr) {
+                return Err(EngineError::BadRequest(format!(
+                    "malformed address coordinate `{addr}`"
+                )));
+            }
+            let mut parts = addr.splitn(3, ':');
+            let kind: u32 = parts
+                .next()
+                .and_then(|k| k.parse().ok())
+                .ok_or_else(|| EngineError::BadRequest("address kind must be numeric".into()))?;
+            let pubkey = parts.next().unwrap_or("").to_string();
+            let d_tag = parts.next().unwrap_or("");
+            // Pin the exact version: caller's pin wins; else the local copy.
+            let event_id = match pin {
+                Some(id) => Some(id.clone()),
+                None => engine
+                    .get_addressable(kind as u64, &pubkey, d_tag, FetchPolicy::LocalOnly)
+                    .await
+                    .ok()
+                    .flatten()
+                    .and_then(|ev| ev.get("id").and_then(|v| v.as_str()).map(str::to_string)),
+            };
+            DiscussionTarget {
+                address: Some(addr.clone()),
+                event_id,
+                kind,
+                pubkey,
+            }
+        }
+        (None, Some(id)) => {
+            let ev = crate::query::query_by_id(engine.ndb(), id)?.ok_or_else(|| {
+                EngineError::NotFound(
+                    "highlight target not cached locally — pass `target.address`".into(),
+                )
+            })?;
+            DiscussionTarget {
+                address: None,
+                event_id: Some(id.clone()),
+                kind: ev.get("kind").and_then(|v| v.as_u64()).unwrap_or(0) as u32,
+                pubkey: ev
+                    .get("pubkey")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string(),
+            }
+        }
+        (None, None) => {
+            return Err(EngineError::BadRequest(
+                "highlight target requires `address` or `event_id`".into(),
+            ))
+        }
+    };
+
+    // Write-time offset verification against the pinned version.
+    if let (Some((start, end)), Some(pin)) = (req.offset, &target.event_id) {
+        if start >= end {
+            return Err(EngineError::BadRequest("offset start must be < end".into()));
+        }
+        if let Some(ev) = crate::query::query_by_id(engine.ndb(), pin)? {
+            let pinned_content = ev.get("content").and_then(|v| v.as_str()).unwrap_or("");
+            let units: Vec<u16> = pinned_content.encode_utf16().collect();
+            let (s, e) = (start as usize, end as usize);
+            let slice_ok =
+                e <= units.len() && String::from_utf16_lossy(&units[s..e]) == req.content;
+            if !slice_ok {
+                return Err(EngineError::BadRequest(
+                    "offset does not slice the pinned content to the highlighted text".into(),
+                ));
+            }
+        }
+    }
+
+    let relay_hint = discussion_relay_hint(&engine);
+    let template = build_highlight_template(
+        &target,
+        &req.content,
+        req.offset,
+        req.context.as_deref(),
+        req.comment.as_deref(),
+        &relay_hint,
+        unix_now_i64(),
+    )
+    .map_err(EngineError::BadRequest)?;
+
+    let resp = sign_ingest_broadcast(&engine, &signing, template, req.relays).await?;
+    Ok(Json(resp))
+}
+
+/// POST /api/v1/discussions/delete — publish a NIP-09 deletion request for
+/// one of the caller's own events. The list handler's tombstone filter hides
+/// the target locally regardless of relay acceptance.
+pub async fn discussion_delete_handler(
+    State(engine): State<AppState>,
+    Extension(signing): Extension<crate::signing::SigningController>,
+    Json(req): Json<DiscussionDeleteRequest>,
+) -> Result<Json<DiscussionPublishResponse>, EngineError> {
+    use crate::discussions::build_deletion_template;
+
+    if !is_hex64(&req.event_id) {
+        return Err(EngineError::BadRequest(
+            "event_id must be 64-char hex".into(),
+        ));
+    }
+    let target = crate::query::query_by_id(engine.ndb(), &req.event_id)?
+        .ok_or_else(|| EngineError::NotFound("event not found locally".into()))?;
+
+    let active = require_active_pubkey(&signing).await?;
+    let target_pubkey = target.get("pubkey").and_then(|v| v.as_str()).unwrap_or("");
+    if target_pubkey != active {
+        return Err(EngineError::Auth(
+            "only the author can request deletion of an event".into(),
+        ));
+    }
+
+    let kind = target.get("kind").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+    // Addressable targets also carry their coordinate so relays can drop
+    // every version (NIP-09).
+    let address = if (30000..40000).contains(&kind) {
+        let d = target
+            .get("tags")
+            .and_then(|v| v.as_array())
+            .and_then(|tags| {
+                tags.iter().find_map(|t| {
+                    let arr = t.as_array()?;
+                    if arr.first()?.as_str()? == "d" {
+                        arr.get(1)?.as_str().map(str::to_string)
+                    } else {
+                        None
+                    }
+                })
+            })
+            .unwrap_or_default();
+        Some(format!("{kind}:{target_pubkey}:{d}"))
+    } else {
+        None
+    };
+
+    let template = build_deletion_template(
+        &req.event_id,
+        kind,
+        address.as_deref(),
+        req.reason.as_deref().unwrap_or(""),
+        unix_now_i64(),
+    );
+
+    let resp = sign_ingest_broadcast(&engine, &signing, template, req.relays).await?;
+    Ok(Json(resp))
 }
 
 // ============================================================================

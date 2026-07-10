@@ -550,6 +550,18 @@ async fn main() -> anyhow::Result<()> {
             "/api/v1/discussions/list",
             post(api::discussions_list_handler),
         )
+        .route(
+            "/api/v1/discussions/comment",
+            post(api::discussion_comment_handler),
+        )
+        .route(
+            "/api/v1/discussions/highlight",
+            post(api::discussion_highlight_handler),
+        )
+        .route(
+            "/api/v1/discussions/delete",
+            post(api::discussion_delete_handler),
+        )
         .route("/api/v1/spell/inspect", post(spell::inspect_handler))
         .route("/api/v1/spell/execute", post(spell::execute_handler))
         .route("/api/v1/spell/list", post(spell::list_handler))

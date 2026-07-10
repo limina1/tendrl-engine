@@ -312,15 +312,23 @@ fn parse_filter(filter_json: &Value) -> Result<nostrdb::Filter> {
                 if !tag_values.is_empty() {
                     match tag_char {
                         'e' => {
-                            // Event references
+                            // Event references. One `events()` call for the
+                            // whole list — per-value `event()` calls each
+                            // open their own filter field, which nostrdb ANDs
+                            // together, so a multi-id `#e` filter would match
+                            // nothing.
+                            let mut id_arrs: Vec<[u8; 32]> = Vec::new();
                             for tag_val in tag_values {
                                 if let Ok(bytes) = hex::decode(tag_val) {
                                     if bytes.len() == 32 {
                                         let mut arr = [0u8; 32];
                                         arr.copy_from_slice(&bytes);
-                                        builder = builder.event(&arr);
+                                        id_arrs.push(arr);
                                     }
                                 }
+                            }
+                            if !id_arrs.is_empty() {
+                                builder = builder.events(id_arrs.iter());
                             }
                         }
                         'p' => {
