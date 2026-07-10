@@ -151,8 +151,6 @@ export function buildSegments(
 			})
 		});
 	}
-	if (overlays.length === 0)
-		return [{ type: 'text', text: content, srcStart: 0, srcEnd: content.length }];
 	for (const s of spans) {
 		overlays.push({
 			start: s.start,
@@ -171,6 +169,12 @@ export function buildSegments(
 			})
 		});
 	}
+	// The no-overlay early-out sits AFTER the spans loop deliberately: it used
+	// to sit before it, which silently dropped highlight spans on any section
+	// with no nostrdown refs/tokens — highlights only rendered next to refs.
+	if (overlays.length === 0)
+		return [{ type: 'text', text: content, srcStart: 0, srcEnd: content.length }];
+
 	// Earliest start first; on a tie the higher-priority overlay (ref) leads so
 	// it claims the run and the highlight is dropped on the overlap check.
 	overlays.sort((a, b) => a.start - b.start || b.prio - a.prio);

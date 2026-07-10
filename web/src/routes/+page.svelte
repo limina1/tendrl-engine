@@ -351,6 +351,7 @@
 		{ id: 'tendrl-reembed-all', name: 'tendrl-reembed-all', description: 'Clear the semantic index and re-embed every eligible event', category: 'Configuration' },
 		// View
 		{ id: 'tendrl-show-event-json', name: 'tendrl-show-event-json', description: 'Show the raw JSON of the focused event', category: 'View' },
+		{ id: 'tendrl-highlight-mode', name: 'tendrl-highlight-mode', description: 'Toggle highlight mode — select text in a reader/doc to publish a NIP-84 highlight', category: 'View' },
 		// Versioning
 		{ id: 'tendrl-undo', name: 'tendrl-undo', description: 'Undo the last action', category: 'Versioning', keybinding: 'C-/ · u' },
 		{ id: 'tendrl-redo', name: 'tendrl-redo', description: 'Redo', category: 'Versioning', keybinding: 'C-S-/' },
@@ -492,6 +493,17 @@
 		}
 		if (cmd.id === 'tendrl-toggle-network-mode') {
 			toggleNetworkMode();
+			closeMinibuffer();
+			return;
+		}
+		if (cmd.id === 'tendrl-highlight-mode') {
+			app.toggleHighlightMode();
+			app.pushToast(
+				app.highlightMode
+					? 'Highlight mode ON — select text in a reader/doc to publish a highlight'
+					: 'Highlight mode off',
+				'info'
+			);
 			closeMinibuffer();
 			return;
 		}

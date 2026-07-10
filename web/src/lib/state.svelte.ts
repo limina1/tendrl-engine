@@ -468,6 +468,11 @@ function _createAppState() {
 	// Engine's nostrdb data directory — surfaced so the Settings/Purge
 	// confirm prompt can show exactly which path is about to be wiped.
 	let dataDir: string | null = $state(null);
+	// Highlight mode (worksheet C3): an explicit global toggle — entered via
+	// the command palette or a buffer pill — during which completing a text
+	// selection in a reader/doc opens the publish-highlight confirm popover.
+	// Off = selections behave normally.
+	let highlightMode = $state(false);
 	let identityStatus: IdentityStatus | null = $state(null);
 	let identityLoading = $state(false);
 	let identityError: string | null = $state(null);
@@ -4277,6 +4282,11 @@ function _createAppState() {
 		// Profile
 		get profilePubkey() { return profilePubkey; },
 		set profilePubkey(v: string | null) { profilePubkey = v; },
+
+		// Highlight mode
+		get highlightMode() { return highlightMode; },
+		toggleHighlightMode() { highlightMode = !highlightMode; },
+		setHighlightMode(on: boolean) { highlightMode = on; },
 
 		// Identity
 		get myPubkey() { return myPubkey; },

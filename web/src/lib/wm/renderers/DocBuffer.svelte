@@ -7,6 +7,8 @@
 	import { getAppState } from '$lib/state.svelte';
 	import CommentThread from '$lib/components/CommentThread.svelte';
 	import ReplyBox from '$lib/components/ReplyBox.svelte';
+	import HighlightCapture from '$lib/components/HighlightCapture.svelte';
+	import { identityCanSign } from '$lib/identity/signer';
 	import { type ThreadNode } from '$lib/discussions/thread';
 	import {
 		segmentsFromSpans,
@@ -65,6 +67,7 @@
 	let loadingStatus = $state<string | null>(null);
 	let error = $state<string | null>(null);
 	let title = $state<string | null>(null);
+	let docEventId = $state<string | null>(null);
 	let docRelays = $state<string[]>([]);
 	let summary = $state<string | null>(null);
 	let body = $state('');
@@ -142,6 +145,7 @@
 		title = null;
 		summary = null;
 		body = '';
+		docEventId = null;
 		docRelays = [];
 		threads = [];
 		highlights = [];
@@ -171,6 +175,7 @@
 			}
 			const tag = (n: string) => ev.tags.find((t) => t[0] === n)?.[1] ?? null;
 			authorPubkey = ev.pubkey || p.pubkey;
+			docEventId = ev.id ?? null;
 			docRelays = ev.relays ?? [];
 			kindLabel =
 				p.kind === 30023 ? 'article'
@@ -240,6 +245,16 @@
 
 	const addrStr = $derived(parsed ? `${parsed.kind}:${parsed.pubkey}:${parsed.dTag}` : null);
 
+	const canSignNow = $derived(identityCanSign(app.identityStatus));
+
+	// Highlight capture source: this buffer renders exactly one document, so
+	// only its own address resolves. The rendered event id pins the offset
+	// frame precisely.
+	function highlightContentFor(addr: string): { content: string; eventId?: string } | null {
+		if (!addrStr || addr !== addrStr || !body) return null;
+		return { content: body, eventId: docEventId ?? undefined };
+	}
+
 	async function handleRefresh() {
 		if (refreshing || !parsed) return;
 		refreshing = true;
@@ -302,6 +317,17 @@
 				     pills → menu LAST. Refresh sits past the cluster as a
 				     fetch affordance, not a row action. -->
 				<div class="doc-actions">
+					<button
+						class="hl-mode-pill"
+						class:hl-mode-pill--on={app.highlightMode}
+						disabled={!canSignNow}
+						onclick={() => app.toggleHighlightMode()}
+						title={canSignNow
+							? app.highlightMode
+								? 'Highlight mode is ON — select text to publish a highlight. Click to turn off.'
+								: 'Turn on highlight mode: select text in the body to publish a NIP-84 highlight'
+							: 'Sign in to highlight'}
+					>hl{app.highlightMode ? ' ●' : ''}</button>
 					<PoolStateBadges
 						item={app.findPoolItemByAddr(addr)}
 						onpillctx={() => app.pillActionByAddr(addr, 'context')}
@@ -346,15 +372,19 @@
 		{/if}
 
 		<div class="doc-content">
+			<HighlightCapture getContent={highlightContentFor} onposted={refreshDiscussionsLocal} />
+			<!-- data-section-addr marks the highlight-capture boundary; the body
+			     text here is verbatim source (text + exact-text marks only), so
+			     capture's plain text-walk fallback maps offsets exactly. -->
 			{#if hasOverlay && segments}
-				<pre class="doc-body">{#each segments as seg, i (i)}{#if seg.highlight}<mark
+				<pre class="doc-body" data-section-addr={addrStr}>{#each segments as seg, i (i)}{#if seg.highlight}<mark
 								class="hl-overlay"
 								data-hl-ids={seg.highlight.id}
 								style={styleFor(seg.highlight.pubkey, seg.highlight.focused)}
 								title="NIP-84 highlight {seg.highlight.id.slice(0, 8)}… by {seg.highlight.pubkey.slice(0, 12)}…"
 							>{seg.text}</mark>{:else}{seg.text}{/if}{/each}</pre>
 			{:else}
-				<pre class="doc-body">{body}</pre>
+				<pre class="doc-body" data-section-addr={addrStr}>{body}</pre>
 			{/if}
 
 			<section class="doc-comments">
@@ -417,6 +447,28 @@
 		font-size: var(--t-2xs);
 	}
 
+	.hl-mode-pill {
+		font-family: var(--font-mono);
+		font-size: calc(var(--t-xs) - 1px);
+		color: var(--base5);
+		background: none;
+		border: 1px solid var(--panel-border);
+		border-radius: var(--r-sm);
+		padding: 2px 8px;
+		cursor: pointer;
+	}
+	.hl-mode-pill:hover:not(:disabled) {
+		color: var(--fg);
+		border-color: var(--base5);
+	}
+	.hl-mode-pill--on {
+		color: var(--id-yours);
+		border-color: var(--id-yours);
+	}
+	.hl-mode-pill:disabled {
+		opacity: 0.5;
+		cursor: not-allowed;
+	}
 	.doc-actions {
 		display: flex;
 		align-items: center;

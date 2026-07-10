@@ -23,8 +23,10 @@
 	import { sectionState, segmentSections } from '$lib/compose/state';
 	import { threadContainsId, type ThreadNode } from '$lib/discussions/thread';
 	import { highlightFromEvent, type Highlight } from '$lib/discussions/highlights';
+	import { identityCanSign } from '$lib/identity/signer';
 	import CommentThread from '$lib/components/CommentThread.svelte';
 	import ReplyBox from '$lib/components/ReplyBox.svelte';
+	import HighlightCapture from '$lib/components/HighlightCapture.svelte';
 	import HighlightList from '$lib/components/HighlightList.svelte';
 	import HighlightsDrawer, {
 		type DrawerHighlight
@@ -244,6 +246,16 @@
 	// no relay round-trip, threading stays engine-side.
 	function refreshDiscussionsLocal() {
 		void loadDiscussionCounts('local_only');
+	}
+
+	const canSignNow = $derived(identityCanSign(app.identityStatus));
+
+	// Source content for highlight capture, by section address. No event-id
+	// pin — the engine pins its local latest version, which is what this
+	// buffer rendered.
+	function highlightContentFor(addr: string): { content: string } | null {
+		const s = pristineSections.find((x) => addrKey(x.addr) === addr);
+		return s?.content ? { content: s.content } : null;
 	}
 
 	async function refreshDiscussions() {
@@ -1927,6 +1939,17 @@
 			{/if}
 		{/if}
 		<span class="sp"></span>
+		<button
+			class="hl-mode-pill"
+			class:hl-mode-pill--on={app.highlightMode}
+			disabled={!canSignNow}
+			onclick={() => app.toggleHighlightMode()}
+			title={canSignNow
+				? app.highlightMode
+					? 'Highlight mode is ON — select text to publish a highlight. Click to turn off.'
+					: 'Turn on highlight mode: select text in a section to publish a NIP-84 highlight'
+				: 'Sign in to highlight'}
+		>hl{app.highlightMode ? ' ●' : ''}</button>
 		{#if isDraftMode}
 			<span class="draft-pill" title="A draft of this publication is in progress">DRAFT</span>
 			<button
@@ -2122,6 +2145,7 @@
 				{/if}
 			</div>
 		{/if}
+		<HighlightCapture getContent={highlightContentFor} onposted={refreshDiscussionsLocal} />
 		{#if publication}
 			<div class="pub-threads">
 				<button
@@ -2599,6 +2623,28 @@
 	}
 	.toolbar .json-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
+	.toolbar .hl-mode-pill {
+		font-family: var(--font-mono);
+		font-size: calc(var(--t-xs) - 1px);
+		color: var(--base5);
+		background: none;
+		border: 1px solid var(--panel-border);
+		border-radius: var(--r-sm);
+		padding: 2px 8px;
+		cursor: pointer;
+	}
+	.toolbar .hl-mode-pill:hover:not(:disabled) {
+		color: var(--fg);
+		border-color: var(--base5);
+	}
+	.toolbar .hl-mode-pill--on {
+		color: var(--id-yours);
+		border-color: var(--id-yours);
+	}
+	.toolbar .hl-mode-pill:disabled {
+		opacity: 0.5;
+		cursor: not-allowed;
+	}
 	.toolbar .discussions-refresh {
 		margin-left: 4px;
 		font-family: var(--font-mono);
