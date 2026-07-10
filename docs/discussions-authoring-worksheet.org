@@ -1,0 +1,801 @@
+#+TITLE: Discussion authoring — decision worksheet
+#+TODO: DECIDE(d) LEAN(l) | DECIDED(D) DROPPED(x)
+
+Companion to =docs/discussions-authoring-spec.md=. That spec reads as if
+everything is settled; it isn't. This worksheet pulls out every place
+where I made a judgment call or where a real choice still exists, and
+unpacks each one: what the question is in plain terms, what prior art
+says (Alexandria, the NIPs, our own code), what the options are, and
+what I'd pick and why.
+
+How to use it:
+- =DECIDE= :: genuinely open — I have a lean but the call is yours.
+- =LEAN= :: the spec already picked this; listed so you can veto. If you
+  do nothing, the spec's choice stands.
+- Flip items to =DECIDED= and fill in the =Decision:= line as you go.
+  Once section A and B are all =DECIDED=, engine implementation (steps
+  1–3 of the spec's build order) can start with zero ambiguity.
+
+* A. Protocol / wire format
+These decisions end up inside signed events on public relays. They are
+the ones that are painful to change later — other clients will read
+these tags forever. Everything else in this worksheet is our own code
+and can be revised freely; section A deserves the most care.
+
+** DECIDED A1: A comment on a section scopes to the section, not the book
+:PROPERTIES:
+:AREA: protocol
+:END:
+*** What this is
+When someone comments on section 3 of a publication, the comment event
+carries a "root scope" — the uppercase =A= tag saying what the whole
+thread is about. It can point at the section (=30041:pk:d-of-section=)
+or at the whole publication (=30040:pk:d-of-book=). This determines
+where the comment shows up when *other* clients fetch discussions, and
+which address we must query to find it again.
+*** Relevant patterns
+- Alexandria roots at the *section* address; only comments typed in its
+  publication-level box root at the 30040. Interop with existing
+  Alexandria threads therefore favors section-rooting.
+- NIP-22 just says root = "the event being commented on", which is the
+  section — the user commented on that text, not on the table of
+  contents.
+- Our read side already queries per-section addresses
+  (=discussions/counts= takes the address list), so section-rooted
+  comments light up the right badges with no extra work.
+*** Options
+1. Root at the section; the publication-level comment box roots at the
+   30040. Two scopes, each meaning what it says. ← spec's choice
+2. Always root at the publication, tag the section some other way
+   (e.g. a second lowercase =a=). Makes "fetch all discussion for this
+   book" a single-address query, but violates least surprise and
+   diverges from Alexandria.
+*** My lean
+Option 1. The single-query benefit of option 2 is already handled by
+sending the full address list in one request, and the engine flattens
+it. Nothing gained, interop lost.
+*** Decision:
+Option 1
+
+** DECIDED A2: Write strict NIP-22 tags; stay lenient when reading
+:PROPERTIES:
+:AREA: protocol
+:END:
+*** What this is
+Alexandria's reply events contain two spec violations: a malformed
+parent coordinate =["a", "1111:<pubkey>:"]= (kind 1111 events don't
+*have* coordinates — they're not addressable) and a 4th element (the
+author pubkey) stuffed into the =A= tag where NIP-22 doesn't define
+one. Do we replicate those for compatibility, or emit clean tags?
+*** Relevant patterns
+- Our own =build_thread= (src/discussions.rs) threads purely off the
+  lowercase =e= chain and ignores both broken tags — so *reading*
+  Alexandria events already works and will keep working.
+- Alexandria's own reader also threads off =e=, so it will read our
+  clean events fine in the other direction.
+*** Options
+1. Strict on write, lenient on read (Postel's law). ← spec's choice
+2. Byte-for-byte Alexandria compatibility. Propagates known bugs into
+   the permanent record for no functional gain.
+*** My lean
+Option 1, firmly. There is no client whose threading depends on the
+malformed tags.
+*** Decision:
+Option 1
+
+** DECIDED A3: The =offset= tag on highlights — ship it, and in what form?
+:PROPERTIES:
+:AREA: protocol
+:END:
+*** What this is
+NIP-84 highlights carry the selected text but *no position*. If the
+phrase "the state" appears four times in a section, nobody — including
+us — can know which occurrence was highlighted. The spec proposes a
+tendrl extension: =["offset", "<start>", "<end>"]=, character positions
+(UTF-16 units, the unit JavaScript slices in) into the section's
+content, with the highlight's =e= tag pinning *which version* of the
+section those offsets refer to. Readers verify: if slicing the current
+content at those offsets reproduces the highlighted text, trust the
+offset; if not (the section was edited since), fall back to text
+search. Foreign clients that don't know the tag lose nothing.
+*** Relevant patterns
+- Alexandria's *read* path honors an =offset= tag (it appears in their
+  mock data) but their *write* path never emits one — so there's a
+  soft precedent for the tag name, but no real ecosystem convention.
+- W3C Web Annotation selectors (XPath/quote selectors) are the
+  heavyweight alternative; they anchor to rendered DOM, which differs
+  per client and per content format (Markdown vs AsciiDoc vs Org), so
+  they're wrong for Nostr where the shared artifact is the raw event
+  content string.
+- Our resolver (=resolve_highlight_spans=) already works in UTF-16
+  offsets, so the extension slots straight in.
+*** Options
+1. Ship =offset= + version-pin + verify-then-fallback. Duplicate
+   phrases resolve correctly for tendrl-authored highlights; costs one
+   tag. ← spec's choice
+2. No offsets — pure substring matching like Alexandria. Simplest;
+   wrong occurrence highlighted whenever text repeats.
+3. Offsets *plus* a =context= tag always (not just optionally), so
+   even foreign readers can disambiguate by neighborhood text.
+   Slightly bigger events; helps clients that do fuzzy matching.
+*** My lean
+Option 1, and fold in option 3's habit cheaply: always send =context=
+when the selection sits inside a paragraph (we have the text anyway).
+Belt and suspenders, and =context= is standard NIP-84.
+*** Decision:
+option 1
+
+** DECIDED A4: Non-standard =k= tag on highlight events
+:PROPERTIES:
+:AREA: protocol
+:END:
+*** What this is
+NIP-84 doesn't define a =k= tag on 9802 events. Adding =["k","30041"]=
+(the kind of the highlighted event) lets relays and clients filter
+"highlights of publications" vs "highlights of articles" in one query.
+Some wild clients do this; it's not spec.
+*** Options
+1. Include it. Harmless one-liner, marginally useful. ← spec's choice
+2. Omit; strictly NIP-84.
+*** My lean
+Include. Cost is zero, and our own future queries may want it.
+*** Decision:
+Include
+
+** DECIDED A5: What happens when someone comments on a kind-1 note
+:PROPERTIES:
+:AREA: protocol
+:END:
+*** What this is
+NIP-22 explicitly forbids using 1111 to reply to kind-1 short notes —
+those keep the older NIP-10 convention (a kind-1 event with marked =e=
+tags). Tendrl barely surfaces kind 1 today (search rows, thread roots),
+but the universal "Comment" action in EventViewModal will eventually
+meet one. The endpoint has to do *something*.
+*** Relevant patterns
+- Alexandria's generic path does exactly this fork:
+  =kind = parent.kind === 1 ? 1 : 1111= (CommentBox.svelte:185).
+- Emitting 1111 against kind 1 anyway (some clients do) splits the
+  thread: NIP-10 readers won't see it.
+*** Options
+1. The endpoint transparently builds a kind-1 NIP-10 reply instead.
+   Caller doesn't branch; response's =event.kind= says what happened.
+   ← spec's choice
+2. Return 400 "kind 1 not supported" — honest, but turns a working
+   button into an error for no user benefit.
+3. Emit 1111 regardless — spec-violating, splits threads. No.
+*** My lean
+Option 1. It's ~30 lines (NIP-10 tags are simple) and makes the
+affordance genuinely universal.
+*** Decision:
+Nostr is moving to kind 1111 for all comments
+
+Resolution as folded into the spec: kind-1 roots also get a 1111
+(=E=/=K=1/=P= scope) — the NIP-10 fork is dropped entirely, following
+ecosystem direction over the vendored NIP-22's "MUST NOT". Caveat
+recorded in the spec: NIP-10-only clients won't thread these replies
+under the note; that cost shrinks as the ecosystem converges.
+
+** DECIDED A6: External-id comments (DOI / URL / ISBN) — how much in v1?
+:PROPERTIES:
+:AREA: protocol
+:END:
+*** What this is
+NIP-22 + NIP-73 allow comments scoped to things that aren't Nostr
+events at all: a paper's DOI, a web URL, a book's ISBN, a podcast
+episode. The event carries =["I", "doi:10.1038/..."]["K", "doi"]=
+instead of event pointers. For a reference manager this is quietly the
+most on-mission form of commenting — discussion attached to *the
+paper*, portable across all clients, independent of whether anyone
+published the paper as a Nostr event. The catch: normalization. Two
+clients writing the "same" DOI differently (case, hyphens, URL form)
+create two disjoint threads, so the id munging must be engine-side and
+exactly per NIP-73 (URLs stripped of fragments/trackers, ISBNs without
+hyphens, DOIs lowercase).
+*** Options
+1. Endpoint support in v1 (one routing row + a normalization helper),
+   UI surface later when refs/import panels want it. ← spec's choice
+2. Defer entirely; keep the enum slot in the API shape so it's
+   non-breaking to add.
+3. Also build a v1 UI surface (e.g. "discuss" on knowledgebase docs
+   that have a DOI).
+*** My lean
+Option 1. The engine work is small and forces the normalization
+helper to exist early; UI can trail. Option 3 is tempting but expands
+v1 — better as the first follow-up, since knowledgebase documents
+already know their source URLs.
+*** Decision:
+Option 1
+
+** DECIDED A7: Replying to a highlight — which event is the "root"?
+:PROPERTIES:
+:AREA: protocol
+:END:
+*** What this is
+This is the subtlest one, and I'd revise the spec depending on your
+call. When a user replies to someone's highlight (in
+DiscussionViewBuffer), the reply's uppercase root tags can point at:
+(a) the *highlight* (=E= tag at the 9802 event — "this thread is about
+the annotation"), or (b) the *section* (=A= tag at the 30041, with the
+lowercase parent tags pointing at the 9802 — "this thread is about the
+section, and this message specifically answers the highlight").
+Both are legal NIP-22. They differ in *where the thread is visible*:
+*** Relevant patterns
+- Alexandria fetches 9802s *together with* 1111s under the same
+  section-address filter and renders highlights as thread nodes among
+  comments — implicitly the (b) worldview.
+- Our own read side does the same: =discussions/list= defaults to
+  kinds =[1111, 9802]= per address, and the reader shows both.
+- The spec as written picked (a), on the plain reading of NIP-22
+  ("root = the thing being commented on").
+*** Options
+1. Root at the 9802 (=E=/=K=9802/=P=). Clean semantics; but the reply
+   carries *no section address at all*, so it is invisible to every
+   section-scoped query — it won't appear in the reader's per-section
+   thread, won't count in the =c N= badge, and only shows when someone
+   opens that specific highlight. ← currently in the spec
+2. Root at the section (=A= at the 30041), parent at the 9802
+   (lowercase =e/k/p=). The reply shows up in the section's thread
+   *and* threads correctly under the highlight; one fetch gets
+   everything. Slight semantic stretch: the root scope names an event
+   the replier may never have read.
+*** My lean
+Option 2, overriding the current spec text. Our whole read pipeline is
+organized around section addresses; option 1 creates orphan
+discussions our own surfaces would systematically miss. The stretch in
+option 2 is the same one Alexandria and our reader already make by
+treating highlights as section-thread citizens. If you agree I'll
+amend spec §3.2.
+*** Decision:
+This is how Amethyst replies to highlights:
+Highlight:
+#+begin_src json
+{
+  "content": "The growth of knowledge is of such special importance because, while the material resource will always remain scarce and will have to be reserved for limited purposes, the use of new knowledge (where we do not make them artificially scarce by patents of monopoly) are unrestricted. Knowledge, once achieved, becomes gratuitously available for the benefit of all. It is through this free gift of the knowledge acquired by the experiments of some members of society that general progress is made possible, that the achievements of those who have gone before facilitate the advance of those who follow.\n\n- F. A. Hayek, The Constitution of Liberty, \"The   Common Sense of Progress\"",
+  "created_at": 1783012312,
+  "id": "2286119821e06a4329b501ea4a72c8f283201d1125a30e3bfb143526951c4f9f",
+  "kind": 9802,
+  "pubkey": "dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06",
+  "relays": [
+    "wss://nos.lol",
+    "wss://spatia-arcana.com",
+    "wss://theforest.nostr1.com"
+  ],
+  "sig": "9d7d2c0dc17e1be07f217e7e474b8345ef00a7f5c11aa584b72182d7b1cac444c16ec5a462e08afb61013ca676ec3445110ead63ba3eeef12706f69da5a1c159",
+  "tags": [
+    [
+      "r",
+      "https://press.uchicago.edu/ucp/books/book/chicago/C/bo9253956.html"
+    ],
+    [
+      "alt",
+      "Highlight: \"The growth of knowledge is of such special importa...\""
+    ]
+  ]
+}
+#+end_src
+
+comment:
+#+begin_src json
+{
+  "content": "Very much in the Ostromian institutional economics frame. Which, of course Ostrom drew massive influence from Hayek.\n\nhttps://direct.mit.edu/books/edited-volume/3807/Understanding-Knowledge-as-a-CommonsFrom-Theory-to?__cf_chl_f_tk=cm3jeeYDZie5hJyNRy1gFEgj0hdPo.c.bCpPtY17zL4-1783013873-1.0.1.1-U9AAI5x6KdswoApl3wBJyIZvB9P9P8dqX1wfdbAfEvc\n",
+  "created_at": 1783013939,
+  "id": "e5628ae68999cb0dc4e2bc54d64a23e5bf809c0dea7151045fe089191edfa16f",
+  "kind": 1111,
+  "pubkey": "dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06",
+  "relays": [
+    "wss://nos.lol",
+    "wss://nostr.mom",
+    "wss://spatia-arcana.com",
+    "wss://theforest.nostr1.com"
+  ],
+  "sig": "1be7944e53a4c072468361a6a41bef906525f1ec559282838e13fe5f88e467592fa2227a4b77fef0cb6f43732e5c52c1a1ce781c7c65822677d0025cab962a1a",
+  "tags": [
+    [
+      "alt",
+      "Reply to nostr:nevent1qqsz9ps3nqs7q6jr9x6sr6j2wty09qeqr5gjtgcw80a3gdfxj5wyl8cprdmhxue69uhhg6r9vehhyetnwshxummnw3erztnrdakj7q3qm3xdppkd0njmrqe2ma8a6ys39zvgp5k8u22mev8xsnqp4nh80srqxpqqqqny5xfpe7s"
+    ],
+    [
+      "E",
+      "2286119821e06a4329b501ea4a72c8f283201d1125a30e3bfb143526951c4f9f",
+      "wss://theforest.nostr1.com/",
+      "dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06"
+    ],
+    [
+      "K",
+      "9802"
+    ],
+    [
+      "P",
+      "dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06",
+      "wss://spatia-arcana.com/"
+    ],
+    [
+      "e",
+      "2286119821e06a4329b501ea4a72c8f283201d1125a30e3bfb143526951c4f9f",
+      "wss://theforest.nostr1.com/",
+      "dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06"
+    ],
+    [
+      "k",
+      "9802"
+    ],
+    [
+      "p",
+      "dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06",
+      "wss://spatia-arcana.com/"
+    ],
+    [
+      "r",
+      "https://direct.mit.edu/books/edited-volume/3807/Understanding-Knowledge-as-a-CommonsFrom-Theory-to?__cf_chl_f_tk=cm3jeeYDZie5hJyNRy1gFEgj0hdPo.c.bCpPtY17zL4-1783013873-1.0.1.1-U9AAI5x6KdswoApl3wBJyIZvB9P9P8dqX1wfdbAfEvc"
+    ],
+    [
+      "client",
+      "Amethyst"
+    ]
+  ]
+}
+#+end_src
+
+Resolution: the Amethyst example settles it as *option 1* — root at
+the 9802 (=E=/=K=9802/=P=, with parent =e/k/p= at the same highlight
+for a top-level comment), overriding my option-2 lean. The spec's
+§3.2 stays as originally written. The visibility concern option 2 was
+trying to solve moves to the *read side* instead: =discussions/list=
+gains a second hop — after fetching a section's 1111s + 9802s, it also
+fetches 1111s whose =#E= points at the returned highlight ids — so
+highlight-rooted threads still surface in section views and counts.
+
+** DECIDED A8: Quote highlights (annotation inside the 9802) in v1
+:PROPERTIES:
+:AREA: protocol
+:END:
+*** What this is
+NIP-84 lets a highlight carry a =["comment", "<annotation>"]= tag —
+"highlight this AND say something about it" as *one* event, rendered
+like a quote-repost. The alternative (highlight event + separate 1111)
+double-posts. UI cost is one optional text input on the highlight
+popover.
+*** Relevant patterns
+Alexandria supports it (optional comment box in
+HighlightSelectionHandler); NIP-84 defines it precisely to avoid the
+two-event mess.
+*** My lean
+Include in v1 — it's an optional request field and an optional input.
+Skip only the NIP-84 fine print about =mention=-marked p/r tags inside
+the annotation (we don't parse annotation text in v1).
+*** Decision:
+Include in v1
+
+* B. Engine / API design
+Our own code — changeable later, but these shape the first PR.
+
+** DECIDED B1: How the reply endpoint learns about the parent comment
+:PROPERTIES:
+:AREA: engine
+:END:
+*** What this is
+To build a reply, the engine needs two things from the parent comment:
+its identity (id, kind, pubkey — for the lowercase parent tags) and
+its *uppercase root tags* (to copy verbatim as the reply's root scope —
+the "root chase"). The parent is usually in nostrdb because the user
+is looking at it. Usually — not always: threads fetched from a relay
+moments ago are ingested, but a comment rendered from an optimistic
+refresh or an edge case might not be findable at sign time.
+*** Options
+1. Web sends only =parent.event_id=; engine loads it from nostrdb,
+   404s if missing. Cleanest contract; occasional spurious failures.
+2. Web always sends the full parent event JSON in the request; engine
+   uses it directly. Never fails; but the engine builds root tags from
+   client-supplied data without checking its own copy (fine — it's the
+   user's own client, not a trust boundary; the user signs the result).
+3. Hybrid: send id + full event; engine prefers its nostrdb copy,
+   falls back to the supplied one. Most robust, slightly more code.
+*** My lean
+Option 3. The fallback path is ~5 lines and eliminates the one failure
+mode users would actually hit ("Reply failed: event not found" on a
+comment they are literally reading).
+*** Decision:
+Option 3
+
+** DECIDED B2: What goes in the relay-hint slots of the tags
+:PROPERTIES:
+:AREA: engine
+:END:
+*** What this is
+NIP-22 tags have a third position for a relay URL hint — "where can a
+stranger fetch the referenced event." It's optional and purely
+advisory. The correct value is a relay where the *target* is actually
+readable — i.e. one of our general/fetch relays, not our publish set.
+*** Relevant patterns
+- Alexandria passes a hint inconsistently (sometimes empty string).
+- Our engine has runtime relay sets in =relay_store.rs=
+  (general/fetch/publish) but does not track per-event "seen on relay
+  X" provenance today.
+*** Options
+1. First configured =general= relay, empty string if none. One line,
+   usually right.
+2. Empty string everywhere in v1. Honest about not knowing; slightly
+   less helpful to foreign clients.
+3. Track per-event source relays at ingest and use the real one.
+   Correct, but a new engine feature for a hint field — out of
+   proportion.
+*** My lean
+Option 1. Revisit toward option 3 only if per-event provenance gets
+built for some other reason.
+*** Decision:
+Option 1
+
+** DECIDED B3: Delete is =POST /discussions/delete=, not HTTP DELETE
+:PROPERTIES:
+:AREA: engine
+:END:
+*** What this is
+Bike-shed but must be picked: the deletion endpoint's shape. It isn't
+really a delete — it *creates* a kind-5 deletion-request event (sign +
+ingest + broadcast, exactly like posting). HTTP DELETE with a request
+body is also awkward in some clients.
+*** My lean
+=POST /api/v1/discussions/delete { event_id, reason }= — it's an event
+publish; POST matches every other mutating route in =main.rs=. (The
+spec at one point sketched =DELETE /discussions/:event_id=; treat this
+worksheet as the fix.)
+*** Decision:
+Go with your lean
+
+** DECIDED B4: How deletions are honored on the read side
+:PROPERTIES:
+:AREA: engine
+:END:
+*** What this is
+Publishing a kind-5 is the easy half. The other half: when
+=discussions/list= serves comments, ones the author deleted should be
+gone. Where does that filtering happen? nostrdb has its own NIP-09
+handling (see =docs/nostrdb-deletion-architecture.org=) — it may
+already hide deleted events from queries, or may not, or may only for
+some query paths. I have not verified which.
+*** Options
+1. Rely on nostrdb's native NIP-09 handling if verification shows it
+   covers our query path. Zero code.
+2. Manual tombstone filter in =discussions_list_handler=: collect
+   kind-5s whose =e= tags name events in the result set, drop matches
+   where the kind-5 pubkey equals the target pubkey. ~20 lines, works
+   regardless of nostrdb behavior.
+3. Both (nostrdb native + manual belt-and-suspenders).
+*** My lean
+Read =nostrdb-deletion-architecture.org= as the first task of the
+deletion step; do option 2 unless that doc proves option 1 suffices.
+Correctness here is user-facing trust ("I deleted it and it's still
+there" is a bad bug class).
+*** Decision:
+Nostrdb does not use delete on events, but we can emit deletion events and broadcast them/send them to a specific set of relays. I guess this should be a general option within the menu - Actions- (d) delete
+
+Resolution: manual tombstone filter in =discussions_list_handler=
+(option 2 — since nostrdb never physically removes events, the read
+path must hide them itself), and deletion surfaces as a universal
+Actions → =(d) delete= chord in EventViewModal for own events, with
+the existing =relays= override for targeted broadcast.
+
+** DECIDED B5: Do authored comments get "local / not yet accepted" status?
+:PROPERTIES:
+:AREA: engine
+:END:
+*** What this is
+Publications have =LocalPublicationTracker=: a signed event is marked
+"local" until some relay accepts it, and the feed shows a pill so you
+know it hasn't propagated. Comments/highlights could get the same
+treatment — or not. Without it: the post response includes per-relay
+accepted/rejected results once, the UI can toast a warning if 0/N
+accepted, and that's it; the event lives in nostrdb either way and
+can be re-broadcast manually via the existing broadcast endpoint.
+*** Options
+1. No persistent tracking in v1; per-relay results in the response +
+   a toast on total failure. ← spec's choice
+2. Extend =LocalPublicationTracker= (or generalize it) to arbitrary
+   event kinds; render a "local" pill on unaccepted comments.
+3. Generalize later, driven by an actual user story (offline writing
+   sessions would motivate it).
+*** My lean
+Option 1 now, option 3 standing. Comments are small and cheap to
+re-post; publications earned the tracker because they're multi-event
+and expensive. Offline-first authoring is a real future story but
+deserves its own design pass.
+*** Decision:
+option 1
+
+** DECIDED B6: Input validation bounds
+:PROPERTIES:
+:AREA: engine
+:END:
+*** What this is
+What the endpoints reject. Not controversial, just needs stating:
+- content: trimmed, non-empty; cap at 64 KB (relays commonly cap whole
+  events around 64–512 KB; a comment near that is pathological).
+- comments are plaintext per NIP-22 — but we do NOT try to strip or
+  reject markdown syntax; we just render as plain text. Enforcement by
+  rendering, not by parsing.
+- highlight =content= must be non-empty and, when =offset= is given,
+  must equal the slice of the pinned section content (cheap server-side
+  sanity check that catches client offset bugs at write time, before
+  they hit the permanent record).
+*** My lean
+As stated. The offset-must-match-slice write check is the one I'd
+insist on: it makes corrupt offsets impossible rather than merely
+handled.
+*** Decision:
+As stated
+
+** DECIDED B7: Fix =discussions/counts= to see replies (bug, not a choice)
+:PROPERTIES:
+:AREA: engine
+:END:
+*** What this is
+Verified bug, listed for visibility rather than debate: replies carry
+their root address only in the uppercase =A= tag, and
+=discussion_counts_handler= filters on lowercase =#a= alone
+(=api.rs:3189-3192=) — so every reply is invisible to the badge
+counts. =discussions/list= already queries the =#a= ∪ =#A= ∪ =#e= trio
+(=api.rs:3538-3564=); counts just needs the same filters plus dedup
+before tallying (the two filters overlap on top-level comments, which
+carry both tags).
+*** My lean
+Ship first, standalone. It improves current behavior before any
+authoring code exists.
+*** Decision:
+Ship
+
+* C. Web UI design
+** DECIDED C1: After posting, refetch locally — don't splice state in TS
+:PROPERTIES:
+:AREA: web
+:END:
+*** What this is
+When a comment is posted, how does it appear on screen? Two idioms:
+(a) optimistically insert the returned event into the local thread
+state (instant, but requires re-implementing thread-tree insertion in
+TypeScript — recreating the exact twin we deleted when threading moved
+to Rust); (b) refetch =discussions/list {policy: local_only, threaded}=
+— the engine ingested the event *before* responding, so the refetch
+includes it, costs one local nostrdb read (sub-50ms), and threading
+stays Rust-only.
+*** Relevant patterns
+Alexandria does client-side insertion plus a =setTimeout(refresh,
+3000)= to catch relay echo — the hack exists because they have no
+local-first store. We do; the whole point of ingest-before-respond is
+that "refetch" is instant and authoritative.
+*** My lean
+(b), firmly — it's the frontend/backend boundary rule paying rent.
+*** Decision:
+B
+
+** DECIDED C2: How selection maps to character offsets (the wrapping question)
+:PROPERTIES:
+:AREA: web
+:END:
+*** What this is
+To emit =offset= tags, the browser selection (DOM nodes + offsets)
+must be converted to positions in the section's raw content string.
+Complication: =RichContent= doesn't render the raw string — nostrdown
+references render as chips/cards whose visible text differs from their
+source text, so "count characters through the DOM" gives wrong answers
+whenever a section contains a ={{ref}}= or wikilink. The renderer
+already slices content into ordered segments, each of which *knows*
+its source range internally; the question is how to expose that to the
+selection-capture code.
+*** Options
+1. Emit =srcStart/srcEnd= on each segment and wrap text segments in
+   =<span data-src-start>= (currently they render as bare text nodes).
+   Selection endpoint → nearest wrapper → =srcStart= + offset inside
+   it. Exact, simple lookup. Cost: extra spans in the reader's hot
+   path — needs one visual/perf sanity check in a =<pre>= context, but
+   spans are display-inline and style-free, so no change is expected.
+   ← spec's choice
+2. No DOM changes: walk the =<pre>='s child nodes in parallel with the
+   segments array, matching by order. Zero DOM cost, but fragile —
+   it depends on Svelte's DOM output mirroring the segment array
+   one-to-one, which is an implementation detail that can silently
+   change (adjacent text nodes merged, comment markers inserted).
+3. Ignore the problem: use =selection.toString()= and search for it in
+   the content string. Re-introduces the duplicate-phrase ambiguity
+   that offsets exist to solve — circular.
+*** My lean
+Option 1. Option 2's failure mode is silent wrong offsets, which the
+write-time slice check (B6) would turn into hard errors — better to
+not generate them at all.
+*** Decision:
+Unsure about this one actually
+
+Resolved empirically (2026-07-09): option 1 shipped and verified in
+the running app — the wrapper spans changed nothing visually
+(pre-wrap, style-free inline), and highlighting the SECOND occurrence
+of a deliberately duplicated phrase produced =["offset","148","171"]=
+on the wire with the overlay rendering on that occurrence only —
+exactly the failure substring matching can't avoid. The end-to-end run
+also exposed and fixed a pre-existing =buildSegments= bug (highlight
+spans were silently dropped on sections without nostrdown refs).
+
+** DECIDED C3: The highlight-creation gesture
+:PROPERTIES:
+:AREA: web
+:END:
+*** What this is
+How a reader actually creates a highlight, physically.
+*** Relevant patterns
+- Alexandria: an explicit "highlight mode" toggle button; while on,
+  any completed selection immediately becomes a highlight (plus a
+  preview/confirm dialog). Modal, but unambiguous.
+- The modern reading-app idiom (Medium, Readwise, Hypothesis): select
+  text → small floating popover appears near the selection with
+  Highlight / Annotate actions.
+- Tendrl is keyboard-centric: the WM has chords, buffers have =j/k/m=
+  navigation. A selection + keystroke flow fits the app's character.
+*** Options
+1. Floating popover on selection-settle (debounced ~200ms), with
+   Highlight and Annotate buttons. Discoverable; medium effort
+   (positioning, dismissal rules, not firing in toolbars). ← spec
+2. Mode toggle à la Alexandria. Simplest; but modal state the user
+   must remember to turn off, and it fights normal copy-selection.
+3. Keyboard only: select text, press =h= (highlight) / =H= or =c=
+   (with annotation). Cheapest to build, invisible to new users.
+4. Popover *and* keyboard chord driving the same action (popover for
+   discoverability, chord for regulars).
+*** My lean
+Option 4, built as option 3 first (the action + offset math with a
+keybinding is the testable core; the popover is presentation added
+after). If effort must be cut, option 3 alone is an acceptable v1 in
+this app's culture.
+*** Decision:
+I like 2 with a function for highlight mode that we can call with Spc :, but we can have a pill on the modeline here that calls up highlight mode for any event that we want to highlight. It is kind of like 2 but you press the button, select text and then bring up the popup like alexandria
+
+Resolution: explicit *highlight mode*, entered two ways — a command
+invocable from =Spc := and a modeline pill on highlightable buffers.
+While the mode is on, completing a selection opens an Alexandria-style
+confirm popover (selected-text preview + optional annotation input +
+post/cancel); leaving the mode restores normal selection behavior.
+Folded into spec §5.1.
+
+** DECIDED C4: Where the universal "Comment" composer lives in EventViewModal
+:PROPERTIES:
+:AREA: web
+:END:
+*** What this is
+EventViewModal (the any-kind event inspector) gets a "Comment" action —
+the entry point that makes commenting work across all of Nostr, not
+just our reading surfaces. When pressed, where does typing happen?
+*** Options
+1. Inline: the action expands a textarea inside the modal's action
+   area; post → toast + optional "view thread" link. Matches how the
+   modal's other chord actions behave; lowest friction. ← my lean
+2. Open a DiscussionView-style buffer pre-focused on a composer.
+   More WM-idiomatic, heavier; a buffer for a one-line comment feels
+   like ceremony.
+3. Dedicated small compose modal stacked on the event modal.
+   Modal-on-modal — avoid.
+*** My lean
+Option 1. If longer-form commenting on arbitrary events becomes a real
+pattern, graduate to option 2 later (the old plan flags the same
+"inline first, graduate to buffer if unhappy" principle for reply
+boxes).
+*** Decision:
+The ultimate fallback for a universal comment option (like in publication, articles specs etc is to use the menu - Actions - (c) comment), but for commenting on a 1111, or any other event that is viewable, it should look like a social reply box and thread
+
+Resolution: two tiers. (1) Universal fallback: EventViewModal Actions
+→ =(c) comment= works on any event of any kind — expands an inline
+textarea in the modal. (2) Events with a viewable surface (a 1111 or
+9802 in DiscussionView, docs/articles with comment sections) render a
+social-style thread with a reply box, which is the primary experience;
+the modal action is the escape hatch for kinds with no view. Folded
+into spec §5.4.
+
+** DECIDED C5: One =ReplyBox= component, mounted on every surface as-is
+:PROPERTIES:
+:AREA: web
+:END:
+*** What this is
+The same article can render in =ReaderBuffer= (from search/refs) or
+=DocBuffer= (from profiles) — a known duplication. Do we consolidate
+those surfaces before adding comment affordances, or mount the same
+components in both?
+*** My lean
+Mount in both; don't couple this feature to a surface consolidation.
+The cost of "both" is two mount points for the same
+=CommentThread=/=ReplyBox= pair, which is exactly what components are
+for. Consolidation is its own (worthwhile, separate) cleanup.
+*** Decision:
+Mount in both
+
+** DECIDED C6: Reply box is a plain textarea in v1
+:PROPERTIES:
+:AREA: web
+:END:
+*** What this is
+NIP-22 comment content is plaintext, so no formatting toolbar is
+*possible*, but mentions (=nostr:npub…= with =p= tags), event quotes
+(=q= tags), and autocomplete are all legal extras. Alexandria's
+generic comment form supports basic markup parsing and @-mentions.
+*** My lean
+Plain =<textarea>=, Ctrl/Cmd-Enter to post, nothing else in v1.
+Mentions/quotes are a clean follow-up (they're additive tags; no wire
+format changes). Every feature added here delays the killer feature
+(highlight capture) behind it in the build order.
+*** Decision:
+You have this well mapped out
+
+** DECIDED C7: What signed-out users see
+:PROPERTIES:
+:AREA: web
+:END:
+*** What this is
+When no identity can sign (=identityCanSign= false): do compose
+affordances vanish, or render disabled with a "sign in to comment"
+hint?
+*** Options
+1. Reply/comment boxes: visible but disabled with the hint (teaches
+   that the feature exists). Highlight popover: not shown at all
+   (a popover appearing on every text selection just to say "you
+   can't" is noise). ← mixed rule, my lean
+2. Hide everything. Cleanest reading surface; feature is
+   undiscoverable until sign-in.
+3. Show everything, prompt sign-in on interaction. Most aggressive
+   funnel; interrupts reading flow.
+*** My lean
+Option 1's mixed rule — persistent affordances teach, transient ones
+shouldn't nag.
+*** Decision:
+Option 1
+
+* D. Feature scoping — what is v1?
+The agreed cut, updated to reflect the A/B/C decisions above.
+
+** In v1 (implementation order)
+- [ ] =discussions/counts= filter fix (B7) — first, standalone
+- [ ] Comment templates: addressable + replaceable + regular +
+      external-id routing; kind-1 roots also get 1111 (A5 — no NIP-10
+      fork), NIP-73 normalization helper (A6)
+- [ ] Reply with root-chase (=root_scope_from_parent=); hybrid parent
+      payload (B1)
+- [ ] Highlight template: =offset= + =context= + =k= + optional
+      annotation (A3, A4, A8); root-at-9802 for comments on
+      highlights, Amethyst-compatible (A7)
+- [ ] Resolver upgrade: verified-offset → context-disambiguated →
+      substring fallback chain
+- [ ] Read-side second hop: 1111s rooted =#E= at returned highlight
+      ids surface in section threads/counts (A7 resolution)
+- [ ] The three endpoints (comment / highlight / =POST
+      /discussions/delete=), each doing build → sign → ingest →
+      broadcast; per-relay results in response, no persistent
+      tracking (B5)
+- [ ] Manual tombstone filter in =discussions/list= (B4)
+- [ ] =ReplyBox= + reply buttons in =CommentThread= (serves Reader,
+      Doc, DiscussionView); social-style thread + reply box in
+      DiscussionView (C4)
+- [ ] Top-level comment boxes in Reader + Doc (both surfaces, C5)
+- [ ] Highlight mode: =Spc := command + modeline pill + confirm
+      popover with annotation (C3); offset mapping approach pending C2
+- [ ] EventViewModal Actions: =(c) comment= universal fallback +
+      =(d) delete= for own events (C4, B4)
+
+** Explicitly not v1 (with the condition that promotes each)
+- [ ] External-id *UI* surface — when refs/knowledgebase panels want a
+      "discuss" affordance (endpoint already accepts it)
+- [ ] Mentions / =q=-tag quoting in comments — additive tags; after
+      highlight capture ships
+- [ ] NIP-84 =mention= markers inside quote-highlight annotations —
+      requires parsing annotation text; wait for demand
+- [ ] "Local" pill / re-broadcast tracking for comments — wait for an
+      offline-authoring user story (B5)
+- [ ] Live updates (SSE push of new discussion events) — polling +
+      refresh until the lack is felt
+- [ ] Offset back-fill for legacy highlights — only if Alexandria-era
+      highlights prove noisy in practice
+- [ ] NIP-25 reactions, notifications — out of scope per the original
+      plan, unchanged
+- [ ] Publication-root highlight cascade rework — legacy read path
+      stays; new highlights always tag their section
+
+* E. Process note
+Every item is =DECIDED= (2026-07-09) and folded into
+=discussions-authoring-spec.md=. The full v1 list in section D shipped
+on =feature/discussion-authoring= the same day — engine steps
+curl-verified against a sandboxed engine, web steps driven end-to-end
+in the embedded SPA under headless CDP.

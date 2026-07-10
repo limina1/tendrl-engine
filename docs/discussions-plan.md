@@ -143,6 +143,14 @@ that policy into `/query`.
 
 ### 2. Engine: authoring endpoints
 
+> **Superseded by `docs/discussions-authoring-spec.md`.** The tag
+> layouts below copy two Alexandria bugs verbatim (the malformed
+> `a 1111:<pubkey>:` reply parent coordinate — kind 1111 is not
+> addressable — and the 4-element `A` tag with an author pubkey; per
+> NIP-22 only `E`/`e` carry a pubkey in position 4). The authoring
+> spec has the corrected, normative layouts plus the offset-tag
+> design. Kept here for history.
+
 NIP-22 tag construction is non-trivial and inconsistent across
 clients in the wild. Keep it in one place. Two endpoints:
 
