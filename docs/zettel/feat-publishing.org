@@ -22,6 +22,17 @@ land in nostrdb; broadcast to relays is a separate, explicit step.
 - =LocalPublicationTracker= (=src/drafts.rs=) marks a snapshot local until a
   relay accepts it; =list_publications= exposes =local= so the feed renders a
   "local" pill.
+- Client provenance (2026-07-09): every event we sign carries
+  =["client", "tendrl"]=. Stamped at the two signing chokepoints rather
+  than by each caller — =SigningController::sign= (=src/signing.rs=;
+  covers all live HTTP publishing for engine, NIP-07, and NIP-46 sources
+  alike, since the tag is added to the template *before* the id is
+  hashed / the template is shipped to the browser signer) and
+  =tree_emit::sign_event= (=src/publication/tree_emit.rs=; the single
+  hash+sign funnel for the 30040/30041 graph builders, so previews show
+  the same tags that publish). Both are idempotent (=ensure_client_tag=)
+  so the nested re-sign path doesn't double-tag. A caller-supplied
+  =client= tag wins over the default.
 
 * Gaps / open edges
 - The engine returns per-relay =broadcast_results= but the web still discards

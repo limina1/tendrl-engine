@@ -33,6 +33,25 @@ use crate::identity::{
 /// (matches the existing `IdentityAppState` in `api.rs`).
 pub type IdentityHandle = Arc<Mutex<IdentitySession>>;
 
+/// Client-provenance tag stamped on every event we sign:
+/// `["client", "tendrl"]`. Added at the two signing chokepoints
+/// (`SigningController::sign` and `tree_emit::sign_event`) so callers
+/// never have to remember it; idempotent so the paths compose.
+pub const CLIENT_TAG_NAME: &str = "client";
+pub const CLIENT_TAG_VALUE: &str = "tendrl";
+
+/// Append the `["client", "tendrl"]` tag unless the template already
+/// carries a `client` tag (caller-supplied ones win — e.g. an event
+/// re-signed through the nested publish path already has it).
+pub fn ensure_client_tag(tags: &mut Vec<Vec<String>>) {
+    let has_client = tags
+        .iter()
+        .any(|t| t.first().map(String::as_str) == Some(CLIENT_TAG_NAME));
+    if !has_client {
+        tags.push(vec![CLIENT_TAG_NAME.into(), CLIENT_TAG_VALUE.into()]);
+    }
+}
+
 const SIGN_TIMEOUT: Duration = Duration::from_secs(60);
 const SIGNER_STALE: Duration = Duration::from_secs(120);
 
@@ -523,7 +542,11 @@ impl SigningController {
         }
     }
 
-    pub async fn sign(&self, template: EventTemplate) -> Result<SignedEvent, SigningError> {
+    pub async fn sign(&self, mut template: EventTemplate) -> Result<SignedEvent, SigningError> {
+        // Stamp client provenance before the id is computed, whichever
+        // source signs — the external-signer path sends the template to
+        // the browser with the tag already in place.
+        ensure_client_tag(&mut template.tags);
         let source = self.current_source();
         match source {
             IdentitySource::Engine => {
@@ -680,6 +703,18 @@ mod tests {
         assert!(matches!(err, SigningError::Mismatch(_)));
     }
 
+    #[test]
+    fn client_tag_appended_once() {
+        let mut tags = vec![vec!["d".to_string(), "x".to_string()]];
+        ensure_client_tag(&mut tags);
+        assert!(tags.contains(&vec!["client".to_string(), "tendrl".to_string()]));
+        // Idempotent: a second pass (e.g. tree_emit-built event re-signed
+        // through the controller) must not double-tag.
+        ensure_client_tag(&mut tags);
+        let count = tags.iter().filter(|t| t[0] == CLIENT_TAG_NAME).count();
+        assert_eq!(count, 1);
+    }
+
     #[tokio::test]
     async fn signer_reports_capabilities() {
         let (pubkey, secret) = test_keypair();
@@ -744,7 +779,7 @@ mod tests {
         // tiny value via a direct ExternalSigner call to keep the test
         // fast.
         let registered = controller.lookup_by_id(&signer_id).await.unwrap();
-        let template = EventTemplate {
+        let _template = EventTemplate {
             kind: 1,
             created_at: 0,
             tags: vec![],

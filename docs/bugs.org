@@ -6,6 +6,24 @@ Log defects here as they're found mid-task, then fix on a dedicated =bugs=
 branch (via worktree) and merge back to the integration branch — don't fold
 unrelated bug fixes into feature/cleanup commits. Tick =FIXED= with the commit.
 
+* OPEN — flaky test: =test_get_addressable_returns_latest_version= under parallel runs
+:PROPERTIES:
+:found: 2026-07-09 (during client-tag provenance work; reproduced on HEAD without the change)
+:END:
+
+** Symptom
+=cargo test --lib= intermittently fails =engine::tests::
+test_get_addressable_returns_latest_version= (~1 in 3 full-suite runs);
+always passes in isolation. Pre-existing — reproduced on a clean tree.
+
+** Suspected why
+The test ingests two versions of the same =30023= coordinate via
+=ingest_and_wait= and expects latest-wins. Under parallel test load the
+wait (nostrdb subscription) likely returns before *both* events are
+indexed, so =get_addressable= sees only the older version. Fix direction:
+make =ingest_and_wait= wait for the expected note count (or ingest + wait
+per event) instead of a single subscription poll.
+
 * FIXED — system prompt not shown until the first chat message
 :PROPERTIES:
 :found: 2026-06-08 (during AI tool-calling feature work)

@@ -471,6 +471,21 @@ pub(super) fn sign_event(
     content: &str,
     secret_hex: Option<&str>,
 ) -> Value {
+    // Stamp client provenance here (before hashing) so previews show the
+    // same tags that publish, and so the nested re-sign path hands the
+    // SigningController a template that already carries it. Idempotent —
+    // mirrors `signing::ensure_client_tag`.
+    let mut tags: Vec<Value> = tags.to_vec();
+    let has_client = tags
+        .iter()
+        .any(|t| t.get(0).and_then(Value::as_str) == Some(crate::signing::CLIENT_TAG_NAME));
+    if !has_client {
+        tags.push(json!([
+            crate::signing::CLIENT_TAG_NAME,
+            crate::signing::CLIENT_TAG_VALUE
+        ]));
+    }
+    let tags = &tags;
     let event_for_hash = json!([0, pubkey, timestamp, kind, tags, content]);
     let id = calculate_event_id(&event_for_hash);
     let sig = if let Some(secret) = secret_hex {
@@ -503,6 +518,36 @@ mod tests {
             level,
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn sign_event_stamps_client_tag() {
+        let tags = vec![json!(["d", "some-slug"])];
+        let ev = sign_event(30041, &"ab".repeat(32), 1_700_000_000, &tags, "body", None);
+        let out_tags = ev["tags"].as_array().unwrap();
+        let client_count = out_tags
+            .iter()
+            .filter(|t| t.get(0).and_then(Value::as_str) == Some("client"))
+            .count();
+        assert_eq!(client_count, 1);
+        assert!(out_tags.contains(&json!(["client", "tendrl"])));
+
+        // Already-tagged input (re-sign path) is not double-tagged.
+        let ev2 = sign_event(
+            30041,
+            &"ab".repeat(32),
+            1_700_000_000,
+            out_tags,
+            "body",
+            None,
+        );
+        let recount = ev2["tags"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|t| t.get(0).and_then(Value::as_str) == Some("client"))
+            .count();
+        assert_eq!(recount, 1);
     }
 
     #[test]
