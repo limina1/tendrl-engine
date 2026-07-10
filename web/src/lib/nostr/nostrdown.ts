@@ -52,19 +52,31 @@ export interface ResolvedRef {
 	created_at?: number;
 }
 
+/** Where a segment came from in the source `content` (UTF-16 offsets).
+ *  Text/highlight segments render the exact `content.slice(srcStart, srcEnd)`;
+ *  ref/token segments render something else in that span's place (a chip or
+ *  card). Selection capture maps DOM positions back to content offsets through
+ *  these — the rendered DOM is NOT offset-faithful on its own. */
+export interface SegmentSource {
+	srcStart: number;
+	srcEnd: number;
+}
+
 /** One renderable run of a section's content. */
-export type ContentSegment =
-	| { type: 'text'; text: string }
-	| {
-			type: 'highlight';
-			text: string;
-			highlight: { id: string; pubkey: string; focused: boolean };
-	  }
-	| { type: 'ref'; ref: ResolvedRef }
-	/** A raw `{{ }}` token the engine hasn't resolved yet (resolution is async,
-	 *  or hasn't run). Rendered as a "resolving" reference chip so the syntax
-	 *  reads as a reference, not plain text, before the resolved `ref` lands. */
-	| { type: 'token'; kind: string; target: string; display?: string; raw: string };
+export type ContentSegment = SegmentSource &
+	(
+		| { type: 'text'; text: string }
+		| {
+				type: 'highlight';
+				text: string;
+				highlight: { id: string; pubkey: string; focused: boolean };
+		  }
+		| { type: 'ref'; ref: ResolvedRef }
+		/** A raw `{{ }}` token the engine hasn't resolved yet (resolution is async,
+		 *  or hasn't run). Rendered as a "resolving" reference chip so the syntax
+		 *  reads as a reference, not plain text, before the resolved `ref` lands. */
+		| { type: 'token'; kind: string; target: string; display?: string; raw: string }
+	);
 
 /** A parsed `{{ }}`/`[[ ]]` token from the engine (`POST /api/v1/nostrdown/parse`)
  *  — the locate-and-classify surface, UTF-16 offsets. The engine grammar is the
@@ -107,12 +119,17 @@ export function buildSegments(
 	tokens: ParsedToken[] = [],
 	focusedId: string | null = null
 ): ContentSegment[] {
-	if (!content) return [{ type: 'text', text: '' }];
+	if (!content) return [{ type: 'text', text: '', srcStart: 0, srcEnd: 0 }];
 
 	const focusedLower = focusedId ? focusedId.toLowerCase() : null;
 	const overlays: Overlay[] = [];
 	for (const ref of refs) {
-		overlays.push({ start: ref.start, end: ref.end, prio: 2, make: () => ({ type: 'ref', ref }) });
+		overlays.push({
+			start: ref.start,
+			end: ref.end,
+			prio: 2,
+			make: () => ({ type: 'ref', ref, srcStart: ref.start, srcEnd: ref.end })
+		});
 	}
 	// Engine-parsed `{{ }}`/`[[ ]]` tokens the resolver hasn't returned yet —
 	// lowest priority, so a resolved `ref` (or highlight) covering the same span
@@ -128,11 +145,14 @@ export function buildSegments(
 				kind: t.kind,
 				target: t.target,
 				display: t.display,
-				raw: content.slice(t.start, t.end)
+				raw: content.slice(t.start, t.end),
+				srcStart: t.start,
+				srcEnd: t.end
 			})
 		});
 	}
-	if (overlays.length === 0) return [{ type: 'text', text: content }];
+	if (overlays.length === 0)
+		return [{ type: 'text', text: content, srcStart: 0, srcEnd: content.length }];
 	for (const s of spans) {
 		overlays.push({
 			start: s.start,
@@ -145,7 +165,9 @@ export function buildSegments(
 					id: s.id,
 					pubkey: s.pubkey,
 					focused: focusedLower !== null && s.id.toLowerCase() === focusedLower
-				}
+				},
+				srcStart: s.start,
+				srcEnd: s.end
 			})
 		});
 	}
@@ -157,10 +179,22 @@ export function buildSegments(
 	let cursor = 0;
 	for (const o of overlays) {
 		if (o.start < cursor) continue; // overlaps an already-emitted run → drop
-		if (o.start > cursor) segments.push({ type: 'text', text: content.slice(cursor, o.start) });
+		if (o.start > cursor)
+			segments.push({
+				type: 'text',
+				text: content.slice(cursor, o.start),
+				srcStart: cursor,
+				srcEnd: o.start
+			});
 		segments.push(o.make());
 		cursor = o.end;
 	}
-	if (cursor < content.length) segments.push({ type: 'text', text: content.slice(cursor) });
+	if (cursor < content.length)
+		segments.push({
+			type: 'text',
+			text: content.slice(cursor),
+			srcStart: cursor,
+			srcEnd: content.length
+		});
 	return segments;
 }
