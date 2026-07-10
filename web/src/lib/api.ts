@@ -1909,3 +1909,76 @@ export function getDiscussionList(
 		})
 	});
 }
+
+// Discussion authoring: the engine builds the NIP-22/84/09 tags, signs via
+// the active source (engine key / NIP-07 / NIP-46), ingests locally FIRST,
+// then broadcasts to the publish relay set. Because ingest precedes the
+// response, the right refresh after a 200 is a cheap
+// `getDiscussionList({policy: 'local_only', threaded: true})` — never
+// client-side thread splicing.
+
+export interface BroadcastSummary {
+	successful: number;
+	total: number;
+	results: { relay_url: string; success: boolean; message?: string; event_id: string }[];
+}
+
+export interface DiscussionPublishResponse {
+	/** The signed event, already queryable locally. */
+	event: DiscussionEvent;
+	/** Per-relay fan-out results; 0/0 when the publish set is empty or the
+	 *  broadcast was declined in Confirm mode — the event is still local. */
+	broadcast: BroadcastSummary;
+}
+
+/** The root a comment scopes to — exactly one form: an addressable/replaceable
+ *  coordinate, a regular event (kind+pubkey only needed when uncached), or a
+ *  NIP-73 external id (engine normalizes it). */
+export interface CommentRootRef {
+	address?: string;
+	event_id?: string;
+	kind?: number;
+	pubkey?: string;
+	external?: string;
+	id_kind?: string;
+	hint?: string;
+}
+
+export function publishComment(req: {
+	root?: CommentRootRef;
+	/** Present = reply; root is chased from the parent's own tags. `event`
+	 *  is the fallback copy for when the engine hasn't cached the parent. */
+	parent?: { event_id: string; event?: DiscussionEvent };
+	content: string;
+	relays?: string[];
+}) {
+	return fetchJson<DiscussionPublishResponse>('/api/v1/discussions/comment', {
+		method: 'POST',
+		body: JSON.stringify(req)
+	});
+}
+
+export function publishHighlight(req: {
+	target: { address?: string; event_id?: string };
+	/** The selected text — slice it from the source content so `offset`
+	 *  agrees byte-for-byte (the engine rejects mismatches). */
+	content: string;
+	/** UTF-16 code units into the pinned version's content. */
+	offset?: [number, number];
+	context?: string;
+	/** Optional annotation → NIP-84 quote highlight. */
+	comment?: string;
+	relays?: string[];
+}) {
+	return fetchJson<DiscussionPublishResponse>('/api/v1/discussions/highlight', {
+		method: 'POST',
+		body: JSON.stringify(req)
+	});
+}
+
+export function deleteDiscussion(req: { event_id: string; reason?: string; relays?: string[] }) {
+	return fetchJson<DiscussionPublishResponse>('/api/v1/discussions/delete', {
+		method: 'POST',
+		body: JSON.stringify(req)
+	});
+}

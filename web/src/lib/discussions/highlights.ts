@@ -19,6 +19,35 @@ export interface Highlight {
 	content: string;
 	/** Author pubkey, for per-author color. */
 	pubkey: string;
+	/** The event's `offset` tag (tendrl extension): UTF-16 `[start, end]`
+	 *  into the pinned version's content. The engine verifies it against
+	 *  the current text before trusting it — send when present. */
+	offset?: [number, number];
+	/** The event's `context` tag — disambiguates repeated phrases. */
+	context?: string;
+}
+
+/** Build a resolver input from a raw kind-9802 event, carrying the
+ *  offset/context tags through so the engine can pin exact positions
+ *  (mirrors Rust `discussions::highlight_from_event`). */
+export function highlightFromEvent(e: {
+	id: string;
+	content: string;
+	pubkey: string;
+	tags: string[][];
+}): Highlight {
+	let offset: [number, number] | undefined;
+	let context: string | undefined;
+	for (const t of e.tags) {
+		if (t[0] === 'offset' && t.length >= 3) {
+			const start = Number.parseInt(t[1], 10);
+			const end = Number.parseInt(t[2], 10);
+			if (Number.isFinite(start) && Number.isFinite(end)) offset = [start, end];
+		} else if (t[0] === 'context' && t[1]) {
+			context = t[1];
+		}
+	}
+	return { id: e.id, content: e.content ?? '', pubkey: e.pubkey, offset, context };
 }
 
 /** A resolved highlight position from the engine. `start`/`end` are UTF-16

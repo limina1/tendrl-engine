@@ -6,9 +6,11 @@
 	import type { Buffer } from '../types';
 	import { getAppState } from '$lib/state.svelte';
 	import CommentThread from '$lib/components/CommentThread.svelte';
+	import ReplyBox from '$lib/components/ReplyBox.svelte';
 	import { type ThreadNode } from '$lib/discussions/thread';
 	import {
 		segmentsFromSpans,
+		highlightFromEvent,
 		type Highlight,
 		type HighlightSpan
 	} from '$lib/discussions/highlights';
@@ -209,9 +211,7 @@
 			// doc's addr; kind 9802 = NIP-84 highlights → overlaid on the body as
 			// <mark>s in author hues.
 			threads = resp.threads_by_address?.[addrStr] ?? [];
-			highlights = resp.events
-				.filter((e) => e.kind === 9802)
-				.map((e) => ({ id: e.id, content: e.content ?? '', pubkey: e.pubkey }));
+			highlights = resp.events.filter((e) => e.kind === 9802).map(highlightFromEvent);
 			const authors = new Set(resp.events.map((e) => e.pubkey));
 			if (authors.size > 0) prefetchAuthors([...authors]);
 		} catch (e) {
@@ -226,6 +226,19 @@
 			authorProfile = null;
 		}
 	}
+
+	// After a post the engine has already ingested the new event, so a
+	// local-only refetch includes it — no relay round-trip, no client-side
+	// thread splicing.
+	function refreshDiscussionsLocal() {
+		if (!parsed) return;
+		void loadDiscussions(
+			{ kind: parsed.kind, pubkey: parsed.pubkey, d_tag: parsed.dTag },
+			{ policy: 'local_only' }
+		);
+	}
+
+	const addrStr = $derived(parsed ? `${parsed.kind}:${parsed.pubkey}:${parsed.dTag}` : null);
 
 	async function handleRefresh() {
 		if (refreshing || !parsed) return;
@@ -355,9 +368,21 @@
 				</button>
 				{#if commentsOpen}
 					{#if threads.length > 0}
-						<CommentThread nodes={threads} focusedEventId={focusCommentId} />
+						<CommentThread
+							nodes={threads}
+							focusedEventId={focusCommentId}
+							replyable
+							onposted={refreshDiscussionsLocal}
+						/>
 					{:else}
 						<p class="doc-comments-empty">No comments yet.</p>
+					{/if}
+					{#if addrStr}
+						<ReplyBox
+							root={{ address: addrStr }}
+							placeholder="Comment on this {kindLabel}…"
+							onposted={refreshDiscussionsLocal}
+						/>
 					{/if}
 				{/if}
 			</section>

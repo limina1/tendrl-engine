@@ -1,6 +1,7 @@
 <script lang="ts">
 	import type { NostrEvent, SearchResult, EditorInsertMode } from '$lib/types';
 	import ProfileName from './ProfileName.svelte';
+	import ReplyBox from './ReplyBox.svelte';
 	import { getAppState } from '$lib/state.svelte';
 	import { isHex64, stripNostrPrefix } from '$lib/nostr/nip19';
 	import * as api from '$lib/api';
@@ -352,7 +353,52 @@
 		}
 	}
 
+	// ===== Discussion actions: comment on / delete this event =====
+	// The universal fallback (worksheet C4): (a c) comments on ANY event of
+	// any kind — the engine routes coordinates / regular events / kind-1111
+	// (which becomes a threaded reply) without the modal caring. (a d)
+	// publishes a NIP-09 deletion request, own events only (worksheet B4).
+	let commentOpen = $state(false);
+	const isOwnEvent = $derived(
+		!!app.identityStatus?.pubkey && n.pubkey === app.identityStatus.pubkey
+	);
+
+	function onCommentAction() {
+		commentOpen = !commentOpen;
+	}
+
+	let deleting = $state(false);
+	async function onDeleteAction() {
+		if (!isOwnEvent || deleting) return;
+		if (
+			!window.confirm(
+				'Publish a deletion request (NIP-09) for this event? tendrl hides it locally; relays that honor deletions will drop it.'
+			)
+		)
+			return;
+		deleting = true;
+		try {
+			const resp = await api.deleteDiscussion({ event_id: n.id, reason: 'deleted by author' });
+			app.pushToast(
+				resp.broadcast.total === 0
+					? 'Deletion recorded locally (no publish relays)'
+					: `Deletion requested (${resp.broadcast.successful}/${resp.broadcast.total} relays)`,
+				'success'
+			);
+			onclose();
+		} catch (e) {
+			app.pushToast(api.errorMessage(e, 'Delete failed'), 'error', 5000);
+		} finally {
+			deleting = false;
+		}
+	}
+
 	function onModalKeydown(e: KeyboardEvent) {
+		// The comment box is the one text input in the modal — while typing
+		// in it, bare letters are text, not chords. Esc still bubbles from
+		// the box's own handler (which closes the box, not the modal).
+		const target = e.target as HTMLElement | null;
+		if (target && (target.tagName === 'TEXTAREA' || target.tagName === 'INPUT')) return;
 		if (e.key === 'Escape') {
 			e.preventDefault();
 			if (chordPrefix !== null) {
@@ -401,6 +447,12 @@
 			} else if (k === 'b') {
 				e.preventDefault();
 				onBroadcastAction();
+			} else if (k === 'c') {
+				e.preventDefault();
+				onCommentAction();
+			} else if (k === 'd' && isOwnEvent) {
+				e.preventDefault();
+				onDeleteAction();
 			}
 			return;
 		}
@@ -833,7 +885,39 @@
 					<span class="evm__key">b</span>
 					<span class="evm__action-label">{broadcasting ? 'Broadcasting…' : 'Broadcast'}</span>
 				</button>
+				<button
+					class="evm__action"
+					class:evm__action--open={commentOpen}
+					onclick={onCommentAction}
+					title="Publish a NIP-22 comment scoped to this event"
+				>
+					<span class="evm__key">c</span>
+					<span class="evm__action-label">Comment</span>
+				</button>
+				{#if isOwnEvent}
+					<button
+						class="evm__action evm__action--danger"
+						onclick={onDeleteAction}
+						disabled={deleting}
+						title="Publish a NIP-09 deletion request for this event (yours only)"
+					>
+						<span class="evm__key">d</span>
+						<span class="evm__action-label">{deleting ? 'Deleting…' : 'Delete'}</span>
+					</button>
+				{/if}
 			</div>
+			{#if commentOpen}
+				<div class="evm__comment-box">
+					<ReplyBox
+						root={{ event_id: n.id, kind: n.kind, pubkey: n.pubkey }}
+						placeholder="Comment on this {KIND_LABEL[n.kind] ?? `kind ${n.kind}`}…"
+						autofocus
+						compact
+						onposted={() => (commentOpen = false)}
+						oncancel={() => (commentOpen = false)}
+					/>
+				</div>
+			{/if}
 		</section>
 
 		<!-- POOL — live view of the reference pool. The three squares show
@@ -1307,6 +1391,18 @@
 	.evm__action:hover {
 		background: color-mix(in srgb, var(--id-yours) 12%, transparent);
 		border-color: var(--id-yours);
+	}
+	.evm__action--open {
+		border-color: var(--id-yours);
+		color: var(--id-yours);
+	}
+	.evm__action--danger:hover {
+		background: color-mix(in srgb, var(--danger) 12%, transparent);
+		border-color: var(--danger);
+		color: var(--danger);
+	}
+	.evm__comment-box {
+		margin-top: 8px;
 	}
 	/* Keycap — small monochrome key hint used everywhere a chord key
 	   exists (section headings, action buttons, copy pills, pool buttons).

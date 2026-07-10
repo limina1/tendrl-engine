@@ -4,6 +4,7 @@
 	import { getActiveStore } from '../buffer-store.svelte';
 	import type { Buffer } from '../types';
 	import CommentThread from '$lib/components/CommentThread.svelte';
+	import ReplyBox from '$lib/components/ReplyBox.svelte';
 	import PoolStateBadges from '$lib/components/PoolStateBadges.svelte';
 	import { countThread, flattenThread, type ThreadNode } from '$lib/discussions/thread';
 	import { prefetchAuthors } from '$lib/discussions/authors.svelte';
@@ -320,8 +321,18 @@
 	//      mode, automatic in Auto. A declined modal degrades to a local
 	//      read, so the worst case is the tree staying at the phase-1
 	//      result — never an error, never a blank screen.
+	// The root the subject's thread is scoped to. A comment's thread lives at
+	// its own root scope (chased from its tags); a highlight IS the root of
+	// its thread — comments on it carry E/e at the 9802 (worksheet A7), so we
+	// query by the highlight's event id.
+	function threadRoot(): ParentRef | null {
+		if (!event) return null;
+		if (isHighlight) return { type: 'e', value: event.id };
+		return refs.root ?? refs.parent ?? null;
+	}
+
 	async function pullThread() {
-		if (!event || !isComment) return;
+		if (!event || (!isComment && !isHighlight)) return;
 		// Already pulled — the button is just a visibility toggle now.
 		if (threadOpen && threadNodes.length > 0) {
 			threadOpen = false;
@@ -331,7 +342,7 @@
 		threadLoading = true;
 		threadError = null;
 		try {
-			const root = refs.root ?? refs.parent;
+			const root = threadRoot();
 			if (!root) {
 				threadError = 'No root reference on this comment';
 				return;
@@ -361,6 +372,26 @@
 			threadError = e instanceof Error ? e.message : String(e);
 		} finally {
 			threadLoading = false;
+		}
+	}
+
+	// Post-success refresh: local-only — the engine ingested the new comment
+	// before responding, so the refetch already includes it.
+	async function refreshThreadLocal() {
+		const root = threadRoot();
+		if (!root) return;
+		threadOpen = true;
+		try {
+			const resp = await api.getDiscussionList({
+				kinds: [1111],
+				limit: 500,
+				threaded: true,
+				policy: 'local_only',
+				...(root.type === 'a' ? { addresses: [root.value] } : { eventIds: [root.value] })
+			});
+			applyThreads(threadsFromResp(resp, root));
+		} catch {
+			// Non-fatal — the toast already reported the post result.
 		}
 	}
 
@@ -490,8 +521,10 @@
 						Show in source
 					</button>
 				{/if}
-			{:else if isComment}
+			{:else}
 				<div class="dv-comment">{event.content}</div>
+			{/if}
+			{#if isComment || isHighlight}
 				<button class="dv-action" onclick={pullThread} disabled={threadLoading}>
 					{threadLoading
 						? 'Pulling thread…'
@@ -507,7 +540,7 @@
 						{#if threadError}
 							<div class="dv-error">{threadError}</div>
 						{/if}
-						{#if rootEvent}
+						{#if rootEvent && !isHighlight}
 							<div class="dv-root">
 								<span class="dv-root-label">thread root</span>
 								<button
@@ -524,14 +557,33 @@
 							</div>
 						{/if}
 						{#if threadNodes.length > 0}
-							<CommentThread nodes={threadNodes} focusedEventId={event.id} />
+							<CommentThread
+								nodes={threadNodes}
+								focusedEventId={event.id}
+								replyable
+								onposted={refreshThreadLocal}
+							/>
 						{:else if !threadLoading && !threadError}
 							<div class="dv-empty-thread">No comments found in this thread.</div>
 						{/if}
 					</div>
 				{/if}
-			{:else}
-				<div class="dv-comment">{event.content}</div>
+				<!-- The social reply box (worksheet C4): replying to a comment
+				     threads under it; commenting on a highlight roots at the
+				     9802 itself (worksheet A7). -->
+				{#if isComment}
+					<ReplyBox
+						parent={event as api.DiscussionEvent}
+						placeholder="Reply to this comment…"
+						onposted={refreshThreadLocal}
+					/>
+				{:else}
+					<ReplyBox
+						root={{ event_id: event.id, kind: 9802, pubkey: event.pubkey }}
+						placeholder="Comment on this highlight…"
+						onposted={refreshThreadLocal}
+					/>
+				{/if}
 			{/if}
 		</div>
 

@@ -22,8 +22,9 @@
 	import type { Buffer } from '../types';
 	import { sectionState, segmentSections } from '$lib/compose/state';
 	import { threadContainsId, type ThreadNode } from '$lib/discussions/thread';
-	import type { Highlight } from '$lib/discussions/highlights';
+	import { highlightFromEvent, type Highlight } from '$lib/discussions/highlights';
 	import CommentThread from '$lib/components/CommentThread.svelte';
+	import ReplyBox from '$lib/components/ReplyBox.svelte';
 	import HighlightList from '$lib/components/HighlightList.svelte';
 	import HighlightsDrawer, {
 		type DrawerHighlight
@@ -238,6 +239,13 @@
 		}
 	}
 
+	// Post-success refresh: the engine ingested the new event before
+	// responding, so a local-only refetch already includes it — instant,
+	// no relay round-trip, threading stays engine-side.
+	function refreshDiscussionsLocal() {
+		void loadDiscussionCounts('local_only');
+	}
+
 	async function refreshDiscussions() {
 		if (discussionLoading) return;
 		discussionLoading = true;
@@ -380,7 +388,9 @@
 		const push = (ev: api.DiscussionEvent) => {
 			if (seen.has(ev.id) || ev.kind !== 9802) return;
 			seen.add(ev.id);
-			out.push({ id: ev.id, content: ev.content ?? '', pubkey: ev.pubkey });
+			// Carry offset/context tags through so the engine resolver can pin
+			// exact positions instead of substring-guessing.
+			out.push(highlightFromEvent(ev));
 		};
 		for (const ev of discussionEvents[addrKey(addr)] ?? []) push(ev);
 		if (publication) {
@@ -408,12 +418,7 @@
 		const push = (ev: api.DiscussionEvent) => {
 			if (seen.has(ev.id) || ev.kind !== 9802) return;
 			seen.add(ev.id);
-			out.push({
-				id: ev.id,
-				content: ev.content ?? '',
-				pubkey: ev.pubkey,
-				created_at: ev.created_at
-			});
+			out.push({ ...highlightFromEvent(ev), created_at: ev.created_at });
 		};
 		for (const ev of discussionEvents[addrKey(addr)] ?? []) push(ev);
 		if (publication && content) {
@@ -2117,7 +2122,7 @@
 				{/if}
 			</div>
 		{/if}
-		{#if publicationThreads.length > 0}
+		{#if publication}
 			<div class="pub-threads">
 				<button
 					class="pub-threads-head"
@@ -2128,7 +2133,19 @@
 					Comments on this article ({publicationThreads.length})
 				</button>
 				{#if publicationThreadsOpen}
-					<CommentThread nodes={publicationThreads} focusedEventId={parsedFocusCommentId} />
+					{#if publicationThreads.length > 0}
+						<CommentThread
+							nodes={publicationThreads}
+							focusedEventId={parsedFocusCommentId}
+							replyable
+							onposted={refreshDiscussionsLocal}
+						/>
+					{/if}
+					<ReplyBox
+						root={{ address: addrKey(publication.addr) }}
+						placeholder="Comment on this publication…"
+						onposted={refreshDiscussionsLocal}
+					/>
 				{/if}
 			</div>
 		{/if}
@@ -2452,7 +2469,17 @@
 							{/if}
 								{#if commentsOpen && sectionThreads.length > 0}
 									<div class="outline-detail outline-detail--comments">
-										<CommentThread nodes={sectionThreads} focusedEventId={parsedFocusCommentId} />
+										<CommentThread
+											nodes={sectionThreads}
+											focusedEventId={parsedFocusCommentId}
+											replyable
+											onposted={refreshDiscussionsLocal}
+										/>
+										<ReplyBox
+											root={{ address: addrKey(section.addr) }}
+											placeholder="Comment on this section…"
+											onposted={refreshDiscussionsLocal}
+										/>
 									</div>
 								{/if}
 							{/if}

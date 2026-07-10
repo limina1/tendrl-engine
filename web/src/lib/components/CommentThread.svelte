@@ -1,13 +1,20 @@
 <script lang="ts">
 	import type { ThreadNode } from '$lib/discussions/thread';
+	import type { DiscussionEvent } from '$lib/api';
 	import { pubkeyToColor } from '$lib/discussions/colors';
 	import { getAuthorDisplayName, hasAuthorName } from '$lib/discussions/authors.svelte';
+	import { getAppState } from '$lib/state.svelte';
+	import { identityCanSign } from '$lib/identity/signer';
+	import ReplyBox from './ReplyBox.svelte';
 
 	let {
 		nodes,
 		focusedEventId = null,
 		depth = 0,
-		maxDepth = 6
+		maxDepth = 6,
+		replyable = false,
+		onposted = undefined,
+		replyCtl = undefined
 	}: {
 		nodes: ThreadNode[];
 		/** When set, the comment with this id gets a visual ring and the
@@ -19,7 +26,33 @@
 		 *  replies" rather than indenting further. Prevents runaway
 		 *  horizontal drift on long chains. */
 		maxDepth?: number;
+		/** Show a per-node Reply affordance. The parent that turns this on
+		 *  should also pass `onposted` to refresh its thread data. */
+		replyable?: boolean;
+		onposted?: () => void;
+		/** Internal — shared open-reply tracker so exactly one reply box is
+		 *  open across the whole recursive tree. Created at the root
+		 *  instance; children receive it by reference. */
+		replyCtl?: { openId: string | null };
 	} = $props();
+
+	const app = getAppState();
+	const canSign = $derived(identityCanSign(app.identityStatus));
+
+	// One open reply box per tree: root instance owns the tracker, the
+	// recursive children share it by reference ($state proxies stay live
+	// across the prop boundary).
+	const localCtl = $state({ openId: null as string | null });
+	const ctl = $derived(replyCtl ?? localCtl);
+
+	function toggleReply(id: string) {
+		ctl.openId = ctl.openId === id ? null : id;
+	}
+
+	function replyPosted() {
+		ctl.openId = null;
+		onposted?.();
+	}
 
 	function short(s: string, n: number): string {
 		return s.length > n ? `${s.slice(0, n)}…` : s;
@@ -70,9 +103,29 @@
 			<span class="ct-time" title={new Date(node.event.created_at * 1000).toLocaleString()}>
 				{fmtTime(node.event.created_at)}
 			</span>
+			{#if replyable}
+				<span class="ct-spacer"></span>
+				<button
+					class="ct-reply-btn"
+					class:ct-reply-btn--open={ctl.openId === node.event.id}
+					disabled={!canSign}
+					title={canSign ? 'Reply to this comment' : 'Sign in to reply'}
+					onclick={() => toggleReply(node.event.id)}
+				>reply</button>
+			{/if}
 		</div>
 		<div class="ct-body">{node.event.content}</div>
 	</div>
+	{#if replyable && ctl.openId === node.event.id}
+		<ReplyBox
+			parent={node.event as DiscussionEvent}
+			placeholder="Reply to {short(node.event.pubkey, 12)}…"
+			autofocus
+			compact
+			onposted={replyPosted}
+			oncancel={() => (ctl.openId = null)}
+		/>
+	{/if}
 	{#if node.children.length > 0}
 		{#if depth + 1 >= maxDepth}
 			<details class="ct-collapse">
@@ -83,6 +136,9 @@
 						{focusedEventId}
 						depth={depth + 1}
 						{maxDepth}
+						{replyable}
+						{onposted}
+						replyCtl={ctl}
 					/>
 				</div>
 			</details>
@@ -93,6 +149,9 @@
 					{focusedEventId}
 					depth={depth + 1}
 					{maxDepth}
+					{replyable}
+					{onposted}
+					replyCtl={ctl}
 				/>
 			</div>
 		{/if}
@@ -141,6 +200,24 @@
 		font-family: var(--font-sans, inherit);
 	}
 	.ct-sep { color: var(--base4); }
+	.ct-spacer { flex: 1; }
+	.ct-reply-btn {
+		font-family: var(--font-mono);
+		font-size: calc(var(--t-xs) - 1px);
+		color: var(--base5);
+		background: none;
+		border: none;
+		padding: 0 4px;
+		cursor: pointer;
+	}
+	.ct-reply-btn:hover:not(:disabled),
+	.ct-reply-btn--open {
+		color: var(--id-yours);
+	}
+	.ct-reply-btn:disabled {
+		opacity: 0.5;
+		cursor: not-allowed;
+	}
 	.ct-body {
 		font-size: var(--t-xs);
 		color: var(--fg);
