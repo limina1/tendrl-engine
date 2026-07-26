@@ -559,6 +559,10 @@ async fn main() -> anyhow::Result<()> {
             post(api::discussion_highlight_handler),
         )
         .route(
+            "/api/v1/discussions/highlight/preview",
+            post(api::discussion_highlight_preview_handler),
+        )
+        .route(
             "/api/v1/discussions/delete",
             post(api::discussion_delete_handler),
         )

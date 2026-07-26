@@ -2007,6 +2007,35 @@ export function publishHighlight(req: {
 	});
 }
 
+/** The exact unsigned kind-9802 template `publishHighlight` would sign for
+ *  this request — same engine builder + validation, client tag stamped,
+ *  pubkey filled when a signer is active. `id`/`sig` appear at signing. */
+export function previewHighlight(req: {
+	target: {
+		address?: string;
+		event_id?: string;
+		url?: string;
+		external?: { id: string; id_kind: string };
+	};
+	content: string;
+	offset?: [number, number];
+	context?: string;
+	comment?: string;
+}): Promise<{
+	event: {
+		kind: number;
+		created_at: number;
+		tags: string[][];
+		content: string;
+		pubkey?: string;
+	};
+}> {
+	return fetchJson('/api/v1/discussions/highlight/preview', {
+		method: 'POST',
+		body: JSON.stringify(req)
+	});
+}
+
 export function deleteDiscussion(req: { event_id: string; reason?: string; relays?: string[] }) {
 	return fetchJson<DiscussionPublishResponse>('/api/v1/discussions/delete', {
 		method: 'POST',

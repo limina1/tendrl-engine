@@ -110,6 +110,48 @@
 		canSign && !posting && text.trim().length >= 3 && !!resolved?.target
 	);
 
+	// --- Event JSON preview ------------------------------------------------
+	// The wire form comes from the engine's own template builder (same code
+	// path as publish, /highlight/preview) so it can't drift — no TS twin.
+	// The $effect reads state synchronously and hands snapshots to the
+	// debounced async fetch (see the effect-async-state memory).
+	let jsonOpen = $state(false);
+	let jsonText = $state<string | null>(null);
+	let jsonErr = $state<string | null>(null);
+	let jsonTimer: ReturnType<typeof setTimeout> | undefined;
+	let jsonToken = 0;
+
+	$effect(() => {
+		if (!jsonOpen) return;
+		const target = resolved?.target ?? null;
+		const content = text.trim();
+		const comment = annotation.trim();
+		clearTimeout(jsonTimer);
+		jsonTimer = setTimeout(async () => {
+			const token = ++jsonToken;
+			if (!target || !content) {
+				jsonText = null;
+				jsonErr = null;
+				return;
+			}
+			try {
+				const resp = await api.previewHighlight({
+					target,
+					content,
+					comment: comment || undefined
+				});
+				if (token !== jsonToken) return;
+				jsonText = JSON.stringify(resp.event, null, 2);
+				jsonErr = null;
+			} catch (e) {
+				if (token !== jsonToken) return;
+				jsonText = null;
+				jsonErr = api.errorMessage(e, 'preview failed');
+			}
+		}, 350);
+		return () => clearTimeout(jsonTimer);
+	});
+
 	function close() {
 		app.highlightComposer = null;
 	}
@@ -216,6 +258,19 @@
 			     template indentation would render as literal whitespace. -->
 			<blockquote class="ghl-preview">{text.trim()}{#if annotation.trim()}<footer
 						class="ghl-preview-note">{annotation.trim()}</footer>{/if}</blockquote>
+		{/if}
+
+		<button class="ghl-json-toggle" onclick={() => (jsonOpen = !jsonOpen)}>
+			{jsonOpen ? '▾' : '▸'} event json
+		</button>
+		{#if jsonOpen}
+			{#if jsonErr}
+				<div class="ghl-detail ghl-detail--bad">{jsonErr}</div>
+			{:else if jsonText}
+				<pre class="ghl-json">{jsonText}</pre>
+			{:else}
+				<div class="ghl-detail">enter a source and text to preview the event</div>
+			{/if}
 		{/if}
 
 		<footer class="ghl-foot">
@@ -346,6 +401,33 @@
 		margin-top: 4px;
 		font-style: italic;
 		color: var(--base5);
+	}
+	.ghl-json-toggle {
+		align-self: flex-start;
+		background: none;
+		border: none;
+		padding: 0;
+		margin-top: 4px;
+		font-family: var(--font-mono);
+		font-size: calc(var(--t-xs) - 1px);
+		color: var(--base5);
+		cursor: pointer;
+	}
+	.ghl-json-toggle:hover {
+		color: var(--fg);
+	}
+	.ghl-json {
+		margin: 0;
+		padding: 6px 8px;
+		background: var(--bg-surface);
+		border: 1px solid var(--panel-border);
+		border-radius: var(--r-sm);
+		font-family: var(--font-mono);
+		font-size: calc(var(--t-xs) - 2px);
+		color: var(--fg-muted);
+		max-height: 180px;
+		overflow: auto;
+		white-space: pre;
 	}
 	.ghl-foot {
 		display: flex;

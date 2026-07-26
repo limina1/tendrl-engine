@@ -4265,15 +4265,16 @@ pub async fn discussion_comment_handler(
     Ok(Json(resp))
 }
 
-/// POST /api/v1/discussions/highlight — publish a NIP-84 highlight
-/// (kind 9802). When `offset` is supplied and the pinned version is cached,
-/// the content must equal the slice — corrupt offsets are rejected at write
-/// time instead of entering the permanent record (worksheet B6).
-pub async fn discussion_highlight_handler(
-    State(engine): State<AppState>,
-    Extension(signing): Extension<crate::signing::SigningController>,
-    Json(req): Json<DiscussionHighlightRequest>,
-) -> Result<Json<DiscussionPublishResponse>, EngineError> {
+/// Resolve a highlight request into the unsigned kind-9802 template —
+/// the shared front half of publish and preview, so the preview can never
+/// drift from what actually gets signed. When `offset` is supplied and the
+/// pinned version is cached, the content must equal the slice — corrupt
+/// offsets are rejected at write time instead of entering the permanent
+/// record (worksheet B6).
+async fn highlight_template_from_request(
+    engine: &AppState,
+    req: &DiscussionHighlightRequest,
+) -> Result<crate::signing::EventTemplate, EngineError> {
     use crate::discussions::{
         build_highlight_template, normalize_external_id, DiscussionTarget, HighlightSource,
     };
@@ -4386,8 +4387,8 @@ pub async fn discussion_highlight_handler(
         }
     }
 
-    let relay_hint = discussion_relay_hint(&engine);
-    let template = build_highlight_template(
+    let relay_hint = discussion_relay_hint(engine);
+    build_highlight_template(
         &source,
         &req.content,
         req.offset,
@@ -4396,10 +4397,36 @@ pub async fn discussion_highlight_handler(
         &relay_hint,
         unix_now_i64(),
     )
-    .map_err(EngineError::BadRequest)?;
+    .map_err(EngineError::BadRequest)
+}
 
-    let resp = sign_ingest_broadcast(&engine, &signing, template, req.relays).await?;
+/// POST /api/v1/discussions/highlight — publish a NIP-84 highlight
+/// (kind 9802).
+pub async fn discussion_highlight_handler(
+    State(engine): State<AppState>,
+    Extension(signing): Extension<crate::signing::SigningController>,
+    Json(req): Json<DiscussionHighlightRequest>,
+) -> Result<Json<DiscussionPublishResponse>, EngineError> {
+    let template = highlight_template_from_request(&engine, &req).await?;
+    let resp = sign_ingest_broadcast(&engine, &signing, template, req.relays.clone()).await?;
     Ok(Json(resp))
+}
+
+/// POST /api/v1/discussions/highlight/preview — the exact unsigned template
+/// the publish path would sign: same builder, same validation, client tag
+/// stamped like the signing chokepoint does, pubkey filled when a signer is
+/// active. `id`/`sig` (and the final `created_at`) only exist at signing.
+pub async fn discussion_highlight_preview_handler(
+    State(engine): State<AppState>,
+    Extension(signing): Extension<crate::signing::SigningController>,
+    Json(req): Json<DiscussionHighlightRequest>,
+) -> Result<Json<serde_json::Value>, EngineError> {
+    let mut template = highlight_template_from_request(&engine, &req).await?;
+    crate::signing::ensure_client_tag(&mut template.tags);
+    if let Ok(pk) = require_active_pubkey(&signing).await {
+        template.pubkey = Some(pk);
+    }
+    Ok(Json(json!({ "event": template })))
 }
 
 /// POST /api/v1/discussions/delete — publish a NIP-09 deletion request for
