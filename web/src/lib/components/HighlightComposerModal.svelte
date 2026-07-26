@@ -17,9 +17,13 @@
 	const app = getAppState();
 	const canSign = $derived(identityCanSign(app.identityStatus));
 
-	let source = $state(app.highlightComposer?.source ?? '');
-	let text = $state(app.highlightComposer?.text ?? '');
-	let annotation = $state('');
+	// Prefill precedence, per field: the explicit open payload (e.g. the
+	// M-x selection grab) wins; otherwise the draft remembered from the
+	// last close. Publish clears the memory; plain close keeps it.
+	const initialSource = app.highlightComposer?.source ?? app.highlightDraft?.source ?? '';
+	let source = $state(initialSource);
+	let text = $state(app.highlightComposer?.text ?? app.highlightDraft?.text ?? '');
+	let annotation = $state(app.highlightDraft?.annotation ?? '');
 	let posting = $state(false);
 
 	// Confirm mode: publishing raises a publish_intent that renders
@@ -111,8 +115,9 @@
 		}, 250);
 	}
 
-	// A prefilled source (e.g. reopened draft state) classifies immediately.
-	if (app.highlightComposer?.source?.trim()) onSourceInput();
+	// A prefilled source (open payload or restored draft) classifies
+	// immediately.
+	if (initialSource.trim()) onSourceInput();
 
 	const canPost = $derived(
 		canSign && !posting && text.trim().length >= 3 && !!resolved?.target
@@ -160,7 +165,11 @@
 		return () => clearTimeout(jsonTimer);
 	});
 
-	function close() {
+	function close(rememberDraft = true) {
+		app.highlightDraft =
+			rememberDraft && (source.trim() || text.trim() || annotation.trim())
+				? { source, text, annotation }
+				: null;
 		app.highlightComposer = null;
 	}
 
@@ -182,7 +191,7 @@
 						: `Highlight published (${successful}/${total} relays)`,
 				successful === 0 && total > 0 ? 'error' : 'success'
 			);
-			close();
+			close(false);
 		} catch (e) {
 			app.pushToast(api.errorMessage(e, 'Highlight failed'), 'error', 5000);
 		} finally {
@@ -224,7 +233,7 @@
 	>
 		<header class="ghl-header">
 			<h3 class="ghl-title">highlight</h3>
-			<button class="ghl-close" onclick={close} aria-label="Close">×</button>
+			<button class="ghl-close" onclick={() => close()} aria-label="Close">×</button>
 		</header>
 
 		<label class="ghl-label" for="ghl-source">
@@ -299,7 +308,7 @@
 				{/if}
 			</span>
 			<span class="ghl-spacer"></span>
-			<button class="ghl-btn" onclick={close} disabled={posting}>Cancel</button>
+			<button class="ghl-btn" onclick={() => close()} disabled={posting}>Cancel</button>
 			<button class="ghl-btn ghl-btn--post" onclick={post} disabled={!canPost}>
 				{posting ? 'Publishing…' : 'Highlight'}
 			</button>

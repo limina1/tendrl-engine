@@ -446,6 +446,12 @@ function _createAppState() {
 	// or external id.
 	let highlightComposer: { text?: string; source?: string } | null = $state(null);
 
+	// The highlighter's unpublished draft — written when the modal closes,
+	// restored on the next open, cleared by a successful publish. Session
+	// memory only (buffer renderers unmount on switch; modals unmount on
+	// close — durable text lives in the store, not the component).
+	let highlightDraft: { source: string; text: string; annotation: string } | null = $state(null);
+
 	// Republish diff prompt: set when Publish detects a same-title
 	// publication. ComparePublishModal renders the diff and calls
 	// confirmRepublish/cancelRepublish. Holds the pending publish args so
@@ -4290,6 +4296,8 @@ function _createAppState() {
 		// General highlighter modal
 		get highlightComposer() { return highlightComposer; },
 		set highlightComposer(v: { text?: string; source?: string } | null) { highlightComposer = v; },
+		get highlightDraft() { return highlightDraft; },
+		set highlightDraft(v: { source: string; text: string; annotation: string } | null) { highlightDraft = v; },
 
 		// Profile
 		get profilePubkey() { return profilePubkey; },
