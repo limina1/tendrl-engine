@@ -435,9 +435,16 @@
 		closeMinibuffer();
 	}
 
+	let mbInputEl: HTMLInputElement | null = null;
+
 	function openMinibuffer(mode: MinibufferMode) {
 		mb = { mode, query: '', selectedIndex: 0 };
 		prefixPath = [];
+		// Deterministic focus into the query field — the input's `autofocus`
+		// only fires reliably on some mount paths (button click), not a
+		// leader-key open (SPC :), which left focus on body so typing never
+		// reached the filter. setTimeout ordering matches enterInsertMode.
+		setTimeout(() => mbInputEl?.focus(), 0);
 	}
 
 	function closeMinibuffer() {
@@ -1616,6 +1623,7 @@
 			<!-- svelte-ignore a11y_autofocus -->
 			<input
 				class="mb__input"
+				bind:this={mbInputEl}
 				bind:value={mb.query}
 				oninput={() => (mb.selectedIndex = 0)}
 				autofocus
