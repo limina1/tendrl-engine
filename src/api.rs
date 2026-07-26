@@ -3908,6 +3908,19 @@ pub struct HighlightTargetRef {
     /// reference frame.
     #[serde(default)]
     pub event_id: Option<String>,
+    /// Non-nostr web source → NIP-84 `r` tag (normalized/tracker-cleaned
+    /// engine-side). Ignored when a nostr target is present.
+    #[serde(default)]
+    pub url: Option<String>,
+    /// Non-nostr, non-web source → NIP-73 `i` tag ("isbn", "doi", …).
+    #[serde(default)]
+    pub external: Option<ExternalSourceRef>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ExternalSourceRef {
+    pub id: String,
+    pub id_kind: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -4261,7 +4274,9 @@ pub async fn discussion_highlight_handler(
     Extension(signing): Extension<crate::signing::SigningController>,
     Json(req): Json<DiscussionHighlightRequest>,
 ) -> Result<Json<DiscussionPublishResponse>, EngineError> {
-    use crate::discussions::{build_highlight_template, DiscussionTarget};
+    use crate::discussions::{
+        build_highlight_template, normalize_external_id, DiscussionTarget, HighlightSource,
+    };
 
     if req.content.trim().is_empty() {
         return Err(EngineError::BadRequest("highlight content is empty".into()));
@@ -4272,7 +4287,7 @@ pub async fn discussion_highlight_handler(
         )));
     }
 
-    let target = match (&req.target.address, &req.target.event_id) {
+    let source = match (&req.target.address, &req.target.event_id) {
         (Some(addr), pin) => {
             if !is_addr_coord(addr) {
                 return Err(EngineError::BadRequest(format!(
@@ -4296,12 +4311,12 @@ pub async fn discussion_highlight_handler(
                     .flatten()
                     .and_then(|ev| ev.get("id").and_then(|v| v.as_str()).map(str::to_string)),
             };
-            DiscussionTarget {
+            HighlightSource::Event(DiscussionTarget {
                 address: Some(addr.clone()),
                 event_id,
                 kind,
                 pubkey,
-            }
+            })
         }
         (None, Some(id)) => {
             let ev = crate::query::query_by_id(engine.ndb(), id)?.ok_or_else(|| {
@@ -4309,7 +4324,7 @@ pub async fn discussion_highlight_handler(
                     "highlight target not cached locally — pass `target.address`".into(),
                 )
             })?;
-            DiscussionTarget {
+            HighlightSource::Event(DiscussionTarget {
                 address: None,
                 event_id: Some(id.clone()),
                 kind: ev.get("kind").and_then(|v| v.as_u64()).unwrap_or(0) as u32,
@@ -4318,37 +4333,62 @@ pub async fn discussion_highlight_handler(
                     .and_then(|v| v.as_str())
                     .unwrap_or("")
                     .to_string(),
-            }
+            })
         }
+        // Non-nostr sources: a web URL (NIP-84 `r` tag) or a NIP-73 external
+        // id (`i` tag) — the generalized-highlighter path.
         (None, None) => {
-            return Err(EngineError::BadRequest(
-                "highlight target requires `address` or `event_id`".into(),
-            ))
+            let url_arg = req.target.url.as_deref().map(str::trim).filter(|u| !u.is_empty());
+            if let Some(url) = url_arg {
+                let normalized = normalize_external_id(url, "web");
+                if !normalized.starts_with("https://") && !normalized.starts_with("http://") {
+                    return Err(EngineError::BadRequest(format!(
+                        "source URL must be a full http(s) URL: `{url}`"
+                    )));
+                }
+                HighlightSource::Url(normalized)
+            } else if let Some(ext) = &req.target.external {
+                if ext.id.trim().is_empty() || ext.id_kind.trim().is_empty() {
+                    return Err(EngineError::BadRequest(
+                        "external source requires `id` and `id_kind`".into(),
+                    ));
+                }
+                HighlightSource::External {
+                    id: normalize_external_id(&ext.id, &ext.id_kind),
+                    id_kind: ext.id_kind.trim().to_string(),
+                }
+            } else {
+                return Err(EngineError::BadRequest(
+                    "highlight target requires `address`, `event_id`, `url`, or `external`".into(),
+                ));
+            }
         }
     };
 
     // Write-time offset verification against the pinned version.
-    if let (Some((start, end)), Some(pin)) = (req.offset, &target.event_id) {
-        if start >= end {
-            return Err(EngineError::BadRequest("offset start must be < end".into()));
-        }
-        if let Some(ev) = crate::query::query_by_id(engine.ndb(), pin)? {
-            let pinned_content = ev.get("content").and_then(|v| v.as_str()).unwrap_or("");
-            let units: Vec<u16> = pinned_content.encode_utf16().collect();
-            let (s, e) = (start as usize, end as usize);
-            let slice_ok =
-                e <= units.len() && String::from_utf16_lossy(&units[s..e]) == req.content;
-            if !slice_ok {
-                return Err(EngineError::BadRequest(
-                    "offset does not slice the pinned content to the highlighted text".into(),
-                ));
+    if let HighlightSource::Event(target) = &source {
+        if let (Some((start, end)), Some(pin)) = (req.offset, &target.event_id) {
+            if start >= end {
+                return Err(EngineError::BadRequest("offset start must be < end".into()));
+            }
+            if let Some(ev) = crate::query::query_by_id(engine.ndb(), pin)? {
+                let pinned_content = ev.get("content").and_then(|v| v.as_str()).unwrap_or("");
+                let units: Vec<u16> = pinned_content.encode_utf16().collect();
+                let (s, e) = (start as usize, end as usize);
+                let slice_ok =
+                    e <= units.len() && String::from_utf16_lossy(&units[s..e]) == req.content;
+                if !slice_ok {
+                    return Err(EngineError::BadRequest(
+                        "offset does not slice the pinned content to the highlighted text".into(),
+                    ));
+                }
             }
         }
     }
 
     let relay_hint = discussion_relay_hint(&engine);
     let template = build_highlight_template(
-        &target,
+        &source,
         &req.content,
         req.offset,
         req.context.as_deref(),

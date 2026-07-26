@@ -721,13 +721,27 @@ pub fn root_scope_from_parent(parent_event: &Value) -> Result<CommentScope, Stri
     }))
 }
 
+/// What a highlight cites — NIP-84's three source families. Events tag
+/// `a`/`e`; URLs tag `r`; anything else citable (a book, a paper) rides the
+/// NIP-73 external-id rails as an `i` tag, same as `CommentScope::External`.
+#[derive(Debug, Clone)]
+pub enum HighlightSource {
+    Event(DiscussionTarget),
+    /// Web URL, canonical form (`normalize_external_id(_, "web")` output —
+    /// NIP-84 asks for best-effort tracker cleaning).
+    Url(String),
+    /// NIP-73 id, canonical form (`normalize_external_id` output), plus its
+    /// id kind ("isbn", "doi", …).
+    External { id: String, id_kind: String },
+}
+
 /// Build a kind-9802 highlight template per NIP-84 (+ tendrl's offset
-/// extension). `content` is the selected text verbatim; `offset` is UTF-16
+/// extension). `content` is the highlighted text verbatim; `offset` is UTF-16
 /// code units into the `.content` of the version pinned by the `e` tag
-/// (spec §4 — advisory, self-verifying on read). `comment` makes it a quote
-/// highlight.
+/// (spec §4 — advisory, self-verifying on read), so it only makes sense for
+/// event sources. `comment` makes it a quote highlight.
 pub fn build_highlight_template(
-    target: &DiscussionTarget,
+    source: &HighlightSource,
     content: &str,
     offset: Option<(u64, u64)>,
     context: Option<&str>,
@@ -735,24 +749,50 @@ pub fn build_highlight_template(
     relay_hint: &str,
     created_at: i64,
 ) -> Result<EventTemplate, String> {
-    if target.address.is_none() && target.event_id.is_none() {
-        return Err("highlight target requires an address or event id".to_string());
-    }
     let mut tags: Vec<Vec<String>> = Vec::new();
-    if let Some(addr) = &target.address {
-        tags.push(tag_with_relay("a", addr, relay_hint));
+    match source {
+        HighlightSource::Event(target) => {
+            if target.address.is_none() && target.event_id.is_none() {
+                return Err("highlight target requires an address or event id".to_string());
+            }
+            if let Some(addr) = &target.address {
+                tags.push(tag_with_relay("a", addr, relay_hint));
+            }
+            if let Some(id) = &target.event_id {
+                tags.push(tag_with_relay("e", id, relay_hint));
+            }
+            // Author attribution with the NIP-84 role marker (position 4).
+            tags.push(vec![
+                "p".to_string(),
+                target.pubkey.clone(),
+                relay_hint.to_string(),
+                "author".to_string(),
+            ]);
+            tags.push(vec!["k".to_string(), target.kind.to_string()]);
+        }
+        HighlightSource::Url(url) => {
+            if url.trim().is_empty() {
+                return Err("highlight source URL is empty".to_string());
+            }
+            // The `source` marker is only mandated for quote highlights,
+            // where it disambiguates against `r`-tag mentions in the comment.
+            if comment.map(str::trim).filter(|c| !c.is_empty()).is_some() {
+                tags.push(vec!["r".to_string(), url.clone(), "source".to_string()]);
+            } else {
+                tags.push(vec!["r".to_string(), url.clone()]);
+            }
+        }
+        HighlightSource::External { id, id_kind } => {
+            if id.trim().is_empty() || id_kind.trim().is_empty() {
+                return Err("external highlight source requires an id and id kind".to_string());
+            }
+            tags.push(vec!["i".to_string(), id.clone()]);
+            tags.push(vec!["k".to_string(), id_kind.clone()]);
+        }
     }
-    if let Some(id) = &target.event_id {
-        tags.push(tag_with_relay("e", id, relay_hint));
+    if offset.is_some() && !matches!(source, HighlightSource::Event(_)) {
+        return Err("offset only applies to nostr event sources".to_string());
     }
-    // Author attribution with the NIP-84 role marker (position 4).
-    tags.push(vec![
-        "p".to_string(),
-        target.pubkey.clone(),
-        relay_hint.to_string(),
-        "author".to_string(),
-    ]);
-    tags.push(vec!["k".to_string(), target.kind.to_string()]);
     if let Some((start, end)) = offset {
         tags.push(vec![
             "offset".to_string(),
@@ -813,7 +853,11 @@ pub fn normalize_external_id(id: &str, id_kind: &str) -> String {
     match id_kind {
         "web" => normalize_web_url(raw),
         "isbn" => {
-            let bare = strip_ci(raw, "isbn:").unwrap_or(raw);
+            // Strip `isbn:` or a bare `ISBN ` label — user-pasted citations
+            // carry either.
+            let bare = strip_ci(raw, "isbn:")
+                .or_else(|| strip_ci(raw, "isbn"))
+                .unwrap_or(raw);
             let digits: String = bare.chars().filter(|c| !matches!(c, '-' | ' ')).collect();
             format!("isbn:{digits}")
         }
@@ -1489,7 +1533,7 @@ mod authoring_tests {
     #[test]
     fn highlight_template_full_shape() {
         let addr = format!("30041:{PK}:section-1");
-        let target = addressable(30041, "section-1", Some(ID));
+        let target = HighlightSource::Event(addressable(30041, "section-1", Some(ID)));
         let tpl = build_highlight_template(
             &target,
             "the selected text",
@@ -1518,7 +1562,7 @@ mod authoring_tests {
 
     #[test]
     fn highlight_optional_tags_omitted() {
-        let target = addressable(30041, "s", None);
+        let target = HighlightSource::Event(addressable(30041, "s", None));
         let tpl =
             build_highlight_template(&target, "text", None, None, Some("  "), "", 1000).unwrap();
         let names: Vec<&str> = tpl.tags.iter().map(|t| t[0].as_str()).collect();
@@ -1527,13 +1571,52 @@ mod authoring_tests {
 
     #[test]
     fn highlight_requires_some_target_ref() {
-        let target = DiscussionTarget {
+        let target = HighlightSource::Event(DiscussionTarget {
             address: None,
             event_id: None,
             kind: 30041,
             pubkey: PK.to_string(),
-        };
+        });
         assert!(build_highlight_template(&target, "x", None, None, None, "", 1000).is_err());
+    }
+
+    #[test]
+    fn highlight_url_source_plain_and_quote() {
+        let src = HighlightSource::Url("https://example.com/post".to_string());
+        // Plain highlight: bare `r` tag.
+        let tpl = build_highlight_template(&src, "text", None, None, None, "", 1000).unwrap();
+        assert_eq!(tpl.tags, vec![t(&["r", "https://example.com/post"])]);
+        // Quote highlight: the source URL carries the NIP-84 `source` marker.
+        let tpl =
+            build_highlight_template(&src, "text", None, None, Some("note"), "", 1000).unwrap();
+        assert_eq!(
+            tpl.tags,
+            vec![
+                t(&["r", "https://example.com/post", "source"]),
+                t(&["comment", "note"]),
+            ]
+        );
+    }
+
+    #[test]
+    fn highlight_external_source_tags_i_and_k() {
+        let src = HighlightSource::External {
+            id: "isbn:9780321765723".to_string(),
+            id_kind: "isbn".to_string(),
+        };
+        let tpl = build_highlight_template(&src, "text", None, None, None, "", 1000).unwrap();
+        assert_eq!(
+            tpl.tags,
+            vec![t(&["i", "isbn:9780321765723"]), t(&["k", "isbn"])]
+        );
+    }
+
+    #[test]
+    fn highlight_offset_rejected_for_non_event_sources() {
+        let src = HighlightSource::Url("https://example.com".to_string());
+        assert!(
+            build_highlight_template(&src, "x", Some((0, 1)), None, None, "", 1000).is_err()
+        );
     }
 
     // --- deletion -----------------------------------------------------------
@@ -1577,6 +1660,10 @@ mod authoring_tests {
         );
         assert_eq!(
             normalize_external_id("isbn:978 0765382030", "isbn"),
+            "isbn:9780765382030"
+        );
+        assert_eq!(
+            normalize_external_id("ISBN 978-0-7653-8203-0", "isbn"),
             "isbn:9780765382030"
         );
         assert_eq!(
