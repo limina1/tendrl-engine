@@ -12,6 +12,7 @@
 	import { getAppState } from '$lib/state.svelte';
 	import { identityCanSign } from '$lib/identity/signer';
 	import { stripNostrPrefix, isHex64 } from '$lib/nostr/nip19';
+	import { confirmState } from '$lib/network/fetch-events.svelte';
 
 	const app = getAppState();
 	const canSign = $derived(identityCanSign(app.identityStatus));
@@ -20,6 +21,13 @@
 	let text = $state(app.highlightComposer?.text ?? '');
 	let annotation = $state('');
 	let posting = $state(false);
+
+	// Confirm mode: publishing raises a publish_intent that renders
+	// PublishConfirmModal (z 250, below us at 300). While it's up, this
+	// modal YIELDS — hidden, keys and backdrop inert — instead of fighting
+	// it for clicks and Escape. Deny brings us back with state intact;
+	// approve resolves the in-flight post (toast + close as usual).
+	const yielding = $derived(posting && confirmState.intent?.type === 'publish_intent');
 
 	type ResolvedSource =
 		| { badge: string; detail: string; target: Parameters<typeof api.publishHighlight>[0]['target'] }
@@ -183,6 +191,9 @@
 	}
 
 	function handleKeydown(e: KeyboardEvent) {
+		// A post in flight (incl. an open publish-confirm) owns the keys:
+		// Escape must not close us mid-request, Ctrl-Enter must not re-post.
+		if (posting) return;
 		if (e.key === 'Escape') {
 			e.preventDefault();
 			close();
@@ -196,7 +207,13 @@
 <svelte:window onkeydown={handleKeydown} />
 
 <!-- svelte-ignore a11y_click_events_have_key_events -->
-<div class="ghl-backdrop" onclick={close} role="presentation">
+<div
+	class="ghl-backdrop {yielding ? 'ghl-backdrop--yield' : ''}"
+	onclick={() => {
+		if (!posting) close();
+	}}
+	role="presentation"
+>
 	<div
 		class="ghl-modal"
 		onclick={(e) => e.stopPropagation()}
@@ -300,6 +317,11 @@
 		align-items: flex-start;
 		justify-content: center;
 		padding-top: 12vh;
+	}
+	/* Stand down while PublishConfirmModal (z 250) is deciding the post —
+	   visibility (not display) keeps bound elements alive. */
+	.ghl-backdrop--yield {
+		visibility: hidden;
 	}
 	.ghl-modal {
 		width: min(520px, 92vw);
