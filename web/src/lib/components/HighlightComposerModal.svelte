@@ -212,12 +212,10 @@
 		/>
 
 		{#if text.trim()}
-			<blockquote class="ghl-preview">
-				{text.trim()}
-				{#if annotation.trim()}
-					<footer class="ghl-preview-note">{annotation.trim()}</footer>
-				{/if}
-			</blockquote>
+			<!-- Markup kept tight: .ghl-preview is white-space:pre-wrap, so
+			     template indentation would render as literal whitespace. -->
+			<blockquote class="ghl-preview">{text.trim()}{#if annotation.trim()}<footer
+						class="ghl-preview-note">{annotation.trim()}</footer>{/if}</blockquote>
 		{/if}
 
 		<footer class="ghl-foot">
@@ -340,6 +338,9 @@
 		color: var(--fg-muted);
 		max-height: 120px;
 		overflow-y: auto;
+		/* Pasted passages keep their paragraph breaks — the event content
+		   carries them verbatim, so the preview must too. */
+		white-space: pre-wrap;
 	}
 	.ghl-preview-note {
 		margin-top: 4px;
