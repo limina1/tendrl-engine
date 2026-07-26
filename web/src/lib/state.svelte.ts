@@ -438,6 +438,14 @@ function _createAppState() {
 	// a list of events each independently expandable, plus expand-all.
 	let eventsModal: { title: string; events: EventsModalItem[] } | null = $state(null);
 
+	// --- General highlighter modal ---
+	// Set by the M-x `tendrl-highlight` command (optionally prefilled from
+	// the window selection); rendered by HighlightComposerModal in +layout.
+	// Unlike highlight *mode* (in-reader selection capture), this composes a
+	// NIP-84 highlight from pasted text against any source — nostr ref, URL,
+	// or external id.
+	let highlightComposer: { text?: string; source?: string } | null = $state(null);
+
 	// Republish diff prompt: set when Publish detects a same-title
 	// publication. ComparePublishModal renders the diff and calls
 	// confirmRepublish/cancelRepublish. Holds the pending publish args so
@@ -4278,6 +4286,10 @@ function _createAppState() {
 		get eventsModal() { return eventsModal; },
 		set eventsModal(v: { title: string; events: EventsModalItem[] } | null) { eventsModal = v; },
 		openEventsModal(title: string, events: EventsModalItem[]) { eventsModal = { title, events }; },
+
+		// General highlighter modal
+		get highlightComposer() { return highlightComposer; },
+		set highlightComposer(v: { text?: string; source?: string } | null) { highlightComposer = v; },
 
 		// Profile
 		get profilePubkey() { return profilePubkey; },

@@ -338,6 +338,7 @@
 		{ id: 'tendrl-publish-draft', name: 'tendrl-publish-draft', description: 'Sign and broadcast the current draft', category: 'Compose' },
 		{ id: 'tendrl-fork-section', name: 'tendrl-fork-section', description: 'Fork an imported section to make it editable', category: 'Compose' },
 		{ id: 'tendrl-cycle-editor-view', name: 'tendrl-cycle-editor-view', description: 'Cycle through composer modes (button/plain/wysiwyg/preview)', category: 'Compose' },
+		{ id: 'tendrl-highlight', name: 'tendrl-highlight', description: 'General highlighter — paste text, cite any source (nostr / URL / ISBN / DOI), annotate, publish', category: 'Compose' },
 		// Configuration
 		{ id: 'tendrl-toggle-network-mode', name: 'tendrl-toggle-network-mode', description: 'Toggle between online and offline mode', category: 'Configuration' },
 		{ id: 'tendrl-show-relays', name: 'tendrl-show-relays', description: 'Show configured relays', category: 'Configuration' },
@@ -493,6 +494,14 @@
 		}
 		if (cmd.id === 'tendrl-toggle-network-mode') {
 			toggleNetworkMode();
+			closeMinibuffer();
+			return;
+		}
+		if (cmd.id === 'tendrl-highlight') {
+			// Prefill from any live selection — the "I was just reading this
+			// elsewhere" path; otherwise open blank for a pure paste.
+			const sel = window.getSelection()?.toString().trim() ?? '';
+			app.highlightComposer = sel ? { text: sel } : {};
 			closeMinibuffer();
 			return;
 		}

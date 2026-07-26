@@ -248,6 +248,29 @@ export async function encode(req: EncodeRequest): Promise<string> {
 	return resp.encoded;
 }
 
+/** The tagged shape `POST /api/v1/decode` returns — mirrors `nip19::Decoded`. */
+export type Decoded =
+	| { kind: 'npub'; pubkey: string }
+	| { kind: 'note'; event_id: string }
+	| { kind: 'nprofile'; pubkey: string; relays: string[] }
+	| {
+			kind: 'nevent';
+			event_id: string;
+			relays: string[];
+			author: string | null;
+			kind_int: number | null;
+	  }
+	| { kind: 'naddr'; kind_int: number; pubkey: string; d_tag: string; relays: string[] };
+
+/** Decode a NIP-19 bech32 identifier (optionally `nostr:`-prefixed) via the
+ *  engine — the inverse of `encode`; the web ships no bech32 of its own. */
+export function decode(input: string): Promise<Decoded> {
+	return fetchJson<Decoded>('/api/v1/decode', {
+		method: 'POST',
+		body: JSON.stringify({ input })
+	});
+}
+
 /**
  * Detect that a same-title publication of the user's already exists and return
  * a section-level diff (matched / added / removed by title slug) so a republish
@@ -1959,7 +1982,15 @@ export function publishComment(req: {
 }
 
 export function publishHighlight(req: {
-	target: { address?: string; event_id?: string };
+	/** Exactly one source family: a nostr target (`address`/`event_id`), a
+	 *  web `url` (NIP-84 `r` tag, tracker-cleaned engine-side), or an
+	 *  `external` NIP-73 id (`i` tag — isbn/doi/…). */
+	target: {
+		address?: string;
+		event_id?: string;
+		url?: string;
+		external?: { id: string; id_kind: string };
+	};
 	/** The selected text — slice it from the source content so `offset`
 	 *  agrees byte-for-byte (the engine rejects mismatches). */
 	content: string;

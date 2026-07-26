@@ -18,6 +18,7 @@
 	import ToastStack from '$lib/components/ToastStack.svelte';
 	import TextPromptModal from '$lib/components/TextPromptModal.svelte';
 	import FetchActivityModal from '$lib/components/FetchActivityModal.svelte';
+	import HighlightComposerModal from '$lib/components/HighlightComposerModal.svelte';
 	// fetch-events self-starts the SSE subscription at module scope; we
 	// only need confirmState here to render the modal.
 	import { confirmState } from '$lib/network/fetch-events.svelte';
@@ -205,6 +206,10 @@
 <MenuHelpModal />
 
 <EventsJsonModal />
+
+{#if app.highlightComposer}
+	<HighlightComposerModal />
+{/if}
 
 <ComparePublishModal />
 
