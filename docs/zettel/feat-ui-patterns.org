@@ -41,6 +41,20 @@ the divergence ledger below is the consolidation worklist.
   details; resolving hands the approved relay list back to the operation.
   =NetworkModeChoiceModal= is the intentionally non-dismissable variant
   (a mode must be chosen; no backdrop-close, no Escape).
+- *Engine-backed wire preview* — when a UI wants to show "what will
+  actually be published", it must NOT assemble the JSON in TS (that's a
+  twin of the Rust builder, guaranteed to drift). Instead the engine
+  exposes a =…/preview= endpoint that runs the SAME request→template
+  function as the publish handler and returns the unsigned template
+  (client tag stamped via the signing helper; only =id=/=sig=/final
+  =created_at= absent, since they don't exist until signing). Canonical:
+  =POST /api/v1/discussions/highlight/preview= ←
+  =highlight_template_from_request= (shared with the publish handler) →
+  the collapsible "event json" panel in =HighlightComposerModal=
+  (debounced, token-guarded against stale responses). Any future
+  publish-shaped surface (compose, comments, relay lists) wanting a
+  preview should clone this: extract the handler's front half, add the
+  sibling route.
 
 * Overlays (modal/dialog) — pattern without a primitive
 
@@ -54,6 +68,23 @@ families (=.modal-backdrop=, =.rf-*=, =.nm-*=, =.gate-*=, =.evm__*=),
 inconsistent Escape handling (some =svelte:window onkeydown=, some
 Enter-only), and nothing prevents two modals overlapping. When adding a
 modal, copy =FetchConfirmModal='s structure and mount it in =+layout=.
+
+*The modal-yield rule* (2026-07-26, learned the hard way): a modal whose
+action can raise a Confirm-mode intent WILL overlap the intent modal —
+and since every modal hand-rolls its own z-index and =svelte:window=
+keydown, they fight: the first collision was the highlighter (z 300)
+covering =PublishConfirmModal= (z 250) so that clicks aimed at
+"Broadcast" hit the highlighter's close-on-backdrop instead, while
+Escape resolved BOTH dialogs at once. Until a modal-stack manager
+exists, the initiating modal must *yield*: while its request is in
+flight, ignore Escape/hotkeys and backdrop clicks; while the intent is
+actually pending (=confirmState.intent=), hide itself with
+=visibility: hidden= (state and bindings stay alive) and come back when
+the intent resolves. Canonical: =HighlightComposerModal='s =yielding=
+derived + =.ghl-backdrop--yield=. Also remember deny ≠ abort: under the
+signing-is-the-snapshot model a denied broadcast still signed and
+ingested locally, so the yielding modal should treat deny as
+"saved locally", not as an error.
 
 * Menus — four coexisting idioms
 
@@ -194,7 +225,14 @@ touched.
 - New surface → =data-tour= anchor (+ discovery tip if it introduces a
   concept).
 - New modal → copy =FetchConfirmModal='s backdrop/dialog structure, mount
-  in =+layout= (until a shared Modal primitive exists).
+  in =+layout= (until a shared Modal primitive exists). If its action can
+  raise a publish/fetch intent, implement the modal-yield rule (above).
+- "What will be published" previews → engine =…/preview= endpoint sharing
+  the publish handler's template builder; never assemble event JSON in TS.
+- Anything that must be focused after a state-driven mount → explicit
+  =.focus()= on the bound element (=setTimeout 0=); the =autofocus=
+  attribute is unreliable for dynamically inserted nodes (minibuffer
+  lesson: it fired on button-click opens but not leader-key opens).
 - Buffer components: no Svelte lifecycle hooks, no wm/registry import
   cycles — props + =$effect= teardown, leaf state modules.
 

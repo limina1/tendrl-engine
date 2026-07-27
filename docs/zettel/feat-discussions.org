@@ -1,38 +1,150 @@
 #+TITLE: Discussions & Highlights
 #+TYPE: feature
-#+STATUS: partial
-#+DATE: 2026-07-05
+#+STATUS: implemented (reactions/notifications out of scope)
+#+DATE: 2026-07-26
 
-Reading the conversation around a publication: NIP-22 comments (kind 1111)
-and NIP-84 highlights (kind 9802) attached to sections and indexes. The
-read side is shipped; the write side (authoring comments and highlights) is
-planned — see =docs/discussions-plan.md=.
+The conversation layer around publications: NIP-22 comments (kind 1111)
+and NIP-84 highlights (kind 9802) attached to sections, indexes, and —
+since the general highlighter — to anything citable at all. Both the
+read side and the write side are shipped; this note explains the wire
+format and the authoring model in enough detail to reason about them
+without re-reading the NIPs.
 
-* What exists
-- =POST /api/v1/discussions/counts= and =/discussions/list= (=src/api.rs=):
-  per-address comment/highlight tallies, deduped engine-side, Confirm-mode
-  gated like any fetch; counts ride along on list responses.
-- NIP-22 threading runs engine-side (uppercase =A/E/K/P= root scope,
-  lowercase =a/e/k/p= parent), per the frontend/backend boundary.
-- NIP-84 highlight span resolution in =src/discussions.rs=
-  (=resolve_highlight_spans=); the reader renders overlays via a
-  =?highlight=<id>= buffer suffix (=web/src/lib/components/RichContent.svelte=,
-  =HighlightList.svelte=, =HighlightsDrawer.svelte=).
-- Per-section discussion badges in the reader (two-phase hydration), plus a
-  "Refresh discussions" action.
-- =DiscussionViewBuffer= (=web/src/lib/wm/renderers/DiscussionViewBuffer.svelte=):
-  single-event view surfacing root/parent refs, loading sibling threads on
-  demand; =CommentThread.svelte= renders trees.
+* The event anatomy (what a 9802 actually carries)
+
+A highlight's =.content= IS the highlighted text — not a pointer to it.
+That single decision drives everything else: the excerpt survives even
+if the source vanishes (the Zotero instinct — see
+[[file:cmp-zotero.org][Zotero]]), and any client can render the quote
+without resolving anything. The tags then say /where it came from/ and
+/what the highlighter added/:
+
+| tag                          | meaning                                            |
+|------------------------------+----------------------------------------------------|
+| =["a", kind:pk:d, relay]=    | source is an addressable nostr event (coordinate)  |
+| =["e", id, relay]=           | source event id — for addressables, the exact      |
+|                              | *version* the highlight was made against           |
+| =["p", pk, relay, "author"]= | attribution, NIP-84 role marker in position 4      |
+| =["k", kind-or-idkind]=      | source kind (=30041=) — or NIP-73 id kind (=isbn=) |
+| =["r", url, ("source")]=     | source is a URL; =source= marker only on quote     |
+|                              | highlights (disambiguates vs. =r= mentions in the  |
+|                              | comment)                                           |
+| =["i", nip73-id]=            | source is an external id: =isbn:…=, =doi:…=, …     |
+| =["offset", start, end]=     | tendrl extension: UTF-16 span into the pinned      |
+|                              | version's content (advisory, self-verifying)       |
+| =["context", text]=          | tight sentence window, ONLY when the selection     |
+|                              | repeats in the section (Amethyst renders context   |
+|                              | as the quote body — emit sparingly)                |
+| =["comment", text]=          | annotation → makes it a *quote highlight*          |
+| =["client", "tendrl"]=       | stamped at the signing chokepoint, every event     |
+
+* The three source families
+
+=build_highlight_template= (=src/discussions.rs=) takes a
+=HighlightSource= enum, which is the whole generalization in one type:
+
+- *Event* — the original path: =a=/=e=/=p=/=k= tags, offset allowed.
+- *Url* — NIP-84's own non-nostr rail: one =r= tag. The engine
+  normalizes first (=normalize_external_id(_, "web")=): scheme/host
+  lowercased, fragment dropped, =utm_*= / fbclid / gclid-class tracker
+  params stripped — the spec asks clients to clean URLs "best effort",
+  and doing it engine-side means every tendrl frontend cleans
+  identically, so the same page can't split into two source spellings.
+- *External* — NIP-73 external ids (=i= + =k= tags) for sources that
+  aren't events or URLs: books (=isbn:9780765382030=), papers
+  (=doi:10.1038/nphys1170=). Rides the exact normalizer the comment
+  system already used for external threads (worksheet A6 — "two tendrl
+  clients must never split a thread over id spelling"), which is also
+  why =ISBN 978-0-321-76572-3= and =isbn:9780321765723= produce the
+  same tag.
+
+*The offset invariant*: =offset= only exists for Event sources, and only
+means anything against the version pinned by the =e= tag. On write, the
+engine re-slices the pinned content and rejects the event if
+=content ≠ slice= — a corrupt anchor is refused entry to the permanent
+record rather than detected later (worksheet B6). Pasted text has no
+pinned reference frame, so the general highlighter never emits offsets;
+those highlights fall back to substring/context resolution on read
+(=resolve_highlight_spans= cascade: verified offset → substring,
+context-guided when the phrase repeats — see
+[[file:idea-annotation-anchoring.org][annotation anchoring]] for why
+this cascade shape is the industry lesson).
+
+* Two capture surfaces, one publish path
+
+Both authoring UIs converge on =POST /api/v1/discussions/highlight=;
+neither derives a single tag client-side.
+
+1. *Highlight mode* (M-x =tendrl-highlight-mode=): select text in a
+   reader/doc buffer; =HighlightCapture.svelte= maps the DOM selection
+   back to source offsets through the =data-src-start/end= stamps
+   =RichContent= emits (rendered chips differ from their source span,
+   so =selection.toString()= is never trusted — the text is sliced from
+   the source so offset and content agree byte-for-byte).
+2. *General highlighter* (M-x =tendrl-highlight=, i.e. =SPC :
+   highlight=): the reverse direction — paste text first, cite the
+   source second. =HighlightComposerModal.svelte= takes any source
+   string and live-classifies it into a badge: bech32
+   (=naddr/nevent/note=, decoded by the engine's =/decode= — the web
+   ships no bech32), =kind:pk:d= coordinates, 64-hex ids, URLs (bare
+   domains get =https://=), =isbn:= / =doi:=. Prefills from the window
+   selection when one exists.
+
+Authoring niceties worth knowing exist (all in the modal):
+- *Event-JSON preview*: =POST /discussions/highlight/preview= returns
+  the exact unsigned template publish would sign — same builder
+  function (=highlight_template_from_request=), same validation, client
+  tag stamped by the same signing helper. Only =id=/=sig=/final
+  =created_at= are absent, because they don't exist until signing. The
+  point is structural: preview and publish share one code path, so the
+  preview /cannot/ drift. (Pattern write-up:
+  [[file:feat-ui-patterns.org][UI patterns]] → wire preview.)
+- *Draft memory*: closing the modal stashes source/text/annotation in
+  =app.highlightDraft=; reopening restores and re-classifies. Publish
+  clears it. Session-scoped.
+- *Modal yield*: in Confirm mode, publishing raises a =publish_intent=
+  whose modal must win the screen; the highlighter hides itself and
+  goes key-inert while the intent is pending. Deny still signs + saves
+  locally (signing is the snapshot; broadcast is a separate step — see
+  [[file:feat-publishing.org][Publishing]]), approve broadcasts.
+
+* Comments (the other half, for completeness)
+
+Kind 1111 for every comment target (the NIP-10 fork was deliberately
+dropped); strict NIP-22 tags on write, lenient reads. Uppercase
+=A/E/I/K/P= carry the *root* scope, lowercase the *parent* — a comment
+on a highlight roots at the 9802 itself (worksheet A7, matching
+Amethyst's wire shape). External targets thread through the same
+NIP-73 normalizer as highlight sources. NIP-09 deletion requests
+(=/discussions/delete=) tombstone locally regardless of relay
+acceptance.
+
+* Read side (unchanged, summarized)
+
+- =/discussions/counts= and =/discussions/list=: per-address tallies,
+  engine-deduped, Confirm-gated like any fetch.
+- Span resolution engine-side (=resolve_highlight_spans=); reader
+  overlays via =RichContent.svelte= + =HighlightList= / =HighlightsDrawer=;
+  =DiscussionViewBuffer= for single-event views, =CommentThread= trees.
 
 * Gaps / open edges
-- Write side unbuilt: posting comments/replies, capturing a selection as a
-  highlight with =["offset", start, end]= anchoring, local-first authoring
-  through the publish pipeline — all planned in =docs/discussions-plan.md=.
-- NIP-25 reactions, notifications, and encrypted comments are explicitly out
-  of scope for that pass.
+
+- External-id highlights have no consumer surface yet — nothing lists
+  "everything I highlighted from this book". That's the seed of
+  [[file:idea-external-source-highlights.org][external-source highlights
+  as proto-citations]].
+- No author attribution (=p= tag) capture for non-nostr sources — NIP-84
+  allows it; the modal doesn't ask.
+- NIP-25 reactions, notifications, encrypted comments: still explicitly
+  out of scope.
 
 * Related
 - [[file:index.org][Index]]
+- [[file:idea-external-source-highlights.org][External-source highlights → citations]]
+- [[file:idea-citations.org][Citations (kind 30161)]]
 - [[file:idea-annotation-anchoring.org][Annotation anchoring]]
 - [[file:idea-event-badges.org][Event badges]]
+- [[file:feat-ui-patterns.org][UI patterns]] — wire preview, modal yield
+- [[file:feat-publishing.org][Publishing]] — signing-is-the-snapshot
 - [[file:feat-reader.org][Reader]]
+- [[file:cmp-hypothesis.org][Hypothesis]] / [[file:cmp-readwise.org][Readwise]] / [[file:cmp-zotero.org][Zotero]]

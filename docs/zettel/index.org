@@ -39,7 +39,7 @@ exists (with code paths), gaps.
 ** Reading
 - [[file:feat-feed.org][Feed]] — publication cards, provenance
 - [[file:feat-reader.org][Reader]] — view modes, nested TOCs, highlights
-- [[file:feat-discussions.org][Discussions & highlights]] — read-side (write-side planned)
+- [[file:feat-discussions.org][Discussions & highlights]] — 9802 anatomy, source families, both capture surfaces
 
 ** Substrate
 - [[file:feat-network.org][Network modes]] — FetchPolicy, Auto/Confirm intents
@@ -87,6 +87,7 @@ path: [[file:conventions.org][conventions]].
 
 ** Reference manager
 - [[file:idea-citations.org][Citations (kind 30161)]] — spec'd, deferred; open issues noted
+- [[file:idea-external-source-highlights.org][External-source highlights → citations]] — isbn/doi 9802s as the evidence half
 - [[file:idea-citation-intents.org][Typed citation intents]] — supports/contradicts edges
 - [[file:idea-registry-metadata.org][Registry metadata resolution]] — DOI/ISBN → citable on import
 - [[file:idea-citation-export.org][Citation export]] — BibTeX/CSL-JSON, materialized
