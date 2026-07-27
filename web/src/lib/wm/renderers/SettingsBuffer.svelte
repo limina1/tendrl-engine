@@ -15,12 +15,19 @@
 	import * as api from '$lib/api';
 	import { textScale, setTextScale, TEXT_SCALE_PRESETS } from '$lib/theme/text-scale.svelte';
 	import type { Buffer } from '../types';
+	import { commands, SCOPE_META, SCOPE_ORDER, BASE_KEYS } from '../commands';
+	import { listLeaderBindings } from '../leader';
 	import type { EditorInsertMode, SyncMode, ButtonLabels, ComposeDefaultMode } from '$lib/types';
 	import ThemePicker from '$lib/components/ThemePicker.svelte';
 
 	let { buffer: _buffer }: { buffer: Buffer } = $props();
 
 	const app = getAppState();
+
+	// Static registries for the Commands / Keybindings sections. Flattened
+	// once from the same sources the palette and leader popup run on, so
+	// the listing can't drift from what the keys actually do.
+	const leaderBindings = listLeaderBindings();
 
 	// Snapshot of the last-saved values from config.toml. Loaded on
 	// mount + after a successful save. Compared against the live
@@ -1052,6 +1059,85 @@
 		</p>
 		</div>
 	</details>
+
+	<!-- Registry of everything runnable from the command palette, grouped
+	     by what invoking it actually gets you — so "what can I act on"
+	     is answerable without trawling the palette. -->
+	<details class="settings-group">
+		<summary class="settings-group-title">Commands (SPC :)</summary>
+		<div class="settings-group-body">
+		<p class="settings-hint">
+			Everything the command palette offers (<kbd class="cmdreg-kb">SPC :</kbd>,
+			<kbd class="cmdreg-kb">:</kbd>, or the modeline <em>commands</em> button),
+			grouped by what running it gets you. <em>deferred</em> = listed for
+			discoverability but not wired up yet — picking it just tells you so.
+		</p>
+		{#each SCOPE_ORDER as scope (scope)}
+			<div class="cmdreg-scope">
+				<div class="cmdreg-scope-head">
+					<span class="cmdreg-scope-label cmdreg-scope-label--{scope}">{SCOPE_META[scope].label}</span>
+					<span class="cmdreg-scope-blurb">{SCOPE_META[scope].blurb}</span>
+				</div>
+				{#each commands.filter((c) => c.scope === scope) as cmd (cmd.id)}
+					<div class="cmdreg-row" class:cmdreg-row--deferred={cmd.deferred}>
+						<span class="cmdreg-name">{cmd.name}</span>
+						<span class="cmdreg-desc">
+							{cmd.description}{#if cmd.context}&nbsp;<em class="cmdreg-ctx">needs {cmd.context}</em>{/if}
+						</span>
+						{#if cmd.deferred}
+							<span class="cmdreg-badge">deferred</span>
+						{/if}
+						{#if cmd.keybinding}
+							<kbd class="cmdreg-kb">{cmd.keybinding}</kbd>
+						{/if}
+					</div>
+				{/each}
+			</div>
+		{/each}
+		</div>
+	</details>
+
+	<!-- Registry of every live keybinding: the normal-mode base layer,
+	     then the SPC leader tree (flattened from the same tree the
+	     which-key popup runs on). -->
+	<details class="settings-group">
+		<summary class="settings-group-title">Keybindings</summary>
+		<div class="settings-group-body">
+		<p class="settings-hint">
+			Keys work in normal mode (no field focused). Bindings are fixed for
+			now — per-user rebinding is planned; this registry is the map of
+			what exists today.
+		</p>
+		<div class="cmdreg-scope">
+			<div class="cmdreg-scope-head">
+				<span class="cmdreg-scope-label">base keys</span>
+				<span class="cmdreg-scope-blurb">The vim-style layer under everything.</span>
+			</div>
+			{#each BASE_KEYS as k (k.keys)}
+				<div class="cmdreg-row">
+					<kbd class="cmdreg-kb cmdreg-kb--lead">{k.keys}</kbd>
+					<span class="cmdreg-desc">{k.desc}</span>
+				</div>
+			{/each}
+		</div>
+		<div class="cmdreg-scope">
+			<div class="cmdreg-scope-head">
+				<span class="cmdreg-scope-label">SPC leader</span>
+				<span class="cmdreg-scope-blurb">The which-key tree, flattened.</span>
+			</div>
+			{#each leaderBindings as b (b.keys)}
+				<div class="cmdreg-row" class:cmdreg-row--deferred={b.deferred}>
+					<kbd class="cmdreg-kb cmdreg-kb--lead">{b.keys}</kbd>
+					<span class="cmdreg-desc">{b.desc}</span>
+					{#if b.deferred}
+						<span class="cmdreg-badge">deferred</span>
+					{/if}
+					<span class="cmdreg-kind">{b.kind}</span>
+				</div>
+			{/each}
+		</div>
+		</div>
+	</details>
 </div>
 
 <style>
@@ -1374,5 +1460,88 @@
 	.settings-save[disabled] {
 		opacity: 0.5;
 		cursor: not-allowed;
+	}
+
+	/* --- Commands / Keybindings registries --- */
+	.cmdreg-scope {
+		margin: 10px 0 14px;
+	}
+	.cmdreg-scope-head {
+		display: flex;
+		align-items: baseline;
+		gap: 10px;
+		margin-bottom: 4px;
+	}
+	.cmdreg-scope-label {
+		font-family: var(--font-mono);
+		font-size: var(--t-2xs);
+		font-weight: 600;
+		text-transform: uppercase;
+		letter-spacing: 0.06em;
+		color: var(--id-yours);
+		flex-shrink: 0;
+	}
+	.cmdreg-scope-blurb {
+		font-size: var(--t-xs);
+		color: var(--base5);
+	}
+	.cmdreg-row {
+		display: flex;
+		align-items: baseline;
+		gap: 8px;
+		padding: 3px 0 3px 10px;
+		border-left: 2px solid var(--base2);
+		font-size: var(--t-sm);
+	}
+	.cmdreg-row--deferred {
+		opacity: 0.5;
+	}
+	.cmdreg-name {
+		font-family: var(--font-mono);
+		font-size: var(--t-xs);
+		color: var(--fg);
+		flex-shrink: 0;
+	}
+	.cmdreg-desc {
+		color: var(--fg-alt);
+		font-size: var(--t-xs);
+		flex: 1;
+		min-width: 0;
+	}
+	.cmdreg-ctx {
+		color: var(--base5);
+		font-style: italic;
+	}
+	.cmdreg-badge {
+		font-family: var(--font-mono);
+		font-size: var(--t-3xs);
+		text-transform: uppercase;
+		letter-spacing: 0.06em;
+		color: var(--base5);
+		border: 1px dashed var(--base3);
+		border-radius: var(--r-sm);
+		padding: 0 5px;
+		flex-shrink: 0;
+	}
+	.cmdreg-kb {
+		font-family: var(--font-mono);
+		font-size: var(--t-2xs);
+		color: var(--base6);
+		padding: 0 5px;
+		border: 1px solid var(--base2);
+		border-radius: var(--r-sm);
+		background: var(--base0);
+		flex-shrink: 0;
+		white-space: nowrap;
+	}
+	.cmdreg-kb--lead {
+		min-width: 90px;
+		text-align: left;
+	}
+	.cmdreg-kind {
+		font-family: var(--font-mono);
+		font-size: var(--t-3xs);
+		color: var(--base4);
+		flex-shrink: 0;
 	}
 </style>

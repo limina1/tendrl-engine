@@ -41,10 +41,23 @@ export type CommandCat =
 	| 'Versioning'
 	| 'View';
 
+/** What invoking a command actually gets the user — the axis the settings
+ *  registry groups by. 'action' acts immediately from anywhere; 'opener'
+ *  takes you to the surface where the real action happens; 'contextual' is
+ *  a real action but only meaningful in its `context` (inert elsewhere);
+ *  'nav' is window/buffer plumbing. */
+export type CommandScope = 'action' | 'opener' | 'contextual' | 'nav';
+
 export type Command = {
 	id: string;
 	name: string;
 	description: string;
 	category: CommandCat;
+	scope: CommandScope;
+	/** For contextual commands: the situation the command needs to bite. */
+	context?: string;
+	/** Listed for discoverability but not executable yet — the palette
+	 *  toasts instead of silently closing, and registries badge it. */
+	deferred?: boolean;
 	keybinding?: string;
 };

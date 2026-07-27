@@ -113,6 +113,57 @@ export function buildLeaderRoot(ctx: LeaderContext): SubPrefix {
 	};
 }
 
+export type LeaderBinding = {
+	keys: string;
+	desc: string;
+	category: CommandCat;
+	kind: LeafKind;
+	deferred?: boolean;
+};
+
+const KEY_LABEL: Record<string, string> = {
+	ArrowLeft: '←',
+	ArrowRight: '→',
+	ArrowUp: '↑',
+	ArrowDown: '↓'
+};
+
+/** Flatten the leader tree into displayable binding rows for the settings
+ *  registry. Built against a noop context — nothing is ever run — so the
+ *  listing can't drift from the real tree. Alias keys (arrows mirroring
+ *  h/j/k/l) merge into the row they duplicate. */
+export function listLeaderBindings(): LeaderBinding[] {
+	const noop = () => {};
+	const root = buildLeaderRoot({
+		openMinibuffer: noop,
+		prefilterMx: noop,
+		killFocusedBuffer: noop,
+		cycleBufferInSlot: noop,
+		toggleFocusedSlot: noop,
+		navigateSlot: noop,
+		setLayout: noop,
+		toggleNetworkMode: noop,
+		openSplitPicker: noop,
+		openSettings: noop,
+		openProfileEdit: noop
+	});
+	const out: LeaderBinding[] = [];
+	const walk = (node: SubPrefix, path: string[]) => {
+		for (const [key, child] of Object.entries(node.children)) {
+			if (child.type === 'prefix') {
+				walk(child, [...path, key]);
+				continue;
+			}
+			const keys = ['SPC', ...path, KEY_LABEL[key] ?? key].join(' ');
+			const twin = out.find((b) => b.desc === child.desc && b.category === child.category);
+			if (twin) twin.keys += ` · ${keys}`;
+			else out.push({ keys, desc: child.desc, category: child.category, kind: child.kind, deferred: child.deferred });
+		}
+	};
+	walk(root, []);
+	return out;
+}
+
 export function resolveLeaderNode(root: SubPrefix, path: string[]): LeaderNode | null {
 	let n: LeaderNode = root;
 	for (const k of path) {

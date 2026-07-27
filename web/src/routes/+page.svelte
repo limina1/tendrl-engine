@@ -3,7 +3,6 @@
 		Buffer,
 		ClassName,
 		Command,
-		CommandCat,
 		LayoutConfig,
 		MinibufferMode,
 		OpenBuf,
@@ -18,6 +17,7 @@
 		type LeaderNode,
 		type SubPrefix
 	} from '$lib/wm/leader';
+	import { commands } from '$lib/wm/commands';
 	import { BufferStore, setActiveStore, type NavAction } from '$lib/wm/buffer-store.svelte';
 	import BufferRenderer from '$lib/wm/BufferRenderer.svelte';
 	import { rendererFor, toursForClass } from '$lib/wm/registry';
@@ -318,48 +318,6 @@
 		if (pendingGTimer) { clearTimeout(pendingGTimer); pendingGTimer = null; }
 	}
 
-	// Representative subset — production reads from src/tree/command.rs (61 commands).
-	const commands: Command[] = [
-		// Buffer
-		{ id: 'tendrl-switch-buffer', name: 'tendrl-switch-buffer', description: 'Switch buffer in focused slot (class-scoped)', category: 'Buffer', keybinding: 'SPC b b · C-x b' },
-		{ id: 'tendrl-switch-buffer-global', name: 'tendrl-switch-buffer-global', description: 'Switch to any open buffer across all classes', category: 'Buffer', keybinding: 'SPC b B' },
-		{ id: 'tendrl-recent-buffer', name: 'tendrl-recent-buffer', description: 'Re-open a recently closed buffer', category: 'Buffer', keybinding: 'SPC b r' },
-		{ id: 'tendrl-kill-buffer', name: 'tendrl-kill-buffer', description: 'Kill the focused buffer (prompts to save if dirty)', category: 'Buffer', keybinding: 'SPC b k · C-x k' },
-		{ id: 'tendrl-find-event', name: 'tendrl-find-event', description: 'Open a Nostr event by id or address into a reader', category: 'Buffer', keybinding: 'SPC f e' },
-		{ id: 'tendrl-find-draft', name: 'tendrl-find-draft', description: 'Open a draft into a composer', category: 'Buffer', keybinding: 'SPC f d' },
-		// Window
-		{ id: 'tendrl-toggle-rail', name: 'tendrl-toggle-rail', description: 'Collapse focused slot to rail (or expand if rail)', category: 'Window', keybinding: 'SPC w c' },
-		{ id: 'tendrl-split-window', name: 'tendrl-split-window', description: 'Split focused slot horizontally with another same-class buffer', category: 'Window', keybinding: 'SPC w s' },
-		// Layout
-		{ id: 'tendrl-switch-layout', name: 'tendrl-switch-layout', description: 'Switch the active layout (read/write/triage/chat/zen)', category: 'Layout', keybinding: 'SPC L' },
-		{ id: 'tendrl-save-layout', name: 'tendrl-save-layout', description: 'Save the current frame configuration as a named layout', category: 'Layout' },
-		// Compose
-		{ id: 'tendrl-save-draft', name: 'tendrl-save-draft', description: 'Save the current draft to the engine', category: 'Compose', keybinding: 'C-x C-s' },
-		{ id: 'tendrl-publish-draft', name: 'tendrl-publish-draft', description: 'Sign and broadcast the current draft', category: 'Compose' },
-		{ id: 'tendrl-fork-section', name: 'tendrl-fork-section', description: 'Fork an imported section to make it editable', category: 'Compose' },
-		{ id: 'tendrl-cycle-editor-view', name: 'tendrl-cycle-editor-view', description: 'Cycle through composer modes (button/plain/wysiwyg/preview)', category: 'Compose' },
-		{ id: 'tendrl-highlight', name: 'tendrl-highlight', description: 'General highlighter — paste text, cite any source (nostr / URL / ISBN / DOI), annotate, publish', category: 'Compose' },
-		// Configuration
-		{ id: 'tendrl-toggle-network-mode', name: 'tendrl-toggle-network-mode', description: 'Toggle between online and offline mode', category: 'Configuration' },
-		{ id: 'tendrl-show-relays', name: 'tendrl-show-relays', description: 'Show configured relays', category: 'Configuration' },
-		{ id: 'tendrl-open-settings', name: 'tendrl-open-settings', description: 'Open the settings buffer', category: 'Configuration', keybinding: 'SPC s s' },
-		{ id: 'tendrl-demo-publish-progress', name: 'tendrl-demo-publish-progress', description: 'Open the publish-progress buffer with mock data (design demo)', category: 'Configuration' },
-		{ id: 'tendrl-login', name: 'tendrl-login', description: 'Open settings buffer to login (ncryptsec or NIP-07)', category: 'Configuration', keybinding: 'SPC s i' },
-		{ id: 'tendrl-logout', name: 'tendrl-logout', description: 'Logout active identity', category: 'Configuration' },
-		{ id: 'tendrl-switch-source', name: 'tendrl-switch-source', description: 'Switch signing source (engine / nip07)', category: 'Configuration' },
-		{ id: 'tendrl-edit-profile', name: 'tendrl-edit-profile', description: 'Edit your kind 0 profile metadata and broadcast', category: 'Configuration', keybinding: 'SPC s p' },
-		{ id: 'tendrl-embed-missing', name: 'tendrl-embed-missing', description: 'Embed knowledge-base events not yet in the semantic index', category: 'Configuration' },
-		{ id: 'tendrl-reembed-all', name: 'tendrl-reembed-all', description: 'Clear the semantic index and re-embed every eligible event', category: 'Configuration' },
-		// View
-		{ id: 'tendrl-show-event-json', name: 'tendrl-show-event-json', description: 'Show the raw JSON of the focused event', category: 'View' },
-		{ id: 'tendrl-highlight-mode', name: 'tendrl-highlight-mode', description: 'Toggle highlight mode — select text in a reader/doc to publish a NIP-84 highlight', category: 'View' },
-		// Versioning
-		{ id: 'tendrl-undo', name: 'tendrl-undo', description: 'Undo the last action', category: 'Versioning', keybinding: 'C-/ · u' },
-		{ id: 'tendrl-redo', name: 'tendrl-redo', description: 'Redo', category: 'Versioning', keybinding: 'C-S-/' },
-		// Application
-		{ id: 'tendrl-quit', name: 'tendrl-quit', description: 'Close this frame', category: 'Application', keybinding: 'C-x C-c' },
-		{ id: 'tendrl-refresh', name: 'tendrl-refresh', description: 'Reload the focused buffer', category: 'Application', keybinding: 'g r' }
-	];
 	let mb = $state<{ mode: MinibufferMode; query: string; selectedIndex: number }>({
 		mode: 'closed',
 		query: '',
@@ -494,6 +452,15 @@
 			openMinibuffer('recent');
 			return;
 		}
+		if (cmd.id === 'tendrl-kill-buffer') {
+			store.killFocused();
+			closeMinibuffer();
+			return;
+		}
+		if (cmd.id === 'tendrl-split-window') {
+			openMinibuffer('split');
+			return;
+		}
 		if (cmd.id === 'tendrl-toggle-rail') {
 			store.toggleFocusedSlot();
 			closeMinibuffer();
@@ -602,7 +569,9 @@
 			closeMinibuffer();
 			return;
 		}
-		// Stubs for unrecognized commands.
+		// Deferred commands land here: acknowledge instead of silently closing,
+		// so an inapplicable pick is distinguishable from a successful no-op.
+		if (cmd.deferred) app.pushToast(`${cmd.name} isn't wired up yet`, 'info');
 		closeMinibuffer();
 	}
 
@@ -1584,7 +1553,7 @@
 			{#if mb.mode === 'mx'}
 				{#each mxEntries as cmd, i (cmd.id)}
 					<button
-						class="mb__row mb__row--mx {i === mb.selectedIndex ? 'mb__row--sel' : ''}"
+						class="mb__row mb__row--mx {i === mb.selectedIndex ? 'mb__row--sel' : ''} {cmd.deferred ? 'mb__row--deferred' : ''}"
 						onmouseenter={() => (mb.selectedIndex = i)}
 						onclick={() => executeCommand(cmd)}
 					>
@@ -1592,6 +1561,9 @@
 						<span class="mb__name">{cmd.name}</span>
 						<span class="mb__kicker">{cmd.description}</span>
 						<span class="mb__sp"></span>
+						{#if cmd.deferred}
+							<span class="mb__deferred">deferred</span>
+						{/if}
 						{#if cmd.keybinding}
 							<span class="mb__kb">{cmd.keybinding}</span>
 						{/if}
@@ -2458,6 +2430,20 @@
 	}
 	.mb__row--mx {
 		font-family: var(--font-sans);
+	}
+	.mb__row--deferred {
+		opacity: 0.45;
+	}
+	.mb__deferred {
+		font-family: var(--font-mono);
+		font-size: var(--t-3xs);
+		text-transform: uppercase;
+		letter-spacing: 0.06em;
+		color: var(--base5);
+		border: 1px dashed var(--base3);
+		border-radius: var(--r-sm);
+		padding: 1px 6px;
+		flex-shrink: 0;
 	}
 
 	.cat {
