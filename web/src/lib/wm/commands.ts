@@ -43,33 +43,33 @@ export const commands: Command[] = [
 	{ id: 'tendrl-split-window', name: 'tendrl-split-window', description: 'Split focused slot horizontally with another same-class buffer', category: 'Window', scope: 'nav', keybinding: 'SPC w s' },
 	// Layout
 	{ id: 'tendrl-switch-layout', name: 'tendrl-switch-layout', description: 'Switch the active layout', category: 'Layout', scope: 'nav', deferred: true, keybinding: 'SPC l b' },
-	{ id: 'tendrl-save-layout', name: 'tendrl-save-layout', description: 'Save the current frame configuration as a named layout', category: 'Layout', scope: 'nav', deferred: true },
+	{ id: 'tendrl-save-layout', name: 'tendrl-save-layout', hiddenByDefault: true, description: 'Save the current frame configuration as a named layout', category: 'Layout', scope: 'nav', deferred: true },
 	// Compose
-	{ id: 'tendrl-save-draft', name: 'tendrl-save-draft', description: 'Save the current draft to the engine', category: 'Compose', scope: 'contextual', context: 'a composer buffer', deferred: true },
-	{ id: 'tendrl-publish-draft', name: 'tendrl-publish-draft', description: 'Sign and broadcast the current draft', category: 'Compose', scope: 'contextual', context: 'a composer buffer', deferred: true },
-	{ id: 'tendrl-fork-section', name: 'tendrl-fork-section', description: 'Fork an imported section to make it editable', category: 'Compose', scope: 'contextual', context: 'a composer with an imported section', deferred: true },
-	{ id: 'tendrl-cycle-editor-view', name: 'tendrl-cycle-editor-view', description: 'Cycle through composer modes (button/plain/wysiwyg/preview)', category: 'Compose', scope: 'contextual', context: 'a composer buffer', deferred: true },
-	{ id: 'tendrl-highlight', name: 'tendrl-highlight', description: 'General highlighter — paste text, cite any source (nostr / URL / ISBN / DOI), annotate, publish', category: 'Compose', scope: 'action' },
+	{ id: 'tendrl-save-draft', name: 'tendrl-save-draft', hiddenByDefault: true, description: 'Save the current draft to the engine', category: 'Compose', scope: 'contextual', context: 'a composer buffer', deferred: true },
+	{ id: 'tendrl-publish-draft', name: 'tendrl-publish-draft', hiddenByDefault: true, description: 'Sign and broadcast the current draft', category: 'Compose', scope: 'contextual', context: 'a composer buffer', deferred: true },
+	{ id: 'tendrl-fork-section', name: 'tendrl-fork-section', hiddenByDefault: true, description: 'Fork an imported section to make it editable', category: 'Compose', scope: 'contextual', context: 'a composer with an imported section', deferred: true },
+	{ id: 'tendrl-cycle-editor-view', name: 'tendrl-cycle-editor-view', description: 'Cycle through composer modes (button/plain/wysiwyg/preview)', category: 'Compose', scope: 'contextual', context: 'a composer buffer', deferred: true, keybinding: 'SPC e v' },
+	{ id: 'tendrl-highlight', name: 'tendrl-highlight', description: 'General highlighter — paste text, cite any source (nostr / URL / ISBN / DOI), annotate, publish', category: 'Compose', scope: 'action', keybinding: 'SPC h' },
 	// Configuration
 	{ id: 'tendrl-toggle-network-mode', name: 'tendrl-toggle-network-mode', description: 'Toggle between auto and confirm network mode', category: 'Configuration', scope: 'action', keybinding: 'SPC t n' },
-	{ id: 'tendrl-show-relays', name: 'tendrl-show-relays', description: 'Open the relay-config buffer', category: 'Configuration', scope: 'opener' },
+	{ id: 'tendrl-show-relays', name: 'tendrl-show-relays', description: 'Open the relay-config buffer', category: 'Configuration', scope: 'opener', keybinding: 'SPC r r' },
 	{ id: 'tendrl-open-settings', name: 'tendrl-open-settings', description: 'Open the settings buffer', category: 'Configuration', scope: 'opener', keybinding: 'SPC s s' },
-	{ id: 'tendrl-demo-publish-progress', name: 'tendrl-demo-publish-progress', description: 'Open the publish-progress buffer with mock data (design demo)', category: 'Configuration', scope: 'action' },
+	{ id: 'tendrl-demo-publish-progress', name: 'tendrl-demo-publish-progress', hiddenByDefault: true, description: 'Open the publish-progress buffer with mock data (design demo)', category: 'Configuration', scope: 'action' },
 	{ id: 'tendrl-login', name: 'tendrl-login', description: 'Open settings at the identity login form (ncryptsec or NIP-07)', category: 'Configuration', scope: 'opener', keybinding: 'SPC s i' },
 	{ id: 'tendrl-logout', name: 'tendrl-logout', description: 'Logout active identity', category: 'Configuration', scope: 'action' },
-	{ id: 'tendrl-switch-source', name: 'tendrl-switch-source', description: 'Open settings to switch signing source (engine / nip07)', category: 'Configuration', scope: 'opener' },
+	{ id: 'tendrl-switch-source', name: 'tendrl-switch-source', hiddenByDefault: true, description: 'Open settings to switch signing source (engine / nip07)', category: 'Configuration', scope: 'opener' },
 	{ id: 'tendrl-edit-profile', name: 'tendrl-edit-profile', description: 'Edit your kind 0 profile metadata and broadcast', category: 'Configuration', scope: 'opener', keybinding: 'SPC s p' },
-	{ id: 'tendrl-embed-missing', name: 'tendrl-embed-missing', description: 'Embed knowledge-base events not yet in the semantic index', category: 'Configuration', scope: 'action' },
-	{ id: 'tendrl-reembed-all', name: 'tendrl-reembed-all', description: 'Clear the semantic index and re-embed every eligible event', category: 'Configuration', scope: 'action' },
+	{ id: 'tendrl-embed-missing', name: 'tendrl-embed-missing', description: 'Embed knowledge-base events not yet in the semantic index', category: 'Configuration', scope: 'action', keybinding: 'SPC e m' },
+	{ id: 'tendrl-reembed-all', name: 'tendrl-reembed-all', description: 'Clear the semantic index and re-embed every eligible event', category: 'Configuration', scope: 'action', keybinding: 'SPC e A' },
 	// View
-	{ id: 'tendrl-show-event-json', name: 'tendrl-show-event-json', description: 'Show the raw JSON of the focused event', category: 'View', scope: 'contextual', context: 'a focused buffer carrying an event' },
-	{ id: 'tendrl-highlight-mode', name: 'tendrl-highlight-mode', description: 'Toggle highlight mode — select text in a reader/doc to publish a NIP-84 highlight', category: 'View', scope: 'contextual', context: 'a reader or doc buffer, then a text selection' },
+	{ id: 'tendrl-show-event-json', name: 'tendrl-show-event-json', hiddenByDefault: true, description: 'Show the raw JSON of the focused event', category: 'View', scope: 'contextual', context: 'a focused buffer carrying an event' },
+	{ id: 'tendrl-highlight-mode', name: 'tendrl-highlight-mode', hiddenByDefault: true, description: 'Toggle highlight mode — select text in a reader/doc to publish a NIP-84 highlight', category: 'View', scope: 'contextual', context: 'a reader or doc buffer, then a text selection' },
 	// Versioning
-	{ id: 'tendrl-undo', name: 'tendrl-undo', description: 'Undo the last action', category: 'Versioning', scope: 'contextual', context: 'an editable buffer', deferred: true },
-	{ id: 'tendrl-redo', name: 'tendrl-redo', description: 'Redo', category: 'Versioning', scope: 'contextual', context: 'an editable buffer', deferred: true },
+	{ id: 'tendrl-undo', name: 'tendrl-undo', hiddenByDefault: true, description: 'Undo the last action', category: 'Versioning', scope: 'contextual', context: 'an editable buffer', deferred: true },
+	{ id: 'tendrl-redo', name: 'tendrl-redo', hiddenByDefault: true, description: 'Redo', category: 'Versioning', scope: 'contextual', context: 'an editable buffer', deferred: true },
 	// Application
-	{ id: 'tendrl-quit', name: 'tendrl-quit', description: 'Close this frame', category: 'Application', scope: 'nav', deferred: true },
-	{ id: 'tendrl-refresh', name: 'tendrl-refresh', description: 'Reload the focused buffer', category: 'Application', scope: 'contextual', context: 'a focused buffer', deferred: true }
+	{ id: 'tendrl-quit', name: 'tendrl-quit', hiddenByDefault: true, description: 'Close this frame', category: 'Application', scope: 'nav', deferred: true },
+	{ id: 'tendrl-refresh', name: 'tendrl-refresh', description: 'Reload the focused buffer', category: 'Application', scope: 'contextual', context: 'a focused buffer', deferred: true, keybinding: 'SPC b R' }
 ];
 
 /** Normal-mode keys hardwired in +page.svelte's onGlobalKeydown — the

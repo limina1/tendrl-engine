@@ -12,10 +12,12 @@
 // safe for buffer renderers — no wm/registry cycle.
 import type { Command } from './types.js';
 import { commands } from './commands.js';
-import { validateLeaderChord, type LeaderBindingOverride } from './leader.js';
+import { defaultTreeCommandIds, validateLeaderChord, type LeaderBindingOverride } from './leader.js';
 
 export type CommandPref = {
-	/** Hidden from the SPC : palette (bindings, if any, keep working). */
+	/** Palette visibility override (in either direction — a command can
+	 *  ship hiddenByDefault and be opted back in). Bindings keep working
+	 *  regardless. Absent = the command's default. */
 	hidden?: boolean;
 	/** Custom binding, space-joined tokens: 'SPC o s' (leader chord) or 'u'
 	 *  (single normal-mode key). Replaces the default binding. */
@@ -24,11 +26,24 @@ export type CommandPref = {
 
 const STORAGE_KEY = 'tendrl.command-prefs.v1';
 
+const byId = new Map(commands.map((c) => [c.id, c]));
+
 function load(): Record<string, CommandPref> {
 	if (typeof localStorage === 'undefined') return {};
 	try {
 		const raw = localStorage.getItem(STORAGE_KEY);
-		return raw ? JSON.parse(raw) : {};
+		const stored: Record<string, CommandPref> = raw ? JSON.parse(raw) : {};
+		// Normalize: prefs that merely restate the shipped defaults (e.g.
+		// saved before those defaults existed) collapse away, so the UI
+		// shows them as defaults, not customizations.
+		for (const [id, p] of Object.entries(stored)) {
+			const cmd = byId.get(id);
+			if (!cmd) continue;
+			if (p.keys !== undefined && p.keys === cmd.keybinding) delete p.keys;
+			if (p.hidden !== undefined && p.hidden === (cmd.hiddenByDefault ?? false)) delete p.hidden;
+			if (Object.keys(p).length === 0) delete stored[id];
+		}
+		return stored;
 	} catch {
 		return {};
 	}
@@ -45,10 +60,15 @@ export function prefFor(id: string): CommandPref {
 	return commandPrefs.byId[id] ?? {};
 }
 
+/** Effective palette visibility: pref override, else the shipped default. */
+export function isCommandHidden(cmd: Command): boolean {
+	return prefFor(cmd.id).hidden ?? cmd.hiddenByDefault ?? false;
+}
+
 export function setHidden(id: string, hidden: boolean) {
 	const p = { ...prefFor(id) };
-	if (hidden) p.hidden = true;
-	else delete p.hidden;
+	if (hidden === (byId.get(id)?.hiddenByDefault ?? false)) delete p.hidden;
+	else p.hidden = hidden;
 	updatePref(id, p);
 }
 
@@ -78,8 +98,14 @@ export function effectiveKeybinding(cmd: Command): string | undefined {
  *  that run the command. `run` is injected by the caller (+page wires it
  *  to executeCommand; listings pass a noop). */
 export function leaderOverrides(run: (cmd: Command) => void): LeaderBindingOverride[] {
+	const treeIds = defaultTreeCommandIds();
 	return commands.flatMap((cmd) => {
-		const keys = commandPrefs.byId[cmd.id]?.keys;
+		// Custom binding wins; otherwise a default SPC chord that the
+		// structural tree doesn't carry (e.g. tendrl-highlight → SPC h)
+		// grafts itself, so shipped defaults fire out of the box through
+		// the same path customs do.
+		const custom = commandPrefs.byId[cmd.id]?.keys;
+		const keys = custom ?? (treeIds.has(cmd.id) ? undefined : cmd.keybinding);
 		if (!keys) return [];
 		// Tokens are the chord AFTER the SPC prefix. A single-key binding
 		// contributes an empty-token override: it still removes the
@@ -87,6 +113,7 @@ export function leaderOverrides(run: (cmd: Command) => void): LeaderBindingOverr
 		// default), but nothing is grafted — dispatch happens via
 		// singleKeyBindings() in normal-mode keydown.
 		const tokens = keys.startsWith('SPC ') ? keys.split(' ').slice(1) : [];
+		if (tokens.length === 0 && !custom) return []; // default non-chord: nothing to graft
 		return [
 			{
 				commandId: cmd.id,
@@ -121,12 +148,17 @@ const RESERVED_SINGLE = new Set([
  *  null when the binding is acceptable. */
 export function validateBinding(tokens: string[], forId: string): string | null {
 	if (tokens.length === 0) return 'empty binding';
-	// Collision with another command's custom binding.
 	const joined = tokens.join(' ');
-	for (const [id, p] of Object.entries(commandPrefs.byId)) {
-		if (id !== forId && p.keys === joined) {
-			return `already bound to ${id.replace(/^tendrl-/, '')}`;
-		}
+	// Collisions with every other command's EFFECTIVE binding (custom or
+	// shipped default) — equal, shadowed-by, or shadowing.
+	for (const cmd of commands) {
+		if (cmd.id === forId) continue;
+		const eff = commandPrefs.byId[cmd.id]?.keys ?? cmd.keybinding;
+		if (!eff) continue;
+		const short = cmd.name.replace(/^tendrl-/, '');
+		if (eff === joined) return `taken by ${short}`;
+		if (eff.startsWith(joined + ' ')) return `would shadow ${short} (${eff})`;
+		if (joined.startsWith(eff + ' ')) return `${eff} (${short}) blocks this chord`;
 	}
 	if (tokens[0] === 'SPC') {
 		if (tokens.length === 1) return 'SPC alone is the leader';

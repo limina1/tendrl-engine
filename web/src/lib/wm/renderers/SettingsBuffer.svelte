@@ -20,6 +20,7 @@
 	import {
 		commandPrefs,
 		effectiveKeybinding,
+		isCommandHidden,
 		leaderOverrides,
 		setHidden,
 		setBinding,
@@ -1131,13 +1132,13 @@
 					<div
 						class="cmdreg-row"
 						class:cmdreg-row--deferred={cmd.deferred}
-						class:cmdreg-row--off={commandPrefs.byId[cmd.id]?.hidden}
+						class:cmdreg-row--off={isCommandHidden(cmd)}
 					>
 						<input
 							class="cmdreg-vis"
 							type="checkbox"
 							title="Show in the SPC : command palette"
-							checked={!commandPrefs.byId[cmd.id]?.hidden}
+							checked={!isCommandHidden(cmd)}
 							onchange={(e) => setHidden(cmd.id, !e.currentTarget.checked)}
 						/>
 						<span class="cmdreg-name">{cmd.name}</span>

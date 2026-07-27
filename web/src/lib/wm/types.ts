@@ -59,5 +59,9 @@ export type Command = {
 	/** Listed for discoverability but not executable yet — the palette
 	 *  toasts instead of silently closing, and registries badge it. */
 	deferred?: boolean;
+	/** Ships palette-hidden: stays in the Settings registry (re-checkable)
+	 *  and any binding keeps working, it just doesn't clutter SPC : until
+	 *  the user opts it in. User prefs override in either direction. */
+	hiddenByDefault?: boolean;
 	keybinding?: string;
 };

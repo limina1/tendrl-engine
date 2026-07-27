@@ -20,8 +20,8 @@
 	} from '$lib/wm/leader';
 	import { commands } from '$lib/wm/commands';
 	import {
-		commandPrefs,
 		effectiveKeybinding,
+		isCommandHidden,
 		leaderOverrides,
 		singleKeyBindings
 	} from '$lib/wm/command-prefs.svelte';
@@ -438,7 +438,7 @@
 		if (mb.mode !== 'mx') return [];
 		// Per-user visibility: hidden commands stay runnable via their
 		// keybinding, they just don't clutter the palette.
-		const visible = commands.filter((c) => !commandPrefs.byId[c.id]?.hidden);
+		const visible = commands.filter((c) => !isCommandHidden(c));
 		const q = mb.query.trim().toLowerCase();
 		if (!q) return visible;
 		return visible.filter(

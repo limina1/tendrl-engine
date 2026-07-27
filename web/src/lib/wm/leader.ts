@@ -162,7 +162,7 @@ export function applyBindingOverrides(root: SubPrefix, overrides: LeaderBindingO
 			if (next?.type === 'prefix') {
 				node = next;
 			} else {
-				const created: SubPrefix = { type: 'prefix', desc: key, children: {} };
+				const created: SubPrefix = { type: 'prefix', desc: GRAFT_PREFIX_DESC[key] ?? key, children: {} };
 				node.children[key] = created;
 				node = created;
 			}
@@ -178,6 +178,29 @@ export function applyBindingOverrides(root: SubPrefix, overrides: LeaderBindingO
 		};
 	}
 	return root;
+}
+
+// Which-key labels for prefixes that only exist via grafted bindings
+// (default or custom) — without an entry the raw key is the label.
+const GRAFT_PREFIX_DESC: Record<string, string> = {
+	e: 'engine / editor',
+	r: 'relays'
+};
+
+/** Command ids the DEFAULT tree carries a tagged leaf for. Commands whose
+ *  default keybinding is a SPC chord but who are NOT in this set (e.g.
+ *  tendrl-highlight → SPC h) get their default grafted at runtime by the
+ *  same override path custom bindings use. */
+export function defaultTreeCommandIds(): Set<string> {
+	const ids = new Set<string>();
+	const walk = (node: SubPrefix) => {
+		for (const child of Object.values(node.children)) {
+			if (child.type === 'prefix') walk(child);
+			else if (child.commandId) ids.add(child.commandId);
+		}
+	};
+	walk(buildNoopRoot());
+	return ids;
 }
 
 /** Can `tokens` (chord after SPC) be grafted for `forCommandId` without
