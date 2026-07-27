@@ -12,12 +12,19 @@
 		SplitNode
 	} from '$lib/wm/types';
 	import {
+		applyBindingOverrides,
 		buildLeaderRoot,
 		resolveLeaderNode,
 		type LeaderNode,
 		type SubPrefix
 	} from '$lib/wm/leader';
 	import { commands } from '$lib/wm/commands';
+	import {
+		commandPrefs,
+		effectiveKeybinding,
+		leaderOverrides,
+		singleKeyBindings
+	} from '$lib/wm/command-prefs.svelte';
 	import { BufferStore, setActiveStore, type NavAction } from '$lib/wm/buffer-store.svelte';
 	import BufferRenderer from '$lib/wm/BufferRenderer.svelte';
 	import { rendererFor, toursForClass } from '$lib/wm/registry';
@@ -429,9 +436,12 @@
 
 	const mxEntries = $derived.by<Command[]>(() => {
 		if (mb.mode !== 'mx') return [];
+		// Per-user visibility: hidden commands stay runnable via their
+		// keybinding, they just don't clutter the palette.
+		const visible = commands.filter((c) => !commandPrefs.byId[c.id]?.hidden);
 		const q = mb.query.trim().toLowerCase();
-		if (!q) return commands;
-		return commands.filter(
+		if (!q) return visible;
+		return visible.filter(
 			(c) =>
 				c.name.toLowerCase().includes(q) ||
 				c.description.toLowerCase().includes(q) ||
@@ -711,6 +721,16 @@
 			return;
 		}
 
+		// User single-key bindings (validated at bind time to never shadow
+		// the reserved normal-mode keys below).
+		const customCmd = singleKeyBindings()[e.key];
+		if (customCmd && !e.ctrlKey) {
+			clearPendingG();
+			e.preventDefault();
+			executeCommand(customCmd);
+			return;
+		}
+
 		// Vim/ranger-style in-buffer nav. h/j/k/l + arrows dispatch to the
 		// focused buffer's registered handler. preventDefault fires
 		// unconditionally in normal mode so arrow keys never trigger
@@ -788,7 +808,13 @@
 		app.handleSetNetworkMode(next);
 	}
 
-	const leaderRoot: SubPrefix = buildLeaderRoot({
+	// Rebuilt whenever command prefs change: custom bindings replace the
+	// default tagged leaves and graft their own chords, so the which-key
+	// popup and dispatch always reflect the user's effective bindings.
+	const leaderRoot: SubPrefix = $derived(applyBindingOverrides(buildLeaderRootDefault(), leaderOverrides(executeCommand)));
+
+	function buildLeaderRootDefault(): SubPrefix {
+		return buildLeaderRoot({
 		openMinibuffer,
 		prefilterMx,
 		killFocusedBuffer: () => store.killFocused(),
@@ -813,7 +839,8 @@
 					kicker: 'kind:0'
 				}
 			})
-	});
+		});
+	}
 
 	function openLeader() {
 		closeMinibuffer();
@@ -1564,8 +1591,8 @@
 						{#if cmd.deferred}
 							<span class="mb__deferred">deferred</span>
 						{/if}
-						{#if cmd.keybinding}
-							<span class="mb__kb">{cmd.keybinding}</span>
+						{#if effectiveKeybinding(cmd)}
+							<span class="mb__kb">{effectiveKeybinding(cmd)}</span>
 						{/if}
 					</button>
 				{/each}

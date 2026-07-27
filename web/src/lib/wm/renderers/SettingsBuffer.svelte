@@ -17,6 +17,15 @@
 	import type { Buffer } from '../types';
 	import { commands, SCOPE_META, SCOPE_ORDER, BASE_KEYS } from '../commands';
 	import { listLeaderBindings } from '../leader';
+	import {
+		commandPrefs,
+		effectiveKeybinding,
+		leaderOverrides,
+		setHidden,
+		setBinding,
+		clearBinding,
+		validateBinding
+	} from '../command-prefs.svelte';
 	import type { EditorInsertMode, SyncMode, ButtonLabels, ComposeDefaultMode } from '$lib/types';
 	import ThemePicker from '$lib/components/ThemePicker.svelte';
 
@@ -24,10 +33,47 @@
 
 	const app = getAppState();
 
-	// Static registries for the Commands / Keybindings sections. Flattened
-	// once from the same sources the palette and leader popup run on, so
-	// the listing can't drift from what the keys actually do.
-	const leaderBindings = listLeaderBindings();
+	// Registries for the Commands / Keybindings sections, flattened from
+	// the same sources the palette and leader popup run on — with the
+	// user's custom-binding overrides applied, so the listing shows the
+	// EFFECTIVE tree, not the defaults.
+	const leaderBindings = $derived(listLeaderBindings(leaderOverrides(() => {})));
+
+	// Keybinding capture: one row at a time flips into a readonly input
+	// that records keystrokes (data-entry, so the shell's insert-mode
+	// contract routes keys here). Enter saves, Esc/blur cancels,
+	// Backspace pops a token, Space records the SPC leader prefix.
+	let capture = $state<{ id: string; tokens: string[]; error: string | null } | null>(null);
+	let captureEl: HTMLInputElement | null = $state(null);
+
+	function startCapture(id: string) {
+		capture = { id, tokens: [], error: null };
+		setTimeout(() => captureEl?.focus(), 0);
+	}
+
+	function captureKeydown(e: KeyboardEvent) {
+		if (!capture) return;
+		e.preventDefault();
+		e.stopPropagation();
+		if (e.key === 'Escape') {
+			capture = null;
+			(e.currentTarget as HTMLElement).blur();
+			return;
+		}
+		if (e.key === 'Enter') {
+			if (capture.tokens.length > 0 && !capture.error) {
+				setBinding(capture.id, capture.tokens.join(' '));
+				capture = null;
+				(e.currentTarget as HTMLElement).blur();
+			}
+			return;
+		}
+		if (e.key === 'Backspace') capture.tokens.pop();
+		else if (e.key === ' ') capture.tokens.push('SPC');
+		else if (e.key.length === 1) capture.tokens.push(e.key);
+		else return; // modifiers etc. — ignore
+		capture.error = capture.tokens.length > 0 ? validateBinding(capture.tokens, capture.id) : null;
+	}
 
 	// Snapshot of the last-saved values from config.toml. Loaded on
 	// mount + after a successful save. Compared against the live
@@ -1069,8 +1115,11 @@
 		<p class="settings-hint">
 			Everything the command palette offers (<kbd class="cmdreg-kb">SPC :</kbd>,
 			<kbd class="cmdreg-kb">:</kbd>, or the modeline <em>commands</em> button),
-			grouped by what running it gets you. <em>deferred</em> = listed for
-			discoverability but not wired up yet — picking it just tells you so.
+			grouped by what running it gets you. The checkbox controls whether the
+			command appears in the palette (its keybinding keeps working either way).
+			Click a binding to rebind: press keys (Space records SPC), Enter saves,
+			Esc cancels — a custom binding replaces the default. <em>deferred</em> =
+			listed for discoverability but not wired up yet. Stored on this device.
 		</p>
 		{#each SCOPE_ORDER as scope (scope)}
 			<div class="cmdreg-scope">
@@ -1079,7 +1128,18 @@
 					<span class="cmdreg-scope-blurb">{SCOPE_META[scope].blurb}</span>
 				</div>
 				{#each commands.filter((c) => c.scope === scope) as cmd (cmd.id)}
-					<div class="cmdreg-row" class:cmdreg-row--deferred={cmd.deferred}>
+					<div
+						class="cmdreg-row"
+						class:cmdreg-row--deferred={cmd.deferred}
+						class:cmdreg-row--off={commandPrefs.byId[cmd.id]?.hidden}
+					>
+						<input
+							class="cmdreg-vis"
+							type="checkbox"
+							title="Show in the SPC : command palette"
+							checked={!commandPrefs.byId[cmd.id]?.hidden}
+							onchange={(e) => setHidden(cmd.id, !e.currentTarget.checked)}
+						/>
 						<span class="cmdreg-name">{cmd.name}</span>
 						<span class="cmdreg-desc">
 							{cmd.description}{#if cmd.context}&nbsp;<em class="cmdreg-ctx">needs {cmd.context}</em>{/if}
@@ -1087,8 +1147,35 @@
 						{#if cmd.deferred}
 							<span class="cmdreg-badge">deferred</span>
 						{/if}
-						{#if cmd.keybinding}
-							<kbd class="cmdreg-kb">{cmd.keybinding}</kbd>
+						{#if capture?.id === cmd.id}
+							{#if capture.error}
+								<span class="cmdreg-err">{capture.error}</span>
+							{/if}
+							<input
+								class="cmdreg-capture"
+								data-entry
+								readonly
+								bind:this={captureEl}
+								value={capture.tokens.join(' ') || 'press keys…'}
+								onkeydown={captureKeydown}
+								onblur={() => (capture = null)}
+							/>
+						{:else}
+							<button
+								class="cmdreg-bindbtn"
+								class:cmdreg-bindbtn--custom={commandPrefs.byId[cmd.id]?.keys}
+								onclick={() => startCapture(cmd.id)}
+								title="Rebind — press keys (Space = SPC), Enter saves, Esc cancels"
+							>
+								{effectiveKeybinding(cmd) ?? 'bind…'}
+							</button>
+							{#if commandPrefs.byId[cmd.id]?.keys}
+								<button
+									class="cmdreg-reset"
+									onclick={() => clearBinding(cmd.id)}
+									title="Remove custom binding{cmd.keybinding ? ` (default: ${cmd.keybinding})` : ''}"
+								>↺</button>
+							{/if}
 						{/if}
 					</div>
 				{/each}
@@ -1104,9 +1191,9 @@
 		<summary class="settings-group-title">Keybindings</summary>
 		<div class="settings-group-body">
 		<p class="settings-hint">
-			Keys work in normal mode (no field focused). Bindings are fixed for
-			now — per-user rebinding is planned; this registry is the map of
-			what exists today.
+			Keys work in normal mode (no field focused). This list shows the
+			<em>effective</em> tree — custom bindings from the Commands section
+			above are already applied. Base keys are reserved and can't be rebound.
 		</p>
 		<div class="cmdreg-scope">
 			<div class="cmdreg-scope-head">
@@ -1542,6 +1629,64 @@
 		font-family: var(--font-mono);
 		font-size: var(--t-3xs);
 		color: var(--base4);
+		flex-shrink: 0;
+	}
+	.cmdreg-vis {
+		flex-shrink: 0;
+		margin: 0;
+		accent-color: var(--id-yours);
+		cursor: pointer;
+	}
+	.cmdreg-row--off .cmdreg-name,
+	.cmdreg-row--off .cmdreg-desc {
+		opacity: 0.45;
+	}
+	.cmdreg-bindbtn {
+		font-family: var(--font-mono);
+		font-size: var(--t-2xs);
+		color: var(--base6);
+		padding: 0 5px;
+		border: 1px solid var(--base2);
+		border-radius: var(--r-sm);
+		background: var(--base0);
+		flex-shrink: 0;
+		white-space: nowrap;
+		cursor: pointer;
+	}
+	.cmdreg-bindbtn:hover {
+		border-color: var(--base4);
+	}
+	.cmdreg-bindbtn--custom {
+		color: var(--id-yours);
+		border-color: var(--id-yours);
+	}
+	.cmdreg-reset {
+		font-size: var(--t-xs);
+		color: var(--base5);
+		background: none;
+		border: none;
+		padding: 0 2px;
+		cursor: pointer;
+		flex-shrink: 0;
+	}
+	.cmdreg-reset:hover {
+		color: var(--fg);
+	}
+	.cmdreg-capture {
+		font-family: var(--font-mono);
+		font-size: var(--t-2xs);
+		color: var(--id-yours);
+		width: 130px;
+		padding: 0 5px;
+		border: 1px solid var(--id-yours);
+		border-radius: var(--r-sm);
+		background: var(--base0);
+		flex-shrink: 0;
+		caret-color: transparent;
+	}
+	.cmdreg-err {
+		font-size: var(--t-2xs);
+		color: var(--id-forked);
 		flex-shrink: 0;
 	}
 </style>

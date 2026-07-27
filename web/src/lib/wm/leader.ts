@@ -8,6 +8,9 @@ export type LeafCmd = {
 	category: CommandCat;
 	kind: LeafKind;
 	deferred?: boolean;
+	/** Palette command this leaf mirrors — lets a user's custom binding
+	 *  replace the default leaf (see applyBindingOverrides). */
+	commandId?: string;
 	run: () => void;
 };
 
@@ -42,10 +45,10 @@ export function buildLeaderRoot(ctx: LeaderContext): SubPrefix {
 				type: 'prefix',
 				desc: 'buffer',
 				children: {
-					b: { type: 'leaf', desc: 'switch (class)', category: 'Buffer', kind: 'client', run: () => ctx.openMinibuffer('class') },
-					B: { type: 'leaf', desc: 'switch (global)', category: 'Buffer', kind: 'client', run: () => ctx.openMinibuffer('global') },
-					r: { type: 'leaf', desc: 'recently closed', category: 'Buffer', kind: 'client', run: () => ctx.openMinibuffer('recent') },
-					k: { type: 'leaf', desc: 'kill buffer', category: 'Buffer', kind: 'client', run: () => ctx.killFocusedBuffer() },
+					b: { type: 'leaf', desc: 'switch (class)', commandId: 'tendrl-switch-buffer', category: 'Buffer', kind: 'client', run: () => ctx.openMinibuffer('class') },
+					B: { type: 'leaf', desc: 'switch (global)', commandId: 'tendrl-switch-buffer-global', category: 'Buffer', kind: 'client', run: () => ctx.openMinibuffer('global') },
+					r: { type: 'leaf', desc: 'recently closed', commandId: 'tendrl-recent-buffer', category: 'Buffer', kind: 'client', run: () => ctx.openMinibuffer('recent') },
+					k: { type: 'leaf', desc: 'kill buffer', commandId: 'tendrl-kill-buffer', category: 'Buffer', kind: 'client', run: () => ctx.killFocusedBuffer() },
 					n: { type: 'leaf', desc: 'next in class', category: 'Buffer', kind: 'client', run: () => ctx.cycleBufferInSlot(1) },
 					p: { type: 'leaf', desc: 'previous in class', category: 'Buffer', kind: 'client', run: () => ctx.cycleBufferInSlot(-1) }
 				}
@@ -54,7 +57,7 @@ export function buildLeaderRoot(ctx: LeaderContext): SubPrefix {
 				type: 'prefix',
 				desc: 'window',
 				children: {
-					c: { type: 'leaf', desc: 'collapse / expand', category: 'Window', kind: 'client', run: () => ctx.toggleFocusedSlot() },
+					c: { type: 'leaf', desc: 'collapse / expand', commandId: 'tendrl-toggle-rail', category: 'Window', kind: 'client', run: () => ctx.toggleFocusedSlot() },
 					// h/l move focus across slots (chat ↔ work ↔ research).
 					// j/k cycle through buffers within the focused slot.
 					h: { type: 'leaf', desc: 'focus left slot', category: 'Window', kind: 'client', run: () => ctx.navigateSlot(-1) },
@@ -65,15 +68,15 @@ export function buildLeaderRoot(ctx: LeaderContext): SubPrefix {
 					k: { type: 'leaf', desc: 'prev buffer in slot', category: 'Window', kind: 'client', run: () => ctx.cycleBufferInSlot(-1) },
 					ArrowDown: { type: 'leaf', desc: 'next buffer in slot', category: 'Window', kind: 'client', run: () => ctx.cycleBufferInSlot(1) },
 					ArrowUp: { type: 'leaf', desc: 'prev buffer in slot', category: 'Window', kind: 'client', run: () => ctx.cycleBufferInSlot(-1) },
-					s: { type: 'leaf', desc: 'split (same-class h)', category: 'Window', kind: 'client', run: () => ctx.openSplitPicker() }
+					s: { type: 'leaf', desc: 'split (same-class h)', commandId: 'tendrl-split-window', category: 'Window', kind: 'client', run: () => ctx.openSplitPicker() }
 				}
 			},
 			f: {
 				type: 'prefix',
 				desc: 'find',
 				children: {
-					e: { type: 'leaf', desc: 'find-event', category: 'Buffer', kind: 'engine', run: () => ctx.prefilterMx('find-event') },
-					d: { type: 'leaf', desc: 'find-draft', category: 'Buffer', kind: 'engine', run: () => ctx.prefilterMx('find-draft') },
+					e: { type: 'leaf', desc: 'find-event', commandId: 'tendrl-find-event', category: 'Buffer', kind: 'engine', run: () => ctx.prefilterMx('find-event') },
+					d: { type: 'leaf', desc: 'find-draft', commandId: 'tendrl-find-draft', category: 'Buffer', kind: 'engine', run: () => ctx.prefilterMx('find-draft') },
 					p: { type: 'leaf', desc: 'find-publication', category: 'Buffer', kind: 'engine', run: () => ctx.prefilterMx('find-publication') }
 				}
 			},
@@ -81,31 +84,31 @@ export function buildLeaderRoot(ctx: LeaderContext): SubPrefix {
 				type: 'prefix',
 				desc: 'layout',
 				children: {
-					b: { type: 'leaf', desc: 'base', category: 'Layout', kind: 'client', run: () => ctx.setLayout('base') },
-					s: { type: 'leaf', desc: 'save current (deferred)', category: 'Layout', kind: 'client', deferred: true, run: () => {} }
+					b: { type: 'leaf', desc: 'base', commandId: 'tendrl-switch-layout', category: 'Layout', kind: 'client', run: () => ctx.setLayout('base') },
+					s: { type: 'leaf', desc: 'save current (deferred)', commandId: 'tendrl-save-layout', category: 'Layout', kind: 'client', deferred: true, run: () => {} }
 				}
 			},
 			t: {
 				type: 'prefix',
 				desc: 'toggle',
 				children: {
-					n: { type: 'leaf', desc: 'network mode', category: 'Configuration', kind: 'engine', run: () => ctx.toggleNetworkMode() }
+					n: { type: 'leaf', desc: 'network mode', commandId: 'tendrl-toggle-network-mode', category: 'Configuration', kind: 'engine', run: () => ctx.toggleNetworkMode() }
 				}
 			},
 			s: {
 				type: 'prefix',
 				desc: 'settings',
 				children: {
-					s: { type: 'leaf', desc: 'open settings', category: 'Configuration', kind: 'client', run: () => ctx.openSettings() },
-					i: { type: 'leaf', desc: 'identity (login / source)', category: 'Configuration', kind: 'client', run: () => ctx.openSettings() },
-					p: { type: 'leaf', desc: 'profile (kind 0)', category: 'Configuration', kind: 'engine', run: () => ctx.openProfileEdit() }
+					s: { type: 'leaf', desc: 'open settings', commandId: 'tendrl-open-settings', category: 'Configuration', kind: 'client', run: () => ctx.openSettings() },
+					i: { type: 'leaf', desc: 'identity (login / source)', commandId: 'tendrl-login', category: 'Configuration', kind: 'client', run: () => ctx.openSettings() },
+					p: { type: 'leaf', desc: 'profile (kind 0)', commandId: 'tendrl-edit-profile', category: 'Configuration', kind: 'engine', run: () => ctx.openProfileEdit() }
 				}
 			},
 			q: {
 				type: 'prefix',
 				desc: 'quit',
 				children: {
-					q: { type: 'leaf', desc: 'quit frame', category: 'Application', kind: 'client', run: () => {} }
+					q: { type: 'leaf', desc: 'quit frame', commandId: 'tendrl-quit', category: 'Application', kind: 'client', run: () => {} }
 				}
 			},
 			':': { type: 'leaf', desc: 'commands', category: 'Application', kind: 'client', run: () => ctx.openMinibuffer('mx') }
@@ -121,6 +124,80 @@ export type LeaderBinding = {
 	deferred?: boolean;
 };
 
+/** A user's custom binding for a palette command (from command-prefs).
+ *  tokens are the chord AFTER the SPC prefix ('SPC o s' → ['o','s']);
+ *  single-key bindings never reach the leader tree. */
+export type LeaderBindingOverride = {
+	commandId: string;
+	tokens: string[];
+	desc: string;
+	category: CommandCat;
+	run: () => void;
+};
+
+/** Apply custom bindings onto a freshly built root, in place: every
+ *  overridden command's default tagged leaves are removed (a custom
+ *  binding REPLACES the default, it doesn't alias it), then SPC-chord
+ *  overrides are grafted, creating prefix nodes as needed. Emptied
+ *  default prefixes are pruned so the which-key popup stays clean. */
+export function applyBindingOverrides(root: SubPrefix, overrides: LeaderBindingOverride[]): SubPrefix {
+	if (overrides.length === 0) return root;
+	const overridden = new Set(overrides.map((o) => o.commandId));
+	const prune = (node: SubPrefix) => {
+		for (const [key, child] of Object.entries(node.children)) {
+			if (child.type === 'prefix') {
+				prune(child);
+				if (Object.keys(child.children).length === 0) delete node.children[key];
+			} else if (child.commandId && overridden.has(child.commandId)) {
+				delete node.children[key];
+			}
+		}
+	};
+	prune(root);
+	for (const o of overrides) {
+		if (o.tokens.length === 0) continue; // single-key override: removal only
+		let node = root;
+		for (const key of o.tokens.slice(0, -1)) {
+			const next = node.children[key];
+			if (next?.type === 'prefix') {
+				node = next;
+			} else {
+				const created: SubPrefix = { type: 'prefix', desc: key, children: {} };
+				node.children[key] = created;
+				node = created;
+			}
+		}
+		const last = o.tokens[o.tokens.length - 1];
+		node.children[last] = {
+			type: 'leaf',
+			desc: o.desc,
+			category: o.category,
+			kind: 'client',
+			commandId: o.commandId,
+			run: o.run
+		};
+	}
+	return root;
+}
+
+/** Can `tokens` (chord after SPC) be grafted for `forCommandId` without
+ *  colliding with the default tree? Descending through an existing prefix
+ *  is fine; landing on one, or crossing/landing on a live leaf that
+ *  belongs to a different command, is not. */
+export function validateLeaderChord(tokens: string[], forCommandId: string): string | null {
+	if (tokens.length === 0) return 'empty chord';
+	let node: LeaderNode = buildNoopRoot();
+	for (let i = 0; i < tokens.length; i++) {
+		if (node.type !== 'prefix') return `SPC ${tokens.slice(0, i).join(' ')} is already a command`;
+		const child: LeaderNode | undefined = node.children[tokens[i]];
+		if (!child) return null; // free slot from here down
+		node = child;
+	}
+	if (node.type === 'prefix') return `SPC ${tokens.join(' ')} is a prefix (would shadow its subtree)`;
+	if (node.commandId === forCommandId) return null; // rebinding to its own default
+	return `SPC ${tokens.join(' ')} is taken by "${node.desc}"`;
+}
+
 const KEY_LABEL: Record<string, string> = {
 	ArrowLeft: '←',
 	ArrowRight: '→',
@@ -128,13 +205,9 @@ const KEY_LABEL: Record<string, string> = {
 	ArrowDown: '↓'
 };
 
-/** Flatten the leader tree into displayable binding rows for the settings
- *  registry. Built against a noop context — nothing is ever run — so the
- *  listing can't drift from the real tree. Alias keys (arrows mirroring
- *  h/j/k/l) merge into the row they duplicate. */
-export function listLeaderBindings(): LeaderBinding[] {
+function buildNoopRoot(): SubPrefix {
 	const noop = () => {};
-	const root = buildLeaderRoot({
+	return buildLeaderRoot({
 		openMinibuffer: noop,
 		prefilterMx: noop,
 		killFocusedBuffer: noop,
@@ -147,6 +220,15 @@ export function listLeaderBindings(): LeaderBinding[] {
 		openSettings: noop,
 		openProfileEdit: noop
 	});
+}
+
+/** Flatten the leader tree into displayable binding rows for the settings
+ *  registry. Built against a noop context — nothing is ever run — so the
+ *  listing can't drift from the real tree. Custom-binding overrides are
+ *  applied first, so the listing shows the EFFECTIVE tree. Alias keys
+ *  (arrows mirroring h/j/k/l) merge into the row they duplicate. */
+export function listLeaderBindings(overrides: LeaderBindingOverride[] = []): LeaderBinding[] {
+	const root = applyBindingOverrides(buildNoopRoot(), overrides);
 	const out: LeaderBinding[] = [];
 	const walk = (node: SubPrefix, path: string[]) => {
 		for (const [key, child] of Object.entries(node.children)) {
