@@ -27,6 +27,8 @@
 	} from '$lib/wm/command-prefs.svelte';
 	import { BufferStore, setActiveStore, type NavAction } from '$lib/wm/buffer-store.svelte';
 	import BufferRenderer from '$lib/wm/BufferRenderer.svelte';
+	import MobileShell from '$lib/wm/MobileShell.svelte';
+	import { shell, type ShellPref } from '$lib/wm/shell.svelte';
 	import { rendererFor, toursForClass } from '$lib/wm/registry';
 	import { getAppState, type ModalNavEntry } from '$lib/state.svelte';
 	import { themeById } from '$lib/themes';
@@ -450,6 +452,14 @@
 	});
 
 	function executeCommand(cmd: Command) {
+		if (cmd.id === 'tendrl-cycle-shell') {
+			const order: ShellPref[] = ['auto', 'desktop', 'mobile'];
+			const next = order[(order.indexOf(shell.pref) + 1) % order.length];
+			shell.setPref(next);
+			app.pushToast(`Shell: ${next}${next === 'auto' ? ` → ${shell.mode}` : ''}`, 'info');
+			closeMinibuffer();
+			return;
+		}
 		if (cmd.id === 'tendrl-switch-buffer') {
 			openMinibuffer('class');
 			return;
@@ -1070,6 +1080,14 @@
 <svelte:window onkeydown={onGlobalKeydown} onfocusin={onFocusIn} onfocusout={onFocusOut} />
 
 <div class="page">
+	{#if shell.mode === 'mobile'}
+		<MobileShell {store} onCommands={() => openMinibuffer('mx')} />
+		{#if mb.mode !== 'closed'}
+			<div class="mshell-sheet">
+				{@render minibufferStrip()}
+			</div>
+		{/if}
+	{:else}
 	<div class="shell">
 		<div class="shell__header">
 			<button
@@ -1287,6 +1305,7 @@
 			>?</button>
 		</div>
 	</div>
+	{/if}
 
 </div>
 
@@ -2409,6 +2428,19 @@
 		flex-direction: column;
 		max-height: 280px;
 		flex-shrink: 0;
+	}
+	/* Mobile shell: the minibuffer renders as a fixed bottom sheet above the
+	   nav bar instead of an in-flow strip above the modeline. */
+	.mshell-sheet {
+		position: fixed;
+		left: 0;
+		right: 0;
+		bottom: calc(46px + env(safe-area-inset-bottom));
+		z-index: 60;
+		box-shadow: 0 -6px 24px rgba(0, 0, 0, 0.35);
+	}
+	.mshell-sheet .mb {
+		max-height: 55vh;
 	}
 	.mb__list {
 		flex: 1;

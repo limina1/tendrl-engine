@@ -69,7 +69,8 @@ export const commands: Command[] = [
 	{ id: 'tendrl-redo', name: 'tendrl-redo', hiddenByDefault: true, description: 'Redo', category: 'Versioning', scope: 'contextual', context: 'an editable buffer', deferred: true },
 	// Application
 	{ id: 'tendrl-quit', name: 'tendrl-quit', hiddenByDefault: true, description: 'Close this frame', category: 'Application', scope: 'nav', deferred: true },
-	{ id: 'tendrl-refresh', name: 'tendrl-refresh', description: 'Reload the focused buffer', category: 'Application', scope: 'contextual', context: 'a focused buffer', deferred: true, keybinding: 'SPC b R' }
+	{ id: 'tendrl-refresh', name: 'tendrl-refresh', description: 'Reload the focused buffer', category: 'Application', scope: 'contextual', context: 'a focused buffer', deferred: true, keybinding: 'SPC b R' },
+	{ id: 'tendrl-cycle-shell', name: 'tendrl-cycle-shell', description: 'Cycle the shell: auto → desktop (WM) → mobile (bottom bar)', category: 'Application', scope: 'action' }
 ];
 
 /** Normal-mode keys hardwired in +page.svelte's onGlobalKeydown — the
