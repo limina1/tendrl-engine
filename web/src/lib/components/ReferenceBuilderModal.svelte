@@ -1,10 +1,15 @@
 <script lang="ts">
-	// "Insert reference" builder — opened from the composer mode-bar. Three modes:
-	//   ref   → pick a sibling section in the current draft   (instant, client-side)
-	//   wiki  → pick an existing wiki/article by title         (live search)
-	//   embed → build an event coordinate, the hard case: author (by: profile
-	//           autocomplete) + kind + a T|d|custom tag value → resolve to a
-	//           matching event → encode its naddr.
+	// "Insert reference" builder — opened from the composer mode-bar `{{ }}`
+	// button (and from inline autocomplete mid-token). One tab per nostrdown form:
+	//   ref     → pick a sibling section in the current draft  (instant, client-side)
+	//   wiki    → pick an existing wiki/article by title       (live search)
+	//   embed   → build an event coordinate, the hard case: author (by: profile
+	//             autocomplete) + kind + a T|d|custom tag value → resolve to a
+	//             matching event → encode its naddr.
+	//   slot    → same coordinate builder, restricted to 30040/30041 (block-level
+	//             transclude → an a-tag in the 30040).
+	//   quote   → coordinate builder + the excerpt text that travels inline.
+	//   mention → profile search (or a pasted npub/nprofile) → `{{@npub…}}`.
 	// On confirm it hands a `{{…}}` token back to the composer, which inserts it
 	// at the editor cursor. Reuses the existing search (`api.search` returns live
 	// `profiles[]` for author lookup) and `api.encode` (coordinate → naddr).
@@ -15,24 +20,20 @@
 	let {
 		open = false,
 		initialTab = 'ref',
-		embedPrefix = 'embed',
 		sectionTitles = [],
 		oninsert,
 		onclose
 	}: {
 		open?: boolean;
 		/** Tab to show each time the modal opens. */
-		initialTab?: 'ref' | 'wiki' | 'embed';
-		/** Prefix the coordinate (Embed) tab emits — `embed` (inline card) or
-		 *  `slot` (block-level transclude → an a-tag in the 30040). */
-		embedPrefix?: 'embed' | 'slot';
+		initialTab?: 'ref' | 'wiki' | 'embed' | 'slot' | 'quote' | 'mention';
 		/** Titles of the other sections in the current draft (for `ref:`). */
 		sectionTitles?: string[];
 		oninsert: (token: string) => void;
 		onclose: () => void;
 	} = $props();
 
-	type Tab = 'ref' | 'wiki' | 'embed';
+	type Tab = 'ref' | 'wiki' | 'embed' | 'slot' | 'quote' | 'mention';
 	let tab = $state<Tab>('ref');
 	// Snap to the requested tab each time the modal opens.
 	let wasOpen = false;
@@ -110,14 +111,39 @@
 		close();
 	}
 
-	// ── embed: paste any entity directly ────────────────────────────────────
+	// ── embed / slot / quote: shared coordinate builder ─────────────────────
+	// Prefix the coordinate tabs emit; quote wraps the target with its excerpt.
+	const coordPrefix = $derived(tab === 'slot' ? 'slot' : tab === 'quote' ? 'quote' : 'embed');
+	// The excerpt a quote carries inline (after `|`) — required: a quote with no
+	// text has nothing to render.
+	let quoteText = $state('');
+	const quoteReady = $derived(tab !== 'quote' || quoteText.trim().length > 0);
+
+	// Paste any entity directly. Slots take addressable events only (they become
+	// index a-tags); quotes take events, not profiles.
 	let pasteEntity = $state('');
 	const ENTITY_RE = /^(nostr:)?(naddr1|nevent1|note1|npub1|nprofile1)[a-z0-9]+$/i;
-	const pasteValid = $derived(ENTITY_RE.test(pasteEntity.trim()));
-	function insertEntity() {
-		if (!pasteValid) return;
-		oninsert(`{{${embedPrefix}:${pasteEntity.trim().replace(/^nostr:/i, '')}}}`);
+	const SLOT_ENTITY_RE = /^(nostr:)?naddr1[a-z0-9]+$/i;
+	const QUOTE_ENTITY_RE = /^(nostr:)?(naddr1|nevent1|note1)[a-z0-9]+$/i;
+	const pasteValid = $derived.by(() => {
+		const v = pasteEntity.trim();
+		if (tab === 'slot') return SLOT_ENTITY_RE.test(v);
+		if (tab === 'quote') return QUOTE_ENTITY_RE.test(v);
+		return ENTITY_RE.test(v);
+	});
+
+	function emitCoord(target: string) {
+		if (tab === 'quote') {
+			oninsert(`{{quote:${target}|${quoteText.trim()}}}`);
+		} else {
+			oninsert(`{{${coordPrefix}:${target}}}`);
+		}
 		close();
+	}
+
+	function insertEntity() {
+		if (!pasteValid || !quoteReady) return;
+		emitCoord(pasteEntity.trim().replace(/^nostr:/i, ''));
 	}
 
 	// ── embed: coordinate builder ───────────────────────────────────────────
@@ -170,12 +196,12 @@
 	];
 	let kindSel = $state(30041);
 	// Slots reference addressable publication events only (a-tags), so the
-	// coordinate tab restricts to 30040/30041 in slot mode.
+	// coordinate builder restricts to 30040/30041 on the Slot tab.
 	const kindOptions = $derived(
-		embedPrefix === 'slot' ? KINDS.filter((k) => k.v === 30040 || k.v === 30041) : KINDS
+		tab === 'slot' ? KINDS.filter((k) => k.v === 30040 || k.v === 30041) : KINDS
 	);
 	$effect(() => {
-		if (embedPrefix === 'slot' && kindSel !== 30040 && kindSel !== 30041) kindSel = 30041;
+		if (tab === 'slot' && kindSel !== 30040 && kindSel !== 30041) kindSel = 30041;
 	});
 
 	type TagMode = 'T' | 'd' | 'custom';
@@ -215,7 +241,7 @@
 	}
 
 	async function insertEmbed(r: SearchResult) {
-		if (!r.addr || inserting) return;
+		if (!r.addr || inserting || !quoteReady) return;
 		inserting = true;
 		try {
 			const naddr = await api.encode({
@@ -224,13 +250,62 @@
 				pubkey: r.addr.pubkey,
 				d_tag: r.addr.d_tag
 			});
-			oninsert(`{{${embedPrefix}:${naddr}}}`);
-			close();
+			emitCoord(naddr);
 		} catch {
 			// leave the modal open so the user can retry / pick another
 		} finally {
 			inserting = false;
 		}
+	}
+
+	// ── mention: profile search → `{{@npub…}}` ──────────────────────────────
+	let mentionQuery = $state('');
+	let mentionSugg = $state<ProfileResult[]>([]);
+	let mentionTimer: ReturnType<typeof setTimeout> | undefined;
+	// Optional display text — `{{@npub…|display}}`; without it the renderer
+	// falls back to the profile's handle.
+	let mentionDisplay = $state('');
+	const MENTION_ENTITY_RE = /^(nostr:)?(npub1|nprofile1)[a-z0-9]+$/i;
+	const mentionPasteValid = $derived(MENTION_ENTITY_RE.test(mentionQuery.trim()));
+
+	function onMentionInput() {
+		clearTimeout(mentionTimer);
+		const q = mentionQuery.trim();
+		if (!q || MENTION_ENTITY_RE.test(q)) {
+			mentionSugg = [];
+			return;
+		}
+		mentionTimer = setTimeout(async () => {
+			try {
+				const resp = await api.search(`by:name:${q}`, 8);
+				mentionSugg = resp.profiles ?? [];
+			} catch {
+				mentionSugg = [];
+			}
+		}, 200);
+	}
+
+	function emitMention(entity: string) {
+		const d = mentionDisplay.trim();
+		oninsert(`{{@${entity}${d ? `|${d}` : ''}}}`);
+		close();
+	}
+
+	async function insertMentionProfile(p: ProfileResult) {
+		if (inserting) return;
+		inserting = true;
+		try {
+			emitMention(await api.encode({ kind: 'npub', pubkey: p.pubkey }));
+		} catch {
+			// leave the modal open so the user can retry / pick another
+		} finally {
+			inserting = false;
+		}
+	}
+
+	function insertMentionEntity() {
+		if (!mentionPasteValid) return;
+		emitMention(mentionQuery.trim().replace(/^nostr:/i, ''));
 	}
 
 	function authorName(r: SearchResult): string {
@@ -244,7 +319,7 @@
 
 	// Focus the input when its tab mounts (Svelte action — avoids the a11y
 	// autofocus-attribute warning).
-	function focusInput(node: HTMLInputElement) {
+	function focusInput(node: HTMLInputElement | HTMLTextAreaElement) {
 		node.focus();
 	}
 
@@ -272,7 +347,10 @@
 				<div class="rb-tabs" role="tablist">
 					<button class="rb-tab" class:active={tab === 'ref'} role="tab" aria-selected={tab === 'ref'} onclick={() => (tab = 'ref')}>Ref</button>
 					<button class="rb-tab" class:active={tab === 'wiki'} role="tab" aria-selected={tab === 'wiki'} onclick={() => (tab = 'wiki')}>Wiki</button>
-					<button class="rb-tab" class:active={tab === 'embed'} role="tab" aria-selected={tab === 'embed'} onclick={() => (tab = 'embed')}>{embedPrefix === 'slot' ? 'Slot' : 'Embed'}</button>
+					<button class="rb-tab" class:active={tab === 'embed'} role="tab" aria-selected={tab === 'embed'} onclick={() => (tab = 'embed')}>Embed</button>
+					<button class="rb-tab" class:active={tab === 'slot'} role="tab" aria-selected={tab === 'slot'} onclick={() => (tab = 'slot')}>Slot</button>
+					<button class="rb-tab" class:active={tab === 'quote'} role="tab" aria-selected={tab === 'quote'} onclick={() => (tab = 'quote')}>Quote</button>
+					<button class="rb-tab" class:active={tab === 'mention'} role="tab" aria-selected={tab === 'mention'} onclick={() => (tab = 'mention')}>@</button>
 				</div>
 				<button class="rb-close" onclick={close} aria-label="Close">×</button>
 			</header>
@@ -328,18 +406,72 @@
 						{/if}
 					</div>
 				</div>
+			{:else if tab === 'mention'}
+				<div class="rb-body">
+					<input
+						class="rb-input"
+						placeholder="profile name — or paste npub / nprofile…"
+						bind:value={mentionQuery}
+						oninput={onMentionInput}
+						onkeydown={(e) => e.key === 'Enter' && insertMentionEntity()}
+						use:focusInput
+					/>
+					<label class="rb-field">
+						<span class="rb-label">as:</span>
+						<input
+							class="rb-input rb-input--inline"
+							placeholder="display text (optional — defaults to the profile's handle)"
+							bind:value={mentionDisplay}
+						/>
+					</label>
+					<div class="rb-list">
+						{#if mentionPasteValid}
+							<button class="rb-row" onclick={insertMentionEntity}>
+								<span class="rb-badge">@</span>
+								<span class="rb-row__title">mention {mentionQuery.trim().replace(/^nostr:/i, '').slice(0, 20)}…</span>
+							</button>
+						{/if}
+						{#each mentionSugg as p (p.pubkey)}
+							<button class="rb-row" onclick={() => insertMentionProfile(p)} disabled={inserting}>
+								<span class="rb-badge">@</span>
+								<span class="rb-row__title">{p.display_name || p.name || 'unnamed'}</span>
+								<span class="rb-row__meta">{p.pubkey.slice(0, 10)}…</span>
+							</button>
+						{:else}
+							{#if !mentionPasteValid}
+								<div class="rb-empty">Type a name to search profiles.</div>
+							{/if}
+						{/each}
+					</div>
+				</div>
 			{:else}
 				<div class="rb-body">
-					<!-- paste any entity directly: naddr / nevent / note / npub / nprofile -->
+					{#if tab === 'quote'}
+						<!-- the excerpt is the quote's payload — it travels inline in the token -->
+						<label class="rb-field rb-field--col">
+							<span class="rb-label">text:</span>
+							<textarea
+								class="rb-input rb-textarea"
+								placeholder="the quoted passage (required — travels inline in the token)…"
+								bind:value={quoteText}
+								use:focusInput
+							></textarea>
+						</label>
+					{/if}
+					<!-- paste any entity directly (slot: naddr only; quote: events only) -->
 					<div class="rb-field">
 						<span class="rb-label">paste:</span>
 						<input
 							class="rb-input rb-input--inline"
-							placeholder="naddr / nevent / note / npub …"
+							placeholder={tab === 'slot'
+								? 'naddr …'
+								: tab === 'quote'
+									? 'naddr / nevent / note …'
+									: 'naddr / nevent / note / npub …'}
 							bind:value={pasteEntity}
 							onkeydown={(e) => e.key === 'Enter' && insertEntity()}
 						/>
-						<button class="rb-go" disabled={!pasteValid} onclick={insertEntity}>embed</button>
+						<button class="rb-go" disabled={!pasteValid || !quoteReady} onclick={insertEntity}>{coordPrefix}</button>
 					</div>
 					<div class="rb-or">or build a coordinate by search:</div>
 					<!-- author -->
@@ -401,14 +533,19 @@
 							<div class="rb-empty">searching…</div>
 						{/if}
 						{#each embedResults as r (r.event_id)}
-							<button class="rb-row" onclick={() => insertEmbed(r)} disabled={inserting}>
+							<button
+								class="rb-row"
+								onclick={() => insertEmbed(r)}
+								disabled={inserting || !quoteReady}
+								title={quoteReady ? undefined : 'Enter the quoted text first'}
+							>
 								<span class="rb-badge">{r.addr?.kind}</span>
 								<span class="rb-row__title">{r.title ?? r.addr?.d_tag}</span>
 								<span class="rb-row__meta">{authorName(r)}</span>
 							</button>
 						{:else}
 							{#if !embedBusy}
-								<div class="rb-empty">Pick an author, kind, and/or a tag value to find an event to embed.</div>
+								<div class="rb-empty">Pick an author, kind, and/or a tag value to find an event to {coordPrefix}.</div>
 							{/if}
 						{/each}
 					</div>
@@ -517,6 +654,13 @@
 		display: flex;
 		align-items: center;
 		gap: 6px;
+	}
+	.rb-field--col {
+		align-items: flex-start;
+	}
+	.rb-textarea {
+		min-height: 64px;
+		resize: vertical;
 	}
 	.rb-go {
 		flex: 0 0 auto;
