@@ -47,6 +47,8 @@ exists (with code paths), gaps.
 - [[file:feat-import.org][Document import]] — PDF/DOCX/EPUB/HTML → events, JSONL ingest/export
 - [[file:feat-assistant.org][LLM assistant]] — chat fragments, agentic tool-calling
 - [[file:feat-shell.org][WM shell]] — buffers, slots, modal nav
+- [[file:feat-mobile.org][Mobile & Android]] — mobile shell (bottom bar,
+  buffer drawer), Tauri 2 Android plan through release
 - [[file:feat-ui-patterns.org][UI patterns]] — the interaction-pattern
   catalog: blessed primitives, divergence ledger, relay-entry case study
 - [[file:feat-appearance.org][Appearance]] — themes, walkthroughs
@@ -57,6 +59,21 @@ exists (with code paths), gaps.
   — markup-agnostic grammar is data-layer, not display-layer
 - [[file:q-heading-anchors.org][Heading anchors dropped from the grammar]]
   — sub-section addressing belongs to the markup engine; make it a 30041 instead
+
+* In flight — the mobile / Android epoch
+
+On branch =feat/mobile-shell=; full plan (phases, milestones, risks) in
+[[file:feat-mobile.org][the feature note]]:
+- [X] mobile shell: bottom-bar class panels + shell selection (auto /
+  pref / =?shell==)
+- [X] Amethyst-style work-buffer drawer + minibuffer bottom sheet
+- [ ] phase A: back/history, cross-class opens, per-shell command
+  visibility → merge to =tendrl-web=; then buffer-internals + touch
+  highlights
+- [ ] phase B: Tauri 2 Android host (NDK build spike → platform
+  adaptation → signing → debug APK)
+- [ ] phase C: share-intent import, reconnect discipline, mobile
+  embeddings, deep links → signed release (zapstore)
 
 * In flight — the nostrdown feature epoch
 

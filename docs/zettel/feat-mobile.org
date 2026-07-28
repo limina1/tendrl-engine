@@ -1,0 +1,216 @@
+#+TITLE: Mobile & Android
+#+TYPE: feature
+#+STATUS: partial
+#+DATE: 2026-07-28
+
+The full integration plan from the shipped mobile shell to a signed,
+distributable Android app. One track, three phases: finish the mobile
+shell in the SPA (phone-browser testable), wrap engine + SPA in a Tauri 2
+Android host, then make it feel native. Working branch: =feat/mobile-shell=.
+
+* Orientation & decisions
+
+The engine-owns-data architecture is the whole bet here: Rust owns
+fetching/storage/derivation behind HTTP+SSE, the SPA is a static client,
+so an Android app is the *same engine and the same SPA* in a different
+container — not a port.
+
+Decisions made (2026-07-27/28):
+
+- *Path*: mobile shell inside the existing SPA first, Tauri 2 Android
+  wrapper second. The engine links into the app process as a library
+  (Android forbids shipping a separate server binary) and serves the
+  embedded SPA to the system WebView over =127.0.0.1=.
+- *Rejected: pure-browser build* (IndexedDB/WASM). nostrdb is an mmap'd
+  LMDB C database; wasm32 has neither. A browser port means rewriting the
+  data layer — a second engine, not a port. Revisit only if a
+  WASM-viable nostrdb backend ever exists.
+- *Shell split, not component split*: one SPA, two shells over the same
+  =BufferStore=. Desktop keeps the WM (slots/splits/modeline/leader);
+  mobile renders the three class slots as full-screen panels behind a
+  bottom bar. Buffer components are shared unmodified — that is the
+  parity mechanism, there is no second UI to keep in sync.
+- *One launcher*: the M-x minibuffer (as a bottom sheet) is the single
+  command/open surface on mobile; the work-buffer drawer is the single
+  switcher (Amethyst's drawer pattern, =reference/amethyst=
+  =DrawerContent.kt=).
+
+* What exists (shipped on =feat/mobile-shell=)
+
+- =web/src/lib/wm/shell.svelte.ts= — shell selection: =?shell=mobile|desktop=
+  URL param (session preview) → persisted pref (localStorage) → viewport
+  auto-detect (≤768px). Live-switchable via the =tendrl-cycle-shell=
+  command (toast feedback).
+- =web/src/lib/wm/MobileShell.svelte= — bottom bar (=chat= / =work= /
+  =search= + =cmds=), class-badged header, Amethyst-style work-buffer
+  drawer (☰ → scrim + left drawer; horizontal rows with label / kicker /
+  modified dot / per-row ×; "+ commands" entry).
+- =+page.svelte= — template branch on =shell.mode=; all script-level
+  wiring (store, commands, keyboard, tours) shared; minibuffer restyled
+  as a fixed bottom sheet on mobile.
+- Verified headless (chromium 390×844, isolated worktree engine on
+  :3131): panel switching, drawer open/select/close, palette filter +
+  execute, live shell cycling with buffers intact.
+
+* Phase A — finish the mobile shell in the SPA
+
+Everything here is testable in a phone browser against the desktop
+engine over LAN (milestone M0, below). Ordered; A1–A3 gate the merge to
+=tendrl-web=.
+
+- [ ] *A1. Back-button / history integration.* pushState on class
+  switches and buffer opens; popstate walks the per-class stack; an open
+  drawer / command sheet / modal consumes back before navigation does.
+  In a WebView the hardware back button *is* history — without this,
+  every back-press exits the app. (=MobileShell.svelte= + a small
+  history module; keep it shell-local, the desktop WM stays
+  history-free.)
+- [ ] *A2. Cross-class open semantics.* Opening a reader from
+  feed/search lands in =work=, auto-switches panels, pushes a history
+  entry. =store.openBuffer= already switches focus; audit the
+  modal-vs-buffer paths (=EventViewModal=, profile opens) on a narrow
+  viewport and hook the history entry.
+- [ ] *A3. Per-shell command visibility.* WM-only commands (splits,
+  rails, layouts) declare themselves desktop-only so the mobile palette
+  offers no dead actions. Extend =Command= with =shells?:
+  ('desktop'|'mobile')[]= and filter =mxEntries= by =shell.mode= —
+  the Settings command registry should surface it too.
+- [ ] *A4. Buffer-internals mobile pass* (open-ended tail; prioritize
+  from real phone use after merge):
+  - [ ] composer: toolbar wrap at narrow widths (Cancel currently clips
+    at 390px), keyboard avoidance via =visualViewport=
+  - [ ] reader: typography pass; TOC/outline as a swipe-in drawer
+  - [ ] modeline surfaces need a mobile home: network-mode pill, relays,
+    identity, embedding status → rows in the drawer or a status sheet
+    (the Confirm-mode fetch modal already renders fine on mobile)
+  - [ ] toasts: bottom-center above the nav bar (currently lower-right)
+  - [ ] walkthrough/tours: per-shell anchor variants, or suppress
+    desktop-anchored tours on mobile
+- [ ] *A5. Touch highlight capture.* Selection handles → action popover
+  (share-sheet style) replacing the mouse+key flow in
+  =HighlightCapture.svelte=. The flagship mobile interaction for a
+  reading app — worth its own design iteration on-device.
+- [ ] Merge =feat/mobile-shell= → =tendrl-web= after A1–A3; A4/A5 land
+  as normal iterations both containers pick up.
+
+* Phase B — Tauri 2 Android wrapper
+
+The engine is already a library crate (=nostr_engine=); the Tauri host
+depends on it, boots the axum server on a background thread bound to
+=127.0.0.1:<ephemeral>=, and points the WebView at it. The SPA is
+already embedded via rust-embed (release builds bake =web/build/= in),
+so the WebView loads the same origin the desktop bundle serves — no
+CORS, no IPC needed initially. Tauri buys packaging, the WebView bridge,
+the hardware-back event, and later plugins (share intents, deep links).
+
+- [ ] *B1. Build spike* (parallel branch, start before A finishes — its
+  risks are independent of UI work):
+  - [ ] toolchain: =cargo-ndk= + Android targets (=aarch64-linux-android=
+    primary; =x86_64-linux-android= for emulator)
+  - [ ] cargo feature =embeddings= gating =fastembed= + =usearch= (off
+    for Android initially — keeps ONNX Runtime out of the critical path;
+    =~:= search degrades gracefully, engine already reports embedding
+    status)
+  - [ ] compile the C/C++ deps under NDK: nostrdb (LMDB — expected fine;
+    Damus ships it on iOS), secp256k1 (cc, well-trodden), =zip=/deflate
+    (pure Rust, fine)
+  - [ ] =keyring= has no Android backend — feature-gate it; identity
+    falls back to the existing ncryptsec-file + passphrase path
+    (=identity.rs=), Android Keystore integration deferred
+  - [ ] gate =webbrowser= open-on-launch (desktop bundle behavior) off
+    on mobile
+  - [ ] scaffold the Tauri 2 mobile project (proposal: =mobile/= dir,
+    host crate depends on =nostr_engine= by path), WebView →
+    =http://127.0.0.1:<port>/?shell=mobile=
+  - [ ] WebView cleartext: allow =127.0.0.1= via
+    =usesCleartextTraffic= / network-security-config (localhost only)
+- [ ] *B2. Platform adaptation* (all small once B1 stands):
+  - [ ] data dir → app-private storage (Tauri path API → engine config)
+  - [ ] engine start/stop tied to app lifecycle; pause the 60s
+    background fetch/embed loop and SSE on suspend, reconnect on resume
+  - [ ] hardware back → =history.back()= (lands on A1's stack), exit at
+    stack root
+  - [ ] config bootstrap: first-run TOML seed (=initial_relays=) written
+    to app storage; =relays.json= as on desktop
+- [ ] *B3. Signing on Android.* No NIP-07 in a WebView. Initially: the
+  engine signer (ncryptsec decrypt in-process — already supported, and
+  the right default for a single-user device app). Then: *NIP-55
+  (Amber)* as a =Signer= impl — Android's native signer app, fits the
+  pluggable =signing.rs= trait exactly; needs an intent bridge through
+  the Tauri host. NIP-46 remote signing is a third engine-side option.
+- [ ] *B4. Debug APK on a real device* (milestone M1): sideload, walk
+  the first-run flow (network-mode choice, feed sync, sign-in), confirm
+  relay fetching + reading + highlighting + publishing end-to-end.
+
+* Phase C — make it feel native
+
+- [ ] *Share-intent import*: share a PDF/URL from any app → engine
+  =document.rs= extraction → knowledgebase. The killer mobile feature
+  for a reference manager; needs a Tauri intent handler + an import
+  confirmation surface.
+- [ ] Relay websocket reconnect discipline on flaky mobile networks
+  (backoff + resume-on-foreground in =relay.rs= / fetch loop).
+- [ ] Re-enable embeddings on mobile: ONNX Runtime Android build behind
+  the =embeddings= feature; evaluate model size / battery; possibly
+  on-demand ("embed while charging").
+- [ ] Per-shell walkthroughs; mobile onboarding beats.
+- [ ] Deep links: =nostr:= URI handler (naddr/nevent → reader buffer) —
+  pairs with the deferred deep-link routing gap in
+  [[file:feat-shell.org][WM shell]].
+
+* Milestones & acceptance
+
+- *M0 — phone browser over LAN* (available now on the branch): desktop
+  engine running; phone on same network →
+  =http://<desktop-ip>:5174/?shell=mobile= (or =:3030= for the embedded
+  build). Accept: read a publication, run a search, switch panels,
+  drawer + palette usable with touch.
+- *M1 — debug APK*: engine boots in-process on device, fresh data dir,
+  first-run flow completes, fetch/read/publish work on wifi + cellular.
+- *M2 — daily driver*: A4/A5 landed; back button never accidentally
+  exits; app survives background/foreground cycles without losing SSE
+  or draft state; battery cost acceptable (no background polling).
+- *M3 — signed release*: versioned with the existing release workflow
+  (Cargo.toml version is the number; add =scripts/build-android.sh=
+  alongside =build-portable.sh=; tag =v<version>=). Distribution:
+  *zapstore* first (Nostr-native, Amethyst precedent), F-Droid later;
+  Play Store not a requirement.
+
+* Risk register
+
+| Risk | Exposure | Mitigation |
+|------+----------+------------|
+| C/C++ deps under NDK (nostrdb, secp256k1) | blocks B1 | spike early, parallel to Phase A; both have mobile precedent |
+| =keyring= unusable on Android | sign-in broken | feature-gate; ncryptsec file path already exists |
+| ONNX Runtime on Android | none initially | =embeddings= feature off; Phase C revisit |
+| WebView blocks cleartext localhost | blank app | network-security-config scoped to 127.0.0.1 |
+| OS kills background engine / SSE | stale UI, lost intents | lifecycle hooks (B2); reconnect-on-resume; no background work |
+| Hardware back exits app | unusable | A1 is the fix; gate M1 on it |
+| Binary size (engine + SPA + deps) | store friction only | embeddings off; strip + LTO as in release profile |
+| Buffer UIs assume pointer/width | papercuts | A4 tail, prioritized by real device use after merge |
+
+* Verification
+
+- Browser-side: the headless chromium + CDP pattern from
+  =.claude/skills/verify= at 390×844 against an isolated worktree engine
+  — used for everything shipped so far; keep driving each A-item that
+  way before device testing.
+- Device-side (M1+): =adb install= debug APKs; =adb logcat= filtered on
+  the engine's tracing output; the engine's HTTP API remains fully
+  scriptable on-device via =adb forward tcp:3030 tcp:<port>=.
+
+* Related
+
+- [[file:feat-shell.org][WM shell]] — the desktop counterpart; shared
+  BufferStore, buffer-component constraints that bind mobile too
+- [[file:feat-ui-patterns.org][UI patterns]] — blessed primitives; mobile
+  variants (sheets, drawers) should join the catalog as they stabilize
+- [[file:feat-identity.org][Identity & signing]] — signer abstraction
+  NIP-55/Amber will plug into
+- [[file:feat-import.org][Document import]] — the engine side of
+  share-intent import
+- [[file:feat-network.org][Network modes]] — Confirm intents on mobile;
+  reconnect discipline
+- [[file:cmp-pkm.org][PKM comparisons]] and =reference/amethyst= — the
+  drawer/bottom-bar patterns borrowed from Amethyst
+- [[file:index.org][index]]
