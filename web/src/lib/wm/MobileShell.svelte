@@ -29,21 +29,36 @@
 	const activeLeaf = $derived(activePos ? store.focusedLeaf(activePos) : null);
 	const workBuffers = $derived(store.openBuffers.filter((b) => b.className === 'work'));
 
+	// Amethyst-style buffer drawer: the ☰ in the work header slides in a left
+	// drawer listing open work buffers as horizontal rows. Select closes it;
+	// kill keeps it open so the pruned list stays visible.
+	let drawerOpen = $state(false);
+
 	function switchClass(cls: ClassName) {
+		drawerOpen = false;
 		const pos = store.findSlotForClass(cls);
 		if (pos) store.focusSlot(pos);
 	}
 
-	function railSelect(buf: Buffer) {
+	function drawerSelect(buf: Buffer) {
 		const pos = store.findSlotForClass('work');
 		if (!pos) return;
 		store.focusSlot(pos);
 		if (activeLeaf?.buffer.id !== buf.id) store.setLeaf(pos, buf);
+		drawerOpen = false;
 	}
 </script>
 
 <div class="mshell">
 	<div class="mshell__head">
+		{#if activeClass === 'work'}
+			<button
+				class="mshell__menu-btn {drawerOpen ? 'mshell__menu-btn--on' : ''}"
+				onclick={() => (drawerOpen = !drawerOpen)}
+				title="Open work buffers"
+				aria-label="Open the work-buffer drawer"
+			>☰</button>
+		{/if}
 		<span class="cls cls--{activeClass}">{activeClass === 'research' ? 'search' : activeClass}</span>
 		{#if activeLeaf}
 			<span class="mshell__head-name">{activeLeaf.buffer.label}</span>
@@ -57,32 +72,55 @@
 	</div>
 
 	<div class="mshell__body">
-		{#if activeClass === 'work'}
-			<nav class="mshell__rail" aria-label="Open work buffers">
-				{#each workBuffers as ob (ob.buffer.id)}
-					<button
-						class="mshell__rail-item {activeLeaf?.buffer.id === ob.buffer.id
-							? 'mshell__rail-item--on'
-							: ''}"
-						onclick={() => railSelect(ob.buffer)}
-						title={ob.buffer.kicker ?? ob.buffer.label}
-					>{ob.buffer.label}</button>
-				{/each}
-				<div class="mshell__rail-sp"></div>
-				<button
-					class="mshell__rail-add"
-					onclick={onCommands}
-					title="Commands — open buffers, act (M-x)"
-					aria-label="Open command palette"
-				>+</button>
-			</nav>
-		{/if}
 		<div class="mshell__panel">
 			{#if activeLeaf}
 				<BufferRenderer buffer={activeLeaf.buffer} />
 			{/if}
 		</div>
 	</div>
+
+	{#if drawerOpen && activeClass === 'work'}
+		<!-- svelte-ignore a11y_click_events_have_key_events -->
+		<!-- svelte-ignore a11y_no_static_element_interactions -->
+		<div class="mshell__scrim" onclick={() => (drawerOpen = false)}></div>
+		<nav class="mshell__drawer" aria-label="Open work buffers">
+			<div class="mshell__drawer-head">
+				<span class="cls cls--work">work</span>
+				<span class="mshell__drawer-title">buffers</span>
+			</div>
+			{#each workBuffers as ob (ob.buffer.id)}
+				<div
+					class="mshell__drawer-row {activeLeaf?.buffer.id === ob.buffer.id
+						? 'mshell__drawer-row--on'
+						: ''}"
+				>
+					<button class="mshell__drawer-go" onclick={() => drawerSelect(ob.buffer)}>
+						<span class="mshell__drawer-name">{ob.buffer.label}</span>
+						{#if ob.buffer.kicker}
+							<span class="mshell__drawer-kicker">{ob.buffer.kicker}</span>
+						{/if}
+					</button>
+					{#if ob.buffer.modified}
+						<span class="mshell__drawer-mod" title="Modified">●</span>
+					{/if}
+					<button
+						class="mshell__drawer-x"
+						onclick={() => store.killBuffer(ob.buffer.id)}
+						title="Close this buffer"
+						aria-label={`Close ${ob.buffer.label}`}
+					>×</button>
+				</div>
+			{/each}
+			<button
+				class="mshell__drawer-add"
+				onclick={() => {
+					drawerOpen = false;
+					onCommands();
+				}}
+				title="Commands — open buffers, act (M-x)"
+			>+ commands</button>
+		</nav>
+	{/if}
 
 	<nav class="mshell__bar" aria-label="Main panels">
 		{#each bar as b (b.cls)}
@@ -159,58 +197,136 @@
 		min-height: 0;
 	}
 
-	.mshell__rail {
-		width: 38px;
-		flex-shrink: 0;
-		display: flex;
-		flex-direction: column;
-		align-items: stretch;
-		gap: var(--s-1);
-		padding: var(--s-2) 0;
-		background: var(--panel-rail-bg);
-		border-right: 1px solid var(--panel-border);
-		overflow-y: auto;
-	}
-	.mshell__rail-item {
-		writing-mode: vertical-rl;
-		transform: rotate(180deg);
+	.mshell__menu-btn {
 		border: none;
-		border-right: 2px solid transparent;
 		background: none;
 		color: var(--fg-alt);
+		font-size: var(--t-sm);
+		line-height: 1;
+		padding: var(--s-1) var(--s-1);
+		margin-left: calc(-1 * var(--s-1));
+		cursor: pointer;
+		align-self: center;
+	}
+	.mshell__menu-btn--on,
+	.mshell__menu-btn:hover {
+		color: var(--fg);
+	}
+
+	.mshell__scrim {
+		position: fixed;
+		inset: 0;
+		background: rgba(0, 0, 0, 0.45);
+		z-index: 50;
+	}
+	.mshell__drawer {
+		position: fixed;
+		top: 0;
+		bottom: 0;
+		left: 0;
+		width: min(78vw, 300px);
+		display: flex;
+		flex-direction: column;
+		background: var(--panel-bg);
+		border-right: 1px solid var(--panel-border-strong);
+		z-index: 51;
+		padding: var(--s-2) 0 calc(var(--s-2) + env(safe-area-inset-bottom));
+		overflow-y: auto;
+		animation: mshell-drawer-in 160ms ease-out;
+	}
+	@keyframes mshell-drawer-in {
+		from {
+			transform: translateX(-100%);
+		}
+		to {
+			transform: translateX(0);
+		}
+	}
+	.mshell__drawer-head {
+		display: flex;
+		align-items: baseline;
+		gap: var(--s-2);
+		padding: var(--s-2) var(--s-3);
+		border-bottom: 1px solid var(--panel-border);
+		margin-bottom: var(--s-1);
+	}
+	.mshell__drawer-title {
 		font-family: var(--font-mono);
 		font-size: var(--t-2xs);
+		color: var(--fg-alt);
+		text-transform: uppercase;
 		letter-spacing: 0.08em;
-		padding: var(--s-2) var(--s-1);
-		max-height: 7.5rem;
+	}
+	.mshell__drawer-row {
+		display: flex;
+		align-items: center;
+		border-left: 2px solid transparent;
+	}
+	.mshell__drawer-row--on {
+		border-left-color: var(--accent);
+		background: var(--panel-bg-soft);
+	}
+	.mshell__drawer-go {
+		flex: 1;
+		min-width: 0;
+		display: flex;
+		flex-direction: column;
+		align-items: flex-start;
+		gap: 2px;
+		border: none;
+		background: none;
+		color: var(--fg);
+		text-align: left;
+		font-family: var(--font-mono);
+		padding: var(--s-2) var(--s-3);
+		cursor: pointer;
+		min-height: 44px;
+		justify-content: center;
+	}
+	.mshell__drawer-name {
+		font-size: var(--t-xs);
+		font-weight: 600;
+	}
+	.mshell__drawer-row--on .mshell__drawer-name {
+		color: var(--accent);
+	}
+	.mshell__drawer-kicker {
+		font-size: var(--t-2xs);
+		color: var(--fg-alt);
+		max-width: 100%;
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
+	}
+	.mshell__drawer-mod {
+		color: var(--accent);
+		font-size: var(--t-2xs);
+		flex-shrink: 0;
+	}
+	.mshell__drawer-x {
+		border: none;
+		background: none;
+		color: var(--fg-alt);
+		font-size: var(--t-sm);
+		padding: var(--s-2) var(--s-3);
 		cursor: pointer;
+		flex-shrink: 0;
 	}
-	.mshell__rail-item--on {
-		color: var(--fg);
-		font-weight: 600;
-		/* rotate(180deg) flips the painted edge: border-right renders on the
-		   left, flush against the rail's outer edge. */
-		border-right-color: var(--accent);
-		background: var(--panel-bg-soft);
+	.mshell__drawer-x:hover {
+		color: var(--danger);
 	}
-	.mshell__rail-sp {
-		flex: 1;
-	}
-	.mshell__rail-add {
+	.mshell__drawer-add {
+		margin: var(--s-2) var(--s-3);
 		border: 1px dashed var(--panel-border-strong);
 		border-radius: var(--r-sm);
 		background: none;
 		color: var(--fg-alt);
 		font-family: var(--font-mono);
-		font-size: var(--t-sm);
-		margin: 0 4px;
-		padding: var(--s-1) 0;
+		font-size: var(--t-xs);
+		padding: var(--s-2);
 		cursor: pointer;
 	}
-	.mshell__rail-add:hover {
+	.mshell__drawer-add:hover {
 		color: var(--accent);
 		border-color: var(--accent);
 	}
