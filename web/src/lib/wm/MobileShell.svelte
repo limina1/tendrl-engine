@@ -1,6 +1,9 @@
 <script lang="ts">
+	import { untrack } from 'svelte';
+	import { page } from '$app/state';
 	import type { Buffer, ClassName } from './types';
 	import type { BufferStore } from './buffer-store.svelte';
+	import { mobileNav } from './mobile-nav.svelte';
 	import BufferRenderer from './BufferRenderer.svelte';
 
 	// The mobile shell renders the SAME BufferStore as the desktop WM — the
@@ -31,11 +34,10 @@
 
 	// Amethyst-style buffer drawer: the ☰ in the work header slides in a left
 	// drawer listing open work buffers as horizontal rows. Select closes it;
-	// kill keeps it open so the pruned list stays visible.
-	let drawerOpen = $state(false);
-
+	// kill keeps it open so the pruned list stays visible. Open-state lives
+	// in mobileNav so hardware Back can close it.
 	function switchClass(cls: ClassName) {
-		drawerOpen = false;
+		mobileNav.drawerOpen = false;
 		const pos = store.findSlotForClass(cls);
 		if (pos) store.focusSlot(pos);
 	}
@@ -45,16 +47,43 @@
 		if (!pos) return;
 		store.focusSlot(pos);
 		if (activeLeaf?.buffer.id !== buf.id) store.setLeaf(pos, buf);
-		drawerOpen = false;
+		mobileNav.drawerOpen = false;
 	}
+
+	// ── Back navigation ─────────────────────────────────────────────────
+	// The work slot's focused buffer is tracked even while another class is
+	// active, so Back restores the work panel as the user left it.
+	const workPos = $derived(store.findSlotForClass('work'));
+	const workBufId = $derived(workPos ? (store.focusedLeaf(workPos)?.buffer.id ?? null) : null);
+
+	// Central watcher: one history entry per genuine panel/buffer change,
+	// whatever caused it (bottom bar, drawer, palette, renderer openBuffer —
+	// effect batching coalesces openBuffer's focus+leaf writes into one
+	// entry). Reads tracked, writes untracked; fully synchronous.
+	$effect(() => {
+		const cls = activeClass;
+		const wb = workBufId;
+		untrack(() => mobileNav.syncFromApp(cls, wb));
+	});
+
+	// History watcher: kit restores shallow state into page.state on
+	// back/forward; mobileNav distinguishes echoes from real traversals.
+	$effect(() => {
+		const entry = page.state.mnav;
+		untrack(() => mobileNav.syncFromHistory(entry, store));
+	});
+
+	// Teardown on shell flip to desktop — desktop stays history-free; any
+	// stale mnav entries left in history are inert (nobody watches them).
+	$effect(() => () => mobileNav.reset());
 </script>
 
 <div class="mshell">
 	<div class="mshell__head">
 		{#if activeClass === 'work'}
 			<button
-				class="mshell__menu-btn {drawerOpen ? 'mshell__menu-btn--on' : ''}"
-				onclick={() => (drawerOpen = !drawerOpen)}
+				class="mshell__menu-btn {mobileNav.drawerOpen ? 'mshell__menu-btn--on' : ''}"
+				onclick={() => (mobileNav.drawerOpen = !mobileNav.drawerOpen)}
 				title="Open work buffers"
 				aria-label="Open the work-buffer drawer"
 			>☰</button>
@@ -79,10 +108,10 @@
 		</div>
 	</div>
 
-	{#if drawerOpen && activeClass === 'work'}
+	{#if mobileNav.drawerOpen && activeClass === 'work'}
 		<!-- svelte-ignore a11y_click_events_have_key_events -->
 		<!-- svelte-ignore a11y_no_static_element_interactions -->
-		<div class="mshell__scrim" onclick={() => (drawerOpen = false)}></div>
+		<div class="mshell__scrim" onclick={() => (mobileNav.drawerOpen = false)}></div>
 		<nav class="mshell__drawer" aria-label="Open work buffers">
 			<div class="mshell__drawer-head">
 				<span class="cls cls--work">work</span>
@@ -114,7 +143,7 @@
 			<button
 				class="mshell__drawer-add"
 				onclick={() => {
-					drawerOpen = false;
+					mobileNav.drawerOpen = false;
 					onCommands();
 				}}
 				title="Commands — open buffers, act (M-x)"

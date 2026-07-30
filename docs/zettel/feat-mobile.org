@@ -58,23 +58,29 @@ Everything here is testable in a phone browser against the desktop
 engine over LAN (milestone M0, below). Ordered; A1–A3 gate the merge to
 =tendrl-web=.
 
-- [ ] *A1. Back-button / history integration.* pushState on class
-  switches and buffer opens; popstate walks the per-class stack; an open
-  drawer / command sheet / modal consumes back before navigation does.
-  In a WebView the hardware back button *is* history — without this,
-  every back-press exits the app. (=MobileShell.svelte= + a small
-  history module; keep it shell-local, the desktop WM stays
-  history-free.)
-- [ ] *A2. Cross-class open semantics.* Opening a reader from
-  feed/search lands in =work=, auto-switches panels, pushes a history
-  entry. =store.openBuffer= already switches focus; audit the
-  modal-vs-buffer paths (=EventViewModal=, profile opens) on a narrow
-  viewport and hook the history entry.
-- [ ] *A3. Per-shell command visibility.* WM-only commands (splits,
-  rails, layouts) declare themselves desktop-only so the mobile palette
-  offers no dead actions. Extend =Command= with =shells?:
-  ('desktop'|'mobile')[]= and filter =mxEntries= by =shell.mode= —
-  the Settings command registry should surface it too.
+- [X] *A1. Back-button / history integration.* Shipped 2026-07-30 as
+  =web/src/lib/wm/mobile-nav.svelte.ts=: SvelteKit shallow routing
+  (=pushState=/=replaceState= + reactive =page.state=), one entry per
+  panel/buffer navigation via a central =$effect= watcher in
+  MobileShell, a prioritized overlay-closer chain registered from
+  =+page.svelte= (drawer → text-prompt → minibuffer → leader → modals →
+  help sheets; NetworkModeChoice + confirm intents excluded by design),
+  and a *guard entry* beneath the baseline so Back-at-root can consume
+  an open overlay or deliberately exit. Hard-won timing subtleties (all
+  CDP-verified): kit's router rejects history writes on the first mount
+  tick, so the baseline write is always deferred one macrotask; a
+  =writing= flag hides our own writes from the history watcher (kit can
+  flush effects synchronously mid-write); entries carry a per-load
+  session id so stale same-URL entries from previous loads are absorbed
+  rather than misread as echoes. Desktop stays history-free.
+- [X] *A2. Cross-class open semantics.* Came free with A1's central
+  watcher: every =store.openBuffer= path (feed rows, profile, search,
+  discussion refs) coalesces into one history entry per navigation —
+  verified renderer-open → Back → feed restore via CDP.
+- [X] *A3. Per-shell command visibility.* =Command.shells?=, four WM
+  commands marked desktop-only, =mxEntries= filter + =executeCommand=
+  guard (leader/binding side door toasts), "desktop-only" badges in the
+  Settings command registry.
 - [ ] *A4. Buffer-internals mobile pass* (open-ended tail; prioritize
   from real phone use after merge):
   - [ ] composer: toolbar wrap at narrow widths (Cancel currently clips

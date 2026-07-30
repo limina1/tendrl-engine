@@ -18,7 +18,7 @@
 		type LeaderNode,
 		type SubPrefix
 	} from '$lib/wm/leader';
-	import { commands } from '$lib/wm/commands';
+	import { commands, commandInShell } from '$lib/wm/commands';
 	import {
 		effectiveKeybinding,
 		isCommandHidden,
@@ -47,7 +47,17 @@
 		discovery,
 		TIPS
 	} from '$lib/wm/discovery.svelte';
-	import { openModelineHelp } from '$lib/wm/modeline-help.svelte';
+	import { openModelineHelp, modelineHelpUI, closeModelineHelp } from '$lib/wm/modeline-help.svelte';
+	import { mobileNav } from '$lib/wm/mobile-nav.svelte';
+	import { textPrompt, resolveTextPrompt } from '$lib/wm/text-prompt.svelte';
+	import {
+		searchConfigUI,
+		closeSearchConfig,
+		searchHelpUI,
+		closeSearchHelp
+	} from '$lib/search/search-config.svelte';
+	import { composeHelpUI, closeComposeHelp } from '$lib/wm/compose-help.svelte';
+	import { menuHelpUI, closeMenuHelp } from '$lib/wm/menu-help.svelte';
 
 	const app = getAppState();
 
@@ -418,6 +428,84 @@
 		mb = { mode: 'closed', query: '', selectedIndex: 0 };
 	}
 
+	// Mobile Back: everything that should close on hardware Back before any
+	// panel navigation happens, topmost first (the drawer is built into
+	// mobileNav at the top of the chain). Registration is idempotent and this
+	// route never unmounts, so a plain top-level call is fine.
+	//
+	// Deliberately NOT registered: NetworkModeChoiceModal (first-run gate —
+	// must be answered, not dismissed) and the fetch/publish confirm intents
+	// (queue semantics — Back must not silently reject an intent).
+	function registerMobileBackClosers() {
+		mobileNav.registerCloser('text-prompt', 95, {
+			// Must resolve (cancel), never just hide — a leaked promise would
+			// wedge the caller awaiting promptText().
+			isOpen: () => textPrompt.active !== null,
+			close: () => resolveTextPrompt(false)
+		});
+		mobileNav.registerCloser('minibuffer', 80, {
+			isOpen: () => mb.mode !== 'closed',
+			close: closeMinibuffer
+		});
+		mobileNav.registerCloser('leader', 70, {
+			isOpen: () => prefixPath.length > 0,
+			close: () => (prefixPath = [])
+		});
+		mobileNav.registerCloser('walk-menu', 62, {
+			isOpen: () => walkMenuOpen !== null,
+			close: () => (walkMenuOpen = null)
+		});
+		mobileNav.registerCloser('history-popover', 61, {
+			isOpen: () => historyPopoverOpen,
+			close: () => (historyPopoverOpen = false)
+		});
+		mobileNav.registerCloser('json-modal', 56, {
+			isOpen: () => app.jsonModalData !== null,
+			close: () => (app.jsonModalData = null)
+		});
+		mobileNav.registerCloser('events-modal', 54, {
+			isOpen: () => app.eventsModal !== null,
+			close: () => (app.eventsModal = null)
+		});
+		mobileNav.registerCloser('event-modal', 52, {
+			isOpen: () => app.eventModalData !== null,
+			close: () => (app.eventModalData = null)
+		});
+		mobileNav.registerCloser('highlight-composer', 50, {
+			isOpen: () => app.highlightComposer !== null,
+			close: () => (app.highlightComposer = null)
+		});
+		mobileNav.registerCloser('republish', 48, {
+			isOpen: () => app.republishPrompt !== null,
+			close: () => app.cancelRepublish()
+		});
+		mobileNav.registerCloser('activity-modal', 46, {
+			isOpen: () => app.activityModalToastId !== null,
+			close: () => app.closeActivityModal()
+		});
+		mobileNav.registerCloser('search-config', 40, {
+			isOpen: () => searchConfigUI.open,
+			close: closeSearchConfig
+		});
+		mobileNav.registerCloser('search-help', 39, {
+			isOpen: () => searchHelpUI.open,
+			close: closeSearchHelp
+		});
+		mobileNav.registerCloser('modeline-help', 38, {
+			isOpen: () => modelineHelpUI.open,
+			close: closeModelineHelp
+		});
+		mobileNav.registerCloser('compose-help', 37, {
+			isOpen: () => composeHelpUI.open,
+			close: closeComposeHelp
+		});
+		mobileNav.registerCloser('menu-help', 36, {
+			isOpen: () => menuHelpUI.open,
+			close: closeMenuHelp
+		});
+	}
+	registerMobileBackClosers();
+
 	const minibufferEntries = $derived.by<OpenBuf[]>(() => {
 		if (mb.mode === 'closed' || mb.mode === 'mx') return [];
 		const source = mb.mode === 'recent' ? store.recentlyClosed : store.openBuffers;
@@ -439,8 +527,10 @@
 	const mxEntries = $derived.by<Command[]>(() => {
 		if (mb.mode !== 'mx') return [];
 		// Per-user visibility: hidden commands stay runnable via their
-		// keybinding, they just don't clutter the palette.
-		const visible = commands.filter((c) => !isCommandHidden(c));
+		// keybinding, they just don't clutter the palette. Shell-scoped
+		// commands (splits/rails/layouts) drop out of the other shell's
+		// palette entirely.
+		const visible = commands.filter((c) => !isCommandHidden(c) && commandInShell(c, shell.mode));
 		const q = mb.query.trim().toLowerCase();
 		if (!q) return visible;
 		return visible.filter(
@@ -452,6 +542,13 @@
 	});
 
 	function executeCommand(cmd: Command) {
+		// Leader chords and custom keybindings bypass the palette filter —
+		// gate shell-scoped commands here so the side door matches.
+		if (!commandInShell(cmd, shell.mode)) {
+			app.pushToast(`${cmd.name} is ${cmd.shells?.join('/')}-shell only`, 'info');
+			closeMinibuffer();
+			return;
+		}
 		if (cmd.id === 'tendrl-cycle-shell') {
 			const order: ShellPref[] = ['auto', 'desktop', 'mobile'];
 			const next = order[(order.indexOf(shell.pref) + 1) % order.length];

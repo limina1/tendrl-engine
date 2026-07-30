@@ -64,4 +64,7 @@ export type Command = {
 	 *  the user opts it in. User prefs override in either direction. */
 	hiddenByDefault?: boolean;
 	keybinding?: string;
+	/** Shells where this command is offered; absent = both. Literal union on
+	 *  purpose — types.ts must stay import-free of shell.svelte.ts. */
+	shells?: ('desktop' | 'mobile')[];
 };

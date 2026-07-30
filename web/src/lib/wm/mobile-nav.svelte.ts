@@ -1,0 +1,221 @@
+/**
+ * Mobile-shell back navigation — Android-grade Back over SvelteKit shallow
+ * routing. The mobile shell pushes one history entry per panel/buffer
+ * navigation (any source: bottom bar, drawer, palette, renderer openBuffer);
+ * Back first closes the topmost open overlay, then walks those entries, and
+ * at the baseline falls through to native page exit (which is what lets an
+ * Android WebView leave the app).
+ *
+ * Kit's router owns popstate in this SPA, so entries go through
+ * pushState/replaceState from $app/navigation and come back reactively via
+ * page.state — never window.history directly. `pushState('', state)`
+ * resolves '' against the current URL, so ?shell= survives every entry.
+ *
+ * Echo/loop prevention is structural, not flag-based: every entry carries a
+ * monotonic `seq` (our own push echoing back through page.state is detected
+ * by seq equality), and traversals set `current` BEFORE mutating the store,
+ * so the central watcher's equality guard suppresses a re-push.
+ *
+ * Desktop stays history-free: the watchers live in MobileShell, which only
+ * mounts when shell.mode === 'mobile'. After a mobile→desktop flip, stale
+ * mnav entries remain in history but nobody watches page.state — Back
+ * no-ops through them and then exits; re-entering mobile re-baselines.
+ *
+ * Leaf module: runtime imports are $app only; wm imports are type-only.
+ */
+
+import { pushState, replaceState } from '$app/navigation';
+import { page } from '$app/state';
+import type { ClassName } from './types';
+import type { BufferStore } from './buffer-store.svelte';
+
+export type MobileNavEntry = {
+	/** Per-page-load session id. History can hold same-URL entries from
+	 *  PREVIOUS loads of this app (reused browser tab); without the sid,
+	 *  an old entry's seq can collide with ours and get misread as an
+	 *  echo. Foreign-sid entries are absorbed instead (see syncFromHistory). */
+	sid: string;
+	/** Monotonic per-session; detects our own push echoing back. */
+	seq: number;
+	/** Active class panel. */
+	cls: ClassName;
+	/** The work slot's focused buffer id — tracked even while another class
+	 *  is active, so Back restores the work panel as the user left it. */
+	workBuf: string | null;
+};
+
+/** One per page load — entries carrying another sid are from a previous
+ *  load's history region. */
+const SID = typeof crypto !== 'undefined' && crypto.randomUUID
+	? crypto.randomUUID().slice(0, 8)
+	: String(Date.now());
+
+export type BackCloser = {
+	isOpen: () => boolean;
+	close: () => void;
+};
+
+class MobileNav {
+	/** The work-buffer drawer — lives here (not MobileShell-local) so Back
+	 *  can close it; it is always the topmost overlay in the chain. */
+	drawerOpen = $state(false);
+
+	/** Last entry we know to be current. Deliberately non-reactive
+	 *  bookkeeping — nothing renders from it. */
+	private current: MobileNavEntry | null = null;
+
+	/** True while WE are writing history state. Kit can flush effects
+	 *  synchronously inside push/replaceState, so the history watcher may
+	 *  observe an intermediate state (e.g. the guard, mid-persistBaseline)
+	 *  and misread it as a user traversal — this flag makes our own writes
+	 *  invisible to syncFromHistory. */
+	private writing = false;
+
+	private closers = new Map<string, { priority: number } & BackCloser>();
+
+	/** Idempotent by id — safe to call at +page script top level (the single
+	 *  always-mounted route); HMR just overwrites. */
+	registerCloser(id: string, priority: number, closer: BackCloser) {
+		this.closers.set(id, { priority, ...closer });
+	}
+
+	/** Write `current` to the history entry. On the very first mount tick
+	 *  kit's router isn't initialized yet and push/replaceState throw —
+	 *  retry once on the next macrotask, which lands after kit's start().
+	 *  The retry re-reads `current`, so it always persists the latest nav
+	 *  state, never a stale capture. */
+	private persist(kind: 'push' | 'replace', attempt = 0) {
+		const entry = this.current;
+		if (!entry) return;
+		this.writing = true;
+		try {
+			(kind === 'push' ? pushState : replaceState)('', { mnav: entry });
+		} catch {
+			if (attempt === 0) setTimeout(() => this.persist(kind, 1), 0);
+		} finally {
+			this.writing = false;
+		}
+	}
+
+	/** Baseline writes TWO entries: a guard (seq -1) replacing the current
+	 *  entry, then the live entry pushed above it. Back at the app's root
+	 *  therefore always fires popstate onto the guard — where an open
+	 *  overlay can consume the press — instead of silently no-opping
+	 *  (bottom of stack) or exiting with an overlay still open. */
+	private persistBaseline(guard: MobileNavEntry, attempt = 0) {
+		this.writing = true;
+		try {
+			replaceState('', { mnav: guard });
+			pushState('', { mnav: this.current! });
+		} catch {
+			if (attempt === 0) setTimeout(() => this.persistBaseline(guard, 1), 0);
+		} finally {
+			this.writing = false;
+		}
+	}
+
+	/** Close the topmost open overlay: drawer first, then registered closers
+	 *  by priority (highest = topmost). True if something was closed. */
+	closeTopOverlay(): boolean {
+		if (this.drawerOpen) {
+			this.drawerOpen = false;
+			return true;
+		}
+		const open = [...this.closers.values()]
+			.filter((c) => c.isOpen())
+			.sort((a, b) => b.priority - a.priority);
+		if (open.length === 0) return false;
+		open[0].close();
+		return true;
+	}
+
+	/** Central-watcher entry point: called (untracked) whenever the active
+	 *  class or work buffer changes, from ANY source. Synchronous. */
+	syncFromApp(cls: ClassName, workBuf: string | null) {
+		if (this.current === null) {
+			// Baseline. Adopt an existing seq (reload / shell re-entry) so
+			// monotonicity holds across the session. The write is ALWAYS
+			// deferred a macrotask: on the mount tick kit's router accepts
+			// replaceState but throws on pushState, which would strand the
+			// guard as the visible entry — an async effect flush then reads
+			// it as a user back-at-root and exits the app. One hop later
+			// both writes land atomically. (A user can't navigate within
+			// the ~0ms window, so ordering is safe.)
+			const seq = Math.max(0, page.state.mnav?.seq ?? 0);
+			this.current = { sid: SID, seq, cls, workBuf };
+			const guard: MobileNavEntry = { sid: SID, seq: -1, cls, workBuf };
+			setTimeout(() => this.persistBaseline(guard), 0);
+			return;
+		}
+		if (cls === this.current.cls && workBuf === this.current.workBuf) return;
+		this.current = { sid: SID, seq: this.current.seq + 1, cls, workBuf };
+		this.persist('push');
+	}
+
+	/** History-watcher entry point: called (untracked) when page.state
+	 *  changes — i.e. on back/forward traversal or our own push echo. */
+	syncFromHistory(entry: MobileNavEntry | undefined, store: BufferStore) {
+		if (this.writing) return; // our own write flushing synchronously
+		if (!this.current) return; // pre-baseline transient
+		// No mnav on the entry: this is the watcher's initial mount run
+		// (before the baseline persists), NOT a traversal — never react.
+		// Real root-backs land on the guard entry below, which carries
+		// state; that is the only exit path.
+		if (!entry) return;
+
+		// Guard (seq -1) or foreign territory (an entry written by a
+		// PREVIOUS load of this app in the same tab): the user pressed Back
+		// at the app's root. An open overlay consumes the press (close +
+		// restore the live entry above the guard); otherwise it's a
+		// deliberate exit — keep going back out of the app. In an Android
+		// WebView the next back() leaves clean history and the host exits
+		// the app; in a bottom-of-stack tab it no-ops harmlessly.
+		if (entry.sid !== this.current.sid || entry.seq < 0) {
+			if (this.closeTopOverlay()) {
+				this.persist('push');
+			} else {
+				window.history.back();
+			}
+			return;
+		}
+
+		if (entry.seq === this.current.seq) return; // echo of our own push
+
+		// Genuine traversal. An open overlay consumes it: close, then re-add
+		// the entry Back just popped (same seq → the echo is ignored).
+		if (this.closeTopOverlay()) {
+			this.persist('push');
+			return;
+		}
+
+		// Apply the popped entry. Set current first so the central watcher's
+		// equality guard suppresses a re-push from these store writes.
+		this.current = entry;
+		const pos = store.findSlotForClass(entry.cls);
+		if (pos) store.focusSlot(pos);
+		const wpos = store.findSlotForClass('work');
+		if (entry.workBuf && wpos) {
+			const ob = store.openBuffers.find((b) => b.buffer.id === entry.workBuf);
+			if (ob && store.focusedLeaf(wpos)?.buffer.id !== entry.workBuf) {
+				store.setLeaf(wpos, ob.buffer);
+			}
+		}
+		// Self-heal against partially applicable entries (killed buffer,
+		// missing slot): re-read what actually resulted.
+		this.current = {
+			sid: SID,
+			seq: entry.seq,
+			cls: store.focusedSlotClass() ?? entry.cls,
+			workBuf: wpos ? (store.focusedLeaf(wpos)?.buffer.id ?? null) : null
+		};
+	}
+
+	/** MobileShell teardown (shell flip to desktop). Closers persist —
+	 *  registration is idempotent and +page registers once. */
+	reset() {
+		this.current = null;
+		this.drawerOpen = false;
+	}
+}
+
+export const mobileNav = new MobileNav();

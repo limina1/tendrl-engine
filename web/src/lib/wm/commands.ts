@@ -39,11 +39,11 @@ export const commands: Command[] = [
 	{ id: 'tendrl-find-event', name: 'tendrl-find-event', description: 'Open a Nostr event by id or address into a reader', category: 'Buffer', scope: 'opener', deferred: true, keybinding: 'SPC f e' },
 	{ id: 'tendrl-find-draft', name: 'tendrl-find-draft', description: 'Open a draft into a composer', category: 'Buffer', scope: 'opener', deferred: true, keybinding: 'SPC f d' },
 	// Window
-	{ id: 'tendrl-toggle-rail', name: 'tendrl-toggle-rail', description: 'Collapse focused slot to rail (or expand if rail)', category: 'Window', scope: 'nav', keybinding: 'SPC w c' },
-	{ id: 'tendrl-split-window', name: 'tendrl-split-window', description: 'Split focused slot horizontally with another same-class buffer', category: 'Window', scope: 'nav', keybinding: 'SPC w s' },
+	{ id: 'tendrl-toggle-rail', name: 'tendrl-toggle-rail', description: 'Collapse focused slot to rail (or expand if rail)', category: 'Window', scope: 'nav', keybinding: 'SPC w c', shells: ['desktop'] },
+	{ id: 'tendrl-split-window', name: 'tendrl-split-window', description: 'Split focused slot horizontally with another same-class buffer', category: 'Window', scope: 'nav', keybinding: 'SPC w s', shells: ['desktop'] },
 	// Layout
-	{ id: 'tendrl-switch-layout', name: 'tendrl-switch-layout', description: 'Switch the active layout', category: 'Layout', scope: 'nav', deferred: true, keybinding: 'SPC l b' },
-	{ id: 'tendrl-save-layout', name: 'tendrl-save-layout', hiddenByDefault: true, description: 'Save the current frame configuration as a named layout', category: 'Layout', scope: 'nav', deferred: true },
+	{ id: 'tendrl-switch-layout', name: 'tendrl-switch-layout', description: 'Switch the active layout', category: 'Layout', scope: 'nav', deferred: true, keybinding: 'SPC l b', shells: ['desktop'] },
+	{ id: 'tendrl-save-layout', name: 'tendrl-save-layout', hiddenByDefault: true, description: 'Save the current frame configuration as a named layout', category: 'Layout', scope: 'nav', deferred: true, shells: ['desktop'] },
 	// Compose
 	{ id: 'tendrl-save-draft', name: 'tendrl-save-draft', hiddenByDefault: true, description: 'Save the current draft to the engine', category: 'Compose', scope: 'contextual', context: 'a composer buffer', deferred: true },
 	{ id: 'tendrl-publish-draft', name: 'tendrl-publish-draft', hiddenByDefault: true, description: 'Sign and broadcast the current draft', category: 'Compose', scope: 'contextual', context: 'a composer buffer', deferred: true },
@@ -72,6 +72,13 @@ export const commands: Command[] = [
 	{ id: 'tendrl-refresh', name: 'tendrl-refresh', description: 'Reload the focused buffer', category: 'Application', scope: 'contextual', context: 'a focused buffer', deferred: true, keybinding: 'SPC b R' },
 	{ id: 'tendrl-cycle-shell', name: 'tendrl-cycle-shell', description: 'Cycle the shell: auto → desktop (WM) → mobile (bottom bar)', category: 'Application', scope: 'action' }
 ];
+
+/** Whether a command is offered in the given shell (absent `shells` = both).
+ *  Takes the mode as a literal so this module stays a leaf — callers read
+ *  it from shell.svelte.ts. */
+export function commandInShell(c: Command, mode: 'desktop' | 'mobile'): boolean {
+	return !c.shells || c.shells.includes(mode);
+}
 
 /** Normal-mode keys hardwired in +page.svelte's onGlobalKeydown — the
  *  layer beneath the leader tree. Listed here so the settings keybinding

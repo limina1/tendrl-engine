@@ -1148,6 +1148,9 @@
 						{#if cmd.deferred}
 							<span class="cmdreg-badge">deferred</span>
 						{/if}
+						{#if cmd.shells?.length === 1}
+							<span class="cmdreg-badge cmdreg-badge--shell">{cmd.shells[0]}-only</span>
+						{/if}
 						{#if capture?.id === cmd.id}
 							{#if capture.error}
 								<span class="cmdreg-err">{capture.error}</span>
@@ -1610,6 +1613,10 @@
 		border-radius: var(--r-sm);
 		padding: 0 5px;
 		flex-shrink: 0;
+	}
+	.cmdreg-badge--shell {
+		border-style: solid;
+		color: var(--fg-alt);
 	}
 	.cmdreg-kb {
 		font-family: var(--font-mono);

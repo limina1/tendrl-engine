@@ -67,9 +67,10 @@ On branch =feat/mobile-shell=; full plan (phases, milestones, risks) in
 - [X] mobile shell: bottom-bar class panels + shell selection (auto /
   pref / =?shell==)
 - [X] Amethyst-style work-buffer drawer + minibuffer bottom sheet
-- [ ] phase A: back/history, cross-class opens, per-shell command
-  visibility → merge to =tendrl-web=; then buffer-internals + touch
-  highlights
+- [X] phase A gate: back/history (guard-entry design, CDP-verified),
+  cross-class opens, per-shell command visibility
+- [ ] phase A tail: buffer-internals mobile pass + touch highlights;
+  merge to =tendrl-web= when ready (deliberately held back for now)
 - [ ] phase B: Tauri 2 Android host (NDK build spike → platform
   adaptation → signing → debug APK)
 - [ ] phase C: share-intent import, reconnect discipline, mobile
