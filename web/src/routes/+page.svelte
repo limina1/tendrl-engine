@@ -1172,7 +1172,11 @@
 	});
 </script>
 
-<svelte:head><title>tendrl</title></svelte:head>
+<!-- Branch leads: tabs truncate from the end, and the favicon already says
+     "tendrl". Only the last path segment — the `feat/` class prefix spends
+     the ~20 visible chars on the part shared across branches; the full name
+     stays in the mode-line. -->
+<svelte:head><title>{app.engineBranch ? `${app.engineBranch.split('/').pop()} · tendrl` : 'tendrl'}</title></svelte:head>
 
 <svelte:window onkeydown={onGlobalKeydown} onfocusin={onFocusIn} onfocusout={onFocusOut} />
 
@@ -1394,6 +1398,9 @@
 						{identityPill.label}
 					</span>
 				{/if}
+			{/if}
+			{#if app.engineBranch}
+				<span class="ml__seg ml__branch" title="Git branch the engine is running from">{app.engineBranch}</span>
 			{/if}
 			{#if app.engineVersion}
 				<span class="ml__seg ml__version" title="Engine build version">v{app.engineVersion}</span>
@@ -2413,6 +2420,7 @@
 	}
 	/* Engine version — quiet, far-right informational tag. */
 	.ml__version { color: var(--base5, var(--base6)); font-variant-numeric: tabular-nums; opacity: 0.75; }
+	.ml__branch { color: var(--orange, var(--base6)); opacity: 0.85; }
 	.pill--btn {
 		border: none;
 		cursor: pointer;

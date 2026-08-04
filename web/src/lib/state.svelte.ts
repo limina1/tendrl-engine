@@ -553,6 +553,10 @@ function _createAppState() {
 	// The running engine build's version (from /health). Shown in the mode-line
 	// and Settings; null until the first fetch resolves.
 	let engineVersion: string | null = $state(null);
+	// Git branch the engine process runs from (dev/test checkouts only —
+	// release installs report none). Shown in the tab title + mode-line so
+	// concurrent branch tests are tellable apart.
+	let engineBranch: string | null = $state(null);
 
 	// --- Embedding ---
 	let embeddingStatus: EmbeddingStatusResponse | null = $state(null);
@@ -3865,7 +3869,7 @@ function _createAppState() {
 		loadDiscovery();
 		// Engine version for the mode-line / Settings. Fire-and-forget — it's
 		// purely informational, so a failure just leaves the segment hidden.
-		api.getHealth().then((h) => { engineVersion = h.version; }).catch(() => {});
+		api.getHealth().then((h) => { engineVersion = h.version; engineBranch = h.branch ?? null; }).catch(() => {});
 		// Fire all three cheap GETs in parallel — none depend on each
 		// other, and the modeline pills + chat composer all need this
 		// data ASAP. Previously getConfig was awaited before the other
@@ -4361,6 +4365,7 @@ function _createAppState() {
 
 		// Engine
 		get engineVersion() { return engineVersion; },
+		get engineBranch() { return engineBranch; },
 
 		// Embedding
 		get embeddingStatus() { return embeddingStatus; },

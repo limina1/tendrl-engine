@@ -168,16 +168,17 @@
 		app.pushToast(`Unresolved ${token.kind}: ${token.target}`, 'info');
 	}
 
-	// Inline autocomplete toggle (the mode-bar {{ }} button) + the embed builder
-	// modal it hands off to. The CM extension array (`nostrdownExt`) is assembled
-	// below, after `refSectionTitles`/`insertNostrdownToken` are in scope.
+	// The reference-builder modal behind the mode-bar {{ }} button, plus the
+	// inline-autocomplete checkbox beside it. The CM extension array
+	// (`nostrdownExt`) is assembled below, after `refSectionTitles`/
+	// `insertNostrdownToken` are in scope.
 	let autocompleteOn = $state(true);
 	let refBuilderOpen = $state(false);
-	// Which prefix the coordinate builder should emit — `embed` (inline) or
-	// `slot` (block-level transclude), set when it's opened from autocomplete.
-	let builderPrefix = $state<'embed' | 'slot'>('embed');
-	// When the embed builder is opened mid-token from autocomplete, the
-	// in-progress `{{embed:…` range it should replace on insert.
+	// Tab the builder opens on — `ref` from the toolbar button; `embed`/`slot`
+	// when autocomplete hands an in-progress token off to the builder.
+	let builderTab = $state<'ref' | 'wiki' | 'embed' | 'slot' | 'quote' | 'mention'>('ref');
+	// When the builder is opened mid-token from autocomplete, the in-progress
+	// `{{embed:…` range it should replace on insert.
 	let embedRange = $state<{ from: number; to: number } | null>(null);
 
 	// Composer walkthrough dropdown. The in-chrome `W` lists every composer
@@ -760,6 +761,19 @@
 		return null;
 	}
 
+	// The toolbar {{ }} button — open the builder fresh, inserting at the cursor.
+	// Guard up front: only the CM editors (plain mode / atomic body) can take the
+	// token, so don't let the user build one that has nowhere to land.
+	function openRefBuilder() {
+		if (!activeCmView()) {
+			app.pushToast('Switch to Plain mode (or an atomic body) to insert a reference', 'info');
+			return;
+		}
+		embedRange = null;
+		builderTab = 'ref';
+		refBuilderOpen = true;
+	}
+
 	function insertNostrdownToken(token: string) {
 		const view = activeCmView();
 		if (!view) {
@@ -814,7 +828,7 @@
 			wiki: wikiSuggestions,
 			openEmbedBuilder: (range, kind) => {
 				embedRange = range;
-				builderPrefix = kind;
+				builderTab = kind;
 				refBuilderOpen = true;
 			}
 		})
@@ -1291,16 +1305,21 @@
 				title="Re-lock unlocked sections that haven't been modified"
 			>Lock all</button>
 		{/if}
-		<!-- Reference autocomplete toggle — leads the affordance cluster. -->
+		<!-- Reference builder + autocomplete checkbox — lead the affordance cluster. -->
 		<button
 			class="affordance affordance--ref"
-			class:affordance--on={autocompleteOn}
-			onclick={() => (autocompleteOn = !autocompleteOn)}
-			title="Reference autocomplete — suggest ref / wiki / embed / quote as you type the brace syntax in the editor"
-			aria-label="Toggle reference autocomplete"
-			aria-pressed={autocompleteOn}
+			onclick={openRefBuilder}
+			title="Insert a reference — build a ref / wiki / embed / slot / quote / mention token at the cursor"
+			aria-label="Insert reference"
 			data-tour="compose-ref"
 		>&lbrace;&lbrace; &rbrace;&rbrace;</button>
+		<label
+			class="ref-auto"
+			title="Inline autocomplete — suggest ref / wiki / embed / quote as you type the brace syntax in the editor"
+		>
+			<input type="checkbox" bind:checked={autocompleteOn} />
+			auto
+		</label>
 		<!-- Read mirrors ReaderBuffer's "Edit" button — same on-screen
 		     position (toolbar far-right) so the Edit↔Read swap reads as
 		     a single mode toggle. When a source pub exists we navigate to
@@ -1676,8 +1695,7 @@
 
 <ReferenceBuilderModal
 	open={refBuilderOpen}
-	initialTab="embed"
-	embedPrefix={builderPrefix}
+	initialTab={builderTab}
 	sectionTitles={refSectionTitles}
 	oninsert={insertNostrdownToken}
 	onclose={() => {
@@ -2317,12 +2335,26 @@
 		position: relative;
 		display: inline-flex;
 	}
-	/* Reference-autocomplete toggle — lit when on (shares the global
-	   `.affordance` base with W / ?). */
-	.affordance--on {
-		border-color: var(--id-yours);
-		color: var(--id-yours);
-		background: color-mix(in srgb, var(--id-yours) 14%, transparent);
+	/* Autocomplete checkbox — the inline `{{` suggestion mode, beside the
+	   reference-builder button (which shares the global `.affordance` base
+	   with W / ?). */
+	.ref-auto {
+		display: inline-flex;
+		align-items: center;
+		gap: 4px;
+		font-family: var(--font-mono);
+		font-size: var(--t-2xs);
+		color: var(--fg-muted);
+		cursor: pointer;
+		user-select: none;
+	}
+	.ref-auto:hover {
+		color: var(--fg);
+	}
+	.ref-auto input {
+		accent-color: var(--id-yours);
+		margin: 0;
+		cursor: pointer;
 	}
 	.walk-backdrop {
 		position: fixed;

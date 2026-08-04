@@ -309,20 +309,20 @@ export const TIPS: Record<string, TourTip> = {
 		body: "The right rail mirrors the parse in real time: the document title, a tag count, and every section indented by its nesting depth. Reorder with `↑`/`↓`, send a section to chat, or read its provenance badge. Sections you haven't saved yet show a `new` pill.",
 		placement: 'left'
 	},
-	// Nostrdown chain — reference other events from your prose (toggle → forms).
+	// Nostrdown chain — reference other events from your prose (builder → forms).
 	'compose-nostrdown': {
 		key: 'compose-nostrdown',
 		anchor: 'compose-ref',
 		title: 'Nostrdown — link & quote',
-		body: "Reference other Nostr events right in your prose. This `{{ }}` button toggles inline autocomplete: type `{{` and pick a kind, then `Tab`/`Enter` to accept. In the reader (and here), plain-click a reference to *preview* it, `⌘/Ctrl-click` to *follow*.",
+		body: "Reference other Nostr events right in your prose. This `{{ }}` button opens the reference builder — pick a sibling section, wiki topic, embed, slot, quote, or profile mention and the token lands at your cursor. The `auto` checkbox keeps inline autocomplete on: type `{{` and pick a kind, then `Tab`/`Enter` to accept. In the reader (and here), plain-click a reference to *preview* it, `⌘/Ctrl-click` to *follow*.",
 		placement: 'bottom',
 		next: 'compose-nostrdown-syntax'
 	},
 	'compose-nostrdown-syntax': {
 		key: 'compose-nostrdown-syntax',
 		anchor: 'compose-plain',
-		title: 'The four forms',
-		body: "`{{ref:Section Title}}` links a sibling section · `{{wiki:topic}}` a wiki/article · `{{embed:naddr…}}` transcludes *any* event — a note, an article, even an `npub` profile — as a card · `{{quote:naddr…|the text}}` quotes a passage inline, attributed (markup-agnostic, no headings). Each reference also lands as a resolution tag (`a`/`e`/`p`/`wikilink`) on the event — check *Preview events* before you sign.",
+		title: 'The token forms',
+		body: "`{{ref:Section Title}}` links a sibling section · `{{wiki:topic}}` a wiki/article · `{{embed:naddr…}}` transcludes *any* event — a note, an article, even an `npub` profile — as a card · `{{quote:naddr…|the text}}` quotes a passage inline, attributed (markup-agnostic, no headings) · `{{slot:naddr…}}` (own line) slots a whole 30040/30041 in as a child section · `{{@npub…}}` mentions a profile. Each reference also lands as a resolution tag (`a`/`e`/`p`/`wikilink`) on the event — check *Preview events* before you sign.",
 		placement: 'top'
 	},
 	// E · Sections chain — the Full-view cards: cards → lock/claim → select → trash.
