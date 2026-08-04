@@ -83,13 +83,19 @@ engine over LAN (milestone M0, below). Ordered; A1–A3 gate the merge to
   Settings command registry.
 - [ ] *A4. Buffer-internals mobile pass* (open-ended tail; prioritize
   from real phone use after merge):
-  - [ ] composer: toolbar wrap at narrow widths (Cancel currently clips
-    at 390px), keyboard avoidance via =visualViewport=
+  - [X] composer: action-bar wrap at narrow widths (Cancel no longer
+    clips at 390px; =@media ≤600px= in ComposeView)
+  - [ ] composer: keyboard avoidance via =visualViewport=
   - [ ] reader: typography pass; TOC/outline as a swipe-in drawer
-  - [ ] modeline surfaces need a mobile home: network-mode pill, relays,
-    identity, embedding status → rows in the drawer or a status sheet
-    (the Confirm-mode fetch modal already renders fine on mobile)
-  - [ ] toasts: bottom-center above the nav bar (currently lower-right)
+  - [X] modeline surfaces' mobile home: STATUS section pinned at the
+    bottom of the work drawer — network row (dot + pill, tap toggles
+    auto/confirm), relays (opens relay buffer), identity (connect /
+    locked / @npub → connect flow, settings, or my profile), embedding
+    counter. Pills are the same deriveds as the desktop modeline,
+    prop-threaded from =+page= — one source. (The Confirm-mode fetch
+    modal already renders fine on mobile.)
+  - [X] toasts: bottom-center above the nav bar in the mobile shell
+    (=toast-stack--mobile=; desktop stays lower-right)
   - [ ] walkthrough/tours: per-shell anchor variants, or suppress
     desktop-anchored tours on mobile
 - [ ] *A5. Touch highlight capture.* Selection handles → action popover

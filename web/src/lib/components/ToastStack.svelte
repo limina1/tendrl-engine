@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { getAppState } from '$lib/state.svelte';
+	import { shell } from '$lib/wm/shell.svelte';
 	import { fly } from 'svelte/transition';
 
 	const app = getAppState();
@@ -31,7 +32,12 @@
 	}
 </script>
 
-<div class="toast-stack" aria-live="polite" aria-atomic="false">
+<div
+	class="toast-stack"
+	class:toast-stack--mobile={shell.mode === 'mobile'}
+	aria-live="polite"
+	aria-atomic="false"
+>
 	{#each app.toasts as t (t.id)}
 		<!-- svelte-ignore a11y_click_events_have_key_events -->
 		<!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -98,6 +104,15 @@
 		bottom: calc(var(--modeline-h, 23px) + 12px);
 		display: flex;
 		flex-direction: column;
+	}
+	/* Mobile shell: bottom-center above the nav bar (no modeline there). */
+	.toast-stack--mobile {
+		right: auto;
+		left: 50%;
+		transform: translateX(-50%);
+		align-items: center;
+		bottom: calc(56px + env(safe-area-inset-bottom));
+		max-width: min(92vw, 420px);
 		gap: 6px;
 		align-items: flex-end;
 		/* Above every modal layer (modals are 100–110, popover 120). */

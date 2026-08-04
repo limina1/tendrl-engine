@@ -2208,6 +2208,13 @@
 		border-top: 1px solid var(--border);
 		flex-shrink: 0;
 	}
+	/* Narrow (mobile) widths: wrap the action row instead of clipping the
+	   trailing buttons off the right edge. */
+	@media (max-width: 600px) {
+		.compose-actions {
+			flex-wrap: wrap;
+		}
+	}
 
 	/* Saved-drafts list — collapsible, sits just above the action row. */
 	.compose-drafts {

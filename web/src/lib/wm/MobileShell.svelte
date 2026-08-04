@@ -11,12 +11,30 @@
 	// the work class gets a vertical rail of its open buffers (the mobile
 	// reading of the desktop pane tabs). Splits are desktop-only: only the
 	// focused leaf of the active class renders here.
+	// Status pills are computed in +page (single source shared with the
+	// desktop modeline) and prop-threaded here; the drawer just renders
+	// them. Tap routing likewise stays in +page (onIdentityTap knows the
+	// pill kind; onToggleNetwork flips auto/confirm).
+	type StatusPill = { label: string; pillClass: string; dotClass?: string };
+
 	let {
 		store,
-		onCommands
+		onCommands,
+		networkPill = null,
+		identityPill = null,
+		embeddingPill = null,
+		onToggleNetwork,
+		onOpenRelays,
+		onIdentityTap
 	}: {
 		store: BufferStore;
 		onCommands: () => void;
+		networkPill?: StatusPill | null;
+		identityPill?: StatusPill | null;
+		embeddingPill?: StatusPill | null;
+		onToggleNetwork?: () => void;
+		onOpenRelays?: () => void;
+		onIdentityTap?: () => void;
 	} = $props();
 
 	// Bottom-bar order + user-facing labels. 'research' reads as "search" on
@@ -148,6 +166,52 @@
 				}}
 				title="Commands — open buffers, act (M-x)"
 			>+ commands</button>
+
+			<!-- Mobile home for the desktop modeline's status pills. -->
+			<div class="mshell__drawer-sp"></div>
+			<div class="mshell__status">
+				<div class="mshell__status-head">status</div>
+				{#if networkPill}
+					<button
+						class="mshell__status-row"
+						onclick={onToggleNetwork}
+						title="Toggle network mode (auto / confirm)"
+					>
+						{#if networkPill.dotClass}<span class="dot {networkPill.dotClass}"></span>{/if}
+						<span class="mshell__status-label">network</span>
+						<span class="pill {networkPill.pillClass}">{networkPill.label}</span>
+					</button>
+				{/if}
+				<button
+					class="mshell__status-row"
+					onclick={() => {
+						mobileNav.drawerOpen = false;
+						onOpenRelays?.();
+					}}
+					title="Relay configuration"
+				>
+					<span class="mshell__status-label">relays</span>
+				</button>
+				{#if identityPill}
+					<button
+						class="mshell__status-row"
+						onclick={() => {
+							mobileNav.drawerOpen = false;
+							onIdentityTap?.();
+						}}
+						title="Identity / signing"
+					>
+						<span class="mshell__status-label">identity</span>
+						<span class="pill {identityPill.pillClass}">{identityPill.label}</span>
+					</button>
+				{/if}
+				{#if embeddingPill}
+					<div class="mshell__status-row mshell__status-row--static">
+						{#if embeddingPill.dotClass}<span class="dot {embeddingPill.dotClass}"></span>{/if}
+						<span class="mshell__status-label">{embeddingPill.label}</span>
+					</div>
+				{/if}
+			</div>
 		</nav>
 	{/if}
 
@@ -358,6 +422,43 @@
 	.mshell__drawer-add:hover {
 		color: var(--accent);
 		border-color: var(--accent);
+	}
+	.mshell__drawer-sp {
+		flex: 1;
+	}
+	.mshell__status {
+		border-top: 1px solid var(--panel-border);
+		padding: var(--s-2) 0 0;
+	}
+	.mshell__status-head {
+		font-family: var(--font-mono);
+		font-size: var(--t-3xs);
+		color: var(--fg-alt);
+		text-transform: uppercase;
+		letter-spacing: 0.08em;
+		padding: 0 var(--s-3) var(--s-1);
+	}
+	.mshell__status-row {
+		width: 100%;
+		display: flex;
+		align-items: center;
+		gap: var(--s-2);
+		border: none;
+		background: none;
+		color: var(--fg);
+		text-align: left;
+		font-family: var(--font-mono);
+		font-size: var(--t-xs);
+		padding: var(--s-2) var(--s-3);
+		min-height: 40px;
+		cursor: pointer;
+	}
+	.mshell__status-row--static {
+		cursor: default;
+	}
+	.mshell__status-label {
+		flex: 1;
+		color: var(--fg-alt);
 	}
 
 	.mshell__panel {

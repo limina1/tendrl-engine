@@ -1178,7 +1178,20 @@
 
 <div class="page">
 	{#if shell.mode === 'mobile'}
-		<MobileShell {store} onCommands={() => openMinibuffer('mx')} />
+		<MobileShell
+			{store}
+			onCommands={() => openMinibuffer('mx')}
+			{networkPill}
+			{identityPill}
+			{embeddingPill}
+			onToggleNetwork={toggleNetworkMode}
+			onOpenRelays={openRelays}
+			onIdentityTap={() => {
+				if (identityPill.kind === 'connect') connectIdentity();
+				else if (identityPill.kind === 'me') openMyProfile();
+				else openSettings();
+			}}
+		/>
 		{#if mb.mode !== 'closed'}
 			<div class="mshell-sheet">
 				{@render minibufferStrip()}
