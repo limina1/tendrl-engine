@@ -416,6 +416,8 @@ export interface EmbeddingStatusResponse {
 export interface HealthResponse {
 	status: string;
 	version: string;
+	/** Git branch of the checkout the engine runs from; absent outside a repo. */
+	branch?: string;
 }
 
 export type NetworkMode = 'auto' | 'confirm';

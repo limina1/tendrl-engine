@@ -36,6 +36,11 @@ pub struct QueryRequest {
 pub struct HealthResponse {
     pub status: String,
     pub version: String,
+    /// Git branch of the checkout the engine process is running from, when
+    /// detectable (dev/test runs launched inside the repo). Omitted for
+    /// installs that run outside a git checkout.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub branch: Option<String>,
 }
 
 /// POST /api/v1/query
@@ -237,7 +242,28 @@ pub async fn health_handler() -> Json<HealthResponse> {
     Json(HealthResponse {
         status: "ok".to_string(),
         version: env!("CARGO_PKG_VERSION").to_string(),
+        branch: git_branch(),
     })
+}
+
+/// The git branch of the working directory the engine was launched from,
+/// resolved once per process. `None` when git is unavailable, the CWD is not
+/// a checkout, or HEAD is detached — so release installs report nothing.
+fn git_branch() -> Option<String> {
+    static BRANCH: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+    BRANCH
+        .get_or_init(|| {
+            let out = std::process::Command::new("git")
+                .args(["rev-parse", "--abbrev-ref", "HEAD"])
+                .output()
+                .ok()?;
+            if !out.status.success() {
+                return None;
+            }
+            let name = String::from_utf8(out.stdout).ok()?.trim().to_string();
+            (!name.is_empty() && name != "HEAD").then_some(name)
+        })
+        .clone()
 }
 
 // ============================================================================
