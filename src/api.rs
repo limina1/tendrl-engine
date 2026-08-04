@@ -248,8 +248,17 @@ pub async fn health_handler() -> Json<HealthResponse> {
 
 /// The git branch of the working directory the engine was launched from,
 /// resolved once per process. `None` when git is unavailable, the CWD is not
-/// a checkout, or HEAD is detached — so release installs report nothing.
+/// a checkout, or HEAD is detached.
+///
+/// Debug builds only — this is a *development* affordance (knowing which
+/// checkout each engine serves while working across branches/worktrees via
+/// `cargo run` / `start.sh`). Release builds compile the lookup out: a
+/// shipped binary launched from inside any unrelated git checkout must not
+/// report that repo's branch, and release tab titles stay plain "tendrl".
 fn git_branch() -> Option<String> {
+    if !cfg!(debug_assertions) {
+        return None;
+    }
     static BRANCH: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
     BRANCH
         .get_or_init(|| {
