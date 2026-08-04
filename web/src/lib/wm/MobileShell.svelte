@@ -23,6 +23,7 @@
 		networkPill = null,
 		identityPill = null,
 		embeddingPill = null,
+		engineInfo = null,
 		onToggleNetwork,
 		onOpenRelays,
 		onIdentityTap
@@ -32,6 +33,9 @@
 		networkPill?: StatusPill | null;
 		identityPill?: StatusPill | null;
 		embeddingPill?: StatusPill | null;
+		/** Engine build info (version + git branch) — the mobile parity of
+		 *  the mode-line's version/branch segments. */
+		engineInfo?: { version: string | null; branch: string | null } | null;
 		onToggleNetwork?: () => void;
 		onOpenRelays?: () => void;
 		onIdentityTap?: () => void;
@@ -209,6 +213,18 @@
 					<div class="mshell__status-row mshell__status-row--static">
 						{#if embeddingPill.dotClass}<span class="dot {embeddingPill.dotClass}"></span>{/if}
 						<span class="mshell__status-label">{embeddingPill.label}</span>
+					</div>
+				{/if}
+				{#if engineInfo?.version || engineInfo?.branch}
+					<div
+						class="mshell__status-row mshell__status-row--static"
+						title={engineInfo.branch ? `Git branch the engine is running from: ${engineInfo.branch}` : ''}
+					>
+						<span class="mshell__status-label">
+							engine{engineInfo.version ? ` v${engineInfo.version}` : ''}{engineInfo.branch
+								? ` · ${engineInfo.branch.split('/').pop()}`
+								: ''}
+						</span>
 					</div>
 				{/if}
 			</div>

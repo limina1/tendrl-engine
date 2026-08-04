@@ -1188,6 +1188,7 @@
 			{networkPill}
 			{identityPill}
 			{embeddingPill}
+			engineInfo={{ version: app.engineVersion, branch: app.engineBranch }}
 			onToggleNetwork={toggleNetworkMode}
 			onOpenRelays={openRelays}
 			onIdentityTap={() => {
