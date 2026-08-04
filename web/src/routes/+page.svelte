@@ -1065,7 +1065,11 @@
 	});
 </script>
 
-<svelte:head><title>{app.engineBranch ? `tendrl · ${app.engineBranch}` : 'tendrl'}</title></svelte:head>
+<!-- Branch leads: tabs truncate from the end, and the favicon already says
+     "tendrl". Only the last path segment — the `feat/` class prefix spends
+     the ~20 visible chars on the part shared across branches; the full name
+     stays in the mode-line. -->
+<svelte:head><title>{app.engineBranch ? `${app.engineBranch.split('/').pop()} · tendrl` : 'tendrl'}</title></svelte:head>
 
 <svelte:window onkeydown={onGlobalKeydown} onfocusin={onFocusIn} onfocusout={onFocusOut} />
 
