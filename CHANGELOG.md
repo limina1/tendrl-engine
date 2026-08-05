@@ -1,3 +1,17 @@
+## v0.6.0 — 2026-07-26
+
+- feat(web): ship the curated palette + binding defaults
+- feat(web): command visibility + rebindable keys from the Settings registry
+- feat(web): command + keybinding registries in Settings
+- docs(zettel): highlight-epoch write-up — 9802 anatomy, wire preview, modal yield, proto-citations
+- feat(web): highlighter remembers its draft across close/reopen
+- fix(web): highlighter yields to the publish-confirm modal
+- feat(highlight): event-json preview — the exact template publish would sign
+- fix(web): focus the minibuffer query field on every open path
+- fix(web): preserve paragraph breaks in the highlighter preview
+- feat(web): general highlighter modal — M-x tendrl-highlight
+- feat(discussions): URL + NIP-73 external sources for kind-9802 highlights
+
 ## v0.5.1 — 2026-07-09
 
 - feat(publish): stamp ["client", "tendrl"] on every signed event
