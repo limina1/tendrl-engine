@@ -2010,9 +2010,14 @@ impl<'a> PublicationEngine<'a> {
         }
 
         // Load the containing index once; ref:/slug-embed: resolve against its
-        // sections + nested indexes.
+        // sections + nested indexes. The FULL tree, not the shallow load:
+        // `collect_sibling_addrs` walks `nested` recursively, so a section
+        // three tiers down (index → group → subgroup → note) is only a
+        // resolvable sibling if the nested indexes were actually loaded.
+        // Depth 4 matches the deepest structures we emit (and the walker's
+        // cycle cap keeps pathological trees bounded).
         let publication = match publication_atag.and_then(NAddr::from_a_tag) {
-            Some(addr) => self.load_publication(&addr, policy).await.ok(),
+            Some(addr) => self.load_publication_tree(&addr, 4, policy).await.ok(),
             None => None,
         };
 
@@ -2244,7 +2249,10 @@ impl<'a> PublicationEngine<'a> {
     /// index, each loaded once and tagged with its human handles (title-slug
     /// plus literal d-tag) so `{{ref:slug}}` / slug `{{embed:slug}}` can match.
     async fn load_sibling_index(&self, pubn: &Publication, policy: FetchPolicy) -> Vec<SiblingEntry> {
-        let mut addrs = Vec::new();
+        // The publication's own address is a sibling too: a section may
+        // reference its containing work ("see the index"), and self-contained
+        // publications (e.g. a kasten) link the root from every Related list.
+        let mut addrs = vec![pubn.addr.clone()];
         collect_sibling_addrs(pubn, &mut addrs);
         let mut out = Vec::with_capacity(addrs.len());
         for addr in addrs {

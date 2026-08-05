@@ -1,0 +1,92 @@
+#+TITLE: Idea: external-source highlights as proto-citations
+#+TYPE: idea
+#+STATUS: brainstorm — write side shipped, consumer side unbuilt
+#+DATE: 2026-07-26
+
+* The observation
+
+The general highlighter can now publish a kind-9802 whose source is a
+book (=["i", "isbn:9780765382030"]=) or a paper
+(=["i", "doi:10.1038/nphys1170"]=). Look at what such an event already
+contains: a verbatim excerpt (=.content=), a canonical machine-readable
+source identifier (the =i= tag), and optionally the reader's own
+commentary (=comment= tag), signed and timestamped. That is /most of a
+citation/ — specifically, it is the evidence half of one. What
+[[file:idea-citations.org][kind 30161]] formalizes on top is the
+*reusable metadata half*: title, authors, publisher, edition — entered
+once, referenced by many publications.
+
+So there's a natural pipeline hiding here:
+
+  read a book → highlight passages against its ISBN (cheap, in the
+  moment) → later, when writing, promote: mint one 30161 for the ISBN,
+  and every highlight against that =i= tag becomes a quotable,
+  provenance-carrying citation candidate.
+
+The highlights are the raw capture; the citation event is the curated
+index. Neither duplicates the other: the 9802 keeps the excerpt and the
+moment of reading, the 30161 keeps the bibliographic record.
+
+* Why the id normalization matters so much here
+
+Aggregation by source only works if the identifier is byte-identical
+across events. This is the same lesson as comment-thread splitting
+(worksheet A6), but the stakes compound over years of reading: =ISBN
+978-0-7653-8203-0=, =isbn:9780765382030=, and =9780765382030= must all
+land on one =i= value or the "everything from this book" query silently
+shards. The engine's =normalize_external_id= is therefore the
+load-bearing wall — hyphens/spaces stripped, labels dropped, DOIs
+lowercased and de-URL-ed. Any future entry surface (import from
+Readwise, a bookmarklet, a mobile share target) must route through it.
+
+* What the ecosystem does (and where we'd differ)
+
+- [[file:cmp-readwise.org][Readwise]] is the closest product shape:
+  highlights aggregated by book, resurfaced over time. But its store is
+  proprietary and its "source" is a fuzzy title string. Ours is a
+  signed event on relays with a canonical id — portable and queryable
+  by anyone (=REQ {"#i": ["isbn:…"]}= is a one-filter relay query).
+- [[file:cmp-hypothesis.org][Hypothesis]] anchors annotations to *live
+  documents* and fights drift with selector ensembles. External-id
+  highlights sidestep that entirely: a book excerpt doesn't drift; the
+  cost is that it can't be re-anchored into a rendered view at all.
+  Display is always "excerpt + citation", never an overlay.
+- [[file:cmp-zotero.org][Zotero]] models the metadata half richly but
+  treats excerpts as private notes. The 9802/30161 split keeps both
+  halves public, signed, and separately authored.
+
+* What's missing (the actual idea)
+
+Data exists; representation exists; the gaps are queries and UI:
+
+1. *Source-grouped highlight list* — a buffer (or profile tab) that
+   groups the user's 9802s by =i= / =r= value: "12 highlights from
+   isbn:97808…". One nostrdb query + a group-by; the engine already
+   parses every tag it needs.
+2. *Promote to citation* — from that group view, "mint 30161" pre-fills
+   the citation form with the id; optionally fetch metadata (ISBN →
+   OpenLibrary, DOI → Crossref) via a Confirm-gated engine fetch, per
+   [[file:feat-network.org][network philosophy]]. Each highlight in the
+   group becomes a candidate quote for ={{cite:…}}= insertion.
+3. *Author attribution* — NIP-84 allows =p= tags with an =author= role
+   on non-nostr sources. The modal doesn't ask today; the promote step
+   is the natural place (once the 30161 knows the author's npub, back-
+   reference it).
+4. *Compose-side surfacing* — while writing, "my highlights matching
+   this topic" (semantic search already embeds 9802 content — kind 9802
+   is in =DEFAULT_EMBED_KINDS=) becomes a quote-suggestion panel.
+
+* Promotion path
+
+Stays =brainstorm= until the 30161 code exists
+([[file:idea-citations.org][citations]] is =spec — deferred=); item 1
+(source-grouped list) is independently shippable and would prove the
+aggregation value before any citation machinery lands.
+
+* Related
+- [[file:index.org][Index]]
+- [[file:feat-discussions.org][Discussions & highlights]] — the shipped write side
+- [[file:idea-citations.org][Citations (kind 30161)]] — the metadata half
+- [[file:idea-citation-intents.org][Citation intents]]
+- [[file:idea-resurfacing.org][Resurfacing]] — Readwise-style review over this data
+- [[file:cmp-readwise.org][Readwise]] / [[file:cmp-zotero.org][Zotero]] / [[file:cmp-hypothesis.org][Hypothesis]]

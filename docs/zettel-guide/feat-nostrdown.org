@@ -52,13 +52,6 @@ Markdown/Org/AsciiDoc/plain content. Normative grammar:
     card reports itself resolved once it's done fetching, so the =N/M refs= count
     tracks the real relay-fetch work, not the instant =/resolve=.
 
-Sibling resolution hardening (2026-08-05): =resolve_refs= loads the containing
-publication as a *full tree* (depth 4), so ={{ref:…}}= targets nested any
-number of tiers down resolve; and the publication's own root address joins the
-sibling set, so "see the index" refs resolve too. Driven by the kasten
-pipeline (=docs/zettel-guide/=, =scripts/build-kasten-events.py=), whose
-imported publications are 3-tier trees with deterministic d-tags.
-
 * Accepted tasks (this feature epoch) — complete
 
 Both epoch tasks landed (2026-07-05): ={{@…}}= mentions and the parsing-boundary

@@ -1,0 +1,61 @@
+#+TITLE: Idea: annotation anchoring robustness & orphan state
+#+TYPE: idea
+#+STATUS: brainstorm — out of scope, captured for orientation
+#+DATE: 2026-07-05
+
+* What it means — the Hypothesis comparison
+
+Hypothesis's engineering lesson from a decade of web annotation: no
+single selector survives document change. Each annotation stores an
+*ensemble* — exact quote + prefix/suffix context + character position —
+and re-anchoring tries a cascade (exact → position → context-guided
+fuzzy → full fuzzy search). When confidence fails, the annotation is
+*orphaned*: kept, flagged, listed separately — never silently lost, never
+silently misplaced. Their chronic bug class is silent anchoring failure;
+the orphan state is the honest fallback.
+
+* Why tendrl mostly — but not entirely — sidesteps this
+
+A highlight (9802) anchored to an *event id* targets immutable content:
+the anchor can never drift. The problem returns exactly where liveness
+does: highlights/annotations on an naddr (replaceable) target face
+re-anchoring on every republish of that section. Same problem class as
+[[file:idea-version-semantics.org][version semantics]], surfacing in the
+annotation layer.
+
+* Data
+
+On 9802s (and future annotation kinds) we create: store the selector
+ensemble as tags — exact quoted text (already conventional in 9802
+content), plus prefix/suffix context and offset hints. Cheap at creation
+time; priceless at re-anchor time.
+
+* Representation (engine)
+
+- Re-anchor pass when resolving highlights against a *newer* version than
+  the one annotated: exact match → context fuzzy → orphan. (NIP-84
+  resolution is already engine-side; this extends it across versions.)
+- Resolution response carries ={anchored | moved | orphaned}= per
+  highlight.
+
+* UI/UX
+
+- =moved= renders normally (maybe a subtle marker); =orphaned= highlights
+  collect in a section-level "orphaned annotations" drawer with the
+  quoted text and the version they were made against — jump to that
+  pinned version to see them in place.
+
+* Open questions
+
+- Selector tag format: adopt W3C Web Annotation vocabulary
+  (TextQuoteSelector/TextPositionSelector) for interop, or minimal
+  custom tags?
+- Fuzzy matching cost on large sections (Hypothesis uses
+  diff-match-patch; fine at section granularity).
+
+* Related
+
+- [[file:index.org][Index]]
+- [[file:feat-discussions.org][Feature: discussions & highlights]]
+- [[file:idea-version-semantics.org][Idea: version semantics]]
+- [[file:cmp-hypothesis.org][Hypothesis]]

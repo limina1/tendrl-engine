@@ -65,6 +65,22 @@
 			(token.kind === 'ref' || token.kind === 'embed' || token.kind === 'wiki') &&
 			!NOSTR_ENTITY_RE.test(token.target)
 		) {
+			// Pinned-coordinate match first: an imported/resumed draft's refs
+			// target section d-tags, which never appear in heading text — a
+			// title-slug scan alone can't see them.
+			const pinned = compose.sections.find((s) => s.d_tag === token.target);
+			if (pinned) {
+				return {
+					kind: 'embed',
+					start: 0,
+					end: 0,
+					target: token.target,
+					label: pinned.title,
+					found: true,
+					event_kind: 30041,
+					title: pinned.title
+				} as ResolvedRef;
+			}
 			const hit = await findHeading(view.state.doc.toString(), await slug(token.target));
 			if (hit) {
 				return {
@@ -80,7 +96,14 @@
 			}
 		}
 		try {
-			const m = await resolveNostrdown([{ key: 'k', content: token.raw }]);
+			// Engine fallback WITH the draft's sections as siblings, so
+			// `ref:`/slug-`embed:` resolve pre-publish exactly as they do in
+			// the draft-reader preview (d-tag / title-slug match engine-side).
+			const siblings = compose.sections.map((s) => ({
+				title: s.title || undefined,
+				d_tag: s.d_tag ?? s.source_addr?.d_tag ?? s.id
+			}));
+			const m = await resolveNostrdown([{ key: 'k', content: token.raw, siblings }]);
 			return m['k']?.[0] ?? null;
 		} catch {
 			return null;
