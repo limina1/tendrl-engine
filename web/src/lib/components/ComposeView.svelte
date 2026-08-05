@@ -57,9 +57,14 @@
 	const NOSTR_ENTITY_RE = /^(nostr:)?(naddr1|nevent1|note1)/i;
 
 	// Resolve a token to a ResolvedRef for the preview card: a sibling heading in
-	// this draft (unpublished, no event yet) or the engine's resolution.
+	// this draft (unpublished, no event yet) or the engine's resolution. A
+	// `[[wikilink]]` checks the draft's own headings too — a topic naming a
+	// sibling section is an internal link, same as `{{ref:}}`.
 	async function previewRefFor(token: NostrdownToken, view: EditorView): Promise<ResolvedRef | null> {
-		if ((token.kind === 'ref' || token.kind === 'embed') && !NOSTR_ENTITY_RE.test(token.target)) {
+		if (
+			(token.kind === 'ref' || token.kind === 'embed' || token.kind === 'wiki') &&
+			!NOSTR_ENTITY_RE.test(token.target)
+		) {
 			const hit = await findHeading(view.state.doc.toString(), await slug(token.target));
 			if (hit) {
 				return {
@@ -130,10 +135,14 @@
 	}
 
 	// mod-click on a recognized token: jump to a sibling heading in this buffer
-	// (works while drafting, before anything is published), else resolve against
-	// the db and open the target event.
+	// (works while drafting, before anything is published — wikilinks included:
+	// a topic naming a sibling heading is an internal link), else resolve
+	// against the db and open the target event.
 	async function followNostrdown(token: NostrdownToken, view: EditorView) {
-		if ((token.kind === 'ref' || token.kind === 'embed') && !NOSTR_ENTITY_RE.test(token.target)) {
+		if (
+			(token.kind === 'ref' || token.kind === 'embed' || token.kind === 'wiki') &&
+			!NOSTR_ENTITY_RE.test(token.target)
+		) {
 			const hit = await findHeading(view.state.doc.toString(), await slug(token.target));
 			if (hit) {
 				view.dispatch({ selection: { anchor: hit.pos }, scrollIntoView: true });

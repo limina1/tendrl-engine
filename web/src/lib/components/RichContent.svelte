@@ -9,7 +9,13 @@
 	import EmbedCard from './EmbedCard.svelte';
 	import { pubkeyToHighlightFill, pubkeyToHighlightStroke } from '$lib/discussions/colors';
 	import type { HighlightSpan } from '$lib/discussions/highlights';
-	import { buildSegments, type ResolvedRef, type ParsedToken } from '$lib/nostr/nostrdown';
+	import {
+		buildSegments,
+		coordMatchesAddr,
+		splitCoord,
+		type ResolvedRef,
+		type ParsedToken
+	} from '$lib/nostr/nostrdown';
 	import type { ResolutionTracker } from '$lib/nostr/resolution-progress.svelte';
 
 	const app = getAppState();
@@ -21,7 +27,8 @@
 		tokens = [],
 		resolution = undefined,
 		focusedHighlightId = null,
-		muted = false
+		muted = false,
+		onopenlocal = undefined
 	}: {
 		content: string;
 		spans?: HighlightSpan[];
@@ -34,7 +41,13 @@
 		resolution?: ResolutionTracker;
 		focusedHighlightId?: string | null;
 		muted?: boolean;
+		/** In-document navigation hand-off: a ref that resolved to a sibling
+		 *  section of the same document but isn't on screen (e.g. the paginated
+		 *  view renders one section at a time). Return true when handled. */
+		onopenlocal?: ((coord: string) => boolean) | undefined;
 	} = $props();
+
+	let rootEl = $state<HTMLElement | undefined>();
 
 	const segments = $derived(buildSegments(content, spans, refs, tokens, focusedHighlightId));
 
@@ -52,12 +65,40 @@
 		return `background: ${fill}; box-shadow: inset 3px 0 0 ${stroke};`;
 	}
 
-	// Open a resolved reference: an addressable in the reader (publication /
-	// section / article / wiki), or a user (npub embed) in the profile view.
+	// A ref that resolved to a sibling section rendered in the same enclosing
+	// view (the continuous reader / draft preview stamps `data-section-addr` on
+	// every section) is an internal link — scroll to it in place. Matching
+	// tolerates a missing pubkey on either side: a draft sibling's synthetic
+	// coordinate is `"30041::<id>"` while an imported section's anchor carries
+	// its source pubkey.
+	function scrollToLocalSection(coord: string): boolean {
+		const container = rootEl?.closest('[data-section-addr]')?.parentElement;
+		if (!container) return false;
+		for (const el of container.querySelectorAll<HTMLElement>('[data-section-addr]')) {
+			const addr = splitCoord(el.dataset.sectionAddr ?? '');
+			if (addr && coordMatchesAddr(coord, { ...addr, kind: Number(addr.kind) })) {
+				el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+				return true;
+			}
+		}
+		return false;
+	}
+
+	// Open a resolved reference: a sibling of the same document scrolls/pages
+	// in place; any other addressable opens in the reader (publication /
+	// section / article / wiki); a user (npub embed) opens the profile view.
 	// nevent/note embeds have no addressable coordinate — preview only, for now.
 	function openRef(ref: ResolvedRef) {
-		if (ref.coord) app.openCoord(ref.coord);
-		else if (ref.event_kind === 0 && ref.author_pubkey) app.navigateToProfile(ref.author_pubkey);
+		if (ref.coord) {
+			if (scrollToLocalSection(ref.coord)) return;
+			if (onopenlocal?.(ref.coord)) return;
+			// A draft sibling's coordinate has no pubkey — there is no published
+			// event to open, and the in-view paths above are the only navigation.
+			if (splitCoord(ref.coord)?.pubkey) app.openCoord(ref.coord);
+			else app.pushToast(`"${ref.label}" is a section of this draft`, 'info');
+		} else if (ref.event_kind === 0 && ref.author_pubkey) {
+			app.navigateToProfile(ref.author_pubkey);
+		}
 		// An unresolved wiki link doesn't dead-end — open the search frame seeded
 		// with the topic (Auto auto-fetches, Confirm searches local + offers relays).
 		else if (ref.kind === 'wiki') app.openSearchFor(`k:30818 d:${ref.target}`, ref.target);
@@ -103,7 +144,7 @@
      source span) so selection capture can map DOM positions back to UTF-16
      content offsets. Text runs get a style-free wrapper span for the same
      reason — inline and inert inside the pre-wrap. -->
-<pre class="section-content" class:muted>{#each segments as seg, i (i)}{#if seg.type === 'highlight'}<mark class="hl-overlay" data-hl-ids={seg.highlight.id} data-src-start={seg.srcStart} style={styleFor(seg.highlight.pubkey, seg.highlight.focused)} title="NIP-84 highlight {seg.highlight.id.slice(0, 8)}… by {seg.highlight.pubkey.slice(0, 12)}…">{seg.text}</mark>{:else if seg.type === 'ref'}{#if seg.ref.kind === 'embed' || seg.ref.kind === 'quote' || seg.ref.kind === 'slot'}<span data-src-start={seg.srcStart} data-src-end={seg.srcEnd}><EmbedCard ref={seg.ref} onopen={openRef} {resolution} /></span>{:else}<button class="nd-ref nd-ref--{seg.ref.kind}" class:nd-unresolved={!seg.ref.found} data-src-start={seg.srcStart} data-src-end={seg.srcEnd} onclick={() => openRef(seg.ref)} onmouseenter={(e) => showPreview(e, seg.ref)} onmouseleave={hidePreview} onfocus={(e) => showPreview(e, seg.ref)} onblur={hidePreview} disabled={!seg.ref.coord && !(seg.ref.event_kind === 0 && seg.ref.author_pubkey) && seg.ref.kind !== 'wiki'} title={refTitle(seg.ref)}>{seg.ref.kind === 'mention' ? '@' : ''}{seg.ref.label}</button>{/if}{:else if seg.type === 'token'}<span class="nd-token nd-token--{seg.kind}" data-src-start={seg.srcStart} data-src-end={seg.srcEnd} title="{seg.kind}: {seg.target} — resolving…">{seg.display || seg.target}</span>{:else}<span data-src-start={seg.srcStart}>{seg.text}</span>{/if}{/each}</pre>
+<pre class="section-content" class:muted bind:this={rootEl}>{#each segments as seg, i (i)}{#if seg.type === 'highlight'}<mark class="hl-overlay" data-hl-ids={seg.highlight.id} data-src-start={seg.srcStart} style={styleFor(seg.highlight.pubkey, seg.highlight.focused)} title="NIP-84 highlight {seg.highlight.id.slice(0, 8)}… by {seg.highlight.pubkey.slice(0, 12)}…">{seg.text}</mark>{:else if seg.type === 'ref'}{#if seg.ref.kind === 'embed' || seg.ref.kind === 'quote' || seg.ref.kind === 'slot'}<span data-src-start={seg.srcStart} data-src-end={seg.srcEnd}><EmbedCard ref={seg.ref} onopen={openRef} {resolution} /></span>{:else}<button class="nd-ref nd-ref--{seg.ref.kind}" class:nd-unresolved={!seg.ref.found} data-src-start={seg.srcStart} data-src-end={seg.srcEnd} onclick={() => openRef(seg.ref)} onmouseenter={(e) => showPreview(e, seg.ref)} onmouseleave={hidePreview} onfocus={(e) => showPreview(e, seg.ref)} onblur={hidePreview} disabled={!seg.ref.coord && !(seg.ref.event_kind === 0 && seg.ref.author_pubkey) && seg.ref.kind !== 'wiki'} title={refTitle(seg.ref)}>{seg.ref.kind === 'mention' ? '@' : ''}{seg.ref.label}</button>{/if}{:else if seg.type === 'token'}<span class="nd-token nd-token--{seg.kind}" data-src-start={seg.srcStart} data-src-end={seg.srcEnd} title="{seg.kind}: {seg.target} — resolving…">{seg.display || seg.target}</span>{:else}<span data-src-start={seg.srcStart}>{seg.text}</span>{/if}{/each}</pre>
 {#if preview}
 	<!-- svelte-ignore a11y_no_static_element_interactions -->
 	<div

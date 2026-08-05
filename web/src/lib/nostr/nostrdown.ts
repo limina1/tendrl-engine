@@ -94,6 +94,30 @@ export interface ParsedToken {
 	end: number;
 }
 
+/** Split an addressable coordinate `"kind:pubkey:d_tag"` (the d-tag may itself
+ *  contain `:`), or null if it isn't one. */
+export function splitCoord(
+	coord: string
+): { kind: string; pubkey: string; d_tag: string } | null {
+	const i1 = coord.indexOf(':');
+	const i2 = coord.indexOf(':', i1 + 1);
+	if (i1 < 0 || i2 < 0) return null;
+	return { kind: coord.slice(0, i1), pubkey: coord.slice(i1 + 1, i2), d_tag: coord.slice(i2 + 1) };
+}
+
+/** Does a resolved ref's `coord` address this section? Exact match, or — when
+ *  either side lacks a pubkey (a draft sibling's synthetic coordinate is
+ *  `"30041::<id>"`) — a kind + d-tag match. Used for in-document navigation:
+ *  a ref that lands on a section of the same view scrolls/pages to it. */
+export function coordMatchesAddr(
+	coord: string,
+	addr: { kind: number; pubkey: string; d_tag: string }
+): boolean {
+	const c = splitCoord(coord);
+	if (!c || c.kind !== String(addr.kind) || c.d_tag !== addr.d_tag) return false;
+	return c.pubkey === addr.pubkey || c.pubkey === '' || addr.pubkey === '';
+}
+
 interface Overlay {
 	start: number;
 	end: number;

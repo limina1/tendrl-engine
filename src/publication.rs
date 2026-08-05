@@ -2021,8 +2021,11 @@ impl<'a> PublicationEngine<'a> {
         // human handles — title-slug (the `T` tag / normalized title) plus the
         // literal d-tag — and match the slug against those. Built once (bounded
         // by sibling count) and only when a slug-based ref is actually present.
+        // Wiki refs consult it too: a `[[wikilink]]` naming a section of the
+        // containing document resolves to that section before any global lookup.
         let needs_siblings = refs.iter().any(|r| {
-            matches!(r.kind, RefKind::Ref) || (matches!(r.kind, RefKind::Embed) && !r.is_entity)
+            matches!(r.kind, RefKind::Ref | RefKind::Wiki)
+                || (matches!(r.kind, RefKind::Embed) && !r.is_entity)
         });
         let mut siblings = match (needs_siblings, &publication) {
             (true, Some(p)) => self.load_sibling_index(p, policy).await,
@@ -2039,10 +2042,7 @@ impl<'a> PublicationEngine<'a> {
             for ds in draft_siblings {
                 let mut slugs = vec![ds.d_tag.clone()];
                 if let Some(t) = ds.title.as_deref().filter(|t| !t.is_empty()) {
-                    let slug = crate::publication::compose::ComposeState::generate_d_tag(t);
-                    if !slug.is_empty() {
-                        slugs.push(slug);
-                    }
+                    push_title_slugs(&mut slugs, t);
                 }
                 siblings.push(SiblingEntry {
                     addr: NAddr::new(KIND_PUBLICATION_SECTION, "", &ds.d_tag),
@@ -2104,7 +2104,13 @@ impl<'a> PublicationEngine<'a> {
                     .await;
                 }
                 RefKind::Wiki => {
-                    if let Some(ev) = self.find_wiki_event(&r.target, author, policy).await {
+                    // Document-local first: a wikilink whose topic names a
+                    // sibling section (of the draft or the containing
+                    // publication) is an internal link — the author referencing
+                    // their own section title beats a same-named global topic.
+                    if let Some(s) = siblings.iter().find(|s| s.matches(&r.target)) {
+                        s.fill(&mut resolved, false, display_given);
+                    } else if let Some(ev) = self.find_wiki_event(&r.target, author, policy).await {
                         resolved.naddr = event_naddr(&ev);
                         resolved.coord = event_coord(&ev);
                         apply_event(&mut resolved, &ev, false, display_given);
@@ -2227,10 +2233,7 @@ impl<'a> PublicationEngine<'a> {
                     slugs.push(t);
                 }
                 if let Some(title) = first_tag_value(ev, "title") {
-                    let slug = crate::publication::compose::ComposeState::generate_d_tag(&title);
-                    if !slug.is_empty() {
-                        slugs.push(slug);
-                    }
+                    push_title_slugs(&mut slugs, &title);
                 }
             }
             out.push(SiblingEntry {
@@ -2441,6 +2444,23 @@ pub struct DraftSibling {
     #[serde(default)]
     pub title: Option<String>,
     pub d_tag: String,
+}
+
+/// Both slug forms of a human title, appended to a sibling's handle list.
+/// Parsed `{{ref:}}`/`[[wiki]]` targets arrive NIP-54-normalized
+/// ([`crate::nostrdown::normalize`], punctuation dropped: `aesops-fables`) while
+/// d-tags/`T` tags are minted with [`ComposeState::generate_d_tag`] (punctuation
+/// → `-`: `aesop-s-fables`) — the two diverge on punctuated titles, so a
+/// sibling answers to either.
+fn push_title_slugs(slugs: &mut Vec<String>, title: &str) {
+    for slug in [
+        crate::publication::compose::ComposeState::generate_d_tag(title),
+        crate::nostrdown::normalize(title),
+    ] {
+        if !slug.is_empty() && !slugs.contains(&slug) {
+            slugs.push(slug);
+        }
+    }
 }
 
 /// Collect every section + nested-index address in `pubn`, depth-first.
@@ -4475,6 +4495,90 @@ mod tests {
         );
 
         // A ref naming no draft sibling stays unresolved.
+        assert!(!refs[1].found);
+    }
+
+    /// A `[[wikilink]]` whose topic names a sibling section of the containing
+    /// publication is an internal link: it resolves to that section (by
+    /// title-slug — the d-tag is a nanoid) and beats a global wiki article
+    /// carrying the same d-tag.
+    #[tokio::test]
+    async fn test_resolve_refs_wiki_prefers_publication_sibling() {
+        let pk_owned = test_pubkey();
+        let pk = pk_owned.as_str();
+        let ch3 = NAddr::new(KIND_PUBLICATION_SECTION, pk, "sec-7h2x9");
+        let root_idx = NAddr::new(KIND_PUBLICATION_INDEX, pk, "root-idx");
+        // A global 30818 sharing the section's title-slug — the sibling wins.
+        let decoy = fixture_event(
+            pk,
+            30818,
+            serde_json::json!([["d", "chapter-three"], ["title", "Chapter Three (global)"]]),
+            "global article body",
+        );
+        let (engine, _dir) = engine_with_events(&[
+            fixture_section(pk, "sec-7h2x9", "Chapter Three", "ch3 body"),
+            fixture_index(pk, "root-idx", "Root", &[&ch3]),
+            decoy,
+        ])
+        .await;
+        let pe = PublicationEngine::new(&engine);
+
+        let refs = pe
+            .resolve_refs(
+                "See [[Chapter Three]].",
+                Some(&root_idx.to_a_tag()),
+                Some(pk),
+                &[],
+                FetchPolicy::LocalOnly,
+            )
+            .await;
+        assert_eq!(refs.len(), 1);
+        let r0 = &refs[0];
+        assert_eq!(r0.kind, crate::nostrdown::RefKind::Wiki);
+        assert!(r0.found, "wikilink resolved document-locally");
+        assert_eq!(
+            r0.coord.as_deref(),
+            Some(format!("{KIND_PUBLICATION_SECTION}:{pk}:sec-7h2x9").as_str()),
+            "the sibling section wins over the same-slug global wiki article"
+        );
+        assert_eq!(r0.label, "Chapter Three");
+    }
+
+    /// In the composer, a `[[wikilink]]` naming another section of the unsigned
+    /// draft resolves against the inline sibling list — including a punctuated
+    /// title, whose NIP-54 slug (`aesops-fables`) differs from its minted d-tag
+    /// form (`aesop-s-fables`).
+    #[tokio::test]
+    async fn test_resolve_refs_wiki_draft_siblings() {
+        let (engine, _dir) = engine_with_events(&[]).await;
+        let pe = PublicationEngine::new(&engine);
+
+        let siblings = vec![DraftSibling {
+            title: Some("Aesop's Fables".to_string()),
+            d_tag: "sec-abc123".to_string(),
+        }];
+        let refs = pe
+            .resolve_refs(
+                "As told in [[Aesop's Fables]]; but [[Unwritten]].",
+                None,
+                None,
+                &siblings,
+                FetchPolicy::LocalOnly,
+            )
+            .await;
+        assert_eq!(refs.len(), 2);
+
+        let r0 = &refs[0];
+        assert_eq!(r0.kind, crate::nostrdown::RefKind::Wiki);
+        assert!(r0.found, "wikilink resolved against the draft's own section");
+        assert_eq!(r0.title.as_deref(), Some("Aesop's Fables"));
+        assert_eq!(
+            r0.coord.as_deref(),
+            Some(format!("{KIND_PUBLICATION_SECTION}::sec-abc123").as_str())
+        );
+
+        // A topic naming nothing local stays unresolved (→ the UI's search
+        // fallback).
         assert!(!refs[1].found);
     }
 
