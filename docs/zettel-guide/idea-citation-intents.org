@@ -1,0 +1,54 @@
+#+TITLE: Idea: typed citation intents (supports / contradicts)
+#+TYPE: idea
+#+STATUS: brainstorm — depends on citations landing
+#+DATE: 2026-07-05
+
+* What it means
+
+A raw citation count hides the most important fact about a claim: whether
+the citing literature *supports* or *refutes* it. scite.ai classified
+citation contexts at scale and found ~92.6% merely mention, 6.5% support,
+0.8% contrast — the rare typed edges carry nearly all the signal.
+Semantic Scholar's citation-intent work confirms the same: typed edges
+beat untyped edges for scholarly graphs. scite needs an ML model to
+recover intent post-hoc; an authoring tool can just *ask the author*, and
+on Nostr the assertion is signed.
+
+* Data
+
+A nostrdown modifier on the cite reference:
+={{cite:smith-2024|supports}}= / =|contradicts= / =|extends= / (default:
+mention). Emitted as a tag on the *citing* event alongside the =cite=
+resolution tag, e.g. =["cite", d-tag, "30161:pk:d-tag", relay, "supports"]=
+(exact slot TBD with the citation spec). Author-asserted, per-edge,
+verifiable.
+
+* Representation (engine)
+
+- Parse the modifier; carry intent through resolution.
+- Aggregation query per cited target: "N supporting / M contradicting /
+  K mentions known locally" — a backlink-family join
+  ([[file:idea-backlinks.org][same machinery]]), filtered to cite edges,
+  grouped by intent.
+
+* UI/UX
+
+- On any cited event's header/card: a small tally chip ("3 ⊕ / 1 ⊖"),
+  expandable into the citing contexts (the sentence around each
+  ={{cite:}}= — we have the content, we can show the passage).
+- In compose: the reference builder offers the intent as a fourth field,
+  defaulting to plain mention — zero friction when you don't care.
+
+* Open questions
+
+- Vocabulary: supports/contradicts/extends/mentions enough? (scite's
+  taxonomy says yes; resist growth.)
+- Should intent live on the 30161 citation event instead of the citing
+  edge? (No — the same source can support one claim and contradict
+  another; intent is a property of the *edge*.)
+
+* Related
+
+- [[file:index.org][Index]]
+- [[file:idea-citations.org][Idea: citations (30161)]]
+- [[file:idea-event-badges.org][Idea: event badges]] (tally rendering)

@@ -1,0 +1,58 @@
+#+TITLE: Idea: backlinks — "referenced by" panel
+#+TYPE: idea
+#+STATUS: brainstorm — out of scope, captured for orientation
+#+DATE: 2026-07-05
+
+* What it means
+
+A *backlink* is the reverse of a reference: if section B contains
+={{ref:A}}= or an =a= tag pointing at A, then "B references A" — and when
+you are reading A, you should be able to see that. Obsidian's insight is
+that the link is /stored one-way, rendered two-way/: authors only ever
+write forward links; the app maintains a global reverse index and shows a
+"what links here" panel on every note. Nothing extra is stored — the
+panel is *derived*.
+
+* Data (nothing new is written)
+
+The forward edges already exist in signed events: =a=/=e=/=q= tags (index
+membership, embeds, quotes), =w= and =ref= tags (emitted by nostrdown on
+signing), =p= tags (mentions). A backlink query is: "all events carrying a
+tag whose value is this id/coordinate" — a filter nostrdb can already
+answer. Scope note: the answer is only as complete as the local store;
+that partiality is inherent (and honest — it is *your* library's view).
+
+* Representation (engine)
+
+One endpoint, e.g. =GET /api/v1/events/:addr/backlinks=, returning
+referencing events grouped by edge type (embedded-in / quoted-by /
+cited-by / included-in-index / mentioned-by). Pure Rust derivation —
+squarely inside the boundary rule. No new stored state, no migration.
+
+* UI/UX
+
+- A collapsible "Referenced by" rail or drawer in the reader (and on
+  profile/event views), grouped by edge type with counts.
+- Each entry: title/author/date chrome + jump-to (open the referencing
+  event with the reference highlighted).
+- Counts can also feed the [[file:idea-event-badges.org][badge row]] so any
+  card anywhere shows "referenced by N".
+
+* Why it matters here
+
+It makes the reference graph *visible* instead of write-only — the payoff
+for all the tag emission nostrdown already does — and it is the
+cheapest of the reader-loop ideas (a join + a pane).
+
+* Open questions
+
+- Group-by-edge-type vs one flat list with type chips?
+- Does index-membership (a 30040 listing this section) belong here or
+  only in breadcrumbs? (Probably both; it *is* a backlink.)
+
+* Related
+
+- [[file:index.org][Index]]
+- [[file:feat-nostrdown.org][Feature: nostrdown]] (tag emission substrate)
+- [[file:idea-event-badges.org][Idea: event badges]]
+- [[file:cmp-pkm.org][PKM comparison]] (Obsidian backlinks)

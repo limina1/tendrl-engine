@@ -1,0 +1,73 @@
+#+TITLE: Feature: nostrdown reference layer
+#+TYPE: feature
+#+STATUS: implemented
+#+DATE: 2026-07-05
+
+The markup-agnostic ={{ }}= reference syntax linking Nostr events across
+Markdown/Org/AsciiDoc/plain content. Normative grammar:
+=docs/nostrdown-spec.md=; citations: =nips/NKBIP-03-revised-2.adoc= (kind
+30161); MIME =m=/=M= tag vocabulary: =nips/NKBIP-06.adoc=; design provenance:
+=docs/nostrdown.org=; working plan: =docs/nostrdown-planning.org=.
+
+* What exists (merged on this branch)
+
+- Parser (=src/nostrdown.rs=): ={{ref|wiki|embed|quote|slot:target|display}}=
+  plus the =[[ ]]= wikilink alias (markup-native link targets skipped) and the
+  ={{@npub}}=/={{@nprofile}}= mention shorthand; NIP-54 slug normalization;
+  byte + UTF-16 spans; ~27 unit tests.
+- Mentions (=RefKind::Mention=): ={{@npub…}}=/={{@nprofile…}}= resolve the kind-0
+  profile and render inline as an =@handle= link (not the full card), emitting
+  =["p", pubkey, relay?]=; ={{@name}}= by contact name stays reserved.
+- Resolution (=publication.rs::resolve_refs=, =POST /api/v1/nostrdown/resolve=):
+  =ref= → sibling sections by title-slug (draft siblings resolve pre-publish);
+  =embed= → entity, LocalOnly with pending→fetch via Confirm intents
+  (=/nostrdown/fetch-entity=); =wiki= → kinds 30818/30023/30041 by normalized
+  d-tag, scored author > wiki-kind > recency.
+- Tag emission on signing (=reference_tags()=): =w= (wiki), =ref=, =a=/=q=/=p=
+  per reference kind — the substrate for [[file:idea-backlinks.org][backlinks]]
+  and [[file:idea-event-badges.org][badges]].
+- Grammar is engine-only (=POST /nostrdown/parse= → =ParsedToken= spans;
+  =POST /nostrdown/normalize= → NIP-54 slugs). The reader chips from =/parse=,
+  the editor decorates via a debounced =/parse= (=StateField=-held, remapped
+  through edits), the composer's slug matching uses a cached =/normalize=
+  (=slugs.ts=). No TS grammar/slug twins remain —
+  [[file:decision-nostrdown-parsing.org][the parsing decision]] is done.
+- =slot= transclusion: contributes an =a= tag to the parent index, mints no
+  30041.
+- Web: RichContent overlay rendering, EmbedCard, ReferenceBuilderModal,
+  CodeMirror decoration + autocomplete.
+- Reader/UX polish (2026-07-06):
+  - =slot= is recognised inline (=RefKind::Slot=, header-only resolve) and renders
+    as a card; the draft preview maps a slot-*section* back to a ={{slot:…}}=
+    reference so it actually shows (published, it stays an =a=-tag child node of
+    the index, never inline content).
+  - ={{@…}}= mention click follows to the profile (reader *and* editor); an
+    unresolved =wiki= / =[[ ]]= click opens the search frame seeded with the topic
+    (=app.openSearchFor= + an =onSearch= nav handler) — Auto auto-fetches, Confirm
+    searches local and offers relays, the standing
+    [[file:feat-network.org][network intent]] flow.
+  - Resolution-progress bar in the reader toolbar (=ReaderBuffer= + =DraftReader=):
+    a per-reader tracker *prop-threaded* to the embed cards — never context, per
+    the [[file:feat-shell.org][shell lifecycle constraint]]. Each embed/quote/slot
+    card reports itself resolved once it's done fetching, so the =N/M refs= count
+    tracks the real relay-fetch work, not the instant =/resolve=.
+
+* Accepted tasks (this feature epoch) — complete
+
+Both epoch tasks landed (2026-07-05): ={{@…}}= mentions and the parsing-boundary
+cleanup (parse/normalize endpoints + TS twins deleted). The epoch is done; this
+branch is ready to fast-forward into =tendrl-web=.
+
+* Not implemented (spec'd or open)
+
+- ={{cite:}}= / kind 30161 — [[file:idea-citations.org][idea zettel]]
+- pin/live version semantics — [[file:idea-version-semantics.org][idea zettel]]
+
+=#fragment= navigation was *dropped from the grammar* (decided) —
+[[file:q-heading-anchors.org][q-heading-anchors]].
+
+* Related
+
+- [[file:index.org][Index]]
+- [[file:feat-compose.org][Feature: compose]]
+- [[file:feat-reader.org][Feature: reader]]

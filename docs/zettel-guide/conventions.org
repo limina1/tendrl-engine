@@ -1,0 +1,55 @@
+#+TITLE: Zettelkasten & Documentation Conventions
+#+TYPE: meta
+#+STATUS: current
+#+DATE: 2026-07-05
+
+* The zettelkasten (=docs/zettel/=)
+
+Flat folder, one idea per note, links over hierarchy. =index.org= is the
+single map; it organizes, the notes connect. Filenames are kebab-case with
+a type prefix so a link's nature is explicit:
+
+- =feat-*= — what exists (feature map; status implemented/partial)
+- =idea-*= — brainstorm / feature request, articulated as data →
+  representation → UI/UX; out of implementation scope until promoted
+- =cmp-*= — software we model off of; where similarities exist
+- =decision-*= — a choice made, with rationale
+- =q-*= — open question, unresolved
+- =tool-*= — dev tooling / test fixtures (regenerable, not user-facing)
+- =scope-*=, =mission=, =conventions=, =index= — meta
+
+Header block on every zettel:
+=#+TITLE:= / =#+TYPE:= (feature | idea | decision | question | comparison |
+meta) / =#+STATUS:= / =#+DATE:=.
+
+STATUS vocabulary: =implemented= / =partial= / =spec= (spec'd, code absent) /
+=brainstorm= / =deferred= / =out-of-scope= / =open= / =current= (meta docs).
+
+Every zettel ends with a =* Related= list of org links, always including
+[[file:index.org][the index]]. Link liberally; a link to a not-yet-written
+zettel marks something worth writing, not an error.
+
+* Maintenance rules
+
+- A change that ships a user-visible feature updates the matching =feat-*=
+  zettel in the same commit/PR (one line is enough). The kasten is the
+  feature inventory; =docs/features.org= is a pointer to it.
+- Promoting an =idea-*= to scheduled work: change its STATUS to =plan=,
+  move its entry under "In flight" in the index, and open the branch.
+- Tick, don't delete: when an idea ships, it becomes or links to a
+  =feat-*= zettel; the idea note stays as provenance.
+
+* Doc lifecycle (all of =docs/=)
+
+Every doc declares =#+STATUS:= one of: =CURRENT= (describes reality) /
+=DESIGN= (vision, unshipped) / =PLAN= (committed intent) / =REPORT=
+(point-in-time) / =LOG= (append-only). When a plan ships, its doc updates
+to CURRENT or moves to =docs/archive/= in the same PR.
+
+CLAUDE.md links into the kasten for standing guidance instead of
+reproducing it — keep zettels short so that stays cheap.
+
+* Related
+
+- [[file:index.org][Index]]
+- [[file:mission.org][Mission]]

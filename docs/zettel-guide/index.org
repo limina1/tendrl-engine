@@ -1,0 +1,126 @@
+#+TITLE: The Tendrl Map
+#+TYPE: meta
+#+STATUS: current
+#+DATE: 2026-07-05
+
+The single index of the tendrl zettelkasten: what exists, what is
+implemented, ideas, decisions, open questions, and the software we model
+off of. One idea per note; links do the organizing. Format and
+maintenance rules: [[file:conventions.org][conventions]].
+
+* Orientation
+
+- [[file:mission.org][Mission]] — reader, writer, reference manager on
+  Nostr; emphasis tiers (writer/research first); orientation dials
+- [[file:conventions.org][Conventions]] — zettel format, doc lifecycle,
+  maintenance rules
+- [[file:scope-boundaries.org][Scope boundaries]] — WoT, multi-user,
+  private layers, named frontends: remembered, not built
+- [[file:../orientation-report.org][Orientation report (2026-07-05)]] and
+  [[file:../orientation-decisions.org][decision intake]] — the review this
+  kasten grew from
+
+* What exists — the feature map
+
+The engine and web surface as shipped. Each note: what it is, what
+exists (with code paths), gaps.
+
+** Research
+- [[file:feat-search.org][Search]] — structured query parser, profile search
+- [[file:feat-embeddings.org][Embeddings]] — in-process ONNX + HNSW, =~:= semantic search
+- [[file:feat-profiles.org][Profiles]] — kind-0 resolution, profile views
+
+** Writing & publishing
+- [[file:feat-compose.org][Compose]] — markup-agnostic full/plain modes, drafts, forking
+- [[file:feat-nostrdown.org][Nostrdown]] — the ={{ }}= / =[[ ]]= reference layer (partial; epoch in flight)
+- [[file:feat-publishing.org][Publishing]] — signing-is-the-snapshot, broadcast, local tracking
+- [[file:feat-identity.org][Identity & signing]] — NIP-49, keyring, NIP-07
+
+** Reading
+- [[file:feat-feed.org][Feed]] — publication cards, provenance
+- [[file:feat-reader.org][Reader]] — view modes, nested TOCs, highlights
+- [[file:feat-discussions.org][Discussions & highlights]] — 9802 anatomy, source families, both capture surfaces
+
+** Substrate
+- [[file:feat-network.org][Network modes]] — FetchPolicy, Auto/Confirm intents
+- [[file:feat-relays.org][Relay sets]] — general/fetch/publish, relays.json
+- [[file:feat-import.org][Document import]] — PDF/DOCX/EPUB/HTML → events, JSONL ingest/export
+- [[file:feat-assistant.org][LLM assistant]] — chat fragments, agentic tool-calling
+- [[file:feat-shell.org][WM shell]] — buffers, slots, modal nav
+- [[file:feat-ui-patterns.org][UI patterns]] — the interaction-pattern
+  catalog: blessed primitives, divergence ledger, relay-entry case study
+- [[file:feat-appearance.org][Appearance]] — themes, walkthroughs
+
+* Decisions
+
+- [[file:decision-nostrdown-parsing.org][Nostrdown parsing lives in Rust]]
+  — markup-agnostic grammar is data-layer, not display-layer
+- [[file:q-heading-anchors.org][Heading anchors dropped from the grammar]]
+  — sub-section addressing belongs to the markup engine; make it a 30041 instead
+
+* In flight — the nostrdown feature epoch
+
+Both accepted tasks landed (2026-07-05); the epoch is *complete* and this branch
+is ready to fast-forward into =tendrl-web= (tracked in
+[[file:feat-nostrdown.org][the feature note]]):
+- [X] implement ={{@…}}= mentions (=RefKind::Mention=)
+- [X] Rust parse endpoint; delete the TS grammar twins
+
+* In flight — relay deletion & list sync
+
+On branch =relay-deletion=; spec in
+[[file:idea-relay-deletion-and-sync.org][the idea note]]:
+- [X] phase 1: per-row local delete + sync badges (frontend only)
+- [X] phase 2: diff-gate the existing relay-list publish (10002/30002)
+
+* Ideas — captured, not scheduled
+
+Brainstorm notes articulating data → representation → UI/UX. Promotion
+path: [[file:conventions.org][conventions]].
+
+** Reader loop
+- [[file:idea-backlinks.org][Backlinks panel]] — derived reverse index; cheapest high-value join
+- [[file:idea-see-also.org][Semantic "See Also"]] — ambient relatedness + promote-to-ref
+- [[file:idea-reading-states.org][Reading states]] — inbox/later/archive triage
+- [[file:idea-resurfacing.org][Resurfacing]] — deliberate review of the knowledge layer
+- [[file:idea-status-metadata.org][Status & confidence metadata]] — perpetual drafts made legible
+
+** Reference manager
+- [[file:idea-citations.org][Citations (kind 30161)]] — spec'd, deferred; open issues noted
+- [[file:idea-external-source-highlights.org][External-source highlights → citations]] — isbn/doi 9802s as the evidence half
+- [[file:idea-citation-intents.org][Typed citation intents]] — supports/contradicts edges
+- [[file:idea-registry-metadata.org][Registry metadata resolution]] — DOI/ISBN → citable on import
+- [[file:idea-citation-export.org][Citation export]] — BibTeX/CSL-JSON, materialized
+- [[file:idea-annotation-anchoring.org][Annotation anchoring]] — selector ensembles, orphan state
+
+** Reference semantics
+- [[file:idea-version-semantics.org][Pin-vs-live & staleness]] — version contract, carbon copying
+
+** Social discovery
+- [[file:idea-post-hoc-labeling.org][Post-hoc labeling]] — labels as retrieval signals; hydration join
+- [[file:idea-feeds-as-indexes.org][Feeds as 30040 indexes]] — algorithm output as artifact
+- [[file:idea-event-badges.org][Event badges]] — annotation follows the identifier, + relay provenance
+- [[file:idea-spells.org][Spells (kind 777)]] — portable, composable saved queries; pipelines, spellbooks
+
+** Substrate & network
+- [[file:idea-entity-hinted-relay-intent.org][Entity-hinted relay intent]] — surface a naddr/nevent's TLV relays in the Confirm modal; hinted-vs-full choice
+
+* Tooling & fixtures
+
+- [[file:tool-collatz-fixture.org][Collatz graph fixture]] — regenerable
+  cyclic test publication for the reader graph (local ingest only)
+
+* Open questions
+
+- [[file:q-knowledgebase.org][knowledgebase/]] — staging area or permanent parallel store?
+
+* Software we model off of
+
+- [[file:cmp-zotero.org][Zotero]] — metadata at reading speed; orthogonal axes; CSL; BBT export
+- [[file:cmp-citavi.org][Citavi]] — knowledge items + outline-as-composition (our closest ancestor)
+- [[file:cmp-readwise.org][Readwise Reader]] — triage, universal highlights, daily review; the Pocket warning
+- [[file:cmp-hypothesis.org][Hypothesis / W3C annotation]] — selector ensembles, orphans, layered visibility
+- [[file:cmp-pkm.org][PKM lineage]] — Obsidian/Roam/Zettelkasten/Xanadu/Gwern
+- [[file:cmp-bluesky.org][Bluesky / AT]] — labelers, feed generators, the hydration join
+- [[file:cmp-folksonomy.org][Folksonomy]] — del.icio.us/Pinboard, hashtag failure modes
+- [[file:cmp-library-tools.org][DEVONthink / Recoll / Calibre]] — see-also, search layers, managed library
