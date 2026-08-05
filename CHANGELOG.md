@@ -1,3 +1,17 @@
+## v0.6.1 — 2026-08-05
+
+- feat: refs navigate in-document; isolated doc buffers resolve refs
+- fix: entity targets resolve in ref and wikilink position
+- fix: wikilinks resolve against the containing document before the global wiki
+- fix(web): thread pinned section d-tags through the draft lifecycle
+- fix(engine): resolve refs against the full publication tree + root
+- feat(scripts): kasten build/import/pdf pipeline
+- docs: portable zettelkasten guide (zettel-guide/)
+- fix(web): branch pill is a dev affordance — compile it out of release builds
+- fix(web): tab title leads with the short branch name
+- feat: surface the engine's git branch in /health, tab title, and mode-line
+- feat(web): {{ }} button opens the reference builder; autocomplete becomes a checkbox
+
 ## v0.6.0 — 2026-07-26
 
 - feat(web): ship the curated palette + binding defaults
