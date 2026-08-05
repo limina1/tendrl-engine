@@ -9,12 +9,16 @@
 
 	let {
 		compose,
+		publicationDTag = null,
 		ontogglereadonly,
 		onremove,
 		onunlockall,
 		onlockall
 	}: {
 		compose: ComposeState;
+		/** The draft's own publication d-tag (session identity) — lets
+		 *  `{{ref:<publication-d>}}` ("see the index") resolve in preview. */
+		publicationDTag?: string | null;
 		ontogglereadonly?: (id: string) => void;
 		onremove?: (id: string) => void;
 		onunlockall?: () => void;
@@ -54,15 +58,21 @@
 	// Inline sibling context for nostrdown `{{ref:…}}` resolution in the preview.
 	// A draft has no events in nostrdb, so the engine can't load its sections to
 	// match a ref slug — we pass each section's title (the human slug source) +
-	// its d-tag (real if imported, else the synthetic compose id) so the engine
-	// resolves refs against the draft itself. Mirrors the editor's local
-	// `findHeading`, but keeps the title→slug match engine-side.
-	const draftSiblings = $derived(
-		compose.sections.map((s) => ({
+	// its d-tag (the PINNED coordinate when the draft carries one — that's what
+	// imported kastens' `{{ref:stem}}` refs target — else the source addr, else
+	// the synthetic compose id) so the engine resolves refs against the draft
+	// itself. Mirrors the editor's local `findHeading`, but keeps the
+	// title→slug match engine-side. The draft's own root is a sibling too, so
+	// `{{ref:<publication-d>}}` ("see the index") resolves in preview.
+	const draftSiblings = $derived([
+		...compose.sections.map((s) => ({
 			title: s.title || undefined,
-			d_tag: s.source_addr?.d_tag ?? s.id
-		}))
-	);
+			d_tag: s.d_tag ?? s.source_addr?.d_tag ?? s.id
+		})),
+		...(publicationDTag
+			? [{ title: compose.title || undefined, d_tag: publicationDTag }]
+			: [])
+	]);
 
 	function itemAt(index: number): ContextItem | null {
 		return compose.sections[index] ?? null;

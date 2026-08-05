@@ -29,9 +29,18 @@ lossless switch between them.
   (=web/src/lib/editor/nostrdown-cm.ts=) — reference layer detailed in the
   nostrdown zettel.
 
+- Pinned section coordinates (2026-08-05): =ContextItem.d_tag= threads through
+  draft resume → save → publish, so an imported draft (e.g. a kasten built by
+  =scripts/build-kasten-events.py=) republishes the same 30041 coordinates
+  instead of re-minting nanoids; the draft-reader preview passes pinned d-tags
+  (+ the draft's own root) as =ref:= siblings.
+
 * Gaps / open edges
 - AsciiDoc WYSIWYG editor and per-section CM6 "repotting" remain roadmap items
   (=docs/wm-shell.md= Phase 3).
+- Plain mode's text round-trip still drops pinned d-tags (re-parse mints
+  fresh) — publish imported kastens from outline mode, or via the direct
+  events import.
 
 * Related
 - [[file:index.org][Index]]
