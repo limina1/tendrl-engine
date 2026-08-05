@@ -121,6 +121,7 @@
 	function openPreview(r: ResolvedRef) {
 		if (r.coord) app.openCoord(r.coord);
 		else if (r.event_kind === 0 && r.author_pubkey) app.navigateToProfile(r.author_pubkey);
+		else if (r.event_id) app.getEventForModal(r.event_id);
 		preview = null;
 	}
 	function scheduleHidePreview() {
@@ -163,11 +164,17 @@
 				app.navigateToProfile(r.author_pubkey);
 				return;
 			}
+			// An nevent/note target has no coordinate — open the event modal.
+			if (r?.found && r.event_id) {
+				app.getEventForModal(r.event_id);
+				return;
+			}
 			// An unresolved wiki reference: don't dead-end on a toast — open the
 			// search frame seeded with the topic so the user can find (or, in Auto
 			// mode, auto-fetch) the defining event. Confirm mode searches local with
 			// the relay-fetch option, per the standing network-intent pattern.
-			if (token.kind === 'wiki') {
+			// (Topic form only — a bech32 entity target isn't a d-tag to search.)
+			if (token.kind === 'wiki' && !NOSTR_ENTITY_RE.test(token.target)) {
 				app.openSearchFor(`k:30818 d:${token.target}`, token.target);
 				return;
 			}

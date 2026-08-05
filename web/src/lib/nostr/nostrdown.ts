@@ -32,6 +32,9 @@ export interface ResolvedRef {
 	naddr?: string;
 	/** `"kind:pubkey:dtag"` coordinate for in-app navigation, when addressable. */
 	coord?: string;
+	/** Hex event id for an `nevent`/`note` target — navigation for
+	 *  non-addressable events (the event modal), which have no coordinate. */
+	event_id?: string;
 	/** Kind of the resolved event, when known. */
 	event_kind?: number;
 	/** Transcluded content for `embed` (depth-1). */

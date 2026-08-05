@@ -2024,8 +2024,7 @@ impl<'a> PublicationEngine<'a> {
         // Wiki refs consult it too: a `[[wikilink]]` naming a section of the
         // containing document resolves to that section before any global lookup.
         let needs_siblings = refs.iter().any(|r| {
-            matches!(r.kind, RefKind::Ref | RefKind::Wiki)
-                || (matches!(r.kind, RefKind::Embed) && !r.is_entity)
+            matches!(r.kind, RefKind::Ref | RefKind::Wiki | RefKind::Embed) && !r.is_entity
         });
         let mut siblings = match (needs_siblings, &publication) {
             (true, Some(p)) => self.load_sibling_index(p, policy).await,
@@ -2067,6 +2066,7 @@ impl<'a> PublicationEngine<'a> {
                 pending: false,
                 naddr: None,
                 coord: None,
+                event_id: None,
                 event_kind: None,
                 content: None,
                 title: None,
@@ -2078,6 +2078,21 @@ impl<'a> PublicationEngine<'a> {
             };
 
             match r.kind {
+                RefKind::Ref if r.is_entity => {
+                    // `{{ref:naddr…}}` / `{{ref:nevent…}}` — an inline link to
+                    // any event, not just a sibling. Resolve the header only
+                    // (a ref links, it doesn't transclude); a not-local event
+                    // comes back valid + pending, same as an entity embed.
+                    self.fill_from_entity(
+                        &r.target,
+                        &mut resolved,
+                        false,
+                        display_given,
+                        FetchPolicy::LocalOnly,
+                    )
+                    .await;
+                    truncate_entity_label(&mut resolved, display_given);
+                }
                 RefKind::Ref => {
                     if let Some(s) = siblings.iter().find(|s| s.matches(&r.target)) {
                         // The TOC lists this sibling, so the link is valid even
@@ -2102,6 +2117,19 @@ impl<'a> PublicationEngine<'a> {
                         FetchPolicy::LocalOnly,
                     )
                     .await;
+                }
+                RefKind::Wiki if r.is_entity => {
+                    // `[[naddr…][My Doc]]` / `{{wiki:nevent…}}` — a pasted
+                    // NIP-19 entity resolves as a direct event link.
+                    self.fill_from_entity(
+                        &r.target,
+                        &mut resolved,
+                        false,
+                        display_given,
+                        FetchPolicy::LocalOnly,
+                    )
+                    .await;
+                    truncate_entity_label(&mut resolved, display_given);
                 }
                 RefKind::Wiki => {
                     // Document-local first: a wikilink whose topic names a
@@ -2148,12 +2176,7 @@ impl<'a> PublicationEngine<'a> {
                         FetchPolicy::LocalOnly,
                     )
                     .await;
-                    // No local profile → the label is still the raw entity; show a
-                    // truncated `npub1abcd…wxyz` rather than the full 63-char bech32.
-                    if !display_given && resolved.title.is_none() && resolved.label.len() > 20 {
-                        let l = &resolved.label;
-                        resolved.label = format!("{}…{}", &l[..10], &l[l.len() - 4..]);
-                    }
+                    truncate_entity_label(&mut resolved, display_given);
                 }
                 RefKind::Quote => {
                     // Resolve the source for attribution only (title/author/coord);
@@ -2202,6 +2225,7 @@ impl<'a> PublicationEngine<'a> {
             pending: false,
             naddr: None,
             coord: None,
+            event_id: None,
             event_kind: None,
             content: None,
             title: None,
@@ -2306,6 +2330,7 @@ impl<'a> PublicationEngine<'a> {
             }
             Decoded::Nevent { event_id, .. } | Decoded::Note { event_id } => {
                 resolved.naddr = Some(entity.to_string());
+                resolved.event_id = Some(event_id.clone());
                 let search = self.engine.search_relays();
                 let over = (!search.is_empty()).then_some(search.as_slice());
                 let filter = serde_json::json!({ "ids": [event_id], "limit": 1 });
@@ -2444,6 +2469,16 @@ pub struct DraftSibling {
     #[serde(default)]
     pub title: Option<String>,
     pub d_tag: String,
+}
+
+/// No local event → the label is still the raw bech32 entity; show a truncated
+/// `naddr1abcd…wxyz` rather than the full 63+-char string. A resolved title or
+/// explicit `|display` already replaced it and is left alone.
+fn truncate_entity_label(resolved: &mut crate::nostrdown::ResolvedRef, display_given: bool) {
+    if !display_given && resolved.title.is_none() && resolved.label.len() > 20 {
+        let l = &resolved.label;
+        resolved.label = format!("{}…{}", &l[..10], &l[l.len() - 4..]);
+    }
 }
 
 /// Both slug forms of a human title, appended to a sibling's handle list.
@@ -4580,6 +4615,73 @@ mod tests {
         // A topic naming nothing local stays unresolved (→ the UI's search
         // fallback).
         assert!(!refs[1].found);
+    }
+
+    /// Entity targets in `ref`/wikilink position resolve as direct event links:
+    /// `{{ref:naddr…}}` to the addressable (coord for navigation), and a
+    /// `[[nevent…]]` wikilink to the event (event_id for the modal — nevents
+    /// have no coordinate). Previously only sibling slugs resolved in ref
+    /// position and entity wikilinks were slug-mangled.
+    #[tokio::test]
+    async fn test_resolve_refs_entity_targets() {
+        let pk_owned = test_pubkey();
+        let pk = pk_owned.as_str();
+        let section = fixture_section(pk, "sec-7h2x9", "Chapter Three", "ch3 body");
+        let event_id = section.get("id").unwrap().as_str().unwrap().to_string();
+        let (engine, _dir) = engine_with_events(&[section]).await;
+        let pe = PublicationEngine::new(&engine);
+
+        let naddr = crate::nip19::encode_naddr(30041, pk, "sec-7h2x9", &[]).unwrap();
+        let nevent = crate::nip19::encode_nevent(&event_id, &[], Some(pk), Some(30041)).unwrap();
+        let content = format!("See {{{{ref:{naddr}}}}} and [[nostr:{nevent}][the event]].");
+        let refs = pe
+            .resolve_refs(&content, None, None, &[], FetchPolicy::LocalOnly)
+            .await;
+        assert_eq!(refs.len(), 2);
+
+        let r0 = &refs[0];
+        assert_eq!(r0.kind, crate::nostrdown::RefKind::Ref);
+        assert!(r0.found, "entity ref resolved to the local addressable");
+        assert_eq!(
+            r0.coord.as_deref(),
+            Some(format!("30041:{pk}:sec-7h2x9").as_str())
+        );
+        assert_eq!(r0.label, "Chapter Three", "title lifts into the label");
+        assert!(r0.content.is_none(), "a ref links; it doesn't transclude");
+
+        let r1 = &refs[1];
+        assert_eq!(r1.kind, crate::nostrdown::RefKind::Wiki);
+        assert!(r1.found, "entity wikilink resolved to the local event");
+        assert_eq!(r1.event_id.as_deref(), Some(event_id.as_str()));
+        assert_eq!(r1.label, "the event", "explicit display wins");
+        assert!(r1.coord.is_none(), "nevent targets have no coordinate");
+    }
+
+    /// A not-local entity ref is still a valid link — `found` + `pending`, with
+    /// the long bech32 label truncated for inline rendering.
+    #[tokio::test]
+    async fn test_resolve_refs_entity_ref_pending_truncates_label() {
+        let pk_owned = test_pubkey();
+        let pk = pk_owned.as_str();
+        let (engine, _dir) = engine_with_events(&[]).await;
+        let pe = PublicationEngine::new(&engine);
+
+        let naddr = crate::nip19::encode_naddr(30040, pk, "not-local", &[]).unwrap();
+        let refs = pe
+            .resolve_refs(
+                &format!("{{{{ref:{naddr}}}}}"),
+                None,
+                None,
+                &[],
+                FetchPolicy::LocalOnly,
+            )
+            .await;
+        assert_eq!(refs.len(), 1);
+        let r0 = &refs[0];
+        assert!(r0.found, "valid address, event just not local");
+        assert!(r0.pending, "renderer can offer/await a relay fetch");
+        assert!(r0.label.len() < 20, "bech32 label truncated: {}", r0.label);
+        assert!(r0.label.starts_with("naddr1") && r0.label.contains('…'));
     }
 
     /// An entity `{{embed:naddr…}}` whose event isn't local resolves as a valid
