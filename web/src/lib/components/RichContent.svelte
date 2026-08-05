@@ -85,13 +85,15 @@
 	}
 
 	// Open a resolved reference: a sibling of the same document scrolls/pages
-	// in place; any other addressable opens in the reader (publication /
+	// in place — unless Ctrl/⌘ is held, which always pops the target out into
+	// its own buffer. Any other addressable opens in the reader (publication /
 	// section / article / wiki); a user (npub embed) opens the profile view.
 	// nevent/note embeds have no addressable coordinate — preview only, for now.
-	function openRef(ref: ResolvedRef) {
+	function openRef(ref: ResolvedRef, e?: MouseEvent) {
+		const popOut = !!e && (e.ctrlKey || e.metaKey);
 		if (ref.coord) {
-			if (scrollToLocalSection(ref.coord)) return;
-			if (onopenlocal?.(ref.coord)) return;
+			if (!popOut && scrollToLocalSection(ref.coord)) return;
+			if (!popOut && onopenlocal?.(ref.coord)) return;
 			// A draft sibling's coordinate has no pubkey — there is no published
 			// event to open, and the in-view paths above are the only navigation.
 			if (splitCoord(ref.coord)?.pubkey) app.openCoord(ref.coord);
@@ -150,7 +152,7 @@
      source span) so selection capture can map DOM positions back to UTF-16
      content offsets. Text runs get a style-free wrapper span for the same
      reason — inline and inert inside the pre-wrap. -->
-<pre class="section-content" class:muted bind:this={rootEl}>{#each segments as seg, i (i)}{#if seg.type === 'highlight'}<mark class="hl-overlay" data-hl-ids={seg.highlight.id} data-src-start={seg.srcStart} style={styleFor(seg.highlight.pubkey, seg.highlight.focused)} title="NIP-84 highlight {seg.highlight.id.slice(0, 8)}… by {seg.highlight.pubkey.slice(0, 12)}…">{seg.text}</mark>{:else if seg.type === 'ref'}{#if seg.ref.kind === 'embed' || seg.ref.kind === 'quote' || seg.ref.kind === 'slot'}<span data-src-start={seg.srcStart} data-src-end={seg.srcEnd}><EmbedCard ref={seg.ref} onopen={openRef} {resolution} /></span>{:else}<button class="nd-ref nd-ref--{seg.ref.kind}" class:nd-unresolved={!seg.ref.found} data-src-start={seg.srcStart} data-src-end={seg.srcEnd} onclick={() => openRef(seg.ref)} onmouseenter={(e) => showPreview(e, seg.ref)} onmouseleave={hidePreview} onfocus={(e) => showPreview(e, seg.ref)} onblur={hidePreview} disabled={!seg.ref.coord && !(seg.ref.event_kind === 0 && seg.ref.author_pubkey) && !seg.ref.event_id && seg.ref.kind !== 'wiki'} title={refTitle(seg.ref)}>{seg.ref.kind === 'mention' ? '@' : ''}{seg.ref.label}</button>{/if}{:else if seg.type === 'token'}<span class="nd-token nd-token--{seg.kind}" data-src-start={seg.srcStart} data-src-end={seg.srcEnd} title="{seg.kind}: {seg.target} — resolving…">{seg.display || seg.target}</span>{:else}<span data-src-start={seg.srcStart}>{seg.text}</span>{/if}{/each}</pre>
+<pre class="section-content" class:muted bind:this={rootEl}>{#each segments as seg, i (i)}{#if seg.type === 'highlight'}<mark class="hl-overlay" data-hl-ids={seg.highlight.id} data-src-start={seg.srcStart} style={styleFor(seg.highlight.pubkey, seg.highlight.focused)} title="NIP-84 highlight {seg.highlight.id.slice(0, 8)}… by {seg.highlight.pubkey.slice(0, 12)}…">{seg.text}</mark>{:else if seg.type === 'ref'}{#if seg.ref.kind === 'embed' || seg.ref.kind === 'quote' || seg.ref.kind === 'slot'}<span data-src-start={seg.srcStart} data-src-end={seg.srcEnd}><EmbedCard ref={seg.ref} onopen={openRef} {resolution} /></span>{:else}<button class="nd-ref nd-ref--{seg.ref.kind}" class:nd-unresolved={!seg.ref.found} data-src-start={seg.srcStart} data-src-end={seg.srcEnd} onclick={(e) => openRef(seg.ref, e)} onmouseenter={(e) => showPreview(e, seg.ref)} onmouseleave={hidePreview} onfocus={(e) => showPreview(e, seg.ref)} onblur={hidePreview} disabled={!seg.ref.coord && !(seg.ref.event_kind === 0 && seg.ref.author_pubkey) && !seg.ref.event_id && seg.ref.kind !== 'wiki'} title={refTitle(seg.ref)}>{seg.ref.kind === 'mention' ? '@' : ''}{seg.ref.label}</button>{/if}{:else if seg.type === 'token'}<span class="nd-token nd-token--{seg.kind}" data-src-start={seg.srcStart} data-src-end={seg.srcEnd} title="{seg.kind}: {seg.target} — resolving…">{seg.display || seg.target}</span>{:else}<span data-src-start={seg.srcStart}>{seg.text}</span>{/if}{/each}</pre>
 {#if preview}
 	<!-- svelte-ignore a11y_no_static_element_interactions -->
 	<div

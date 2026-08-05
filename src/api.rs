@@ -788,6 +788,12 @@ pub struct ResolveNostrdownItem {
     /// `ref:`/sibling-`embed:` resolution. Omitted for atomic articles.
     #[serde(default)]
     pub publication: Option<String>,
+    /// The coordinate of the event this content belongs to
+    /// (`"kind:pubkey:dtag"`). When `publication` is omitted — a section opened
+    /// as an isolated document — the resolver derives the containing 30040 by
+    /// reverse a-tag lookup (local-only) so sibling refs still resolve.
+    #[serde(default)]
+    pub coord: Option<String>,
     /// Section author pubkey (hex) — the preferred author for `wiki:` lookups.
     #[serde(default)]
     pub author: Option<String>,
@@ -835,10 +841,29 @@ pub async fn resolve_nostrdown_handler(
     let pub_engine = PublicationEngine::new(&engine);
     let mut refs = std::collections::HashMap::new();
     for item in req.items {
+        // No explicit publication context (an isolated doc view): derive the
+        // containing 30040 from the section's own coordinate so sibling refs
+        // still resolve. Local-only reverse a-tag lookup; first parent wins.
+        let mut publication = item.publication.clone();
+        if publication.is_none() && (item.content.contains("{{") || item.content.contains("[[")) {
+            if let Some(addr) = item
+                .coord
+                .as_deref()
+                .and_then(crate::publication::NAddr::from_a_tag)
+            {
+                publication = pub_engine
+                    .containing_publications(std::slice::from_ref(&addr))
+                    .await
+                    .unwrap_or_default()
+                    .get(&addr.to_a_tag())
+                    .and_then(|parents| parents.first())
+                    .map(|p| p.to_a_tag());
+            }
+        }
         let resolved = pub_engine
             .resolve_refs(
                 &item.content,
-                item.publication.as_deref(),
+                publication.as_deref(),
                 item.author.as_deref(),
                 &item.siblings,
                 policy,

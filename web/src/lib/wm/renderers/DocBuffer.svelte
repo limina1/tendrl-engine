@@ -11,14 +11,14 @@
 	import { identityCanSign } from '$lib/identity/signer';
 	import { type ThreadNode } from '$lib/discussions/thread';
 	import {
-		segmentsFromSpans,
 		highlightFromEvent,
 		type Highlight,
 		type HighlightSpan
 	} from '$lib/discussions/highlights';
-	import { pubkeyToHighlightFill, pubkeyToHighlightStroke } from '$lib/discussions/colors';
 	import { prefetchAuthors, refreshAuthors } from '$lib/discussions/authors.svelte';
 	import PoolStateBadges from '$lib/components/PoolStateBadges.svelte';
+	import RichContent from '$lib/components/RichContent.svelte';
+	import type { ResolvedRef, ParsedToken } from '$lib/nostr/nostrdown';
 
 	// A slim viewer for single addressable documents — NIP-23 long-form
 	// articles (kind 30023) and NKBIP-02 wiki pages (kind 30818). The
@@ -79,17 +79,8 @@
 	let commentsOpen = $state(true);
 	let refreshing = $state(false);
 
-	function styleFor(pubkey: string, focused: boolean): string {
-		const fill = pubkeyToHighlightFill(pubkey);
-		const stroke = pubkeyToHighlightStroke(pubkey);
-		if (focused) {
-			return `background: ${fill}; box-shadow: inset 3px 0 0 ${stroke}, 0 0 0 2px var(--state-online);`;
-		}
-		return `background: ${fill}; box-shadow: inset 3px 0 0 ${stroke};`;
-	}
-
 	// Highlight spans resolved engine-side (POST /highlights/resolve), async
-	// into state, then sliced into render segments by `segmentsFromSpans`.
+	// into state; RichContent merges them with the nostrdown refs below.
 	let highlightSpans = $state<HighlightSpan[]>([]);
 	$effect(() => {
 		const text = body;
@@ -111,11 +102,43 @@
 		};
 	});
 
-	const segments = $derived(
-		highlightSpans.length > 0 && body
-			? segmentsFromSpans(body, highlightSpans, focusHighlightId)
-			: null
-	);
+	// Nostrdown `{{ }}`/`[[ ]]` references, resolved engine-side. An isolated
+	// doc has no publication context to hand over — instead its own coordinate
+	// goes along and the engine derives the containing 30040 (reverse a-tag
+	// lookup) so sibling refs resolve here too. Tokens land first as
+	// "resolving" chips; the resolve supersedes them.
+	let docRefs = $state<ResolvedRef[]>([]);
+	let docTokens = $state<ParsedToken[]>([]);
+	$effect(() => {
+		const text = body;
+		const coord = addrStr;
+		const author = authorPubkey;
+		if (!text || !(text.includes('{{') || text.includes('[['))) {
+			docRefs = [];
+			docTokens = [];
+			return;
+		}
+		let cancelled = false;
+		api.parseNostrdown([{ key: 'doc', content: text }])
+			.then((m) => {
+				if (!cancelled) docTokens = m['doc'] ?? [];
+			})
+			.catch(() => {
+				if (!cancelled) docTokens = [];
+			});
+		api.resolveNostrdown([
+			{ key: 'doc', content: text, author: author || undefined, coord: coord ?? undefined }
+		])
+			.then((m) => {
+				if (!cancelled) docRefs = m['doc'] ?? [];
+			})
+			.catch(() => {
+				if (!cancelled) docRefs = [];
+			});
+		return () => {
+			cancelled = true;
+		};
+	});
 
 	// When arriving via ?highlight=<id>, scroll the focused <mark> into
 	// view once the overlay has rendered (same deferred-frame trick as
@@ -123,14 +146,13 @@
 	let wrapEl = $state<HTMLElement | null>(null);
 	$effect(() => {
 		const id = focusHighlightId;
-		if (!id || !segments || !wrapEl) return;
+		if (!id || highlightSpans.length === 0 || !wrapEl) return;
 		requestAnimationFrame(() => {
 			const mark = wrapEl?.querySelector(`[data-hl-ids*="${id}"]`);
 			mark?.scrollIntoView({ behavior: 'auto', block: 'center' });
 			mark?.classList.add('hl-flash');
 		});
 	});
-	const hasOverlay = $derived(!!segments && segments.some((s) => s.highlight !== null));
 
 	const authorName = $derived(
 		authorProfile?.display_name ||
@@ -376,16 +398,15 @@
 			<!-- data-section-addr marks the highlight-capture boundary; the body
 			     text here is verbatim source (text + exact-text marks only), so
 			     capture's plain text-walk fallback maps offsets exactly. -->
-			{#if hasOverlay && segments}
-				<pre class="doc-body" data-section-addr={addrStr}>{#each segments as seg, i (i)}{#if seg.highlight}<mark
-								class="hl-overlay"
-								data-hl-ids={seg.highlight.id}
-								style={styleFor(seg.highlight.pubkey, seg.highlight.focused)}
-								title="NIP-84 highlight {seg.highlight.id.slice(0, 8)}… by {seg.highlight.pubkey.slice(0, 12)}…"
-							>{seg.text}</mark>{:else}{seg.text}{/if}{/each}</pre>
-			{:else}
-				<pre class="doc-body" data-section-addr={addrStr}>{body}</pre>
-			{/if}
+			<div class="doc-body" data-section-addr={addrStr}>
+				<RichContent
+					content={body}
+					spans={highlightSpans}
+					refs={docRefs}
+					tokens={docTokens}
+					focusedHighlightId={focusHighlightId}
+				/>
+			</div>
 
 			<section class="doc-comments">
 				<button
@@ -598,11 +619,6 @@
 		padding: 14px 16px;
 	}
 
-	.hl-overlay {
-		color: inherit;
-		padding: 1px 2px;
-		border-radius: 2px;
-	}
 	@keyframes hl-flash {
 		0%,
 		100% {

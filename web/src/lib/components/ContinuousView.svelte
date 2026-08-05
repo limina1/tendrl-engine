@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { tick } from 'svelte';
 	import type { LazySection } from '$lib/types';
 	import { getAppState } from '$lib/state.svelte';
 	import * as api from '$lib/api';
@@ -8,7 +9,7 @@
 	import RichContent from './RichContent.svelte';
 	import { threadContainsId, type ThreadNode } from '$lib/discussions/thread';
 	import { type Highlight, type HighlightSpan } from '$lib/discussions/highlights';
-	import type { ResolvedRef, ParsedToken } from '$lib/nostr/nostrdown';
+	import { coordMatchesAddr, type ResolvedRef, type ParsedToken } from '$lib/nostr/nostrdown';
 	import type { ResolutionTracker } from '$lib/nostr/resolution-progress.svelte';
 
 	const app = getAppState();
@@ -249,6 +250,33 @@
 
 	let containerEl: HTMLDivElement | undefined = $state();
 
+	// In-document navigation for nostrdown refs: a ref/wikilink that resolved
+	// to a sibling section hidden under a collapsed index (RichContent's own
+	// DOM scroll already handles visible rows) expands its ancestors and
+	// scrolls to it, instead of popping the target out into a new buffer.
+	function openLocalSection(coord: string): boolean {
+		const idx = sections.findIndex((s) => s.addr && coordMatchesAddr(coord, s.addr));
+		// Index rows aren't readable in place — let those refocus/pop out.
+		if (idx < 0 || isIndex(sections[idx])) return false;
+		const next = { ...expandedByAddr };
+		let d = sections[idx].depth ?? 0;
+		for (let j = idx - 1; j >= 0 && d > 0; j--) {
+			const s = sections[j];
+			const dj = s.depth ?? 0;
+			if (dj < d && isIndex(s) && s.addr) {
+				next[addrKey(s.addr)] = true;
+				d = dj;
+			}
+		}
+		expandedByAddr = next;
+		tick().then(() => {
+			containerEl
+				?.querySelector(`[data-section-index="${idx}"]`)
+				?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+		});
+		return true;
+	}
+
 	// Visibility-driven lazy load. Re-runs whenever `visibleRows` changes
 	// so sections revealed by an expand get observed too — a one-shot
 	// onMount observer would miss every row mounted after a toggle.
@@ -380,6 +408,7 @@
 						tokens={k ? tokensBySection[k] ?? [] : []}
 						{resolution}
 						{focusedHighlightId}
+						onopenlocal={openLocalSection}
 					/>
 				{:else if section.status === 'loading'}
 					<div class="skeleton"></div>

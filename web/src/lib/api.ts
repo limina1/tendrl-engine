@@ -322,6 +322,10 @@ export async function resolveNostrdown(
 		content: string;
 		publication?: string;
 		author?: string;
+		/** The coordinate (`"kind:pubkey:dtag"`) of the event this content came
+		 *  from. When `publication` is omitted — an isolated doc view — the
+		 *  engine derives the containing 30040 from it so sibling refs resolve. */
+		coord?: string;
 		/** Sibling sections of an unsigned draft (title + synthetic d-tag) so
 		 *  `{{ref:slug}}` resolves in the composer's draft-reader preview before
 		 *  anything is published. Omit for published reads. */
