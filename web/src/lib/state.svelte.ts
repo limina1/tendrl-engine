@@ -529,6 +529,10 @@ function _createAppState() {
 		})()
 	);
 
+	// Watch-only (npub) login intent — re-established on boot when the
+	// engine session comes up empty (engine restarts forget it).
+	const WATCH_NPUB_KEY = 'tendrl.watchNpub';
+
 	function persistNetworkMode(mode: 'auto' | 'confirm') {
 		if (typeof localStorage !== 'undefined') {
 			try {
@@ -4018,6 +4022,28 @@ function _createAppState() {
 				resolveIdentityName(identityStatus.pubkey);
 			}
 		} catch {}
+		// Watch-only (npub) persistence: the engine holds watching state in
+		// memory only, so an engine restart forgets it. Re-establish from
+		// localStorage — the same persist-the-intent pattern as the NIP-07
+		// auto-reconnect above. Only when the session came up empty: a real
+		// signer (reconnected NIP-07, engine key) always wins, and if it
+		// failed to come up, falling back to watching still gives the user
+		// their own feed/profile.
+		if ((identityStatus?.state ?? 'none') === 'none') {
+			const savedWatchNpub =
+				typeof localStorage !== 'undefined' ? localStorage.getItem(WATCH_NPUB_KEY) : null;
+			if (savedWatchNpub) {
+				try {
+					identityStatus = await api.loginIdentityNpub(savedWatchNpub);
+					if (identityStatus.pubkey) {
+						myPubkey = identityStatus.pubkey;
+						resolveIdentityName(identityStatus.pubkey);
+					}
+				} catch (e) {
+					console.warn('[identity] watch npub re-login failed:', e);
+				}
+			}
+		}
 		// Load assistant identity (separate keyring-backed session)
 		try {
 			assistantStatus = await api.getAssistantIdentity();
@@ -4074,6 +4100,9 @@ function _createAppState() {
 				myPubkey = identityStatus.pubkey;
 				resolveIdentityName(identityStatus.pubkey);
 			}
+			// A real key displaces watch-only — engine-side and here, so a
+			// reload doesn't down-grade the session back to watching.
+			try { localStorage.removeItem(WATCH_NPUB_KEY); } catch {}
 		} catch (e: unknown) {
 			identityError = e instanceof Error ? e.message : String(e);
 		} finally {
@@ -4082,7 +4111,9 @@ function _createAppState() {
 	}
 
 	/** Watch-only login (npub / 64-hex). State lands on "watching":
-	 *  by:me + profile work, signing stays unavailable. */
+	 *  by:me + profile work, signing stays unavailable. The npub persists
+	 *  in localStorage so a reload / engine restart re-establishes it
+	 *  (see the initialize() re-login); logout or a real key login clears it. */
 	async function handleIdentityNpubLogin(npub: string) {
 		identityError = null;
 		identityLoading = true;
@@ -4092,6 +4123,7 @@ function _createAppState() {
 				myPubkey = identityStatus.pubkey;
 				resolveIdentityName(identityStatus.pubkey);
 			}
+			try { localStorage.setItem(WATCH_NPUB_KEY, npub.trim()); } catch {}
 		} catch (e: unknown) {
 			identityError = e instanceof Error ? e.message : String(e);
 		} finally {
@@ -4128,6 +4160,9 @@ function _createAppState() {
 			identityStatus = await api.logoutIdentity();
 			myPubkey = null;
 			identityDisplayName = null;
+			// Logout is explicit — drop the watch-npub intent too, or the
+			// next reload would silently log the npub back in.
+			try { localStorage.removeItem(WATCH_NPUB_KEY); } catch {}
 		} catch (e) {
 			console.error('Logout failed:', e);
 		}

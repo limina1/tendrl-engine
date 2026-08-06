@@ -1226,6 +1226,12 @@
 			}}
 		/>
 		{#if mb.mode !== 'closed'}
+			<!-- Press-out for the sheet: phones have no Esc. Covers the whole
+			     screen (bottom bar included) — first tap closes, second acts,
+			     the standard bottom-sheet pattern. Back (closer, 80) also works. -->
+			<!-- svelte-ignore a11y_click_events_have_key_events -->
+			<!-- svelte-ignore a11y_no_static_element_interactions -->
+			<div class="mshell-sheet-scrim" onclick={closeMinibuffer}></div>
 			<div class="mshell-sheet">
 				{@render minibufferStrip()}
 			</div>
@@ -2578,6 +2584,12 @@
 	}
 	/* Mobile shell: the minibuffer renders as a fixed bottom sheet above the
 	   nav bar instead of an in-flow strip above the modeline. */
+	.mshell-sheet-scrim {
+		position: fixed;
+		inset: 0;
+		z-index: 59;
+		background: rgba(0, 0, 0, 0.25);
+	}
 	.mshell-sheet {
 		position: fixed;
 		left: 0;
