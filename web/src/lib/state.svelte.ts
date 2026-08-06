@@ -570,7 +570,15 @@ function _createAppState() {
 	// the cold-cache feed fetch, so nothing touches relays before the user
 	// picks. Null status (engine hasn't answered yet) → don't prompt; the
 	// init/poll paths fill it in within milliseconds.
-	const needsNetworkModeChoice = $derived.by(() => networkStatus?.mode_chosen === false);
+	// "Decide later": an X / press-out on the choice modal hides it for THIS
+	// session only. mode_chosen stays false engine-side, so the modal returns
+	// on next launch and the cold-cache feed fetch stays suppressed — nothing
+	// touches relays without an explicit choice (the engine default is
+	// confirm). Added for phones, where a modal with no escape is a wall.
+	let networkModeChoiceDismissed = $state(false);
+	const needsNetworkModeChoice = $derived.by(
+		() => networkStatus?.mode_chosen === false && !networkModeChoiceDismissed
+	);
 
 	// --- Relay config ---
 	let fetchRelayUrls: string[] = $state([]);
@@ -4073,6 +4081,24 @@ function _createAppState() {
 		}
 	}
 
+	/** Watch-only login (npub / 64-hex). State lands on "watching":
+	 *  by:me + profile work, signing stays unavailable. */
+	async function handleIdentityNpubLogin(npub: string) {
+		identityError = null;
+		identityLoading = true;
+		try {
+			identityStatus = await api.loginIdentityNpub(npub);
+			if (identityStatus.pubkey) {
+				myPubkey = identityStatus.pubkey;
+				resolveIdentityName(identityStatus.pubkey);
+			}
+		} catch (e: unknown) {
+			identityError = e instanceof Error ? e.message : String(e);
+		} finally {
+			identityLoading = false;
+		}
+	}
+
 	async function handleIdentityUnlock(password: string) {
 		identityError = null;
 		identityLoading = true;
@@ -4357,6 +4383,7 @@ function _createAppState() {
 		get savedNetworkMode() { return savedNetworkMode; },
 		set identityError(v: string | null) { identityError = v; },
 		handleIdentityLogin,
+		handleIdentityNpubLogin,
 		handleIdentityUnlock,
 		handleIdentityLock,
 		handleIdentityLogout,
@@ -4385,6 +4412,7 @@ function _createAppState() {
 		// Network
 		get networkStatus() { return networkStatus; },
 		get needsNetworkModeChoice() { return needsNetworkModeChoice; },
+		dismissNetworkModeChoice() { networkModeChoiceDismissed = true; },
 
 		// Relay config
 		get fetchRelayUrls() { return fetchRelayUrls; },

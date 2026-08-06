@@ -173,12 +173,21 @@ the hardware-back event, and later plugins (share intents, deep links).
     stack root
   - [ ] config bootstrap: first-run TOML seed (=initial_relays=) written
     to app storage; =relays.json= as on desktop
-- [ ] *B3. Signing on Android.* No NIP-07 in a WebView. Initially: the
-  engine signer (ncryptsec decrypt in-process — already supported, and
-  the right default for a single-user device app). Then: *NIP-55
-  (Amber)* as a =Signer= impl — Android's native signer app, fits the
-  pluggable =signing.rs= trait exactly; needs an intent bridge through
-  the Tauri host. NIP-46 remote signing is a third engine-side option.
+- [ ] *B3. Signing on Android.* No NIP-07 in a WebView. Ladder:
+  - [X] *npub (watch-only) login* — the first page in, and currently
+    the only mobile login: =IdentitySession.watch_pubkey= → state
+    ="watching"= (=POST /identity/login-npub=); =by:me= / feed scoping /
+    profile chip work via =effective_pubkey=, signing surfaces stay
+    gated (=identityCanSign= is false). Settings lists the npub field
+    *first*, before ncryptsec/NIP-07; a real key login displaces it.
+    Secrets pasted into the npub field are rejected loudly.
+  - [ ] engine signer (ncryptsec decrypt in-process — already
+    supported; the right default for a single-user device app)
+  - [ ] *NIP-55 (Amber)* as a =Signer= impl — Android's native signer
+    app, fits the pluggable =signing.rs= trait exactly; needs an
+    intent bridge through the Tauri host. The upgrade path from
+    watch-only: same npub identity, Amber supplies the signatures.
+  - [ ] NIP-46 remote signing as a third engine-side option
 - [ ] *B4. Debug APK on a real device* (milestone M1): sideload, walk
   the first-run flow (network-mode choice, feed sync, sign-in), confirm
   relay fetching + reading + highlighting + publishing end-to-end.

@@ -562,7 +562,9 @@ export interface NetworkStatus {
 	recent: FetchRecord[];
 }
 
-export type IdentityState = 'none' | 'locked' | 'unlocked';
+/** `watching` = npub (read-only) login: a pubkey with no key material —
+ *  feed scoping / `by:me` / profile work, signing does not. */
+export type IdentityState = 'none' | 'watching' | 'locked' | 'unlocked';
 
 export type IdentitySourceKind = 'engine' | 'nip07' | 'nip46';
 

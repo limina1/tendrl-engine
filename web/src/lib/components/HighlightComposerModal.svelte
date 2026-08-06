@@ -325,7 +325,7 @@
 		display: flex;
 		align-items: flex-start;
 		justify-content: center;
-		padding-top: 12vh;
+		padding-top: 12dvh;
 	}
 	/* Stand down while PublishConfirmModal (z 250) is deciding the post —
 	   visibility (not display) keeps bound elements alive. */
@@ -334,6 +334,8 @@
 	}
 	.ghl-modal {
 		width: min(520px, 92vw);
+		max-height: 84dvh;
+		overflow-y: auto;
 		background: var(--bg);
 		border: 1px solid var(--panel-border-strong, var(--panel-border));
 		border-radius: var(--r-sm, 3px);

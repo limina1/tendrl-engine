@@ -568,7 +568,7 @@
 	}
 	.rb-modal {
 		width: min(560px, 100%);
-		max-height: 78vh;
+		max-height: 78dvh;
 		display: flex;
 		flex-direction: column;
 		background: var(--bg);

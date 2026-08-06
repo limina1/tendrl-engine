@@ -264,7 +264,7 @@
 		border-radius: var(--r-md);
 		width: 90vw;
 		max-width: 540px;
-		max-height: 88vh;
+		max-height: 88dvh;
 		display: flex;
 		flex-direction: column;
 		font-family: var(--font-mono);

@@ -79,7 +79,7 @@
 		padding: 24px;
 		max-width: 420px;
 		width: 90%;
-		max-height: 80vh;
+		max-height: 80dvh;
 		overflow-y: auto;
 	}
 

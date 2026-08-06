@@ -148,7 +148,7 @@
 		border: 1px solid var(--panel-border, var(--border));
 		border-radius: var(--r-md);
 		width: min(900px, 100%);
-		max-height: 90vh;
+		max-height: 90dvh;
 		display: flex;
 		flex-direction: column;
 		overflow: hidden;
@@ -286,7 +286,7 @@
 		border: 1px solid var(--panel-border);
 		border-radius: var(--r-sm);
 		padding: 10px 12px;
-		max-height: 50vh;
+		max-height: 50dvh;
 		overflow: auto;
 	}
 </style>

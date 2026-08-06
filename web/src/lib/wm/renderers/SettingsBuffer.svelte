@@ -214,6 +214,16 @@
 	// Inputs for engine login flow
 	let ncryptsecInput = $state('');
 	let passwordInput = $state('');
+	// Watch-only (npub) login — the lightest way in, listed first: on a
+	// phone there's no NIP-07 extension and pasting an ncryptsec is heavy.
+	let npubInput = $state('');
+
+	async function doNpubLogin() {
+		const v = npubInput.trim();
+		if (!v) return;
+		await app.handleIdentityNpubLogin(v);
+		npubInput = '';
+	}
 	// Inputs for the assistant identity flow
 	let assistantKeyInput = $state('');
 	let assistantPasswordInput = $state('');
@@ -501,7 +511,9 @@
 						? 'pill--online'
 						: currentState === 'locked'
 							? 'pill--draft'
-							: 'pill--ghost'}"
+							: currentState === 'watching'
+								? 'pill--local'
+								: 'pill--ghost'}"
 				>{currentState}</span>
 				<span class="pill pill--ghost source-pill">source: {currentSource}</span>
 			</div>
@@ -534,7 +546,7 @@
 			</div>
 		</div>
 
-		{#if currentSource === 'engine' && currentState !== 'none'}
+		{#if currentSource === 'engine' && (currentState === 'locked' || currentState === 'unlocked')}
 			<div class="settings-row">
 				<span class="settings-label">Lock after</span>
 				<div class="radio-group">
@@ -559,7 +571,44 @@
 		{/if}
 
 		{#if currentSource === 'engine'}
-			{#if currentState === 'none'}
+			{#if currentState === 'none' || currentState === 'watching'}
+				{#if currentState === 'watching'}
+					<div class="settings-row settings-row--stack">
+						{#if app.identityStatus?.npub}
+							<span class="settings-label mono">{app.identityStatus.npub}</span>
+						{/if}
+						<span class="settings-hint">
+							Watch-only — your feed, profile, and <strong>by:me</strong> work from this
+							npub, but nothing can be signed. Paste an ncryptsec below (or connect
+							NIP-07) to sign.
+						</span>
+						<div class="action-row">
+							<button class="settings-action settings-action--danger" onclick={app.handleIdentityLogout}
+								>Logout</button
+							>
+						</div>
+					</div>
+				{:else}
+					<div class="settings-row settings-row--stack">
+						<label class="settings-label" for="npub-input">npub (watch-only)</label>
+						<input
+							id="npub-input"
+							class="settings-input"
+							bind:value={npubInput}
+							placeholder="npub1..."
+							spellcheck="false"
+							onkeydown={(e) => e.key === 'Enter' && doNpubLogin()}
+						/>
+						<button class="settings-action" onclick={doNpubLogin} disabled={app.identityLoading}>
+							{app.identityLoading ? 'Working…' : 'Watch'}
+						</button>
+						<span class="settings-hint">
+							The lightest way in: browse as yourself — feed, profile, and
+							<strong>by:me</strong> scope to this npub. Signing needs a key
+							(ncryptsec below, or NIP-07). Never paste an nsec here.
+						</span>
+					</div>
+				{/if}
 				<div class="settings-row settings-row--stack">
 					<label class="settings-label" for="ncryptsec-input">ncryptsec</label>
 					<textarea

@@ -7228,6 +7228,27 @@ pub async fn identity_login_handler(
     Ok(Json(session.status()))
 }
 
+#[derive(Debug, Deserialize)]
+pub struct NpubLoginRequest {
+    /// `npub1…` or a raw 64-hex pubkey. Secrets are rejected.
+    pub npub: String,
+}
+
+/// POST /api/v1/identity/login-npub — watch-only login: hold a pubkey as
+/// the session identity with no key material. `by:me`, feed scoping, and
+/// the profile chip work; signing does not (state = "watching"). The
+/// primary mobile sign-in until an external signer (NIP-55/Amber) lands.
+pub async fn identity_npub_login_handler(
+    State(identity): State<IdentityAppState>,
+    Json(req): Json<NpubLoginRequest>,
+) -> Result<Json<IdentityStatusResponse>, EngineError> {
+    let mut session = identity.lock().unwrap();
+    session
+        .login_npub(&req.npub)
+        .map_err(|e| EngineError::InvalidFilter(e.to_string()))?;
+    Ok(Json(session.status()))
+}
+
 /// POST /api/v1/identity/unlock — decrypt ncryptsec with password
 pub async fn identity_unlock_handler(
     State(identity): State<IdentityAppState>,

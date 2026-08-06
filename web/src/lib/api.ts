@@ -950,6 +950,14 @@ export function loginIdentity(ncryptsec: string) {
 	});
 }
 
+/** Watch-only login: npub1… or 64-hex pubkey → state "watching". */
+export function loginIdentityNpub(npub: string) {
+	return fetchJson<IdentityStatus>('/api/v1/identity/login-npub', {
+		method: 'POST',
+		body: JSON.stringify({ npub })
+	});
+}
+
 export function unlockIdentity(password: string) {
 	return fetchJson<IdentityStatus>('/api/v1/identity/unlock', {
 		method: 'POST',

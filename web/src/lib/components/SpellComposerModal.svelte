@@ -178,7 +178,7 @@
 	}
 	.sc-modal {
 		width: min(560px, 92vw);
-		max-height: 85vh;
+		max-height: 85dvh;
 		overflow-y: auto;
 		background: var(--bg);
 		border: 1px solid var(--border);

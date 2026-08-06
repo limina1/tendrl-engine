@@ -678,7 +678,9 @@ impl IdentitySource {
 /// Serializable identity status returned by the API
 #[derive(Debug, Clone, Serialize)]
 pub struct IdentityStatusResponse {
-    /// "none" | "locked" | "unlocked"
+    /// "none" | "watching" | "locked" | "unlocked". `watching` is the
+    /// npub (read-only) login: a pubkey with no key material — feed
+    /// scoping and `by:me` work, signing does not.
     pub state: String,
     /// Hex pubkey (available when locked or unlocked)
     pub pubkey: Option<String>,
@@ -732,6 +734,11 @@ pub struct IdentitySession {
     /// can surface a non-null pubkey when source != engine. Set by
     /// `set_source_with_pubkey`; cleared when switching back to engine.
     external_pubkey: Option<String>,
+    /// Watch-only login: an npub with no key material. Drives `by:me` /
+    /// feed scoping and the profile chip; can never sign. The primary
+    /// mobile sign-in until an external signer (NIP-55/Amber) lands.
+    /// Displaced by any real login (ncryptsec/nsec) and cleared on logout.
+    watch_pubkey: Option<String>,
 }
 
 impl Default for IdentitySession {
@@ -755,6 +762,7 @@ impl IdentitySession {
             ncryptsec: None,
             pubkey: None,
             external_pubkey: None,
+            watch_pubkey: None,
             secret: None,
             last_activity: None,
             lock_timeout: None,
@@ -786,6 +794,30 @@ impl IdentitySession {
         self.external_pubkey = Some(pubkey);
     }
 
+    /// Watch-only login: accept an `npub1…` (or a raw 64-hex pubkey) and hold
+    /// it as the session identity with no key material. A pasted secret
+    /// (`nsec…`/`ncryptsec…`) is rejected loudly — the npub field must never
+    /// quietly swallow key material. Returns the hex pubkey.
+    pub fn login_npub(&mut self, input: &str) -> Result<String, KeyParseError> {
+        let input = input.trim();
+        if input.starts_with("nsec1") || input.starts_with("ncryptsec1") {
+            return Err(KeyParseError::UnknownPrefix(
+                "secret key — use the ncryptsec login, not the npub field".into(),
+            ));
+        }
+        let pubkey_hex = match parse_key(input)? {
+            KeyType::Npub(npub) => decode_npub(&npub)?,
+            _ => return Err(KeyParseError::InvalidLength),
+        };
+        // Clear any previous session — watch-only replaces it wholesale.
+        self.secret = None;
+        self.last_activity = None;
+        self.pubkey = None;
+        self.ncryptsec = None;
+        self.watch_pubkey = Some(pubkey_hex.clone());
+        Ok(pubkey_hex)
+    }
+
     /// Store an ncryptsec and transition to locked state.
     /// Returns the pubkey if we can derive it (we can't without the password,
     /// so this just validates the format and stores it).
@@ -795,10 +827,11 @@ impl IdentitySession {
                 ncryptsec.chars().take(10).collect(),
             ));
         }
-        // Clear any previous session
+        // Clear any previous session (a real key displaces watch-only)
         self.secret = None;
         self.last_activity = None;
         self.pubkey = None;
+        self.watch_pubkey = None;
         self.ncryptsec = Some(ncryptsec.to_string());
         Ok(())
     }
@@ -812,6 +845,7 @@ impl IdentitySession {
         let pubkey_hex = derive_pubkey_from_secret(&secret_hex)?;
         self.ncryptsec = None;
         self.external_pubkey = None;
+        self.watch_pubkey = None;
         self.secret = Some(Zeroizing::new(secret_hex));
         self.pubkey = Some(pubkey_hex.clone());
         self.last_activity = Some(Instant::now());
@@ -842,6 +876,7 @@ impl IdentitySession {
     pub fn logout(&mut self) {
         self.ncryptsec = None;
         self.pubkey = None;
+        self.watch_pubkey = None;
         self.secret = None;
         self.last_activity = None;
         self.unsigned_event_ids.clear();
@@ -925,7 +960,7 @@ impl IdentitySession {
     /// from the live session without an async signer round-trip.
     pub fn effective_pubkey(&self) -> Option<String> {
         match self.source {
-            IdentitySource::Engine => self.pubkey.clone(),
+            IdentitySource::Engine => self.pubkey.clone().or_else(|| self.watch_pubkey.clone()),
             IdentitySource::Nip07 { .. } | IdentitySource::Nip46 { .. } => {
                 self.external_pubkey.clone().or_else(|| self.pubkey.clone())
             }
@@ -951,6 +986,8 @@ impl IdentitySession {
             "unlocked"
         } else if self.ncryptsec.is_some() {
             "locked"
+        } else if self.watch_pubkey.is_some() {
+            "watching"
         } else {
             "none"
         };

@@ -433,10 +433,15 @@
 	// mobileNav at the top of the chain). Registration is idempotent and this
 	// route never unmounts, so a plain top-level call is fine.
 	//
-	// Deliberately NOT registered: NetworkModeChoiceModal (first-run gate —
-	// must be answered, not dismissed) and the fetch/publish confirm intents
+	// Deliberately NOT registered: the fetch/publish confirm intents
 	// (queue semantics — Back must not silently reject an intent).
 	function registerMobileBackClosers() {
+		// Topmost surface in the app (z 300) — Back = "decide later", the same
+		// session-only dismiss as its X/backdrop; the modal returns next launch.
+		mobileNav.registerCloser('network-mode-choice', 99, {
+			isOpen: () => app.needsNetworkModeChoice,
+			close: () => app.dismissNetworkModeChoice()
+		});
 		mobileNav.registerCloser('text-prompt', 95, {
 			// Must resolve (cancel), never just hide — a leaked promise would
 			// wedge the caller awaiting promptText().
@@ -1063,6 +1068,16 @@
 				pillClass: 'pill--local'
 			};
 		}
+		// Watch-only (npub login): an identity, not a signer — tap opens
+		// the profile like `me`, the label says it can't sign.
+		if (id?.state === 'watching') {
+			const npub = id?.npub ?? '';
+			return {
+				kind: 'me' as const,
+				label: npub ? `@${npub.slice(0, 12)} · watch` : 'watching',
+				pillClass: 'pill--local'
+			};
+		}
 		// Engine key present but locked — clicking opens Settings to
 		// unlock (needs the password field).
 		if (id?.state === 'locked') {
@@ -1081,7 +1096,11 @@
 	// login, so gating on it alone made the chip look "logged in" on
 	// engine source with no unlocked key. Gate on can-sign instead;
 	// app.myPubkey still drives feed/authoring under the hood.
-	const meLoggedIn = $derived(identityCanSign(app.identityStatus));
+	// Watch-only (npub) counts: it's an identity for profile/feed purposes
+	// even though it can't sign — signing surfaces gate on canSignNow.
+	const meLoggedIn = $derived(
+		identityCanSign(app.identityStatus) || app.identityStatus?.state === 'watching'
+	);
 	const mePubkey = $derived(
 		meLoggedIn ? (app.identityStatus?.pubkey ?? app.myPubkey ?? null) : null
 	);

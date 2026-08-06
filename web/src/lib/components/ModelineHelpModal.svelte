@@ -78,7 +78,7 @@
 	}
 	.mh-modal {
 		width: min(560px, 100%);
-		max-height: 80vh;
+		max-height: 80dvh;
 		display: flex;
 		flex-direction: column;
 		background: var(--bg);

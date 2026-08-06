@@ -459,7 +459,7 @@
 	}
 	.sb-modal {
 		width: min(640px, 94vw);
-		max-height: 88vh;
+		max-height: 88dvh;
 		overflow-y: auto;
 		background: var(--bg);
 		border: 1px solid var(--border);

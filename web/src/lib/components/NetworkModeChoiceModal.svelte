@@ -3,17 +3,22 @@
 	// `mode_chosen: false` (fresh install) — BEFORE any relay fetch — so the
 	// user deliberately picks how the app talks to the network. The choice
 	// persists to config.toml (engine flips `mode_chosen` true), so it never
-	// re-appears. There is no dismiss / backdrop-close: picking a mode is the
-	// only way out, by design.
+	// re-appears once picked. The X / backdrop is "decide later": a
+	// session-only dismiss (mode_chosen stays false, so the modal returns
+	// next launch and the cold-cache fetch stays suppressed) — on a phone a
+	// modal with no escape is a wall, so the hard gate became a soft one.
 
 	import type { NetworkMode } from '$lib/types';
 
 	let {
-		onchoose
+		onchoose,
+		ondismiss
 	}: {
 		/** Persist the picked mode + close, and either start or suppress the
 		 *  contextual walkthrough per the toggle. Wired to app.chooseNetworkMode. */
 		onchoose: (mode: NetworkMode, runWalkthrough: boolean) => void;
+		/** "Decide later" — hide for this session without persisting a mode. */
+		ondismiss: () => void;
 	} = $props();
 
 	let submitting = $state(false);
@@ -28,10 +33,26 @@
 	}
 </script>
 
-<div class="nm-backdrop" role="presentation">
-	<div class="nm-modal" role="dialog" aria-modal="true" aria-labelledby="nm-title" tabindex="-1">
+<!-- svelte-ignore a11y_click_events_have_key_events -->
+<!-- svelte-ignore a11y_no_static_element_interactions -->
+<div class="nm-backdrop" role="presentation" onclick={ondismiss}>
+	<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+	<div
+		class="nm-modal"
+		role="dialog"
+		aria-modal="true"
+		aria-labelledby="nm-title"
+		tabindex="-1"
+		onclick={(e) => e.stopPropagation()}
+	>
 		<header class="nm-header">
 			<h3 class="nm-title" id="nm-title">Select your default network mode</h3>
+			<button
+				class="nm-x"
+				onclick={ondismiss}
+				title="Decide later — nothing is fetched until you pick a mode; this asks again next launch"
+				aria-label="Decide later"
+			>×</button>
 			<p class="nm-sub">
 				How should the app reach Nostr relays? You can change this any time in Settings.
 			</p>
@@ -104,15 +125,31 @@
 		border-radius: var(--r-md);
 		width: 90vw;
 		max-width: 560px;
-		max-height: 86vh;
+		max-height: 92dvh;
 		display: flex;
 		flex-direction: column;
 		font-family: var(--font-mono);
 		overflow-y: auto;
 	}
 	.nm-header {
+		position: relative;
 		padding: 16px 18px 10px;
 		border-bottom: 1px solid var(--panel-border);
+	}
+	.nm-x {
+		position: absolute;
+		top: 10px;
+		right: 10px;
+		background: transparent;
+		border: none;
+		color: var(--base5);
+		font-size: var(--t-lg);
+		line-height: 1;
+		padding: 4px 8px;
+		cursor: pointer;
+	}
+	.nm-x:hover {
+		color: var(--fg);
 	}
 	.nm-title {
 		margin: 0;

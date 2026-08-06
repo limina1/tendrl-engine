@@ -145,6 +145,7 @@
 {#if app.needsNetworkModeChoice}
 	<NetworkModeChoiceModal
 		onchoose={(mode, runWalkthrough) => app.chooseNetworkMode(mode, runWalkthrough)}
+		ondismiss={() => app.dismissNetworkModeChoice()}
 	/>
 {/if}
 

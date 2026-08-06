@@ -137,8 +137,8 @@ export const TIPS: Record<string, TourTip> = {
 	'sign-in-methods': {
 		key: 'sign-in-methods',
 		anchor: 'identity-source',
-		title: 'Two ways in',
-		body: '*Engine* — paste an `ncryptsec` below and unlock it with its password; held for this session only, never written to disk. *NIP-07* — a browser extension holds the key and the engine never sees it. To connect one: (1) make sure your extension is activated/unlocked, (2) pick `nip07` and press `Reconnect`, (3) your signer pops up asking to read your public key — `Authorize`, or `Authorize forever`.',
+		title: 'Three ways in',
+		body: '*npub (watch-only)* — the lightest: paste your `npub1…` and browse as yourself (feed, profile, `by:me`); signing stays off. *Engine* — paste an `ncryptsec` below and unlock it with its password; held for this session only, never written to disk. *NIP-07* — a browser extension holds the key and the engine never sees it. To connect one: (1) make sure your extension is activated/unlocked, (2) pick `nip07` and press `Reconnect`, (3) your signer pops up asking to read your public key — `Authorize`, or `Authorize forever`.',
 		placement: 'bottom',
 		// Same gate: no point explaining the sign-in methods to someone already
 		// signed in. (Reachable on demand via Settings' walkthrough regardless.)

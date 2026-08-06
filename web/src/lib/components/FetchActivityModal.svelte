@@ -203,7 +203,7 @@
 		border-radius: var(--r-md);
 		width: 90vw;
 		max-width: 640px;
-		max-height: 80vh;
+		max-height: 80dvh;
 		display: flex;
 		flex-direction: column;
 		font-family: var(--font-sans);

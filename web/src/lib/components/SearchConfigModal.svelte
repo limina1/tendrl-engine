@@ -637,7 +637,7 @@
 		border-radius: var(--r-md);
 		width: 90vw;
 		max-width: 540px;
-		max-height: 88vh;
+		max-height: 88dvh;
 		display: flex;
 		flex-direction: column;
 		font-family: var(--font-mono);
@@ -906,7 +906,7 @@
 		list-style: none;
 		margin: 0 0 6px;
 		padding: 0;
-		max-height: 20vh;
+		max-height: 20dvh;
 		overflow-y: auto;
 	}
 	.sc-relay {

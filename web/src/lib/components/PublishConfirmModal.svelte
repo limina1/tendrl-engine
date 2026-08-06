@@ -260,7 +260,7 @@
 		border-radius: var(--r-md);
 		width: 90vw;
 		max-width: 560px;
-		max-height: 80vh;
+		max-height: 80dvh;
 		display: flex;
 		flex-direction: column;
 		font-family: var(--font-mono);
@@ -336,7 +336,7 @@
 		list-style: none;
 		margin: 0;
 		padding: 0;
-		max-height: 22vh;
+		max-height: 22dvh;
 		overflow-y: auto;
 	}
 	.rf-row {
@@ -424,7 +424,7 @@
 		list-style: none;
 		margin: 8px 0 0;
 		padding: 0;
-		max-height: 28vh;
+		max-height: 28dvh;
 		overflow-y: auto;
 		display: flex;
 		flex-direction: column;

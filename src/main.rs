@@ -300,6 +300,10 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/v1/identity", get(api::identity_status_handler))
         .route("/api/v1/identity/login", post(api::identity_login_handler))
         .route(
+            "/api/v1/identity/login-npub",
+            post(api::identity_npub_login_handler),
+        )
+        .route(
             "/api/v1/identity/unlock",
             post(api::identity_unlock_handler),
         )

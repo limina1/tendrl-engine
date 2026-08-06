@@ -1177,7 +1177,7 @@
 		border: 1px solid var(--border);
 		border-radius: var(--radius);
 		width: min(720px, 90vw);
-		max-height: 80vh;
+		max-height: 80dvh;
 		display: flex;
 		flex-direction: column;
 		/* One scroll container for the whole modal — sections flow at their
