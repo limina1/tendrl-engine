@@ -1,0 +1,225 @@
+= Citations Specification
+:revremark: revised draft 2 — single-kind + NKBIP-06 m/M tags + formal nostrdown reference grammar
+
+*NKBIP-03 (revised 2)*
+This NIP defines the basic structure of citations required for embedded quotes, footnotes, endnotes, in-line references, appendices, and prompt records.
+
+It covers internal (to Nostr addresses) and external (to the wider web or printed material) citations.
+
+NOTE: This revision (1) collapses the four source-type kinds (30–33) into a single
+addressable kind `30161`, distinguished by the `M` tag from [[NKBIP-06]]; and (2)
+formalizes the in-line *Reference Syntax* on the shared nostrdown `{{ }}` grammar
+— a single `:` prefix plus an optional `|` part, *not* the former
+`[[citation::foot::…]]` double-colon form. See *Event Kind* and *Reference
+Syntax* below for the rationale.
+
+*In-Event References*
+
+A citation MAY instead be written *in-event* — as prose in the document's own markup, carrying the same information as a `kind 30161` record. This is a display convenience, not a structured one: the text is read as written, and only its `nostr:` URIs resolve (NIP-21, linkified per NIP-27).
+
+For a structured, reusable, queryable citation, mint a `30161` and reference it with `{{cite:<d-tag>}}` (see *Reference Syntax*).
+
+Recommended form:
+
+[source]
+----
+[author]. Nostr: "[title]". [published on].
+nostr:[npub]
+nostr:[event identifier, human-readable]
+----
+
+Example:
+
+----
+John Smith. Nostr: "The Truth About Time". 18 January 2024.
+nostr:npub11038193028767404737...
+nostr:naddr1992p01098091432700...
+----
+
+*Event Kind*
+
+Citations are a single addressable event, *kind `30161`*. The four source types
+are not separate kinds; they are distinguished by the `M` tag (NKBIP-06), whose
+`category/use-case/replaceability` form carries the source type in its use-case
+slot:
+
+* `["M", "citation/nostr/replaceable"]` — internal reference,
+* `["M", "citation/web/replaceable"]` — external web reference,
+* `["M", "citation/hardcopy/replaceable"]` — hardcopy reference,
+* `["M", "citation/prompt/replaceable"]` — prompt reference.
+
+Because `M` is a single-letter tag it is relay-indexed: `{"kinds":[30161],
+"#M":["citation/web/replaceable"]}` returns all web citations server-side, while
+`{"kinds":[30161]}` returns every citation by the author in one filter. The `m`
+tag carries the MIME type of the cited resource where it has one.
+
+Citations SHOULD be documented ex-event (in their own `30161` event, as below)
+to ensure completeness, reusability, discoverability, and applicability; they MAY
+also be documented in-event per the format above.
+
+*Event Structure*
+
+Internal Nostr reference:
+
+[source, json]
+----
+{
+  "kind": 30161,
+  "pubkey": "<citation-writer-pubkey>",
+  "tags": [
+    ["m", "application/json"],
+    ["M", "citation/nostr/replaceable"],
+    ["d", "<citation identifier, e.g. author-year-slug>"],
+    ["a", "<kind>:<pubkey>:<d-tag>", "<relay hint>"],
+    ["published_on", "<date-time in ISO 8601 format>"],
+    ["title", "<title to display for citation>"],
+    ["author", "<author to display for citation, such as a handle name or proper name of the npub>"],
+    // additional, optional tags
+    ["accessed_on", "<date-time in ISO 8601 format>"],
+    ["location", "<where was it written or published>"],
+    ["g", "<geohash of the precise location>"],
+    ["summary", "<short explanation of which topics the citation covers>"]
+  ],
+  "content": "<text cited>"
+}
+----
+
+NOTE: The reference uses the standard `a` (addressable-coordinate) tag. For a
+non-replaceable target event, use `e` with the event id instead.
+
+External web reference:
+
+[source, json]
+----
+{
+  "kind": 30161,
+  "pubkey": "<citation-writer-pubkey>",
+  "tags": [
+    ["m", "text/html"],
+    ["M", "citation/web/replaceable"],
+    ["d", "<citation identifier>"],
+    // mandatory tags
+    ["u", "<URL where citation was accessed>"],
+    ["accessed_on", "<date-time in ISO 8601 format>"],
+    ["title", "<title to display for citation>"],
+    ["author", "<author to display for citation>"],
+    // additional, optional tags
+    ["published_on", "<date-time in ISO 8601 format>"],
+    ["published_by", "<who published the citation>"],
+    ["version", "<version or edition of the publication>"],
+    ["location", "<where was it written or published>"],
+    ["g", "<geohash of the precise location>"],
+    ["open_timestamp", "<`e` tag of kind 1040 event>"],
+    ["summary", "<short explanation of which topics the citation covers>"]
+  ],
+  "content": "<text cited>"
+}
+----
+
+Hardcopy reference:
+
+[source, json]
+----
+{
+  "kind": 30161,
+  "pubkey": "<citation-writer-pubkey>",
+  "tags": [
+    ["M", "citation/hardcopy/replaceable"],
+    ["d", "<citation identifier>"],
+    ["accessed_on", "<date-time in ISO 8601 format>"],
+    ["title", "<title to display for citation>"],
+    ["author", "<author to display for citation>"],
+    // additional, optional tags
+    ["page_range", "<pages the citation is found on>"],
+    ["chapter_title", "<chapter or section the citation is found within>"],
+    ["editor", "who edited the publication"],
+    ["published_on", "<date-time in ISO 8601 format>"],
+    ["published_by", "<who published the citation>"],
+    ["published_in", "<journal name>", "<volume>"],
+    ["doi", "<DOI number>"],
+    ["version", "<version or edition of the publication>"],
+    ["location", "<where was it written or published>"],
+    ["g", "<geohash of the precise location>"],
+    ["summary", "<short explanation of which topics the citation covers>"]
+  ],
+  "content": "<text cited>"
+}
+----
+
+NOTE: A pure hardcopy source has no MIME type, so `m` is omitted. Include `["m",
+"application/pdf"]` (or similar) when the citation is to a scanned/digital copy.
+
+Prompt reference:
+
+[source, json]
+----
+{
+  "kind": 30161,
+  "pubkey": "<citation-writer-pubkey>",
+  "tags": [
+    ["m", "text/plain"],
+    ["M", "citation/prompt/replaceable"],
+    ["d", "<citation identifier>"],
+    ["llm", "<language model used for the prompt, like ChatGPT>"],
+    ["accessed_on", "<date-time in ISO 8601 format"],
+    ["version", "<version or edition of the model>"],
+    ["summary", "<prompt conversation script>"],
+    // additional, optional tags
+    ["u", "<website llm was accessed from>"]
+  ],
+  "content": "<text cited>"
+}
+----
+
+*Reference Syntax*
+
+Citations use the shared *nostrdown* `{{ }}` grammar — the same token as
+`{{ref:}}`, `{{wiki:}}`, `{{embed:}}`, `{{quote:}}`, and `{{slot:}}` — so one
+parser handles every reference uniformly, independent of the host markup. The
+grammar is normative in the Nostrdown specification; a citation reference is:
+
+----
+{{cite:<target>[|modifier]}}
+----
+
+`target` is the citation's `d`-tag, or a NIP-19 entity for a direct event
+reference. Split on the *first* `:` (so colon-bearing targets — a
+`kind:pubkey:d-tag` coordinate, a `nostr:` URI — stay intact); `|` is optional
+and splits once.
+
+`{{ }}` replaces the former `[[citation::foot::…]]` form. The double-colon field
+separator is *not* used: `::` is positional (slot order must be memorized, optional
+slots become empty gaps), it collides with the colons inside coordinates and with
+the block-macro form `name::target[]` (e.g. `book::`) some markups use, and it fuses
+a reference's identity with its presentation. A single `:` prefix plus an optional
+`|` modifier keeps kind, target, and presentation independent. `{{ }}` is also free
+across the common markups, whereas `[[ ]]` is link/anchor syntax in several of them.
+
+The citing event resolves the reference via a tag carrying the citation coordinate
+(the nostrdown tag-resolution pattern — short reference in the content,
+machine-readable coordinate in a tag):
+
+[source, json]
+----
+["cite", "<d-tag>", "30161:<citation-writer-pubkey>:<d-tag>", "<relay hint>"]
+----
+
+*Presentation*
+
+Rendering style (footnote, endnote, in-line parenthetical, block quote) is *not*
+encoded in the markup. It is determined by, in order of precedence:
+
+. a per-citation modifier, only when the author has a specific reason —
+  `{{cite:smith-2024|foot}}`, `{{cite:smith-2024|quote}}`,
+. a publication-level tag on the `kind:30040` index — `["citation-style",
+  "chicago"]` or `["citation-style", "footnote"]`,
+. client/reader preference.
+
+`{{cite:smith-2024|foot}}` therefore expresses what `[[citation::foot::smith-2024]]`
+did, but the style is an *optional override* rather than a mandatory positional
+field — so a document switches footnotes↔endnotes by changing one
+`citation-style` tag on its index, not by editing every citation. This replaces
+the former render-typed markup (`[[citation::foot::…]]`, `[[citation::end::…]]`,
+`[[citation::inline::…]]`, `[[citation::prompt-inline::…]]`, etc.): the
+endnote/footnote/inline distinction is presentation, carried by `citation-style`,
+not by the reference itself.

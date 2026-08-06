@@ -2010,9 +2010,14 @@ impl<'a> PublicationEngine<'a> {
         }
 
         // Load the containing index once; ref:/slug-embed: resolve against its
-        // sections + nested indexes.
+        // sections + nested indexes. The FULL tree, not the shallow load:
+        // `collect_sibling_addrs` walks `nested` recursively, so a section
+        // three tiers down (index → group → subgroup → note) is only a
+        // resolvable sibling if the nested indexes were actually loaded.
+        // Depth 4 matches the deepest structures we emit (and the walker's
+        // cycle cap keeps pathological trees bounded).
         let publication = match publication_atag.and_then(NAddr::from_a_tag) {
-            Some(addr) => self.load_publication(&addr, policy).await.ok(),
+            Some(addr) => self.load_publication_tree(&addr, 4, policy).await.ok(),
             None => None,
         };
 
@@ -2021,8 +2026,10 @@ impl<'a> PublicationEngine<'a> {
         // human handles — title-slug (the `T` tag / normalized title) plus the
         // literal d-tag — and match the slug against those. Built once (bounded
         // by sibling count) and only when a slug-based ref is actually present.
+        // Wiki refs consult it too: a `[[wikilink]]` naming a section of the
+        // containing document resolves to that section before any global lookup.
         let needs_siblings = refs.iter().any(|r| {
-            matches!(r.kind, RefKind::Ref) || (matches!(r.kind, RefKind::Embed) && !r.is_entity)
+            matches!(r.kind, RefKind::Ref | RefKind::Wiki | RefKind::Embed) && !r.is_entity
         });
         let mut siblings = match (needs_siblings, &publication) {
             (true, Some(p)) => self.load_sibling_index(p, policy).await,
@@ -2039,10 +2046,7 @@ impl<'a> PublicationEngine<'a> {
             for ds in draft_siblings {
                 let mut slugs = vec![ds.d_tag.clone()];
                 if let Some(t) = ds.title.as_deref().filter(|t| !t.is_empty()) {
-                    let slug = crate::publication::compose::ComposeState::generate_d_tag(t);
-                    if !slug.is_empty() {
-                        slugs.push(slug);
-                    }
+                    push_title_slugs(&mut slugs, t);
                 }
                 siblings.push(SiblingEntry {
                     addr: NAddr::new(KIND_PUBLICATION_SECTION, "", &ds.d_tag),
@@ -2067,6 +2071,7 @@ impl<'a> PublicationEngine<'a> {
                 pending: false,
                 naddr: None,
                 coord: None,
+                event_id: None,
                 event_kind: None,
                 content: None,
                 title: None,
@@ -2078,6 +2083,21 @@ impl<'a> PublicationEngine<'a> {
             };
 
             match r.kind {
+                RefKind::Ref if r.is_entity => {
+                    // `{{ref:naddr…}}` / `{{ref:nevent…}}` — an inline link to
+                    // any event, not just a sibling. Resolve the header only
+                    // (a ref links, it doesn't transclude); a not-local event
+                    // comes back valid + pending, same as an entity embed.
+                    self.fill_from_entity(
+                        &r.target,
+                        &mut resolved,
+                        false,
+                        display_given,
+                        FetchPolicy::LocalOnly,
+                    )
+                    .await;
+                    truncate_entity_label(&mut resolved, display_given);
+                }
                 RefKind::Ref => {
                     if let Some(s) = siblings.iter().find(|s| s.matches(&r.target)) {
                         // The TOC lists this sibling, so the link is valid even
@@ -2103,8 +2123,27 @@ impl<'a> PublicationEngine<'a> {
                     )
                     .await;
                 }
+                RefKind::Wiki if r.is_entity => {
+                    // `[[naddr…][My Doc]]` / `{{wiki:nevent…}}` — a pasted
+                    // NIP-19 entity resolves as a direct event link.
+                    self.fill_from_entity(
+                        &r.target,
+                        &mut resolved,
+                        false,
+                        display_given,
+                        FetchPolicy::LocalOnly,
+                    )
+                    .await;
+                    truncate_entity_label(&mut resolved, display_given);
+                }
                 RefKind::Wiki => {
-                    if let Some(ev) = self.find_wiki_event(&r.target, author, policy).await {
+                    // Document-local first: a wikilink whose topic names a
+                    // sibling section (of the draft or the containing
+                    // publication) is an internal link — the author referencing
+                    // their own section title beats a same-named global topic.
+                    if let Some(s) = siblings.iter().find(|s| s.matches(&r.target)) {
+                        s.fill(&mut resolved, false, display_given);
+                    } else if let Some(ev) = self.find_wiki_event(&r.target, author, policy).await {
                         resolved.naddr = event_naddr(&ev);
                         resolved.coord = event_coord(&ev);
                         apply_event(&mut resolved, &ev, false, display_given);
@@ -2142,12 +2181,7 @@ impl<'a> PublicationEngine<'a> {
                         FetchPolicy::LocalOnly,
                     )
                     .await;
-                    // No local profile → the label is still the raw entity; show a
-                    // truncated `npub1abcd…wxyz` rather than the full 63-char bech32.
-                    if !display_given && resolved.title.is_none() && resolved.label.len() > 20 {
-                        let l = &resolved.label;
-                        resolved.label = format!("{}…{}", &l[..10], &l[l.len() - 4..]);
-                    }
+                    truncate_entity_label(&mut resolved, display_given);
                 }
                 RefKind::Quote => {
                     // Resolve the source for attribution only (title/author/coord);
@@ -2196,6 +2230,7 @@ impl<'a> PublicationEngine<'a> {
             pending: false,
             naddr: None,
             coord: None,
+            event_id: None,
             event_kind: None,
             content: None,
             title: None,
@@ -2214,7 +2249,10 @@ impl<'a> PublicationEngine<'a> {
     /// index, each loaded once and tagged with its human handles (title-slug
     /// plus literal d-tag) so `{{ref:slug}}` / slug `{{embed:slug}}` can match.
     async fn load_sibling_index(&self, pubn: &Publication, policy: FetchPolicy) -> Vec<SiblingEntry> {
-        let mut addrs = Vec::new();
+        // The publication's own address is a sibling too: a section may
+        // reference its containing work ("see the index"), and self-contained
+        // publications (e.g. a kasten) link the root from every Related list.
+        let mut addrs = vec![pubn.addr.clone()];
         collect_sibling_addrs(pubn, &mut addrs);
         let mut out = Vec::with_capacity(addrs.len());
         for addr in addrs {
@@ -2227,10 +2265,7 @@ impl<'a> PublicationEngine<'a> {
                     slugs.push(t);
                 }
                 if let Some(title) = first_tag_value(ev, "title") {
-                    let slug = crate::publication::compose::ComposeState::generate_d_tag(&title);
-                    if !slug.is_empty() {
-                        slugs.push(slug);
-                    }
+                    push_title_slugs(&mut slugs, &title);
                 }
             }
             out.push(SiblingEntry {
@@ -2303,6 +2338,7 @@ impl<'a> PublicationEngine<'a> {
             }
             Decoded::Nevent { event_id, .. } | Decoded::Note { event_id } => {
                 resolved.naddr = Some(entity.to_string());
+                resolved.event_id = Some(event_id.clone());
                 let search = self.engine.search_relays();
                 let over = (!search.is_empty()).then_some(search.as_slice());
                 let filter = serde_json::json!({ "ids": [event_id], "limit": 1 });
@@ -2441,6 +2477,33 @@ pub struct DraftSibling {
     #[serde(default)]
     pub title: Option<String>,
     pub d_tag: String,
+}
+
+/// No local event → the label is still the raw bech32 entity; show a truncated
+/// `naddr1abcd…wxyz` rather than the full 63+-char string. A resolved title or
+/// explicit `|display` already replaced it and is left alone.
+fn truncate_entity_label(resolved: &mut crate::nostrdown::ResolvedRef, display_given: bool) {
+    if !display_given && resolved.title.is_none() && resolved.label.len() > 20 {
+        let l = &resolved.label;
+        resolved.label = format!("{}…{}", &l[..10], &l[l.len() - 4..]);
+    }
+}
+
+/// Both slug forms of a human title, appended to a sibling's handle list.
+/// Parsed `{{ref:}}`/`[[wiki]]` targets arrive NIP-54-normalized
+/// ([`crate::nostrdown::normalize`], punctuation dropped: `aesops-fables`) while
+/// d-tags/`T` tags are minted with [`ComposeState::generate_d_tag`] (punctuation
+/// → `-`: `aesop-s-fables`) — the two diverge on punctuated titles, so a
+/// sibling answers to either.
+fn push_title_slugs(slugs: &mut Vec<String>, title: &str) {
+    for slug in [
+        crate::publication::compose::ComposeState::generate_d_tag(title),
+        crate::nostrdown::normalize(title),
+    ] {
+        if !slug.is_empty() && !slugs.contains(&slug) {
+            slugs.push(slug);
+        }
+    }
 }
 
 /// Collect every section + nested-index address in `pubn`, depth-first.
@@ -4476,6 +4539,157 @@ mod tests {
 
         // A ref naming no draft sibling stays unresolved.
         assert!(!refs[1].found);
+    }
+
+    /// A `[[wikilink]]` whose topic names a sibling section of the containing
+    /// publication is an internal link: it resolves to that section (by
+    /// title-slug — the d-tag is a nanoid) and beats a global wiki article
+    /// carrying the same d-tag.
+    #[tokio::test]
+    async fn test_resolve_refs_wiki_prefers_publication_sibling() {
+        let pk_owned = test_pubkey();
+        let pk = pk_owned.as_str();
+        let ch3 = NAddr::new(KIND_PUBLICATION_SECTION, pk, "sec-7h2x9");
+        let root_idx = NAddr::new(KIND_PUBLICATION_INDEX, pk, "root-idx");
+        // A global 30818 sharing the section's title-slug — the sibling wins.
+        let decoy = fixture_event(
+            pk,
+            30818,
+            serde_json::json!([["d", "chapter-three"], ["title", "Chapter Three (global)"]]),
+            "global article body",
+        );
+        let (engine, _dir) = engine_with_events(&[
+            fixture_section(pk, "sec-7h2x9", "Chapter Three", "ch3 body"),
+            fixture_index(pk, "root-idx", "Root", &[&ch3]),
+            decoy,
+        ])
+        .await;
+        let pe = PublicationEngine::new(&engine);
+
+        let refs = pe
+            .resolve_refs(
+                "See [[Chapter Three]].",
+                Some(&root_idx.to_a_tag()),
+                Some(pk),
+                &[],
+                FetchPolicy::LocalOnly,
+            )
+            .await;
+        assert_eq!(refs.len(), 1);
+        let r0 = &refs[0];
+        assert_eq!(r0.kind, crate::nostrdown::RefKind::Wiki);
+        assert!(r0.found, "wikilink resolved document-locally");
+        assert_eq!(
+            r0.coord.as_deref(),
+            Some(format!("{KIND_PUBLICATION_SECTION}:{pk}:sec-7h2x9").as_str()),
+            "the sibling section wins over the same-slug global wiki article"
+        );
+        assert_eq!(r0.label, "Chapter Three");
+    }
+
+    /// In the composer, a `[[wikilink]]` naming another section of the unsigned
+    /// draft resolves against the inline sibling list — including a punctuated
+    /// title, whose NIP-54 slug (`aesops-fables`) differs from its minted d-tag
+    /// form (`aesop-s-fables`).
+    #[tokio::test]
+    async fn test_resolve_refs_wiki_draft_siblings() {
+        let (engine, _dir) = engine_with_events(&[]).await;
+        let pe = PublicationEngine::new(&engine);
+
+        let siblings = vec![DraftSibling {
+            title: Some("Aesop's Fables".to_string()),
+            d_tag: "sec-abc123".to_string(),
+        }];
+        let refs = pe
+            .resolve_refs(
+                "As told in [[Aesop's Fables]]; but [[Unwritten]].",
+                None,
+                None,
+                &siblings,
+                FetchPolicy::LocalOnly,
+            )
+            .await;
+        assert_eq!(refs.len(), 2);
+
+        let r0 = &refs[0];
+        assert_eq!(r0.kind, crate::nostrdown::RefKind::Wiki);
+        assert!(r0.found, "wikilink resolved against the draft's own section");
+        assert_eq!(r0.title.as_deref(), Some("Aesop's Fables"));
+        assert_eq!(
+            r0.coord.as_deref(),
+            Some(format!("{KIND_PUBLICATION_SECTION}::sec-abc123").as_str())
+        );
+
+        // A topic naming nothing local stays unresolved (→ the UI's search
+        // fallback).
+        assert!(!refs[1].found);
+    }
+
+    /// Entity targets in `ref`/wikilink position resolve as direct event links:
+    /// `{{ref:naddr…}}` to the addressable (coord for navigation), and a
+    /// `[[nevent…]]` wikilink to the event (event_id for the modal — nevents
+    /// have no coordinate). Previously only sibling slugs resolved in ref
+    /// position and entity wikilinks were slug-mangled.
+    #[tokio::test]
+    async fn test_resolve_refs_entity_targets() {
+        let pk_owned = test_pubkey();
+        let pk = pk_owned.as_str();
+        let section = fixture_section(pk, "sec-7h2x9", "Chapter Three", "ch3 body");
+        let event_id = section.get("id").unwrap().as_str().unwrap().to_string();
+        let (engine, _dir) = engine_with_events(&[section]).await;
+        let pe = PublicationEngine::new(&engine);
+
+        let naddr = crate::nip19::encode_naddr(30041, pk, "sec-7h2x9", &[]).unwrap();
+        let nevent = crate::nip19::encode_nevent(&event_id, &[], Some(pk), Some(30041)).unwrap();
+        let content = format!("See {{{{ref:{naddr}}}}} and [[nostr:{nevent}][the event]].");
+        let refs = pe
+            .resolve_refs(&content, None, None, &[], FetchPolicy::LocalOnly)
+            .await;
+        assert_eq!(refs.len(), 2);
+
+        let r0 = &refs[0];
+        assert_eq!(r0.kind, crate::nostrdown::RefKind::Ref);
+        assert!(r0.found, "entity ref resolved to the local addressable");
+        assert_eq!(
+            r0.coord.as_deref(),
+            Some(format!("30041:{pk}:sec-7h2x9").as_str())
+        );
+        assert_eq!(r0.label, "Chapter Three", "title lifts into the label");
+        assert!(r0.content.is_none(), "a ref links; it doesn't transclude");
+
+        let r1 = &refs[1];
+        assert_eq!(r1.kind, crate::nostrdown::RefKind::Wiki);
+        assert!(r1.found, "entity wikilink resolved to the local event");
+        assert_eq!(r1.event_id.as_deref(), Some(event_id.as_str()));
+        assert_eq!(r1.label, "the event", "explicit display wins");
+        assert!(r1.coord.is_none(), "nevent targets have no coordinate");
+    }
+
+    /// A not-local entity ref is still a valid link — `found` + `pending`, with
+    /// the long bech32 label truncated for inline rendering.
+    #[tokio::test]
+    async fn test_resolve_refs_entity_ref_pending_truncates_label() {
+        let pk_owned = test_pubkey();
+        let pk = pk_owned.as_str();
+        let (engine, _dir) = engine_with_events(&[]).await;
+        let pe = PublicationEngine::new(&engine);
+
+        let naddr = crate::nip19::encode_naddr(30040, pk, "not-local", &[]).unwrap();
+        let refs = pe
+            .resolve_refs(
+                &format!("{{{{ref:{naddr}}}}}"),
+                None,
+                None,
+                &[],
+                FetchPolicy::LocalOnly,
+            )
+            .await;
+        assert_eq!(refs.len(), 1);
+        let r0 = &refs[0];
+        assert!(r0.found, "valid address, event just not local");
+        assert!(r0.pending, "renderer can offer/await a relay fetch");
+        assert!(r0.label.len() < 20, "bech32 label truncated: {}", r0.label);
+        assert!(r0.label.starts_with("naddr1") && r0.label.contains('…'));
     }
 
     /// An entity `{{embed:naddr…}}` whose event isn't local resolves as a valid

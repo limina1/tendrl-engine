@@ -1837,14 +1837,18 @@ function _createAppState() {
 						content: s.content,
 						level: s.level,
 						tags: s.tags.map((t) => [t.name, t.value] as [string, string]),
-						// Reuse the matched section's d-tag on republish so the
-						// 30041 replaces rather than forks.
-						d_tag: overrides?.dTagByTitle[s.title],
+						// Reuse the matched section's d-tag on republish, else
+						// the section's own pinned coordinate (set on draft
+						// resume) so the 30041 replaces rather than forks.
+						d_tag: overrides?.dTagByTitle[s.title] ?? s.d_tag,
 						// Block-level transclude slot → the engine emits an a-tag
 						// to the existing 30040/30041 and mints no 30041 here.
 						slot: s.slot
 					})),
-					d_tag: overrides?.pubDTag,
+					// Republish override, else the session's own publication
+					// identity (restored on draft resume) — never re-mint when
+					// the draft already has a coordinate.
+					d_tag: overrides?.pubDTag ?? composeDTag ?? undefined,
 					notes,
 					sign: true,
 					broadcast: false
@@ -2070,7 +2074,10 @@ function _createAppState() {
 					content: s.content,
 					level: s.level,
 					tags: s.tags.map((t) => [t.name, t.value] as [string, string]),
-					slot: s.slot
+					slot: s.slot,
+					// Preserve pinned section coordinates across save/resume
+					// cycles — losing them would re-mint on the next publish.
+					d_tag: s.d_tag
 				})),
 				// Thread the session's d-tag so this save versions the same
 				// publication instead of forking a new one.
@@ -2104,7 +2111,10 @@ function _createAppState() {
 						original_content: s.content,
 						origin: 'compose' as const,
 						level: s.level,
-						slot: s.slot
+						slot: s.slot,
+						// Keep the pinned section coordinate: publish must
+						// replace the same 30041, not mint a fresh nanoid.
+						d_tag: s.d_tag
 					},
 					{ compose: true }
 				)
@@ -4244,6 +4254,7 @@ function _createAppState() {
 		get compose() { return compose; },
 		get composeDrafts() { return composeDrafts; },
 		get composeTitle() { return composeTitle; },
+		get composeDTag() { return composeDTag; },
 		set composeTitle(v: string) { composeTitle = v; },
 		get composeTags() { return composeTags; },
 		set composeTags(v: TagEntry[]) { composeTags = v; },

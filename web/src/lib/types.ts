@@ -295,6 +295,11 @@ export interface ContextItem {
 	 *  the index, rather than authored content. Carried to the publish request
 	 *  as `slot`; the engine emits an `a`-tag and mints no 30041. */
 	slot?: string;
+	/** Pinned d-tag for the 30041 this section emits. Set when a draft is
+	 *  resumed (or seeded by an importer that pre-mints coordinates) so
+	 *  save/publish replace the same addressable event instead of minting a
+	 *  fresh nanoid — {{ref:d-tag}} references stay valid across publishes. */
+	d_tag?: string;
 }
 
 export type SyncMode = 'reactive' | 'explicit';

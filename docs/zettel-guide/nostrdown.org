@@ -24,25 +24,13 @@ were distilled from — read it for the /why/, those for the /what/.
   Unknown prefixes (=cite=/=@=/=term=/=media=) degrade to literal text.
 - *Resolver* (=resolve_refs= → =POST /api/v1/nostrdown/resolve=):
   - =ref:= → sibling section by *title-slug* (the =T= tag — section d-tags are
-    opaque nanoids, so the human slug matches the normalized title); an *entity*
-    target (={{ref:naddr…}}= / ={{ref:nevent…}}=) resolves as a direct event
-    link (header only, no transclusion; nevent/note carry =event_id= for the
-    web's event modal since they have no coordinate).
-  - =wiki:= / =[[wikilink]]= → *document-local first*: a topic naming a sibling
-    section (draft or publication) resolves to that section; else kind
-    30818/30023/30041 by normalized d-tag (author-preferred); else unresolved →
-    the UI's search fallback. Sibling handles match both slug forms of the
-    title (minted-d-tag and NIP-54). A pasted entity (=[[naddr…][My Doc]]=)
-    resolves as a direct event link, same as an entity =ref:=.
+    opaque nanoids, so the human slug matches the normalized title).
+  - =wiki:= → kind 30818/30023/30041 by normalized d-tag (author-preferred).
   - =embed:= → *any* entity: naddr (publication/section/article/wiki), nevent/note
     (any event incl. kind-1 notes), npub/nprofile (a user → kind-0 name + picture
     + bio). Field-driven (title/summary/author/image/content).
   - =quote:= → the source resolved for *attribution only*; the excerpt is the
     inline =|text=.
-  - Navigation (web): a ref that resolves to a sibling of the /same/ document
-    scrolls to it in place (continuous) or pages to it (paginated) instead of
-    opening a separate buffer; a draft sibling's synthetic coordinate
-    (=30041::<id>=) never routes to a doc view.
 - *Rendering* (web): one =EmbedCard= everywhere — reader inline embeds, reader
   =ref=/=wiki= hover previews, and the composer click-preview (mounted into the CM
   tooltip) — so all previews are identical. Field-driven: image (avatar / cover /
@@ -52,9 +40,7 @@ were distilled from — read it for the /why/, those for the /what/.
 - *Publish* (=reference_tags=): every reference emits a resolution tag, so the
   event self-describes and the tags appear in the *Preview events* —
   =w= / =ref= / =a= / =q= / =p=, and for =quote= the NIP-84 source (=a=/=e=)
-  + author (=p= … =author=). Entity targets in /any/ position (ref, wikilink,
-  embed) emit the pointer tag for what they address (=a=/=q=/=p=), never a
-  =w=/=ref= handle tag wrapping a bech32 string.
+  + author (=p= … =author=).
 - *Authoring* (editor): CM extension recognizes ={{ }}= tokens; inline
   autocomplete (mode-bar toggle; ={{= → prefixes, ={{ref:= → sibling titles,
   ={{wiki:= → title search, ={{embed:= → the builder) with Tab/Enter accept;

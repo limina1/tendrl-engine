@@ -1,6 +1,6 @@
 [package]
 name = "nostr-engine"
-version = "0.5.0"
+version = "0.6.1"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 description = "Standalone local Nostr backend with HTTP API - query nostrdb and fetch from relays"

@@ -17,7 +17,8 @@
 		focusedHighlightId = null,
 		publicationAtag = undefined,
 		siblings = undefined,
-		resolution = undefined
+		resolution = undefined,
+		onopenlocal = undefined
 	}: {
 		section: LazySection;
 		truncate?: boolean;
@@ -42,6 +43,9 @@
 		/** The enclosing reader's resolution-progress tracker (threaded, not
 		 *  context). Passed to RichContent so it reports; absent outside a reader. */
 		resolution?: ResolutionTracker;
+		/** In-document navigation hand-off for refs resolved to sibling sections
+		 *  not in the DOM (paginated view) — threaded to RichContent. */
+		onopenlocal?: ((coord: string) => boolean) | undefined;
 	} = $props();
 
 	const status: SectionStatus = $derived(section.status ?? 'loaded');
@@ -169,6 +173,7 @@
 			{resolution}
 			{focusedHighlightId}
 			muted={preview}
+			{onopenlocal}
 		/>
 	{:else if status === 'loading'}
 		<div class="skeleton"></div>

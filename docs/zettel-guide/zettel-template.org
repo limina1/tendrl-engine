@@ -1,0 +1,412 @@
+:title: Zettelkasten Conventions — Portable Template
+:type: meta
+:status: DESIGN
+:date: 2026-08-04
+
+Generalized from the tendrl kasten, whose
+[[file:conventions.org][conventions]] and [[file:index.org][index]]
+ship alongside as the worked example.
+This folder is self-contained and transportable: copy it into any
+project, use this file as the =conventions= note — fill the two knobs
+(note types, status vocabulary), delete the instantiation notes —
+and start writing. Works for study guides, working through books,
+research projects — anything with notes that accumulate — including
+the AI-seeded case where a model produces the first mapping of a
+corpus and the human navigates from there (see /Variant: AI-seeded
+corpus mapping/).
+
+The template is written so a kasten maps 1:1 onto Nostr events
+(NKBIP-01 + nostrdown) with no restructuring: see /The event mapping/
+below. You can run it as plain files for years and publish it later —
+the conventions are the same either way.
+
+* The invariant skeleton
+
+These rules are domain-independent. Keep all of them.
+
+1. *Flat folder, one idea per note, links over hierarchy.* No
+   subdirectories, no categories-as-folders. A note is small enough
+   that linking /to/ it means something specific. Most notes belong to
+   several topics at once; a folder forces one parent, links don't.
+
+2. *One index, and only one.* A single =index= note is the map: it
+   groups notes into sections and is the only file that does. The
+   index /organizes/; the notes /connect/. Many maps means no trusted
+   map.
+
+3. *The filename declares the note's epistemic type.* A kebab-case
+   prefix answers "what kind of claim does this note make?" before you
+   open it — so a link carries that information too. The prefixes are
+   Knob 1; the principle — type visible in the link — is invariant.
+
+4. *A header block on every note*, in the plain-text tag format the
+   document parser standardizes (tendrl / Alexandria):
+
+   : :title: Annotation anchoring
+   : :type: idea
+   : :status: brainstorm
+   : :tags: annotation, anchoring
+
+   =:tagname: tagvalue= lines, with comma-separated values (=:tags:=)
+   fanning out into one tag per value. These evaluate directly into
+   Nostr event tags at publish — the header block /is/ the event's tag
+   list in source form, and it is markup-agnostic: the same block
+   works in Org, Markdown, AsciiDoc, or bare text. =type= mirrors the
+   filename prefix; =status= comes from Knob 2; =date= is the last
+   substantive revision. Cheap enough to never skip, rich enough to
+   grep.
+
+5. *Every note ends with a /Related/ list of wikilinks
+   (=[[topic]]=), always including the index.* And: *a link to a note
+   that doesn't exist yet is a TODO, not an error.* Dangling links are
+   how the kasten tells you what to write next. Wikilinks are
+   nostrdown's cross-markup form, so the Related list survives any
+   choice of markup — and later, publication.
+
+6. *Update the kasten in the same unit of work as the thing it
+   describes.* Same study session as the chapter, same sitting as the
+   reading, same commit as the feature. One line is enough. This rule
+   is what prevents the "catch-up documentation day" that never comes.
+   Name your unit of work explicitly when instantiating.
+
+7. *Explicit promotion path for speculation → commitment.* When you
+   decide to act on a speculative note, don't rewrite it: change its
+   STATUS and move its index entry under an "In flight" section. The
+   index doubles as a lightweight kanban.
+
+8. *Tick, don't delete.* When something speculative becomes real, the
+   speculative note stays as provenance and links forward to the note
+   describing the reality. The history of your thinking is data.
+
+9. *Entry documents link into the kasten instead of reproducing it.*
+   A syllabus, README, or study plan points at zettels, never copies
+   them — which stays cheap only if zettels stay short. Short notes
+   are what make the linking economy work.
+
+* Knob 1: note types
+These are suggestions by an AI, open for interpretation and contextual modification. This is not a closed standard. Organize according to what suits the project.
+
+Derive prefixes from these five roles. 
+the roles must stay distinguishable at a glance — the whole value is
+that /inventory/ and /speculation/ can never be confused in a link.
+
+| Role                                        | Software (tendrl) | Study guide | Book work  |
+|---------------------------------------------+-------------------+-------------+------------|
+| Inventory — established, verified, worked   | =feat-=           | =topic-=    | =concept-= |
+| Speculation — your own unproven thinking    | =idea-=           | =conj-=     | =syn-=     |
+| External reference — sources you draw from  | =cmp-=            | =src-=      | =src-=     |
+| Settled judgment — a choice, with rationale | =decision-=       | =stance-=   | =claim-=   |
+| Open question                               | =q-=              | =q-=        | =q-=       |
+
+Plus meta in every instantiation: =index=, =conventions=, =mission=
+(what this kasten is for), optionally =scope-*= (what it deliberately
+excludes — remembered, not pursued).
+
+* Knob 2: status vocabulary
+
+The statuses encode this domain's /lifecycle of certainty/: the stages
+between "captured" and "done". Ask what those stages are, keep the
+list short, and include a decay state if knowledge goes stale.
+
+- Software (tendrl) :: =brainstorm= → =spec= → =plan= → =partial= →
+  =implemented=; plus =deferred= / =out-of-scope= / =open=
+- Study guide :: =unread= → =skimmed= → =working= → =fluent=; plus
+  =stale= (was fluent, needs review). Grepping =:status: stale= is
+  your review queue — the kasten quietly becomes a spaced-repetition
+  substrate.
+- Book work :: =captured= → =developing= → =integrated=; plus
+  =abandoned= (kept as provenance per rule 8, never deleted)
+
+Meta docs are always =current=.
+
+* Doc lifecycle (documents around the kasten)
+
+Longer documents living beside the kasten (plans, reports, logs) each
+declare =:status:= one of:
+
+- =CURRENT= — describes present understanding/reality
+- =DESIGN= — vision, not yet real
+- =PLAN= — committed intent
+- =REPORT= — point-in-time snapshot (an exam post-mortem, a chapter
+  summary as-of-first-read)
+- =LOG= — append-only (a reading log)
+
+When a PLAN completes, its doc becomes CURRENT or moves to an archive
+folder, in the same unit of work.
+
+* The event mapping (nostrdown / NKBIP-01)
+
+The kasten is shaped to publish as a structured Nostr publication with
+no restructuring. The mapping:
+
+- *Three orthogonal layers.* /Markup/ (Org, Markdown, AsciiDoc, plain
+  text) owns formatting — bold, italics, headings, media. /nostrdown/
+  owns semantics — references between events, transclusion, how
+  events render. The /header block/ owns metadata — the event's tags.
+  Notes mix any markup with the same semantic and metadata layers;
+  this markup-agnosticism is what keeps the kasten portable across
+  formats and publishable without conversion.
+
+- *Note → kind 30041.* One zettel, one section event. Each note keeps
+  its own markup — declared per event via content-format tags,
+  detected by the engine. The =d= tag is an opaque id; humans address
+  the note by its title slug (=T= tag), which is what nostrdown
+  =ref:= resolution keys on.
+
+- *Header block → tags, literally.* The =:tagname: tagvalue= block
+  evaluates line-by-line into Nostr event tags at publish (=:status:
+  stale= → =["status", "stale"]=; =:tags:= fans out into one tag per
+  value) — no translation layer, the source metadata /is/ the event
+  metadata. The grep-based review queue becomes a query:
+  =status:stale= in tendrl's search DSL, or a tag filter on any
+  relay. A saved query (kind 777 spell) makes the review queue a
+  persistent, shareable object. One refinement: the conventions may
+  declare certain header keys /local-only/ (e.g. =:file:= for a
+  path on the writing machine) — those serve navigation on disk and
+  are stripped at build time, never published.
+
+- *Index section → kind 30040.* Each topical grouping in =index.org=
+  becomes its own 30040 whose ordered =a= tags list its notes. A note
+  may appear in as many indices as it belongs to — multiple 30040s
+  referencing the same 30041 is the event-space form of "links over
+  hierarchy". Indices may reference other indices (30040 → 30040):
+  nesting and even cycles are legal; readers walk the tree with a
+  depth cap and a visited set, so recursive cross-linking is a
+  feature, not a hazard.
+
+- *The master index → one top-level 30040.* Its children are the
+  topical indices. This is =index.org='s event twin: the single map,
+  itself a replaceable event — so reorganizing the kasten is
+  republishing /one/ event, without touching any note.
+
+- *Cross-references → nostrdown.* Inside note bodies:
+  =[[topic]]= / ={{wiki:d-tag}}= for cross-document references,
+  ={{ref:title-slug}}= for a sibling note within the same publication,
+  ={{embed:naddr}}= to transclude. Publishing emits =["w", topic]=
+  tags, so the =* Related= list stops being decoration and becomes
+  relay-queryable: "every note referencing /topic/" is one filter.
+  Backlinks are a derived reverse index over those tags.
+
+- *Write name-first; bind at publish.* At writing time none of the
+  target events exist, so references in the files are /placeholders by
+  stable human name/ — the title slug (=ref:=) or normalized topic
+  (=[[ ]]= / =wiki:=) — never a hard event address. This is why the
+  slug, not the =d= tag, is the note's durable handle: =d= tags are
+  opaque ids minted at publish, but the title slug is identical on
+  disk and in the =T= tag, so every name-based reference written
+  before any event existed resolves without rewriting the text. The
+  same syntax does both jobs: pre-publication it is an inert
+  placeholder; at publish time the publisher resolves slugs against
+  the bundle being signed (siblings → coordinates, wiki topics → =w=
+  tags), and after publication readers resolve the rest lazily.
+  Address-based forms (={{embed:naddr}}=, =nostr:= entities) are
+  reserved for things /already/ published by someone else.
+
+- *Dangling links stay valid.* Resolution is lazy; an unresolved wiki
+  target is exactly what it is on disk — a marker of something worth
+  writing. Rule 5 survives publication unchanged: a placeholder whose
+  target never got written simply stays a placeholder.
+
+- *Lifecycle: deliberate publishing.* Notes draft locally; signing is
+  the snapshot (the only way into the db); broadcast is a separate,
+  explicit step. A kasten can live local-only forever, publish one
+  topical index, or publish whole — per-index granularity for free.
+
+* Variant: AI-seeded corpus mapping
+
+Use case: turn an AI onto a collection of books and papers around a
+single topic. The AI produces the first mapping; the value of the
+kasten is that the human can navigate, correct, and take ownership of
+it afterward. The conventions above hold unchanged — this variant
+adds four rules on top:
+
+- *Division of labor follows the note types.* The AI authors the
+  inventory half of Knob 1: one =src-= note per book/paper (its
+  claims, structure, where things live), =concept-= notes extracted
+  /across/ sources, and =q-= notes where sources disagree or leave
+  gaps. The speculation and judgment half (=syn-=, =claim-=,
+  =stance-=) is reserved for the human — the AI seeds those only as
+  dangling links (rule 5), so the first mapping deliberately ships
+  with an empty speculation layer. Filling it /is/ the studying.
+
+- *Provenance is native, not annotated.* Every note records its
+  author: on disk, an =:author:= line in the header block; as events,
+  it is simply the signing pubkey — machine-drafted notes are signed
+  by the assistant's key, yours by yours. A 30040 index references
+  sections by any author, so a human-curated index over AI-authored
+  notes is the normal case, not a workaround (in tendrl:
+  =by:assistant= filters one side of the split).
+
+- *Below the note: passage-level citations — pointers, never text.*
+  The extra granularity the mapping works with is /external-source/
+  citation, Zotero-style: the source stays external, identified by
+  registry metadata (=isbn= / =doi=, plus a URL when one exists),
+  and what a claim publishes is citation-shaped — a kind-9802
+  highlight carrying a locator (chapter / page / section) and at most
+  a brief quoted passage, the territory of fair-use quotation in
+  scholarship. The reader resolves the citation against their own
+  copy of the source, however they hold it. Every AI claim in a
+  =concept-= note carries such a pointer, so checking a =drafted=
+  note means following its citations, not re-reading the book. The
+  reference-manager layer then applies to the kasten for free: typed
+  citation intents (supports/contradicts) on the =q-= tensions,
+  backlinks from a source to every claim built on it, citation
+  export for anything that leaves the system.
+
+- *What broadcasts is the transformation, never the corpus.* The
+  published layer of the kasten is the intellectual work /about/ the
+  sources — notes, claims, questions, indices, citations. The sources
+  themselves never enter the system at all: the AI reads them where
+  they live and emits notes plus citation pointers, and nothing
+  beyond the citation (identifier, locator, brief quote) crosses into
+  an event. Relayed events are effectively permanent, so broadcasting
+  the text of closed works is off the table, full stop. Reserve
+  ={{embed:}}= / full-section transclusion for sources that are
+  genuinely open: public domain, openly licensed, or already
+  Nostr-native publications.
+
+- *Write broadcast-clean from the first note.* Since every note is a
+  publication candidate, personal information is kept out at writing
+  time, not scrubbed at build time:
+  - /People are cited or mentioned, never named as private persons./
+    Scholars and public authors appear by name — that is citation,
+    the point of the layer. Project participants (the human, their
+    colleagues, correspondents) appear as nostrdown mentions
+    (={{@…}}=, bound to a pubkey at publish) or by role ("a
+    colleague", "a co-author"), never by personal name.
+  - /The medium is not the content./ Working artifacts are described
+    by their function — "the literature map", "the orientation
+    documents" — never by how they arrived (an email, a chat thread,
+    a meeting). The transport channel is personal context; the
+    function is knowledge.
+  - /Paths stay local./ Sources are identified by registry metadata
+    (=:cite:= / =:doi:= / =:isbn:= / =:pages:=), never by filesystem
+    path — a path leaks the local machine's layout and documents
+    possession of source copies. Local navigation aids live in header
+    keys the conventions declare local-only (e.g. =:file:=), which
+    the build strips from events.
+  - /Redaction is a backstop, not a workflow./ A build-time
+    sanitization pass (substitutions, name→mention, dropped
+    local-only tags) exists to catch what slipped through — audit its
+    output before anything broadcasts, but never rely on it as a
+    license to write privately and scrub later. And note its limits:
+    the source files and the redaction config itself still carry the
+    private names, so the folder's own sharing/commit story is a
+    separate decision from the event layer's.
+
+- *Trust is a status axis.* Machine-drafted notes enter at a
+  low-trust status (e.g. =drafted=), and the human's traversal is
+  what promotes them: =drafted= → =checked= (read against the source)
+  → onward through Knob 2 (=working=, =fluent=). The study guide is
+  exactly this traversal: =status:drafted= queries what the AI claims
+  and you haven't confirmed; the mapping is absorbed when nothing is
+  left at =drafted= — or consciously abandoned per rule 8.
+
+- *Reading paths are indices.* Besides topical indices, the AI emits
+  ordered /path/ indices — an ordered 30040 is literally a syllabus.
+  Multiple paths over the same notes coexist (prerequisite order,
+  source-by-source, by difficulty) because indices are cheap and
+  notes are shared; the human's own path, built by re-ordering or
+  pruning, is just one more index — the AI's originals stay as
+  provenance.
+
+* The build pipeline (kasten → events → import → PDF)
+
+Working tooling ships in =scripts/= — three stages, each a plain
+Python script, each leaving the source files untouched. Developed
+against a real AI-seeded kasten; generic over any kasten that follows
+these conventions (.adoc notes + an index note).
+
+- =scripts/build-kasten-events.py <kasten>/= — the *build*. Parses
+  every note (header block → tags, d-tag = filename stem, so rebuilds
+  are idempotent on the same coordinates; =T= = the short-title slug,
+  the note's human topic handle), converts =link:x.adoc[…]= file
+  links into ={{ref:x|Title}}= nostrdown /sibling/ refs (+ =ref=
+  tags) — =ref:=, not =wiki:=, because the kasten is one publication
+  and sibling resolution matches d-tag / =T= / title, in the reader
+  and the draft preview alike; links to unwritten notes stay dangling
+  — TODOs that resolve when written. Derives the 30040 tree from the
+  index note, unwraps
+  editor-hard-wrapped lines back into flowing paragraphs, and emits
+  /unsigned/ event templates in dependency order — leaves first,
+  every referenced event before its referrer, the top 30040 last.
+  Pubkey-dependent coordinates carry a =__PUBKEY__= placeholder bound
+  at import (name-first, bind-at-publish). Outputs:
+  =build/events.jsonl=, =build/draft.json=, =build/tree.txt= (the
+  dependency tree + manifest + what was dropped or dangling).
+
+  Sanitization (the redaction backstop from the variant above) reads
+  =<kasten>/build-config.json=: =substitutions= (regex rewrites over
+  content and tag values), =mentions= (names → ={{@__PUBKEY__}}=),
+  =rename= (d-tag aliases), =drop_tags= (local-only header keys,
+  e.g. =:file:=). Applies to the built events only — the files and
+  the config itself still carry the private names.
+
+- =scripts/import-kasten-events.py build/events.jsonl= — the
+  *import*, into a running tendrl engine. Two paths along the trust
+  axis: =--draft= saves the whole kasten as ONE unsigned composer
+  draft (review and edit the mapping in the UI; signing stays there —
+  the AI's work doesn't enter the db until read), or the direct path
+  binds =__PUBKEY__=, signs each template through the engine's own
+  identity (keys never leave the engine) in file order, and ingests
+  locally. Either way nothing broadcasts: signing is the snapshot,
+  broadcast is a separate deliberate step, per publication, or never.
+
+- =scripts/kasten-pdf.py build/events.jsonl= — the *render*. Walks
+  the top 30040's tree and typesets the kasten as a book via
+  asciidoctor-pdf: TOC from the index structure, heading depth = tree
+  depth, every ={{wiki:}}= ref a clickable internal cross-reference,
+  dangling refs italicized (visible TODOs), mentions rendered via
+  =--mention-label=, per-note =type · status · cite= metadata under
+  each heading — which makes the PDF a review artifact: every
+  =status: drafted= is visible at the point of reading. Also a proof
+  the event mapping loses nothing a human-facing rendering needs.
+
+* Instantiation checklist
+
+1. Copy this file into the new folder as its =conventions= note (any
+   markup); set =:status: current=; delete the columns of the Knob 1
+   table and the Knob 2 examples that don't apply.
+2. Pick the unit of work (rule 6) and write it into rule 6.
+3. Create the =index= note (sections: Orientation / the inventory
+   sections that fit the domain / In flight / open questions /
+   sources) and a =mission= note (one page: what this kasten is for,
+   what it is not).
+4. Write the first note. Link to at least two notes that don't exist.
+
+* Related
+
+All ship with this folder (originals live in the tendrl repo's
+=docs/= tree):
+
+- [[file:nostrdown.org][nostrdown spec]] — the reference layer the
+  event mapping builds on
+- [[file:conventions.org][tendrl's own conventions]] +
+  [[file:index.org][index]] — the worked example this template was
+  generalized from
+- [[file:feat-nostrdown.org][feat-nostrdown]],
+  [[file:idea-backlinks.org][idea-backlinks]],
+  [[file:idea-spells.org][idea-spells]] — machinery the event
+  mapping leans on
+- [[file:idea-citations.org][idea-citations]],
+  [[file:idea-citation-intents.org][idea-citation-intents]],
+  [[file:idea-external-source-highlights.org][idea-external-source-highlights]],
+  [[file:idea-annotation-anchoring.org][idea-annotation-anchoring]]
+  — the passage-granularity citation layer of the AI-seeded variant
+- =scripts/= — the working build pipeline (see /The build pipeline/
+  above): =build-kasten-events.py= (kasten → ordered unsigned events
+  + draft + tree report), =import-kasten-events.py= (sign+ingest, or
+  =--draft= for review-first), =kasten-pdf.py= (the book render).
+  Copies — the originals live in the tendrl repo's =scripts/=.
+- =specs/= — the protocol mechanics, for when the mapping needs to be
+  checked against the wire format:
+  [[file:specs/nkbip-01.adoc][NKBIP-01]] (30040/30041 curated
+  publications), [[file:specs/nkbip-03-citations.adoc][NKBIP-03]]
+  (citations, kind 30161, current revised draft),
+  [[file:specs/nip-84-highlights.md][NIP-84]] (kind-9802 highlights),
+  [[file:specs/nip-54-wiki.md][NIP-54]] (wiki d-tag normalization),
+  [[file:specs/nkbip-06-mime.adoc][NKBIP-06]] (MIME / content-format
+  tags), [[file:specs/nkbip-08-book-wikilinks.adoc][NKBIP-08]]
+  (book wikilinks), [[file:specs/nip-a7-spells.md][NIP-A7]] +
+  [[file:specs/nip-a7-composition.md][composition extension]]
+  (kind-777 spells — saved queries)

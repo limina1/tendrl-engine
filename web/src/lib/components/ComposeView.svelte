@@ -57,9 +57,30 @@
 	const NOSTR_ENTITY_RE = /^(nostr:)?(naddr1|nevent1|note1)/i;
 
 	// Resolve a token to a ResolvedRef for the preview card: a sibling heading in
-	// this draft (unpublished, no event yet) or the engine's resolution.
+	// this draft (unpublished, no event yet) or the engine's resolution. A
+	// `[[wikilink]]` checks the draft's own headings too — a topic naming a
+	// sibling section is an internal link, same as `{{ref:}}`.
 	async function previewRefFor(token: NostrdownToken, view: EditorView): Promise<ResolvedRef | null> {
-		if ((token.kind === 'ref' || token.kind === 'embed') && !NOSTR_ENTITY_RE.test(token.target)) {
+		if (
+			(token.kind === 'ref' || token.kind === 'embed' || token.kind === 'wiki') &&
+			!NOSTR_ENTITY_RE.test(token.target)
+		) {
+			// Pinned-coordinate match first: an imported/resumed draft's refs
+			// target section d-tags, which never appear in heading text — a
+			// title-slug scan alone can't see them.
+			const pinned = compose.sections.find((s) => s.d_tag === token.target);
+			if (pinned) {
+				return {
+					kind: 'embed',
+					start: 0,
+					end: 0,
+					target: token.target,
+					label: pinned.title,
+					found: true,
+					event_kind: 30041,
+					title: pinned.title
+				} as ResolvedRef;
+			}
 			const hit = await findHeading(view.state.doc.toString(), await slug(token.target));
 			if (hit) {
 				return {
@@ -75,7 +96,14 @@
 			}
 		}
 		try {
-			const m = await resolveNostrdown([{ key: 'k', content: token.raw }]);
+			// Engine fallback WITH the draft's sections as siblings, so
+			// `ref:`/slug-`embed:` resolve pre-publish exactly as they do in
+			// the draft-reader preview (d-tag / title-slug match engine-side).
+			const siblings = compose.sections.map((s) => ({
+				title: s.title || undefined,
+				d_tag: s.d_tag ?? s.source_addr?.d_tag ?? s.id
+			}));
+			const m = await resolveNostrdown([{ key: 'k', content: token.raw, siblings }]);
 			return m['k']?.[0] ?? null;
 		} catch {
 			return null;
@@ -116,6 +144,7 @@
 	function openPreview(r: ResolvedRef) {
 		if (r.coord) app.openCoord(r.coord);
 		else if (r.event_kind === 0 && r.author_pubkey) app.navigateToProfile(r.author_pubkey);
+		else if (r.event_id) app.getEventForModal(r.event_id);
 		preview = null;
 	}
 	function scheduleHidePreview() {
@@ -130,10 +159,14 @@
 	}
 
 	// mod-click on a recognized token: jump to a sibling heading in this buffer
-	// (works while drafting, before anything is published), else resolve against
-	// the db and open the target event.
+	// (works while drafting, before anything is published — wikilinks included:
+	// a topic naming a sibling heading is an internal link), else resolve
+	// against the db and open the target event.
 	async function followNostrdown(token: NostrdownToken, view: EditorView) {
-		if ((token.kind === 'ref' || token.kind === 'embed') && !NOSTR_ENTITY_RE.test(token.target)) {
+		if (
+			(token.kind === 'ref' || token.kind === 'embed' || token.kind === 'wiki') &&
+			!NOSTR_ENTITY_RE.test(token.target)
+		) {
 			const hit = await findHeading(view.state.doc.toString(), await slug(token.target));
 			if (hit) {
 				view.dispatch({ selection: { anchor: hit.pos }, scrollIntoView: true });
@@ -154,11 +187,17 @@
 				app.navigateToProfile(r.author_pubkey);
 				return;
 			}
+			// An nevent/note target has no coordinate — open the event modal.
+			if (r?.found && r.event_id) {
+				app.getEventForModal(r.event_id);
+				return;
+			}
 			// An unresolved wiki reference: don't dead-end on a toast — open the
 			// search frame seeded with the topic so the user can find (or, in Auto
 			// mode, auto-fetch) the defining event. Confirm mode searches local with
 			// the relay-fetch option, per the standing network-intent pattern.
-			if (token.kind === 'wiki') {
+			// (Topic form only — a bech32 entity target isn't a d-tag to search.)
+			if (token.kind === 'wiki' && !NOSTR_ENTITY_RE.test(token.target)) {
 				app.openSearchFor(`k:30818 d:${token.target}`, token.target);
 				return;
 			}

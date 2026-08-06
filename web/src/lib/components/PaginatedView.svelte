@@ -4,6 +4,7 @@
 	import type { Highlight } from '$lib/discussions/highlights';
 	import { getAppState } from '$lib/state.svelte';
 	import SectionCard from './SectionCard.svelte';
+	import { coordMatchesAddr } from '$lib/nostr/nostrdown';
 	import type { ResolutionTracker } from '$lib/nostr/resolution-progress.svelte';
 	import CommentThread from './CommentThread.svelte';
 	import PoolStateBadges from './PoolStateBadges.svelte';
@@ -89,6 +90,16 @@
 	// Keydown is handled by ReaderBuffer's nav handler (registered via the
 	// global buffer-store dispatcher). PaginatedView no longer attaches its
 	// own listener — global j/k/arrow already drives onnavigate from there.
+
+	// In-document navigation for nostrdown refs: a ref/wikilink that resolved
+	// to a sibling section of this document pages to it (only the current
+	// section is in the DOM, so RichContent's scroll-in-place can't reach it).
+	function openLocalSection(coord: string): boolean {
+		const idx = sections.findIndex((s) => s.addr && coordMatchesAddr(coord, s.addr));
+		if (idx < 0) return false;
+		if (idx !== currentSection) onnavigate(idx);
+		return true;
+	}
 </script>
 
 <div class="paginated-view">
@@ -143,7 +154,15 @@
 				<span class="nested-page__hint">Nested publication — refocus ⟳</span>
 			</button>
 		{:else if section}
-			<SectionCard {section} {highlights} {focusedHighlightId} {publicationAtag} {siblings} {resolution} />
+			<SectionCard
+				{section}
+				{highlights}
+				{focusedHighlightId}
+				{publicationAtag}
+				{siblings}
+				{resolution}
+				onopenlocal={openLocalSection}
+			/>
 			{#if threads.length > 0}
 				<div class="paginated-threads">
 					<button

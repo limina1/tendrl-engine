@@ -29,6 +29,7 @@
 
 <DraftReader
 	compose={app.compose}
+	publicationDTag={app.composeDTag}
 	ontogglereadonly={app.handleToggleReadonly}
 	onremove={removeById}
 	onunlockall={unlockAllImported}

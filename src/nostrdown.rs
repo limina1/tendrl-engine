@@ -150,8 +150,9 @@ pub struct ResolvedRef {
     /// `true` when the target is a valid event address (`found`) but the event
     /// itself isn't in the local db yet — the renderer offers a relay fetch
     /// (auto in Auto mode, a click in Confirm mode). Cleared once the event is
-    /// fetched and the card is filled. Always `false` for `ref`/`wiki` (those
-    /// resolve against local sections/articles, not a remote fetch).
+    /// fetched and the card is filled. Always `false` for slug-target
+    /// `ref`/`wiki` (those resolve against local sections/articles, not a
+    /// remote fetch); an entity-target ref can be pending like an embed.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub pending: bool,
     /// NIP-19 `naddr`/`nevent`/`note` to navigate to, when resolved.
@@ -161,6 +162,11 @@ pub struct ResolvedRef {
     /// the target is an addressable event. `None` for `nevent`/`note` embeds.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub coord: Option<String>,
+    /// Hex event id for an `nevent`/`note` target, when the entity names one —
+    /// the web's navigation for non-addressable events (the event modal), which
+    /// have no coordinate.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub event_id: Option<String>,
     /// Kind of the resolved event, when known.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub event_kind: Option<u64>,
@@ -377,16 +383,25 @@ fn parse_wikilink_inner(inner: &str, start: usize, end: usize) -> Option<Nostrdo
     if target_raw.is_empty() || is_markup_link_target(target_raw) {
         return None;
     }
-    let target = normalize(target_raw);
-    if target.is_empty() {
-        return None;
-    }
+    // `[[naddr…][My Doc]]` / `[[nostr:nevent…]]` — a pasted NIP-19 entity kept
+    // verbatim and resolved as an event link, not slug-normalized into an
+    // unresolvable topic.
+    let is_entity = is_nostr_entity(target_raw);
+    let target = if is_entity {
+        strip_nostr_prefix(target_raw).to_string()
+    } else {
+        let n = normalize(target_raw);
+        if n.is_empty() {
+            return None;
+        }
+        n
+    };
 
     Some(NostrdownRef {
         kind: RefKind::Wiki,
         target,
         raw_target: target_raw.to_string(),
-        is_entity: false,
+        is_entity,
         display,
         start,
         end,
@@ -544,12 +559,15 @@ pub fn reference_tags(content: &str) -> Vec<Vec<String>> {
     };
     for r in parse(content) {
         match r.kind {
-            RefKind::Wiki => push(&mut out, &mut seen, vec!["w".into(), r.target]),
-            RefKind::Ref => push(&mut out, &mut seen, vec!["ref".into(), r.target]),
+            RefKind::Wiki if !r.is_entity => push(&mut out, &mut seen, vec!["w".into(), r.target]),
+            RefKind::Ref if !r.is_entity => push(&mut out, &mut seen, vec!["ref".into(), r.target]),
             RefKind::Embed if !r.is_entity => {
                 push(&mut out, &mut seen, vec!["ref".into(), r.target])
             }
-            RefKind::Embed => {
+            // Entity targets — `{{ref:naddr…}}`, `[[nevent…]]`, `{{embed:…}}` —
+            // all emit the pointer tag for what they address (`a`/`q`/`p`), not
+            // a `w`/`ref` handle tag wrapping a bech32 string.
+            RefKind::Wiki | RefKind::Ref | RefKind::Embed => {
                 let Ok(decoded) = crate::nip19::decode(&r.target) else {
                     continue;
                 };
@@ -713,6 +731,22 @@ mod tests {
             &"See [[Hayek's Knowledge Problem]] for more."[r.start..r.end],
             "[[Hayek's Knowledge Problem]]"
         );
+    }
+
+    #[test]
+    fn parses_wikilink_entity_target() {
+        // A pasted NIP-19 entity stays verbatim (not slug-normalized) and is
+        // flagged so resolution treats it as a direct event link.
+        let r = one("See [[naddr1qq24xdjldfuk5djv2dt]] for the index.");
+        assert_eq!(r.kind, RefKind::Wiki);
+        assert!(r.is_entity);
+        assert_eq!(r.target, "naddr1qq24xdjldfuk5djv2dt");
+
+        // `nostr:`-prefixed with an Org-style display; prefix stripped.
+        let r = one("[[nostr:nevent1qqs0abcdef][the linked event]]");
+        assert!(r.is_entity);
+        assert_eq!(r.target, "nevent1qqs0abcdef");
+        assert_eq!(r.display.as_deref(), Some("the linked event"));
     }
 
     #[test]
@@ -955,6 +989,27 @@ mod tests {
         assert!(tags.contains(&vec!["p".to_string(), pk.clone()]));
         // The two `{{wiki:…}}` dedupe to a single `w` tag.
         assert_eq!(tags.iter().filter(|t| t[0] == "w").count(), 1);
+    }
+
+    #[test]
+    fn reference_tags_entity_ref_and_wikilink() {
+        // Entity targets in ref/wikilink position emit the pointer tag for what
+        // they address — never a `w`/`ref` handle tag wrapping a bech32 string.
+        let pk = "ef".repeat(32);
+        let id = "12".repeat(32);
+        let naddr = crate::nip19::encode_naddr(30040, &pk, "idx-1", &[]).unwrap();
+        let nevent = crate::nip19::encode_nevent(&id, &[], None, None).unwrap();
+        let content = format!("see {{{{ref:{naddr}}}}} and [[nostr:{nevent}][the event]].");
+        let tags = reference_tags(&content);
+
+        assert!(tags.contains(&vec!["a".to_string(), format!("30040:{pk}:idx-1")]));
+        assert!(tags
+            .iter()
+            .any(|t| t[0] == "q" && t[1] == id));
+        assert!(
+            !tags.iter().any(|t| t[0] == "w" || t[0] == "ref"),
+            "no handle tags for entity targets: {tags:?}"
+        );
     }
 
     #[test]

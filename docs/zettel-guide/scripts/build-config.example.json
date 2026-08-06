@@ -1,0 +1,11 @@
+{
+  "_comment": "Copy to <kasten>/build-config.json. Redactions apply to BUILT EVENTS only — source files and this config still carry the names; write broadcast-clean first, use this as the backstop.",
+  "mentions": ["Alice", "alice"],
+  "rename": {"map-email": "literature-map"},
+  "drop_tags": ["file"],
+  "substitutions": [
+    ["\\s*\\(Alice's email\\)", ""],
+    ["\\bthe project email\\b", "the literature map"],
+    ["sources/[^`()\\n]*?\\.(?:pdf|tex|md|txt)", "a local source copy"]
+  ]
+}
