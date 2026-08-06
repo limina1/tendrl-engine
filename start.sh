@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Start all tendrl-engine services
-# Usage: ./start.sh [-c config.toml] [--dev] [--build] [--open]
+# Usage: ./start.sh [-c config.toml] [--dev] [--build] [--open] [--lan]
 #
 # Services:
 #   1. Backend engine (Rust, port 3030) — embeddings run in-process (ONNX)
@@ -10,6 +10,10 @@
 #   --dev    Run vite dev (hot-reload) on 5173 instead of preview
 #   --build  Run `pnpm build` before starting the preview
 #   --open   Open the frontend URL in a browser once services are up
+#   --lan    Bind engine + frontend to 0.0.0.0 so other devices on the local
+#            network (e.g. your phone) can reach them; prints the LAN URL.
+#            Only use on a network you trust — this exposes the engine
+#            (including signing/identity endpoints) to everyone on it.
 #
 # Browser: NOT opened by default. The engine's own auto-open is suppressed here
 # (--no-open) because it targets :3030, the embedded build — not the :5173/:5174
@@ -25,6 +29,7 @@ CONFIG="config.toml"
 DEV=false
 BUILD=false
 OPEN=false
+LAN=false
 PIDS=()
 
 # Parse args
@@ -34,6 +39,7 @@ while [[ $# -gt 0 ]]; do
         --dev) DEV=true; shift ;;
         --build) BUILD=true; shift ;;
         --open) OPEN=true; shift ;;
+        --lan) LAN=true; shift ;;
         *) shift ;;
     esac
 done
@@ -78,17 +84,29 @@ if [[ "$DEV" == true ]]; then free_port 5173; else free_port 5174; fi
 # 1. Build and start backend. Embeddings (when enabled in config) run
 # in-process via ONNX — the model loads lazily on first use, no separate
 # service to start or wait for.
+# --lan: bind everything to 0.0.0.0 and figure out the address to show the
+# user. Best-effort IP detection — the bind works regardless.
+HOST_ARGS=()
+VITE_HOST_ARGS=()
+LAN_IP=""
+if [[ "$LAN" == true ]]; then
+    HOST_ARGS=(--host 0.0.0.0)
+    VITE_HOST_ARGS=(--host)
+    LAN_IP=$(ip -4 addr show scope global 2>/dev/null | grep -oE 'inet [0-9.]+' | head -1 | cut -d' ' -f2)
+    [[ -z "$LAN_IP" ]] && LAN_IP=$(hostname -I 2>/dev/null | awk '{print $1}')
+fi
+
 echo "Starting backend..."
 # --no-open: this script owns the browser (see header). The engine would
 # otherwise pop a :3030 tab on every restart — the wrong port for this flow.
-cargo run -- -c "$CONFIG" --no-open &
+cargo run -- -c "$CONFIG" --no-open "${HOST_ARGS[@]}" &
 PIDS+=($!)
 
 # 2. Start frontend
 if [[ "$DEV" == true ]]; then
     sleep 1
     echo "Starting frontend dev server..."
-    (cd web && pnpm dev) &
+    (cd web && pnpm exec vite dev "${VITE_HOST_ARGS[@]}") &
     PIDS+=($!)
     FRONTEND_URL="http://localhost:5173"
 else
@@ -105,7 +123,7 @@ else
     # Invoke vite directly: `pnpm preview -- ...` forwards the `--` literally,
     # so vite sees `vite preview -- --port 5174` and ignores the flags (falling
     # back to its default :4173). `pnpm exec` runs the binary with real args.
-    (cd web && pnpm exec vite preview --port 5174 --strictPort) &
+    (cd web && pnpm exec vite preview --port 5174 --strictPort "${VITE_HOST_ARGS[@]}") &
     PIDS+=($!)
     FRONTEND_URL="http://localhost:5174"
 fi
@@ -115,6 +133,13 @@ echo "════════════════════════�
 echo "  tendrl-engine running"
 echo "  Backend:  http://localhost:3030"
 echo "  Frontend: $FRONTEND_URL"
+if [[ "$LAN" == true ]]; then
+    if [[ -n "$LAN_IP" ]]; then
+        echo "  LAN:      ${FRONTEND_URL/localhost/$LAN_IP}  (open this on your phone)"
+    else
+        echo "  LAN:      bound to 0.0.0.0 — couldn't detect the LAN IP; use this machine's address"
+    fi
+fi
 echo "  Config:   $CONFIG"
 echo "  Stop:     Ctrl+C"
 echo "═══════════════════════════════════════"
