@@ -428,6 +428,25 @@
 		mb = { mode: 'closed', query: '', selectedIndex: 0 };
 	}
 
+	// Press-out for the minibuffer, both shells: a click/tap anywhere outside
+	// the strip closes it (Esc-less phones; muscle-memory clicks on desktop).
+	// Registration is deferred a tick so the click that opened it doesn't
+	// immediately close it (same pattern as DiscoveryTip's outside-dismiss).
+	// The mobile sheet's scrim stays for the visual dim; this listener is the
+	// actual closer on both.
+	$effect(() => {
+		if (mb.mode === 'closed') return;
+		const onDown = (e: PointerEvent) => {
+			const t = e.target as HTMLElement | null;
+			if (t && !t.closest('.mb')) closeMinibuffer();
+		};
+		const id = setTimeout(() => window.addEventListener('pointerdown', onDown), 0);
+		return () => {
+			clearTimeout(id);
+			window.removeEventListener('pointerdown', onDown);
+		};
+	});
+
 	// Mobile Back: everything that should close on hardware Back before any
 	// panel navigation happens, topmost first (the drawer is built into
 	// mobileNav at the top of the chain). Registration is idempotent and this
@@ -1800,6 +1819,7 @@
 				placeholder={mb.mode === 'mx' ? 'command…' : 'filter…'}
 			/>
 			<span class="mb__hint">↑↓ select · enter {mb.mode === 'mx' ? 'execute' : mb.mode === 'split' ? 'split' : 'switch'} · esc close</span>
+			<button class="mb__x" onclick={closeMinibuffer} title="Close (Esc)" aria-label="Close">×</button>
 		</div>
 	</div>
 {/snippet}
@@ -2731,6 +2751,19 @@
 		font-family: var(--font-mono);
 		font-size: var(--t-2xs);
 		color: var(--base5);
+	}
+	.mb__x {
+		border: none;
+		background: none;
+		color: var(--base5);
+		font-size: var(--t-md);
+		line-height: 1;
+		padding: 4px 8px;
+		cursor: pointer;
+		flex-shrink: 0;
+	}
+	.mb__x:hover {
+		color: var(--fg);
 	}
 
 	/* Buffer-content ghosts */
