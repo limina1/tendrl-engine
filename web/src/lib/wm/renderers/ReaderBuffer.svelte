@@ -9,6 +9,8 @@
 	import ProfileName from '$lib/components/ProfileName.svelte';
 	import PoolStateBadges from '$lib/components/PoolStateBadges.svelte';
 	import { getActiveStore, type NavAction } from '../buffer-store.svelte';
+	import { shell } from '../shell.svelte';
+	import { mobileNav } from '../mobile-nav.svelte';
 	import { ResolutionTracker } from '$lib/nostr/resolution-progress.svelte';
 	import type {
 		LazySection,
@@ -574,6 +576,65 @@
 	// highlights that don't carry a section addr themselves.
 	let drawerOpen = $state(false);
 
+	// ── Mobile TOC drawer ───────────────────────────────────────────────
+	// Phone-shell affordance: paginated/continuous reading keeps a swipe-in
+	// left drawer of the outline (the desktop answer — flip to Outline view —
+	// costs your reading position). Rows reuse outlineVisible/outlineExpanded
+	// so the collapse state matches the outline view exactly.
+	let tocOpen = $state(false);
+	// ContinuousView instance — its exported scrollToSection keeps a TOC
+	// jump in-place instead of flipping the view mode.
+	let continuousView = $state<{ scrollToSection: (i: number) => void } | undefined>();
+	function tocJump(i: number) {
+		if (viewMode === 'continuous') continuousView?.scrollToSection(i);
+		else {
+			viewMode = 'paginated';
+			handleNavigate(i);
+		}
+		tocOpen = false;
+	}
+
+	// Hardware Back closes these before it walks panel history. Registration
+	// is idempotent by id; the teardown re-registers a dead closer so a
+	// stale closure can't consume Back after unmount. (Buffer components
+	// must not use lifecycle hooks — $effect teardown only.)
+	mobileNav.registerCloser('reader-toc', 58, {
+		isOpen: () => tocOpen,
+		close: () => (tocOpen = false)
+	});
+	mobileNav.registerCloser('reader-highlights', 57, {
+		isOpen: () => drawerOpen,
+		close: () => (drawerOpen = false)
+	});
+	$effect(() => () => {
+		mobileNav.registerCloser('reader-toc', 58, { isOpen: () => false, close: () => {} });
+		mobileNav.registerCloser('reader-highlights', 57, { isOpen: () => false, close: () => {} });
+	});
+
+	// Edge-swipe right opens the TOC drawer; swipe left (anywhere, drawer
+	// open) closes it. Threshold-based — no follow-finger animation.
+	let touchStartX = 0;
+	let touchStartY = 0;
+	let touchFromEdge = false;
+	let touchWithDrawer = false;
+	function onReaderTouchStart(e: TouchEvent) {
+		if (shell.mode !== 'mobile') return;
+		const t = e.touches[0];
+		touchStartX = t.clientX;
+		touchStartY = t.clientY;
+		touchFromEdge = !tocOpen && t.clientX < 28;
+		touchWithDrawer = tocOpen;
+	}
+	function onReaderTouchEnd(e: TouchEvent) {
+		if (shell.mode !== 'mobile') return;
+		const t = e.changedTouches[0];
+		const dx = t.clientX - touchStartX;
+		const dy = t.clientY - touchStartY;
+		if (Math.abs(dx) < 50 || Math.abs(dy) > Math.abs(dx)) return;
+		if (touchFromEdge && dx > 0 && showTocButton) tocOpen = true;
+		else if (touchWithDrawer && dx < 0) tocOpen = false;
+	}
+
 	const drawerHighlights = $derived.by<DrawerHighlight[]>(() => {
 		const byId = new Map<string, api.DiscussionEvent>();
 		for (const events of Object.values(discussionEvents)) {
@@ -713,6 +774,11 @@
 	// ComposeView's "Read" affordance which spawns the draft buffer.
 	const isDraftMode = false;
 	const sections = $derived<LazySection[]>(pristineSections);
+	// (Down here, not with the rest of the mobile-TOC block: TS flags a
+	// use-before-declaration on isDraftMode/sections up there, lazy or not.)
+	const showTocButton = $derived(
+		shell.mode === 'mobile' && viewMode !== 'outline' && !isDraftMode && sections.length > 0
+	);
 	const segments = $derived<ReturnType<typeof segmentSections>>([]);
 
 	async function load() {
@@ -1866,8 +1932,19 @@
 	});
 </script>
 
-<div class="reader-wrap">
+<!-- Swipe is supplementary — the § toc button is the accessible path. -->
+<!-- svelte-ignore a11y_no_static_element_interactions -->
+<div class="reader-wrap" ontouchstart={onReaderTouchStart} ontouchend={onReaderTouchEnd}>
 	<div class="toolbar" data-tour="reader-toolbar">
+		{#if showTocButton}
+			<button
+				class="toc-btn"
+				class:active={tocOpen}
+				onclick={() => (tocOpen = !tocOpen)}
+				title="Table of contents (or swipe in from the left edge)"
+				aria-label="Open the table of contents"
+			>§ toc</button>
+		{/if}
 		<!-- Order matches the h/l drill axis: outline → paginated → continuous.
 		     l/→ cycles right, h/← cycles left. Outline's l/→ is special —
 		     it drills into paginated with the cursored section loaded. -->
@@ -2512,6 +2589,7 @@
 				{/if}
 			{:else if viewMode === 'continuous'}
 				<ContinuousView
+					bind:this={continuousView}
 					{sections}
 					onrefocus={refocus}
 					publication={{
@@ -2545,6 +2623,43 @@
 			{/if}
 		</div>
 	{/if}
+	{#if tocOpen}
+		<!-- svelte-ignore a11y_click_events_have_key_events -->
+		<!-- svelte-ignore a11y_no_static_element_interactions -->
+		<div class="rtoc-scrim" onclick={() => (tocOpen = false)}></div>
+		<nav class="rtoc" aria-label="Table of contents">
+			<div class="rtoc__head">
+				<span class="rtoc__title">{publication?.title || 'Contents'}</span>
+			</div>
+			{#each outlineVisible as row (`${row.index}:${row.section.addr.pubkey}:${row.section.addr.d_tag}`)}
+				{@const section = row.section}
+				{@const i = row.index}
+				{#if section.addr.kind === 30040}
+					{@const loadable = (outlineChildInfo.get(i)?.descendants ?? 0) > 0}
+					{@const open = outlineExpanded[nestedAddrKey(section.addr)] ?? false}
+					<button
+						class="rtoc__row rtoc__row--index"
+						style="--depth:{section.depth ?? 0}"
+						onclick={() => loadable && toggleOutlineIndex(section.addr)}
+						disabled={!loadable}
+						aria-expanded={loadable ? open : undefined}
+					>
+						<span class="rtoc__caret">{loadable ? (open ? '▾' : '▸') : '·'}</span>
+						<span class="rtoc__name">{section.title || 'Nested publication'}</span>
+					</button>
+				{:else}
+					<button
+						class="rtoc__row"
+						class:rtoc__row--on={viewMode === 'paginated' && i === currentSection}
+						style="--depth:{section.depth ?? 0}"
+						onclick={() => tocJump(i)}
+					>
+						<span class="rtoc__name">{section.title || 'Untitled section'}</span>
+					</button>
+				{/if}
+			{/each}
+		</nav>
+	{/if}
 	<HighlightsDrawer
 		highlights={drawerHighlights}
 		open={drawerOpen}
@@ -2572,6 +2687,98 @@
 		background: var(--panel-bg-soft);
 		flex-shrink: 0;
 		align-items: center;
+	}
+	/* Narrow (mobile) widths: wrap the toolbar instead of clipping the
+	   trailing actions off the right edge. */
+	@media (max-width: 768px) {
+		.toolbar {
+			flex-wrap: wrap;
+			row-gap: 4px;
+		}
+	}
+
+	/* Mobile TOC drawer — same surface language as the shell's work-buffer
+	   drawer (fixed left panel + scrim) but one layer beneath it. */
+	.toolbar .toc-btn {
+		color: var(--id-yours);
+		border-color: color-mix(in srgb, var(--id-yours) 40%, transparent);
+	}
+	.rtoc-scrim {
+		position: fixed;
+		inset: 0;
+		background: rgba(0, 0, 0, 0.45);
+		z-index: 45;
+	}
+	.rtoc {
+		position: fixed;
+		top: 0;
+		bottom: 0;
+		left: 0;
+		width: min(78vw, 320px);
+		display: flex;
+		flex-direction: column;
+		background: var(--panel-bg);
+		border-right: 1px solid var(--panel-border-strong);
+		z-index: 46;
+		padding: var(--s-2) 0 calc(var(--s-2) + env(safe-area-inset-bottom));
+		overflow-y: auto;
+		animation: rtoc-in 160ms ease-out;
+	}
+	@keyframes rtoc-in {
+		from {
+			transform: translateX(-100%);
+		}
+		to {
+			transform: translateX(0);
+		}
+	}
+	.rtoc__head {
+		padding: var(--s-2) var(--s-3);
+		border-bottom: 1px solid var(--panel-border);
+		margin-bottom: var(--s-1);
+	}
+	.rtoc__title {
+		font-family: var(--font-mono);
+		font-size: var(--t-xs);
+		font-weight: 600;
+	}
+	.rtoc__row {
+		display: flex;
+		align-items: center;
+		gap: var(--s-2);
+		width: 100%;
+		border: none;
+		border-left: 2px solid transparent;
+		background: none;
+		color: var(--fg);
+		text-align: left;
+		font-family: var(--font-mono);
+		font-size: var(--t-xs);
+		padding: var(--s-2) var(--s-3);
+		padding-left: calc(var(--s-3) + var(--depth, 0) * 14px);
+		min-height: 44px;
+		cursor: pointer;
+	}
+	.rtoc__row--on {
+		border-left-color: var(--accent);
+		background: var(--panel-bg-soft);
+		color: var(--accent);
+	}
+	.rtoc__row--index {
+		color: var(--fg-alt);
+		font-weight: 600;
+	}
+	.rtoc__row:disabled {
+		cursor: default;
+		opacity: 0.6;
+	}
+	.rtoc__caret {
+		flex-shrink: 0;
+	}
+	.rtoc__name {
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
 	}
 	.toolbar button {
 		font-family: var(--font-mono);

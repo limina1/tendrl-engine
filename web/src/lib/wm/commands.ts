@@ -70,7 +70,10 @@ export const commands: Command[] = [
 	// Application
 	{ id: 'tendrl-quit', name: 'tendrl-quit', hiddenByDefault: true, description: 'Close this frame', category: 'Application', scope: 'nav', deferred: true },
 	{ id: 'tendrl-refresh', name: 'tendrl-refresh', description: 'Reload the focused buffer', category: 'Application', scope: 'contextual', context: 'a focused buffer', deferred: true, keybinding: 'SPC b R' },
-	{ id: 'tendrl-cycle-shell', name: 'tendrl-cycle-shell', description: 'Cycle the shell: auto → desktop (WM) → mobile (bottom bar)', category: 'Application', scope: 'action' }
+	{ id: 'tendrl-cycle-shell', name: 'tendrl-cycle-shell', description: 'Cycle the shell: auto → desktop (WM) → mobile (bottom bar)', category: 'Application', scope: 'action' },
+	// The desktop entry point for the walk is the logo's W dropdown — chrome the
+	// mobile shell doesn't render, so the palette carries an entry in both shells.
+	{ id: 'tendrl-run-walkthrough', name: 'tendrl-run-walkthrough', description: 'Replay the first-run guided walkthrough from the top', category: 'Application', scope: 'action' }
 ];
 
 /** Whether a command is offered in the given shell (absent `shells` = both).

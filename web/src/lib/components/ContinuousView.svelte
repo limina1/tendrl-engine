@@ -258,6 +258,14 @@
 		const idx = sections.findIndex((s) => s.addr && coordMatchesAddr(coord, s.addr));
 		// Index rows aren't readable in place — let those refocus/pop out.
 		if (idx < 0 || isIndex(sections[idx])) return false;
+		scrollToSection(idx);
+		return true;
+	}
+
+	/** Expand the target's collapsed ancestors and scroll it into view.
+	 *  Exported for the reader's mobile TOC drawer (bind:this). */
+	export function scrollToSection(idx: number) {
+		if (idx < 0 || idx >= sections.length) return;
 		const next = { ...expandedByAddr };
 		let d = sections[idx].depth ?? 0;
 		for (let j = idx - 1; j >= 0 && d > 0; j--) {
@@ -274,7 +282,6 @@
 				?.querySelector(`[data-section-index="${idx}"]`)
 				?.scrollIntoView({ behavior: 'smooth', block: 'start' });
 		});
-		return true;
 	}
 
 	// Visibility-driven lazy load. Re-runs whenever `visibleRows` changes
@@ -451,6 +458,19 @@
 		flex: 1;
 		overflow-y: auto;
 		padding: 16px;
+	}
+	/* Phone reading: roomier gutters, larger headings, clear of the bottom
+	   bar / home-indicator region. */
+	@media (max-width: 768px) {
+		.continuous-view {
+			padding: 14px 16px calc(24px + env(safe-area-inset-bottom));
+		}
+		.pub-title {
+			font-size: var(--t-lg);
+		}
+		.section-title {
+			font-size: var(--t-base);
+		}
 	}
 
 	.pub-title {

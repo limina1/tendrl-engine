@@ -23,6 +23,13 @@ class ShellState {
 	/** Session-only override from `?shell=` — wins over the stored pref,
 	 *  never persisted; cleared by an explicit setPref. */
 	private urlOverride = $state<ShellMode | null>(null);
+	/** Px of on-screen keyboard overlapping the *layout* viewport. Non-zero
+	 *  only on browsers that keep the layout viewport full-height under the
+	 *  keyboard (iOS Safari); where the viewport meta's
+	 *  interactive-widget=resizes-content applies (Android Chrome/WebView)
+	 *  the layout viewport shrinks with the keyboard and this stays 0 —
+	 *  never double-compensates. Consumed as --kb-inset on .page. */
+	keyboardInset = $state(0);
 
 	constructor() {
 		if (typeof window === 'undefined') return;
@@ -33,6 +40,16 @@ class ShellState {
 		const mq = window.matchMedia(MOBILE_QUERY);
 		this.compact = mq.matches;
 		mq.addEventListener('change', (e) => (this.compact = e.matches));
+		const vv = window.visualViewport;
+		if (vv) {
+			const update = () => {
+				const inset = Math.round(window.innerHeight - vv.height - vv.offsetTop);
+				// <60px is URL-bar / pinch jitter, not a keyboard.
+				this.keyboardInset = inset >= 60 ? inset : 0;
+			};
+			vv.addEventListener('resize', update);
+			vv.addEventListener('scroll', update);
+		}
 	}
 
 	get mode(): ShellMode {

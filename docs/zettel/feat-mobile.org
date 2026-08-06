@@ -81,12 +81,30 @@ engine over LAN (milestone M0, below). Ordered; A1–A3 gate the merge to
   commands marked desktop-only, =mxEntries= filter + =executeCommand=
   guard (leader/binding side door toasts), "desktop-only" badges in the
   Settings command registry.
-- [ ] *A4. Buffer-internals mobile pass* (open-ended tail; prioritize
+- [X] *A4. Buffer-internals mobile pass* (open-ended tail; prioritize
   from real phone use after merge):
   - [X] composer: action-bar wrap at narrow widths (Cancel no longer
     clips at 390px; =@media ≤600px= in ComposeView)
-  - [ ] composer: keyboard avoidance via =visualViewport=
-  - [ ] reader: typography pass; TOC/outline as a swipe-in drawer
+  - [X] composer: keyboard avoidance — two layers: the viewport meta
+    gains =interactive-widget=resizes-content= (Android Chrome/WebView:
+    layout viewport shrinks with the keyboard, so the flex shell +
+    pinned compose actions just work), plus =shell.keyboardInset=
+    (visualViewport tracking) → =--kb-inset= on =.page= for iOS-style
+    browsers where the layout viewport stays full-height. The two never
+    double-compensate (inset reads 0 where the meta applies). CSS
+    wiring CDP-verified (=--kb-inset: 300px= → page 844→544, bar
+    lifted); real-keyboard behavior needs the phone.
+  - [X] reader: typography pass (=.section-content= steps --t-xs →
+    --t-base with 1.65 leading ≤768px; continuous view padding +
+    heading bumps; toolbar wraps) and a mobile TOC drawer — =§ toc=
+    button in paginated/continuous + edge-swipe right to open / swipe
+    left to close; rows reuse =outlineVisible=/=outlineExpanded= (same
+    collapse state as outline view); jump keeps the view mode
+    (continuous scrolls in place via ContinuousView's exported
+    =scrollToSection=, paginated navigates). Registered as mobileNav
+    closers (toc 58, highlights drawer 57) so Back consumes them —
+    teardown re-registers dead closers (no stale closure after
+    unmount). CDP-verified incl. Back-consume chain and touch swipes.
   - [X] modeline surfaces' mobile home: STATUS section pinned at the
     bottom of the work drawer — network row (dot + pill, tap toggles
     auto/confirm), relays (opens relay buffer), identity (connect /
@@ -96,8 +114,19 @@ engine over LAN (milestone M0, below). Ordered; A1–A3 gate the merge to
     modal already renders fine on mobile.)
   - [X] toasts: bottom-center above the nav bar in the mobile shell
     (=toast-stack--mobile=; desktop stays lower-right)
-  - [ ] walkthrough/tours: per-shell anchor variants, or suppress
-    desktop-anchored tours on mobile
+  - [X] walkthrough/tours: =TourTip.mobile= per-shell overrides
+    (anchor/body/placement), resolved in DiscoveryTip when the mobile
+    shell is active — beats anchored to desktop chrome (sign-in,
+    signed-in-noname, go-home, walk-done) retarget to mobile anchors
+    (=mobile-menu= ☰, =mobile-bar=, =mobile-cmds=, =mobile-status=)
+    instead of auto-skip-burning as seen. New
+    =tendrl-run-walkthrough= palette command = the mobile home of the
+    logo-W "First-run walkthrough" entry (works on desktop too).
+    On-demand buffer tours (reader/composer/search W chips) already
+    anchor inside buffer chrome and work unchanged; mode-line tours
+    stay desktop-only by construction (their W chip lives on the
+    mode-line). CDP-verified: sign-in surfaces its mobile body ringed
+    to the cmds button.
 - [ ] *A5. Touch highlight capture.* Selection handles → action popover
   (share-sheet style) replacing the mouse+key flow in
   =HighlightCapture.svelte=. The flagship mobile interaction for a

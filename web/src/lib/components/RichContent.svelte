@@ -174,6 +174,14 @@
 		color: var(--fg);
 		margin: 0;
 	}
+	/* Phone reading typography: --t-xs is a UI size (~12px effective) —
+	   step body text up a notch and open the leading on narrow viewports. */
+	@media (max-width: 768px) {
+		.section-content {
+			font-size: var(--t-base);
+			line-height: 1.65;
+		}
+	}
 	.section-content.muted {
 		color: var(--fg-muted);
 	}

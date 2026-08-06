@@ -2,7 +2,12 @@
 <html lang="en">
 	<head>
 		<meta charset="utf-8" />
-		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<!-- interactive-widget=resizes-content: the on-screen keyboard shrinks the
+		     layout viewport (Android Chrome/WebView) instead of overlaying it, so
+		     the mobile shell's bottom bar and the composer's action row stay
+		     visible while typing. Browsers without the key (iOS Safari) fall back
+		     to the visualViewport tracking in wm/shell.svelte.ts (--kb-inset). -->
+		<meta name="viewport" content="width=device-width, initial-scale=1, interactive-widget=resizes-content" />
 		<link rel="icon" href="data:," />
 		<title>tendrl workbench</title>
 		<!-- No-flash text scale: apply the saved Appearance preset to the root

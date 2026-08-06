@@ -105,6 +105,7 @@
 		{#if activeClass === 'work'}
 			<button
 				class="mshell__menu-btn {mobileNav.drawerOpen ? 'mshell__menu-btn--on' : ''}"
+				data-tour="mobile-menu"
 				onclick={() => (mobileNav.drawerOpen = !mobileNav.drawerOpen)}
 				title="Open work buffers"
 				aria-label="Open the work-buffer drawer"
@@ -173,7 +174,7 @@
 
 			<!-- Mobile home for the desktop modeline's status pills. -->
 			<div class="mshell__drawer-sp"></div>
-			<div class="mshell__status">
+			<div class="mshell__status" data-tour="mobile-status">
 				<div class="mshell__status-head">status</div>
 				{#if networkPill}
 					<button
@@ -231,7 +232,7 @@
 		</nav>
 	{/if}
 
-	<nav class="mshell__bar" aria-label="Main panels">
+	<nav class="mshell__bar" data-tour="mobile-bar" aria-label="Main panels">
 		{#each bar as b (b.cls)}
 			<button
 				class="mshell__bar-item mshell__bar-item--{b.cls} {activeClass === b.cls
@@ -240,7 +241,7 @@
 				onclick={() => switchClass(b.cls)}
 			>{b.label}</button>
 		{/each}
-		<button class="mshell__bar-item mshell__bar-item--cmd" onclick={onCommands}>cmds</button>
+		<button class="mshell__bar-item mshell__bar-item--cmd" data-tour="mobile-cmds" onclick={onCommands}>cmds</button>
 	</nav>
 </div>
 

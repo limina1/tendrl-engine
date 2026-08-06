@@ -78,6 +78,13 @@ export type TourTip = {
 	 *  the user hasn't already done. Omit for beats that are always relevant
 	 *  (and for on-demand `W` tours, which the user asked for explicitly). */
 	relevantWhen?: (w: WalkthroughWorld) => boolean;
+	/** Per-shell overrides, applied by the overlay when the mobile shell is
+	 *  active. A beat anchored to desktop chrome (header, mode-line) would
+	 *  otherwise auto-skip on mobile — silently marked seen, burning the walk
+	 *  without teaching anything. Override the anchor to the mobile chrome
+	 *  equivalent (see MobileShell's data-tour attributes) and, where the body
+	 *  narrates desktop chrome ("click the tendrl logo"), the body too. */
+	mobile?: { anchor?: string; body?: string; placement?: 'top' | 'bottom' | 'left' | 'right' };
 };
 
 // Registry. The first-run "feed sync" login walk (feed-sync → sign-in →
@@ -120,7 +127,12 @@ export const TIPS: Record<string, TourTip> = {
 		placement: 'bottom',
 		// Already signed in (e.g. a key auto-loaded from the keyring)? Don't
 		// teach signing in. Skips this and the source-controls beat below.
-		relevantWhen: (w) => !w.hasIdentity
+		relevantWhen: (w) => !w.hasIdentity,
+		mobile: {
+			anchor: 'mobile-cmds',
+			body: 'Open *cmds* and run `tendrl-open-settings` to sign in — a `NIP-07` browser extension, or paste an `ncryptsec` key with its password. Heads up: the moment you sign in you\'ll see your pubkey but no name yet.',
+			placement: 'top'
+		}
 	},
 	'sign-in-methods': {
 		key: 'sign-in-methods',
@@ -138,14 +150,24 @@ export const TIPS: Record<string, TourTip> = {
 		title: 'Signed in — no name yet',
 		body: "There you are: a pubkey, but no display name or avatar. That's expected — your profile (a `kind 0` event) lives on a relay you haven't pulled from yet. Fetching the feed will bring it in.",
 		placement: 'bottom',
-		next: 'go-home'
+		next: 'go-home',
+		mobile: {
+			anchor: 'mobile-menu',
+			body: "You're signed in. The `☰` drawer's *identity* row shows a pubkey, but no display name or avatar yet. That's expected — your profile (a `kind 0` event) lives on a relay you haven't pulled from yet. Fetching the feed will bring it in.",
+			placement: 'bottom'
+		}
 	},
 	'go-home': {
 		key: 'go-home',
 		anchor: 'home',
 		title: 'Back to the feed',
 		body: 'Head home — click the *tendrl* logo (or the feed tab) to return to your feed, then sync it again.',
-		placement: 'bottom'
+		placement: 'bottom',
+		mobile: {
+			anchor: 'mobile-menu',
+			body: 'Head home — open the `☰` drawer and pick *feed* to return to your feed, then sync it again.',
+			placement: 'bottom'
+		}
 	},
 	'general-feed': {
 		key: 'general-feed',
@@ -178,7 +200,12 @@ export const TIPS: Record<string, TourTip> = {
 		anchor: 'modeline',
 		title: "You're all set",
 		body: "That's the guided tour. From here, every panel has its own walkthrough — tap `W` (and `?` for the full reference) on the mode-line, reader, composer, search, and event menus to go deeper whenever you want. They never interrupt; they wait for you to ask.",
-		placement: 'top'
+		placement: 'top',
+		mobile: {
+			anchor: 'mobile-bar',
+			body: "That's the guided tour. From here, panels keep their own walkthroughs — tap `W` (and `?` for the full reference) in the reader, composer, search, and event menus to go deeper whenever you want. They never interrupt; they wait for you to ask.",
+			placement: 'top'
+		}
 	},
 
 	// ── Reader tour (event-gated: fires when a publication first opens) ───

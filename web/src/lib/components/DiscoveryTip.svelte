@@ -14,6 +14,7 @@
 		dismissActive,
 		endWalkthrough
 	} from '$lib/wm/discovery.svelte';
+	import { shell } from '$lib/wm/shell.svelte';
 
 	const GAP = 10; // px between anchor and card
 	const MARGIN = 8; // px min gap from any viewport edge
@@ -34,7 +35,14 @@
 	// the active tip changes so each beat starts glued to its anchor again.
 	let dragOffset = $state<{ x: number; y: number } | null>(null);
 
-	const tip = $derived(activeTip());
+	// Per-shell resolution: a tip's `mobile` overrides (anchor / body /
+	// placement) apply when the mobile shell is active, so beats anchored to
+	// desktop chrome retarget instead of auto-skipping. The spread keeps
+	// `key`, so vars/seen/queue bookkeeping is shell-agnostic.
+	const rawTip = $derived(activeTip());
+	const tip = $derived(
+		rawTip && shell.mode === 'mobile' && rawTip.mobile ? { ...rawTip, ...rawTip.mobile } : rawTip
+	);
 	const body = $derived(tip ? renderBodyHtml(tip) : '');
 	const remaining = $derived(discovery.queue.length);
 	// A guided segment chains one tip at a time (queue length 1) via `next`, so

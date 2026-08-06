@@ -557,6 +557,11 @@
 			closeMinibuffer();
 			return;
 		}
+		if (cmd.id === 'tendrl-run-walkthrough') {
+			closeMinibuffer();
+			replayWalkthrough();
+			return;
+		}
 		if (cmd.id === 'tendrl-switch-buffer') {
 			openMinibuffer('class');
 			return;
@@ -1180,7 +1185,11 @@
 
 <svelte:window onkeydown={onGlobalKeydown} onfocusin={onFocusIn} onfocusout={onFocusOut} />
 
-<div class="page">
+<!-- --kb-inset: keyboard height overlapping the layout viewport (iOS-style
+     browsers only; 0 where interactive-widget=resizes-content applies — see
+     app.html). Shrinks the page so the bottom bar / compose actions clear
+     the keyboard. Mobile shell only: desktop windows never need it. -->
+<div class="page" style="--kb-inset: {shell.mode === 'mobile' ? shell.keyboardInset : 0}px">
 	{#if shell.mode === 'mobile'}
 		<MobileShell
 			{store}
@@ -1772,7 +1781,7 @@
 
 <style>
 	.page {
-		height: 100dvh;
+		height: calc(100dvh - var(--kb-inset, 0px));
 		background: var(--bg-alt);
 		color: var(--fg);
 		font-family: var(--font-sans);
@@ -2554,7 +2563,7 @@
 		position: fixed;
 		left: 0;
 		right: 0;
-		bottom: calc(46px + env(safe-area-inset-bottom));
+		bottom: calc(46px + env(safe-area-inset-bottom) + var(--kb-inset, 0px));
 		z-index: 60;
 		box-shadow: 0 -6px 24px rgba(0, 0, 0, 0.35);
 	}
