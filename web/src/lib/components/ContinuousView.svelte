@@ -160,6 +160,27 @@
 
 	const isIndex = (s: LazySection) => s.addr?.kind === 30040;
 
+	// Companion (preamble) sections: a 30041 sharing pubkey + d-tag with a
+	// 30040 index is that index's own body text — the tendrl/kasten authoring
+	// convention. Its title duplicates the index header rendered immediately
+	// above it, so the title row is suppressed and only content shows (often
+	// nothing: an index with no text before its first subheading publishes an
+	// empty companion). The root index isn't in `sections`, so its companion
+	// is matched against publicationAtag.
+	const companionOwnerKeys = $derived.by(() => {
+		const keys = new Set<string>();
+		for (const s of sections) {
+			if (s.addr && isIndex(s)) keys.add(`${s.addr.pubkey}:${s.addr.d_tag}`);
+		}
+		if (publicationAtag) {
+			const [, pubkey, ...d] = publicationAtag.split(':');
+			if (pubkey && d.length) keys.add(`${pubkey}:${d.join(':')}`);
+		}
+		return keys;
+	});
+	const isCompanion = (s: LazySection) =>
+		!!s.addr && !isIndex(s) && companionOwnerKeys.has(`${s.addr.pubkey}:${s.addr.d_tag}`);
+
 	// Per-index child bookkeeping, keyed by the entry's position in
 	// `sections`: how many *direct* children (one level down) it carries
 	// and whether any descendants were loaded at all. An index with zero
@@ -385,7 +406,7 @@
 				data-section-index={i}
 				data-section-addr={section.addr ? `${section.addr.kind}:${section.addr.pubkey}:${section.addr.d_tag}` : undefined}
 			>
-				{#if section.title || onviewjson}
+				{#if !isCompanion(section) && (section.title || onviewjson)}
 					<h3 class="section-title">
 						<span class="section-title__text">{section.title ?? ''}</span>
 						<PoolStateBadges
@@ -406,17 +427,22 @@
 						{/if}
 					</h3>
 				{/if}
-				{#if section.status === 'loaded' && section.content}
-					{@const k = section.addr ? addrKey(section.addr) : ''}
-					<RichContent
-						content={section.content}
-						spans={k ? spansBySection[k] ?? [] : []}
-						refs={k ? refsBySection[k] ?? [] : []}
-						tokens={k ? tokensBySection[k] ?? [] : []}
-						{resolution}
-						{focusedHighlightId}
-						onopenlocal={openLocalSection}
-					/>
+				{#if section.status === 'loaded'}
+					<!-- Loaded-and-empty renders nothing. It used to fall through
+					     to the pending skeleton below and pulse forever — empty
+					     companion sections looked permanently "waiting to load". -->
+					{#if section.content}
+						{@const k = section.addr ? addrKey(section.addr) : ''}
+						<RichContent
+							content={section.content}
+							spans={k ? spansBySection[k] ?? [] : []}
+							refs={k ? refsBySection[k] ?? [] : []}
+							tokens={k ? tokensBySection[k] ?? [] : []}
+							{resolution}
+							{focusedHighlightId}
+							onopenlocal={openLocalSection}
+						/>
+					{/if}
 				{:else if section.status === 'loading'}
 					<div class="skeleton"></div>
 				{:else if section.status === 'error'}
@@ -444,7 +470,9 @@
 				{/if}
 			</div>
 		{/if}
-		{#if ri < visibleRows.length - 1 && !isIndex(section)}
+		{#if ri < visibleRows.length - 1 && !isIndex(section) && !(isCompanion(section) && !section.content)}
+			<!-- An empty companion renders nothing at all — no divider either,
+			     or every index would be followed by a stray rule. -->
 			<hr class="section-divider" />
 		{/if}
 	{/each}

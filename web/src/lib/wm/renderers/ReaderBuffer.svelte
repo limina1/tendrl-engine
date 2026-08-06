@@ -585,6 +585,21 @@
 	// ContinuousView instance — its exported scrollToSection keeps a TOC
 	// jump in-place instead of flipping the view mode.
 	let continuousView = $state<{ scrollToSection: (i: number) => void } | undefined>();
+	// Companion (preamble) sections — a 30041 sharing pubkey + d-tag with a
+	// 30040 index (or the publication root) is that index's own body text.
+	// The TOC drawer skips them: their title duplicates the index row above.
+	// Mirrors ContinuousView's isCompanion.
+	const companionOwnerKeys = $derived.by(() => {
+		const keys = new Set<string>();
+		for (const s of pristineSections) {
+			if (s.addr.kind === 30040) keys.add(`${s.addr.pubkey}:${s.addr.d_tag}`);
+		}
+		if (publication) keys.add(`${publication.addr.pubkey}:${publication.addr.d_tag}`);
+		return keys;
+	});
+	const isCompanionSection = (s: LazySection) =>
+		s.addr.kind !== 30040 && companionOwnerKeys.has(`${s.addr.pubkey}:${s.addr.d_tag}`);
+
 	function tocJump(i: number) {
 		if (viewMode === 'continuous') continuousView?.scrollToSection(i);
 		else {
@@ -2647,7 +2662,7 @@
 						<span class="rtoc__caret">{loadable ? (open ? '▾' : '▸') : '·'}</span>
 						<span class="rtoc__name">{section.title || 'Nested publication'}</span>
 					</button>
-				{:else}
+				{:else if !isCompanionSection(section)}
 					<button
 						class="rtoc__row"
 						class:rtoc__row--on={viewMode === 'paginated' && i === currentSection}
