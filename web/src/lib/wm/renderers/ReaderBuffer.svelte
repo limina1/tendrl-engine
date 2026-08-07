@@ -3196,7 +3196,9 @@
 	   ellipsize) instead of forcing the badges out of the pane. */
 	.title__text {
 		flex: 1;
-		min-width: 0;
+		/* A long title keeps real line length — the chips wrap to their own
+		   row instead of squeezing it into a tall left column. */
+		min-width: min(100%, 24ch);
 		overflow-wrap: anywhere;
 	}
 	/* Comments/highlights disclosure — rides the title row instead of
