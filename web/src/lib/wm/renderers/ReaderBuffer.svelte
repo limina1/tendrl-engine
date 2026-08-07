@@ -576,6 +576,25 @@
 	// highlights that don't carry a section addr themselves.
 	let drawerOpen = $state(false);
 
+	// ── Aux tools row ───────────────────────────────────────────────────
+	// The toolbar keeps only orientation chrome (§ toc, view modes, menu,
+	// nesting depth); the action cluster (hl / edit / ⟳ fetch / pool chips /
+	// graph / refresh discussions) collapses behind a `tools` caret so the
+	// article keeps the vertical space. Persisted globally — the choice
+	// survives buffer switches and sessions.
+	const AUX_TOOLS_KEY = 'tendrl:reader-tools-open';
+	let auxOpen = $state(
+		typeof localStorage !== 'undefined' && localStorage.getItem(AUX_TOOLS_KEY) === '1'
+	);
+	function toggleAux() {
+		auxOpen = !auxOpen;
+		try {
+			localStorage.setItem(AUX_TOOLS_KEY, auxOpen ? '1' : '0');
+		} catch {
+			// storage unavailable (private mode) — state stays session-local
+		}
+	}
+
 	// ── Mobile TOC drawer ───────────────────────────────────────────────
 	// Phone-shell affordance: paginated/continuous reading keeps a swipe-in
 	// left drawer of the outline (the desktop answer — flip to Outline view —
@@ -584,7 +603,10 @@
 	let tocOpen = $state(false);
 	// ContinuousView instance — its exported scrollToSection keeps a TOC
 	// jump in-place instead of flipping the view mode.
-	let continuousView = $state<{ scrollToSection: (i: number) => void } | undefined>();
+	let continuousView = $state<
+		| { scrollToSection: (i: number) => void; expandAll: () => void; collapseAll: () => void }
+		| undefined
+	>();
 	// Companion (preamble) sections — a 30041 sharing pubkey + d-tag with a
 	// 30040 index (or the publication root) is that index's own body text.
 	// The TOC drawer skips them: their title duplicates the index row above.
@@ -2071,59 +2093,120 @@
 				>SINGLE LEVEL</span>
 			{/if}
 		{/if}
+		{#if outlineIndexCount > 0 && viewMode !== 'paginated'}
+			<!-- Whole-tree expand/collapse — lives here (the depth row had the
+			     slack) instead of its own treebar row above the content. -->
+			<button
+				class="tree-all"
+				onclick={() => (viewMode === 'outline' ? expandAllOutline() : continuousView?.expandAll())}
+				title="Expand all {outlineIndexCount} nested indexes"
+			>+ all</button>
+			<button
+				class="tree-all"
+				onclick={() =>
+					viewMode === 'outline' ? collapseAllOutline() : continuousView?.collapseAll()}
+				title="Collapse all nested indexes"
+			>− all</button>
+		{/if}
 		<span class="sp"></span>
 		<button
-			class="hl-mode-pill"
-			class:hl-mode-pill--on={app.highlightMode}
-			disabled={!canSignNow}
-			onclick={() => app.toggleHighlightMode()}
-			title={canSignNow
-				? app.highlightMode
-					? 'Highlight mode is ON — select text to publish a highlight. Click to turn off.'
-					: 'Turn on highlight mode: select text in a section to publish a NIP-84 highlight'
-				: 'Sign in to highlight'}
-		>hl{app.highlightMode ? ' ●' : ''}</button>
-		{#if isDraftMode}
-			<span class="draft-pill" title="A draft of this publication is in progress">DRAFT</span>
+			class="aux-toggle"
+			data-tour="reader-tools"
+			onclick={toggleAux}
+			aria-expanded={auxOpen}
+			title="Tools — highlight mode, edit, fetch, pool actions, refresh discussions"
+		>{auxOpen ? '▾' : '▸'} tools</button>
+	</div>
+	{#if auxOpen}
+		<!-- The action cluster, off the critical reading path. Reuses the
+		     .toolbar class so the shared button styling applies. -->
+		<div class="toolbar toolbar--aux">
 			<button
-				class="bulk"
-				onclick={unlockAllImported}
-				disabled={!anyLockable}
-				title="Unlock all imported sections (yellow — claimed for reorder/edit)"
-			>Unlock all</button>
-			<button
-				class="bulk"
-				onclick={lockAllUnlocked}
-				disabled={!anyUnlocked}
-				title="Re-lock unlocked sections that haven't been modified"
-			>Lock all</button>
-		{/if}
-		{#if viewMode === 'paginated'}
+				class="hl-mode-pill"
+				class:hl-mode-pill--on={app.highlightMode}
+				disabled={!canSignNow}
+				onclick={() => app.toggleHighlightMode()}
+				title={canSignNow
+					? app.highlightMode
+						? 'Highlight mode is ON — select text to publish a highlight. Click to turn off.'
+						: 'Turn on highlight mode: select text in a section to publish a NIP-84 highlight'
+					: 'Sign in to highlight'}
+			>hl{app.highlightMode ? ' ●' : ''}</button>
+			{#if isDraftMode}
+				<span class="draft-pill" title="A draft of this publication is in progress">DRAFT</span>
+				<button
+					class="bulk"
+					onclick={unlockAllImported}
+					disabled={!anyLockable}
+					title="Unlock all imported sections (yellow — claimed for reorder/edit)"
+				>Unlock all</button>
+				<button
+					class="bulk"
+					onclick={lockAllUnlocked}
+					disabled={!anyUnlocked}
+					title="Re-lock unlocked sections that haven't been modified"
+				>Lock all</button>
+			{/if}
+			{#if viewMode === 'paginated'}
+				<button
+					class="edit"
+					onclick={editFocusedSection}
+					disabled={!publication}
+					title="Send focused section to composer">Edit §</button
+				>
+			{/if}
 			<button
 				class="edit"
-				onclick={editFocusedSection}
+				data-tour="reader-edit"
+				onclick={editInComposer}
 				disabled={!publication}
-				title="Send focused section to composer">Edit §</button
+				title={isDraftMode ? 'Continue editing this draft' : 'Open this publication in the composer'}
+			>Edit</button>
+			<button
+				class="discussions-refresh"
+				onclick={refreshDiscussions}
+				disabled={discussionLoading || !publication}
+				title={app.networkStatus?.mode === 'auto'
+					? 'Pull new comments and highlights from relays'
+					: 'Offline — pull comments and highlights from relays anyway (manual override)'}
 			>
-		{/if}
-		<button
-			class="edit"
-			data-tour="reader-edit"
-			onclick={editInComposer}
-			disabled={!publication}
-			title={isDraftMode ? 'Continue editing this draft' : 'Open this publication in the composer'}
-		>Edit</button>
-		<button
-			class="discussions-refresh"
-			onclick={refreshDiscussions}
-			disabled={discussionLoading || !publication}
-			title={app.networkStatus?.mode === 'auto'
-				? 'Pull new comments and highlights from relays'
-				: 'Offline — pull comments and highlights from relays anyway (manual override)'}
-		>
-			{discussionLoading ? '…' : 'Refresh discussions'}
-		</button>
-	</div>
+				{discussionLoading ? '…' : 'Refresh discussions'}
+			</button>
+			{#if publication}
+				{@const pubAddr = publication.addr}
+				{#if pubAddr.kind === 30040}
+					<button
+						class="title-fetch"
+						class:spin={backfillingAll}
+						onclick={backfillAll}
+						disabled={backfillingAll}
+						title="Fetch this publication's index + backfill all missing sections from relays"
+						aria-label="Fetch and backfill"
+					>⟳</button>
+				{/if}
+				<PoolStateBadges
+					item={app.findPoolItemByAddr(pubAddr)}
+					onpillctx={() => app.pillActionByAddr(pubAddr, 'context')}
+					onpillcmp={() => app.pillActionByAddr(pubAddr, 'compose')}
+					onpilldrop={() => app.pillActionByAddr(pubAddr, 'drop')}
+					signed={publication.signed}
+					relays={publication.relays}
+					forked={publication.forked}
+					containedIn={containedIn.length}
+					onpartof={findContainers}
+					orientation="horizontal"
+				/>
+			{/if}
+			{#if hasGraph}
+				<button
+					class="crumb-graph"
+					class:active={graphOpen}
+					onclick={() => (graphOpen = !graphOpen)}
+					title="Toggle the publication reference graph"
+				>⊞ graph</button>
+			{/if}
+		</div>
+	{/if}
 
 	{#if loading}
 		<div class="empty">
@@ -2137,7 +2220,7 @@
 	{:else if !publication}
 		<div class="empty"><p>No publication loaded</p></div>
 	{:else}
-		{#if focusStack.length > 1 || hasGraph}
+		{#if focusStack.length > 1}
 			<!-- Cross-publication navigation. The breadcrumb is the trail of
 			     focused 30040 indexes; the marker (crumb--current) is where
 			     the reader is. Crumbs past the marker are the loop tail —
@@ -2171,14 +2254,6 @@
 						{/if}
 					{/each}
 				{/if}
-				{#if hasGraph}
-					<button
-						class="crumb-graph"
-						class:active={graphOpen}
-						onclick={() => (graphOpen = !graphOpen)}
-						title="Toggle the publication reference graph"
-					>⊞ graph</button>
-				{/if}
 			</nav>
 		{/if}
 		{#if graphOpen && hasGraph}
@@ -2191,37 +2266,23 @@
 				onclose={() => (graphOpen = false)}
 			/>
 		{/if}
-		<!-- Header row renders even for untitled events: the pill cluster
-		     (provenance / context / compose) is chrome every view carries,
-		     title or not — see feat-ui-patterns "row action-cluster order". -->
+		<!-- Title row carries the comments/highlights disclosure as a compact
+		     chip — one row of chrome instead of two. The pill cluster
+		     (⟳ / provenance / context / compose) lives in the `tools` row. -->
 		{#if publication}
-			{@const pubAddr = publication.addr}
 			<div class="title">
 				{#if publication.title}
 					<span class="title__text">{publication.title}</span>
 				{/if}
-				{#if pubAddr.kind === 30040}
-					<button
-						class="title-fetch"
-						class:spin={backfillingAll}
-						onclick={backfillAll}
-						disabled={backfillingAll}
-						title="Fetch this publication's index + backfill all missing sections from relays"
-						aria-label="Fetch and backfill"
-					>⟳</button>
-				{/if}
-				<PoolStateBadges
-					item={app.findPoolItemByAddr(pubAddr)}
-					onpillctx={() => app.pillActionByAddr(pubAddr, 'context')}
-					onpillcmp={() => app.pillActionByAddr(pubAddr, 'compose')}
-					onpilldrop={() => app.pillActionByAddr(pubAddr, 'drop')}
-					signed={publication.signed}
-					relays={publication.relays}
-					forked={publication.forked}
-					containedIn={containedIn.length}
-					onpartof={findContainers}
-					orientation="horizontal"
-				/>
+				<button
+					class="threads-chip"
+					onclick={() => (publicationThreadsOpen = !publicationThreadsOpen)}
+					aria-expanded={publicationThreadsOpen}
+					title="Comments & highlights on this publication — across the index and all sections"
+				>
+					<span class="ptr">{publicationThreadsOpen ? '▾' : '▸'}</span>
+					{#if discussionLoading}…{:else}cmt {totalDiscussion.comments} · hl {totalDiscussion.highlights}{/if}
+				</button>
 			</div>
 		{/if}
 		{#if highlightText !== null}
@@ -2237,59 +2298,53 @@
 				{/if}
 			</div>
 		{/if}
-		{#if discussionRefreshedAt !== null || discussionLoading}
-			<div class="discussion-summary" title="Across the publication index and all sections">
-				{#if discussionLoading}
-					<span class="ds-badge">Fetching discussions…</span>
-				{:else if totalDiscussion.comments === 0 && totalDiscussion.highlights === 0}
-					<span class="ds-badge ds-badge--empty">No comments or highlights found</span>
-					{#if discussionSource}
-						<span class="ds-sep">·</span>
-						<span class="ds-source" title="Engine returned this many events from local DB and relays for the underlying query">
-							scanned {discussionSource.local_count} local / {discussionSource.relay_count} relay events
-						</span>
-					{/if}
-				{:else}
-					<span
-						class="ds-badge ds-badge--comments"
-						title="{totalDiscussion.comments} comment{totalDiscussion.comments === 1 ? '' : 's'} across the publication and its sections"
-					>
-						cmt {totalDiscussion.comments}
-					</span>
-					<button
-						class="ds-badge ds-badge--highlights ds-badge--button"
-						onclick={() => (drawerOpen = !drawerOpen)}
-						title="{totalDiscussion.highlights} highlight{totalDiscussion.highlights === 1 ? '' : 's'} — {drawerOpen ? 'hide highlights drawer' : 'open highlights drawer (grouped by author, click to scroll)'}"
-					>
-						hl {totalDiscussion.highlights}
-					</button>
-					{#if publicationDiscussion.comments > 0 || publicationDiscussion.highlights > 0}
-						<span class="ds-sep">·</span>
-						<span class="ds-on-index" title="Comments/highlights on the publication index itself (kind 30040)">
-							index: cmt {publicationDiscussion.comments} · hl {publicationDiscussion.highlights}
-						</span>
-					{/if}
-					{#if discussionSource}
-						<span class="ds-sep">·</span>
-						<span class="ds-source" title="local DB matches + relay-fetched events for this query">
-							{discussionSource.local_count}L / {discussionSource.relay_count}R
-						</span>
-					{/if}
-				{/if}
-			</div>
-		{/if}
 		<HighlightCapture getContent={highlightContentFor} onposted={refreshDiscussionsLocal} />
-		{#if publication}
+		{#if publication && publicationThreadsOpen}
+			<!-- Discussion body — opened by the title row's chip; everything
+			     (scan summary, threads, reply box) lives behind that caret. -->
 			<div class="pub-threads">
-				<button
-					class="pub-threads-head"
-					onclick={() => (publicationThreadsOpen = !publicationThreadsOpen)}
-					aria-expanded={publicationThreadsOpen}
-				>
-					<span class="ptr">{publicationThreadsOpen ? '▾' : '▸'}</span>
-					Comments on this article ({publicationThreads.length})
-				</button>
 				{#if publicationThreadsOpen}
+					{#if discussionRefreshedAt !== null || discussionLoading}
+						<div class="discussion-summary" title="Across the publication index and all sections">
+							{#if discussionLoading}
+								<span class="ds-badge">Fetching discussions…</span>
+							{:else if totalDiscussion.comments === 0 && totalDiscussion.highlights === 0}
+								<span class="ds-badge ds-badge--empty">No comments or highlights found</span>
+								{#if discussionSource}
+									<span class="ds-sep">·</span>
+									<span class="ds-source" title="Engine returned this many events from local DB and relays for the underlying query">
+										scanned {discussionSource.local_count} local / {discussionSource.relay_count} relay events
+									</span>
+								{/if}
+							{:else}
+								<span
+									class="ds-badge ds-badge--comments"
+									title="{totalDiscussion.comments} comment{totalDiscussion.comments === 1 ? '' : 's'} across the publication and its sections"
+								>
+									cmt {totalDiscussion.comments}
+								</span>
+								<button
+									class="ds-badge ds-badge--highlights ds-badge--button"
+									onclick={() => (drawerOpen = !drawerOpen)}
+									title="{totalDiscussion.highlights} highlight{totalDiscussion.highlights === 1 ? '' : 's'} — {drawerOpen ? 'hide highlights drawer' : 'open highlights drawer (grouped by author, click to scroll)'}"
+								>
+									hl {totalDiscussion.highlights}
+								</button>
+								{#if publicationDiscussion.comments > 0 || publicationDiscussion.highlights > 0}
+									<span class="ds-sep">·</span>
+									<span class="ds-on-index" title="Comments/highlights on the publication index itself (kind 30040)">
+										index: cmt {publicationDiscussion.comments} · hl {publicationDiscussion.highlights}
+									</span>
+								{/if}
+								{#if discussionSource}
+									<span class="ds-sep">·</span>
+									<span class="ds-source" title="local DB matches + relay-fetched events for this query">
+										{discussionSource.local_count}L / {discussionSource.relay_count}R
+									</span>
+								{/if}
+							{/if}
+						</div>
+					{/if}
 					{#if publicationThreads.length > 0}
 						<CommentThread
 							nodes={publicationThreads}
@@ -2442,22 +2497,6 @@
 					     hierarchy. 30041 sections render as section cards;
 					     nested 30040 indexes are collapsible folders — the
 					     caret expands children inline, `refocus` re-roots. -->
-					{#if outlineIndexCount > 0}
-						<div class="outline-treebar">
-							<span class="outline-treebar__label"
-								>{outlineIndexCount} nested {outlineIndexCount === 1
-									? 'index'
-									: 'indexes'}</span
-							>
-							<span class="outline-treebar__spacer"></span>
-							<button class="outline-treebar__btn" onclick={expandAllOutline}
-								>Expand all</button
-							>
-							<button class="outline-treebar__btn" onclick={collapseAllOutline}
-								>Collapse all</button
-							>
-						</div>
-					{/if}
 					<div class="outline-overlay" bind:this={outlineEl}>
 						{#each outlineVisible as row (`${row.index}:${row.section.addr.pubkey}:${row.section.addr.d_tag}`)}
 							{@const section = row.section}
@@ -2745,12 +2784,36 @@
 		align-items: center;
 	}
 	/* Narrow (mobile) widths: wrap the toolbar instead of clipping the
-	   trailing actions off the right edge. */
+	   trailing actions off the right edge, and give its buttons a real
+	   touch box (§ toc measured 54×22 on a phone). */
 	@media (max-width: 768px) {
 		.toolbar {
 			flex-wrap: wrap;
 			row-gap: 4px;
 		}
+		.toolbar button {
+			min-height: 38px;
+		}
+		/* Row 2 must hold NESTED + knob + ±all + tools in 390px — the knob's
+		   "depth" word is redundant next to the NESTED chip; the ± buttons
+		   and titles carry it. */
+		.depth-knob__label {
+			display: none;
+		}
+		.toolbar .tree-all {
+			padding-left: 5px;
+			padding-right: 5px;
+		}
+	}
+
+	/* The collapsed action row (hl / edit / ⟳ / pool chips / graph /
+	   refresh) — same chrome family as the toolbar, one shade quieter so
+	   it reads as the toolbar's drawer, not a second toolbar. */
+	.toolbar--aux {
+		background: var(--panel-bg);
+	}
+	.toolbar .aux-toggle {
+		color: var(--fg-alt);
 	}
 
 	/* Mobile TOC drawer — same surface language as the shell's work-buffer
@@ -3003,23 +3066,12 @@
 		max-height: 40%;
 		overflow-y: auto;
 	}
-	.pub-threads-head {
-		font-family: var(--font-mono);
-		font-size: var(--t-xs);
-		text-transform: uppercase;
-		letter-spacing: 0.06em;
-		color: var(--id-yours);
-		margin-bottom: 6px;
-		display: inline-flex;
-		align-items: center;
-		gap: 4px;
-		background: transparent;
-		border: none;
-		padding: 0;
-		cursor: pointer;
+	/* The scan summary lives inside the expanded block now — drop the
+	   standalone-row chrome it used to carry. */
+	.pub-threads .discussion-summary {
+		border-bottom: none;
+		padding: 2px 0 6px;
 	}
-	.pub-threads-head:hover { color: var(--fg); }
-	.pub-threads-head .ptr { min-width: 1ch; }
 
 	.hl-banner {
 		display: flex;
@@ -3123,6 +3175,25 @@
 		min-width: 0;
 		overflow-wrap: anywhere;
 	}
+	/* Comments/highlights disclosure — rides the title row instead of
+	   owning one. Same quiet mono family as the old pub-threads head. */
+	.threads-chip {
+		display: inline-flex;
+		align-items: center;
+		gap: 4px;
+		margin-left: auto;
+		background: transparent;
+		border: none;
+		padding: 4px 0 4px 8px;
+		font-family: var(--font-mono);
+		font-size: var(--t-2xs);
+		font-weight: 400;
+		color: var(--id-yours);
+		cursor: pointer;
+		white-space: nowrap;
+	}
+	.threads-chip:hover { color: var(--fg); }
+	.threads-chip .ptr { min-width: 1ch; }
 	.content { flex: 1; overflow: auto; min-height: 0; }
 	.empty {
 		flex: 1;
@@ -3300,37 +3371,6 @@
 	}
 
 	/* Outline tree controls — expand/collapse the whole hierarchy at once. */
-	.outline-treebar {
-		display: flex;
-		align-items: center;
-		gap: 8px;
-		padding: 6px 8px 0;
-	}
-	.outline-treebar__label {
-		font-family: var(--font-mono);
-		font-size: var(--t-3xs);
-		text-transform: uppercase;
-		letter-spacing: 0.07em;
-		color: var(--fg-muted);
-	}
-	.outline-treebar__spacer { flex: 1; }
-	.outline-treebar__btn {
-		background: none;
-		border: 1px solid var(--panel-border);
-		color: var(--fg-muted);
-		font-family: var(--font-mono);
-		font-size: var(--t-3xs);
-		text-transform: uppercase;
-		letter-spacing: 0.05em;
-		padding: 2px 8px;
-		border-radius: var(--r-sm);
-		cursor: pointer;
-	}
-	.outline-treebar__btn:hover {
-		border-color: var(--id-yours);
-		color: var(--id-yours);
-	}
-
 	/* Cross-publication breadcrumb trail. */
 	.crumbs {
 		display: flex;

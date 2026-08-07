@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { untrack } from 'svelte';
 	import { getActiveStore } from '$lib/wm/buffer-store.svelte';
+	import { shell } from '$lib/wm/shell.svelte';
 	import type { ComposeState, ContextItem, TagEntry, SyncMode } from '$lib/types';
 	import type { DraftSummary } from '$lib/api';
 	import { resolveNostrdown, search } from '$lib/api';
@@ -747,6 +748,10 @@
 
 	// Detected structure for plain mode sidebar
 	let plainText = $state('');
+	// The detected panel collapses behind a caret so it stops squeezing the
+	// editor — at 390px the fixed 200px sidebar left ~half the width for
+	// text. Default: open where there's room (desktop), closed on mobile.
+	let detectedOpen = $state(shell.mode !== 'mobile');
 	const detectedState = $derived.by(() => {
 		if (mode !== 'plain')
 			return {
@@ -1554,7 +1559,7 @@
 	{:else if mode === 'plain'}
 		{@render composeToolbar()}
 		<div class="compose-content">
-			<div class="plain-layout" data-tour="compose-plain">
+			<div class="plain-layout" class:plain-layout--closed={!detectedOpen} data-tour="compose-plain">
 				<div class="plain-editor-wrap">
 					<CodeMirrorEditor
 						bind:value={plainText}
@@ -1566,7 +1571,21 @@
 					/>
 				</div>
 				<div class="detected-sections" data-tour="compose-detected">
-					<div class="detected-header">Detected</div>
+					<!-- Caret-collapsible: at phone width the fixed sidebar left
+					     ~half the width for text; closed, the panel folds to a
+					     slim bar under the editor and the editor takes it all. -->
+					<button
+						class="detected-toggle"
+						onclick={() => (detectedOpen = !detectedOpen)}
+						aria-expanded={detectedOpen}
+						title={detectedOpen
+							? 'Hide the detected-section outline — the editor takes the full width'
+							: 'Show the live detected-section outline'}
+					>
+						<span class="ptr">{detectedOpen ? '▾' : '▸'}</span>
+						Detected ({detectedSections.length})
+					</button>
+					{#if detectedOpen}
 					<div class="detected-row detected-doc-title">
 						<span class="detected-label">title</span>
 						<span class="detected-title">{detectedState.title || '[No title]'}</span>
@@ -1623,6 +1642,7 @@
 							section ({effectiveDelim()}{effectiveDelim()}{effectiveDelim()}+
 							for nested sub-sections)
 						</div>
+					{/if}
 					{/if}
 				</div>
 			</div>
@@ -2104,6 +2124,16 @@
 		gap: 0;
 		min-height: 0;
 	}
+	/* Closed: the panel folds to a slim full-width bar under the editor —
+	   the editor takes the whole width, the caret stays reachable. */
+	.plain-layout--closed {
+		flex-direction: column;
+	}
+	.plain-layout--closed .detected-sections {
+		width: auto;
+		border-left: none;
+		border-top: 1px solid var(--border);
+	}
 
 	.plain-editor-wrap {
 		flex: 1;
@@ -2120,14 +2150,41 @@
 		overflow-y: auto;
 		background: var(--bg);
 	}
+	/* Narrow widths: even the open panel stacks below the editor as a
+	   bottom drawer instead of stealing half the line length. */
+	@media (max-width: 768px) {
+		.plain-layout {
+			flex-direction: column;
+		}
+		.detected-sections {
+			width: auto;
+			border-left: none;
+			border-top: 1px solid var(--border);
+			max-height: 45%;
+		}
+	}
 
-	.detected-header {
+	.detected-toggle {
+		display: flex;
+		align-items: center;
+		gap: 4px;
+		width: 100%;
+		background: none;
+		border: none;
+		cursor: pointer;
+		text-align: left;
 		font-size: var(--t-3xs);
 		font-weight: 600;
 		color: var(--fg-muted);
 		text-transform: uppercase;
 		letter-spacing: 0.05em;
 		padding: 8px 10px 4px;
+	}
+	.detected-toggle:hover {
+		color: var(--fg);
+	}
+	.plain-layout--closed .detected-toggle {
+		padding-bottom: 8px;
 	}
 
 	.detected-row {

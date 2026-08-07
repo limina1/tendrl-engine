@@ -233,14 +233,14 @@
 		return rows;
 	});
 
-	function expandAll() {
+	export function expandAll() {
 		const next: Record<string, boolean> = {};
 		for (const s of sections) {
 			if (isIndex(s) && s.addr) next[addrKey(s.addr)] = true;
 		}
 		expandedByAddr = next;
 	}
-	function collapseAll() {
+	export function collapseAll() {
 		expandedByAddr = {};
 	}
 
@@ -343,21 +343,13 @@
 </script>
 
 <div class="continuous-view" bind:this={containerEl}>
-	{#if publication?.title}
-		<h2 class="pub-title">{publication.title}</h2>
-		{#if publication.summary}
-			<p class="pub-summary">{publication.summary}</p>
-		{/if}
+	<!-- No repeated doc title here — the reader's title row already shows it
+	     (it rendered three times stacked on a phone). The summary is unique
+	     info, so it alone survives. Expand/collapse-all moved to the
+	     reader's depth toolbar row (exported below). -->
+	{#if publication?.summary}
+		<p class="pub-summary">{publication.summary}</p>
 		<hr class="pub-divider" />
-	{/if}
-
-	{#if indexCount > 0}
-		<div class="cv-treebar">
-			<span class="cv-treebar__label">{indexCount} nested {indexCount === 1 ? 'index' : 'indexes'}</span>
-			<span class="cv-treebar__spacer"></span>
-			<button class="cv-treebar__btn" onclick={expandAll}>Expand all</button>
-			<button class="cv-treebar__btn" onclick={collapseAll}>Collapse all</button>
-		</div>
 	{/if}
 
 	{#each visibleRows as row, ri (`${row.index}:${row.section.addr?.pubkey ?? ''}:${row.section.addr?.d_tag ?? ''}`)}
@@ -493,18 +485,9 @@
 		.continuous-view {
 			padding: 14px 16px calc(24px + env(safe-area-inset-bottom));
 		}
-		.pub-title {
-			font-size: var(--t-lg);
-		}
 		.section-title {
 			font-size: var(--t-base);
 		}
-	}
-
-	.pub-title {
-		font-size: var(--t-md);
-		font-weight: 700;
-		margin: 0 0 8px 0;
 	}
 
 	.pub-summary {
@@ -519,40 +502,6 @@
 		border: none;
 		border-top: 1px solid var(--border);
 		margin: 12px 0;
-	}
-
-	/* Tree controls — expand/collapse the whole nested structure at once. */
-	.cv-treebar {
-		display: flex;
-		align-items: center;
-		gap: 8px;
-		margin: 0 0 10px 0;
-		padding-bottom: 8px;
-		border-bottom: 1px solid var(--border);
-	}
-	.cv-treebar__label {
-		font-family: var(--font-mono);
-		font-size: var(--t-3xs);
-		text-transform: uppercase;
-		letter-spacing: 0.06em;
-		color: var(--fg-muted);
-	}
-	.cv-treebar__spacer { flex: 1; }
-	.cv-treebar__btn {
-		background: none;
-		border: 1px solid var(--border);
-		color: var(--fg-muted);
-		font-family: var(--font-mono);
-		font-size: var(--t-3xs);
-		text-transform: uppercase;
-		letter-spacing: 0.04em;
-		padding: 2px 8px;
-		border-radius: var(--radius);
-		cursor: pointer;
-	}
-	.cv-treebar__btn:hover {
-		border-color: var(--id-yours);
-		color: var(--id-yours);
 	}
 
 	.continuous-section {
