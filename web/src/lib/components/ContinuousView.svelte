@@ -343,14 +343,10 @@
 </script>
 
 <div class="continuous-view" bind:this={containerEl}>
-	<!-- No repeated doc title here — the reader's title row already shows it
-	     (it rendered three times stacked on a phone). The summary is unique
-	     info, so it alone survives. Expand/collapse-all moved to the
-	     reader's depth toolbar row (exported below). -->
-	{#if publication?.summary}
-		<p class="pub-summary">{publication.summary}</p>
-		<hr class="pub-divider" />
-	{/if}
+	<!-- No doc title or summary here — the reader's title row owns both
+	     (title rendered three times stacked on a phone; the summary now
+	     lives in the reader's collapsible summary drawer, every view).
+	     Expand/collapse-all moved to the reader's depth toolbar row. -->
 
 	{#each visibleRows as row, ri (`${row.index}:${row.section.addr?.pubkey ?? ''}:${row.section.addr?.d_tag ?? ''}`)}
 		{@const section = row.section}
@@ -488,20 +484,6 @@
 		.section-title {
 			font-size: var(--t-base);
 		}
-	}
-
-	.pub-summary {
-		font-size: var(--t-xs);
-		color: var(--fg-muted);
-		font-style: italic;
-		margin: 0 0 12px 0;
-		line-height: 1.5;
-	}
-
-	.pub-divider {
-		border: none;
-		border-top: 1px solid var(--border);
-		margin: 12px 0;
 	}
 
 	.continuous-section {

@@ -501,6 +501,7 @@
 	.doc-bar {
 		display: flex;
 		align-items: flex-start;
+		flex-wrap: wrap;
 		gap: 10px;
 		padding: 10px 16px;
 		border-bottom: 1px solid var(--border);
@@ -509,6 +510,17 @@
 	.doc-headings {
 		flex: 1;
 		min-width: 0;
+	}
+	/* Narrow widths: the action cluster was squeezing title + summary into
+	   a tall left column — give the headings the whole row and let the
+	   actions wrap beneath, right-aligned. */
+	@media (max-width: 768px) {
+		.doc-headings {
+			flex: 1 1 100%;
+		}
+		.doc-actions {
+			margin-left: auto;
+		}
 	}
 
 	.doc-kind {

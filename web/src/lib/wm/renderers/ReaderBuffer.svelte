@@ -121,6 +121,9 @@
 	type StreamNode = {
 		addr: NAddr;
 		title: string | null;
+		/** summary/description tag off an index event — only the root's is
+		 *  surfaced (the reader's summary drawer). */
+		summary?: string | null;
 		isIndex: boolean;
 		content: string | null;
 		/** addr-keys of children, in tree order (from the index event). */
@@ -576,6 +579,10 @@
 	// highlights that don't carry a section addr themselves.
 	let drawerOpen = $state(false);
 
+	// Summary drawer — a publication/article/wiki `summary` tag renders
+	// under the title, open by default, closable from the title-row chip.
+	let summaryOpen = $state(true);
+
 	// ── Aux tools row ───────────────────────────────────────────────────
 	// The toolbar keeps only orientation chrome (§ toc, view modes, menu,
 	// nesting depth); the action cluster (hl / edit / ⟳ fetch / pool chips /
@@ -932,15 +939,17 @@
 				Object.assign(existing, patch);
 				return;
 			}
+			// Defaults + patch spread: an explicit field list here silently
+			// dropped patch fields it didn't name (the root node — created
+			// fresh, never merged — lost summary/relays/signed/forked).
 			nodes.set(key, {
-				addr: patch.addr,
-				title: patch.title ?? null,
-				isIndex: patch.isIndex ?? false,
-				content: patch.content ?? null,
-				childKeys: patch.childKeys ?? [],
-				parentKey: patch.parentKey,
-				status: patch.status ?? 'pending',
-				error: patch.error
+				title: null,
+				summary: null,
+				isIndex: false,
+				content: null,
+				childKeys: [],
+				status: 'pending',
+				...patch
 			});
 		};
 
@@ -972,7 +981,7 @@
 			publication = {
 				addr: root.addr,
 				title: root.title,
-				summary: null,
+				summary: root.summary ?? null,
 				image: null,
 				author_pubkey: root.addr.pubkey,
 				version: null,
@@ -1080,6 +1089,7 @@
 				upsert(k, {
 					addr: ev.addr,
 					title: ev.title,
+					summary: ev.summary ?? null,
 					isIndex: true,
 					status: 'loaded',
 					childKeys: ev.children.map((c) => addrKey(c.addr)),
@@ -1323,6 +1333,7 @@
 			const tags = ev.tags ?? [];
 			const dTag = tags.find((t) => t[0] === 'd')?.[1] ?? '';
 			const titleTag = tags.find((t) => t[0] === 'title')?.[1] ?? null;
+			const summaryTag = tags.find((t) => t[0] === 'summary')?.[1] ?? null;
 			const addr = {
 				kind: ev.kind ?? 0,
 				pubkey: ev.pubkey ?? '',
@@ -1331,7 +1342,7 @@
 			publication = {
 				addr,
 				title: titleTag,
-				summary: null,
+				summary: summaryTag,
 				image: null,
 				author_pubkey: ev.pubkey ?? '',
 				version: null,
@@ -2274,6 +2285,16 @@
 				{#if publication.title}
 					<span class="title__text">{publication.title}</span>
 				{/if}
+				{#if publication.summary}
+					<button
+						class="threads-chip summary-chip"
+						onclick={() => (summaryOpen = !summaryOpen)}
+						aria-expanded={summaryOpen}
+						title={summaryOpen ? 'Hide the summary' : 'Show the summary'}
+					>
+						<span class="ptr">{summaryOpen ? '▾' : '▸'}</span>summary
+					</button>
+				{/if}
 				<button
 					class="threads-chip"
 					onclick={() => (publicationThreadsOpen = !publicationThreadsOpen)}
@@ -2284,6 +2305,9 @@
 					{#if discussionLoading}…{:else}cmt {totalDiscussion.comments} · hl {totalDiscussion.highlights}{/if}
 				</button>
 			</div>
+			{#if publication.summary && summaryOpen}
+				<p class="title-summary">{publication.summary}</p>
+			{/if}
 		{/if}
 		{#if highlightText !== null}
 			<div class="hl-banner">
@@ -3194,6 +3218,22 @@
 	}
 	.threads-chip:hover { color: var(--fg); }
 	.threads-chip .ptr { min-width: 1ch; }
+	/* With a summary chip present, it takes the auto margin and the cmt/hl
+	   chip sits flush beside it. */
+	.summary-chip { color: var(--fg-alt, var(--base5)); }
+	.summary-chip + .threads-chip { margin-left: 0; }
+	/* The summary drawer — open by default, closed from the title chip. */
+	.title-summary {
+		margin: 0;
+		padding: 4px var(--s-3) 8px;
+		border-bottom: 1px solid var(--panel-border);
+		font-size: var(--t-xs);
+		font-style: italic;
+		color: var(--fg-muted, var(--base5));
+		line-height: 1.5;
+		flex-shrink: 0;
+		white-space: pre-wrap;
+	}
 	.content { flex: 1; overflow: auto; min-height: 0; }
 	.empty {
 		flex: 1;

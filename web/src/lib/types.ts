@@ -125,6 +125,10 @@ export type PubLoadEvent =
 			addr: NAddr;
 			depth: number;
 			title: string | null;
+			/** The index event's summary/description tag — the reader's
+			 *  collapsible summary drawer shows the root's. Optional so the
+			 *  parser tolerates older engines that don't emit it. */
+			summary?: string | null;
 			is_root: boolean;
 			children: PubChildRef[];
 			/** Provenance from the index event itself — drives the reader

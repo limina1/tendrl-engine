@@ -722,6 +722,10 @@ pub enum PubLoadEvent {
         addr: NAddr,
         depth: usize,
         title: Option<String>,
+        /// The index event's `summary`/`description` tag — the reader shows
+        /// the root's summary in its collapsible summary drawer.
+        #[serde(default)]
+        summary: Option<String>,
         is_root: bool,
         children: Vec<PubChildRef>,
         /// Relays this index event has been seen on. Empty = local-only.
@@ -1455,6 +1459,7 @@ impl<'a> PublicationEngine<'a> {
                     addr: addr.clone(),
                     depth,
                     title: pub_.title.clone(),
+                    summary: pub_.summary.clone(),
                     is_root,
                     children,
                     relays: pub_.relays.clone(),
