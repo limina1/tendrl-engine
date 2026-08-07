@@ -601,11 +601,15 @@
 		s.addr.kind !== 30040 && companionOwnerKeys.has(`${s.addr.pubkey}:${s.addr.d_tag}`);
 
 	function tocJump(i: number) {
-		if (viewMode === 'continuous') continuousView?.scrollToSection(i);
-		else {
+		if (viewMode === 'continuous') {
+			continuousView?.scrollToSection(i);
+			handleNavigate(i);
+		} else {
 			viewMode = 'paginated';
 			handleNavigate(i);
 		}
+		// A TOC jump is a teleport — Back returns to where you jumped from.
+		mobileNav.pushViewChange(buffer.id);
 		tocOpen = false;
 	}
 
@@ -1500,6 +1504,43 @@
 		outlineCursor = index;
 	}
 
+	// Place-history helpers (docs/zettel/idea-place-routing.org phase 1):
+	// teleports (view-mode switch, TOC jump, outline drill) PUSH an entry so
+	// Back returns to the previous place; page turns REPLACE so Back exits
+	// the document instead of unwinding every turn. Both no-op on desktop.
+	function gotoSection(i: number, how: 'traverse' | 'teleport') {
+		handleNavigate(i);
+		if (how === 'teleport') mobileNav.pushViewChange(buffer.id);
+		else mobileNav.replaceViewChange(buffer.id);
+	}
+	function setView(m: ViewMode) {
+		if (viewMode === m) return;
+		viewMode = m;
+		mobileNav.pushViewChange(buffer.id);
+	}
+
+	// The reader's place: {mode, section}. Section index is session-local
+	// (stable enough for in-memory history); the URL form (phase 2) will
+	// carry title-slugs instead. Applying is best-effort — on a cross-buffer
+	// Back the document may still be loading; indices land once it does.
+	$effect(() => {
+		const id = buffer.id;
+		mobileNav.registerViewProvider(id, {
+			capture: () => ({ mode: viewMode, section: String(currentSection) }),
+			apply: (v) => {
+				const m = v.mode;
+				if (m === 'outline' || m === 'paginated' || m === 'continuous') viewMode = m;
+				const idx = Number(v.section);
+				if (Number.isInteger(idx) && idx >= 0) {
+					handleNavigate(idx);
+					if (m === 'paginated' && !isDraftMode) handleLoadSection(idx);
+					if (m === 'continuous') setTimeout(() => continuousView?.scrollToSection(idx), 60);
+				}
+			}
+		});
+		return () => mobileNav.unregisterViewProvider(id);
+	});
+
 	// Per-section / per-nested-index "fetch from relays" affordance.
 	// Forces `fetch_always` so the engine runs through the relay path
 	// (and confirm mode pops a single-event modal). After the event
@@ -1795,7 +1836,7 @@
 		}
 		if (!isDraftMode) handleLoadSection(outlineCursor);
 		viewMode = 'paginated';
-		handleNavigate(outlineCursor);
+		gotoSection(outlineCursor, 'teleport');
 	}
 
 	// View-mode order — left/right (h/l) cycles through these. Outline's
@@ -1806,7 +1847,7 @@
 	function cycleView(dir: 1 | -1) {
 		const i = VIEW_ORDER.indexOf(viewMode);
 		const n = VIEW_ORDER.length;
-		viewMode = VIEW_ORDER[(i + dir + n) % n];
+		setView(VIEW_ORDER[(i + dir + n) % n]);
 	}
 
 	function handleNav(action: NavAction): boolean {
@@ -1856,19 +1897,19 @@
 		}
 		if (viewMode === 'paginated') {
 			if (action === 'down') {
-				if (currentSection < sections.length - 1) handleNavigate(currentSection + 1);
+				if (currentSection < sections.length - 1) gotoSection(currentSection + 1, 'traverse');
 				return true;
 			}
 			if (action === 'up') {
-				if (currentSection > 0) handleNavigate(currentSection - 1);
+				if (currentSection > 0) gotoSection(currentSection - 1, 'traverse');
 				return true;
 			}
 			if (action === 'top') {
-				handleNavigate(0);
+				gotoSection(0, 'traverse');
 				return true;
 			}
 			if (action === 'bottom') {
-				handleNavigate(sections.length - 1);
+				gotoSection(sections.length - 1, 'traverse');
 				return true;
 			}
 			if (action === 'left' || action === 'right') {
@@ -1965,15 +2006,15 @@
 		     it drills into paginated with the cursored section loaded. -->
 		<button
 			class:active={viewMode === 'outline'}
-			onclick={() => (viewMode = 'outline')}>Outline</button
+			onclick={() => setView('outline')}>Outline</button
 		>
 		<button
 			class:active={viewMode === 'paginated'}
-			onclick={() => (viewMode = 'paginated')}>Paginated</button
+			onclick={() => setView('paginated')}>Paginated</button
 		>
 		<button
 			class:active={viewMode === 'continuous'}
-			onclick={() => (viewMode = 'continuous')}>Continuous</button
+			onclick={() => setView('continuous')}>Continuous</button
 		>
 		{#if resolution.resolving}
 			<span
@@ -2333,7 +2374,7 @@
 												index={i + 1}
 												onclick={() => {
 													viewMode = 'paginated';
-													handleNavigate(i);
+													gotoSection(i, 'teleport');
 												}}
 												onviewjson={openSectionJsonBySection}
 											/>
@@ -2533,7 +2574,7 @@
 											onclick={() => {
 												handleLoadSection(i);
 												viewMode = 'paginated';
-												handleNavigate(i);
+												gotoSection(i, 'teleport');
 											}}
 										/>
 									</div>
@@ -2624,7 +2665,7 @@
 				<PaginatedView
 					{sections}
 					{currentSection}
-					onnavigate={handleNavigate}
+					onnavigate={(i: number) => gotoSection(i, 'traverse')}
 					onrefocus={refocus}
 					onload={isDraftMode ? undefined : handleLoadSection}
 					onsectionjson={openSectionJsonByIndex}

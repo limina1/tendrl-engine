@@ -1,7 +1,9 @@
 /**
  * Mobile-shell back navigation — Android-grade Back over SvelteKit shallow
  * routing. The mobile shell pushes one history entry per panel/buffer
- * navigation (any source: bottom bar, drawer, palette, renderer openBuffer);
+ * navigation (any source: bottom bar, drawer, palette, renderer openBuffer)
+ * and per teleport-class view transition inside a buffer (view-mode switch,
+ * TOC jump — see ViewPlace below and docs/zettel/idea-place-routing.org);
  * Back first closes the topmost open overlay, then walks those entries, and
  * at the baseline falls through to native page exit (which is what lets an
  * Android WebView leave the app).
@@ -42,7 +44,30 @@ export type MobileNavEntry = {
 	/** The work slot's focused buffer id — tracked even while another class
 	 *  is active, so Back restores the work panel as the user left it. */
 	workBuf: string | null;
+	/** Buffer-level place (docs/zettel/idea-place-routing.org): a small
+	 *  serializable descriptor the focused work buffer contributes via its
+	 *  ViewProvider (e.g. reader {mode, section}). Teleport-class view
+	 *  transitions push entries carrying it; traversal updates it in place. */
+	view?: ViewPlace | null;
 };
+
+/** String-only so entries stay structured-cloneable for history state and
+ *  (phase 2) serialize losslessly into the hash route. */
+export type ViewPlace = Record<string, string>;
+
+export type ViewProvider = {
+	/** Snapshot the buffer's current place; null = nothing worth recording. */
+	capture: () => ViewPlace | null;
+	/** Restore a previously captured place (best-effort — content may still
+	 *  be loading; appliers must tolerate that). */
+	apply: (v: ViewPlace) => void;
+};
+
+function viewEq(a: ViewPlace | null | undefined, b: ViewPlace | null | undefined): boolean {
+	if (!a || !b) return !a === !b;
+	const ka = Object.keys(a);
+	return ka.length === Object.keys(b).length && ka.every((k) => a[k] === b[k]);
+}
 
 /** One per page load — entries carrying another sid are from a previous
  *  load's history region. */
@@ -73,10 +98,61 @@ class MobileNav {
 
 	private closers = new Map<string, { priority: number } & BackCloser>();
 
+	/** Buffer-level place providers, keyed by buffer id. Registered by the
+	 *  buffer component while mounted (via $effect, teardown unregisters). */
+	private viewProviders = new Map<string, ViewProvider>();
+
+	/** A popped entry's view that couldn't apply because its buffer's
+	 *  component wasn't mounted yet (cross-buffer Back remounts the
+	 *  renderer); delivered when that provider registers. */
+	private pendingView: { bufId: string; view: ViewPlace } | null = null;
+
 	/** Idempotent by id — safe to call at +page script top level (the single
 	 *  always-mounted route); HMR just overwrites. */
 	registerCloser(id: string, priority: number, closer: BackCloser) {
 		this.closers.set(id, { priority, ...closer });
+	}
+
+	registerViewProvider(bufId: string, provider: ViewProvider) {
+		this.viewProviders.set(bufId, provider);
+		if (this.pendingView && this.pendingView.bufId === bufId) {
+			const v = this.pendingView.view;
+			this.pendingView = null;
+			provider.apply(v);
+		}
+	}
+
+	unregisterViewProvider(bufId: string) {
+		this.viewProviders.delete(bufId);
+	}
+
+	private captureView(workBuf: string | null): ViewPlace | null {
+		if (!workBuf) return null;
+		return this.viewProviders.get(workBuf)?.capture() ?? null;
+	}
+
+	/** A teleport-class view transition inside the focused work buffer
+	 *  (view-mode switch, TOC jump, outline drill) — records the NEW place
+	 *  as a history entry so Back returns to the previous one. Call AFTER
+	 *  mutating the view state. No-op on desktop (no baseline) and for
+	 *  non-focused buffers. */
+	pushViewChange(bufId: string) {
+		if (!this.current || this.current.workBuf !== bufId) return;
+		const view = this.captureView(bufId);
+		if (viewEq(view, this.current.view)) return;
+		this.current = { ...this.current, seq: this.current.seq + 1, view };
+		this.persist('push');
+	}
+
+	/** A traversal-class move (page turn) — the place is remembered on the
+	 *  CURRENT entry instead of stacking; Back exits the document rather
+	 *  than unwinding every page turn. Call AFTER mutating the view state. */
+	replaceViewChange(bufId: string) {
+		if (!this.current || this.current.workBuf !== bufId) return;
+		const view = this.captureView(bufId);
+		if (viewEq(view, this.current.view)) return;
+		this.current = { ...this.current, view };
+		this.persist('replace');
 	}
 
 	/** Write `current` to the history entry. On the very first mount tick
@@ -142,13 +218,19 @@ class MobileNav {
 			// both writes land atomically. (A user can't navigate within
 			// the ~0ms window, so ordering is safe.)
 			const seq = Math.max(0, page.state.mnav?.seq ?? 0);
-			this.current = { sid: SID, seq, cls, workBuf };
+			this.current = { sid: SID, seq, cls, workBuf, view: this.captureView(workBuf) };
 			const guard: MobileNavEntry = { sid: SID, seq: -1, cls, workBuf };
 			setTimeout(() => this.persistBaseline(guard), 0);
 			return;
 		}
 		if (cls === this.current.cls && workBuf === this.current.workBuf) return;
-		this.current = { sid: SID, seq: this.current.seq + 1, cls, workBuf };
+		this.current = {
+			sid: SID,
+			seq: this.current.seq + 1,
+			cls,
+			workBuf,
+			view: this.captureView(workBuf)
+		};
 		this.persist('push');
 	}
 
@@ -200,13 +282,23 @@ class MobileNav {
 				store.setLeaf(wpos, ob.buffer);
 			}
 		}
+		// Restore the entry's buffer-level place. If the target buffer's
+		// component isn't mounted yet (cross-buffer Back — setLeaf above
+		// swaps the renderer on the next flush), park it for delivery when
+		// its provider registers.
+		if (entry.workBuf && entry.view) {
+			const provider = this.viewProviders.get(entry.workBuf);
+			if (provider) provider.apply(entry.view);
+			else this.pendingView = { bufId: entry.workBuf, view: entry.view };
+		}
 		// Self-heal against partially applicable entries (killed buffer,
 		// missing slot): re-read what actually resulted.
 		this.current = {
 			sid: SID,
 			seq: entry.seq,
 			cls: store.focusedSlotClass() ?? entry.cls,
-			workBuf: wpos ? (store.focusedLeaf(wpos)?.buffer.id ?? null) : null
+			workBuf: wpos ? (store.focusedLeaf(wpos)?.buffer.id ?? null) : null,
+			view: entry.view ?? null
 		};
 	}
 
@@ -215,6 +307,7 @@ class MobileNav {
 	reset() {
 		this.current = null;
 		this.drawerOpen = false;
+		this.pendingView = null;
 	}
 }
 

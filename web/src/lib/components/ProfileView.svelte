@@ -10,6 +10,7 @@
 	import SpellClauseBlock from './SpellClauseBlock.svelte';
 	import ProfileName from './ProfileName.svelte';
 	import { getActiveStore, type NavAction } from '$lib/wm/buffer-store.svelte';
+	import { mobileNav } from '$lib/wm/mobile-nav.svelte';
 
 	const app = getAppState();
 	const store = getActiveStore();
@@ -41,7 +42,29 @@
 	} = $props();
 
 	type Tab = 'publications' | 'articles' | 'wikis' | 'specs' | 'sections' | 'highlights' | 'comments' | 'spells';
+	const TAB_NAMES: Tab[] = ['publications', 'articles', 'wikis', 'specs', 'sections', 'highlights', 'comments', 'spells'];
 	let activeTab: Tab = $state('publications');
+
+	// Buffer-level place for Back history (idea-place-routing.org phase 1):
+	// a tab switch is a teleport, so mobile Back walks back through tabs.
+	// Only wired when hosted in a WM buffer (bufferId present).
+	function switchTab(t: Tab) {
+		if (activeTab === t) return;
+		activeTab = t;
+		if (bufferId) mobileNav.pushViewChange(bufferId);
+	}
+	$effect(() => {
+		const id = bufferId;
+		if (!id) return;
+		mobileNav.registerViewProvider(id, {
+			capture: () => ({ tab: activeTab }),
+			apply: (v) => {
+				const t = v.tab as Tab;
+				if (TAB_NAMES.includes(t)) activeTab = t;
+			}
+		});
+		return () => mobileNav.unregisterViewProvider(id);
+	});
 	let profile = $state<Profile | null>(null);
 	let publications = $state<PublicationSummary[]>([]);
 	// NIP-23 long-form articles (kind 30023) and NKBIP-02 wikis (kind
@@ -811,7 +834,7 @@
 
 	{#snippet tabCell(t: Tab, label: string, count: number)}
 		<div class="tab" class:active={activeTab === t}>
-			<button class="tab-label" onclick={() => (activeTab = t)}>
+			<button class="tab-label" onclick={() => switchTab(t)}>
 				{label} ({count})
 			</button>
 			<button

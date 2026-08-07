@@ -84,11 +84,17 @@ ever matters.
 
 * Roadmap
 
-- [ ] *Phase 1 — buffer-level history* (mobile, extends A1's nav
+- [X] *Phase 1 — buffer-level history* (mobile, extends A1's nav
   module): view-descriptor registry (buffers contribute
   =capture()/apply()=), reader wires view mode + section (push on
   view-mode switch and TOC jump, replace on page turn), profile wires
-  its tab. Back walks view changes.
+  its tab. Back walks view changes. Shipped 2026-08-07: =ViewPlace= /
+  =ViewProvider= + =pushViewChange=/=replaceViewChange= in
+  =mobile-nav.svelte.ts= (pending-view parking for cross-buffer pops);
+  reader =setView=/=gotoSection= helpers; profile =switchTab=.
+  CDP-verified: Back walks continuous→outline, TOC jump consumed,
+  page turns don't stack (forward restores position), desktop
+  history-free.
 - [ ] *Phase 2 — URL projection + deep-link boot*: hash
   serializer/parser for places, =replaceState= keeps the URL current,
   boot reads the hash and opens the place. Reload restores your spot;

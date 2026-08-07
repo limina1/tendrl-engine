@@ -81,7 +81,7 @@ On branch =feat/mobile-shell=; full plan (phases, milestones, risks) in
 Discovered in the mobile atlas review, but shell-wide; on branch
 =feat/mobile-shell= (extends A1's nav module); design in
 [[file:idea-place-routing.org][the idea note]]:
-- [ ] phase 1: buffer-level history (reader view mode + section,
+- [X] phase 1: buffer-level history (reader view mode + section,
   profile tab; traversal replaces, teleports push)
 - [ ] phase 2: hash-route URL projection + deep-link boot
 - [ ] phase 3: desktop Back/forward + share-link + =nostr:= handler
