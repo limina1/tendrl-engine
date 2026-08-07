@@ -1468,6 +1468,9 @@
 
 	.radio-group {
 		display: flex;
+		/* Wrap at narrow widths — an overflowing row clips its last option
+		   ("Large" → "La" on a 390px phone). */
+		flex-wrap: wrap;
 		gap: 10px;
 	}
 

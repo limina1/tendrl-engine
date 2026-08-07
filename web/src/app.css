@@ -107,3 +107,21 @@ input {
 input:focus {
 	border-color: var(--accent);
 }
+
+/* ── Mobile tap-target floor ─────────────────────────────────────────────
+   The compact icon/selection affordances (All/Inv, ◂ ▸ □ 🗑 rows in chat/
+   search/context/compose, the search 🪄 W ? ⚙ strip) render ~18px tall —
+   fine under a mouse, a lottery tap on a phone. On touch devices / narrow
+   viewports give them a comfortable box without changing their look. */
+@media (pointer: coarse), (max-width: 768px) {
+	.sel-btn,
+	.icon-btn,
+	.icon-btn-sm,
+	.affordance {
+		/* !important: Svelte-scoped rules (e.g. SearchPanel's .icon-btn
+		   { min-width: 28px }) carry the scope-hash class and outrank a
+		   plain global selector — this floor must win everywhere. */
+		min-height: 38px !important;
+		min-width: 38px !important;
+	}
+}

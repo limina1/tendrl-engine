@@ -102,15 +102,15 @@
 
 <div class="mshell">
 	<div class="mshell__head">
-		{#if activeClass === 'work'}
-			<button
-				class="mshell__menu-btn {mobileNav.drawerOpen ? 'mshell__menu-btn--on' : ''}"
-				data-tour="mobile-menu"
-				onclick={() => (mobileNav.drawerOpen = !mobileNav.drawerOpen)}
-				title="Open work buffers"
-				aria-label="Open the work-buffer drawer"
-			>☰</button>
-		{/if}
+		<!-- Global, not work-only: the drawer is the sole route to STATUS
+		     (network mode, relays, identity) — chat and search need it too. -->
+		<button
+			class="mshell__menu-btn {mobileNav.drawerOpen ? 'mshell__menu-btn--on' : ''}"
+			data-tour="mobile-menu"
+			onclick={() => (mobileNav.drawerOpen = !mobileNav.drawerOpen)}
+			title="Work buffers + status"
+			aria-label="Open the buffer/status drawer"
+		>☰</button>
 		<span class="cls cls--{activeClass}">{activeClass === 'research' ? 'search' : activeClass}</span>
 		{#if activeLeaf}
 			<span class="mshell__head-name">{activeLeaf.buffer.label}</span>
@@ -131,7 +131,7 @@
 		</div>
 	</div>
 
-	{#if mobileNav.drawerOpen && activeClass === 'work'}
+	{#if mobileNav.drawerOpen}
 		<!-- svelte-ignore a11y_click_events_have_key_events -->
 		<!-- svelte-ignore a11y_no_static_element_interactions -->
 		<div class="mshell__scrim" onclick={() => (mobileNav.drawerOpen = false)}></div>
@@ -313,8 +313,16 @@
 		color: var(--fg-alt);
 		font-size: var(--t-sm);
 		line-height: 1;
-		padding: var(--s-1) var(--s-1);
-		margin-left: calc(-1 * var(--s-1));
+		/* ≥44px touch target — the glyph alone renders ~16×22. Negative
+		   vertical margins let the hit box overlap the head's padding so
+		   the row itself stays slim (the head is chrome, not content). */
+		min-width: 44px;
+		min-height: 44px;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		padding: 0;
+		margin: -7px 0 -7px calc(-1 * var(--s-2));
 		cursor: pointer;
 		align-self: center;
 	}

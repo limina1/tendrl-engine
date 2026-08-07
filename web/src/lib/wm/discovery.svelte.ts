@@ -130,7 +130,9 @@ export const TIPS: Record<string, TourTip> = {
 		relevantWhen: (w) => !w.hasIdentity,
 		mobile: {
 			anchor: 'mobile-cmds',
-			body: 'Open *cmds* and run `tendrl-open-settings` to sign in — a `NIP-07` browser extension, or paste an `ncryptsec` key with its password. Heads up: the moment you sign in you\'ll see your pubkey but no name yet.',
+			// No NIP-07 pitch here — browser extensions don't exist in a phone
+			// WebView; watch-only npub is the first way in on mobile.
+			body: 'Open *cmds* and run `tendrl-open-settings` to sign in — the lightest way is to paste your `npub1…` and browse as yourself (watch-only); add an `ncryptsec` key later when you want to sign. Heads up: the moment you sign in you\'ll see your pubkey but no name yet.',
 			placement: 'top'
 		}
 	},
@@ -142,7 +144,12 @@ export const TIPS: Record<string, TourTip> = {
 		placement: 'bottom',
 		// Same gate: no point explaining the sign-in methods to someone already
 		// signed in. (Reachable on demand via Settings' walkthrough regardless.)
-		relevantWhen: (w) => !w.hasIdentity
+		relevantWhen: (w) => !w.hasIdentity,
+		mobile: {
+			// Two ways, not three: no browser extensions in a phone WebView, so
+			// the NIP-07 connect walkthrough would dead-end here.
+			body: '*npub (watch-only)* — the lightest: paste your `npub1…` and browse as yourself (feed, profile, `by:me`); signing stays off. *Engine* — paste an `ncryptsec` below and unlock it with its password; held for this session only, never written to disk. (`NIP-07` browser-extension signing is a desktop thing — there\'s no extension to connect inside a phone WebView.)'
+		}
 	},
 	'signed-in-noname': {
 		key: 'signed-in-noname',
@@ -230,9 +237,11 @@ export const TIPS: Record<string, TourTip> = {
 	},
 	'reader-edit': {
 		key: 'reader-edit',
-		anchor: 'reader-edit',
+		// Anchored to the always-visible `tools` caret — the Edit button
+		// itself lives inside the collapsed row it opens.
+		anchor: 'reader-tools',
 		title: 'Edit in the composer',
-		body: '`Edit` pulls the whole publication into the composer to revise it. Imported sections arrive *locked* (yellow once you claim one) — unlock just the ones you want to change, then sign a new snapshot. The composer has its own `W` tour.',
+		body: '`tools` unfolds the action row: highlight mode, `Edit` (pulls the whole publication into the composer to revise it), ⟳ fetch, and the pool chips. Imported sections arrive *locked* (yellow once you claim one) — unlock just the ones you want to change, then sign a new snapshot. The composer has its own `W` tour.',
 		placement: 'bottom'
 	},
 
