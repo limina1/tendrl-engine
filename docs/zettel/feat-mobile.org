@@ -263,4 +263,6 @@ the hardware-back event, and later plugins (share intents, deep links).
   reconnect discipline
 - [[file:cmp-pkm.org][PKM comparisons]] and =reference/amethyst= — the
   drawer/bottom-bar patterns borrowed from Amethyst
+- [[file:idea-place-routing.org][Places & routing]] — history/URL/deep-link
+  model the mobile Back work uncovered; phases 1–3 run beside phase B
 - [[file:index.org][index]]

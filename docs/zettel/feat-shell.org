@@ -75,3 +75,5 @@ reader-breaking iterations. Anything mounting *inside* a buffer must respect the
 - [[file:feat-reader.org][Reader]]
 - [[file:feat-compose.org][Compose]]
 - [[file:feat-feed.org][Feed]]
+- [[file:idea-place-routing.org][Places & routing]] — nameable places over
+  the buffer/panel model; history and URLs as projections

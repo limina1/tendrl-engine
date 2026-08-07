@@ -1,0 +1,122 @@
+#+TITLE: Idea: places — navigation history and routes as projections of one model
+#+TYPE: idea
+#+STATUS: plan — phase 1 starting on =feat/mobile-shell= (2026-08-07)
+#+DATE: 2026-08-07
+
+Discovered in the mobile shell, but it uncovers a shell-wide gap: the app
+has no notion of a *place* — a nameable, serializable "where you are".
+Once places exist, four things that look like separate features become
+projections of the same model: navigation history (Back), the URL,
+share-links, and =nostr:= deep links.
+
+* Origin
+
+The mobile A1 work gave the shell *shell-level* history: which class
+panel is active and which work buffer is focused, recorded as shallow
+=pushState= entries (=web/src/lib/wm/mobile-nav.svelte.ts=). Reviewing
+the screen atlas (2026-08-07) surfaced what it can't express: anything
+*inside* a buffer. Reader view switches (outline → paginated →
+continuous), the section you were on, a profile tab — Back skips over
+all of it, and a reload loses your spot in a book. The URL never
+changes, so no place is shareable.
+
+The mobile constraint (hardware Back must mean something) forced the
+question; the answer is not mobile-specific.
+
+* The place model
+
+#+begin_example
+place = document (NIP-19 entity) + section (title-slug) + view mode
+#/read/naddr1…/requisite-variety?view=paginated
+#+end_example
+
+- *Document* by NIP-19 entity (naddr/nevent/npub) — nostr-native; the
+  engine already decodes these (=src/nip19.rs=, =POST /api/v1/decode=).
+- *Section* by title-slug, never index — indexes shift when a
+  publication is edited; title-slugs are already the human handle in the
+  [[file:feat-nostrdown.org][nostrdown]] ref layer (d-tags are opaque
+  nanoids). In-memory history entries may carry the d-tag (stable and
+  cheap); the URL form uses the slug.
+- *View mode* is a hint, not mechanics: no page numbers, no scroll
+  offsets. Each view interprets the same place its own way — outline
+  focuses the node, paginated opens that section's page, continuous
+  scrolls to it (=scrollToSection= exists). Switching view mode
+  preserves the place for free.
+
+What stays out: ephemeral view state (scroll px, expansion sets,
+selection) — per the frontend/backend boundary and the WM model, that
+belongs to the buffer, not the address.
+
+* Traversal vs teleport
+
+The rule that keeps Back useful without flooding the stack:
+
+- *Traversal replaces*: turning pages in paginated view updates the
+  current entry (=replaceState=). Your place is remembered, but Back
+  exits the book instead of unwinding forty page turns.
+- *Teleports push*: TOC jumps, ={{ref}}= follows, opening from search
+  or feed, buffer/panel switches, and view-mode switches each get an
+  entry (=pushState=).
+
+* URL as projection
+
+The URL is a *projection* of the current history entry, not a second
+source of truth. State (BufferStore + nav entries) stays authoritative;
+the URL seeds it exactly once, on cold boot (deep-link open).
+
+Hash routes (=/#/read/…=), not path routes, at least initially: no
+server or Kit-router involvement (the static-adapter SPA is one
+prerendered page; path routes would need a client catch-all), and hash
+works identically in the engine's embedded server (whose SPA fallback
+exists — =src/static_assets.rs=), a Tauri WebView, and any =file://=
+context. Revisit path routes only if server-side rendering of a place
+ever matters.
+
+* Decisions
+
+- Desktop gets real Back/forward history too, at phase 3 (user,
+  2026-08-07): once the URL visibly changes as you navigate, a desktop
+  Back that does nothing reads as broken. Until then desktop stays
+  history-free; the nav module keeps its mobile mount.
+- Confirm-intent modals and the first-run network-mode gate stay off
+  the Back-closer stack (queue semantics, first-run gate) — places
+  don't change that.
+
+* Roadmap
+
+- [ ] *Phase 1 — buffer-level history* (mobile, extends A1's nav
+  module): view-descriptor registry (buffers contribute
+  =capture()/apply()=), reader wires view mode + section (push on
+  view-mode switch and TOC jump, replace on page turn), profile wires
+  its tab. Back walks view changes.
+- [ ] *Phase 2 — URL projection + deep-link boot*: hash
+  serializer/parser for places, =replaceState= keeps the URL current,
+  boot reads the hash and opens the place. Reload restores your spot;
+  a copyable link to any place.
+- [ ] *Phase 3 — both-shell history + share affordance*: desktop
+  Back/forward enabled, "copy link to here" in the reader menu,
+  =nostr:= URI handler mapping onto the same parser (feeds the
+  Android share-intent / deep-link work in
+  [[file:feat-mobile.org][feat-mobile]] phase C).
+
+* What it unlocks
+
+Share-links to a section of a publication; reload/restart landing where
+you left off; the Phase-C =nostr:= handler and Android intents parsing
+into the same route grammar; and (later) cross-frontend addressing —
+a place string is frontend-agnostic, so an emacs or TUI frontend could
+honor the same grammar.
+
+* Related
+
+- [[file:feat-mobile.org][Mobile & Android]] — where the gap was
+  discovered; A1 shell-level history is the foundation phase 1 extends
+- [[file:feat-shell.org][Shell & WM]] — the buffer/panel model places
+  address
+- [[file:feat-reader.org][Reader]] — first buffer to speak places
+  (view mode + section)
+- [[file:feat-nostrdown.org][Nostrdown]] — title-slug convention the
+  section segment reuses
+- [[file:feat-ui-patterns.org][UI patterns]] — Back-closer priority
+  stack (overlays unwind before history)
+- [[file:index.org][the index]]

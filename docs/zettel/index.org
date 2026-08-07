@@ -76,6 +76,16 @@ On branch =feat/mobile-shell=; full plan (phases, milestones, risks) in
 - [ ] phase C: share-intent import, reconnect discipline, mobile
   embeddings, deep links → signed release (zapstore)
 
+* In flight — places & navigation history
+
+Discovered in the mobile atlas review, but shell-wide; on branch
+=feat/mobile-shell= (extends A1's nav module); design in
+[[file:idea-place-routing.org][the idea note]]:
+- [ ] phase 1: buffer-level history (reader view mode + section,
+  profile tab; traversal replaces, teleports push)
+- [ ] phase 2: hash-route URL projection + deep-link boot
+- [ ] phase 3: desktop Back/forward + share-link + =nostr:= handler
+
 * In flight — the nostrdown feature epoch
 
 Both accepted tasks landed (2026-07-05); the epoch is *complete* and this branch
