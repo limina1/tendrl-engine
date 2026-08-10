@@ -304,3 +304,34 @@ only the first was audited for the copy affordance.
 =copy= button beside every raw-JSON surface, all through the
 clipboard+toast pattern: EventViewModal (reuses its =copyText=), the
 legacy json-modal header, and ProfileResultItem's fold-out.
+
+* OPEN — relay working-set UX: no removal from confirm modals; no NIP-65 seeding (UPSTREAM: tendrl-web)
+:PROPERTIES:
+:found: 2026-08-10 (Android device pass, feat/mobile-shell)
+:END:
+
+** Symptom
+From the publish/fetch confirm modals there is no way to *drop* a relay
+from the working sets — only per-operation unchecking (the × removal
+lives only in the relays buffer, easy to miss; on the phone the modal is
+the surface the user actually meets). And a signed-in user's kind 10002
+read/write relays are never offered: the working sets stay on the
+generic defaults, so every new install hand-curates from scratch.
+
+** Direction (agreed with user; matches the deferred getRelays decision in
+docs/amber-nip55-signing-plan.md "Open questions")
+- Confirm modals: removal affordance (or a jump into the relays buffer
+  row) alongside the now-persistent "Add relay".
+- One-shot NIP-65 suggestion surface at login: pull the user's read/write
+  relays (kind 10002 fetch; Amber getRelays as a second provider on
+  Android), per-relay checkboxes, read → fetch set, write → publish set —
+  combined with, not replacing, the "general feed" defaults. Never silent,
+  never re-runs on boot, re-invokable from the relay buffer. Import
+  publishes nothing (project_publishing_philosophy).
+- Fix belongs on the main branch (tendrl-web), not the mobile branch —
+  desktop NIP-07 gets the same surface for free.
+
+** Fixed already (this branch)
+- ws://localhost:3334 removed from DEFAULT_RELAYS (guaranteed-refused
+  connection in every fresh install's sets; worst on device).
+- PublishConfirmModal "Add relay" now persists to the publish set.

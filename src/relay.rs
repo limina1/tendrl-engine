@@ -11,12 +11,13 @@ use tokio::time::timeout;
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 use tracing::{debug, info, warn};
 
-/// Default relays to fetch from (focused on publication-supporting relays)
-pub const DEFAULT_RELAYS: &[&str] = &[
-    "ws://localhost:3334",
-    "wss://relay.noswhere.com",
-    "wss://relay.damus.io",
-];
+/// Default relays to fetch from (focused on publication-supporting
+/// relays). Public relays only — a `ws://localhost` dev relay used to be
+/// seeded here, which put a guaranteed-refused connection into every
+/// fresh install's working sets (and every operation on mobile, where
+/// nothing listens on loopback). Add a local relay explicitly when you
+/// run one.
+pub const DEFAULT_RELAYS: &[&str] = &["wss://relay.noswhere.com", "wss://relay.damus.io"];
 
 /// Default indexer (profile / kind-10002 discovery) relays. Used to
 /// seed `indexer.default` on first boot so a fresh install can fall
