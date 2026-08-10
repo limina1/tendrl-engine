@@ -1380,3 +1380,21 @@ adb pair <phone-ip>:<pairing-port>    # one-time, uses the 6-digit code
 adb connect <phone-ip>:<connect-port> # the port shown on the main screen
 adb devices
 #+end_src
+
+** Debug APK build + install
+
+Two quirks: (1) rust-embed does not watch =web/build/= — after a
+=pnpm -C web build=, force the engine to re-embed with
+=cargo clean -p nostr-engine= (run inside =mobile/src-tauri=); (2) the
+gradle packaging step can append to a stale APK instead of rewriting it
+(file grows ~2x) — delete the outputs dir first.
+
+#+begin_src bash
+cd mobile/src-tauri
+pnpm -C ../../web build
+cargo clean -p nostr-engine
+rm -rf gen/android/app/build/outputs
+cargo tauri android build --debug --target aarch64
+adb install -r gen/android/app/build/outputs/apk/universal/debug/app-universal-debug.apk
+adb logcat --pid=$(adb shell pidof -s io.github.limina1.tendrl)
+#+end_src
