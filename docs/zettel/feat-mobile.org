@@ -144,28 +144,28 @@ so the WebView loads the same origin the desktop bundle serves — no
 CORS, no IPC needed initially. Tauri buys packaging, the WebView bridge,
 the hardware-back event, and later plugins (share intents, deep links).
 
-- [ ] *B1. Build spike* (parallel branch, start before A finishes — its
-  risks are independent of UI work):
-  - [ ] toolchain: =cargo-ndk= + Android targets (=aarch64-linux-android=
+- [X] *B1. Build spike* — DONE 2026-08-10 (host: =mobile/src-tauri=,
+  app id =io.github.limina1.tendrl=; commands in =docs/commands.org=):
+  - [X] toolchain: =cargo-ndk= + Android targets (=aarch64-linux-android=
     primary; =x86_64-linux-android= for emulator)
-  - [ ] cargo feature =embeddings= gating =fastembed= + =usearch= (off
+  - [X] cargo feature =embeddings= gating =fastembed= + =usearch= (off
     for Android initially — keeps ONNX Runtime out of the critical path;
     =~:= search degrades gracefully, engine already reports embedding
     status)
-  - [ ] compile the C/C++ deps under NDK: nostrdb (LMDB — expected fine;
+  - [X] compile the C/C++ deps under NDK: nostrdb (LMDB — expected fine;
     Damus ships it on iOS), secp256k1 (cc, well-trodden), =zip=/deflate
     (pure Rust, fine)
-  - [ ] =keyring= has no Android backend — feature-gate it; identity
+  - [X] =keyring= has no Android backend — feature-gate it; identity
     falls back to the existing ncryptsec-file + passphrase path
     (=identity.rs=), Android Keystore integration deferred
-  - [ ] gate =webbrowser= open-on-launch (desktop bundle behavior) off
+  - [X] gate =webbrowser= open-on-launch (desktop bundle behavior) off
     on mobile
-  - [ ] scaffold the Tauri 2 mobile project (proposal: =mobile/= dir,
+  - [X] scaffold the Tauri 2 mobile project (proposal: =mobile/= dir,
     host crate depends on =nostr_engine= by path), WebView →
     =http://127.0.0.1:<port>/?shell=mobile=
-  - [ ] WebView cleartext: allow =127.0.0.1= via
+  - [X] WebView cleartext: allow =127.0.0.1= via
     =usesCleartextTraffic= / network-security-config (localhost only)
-  - [ ] *loopback auth token* — Android loopback is device-shared: any
+  - [X] *loopback auth token* — Android loopback is device-shared: any
     app can reach =127.0.0.1:<port>=, and the engine currently treats
     "can reach me" as "is the user" (fine on desktop's single trust
     domain, wrong across Android's mutually-untrusted sandboxes). Host
@@ -177,13 +177,16 @@ the hardware-back event, and later plugins (share intents, deep links).
     grants (confused deputy). See
     [[file:../amber-nip55-signing-plan.md][Amber/NIP-55 plan]], security notes.
 - [ ] *B2. Platform adaptation* (all small once B1 stands):
-  - [ ] data dir → app-private storage (Tauri path API → engine config)
+  - [X] data dir → app-private storage (Tauri path API → engine config;
+    stable port 41347 so the WebView origin — and all SPA storage — survives
+    restarts)
   - [ ] engine start/stop tied to app lifecycle; pause the 60s
     background fetch/embed loop and SSE on suspend, reconnect on resume
   - [ ] hardware back → =history.back()= (lands on A1's stack), exit at
     stack root
-  - [ ] config bootstrap: first-run TOML seed (=initial_relays=) written
-    to app storage; =relays.json= as on desktop
+  - [X] config bootstrap: first-run TOML seed (=initial_relays=) written
+    to app storage; =relays.json= as on desktop (localhost dev relay
+    dropped from the defaults)
 - [ ] *B3. Signing on Android.* No NIP-07 in a WebView. Ladder:
   - [X] *npub (watch-only) login* — the first page in, and currently
     the only mobile login: =IdentitySession.watch_pubkey= → state
@@ -194,14 +197,25 @@ the hardware-back event, and later plugins (share intents, deep links).
     Secrets pasted into the npub field are rejected loudly.
   - [ ] engine signer (ncryptsec decrypt in-process — already
     supported; the right default for a single-user device app)
-  - [ ] *NIP-55 (Amber)* as a =Signer= impl — Android's native signer
-    app, fits the pluggable =signing.rs= trait exactly; needs an
-    intent bridge through the Tauri host. The upgrade path from
-    watch-only: same npub identity, Amber supplies the signatures.
+  - [X] *NIP-55 (Amber)* — shipped 2026-08-10, but NOT as an
+    engine-side =Signer= impl: Amber registers as an *external signer*
+    (kind ="nip55"=) over the existing SSE registry — the seam NIP-07
+    built is already the intent bridge, transport-agnostically. WebView
+    glue (=web/src/lib/identity/nip55.ts=) fulfils sign requests via the
+    in-app Tauri Kotlin plugin (ContentResolver-first, intent fallback);
+    the engine adds one enum variant + =verify_signed_event= (schnorr
+    check on everything external signers return). Verified on device:
+    connect, sign, publish. See
+    [[file:../amber-nip55-signing-plan.md][the plan]].
   - [ ] NIP-46 remote signing as a third engine-side option
-- [ ] *B4. Debug APK on a real device* (milestone M1): sideload, walk
-  the first-run flow (network-mode choice, feed sync, sign-in), confirm
-  relay fetching + reading + highlighting + publishing end-to-end.
+- [X] *B4. Debug APK on a real device* (milestone M1) — Pixel 7 over
+  wireless adb, 2026-08-10: boot, token enforcement (outside process
+  401s on =/api= incl. =/identity/sign=), feed sync (wss needed
+  webpki-roots fallback — no OS cert store for rustls on Android),
+  reading, Amber connect + signed highlight publish end-to-end.
+  Still unverified: batch publish, deny path, silent restart
+  re-attach, suspend/resume across the intent round-trip, first-contact
+  approval vs the 60s timeout.
 
 * Phase C — make it feel native
 
