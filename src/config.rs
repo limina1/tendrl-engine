@@ -310,11 +310,13 @@ impl RelayConfig {
 /// (serde ignores unknown fields).
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct IdentityConfig {
-    /// Last-chosen signing source — `"engine"` or `"nip07"`. Persisted by
-    /// Save Settings so a reload reconnects to the same signer. Engine boots
-    /// as `"engine"` regardless; the web re-registers a NIP-07 signer when
-    /// this is set and `window.nostr` is reachable. Kept so the engine knows
-    /// which signer to reattach to on startup.
+    /// Last-chosen signing source — `"engine"`, `"nip07"`, or `"nip55"`.
+    /// Persisted by Save Settings so a reload reconnects to the same signer.
+    /// The web re-registers the external signer when this is set and its
+    /// transport is reachable (`window.nostr` for nip07; the Tauri NIP-55
+    /// plugin + the persisted `{packageName, pubkey}` in localStorage for
+    /// nip55). Kept so the engine knows which signer to reattach to on
+    /// startup.
     #[serde(default)]
     pub source: Option<String>,
     /// Auto-lock the engine key after this many minutes of inactivity. `0`

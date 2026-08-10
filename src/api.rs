@@ -2617,7 +2617,7 @@ pub struct ConfigSnapshotRequest {
     #[serde(default)]
     pub network_mode: Option<String>,
     /// Optional identity source — when present, written to
-    /// `[identity] source`. Values: `"engine"` / `"nip07"`.
+    /// `[identity] source`. Values: `"engine"` / `"nip07"` / `"nip55"`.
     #[serde(default)]
     pub identity_source: Option<String>,
     /// Optional engine auto-lock timeout in minutes — when present,
@@ -5062,7 +5062,7 @@ fn map_publish_sign_error(e: crate::signing::SigningError) -> EngineError {
             EngineError::Locked("Identity is locked — unlock with password first".into())
         }
         crate::signing::SigningError::SignerNotConnected => EngineError::Auth(
-            "External signer not connected — open a tab with the signer extension".into(),
+            "External signer not connected — reconnect your signer (browser extension or signer app)".into(),
         ),
         other => EngineError::Other(format!("Cannot sign: {other}")),
     }
@@ -7464,13 +7464,13 @@ pub async fn assistant_identity_logout_handler(
 
 #[derive(Debug, Deserialize)]
 pub struct UseSourceRequest {
-    /// "engine" | "nip07"
+    /// "engine" | "nip07" | "nip55"
     pub source: String,
-    /// Required when source is nip07 (returned by /signer-register).
+    /// Required when source is nip07/nip55 (returned by /signer-register).
     #[serde(default)]
     pub signer_id: Option<String>,
     /// Hex pubkey of the external signer. When provided alongside an
-    /// nip07 source, the session surfaces it as the active
+    /// external source, the session surfaces it as the active
     /// pubkey via /identity status.
     #[serde(default)]
     pub pubkey: Option<String>,
@@ -7499,6 +7499,16 @@ pub async fn identity_use_source_handler(
                 signer_id: Some(signer_id),
             }
         }
+        "nip55" => {
+            let signer_id = req.signer_id.ok_or_else(|| {
+                EngineError::BadRequest(
+                    "nip55 source requires a signer_id — register the signer app first".into(),
+                )
+            })?;
+            IdentitySource::Nip55 {
+                signer_id: Some(signer_id),
+            }
+        }
         // "nip46" is intentionally unsupported — the Nip46 variant has no
         // bunker transport, so it would register a non-functional signer.
         // It falls through to the unknown-source error below. Re-add an
@@ -7512,7 +7522,8 @@ pub async fn identity_use_source_handler(
     match (&new_source, req.pubkey.as_ref()) {
         (
             crate::identity::IdentitySource::Nip07 { .. }
-            | crate::identity::IdentitySource::Nip46 { .. },
+            | crate::identity::IdentitySource::Nip46 { .. }
+            | crate::identity::IdentitySource::Nip55 { .. },
             Some(pk),
         ) => session.set_source_with_pubkey(new_source, pk.clone()),
         _ => session.set_source(new_source),
@@ -7565,7 +7576,7 @@ pub async fn identity_sign_handler(
             EngineError::Auth("No identity configured".into())
         }
         crate::signing::SigningError::SignerNotConnected => EngineError::Auth(
-            "External signer not connected — open a tab with the signer extension".into(),
+            "External signer not connected — reconnect your signer (browser extension or signer app)".into(),
         ),
         other => EngineError::Other(format!("Sign failed: {other}")),
     })?;

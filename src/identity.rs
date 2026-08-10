@@ -682,6 +682,10 @@ pub enum IdentitySource {
     Engine,
     Nip07 { signer_id: Option<String> },
     Nip46 { signer_id: Option<String> },
+    /// Android signer app (Amber) over the same external-signer registry as
+    /// NIP-07 — the WebView glue talks to the app via the Tauri NIP-55
+    /// plugin and fulfils sign requests from the SSE channel.
+    Nip55 { signer_id: Option<String> },
 }
 
 impl Default for IdentitySource {
@@ -696,6 +700,7 @@ impl IdentitySource {
             IdentitySource::Engine => "engine",
             IdentitySource::Nip07 { .. } => "nip07",
             IdentitySource::Nip46 { .. } => "nip46",
+            IdentitySource::Nip55 { .. } => "nip55",
         }
     }
 
@@ -703,15 +708,16 @@ impl IdentitySource {
         match self {
             IdentitySource::Engine => None,
             IdentitySource::Nip07 { signer_id: Some(id) }
-            | IdentitySource::Nip46 { signer_id: Some(id) } => Some(id.as_str()),
-            IdentitySource::Nip07 { signer_id: None } | IdentitySource::Nip46 { signer_id: None } => {
-                None
-            }
+            | IdentitySource::Nip46 { signer_id: Some(id) }
+            | IdentitySource::Nip55 { signer_id: Some(id) } => Some(id.as_str()),
+            IdentitySource::Nip07 { signer_id: None }
+            | IdentitySource::Nip46 { signer_id: None }
+            | IdentitySource::Nip55 { signer_id: None } => None,
         }
     }
 
-    /// Parse a source string from config.toml (`"engine" | "nip07"`)
-    /// into an `IdentitySource`. External variants get
+    /// Parse a source string from config.toml (`"engine" | "nip07" |
+    /// "nip55"`) into an `IdentitySource`. External variants get
     /// `signer_id: None` — the live signer_id is filled in later when
     /// the web calls `/identity/use`. Returns `None` for unknown
     /// strings; caller should fall back to `IdentitySource::Engine`.
@@ -724,6 +730,7 @@ impl IdentitySource {
         match s {
             "engine" => Some(IdentitySource::Engine),
             "nip07" => Some(IdentitySource::Nip07 { signer_id: None }),
+            "nip55" => Some(IdentitySource::Nip55 { signer_id: None }),
             _ => None,
         }
     }
@@ -1015,7 +1022,9 @@ impl IdentitySession {
     pub fn effective_pubkey(&self) -> Option<String> {
         match self.source {
             IdentitySource::Engine => self.pubkey.clone().or_else(|| self.watch_pubkey.clone()),
-            IdentitySource::Nip07 { .. } | IdentitySource::Nip46 { .. } => {
+            IdentitySource::Nip07 { .. }
+            | IdentitySource::Nip46 { .. }
+            | IdentitySource::Nip55 { .. } => {
                 self.external_pubkey.clone().or_else(|| self.pubkey.clone())
             }
         }
@@ -1069,7 +1078,9 @@ impl IdentitySession {
         // the UI doesn't treat nip07 as "no identity".
         let effective_state = if matches!(
             self.source,
-            IdentitySource::Nip07 { .. } | IdentitySource::Nip46 { .. }
+            IdentitySource::Nip07 { .. }
+                | IdentitySource::Nip46 { .. }
+                | IdentitySource::Nip55 { .. }
         ) && self.external_pubkey.is_some()
         {
             "unlocked"
@@ -1093,6 +1104,37 @@ impl IdentitySession {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn from_config_str_parses_known_sources() {
+        assert!(matches!(
+            IdentitySource::from_config_str("engine"),
+            Some(IdentitySource::Engine)
+        ));
+        assert!(matches!(
+            IdentitySource::from_config_str("nip07"),
+            Some(IdentitySource::Nip07 { signer_id: None })
+        ));
+        assert!(matches!(
+            IdentitySource::from_config_str("nip55"),
+            Some(IdentitySource::Nip55 { signer_id: None })
+        ));
+        // nip46 has no transport yet — deliberately not parsed.
+        assert!(IdentitySource::from_config_str("nip46").is_none());
+        assert!(IdentitySource::from_config_str("bogus").is_none());
+    }
+
+    #[test]
+    fn kind_str_round_trips_through_config_parse() {
+        for src in [
+            IdentitySource::Engine,
+            IdentitySource::Nip07 { signer_id: None },
+            IdentitySource::Nip55 { signer_id: None },
+        ] {
+            let parsed = IdentitySource::from_config_str(src.kind_str()).unwrap();
+            assert_eq!(parsed.kind_str(), src.kind_str());
+        }
+    }
 
     #[test]
     fn login_nsec_derives_pubkey_and_can_sign() {

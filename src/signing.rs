@@ -262,6 +262,51 @@ pub(crate) fn canonical_id(canonical: &Value) -> String {
     hex::encode(hash)
 }
 
+/// Verify a fully-signed event: recompute the NIP-01 id from the event's own
+/// fields and schnorr-verify `sig` against `pubkey`.
+///
+/// Run on everything an *external* signer hands back (browser extension,
+/// signer app) before it is stored or broadcast — a buggy or hostile signer
+/// must not be able to put garbage on the wire under the user's npub. The
+/// web glue does no crypto; verification lives engine-side (the SPA has no
+/// nostr crypto dependency, and the boundary rule keeps it that way).
+pub fn verify_signed_event(ev: &Value) -> Result<(), String> {
+    let pubkey = ev
+        .get("pubkey")
+        .and_then(Value::as_str)
+        .ok_or("missing pubkey")?;
+    let id = ev.get("id").and_then(Value::as_str).ok_or("missing id")?;
+    let sig = ev.get("sig").and_then(Value::as_str).ok_or("missing sig")?;
+    let created_at = ev
+        .get("created_at")
+        .and_then(Value::as_i64)
+        .ok_or("missing created_at")?;
+    let kind = ev.get("kind").and_then(Value::as_u64).ok_or("missing kind")?;
+    let tags = ev.get("tags").cloned().unwrap_or_else(|| json!([]));
+    let content = ev
+        .get("content")
+        .and_then(Value::as_str)
+        .ok_or("missing content")?;
+
+    let canonical = json!([0, pubkey, created_at, kind, tags, content]);
+    let expect = canonical_id(&canonical);
+    if !expect.eq_ignore_ascii_case(id) {
+        return Err(format!("event id does not match its contents (expected {expect})"));
+    }
+
+    use secp256k1::{schnorr::Signature, Message, XOnlyPublicKey, SECP256K1};
+    let id_bytes = hex::decode(id).map_err(|_| "id is not hex")?;
+    let sig_bytes = hex::decode(sig).map_err(|_| "sig is not hex")?;
+    let pk_bytes = hex::decode(pubkey).map_err(|_| "pubkey is not hex")?;
+    let msg = Message::from_digest_slice(&id_bytes).map_err(|_| "id is not 32 bytes")?;
+    let sig = Signature::from_slice(&sig_bytes).map_err(|_| "sig is not a schnorr signature")?;
+    let pk = XOnlyPublicKey::from_slice(&pk_bytes).map_err(|_| "pubkey is not x-only")?;
+    SECP256K1
+        .verify_schnorr(&sig, &msg, &pk)
+        .map_err(|_| "schnorr signature verification failed")?;
+    Ok(())
+}
+
 // ---------------------------------------------------------------------------
 // External signer registry
 // ---------------------------------------------------------------------------
@@ -424,7 +469,22 @@ impl Signer for ExternalSigner {
         };
 
         match reply {
-            SignerReply::Ok(signed) => Ok(signed),
+            SignerReply::Ok(signed) => {
+                // Never trust an external signer's output blindly: the event
+                // must verify AND belong to the registered pubkey (catches an
+                // account switch inside the signer app mid-session).
+                verify_signed_event(&signed).map_err(|e| {
+                    SigningError::External(format!("signer returned an invalid event: {e}"))
+                })?;
+                let signed_pk = signed.get("pubkey").and_then(Value::as_str).unwrap_or("");
+                if signed_pk != self.pubkey_hex {
+                    return Err(SigningError::Mismatch(format!(
+                        "signer returned an event for {} but is registered as {}",
+                        signed_pk, self.pubkey_hex
+                    )));
+                }
+                Ok(signed)
+            }
             SignerReply::Err(msg) => Err(SigningError::External(msg)),
         }
     }
@@ -559,7 +619,9 @@ impl SigningController {
                 };
                 signer.sign(template).await
             }
-            IdentitySource::Nip07 { signer_id } | IdentitySource::Nip46 { signer_id } => {
+            IdentitySource::Nip07 { signer_id }
+            | IdentitySource::Nip46 { signer_id }
+            | IdentitySource::Nip55 { signer_id } => {
                 let signer_id = signer_id.ok_or(SigningError::SignerNotConnected)?;
                 let registered = self
                     .lookup_by_id(&signer_id)
@@ -611,7 +673,9 @@ impl SigningController {
                 .lock()
                 .ok()
                 .and_then(|s| s.pubkey().map(|p| p.to_string())),
-            IdentitySource::Nip07 { signer_id } | IdentitySource::Nip46 { signer_id } => {
+            IdentitySource::Nip07 { signer_id }
+            | IdentitySource::Nip46 { signer_id }
+            | IdentitySource::Nip55 { signer_id } => {
                 let id = signer_id?;
                 self.registry.read().await.get(&id).map(|s| s.pubkey.clone())
             }
@@ -791,5 +855,149 @@ mod tests {
         // Don't send through channel; just assert that drop_pending works
         // and that there's a pending entry mid-flight.
         registered.drop_pending(&req_id).await;
+    }
+
+    /// Full round-trip through the registry for a `nip55` source: the
+    /// controller routes the sign to the registered signer's channel, a
+    /// fulfiller (standing in for the WebView → Amber glue) signs the
+    /// template and posts the reply, and the verified event comes back.
+    /// Proves the registry really is kind-agnostic — no nip55-specific
+    /// engine code beyond the enum arm.
+    #[tokio::test]
+    async fn nip55_source_signs_through_registry() {
+        let (pubkey, secret) = test_keypair();
+        let identity: IdentityHandle = Arc::new(Mutex::new(IdentitySession::new()));
+        let controller = SigningController::new(identity);
+
+        let (signer_id, _token) = controller
+            .register_external(
+                "nip55".into(),
+                pubkey.clone(),
+                SignerCapabilities {
+                    sign_event: true,
+                    auto_approve_kinds: vec![30040, 30041],
+                    ..Default::default()
+                },
+            )
+            .await;
+        controller.set_source(IdentitySource::Nip55 {
+            signer_id: Some(signer_id.clone()),
+        });
+
+        // Fulfiller: consume the SSE-side channel, sign with the test key,
+        // resolve the pending request — exactly what the glue does.
+        let registered = controller.lookup_by_id(&signer_id).await.unwrap();
+        let mut rx = registered.take_receiver().expect("channel receiver");
+        let fulfiller_controller = controller.clone();
+        let fulfiller_id = signer_id.clone();
+        let fulfiller_key = (pubkey.clone(), secret.clone());
+        tokio::spawn(async move {
+            if let Some(SseEvent::SignRequest { req_id, template }) = rx.recv().await {
+                let signer = InProcessSigner::new(fulfiller_key.0, fulfiller_key.1);
+                let signed = signer.sign(template).await.expect("fulfiller signs");
+                fulfiller_controller
+                    .resolve_sign_response(&fulfiller_id, &req_id, SignerReply::Ok(signed))
+                    .await;
+            }
+        });
+
+        let template = EventTemplate {
+            kind: 30041,
+            created_at: 1_700_000_000,
+            tags: vec![vec!["d".into(), "sect".into()]],
+            content: "section body".into(),
+            pubkey: Some(pubkey.clone()),
+        };
+        let signed = controller.sign(template).await.expect("nip55 sign routes");
+        assert_eq!(signed["pubkey"].as_str().unwrap(), pubkey);
+        assert_eq!(signed["kind"].as_u64().unwrap(), 30041);
+        // The controller stamped provenance before the template went out.
+        let tags = signed["tags"].as_array().unwrap();
+        assert!(tags
+            .iter()
+            .any(|t| t[0] == CLIENT_TAG_NAME && t[1] == CLIENT_TAG_VALUE));
+        // And what came back verifies.
+        verify_signed_event(&signed).expect("returned event verifies");
+    }
+
+    /// A signer app returning garbage must not survive the Ok path.
+    #[tokio::test]
+    async fn external_signer_rejects_invalid_reply() {
+        let (pubkey, _secret) = test_keypair();
+        let identity: IdentityHandle = Arc::new(Mutex::new(IdentitySession::new()));
+        let controller = SigningController::new(identity);
+
+        let (signer_id, _token) = controller
+            .register_external(
+                "nip55".into(),
+                pubkey.clone(),
+                SignerCapabilities {
+                    sign_event: true,
+                    ..Default::default()
+                },
+            )
+            .await;
+        controller.set_source(IdentitySource::Nip55 {
+            signer_id: Some(signer_id.clone()),
+        });
+
+        let registered = controller.lookup_by_id(&signer_id).await.unwrap();
+        let mut rx = registered.take_receiver().expect("channel receiver");
+        let fulfiller_controller = controller.clone();
+        let fulfiller_id = signer_id.clone();
+        tokio::spawn(async move {
+            if let Some(SseEvent::SignRequest { req_id, .. }) = rx.recv().await {
+                fulfiller_controller
+                    .resolve_sign_response(
+                        &fulfiller_id,
+                        &req_id,
+                        SignerReply::Ok(json!({ "garbage": true })),
+                    )
+                    .await;
+            }
+        });
+
+        let template = EventTemplate {
+            kind: 1,
+            created_at: 0,
+            tags: vec![],
+            content: String::new(),
+            pubkey: Some(pubkey),
+        };
+        let err = controller.sign(template).await.unwrap_err();
+        assert!(matches!(err, SigningError::External(_)), "got: {err:?}");
+    }
+
+    #[tokio::test]
+    async fn verify_signed_event_accepts_valid_rejects_tampered() {
+        let (pubkey, secret) = test_keypair();
+        let signer = InProcessSigner::new(pubkey.clone(), secret);
+        let signed = signer
+            .sign(EventTemplate {
+                kind: 1,
+                created_at: 1_700_000_000,
+                tags: vec![vec!["t".into(), "x".into()]],
+                content: "hello".into(),
+                pubkey: Some(pubkey),
+            })
+            .await
+            .unwrap();
+
+        verify_signed_event(&signed).expect("valid event verifies");
+
+        // Tampered content → recomputed id no longer matches.
+        let mut tampered = signed.clone();
+        tampered["content"] = json!("evil");
+        let err = verify_signed_event(&tampered).unwrap_err();
+        assert!(err.contains("id does not match"), "got: {err}");
+
+        // Wrong-but-well-formed signature → schnorr verification fails.
+        let mut bad_sig = signed.clone();
+        bad_sig["sig"] = json!("ab".repeat(64));
+        let err = verify_signed_event(&bad_sig).unwrap_err();
+        assert!(err.contains("verification failed") || err.contains("schnorr"), "got: {err}");
+
+        // Missing fields are reported, not panicked on.
+        assert!(verify_signed_event(&json!({ "kind": 1 })).is_err());
     }
 }
