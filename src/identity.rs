@@ -463,8 +463,15 @@ pub fn format_pubkey_as_npub(hex_pubkey: &str) -> String {
     }
 }
 
-/// Keyring wrapper for secure storage
+/// Keyring wrapper for secure storage.
+///
+/// Without the `keyring` feature (mobile builds — Android has no Secret
+/// Service) a stub with the same surface is compiled: `is_available()` is
+/// `false` and every accessor reports `NotFound`, so persistence degrades to
+/// session-only exactly like a headless desktop run. Consumers already branch
+/// on that.
 pub struct IdentityKeyring {
+    #[cfg_attr(not(feature = "keyring"), allow(dead_code))]
     service: String,
 }
 
@@ -475,6 +482,53 @@ impl IdentityKeyring {
             service: "nostr-engine".to_string(),
         }
     }
+}
+
+#[cfg(not(feature = "keyring"))]
+impl IdentityKeyring {
+    pub fn store_secret(&self, _pubkey: &str, _secret: &str) -> Result<(), KeyringError> {
+        Err(KeyringError::Keyring("keyring not compiled into this build".into()))
+    }
+
+    pub fn get_secret(&self, _pubkey: &str) -> Result<String, KeyringError> {
+        Err(KeyringError::NotFound)
+    }
+
+    pub fn delete_secret(&self, _pubkey: &str) -> Result<(), KeyringError> {
+        Ok(())
+    }
+
+    pub fn store_last_identity(&self, _key_type: &str, _key_data: &str) -> Result<(), KeyringError> {
+        Err(KeyringError::Keyring("keyring not compiled into this build".into()))
+    }
+
+    pub fn get_last_identity(&self) -> Result<(String, String), KeyringError> {
+        Err(KeyringError::NotFound)
+    }
+
+    pub fn clear_last_identity(&self) -> Result<(), KeyringError> {
+        Ok(())
+    }
+
+    pub fn store_last_assistant(&self, _data: &str) -> Result<(), KeyringError> {
+        Err(KeyringError::Keyring("keyring not compiled into this build".into()))
+    }
+
+    pub fn get_last_assistant(&self) -> Result<String, KeyringError> {
+        Err(KeyringError::NotFound)
+    }
+
+    pub fn clear_last_assistant(&self) -> Result<(), KeyringError> {
+        Ok(())
+    }
+
+    pub fn is_available(&self) -> bool {
+        false
+    }
+}
+
+#[cfg(feature = "keyring")]
+impl IdentityKeyring {
 
     /// Store a secret in the keyring
     pub fn store_secret(&self, pubkey: &str, secret: &str) -> Result<(), KeyringError> {

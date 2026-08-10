@@ -2,13 +2,26 @@
 //!
 //! Wraps usearch HNSW index with an event_id mapping. Embeddings are generated
 //! in-process via ONNX (fastembed) — the only backend.
+//!
+//! The heavy backends are optional: with neither the `embeddings` (prebuilt
+//! onnxruntime download) nor the `embeddings-dynamic` (runtime dlopen, the
+//! Android path) feature enabled, a stub `EmbeddingIndex` with the same public
+//! surface is compiled instead. Its constructors return an error, so
+//! `Engine::init_embedding` fails cleanly, `embedding_index()` stays `None`,
+//! and every consumer takes its existing disabled path — no `#[cfg]` spread
+//! outside this module.
 
 use crate::config::EmbeddingConfig;
 use crate::error::{EngineError, Result};
 use serde::{Deserialize, Serialize};
+#[cfg(any(feature = "embeddings", feature = "embeddings-dynamic"))]
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::Path;
+#[cfg(any(feature = "embeddings", feature = "embeddings-dynamic"))]
+use std::path::PathBuf;
+#[cfg(any(feature = "embeddings", feature = "embeddings-dynamic"))]
 use tracing::{debug, info, warn};
+#[cfg(any(feature = "embeddings", feature = "embeddings-dynamic"))]
 use usearch::{Index, IndexOptions, MetricKind, ScalarKind};
 
 /// Canonical set of event kinds eligible for semantic embedding: 30041
@@ -19,6 +32,7 @@ use usearch::{Index, IndexOptions, MetricKind, ScalarKind};
 pub const DEFAULT_EMBED_KINDS: [u16; 4] = [30041, 30023, 30818, 9802];
 
 /// Mapping persisted alongside the HNSW index
+#[cfg(any(feature = "embeddings", feature = "embeddings-dynamic"))]
 #[derive(Debug, Serialize, Deserialize)]
 struct IndexMapping {
     /// Model name used to generate these vectors
@@ -34,6 +48,7 @@ struct IndexMapping {
 }
 
 /// In-process ONNX embedding backend (fastembed).
+#[cfg(any(feature = "embeddings", feature = "embeddings-dynamic"))]
 struct EmbeddingBackend {
     model: fastembed::TextEmbedding,
 }
@@ -57,6 +72,7 @@ pub struct EmbeddingStatus {
 }
 
 /// HNSW-backed embedding index with event ID mapping
+#[cfg(any(feature = "embeddings", feature = "embeddings-dynamic"))]
 pub struct EmbeddingIndex {
     index: Index,
     mapping: IndexMapping,
@@ -72,6 +88,7 @@ pub struct EmbeddingIndex {
     cache_dir: Option<PathBuf>,
 }
 
+#[cfg(any(feature = "embeddings", feature = "embeddings-dynamic"))]
 impl EmbeddingIndex {
     /// Create a new empty index from config
     pub fn new(data_dir: &Path, config: &EmbeddingConfig) -> Result<Self> {
@@ -421,7 +438,90 @@ impl EmbeddingIndex {
     }
 }
 
-#[cfg(test)]
+/// Stub compiled when no embedding backend feature is enabled (mobile builds).
+/// Same public surface as the real index; the constructors fail, so the engine
+/// simply never holds one and every consumer takes its disabled path.
+#[cfg(not(any(feature = "embeddings", feature = "embeddings-dynamic")))]
+pub struct EmbeddingIndex {
+    /// Uninhabited — a stub index can never actually be constructed.
+    never: std::convert::Infallible,
+}
+
+#[cfg(not(any(feature = "embeddings", feature = "embeddings-dynamic")))]
+#[allow(clippy::len_without_is_empty)] // mirrors the real impl's surface exactly
+impl EmbeddingIndex {
+    fn unavailable() -> EngineError {
+        EngineError::Config(
+            "embeddings are not compiled into this build (enable the `embeddings` or \
+             `embeddings-dynamic` feature)"
+                .into(),
+        )
+    }
+
+    pub fn new(_data_dir: &Path, _config: &EmbeddingConfig) -> Result<Self> {
+        Err(Self::unavailable())
+    }
+
+    pub fn load(_data_dir: &Path, _config: &EmbeddingConfig) -> Result<Self> {
+        Err(Self::unavailable())
+    }
+
+    pub fn prefetch_model(_model: &str, _cache_dir: &Path) -> Result<()> {
+        Err(Self::unavailable())
+    }
+
+    // The instance methods below are unreachable (no constructor succeeds) but
+    // keep consumers compiling without any `#[cfg]` at the call sites.
+    pub fn save(&self) -> Result<()> {
+        match self.never {}
+    }
+
+    pub fn insert(&mut self, _event_id: &str, _vector: &[f32]) -> Result<()> {
+        match self.never {}
+    }
+
+    pub fn contains(&self, _event_id: &str) -> bool {
+        match self.never {}
+    }
+
+    pub fn remove(&mut self, _event_id: &str) -> Result<()> {
+        match self.never {}
+    }
+
+    pub fn search(&self, _query_vec: &[f32], _k: usize) -> Result<Vec<(String, f64)>> {
+        match self.never {}
+    }
+
+    pub fn len(&self) -> usize {
+        match self.never {}
+    }
+
+    pub fn all_ids(&self) -> Vec<String> {
+        match self.never {}
+    }
+
+    pub fn model(&self) -> &str {
+        match self.never {}
+    }
+
+    pub async fn embed_texts(&self, _texts: &[String]) -> Result<Vec<Vec<f32>>> {
+        match self.never {}
+    }
+
+    pub async fn embed_query(&self, _text: &str) -> Result<Vec<f32>> {
+        match self.never {}
+    }
+
+    pub async fn health_check(&self) -> Result<EmbeddingHealth> {
+        match self.never {}
+    }
+
+    pub fn clear(&mut self) -> Result<()> {
+        match self.never {}
+    }
+}
+
+#[cfg(all(test, any(feature = "embeddings", feature = "embeddings-dynamic")))]
 mod tests {
     use super::*;
 

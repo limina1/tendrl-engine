@@ -19,9 +19,28 @@ path = "src/lib.rs"
 [[bin]]
 name = "tendrl-engine"
 path = "src/main.rs"
+required-features = ["desktop"]
 
 [features]
-default = []
+# Desktop builds keep today's exact behavior; the Android host builds the lib
+# with --no-default-features (+ embed-assets) to drop the deps that don't
+# cross-compile or don't apply on-device.
+default = ["embeddings", "keyring", "desktop"]
+# Semantic search backends. `embeddings` links the prebuilt onnxruntime that
+# ort downloads at build time (no prebuilts exist for Android targets);
+# `embeddings-dynamic` dlopens a libonnxruntime.so provided at runtime (the
+# Android path — the APK ships Microsoft's onnxruntime-android). Enable exactly
+# one; both compile the same EmbeddingIndex.
+embeddings = ["dep:fastembed", "dep:usearch", "fastembed/ort-download-binaries"]
+embeddings-dynamic = ["dep:fastembed", "dep:usearch", "fastembed/ort-load-dynamic"]
+# OS keyring persistence (assistant identity). No Secret Service on Android —
+# the stub degrades to session-only, which consumers already handle.
+keyring = ["dep:keyring"]
+# Browser-open on launch; the binary is desktop-only.
+desktop = ["dep:webbrowser"]
+# Bake web/build/ into the binary even in debug profiles (rust-embed otherwise
+# reads from disk in debug, and that path doesn't exist inside an APK).
+embed-assets = ["rust-embed/debug-embed"]
 
 [dependencies]
 # Nostr database
@@ -67,7 +86,7 @@ nanoid = "0.4"
 url = "2"
 
 # Identity/key management
-keyring = "3"
+keyring = { version = "3", optional = true }
 bech32 = "0.11"
 chacha20poly1305 = "0.10"
 scrypt = "0.11"
@@ -81,19 +100,20 @@ zeroize = "1"
 clap = { version = "4", features = ["derive"] }
 
 # Vector search
-usearch = "2"
+usearch = { version = "2", optional = true }
 
 # In-process ONNX embeddings (the only embedding backend).
 # default-features off to swap hf-hub's TLS from native-tls (OpenSSL) to rustls
-# so the distributable binary carries no libssl/libcrypto dependency;
-# ort-download-binaries is re-enabled to keep onnxruntime statically linked in.
-fastembed = { version = "4", default-features = false, features = ["ort-download-binaries", "hf-hub-rustls-tls"] }
+# so the distributable binary carries no libssl/libcrypto dependency. The ort
+# backend (ort-download-binaries vs ort-load-dynamic) is selected by the
+# `embeddings` / `embeddings-dynamic` cargo features above.
+fastembed = { version = "4", default-features = false, features = ["hf-hub-rustls-tls"], optional = true }
 
 # Single-exe bundling: embed the built SPA (web/build/) into the binary and
 # open the browser on launch. In debug builds rust-embed reads from disk so the
 # UI hot-reloads without a rebuild; release builds bake the assets in.
 rust-embed = { version = "8", features = ["mime-guess"] }
-webbrowser = "1"
+webbrowser = { version = "1", optional = true }
 # In-process document text extraction (replaces the Python sidecar /parse).
 pdf-extract = "0.10.0"
 epub = "2.1.5"
