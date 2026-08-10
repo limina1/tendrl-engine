@@ -181,10 +181,13 @@ sections and embeds new events on a 60-second interval when embeddings are enabl
   (`is_markup_link_target`) so it never overrides Markdown/Org/AsciiDoc's own
   links. Returns typed `NostrdownRef`s with byte offsets + NIP-54 slug normalization.
   Resolution is engine-side (`PublicationEngine::resolve_refs` →
-  `POST /api/v1/nostrdown/resolve`): `ref:`→sibling section by **title-slug** (d-tags
-  are opaque nanoids, so the human slug matches the `T` tag/normalized title),
-  `wiki:`→kind 30818/30023/30041 by normalized d-tag, `embed:`→naddr/sibling
-  transclusion. The web (`RichContent.svelte`) merges resolved spans with NIP-84
+  `POST /api/v1/nostrdown/resolve`): `ref:`→**sibling-only** by title-slug (d-tags
+  are opaque nanoids, so the human slug matches the `T` tag/normalized title;
+  an naddr/coordinate ref resolves iff it addresses a sibling),
+  `wiki:`→sibling first, else 30818 by `d` / 30040+30041 by `T` title-slug,
+  `embed:`→naddr/coordinate/sibling transclusion. A `kind:pubkey:d-tag`
+  coordinate is admissible wherever an entity is (canonicalized to its naddr,
+  never slug-normalized). The web (`RichContent.svelte`) merges resolved spans with NIP-84
   highlight spans onto one overlay — the same parse/resolve/render split as
   highlights. Publish emits `["w", topic]` tags (single-letter, relay-indexable)
   for `{{wiki:}}` / `[[ ]]` refs, plus `ref`/`a`/`q`/`p` tags per reference kind

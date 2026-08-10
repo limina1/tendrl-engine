@@ -23,17 +23,21 @@ were distilled from — read it for the /why/, those for the /what/.
   ={{ref|wiki|embed|quote:target|display}}=, NIP-54 slug normalization.
   Unknown prefixes (=cite=/=@=/=term=/=media=) degrade to literal text.
 - *Resolver* (=resolve_refs= → =POST /api/v1/nostrdown/resolve=):
-  - =ref:= → sibling section by *title-slug* (the =T= tag — section d-tags are
-    opaque nanoids, so the human slug matches the normalized title); an *entity*
-    target (={{ref:naddr…}}= / ={{ref:nevent…}}=) resolves as a direct event
-    link (header only, no transclusion; nevent/note carry =event_id= for the
-    web's event modal since they have no coordinate).
+  - =ref:= → *sibling-only*: a section/nested index of the same publication,
+    by title-slug (the =T= tag — section d-tags are opaque nanoids, so the
+    human slug matches the normalized title) or literal d-tag; an
+    naddr/coordinate target resolves *iff it addresses a sibling* and stays
+    unresolved otherwise — a ref never leaves its document (use =embed:= or an
+    entity wikilink for arbitrary events).
   - =wiki:= / =[[wikilink]]= → *document-local first*: a topic naming a sibling
-    section (draft or publication) resolves to that section; else kind
-    30818/30023/30041 by normalized d-tag (author-preferred); else unresolved →
-    the UI's search fallback. Sibling handles match both slug forms of the
-    title (minted-d-tag and NIP-54). A pasted entity (=[[naddr…][My Doc]]=)
-    resolves as a direct event link, same as an entity =ref:=.
+    section (draft or publication) resolves to that section; else the global
+    lookup splits tag semantics by kind — 30818 by =d= (the topic *is* the
+    article name) and 30040/30041 by their =T= title-slug (author-preferred,
+    30818 preferred); else unresolved → the UI's search fallback. Sibling
+    handles match both slug forms of the title (minted-d-tag and NIP-54). A
+    pasted entity or coordinate (=[[naddr…][My Doc]]=) resolves as a direct
+    event link — the wikilink is the general-pointer form (nevent/note carry
+    =event_id= for the web's event modal since they have no coordinate).
   - =embed:= → *any* entity: naddr (publication/section/article/wiki), nevent/note
     (any event incl. kind-1 notes), npub/nprofile (a user → kind-0 name + picture
     + bio). Field-driven (title/summary/author/image/content).

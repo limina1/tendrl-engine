@@ -2034,7 +2034,11 @@ impl<'a> PublicationEngine<'a> {
         // Wiki refs consult it too: a `[[wikilink]]` naming a section of the
         // containing document resolves to that section before any global lookup.
         let needs_siblings = refs.iter().any(|r| {
-            matches!(r.kind, RefKind::Ref | RefKind::Wiki | RefKind::Embed) && !r.is_entity
+            // Every ref needs the sibling index — an entity/coordinate ref only
+            // resolves if it addresses a sibling (refs never leave the
+            // containing publication).
+            matches!(r.kind, RefKind::Ref)
+                || (matches!(r.kind, RefKind::Wiki | RefKind::Embed) && !r.is_entity)
         });
         let mut siblings = match (needs_siblings, &publication) {
             (true, Some(p)) => self.load_sibling_index(p, policy).await,
@@ -2089,18 +2093,30 @@ impl<'a> PublicationEngine<'a> {
 
             match r.kind {
                 RefKind::Ref if r.is_entity => {
-                    // `{{ref:naddr…}}` / `{{ref:nevent…}}` — an inline link to
-                    // any event, not just a sibling. Resolve the header only
-                    // (a ref links, it doesn't transclude); a not-local event
-                    // comes back valid + pending, same as an entity embed.
-                    self.fill_from_entity(
-                        &r.target,
-                        &mut resolved,
-                        false,
-                        display_given,
-                        FetchPolicy::LocalOnly,
-                    )
-                    .await;
+                    // `{{ref:naddr…}}` / `{{ref:kind:pk:d}}` — a ref is a
+                    // *sibling* link only: the entity must address a section or
+                    // nested index of the containing document (or draft).
+                    // Anything else — a foreign naddr, an nevent — stays
+                    // unresolved; point at arbitrary events with `embed` or an
+                    // entity wikilink instead. Pubkey match is tolerant: draft
+                    // siblings carry none.
+                    if let Ok(crate::nip19::Decoded::Naddr {
+                        kind_int,
+                        pubkey,
+                        d_tag,
+                        ..
+                    }) = crate::nip19::decode(&r.target)
+                    {
+                        if let Some(s) = siblings.iter().find(|s| {
+                            s.addr.kind == kind_int as u64
+                                && s.addr.d_tag == d_tag
+                                && (s.addr.pubkey.is_empty()
+                                    || pubkey.is_empty()
+                                    || s.addr.pubkey == pubkey)
+                        }) {
+                            s.fill(&mut resolved, false, display_given);
+                        }
+                    }
                     truncate_entity_label(&mut resolved, display_given);
                 }
                 RefKind::Ref => {
@@ -2394,23 +2410,25 @@ impl<'a> PublicationEngine<'a> {
         }
     }
 
-    /// Find the best event for a `wiki:` topic, querying kinds 30818 (wiki),
-    /// 30023 (article), and 30041 (section) by normalized `d` tag. Prefers the
-    /// given author, then a wiki kind, then the most recent.
+    /// Find the definitional event for a `wiki:` topic. The tag semantics are
+    /// deliberately split by kind: a kind-30818 wiki article's `d` tag *is* the
+    /// topic name, so 30818 is queried by `#d`; publication indexes/sections
+    /// (30040/30041) mint opaque nanoid `d` tags and carry their title-slug in
+    /// the `T` tag, so they are queried by `#T`. Prefers the given author, then
+    /// the wiki kind, then the most recent.
     async fn find_wiki_event(
         &self,
-        d_tag: &str,
+        topic: &str,
         author: Option<&str>,
         policy: FetchPolicy,
     ) -> Option<Value> {
-        let filter = serde_json::json!({
-            "kinds": [30818, 30023, 30041],
-            "#d": [d_tag],
-            "limit": 50,
-        });
+        let filters = vec![
+            serde_json::json!({ "kinds": [30818], "#d": [topic], "limit": 50 }),
+            serde_json::json!({ "kinds": [30040, 30041], "#T": [topic], "limit": 50 }),
+        ];
         let mut events = self
             .engine
-            .get_events(vec![filter], policy, None)
+            .get_events(filters, policy, None)
             .await
             .ok()?
             .events;
@@ -2422,11 +2440,7 @@ impl<'a> PublicationEngine<'a> {
                 .map(|a| e.get("pubkey").and_then(Value::as_str) == Some(a))
                 .unwrap_or(false);
             let kind = e.get("kind").and_then(Value::as_u64).unwrap_or(0);
-            let kind_pref = match kind {
-                30818 => 2,
-                30023 => 1,
-                _ => 0,
-            };
+            let kind_pref = u8::from(kind == 30818);
             let created = e.get("created_at").and_then(Value::as_i64).unwrap_or(0);
             (author_match as u8, kind_pref, created)
         };
@@ -4630,31 +4644,43 @@ mod tests {
         assert!(!refs[1].found);
     }
 
-    /// Entity targets in `ref`/wikilink position resolve as direct event links:
-    /// `{{ref:naddr…}}` to the addressable (coord for navigation), and a
-    /// `[[nevent…]]` wikilink to the event (event_id for the modal — nevents
-    /// have no coordinate). Previously only sibling slugs resolved in ref
-    /// position and entity wikilinks were slug-mangled.
+    /// Entity targets: a `{{ref:naddr…}}` (or coordinate ref) resolves ONLY
+    /// when it addresses a sibling of the containing publication — a ref never
+    /// leaves the document. An entity `[[nevent…]]` wikilink is a general
+    /// pointer and resolves to the event itself; a coordinate `{{embed:…}}`
+    /// transcludes like its naddr form.
     #[tokio::test]
     async fn test_resolve_refs_entity_targets() {
         let pk_owned = test_pubkey();
         let pk = pk_owned.as_str();
+        let ch3 = NAddr::new(KIND_PUBLICATION_SECTION, pk, "sec-7h2x9");
+        let root_idx = NAddr::new(KIND_PUBLICATION_INDEX, pk, "root-idx");
         let section = fixture_section(pk, "sec-7h2x9", "Chapter Three", "ch3 body");
         let event_id = section.get("id").unwrap().as_str().unwrap().to_string();
-        let (engine, _dir) = engine_with_events(&[section]).await;
+        let (engine, _dir) =
+            engine_with_events(&[section, fixture_index(pk, "root-idx", "Root", &[&ch3])]).await;
         let pe = PublicationEngine::new(&engine);
 
         let naddr = crate::nip19::encode_naddr(30041, pk, "sec-7h2x9", &[]).unwrap();
         let nevent = crate::nip19::encode_nevent(&event_id, &[], Some(pk), Some(30041)).unwrap();
-        let content = format!("See {{{{ref:{naddr}}}}} and [[nostr:{nevent}][the event]].");
+        let content = format!(
+            "See {{{{ref:{naddr}}}}} and [[nostr:{nevent}][the event]]; \
+             also {{{{embed:30041:{pk}:sec-7h2x9}}}}."
+        );
         let refs = pe
-            .resolve_refs(&content, None, None, &[], FetchPolicy::LocalOnly)
+            .resolve_refs(
+                &content,
+                Some(&root_idx.to_a_tag()),
+                None,
+                &[],
+                FetchPolicy::LocalOnly,
+            )
             .await;
-        assert_eq!(refs.len(), 2);
+        assert_eq!(refs.len(), 3);
 
         let r0 = &refs[0];
         assert_eq!(r0.kind, crate::nostrdown::RefKind::Ref);
-        assert!(r0.found, "entity ref resolved to the local addressable");
+        assert!(r0.found, "entity ref addressing a sibling resolves");
         assert_eq!(
             r0.coord.as_deref(),
             Some(format!("30041:{pk}:sec-7h2x9").as_str())
@@ -4668,18 +4694,35 @@ mod tests {
         assert_eq!(r1.event_id.as_deref(), Some(event_id.as_str()));
         assert_eq!(r1.label, "the event", "explicit display wins");
         assert!(r1.coord.is_none(), "nevent targets have no coordinate");
+
+        // The coordinate embed rode the entity pipeline: verbatim match,
+        // content transcluded — not slug-mangled.
+        let r2 = &refs[2];
+        assert_eq!(r2.kind, crate::nostrdown::RefKind::Embed);
+        assert!(r2.found, "coordinate embed resolved");
+        assert_eq!(r2.content.as_deref(), Some("ch3 body"));
+        assert_eq!(
+            r2.coord.as_deref(),
+            Some(format!("30041:{pk}:sec-7h2x9").as_str())
+        );
     }
 
-    /// A not-local entity ref is still a valid link — `found` + `pending`, with
-    /// the long bech32 label truncated for inline rendering.
+    /// An entity ref that does NOT address a sibling of the containing document
+    /// stays unresolved — a ref never leaves its publication (use `embed` or an
+    /// entity wikilink for arbitrary events). The long bech32 label is still
+    /// truncated for inline rendering.
     #[tokio::test]
-    async fn test_resolve_refs_entity_ref_pending_truncates_label() {
+    async fn test_resolve_refs_entity_ref_sibling_only() {
         let pk_owned = test_pubkey();
         let pk = pk_owned.as_str();
-        let (engine, _dir) = engine_with_events(&[]).await;
+        // The referenced event exists locally — but there is no containing
+        // publication, so it is nobody's sibling.
+        let (engine, _dir) =
+            engine_with_events(&[fixture_section(pk, "sec-7h2x9", "Chapter Three", "ch3 body")])
+                .await;
         let pe = PublicationEngine::new(&engine);
 
-        let naddr = crate::nip19::encode_naddr(30040, pk, "not-local", &[]).unwrap();
+        let naddr = crate::nip19::encode_naddr(30041, pk, "sec-7h2x9", &[]).unwrap();
         let refs = pe
             .resolve_refs(
                 &format!("{{{{ref:{naddr}}}}}"),
@@ -4691,10 +4734,58 @@ mod tests {
             .await;
         assert_eq!(refs.len(), 1);
         let r0 = &refs[0];
-        assert!(r0.found, "valid address, event just not local");
-        assert!(r0.pending, "renderer can offer/await a relay fetch");
+        assert!(!r0.found, "a ref outside its publication does not resolve");
+        assert!(!r0.pending);
         assert!(r0.label.len() < 20, "bech32 label truncated: {}", r0.label);
         assert!(r0.label.starts_with("naddr1") && r0.label.contains('…'));
+    }
+
+    /// Global wiki fallback semantics: 30818 matches by `d` (the topic IS the
+    /// article name); 30040/30041 match by their `T` title-slug tag (their `d`
+    /// tags are opaque nanoids, deliberately not topic handles).
+    #[tokio::test]
+    async fn test_resolve_refs_wiki_d_vs_title_tag() {
+        let pk_owned = test_pubkey();
+        let pk = pk_owned.as_str();
+        // A section whose d-tag is a nanoid but whose `T` tag carries the slug.
+        let section = fixture_event(
+            pk,
+            30041,
+            serde_json::json!([
+                ["d", "sec-9x1k2"],
+                ["title", "Knowledge Problem"],
+                ["T", "knowledge-problem"]
+            ]),
+            "section body",
+        );
+        // A decoy 30041 whose *d* tag matches the topic — must NOT resolve:
+        // sections answer to `T`, not `d`.
+        let decoy = fixture_event(
+            pk,
+            30041,
+            serde_json::json!([["d", "knowledge-problem"], ["title", "Decoy"]]),
+            "decoy body",
+        );
+        let (engine, _dir) = engine_with_events(&[section, decoy]).await;
+        let pe = PublicationEngine::new(&engine);
+
+        let refs = pe
+            .resolve_refs(
+                "See [[knowledge problem]].",
+                None,
+                None,
+                &[],
+                FetchPolicy::LocalOnly,
+            )
+            .await;
+        assert_eq!(refs.len(), 1);
+        let r0 = &refs[0];
+        assert!(r0.found, "wiki resolved the 30041 by its T title-slug tag");
+        assert_eq!(
+            r0.coord.as_deref(),
+            Some(format!("30041:{pk}:sec-9x1k2").as_str())
+        );
+        assert_eq!(r0.label, "Knowledge Problem");
     }
 
     /// An entity `{{embed:naddr…}}` whose event isn't local resolves as a valid
