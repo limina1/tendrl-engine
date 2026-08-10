@@ -27,6 +27,12 @@ pub struct ServeOptions {
     pub config: Config,
     /// The path `config` was loaded from; settings persist back to it.
     pub config_path: PathBuf,
+    /// Per-boot secret gating `/api/` requests. On Android the loopback
+    /// interface is shared by every app on the device, so "it's local" is not
+    /// a trust boundary — the Tauri host generates a token each boot and
+    /// injects it into the WebView's initial URL; anything on the port without
+    /// it gets 401. `None` (the desktop default) adds no middleware at all.
+    pub loopback_token: Option<String>,
 }
 
 /// A started server. `start` returns only after the listener is bound, so
@@ -79,10 +85,77 @@ fn restore_assistant_identity(session: &api::IdentityAppState, keyring_available
 
 /// Build the engine and every router, bind the listener, and spawn the serve
 /// loop. Returns once the port is bound.
+/// Does `req` carry the loopback token? Non-`/api/` paths (the embedded SPA,
+/// `/health`) always pass — the app shell itself is not secret, and the boot
+/// URL is what *delivers* the token. Accepted carriers, in order: the
+/// `X-Tendrl-Token` header, a `tendrl_token` cookie (set once by the SPA from
+/// the boot query param — rides on every same-origin fetch *and* EventSource
+/// with no per-call-site code), and an `auth_token` query param as the
+/// belt-and-braces fallback for contexts where cookies fail.
+fn request_has_token(req: &axum::extract::Request, token: &str) -> bool {
+    if !req.uri().path().starts_with("/api/") {
+        return true;
+    }
+    if let Some(h) = req.headers().get("x-tendrl-token") {
+        if h.to_str().map(|v| v == token).unwrap_or(false) {
+            return true;
+        }
+    }
+    if let Some(c) = req.headers().get(axum::http::header::COOKIE) {
+        if let Ok(s) = c.to_str() {
+            let found = s.split(';').any(|kv| {
+                kv.trim()
+                    .strip_prefix("tendrl_token=")
+                    .map(|v| v == token)
+                    .unwrap_or(false)
+            });
+            if found {
+                return true;
+            }
+        }
+    }
+    if let Some(q) = req.uri().query() {
+        let found = q.split('&').any(|kv| {
+            kv.strip_prefix("auth_token=")
+                .map(|v| v == token)
+                .unwrap_or(false)
+        });
+        if found {
+            return true;
+        }
+    }
+    false
+}
+
+/// Wrap `app` in the loopback-token guard.
+fn apply_loopback_guard(app: Router, token: String) -> Router {
+    use axum::response::IntoResponse;
+    let token = Arc::new(token);
+    app.layer(axum::middleware::from_fn(
+        move |req: axum::extract::Request, next: axum::middleware::Next| {
+            let token = token.clone();
+            async move {
+                if request_has_token(&req, &token) {
+                    next.run(req).await
+                } else {
+                    (
+                        axum::http::StatusCode::UNAUTHORIZED,
+                        axum::Json(serde_json::json!({
+                            "error": { "message": "missing or invalid loopback token" }
+                        })),
+                    )
+                        .into_response()
+                }
+            }
+        },
+    ))
+}
+
 pub async fn start(opts: ServeOptions) -> anyhow::Result<RunningServer> {
     let ServeOptions {
         config,
         config_path,
+        loopback_token,
     } = opts;
 
     info!("Starting nostr-engine v{}", env!("CARGO_PKG_VERSION"));
@@ -526,6 +599,16 @@ pub async fn start(opts: ServeOptions) -> anyhow::Result<RunningServer> {
         .layer(axum::extract::DefaultBodyLimit::max(50 * 1024 * 1024)) // 50MB for JSONL import
         .layer(cors);
 
+    // Loopback auth: added only when a token is configured, so the desktop
+    // flow (no token) is byte-identical.
+    let app = match loopback_token {
+        Some(token) => {
+            info!("Loopback token auth enabled for /api");
+            apply_loopback_guard(app, token)
+        }
+        None => app,
+    };
+
     // Background sync — fetch missing sections and embed new events
     if config.embedding.enabled {
         let state = state.clone();
@@ -583,4 +666,75 @@ pub async fn start(opts: ServeOptions) -> anyhow::Result<RunningServer> {
     let handle = tokio::spawn(async move { axum::serve(listener, app).await });
 
     Ok(RunningServer { addr, handle })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::body::Body;
+    use axum::http::{Request, StatusCode};
+    use tower::ServiceExt;
+
+    const TOKEN: &str = "sekrit";
+
+    /// A tiny router standing in for the real app: one /api route, one open
+    /// route — enough to exercise the guard without booting an Engine.
+    fn guarded_app() -> Router {
+        let app = Router::new()
+            .route("/api/v1/ping", get(|| async { "pong" }))
+            .route("/health", get(|| async { "ok" }));
+        apply_loopback_guard(app, TOKEN.to_string())
+    }
+
+    async fn status_of(req: Request<Body>) -> StatusCode {
+        guarded_app().oneshot(req).await.unwrap().status()
+    }
+
+    #[tokio::test]
+    async fn api_without_token_is_401() {
+        let req = Request::get("/api/v1/ping").body(Body::empty()).unwrap();
+        assert_eq!(status_of(req).await, StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn api_with_header_token_passes() {
+        let req = Request::get("/api/v1/ping")
+            .header("x-tendrl-token", TOKEN)
+            .body(Body::empty())
+            .unwrap();
+        assert_eq!(status_of(req).await, StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn api_with_cookie_token_passes() {
+        let req = Request::get("/api/v1/ping")
+            .header("cookie", format!("foo=bar; tendrl_token={TOKEN}"))
+            .body(Body::empty())
+            .unwrap();
+        assert_eq!(status_of(req).await, StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn api_with_query_token_passes() {
+        let req = Request::get(format!("/api/v1/ping?auth_token={TOKEN}"))
+            .body(Body::empty())
+            .unwrap();
+        assert_eq!(status_of(req).await, StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn api_with_wrong_token_is_401() {
+        let req = Request::get("/api/v1/ping")
+            .header("x-tendrl-token", "wrong")
+            .header("cookie", "tendrl_token=wrong")
+            .body(Body::empty())
+            .unwrap();
+        assert_eq!(status_of(req).await, StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn non_api_paths_stay_open() {
+        let req = Request::get("/health").body(Body::empty()).unwrap();
+        assert_eq!(status_of(req).await, StatusCode::OK);
+    }
 }

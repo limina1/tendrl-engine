@@ -111,9 +111,16 @@ async fn main() -> anyhow::Result<()> {
 
     let host = config.server.host.clone();
 
+    // Opt-in loopback auth for testing the mobile-host mechanism on desktop;
+    // unset (the default) leaves the API open exactly as before.
+    let loopback_token = std::env::var("TENDRL_LOOPBACK_TOKEN")
+        .ok()
+        .filter(|t| !t.is_empty());
+
     let server = server::start(ServeOptions {
         config,
         config_path,
+        loopback_token,
     })
     .await?;
 
