@@ -165,6 +165,17 @@ the hardware-back event, and later plugins (share intents, deep links).
     =http://127.0.0.1:<port>/?shell=mobile=
   - [ ] WebView cleartext: allow =127.0.0.1= via
     =usesCleartextTraffic= / network-security-config (localhost only)
+  - [ ] *loopback auth token* — Android loopback is device-shared: any
+    app can reach =127.0.0.1:<port>=, and the engine currently treats
+    "can reach me" as "is the user" (fine on desktop's single trust
+    domain, wrong across Android's mutually-untrusted sandboxes). Host
+    generates a per-boot secret, injects it into the WebView (initial
+    query param; SPA sends it as a header on every request incl. SSE),
+    engine middleware rejects requests without it. *Hard prerequisite
+    for any signer on device* — otherwise a malicious app can drive
+    =/identity/sign= and launder requests through tendrl's Amber
+    grants (confused deputy). See
+    [[file:../amber-nip55-signing-plan.md][Amber/NIP-55 plan]], security notes.
 - [ ] *B2. Platform adaptation* (all small once B1 stands):
   - [ ] data dir → app-private storage (Tauri path API → engine config)
   - [ ] engine start/stop tied to app lifecycle; pause the 60s
@@ -234,6 +245,7 @@ the hardware-back event, and later plugins (share intents, deep links).
 | =keyring= unusable on Android | sign-in broken | feature-gate; ncryptsec file path already exists |
 | ONNX Runtime on Android | none initially | =embeddings= feature off; Phase C revisit |
 | WebView blocks cleartext localhost | blank app | network-security-config scoped to 127.0.0.1 |
+| Engine port open to every app (shared Android loopback) | arbitrary sign/publish once a signer is attached | per-boot auth token (B1 item); gates NIP-55 landing |
 | OS kills background engine / SSE | stale UI, lost intents | lifecycle hooks (B2); reconnect-on-resume; no background work |
 | Hardware back exits app | unusable | A1 is the fix; gate M1 on it |
 | Binary size (engine + SPA + deps) | store friction only | embeddings off; strip + LTO as in release profile |
