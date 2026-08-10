@@ -1329,3 +1329,54 @@ pnpm -C web check                                           # 0 errors
 
 UI: "+ Add relay", discovery "+ add", "+ New set", set rename (click
 title), "+ add relay" inside a set — all pop the in-app prompt.
+
+* Android build (feat/mobile-shell — Phase B1)
+
+Toolchain installed 2026-08-10: Android SDK at =~/Android/Sdk= (cmdline-tools
+"latest", platform-tools 37, platforms;android-35, build-tools;35.0.0,
+ndk;28.2.13676358 = r28c), user-space rustup at =~/.rustup= / =~/.cargo=
+(NOT on PATH — the system pacman rust stays the default; Android builds
+invoke the shims explicitly), =cargo-ndk= 4.1.2 + =tauri-cli= 2.11.4 in
+=~/.cargo/bin=. JDK 17 from pacman at =/usr/lib/jvm/java-17-openjdk=
+(Homebrew JDK 24 is too new for AGP — never let it leak into gradle).
+
+** Environment for any Android build shell
+
+#+begin_src bash
+export ANDROID_HOME=$HOME/Android/Sdk
+export ANDROID_NDK_HOME=$HOME/Android/Sdk/ndk/28.2.13676358
+export NDK_HOME=$ANDROID_NDK_HOME
+export JAVA_HOME=/usr/lib/jvm/java-17-openjdk
+export PATH=$HOME/.cargo/bin:$ANDROID_HOME/platform-tools:$PATH
+#+end_src
+
+** Cross-compile check of the engine lib (no Tauri needed)
+
+Proves the whole native dep graph (nostrdb's C build: LMDB, secp256k1,
+flatcc) under NDK clang for the two arches that matter (device, emulator).
+=web/build/= must exist first (rust-embed input).
+
+#+begin_src bash
+pnpm -C web build
+cargo ndk -t arm64-v8a check --lib --no-default-features --features embed-assets
+cargo ndk -t x86_64   check --lib --no-default-features --features embed-assets
+#+end_src
+
+** SDK component (re-)install
+
+#+begin_src bash
+yes | ~/Android/Sdk/cmdline-tools/latest/bin/sdkmanager --licenses
+~/Android/Sdk/cmdline-tools/latest/bin/sdkmanager \
+  "platform-tools" "platforms;android-35" "build-tools;35.0.0" "ndk;28.2.13676358"
+#+end_src
+
+** Phone over Wi-Fi (no cable)
+
+On the phone: Developer options → Wireless debugging → Pair device with
+pairing code, then:
+
+#+begin_src bash
+adb pair <phone-ip>:<pairing-port>    # one-time, uses the 6-digit code
+adb connect <phone-ip>:<connect-port> # the port shown on the main screen
+adb devices
+#+end_src
