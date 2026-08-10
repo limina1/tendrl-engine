@@ -6,6 +6,23 @@ Log defects here as they're found mid-task, then fix on a dedicated =bugs=
 branch (via worktree) and merge back to the integration branch — don't fold
 unrelated bug fixes into feature/cleanup commits. Tick =FIXED= with the commit.
 
+* OPEN — nostrdown prefix matching is case-sensitive, clashing with the spec's ABNF
+:PROPERTIES:
+:found: 2026-08-10 (spec-conformance audit of the nostrdown tokenizer)
+:END:
+
+** Symptom
+={{Ref:intro}}= / ={{WIKI:topic}}= parse as literal text — the tokenizer
+(=RefKind::from_prefix=, =src/nostrdown.rs=) matches prefixes exact-lowercase
+only. The spec's ABNF (=docs/nostrdown-spec.md=, =prefix = "ref" / …=) uses
+string literals, which are case-insensitive by RFC 5234 convention, so a
+conforming author could write ={{Ref:…}}= and get prose instead of a link.
+
+** Fix direction
+Lowercase the prefix before the =from_prefix= match (one =to_ascii_lowercase()=
+on the prefix slice; same for the =[[ ]]= path if ever applicable). The spec's
+parsing rules note the current case-sensitive behavior until this lands.
+
 * OPEN — flaky test: =test_get_addressable_returns_latest_version= under parallel runs
 :PROPERTIES:
 :found: 2026-07-09 (during client-tag provenance work; reproduced on HEAD without the change)
