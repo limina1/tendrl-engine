@@ -335,3 +335,18 @@ docs/amber-nip55-signing-plan.md "Open questions")
 - ws://localhost:3334 removed from DEFAULT_RELAYS (guaranteed-refused
   connection in every fresh install's sets; worst on device).
 - PublishConfirmModal "Add relay" now persists to the publish set.
+
+* OPEN — mobile feed: no pull-down-to-refresh gesture (UPSTREAM-ish: web polish)
+:PROPERTIES:
+:found: 2026-08-10 (Android device pass)
+:END:
+Two different time-ends, per user: pull-down = refetch the NEW end
+(what "Sync all" does today, but as the native gesture); "Load more" =
+page BACKWARD in time (exists, and un-starved by the engine-side
+continuation fix below). Add an overscroll pull-refresh to the mobile
+feed that triggers the existing sync.
+
+** Fixed already (this branch)
+- Feed starvation: a junk-heavy store rendered 3 items with no Load
+  more — list_root_publications now pages the local store backwards
+  until the page fills (bounded), so count-based hasMore works again.

@@ -1880,15 +1880,105 @@ impl<'a> PublicationEngine<'a> {
 
         // Read ignore list before entering blocking closure
         let ignore_list = self.engine.ignore_list().read().await.clone();
-        let events = response.events;
+        let mut events = response.events;
 
         // Offload CPU-heavy dedup/filter/sort to blocking threadpool
         // so the async runtime stays responsive
-        let roots = tokio::task::spawn_blocking(move || {
-            process_root_publications(events, ignore_list, limit)
-        })
-        .await
-        .map_err(|e| crate::error::EngineError::Database(format!("spawn_blocking: {e}")))?;
+        let run_filter = |ev: Vec<serde_json::Value>, ig: crate::engine::IgnoreList| async move {
+            tokio::task::spawn_blocking(move || process_root_publications(ev, ig, limit))
+                .await
+                .map_err(|e| crate::error::EngineError::Database(format!("spawn_blocking: {e}")))
+        };
+        let mut roots = run_filter(events.clone(), ignore_list.clone()).await?;
+
+        // A single query window can starve the feed: the broad filter samples
+        // the most recent 30040s by created_at, and reference-less (skippable)
+        // junk indexes can crowd out every real publication in that window —
+        // seen on-device, where 83 of 100 sampled events were empty and the
+        // real publications sat just past the cap, so a store holding hundreds
+        // rendered a 3-item feed with no "Load more". Page the LOCAL store
+        // backwards until the page fills or the store runs out (bounded
+        // rounds). Each continuation reprocesses the accumulated set so
+        // child-detection/dedup stay correct across windows; after a
+        // FetchAlways sync this pages the freshly enlarged store.
+        // Continuation cursor = the lower EDGE of the broad window's
+        // contiguous coverage, NOT the global oldest 30040 — the scoped
+        // (authors) filter reaches years back, and a global min would jump
+        // the cursor past everything in between in one round (observed: a
+        // store with ~100 real publications paged straight to nothing).
+        // Round 1 approximates the edge as the min over the `limit*5` most
+        // recent 30040s we hold (a superset's top-K min is never older than
+        // the broad window's own edge, so this can only overlap, never
+        // gap); after that each purely-broad continuation response defines
+        // the edge exactly.
+        let broad_window = limit * 5;
+        let mut edge: Option<u64> = {
+            let mut created: Vec<u64> = events
+                .iter()
+                .filter(|e| {
+                    e.get("kind").and_then(|k| k.as_u64())
+                        == Some(KIND_PUBLICATION_INDEX as u64)
+                })
+                .filter_map(|e| e.get("created_at").and_then(|c| c.as_u64()))
+                .collect();
+            created.sort_unstable_by(|a, b| b.cmp(a));
+            if created.len() < broad_window {
+                // The broad query itself came back short — store exhausted.
+                None
+            } else {
+                created.get(broad_window - 1).copied()
+            }
+        };
+        let mut rounds = 0usize;
+        while roots.len() < limit && rounds < 10 {
+            let Some(until) = edge.filter(|e| *e > 0) else { break };
+            rounds += 1;
+            let more = self
+                .engine
+                .get_events(
+                    vec![json!({
+                        "kinds": [KIND_PUBLICATION_INDEX],
+                        "limit": broad_window,
+                        "until": until - 1,
+                    })],
+                    FetchPolicy::LocalOnly,
+                    None,
+                )
+                .await?;
+            if more.events.is_empty() {
+                break;
+            }
+            let response_min = more
+                .events
+                .iter()
+                .filter_map(|e| e.get("created_at").and_then(|c| c.as_u64()))
+                .min();
+            let short_window = more.events.len() < broad_window;
+            let known: std::collections::HashSet<String> = events
+                .iter()
+                .filter_map(|e| e.get("id").and_then(|i| i.as_str()).map(str::to_string))
+                .collect();
+            let before_len = events.len();
+            events.extend(more.events.into_iter().filter(|e| {
+                e.get("id")
+                    .and_then(|i| i.as_str())
+                    .map(|i| !known.contains(i))
+                    .unwrap_or(false)
+            }));
+            if events.len() > before_len {
+                roots = run_filter(events.clone(), ignore_list.clone()).await?;
+            }
+            // A short window means the store has nothing older.
+            edge = if short_window { None } else { response_min };
+        }
+        if rounds > 0 {
+            tracing::debug!(
+                "list_root_publications: {} roots after {} continuation round(s) ({} raw events)",
+                roots.len(),
+                rounds,
+                events.len()
+            );
+        }
 
         Ok(roots)
     }
