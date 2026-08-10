@@ -54,8 +54,14 @@ tower-http = { version = "0.5", features = ["cors", "fs"] }
 tokio = { version = "1", features = ["full"] }
 futures = "0.3"
 
-# WebSocket client for relay fetching
-tokio-tungstenite = { version = "0.29", features = ["rustls-tls-native-roots"] }
+# WebSocket client for relay fetching. Both rustls root sources on purpose:
+# native-roots reads the OS trust store (desktop; corporate/custom CAs keep
+# working) and webpki-roots bundles the Mozilla set as the fallback that
+# makes wss:// work on Android, where rustls-native-certs finds no OS store
+# at all ("no native root CA certificates found" on every relay otherwise).
+# tokio-tungstenite treats an empty native store as non-fatal when webpki
+# roots are also enabled.
+tokio-tungstenite = { version = "0.29", features = ["rustls-tls-native-roots", "rustls-tls-webpki-roots"] }
 
 # Serialization
 serde = { version = "1", features = ["derive"] }

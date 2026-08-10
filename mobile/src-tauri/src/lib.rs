@@ -45,6 +45,24 @@ fn per_boot_token() -> String {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Android: stdout is a black hole — send tracing to logcat (tag
+    // "tendrl", filter with `adb logcat -s tendrl`). Elsewhere keep the
+    // stdout fmt subscriber for desktop-dev runs of the host.
+    #[cfg(target_os = "android")]
+    {
+        use tracing_subscriber::layer::SubscriberExt;
+        use tracing_subscriber::util::SubscriberInitExt;
+        let filter = tracing_subscriber::EnvFilter::new(
+            "info,nostr_engine=debug,tendrl_mobile_lib=debug",
+        );
+        match tracing_android::layer("tendrl") {
+            Ok(layer) => {
+                tracing_subscriber::registry().with(filter).with(layer).init();
+            }
+            Err(e) => eprintln!("failed to init logcat tracing: {e}"),
+        }
+    }
+    #[cfg(not(target_os = "android"))]
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::from_default_env()
