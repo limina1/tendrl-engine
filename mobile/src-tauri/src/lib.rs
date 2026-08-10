@@ -18,6 +18,8 @@
 
 use tauri::Manager;
 
+mod nip55;
+
 fn engine_config(
     data_root: &std::path::Path,
 ) -> (nostr_engine::Config, std::path::PathBuf) {
@@ -52,6 +54,7 @@ pub fn run() {
         .init();
 
     tauri::Builder::default()
+        .plugin(nip55::init())
         .setup(|app| {
             let data_root = app.path().app_data_dir()?;
             std::fs::create_dir_all(&data_root)?;
