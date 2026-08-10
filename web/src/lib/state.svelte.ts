@@ -4029,7 +4029,17 @@ function _createAppState() {
 							console.warn('[identity] nip55 watch-only fallback failed:', e);
 						}
 					}
-				} else if (!detectNip55()) {
+				} else if (detectNip55()) {
+					// Saved source says nip55 but there's nothing to re-attach
+					// (connect never completed, or the WebView storage was
+					// cleared) — say so instead of leaving a half-armed state
+					// where the source reads nip55 but nothing can sign.
+					pushToast(
+						'Signer app not reconnected — sign in with Amber again in Settings.',
+						'info',
+						7000
+					);
+				} else {
 					console.warn(
 						'[identity] saved source = nip55 but not running inside the Android app — staying on engine.'
 					);

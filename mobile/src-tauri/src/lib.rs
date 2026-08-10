@@ -20,8 +20,17 @@ use tauri::Manager;
 
 mod nip55;
 
+/// Stable loopback port. The WebView origin (scheme+host+port) keys ALL of
+/// the SPA's persisted state — localStorage (signer-app pubkey, watch npub,
+/// shell prefs) and cookies. An ephemeral port meant a fresh origin every
+/// launch, silently wiping that state (the NIP-55 boot re-attach never found
+/// its persisted pubkey). Uncommon high port to dodge other apps; on bind
+/// failure we fall back to ephemeral — state loss beats not launching.
+const PREFERRED_PORT: u16 = 41347;
+
 fn engine_config(
     data_root: &std::path::Path,
+    port: u16,
 ) -> (nostr_engine::Config, std::path::PathBuf) {
     let config_path = data_root.join("config.toml");
     let mut config = nostr_engine::Config::load_or_default(Some(&config_path));
@@ -32,8 +41,7 @@ fn engine_config(
     // doesn't warn every boot.
     config.embedding.enabled = false;
     config.server.host = "127.0.0.1".into();
-    // Ephemeral port: the kernel picks, we read it back from `start()`.
-    config.server.port = 0;
+    config.server.port = port;
     (config, config_path)
 }
 
@@ -76,16 +84,32 @@ pub fn run() {
         .setup(|app| {
             let data_root = app.path().app_data_dir()?;
             std::fs::create_dir_all(&data_root)?;
-            let (config, config_path) = engine_config(&data_root);
             let token = per_boot_token();
 
-            let server = tauri::async_runtime::block_on(nostr_engine::server::start(
+            let (config, config_path) = engine_config(&data_root, PREFERRED_PORT);
+            let server = match tauri::async_runtime::block_on(nostr_engine::server::start(
                 nostr_engine::server::ServeOptions {
                     config,
-                    config_path,
+                    config_path: config_path.clone(),
                     loopback_token: Some(token.clone()),
                 },
-            ))?;
+            )) {
+                Ok(server) => server,
+                Err(e) => {
+                    tracing::warn!(
+                        "preferred port {PREFERRED_PORT} unavailable ({e}); falling back to an \
+                         ephemeral port — SPA-persisted state (signer, prefs) won't carry over"
+                    );
+                    let (config, config_path) = engine_config(&data_root, 0);
+                    tauri::async_runtime::block_on(nostr_engine::server::start(
+                        nostr_engine::server::ServeOptions {
+                            config,
+                            config_path,
+                            loopback_token: Some(token.clone()),
+                        },
+                    ))?
+                }
+            };
             tracing::info!("engine bound on {}", server.addr);
 
             let url = format!(

@@ -24,15 +24,20 @@ import type { IdentityStatus } from '$lib/types';
  * describes only the engine key, so checking it alone wrongly excludes
  * signer logins — which is why the compose Publish button vanished
  * under a NIP-07 login.
+ *
+ * External sources must also carry a `signer_id`: on boot the engine
+ * restores the *saved* source with no live registration (so the modeline
+ * doesn't flicker), and until the re-attach completes nothing can sign —
+ * trusting the source string alone un-gated signing surfaces into a
+ * guaranteed "no identity" error (hit on Android when the re-attach
+ * found no persisted signer).
  */
 export function identityCanSign(status: IdentityStatus | null | undefined): boolean {
 	if (!status) return false;
-	return (
-		status.state === 'unlocked' ||
-		status.source === 'nip07' ||
-		status.source === 'nip46' ||
-		status.source === 'nip55'
-	);
+	if (status.state === 'unlocked') return true;
+	const external =
+		status.source === 'nip07' || status.source === 'nip46' || status.source === 'nip55';
+	return external && !!status.signer_id;
 }
 
 declare global {
