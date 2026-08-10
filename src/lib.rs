@@ -73,6 +73,7 @@ pub mod relay_diff;
 pub mod relay_store;
 pub mod relay_url;
 pub mod search;
+pub mod server;
 pub mod sessions;
 pub mod signing;
 pub mod spell;
