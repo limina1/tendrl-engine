@@ -14,6 +14,10 @@
 
 	import type { FetchEvent } from '$lib/types';
 	import { resolveConfirm } from '$lib/network/fetch-events.svelte';
+	import { addRelay } from '$lib/api';
+	import { getAppState } from '$lib/state.svelte';
+
+	const app = getAppState();
 
 	type PublishIntentEvent = Extract<FetchEvent, { type: 'publish_intent' }>;
 	let { intent }: { intent: PublishIntentEvent } = $props();
@@ -96,6 +100,13 @@
 		extras = [...extras, v];
 		appendInput = '';
 		appendError = null;
+		// A publish confirm's target set is unambiguous, so "Add relay" is a
+		// persistent edit to the publish set — mirroring the feed-sync
+		// modal's fetch-set persistence. Without this, additions here were
+		// one-shot and the next broadcast proposed the same old defaults.
+		// (Unchecking a proposed relay stays per-operation on purpose.)
+		addRelay('publish', v).catch(() => {});
+		app.pushToast(`Saved ${v.replace(/^wss?:\/\//, '')} to your publish set`, 'success', 2500);
 	}
 
 	function copyOne(s: string) {
