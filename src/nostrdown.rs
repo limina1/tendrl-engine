@@ -13,11 +13,17 @@
 //!
 //! Only the three structural reference prefixes are recognised today:
 //!
-//! - `ref`   — an internal reference to a sibling section in the same publication
+//! - `ref`   — an internal reference to a sibling section in the same
+//!             publication (sibling-only — a ref never leaves its document)
 //! - `wiki`  — a markup-agnostic wikilink (replaces NKBIP-01's `[[ ]]`, which
-//!             collides with Org-mode) resolving to a kind 30818/30041/30023 by
-//!             normalized d-tag
+//!             collides with Org-mode) resolving to a kind 30818 by normalized
+//!             `d` tag, else a 30040/30041 by its `T` title-slug tag
 //! - `embed` — transclusion of another event's content inline
+//!
+//! Targets come in three admissible forms: a NIP-54 title-slug, a NIP-19 bech32
+//! entity (optionally `nostr:`-prefixed), or a `kind:pubkey:d-tag` coordinate.
+//! Entities are kept verbatim; a coordinate is re-encoded as its naddr so it
+//! rides the same entity pipeline (never slug-normalized).
 //!
 //! `{{@npub…}}`/`{{@nprofile…}}` profile mentions are also recognised (an inline
 //! `@handle` emitting a `p` tag). `cite`, `@name` (mention by contact name),
@@ -150,9 +156,9 @@ pub struct ResolvedRef {
     /// `true` when the target is a valid event address (`found`) but the event
     /// itself isn't in the local db yet — the renderer offers a relay fetch
     /// (auto in Auto mode, a click in Confirm mode). Cleared once the event is
-    /// fetched and the card is filled. Always `false` for slug-target
-    /// `ref`/`wiki` (those resolve against local sections/articles, not a
-    /// remote fetch); an entity-target ref can be pending like an embed.
+    /// fetched and the card is filled. Always `false` for `ref` (sibling-only:
+    /// it either matches the local sibling index or stays unresolved) and for
+    /// slug-target `wiki` (resolved against local sections/articles).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub pending: bool,
     /// NIP-19 `naddr`/`nevent`/`note` to navigate to, when resolved.
@@ -216,6 +222,40 @@ fn is_nostr_entity(s: &str) -> bool {
             && s[..hrp.len()].eq_ignore_ascii_case(hrp)
             && s[hrp.len()..].chars().all(|c| c.is_ascii_alphanumeric())
     })
+}
+
+/// A `kind:pubkey:d-tag` addressable coordinate, re-encoded as an `naddr` so it
+/// rides the entity pipeline (verbatim match, entity resolution, `a`-tag
+/// emission) instead of being slug-normalized — NIP-54 normalization drops the
+/// colons, which would silently mangle the coordinate into an unresolvable
+/// slug. The d-tag is everything after the second `:` (it may contain colons).
+fn coord_to_naddr(s: &str) -> Option<String> {
+    let (kind_s, rest) = s.split_once(':')?;
+    let (pubkey, d_tag) = rest.split_once(':')?;
+    let kind: u32 = kind_s.parse().ok()?;
+    if pubkey.len() != 64 || !pubkey.bytes().all(|b| b.is_ascii_hexdigit()) || d_tag.is_empty() {
+        return None;
+    }
+    crate::nip19::encode_naddr(kind, pubkey, d_tag, &[]).ok()
+}
+
+/// Canonicalize a written target: a NIP-19 entity is kept verbatim (`nostr:`
+/// stripped) and a `kind:pubkey:d-tag` coordinate becomes its naddr — both
+/// entity-class, matched verbatim per the spec. Anything else NIP-54-normalizes
+/// into a slug. `None` when nothing usable remains.
+fn canonical_target(target_raw: &str) -> Option<(String, bool)> {
+    if is_nostr_entity(target_raw) {
+        return Some((strip_nostr_prefix(target_raw).to_string(), true));
+    }
+    if let Some(naddr) = coord_to_naddr(target_raw) {
+        return Some((naddr, true));
+    }
+    let n = normalize(target_raw);
+    if n.is_empty() {
+        None
+    } else {
+        Some((n, false))
+    }
 }
 
 /// NIP-54 d-tag / wikilink normalization.
@@ -291,16 +331,7 @@ fn parse_inner(inner: &str, start: usize, end: usize) -> Option<NostrdownRef> {
         return None;
     }
 
-    let is_entity = is_nostr_entity(target_raw);
-    let target = if is_entity {
-        strip_nostr_prefix(target_raw).to_string()
-    } else {
-        let n = normalize(target_raw);
-        if n.is_empty() {
-            return None;
-        }
-        n
-    };
+    let (target, is_entity) = canonical_target(target_raw)?;
 
     Some(NostrdownRef {
         kind,
@@ -383,19 +414,10 @@ fn parse_wikilink_inner(inner: &str, start: usize, end: usize) -> Option<Nostrdo
     if target_raw.is_empty() || is_markup_link_target(target_raw) {
         return None;
     }
-    // `[[naddr…][My Doc]]` / `[[nostr:nevent…]]` — a pasted NIP-19 entity kept
-    // verbatim and resolved as an event link, not slug-normalized into an
-    // unresolvable topic.
-    let is_entity = is_nostr_entity(target_raw);
-    let target = if is_entity {
-        strip_nostr_prefix(target_raw).to_string()
-    } else {
-        let n = normalize(target_raw);
-        if n.is_empty() {
-            return None;
-        }
-        n
-    };
+    // `[[naddr…][My Doc]]` / `[[nostr:nevent…]]` / `[[30041:pk:d]]` — a pasted
+    // NIP-19 entity or coordinate kept verbatim and resolved as an event link,
+    // not slug-normalized into an unresolvable topic.
+    let (target, is_entity) = canonical_target(target_raw)?;
 
     Some(NostrdownRef {
         kind: RefKind::Wiki,
@@ -540,8 +562,12 @@ pub fn parse(content: &str) -> Vec<NostrdownRef> {
 /// - `{{wiki:topic}}` / `[[topic]]` → `["w", topic]` (single-letter, relay-indexed
 ///   like `d`, so `{"#w":[topic]}` returns backlinks; topic only — author-agnostic
 ///   per NIP-54, no pinned version)
-/// - `{{ref:slug}}` / slug `{{embed:slug}}` → `["ref", slug]` (sibling handle)
-/// - `{{embed:naddr…}}`   → `["a", "kind:pubkey:dtag", relay?]`
+/// - `{{ref:slug}}` → `["ref", slug]` (sibling handle); an naddr/coordinate ref
+///   emits `["ref", d_tag]` — still a sibling handle, refs never leave the
+///   containing publication
+/// - slug `{{embed:slug}}` → nothing (a sibling transclusion; the index's own
+///   `a` tags already address the sibling — kept distinct from `ref`)
+/// - `{{embed:naddr…}}` / `{{embed:kind:pk:d}}` → `["a", "kind:pubkey:dtag", relay?]`
 /// - `{{embed:nevent/note}}` → `["q", id, relay?, pubkey?]` (NIP-18 quote)
 /// - `{{embed:npub/nprofile}}` → `["p", pubkey, relay?]`
 ///
@@ -561,13 +587,26 @@ pub fn reference_tags(content: &str) -> Vec<Vec<String>> {
         match r.kind {
             RefKind::Wiki if !r.is_entity => push(&mut out, &mut seen, vec!["w".into(), r.target]),
             RefKind::Ref if !r.is_entity => push(&mut out, &mut seen, vec!["ref".into(), r.target]),
-            RefKind::Embed if !r.is_entity => {
-                push(&mut out, &mut seen, vec!["ref".into(), r.target])
+            // A slug embed transcludes a *sibling* — kept distinct from `ref`:
+            // emitting `["ref", slug]` here would collapse the two roles into
+            // one tag, and the sibling is already addressed by the containing
+            // index's own `a` tags. No inline tag.
+            RefKind::Embed if !r.is_entity => {}
+            // An entity/coordinate ref is still a *sibling* handle (a ref never
+            // leaves the containing publication): only an naddr can address a
+            // sibling, and its d-tag is the handle the tag carries. Any other
+            // entity in ref position tags nothing (it won't resolve either).
+            RefKind::Ref => {
+                if let Ok(crate::nip19::Decoded::Naddr { d_tag, .. }) =
+                    crate::nip19::decode(&r.target)
+                {
+                    push(&mut out, &mut seen, vec!["ref".into(), d_tag]);
+                }
             }
-            // Entity targets — `{{ref:naddr…}}`, `[[nevent…]]`, `{{embed:…}}` —
-            // all emit the pointer tag for what they address (`a`/`q`/`p`), not
-            // a `w`/`ref` handle tag wrapping a bech32 string.
-            RefKind::Wiki | RefKind::Ref | RefKind::Embed => {
+            // Entity targets — `[[nevent…]]`, `{{embed:…}}` — emit the pointer
+            // tag for what they address (`a`/`q`/`p`), not a `w` handle tag
+            // wrapping a bech32 string.
+            RefKind::Wiki | RefKind::Embed => {
                 let Ok(decoded) = crate::nip19::decode(&r.target) else {
                     continue;
                 };
@@ -993,8 +1032,9 @@ mod tests {
 
     #[test]
     fn reference_tags_entity_ref_and_wikilink() {
-        // Entity targets in ref/wikilink position emit the pointer tag for what
-        // they address — never a `w`/`ref` handle tag wrapping a bech32 string.
+        // An entity ref is still a *sibling* handle — it emits `["ref", d_tag]`,
+        // never an `a` pointer (refs don't leave the publication). An entity
+        // wikilink is a general pointer and emits the tag for what it addresses.
         let pk = "ef".repeat(32);
         let id = "12".repeat(32);
         let naddr = crate::nip19::encode_naddr(30040, &pk, "idx-1", &[]).unwrap();
@@ -1002,14 +1042,55 @@ mod tests {
         let content = format!("see {{{{ref:{naddr}}}}} and [[nostr:{nevent}][the event]].");
         let tags = reference_tags(&content);
 
-        assert!(tags.contains(&vec!["a".to_string(), format!("30040:{pk}:idx-1")]));
-        assert!(tags
-            .iter()
-            .any(|t| t[0] == "q" && t[1] == id));
         assert!(
-            !tags.iter().any(|t| t[0] == "w" || t[0] == "ref"),
-            "no handle tags for entity targets: {tags:?}"
+            tags.contains(&vec!["ref".to_string(), "idx-1".to_string()]),
+            "entity ref emits the sibling d-tag handle: {tags:?}"
         );
+        assert!(tags.iter().any(|t| t[0] == "q" && t[1] == id));
+        assert!(
+            !tags.iter().any(|t| t[0] == "w" || t[0] == "a"),
+            "no `w` handle for entity wikilinks, no `a` pointer for refs: {tags:?}"
+        );
+    }
+
+    #[test]
+    fn coordinate_targets_ride_the_entity_pipeline() {
+        // A `kind:pubkey:d-tag` coordinate is matched verbatim (via its naddr),
+        // never slug-normalized — normalization would drop the colons and mangle
+        // it into an unresolvable slug.
+        let pk = "ab".repeat(32);
+        let r = one(&format!("{{{{embed:30041:{pk}:my-section}}}}"));
+        assert_eq!(r.kind, RefKind::Embed);
+        assert!(r.is_entity, "coordinate is entity-class, not a slug");
+        assert!(r.target.starts_with("naddr1"));
+        assert_eq!(r.raw_target, format!("30041:{pk}:my-section"));
+
+        let tags = reference_tags(&format!("{{{{embed:30041:{pk}:my-section}}}}"));
+        assert!(
+            tags.contains(&vec!["a".to_string(), format!("30041:{pk}:my-section")]),
+            "coordinate embed emits its `a` pointer: {tags:?}"
+        );
+
+        // Coordinates work in wikilinks too.
+        let r = one(&format!("[[30040:{pk}:root-idx][The Index]]"));
+        assert_eq!(r.kind, RefKind::Wiki);
+        assert!(r.is_entity);
+        assert_eq!(r.display.as_deref(), Some("The Index"));
+
+        // A malformed coordinate (bad pubkey) still degrades to a slug.
+        let r = one("{{embed:30041:nothex:my-section}}");
+        assert!(!r.is_entity);
+        assert_eq!(r.target, "30041nothexmy-section");
+    }
+
+    #[test]
+    fn slug_embed_emits_no_tag() {
+        // `{{embed:slug}}` transcludes a sibling but is not a `ref` — no handle
+        // tag (the containing index's `a` tags already address the sibling).
+        assert!(reference_tags("{{embed:The Ascent}}").is_empty());
+        // The neighboring `ref` still tags.
+        let tags = reference_tags("{{ref:The Ascent}} {{embed:The Ascent}}");
+        assert_eq!(tags, vec![vec!["ref".to_string(), "the-ascent".to_string()]]);
     }
 
     #[test]
