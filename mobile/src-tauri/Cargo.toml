@@ -1,0 +1,35 @@
+# Tauri 2 Android host for tendrl. Deliberately NOT part of the root
+# package/workspace — the engine is consumed as a path dependency with
+# default features off (no fastembed/usearch/keyring/webbrowser; the SPA is
+# baked in via embed-assets so debug APKs work without a disk web/build).
+#
+# Build from this directory with the Android env from docs/commands.org:
+#   cargo tauri android build --debug --target aarch64
+[package]
+name = "tendrl-mobile"
+version = "0.1.0"
+description = "tendrl Android host — engine-in-process behind a token-gated loopback port"
+edition = "2021"
+
+[lib]
+name = "tendrl_mobile_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+# Full debuginfo makes a ~360MB debug APK; line tables keep useful
+# backtraces at a fraction of that for over-the-air installs.
+[profile.dev]
+debug = "line-tables-only"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+nostr-engine = { path = "../..", default-features = false, features = ["embed-assets"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+hex = "0.4"
+getrandom = "0.3"
+anyhow = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }

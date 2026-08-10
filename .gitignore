@@ -2,6 +2,12 @@
 /target/
 **/*.rs.bk
 
+# Android host (mobile/src-tauri): Rust target + regenerated capability
+# schemas. gen/android itself is committed by design (Tauri 2 treats it as
+# user-maintained); its gradle outputs are covered by gen/android/.gitignore.
+mobile/src-tauri/target/
+mobile/src-tauri/gen/schemas/
+
 # In-process ONNX embedding model cache (fastembed)
 .fastembed_cache/
 **/fastembed_cache/

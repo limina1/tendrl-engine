@@ -1,0 +1,10 @@
+{
+  "$schema": "../gen/schemas/mobile-schema.json",
+  "identifier": "mobile",
+  "description": "The engine-origin WebView. The window's URL is http://127.0.0.1:<ephemeral-port>, which Tauri treats as a remote origin — IPC (and later the nip55 plugin) is only reachable because of the remote urls grant below.",
+  "windows": ["main"],
+  "remote": {
+    "urls": ["http://127.0.0.1:*"]
+  },
+  "permissions": ["core:default"]
+}
