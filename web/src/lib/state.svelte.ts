@@ -3998,6 +3998,45 @@ function _createAppState() {
 			} finally {
 				identityAutoReconnecting = false;
 			}
+		} else if (savedIdentitySource === 'nip55') {
+			// Android signer app (Amber) re-attach: silent — registering with
+			// the persisted pubkey skips the consent intent, so there is no
+			// signer-app prompt on every app start. If the signer app is gone
+			// (uninstalled) or registration fails, fall back to WATCHING the
+			// same pubkey: feed scoping and profile survive, signing re-gates
+			// until the user reconnects a signer.
+			identityAutoReconnecting = true;
+			try {
+				const { detectNip55, persistedNip55 } = await import('$lib/identity/nip55');
+				const saved = detectNip55() ? persistedNip55() : null;
+				if (saved) {
+					console.log('[identity] auto-reconnecting NIP-55 signer app (saved in config.toml)');
+					await handleSelectNip55Source(saved.packageName, saved.pubkey);
+					if (identityError) {
+						console.warn('[identity] nip55 auto-reconnect failed:', identityError);
+						pushToast(
+							`Signer app reconnect failed: ${identityError} — watching your npub instead. Reconnect in Settings to sign.`,
+							'error',
+							7000
+						);
+						try {
+							identityStatus = await api.loginIdentityNpub(saved.pubkey);
+							if (identityStatus.pubkey) {
+								myPubkey = identityStatus.pubkey;
+								resolveIdentityName(identityStatus.pubkey);
+							}
+						} catch (e) {
+							console.warn('[identity] nip55 watch-only fallback failed:', e);
+						}
+					}
+				} else if (!detectNip55()) {
+					console.warn(
+						'[identity] saved source = nip55 but not running inside the Android app — staying on engine.'
+					);
+				}
+			} finally {
+				identityAutoReconnecting = false;
+			}
 		}
 		try {
 			chat = await api.getChat();
@@ -4157,12 +4196,22 @@ function _createAppState() {
 
 	async function handleIdentityLogout() {
 		try {
+			// Tear down any live external signer channel first (nip07/nip55).
+			if (externalSignerTeardown) {
+				externalSignerTeardown();
+				externalSignerTeardown = null;
+			}
+			externalSignerPubkey = null;
 			identityStatus = await api.logoutIdentity();
 			myPubkey = null;
 			identityDisplayName = null;
-			// Logout is explicit — drop the watch-npub intent too, or the
-			// next reload would silently log the npub back in.
+			// Logout is explicit — drop the watch-npub and signer-app intents
+			// too, or the next reload would silently log back in.
 			try { localStorage.removeItem(WATCH_NPUB_KEY); } catch {}
+			try {
+				const { clearPersistedNip55 } = await import('$lib/identity/nip55');
+				clearPersistedNip55();
+			} catch {}
 		} catch (e) {
 			console.error('Logout failed:', e);
 		}
@@ -4277,6 +4326,43 @@ function _createAppState() {
 			identityStatus = await api.useIdentitySource({ source: 'engine' });
 		} catch (e) {
 			console.error('switch to engine source failed:', e);
+		}
+	}
+
+	/**
+	 * Connect an Android signer app (NIP-55, e.g. Amber) as the signing
+	 * source. Mirrors handleSelectNip07Source; only reachable inside the
+	 * Tauri host (the settings surface renders the buttons only there).
+	 * `prefetchedPubkey` is the boot re-attach path: registering with the
+	 * persisted pubkey skips the signer app's consent intent entirely.
+	 */
+	async function handleSelectNip55Source(packageName: string, prefetchedPubkey?: string) {
+		identityError = null;
+		identityLoading = true;
+		try {
+			const { registerNip55Signer } = await import('$lib/identity/nip55');
+			externalSignerTeardown = await registerNip55Signer(packageName, prefetchedPubkey);
+			identityStatus = await api.getIdentity();
+			if (identityStatus.pubkey) {
+				externalSignerPubkey = identityStatus.pubkey;
+				myPubkey = identityStatus.pubkey;
+				resolveIdentityName(identityStatus.pubkey);
+			}
+			// Persist the intent for boot auto-reconnect — same pattern (and
+			// same skip-if-already-saved guard) as the nip07 path above.
+			if (savedIdentitySource !== 'nip55') {
+				try {
+					await api.snapshotConfig({ identity_source: 'nip55' });
+					savedIdentitySource = 'nip55';
+				} catch (e) {
+					console.warn('[identity] failed to persist nip55 source:', e);
+				}
+			}
+		} catch (e: unknown) {
+			identityError = e instanceof Error ? e.message : String(e);
+			externalSignerPubkey = null;
+		} finally {
+			identityLoading = false;
 		}
 	}
 
@@ -4425,6 +4511,7 @@ function _createAppState() {
 		handleSetLockTimeout,
 		get externalSignerPubkey() { return externalSignerPubkey; },
 		handleSelectNip07Source,
+		handleSelectNip55Source,
 		handleSelectEngineSource,
 
 		// Assistant identity (second keyring-backed session)

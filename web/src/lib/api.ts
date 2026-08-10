@@ -1023,7 +1023,7 @@ export interface SignerCapabilities {
 }
 
 export interface SignerRegisterRequest {
-	kind: 'nip07' | 'nip46';
+	kind: 'nip07' | 'nip46' | 'nip55';
 	pubkey: string;
 	capabilities?: SignerCapabilities;
 }
@@ -1041,10 +1041,10 @@ export function registerSigner(req: SignerRegisterRequest) {
 }
 
 export interface UseSourceRequest {
-	source: 'engine' | 'nip07' | 'nip46';
+	source: 'engine' | 'nip07' | 'nip46' | 'nip55';
 	signer_id?: string;
-	/** External signer pubkey (hex). Pass when source is nip07/nip46
-	 *  so /identity status surfaces a non-null pubkey. */
+	/** External signer pubkey (hex). Pass when source is external
+	 *  (nip07/nip46/nip55) so /identity status surfaces a non-null pubkey. */
 	pubkey?: string;
 }
 

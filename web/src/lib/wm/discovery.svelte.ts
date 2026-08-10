@@ -146,9 +146,10 @@ export const TIPS: Record<string, TourTip> = {
 		// signed in. (Reachable on demand via Settings' walkthrough regardless.)
 		relevantWhen: (w) => !w.hasIdentity,
 		mobile: {
-			// Two ways, not three: no browser extensions in a phone WebView, so
-			// the NIP-07 connect walkthrough would dead-end here.
-			body: '*npub (watch-only)* — the lightest: paste your `npub1…` and browse as yourself (feed, profile, `by:me`); signing stays off. *Engine* — paste an `ncryptsec` below and unlock it with its password; held for this session only, never written to disk. (`NIP-07` browser-extension signing is a desktop thing — there\'s no extension to connect inside a phone WebView.)'
+			// No browser extensions in a phone WebView, so NIP-07 is swapped
+			// for the NIP-55 signer-app path (Android app only — in a plain
+			// mobile browser the signer-app button simply isn't there).
+			body: '*Signer app* — the best way to sign on a phone: if Amber (or another NIP-55 signer) is installed, tap *Sign in with Amber* and approve; your key stays in the signer app. *npub (watch-only)* — the lightest way in: paste your `npub1…` and browse as yourself (feed, profile, `by:me`); signing stays off. *Engine* — paste an `ncryptsec` below and unlock it with its password; held for this session only, never written to disk.'
 		}
 	},
 	'signed-in-noname': {

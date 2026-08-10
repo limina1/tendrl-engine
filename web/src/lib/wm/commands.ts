@@ -57,7 +57,7 @@ export const commands: Command[] = [
 	{ id: 'tendrl-demo-publish-progress', name: 'tendrl-demo-publish-progress', hiddenByDefault: true, description: 'Open the publish-progress buffer with mock data (design demo)', category: 'Configuration', scope: 'action' },
 	{ id: 'tendrl-login', name: 'tendrl-login', description: 'Open settings at the identity login form (ncryptsec or NIP-07)', category: 'Configuration', scope: 'opener', keybinding: 'SPC s i' },
 	{ id: 'tendrl-logout', name: 'tendrl-logout', description: 'Logout active identity', category: 'Configuration', scope: 'action' },
-	{ id: 'tendrl-switch-source', name: 'tendrl-switch-source', hiddenByDefault: true, description: 'Open settings to switch signing source (engine / nip07)', category: 'Configuration', scope: 'opener' },
+	{ id: 'tendrl-switch-source', name: 'tendrl-switch-source', hiddenByDefault: true, description: 'Open settings to switch signing source (engine / nip07 / signer app)', category: 'Configuration', scope: 'opener' },
 	{ id: 'tendrl-edit-profile', name: 'tendrl-edit-profile', description: 'Edit your kind 0 profile metadata and broadcast', category: 'Configuration', scope: 'opener', keybinding: 'SPC s p' },
 	{ id: 'tendrl-embed-missing', name: 'tendrl-embed-missing', description: 'Embed knowledge-base events not yet in the semantic index', category: 'Configuration', scope: 'action', keybinding: 'SPC e m' },
 	{ id: 'tendrl-reembed-all', name: 'tendrl-reembed-all', description: 'Clear the semantic index and re-embed every eligible event', category: 'Configuration', scope: 'action', keybinding: 'SPC e A' },

@@ -570,7 +570,7 @@ export interface NetworkStatus {
  *  feed scoping / `by:me` / profile work, signing does not. */
 export type IdentityState = 'none' | 'watching' | 'locked' | 'unlocked';
 
-export type IdentitySourceKind = 'engine' | 'nip07' | 'nip46';
+export type IdentitySourceKind = 'engine' | 'nip07' | 'nip46' | 'nip55';
 
 export interface IdentityStatus {
 	state: IdentityState;
@@ -581,7 +581,7 @@ export interface IdentityStatus {
 	lock_timeout_minutes: number;
 	/** Active signing source. Always present (defaults to "engine"). */
 	source: IdentitySourceKind;
-	/** Set when source is nip07 / nip46. */
+	/** Set when source is nip07 / nip46 / nip55. */
 	signer_id?: string;
 	/** Only present on the assistant identity status: whether the OS keyring
 	 *  is usable for persistence. `false` ⇒ the key won't survive a restart. */

@@ -10,6 +10,12 @@
 	import { untrack } from 'svelte';
 	import { getAppState } from '$lib/state.svelte';
 	import { nip07, startNip07Watch } from '$lib/identity/nip07.svelte';
+	import {
+		detectNip55,
+		getSignerApps,
+		fetchSignerPubkey,
+		type Nip55SignerApp
+	} from '$lib/identity/nip55';
 	import { trigger as triggerTip } from '$lib/wm/discovery.svelte';
 	import { discovery, rearmDiscovery, rearmFeatureTours, setWalkthroughEnabled } from '$lib/wm/discovery.svelte';
 	import * as api from '$lib/api';
@@ -194,6 +200,16 @@
 			// listeners, so enabling/unlocking the extension *after* Settings is
 			// open lights up the radio on its own — no effect re-run needed.
 			startNip07Watch();
+			// NIP-55 signer apps exist only inside the Android host; off it
+			// this stays [] and the signer-app block never renders.
+			if (detectNip55()) {
+				getSignerApps()
+					.then((apps) => (signerApps = apps))
+					.catch((e) => {
+						console.warn('[nip55] signer app enumeration failed:', e);
+						signerApps = [];
+					});
+			}
 			// Walkthrough: opening Settings is the "two ways in" beat of the one
 			// auto walk. Precondition-gated (`relevantWhen: !hasIdentity`), so it
 			// self-suppresses for anyone already signed in; seen-gating stops it
@@ -223,6 +239,51 @@
 		if (!v) return;
 		await app.handleIdentityNpubLogin(v);
 		npubInput = '';
+	}
+
+	// NIP-55 signer apps (Amber) — Android host only. Enumerated in the
+	// mount-load batch above; connecting routes through the same external-
+	// signer machinery as NIP-07.
+	let signerApps = $state<Nip55SignerApp[]>([]);
+	let signerConnecting = $state<string | null>(null);
+	// Watch-only upgrade gate: same pubkey displaces the watch seamlessly;
+	// a different pubkey pauses here for an explicit confirm (no silent
+	// feed-scope swap, and no browser dialogs — inline confirm per the UI
+	// pattern catalog).
+	let pendingSignerSwitch = $state<{ app: Nip55SignerApp; pubkey: string } | null>(null);
+
+	async function connectSignerApp(signerApp: Nip55SignerApp) {
+		pendingSignerSwitch = null;
+		signerConnecting = signerApp.packageName;
+		try {
+			const watching =
+				app.identityStatus?.state === 'watching' ? app.identityStatus?.pubkey : null;
+			if (watching) {
+				// Fetch the signer's pubkey first (one consent intent) so we can
+				// compare before displacing the watched identity. Passing it as
+				// the prefetched pubkey means no second prompt on connect.
+				const pubkey = await fetchSignerPubkey(signerApp.packageName);
+				if (pubkey !== watching) {
+					pendingSignerSwitch = { app: signerApp, pubkey };
+					return;
+				}
+				await app.handleSelectNip55Source(signerApp.packageName, pubkey);
+			} else {
+				await app.handleSelectNip55Source(signerApp.packageName);
+			}
+		} catch (e) {
+			console.warn('[nip55] connect failed:', e);
+		} finally {
+			signerConnecting = null;
+		}
+	}
+
+	async function confirmSignerSwitch() {
+		const pending = pendingSignerSwitch;
+		pendingSignerSwitch = null;
+		if (pending) {
+			await app.handleSelectNip55Source(pending.app.packageName, pending.pubkey);
+		}
 	}
 	// Inputs for the assistant identity flow
 	let assistantKeyInput = $state('');
@@ -519,6 +580,47 @@
 			</div>
 		</div>
 
+		{#if signerApps.length > 0 && currentSource !== 'nip55'}
+			<!-- Signer apps first on mobile: the lightest way to a SIGNING
+			     identity on a phone (watch-only npub stays the lightest way in
+			     at all). Only renders inside the Android host with a NIP-55
+			     app installed. -->
+			<div class="settings-row settings-row--stack" data-tour="signer-app">
+				<span class="settings-label">Signer app</span>
+				{#each signerApps as signerApp (signerApp.packageName)}
+					<button
+						class="settings-action"
+						onclick={() => connectSignerApp(signerApp)}
+						disabled={signerConnecting !== null || app.identityLoading}
+					>
+						{signerConnecting === signerApp.packageName
+							? 'Connecting…'
+							: `Sign in with ${signerApp.name}`}
+					</button>
+				{/each}
+				{#if pendingSignerSwitch}
+					<span class="settings-hint">
+						<strong>{pendingSignerSwitch.app.name}</strong> is signed in as a
+						<strong>different identity</strong>
+						(<span class="mono">{pendingSignerSwitch.pubkey.slice(0, 16)}…</span>) than the
+						npub you are watching. Connect anyway? Your feed and profile will switch to the
+						signer's identity.
+					</span>
+					<div class="action-row">
+						<button class="settings-action" onclick={confirmSignerSwitch}>Switch identity</button>
+						<button class="settings-action" onclick={() => (pendingSignerSwitch = null)}
+							>Cancel</button
+						>
+					</div>
+				{/if}
+				<span class="settings-hint">
+					Your key stays in the signer app; tendrl sends events there for approval
+					(NIP-55). Publication kinds are requested for auto-approval so batch publishes
+					sign silently.
+				</span>
+			</div>
+		{/if}
+
 		<div class="settings-row">
 			<span class="settings-label">Source</span>
 			<div class="radio-group" data-tour="identity-source">
@@ -693,6 +795,30 @@
 					</button>
 					<button class="settings-action" onclick={() => pickSource('engine')}
 						>Disconnect</button
+					>
+				</div>
+			</div>
+		{:else if currentSource === 'nip55'}
+			<div class="settings-row settings-row--stack">
+				{#if isAutoReconnecting}
+					<span class="settings-hint">Reconnecting to your signer app…</span>
+				{:else}
+					<span class="settings-hint">
+						Signing requests are routed to your <strong>signer app</strong> (NIP-55); the
+						key never enters tendrl. Pre-approved kinds sign silently, everything else
+						prompts in the app.
+					</span>
+				{/if}
+				{#if app.externalSignerPubkey}
+					<span class="settings-label mono">{app.externalSignerPubkey.slice(0, 16)}…</span>
+				{/if}
+				<div class="action-row">
+					<button class="settings-action" onclick={() => pickSource('engine')}
+						>Disconnect</button
+					>
+					<button
+						class="settings-action settings-action--danger"
+						onclick={app.handleIdentityLogout}>Logout</button
 					>
 				</div>
 			</div>
