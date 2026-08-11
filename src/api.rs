@@ -6353,6 +6353,18 @@ pub async fn embed_reindex_handler(
     Ok(Json(status))
 }
 
+/// POST /api/v1/embed/prefetch — download + load the embedding model if it's
+/// not already cached, independent of whether anything needs embedding. The
+/// request stays pending for the whole download (~90 MB first time), which is
+/// how the UI gets a real "downloading" window. Returns the refreshed status
+/// (with `model_ready` now true).
+pub async fn embed_prefetch_handler(
+    State(engine): State<AppState>,
+) -> Result<Json<Value>, EngineError> {
+    engine.prefetch_embedding_model().await?;
+    embed_status_handler(State(engine)).await
+}
+
 /// Body for `POST /api/v1/embed/config`. Both fields are optional so the UI
 /// can update the kind set and the auto-embed toggle independently.
 #[derive(Deserialize)]

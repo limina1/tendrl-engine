@@ -1485,6 +1485,22 @@ impl Engine {
     }
 
     /// Sync embeddings: find unembedded events, embed them, update index
+    /// Download + load the embedding model if it isn't cached yet, without
+    /// requiring anything to embed. The download is blocking (network +
+    /// disk), so it runs on the blocking pool; the HTTP caller stays pending
+    /// for the whole download, which is what gives the UI a real "downloading"
+    /// window to show.
+    pub async fn prefetch_embedding_model(&self) -> Result<()> {
+        let emb = self
+            .embedding
+            .as_ref()
+            .ok_or_else(|| EngineError::Config("Embedding not enabled".into()))?
+            .clone();
+        tokio::task::spawn_blocking(move || emb.blocking_read().ensure_model_loaded())
+            .await
+            .map_err(|e| EngineError::Database(format!("spawn_blocking: {e}")))?
+    }
+
     pub async fn sync_embeddings(&self) -> Result<EmbeddingStatus> {
         let emb = self
             .embedding

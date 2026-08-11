@@ -1214,12 +1214,20 @@
 					</span>
 					<button
 						class="settings-action"
-						onclick={app.handleSyncEmbeddings}
-						disabled={app.embeddingSyncing}
-						title="Downloads the model (~90 MB, once), then embeds everything eligible."
+						onclick={app.handleDownloadEmbeddingModel}
+						disabled={app.embeddingDownloading}
+						title="Downloads the model (~90 MB, once), then embeds everything eligible. Stays on wifi-length; leave this open until it finishes."
 					>
-						{app.embeddingSyncing ? 'Downloading + embedding…' : 'Download model (~90 MB) & embed'}
+						{app.embeddingDownloading
+							? 'Downloading model (~90 MB)…'
+							: 'Download model (~90 MB) & embed'}
 					</button>
+					{#if app.embeddingDownloading}
+						<span class="settings-hint">
+							Downloading — this can take a minute on the first run; keep the app
+							open. It won't need downloading again.
+						</span>
+					{/if}
 				</div>
 			{/if}
 

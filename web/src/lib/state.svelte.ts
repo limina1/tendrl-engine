@@ -3314,6 +3314,29 @@ function _createAppState() {
 		}
 	}
 
+	// Explicit "get the model" action: downloads (~90 MB, one-time) even with
+	// an empty corpus — plain Sync no-ops when there's nothing to embed and so
+	// never triggers the download. Then embeds whatever is present. The
+	// prefetch request blocks for the whole download, so `embeddingDownloading`
+	// stays true for its real duration — the missing indicator.
+	let embeddingDownloading = $state(false);
+	async function handleDownloadEmbeddingModel() {
+		if (embeddingDownloading) return;
+		embeddingDownloading = true;
+		try {
+			embeddingStatus = await api.prefetchEmbeddingModel();
+			pushToast('Embedding model ready — indexing your library…', 'success');
+			// Now that the model is on disk, embed the existing corpus.
+			embeddingStatus = await api.syncEmbeddings();
+			pushToast('Semantic search is ready.', 'success');
+		} catch (e) {
+			pushToast(api.errorMessage(e, 'Model download failed'), 'error', 6000);
+		} finally {
+			try { embeddingStatus = await api.getEmbeddingStatus(); } catch {}
+			embeddingDownloading = false;
+		}
+	}
+
 	async function handleReindexEmbeddings() {
 		embeddingSyncing = true;
 		const pollInterval = setInterval(async () => {
@@ -4559,6 +4582,7 @@ function _createAppState() {
 		// Embedding
 		get embeddingStatus() { return embeddingStatus; },
 		get embeddingSyncing() { return embeddingSyncing; },
+		get embeddingDownloading() { return embeddingDownloading; },
 
 		// Network
 		get networkStatus() { return networkStatus; },
@@ -4723,6 +4747,7 @@ function _createAppState() {
 		handleDocPublish,
 		handleLoadSection,
 		handleSyncEmbeddings,
+		handleDownloadEmbeddingModel,
 		handleReindexEmbeddings,
 		handleSetEmbedKinds,
 		handleSetAutoEmbed,

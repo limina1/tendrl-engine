@@ -449,6 +449,15 @@ impl EmbeddingIndex {
         Ok(())
     }
 
+    /// Force the ONNX backend to load now — downloading the model into the
+    /// cache if it isn't already present. Blocking (network + disk). This is
+    /// the explicit "get the model" action, decoupled from embedding: a sync
+    /// with an empty corpus never touches the backend, so without this the
+    /// model would never download until there was something to embed.
+    pub fn ensure_model_loaded(&self) -> Result<()> {
+        self.backend().map(|_| ())
+    }
+
     /// Lazily load (once) and return the in-process ONNX backend.
     fn backend(&self) -> Result<&EmbeddingBackend> {
         if let Some(b) = self.backend.get() {
@@ -509,6 +518,10 @@ impl EmbeddingIndex {
 
     pub fn prefetch_model(_model: &str, _cache_dir: &Path) -> Result<()> {
         Err(Self::unavailable())
+    }
+
+    pub fn ensure_model_loaded(&self) -> Result<()> {
+        match self.never {}
     }
 
     // The instance methods below are unreachable (no constructor succeeds) but

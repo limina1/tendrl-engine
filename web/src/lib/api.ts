@@ -1719,6 +1719,13 @@ export function reindexEmbeddings() {
 	return fetchJson<EmbeddingStatusResponse>('/api/v1/embed/reindex', { method: 'POST' });
 }
 
+/** Download + load the embedding model if not cached. The promise stays
+ *  pending for the whole download (~90 MB first time); resolves with the
+ *  refreshed status (model_ready = true). */
+export function prefetchEmbeddingModel() {
+	return fetchJson<EmbeddingStatusResponse>('/api/v1/embed/prefetch', { method: 'POST' });
+}
+
 /** Set which event kinds are eligible for embedding. Persists engine-side and
  *  returns the refreshed status. */
 export function setEmbedKinds(kinds: number[]) {

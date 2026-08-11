@@ -511,6 +511,7 @@ pub async fn start(opts: ServeOptions) -> anyhow::Result<RunningServer> {
         .route("/api/v1/embed/status", get(api::embed_status_handler))
         .route("/api/v1/embed/sync", post(api::embed_sync_handler))
         .route("/api/v1/embed/reindex", post(api::embed_reindex_handler))
+        .route("/api/v1/embed/prefetch", post(api::embed_prefetch_handler))
         .route("/api/v1/embed/config", post(api::embed_config_handler))
         // Claude Code sessions
         .route(
