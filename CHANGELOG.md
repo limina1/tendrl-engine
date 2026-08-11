@@ -1,3 +1,17 @@
+## v0.8.2 — 2026-08-11
+
+- docs(zettel): buffer-mgmt UI — PaneTabs overflow pattern, SPC b o, mobile bar/drawer rework
+- feat(search): tag-filter values match their NIP-54 slug automatically
+- feat(web): mobile ☰ menu-edge preference — right by default, drawer follows
+- feat(web): mobile drawer activity/wiki/history rows; ☰ moves to the bottom bar
+- fix(web): mobile bar slots are work + search, not chat + work
+- docs(commands): phone-browser demo of the SPA mobile shell over LAN
+- feat(web): buffer-management UI — overflow-aware tab strip, SPC b o chords, mobile drawer statuses
+- feat(scripts): make-android-icon.sh — lab SVG export → installed icon set
+- refactor(design): accordion sidebar for the icon lab
+- feat(design): icon-generation lab — identifier exports + settings loader
+- feat(mobile): Android app icon from the phototropic decay mark
+
 ## v0.8.1 — 2026-08-11
 
 - fix(start): build the engine before launching anything
