@@ -413,6 +413,10 @@ export interface EmbeddingStatusResponse {
 	missing_sections: number;
 	embedding_available: boolean;
 	model: string | null;
+	/** Whether an embed can run WITHOUT first downloading the model
+	 *  (~90 MB, one-time). Distinct from `embedding_available`, which says
+	 *  nothing about download state — this gates the download notice. */
+	model_ready: boolean;
 	/** Kinds currently eligible for embedding (engine-persisted selection). */
 	embed_kinds: number[];
 	/** Full menu of embeddable kinds the UI offers as checkboxes. */

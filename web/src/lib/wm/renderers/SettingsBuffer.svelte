@@ -1195,11 +1195,33 @@
 					<span class="pill {e.embedding_available ? 'pill--online' : 'pill--ghost'}">
 						{e.embedding_available ? 'ready' : 'unavailable'}
 					</span>
+					{#if e.model_ready === false}
+						<span class="pill pill--draft">model not downloaded</span>
+					{/if}
 					{#if e.model}
 						<span class="pill pill--ghost source-pill">{e.model}</span>
 					{/if}
 				</div>
 			</div>
+
+			{#if e.model_ready === false}
+				<div class="settings-row settings-row--stack">
+					<span class="settings-hint">
+						The embedding model isn't on this device yet. Semantic search
+						(<code>~:query</code>) and embedding wait until it is — a
+						<strong>one-time ~90 MB download</strong>, stored with the app's
+						data (survives restarts and updates; removed on uninstall).
+					</span>
+					<button
+						class="settings-action"
+						onclick={app.handleSyncEmbeddings}
+						disabled={app.embeddingSyncing}
+						title="Downloads the model (~90 MB, once), then embeds everything eligible."
+					>
+						{app.embeddingSyncing ? 'Downloading + embedding…' : 'Download model (~90 MB) & embed'}
+					</button>
+				</div>
+			{/if}
 
 			<div class="settings-row">
 				<span class="settings-label">Index</span>

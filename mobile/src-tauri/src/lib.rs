@@ -36,13 +36,52 @@ fn engine_config(
     let mut config = nostr_engine::Config::load_or_default(Some(&config_path));
     config.database.data_dir = data_root.join("db").to_string_lossy().into_owned();
     config.documents.path = data_root.join("documents").to_string_lossy().into_owned();
-    // No embedding backend is compiled into the mobile build (yet — the
-    // ort-load-dynamic path lands later); keep the flag off so the engine
-    // doesn't warn every boot.
-    config.embedding.enabled = false;
+    // Embeddings on: the index is cheap to open; the heavy part (the
+    // one-time ~90 MB model download) only happens on an explicit,
+    // labeled user action — the UI gates it on the status endpoint's
+    // model_ready flag. Boot-time only (init_embedding runs pre-Arc), so
+    // the host decides rather than the settings UI.
+    config.embedding.enabled = true;
+    // Explicit model cache under app data: the desktop fallback probes
+    // current_exe()'s parent for a shipped models/ folder, which is
+    // meaningless inside an APK.
+    config.embedding.cache_dir = Some(data_root.join("models").to_string_lossy().into_owned());
     config.server.host = "127.0.0.1".into();
     config.server.port = port;
     (config, config_path)
+}
+
+/// Point ort's load-dynamic at the APK's own native-lib dir instead of
+/// trusting dlopen's default search: resolve where the host library itself
+/// was loaded from (via /proc/self/maps) and expect libonnxruntime.so
+/// (packed by the gradle AAR dependency) beside it. Makes a resolution
+/// failure a clear log line instead of a mystery inside ort.
+#[cfg(target_os = "android")]
+fn set_ort_dylib_path() {
+    let Ok(maps) = std::fs::read_to_string("/proc/self/maps") else {
+        return;
+    };
+    for line in maps.lines() {
+        let Some(path) = line.split_whitespace().last() else {
+            continue;
+        };
+        if path.ends_with("/libtendrl_mobile_lib.so") {
+            if let Some(dir) = std::path::Path::new(path).parent() {
+                let ort = dir.join("libonnxruntime.so");
+                if ort.exists() {
+                    tracing::info!("ORT_DYLIB_PATH={}", ort.display());
+                } else {
+                    tracing::warn!(
+                        "libonnxruntime.so not found beside the host lib ({}) — embeds will fail to init",
+                        dir.display()
+                    );
+                }
+                std::env::set_var("ORT_DYLIB_PATH", &ort);
+            }
+            return;
+        }
+    }
+    tracing::warn!("could not locate the host lib in /proc/self/maps; leaving ORT_DYLIB_PATH unset");
 }
 
 fn per_boot_token() -> String {
@@ -84,6 +123,8 @@ pub fn run() {
         .setup(|app| {
             let data_root = app.path().app_data_dir()?;
             std::fs::create_dir_all(&data_root)?;
+            #[cfg(target_os = "android")]
+            set_ort_dylib_path();
             let token = per_boot_token();
 
             let (config, config_path) = engine_config(&data_root, PREFERRED_PORT);
@@ -111,6 +152,10 @@ pub fn run() {
                 }
             };
             tracing::info!("engine bound on {}", server.addr);
+            // Foreground gate: the run-loop callback below flips this on
+            // Suspended/Resumed so the 60s background loop sleeps while
+            // the app is backgrounded.
+            app.manage(BackgroundGate(server.background_paused.clone()));
 
             let url = format!(
                 "http://127.0.0.1:{}/?shell=mobile&auth_token={}",
@@ -125,6 +170,34 @@ pub fn run() {
             .build()?;
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("error while running tendrl mobile host");
+        .build(tauri::generate_context!())
+        .expect("error while building tendrl mobile host")
+        .run(|app, event| {
+            // Mobile lifecycle → background-loop gate. Desktop-dev builds of
+            // the host never see these variants (cfg(mobile)).
+            #[cfg(target_os = "android")]
+            if let tauri::RunEvent::WindowEvent { event, .. } = &event {
+                let paused = match event {
+                    tauri::WindowEvent::Suspended => Some(true),
+                    tauri::WindowEvent::Resumed => Some(false),
+                    _ => None,
+                };
+                if let Some(paused) = paused {
+                    if let Some(gate) = app.try_state::<BackgroundGate>() {
+                        gate.0
+                            .store(paused, std::sync::atomic::Ordering::Relaxed);
+                        tracing::info!(
+                            "background loop {}",
+                            if paused { "paused (app suspended)" } else { "resumed" }
+                        );
+                    }
+                }
+            }
+            #[cfg(not(target_os = "android"))]
+            let _ = (app, event);
+        });
 }
+
+/// The engine's background-loop pause switch, managed as Tauri state so the
+/// run-loop lifecycle callback can reach it.
+struct BackgroundGate(std::sync::Arc<std::sync::atomic::AtomicBool>);

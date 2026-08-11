@@ -2565,6 +2565,25 @@ function _createAppState() {
 			return;
 		}
 
+		// A semantic clause makes the engine load — and on first use
+		// DOWNLOAD (~90 MB, one-time) — the embedding model. That must
+		// never happen as a search side effect: without the model on disk
+		// the search would just hang for the whole download, possibly on
+		// metered data. The explicit download lives in Settings →
+		// Embeddings; until then, semantic search declines with directions.
+		if (
+			/(^|\s)~:/.test(query) &&
+			embeddingStatus?.enabled &&
+			embeddingStatus.model_ready === false
+		) {
+			pushToast(
+				'Semantic search needs the embedding model (~90 MB, one-time download) — get it in Settings → Embeddings.',
+				'info',
+				7000
+			);
+			return;
+		}
+
 		// Push synchronously, before any await. Two back-to-back searches
 		// must preserve user-perceived order in the history list.
 		pushHistoryEntry({

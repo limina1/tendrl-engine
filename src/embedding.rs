@@ -334,6 +334,47 @@ impl EmbeddingIndex {
         })
     }
 
+    /// Whether the ONNX model is usable WITHOUT a network download: already
+    /// loaded in memory, or its files present in the resolved cache. Cheap
+    /// disk probe, never loads the model. `health_check` says nothing about
+    /// download state — this is what lets the UI gate the one-time ~90 MB
+    /// model download behind an explicit user action instead of a silent
+    /// hang on the first embed/`~:` search.
+    pub fn model_ready(&self) -> bool {
+        if self.backend.get().is_some() {
+            return true;
+        }
+        let cache = self
+            .cache_dir
+            .clone()
+            // fastembed's own default cache when none is configured.
+            .unwrap_or_else(|| PathBuf::from(".fastembed_cache"));
+        // hf-hub cache layout: <cache>/models--{org}--{name}/**/model.onnx.
+        // Require an actual .onnx file so a partially-downloaded repo dir
+        // doesn't count as ready.
+        let repo = cache.join(format!("models--{}", self.model_code.replace('/', "--")));
+        fn has_onnx(dir: &Path, depth: u8) -> bool {
+            if depth == 0 {
+                return false;
+            }
+            let Ok(read_dir) = std::fs::read_dir(dir) else {
+                return false;
+            };
+            for entry in read_dir.flatten() {
+                let p = entry.path();
+                if p.is_dir() {
+                    if has_onnx(&p, depth - 1) {
+                        return true;
+                    }
+                } else if p.extension().is_some_and(|e| e == "onnx") {
+                    return true;
+                }
+            }
+            false
+        }
+        has_onnx(&repo, 6)
+    }
+
     /// Clear the index (for reindex)
     pub fn clear(&mut self) -> Result<()> {
         let opts = IndexOptions {
@@ -513,6 +554,10 @@ impl EmbeddingIndex {
     }
 
     pub async fn health_check(&self) -> Result<EmbeddingHealth> {
+        match self.never {}
+    }
+
+    pub fn model_ready(&self) -> bool {
         match self.never {}
     }
 

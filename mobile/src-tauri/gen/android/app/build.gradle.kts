@@ -58,6 +58,11 @@ rust {
 }
 
 dependencies {
+    // ONNX Runtime for on-device embeddings: ort (Rust) is built with
+    // load-dynamic and dlopens the libonnxruntime.so this AAR packs into
+    // the APK. The version MUST match ort-sys's ONNXRUNTIME_VERSION pin
+    // (2.0.0-rc.9 -> 1.20.0) — never float it.
+    implementation("com.microsoft.onnxruntime:onnxruntime-android:1.20.0")
     implementation("androidx.webkit:webkit:1.14.0")
     implementation("androidx.appcompat:appcompat:1.7.1")
     implementation("androidx.activity:activity-ktx:1.10.1")

@@ -44,6 +44,12 @@ pub struct RunningServer {
     pub addr: SocketAddr,
     /// The serve task; await it to run until shutdown.
     pub handle: tokio::task::JoinHandle<std::io::Result<()>>,
+    /// Pause switch for the 60s background loop (section fetch + embed
+    /// sync). Mobile hosts flip it on Suspended/Resumed so a backgrounded
+    /// app doesn't keep waking the CPU; ticks resume where they left off.
+    /// Inert when embeddings are disabled (the loop doesn't exist) and on
+    /// desktop (nothing flips it).
+    pub background_paused: Arc<std::sync::atomic::AtomicBool>,
 }
 
 /// Restore a persisted assistant identity from the OS keyring into `session`.
@@ -610,8 +616,10 @@ pub async fn start(opts: ServeOptions) -> anyhow::Result<RunningServer> {
     };
 
     // Background sync — fetch missing sections and embed new events
+    let background_paused = Arc::new(std::sync::atomic::AtomicBool::new(false));
     if config.embedding.enabled {
         let state = state.clone();
+        let paused = background_paused.clone();
         tokio::spawn(async move {
             // Let startup settle before the first background pass. The ONNX
             // model loads in-process on first embed (no sidecar to wait for).
@@ -619,6 +627,12 @@ pub async fn start(opts: ServeOptions) -> anyhow::Result<RunningServer> {
             let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
             loop {
                 interval.tick().await;
+
+                // Foreground gate: skip the whole pass while the host says
+                // we're backgrounded (mobile). Cheap check per tick.
+                if paused.load(std::sync::atomic::Ordering::Relaxed) {
+                    continue;
+                }
 
                 if state.is_auto() {
                     match state.fetch_missing_sections().await {
@@ -665,7 +679,11 @@ pub async fn start(opts: ServeOptions) -> anyhow::Result<RunningServer> {
 
     let handle = tokio::spawn(async move { axum::serve(listener, app).await });
 
-    Ok(RunningServer { addr, handle })
+    Ok(RunningServer {
+        addr,
+        handle,
+        background_paused,
+    })
 }
 
 #[cfg(test)]

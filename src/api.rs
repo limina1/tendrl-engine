@@ -6260,6 +6260,7 @@ pub async fn embed_status_handler(
                 "missing_sections": 0,
                 "embedding_available": false,
                 "model": null,
+                "model_ready": false,
                 "embed_kinds": engine.embed_kinds(),
                 "available_kinds": crate::embedding::DEFAULT_EMBED_KINDS.to_vec(),
                 "auto_embed": engine.auto_embed(),
@@ -6324,6 +6325,10 @@ pub async fn embed_status_handler(
         "missing_sections": missing_sections,
         "embedding_available": embedding_available,
         "model": model,
+        // Distinct from `embedding_available`: whether an embed can run
+        // WITHOUT first downloading the model (~90 MB). Gates the UI's
+        // download notice.
+        "model_ready": index.model_ready(),
         "embed_kinds": embed_kinds,
         "available_kinds": available_kinds,
         "auto_embed": engine.auto_embed(),
