@@ -76,14 +76,20 @@ if [[ ! -f "$CONFIG" ]]; then
     exit 1
 fi
 
+# Compile the engine up front, before anything is launched. `cargo run` alone
+# compiles in the background after the frontend is already up, so the SPA sits
+# on a dead :3030 spewing proxy errors until the build lands.
+echo "Building backend..."
+cargo build
+
 # Reclaim our ports before starting so a leftover process can't block the bind
 # (and trigger the set -e / trap cascade that kills everything).
 free_port 3030
 if [[ "$DEV" == true ]]; then free_port 5173; else free_port 5174; fi
 
-# 1. Build and start backend. Embeddings (when enabled in config) run
-# in-process via ONNX — the model loads lazily on first use, no separate
-# service to start or wait for.
+# 1. Start backend (compiled above, so this binds immediately). Embeddings
+# (when enabled in config) run in-process via ONNX — the model loads lazily on
+# first use, no separate service to start or wait for.
 # --lan: bind everything to 0.0.0.0 and figure out the address to show the
 # user. Best-effort IP detection — the bind works regardless.
 HOST_ARGS=()
