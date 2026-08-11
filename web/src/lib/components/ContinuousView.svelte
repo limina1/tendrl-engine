@@ -10,6 +10,7 @@
 	import { threadContainsId, type ThreadNode } from '$lib/discussions/thread';
 	import { type Highlight, type HighlightSpan } from '$lib/discussions/highlights';
 	import { coordMatchesAddr, type ResolvedRef, type ParsedToken } from '$lib/nostr/nostrdown';
+	import { registerResolveView } from '$lib/nostr/resolve-status.svelte';
 	import type { ResolutionTracker } from '$lib/nostr/resolution-progress.svelte';
 
 	const app = getAppState();
@@ -100,6 +101,37 @@
 	// True while the background relay pass is in flight — RichContent shows a
 	// spinner (not the search glyph) on unresolved wiki links meanwhile.
 	let nostrdownBackfilling = $state(false);
+	// Modeline "resolve everything" registration; latest batch kept in a
+	// plain var (non-template bookkeeping).
+	let currentItems: api.ResolveNostrdownItem[] = [];
+	const resolveReg = registerResolveView();
+	$effect(() => () => resolveReg.unregister());
+	async function forceResolve(): Promise<number> {
+		if (currentItems.length === 0) return 0;
+		nostrdownBackfilling = true;
+		try {
+			return await api.resolveNostrdownForce(currentItems, (m) => {
+				refsBySection = { ...refsBySection, ...m };
+			});
+		} finally {
+			nostrdownBackfilling = false;
+		}
+	}
+	$effect(() => {
+		const wiki = Object.values(refsBySection)
+			.flat()
+			.filter((r) => r.kind === 'wiki');
+		resolveReg.update({
+			total:
+				wiki.length ||
+				Object.values(tokensBySection)
+					.flat()
+					.filter((t) => t.kind === 'wiki').length,
+			found: wiki.filter((r) => r.found).length,
+			busy: nostrdownBackfilling,
+			refetch: forceResolve
+		});
+	});
 	$effect(() => {
 		const items: {
 			key: string;
@@ -123,8 +155,10 @@
 			refsBySection = {};
 			tokensBySection = {};
 			nostrdownBackfilling = false;
+			currentItems = [];
 			return;
 		}
+		currentItems = items;
 		let cancelled = false;
 		api.parseNostrdown(items.map((i) => ({ key: i.key, content: i.content })))
 			.then((m) => {

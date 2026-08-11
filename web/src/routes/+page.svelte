@@ -31,6 +31,7 @@
 	import { shell, type ShellPref } from '$lib/wm/shell.svelte';
 	import { rendererFor, toursForClass } from '$lib/wm/registry';
 	import { getAppState, type ModalNavEntry } from '$lib/state.svelte';
+	import { resolveStatus } from '$lib/nostr/resolve-status.svelte';
 	import { themeById } from '$lib/themes';
 	import {
 		getAuthorDisplayName,
@@ -1173,6 +1174,27 @@
 		});
 	}
 
+	// Modeline wiki-resolution pill: progress display + the "resolve
+	// everything here" button. In Confirm mode the click raises ONE fetch
+	// intent for every unresolved wiki link on screen; in Auto it forces a
+	// manual re-fetch (e.g. after changing relays).
+	let ndResolvingAll = $state(false);
+	async function resolveAllVisible() {
+		if (ndResolvingAll) return;
+		ndResolvingAll = true;
+		try {
+			const n = await resolveStatus.refetchAll();
+			app.pushToast(
+				n > 0
+					? `Fetched ${n} wiki link${n === 1 ? '' : 's'} from relays`
+					: 'No new wiki links found on the relays',
+				n > 0 ? 'success' : 'info'
+			);
+		} finally {
+			ndResolvingAll = false;
+		}
+	}
+
 	function openRelays() {
 		store.openBuffer({
 			className: 'work',
@@ -1366,6 +1388,27 @@
 				relays
 			</button>
 			<span class="ml__spacer"></span>
+			{#if resolveStatus.total > 0}
+				{@const busy = resolveStatus.busy || ndResolvingAll}
+				<button
+					class="pill pill--btn pill--ndres"
+					class:pill--ndres-busy={busy}
+					onclick={resolveAllVisible}
+					title={busy
+						? `Resolving wiki links… ${resolveStatus.found}/${resolveStatus.total}`
+						: resolveStatus.found < resolveStatus.total
+							? `${resolveStatus.total - resolveStatus.found} wiki links unresolved — click to fetch them all from relays${app.networkStatus?.mode === 'confirm' ? ' (one confirm)' : ''}`
+							: 'All wiki links resolved — click to re-fetch from relays'}
+				>
+					<span class="ndres-bar" aria-hidden="true">
+						<span
+							class="ndres-bar__fill"
+							style="width:{Math.round((resolveStatus.found / Math.max(1, resolveStatus.total)) * 100)}%"
+						></span>
+					</span>
+					{resolveStatus.found}/{resolveStatus.total} wiki
+				</button>
+			{/if}
 			{#if focusedBuffer && store.modelineStatus(focusedBuffer.id)}
 				<span class="ml__seg ml__status">{store.modelineStatus(focusedBuffer.id)}</span>
 			{/if}
@@ -2465,6 +2508,41 @@
 		text-overflow: ellipsis;
 	}
 	.ml__seg--prefix { color: var(--id-yours); }
+	/* Wiki-resolution pill: progress bar + count, doubling as the "resolve
+	   everything here" button. The unresolved remainder of the track uses
+	   --nd-unresolved — themes may override it; falls back to the forked
+	   identity hue so it always differs from the resolved accent fill. */
+	.pill--ndres {
+		display: inline-flex;
+		align-items: center;
+		gap: 6px;
+		font-variant-numeric: tabular-nums;
+	}
+	.ndres-bar {
+		width: 36px;
+		height: 4px;
+		border-radius: 2px;
+		background: color-mix(in srgb, var(--nd-unresolved, var(--id-forked)) 45%, transparent);
+		overflow: hidden;
+	}
+	.ndres-bar__fill {
+		display: block;
+		height: 100%;
+		border-radius: 2px;
+		background: var(--accent, var(--id-yours));
+		transition: width 240ms ease;
+	}
+	.pill--ndres-busy .ndres-bar__fill {
+		animation: ndres-pulse 1.1s ease-in-out infinite;
+	}
+	@keyframes ndres-pulse {
+		0%,
+		100% { opacity: 1; }
+		50% { opacity: 0.45; }
+	}
+	@media (prefers-reduced-motion: reduce) {
+		.pill--ndres-busy .ndres-bar__fill { animation: none; }
+	}
 	/* Right-justified loading indicator — sits after .ml__spacer (flex:1). */
 	.ml__status {
 		color: var(--base6);

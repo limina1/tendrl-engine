@@ -333,12 +333,19 @@ export interface ResolveNostrdownItem {
 
 export async function resolveNostrdown(
 	items: ResolveNostrdownItem[],
-	policy?: 'local_only' | 'local_first'
+	policy?: 'local_only' | 'local_first',
+	modeConfirm = false
 ): Promise<Record<string, ResolvedRef[]>> {
 	if (items.length === 0) return {};
+	const body: Record<string, unknown> = { items };
+	if (policy) body.policy = policy;
+	// User-initiated fetch: the engine gates the relay lookup through the
+	// Confirm-mode intent flow (one modal for the whole batch) instead of
+	// silently downgrading to local-only.
+	if (modeConfirm) body.mode_confirm = true;
 	const resp = await fetchJson<{ refs: Record<string, ResolvedRef[]> }>(
 		'/api/v1/nostrdown/resolve',
-		{ method: 'POST', body: JSON.stringify(policy ? { items, policy } : { items }) }
+		{ method: 'POST', body: JSON.stringify(body) }
 	);
 	return resp.refs;
 }
@@ -353,6 +360,9 @@ const ND_CACHE_MAX = 200;
 function ndCacheKey(i: ResolveNostrdownItem): string | null {
 	if (i.siblings?.length) return null;
 	return `${i.publication ?? ''}|${i.author ?? ''}|${i.coord ?? ''}|${i.content}`;
+}
+function ndCountFound(m: Record<string, ResolvedRef[]>): number {
+	return Object.values(m).reduce((n, refs) => n + refs.filter((r) => r.found).length, 0);
 }
 function ndCacheStore(key: string | null, refs: ResolvedRef[], backfilled: boolean) {
 	if (!key) return;
@@ -383,8 +393,7 @@ export async function resolveNostrdownProgressive(
 	opts?: { fetch?: boolean; onFetched?: (newlyFound: number) => void }
 ): Promise<void> {
 	if (items.length === 0) return;
-	const countFound = (m: Record<string, ResolvedRef[]>) =>
-		Object.values(m).reduce((n, refs) => n + refs.filter((r) => r.found).length, 0);
+	const countFound = ndCountFound;
 
 	// Pass 0: synchronous repaint from cache; only cache misses hit the engine.
 	const merged: Record<string, ResolvedRef[]> = {};
@@ -431,6 +440,34 @@ export async function resolveNostrdownProgressive(
 	} catch {
 		// Keep the local pass's paint — the relay backfill is best-effort.
 	}
+}
+
+/**
+ * User-initiated "resolve everything here" — the modeline button. Runs the
+ * relay lookup regardless of the session backfill cache, routed through the
+ * Confirm-mode intent flow (ONE modal approval for the whole batch; opens
+ * immediately in Auto). Updates the cache, repaints via `apply`, and resolves
+ * to the number of refs that flipped to found.
+ */
+export async function resolveNostrdownForce(
+	items: ResolveNostrdownItem[],
+	apply: (refs: Record<string, ResolvedRef[]>) => void
+): Promise<number> {
+	if (items.length === 0) return 0;
+	const before: Record<string, ResolvedRef[]> = {};
+	for (const i of items) {
+		const key = ndCacheKey(i);
+		const hit = key ? ndResolveCache.get(key) : undefined;
+		if (hit) before[i.key] = hit.refs;
+	}
+	const fetched = await resolveNostrdown(items, 'local_first', true);
+	const merged: Record<string, ResolvedRef[]> = {};
+	for (const i of items) {
+		merged[i.key] = fetched[i.key] ?? before[i.key] ?? [];
+		ndCacheStore(ndCacheKey(i), merged[i.key], true);
+	}
+	apply(merged);
+	return Math.max(0, ndCountFound(merged) - ndCountFound(before));
 }
 
 /**

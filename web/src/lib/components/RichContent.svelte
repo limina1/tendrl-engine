@@ -233,15 +233,18 @@
 	}
 	/* An unresolved WIKI link is still a live link — click searches the topic
 	   (and the background relay pass may yet flip it to found) — so it must
-	   read as one: accent-tinted with a dashed underline, not muted prose. */
+	   read as one, in the shared "not yet resolved" hue (--nd-unresolved,
+	   theme-overridable; falls back to the forked identity color) so it is
+	   color-distinct from the resolved accent AND matches the modeline
+	   resolution bar's unresolved track. */
 	.nd-ref--wiki.nd-unresolved {
-		color: color-mix(in srgb, var(--accent, var(--id-yours)) 75%, var(--fg));
+		color: color-mix(in srgb, var(--nd-unresolved, var(--id-forked)) 80%, var(--fg));
 		background: none;
-		border-bottom: 1px dashed color-mix(in srgb, var(--accent, var(--id-yours)) 55%, transparent);
+		border-bottom: 1px dashed color-mix(in srgb, var(--nd-unresolved, var(--id-forked)) 55%, transparent);
 		cursor: pointer;
 	}
 	.nd-ref--wiki.nd-unresolved:hover {
-		background: color-mix(in srgb, var(--accent, var(--id-yours)) 12%, transparent);
+		background: color-mix(in srgb, var(--nd-unresolved, var(--id-forked)) 12%, transparent);
 		text-decoration: none;
 	}
 	/* Hover affordance: while the relay backfill is in flight a spinner says

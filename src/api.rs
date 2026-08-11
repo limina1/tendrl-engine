@@ -814,6 +814,12 @@ pub struct ResolveNostrdownRequest {
     /// Fetch policy (optional, defaults to local_first).
     #[serde(default)]
     pub policy: Option<String>,
+    /// Marks the request user-initiated ("resolve everything here"): the
+    /// relay lookup for unresolved wiki topics goes through the Confirm-mode
+    /// intent/approval flow (ONE intent for the whole batch) instead of the
+    /// silent local-only downgrade. In Auto mode the gate opens immediately.
+    #[serde(default)]
+    pub mode_confirm: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -838,6 +844,21 @@ pub async fn resolve_nostrdown_handler(
         Some(p) => p.parse()?,
         None => FetchPolicy::LocalFirst,
     };
+    // User-initiated "resolve everything": one fetch operation gates the whole
+    // batch — in Confirm mode this blocks for a single modal approval; in Auto
+    // it opens immediately. Declined → the resolve proceeds local-only.
+    let (policy, op, mode_confirm) = begin_single_fetch_gate(
+        &engine,
+        req.mode_confirm,
+        policy,
+        "Resolve wiki links…".to_string(),
+        vec![
+            "Look up unresolved [[wikilink]] / {{wiki:}} topics on the relays".to_string(),
+            "Ingest matches; links flip to resolved".to_string(),
+        ],
+    )
+    .await;
+    let chosen: Option<Vec<String>> = op.as_ref().map(|o| o.relays().to_vec());
     let pub_engine = PublicationEngine::new(&engine);
     let mut refs = std::collections::HashMap::new();
     for item in req.items {
@@ -861,15 +882,25 @@ pub async fn resolve_nostrdown_handler(
             }
         }
         let resolved = pub_engine
-            .resolve_refs(
+            .resolve_refs_with_options(
                 &item.content,
                 publication.as_deref(),
                 item.author.as_deref(),
                 &item.siblings,
                 policy,
+                chosen.as_deref(),
+                mode_confirm,
             )
             .await;
         refs.insert(item.key, resolved);
+    }
+    if let Some(op) = op {
+        op.complete(
+            refs.values()
+                .flatten()
+                .filter(|r| r.found && matches!(r.kind, crate::nostrdown::RefKind::Wiki))
+                .count(),
+        );
     }
     Ok(Json(ResolveNostrdownResponse { refs }))
 }

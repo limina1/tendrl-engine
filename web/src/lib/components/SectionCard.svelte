@@ -5,6 +5,7 @@
 	import type { ResolvedRef, ParsedToken } from '$lib/nostr/nostrdown';
 	import type { ResolutionTracker } from '$lib/nostr/resolution-progress.svelte';
 	import { getAppState } from '$lib/state.svelte';
+	import { registerResolveView } from '$lib/nostr/resolve-status.svelte';
 	import RichContent from './RichContent.svelte';
 
 	const app = getAppState();
@@ -104,12 +105,38 @@
 	// True while the background relay pass is in flight — RichContent shows a
 	// spinner (not the search glyph) on unresolved wiki links meanwhile.
 	let nostrdownBackfilling = $state(false);
+	// Modeline "resolve everything" registration (skipped for preview cards —
+	// they don't resolve at all). Plain var for the latest items on purpose.
+	let currentItems: api.ResolveNostrdownItem[] = [];
+	const resolveReg = registerResolveView();
+	$effect(() => () => resolveReg.unregister());
+	async function forceResolve(): Promise<number> {
+		if (currentItems.length === 0) return 0;
+		nostrdownBackfilling = true;
+		try {
+			return await api.resolveNostrdownForce(currentItems, (m) => {
+				nostrdownRefs = m['section'] ?? nostrdownRefs;
+			});
+		} finally {
+			nostrdownBackfilling = false;
+		}
+	}
+	$effect(() => {
+		const wiki = nostrdownRefs.filter((r) => r.kind === 'wiki');
+		resolveReg.update({
+			total: wiki.length || nostrdownTokens.filter((t) => t.kind === 'wiki').length,
+			found: wiki.filter((r) => r.found).length,
+			busy: nostrdownBackfilling,
+			refetch: forceResolve
+		});
+	});
 	$effect(() => {
 		const text = displayContent;
 		if (!text || preview || !(text.includes('{{') || text.includes('[['))) {
 			nostrdownRefs = [];
 			nostrdownTokens = [];
 			nostrdownBackfilling = false;
+			currentItems = [];
 			return;
 		}
 		let cancelled = false;
@@ -122,16 +149,17 @@
 			});
 		const doFetch = app.networkStatus?.mode === 'auto';
 		nostrdownBackfilling = doFetch;
+		currentItems = [
+			{
+				key: 'section',
+				content: text,
+				publication: publicationAtag,
+				author: section.addr?.pubkey,
+				siblings
+			}
+		];
 		api.resolveNostrdownProgressive(
-			[
-				{
-					key: 'section',
-					content: text,
-					publication: publicationAtag,
-					author: section.addr?.pubkey,
-					siblings
-				}
-			],
+			currentItems,
 			(m) => {
 				if (!cancelled) nostrdownRefs = m['section'] ?? [];
 			},

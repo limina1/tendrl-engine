@@ -2097,6 +2097,25 @@ impl<'a> PublicationEngine<'a> {
         draft_siblings: &[DraftSibling],
         policy: FetchPolicy,
     ) -> Vec<crate::nostrdown::ResolvedRef> {
+        self.resolve_refs_with_options(content, publication_atag, author, draft_siblings, policy, None, false)
+            .await
+    }
+
+    /// [`Self::resolve_refs`] with the user-initiated fetch context: `relays`
+    /// (a Confirm-modal-approved override set) and `mode_confirm` (the caller
+    /// opened a fetch operation, so the relay lookup bypasses the offline
+    /// downgrade) are threaded into the batched wiki-topic lookup.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn resolve_refs_with_options(
+        &self,
+        content: &str,
+        publication_atag: Option<&str>,
+        author: Option<&str>,
+        draft_siblings: &[DraftSibling],
+        policy: FetchPolicy,
+        relays: Option<&[String]>,
+        mode_confirm: bool,
+    ) -> Vec<crate::nostrdown::ResolvedRef> {
         use crate::nostrdown::{self, RefKind};
 
         let refs = nostrdown::parse(content);
@@ -2331,7 +2350,9 @@ impl<'a> PublicationEngine<'a> {
                 t.dedup();
                 t
             };
-            let found = self.find_wiki_events(&topics, author, policy).await;
+            let found = self
+                .find_wiki_events(&topics, author, policy, relays, mode_confirm)
+                .await;
             for (idx, topic, display_given) in deferred_wiki {
                 if let Some(ev) = found.get(&topic) {
                     let resolved = &mut out[idx];
@@ -2538,6 +2559,8 @@ impl<'a> PublicationEngine<'a> {
         topics: &[String],
         author: Option<&str>,
         policy: FetchPolicy,
+        relays: Option<&[String]>,
+        mode_confirm: bool,
     ) -> std::collections::HashMap<String, Value> {
         use std::collections::hash_map::Entry;
         let score = |e: &Value| -> (u8, u8, i64) {
@@ -2560,7 +2583,11 @@ impl<'a> PublicationEngine<'a> {
                 serde_json::json!({ "kinds": [30818], "#d": chunk, "limit": 500 }),
                 serde_json::json!({ "kinds": [30040, 30041], "#T": chunk, "limit": 500 }),
             ];
-            let events = match self.engine.get_events(filters, policy, None).await {
+            let events = match self
+                .engine
+                .get_events_with_options(filters, policy, relays, mode_confirm)
+                .await
+            {
                 Ok(r) => r.events,
                 Err(_) => continue,
             };

@@ -20,6 +20,7 @@
 	import RichContent from '$lib/components/RichContent.svelte';
 	import type { ResolvedRef, ParsedToken } from '$lib/nostr/nostrdown';
 	import { shouldNetworkFetch } from '$lib/nostr/fetch-dedupe';
+	import { registerResolveView } from '$lib/nostr/resolve-status.svelte';
 
 	// A slim viewer for single addressable documents — NIP-23 long-form
 	// articles (kind 30023) and NKBIP-02 wiki pages (kind 30818). The
@@ -113,6 +114,31 @@
 	// True while the background relay pass is in flight — RichContent shows a
 	// spinner (not the search glyph) on unresolved wiki links meanwhile.
 	let docBackfilling = $state(false);
+	// Non-template bookkeeping for the modeline "resolve everything" button:
+	// latest resolve items (plain var, not state) + the modeline registration.
+	let currentItems: api.ResolveNostrdownItem[] = [];
+	const resolveReg = registerResolveView();
+	$effect(() => () => resolveReg.unregister());
+	async function forceResolve(): Promise<number> {
+		if (currentItems.length === 0) return 0;
+		docBackfilling = true;
+		try {
+			return await api.resolveNostrdownForce(currentItems, (m) => {
+				docRefs = m['doc'] ?? docRefs;
+			});
+		} finally {
+			docBackfilling = false;
+		}
+	}
+	$effect(() => {
+		const wiki = docRefs.filter((r) => r.kind === 'wiki');
+		resolveReg.update({
+			total: wiki.length || docTokens.filter((t) => t.kind === 'wiki').length,
+			found: wiki.filter((r) => r.found).length,
+			busy: docBackfilling,
+			refetch: forceResolve
+		});
+	});
 	$effect(() => {
 		const text = body;
 		const coord = addrStr;
@@ -121,6 +147,7 @@
 			docRefs = [];
 			docTokens = [];
 			docBackfilling = false;
+			currentItems = [];
 			return;
 		}
 		let cancelled = false;
@@ -133,8 +160,11 @@
 			});
 		const doFetch = app.networkStatus?.mode === 'auto';
 		docBackfilling = doFetch;
+		currentItems = [
+			{ key: 'doc', content: text, author: author || undefined, coord: coord ?? undefined }
+		];
 		api.resolveNostrdownProgressive(
-			[{ key: 'doc', content: text, author: author || undefined, coord: coord ?? undefined }],
+			currentItems,
 			(m) => {
 				if (!cancelled) docRefs = m['doc'] ?? [];
 			},
