@@ -20,6 +20,7 @@
 	import { discovery, rearmDiscovery, rearmFeatureTours, setWalkthroughEnabled } from '$lib/wm/discovery.svelte';
 	import * as api from '$lib/api';
 	import { textScale, setTextScale, TEXT_SCALE_PRESETS } from '$lib/theme/text-scale.svelte';
+	import { shell, type ShellPref } from '../shell.svelte';
 	import type { Buffer } from '../types';
 	import { commands, SCOPE_META, SCOPE_ORDER, BASE_KEYS } from '../commands';
 	import { listLeaderBindings } from '../leader';
@@ -37,6 +38,14 @@
 	import ThemePicker from '$lib/components/ThemePicker.svelte';
 
 	let { buffer: _buffer }: { buffer: Buffer } = $props();
+
+	// Appearance → Shell: force desktop/mobile rendering, or follow the
+	// viewport. Same pref the tendrl-cycle-shell command steps through.
+	const SHELL_PREFS: { id: ShellPref; label: string }[] = [
+		{ id: 'auto', label: 'Auto' },
+		{ id: 'desktop', label: 'Desktop' },
+		{ id: 'mobile', label: 'Mobile' }
+	];
 
 	const app = getAppState();
 
@@ -556,6 +565,33 @@
 		<p class="settings-hint">
 			Scales the whole interface. Applies instantly and is saved on this device —
 			it isn't part of the engine config and doesn't sync across machines.
+		</p>
+
+		<div class="settings-row">
+			<span
+				class="settings-label"
+				title="Desktop = window-manager shell (class slots, splits, leader key). Mobile = bottom-bar shell (class panels, work rail). Auto follows the viewport width."
+			>Shell</span>
+			<div class="radio-group">
+				{#each SHELL_PREFS as p (p.id)}
+					<label class="radio">
+						<input
+							type="radio"
+							name="shell-pref"
+							value={p.id}
+							checked={shell.pref === p.id}
+							onchange={() => shell.setPref(p.id)}
+						/>
+						<span>{p.label}</span>
+					</label>
+				{/each}
+			</div>
+		</div>
+		<p class="settings-hint">
+			Forces the desktop WM or the mobile bottom-bar shell regardless of screen
+			size; Auto follows the viewport (now rendering: {shell.mode}). Applies
+			instantly, saved on this device. Also steppable via the
+			<code>tendrl-cycle-shell</code> command.
 		</p>
 		</div>
 	</details>
