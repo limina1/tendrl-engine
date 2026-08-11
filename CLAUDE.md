@@ -15,7 +15,10 @@ scripts/build-portable.sh           # release artifact: manylinux glibc-2.28 flo
 scripts/build-portable.sh --bump patch   # bump (major|minor|patch|X.Y.Z), regen CHANGELOG, then build — same flag on build-bundle.sh
 scripts/bump-version.sh minor            # bump the version only (also syncs Cargo.lock); prints current version with no args
 scripts/release-notes.sh                 # prepend a CHANGELOG.md section: commits since the last v* tag (--print to preview)
-# then: review the diff, commit, and  git tag v<version>
+# then: review the diff, commit, and publish:
+scripts/publish-release.sh               # tag v<version> if needed, push the tag, create the GitHub release
+                                         # (CHANGELOG section = notes, portable tarball = asset; --dry-run to preview,
+                                         #  --no-asset for notes-only, `publish-release.sh X.Y.Z --no-asset` to backfill an old tag)
 
 # Run
 cargo run -- -c config.toml         # run engine with config

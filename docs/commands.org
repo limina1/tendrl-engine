@@ -1444,3 +1444,38 @@ to auto first:
 =curl -X POST localhost:3131/api/v1/network/mode -d '{"mode":"auto"}'=.
 If the phone can't connect at all, it's the desktop firewall — allow
 the port.
+
+* Release → GitHub (full ship sequence)
+
+Cargo.toml =[package] version= is the single source of the release
+number; the =v<version>= tag is load-bearing (release-notes.sh anchors
+the changelog range on the newest =v*= tag).
+
+#+begin_src bash
+# 1. Land the work on master, then bump + changelog + portable build (docker):
+scripts/build-portable.sh --bump patch        # or minor|major|--version X.Y.Z
+
+# 2. Review CHANGELOG.md + Cargo.toml diff, commit the release state:
+git add Cargo.toml Cargo.lock CHANGELOG.md && git commit -m "v$(scripts/bump-version.sh)"
+
+# 3. Publish to GitHub (tags HEAD if v<version> doesn't exist yet,
+#    pushes the tag, creates the release: CHANGELOG section = notes,
+#    target/portable/release/tendrl-engine-<version>.tar.gz = asset):
+scripts/publish-release.sh --dry-run          # preview first
+scripts/publish-release.sh
+
+# 4. Push the branch too (the tag alone leaves the branch view behind):
+git push origin master
+#+end_src
+
+Variants:
+
+#+begin_src bash
+scripts/publish-release.sh --no-asset         # notes-only release (no tarball)
+scripts/publish-release.sh 0.8.1 --no-asset   # backfill an old, already-tagged version
+gh release upload v0.8.2 <file> --clobber     # replace/add an asset on an existing release
+#+end_src
+
+Rebuilding the same version: =scripts/build-portable.sh= with no flags
+(the changelog script refuses to stack a duplicate section, and
+publish-release.sh refuses if the GitHub release already exists).
