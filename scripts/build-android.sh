@@ -45,8 +45,12 @@ if [[ "${1:-}" == "--init-signing" ]]; then
     mkdir -p "$(dirname "$KEYSTORE")"
     password=$(head -c 32 /dev/urandom | base64 | tr -d '/+=' | head -c 24)
     echo "==> Generating release keystore at ${KEYSTORE}…"
+    # -storetype JKS explicitly: JDK 9+ keytool defaults to PKCS12, which
+    # gradle/apksigner accept but zapstore's pure-Go publish flow does not —
+    # its keystore parser is routed by extension and requires the real JKS
+    # container (0xFEEDFEED magic). JKS keeps every consumer happy.
     "$JAVA_HOME/bin/keytool" -genkeypair -v -keystore "$KEYSTORE" -alias tendrl \
-      -keyalg RSA -keysize 4096 -validity 10950 \
+      -storetype JKS -keyalg RSA -keysize 4096 -validity 10950 \
       -storepass "$password" -keypass "$password" \
       -dname "CN=tendrl, O=limina1"
   fi
