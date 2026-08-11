@@ -215,12 +215,15 @@ fn strip_nostr_prefix(s: &str) -> &str {
 /// Does `s` (after an optional `nostr:` prefix) name a NIP-19 bech32 entity we
 /// keep verbatim rather than slug-normalizing?
 fn is_nostr_entity(s: &str) -> bool {
-    let s = strip_nostr_prefix(s);
+    // Compare as bytes: a byte-index slice of the &str panics when the cut lands
+    // inside a multi-byte char (e.g. `[[L'Abécédaire…]]` — 'é' spans bytes 4..6,
+    // right where the `note1`/`npub1` prefix check cuts).
+    let b = strip_nostr_prefix(s).as_bytes();
     const HRPS: [&str; 5] = ["naddr1", "nevent1", "note1", "nprofile1", "npub1"];
     HRPS.iter().any(|hrp| {
-        s.len() > hrp.len()
-            && s[..hrp.len()].eq_ignore_ascii_case(hrp)
-            && s[hrp.len()..].chars().all(|c| c.is_ascii_alphanumeric())
+        b.len() > hrp.len()
+            && b[..hrp.len()].eq_ignore_ascii_case(hrp.as_bytes())
+            && b[hrp.len()..].iter().all(|c| c.is_ascii_alphanumeric())
     })
 }
 
@@ -357,12 +360,15 @@ fn parse_mention(rest: &str, start: usize, end: usize) -> Option<NostrdownRef> {
     if target_raw.is_empty() {
         return None;
     }
-    // Only a profile entity mentions cleanly to a `p` tag.
+    // Only a profile entity mentions cleanly to a `p` tag. Byte comparison, not
+    // a &str slice — the prefix cut may land inside a multi-byte char (see
+    // `is_nostr_entity`).
     let stripped = strip_nostr_prefix(target_raw);
+    let sb = stripped.as_bytes();
     let is_profile = ["npub1", "nprofile1"].iter().any(|hrp| {
-        stripped.len() > hrp.len()
-            && stripped[..hrp.len()].eq_ignore_ascii_case(hrp)
-            && stripped[hrp.len()..].chars().all(|c| c.is_ascii_alphanumeric())
+        sb.len() > hrp.len()
+            && sb[..hrp.len()].eq_ignore_ascii_case(hrp.as_bytes())
+            && sb[hrp.len()..].iter().all(|c| c.is_ascii_alphanumeric())
     });
     if !is_profile {
         return None;
@@ -826,6 +832,27 @@ mod tests {
                 "{s:?} is markup-native and must not be a wiki ref"
             );
         }
+    }
+
+    #[test]
+    fn multibyte_targets_do_not_panic() {
+        // Regression: the entity-prefix check byte-sliced the target, panicking
+        // when the cut landed inside a multi-byte char ("end byte index 5 is not
+        // a char boundary" on real Wikipedia-derived content). Each of these puts
+        // a non-ASCII char at/near an HRP prefix length boundary.
+        for (s, want) in [
+            ("[[L'Abécédaire de Gilles Deleuze]]", "labécédaire-de-gilles-deleuze"),
+            ("[[Félix Guattari]]", "félix-guattari"),
+            ("[[khâgne]]", "khâgne"),
+            ("[[日本語の哲学]]", "日本語の哲学"),
+        ] {
+            let r = one(s);
+            assert_eq!(r.kind, RefKind::Wiki);
+            assert_eq!(r.target, want, "for {s:?}");
+        }
+        // Same slice in the mention path: a non-entity multi-byte target is
+        // rejected as literal text, not a panic.
+        assert!(parse("{{@Félix|display}}").is_empty());
     }
 
     #[test]
