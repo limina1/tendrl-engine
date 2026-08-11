@@ -1398,3 +1398,36 @@ cargo tauri android build --debug --target aarch64
 adb install -r gen/android/app/build/outputs/apk/universal/debug/app-universal-debug.apk
 adb logcat --pid=$(adb shell pidof -s io.github.limina1.tendrl)
 #+end_src
+
+* Phone-browser demo — SPA mobile shell over LAN (no APK)
+
+Run a second engine from your checkout/worktree and open it from the
+phone's browser on the same Wi-Fi. Two things the normal run command
+misses: bind =0.0.0.0= (the default is loopback — unreachable from the
+phone), and use a scratch =data_dir= (NEVER the live engine's — two
+processes on one nostrdb LMDB corrupts it).
+
+#+begin_src bash
+pnpm -C web build && cargo build     # SPA embeds at compile time
+
+cat > /tmp/phone-demo.toml << 'CFG'
+timeout_ms = 8000
+initial_relays = ["wss://relay.damus.io", "wss://nos.lol"]
+[embedding]
+enabled = false
+[database]
+data_dir = "/tmp/phone-demo-data"
+CFG
+
+./target/debug/tendrl-engine -c /tmp/phone-demo.toml \
+  --host 0.0.0.0 --port 3131
+#+end_src
+
+Then on the phone: =http://<desktop-LAN-ip>:3131/= (=ip -4 addr= on the
+desktop). The ≤768px viewport auto-selects the mobile shell; force it
+either way with =?shell=mobile= (or =?shell=desktop=). Fresh engines
+boot in Confirm mode — approve the first feed sync in the UI, or flip
+to auto first:
+=curl -X POST localhost:3131/api/v1/network/mode -d '{"mode":"auto"}'=.
+If the phone can't connect at all, it's the desktop firewall — allow
+the port.
