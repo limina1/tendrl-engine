@@ -3,8 +3,10 @@
 	import { page } from '$app/state';
 	import type { Buffer, ClassName } from './types';
 	import type { BufferStore } from './buffer-store.svelte';
+	import type { NetworkStatus } from '$lib/types';
 	import { mobileNav } from './mobile-nav.svelte';
 	import BufferRenderer from './BufferRenderer.svelte';
+	import ActivityCenter from './ActivityCenter.svelte';
 
 	// The mobile shell renders the SAME BufferStore as the desktop WM — the
 	// three class slots become full-screen panels behind a bottom bar, and
@@ -27,7 +29,13 @@
 		onToggleNetwork,
 		onOpenRelays,
 		onOpenSettings,
-		onIdentityTap
+		onOpenCompose,
+		onIdentityTap,
+		activity = null,
+		onKillFetch,
+		wiki = null,
+		onResolveWiki,
+		searchRows = []
 	}: {
 		store: BufferStore;
 		onCommands: () => void;
@@ -40,8 +48,22 @@
 		onToggleNetwork?: () => void;
 		onOpenRelays?: () => void;
 		onOpenSettings?: () => void;
+		onOpenCompose?: () => void;
 		onIdentityTap?: () => void;
+		/** Live network-activity summary (the modeline ⇅ pill's data). */
+		activity?: NetworkStatus | null;
+		onKillFetch?: (id?: number) => void;
+		/** Wiki-resolution progress (the modeline n/m pill); null = no wiki
+		 *  links on the current screen, row hidden. */
+		wiki?: { found: number; total: number; busy: boolean } | null;
+		onResolveWiki?: () => void;
+		/** Search history, pre-labelled by +page (the modeline 🔍 pill). */
+		searchRows?: { key: string; kind: string; label: string; meta: string; replay: () => void }[];
 	} = $props();
+
+	// Drawer-local expand state for the activity and history sub-lists.
+	let actOpen = $state(false);
+	let histOpen = $state(false);
 
 	// Bottom-bar order + user-facing labels. Only work and search get a slot
 	// for now ('research' reads as "search" on the bar; the class name stays
@@ -106,15 +128,6 @@
 
 <div class="mshell">
 	<div class="mshell__head">
-		<!-- Global, not work-only: the drawer is the sole route to STATUS
-		     (network mode, relays, identity) — chat and search need it too. -->
-		<button
-			class="mshell__menu-btn {mobileNav.drawerOpen ? 'mshell__menu-btn--on' : ''}"
-			data-tour="mobile-menu"
-			onclick={() => (mobileNav.drawerOpen = !mobileNav.drawerOpen)}
-			title="Work buffers + status"
-			aria-label="Open the buffer/status drawer"
-		>☰</button>
 		<span class="cls cls--{activeClass}">{activeClass === 'research' ? 'search' : activeClass}</span>
 		{#if activeLeaf}
 			<span class="mshell__head-name">{activeLeaf.buffer.label}</span>
@@ -167,6 +180,14 @@
 					>×</button>
 				</div>
 			{/each}
+			<button
+				class="mshell__drawer-add"
+				onclick={() => {
+					mobileNav.drawerOpen = false;
+					onOpenCompose?.();
+				}}
+				title="Open the composer (current draft)"
+			>+ compose</button>
 			<button
 				class="mshell__drawer-add"
 				data-tour="mobile-cmds"
@@ -243,6 +264,64 @@
 						<span class="mshell__status-go" aria-hidden="true">›</span>
 					</button>
 				{/if}
+				{#if wiki}
+					<button
+						class="mshell__status-row"
+						onclick={onResolveWiki}
+						title={wiki.found < wiki.total
+							? `${wiki.total - wiki.found} wiki links unresolved — tap to fetch them all from relays`
+							: 'All wiki links resolved — tap to re-fetch from relays'}
+					>
+						{#if wiki.busy}<span class="dot dot--fetching"></span>{/if}
+						<span class="mshell__status-label">wiki links</span>
+						<span class="pill pill--ghost">{wiki.found}/{wiki.total}</span>
+					</button>
+				{/if}
+				<button
+					class="mshell__status-row"
+					onclick={() => (actOpen = !actOpen)}
+					title="Network activity — what the engine pulled, and why"
+				>
+					<span class="mshell__status-label">⇅ activity</span>
+					{#if (activity?.active_fetches ?? 0) > 0}
+						<span class="pill pill--ghost">{activity?.active_fetches}</span>
+					{/if}
+					<span class="mshell__status-go" aria-hidden="true">{actOpen ? '▾' : '▸'}</span>
+				</button>
+				{#if actOpen}
+					<div class="mshell__act">
+						<ActivityCenter {activity} onKill={onKillFetch} />
+					</div>
+				{/if}
+				{#if searchRows.length > 0}
+					<button
+						class="mshell__status-row"
+						onclick={() => (histOpen = !histOpen)}
+						title="Search history — tap an entry to run it again"
+					>
+						<span class="mshell__status-label">🔍 searches</span>
+						<span class="pill pill--ghost">{searchRows.length}</span>
+						<span class="mshell__status-go" aria-hidden="true">{histOpen ? '▾' : '▸'}</span>
+					</button>
+					{#if histOpen}
+						<div class="mshell__hist">
+							{#each searchRows as row (row.key)}
+								<button
+									class="mshell__hist-row"
+									onclick={() => {
+										mobileNav.drawerOpen = false;
+										row.replay();
+									}}
+									title={row.label}
+								>
+									<span class="mshell__hist-kind">{row.kind}</span>
+									<span class="mshell__hist-label">{row.label}</span>
+									{#if row.meta}<span class="mshell__hist-meta">{row.meta}</span>{/if}
+								</button>
+							{/each}
+						</div>
+					{/if}
+				{/if}
 				{#if engineInfo?.version || engineInfo?.branch}
 					<div
 						class="mshell__status-row mshell__status-row--static"
@@ -260,6 +339,19 @@
 	{/if}
 
 	<nav class="mshell__bar" data-tour="mobile-bar" aria-label="Main panels">
+		<!-- ☰ lives in the bar, thumb-reachable, not the top-left header. Small
+		     fixed slot at the left edge for now; which edge should become a
+		     Settings preference (handedness) later. Global, not work-only: the
+		     drawer is the sole route to STATUS — search needs it too. -->
+		<button
+			class="mshell__bar-item mshell__bar-item--menu {mobileNav.drawerOpen
+				? 'mshell__bar-item--on'
+				: ''}"
+			data-tour="mobile-menu"
+			onclick={() => (mobileNav.drawerOpen = !mobileNav.drawerOpen)}
+			title="Buffers + status"
+			aria-label="Open the buffer/status drawer"
+		>☰</button>
 		{#each bar as b (b.cls)}
 			<button
 				class="mshell__bar-item mshell__bar-item--{b.cls} {activeClass === b.cls
@@ -331,30 +423,6 @@
 		flex: 1;
 		display: flex;
 		min-height: 0;
-	}
-
-	.mshell__menu-btn {
-		border: none;
-		background: none;
-		color: var(--fg-alt);
-		font-size: var(--t-sm);
-		line-height: 1;
-		/* ≥44px touch target — the glyph alone renders ~16×22. Negative
-		   vertical margins let the hit box overlap the head's padding so
-		   the row itself stays slim (the head is chrome, not content). */
-		min-width: 44px;
-		min-height: 44px;
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		padding: 0;
-		margin: -7px 0 -7px calc(-1 * var(--s-2));
-		cursor: pointer;
-		align-self: center;
-	}
-	.mshell__menu-btn--on,
-	.mshell__menu-btn:hover {
-		color: var(--fg);
 	}
 
 	.mshell__scrim {
@@ -460,7 +528,7 @@
 		color: var(--danger);
 	}
 	.mshell__drawer-add {
-		margin: var(--s-2) var(--s-3);
+		margin: var(--s-2) var(--s-3) 0;
 		border: 1px dashed var(--panel-border-strong);
 		border-radius: var(--r-sm);
 		background: none;
@@ -516,6 +584,52 @@
 		font-size: var(--t-sm);
 		line-height: 1;
 	}
+	/* Inline expansions of the activity / search-history rows. */
+	.mshell__act {
+		font-family: var(--font-sans);
+		font-size: var(--t-2xs);
+		border-left: 2px solid var(--panel-border);
+		margin: 0 0 var(--s-1);
+	}
+	.mshell__hist {
+		border-left: 2px solid var(--panel-border);
+		margin: 0 0 var(--s-1);
+	}
+	.mshell__hist-row {
+		width: 100%;
+		display: flex;
+		align-items: center;
+		gap: var(--s-2);
+		border: none;
+		background: none;
+		color: var(--fg);
+		text-align: left;
+		font-family: var(--font-mono);
+		font-size: var(--t-2xs);
+		padding: var(--s-1) var(--s-3);
+		min-height: 40px;
+		cursor: pointer;
+	}
+	.mshell__hist-kind {
+		flex-shrink: 0;
+		border: 1px solid var(--base3);
+		border-radius: var(--r-sm);
+		color: var(--base6);
+		font-size: var(--t-3xs);
+		padding: 0 4px;
+	}
+	.mshell__hist-label {
+		flex: 1;
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+	.mshell__hist-meta {
+		flex-shrink: 0;
+		color: var(--fg-alt);
+		font-size: var(--t-3xs);
+	}
 
 	.mshell__panel {
 		flex: 1;
@@ -558,4 +672,13 @@
 	.mshell__bar-item--on.mshell__bar-item--chat { border-top-color: var(--id-imported); }
 	.mshell__bar-item--on.mshell__bar-item--work { border-top-color: var(--id-yours); }
 	.mshell__bar-item--on.mshell__bar-item--research { border-top-color: var(--id-remote); }
+	/* Small fixed slot — the drawer trigger, not a class panel. */
+	.mshell__bar-item--menu {
+		flex: 0 0 56px;
+		border-right: 1px solid var(--panel-border);
+		font-size: var(--t-sm);
+	}
+	.mshell__bar-item--menu.mshell__bar-item--on {
+		border-top-color: var(--accent);
+	}
 </style>
