@@ -5,6 +5,7 @@
 	import type { BufferStore } from './buffer-store.svelte';
 	import type { NetworkStatus } from '$lib/types';
 	import { mobileNav } from './mobile-nav.svelte';
+	import { shell } from './shell.svelte';
 	import BufferRenderer from './BufferRenderer.svelte';
 	import ActivityCenter from './ActivityCenter.svelte';
 
@@ -152,7 +153,7 @@
 		<!-- svelte-ignore a11y_click_events_have_key_events -->
 		<!-- svelte-ignore a11y_no_static_element_interactions -->
 		<div class="mshell__scrim" onclick={() => (mobileNav.drawerOpen = false)}></div>
-		<nav class="mshell__drawer" aria-label="Open work buffers">
+		<nav class="mshell__drawer mshell__drawer--{shell.menuEdge}" aria-label="Open work buffers">
 			<div class="mshell__drawer-head">
 				<span class="cls cls--work">work</span>
 				<span class="mshell__drawer-title">buffers</span>
@@ -338,13 +339,13 @@
 		</nav>
 	{/if}
 
-	<nav class="mshell__bar" data-tour="mobile-bar" aria-label="Main panels">
-		<!-- ☰ lives in the bar, thumb-reachable, not the top-left header. Small
-		     fixed slot at the left edge for now; which edge should become a
-		     Settings preference (handedness) later. Global, not work-only: the
-		     drawer is the sole route to STATUS — search needs it too. -->
+	<!-- ☰ lives in the bar, thumb-reachable, not the top-left header. Small
+	     fixed slot on the edge picked by Settings → "Menu edge" (right by
+	     default). Global, not work-only: the drawer is the sole route to
+	     STATUS — search needs it too. -->
+	{#snippet menuBtn()}
 		<button
-			class="mshell__bar-item mshell__bar-item--menu {mobileNav.drawerOpen
+			class="mshell__bar-item mshell__bar-item--menu mshell__bar-item--menu-{shell.menuEdge} {mobileNav.drawerOpen
 				? 'mshell__bar-item--on'
 				: ''}"
 			data-tour="mobile-menu"
@@ -352,6 +353,9 @@
 			title="Buffers + status"
 			aria-label="Open the buffer/status drawer"
 		>☰</button>
+	{/snippet}
+	<nav class="mshell__bar" data-tour="mobile-bar" aria-label="Main panels">
+		{#if shell.menuEdge === 'left'}{@render menuBtn()}{/if}
 		{#each bar as b (b.cls)}
 			<button
 				class="mshell__bar-item mshell__bar-item--{b.cls} {activeClass === b.cls
@@ -360,6 +364,7 @@
 				onclick={() => switchClass(b.cls)}
 			>{b.label}</button>
 		{/each}
+		{#if shell.menuEdge === 'right'}{@render menuBtn()}{/if}
 	</nav>
 </div>
 
@@ -431,24 +436,40 @@
 		background: rgba(0, 0, 0, 0.45);
 		z-index: 50;
 	}
+	/* The drawer slides out from the ☰ button's own edge. */
 	.mshell__drawer {
 		position: fixed;
 		top: 0;
 		bottom: 0;
-		left: 0;
 		width: min(78vw, 300px);
 		display: flex;
 		flex-direction: column;
 		background: var(--panel-bg);
-		border-right: 1px solid var(--panel-border-strong);
 		z-index: 51;
 		padding: var(--s-2) 0 calc(var(--s-2) + env(safe-area-inset-bottom));
 		overflow-y: auto;
-		animation: mshell-drawer-in 160ms ease-out;
 	}
-	@keyframes mshell-drawer-in {
+	.mshell__drawer--left {
+		left: 0;
+		border-right: 1px solid var(--panel-border-strong);
+		animation: mshell-drawer-in-left 160ms ease-out;
+	}
+	.mshell__drawer--right {
+		right: 0;
+		border-left: 1px solid var(--panel-border-strong);
+		animation: mshell-drawer-in-right 160ms ease-out;
+	}
+	@keyframes mshell-drawer-in-left {
 		from {
 			transform: translateX(-100%);
+		}
+		to {
+			transform: translateX(0);
+		}
+	}
+	@keyframes mshell-drawer-in-right {
+		from {
+			transform: translateX(100%);
 		}
 		to {
 			transform: translateX(0);
@@ -672,12 +693,14 @@
 	.mshell__bar-item--on.mshell__bar-item--chat { border-top-color: var(--id-imported); }
 	.mshell__bar-item--on.mshell__bar-item--work { border-top-color: var(--id-yours); }
 	.mshell__bar-item--on.mshell__bar-item--research { border-top-color: var(--id-remote); }
-	/* Small fixed slot — the drawer trigger, not a class panel. */
+	/* Small fixed slot — the drawer trigger, not a class panel. The divider
+	   sits on its inner edge, whichever side Settings puts it on. */
 	.mshell__bar-item--menu {
 		flex: 0 0 56px;
-		border-right: 1px solid var(--panel-border);
 		font-size: var(--t-sm);
 	}
+	.mshell__bar-item--menu-left { border-right: 1px solid var(--panel-border); }
+	.mshell__bar-item--menu-right { border-left: 1px solid var(--panel-border); }
 	.mshell__bar-item--menu.mshell__bar-item--on {
 		border-top-color: var(--accent);
 	}
