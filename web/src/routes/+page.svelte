@@ -31,6 +31,7 @@
 	import { shell, type ShellPref } from '$lib/wm/shell.svelte';
 	import { rendererFor, toursForClass } from '$lib/wm/registry';
 	import { getAppState, type ModalNavEntry } from '$lib/state.svelte';
+	import * as api from '$lib/api';
 	import { resolveStatus } from '$lib/nostr/resolve-status.svelte';
 	import { themeById } from '$lib/themes';
 	import {
@@ -359,6 +360,69 @@
 		document.addEventListener('mousedown', onDocMouseDown);
 		return () => document.removeEventListener('mousedown', onDocMouseDown);
 	});
+
+	// ── Network activity center ─────────────────────────────────────────
+	// Modeline pill (lit while the engine pulls from relays) + popover
+	// listing in-flight fetches (killable, each row shows its cause) and
+	// the recent fetch log (expandable reason/query detail). Fed by
+	// polling /network/status: slow tick to light the pill, fast while
+	// the popover is open.
+	let activityOpen = $state(false);
+	let actWrapEl: HTMLElement | null = $state(null);
+	let netAct = $state<import('$lib/types').NetworkStatus | null>(null);
+	let activityExpanded = $state<Record<number, boolean>>({});
+	$effect(() => {
+		if (!activityOpen) return;
+		function onDocMouseDown(e: MouseEvent) {
+			if (!actWrapEl) return;
+			if (e.target instanceof Node && actWrapEl.contains(e.target)) return;
+			activityOpen = false;
+		}
+		document.addEventListener('mousedown', onDocMouseDown);
+		return () => document.removeEventListener('mousedown', onDocMouseDown);
+	});
+	$effect(() => {
+		const fast = activityOpen;
+		let stopped = false;
+		const tick = async () => {
+			try {
+				const s = await api.getNetworkStatus();
+				if (!stopped) netAct = s;
+			} catch {
+				// Engine unreachable — leave the last snapshot.
+			}
+		};
+		void tick();
+		const iv = setInterval(tick, fast ? 1500 : 5000);
+		return () => {
+			stopped = true;
+			clearInterval(iv);
+		};
+	});
+	function shortRelay(url: string): string {
+		return url.replace(/^wss?:\/\//, '').replace(/\/+$/, '');
+	}
+	function actElapsed(startedAt: number): string {
+		const s = Math.max(0, Math.floor(Date.now() / 1000) - startedAt);
+		return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m${s % 60}s`;
+	}
+	async function killFetchRow(id: number) {
+		try {
+			await api.killFetch(id);
+			netAct = await api.getNetworkStatus();
+		} catch (e) {
+			console.warn('fetch-kill failed', e);
+		}
+	}
+	async function killAllFetches() {
+		try {
+			const n = await api.killFetch();
+			app.pushToast(`Killed ${n} fetch${n === 1 ? '' : 'es'}`, 'info');
+			netAct = await api.getNetworkStatus();
+		} catch (e) {
+			console.warn('fetch-kill failed', e);
+		}
+	}
 
 	// Local mirror of state.svelte.ts entryKey — used to test "is this row
 	// the previousEntry" for the depth-1 highlight.
@@ -990,7 +1054,7 @@
 	// history, the W/? affordances — keep their own clicks, so ignore anything
 	// that lands on a button/link/input or inside the history popover wrap.
 	function onModelineClick(e: MouseEvent) {
-		if ((e.target as HTMLElement).closest('button, a, input, .hs-pill-wrap')) return;
+		if ((e.target as HTMLElement).closest('button, a, input, .hs-pill-wrap, .act-pill-wrap')) return;
 		if (leaderOpen) prefixPath = [];
 		else openLeader();
 	}
@@ -1409,6 +1473,77 @@
 					{resolveStatus.found}/{resolveStatus.total} wiki
 				</button>
 			{/if}
+			<span class="act-pill-wrap" bind:this={actWrapEl}>
+				<button
+					class="pill pill--btn pill--act"
+					class:pill--act-live={(netAct?.active_fetches ?? 0) > 0}
+					onclick={() => (activityOpen = !activityOpen)}
+					title={(netAct?.active_fetches ?? 0) > 0
+						? `${netAct?.active_fetches} relay fetch${(netAct?.active_fetches ?? 0) === 1 ? '' : 'es'} in flight — click for details / kill`
+						: 'Network activity — what the engine pulled, and why'}
+					aria-label="Network activity"
+				>
+					<span class="act-ind" aria-hidden="true">⇅</span>{#if (netAct?.active_fetches ?? 0) > 0}&nbsp;{netAct?.active_fetches}{/if}
+				</button>
+				{#if activityOpen}
+					<div class="act-popover" role="dialog" aria-label="Network activity">
+						<div class="act-head">
+							<span>network activity</span>
+							{#if (netAct?.active ?? []).length > 0}
+								<button class="act-killall" onclick={killAllFetches} title="Kill every in-flight fetch">
+									kill all
+								</button>
+							{/if}
+						</div>
+						{#if (netAct?.active ?? []).length > 0}
+							<div class="act-sect">active</div>
+							{#each netAct?.active ?? [] as f (f.id)}
+								<div class="act-row act-row--live">
+									<span class="act-row__reason">{f.reason ?? f.trigger}</span>
+									<span class="act-row__relay">{shortRelay(f.relay)}</span>
+									<span class="act-row__meta">{actElapsed(f.started_at)}</span>
+									<button
+										class="act-row__btn act-row__btn--kill"
+										onclick={() => killFetchRow(f.id)}
+										title="Kill this fetch">×</button
+									>
+								</div>
+							{/each}
+						{/if}
+						<div class="act-sect">recent</div>
+						{#if (netAct?.recent ?? []).length === 0}
+							<div class="act-empty">No relay activity yet</div>
+						{/if}
+						{#each (netAct?.recent ?? []).slice(0, 14) as r (r.id)}
+							<div class="act-row">
+								<span
+									class="act-row__dot"
+									class:act-row__dot--ok={r.success}
+									class:act-row__dot--fail={!r.success}
+									title={r.success ? 'ok' : r.error ?? 'failed'}
+								></span>
+								<span class="act-row__reason">{r.reason ?? r.trigger}</span>
+								<span class="act-row__relay">{shortRelay(r.relay)}</span>
+								<span class="act-row__meta">{r.event_count}ev · {r.duration_ms}ms</span>
+								<button
+									class="act-row__btn"
+									onclick={() => (activityExpanded[r.id] = !activityExpanded[r.id])}
+									title="Show cause & query"
+								>
+									{activityExpanded[r.id] ? '▾' : '▸'}
+								</button>
+							</div>
+							{#if activityExpanded[r.id]}
+								<div class="act-detail">
+									<div><span class="act-detail__k">cause</span>{r.reason ?? `(none — trigger: ${r.trigger})`}</div>
+									<div><span class="act-detail__k">query</span>{r.filter_summary}</div>
+									{#if r.error}<div><span class="act-detail__k">error</span>{r.error}</div>{/if}
+								</div>
+							{/if}
+						{/each}
+					</div>
+				{/if}
+			</span>
 			{#if focusedBuffer && store.modelineStatus(focusedBuffer.id)}
 				<span class="ml__seg ml__status">{store.modelineStatus(focusedBuffer.id)}</span>
 			{/if}
@@ -2542,6 +2677,157 @@
 	}
 	@media (prefers-reduced-motion: reduce) {
 		.pill--ndres-busy .ndres-bar__fill { animation: none; }
+	}
+	/* Network-activity pill + popover. Dim when idle (still clickable for the
+	   recent log); lit + pulsing while relay fetches are in flight. */
+	.act-pill-wrap {
+		position: relative;
+		display: inline-flex;
+	}
+	.pill--act {
+		font-variant-numeric: tabular-nums;
+	}
+	.pill--act .act-ind {
+		opacity: 0.5;
+	}
+	.pill--act-live {
+		color: var(--state-online, var(--green));
+		border-color: color-mix(in srgb, var(--state-online, var(--green)) 45%, var(--panel-border));
+	}
+	.pill--act-live .act-ind {
+		opacity: 1;
+		animation: act-pulse 1.1s ease-in-out infinite;
+	}
+	@keyframes act-pulse {
+		0%,
+		100% { opacity: 1; }
+		50% { opacity: 0.4; }
+	}
+	@media (prefers-reduced-motion: reduce) {
+		.pill--act-live .act-ind { animation: none; }
+	}
+	.act-popover {
+		position: absolute;
+		bottom: calc(100% + 6px);
+		right: 0;
+		z-index: 120;
+		min-width: 360px;
+		max-width: 520px;
+		max-height: 50vh;
+		overflow-y: auto;
+		background: var(--panel-bg);
+		border: 1px solid var(--panel-border);
+		border-radius: var(--r-md);
+		box-shadow: var(--shadow-md);
+		font-family: var(--font-sans);
+		font-size: var(--t-2xs);
+		padding: 6px 0;
+	}
+	.act-head {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		padding: 2px 10px 6px;
+		color: var(--fg-muted);
+		text-transform: lowercase;
+		letter-spacing: 0.04em;
+	}
+	.act-killall {
+		appearance: none;
+		background: none;
+		border: 1px solid color-mix(in srgb, var(--state-error, var(--red)) 45%, var(--panel-border));
+		color: var(--state-error, var(--red));
+		border-radius: var(--r-sm, 3px);
+		font: inherit;
+		padding: 1px 7px;
+		cursor: pointer;
+	}
+	.act-killall:hover {
+		background: color-mix(in srgb, var(--state-error, var(--red)) 12%, transparent);
+	}
+	.act-sect {
+		padding: 4px 10px 2px;
+		color: var(--fg-muted);
+		opacity: 0.8;
+		font-size: 0.9em;
+		text-transform: lowercase;
+	}
+	.act-row {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		padding: 3px 10px;
+		min-width: 0;
+	}
+	.act-row--live .act-row__reason {
+		color: var(--state-online, var(--green));
+	}
+	.act-row__dot {
+		width: 7px;
+		height: 7px;
+		border-radius: 50%;
+		flex-shrink: 0;
+	}
+	.act-row__dot--ok { background: var(--state-online, var(--green)); opacity: 0.7; }
+	.act-row__dot--fail { background: var(--state-error, var(--red)); }
+	.act-row__reason {
+		color: var(--fg);
+		flex-shrink: 0;
+		max-width: 40%;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+	.act-row__relay {
+		color: var(--fg-muted);
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+		flex: 1;
+		min-width: 0;
+	}
+	.act-row__meta {
+		color: var(--fg-muted);
+		font-variant-numeric: tabular-nums;
+		flex-shrink: 0;
+	}
+	.act-row__btn {
+		appearance: none;
+		background: none;
+		border: none;
+		color: var(--fg-muted);
+		font: inherit;
+		padding: 0 3px;
+		cursor: pointer;
+		border-radius: 3px;
+		flex-shrink: 0;
+	}
+	.act-row__btn:hover {
+		background: color-mix(in srgb, var(--fg) 10%, transparent);
+		color: var(--fg);
+	}
+	.act-row__btn--kill {
+		color: var(--state-error, var(--red));
+		font-size: var(--t-sm);
+		line-height: 1;
+	}
+	.act-detail {
+		margin: 0 10px 4px 25px;
+		padding: 4px 8px;
+		border-left: 2px solid var(--panel-border);
+		color: var(--fg-muted);
+		word-break: break-word;
+	}
+	.act-detail__k {
+		display: inline-block;
+		min-width: 44px;
+		color: var(--fg);
+		opacity: 0.7;
+	}
+	.act-empty {
+		padding: 4px 10px 6px;
+		color: var(--fg-muted);
+		font-style: italic;
 	}
 	/* Right-justified loading indicator — sits after .ml__spacer (flex:1). */
 	.ml__status {

@@ -134,6 +134,30 @@ fn request_has_token(req: &axum::extract::Request, token: &str) -> bool {
 }
 
 /// Wrap `app` in the loopback-token guard.
+/// Map an API path to the human fetch reason its handler's relay traffic
+/// should carry in the activity log. Prefix matching, most specific first;
+/// `None` for paths whose handlers don't reach relays (or aren't worth
+/// attributing yet). A handler can still override by nesting its own
+/// `with_fetch_reason` — the innermost scope wins.
+fn fetch_reason_for_path(path: &str) -> Option<&'static str> {
+    const REASONS: &[(&str, &str)] = &[
+        ("/api/v1/nostrdown/resolve", "Resolving references"),
+        ("/api/v1/search", "Search"),
+        ("/api/v1/events/", "Fetching event"),
+        ("/api/v1/addressable/", "Fetching document"),
+        ("/api/v1/publications", "Loading publication"),
+        ("/api/v1/discussions/", "Loading discussions"),
+        ("/api/v1/profile/", "Profile lookup"),
+        ("/api/v1/profiles/fetch", "Profile lookup"),
+        ("/api/v1/highlights/", "Resolving highlights"),
+        ("/api/v1/spell/execute", "Running spell"),
+    ];
+    REASONS
+        .iter()
+        .find(|(prefix, _)| path.starts_with(prefix))
+        .map(|(_, reason)| *reason)
+}
+
 fn apply_loopback_guard(app: Router, token: String) -> Router {
     use axum::response::IntoResponse;
     let token = Arc::new(token);
@@ -454,6 +478,10 @@ pub async fn start(opts: ServeOptions) -> anyhow::Result<RunningServer> {
         .route("/api/v1/network/status", get(api::network_status_handler))
         .route("/api/v1/network/mode", post(api::set_network_mode_handler))
         .route(
+            "/api/v1/network/fetch-kill",
+            post(api::network_fetch_kill_handler),
+        )
+        .route(
             "/api/v1/network/reset-mode-choice",
             post(api::reset_mode_choice_handler),
         )
@@ -604,10 +632,24 @@ pub async fn start(opts: ServeOptions) -> anyhow::Result<RunningServer> {
         .layer(axum::Extension(user_session.clone()))
         .layer(axum::Extension(signing_controller.clone()))
         .layer(axum::extract::DefaultBodyLimit::max(50 * 1024 * 1024)) // 50MB for JSONL import
+        // Fetch-cause attribution: scope a task-local reason over each request
+        // so every relay fetch the handler performs carries WHY it ran (shown
+        // in the activity center). One layer instead of per-handler plumbing.
+        .layer(axum::middleware::from_fn(
+            |req: axum::extract::Request, next: axum::middleware::Next| async move {
+                match fetch_reason_for_path(req.uri().path()) {
+                    Some(reason) => {
+                        crate::network::with_fetch_reason(reason, next.run(req)).await
+                    }
+                    None => next.run(req).await,
+                }
+            },
+        ))
         .layer(cors);
 
     // Loopback auth: added only when a token is configured, so the desktop
     // flow (no token) is byte-identical.
+    // (fetch_reason_for_path lives at module scope below.)
     let app = match loopback_token {
         Some(token) => {
             info!("Loopback token auth enabled for /api");
@@ -636,7 +678,12 @@ pub async fn start(opts: ServeOptions) -> anyhow::Result<RunningServer> {
                 }
 
                 if state.is_auto() {
-                    match state.fetch_missing_sections().await {
+                    match crate::network::with_fetch_reason(
+                        "Background sync (missing sections)",
+                        state.fetch_missing_sections(),
+                    )
+                    .await
+                    {
                         Ok((_, missing, fetched)) => {
                             if fetched > 0 {
                                 info!(

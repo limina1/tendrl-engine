@@ -2281,6 +2281,31 @@ pub async fn network_status_handler(State(engine): State<AppState>) -> Json<Valu
     Json(serde_json::to_value(status).unwrap_or_default())
 }
 
+/// POST /api/v1/network/fetch-kill body — kill one in-flight fetch by id, or
+/// every in-flight fetch when `id` is omitted.
+#[derive(Debug, Default, Deserialize)]
+pub struct FetchKillRequest {
+    #[serde(default)]
+    pub id: Option<u64>,
+}
+
+/// POST /api/v1/network/fetch-kill
+///
+/// Cancel in-flight relay fetches. The cancellation token is selected against
+/// the relay work inside `tracked_fetch_with_options`, so a killed fetch drops
+/// its socket work immediately and logs a `killed` FetchRecord; the owning
+/// request continues with whatever it already has (local results).
+pub async fn network_fetch_kill_handler(
+    State(engine): State<AppState>,
+    Json(req): Json<FetchKillRequest>,
+) -> Json<Value> {
+    let killed = match req.id {
+        Some(id) => engine.network().kill_fetch(id) as usize,
+        None => engine.network().kill_all_fetches(),
+    };
+    Json(json!({ "killed": killed }))
+}
+
 /// POST /api/v1/network/mode — toggle online/offline
 #[derive(Debug, Deserialize)]
 pub struct SetNetworkModeRequest {

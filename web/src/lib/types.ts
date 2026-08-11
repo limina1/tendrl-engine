@@ -557,6 +557,20 @@ export interface FetchRecord {
 	timestamp: number;
 	success: boolean;
 	error: string | null;
+	/** The human cause of the fetch ("Search", "Resolving references", …),
+	 *  attributed engine-side from the request that ran it. */
+	reason?: string;
+}
+
+/** An in-flight relay fetch — live counterpart of FetchRecord, individually
+ *  killable via POST /network/fetch-kill. */
+export interface ActiveFetch {
+	id: number;
+	relay: string;
+	filter_summary: string;
+	trigger: string;
+	started_at: number;
+	reason?: string;
 }
 
 export interface NetworkStatus {
@@ -567,6 +581,7 @@ export interface NetworkStatus {
 	active_fetches: number;
 	total_events_fetched: number;
 	last_fetch_timestamp: number;
+	active: ActiveFetch[];
 	recent: FetchRecord[];
 }
 

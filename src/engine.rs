@@ -1300,7 +1300,18 @@ impl Engine {
         }
         let summary = network::summarize_filters(filters);
         let guard = self.network.begin_fetch(relay_url, summary, trigger);
-        match relay::fetch_with_filters(&self.ndb, relay_url, filters).await {
+        // Every relay fetch funnels through here, so this select IS the kill
+        // switch: POST /network/fetch-kill cancels the guard's token and the
+        // in-flight relay work is dropped. A killed fetch yields no events
+        // (not an error) so LocalFirst callers just keep their local results.
+        let result = tokio::select! {
+            r = relay::fetch_with_filters(&self.ndb, relay_url, filters) => r,
+            _ = guard.cancelled() => {
+                guard.fail("killed".to_string());
+                return Ok(vec![]);
+            }
+        };
+        match result {
             Ok(events) => {
                 let count = events.len();
                 guard.complete(count);

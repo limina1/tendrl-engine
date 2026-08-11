@@ -11,8 +11,36 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::sync::{broadcast, oneshot};
+use tokio_util::sync::CancellationToken;
 
 const MAX_LOG_ENTRIES: usize = 64;
+
+// ---------------------------------------------------------------------------
+// Fetch reason — task-local cause attribution
+// ---------------------------------------------------------------------------
+
+tokio::task_local! {
+    /// The human reason for relay fetches issued inside the current task —
+    /// "Resolve wiki links", "Search: k:30818 …", "Profile prefetch". Set by
+    /// API handlers via [`with_fetch_reason`]; read by [`NetworkActivity::
+    /// begin_fetch`] so every FetchRecord carries its cause without threading
+    /// a parameter through every fetch layer. Fetches spawned into detached
+    /// tasks fall back to `None` (attribute those at their spawn site).
+    static FETCH_REASON: String;
+}
+
+/// Run `f` with `reason` attached to every relay fetch it performs.
+pub async fn with_fetch_reason<F>(reason: impl Into<String>, f: F) -> F::Output
+where
+    F: std::future::Future,
+{
+    FETCH_REASON.scope(reason.into(), f).await
+}
+
+/// The reason attached to the current task, if any.
+pub fn current_fetch_reason() -> Option<String> {
+    FETCH_REASON.try_with(|r| r.clone()).ok()
+}
 
 // ---------------------------------------------------------------------------
 // Types
@@ -87,6 +115,26 @@ pub struct FetchRecord {
     pub success: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    /// The human cause of this fetch ("Resolve wiki links", "Search: …"),
+    /// captured from the task-local set by [`with_fetch_reason`]. `None` for
+    /// fetches whose call path never attached one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+/// An in-flight relay fetch — the live counterpart of [`FetchRecord`],
+/// listed in [`NetworkStatus::active`] so the UI can show (and kill) what
+/// the engine is pulling right now.
+#[derive(Debug, Clone, Serialize)]
+pub struct ActiveFetchInfo {
+    pub id: u64,
+    pub relay: String,
+    pub filter_summary: String,
+    pub trigger: FetchTrigger,
+    /// Unix seconds when the fetch started.
+    pub started_at: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -99,6 +147,9 @@ pub struct NetworkStatus {
     pub active_fetches: u64,
     pub total_events_fetched: u64,
     pub last_fetch_timestamp: u64,
+    /// In-flight fetches, oldest first — each row is individually killable
+    /// via POST /network/fetch-kill.
+    pub active: Vec<ActiveFetchInfo>,
     pub recent: Vec<FetchRecord>,
 }
 
@@ -114,6 +165,9 @@ pub struct NetworkActivity {
     mode_chosen: AtomicBool,
     log: Mutex<VecDeque<FetchRecord>>,
     active_fetches: AtomicU64,
+    /// Live registry of in-flight fetches: metadata for the status endpoint
+    /// plus each fetch's cancellation token for the kill switch.
+    active: Mutex<HashMap<u64, (ActiveFetchInfo, CancellationToken)>>,
     next_id: AtomicU64,
     total_events_fetched: AtomicU64,
     last_fetch_timestamp: AtomicU64,
@@ -131,6 +185,7 @@ impl NetworkActivity {
             mode_chosen: AtomicBool::new(false),
             log: Mutex::new(VecDeque::with_capacity(MAX_LOG_ENTRIES)),
             active_fetches: AtomicU64::new(0),
+            active: Mutex::new(HashMap::new()),
             next_id: AtomicU64::new(1),
             total_events_fetched: AtomicU64::new(0),
             last_fetch_timestamp: AtomicU64::new(0),
@@ -182,14 +237,78 @@ impl NetworkActivity {
     ) -> FetchGuard {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         self.active_fetches.fetch_add(1, Ordering::Relaxed);
+        let reason = current_fetch_reason();
+        let token = CancellationToken::new();
+        if let Ok(mut active) = self.active.lock() {
+            active.insert(
+                id,
+                (
+                    ActiveFetchInfo {
+                        id,
+                        relay: relay.to_string(),
+                        filter_summary: filter_summary.clone(),
+                        trigger: trigger.clone(),
+                        started_at: now_unix(),
+                        reason: reason.clone(),
+                    },
+                    token.clone(),
+                ),
+            );
+        }
         FetchGuard {
             activity: std::sync::Arc::clone(self),
             id,
             relay: relay.to_string(),
             filter_summary,
             trigger,
+            reason,
+            token,
             start: Instant::now(),
             completed: false,
+        }
+    }
+
+    /// Snapshot of in-flight fetches, oldest first.
+    pub fn active_fetch_list(&self) -> Vec<ActiveFetchInfo> {
+        let mut list: Vec<ActiveFetchInfo> = self
+            .active
+            .lock()
+            .map(|a| a.values().map(|(info, _)| info.clone()).collect())
+            .unwrap_or_default();
+        list.sort_by_key(|f| f.id);
+        list
+    }
+
+    /// Kill one in-flight fetch by id. Returns whether it was found live.
+    pub fn kill_fetch(&self, id: u64) -> bool {
+        match self.active.lock() {
+            Ok(active) => match active.get(&id) {
+                Some((_, token)) => {
+                    token.cancel();
+                    true
+                }
+                None => false,
+            },
+            Err(_) => false,
+        }
+    }
+
+    /// Kill every in-flight fetch. Returns how many were signalled.
+    pub fn kill_all_fetches(&self) -> usize {
+        match self.active.lock() {
+            Ok(active) => {
+                for (_, token) in active.values() {
+                    token.cancel();
+                }
+                active.len()
+            }
+            Err(_) => 0,
+        }
+    }
+
+    fn remove_active(&self, id: u64) {
+        if let Ok(mut active) = self.active.lock() {
+            active.remove(&id);
         }
     }
 
@@ -219,6 +338,7 @@ impl NetworkActivity {
             active_fetches: self.active_fetches.load(Ordering::Relaxed),
             total_events_fetched: self.total_events_fetched.load(Ordering::Relaxed),
             last_fetch_timestamp: self.last_fetch_timestamp.load(Ordering::Relaxed),
+            active: self.active_fetch_list(),
             recent,
         }
     }
@@ -376,14 +496,23 @@ pub struct FetchGuard {
     relay: String,
     filter_summary: String,
     trigger: FetchTrigger,
+    reason: Option<String>,
+    token: CancellationToken,
     start: Instant,
     completed: bool,
 }
 
 impl FetchGuard {
+    /// Resolves when this fetch is killed (POST /network/fetch-kill) —
+    /// `select!` it against the relay work.
+    pub async fn cancelled(&self) {
+        self.token.cancelled().await
+    }
+
     pub fn complete(mut self, event_count: usize) {
         self.completed = true;
         self.activity.active_fetches.fetch_sub(1, Ordering::Relaxed);
+        self.activity.remove_active(self.id);
         let record = FetchRecord {
             id: self.id,
             relay: self.relay.clone(),
@@ -394,6 +523,7 @@ impl FetchGuard {
             timestamp: now_unix(),
             success: true,
             error: None,
+            reason: self.reason.clone(),
         };
         self.activity.record(record);
     }
@@ -401,6 +531,7 @@ impl FetchGuard {
     pub fn fail(mut self, error: String) {
         self.completed = true;
         self.activity.active_fetches.fetch_sub(1, Ordering::Relaxed);
+        self.activity.remove_active(self.id);
         let record = FetchRecord {
             id: self.id,
             relay: self.relay.clone(),
@@ -411,6 +542,7 @@ impl FetchGuard {
             timestamp: now_unix(),
             success: false,
             error: Some(error),
+            reason: self.reason.clone(),
         };
         self.activity.record(record);
     }
@@ -421,6 +553,7 @@ impl Drop for FetchGuard {
         if !self.completed {
             // Future was cancelled — still decrement active count
             self.activity.active_fetches.fetch_sub(1, Ordering::Relaxed);
+            self.activity.remove_active(self.id);
         }
     }
 }

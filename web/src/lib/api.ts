@@ -1977,6 +1977,16 @@ export function getNetworkStatus() {
 	return fetchJson<NetworkStatus>('/api/v1/network/status');
 }
 
+/** Kill one in-flight relay fetch by id, or all of them when id is omitted.
+ *  Resolves to how many were signalled. */
+export async function killFetch(id?: number): Promise<number> {
+	const resp = await fetchJson<{ killed: number }>('/api/v1/network/fetch-kill', {
+		method: 'POST',
+		body: JSON.stringify(id === undefined ? {} : { id })
+	});
+	return resp.killed;
+}
+
 export function setNetworkMode(mode: NetworkMode) {
 	return fetchJson<NetworkStatus>('/api/v1/network/mode', {
 		method: 'POST',
