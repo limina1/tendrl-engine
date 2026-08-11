@@ -1,6 +1,6 @@
 # On-device semantic search (Stage 10) — design
 
-Status: proposed · 2026-08-10
+Status: SHIPPED · 2026-08-10 (merged to master)
 Branch: `feat/ondevice-embeddings` (off `master`, post-v0.7.0)
 Related: `docs/amber-nip55-signing-plan.md` (the plan that deferred this),
 `docs/zettel/feat-mobile.org`, `docs/commands.org` ("Android build")
@@ -179,3 +179,31 @@ Confirm-mode consent philosophy (relay fetches get an intent; a download
 - Keep the desktop-default MiniLM model on mobile, or pick a smaller one?
   (Defer until M3 throughput numbers exist; the config already supports
   per-install model choice.)
+
+## Shipped — device pass (2026-08-10, Pixel 7)
+
+All milestones verified end-to-end on device:
+
+- **M1** arm64 compile (numkong bumped 7.6→7.8; x86_64 deferred upstream).
+- **M2** host wiring: `embeddings-dynamic`, model cache under app data,
+  `ORT_DYLIB_PATH` = bare soname, Suspended/Resumed background gate.
+- **16 KB alignment**: dropped legacy packaging, ORT AAR → 1.22.0; all
+  packed .so LOAD-aligned to 0x4000, install dialog gone.
+- **Model consent**: `model_ready` probe + explicit "Download model (~90 MB)"
+  action (Sync no-ops on an empty corpus, so it never triggered the
+  download); `$HOME` set under app data so hf-hub's `Cache::default()`
+  doesn't panic on Android.
+- **Section fetch**: wired the existing `/fetch/sections` to a Settings
+  button (a feed sync brings only 30040 indexes; 30041 sections are what's
+  embeddable).
+- **OOM fix**: fastembed batch bounded to 8 (a 590-section pass at batch 64
+  hit 3.5 GB and was low-memory-killed); index saves per batch so progress
+  survives.
+- **Confirmed**: `ort: Loaded ONNX Runtime dylib 1.22.0`, index climbed
+  past 376 vectors with no OOM, and `~:` semantic search returns relevant
+  results on device.
+
+Known follow-ups (not blocking): embedding stalls while the app is
+backgrounded (Android CPU throttle) and the fetch-triggered pass isn't
+auto-resumed — foregrounding + the background loop / manual Sync finishes
+it. x86_64-android embeddings await the upstream numkong fix (bugs.org).
