@@ -153,6 +153,19 @@
 		relayError = null;
 	}
 
+	function removeRelayEntry(url: string) {
+		draftRelays = draftRelays.filter((r) => r !== url);
+		draftAddedRelays = draftAddedRelays.filter((r) => r !== url);
+		if (configRelays.includes(url)) {
+			// Config relays come from the engine's `fetch` set — × here is a
+			// persistent edit (immediate, like the Embedding section), not
+			// part of the modal's Save/Cancel draft.
+			configRelays = configRelays.filter((r) => r !== url);
+			api.removeRelay('fetch', url).catch(() => {});
+			app.pushToast(`Removed ${url.replace(/^wss?:\/\//, '')} from your fetch set`, 'success', 2500);
+		}
+	}
+
 	// ---- form <-> query round-trip -----------------------------------
 	// Query mode carries the dimensions that have a query token: kinds,
 	// author, time. NIP-50 has no token (it's a relay mode), so it stays
@@ -488,7 +501,7 @@
 									{#each relayOptions as url (url)}
 										{@const on = draftRelays.includes(url)}
 										{@const added = !configRelays.includes(url)}
-										<li>
+										<li class="sc-relay-item">
 											<button
 												type="button"
 												class="sc-relay"
@@ -497,6 +510,15 @@
 												aria-pressed={on}
 												onclick={() => toggleRelay(url)}>{url}</button
 											>
+											<button
+												type="button"
+												class="sc-relay-remove"
+												onclick={() => removeRelayEntry(url)}
+												aria-label="Remove {url}"
+												title={added
+													? 'Remove this relay'
+													: 'Remove this relay from the fetch set'}
+											>×</button>
 										</li>
 									{/each}
 								</ul>
@@ -909,9 +931,31 @@
 		max-height: 20dvh;
 		overflow-y: auto;
 	}
+	.sc-relay-item {
+		display: flex;
+		align-items: center;
+		gap: 2px;
+	}
+	.sc-relay-remove {
+		flex-shrink: 0;
+		background: transparent;
+		border: none;
+		color: var(--base5);
+		font: inherit;
+		font-size: var(--t-sm);
+		line-height: 1;
+		padding: 2px 6px;
+		border-radius: var(--r-sm);
+		cursor: pointer;
+	}
+	.sc-relay-remove:hover {
+		color: var(--id-draft);
+		background: var(--bg-surface);
+	}
 	.sc-relay {
 		display: block;
-		width: 100%;
+		flex: 1;
+		min-width: 0;
 		text-align: left;
 		font: inherit;
 		background: none;

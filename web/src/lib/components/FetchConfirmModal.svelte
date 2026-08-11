@@ -9,7 +9,7 @@
 
 	import type { FetchEvent, NipFilter, CompositionShape, Phase } from '$lib/types';
 	import { resolveConfirm, reissueConfirm } from '$lib/network/fetch-events.svelte';
-	import { addRelay } from '$lib/api';
+	import { addRelay, removeRelay } from '$lib/api';
 	import { getAppState } from '$lib/state.svelte';
 
 	const app = getAppState();
@@ -66,6 +66,9 @@
 	// this one operation, or append an extra.
 	let deselected = $state<Set<string>>(new Set());
 	let extras = $state<string[]>([]);
+	// Proposed relays the user deleted outright (× on the row) — unlike a
+	// deselect, the entry leaves the list entirely.
+	let removed = $state<Set<string>>(new Set());
 	let appendInput = $state('');
 	let appendError = $state<string | null>(null);
 	let detailsOpen = $state(false);
@@ -148,7 +151,7 @@
 		return intent.relays;
 	});
 
-	const allRelays = $derived([...proposedRelays, ...extras]);
+	const allRelays = $derived([...proposedRelays.filter((r) => !removed.has(r)), ...extras]);
 	const selectedRelays = $derived(allRelays.filter((r) => !deselected.has(r)));
 
 	const PATTERN_LABEL: Record<string, string> = {
@@ -190,7 +193,14 @@
 			appendError = 'Already in the list';
 			return;
 		}
-		extras = [...extras, v];
+		// Re-adding a proposed relay that was ×-removed restores its row
+		// instead of duplicating it as an extra.
+		if (removed.has(v)) {
+			removed.delete(v);
+			removed = new Set(removed);
+		} else {
+			extras = [...extras, v];
+		}
 		appendInput = '';
 		appendError = null;
 		// For a feed sync, "Add relay" is a persistent edit to the read set —
@@ -202,6 +212,26 @@
 		if (isFeedIntent) {
 			addRelay('fetch', v).catch(() => {});
 			app.pushToast(`Saved ${v.replace(/^wss?:\/\//, '')} to your read set`, 'success', 2500);
+		}
+	}
+
+	function removeUrl(url: string) {
+		if (extras.includes(url)) {
+			extras = extras.filter((u) => u !== url);
+		} else {
+			removed.add(url);
+			removed = new Set(removed);
+		}
+		if (deselected.has(url)) {
+			deselected.delete(url);
+			deselected = new Set(deselected);
+		}
+		// Mirror addExtra: a feed sync composes from the persistent read
+		// (`fetch`) set, so × writes the removal through; other patterns'
+		// relay sets are ambiguous, so removal stays one-shot.
+		if (isFeedIntent) {
+			removeRelay('fetch', url).catch(() => {});
+			app.pushToast(`Removed ${url.replace(/^wss?:\/\//, '')} from your read set`, 'success', 2500);
 		}
 	}
 
@@ -265,7 +295,7 @@
 			{:else}
 				<ul class="rf-list">
 					{#each allRelays as url (url)}
-						<li>
+						<li class="rf-item">
 							<label class="rf-row">
 								<input
 									type="checkbox"
@@ -274,6 +304,14 @@
 								/>
 								<code class="rf-url">{url}</code>
 							</label>
+							<button
+								class="rf-remove"
+								onclick={() => removeUrl(url)}
+								aria-label="Remove {url}"
+								title={isFeedIntent
+									? 'Remove this relay from your read set'
+									: 'Remove this relay from the list for this fetch'}
+							>×</button>
 						</li>
 					{/each}
 				</ul>
@@ -707,13 +745,36 @@
 		max-height: 22dvh;
 		overflow-y: auto;
 	}
+	.rf-item {
+		display: flex;
+		align-items: center;
+		gap: 2px;
+	}
 	.rf-row {
+		flex: 1;
+		min-width: 0;
 		display: flex;
 		align-items: center;
 		gap: 8px;
 		padding: 3px 6px;
 		border-radius: var(--r-sm);
 		cursor: pointer;
+	}
+	.rf-remove {
+		flex-shrink: 0;
+		background: transparent;
+		border: none;
+		color: var(--base5);
+		font: inherit;
+		font-size: var(--t-sm);
+		line-height: 1;
+		padding: 2px 6px;
+		border-radius: var(--r-sm);
+		cursor: pointer;
+	}
+	.rf-remove:hover {
+		color: var(--id-draft);
+		background: var(--bg-surface);
 	}
 	.rf-row:hover {
 		background: var(--bg-surface);
