@@ -18,10 +18,21 @@ navigation. Full spec: =docs/wm-shell.md=; shell root in
   =web/src/lib/wm/registry.ts= and =web/src/lib/wm/renderers/=.
 - Splits: =SPC w s= splits the focused leaf with a same-class buffer picker;
   =j= / =k= cycles leaves. Buffer switching =SPC b b= (class) / =SPC b B=
-  (global) / =SPC b r= (recently closed, cap 20); =SPC b k= kills. Each
+  (global) / =SPC b r= (recently closed, cap 20); =SPC b k= kills; the
+  =SPC b o= open prefix jumps straight to a buffer — =b o c= composer
+  (=tendrl-open-compose=), =b o s= settings (chord alias of =SPC s s=;
+  same commandId, so the keybinding registry merges the rows). Each
   pane-head tab also carries a mouse × (=store.killBuffer(id)= — kills any
   open buffer, swapping every leaf that shows it to a same-class
   replacement or the class default).
+- Pane-head tab strip = =web/src/lib/wm/PaneTabs.svelte= (2026-08-11,
+  extracted from =renderTree= so it can carry scroll state): overflow is
+  visible and mouse/touch-reachable — edge fades + chevron nudges when
+  scrolled, active tab kept in view on any switch path, vertical wheel
+  mapped to horizontal scroll, and a trailing =N▾= count button that
+  opens the =SPC b b= class switcher (the blessed fallback for "tons of
+  tabs" — deliberately not a new dropdown). Chrome appears only when the
+  strip actually overflows.
 - SPC leader with Doom-style which-key popup; M-x fuzzy command palette
   (=:=); modeline with layout, focused buffer, and segmented network /
   embedding / identity status pills.

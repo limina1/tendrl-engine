@@ -41,10 +41,27 @@ Decisions made (2026-07-27/28):
   URL param (session preview) → persisted pref (localStorage) → viewport
   auto-detect (≤768px). Live-switchable via the =tendrl-cycle-shell=
   command (toast feedback).
-- =web/src/lib/wm/MobileShell.svelte= — bottom bar (=chat= / =work= /
-  =search= + =cmds=), class-badged header, Amethyst-style work-buffer
-  drawer (☰ → scrim + left drawer; horizontal rows with label / kicker /
-  modified dot / per-row ×; "+ commands" entry).
+- =web/src/lib/wm/MobileShell.svelte= — bottom bar and drawer, reworked
+  2026-08-11 (merged to master =31dced7=):
+  - *Bar*: =work= / =search= class slots + a small fixed ☰ slot on the
+    *right* edge by default. =shell.menuEdge= ('left'|'right',
+    localStorage =tendrl:menuEdge=, Settings → Appearance → "Menu edge")
+    picks the edge, and the drawer slides out from that same edge. Chat
+    has no bar slot (reachable via the drawer's commands entry; its
+    panel still renders when something opens it). The old =cmds= bar
+    column is gone. More bar-ordering prefs planned alongside menuEdge.
+  - *Drawer = buffers + THE status hub*: work-buffer rows, "+ compose",
+    "+ commands" (anchor =mobile-cmds=), then STATUS carrying every
+    modeline pill in the same dot/pill vocabulary: settings ›, network
+    (tap toggles auto/confirm), relays ›, identity, embed (tap →
+    settings), wiki =n/m= (tap = resolve-all), ⇅ activity (inline
+    expand), 🔍 search history (inline expand, tap replays). › marks
+    rows that open a buffer vs. toggle in place.
+  - =web/src/lib/wm/ActivityCenter.svelte= is the *one* activity-list
+    implementation — the desktop modeline popover and the drawer both
+    render it (active fetches w/ kill ×, recent w/ expand-cause ▸).
+    Extracting shared status surfaces into one component is the rule
+    whenever a modeline pill grows a drawer row.
 - =+page.svelte= — template branch on =shell.mode=; all script-level
   wiring (store, commands, keyboard, tours) shared; minibuffer restyled
   as a fixed bottom sheet on mobile.

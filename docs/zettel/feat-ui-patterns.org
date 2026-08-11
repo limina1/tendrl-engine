@@ -43,6 +43,16 @@ the divergence ledger below is the consolidation worklist.
   wiki-link four-state cycle (chip→fetching→searchable→resolved, hover
   spinner vs search glyph, =--nd-unresolved= theme token) — see
   [[file:feat-nostrdown.org][nostrdown]].
+- *Overflow-aware horizontal strip* (2026-08-11) — any horizontally
+  scrolling row of items (canonical: the pane-head tab strip,
+  =web/src/lib/wm/PaneTabs.svelte=) must make its overflow visible and
+  reachable without a keyboard: edge fades (CSS mask, theme-agnostic) +
+  chevron nudge buttons when scrolled, the active item kept in view via
+  =scrollIntoView= on every switch path, vertical wheel mapped to
+  horizontal scroll, and a trailing count button that falls back to an
+  existing *list* surface (the =SPC b b= switcher) instead of growing a
+  new dropdown (menu idiom rule below). Affordances render only while
+  the strip actually overflows.
 - *Two-step armed button* — destructive-but-local clicks: first click arms
   ("really delete? (Ns)"), second executes, timer disarms. Sites:
   relay-set delete + reset-to-defaults (=RelaysBuffer=), context trash
