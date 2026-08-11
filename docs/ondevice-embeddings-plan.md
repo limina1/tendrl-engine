@@ -46,9 +46,17 @@ cargo ndk -t arm64-v8a check --lib --no-default-features --features embed-assets
 cargo ndk -t x86_64   check --lib --no-default-features --features embed-assets,embeddings-dynamic
 ```
 
-Watch for: libc++ linkage (cargo-ndk links `c++_static` by default — confirm
-usearch is satisfied; if not, `c++_shared` needs packaging), exceptions/RTTI
-flags in usearch's cc build.
+**M1 RESULT (2026-08-10): arm64 clean, x86_64 blocked upstream.** Host-linux
+and `arm64-v8a` both check green (usearch 2.25.2 + numkong bumped 7.6.0 →
+7.8.0, desktop tests unaffected). `x86_64-linux-android` fails inside
+numkong's `capabilities.h`: it forward-declares
+`extern "C" long syscall(long, ...) noexcept` for Linux-x86_64 assuming
+glibc, but bionic declares `syscall` without `noexcept` — and only the
+x86_64/riscv branch takes that path, which is why arm64 never sees it
+(still unfixed in 7.8.0; needs an `!defined(__ANDROID__)` guard upstream).
+**Decision: embeddings are arm64-only on Android.** The device target is
+arm64; only the unused emulator arch loses `~:`. Logged in bugs.org as an
+upstream candidate.
 
 ## Components
 

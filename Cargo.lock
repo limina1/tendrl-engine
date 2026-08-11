@@ -2440,9 +2440,9 @@ checksum = "830b246a0e5f20af87141b25c173cd1b609bd7779a4617d6ec582abaf90870f3"
 
 [[package]]
 name = "numkong"
-version = "7.6.0"
+version = "7.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a75e386ad4a252e96357fd400ed9b5c7afea048447f2fb0906652b47cf2aaa87"
+checksum = "81601dc994296baed2968db046b01589be7898837c31f2b073704c6e65ff8f04"
 dependencies = [
  "cc",
 ]

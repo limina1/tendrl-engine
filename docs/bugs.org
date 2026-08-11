@@ -350,3 +350,17 @@ feed that triggers the existing sync.
 - Feed starvation: a junk-heavy store rendered 3 items with no Load
   more — list_root_publications now pages the local store backwards
   until the page fills (bounded), so count-based hasMore works again.
+
+* OPEN — numkong capabilities.h breaks x86_64-android builds (UPSTREAM: ashvardanian/numkong)
+:PROPERTIES:
+:found: 2026-08-10 (stage-10 M1 spike, feat/ondevice-embeddings)
+:END:
+=include/numkong/capabilities.h= (checked 7.6.0 and 7.8.0) forward-declares
+=extern "C" long syscall(long, ...) noexcept= under
+=NK_DEFINED_LINUX_ && NK_TARGET_X8664_= — a glibc assumption. Android's
+bionic defines =__linux__= but declares =syscall= WITHOUT =noexcept=, so
+NDK clang++ fails with "exception specification does not match previous
+declaration". aarch64 never takes that branch, so arm64 builds are fine.
+Fix is a one-liner upstream: guard with =!defined(__ANDROID__)= (bionic
+needs no syscall forward-declaration). Until then: on-device embeddings
+are arm64-only (decision recorded in docs/ondevice-embeddings-plan.md).
