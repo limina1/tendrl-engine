@@ -1,3 +1,74 @@
+## v0.8.1 — 2026-08-11
+
+- fix(start): build the engine before launching anything
+- docs(zettel): nostrdown resolution overhaul, fetch contract, new UI primitives
+- feat: network activity center — live fetch icon, cause attribution, kill switch
+- feat: modeline wiki-resolution bar — progress + resolve-everything button
+- fix(web): stop per-switch reload churn for standalone docs
+- feat(web): unresolved wiki links read as links, with live loading state
+- perf(nostrdown): batch wiki lookups; paint refs before relay backfill
+- feat(relay): log WHAT each fetch requested — naddr for coordinate lookups, DSL otherwise
+- feat(web): Shell selector (auto/desktop/mobile) in Settings → Appearance
+- fix(nostrdown): don't panic on multi-byte chars in [[ ]] / {{@ }} targets
+- feat(web): × to remove relay entries in the fetch-confirm and search-config menus
+
+## v0.8.0 — 2026-08-10
+
+- v0.8.0
+- fix(mobile): set $HOME so hf-hub's Cache::default() doesn't panic on Android
+- docs(mobile): stage-10 shipped — on-device semantic search verified on device
+- fix(embed): bound the ONNX batch — 590-section pass OOM-killed the app (3.5 GB)
+- feat(embed): wire the fetch-sections action; on-device ORT load confirmed
+- fix(embed): explicit model download — Sync no-ops with an empty corpus, never fetching the model
+- fix(mobile): 16 KB page alignment — drop legacy packaging, bump ORT AAR to 1.22.0
+- fix(mobile): stage-10 device round — extract native libs; background loop respects model consent and survives panics
+- feat(mobile): stage-10 M2 — on-device embeddings wired, download consented, background loop foreground-gated
+- feat(mobile): stage-10 M1 spike — usearch/fastembed compile for arm64-android; x86_64 blocked upstream
+- docs(mobile): stage-10 plan — download notice is a required component, not polish
+- docs(mobile): Stage 10 plan — on-device semantic search via ort-load-dynamic + onnxruntime AAR
+
+## v0.7.0 — 2026-08-10
+
+- v0.7.0
+- docs(claude): project layout — mobile/src-tauri host, server.rs embeddable boot, feature-gated engine
+- fix(nip55): pass npub as current_user — hex broke the silent ContentResolver path
+- fix(feed): page the local store until the feed page fills — junk indexes starved the list
+- docs(zettel): feat-mobile — tick B1/B4 + NIP-55; record what the device pass proved
+- fix(relay): drop ws://localhost:3334 from DEFAULT_RELAYS; log relay-UX upstream work
+- fix(web): publish-confirm 'Add relay' persists to the publish set
+- fix(mobile): device-pass round 2 — stable WebView origin; honest identityCanSign
+- docs(nostrdown): spec matches shipped semantics; log prefix-case clash
+- fix(nostrdown): coordinate targets, sibling-only refs, wiki d/T split
+- fix(mobile): device-pass round 1 — wss roots, logcat tracing, status-bar insets
+- docs(commands): debug APK build/install — rust-embed + gradle packaging quirks
+- feat(web): NIP-55 signer glue + login surfaces — Amber connect, boot re-attach, watch-only upgrade
+- feat(mobile): in-app NIP-55 Kotlin plugin — enumeration, get_public_key intent, sign_event ContentResolver-first
+- feat(mobile): Tauri 2 Android host — engine in-process on token-gated loopback
+- docs(commands): Android toolchain setup + NDK cross-compile check
+- feat(identity): nip55 external-signer source + engine-side signature verification
+- feat(security): per-boot loopback auth token — opt-in /api middleware + SPA cookie capture
+- feat(build): feature-gate embeddings/keyring/desktop — default-on, mobile builds --no-default-features
+- refactor(engine): extract server boot from main.rs into lib (server::start)
+- docs(mobile): amber NIP-55 signing plan + B1 loopback-token item
+- fix(web): reader title keeps line length — chips wrap below long titles
+- feat: surface publication/article/wiki summaries — reader drawer + full-width doc header
+- feat(web): reader/composer disclosure drawers — reclaim article space
+- fix(web): mobile atlas round 2 — F1-F3 + Q1
+- feat(web): buffer-level Back history — reader places + profile tabs (phase 1)
+- docs(zettel): places & navigation history — discovered in mobile, shell-wide pattern
+- feat(web): minibuffer press-out + × close, both shells
+- fix(web): continuous view — loaded-empty sections pulsed forever; companion preambles deduped
+- fix(web): sheet press-out + persistent watch-npub (phone feedback)
+- feat(scripts): start.sh --lan — bind engine + web preview to 0.0.0.0 for phone-over-LAN use
+- feat: phone-fit modals + npub (watch-only) login as the first way in
+- feat(web): A4 mobile pass — keyboard avoidance, reader TOC drawer + typography, per-shell walkthrough
+- feat(web): engine version + branch row in the mobile drawer status section
+- feat(web): mobile A4 quick wins — drawer status rows, centered toasts, composer wrap
+- feat(web): Android-grade Back for the mobile shell + per-shell commands
+- docs(zettel): feat-mobile — the full mobile/Android integration plan
+- feat(web): mobile work rail → Amethyst-style buffer drawer
+- feat(web): mobile shell — bottom-bar class panels + work rail
+
 ## v0.6.1 — 2026-08-05
 
 - feat: refs navigate in-document; isolated doc buffers resolve refs
