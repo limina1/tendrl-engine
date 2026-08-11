@@ -305,12 +305,20 @@ impl EmbeddingIndex {
         &self.mapping.model
     }
 
-    /// Embed a batch of texts using the in-process ONNX model
+    /// Embed a batch of texts using the in-process ONNX model.
+    ///
+    /// `batch_size` is passed to fastembed so ONNX runs a bounded number of
+    /// sequences at once — attention memory is O(batch · seq²), so an
+    /// unbounded batch of long sections spikes into the gigabytes and gets
+    /// OOM-killed on a phone (observed: 3.5 GB on a 590-section pass). 8 keeps
+    /// the peak modest with negligible throughput cost.
+    const EMBED_BATCH: usize = 8;
+
     pub async fn embed_texts(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
         let refs: Vec<&str> = texts.iter().map(|s| s.as_str()).collect();
         self.backend()?
             .model
-            .embed(refs, None)
+            .embed(refs, Some(Self::EMBED_BATCH))
             .map_err(|e| EngineError::Database(format!("ONNX embedding failed: {e}")))
     }
 

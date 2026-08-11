@@ -1577,8 +1577,11 @@ impl Engine {
 
         info!("Embedding {} new events", to_embed.len());
 
-        // Batch embed — release lock between batches so status polling works
-        let batch_size = 64;
+        // Batch embed — release lock between batches so status polling works,
+        // and the index saves incrementally below so an OOM-kill mid-run
+        // keeps completed batches. Kept small: fastembed sub-batches at 8, but
+        // this also bounds the texts + vectors held per iteration (mobile RAM).
+        let batch_size = 32;
 
         for chunk in to_embed.chunks(batch_size) {
             let texts: Vec<String> = chunk.iter().map(|(_, t)| t.clone()).collect();
