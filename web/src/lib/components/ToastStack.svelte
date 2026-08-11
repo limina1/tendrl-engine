@@ -139,6 +139,15 @@
 		cursor: default;
 		/* A subtle indicator that this toast won't auto-dismiss. */
 		box-shadow: var(--shadow-md), 0 0 0 1px var(--panel-border-strong, var(--panel-border));
+		align-items: flex-start;
+	}
+	/* Pinning (click) is also the expand gesture: a pinned toast shows its full
+	   message instead of the one-line ellipsis. */
+	.toast--pinned .toast__msg {
+		white-space: pre-wrap;
+		overflow: visible;
+		text-overflow: clip;
+		word-break: break-word;
 	}
 	.toast__dot {
 		display: inline-block;

@@ -316,28 +316,66 @@ export async function resolveHighlights(
  * key to its `ResolvedRef[]` (UTF-16 offsets); the caller renders via
  * `buildSegments`.
  */
+export interface ResolveNostrdownItem {
+	key: string;
+	content: string;
+	publication?: string;
+	author?: string;
+	/** The coordinate (`"kind:pubkey:dtag"`) of the event this content came
+	 *  from. When `publication` is omitted — an isolated doc view — the
+	 *  engine derives the containing 30040 from it so sibling refs resolve. */
+	coord?: string;
+	/** Sibling sections of an unsigned draft (title + synthetic d-tag) so
+	 *  `{{ref:slug}}` resolves in the composer's draft-reader preview before
+	 *  anything is published. Omit for published reads. */
+	siblings?: { title?: string; d_tag: string }[];
+}
+
 export async function resolveNostrdown(
-	items: {
-		key: string;
-		content: string;
-		publication?: string;
-		author?: string;
-		/** The coordinate (`"kind:pubkey:dtag"`) of the event this content came
-		 *  from. When `publication` is omitted — an isolated doc view — the
-		 *  engine derives the containing 30040 from it so sibling refs resolve. */
-		coord?: string;
-		/** Sibling sections of an unsigned draft (title + synthetic d-tag) so
-		 *  `{{ref:slug}}` resolves in the composer's draft-reader preview before
-		 *  anything is published. Omit for published reads. */
-		siblings?: { title?: string; d_tag: string }[];
-	}[]
+	items: ResolveNostrdownItem[],
+	policy?: 'local_only' | 'local_first'
 ): Promise<Record<string, ResolvedRef[]>> {
 	if (items.length === 0) return {};
 	const resp = await fetchJson<{ refs: Record<string, ResolvedRef[]> }>(
 		'/api/v1/nostrdown/resolve',
-		{ method: 'POST', body: JSON.stringify({ items }) }
+		{ method: 'POST', body: JSON.stringify(policy ? { items, policy } : { items }) }
 	);
 	return resp.refs;
+}
+
+/**
+ * Two-pass nostrdown resolution: an instant `local_only` pass paints every ref
+ * (found ones link, unresolved wiki topics still click through to search), then
+ * — when `fetch` is set, i.e. network mode is Auto — a background `local_first`
+ * pass backfills missing topics from relays and repaints. `apply` is called
+ * once per landed pass; guard staleness there. `onFetched` fires after the
+ * relay pass with the count of refs that flipped to found (0 = nothing new).
+ */
+export async function resolveNostrdownProgressive(
+	items: ResolveNostrdownItem[],
+	apply: (refs: Record<string, ResolvedRef[]>) => void,
+	opts?: { fetch?: boolean; onFetched?: (newlyFound: number) => void }
+): Promise<void> {
+	if (items.length === 0) return;
+	const countFound = (m: Record<string, ResolvedRef[]>) =>
+		Object.values(m).reduce((n, refs) => n + refs.filter((r) => r.found).length, 0);
+	let localFound = 0;
+	try {
+		const local = await resolveNostrdown(items, 'local_only');
+		localFound = countFound(local);
+		apply(local);
+	} catch {
+		apply({});
+		return;
+	}
+	if (!opts?.fetch) return;
+	try {
+		const fetched = await resolveNostrdown(items, 'local_first');
+		apply(fetched);
+		opts.onFetched?.(Math.max(0, countFound(fetched) - localFound));
+	} catch {
+		// Keep the local pass's paint — the relay backfill is best-effort.
+	}
 }
 
 /**
