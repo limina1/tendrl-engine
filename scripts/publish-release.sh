@@ -29,7 +29,8 @@ for a in "$@"; do
     --no-asset) no_asset=true ;;
     --dry-run)  dry_run=true ;;
     -*) echo "ERROR: unknown flag '$a' (use --no-asset, --dry-run, or pass a version)" >&2; exit 1 ;;
-    *)  version="$a" ;;
+    *)  [[ "$a" =~ ^[0-9]+\.[0-9]+\.[0-9]+ ]] || { echo "ERROR: positional arg must be a version like 0.8.1 (assets are located from it, not passed as paths) — got '$a'" >&2; exit 1; }
+        version="$a" ;;
   esac
 done
 
@@ -63,8 +64,9 @@ if ! git rev-parse -q --verify "refs/tags/${tag}" >/dev/null; then
   fi
 fi
 
-# Asset: the version-stamped tarball from build-portable.sh.
-tarball="target/portable/release/tendrl-engine-${version}.tar.gz"
+# Asset: the version-stamped tarball from build-portable.sh (it lands in
+# target/portable/, NOT target/portable/release/ — that's the bare binary dir).
+tarball="target/portable/tendrl-engine-${version}.tar.gz"
 if ! $no_asset && [[ ! -f "$tarball" ]]; then
   echo "ERROR: ${tarball} not found — run scripts/build-portable.sh, or pass --no-asset for a notes-only release" >&2
   exit 1
