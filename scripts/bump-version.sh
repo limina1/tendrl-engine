@@ -76,10 +76,18 @@ fi
 # to the first match; s//…/ reuses that same regex as the substitution pattern.
 sed -i -E "0,/^version *= *\"[^\"]+\"/s//version = \"${new}\"/" "$manifest"
 
+# Keep the Android host on the same version train: the engine runs in-process
+# inside the APK, so the APK's versionName (tauri.conf.json "version") and the
+# mobile crate mirror the engine version. tauri derives the APK versionCode as
+# major*1000000 + minor*1000 + patch — monotonic while versions only go up.
+sed -i -E "0,/\"version\": *\"[^\"]+\"/s//\"version\": \"${new}\"/" mobile/src-tauri/tauri.conf.json
+sed -i -E "0,/^version *= *\"[^\"]+\"/s//version = \"${new}\"/" mobile/src-tauri/Cargo.toml
+
 # Keep Cargo.lock's own package entry in step so the next build doesn't re-touch
 # it as a side effect. Harmless if cargo is absent — the build resolves it anyway.
 if command -v cargo >/dev/null 2>&1; then
   cargo update -p nostr-engine >/dev/null 2>&1 || true
+  (cd mobile/src-tauri && cargo update -p tendrl-mobile >/dev/null 2>&1) || true
 fi
 
 echo "==> version: ${current} -> ${new}"

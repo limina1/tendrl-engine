@@ -64,13 +64,20 @@ if ! git rev-parse -q --verify "refs/tags/${tag}" >/dev/null; then
   fi
 fi
 
-# Asset: the version-stamped tarball from build-portable.sh (it lands in
-# target/portable/, NOT target/portable/release/ — that's the bare binary dir).
+# Assets: the version-stamped tarball from build-portable.sh (required), plus
+# the signed Android APK from build-android.sh when one was built for this
+# version (optional — desktop-only releases are fine).
 tarball="target/portable/tendrl-engine-${version}.tar.gz"
 if ! $no_asset && [[ ! -f "$tarball" ]]; then
   echo "ERROR: ${tarball} not found — run scripts/build-portable.sh, or pass --no-asset for a notes-only release" >&2
   exit 1
 fi
+apk="target/android/tendrl-${version}-arm64.apk"
+if ! $no_asset && [[ ! -f "$apk" ]]; then
+  echo "NOTE: no ${apk} — release ships without an Android APK (scripts/build-android.sh to add one)."
+  apk=""
+fi
+$no_asset && apk=""
 
 if gh release view "$tag" >/dev/null 2>&1; then
   echo "ERROR: release ${tag} already exists on GitHub (use 'gh release upload ${tag} <file> --clobber' to replace assets)" >&2
@@ -83,6 +90,7 @@ if $dry_run; then
               || echo "    tag:    push existing ${tag} ($(git rev-parse --short "${tag}^{commit}"))"
   $no_asset   && echo "    asset:  none (--no-asset)" \
               || echo "    asset:  ${tarball} ($(ls -lh "$tarball" | awk '{print $5}'))"
+  [[ -n "$apk" ]] && echo "    asset:  ${apk} ($(ls -lh "$apk" | awk '{print $5}'))"
   echo "    notes:"
   printf '%s\n' "$notes" | sed 's/^/      /'
   exit 0
@@ -96,6 +104,7 @@ git push origin "refs/tags/${tag}"
 echo "==> Creating GitHub release ${tag}…"
 args=("$tag" --title "tendrl-engine ${tag}" --notes-file -)
 $no_asset || args+=("$tarball")
+[[ -n "$apk" ]] && args+=("$apk")
 printf '%s\n' "$notes" | gh release create "${args[@]}"
 
 # The tag makes its commits reachable, but if no pushed branch contains it the

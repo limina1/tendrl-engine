@@ -1412,6 +1412,24 @@ adb install -r gen/android/app/build/outputs/apk/universal/debug/app-universal-d
 adb logcat --pid=$(adb shell pidof -s io.github.limina1.tendrl)
 #+end_src
 
+** Release APK (signed)
+
+One script does the whole thing — env setup, SPA build, the two quirks
+above, signed arm64 build, signature verify, versioned copy:
+
+#+begin_src bash
+scripts/build-android.sh                 # → target/android/tendrl-<version>-arm64.apk
+scripts/build-android.sh --init-signing  # first time only: keystore + properties
+#+end_src
+
+Signing: gradle's release buildType reads
+=mobile/src-tauri/gen/android/keystore.properties= (gitignored) →
+keystore at =~/.android-keys/tendrl-release.keystore=. *Back both up* —
+installed apps only upgrade to APKs signed with the same key. Versions:
+=bump-version.sh= stamps =tauri.conf.json= alongside =Cargo.toml=;
+versionCode is derived (=major*1e6 + minor*1000 + patch=), so it stays
+monotonic and upgrades install cleanly over older releases.
+
 * Phone-browser demo — SPA mobile shell over LAN (no APK)
 
 Run a second engine from your checkout/worktree and open it from the
@@ -1452,15 +1470,22 @@ number; the =v<version>= tag is load-bearing (release-notes.sh anchors
 the changelog range on the newest =v*= tag).
 
 #+begin_src bash
-# 1. Land the work on master, then bump + changelog + portable build (docker):
+# 1. Land the work on master, then bump + changelog + portable build (docker).
+#    The bump also syncs mobile/src-tauri/{tauri.conf.json,Cargo.toml} so the
+#    APK rides the same version (versionCode = major*1e6 + minor*1000 + patch):
 scripts/build-portable.sh --bump patch        # or minor|major|--version X.Y.Z
 
-# 2. Review CHANGELOG.md + Cargo.toml diff, commit the release state:
-git add Cargo.toml Cargo.lock CHANGELOG.md && git commit -m "v$(scripts/bump-version.sh)"
+# 1b. Optional Android asset — signed release APK (arm64):
+scripts/build-android.sh                      # → target/android/tendrl-<ver>-arm64.apk
+# (first time only:  scripts/build-android.sh --init-signing  — creates the
+#  keystore at ~/.android-keys/ + gen/android/keystore.properties; BACK IT UP)
 
-# 3. Publish to GitHub (tags HEAD if v<version> doesn't exist yet,
-#    pushes the tag, creates the release: CHANGELOG section = notes,
-#    target/portable/release/tendrl-engine-<version>.tar.gz = asset):
+# 2. Review CHANGELOG.md + Cargo.toml diff, commit the release state:
+git add Cargo.toml Cargo.lock CHANGELOG.md mobile/src-tauri && git commit -m "v$(scripts/bump-version.sh)"
+
+# 3. Publish to GitHub (tags HEAD if v<version> doesn't exist yet, pushes the
+#    tag, creates the release: CHANGELOG section = notes, portable tarball =
+#    asset, plus target/android/tendrl-<version>-arm64.apk when it exists):
 scripts/publish-release.sh --dry-run          # preview first
 scripts/publish-release.sh
 
