@@ -19,6 +19,7 @@
 	import PoolStateBadges from '$lib/components/PoolStateBadges.svelte';
 	import RichContent from '$lib/components/RichContent.svelte';
 	import type { ResolvedRef, ParsedToken } from '$lib/nostr/nostrdown';
+	import { shouldNetworkFetch } from '$lib/nostr/fetch-dedupe';
 
 	// A slim viewer for single addressable documents — NIP-23 long-form
 	// articles (kind 30023) and NKBIP-02 wiki pages (kind 30818). The
@@ -220,9 +221,16 @@
 			summary = tag('summary');
 			body = ev.content ?? '';
 			// Discussions and the author profile are secondary — let the body
-			// paint immediately and fill these in as they arrive.
+			// paint immediately and fill these in as they arrive. The relay
+			// refresh for discussions runs once per doc per TTL window: buffers
+			// remount on every switch, and without the dedupe each alternation
+			// re-hit the relays (the "always refreshing" churn). Within the
+			// window, local-only — the explicit refresh button still forces it.
 			const addr: NAddr = { kind: p.kind, pubkey: p.pubkey, d_tag: p.dTag };
-			void loadDiscussions(addr);
+			const discKey = `disc:${p.kind}:${p.pubkey}:${p.dTag}`;
+			void loadDiscussions(addr, {
+				policy: shouldNetworkFetch(discKey) ? 'local_first' : 'local_only'
+			});
 			void loadAuthor(authorPubkey);
 		} catch (e) {
 			error = api.errorMessage(e);

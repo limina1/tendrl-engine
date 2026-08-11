@@ -343,6 +343,26 @@ export async function resolveNostrdown(
 	return resp.refs;
 }
 
+// Session cache for resolved nostrdown refs, keyed by the item's full
+// resolution context. Buffer renderers unmount on every switch, so without
+// this every alternation re-resolved from scratch — and worse, re-ran the
+// relay backfill. Draft items (with `siblings`) are never cached: the draft
+// mutates under them.
+const ndResolveCache = new Map<string, { refs: ResolvedRef[]; backfilled: boolean }>();
+const ND_CACHE_MAX = 200;
+function ndCacheKey(i: ResolveNostrdownItem): string | null {
+	if (i.siblings?.length) return null;
+	return `${i.publication ?? ''}|${i.author ?? ''}|${i.coord ?? ''}|${i.content}`;
+}
+function ndCacheStore(key: string | null, refs: ResolvedRef[], backfilled: boolean) {
+	if (!key) return;
+	if (!ndResolveCache.has(key) && ndResolveCache.size >= ND_CACHE_MAX) {
+		const oldest = ndResolveCache.keys().next().value;
+		if (oldest !== undefined) ndResolveCache.delete(oldest);
+	}
+	ndResolveCache.set(key, { refs, backfilled });
+}
+
 /**
  * Two-pass nostrdown resolution: an instant `local_only` pass paints every ref
  * (found ones link, unresolved wiki topics still click through to search), then
@@ -350,6 +370,12 @@ export async function resolveNostrdown(
  * pass backfills missing topics from relays and repaints. `apply` is called
  * once per landed pass; guard staleness there. `onFetched` fires after the
  * relay pass with the count of refs that flipped to found (0 = nothing new).
+ *
+ * Results are session-cached per item: a remounted buffer repaints its links
+ * synchronously from cache, and an item whose backfill already settled never
+ * hits the relays again (fresh events still surface once something else
+ * ingests them and the buffer next remounts, via the cached-refs local pass
+ * being replaced below).
  */
 export async function resolveNostrdownProgressive(
 	items: ResolveNostrdownItem[],
@@ -359,20 +385,49 @@ export async function resolveNostrdownProgressive(
 	if (items.length === 0) return;
 	const countFound = (m: Record<string, ResolvedRef[]>) =>
 		Object.values(m).reduce((n, refs) => n + refs.filter((r) => r.found).length, 0);
-	let localFound = 0;
-	try {
-		const local = await resolveNostrdown(items, 'local_only');
-		localFound = countFound(local);
-		apply(local);
-	} catch {
-		apply({});
-		return;
+
+	// Pass 0: synchronous repaint from cache; only cache misses hit the engine.
+	const merged: Record<string, ResolvedRef[]> = {};
+	const uncached: ResolveNostrdownItem[] = [];
+	for (const i of items) {
+		const key = ndCacheKey(i);
+		const hit = key ? ndResolveCache.get(key) : undefined;
+		if (hit) merged[i.key] = hit.refs;
+		else uncached.push(i);
+	}
+	if (Object.keys(merged).length > 0) apply({ ...merged });
+
+	if (uncached.length > 0) {
+		try {
+			const local = await resolveNostrdown(uncached, 'local_only');
+			for (const i of uncached) {
+				merged[i.key] = local[i.key] ?? [];
+				ndCacheStore(ndCacheKey(i), merged[i.key], false);
+			}
+			apply({ ...merged });
+		} catch {
+			if (Object.keys(merged).length === 0) apply({});
+			return;
+		}
 	}
 	if (!opts?.fetch) return;
+
+	// Relay backfill, once per item per session — a re-opened buffer whose
+	// topics already went out doesn't hammer the relays again.
+	const toBackfill = items.filter((i) => {
+		const key = ndCacheKey(i);
+		return key === null || !ndResolveCache.get(key)?.backfilled;
+	});
+	if (toBackfill.length === 0) return;
+	const before = countFound(merged);
 	try {
-		const fetched = await resolveNostrdown(items, 'local_first');
-		apply(fetched);
-		opts.onFetched?.(Math.max(0, countFound(fetched) - localFound));
+		const fetched = await resolveNostrdown(toBackfill, 'local_first');
+		for (const i of toBackfill) {
+			merged[i.key] = fetched[i.key] ?? merged[i.key] ?? [];
+			ndCacheStore(ndCacheKey(i), merged[i.key], true);
+		}
+		apply({ ...merged });
+		opts.onFetched?.(Math.max(0, countFound(merged) - before));
 	} catch {
 		// Keep the local pass's paint — the relay backfill is best-effort.
 	}

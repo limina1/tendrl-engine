@@ -3158,7 +3158,14 @@ function _createAppState() {
 			}
 			await openStandaloneSection(result);
 		} else {
-			await openStandaloneSection(result);
+			// 30023 article / 30818 wiki / 30817 spec / any other addressable:
+			// the canonical doc view — the SAME buffer identity a nostrdown ref
+			// or comment target opens (`doc:kind:pubkey:dtag`), so the switcher
+			// holds one buffer per document instead of a reader twin that
+			// reloads on every alternation.
+			const { pubkey, d_tag } = result.addr;
+			const short = d_tag.length > 24 ? d_tag.slice(0, 24) + '…' : d_tag;
+			navigateToDoc(`doc:${result.kind}:${pubkey}:${d_tag}`, short);
 		}
 	}
 
