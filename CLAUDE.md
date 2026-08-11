@@ -15,6 +15,8 @@ scripts/build-portable.sh           # release artifact: manylinux glibc-2.28 flo
 scripts/build-portable.sh --bump patch   # bump (major|minor|patch|X.Y.Z), regen CHANGELOG, then build — same flag on build-bundle.sh
 scripts/bump-version.sh minor            # bump the version only (also syncs Cargo.lock); prints current version with no args
 scripts/release-notes.sh                 # prepend a CHANGELOG.md section: commits since the last v* tag (--print to preview)
+scripts/build-android.sh                 # signed release APK (arm64) → target/android/ — bump syncs the mobile version;
+                                         # one-time keystore setup: scripts/build-android.sh --init-signing
 # then: review the diff, commit, and publish:
 scripts/publish-release.sh               # tag v<version> if needed, push the tag, create the GitHub release
                                          # (CHANGELOG section = notes, portable tarball = asset; --dry-run to preview,

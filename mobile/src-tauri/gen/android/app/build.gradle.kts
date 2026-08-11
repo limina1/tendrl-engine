@@ -13,6 +13,17 @@ val tauriProperties = Properties().apply {
     }
 }
 
+// Release signing config lives OUTSIDE git: gen/android/keystore.properties
+// (gitignored) points at the keystore. scripts/build-android.sh --init-signing
+// creates both. Absent the file, release builds come out unsigned (debug
+// builds are untouched either way).
+val keystoreProperties = Properties().apply {
+    val propFile = rootProject.file("keystore.properties")
+    if (propFile.exists()) {
+        propFile.inputStream().use { load(it) }
+    }
+}
+
 android {
     compileSdk = 36
     namespace = "io.github.limina1.tendrl"
@@ -23,6 +34,16 @@ android {
         targetSdk = 36
         versionCode = tauriProperties.getProperty("tauri.android.versionCode", "1").toInt()
         versionName = tauriProperties.getProperty("tauri.android.versionName", "1.0")
+    }
+    signingConfigs {
+        if (keystoreProperties.containsKey("storeFile")) {
+            create("release") {
+                keyAlias = keystoreProperties["keyAlias"] as String
+                keyPassword = keystoreProperties["password"] as String
+                storeFile = file(keystoreProperties["storeFile"] as String)
+                storePassword = keystoreProperties["password"] as String
+            }
+        }
     }
     buildTypes {
         getByName("debug") {
@@ -37,6 +58,8 @@ android {
             }
         }
         getByName("release") {
+            // null when keystore.properties is absent → unsigned, as before.
+            signingConfig = signingConfigs.findByName("release")
             isMinifyEnabled = true
             proguardFiles(
                 *fileTree(".") { include("**/*.pro") }
