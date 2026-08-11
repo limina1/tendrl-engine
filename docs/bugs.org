@@ -6,6 +6,27 @@ Log defects here as they're found mid-task, then fix on a dedicated =bugs=
 branch (via worktree) and merge back to the integration branch — don't fold
 unrelated bug fixes into feature/cleanup commits. Tick =FIXED= with the commit.
 
+* FIXED — nostrdown parse/resolve panics on multi-byte chars in `[[ ]]` targets
+:PROPERTIES:
+:found: 2026-08-11 (Wikipedia-derived 30818 article: no wikilinks rendered, worker panic)
+:fixed: 2026-08-11, =bugs= branch
+:END:
+
+** Symptom
+Any content whose =[[ ]]= (or ={{@…}}=) target contains a non-ASCII char that
+straddles an HRP-prefix byte boundary — e.g. =[[L'Abécédaire de Gilles
+Deleuze]]= — panicked the tokio worker: "end byte index 5 is not a char
+boundary; it is inside 'é'". The whole =POST /api/v1/nostrdown/parse= /
+=/resolve= request died (vite: "socket hang up"), so the reader got *no* refs
+for the section — every wikilink stuck as an unclickable "resolving…" chip.
+
+** Cause / fix
+=is_nostr_entity= and =parse_mention= (=src/nostrdown.rs=) tested for
+=naddr1=/=npub1=/… prefixes with a byte-indexed *&str* slice
+(=s[..hrp.len()]=), which panics off a char boundary. Compare as =&[u8]=
+instead (byte slices have no boundaries). Regression test:
+=multibyte_targets_do_not_panic=.
+
 * OPEN — nostrdown prefix matching is case-sensitive, clashing with the spec's ABNF
 :PROPERTIES:
 :found: 2026-08-10 (spec-conformance audit of the nostrdown tokenizer)
