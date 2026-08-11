@@ -1,0 +1,151 @@
+# On-device semantic search (Stage 10) — design
+
+Status: proposed · 2026-08-10
+Branch: `feat/ondevice-embeddings` (off `master`, post-v0.7.0)
+Related: `docs/amber-nip55-signing-plan.md` (the plan that deferred this),
+`docs/zettel/feat-mobile.org`, `docs/commands.org` ("Android build")
+
+## Goal
+
+`~:` semantic search working in the Android app with the same engine
+machinery as desktop: in-process fastembed embeddings + the usearch HNSW
+index, the existing `/embed/*` endpoints, status UI, and search degradation
+semantics. No new backend, no sidecar, no server.
+
+Non-goals: bundling model weights in the APK (lazy download stays), iOS,
+changing the desktop embedding path in any way (its `embeddings` feature and
+prebuilt-ort download are untouched).
+
+## What already exists (verified)
+
+- **`embeddings-dynamic` cargo feature** (landed with Stage 2's gating):
+  `["dep:fastembed", "dep:usearch", "fastembed/ort-load-dynamic"]`. Verified
+  against fastembed 4.9.1: `ort-load-dynamic = ["ort/load-dynamic"]` is real.
+  Same `EmbeddingIndex` compiles under either backend; the stub-twin design
+  means **zero consumer changes** anywhere in the engine.
+- **ort 2.0.0-rc.9 targets ONNX Runtime 1.20.0** (`ort-sys` build.rs pin) —
+  the AAR version below must match this, not float to latest.
+- Host currently forces `embedding.enabled = false` and the engine's 60 s
+  background task (section fetch + embed sync) is gated on that flag.
+- The web's Embeddings settings section, embed-status polling, `SPC e m`
+  (embed missing) / `SPC e A` (reindex) commands all work against the same
+  endpoints and need no mobile-specific changes.
+
+## The one unproven native dep: usearch under the NDK
+
+The Stage 5 NDK spike compiled the engine **without** usearch/fastembed
+(that was the point of the gating). Stage 10 is the first time usearch's
+C++ (and its SIMD paths) meets NDK clang++. Expected fine — aarch64 NEON is
+a first-class usearch target — but it is the un-derisked item, so it goes
+first:
+
+```bash
+# M1 spike, before any host/gradle work (env from docs/commands.org):
+cargo check --lib --no-default-features --features embed-assets,embeddings-dynamic   # host linux first
+cargo ndk -t arm64-v8a check --lib --no-default-features --features embed-assets,embeddings-dynamic
+cargo ndk -t x86_64   check --lib --no-default-features --features embed-assets,embeddings-dynamic
+```
+
+Watch for: libc++ linkage (cargo-ndk links `c++_static` by default — confirm
+usearch is satisfied; if not, `c++_shared` needs packaging), exceptions/RTTI
+flags in usearch's cc build.
+
+## Components
+
+### 1. Host crate (`mobile/src-tauri`)
+
+- `Cargo.toml`: `nostr-engine = { …, features = ["embed-assets", "embeddings-dynamic"] }`.
+- `lib.rs` `engine_config`: stop forcing `embedding.enabled = false`; set
+  `config.embedding.cache_dir = <data_root>/models` explicitly (the desktop
+  fallback probes `current_exe()`'s parent, which is meaningless inside an
+  APK) and leave model/dimensions at engine defaults for desktop parity.
+- **Dylib resolution** (the load-dynamic contract): ort dlopens
+  `libonnxruntime.so` at first use. The APK's native-lib dir is on the app
+  process's linker path, so a plain dlopen is expected to work. Belt and
+  braces: before `server::start`, resolve the directory that
+  `libtendrl_mobile_lib.so` itself was loaded from (parse `/proc/self/maps`
+  — pure Rust, no JNI) and set `ORT_DYLIB_PATH` to
+  `<that dir>/libonnxruntime.so`. Cheap, deterministic, and makes the
+  failure mode a log line instead of a mystery.
+
+### 2. Gradle (`gen/android/app/build.gradle.kts`)
+
+```kotlin
+dependencies {
+    // Must match ort-sys's ONNXRUNTIME_VERSION (2.0.0-rc.9 -> 1.20.0).
+    // Do NOT float this; ort's ABI checks reject mismatched majors/minors.
+    implementation("com.microsoft.onnxruntime:onnxruntime-android:1.20.0")
+}
+```
+
+Packs `libonnxruntime.so` per ABI into the APK (~15–25 MB for arm64).
+
+### 3. Model provisioning
+
+fastembed downloads the model on first embed (engine default resolves to
+`Qdrant/all-MiniLM-L6-v2-onnx`, ~90 MB with tokenizer) into the configured
+cache under app storage, over the existing rustls HF-hub path. First
+`~:` search or embed-missing run pays the download; the Embeddings settings
+section already surfaces status/health, which is where the wait is visible.
+No APK bloat, survives app updates (app-data dir), wiped by uninstall.
+
+### 4. Battery / lifecycle (decision point)
+
+Enabling `embedding.enabled` also arms the 60 s background task (section
+fetch + auto-embed) — on a phone that's a wakeup tax while backgrounded.
+Options:
+
+- **(a) Parity**: ship it as-is, note the battery cost, rely on Android's
+  background throttling of the process.
+- **(b) Manual-only**: host config sets `auto_embed = false`; embedding
+  happens via the existing `SPC e m` / settings action only.
+- **(c) Foreground-gated (recommended)**: keep parity behavior but pause
+  the background loop while the app is backgrounded — Tauri 2 delivers
+  `RunEvent::Resumed` / `WindowEvent::Focused` on Android; host flips a flag
+  the engine loop checks (small engine addition: an `AtomicBool` pause gate
+  on the background task, host-settable via a `server::RunningServer`
+  handle). This also quietly delivers the B2 "pause fetch loop on suspend"
+  item for the fetch half of the same loop.
+
+### 5. Web
+
+Nothing required. Optional polish: the Embeddings settings section could
+show a "model not downloaded yet (~90 MB)" hint on mobile before first use.
+
+## Verification ladder
+
+1. **M1 — compile spike**: the three checks above; clippy on the feature
+   combo. No device needed.
+2. **M2 — host wiring**: gradle AAR + config enable + `ORT_DYLIB_PATH`;
+   debug APK builds; APK size delta noted.
+3. **M3 — device pass** (adb over LAN, `adb logcat -s tendrl`):
+   - embed status endpoint healthy; model downloads to
+     `<data>/models` on first embed (watch size/time on wifi);
+   - `SPC e m` embeds the existing corpus (~hundreds of events after the
+     feed syncs) — measure throughput (events/sec on the Pixel 7's CPU);
+   - `~:cave allegory` style searches return semantically sane results
+     against the Republic/companion content already on the device;
+   - kill/relaunch: index persists (vectors.idx/map under app data),
+     no re-download, no re-embed.
+4. **M4 — lifecycle gate** (per the decision above) + docs: commands.org
+   device notes, feat-mobile zettel tick, bump plan status to shipped.
+
+## Risks
+
+| Risk | Exposure | Mitigation / early detection |
+|---|---|---|
+| usearch C++ under NDK (first contact) | blocks everything | M1 spike first; c++_shared packaging as fallback |
+| ort ↔ libonnxruntime version mismatch | runtime init failure | pin AAR 1.20.0 (= ort-sys pin); never float |
+| dlopen can't find libonnxruntime.so | embeds error out | explicit ORT_DYLIB_PATH from /proc/self/maps; failure is a clean engine error (embedding stays disabled, app unaffected) |
+| 90 MB model download on metered connection | user surprise | download only on explicit embed/search action (already the semantics); settings hint (optional) |
+| ONNX inference RAM/thermals on device | slow embeds | MiniLM-L6 is small (~90 MB, 384-dim); measure in M3 before considering a smaller model |
+| Background embed loop battery tax | drain complaints | lifecycle decision (c) recommended |
+
+## Open questions
+
+- Lifecycle option (a) parity / (b) manual-only / (c) foreground-gated —
+  recommendation is (c); (b) is the safe fallback if the pause gate grows
+  legs.
+- Keep the desktop-default MiniLM model on mobile, or pick a smaller one?
+  (Defer until M3 throughput numbers exist; the config already supports
+  per-install model choice.)
