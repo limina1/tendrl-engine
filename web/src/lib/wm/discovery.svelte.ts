@@ -129,11 +129,11 @@ export const TIPS: Record<string, TourTip> = {
 		// teach signing in. Skips this and the source-controls beat below.
 		relevantWhen: (w) => !w.hasIdentity,
 		mobile: {
-			anchor: 'mobile-cmds',
+			anchor: 'mobile-menu',
 			// No NIP-07 pitch here — browser extensions don't exist in a phone
 			// WebView; watch-only npub is the first way in on mobile.
-			body: 'Open *cmds* and run `tendrl-open-settings` to sign in — the lightest way is to paste your `npub1…` and browse as yourself (watch-only); add an `ncryptsec` key later when you want to sign. Heads up: the moment you sign in you\'ll see your pubkey but no name yet.',
-			placement: 'top'
+			body: 'Open the `☰` drawer and tap *settings* to sign in — the lightest way is to paste your `npub1…` and browse as yourself (watch-only); add an `ncryptsec` key later when you want to sign. Heads up: the moment you sign in you\'ll see your pubkey but no name yet.',
+			placement: 'bottom'
 		}
 	},
 	'sign-in-methods': {

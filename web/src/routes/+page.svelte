@@ -28,6 +28,7 @@
 	import { BufferStore, setActiveStore, type NavAction } from '$lib/wm/buffer-store.svelte';
 	import BufferRenderer from '$lib/wm/BufferRenderer.svelte';
 	import MobileShell from '$lib/wm/MobileShell.svelte';
+	import PaneTabs from '$lib/wm/PaneTabs.svelte';
 	import { shell, type ShellPref } from '$lib/wm/shell.svelte';
 	import { rendererFor, toursForClass } from '$lib/wm/registry';
 	import { getAppState, type ModalNavEntry } from '$lib/state.svelte';
@@ -701,6 +702,11 @@
 			closeMinibuffer();
 			return;
 		}
+		if (cmd.id === 'tendrl-open-compose') {
+			openCompose();
+			closeMinibuffer();
+			return;
+		}
 		if (cmd.id === 'tendrl-open-settings') {
 			store.openBuffer({
 				className: 'work',
@@ -1039,7 +1045,8 @@
 					label: 'profile',
 					kicker: 'kind:0'
 				}
-			})
+			}),
+		openCompose
 		});
 	}
 
@@ -1238,6 +1245,13 @@
 		});
 	}
 
+	function openCompose() {
+		store.openBuffer({
+			className: 'work',
+			buffer: { id: 'composer:current', kind: 'composer', label: 'composer', kicker: 'draft' }
+		});
+	}
+
 	// Modeline wiki-resolution pill: progress display + the "resolve
 	// everything here" button. In Confirm mode the click raises ONE fetch
 	// intent for every unresolved wiki link on screen; in Auto it forces a
@@ -1324,6 +1338,7 @@
 			engineInfo={{ version: app.engineVersion, branch: app.engineBranch }}
 			onToggleNetwork={toggleNetworkMode}
 			onOpenRelays={openRelays}
+			onOpenSettings={openSettings}
 			onIdentityTap={() => {
 				if (identityPill.kind === 'connect') connectIdentity();
 				else if (identityPill.kind === 'me') openMyProfile();
@@ -1736,30 +1751,19 @@
 			<div class="pane__head">
 				<span class="cls cls--{slot.className}">{slot.className}</span>
 				{#if isRoot && classBuffers.length > 1}
-					<div class="pane__tabs">
-						{#each classBuffers as ob (ob.buffer.id)}
-							<span class="pane__tab {ob.buffer.id === node.buffer.id ? 'pane__tab--on' : ''}">
-								<button
-									class="pane__tab-go"
-									onclick={(e) => {
-										e.stopPropagation();
-										store.focusSlot(pos);
-										if (ob.buffer.id !== node.buffer.id) store.setLeaf(pos, ob.buffer);
-									}}
-									title={ob.buffer.kicker ?? ob.buffer.label}
-								>{ob.buffer.label}</button>
-								<button
-									class="pane__tab-x"
-									onclick={(e) => {
-										e.stopPropagation();
-										store.killBuffer(ob.buffer.id);
-									}}
-									title="Close this buffer (SPC b k)"
-									aria-label={`Close ${ob.buffer.label}`}
-								>×</button>
-							</span>
-						{/each}
-					</div>
+					<PaneTabs
+						buffers={classBuffers.map((ob) => ob.buffer)}
+						activeId={node.buffer.id}
+						onSelect={(buf) => {
+							store.focusSlot(pos);
+							if (buf.id !== node.buffer.id) store.setLeaf(pos, buf);
+						}}
+						onKill={(id) => store.killBuffer(id)}
+						onMore={() => {
+							store.focusSlot(pos);
+							openMinibuffer('class');
+						}}
+					/>
 				{:else}
 					<span class="pane__name">{node.buffer.label}</span>
 				{/if}
@@ -2297,58 +2301,6 @@
 		padding: 0 4px;
 	}
 	.pane__x:hover { color: var(--fg); }
-	.pane__tabs {
-		display: flex;
-		gap: 2px;
-		align-items: center;
-		min-width: 0;
-		overflow-x: auto;
-		scrollbar-width: none;
-	}
-	/* Tab = wrapper span holding the switch button + the close ×, so the
-	   border/active tint frames both without nesting buttons. */
-	.pane__tab {
-		display: inline-flex;
-		align-items: center;
-		border: 1px solid transparent;
-		border-radius: var(--r-sm);
-		color: var(--base5);
-		flex-shrink: 0;
-	}
-	.pane__tab:hover { color: var(--fg); border-color: var(--base3); }
-	.pane__tab--on {
-		color: var(--fg);
-		border-color: var(--id-yours);
-		background: color-mix(in srgb, var(--id-yours) 10%, transparent);
-		font-weight: 600;
-	}
-	.pane__tab-go {
-		background: transparent;
-		border: none;
-		color: inherit;
-		cursor: pointer;
-		font-family: var(--font-mono);
-		font-size: var(--t-2xs);
-		font-weight: inherit;
-		text-transform: uppercase;
-		letter-spacing: 0.05em;
-		padding: 1px 2px 1px 6px;
-		max-width: 18ch;
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
-	}
-	.pane__tab-x {
-		background: transparent;
-		border: none;
-		color: var(--base4);
-		cursor: pointer;
-		font-size: var(--t-xs);
-		line-height: 1;
-		padding: 1px 5px 1px 3px;
-		border-radius: var(--r-sm);
-	}
-	.pane__tab-x:hover { color: var(--red, var(--fg)); }
 	.pane__body {
 		flex: 1;
 		padding: var(--s-3);

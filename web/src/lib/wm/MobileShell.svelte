@@ -26,6 +26,7 @@
 		engineInfo = null,
 		onToggleNetwork,
 		onOpenRelays,
+		onOpenSettings,
 		onIdentityTap
 	}: {
 		store: BufferStore;
@@ -38,15 +39,16 @@
 		engineInfo?: { version: string | null; branch: string | null } | null;
 		onToggleNetwork?: () => void;
 		onOpenRelays?: () => void;
+		onOpenSettings?: () => void;
 		onIdentityTap?: () => void;
 	} = $props();
 
-	// Bottom-bar order + user-facing labels. 'research' reads as "search" on
-	// the bar; the class name stays research everywhere else.
+	// Bottom-bar order + user-facing labels. Only chat and work get a slot
+	// for now — research (search) stays reachable through the ☰ drawer's
+	// commands entry, and its panel still renders when something opens it.
 	const bar: { cls: ClassName; label: string }[] = [
 		{ cls: 'chat', label: 'chat' },
-		{ cls: 'work', label: 'work' },
-		{ cls: 'research', label: 'search' }
+		{ cls: 'work', label: 'work' }
 	];
 
 	const activeClass = $derived(store.focusedSlotClass() ?? 'work');
@@ -165,6 +167,7 @@
 			{/each}
 			<button
 				class="mshell__drawer-add"
+				data-tour="mobile-cmds"
 				onclick={() => {
 					mobileNav.drawerOpen = false;
 					onCommands();
@@ -172,10 +175,23 @@
 				title="Commands — open buffers, act (M-x)"
 			>+ commands</button>
 
-			<!-- Mobile home for the desktop modeline's status pills. -->
+			<!-- Mobile home for the desktop modeline's status pills, in the
+			     same visual vocabulary (dots + pills); › marks rows that open
+			     a work buffer rather than toggling in place. -->
 			<div class="mshell__drawer-sp"></div>
 			<div class="mshell__status" data-tour="mobile-status">
 				<div class="mshell__status-head">status</div>
+				<button
+					class="mshell__status-row"
+					onclick={() => {
+						mobileNav.drawerOpen = false;
+						onOpenSettings?.();
+					}}
+					title="Open settings (identity, embedding, appearance)"
+				>
+					<span class="mshell__status-label">settings</span>
+					<span class="mshell__status-go" aria-hidden="true">›</span>
+				</button>
 				{#if networkPill}
 					<button
 						class="mshell__status-row"
@@ -196,6 +212,7 @@
 					title="Relay configuration"
 				>
 					<span class="mshell__status-label">relays</span>
+					<span class="mshell__status-go" aria-hidden="true">›</span>
 				</button>
 				{#if identityPill}
 					<button
@@ -211,10 +228,18 @@
 					</button>
 				{/if}
 				{#if embeddingPill}
-					<div class="mshell__status-row mshell__status-row--static">
+					<button
+						class="mshell__status-row"
+						onclick={() => {
+							mobileNav.drawerOpen = false;
+							onOpenSettings?.();
+						}}
+						title="Embedding index — status, sync, and reindex live in Settings"
+					>
 						{#if embeddingPill.dotClass}<span class="dot {embeddingPill.dotClass}"></span>{/if}
 						<span class="mshell__status-label">{embeddingPill.label}</span>
-					</div>
+						<span class="mshell__status-go" aria-hidden="true">›</span>
+					</button>
 				{/if}
 				{#if engineInfo?.version || engineInfo?.branch}
 					<div
@@ -241,7 +266,6 @@
 				onclick={() => switchClass(b.cls)}
 			>{b.label}</button>
 		{/each}
-		<button class="mshell__bar-item mshell__bar-item--cmd" data-tour="mobile-cmds" onclick={onCommands}>cmds</button>
 	</nav>
 </div>
 
@@ -485,6 +509,11 @@
 		flex: 1;
 		color: var(--fg-alt);
 	}
+	.mshell__status-go {
+		color: var(--fg-alt);
+		font-size: var(--t-sm);
+		line-height: 1;
+	}
 
 	.mshell__panel {
 		flex: 1;
@@ -527,9 +556,4 @@
 	.mshell__bar-item--on.mshell__bar-item--chat { border-top-color: var(--id-imported); }
 	.mshell__bar-item--on.mshell__bar-item--work { border-top-color: var(--id-yours); }
 	.mshell__bar-item--on.mshell__bar-item--research { border-top-color: var(--id-remote); }
-	.mshell__bar-item--cmd {
-		flex: 0 0 22%;
-		border-left: 1px solid var(--panel-border);
-		color: var(--fg-alt);
-	}
 </style>
