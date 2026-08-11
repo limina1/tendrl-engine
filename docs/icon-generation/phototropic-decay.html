@@ -35,9 +35,13 @@
         .sidebar {
             width: 320px;
             flex-shrink: 0;
+            align-self: flex-start;
+            position: sticky;
+            top: 20px;
+            max-height: calc(100vh - 40px);
             background: rgba(255, 255, 255, 0.95);
             backdrop-filter: blur(10px);
-            padding: 24px;
+            padding: 20px;
             border-radius: 12px;
             box-shadow: 0 10px 30px rgba(20, 20, 19, 0.1);
             overflow-y: auto;
@@ -55,27 +59,53 @@
         .sidebar .subtitle {
             color: var(--anthropic-mid-gray);
             font-size: 14px;
-            margin-bottom: 32px;
+            margin-bottom: 16px;
             line-height: 1.4;
         }
 
-        .control-section { margin-bottom: 32px; }
+        .quick-actions { margin-bottom: 16px; }
 
-        .control-section h3 {
-            font-size: 16px;
+        details.control-section {
+            margin-bottom: 8px;
+            border: 1px solid var(--anthropic-light-gray);
+            border-radius: 8px;
+            background: var(--anthropic-light);
+            overflow: hidden;
+        }
+
+        details.control-section[open] { background: white; }
+
+        details.control-section summary {
+            list-style: none;
+            cursor: pointer;
+            padding: 10px 14px;
+            font-size: 14px;
             font-weight: 600;
             color: var(--anthropic-dark);
-            margin-bottom: 16px;
             display: flex;
             align-items: center;
             gap: 8px;
+            user-select: none;
         }
 
-        .control-section h3::before {
+        details.control-section summary::-webkit-details-marker { display: none; }
+
+        details.control-section summary::before {
             content: '•';
             color: var(--anthropic-orange);
             font-weight: bold;
         }
+
+        details.control-section summary::after {
+            content: '\25B8';
+            margin-left: auto;
+            color: var(--anthropic-mid-gray);
+            transition: transform 0.15s ease;
+        }
+
+        details.control-section[open] summary::after { transform: rotate(90deg); }
+
+        .section-body { padding: 6px 14px 14px; }
 
         /* Seed Controls */
         .seed-input {
@@ -107,7 +137,7 @@
         .regen-button { margin-bottom: 0; }
 
         /* Parameter Controls */
-        .control-group { margin-bottom: 20px; }
+        .control-group { margin-bottom: 14px; }
 
         .control-group label {
             display: block;
@@ -343,7 +373,7 @@
 
         @media (max-width: 700px) {
             .container { flex-direction: column; padding: 12px; }
-            .sidebar { width: 100%; }
+            .sidebar { width: 100%; position: static; max-height: none; }
             .canvas-area { padding: 0; }
         }
     </style>
@@ -355,33 +385,51 @@
             <h1>Phototropic Decay</h1>
             <div class="subtitle">A recursive branching organism on a receding plane. Drag the canvas to shape it.</div>
 
+            <div class="quick-actions">
+                <input type="text" id="design-id" class="seed-input" readonly onclick="this.select()" title="Design identifier (seed + param hash) — every export is named with it">
+                <div class="button-row">
+                    <button class="button" onclick="regenerate()">Regenerate</button>
+                    <button class="button" onclick="resetParameters()">Reset</button>
+                </div>
+                <div class="button-row">
+                    <button class="button secondary" onclick="downloadPNG()" title="Downloads <id>.png plus a matching <id>.json params file">PNG</button>
+                    <button class="button tertiary" onclick="downloadSVG()" title="Downloads <id>.svg plus a matching <id>.json params file">SVG</button>
+                    <button class="button" onclick="document.getElementById('params-file').click()" title="Load a previously exported params .json">Load…</button>
+                </div>
+                <input type="file" id="params-file" accept=".json,application/json" style="display:none" onchange="loadParamsFile(this.files[0]); this.value='';">
+            </div>
+
             <!-- Seed Section -->
-            <div class="control-section">
-                <h3>Seed</h3>
-                <input type="number" id="seed-input" class="seed-input" value="4821" onchange="updateSeed()">
+            <details class="control-section" open>
+                <summary>Seed</summary>
+                <div class="section-body">
+<input type="number" id="seed-input" class="seed-input" value="4821" onchange="updateSeed()">
                 <div class="seed-controls">
                     <button class="button secondary" onclick="previousSeed()">← Prev</button>
                     <button class="button secondary" onclick="nextSeed()">Next →</button>
                 </div>
                 <button class="button tertiary regen-button" onclick="randomSeedAndUpdate()">↻ Random</button>
-            </div>
+                </div>
+            </details>
 
             <!-- Directions -->
-            <div class="control-section">
-                <h3>Directions</h3>
-                <div class="preset-grid">
+            <details class="control-section">
+                <summary>Directions</summary>
+                <div class="section-body">
+<div class="preset-grid">
                     <button class="preset" onclick="applyPreset('vascular')"><strong>Vascular</strong><span>Dense, capillary-rich</span></button>
                     <button class="preset" onclick="applyPreset('rootmark')"><strong>Rootmark</strong><span>Few thick limbs</span></button>
                     <button class="preset" onclick="applyPreset('synapse')"><strong>Synapse</strong><span>Wide radial burst</span></button>
                     <button class="preset" onclick="applyPreset('delta')"><strong>Delta</strong><span>Extreme perspective</span></button>
                 </div>
-            </div>
+                </div>
+            </details>
 
             <!-- Parameters Section -->
-            <div class="control-section">
-                <h3>Growth</h3>
-
-                <div class="control-group">
+            <details class="control-section">
+                <summary>Growth</summary>
+                <div class="section-body">
+<div class="control-group">
                     <label>Branch Angle (drag ↔)</label>
                     <div class="slider-container">
                         <input type="range" id="spread" min="8" max="130" step="1" value="46" oninput="updateParam('spread', this.value)">
@@ -452,12 +500,13 @@
                         <span class="value-display" id="capillaries-value">0.55</span>
                     </div>
                 </div>
-            </div>
+                </div>
+            </details>
 
-            <div class="control-section">
-                <h3>Perspective</h3>
-
-                <div class="control-group">
+            <details class="control-section">
+                <summary>Perspective</summary>
+                <div class="section-body">
+<div class="control-group">
                     <label>Tilt into depth (drag ↕)</label>
                     <div class="slider-container">
                         <input type="range" id="tilt" min="0" max="78" step="1" value="52" oninput="updateParam('tilt', this.value)">
@@ -480,12 +529,13 @@
                         <span class="value-display" id="focal-value">900</span>
                     </div>
                 </div>
+                </div>
+            </details>
 
-            </div>
-
-            <div class="control-section">
-                <h3>Framing</h3>
-                <div class="toggle-row">
+            <details class="control-section">
+                <summary>Framing</summary>
+                <div class="section-body">
+<div class="toggle-row">
                     <input type="checkbox" id="panModeBox" onchange="setPanMode(this.checked)">
                     <label for="panModeBox" style="margin:0">Pan mode (plain drag moves the mark)</label>
                 </div>
@@ -507,12 +557,13 @@
                 </div>
 
                 <button class="button secondary" onclick="recenter()">Recenter</button>
-            </div>
+                </div>
+            </details>
 
-            <div class="control-section">
-                <h3>Light</h3>
-
-                <div class="control-group">
+            <details class="control-section">
+                <summary>Light</summary>
+                <div class="section-body">
+<div class="control-group">
                     <label>Bloom</label>
                     <div class="slider-container">
                         <input type="range" id="glow" min="0" max="2.5" step="0.05" value="1" oninput="updateParam('glow', this.value)">
@@ -543,11 +594,13 @@
                         <span class="color-value" id="bg-value">#000000</span>
                     </div>
                 </div>
-            </div>
+                </div>
+            </details>
 
-            <div class="control-section">
-                <h3>Seep</h3>
-                <div class="toggle-row">
+            <details class="control-section">
+                <summary>Seep</summary>
+                <div class="section-body">
+<div class="toggle-row">
                     <input type="checkbox" id="seep" onchange="toggleFlag('seep', this.checked)">
                     <label for="seep" style="margin:0">Enable seep</label>
                 </div>
@@ -601,11 +654,13 @@
                 </div>
 
                 <button class="button tertiary" onclick="reseep()">↻ Reroll seep</button>
-            </div>
+                </div>
+            </details>
 
-            <div class="control-section">
-                <h3>Logo Test</h3>
-                <div class="toggle-row">
+            <details class="control-section">
+                <summary>Logo Test</summary>
+                <div class="section-body">
+<div class="toggle-row">
                     <input type="checkbox" id="silhouette" onchange="toggleFlag('silhouette', this.checked)">
                     <label for="silhouette" style="margin:0">Silhouette test (flat, no bloom)</label>
                 </div>
@@ -618,31 +673,12 @@
                     <div class="thumb-item"><canvas id="t64" width="64" height="64"></canvas><span>64</span></div>
                     <div class="thumb-item"><canvas id="t32" width="32" height="32"></canvas><span>32</span></div>
                 </div>
-            </div>
+                </div>
+            </details>
 
             <!-- Actions Section -->
-            <div class="control-section">
-                <h3>Actions</h3>
-                <div class="button-row">
-                    <button class="button" onclick="regenerate()">Regenerate</button>
-                    <button class="button" onclick="resetParameters()">Reset</button>
-                </div>
-            </div>
-
-            <!-- Export / Import Section -->
-            <div class="control-section">
-                <h3>Export</h3>
-                <label style="display:block; font-size:12px; color: var(--anthropic-mid-gray); margin-bottom:4px;">Identifier (seed + param hash)</label>
-                <input type="text" id="design-id" class="seed-input" readonly onclick="this.select()" title="Click to select — every export is named with this identifier">
-                <div class="button-row">
-                    <button class="button secondary" onclick="downloadPNG()">PNG + params</button>
-                    <button class="button tertiary" onclick="downloadSVG()">SVG + params</button>
-                </div>
-                <div class="button-row">
-                    <button class="button" onclick="document.getElementById('params-file').click()">Load settings…</button>
-                </div>
-                <input type="file" id="params-file" accept=".json,application/json" style="display:none" onchange="loadParamsFile(this.files[0]); this.value='';">
-            </div>
+            
+            
         </div>
 
         <!-- Main Canvas Area -->
