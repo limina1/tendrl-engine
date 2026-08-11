@@ -759,6 +759,60 @@ pub fn nip_filter_from_json(f: &Value) -> NipFilter {
 /// JSON filter into a `NipFilter` and delegates to
 /// `RequestSummary::to_dsl`. New call sites should construct
 /// `RequestSummary` directly and call `.to_dsl()` on it.
+/// Compact human-readable "what" for a REQ's filters — the relay-fetch
+/// log lines' answer to "fetched WHAT from that relay?". A clean
+/// coordinate lookup (one kind + one author + `#d` values) renders as
+/// naddr(s) so the log names the actual entity; anything else renders
+/// as the search-DSL clause string, which pastes straight back into
+/// the search box. Capped so a bulk section backfill (dozens of `#d`
+/// values) can't flood a log line.
+pub fn describe_filters_for_log(filters: &[Value]) -> String {
+    filters
+        .iter()
+        .map(describe_filter_for_log)
+        .collect::<Vec<_>>()
+        .join(" | ")
+}
+
+fn describe_filter_for_log(f: &Value) -> String {
+    let nf = nip_filter_from_json(f);
+    if let (Some(kinds), Some(authors)) = (&nf.kinds, &nf.authors) {
+        if kinds.len() == 1 && authors.len() == 1 {
+            if let (Ok(kind), Some(ds)) = (u32::try_from(kinds[0]), nf.tags.get("d")) {
+                let mut naddrs: Vec<String> = ds
+                    .iter()
+                    .take(2)
+                    .filter_map(|d| crate::nip19::encode_naddr(kind, &authors[0], d, &[]).ok())
+                    .collect();
+                // Only when every shown d-tag encoded — a bad pubkey
+                // falls through to the DSL form instead of logging a
+                // half-empty naddr list.
+                if !naddrs.is_empty() && naddrs.len() == ds.len().min(2) {
+                    if ds.len() > naddrs.len() {
+                        naddrs.push(format!("+{} more", ds.len() - naddrs.len()));
+                    }
+                    return naddrs.join(" ");
+                }
+            }
+        }
+    }
+    let mut s = filter_to_dsl_clauses(&nf);
+    const MAX_LEN: usize = 220;
+    if s.len() > MAX_LEN {
+        let mut cut = MAX_LEN;
+        while !s.is_char_boundary(cut) {
+            cut -= 1;
+        }
+        s.truncate(cut);
+        s.push('…');
+    }
+    if s.is_empty() {
+        "(empty filter)".to_string()
+    } else {
+        s
+    }
+}
+
 pub fn dsl_for_composition(filters: &[Value], composition: &CompositionShape) -> String {
     let summary = RequestSummary {
         filters: filters.iter().map(nip_filter_from_json).collect(),
@@ -1333,6 +1387,39 @@ mod tests {
             authors: Some(authors.into_iter().map(String::from).collect()),
             ..NipFilter::default()
         }
+    }
+
+    #[test]
+    fn describe_filters_renders_coordinate_lookup_as_naddr() {
+        let pubkey = "aa".repeat(32);
+        let f = serde_json::json!({
+            "kinds": [30041], "authors": [pubkey], "#d": ["intro"], "limit": 1
+        });
+        let s = describe_filters_for_log(&[f]);
+        assert!(s.starts_with("naddr1"), "expected naddr, got: {s}");
+        // Round-trip: the logged naddr decodes back to the coordinate.
+        match crate::nip19::decode(&s).expect("logged naddr decodes") {
+            crate::nip19::Decoded::Naddr { kind_int, d_tag, .. } => {
+                assert_eq!(kind_int, 30041);
+                assert_eq!(d_tag, "intro");
+            }
+            other => panic!("expected naddr, decoded {other:?}"),
+        }
+    }
+
+    #[test]
+    fn describe_filters_renders_generic_filter_as_dsl() {
+        let f = serde_json::json!({ "kinds": [30040, 0], "limit": 50 });
+        assert_eq!(describe_filters_for_log(&[f]), "k:30040,0 limit:50");
+    }
+
+    #[test]
+    fn describe_filters_caps_bulk_d_tag_lists() {
+        let pubkey = "bb".repeat(32);
+        let ds: Vec<String> = (0..30).map(|i| format!("section-{i}")).collect();
+        let f = serde_json::json!({ "kinds": [30041], "authors": [pubkey], "#d": ds });
+        let s = describe_filters_for_log(&[f]);
+        assert!(s.contains("+28 more"), "expected capped list, got: {s}");
     }
 
     fn stage(label: &str, members: Vec<(Phase, Vec<String>)>, delay_ms: u64) -> PhaseStage {

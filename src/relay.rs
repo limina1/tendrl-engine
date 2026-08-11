@@ -135,10 +135,11 @@ pub async fn fetch_with_filters(
     let _ = ws.close(None).await;
 
     info!(
-        "Fetched {} events from {} in {:?}",
+        "Fetched {} events from {} in {:?} for {}",
         fetched_events.len(),
         relay_url,
-        start.elapsed()
+        start.elapsed(),
+        crate::network::describe_filters_for_log(filters)
     );
 
     Ok(fetched_events)
