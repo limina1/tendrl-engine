@@ -43,12 +43,14 @@
 		onIdentityTap?: () => void;
 	} = $props();
 
-	// Bottom-bar order + user-facing labels. Only chat and work get a slot
-	// for now — research (search) stays reachable through the ☰ drawer's
-	// commands entry, and its panel still renders when something opens it.
+	// Bottom-bar order + user-facing labels. Only work and search get a slot
+	// for now ('research' reads as "search" on the bar; the class name stays
+	// research everywhere else). Chat has no slot — it stays reachable
+	// through the ☰ drawer's commands entry, and its panel still renders
+	// when something opens it.
 	const bar: { cls: ClassName; label: string }[] = [
-		{ cls: 'chat', label: 'chat' },
-		{ cls: 'work', label: 'work' }
+		{ cls: 'work', label: 'work' },
+		{ cls: 'research', label: 'search' }
 	];
 
 	const activeClass = $derived(store.focusedSlotClass() ?? 'work');
