@@ -129,13 +129,19 @@
 			.catch(() => {
 				if (!cancelled) tokensBySection = {};
 			});
-		api.resolveNostrdown(items)
-			.then((m) => {
+		api.resolveNostrdownProgressive(
+			items,
+			(m) => {
 				if (!cancelled) refsBySection = m;
-			})
-			.catch(() => {
-				if (!cancelled) refsBySection = {};
-			});
+			},
+			{
+				fetch: app.networkStatus?.mode === 'auto',
+				onFetched: (n) => {
+					if (!cancelled && n > 0)
+						app.pushToast(`Fetched ${n} wiki link${n === 1 ? '' : 's'} from relays`, 'info');
+				}
+			}
+		);
 		return () => {
 			cancelled = true;
 		};

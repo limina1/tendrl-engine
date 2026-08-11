@@ -2157,6 +2157,9 @@ impl<'a> PublicationEngine<'a> {
         }
 
         let mut out = Vec::with_capacity(refs.len());
+        // Non-sibling wiki topics, batched into one lookup after the loop:
+        // (index into `out`, topic slug, display_given).
+        let mut deferred_wiki: Vec<(usize, String, bool)> = Vec::new();
         for r in &refs {
             let (start, end) = r.utf16_span(content);
             let display_given = r.display.is_some();
@@ -2254,10 +2257,13 @@ impl<'a> PublicationEngine<'a> {
                     // their own section title beats a same-named global topic.
                     if let Some(s) = siblings.iter().find(|s| s.matches(&r.target)) {
                         s.fill(&mut resolved, false, display_given);
-                    } else if let Some(ev) = self.find_wiki_event(&r.target, author, policy).await {
-                        resolved.naddr = event_naddr(&ev);
-                        resolved.coord = event_coord(&ev);
-                        apply_event(&mut resolved, &ev, false, display_given);
+                    } else {
+                        // Global topic lookup — deferred so every unresolved
+                        // topic in the batch goes out as ONE query after the
+                        // loop, not a serial per-topic relay REQ (a
+                        // Wikipedia-derived article carries 100+ wikilinks;
+                        // serial fetches stalled resolve for minutes).
+                        deferred_wiki.push((out.len(), r.target.clone(), display_given));
                     }
                 }
                 RefKind::Slot => {
@@ -2315,6 +2321,25 @@ impl<'a> PublicationEngine<'a> {
             }
 
             out.push(resolved);
+        }
+
+        if !deferred_wiki.is_empty() {
+            let topics: Vec<String> = {
+                let mut t: Vec<String> =
+                    deferred_wiki.iter().map(|(_, topic, _)| topic.clone()).collect();
+                t.sort();
+                t.dedup();
+                t
+            };
+            let found = self.find_wiki_events(&topics, author, policy).await;
+            for (idx, topic, display_given) in deferred_wiki {
+                if let Some(ev) = found.get(&topic) {
+                    let resolved = &mut out[idx];
+                    resolved.naddr = event_naddr(ev);
+                    resolved.coord = event_coord(ev);
+                    apply_event(resolved, ev, false, display_given);
+                }
+            }
         }
         out
     }
@@ -2500,31 +2525,21 @@ impl<'a> PublicationEngine<'a> {
         }
     }
 
-    /// Find the definitional event for a `wiki:` topic. The tag semantics are
-    /// deliberately split by kind: a kind-30818 wiki article's `d` tag *is* the
-    /// topic name, so 30818 is queried by `#d`; publication indexes/sections
-    /// (30040/30041) mint opaque nanoid `d` tags and carry their title-slug in
-    /// the `T` tag, so they are queried by `#T`. Prefers the given author, then
-    /// the wiki kind, then the most recent.
-    async fn find_wiki_event(
+    /// Find the definitional events for a batch of `wiki:` topics, in ONE query
+    /// per chunk (not one per topic — a Wikipedia-derived article carries 100+
+    /// wikilinks, and serial relay REQs stalled resolve for minutes). The tag
+    /// semantics are deliberately split by kind: a kind-30818 wiki article's `d`
+    /// tag *is* the topic name, so 30818 is queried by `#d`; publication
+    /// indexes/sections (30040/30041) mint opaque nanoid `d` tags and carry
+    /// their title-slug in the `T` tag, so they are queried by `#T`. Per topic:
+    /// prefers the given author, then the wiki kind, then the most recent.
+    async fn find_wiki_events(
         &self,
-        topic: &str,
+        topics: &[String],
         author: Option<&str>,
         policy: FetchPolicy,
-    ) -> Option<Value> {
-        let filters = vec![
-            serde_json::json!({ "kinds": [30818], "#d": [topic], "limit": 50 }),
-            serde_json::json!({ "kinds": [30040, 30041], "#T": [topic], "limit": 50 }),
-        ];
-        let mut events = self
-            .engine
-            .get_events(filters, policy, None)
-            .await
-            .ok()?
-            .events;
-        if events.is_empty() {
-            return None;
-        }
+    ) -> std::collections::HashMap<String, Value> {
+        use std::collections::hash_map::Entry;
         let score = |e: &Value| -> (u8, u8, i64) {
             let author_match = author
                 .map(|a| e.get("pubkey").and_then(Value::as_str) == Some(a))
@@ -2534,8 +2549,55 @@ impl<'a> PublicationEngine<'a> {
             let created = e.get("created_at").and_then(Value::as_i64).unwrap_or(0);
             (author_match as u8, kind_pref, created)
         };
-        events.sort_by(|a, b| score(b).cmp(&score(a)));
-        events.into_iter().next()
+        let mut best: std::collections::HashMap<String, Value> = std::collections::HashMap::new();
+        // Chunked so a link-dense article can't mint a filter with hundreds of
+        // tag values (relays commonly cap filter array sizes). The generous
+        // limit keeps LocalFirst's local-hit short-circuit from firing when
+        // only a few topics are known locally — it only skips the relay when
+        // local results alone reach the limit.
+        for chunk in topics.chunks(50) {
+            let filters = vec![
+                serde_json::json!({ "kinds": [30818], "#d": chunk, "limit": 500 }),
+                serde_json::json!({ "kinds": [30040, 30041], "#T": chunk, "limit": 500 }),
+            ];
+            let events = match self.engine.get_events(filters, policy, None).await {
+                Ok(r) => r.events,
+                Err(_) => continue,
+            };
+            for e in events {
+                // Which topic(s) does this event define? 30818 answers by `d`,
+                // 30040/30041 by `T` (both stored slug-normalized).
+                let kind = e.get("kind").and_then(Value::as_u64).unwrap_or(0);
+                let handle_tag = if kind == 30818 { "d" } else { "T" };
+                let handles: Vec<String> = e
+                    .get("tags")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|t| {
+                        let t = t.as_array()?;
+                        if t.first()?.as_str()? != handle_tag {
+                            return None;
+                        }
+                        t.get(1)?.as_str().map(str::to_string)
+                    })
+                    .filter(|h| chunk.contains(h))
+                    .collect();
+                for h in handles {
+                    match best.entry(h) {
+                        Entry::Vacant(v) => {
+                            v.insert(e.clone());
+                        }
+                        Entry::Occupied(mut o) => {
+                            if score(&e) > score(o.get()) {
+                                o.insert(e.clone());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        best
     }
 }
 

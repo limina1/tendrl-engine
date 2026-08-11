@@ -126,15 +126,19 @@
 			.catch(() => {
 				if (!cancelled) docTokens = [];
 			});
-		api.resolveNostrdown([
-			{ key: 'doc', content: text, author: author || undefined, coord: coord ?? undefined }
-		])
-			.then((m) => {
+		api.resolveNostrdownProgressive(
+			[{ key: 'doc', content: text, author: author || undefined, coord: coord ?? undefined }],
+			(m) => {
 				if (!cancelled) docRefs = m['doc'] ?? [];
-			})
-			.catch(() => {
-				if (!cancelled) docRefs = [];
-			});
+			},
+			{
+				fetch: app.networkStatus?.mode === 'auto',
+				onFetched: (n) => {
+					if (!cancelled && n > 0)
+						app.pushToast(`Fetched ${n} wiki link${n === 1 ? '' : 's'} from relays`, 'info');
+				}
+			}
+		);
 		return () => {
 			cancelled = true;
 		};

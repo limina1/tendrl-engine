@@ -4,7 +4,10 @@
 	import { type Highlight, type HighlightSpan } from '$lib/discussions/highlights';
 	import type { ResolvedRef, ParsedToken } from '$lib/nostr/nostrdown';
 	import type { ResolutionTracker } from '$lib/nostr/resolution-progress.svelte';
+	import { getAppState } from '$lib/state.svelte';
 	import RichContent from './RichContent.svelte';
+
+	const app = getAppState();
 
 	let {
 		section,
@@ -113,21 +116,27 @@
 			.catch(() => {
 				if (!cancelled) nostrdownTokens = [];
 			});
-		api.resolveNostrdown([
-			{
-				key: 'section',
-				content: text,
-				publication: publicationAtag,
-				author: section.addr?.pubkey,
-				siblings
-			}
-		])
-			.then((m) => {
+		api.resolveNostrdownProgressive(
+			[
+				{
+					key: 'section',
+					content: text,
+					publication: publicationAtag,
+					author: section.addr?.pubkey,
+					siblings
+				}
+			],
+			(m) => {
 				if (!cancelled) nostrdownRefs = m['section'] ?? [];
-			})
-			.catch(() => {
-				if (!cancelled) nostrdownRefs = [];
-			});
+			},
+			{
+				fetch: app.networkStatus?.mode === 'auto',
+				onFetched: (n) => {
+					if (!cancelled && n > 0)
+						app.pushToast(`Fetched ${n} wiki link${n === 1 ? '' : 's'} from relays`, 'info');
+				}
+			}
+		);
 		return () => {
 			cancelled = true;
 		};
