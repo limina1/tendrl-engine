@@ -59,6 +59,39 @@ sibling set, so "see the index" refs resolve too. Driven by the kasten
 pipeline (=docs/zettel-guide/=, =scripts/build-kasten-events.py=), whose
 imported publications are 3-tier trees with deterministic d-tags.
 
+* Resolution pipeline overhaul (2026-08-11)
+
+Driven by a real Wikipedia-derived 30818 (100+ wikilinks per article), which
+broke the pipeline four ways in one afternoon. The result is a contract:
+
+- *Never panic on content*: the NIP-19 entity-prefix checks byte-sliced the
+  target and panicked mid-char on =[[L'Abécédaire…]]= — one bad wikilink
+  killed the whole =/parse= + =/resolve= request, so *no* links rendered.
+  Fixed (byte-wise compare, =multibyte_targets_do_not_panic= regression).
+- *Batch, never serialize*: the wiki-topic lookup was one relay REQ per
+  topic (~218 serial REQs, minutes of wall clock). Now ONE chunked query
+  (50 topics per =#d=/=#T= filter) — 3 REQs, ~3s (=find_wiki_events=).
+- *Paint first, fetch behind*: =resolveNostrdownProgressive= (web/api.ts)
+  does an instant =local_only= pass, then — Auto mode only — a background
+  =local_first= relay backfill that repaints + toasts. Results are
+  session-cached per (content, publication, author, coord) so a remounted
+  buffer repaints synchronously and a settled backfill never re-runs
+  (drafts excluded — they mutate). This matters because buffer renderers
+  unmount on every switch.
+- *Every link phase is live* (the four-state affordance): pre-resolve token
+  chip (click → search) → unresolved-while-backfilling (link-styled in the
+  =--nd-unresolved= theme token, hover spinner) → unresolved-settled (hover
+  search glyph, click → search seeded =k:30818 d:<slug>=) → resolved (click
+  opens, hover previews). No phase reads as plain text; every title says
+  what a click does *right now*.
+- *Aggregate progress is a control*: the modeline wiki pill (=resolveStatus=
+  leaf registry — mounted views ≡ visible views) shows =found/total= with a
+  two-color bar (accent fill / =--nd-unresolved= track) and IS the "resolve
+  everything here" button: one =mode_confirm= call to =/nostrdown/resolve=
+  → ONE Confirm intent for the whole screen (Auto: cache-bypassing
+  re-fetch, for after relay changes). See
+  [[file:feat-network.org][network]] for the consent-once-per-screen idiom.
+
 * Accepted tasks (this feature epoch) — complete
 
 Both epoch tasks landed (2026-07-05): ={{@…}}= mentions and the parsing-boundary

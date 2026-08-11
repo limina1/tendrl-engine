@@ -47,6 +47,41 @@ Open refinements:
   the modal *distinctly* (grouped/highlighted as "this reference points here") and
   offer a hinted-relay(s)-vs-full-set choice.
 
+* The fetch contract: attributable, observable, interruptible (2026-08-11)
+
+Every relay fetch now keeps three properties, enforced at the single choke
+point all fetches pass through (=Engine::tracked_fetch_with_options=):
+
+- *Attributable* — =FetchRecord.reason= carries the human cause ("Resolving
+  references", "Search", "Profile lookup", …). Mechanism: a tokio task-local
+  (=network::with_fetch_reason=) scoped by ONE axum layer mapping request
+  path → reason (=server.rs::fetch_reason_for_path=) — no per-handler
+  plumbing; the innermost scope wins, so a handler can override. Detached
+  tasks attribute at their spawn site (the 60s section-sync loop does).
+  =FetchTrigger= stays the *mechanism* axis; =reason= is the *why* axis.
+- *Observable* — =NetworkStatus.active= lists in-flight fetches (id, relay,
+  reason, started_at) alongside the =recent= ring buffer. Web: the modeline
+  network pill (dim idle / green pulsing + count while pulling, polls
+  =/network/status=) opens the *activity center* popover — active rows and
+  a recent log where a per-row ▸ expands cause + exact query + error. This
+  covers the fetches the intent/toast flow never sees (auto-mode backfills,
+  LocalFirst misses, background sync).
+- *Interruptible* — every fetch's guard registers a =CancellationToken=;
+  the choke point =select!=s relay work against it. =POST
+  /network/fetch-kill= ={id?}= kills one or all: socket work drops
+  immediately, a ="killed"= FetchRecord lands, and the owning request
+  continues with local results (kill ≠ error). Activity-center rows get ×;
+  header gets "kill all". Known v1 limit: per-fetch semantics — a
+  multi-chunk resolve starts its next chunk after a kill; propagating
+  cancellation to the owning *operation* is the refinement.
+
+Related idiom that landed with it: *consent once per screen* — the modeline
+wiki-resolution pill sends the whole screen's unresolved topics through one
+=mode_confirm= resolve → a single Confirm intent, instead of per-link
+approvals. Generalizable to any bulk enrichment (embeds, discussions).
+Any future fetch path (new transport, new caller) must preserve all three
+properties — route it through the choke point or replicate them.
+
 * Gaps / open edges
 - No per-source or per-kind fetch policies — the mode is engine-global.
 

@@ -24,7 +24,25 @@ the divergence ledger below is the consolidation worklist.
   lower-right =ToastStack= (=aria-live=, RAF countdown, pin, kinds
   success/info/error/pending). The single non-blocking acknowledgment
   channel (~100 call sites). SSE-driven =pushActivityToast= adds per-relay
-  lifecycle dots with an Expand → =FetchActivityModal=.
+  lifecycle dots with an Expand → =FetchActivityModal=. *Pin = expand*
+  (2026-08-11): clicking pins AND un-ellipsizes — a pinned toast wraps its
+  full message; never leave a truncated message with no way to read it.
+- *Modeline progress-pill-as-action* (2026-08-11) — a modeline pill that
+  reads as live status AND is the bulk action on that status. Two
+  instances: the wiki-resolution pill (=found/total= two-color bar; click =
+  "resolve everything here", one Confirm intent for the whole screen) and
+  the network-activity pill (dim idle / pulsing green while fetching;
+  click opens the activity-center popover with per-row expand-cause ▸ and
+  kill ×). Status the user might act on belongs in one element, not a
+  readout plus a separate button. Aggregation comes from a leaf registry
+  (=resolve-status.svelte.ts=): renderers register on mount / unregister on
+  teardown, so mounted ≡ visible and the pill always reflects the screen.
+- *Async link affordance* (2026-08-11) — anything clickable whose target
+  resolves asynchronously must show what a click does *right now* in every
+  phase, and no phase may read as plain text. Canonical: the nostrdown
+  wiki-link four-state cycle (chip→fetching→searchable→resolved, hover
+  spinner vs search glyph, =--nd-unresolved= theme token) — see
+  [[file:feat-nostrdown.org][nostrdown]].
 - *Two-step armed button* — destructive-but-local clicks: first click arms
   ("really delete? (Ns)"), second executes, timer disarms. Sites:
   relay-set delete + reset-to-defaults (=RelaysBuffer=), context trash
