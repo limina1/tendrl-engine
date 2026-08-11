@@ -1,0 +1,1355 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Phototropic Decay — Logo Lab</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.7.0/p5.min.js"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600&family=Lora:wght@400;500&display=swap" rel="stylesheet">
+    <style>
+        /* Anthropic Brand Colors */
+        :root {
+            --anthropic-dark: #141413;
+            --anthropic-light: #faf9f5;
+            --anthropic-mid-gray: #b0aea5;
+            --anthropic-light-gray: #e8e6dc;
+            --anthropic-orange: #d97757;
+            --anthropic-blue: #6a9bcc;
+            --anthropic-green: #788c5d;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: 'Poppins', sans-serif;
+            background: linear-gradient(135deg, var(--anthropic-light) 0%, #f5f3ee 100%);
+            min-height: 100vh;
+            color: var(--anthropic-dark);
+        }
+
+        .container { display: flex; min-height: 100vh; padding: 20px; gap: 20px; }
+
+        /* Sidebar */
+        .sidebar {
+            width: 320px;
+            flex-shrink: 0;
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(10px);
+            padding: 24px;
+            border-radius: 12px;
+            box-shadow: 0 10px 30px rgba(20, 20, 19, 0.1);
+            overflow-y: auto;
+            overflow-x: hidden;
+        }
+
+        .sidebar h1 {
+            font-family: 'Lora', serif;
+            font-size: 24px;
+            font-weight: 500;
+            color: var(--anthropic-dark);
+            margin-bottom: 8px;
+        }
+
+        .sidebar .subtitle {
+            color: var(--anthropic-mid-gray);
+            font-size: 14px;
+            margin-bottom: 32px;
+            line-height: 1.4;
+        }
+
+        .control-section { margin-bottom: 32px; }
+
+        .control-section h3 {
+            font-size: 16px;
+            font-weight: 600;
+            color: var(--anthropic-dark);
+            margin-bottom: 16px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .control-section h3::before {
+            content: '•';
+            color: var(--anthropic-orange);
+            font-weight: bold;
+        }
+
+        /* Seed Controls */
+        .seed-input {
+            width: 100%;
+            background: var(--anthropic-light);
+            padding: 12px;
+            border-radius: 8px;
+            font-family: 'Courier New', monospace;
+            font-size: 14px;
+            margin-bottom: 12px;
+            border: 1px solid var(--anthropic-light-gray);
+            text-align: center;
+        }
+
+        .seed-input:focus {
+            outline: none;
+            border-color: var(--anthropic-orange);
+            box-shadow: 0 0 0 2px rgba(217, 119, 87, 0.1);
+            background: white;
+        }
+
+        .seed-controls {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 8px;
+            margin-bottom: 8px;
+        }
+
+        .regen-button { margin-bottom: 0; }
+
+        /* Parameter Controls */
+        .control-group { margin-bottom: 20px; }
+
+        .control-group label {
+            display: block;
+            font-size: 14px;
+            font-weight: 500;
+            color: var(--anthropic-dark);
+            margin-bottom: 8px;
+        }
+
+        .slider-container { display: flex; align-items: center; gap: 12px; }
+
+        .slider-container input[type="range"] {
+            flex: 1;
+            height: 4px;
+            background: var(--anthropic-light-gray);
+            border-radius: 2px;
+            outline: none;
+            -webkit-appearance: none;
+        }
+
+        .slider-container input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            width: 16px;
+            height: 16px;
+            background: var(--anthropic-orange);
+            border-radius: 50%;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .slider-container input[type="range"]::-webkit-slider-thumb:hover {
+            transform: scale(1.1);
+            background: #c86641;
+        }
+
+        .slider-container input[type="range"]::-moz-range-thumb {
+            width: 16px;
+            height: 16px;
+            background: var(--anthropic-orange);
+            border-radius: 50%;
+            border: none;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .value-display {
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            color: var(--anthropic-mid-gray);
+            min-width: 60px;
+            text-align: right;
+        }
+
+        /* Color Pickers */
+        .color-group { margin-bottom: 16px; }
+
+        .color-group label {
+            display: block;
+            font-size: 12px;
+            color: var(--anthropic-mid-gray);
+            margin-bottom: 4px;
+        }
+
+        .color-picker-container { display: flex; align-items: center; gap: 8px; }
+
+        .color-picker-container input[type="color"] {
+            width: 32px;
+            height: 32px;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            background: none;
+            padding: 0;
+        }
+
+        .color-value {
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            color: var(--anthropic-mid-gray);
+        }
+
+        /* Buttons */
+        .button {
+            background: var(--anthropic-orange);
+            color: white;
+            border: none;
+            padding: 10px 16px;
+            border-radius: 6px;
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            width: 100%;
+        }
+
+        .button:hover { background: #c86641; transform: translateY(-1px); }
+        .button:active { transform: translateY(0); }
+        .button.secondary { background: var(--anthropic-blue); }
+        .button.secondary:hover { background: #5a8bb8; }
+        .button.tertiary { background: var(--anthropic-green); }
+        .button.tertiary:hover { background: #6b7b52; }
+
+        .button-row { display: flex; gap: 8px; }
+        .button-row .button { flex: 1; }
+        .button-row + .button-row { margin-top: 8px; }
+
+        /* Presets */
+        .preset-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 8px;
+        }
+
+        .preset {
+            background: var(--anthropic-light);
+            border: 1px solid var(--anthropic-light-gray);
+            border-radius: 8px;
+            padding: 10px 8px;
+            cursor: pointer;
+            text-align: left;
+            font-family: 'Poppins', sans-serif;
+            transition: all 0.15s ease;
+        }
+
+        .preset:hover {
+            border-color: var(--anthropic-orange);
+            background: white;
+            transform: translateY(-1px);
+        }
+
+        .preset strong {
+            display: block;
+            font-size: 13px;
+            font-weight: 600;
+            margin-bottom: 2px;
+        }
+
+        .preset span {
+            font-size: 11px;
+            color: var(--anthropic-mid-gray);
+            line-height: 1.3;
+        }
+
+        /* Toggles */
+        .toggle-row {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 12px;
+            font-size: 14px;
+        }
+
+        .toggle-row input[type="checkbox"] {
+            width: 16px;
+            height: 16px;
+            accent-color: var(--anthropic-orange);
+            cursor: pointer;
+        }
+
+        /* Thumbnail strip */
+        .thumbs {
+            display: flex;
+            align-items: flex-end;
+            gap: 14px;
+            padding: 14px;
+            background: var(--anthropic-dark);
+            border-radius: 8px;
+        }
+
+        .thumb-item { text-align: center; }
+
+        .thumb-item canvas {
+            display: block;
+            border-radius: 4px;
+            image-rendering: auto;
+        }
+
+        .thumb-item span {
+            display: block;
+            font-family: 'Courier New', monospace;
+            font-size: 10px;
+            color: var(--anthropic-mid-gray);
+            margin-top: 6px;
+        }
+
+        /* Canvas Area */
+        .canvas-area {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-width: 0;
+            gap: 12px;
+        }
+
+        #canvas-container {
+            width: 100%;
+            max-width: 1000px;
+            border-radius: 12px;
+            overflow: hidden;
+            box-shadow: 0 20px 40px rgba(20, 20, 19, 0.1);
+            background: #000;
+            cursor: grab;
+            touch-action: none;
+        }
+
+        #canvas-container.dragging { cursor: grabbing; }
+
+        #canvas-container canvas {
+            display: block;
+            width: 100% !important;
+            height: auto !important;
+        }
+
+        .hint {
+            font-size: 12px;
+            color: var(--anthropic-mid-gray);
+            text-align: center;
+            max-width: 1000px;
+        }
+
+        .hint b { color: var(--anthropic-dark); font-weight: 500; }
+
+        .loading {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 18px;
+            color: var(--anthropic-mid-gray);
+            padding: 80px 0;
+        }
+
+        @media (max-width: 700px) {
+            .container { flex-direction: column; padding: 12px; }
+            .sidebar { width: 100%; }
+            .canvas-area { padding: 0; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- Control Sidebar -->
+        <div class="sidebar">
+            <h1>Phototropic Decay</h1>
+            <div class="subtitle">A recursive branching organism on a receding plane. Drag the canvas to shape it.</div>
+
+            <!-- Seed Section -->
+            <div class="control-section">
+                <h3>Seed</h3>
+                <input type="number" id="seed-input" class="seed-input" value="4821" onchange="updateSeed()">
+                <div class="seed-controls">
+                    <button class="button secondary" onclick="previousSeed()">← Prev</button>
+                    <button class="button secondary" onclick="nextSeed()">Next →</button>
+                </div>
+                <button class="button tertiary regen-button" onclick="randomSeedAndUpdate()">↻ Random</button>
+            </div>
+
+            <!-- Directions -->
+            <div class="control-section">
+                <h3>Directions</h3>
+                <div class="preset-grid">
+                    <button class="preset" onclick="applyPreset('vascular')"><strong>Vascular</strong><span>Dense, capillary-rich</span></button>
+                    <button class="preset" onclick="applyPreset('rootmark')"><strong>Rootmark</strong><span>Few thick limbs</span></button>
+                    <button class="preset" onclick="applyPreset('synapse')"><strong>Synapse</strong><span>Wide radial burst</span></button>
+                    <button class="preset" onclick="applyPreset('delta')"><strong>Delta</strong><span>Extreme perspective</span></button>
+                </div>
+            </div>
+
+            <!-- Parameters Section -->
+            <div class="control-section">
+                <h3>Growth</h3>
+
+                <div class="control-group">
+                    <label>Branch Angle (drag ↔)</label>
+                    <div class="slider-container">
+                        <input type="range" id="spread" min="8" max="130" step="1" value="46" oninput="updateParam('spread', this.value)">
+                        <span class="value-display" id="spread-value">46°</span>
+                    </div>
+                </div>
+
+                <div class="control-group">
+                    <label>Primary Rays</label>
+                    <div class="slider-container">
+                        <input type="range" id="rays" min="2" max="9" step="1" value="5" oninput="updateParam('rays', this.value)">
+                        <span class="value-display" id="rays-value">5</span>
+                    </div>
+                </div>
+
+                <div class="control-group">
+                    <label>Recursion Depth</label>
+                    <div class="slider-container">
+                        <input type="range" id="depth" min="2" max="9" step="1" value="7" oninput="updateParam('depth', this.value)">
+                        <span class="value-display" id="depth-value">7</span>
+                    </div>
+                </div>
+
+                <div class="control-group">
+                    <label>Length Decay</label>
+                    <div class="slider-container">
+                        <input type="range" id="lengthRatio" min="0.5" max="0.92" step="0.01" value="0.74" oninput="updateParam('lengthRatio', this.value)">
+                        <span class="value-display" id="lengthRatio-value">0.74</span>
+                    </div>
+                </div>
+
+                <div class="control-group">
+                    <label>Taper</label>
+                    <div class="slider-container">
+                        <input type="range" id="widthRatio" min="0.45" max="0.9" step="0.01" value="0.68" oninput="updateParam('widthRatio', this.value)">
+                        <span class="value-display" id="widthRatio-value">0.68</span>
+                    </div>
+                </div>
+
+                <div class="control-group">
+                    <label>Trunk Weight</label>
+                    <div class="slider-container">
+                        <input type="range" id="trunk" min="6" max="48" step="1" value="24" oninput="updateParam('trunk', this.value)">
+                        <span class="value-display" id="trunk-value">24</span>
+                    </div>
+                </div>
+
+                <div class="control-group">
+                    <label>Curl</label>
+                    <div class="slider-container">
+                        <input type="range" id="curl" min="0" max="1.4" step="0.05" value="0.45" oninput="updateParam('curl', this.value)">
+                        <span class="value-display" id="curl-value">0.45</span>
+                    </div>
+                </div>
+
+                <div class="control-group">
+                    <label>Jitter</label>
+                    <div class="slider-container">
+                        <input type="range" id="jitter" min="0" max="1.5" step="0.05" value="0.4" oninput="updateParam('jitter', this.value)">
+                        <span class="value-display" id="jitter-value">0.4</span>
+                    </div>
+                </div>
+
+                <div class="control-group">
+                    <label>Capillaries</label>
+                    <div class="slider-container">
+                        <input type="range" id="capillaries" min="0" max="1" step="0.05" value="0.55" oninput="updateParam('capillaries', this.value)">
+                        <span class="value-display" id="capillaries-value">0.55</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="control-section">
+                <h3>Perspective</h3>
+
+                <div class="control-group">
+                    <label>Tilt into depth (drag ↕)</label>
+                    <div class="slider-container">
+                        <input type="range" id="tilt" min="0" max="78" step="1" value="52" oninput="updateParam('tilt', this.value)">
+                        <span class="value-display" id="tilt-value">52°</span>
+                    </div>
+                </div>
+
+                <div class="control-group">
+                    <label>Yaw (shift + drag ↔)</label>
+                    <div class="slider-container">
+                        <input type="range" id="yaw" min="-180" max="180" step="1" value="28" oninput="updateParam('yaw', this.value)">
+                        <span class="value-display" id="yaw-value">28°</span>
+                    </div>
+                </div>
+
+                <div class="control-group">
+                    <label>Focal Length</label>
+                    <div class="slider-container">
+                        <input type="range" id="focal" min="380" max="2400" step="20" value="900" oninput="updateParam('focal', this.value)">
+                        <span class="value-display" id="focal-value">900</span>
+                    </div>
+                </div>
+
+            </div>
+
+            <div class="control-section">
+                <h3>Framing</h3>
+                <div class="toggle-row">
+                    <input type="checkbox" id="panModeBox" onchange="setPanMode(this.checked)">
+                    <label for="panModeBox" style="margin:0">Pan mode (plain drag moves the mark)</label>
+                </div>
+
+                <div class="control-group">
+                    <label>Center X</label>
+                    <div class="slider-container">
+                        <input type="range" id="offsetX" min="-450" max="450" step="1" value="0" oninput="updateParam('offsetX', this.value)">
+                        <span class="value-display" id="offsetX-value">0</span>
+                    </div>
+                </div>
+
+                <div class="control-group">
+                    <label>Center Y</label>
+                    <div class="slider-container">
+                        <input type="range" id="offsetY" min="-450" max="450" step="1" value="40" oninput="updateParam('offsetY', this.value)">
+                        <span class="value-display" id="offsetY-value">40</span>
+                    </div>
+                </div>
+
+                <button class="button secondary" onclick="recenter()">Recenter</button>
+            </div>
+
+            <div class="control-section">
+                <h3>Light</h3>
+
+                <div class="control-group">
+                    <label>Bloom</label>
+                    <div class="slider-container">
+                        <input type="range" id="glow" min="0" max="2.5" step="0.05" value="1" oninput="updateParam('glow', this.value)">
+                        <span class="value-display" id="glow-value">1.00</span>
+                    </div>
+                </div>
+
+                <div class="color-group">
+                    <label>Root Color</label>
+                    <div class="color-picker-container">
+                        <input type="color" id="colorRoot" value="#0b8f3a" onchange="updateColor('colorRoot', this.value)">
+                        <span class="color-value" id="colorRoot-value">#0b8f3a</span>
+                    </div>
+                </div>
+
+                <div class="color-group">
+                    <label>Tip Color</label>
+                    <div class="color-picker-container">
+                        <input type="color" id="colorTip" value="#8dffb4" onchange="updateColor('colorTip', this.value)">
+                        <span class="color-value" id="colorTip-value">#8dffb4</span>
+                    </div>
+                </div>
+
+                <div class="color-group">
+                    <label>Background</label>
+                    <div class="color-picker-container">
+                        <input type="color" id="bg" value="#000000" onchange="updateColor('bg', this.value)">
+                        <span class="color-value" id="bg-value">#000000</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="control-section">
+                <h3>Seep</h3>
+                <div class="toggle-row">
+                    <input type="checkbox" id="seep" onchange="toggleFlag('seep', this.checked)">
+                    <label for="seep" style="margin:0">Enable seep</label>
+                </div>
+
+                <div class="control-group">
+                    <label>Origins</label>
+                    <div class="slider-container">
+                        <input type="range" id="seepChance" min="0" max="1" step="0.02" value="0.5" oninput="updateParam('seepChance', this.value); reseepOnly()">
+                        <span class="value-display" id="seepChance-value">0.50</span>
+                    </div>
+                </div>
+
+                <div class="control-group">
+                    <label>Saturation</label>
+                    <div class="slider-container">
+                        <input type="range" id="seepAmount" min="0" max="1" step="0.02" value="0.85" oninput="updateParam('seepAmount', this.value)">
+                        <span class="value-display" id="seepAmount-value">0.85</span>
+                    </div>
+                </div>
+
+                <div class="control-group">
+                    <label>Seep Bloom</label>
+                    <div class="slider-container">
+                        <input type="range" id="seepBloom" min="0.4" max="3" step="0.05" value="1.35" oninput="updateParam('seepBloom', this.value)">
+                        <span class="value-display" id="seepBloom-value">1.35</span>
+                    </div>
+                </div>
+
+                <div class="control-group">
+                    <label>Hue Balance (purple ↔ red)</label>
+                    <div class="slider-container">
+                        <input type="range" id="seepBalance" min="0" max="1" step="0.02" value="0.5" oninput="updateParam('seepBalance', this.value); reseepOnly()">
+                        <span class="value-display" id="seepBalance-value">0.50</span>
+                    </div>
+                </div>
+
+                <div class="color-group">
+                    <label>Seep A</label>
+                    <div class="color-picker-container">
+                        <input type="color" id="colorSeep" value="#a63dff" onchange="updateColor('colorSeep', this.value)">
+                        <span class="color-value" id="colorSeep-value">#a63dff</span>
+                    </div>
+                </div>
+
+                <div class="color-group">
+                    <label>Seep B</label>
+                    <div class="color-picker-container">
+                        <input type="color" id="colorSeep2" value="#ff2f4e" onchange="updateColor('colorSeep2', this.value)">
+                        <span class="color-value" id="colorSeep2-value">#ff2f4e</span>
+                    </div>
+                </div>
+
+                <button class="button tertiary" onclick="reseep()">↻ Reroll seep</button>
+            </div>
+
+            <div class="control-section">
+                <h3>Logo Test</h3>
+                <div class="toggle-row">
+                    <input type="checkbox" id="silhouette" onchange="toggleFlag('silhouette', this.checked)">
+                    <label for="silhouette" style="margin:0">Silhouette test (flat, no bloom)</label>
+                </div>
+                <div class="toggle-row">
+                    <input type="checkbox" id="safeArea" onchange="toggleFlag('safeArea', this.checked)">
+                    <label for="safeArea" style="margin:0">Show icon safe-area mask</label>
+                </div>
+                <div class="thumbs">
+                    <div class="thumb-item"><canvas id="t128" width="128" height="128"></canvas><span>128</span></div>
+                    <div class="thumb-item"><canvas id="t64" width="64" height="64"></canvas><span>64</span></div>
+                    <div class="thumb-item"><canvas id="t32" width="32" height="32"></canvas><span>32</span></div>
+                </div>
+            </div>
+
+            <!-- Actions Section -->
+            <div class="control-section">
+                <h3>Actions</h3>
+                <div class="button-row">
+                    <button class="button" onclick="regenerate()">Regenerate</button>
+                    <button class="button" onclick="resetParameters()">Reset</button>
+                </div>
+            </div>
+
+            <!-- Export / Import Section -->
+            <div class="control-section">
+                <h3>Export</h3>
+                <label style="display:block; font-size:12px; color: var(--anthropic-mid-gray); margin-bottom:4px;">Identifier (seed + param hash)</label>
+                <input type="text" id="design-id" class="seed-input" readonly onclick="this.select()" title="Click to select — every export is named with this identifier">
+                <div class="button-row">
+                    <button class="button secondary" onclick="downloadPNG()">PNG + params</button>
+                    <button class="button tertiary" onclick="downloadSVG()">SVG + params</button>
+                </div>
+                <div class="button-row">
+                    <button class="button" onclick="document.getElementById('params-file').click()">Load settings…</button>
+                </div>
+                <input type="file" id="params-file" accept=".json,application/json" style="display:none" onchange="loadParamsFile(this.files[0]); this.value='';">
+            </div>
+        </div>
+
+        <!-- Main Canvas Area -->
+        <div class="canvas-area">
+            <div id="canvas-container">
+                <div class="loading">Growing…</div>
+            </div>
+            <div class="hint"><b>Drag ↔</b> branch angle &nbsp;·&nbsp; <b>Drag ↕</b> tilt &nbsp;·&nbsp; <b>Shift+drag</b> yaw &nbsp;·&nbsp; <b>Alt / right-drag</b> reposition &nbsp;·&nbsp; <b>Double-click</b> new seed</div>
+        </div>
+    </div>
+
+    <script>
+        // ═══════════════════════════════════════════════════════════════════════
+        // PARAMETERS
+        // ═══════════════════════════════════════════════════════════════════════
+
+        let params = {
+            seed: 4821,
+            spread: 46,
+            rays: 5,
+            depth: 7,
+            lengthRatio: 0.74,
+            widthRatio: 0.68,
+            trunk: 24,
+            curl: 0.45,
+            jitter: 0.4,
+            capillaries: 0.55,
+            tilt: 52,
+            yaw: 28,
+            focal: 900,
+            offsetX: 0,
+            offsetY: 40,
+            glow: 1,
+            colorRoot: '#0b8f3a',
+            colorTip: '#8dffb4',
+            colorSeep: '#a63dff',
+            colorSeep2: '#ff2f4e',
+            seepBalance: 0.5,
+            bg: '#000000',
+            seep: false,
+            seepSeed: 7031,
+            seepChance: 0.5,
+            seepAmount: 0.85,
+            seepBloom: 1.35,
+            silhouette: false,
+            safeArea: false
+        };
+
+        let defaultParams = {...params};
+
+        const SIZE = 1000;
+        let strokesList = [];
+        let dirty = true;
+        let dragging = false;
+        let lowQuality = false;
+        let panMode = false;
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // GEOMETRY — grow the organism in plane coordinates
+        // ═══════════════════════════════════════════════════════════════════════
+
+        function buildTree() {
+            randomSeed(params.seed);
+            noiseSeed(params.seed);
+            strokesList = [];
+
+            const n = params.rays;
+            const baseLen = 205;
+
+            for (let i = 0; i < n; i++) {
+                const a = (TWO_PI / n) * i + random(-0.30, 0.30);
+                grow(0, 0, a, baseLen * random(0.82, 1.2), params.trunk * random(0.85, 1.15), 0, false, -1);
+            }
+
+            assignSeep();
+        }
+
+        function effDepth() {
+            return lowQuality ? Math.max(2, params.depth - 1) : params.depth;
+        }
+
+        function grow(x, y, a, len, w, depth, isHair, parentIdx) {
+            if (depth > effDepth() || len < 2.5 || w < 0.2) return;
+            if (strokesList.length > 3600) return;
+
+            const steps = isHair ? 4 : 8;
+            const pts = [{x: x, y: y}];
+            let cx = x, cy = y, ca = a;
+            const curlDir = random() < 0.5 ? -1 : 1;
+            const curlAmt = params.curl * random(0.55, 1.45);
+
+            for (let s = 0; s < steps; s++) {
+                ca += curlDir * curlAmt * 0.055;
+                ca += (noise(cx * 0.0035 + 40, cy * 0.0035, depth * 0.7) * 2 - 1) * 0.075 * params.jitter;
+                cx += cos(ca) * (len / steps);
+                cy += sin(ca) * (len / steps);
+                pts.push({x: cx, y: cy});
+            }
+
+            const myIdx = strokesList.length;
+            strokesList.push({
+                pts: pts,
+                w0: w,
+                w1: w * params.widthRatio,
+                depth: depth,
+                hair: isHair,
+                parent: parentIdx,
+                seep: 0,
+                tint: 0
+            });
+
+            if (isHair) return;
+
+            // capillary offshoot from a midpoint
+            if (depth >= 1 && random() < params.capillaries) {
+                const mi = floor(random(2, steps));
+                const p = pts[mi];
+                const side = random() < 0.5 ? -1 : 1;
+                grow(p.x, p.y, ca + side * radians(params.spread) * random(0.7, 1.5),
+                     len * 0.42 * random(0.6, 1.1), w * 0.28, depth + 2, true, myIdx);
+            }
+
+            const spread = radians(params.spread);
+            const kids = (depth < 2 && random() < 0.35) ? 3 : 2;
+
+            for (let k = 0; k < kids; k++) {
+                let off = map(k, 0, kids - 1, -spread / 2, spread / 2);
+                off += random(-1, 1) * 0.22 * params.jitter;
+                grow(cx, cy, ca + off,
+                     len * params.lengthRatio * random(0.84, 1.12),
+                     w * params.widthRatio * random(0.9, 1.05),
+                     depth + 1, false, myIdx);
+            }
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // SEEP — an independent contagion spreading outward through the tree
+        // ═══════════════════════════════════════════════════════════════════════
+
+        function mulberry32(a) {
+            return function() {
+                a |= 0; a = a + 0x6D2B79F5 | 0;
+                let t = Math.imul(a ^ a >>> 15, 1 | a);
+                t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+                return ((t ^ t >>> 14) >>> 0) / 4294967296;
+            };
+        }
+
+        // Uses its own PRNG so the purple can be rerolled without regrowing the tree.
+        function assignSeep() {
+            const rnd = mulberry32(params.seepSeed);
+            const originChance = params.seepChance * 0.055;
+
+            for (let i = 0; i < strokesList.length; i++) {
+                const s = strokesList[i];
+                const p = s.parent >= 0 ? strokesList[s.parent] : null;
+                let v = p ? p.seep : 0;
+
+                let tint = p ? p.tint : 0;
+
+                if (v > 0) {
+                    // already seeping: intensifies as it travels outward
+                    v = Math.min(1, v + 0.04 + rnd() * 0.26);
+                } else if (s.depth >= 1 && rnd() < originChance) {
+                    v = 0.12 + rnd() * 0.3;
+                    // each origin commits to one hue; its whole subtree inherits it
+                    tint = rnd() < params.seepBalance ? 1 : 0;
+                }
+
+                s.seep = v;
+                s.tint = tint;
+            }
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // PROJECTION — yaw, tilt into depth, true perspective divide
+        // ═══════════════════════════════════════════════════════════════════════
+
+        function project(px, py) {
+            const ya = radians(params.yaw);
+            const ca = cos(ya), sa = sin(ya);
+            const rx = px * ca - py * sa;
+            const ry = px * sa + py * ca;
+
+            const t = radians(params.tilt);
+            const d = ry * sin(t);
+            let f = params.focal / max(params.focal + d, 60);
+            f = constrain(f, 0.05, 3.2);
+
+            return {x: rx * f, y: ry * cos(t) * f, f: f, d: d};
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // RENDER
+        // ═══════════════════════════════════════════════════════════════════════
+
+        function setup() {
+            const c = createCanvas(SIZE, SIZE);
+            c.parent('canvas-container');
+            const el = document.querySelector('.loading');
+            if (el) el.style.display = 'none';
+            pixelDensity(1);
+            buildTree();
+            attachPointer(c.elt);
+            frameRate(60);
+        }
+
+        function draw() {
+            if (!dirty) return;
+            dirty = false;
+            renderArt();
+            updateThumbs();
+            updateIdDisplay();
+        }
+
+        function renderArt() {
+            blendMode(BLEND);
+            background(params.bg);
+
+            push();
+            translate(width / 2 + params.offsetX, height / 2 + params.offsetY);
+
+            // depth sort: far branches first
+            const projected = strokesList.map(function(s) {
+                const mid = s.pts[floor(s.pts.length / 2)];
+                return {s: s, d: project(mid.x, mid.y).d};
+            });
+            projected.sort(function(a, b) { return b.d - a.d; });
+
+            const cRoot = color(params.colorRoot);
+            const cTip = color(params.colorTip);
+            const cSeep = color(params.colorSeep);
+            const cSeep2 = color(params.colorSeep2);
+
+            if (params.silhouette) {
+                blendMode(BLEND);
+                strokeCap(ROUND);
+                stroke(255);
+                for (let i = 0; i < projected.length; i++) {
+                    drawStroke(projected[i].s, 1);
+                }
+                pop();
+                if (params.safeArea) drawSafeArea();
+                return;
+            }
+
+            // bloom passes (additive)
+            if (params.glow > 0.01) {
+                blendMode(ADD);
+                if (!lowQuality) {
+                    for (let i = 0; i < projected.length; i++) {
+                        const s = projected[i].s;
+                        if (s.hair) continue;
+                        const c = strokeColorFor(s, cRoot, cTip, cSeep, cSeep2);
+                        stroke(red(c), green(c), blue(c), 7 * params.glow * seepBloomFor(s));
+                        strokeCap(ROUND);
+                        drawStroke(s, 5.5);
+                    }
+                }
+                for (let i = 0; i < projected.length; i++) {
+                    const s = projected[i].s;
+                    const c = strokeColorFor(s, cRoot, cTip, cSeep, cSeep2);
+                    stroke(red(c), green(c), blue(c), (s.hair ? 10 : 20) * params.glow * seepBloomFor(s));
+                    strokeCap(ROUND);
+                    drawStroke(s, s.hair ? 2.2 : 2.6);
+                }
+            }
+
+            // core pass
+            blendMode(BLEND);
+            strokeCap(ROUND);
+            for (let i = 0; i < projected.length; i++) {
+                const s = projected[i].s;
+                const c = strokeColorFor(s, cRoot, cTip, cSeep, cSeep2);
+                stroke(red(c), green(c), blue(c), s.hair ? 130 : 255);
+                drawStroke(s, 1);
+            }
+
+            pop();
+            if (params.safeArea) drawSafeArea();
+        }
+
+        function strokeColorFor(s, cRoot, cTip, cSeepA, cSeepB) {
+            const t = constrain(s.depth / max(params.depth, 1), 0, 1);
+            const base = lerpColor(cRoot, cTip, pow(t, 0.75));
+            if (!params.seep || s.seep <= 0) return base;
+            const target = s.tint === 1
+                ? (cSeepB || color(params.colorSeep2))
+                : (cSeepA || color(params.colorSeep));
+            const mix = constrain(s.seep * params.seepAmount, 0, 1);
+            return lerpColor(base, target, mix);
+        }
+
+        function seepBloomFor(s) {
+            if (!params.seep || s.seep <= 0) return 1;
+            return 1 + (params.seepBloom - 1) * constrain(s.seep, 0, 1);
+        }
+
+        function drawStroke(s, widthMul) {
+            const n = s.pts.length;
+            let a = project(s.pts[0].x, s.pts[0].y);
+            for (let i = 0; i < n - 1; i++) {
+                const b = project(s.pts[i + 1].x, s.pts[i + 1].y);
+                const tm = (i + 0.5) / (n - 1);
+                const w = lerp(s.w0, s.w1, tm) * ((a.f + b.f) / 2) * widthMul;
+                strokeWeight(max(w, 0.4));
+                line(a.x, a.y, b.x, b.y);
+                a = b;
+            }
+        }
+
+        function drawSafeArea() {
+            push();
+            noFill();
+            stroke(255, 60);
+            strokeWeight(2);
+            drawingContext.setLineDash([10, 10]);
+            const m = SIZE * 0.1;
+            rect(m, m, SIZE - 2 * m, SIZE - 2 * m, SIZE * 0.05);
+            ellipse(SIZE / 2, SIZE / 2, SIZE * 0.8);
+            drawingContext.setLineDash([]);
+            pop();
+        }
+
+        function updateThumbs() {
+            const src = document.querySelector('#canvas-container canvas');
+            if (!src) return;
+            [128, 64, 32].forEach(function(sz) {
+                const t = document.getElementById('t' + sz);
+                const ctx = t.getContext('2d');
+                ctx.clearRect(0, 0, sz, sz);
+                ctx.imageSmoothingEnabled = true;
+                ctx.imageSmoothingQuality = 'high';
+                ctx.drawImage(src, 0, 0, sz, sz);
+            });
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // POINTER INTERACTION — drag to shape
+        // ═══════════════════════════════════════════════════════════════════════
+
+        function attachPointer(el) {
+            let lastX = 0, lastY = 0, shift = false, panning = false;
+            const wrap = document.getElementById('canvas-container');
+
+            el.addEventListener('contextmenu', function(e) { e.preventDefault(); });
+
+            el.addEventListener('pointerdown', function(e) {
+                dragging = true;
+                shift = e.shiftKey;
+                panning = e.altKey || e.metaKey || e.button === 1 || e.button === 2 || panMode;
+                lowQuality = !panning;
+                lastX = e.clientX;
+                lastY = e.clientY;
+                wrap.classList.add('dragging');
+                el.setPointerCapture(e.pointerId);
+                e.preventDefault();
+            });
+
+            el.addEventListener('pointermove', function(e) {
+                if (!dragging) return;
+                // convert screen pixels to canvas units (canvas is CSS-scaled)
+                const scale = SIZE / el.getBoundingClientRect().width;
+                const dx = (e.clientX - lastX);
+                const dy = (e.clientY - lastY);
+                lastX = e.clientX;
+                lastY = e.clientY;
+
+                if (panning) {
+                    setParam('offsetX', constrain(params.offsetX + dx * scale, -450, 450));
+                    setParam('offsetY', constrain(params.offsetY + dy * scale, -450, 450));
+                    dirty = true;
+                    e.preventDefault();
+                    return;
+                }
+
+                if (shift || e.shiftKey) {
+                    setParam('yaw', constrain(params.yaw + dx * 0.5, -180, 180));
+                } else {
+                    setParam('spread', constrain(params.spread + dx * 0.28, 8, 130));
+                }
+                setParam('tilt', constrain(params.tilt + dy * 0.22, 0, 78));
+
+                buildTree();
+                dirty = true;
+                e.preventDefault();
+            });
+
+            const end = function(e) {
+                if (!dragging) return;
+                dragging = false;
+                wrap.classList.remove('dragging');
+                if (!panning) {
+                    lowQuality = false;
+                    buildTree();
+                }
+                panning = false;
+                dirty = true;
+            };
+
+            el.addEventListener('pointerup', end);
+            el.addEventListener('pointercancel', end);
+            el.addEventListener('dblclick', function() { randomSeedAndUpdate(); });
+        }
+
+        function setParam(name, value) {
+            params[name] = value;
+            const slider = document.getElementById(name);
+            if (slider) slider.value = value;
+            showValue(name);
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // UI HANDLERS
+        // ═══════════════════════════════════════════════════════════════════════
+
+        const REBUILD = ['spread','rays','depth','lengthRatio','widthRatio','trunk','curl','jitter','capillaries'];
+
+        function updateParam(name, value) {
+            params[name] = parseFloat(value);
+            showValue(name);
+            if (REBUILD.indexOf(name) !== -1) buildTree();
+            dirty = true;
+        }
+
+        function updateColor(name, value) {
+            params[name] = value;
+            const el = document.getElementById(name + '-value');
+            if (el) el.textContent = value;
+            dirty = true;
+        }
+
+        function toggleFlag(name, checked) {
+            params[name] = checked;
+            if (name === 'seep' && checked) document.getElementById('seep').checked = true;
+            dirty = true;
+        }
+
+        function setPanMode(on) {
+            panMode = on;
+        }
+
+        function recenter() {
+            setParam('offsetX', 0);
+            setParam('offsetY', 0);
+            dirty = true;
+        }
+
+        // Reroll only the purple — tree geometry untouched
+        function reseep() {
+            params.seepSeed = Math.floor(Math.random() * 999999) + 1;
+            params.seep = true;
+            document.getElementById('seep').checked = true;
+            assignSeep();
+            dirty = true;
+        }
+
+        function reseepOnly() {
+            assignSeep();
+            dirty = true;
+        }
+
+        function showValue(name) {
+            const el = document.getElementById(name + '-value');
+            if (!el) return;
+            const v = params[name];
+            if (name === 'spread' || name === 'tilt' || name === 'yaw') {
+                el.textContent = Math.round(v) + '°';
+            } else if (name === 'lengthRatio' || name === 'widthRatio' || name === 'curl' ||
+                       name === 'jitter' || name === 'capillaries' || name === 'glow' ||
+                       name === 'seepChance' || name === 'seepAmount' || name === 'seepBloom' ||
+                       name === 'seepBalance') {
+                el.textContent = Number(v).toFixed(2);
+            } else {
+                el.textContent = Math.round(v);
+            }
+        }
+
+        function syncUI() {
+            Object.keys(params).forEach(function(k) {
+                const el = document.getElementById(k);
+                if (!el) return;
+                if (el.type === 'checkbox') el.checked = params[k];
+                else el.value = params[k];
+                showValue(k);
+                const cv = document.getElementById(k + '-value');
+                if (el.type === 'color' && cv) cv.textContent = params[k];
+            });
+            updateSeedDisplay();
+            updateIdDisplay();
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // PRESETS
+        // ═══════════════════════════════════════════════════════════════════════
+
+        const PRESETS = {
+            vascular:  {rays: 6, depth: 8, spread: 44, lengthRatio: 0.76, widthRatio: 0.66,
+                        trunk: 20, curl: 0.5, jitter: 0.45, capillaries: 0.85,
+                        tilt: 48, yaw: 24, focal: 950, offsetX: 0, offsetY: 30, glow: 1.1},
+            rootmark:  {rays: 3, depth: 5, spread: 34, lengthRatio: 0.8, widthRatio: 0.74,
+                        trunk: 38, curl: 0.65, jitter: 0.25, capillaries: 0.1,
+                        tilt: 40, yaw: -35, focal: 1100, offsetX: 0, offsetY: 60, glow: 0.75},
+            synapse:   {rays: 8, depth: 6, spread: 78, lengthRatio: 0.68, widthRatio: 0.6,
+                        trunk: 16, curl: 0.2, jitter: 0.7, capillaries: 0.5,
+                        tilt: 22, yaw: 12, focal: 1600, offsetX: 0, offsetY: 0, glow: 1.4},
+            delta:     {rays: 4, depth: 8, spread: 52, lengthRatio: 0.78, widthRatio: 0.7,
+                        trunk: 28, curl: 0.35, jitter: 0.35, capillaries: 0.35,
+                        tilt: 72, yaw: 96, focal: 520, offsetX: -30, offsetY: -70, glow: 1.0}
+        };
+
+        function applyPreset(name) {
+            const p = PRESETS[name];
+            if (!p) return;
+            Object.keys(p).forEach(function(k) { params[k] = p[k]; });
+            syncUI();
+            buildTree();
+            dirty = true;
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // EXPORT — every asset is named phototropic-<seed>-<hash> and ships with
+        // a matching .json params file that "Load settings…" can restore
+        // ═══════════════════════════════════════════════════════════════════════
+
+        // Every param that affects the rendered output, in canonical order.
+        // safeArea is a viewport overlay only, so it stays out of the identity.
+        const PARAM_KEYS = ['seed','spread','rays','depth','lengthRatio','widthRatio',
+                            'trunk','curl','jitter','capillaries','tilt','yaw','focal',
+                            'offsetX','offsetY','glow','colorRoot','colorTip','colorSeep',
+                            'colorSeep2','seepBalance','bg','seep','seepSeed','seepChance',
+                            'seepAmount','seepBloom','silhouette'];
+
+        function designId() {
+            const sig = PARAM_KEYS.map(function(k) { return k + '=' + String(params[k]); }).join(';');
+            let h = 5381;
+            for (let i = 0; i < sig.length; i++) {
+                h = ((h * 33) ^ sig.charCodeAt(i)) >>> 0;
+            }
+            return 'phototropic-' + params.seed + '-' + h.toString(36);
+        }
+
+        function updateIdDisplay() {
+            const el = document.getElementById('design-id');
+            if (el) el.value = designId();
+        }
+
+        function downloadParams(id) {
+            const p = {};
+            PARAM_KEYS.forEach(function(k) { p[k] = params[k]; });
+            const doc = {
+                generator: 'phototropic-decay',
+                version: 1,
+                id: id,
+                exported: new Date().toISOString(),
+                params: p
+            };
+            const blob = new Blob([JSON.stringify(doc, null, 2)], {type: 'application/json'});
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = id + '.json';
+            a.click();
+            setTimeout(function() { URL.revokeObjectURL(url); }, 1000);
+        }
+
+        function loadParamsFile(file) {
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = function() {
+                try {
+                    const doc = JSON.parse(reader.result);
+                    // accept both the exported wrapper and a bare params object
+                    const src = doc && doc.params ? doc.params : doc;
+                    let applied = 0;
+                    PARAM_KEYS.forEach(function(k) {
+                        if (src && Object.prototype.hasOwnProperty.call(src, k)) {
+                            params[k] = src[k];
+                            applied++;
+                        }
+                    });
+                    if (!applied) { alert('No recognizable parameters in ' + file.name); return; }
+                    syncUI();
+                    buildTree();
+                    dirty = true;
+                } catch (e) {
+                    alert('Could not parse ' + file.name + ': ' + e.message);
+                }
+            };
+            reader.readAsText(file);
+        }
+
+        function downloadPNG() {
+            const id = designId();
+            saveCanvas(id, 'png');
+            setTimeout(function() { downloadParams(id); }, 300);
+        }
+
+        function downloadSVG() {
+            const id = designId();
+            const cx = SIZE / 2 + params.offsetX, cy = SIZE / 2 + params.offsetY;
+            const cRoot = color(params.colorRoot), cTip = color(params.colorTip),
+                  cSeep = color(params.colorSeep), cSeep2 = color(params.colorSeep2);
+            let body = '';
+
+            const sorted = strokesList.map(function(s) {
+                const mid = s.pts[floor(s.pts.length / 2)];
+                return {s: s, d: project(mid.x, mid.y).d};
+            }).sort(function(a, b) { return b.d - a.d; });
+
+            for (let i = 0; i < sorted.length; i++) {
+                const s = sorted[i].s;
+                const n = s.pts.length;
+                const col = params.silhouette ? '#ffffff' : hexOf(strokeColorFor(s, cRoot, cTip, cSeep, cSeep2));
+                let a = project(s.pts[0].x, s.pts[0].y);
+                for (let j = 0; j < n - 1; j++) {
+                    const b = project(s.pts[j + 1].x, s.pts[j + 1].y);
+                    const tm = (j + 0.5) / (n - 1);
+                    const w = Math.max(lerp(s.w0, s.w1, tm) * ((a.f + b.f) / 2), 0.4);
+                    body += '<line x1="' + (cx + a.x).toFixed(2) + '" y1="' + (cy + a.y).toFixed(2) +
+                            '" x2="' + (cx + b.x).toFixed(2) + '" y2="' + (cy + b.y).toFixed(2) +
+                            '" stroke="' + col + '" stroke-width="' + w.toFixed(2) +
+                            '" stroke-linecap="round" opacity="' + (s.hair ? 0.5 : 1) + '"/>';
+                    a = b;
+                }
+            }
+
+            const svg =
+'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ' + SIZE + ' ' + SIZE + '" width="' + SIZE + '" height="' + SIZE + '">' +
+'<defs><filter id="bloom" x="-30%" y="-30%" width="160%" height="160%">' +
+'<feGaussianBlur stdDeviation="6" result="b"/>' +
+'<feMerge><feMergeNode in="b"/><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>' +
+'</filter></defs>' +
+'<rect width="' + SIZE + '" height="' + SIZE + '" fill="' + params.bg + '"/>' +
+'<g filter="url(#bloom)">' + body + '</g></svg>';
+
+            const blob = new Blob([svg], {type: 'image/svg+xml'});
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = id + '.svg';
+            a.click();
+            setTimeout(function() { URL.revokeObjectURL(url); }, 1000);
+            setTimeout(function() { downloadParams(id); }, 300);
+        }
+
+        function hexOf(c) {
+            const r = Math.round(red(c)), g = Math.round(green(c)), b = Math.round(blue(c));
+            return '#' + [r, g, b].map(function(v) {
+                return v.toString(16).padStart(2, '0');
+            }).join('');
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // SEED CONTROLS
+        // ═══════════════════════════════════════════════════════════════════════
+
+        function updateSeedDisplay() {
+            document.getElementById('seed-input').value = params.seed;
+        }
+
+        function updateSeed() {
+            const input = document.getElementById('seed-input');
+            const newSeed = parseInt(input.value);
+            if (newSeed && newSeed > 0) {
+                params.seed = newSeed;
+                buildTree();
+                dirty = true;
+            } else {
+                updateSeedDisplay();
+            }
+        }
+
+        function previousSeed() {
+            params.seed = Math.max(1, params.seed - 1);
+            updateSeedDisplay();
+            buildTree();
+            dirty = true;
+        }
+
+        function nextSeed() {
+            params.seed = params.seed + 1;
+            updateSeedDisplay();
+            buildTree();
+            dirty = true;
+        }
+
+        function randomSeedAndUpdate() {
+            params.seed = Math.floor(Math.random() * 999999) + 1;
+            updateSeedDisplay();
+            buildTree();
+            dirty = true;
+        }
+
+        function regenerate() {
+            buildTree();
+            dirty = true;
+        }
+
+        function resetParameters() {
+            params = {...defaultParams};
+            syncUI();
+            buildTree();
+            dirty = true;
+        }
+
+        window.addEventListener('load', function() { syncUI(); });
+    </script>
+</body>
+</html>

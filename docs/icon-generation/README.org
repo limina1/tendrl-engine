@@ -1,0 +1,40 @@
+#+title: Icon generation — Phototropic Decay
+
+The tendrl mark is generative: a recursive branching organism grown from a
+seed, projected onto a receding plane. =phototropic-decay.html= is the lab —
+open it in a browser, drag the canvas to shape the organism, and export.
+
+* Identity
+
+Every design has a stable identifier: =phototropic-<seed>-<hash>=, where the
+hash (djb2, base36) covers every parameter that affects the rendered output.
+The lab shows the current identifier live in the Export section; any slider
+move changes it.
+
+* Export / import
+
+- *PNG + params* / *SVG + params* download the asset as =<id>.png= / =<id>.svg=
+  *plus* a matching =<id>.json= carrying the full parameter set.
+- *Load settings…* takes such a =.json= (the exported wrapper or a bare params
+  object) and restores the design exactly — same id, same pixels.
+
+Committed designs live in this directory as the =<id>.svg= + =<id>.json= pair,
+so any of them can be reloaded into the lab and re-exported at any size.
+
+* Current Android app icon
+
+=phototropic-4821-1h00dkj= (the lab's default parameters). The icon set was
+generated from a 1024 px raster of this design:
+
+#+begin_src bash
+# from mobile/src-tauri — regenerates icons/ and gen/android res mipmaps
+cargo tauri icon icons/source.png
+#+end_src
+
+Post-processing applied on top of =cargo tauri icon= output:
+- =gen/android/…/values/ic_launcher_background.xml= set to =#000000= (the
+  adaptive-icon background layer; tauri writes =#fff=).
+- The =ic_launcher_foreground.png= mipmaps were re-rendered with the mark
+  scaled to the adaptive safe zone (center 72/108 of the canvas) on a black
+  field, so Android-8+ launchers show the whole organism instead of a
+  center crop. See the montage check in the repo history.
