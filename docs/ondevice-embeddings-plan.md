@@ -12,7 +12,7 @@ machinery as desktop: in-process fastembed embeddings + the usearch HNSW
 index, the existing `/embed/*` endpoints, status UI, and search degradation
 semantics. No new backend, no sidecar, no server.
 
-Non-goals: bundling model weights in the APK (lazy download stays), iOS,
+Non-goals: bundling model weights in the APK (lazy download stays),
 changing the desktop embedding path in any way (its `embeddings` feature and
 prebuilt-ort download are untouched).
 
@@ -107,10 +107,32 @@ Options:
   handle). This also quietly delivers the B2 "pause fetch loop on suspend"
   item for the fetch half of the same loop.
 
-### 5. Web
+### 5. Download notice (required, not polish)
 
-Nothing required. Optional polish: the Embeddings settings section could
-show a "model not downloaded yet (~90 MB)" hint on mobile before first use.
+Lazy download stays, but it must be **announced and consented**, because
+today it is invisible-and-worse: fastembed's progress goes to stdout (a
+black hole in-app), and `health_check` reports "ok" without checking
+whether the model is on disk — the UI cannot distinguish "ready" from
+"your next search will silently pull ~90 MB", which also sidesteps the
+Confirm-mode consent philosophy (relay fetches get an intent; a download
+25× larger would just happen).
+
+- **Engine**: `EmbeddingStatus` gains `model_ready: bool` — a cheap
+  files-on-disk probe of the cache dir (no model load). fastembed's cache
+  layout makes this a directory-exists + non-empty check for the resolved
+  model code.
+- **Web**: when `model_ready` is false —
+  - the Embeddings settings section shows "model not downloaded (~90 MB,
+    one-time)" with an explicit **Download model** action;
+  - the first `~:` search / embed-missing action shows an inline armed
+    confirm ("downloads the embedding model, ~90 MB, once — continue?")
+    instead of hanging; declining degrades exactly like embeddings-off.
+  Both surfaces are shared with desktop — this fixes the same silent hang
+  there, it's just never been painful on a wired connection.
+- Progress: poll the existing embed-status endpoint during the download
+  (`model_ready` flips when done); byte-level progress is out of scope
+  (fastembed doesn't expose it) — the confirm sets the expectation, the
+  status flip ends it.
 
 ## Verification ladder
 
@@ -137,7 +159,7 @@ show a "model not downloaded yet (~90 MB)" hint on mobile before first use.
 | usearch C++ under NDK (first contact) | blocks everything | M1 spike first; c++_shared packaging as fallback |
 | ort ↔ libonnxruntime version mismatch | runtime init failure | pin AAR 1.20.0 (= ort-sys pin); never float |
 | dlopen can't find libonnxruntime.so | embeds error out | explicit ORT_DYLIB_PATH from /proc/self/maps; failure is a clean engine error (embedding stays disabled, app unaffected) |
-| 90 MB model download on metered connection | user surprise | download only on explicit embed/search action (already the semantics); settings hint (optional) |
+| 90 MB model download on metered connection | user surprise | `model_ready` status + armed confirm before the first download (component 5) — nothing downloads without an explicit yes |
 | ONNX inference RAM/thermals on device | slow embeds | MiniLM-L6 is small (~90 MB, 384-dim); measure in M3 before considering a smaller model |
 | Background embed loop battery tax | drain complaints | lifecycle decision (c) recommended |
 
