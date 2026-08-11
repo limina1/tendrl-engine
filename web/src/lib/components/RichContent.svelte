@@ -28,6 +28,7 @@
 		resolution = undefined,
 		focusedHighlightId = null,
 		muted = false,
+		backfilling = false,
 		onopenlocal = undefined
 	}: {
 		content: string;
@@ -41,6 +42,10 @@
 		resolution?: ResolutionTracker;
 		focusedHighlightId?: string | null;
 		muted?: boolean;
+		/** True while the background relay pass is still in flight: an
+		 *  unresolved wiki link shows a spinner on hover (it may yet flip to
+		 *  found) instead of the search glyph it gets once the pass settles. */
+		backfilling?: boolean;
 		/** In-document navigation hand-off: a ref that resolved to a sibling
 		 *  section of the same document but isn't on screen (e.g. the paginated
 		 *  view renders one section at a time). Return true when handled. */
@@ -115,7 +120,9 @@
 	function refTitle(ref: ResolvedRef): string {
 		if (!ref.found)
 			return ref.kind === 'wiki'
-				? `Search for “${ref.target}”`
+				? backfilling
+					? `Fetching “${ref.target}” from relays… — click to search now`
+					: `Not local — search for “${ref.target}”`
 				: `Unresolved ${ref.kind}: ${ref.target}`;
 		const kind = ref.event_kind ? ` (kind ${ref.event_kind})` : '';
 		return `${ref.kind}: ${ref.target}${kind}`;
@@ -152,7 +159,7 @@
      source span) so selection capture can map DOM positions back to UTF-16
      content offsets. Text runs get a style-free wrapper span for the same
      reason — inline and inert inside the pre-wrap. -->
-<pre class="section-content" class:muted bind:this={rootEl}>{#each segments as seg, i (i)}{#if seg.type === 'highlight'}<mark class="hl-overlay" data-hl-ids={seg.highlight.id} data-src-start={seg.srcStart} style={styleFor(seg.highlight.pubkey, seg.highlight.focused)} title="NIP-84 highlight {seg.highlight.id.slice(0, 8)}… by {seg.highlight.pubkey.slice(0, 12)}…">{seg.text}</mark>{:else if seg.type === 'ref'}{#if seg.ref.kind === 'embed' || seg.ref.kind === 'quote' || seg.ref.kind === 'slot'}<span data-src-start={seg.srcStart} data-src-end={seg.srcEnd}><EmbedCard ref={seg.ref} onopen={openRef} {resolution} /></span>{:else}<button class="nd-ref nd-ref--{seg.ref.kind}" class:nd-unresolved={!seg.ref.found} data-src-start={seg.srcStart} data-src-end={seg.srcEnd} onclick={(e) => openRef(seg.ref, e)} onmouseenter={(e) => showPreview(e, seg.ref)} onmouseleave={hidePreview} onfocus={(e) => showPreview(e, seg.ref)} onblur={hidePreview} disabled={!seg.ref.coord && !(seg.ref.event_kind === 0 && seg.ref.author_pubkey) && !seg.ref.event_id && seg.ref.kind !== 'wiki'} title={refTitle(seg.ref)}>{seg.ref.kind === 'mention' ? '@' : ''}{seg.ref.label}</button>{/if}{:else if seg.type === 'token'}<span class="nd-token nd-token--{seg.kind}" data-src-start={seg.srcStart} data-src-end={seg.srcEnd} title="{seg.kind}: {seg.target} — resolving…">{seg.display || seg.target}</span>{:else}<span data-src-start={seg.srcStart}>{seg.text}</span>{/if}{/each}</pre>
+<pre class="section-content" class:muted bind:this={rootEl}>{#each segments as seg, i (i)}{#if seg.type === 'highlight'}<mark class="hl-overlay" data-hl-ids={seg.highlight.id} data-src-start={seg.srcStart} style={styleFor(seg.highlight.pubkey, seg.highlight.focused)} title="NIP-84 highlight {seg.highlight.id.slice(0, 8)}… by {seg.highlight.pubkey.slice(0, 12)}…">{seg.text}</mark>{:else if seg.type === 'ref'}{#if seg.ref.kind === 'embed' || seg.ref.kind === 'quote' || seg.ref.kind === 'slot'}<span data-src-start={seg.srcStart} data-src-end={seg.srcEnd}><EmbedCard ref={seg.ref} onopen={openRef} {resolution} /></span>{:else}<button class="nd-ref nd-ref--{seg.ref.kind}" class:nd-unresolved={!seg.ref.found} class:nd-backfilling={backfilling && !seg.ref.found} data-src-start={seg.srcStart} data-src-end={seg.srcEnd} onclick={(e) => openRef(seg.ref, e)} onmouseenter={(e) => showPreview(e, seg.ref)} onmouseleave={hidePreview} onfocus={(e) => showPreview(e, seg.ref)} onblur={hidePreview} disabled={!seg.ref.coord && !(seg.ref.event_kind === 0 && seg.ref.author_pubkey) && !seg.ref.event_id && seg.ref.kind !== 'wiki'} title={refTitle(seg.ref)}>{seg.ref.kind === 'mention' ? '@' : ''}{seg.ref.label}</button>{/if}{:else if seg.type === 'token'}{#if seg.kind === 'wiki'}<button class="nd-token nd-token--wiki nd-token--live" data-src-start={seg.srcStart} data-src-end={seg.srcEnd} title="wiki: {seg.target} — resolving… click to search" onclick={() => app.openSearchFor(`k:30818 d:${seg.target}`, seg.target)}>{seg.display || seg.target}</button>{:else}<span class="nd-token nd-token--{seg.kind}" data-src-start={seg.srcStart} data-src-end={seg.srcEnd} title="{seg.kind}: {seg.target} — resolving…">{seg.display || seg.target}</span>{/if}{:else}<span data-src-start={seg.srcStart}>{seg.text}</span>{/if}{/each}</pre>
 {#if preview}
 	<!-- svelte-ignore a11y_no_static_element_interactions -->
 	<div
@@ -224,6 +231,51 @@
 		border-bottom: 1px dotted var(--fg-muted);
 		cursor: default;
 	}
+	/* An unresolved WIKI link is still a live link — click searches the topic
+	   (and the background relay pass may yet flip it to found) — so it must
+	   read as one: accent-tinted with a dashed underline, not muted prose. */
+	.nd-ref--wiki.nd-unresolved {
+		color: color-mix(in srgb, var(--accent, var(--id-yours)) 75%, var(--fg));
+		background: none;
+		border-bottom: 1px dashed color-mix(in srgb, var(--accent, var(--id-yours)) 55%, transparent);
+		cursor: pointer;
+	}
+	.nd-ref--wiki.nd-unresolved:hover {
+		background: color-mix(in srgb, var(--accent, var(--id-yours)) 12%, transparent);
+		text-decoration: none;
+	}
+	/* Hover affordance: while the relay backfill is in flight a spinner says
+	   "this may resolve any moment"; once settled, a search glyph says "click
+	   to search". Both sit after the label so the text itself never shifts. */
+	.nd-ref--wiki.nd-unresolved:hover::after {
+		content: '⌕';
+		display: inline-block;
+		margin-left: 3px;
+		font-size: 0.85em;
+		opacity: 0.7;
+	}
+	.nd-ref--wiki.nd-unresolved.nd-backfilling:hover::after {
+		content: '';
+		width: 0.65em;
+		height: 0.65em;
+		vertical-align: -0.05em;
+		border: 1.5px solid currentColor;
+		border-top-color: transparent;
+		border-radius: 50%;
+		animation: nd-spin 0.7s linear infinite;
+	}
+	@keyframes nd-spin {
+		to {
+			transform: rotate(360deg);
+		}
+	}
+	@media (prefers-reduced-motion: reduce) {
+		.nd-ref--wiki.nd-unresolved.nd-backfilling:hover::after {
+			animation: none;
+			border-top-color: currentColor;
+			opacity: 0.5;
+		}
+	}
 
 	/* A `{{ }}` token before the engine resolves it: reads as a reference (not
 	   plain text) with a faint pulse to signal "resolving", so the syntax never
@@ -236,6 +288,13 @@
 		padding: 0 3px;
 		border-bottom: 1px dotted color-mix(in srgb, var(--id-yours) 55%, transparent);
 		animation: nd-token-pulse 1.4s ease-in-out infinite;
+	}
+	/* A wiki token is already a live link (click searches the topic) even
+	   before resolution replaces it — a button, so reset chrome accordingly. */
+	.nd-token--live {
+		border: none;
+		border-bottom: 1px dotted color-mix(in srgb, var(--id-yours) 55%, transparent);
+		cursor: pointer;
 	}
 	.nd-token::before {
 		content: '⧉ ';

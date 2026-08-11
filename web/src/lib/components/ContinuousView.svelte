@@ -97,6 +97,9 @@
 	// Pre-resolution "resolving" chip spans, parsed engine-side in parallel with
 	// resolve (parse is pure + fast, so chips land first; resolve supersedes).
 	let tokensBySection = $state<Record<string, ParsedToken[]>>({});
+	// True while the background relay pass is in flight — RichContent shows a
+	// spinner (not the search glyph) on unresolved wiki links meanwhile.
+	let nostrdownBackfilling = $state(false);
 	$effect(() => {
 		const items: {
 			key: string;
@@ -119,6 +122,7 @@
 		if (items.length === 0) {
 			refsBySection = {};
 			tokensBySection = {};
+			nostrdownBackfilling = false;
 			return;
 		}
 		let cancelled = false;
@@ -129,19 +133,23 @@
 			.catch(() => {
 				if (!cancelled) tokensBySection = {};
 			});
+		const doFetch = app.networkStatus?.mode === 'auto';
+		nostrdownBackfilling = doFetch;
 		api.resolveNostrdownProgressive(
 			items,
 			(m) => {
 				if (!cancelled) refsBySection = m;
 			},
 			{
-				fetch: app.networkStatus?.mode === 'auto',
+				fetch: doFetch,
 				onFetched: (n) => {
 					if (!cancelled && n > 0)
 						app.pushToast(`Fetched ${n} wiki link${n === 1 ? '' : 's'} from relays`, 'info');
 				}
 			}
-		);
+		).then(() => {
+			if (!cancelled) nostrdownBackfilling = false;
+		});
 		return () => {
 			cancelled = true;
 		};
@@ -432,6 +440,7 @@
 							spans={k ? spansBySection[k] ?? [] : []}
 							refs={k ? refsBySection[k] ?? [] : []}
 							tokens={k ? tokensBySection[k] ?? [] : []}
+							backfilling={nostrdownBackfilling}
 							{resolution}
 							{focusedHighlightId}
 							onopenlocal={openLocalSection}

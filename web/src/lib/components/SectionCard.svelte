@@ -101,11 +101,15 @@
 	// slower resolve then supersedes them). A `[[ ]]` wikilink also parses, so the
 	// gate below covers both delimiters.
 	let nostrdownTokens = $state<ParsedToken[]>([]);
+	// True while the background relay pass is in flight — RichContent shows a
+	// spinner (not the search glyph) on unresolved wiki links meanwhile.
+	let nostrdownBackfilling = $state(false);
 	$effect(() => {
 		const text = displayContent;
 		if (!text || preview || !(text.includes('{{') || text.includes('[['))) {
 			nostrdownRefs = [];
 			nostrdownTokens = [];
+			nostrdownBackfilling = false;
 			return;
 		}
 		let cancelled = false;
@@ -116,6 +120,8 @@
 			.catch(() => {
 				if (!cancelled) nostrdownTokens = [];
 			});
+		const doFetch = app.networkStatus?.mode === 'auto';
+		nostrdownBackfilling = doFetch;
 		api.resolveNostrdownProgressive(
 			[
 				{
@@ -130,13 +136,15 @@
 				if (!cancelled) nostrdownRefs = m['section'] ?? [];
 			},
 			{
-				fetch: app.networkStatus?.mode === 'auto',
+				fetch: doFetch,
 				onFetched: (n) => {
 					if (!cancelled && n > 0)
 						app.pushToast(`Fetched ${n} wiki link${n === 1 ? '' : 's'} from relays`, 'info');
 				}
 			}
-		);
+		).then(() => {
+			if (!cancelled) nostrdownBackfilling = false;
+		});
 		return () => {
 			cancelled = true;
 		};
@@ -179,6 +187,7 @@
 			spans={highlightSpans}
 			refs={nostrdownRefs}
 			tokens={nostrdownTokens}
+			backfilling={nostrdownBackfilling}
 			{resolution}
 			{focusedHighlightId}
 			muted={preview}

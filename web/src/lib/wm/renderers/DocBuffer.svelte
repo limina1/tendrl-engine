@@ -109,6 +109,9 @@
 	// "resolving" chips; the resolve supersedes them.
 	let docRefs = $state<ResolvedRef[]>([]);
 	let docTokens = $state<ParsedToken[]>([]);
+	// True while the background relay pass is in flight — RichContent shows a
+	// spinner (not the search glyph) on unresolved wiki links meanwhile.
+	let docBackfilling = $state(false);
 	$effect(() => {
 		const text = body;
 		const coord = addrStr;
@@ -116,6 +119,7 @@
 		if (!text || !(text.includes('{{') || text.includes('[['))) {
 			docRefs = [];
 			docTokens = [];
+			docBackfilling = false;
 			return;
 		}
 		let cancelled = false;
@@ -126,19 +130,23 @@
 			.catch(() => {
 				if (!cancelled) docTokens = [];
 			});
+		const doFetch = app.networkStatus?.mode === 'auto';
+		docBackfilling = doFetch;
 		api.resolveNostrdownProgressive(
 			[{ key: 'doc', content: text, author: author || undefined, coord: coord ?? undefined }],
 			(m) => {
 				if (!cancelled) docRefs = m['doc'] ?? [];
 			},
 			{
-				fetch: app.networkStatus?.mode === 'auto',
+				fetch: doFetch,
 				onFetched: (n) => {
 					if (!cancelled && n > 0)
 						app.pushToast(`Fetched ${n} wiki link${n === 1 ? '' : 's'} from relays`, 'info');
 				}
 			}
-		);
+		).then(() => {
+			if (!cancelled) docBackfilling = false;
+		});
 		return () => {
 			cancelled = true;
 		};
@@ -408,6 +416,7 @@
 					spans={highlightSpans}
 					refs={docRefs}
 					tokens={docTokens}
+					backfilling={docBackfilling}
 					focusedHighlightId={focusHighlightId}
 				/>
 			</div>
