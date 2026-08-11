@@ -28,6 +28,8 @@
 	import { BufferStore, setActiveStore, type NavAction } from '$lib/wm/buffer-store.svelte';
 	import BufferRenderer from '$lib/wm/BufferRenderer.svelte';
 	import MobileShell from '$lib/wm/MobileShell.svelte';
+	import PaneTabs from '$lib/wm/PaneTabs.svelte';
+	import ActivityCenter from '$lib/wm/ActivityCenter.svelte';
 	import { shell, type ShellPref } from '$lib/wm/shell.svelte';
 	import { rendererFor, toursForClass } from '$lib/wm/registry';
 	import { getAppState, type ModalNavEntry } from '$lib/state.svelte';
@@ -370,7 +372,6 @@
 	let activityOpen = $state(false);
 	let actWrapEl: HTMLElement | null = $state(null);
 	let netAct = $state<import('$lib/types').NetworkStatus | null>(null);
-	let activityExpanded = $state<Record<number, boolean>>({});
 	$effect(() => {
 		if (!activityOpen) return;
 		function onDocMouseDown(e: MouseEvent) {
@@ -399,25 +400,15 @@
 			clearInterval(iv);
 		};
 	});
-	function shortRelay(url: string): string {
-		return url.replace(/^wss?:\/\//, '').replace(/\/+$/, '');
-	}
-	function actElapsed(startedAt: number): string {
-		const s = Math.max(0, Math.floor(Date.now() / 1000) - startedAt);
-		return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m${s % 60}s`;
-	}
-	async function killFetchRow(id: number) {
+	// ActivityCenter's kill hook — no id means "kill all" (with a toast).
+	async function killFetch(id?: number) {
 		try {
-			await api.killFetch(id);
-			netAct = await api.getNetworkStatus();
-		} catch (e) {
-			console.warn('fetch-kill failed', e);
-		}
-	}
-	async function killAllFetches() {
-		try {
-			const n = await api.killFetch();
-			app.pushToast(`Killed ${n} fetch${n === 1 ? '' : 'es'}`, 'info');
+			if (id === undefined) {
+				const n = await api.killFetch();
+				app.pushToast(`Killed ${n} fetch${n === 1 ? '' : 'es'}`, 'info');
+			} else {
+				await api.killFetch(id);
+			}
 			netAct = await api.getNetworkStatus();
 		} catch (e) {
 			console.warn('fetch-kill failed', e);
@@ -698,6 +689,11 @@
 					: 'Highlight mode off',
 				'info'
 			);
+			closeMinibuffer();
+			return;
+		}
+		if (cmd.id === 'tendrl-open-compose') {
+			openCompose();
 			closeMinibuffer();
 			return;
 		}
@@ -1039,7 +1035,8 @@
 					label: 'profile',
 					kicker: 'kind:0'
 				}
-			})
+			}),
+		openCompose
 		});
 	}
 
@@ -1238,6 +1235,13 @@
 		});
 	}
 
+	function openCompose() {
+		store.openBuffer({
+			className: 'work',
+			buffer: { id: 'composer:current', kind: 'composer', label: 'composer', kicker: 'draft' }
+		});
+	}
+
 	// Modeline wiki-resolution pill: progress display + the "resolve
 	// everything here" button. In Confirm mode the click raises ONE fetch
 	// intent for every unresolved wiki link on screen; in Auto it forces a
@@ -1324,11 +1328,30 @@
 			engineInfo={{ version: app.engineVersion, branch: app.engineBranch }}
 			onToggleNetwork={toggleNetworkMode}
 			onOpenRelays={openRelays}
+			onOpenSettings={openSettings}
+			onOpenCompose={openCompose}
 			onIdentityTap={() => {
 				if (identityPill.kind === 'connect') connectIdentity();
 				else if (identityPill.kind === 'me') openMyProfile();
 				else openSettings();
 			}}
+			activity={netAct}
+			onKillFetch={killFetch}
+			wiki={resolveStatus.total > 0
+				? {
+						found: resolveStatus.found,
+						total: resolveStatus.total,
+						busy: resolveStatus.busy || ndResolvingAll
+					}
+				: null}
+			onResolveWiki={resolveAllVisible}
+			searchRows={app.searchHistory.map((e) => ({
+				key: entryKey(e),
+				kind: e.kind,
+				label: entryLabel(e),
+				meta: entryMeta(e),
+				replay: () => replayEntry(e)
+			}))}
 		/>
 		{#if mb.mode !== 'closed'}
 			<!-- Press-out for the sheet: phones have no Esc. Covers the whole
@@ -1487,60 +1510,7 @@
 				</button>
 				{#if activityOpen}
 					<div class="act-popover" role="dialog" aria-label="Network activity">
-						<div class="act-head">
-							<span>network activity</span>
-							{#if (netAct?.active ?? []).length > 0}
-								<button class="act-killall" onclick={killAllFetches} title="Kill every in-flight fetch">
-									kill all
-								</button>
-							{/if}
-						</div>
-						{#if (netAct?.active ?? []).length > 0}
-							<div class="act-sect">active</div>
-							{#each netAct?.active ?? [] as f (f.id)}
-								<div class="act-row act-row--live">
-									<span class="act-row__reason">{f.reason ?? f.trigger}</span>
-									<span class="act-row__relay">{shortRelay(f.relay)}</span>
-									<span class="act-row__meta">{actElapsed(f.started_at)}</span>
-									<button
-										class="act-row__btn act-row__btn--kill"
-										onclick={() => killFetchRow(f.id)}
-										title="Kill this fetch">×</button
-									>
-								</div>
-							{/each}
-						{/if}
-						<div class="act-sect">recent</div>
-						{#if (netAct?.recent ?? []).length === 0}
-							<div class="act-empty">No relay activity yet</div>
-						{/if}
-						{#each (netAct?.recent ?? []).slice(0, 14) as r (r.id)}
-							<div class="act-row">
-								<span
-									class="act-row__dot"
-									class:act-row__dot--ok={r.success}
-									class:act-row__dot--fail={!r.success}
-									title={r.success ? 'ok' : r.error ?? 'failed'}
-								></span>
-								<span class="act-row__reason">{r.reason ?? r.trigger}</span>
-								<span class="act-row__relay">{shortRelay(r.relay)}</span>
-								<span class="act-row__meta">{r.event_count}ev · {r.duration_ms}ms</span>
-								<button
-									class="act-row__btn"
-									onclick={() => (activityExpanded[r.id] = !activityExpanded[r.id])}
-									title="Show cause & query"
-								>
-									{activityExpanded[r.id] ? '▾' : '▸'}
-								</button>
-							</div>
-							{#if activityExpanded[r.id]}
-								<div class="act-detail">
-									<div><span class="act-detail__k">cause</span>{r.reason ?? `(none — trigger: ${r.trigger})`}</div>
-									<div><span class="act-detail__k">query</span>{r.filter_summary}</div>
-									{#if r.error}<div><span class="act-detail__k">error</span>{r.error}</div>{/if}
-								</div>
-							{/if}
-						{/each}
+						<ActivityCenter activity={netAct} onKill={killFetch} />
 					</div>
 				{/if}
 			</span>
@@ -1736,30 +1706,19 @@
 			<div class="pane__head">
 				<span class="cls cls--{slot.className}">{slot.className}</span>
 				{#if isRoot && classBuffers.length > 1}
-					<div class="pane__tabs">
-						{#each classBuffers as ob (ob.buffer.id)}
-							<span class="pane__tab {ob.buffer.id === node.buffer.id ? 'pane__tab--on' : ''}">
-								<button
-									class="pane__tab-go"
-									onclick={(e) => {
-										e.stopPropagation();
-										store.focusSlot(pos);
-										if (ob.buffer.id !== node.buffer.id) store.setLeaf(pos, ob.buffer);
-									}}
-									title={ob.buffer.kicker ?? ob.buffer.label}
-								>{ob.buffer.label}</button>
-								<button
-									class="pane__tab-x"
-									onclick={(e) => {
-										e.stopPropagation();
-										store.killBuffer(ob.buffer.id);
-									}}
-									title="Close this buffer (SPC b k)"
-									aria-label={`Close ${ob.buffer.label}`}
-								>×</button>
-							</span>
-						{/each}
-					</div>
+					<PaneTabs
+						buffers={classBuffers.map((ob) => ob.buffer)}
+						activeId={node.buffer.id}
+						onSelect={(buf) => {
+							store.focusSlot(pos);
+							if (buf.id !== node.buffer.id) store.setLeaf(pos, buf);
+						}}
+						onKill={(id) => store.killBuffer(id)}
+						onMore={() => {
+							store.focusSlot(pos);
+							openMinibuffer('class');
+						}}
+					/>
 				{:else}
 					<span class="pane__name">{node.buffer.label}</span>
 				{/if}
@@ -2297,58 +2256,6 @@
 		padding: 0 4px;
 	}
 	.pane__x:hover { color: var(--fg); }
-	.pane__tabs {
-		display: flex;
-		gap: 2px;
-		align-items: center;
-		min-width: 0;
-		overflow-x: auto;
-		scrollbar-width: none;
-	}
-	/* Tab = wrapper span holding the switch button + the close ×, so the
-	   border/active tint frames both without nesting buttons. */
-	.pane__tab {
-		display: inline-flex;
-		align-items: center;
-		border: 1px solid transparent;
-		border-radius: var(--r-sm);
-		color: var(--base5);
-		flex-shrink: 0;
-	}
-	.pane__tab:hover { color: var(--fg); border-color: var(--base3); }
-	.pane__tab--on {
-		color: var(--fg);
-		border-color: var(--id-yours);
-		background: color-mix(in srgb, var(--id-yours) 10%, transparent);
-		font-weight: 600;
-	}
-	.pane__tab-go {
-		background: transparent;
-		border: none;
-		color: inherit;
-		cursor: pointer;
-		font-family: var(--font-mono);
-		font-size: var(--t-2xs);
-		font-weight: inherit;
-		text-transform: uppercase;
-		letter-spacing: 0.05em;
-		padding: 1px 2px 1px 6px;
-		max-width: 18ch;
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
-	}
-	.pane__tab-x {
-		background: transparent;
-		border: none;
-		color: var(--base4);
-		cursor: pointer;
-		font-size: var(--t-xs);
-		line-height: 1;
-		padding: 1px 5px 1px 3px;
-		border-radius: var(--r-sm);
-	}
-	.pane__tab-x:hover { color: var(--red, var(--fg)); }
 	.pane__body {
 		flex: 1;
 		padding: var(--s-3);
@@ -2723,112 +2630,8 @@
 		font-size: var(--t-2xs);
 		padding: 6px 0;
 	}
-	.act-head {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		padding: 2px 10px 6px;
-		color: var(--fg-muted);
-		text-transform: lowercase;
-		letter-spacing: 0.04em;
-	}
-	.act-killall {
-		appearance: none;
-		background: none;
-		border: 1px solid color-mix(in srgb, var(--state-error, var(--red)) 45%, var(--panel-border));
-		color: var(--state-error, var(--red));
-		border-radius: var(--r-sm, 3px);
-		font: inherit;
-		padding: 1px 7px;
-		cursor: pointer;
-	}
-	.act-killall:hover {
-		background: color-mix(in srgb, var(--state-error, var(--red)) 12%, transparent);
-	}
-	.act-sect {
-		padding: 4px 10px 2px;
-		color: var(--fg-muted);
-		opacity: 0.8;
-		font-size: 0.9em;
-		text-transform: lowercase;
-	}
-	.act-row {
-		display: flex;
-		align-items: center;
-		gap: 8px;
-		padding: 3px 10px;
-		min-width: 0;
-	}
-	.act-row--live .act-row__reason {
-		color: var(--state-online, var(--green));
-	}
-	.act-row__dot {
-		width: 7px;
-		height: 7px;
-		border-radius: 50%;
-		flex-shrink: 0;
-	}
-	.act-row__dot--ok { background: var(--state-online, var(--green)); opacity: 0.7; }
-	.act-row__dot--fail { background: var(--state-error, var(--red)); }
-	.act-row__reason {
-		color: var(--fg);
-		flex-shrink: 0;
-		max-width: 40%;
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
-	}
-	.act-row__relay {
-		color: var(--fg-muted);
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
-		flex: 1;
-		min-width: 0;
-	}
-	.act-row__meta {
-		color: var(--fg-muted);
-		font-variant-numeric: tabular-nums;
-		flex-shrink: 0;
-	}
-	.act-row__btn {
-		appearance: none;
-		background: none;
-		border: none;
-		color: var(--fg-muted);
-		font: inherit;
-		padding: 0 3px;
-		cursor: pointer;
-		border-radius: 3px;
-		flex-shrink: 0;
-	}
-	.act-row__btn:hover {
-		background: color-mix(in srgb, var(--fg) 10%, transparent);
-		color: var(--fg);
-	}
-	.act-row__btn--kill {
-		color: var(--state-error, var(--red));
-		font-size: var(--t-sm);
-		line-height: 1;
-	}
-	.act-detail {
-		margin: 0 10px 4px 25px;
-		padding: 4px 8px;
-		border-left: 2px solid var(--panel-border);
-		color: var(--fg-muted);
-		word-break: break-word;
-	}
-	.act-detail__k {
-		display: inline-block;
-		min-width: 44px;
-		color: var(--fg);
-		opacity: 0.7;
-	}
-	.act-empty {
-		padding: 4px 10px 6px;
-		color: var(--fg-muted);
-		font-style: italic;
-	}
+	/* .act-head/.act-row/... live in wm/ActivityCenter.svelte (shared with
+	   the mobile drawer); only the popover anchor chrome stays here. */
 	/* Right-justified loading indicator — sits after .ml__spacer (flex:1). */
 	.ml__status {
 		color: var(--base6);

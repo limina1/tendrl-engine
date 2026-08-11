@@ -45,6 +45,7 @@ export const commands: Command[] = [
 	{ id: 'tendrl-switch-layout', name: 'tendrl-switch-layout', description: 'Switch the active layout', category: 'Layout', scope: 'nav', deferred: true, keybinding: 'SPC l b', shells: ['desktop'] },
 	{ id: 'tendrl-save-layout', name: 'tendrl-save-layout', hiddenByDefault: true, description: 'Save the current frame configuration as a named layout', category: 'Layout', scope: 'nav', deferred: true, shells: ['desktop'] },
 	// Compose
+	{ id: 'tendrl-open-compose', name: 'tendrl-open-compose', description: 'Open the composer (current draft)', category: 'Compose', scope: 'opener', keybinding: 'SPC b o c' },
 	{ id: 'tendrl-save-draft', name: 'tendrl-save-draft', hiddenByDefault: true, description: 'Save the current draft to the engine', category: 'Compose', scope: 'contextual', context: 'a composer buffer', deferred: true },
 	{ id: 'tendrl-publish-draft', name: 'tendrl-publish-draft', hiddenByDefault: true, description: 'Sign and broadcast the current draft', category: 'Compose', scope: 'contextual', context: 'a composer buffer', deferred: true },
 	{ id: 'tendrl-fork-section', name: 'tendrl-fork-section', hiddenByDefault: true, description: 'Fork an imported section to make it editable', category: 'Compose', scope: 'contextual', context: 'a composer with an imported section', deferred: true },

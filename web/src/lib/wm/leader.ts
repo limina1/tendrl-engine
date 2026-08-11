@@ -34,6 +34,7 @@ export type LeaderContext = {
 	openSplitPicker: () => void;
 	openSettings: () => void;
 	openProfileEdit: () => void;
+	openCompose: () => void;
 };
 
 export function buildLeaderRoot(ctx: LeaderContext): SubPrefix {
@@ -50,7 +51,17 @@ export function buildLeaderRoot(ctx: LeaderContext): SubPrefix {
 					r: { type: 'leaf', desc: 'recently closed', commandId: 'tendrl-recent-buffer', category: 'Buffer', kind: 'client', run: () => ctx.openMinibuffer('recent') },
 					k: { type: 'leaf', desc: 'kill buffer', commandId: 'tendrl-kill-buffer', category: 'Buffer', kind: 'client', run: () => ctx.killFocusedBuffer() },
 					n: { type: 'leaf', desc: 'next in class', category: 'Buffer', kind: 'client', run: () => ctx.cycleBufferInSlot(1) },
-					p: { type: 'leaf', desc: 'previous in class', category: 'Buffer', kind: 'client', run: () => ctx.cycleBufferInSlot(-1) }
+					p: { type: 'leaf', desc: 'previous in class', category: 'Buffer', kind: 'client', run: () => ctx.cycleBufferInSlot(-1) },
+					o: {
+						type: 'prefix',
+						desc: 'open',
+						children: {
+							c: { type: 'leaf', desc: 'compose', commandId: 'tendrl-open-compose', category: 'Compose', kind: 'client', run: () => ctx.openCompose() },
+							// Same commandId as SPC s s — the two chords are aliases;
+							// desc/category match so listLeaderBindings merges the rows.
+							s: { type: 'leaf', desc: 'open settings', commandId: 'tendrl-open-settings', category: 'Configuration', kind: 'client', run: () => ctx.openSettings() }
+						}
+					}
 				}
 			},
 			w: {
@@ -241,7 +252,8 @@ function buildNoopRoot(): SubPrefix {
 		toggleNetworkMode: noop,
 		openSplitPicker: noop,
 		openSettings: noop,
-		openProfileEdit: noop
+		openProfileEdit: noop,
+		openCompose: noop
 	});
 }
 

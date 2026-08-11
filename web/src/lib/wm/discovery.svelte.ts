@@ -129,10 +129,10 @@ export const TIPS: Record<string, TourTip> = {
 		// teach signing in. Skips this and the source-controls beat below.
 		relevantWhen: (w) => !w.hasIdentity,
 		mobile: {
-			anchor: 'mobile-cmds',
+			anchor: 'mobile-menu',
 			// No NIP-07 pitch here — browser extensions don't exist in a phone
 			// WebView; watch-only npub is the first way in on mobile.
-			body: 'Open *cmds* and run `tendrl-open-settings` to sign in — the lightest way is to paste your `npub1…` and browse as yourself (watch-only); add an `ncryptsec` key later when you want to sign. Heads up: the moment you sign in you\'ll see your pubkey but no name yet.',
+			body: 'Open the `☰` drawer and tap *settings* to sign in — the lightest way is to paste your `npub1…` and browse as yourself (watch-only); add an `ncryptsec` key later when you want to sign. Heads up: the moment you sign in you\'ll see your pubkey but no name yet.',
 			placement: 'top'
 		}
 	},
@@ -162,7 +162,7 @@ export const TIPS: Record<string, TourTip> = {
 		mobile: {
 			anchor: 'mobile-menu',
 			body: "You're signed in. The `☰` drawer's *identity* row shows a pubkey, but no display name or avatar yet. That's expected — your profile (a `kind 0` event) lives on a relay you haven't pulled from yet. Fetching the feed will bring it in.",
-			placement: 'bottom'
+			placement: 'top'
 		}
 	},
 	'go-home': {
@@ -174,7 +174,7 @@ export const TIPS: Record<string, TourTip> = {
 		mobile: {
 			anchor: 'mobile-menu',
 			body: 'Head home — open the `☰` drawer and pick *feed* to return to your feed, then sync it again.',
-			placement: 'bottom'
+			placement: 'top'
 		}
 	},
 	'general-feed': {

@@ -20,7 +20,7 @@
 	import { discovery, rearmDiscovery, rearmFeatureTours, setWalkthroughEnabled } from '$lib/wm/discovery.svelte';
 	import * as api from '$lib/api';
 	import { textScale, setTextScale, TEXT_SCALE_PRESETS } from '$lib/theme/text-scale.svelte';
-	import { shell, type ShellPref } from '../shell.svelte';
+	import { shell, type ShellPref, type MenuEdge } from '../shell.svelte';
 	import type { Buffer } from '../types';
 	import { commands, SCOPE_META, SCOPE_ORDER, BASE_KEYS } from '../commands';
 	import { listLeaderBindings } from '../leader';
@@ -45,6 +45,13 @@
 		{ id: 'auto', label: 'Auto' },
 		{ id: 'desktop', label: 'Desktop' },
 		{ id: 'mobile', label: 'Mobile' }
+	];
+
+	// Appearance → Menu edge: which side of the mobile bottom bar carries
+	// the ☰ drawer button (handedness).
+	const MENU_EDGES: { id: MenuEdge; label: string }[] = [
+		{ id: 'left', label: 'Left' },
+		{ id: 'right', label: 'Right' }
 	];
 
 	const app = getAppState();
@@ -592,6 +599,31 @@
 			size; Auto follows the viewport (now rendering: {shell.mode}). Applies
 			instantly, saved on this device. Also steppable via the
 			<code>tendrl-cycle-shell</code> command.
+		</p>
+
+		<div class="settings-row">
+			<span
+				class="settings-label"
+				title="Which edge of the mobile bottom bar carries the ☰ buffer/status drawer button"
+			>Menu edge</span>
+			<div class="radio-group">
+				{#each MENU_EDGES as m (m.id)}
+					<label class="radio">
+						<input
+							type="radio"
+							name="menu-edge"
+							value={m.id}
+							checked={shell.menuEdge === m.id}
+							onchange={() => shell.setMenuEdge(m.id)}
+						/>
+						<span>{m.label}</span>
+					</label>
+				{/each}
+			</div>
+		</div>
+		<p class="settings-hint">
+			Puts the mobile bar's ☰ menu on the left or right edge (handedness).
+			Mobile shell only; applies instantly, saved on this device.
 		</p>
 		</div>
 	</details>
