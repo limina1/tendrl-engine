@@ -144,6 +144,16 @@ export async function registerNip55Signer(
 ): Promise<() => void> {
 	const pubkey = prefetchedPubkey ?? (await fetchSignerPubkey(packageName));
 
+	// NIP-55's ContentResolver contract passes the logged-in account as an
+	// npub (the spec's projection example is `listOf(event, "", npub)`).
+	// Passing hex made the signer treat every silent query as
+	// unauthorized → intent fallback → one prompt per event, which is
+	// exactly the batch experience this path exists to avoid. The engine
+	// owns NIP-19; fall back to hex only if the encode call itself fails.
+	const currentUser = await api
+		.encode({ kind: 'npub', pubkey })
+		.catch(() => pubkey);
+
 	const reg = await api.registerSigner({
 		kind: 'nip55',
 		pubkey,
@@ -180,7 +190,7 @@ export async function registerNip55Signer(
 					packageName,
 					eventJson,
 					id,
-					currentUser: pubkey
+					currentUser
 				});
 				let signed: SignedEvent;
 				if (res.event) {
