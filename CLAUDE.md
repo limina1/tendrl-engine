@@ -270,6 +270,11 @@ The parser (`search.rs`) tokenizes a query string into typed filters:
 Note `author:` is a *tag* filter (events with an `["author", …]` tag), **not** an
 alias for the `by:` publishing-pubkey filter.
 
+Tag-filter values match slug variants automatically (`tag_value_variants`): each
+typed value is expanded to {as-typed, lowercase, whitespace→dash, full NIP-54
+normalization via `nostrdown::normalize`} and OR'd, so `T:"What's Up?"` hits the
+stored `whats-up` — no need to hand-normalize; quote values containing spaces.
+
 ## Project Layout
 
 - `src/` — Rust engine (library + the `tendrl-engine` binary). `src/server.rs`

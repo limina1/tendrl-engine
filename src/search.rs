@@ -461,19 +461,24 @@ impl SearchQuery {
 ///
 /// Nostr hashtag-style tags are written as lowercase slugs by convention
 /// — NIP-24 mandates it for `t` — but a user types the human-readable
-/// form ("Douay-Rheims Bible"). We match either: the value as typed, its
-/// lowercase, and a lowercase slug (whitespace runs collapsed to a single
-/// `-`, so `t:"words separated by space"` also hits `words-separated-by-space`).
+/// form ("Douay-Rheims Bible"). We match any of: the value as typed, its
+/// lowercase, a lowercase slug (whitespace runs collapsed to a single
+/// `-`, so `t:"words separated by space"` also hits `words-separated-by-space`),
+/// and the full NIP-54 normalization (`nostrdown::normalize` — the same
+/// function that stamps `T`/wiki-`d` slugs at publish time, so
+/// `T:"What's Up?"` hits the stored `whats-up` by construction).
 ///
 /// The literal is always kept, so normalization only ever *adds* candidate
 /// matches — NIP-01 tag filters are an OR over their value list, so a
-/// variant can never drop a result the literal would have found.
+/// variant can never drop a result the literal would have found (opaque
+/// d-tags like nanoids still match via the literal).
 pub fn tag_value_variants(value: &str) -> Vec<String> {
     let mut out = vec![value.to_string()];
     let lower = value.to_lowercase();
     let slug = lower.split_whitespace().collect::<Vec<_>>().join("-");
-    for v in [lower, slug] {
-        if !out.contains(&v) {
+    let nip54 = crate::nostrdown::normalize(value);
+    for v in [lower, slug, nip54] {
+        if !v.is_empty() && !out.contains(&v) {
             out.push(v);
         }
     }
@@ -1346,6 +1351,20 @@ mod tests {
                 "douay-rheims-bible"
             ]
         );
+        // Punctuation — the NIP-54 variant drops it, matching the stored
+        // slug that publish-time normalization produced.
+        assert_eq!(
+            tag_value_variants("What's Up?"),
+            vec!["What's Up?", "what's up?", "what's-up?", "whats-up"]
+        );
+        // Unicode survives NIP-54 normalization (alphanumerics kept).
+        assert_eq!(
+            tag_value_variants("日本語 Article"),
+            vec!["日本語 Article", "日本語 article", "日本語-article"]
+        );
+        // Pure punctuation normalizes to nothing — the empty variant is
+        // dropped so it can't match every untagged value.
+        assert_eq!(tag_value_variants("??"), vec!["??"]);
     }
 
     #[test]
