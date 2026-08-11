@@ -1370,6 +1370,19 @@ yes | ~/Android/Sdk/cmdline-tools/latest/bin/sdkmanager --licenses
   "platform-tools" "platforms;android-35" "build-tools;35.0.0" "ndk;28.2.13676358"
 #+end_src
 
+** App icon from a lab export (per-release)
+
+Design in =docs/icon-generation/phototropic-decay.html=, export *SVG +
+params*, put both files in =docs/icon-generation/=, then:
+
+#+begin_src bash
+scripts/make-android-icon.sh docs/icon-generation/phototropic-<id>.svg
+#+end_src
+
+Rasterizes via headless Chromium, runs =cargo tauri icon=, and fixes the
+adaptive-icon layers (bg color from the params json, foreground fitted to
+the 72/108 safe zone). Details: =docs/icon-generation/README.org=.
+
 ** Phone over Wi-Fi (no cable)
 
 On the phone: Developer options → Wireless debugging → Pair device with
