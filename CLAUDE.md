@@ -272,8 +272,18 @@ alias for the `by:` publishing-pubkey filter.
 
 ## Project Layout
 
-- `src/` — Rust engine (library + the `tendrl-engine` binary)
+- `src/` — Rust engine (library + the `tendrl-engine` binary). `src/server.rs`
+  is the embeddable boot (`server::start`): the binary and the Android host
+  both call it; `main.rs` is a thin CLI wrapper.
 - `web/` — SvelteKit frontend (Svelte 5, pnpm, static adapter, served from `web/build/`)
+- `mobile/src-tauri/` — Tauri 2 Android host (app id `io.github.limina1.tendrl`):
+  engine in-process on a token-gated loopback port (stable 41347 — the WebView
+  origin keys the SPA's persisted storage), WebView at `?shell=mobile`, in-app
+  NIP-55 (Amber) Kotlin plugin. Independent crate, NOT in the root package;
+  build commands + Android toolchain env in `docs/commands.org` ("Android build").
+  The engine crate stays platform-agnostic: mobile builds use
+  `--no-default-features --features embed-assets` (features gate
+  embeddings/keyring/desktop).
 - `config.example.toml` — reference config; copy to `config.toml`
 - `scripts/` — utility scripts (MCP server, publishing helpers)
 - `knowledgebase/` — local documents for import
