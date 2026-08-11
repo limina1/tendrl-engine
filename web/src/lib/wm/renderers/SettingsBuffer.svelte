@@ -1245,6 +1245,24 @@
 						{#if (e.missing_sections ?? 0) > 0}{e.missing_sections} unfetched{/if}{#if (e.missing_sections ?? 0) > 0 && (e.stale_count ?? 0) > 0}, {/if}{#if (e.stale_count ?? 0) > 0}{e.stale_count} stale{/if}
 					</span>
 				</div>
+				{#if (e.missing_sections ?? 0) > 0}
+					<div class="settings-row settings-row--stack">
+						<button
+							class="settings-action"
+							onclick={app.handleFetchSections}
+							disabled={app.fetchingSections}
+							title="Only publication indexes sync with the feed; this pulls the section bodies they reference so they can be read and embedded."
+						>
+							{app.fetchingSections
+								? 'Fetching sections…'
+								: `Fetch ${e.missing_sections} section${e.missing_sections === 1 ? '' : 's'} from relays`}
+						</button>
+						<span class="settings-hint">
+							Sections are what semantic search indexes — a feed sync only brings
+							the publication indexes. Fetches, then embeds automatically.
+						</span>
+					</div>
+				{/if}
 			{/if}
 
 			<div class="settings-row">

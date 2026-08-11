@@ -3337,6 +3337,33 @@ function _createAppState() {
 		}
 	}
 
+	// Pull the section bodies (kind 30041) referenced by synced publication
+	// indexes but not yet local — the "N unfetched" count. Only the indexes
+	// arrive with a feed sync; sections are what's actually embeddable, so
+	// without this semantic search has nothing to index. The engine
+	// auto-embeds freshly fetched sections when auto_embed is on.
+	let fetchingSections = $state(false);
+	async function handleFetchSections() {
+		if (fetchingSections) return;
+		fetchingSections = true;
+		try {
+			const r = await api.fetchSections();
+			pushToast(
+				r.fetched > 0
+					? `Fetched ${r.fetched} section${r.fetched === 1 ? '' : 's'} — embedding…`
+					: 'No new sections fetched.',
+				r.fetched > 0 ? 'success' : 'info'
+			);
+			// Give the post-fetch auto-embed a moment, then refresh.
+			try { embeddingStatus = await api.getEmbeddingStatus(); } catch {}
+		} catch (e) {
+			pushToast(api.errorMessage(e, 'Fetch sections failed'), 'error', 6000);
+		} finally {
+			try { embeddingStatus = await api.getEmbeddingStatus(); } catch {}
+			fetchingSections = false;
+		}
+	}
+
 	async function handleReindexEmbeddings() {
 		embeddingSyncing = true;
 		const pollInterval = setInterval(async () => {
@@ -3588,16 +3615,6 @@ function _createAppState() {
 			await loadFeed();
 		} catch (e) {
 			console.error('Fetch authors failed:', e);
-		}
-	}
-
-	async function handleFetchSections() {
-		try {
-			const resp = await api.fetchSections();
-			console.log(`Fetch sections: ${resp.total_referenced} referenced, ${resp.missing} missing, ${resp.fetched} fetched`);
-			await loadFeed();
-		} catch (e) {
-			console.error('Fetch sections failed:', e);
 		}
 	}
 
@@ -4583,6 +4600,7 @@ function _createAppState() {
 		get embeddingStatus() { return embeddingStatus; },
 		get embeddingSyncing() { return embeddingSyncing; },
 		get embeddingDownloading() { return embeddingDownloading; },
+		get fetchingSections() { return fetchingSections; },
 
 		// Network
 		get networkStatus() { return networkStatus; },
@@ -4748,6 +4766,7 @@ function _createAppState() {
 		handleLoadSection,
 		handleSyncEmbeddings,
 		handleDownloadEmbeddingModel,
+		handleFetchSections,
 		handleReindexEmbeddings,
 		handleSetEmbedKinds,
 		handleSetAutoEmbed,
@@ -4768,7 +4787,6 @@ function _createAppState() {
 		handleImportPagesToContext,
 		handleImportPagesToCompose,
 		handleFetchAuthors,
-		handleFetchSections,
 		handleFetchFromRelay,
 		refreshChat,
 		handleToggleSessions,
