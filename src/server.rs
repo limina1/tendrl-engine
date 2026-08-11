@@ -653,8 +653,30 @@ pub async fn start(opts: ServeOptions) -> anyhow::Result<RunningServer> {
                 // Embed any unembedded events (runs regardless of online/offline,
                 // but only when auto-embed is on — otherwise embedding is manual).
                 if state.auto_embed() && state.embedding_index().is_some() {
-                    match state.sync_embeddings().await {
-                        Ok(status) => {
+                    // The background loop must NEVER be what triggers the
+                    // one-time model download (~90 MB) — that belongs to an
+                    // explicit user action (settings Download button / manual
+                    // sync). Skip quietly until the model is on disk.
+                    let model_ready = match state.embedding_index() {
+                        Some(idx) => idx.read().await.model_ready(),
+                        None => false,
+                    };
+                    if !model_ready {
+                        tracing::debug!(
+                            "Background embed sync skipped: model not downloaded yet"
+                        );
+                        continue;
+                    }
+                    // Spawn-isolated so a panic inside the ONNX stack (e.g. a
+                    // failed dlopen on mobile) can't silently kill this whole
+                    // loop — observed on-device: the task died with no log
+                    // line and no further ticks.
+                    let pass = {
+                        let state = state.clone();
+                        tokio::spawn(async move { state.sync_embeddings().await })
+                    };
+                    match pass.await {
+                        Ok(Ok(status)) => {
                             if status.indexed_count < status.total_events {
                                 info!(
                                     "Background embed sync: {}/{} indexed",
@@ -662,8 +684,11 @@ pub async fn start(opts: ServeOptions) -> anyhow::Result<RunningServer> {
                                 );
                             }
                         }
-                        Err(e) => {
+                        Ok(Err(e)) => {
                             tracing::debug!("Background embed sync error: {}", e);
+                        }
+                        Err(e) => {
+                            tracing::warn!("Background embed pass panicked: {e}");
                         }
                     }
                 }

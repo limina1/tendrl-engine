@@ -48,6 +48,15 @@ android {
     kotlinOptions {
         jvmTarget = "1.8"
     }
+    packaging {
+        jniLibs {
+            // Extract native libs to the filesystem instead of loading them
+            // from inside the APK: ort's load-dynamic needs a real file path
+            // to dlopen libonnxruntime.so (and the host resolves that path
+            // from /proc/self/maps, which only shows extracted libraries).
+            useLegacyPackaging = true
+        }
+    }
     buildFeatures {
         buildConfig = true
     }
