@@ -104,7 +104,17 @@ pub fn run() {
             let data_root = app.path().app_data_dir()?;
             std::fs::create_dir_all(&data_root)?;
             #[cfg(target_os = "android")]
-            set_ort_dylib_path();
+            {
+                // hf-hub's ApiBuilder::new() constructs Cache::default(),
+                // which does dirs::home_dir().expect("Cache directory cannot
+                // be found") — and Android has no $HOME, so the model
+                // download panics before fastembed's explicit cache_dir
+                // override can apply. Give home_dir something to return;
+                // the override still decides where the model actually lands
+                // (<data>/models).
+                std::env::set_var("HOME", &data_root);
+                set_ort_dylib_path();
+            }
             let token = per_boot_token();
 
             let (config, config_path) = engine_config(&data_root, PREFERRED_PORT);
