@@ -48,15 +48,12 @@ android {
     kotlinOptions {
         jvmTarget = "1.8"
     }
-    packaging {
-        jniLibs {
-            // Extract native libs to the filesystem instead of loading them
-            // from inside the APK: ort's load-dynamic needs a real file path
-            // to dlopen libonnxruntime.so (and the host resolves that path
-            // from /proc/self/maps, which only shows extracted libraries).
-            useLegacyPackaging = true
-        }
-    }
+    // Modern packaging (the AGP default, restated for intent): native libs
+    // stay uncompressed and page-aligned inside the APK, which is what the
+    // Android 15+ 16 KB check wants — and ort dlopens libonnxruntime.so by
+    // soname through the app's linker namespace, so no extraction is needed
+    // (an earlier useLegacyPackaging=true here compressed the libs and
+    // tripped the 16 KB "not aligned" dialog).
     buildFeatures {
         buildConfig = true
     }
@@ -69,9 +66,12 @@ rust {
 dependencies {
     // ONNX Runtime for on-device embeddings: ort (Rust) is built with
     // load-dynamic and dlopens the libonnxruntime.so this AAR packs into
-    // the APK. The version MUST match ort-sys's ONNXRUNTIME_VERSION pin
-    // (2.0.0-rc.9 -> 1.20.0) — never float it.
-    implementation("com.microsoft.onnxruntime:onnxruntime-android:1.20.0")
+    // the APK. 1.22.0 (not the 1.20.0 that ort-sys nominally targets)
+    // because 1.20.0's prebuilt .so predates Android 15's 16 KB page
+    // alignment and fails the install check; ONNX Runtime's GetApi is
+    // backward compatible, so a newer runtime still serves ort's
+    // ORT_API_VERSION=20 request. Do not downgrade below 1.21 (alignment).
+    implementation("com.microsoft.onnxruntime:onnxruntime-android:1.22.0")
     implementation("androidx.webkit:webkit:1.14.0")
     implementation("androidx.appcompat:appcompat:1.7.1")
     implementation("androidx.activity:activity-ktx:1.10.1")

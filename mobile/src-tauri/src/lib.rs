@@ -51,37 +51,17 @@ fn engine_config(
     (config, config_path)
 }
 
-/// Point ort's load-dynamic at the APK's own native-lib dir instead of
-/// trusting dlopen's default search: resolve where the host library itself
-/// was loaded from (via /proc/self/maps) and expect libonnxruntime.so
-/// (packed by the gradle AAR dependency) beside it. Makes a resolution
-/// failure a clear log line instead of a mystery inside ort.
+/// Tell ort's load-dynamic to dlopen the ONNX Runtime by **soname**. With
+/// modern packaging the AAR's libonnxruntime.so is not extracted to the
+/// filesystem, but it lives in the app's linker namespace (same dir as our
+/// host lib), so `dlopen("libonnxruntime.so")` resolves without a path —
+/// the standard unextracted-lib pattern. (This is also ort's default on
+/// Android; set explicitly for a clear log line and to skip ort's
+/// current_exe()-relative probe.)
 #[cfg(target_os = "android")]
 fn set_ort_dylib_path() {
-    let Ok(maps) = std::fs::read_to_string("/proc/self/maps") else {
-        return;
-    };
-    for line in maps.lines() {
-        let Some(path) = line.split_whitespace().last() else {
-            continue;
-        };
-        if path.ends_with("/libtendrl_mobile_lib.so") {
-            if let Some(dir) = std::path::Path::new(path).parent() {
-                let ort = dir.join("libonnxruntime.so");
-                if ort.exists() {
-                    tracing::info!("ORT_DYLIB_PATH={}", ort.display());
-                } else {
-                    tracing::warn!(
-                        "libonnxruntime.so not found beside the host lib ({}) — embeds will fail to init",
-                        dir.display()
-                    );
-                }
-                std::env::set_var("ORT_DYLIB_PATH", &ort);
-            }
-            return;
-        }
-    }
-    tracing::warn!("could not locate the host lib in /proc/self/maps; leaving ORT_DYLIB_PATH unset");
+    std::env::set_var("ORT_DYLIB_PATH", "libonnxruntime.so");
+    tracing::info!("ORT_DYLIB_PATH=libonnxruntime.so (resolved via app linker namespace)");
 }
 
 fn per_boot_token() -> String {
