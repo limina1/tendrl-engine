@@ -2892,19 +2892,37 @@ impl<'a> PublicationEngine<'a> {
             score: &(dyn Fn(&Value) -> (u8, u8, i64) + Sync),
             best: &mut std::collections::HashMap<String, Value>,
         ) {
-            for chunk in topics.chunks(50) {
-                let filters = vec![
-                    serde_json::json!({ "kinds": [30818], "#d": chunk, "limit": 500 }),
-                    serde_json::json!({ "kinds": [30040, 30041], "#T": chunk, "limit": 500 }),
-                ];
-                let events = match this
-                    .engine
-                    .get_events_with_options(filters, policy, relays, mode_confirm)
-                    .await
-                {
-                    Ok(r) => r.events,
-                    Err(_) => continue,
-                };
+            use futures::stream::StreamExt;
+            // Chunks run bounded-concurrent: a 300-topic article is 6 chunks,
+            // and a slow relay costs ~5 s per REQ — sequentially that was the
+            // whole pass at 30 s wall; concurrent it's one relay-timeout.
+            let chunk_results: Vec<(Vec<String>, Vec<Value>)> =
+                futures::stream::iter(topics.chunks(50).map(<[String]>::to_vec))
+                    .map(|chunk| {
+                        let relays = relays.map(<[String]>::to_vec);
+                        async move {
+                            let filters = vec![
+                                serde_json::json!({ "kinds": [30818], "#d": &chunk, "limit": 500 }),
+                                serde_json::json!({ "kinds": [30040, 30041], "#T": &chunk, "limit": 500 }),
+                            ];
+                            let events = this
+                                .engine
+                                .get_events_with_options(
+                                    filters,
+                                    policy,
+                                    relays.as_deref(),
+                                    mode_confirm,
+                                )
+                                .await
+                                .map(|r| r.events)
+                                .unwrap_or_default();
+                            (chunk, events)
+                        }
+                    })
+                    .buffer_unordered(4)
+                    .collect()
+                    .await;
+            for (chunk, events) in chunk_results {
                 for e in events {
                     // Which topic(s) does this event define? 30818 answers by
                     // `d`, 30040/30041 by `T` (both stored slug-normalized).

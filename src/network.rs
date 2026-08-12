@@ -589,9 +589,16 @@ pub fn summarize_filters(filters: &[Value]) -> String {
                 parts.push(format!("ids={}", ids.len()));
             }
         }
-        if let Some(d_tags) = f.get("#d").and_then(|v| v.as_array()) {
-            if !d_tags.is_empty() {
-                parts.push(format!("#d={}", d_tags.len()));
+        // Every tag filter, generically — the old #d-only special case left
+        // e.g. a wiki lookup's `#T` half rendering as a bare kinds=[30040,
+        // 30041], which read as "why is it fetching sections?" in the panel.
+        if let Some(obj) = f.as_object() {
+            for (key, value) in obj {
+                if let Some(values) = key.strip_prefix('#').and(value.as_array()) {
+                    if !values.is_empty() {
+                        parts.push(format!("{}={}", key, values.len()));
+                    }
+                }
             }
         }
         if let Some(limit) = f.get("limit").and_then(|v| v.as_u64()) {

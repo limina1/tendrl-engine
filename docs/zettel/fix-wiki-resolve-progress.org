@@ -20,14 +20,19 @@ the engine was doing M redundant flushes.
 
 * Proposed fix (tactical)
 
-- [X] Chunk the client's relay backfill (=resolveNostrdownProgressive=)
-  into bounded section groups (8/request), applied as each lands, so the
-  tracker advances stepwise. Deliberately re-adds a few round trips for
-  legibility; server-side this is cheap post-sweep (the tree no longer
-  reloads per request, and repeated topics hit local after the first
-  chunk ingests them). Only the un-gated =local_first= backfill chunks —
-  the =mode_confirm= force path stays one request so Confirm mode still
-  raises ONE modal. A mid-pass failure now keeps earlier chunks painted.
+- [X] +Chunk the client's relay backfill into bounded section groups+ —
+  *shipped and reverted the same day.* On-device it multiplied relay
+  cost instead of amortizing it: real articles repeat topics across
+  sections, so consecutive chunks re-flushed the SAME topics before
+  earlier fetches had ingested (device log: one identical 50-topic
+  query sent 4× in 20 s against a ~5 s/query relay), and each chunk
+  paid the slow relay's full wait. The backfill is ONE request again —
+  the server dedupes topics request-wide, which was the point of the
+  batching. What shipped instead for the wait itself:
+  =find_wiki_events= now runs its 50-topic chunks *bounded-concurrent*
+  (4 at once), so a 300-topic first pass costs one slow-relay wait, not
+  six stacked. Stepwise counter movement belongs to
+  [[file:fix-resolve-in-stream.org][resolve-in-stream]].
 - [X] Busy-state messaging in the modeline tracker — the pill reads
   "N/M wiki · fetching…" while the pass is in flight (verified live via
   CDP: the counter advances chunk by chunk instead of teleporting).

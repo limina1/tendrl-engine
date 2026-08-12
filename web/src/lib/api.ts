@@ -478,32 +478,28 @@ export async function resolveNostrdownProgressive(
 	if (!opts?.fetch) return;
 
 	// Relay backfill, once per item per session — a re-opened buffer whose
-	// topics already went out doesn't hammer the relays again. Chunked ON
-	// PURPOSE: one request-wide flush was fast but silent — the modeline
-	// counter sat still and then teleported (10→300), indistinguishable
-	// from a hang on a slow relay. Applying per chunk makes the progress
-	// pill advance stepwise; server-side the extra requests are cheap
-	// post-batching (the tree loads once per request, and topics resolved
-	// by an earlier chunk hit local in later ones). No mode_confirm here,
-	// so chunking never multiplies Confirm-mode modals.
+	// topics already went out doesn't hammer the relays again. ONE request
+	// for the whole batch, deliberately: a chunked version shipped briefly
+	// for progress-bar legibility and was reverted the same day — real
+	// articles repeat topics across sections, so per-chunk requests
+	// re-flushed the SAME topics to relays before earlier fetches had
+	// ingested (on-device log: one identical 50-topic query sent 4× in
+	// 20 s against a 5 s/query relay). The single request lets the server
+	// dedupe topics request-wide; the modeline's busy label covers the
+	// wait, and stepwise progress is fix-resolve-in-stream's job.
 	const toBackfill = items.filter((i) => !ndResolveCache.get(ndCacheKey(i))?.backfilled);
 	if (toBackfill.length === 0) return;
-	const BACKFILL_CHUNK = 8;
 	const before = countFound(merged);
 	try {
-		for (let at = 0; at < toBackfill.length; at += BACKFILL_CHUNK) {
-			const batch = toBackfill.slice(at, at + BACKFILL_CHUNK);
-			const fetched = await resolveNostrdown(batch, 'local_first');
-			for (const i of batch) {
-				merged[i.key] = fetched[i.key] ?? merged[i.key] ?? [];
-				ndCacheStore(ndCacheKey(i), merged[i.key], true);
-			}
-			apply({ ...merged });
+		const fetched = await resolveNostrdown(toBackfill, 'local_first');
+		for (const i of toBackfill) {
+			merged[i.key] = fetched[i.key] ?? merged[i.key] ?? [];
+			ndCacheStore(ndCacheKey(i), merged[i.key], true);
 		}
+		apply({ ...merged });
 		opts.onFetched?.(Math.max(0, countFound(merged) - before));
 	} catch {
-		// Keep whatever landed — earlier chunks stay painted; the relay
-		// backfill is best-effort.
+		// Keep the local pass's paint — the relay backfill is best-effort.
 	}
 }
 
