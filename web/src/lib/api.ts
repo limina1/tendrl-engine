@@ -17,7 +17,8 @@ import type {
 	IdentityStatus,
 	RepublishDiff,
 	HealthResponse,
-	NostrEvent
+	NostrEvent,
+	Inventory
 } from './types';
 import type { ThreadNode } from './discussions/thread';
 import type { Highlight, HighlightSpan } from './discussions/highlights';
@@ -1833,6 +1834,19 @@ export function unignoreEvents(
 		method: 'DELETE',
 		body: JSON.stringify({ event_ids, pubkeys, coordinates })
 	});
+}
+
+// Local database inventory
+
+/** Aggregate stats for the local nostrdb: totals, kind/author/relay
+ *  histograms, archive span, disk cost. The engine caches a snapshot for a
+ *  minute — pass `refresh` to force a rescan. */
+export function getInventory(opts?: { refresh?: boolean; relays?: boolean }) {
+	const params = new URLSearchParams();
+	if (opts?.refresh) params.set('refresh', 'true');
+	if (opts?.relays === false) params.set('relays', 'false');
+	const qs = params.toString();
+	return fetchJson<Inventory>(`/api/v1/stats/inventory${qs ? `?${qs}` : ''}`);
 }
 
 // Embedding API

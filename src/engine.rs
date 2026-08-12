@@ -32,6 +32,35 @@ const PROFILE_BACKFILL_CAP: usize = 200;
 /// inside `i32` (nostrdb's query-limit type).
 const EXHAUSTIVE_SCAN_LIMIT: usize = 1_000_000;
 
+/// Floor for how many contributing event ids a `count:` histogram bucket
+/// carries. The cap normally tracks the query's result limit; this keeps
+/// a deliberately tiny `limit:1` from also collapsing the unfold lists.
+const MIN_BUCKET_ID_CAP: usize = 50;
+
+/// How long the enumerated kind set stays valid. It only changes when a
+/// kind is stored for the first time, and the cost of being briefly
+/// stale is that a brand-new kind is missing from one aggregation.
+const KNOWN_KINDS_TTL_SECS: u64 = 300;
+
+/// Does this NIP-01 filter give nostrdb something to seek on?
+///
+/// Ids, kinds, authors, and single-letter tag keys each select a real
+/// index. A filter with only `limit`/`since`/`until` selects none, and
+/// falls to the created-at plan — the one plan with a truncated start key
+/// (see `stats::compute_inventory`), so it under-returns.
+fn filter_is_indexable(filter: &Value) -> bool {
+    let Some(obj) = filter.as_object() else {
+        return false;
+    };
+    obj.keys()
+        .any(|k| matches!(k.as_str(), "ids" | "kinds" | "authors") || k.starts_with('#'))
+}
+
+/// How long a local-DB inventory snapshot stays servable. The DB only
+/// moves as fast as ingest, and the panel shows the snapshot time, so a
+/// minute of staleness costs nothing and saves a full scan per open.
+const INVENTORY_TTL_SECS: u64 = 60;
+
 /// Fetch policy determines how the engine retrieves events
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -177,6 +206,18 @@ pub struct Engine {
     network: Arc<NetworkActivity>,
     /// NIP-11 relay information cache (process-wide, 1h TTL)
     nip11_cache: crate::nip11::Nip11Cache,
+    /// Last local-DB inventory snapshot + the options that produced it.
+    /// Computing one is a full note-table scan, so repeated panel opens
+    /// are served from here for `INVENTORY_TTL_SECS` (the UI's refresh
+    /// button bypasses it).
+    inventory_cache:
+        std::sync::Mutex<Option<(crate::stats::InventoryOptions, crate::stats::Inventory)>>,
+    /// Kinds present in the local DB, and when that was last established.
+    /// Enumerating them costs a full walk; the set only changes when a
+    /// kind is stored for the first time, so it is cached for
+    /// `KNOWN_KINDS_TTL_SECS`. Used to give `count:` aggregations an
+    /// exact scan (see `kind_enumerated_filters`).
+    known_kinds: std::sync::Mutex<Option<(std::time::Instant, Vec<u32>)>>,
     /// Sections (pubkey, d_tag) that the background sync tried to fetch
     /// and NO configured relay had — mapped to the time we last tried.
     /// Without this, `fetch_missing_sections` recomputes the missing set
@@ -292,6 +333,8 @@ impl Engine {
             // failed boot never auto-fetches (matches config.rs's default_network_mode).
             network: Arc::new(NetworkActivity::new(NetworkMode::Confirm)),
             nip11_cache: crate::nip11::Nip11Cache::new(),
+            inventory_cache: std::sync::Mutex::new(None),
+            known_kinds: std::sync::Mutex::new(None),
             unreachable_sections: std::sync::Mutex::new(std::collections::HashMap::new()),
         })
     }
@@ -1425,6 +1468,105 @@ impl Engine {
         self.embedding.as_ref()
     }
 
+    /// The kinds present in the local DB, cached for
+    /// `KNOWN_KINDS_TTL_SECS`. `None` if enumeration failed — callers
+    /// treat that as "no kind constraint available" and carry on.
+    fn known_kinds(&self) -> Option<Vec<u32>> {
+        if let Ok(cache) = self.known_kinds.lock() {
+            if let Some((at, kinds)) = cache.as_ref() {
+                if at.elapsed().as_secs() < KNOWN_KINDS_TTL_SECS {
+                    return Some(kinds.clone());
+                }
+            }
+        }
+
+        let kinds = match crate::stats::known_kinds(&self.ndb) {
+            Ok(k) => k,
+            Err(e) => {
+                warn!("Kind enumeration failed: {}", e);
+                return None;
+            }
+        };
+        if let Ok(mut cache) = self.known_kinds.lock() {
+            *cache = Some((std::time::Instant::now(), kinds.clone()));
+        }
+        Some(kinds)
+    }
+
+    /// Fill in kind-0 display names on `count:by` histogram buckets, whose
+    /// values are bare hex pubkeys.
+    ///
+    /// Author resolution is engine-side by the same rule that puts kind-0
+    /// parsing here (the web renders the name it is given).
+    fn label_author_buckets(&self, buckets: &mut [search::TagValueCount]) {
+        let keys: Vec<[u8; 32]> = buckets
+            .iter()
+            .map(|b| query::parse_hex_pubkey(&b.value).unwrap_or([0u8; 32]))
+            .collect();
+        for (bucket, name) in buckets
+            .iter_mut()
+            .zip(crate::stats::display_names(&self.ndb, &keys))
+        {
+            bucket.label = name;
+        }
+    }
+
+    /// Aggregate inventory of the local database — totals, kind and author
+    /// histograms, archive span, disk cost.
+    ///
+    /// A full note-table scan, so it runs on a blocking thread and the
+    /// result is cached for `INVENTORY_TTL_SECS`. `refresh` forces a
+    /// rescan; a cached snapshot taken with different options (notably
+    /// without relay provenance) never answers a request that wants them.
+    pub async fn inventory(
+        &self,
+        opts: crate::stats::InventoryOptions,
+        refresh: bool,
+    ) -> Result<crate::stats::Inventory> {
+        if !refresh {
+            if let Some(hit) = self.cached_inventory(&opts) {
+                return Ok(hit);
+            }
+        }
+
+        let ndb = self.ndb.clone();
+        let data_dir = self.data_dir.clone();
+        let mut inventory = tokio::task::spawn_blocking(move || {
+            crate::stats::compute_inventory(&ndb, &data_dir, opts)
+        })
+        .await
+        .map_err(|e| EngineError::Other(format!("inventory scan panicked: {e}")))??;
+
+        // Vector count lives on the embedding index, not in nostrdb — read
+        // it here so the panel can show coverage against the event total.
+        if let Some(index) = &self.embedding {
+            inventory.embedded_events = Some(index.read().await.len());
+        }
+
+        if let Ok(mut cache) = self.inventory_cache.lock() {
+            *cache = Some((opts, inventory.clone()));
+        }
+        Ok(inventory)
+    }
+
+    /// A cached snapshot, if one is fresh enough and was computed with at
+    /// least the dimensions this request asks for.
+    fn cached_inventory(
+        &self,
+        opts: &crate::stats::InventoryOptions,
+    ) -> Option<crate::stats::Inventory> {
+        let cache = self.inventory_cache.lock().ok()?;
+        let (cached_opts, inventory) = cache.as_ref()?;
+        if opts.include_relays && !cached_opts.include_relays {
+            return None;
+        }
+        if cached_opts.top_authors < opts.top_authors || cached_opts.top_relays < opts.top_relays {
+            return None;
+        }
+        let age = crate::stats::now_secs().saturating_sub(inventory.generated_at);
+        (age < INVENTORY_TTL_SECS).then(|| inventory.clone())
+    }
+
     /// The event kinds currently eligible for embedding (deduped clone).
     pub fn embed_kinds(&self) -> Vec<u16> {
         self.embed_kinds.read().unwrap().clone()
@@ -2069,7 +2211,7 @@ impl Engine {
             .iter()
             .any(|tf| tf.tag_name.chars().count() > 1);
         let has_has_tags = !query.has_tags.is_empty();
-        let has_count_tags = !query.count_tags.is_empty();
+        let has_count_tags = !query.count_tags.is_empty() || !query.count_dims.is_empty();
         // A multi-char tag / `has:` / `count:` / keyword query carries a
         // constraint nostrdb cannot index — it is post-filtered in memory
         // by `query::filter_by_tags` / `filter_by_text` after the DB read.
@@ -2102,6 +2244,26 @@ impl Engine {
             for f in &mut filters {
                 if let Some(obj) = f.as_object_mut() {
                     obj.insert("limit".to_string(), serde_json::json!(scan_limit));
+                }
+            }
+        }
+
+        // A filter carrying nothing but a limit routes nostrdb to its
+        // created-at plan, which silently skips ~0.4% of the database (see
+        // `stats::compute_inventory` for the truncated-key detail). A
+        // keyword search never notices; an aggregate must, because there
+        // the number IS the answer. So a `count:` scan names every kind
+        // instead, which routes to the exact kind index — and, unlike a
+        // limited search, an aggregate reads the whole result set, so the
+        // kind-major return order costs nothing.
+        if has_count_tags && exhaustive {
+            if let Some(kinds) = self.known_kinds().filter(|k| !k.is_empty()) {
+                for f in &mut filters {
+                    if !filter_is_indexable(f) {
+                        if let Some(obj) = f.as_object_mut() {
+                            obj.insert("kinds".to_string(), serde_json::json!(kinds));
+                        }
+                    }
                 }
             }
         }
@@ -2178,11 +2340,28 @@ impl Engine {
 
         // `count:NAME` runs AFTER all filtering so histograms reflect the
         // user's narrowing. Empty by default when no count: was requested.
-        let tag_counts = if has_count_tags {
-            query::count_tag_values(&filtered, &query.count_tags)
+        // Bucket id lists are bounded by the result window: the UI unfolds
+        // a bucket by looking its ids up in `results`, so ids past the
+        // limit are unrenderable weight. An unfiltered `count:kind` over a
+        // large database would otherwise ship one id per event.
+        let bucket_id_cap = limit.max(MIN_BUCKET_ID_CAP);
+
+        let mut tag_counts = if !query.count_tags.is_empty() {
+            query::count_tag_values(&filtered, &query.count_tags, bucket_id_cap)
         } else {
             std::collections::HashMap::new()
         };
+
+        // Field histograms (`count:kind` / `count:by`) share the map — the
+        // reserved key can't collide with a tag name, since a tag called
+        // `kind`/`by` is routed to the field dimension at parse time.
+        for dim in &query.count_dims {
+            let mut buckets = query::count_dimension(&filtered, *dim, bucket_id_cap);
+            if *dim == search::CountDimension::Author {
+                self.label_author_buckets(&mut buckets);
+            }
+            tag_counts.insert(dim.key().to_string(), buckets);
+        }
 
         let results = search::build_search_results(&filtered, limit);
 
@@ -2205,6 +2384,21 @@ impl Engine {
             })
             .collect();
         let count = results.len();
+
+        // A bucket's ids exist so the UI can unfold it into rows it already
+        // holds; an id outside the result window renders as a dead "not in
+        // results" placeholder. Keep only the ids that resolve, and let the
+        // bucket's (exact) count carry the rest — the UI says how many were
+        // left out rather than listing them.
+        if !tag_counts.is_empty() {
+            let visible: std::collections::HashSet<&str> =
+                results.iter().map(|r| r.event_id.as_str()).collect();
+            for buckets in tag_counts.values_mut() {
+                for bucket in buckets.iter_mut() {
+                    bucket.event_ids.retain(|id| visible.contains(id.as_str()));
+                }
+            }
+        }
 
         Ok(SearchResponse {
             results,

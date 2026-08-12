@@ -183,6 +183,31 @@
 	function bucketKey(tagName: string, value: string): string {
 		return `${tagName}::${value}`;
 	}
+
+	// `count:` groups by a tag name, except for the two reserved event
+	// fields, whose keys read as bare prepositions on their own.
+	function groupLabel(name: string): string {
+		if (name === 'by') return 'author pubkey';
+		return name;
+	}
+
+	// The query that isolates one bucket, so "show me the rest of these"
+	// is one click. The field dimensions map back onto their own filter
+	// tokens (`k:` / `by:`); a tag bucket maps onto `NAME:value`.
+	function bucketQuery(name: string, value: string): string {
+		if (name === 'kind') return `k:${value}`;
+		if (name === 'by') return `by:${value}`;
+		return value.includes(' ') ? `${name}:"${value}"` : `${name}:${value}`;
+	}
+
+	// The raw bucket value, shown beside its human label — or in place of
+	// one when the pubkey has no kind-0 stored. A pubkey is truncated (it's
+	// an identifier, not a name, and the full value stays in the row
+	// title); a kind number is short already.
+	function shortValue(name: string, value: string): string {
+		if (name === 'by' && value.length > 16) return `${value.slice(0, 12)}…`;
+		return value;
+	}
 	function toggleBucket(tagName: string, value: string) {
 		const key = bucketKey(tagName, value);
 		const next = new Set(expandedBuckets);
@@ -403,7 +428,7 @@
 				{#each groupedNames as tagName}
 					<div class="bucket-group">
 						<div class="bucket-group__header">
-							<span class="bucket-group__name">{tagName}</span>
+							<span class="bucket-group__name">{groupLabel(tagName)}</span>
 							<span class="bucket-group__total">{tagCounts[tagName].length} values</span>
 						</div>
 						{#each tagCounts[tagName] as bucket (tagName + ':' + bucket.value)}
@@ -416,7 +441,16 @@
 								title="{bucket.count} events with {tagName}={bucket.value}"
 							>
 								<span class="bucket__arrow" class:open={expanded}>{expanded ? '▾' : '▸'}</span>
-								<span class="bucket__value">{bucket.value || '(empty)'}</span>
+								<!-- `count:kind` / `count:by` buckets are keyed by an opaque
+								     value (a kind number, a hex pubkey); the engine ships the
+								     human form as `label`, and the raw value stays visible
+								     beside it so the row is still copyable/identifiable. -->
+								<span class="bucket__value"
+									>{bucket.label ?? (shortValue(tagName, bucket.value) || '(empty)')}</span
+								>
+								{#if bucket.label}
+									<span class="bucket__key">{shortValue(tagName, bucket.value)}</span>
+								{/if}
 								<span class="bucket__count">{bucket.count}</span>
 							</button>
 							{#if expanded}
@@ -441,13 +475,26 @@
 													onpillaction={onresultpillaction}
 												/>
 											</div>
-										{:else}
-											<div class="bucket__event-missing">
-												<span class="evid">{id.slice(0, 12)}…</span>
-												<span class="hint">(event not in results — likely beyond fetch limit)</span>
-											</div>
 										{/if}
 									{/each}
+									<!-- The count is exact over everything matched; the rows above
+									     are only the part inside this result window. Say how many
+									     are missing rather than listing ids that can't render. -->
+									{#if bucket.count > bucket.event_ids.length}
+										{@const beyond = bucket.count - bucket.event_ids.length}
+										<button
+											class="bucket__beyond"
+											onclick={() => {
+												// Put the query in the box as well as running it —
+												// the input is the record of what the results are.
+												searchValue = bucketQuery(tagName, bucket.value);
+												onsearch(searchValue);
+											}}
+											title="Search this bucket on its own to see all {bucket.count}"
+										>
+											{beyond.toLocaleString()} more beyond this result window — search just this
+										</button>
+									{/if}
 								</div>
 							{/if}
 						{/each}
@@ -998,6 +1045,14 @@
 		text-overflow: ellipsis;
 		white-space: nowrap;
 	}
+	/* Raw value beside a resolved label (kind number, truncated pubkey) —
+	   secondary to the name, but present so the row stays identifiable. */
+	.bucket__key {
+		flex: 0 0 auto;
+		color: var(--fg-muted);
+		font-family: var(--font-mono);
+		font-size: var(--t-2xs);
+	}
 	.bucket__count {
 		color: var(--fg-muted);
 		font-size: var(--t-3xs);
@@ -1009,15 +1064,22 @@
 	.bucket__events {
 		background: color-mix(in srgb, var(--id-yours) 4%, transparent);
 	}
-	.bucket__event-missing {
+	/* Tail of an unfolded bucket: the events this window doesn't hold,
+	   offered as a search rather than listed as unrenderable ids. */
+	.bucket__beyond {
+		display: block;
+		width: 100%;
 		padding: 4px 12px 4px 30px;
+		border: none;
+		background: transparent;
+		text-align: left;
 		font-size: var(--t-3xs);
-		color: var(--fg-muted);
-		font-family: var(--font-mono);
-	}
-	.bucket__event-missing .hint {
 		font-style: italic;
-		margin-left: 8px;
+		color: var(--fg-muted);
+	}
+	.bucket__beyond:hover {
+		color: var(--fg);
+		text-decoration: underline;
 	}
 
 	.empty {

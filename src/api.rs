@@ -2880,6 +2880,49 @@ pub async fn config_export_handler(
     Ok((headers, output))
 }
 
+/// Query string for `GET /api/v1/stats/inventory`.
+#[derive(Debug, Deserialize)]
+pub struct InventoryQuery {
+    /// Force a rescan instead of serving the cached snapshot.
+    #[serde(default)]
+    pub refresh: bool,
+    /// Tally which relays each note arrived from. On by default; pass
+    /// `relays=false` to skip the per-note cursor on a large database.
+    pub relays: Option<bool>,
+    /// How many author rows to return (the tail is one-event pubkeys).
+    pub top_authors: Option<usize>,
+    pub top_relays: Option<usize>,
+}
+
+/// GET /api/v1/stats/inventory — aggregate picture of the local database.
+///
+/// Totals, the kind histogram (labelled), the top authors (kind-0
+/// resolved), archive span, disk cost, and embedding coverage. Every
+/// tally is derived engine-side; the web renders rows.
+pub async fn inventory_handler(
+    State(engine): State<AppState>,
+    axum::extract::Query(query): axum::extract::Query<InventoryQuery>,
+) -> Result<Json<Value>, EngineError> {
+    let defaults = crate::stats::InventoryOptions::default();
+    let opts = crate::stats::InventoryOptions {
+        include_relays: query.relays.unwrap_or(defaults.include_relays),
+        // Clamp: an unbounded `top_authors` would serialize every distinct
+        // pubkey in the DB into one response.
+        top_authors: query.top_authors.unwrap_or(defaults.top_authors).min(500),
+        top_relays: query.top_relays.unwrap_or(defaults.top_relays).min(500),
+    };
+
+    let inventory = engine.inventory(opts, query.refresh).await?;
+    debug!(
+        "Inventory: {} events, {} kinds, {} authors ({}ms)",
+        inventory.total_events,
+        inventory.distinct_kinds,
+        inventory.distinct_authors,
+        inventory.scan_ms
+    );
+    Ok(Json(serde_json::to_value(inventory)?))
+}
+
 /// GET /api/v1/settings — return editor/compose/network defaults from the
 /// current config.toml so the web can hydrate state at boot instead of
 /// starting on hard-coded defaults that diverge from the user's last save.

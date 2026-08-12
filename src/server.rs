@@ -471,6 +471,8 @@ pub async fn start(opts: ServeOptions) -> anyhow::Result<RunningServer> {
         )
         .route("/api/v1/config/export", get(api::config_export_handler))
         .route("/api/v1/settings", get(api::settings_handler))
+        // Local database inventory (totals / kind + author histograms)
+        .route("/api/v1/stats/inventory", get(api::inventory_handler))
         .route("/api/v1/fetch", post(api::fetch_relay_handler))
         .route("/api/v1/fetch/authors", post(api::fetch_authors_handler))
         .route("/api/v1/fetch/sections", post(api::fetch_sections_handler))
