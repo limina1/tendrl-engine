@@ -97,3 +97,7 @@ dimensions = 384
 # Database settings (optional)
 # [database]
 # data_dir = "~/.local/share/nostr-engine/nostrdb"
+# LMDB map size in MiB. Unset = nostrdb's default (a 32 GiB address-space
+# reservation — harmless on desktop). The Android host caps this at 4096;
+# if a store ever outgrows the cap, ingest fails with MDB_MAP_FULL — raise it.
+# mapsize_mb = 4096

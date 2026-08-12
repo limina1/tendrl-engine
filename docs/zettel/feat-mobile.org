@@ -279,7 +279,7 @@ the hardware-back event, and later plugins (share intents, deep links).
 | Engine port open to every app (shared Android loopback) | arbitrary sign/publish once a signer is attached | per-boot auth token (B1 item); gates NIP-55 landing |
 | OS kills background engine / SSE | stale UI, lost intents | lifecycle hooks (B2); reconnect-on-resume; no background work |
 | Hardware back exits app | unusable | A1 is the fix; gate M1 on it |
-| Binary size (engine + SPA + deps) | 72 MB APK; 44 MB unstripped =.so= (measured 2026-08-12) | FIXED 2026-08-12: =[profile.release]= (fat LTO + strip + cu=1) in both workspace roots — [[file:fix-release-profile.org][fix-release-profile]] (desktop −20%; APK delta with next signed build) |
+| Binary size (engine + SPA + deps) | 72 MB APK; 44 MB unstripped =.so= (measured 2026-08-12) | FIXED 2026-08-12: =[profile.release]= (fat LTO + strip + cu=1) in both workspace roots — [[file:fix-release-profile.org][fix-release-profile]] (desktop −20%; APK 55 MB; =.so= 26.8 MB stripped) |
 | Buffer UIs assume pointer/width | papercuts | A4 tail, prioritized by real device use after merge |
 
 * Performance audit (2026-08-12)
@@ -293,8 +293,11 @@ historical), and the actual APK build is
 — not the =--no-default-features --features embed-assets= line
 =docs/commands.org= keeps as a cross-compile check. Open issues:
 
-- [[file:fix-android-boot-blocking.org][Boot blocking]] — engine boots
-  via =block_on= on the UI thread, pre-WebView (ANR exposure)
+- +[[file:fix-android-boot-blocking.org][Boot blocking]] — engine boots
+  via =block_on= on the UI thread, pre-WebView (ANR exposure)+ (fixed
+  2026-08-12: splash-first WebView + spawned boot + =navigate()=;
+  mobile LMDB map capped at 4 GiB via the new =database.mapsize_mb=;
+  HNSW reserve floor dropped)
 - [[file:fix-android-lifecycle.org][Lifecycle gaps]] — suspend gates
   only the 60 s loop (the B2/M2 SSE half is still open); debug-level
   logcat in release

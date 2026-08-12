@@ -306,10 +306,25 @@ impl Engine {
     /// - Subsequent boots: load the JSON file; ignore `initial_relays`
     ///   entirely. The file is the source of truth.
     pub fn with_relay_config(data_path: &Path, relay_config: &RelayConfig) -> Result<Self> {
+        Self::with_database_config(data_path, relay_config, &crate::config::DatabaseConfig::default())
+    }
+
+    /// [`Self::with_relay_config`] plus database tuning — currently the LMDB
+    /// mapsize knob, which the mobile host caps (nostrdb's default is a
+    /// 32 GiB address-space reservation per boot; fine on desktop, bad VSS
+    /// optics under Android's low-memory killer).
+    pub fn with_database_config(
+        data_path: &Path,
+        relay_config: &RelayConfig,
+        db: &crate::config::DatabaseConfig,
+    ) -> Result<Self> {
         // Ensure the data directory exists
         std::fs::create_dir_all(data_path)?;
 
-        let config = Config::new().set_ingester_threads(2);
+        let mut config = Config::new().set_ingester_threads(2);
+        if let Some(mb) = db.mapsize_mb {
+            config = config.set_mapsize(mb as usize * 1024 * 1024);
+        }
 
         let ndb = Ndb::new(
             data_path

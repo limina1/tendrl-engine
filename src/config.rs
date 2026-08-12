@@ -40,6 +40,13 @@ pub struct DatabaseConfig {
     /// Path to nostrdb data directory
     #[serde(default = "default_data_dir")]
     pub data_dir: String,
+    /// LMDB map size in MiB. `None` keeps nostrdb's default — a 32 GiB
+    /// address-space reservation, harmless on desktop. Mobile hosts set a
+    /// smaller cap (VSS accounting / low-memory-killer optics); if a store
+    /// ever outgrows it, ingest fails with MDB_MAP_FULL — recover by
+    /// raising this value.
+    #[serde(default)]
+    pub mapsize_mb: Option<u64>,
 }
 
 pub fn default_data_dir() -> String {
@@ -64,6 +71,7 @@ impl Default for DatabaseConfig {
     fn default() -> Self {
         Self {
             data_dir: default_data_dir(),
+            mapsize_mb: None,
         }
     }
 }

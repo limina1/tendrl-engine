@@ -198,7 +198,7 @@ pub async fn start(opts: ServeOptions) -> anyhow::Result<RunningServer> {
 
     // Create the engine
     let data_path = PathBuf::from(&config.database.data_dir);
-    let mut engine = Engine::with_relay_config(&data_path, &relay_config)?;
+    let mut engine = Engine::with_database_config(&data_path, &relay_config, &config.database)?;
     // Same path we loaded from — settings persist to and reload from one file.
     engine.set_config_path(config_path.clone());
     engine.set_documents_path(PathBuf::from(&config.documents.path));
@@ -226,14 +226,29 @@ pub async fn start(opts: ServeOptions) -> anyhow::Result<RunningServer> {
         .unwrap()
         .set_timeout_minutes(config.identity.lock_timeout_minutes);
 
-    let keyring_available = crate::identity::IdentityKeyring::new().is_available();
+    // The keyring probe + read are synchronous OS round trips (DBus/Secret
+    // Service on desktop; a stub returning false on Android) — keep them off
+    // the async runtime. No scrypt happens on this path: `login_ncryptsec`
+    // stores the blob *locked*; decryption lives in the unlock handlers,
+    // which already spawn_blocking it.
+    let keyring_available =
+        tokio::task::spawn_blocking(|| crate::identity::IdentityKeyring::new().is_available())
+            .await
+            .unwrap_or(false);
     if !keyring_available {
         tracing::warn!(
             "OS keyring unavailable — assistant identity will not persist across restarts"
         );
     }
     let assistant_session: api::IdentityAppState = Arc::new(Mutex::new(IdentitySession::new()));
-    restore_assistant_identity(&assistant_session, keyring_available);
+    {
+        let session = assistant_session.clone();
+        tokio::task::spawn_blocking(move || {
+            restore_assistant_identity(&session, keyring_available)
+        })
+        .await
+        .ok();
+    }
 
     engine.set_user_session(user_session.clone());
     engine.set_assistant_session(assistant_session.clone());

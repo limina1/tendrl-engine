@@ -102,8 +102,11 @@ impl EmbeddingIndex {
         let index = Index::new(&opts)
             .map_err(|e| EngineError::Database(format!("Failed to create HNSW index: {e}")))?;
 
+        // Small starter capacity — `insert` doubles on demand, so a fixed
+        // 100k-slot reservation on every fresh install was pure memory tax
+        // (worst on-device, where the graph arena is allocated up front).
         index
-            .reserve(100_000)
+            .reserve(1_024)
             .map_err(|e| EngineError::Database(format!("Failed to reserve HNSW capacity: {e}")))?;
 
         let mapping = IndexMapping {
@@ -397,8 +400,9 @@ impl EmbeddingIndex {
 
         self.index = Index::new(&opts)
             .map_err(|e| EngineError::Database(format!("Failed to create fresh index: {e}")))?;
+        // Same small floor as a fresh index — `insert` grows on demand.
         self.index
-            .reserve(100_000)
+            .reserve(1_024)
             .map_err(|e| EngineError::Database(format!("Failed to reserve capacity: {e}")))?;
 
         self.mapping.id_to_key.clear();

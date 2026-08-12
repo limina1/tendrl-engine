@@ -1,11 +1,52 @@
 <!doctype html>
-<!-- Placeholder frontendDist: never actually served. The real UI is the
-     SPA embedded in the engine binary; the WebView loads the engine's
-     loopback origin directly (see src/lib.rs). Tauri just requires this
-     directory to exist at build time. -->
+<!-- Boot splash. The WebView opens here IMMEDIATELY (engine boot happens in
+     a spawned task — see src/lib.rs), and the host calls navigate() to the
+     engine's loopback origin once the port is bound. No JS: the host drives
+     the transition, and on a failed boot it eval()s the error into #status.
+     The SPA's persisted state is keyed to the DESTINATION origin
+     (127.0.0.1:41347), so this asset-origin splash touches none of it. -->
 <html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>tendrl</title>
+    <style>
+      html,
+      body {
+        height: 100%;
+        margin: 0;
+      }
+      body {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 16px;
+        background: #101413;
+        color: #9ab8a8;
+        font: 15px/1.4 system-ui, sans-serif;
+      }
+      .ring {
+        width: 28px;
+        height: 28px;
+        border-radius: 50%;
+        border: 3px solid #26302b;
+        border-top-color: #7fd0a7;
+        animation: spin 0.9s linear infinite;
+      }
+      @keyframes spin {
+        to {
+          transform: rotate(1turn);
+        }
+      }
+      #status {
+        max-width: 34ch;
+        text-align: center;
+      }
+    </style>
+  </head>
   <body>
-    tendrl loads from the embedded engine — if you can read this, the host
-    failed to point the WebView at the engine origin.
+    <div class="ring" aria-hidden="true"></div>
+    <div id="status">starting tendrl…</div>
   </body>
 </html>

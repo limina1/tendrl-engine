@@ -54,8 +54,9 @@ stay as provenance. Source evaluation:
 - [X] [[file:fix-release-profile.org][Release profile]] (critical, cheap) —
   no =[profile.release]= anywhere; 44 MB unstripped mobile =.so=
   (fixed 2026-08-12)
-- [ ] [[file:fix-android-boot-blocking.org][Android boot blocking]]
+- [X] [[file:fix-android-boot-blocking.org][Android boot blocking]]
   (critical) — engine boots via =block_on= on the UI thread, pre-WebView
+  (fixed 2026-08-12)
 - [ ] [[file:fix-android-lifecycle.org][Android lifecycle gaps]] (high) —
   suspend gates one loop; SSE/polls run on; debug logging in release
 

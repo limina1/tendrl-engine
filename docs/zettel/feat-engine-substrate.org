@@ -17,10 +17,14 @@ base to hang off — no other =feat-*= note owns this plumbing.
   =ndb_query= calls corrupt nostrdb's heap (documented upstream bug —
   do not remove). The lock is local-read-only; no relay I/O under it.
 - *Boot* (=src/server.rs::start=, shared by the desktop binary and the
-  Android host): Engine init → keyring restore (scrypt, synchronous) →
+  Android host): Engine init → keyring restore (a sync OS-keyring read,
+  on the blocking pool since 2026-08-12 — no scrypt here; that was a
+  mis-audit, decryption lives in the unlock handlers) →
   =init_embedding= (full =vectors.map= parse + HNSW load, synchronous) →
   prompt file → router (~90 routes) → background loop spawn → bind.
-  Everything before bind is on the critical path to the first request.
+  Everything before bind is on the critical path to the first request;
+  the Android host now shows a splash and =navigate()=s when bind
+  completes instead of blocking the UI thread on all of it.
 - *The 60 s background tick* (=src/server.rs:666=, only when embeddings
   are enabled): =fetch_missing_sections_if_dirty= (skips unless a
   30040/30041 was ingested or the 30-minute TTL fallback is due; the
@@ -45,9 +49,11 @@ base to hang off — no other =feat-*= note owns this plumbing.
   idle-cheap]] — cost ∝ store size every minute, no watermark+
   (fixed 2026-08-12: dirty-set + boot-scan reconciler)
 - [[file:fix-relay-connection-churn.org][No relay connection reuse]]
-- Boot does scrypt + full index deserialization before bind
-  ([[file:fix-android-boot-blocking.org][worst on Android]], where it
-  also sits on the UI thread)
+- Boot does full index deserialization before bind (the scrypt half of
+  this line was a mis-audit) — the Android-side exposure is
+  +on the UI thread+ [[file:fix-android-boot-blocking.org][fixed
+  2026-08-12]]; the load itself still precedes bind (compact
+  =vectors.map= halved its parse cost)
 
 * Related
 

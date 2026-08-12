@@ -1,20 +1,28 @@
 //! tendrl Android host.
 //!
-//! Boot sequence (all in the Tauri `setup` hook):
-//!   1. Resolve the app-private data dir and build the engine `Config` there
-//!      (fresh installs get sane on-device paths; `config.toml` persists user
-//!      settings across runs exactly like desktop).
-//!   2. Generate a per-boot loopback token — on Android `127.0.0.1` is
-//!      reachable by every app on the device, so the engine 401s `/api/`
-//!      requests that don't carry it.
-//!   3. Start the engine in-process on an ephemeral loopback port
-//!      (`server::start` returns once the port is bound).
-//!   4. Open the WebView at the engine origin with `?shell=mobile` (mobile
-//!      shell selection) and `auth_token=` (captured into a cookie by the
-//!      SPA's boot module, then scrubbed from the URL).
+//! Boot sequence:
+//!   1. (setup hook) Resolve the app-private data dir, per-boot loopback
+//!      token, and open the WebView IMMEDIATELY on the bundled splash
+//!      (`frontendDist`'s `index.html`). The engine used to boot via
+//!      `block_on` on the Android main thread *before* any UI existed — a
+//!      slow first boot (LMDB map, HNSW/model load) was indistinguishable
+//!      from a hang and burned ANR budget.
+//!   2. (spawned task) Build the engine `Config` (fresh installs get sane
+//!      on-device paths; `config.toml` persists user settings across runs
+//!      exactly like desktop; the LMDB mapsize is capped for mobile) and
+//!      `server::start` on the loopback port. The token gates `/api/`:
+//!      `127.0.0.1` is reachable by every app on the device.
+//!   3. Once the port is bound, `navigate()` the WebView to the engine
+//!      origin with `?shell=mobile` (mobile shell selection) and
+//!      `auth_token=` (captured into a cookie by the SPA's boot module,
+//!      then scrubbed from the URL). On a failed boot, the error is
+//!      eval()'d into the splash instead of a silent hang. SPA-persisted
+//!      state is keyed to the destination origin, so the splash→engine
+//!      navigation touches none of it.
 //!
-//! The WebView is same-origin with the API — the engine serves the embedded
-//! SPA — so fetches and EventSources carry the token cookie automatically.
+//! The WebView ends same-origin with the API — the engine serves the
+//! embedded SPA — so fetches and EventSources carry the token cookie
+//! automatically.
 
 use tauri::Manager;
 
@@ -36,6 +44,12 @@ fn engine_config(
     let mut config = nostr_engine::Config::load_or_default(Some(&config_path));
     config.database.data_dir = data_root.join("db").to_string_lossy().into_owned();
     config.documents.path = data_root.join("documents").to_string_lossy().into_owned();
+    // Cap the LMDB map for mobile: nostrdb's default is a 32 GiB
+    // address-space reservation per boot — harmless on desktop, bad VSS
+    // optics under the low-memory killer. 4 GiB is far beyond any plausible
+    // on-device store; a user-set config.toml value wins. If a store ever
+    // outgrows it, ingest fails with MDB_MAP_FULL — raise the knob.
+    config.database.mapsize_mb.get_or_insert(4096);
     // Embeddings on: the index is cheap to open; the heavy part (the
     // one-time ~90 MB model download) only happens on an explicit,
     // labeled user action — the UI gates it on the status endpoint's
@@ -117,47 +131,82 @@ pub fn run() {
             }
             let token = per_boot_token();
 
-            let (config, config_path) = engine_config(&data_root, PREFERRED_PORT);
-            let server = match tauri::async_runtime::block_on(nostr_engine::server::start(
-                nostr_engine::server::ServeOptions {
-                    config,
-                    config_path: config_path.clone(),
-                    loopback_token: Some(token.clone()),
-                },
-            )) {
-                Ok(server) => server,
-                Err(e) => {
-                    tracing::warn!(
-                        "preferred port {PREFERRED_PORT} unavailable ({e}); falling back to an \
-                         ephemeral port — SPA-persisted state (signer, prefs) won't carry over"
-                    );
-                    let (config, config_path) = engine_config(&data_root, 0);
-                    tauri::async_runtime::block_on(nostr_engine::server::start(
-                        nostr_engine::server::ServeOptions {
+            // WebView FIRST, on the bundled splash — the engine boot below
+            // runs in a spawned task, off the main thread, so a slow first
+            // boot shows a spinner instead of eating the ANR window.
+            let window = tauri::WebviewWindowBuilder::new(
+                app,
+                "main",
+                tauri::WebviewUrl::App("index.html".into()),
+            )
+            .build()?;
+
+            let handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                let (config, config_path) = engine_config(&data_root, PREFERRED_PORT);
+                let started = match nostr_engine::server::start(
+                    nostr_engine::server::ServeOptions {
+                        config,
+                        config_path,
+                        loopback_token: Some(token.clone()),
+                    },
+                )
+                .await
+                {
+                    Ok(server) => Ok(server),
+                    Err(e) => {
+                        tracing::warn!(
+                            "preferred port {PREFERRED_PORT} unavailable ({e}); falling back \
+                             to an ephemeral port — SPA-persisted state (signer, prefs) won't \
+                             carry over"
+                        );
+                        let (config, config_path) = engine_config(&data_root, 0);
+                        nostr_engine::server::start(nostr_engine::server::ServeOptions {
                             config,
                             config_path,
                             loopback_token: Some(token.clone()),
-                        },
-                    ))?
+                        })
+                        .await
+                    }
+                };
+                match started {
+                    Ok(server) => {
+                        tracing::info!("engine bound on {}", server.addr);
+                        // Foreground gate: the run-loop callback flips this on
+                        // Suspended/Resumed so the 60s background loop sleeps
+                        // while the app is backgrounded. Managed late (post-
+                        // bind) — the run-loop reads it via try_state and
+                        // tolerates its absence in the boot window.
+                        handle.manage(BackgroundGate(server.background_paused.clone()));
+                        let url = format!(
+                            "http://127.0.0.1:{}/?shell=mobile&auth_token={}",
+                            server.addr.port(),
+                            token
+                        );
+                        match url.parse() {
+                            Ok(url) => {
+                                if let Err(e) = window.navigate(url) {
+                                    tracing::error!("failed to leave the boot splash: {e}");
+                                }
+                            }
+                            Err(e) => tracing::error!("engine URL failed to parse: {e}"),
+                        }
+                    }
+                    Err(e) => {
+                        tracing::error!("engine failed to start: {e}");
+                        // Surface it on the splash — a visible failure beats
+                        // the old panic-in-setup (and beats a forever-spinner).
+                        let msg = format!("Engine failed to start: {e}")
+                            .replace('\\', " ")
+                            .replace('"', "'")
+                            .replace('\n', " ");
+                        let _ = window.eval(&format!(
+                            "document.getElementById('status').textContent = \"{msg}\";\
+                             document.querySelector('.ring').style.display = 'none';"
+                        ));
+                    }
                 }
-            };
-            tracing::info!("engine bound on {}", server.addr);
-            // Foreground gate: the run-loop callback below flips this on
-            // Suspended/Resumed so the 60s background loop sleeps while
-            // the app is backgrounded.
-            app.manage(BackgroundGate(server.background_paused.clone()));
-
-            let url = format!(
-                "http://127.0.0.1:{}/?shell=mobile&auth_token={}",
-                server.addr.port(),
-                token
-            );
-            tauri::WebviewWindowBuilder::new(
-                app,
-                "main",
-                tauri::WebviewUrl::External(url.parse()?),
-            )
-            .build()?;
+            });
             Ok(())
         })
         .build(tauri::generate_context!())

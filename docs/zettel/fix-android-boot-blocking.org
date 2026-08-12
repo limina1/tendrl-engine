@@ -1,7 +1,8 @@
 #+TITLE: Fix: Android Boot Blocking
 #+TYPE: fix
-#+STATUS: open
+#+STATUS: fixed
 #+DATE: 2026-08-12
+#+FIXED: 2026-08-12, perf/2026-08-fixes (perf(android): boot off the UI thread…)
 
 * The issue (observed 2026-08-12, v0.8.2)
 
@@ -22,14 +23,37 @@ restore runs scrypt on the async task (everywhere else it is explicitly
 
 * Proposed fix
 
-- [ ] Move =server::start= off the setup hook: spawn it, create the
-  WebView immediately with a loading page that polls =/health=
-- [ ] Tune =set_mapsize= for mobile (VSS accounting; LMK optics)
-- [ ] Size the HNSW reserve from the on-disk index (lazy growth path
-  already exists) instead of a fixed 100k
-- [ ] Desktop: =spawn_blocking= the keyring/scrypt restore; compact (not
-  pretty-printed) =vectors.map= encoding
-  ([[file:fix-background-tick-idle-cost.org][also cuts save cost]])
+- [X] Move =server::start= off the setup hook: spawn it, create the
+  WebView immediately with a loading page ~that polls /health~ — the
+  WebView opens on a bundled splash (=mobile/dist/index.html=, now a
+  real page) and the *host* drives the transition via
+  =WebviewWindow::navigate()= once =server::start= returns (its return
+  IS the bound-and-ready signal — same semantics polling =/health=
+  would give, no JS needed; =/health= remains the debug probe and the
+  fallback design if =navigate()= ever misbehaves on a WebView). The
+  port-0 fallback moved inside the spawned task (the double =block_on=
+  is gone); a failed boot eval()s the error into the splash instead of
+  panicking the setup hook. SPA storage is keyed to the destination
+  origin, untouched by the splash→engine navigation.
+- [X] Tune =set_mapsize= for mobile (VSS accounting; LMK optics) —
+  =database.mapsize_mb= config knob (engine stays platform-agnostic);
+  the mobile host defaults it to 4096 MiB the same way it forces
+  =embedding.enabled=; user-set =config.toml= values win; =None= keeps
+  nostrdb's 32 GiB default on desktop
+- [X] Size the HNSW reserve from the on-disk index (lazy growth path
+  already exists) instead of a fixed 100k — fresh/reindex floors drop
+  to 1,024; =insert= doubles on demand; =load()= sizes from the file
+- [X] Desktop: =spawn_blocking= the ~keyring/scrypt~ restore; compact
+  (not pretty-printed) =vectors.map= encoding
+  ([[file:fix-background-tick-idle-cost.org][also cuts save cost]]) —
+  *correction*: no scrypt runs on the boot path
+  (=login_ncryptsec= stores the blob locked; decryption lives in the
+  unlock handlers, already =spawn_blocking='d). What does block is the
+  synchronous OS-keyring probe + read (DBus on desktop; stub on
+  Android) — both now run on the blocking pool. The compact
+  =vectors.map= shipped with the
+  [[file:fix-background-tick-idle-cost.org][tick fix]] (5.1 MB pretty
+  → compact, parsed on every boot).
 
 * Related
 

@@ -40,9 +40,10 @@ recompile on every APK build*.
   =tendrl-engine= (SPA embedded): 59.2 MB → 48.6 MB thin LTO → *47.2 MB
   fat LTO* (−20%); thin vs fat build time was a wash (7m02s vs 7m40s
   clean), so both manifests ship =lto = "fat"= (drop to =thin= if an
-  NDK link ever chokes). APK/.so deltas: measured with the next signed
-  build (the profile change is what moves them; nothing later in the
-  perf sweep affects size).
+  NDK link ever chokes). APK/.so deltas (signed build, 2026-08-12,
+  fat LTO): APK 72 MB → *55 MB* (−24%);
+  =libtendrl_mobile_lib.so= 44.4 MB unstripped → *26.8 MB stripped*
+  (−40%). Fat LTO linked clean under NDK r28c.
 - [X] =cargo:rerun-if-changed= on =web/build/= (build script) to drop
   the forced clean — *already existed*: =build.rs:50-64= walks the tree
   and emits per-file rerun-if-changed (the claim above was stale).
