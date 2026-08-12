@@ -83,8 +83,9 @@ pnpm -C web build
 echo "==> Building signed release APK (aarch64) — version ${version}…"
 (
   cd mobile/src-tauri
-  # rust-embed does not watch web/build/ — force the engine crate to re-embed.
-  cargo clean -p nostr-engine
+  # (No forced `cargo clean` here: the engine's build.rs walks web/build/ and
+  # emits rerun-if-changed per file, so a rebuilt SPA re-embeds on its own —
+  # verified from this workspace's separate target dir.)
   # gradle's packaging step can append to a stale APK instead of rewriting it.
   rm -rf gen/android/app/build/outputs
   cargo tauri android build --apk --target aarch64

@@ -20,6 +20,15 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 [profile.dev]
 debug = "line-tables-only"
 
+# The .so shipped unstripped at 44 MB (~60% of the APK) with no LTO before
+# this profile existed. No panic = "abort": the engine deliberately
+# spawn-isolates the background embed pass because an on-device ONNX panic
+# was observed — abort would turn that survivable panic into app death.
+[profile.release]
+lto = "fat"
+codegen-units = 1
+strip = true
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 

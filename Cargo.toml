@@ -135,3 +135,10 @@ tempfile = "3.24.0"
 tokio-test = "0.4"
 # oneshot() in the loopback-guard middleware tests
 tower = { version = "0.5", features = ["util"] }
+
+# NOTE: mobile/src-tauri/ is its own workspace root — this profile does NOT
+# reach the Android build; it carries its own [profile.release].
+[profile.release]
+lto = "fat"
+codegen-units = 1
+strip = true

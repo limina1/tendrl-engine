@@ -1,7 +1,8 @@
 #+TITLE: Fix: Release Profile
 #+TYPE: fix
-#+STATUS: open
+#+STATUS: fixed
 #+DATE: 2026-08-12
+#+FIXED: 2026-08-12, perf/2026-08-fixes (commit noted in git log: build(release): profiles)
 
 * The issue (observed 2026-08-12, v0.8.2)
 
@@ -27,12 +28,28 @@ recompile on every APK build*.
 
 * Proposed fix
 
-- [ ] =[profile.release]= in both workspace roots: =lto = "thin"= (try
+- [X] =[profile.release]= in both workspace roots: =lto = "thin"= (try
   =fat= and compare), =strip = true=, =codegen-units = 1=
-- [ ] =panic = "abort"= for the mobile workspace
-- [ ] Rebuild, record binary/APK size deltas here
-- [ ] =cargo:rerun-if-changed= on =web/build/= (build script) to drop
-  the forced clean
+- [X] +=panic = "abort"= for the mobile workspace+ — *rejected*: the
+  engine deliberately spawn-isolates the background embed pass
+  (=server.rs:722=) because an on-device ONNX panic was observed killing
+  the loop silently; =abort= would turn that survivable panic into app
+  death. Revisit after
+  [[file:fix-embedding-runtime-blocking.org][embedding runtime blocking]].
+- [X] Rebuild, record binary/APK size deltas here — desktop
+  =tendrl-engine= (SPA embedded): 59.2 MB → 48.6 MB thin LTO → *47.2 MB
+  fat LTO* (−20%); thin vs fat build time was a wash (7m02s vs 7m40s
+  clean), so both manifests ship =lto = "fat"= (drop to =thin= if an
+  NDK link ever chokes). APK/.so deltas: measured with the next signed
+  build (the profile change is what moves them; nothing later in the
+  perf sweep affects size).
+- [X] =cargo:rerun-if-changed= on =web/build/= (build script) to drop
+  the forced clean — *already existed*: =build.rs:50-64= walks the tree
+  and emits per-file rerun-if-changed (the claim above was stale).
+  Verified from the mobile workspace's separate target dir (touch an
+  asset → nostr-engine recompiles), so the forced
+  =cargo clean -p nostr-engine= in =build-android.sh= is deleted — this
+  was a full engine recompile on every APK build.
 
 * Related
 
