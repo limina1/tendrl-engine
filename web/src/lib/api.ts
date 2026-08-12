@@ -478,20 +478,32 @@ export async function resolveNostrdownProgressive(
 	if (!opts?.fetch) return;
 
 	// Relay backfill, once per item per session — a re-opened buffer whose
-	// topics already went out doesn't hammer the relays again.
+	// topics already went out doesn't hammer the relays again. Chunked ON
+	// PURPOSE: one request-wide flush was fast but silent — the modeline
+	// counter sat still and then teleported (10→300), indistinguishable
+	// from a hang on a slow relay. Applying per chunk makes the progress
+	// pill advance stepwise; server-side the extra requests are cheap
+	// post-batching (the tree loads once per request, and topics resolved
+	// by an earlier chunk hit local in later ones). No mode_confirm here,
+	// so chunking never multiplies Confirm-mode modals.
 	const toBackfill = items.filter((i) => !ndResolveCache.get(ndCacheKey(i))?.backfilled);
 	if (toBackfill.length === 0) return;
+	const BACKFILL_CHUNK = 8;
 	const before = countFound(merged);
 	try {
-		const fetched = await resolveNostrdown(toBackfill, 'local_first');
-		for (const i of toBackfill) {
-			merged[i.key] = fetched[i.key] ?? merged[i.key] ?? [];
-			ndCacheStore(ndCacheKey(i), merged[i.key], true);
+		for (let at = 0; at < toBackfill.length; at += BACKFILL_CHUNK) {
+			const batch = toBackfill.slice(at, at + BACKFILL_CHUNK);
+			const fetched = await resolveNostrdown(batch, 'local_first');
+			for (const i of batch) {
+				merged[i.key] = fetched[i.key] ?? merged[i.key] ?? [];
+				ndCacheStore(ndCacheKey(i), merged[i.key], true);
+			}
+			apply({ ...merged });
 		}
-		apply({ ...merged });
 		opts.onFetched?.(Math.max(0, countFound(merged) - before));
 	} catch {
-		// Keep the local pass's paint — the relay backfill is best-effort.
+		// Keep whatever landed — earlier chunks stay painted; the relay
+		// backfill is best-effort.
 	}
 }
 

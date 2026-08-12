@@ -218,8 +218,16 @@
 				if (!cancelled) tokensBySection = {};
 			});
 		nostrdownBackfilling = doFetch;
+		// Accumulate in a CLOSURE, not by spreading refsBySection: reading
+		// $state inside an effect's async continuation re-enters tracking
+		// and self-loops (the documented Svelte 5.53 query-flood family —
+		// this exact bug re-appeared here as a 30-POST/s resolve storm when
+		// the merge read refsBySection). apply stays write-only.
+		let acc: Record<string, ResolvedRef[]> = {};
 		const apply = (m: Record<string, ResolvedRef[]>) => {
-			if (!cancelled) refsBySection = { ...refsBySection, ...m };
+			if (cancelled) return;
+			acc = { ...acc, ...m };
+			refsBySection = acc;
 		};
 		const opts = {
 			fetch: doFetch,

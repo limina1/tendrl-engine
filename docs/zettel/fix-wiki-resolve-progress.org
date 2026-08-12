@@ -1,7 +1,8 @@
 #+TITLE: Fix: Wiki Resolve Progress
 #+TYPE: fix
-#+STATUS: open
+#+STATUS: fixed
 #+DATE: 2026-08-12
+#+FIXED: 2026-08-12, perf/embed-throttle-wiki-progress (perf(reader): chunked wiki backfill…)
 
 * The issue (reported 2026-08-12, after the perf sweep)
 
@@ -19,16 +20,28 @@ the engine was doing M redundant flushes.
 
 * Proposed fix (tactical)
 
-- [ ] Chunk the client's relay backfill (=resolveNostrdownProgressive=)
-  into bounded section groups, applied as each lands, so the tracker
-  advances stepwise. Deliberately re-adds a few round trips for
+- [X] Chunk the client's relay backfill (=resolveNostrdownProgressive=)
+  into bounded section groups (8/request), applied as each lands, so the
+  tracker advances stepwise. Deliberately re-adds a few round trips for
   legibility; server-side this is cheap post-sweep (the tree no longer
   reloads per request, and repeated topics hit local after the first
-  chunk ingests them).
-- [ ] Busy-state messaging in the modeline tracker while the relay pass
-  is in flight ("fetching N topics…"), driven by the existing =busy=
-  flag, so even the first chunk's wait is visibly *working* rather than
-  hung.
+  chunk ingests them). Only the un-gated =local_first= backfill chunks —
+  the =mode_confirm= force path stays one request so Confirm mode still
+  raises ONE modal. A mid-pass failure now keeps earlier chunks painted.
+- [X] Busy-state messaging in the modeline tracker — the pill reads
+  "N/M wiki · fetching…" while the pass is in flight (verified live via
+  CDP: the counter advances chunk by chunk instead of teleporting).
+
+*Regression caught during verification* (the reason to keep the CDP
+fetch-count harness around): the first cut merged chunks with
+=refsBySection = { ...refsBySection, ...m }= inside the effect's async
+continuation — *reading* =$state= there re-enters tracking and
+self-loops (the documented Svelte 5.53 query-flood family, previously
+eliminated codebase-wide) — producing a 30-POST/s resolve storm that
+Chrome's 5-minute intensive throttling masked into "stops on its own".
+The shipped =apply= accumulates in a closure and stays *write-only* to
+state. Rule reaffirmed: effect-spawned async callbacks must never read
+reactive state.
 
 * The structural cure
 

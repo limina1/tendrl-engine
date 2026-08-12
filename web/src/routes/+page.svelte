@@ -1499,7 +1499,7 @@
 							style="width:{Math.round((resolveStatus.found / Math.max(1, resolveStatus.total)) * 100)}%"
 						></span>
 					</span>
-					{resolveStatus.found}/{resolveStatus.total} wiki
+					{resolveStatus.found}/{resolveStatus.total} wiki{#if busy}&nbsp;· fetching…{/if}
 				</button>
 			{/if}
 			<span class="act-pill-wrap" bind:this={actWrapEl}>
