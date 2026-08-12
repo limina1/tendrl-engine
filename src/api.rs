@@ -860,40 +860,25 @@ pub async fn resolve_nostrdown_handler(
     .await;
     let chosen: Option<Vec<String>> = op.as_ref().map(|o| o.relays().to_vec());
     let pub_engine = PublicationEngine::new(&engine);
-    let mut refs = std::collections::HashMap::new();
-    for item in req.items {
-        // No explicit publication context (an isolated doc view): derive the
-        // containing 30040 from the section's own coordinate so sibling refs
-        // still resolve. Local-only reverse a-tag lookup; first parent wins.
-        let mut publication = item.publication.clone();
-        if publication.is_none() && (item.content.contains("{{") || item.content.contains("[[")) {
-            if let Some(addr) = item
-                .coord
-                .as_deref()
-                .and_then(crate::publication::NAddr::from_a_tag)
-            {
-                publication = pub_engine
-                    .containing_publications(std::slice::from_ref(&addr))
-                    .await
-                    .unwrap_or_default()
-                    .get(&addr.to_a_tag())
-                    .and_then(|parents| parents.first())
-                    .map(|p| p.to_a_tag());
-            }
-        }
-        let resolved = pub_engine
-            .resolve_refs_with_options(
-                &item.content,
-                publication.as_deref(),
-                item.author.as_deref(),
-                &item.siblings,
-                policy,
-                chosen.as_deref(),
-                mode_confirm,
-            )
-            .await;
-        refs.insert(item.key, resolved);
-    }
+    // One batched resolve for the whole request: the tree + sibling index
+    // load once per distinct publication (not per item), and unresolved wiki
+    // topics flush once. Items with no explicit publication derive their
+    // containing 30040 inside the batch via one reverse a-tag lookup.
+    let items: Vec<crate::publication::ResolveItem> = req
+        .items
+        .into_iter()
+        .map(|item| crate::publication::ResolveItem {
+            key: item.key,
+            content: item.content,
+            publication: item.publication,
+            coord: item.coord,
+            author: item.author,
+            siblings: item.siblings,
+        })
+        .collect();
+    let refs = pub_engine
+        .resolve_refs_batch(items, policy, chosen.as_deref(), mode_confirm)
+        .await;
     if let Some(op) = op {
         op.complete(
             refs.values()

@@ -353,19 +353,38 @@ export async function resolveNostrdown(
 // Session cache for resolved nostrdown refs, keyed by the item's full
 // resolution context. Buffer renderers unmount on every switch, so without
 // this every alternation re-resolved from scratch — and worse, re-ran the
-// relay backfill. Draft items (with `siblings`) are never cached: the draft
-// mutates under them.
+// relay backfill. Address-keyed with content/sibling fingerprints: an edited
+// draft or replaced section changes the fingerprint, so stale entries age
+// out of the LRU naturally — drafts no longer opt out of caching entirely
+// (the old null-key exclusion made every composer-preview tick a cold,
+// relay-reaching, full-document resolve).
 const ndResolveCache = new Map<string, { refs: ResolvedRef[]; backfilled: boolean }>();
 const ND_CACHE_MAX = 200;
-function ndCacheKey(i: ResolveNostrdownItem): string | null {
-	if (i.siblings?.length) return null;
-	return `${i.publication ?? ''}|${i.author ?? ''}|${i.coord ?? ''}|${i.content}`;
+// Compact string fingerprint for cache keys (length + two independent
+// 32-bit FNV-1a passes ≈ 64 bits — not cryptographic, just collision-safe
+// at this cache's scale). Full content strings made keys megabytes.
+function ndFingerprint(s: string): string {
+	let a = 0x811c9dc5;
+	let b = 0x811c9dc5 ^ 0x9e3779b9;
+	for (let i = 0; i < s.length; i++) {
+		const c = s.charCodeAt(i);
+		a ^= c;
+		a = Math.imul(a, 0x01000193);
+		b ^= c;
+		b = Math.imul(b, 0x01000193) ^ 0x5bd1e995;
+	}
+	return `${s.length.toString(36)}.${(a >>> 0).toString(36)}.${(b >>> 0).toString(36)}`;
+}
+function ndCacheKey(i: ResolveNostrdownItem): string {
+	const sib = i.siblings?.length
+		? ndFingerprint(i.siblings.map((s) => `${s.d_tag}:${s.title ?? ''}`).join('\n'))
+		: '';
+	return `${i.publication ?? ''}|${i.author ?? ''}|${i.coord ?? i.key}|${ndFingerprint(i.content)}|${sib}`;
 }
 function ndCountFound(m: Record<string, ResolvedRef[]>): number {
 	return Object.values(m).reduce((n, refs) => n + refs.filter((r) => r.found).length, 0);
 }
-function ndCacheStore(key: string | null, refs: ResolvedRef[], backfilled: boolean) {
-	if (!key) return;
+function ndCacheStore(key: string, refs: ResolvedRef[], backfilled: boolean) {
 	if (!ndResolveCache.has(key) && ndResolveCache.size >= ND_CACHE_MAX) {
 		const oldest = ndResolveCache.keys().next().value;
 		if (oldest !== undefined) ndResolveCache.delete(oldest);
@@ -399,8 +418,7 @@ export async function resolveNostrdownProgressive(
 	const merged: Record<string, ResolvedRef[]> = {};
 	const uncached: ResolveNostrdownItem[] = [];
 	for (const i of items) {
-		const key = ndCacheKey(i);
-		const hit = key ? ndResolveCache.get(key) : undefined;
+		const hit = ndResolveCache.get(ndCacheKey(i));
 		if (hit) merged[i.key] = hit.refs;
 		else uncached.push(i);
 	}
@@ -423,10 +441,7 @@ export async function resolveNostrdownProgressive(
 
 	// Relay backfill, once per item per session — a re-opened buffer whose
 	// topics already went out doesn't hammer the relays again.
-	const toBackfill = items.filter((i) => {
-		const key = ndCacheKey(i);
-		return key === null || !ndResolveCache.get(key)?.backfilled;
-	});
+	const toBackfill = items.filter((i) => !ndResolveCache.get(ndCacheKey(i))?.backfilled);
 	if (toBackfill.length === 0) return;
 	const before = countFound(merged);
 	try {
@@ -456,8 +471,7 @@ export async function resolveNostrdownForce(
 	if (items.length === 0) return 0;
 	const before: Record<string, ResolvedRef[]> = {};
 	for (const i of items) {
-		const key = ndCacheKey(i);
-		const hit = key ? ndResolveCache.get(key) : undefined;
+		const hit = ndResolveCache.get(ndCacheKey(i));
 		if (hit) before[i.key] = hit.refs;
 	}
 	const fetched = await resolveNostrdown(items, 'local_first', true);

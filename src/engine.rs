@@ -269,6 +269,12 @@ pub struct Engine {
     /// cadence that retries unreachable sections after their TTL lapses even
     /// when nothing new was ingested.
     last_sections_pass: std::sync::Mutex<Option<std::time::Instant>>,
+    /// Wiki topics a relay-reaching lookup failed to resolve, with when.
+    /// Mirrors `unreachable_sections`: without it, every resolve pass
+    /// re-reached relays for the same permanently-missing topics. Entries
+    /// expire after the retry TTL; relay add/reset clears the map; a
+    /// user-initiated "resolve everything" (mode_confirm) bypasses it.
+    wiki_topic_misses: std::sync::Mutex<std::collections::HashMap<String, std::time::Instant>>,
 }
 
 impl Engine {
@@ -383,6 +389,7 @@ impl Engine {
             // Start dirty so the first background pass after boot always runs.
             sections_dirty: std::sync::atomic::AtomicBool::new(true),
             last_sections_pass: std::sync::Mutex::new(None),
+            wiki_topic_misses: std::sync::Mutex::new(std::collections::HashMap::new()),
         })
     }
 
@@ -1154,6 +1161,9 @@ impl Engine {
         if let Ok(mut skip) = self.unreachable_sections.lock() {
             skip.clear();
         }
+        if let Ok(mut misses) = self.wiki_topic_misses.lock() {
+            misses.clear();
+        }
         self.sections_dirty
             .store(true, std::sync::atomic::Ordering::Relaxed);
         true
@@ -1217,6 +1227,9 @@ impl Engine {
         // written off as unreachable — retry them on the next sync.
         if let Ok(mut skip) = self.unreachable_sections.lock() {
             skip.clear();
+        }
+        if let Ok(mut misses) = self.wiki_topic_misses.lock() {
+            misses.clear();
         }
         self.sections_dirty
             .store(true, std::sync::atomic::Ordering::Relaxed);
@@ -1320,6 +1333,9 @@ impl Engine {
         if let Ok(mut skip) = self.unreachable_sections.lock() {
             skip.clear();
         }
+        if let Ok(mut misses) = self.wiki_topic_misses.lock() {
+            misses.clear();
+        }
         self.sections_dirty
             .store(true, std::sync::atomic::Ordering::Relaxed);
         added
@@ -1422,6 +1438,30 @@ impl Engine {
                 guard.fail(msg);
                 Err(e)
             }
+        }
+    }
+
+    /// Drop topics under a fresh negative memo (a relay-reaching wiki lookup
+    /// already failed for them within the TTL); expires stale entries.
+    pub(crate) fn filter_fresh_wiki_misses(&self, topics: Vec<String>) -> Vec<String> {
+        let now = std::time::Instant::now();
+        let mut misses = self.wiki_topic_misses.lock().unwrap();
+        misses.retain(|_, t| now.duration_since(*t) < UNREACHABLE_RETRY_TTL);
+        topics
+            .into_iter()
+            .filter(|t| !misses.contains_key(t))
+            .collect()
+    }
+
+    /// Record topics a relay-reaching wiki lookup failed to resolve.
+    pub(crate) fn record_wiki_misses(&self, topics: &[String]) {
+        if topics.is_empty() {
+            return;
+        }
+        let now = std::time::Instant::now();
+        let mut misses = self.wiki_topic_misses.lock().unwrap();
+        for t in topics {
+            misses.insert(t.clone(), now);
         }
     }
 

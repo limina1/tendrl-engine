@@ -32,8 +32,9 @@ stay as provenance. Source evaluation:
 
 * Nostrdown resolution
 
-- [ ] [[file:fix-resolve-cost-model.org][Resolve cost model]] (critical) —
+- [X] [[file:fix-resolve-cost-model.org][Resolve cost model]] (critical) —
   M×2T locked queries per pass; misses never memoized; content-keyed cache
+  (fixed 2026-08-12)
 - [ ] [[file:fix-resolve-in-stream.org][Resolve-in-stream]] (structural) —
   emit resolved spans with the tree stream; prefetch ≡ resolve
 

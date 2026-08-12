@@ -2309,70 +2309,234 @@ impl<'a> PublicationEngine<'a> {
         relays: Option<&[String]>,
         mode_confirm: bool,
     ) -> Vec<crate::nostrdown::ResolvedRef> {
-        use crate::nostrdown::{self, RefKind};
+        let item = ResolveItem {
+            key: String::new(),
+            content: content.to_string(),
+            publication: publication_atag.map(str::to_string),
+            coord: None,
+            author: author.map(str::to_string),
+            siblings: draft_siblings.to_vec(),
+        };
+        self.resolve_refs_batch(vec![item], policy, relays, mode_confirm)
+            .await
+            .remove("")
+            .unwrap_or_default()
+    }
 
-        let refs = nostrdown::parse(content);
-        if refs.is_empty() {
-            return Vec::new();
+    /// Resolve nostrdown refs for a whole batch of items in one pass — the
+    /// engine side of `POST /nostrdown/resolve`.
+    ///
+    /// The per-item version paid the whole publication again for every item:
+    /// an unconditional depth-4 tree load, a sibling index that *re-queried*
+    /// every node the tree load had just fetched, and a wiki-topic flush per
+    /// item. For M items over a T-node publication that was ≈ M×2T locked
+    /// nostrdb queries per request — reproducing data the SSE stream had
+    /// just delivered. Now, per request:
+    ///
+    /// - the depth-4 tree loads ONCE per distinct publication, and only when
+    ///   some item in that group actually needs the sibling index;
+    /// - the sibling index is built in-memory from the loaded tree
+    ///   (`collect_sibling_entries`) — the re-query loop is gone;
+    /// - unresolved wiki topics flush once per request (grouped by the
+    ///   items' preferred author, which drives candidate ranking), with a
+    ///   TTL'd negative memo so permanently-missing topics stop re-reaching
+    ///   relays every pass.
+    pub async fn resolve_refs_batch(
+        &self,
+        items: Vec<ResolveItem>,
+        policy: FetchPolicy,
+        relays: Option<&[String]>,
+        mode_confirm: bool,
+    ) -> std::collections::HashMap<String, Vec<crate::nostrdown::ResolvedRef>> {
+        use crate::nostrdown::{self, RefKind};
+        use std::collections::HashMap;
+
+        let mut out: HashMap<String, Vec<nostrdown::ResolvedRef>> = HashMap::new();
+
+        // Parse everything first — the tokenizer is pure; tokenless items
+        // cost nothing and take no further part.
+        struct ParsedItem {
+            item: ResolveItem,
+            refs: Vec<nostrdown::NostrdownRef>,
+        }
+        let mut parsed: Vec<ParsedItem> = Vec::new();
+        for item in items {
+            let refs = nostrdown::parse(&item.content);
+            if refs.is_empty() {
+                out.insert(item.key.clone(), Vec::new());
+            } else {
+                parsed.push(ParsedItem { item, refs });
+            }
+        }
+        if parsed.is_empty() {
+            return out;
         }
 
-        // Load the containing index once; ref:/slug-embed: resolve against its
-        // sections + nested indexes. The FULL tree, not the shallow load:
-        // `collect_sibling_addrs` walks `nested` recursively, so a section
-        // three tiers down (index → group → subgroup → note) is only a
-        // resolvable sibling if the nested indexes were actually loaded.
-        // Depth 4 matches the deepest structures we emit (and the walker's
-        // cycle cap keeps pathological trees bounded).
-        let publication = match publication_atag.and_then(NAddr::from_a_tag) {
-            Some(addr) => self.load_publication_tree(&addr, 4, policy).await.ok(),
-            None => None,
-        };
-
-        // Section d-tags are opaque nanoids, so a human `{{ref:slug}}` can't
-        // match by d-tag. Build a sibling index that maps each section to its
-        // human handles — title-slug (the `T` tag / normalized title) plus the
-        // literal d-tag — and match the slug against those. Built once (bounded
-        // by sibling count) and only when a slug-based ref is actually present.
-        // Wiki refs consult it too: a `[[wikilink]]` naming a section of the
-        // containing document resolves to that section before any global lookup.
-        let needs_siblings = refs.iter().any(|r| {
-            // Every ref needs the sibling index — an entity/coordinate ref only
-            // resolves if it addresses a sibling (refs never leave the
-            // containing publication).
-            matches!(r.kind, RefKind::Ref)
-                || (matches!(r.kind, RefKind::Wiki | RefKind::Embed) && !r.is_entity)
-        });
-        let mut siblings = match (needs_siblings, &publication) {
-            (true, Some(p)) => self.load_sibling_index(p, policy).await,
-            _ => Vec::new(),
-        };
-
-        // Draft siblings: an unsigned, in-composer publication has no events in
-        // nostrdb, so its sections can't be loaded above. The frontend passes the
-        // draft's own sections (title + synthetic d-tag) inline so `{{ref:slug}}`
-        // resolves against them in the draft-reader preview — the same title-slug
-        // match, just sourced from the request instead of the db. Appended after
-        // the published siblings so a real event still wins when both exist.
-        if needs_siblings {
-            for ds in draft_siblings {
-                let mut slugs = vec![ds.d_tag.clone()];
-                if let Some(t) = ds.title.as_deref().filter(|t| !t.is_empty()) {
-                    push_title_slugs(&mut slugs, t);
+        // Items without an explicit publication (isolated doc views) derive
+        // their containing 30040 in ONE batched reverse a-tag lookup.
+        let orphan_addrs: Vec<NAddr> = parsed
+            .iter()
+            .filter(|p| p.item.publication.is_none())
+            .filter_map(|p| p.item.coord.as_deref().and_then(NAddr::from_a_tag))
+            .collect();
+        if !orphan_addrs.is_empty() {
+            if let Ok(parents) = self.containing_publications(&orphan_addrs).await {
+                for p in &mut parsed {
+                    if p.item.publication.is_none() {
+                        if let Some(addr) =
+                            p.item.coord.as_deref().and_then(NAddr::from_a_tag)
+                        {
+                            p.item.publication = parents
+                                .get(&addr.to_a_tag())
+                                .and_then(|list| list.first())
+                                .map(|a| a.to_a_tag());
+                        }
+                    }
                 }
-                siblings.push(SiblingEntry {
-                    addr: NAddr::new(KIND_PUBLICATION_SECTION, "", &ds.d_tag),
-                    event: None,
-                    slugs,
-                    title: ds.title.clone(),
-                });
             }
         }
 
+        // One sibling index per distinct publication — and only for
+        // publications where some item's refs actually consult siblings
+        // (entity-only items never trigger the depth-4 tree load at all;
+        // the old code loaded it unconditionally). Depth 4 matches the
+        // deepest structures we emit; the walker's cycle cap bounds
+        // pathological trees. `collect_sibling_entries` reads the events
+        // the tree load already holds — nothing is re-queried.
+        let needs_siblings = |refs: &[nostrdown::NostrdownRef]| {
+            refs.iter().any(|r| {
+                matches!(r.kind, RefKind::Ref)
+                    || (matches!(r.kind, RefKind::Wiki | RefKind::Embed) && !r.is_entity)
+            })
+        };
+        let mut sibling_ctx: HashMap<String, Vec<SiblingEntry>> = HashMap::new();
+        for p in &parsed {
+            let Some(atag) = p.item.publication.as_deref() else {
+                continue;
+            };
+            if sibling_ctx.contains_key(atag) || !needs_siblings(&p.refs) {
+                continue;
+            }
+            let entries = match NAddr::from_a_tag(atag) {
+                Some(addr) => match self.load_publication_tree(&addr, 4, policy).await {
+                    Ok(pubn) => collect_sibling_entries(&pubn),
+                    Err(_) => Vec::new(),
+                },
+                None => Vec::new(),
+            };
+            sibling_ctx.insert(atag.to_string(), entries);
+        }
+
+        // Per-item resolution; unresolved wiki topics defer into ONE
+        // request-scoped list: (item key, index into that item's output,
+        // topic, display_given, preferred author).
+        let mut deferred_wiki: Vec<(String, usize, String, bool, Option<String>)> = Vec::new();
+        for p in &parsed {
+            let base: &[SiblingEntry] = p
+                .item
+                .publication
+                .as_deref()
+                .and_then(|atag| sibling_ctx.get(atag))
+                .map(Vec::as_slice)
+                .unwrap_or(&[]);
+
+            // Draft siblings: an unsigned, in-composer publication has no
+            // events in nostrdb, so its sections can't come from the tree.
+            // The frontend passes them inline; appended after the published
+            // siblings so a real event still wins when both exist.
+            let draft: Vec<SiblingEntry> = if needs_siblings(&p.refs) {
+                p.item
+                    .siblings
+                    .iter()
+                    .map(|ds| {
+                        let mut slugs = vec![ds.d_tag.clone()];
+                        if let Some(t) = ds.title.as_deref().filter(|t| !t.is_empty()) {
+                            push_title_slugs(&mut slugs, t);
+                        }
+                        SiblingEntry {
+                            addr: NAddr::new(KIND_PUBLICATION_SECTION, "", &ds.d_tag),
+                            event: None,
+                            slugs,
+                            title: ds.title.clone(),
+                        }
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            };
+
+            let resolved = self
+                .resolve_item_refs(
+                    &p.item.content,
+                    &p.refs,
+                    base,
+                    &draft,
+                    &p.item.key,
+                    p.item.author.as_deref(),
+                    &mut deferred_wiki,
+                )
+                .await;
+            out.insert(p.item.key.clone(), resolved);
+        }
+
+        // ONE wiki flush per request (per preferred author — ranking prefers
+        // the item's author, and items of one publication share theirs).
+        if !deferred_wiki.is_empty() {
+            let mut by_author: HashMap<Option<String>, Vec<usize>> = HashMap::new();
+            for (i, entry) in deferred_wiki.iter().enumerate() {
+                by_author.entry(entry.4.clone()).or_default().push(i);
+            }
+            for (author, entry_idxs) in by_author {
+                let mut topics: Vec<String> = entry_idxs
+                    .iter()
+                    .map(|&i| deferred_wiki[i].2.clone())
+                    .collect();
+                topics.sort();
+                topics.dedup();
+                let found = self
+                    .find_wiki_events(&topics, author.as_deref(), policy, relays, mode_confirm)
+                    .await;
+                for i in entry_idxs {
+                    let (key, out_idx, topic, display_given, _) = &deferred_wiki[i];
+                    if let Some(ev) = found.get(topic) {
+                        if let Some(refs) = out.get_mut(key) {
+                            let resolved = &mut refs[*out_idx];
+                            resolved.naddr = event_naddr(ev);
+                            resolved.coord = event_coord(ev);
+                            apply_event(resolved, ev, false, *display_given);
+                        }
+                    }
+                }
+            }
+        }
+
+        out
+    }
+
+    /// The per-ref resolution loop for one item. Sibling lookups run over
+    /// `base` (the publication's shared, request-scoped index) chained with
+    /// `draft` (this item's inline draft sections). Unresolved wiki topics
+    /// are deferred into the request-scoped `deferred_wiki` instead of
+    /// flushing per item.
+    #[allow(clippy::too_many_arguments)]
+    async fn resolve_item_refs(
+        &self,
+        content: &str,
+        refs: &[crate::nostrdown::NostrdownRef],
+        base: &[SiblingEntry],
+        draft: &[SiblingEntry],
+        item_key: &str,
+        author: Option<&str>,
+        deferred_wiki: &mut Vec<(String, usize, String, bool, Option<String>)>,
+    ) -> Vec<crate::nostrdown::ResolvedRef> {
+        use crate::nostrdown::{self, RefKind};
+
+        let find_sibling = |pred: &dyn Fn(&&SiblingEntry) -> bool| {
+            base.iter().chain(draft.iter()).find(pred)
+        };
+
         let mut out = Vec::with_capacity(refs.len());
-        // Non-sibling wiki topics, batched into one lookup after the loop:
-        // (index into `out`, topic slug, display_given).
-        let mut deferred_wiki: Vec<(usize, String, bool)> = Vec::new();
-        for r in &refs {
+        for r in refs {
             let (start, end) = r.utf16_span(content);
             let display_given = r.display.is_some();
             let mut resolved = nostrdown::ResolvedRef {
@@ -2412,7 +2576,7 @@ impl<'a> PublicationEngine<'a> {
                         ..
                     }) = crate::nip19::decode(&r.target)
                     {
-                        if let Some(s) = siblings.iter().find(|s| {
+                        if let Some(s) = find_sibling(&|s: &&SiblingEntry| {
                             s.addr.kind == kind_int as u64
                                 && s.addr.d_tag == d_tag
                                 && (s.addr.pubkey.is_empty()
@@ -2425,14 +2589,14 @@ impl<'a> PublicationEngine<'a> {
                     truncate_entity_label(&mut resolved, display_given);
                 }
                 RefKind::Ref => {
-                    if let Some(s) = siblings.iter().find(|s| s.matches(&r.target)) {
+                    if let Some(s) = find_sibling(&|s: &&SiblingEntry| s.matches(&r.target)) {
                         // The TOC lists this sibling, so the link is valid even
                         // when its event isn't local.
                         s.fill(&mut resolved, false, display_given);
                     }
                 }
                 RefKind::Embed if !r.is_entity => {
-                    if let Some(s) = siblings.iter().find(|s| s.matches(&r.target)) {
+                    if let Some(s) = find_sibling(&|s: &&SiblingEntry| s.matches(&r.target)) {
                         s.fill(&mut resolved, true, display_given);
                     }
                 }
@@ -2467,15 +2631,23 @@ impl<'a> PublicationEngine<'a> {
                     // sibling section (of the draft or the containing
                     // publication) is an internal link — the author referencing
                     // their own section title beats a same-named global topic.
-                    if let Some(s) = siblings.iter().find(|s| s.matches(&r.target)) {
+                    if let Some(s) = find_sibling(&|s: &&SiblingEntry| s.matches(&r.target)) {
                         s.fill(&mut resolved, false, display_given);
                     } else {
                         // Global topic lookup — deferred so every unresolved
-                        // topic in the batch goes out as ONE query after the
-                        // loop, not a serial per-topic relay REQ (a
+                        // topic in the whole REQUEST goes out as one batched
+                        // query after all items resolve, not per topic (a
                         // Wikipedia-derived article carries 100+ wikilinks;
-                        // serial fetches stalled resolve for minutes).
-                        deferred_wiki.push((out.len(), r.target.clone(), display_given));
+                        // serial fetches stalled resolve for minutes) and not
+                        // per item (a 20-section reader batch used to flush
+                        // 20 times).
+                        deferred_wiki.push((
+                            item_key.to_string(),
+                            out.len(),
+                            r.target.clone(),
+                            display_given,
+                            author.map(str::to_string),
+                        ));
                     }
                 }
                 RefKind::Slot => {
@@ -2493,7 +2665,9 @@ impl<'a> PublicationEngine<'a> {
                             FetchPolicy::LocalOnly,
                         )
                         .await;
-                    } else if let Some(s) = siblings.iter().find(|s| s.matches(&r.target)) {
+                    } else if let Some(s) =
+                        find_sibling(&|s: &&SiblingEntry| s.matches(&r.target))
+                    {
                         s.fill(&mut resolved, false, display_given);
                     }
                 }
@@ -2534,27 +2708,6 @@ impl<'a> PublicationEngine<'a> {
 
             out.push(resolved);
         }
-
-        if !deferred_wiki.is_empty() {
-            let topics: Vec<String> = {
-                let mut t: Vec<String> =
-                    deferred_wiki.iter().map(|(_, topic, _)| topic.clone()).collect();
-                t.sort();
-                t.dedup();
-                t
-            };
-            let found = self
-                .find_wiki_events(&topics, author, policy, relays, mode_confirm)
-                .await;
-            for (idx, topic, display_given) in deferred_wiki {
-                if let Some(ev) = found.get(&topic) {
-                    let resolved = &mut out[idx];
-                    resolved.naddr = event_naddr(ev);
-                    resolved.coord = event_coord(ev);
-                    apply_event(resolved, ev, false, display_given);
-                }
-            }
-        }
         out
     }
 
@@ -2593,48 +2746,6 @@ impl<'a> PublicationEngine<'a> {
         self.fill_from_entity(entity, &mut resolved, want_content, false, FetchPolicy::FetchAlways)
             .await;
         resolved
-    }
-
-    /// Build the sibling index for a publication: every section and nested
-    /// index, each loaded once and tagged with its human handles (title-slug
-    /// plus literal d-tag) so `{{ref:slug}}` / slug `{{embed:slug}}` can match.
-    async fn load_sibling_index(&self, pubn: &Publication, policy: FetchPolicy) -> Vec<SiblingEntry> {
-        // The publication's own address is a sibling too: a section may
-        // reference its containing work ("see the index"), and self-contained
-        // publications (e.g. a kasten) link the root from every Related list.
-        let mut addrs = vec![pubn.addr.clone()];
-        collect_sibling_addrs(pubn, &mut addrs);
-        let mut out = Vec::with_capacity(addrs.len());
-        for addr in addrs {
-            let event = self.load_event_by_addr(&addr, policy).await;
-            // Handles to match against: literal d-tag, the `T` tag (normalized
-            // title slug emitted at publish), and the normalized title itself.
-            let mut slugs = vec![addr.d_tag.clone()];
-            if let Some(ev) = &event {
-                if let Some(t) = first_tag_value(ev, "T").filter(|t| !t.is_empty()) {
-                    slugs.push(t);
-                }
-                if let Some(title) = first_tag_value(ev, "title") {
-                    push_title_slugs(&mut slugs, &title);
-                }
-            }
-            out.push(SiblingEntry {
-                addr,
-                event,
-                slugs,
-                title: None,
-            });
-        }
-        out
-    }
-
-    /// Load an addressable event for `addr`, swallowing errors to `None`.
-    async fn load_event_by_addr(&self, addr: &NAddr, policy: FetchPolicy) -> Option<Value> {
-        self.engine
-            .get_addressable(addr.kind, &addr.pubkey, &addr.d_tag, policy)
-            .await
-            .ok()
-            .flatten()
     }
 
     /// Resolve an `embed:` whose target is a bech32 NIP-19 entity.
@@ -2766,56 +2877,113 @@ impl<'a> PublicationEngine<'a> {
             (author_match as u8, kind_pref, created)
         };
         let mut best: std::collections::HashMap<String, Value> = std::collections::HashMap::new();
-        // Chunked so a link-dense article can't mint a filter with hundreds of
-        // tag values (relays commonly cap filter array sizes). The generous
-        // limit keeps LocalFirst's local-hit short-circuit from firing when
-        // only a few topics are known locally — it only skips the relay when
-        // local results alone reach the limit.
-        for chunk in topics.chunks(50) {
-            let filters = vec![
-                serde_json::json!({ "kinds": [30818], "#d": chunk, "limit": 500 }),
-                serde_json::json!({ "kinds": [30040, 30041], "#T": chunk, "limit": 500 }),
-            ];
-            let events = match self
-                .engine
-                .get_events_with_options(filters, policy, relays, mode_confirm)
-                .await
-            {
-                Ok(r) => r.events,
-                Err(_) => continue,
-            };
-            for e in events {
-                // Which topic(s) does this event define? 30818 answers by `d`,
-                // 30040/30041 by `T` (both stored slug-normalized).
-                let kind = e.get("kind").and_then(Value::as_u64).unwrap_or(0);
-                let handle_tag = if kind == 30818 { "d" } else { "T" };
-                let handles: Vec<String> = e
-                    .get("tags")
-                    .and_then(Value::as_array)
-                    .into_iter()
-                    .flatten()
-                    .filter_map(|t| {
-                        let t = t.as_array()?;
-                        if t.first()?.as_str()? != handle_tag {
-                            return None;
-                        }
-                        t.get(1)?.as_str().map(str::to_string)
-                    })
-                    .filter(|h| chunk.contains(h))
-                    .collect();
-                for h in handles {
-                    match best.entry(h) {
-                        Entry::Vacant(v) => {
-                            v.insert(e.clone());
-                        }
-                        Entry::Occupied(mut o) => {
-                            if score(&e) > score(o.get()) {
-                                o.insert(e.clone());
+        // Merge one query pass's events into `best`, scored per topic.
+        // Chunked so a link-dense article can't mint a filter with hundreds
+        // of tag values (relays commonly cap filter array sizes). The
+        // generous limit keeps LocalFirst's local-hit short-circuit from
+        // firing when only a few topics are known locally — it only skips
+        // the relay when local results alone reach the limit.
+        async fn pass(
+            this: &PublicationEngine<'_>,
+            topics: &[String],
+            policy: FetchPolicy,
+            relays: Option<&[String]>,
+            mode_confirm: bool,
+            score: &(dyn Fn(&Value) -> (u8, u8, i64) + Sync),
+            best: &mut std::collections::HashMap<String, Value>,
+        ) {
+            for chunk in topics.chunks(50) {
+                let filters = vec![
+                    serde_json::json!({ "kinds": [30818], "#d": chunk, "limit": 500 }),
+                    serde_json::json!({ "kinds": [30040, 30041], "#T": chunk, "limit": 500 }),
+                ];
+                let events = match this
+                    .engine
+                    .get_events_with_options(filters, policy, relays, mode_confirm)
+                    .await
+                {
+                    Ok(r) => r.events,
+                    Err(_) => continue,
+                };
+                for e in events {
+                    // Which topic(s) does this event define? 30818 answers by
+                    // `d`, 30040/30041 by `T` (both stored slug-normalized).
+                    let kind = e.get("kind").and_then(Value::as_u64).unwrap_or(0);
+                    let handle_tag = if kind == 30818 { "d" } else { "T" };
+                    let handles: Vec<String> = e
+                        .get("tags")
+                        .and_then(Value::as_array)
+                        .into_iter()
+                        .flatten()
+                        .filter_map(|t| {
+                            let t = t.as_array()?;
+                            if t.first()?.as_str()? != handle_tag {
+                                return None;
+                            }
+                            t.get(1)?.as_str().map(str::to_string)
+                        })
+                        .filter(|h| chunk.contains(h))
+                        .collect();
+                    for h in handles {
+                        match best.entry(h) {
+                            Entry::Vacant(v) => {
+                                v.insert(e.clone());
+                            }
+                            Entry::Occupied(mut o) => {
+                                if score(&e) > score(o.get()) {
+                                    o.insert(e.clone());
+                                }
                             }
                         }
                     }
                 }
             }
+        }
+
+        // Pass 1: local, always — a topic ingested since a recorded miss
+        // still resolves immediately.
+        pass(
+            self,
+            topics,
+            FetchPolicy::LocalOnly,
+            None,
+            false,
+            &score,
+            &mut best,
+        )
+        .await;
+        if matches!(policy, FetchPolicy::LocalOnly) {
+            return best;
+        }
+
+        // Pass 2: relay-reaching, only for topics the local pass left
+        // unresolved — minus those under a fresh negative memo (unless the
+        // user explicitly asked, mode_confirm). Mirrors the
+        // unreachable-sections TTL: without this, every resolve pass
+        // re-reached relays for the same permanently-missing topics.
+        let unresolved: Vec<String> = topics
+            .iter()
+            .filter(|t| !best.contains_key(*t))
+            .cloned()
+            .collect();
+        let to_fetch = if mode_confirm {
+            unresolved
+        } else {
+            self.engine.filter_fresh_wiki_misses(unresolved)
+        };
+        if to_fetch.is_empty() {
+            return best;
+        }
+        pass(self, &to_fetch, policy, relays, mode_confirm, &score, &mut best).await;
+
+        // Record what the relays didn't have — but only when the pass could
+        // actually reach them (offline mode downgrades to local silently).
+        if mode_confirm || self.engine.is_auto() {
+            let still_missing: Vec<String> = to_fetch
+                .into_iter()
+                .filter(|t| !best.contains_key(t))
+                .collect();
+            self.engine.record_wiki_misses(&still_missing);
         }
         best
     }
@@ -2897,15 +3065,65 @@ fn push_title_slugs(slugs: &mut Vec<String>, title: &str) {
     }
 }
 
-/// Collect every section + nested-index address in `pubn`, depth-first.
-fn collect_sibling_addrs(pubn: &Publication, out: &mut Vec<NAddr>) {
-    for s in &pubn.sections {
-        out.push(s.addr.clone());
+/// One item of a [`PublicationEngine::resolve_refs_batch`] request — a
+/// section's content plus the context its refs resolve against. Mirrors the
+/// API's `ResolveNostrdownItem`.
+#[derive(Debug, Clone)]
+pub struct ResolveItem {
+    /// Echo key the response map is unpacked by (typically the section addr).
+    pub key: String,
+    pub content: String,
+    /// Containing 30040 coordinate (`"30040:pubkey:dtag"`), if known.
+    pub publication: Option<String>,
+    /// This content's own coordinate — used to derive `publication` by
+    /// reverse a-tag lookup when it isn't given.
+    pub coord: Option<String>,
+    /// Preferred author (hex) for `wiki:` candidate ranking.
+    pub author: Option<String>,
+    /// Inline draft sections (composer preview) — see [`DraftSibling`].
+    pub siblings: Vec<DraftSibling>,
+}
+
+/// Build the sibling index for a loaded publication tree — every section and
+/// nested index, tagged with its human handles (title-slug plus literal
+/// d-tag) so `{{ref:slug}}` / slug `{{embed:slug}}` can match. Pure: reads
+/// the events the tree load already holds; nothing is re-queried. Sections
+/// that failed to load still contribute their d-tag handle (the TOC lists
+/// them, so the link is valid even when the event isn't local — the same
+/// degradation the old per-node re-query produced).
+fn collect_sibling_entries(pubn: &Publication) -> Vec<SiblingEntry> {
+    fn entry_for(addr: &NAddr, event: Option<&Value>) -> SiblingEntry {
+        let mut slugs = vec![addr.d_tag.clone()];
+        if let Some(ev) = event {
+            if let Some(t) = first_tag_value(ev, "T").filter(|t| !t.is_empty()) {
+                slugs.push(t);
+            }
+            if let Some(title) = first_tag_value(ev, "title") {
+                push_title_slugs(&mut slugs, &title);
+            }
+        }
+        SiblingEntry {
+            addr: addr.clone(),
+            event: event.cloned(),
+            slugs,
+            title: None,
+        }
     }
-    for nested in &pubn.nested {
-        out.push(nested.addr.clone());
-        collect_sibling_addrs(nested, out);
+    fn walk(pubn: &Publication, out: &mut Vec<SiblingEntry>) {
+        for s in &pubn.sections {
+            out.push(entry_for(&s.addr, s.event.data()));
+        }
+        for nested in &pubn.nested {
+            out.push(entry_for(&nested.addr, nested.index.data()));
+            walk(nested, out);
+        }
     }
+    // The publication's own address is a sibling too: a section may
+    // reference its containing work ("see the index"), and self-contained
+    // publications (e.g. a kasten) link the root from every Related list.
+    let mut out = vec![entry_for(&pubn.addr, pubn.index.data())];
+    walk(pubn, &mut out);
+    out
 }
 
 /// First value of the `name` tag on `event`, if present.

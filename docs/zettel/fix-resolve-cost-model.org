@@ -1,7 +1,8 @@
 #+TITLE: Fix: Resolve Cost Model
 #+TYPE: fix
-#+STATUS: open
+#+STATUS: fixed
 #+DATE: 2026-08-12
+#+FIXED: 2026-08-12, perf/2026-08-fixes (perf(resolve): batch resolve_refs…)
 
 * The issue (observed 2026-08-12, v0.8.2)
 
@@ -39,14 +40,36 @@ instead of amortizing it*: prefetch grows both M and T.
 
 * Proposed fix (tactical — the handler keeps its shape)
 
-- [ ] One tree + sibling-index load per publication *per request*,
-  shared across items
-- [ ] Build the sibling index from the =Publication='s already-loaded
-  events; delete the re-query loop
-- [ ] Negative-result memo with TTL (mirror =unreachable_sections=)
-- [ ] Flush deferred wiki topics once per request, not per item
-- [ ] Client: address-keyed cache entries; cache drafts with
-  invalidation on edit instead of opting out
+- [X] One tree + sibling-index load per publication *per request*,
+  shared across items — =resolve_refs_batch= (the handler now makes one
+  call for the whole request; =resolve_refs_with_options= is a one-item
+  wrapper). Better than spec'd: the depth-4 tree loads only when some
+  item in the group actually *needs* siblings — entity-only items no
+  longer trigger it at all (the old load was unconditional). The
+  orphan-item containing-publication derivation also batches into one
+  reverse a-tag lookup.
+- [X] Build the sibling index from the =Publication='s already-loaded
+  events; delete the re-query loop — =collect_sibling_entries= (pure);
+  =load_sibling_index= and its helper =load_event_by_addr= deleted
+- [X] Negative-result memo with TTL (mirror =unreachable_sections=) —
+  =Engine.wiki_topic_misses=, 30-min TTL, recorded only after a pass
+  that actually reached relays, cleared on relay add/reset, bypassed by
+  =mode_confirm= ("resolve everything"); the local pass always runs so
+  a topic ingested since the miss resolves immediately
+- [X] Flush deferred wiki topics once per request, not per item —
+  request-scoped deferral, grouped per preferred author (author drives
+  candidate ranking; items of one publication share theirs)
+- [X] Client: address-keyed cache entries; cache drafts with
+  invalidation on edit instead of opting out — key =
+  publication|author|coord|fp(content)|fp(siblings)= (compact ~64-bit
+  fingerprints instead of the full content string); an edit changes the
+  fingerprint so stale entries age out of the LRU. Correction to the
+  issue text: =ndResolveCache= was already module-global in =api.ts=
+  (not component state) — the fix was the key shape, not a hoist.
+
+Absorbed without component edits: =SectionCard='s per-card resolve
+(paginated/outline views POST per visible card) now hits the shared
+tree/sibling context server-side and the reworked cache client-side.
 
 The structural half — making resolution part of the stream so prefetch
 ≡ resolve — is [[file:fix-resolve-in-stream.org][its own zettel]].
