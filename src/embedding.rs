@@ -199,7 +199,10 @@ impl EmbeddingIndex {
             .save(idx_path.to_str().unwrap())
             .map_err(|e| EngineError::Database(format!("Failed to save vectors.idx: {e}")))?;
 
-        let map_data = serde_json::to_string_pretty(&self.mapping)
+        // Compact on purpose: the map holds every event id twice, and the
+        // pretty encoding measured 5.1 MB on a live install — rewritten on
+        // every save, parsed on every boot. Loading accepts either form.
+        let map_data = serde_json::to_string(&self.mapping)
             .map_err(|e| EngineError::Database(format!("Failed to serialize mapping: {e}")))?;
         std::fs::write(&map_path, map_data)
             .map_err(|e| EngineError::Database(format!("Failed to write vectors.map: {e}")))?;

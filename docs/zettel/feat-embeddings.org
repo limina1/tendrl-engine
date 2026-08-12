@@ -26,9 +26,12 @@ index; the =~:= search operator queries it.
 * Gaps / open edges
 - Per-event =sync_embeddings()= is slow on large batches; bulk JSONL ingest
   works around it with a single sync at the end.
-- Performance (2026-08-12 audit): the 60 s sync pass rescans up to 100k
+- Performance (2026-08-12 audit): +the 60 s sync pass rescans up to 100k
   events per tick with no watermark and rewrites the full index every 32
-  embeds — [[file:fix-background-tick-idle-cost.org][fix-background-tick-idle-cost]];
+  embeds+ — fixed same day
+  ([[file:fix-background-tick-idle-cost.org][fix-background-tick-idle-cost]]:
+  ingest-fed dirty set, one reconciliation scan per boot, saves every
+  512 inserts, compact =vectors.map=, in-flight guard);
   ONNX inference runs synchronously on tokio workers and =~:= can inline
   the model download —
   [[file:fix-embedding-runtime-blocking.org][fix-embedding-runtime-blocking]].

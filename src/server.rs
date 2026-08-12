@@ -680,7 +680,10 @@ pub async fn start(opts: ServeOptions) -> anyhow::Result<RunningServer> {
                 if state.is_auto() {
                     match crate::network::with_fetch_reason(
                         "Background sync (missing sections)",
-                        state.fetch_missing_sections(),
+                        // Dirty-gated: idle ticks skip the pass (and its
+                        // 100k-index scan) entirely; ingest of a 30040/30041
+                        // or the TTL fallback re-arms it.
+                        state.fetch_missing_sections_if_dirty(),
                     )
                     .await
                     {

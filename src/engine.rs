@@ -32,6 +32,58 @@ const PROFILE_BACKFILL_CAP: usize = 200;
 /// inside `i32` (nostrdb's query-limit type).
 const EXHAUSTIVE_SCAN_LIMIT: usize = 1_000_000;
 
+/// How long a section stays on the unreachable skip-list before the
+/// background sync retries it — also the fallback cadence for the full
+/// missing-sections pass when nothing new was ingested.
+const UNREACHABLE_RETRY_TTL: std::time::Duration = std::time::Duration::from_secs(30 * 60);
+
+/// Extract the `d` tag value from an event's tags.
+fn event_d_tag(event: &Value) -> Option<&str> {
+    event.get("tags").and_then(|v| v.as_array()).and_then(|tags| {
+        tags.iter().find_map(|tag| {
+            let arr = tag.as_array()?;
+            if arr.first()?.as_str()? == "d" {
+                arr.get(1)?.as_str()
+            } else {
+                None
+            }
+        })
+    })
+}
+
+/// The text an event contributes to the embedding index: "title\ncontent",
+/// degrading to whichever half exists. `None` when there is nothing to embed.
+fn event_embed_text(event: &Value) -> Option<String> {
+    let content = event.get("content").and_then(|v| v.as_str()).unwrap_or("");
+    let title = event
+        .get("tags")
+        .and_then(|t| t.as_array())
+        .and_then(|tags| {
+            tags.iter().find_map(|tag| {
+                let arr = tag.as_array()?;
+                if arr.first()?.as_str()? == "title" {
+                    arr.get(1)?.as_str()
+                } else {
+                    None
+                }
+            })
+        })
+        .unwrap_or("");
+
+    let text = if title.is_empty() {
+        content.to_string()
+    } else if content.is_empty() {
+        title.to_string()
+    } else {
+        format!("{title}\n{content}")
+    };
+    if text.trim().is_empty() {
+        None
+    } else {
+        Some(text)
+    }
+}
+
 /// Fetch policy determines how the engine retrieves events
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -185,6 +237,32 @@ pub struct Engine {
     /// retry TTL lapses; `add_relay` clears the map so a new relay gets
     /// an immediate shot at previously-unreachable sections.
     unreachable_sections: std::sync::Mutex<std::collections::HashMap<(String, String), std::time::Instant>>,
+    /// Event ids of embeddable kinds ingested since the last completed embed
+    /// pass. The steady-state `sync_embeddings` drains this instead of
+    /// re-scanning (and re-materializing) up to 100k events every 60s tick.
+    /// Capped: on overflow it is cleared and `embed_boot_scan_done` is
+    /// dropped, falling back to one full reconciliation scan.
+    embed_dirty: std::sync::Mutex<std::collections::HashSet<String>>,
+    /// Whether a full reconciliation scan has completed since boot (or since
+    /// the last reindex / dirty-set overflow). While false, `sync_embeddings`
+    /// runs the full store scan; afterwards it trusts the dirty set. A
+    /// created_at watermark can't replace the boot scan: events legitimately
+    /// arrive with old timestamps (backfills) and nostrdb has no ingest-time
+    /// index, so the scan is the one safe reconciler.
+    embed_boot_scan_done: std::sync::atomic::AtomicBool,
+    /// One `sync_embeddings` pass at a time. The 60s loop and the API's
+    /// fire-and-forget spawns (publish / fetch handlers) used to race: both
+    /// computed `to_embed` from the same snapshot and paid the ONNX cost
+    /// twice per event before the insert dedup absorbed the duplicate.
+    embedding_sync_guard: tokio::sync::Mutex<()>,
+    /// Set when a 30040/30041 lands in nostrdb; `fetch_missing_sections`'
+    /// background wrapper skips the whole pass (100k-index scan included)
+    /// while this is false and the periodic full pass isn't due.
+    sections_dirty: std::sync::atomic::AtomicBool,
+    /// When the last full `fetch_missing_sections` pass ran — the fallback
+    /// cadence that retries unreachable sections after their TTL lapses even
+    /// when nothing new was ingested.
+    last_sections_pass: std::sync::Mutex<Option<std::time::Instant>>,
 }
 
 impl Engine {
@@ -293,6 +371,12 @@ impl Engine {
             network: Arc::new(NetworkActivity::new(NetworkMode::Confirm)),
             nip11_cache: crate::nip11::Nip11Cache::new(),
             unreachable_sections: std::sync::Mutex::new(std::collections::HashMap::new()),
+            embed_dirty: std::sync::Mutex::new(std::collections::HashSet::new()),
+            embed_boot_scan_done: std::sync::atomic::AtomicBool::new(false),
+            embedding_sync_guard: tokio::sync::Mutex::new(()),
+            // Start dirty so the first background pass after boot always runs.
+            sections_dirty: std::sync::atomic::AtomicBool::new(true),
+            last_sections_pass: std::sync::Mutex::new(None),
         })
     }
 
@@ -1059,10 +1143,13 @@ impl Engine {
         }
         self.persist_relay_sets_to_config();
         // A new relay may carry sections we'd written off as unreachable —
-        // clear the skip map so the next background sync retries them.
+        // clear the skip map (and arm the dirty flag so the gated background
+        // pass actually runs) so the next sync retries them.
         if let Ok(mut skip) = self.unreachable_sections.lock() {
             skip.clear();
         }
+        self.sections_dirty
+            .store(true, std::sync::atomic::Ordering::Relaxed);
         true
     }
 
@@ -1125,6 +1212,8 @@ impl Engine {
         if let Ok(mut skip) = self.unreachable_sections.lock() {
             skip.clear();
         }
+        self.sections_dirty
+            .store(true, std::sync::atomic::Ordering::Relaxed);
     }
 
     /// Mirror the live general/fetch/publish working sets into config.toml as
@@ -1225,6 +1314,8 @@ impl Engine {
         if let Ok(mut skip) = self.unreachable_sections.lock() {
             skip.clear();
         }
+        self.sections_dirty
+            .store(true, std::sync::atomic::Ordering::Relaxed);
         added
     }
 
@@ -1315,6 +1406,9 @@ impl Engine {
             Ok(events) => {
                 let count = events.len();
                 guard.complete(count);
+                // Every relay fetch ingests inline, so this is the single
+                // funnel that keeps the background loop's dirty sets fed.
+                self.note_ingest_batch(&events);
                 Ok(events)
             }
             Err(e) => {
@@ -1322,6 +1416,42 @@ impl Engine {
                 guard.fail(msg);
                 Err(e)
             }
+        }
+    }
+
+    /// Feed the background loop's dirty state from freshly ingested events:
+    /// embeddable ids queue for the next embed pass; a 30040/30041 arms the
+    /// missing-sections pass. Cheap and lock-short — called on every ingest.
+    fn note_ingest_batch(&self, events: &[Value]) {
+        /// Past this the set is dropped in favor of one full rescan — bounds
+        /// memory if the loop is starved (e.g. embeddings paused for days).
+        const EMBED_DIRTY_CAP: usize = 10_000;
+        if events.is_empty() {
+            return;
+        }
+        let embed_kinds = self.embed_kinds();
+        let mut dirty = self.embed_dirty.lock().unwrap();
+        for event in events {
+            let Some(kind) = event.get("kind").and_then(|v| v.as_u64()) else {
+                continue;
+            };
+            if kind == 30040 || kind == 30041 {
+                self.sections_dirty
+                    .store(true, std::sync::atomic::Ordering::Relaxed);
+            }
+            if !embed_kinds.contains(&(kind as u16)) {
+                continue;
+            }
+            let Some(id) = event.get("id").and_then(|v| v.as_str()) else {
+                continue;
+            };
+            if dirty.len() >= EMBED_DIRTY_CAP && !dirty.contains(id) {
+                dirty.clear();
+                self.embed_boot_scan_done
+                    .store(false, std::sync::atomic::Ordering::Relaxed);
+                continue;
+            }
+            dirty.insert(id.to_string());
         }
     }
 
@@ -1512,75 +1642,129 @@ impl Engine {
             .map_err(|e| EngineError::Database(format!("spawn_blocking: {e}")))?
     }
 
+    /// Force the next `sync_embeddings` to run the full reconciliation scan,
+    /// then run it. The manual "/embed/sync" button keeps its historical
+    /// "find anything unembedded" semantics through this; the fire-and-forget
+    /// spawns after publish/fetch use plain `sync_embeddings` (dirty-set).
+    pub async fn sync_embeddings_full(&self) -> Result<EmbeddingStatus> {
+        self.embed_boot_scan_done
+            .store(false, std::sync::atomic::Ordering::Relaxed);
+        self.sync_embeddings().await
+    }
+
     pub async fn sync_embeddings(&self) -> Result<EmbeddingStatus> {
         let emb = self
             .embedding
             .as_ref()
             .ok_or_else(|| EngineError::Config("Embedding not enabled".into()))?;
 
-        // CPU-heavy: query 100k events, iterate to find unembedded — offload to blocking pool
-        let ndb = Arc::clone(&self.ndb);
-        let embed_kinds = self.embed_kinds();
-        let indexed_ids: std::collections::HashSet<String> = {
+        // One pass at a time: the 60s loop and the API's fire-and-forget
+        // spawns can overlap, and two passes over the same snapshot embed the
+        // same events twice (the insert dedup only saves the index, not the
+        // ONNX cost) and race the vectors.idx write.
+        let Ok(_pass_guard) = self.embedding_sync_guard.try_lock() else {
             let index = emb.read().await;
-            index.all_ids().into_iter().collect()
-        };
-
-        let (total_events, to_embed) = tokio::task::spawn_blocking(move || {
-            let filter = serde_json::json!({"kinds": embed_kinds, "limit": 100000});
-            let all_events = query::query_local(&ndb, &[filter]).unwrap_or_default();
-            let total_events = all_events.len();
-
-            let mut to_embed: Vec<(String, String)> = Vec::new();
-            for event in &all_events {
-                let event_id = event.get("id").and_then(|v| v.as_str()).unwrap_or("");
-                if event_id.is_empty() || indexed_ids.contains(event_id) {
-                    continue;
-                }
-
-                let content = event.get("content").and_then(|v| v.as_str()).unwrap_or("");
-                let title = event
-                    .get("tags")
-                    .and_then(|t| t.as_array())
-                    .and_then(|tags| {
-                        tags.iter().find_map(|tag| {
-                            let arr = tag.as_array()?;
-                            if arr.first()?.as_str()? == "title" {
-                                arr.get(1)?.as_str()
-                            } else {
-                                None
-                            }
-                        })
-                    })
-                    .unwrap_or("");
-
-                let text = if title.is_empty() {
-                    content.to_string()
-                } else if content.is_empty() {
-                    title.to_string()
-                } else {
-                    format!("{title}\n{content}")
-                };
-
-                if text.trim().is_empty() {
-                    continue;
-                }
-
-                to_embed.push((event_id.to_string(), text));
-            }
-
-            (total_events, to_embed)
-        })
-        .await
-        .map_err(|e| EngineError::Database(format!("spawn_blocking: {e}")))?;
-
-        if to_embed.is_empty() {
-            let index = emb.read().await;
-            let model = index.model().to_string();
             return Ok(EmbeddingStatus {
                 enabled: true,
                 indexed_count: index.len(),
-                total_events,
+                total_events: index.len(),
+                embedding_available: true,
+                model: Some(index.model().to_string()),
+            });
+        };
+
+        let boot_scan = !self
+            .embed_boot_scan_done
+            .load(std::sync::atomic::Ordering::Relaxed);
+
+        let (total_events, to_embed) = if boot_scan {
+            // Full reconciliation: scan the store for anything unembedded.
+            // Runs once per boot (and after reindex / dirty-set overflow);
+            // the steady-state ticks below never re-scan.
+            let ndb = Arc::clone(&self.ndb);
+            let embed_kinds = self.embed_kinds();
+            let indexed_ids: std::collections::HashSet<String> = {
+                let index = emb.read().await;
+                index.all_ids().into_iter().collect()
+            };
+            tokio::task::spawn_blocking(move || {
+                let filter = serde_json::json!({"kinds": embed_kinds, "limit": 100000});
+                let all_events = query::query_local(&ndb, &[filter]).unwrap_or_default();
+                let total_events = all_events.len();
+
+                let mut to_embed: Vec<(String, String)> = Vec::new();
+                for event in &all_events {
+                    let event_id = event.get("id").and_then(|v| v.as_str()).unwrap_or("");
+                    if event_id.is_empty() || indexed_ids.contains(event_id) {
+                        continue;
+                    }
+                    if let Some(text) = event_embed_text(event) {
+                        to_embed.push((event_id.to_string(), text));
+                    }
+                }
+
+                (total_events, to_embed)
+            })
+            .await
+            .map_err(|e| EngineError::Database(format!("spawn_blocking: {e}")))?
+        } else {
+            // Steady state: only what ingest queued since the last pass.
+            let drained: Vec<String> = {
+                let mut dirty = self.embed_dirty.lock().unwrap();
+                dirty.drain().collect()
+            };
+            let candidates: Vec<String> = if drained.is_empty() {
+                Vec::new()
+            } else {
+                let index = emb.read().await;
+                drained.into_iter().filter(|id| !index.contains(id)).collect()
+            };
+            if candidates.is_empty() {
+                let index = emb.read().await;
+                return Ok(EmbeddingStatus {
+                    enabled: true,
+                    indexed_count: index.len(),
+                    total_events: index.len(),
+                    embedding_available: true,
+                    model: Some(index.model().to_string()),
+                });
+            }
+            let ndb = Arc::clone(&self.ndb);
+            let to_embed = tokio::task::spawn_blocking(move || {
+                let mut out: Vec<(String, String)> = Vec::new();
+                for chunk in candidates.chunks(500) {
+                    let filter = serde_json::json!({"ids": chunk, "limit": chunk.len()});
+                    let events = query::query_local(&ndb, &[filter]).unwrap_or_default();
+                    for event in &events {
+                        let Some(id) = event.get("id").and_then(|v| v.as_str()) else {
+                            continue;
+                        };
+                        if let Some(text) = event_embed_text(event) {
+                            out.push((id.to_string(), text));
+                        }
+                    }
+                }
+                out
+            })
+            .await
+            .map_err(|e| EngineError::Database(format!("spawn_blocking: {e}")))?;
+            // No store scan on this path; report the post-pass index size as
+            // the total so callers' "indexed < total" logging stays quiet.
+            (0, to_embed)
+        };
+
+        if to_embed.is_empty() {
+            if boot_scan {
+                self.embed_boot_scan_done
+                    .store(true, std::sync::atomic::Ordering::Relaxed);
+            }
+            let index = emb.read().await;
+            let n = index.len();
+            let model = index.model().to_string();
+            return Ok(EmbeddingStatus {
+                enabled: true,
+                indexed_count: n,
+                total_events: if boot_scan { total_events } else { n },
                 embedding_available: true,
                 model: Some(model),
             });
@@ -1588,11 +1772,17 @@ impl Engine {
 
         info!("Embedding {} new events", to_embed.len());
 
-        // Batch embed — release lock between batches so status polling works,
-        // and the index saves incrementally below so an OOM-kill mid-run
-        // keeps completed batches. Kept small: fastembed sub-batches at 8, but
-        // this also bounds the texts + vectors held per iteration (mobile RAM).
+        // Batch embed — release lock between batches so status polling works.
+        // Kept small: fastembed sub-batches at 8, but this also bounds the
+        // texts + vectors held per iteration (mobile RAM).
         let batch_size = 32;
+        // Save on a threshold rather than per batch: each save rewrites the
+        // whole vectors.idx + id map, so per-32 saves made a big pass O(N·M)
+        // in disk writes. 512 keeps the OOM-kill-progress insurance at 1/16
+        // the write cost; a final save below covers the tail.
+        let save_threshold = 512usize;
+        let mut inserted_since_save = 0usize;
+        let mut unsaved = false;
 
         for chunk in to_embed.chunks(batch_size) {
             let texts: Vec<String> = chunk.iter().map(|(_, t)| t.clone()).collect();
@@ -1606,30 +1796,47 @@ impl Engine {
 
             match vectors {
                 Ok(vectors) => {
-                    // Insert with write lock
-                    let mut index = emb.write().await;
-                    for (id, vec) in ids.iter().zip(vectors.iter()) {
-                        if let Err(e) = index.insert(id, vec) {
-                            warn!("Failed to insert embedding for {}: {}", id, e);
+                    {
+                        // Insert with write lock
+                        let mut index = emb.write().await;
+                        for (id, vec) in ids.iter().zip(vectors.iter()) {
+                            if let Err(e) = index.insert(id, vec) {
+                                warn!("Failed to insert embedding for {}: {}", id, e);
+                            }
                         }
+                        inserted_since_save += ids.len();
+                        unsaved = true;
                     }
-                    // Save after each batch so progress is preserved
-                    if let Err(e) = index.save() {
-                        warn!("Failed to save embeddings after batch: {}", e);
+                    if inserted_since_save >= save_threshold {
+                        let index = emb.read().await;
+                        if let Err(e) = index.save() {
+                            warn!("Failed to save embeddings mid-pass: {}", e);
+                        } else {
+                            inserted_since_save = 0;
+                            unsaved = false;
+                        }
                     }
                 }
                 Err(e) => {
                     warn!("Batch embedding failed: {}", e);
-                    // Continue with remaining batches instead of breaking
+                    // Requeue so the next tick retries instead of forgetting
+                    // the chunk (the dirty set is drained by then).
+                    let mut dirty = self.embed_dirty.lock().unwrap();
+                    for id in ids {
+                        dirty.insert(id);
+                    }
                     continue;
                 }
             }
         }
 
-        // Save once at end
-        {
+        if unsaved {
             let index = emb.read().await;
             index.save()?;
+        }
+        if boot_scan {
+            self.embed_boot_scan_done
+                .store(true, std::sync::atomic::Ordering::Relaxed);
         }
 
         let index = emb.read().await;
@@ -1639,10 +1846,35 @@ impl Engine {
         Ok(EmbeddingStatus {
             enabled: true,
             indexed_count,
-            total_events,
+            total_events: if boot_scan { total_events } else { indexed_count },
             embedding_available: true,
             model: Some(model),
         })
+    }
+
+    /// Background-loop wrapper for [`fetch_missing_sections`]: skips the
+    /// whole pass — including its 100k-index scan — unless a 30040/30041
+    /// was ingested since the last pass (the dirty flag) or the periodic
+    /// full pass is due (so unreachable sections whose TTL lapsed get their
+    /// retry). Manual triggers call `fetch_missing_sections` directly and
+    /// always run.
+    pub async fn fetch_missing_sections_if_dirty(&self) -> Result<(usize, usize, usize)> {
+        if !self.is_auto() {
+            // Don't consume the dirty flag while offline — the pass after
+            // the user flips back to Auto should still see it.
+            return Ok((0, 0, 0));
+        }
+        let dirty = self
+            .sections_dirty
+            .swap(false, std::sync::atomic::Ordering::Relaxed);
+        let due = {
+            let last = self.last_sections_pass.lock().unwrap();
+            last.is_none_or(|t| t.elapsed() >= UNREACHABLE_RETRY_TTL)
+        };
+        if !dirty && !due {
+            return Ok((0, 0, 0));
+        }
+        self.fetch_missing_sections().await
     }
 
     /// Fetch missing 30041 sections for all locally known 30040 indexes
@@ -1653,6 +1885,7 @@ impl Engine {
         if !self.is_auto() {
             return Ok((0, 0, 0));
         }
+        *self.last_sections_pass.lock().unwrap() = Some(std::time::Instant::now());
 
         // CPU-heavy part: query indexes, extract tags, check missing — offload to blocking pool
         let ndb = Arc::clone(&self.ndb);
@@ -1678,15 +1911,33 @@ impl Engine {
                 }
             }
 
-            let mut missing: Vec<(String, String)> = Vec::new();
+            // Existence check batched per author (50 d-tags per filter) —
+            // this used to be one locked point query per referenced
+            // coordinate, i.e. hundreds of queries per tick on a real store.
+            let mut by_author: HashMap<String, Vec<String>> = HashMap::new();
             for (pubkey, d_tag) in &needed {
-                let check =
-                    json!({"kinds": [30041], "authors": [pubkey], "#d": [d_tag], "limit": 1});
-                let found = query::query_local(&ndb, &[check])
-                    .map(|e| !e.is_empty())
-                    .unwrap_or(false);
-                if !found {
-                    missing.push((pubkey.clone(), d_tag.clone()));
+                by_author
+                    .entry(pubkey.clone())
+                    .or_default()
+                    .push(d_tag.clone());
+            }
+            let mut missing: Vec<(String, String)> = Vec::new();
+            for (pubkey, d_tags) in &by_author {
+                for chunk in d_tags.chunks(50) {
+                    let check = json!({
+                        "kinds": [30041],
+                        "authors": [pubkey],
+                        "#d": chunk,
+                        "limit": chunk.len() * 2
+                    });
+                    let found = query::query_local(&ndb, &[check]).unwrap_or_default();
+                    let have: HashSet<&str> =
+                        found.iter().filter_map(event_d_tag).collect();
+                    for d_tag in chunk {
+                        if !have.contains(d_tag.as_str()) {
+                            missing.push((pubkey.clone(), d_tag.clone()));
+                        }
+                    }
                 }
             }
 
@@ -1702,8 +1953,6 @@ impl Engine {
         // within-call taper below only helps when a *later* relay in the
         // same fan-out has the section). `add_relay` clears the map so a
         // newly added relay retries previously-unreachable sections at once.
-        const UNREACHABLE_RETRY_TTL: std::time::Duration =
-            std::time::Duration::from_secs(30 * 60);
         let now = std::time::Instant::now();
         let missing: Vec<(String, String)> = {
             let mut skip = self.unreachable_sections.lock().unwrap();
@@ -1788,25 +2037,28 @@ impl Engine {
                         }
                     }
                     // Re-check LOCALLY which of the remaining d-tags
-                    // landed in nostrdb. Drop the ones now present; the
-                    // rest get tried against the next relay.
+                    // landed in nostrdb — one batched query, not one per
+                    // d-tag. Drop the ones now present; the rest get tried
+                    // against the next relay.
                     let pubkey_s = pubkey.clone();
                     let pending: Vec<String> = remaining.clone();
                     let ndb_clone = Arc::clone(&ndb_for_check);
                     let still_missing = tokio::task::spawn_blocking(move || {
+                        let f = json!({
+                            "kinds": [30041],
+                            "authors": [&pubkey_s],
+                            "#d": &pending,
+                            "limit": pending.len() * 2
+                        });
+                        let found =
+                            query::query_local(&ndb_clone, &[f]).unwrap_or_default();
+                        let have: std::collections::HashSet<String> = found
+                            .iter()
+                            .filter_map(|e| event_d_tag(e).map(String::from))
+                            .collect();
                         pending
                             .into_iter()
-                            .filter(|d| {
-                                let f = json!({
-                                    "kinds": [30041],
-                                    "authors": [&pubkey_s],
-                                    "#d": [d],
-                                    "limit": 1
-                                });
-                                query::query_local(&ndb_clone, &[f])
-                                    .map(|e| e.is_empty())
-                                    .unwrap_or(true)
-                            })
+                            .filter(|d| !have.contains(d))
                             .collect::<Vec<String>>()
                     })
                     .await
@@ -1858,8 +2110,10 @@ impl Engine {
             let mut index = emb.write().await;
             index.clear()?;
         }
+        // The dirty set is meaningless against an empty index.
+        self.embed_dirty.lock().unwrap().clear();
 
-        self.sync_embeddings().await
+        self.sync_embeddings_full().await
     }
 
     /// Query events using NIP-01 filters with the specified fetch policy
@@ -2001,6 +2255,9 @@ impl Engine {
                 EngineError::Database(format!("Failed to ingest event: {}", e))
             })?;
         debug!("Ingest succeeded");
+        if let Ok(ev) = serde_json::from_str::<Value>(event_json) {
+            self.note_ingest_batch(std::slice::from_ref(&ev));
+        }
         Ok(())
     }
 

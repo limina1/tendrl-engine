@@ -6395,7 +6395,9 @@ pub async fn embed_status_handler(
 pub async fn embed_sync_handler(
     State(engine): State<AppState>,
 ) -> Result<Json<EmbeddingStatus>, EngineError> {
-    let status = engine.sync_embeddings().await?;
+    // Manual "sync now" keeps find-anything-unembedded semantics: force the
+    // full reconciliation scan rather than trusting the ingest dirty-set.
+    let status = engine.sync_embeddings_full().await?;
     // Also sync document embeddings
     let _ = engine.sync_doc_embeddings().await;
     Ok(Json(status))

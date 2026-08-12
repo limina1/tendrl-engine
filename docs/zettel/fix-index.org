@@ -19,9 +19,9 @@ stay as provenance. Source evaluation:
   (critical) — per-section awaits; M×R serial handshakes for missing trees
 - [ ] [[file:fix-ndb-lock-hold.org][nostrdb lock hold time]] (critical) —
   global mutex held across full result materialization on runtime threads
-- [ ] [[file:fix-background-tick-idle-cost.org][Background tick idle cost]]
+- [X] [[file:fix-background-tick-idle-cost.org][Background tick idle cost]]
   (high) — 100k-event scan + full id-set clone per minute; N+1 point
-  queries; HNSW rewrite every 32 embeds
+  queries; HNSW rewrite every 32 embeds (fixed 2026-08-12)
 - [ ] [[file:fix-search-response-latency.org][Search response latency]]
   (high) — every search awaits a sequential relay profile backfill
 - [ ] [[file:fix-embedding-runtime-blocking.org][Embedding runtime blocking]]

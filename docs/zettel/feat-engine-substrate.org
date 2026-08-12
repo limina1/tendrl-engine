@@ -22,11 +22,15 @@ base to hang off — no other =feat-*= note owns this plumbing.
   prompt file → router (~90 routes) → background loop spawn → bind.
   Everything before bind is on the critical path to the first request.
 - *The 60 s background tick* (=src/server.rs:666=, only when embeddings
-  are enabled): =fetch_missing_sections= (scan all 30040s, point-query
-  every referenced coordinate, relay-fetch the missing in 50-d-tag
-  chunks, with a 30-minute unreachable TTL) then =sync_embeddings=
-  (scan embeddable kinds, embed new in batches of 32, save the index).
-  Pausable via the mobile suspend gate.
+  are enabled): =fetch_missing_sections_if_dirty= (skips unless a
+  30040/30041 was ingested or the 30-minute TTL fallback is due; the
+  pass batches its existence checks per author) then =sync_embeddings=
+  (one full reconciliation scan per boot, thereafter an ingest-fed
+  dirty set; embeds in batches of 32, saves every 512 inserts, guarded
+  against overlapping passes). Idle ticks do no store work
+  (reworked 2026-08-12 —
+  [[file:fix-background-tick-idle-cost.org][the fix]]). Pausable via
+  the mobile suspend gate.
 - *Fetch machinery*: =FetchPolicy= (LocalOnly / LocalFirst / FetchAlways)
   + =NetworkMode= Confirm gating — see [[file:feat-network.org][network
   modes]]. Relay I/O itself is per-call WebSockets in =src/relay.rs= —
@@ -37,8 +41,9 @@ base to hang off — no other =feat-*= note owns this plumbing.
 - [[file:fix-ndb-lock-hold.org][Lock held across full result
   materialization]], on runtime threads, up to the 1M exhaustive-scan
   limit
-- [[file:fix-background-tick-idle-cost.org][The tick is never
-  idle-cheap]] — cost ∝ store size every minute, no watermark
+- +[[file:fix-background-tick-idle-cost.org][The tick is never
+  idle-cheap]] — cost ∝ store size every minute, no watermark+
+  (fixed 2026-08-12: dirty-set + boot-scan reconciler)
 - [[file:fix-relay-connection-churn.org][No relay connection reuse]]
 - Boot does scrypt + full index deserialization before bind
   ([[file:fix-android-boot-blocking.org][worst on Android]], where it

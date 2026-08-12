@@ -1,7 +1,8 @@
 #+TITLE: Fix: Background Tick Idle Cost
 #+TYPE: fix
-#+STATUS: open
+#+STATUS: fixed
 #+DATE: 2026-08-12
+#+FIXED: 2026-08-12, perf/2026-08-fixes (perf(tick): dirty-set embed sync…)
 
 * The issue (observed 2026-08-12, v0.8.2)
 
@@ -35,12 +36,27 @@ flash-write tax, gated only by the suspend flag
 
 * Proposed fix
 
-- [ ] =since=-cursor watermark for both passes (persisted per pass)
-- [ ] Dirty-set fed from ingest instead of full rescans
-- [ ] Batch coordinate-existence checks into one multi-value filter
-- [ ] Save the index once per pass (or on a dirty threshold), compact
-  JSON encoding for the id map
-- [ ] In-flight guard (mutex/flag) around =sync_embeddings=
+- [X] =since=-cursor watermark for both passes (persisted per pass) —
+  *substituted*: a =created_at= watermark can silently skip backfilled
+  old events (nostrdb has no ingest-time index), so the shipped design
+  is dirty-set steady state + one full reconciliation scan per boot
+  (=embed_boot_scan_done=). The scan that used to run 60×/hour now runs
+  once per boot; the sections pass got the same shape via
+  =sections_dirty= + a 30-minute TTL fallback
+  (=fetch_missing_sections_if_dirty=).
+- [X] Dirty-set fed from ingest instead of full rescans —
+  =note_ingest_batch= at the three ingest funnels
+  (=tracked_fetch_with_options=, =ingest_event=; provenance re-ingests
+  skip it), 10k cap with overflow → rescan
+- [X] Batch coordinate-existence checks into one multi-value filter —
+  both the initial check and the per-relay re-check now go out as
+  per-author 50-d-tag chunks
+- [X] Save the index once per pass (or on a dirty threshold), compact
+  JSON encoding for the id map — save every 512 inserts + final;
+  =vectors.map= written compact (load accepts either form)
+- [X] In-flight guard (mutex/flag) around =sync_embeddings= —
+  =try_lock= on =embedding_sync_guard=; the manual =/embed/sync= keeps
+  full-scan semantics via =sync_embeddings_full=
 
 * Related
 
