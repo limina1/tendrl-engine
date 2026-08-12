@@ -876,6 +876,12 @@ impl Spell {
         for t in &q.count_tags {
             warnings.push(format!("count:{t} has no spell equivalent — dropped"));
         }
+        for dim in &q.count_dims {
+            warnings.push(format!(
+                "count:{} has no spell equivalent — dropped",
+                dim.key()
+            ));
+        }
 
         if !spell.has_filter_condition() {
             return Err(EngineError::InvalidFilter(

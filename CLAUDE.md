@@ -160,6 +160,15 @@ sections and embeds new events on a 60-second interval when embeddings are enabl
   nostrdb's heap and abort the process; do not remove this lock.
 - **`relay.rs`**: WebSocket relay fetching, NIP-01 REQ/EVENT/EOSE protocol
 - **`search.rs`**: Structured query parser — see *Search syntax* below
+- **`stats.rs`**: Local-DB inventory (`GET /api/v1/stats/inventory`) — totals,
+  kind/author/relay histograms, archive span, disk cost. **Walks per kind on
+  purpose**: a filter with no ids/kinds/authors/tags routes nostrdb to its
+  created-at plan, whose 32-byte start key is truncated (`{0xFF}` sets one
+  byte), silently skipping ~0.4% of notes. The kind index has no such
+  truncation, so the cheap walk only *enumerates* kinds and each is then
+  recounted exactly. `count:` scans get the same treatment via
+  `Engine::known_kinds` (5-min cache); other whole-DB scans (keyword, `has:`)
+  still take the ~0.4% hit deliberately — see `docs/commands.org`
 - **`embedding.rs`**: HNSW vector index (usearch) with in-process ONNX embeddings
   (fastembed); the model loads lazily on first embed and is cached next to the index
 - **`document.rs`**: in-process document text extraction (PDF via `pdf-extract`, DOCX
@@ -271,6 +280,11 @@ The parser (`search.rs`) tokenizes a query string into typed filters:
 - `relay:<url>` — relay override, repeatable; bare domains normalize to `wss://`
   (per-branch in `|` compounds; a Confirm-modal-approved set wins over tokens)
 - `has:NAME` — tag-presence operator (matches any event carrying a `NAME` tag)
+- `count:NAME` — histogram of distinct values of tag `NAME` across the matches
+  (computed after all filtering). Two reserved names aggregate an event *field*
+  instead of a tag: `count:kind` and `count:by` (pubkey), each bucket labelled
+  engine-side with the kind name / kind-0 display name. `count:author` is still
+  the `author` **tag**, mirroring the `by:` / `author:` split.
 - `NAME:value` — generic tag filter (**bare key — no `#` prefix**; `#NAME:value` is
   NIP-01 raw-filter notation and parses as a literal text token here)
 

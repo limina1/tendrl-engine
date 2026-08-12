@@ -34,7 +34,13 @@
 		clearBinding,
 		validateBinding
 	} from '../command-prefs.svelte';
-	import type { EditorInsertMode, SyncMode, ButtonLabels, ComposeDefaultMode } from '$lib/types';
+	import type {
+		EditorInsertMode,
+		SyncMode,
+		ButtonLabels,
+		ComposeDefaultMode,
+		Inventory
+	} from '$lib/types';
 	import ThemePicker from '$lib/components/ThemePicker.svelte';
 
 	let { buffer: _buffer }: { buffer: Buffer } = $props();
@@ -390,6 +396,74 @@
 			return true;
 		return false;
 	});
+
+	// Local-DB inventory. The engine computes it with a full note-table
+	// scan, so it loads lazily on first open of the section (and is served
+	// from a 60s engine-side cache thereafter) rather than on every
+	// Settings mount. Refresh forces a rescan.
+	let inventory = $state<Inventory | null>(null);
+	let inventoryLoading = $state(false);
+	let inventoryError = $state<string | null>(null);
+	// Both histograms have long tails — show a head, expand on demand.
+	let showAllKinds = $state(false);
+	let showAllAuthors = $state(false);
+	const KIND_HEAD = 12;
+	const AUTHOR_HEAD = 10;
+
+	async function loadInventory(refresh = false) {
+		inventoryLoading = true;
+		inventoryError = null;
+		try {
+			inventory = await api.getInventory({ refresh });
+		} catch (e) {
+			inventoryError = api.errorMessage(e, 'Could not read the local database');
+		} finally {
+			inventoryLoading = false;
+		}
+	}
+
+	function onInventoryToggle(e: Event) {
+		const open = (e.currentTarget as HTMLDetailsElement).open;
+		if (open && !inventory && !inventoryLoading) void loadInventory();
+	}
+
+	const visibleKinds = $derived(
+		showAllKinds ? (inventory?.kinds ?? []) : (inventory?.kinds ?? []).slice(0, KIND_HEAD)
+	);
+	const visibleAuthors = $derived(
+		showAllAuthors ? (inventory?.authors ?? []) : (inventory?.authors ?? []).slice(0, AUTHOR_HEAD)
+	);
+	// Bars are proportional to the largest bucket in each histogram, not to
+	// the total — a 60%-of-everything kind would otherwise flatten the rest
+	// into invisibility.
+	const maxKindCount = $derived(Math.max(1, ...(inventory?.kinds ?? []).map((k) => k.count)));
+	const maxAuthorCount = $derived(Math.max(1, ...(inventory?.authors ?? []).map((a) => a.count)));
+	const maxRelayCount = $derived(Math.max(1, ...(inventory?.relays ?? []).map((r) => r.count)));
+
+	function formatCount(n: number): string {
+		return n.toLocaleString();
+	}
+
+	function formatBytes(bytes: number): string {
+		if (bytes <= 0) return '0 B';
+		const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+		const i = Math.min(units.length - 1, Math.floor(Math.log(bytes) / Math.log(1024)));
+		const value = bytes / 1024 ** i;
+		return `${value >= 100 || i === 0 ? Math.round(value) : value.toFixed(1)} ${units[i]}`;
+	}
+
+	function formatDay(ts: number | undefined): string {
+		if (!ts) return '—';
+		return new Date(ts * 1000).toLocaleDateString();
+	}
+
+	function snapshotAge(ts: number): string {
+		const secs = Math.max(0, Math.floor(Date.now() / 1000) - ts);
+		if (secs < 5) return 'just now';
+		if (secs < 60) return `${secs}s ago`;
+		if (secs < 3600) return `${Math.floor(secs / 60)}m ago`;
+		return `${Math.floor(secs / 3600)}h ago`;
+	}
 
 	// Purge button state. Calls the engine's /api/v1/purge which
 	// deletes the LMDB files + re-execs itself in-place; the toast
@@ -1374,6 +1448,147 @@
 	<!-- Data / maintenance. Purge wipes the local LMDB cache and
 	     re-execs the engine in place (~1 second of unavailability).
 	     Relays.json, config.toml, identity ncryptsec are preserved. -->
+	<!-- What is actually in the local database: totals, the kind histogram,
+	     who wrote it, where it came from. Closed by default — opening it
+	     costs a full note-table scan (cached engine-side for a minute). -->
+	<details class="settings-group" ontoggle={onInventoryToggle}>
+		<summary class="settings-group-title">Inventory</summary>
+		<div class="settings-group-body">
+		{#if inventoryLoading && !inventory}
+			<p class="settings-hint">Scanning the local database…</p>
+		{:else if inventoryError}
+			<div class="settings-row">
+				<span class="settings-label">Inventory</span>
+				<span class="settings-error">{inventoryError}</span>
+			</div>
+			<button class="settings-action" onclick={() => loadInventory(true)}>Retry</button>
+		{:else if inventory}
+			{@const inv = inventory}
+			<div class="settings-row">
+				<span class="settings-label">Total events</span>
+				<div class="status-row">
+					<span class="settings-value mono">{formatCount(inv.total_events)}</span>
+					{#if inv.truncated}
+						<span class="pill pill--draft" title="The scan hit its ceiling — these numbers are floors.">partial</span>
+					{/if}
+					<button
+						class="settings-action"
+						onclick={() => loadInventory(true)}
+						disabled={inventoryLoading}
+						title="Rescan the database instead of reusing the cached snapshot"
+					>
+						{inventoryLoading ? 'Scanning…' : 'Refresh'}
+					</button>
+				</div>
+			</div>
+
+			<div class="settings-row">
+				<span class="settings-label">Span</span>
+				<span class="settings-value mono">{formatDay(inv.oldest)} → {formatDay(inv.newest)}</span>
+			</div>
+			<div class="settings-row">
+				<span class="settings-label">On disk</span>
+				<span class="settings-value mono">{formatBytes(inv.db_bytes)}</span>
+			</div>
+			{#if inv.embedded_events != null}
+				<div class="settings-row">
+					<span class="settings-label">Embedded</span>
+					<span class="settings-value mono">
+						{formatCount(inv.embedded_events)} / {formatCount(inv.total_events)}
+					</span>
+				</div>
+			{/if}
+
+			<!-- Kind histogram. Each row runs `k:<kind>` in the search buffer,
+			     so the inventory is a way in, not just a readout. -->
+			<div class="inv-block">
+				<div class="inv-block__head">
+					<span class="settings-label">By kind</span>
+					<span class="inv-block__meta">{inv.distinct_kinds} distinct</span>
+				</div>
+				{#each visibleKinds as k (k.kind)}
+					<button
+						class="inv-row"
+						onclick={() => app.openSearchFor(`k:${k.kind}`, k.label ?? `kind ${k.kind}`)}
+						title="Search this kind (k:{k.kind})"
+					>
+						<span class="inv-row__bar" style="width: {(k.count / maxKindCount) * 100}%"></span>
+						<span class="inv-row__name">
+							{k.label ?? `kind ${k.kind}`}
+							<span class="inv-row__key mono">{k.kind}</span>
+						</span>
+						<span class="inv-row__count mono">{formatCount(k.count)}</span>
+					</button>
+				{/each}
+				{#if inv.kinds.length > KIND_HEAD}
+					<button class="inv-more" onclick={() => (showAllKinds = !showAllKinds)}>
+						{showAllKinds ? 'Show fewer' : `Show all ${inv.kinds.length}`}
+					</button>
+				{/if}
+			</div>
+
+			<!-- Author histogram — the head of the distribution; the tail is
+			     one-event pubkeys. Names are kind-0, resolved engine-side. -->
+			<div class="inv-block">
+				<div class="inv-block__head">
+					<span class="settings-label">By author</span>
+					<span class="inv-block__meta">
+						{formatCount(inv.distinct_authors)} distinct · top {inv.authors.length}
+					</span>
+				</div>
+				{#each visibleAuthors as a (a.pubkey)}
+					<button
+						class="inv-row"
+						onclick={() => app.openSearchFor(`by:${a.pubkey}`, a.name ?? a.pubkey.slice(0, 8))}
+						title="Search this author (by:{a.pubkey})"
+					>
+						<span class="inv-row__bar" style="width: {(a.count / maxAuthorCount) * 100}%"></span>
+						<span class="inv-row__name">
+							{a.name ?? 'unknown'}
+							{#if !a.name}<span class="inv-row__key mono">{a.pubkey.slice(0, 12)}…</span>{/if}
+						</span>
+						<span class="inv-row__count mono">{formatCount(a.count)}</span>
+					</button>
+				{/each}
+				{#if inv.authors.length > AUTHOR_HEAD}
+					<button class="inv-more" onclick={() => (showAllAuthors = !showAllAuthors)}>
+						{showAllAuthors ? 'Show fewer' : `Show all ${inv.authors.length}`}
+					</button>
+				{/if}
+			</div>
+
+			<!-- Provenance: which relays these events arrived from. Not
+			     clickable — `relay:` in a search names where to FETCH from,
+			     which is a different question from where a stored event came
+			     from, and a row that did the wrong thing would mislead. -->
+			{#if inv.relays_included && inv.relays.length > 0}
+				<div class="inv-block">
+					<div class="inv-block__head">
+						<span class="settings-label">By relay</span>
+						<span class="inv-block__meta">{inv.distinct_relays} seen</span>
+					</div>
+					{#each inv.relays as r (r.relay)}
+						<div class="inv-row inv-row--static">
+							<span class="inv-row__bar" style="width: {(r.count / maxRelayCount) * 100}%"></span>
+							<span class="inv-row__name mono">{r.relay}</span>
+							<span class="inv-row__count mono">{formatCount(r.count)}</span>
+						</div>
+					{/each}
+				</div>
+			{/if}
+
+			<p class="settings-hint">
+				Snapshot {snapshotAge(inv.generated_at)} · scanned in {inv.scan_ms}ms. The same
+				tallies are available per-query in search: <code>count:kind</code> and
+				<code>count:by</code> group any result set (e.g.
+				<code>k:30040 count:by</code>), and <code>count:NAME</code> groups by a tag.
+			</p>
+		{:else}
+			<p class="settings-hint">Open this section to scan the local database.</p>
+		{/if}
+		</div>
+	</details>
+
 	<details class="settings-group" open>
 		<summary class="settings-group-title">Data</summary>
 		<div class="settings-group-body">
@@ -1740,6 +1955,83 @@
 		display: flex;
 		gap: 6px;
 		align-items: center;
+	}
+
+	/* Inventory histograms. Each row is a name, a proportional bar behind
+	   it, and a right-aligned count — a small-multiple list, so the bar
+	   carries the shape of the distribution and the number carries the
+	   value. One hue throughout: the rows are one series, not categories. */
+	.inv-block {
+		display: flex;
+		flex-direction: column;
+		gap: 1px;
+		margin: 10px 0 4px;
+	}
+	.inv-block__head {
+		display: flex;
+		align-items: baseline;
+		justify-content: space-between;
+		gap: 8px;
+		margin-bottom: 4px;
+	}
+	.inv-block__meta {
+		font-size: var(--t-2xs);
+		color: var(--base6);
+	}
+	.inv-row {
+		position: relative;
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		width: 100%;
+		padding: 3px 8px;
+		border: none;
+		border-radius: var(--r-sm);
+		background: transparent;
+		text-align: left;
+		font-size: var(--t-xs);
+		color: var(--fg);
+		overflow: hidden;
+	}
+	.inv-row:not(.inv-row--static):hover {
+		background: var(--base2);
+	}
+	.inv-row--static {
+		cursor: default;
+	}
+	.inv-row__bar {
+		position: absolute;
+		left: 0;
+		top: 0;
+		bottom: 0;
+		background: color-mix(in srgb, var(--blue) 18%, transparent);
+		border-radius: var(--r-sm);
+		pointer-events: none;
+	}
+	.inv-row__name {
+		position: relative;
+		flex: 1;
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+	.inv-row__key {
+		color: var(--base6);
+		font-size: var(--t-2xs);
+		margin-left: 6px;
+	}
+	.inv-row__count {
+		position: relative;
+		color: var(--fg-alt, var(--fg));
+		font-variant-numeric: tabular-nums;
+	}
+	.inv-more {
+		align-self: flex-start;
+		margin-top: 4px;
+		padding: 2px 8px;
+		font-size: var(--t-2xs);
+		color: var(--base6);
 	}
 	.source-pill {
 		font-family: var(--font-mono);

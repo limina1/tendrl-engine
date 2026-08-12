@@ -239,6 +239,52 @@ export interface TagValueCount {
 	value: string;
 	count: number;
 	event_ids: string[];
+	/** Human rendering of an opaque `value`: the kind name for
+	 *  `count:kind`, the kind-0 display name for `count:by`. Absent for tag
+	 *  histograms, whose values are already readable. */
+	label?: string;
+}
+
+/** One row of the local-DB kind histogram (`/api/v1/stats/inventory`). */
+export interface KindCount {
+	kind: number;
+	count: number;
+	/** Well-known kind name; absent for kinds the engine has no label for. */
+	label?: string;
+}
+
+/** One row of the author histogram — pubkey is the key, name is kind-0. */
+export interface AuthorCount {
+	pubkey: string;
+	count: number;
+	name?: string;
+}
+
+export interface RelayCount {
+	relay: string;
+	count: number;
+}
+
+/** Aggregate picture of the local nostrdb — what's actually stored, by
+ *  kind, by author, by relay, plus span and disk cost. Every tally is
+ *  derived engine-side. */
+export interface Inventory {
+	total_events: number;
+	kinds: KindCount[];
+	distinct_kinds: number;
+	authors: AuthorCount[];
+	distinct_authors: number;
+	known_profiles: number;
+	relays: RelayCount[];
+	distinct_relays: number;
+	relays_included: boolean;
+	oldest?: number;
+	newest?: number;
+	db_bytes: number;
+	embedded_events?: number;
+	scan_ms: number;
+	generated_at: number;
+	truncated: boolean;
 }
 
 export interface SearchResponse {

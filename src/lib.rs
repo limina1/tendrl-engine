@@ -78,6 +78,7 @@ pub mod sessions;
 pub mod signing;
 pub mod spell;
 pub mod static_assets;
+pub mod stats;
 pub mod tools;
 pub mod tree;
 pub mod user_data;

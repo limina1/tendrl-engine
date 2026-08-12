@@ -92,6 +92,10 @@ pub struct SearchQuery {
     /// values for that tag across the matched events. Composes with other
     /// filters — the histogram is computed AFTER all filtering.
     pub count_tags: Vec<String>,
+    /// Aggregation over an event *field* rather than a tag: `count:kind`
+    /// and `count:by`. Kind and pubkey are not tags, so they can never be
+    /// reached through `count_tags` — these are the two reserved names.
+    pub count_dims: Vec<CountDimension>,
     pub kind_filter: Option<Vec<u64>>,
     pub author_filter: Option<AuthorFilter>,
     pub text_filter: Option<TextFilter>,
@@ -174,6 +178,42 @@ pub struct DocPageResult {
     pub semantic_score: f64,
 }
 
+/// An event field that `count:` can aggregate over.
+///
+/// The histogram machinery is otherwise tag-shaped, but the two fields a
+/// reader most wants an inventory of — *what kinds do I have* and *who
+/// wrote them* — live on the event itself, not in its tags. These are
+/// reserved `count:` names; every other name is still a tag lookup, so
+/// `count:author` remains the `author` **tag** (`by` is the pubkey, per
+/// the same split as the `by:` / `author:` filters).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CountDimension {
+    /// `count:kind` — histogram of `event.kind`.
+    Kind,
+    /// `count:by` — histogram of `event.pubkey`.
+    Author,
+}
+
+impl CountDimension {
+    /// The reserved token name, and the key this dimension's histogram
+    /// takes in `SearchResponse.tag_counts`.
+    pub fn key(&self) -> &'static str {
+        match self {
+            CountDimension::Kind => "kind",
+            CountDimension::Author => "by",
+        }
+    }
+
+    /// Reserved-name lookup for the parser.
+    pub fn from_name(name: &str) -> Option<Self> {
+        match name {
+            "kind" => Some(CountDimension::Kind),
+            "by" => Some(CountDimension::Author),
+            _ => None,
+        }
+    }
+}
+
 /// One bucket in a `count:NAME` histogram — a distinct tag value, how
 /// many matched events carry it, and the IDs of those events so the UI
 /// can render an expandable "unfold > list" view. Full event details
@@ -183,6 +223,12 @@ pub struct TagValueCount {
     pub value: String,
     pub count: usize,
     pub event_ids: Vec<String>,
+    /// Human rendering of `value` when it is an opaque identifier: the
+    /// kind name for `count:kind`, the kind-0 display name for
+    /// `count:by`. Tag histograms leave it unset — a tag value is
+    /// already the human form.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
 }
 
 /// Response from a search operation
@@ -270,6 +316,7 @@ impl SearchQuery {
         let mut tag_filters: Vec<TagFilter> = Vec::new();
         let mut has_tags: Vec<String> = Vec::new();
         let mut count_tags: Vec<String> = Vec::new();
+        let mut count_dims: Vec<CountDimension> = Vec::new();
         let mut kind_filter: Option<Vec<u64>> = None;
         let mut author_filter: Option<AuthorFilter> = None;
         let mut text_filter: Option<TextFilter> = None;
@@ -319,7 +366,13 @@ impl SearchQuery {
                     }
                 }
                 TokenClass::CountTag(name) => {
-                    if !count_tags.iter().any(|n| n == &name) {
+                    // `kind` / `by` are reserved: they aggregate the event
+                    // field, not a tag of that name.
+                    if let Some(dim) = CountDimension::from_name(&name) {
+                        if !count_dims.contains(&dim) {
+                            count_dims.push(dim);
+                        }
+                    } else if !count_tags.iter().any(|n| n == &name) {
                         count_tags.push(name);
                     }
                 }
@@ -373,6 +426,7 @@ impl SearchQuery {
             tag_filters,
             has_tags,
             count_tags,
+            count_dims,
             kind_filter,
             author_filter,
             text_filter,
@@ -1287,6 +1341,41 @@ mod tests {
         assert_eq!(q.kind_filter, Some(vec![30041]));
         assert_eq!(q.has_tags, vec!["author".to_string()]);
         assert_eq!(q.count_tags, vec!["author".to_string()]);
+    }
+
+    #[test]
+    fn test_parse_count_kind_is_a_field_not_a_tag() {
+        // Kind lives on the event, so `count:kind` must never be routed
+        // to the tag histogram (which would silently return nothing).
+        let q = SearchQuery::parse("count:kind").unwrap();
+        assert_eq!(q.count_dims, vec![CountDimension::Kind]);
+        assert!(q.count_tags.is_empty());
+    }
+
+    #[test]
+    fn test_parse_count_by_is_the_pubkey_dimension() {
+        let q = SearchQuery::parse("count:by").unwrap();
+        assert_eq!(q.count_dims, vec![CountDimension::Author]);
+        assert!(q.count_tags.is_empty());
+    }
+
+    #[test]
+    fn test_count_author_stays_a_tag_histogram() {
+        // `author:` is a tag filter and `by:` is the pubkey filter; the
+        // count: names keep exactly the same split.
+        let q = SearchQuery::parse("count:author count:by").unwrap();
+        assert_eq!(q.count_tags, vec!["author".to_string()]);
+        assert_eq!(q.count_dims, vec![CountDimension::Author]);
+    }
+
+    #[test]
+    fn test_parse_count_dims_dedupe_and_compose() {
+        let q = SearchQuery::parse("k:30041 count:kind count:by count:kind").unwrap();
+        assert_eq!(q.kind_filter, Some(vec![30041]));
+        assert_eq!(
+            q.count_dims,
+            vec![CountDimension::Kind, CountDimension::Author]
+        );
     }
 
     #[test]

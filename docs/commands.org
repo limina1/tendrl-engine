@@ -584,11 +584,124 @@ Verify:
 4. Click again to collapse.
 5. Multiple =count:= clauses ( =count:author count:client= )
    render as two separate groups stacked vertically.
-6. =event_ids= beyond the fetch limit ( e.g. cursor-overflow )
-   appear as a single muted "id… (not in results)" placeholder.
+6. A bucket whose events fall outside the current result window
+   ends in one muted line — =N more beyond this result window —
+   search just this= — which re-runs the search scoped to that
+   bucket alone ( =k:30041= , =by:<hex>= , =NAME:value= ) and puts
+   that query in the input box.
 
 When the query has no =count:= , the panel keeps its original
 flat-list behavior. Switching is automatic per response shape.
+
+* Local database inventory
+
+** =count:kind= / =count:by= — histograms over event fields
+
+Kind and pubkey are not tags, so =count:NAME= could never reach
+them. Two reserved names aggregate the event field instead:
+
+- =count:kind= → histogram of =event.kind= , each bucket labelled
+  with the kind's name ( ="publication section"= , … ) where one
+  is known.
+- =count:by= → histogram of =event.pubkey= , labelled with the
+  kind-0 display name where we hold one. Mirrors the =by:= /
+  =author:= split — =count:author= is still the =author= *tag*.
+
+Buckets land in the same =tag_counts= map, keyed ="kind"= /
+="by"= , with the human form in a new =label= field.
+
+#+begin_src bash
+read -r -d '' Q <<'Q'
+{"query":"count:kind","policy":"local_only","scope_to_me":false,"limit":20}
+Q
+curl -sX POST http://localhost:3030/api/v1/search \
+  -H 'Content-Type: application/json' -d "$Q" \
+  | jq '.tag_counts.kind[:5] | map({value,count,label})'
+# → [{"value":"30041","count":25213,"label":"publication section"}, …]
+
+# Who writes the publication indexes in this database?
+read -r -d '' Q <<'Q'
+{"query":"k:30040 count:by","policy":"local_only","scope_to_me":false}
+Q
+curl -sX POST http://localhost:3030/api/v1/search \
+  -H 'Content-Type: application/json' -d "$Q" \
+  | jq '.tag_counts.by[:5] | map({label,count})'
+#+end_src
+
+=event_ids= are pruned to the ids that actually came back in
+=results= — an id outside the window can't be rendered, and an
+unpruned whole-database histogram shipped ~2.6 MB of dead ids.
+=count= stays exact over everything matched.
+
+** =GET /api/v1/stats/inventory=
+
+Aggregate picture of the local nostrdb: totals, kind / author /
+relay histograms, archive span, disk cost, embedding coverage.
+Cached engine-side for 60s.
+
+#+begin_src bash
+curl -s localhost:3030/api/v1/stats/inventory | jq '{total_events,
+  distinct_kinds, distinct_authors, distinct_relays, db_bytes, scan_ms,
+  kinds: .kinds[:5], authors: [.authors[:3][] | {name,count}]}'
+
+curl -s 'localhost:3030/api/v1/stats/inventory?refresh=true'      # rescan
+curl -s 'localhost:3030/api/v1/stats/inventory?relays=false'      # skip provenance
+curl -s 'localhost:3030/api/v1/stats/inventory?top_authors=100'   # deeper tail
+#+end_src
+
+Cross-check that the scan and the search agree — they read the
+same DB through different paths, so a mismatch means one of them
+regressed:
+
+#+begin_src bash
+INV=$(curl -s localhost:3030/api/v1/stats/inventory | jq '.total_events')
+read -r -d '' Q <<'Q'
+{"query":"count:kind","policy":"local_only","scope_to_me":false,"limit":5}
+Q
+SUM=$(curl -sX POST http://localhost:3030/api/v1/search \
+  -H 'Content-Type: application/json' -d "$Q" \
+  | jq '[.tag_counts.kind[].count] | add')
+echo "inventory=$INV  count:kind=$SUM"   # must match
+#+end_src
+
+*** Why the scan walks per kind (nostrdb undercount)
+
+A filter with no ids/kinds/authors/tags routes nostrdb to its
+created-at plan, which seeks into the note-id index from a 32-byte
+"high key" written =unsigned char high_key[32] = {0xFF};= — C
+initializes only the *first* byte. Every note whose id sorts above
+=FF 00 … 00= is skipped: measured at 0.37% (146 of 39,078) on a
+real store. The kinds plan keys off =(kind, timestamp)= and has no
+such truncation.
+
+So the inventory enumerates kinds with the cheap walk (a kind is
+only lost if *every* one of its events lands in the blind spot,
+and the well-known kinds are probed individually on top), then
+recounts each kind through the kind index. =count:= scans get the
+same treatment via an enumerated-kinds filter — see
+=Engine::known_kinds= (5-minute cache).
+
+Note this blind spot still applies to *other* whole-DB scans
+(keyword search, =has:= , multi-char tags): they under-return by
+the same ~0.4%. Left alone deliberately — an aggregate's number is
+the answer, a keyword search's isn't, and the fix costs a second
+index walk per query.
+
+** UI: Settings → Inventory
+
+Collapsed by default; opening it runs the scan (lazy, then cached).
+
+1. Open Settings → *Inventory*.
+2. Totals ( =Total events= , =Span= , =On disk= , =Embedded= ),
+   then three histograms: =By kind= , =By author= , =By relay= ,
+   each row a proportional bar + right-aligned count.
+3. Click a kind row → search opens on =k:<kind>= . Click an
+   author row → =by:<hex>= . Relay rows are inert on purpose:
+   =relay:= in a search names where to *fetch* from, which is a
+   different question from where a stored event came from.
+4. =Show all N= expands the head-of-distribution lists.
+5. =Refresh= forces a rescan (bypasses the 60s cache); the footer
+   reports snapshot age and scan time.
 
 * Slice 6 — Containing publications block
 

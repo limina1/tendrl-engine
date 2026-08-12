@@ -518,6 +518,28 @@ pub fn filter_by_tags(events: &[Value], tag_filters: &[crate::search::TagFilter]
         .collect()
 }
 
+/// A histogram bucket while it is being built: the true count, plus a
+/// capped prefix of the contributing event ids.
+///
+/// The two diverge on purpose. The count is the answer to the question
+/// ("how many events are kind 30041?") and must be exact; the ids only
+/// exist so the UI can unfold a bucket into rows it already holds, so
+/// keeping more than the result window is pure payload.
+#[derive(Default)]
+struct BucketIds {
+    count: usize,
+    ids: Vec<String>,
+}
+
+impl BucketIds {
+    fn push(&mut self, event_id: &str, cap: usize) {
+        self.count += 1;
+        if self.ids.len() < cap {
+            self.ids.push(event_id.to_string());
+        }
+    }
+}
+
 /// Aggregate distinct tag values for each requested name across `events`.
 ///
 /// Backs `count:NAME` queries. For each requested tag name, walks the
@@ -529,15 +551,22 @@ pub fn filter_by_tags(events: &[Value], tag_filters: &[crate::search::TagFilter]
 /// Counting is per-event (an event with two `["author","Claude"]` tags
 /// still only adds 1 to Claude's bucket), and case-sensitive (matches
 /// the raw tag value).
+///
+/// `id_cap` bounds how many ids each bucket carries — `count` stays the
+/// true total. Without it a histogram over a whole-database scan ships
+/// one id per matched event (megabytes), none of which the UI could
+/// render anyway: it can only unfold an id that also came back in
+/// `results`. See [`BucketIds`].
 pub fn count_tag_values(
     events: &[Value],
     names: &[String],
+    id_cap: usize,
 ) -> std::collections::HashMap<String, Vec<crate::search::TagValueCount>> {
     use std::collections::HashMap;
 
-    // tag_name → value → Vec<event_id> (insertion-ordered = recency-ordered
-    // because callers pass events in the order they came back from the DB).
-    let mut buckets: HashMap<String, HashMap<String, Vec<String>>> = HashMap::new();
+    // tag_name → value → bucket (ids stay insertion-ordered = recency-
+    // ordered, because callers pass events in the order the DB returned).
+    let mut buckets: HashMap<String, HashMap<String, BucketIds>> = HashMap::new();
     for name in names {
         buckets.insert(name.clone(), HashMap::new());
     }
@@ -576,7 +605,7 @@ pub fn count_tag_values(
         for (name, values) in seen {
             let bucket = buckets.get_mut(name).expect("bucket exists");
             for v in values {
-                bucket.entry(v).or_default().push(event_id.clone());
+                bucket.entry(v).or_default().push(&event_id, id_cap);
             }
         }
     }
@@ -586,16 +615,91 @@ pub fn count_tag_values(
         .map(|(name, value_buckets)| {
             let mut entries: Vec<crate::search::TagValueCount> = value_buckets
                 .into_iter()
-                .map(|(value, event_ids)| crate::search::TagValueCount {
+                .map(|(value, bucket)| crate::search::TagValueCount {
                     value,
-                    count: event_ids.len(),
-                    event_ids,
+                    count: bucket.count,
+                    event_ids: bucket.ids,
+                    // A tag value is already human-readable.
+                    label: None,
                 })
                 .collect();
             entries.sort_by(|a, b| b.count.cmp(&a.count).then_with(|| a.value.cmp(&b.value)));
             (name, entries)
         })
         .collect()
+}
+
+/// Aggregate an event *field* — kind or pubkey — across `events`.
+///
+/// Backs `count:kind` / `count:by`. Same bucket shape as
+/// [`count_tag_values`] so both kinds of histogram render through one UI
+/// path: `value` is the raw field (kind number as a string, pubkey hex),
+/// `label` its human form where one exists. Kind labels come from
+/// [`crate::stats::kind_label`]; author names are filled in by the
+/// caller, which has the nostrdb handle for the kind-0 lookup.
+pub fn count_dimension(
+    events: &[Value],
+    dim: crate::search::CountDimension,
+    id_cap: usize,
+) -> Vec<crate::search::TagValueCount> {
+    use crate::search::CountDimension;
+    use std::collections::HashMap;
+
+    // Insertion-ordered event id lists, mirroring count_tag_values: the
+    // caller passes events newest-first, and the unfolded bucket keeps
+    // that order. `id_cap` matters most here — `count:kind` with no other
+    // filter buckets the entire database.
+    let mut buckets: HashMap<String, BucketIds> = HashMap::new();
+
+    for event in events {
+        let key = match dim {
+            CountDimension::Kind => match event.get("kind").and_then(|v| v.as_u64()) {
+                Some(k) => k.to_string(),
+                None => continue,
+            },
+            CountDimension::Author => match event.get("pubkey").and_then(|v| v.as_str()) {
+                Some(pk) => pk.to_string(),
+                None => continue,
+            },
+        };
+        let event_id = event.get("id").and_then(|v| v.as_str()).unwrap_or("");
+        buckets.entry(key).or_default().push(event_id, id_cap);
+    }
+
+    let mut entries: Vec<crate::search::TagValueCount> = buckets
+        .into_iter()
+        .map(|(value, bucket)| {
+            let label = match dim {
+                CountDimension::Kind => value
+                    .parse::<u32>()
+                    .ok()
+                    .and_then(crate::stats::kind_label)
+                    .map(str::to_string),
+                // Filled in by the caller (needs the DB).
+                CountDimension::Author => None,
+            };
+            crate::search::TagValueCount {
+                count: bucket.count,
+                value,
+                event_ids: bucket.ids,
+                label,
+            }
+        })
+        .collect();
+
+    // Count descending, then by value so ties are stable. Kinds sort
+    // numerically within a tie rather than lexically ("9" before "30041").
+    entries.sort_by(|a, b| {
+        b.count.cmp(&a.count).then_with(|| match dim {
+            CountDimension::Kind => a
+                .value
+                .parse::<u64>()
+                .unwrap_or(u64::MAX)
+                .cmp(&b.value.parse::<u64>().unwrap_or(u64::MAX)),
+            CountDimension::Author => a.value.cmp(&b.value),
+        })
+    });
+    entries
 }
 
 /// Keep only events that have at least one tag for each named key.
@@ -1002,7 +1106,7 @@ mod tests {
             json!({"id": "e4", "tags": [["author", "liminal 🌑"]]}),
             json!({"id": "e5", "tags": [["t", "tech"]]}),
         ];
-        let result = count_tag_values(&events, &["author".to_string()]);
+        let result = count_tag_values(&events, &["author".to_string()], usize::MAX);
         let authors = &result["author"];
         // Sorted desc by count; ties broken alphabetically.
         assert_eq!(authors[0].value, "Claude");
@@ -1018,12 +1122,91 @@ mod tests {
     }
 
     #[test]
+    fn test_count_dimension_kind_labels_and_orders() {
+        use crate::search::CountDimension;
+        let events = vec![
+            json!({"id": "e1", "kind": 30041, "pubkey": "aa"}),
+            json!({"id": "e2", "kind": 30041, "pubkey": "bb"}),
+            json!({"id": "e3", "kind": 1, "pubkey": "aa"}),
+            json!({"id": "e4", "kind": 424242, "pubkey": "aa"}),
+        ];
+        let buckets = count_dimension(&events, CountDimension::Kind, usize::MAX);
+        assert_eq!(buckets[0].value, "30041");
+        assert_eq!(buckets[0].count, 2);
+        assert_eq!(buckets[0].label.as_deref(), Some("publication section"));
+        assert_eq!(
+            buckets[0].event_ids,
+            vec!["e1".to_string(), "e2".to_string()]
+        );
+        // Ties sort numerically, not lexically — 1 before 424242.
+        assert_eq!(buckets[1].value, "1");
+        assert_eq!(buckets[2].value, "424242");
+        // A kind we have no name for renders as the bare number.
+        assert_eq!(buckets[2].label, None);
+    }
+
+    #[test]
+    fn test_count_dimension_author_uses_pubkey_not_tags() {
+        use crate::search::CountDimension;
+        // The `author` TAG says Claude on every event; the pubkey
+        // histogram must ignore it and bucket by who signed.
+        let events = vec![
+            json!({"id": "e1", "kind": 1, "pubkey": "aa", "tags": [["author", "Claude"]]}),
+            json!({"id": "e2", "kind": 1, "pubkey": "aa", "tags": [["author", "Claude"]]}),
+            json!({"id": "e3", "kind": 1, "pubkey": "bb", "tags": [["author", "Claude"]]}),
+        ];
+        let buckets = count_dimension(&events, CountDimension::Author, usize::MAX);
+        assert_eq!(buckets.len(), 2);
+        assert_eq!(buckets[0].value, "aa");
+        assert_eq!(buckets[0].count, 2);
+        // Names are attached later, by the layer holding the DB handle.
+        assert_eq!(buckets[0].label, None);
+    }
+
+    #[test]
+    fn test_bucket_id_cap_bounds_ids_but_not_counts() {
+        use crate::search::CountDimension;
+        // The count is the answer to the question and must stay exact;
+        // the id list is only an unfold aid and is capped.
+        let events: Vec<_> = (0..10)
+            .map(|i| json!({"id": format!("e{i}"), "kind": 1, "pubkey": "aa"}))
+            .collect();
+
+        let kinds = count_dimension(&events, CountDimension::Kind, 3);
+        assert_eq!(kinds[0].count, 10);
+        assert_eq!(kinds[0].event_ids, vec!["e0", "e1", "e2"]);
+
+        let authors = count_dimension(&events, CountDimension::Author, 3);
+        assert_eq!(authors[0].count, 10);
+        assert_eq!(authors[0].event_ids.len(), 3);
+    }
+
+    #[test]
+    fn test_count_tag_values_respects_the_id_cap() {
+        let events: Vec<_> = (0..10)
+            .map(|i| json!({"id": format!("e{i}"), "tags": [["author", "Claude"]]}))
+            .collect();
+        let result = count_tag_values(&events, &["author".to_string()], 4);
+        assert_eq!(result["author"][0].count, 10);
+        assert_eq!(result["author"][0].event_ids, vec!["e0", "e1", "e2", "e3"]);
+    }
+
+    #[test]
+    fn test_count_dimension_skips_events_missing_the_field() {
+        use crate::search::CountDimension;
+        let events = vec![json!({"id": "e1"}), json!({"id": "e2", "kind": 1})];
+        let buckets = count_dimension(&events, CountDimension::Kind, usize::MAX);
+        assert_eq!(buckets.len(), 1);
+        assert_eq!(buckets[0].value, "1");
+    }
+
+    #[test]
     fn test_count_tag_values_dedupes_within_event() {
         // Two `["author", "Claude"]` on one event count as 1, and the id
         // appears once in event_ids (not twice).
         let events =
             vec![json!({"id": "e1", "tags": [["author", "Claude"], ["author", "Claude"]]})];
-        let result = count_tag_values(&events, &["author".to_string()]);
+        let result = count_tag_values(&events, &["author".to_string()], usize::MAX);
         assert_eq!(result["author"][0].count, 1);
         assert_eq!(result["author"][0].event_ids, vec!["e1".to_string()]);
     }
@@ -1034,7 +1217,11 @@ mod tests {
             json!({"id": "e1", "tags": [["author", "Claude"], ["client", "tendrl"]]}),
             json!({"id": "e2", "tags": [["author", "Pablo"], ["client", "amethyst"]]}),
         ];
-        let result = count_tag_values(&events, &["author".to_string(), "client".to_string()]);
+        let result = count_tag_values(
+            &events,
+            &["author".to_string(), "client".to_string()],
+            usize::MAX,
+        );
         assert_eq!(result["author"].len(), 2);
         assert_eq!(result["client"].len(), 2);
         // Same event can appear in multiple buckets — once per tag name.
