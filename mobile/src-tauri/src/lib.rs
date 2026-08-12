@@ -188,10 +188,46 @@ pub fn run() {
                             server.addr.port(),
                             token
                         );
-                        match url.parse() {
-                            Ok(url) => {
-                                if let Err(e) = window.navigate(url) {
-                                    tracing::error!("failed to leave the boot splash: {e}");
+                        match url.parse::<tauri::Url>() {
+                            Ok(target) => {
+                                // The Android WebView is created asynchronously
+                                // while the engine boots in parallel — and the
+                                // engine wins by a wide margin (observed: bound
+                                // in 18 ms on a warm store). navigate() only
+                                // queues an event-loop message; if the webview
+                                // doesn't exist yet the message is DROPPED
+                                // silently and the splash never leaves. Retry
+                                // until the webview actually reports the
+                                // engine origin.
+                                let mut navigated = false;
+                                for attempt in 1..=50u32 {
+                                    if let Err(e) = window.navigate(target.clone()) {
+                                        tracing::warn!("navigate attempt {attempt}: {e}");
+                                    }
+                                    tokio::time::sleep(std::time::Duration::from_millis(200))
+                                        .await;
+                                    if let Ok(current) = window.url() {
+                                        if current.host_str() == target.host_str()
+                                            && current.port() == target.port()
+                                        {
+                                            tracing::info!(
+                                                "webview on the engine origin \
+                                                 (attempt {attempt})"
+                                            );
+                                            navigated = true;
+                                            break;
+                                        }
+                                    }
+                                }
+                                if !navigated {
+                                    tracing::error!(
+                                        "webview never reached the engine origin"
+                                    );
+                                    let _ = window.eval(
+                                        "document.getElementById('status').textContent = \
+                                         'Engine is up but the app failed to load — \
+                                          reopen the app.';",
+                                    );
                                 }
                             }
                             Err(e) => tracing::error!("engine URL failed to parse: {e}"),

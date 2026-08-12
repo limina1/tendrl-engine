@@ -55,6 +55,16 @@ restore runs scrypt on the async task (everywhere else it is explicitly
   [[file:fix-background-tick-idle-cost.org][tick fix]] (5.1 MB pretty
   → compact, parsed on every boot).
 
+* Post-fix addendum (2026-08-12, on-device)
+
+First device pass caught a race the desktop analysis missed: the engine
+boots *fast* (bound in 18 ms on a warm store) while the Android WebView
+is still being created asynchronously — and =navigate()= only queues an
+event-loop message, which is *silently dropped* if the webview doesn't
+exist yet. Splash-forever. The hand-off now retries every 200 ms and
+verifies via =window.url()= until the webview actually reports the
+engine origin (observed on-device: attempt 1, ~460 ms after bind).
+
 * Related
 
 - [[file:fix-index.org][Fix index]] · [[file:index.org][Index]]
