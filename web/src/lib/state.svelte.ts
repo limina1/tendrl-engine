@@ -4167,10 +4167,20 @@ function _createAppState() {
 	}
 
 	function startNetworkPoll() {
+		// Equality-guard the reassignment: `networkStatus` is $state, so an
+		// unguarded write every 2 s invalidated every reader — including the
+		// reader's resolve effects, which re-POSTed full-document parses
+		// forever at steady state. The payload is byte-stable while idle
+		// (started_at/durations are fixed per fetch), so a JSON compare
+		// means idle polls invalidate nothing and real changes still land.
+		let lastStatusJson = '';
 		const networkPoll = setInterval(async () => {
 			if (document.hidden) return;
 			try {
 				const ns = await api.getNetworkStatus();
+				const snap = JSON.stringify(ns);
+				if (snap === lastStatusJson) return;
+				lastStatusJson = snap;
 				networkStatus = ns;
 				// Keep the localStorage cache in sync with the live
 				// engine so the next reload's instant-paint matches

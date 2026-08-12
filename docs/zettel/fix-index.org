@@ -40,8 +40,9 @@ stay as provenance. Source evaluation:
 
 * Web reader
 
-- [ ] [[file:fix-reader-effect-churn.org][Reader effect churn]] (critical) —
+- [X] [[file:fix-reader-effect-churn.org][Reader effect churn]] (critical) —
   2 s =networkStatus= dependency re-fires uncached full-document POSTs
+  (fixed 2026-08-12)
 - [ ] [[file:fix-reader-remount-cost.org][Reader remount cost]] (high) —
   buffer switch-back re-streams the whole publication + relay refetch
 - [ ] [[file:fix-reader-render-hotpath.org][Reader render hot path]] (high) —

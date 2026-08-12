@@ -366,12 +366,15 @@
 	// ── Network activity center ─────────────────────────────────────────
 	// Modeline pill (lit while the engine pulls from relays) + popover
 	// listing in-flight fetches (killable, each row shows its cause) and
-	// the recent fetch log (expandable reason/query detail). Fed by
-	// polling /network/status: slow tick to light the pill, fast while
-	// the popover is open.
+	// the recent fetch log (expandable reason/query detail). The pill rides
+	// the layout's guarded 2 s /network/status poll (app.networkStatus) —
+	// the standalone 5 s poll that used to run here was a duplicate, and it
+	// wasn't document.hidden-gated. A fast local poll runs ONLY while the
+	// popover is open (visible by definition) so the fetch list stays live.
 	let activityOpen = $state(false);
 	let actWrapEl: HTMLElement | null = $state(null);
-	let netAct = $state<import('$lib/types').NetworkStatus | null>(null);
+	let fastAct = $state<import('$lib/types').NetworkStatus | null>(null);
+	const netAct = $derived(activityOpen && fastAct ? fastAct : app.networkStatus);
 	$effect(() => {
 		if (!activityOpen) return;
 		function onDocMouseDown(e: MouseEvent) {
@@ -383,18 +386,21 @@
 		return () => document.removeEventListener('mousedown', onDocMouseDown);
 	});
 	$effect(() => {
-		const fast = activityOpen;
+		if (!activityOpen) {
+			fastAct = null;
+			return;
+		}
 		let stopped = false;
 		const tick = async () => {
 			try {
 				const s = await api.getNetworkStatus();
-				if (!stopped) netAct = s;
+				if (!stopped) fastAct = s;
 			} catch {
 				// Engine unreachable — leave the last snapshot.
 			}
 		};
 		void tick();
-		const iv = setInterval(tick, fast ? 1500 : 5000);
+		const iv = setInterval(tick, 1500);
 		return () => {
 			stopped = true;
 			clearInterval(iv);
@@ -409,7 +415,7 @@
 			} else {
 				await api.killFetch(id);
 			}
-			netAct = await api.getNetworkStatus();
+			fastAct = await api.getNetworkStatus();
 		} catch (e) {
 			console.warn('fetch-kill failed', e);
 		}

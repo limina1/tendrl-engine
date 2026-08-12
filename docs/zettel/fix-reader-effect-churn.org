@@ -1,7 +1,8 @@
 #+TITLE: Fix: Reader Effect Churn
 #+TYPE: fix
-#+STATUS: open
+#+STATUS: fixed
 #+DATE: 2026-08-12
+#+FIXED: 2026-08-12, perf/2026-08-fixes (perf(reader): equality-guarded status poll…)
 
 * The issue (observed 2026-08-12, v0.8.2)
 
@@ -30,16 +31,30 @@ but it is the single largest network amplifier in the reader path).
 
 * Proposed fix
 
-- [ ] Equality-guard the status poll (only reassign =networkStatus= on
-  change), and/or read =mode= via =untrack= in the resolve effects
-- [ ] Session-cache =parseNostrdown= and =resolveHighlights= exactly as
-  =resolveNostrdown= is cached
-- [ ] Key the effects on a stable addr-set identity, not array identity
-- [ ] Resolve visible-first (respect the collapse model; backfill the
-  rest idle)
-- [ ] Collapse the duplicate 5 s poll into the 2 s one
-- [ ] Cache draft resolves with invalidation on edit
-  ([[file:fix-resolve-cost-model.org][cost model]])
+- [X] Equality-guard the status poll (only reassign =networkStatus= on
+  change), and/or read =mode= via =untrack= in the resolve effects —
+  JSON-compare guard shipped (the payload is byte-stable at idle);
+  =mode= stays *tracked* via the effect keys on purpose, preserving
+  "flip to Auto → one backfill of already-rendered sections"
+- [X] Session-cache =parseNostrdown= and =resolveHighlights= exactly as
+  =resolveNostrdown= is cached — content-fingerprint keys (highlight
+  side keyed by the sorted 9802 id set; the events are immutable);
+  =SectionCard= and =DraftReader= benefit with zero edits
+- [X] Key the effects on a stable addr-set identity, not array identity
+  — =hlEffectKey= / =ndEffectKey= derived strings (value-compared, so
+  per-frame array reallocation stops re-firing the POSTs); item builds
+  run under =untrack=
+- [X] Resolve visible-first (respect the collapse model; backfill the
+  rest idle) — the nostrdown batch splits on =visibleRows= membership;
+  the hidden remainder resolves via =requestIdleCallback=.
+  Collapse/expand is deliberately NOT in the effect key: expansion
+  needs no re-run because the remainder already resolved.
+- [X] Collapse the duplicate 5 s poll into the 2 s one — the pill now
+  derives from =app.networkStatus=; a 1.5 s local poll runs only while
+  the activity popover is open (visible by definition)
+- [X] Cache draft resolves with invalidation on edit — shipped by the
+  [[file:fix-resolve-cost-model.org][cost model]] key rework
+  (fingerprint keys; drafts no longer opt out)
 
 * Related
 

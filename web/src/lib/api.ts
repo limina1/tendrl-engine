@@ -299,11 +299,34 @@ export async function resolveHighlights(
 	items: { key: string; content: string; highlights: Highlight[] }[]
 ): Promise<Record<string, HighlightSpan[]>> {
 	if (items.length === 0) return {};
-	const resp = await fetchJson<{ spans: Record<string, HighlightSpan[]> }>(
-		'/api/v1/highlights/resolve',
-		{ method: 'POST', body: JSON.stringify({ items }) }
-	);
-	return resp.spans;
+	// Session-cached like resolveNostrdown: content + the highlight set
+	// (ids + anchors) key each item, so steady-state effect re-runs stop
+	// POSTing full documents; a new/changed highlight changes the key.
+	const merged: Record<string, HighlightSpan[]> = {};
+	const uncached: typeof items = [];
+	// 9802 events are immutable, so the sorted id set identifies the
+	// highlight side; content fingerprint the text side.
+	const keyFor = (i: (typeof items)[number]) =>
+		`${ndFingerprint(i.content)}|${i.highlights
+			.map((h) => h.id)
+			.sort()
+			.join(',')}`;
+	for (const i of items) {
+		const hit = hlResolveCache.get(keyFor(i));
+		if (hit) merged[i.key] = hit;
+		else uncached.push(i);
+	}
+	if (uncached.length > 0) {
+		const resp = await fetchJson<{ spans: Record<string, HighlightSpan[]> }>(
+			'/api/v1/highlights/resolve',
+			{ method: 'POST', body: JSON.stringify({ items: uncached }) }
+		);
+		for (const i of uncached) {
+			merged[i.key] = resp.spans[i.key] ?? [];
+			sessionCacheStore(hlResolveCache, keyFor(i), merged[i.key]);
+		}
+	}
+	return merged;
 }
 
 /**
@@ -360,6 +383,21 @@ export async function resolveNostrdown(
 // relay-reaching, full-document resolve).
 const ndResolveCache = new Map<string, { refs: ResolvedRef[]; backfilled: boolean }>();
 const ND_CACHE_MAX = 200;
+
+// Sibling session caches for the other two per-section POSTs the reader
+// fires — parse (pure tokenizer) and highlight-span resolution. Without
+// these, every effect re-run re-POSTed full documents (and did so every 2 s
+// while the network-status poll churned identity).
+const parseCache = new Map<string, ParsedToken[]>();
+const hlResolveCache = new Map<string, HighlightSpan[]>();
+const SESSION_CACHE_MAX = 300;
+function sessionCacheStore<T>(cache: Map<string, T>, key: string, value: T) {
+	if (!cache.has(key) && cache.size >= SESSION_CACHE_MAX) {
+		const oldest = cache.keys().next().value;
+		if (oldest !== undefined) cache.delete(oldest);
+	}
+	cache.set(key, value);
+}
 // Compact string fingerprint for cache keys (length + two independent
 // 32-bit FNV-1a passes ≈ 64 bits — not cryptographic, just collision-safe
 // at this cache's scale). Full content strings made keys megabytes.
@@ -494,12 +532,27 @@ export async function parseNostrdown(
 	items: { key: string; content: string }[]
 ): Promise<Record<string, ParsedToken[]>> {
 	if (items.length === 0) return {};
-	const map = Object.fromEntries(items.map((i) => [i.key, i.content]));
-	const resp = await fetchJson<{ tokens: Record<string, ParsedToken[]> }>(
-		'/api/v1/nostrdown/parse',
-		{ method: 'POST', body: JSON.stringify({ items: map }) }
-	);
-	return resp.tokens;
+	// Session-cached by content fingerprint — the tokenizer is pure, so a
+	// content string always parses the same way.
+	const merged: Record<string, ParsedToken[]> = {};
+	const uncached: typeof items = [];
+	for (const i of items) {
+		const hit = parseCache.get(ndFingerprint(i.content));
+		if (hit) merged[i.key] = hit;
+		else uncached.push(i);
+	}
+	if (uncached.length > 0) {
+		const map = Object.fromEntries(uncached.map((i) => [i.key, i.content]));
+		const resp = await fetchJson<{ tokens: Record<string, ParsedToken[]> }>(
+			'/api/v1/nostrdown/parse',
+			{ method: 'POST', body: JSON.stringify({ items: map }) }
+		);
+		for (const i of uncached) {
+			merged[i.key] = resp.tokens[i.key] ?? [];
+			sessionCacheStore(parseCache, ndFingerprint(i.content), merged[i.key]);
+		}
+	}
+	return merged;
 }
 
 /**

@@ -31,8 +31,10 @@ never happen in the browser.
   navigation are Phase 3 roadmap (=docs/wm-shell.md=).
 - =ReaderBuffer='s addr-keyed re-accumulation of tree events is a thin twin
   a flattened-TOC stream would drop (optional refinement).
-- Performance (2026-08-12 audit): [[file:fix-reader-effect-churn.org][effect
-  churn]] (2 s full-document POST loop),
+- Performance (2026-08-12 audit): +[[file:fix-reader-effect-churn.org][effect
+  churn]] (2 s full-document POST loop)+ (fixed same day:
+  equality-guarded poll, stable effect keys, parse/highlight session
+  caches, visible-first resolve, duplicate 5 s poll deleted),
   [[file:fix-reader-remount-cost.org][remount cost]] (switch-back
   re-streams everything), [[file:fix-reader-render-hotpath.org][render
   hot path]] (O(N²) deriveds, index-keyed each blocks) — and the

@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { tick } from 'svelte';
+	import { tick, untrack } from 'svelte';
 	import type { LazySection } from '$lib/types';
 	import { getAppState } from '$lib/state.svelte';
 	import * as api from '$lib/api';
@@ -64,18 +64,42 @@
 	// slices content by these via `segmentsFromSpans`. Re-runs when the section
 	// set or any section's highlights change.
 	let spansBySection = $state<Record<string, HighlightSpan[]>>({});
-	$effect(() => {
-		const items: { key: string; content: string; highlights: Highlight[] }[] = [];
+	// Stable identity for the effect below: addr + content length + the
+	// highlight id set, per section. `sections` is a FRESH array on every
+	// rAF stream commit, so keying on array identity re-fired a
+	// full-document POST per frame (and every 2 s at steady state while
+	// the network poll churned identity). A string key is value-compared,
+	// so equal recomputations don't re-run the effect at all.
+	const hlEffectKey = $derived.by(() => {
+		const parts: string[] = [];
 		for (const s of sections) {
 			if (s.status !== 'loaded' || !s.content || !s.addr) continue;
 			const hls = highlightsFor ? highlightsFor(s.addr) : [];
 			if (hls.length === 0) continue;
-			items.push({ key: addrKey(s.addr), content: s.content, highlights: hls });
+			parts.push(
+				`${addrKey(s.addr)}:${s.content.length}#${hls
+					.map((h) => h.id)
+					.sort()
+					.join(',')}`
+			);
 		}
-		if (items.length === 0) {
+		return parts.join('\n');
+	});
+	$effect(() => {
+		if (!hlEffectKey) {
 			spansBySection = {};
 			return;
 		}
+		const items = untrack(() => {
+			const out: { key: string; content: string; highlights: Highlight[] }[] = [];
+			for (const s of sections) {
+				if (s.status !== 'loaded' || !s.content || !s.addr) continue;
+				const hls = highlightsFor ? highlightsFor(s.addr) : [];
+				if (hls.length === 0) continue;
+				out.push({ key: addrKey(s.addr), content: s.content, highlights: hls });
+			}
+			return out;
+		});
 		let cancelled = false;
 		api.resolveHighlights(items)
 			.then((m) => {
@@ -132,34 +156,60 @@
 			refetch: forceResolve
 		});
 	});
-	$effect(() => {
-		const items: {
-			key: string;
-			content: string;
-			publication?: string;
-			author?: string;
-			siblings?: { title?: string; d_tag: string }[];
-		}[] = [];
+	// Stable identity, mirroring hlEffectKey: eligible addr set (+ content
+	// length), the resolution context, and whether the relay backfill is on.
+	// Collapse/expand state is deliberately NOT in the key — hidden sections
+	// resolve in the idle remainder pass below, so expansion needs no re-run.
+	const ndEffectKey = $derived.by(() => {
+		const parts: string[] = [];
 		for (const s of sections) {
 			if (s.status !== 'loaded' || !s.content || !s.addr) continue;
 			if (!(s.content.includes('{{') || s.content.includes('[['))) continue;
-			items.push({
-				key: addrKey(s.addr),
-				content: s.content,
-				publication: publicationAtag,
-				author: s.addr.pubkey,
-				siblings
-			});
+			parts.push(`${addrKey(s.addr)}:${s.content.length}`);
 		}
-		if (items.length === 0) {
+		const sib = siblings?.map((s) => `${s.d_tag}:${s.title ?? ''}`).join(',') ?? '';
+		const fetch = app.networkStatus?.mode === 'auto' ? 'fetch' : 'local';
+		return `${parts.join('\n')}|${publicationAtag ?? ''}|${sib}|${fetch}`;
+	});
+	$effect(() => {
+		const empty = ndEffectKey.startsWith('|');
+		if (empty) {
 			refsBySection = {};
 			tokensBySection = {};
 			nostrdownBackfilling = false;
 			currentItems = [];
 			return;
 		}
-		currentItems = items;
 		let cancelled = false;
+		// Everything below reads snapshots — the key above is the only dep.
+		const { visible, hidden, doFetch } = untrack(() => {
+			const eligible: api.ResolveNostrdownItem[] = [];
+			for (const s of sections) {
+				if (s.status !== 'loaded' || !s.content || !s.addr) continue;
+				if (!(s.content.includes('{{') || s.content.includes('[['))) continue;
+				eligible.push({
+					key: addrKey(s.addr),
+					content: s.content,
+					publication: publicationAtag,
+					author: s.addr.pubkey,
+					siblings
+				});
+			}
+			// Visible-first: sections under a collapsed index aren't rendered,
+			// so their refs can wait for idle time.
+			const visibleAddrs = new Set(
+				visibleRows
+					.filter((r) => r.section.addr)
+					.map((r) => addrKey(r.section.addr!))
+			);
+			return {
+				visible: eligible.filter((i) => visibleAddrs.has(i.key)),
+				hidden: eligible.filter((i) => !visibleAddrs.has(i.key)),
+				doFetch: app.networkStatus?.mode === 'auto'
+			};
+		});
+		const items = [...visible, ...hidden];
+		currentItems = items;
 		api.parseNostrdown(items.map((i) => ({ key: i.key, content: i.content })))
 			.then((m) => {
 				if (!cancelled) tokensBySection = m;
@@ -167,22 +217,32 @@
 			.catch(() => {
 				if (!cancelled) tokensBySection = {};
 			});
-		const doFetch = app.networkStatus?.mode === 'auto';
 		nostrdownBackfilling = doFetch;
-		api.resolveNostrdownProgressive(
-			items,
-			(m) => {
-				if (!cancelled) refsBySection = m;
-			},
-			{
-				fetch: doFetch,
-				onFetched: (n) => {
-					if (!cancelled && n > 0)
-						app.pushToast(`Fetched ${n} wiki link${n === 1 ? '' : 's'} from relays`, 'info');
-				}
+		const apply = (m: Record<string, ResolvedRef[]>) => {
+			if (!cancelled) refsBySection = { ...refsBySection, ...m };
+		};
+		const opts = {
+			fetch: doFetch,
+			onFetched: (n: number) => {
+				if (!cancelled && n > 0)
+					app.pushToast(`Fetched ${n} wiki link${n === 1 ? '' : 's'} from relays`, 'info');
 			}
-		).then(() => {
+		};
+		const finish = () => {
 			if (!cancelled) nostrdownBackfilling = false;
+		};
+		void api.resolveNostrdownProgressive(visible, apply, opts).then(() => {
+			if (cancelled || hidden.length === 0) {
+				finish();
+				return;
+			}
+			// Remainder on idle time (session-cached, so a re-run is cheap).
+			const runRest = () => {
+				if (cancelled) return;
+				void api.resolveNostrdownProgressive(hidden, apply, opts).then(finish);
+			};
+			if (typeof requestIdleCallback === 'function') requestIdleCallback(runRest);
+			else setTimeout(runRest, 0);
 		});
 		return () => {
 			cancelled = true;
