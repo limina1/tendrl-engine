@@ -117,6 +117,23 @@ line is not what the APK build uses.
    then the persistent relay layer (Phase C of
    [[file:feat-mobile.org][mobile]])
 
+* Outcome (2026-08-12, =perf/2026-08-fixes=)
+
+Items 1–5 shipped the same day as the evaluation, one commit per
+=fix-*= zettel (details + measured deltas live in each zettel):
+release profile (desktop −20%, APK 72→55 MB, =.so= 44.4→26.8 MB
+stripped), reader effect churn (steady-state reader traffic verified
+via a CDP fetch-count harness: one parse + one resolve per document,
+then silence; buffer switch-back re-resolves entirely from cache),
+relay read fanout (=buffer_unordered(8)= at the multi-relay chokepoint;
+the connection-reuse half of that zettel is deferred with rationale),
+three-phase section loads, batched =resolve_refs= with the wiki-miss
+TTL memo, Android splash-first boot, and the dirty-set tick (the
+"watermark" shipped as dirty-set + once-per-boot reconciliation scan —
+the zettel records why a =created_at= cursor was rejected). Item 6
+(structural) remains open, as do the non-critical zettels outside the
+sweep's scope.
+
 * Related
 
 - [[file:fix-index.org][Fix index]] — all issues, status-tracked
