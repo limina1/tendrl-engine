@@ -58,6 +58,7 @@ exists (with code paths), gaps.
 * Decisions
 
 - [[file:decision-nostrdown-parsing.org][Nostrdown parsing lives in Rust]]
+- [[file:decision-wikilinks-30818-only.org][Global wikilinks resolve to 30818 only]]
   — markup-agnostic grammar is data-layer, not display-layer
 - [[file:q-heading-anchors.org][Heading anchors dropped from the grammar]]
   — sub-section addressing belongs to the markup engine; make it a 30041 instead

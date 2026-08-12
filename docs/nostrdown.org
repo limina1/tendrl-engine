@@ -31,9 +31,14 @@ were distilled from — read it for the /why/, those for the /what/.
     entity wikilink for arbitrary events).
   - =wiki:= / =[[wikilink]]= → *document-local first*: a topic naming a sibling
     section (draft or publication) resolves to that section; else the global
-    lookup splits tag semantics by kind — 30818 by =d= (the topic *is* the
-    article name) and 30040/30041 by their =T= title-slug (author-preferred,
-    30818 preferred); else unresolved → the UI's search fallback. Sibling
+    lookup targets *kind-30818 wiki articles only*, by =d= — the topic *is*
+    the article name (author-preferred, then most recent); else unresolved →
+    the UI's search fallback. (Decided 2026-08-12: the former fallback to
+    30040/30041 by =T= title-slug is gone — section cross-referencing is
+    =ref:=/sibling territory, and pointing prose at arbitrary non-wiki
+    events is =embed:=/entity territory; a global title-slug match made any
+    same-titled section anywhere a link target. See
+    =docs/zettel/decision-wikilinks-30818-only.org=.) Sibling
     handles match both slug forms of the title (minted-d-tag and NIP-54). A
     pasted entity or coordinate (=[[naddr…][My Doc]]=) resolves as a direct
     event link — the wikilink is the general-pointer form (nevent/note carry
@@ -188,8 +193,10 @@ NKBIP-01 defines =[[wikilinks]]= but these conflict with Org-mode.
 {{wiki:target-topic|Display Text}}
 #+end_example
 
-Resolution: client normalizes target (lowercase, spaces→dashes) and queries
-across kind 30818 (wiki), 30041 (sections), or 30023 (articles).
+Resolution: engine normalizes the target (NIP-54) and queries kind 30818
+only — the topic is the article's =d= tag. (Earlier drafts considered
+querying across 30041 sections and 30023 articles too; decided against
+2026-08-12 — see =docs/zettel/decision-wikilinks-30818-only.org=.)
 
 *** Scope Question
 

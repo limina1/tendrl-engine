@@ -21,8 +21,11 @@ Markdown/Org/AsciiDoc/plain content. Normative grammar:
 - Resolution (=publication.rs::resolve_refs=, =POST /api/v1/nostrdown/resolve=):
   =ref= → sibling sections by title-slug (draft siblings resolve pre-publish);
   =embed= → entity, LocalOnly with pending→fetch via Confirm intents
-  (=/nostrdown/fetch-entity=); =wiki= → kinds 30818/30023/30041 by normalized
-  d-tag, scored author > wiki-kind > recency.
+  (=/nostrdown/fetch-entity=); =wiki= → sibling first, else *kind 30818
+  only* by normalized d-tag, scored author > recency
+  ([[file:decision-wikilinks-30818-only.org][decided 2026-08-12]] — the
+  30040/30041 =T=-title-slug fallback is gone; sections cross-reference
+  via =ref=/siblings, arbitrary events via =embed=).
 - Tag emission on signing (=reference_tags()=): =w= (wiki), =ref=, =a=/=q=/=p=
   per reference kind — the substrate for [[file:idea-backlinks.org][backlinks]]
   and [[file:idea-event-badges.org][badges]].

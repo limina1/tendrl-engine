@@ -1,0 +1,50 @@
+#+TITLE: Decision: Global Wikilinks Resolve to 30818 Only
+#+TYPE: decision
+#+STATUS: current
+#+DATE: 2026-08-12
+
+* The decision
+
+A global =[[wikilink]]= / ={{wiki:topic}}= resolves to *kind-30818 wiki
+articles only*, matched by =d= tag (the topic *is* the article name,
+NIP-54-normalized). The fallback that also admitted 30040/30041 by
+their =T= title-slug is removed.
+
+Document-local resolution is untouched: a topic naming a *sibling*
+section of the containing publication (or draft) still resolves to it
+first — that is an internal link, not a global lookup.
+
+* Why
+
+Each event class keeps its own referencing mechanism (user's call,
+2026-08-12, during the on-device wiki-resolution pass):
+
+- *30818 wiki articles* are communal topic pages — the natural, and now
+  only, target of a global topic link.
+- *30041 sections referencing each other* is what =ref:= and sibling
+  resolution are for; zettel-to-zettel links live inside a publication's
+  own structure. A global title-slug match made any same-titled section
+  by anyone, anywhere, a link target — surprising, and wrong more often
+  than right.
+- *Open backlinks to arbitrary non-wiki events* are =embed:=/entity
+  territory today, and a semantic-linking layer tomorrow — not something
+  a title collision should approximate.
+
+Bonus: the wiki lookup's relay traffic halves (one =#d= filter instead
+of two), and the activity panel stops showing 30040/30041 fetches that
+read as unexplained section pulls.
+
+* What changed
+
+=find_wiki_events= queries =k:30818 #d:<topics>= only; ranking is
+author-preferred, then most recent (the kind-preference tier is moot).
+Spec updated in =docs/nostrdown.org=; the regression test
+=test_resolve_refs_wiki_30818_only= pins both halves (30818 resolves;
+a T-slug 30041 no longer does).
+
+* Related
+
+- [[file:index.org][Index]]
+- [[file:feat-nostrdown.org][Nostrdown]]
+- [[file:fix-wiki-resolve-progress.org][Wiki resolve progress]] — the
+  on-device pass this fell out of

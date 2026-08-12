@@ -2852,12 +2852,16 @@ impl<'a> PublicationEngine<'a> {
 
     /// Find the definitional events for a batch of `wiki:` topics, in ONE query
     /// per chunk (not one per topic — a Wikipedia-derived article carries 100+
-    /// wikilinks, and serial relay REQs stalled resolve for minutes). The tag
-    /// semantics are deliberately split by kind: a kind-30818 wiki article's `d`
-    /// tag *is* the topic name, so 30818 is queried by `#d`; publication
-    /// indexes/sections (30040/30041) mint opaque nanoid `d` tags and carry
-    /// their title-slug in the `T` tag, so they are queried by `#T`. Per topic:
-    /// prefers the given author, then the wiki kind, then the most recent.
+    /// wikilinks, and serial relay REQs stalled resolve for minutes).
+    ///
+    /// Global wikilinks resolve to kind-30818 wiki articles ONLY, whose `d`
+    /// tag *is* the topic name (decided 2026-08-12 —
+    /// `docs/zettel/decision-wikilinks-30818-only.org`). The former fallback
+    /// to 30040/30041 by `T` title-slug was dropped: section
+    /// cross-referencing is `ref:`/sibling territory, and linking prose to
+    /// arbitrary non-wiki events is embed/semantic territory — a global
+    /// title-slug match made any same-titled section anywhere a link target.
+    /// Per topic: prefers the given author, then the most recent.
     async fn find_wiki_events(
         &self,
         topics: &[String],
@@ -2867,14 +2871,12 @@ impl<'a> PublicationEngine<'a> {
         mode_confirm: bool,
     ) -> std::collections::HashMap<String, Value> {
         use std::collections::hash_map::Entry;
-        let score = |e: &Value| -> (u8, u8, i64) {
+        let score = |e: &Value| -> (u8, i64) {
             let author_match = author
                 .map(|a| e.get("pubkey").and_then(Value::as_str) == Some(a))
                 .unwrap_or(false);
-            let kind = e.get("kind").and_then(Value::as_u64).unwrap_or(0);
-            let kind_pref = u8::from(kind == 30818);
             let created = e.get("created_at").and_then(Value::as_i64).unwrap_or(0);
-            (author_match as u8, kind_pref, created)
+            (author_match as u8, created)
         };
         let mut best: std::collections::HashMap<String, Value> = std::collections::HashMap::new();
         // Merge one query pass's events into `best`, scored per topic.
@@ -2889,7 +2891,7 @@ impl<'a> PublicationEngine<'a> {
             policy: FetchPolicy,
             relays: Option<&[String]>,
             mode_confirm: bool,
-            score: &(dyn Fn(&Value) -> (u8, u8, i64) + Sync),
+            score: &(dyn Fn(&Value) -> (u8, i64) + Sync),
             best: &mut std::collections::HashMap<String, Value>,
         ) {
             use futures::stream::StreamExt;
@@ -2901,10 +2903,9 @@ impl<'a> PublicationEngine<'a> {
                     .map(|chunk| {
                         let relays = relays.map(<[String]>::to_vec);
                         async move {
-                            let filters = vec![
-                                serde_json::json!({ "kinds": [30818], "#d": &chunk, "limit": 500 }),
-                                serde_json::json!({ "kinds": [30040, 30041], "#T": &chunk, "limit": 500 }),
-                            ];
+                            let filters = vec![serde_json::json!({
+                                "kinds": [30818], "#d": &chunk, "limit": 500
+                            })];
                             let events = this
                                 .engine
                                 .get_events_with_options(
@@ -2924,10 +2925,7 @@ impl<'a> PublicationEngine<'a> {
                     .await;
             for (chunk, events) in chunk_results {
                 for e in events {
-                    // Which topic(s) does this event define? 30818 answers by
-                    // `d`, 30040/30041 by `T` (both stored slug-normalized).
-                    let kind = e.get("kind").and_then(Value::as_u64).unwrap_or(0);
-                    let handle_tag = if kind == 30818 { "d" } else { "T" };
+                    // A 30818's `d` tag IS the topic (stored slug-normalized).
                     let handles: Vec<String> = e
                         .get("tags")
                         .and_then(Value::as_array)
@@ -2935,7 +2933,7 @@ impl<'a> PublicationEngine<'a> {
                         .flatten()
                         .filter_map(|t| {
                             let t = t.as_array()?;
-                            if t.first()?.as_str()? != handle_tag {
+                            if t.first()?.as_str()? != "d" {
                                 return None;
                             }
                             t.get(1)?.as_str().map(str::to_string)
@@ -5352,10 +5350,12 @@ mod tests {
     /// article name); 30040/30041 match by their `T` title-slug tag (their `d`
     /// tags are opaque nanoids, deliberately not topic handles).
     #[tokio::test]
-    async fn test_resolve_refs_wiki_d_vs_title_tag() {
+    async fn test_resolve_refs_wiki_30818_only() {
         let pk_owned = test_pubkey();
         let pk = pk_owned.as_str();
-        // A section whose d-tag is a nanoid but whose `T` tag carries the slug.
+        // Global wikilinks resolve to 30818 by `d` ONLY (decided 2026-08-12):
+        // a 30041 with a matching `T` title-slug — the former fallback — must
+        // no longer be a global link target.
         let section = fixture_event(
             pk,
             30041,
@@ -5366,15 +5366,21 @@ mod tests {
             ]),
             "section body",
         );
-        // A decoy 30041 whose *d* tag matches the topic — must NOT resolve:
-        // sections answer to `T`, not `d`.
+        // Nor a 30041 whose *d* happens to match the topic.
         let decoy = fixture_event(
             pk,
             30041,
             serde_json::json!([["d", "knowledge-problem"], ["title", "Decoy"]]),
             "decoy body",
         );
-        let (engine, _dir) = engine_with_events(&[section, decoy]).await;
+        // The real wiki article — this is what resolves.
+        let wiki = fixture_event(
+            pk,
+            30818,
+            serde_json::json!([["d", "knowledge-problem"], ["title", "Knowledge Problem"]]),
+            "wiki body",
+        );
+        let (engine, _dir) = engine_with_events(&[section, decoy, wiki]).await;
         let pe = PublicationEngine::new(&engine);
 
         let refs = pe
@@ -5388,12 +5394,42 @@ mod tests {
             .await;
         assert_eq!(refs.len(), 1);
         let r0 = &refs[0];
-        assert!(r0.found, "wiki resolved the 30041 by its T title-slug tag");
+        assert!(r0.found, "wiki resolved to the 30818 by d-tag");
         assert_eq!(
             r0.coord.as_deref(),
-            Some(format!("30041:{pk}:sec-9x1k2").as_str())
+            Some(format!("30818:{pk}:knowledge-problem").as_str())
         );
-        assert_eq!(r0.label, "Knowledge Problem");
+
+        // Without the 30818, the same link stays unresolved — sections are
+        // ref:/sibling territory, not global wikilink targets.
+        let (engine2, _dir2) = engine_with_events(&[
+            fixture_event(
+                pk,
+                30041,
+                serde_json::json!([
+                    ["d", "sec-9x1k2"],
+                    ["title", "Knowledge Problem"],
+                    ["T", "knowledge-problem"]
+                ]),
+                "section body",
+            ),
+        ])
+        .await;
+        let pe2 = PublicationEngine::new(&engine2);
+        let refs2 = pe2
+            .resolve_refs(
+                "See [[knowledge problem]].",
+                None,
+                None,
+                &[],
+                FetchPolicy::LocalOnly,
+            )
+            .await;
+        assert_eq!(refs2.len(), 1);
+        assert!(
+            !refs2[0].found,
+            "a 30041 T-slug match no longer resolves a global wikilink"
+        );
     }
 
     /// An entity `{{embed:naddr…}}` whose event isn't local resolves as a valid

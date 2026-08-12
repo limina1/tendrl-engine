@@ -189,7 +189,9 @@ sections and embeds new events on a 60-second interval when embeddings are enabl
   `POST /api/v1/nostrdown/resolve`): `ref:`→**sibling-only** by title-slug (d-tags
   are opaque nanoids, so the human slug matches the `T` tag/normalized title;
   an naddr/coordinate ref resolves iff it addresses a sibling),
-  `wiki:`→sibling first, else 30818 by `d` / 30040+30041 by `T` title-slug,
+  `wiki:`→sibling first, else 30818 by `d` ONLY (the 30040/30041
+  `T`-title-slug fallback was removed 2026-08-12 —
+  `docs/zettel/decision-wikilinks-30818-only.org`),
   `embed:`→naddr/coordinate/sibling transclusion. A `kind:pubkey:d-tag`
   coordinate is admissible wherever an entity is (canonicalized to its naddr,
   never slug-normalized). The web (`RichContent.svelte`) merges resolved spans with NIP-84
