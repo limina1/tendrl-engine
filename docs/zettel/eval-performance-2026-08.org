@@ -134,6 +134,20 @@ the zettel records why a =created_at= cursor was rejected). Item 6
 (structural) remains open, as do the non-critical zettels outside the
 sweep's scope.
 
+A/B benchmark, pre-sweep (=45076ce=) vs sweep head, same debug builds,
+same seeded store (80-section wikilink-dense publication, 320 refs;
+identical outputs both sides):
+
+| workload                                         |   before |  after |    Δ |
+|--------------------------------------------------+----------+--------+------|
+| =POST /nostrdown/resolve=, all 80 sections       |    4.4 s |  45 ms | ~95× |
+| tree-open, 12 relay-missing sections × 2 relays  |   18.3 s | 1.75 s | ~10× |
+| reader steady-state POSTs (20 s window, CDP)     | ~10–30   |      0 |    — |
+
+The stream with everything local was already fast both sides (~40 ms) —
+the wins live exactly where the cost model predicted: per-item
+re-loading in resolve, and serial relay fanout for misses.
+
 * Related
 
 - [[file:fix-index.org][Fix index]] — all issues, status-tracked
