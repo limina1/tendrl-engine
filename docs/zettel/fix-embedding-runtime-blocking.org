@@ -1,0 +1,44 @@
+#+TITLE: Fix: Embedding Runtime Blocking
+#+TYPE: fix
+#+STATUS: open
+#+DATE: 2026-08-12
+
+* The issue (observed 2026-08-12, v0.8.2)
+
+=embed_texts= is async in signature only — the body is a synchronous
+fastembed/ONNX call with no =.await= and no =spawn_blocking=
+(=embedding.rs:317-323=), so CPU-bound inference occupies a tokio worker
+for its full duration in every caller (=sync_embeddings= is dispatched
+via plain =tokio::spawn=, =server.rs:724= — the comment there is about
+panic containment, not blocking).
+
+The background loop guards the one-time ~90 MB model download
+(=model_ready()=, =server.rs:708-717=, with an explicit comment that the
+loop "must NEVER be what triggers" it) — but =semantic_search= has no
+such guard: =engine.rs:2350= calls =embed_query= directly, so the first
+=~:= query on a fresh install can run the whole download inline on a
+worker thread.
+
+The embed batch holds the index =RwLock= write guard across a full
+=index.save()= (=engine.rs:1610-1617=) — a concurrent =~:= search
+(needs =read=, =engine.rs:2349=) waits behind an entire HNSW disk
+serialization.
+
+* Proposed fix
+
+- [ ] =spawn_blocking= around inference (both sync pass and =~:= query
+  embedding)
+- [ ] =model_ready= guard in =semantic_search=: fail fast with a
+  "model warming" status (the engine already reports embedding status)
+  and kick the download in the background
+- [ ] Move =save()= outside the write-lock window (serialize from a
+  snapshot, or save once per pass —
+  [[file:fix-background-tick-idle-cost.org][tick cost]])
+
+* Related
+
+- [[file:fix-index.org][Fix index]] · [[file:index.org][Index]]
+- [[file:eval-performance-2026-08.org][Performance evaluation (2026-08-12)]]
+- [[file:feat-embeddings.org][Embeddings]]
+- [[file:feat-engine-substrate.org][Engine substrate]]
+- [[file:fix-background-tick-idle-cost.org][Background tick idle cost]]

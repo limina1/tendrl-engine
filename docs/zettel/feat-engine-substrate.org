@@ -1,0 +1,54 @@
+#+TITLE: Engine Substrate — nostrdb, the query lock, boot, the tick
+#+TYPE: feature
+#+STATUS: implemented
+#+DATE: 2026-08-12
+
+The layer under every feature: how the engine stores, reads, boots, and
+keeps itself current. Split out so the =fix-*= zettels about it have a
+base to hang off — no other =feat-*= note owns this plumbing.
+
+* What exists
+
+- *Store*: =nostrdb= (LMDB) owned by =Engine= (=src/engine.rs=), opened
+  with 2 ingester threads and the default 32 GiB =mapsize= (never tuned;
+  relevant on Android VSS accounting). All access goes through Engine.
+- *The global query lock*: every nostrdb read serializes through a
+  process-wide =std::sync::Mutex= (=src/query.rs:25=) because concurrent
+  =ndb_query= calls corrupt nostrdb's heap (documented upstream bug —
+  do not remove). The lock is local-read-only; no relay I/O under it.
+- *Boot* (=src/server.rs::start=, shared by the desktop binary and the
+  Android host): Engine init → keyring restore (scrypt, synchronous) →
+  =init_embedding= (full =vectors.map= parse + HNSW load, synchronous) →
+  prompt file → router (~90 routes) → background loop spawn → bind.
+  Everything before bind is on the critical path to the first request.
+- *The 60 s background tick* (=src/server.rs:666=, only when embeddings
+  are enabled): =fetch_missing_sections= (scan all 30040s, point-query
+  every referenced coordinate, relay-fetch the missing in 50-d-tag
+  chunks, with a 30-minute unreachable TTL) then =sync_embeddings=
+  (scan embeddable kinds, embed new in batches of 32, save the index).
+  Pausable via the mobile suspend gate.
+- *Fetch machinery*: =FetchPolicy= (LocalOnly / LocalFirst / FetchAlways)
+  + =NetworkMode= Confirm gating — see [[file:feat-network.org][network
+  modes]]. Relay I/O itself is per-call WebSockets in =src/relay.rs= —
+  see [[file:feat-relays.org][relay sets]] for the set model.
+
+* Gaps / open edges (2026-08-12)
+
+- [[file:fix-ndb-lock-hold.org][Lock held across full result
+  materialization]], on runtime threads, up to the 1M exhaustive-scan
+  limit
+- [[file:fix-background-tick-idle-cost.org][The tick is never
+  idle-cheap]] — cost ∝ store size every minute, no watermark
+- [[file:fix-relay-connection-churn.org][No relay connection reuse]]
+- Boot does scrypt + full index deserialization before bind
+  ([[file:fix-android-boot-blocking.org][worst on Android]], where it
+  also sits on the UI thread)
+
+* Related
+
+- [[file:index.org][Index]]
+- [[file:eval-performance-2026-08.org][Performance evaluation (2026-08-12)]]
+- [[file:fix-index.org][Fix index]]
+- [[file:feat-network.org][Network modes]]
+- [[file:feat-embeddings.org][Embeddings]]
+- [[file:feat-mobile.org][Mobile & Android]]

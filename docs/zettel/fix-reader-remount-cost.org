@@ -1,0 +1,43 @@
+#+TITLE: Fix: Reader Remount Cost
+#+TYPE: fix
+#+STATUS: open
+#+DATE: 2026-08-12
+
+* The issue (observed 2026-08-12, v0.8.2)
+
+Buffer renderers unmount on every switch (by design —
+[[file:feat-shell.org][WM shell]]), and the reader keeps its publication
+cache *inside the component*: =focusCache= is component-local
+(=ReaderBuffer.svelte:118=), so switching away and back re-streams the
+entire publication from scratch (the mount effect clears focus state and
+=load()= finds no cache, =:1438-1454=). The in-memory restore path
+(=:867-885=) only covers refocus *within* one mounted instance.
+
+On top of the re-stream, the settle effect re-fetches discussions
+including a =fetch_always= relay round trip (=:1462-1478=) — the
+=shouldNetworkFetch= dedupe helper exists for exactly this but only
+=DocBuffer= uses it. All reader view state (view mode, section, outline
+cursor/expansion, focus stack, =treeDepth=) is lost per switch; only
+=ComposerBuffer= uses =store.bufferState= for persistence.
+
+This violates the established state-ownership rule: document state in
+=AppState=, view state in =store.bufferState=, component holds nothing
+it can't lose (the composer already follows it).
+
+* Proposed fix
+
+- [ ] Hoist the publication/focus cache to =AppState= keyed by
+  publication addr (the =ndResolveCache= shows the pattern works)
+- [ ] Persist reader view state in =store.bufferState= (as the composer
+  does)
+- [ ] Route the discussion refetch through =shouldNetworkFetch=
+- [ ] On switch-back with a warm cache: render immediately, run a
+  cheap =local_only= freshness pass instead of a full re-stream
+
+* Related
+
+- [[file:fix-index.org][Fix index]] · [[file:index.org][Index]]
+- [[file:eval-performance-2026-08.org][Performance evaluation (2026-08-12)]]
+- [[file:feat-shell.org][WM shell]] — the unmount constraint
+- [[file:feat-reader.org][Reader]]
+- [[file:fix-reader-effect-churn.org][Reader effect churn]]

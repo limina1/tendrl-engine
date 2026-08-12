@@ -1,0 +1,41 @@
+#+TITLE: Fix: Android Boot Blocking
+#+TYPE: fix
+#+STATUS: open
+#+DATE: 2026-08-12
+
+* The issue (observed 2026-08-12, v0.8.2)
+
+The entire engine boots *inside the Tauri =setup= hook via =block_on=*,
+on the Android main/UI thread, before the WebView is created
+(=mobile/src-tauri/src/lib.rs:103-161=, =block_on(server::start(...))=
+at =:121-143=). In that window, serially: LMDB env open with the default
+*32 GiB mapsize* (never tuned via =set_mapsize=), a *100k-slot HNSW
+reserve* on fresh installs (=embedding.rs:105-107=), relay/ignore-list
+JSON reads, prompt-file write, full router construction. No splash, no
+progress surface — a slow first boot is indistinguishable from a hang
+and counts against the ANR window.
+
+Desktop shares the boot-path half (=server.rs:236=, =:251=): keyring
+restore runs scrypt on the async task (everywhere else it is explicitly
+=spawn_blocking='d), and =init_embedding= parses the full pretty-printed
+=vectors.map= before the listener binds.
+
+* Proposed fix
+
+- [ ] Move =server::start= off the setup hook: spawn it, create the
+  WebView immediately with a loading page that polls =/health=
+- [ ] Tune =set_mapsize= for mobile (VSS accounting; LMK optics)
+- [ ] Size the HNSW reserve from the on-disk index (lazy growth path
+  already exists) instead of a fixed 100k
+- [ ] Desktop: =spawn_blocking= the keyring/scrypt restore; compact (not
+  pretty-printed) =vectors.map= encoding
+  ([[file:fix-background-tick-idle-cost.org][also cuts save cost]])
+
+* Related
+
+- [[file:fix-index.org][Fix index]] · [[file:index.org][Index]]
+- [[file:eval-performance-2026-08.org][Performance evaluation (2026-08-12)]]
+- [[file:feat-mobile.org][Mobile & Android]] ·
+  [[file:feat-engine-substrate.org][Engine substrate]]
+- [[file:fix-android-lifecycle.org][Android lifecycle gaps]]
+- [[file:fix-release-profile.org][Release profile]]

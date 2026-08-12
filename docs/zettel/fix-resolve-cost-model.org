@@ -1,0 +1,61 @@
+#+TITLE: Fix: Resolve Cost Model
+#+TYPE: fix
+#+STATUS: open
+#+DATE: 2026-08-12
+
+* The issue (observed 2026-08-12, v0.8.2)
+
+=POST /nostrdown/resolve= is a serial per-item loop (=api.rs:864=), and
+each item pays for the whole publication again:
+
+1. Full depth-4 tree load, *unconditionally* (=publication.rs:2134=) —
+   even when the item's refs never consult siblings (the
+   =needs_siblings= gate at =:2145= guards only step 2).
+2. =load_sibling_index= then *re-queries every node the tree load just
+   fetched*, one =load_event_by_addr= at a time
+   (=publication.rs:2408-2416=), discarding the already-loaded events.
+3. Per-ref entity lookups run serially inside the ref loop
+   (=publication.rs:2244=, =:2262=, =:2298=, =:2313=, =:2331=).
+4. Misses are never memoized: under =local_first=, every
+   permanently-missing sibling re-triggers the serial fresh-socket relay
+   fanout *per item, per pass* — the exact shape the 2026-08-11 wiki
+   batching fixed for topics (=publication.rs:2280-2286=), retained on
+   the sibling half. Wiki batching itself is per-item, not per-request.
+
+For M items over a publication of T tree nodes: ≈ M×(2T+E) locked
+nostrdb queries + M×(missing×R) serial relay REQs. The reader sends
+M = every loaded section, so a 60-section publication ≈ 7,300 locked
+queries per pass — reproducing data the SSE stream just delivered.
+
+Client side: the session cache is keyed by *content string*
+(=api.ts:362=) so nothing can be warmed by coordinate before content
+exists, and draft items are excluded entirely (=api.ts:361=) — the
+composer preview runs a cold, relay-reaching, full-document resolve on
+every effect run (see [[file:fix-reader-effect-churn.org][effect churn]]
+for the 2 s trigger).
+
+This is the structural reason *prefetching multiplies resolve cost
+instead of amortizing it*: prefetch grows both M and T.
+
+* Proposed fix (tactical — the handler keeps its shape)
+
+- [ ] One tree + sibling-index load per publication *per request*,
+  shared across items
+- [ ] Build the sibling index from the =Publication='s already-loaded
+  events; delete the re-query loop
+- [ ] Negative-result memo with TTL (mirror =unreachable_sections=)
+- [ ] Flush deferred wiki topics once per request, not per item
+- [ ] Client: address-keyed cache entries; cache drafts with
+  invalidation on edit instead of opting out
+
+The structural half — making resolution part of the stream so prefetch
+≡ resolve — is [[file:fix-resolve-in-stream.org][its own zettel]].
+
+* Related
+
+- [[file:fix-index.org][Fix index]] · [[file:index.org][Index]]
+- [[file:eval-performance-2026-08.org][Performance evaluation (2026-08-12)]]
+- [[file:feat-nostrdown.org][Nostrdown]] — the 2026-08-11 overhaul this extends
+- [[file:fix-resolve-in-stream.org][Resolve-in-stream]]
+- [[file:fix-sequential-section-loads.org][Sequential section loads]]
+- [[file:fix-ndb-lock-hold.org][nostrdb lock hold]]

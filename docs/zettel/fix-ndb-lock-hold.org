@@ -1,0 +1,48 @@
+#+TITLE: Fix: nostrdb Lock Hold Time
+#+TYPE: fix
+#+STATUS: open
+#+DATE: 2026-08-12
+
+* The issue (observed 2026-08-12, v0.8.2)
+
+The process-wide query mutex (=query.rs:25=; required — see
+[[file:feat-engine-substrate.org][engine substrate]]) is held across
+=note_to_json= for the *entire result set*, not just the =ndb_query=
+call (=query.rs:56-63=, =:86=, =:750=). Scans run up to
+=EXHAUSTIVE_SCAN_LIMIT = 1_000_000= (=engine.rs:33=, stamped on any
+multi-char tag / =has:= / =count:= / keyword filter), and the callers
+are async fns with *no* =spawn_blocking= (=engine.rs:2117=, =:2654=,
+=:2674=, =:2772=) — so a big scan parks a tokio worker *and* blocks
+every other DB read, including a live SSE tree stream.
+
+N+1 shapes around it: one locked point query per referenced coordinate
+in the tick (=engine.rs:1682-1691=), per HNSW hit in semantic search
+(=engine.rs:2412=, up to k×10), per pubkey in profile backfills
+(=engine.rs:2263=, =publication.rs:1023=). Post-filters then deep-clone
+the matched set up to three times (=engine.rs:2149-2166=).
+
+The lock's own justification — "queries are sub-millisecond"
+(=query.rs:11-24=) — is desktop-calibrated: on Android, cold mmap pages
+fault in from flash and the background tick genuinely contends with
+foreground UI on this =std::sync::Mutex=.
+
+* Proposed fix
+
+- [ ] Collect note keys/ids under the lock, materialize JSON *after*
+  releasing it (where nostrdb's lifetime rules allow)
+- [ ] =spawn_blocking= for scan-class queries on the request path
+- [ ] Batch point-lookups into single multi-value filters (coordinates,
+  profile existence)
+- [ ] Filter *before* materializing (apply tag/text post-filters on
+  =Note= accessors, not on built JSON), killing the triple clone
+- [ ] Long-term: chase the upstream nostrdb concurrent-query bug so the
+  lock can narrow
+
+* Related
+
+- [[file:fix-index.org][Fix index]] · [[file:index.org][Index]]
+- [[file:eval-performance-2026-08.org][Performance evaluation (2026-08-12)]]
+- [[file:feat-engine-substrate.org][Engine substrate]]
+- [[file:fix-background-tick-idle-cost.org][Background tick idle cost]]
+- [[file:fix-resolve-cost-model.org][Resolve cost model]]
+- [[file:feat-mobile.org][Mobile & Android]]

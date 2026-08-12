@@ -1,0 +1,52 @@
+#+TITLE: Fix: Background Tick Idle Cost
+#+TYPE: fix
+#+STATUS: open
+#+DATE: 2026-08-12
+
+* The issue (observed 2026-08-12, v0.8.2)
+
+The 60 s background loop (=server.rs:666-744=) is never idle-cheap —
+its cost is proportional to store size every minute, changed or not:
+
+- =sync_embeddings= clones *every* indexed event-id into a fresh
+  =HashSet= per tick (=engine.rs:1526= → =embedding.rs:299=) and
+  JSON-materializes up to 100k events under the global lock
+  (=engine.rs:1530=). No watermark, no dirty-set.
+- =fetch_missing_sections= scans all 30040s (=engine.rs:1660=), then
+  issues one locked point query per referenced coordinate
+  (=engine.rs:1682-1691=) — and again per still-pending d-tag after each
+  relay (=:1796-1811=).
+- The embed phase rewrites the *entire* HNSW index plus a
+  pretty-printed JSON id map to disk after every 32 embeds
+  (=engine.rs:1617= → =embedding.rs:191-209=).
+- Nothing guards two =sync_embeddings= passes racing — the loop and the
+  =fetch_sections_handler= spawn (=api.rs:2260-2264=) can overlap and
+  both write =vectors.idx=.
+
+The one mitigation that exists: the 30-minute unreachable-section TTL
+(=engine.rs:1705-1716=), added after the re-request storm.
+
+* Why it matters
+
+Steady-state CPU + lock contention with foreground reads
+([[file:fix-ndb-lock-hold.org][the lock]]); on Android it is battery and
+flash-write tax, gated only by the suspend flag
+([[file:fix-android-lifecycle.org][lifecycle]]).
+
+* Proposed fix
+
+- [ ] =since=-cursor watermark for both passes (persisted per pass)
+- [ ] Dirty-set fed from ingest instead of full rescans
+- [ ] Batch coordinate-existence checks into one multi-value filter
+- [ ] Save the index once per pass (or on a dirty threshold), compact
+  JSON encoding for the id map
+- [ ] In-flight guard (mutex/flag) around =sync_embeddings=
+
+* Related
+
+- [[file:fix-index.org][Fix index]] · [[file:index.org][Index]]
+- [[file:eval-performance-2026-08.org][Performance evaluation (2026-08-12)]]
+- [[file:feat-engine-substrate.org][Engine substrate]]
+- [[file:feat-embeddings.org][Embeddings]]
+- [[file:fix-ndb-lock-hold.org][nostrdb lock hold]]
+- [[file:fix-embedding-runtime-blocking.org][Embedding runtime blocking]]

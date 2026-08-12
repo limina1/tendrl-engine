@@ -1,0 +1,52 @@
+#+TITLE: Fix: Resolve-in-Stream
+#+TYPE: fix
+#+STATUS: open
+#+DATE: 2026-08-12
+
+The structural fix for [[file:fix-resolve-cost-model.org][the resolve
+cost model]]: move ref resolution *into* the publication tree stream, so
+refs arrive on the same channel as content and prefetching and resolving
+become the same act.
+
+* The shape of the problem
+
+Today resolution is post-hoc on a separate channel: content arrives over
+SSE; refs require render → =$effect= → POST → round trip. Refs can never
+be ready when a section paints, so prefetching content *guarantees*
+follow-up resolve traffic. The stream (=stream_tree_inner=,
+=publication.rs:1348=) has just fetched and ingested every index and
+leaf event — then =resolve_refs= reloads all of them, twice per item,
+because the only handoff is a coordinate string in the request body.
+
+* The proposal
+
+While the stream walks the tree it already holds everything the sibling
+index needs. So:
+
+- [ ] Build the sibling index once per stream walk, incrementally, as
+  leaves resolve
+- [ ] Parse each leaf's content engine-side during the walk (the parser
+  is pure and lives in Rust — [[file:decision-nostrdown-parsing.org][by
+  decision]]) and emit resolved ref spans with the =Leaf= event (or as a
+  follow-up =RefSpans= event per addr, so leaf latency is untouched)
+- [ ] Frontend consumes spans from the stream; the two reader effects
+  (=/nostrdown/parse= + =/nostrdown/resolve= POSTs) disappear for the
+  reader path
+- [ ] Keep the POST endpoint for drafts, isolated docs (=DocBuffer=),
+  and compose hover — the surfaces with no stream
+
+* Consequences
+
+Kills the M×2T re-query outright; removes the parse round trips; gives
+prefetch a meaning (streaming deeper = resolving deeper); removes the
+reader's dependence on client-side resolve caching. Highlight resolution
+could ride the same stream later (same parse/resolve/render split).
+
+* Related
+
+- [[file:fix-index.org][Fix index]] · [[file:index.org][Index]]
+- [[file:eval-performance-2026-08.org][Performance evaluation (2026-08-12)]]
+- [[file:fix-resolve-cost-model.org][Resolve cost model]]
+- [[file:fix-reader-effect-churn.org][Reader effect churn]]
+- [[file:feat-nostrdown.org][Nostrdown]] · [[file:feat-reader.org][Reader]]
+- [[file:decision-nostrdown-parsing.org][Parsing lives in Rust]]

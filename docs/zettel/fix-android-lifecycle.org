@@ -1,0 +1,52 @@
+#+TITLE: Fix: Android Lifecycle Gaps
+#+TYPE: fix
+#+STATUS: open
+#+DATE: 2026-08-12
+
+* The issue (observed 2026-08-12, v0.8.2)
+
+The =Suspended=/=Resumed= handling
+(=mobile/src-tauri/src/lib.rs:165-188= → =server.rs:52=, checked at
+=:676=) gates *only* the 60 s background loop. Untouched on suspend:
+
+- Both SSE stream kinds (fetch-events singleton + per-reader publication
+  streams) — nothing closes them on background or forces a reconnect on
+  foreground. The B2 item "pause … SSE on suspend, reconnect on resume"
+  is half-shipped; the M2 acceptance criterion "survives
+  background/foreground cycles without losing SSE" is unmet (both in
+  [[file:feat-mobile.org][the mobile plan]]).
+- The 2 s =/network/status= poll — =document.hidden=-guarded but the
+  timer stays armed; Android's timer throttling is what actually saves
+  battery, not the code. The duplicate 5 s poll isn't guarded at all
+  ([[file:fix-reader-effect-churn.org][effect churn]]).
+- In-flight relay fetches; a background pass already running when
+  suspension arrives is not cancelled.
+
+No foreground service and no wake lock (by design — fine), so OS process
+death is *silent*: engine, nostrdb handle, and all streams die together
+and return is a full cold start
+([[file:fix-android-boot-blocking.org][boot blocking]]).
+
+Also: release builds subscribe logcat at =nostr_engine=debug=
+(=lib.rs:83=) — every debug-level line is formatted and pushed through
+JNI for the process lifetime.
+
+* Proposed fix
+
+- [ ] Close/pause SSE on suspend; force reconnect + state re-sync on
+  resume (health check, re-stream open readers from cache)
+- [ ] Clear armed poll timers on suspend rather than relying on OS
+  throttling
+- [ ] Cancel the in-flight background pass on suspend (cancellation
+  token already exists in the fetch path)
+- [ ] =info=-level logging in release builds
+- [ ] With [[file:fix-relay-connection-churn.org][connection reuse]]:
+  backoff + resume-on-foreground discipline (Phase C)
+
+* Related
+
+- [[file:fix-index.org][Fix index]] · [[file:index.org][Index]]
+- [[file:eval-performance-2026-08.org][Performance evaluation (2026-08-12)]]
+- [[file:feat-mobile.org][Mobile & Android]]
+- [[file:fix-android-boot-blocking.org][Android boot blocking]]
+- [[file:fix-relay-connection-churn.org][Relay connection churn]]

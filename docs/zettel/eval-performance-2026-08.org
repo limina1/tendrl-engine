@@ -1,0 +1,126 @@
+#+TITLE: Performance Evaluation — August 2026
+#+TYPE: report
+#+STATUS: current
+#+DATE: 2026-08-12
+
+Two-part evaluation of the stack at v0.8.2: the Rust engine + Svelte SPA
+on desktop Linux, and the same pair inside the Tauri Android host, with a
+deep dive on why nostrdown/wikilink resolution fights prefetching.
+Compiled from four parallel code audits (engine data path, nostrdown
+resolution, web frontend, Android host); every issue is broken out into
+an atomic =fix-*= zettel indexed in [[file:fix-index.org][the fix index]].
+Full prose report with all file:line evidence:
+https://claude.ai/code/artifact/c1f7313e-c528-49bf-85fc-3b8bd959c2a8
+
+* The signature: point fixes over pattern fixes
+
+The codebase documents five perf incidents that were measured, hurt, and
+fixed *at the point of pain* — and the underlying pattern was left as
+the default everywhere else:
+
+- sequential publish took minutes → =buffer_unordered(16)= (=relay.rs:327=)
+- serial wikilink fetches "stalled resolve for minutes" → 50-topic
+  batching (=publication.rs:2280=; see the 2026-08-11 overhaul in
+  [[file:feat-nostrdown.org][the nostrdown zettel]])
+- =note_to_json= dominance → note-level text matching (=query.rs:69=)
+- 3.5 GB embed OOM on-device → =EMBED_BATCH = 8= (=embedding.rs:310=)
+- 60 s re-request storm → 30-minute unreachable TTL (=engine.rs:1698=)
+
+Four shapes recur through every open issue:
+
+1. *Sequential per-item awaits* where bounded fanout is safe
+2. *A fresh WebSocket per relay fetch* — no pooling anywhere
+3. *The global nostrdb mutex held across full result materialization*,
+   on tokio worker threads without =spawn_blocking=
+4. *No caching of derived or negative results*
+
+The architecture (engine owns data, thin frontend) is sound; the
+plumbing under it hasn't caught up.
+
+* Part 1 — Desktop Linux
+
+Engine: [[file:fix-relay-connection-churn.org][relay connection churn]] ·
+[[file:fix-sequential-section-loads.org][sequential section loads]] ·
+[[file:fix-ndb-lock-hold.org][nostrdb lock hold time]] ·
+[[file:fix-background-tick-idle-cost.org][background tick idle cost]] ·
+[[file:fix-search-response-latency.org][search response latency]] ·
+[[file:fix-embedding-runtime-blocking.org][embedding runtime blocking]]
+
+Web: [[file:fix-reader-effect-churn.org][reader effect churn]] ·
+[[file:fix-reader-remount-cost.org][reader remount cost]] ·
+[[file:fix-reader-render-hotpath.org][reader render hot path]]
+
+The compounding worst case: a publication tree with M locally-missing
+sections across R relays costs M×R *serial* WebSocket handshakes (15 s
+ceiling each) inside one HTTP handler — sequential section loads ×
+sequential relay fanout × no connection reuse.
+
+* Interlude — why resolution fights prefetching
+
+The tactical half is [[file:fix-resolve-cost-model.org][the resolve cost
+model]]; the structural half is
+[[file:fix-resolve-in-stream.org][resolve-in-stream]]. The cost model in
+one block, for M resolve items over a publication of T tree nodes:
+
+#+begin_example
+nostrdb queries ≈ M × (2T + E)        serial, all under the global lock
+relay REQs      ≈ M × (missing × R)   serial, fresh WebSocket each
+                + M × ceil(W/50)      the one batched path (wiki topics)
+#+end_example
+
+A 60-section publication ≈ 7,300 locked queries per resolve pass,
+reproducing data the SSE stream just delivered. Prefetching grows both M
+and T, so prefetch *multiplies* resolve cost instead of amortizing it —
+that is the felt pain, and it is structural, not a tuning problem.
+
+* Part 2 — Android
+
+The engine has zero =cfg(target_os = "android")= gates — mobile runs the
+desktop code byte-for-byte (minus keyring, plus dlopen'd ONNX). All of
+Part 1 applies, amplified: cold mmap page faults under the global lock,
+a radio wakeup per WebSocket, LMK pressure. Mobile-specific:
+[[file:fix-android-boot-blocking.org][boot on the UI thread]] ·
+[[file:fix-android-lifecycle.org][lifecycle gaps]] ·
+[[file:fix-release-profile.org][missing release profile]] (44 MB
+unstripped =.so=, ~60% of the 72 MB APK).
+
+Two stale beliefs corrected in [[file:feat-mobile.org][the mobile
+zettel]]: mobile *does* ship embeddings (=embeddings-dynamic= +
+onnxruntime-android), and the documented =--no-default-features= build
+line is not what the APK build uses.
+
+* What is healthy (verified 2026-08-12)
+
+- The =$state=-read-in-async effect-loop family is genuinely eliminated
+  (all 128 effects checked; the ProfileView and ReaderBuffer guards hold).
+- Content parsing is all Rust-side — no client markup parser at all;
+  =buildSegments= is a cheap linear merge.
+- The fetch-events SSE singleton: backoff, double-open guard, HMR-safe.
+- The rAF commit throttle, wiki 50-topic batching, concurrent publish
+  fanout, =ndResolveCache=, bounded feed paging, unreachable-section TTL —
+  the right instincts, applied locally.
+
+* The plan, in leverage order
+
+1. [[file:fix-release-profile.org][Release profile]] — hours, halves the
+   APK, zero risk
+2. [[file:fix-reader-effect-churn.org][Reader effect churn]] — kills the
+   steady-state full-document POST loop
+3. [[file:fix-relay-connection-churn.org][Relay churn]] +
+   [[file:fix-sequential-section-loads.org][section loads]] — read fanout
+   concurrency + connection reuse
+4. [[file:fix-resolve-cost-model.org][Resolve cost model]] — one tree +
+   sibling load per request; negative-result TTL
+5. [[file:fix-android-boot-blocking.org][Android boot]] +
+   [[file:fix-background-tick-idle-cost.org][tick watermark]]
+6. Structural: [[file:fix-resolve-in-stream.org][resolve-in-stream]],
+   then the persistent relay layer (Phase C of
+   [[file:feat-mobile.org][mobile]])
+
+* Related
+
+- [[file:fix-index.org][Fix index]] — all issues, status-tracked
+- [[file:index.org][Index]]
+- [[file:feat-engine-substrate.org][Engine substrate]]
+- [[file:feat-nostrdown.org][Nostrdown]]
+- [[file:feat-mobile.org][Mobile & Android]]

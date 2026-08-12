@@ -1,0 +1,60 @@
+#+TITLE: Fix Index
+#+TYPE: meta
+#+STATUS: current
+#+DATE: 2026-08-12
+
+The issue tracker of the kasten: every =fix-*= zettel, grouped by area,
+with severity. Tick a box when the fix ships; in the same change set the
+zettel's =#+STATUS:= to =fixed=, note the commit/date in the zettel, and
+update the owning =feat-*= zettel. Tick, don't delete — fixed zettels
+stay as provenance. Source evaluation:
+[[file:eval-performance-2026-08.org][performance evaluation (2026-08-12)]].
+
+* Engine data path
+
+- [ ] [[file:fix-relay-connection-churn.org][Relay connection churn]]
+  (critical) — fresh WebSocket per fetch, serial read fanout, no
+  reconnect discipline
+- [ ] [[file:fix-sequential-section-loads.org][Sequential section loads]]
+  (critical) — per-section awaits; M×R serial handshakes for missing trees
+- [ ] [[file:fix-ndb-lock-hold.org][nostrdb lock hold time]] (critical) —
+  global mutex held across full result materialization on runtime threads
+- [ ] [[file:fix-background-tick-idle-cost.org][Background tick idle cost]]
+  (high) — 100k-event scan + full id-set clone per minute; N+1 point
+  queries; HNSW rewrite every 32 embeds
+- [ ] [[file:fix-search-response-latency.org][Search response latency]]
+  (high) — every search awaits a sequential relay profile backfill
+- [ ] [[file:fix-embedding-runtime-blocking.org][Embedding runtime blocking]]
+  (high) — sync ONNX on tokio workers; =~:= can inline a 90 MB download
+
+* Nostrdown resolution
+
+- [ ] [[file:fix-resolve-cost-model.org][Resolve cost model]] (critical) —
+  M×2T locked queries per pass; misses never memoized; content-keyed cache
+- [ ] [[file:fix-resolve-in-stream.org][Resolve-in-stream]] (structural) —
+  emit resolved spans with the tree stream; prefetch ≡ resolve
+
+* Web reader
+
+- [ ] [[file:fix-reader-effect-churn.org][Reader effect churn]] (critical) —
+  2 s =networkStatus= dependency re-fires uncached full-document POSTs
+- [ ] [[file:fix-reader-remount-cost.org][Reader remount cost]] (high) —
+  buffer switch-back re-streams the whole publication + relay refetch
+- [ ] [[file:fix-reader-render-hotpath.org][Reader render hot path]] (high) —
+  O(G²) focusGraph clones, O(N²) deriveds, index-keyed each blocks, no
+  virtualization
+
+* Build & Android
+
+- [ ] [[file:fix-release-profile.org][Release profile]] (critical, cheap) —
+  no =[profile.release]= anywhere; 44 MB unstripped mobile =.so=
+- [ ] [[file:fix-android-boot-blocking.org][Android boot blocking]]
+  (critical) — engine boots via =block_on= on the UI thread, pre-WebView
+- [ ] [[file:fix-android-lifecycle.org][Android lifecycle gaps]] (high) —
+  suspend gates one loop; SSE/polls run on; debug logging in release
+
+* Related
+
+- [[file:eval-performance-2026-08.org][Performance evaluation (2026-08-12)]]
+- [[file:index.org][Index]]
+- [[file:conventions.org][Conventions]] — the =fix-*= lifecycle

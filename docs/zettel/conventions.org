@@ -10,6 +10,12 @@ single map; it organizes, the notes connect. Filenames are kebab-case with
 a type prefix so a link's nature is explicit:
 
 - =feat-*= — what exists (feature map; status implemented/partial)
+- =fix-*= — a diagnosed defect or inefficiency: dated observation with
+  evidence (file:line), why it matters, proposed fix as checkboxes.
+  STATUS: =open= / =in-progress= / =fixed=. All indexed in
+  [[file:fix-index.org][fix-index]]; when one ships, tick it there, set
+  its STATUS to =fixed= with the commit/date, and update the owning
+  =feat-*= zettel — tick, don't delete.
 - =idea-*= — brainstorm / feature request, articulated as data →
   representation → UI/UX; out of implementation scope until promoted
 - =cmp-*= — software we model off of; where similarities exist
@@ -19,8 +25,8 @@ a type prefix so a link's nature is explicit:
 - =scope-*=, =mission=, =conventions=, =index= — meta
 
 Header block on every zettel:
-=#+TITLE:= / =#+TYPE:= (feature | idea | decision | question | comparison |
-meta) / =#+STATUS:= / =#+DATE:=.
+=#+TITLE:= / =#+TYPE:= (feature | fix | idea | decision | question |
+comparison | report | meta) / =#+STATUS:= / =#+DATE:=.
 
 STATUS vocabulary: =implemented= / =partial= / =spec= (spec'd, code absent) /
 =brainstorm= / =deferred= / =out-of-scope= / =open= / =current= (meta docs).

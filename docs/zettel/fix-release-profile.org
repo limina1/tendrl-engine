@@ -1,0 +1,42 @@
+#+TITLE: Fix: Release Profile
+#+TYPE: fix
+#+STATUS: open
+#+DATE: 2026-08-12
+
+* The issue (observed 2026-08-12, v0.8.2)
+
+There is *no* =[profile.release]= anywhere: not in the root =Cargo.toml=,
+and not in =mobile/src-tauri/= — which is deliberately outside the root
+workspace and is therefore its own workspace root inheriting cargo
+defaults (=opt-level 3=, *no LTO*, =codegen-units 16=, =strip none=,
+=panic unwind=). Measured consequences:
+
+- Desktop release binary: 59 MB.
+- =libtendrl_mobile_lib.so= in the shipped APK: *44.4 MB, not
+  stripped* (verified via =file= on the APK entry) — ~60% of the 72 MB
+  APK. Gradle's =isMinifyEnabled= is R8 on the dex and does nothing for
+  the native lib. Native libs ship uncompressed (16 KB page alignment),
+  so install size ≈ the full 75.8 MB.
+- The mobile risk register's mitigation "strip + LTO as in release
+  profile" referenced a profile that did not exist (corrected in
+  [[file:feat-mobile.org][the mobile zettel]], 2026-08-12).
+
+Adjacent build-hygiene tax: rust-embed doesn't watch =web/build/=, so
+=build-android.sh= forces =cargo clean -p nostr-engine= — a *full engine
+recompile on every APK build*.
+
+* Proposed fix
+
+- [ ] =[profile.release]= in both workspace roots: =lto = "thin"= (try
+  =fat= and compare), =strip = true=, =codegen-units = 1=
+- [ ] =panic = "abort"= for the mobile workspace
+- [ ] Rebuild, record binary/APK size deltas here
+- [ ] =cargo:rerun-if-changed= on =web/build/= (build script) to drop
+  the forced clean
+
+* Related
+
+- [[file:fix-index.org][Fix index]] · [[file:index.org][Index]]
+- [[file:eval-performance-2026-08.org][Performance evaluation (2026-08-12)]]
+- [[file:feat-mobile.org][Mobile & Android]]
+- [[file:fix-android-boot-blocking.org][Android boot blocking]]

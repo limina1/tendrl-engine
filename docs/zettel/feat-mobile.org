@@ -274,13 +274,38 @@ the hardware-back event, and later plugins (share intents, deep links).
 |------+----------+------------|
 | C/C++ deps under NDK (nostrdb, secp256k1) | blocks B1 | spike early, parallel to Phase A; both have mobile precedent |
 | =keyring= unusable on Android | sign-in broken | feature-gate; ncryptsec file path already exists |
-| ONNX Runtime on Android | none initially | =embeddings= feature off; Phase C revisit |
+| ONNX Runtime on Android | RAM/thermals/battery unmeasured (M3 measurement still unrecorded) | SHIPPED 2026-08 via =embeddings-dynamic= (dlopen'd onnxruntime-android); =EMBED_BATCH=8= caps inference RAM |
 | WebView blocks cleartext localhost | blank app | network-security-config scoped to 127.0.0.1 |
 | Engine port open to every app (shared Android loopback) | arbitrary sign/publish once a signer is attached | per-boot auth token (B1 item); gates NIP-55 landing |
 | OS kills background engine / SSE | stale UI, lost intents | lifecycle hooks (B2); reconnect-on-resume; no background work |
 | Hardware back exits app | unusable | A1 is the fix; gate M1 on it |
-| Binary size (engine + SPA + deps) | store friction only | embeddings off; strip + LTO as in release profile |
+| Binary size (engine + SPA + deps) | 72 MB APK; 44 MB unstripped =.so= (measured 2026-08-12) | [[file:fix-release-profile.org][fix-release-profile]] — the "release profile" this row once cited never existed |
 | Buffer UIs assume pointer/width | papercuts | A4 tail, prioritized by real device use after merge |
+
+* Performance audit (2026-08-12)
+
+The [[file:eval-performance-2026-08.org][August 2026 evaluation]] audited
+the Android host. Corrections to this zettel's earlier assumptions:
+embeddings are *on* for mobile (=embeddings-dynamic=, =lib.rs= enables
+them unconditionally; the B1-era "off for Android" lines above are
+historical), and the actual APK build is
+=default-features=false, features=["embed-assets","embeddings-dynamic"]=
+— not the =--no-default-features --features embed-assets= line
+=docs/commands.org= keeps as a cross-compile check. Open issues:
+
+- [[file:fix-android-boot-blocking.org][Boot blocking]] — engine boots
+  via =block_on= on the UI thread, pre-WebView (ANR exposure)
+- [[file:fix-android-lifecycle.org][Lifecycle gaps]] — suspend gates
+  only the 60 s loop (the B2/M2 SSE half is still open); debug-level
+  logcat in release
+- [[file:fix-release-profile.org][Release profile]] — the 44 MB
+  unstripped =.so=
+- [[file:fix-relay-connection-churn.org][Relay connection churn]] — a
+  radio wakeup per fetch; Phase C reconnect discipline is the fix's
+  structural half
+- The engine has zero =cfg(target_os = "android")= gates — the [[file:fix-ndb-lock-hold.org][query-lock]]
+  and [[file:fix-background-tick-idle-cost.org][tick-cost]] issues hit
+  hardest here (cold mmap faults from flash, battery)
 
 * Verification
 

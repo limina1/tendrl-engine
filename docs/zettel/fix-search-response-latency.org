@@ -1,0 +1,38 @@
+#+TITLE: Fix: Search Response Latency
+#+TYPE: fix
+#+STATUS: open
+#+DATE: 2026-08-12
+
+* The issue (observed 2026-08-12, v0.8.2)
+
+Every search *awaits* =backfill_result_profiles= before responding
+(=api.rs:611=, =:646=; definition =:662-684=): one =profile_exists= DB
+query per result author, then a *sequential relay fanout across the
+union of all relay sets* (=engine.rs:2285=, =:2305=). Local results are
+in hand and then wait on the network. Compound =|= queries also run
+their branches sequentially (=api.rs:566-595=), each branch potentially
+an exhaustive scan plus its own relay fanout.
+
+* Why it matters
+
+Search is the highest-frequency interactive surface; a relay round trip
+(with [[file:fix-relay-connection-churn.org][fresh-socket cost]] and a
+15 s ceiling per relay) is added to every query even when everything
+needed is local. The web already has a late-hydration path for profiles
+(=prefetchProfiles=, debounced), so the await buys nothing the UI needs.
+
+* Proposed fix
+
+- [ ] Return local results immediately; run the profile backfill
+  detached (results carry pubkeys; the existing web profile hydration
+  fills names as they land)
+- [ ] Batch profile-existence checks into one multi-author filter
+  (see [[file:fix-ndb-lock-hold.org][lock hold]])
+- [ ] Run compound =|= branches concurrently (bounded)
+
+* Related
+
+- [[file:fix-index.org][Fix index]] · [[file:index.org][Index]]
+- [[file:eval-performance-2026-08.org][Performance evaluation (2026-08-12)]]
+- [[file:feat-search.org][Search]] · [[file:feat-profiles.org][Profiles]]
+- [[file:fix-relay-connection-churn.org][Relay connection churn]]

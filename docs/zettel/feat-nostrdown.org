@@ -102,6 +102,14 @@ branch is ready to fast-forward into =tendrl-web=.
 
 - ={{cite:}}= / kind 30161 — [[file:idea-citations.org][idea zettel]]
 - pin/live version semantics — [[file:idea-version-semantics.org][idea zettel]]
+- Performance (2026-08-12 audit): the overhaul above fixed the *wiki*
+  half; the sibling/tree half retains the pre-overhaul serial shape —
+  per resolve item, a full depth-4 tree load plus a one-at-a-time
+  re-query of every node just loaded (≈ M×2T locked queries per pass,
+  misses never memoized). Tactical:
+  [[file:fix-resolve-cost-model.org][fix-resolve-cost-model]];
+  structural: [[file:fix-resolve-in-stream.org][fix-resolve-in-stream]]
+  (resolution rides the tree stream; prefetch ≡ resolve).
 
 =#fragment= navigation was *dropped from the grammar* (decided) —
 [[file:q-heading-anchors.org][q-heading-anchors]].

@@ -37,6 +37,9 @@ semantic retrieval.
   length-sensitive code; fetch the full event by id.
 - Heterogeneous result display (publications, sections, profiles, pages mixed)
   is still listed as a design item in =docs/wm-shell.md=.
+- Performance (2026-08-12 audit): every search awaits a sequential relay
+  profile backfill before responding; compound =|= branches run
+  serially — [[file:fix-search-response-latency.org][fix-search-response-latency]].
 
 * Related
 - [[file:index.org][Index]]

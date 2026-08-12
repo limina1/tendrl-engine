@@ -1,0 +1,53 @@
+#+TITLE: Fix: Sequential Section Loads
+#+TYPE: fix
+#+STATUS: open
+#+DATE: 2026-08-12
+
+* The issue (observed 2026-08-12, v0.8.2)
+
+=load_sections= awaits one =get_addressable= per section, strictly
+serially (=publication.rs:806-861=, loop at =:813=); the SSE tree
+stream's leaf loop is the same shape (=publication.rs:1476-1546=).
+Concurrency exists only on the *index* axis
+(=buffer_unordered(MAX_CONCURRENT_INDEX_FETCHES = 8)=,
+=publication.rs:1238= / =:1579=) — never for leaves.
+
+Under =LocalFirst= each call is =limit: 1=, so the short-circuit
+(=engine.rs:2685=) only saves cached sections; every *missing* section
+falls through to the full serial relay fanout
+([[file:fix-relay-connection-churn.org][fresh socket per relay]]). A
+tree with 30 missing sections × 2 relays = 60 serial handshakes inside
+one HTTP handler; worst case minutes.
+
+The batched counterexample already exists in the same file:
+=backfill_publication_sections= groups missing coordinates by author
+into 50-d-tag chunked filters (=publication.rs:1046-1053=) — but even it
+fans out relays × filters serially (=:1126-1162=).
+
+* Why it matters
+
+Tree open latency for any partially-local publication; the SSE stream
+delivers leaves serially so the reader paints slowly even when relays
+are fast; each miss also holds the request inside the relay timeout
+budget. This is one of the two factors in the resolve cost model
+([[file:fix-resolve-cost-model.org][the other]]).
+
+* Proposed fix
+
+- [ ] Bounded-concurrent leaf loads (=buffer_unordered= over sections,
+  as the index axis already does)
+- [ ] For misses, aggregate into per-author multi-d-tag filters (reuse
+  the =backfill_publication_sections= chunking) instead of per-section
+  REQs
+- [ ] Dedupe relay connects across sections (needs
+  [[file:fix-relay-connection-churn.org][connection reuse]])
+- [ ] Early-exit relays once all pending filters are satisfied (the
+  taper at =engine.rs:1754= shows the pattern)
+
+* Related
+
+- [[file:fix-index.org][Fix index]] · [[file:index.org][Index]]
+- [[file:eval-performance-2026-08.org][Performance evaluation (2026-08-12)]]
+- [[file:fix-relay-connection-churn.org][Relay connection churn]]
+- [[file:fix-resolve-cost-model.org][Resolve cost model]]
+- [[file:feat-reader.org][Reader]] · [[file:feat-nostrdown.org][Nostrdown]]

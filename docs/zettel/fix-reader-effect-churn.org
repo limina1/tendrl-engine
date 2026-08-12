@@ -1,0 +1,51 @@
+#+TITLE: Fix: Reader Effect Churn
+#+TYPE: fix
+#+STATUS: open
+#+DATE: 2026-08-12
+
+* The issue (observed 2026-08-12, v0.8.2)
+
+=ContinuousView='s two resolve effects (=ContinuousView.svelte:67=,
+=:135=) depend on (a) the =sections= array, freshly allocated by every
+rAF stream commit, and (b) =app.networkStatus=, which a 2 s poll
+reassigns with *no equality guard* (=state.svelte.ts:4169-4184=; the
+effects read =app.networkStatus?.mode= synchronously). Consequences:
+
+- During a stream: up to one full-document =/highlights/resolve= +
+  =/nostrdown/parse= round trip per animation frame.
+- At steady state: both POSTs re-fire *every 2 seconds, forever*, per
+  mounted reader. Only =/nostrdown/resolve= is session-cached
+  (=api.ts:358=); =parseNostrdown= (=api.ts:479=) and =resolveHighlights=
+  (=api.ts:298=) have no cache at all.
+- The effect resolves every *loaded* section, not every *visible* one
+  (=ContinuousView.svelte:143= ignores the collapse model).
+- A second, independent network-status poll runs at 5 s / 1.5 s
+  (=+page.svelte:397=), not =document.hidden=-guarded.
+- Draft previews are worse: excluded from the cache (=api.ts:361=), the
+  composer's =DraftReader= re-runs a full =local_only= *and* a
+  relay-reaching =local_first= resolve on every tick and keystroke.
+
+Same family as the fixed profile-query flood (bounded, not infinite —
+but it is the single largest network amplifier in the reader path).
+
+* Proposed fix
+
+- [ ] Equality-guard the status poll (only reassign =networkStatus= on
+  change), and/or read =mode= via =untrack= in the resolve effects
+- [ ] Session-cache =parseNostrdown= and =resolveHighlights= exactly as
+  =resolveNostrdown= is cached
+- [ ] Key the effects on a stable addr-set identity, not array identity
+- [ ] Resolve visible-first (respect the collapse model; backfill the
+  rest idle)
+- [ ] Collapse the duplicate 5 s poll into the 2 s one
+- [ ] Cache draft resolves with invalidation on edit
+  ([[file:fix-resolve-cost-model.org][cost model]])
+
+* Related
+
+- [[file:fix-index.org][Fix index]] · [[file:index.org][Index]]
+- [[file:eval-performance-2026-08.org][Performance evaluation (2026-08-12)]]
+- [[file:fix-resolve-cost-model.org][Resolve cost model]]
+- [[file:fix-resolve-in-stream.org][Resolve-in-stream]] — removes these
+  effects outright for the reader path
+- [[file:feat-reader.org][Reader]] · [[file:feat-nostrdown.org][Nostrdown]]

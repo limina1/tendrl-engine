@@ -42,6 +42,8 @@ exists (with code paths), gaps.
 - [[file:feat-discussions.org][Discussions & highlights]] — 9802 anatomy, source families, both capture surfaces
 
 ** Substrate
+- [[file:feat-engine-substrate.org][Engine substrate]] — nostrdb + the
+  query lock, boot, the 60 s background tick
 - [[file:feat-network.org][Network modes]] — FetchPolicy, Auto/Confirm intents
 - [[file:feat-relays.org][Relay sets]] — general/fetch/publish, relays.json
 - [[file:feat-import.org][Document import]] — PDF/DOCX/EPUB/HTML → events, JSONL ingest/export
@@ -59,6 +61,18 @@ exists (with code paths), gaps.
   — markup-agnostic grammar is data-layer, not display-layer
 - [[file:q-heading-anchors.org][Heading anchors dropped from the grammar]]
   — sub-section addressing belongs to the markup engine; make it a 30041 instead
+
+* Issues — the fix layer
+
+Diagnosed defects/inefficiencies as atomic =fix-*= zettels (format:
+[[file:conventions.org][conventions]]); worked through and ticked in the
+index, never deleted:
+
+- [[file:fix-index.org][Fix index]] — all open issues, grouped, with
+  severity (14 open as of 2026-08-12)
+- [[file:eval-performance-2026-08.org][Performance evaluation
+  (2026-08-12)]] — the two-part desktop/Android audit the fix layer grew
+  from; cost models, what's healthy, the leverage-ordered plan
 
 * In flight — the mobile / Android epoch
 

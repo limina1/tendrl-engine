@@ -60,6 +60,10 @@ navigation. Full spec: =docs/wm-shell.md=; shell root in
 - Per =docs/wm-shell.md=: deep-link routing (=/p/<pk>/<dtag>= → buffer),
   cross-tab BroadcastChannel sync, user-savable perspectives, and Shell
   extraction into a reusable component are still open.
+- The unmount-on-switch model is only cheap when renderers follow the
+  composer's state-ownership pattern; the reader doesn't yet —
+  [[file:fix-reader-remount-cost.org][fix-reader-remount-cost]]
+  (2026-08-12 audit).
 
 * Constraints when building buffer features (learned the hard way, 2026-07-06)
 Two non-obvious traps in the buffer render path — each cost multiple

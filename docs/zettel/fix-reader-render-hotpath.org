@@ -1,0 +1,48 @@
+#+TITLE: Fix: Reader Render Hot Path
+#+TYPE: fix
+#+STATUS: open
+#+DATE: 2026-08-12
+
+* The issue (observed 2026-08-12, v0.8.2)
+
+Superlinear work in =ReaderBuffer= during streaming and rendering:
+
+- =focusGraph= is fully spread-cloned per *index event*, un-throttled
+  (=ReaderBuffer.svelte:1111-1124=) — O(G²) over a load, unlike the
+  section commit which is correctly rAF-batched.
+- Each rAF commit walks the whole node graph allocating a fresh
+  =LazySection= per node (=:997-1027=) — O(N) fresh objects per frame,
+  and the new array identity invalidates the derived cascade below.
+- =outlineChildInfo= is a nested scan, O(N²) worst case (=:496-512=),
+  recomputed per frame during a stream; =drawerHighlights= substring
+  scans every section per recompute (=:686-714=).
+- The outline template calls =effectiveHighlightsForSection= per visible
+  row (=:2602= → =:426=), which starts with an O(N) =find= — O(V×N) per
+  render, plus =findPoolItemByAddr= linear pool scans (=:2565=, =:2646=).
+- Each-block keys embed =row.index= (=:2525=, =ContinuousView.svelte:399=):
+  a mid-tree arrival shifts every downstream key, so Svelte destroys and
+  remounts the tail (=SectionCard= + =RichContent=) once per frame.
+- No list virtualization anywhere: feed appends unbounded
+  (=state.svelte.ts:1219=), search renders all results, continuous view
+  keeps every row in the DOM (its IntersectionObserver is for lazy
+  *loading*, and is rebuilt from scratch per commit,
+  =ContinuousView.svelte:359-390=).
+
+* Proposed fix
+
+- [ ] Fold =focusGraph= mutation into the rAF commit (or use fine-grained
+  reactive map instead of spread-clone)
+- [ ] Stable each keys: addr only, no index
+- [ ] Precompute child-info + per-section highlight lookup as Maps in
+  the commit's single walk (kill the O(N²)/O(V×N) deriveds)
+- [ ] Reuse the observer; observe only new rows
+- [ ] Windowing or =content-visibility: auto= for feed, search results,
+  and continuous view
+
+* Related
+
+- [[file:fix-index.org][Fix index]] · [[file:index.org][Index]]
+- [[file:eval-performance-2026-08.org][Performance evaluation (2026-08-12)]]
+- [[file:feat-reader.org][Reader]] · [[file:feat-feed.org][Feed]] ·
+  [[file:feat-shell.org][WM shell]]
+- [[file:fix-reader-remount-cost.org][Reader remount cost]]
