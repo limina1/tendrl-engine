@@ -17,8 +17,9 @@ stay as provenance. Source evaluation:
   reconnect discipline (in-progress 2026-08-12: read fanout now
   bounded-concurrent + batched REQs; connection reuse / persistent
   layer still open)
-- [ ] [[file:fix-sequential-section-loads.org][Sequential section loads]]
+- [X] [[file:fix-sequential-section-loads.org][Sequential section loads]]
   (critical) — per-section awaits; M×R serial handshakes for missing trees
+  (fixed 2026-08-12)
 - [ ] [[file:fix-ndb-lock-hold.org][nostrdb lock hold time]] (critical) —
   global mutex held across full result materialization on runtime threads
 - [X] [[file:fix-background-tick-idle-cost.org][Background tick idle cost]]

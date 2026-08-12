@@ -385,3 +385,17 @@ declaration". aarch64 never takes that branch, so arm64 builds are fine.
 Fix is a one-liner upstream: guard with =!defined(__ANDROID__)= (bionic
 needs no syscall forward-declaration). Until then: on-device embeddings
 are arm64-only (decision recorded in docs/ondevice-embeddings-plan.md).
+
+* OPEN — engine test suite flakes under full parallelism (test infra)
+:PROPERTIES:
+:found: 2026-08-12 (perf/2026-08-fixes verification runs)
+:END:
+With the default 16-way =cargo test= parallelism, one nostrdb-backed
+test intermittently fails (a different one each run —
+=test_search_by_tag=, =test_get_addressable_returns_latest_version= —
+each passing in isolation and at =--test-threads=4=). Mechanism:
+=ingest_and_wait= swallows its 5 s =wait_for_notes= timeout (=let _ ==)
+and every test boots its own =Ndb= with 2 ingester threads, so a loaded
+machine can leave the ingest un-settled when the assertion queries. Fix
+candidates: fail loudly on the timeout instead of swallowing it, or
+poll-retry the query. Not a product bug.

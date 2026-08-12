@@ -1,7 +1,8 @@
 #+TITLE: Fix: Sequential Section Loads
 #+TYPE: fix
-#+STATUS: open
+#+STATUS: fixed
 #+DATE: 2026-08-12
+#+FIXED: 2026-08-12, perf/2026-08-fixes (perf(sections): three-phase load_sections…)
 
 * The issue (observed 2026-08-12, v0.8.2)
 
@@ -34,15 +35,27 @@ budget. This is one of the two factors in the resolve cost model
 
 * Proposed fix
 
-- [ ] Bounded-concurrent leaf loads (=buffer_unordered= over sections,
-  as the index axis already does)
-- [ ] For misses, aggregate into per-author multi-d-tag filters (reuse
+- [X] Bounded-concurrent leaf loads (=buffer_unordered= over sections,
+  as the index axis already does) —
+  =MAX_CONCURRENT_SECTION_LOADS = 8=; =load_sections= is now
+  three-phase (concurrent local pass → one batched relay pass for
+  misses → local re-read), and the SSE leaf loop shares the same
+  helpers, emitting local hits immediately and misses after the batch
+  (every section still emits exactly one event, so the client's i/N
+  counter is unchanged)
+- [X] For misses, aggregate into per-author multi-d-tag filters (reuse
   the =backfill_publication_sections= chunking) instead of per-section
-  REQs
-- [ ] Dedupe relay connects across sections (needs
-  [[file:fix-relay-connection-churn.org][connection reuse]])
-- [ ] Early-exit relays once all pending filters are satisfied (the
-  taper at =engine.rs:1754= shows the pattern)
+  REQs — =addr_filters= (per-(author,kind), 50-d-tag chunks), whole set
+  as ONE REQ per relay
+- [X] Dedupe relay connects across sections — subsumed: batching makes
+  per-section connects structurally impossible (one connect per relay
+  per pass); cross-*operation* connection reuse remains with the
+  [[file:fix-relay-connection-churn.org][deferred connection layer]]
+- [X] Early-exit relays once all pending filters are satisfied (the
+  taper at =engine.rs:1754= shows the pattern) — relay results drain as
+  a stream; once a batched local re-check finds everything, the
+  remaining in-flight fetches are dropped (their FetchGuards clean up
+  on drop). =FetchAlways= deliberately drains all relays.
 
 * Related
 

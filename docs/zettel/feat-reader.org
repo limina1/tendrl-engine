@@ -37,6 +37,11 @@ never happen in the browser.
   re-streams everything), [[file:fix-reader-render-hotpath.org][render
   hot path]] (O(N²) deriveds, index-keyed each blocks) — and the
   structural cure, [[file:fix-resolve-in-stream.org][resolve-in-stream]].
+  Fixed same day: [[file:fix-sequential-section-loads.org][sequential
+  section loads]] — the tree stream's leaves now load
+  bounded-concurrent with one batched relay REQ per relay for misses,
+  so a partially-local publication paints local sections immediately
+  instead of stalling behind serial per-section relay fanouts.
 
 * Related
 - [[file:index.org][Index]]

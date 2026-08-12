@@ -44,7 +44,7 @@ const READ_FANOUT: usize = 8;
 const UNREACHABLE_RETRY_TTL: std::time::Duration = std::time::Duration::from_secs(30 * 60);
 
 /// Extract the `d` tag value from an event's tags.
-fn event_d_tag(event: &Value) -> Option<&str> {
+pub(crate) fn event_d_tag(event: &Value) -> Option<&str> {
     event.get("tags").and_then(|v| v.as_array()).and_then(|tags| {
         tags.iter().find_map(|tag| {
             let arr = tag.as_array()?;

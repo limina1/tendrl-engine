@@ -22,6 +22,89 @@ pub mod tree_emit;
 pub const KIND_PUBLICATION_INDEX: u64 = 30040;
 pub const KIND_PUBLICATION_SECTION: u64 = 30041;
 
+/// Max section (30041 leaf) loads in flight at once — the leaf-axis twin of
+/// `MAX_CONCURRENT_INDEX_FETCHES` (the index axis was bounded-concurrent
+/// from the start; leaves were serial).
+const MAX_CONCURRENT_SECTION_LOADS: usize = 8;
+
+/// Fill a [`Section`] from its loaded event: content, `title` tag, and the
+/// `Loaded` status. One home for the extraction all load paths share.
+fn fill_section(section: &mut Section, event: Value) {
+    section.content = event.get("content").and_then(|v| v.as_str()).map(String::from);
+    if let Some(tags) = event.get("tags").and_then(|v| v.as_array()) {
+        for tag in tags {
+            if let Some(arr) = tag.as_array() {
+                if arr.first().and_then(|v| v.as_str()) == Some("title") {
+                    section.title = arr.get(1).and_then(|v| v.as_str()).map(String::from);
+                }
+            }
+        }
+    }
+    section.event = LoadStatus::Loaded { data: event };
+}
+
+/// NIP-01 filters covering `addrs`: grouped per (author, kind), d-tags
+/// chunked at 50 per filter — the same shape `backfill_publication_sections`
+/// established. Filters in one REQ are ORed, so the whole set rides one
+/// subscription per relay.
+/// Build the SSE `Leaf` event for a loaded section event. Mirrors the
+/// publication-index path: sig + relay provenance ride along so the section
+/// row renders the same draft / relay-label pill the root publication does.
+fn leaf_pub_event(addr: NAddr, depth: usize, leaf: &Value) -> PubLoadEvent {
+    let content = leaf.get("content").and_then(|v| v.as_str()).map(String::from);
+    let title = leaf.get("tags").and_then(|v| v.as_array()).and_then(|tags| {
+        tags.iter().find_map(|t| {
+            let t = t.as_array()?;
+            if t.first()?.as_str()? == "title" {
+                t.get(1)?.as_str().map(String::from)
+            } else {
+                None
+            }
+        })
+    });
+    let relays: Vec<String> = leaf
+        .get("relays")
+        .and_then(|v| v.as_array())
+        .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+        .unwrap_or_default();
+    let signed = leaf
+        .get("sig")
+        .and_then(|v| v.as_str())
+        .map(|s| !s.is_empty() && !s.chars().all(|c| c == '0'))
+        .unwrap_or(false);
+    PubLoadEvent::Leaf {
+        addr,
+        depth,
+        title,
+        content,
+        relays,
+        signed,
+    }
+}
+
+fn addr_filters(addrs: &[NAddr]) -> Vec<Value> {
+    use std::collections::HashMap;
+    let mut grouped: HashMap<(String, u64), Vec<String>> = HashMap::new();
+    for addr in addrs {
+        grouped
+            .entry((addr.pubkey.clone(), addr.kind))
+            .or_default()
+            .push(addr.d_tag.clone());
+    }
+    let mut filters = Vec::new();
+    for ((pubkey, kind), d_tags) in grouped {
+        for chunk in d_tags.chunks(50) {
+            filters.push(serde_json::json!({
+                "kinds": [kind],
+                "authors": [pubkey],
+                "#d": chunk,
+                "limit": chunk.len() * 2,
+            }));
+        }
+    }
+    filters
+}
+
 /// Mint an opaque d-tag — 21-character URL-safe random string, same shape as
 /// the JS nanoid package (alphabet `A-Za-z0-9_-`). NKBIP-01 publications use
 /// stable nanoid d-tags so titles can be edited without breaking addressable
@@ -802,62 +885,194 @@ impl<'a> PublicationEngine<'a> {
         Publication::from_event(&event, true)
     }
 
-    /// Load all sections for a publication
+    /// Load all sections for a publication.
+    ///
+    /// Three phases instead of one serial per-section `get_addressable` loop
+    /// (which under LocalFirst turned every *missing* section into its own
+    /// full relay fanout — a 30-miss tree × 2 relays was 60 serial
+    /// handshakes inside one handler):
+    ///
+    /// 1. Bounded-concurrent LOCAL pass over every unloaded section.
+    /// 2. One batched relay pass for the misses — per-author 50-d-tag
+    ///    chunked filters, one REQ per relay, relays concurrent, early exit
+    ///    once a local re-check is satisfied. (`FetchAlways` sends every
+    ///    section through this pass and drains all relays.)
+    /// 3. Local re-read of the fetched set (latest-wins via
+    ///    `get_addressable`); leftovers become `Failed` exactly as before.
     pub async fn load_sections(
         &self,
         pub_: &mut Publication,
         policy: FetchPolicy,
     ) -> Result<usize> {
-        let mut loaded = 0;
+        let targets: Vec<(usize, NAddr)> = pub_
+            .sections
+            .iter()
+            .enumerate()
+            .filter(|(_, s)| !s.event.is_loaded())
+            .map(|(i, s)| (i, s.addr.clone()))
+            .collect();
+        if targets.is_empty() {
+            return Ok(0);
+        }
+        for (i, _) in &targets {
+            pub_.sections[*i].event = LoadStatus::Loading;
+        }
+        let fetch_always = matches!(policy, FetchPolicy::FetchAlways);
 
-        for section in &mut pub_.sections {
-            if section.event.is_loaded() {
-                continue;
-            }
+        // Phase 1: local pass.
+        let addrs: Vec<NAddr> = targets.iter().map(|(_, a)| a.clone()).collect();
+        let local = self.load_addrs_local(&addrs).await;
 
-            section.event = LoadStatus::Loading;
-
-            match self
-                .engine
-                .get_addressable(
-                    section.addr.kind,
-                    &section.addr.pubkey,
-                    &section.addr.d_tag,
-                    policy,
-                )
-                .await
-            {
-                Ok(Some(event)) => {
-                    // Extract content and title from section event
-                    section.content = event.get("content").and_then(|v| v.as_str()).map(String::from);
-
-                    if let Some(tags) = event.get("tags").and_then(|v| v.as_array()) {
-                        for tag in tags {
-                            if let Some(arr) = tag.as_array() {
-                                if arr.first().and_then(|v| v.as_str()) == Some("title") {
-                                    section.title = arr.get(1).and_then(|v| v.as_str()).map(String::from);
-                                }
-                            }
-                        }
-                    }
-
-                    section.event = LoadStatus::Loaded { data: event };
+        let mut loaded = 0usize;
+        let mut pending: Vec<(usize, NAddr)> = Vec::new();
+        for ((i, addr), event) in targets.into_iter().zip(local) {
+            match event {
+                // FetchAlways refetches even locally-present sections.
+                Some(event) if !fetch_always => {
+                    fill_section(&mut pub_.sections[i], event);
                     loaded += 1;
                 }
-                Ok(None) => {
-                    section.event = LoadStatus::Failed {
-                        error: "Section not found".into(),
-                    };
+                _ => pending.push((i, addr)),
+            }
+        }
+        if pending.is_empty() {
+            return Ok(loaded);
+        }
+
+        // Phase 2: batched relay pass (skipped for LocalOnly; offline mode
+        // gates inside the tracked fetch exactly as the old per-section
+        // path's policy downgrade did).
+        if !matches!(policy, FetchPolicy::LocalOnly) {
+            let pending_addrs: Vec<NAddr> = pending.iter().map(|(_, a)| a.clone()).collect();
+            let trigger = if fetch_always {
+                crate::network::FetchTrigger::FetchAlways
+            } else {
+                crate::network::FetchTrigger::LocalFirst
+            };
+            self.fetch_addrs_batched(&pending_addrs, trigger, !fetch_always)
+                .await;
+        }
+
+        // Phase 3: local re-read — fetched events were ingested inline.
+        let pending_addrs: Vec<NAddr> = pending.iter().map(|(_, a)| a.clone()).collect();
+        let reread = self.load_addrs_local(&pending_addrs).await;
+        for ((i, _), event) in pending.into_iter().zip(reread) {
+            match event {
+                Some(event) => {
+                    fill_section(&mut pub_.sections[i], event);
+                    loaded += 1;
                 }
-                Err(e) => {
-                    section.event = LoadStatus::Failed {
-                        error: e.to_string(),
+                None => {
+                    pub_.sections[i].event = LoadStatus::Failed {
+                        error: "Section not found".into(),
                     };
                 }
             }
         }
 
         Ok(loaded)
+    }
+
+    /// Bounded-concurrent LOCAL load of `addrs` — one `Option<Value>` per
+    /// input address, positionally aligned. Latest-wins per addressable
+    /// (`get_addressable` semantics).
+    async fn load_addrs_local(&self, addrs: &[NAddr]) -> Vec<Option<Value>> {
+        use futures::stream::StreamExt;
+        if addrs.is_empty() {
+            return Vec::new();
+        }
+        let results: Vec<(usize, Option<Value>)> =
+            futures::stream::iter(addrs.iter().cloned().enumerate())
+                .map(|(i, addr)| async move {
+                    let ev = self
+                        .engine
+                        .get_addressable(
+                            addr.kind,
+                            &addr.pubkey,
+                            &addr.d_tag,
+                            FetchPolicy::LocalOnly,
+                        )
+                        .await
+                        .ok()
+                        .flatten();
+                    (i, ev)
+                })
+                .buffer_unordered(MAX_CONCURRENT_SECTION_LOADS)
+                .collect()
+                .await;
+        let mut out: Vec<Option<Value>> = vec![None; addrs.len()];
+        for (i, ev) in results {
+            out[i] = ev;
+        }
+        out
+    }
+
+    /// One batched relay pass for missing addressables: per-(author, kind)
+    /// 50-d-tag chunked filters, the whole set as ONE REQ per relay, relays
+    /// bounded-concurrent. With `early_exit`, results are drained as relays
+    /// complete and the remaining in-flight fetches are dropped (their
+    /// guards clean up) once a local re-check finds every address present.
+    /// Fetched events ingest into nostrdb inline; the caller re-reads
+    /// locally afterwards.
+    async fn fetch_addrs_batched(
+        &self,
+        addrs: &[NAddr],
+        trigger: crate::network::FetchTrigger,
+        early_exit: bool,
+    ) {
+        use futures::stream::StreamExt;
+        let filters = addr_filters(addrs);
+        if filters.is_empty() {
+            return;
+        }
+        let relays = self.engine.relays();
+        if relays.is_empty() {
+            return;
+        }
+        let filters_ref = &filters;
+        let mut stream = futures::stream::iter(relays.iter().cloned())
+            .map(|relay_url| {
+                let trigger = trigger.clone();
+                async move {
+                    self.engine
+                        .tracked_fetch_with_options(&relay_url, filters_ref, trigger, false)
+                        .await
+                }
+            })
+            .buffer_unordered(MAX_CONCURRENT_SECTION_LOADS);
+        while let Some(result) = stream.next().await {
+            let fetched_any = matches!(&result, Ok(events) if !events.is_empty());
+            if early_exit && fetched_any && self.missing_addrs_local(addrs).await.is_empty() {
+                break;
+            }
+        }
+    }
+
+    /// Which of `addrs` are still absent locally — one batched LocalOnly
+    /// query over the same chunked filters, not a point query per address.
+    async fn missing_addrs_local(&self, addrs: &[NAddr]) -> Vec<NAddr> {
+        let filters = addr_filters(addrs);
+        let found = self
+            .engine
+            .get_events(filters, FetchPolicy::LocalOnly, None)
+            .await
+            .map(|r| r.events)
+            .unwrap_or_default();
+        let have: std::collections::HashSet<(u64, String, String)> = found
+            .iter()
+            .filter_map(|e| {
+                Some((
+                    e.get("kind")?.as_u64()?,
+                    e.get("pubkey")?.as_str()?.to_string(),
+                    crate::engine::event_d_tag(e)?.to_string(),
+                ))
+            })
+            .collect();
+        addrs
+            .iter()
+            .filter(|a| !have.contains(&(a.kind, a.pubkey.clone(), a.d_tag.clone())))
+            .cloned()
+            .collect()
     }
 
     /// Load a single section by index
@@ -889,19 +1104,7 @@ impl<'a> PublicationEngine<'a> {
             .await
         {
             Ok(Some(event)) => {
-                section.content = event.get("content").and_then(|v| v.as_str()).map(String::from);
-
-                if let Some(tags) = event.get("tags").and_then(|v| v.as_array()) {
-                    for tag in tags {
-                        if let Some(arr) = tag.as_array() {
-                            if arr.first().and_then(|v| v.as_str()) == Some("title") {
-                                section.title = arr.get(1).and_then(|v| v.as_str()).map(String::from);
-                            }
-                        }
-                    }
-                }
-
-                section.event = LoadStatus::Loaded { data: event };
+                fill_section(section, event);
                 Ok(true)
             }
             Ok(None) => {
@@ -1480,76 +1683,58 @@ impl<'a> PublicationEngine<'a> {
                 return; // receiver gone — abort
             }
 
-            // 4. Resolve this index's content leaves, one event each.
-            for section in &pub_.sections {
-                let ev = match self
-                    .engine
-                    .get_addressable(
-                        section.addr.kind,
-                        &section.addr.pubkey,
-                        &section.addr.d_tag,
-                        policy,
-                    )
-                    .await
-                {
-                    Ok(Some(leaf)) => {
-                        let content = leaf
-                            .get("content")
-                            .and_then(|v| v.as_str())
-                            .map(String::from);
-                        let title = leaf
-                            .get("tags")
-                            .and_then(|v| v.as_array())
-                            .and_then(|tags| {
-                                tags.iter().find_map(|t| {
-                                    let t = t.as_array()?;
-                                    if t.first()?.as_str()? == "title" {
-                                        t.get(1)?.as_str().map(String::from)
-                                    } else {
-                                        None
-                                    }
-                                })
-                            });
-                        // Mirror the publication-index path: extract sig +
-                        // relays from the raw event JSON so the section row
-                        // can render the same draft / relay-label pill the
-                        // root publication does.
-                        let relays: Vec<String> = leaf
-                            .get("relays")
-                            .and_then(|v| v.as_array())
-                            .map(|a| {
-                                a.iter()
-                                    .filter_map(|v| v.as_str().map(String::from))
-                                    .collect()
-                            })
-                            .unwrap_or_default();
-                        let signed = leaf
-                            .get("sig")
-                            .and_then(|v| v.as_str())
-                            .map(|s| !s.is_empty() && !s.chars().all(|c| c == '0'))
-                            .unwrap_or(false);
-                        PubLoadEvent::Leaf {
-                            addr: section.addr.clone(),
-                            depth: depth + 1,
-                            title,
-                            content,
-                            relays,
-                            signed,
+            // 4. Resolve this index's content leaves: a concurrent LOCAL
+            //    pass first — hits paint immediately, in section order —
+            //    then ONE batched relay pass for the misses (per-author
+            //    chunked filters, one REQ per relay) instead of a serial
+            //    full relay fanout per missing section. Every section still
+            //    emits exactly one event (Leaf or Error), so the client's
+            //    i/N counter is unchanged; missing leaves just arrive after
+            //    the local ones rather than interleaved.
+            let fetch_always = matches!(policy, FetchPolicy::FetchAlways);
+            let section_addrs: Vec<NAddr> =
+                pub_.sections.iter().map(|s| s.addr.clone()).collect();
+            let local = self.load_addrs_local(&section_addrs).await;
+            let mut pending: Vec<NAddr> = Vec::new();
+            for (addr, event) in section_addrs.iter().zip(local) {
+                match event {
+                    Some(leaf) if !fetch_always => {
+                        if !emit_pub_event(
+                            &tx,
+                            &counter,
+                            leaf_pub_event(addr.clone(), depth + 1, &leaf),
+                        )
+                        .await
+                        {
+                            return; // receiver gone — abort
                         }
                     }
-                    Ok(None) => PubLoadEvent::Error {
-                        addr: section.addr.clone(),
-                        depth: depth + 1,
-                        message: "Section not found".into(),
-                    },
-                    Err(e) => PubLoadEvent::Error {
-                        addr: section.addr.clone(),
-                        depth: depth + 1,
-                        message: e.to_string(),
-                    },
-                };
-                if !emit_pub_event(&tx, &counter, ev).await {
-                    return; // receiver gone — abort
+                    _ => pending.push(addr.clone()),
+                }
+            }
+            if !pending.is_empty() {
+                if !matches!(policy, FetchPolicy::LocalOnly) {
+                    let trigger = if fetch_always {
+                        crate::network::FetchTrigger::FetchAlways
+                    } else {
+                        crate::network::FetchTrigger::LocalFirst
+                    };
+                    self.fetch_addrs_batched(&pending, trigger, !fetch_always)
+                        .await;
+                }
+                let reread = self.load_addrs_local(&pending).await;
+                for (addr, event) in pending.into_iter().zip(reread) {
+                    let ev = match event {
+                        Some(leaf) => leaf_pub_event(addr, depth + 1, &leaf),
+                        None => PubLoadEvent::Error {
+                            addr,
+                            depth: depth + 1,
+                            message: "Section not found".into(),
+                        },
+                    };
+                    if !emit_pub_event(&tx, &counter, ev).await {
+                        return; // receiver gone — abort
+                    }
                 }
             }
 
