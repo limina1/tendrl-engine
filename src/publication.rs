@@ -1119,13 +1119,18 @@ impl<'a> PublicationEngine<'a> {
         };
         let chosen = op.relays().to_vec();
 
-        // 5. Fan out across the approved relays. Each one ingests
-        //    into nostrdb as it streams; we just count totals for
-        //    the response.
-        let mut total_fetched = 0usize;
-        for relay_url in &chosen {
-            for filter in &filters {
-                op.relay_status(
+        // 5. Fan out across the approved relays, bounded-concurrent, with
+        //    the WHOLE filter set in one REQ per relay (NIP-01 ORs filters
+        //    within a subscription) — the old shape was relays × filters
+        //    serial WebSockets, and reported per-(relay, filter) statuses
+        //    that overwrote each other anyway. Each relay ingests into
+        //    nostrdb as it streams; we just count totals for the response.
+        use futures::stream::StreamExt;
+        let filters_ref = &filters;
+        let op_ref = &op;
+        let total_fetched: usize = futures::stream::iter(chosen.iter().cloned())
+            .map(|relay_url| async move {
+                op_ref.relay_status(
                     relay_url.clone(),
                     crate::network::Phase::Read,
                     crate::network::RelayStatusValue::Connecting,
@@ -1133,33 +1138,36 @@ impl<'a> PublicationEngine<'a> {
                 match self
                     .engine
                     .tracked_fetch_with_options(
-                        relay_url,
-                        std::slice::from_ref(filter),
+                        &relay_url,
+                        filters_ref,
                         crate::network::FetchTrigger::UserAction,
                         true,
                     )
                     .await
                 {
                     Ok(events) => {
-                        op.relay_status(
+                        op_ref.relay_status(
                             relay_url.clone(),
                             crate::network::Phase::Read,
                             crate::network::RelayStatusValue::Eose {
                                 event_count: events.len(),
                             },
                         );
-                        total_fetched += events.len();
+                        events.len()
                     }
                     Err(e) => {
-                        op.relay_status(
-                            relay_url.clone(),
+                        op_ref.relay_status(
+                            relay_url,
                             crate::network::Phase::Read,
                             crate::network::RelayStatusValue::Error { msg: e.to_string() },
                         );
+                        0
                     }
                 }
-            }
-        }
+            })
+            .buffer_unordered(8)
+            .fold(0usize, |acc, n| async move { acc + n })
+            .await;
         op.complete(total_fetched);
 
         Ok((total_needed, total_fetched))

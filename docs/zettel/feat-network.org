@@ -85,8 +85,11 @@ properties — route it through the choke point or replicate them.
 * Gaps / open edges
 - No per-source or per-kind fetch policies — the mode is engine-global.
 - Performance (2026-08-12 audit): every relay fetch is a fresh
-  WebSocket and multi-relay read fanout is serial —
-  [[file:fix-relay-connection-churn.org][fix-relay-connection-churn]].
+  WebSocket and +multi-relay read fanout is serial+ —
+  [[file:fix-relay-connection-churn.org][fix-relay-connection-churn]]
+  (read fanout made bounded-concurrent 2026-08-12, =READ_FANOUT = 8=,
+  same guard/kill-switch semantics; connection reuse and the
+  persistent layer remain open).
 
 * Related
 - [[file:index.org][Index]]

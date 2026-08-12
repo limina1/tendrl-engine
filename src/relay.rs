@@ -50,7 +50,15 @@ pub async fn fetch_with_filters(
         .await
         .map_err(|e| EngineError::Relay(format!("Failed to connect to {}: {}", relay_url, e)))?;
 
-    let sub_id = "nostr_engine_fetch";
+    // Unique per REQ. With one REQ per socket this is only hygiene, but a
+    // shared/pooled connection (the planned persistent layer) would collide
+    // subscriptions — and CLOSE the wrong one — on a fixed id.
+    static SUB_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let sub_id = format!(
+        "tendrl-fetch-{}",
+        SUB_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    );
+    let sub_id = sub_id.as_str();
 
     // Build REQ message: ["REQ", sub_id, filter1, filter2, ...]
     let mut req = vec![json!("REQ"), json!(sub_id)];
@@ -143,29 +151,6 @@ pub async fn fetch_with_filters(
     );
 
     Ok(fetched_events)
-}
-
-/// Fetch a single event by ID from relays
-pub async fn fetch_event_by_id(ndb: &Ndb, relays: &[String], event_id: &str) -> Result<Option<Value>> {
-    let filter = json!({
-        "ids": [event_id],
-        "limit": 1
-    });
-
-    for relay_url in relays {
-        match fetch_with_filters(ndb, relay_url, &[filter.clone()]).await {
-            Ok(events) => {
-                if let Some(event) = events.into_iter().next() {
-                    return Ok(Some(event));
-                }
-            }
-            Err(e) => {
-                debug!("Failed to fetch from {}: {}", relay_url, e);
-            }
-        }
-    }
-
-    Ok(None)
 }
 
 /// Result of publishing an event to a relay
@@ -369,56 +354,4 @@ where
 
     let success_count = relay_ok.iter().filter(|&&ok| ok).count();
     (success_count, total_relays, all_results)
-}
-
-/// Fetch an addressable event by kind:pubkey:d-tag from relays
-pub async fn fetch_addressable(
-    ndb: &Ndb,
-    relays: &[String],
-    kind: u64,
-    pubkey: &str,
-    d_tag: &str,
-) -> Result<Option<Value>> {
-    let filter = json!({
-        "kinds": [kind],
-        "authors": [pubkey],
-        "#d": [d_tag],
-        "limit": 1
-    });
-
-    for relay_url in relays {
-        debug!(
-            "Fetching {}:{}:{}... from {}",
-            kind,
-            &pubkey.chars().take(8).collect::<String>(),
-            d_tag,
-            relay_url
-        );
-
-        match fetch_with_filters(ndb, relay_url, &[filter.clone()]).await {
-            Ok(events) => {
-                if let Some(event) = events.into_iter().next() {
-                    info!(
-                        "Found {}:{}:{}... from {}",
-                        kind,
-                        &pubkey.chars().take(8).collect::<String>(),
-                        d_tag,
-                        relay_url
-                    );
-                    return Ok(Some(event));
-                }
-            }
-            Err(e) => {
-                debug!("Failed to fetch from {}: {}", relay_url, e);
-            }
-        }
-    }
-
-    debug!(
-        "Addressable event {}:{}:{}... not found on any relay",
-        kind,
-        &pubkey.chars().take(8).collect::<String>(),
-        d_tag
-    );
-    Ok(None)
 }

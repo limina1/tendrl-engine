@@ -32,6 +32,12 @@ const PROFILE_BACKFILL_CAP: usize = 200;
 /// inside `i32` (nostrdb's query-limit type).
 const EXHAUSTIVE_SCAN_LIMIT: usize = 1_000_000;
 
+/// Max relays a multi-relay read fans out to concurrently. Mirrors the
+/// publish path's bounded fanout (relay.rs MAX_CONCURRENT = 16, over
+/// relay×event pairs); reads are one socket per relay, so 8 keeps worst-case
+/// open sockets modest while collapsing the serial 15s-per-relay stacking.
+const READ_FANOUT: usize = 8;
+
 /// How long a section stays on the unreachable skip-list before the
 /// background sync retries it — also the fallback cadence for the full
 /// missing-sections pass when nothing new was ingested.
@@ -1482,24 +1488,37 @@ impl Engine {
         if !mode_confirm && !self.is_auto() {
             return Ok(vec![]);
         }
+        // Concurrent fanout, bounded: the serial version stacked each relay's
+        // 15s worst-case timeout end-to-end (the read-side mirror of the
+        // sequential-publish incident fixed in relay.rs). Each relay still
+        // gets its own FetchRecord/guard, so the activity log and the kill
+        // switch behave exactly as before; dedup happens on collect.
+        use futures::stream::StreamExt;
+        let results: Vec<Result<Vec<Value>>> = futures::stream::iter(relays.iter().cloned())
+            .map(|relay_url| {
+                let trigger = trigger.clone();
+                async move {
+                    let r = self
+                        .tracked_fetch_with_options(&relay_url, filters, trigger, mode_confirm)
+                        .await;
+                    if let Err(e) = &r {
+                        debug!("Relay {} error: {}", relay_url, e);
+                    }
+                    r
+                }
+            })
+            .buffer_unordered(READ_FANOUT)
+            .collect()
+            .await;
+
         let mut all_events = Vec::new();
         let mut seen_ids = std::collections::HashSet::new();
-        for relay_url in relays {
-            match self
-                .tracked_fetch_with_options(relay_url, filters, trigger.clone(), mode_confirm)
-                .await
-            {
-                Ok(events) => {
-                    for event in events {
-                        if let Some(id) = event.get("id").and_then(|v| v.as_str()) {
-                            if seen_ids.insert(id.to_string()) {
-                                all_events.push(event);
-                            }
-                        }
+        for events in results.into_iter().flatten() {
+            for event in events {
+                if let Some(id) = event.get("id").and_then(|v| v.as_str()) {
+                    if seen_ids.insert(id.to_string()) {
+                        all_events.push(event);
                     }
-                }
-                Err(e) => {
-                    debug!("Relay {} error: {}", relay_url, e);
                 }
             }
         }
@@ -2558,21 +2577,33 @@ impl Engine {
             "authors": missing,
             "limit": missing.len(),
         });
-        let mut fetched = 0;
-        for relay_url in &relays {
-            match self
-                .tracked_fetch_with_options(
-                    relay_url,
-                    &[filter.clone()],
-                    FetchTrigger::ProfilePrefetch,
-                    mode_confirm,
-                )
-                .await
-            {
-                Ok(events) => fetched += events.len(),
-                Err(e) => debug!("Profile backfill from {} failed: {}", relay_url, e),
-            }
-        }
+        // Identical filter per relay — a pure fanout, bounded-concurrent
+        // like every other multi-relay read.
+        use futures::stream::StreamExt;
+        let fetched: usize = futures::stream::iter(relays.iter().cloned())
+            .map(|relay_url| {
+                let filter = filter.clone();
+                async move {
+                    match self
+                        .tracked_fetch_with_options(
+                            &relay_url,
+                            std::slice::from_ref(&filter),
+                            FetchTrigger::ProfilePrefetch,
+                            mode_confirm,
+                        )
+                        .await
+                    {
+                        Ok(events) => events.len(),
+                        Err(e) => {
+                            debug!("Profile backfill from {} failed: {}", relay_url, e);
+                            0
+                        }
+                    }
+                }
+            })
+            .buffer_unordered(READ_FANOUT)
+            .fold(0usize, |acc, n| async move { acc + n })
+            .await;
         info!(
             "Profile backfill: ingested {} kind-0 event(s) for {} missing author(s)",
             fetched,

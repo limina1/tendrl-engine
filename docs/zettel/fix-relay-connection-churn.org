@@ -1,7 +1,8 @@
 #+TITLE: Fix: Relay Connection Churn
 #+TYPE: fix
-#+STATUS: open
+#+STATUS: in-progress
 #+DATE: 2026-08-12
+#+PROGRESS: 2026-08-12, perf/2026-08-fixes — read fanout concurrent; reuse/persistent layer still open
 
 * The issue (observed 2026-08-12, v0.8.2)
 
@@ -36,12 +37,32 @@ paths retain exactly the shape that comment describes.
 
 - [ ] Reuse one WebSocket per relay *within an operation* (a fetch
   session object threaded through the loops) — no global pool needed for
-  the first win
-- [ ] Convert read fanout to =buffer_unordered= mirroring the publish
-  path (bounded, per-relay)
+  the first win. /Deferred 2026-08-12/: needs FetchGuard bookkeeping
+  decoupled from connection lifetime and a handle threaded where
+  =&[String]= flows today; the batched-filter work
+  ([[file:fix-sequential-section-loads.org][section loads]]) collapses
+  per-section connects into one REQ per relay per author-chunk, which
+  captures most of this win. The sub-id blocker is cleared: REQs now
+  use unique =tendrl-fetch-N= ids instead of a fixed string that would
+  collide on a shared socket.
+- [X] Convert read fanout to =buffer_unordered= mirroring the publish
+  path (bounded, per-relay) — =READ_FANOUT = 8= in
+  =tracked_fetch_multiple_with_options= (the default multi-relay read
+  path) and =backfill_missing_profiles=;
+  =backfill_publication_sections= additionally sends its whole filter
+  set as ONE REQ per relay (NIP-01 ORs filters) instead of
+  relays × filters serial sockets. The dead serial helpers
+  =relay::fetch_event_by_id= / =relay::fetch_addressable= (zero
+  callers, bypassed FetchGuard) are deleted rather than converted.
 - [ ] Structural: a persistent connection layer — keep-alive sockets
   with backoff, close-on-suspend, reopen-on-foreground (Phase C;
   prerequisite for aggressive prefetching)
+
+Adjacent finding (out of this fix's scope, recorded 2026-08-12):
+=relay::publish_to_relays= (=relay.rs:284=) is still a serial loop —
+only the multi-event =publish_events_to_relays_with_progress= got the
+concurrent treatment after the 120-sends incident. Callers:
+=spell.rs=, two =api.rs= sites.
 
 * Related
 
