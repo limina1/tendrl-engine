@@ -1,7 +1,8 @@
 #+TITLE: Fix: Embedding Runtime Blocking
 #+TYPE: fix
-#+STATUS: open
+#+STATUS: fixed
 #+DATE: 2026-08-12
+#+FIXED: 2026-08-12, perf/embed-throttle-wiki-progress (perf(embed): off the runtime + per-tick budget)
 
 * The issue (observed 2026-08-12, v0.8.2)
 
@@ -26,14 +27,33 @@ serialization.
 
 * Proposed fix
 
-- [ ] =spawn_blocking= around inference (both sync pass and =~:= query
-  embedding)
-- [ ] =model_ready= guard in =semantic_search=: fail fast with a
-  "model warming" status (the engine already reports embedding status)
-  and kick the download in the background
-- [ ] Move =save()= outside the write-lock window (serialize from a
-  snapshot, or save once per pass —
-  [[file:fix-background-tick-idle-cost.org][tick cost]])
+- [X] =spawn_blocking= around inference (both sync pass and =~:= query
+  embedding) — =embed_texts=/=embed_query= are now honestly *sync*
+  (async-in-signature-only was the trap); all three call sites (event
+  sync pass, doc pages, =~:= query) run them on the blocking pool via
+  =blocking_read()=
+- [X] =model_ready= guard in =semantic_search=: fail fast with a
+  "model warming" status and kick the download in the background — the
+  first =~:= on a fresh install no longer runs the 90 MB download
+  inline while holding the index read lock
+- [X] Move =save()= outside the write-lock window — shipped with the
+  [[file:fix-background-tick-idle-cost.org][tick fix]] (saves happen
+  under a read lock on a 512-insert threshold); ticked here for the
+  record
+- [X] =embedding.max_per_tick= budget (added 2026-08-12, user report:
+  "embedding just kills the mobile experience") — cap how many events
+  one pass embeds; the remainder requeues into the
+  [[file:fix-background-tick-idle-cost.org][dirty set]] for later
+  ticks, turning a fresh install's continuous saturate-the-cores pass
+  into a background trickle. The mobile host defaults it to 64/tick
+  (≈600-section backlog in ~10 min of background time) the same way it
+  caps =database.mapsize_mb=; desktop stays unbounded; user-set
+  =config.toml= wins.
+
+Note for [[file:fix-release-profile.org][release-profile]]'s deferred
+=panic = "abort"=: still rejected — under =abort= a panic aborts the
+process regardless of task isolation, so the spawn-isolation rationale
+stands even now that inference is off the runtime.
 
 * Related
 

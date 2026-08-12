@@ -1,0 +1,45 @@
+#+TITLE: Fix: Wiki Resolve Progress
+#+TYPE: fix
+#+STATUS: open
+#+DATE: 2026-08-12
+
+* The issue (reported 2026-08-12, after the perf sweep)
+
+The [[file:fix-resolve-cost-model.org][resolve batching]] made the wiki
+lookup fast and one-shot — and thereby *silent*: the whole unresolved
+topic set goes out as one request-scoped flush, so the modeline's
+resolve counter sits still and then teleports (user report: "would jump
+from 10 to 300, which in the middle time is just confusing if things
+are hanging"). There is no intermediate signal between "sent" and
+"landed"; on a slow relay the UI is indistinguishable from a hang.
+
+This is a *feedback* gap, not a speed regression — the batch itself is
+the right shape. Pre-sweep the counter advanced per item only because
+the engine was doing M redundant flushes.
+
+* Proposed fix (tactical)
+
+- [ ] Chunk the client's relay backfill (=resolveNostrdownProgressive=)
+  into bounded section groups, applied as each lands, so the tracker
+  advances stepwise. Deliberately re-adds a few round trips for
+  legibility; server-side this is cheap post-sweep (the tree no longer
+  reloads per request, and repeated topics hit local after the first
+  chunk ingests them).
+- [ ] Busy-state messaging in the modeline tracker while the relay pass
+  is in flight ("fetching N topics…"), driven by the existing =busy=
+  flag, so even the first chunk's wait is visibly *working* rather than
+  hung.
+
+* The structural cure
+
+[[file:fix-resolve-in-stream.org][Resolve-in-stream]]: when resolution
+rides the SSE tree stream, incremental progress falls out for free and
+this zettel's chunking becomes unnecessary.
+
+* Related
+
+- [[file:fix-index.org][Fix index]] · [[file:index.org][Index]]
+- [[file:fix-resolve-cost-model.org][Resolve cost model]] — the batching
+  this reacts to
+- [[file:fix-resolve-in-stream.org][Resolve-in-stream]]
+- [[file:feat-nostrdown.org][Nostrdown]] · [[file:feat-reader.org][Reader]]

@@ -261,6 +261,11 @@ pub struct Engine {
     /// computed `to_embed` from the same snapshot and paid the ONNX cost
     /// twice per event before the insert dedup absorbed the duplicate.
     embedding_sync_guard: tokio::sync::Mutex<()>,
+    /// Per-pass embedding budget (0 = unbounded). Seeded from
+    /// `config.embedding.max_per_tick`; the remainder of a capped pass
+    /// requeues into `embed_dirty` for later ticks. Mobile sets this low so
+    /// a backlog trickles instead of saturating the cores.
+    embed_max_per_tick: std::sync::atomic::AtomicUsize,
     /// Set when a 30040/30041 lands in nostrdb; `fetch_missing_sections`'
     /// background wrapper skips the whole pass (100k-index scan included)
     /// while this is false and the periodic full pass isn't due.
@@ -401,6 +406,7 @@ impl Engine {
             embed_dirty: std::sync::Mutex::new(std::collections::HashSet::new()),
             embed_boot_scan_done: std::sync::atomic::AtomicBool::new(false),
             embedding_sync_guard: tokio::sync::Mutex::new(()),
+            embed_max_per_tick: std::sync::atomic::AtomicUsize::new(0),
             // Start dirty so the first background pass after boot always runs.
             sections_dirty: std::sync::atomic::AtomicBool::new(true),
             last_sections_pass: std::sync::Mutex::new(None),
@@ -1593,6 +1599,11 @@ impl Engine {
         *self.embed_kinds.write().unwrap() = seeded;
         self.auto_embed
             .store(config.auto_embed, std::sync::atomic::Ordering::Relaxed);
+        // 0 = unbounded (the desktop default).
+        self.embed_max_per_tick.store(
+            config.max_per_tick.unwrap_or(0),
+            std::sync::atomic::Ordering::Relaxed,
+        );
 
         let index_dir = config
             .index_path
@@ -1844,6 +1855,28 @@ impl Engine {
             });
         }
 
+        // Per-pass budget: embed at most `max_per_tick` now, requeue the
+        // rest into the dirty set for later ticks (the boot flag still flips
+        // below — the queued remainder IS the tracked backlog). Turns a
+        // fresh install's saturate-until-done pass into a trickle on hosts
+        // that cap it (mobile).
+        let budget = self
+            .embed_max_per_tick
+            .load(std::sync::atomic::Ordering::Relaxed);
+        let mut to_embed = to_embed;
+        if budget > 0 && to_embed.len() > budget {
+            let deferred = to_embed.split_off(budget);
+            let mut dirty = self.embed_dirty.lock().unwrap();
+            for (id, _) in &deferred {
+                dirty.insert(id.clone());
+            }
+            info!(
+                "Embedding budget: {} this pass, {} queued for later ticks",
+                to_embed.len(),
+                deferred.len()
+            );
+        }
+
         info!("Embedding {} new events", to_embed.len());
 
         // Batch embed — release lock between batches so status polling works.
@@ -1862,11 +1895,16 @@ impl Engine {
             let texts: Vec<String> = chunk.iter().map(|(_, t)| t.clone()).collect();
             let ids: Vec<String> = chunk.iter().map(|(id, _)| id.clone()).collect();
 
-            // Embed with read lock (only needs the backend, not mutation)
-            let vectors = {
-                let index = emb.read().await;
-                index.embed_texts(&texts).await
-            };
+            // Embed on the blocking pool — ONNX inference is CPU-bound and
+            // synchronous; running it on a tokio worker starved the HTTP
+            // server (and on mobile, the UI's own requests) for the whole
+            // batch. blocking_read: we're off-runtime inside spawn_blocking.
+            let emb_infer = std::sync::Arc::clone(emb);
+            let vectors = tokio::task::spawn_blocking(move || {
+                emb_infer.blocking_read().embed_texts(&texts)
+            })
+            .await
+            .map_err(|e| EngineError::Database(format!("spawn_blocking: {e}")))?;
 
             match vectors {
                 Ok(vectors) => {
@@ -2688,11 +2726,41 @@ impl Engine {
             || query.text_filter.is_some();
         let fetch_k = if has_post_filters { k * 10 } else { k * 5 };
 
-        // Embed the query
-        let index = emb.read().await;
-        let query_vec = index.embed_query(&semantic.query).await?;
+        // Fail fast while the ~90 MB model isn't on disk. The first `~:` on
+        // a fresh install used to run the whole download inline on a tokio
+        // worker while holding the index read lock (blocking every embed
+        // write behind it). A search IS an explicit user action, so kick the
+        // download in the background and tell the caller to retry.
+        {
+            let index = emb.read().await;
+            if !index.model_ready() {
+                drop(index);
+                let emb_dl = std::sync::Arc::clone(emb);
+                tokio::task::spawn_blocking(move || {
+                    if let Err(e) = emb_dl.blocking_read().ensure_model_loaded() {
+                        warn!("Embedding model download failed: {e}");
+                    }
+                });
+                return Err(EngineError::Config(
+                    "Embedding model is still downloading (~90 MB, started now) — \
+                     retry the ~: search in a moment"
+                        .into(),
+                ));
+            }
+        }
+
+        // Embed the query on the blocking pool (CPU-bound ONNX; may also pay
+        // the one-time model load from disk).
+        let emb_q = std::sync::Arc::clone(emb);
+        let query_text = semantic.query.clone();
+        let query_vec = tokio::task::spawn_blocking(move || {
+            emb_q.blocking_read().embed_query(&query_text)
+        })
+        .await
+        .map_err(|e| EngineError::Database(format!("spawn_blocking: {e}")))??;
 
         // Search HNSW
+        let index = emb.read().await;
         let matches = index.search(&query_vec, fetch_k)?;
         drop(index);
 
@@ -2939,10 +3007,13 @@ impl Engine {
                     keys[..chunk.len()].iter().map(|s| s.as_str()).collect();
                 let chunk_texts: Vec<String> = chunk.to_vec();
 
-                let vectors = {
-                    let index = emb.read().await;
-                    index.embed_texts(&chunk_texts).await
-                };
+                // Blocking pool — same contract as the event sync pass.
+                let emb_infer = std::sync::Arc::clone(emb);
+                let vectors = tokio::task::spawn_blocking(move || {
+                    emb_infer.blocking_read().embed_texts(&chunk_texts)
+                })
+                .await
+                .map_err(|e| EngineError::Database(format!("spawn_blocking: {e}")))?;
 
                 match vectors {
                     Ok(vecs) => {

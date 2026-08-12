@@ -362,6 +362,15 @@ pub struct EmbeddingConfig {
     /// the manual sync/reindex actions. Defaults on.
     #[serde(default = "default_auto_embed")]
     pub auto_embed: bool,
+    /// Per-pass embedding budget: at most this many events embed in one
+    /// background pass; the remainder stays queued for later ticks. `None`
+    /// (default) = unbounded — right for desktop, where a big pass is
+    /// tolerable. The mobile host sets a low cap so a fresh install's
+    /// backlog trickles instead of saturating the cores in one go. Manual
+    /// "/embed/reindex + sync" passes honor it too (they just take more
+    /// ticks to converge).
+    #[serde(default)]
+    pub max_per_tick: Option<usize>,
     /// Event kinds eligible for semantic embedding. Defaults to
     /// `embedding::DEFAULT_EMBED_KINDS`; editable from the UI's Embedding
     /// settings panel (POST /api/v1/embed/config) and persisted here so the
@@ -393,6 +402,7 @@ impl Default for EmbeddingConfig {
             cache_dir: None,
             auto_embed: default_auto_embed(),
             embed_kinds: default_embed_kinds(),
+            max_per_tick: None,
         }
     }
 }

@@ -320,7 +320,12 @@ impl EmbeddingIndex {
     /// the peak modest with negligible throughput cost.
     const EMBED_BATCH: usize = 8;
 
-    pub async fn embed_texts(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
+    /// CPU-bound, synchronous ONNX inference (may also lazily dlopen/load the
+    /// model on first call). Deliberately NOT async: it used to be `async` in
+    /// signature only, which let callers run whole inference batches on tokio
+    /// worker threads. Call from `spawn_blocking` (with `blocking_read()` on
+    /// the index lock) — every engine call site does.
+    pub fn embed_texts(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
         let refs: Vec<&str> = texts.iter().map(|s| s.as_str()).collect();
         self.backend()?
             .model
@@ -328,9 +333,9 @@ impl EmbeddingIndex {
             .map_err(|e| EngineError::Database(format!("ONNX embedding failed: {e}")))
     }
 
-    /// Embed a single text
-    pub async fn embed_query(&self, text: &str) -> Result<Vec<f32>> {
-        let results = self.embed_texts(&[text.to_string()]).await?;
+    /// Embed a single text. Same blocking contract as [`Self::embed_texts`].
+    pub fn embed_query(&self, text: &str) -> Result<Vec<f32>> {
+        let results = self.embed_texts(&[text.to_string()])?;
         results
             .into_iter()
             .next()
@@ -573,11 +578,11 @@ impl EmbeddingIndex {
         match self.never {}
     }
 
-    pub async fn embed_texts(&self, _texts: &[String]) -> Result<Vec<Vec<f32>>> {
+    pub fn embed_texts(&self, _texts: &[String]) -> Result<Vec<Vec<f32>>> {
         match self.never {}
     }
 
-    pub async fn embed_query(&self, _text: &str) -> Result<Vec<f32>> {
+    pub fn embed_query(&self, _text: &str) -> Result<Vec<f32>> {
         match self.never {}
     }
 

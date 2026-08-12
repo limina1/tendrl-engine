@@ -59,6 +59,11 @@ initial_relays = [
 enabled = false
 model = "all-MiniLM-L6-v2"            # friendly name or an explicit fastembed code
 dimensions = 384
+# Per-pass embedding budget: at most this many events embed per background
+# tick; the rest stays queued. Unset = unbounded (desktop default). The
+# Android host defaults this to 64 so a fresh install's backlog trickles
+# instead of pinning the cores.
+# max_per_tick = 64
 
 # AI assistant (optional). The Anthropic API key is NEVER stored here —
 # set ANTHROPIC_API_KEY in the environment. Without it the chat falls

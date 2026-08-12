@@ -32,9 +32,13 @@ index; the =~:= search operator queries it.
   ([[file:fix-background-tick-idle-cost.org][fix-background-tick-idle-cost]]:
   ingest-fed dirty set, one reconciliation scan per boot, saves every
   512 inserts, compact =vectors.map=, in-flight guard);
-  ONNX inference runs synchronously on tokio workers and =~:= can inline
-  the model download —
-  [[file:fix-embedding-runtime-blocking.org][fix-embedding-runtime-blocking]].
+  +ONNX inference runs synchronously on tokio workers and =~:= can inline
+  the model download+ — also fixed same day
+  ([[file:fix-embedding-runtime-blocking.org][fix-embedding-runtime-blocking]]:
+  inference on the blocking pool everywhere, =~:= fails fast while the
+  model downloads in the background, and the new
+  =embedding.max_per_tick= budget trickles backlogs — the mobile host
+  defaults it to 64/tick).
 
 * Related
 - [[file:index.org][Index]]

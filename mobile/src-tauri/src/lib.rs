@@ -56,6 +56,11 @@ fn engine_config(
     // model_ready flag. Boot-time only (init_embedding runs pre-Arc), so
     // the host decides rather than the settings UI.
     config.embedding.enabled = true;
+    // Embed in trickles: an uncapped backlog pass saturates the cores for
+    // minutes on-device (thermals + battery + a starved WebView). 64 per
+    // 60 s tick clears a 600-section backlog in ~10 min of background time;
+    // a user-set config.toml value wins.
+    config.embedding.max_per_tick.get_or_insert(64);
     // Explicit model cache under app data: the desktop fallback probes
     // current_exe()'s parent for a shipped models/ folder, which is
     // meaningless inside an APK.
