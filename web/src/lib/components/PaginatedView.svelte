@@ -6,6 +6,7 @@
 	import SectionCard from './SectionCard.svelte';
 	import { coordMatchesAddr } from '$lib/nostr/nostrdown';
 	import type { ResolutionTracker } from '$lib/nostr/resolution-progress.svelte';
+	import { readingVars } from '$lib/theme/reading.svelte';
 	import CommentThread from './CommentThread.svelte';
 	import PoolStateBadges from './PoolStateBadges.svelte';
 
@@ -140,7 +141,9 @@
 			/>
 		</div>
 	{/if}
-	<div class="paginated-content" bind:this={contentEl}>
+	<!-- Reading typography (face / size / measure / leading) rides on the
+	     scroller; SectionCard centres itself in the measure. -->
+	<div class="paginated-content" style={readingVars()} bind:this={contentEl}>
 		{#if section && section.addr.kind === 30040}
 			<button
 				class="nested-page"

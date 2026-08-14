@@ -31,6 +31,8 @@
 	import PaneTabs from '$lib/wm/PaneTabs.svelte';
 	import ActivityCenter from '$lib/wm/ActivityCenter.svelte';
 	import { shell, type ShellPref } from '$lib/wm/shell.svelte';
+	import { stepTextScale, textScalePx } from '$lib/theme/text-scale.svelte';
+	import { readingSizePx, stepReadingSize } from '$lib/theme/reading.svelte';
 	import { rendererFor, toursForClass } from '$lib/wm/registry';
 	import { getAppState, type ModalNavEntry } from '$lib/state.svelte';
 	import * as api from '$lib/api';
@@ -656,6 +658,20 @@
 			const next = order[(order.indexOf(shell.pref) + 1) % order.length];
 			shell.setPref(next);
 			app.pushToast(`Shell: ${next}${next === 'auto' ? ` → ${shell.mode}` : ''}`, 'info');
+			closeMinibuffer();
+			return;
+		}
+		// Text size / reading size: steppers, so the palette entries step too
+		// (and stay open-able repeatedly from the keyboard).
+		if (cmd.id === 'tendrl-text-bigger' || cmd.id === 'tendrl-text-smaller') {
+			stepTextScale(cmd.id === 'tendrl-text-bigger' ? 1 : -1);
+			app.pushToast(`Interface text: ${textScalePx()}px`, 'info');
+			closeMinibuffer();
+			return;
+		}
+		if (cmd.id === 'tendrl-reading-bigger' || cmd.id === 'tendrl-reading-smaller') {
+			stepReadingSize(cmd.id === 'tendrl-reading-bigger' ? 1 : -1);
+			app.pushToast(`Reading text: ${readingSizePx()}px`, 'info');
 			closeMinibuffer();
 			return;
 		}

@@ -11,6 +11,7 @@
 	import { type Highlight, type HighlightSpan } from '$lib/discussions/highlights';
 	import { coordMatchesAddr, type ResolvedRef, type ParsedToken } from '$lib/nostr/nostrdown';
 	import { registerResolveView } from '$lib/nostr/resolve-status.svelte';
+	import { readingVars } from '$lib/theme/reading.svelte';
 	import type { ResolutionTracker } from '$lib/nostr/resolution-progress.svelte';
 
 	const app = getAppState();
@@ -458,12 +459,16 @@
 	});
 </script>
 
-<div class="continuous-view" bind:this={containerEl}>
+<!-- `readingVars()` puts the reader's typography prefs (face, size, measure,
+     leading) on the scroller; `.cv-column` is the measured column they define,
+     centred in whatever width the pane happens to be. -->
+<div class="continuous-view" style={readingVars()} bind:this={containerEl}>
 	<!-- No doc title or summary here — the reader's title row owns both
 	     (title rendered three times stacked on a phone; the summary now
 	     lives in the reader's collapsible summary drawer, every view).
 	     Expand/collapse-all moved to the reader's depth toolbar row. -->
 
+	<div class="cv-column">
 	{#each visibleRows as row, ri (`${row.index}:${row.section.addr?.pubkey ?? ''}:${row.section.addr?.d_tag ?? ''}`)}
 		{@const section = row.section}
 		{@const i = row.index}
@@ -584,6 +589,7 @@
 	{#if sections.length === 0}
 		<p class="empty">No sections loaded</p>
 	{/if}
+	</div>
 </div>
 
 <style>
@@ -592,20 +598,37 @@
 		overflow-y: auto;
 		padding: 16px;
 	}
-	/* Phone reading: roomier gutters, larger headings, clear of the bottom
-	   bar / home-indicator region. */
+	/* The measured column. `--rd-measure` is in `ch`, so the column carries the
+	   reading face and size itself — otherwise `ch` would resolve against the UI
+	   font and the line length would be wrong for every non-default face. Body
+	   text, section headings and dividers all sit inside it, so the document
+	   reads as one column rather than a full-bleed wall of text. */
+	.cv-column {
+		max-width: var(--rd-measure, none);
+		margin-inline: auto;
+		font-family: var(--rd-font, var(--font-sans));
+		font-size: var(--rd-size, var(--t-base));
+	}
+	/* Structural chrome (nested-index rows) stays in the UI face — it's
+	   navigation, not prose. */
+	.cv-index {
+		font-family: var(--font-sans);
+		font-size: var(--t-base);
+	}
+	/* Phone reading: roomier gutters, clear of the bottom bar / home-indicator
+	   region. (Sizes are the reader's own knobs now — no phone-only bump.) */
 	@media (max-width: 768px) {
 		.continuous-view {
 			padding: 14px 16px calc(24px + env(safe-area-inset-bottom));
 		}
-		.section-title {
-			font-size: var(--t-base);
-		}
 	}
 
 	.continuous-section {
-		padding: 8px 0;
+		padding: 8px 0 14px;
 		padding-left: calc(var(--depth, 0) * 18px);
+		/* Room above a section jumped to via the TOC / a nostrdown ref, so its
+		   heading doesn't land flush against the toolbar. */
+		scroll-margin-top: 12px;
 	}
 
 	/* Inline nested-publication node — a collapsible folder. The caret
@@ -679,10 +702,13 @@
 		background: color-mix(in srgb, var(--id-yours) 12%, transparent);
 	}
 
+	/* Section headings scale WITH the reading size (and inherit the reading
+	   face): a heading smaller than its own body text — which is what a fixed
+	   UI size becomes once the reader steps the body up — reads as a caption. */
 	.section-title {
-		font-size: var(--t-sm);
+		font-size: var(--rd-title, var(--t-sm));
 		font-weight: 600;
-		margin-bottom: 6px;
+		margin-bottom: 8px;
 		display: flex;
 		align-items: center;
 		gap: 8px;
@@ -732,11 +758,14 @@
 		font-size: var(--t-2xs);
 	}
 
+	/* A quiet rule between sections: short and centred, so it reads as a
+	   breath in the text rather than a table border. */
 	.section-divider {
 		border: none;
 		border-top: 1px solid var(--border);
-		margin: 4px 0;
-		opacity: 0.5;
+		width: 22%;
+		margin: 10px auto 16px;
+		opacity: 0.45;
 	}
 
 	.empty {

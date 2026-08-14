@@ -10,16 +10,24 @@
 		<meta name="viewport" content="width=device-width, initial-scale=1, interactive-widget=resizes-content" />
 		<link rel="icon" href="data:," />
 		<title>tendrl workbench</title>
-		<!-- No-flash text scale: apply the saved Appearance preset to the root
+		<!-- No-flash text scale: apply the saved Appearance factor to the root
 		     --text-scale before first paint, so the UI never renders at the
-		     default size and then jump-rescales. Mirror of TEXT_SCALE_PRESETS in
-		     src/lib/theme/text-scale.svelte.ts — keep the factors in sync. -->
+		     default size and then jump-rescales. Mirror of the bounds + legacy
+		     preset map in src/lib/theme/text-scale.svelte.ts — keep in sync. -->
 		<script>
 			(function () {
 				try {
-					var f = { compact: 1.0, default: 1.08, large: 1.23, xlarge: 1.38 };
-					var id = localStorage.getItem('tendrl.textScale');
-					if (f[id]) document.documentElement.style.setProperty('--text-scale', String(f[id]));
+					var f = parseFloat(localStorage.getItem('tendrl.textScaleFactor'));
+					if (!(f > 0)) {
+						// Settings saved before the stepper replaced the preset ladder.
+						var legacy = { compact: 1.0, default: 1.08, large: 1.23, xlarge: 1.38 };
+						f = legacy[localStorage.getItem('tendrl.textScale')];
+					}
+					if (f > 0)
+						document.documentElement.style.setProperty(
+							'--text-scale',
+							String(Math.min(2.0, Math.max(0.8, f)))
+						);
 				} catch (e) {
 					/* no localStorage — stylesheet default (1.08) applies */
 				}
