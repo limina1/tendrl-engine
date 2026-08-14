@@ -540,6 +540,58 @@ impl Engine {
             .collect()
     }
 
+    /// Relays to ask when *resolving* events of `kind` — targeted
+    /// retrieval of a known coordinate or entity. `None` means nobody
+    /// claimed the kind and the caller keeps whatever set it would have
+    /// used, which is what makes an install with no claims a no-op.
+    ///
+    /// Deliberately NOT consulted for open-ended discovery (feeds,
+    /// searches, profile lookups): claims are specificity layered on the
+    /// read/write policy, not a replacement for it.
+    pub fn resolve_relays_for_kind(&self, kind: u64) -> Option<Vec<String>> {
+        let claimants = self.relays_claiming_kind(kind);
+        (!claimants.is_empty()).then_some(claimants)
+    }
+
+    /// Split already-built filters into the relays that should receive
+    /// them, so one resolve pass can send different filters to different
+    /// relays (a single REQ each — NIP-01 ORs filters).
+    ///
+    /// A filter naming exactly one kind routes to that kind's claimants
+    /// when it has any. Everything else — multi-kind filters, filters
+    /// with no `kinds` at all (id lookups, `#e` threads), and unclaimed
+    /// kinds — goes to `fallback` untouched. Conservative on purpose: a
+    /// filter we can't attribute to one kind must not be narrowed.
+    ///
+    /// Relay order is first-seen so the confirm modal's composition
+    /// reads the way the work was planned.
+    pub fn plan_resolve_fetch(
+        &self,
+        filters: &[Value],
+        fallback: &[String],
+    ) -> Vec<(String, Vec<Value>)> {
+        let mut plan: Vec<(String, Vec<Value>)> = Vec::new();
+        let mut push = |relay: &str, filter: &Value| {
+            match plan.iter_mut().find(|(r, _)| r == relay) {
+                Some((_, fs)) => fs.push(filter.clone()),
+                None => plan.push((relay.to_string(), vec![filter.clone()])),
+            }
+        };
+        for filter in filters {
+            let single_kind = match filter.get("kinds").and_then(Value::as_array) {
+                Some(kinds) if kinds.len() == 1 => kinds[0].as_u64(),
+                _ => None,
+            };
+            let targets = single_kind
+                .and_then(|k| self.resolve_relays_for_kind(k))
+                .unwrap_or_else(|| fallback.to_vec());
+            for relay in &targets {
+                push(relay, filter);
+            }
+        }
+        plan
+    }
+
     /// Replace a relay's resolve-kind claims and write through to
     /// `relays.json`. An empty slice clears them. Returns whether
     /// anything changed.
@@ -2555,8 +2607,17 @@ impl Engine {
             "#d": [d_tag],
             "limit": 1
         })];
+        // Resolving a coordinate is targeted retrieval of a known kind, so
+        // claims apply: if any relay claims this kind, it IS the set to
+        // ask. An explicit override wins over a claim (the caller said
+        // where — a `relay:` token or an entity's own TLV hint).
+        let claimed = override_relays
+            .is_none()
+            .then(|| self.resolve_relays_for_kind(kind))
+            .flatten();
+        let relays = override_relays.or(claimed.as_deref());
         let response = self
-            .get_events_with_options(filters, policy, override_relays, mode_confirm)
+            .get_events_with_options(filters, policy, relays, mode_confirm)
             .await?;
         // LocalFirst merges local before relay events, so the requested
         // version may not be first — addressables resolve latest-wins.
@@ -4213,5 +4274,96 @@ mod tests {
         assert_eq!(sets.named.len(), 1);
         assert_eq!(sets.named[0].d_tag, "research");
         assert_eq!(sets.named[0].urls, vec!["wss://curated.relay".to_string()]);
+    }
+
+    /// With no claims anywhere, planning is the identity: every filter to
+    /// every read relay. This is the compat floor the whole routing
+    /// feature rests on — an unconfigured install must fetch exactly what
+    /// it fetched before.
+    #[tokio::test]
+    async fn test_plan_resolve_fetch_is_a_noop_without_claims() {
+        let temp_dir = tempdir().expect("temp dir");
+        let cfg = RelayConfig {
+            initial_relays: vec!["wss://a.relay".to_string(), "wss://b.relay".to_string()],
+            ..RelayConfig::default()
+        };
+        let engine = Engine::with_relay_config(temp_dir.path(), &cfg).expect("engine");
+
+        let filters = vec![
+            json!({ "kinds": [30818], "#d": ["ada-lovelace"] }),
+            json!({ "kinds": [30041], "authors": ["abc"] }),
+        ];
+        let read = engine.relays();
+        let plan = engine.plan_resolve_fetch(&filters, &read);
+
+        assert_eq!(plan.len(), 2, "one entry per read relay");
+        for (_, fs) in &plan {
+            assert_eq!(fs.len(), 2, "every relay still receives every filter");
+        }
+        assert!(engine.resolve_relays_for_kind(30818).is_none());
+    }
+
+    /// A claim is exclusive per kind: the claimed filter goes to the
+    /// claimant ONLY (the read relays drop out of that filter), while an
+    /// unclaimed kind in the same pass still fans out to the read set.
+    #[tokio::test]
+    async fn test_claimed_kind_routes_to_claimants_only() {
+        let temp_dir = tempdir().expect("temp dir");
+        let cfg = RelayConfig {
+            initial_relays: vec!["wss://a.relay".to_string(), "wss://b.relay".to_string()],
+            ..RelayConfig::default()
+        };
+        let engine = Engine::with_relay_config(temp_dir.path(), &cfg).expect("engine");
+
+        // The document relay: claims wiki articles, joins no working set.
+        assert!(engine.set_relay_resolve_kinds("wss://docs.example", &[30818]));
+        assert_eq!(
+            engine.resolve_relays_for_kind(30818),
+            Some(vec!["wss://docs.example".to_string()])
+        );
+
+        let wiki = json!({ "kinds": [30818], "#d": ["ada-lovelace"] });
+        let section = json!({ "kinds": [30041], "authors": ["abc"] });
+        let read = engine.relays();
+        let plan = engine.plan_resolve_fetch(&[wiki.clone(), section.clone()], &read);
+
+        let for_relay = |url: &str| -> Vec<Value> {
+            plan.iter()
+                .find(|(r, _)| r == url)
+                .map(|(_, fs)| fs.clone())
+                .unwrap_or_default()
+        };
+        assert_eq!(for_relay("wss://docs.example"), vec![wiki]);
+        // The read relays are asked for the unclaimed section kind, and
+        // NOT for the claimed wiki kind — that is the narrowing.
+        assert_eq!(for_relay("wss://a.relay"), vec![section.clone()]);
+        assert_eq!(for_relay("wss://b.relay"), vec![section]);
+
+        // Clearing the claim restores the previous behavior exactly.
+        assert!(engine.set_relay_resolve_kinds("wss://docs.example", &[]));
+        assert!(engine.resolve_relays_for_kind(30818).is_none());
+    }
+
+    /// Filters we can't attribute to a single kind are never narrowed:
+    /// multi-kind filters and kindless ones (id lookups, `#e` threads)
+    /// keep going to the fallback set even when a claim exists.
+    #[tokio::test]
+    async fn test_unattributable_filters_are_never_narrowed() {
+        let temp_dir = tempdir().expect("temp dir");
+        let cfg = RelayConfig {
+            initial_relays: vec!["wss://a.relay".to_string()],
+            ..RelayConfig::default()
+        };
+        let engine = Engine::with_relay_config(temp_dir.path(), &cfg).expect("engine");
+        assert!(engine.set_relay_resolve_kinds("wss://docs.example", &[30818]));
+
+        let multi = json!({ "kinds": [30818, 30041] });
+        let kindless = json!({ "ids": ["deadbeef"] });
+        let read = engine.relays();
+        let plan = engine.plan_resolve_fetch(&[multi.clone(), kindless.clone()], &read);
+
+        assert_eq!(plan.len(), 1, "only the fallback relay is targeted");
+        assert_eq!(plan[0].0, "wss://a.relay");
+        assert_eq!(plan[0].1, vec![multi, kindless]);
     }
 }

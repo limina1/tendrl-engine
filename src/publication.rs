@@ -1025,17 +1025,22 @@ impl<'a> PublicationEngine<'a> {
         if filters.is_empty() {
             return;
         }
-        let relays = self.engine.relays();
-        if relays.is_empty() {
+        let read_relays = self.engine.relays();
+        // Addressable coordinates carry their kind, so `addr_filters`
+        // yields single-kind filters and claims can route each one —
+        // a claimed kind goes to its claimants, everything else to the
+        // read set. No claims = every filter to every read relay, the
+        // shape this had before routing existed.
+        let plan = self.engine.plan_resolve_fetch(&filters, &read_relays);
+        if plan.is_empty() {
             return;
         }
-        let filters_ref = &filters;
-        let mut stream = futures::stream::iter(relays.iter().cloned())
-            .map(|relay_url| {
+        let mut stream = futures::stream::iter(plan.clone())
+            .map(|(relay_url, relay_filters)| {
                 let trigger = trigger.clone();
                 async move {
                     self.engine
-                        .tracked_fetch_with_options(&relay_url, filters_ref, trigger, false)
+                        .tracked_fetch_with_options(&relay_url, &relay_filters, trigger, false)
                         .await
                 }
             })
@@ -1270,7 +1275,13 @@ impl<'a> PublicationEngine<'a> {
 
         // 4. Open the operation with a structured summary so the
         //    confirm modal shows the DSL + filter list + composition.
-        let relays = self.engine.relays();
+        //    Filters are single-kind by construction above, so claims can
+        //    route each one: a claimed kind goes to its claimants, the
+        //    rest to the read set. With no claims anywhere the plan is
+        //    every filter to every read relay — exactly the old shape.
+        let read_relays = self.engine.relays();
+        let plan = self.engine.plan_resolve_fetch(&filters, &read_relays);
+        let relays: Vec<String> = plan.iter().map(|(r, _)| r.clone()).collect();
         let summary = crate::network::RequestSummary {
             filters: filters
                 .iter()
@@ -1330,9 +1341,18 @@ impl<'a> PublicationEngine<'a> {
         //    nostrdb as it streams; we just count totals for the response.
         use futures::stream::StreamExt;
         let filters_ref = &filters;
+        let plan_ref = &plan;
         let op_ref = &op;
         let total_fetched: usize = futures::stream::iter(chosen.iter().cloned())
             .map(|relay_url| async move {
+                // Each relay gets the filters planned for it. A relay the
+                // user *added* in the confirm modal isn't in the plan —
+                // they asked for it explicitly, so it gets everything.
+                let for_relay = plan_ref
+                    .iter()
+                    .find(|(r, _)| r == &relay_url)
+                    .map(|(_, fs)| fs.as_slice())
+                    .unwrap_or(filters_ref.as_slice());
                 op_ref.relay_status(
                     relay_url.clone(),
                     crate::network::Phase::Read,
@@ -1342,7 +1362,7 @@ impl<'a> PublicationEngine<'a> {
                     .engine
                     .tracked_fetch_with_options(
                         &relay_url,
-                        filters_ref,
+                        for_relay,
                         crate::network::FetchTrigger::UserAction,
                         true,
                     )
@@ -2878,6 +2898,16 @@ impl<'a> PublicationEngine<'a> {
             let created = e.get("created_at").and_then(Value::as_i64).unwrap_or(0);
             (author_match as u8, created)
         };
+        // Wikilinks resolve to 30818 only, so the target kind is known
+        // exactly — which means the relay set is knowable exactly. If any
+        // relay claims 30818, ask the claimants instead of the whole read
+        // set (an explicit `relays` override still wins). See
+        // `docs/zettel/idea-relay-kind-routing.org`.
+        let claimed = relays
+            .is_none()
+            .then(|| self.engine.resolve_relays_for_kind(30818))
+            .flatten();
+        let relays = relays.or(claimed.as_deref());
         let mut best: std::collections::HashMap<String, Value> = std::collections::HashMap::new();
         // Merge one query pass's events into `best`, scored per topic.
         // Chunked so a link-dense article can't mint a filter with hundreds

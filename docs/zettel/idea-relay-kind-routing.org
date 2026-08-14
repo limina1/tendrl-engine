@@ -197,8 +197,16 @@ When several things have an opinion about where a fetch goes:
   suggestions from NIP-11 =retention= and the publication kinds).
   Claims are policy-independent, so a claims-only relay renders as a row
   with every toggle off — the resolution-only target
-- [ ] Route the resolve path: nostrdown =resolve_refs= + section
+- [X] Route the resolve path: nostrdown =resolve_refs= + section
   backfill — narrowest, highest value, and the case that motivated this
+  (2026-08-14). Four seams: =Engine::resolve_relays_for_kind= (the
+  primitive), =plan_resolve_fetch= (filters → per-relay plan),
+  =get_addressable_with_options= (every coordinate resolution — tree
+  loading, entity fetch, siblings), =find_wiki_events= (30818),
+  =fetch_addrs_batched= + =backfill_publication_sections= (per-relay
+  filter subsets in one REQ each). Measured on an isolated engine: a
+  wikilink resolve touched both read relays before the claim and *only*
+  the claimant after, and both read relays again once cleared
 - [ ] Index rule = profile fallback; detach profile backfill from the
   response ([[file:fix-search-response-latency.org][search latency]])
 - [ ] Collapse =search= into read; retire =DiscoveryClass=, both
@@ -209,6 +217,14 @@ When several things have an opinion about where a fetch goes:
 - [ ] Observed-provenance suggestions (kind × relay histogram)
 
 * Decisions taken while building (2026-08-14)
+
+- *The plan is per filter, not per request.* Filters that name exactly
+  one kind route to that kind's claimants; multi-kind and kindless
+  filters (id lookups, =#e= threads) go to the fallback set untouched —
+  a filter we cannot attribute to one kind must never be narrowed
+  (rule 5). One REQ per relay carries whatever subset it was planned.
+- *A relay the user adds in the Confirm modal gets everything.* It isn't
+  in the plan, and they asked for it explicitly.
 
 - *Claims outlive set membership.* Removing a relay from =fetch= does
   not clear its claims — a claims-only relay is a legitimate row (rule
