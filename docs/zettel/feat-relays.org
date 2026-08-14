@@ -40,6 +40,16 @@ edits are never auto-published as Nostr events.
   fetch/publish from =initial_relays=, broadcast cleared, discovery
   built-ins, exclusive flags off; named sets preserved. Two-step armed
   button in the relay buffer header, local-only — 2026-07-06.
+- Per-relay *resolve kinds*: a relay can list the kinds it serves, and
+  resolution (coordinate fetches, wikilink 30818 lookups, section
+  backfill) goes to the claimants for a claimed kind instead of the read
+  set. Claims are policy-independent — a claims-only relay is a
+  resolution-only target. Empty everywhere = pre-routing behavior —
+  2026-08-14, see [[file:idea-relay-kind-routing.org][kind-scoped relay
+  routing]].
+- The =indexer= class now behaves as the model says: profile metadata to
+  drop to when the primary set misses, consulted tier by tier and only
+  while authors are still unresolved — 2026-08-14.
 - The relay row and panel header wrap instead of shrinking, so the relay
   URL survives phone width and narrow WM splits — 2026-08-14, see
   [[file:fix-relay-row-mobile-layout.org][relay row mobile layout]].

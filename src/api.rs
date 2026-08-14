@@ -608,7 +608,7 @@ pub async fn search_handler(
             doc_results: vec![],
             tag_counts: std::collections::HashMap::new(),
         };
-        backfill_result_profiles(&engine, &response, req.mode_confirm).await;
+        backfill_result_profiles(&engine, &response, req.mode_confirm);
         if let Some(op) = op {
             op.complete(response.count);
         }
@@ -643,7 +643,7 @@ pub async fn search_handler(
         response.profiles = engine.search_profiles(&term).await;
     }
 
-    backfill_result_profiles(&engine, &response, req.mode_confirm).await;
+    backfill_result_profiles(&engine, &response, req.mode_confirm);
     if let Some(op) = op {
         op.complete(response.count);
     }
@@ -651,26 +651,28 @@ pub async fn search_handler(
 }
 
 /// Cache kind-0 profiles for the authors of these search results.
-/// Awaited — the profiles are fetched into nostrdb *before* the search
-/// response returns, so the client's first render resolves author
-/// metadata locally with no follow-up round-trip. The engine method
-/// no-ops for authors already cached.
+///
+/// **Detached.** A profile lookup is a different fetch to different
+/// relays than the search that triggered it — the relay that served an
+/// event is not necessarily the one carrying its author's kind 0, which
+/// is the whole reason the index role exists
+/// (`docs/zettel/idea-relay-kind-routing.org`). Awaiting it put a relay
+/// round trip, with its 15 s per-relay ceiling, in front of results
+/// already sitting in hand. The web hydrates names separately
+/// (`prefetchProfiles`, debounced), so the await bought nothing it needed.
 ///
 /// `mode_confirm` is the search request's own flag: a search the user
 /// authorized to reach relays despite offline mode carries its profile
 /// backfill along on the same okay.
-async fn backfill_result_profiles(
-    engine: &AppState,
-    response: &SearchResponse,
-    mode_confirm: bool,
-) {
+fn backfill_result_profiles(engine: &AppState, response: &SearchResponse, mode_confirm: bool) {
     let pubkeys: Vec<String> = response.results.iter().map(|r| r.author.clone()).collect();
     if pubkeys.is_empty() {
         return;
     }
-    engine
-        .backfill_missing_profiles(pubkeys, mode_confirm)
-        .await;
+    let engine = engine.clone();
+    tokio::spawn(async move {
+        engine.backfill_missing_profiles(pubkeys, mode_confirm).await;
+    });
 }
 
 /// The free-text component of a query — the keywords or exact phrase

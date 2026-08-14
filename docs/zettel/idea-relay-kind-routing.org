@@ -207,8 +207,12 @@ When several things have an opinion about where a fetch goes:
   filter subsets in one REQ each). Measured on an isolated engine: a
   wikilink resolve touched both read relays before the claim and *only*
   the claimant after, and both read relays again once cleared
-- [ ] Index rule = profile fallback; detach profile backfill from the
-  response ([[file:fix-search-response-latency.org][search latency]])
+- [X] Index rule = profile fallback; detach profile backfill from the
+  response ([[file:fix-search-response-latency.org][search latency]]) —
+  2026-08-14. The backfill now runs a primary pass, re-checks what's
+  still missing, and only then drops to =indexer.default= /
+  =indexer.fallback=; and it no longer blocks the search response,
+  because a profile lookup is a different fetch to different relays
 - [ ] Collapse =search= into read; retire =DiscoveryClass=, both
   =exclusive= flags, and the four dotted set names — with a
   =relays.json= load-time migration (=search.*= → read, =indexer.*= →

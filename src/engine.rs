@@ -2955,14 +2955,12 @@ impl Engine {
         mode_confirm: bool,
     ) -> usize {
         let considered = pubkeys.len();
-        // Distinct, well-formed pubkeys with no kind-0 cached locally.
-        let mut seen = std::collections::HashSet::new();
-        let missing: Vec<String> = pubkeys
-            .into_iter()
-            .filter(|pk| pk.len() == 64 && seen.insert(pk.clone()))
-            .filter(|pk| !query::profile_exists(&self.ndb, pk))
-            .take(PROFILE_BACKFILL_CAP)
-            .collect();
+        // Distinct, well-formed pubkeys with no kind-0 cached locally —
+        // ONE query for the whole set. The per-author `profile_exists`
+        // this replaces took the process-wide nostrdb lock once per
+        // author, on a runtime thread, before any network work started.
+        let mut missing = query::profiles_missing(&self.ndb, &pubkeys);
+        missing.truncate(PROFILE_BACKFILL_CAP);
         if missing.is_empty() {
             debug!(
                 "Profile backfill: all {} result authors already cached",
@@ -2981,8 +2979,30 @@ impl Engine {
 
         // Profiles can live on any configured relay — query the union of
         // the general / fetch / publish sets so an empty `general` set
-        // doesn't silently disable the backfill.
-        let relays = self.relay_config.read().unwrap().all_urls();
+        // doesn't silently disable the backfill. With `exclusive.indexer`
+        // ON the indexers REPLACE that set for profile lookups, which is
+        // what the flag has always meant.
+        let (relays, indexer_tiers) = {
+            let rc = self.relay_config.read().unwrap();
+            let primary = if rc.exclusive.indexer && !rc.indexer.default.is_empty() {
+                rc.indexer.default.clone()
+            } else {
+                rc.all_urls()
+            };
+            // The index role in one line: profile metadata to drop to
+            // when the primary set misses. Tiers are consulted in order
+            // and only while authors are still missing.
+            let tiers: Vec<Vec<String>> = [rc.indexer.default.clone(), rc.indexer.fallback.clone()]
+                .into_iter()
+                .map(|tier| {
+                    tier.into_iter()
+                        .filter(|u| !primary.contains(u))
+                        .collect::<Vec<_>>()
+                })
+                .filter(|tier: &Vec<String>| !tier.is_empty())
+                .collect();
+            (primary, tiers)
+        };
         if relays.is_empty() {
             warn!(
                 "Profile backfill: {} author(s) missing a kind-0, but no relays are configured",
@@ -3004,30 +3024,55 @@ impl Engine {
         // Identical filter per relay — a pure fanout, bounded-concurrent
         // like every other multi-relay read.
         use futures::stream::StreamExt;
-        let fetched: usize = futures::stream::iter(relays.iter().cloned())
-            .map(|relay_url| {
-                let filter = filter.clone();
-                async move {
-                    match self
-                        .tracked_fetch_with_options(
-                            &relay_url,
-                            std::slice::from_ref(&filter),
-                            FetchTrigger::ProfilePrefetch,
-                            mode_confirm,
-                        )
-                        .await
-                    {
-                        Ok(events) => events.len(),
-                        Err(e) => {
-                            debug!("Profile backfill from {} failed: {}", relay_url, e);
-                            0
+        let fanout = |relays: Vec<String>, filter: serde_json::Value| async move {
+            futures::stream::iter(relays.into_iter())
+                .map(|relay_url| {
+                    let filter = filter.clone();
+                    async move {
+                        match self
+                            .tracked_fetch_with_options(
+                                &relay_url,
+                                std::slice::from_ref(&filter),
+                                FetchTrigger::ProfilePrefetch,
+                                mode_confirm,
+                            )
+                            .await
+                        {
+                            Ok(events) => events.len(),
+                            Err(e) => {
+                                debug!("Profile backfill from {} failed: {}", relay_url, e);
+                                0
+                            }
                         }
                     }
-                }
-            })
-            .buffer_unordered(READ_FANOUT)
-            .fold(0usize, |acc, n| async move { acc + n })
-            .await;
+                })
+                .buffer_unordered(READ_FANOUT)
+                .fold(0usize, |acc, n| async move { acc + n })
+                .await
+        };
+        let mut fetched = fanout(relays, filter).await;
+
+        // Still missing? Drop to the index. Each tier runs only while
+        // authors remain unresolved, so a hit in `default` means
+        // `fallback` is never contacted.
+        for tier in indexer_tiers {
+            let still_missing = query::profiles_missing(&self.ndb, &missing);
+            if still_missing.is_empty() {
+                break;
+            }
+            debug!(
+                "Profile backfill: {} author(s) still missing — dropping to {} indexer relay(s)",
+                still_missing.len(),
+                tier.len()
+            );
+            let filter = serde_json::json!({
+                "kinds": [0],
+                "authors": still_missing,
+                "limit": still_missing.len(),
+            });
+            fetched += fanout(tier, filter).await;
+        }
+
         info!(
             "Profile backfill: ingested {} kind-0 event(s) for {} missing author(s)",
             fetched,
@@ -4274,6 +4319,37 @@ mod tests {
         assert_eq!(sets.named.len(), 1);
         assert_eq!(sets.named[0].d_tag, "research");
         assert_eq!(sets.named[0].urls, vec!["wss://curated.relay".to_string()]);
+    }
+
+    /// The batched existence check agrees with the per-author one it
+    /// replaced: authors with a cached kind-0 drop out, everyone else is
+    /// reported missing, input order and dedup preserved, malformed
+    /// pubkeys dropped (they can't be fetched either).
+    #[tokio::test]
+    async fn test_profiles_missing_matches_per_author_check() {
+        let dir = tempdir().unwrap();
+        let engine = Engine::with_config(dir.path(), &[], 1000).unwrap();
+
+        let profile = build_test_event(0, r#"{"name":"ada"}"#, vec![], 1_700_000_000);
+        let known = serde_json::from_str::<Value>(&profile).unwrap()["pubkey"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        ingest_and_wait(&engine, &[profile]).await;
+
+        let unknown = "b".repeat(64);
+        let asked = vec![
+            known.clone(),
+            unknown.clone(),
+            unknown.clone(), // duplicate
+            "not-a-pubkey".to_string(),
+        ];
+
+        let missing = crate::query::profiles_missing(engine.ndb(), &asked);
+        assert_eq!(missing, vec![unknown.clone()]);
+        // …and it agrees with the point query on each author.
+        assert!(engine.has_cached_profile(&known));
+        assert!(!engine.has_cached_profile(&unknown));
     }
 
     /// With no claims anywhere, planning is the identity: every filter to

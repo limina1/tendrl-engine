@@ -793,6 +793,55 @@ pub fn profile_exists(ndb: &Ndb, pubkey: &str) -> bool {
         .unwrap_or(false)
 }
 
+/// Which of `pubkeys` have NO kind-0 cached locally, in input order and
+/// deduped. One query for the whole set instead of a `profile_exists`
+/// point query each — the lock is process-wide, so N authors used to mean
+/// N lock acquisitions and N transactions on a runtime thread.
+///
+/// Malformed pubkeys are dropped rather than reported missing: they can't
+/// be fetched from a relay either.
+pub fn profiles_missing(ndb: &Ndb, pubkeys: &[String]) -> Vec<String> {
+    let mut wanted: Vec<(String, [u8; 32])> = Vec::with_capacity(pubkeys.len());
+    let mut seen = std::collections::HashSet::new();
+    for pk in pubkeys {
+        if !seen.insert(pk.as_str()) {
+            continue;
+        }
+        if let Ok(parsed) = parse_hex_id(pk) {
+            wanted.push((pk.clone(), parsed));
+        }
+    }
+    if wanted.is_empty() {
+        return Vec::new();
+    }
+
+    let found: std::collections::HashSet<String> = {
+        let _guard = ndb_query_lock();
+        let Ok(txn) = Transaction::new(ndb) else {
+            return Vec::new();
+        };
+        let filter = FilterBuilder::new()
+            .kinds([0])
+            .authors(wanted.iter().map(|(_, pk)| pk))
+            .limit(wanted.len() as u64)
+            .build();
+        ndb.query(&txn, &[filter], wanted.len() as i32)
+            .map(|results| {
+                results
+                    .iter()
+                    .map(|r| hex::encode(r.note.pubkey()))
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+
+    wanted
+        .into_iter()
+        .filter(|(hex_pk, _)| !found.contains(hex_pk))
+        .map(|(hex_pk, _)| hex_pk)
+        .collect()
+}
+
 /// How many kind-0 events the profile scan walks, and how many hits it
 /// returns. The scan is brute-force (NIP-01 has no name index); the cap
 /// keeps a noisy term from flooding the people category.

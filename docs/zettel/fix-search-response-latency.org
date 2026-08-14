@@ -1,7 +1,9 @@
 #+TITLE: Fix: Search Response Latency
 #+TYPE: fix
-#+STATUS: open
+#+STATUS: in-progress
 #+DATE: 2026-08-12
+#+PROGRESS: 2026-08-14 — backfill detached + existence batched + index
+#+PROGRESS: fallback; concurrent =|= branches still open
 
 * The issue (observed 2026-08-12, v0.8.2)
 
@@ -23,12 +25,24 @@ needed is local. The web already has a late-hydration path for profiles
 
 * Proposed fix
 
-- [ ] Return local results immediately; run the profile backfill
+- [X] Return local results immediately; run the profile backfill
   detached (results carry pubkeys; the existing web profile hydration
-  fills names as they land)
-- [ ] Batch profile-existence checks into one multi-author filter
-  (see [[file:fix-ndb-lock-hold.org][lock hold]])
-- [ ] Run compound =|= branches concurrently (bounded)
+  fills names as they land) — 2026-08-14, =backfill_result_profiles=
+  spawns instead of awaiting. Measured with a blackhole relay in the
+  fan-out: the search answered in 13 ms while the backfill went on
+  reaching for 55 profiles across 4 relays in the background
+- [X] Batch profile-existence checks into one multi-author filter
+  (see [[file:fix-ndb-lock-hold.org][lock hold]]) — 2026-08-14,
+  =query::profiles_missing=; also replaces the per-author
+  =has_cached_profile= loop in =backfill_publication_sections=, where a
+  deep tree took the process-wide lock once per author
+- [X] Index = the profile-metadata fallback, per
+  [[file:idea-relay-kind-routing.org][kind-scoped routing]] — 2026-08-14:
+  the backfill runs its primary pass, re-checks what's still missing, and
+  only then drops to =indexer.default=, then =indexer.fallback=. A hit in
+  the primary set means the indexers are never contacted;
+  =exclusive.indexer= still makes the indexers replace the primary set
+- [ ] Run compound =|= branches concurrently (bounded) — still open
 
 * The structural reading (added 2026-08-14)
 

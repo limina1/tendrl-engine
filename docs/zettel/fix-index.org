@@ -25,10 +25,12 @@ stay as provenance. Source evaluation:
 - [X] [[file:fix-background-tick-idle-cost.org][Background tick idle cost]]
   (high) — 100k-event scan + full id-set clone per minute; N+1 point
   queries; HNSW rewrite every 32 embeds (fixed 2026-08-12)
-- [ ] [[file:fix-search-response-latency.org][Search response latency]]
-  (high) — every search awaits a sequential relay profile backfill;
-  the profile route is a *different* fetch to *different* relays, per
+- [-] [[file:fix-search-response-latency.org][Search response latency]]
+  (high) — every search awaited a relay profile backfill; the profile
+  route is a *different* fetch to *different* relays, per
   [[file:idea-relay-kind-routing.org][kind-scoped routing]]
+  (2026-08-14: backfill detached, existence check batched, index
+  fallback wired; concurrent =|= branches still open)
 - [X] [[file:fix-embedding-runtime-blocking.org][Embedding runtime blocking]]
   (high) — sync ONNX on tokio workers; =~:= can inline a 90 MB download
   (fixed 2026-08-12, incl. the new =embedding.max_per_tick= budget)

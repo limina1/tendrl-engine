@@ -1226,10 +1226,11 @@ impl<'a> PublicationEngine<'a> {
         }
         let mut tree_authors: HashSet<String> = HashSet::new();
         collect_authors(&local, &mut tree_authors);
-        let missing_profiles: Vec<String> = tree_authors
-            .into_iter()
-            .filter(|pk| pk.len() == 64 && !self.engine.has_cached_profile(pk))
-            .collect();
+        // One query for the whole author set — a deep tree used to take
+        // the process-wide nostrdb lock once per author here.
+        let tree_authors: Vec<String> = tree_authors.into_iter().collect();
+        let missing_profiles: Vec<String> =
+            crate::query::profiles_missing(self.engine.ndb(), &tree_authors);
 
         let total_needed: usize = needed.values().map(|s| s.len()).sum();
         // Nothing to do only when there are neither missing sections nor
