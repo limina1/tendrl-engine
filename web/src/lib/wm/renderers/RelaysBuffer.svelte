@@ -2140,11 +2140,15 @@
 		padding: 0 0 24px;
 	}
 
+	/* Same wrap-don't-shrink rule as .relay-row: without it the title
+	   column (min-width: 0) collapsed to one word per line at phone
+	   width while the action buttons kept their intrinsic size. */
 	.relays-header {
 		display: flex;
+		flex-wrap: wrap;
 		align-items: center;
 		justify-content: space-between;
-		gap: 12px;
+		gap: 8px 12px;
 		padding: 10px 14px;
 		font-size: var(--t-xs);
 		font-weight: 600;
@@ -2157,10 +2161,12 @@
 		display: flex;
 		flex-direction: column;
 		gap: 2px;
+		flex: 1 1 14rem;
 		min-width: 0;
 	}
 	.relays-header-actions {
 		display: flex;
+		flex-wrap: wrap;
 		gap: 8px;
 		text-transform: none;
 		letter-spacing: 0;
@@ -2234,9 +2240,10 @@
 	}
 	.discovery-header-row {
 		display: flex;
+		flex-wrap: wrap;
 		align-items: center;
 		justify-content: space-between;
-		gap: 8px;
+		gap: 6px 8px;
 	}
 	.discovery-header {
 		font-family: var(--font-mono);
@@ -2332,10 +2339,18 @@
 		background: var(--bg-surface);
 	}
 
+	/* Wraps rather than shrinks: the identity (url + flags) and the roles
+	   (toggles + remove) are two orthogonal things, and when they can't
+	   share a line the roles drop to a second one. Intrinsic, not
+	   breakpoint-driven — this panel also lives in resizable WM splits,
+	   where a viewport media query would be looking at the wrong width.
+	   Without it the toggles (flex-shrink: 0) squeezed .relay-id to zero
+	   and the relay URL vanished entirely on a phone. */
 	.relay-row {
 		display: flex;
+		flex-wrap: wrap;
 		align-items: center;
-		gap: 10px;
+		gap: 6px 10px;
 		padding: 8px 14px;
 	}
 
@@ -2350,11 +2365,14 @@
 	}
 	.relay-disclosure:hover { color: var(--fg); }
 
+	/* Basis wide enough that the toggles wrap away before the url starts
+	   ellipsising; still grows to fill the line when there's room. */
 	.relay-id {
-		flex: 1;
+		flex: 1 1 12rem;
 		display: flex;
+		flex-wrap: wrap;
 		align-items: center;
-		gap: 8px;
+		gap: 4px 8px;
 		min-width: 0;
 	}
 
@@ -2374,6 +2392,7 @@
 
 	.relay-toggles {
 		display: flex;
+		flex-wrap: wrap;
 		gap: 4px;
 		flex-shrink: 0;
 	}
@@ -2430,6 +2449,9 @@
 		line-height: 1;
 		padding: 0 4px;
 		flex-shrink: 0;
+		/* Holds the right edge on whichever line it lands on — trailing
+		   the toggles once the row has wrapped. */
+		margin-left: auto;
 	}
 	.relay-remove:hover {
 		color: var(--red, var(--fg));
