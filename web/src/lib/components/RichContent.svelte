@@ -173,21 +173,34 @@
 {/if}
 
 <style>
+	/* Body text. The `--rd-*` custom properties come from the enclosing reading
+	   container (see theme/reading.svelte.ts); every fallback is the old UI-chrome
+	   value, so a body rendered OUTSIDE a reading surface (compose preview,
+	   outline peek, hover card) looks exactly as it did before.
+
+	   Everything here is presentation only — the content stays one `pre-wrap`
+	   run, because highlight capture and nostrdown overlays map DOM offsets 1:1
+	   onto the event's UTF-16 content. */
 	.section-content {
 		white-space: pre-wrap;
-		font-family: var(--font-sans);
-		font-size: var(--t-xs);
-		line-height: 1.5;
+		font-family: var(--rd-font, var(--font-sans));
+		font-size: var(--rd-size, var(--t-xs));
+		line-height: var(--rd-leading, 1.5);
 		color: var(--fg);
 		margin: 0;
-	}
-	/* Phone reading typography: --t-xs is a UI size (~12px effective) —
-	   step body text up a notch and open the leading on narrow viewports. */
-	@media (max-width: 768px) {
-		.section-content {
-			font-size: var(--t-base);
-			line-height: 1.65;
-		}
+		/* `text-wrap` after `white-space` keeps pre-wrap's collapse behaviour
+		   (it only re-states wrap mode) while asking for even ragged edges and
+		   no one-word last lines — the single biggest legibility win available
+		   to unstyled text. */
+		text-wrap: pretty;
+		text-align: var(--rd-align, start);
+		hyphens: var(--rd-hyphens, manual);
+		/* Bare URLs and long identifiers (npubs, naddrs, hashes) are common in
+		   this corpus and would otherwise push a horizontal scrollbar. */
+		overflow-wrap: break-word;
+		font-kerning: normal;
+		font-variant-ligatures: common-ligatures contextual;
+		hanging-punctuation: first allow-end last;
 	}
 	.section-content.muted {
 		color: var(--fg-muted);

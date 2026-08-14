@@ -19,7 +19,17 @@
 	import { trigger as triggerTip } from '$lib/wm/discovery.svelte';
 	import { discovery, rearmDiscovery, rearmFeatureTours, setWalkthroughEnabled } from '$lib/wm/discovery.svelte';
 	import * as api from '$lib/api';
-	import { textScale, setTextScale, TEXT_SCALE_PRESETS } from '$lib/theme/text-scale.svelte';
+	import {
+		atScaleMax,
+		atScaleMin,
+		resetTextScale,
+		SCALE_DEFAULT,
+		SCALE_STEP,
+		stepTextScale,
+		textScale,
+		textScalePx
+	} from '$lib/theme/text-scale.svelte';
+	import ReadingControls from '$lib/components/ReadingControls.svelte';
 	import { shell, type ShellPref, type MenuEdge } from '../shell.svelte';
 	import type { Buffer } from '../types';
 	import { commands, SCOPE_META, SCOPE_ORDER, BASE_KEYS } from '../commands';
@@ -627,25 +637,51 @@
 		</div>
 
 		<div class="settings-row">
-			<span class="settings-label">Text size</span>
-			<div class="radio-group">
-				{#each TEXT_SCALE_PRESETS as preset (preset.id)}
-					<label class="radio">
-						<input
-							type="radio"
-							name="text-scale"
-							value={preset.id}
-							checked={textScale.id === preset.id}
-							onchange={() => setTextScale(preset.id)}
-						/>
-						<span>{preset.label}</span>
-					</label>
-				{/each}
-			</div>
+			<span
+				class="settings-label"
+				title="Scales the whole interface — type, spacing and chrome together."
+			>Text size</span>
+			<!-- A stepper, not a preset ladder: "Large" means something different
+			     on a phone, a laptop and a 4K panel, so each device steps to where
+			     it wants instead of picking from four fixed rungs. -->
+			<span class="stepper">
+				<button
+					onclick={() => stepTextScale(-1)}
+					disabled={atScaleMin()}
+					aria-label="Smaller interface text">−</button>
+				<span class="stepper__val">{textScalePx()}px</span>
+				<button
+					onclick={() => stepTextScale(1)}
+					disabled={atScaleMax()}
+					aria-label="Larger interface text">+</button>
+			</span>
+			<span class="stepper__pct">{Math.round(textScale.factor * 100)}%</span>
+			<button
+				class="stepper__reset"
+				onclick={resetTextScale}
+				disabled={Math.abs(textScale.factor - SCALE_DEFAULT) < 1e-6}
+				title="Back to the shipped size"
+			>reset</button>
 		</div>
 		<p class="settings-hint">
-			Scales the whole interface. Applies instantly and is saved on this device —
-			it isn't part of the engine config and doesn't sync across machines.
+			Scales the whole interface in {Math.round(SCALE_STEP * 100)}% steps. Applies
+			instantly and is saved on this device — it isn't part of the engine config and
+			doesn't sync across machines.
+		</p>
+
+		<div class="settings-row settings-row--wrap">
+			<span
+				class="settings-label"
+				title="Typography for document bodies — the reader, the pager and single-document buffers."
+			>Reading</span>
+			<ReadingControls />
+		</div>
+		<p class="settings-hint">
+			Sections are stored as plain text, so the reader is styled by typography
+			rather than markup: a measured column (line length in characters), a
+			reading face, and independent size and line spacing. The same controls sit
+			behind <code>Aa</code> in the reader's toolbar, where you can judge them
+			against the text. Saved on this device.
 		</p>
 
 		<div class="settings-row">
@@ -1922,6 +1958,63 @@
 		font-size: var(--t-xs);
 		color: var(--base6);
 	}
+
+	/* Rows whose control is itself a cluster (the reading knobs) wrap rather
+	   than overflow a narrow panel. */
+	.settings-row--wrap {
+		flex-wrap: wrap;
+		align-items: flex-start;
+	}
+
+	/* ± counter — the stepper that replaced the text-size preset ladder. */
+	.stepper {
+		display: inline-flex;
+		align-items: center;
+		gap: 2px;
+		border: 1px solid var(--panel-border);
+		border-radius: var(--r-sm);
+		padding: 0 2px;
+	}
+	.stepper button {
+		background: none;
+		border: none;
+		color: var(--id-yours);
+		font-size: var(--t-sm);
+		line-height: 1;
+		padding: 4px 8px;
+		cursor: pointer;
+	}
+	.stepper button:hover:not(:disabled) {
+		background: color-mix(in srgb, var(--id-yours) 14%, transparent);
+	}
+	.stepper button:disabled {
+		color: var(--base5);
+		opacity: 0.5;
+		cursor: default;
+	}
+	.stepper__val {
+		font-family: var(--font-mono);
+		font-size: var(--t-xs);
+		min-width: 5ch;
+		text-align: center;
+	}
+	.stepper__pct {
+		font-family: var(--font-mono);
+		font-size: var(--t-3xs);
+		color: var(--base5);
+	}
+	.stepper__reset {
+		background: none;
+		border: none;
+		color: var(--base5);
+		font-family: var(--font-mono);
+		font-size: var(--t-3xs);
+		text-decoration: underline dotted;
+		cursor: pointer;
+		padding: 2px 4px;
+	}
+	.stepper__reset:hover:not(:disabled) { color: var(--id-yours); }
+	.stepper__reset:disabled { opacity: 0.4; cursor: default; text-decoration: none; }
 
 	.radio-group {
 		display: flex;

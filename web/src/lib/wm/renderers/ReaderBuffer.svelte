@@ -29,6 +29,7 @@
 	import CommentThread from '$lib/components/CommentThread.svelte';
 	import ReplyBox from '$lib/components/ReplyBox.svelte';
 	import HighlightCapture from '$lib/components/HighlightCapture.svelte';
+	import ReadingControls from '$lib/components/ReadingControls.svelte';
 	import HighlightList from '$lib/components/HighlightList.svelte';
 	import HighlightsDrawer, {
 		type DrawerHighlight
@@ -597,6 +598,24 @@
 		auxOpen = !auxOpen;
 		try {
 			localStorage.setItem(AUX_TOOLS_KEY, auxOpen ? '1' : '0');
+		} catch {
+			// storage unavailable (private mode) — state stays session-local
+		}
+	}
+
+	// ── Reading typography row ──────────────────────────────────────────
+	// `Aa` drops a strip of reading knobs (face, size, column width, leading,
+	// justify). The prefs are global + per device (theme/reading.svelte.ts);
+	// only whether the strip is showing is buffer view state, persisted the
+	// same way the tools caret is.
+	const TYPE_ROW_KEY = 'tendrl:reader-type-open';
+	let typeOpen = $state(
+		typeof localStorage !== 'undefined' && localStorage.getItem(TYPE_ROW_KEY) === '1'
+	);
+	function toggleType() {
+		typeOpen = !typeOpen;
+		try {
+			localStorage.setItem(TYPE_ROW_KEY, typeOpen ? '1' : '0');
 		} catch {
 			// storage unavailable (private mode) — state stays session-local
 		}
@@ -2121,6 +2140,13 @@
 		{/if}
 		<span class="sp"></span>
 		<button
+			class="aux-toggle type-toggle"
+			class:active={typeOpen}
+			onclick={toggleType}
+			aria-expanded={typeOpen}
+			title="Reading typography — font, size, column width, line spacing"
+		>Aa</button>
+		<button
 			class="aux-toggle"
 			data-tour="reader-tools"
 			onclick={toggleAux}
@@ -2128,6 +2154,13 @@
 			title="Tools — highlight mode, edit, fetch, pool actions, refresh discussions"
 		>{auxOpen ? '▾' : '▸'} tools</button>
 	</div>
+	{#if typeOpen}
+		<!-- Reading typography, adjusted while reading (that's the only place
+		     you can judge it). Same drawer posture as the tools row. -->
+		<div class="toolbar toolbar--aux toolbar--type">
+			<ReadingControls compact />
+		</div>
+	{/if}
 	{#if auxOpen}
 		<!-- The action cluster, off the critical reading path. Reuses the
 		     .toolbar class so the shared button styling applies. -->
@@ -2838,6 +2871,16 @@
 	}
 	.toolbar .aux-toggle {
 		color: var(--fg-alt);
+	}
+	/* Reading-typography strip. Its controls bring their own chrome, so the
+	   row is just a quiet shelf — no toolbar button padding. */
+	.toolbar--type {
+		padding: 6px 8px;
+	}
+	.toolbar .type-toggle {
+		font-family: var(--font-serif);
+		font-size: var(--t-sm);
+		letter-spacing: 0.02em;
 	}
 
 	/* Mobile TOC drawer — same surface language as the shell's work-buffer

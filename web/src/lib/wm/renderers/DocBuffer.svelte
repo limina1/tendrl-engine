@@ -18,6 +18,8 @@
 	import { prefetchAuthors, refreshAuthors } from '$lib/discussions/authors.svelte';
 	import PoolStateBadges from '$lib/components/PoolStateBadges.svelte';
 	import RichContent from '$lib/components/RichContent.svelte';
+	import { readingVars } from '$lib/theme/reading.svelte';
+	import ReadingControls from '$lib/components/ReadingControls.svelte';
 	import type { ResolvedRef, ParsedToken } from '$lib/nostr/nostrdown';
 	import { shouldNetworkFetch } from '$lib/nostr/fetch-dedupe';
 	import { registerResolveView } from '$lib/nostr/resolve-status.svelte';
@@ -79,6 +81,9 @@
 	let threads = $state<ThreadNode[]>([]);
 	let highlights = $state<Highlight[]>([]);
 	let commentsOpen = $state(true);
+	// Reading-typography strip (the `Aa` pill). View state only — the prefs
+	// themselves live in theme/reading.svelte.ts and persist per device.
+	let typeOpen = $state(false);
 	let refreshing = $state(false);
 
 	// Highlight spans resolved engine-side (POST /highlights/resolve), async
@@ -390,6 +395,13 @@
 				     fetch affordance, not a row action. -->
 				<div class="doc-actions">
 					<button
+						class="pill pill--menu type-btn"
+						class:type-btn--on={typeOpen}
+						onclick={() => (typeOpen = !typeOpen)}
+						aria-expanded={typeOpen}
+						title="Reading typography — font, size, column width, line spacing"
+					>Aa</button>
+					<button
 						class="hl-mode-pill"
 						class:hl-mode-pill--on={app.highlightMode}
 						disabled={!canSignNow}
@@ -427,6 +439,10 @@
 			</button>
 		</header>
 
+		{#if typeOpen}
+			<div class="doc-type"><ReadingControls compact /></div>
+		{/if}
+
 		{#if authorPubkey}
 			<!-- Author chip — avatar + name, click jumps to their profile page. -->
 			<button
@@ -443,7 +459,7 @@
 			</button>
 		{/if}
 
-		<div class="doc-content">
+		<div class="doc-content" style={readingVars()}>
 			<HighlightCapture getContent={highlightContentFor} onposted={refreshDiscussionsLocal} />
 			<!-- data-section-addr marks the highlight-capture boundary; the body
 			     text here is verbatim source (text + exact-text marks only), so
@@ -666,20 +682,38 @@
 		white-space: nowrap;
 	}
 
+	.type-btn--on {
+		border-color: var(--id-yours);
+		color: var(--id-yours);
+		background: color-mix(in srgb, var(--id-yours) 12%, transparent);
+	}
+	/* Typography strip — a drawer under the doc bar, same posture as the
+	   reader's `Aa` row. */
+	.doc-type {
+		padding: 6px 16px;
+		border-bottom: 1px solid var(--border);
+		background: var(--bg-surface);
+	}
+
 	.doc-content {
 		flex: 1;
 		overflow-y: auto;
 		min-height: 0;
 	}
 
+	/* The measured reading column (see theme/reading.svelte.ts). The wrapper
+	   carries the reading face + size so the `ch` measure resolves against the
+	   font actually in use; RichContent inside inherits both. */
 	.doc-body {
 		white-space: pre-wrap;
-		font-family: var(--font-sans);
-		font-size: var(--t-xs);
-		line-height: 1.6;
+		font-family: var(--rd-font, var(--font-sans));
+		font-size: var(--rd-size, var(--t-xs));
+		line-height: var(--rd-leading, 1.6);
 		color: var(--fg);
-		margin: 0;
-		padding: 14px 16px;
+		margin: 0 auto;
+		padding: 14px 16px 28px;
+		max-width: var(--rd-measure, none);
+		box-sizing: content-box;
 	}
 
 	@keyframes hl-flash {

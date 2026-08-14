@@ -231,9 +231,17 @@
 </div>
 
 <style>
+	/* Inside a reading surface the card IS the column: it carries the reading
+	   face + size (so the `ch` measure resolves against the right font) and
+	   centres itself in the pane. Outside one, every `--rd-*` falls back and the
+	   card renders exactly as before. */
 	.section-card {
-		padding: 12px 16px;
+		padding: 12px 16px 20px;
 		border-bottom: 1px solid var(--border);
+		max-width: var(--rd-measure, none);
+		margin-inline: auto;
+		font-family: var(--rd-font, inherit);
+		font-size: var(--rd-size, inherit);
 	}
 
 	.section-card.clickable {
@@ -248,10 +256,11 @@
 		opacity: 0.6;
 	}
 
+	/* Scales with the reading size — see ContinuousView's twin rule. */
 	.section-title {
-		font-size: var(--t-sm);
+		font-size: var(--rd-title, var(--t-sm));
 		font-weight: 600;
-		margin-bottom: 6px;
+		margin-bottom: 8px;
 		display: flex;
 		align-items: center;
 		gap: 4px;
