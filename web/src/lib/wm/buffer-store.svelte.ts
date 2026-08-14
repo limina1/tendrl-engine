@@ -258,6 +258,42 @@ export class BufferStore {
 		this.flash(pos);
 	}
 
+	// Close the focused leaf (the window), collapsing its parent split and
+	// promoting the surviving sibling — Emacs `delete-window`. The buffer
+	// itself stays open (it's still in `openBuffers`); only the window goes.
+	// Returns false when the focused leaf is the slot's only window: there
+	// is nothing to collapse into, so the caller reports instead of guessing
+	// (collapsing the slot is `SPC w c`, killing the buffer is `SPC b k`).
+	closeFocusedLeaf(): boolean {
+		const pos = this.focusedSlot;
+		const tree = this.slotTrees[pos];
+		if (!tree) return false;
+		const cur = this.focusedLeaf(pos);
+		if (!cur || cur.path.length === 0) return false;
+		const parentPath = cur.path.slice(0, -1);
+		const idx = cur.path[cur.path.length - 1];
+		const parent = nodeAt(tree, parentPath);
+		if (!parent || parent.type !== 'split') return false;
+
+		const remaining = parent.children.filter((_, i) => i !== idx);
+		const next = replaceAt(tree, parentPath, () =>
+			remaining.length === 1 ? remaining[0] : { ...parent, children: remaining }
+		);
+		this.slotTrees = { ...this.slotTrees, [pos]: next };
+
+		// Focus the neighbour that took the closed window's place — the child
+		// that shifted into its index, or the last one if it was the tail.
+		const survivorPath =
+			remaining.length === 1 ? parentPath : [...parentPath, Math.min(idx, remaining.length - 1)];
+		const survivor = nodeAt(next, survivorPath);
+		const focusPath = survivor ? [...survivorPath, ...firstLeafPath(survivor)] : firstLeafPath(next);
+		this.focusedLeafPath = { ...this.focusedLeafPath, [pos]: focusPath };
+		const buf = this.focusedLeaf(pos)?.buffer;
+		if (buf) this.touchVisit(buf.id);
+		this.flash(pos);
+		return true;
+	}
+
 	// Cycle which leaf is focused within the focused slot's tree.
 	cycleLeafInFocusedSlot(dir: 1 | -1) {
 		const pos = this.focusedSlot;

@@ -16,8 +16,13 @@ navigation. Full spec: =docs/wm-shell.md=; shell root in
   =composer:current=, =draft-reader:current=, =profile:<pk>=, plus singletons
   (=chat=, =feed=, =search:default=, =settings=, …). Registry + renderers in
   =web/src/lib/wm/registry.ts= and =web/src/lib/wm/renderers/=.
-- Splits: =SPC w s= splits the focused leaf with a same-class buffer picker;
-  =j= / =k= cycles leaves. Buffer switching =SPC b b= (class) / =SPC b B=
+- Splits: =SPC w s= (below) / =SPC w v= (right) split the focused leaf with a
+  same-class buffer picker — orientation is carried beside the one picker mode,
+  so the prompt reads =s>= / =v>=; =SPC w x= kills the focused *window*,
+  collapsing its parent split into the surviving sibling (the buffer stays
+  open — that's =SPC b k=), and reports instead of guessing when the leaf is
+  the slot's only window. =j= / =k= (=↓= / =↑=) move focus within the slot.
+  Buffer switching =SPC b b= (class) / =SPC b B=
   (global) / =SPC b r= (recently closed, cap 20); =SPC b k= kills; the
   =SPC b o= open prefix jumps straight to a buffer — =b o c= composer
   (=tendrl-open-compose=), =b o s= settings (chord alias of =SPC s s=;

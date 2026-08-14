@@ -40,7 +40,9 @@ export const commands: Command[] = [
 	{ id: 'tendrl-find-draft', name: 'tendrl-find-draft', description: 'Open a draft into a composer', category: 'Buffer', scope: 'opener', deferred: true, keybinding: 'SPC f d' },
 	// Window
 	{ id: 'tendrl-toggle-rail', name: 'tendrl-toggle-rail', description: 'Collapse focused slot to rail (or expand if rail)', category: 'Window', scope: 'nav', keybinding: 'SPC w c', shells: ['desktop'] },
-	{ id: 'tendrl-split-window', name: 'tendrl-split-window', description: 'Split focused slot horizontally with another same-class buffer', category: 'Window', scope: 'nav', keybinding: 'SPC w s', shells: ['desktop'] },
+	{ id: 'tendrl-split-window', name: 'tendrl-split-window', description: 'Split the focused window below with another same-class buffer', category: 'Window', scope: 'nav', keybinding: 'SPC w s', shells: ['desktop'] },
+	{ id: 'tendrl-vsplit-window', name: 'tendrl-vsplit-window', description: 'Split the focused window to the right with another same-class buffer', category: 'Window', scope: 'nav', keybinding: 'SPC w v', shells: ['desktop'] },
+	{ id: 'tendrl-close-window', name: 'tendrl-close-window', description: 'Close the focused window, giving its space to the sibling (the buffer stays open)', category: 'Window', scope: 'nav', keybinding: 'SPC w x', shells: ['desktop'] },
 	// Layout
 	{ id: 'tendrl-switch-layout', name: 'tendrl-switch-layout', description: 'Switch the active layout', category: 'Layout', scope: 'nav', deferred: true, keybinding: 'SPC l b', shells: ['desktop'] },
 	{ id: 'tendrl-save-layout', name: 'tendrl-save-layout', hiddenByDefault: true, description: 'Save the current frame configuration as a named layout', category: 'Layout', scope: 'nav', deferred: true, shells: ['desktop'] },
