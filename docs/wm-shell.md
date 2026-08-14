@@ -295,6 +295,9 @@ Two modes; mode shown in mode-line at left.
 | =SPC b r=       | Recently closed                                       |
 | =SPC b k=       | Kill buffer                                           |
 | =SPC w c=       | Toggle focused slot collapse/expand                   |
+| =SPC w s=       | Split focused window below (same-class picker)         |
+| =SPC w v=       | Split focused window right (same-class picker)         |
+| =SPC w x=       | Kill focused window (buffer stays open)               |
 
 *=i= vs =o=:*
 

@@ -31,7 +31,8 @@ export type LeaderContext = {
 	navigateSlot: (dir: 1 | -1) => void;
 	setLayout: (name: string) => void;
 	toggleNetworkMode: () => void;
-	openSplitPicker: () => void;
+	openSplitPicker: (orient: 'h' | 'v') => void;
+	closeFocusedWindow: () => void;
 	openSettings: () => void;
 	openProfileEdit: () => void;
 	openCompose: () => void;
@@ -70,7 +71,8 @@ export function buildLeaderRoot(ctx: LeaderContext): SubPrefix {
 				children: {
 					c: { type: 'leaf', desc: 'collapse / expand', commandId: 'tendrl-toggle-rail', category: 'Window', kind: 'client', run: () => ctx.toggleFocusedSlot() },
 					// h/l move focus across slots (chat ↔ work ↔ research).
-					// j/k cycle through buffers within the focused slot.
+					// j/k move focus within the focused slot — between its split
+					// windows, or through its class's buffers when it has only one.
 					h: { type: 'leaf', desc: 'focus left slot', category: 'Window', kind: 'client', run: () => ctx.navigateSlot(-1) },
 					l: { type: 'leaf', desc: 'focus right slot', category: 'Window', kind: 'client', run: () => ctx.navigateSlot(1) },
 					ArrowLeft: { type: 'leaf', desc: 'focus left slot', category: 'Window', kind: 'client', run: () => ctx.navigateSlot(-1) },
@@ -79,7 +81,9 @@ export function buildLeaderRoot(ctx: LeaderContext): SubPrefix {
 					k: { type: 'leaf', desc: 'prev buffer in slot', category: 'Window', kind: 'client', run: () => ctx.cycleBufferInSlot(-1) },
 					ArrowDown: { type: 'leaf', desc: 'next buffer in slot', category: 'Window', kind: 'client', run: () => ctx.cycleBufferInSlot(1) },
 					ArrowUp: { type: 'leaf', desc: 'prev buffer in slot', category: 'Window', kind: 'client', run: () => ctx.cycleBufferInSlot(-1) },
-					s: { type: 'leaf', desc: 'split (same-class h)', commandId: 'tendrl-split-window', category: 'Window', kind: 'client', run: () => ctx.openSplitPicker() }
+					s: { type: 'leaf', desc: 'split below (same-class)', commandId: 'tendrl-split-window', category: 'Window', kind: 'client', run: () => ctx.openSplitPicker('h') },
+					v: { type: 'leaf', desc: 'split right (same-class)', commandId: 'tendrl-vsplit-window', category: 'Window', kind: 'client', run: () => ctx.openSplitPicker('v') },
+					x: { type: 'leaf', desc: 'kill window', commandId: 'tendrl-close-window', category: 'Window', kind: 'client', run: () => ctx.closeFocusedWindow() }
 				}
 			},
 			f: {
@@ -251,6 +255,7 @@ function buildNoopRoot(): SubPrefix {
 		setLayout: noop,
 		toggleNetworkMode: noop,
 		openSplitPicker: noop,
+		closeFocusedWindow: noop,
 		openSettings: noop,
 		openProfileEdit: noop,
 		openCompose: noop

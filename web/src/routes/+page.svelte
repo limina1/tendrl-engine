@@ -347,6 +347,11 @@
 		selectedIndex: 0
 	});
 
+	// Which way the pending `split` minibuffer will cut once a buffer is
+	// picked — 'h' stacks below (SPC w s), 'v' opens to the right (SPC w v).
+	// Carried beside the mode so the picker itself stays one mode.
+	let splitOrient = $state<'h' | 'v'>('h');
+
 	// Search-history popover toggle, anchored to the .hs-pill-wrap in the
 	// modeline. Click-outside closes it via the $effect below.
 	let historyPopoverOpen = $state(false);
@@ -467,7 +472,7 @@
 
 	function selectBuffer(entry: OpenBuf) {
 		if (mb.mode === 'split') {
-			store.splitFocused(entry.buffer, 'h');
+			store.splitFocused(entry.buffer, splitOrient);
 		} else {
 			store.selectBuffer(entry);
 		}
@@ -488,6 +493,17 @@
 
 	function closeMinibuffer() {
 		mb = { mode: 'closed', query: '', selectedIndex: 0 };
+	}
+
+	function openSplitPicker(orient: 'h' | 'v') {
+		splitOrient = orient;
+		openMinibuffer('split');
+	}
+
+	function closeFocusedWindow() {
+		if (!store.closeFocusedLeaf()) {
+			app.pushToast('Only window in this slot — SPC w c collapses it, SPC b k kills the buffer', 'info');
+		}
 	}
 
 	// Press-out for the minibuffer, both shells: a click/tap anywhere outside
@@ -665,8 +681,13 @@
 			closeMinibuffer();
 			return;
 		}
-		if (cmd.id === 'tendrl-split-window') {
-			openMinibuffer('split');
+		if (cmd.id === 'tendrl-split-window' || cmd.id === 'tendrl-vsplit-window') {
+			openSplitPicker(cmd.id === 'tendrl-vsplit-window' ? 'v' : 'h');
+			return;
+		}
+		if (cmd.id === 'tendrl-close-window') {
+			closeFocusedWindow();
+			closeMinibuffer();
 			return;
 		}
 		if (cmd.id === 'tendrl-toggle-rail') {
@@ -1026,7 +1047,8 @@
 		navigateSlot: (dir) => store.navigateSlot(dir),
 		setLayout,
 		toggleNetworkMode,
-		openSplitPicker: () => openMinibuffer('split'),
+		openSplitPicker,
+		closeFocusedWindow,
 		openSettings: () =>
 			store.openBuffer({
 				className: 'work',
@@ -1302,7 +1324,8 @@
 		}
 		if (mb.mode === 'split') {
 			const cls = store.focusedSlotClass();
-			return `Split with · ${cls ?? '?'} class · ${minibufferEntries.length} open`;
+			const dir = splitOrient === 'v' ? 'right' : 'below';
+			return `Split ${dir} with · ${cls ?? '?'} class · ${minibufferEntries.length} open`;
 		}
 		if (mb.mode === 'global') return `Switch buffer · global · ${minibufferEntries.length} open`;
 		if (mb.mode === 'recent') return `Recently closed · ${minibufferEntries.length}`;
@@ -1951,7 +1974,7 @@
 		</div>
 		<div class="mb__input-row">
 			<span class="mb__title">{minibufferTitle}</span>
-			<span class="mb__prompt">{mb.mode === 'global' ? 'B>' : mb.mode === 'recent' ? 'r>' : mb.mode === 'mx' ? 'cmd>' : mb.mode === 'split' ? 's>' : 'b>'}</span>
+			<span class="mb__prompt">{mb.mode === 'global' ? 'B>' : mb.mode === 'recent' ? 'r>' : mb.mode === 'mx' ? 'cmd>' : mb.mode === 'split' ? (splitOrient === 'v' ? 'v>' : 's>') : 'b>'}</span>
 			<!-- svelte-ignore a11y_autofocus -->
 			<input
 				class="mb__input"
