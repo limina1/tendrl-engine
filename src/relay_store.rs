@@ -72,6 +72,20 @@ pub struct RelaySets {
     /// combination of classes AND any number of named sets.
     #[serde(default)]
     pub named: Vec<NamedRelaySet>,
+    /// Per-relay **resolve kinds**: the event kinds a relay is claimed to
+    /// serve, keyed by normalized URL. Specificity layered on top of the
+    /// read/write/broadcast policy — it governs *resolution* (targeted
+    /// retrieval of a known coordinate/entity), not general traffic.
+    ///
+    /// A claim is exclusive per kind: resolving kind K goes to the relays
+    /// listing K, whatever their policy. When no relay lists K, resolution
+    /// falls back to the read set — so an empty map is exactly today's
+    /// behavior. A URL with claims but no policy is a resolution-only
+    /// target: never in feeds, searches, or profile lookups.
+    ///
+    /// See `docs/zettel/idea-relay-kind-routing.org`.
+    #[serde(default)]
+    pub resolve_kinds: std::collections::BTreeMap<String, Vec<u64>>,
     /// Per-class `exclusive` toggle for discovery classes. When ON for
     /// a class, the engine bypasses read relays entirely for that
     /// lookup type — primary = `class.default` only, fallback =
@@ -211,8 +225,46 @@ impl RelaySets {
                 fallback: Vec::new(),
             },
             named: Vec::new(),
+            // No claims on a fresh install: resolution behaves exactly as
+            // it did before routing existed.
+            resolve_kinds: std::collections::BTreeMap::new(),
             exclusive: ExclusiveFlags::default(),
         }
+    }
+
+    /// The kinds claimed by `url` (normalized), or an empty slice.
+    pub fn kinds_for(&self, url: &str) -> &[u64] {
+        let key = crate::relay_url::normalize_relay_url(url);
+        self.resolve_kinds.get(&key).map_or(&[], |v| v.as_slice())
+    }
+
+    /// Every relay claiming `kind`, in insertion-stable (sorted-key) order.
+    /// Empty means nothing claims it — the caller falls back to the read
+    /// set, which is what makes an unconfigured install a no-op.
+    pub fn relays_claiming_kind(&self, kind: u64) -> Vec<String> {
+        self.resolve_kinds
+            .iter()
+            .filter(|(_, kinds)| kinds.contains(&kind))
+            .map(|(url, _)| url.clone())
+            .collect()
+    }
+
+    /// Replace `url`'s claims. An empty list drops the entry entirely so
+    /// the map never accumulates empty vectors (and `relays.json` stays
+    /// readable). Kinds are deduped and sorted for a stable file.
+    pub fn set_kinds(&mut self, url: &str, kinds: &[u64]) {
+        let key = crate::relay_url::normalize_relay_url(url);
+        if key.is_empty() {
+            return;
+        }
+        if kinds.is_empty() {
+            self.resolve_kinds.remove(&key);
+            return;
+        }
+        let mut k = kinds.to_vec();
+        k.sort_unstable();
+        k.dedup();
+        self.resolve_kinds.insert(key, k);
     }
 
     /// Normalize every URL in each set and drop duplicates. Idempotent —
@@ -229,6 +281,27 @@ impl RelaySets {
         self.indexer.fallback = normalize_dedup(&self.indexer.fallback);
         for s in &mut self.named {
             s.urls = normalize_dedup(&s.urls);
+        }
+        // Claim keys are URLs too — canonicalize them so a hand-edited
+        // `relays.json` with a trailing slash still matches lookups.
+        if !self.resolve_kinds.is_empty() {
+            let claims = std::mem::take(&mut self.resolve_kinds);
+            for (url, mut kinds) in claims {
+                let key = crate::relay_url::normalize_relay_url(&url);
+                if key.is_empty() || kinds.is_empty() {
+                    continue;
+                }
+                kinds.sort_unstable();
+                kinds.dedup();
+                self.resolve_kinds
+                    .entry(key)
+                    .and_modify(|existing| {
+                        existing.extend_from_slice(&kinds);
+                        existing.sort_unstable();
+                        existing.dedup();
+                    })
+                    .or_insert(kinds);
+            }
         }
     }
 
@@ -407,6 +480,24 @@ impl RelayStore {
         Ok(true)
     }
 
+    /// Replace `url`'s resolve-kind claims and persist. Passing an empty
+    /// slice clears them. Returns whether the stored claims changed.
+    ///
+    /// Claims are deliberately independent of set membership: a relay may
+    /// carry claims with no read/write/broadcast policy at all (the
+    /// resolution-only target), so `remove` does *not* clear them — only
+    /// an explicit call here does.
+    pub fn set_kinds(&self, sets: &mut RelaySets, url: &str, kinds: &[u64]) -> Result<bool> {
+        let key = crate::relay_url::normalize_relay_url(url);
+        let before = sets.resolve_kinds.get(&key).cloned();
+        sets.set_kinds(url, kinds);
+        let changed = before.as_deref() != sets.resolve_kinds.get(&key).map(|v| v.as_slice());
+        if changed {
+            self.save(sets)?;
+        }
+        Ok(changed)
+    }
+
     /// Remove `url` from the named set (if present) and persist. Returns
     /// whether anything was actually removed.
     pub fn remove(&self, sets: &mut RelaySets, set: &str, url: &str) -> Result<bool> {
@@ -552,6 +643,70 @@ mod tests {
         let reloaded = store.load().unwrap();
         assert!(reloaded.search.default.is_empty());
         assert_eq!(reloaded.search.fallback, vec!["wss://a".to_string()]);
+    }
+
+    #[test]
+    fn resolve_kinds_round_trip_and_clear() {
+        let tmp = TempDir::new().unwrap();
+        let store = RelayStore::new(tmp.path()).unwrap();
+        let mut sets = RelaySets::default();
+
+        // Unsorted + duplicated input normalizes on the way in.
+        assert!(store
+            .set_kinds(&mut sets, "wss://docs.example", &[30041, 30818, 30040, 30818])
+            .unwrap());
+        assert_eq!(
+            store.load().unwrap().kinds_for("wss://docs.example"),
+            &[30040, 30041, 30818]
+        );
+        // Idempotent — same claims, no rewrite.
+        assert!(!store
+            .set_kinds(&mut sets, "wss://docs.example", &[30040, 30041, 30818])
+            .unwrap());
+
+        // Empty clears the entry rather than storing an empty vec.
+        assert!(store.set_kinds(&mut sets, "wss://docs.example", &[]).unwrap());
+        assert!(store.load().unwrap().resolve_kinds.is_empty());
+    }
+
+    #[test]
+    fn claims_survive_set_removal() {
+        // A relay may be a resolution-only target: claims with no
+        // read/write/broadcast membership. Leaving a set must not
+        // silently drop them.
+        let tmp = TempDir::new().unwrap();
+        let store = RelayStore::new(tmp.path()).unwrap();
+        let mut sets = RelaySets::default();
+
+        store.add(&mut sets, "fetch", "wss://docs.example").unwrap();
+        store
+            .set_kinds(&mut sets, "wss://docs.example", &[30818])
+            .unwrap();
+        store.remove(&mut sets, "fetch", "wss://docs.example").unwrap();
+
+        let reloaded = store.load().unwrap();
+        assert!(reloaded.fetch.is_empty());
+        assert_eq!(reloaded.kinds_for("wss://docs.example"), &[30818]);
+        assert_eq!(
+            reloaded.relays_claiming_kind(30818),
+            vec!["wss://docs.example".to_string()]
+        );
+        // Nothing claims a kind nobody listed — the caller falls back to
+        // the read set, which is what keeps an unconfigured install a no-op.
+        assert!(reloaded.relays_claiming_kind(1).is_empty());
+    }
+
+    #[test]
+    fn claim_keys_canonicalize_on_load() {
+        let tmp = TempDir::new().unwrap();
+        let store = RelayStore::new(tmp.path()).unwrap();
+        let legacy = r#"{
+            "resolve_kinds": { "WSS://Docs.Example/": [30818] }
+        }"#;
+        std::fs::write(store.path(), legacy).unwrap();
+
+        let loaded = store.load().unwrap();
+        assert_eq!(loaded.kinds_for("wss://docs.example"), &[30818]);
     }
 
     #[test]

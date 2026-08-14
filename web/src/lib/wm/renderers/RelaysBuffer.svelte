@@ -6,6 +6,7 @@
 	// Global in-app prompt (window.prompt replacement) — the modal
 	// itself renders once in +layout; we just await promptText().
 	import { promptText, textPrompt } from '$lib/wm/text-prompt.svelte';
+	import { kindLabel, KNOWN_KINDS } from '$lib/search/search-config.svelte';
 	import ProfileName from '$lib/components/ProfileName.svelte';
 	import type { Buffer } from '../types';
 
@@ -28,6 +29,12 @@
 		write: boolean;
 		auth: boolean;
 		broadcast: boolean;
+		/** Resolve-kind claims — the kinds this relay is asked for when
+		 *  resolving a known target. Empty = no claim, and resolution for
+		 *  an unclaimed kind uses the read relays exactly as before. A row
+		 *  may carry claims with no policy at all: a resolution-only
+		 *  target that stays out of feeds and searches. */
+		kinds: number[];
 	};
 
 	// Discovery section rows — one entry per (URL, tier) in a class.
@@ -47,6 +54,10 @@
 	let loading = $state(true);
 	let error = $state<string | null>(null);
 	let expanded = $state(new Set<string>());
+	// Second disclosure per row, independent of the NIP-11 one: the
+	// resolve-kinds editor.
+	let kindsOpen = $state(new Set<string>());
+	let kindDraft = $state<Record<string, string>>({});
 	// Map<normalizedUrl, Nip11Status> — refreshed reactively as fetches
 	// resolve. Fresh object each update so $derived sees a change.
 	let infoMap = $state<Record<string, Nip11Status>>({});
@@ -150,7 +161,8 @@
 						read: false,
 						write: false,
 						auth: false,
-						broadcast: false
+						broadcast: false,
+						kinds: []
 					};
 					map.set(url, r);
 				}
@@ -164,6 +176,12 @@
 			for (const url of cfg.fetch?.urls ?? []) ensure(url).read = true;
 			for (const url of cfg.publish?.urls ?? []) ensure(url).write = true;
 			for (const url of cfg.broadcast?.urls ?? []) ensure(url).broadcast = true;
+			// Claims are policy-independent, so a relay can appear here with
+			// no set membership at all — the resolution-only target. `ensure`
+			// gives it a row with every policy toggle off.
+			for (const [url, kinds] of Object.entries(cfg.resolve_kinds ?? {})) {
+				ensure(url).kinds = [...kinds].sort((a, b) => a - b);
+			}
 			rows = [...map.values()].sort((a, b) => a.url.localeCompare(b.url));
 
 			// Phase 5: Discovery section has its own per-tier rows so
@@ -259,6 +277,74 @@
 		}
 	}
 
+	function toggleKinds(url: string) {
+		const next = new Set(kindsOpen);
+		if (!next.delete(url)) next.add(url);
+		kindsOpen = next;
+	}
+
+	/** Write a relay's claims through to relays.json, optimistically. */
+	async function saveKinds(url: string, kinds: number[]) {
+		const prev = rows;
+		const sorted = [...new Set(kinds)].sort((a, b) => a - b);
+		rows = rows.map((r) => (r.url === url ? { ...r, kinds: sorted } : r));
+		try {
+			await api.setRelayKinds(url, sorted);
+		} catch (e) {
+			rows = prev; // revert on failure
+			app.pushToast(
+				`Couldn't save resolve kinds: ${e instanceof Error ? e.message : String(e)}`,
+				'error',
+				5000
+			);
+		}
+	}
+
+	function addKind(url: string, kind?: number) {
+		const row = rows.find((r) => r.url === url);
+		if (!row) return;
+		const raw = kind ?? Number.parseInt((kindDraft[url] ?? '').replace(/^k(?:ind)?:/i, ''), 10);
+		if (!Number.isInteger(raw) || raw < 0 || raw > 65535) {
+			app.pushToast('Enter a kind number (0–65535)', 'error', 3000);
+			return;
+		}
+		kindDraft = { ...kindDraft, [url]: '' };
+		if (row.kinds.includes(raw)) return;
+		saveKinds(url, [...row.kinds, raw]);
+	}
+
+	function removeKind(url: string, kind: number) {
+		const row = rows.find((r) => r.url === url);
+		if (!row) return;
+		saveKinds(
+			url,
+			row.kinds.filter((k) => k !== kind)
+		);
+	}
+
+	/** Kinds worth offering for a row: what the relay's own NIP-11
+	 *  `retention` declares it keeps (the relay announcing exactly this),
+	 *  then the publication kinds tendrl is built around. Already-claimed
+	 *  kinds drop out. Suggestions only — nothing applies until clicked. */
+	function kindSuggestions(row: RelayRow): number[] {
+		const out: number[] = [];
+		const push = (k: number) => {
+			if (Number.isInteger(k) && !row.kinds.includes(k) && !out.includes(k)) out.push(k);
+		};
+		for (const policy of docFor(row.url)?.retention ?? []) {
+			for (const entry of policy.kinds ?? []) {
+				if (Array.isArray(entry)) {
+					// NIP-11 allows [lo, hi] ranges; only offer small ones —
+					// a wide range is a retention policy, not a claim.
+					const [lo, hi] = entry;
+					if (hi - lo <= 8) for (let k = lo; k <= hi; k++) push(k);
+				} else push(entry);
+			}
+		}
+		for (const k of KNOWN_KINDS) push(k.kind);
+		return out.slice(0, 8);
+	}
+
 	// Delete a relay from ALL of tendrl's working sets (general / fetch /
 	// publish / broadcast). Local-only by design: relays.json changes,
 	// the user's published relay-list events don't. Removing a URL from
@@ -274,6 +360,10 @@
 			await api.removeRelay('fetch', url);
 			await api.removeRelay('publish', url);
 			await api.removeRelay('broadcast', url);
+			// Claims outlive set membership by design (a claims-only relay
+			// is a valid row), so a full delete has to clear them too or
+			// the row would come back with every toggle off.
+			await api.setRelayKinds(url, []);
 			app.pushToast(`Removed ${shorten(url)} from tendrl`, 'info', 2500);
 			await load();
 		} catch (e) {
@@ -1647,6 +1737,22 @@
 							</div>
 						</div>
 
+						<!-- Second disclosure, sibling to the NIP-11 one: the kinds
+						     this relay is asked for when resolving a known target.
+						     Sits between identity and policy because it refines
+						     policy rather than replacing it. -->
+						<button
+							class="relay-kinds-toggle"
+							class:relay-kinds-toggle--set={row.kinds.length > 0}
+							onclick={() => toggleKinds(row.url)}
+							aria-expanded={kindsOpen.has(row.url)}
+							title="Event kinds this relay is asked to resolve. Empty = no claim; resolution uses your read relays as before."
+						>
+							{kindsOpen.has(row.url) ? '▾' : '▸'} resolve kinds{row.kinds.length
+								? ` · ${row.kinds.length}`
+								: ''}
+						</button>
+
 						<div class="relay-toggles">
 							<button
 								class="pill toggle-pill"
@@ -1680,6 +1786,70 @@
 							title="Remove this relay from tendrl (all working sets). Local only — never touches your published relay lists."
 						>×</button>
 					</div>
+
+					{#if kindsOpen.has(row.url)}
+						<div class="relay-kinds-panel">
+							<p class="kinds-help">
+								Kinds listed here are resolved from <em>this</em> relay. A claim is
+								exclusive: once any relay claims a kind, resolving it asks the
+								claimants and no one else. Kinds nobody claims keep using your read
+								relays.
+							</p>
+
+							{#if row.kinds.length}
+								<div class="kinds-chips">
+									{#each row.kinds as k (k)}
+										<button
+											class="pill kinds-chip"
+											onclick={() => removeKind(row.url, k)}
+											title="Remove this claim"
+										>
+											{kindLabel(k)} <span class="kinds-num">k:{k}</span>
+											<span class="kinds-x">×</span>
+										</button>
+									{/each}
+								</div>
+							{:else}
+								<p class="empty muted kinds-empty">
+									No claims — this relay is not preferred for resolving anything.
+								</p>
+							{/if}
+
+							<div class="kinds-entry">
+								<input
+									class="kinds-input"
+									type="text"
+									inputmode="numeric"
+									placeholder="kind number, e.g. 30818"
+									value={kindDraft[row.url] ?? ''}
+									oninput={(e) => {
+										kindDraft = { ...kindDraft, [row.url]: e.currentTarget.value };
+									}}
+									onkeydown={(e) => {
+										if (e.key === 'Enter') {
+											e.preventDefault();
+											addKind(row.url);
+										}
+									}}
+								/>
+								<button class="btn-refresh" onclick={() => addKind(row.url)}>+ Add</button>
+							</div>
+
+							{#if kindSuggestions(row).length}
+								<div class="kinds-suggest">
+									{#each kindSuggestions(row) as k (k)}
+										<button
+											class="pill kinds-suggest-pill"
+											onclick={() => addKind(row.url, k)}
+											title={docFor(row.url)?.retention
+												? 'Suggested — from this relay’s NIP-11 retention policy or tendrl’s publication kinds'
+												: 'Suggested — a publication kind tendrl is built around'}
+										>+ {kindLabel(k)} <span class="kinds-num">k:{k}</span></button>
+									{/each}
+								</div>
+							{/if}
+						</div>
+					{/if}
 
 					{#if expanded.has(row.url)}
 						<div class="relay-detail">
@@ -2395,6 +2565,95 @@
 		flex-wrap: wrap;
 		gap: 4px;
 		flex-shrink: 0;
+	}
+
+	/* Resolve-kinds disclosure — quiet until the relay claims something,
+	   then it carries a count and reads as configured state rather than
+	   an empty affordance. */
+	.relay-kinds-toggle {
+		background: transparent;
+		border: 1px solid transparent;
+		border-radius: var(--r-md);
+		color: var(--fg-muted);
+		cursor: pointer;
+		flex-shrink: 0;
+		font-family: var(--font-mono);
+		font-size: var(--t-xs);
+		padding: 1px 6px;
+		white-space: nowrap;
+	}
+	.relay-kinds-toggle:hover {
+		border-color: var(--base3);
+		color: var(--fg);
+	}
+	.relay-kinds-toggle--set {
+		background: color-mix(in srgb, var(--id-remote, var(--id-yours)) 12%, transparent);
+		border-color: color-mix(in srgb, var(--id-remote, var(--id-yours)) 40%, transparent);
+		color: var(--id-remote, var(--id-yours));
+	}
+
+	.relay-kinds-panel {
+		display: flex;
+		flex-direction: column;
+		gap: 8px;
+		padding: 4px 14px 12px 32px;
+	}
+	.kinds-help {
+		margin: 0;
+		color: var(--base5);
+		font-size: var(--t-xs);
+		line-height: var(--lh-snug, 1.4);
+		max-width: 62ch;
+	}
+	.kinds-chips,
+	.kinds-suggest {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 4px;
+	}
+	.kinds-chip {
+		background: color-mix(in srgb, var(--id-remote, var(--id-yours)) 14%, transparent);
+		border: 1px solid color-mix(in srgb, var(--id-remote, var(--id-yours)) 45%, transparent);
+		color: var(--id-remote, var(--id-yours));
+		cursor: pointer;
+	}
+	.kinds-chip:hover .kinds-x {
+		color: var(--red, var(--fg));
+	}
+	.kinds-suggest-pill {
+		background: transparent;
+		border: 1px dashed var(--base3);
+		color: var(--base6);
+		cursor: pointer;
+	}
+	.kinds-suggest-pill:hover {
+		border-style: solid;
+		color: var(--fg);
+	}
+	.kinds-num {
+		color: var(--base5);
+	}
+	.kinds-empty {
+		padding: 0;
+		text-align: left;
+		font-size: var(--t-xs);
+	}
+	.kinds-entry {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 6px;
+	}
+	.kinds-input {
+		background: var(--bg-input, var(--bg-surface));
+		border: 1px solid var(--base3);
+		border-radius: var(--r-md);
+		color: var(--fg);
+		font-family: var(--font-mono);
+		font-size: var(--t-xs);
+		padding: 2px 8px;
+		min-width: 0;
+		flex: 1 1 14rem;
+		max-width: 22rem;
 	}
 
 	/* Toggle pills: ghost outline when off, filled-tinted when on. The

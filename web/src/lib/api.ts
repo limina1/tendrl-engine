@@ -1600,9 +1600,22 @@ export function getRelayConfig() {
 		indexer: DiscoveryClass;
 		exclusive: { search: boolean; indexer: boolean };
 		named_sets: NamedRelaySet[];
+		/** Per-relay resolve-kind claims, keyed by normalized URL. A URL
+		 *  absent from the map claims nothing, and resolution for a kind
+		 *  nobody claims falls back to the read relays — so an empty map
+		 *  is exactly the pre-routing behavior. */
+		resolve_kinds: Record<string, number[]>;
 		authors: string[];
 		initial_relays: string[];
 	}>('/api/v1/relays');
+}
+
+/** Replace a relay's resolve-kind claims. `[]` clears them. */
+export function setRelayKinds(url: string, kinds: number[]) {
+	return fetchJson<{ updated: boolean; message: string }>('/api/v1/config/update', {
+		method: 'POST',
+		body: JSON.stringify({ set_relay_kinds: { url, kinds } })
+	});
 }
 
 export function createNamedSet(d_tag: string, title: string) {

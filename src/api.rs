@@ -2453,6 +2453,9 @@ pub struct ConfigUpdateRequest {
     pub add_to_named_set: Option<NamedSetMember>,
     /// Remove a relay URL from a named set.
     pub remove_from_named_set: Option<NamedSetMember>,
+    /// Replace a relay's resolve-kind claims (empty list clears them).
+    /// See `docs/zettel/idea-relay-kind-routing.org`.
+    pub set_relay_kinds: Option<SetRelayKinds>,
     /// Toggle the `exclusive` flag for a discovery class
     /// (`"search"` or `"indexer"`). When ON, the engine bypasses read
     /// relays for that class's lookup type and uses the class's
@@ -2475,6 +2478,15 @@ pub struct SetExclusive {
     /// `"search"` or `"indexer"`.
     pub class: String,
     pub value: bool,
+}
+
+/// Replace one relay's resolve-kind claims wholesale — the UI edits a
+/// list, so a full replacement avoids add/remove round trips and makes
+/// "clear all claims" expressible as an empty list.
+#[derive(Debug, Deserialize)]
+pub struct SetRelayKinds {
+    pub url: String,
+    pub kinds: Vec<u64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -2553,6 +2565,11 @@ pub async fn config_update_handler(
     }
     if let Some(m) = &req.remove_from_named_set {
         if engine.remove_from_named_set(&m.d_tag, &m.url) {
+            changed = true;
+        }
+    }
+    if let Some(sk) = &req.set_relay_kinds {
+        if engine.set_relay_resolve_kinds(&sk.url, &sk.kinds) {
             changed = true;
         }
     }
@@ -2963,6 +2980,10 @@ pub async fn relay_config_handler(State(engine): State<AppState>) -> Json<Value>
             "indexer": rc.exclusive.indexer,
         },
         "named_sets": rc.named_sets,
+        // Per-relay resolve-kind claims, keyed by normalized URL. Absent
+        // keys = no claims = resolution uses the read set. Edit through
+        // /config/update with `set_relay_kinds`.
+        "resolve_kinds": rc.resolve_kinds,
         "authors": rc.authors_hex(),
         "initial_relays": rc.initial_relays,
     }))

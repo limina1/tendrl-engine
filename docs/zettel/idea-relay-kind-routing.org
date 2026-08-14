@@ -1,7 +1,8 @@
 #+TITLE: Idea: kind-scoped relay routing
 #+TYPE: idea
-#+STATUS: spec
+#+STATUS: partial
 #+DATE: 2026-08-14
+#+PROGRESS: 2026-08-14 — storage + API + editor shipped; routing not wired yet
 
 Relay sets today are *functional* — read / write / broadcast say what a
 relay is for — but not *topical*: nothing says what a relay actually
@@ -184,10 +185,18 @@ When several things have an opinion about where a fetch goes:
 
 * Build order
 
-- [ ] [[file:fix-relay-row-mobile-layout.org][Relay row reflow]] —
-  prerequisite; the row must carry a third line
-- [ ] Per-relay =kinds= in =relays.json= + the engine's kind → relays
-  index; =plan()= behind it. Ships as a no-op (rule 1)
+- [X] [[file:fix-relay-row-mobile-layout.org][Relay row reflow]] —
+  prerequisite; the row must carry a third line (2026-08-14)
+- [X] Per-relay =kinds= in =relays.json= + the engine's kind → relays
+  index. Ships as a no-op (rule 1) — nothing reads the claims yet
+  (2026-08-14): =RelaySets.resolve_kinds= (URL → kinds, normalized keys,
+  sorted/deduped, cleared by an empty list), =Engine::relays_claiming_kind=
+  / =set_relay_resolve_kinds=, =set_relay_kinds= on
+  =POST /config/update=, =resolve_kinds= on =GET /relays=, and the
+  *resolve kinds* disclosure on the relay row (chips + entry +
+  suggestions from NIP-11 =retention= and the publication kinds).
+  Claims are policy-independent, so a claims-only relay renders as a row
+  with every toggle off — the resolution-only target
 - [ ] Route the resolve path: nostrdown =resolve_refs= + section
   backfill — narrowest, highest value, and the case that motivated this
 - [ ] Index rule = profile fallback; detach profile backfill from the
@@ -198,6 +207,21 @@ When several things have an opinion about where a fetch goes:
   index)
 - [ ] Kinds editor + NIP-11 =retention= parse as suggestions
 - [ ] Observed-provenance suggestions (kind × relay histogram)
+
+* Decisions taken while building (2026-08-14)
+
+- *Claims outlive set membership.* Removing a relay from =fetch= does
+  not clear its claims — a claims-only relay is a legitimate row (rule
+  3). Only an explicit clear (empty list) or the row's × does it.
+- *Reset to defaults drops claims*, unlike named sets. Claims are
+  functional routing config; a first-boot install has none.
+- *Whole-list replacement, not add/remove.* The editor edits a list, so
+  =set_relay_kinds= replaces it — which also makes "clear all" simply an
+  empty list.
+- *Editing a claim rearms the retry paths.* Setting claims clears the
+  unreachable-section skip map and the wiki-miss memo, the same way
+  adding a relay does: the answer may now live somewhere we stopped
+  asking.
 
 * Open
 

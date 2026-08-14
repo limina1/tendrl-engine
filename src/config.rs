@@ -142,6 +142,12 @@ pub struct RelayConfig {
     /// `relays.json` at runtime; never deserialized from TOML.
     #[serde(skip, default)]
     pub named_sets: Vec<crate::relay_store::NamedRelaySet>,
+    /// Per-relay resolve-kind claims, keyed by normalized URL. Loaded
+    /// from `relays.json` at runtime; never from TOML. Empty map = no
+    /// claims = resolution uses the read set, as it always did. See
+    /// `relay_store::RelaySets::resolve_kinds`.
+    #[serde(skip, default)]
+    pub resolve_kinds: std::collections::BTreeMap<String, Vec<u64>>,
     /// Authors to follow — fetch their events from fetch relays (npub or hex)
     #[serde(default)]
     pub authors: Vec<String>,
@@ -232,6 +238,7 @@ impl Default for RelayConfig {
             indexer: crate::relay_store::DiscoveryClass::default(),
             exclusive: crate::relay_store::ExclusiveFlags::default(),
             named_sets: Vec::new(),
+            resolve_kinds: std::collections::BTreeMap::new(),
             authors: Vec::new(),
             timeout_ms: default_timeout_ms(),
         }
@@ -291,6 +298,7 @@ impl RelayConfig {
         self.indexer = sets.indexer.clone();
         self.exclusive = sets.exclusive.clone();
         self.named_sets = sets.named.clone();
+        self.resolve_kinds = sets.resolve_kinds.clone();
     }
 
     /// Resolve author list to hex pubkeys (handles npub and hex)

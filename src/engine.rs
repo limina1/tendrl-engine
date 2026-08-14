@@ -517,6 +517,76 @@ impl Engine {
         self.relay_config.read().unwrap().indexer.fallback.clone()
     }
 
+    /// Every relay's resolve-kind claims, keyed by normalized URL (owned
+    /// clone). Empty map = nothing claimed = resolution behaves exactly
+    /// as it did before routing existed.
+    pub fn relay_resolve_kinds(&self) -> std::collections::BTreeMap<String, Vec<u64>> {
+        self.relay_config.read().unwrap().resolve_kinds.clone()
+    }
+
+    /// The relays claiming `kind`. Empty means nobody claimed it and the
+    /// caller should fall back to its usual set — that fallback is what
+    /// makes an unconfigured install a no-op. A claim is exclusive per
+    /// kind: when this returns non-empty, it IS the set to ask, whatever
+    /// the claimants' read/write policy.
+    ///
+    /// See `docs/zettel/idea-relay-kind-routing.org`.
+    pub fn relays_claiming_kind(&self, kind: u64) -> Vec<String> {
+        let rc = self.relay_config.read().unwrap();
+        rc.resolve_kinds
+            .iter()
+            .filter(|(_, kinds)| kinds.contains(&kind))
+            .map(|(url, _)| url.clone())
+            .collect()
+    }
+
+    /// Replace a relay's resolve-kind claims and write through to
+    /// `relays.json`. An empty slice clears them. Returns whether
+    /// anything changed.
+    ///
+    /// Claims are independent of set membership by design — a relay can
+    /// carry claims with no read/write/broadcast policy at all (the
+    /// resolution-only target), so this is the only thing that clears
+    /// them; leaving a working set does not.
+    pub fn set_relay_resolve_kinds(&self, url: &str, kinds: &[u64]) -> bool {
+        let url = crate::relay_url::normalize_relay_url(url);
+        if url.is_empty() {
+            return false;
+        }
+        let (changed, snapshot) = {
+            let mut rc = self.relay_config.write().unwrap();
+            let before = rc.resolve_kinds.get(&url).cloned();
+            if kinds.is_empty() {
+                rc.resolve_kinds.remove(&url);
+            } else {
+                let mut k = kinds.to_vec();
+                k.sort_unstable();
+                k.dedup();
+                rc.resolve_kinds.insert(url.clone(), k);
+            }
+            let changed = before.as_deref() != rc.resolve_kinds.get(&url).map(|v| v.as_slice());
+            (changed, self.relay_sets_snapshot_locked(&rc))
+        };
+        if !changed {
+            return false;
+        }
+        if let Err(e) = self.relay_store.save(&snapshot) {
+            warn!("Failed to persist resolve kinds ({url}): {e}");
+        }
+        // A newly claimed kind changes where resolution looks, so sections
+        // we'd written off as unreachable (and wiki topics we memoized as
+        // missing) deserve another pass against the claimed relays.
+        if let Ok(mut skip) = self.unreachable_sections.lock() {
+            skip.clear();
+        }
+        if let Ok(mut misses) = self.wiki_topic_misses.lock() {
+            misses.clear();
+        }
+        self.sections_dirty
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+        true
+    }
+
     /// Merge the engine's well-known default discovery URLs into the
     /// current live config + persist. Idempotent — URLs already
     /// present skip. Returns how many were added. Useful for existing
@@ -971,6 +1041,7 @@ impl Engine {
             search: rc.search.clone(),
             indexer: rc.indexer.clone(),
             named: rc.named_sets.clone(),
+            resolve_kinds: rc.resolve_kinds.clone(),
             exclusive: rc.exclusive.clone(),
         }
     }
@@ -1281,6 +1352,11 @@ impl Engine {
             rc.search = sets.search.clone();
             rc.indexer = sets.indexer.clone();
             rc.exclusive = sets.exclusive.clone();
+            // Claims are functional routing config, so a reset drops them
+            // (a first-boot install has none) — unlike named sets, which
+            // are user-curated groupings and survive. Mirror it into the
+            // live config or memory would keep claims disk no longer has.
+            rc.resolve_kinds.clear();
             sets
         };
         if let Err(e) = self.relay_store.save(&snapshot) {
