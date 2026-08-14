@@ -146,6 +146,7 @@ path: [[file:conventions.org][conventions]].
 - [[file:idea-spells.org][Spells (kind 777)]] — portable, composable saved queries; pipelines, spellbooks
 
 ** Substrate & network
+- [[file:idea-relay-kind-routing.org][Kind-scoped relay routing]] — relays list the kinds they serve; resolution goes to the claimers, not the whole set
 - [[file:idea-entity-hinted-relay-intent.org][Entity-hinted relay intent]] — surface a naddr/nevent's TLV relays in the Confirm modal; hinted-vs-full choice
 
 * Tooling & fixtures

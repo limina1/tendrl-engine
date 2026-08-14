@@ -1,0 +1,53 @@
+#+TITLE: Fix: Relay Row Mobile Layout
+#+TYPE: fix
+#+STATUS: open
+#+DATE: 2026-08-14
+
+* The issue (observed 2026-08-14, v0.9.0)
+
+On a phone the relay list shows the *options* but not the *relay*. The
+URL is squeezed to nothing while the toggle pills survive at full width.
+
+=.relay-row= (=RelaysBuffer.svelte:1613=, CSS =:2335=) is a single
+non-wrapping flex line holding five children:
+
+| child             | width behavior              |
+|-------------------+-----------------------------|
+| =.relay-disclosure= | =min-width: 18px=         |
+| =.relay-id=       | =flex: 1; min-width: 0=     |
+| =.relay-toggles=  | =flex-shrink: 0= (=:2378=)  |
+| =.relay-remove=   | intrinsic                   |
+
+Four toggle pills — read / write / broadcast / auth (=:1650-1675=) — in
+a =flex-shrink: 0= container, plus disclosure, remove, and 14px side
+padding with 10px gaps. At ~360 CSS px that exceeds the line, and the
+only flexible child is =.relay-id=, so the URL collapses and
+=text-overflow: ellipsis= (=:2361-2367=) renders it as nothing. The sync
+/ paid / auth / software pills inside =.relay-flags= disappear with it.
+
+No =@media= query in the buffer touches this row; the three that exist
+(=:2280=, =:2588=, =:2885=) are other grids.
+
+* Proposed fix
+
+Restack rather than shrink — the row is carrying two orthogonal things
+(identity, roles) and they want separate lines on a narrow viewport:
+
+- [ ] =.relay-row= becomes a grid that reflows under ~600px: line 1 =
+  disclosure + URL + remove; line 2 = flags + toggles, wrapping, aligned
+  to the URL's left edge
+- [ ] =.relay-toggles= wraps (=flex-wrap: wrap=) instead of
+  =flex-shrink: 0= once it owns a line
+- [ ] Keep the wide layout unchanged above the breakpoint
+- [ ] Leave headroom for a third line — the kinds editor from
+  [[file:idea-relay-kind-routing.org][kind-scoped relay routing]] lands
+  here, which is why this fix comes first
+
+* Related
+
+- [[file:fix-index.org][Fix index]] · [[file:index.org][Index]]
+- [[file:idea-relay-kind-routing.org][Kind-scoped relay routing]] — the
+  row's next occupant
+- [[file:feat-relays.org][Relay sets]] ·
+  [[file:feat-mobile.org][Mobile & Android]]
+- [[file:feat-ui-patterns.org][UI patterns]] — relay entry is its case study

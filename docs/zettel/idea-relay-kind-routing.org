@@ -1,0 +1,231 @@
+#+TITLE: Idea: kind-scoped relay routing
+#+TYPE: idea
+#+STATUS: spec
+#+DATE: 2026-08-14
+
+Relay sets today are *functional* — read / write / broadcast say what a
+relay is for — but not *topical*: nothing says what a relay actually
+carries. So every retrieval fans out to the whole read set regardless of
+what is being asked for. The fan-out width is a global constant.
+
+This note adds one optional layer: a relay may list the **kinds it
+serves**, and *resolution* is routed to the relays that list the kind
+being resolved. Nothing else changes. An empty kinds column everywhere
+is a strict no-op.
+
+* The observation
+
+A document relay can carry Project Gutenberg books and Wikipedia as
+Nostr events — 30818 wiki articles, 30040/30041 publications. General
+social relays carry none of it. And by
+[[file:decision-wikilinks-30818-only.org][the wikilink decision]] a
+=[[topic]]= resolves to kind 30818 *only*, so at resolve time the target
+kind is known exactly — which means the relay set is knowable exactly.
+
+Today it isn't used. =resolve_refs= and the section backfill aim at
+=engine.relays()= — the whole fetch set (=publication.rs:1028=, =:1273=,
+=:1994=). For a wikilink-dense document that is M refs × R relays of
+sockets, where R−1 of them structurally cannot answer. The wiki-miss TTL
+memo added in [[file:fix-resolve-cost-model.org][the resolve cost fix]]
+caches that failure; it doesn't stop us asking. On Android each of those
+is a radio wake ([[file:fix-relay-connection-churn.org][relay churn]]).
+
+The user-facing statement of the goal: /I only need to enter that one
+relay for any book or wiki event./
+
+* The model: policy, then specificity
+
+Two layers per relay. **Policy** — read / write / broadcast / index — is
+the regular focus, and governs general traffic. **Kinds** is an optional
+list layered on top: specificity, and it governs *resolution only*.
+
+| policy | kinds  | general traffic                    | resolution                            |
+|--------+--------+------------------------------------+---------------------------------------|
+| read   | —      | all kinds                          | default resolver when nothing claims K |
+| read   | listed | all kinds, *unchanged*             | claims those kinds                    |
+| (none) | listed | none — not in any general fan-out  | claims those kinds; resolution-only   |
+| index  | —      | kind 0 fallback on read-set miss   | —                                     |
+
+Listing kinds never *removes* a relay from work it already did. It only
+adds claims. The one narrowing effect is on the other side: a claimed
+kind stops being asked of everyone.
+
+** Rules
+
+1. *Compat floor.* No kinds listed anywhere = today's behavior exactly,
+   every path. This is the acceptance criterion for the first commit.
+2. *A claim is exclusive, per kind.* Resolving kind K goes to the relays
+   listing K — all of them, whatever their policy. If no relay lists K,
+   it goes to the read set, as today.
+3. *Policy-less + kinds = resolution-only target.* Not in feeds, not in
+   searches, not in profile lookups. This is the document-relay case:
+   you want its books without inviting it into general traffic.
+4. *Resolution is targeted retrieval*, and only that: nostrdown ref
+   resolution (=wiki= / =ref= / =embed= / =quote= / =slot=), publication
+   section backfill by =a= tag, naddr/nevent entity fetch. Open-ended
+   discovery — feed pulls, searches, profile lookups — follows policy.
+5. *Unkinded filters are never routed.* An id-only lookup or an =#e=
+   thread query carries no kind; it follows policy.
+6. *One REQ per relay per operation.* Once a fetch is planned per relay
+   rather than per filter, a relay's filters merge into a single REQ
+   (NIP-01 ORs filters) — the trick =backfill_publication_sections=
+   already uses, generalized.
+
+** The seam
+
+One function, one call site shape:
+
+: fn plan(&self, filters: &[Value], purpose: Purpose) -> Vec<(RelayUrl, Vec<Value>)>
+
+=Purpose= is =Resolve= | =General= — the targeted/open-ended split of
+rule 4, not a taxonomy. It is *not* =FetchTrigger=: the trigger says why
+the network may be touched at all (Confirm gating, activity log), the
+purpose says what is being asked for. Both ride the same call sites.
+
+Everything downstream of =plan= is unchanged —
+=tracked_fetch_multiple_with_options= already fans out
+=buffer_unordered(READ_FANOUT)= over a relay list; it just receives a
+narrower one, with per-relay filters.
+
+* What this cleans up
+
+Today's classes: =general= / =fetch= / =publish= / =broadcast=, plus
+=search= and =indexer= as two-tier =DiscoveryClass= (default + fallback)
+with per-class =exclusive= flags, plus named sets
+(=relay_store.rs:40-165=). Eight dotted set names, two flags, and their
+consumer surface has stayed thin enough to be called "phantom relay-class
+config" since the May 2026 audit.
+
+Under this model:
+
+- **search collapses into read.** Searching *is* reading. Aiming a
+  particular query somewhere specific is already expressible per query —
+  the =relay:= token and the search settings — which is where a
+  per-query choice belongs, not in persistent relay state.
+- **index stops being a discovery class** and becomes one narrow rule:
+  *profile metadata to drop to when the read set misses.* No default /
+  fallback tiers — being an index /is/ being the fallback.
+
+Left standing: read / write / broadcast / index, plus per-relay kinds,
+plus named sets (unaffected — they are publishing destinations).
+
+This supersedes the 2026-06-08 refinement recorded in
+=project-relay-classes=, which proposed *cutting* search and indexer as
+social-discovery features. They were built instead (2026-07-05). The
+resolution here is neither: search is absorbed into read, indexer is
+narrowed to its one real job.
+
+* Why the profile route has to be explicit
+
+The relay that served the content is not the relay that serves its
+author's kind 0. A Gutenberg import relay has the books, not the people.
+
+Today that gap is invisible, because we fan out wide for the content and
+the kind 0 arrives incidentally from one of the general relays. Narrow
+the content route and the incidental collection stops — so the index
+role stops being decorative and becomes load-bearing. Kind-scoped
+routing *creates* the need for the index rule; it doesn't remove it.
+
+Which lands [[file:fix-search-response-latency.org][the search latency
+fix]] in the same place from the other direction. Profile backfill is a
+*different* fetch to *different* relays, not a tail of the content
+request — so awaiting it before responding (=api.rs:611=, =:646=) is
+wrong on structure, not merely slow.
+
+* Where the kinds come from
+
+Three sources, all *suggestions* the user confirms — never silent
+network policy:
+
+- **NIP-11.** =retention[].kinds= is a relay declaring which kinds it
+  keeps. Already fetched and cached as raw =Value= on =Nip11Doc=
+  (=nip11.rs:62=), never parsed. Entries are ints or =[lo, hi]= ranges;
+  parse tolerantly.
+- **Observed provenance.** nostrdb records which relay delivered a note
+  (=note.relays()= — the same source as the feed provenance badge). A
+  kind × relay histogram is =stats.rs=-shaped work and is the honest
+  signal: /this relay is where your 30818s actually came from./
+- **Manual.** The kinds editor on the relay row.
+
+* UI
+
+The relay row becomes stacked lines:
+
+:   wss://docs.example.org
+:   [read] [write] [broadcast] [index]
+:   [kinds ▾]  30818 · 30040 · 30041          (expanded: chips + entry)
+
+Collapsed when empty, so a user who never touches this sees one extra
+chevron. This restacking is also what fixes
+[[file:fix-relay-row-mobile-layout.org][the mobile row]], where the
+single flex line already squeezes the URL out at phone width — do that
+first, the row needs to carry a third line either way.
+
+Legibility, per [[file:mission.org][deliberate publishing]] — silent
+narrowing is the risk this design carries:
+
+- The fetch activity log names *what selected these relays* — a claim on
+  kind K, or the read policy.
+- A resolution that comes back empty from claimers says so — /not on
+  your 30818 relays/ — with an explicit widen action. It does not widen
+  itself.
+- The Confirm-mode intent shows the routed set, as it shows any set.
+
+* Precedence
+
+When several things have an opinion about where a fetch goes:
+
+1. An explicit =relay:= token on the query — the user said it now.
+2. The entity's own TLV relay hints, if any —
+   [[file:idea-entity-hinted-relay-intent.org][entity-hinted relay
+   intent]] (/you'll find this event here/, from the naddr itself).
+3. A kind claim (this note).
+4. Policy — the read set.
+
+* Build order
+
+- [ ] [[file:fix-relay-row-mobile-layout.org][Relay row reflow]] —
+  prerequisite; the row must carry a third line
+- [ ] Per-relay =kinds= in =relays.json= + the engine's kind → relays
+  index; =plan()= behind it. Ships as a no-op (rule 1)
+- [ ] Route the resolve path: nostrdown =resolve_refs= + section
+  backfill — narrowest, highest value, and the case that motivated this
+- [ ] Index rule = profile fallback; detach profile backfill from the
+  response ([[file:fix-search-response-latency.org][search latency]])
+- [ ] Collapse =search= into read; retire =DiscoveryClass=, both
+  =exclusive= flags, and the four dotted set names — with a
+  =relays.json= load-time migration (=search.*= → read, =indexer.*= →
+  index)
+- [ ] Kinds editor + NIP-11 =retention= parse as suggestions
+- [ ] Observed-provenance suggestions (kind × relay histogram)
+
+* Open
+
+- Should an *open-ended* query whose filter names a claimed kind prefer
+  the claimers too? The motivating intuition says a wiki search probably
+  still wants the wiki relay. Held out of v1: search aiming is per-query
+  (=relay:=, search settings), and making claims bind open-ended traffic
+  reintroduces the narrowing risk where it is least legible.
+- Kind *groups* with labels — "books" = 30040 + 30041 — as presets in
+  the editor, stored expanded? Presentation only if so.
+- Are kinds ever published? Local workbench state for now, consistent
+  with [[file:feat-relays.org][relay sets]] never being broadcast.
+- Does a claim apply to *writes* of that kind (publish routing), or is
+  this read-side only? Read-side only in v1; publish destinations are
+  the named-set/broadcast story.
+
+* Related
+
+- [[file:index.org][Index]] · [[file:feat-relays.org][Relay sets]]
+- [[file:fix-relay-row-mobile-layout.org][Relay row mobile layout]]
+- [[file:fix-search-response-latency.org][Search response latency]]
+- [[file:fix-relay-connection-churn.org][Relay connection churn]] —
+  narrowing multiplies with connection reuse
+- [[file:fix-resolve-cost-model.org][Resolve cost model]] ·
+  [[file:fix-resolve-in-stream.org][Resolve-in-stream]]
+- [[file:idea-entity-hinted-relay-intent.org][Entity-hinted relay intent]]
+  — the per-entity half of the same question
+- [[file:decision-wikilinks-30818-only.org][Wikilinks resolve to 30818 only]]
+  — why the target kind is known exactly
+- [[file:feat-network.org][Network modes]] ·
+  [[file:feat-publishing.org][Publishing]] · [[file:mission.org][Mission]]

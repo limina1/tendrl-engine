@@ -26,7 +26,9 @@ stay as provenance. Source evaluation:
   (high) — 100k-event scan + full id-set clone per minute; N+1 point
   queries; HNSW rewrite every 32 embeds (fixed 2026-08-12)
 - [ ] [[file:fix-search-response-latency.org][Search response latency]]
-  (high) — every search awaits a sequential relay profile backfill
+  (high) — every search awaits a sequential relay profile backfill;
+  the profile route is a *different* fetch to *different* relays, per
+  [[file:idea-relay-kind-routing.org][kind-scoped routing]]
 - [X] [[file:fix-embedding-runtime-blocking.org][Embedding runtime blocking]]
   (high) — sync ONNX on tokio workers; =~:= can inline a 90 MB download
   (fixed 2026-08-12, incl. the new =embedding.max_per_tick= budget)
@@ -52,6 +54,13 @@ stay as provenance. Source evaluation:
 - [ ] [[file:fix-reader-render-hotpath.org][Reader render hot path]] (high) —
   O(G²) focusGraph clones, O(N²) deriveds, index-keyed each blocks, no
   virtualization
+
+* Web shell & panels
+
+- [ ] [[file:fix-relay-row-mobile-layout.org][Relay row mobile layout]]
+  (medium) — the single flex row squeezes the URL to nothing at phone
+  width; only the toggle pills survive. Prerequisite for the kinds
+  editor in [[file:idea-relay-kind-routing.org][kind-scoped routing]]
 
 * Build & Android
 

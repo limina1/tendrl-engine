@@ -30,9 +30,20 @@ needed is local. The web already has a late-hydration path for profiles
   (see [[file:fix-ndb-lock-hold.org][lock hold]])
 - [ ] Run compound =|= branches concurrently (bounded)
 
+* The structural reading (added 2026-08-14)
+
+[[file:idea-relay-kind-routing.org][Kind-scoped relay routing]] reaches
+the same fix from the other side: a profile lookup is a *different*
+fetch to *different* relays than the content request that triggered it
+— the relay that served an event is not the relay that carries its
+author's kind 0. So the await isn't merely slow, it's a category error;
+and the =index= role (profile metadata to drop to) is the route that
+should serve it.
+
 * Related
 
 - [[file:fix-index.org][Fix index]] · [[file:index.org][Index]]
+- [[file:idea-relay-kind-routing.org][Kind-scoped relay routing]]
 - [[file:eval-performance-2026-08.org][Performance evaluation (2026-08-12)]]
 - [[file:feat-search.org][Search]] · [[file:feat-profiles.org][Profiles]]
 - [[file:fix-relay-connection-churn.org][Relay connection churn]]
