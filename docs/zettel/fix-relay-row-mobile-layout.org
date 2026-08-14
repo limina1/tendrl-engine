@@ -1,7 +1,8 @@
 #+TITLE: Fix: Relay Row Mobile Layout
 #+TYPE: fix
-#+STATUS: open
+#+STATUS: fixed
 #+DATE: 2026-08-14
+#+FIXED: 2026-08-14, =7b10410= on =feat/relay-kind-routing=
 
 * The issue (observed 2026-08-14, v0.9.0)
 
@@ -30,20 +31,42 @@ anywhere in its ~820-line =<style>= block (=:2135-2957=). Nothing was
 handled and mistuned;
 the panel was simply never given a narrow layout.
 
-* Proposed fix
+* The fix (shipped 2026-08-14, =7b10410=)
 
-Restack rather than shrink — the row is carrying two orthogonal things
-(identity, roles) and they want separate lines on a narrow viewport:
+Wrap rather than shrink — the row carries two orthogonal things
+(identity, roles) and they want separate lines when they can't share
+one:
 
-- [ ] =.relay-row= becomes a grid that reflows under ~600px: line 1 =
-  disclosure + URL + remove; line 2 = flags + toggles, wrapping, aligned
-  to the URL's left edge
-- [ ] =.relay-toggles= wraps (=flex-wrap: wrap=) instead of
-  =flex-shrink: 0= once it owns a line
-- [ ] Keep the wide layout unchanged above the breakpoint
-- [ ] Leave headroom for a third line — the kinds editor from
+- [X] =.relay-row= wraps; =.relay-id= gets =flex: 1 1 12rem= so the
+  toggles drop to a second line before the url starts ellipsising, and
+  =.relay-remove= takes =margin-left: auto= to hold the right edge of
+  whichever line it lands on
+- [X] =.relay-toggles= wraps internally as well
+- [X] Wide layout unchanged — verified against the built SPA at 1280px
+- [X] Same treatment for =.relays-header=, which collapsed its title
+  column to one word per line behind the action buttons (=:2143=), and
+  =.discovery-header-row=
+- [X] Leaves headroom for a third line — the kinds editor from
   [[file:idea-relay-kind-routing.org][kind-scoped relay routing]] lands
-  here, which is why this fix comes first
+  here, which is why this fix came first
+
+*Intrinsic, not breakpoint-driven.* A =@media= query was the obvious
+move and is the wrong one: this panel also renders inside resizable WM
+splits, where the viewport width is not the row's width. Flex wrapping
+degrades at whatever width the *container* actually has.
+
+Verified end to end: an isolated engine on =:3131= driven headless via
+CDP, relays buffer at 390 × 844 (url + NIP-11 pill on line 1, toggles +
+remove on line 2) and at 1280 (single line, unchanged).
+
+* Adjacent, not fixed
+
+At phone width the section blocks (=.rw-section=, =.discovery=) have no
+horizontal padding while =.relay-row= has 14px, so section titles and
+their action buttons sit flush against both screen edges. Pre-existing
+and width-independent — the same 14px offset exists on desktop, where it
+reads as an indent rather than a missing gutter. Left alone: fixing it
+shifts the desktop layout too.
 
 * Related
 

@@ -57,10 +57,11 @@ stay as provenance. Source evaluation:
 
 * Web shell & panels
 
-- [ ] [[file:fix-relay-row-mobile-layout.org][Relay row mobile layout]]
-  (medium) — the single flex row squeezes the URL to nothing at phone
-  width; only the toggle pills survive. Prerequisite for the kinds
+- [X] [[file:fix-relay-row-mobile-layout.org][Relay row mobile layout]]
+  (medium) — the single flex row squeezed the URL to nothing at phone
+  width; only the toggle pills survived. Prerequisite for the kinds
   editor in [[file:idea-relay-kind-routing.org][kind-scoped routing]]
+  (fixed 2026-08-14)
 
 * Build & Android
 

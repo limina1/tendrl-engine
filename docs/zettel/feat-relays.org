@@ -40,6 +40,9 @@ edits are never auto-published as Nostr events.
   fetch/publish from =initial_relays=, broadcast cleared, discovery
   built-ins, exclusive flags off; named sets preserved. Two-step armed
   button in the relay buffer header, local-only — 2026-07-06.
+- The relay row and panel header wrap instead of shrinking, so the relay
+  URL survives phone width and narrow WM splits — 2026-08-14, see
+  [[file:fix-relay-row-mobile-layout.org][relay row mobile layout]].
 - No browser dialogs anywhere in the buffer: all five =window.prompt=
   entries (add relay, add discovery relay, new/rename set, add to set)
   go through the shell-wide =promptText()= modal (extracted to
@@ -57,9 +60,9 @@ edits are never auto-published as Nostr events.
   flow; the discovery classes are configured but their consumer surface is
   still thin ("phantom relay-class config" per the May 2026 audit) — the
   routing note above is the proposed resolution.
-- The relay row is unusable on a phone: the URL is squeezed out by the
-  toggle pills — [[file:fix-relay-row-mobile-layout.org][relay row mobile
-  layout]].
+- Section blocks have no horizontal padding, so at phone width their
+  titles and buttons sit flush against both screen edges — noted under
+  [[file:fix-relay-row-mobile-layout.org][relay row mobile layout]].
 - Kind 30002 members are published as =r= tags where NIP-51 says
   =relay= — logged in =docs/bugs.org= (2026-07-06); the diff endpoint
   already reads both.
