@@ -1,3 +1,40 @@
+## v0.9.1 — 2026-08-14
+
+- feat(reading): per-device reading typography — face, size, measure, leading, justify
+- feat(wm): SPC w v vertical split and SPC w x window kill
+- perf(search): detach profile backfill, batch existence, drop to the index
+- feat(relays): route resolution through kind claims
+- feat(relays): per-relay resolve-kind claims (storage, API, editor)
+- docs(zettel): mark the relay row layout fix shipped
+- fix(web): wrap the relay panel's rows and header instead of shrinking them
+- docs(zettel): correct the media-query claim in the relay row fix
+- docs(zettel): spec kind-scoped relay routing + relay row mobile fix
+
+## v0.9.0 — 2026-08-12
+
+- chore(release): 0.8.2 -> 0.9.0
+- feat(nostrdown)!: global wikilinks resolve to kind-30818 only
+- perf(resolve): revert chunked backfill (relay-cost multiplier); concurrent wiki topic chunks
+- fix(android): retry the splash->engine navigate until the webview reports the engine origin
+- feat(stats): local DB inventory + count:kind / count:by
+- perf(reader): chunked wiki backfill with live progress; write-only apply
+- perf(embed): inference off the async runtime; per-tick budget for mobile
+- docs(zettel): A/B benchmark numbers for the perf sweep
+- docs(zettel): record the perf sweep's outcome in the eval report
+- perf(android): boot off the UI thread — splash-first WebView, capped LMDB map, small HNSW floor
+- perf(reader): equality-guarded status poll, stable effect keys, parse/highlight caches, visible-first resolve
+- perf(resolve): batch resolve_refs — one tree + sibling index per publication per request
+- perf(sections): three-phase load_sections — concurrent local pass, one batched relay REQ, early exit
+- perf(relay): bounded-concurrent read fanout; one REQ per relay in backfill
+- perf(tick): dirty-set embed sync, gated sections pass, batched checks, cheap saves
+- build(release): [profile.release] in both workspace roots; drop forced APK-clean
+- docs(zettel): performance audit 2026-08 — eval report, fix-* issue layer, engine-substrate base
+- fix(release): generate the Android keystore as real JKS, not JDK-default PKCS12
+- feat(release): Android release pipeline — signed APK on the engine version train
+- fix(release): tarball lives in target/portable/, not target/portable/release/; reject non-version positional args
+- fix(release): tarball lives in target/portable/, not target/portable/release/; reject non-version positional args
+- feat(release): publish-release.sh — GitHub releases from tag + CHANGELOG + portable tarball
+
 ## v0.8.2 — 2026-08-11
 
 - docs(zettel): buffer-mgmt UI — PaneTabs overflow pattern, SPC b o, mobile bar/drawer rework
