@@ -1,3 +1,19 @@
+## v0.10.0 — 2026-08-18
+
+- three columns
+- fix(server): bind the listener before constructing the engine
+- feat(mobile): drawer commands opens the SPC leader as a touch sheet
+- feat(relay): unified relay management UI — active/inactive toggle + modal opt-in
+- docs(zettel): fold the highlight-capture rework into the kasten
+- feat(relay): persistent active/inactive relay state (park/unpark)
+- feat(mobile): + highlight drawer button opens the general highlighter
+- feat(relay): make the search class actually serve search; flatten it to a row toggle
+- feat(highlights): context entry in the general highlighter
+- feat(relay): new default relays + mercury resolve claims, seed-version upgrades
+- fix(highlights): center the capture card on both shells
+- fix(highlights): mobile-first capture — selectionchange trigger, bottom sheet, editable text, explicit NIP-84 context
+- fix(relay): bound websocket connect; make cold-cache feed pull non-blocking
+
 ## v0.9.1 — 2026-08-14
 
 - feat(reading): per-device reading typography — face, size, measure, leading, justify
