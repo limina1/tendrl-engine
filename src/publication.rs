@@ -2796,10 +2796,15 @@ impl<'a> PublicationEngine<'a> {
                 let addr = NAddr::new(kind_int as u64, &pubkey, &d_tag);
                 resolved.coord = Some(addr.to_a_tag());
                 // Route through `get_events` (not `get_addressable`) so a
-                // FetchAlways fetch goes through the Confirm intent flow, and aim
-                // it at the search relay set.
-                let search = self.engine.search_relays();
-                let over = (!search.is_empty()).then_some(search.as_slice());
+                // FetchAlways fetch goes through the Confirm intent flow.
+                // The kind is known here, so resolve-kind claims apply:
+                // a claimed kind fetches from its claimants (mercury for
+                // publication/wiki kinds by default), everything else
+                // from the read set. This used to override with the
+                // `search` relay class — a misnomer; that class now
+                // serves actual search.
+                let claimed = self.engine.resolve_relays_for_kind(kind_int as u64);
+                let over = claimed.as_deref();
                 let filter = serde_json::json!({
                     "kinds": [kind_int], "authors": [pubkey], "#d": [d_tag], "limit": 1,
                 });
@@ -2821,8 +2826,10 @@ impl<'a> PublicationEngine<'a> {
             Decoded::Nevent { event_id, .. } | Decoded::Note { event_id } => {
                 resolved.naddr = Some(entity.to_string());
                 resolved.event_id = Some(event_id.clone());
-                let search = self.engine.search_relays();
-                let over = (!search.is_empty()).then_some(search.as_slice());
+                // An id lookup names no kind, so claims can't route it —
+                // the read set is the right target (was: the mislabeled
+                // `search` class).
+                let over = None;
                 let filter = serde_json::json!({ "ids": [event_id], "limit": 1 });
                 let ev = self
                     .engine

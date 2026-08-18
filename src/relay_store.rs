@@ -299,6 +299,16 @@ impl RelaySets {
                 self.resolve_kinds.entry(key).or_insert_with(|| kinds.to_vec());
             }
         }
+        // The search class flattened from a two-tier section to a
+        // per-relay toggle backed by `search.default`; fold any
+        // fallback-tier members in so they stay visible. (No behavior
+        // change: the fallback tier never had a consumer.)
+        let fb = std::mem::take(&mut self.search.fallback);
+        for url in fb {
+            if !self.search.default.contains(&url) {
+                self.search.default.push(url);
+            }
+        }
         self.seed_version = CURRENT_SEED_VERSION;
         true
     }

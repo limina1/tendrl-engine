@@ -2052,13 +2052,37 @@ pub async fn fetch_relay_handler(
     Json(req): Json<FetchRelayRequest>,
 ) -> Result<Json<Value>, EngineError> {
     // Relay set: `relays` wins; fall back to the legacy single `relay`.
-    let targets: Vec<String> = if !req.relays.is_empty() {
+    let mut targets: Vec<String> = if !req.relays.is_empty() {
         req.relays.clone()
     } else if !req.relay.is_empty() {
         vec![req.relay.clone()]
     } else {
-        return Err(EngineError::InvalidFilter("no relay specified".into()));
+        Vec::new()
     };
+
+    // A search-typed fetch composes the `search` relay class — the
+    // class's actual purpose (it was historically consulted only by
+    // entity resolution, which now routes via resolve-kind claims).
+    // Per its documented semantics: `search.default` JOINS the caller's
+    // set, or REPLACES it when `exclusive.search` is on. Non-search
+    // fetches are untouched.
+    if req.search.as_deref().is_some_and(|s| !s.is_empty()) {
+        let sd = engine.search_relays();
+        if !sd.is_empty() {
+            if engine.discovery_exclusive("search") {
+                targets = sd;
+            } else {
+                for url in sd {
+                    if !targets.contains(&url) {
+                        targets.push(url);
+                    }
+                }
+            }
+        }
+    }
+    if targets.is_empty() {
+        return Err(EngineError::InvalidFilter("no relay specified".into()));
+    }
 
     debug!(
         "Fetch from {} relay(s) kinds={:?} authors={} limit={} mode_confirm={}",
