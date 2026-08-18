@@ -89,8 +89,10 @@ fn restore_assistant_identity(session: &api::IdentityAppState, keyring_available
     }
 }
 
-/// Build the engine and every router, bind the listener, and spawn the serve
-/// loop. Returns once the port is bound.
+/// Bind the listener FIRST, then build the engine and every router and
+/// spawn the serve loop. Bind-first is load-bearing: a taken port fails
+/// before the LMDB environment is opened or any task is spawned, so a
+/// caller's port-fallback retry never double-opens the database.
 /// Does `req` carry the loopback token? Non-`/api/` paths (the embedded SPA,
 /// `/health`) always pass — the app shell itself is not secret, and the boot
 /// URL is what *delivers* the token. Accepted carriers, in order: the
@@ -190,6 +192,21 @@ pub async fn start(opts: ServeOptions) -> anyhow::Result<RunningServer> {
 
     info!("Starting nostr-engine v{}", env!("CARGO_PKG_VERSION"));
     info!("Data directory: {}", config.database.data_dir);
+
+    // Bind FIRST — before the engine (and its LMDB environment) exists
+    // and before any background task is spawned. A taken port must fail
+    // here, with nothing to leak: the pre-bind ordering used to open
+    // nostrdb, spawn the background-sync loop (whose Arc<Engine> kept
+    // the LMDB env alive past the Err), and only then bind — so the
+    // mobile host's port-0 fallback re-ran start() and opened the SAME
+    // LMDB environment a second time in one process, which LMDB
+    // documents as undefined behavior (lock-table corruption / hangs —
+    // the Android quick-relaunch lockup). Bind-first makes the fallback
+    // safe: a failed attempt constructs nothing.
+    let bind_addr = config.bind_addr();
+    let listener = tokio::net::TcpListener::bind(&bind_addr).await?;
+    let addr = listener.local_addr()?;
+    info!("Bound http://{}", addr);
 
     // Pass the TOML-derived RelayConfig straight through. The working
     // URL sets are layered in by Engine::with_relay_config from
@@ -764,10 +781,8 @@ pub async fn start(opts: ServeOptions) -> anyhow::Result<RunningServer> {
         });
     }
 
-    // Bind before returning so the caller's `addr` is immediately usable.
-    let bind_addr = config.bind_addr();
-    let listener = tokio::net::TcpListener::bind(&bind_addr).await?;
-    let addr = listener.local_addr()?;
+    // The listener was bound at the very top of start() — see the
+    // bind-first comment there. From here we only start serving on it.
     info!("Listening on http://{}", addr);
 
     let handle = tokio::spawn(async move { axum::serve(listener, app).await });
@@ -787,6 +802,52 @@ mod tests {
     use tower::ServiceExt;
 
     const TOKEN: &str = "sekrit";
+
+    /// Bind-first regression test for the Android quick-relaunch lockup:
+    /// when the preferred port is taken, `start` must fail BEFORE the
+    /// engine exists — no LMDB environment opened (the data dir is never
+    /// even created), nothing spawned holding an Arc<Engine> — so the
+    /// caller's port-0 fallback on the SAME data dir opens the database
+    /// for the first (and only) time. Pre-fix, the failed attempt left
+    /// an open LMDB env behind and the fallback's second open was UB.
+    #[tokio::test]
+    async fn occupied_port_fails_before_engine_exists() {
+        let blocker = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let taken_port = blocker.local_addr().unwrap().port();
+
+        let tmp = tempfile::tempdir().unwrap();
+        let data_dir = tmp.path().join("db");
+        let mut config = crate::config::Config::default();
+        config.database.data_dir = data_dir.to_string_lossy().into_owned();
+        config.embedding.enabled = false;
+        config.server.host = "127.0.0.1".into();
+        config.server.port = taken_port;
+
+        let failed = start(ServeOptions {
+            config: config.clone(),
+            config_path: tmp.path().join("config.toml"),
+            loopback_token: None,
+        })
+        .await;
+        assert!(failed.is_err(), "occupied port must fail start()");
+        assert!(
+            !data_dir.exists(),
+            "bind must fail before the engine opens (or creates) the data dir"
+        );
+
+        // The fallback the mobile host performs: same data dir, port 0.
+        config.server.port = 0;
+        let server = start(ServeOptions {
+            config,
+            config_path: tmp.path().join("config.toml"),
+            loopback_token: None,
+        })
+        .await
+        .expect("port-0 fallback on the same data dir must boot cleanly");
+        assert_ne!(server.addr.port(), taken_port);
+        server.handle.abort();
+        drop(blocker);
+    }
 
     /// A tiny router standing in for the real app: one /api route, one open
     /// route — enough to exercise the guard without booting an Engine.
