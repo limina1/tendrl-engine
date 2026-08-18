@@ -2,8 +2,15 @@
 	// Highlight mode's capture surface (worksheet C3): mounted once per
 	// reader/doc buffer. While `app.highlightMode` is on, completing a text
 	// selection inside a `[data-section-addr]` container opens an
-	// Alexandria-style confirm popover — selected-text preview, optional
-	// annotation (quote highlight), post/cancel. Off = completely inert.
+	// Alexandria-style confirm surface — editable selected text, optional
+	// annotation (quote highlight), optional NIP-84 context, post/cancel.
+	// Off = completely inert.
+	//
+	// Two capture triggers: `mouseup` (desktop, immediate) and a debounced
+	// `selectionchange` — touch selection (long-press + drag handles) never
+	// fires mouseup, so without the latter the mobile popover only appeared
+	// on the NEXT stray tap. On mobile the surface renders as a bottom sheet
+	// instead of an anchored popover (the selection handles own the text).
 	//
 	// Offsets (worksheet C2, option 1): the rendered DOM is not
 	// offset-faithful — nostrdown refs render as chips whose text differs
@@ -13,10 +20,14 @@
 	// to a text walk from the section container, which is exact there. The
 	// highlighted text is sliced from the SOURCE content, never from
 	// `selection.toString()`, so the offset tag and the event content agree
-	// byte-for-byte (the engine rejects mismatches at write time).
+	// byte-for-byte (the engine rejects mismatches at write time). The text
+	// box is editable; an edited highlight no longer slices the source, so
+	// it publishes WITHOUT the offset pin (the engine accepts offset-less
+	// highlights — only a supplied offset is verified).
 	import * as api from '$lib/api';
 	import { getAppState } from '$lib/state.svelte';
 	import { identityCanSign } from '$lib/identity/signer';
+	import { shell } from '$lib/wm/shell.svelte';
 
 	let {
 		getContent,
@@ -31,6 +42,7 @@
 
 	const app = getAppState();
 	const canSign = $derived(identityCanSign(app.identityStatus));
+	const mobile = $derived(shell.mode === 'mobile');
 
 	type Pending = {
 		addr: string;
@@ -38,13 +50,26 @@
 		content: string; // full section content
 		start: number;
 		end: number;
-		text: string; // content.slice(start, end)
+		text: string; // content.slice(start, end) — the pristine capture
 		x: number;
 		y: number;
 	};
 	let pending = $state<Pending | null>(null);
+	let text = $state(''); // editable copy of pending.text
 	let annotation = $state('');
+	let contextOpen = $state(false);
+	let contextText = $state('');
+	/** Sheet hidden, next selection in the same section becomes the context. */
+	let selectingContext = $state(false);
+	/** The user has interacted with the surface — from then on it holds its
+	 *  capture. Until then a new/adjusted selection replaces it, so mobile
+	 *  handle-dragging keeps working after the long-press word selection
+	 *  already opened the sheet. */
+	let touched = $state(false);
 	let posting = $state(false);
+
+	const edited = $derived(pending !== null && text.trim() !== pending.text);
+	const canPost = $derived(pending !== null && !posting && text.trim().length >= 3);
 
 	/** Map a selection endpoint to a UTF-16 offset into the section source.
 	 *  `edge` decides which way an endpoint inside an atomic chip clamps so
@@ -100,12 +125,13 @@
 		return null;
 	}
 
-	/** NIP-84 context — emitted SPARINGLY. Several clients (Amethyst) render
-	 *  the `context` tag as the quote body, so a wide context displays as if
-	 *  far more than the selection were highlighted. It's only genuinely
+	/** NIP-84 auto-context — emitted SPARINGLY. Several clients (Amethyst)
+	 *  render the `context` tag as the quote body, so a wide context displays
+	 *  as if far more than the selection were highlighted. It's only genuinely
 	 *  needed when the selected text repeats in the section (so a reader that
 	 *  ignores our offset tag can still pick the right occurrence), and even
-	 *  then a tight sentence window suffices — never the whole paragraph. */
+	 *  then a tight sentence window suffices — never the whole paragraph.
+	 *  An explicit user-entered context always wins over this. */
 	function contextAround(content: string, start: number, end: number): string | undefined {
 		const text = content.slice(start, end).trim().toLowerCase();
 		if (!text) return undefined;
@@ -132,71 +158,147 @@
 		return ctx;
 	}
 
+	/** Resolve the current DOM selection to a section-sourced slice. */
+	function resolveSelection(): {
+		addr: string;
+		eventId?: string;
+		content: string;
+		start: number;
+		end: number;
+		text: string;
+		rect: DOMRect;
+	} | null {
+		const sel = window.getSelection();
+		if (!sel || sel.isCollapsed || sel.rangeCount === 0) return null;
+		const range = sel.getRangeAt(0);
+		const startEl =
+			range.startContainer.nodeType === Node.TEXT_NODE
+				? range.startContainer.parentElement
+				: (range.startContainer as HTMLElement | null);
+		const container = startEl?.closest<HTMLElement>('[data-section-addr]');
+		if (!container) return null;
+		const addr = container.dataset.sectionAddr;
+		if (!addr) return null;
+		// Both endpoints must live in the same section — cross-section
+		// highlights have no single source string.
+		const endEl =
+			range.endContainer.nodeType === Node.TEXT_NODE
+				? range.endContainer.parentElement
+				: (range.endContainer as HTMLElement | null);
+		if (endEl?.closest('[data-section-addr]') !== container) return null;
+
+		const info = getContent(addr);
+		if (!info) return null;
+		let start = offsetAt(container, range.startContainer, range.startOffset, 'start');
+		let end = offsetAt(container, range.endContainer, range.endOffset, 'end');
+		if (start === null || end === null) return null;
+		if (start > end) [start, end] = [end, start];
+		// Trim whitespace off the selection edges, offsets adjusted in step
+		// so the slice==content invariant (which the engine enforces) holds.
+		while (start < end && /\s/.test(info.content[start])) start++;
+		while (end > start && /\s/.test(info.content[end - 1])) end--;
+		const sliced = info.content.slice(start, end);
+		if (sliced.trim().length < 3) return null;
+
+		return {
+			addr,
+			eventId: info.eventId,
+			content: info.content,
+			start,
+			end,
+			text: sliced,
+			rect: range.getBoundingClientRect()
+		};
+	}
+
+	function capture() {
+		const hit = resolveSelection();
+		if (!hit) return;
+
+		// Context-selection detour: the slice fills the context field instead
+		// of starting a new highlight. Same section only — context from a
+		// different section isn't "surrounding content".
+		if (selectingContext && pending) {
+			if (hit.addr !== pending.addr) return;
+			contextText = hit.text;
+			selectingContext = false;
+			window.getSelection()?.removeAllRanges();
+			return;
+		}
+
+		pending = {
+			addr: hit.addr,
+			eventId: hit.eventId,
+			content: hit.content,
+			start: hit.start,
+			end: hit.end,
+			text: hit.text,
+			x: Math.max(8, Math.min(hit.rect.left + hit.rect.width / 2 - 160, window.innerWidth - 336)),
+			y: Math.min(hit.rect.bottom + 8, window.innerHeight - 220)
+		};
+		text = hit.text;
+		annotation = '';
+		contextText = '';
+		contextOpen = false;
+		touched = false;
+	}
+
+	function wantsCapture(): boolean {
+		if (!app.highlightMode || !canSign || posting) return false;
+		// A capture the user has engaged with holds; an untouched one is
+		// replaced by further selection (mobile handle-dragging) — unless
+		// we're out collecting context for it.
+		if (pending && !selectingContext && touched) return false;
+		return true;
+	}
+
 	function onMouseUp() {
-		if (!app.highlightMode || pending || !canSign) return;
+		if (!wantsCapture()) return;
 		// Let the browser finalize the selection first.
 		requestAnimationFrame(() => {
-			const sel = window.getSelection();
-			if (!sel || sel.isCollapsed || sel.rangeCount === 0) return;
-			const range = sel.getRangeAt(0);
-			const startEl =
-				range.startContainer.nodeType === Node.TEXT_NODE
-					? range.startContainer.parentElement
-					: (range.startContainer as HTMLElement | null);
-			const container = startEl?.closest<HTMLElement>('[data-section-addr]');
-			if (!container) return;
-			const addr = container.dataset.sectionAddr;
-			if (!addr) return;
-			// Both endpoints must live in the same section — cross-section
-			// highlights have no single source string.
-			const endEl =
-				range.endContainer.nodeType === Node.TEXT_NODE
-					? range.endContainer.parentElement
-					: (range.endContainer as HTMLElement | null);
-			if (endEl?.closest('[data-section-addr]') !== container) return;
-
-			const info = getContent(addr);
-			if (!info) return;
-			let start = offsetAt(container, range.startContainer, range.startOffset, 'start');
-			let end = offsetAt(container, range.endContainer, range.endOffset, 'end');
-			if (start === null || end === null) return;
-			if (start > end) [start, end] = [end, start];
-			// Trim whitespace off the selection edges, offsets adjusted in step
-			// so the slice==content invariant (which the engine enforces) holds.
-			while (start < end && /\s/.test(info.content[start])) start++;
-			while (end > start && /\s/.test(info.content[end - 1])) end--;
-			const text = info.content.slice(start, end);
-			if (text.trim().length < 3) return;
-
-			const rect = range.getBoundingClientRect();
-			pending = {
-				addr,
-				eventId: info.eventId,
-				content: info.content,
-				start,
-				end,
-				text,
-				x: Math.max(8, Math.min(rect.left + rect.width / 2 - 160, window.innerWidth - 336)),
-				y: Math.min(rect.bottom + 8, window.innerHeight - 180)
-			};
-			annotation = '';
+			if (wantsCapture()) capture();
 		});
 	}
 
+	// Touch selection never fires mouseup — settle on selectionchange
+	// instead. The debounce spans the drag-handle adjustments so the sheet
+	// opens once, when the reader stops moving the handles.
+	let selTimer: ReturnType<typeof setTimeout> | undefined;
+	function onSelectionChange() {
+		if (!wantsCapture()) return;
+		clearTimeout(selTimer);
+		selTimer = setTimeout(() => {
+			if (wantsCapture()) capture();
+		}, 500);
+	}
+
 	function dismiss() {
+		clearTimeout(selTimer);
 		pending = null;
+		text = '';
 		annotation = '';
+		contextText = '';
+		contextOpen = false;
+		selectingContext = false;
+		touched = false;
 	}
 
 	async function post() {
-		if (!pending || posting) return;
+		if (!pending || !canPost) return;
+		const finalText = text.trim();
+		// Edited text no longer slices the pinned source — drop the offset
+		// (and the offset-derived auto-context) rather than publish a pin the
+		// engine would reject.
+		const isEdited = finalText !== pending.text;
 		posting = true;
 		try {
 			const resp = await api.publishHighlight({
 				target: { address: pending.addr, event_id: pending.eventId },
-				content: pending.text,
-				offset: [pending.start, pending.end],
-				context: contextAround(pending.content, pending.start, pending.end),
+				content: finalText,
+				offset: isEdited ? undefined : [pending.start, pending.end],
+				context:
+					contextText.trim() ||
+					(isEdited ? undefined : contextAround(pending.content, pending.start, pending.end)),
 				comment: annotation.trim() || undefined
 			});
 			const { successful, total } = resp.broadcast;
@@ -219,7 +321,11 @@
 	}
 
 	function onKeydown(e: KeyboardEvent) {
-		if (e.key === 'Escape' && pending) {
+		if (e.key === 'Escape' && selectingContext) {
+			e.preventDefault();
+			e.stopPropagation();
+			selectingContext = false;
+		} else if (e.key === 'Escape' && pending) {
 			e.preventDefault();
 			e.stopPropagation();
 			dismiss();
@@ -233,30 +339,77 @@
 	$effect(() => {
 		if (!app.highlightMode) dismiss();
 	});
-
-	function short(s: string, n: number): string {
-		return s.length > n ? `${s.slice(0, n)}…` : s;
-	}
 </script>
 
-<svelte:document onmouseup={onMouseUp} onkeydown={onKeydown} />
+<svelte:document onmouseup={onMouseUp} onselectionchange={onSelectionChange} onkeydown={onKeydown} />
 
-{#if pending}
-	<div class="hc-popover" style="left: {pending.x}px; top: {pending.y}px" role="dialog" aria-label="Publish highlight">
-		<blockquote class="hc-preview">{short(pending.text, 180)}</blockquote>
-		<!-- svelte-ignore a11y_autofocus -->
+{#if pending && selectingContext}
+	<div class="hc-ctx-banner" class:hc-ctx-banner--mobile={mobile} role="status">
+		<span>select the surrounding text for context</span>
+		<button class="hc-btn" onclick={() => (selectingContext = false)}>cancel</button>
+	</div>
+{:else if pending}
+	<div
+		class="hc-popover"
+		class:hc-popover--sheet={mobile}
+		style={mobile ? undefined : `left: ${pending.x}px; top: ${pending.y}px`}
+		role="dialog"
+		aria-label="Publish highlight"
+		onfocusin={() => (touched = true)}
+	>
+		<textarea
+			class="hc-text"
+			rows={mobile ? 4 : 3}
+			bind:value={text}
+			disabled={posting}
+			aria-label="Highlighted text (editable)"
+		></textarea>
+		{#if edited}
+			<div class="hc-note">edited — will publish without a position pin</div>
+		{/if}
 		<input
-			class="hc-annotation"
+			class="hc-field"
 			type="text"
 			placeholder="Annotation (optional — makes it a quote highlight)"
 			bind:value={annotation}
 			disabled={posting}
 		/>
+		{#if contextOpen}
+			<div class="hc-ctx">
+				<textarea
+					class="hc-field hc-ctx-text"
+					rows="2"
+					placeholder="Context — surrounding text (paste, or select in the text)"
+					bind:value={contextText}
+					disabled={posting}
+				></textarea>
+				<button
+					class="hc-btn"
+					onclick={() => {
+						touched = true;
+						selectingContext = true;
+					}}
+					disabled={posting}
+					title="Hide this panel and select the surrounding text in the section"
+				>select in text</button>
+			</div>
+		{/if}
 		<div class="hc-foot">
-			<span class="hc-hint">{pending.end - pending.start} chars · Ctrl-Enter</span>
+			{#if !contextOpen}
+				<button
+					class="hc-btn hc-btn--ghost"
+					onclick={() => {
+						touched = true;
+						contextOpen = true;
+					}}
+					disabled={posting}
+					title="Add NIP-84 context — surrounding text that situates the highlight"
+				>+ context</button>
+			{/if}
+			<span class="hc-hint">{text.trim().length} chars{#if !mobile}&nbsp;· Ctrl-Enter{/if}</span>
 			<span class="hc-spacer"></span>
 			<button class="hc-btn" onclick={dismiss} disabled={posting}>Cancel</button>
-			<button class="hc-btn hc-btn--post" onclick={post} disabled={posting}>
+			<button class="hc-btn hc-btn--post" onclick={post} disabled={!canPost}>
 				{posting ? 'Publishing…' : 'Highlight'}
 			</button>
 		</div>
@@ -277,16 +430,29 @@
 		flex-direction: column;
 		gap: 6px;
 	}
-	.hc-preview {
+	.hc-text {
 		margin: 0;
 		padding: 4px 8px;
+		border: 1px solid var(--panel-border);
 		border-left: 2px solid var(--id-yours);
+		border-radius: var(--r-sm);
+		background: var(--bg-surface);
+		font-family: var(--font-sans);
 		font-size: var(--t-xs);
 		color: var(--fg-muted);
-		max-height: 72px;
-		overflow: hidden;
+		max-height: 96px;
+		resize: vertical;
 	}
-	.hc-annotation {
+	.hc-text:focus {
+		outline: none;
+		color: var(--fg);
+	}
+	.hc-note {
+		font-family: var(--font-mono);
+		font-size: calc(var(--t-xs) - 2px);
+		color: var(--base5);
+	}
+	.hc-field {
 		font-family: var(--font-sans);
 		font-size: var(--t-xs);
 		color: var(--fg);
@@ -295,9 +461,19 @@
 		border-radius: var(--r-sm);
 		padding: 4px 8px;
 	}
-	.hc-annotation:focus {
+	.hc-field:focus,
+	.hc-text:focus {
 		outline: none;
 		border-color: var(--id-yours);
+	}
+	.hc-ctx {
+		display: flex;
+		align-items: flex-end;
+		gap: 6px;
+	}
+	.hc-ctx-text {
+		flex: 1;
+		resize: vertical;
 	}
 	.hc-foot {
 		display: flex;
@@ -329,8 +505,80 @@
 	.hc-btn--post {
 		color: var(--id-yours);
 	}
+	.hc-btn--ghost {
+		border-style: dashed;
+	}
 	.hc-btn:disabled {
 		opacity: 0.5;
 		cursor: not-allowed;
+	}
+
+	/* The "go select context" affordance while the panel is hidden. */
+	.hc-ctx-banner {
+		position: fixed;
+		z-index: 300;
+		top: 12px;
+		left: 50%;
+		transform: translateX(-50%);
+		display: flex;
+		align-items: center;
+		gap: 10px;
+		background: var(--bg);
+		border: 1px solid var(--panel-border-strong, var(--panel-border));
+		border-radius: var(--r-sm, 3px);
+		box-shadow: var(--shadow-lg, 0 8px 30px rgba(0, 0, 0, 0.4));
+		padding: 6px 10px;
+		font-family: var(--font-mono);
+		font-size: var(--t-xs);
+		color: var(--fg-muted);
+		white-space: nowrap;
+	}
+
+	/* Mobile: bottom sheet — the selection handles own the text, so the
+	   surface docks full-width at the bottom with touch-sized targets.
+	   `--kb-inset` (set by the mobile shell) keeps it above the soft
+	   keyboard while the annotation/context fields are focused. */
+	.hc-popover--sheet {
+		left: 0;
+		right: 0;
+		top: auto;
+		bottom: var(--kb-inset, 0px);
+		width: auto;
+		border-radius: 12px 12px 0 0;
+		border-bottom: none;
+		padding: 14px 16px calc(14px + env(safe-area-inset-bottom, 0px));
+		gap: 12px;
+	}
+	.hc-popover--sheet .hc-text {
+		font-size: var(--t-sm);
+		max-height: 30dvh;
+		padding: 8px 10px;
+	}
+	.hc-popover--sheet .hc-field {
+		font-size: var(--t-sm);
+		padding: 10px 12px;
+	}
+	.hc-popover--sheet .hc-note,
+	.hc-popover--sheet .hc-hint {
+		font-size: var(--t-xs);
+	}
+	.hc-popover--sheet .hc-btn {
+		font-size: var(--t-sm);
+		padding: 10px 16px;
+		min-height: 44px;
+	}
+	.hc-popover--sheet .hc-foot {
+		gap: 10px;
+	}
+	.hc-ctx-banner--mobile {
+		top: auto;
+		bottom: calc(72px + env(safe-area-inset-bottom, 0px));
+		font-size: var(--t-sm);
+		padding: 10px 14px;
+	}
+	.hc-ctx-banner--mobile .hc-btn {
+		font-size: var(--t-sm);
+		padding: 8px 14px;
+		min-height: 40px;
 	}
 </style>
