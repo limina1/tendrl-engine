@@ -2868,13 +2868,30 @@
 	.mshell-sheet--leader .lp__hint {
 		display: none;
 	}
+	/* Three-across scrollable grid: compact rows — keychip + name, the
+	   +/→ marker keeps the prefix/leaf distinction, the engine/client
+	   badges don't fit and go. */
 	.mshell-sheet--leader .lp__grid {
-		grid-template-columns: 1fr;
+		grid-template-columns: repeat(3, 1fr);
 		gap: 4px;
 	}
 	.mshell-sheet--leader .lp__row {
 		min-height: 44px;
-		padding: 8px var(--s-3);
+		padding: 6px var(--s-2);
+		overflow: hidden;
+	}
+	.mshell-sheet--leader .lp__desc {
+		font-size: var(--t-xs);
+		white-space: normal;
+		display: -webkit-box;
+		-webkit-line-clamp: 2;
+		line-clamp: 2;
+		-webkit-box-orient: vertical;
+		overflow: hidden;
+	}
+	.mshell-sheet--leader .lp__kind,
+	.mshell-sheet--leader .lp__sp {
+		display: none;
 	}
 	.mlp-bar {
 		display: flex;
