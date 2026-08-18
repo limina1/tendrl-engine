@@ -32,9 +32,11 @@ without resolving anything. The tags then say /where it came from/ and
 | =["i", nip73-id]=            | source is an external id: =isbn:…=, =doi:…=, …     |
 | =["offset", start, end]=     | tendrl extension: UTF-16 span into the pinned      |
 |                              | version's content (advisory, self-verifying)       |
-| =["context", text]=          | tight sentence window, ONLY when the selection     |
-|                              | repeats in the section (Amethyst renders context   |
-|                              | as the quote body — emit sparingly)                |
+| =["context", text]=          | user-explicit (paste, or select-in-text in the     |
+|                              | capture card); auto only as a tight sentence       |
+|                              | window when the selection repeats in the section   |
+|                              | (Amethyst renders context as the quote body —      |
+|                              | auto-emit sparingly)                               |
 | =["comment", text]=          | annotation → makes it a *quote highlight*          |
 | =["client", "tendrl"]=       | stamped at the signing chokepoint, every event     |
 
@@ -80,7 +82,19 @@ neither derives a single tag client-side.
    back to source offsets through the =data-src-start/end= stamps
    =RichContent= emits (rendered chips differ from their source span,
    so =selection.toString()= is never trusted — the text is sliced from
-   the source so offset and content agree byte-for-byte).
+   the source so offset and content agree byte-for-byte). Two capture
+   triggers (2026-08-18): =mouseup= (desktop, immediate) plus a
+   debounced =selectionchange= — touch selection never fires mouseup,
+   so this is what makes the mobile flow work at all. The surface is a
+   viewport-centered card on both shells (mobile only sizes it up for
+   touch); an /untouched/ card is replaced by further selection so
+   drag-handle adjustment isn't locked out. The captured text is
+   editable in place — edited text no longer slices the pinned source,
+   so it publishes offset-less (the engine rejects mismatched offsets
+   at write time). Context is an explicit entry: paste it, or
+   "select in text" hides the card so the surrounding passage can be
+   selected as the context; the sparing auto-context stays as the
+   repeats-only fallback.
 2. *General highlighter* (M-x =tendrl-highlight=, i.e. =SPC :
    highlight=): the reverse direction — paste text first, cite the
    source second. =HighlightComposerModal.svelte= takes any source
@@ -88,7 +102,10 @@ neither derives a single tag client-side.
    (=naddr/nevent/note=, decoded by the engine's =/decode= — the web
    ships no bech32), =kind:pk:d= coordinates, 64-hex ids, URLs (bare
    domains get =https://=), =isbn:= / =doi:=. Prefills from the window
-   selection when one exists.
+   selection when one exists. Carries an optional pasted =context=
+   field (2026-08-18) — no offset (pasted text has no reference
+   frame), but surrounding text still travels. Mobile reaches it via
+   the drawer's =+ highlight= button (above =+ compose=).
 
 Authoring niceties worth knowing exist (all in the modal):
 - *Event-JSON preview*: =POST /discussions/highlight/preview= returns
@@ -99,9 +116,9 @@ Authoring niceties worth knowing exist (all in the modal):
   point is structural: preview and publish share one code path, so the
   preview /cannot/ drift. (Pattern write-up:
   [[file:feat-ui-patterns.org][UI patterns]] → wire preview.)
-- *Draft memory*: closing the modal stashes source/text/annotation in
-  =app.highlightDraft=; reopening restores and re-classifies. Publish
-  clears it. Session-scoped.
+- *Draft memory*: closing the modal stashes source/text/annotation/
+  context in =app.highlightDraft=; reopening restores and
+  re-classifies. Publish clears it. Session-scoped.
 - *Modal yield*: in Confirm mode, publishing raises a =publish_intent=
   whose modal must win the screen; the highlighter hides itself and
   goes key-inert while the intent is pending. Deny still signs + saves

@@ -144,10 +144,15 @@ engine over LAN (milestone M0, below). Ordered; A1–A3 gate the merge to
     stay desktop-only by construction (their W chip lives on the
     mode-line). CDP-verified: sign-in surfaces its mobile body ringed
     to the cmds button.
-- [ ] *A5. Touch highlight capture.* Selection handles → action popover
-  (share-sheet style) replacing the mouse+key flow in
-  =HighlightCapture.svelte=. The flagship mobile interaction for a
-  reading app — worth its own design iteration on-device.
+- [X] *A5. Touch highlight capture.* Shipped 2026-08-18, different
+  shape than sketched: not a share-sheet popover but a debounced
+  =selectionchange= trigger (touch selection never fires =mouseup=)
+  opening a viewport-centered card — editable text, explicit NIP-84
+  context (paste or select-in-text), touch-sized targets. An untouched
+  card is replaced by further selection so drag-handle adjustment
+  keeps working. Details: [[file:feat-discussions.org][Discussions &
+  Highlights]]. The drawer also gained =+ highlight= (above
+  =+ compose=) opening the general highlighter.
 - [ ] Merge =feat/mobile-shell= → =tendrl-web= after A1–A3; A4/A5 land
   as normal iterations both containers pick up.
 

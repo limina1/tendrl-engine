@@ -140,6 +140,13 @@ divergence.
   =--cursor= highlight, scroll-into-view. Checkbox multi-select
   (=checkedIds= + batch bar) coexists on search/context surfaces — two
   selection models on one surface is a known confusion point.
+- *Selection-driven capture* (2026-08-18, =HighlightCapture.svelte=):
+  a surface reacting to text selection must listen to a debounced
+  =selectionchange=, not just =mouseup= — touch selection (long-press
+  + drag handles) never fires mouseup. Render it as a
+  viewport-centered card with *no backdrop* (the selection must stay
+  visible), and let further selection replace an /untouched/ capture
+  so handle-dragging isn't locked out the moment the card opens.
 
 * Pills, badges, status
 

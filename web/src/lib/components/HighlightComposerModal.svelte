@@ -6,8 +6,8 @@
 	// `kind:pubkey:d` coordinate, 64-hex id), a web URL, or an external id
 	// (isbn:/doi:); classification is local string shape + the engine's
 	// `/decode` for bech32, shown live as a badge so the user sees what the
-	// event will cite before publishing. No offset/context tags — pasted text
-	// has no pinned reference frame.
+	// event will cite before publishing. No offset tag — pasted text has no
+	// pinned reference frame; NIP-84 context is an optional pasted entry.
 	import * as api from '$lib/api';
 	import { getAppState } from '$lib/state.svelte';
 	import { identityCanSign } from '$lib/identity/signer';
@@ -24,6 +24,7 @@
 	let source = $state(initialSource);
 	let text = $state(app.highlightComposer?.text ?? app.highlightDraft?.text ?? '');
 	let annotation = $state(app.highlightDraft?.annotation ?? '');
+	let context = $state(app.highlightDraft?.context ?? '');
 	let posting = $state(false);
 
 	// Confirm mode: publishing raises a publish_intent that renders
@@ -139,6 +140,7 @@
 		const target = resolved?.target ?? null;
 		const content = text.trim();
 		const comment = annotation.trim();
+		const ctx = context.trim();
 		clearTimeout(jsonTimer);
 		jsonTimer = setTimeout(async () => {
 			const token = ++jsonToken;
@@ -151,6 +153,7 @@
 				const resp = await api.previewHighlight({
 					target,
 					content,
+					context: ctx || undefined,
 					comment: comment || undefined
 				});
 				if (token !== jsonToken) return;
@@ -167,8 +170,8 @@
 
 	function close(rememberDraft = true) {
 		app.highlightDraft =
-			rememberDraft && (source.trim() || text.trim() || annotation.trim())
-				? { source, text, annotation }
+			rememberDraft && (source.trim() || text.trim() || annotation.trim() || context.trim())
+				? { source, text, annotation, context }
 				: null;
 		app.highlightComposer = null;
 	}
@@ -180,6 +183,7 @@
 			const resp = await api.publishHighlight({
 				target: resolved.target,
 				content: text.trim(),
+				context: context.trim() || undefined,
 				comment: annotation.trim() || undefined
 			});
 			const { successful, total } = resp.broadcast;
@@ -266,6 +270,16 @@
 			data-entry
 			placeholder="Paste the passage being highlighted…"
 			bind:value={text}
+			disabled={posting}
+		></textarea>
+
+		<label class="ghl-label" for="ghl-context">context</label>
+		<textarea
+			id="ghl-context"
+			class="ghl-input ghl-context"
+			data-entry
+			placeholder="Optional — surrounding text (NIP-84 context tag)"
+			bind:value={context}
 			disabled={posting}
 		></textarea>
 
@@ -404,6 +418,10 @@
 	}
 	.ghl-text {
 		min-height: 88px;
+		resize: vertical;
+	}
+	.ghl-context {
+		min-height: 44px;
 		resize: vertical;
 	}
 	.ghl-detail {

@@ -1375,6 +1375,7 @@
 			onOpenRelays={openRelays}
 			onOpenSettings={openSettings}
 			onOpenCompose={openCompose}
+			onOpenHighlight={() => (app.highlightComposer = {})}
 			onIdentityTap={() => {
 				if (identityPill.kind === 'connect') connectIdentity();
 				else if (identityPill.kind === 'me') openMyProfile();
