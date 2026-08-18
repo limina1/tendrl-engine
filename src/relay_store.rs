@@ -91,6 +91,17 @@ pub struct RelaySets {
     /// See `docs/zettel/idea-relay-kind-routing.org`.
     #[serde(default)]
     pub resolve_kinds: std::collections::BTreeMap<String, Vec<u64>>,
+    /// Inactive relays: URL → the set names it belonged to when it was
+    /// deactivated (`"general"`, `"fetch"`, `"publish"`, `"broadcast"`,
+    /// `"search.default"`, `"search.fallback"`, `"indexer.default"`,
+    /// `"indexer.fallback"`). Presence in this map IS the inactive state:
+    /// the URL is removed from those working sets (so every engine
+    /// consumer skips it with zero filtering) and reactivation re-adds it
+    /// to exactly the recorded sets. This is what lets the user park a
+    /// relay — keep its URL and role configuration — without deleting it.
+    /// Claims (`resolve_kinds`) are retained but ignored while inactive.
+    #[serde(default)]
+    pub inactive: std::collections::BTreeMap<String, Vec<String>>,
     /// Highest default-seed generation this file has absorbed. Lets new
     /// engine defaults reach EXISTING installs additively: on load, a
     /// file whose stamp is behind `CURRENT_SEED_VERSION` gets the newer
@@ -257,6 +268,7 @@ impl RelaySets {
             },
             named: Vec::new(),
             resolve_kinds,
+            inactive: std::collections::BTreeMap::new(),
             seed_version: CURRENT_SEED_VERSION,
             exclusive: ExclusiveFlags::default(),
         }
@@ -321,11 +333,12 @@ impl RelaySets {
 
     /// Every relay claiming `kind`, in insertion-stable (sorted-key) order.
     /// Empty means nothing claims it — the caller falls back to the read
-    /// set, which is what makes an unconfigured install a no-op.
+    /// set, which is what makes an unconfigured install a no-op. Parked
+    /// (inactive) relays keep their claims on file but never claim here.
     pub fn relays_claiming_kind(&self, kind: u64) -> Vec<String> {
         self.resolve_kinds
             .iter()
-            .filter(|(_, kinds)| kinds.contains(&kind))
+            .filter(|(url, kinds)| kinds.contains(&kind) && !self.inactive.contains_key(*url))
             .map(|(url, _)| url.clone())
             .collect()
     }
@@ -383,6 +396,73 @@ impl RelaySets {
                     })
                     .or_insert(kinds);
             }
+        }
+        // Inactive keys are URLs too — same canonicalization as claims.
+        if !self.inactive.is_empty() {
+            let parked = std::mem::take(&mut self.inactive);
+            for (url, sets) in parked {
+                let key = crate::relay_url::normalize_relay_url(&url);
+                if key.is_empty() {
+                    continue;
+                }
+                self.inactive.entry(key).or_insert(sets);
+            }
+        }
+    }
+
+    /// Every membership list `set_active` walks when parking/unparking —
+    /// the flat sets plus both tiers of each discovery class.
+    pub const MEMBERSHIP_SETS: &'static [&'static str] = &[
+        "general",
+        "fetch",
+        "publish",
+        "broadcast",
+        "search.default",
+        "search.fallback",
+        "indexer.default",
+        "indexer.fallback",
+    ];
+
+    /// Park (`active=false`) or unpark (`active=true`) a relay.
+    /// Deactivating strips `url` from every working set and records the
+    /// memberships in `inactive` — so all engine consumers skip it with
+    /// no filtering anywhere — while the row (URL, roles, claims)
+    /// survives for later reactivation. Activating re-adds the URL to
+    /// exactly the recorded sets and drops the entry. A membership-less
+    /// park is valid (a claims-only relay can be parked too). Returns
+    /// true when state changed.
+    pub fn set_active(&mut self, url: &str, active: bool) -> bool {
+        let key = crate::relay_url::normalize_relay_url(url);
+        if key.is_empty() {
+            return false;
+        }
+        if active {
+            let Some(memberships) = self.inactive.remove(&key) else {
+                return false;
+            };
+            for set in memberships {
+                if let Ok(list) = self.get_mut(&set) {
+                    if !list.contains(&key) {
+                        list.push(key.clone());
+                    }
+                }
+            }
+            true
+        } else {
+            if self.inactive.contains_key(&key) {
+                return false;
+            }
+            let mut memberships = Vec::new();
+            for set in Self::MEMBERSHIP_SETS {
+                let list = self.get_mut(set).expect("membership set names are valid");
+                let before = list.len();
+                list.retain(|u| u != &key);
+                if list.len() != before {
+                    memberships.push(set.to_string());
+                }
+            }
+            self.inactive.insert(key, memberships);
+            true
         }
     }
 
@@ -841,6 +921,40 @@ mod tests {
         );
         // Idempotent: the stamp gates a second pass.
         assert!(!sets.apply_default_upgrades());
+    }
+
+    #[test]
+    fn set_active_parks_and_restores_memberships() {
+        let mut sets = RelaySets::default();
+        let url = "wss://parked.example".to_string();
+        sets.fetch.push(url.clone());
+        sets.publish.push(url.clone());
+        sets.search.default.push(url.clone());
+        sets.set_kinds(&url, &[30818]);
+
+        // Park: gone from every working set, memberships recorded,
+        // claims retained on file but no longer claiming.
+        assert!(sets.set_active(&url, false));
+        assert!(sets.fetch.is_empty());
+        assert!(sets.publish.is_empty());
+        assert!(sets.search.default.is_empty());
+        assert_eq!(
+            sets.inactive.get(&url).map(|v| v.as_slice()),
+            Some(&["fetch".to_string(), "publish".to_string(), "search.default".to_string()][..])
+        );
+        assert_eq!(sets.kinds_for(&url), &[30818]);
+        assert!(sets.relays_claiming_kind(30818).is_empty());
+        // Idempotent in both directions.
+        assert!(!sets.set_active(&url, false));
+
+        // Unpark: exactly the recorded memberships come back.
+        assert!(sets.set_active(&url, true));
+        assert_eq!(sets.fetch, vec![url.clone()]);
+        assert_eq!(sets.publish, vec![url.clone()]);
+        assert_eq!(sets.search.default, vec![url.clone()]);
+        assert!(sets.inactive.is_empty());
+        assert_eq!(sets.relays_claiming_kind(30818), vec![url.clone()]);
+        assert!(!sets.set_active(&url, true));
     }
 
     #[test]
