@@ -450,7 +450,7 @@ function _createAppState() {
 	// restored on the next open, cleared by a successful publish. Session
 	// memory only (buffer renderers unmount on switch; modals unmount on
 	// close — durable text lives in the store, not the component).
-	let highlightDraft: { source: string; text: string; annotation: string } | null = $state(null);
+	let highlightDraft: { source: string; text: string; annotation: string; context: string } | null = $state(null);
 
 	// Republish diff prompt: set when Publish detects a same-title
 	// publication. ComparePublishModal renders the diff and calls
@@ -4545,7 +4545,7 @@ function _createAppState() {
 		get highlightComposer() { return highlightComposer; },
 		set highlightComposer(v: { text?: string; source?: string } | null) { highlightComposer = v; },
 		get highlightDraft() { return highlightDraft; },
-		set highlightDraft(v: { source: string; text: string; annotation: string } | null) { highlightDraft = v; },
+		set highlightDraft(v: { source: string; text: string; annotation: string; context: string } | null) { highlightDraft = v; },
 
 		// Profile
 		get profilePubkey() { return profilePubkey; },
