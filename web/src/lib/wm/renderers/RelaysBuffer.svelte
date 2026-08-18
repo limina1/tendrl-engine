@@ -32,6 +32,9 @@
 		broadcast: boolean;
 		/** Member of the search class (NIP-50 fan-out). */
 		search: boolean;
+		/** False = parked: kept on file with its roles/claims but in no
+		 *  working set — every operation skips it until reactivated. */
+		active: boolean;
 		/** Resolve-kind claims — the kinds this relay is asked for when
 		 *  resolving a known target. Empty = no claim, and resolution for
 		 *  an unclaimed kind uses the read relays exactly as before. A row
@@ -164,6 +167,7 @@
 						auth: false,
 						broadcast: false,
 						search: false,
+						active: true,
 						kinds: []
 					};
 					map.set(url, r);
@@ -189,6 +193,22 @@
 			// tiers here so a not-yet-migrated file still shows its rows.
 			for (const url of [...(cfg.search?.default ?? []), ...(cfg.search?.fallback ?? [])]) {
 				ensure(url).search = true;
+			}
+			// Parked relays: not in any working set, so they only appear
+			// via the inactive map. Reconstruct their role pills from the
+			// recorded memberships and dim the row.
+			for (const [url, memberships] of Object.entries(cfg.inactive ?? {})) {
+				const r = ensure(url);
+				r.active = false;
+				for (const set of memberships) {
+					if (set === 'general') {
+						r.read = true;
+						r.write = true;
+					} else if (set === 'fetch') r.read = true;
+					else if (set === 'publish') r.write = true;
+					else if (set === 'broadcast') r.broadcast = true;
+					else if (set.startsWith('search.')) r.search = true;
+				}
 			}
 			rows = [...map.values()].sort((a, b) => a.url.localeCompare(b.url));
 
@@ -248,10 +268,39 @@
 		});
 	});
 
+	/** Park / unpark a relay. The engine records (and restores) the
+	 *  row's set memberships; reload afterwards so pills, counts, and
+	 *  the dimmed state all come from authoritative config. */
+	async function toggleActive(url: string) {
+		const row = rows.find((r) => r.url === url);
+		if (!row) return;
+		const next = !row.active;
+		rows = rows.map((r) => (r.url === url ? { ...r, active: next } : r)); // optimistic
+		try {
+			await api.setRelayActive(url, next);
+			app.pushToast(
+				next ? `${shorten(url)} active` : `${shorten(url)} inactive — kept, but skipped by every operation`,
+				'success',
+				2500
+			);
+			await load();
+		} catch (e) {
+			rows = rows.map((r) => (r.url === url ? row : r)); // revert
+			app.pushToast(
+				`Couldn't toggle active: ${e instanceof Error ? e.message : String(e)}`,
+				'error',
+				5000
+			);
+		}
+	}
+
 	type ToggleField = 'read' | 'write' | 'auth' | 'broadcast' | 'search';
 	async function toggle(url: string, field: ToggleField) {
 		const row = rows.find((r) => r.url === url);
 		if (!row) return;
+		// Role edits on a parked relay would desync the recorded
+		// memberships — reactivate first (the pills are disabled too).
+		if (!row.active) return;
 		const next = { ...row, [field]: !row[field] };
 		rows = rows.map((r) => (r.url === url ? next : r)); // optimistic
 
@@ -366,8 +415,13 @@
 	// reversible (re-add the URL) and the row's tooltip says the scope.
 	async function deleteRelay(url: string) {
 		const prev = rows;
+		const wasInactive = rows.find((r) => r.url === url)?.active === false;
 		rows = rows.filter((r) => r.url !== url); // optimistic
 		try {
+			// A parked relay lives only in the inactive map — unpark it
+			// first so the set removals below actually find (and clear)
+			// its memberships instead of leaving a resurrecting entry.
+			if (wasInactive) await api.setRelayActive(url, true);
 			// remove_relay is a no-op (false) for sets the URL isn't in.
 			await api.removeRelay('general', url);
 			await api.removeRelay('fetch', url);
@@ -1112,15 +1166,17 @@
 	}
 
 	function relaysForPublish(kind: PublishableKind): string[] {
+		// Parked rows keep their role pills for display but are not
+		// working members — a published list must not carry them.
 		if (kind === 10002) {
-			return rows.filter((r) => r.read || r.write).map((r) => r.url);
+			return rows.filter((r) => r.active && (r.read || r.write)).map((r) => r.url);
 		}
 		if (kind === 10088) {
-			return rows.filter((r) => r.broadcast).map((r) => r.url);
+			return rows.filter((r) => r.active && r.broadcast).map((r) => r.url);
 		}
 		// Search flattened to a main-row toggle; indexer is still the
 		// union of both tiers from the Discovery section.
-		if (kind === 10007) return rows.filter((r) => r.search).map((r) => r.url);
+		if (kind === 10007) return rows.filter((r) => r.active && r.search).map((r) => r.url);
 		if (kind === 10086) return indexerRows.map((r) => r.url);
 		return [];
 	}
@@ -1727,7 +1783,12 @@
 				{@const doc = docFor(row.url)}
 				{@const lim = doc?.limitation}
 				{@const sync = syncStateFor(row)}
-				<div class="relay-card" class:relay-card--expanded={expanded.has(row.url)} bind:this={rowEls[row.url]}>
+				<div
+					class="relay-card"
+					class:relay-card--expanded={expanded.has(row.url)}
+					class:relay-card--inactive={!row.active}
+					bind:this={rowEls[row.url]}
+				>
 					<div class="relay-row">
 						<button
 							class="relay-disclosure"
@@ -1783,32 +1844,45 @@
 
 						<div class="relay-toggles">
 							<button
+								class="pill toggle-pill toggle-pill--power"
+								class:toggle-pill--on={row.active}
+								onclick={() => toggleActive(row.url)}
+								title={row.active
+									? 'Active — every operation may use this relay per its roles. Click to deactivate: the relay is kept (URL, roles, resolve kinds) but skipped by everything until you reactivate it.'
+									: 'Inactive — kept on file but skipped by every operation. Click to reactivate with the same roles it had.'}
+							>{row.active ? 'active' : 'inactive'}</button>
+							<button
 								class="pill toggle-pill"
 								class:toggle-pill--on={row.read}
+								disabled={!row.active}
 								onclick={() => toggle(row.url, 'read')}
 								title="Read from this relay"
 							>read</button>
 							<button
 								class="pill toggle-pill"
 								class:toggle-pill--on={row.write}
+								disabled={!row.active}
 								onclick={() => toggle(row.url, 'write')}
 								title="Publish to this relay (your own signed events land here)"
 							>write</button>
 							<button
 								class="pill toggle-pill toggle-pill--broadcast"
 								class:toggle-pill--on={row.broadcast}
+								disabled={!row.active}
 								onclick={() => toggle(row.url, 'broadcast')}
 								title="Mark this relay as a broadcast / aggregator target. Never auto-published to — only when you explicitly opt in per event."
 							>broadcast</button>
 							<button
 								class="pill toggle-pill"
 								class:toggle-pill--on={row.auth}
+								disabled={!row.active}
 								onclick={() => toggle(row.url, 'auth')}
 								title="Authenticate (NIP-42) when this relay challenges"
 							>auth</button>
 							<button
 								class="pill toggle-pill toggle-pill--search"
 								class:toggle-pill--on={row.search}
+								disabled={!row.active}
 								onclick={() => toggle(row.url, 'search')}
 								title="Use this relay for free-text (NIP-50) search fetches — it joins the fan-out of every search-typed fetch"
 							>search</button>
@@ -2700,6 +2774,22 @@
 		cursor: pointer;
 		font-family: var(--font-mono);
 		padding: 1px 8px;
+	}
+	.toggle-pill[disabled] {
+		opacity: 0.45;
+		cursor: default;
+		pointer-events: none;
+	}
+	/* Park/unpark master switch — reads as state, not role. */
+	.toggle-pill--power:not(.toggle-pill--on) {
+		border-color: var(--orange, #cb4b16);
+		color: var(--orange, #cb4b16);
+	}
+	/* Parked rows stay listed (URL, roles, claims survive) but read as
+	   dormant: everything dims except the power pill. */
+	.relay-card--inactive .relay-row > :not(.relay-toggles),
+	.relay-card--inactive .relay-toggles > :not(.toggle-pill--power) {
+		opacity: 0.5;
 	}
 	.toggle-pill:hover {
 		color: var(--fg);

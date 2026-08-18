@@ -1605,9 +1605,23 @@ export function getRelayConfig() {
 		 *  nobody claims falls back to the read relays — so an empty map
 		 *  is exactly the pre-routing behavior. */
 		resolve_kinds: Record<string, number[]>;
+		/** Parked relays: URL → the set memberships held when the relay
+		 *  was deactivated. Presence in the map IS the inactive state —
+		 *  the URL sits in no working set until reactivated. */
+		inactive: Record<string, string[]>;
 		authors: string[];
 		initial_relays: string[];
 	}>('/api/v1/relays');
+}
+
+/** Park (`active=false`) or unpark (`active=true`) a relay across all
+ *  working sets. Parking keeps the URL, roles, and claims on file —
+ *  the persistent alternative to deleting a relay to silence it. */
+export function setRelayActive(url: string, active: boolean) {
+	return fetchJson<{ updated: boolean; message: string }>('/api/v1/config/update', {
+		method: 'POST',
+		body: JSON.stringify({ set_relay_active: { url, active } })
+	});
 }
 
 /** Replace a relay's resolve-kind claims. `[]` clears them. */

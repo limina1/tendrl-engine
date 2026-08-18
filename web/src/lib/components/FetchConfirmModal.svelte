@@ -9,7 +9,7 @@
 
 	import type { FetchEvent, NipFilter, CompositionShape, Phase } from '$lib/types';
 	import { resolveConfirm, reissueConfirm } from '$lib/network/fetch-events.svelte';
-	import { addRelay, removeRelay } from '$lib/api';
+	import { addRelay, removeRelay, getRelayConfig } from '$lib/api';
 	import { getAppState } from '$lib/state.svelte';
 
 	const app = getAppState();
@@ -152,7 +152,31 @@
 	});
 
 	const allRelays = $derived([...proposedRelays.filter((r) => !removed.has(r)), ...extras]);
-	const selectedRelays = $derived(allRelays.filter((r) => !deselected.has(r)));
+
+	// Parked (inactive) relays: kept in the user's config but in no
+	// working set, so the engine never proposes them. Surface them here
+	// unchecked so they're one click from joining THIS operation —
+	// per-op only; making one active again lives in relay management.
+	let inactiveUrls = $state<string[]>([]);
+	let optedIn = $state<Set<string>>(new Set());
+	$effect(() => {
+		getRelayConfig()
+			.then((cfg) => {
+				inactiveUrls = Object.keys(cfg.inactive ?? {});
+			})
+			.catch(() => {});
+	});
+	const inactiveOffered = $derived(inactiveUrls.filter((u) => !allRelays.includes(u)));
+	function toggleOptIn(url: string) {
+		const next = new Set(optedIn);
+		if (!next.delete(url)) next.add(url);
+		optedIn = next;
+	}
+
+	const selectedRelays = $derived([
+		...allRelays.filter((r) => !deselected.has(r)),
+		...inactiveOffered.filter((u) => optedIn.has(u))
+	]);
 
 	const PATTERN_LABEL: Record<string, string> = {
 		event: 'event',
@@ -312,6 +336,24 @@
 									? 'Remove this relay from your read set'
 									: 'Remove this relay from the list for this fetch'}
 							>×</button>
+						</li>
+					{/each}
+				</ul>
+			{/if}
+			{#if inactiveOffered.length > 0}
+				<div class="rf-section-head rf-section-head--inactive">Inactive relays</div>
+				<ul class="rf-list rf-list--inactive">
+					{#each inactiveOffered as url (url)}
+						<li class="rf-item">
+							<label class="rf-row">
+								<input
+									type="checkbox"
+									checked={optedIn.has(url)}
+									onchange={() => toggleOptIn(url)}
+								/>
+								<code class="rf-url">{url}</code>
+								<span class="rf-inactive-tag" title="Deactivated in relay management — check to include it for this operation only.">inactive</span>
+							</label>
 						</li>
 					{/each}
 				</ul>
@@ -570,6 +612,24 @@
 		color: var(--id-yours);
 		margin-bottom: 6px;
 		font-size: calc(var(--t-xs) - 1px);
+	}
+	.rf-section-head--inactive {
+		margin-top: 10px;
+		color: var(--base5);
+	}
+	.rf-list--inactive .rf-url {
+		opacity: 0.6;
+	}
+	.rf-list--inactive input:checked ~ .rf-url {
+		opacity: 1;
+	}
+	.rf-inactive-tag {
+		font-size: calc(var(--t-xs) - 1px);
+		color: var(--orange, #cb4b16);
+		border: 1px solid currentColor;
+		padding: 0 5px;
+		border-radius: 2px;
+		margin-left: 6px;
 	}
 	.rf-section-head-row {
 		display: flex;
