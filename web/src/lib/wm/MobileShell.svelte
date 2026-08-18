@@ -31,6 +31,7 @@
 		onOpenRelays,
 		onOpenSettings,
 		onOpenCompose,
+		onOpenHighlight,
 		onIdentityTap,
 		activity = null,
 		onKillFetch,
@@ -50,6 +51,8 @@
 		onOpenRelays?: () => void;
 		onOpenSettings?: () => void;
 		onOpenCompose?: () => void;
+		/** Open the general highlighter (paste text, cite any source). */
+		onOpenHighlight?: () => void;
 		onIdentityTap?: () => void;
 		/** Live network-activity summary (the modeline ⇅ pill's data). */
 		activity?: NetworkStatus | null;
@@ -181,6 +184,14 @@
 					>×</button>
 				</div>
 			{/each}
+			<button
+				class="mshell__drawer-add"
+				onclick={() => {
+					mobileNav.drawerOpen = false;
+					onOpenHighlight?.();
+				}}
+				title="General highlighter — paste text, cite any source (nostr / URL / ISBN / DOI)"
+			>+ highlight</button>
 			<button
 				class="mshell__drawer-add"
 				onclick={() => {
