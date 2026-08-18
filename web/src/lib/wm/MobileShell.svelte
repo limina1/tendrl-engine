@@ -207,7 +207,7 @@
 					mobileNav.drawerOpen = false;
 					onCommands();
 				}}
-				title="Commands — open buffers, act (M-x)"
+				title="Commands menu — press to navigate (the SPC leader); cmd for typed M-x"
 			>+ commands</button>
 
 			<!-- Mobile home for the desktop modeline's status pills, in the

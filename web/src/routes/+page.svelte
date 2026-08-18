@@ -1366,7 +1366,7 @@
 	{#if shell.mode === 'mobile'}
 		<MobileShell
 			{store}
-			onCommands={() => openMinibuffer('mx')}
+			onCommands={openLeader}
 			{networkPill}
 			{identityPill}
 			{embeddingPill}
@@ -1408,6 +1408,26 @@
 			<div class="mshell-sheet-scrim" onclick={closeMinibuffer}></div>
 			<div class="mshell-sheet">
 				{@render minibufferStrip()}
+			</div>
+		{:else if leaderOpen && currentLeaderNode?.type === 'prefix'}
+			<!-- The SPC leader as a touch sheet (drawer → commands): the same
+			     which-key popup the desktop renders — rows are buttons, so
+			     press-to-navigate works as-is — plus a touch bar: ‹ up one
+			     level, cmd = the typed M-x fallback, close. Back (closer, 70)
+			     also pops the whole sheet. -->
+			<!-- svelte-ignore a11y_click_events_have_key_events -->
+			<!-- svelte-ignore a11y_no_static_element_interactions -->
+			<div class="mshell-sheet-scrim" onclick={() => (prefixPath = [])}></div>
+			<div class="mshell-sheet mshell-sheet--leader">
+				{@render leaderPopup(currentLeaderNode)}
+				<div class="mlp-bar">
+					<button class="mlp-btn" onclick={leaderUp} disabled={prefixPath.length <= 1}
+						title="Up one level">‹ up</button>
+					<button class="mlp-btn mlp-btn--cmd" onclick={() => openMinibuffer('mx')}
+						title="Type a command (M-x)">cmd</button>
+					<span class="mlp-sp"></span>
+					<button class="mlp-btn" onclick={() => (prefixPath = [])} title="Close">close</button>
+				</div>
 			</div>
 		{/if}
 	{:else}
@@ -2833,6 +2853,56 @@
 	}
 	.mshell-sheet .mb {
 		max-height: 55vh;
+	}
+	/* Leader-as-sheet: reuse the desktop which-key popup with touch sizing.
+	   The keyboard hint row is desktop language — hidden here; keychips
+	   stay (they teach the SPC chords the desktop uses). */
+	.mshell-sheet--leader {
+		background: var(--panel-bg);
+		border-top: 1px solid var(--base3);
+	}
+	.mshell-sheet--leader .lp {
+		border-top: none;
+		max-height: min(60vh, 420px);
+	}
+	.mshell-sheet--leader .lp__hint {
+		display: none;
+	}
+	.mshell-sheet--leader .lp__grid {
+		grid-template-columns: 1fr;
+		gap: 4px;
+	}
+	.mshell-sheet--leader .lp__row {
+		min-height: 44px;
+		padding: 8px var(--s-3);
+	}
+	.mlp-bar {
+		display: flex;
+		align-items: center;
+		gap: var(--s-2);
+		padding: var(--s-2) var(--s-3);
+		background: var(--panel-bg-soft);
+		border-top: 1px solid var(--panel-border);
+	}
+	.mlp-btn {
+		font-family: var(--font-mono);
+		font-size: var(--t-sm);
+		color: var(--base6);
+		background: var(--bg-surface);
+		border: 1px solid var(--panel-border);
+		border-radius: var(--r-sm);
+		padding: 10px 16px;
+		min-height: 44px;
+		cursor: pointer;
+	}
+	.mlp-btn:disabled {
+		opacity: 0.4;
+	}
+	.mlp-btn--cmd {
+		color: var(--id-yours);
+	}
+	.mlp-sp {
+		flex: 1;
 	}
 	.mb__list {
 		flex: 1;
