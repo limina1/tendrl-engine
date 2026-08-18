@@ -19,6 +19,33 @@ use tracing::{debug, info, warn};
 /// run one.
 pub const DEFAULT_RELAYS: &[&str] = &["wss://relay.noswhere.com", "wss://relay.damus.io"];
 
+/// Bound on TCP + TLS + WebSocket-upgrade establishment. The per-fetch
+/// timeouts below only start ticking once the socket is up — without
+/// this cap, a blackholed connect (wifi↔cellular handoff, unreachable
+/// IPv6, Doze-frozen radio — all routine on Android) blocks for the OS
+/// TCP timeout, i.e. minutes, and anything awaiting the fetch hangs
+/// with it. A healthy relay completes the handshake well under 5s.
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// `connect_async` bounded by [`CONNECT_TIMEOUT`]; error is a plain
+/// string so both the fetch path (`EngineError`) and the publish path
+/// (`String`) can wrap it.
+async fn connect_bounded(
+    relay_url: &str,
+) -> std::result::Result<
+    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>,
+    String,
+> {
+    match timeout(CONNECT_TIMEOUT, connect_async(relay_url)).await {
+        Ok(Ok((ws, _))) => Ok(ws),
+        Ok(Err(e)) => Err(format!("Failed to connect: {}", e)),
+        Err(_) => Err(format!(
+            "Connect timed out after {}s",
+            CONNECT_TIMEOUT.as_secs()
+        )),
+    }
+}
+
 /// Default indexer (profile / kind-10002 discovery) relays. Used to
 /// seed `indexer.default` on first boot so a fresh install can fall
 /// back from the read set without manual configuration. Well-known
@@ -46,9 +73,9 @@ pub async fn fetch_with_filters(
 ) -> Result<Vec<Value>> {
     debug!("Fetching events from {} with {} filters", relay_url, filters.len());
 
-    let (mut ws, _) = connect_async(relay_url)
+    let mut ws = connect_bounded(relay_url)
         .await
-        .map_err(|e| EngineError::Relay(format!("Failed to connect to {}: {}", relay_url, e)))?;
+        .map_err(|e| EngineError::Relay(format!("{}: {}", relay_url, e)))?;
 
     // Unique per REQ. With one REQ per socket this is only hygiene, but a
     // shared/pooled connection (the planned persistent layer) would collide
@@ -173,9 +200,7 @@ pub async fn publish_event(relay_url: &str, event_json: &str) -> PublishResult {
         .unwrap_or_default();
 
     let result = async {
-        let (mut ws, _) = connect_async(relay_url)
-            .await
-            .map_err(|e| format!("Failed to connect: {}", e))?;
+        let mut ws = connect_bounded(relay_url).await?;
 
         // Send EVENT message: ["EVENT", {event}]
         let event: Value = serde_json::from_str(event_json)
@@ -354,4 +379,37 @@ where
 
     let success_count = relay_ok.iter().filter(|&&ok| ok).count();
     (success_count, total_relays, all_results)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A relay that accepts the TCP connection but never answers the
+    /// WebSocket upgrade — the hermetic stand-in for a blackholed
+    /// connect (the on-device failure mode this timeout exists for).
+    /// Without CONNECT_TIMEOUT, connect_async waits on it forever.
+    #[tokio::test]
+    async fn connect_bounded_times_out_on_silent_peer() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        // Keep sockets accepted-but-mute for the duration of the test.
+        let server = tokio::spawn(async move {
+            let mut held = Vec::new();
+            while let Ok((sock, _)) = listener.accept().await {
+                held.push(sock);
+            }
+        });
+
+        let start = Instant::now();
+        let result = connect_bounded(&format!("ws://{}", addr)).await;
+        let elapsed = start.elapsed();
+
+        let err = result.err().expect("silent peer must not connect");
+        assert!(err.contains("timed out"), "unexpected error: {err}");
+        // Bounded by the timeout (small slack for scheduling), not the
+        // OS TCP timeout.
+        assert!(elapsed < CONNECT_TIMEOUT + Duration::from_secs(2));
+        server.abort();
+    }
 }
