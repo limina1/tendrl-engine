@@ -17,7 +17,28 @@ use tracing::{debug, info, warn};
 /// fresh install's working sets (and every operation on mobile, where
 /// nothing listens on loopback). Add a local relay explicitly when you
 /// run one.
-pub const DEFAULT_RELAYS: &[&str] = &["wss://relay.noswhere.com", "wss://relay.damus.io"];
+pub const DEFAULT_RELAYS: &[&str] = &[
+    "wss://relay.noswhere.com",
+    "wss://relay.damus.io",
+    "wss://theforest.nostr1.com",
+    "wss://thecitadel.nostr1.com",
+    "wss://mercury-relay.imwald.eu/relay",
+];
+
+/// Defaults that seed as read-only: included in the read/general seed,
+/// excluded from the publish seed. (thecitadel is read+write and so is
+/// absent here; theforest and mercury are read sources only.)
+pub const DEFAULT_READ_ONLY: &[&str] = &[
+    "wss://theforest.nostr1.com",
+    "wss://mercury-relay.imwald.eu/relay",
+];
+
+/// Default per-relay resolve-kind claims (see `RelaySets::resolve_kinds`):
+/// targeted resolution of these kinds routes to the claimant instead of
+/// the read set. Mercury serves the publication/wiki kinds tendrl
+/// resolves most — 30040 (index), 30041 (section), 30818 (wiki).
+pub const DEFAULT_RESOLVE_CLAIMS: &[(&str, &[u64])] =
+    &[("wss://mercury-relay.imwald.eu/relay", &[30040, 30041, 30818])];
 
 /// Default indexer (profile / kind-10002 discovery) relays. Used to
 /// seed `indexer.default` on first boot so a fresh install can fall

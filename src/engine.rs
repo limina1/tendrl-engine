@@ -411,9 +411,19 @@ impl Engine {
                 .map_err(|e| EngineError::Config(format!("Failed to seed relay store: {e}")))?;
             seeded
         } else {
-            relay_store
+            let mut loaded = relay_store
                 .load()
-                .map_err(|e| EngineError::Config(format!("Failed to load relay store: {e}")))?
+                .map_err(|e| EngineError::Config(format!("Failed to load relay store: {e}")))?;
+            // Additively merge defaults newer than this file's seed
+            // generation (new default relays / resolve claims reach
+            // existing installs without touching user edits).
+            if loaded.apply_default_upgrades() {
+                info!("Merged new default relays into {}", relay_store.path().display());
+                relay_store.save(&loaded).map_err(|e| {
+                    EngineError::Config(format!("Failed to persist relay upgrade: {e}"))
+                })?;
+            }
+            loaded
         };
         let mut relay_config = relay_config.clone();
         relay_config.apply_persisted(&sets);
@@ -1094,6 +1104,9 @@ impl Engine {
             indexer: rc.indexer.clone(),
             named: rc.named_sets.clone(),
             resolve_kinds: rc.resolve_kinds.clone(),
+            // Snapshots come from a build that knows the current
+            // defaults, so they always carry the current stamp.
+            seed_version: crate::relay_store::CURRENT_SEED_VERSION,
             exclusive: rc.exclusive.clone(),
         }
     }
@@ -1404,11 +1417,12 @@ impl Engine {
             rc.search = sets.search.clone();
             rc.indexer = sets.indexer.clone();
             rc.exclusive = sets.exclusive.clone();
-            // Claims are functional routing config, so a reset drops them
-            // (a first-boot install has none) — unlike named sets, which
-            // are user-curated groupings and survive. Mirror it into the
-            // live config or memory would keep claims disk no longer has.
-            rc.resolve_kinds.clear();
+            // Claims are functional routing config: a reset returns them
+            // to the seeded defaults (mercury's publication/wiki claims),
+            // dropping any user-added ones — unlike named sets, which are
+            // user-curated groupings and survive. Mirror the seeded map
+            // into the live config so memory matches disk.
+            rc.resolve_kinds = sets.resolve_kinds.clone();
             sets
         };
         if let Err(e) = self.relay_store.save(&snapshot) {
@@ -4364,6 +4378,11 @@ mod tests {
             ..RelayConfig::default()
         };
         let engine = Engine::with_relay_config(temp_dir.path(), &cfg).expect("engine");
+        // First boot seeds mercury's default claims — drop them so this
+        // test exercises the genuinely-unclaimed baseline.
+        for (url, _) in crate::relay::DEFAULT_RESOLVE_CLAIMS {
+            engine.set_relay_resolve_kinds(url, &[]);
+        }
 
         let filters = vec![
             json!({ "kinds": [30818], "#d": ["ada-lovelace"] }),
@@ -4390,6 +4409,11 @@ mod tests {
             ..RelayConfig::default()
         };
         let engine = Engine::with_relay_config(temp_dir.path(), &cfg).expect("engine");
+        // Drop the seeded default claims (mercury) — this test isolates a
+        // single claimant.
+        for (url, _) in crate::relay::DEFAULT_RESOLVE_CLAIMS {
+            engine.set_relay_resolve_kinds(url, &[]);
+        }
 
         // The document relay: claims wiki articles, joins no working set.
         assert!(engine.set_relay_resolve_kinds("wss://docs.example", &[30818]));

@@ -34,6 +34,11 @@ pub enum RelayStoreError {
     UnknownSet(String),
 }
 
+/// Current default-seed generation. Bump when new engine defaults
+/// should reach existing installs; add the corresponding merge step in
+/// [`RelaySets::apply_default_upgrades`].
+pub const CURRENT_SEED_VERSION: u32 = 1;
+
 /// The working relay URL lists. Serialized as
 /// `{"general":[…],"fetch":[…],"publish":[…],"search":{"default":[…],"fallback":[…]},…}`
 /// in `relays.json`.
@@ -86,6 +91,13 @@ pub struct RelaySets {
     /// See `docs/zettel/idea-relay-kind-routing.org`.
     #[serde(default)]
     pub resolve_kinds: std::collections::BTreeMap<String, Vec<u64>>,
+    /// Highest default-seed generation this file has absorbed. Lets new
+    /// engine defaults reach EXISTING installs additively: on load, a
+    /// file whose stamp is behind `CURRENT_SEED_VERSION` gets the newer
+    /// defaults merged in (never overwriting user edits) and the stamp
+    /// bumped. Files predating the field deserialize as 0.
+    #[serde(default)]
+    pub seed_version: u32,
     /// Per-class `exclusive` toggle for discovery classes. When ON for
     /// a class, the engine bypasses read relays entirely for that
     /// lookup type — primary = `class.default` only, fallback =
@@ -203,6 +215,18 @@ impl RelaySets {
     /// stored state, including explicit-empty.
     pub fn seed_from_initial(initial: &[String]) -> Self {
         let normalized = normalize_dedup(initial);
+        // Publish gets the same seed minus the read-only defaults —
+        // content sources (theforest, mercury) shouldn't become publish
+        // targets just by being in the bootstrap list.
+        let read_only: Vec<String> = crate::relay::DEFAULT_READ_ONLY
+            .iter()
+            .map(|u| crate::relay_url::normalize_relay_url(u))
+            .collect();
+        let publish: Vec<String> = normalized
+            .iter()
+            .filter(|u| !read_only.contains(u))
+            .cloned()
+            .collect();
         let default_indexers: Vec<String> = crate::relay::DEFAULT_INDEXERS
             .iter()
             .map(|s| s.to_string())
@@ -211,10 +235,17 @@ impl RelaySets {
             .iter()
             .map(|s| s.to_string())
             .collect();
+        let mut resolve_kinds = std::collections::BTreeMap::new();
+        for (url, kinds) in crate::relay::DEFAULT_RESOLVE_CLAIMS {
+            let key = crate::relay_url::normalize_relay_url(url);
+            if !key.is_empty() {
+                resolve_kinds.insert(key, kinds.to_vec());
+            }
+        }
         Self {
             general: normalized.clone(),
-            fetch: normalized.clone(),
-            publish: normalized,
+            fetch: normalized,
+            publish,
             broadcast: Vec::new(),
             search: DiscoveryClass {
                 default: normalize_dedup(&default_search),
@@ -225,11 +256,51 @@ impl RelaySets {
                 fallback: Vec::new(),
             },
             named: Vec::new(),
-            // No claims on a fresh install: resolution behaves exactly as
-            // it did before routing existed.
-            resolve_kinds: std::collections::BTreeMap::new(),
+            resolve_kinds,
+            seed_version: CURRENT_SEED_VERSION,
             exclusive: ExclusiveFlags::default(),
         }
+    }
+
+    /// Merge defaults that postdate this file's `seed_version` — the
+    /// additive path by which new engine defaults reach existing
+    /// installs. Never removes or reorders anything the user has; a
+    /// default the user deleted after a previous upgrade won't return
+    /// unless a LATER seed generation re-adds it. Returns true when
+    /// anything changed (caller persists).
+    pub fn apply_default_upgrades(&mut self) -> bool {
+        if self.seed_version >= CURRENT_SEED_VERSION {
+            return false;
+        }
+        // Generation 1 (2026-08-18): theforest + thecitadel + mercury
+        // read defaults, thecitadel as a publish default, mercury's
+        // publication/wiki resolve claims.
+        let read_only: Vec<String> = crate::relay::DEFAULT_READ_ONLY
+            .iter()
+            .map(|u| crate::relay_url::normalize_relay_url(u))
+            .collect();
+        for url in crate::relay::DEFAULT_RELAYS {
+            let key = crate::relay_url::normalize_relay_url(url);
+            if key.is_empty() {
+                continue;
+            }
+            for list in [&mut self.general, &mut self.fetch] {
+                if !list.contains(&key) {
+                    list.push(key.clone());
+                }
+            }
+            if !read_only.contains(&key) && !self.publish.contains(&key) {
+                self.publish.push(key.clone());
+            }
+        }
+        for (url, kinds) in crate::relay::DEFAULT_RESOLVE_CLAIMS {
+            let key = crate::relay_url::normalize_relay_url(url);
+            if !key.is_empty() {
+                self.resolve_kinds.entry(key).or_insert_with(|| kinds.to_vec());
+            }
+        }
+        self.seed_version = CURRENT_SEED_VERSION;
+        true
     }
 
     /// The kinds claimed by `url` (normalized), or an empty slice.
@@ -707,6 +778,59 @@ mod tests {
 
         let loaded = store.load().unwrap();
         assert_eq!(loaded.kinds_for("wss://docs.example"), &[30818]);
+    }
+
+    #[test]
+    fn seed_excludes_read_only_defaults_from_publish() {
+        let initial: Vec<String> = crate::relay::DEFAULT_RELAYS
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let sets = RelaySets::seed_from_initial(&initial);
+        // Read side carries everything…
+        assert!(sets.fetch.contains(&"wss://theforest.nostr1.com".to_string()));
+        assert!(sets.fetch.contains(&"wss://mercury-relay.imwald.eu/relay".to_string()));
+        assert!(sets.fetch.contains(&"wss://thecitadel.nostr1.com".to_string()));
+        // …publish drops the read-only sources but keeps thecitadel.
+        assert!(!sets.publish.contains(&"wss://theforest.nostr1.com".to_string()));
+        assert!(!sets.publish.contains(&"wss://mercury-relay.imwald.eu/relay".to_string()));
+        assert!(sets.publish.contains(&"wss://thecitadel.nostr1.com".to_string()));
+        // Mercury claims the publication/wiki kinds; stamp is current.
+        assert_eq!(
+            sets.kinds_for("wss://mercury-relay.imwald.eu/relay"),
+            &[30040, 30041, 30818]
+        );
+        assert_eq!(sets.seed_version, CURRENT_SEED_VERSION);
+    }
+
+    #[test]
+    fn default_upgrades_merge_additively_into_old_files() {
+        // A pre-seed_version file: user has their own relay and their own
+        // claim on a kind mercury also claims.
+        let legacy = r#"{
+            "general": ["wss://mine.example"],
+            "fetch": ["wss://mine.example"],
+            "publish": ["wss://mine.example"],
+            "resolve_kinds": { "wss://mywiki.example": [30818] }
+        }"#;
+        let mut sets: RelaySets = serde_json::from_str(legacy).unwrap();
+        sets.canonicalize();
+        assert_eq!(sets.seed_version, 0);
+
+        assert!(sets.apply_default_upgrades());
+        // User entries untouched, new defaults appended.
+        assert_eq!(sets.fetch[0], "wss://mine.example");
+        assert!(sets.fetch.contains(&"wss://theforest.nostr1.com".to_string()));
+        assert!(sets.publish.contains(&"wss://thecitadel.nostr1.com".to_string()));
+        assert!(!sets.publish.contains(&"wss://theforest.nostr1.com".to_string()));
+        // Mercury's claim arrives WITHOUT displacing the user's own claim.
+        assert_eq!(sets.kinds_for("wss://mywiki.example"), &[30818]);
+        assert_eq!(
+            sets.kinds_for("wss://mercury-relay.imwald.eu/relay"),
+            &[30040, 30041, 30818]
+        );
+        // Idempotent: the stamp gates a second pass.
+        assert!(!sets.apply_default_upgrades());
     }
 
     #[test]
