@@ -9,8 +9,9 @@
 	// Two capture triggers: `mouseup` (desktop, immediate) and a debounced
 	// `selectionchange` — touch selection (long-press + drag handles) never
 	// fires mouseup, so without the latter the mobile popover only appeared
-	// on the NEXT stray tap. On mobile the surface renders as a bottom sheet
-	// instead of an anchored popover (the selection handles own the text).
+	// on the NEXT stray tap. The surface is a viewport-centered card on both
+	// shells (no backdrop — the selection stays visible); mobile only sizes
+	// it up for touch.
 	//
 	// Offsets (worksheet C2, option 1): the rendered DOM is not
 	// offset-faithful — nostrdown refs render as chips whose text differs
@@ -51,8 +52,6 @@
 		start: number;
 		end: number;
 		text: string; // content.slice(start, end) — the pristine capture
-		x: number;
-		y: number;
 	};
 	let pending = $state<Pending | null>(null);
 	let text = $state(''); // editable copy of pending.text
@@ -166,7 +165,6 @@
 		start: number;
 		end: number;
 		text: string;
-		rect: DOMRect;
 	} | null {
 		const sel = window.getSelection();
 		if (!sel || sel.isCollapsed || sel.rangeCount === 0) return null;
@@ -206,8 +204,7 @@
 			content: info.content,
 			start,
 			end,
-			text: sliced,
-			rect: range.getBoundingClientRect()
+			text: sliced
 		};
 	}
 
@@ -232,9 +229,7 @@
 			content: hit.content,
 			start: hit.start,
 			end: hit.end,
-			text: hit.text,
-			x: Math.max(8, Math.min(hit.rect.left + hit.rect.width / 2 - 160, window.innerWidth - 336)),
-			y: Math.min(hit.rect.bottom + 8, window.innerHeight - 220)
+			text: hit.text
 		};
 		text = hit.text;
 		annotation = '';
@@ -351,8 +346,7 @@
 {:else if pending}
 	<div
 		class="hc-popover"
-		class:hc-popover--sheet={mobile}
-		style={mobile ? undefined : `left: ${pending.x}px; top: ${pending.y}px`}
+		class:hc-popover--mobile={mobile}
 		role="dialog"
 		aria-label="Publish highlight"
 		onfocusin={() => (touched = true)}
@@ -417,10 +411,18 @@
 {/if}
 
 <style>
+	/* Centered card on both shells (no backdrop — the selection stays
+	   visible behind it). `--kb-inset` (set by the mobile shell) shifts the
+	   center up while the soft keyboard is open. */
 	.hc-popover {
 		position: fixed;
 		z-index: 300;
-		width: min(320px, 90vw);
+		left: 50%;
+		top: calc(50% - var(--kb-inset, 0px) / 2);
+		transform: translate(-50%, -50%);
+		width: min(360px, 92vw);
+		max-height: calc(100dvh - var(--kb-inset, 0px) - 24px);
+		overflow-y: auto;
 		background: var(--bg);
 		border: 1px solid var(--panel-border-strong, var(--panel-border));
 		border-radius: var(--r-sm, 3px);
@@ -534,45 +536,35 @@
 		white-space: nowrap;
 	}
 
-	/* Mobile: bottom sheet — the selection handles own the text, so the
-	   surface docks full-width at the bottom with touch-sized targets.
-	   `--kb-inset` (set by the mobile shell) keeps it above the soft
-	   keyboard while the annotation/context fields are focused. */
-	.hc-popover--sheet {
-		left: 0;
-		right: 0;
-		top: auto;
-		bottom: var(--kb-inset, 0px);
-		width: auto;
-		border-radius: 12px 12px 0 0;
-		border-bottom: none;
-		padding: 14px 16px calc(14px + env(safe-area-inset-bottom, 0px));
+	/* Mobile: same centered card, wider with touch-sized type and targets. */
+	.hc-popover--mobile {
+		width: min(480px, 94vw);
+		border-radius: 8px;
+		padding: 14px 16px;
 		gap: 12px;
 	}
-	.hc-popover--sheet .hc-text {
+	.hc-popover--mobile .hc-text {
 		font-size: var(--t-sm);
 		max-height: 30dvh;
 		padding: 8px 10px;
 	}
-	.hc-popover--sheet .hc-field {
+	.hc-popover--mobile .hc-field {
 		font-size: var(--t-sm);
 		padding: 10px 12px;
 	}
-	.hc-popover--sheet .hc-note,
-	.hc-popover--sheet .hc-hint {
+	.hc-popover--mobile .hc-note,
+	.hc-popover--mobile .hc-hint {
 		font-size: var(--t-xs);
 	}
-	.hc-popover--sheet .hc-btn {
+	.hc-popover--mobile .hc-btn {
 		font-size: var(--t-sm);
 		padding: 10px 16px;
 		min-height: 44px;
 	}
-	.hc-popover--sheet .hc-foot {
+	.hc-popover--mobile .hc-foot {
 		gap: 10px;
 	}
 	.hc-ctx-banner--mobile {
-		top: auto;
-		bottom: calc(72px + env(safe-area-inset-bottom, 0px));
 		font-size: var(--t-sm);
 		padding: 10px 14px;
 	}
