@@ -20,15 +20,21 @@
 	// list events. Auth here is a placeholder for the eventual
 	// blocked/auth-required taxonomy; toggles don't persist yet.
 	//
-	// Phase 5: the main row no longer carries `search` / `indexer` —
-	// those moved into the dedicated Discovery section below, where
-	// each URL appears in a default-or-fallback tier explicitly.
+	// `search` is a plain per-row toggle like read/write (backed by
+	// `search.default` — NIP-50 search fetches fan out across toggled
+	// relays). Only `indexer` keeps the dedicated Discovery section
+	// with its default/fallback tiers.
 	type RelayRow = {
 		url: string;
 		read: boolean;
 		write: boolean;
 		auth: boolean;
 		broadcast: boolean;
+		/** Member of the search class (NIP-50 fan-out). */
+		search: boolean;
+		/** False = parked: kept on file with its roles/claims but in no
+		 *  working set — every operation skips it until reactivated. */
+		active: boolean;
 		/** Resolve-kind claims — the kinds this relay is asked for when
 		 *  resolving a known target. Empty = no claim, and resolution for
 		 *  an unclaimed kind uses the read relays exactly as before. A row
@@ -43,9 +49,7 @@
 	type DiscoveryRow = { url: string; tier: 'default' | 'fallback' };
 
 	let rows = $state<RelayRow[]>([]);
-	let searchRows = $state<DiscoveryRow[]>([]);
 	let indexerRows = $state<DiscoveryRow[]>([]);
-	let searchExclusive = $state(false);
 	let indexerExclusive = $state(false);
 	let initialRelays = $state<string[]>([]);
 	let namedSets = $state<api.NamedRelaySet[]>([]);
@@ -162,6 +166,8 @@
 						write: false,
 						auth: false,
 						broadcast: false,
+						search: false,
+						active: true,
 						kinds: []
 					};
 					map.set(url, r);
@@ -182,20 +188,37 @@
 			for (const [url, kinds] of Object.entries(cfg.resolve_kinds ?? {})) {
 				ensure(url).kinds = [...kinds].sort((a, b) => a - b);
 			}
+			// Search class flattened onto the main rows — the engine's
+			// gen-1 upgrade folds fallback into default, but read both
+			// tiers here so a not-yet-migrated file still shows its rows.
+			for (const url of [...(cfg.search?.default ?? []), ...(cfg.search?.fallback ?? [])]) {
+				ensure(url).search = true;
+			}
+			// Parked relays: not in any working set, so they only appear
+			// via the inactive map. Reconstruct their role pills from the
+			// recorded memberships and dim the row.
+			for (const [url, memberships] of Object.entries(cfg.inactive ?? {})) {
+				const r = ensure(url);
+				r.active = false;
+				for (const set of memberships) {
+					if (set === 'general') {
+						r.read = true;
+						r.write = true;
+					} else if (set === 'fetch') r.read = true;
+					else if (set === 'publish') r.write = true;
+					else if (set === 'broadcast') r.broadcast = true;
+					else if (set.startsWith('search.')) r.search = true;
+				}
+			}
 			rows = [...map.values()].sort((a, b) => a.url.localeCompare(b.url));
 
-			// Phase 5: Discovery section has its own per-tier rows so
+			// Indexer keeps the Discovery section with per-tier rows so
 			// the user can see explicitly which tier each URL belongs
 			// to (and switch between them with the radio toggles).
-			searchRows = [
-				...(cfg.search?.default ?? []).map((url): DiscoveryRow => ({ url, tier: 'default' })),
-				...(cfg.search?.fallback ?? []).map((url): DiscoveryRow => ({ url, tier: 'fallback' }))
-			].sort((a, b) => a.url.localeCompare(b.url));
 			indexerRows = [
 				...(cfg.indexer?.default ?? []).map((url): DiscoveryRow => ({ url, tier: 'default' })),
 				...(cfg.indexer?.fallback ?? []).map((url): DiscoveryRow => ({ url, tier: 'fallback' }))
 			].sort((a, b) => a.url.localeCompare(b.url));
-			searchExclusive = cfg.exclusive?.search ?? false;
 			indexerExclusive = cfg.exclusive?.indexer ?? false;
 			// Kick off NIP-11 fetches up-front so the badges fill in
 			// without the user expanding each row.
@@ -245,10 +268,39 @@
 		});
 	});
 
-	type ToggleField = 'read' | 'write' | 'auth' | 'broadcast';
+	/** Park / unpark a relay. The engine records (and restores) the
+	 *  row's set memberships; reload afterwards so pills, counts, and
+	 *  the dimmed state all come from authoritative config. */
+	async function toggleActive(url: string) {
+		const row = rows.find((r) => r.url === url);
+		if (!row) return;
+		const next = !row.active;
+		rows = rows.map((r) => (r.url === url ? { ...r, active: next } : r)); // optimistic
+		try {
+			await api.setRelayActive(url, next);
+			app.pushToast(
+				next ? `${shorten(url)} active` : `${shorten(url)} inactive — kept, but skipped by every operation`,
+				'success',
+				2500
+			);
+			await load();
+		} catch (e) {
+			rows = rows.map((r) => (r.url === url ? row : r)); // revert
+			app.pushToast(
+				`Couldn't toggle active: ${e instanceof Error ? e.message : String(e)}`,
+				'error',
+				5000
+			);
+		}
+	}
+
+	type ToggleField = 'read' | 'write' | 'auth' | 'broadcast' | 'search';
 	async function toggle(url: string, field: ToggleField) {
 		const row = rows.find((r) => r.url === url);
 		if (!row) return;
+		// Role edits on a parked relay would desync the recorded
+		// memberships — reactivate first (the pills are disabled too).
+		if (!row.active) return;
 		const next = { ...row, [field]: !row[field] };
 		rows = rows.map((r) => (r.url === url ? next : r)); // optimistic
 
@@ -258,6 +310,16 @@
 		try {
 			if (field === 'broadcast') {
 				await (next.broadcast ? api.addRelay('broadcast', url) : api.removeRelay('broadcast', url));
+			} else if (field === 'search') {
+				if (next.search) {
+					await api.addRelay('search.default', url);
+				} else {
+					// Clear BOTH tiers — a not-yet-migrated file may still
+					// hold this URL in fallback, and the toggle means
+					// "out of the search class", not "out of one tier".
+					await api.removeRelay('search.default', url);
+					await api.removeRelay('search.fallback', url);
+				}
 			} else {
 				// Reconcile the row's read/write into explicit fetch + publish set
 				// membership, and drop it from the legacy `general` set (which means
@@ -353,13 +415,22 @@
 	// reversible (re-add the URL) and the row's tooltip says the scope.
 	async function deleteRelay(url: string) {
 		const prev = rows;
+		const wasInactive = rows.find((r) => r.url === url)?.active === false;
 		rows = rows.filter((r) => r.url !== url); // optimistic
 		try {
+			// A parked relay lives only in the inactive map — unpark it
+			// first so the set removals below actually find (and clear)
+			// its memberships instead of leaving a resurrecting entry.
+			if (wasInactive) await api.setRelayActive(url, true);
 			// remove_relay is a no-op (false) for sets the URL isn't in.
 			await api.removeRelay('general', url);
 			await api.removeRelay('fetch', url);
 			await api.removeRelay('publish', url);
 			await api.removeRelay('broadcast', url);
+			// Search flattened onto the main rows — a full delete clears
+			// both of its tiers as well.
+			await api.removeRelay('search.default', url);
+			await api.removeRelay('search.fallback', url);
 			// Claims outlive set membership by design (a claims-only relay
 			// is a valid row), so a full delete has to clear them too or
 			// the row would come back with every toggle off.
@@ -377,16 +448,16 @@
 	}
 
 	// ------------------------------------------------------------------
-	// Discovery section — Search + Indexer subsections
+	// Discovery section — Indexer only. (Search flattened to a per-row
+	// toggle on the main list; the two-tier UI remains for indexer.)
 	// ------------------------------------------------------------------
-	type DiscoveryClass = 'search' | 'indexer';
+	type DiscoveryClass = 'indexer';
 
-	function rowsFor(klass: DiscoveryClass): DiscoveryRow[] {
-		return klass === 'search' ? searchRows : indexerRows;
+	function rowsFor(_klass: DiscoveryClass): DiscoveryRow[] {
+		return indexerRows;
 	}
-	function setRowsFor(klass: DiscoveryClass, next: DiscoveryRow[]) {
-		if (klass === 'search') searchRows = next;
-		else indexerRows = next;
+	function setRowsFor(_klass: DiscoveryClass, next: DiscoveryRow[]) {
+		indexerRows = next;
 	}
 
 	/** Switch a discovery row's tier (default ⇄ fallback). Adding to
@@ -433,10 +504,9 @@
 	/** Toggle the per-class `exclusive` flag. ON = read relays bypassed
 	 *  for this class's lookup type. */
 	async function toggleExclusive(klass: DiscoveryClass) {
-		const before = klass === 'search' ? searchExclusive : indexerExclusive;
+		const before = indexerExclusive;
 		const next = !before;
-		if (klass === 'search') searchExclusive = next;
-		else indexerExclusive = next;
+		indexerExclusive = next;
 		try {
 			await api.setDiscoveryExclusive(klass, next);
 			app.pushToast(
@@ -445,8 +515,7 @@
 				1800
 			);
 		} catch (e) {
-			if (klass === 'search') searchExclusive = before;
-			else indexerExclusive = before;
+			indexerExclusive = before;
 			app.pushToast(
 				`Couldn't toggle exclusive: ${e instanceof Error ? e.message : String(e)}`,
 				'error',
@@ -1097,15 +1166,17 @@
 	}
 
 	function relaysForPublish(kind: PublishableKind): string[] {
+		// Parked rows keep their role pills for display but are not
+		// working members — a published list must not carry them.
 		if (kind === 10002) {
-			return rows.filter((r) => r.read || r.write).map((r) => r.url);
+			return rows.filter((r) => r.active && (r.read || r.write)).map((r) => r.url);
 		}
 		if (kind === 10088) {
-			return rows.filter((r) => r.broadcast).map((r) => r.url);
+			return rows.filter((r) => r.active && r.broadcast).map((r) => r.url);
 		}
-		// Phase 5: kind 10007 (search) and 10086 (indexer) are now the
+		// Search flattened to a main-row toggle; indexer is still the
 		// union of both tiers from the Discovery section.
-		if (kind === 10007) return searchRows.map((r) => r.url);
+		if (kind === 10007) return rows.filter((r) => r.active && r.search).map((r) => r.url);
 		if (kind === 10086) return indexerRows.map((r) => r.url);
 		return [];
 	}
@@ -1597,7 +1668,7 @@
 										<button class="pull-add pull-add--strong" onclick={() => importSuggestion(s, 'both')}>+ both</button>
 									{/if}
 								{:else if kind === 10007}
-									{@const alreadyInSearch = searchRows.some((r) => r.url === s.url)}
+									{@const alreadyInSearch = existing?.search ?? false}
 									{#if !alreadyInSearch}
 										<button class="pull-add" onclick={() => importSuggestion(s, 'search')}>+ search</button>
 									{/if}
@@ -1611,7 +1682,7 @@
 										<button class="pull-add" onclick={() => importSuggestion(s, 'broadcast')}>+ broadcast</button>
 									{/if}
 								{/if}
-								{#if (kind === 10002 && existing && (existing.read || existing.write)) || (kind === 10007 && searchRows.some((r) => r.url === s.url)) || (kind === 10086 && indexerRows.some((r) => r.url === s.url)) || (kind === 10088 && existing?.broadcast)}
+								{#if (kind === 10002 && existing && (existing.read || existing.write)) || (kind === 10007 && existing?.search) || (kind === 10086 && indexerRows.some((r) => r.url === s.url)) || (kind === 10088 && existing?.broadcast)}
 									<span class="pulled-state">already in {kind === 10002 ? 'read/write' : classNameForKind(kind as 10002 | 10007 | 10086 | 10088)}</span>
 								{/if}
 							</div>
@@ -1655,12 +1726,13 @@
 	{:else}
 		{@const count10002 = relaysForPublish(10002).length}
 		{@const count10088 = relaysForPublish(10088).length}
+		{@const count10007 = relaysForPublish(10007).length}
 		<!-- Read / Write / Broadcast section. Per-class publish buttons
 		     live in this header (their content is built from this
 		     section's toggles), not in the global footer. -->
 		<div class="rw-section">
 			<div class="rw-section-head">
-				<span class="rw-section-title">Read / Write / Broadcast</span>
+				<span class="rw-section-title">Read / Write / Broadcast / Search</span>
 				<div class="rw-section-actions">
 					<button
 						class="btn-add" onclick={promptAdd}
@@ -1690,6 +1762,18 @@
 					>
 						{publishingKind === 10088 ? 'Publishing…' : `Publish kind 10088 (${count10088})`}
 					</button>
+					<button
+						class="btn-publish-list btn-publish-list--search"
+						onclick={() => publishRelayListByKind(10007)}
+						disabled={publishingKind !== null || count10007 === 0 || !app.myPubkey}
+						title={!app.myPubkey
+							? 'Sign in first to publish.'
+							: count10007 === 0
+								? 'No search relays toggled.'
+								: `Sign a kind 10007 (search list, NIP-44 encrypted) with ${count10007} relay${count10007 === 1 ? '' : 's'}.`}
+					>
+						{publishingKind === 10007 ? 'Publishing…' : `Publish kind 10007 (${count10007})`}
+					</button>
 				</div>
 			</div>
 		</div>
@@ -1699,7 +1783,12 @@
 				{@const doc = docFor(row.url)}
 				{@const lim = doc?.limitation}
 				{@const sync = syncStateFor(row)}
-				<div class="relay-card" class:relay-card--expanded={expanded.has(row.url)} bind:this={rowEls[row.url]}>
+				<div
+					class="relay-card"
+					class:relay-card--expanded={expanded.has(row.url)}
+					class:relay-card--inactive={!row.active}
+					bind:this={rowEls[row.url]}
+				>
 					<div class="relay-row">
 						<button
 							class="relay-disclosure"
@@ -1755,29 +1844,48 @@
 
 						<div class="relay-toggles">
 							<button
+								class="pill toggle-pill toggle-pill--power"
+								class:toggle-pill--on={row.active}
+								onclick={() => toggleActive(row.url)}
+								title={row.active
+									? 'Active — every operation may use this relay per its roles. Click to deactivate: the relay is kept (URL, roles, resolve kinds) but skipped by everything until you reactivate it.'
+									: 'Inactive — kept on file but skipped by every operation. Click to reactivate with the same roles it had.'}
+							>{row.active ? 'active' : 'inactive'}</button>
+							<button
 								class="pill toggle-pill"
 								class:toggle-pill--on={row.read}
+								disabled={!row.active}
 								onclick={() => toggle(row.url, 'read')}
 								title="Read from this relay"
 							>read</button>
 							<button
 								class="pill toggle-pill"
 								class:toggle-pill--on={row.write}
+								disabled={!row.active}
 								onclick={() => toggle(row.url, 'write')}
 								title="Publish to this relay (your own signed events land here)"
 							>write</button>
 							<button
 								class="pill toggle-pill toggle-pill--broadcast"
 								class:toggle-pill--on={row.broadcast}
+								disabled={!row.active}
 								onclick={() => toggle(row.url, 'broadcast')}
 								title="Mark this relay as a broadcast / aggregator target. Never auto-published to — only when you explicitly opt in per event."
 							>broadcast</button>
 							<button
 								class="pill toggle-pill"
 								class:toggle-pill--on={row.auth}
+								disabled={!row.active}
 								onclick={() => toggle(row.url, 'auth')}
 								title="Authenticate (NIP-42) when this relay challenges"
 							>auth</button>
+							<button
+								class="pill toggle-pill toggle-pill--search"
+								class:toggle-pill--on={row.search}
+								disabled={!row.active}
+								onclick={() => toggle(row.url, 'search')}
+								title="Use this relay for free-text (NIP-50) search fetches — it joins the fan-out of every search-typed fetch"
+							>search</button>
 						</div>
 
 						<button
@@ -2020,11 +2128,11 @@
 			{/each}
 		</div>
 
-		<!-- Discovery section — Search + Indexer subsections. Each
-		     relay is in EITHER default OR fallback per class (mutex
-		     enforced server-side). Per-class `exclusive` toggle in the
-		     subsection header controls whether the read relays are
-		     bypassed for that lookup type. -->
+		<!-- Discovery section — Indexer only (search is a per-row toggle
+		     on the main list above). Each relay is in EITHER default OR
+		     fallback (mutex enforced server-side). The `exclusive`
+		     toggle in the subsection header controls whether the read
+		     relays are bypassed for that lookup type. -->
 		<div class="discovery">
 			<div class="discovery-header-row">
 				<span class="discovery-header">Discovery</span>
@@ -2037,14 +2145,14 @@
 					{restoringDefaults ? 'Restoring…' : 'Restore defaults'}
 				</button>
 			</div>
-			{#each ['search', 'indexer'] as klass (klass)}
-				{@const rows0 = klass === 'search' ? searchRows : indexerRows}
-				{@const excl = klass === 'search' ? searchExclusive : indexerExclusive}
-				{@const publishKind = klass === 'search' ? 10007 : 10086}
+			{#each ['indexer'] as klass (klass)}
+				{@const rows0 = indexerRows}
+				{@const excl = indexerExclusive}
+				{@const publishKind = 10086}
 				{@const publishCount = rows0.length}
 				<div class="discovery-subsection">
 					<div class="discovery-sub-head">
-						<span class="discovery-sub-title">{klass === 'search' ? 'Search relays' : 'Indexer relays'}</span>
+						<span class="discovery-sub-title">Indexer relays</span>
 						<button
 							class="pill toggle-pill discovery-excl"
 							class:toggle-pill--on={excl}
@@ -2666,6 +2774,22 @@
 		cursor: pointer;
 		font-family: var(--font-mono);
 		padding: 1px 8px;
+	}
+	.toggle-pill[disabled] {
+		opacity: 0.45;
+		cursor: default;
+		pointer-events: none;
+	}
+	/* Park/unpark master switch — reads as state, not role. */
+	.toggle-pill--power:not(.toggle-pill--on) {
+		border-color: var(--orange, #cb4b16);
+		color: var(--orange, #cb4b16);
+	}
+	/* Parked rows stay listed (URL, roles, claims survive) but read as
+	   dormant: everything dims except the power pill. */
+	.relay-card--inactive .relay-row > :not(.relay-toggles),
+	.relay-card--inactive .relay-toggles > :not(.toggle-pill--power) {
+		opacity: 0.5;
 	}
 	.toggle-pill:hover {
 		color: var(--fg);

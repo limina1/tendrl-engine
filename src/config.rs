@@ -148,6 +148,11 @@ pub struct RelayConfig {
     /// `relay_store::RelaySets::resolve_kinds`.
     #[serde(skip, default)]
     pub resolve_kinds: std::collections::BTreeMap<String, Vec<u64>>,
+    /// Parked relays: URL → memberships held when deactivated. Loaded
+    /// from `relays.json` at runtime; never from TOML. See
+    /// `relay_store::RelaySets::inactive`.
+    #[serde(skip, default)]
+    pub inactive: std::collections::BTreeMap<String, Vec<String>>,
     /// Authors to follow — fetch their events from fetch relays (npub or hex)
     #[serde(default)]
     pub authors: Vec<String>,
@@ -239,6 +244,7 @@ impl Default for RelayConfig {
             exclusive: crate::relay_store::ExclusiveFlags::default(),
             named_sets: Vec::new(),
             resolve_kinds: std::collections::BTreeMap::new(),
+            inactive: std::collections::BTreeMap::new(),
             authors: Vec::new(),
             timeout_ms: default_timeout_ms(),
         }
@@ -299,6 +305,7 @@ impl RelayConfig {
         self.exclusive = sets.exclusive.clone();
         self.named_sets = sets.named.clone();
         self.resolve_kinds = sets.resolve_kinds.clone();
+        self.inactive = sets.inactive.clone();
     }
 
     /// Resolve author list to hex pubkeys (handles npub and hex)

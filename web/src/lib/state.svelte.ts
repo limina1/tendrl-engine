@@ -1149,10 +1149,20 @@ function _createAppState() {
 		try {
 			let resp = await api.listPublications(20, 'local_only', undefined, feedGeneral);
 			// Cold-cache fallback: if local nostrdb has nothing (fresh
-			// install, post-purge, etc.), retry ONCE with `fetch_always`
-			// so the user sees content without manually hitting Sync. In
-			// confirm mode the engine pops the FetchConfirmModal; in auto
-			// it fires silently and the activity toast tracks progress.
+			// install, post-purge, etc.), kick off ONE `fetch_always`
+			// pull so the user sees content without manually hitting
+			// Sync. In confirm mode the engine pops the FetchConfirmModal;
+			// in auto it fires silently and the activity toast tracks
+			// progress.
+			//
+			// Deliberately NOT awaited: the relay pull's duration is
+			// hostage to relay health (a single stalled relay holds the
+			// whole composite response open), and holding `feedLoading`
+			// on it froze cold boots on mobile behind an indefinite
+			// "Loading publications…". Instead the empty state renders
+			// immediately and `handleFeedSync` runs behind it —
+			// `feedSyncing` flips the empty-state CTA to a disabled
+			// "Syncing…", and the feed fills in when (if) results land.
 			//
 			// The `coldFetchAttempted` guard is essential: loadFeed() is
 			// called from ~10 sites — notably an $effect on every
@@ -1174,12 +1184,10 @@ function _createAppState() {
 				networkStatus?.mode_chosen === true
 			) {
 				coldFetchAttempted = true;
-				try {
-					const fetched = await api.listPublications(20, 'fetch_always', undefined, feedGeneral);
-					if (fetched.publications.length > 0) resp = fetched;
-				} catch {
-					/* relay fetch failed — keep the empty local result */
-				}
+				// Fire-and-forget (see above). handleFeedSync owns the
+				// whole lifecycle: feedSyncing on/off, feed/profile
+				// updates on success, silent keep-empty on failure.
+				void handleFeedSync();
 			}
 			feed = resp.publications;
 			feedHasMore = resp.count >= 20;

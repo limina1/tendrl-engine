@@ -2052,13 +2052,37 @@ pub async fn fetch_relay_handler(
     Json(req): Json<FetchRelayRequest>,
 ) -> Result<Json<Value>, EngineError> {
     // Relay set: `relays` wins; fall back to the legacy single `relay`.
-    let targets: Vec<String> = if !req.relays.is_empty() {
+    let mut targets: Vec<String> = if !req.relays.is_empty() {
         req.relays.clone()
     } else if !req.relay.is_empty() {
         vec![req.relay.clone()]
     } else {
-        return Err(EngineError::InvalidFilter("no relay specified".into()));
+        Vec::new()
     };
+
+    // A search-typed fetch composes the `search` relay class — the
+    // class's actual purpose (it was historically consulted only by
+    // entity resolution, which now routes via resolve-kind claims).
+    // Per its documented semantics: `search.default` JOINS the caller's
+    // set, or REPLACES it when `exclusive.search` is on. Non-search
+    // fetches are untouched.
+    if req.search.as_deref().is_some_and(|s| !s.is_empty()) {
+        let sd = engine.search_relays();
+        if !sd.is_empty() {
+            if engine.discovery_exclusive("search") {
+                targets = sd;
+            } else {
+                for url in sd {
+                    if !targets.contains(&url) {
+                        targets.push(url);
+                    }
+                }
+            }
+        }
+    }
+    if targets.is_empty() {
+        return Err(EngineError::InvalidFilter("no relay specified".into()));
+    }
 
     debug!(
         "Fetch from {} relay(s) kinds={:?} authors={} limit={} mode_confirm={}",
@@ -2458,6 +2482,10 @@ pub struct ConfigUpdateRequest {
     /// Replace a relay's resolve-kind claims (empty list clears them).
     /// See `docs/zettel/idea-relay-kind-routing.org`.
     pub set_relay_kinds: Option<SetRelayKinds>,
+    /// Park (`active: false`) or unpark (`active: true`) a relay across
+    /// all working sets, keeping its URL/roles/claims on file. The
+    /// persistent counterpart of unchecking a relay in a confirm modal.
+    pub set_relay_active: Option<SetRelayActive>,
     /// Toggle the `exclusive` flag for a discovery class
     /// (`"search"` or `"indexer"`). When ON, the engine bypasses read
     /// relays for that class's lookup type and uses the class's
@@ -2489,6 +2517,12 @@ pub struct SetExclusive {
 pub struct SetRelayKinds {
     pub url: String,
     pub kinds: Vec<u64>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SetRelayActive {
+    pub url: String,
+    pub active: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -2572,6 +2606,11 @@ pub async fn config_update_handler(
     }
     if let Some(sk) = &req.set_relay_kinds {
         if engine.set_relay_resolve_kinds(&sk.url, &sk.kinds) {
+            changed = true;
+        }
+    }
+    if let Some(sa) = &req.set_relay_active {
+        if engine.set_relay_active(&sa.url, sa.active) {
             changed = true;
         }
     }
@@ -2986,6 +3025,10 @@ pub async fn relay_config_handler(State(engine): State<AppState>) -> Json<Value>
         // keys = no claims = resolution uses the read set. Edit through
         // /config/update with `set_relay_kinds`.
         "resolve_kinds": rc.resolve_kinds,
+        // Parked relays: URL → the set memberships held when the relay
+        // was deactivated. Presence = inactive. Toggle through
+        // /config/update with `set_relay_active`.
+        "inactive": rc.inactive,
         "authors": rc.authors_hex(),
         "initial_relays": rc.initial_relays,
     }))

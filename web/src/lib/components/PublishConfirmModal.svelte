@@ -14,7 +14,7 @@
 
 	import type { FetchEvent } from '$lib/types';
 	import { resolveConfirm } from '$lib/network/fetch-events.svelte';
-	import { addRelay } from '$lib/api';
+	import { addRelay, getRelayConfig } from '$lib/api';
 	import { getAppState } from '$lib/state.svelte';
 
 	const app = getAppState();
@@ -67,7 +67,29 @@
 	let eventsOpen = $state(false);
 
 	const allRelays = $derived([...intent.relays, ...extras]);
-	const selectedRelays = $derived(allRelays.filter((r) => !deselected.has(r)));
+
+	// Parked (inactive) relays — offered unchecked, per-op opt-in only.
+	// Mirrors FetchConfirmModal; persistence lives in relay management.
+	let inactiveUrls = $state<string[]>([]);
+	let optedIn = $state<Set<string>>(new Set());
+	$effect(() => {
+		getRelayConfig()
+			.then((cfg) => {
+				inactiveUrls = Object.keys(cfg.inactive ?? {});
+			})
+			.catch(() => {});
+	});
+	const inactiveOffered = $derived(inactiveUrls.filter((u) => !allRelays.includes(u)));
+	function toggleOptIn(url: string) {
+		const next = new Set(optedIn);
+		if (!next.delete(url)) next.add(url);
+		optedIn = next;
+	}
+
+	const selectedRelays = $derived([
+		...allRelays.filter((r) => !deselected.has(r)),
+		...inactiveOffered.filter((u) => optedIn.has(u))
+	]);
 
 	// The procedure — what happens on confirm, in order.
 	const procedure = $derived.by(() => {
@@ -185,6 +207,24 @@
 									onchange={() => toggle(url)}
 								/>
 								<code class="rf-url">{url}</code>
+							</label>
+						</li>
+					{/each}
+				</ul>
+			{/if}
+			{#if inactiveOffered.length > 0}
+				<div class="rf-section-head rf-section-head--inactive">Inactive relays</div>
+				<ul class="rf-list rf-list--inactive">
+					{#each inactiveOffered as url (url)}
+						<li class="rf-item">
+							<label class="rf-row">
+								<input
+									type="checkbox"
+									checked={optedIn.has(url)}
+									onchange={() => toggleOptIn(url)}
+								/>
+								<code class="rf-url">{url}</code>
+								<span class="rf-inactive-tag" title="Deactivated in relay management — check to include it for this broadcast only.">inactive</span>
 							</label>
 						</li>
 					{/each}
@@ -324,6 +364,24 @@
 		color: var(--id-yours);
 		margin-bottom: 6px;
 		font-size: calc(var(--t-xs) - 1px);
+	}
+	.rf-section-head--inactive {
+		margin-top: 10px;
+		color: var(--base5);
+	}
+	.rf-list--inactive .rf-url {
+		opacity: 0.6;
+	}
+	.rf-list--inactive input:checked ~ .rf-url {
+		opacity: 1;
+	}
+	.rf-inactive-tag {
+		font-size: calc(var(--t-xs) - 1px);
+		color: var(--orange, #cb4b16);
+		border: 1px solid currentColor;
+		padding: 0 5px;
+		border-radius: 2px;
+		margin-left: 6px;
 	}
 	.rf-function {
 		margin: 0;
