@@ -6,6 +6,7 @@
 	import { getActiveStore, type NavAction } from '../buffer-store.svelte';
 	import type { Buffer } from '../types';
 	import type { PublicationSummary } from '$lib/types';
+	import { promptText } from '$lib/wm/text-prompt.svelte';
 	import {
 		discovery,
 		trigger as triggerTip,
@@ -72,13 +73,40 @@
 		for (const sh of app.bookshelf?.shelves ?? []) add(sh.d_tag, sh.title, sh.count);
 		const cur = app.bookshelfShelf ?? DEFAULT_SHELF;
 		add(cur);
+		if (app.identityStatus?.pubkey) rows.push({ value: '__new__', label: '+ new shelf…' });
 		return rows;
 	});
 
-	function onPickShelf(e: Event) {
-		const v = (e.currentTarget as HTMLSelectElement).value;
+	async function onPickShelf(e: Event) {
+		const sel = e.currentTarget as HTMLSelectElement;
+		const v = sel.value;
 		cursor = 0;
+		if (v === '__new__') {
+			// Snap the select back; the new shelf is selected once it exists.
+			sel.value = app.bookshelfShelf ?? DEFAULT_SHELF;
+			const title = await promptText({
+				title: 'New bookshelf',
+				placeholder: 'Shelf name',
+				hint: 'A named kind-30045 shelf; the d-tag is derived from the name. Signed locally, broadcast when ready.',
+				confirmLabel: 'Create'
+			});
+			if (!title) return;
+			const d = await app.createShelf(title);
+			if (d) void app.selectBookshelfShelf(d === DEFAULT_SHELF ? null : d);
+			return;
+		}
 		void app.selectBookshelfShelf(v === DEFAULT_SHELF ? null : v);
+	}
+
+	const isMyShelf = $derived(
+		!!app.identityStatus?.pubkey && app.bookshelf?.pubkey === app.identityStatus.pubkey
+	);
+
+	async function unshelve(pub_item: PublicationSummary) {
+		await app.unshelveBook(
+			`${pub_item.addr.kind}:${pub_item.addr.pubkey}:${pub_item.addr.d_tag}`,
+			app.bookshelfShelf
+		);
 	}
 
 	/** Bookshelf rows the store holds, in shelf order — the navigable list. */
@@ -278,7 +306,7 @@
 	});
 </script>
 
-{#snippet pubRow(pub_item: PublicationSummary, i: number)}
+{#snippet pubRow(pub_item: PublicationSummary, i: number, onremove?: () => void)}
 	<!-- svelte-ignore a11y_no_static_element_interactions -->
 	<div
 		class="row"
@@ -339,6 +367,13 @@
 				onpartof={() => findContainers(pub_item.addr)}
 			/>
 			<span class="meta">{pub_item.section_count} sections</span>
+			{#if onremove}
+				<button
+					class="pill pill--remove"
+					onclick={(e) => { e.stopPropagation(); onremove(); }}
+					title="Take this book off the shelf (signs a new shelf version; broadcast when ready)"
+				>remove</button>
+			{/if}
 			<button
 				class="pill pill--menu"
 				data-tour={i === 0 ? 'menu-pill' : undefined}
@@ -413,6 +448,13 @@
 				{/each}
 			</select>
 			<span class="count">{shelfPubs.length}{shelfMissing.length ? ` +${shelfMissing.length} missing` : ''}</span>
+			{#if isMyShelf && app.bookshelf?.local && app.bookshelf.event}
+				<button
+					class="sync sync--broadcast"
+					onclick={() => app.broadcastShelf(app.bookshelf?.event)}
+					title="This shelf is signed locally and no relay has accepted it yet — push it to your publish relays"
+				>broadcast</button>
+			{/if}
 			<button
 				class="sync"
 				onclick={app.handleBookshelfSync}
@@ -446,7 +488,7 @@
 		{:else}
 			<div class="feed-list" bind:this={listEl}>
 				{#each shelfPubs as pub_item, i (`${pub_item.addr.pubkey}:${pub_item.addr.d_tag}`)}
-					{@render pubRow(pub_item, i)}
+					{@render pubRow(pub_item, i, isMyShelf ? () => unshelve(pub_item) : undefined)}
 				{/each}
 				{#if shelfMissing.length}
 					<div class="missing">
@@ -541,6 +583,8 @@
 		color: var(--fg);
 		cursor: pointer;
 	}
+	.sync--broadcast { border-color: var(--id-yours); color: var(--fg); }
+	.pill--remove { cursor: pointer; }
 	.count { font-variant-numeric: tabular-nums; color: var(--base5); margin-left: auto; white-space: nowrap; }
 	/* Books the shelf lists but the store doesn't hold — bare coordinates
 	   until a fetch lands them, kept below the real rows. */

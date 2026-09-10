@@ -28,6 +28,7 @@ import type {
 	FeedRelays,
 	FeedTimeline,
 	BookshelfResponse,
+	ShelfSummary,
 	PublicationDetail,
 	LazySection,
 	ComposeState,
@@ -1313,6 +1314,92 @@ function _createAppState() {
 			bookshelfError = e instanceof Error && /404|identity/i.test(e.message) ? 'none' : 'unavailable';
 		} finally {
 			bookshelfSyncing = false;
+		}
+	}
+
+	// ----- Shelf edits: template → sign → save (signing is the snapshot;
+	// broadcast is the separate step, like publications and spellbooks).
+
+	/** My shelves (picker rows). Local read; empty when signed out. */
+	async function listMyShelves(): Promise<ShelfSummary[]> {
+		try {
+			const resp = await api.getBookshelf('local_only');
+			return resp.shelves;
+		} catch {
+			return [];
+		}
+	}
+
+	/** Put a publication on one of my shelves. `shelf` null = the default
+	 *  `my-book-collection`; an absent shelf is created implicitly. */
+	async function shelveBook(coordinate: string, shelf: string | null, relayHint?: string) {
+		try {
+			const t = await api.bookshelfTemplate({
+				action: 'add',
+				shelf,
+				coordinate,
+				relay_hint: relayHint
+			});
+			const { signed_event } = await api.signTemplate({ template: t.template });
+			await api.saveBookshelf({ event: signed_event, broadcast: false });
+			const name = t.bookshelf.title ?? (t.bookshelf.d_tag === 'my-book-collection' ? 'my books' : t.bookshelf.d_tag);
+			pushToast(
+				t.created ? `Shelf “${name}” created — broadcast it when ready` : `Shelved on “${name}”`,
+				'success'
+			);
+			if ((shelf ?? null) === bookshelfShelf) void loadBookshelf();
+			return true;
+		} catch (e) {
+			pushToast(api.errorMessage(e, 'Shelving failed'), 'error');
+			return false;
+		}
+	}
+
+	/** Take a publication off one of my shelves. */
+	async function unshelveBook(coordinate: string, shelf: string | null) {
+		try {
+			const t = await api.bookshelfTemplate({ action: 'remove', shelf, coordinate });
+			const { signed_event } = await api.signTemplate({ template: t.template });
+			await api.saveBookshelf({ event: signed_event, broadcast: false });
+			pushToast('Removed from shelf — broadcast the shelf when ready', 'success');
+			if ((shelf ?? null) === bookshelfShelf) void loadBookshelf();
+			return true;
+		} catch (e) {
+			pushToast(api.errorMessage(e, 'Removing failed'), 'error');
+			return false;
+		}
+	}
+
+	/** Create an empty named shelf from a title; the engine derives the
+	 *  30045 d-tag (NIP-54 slug). Resolves to the new d-tag, or null. */
+	async function createShelf(title: string): Promise<string | null> {
+		try {
+			const t = await api.bookshelfTemplate({ action: 'create', title });
+			const { signed_event } = await api.signTemplate({ template: t.template });
+			await api.saveBookshelf({ event: signed_event, broadcast: false });
+			pushToast(`Shelf “${title}” created — broadcast it when ready`, 'success');
+			return t.bookshelf.d_tag;
+		} catch (e) {
+			pushToast(api.errorMessage(e, 'Creating the shelf failed'), 'error');
+			return null;
+		}
+	}
+
+	/** Push a signed shelf to the publish relays. Clears its local pill on
+	 *  the first accept. */
+	async function broadcastShelf(event: unknown) {
+		try {
+			const res = await api.saveBookshelf({ event, broadcast: true });
+			const ok = res.broadcast_results?.filter((r) => r.success).length ?? 0;
+			pushToast(
+				`Shelf broadcast — accepted by ${ok} relay${ok === 1 ? '' : 's'}`,
+				ok > 0 ? 'success' : 'error'
+			);
+			void loadBookshelf();
+			return ok > 0;
+		} catch (e) {
+			pushToast(api.errorMessage(e, 'Broadcast failed'), 'error');
+			return false;
 		}
 	}
 
@@ -4961,6 +5048,11 @@ function _createAppState() {
 		loadBookshelf,
 		handleBookshelfSync,
 		selectBookshelfShelf,
+		listMyShelves,
+		shelveBook,
+		unshelveBook,
+		createShelf,
+		broadcastShelf,
 		handleFeedLoadMore,
 		loadFeed,
 		openPublication,

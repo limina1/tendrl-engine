@@ -8,6 +8,13 @@ served to every surface that shows a name — so usernames resolve everywhere
 without per-component fetch logic.
 
 * What exists
+- *Bookshelves* tab (2026-09-10): every kind-30045 shelf the profile's
+  pubkey publishes, each block = shelf head (title/d, count, date, =local=
+  pill + *Broadcast shelf* on my own unbroadcast ones) + its books as
+  ordinary publication items (open → reader; =remove= on my own shelves).
+  *+ New shelf* on my own profile (=promptText=, engine slugs the d-tag).
+  Data: =GET /api/v1/bookshelf/all?pubkey== — see
+  [[file:feat-feed.org][Feed]] for the format and the write path.
 - Engine-side kind-0 resolution as the single source of truth:
   =Metadata::from_event_content= in =src/user_data.rs=, consumed by
   =api.rs::profile_from_event= for the profile endpoint.

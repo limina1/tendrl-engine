@@ -1174,11 +1174,35 @@ pub async fn bookshelf_handler(
         .await
         .unwrap_or_default();
 
-    let books: Vec<Value> = shelved
+    let books = shelved_rows(&shelved, tracker.as_ref(), &containing);
+
+    let local = tracker
+        .as_ref()
+        .map(|t| t.is_local(&shelf.coordinate()))
+        .unwrap_or(false);
+    Ok(Json(json!({
+        "pubkey": pubkey,
+        "shelf": shelf_d,
+        "shelves": loaded.shelves,
+        "bookshelf": shelf,
+        "event": loaded.event,
+        "local": local,
+        "books": books
+    })))
+}
+
+/// One feed-shaped row per shelved book (summary when held, else the bare
+/// reference with `missing: true`).
+fn shelved_rows(
+    shelved: &[crate::bookshelf::ShelvedBook],
+    tracker: Option<&crate::drafts::LocalPublicationTracker>,
+    containing: &std::collections::HashMap<String, Vec<crate::publication::NAddr>>,
+) -> Vec<Value> {
+    shelved
         .iter()
         .map(|b| match &b.publication {
             Some(p) => {
-                let mut row = publication_summary_json(p, tracker.as_ref(), &containing);
+                let mut row = publication_summary_json(p, tracker, containing);
                 row["relay_hint"] = json!(b.reference.relay_hint);
                 row["missing"] = json!(false);
                 row
@@ -1190,14 +1214,273 @@ pub async fn bookshelf_handler(
                 "missing": true
             }),
         })
-        .collect();
+        .collect()
+}
 
+/// Query for `GET /api/v1/bookshelf/all`.
+#[derive(Debug, Deserialize)]
+pub struct BookshelvesQuery {
+    /// Whose shelves. Defaults to the signed-in user's.
+    pub pubkey: Option<String>,
+}
+
+/// GET /api/v1/bookshelf/all — every shelf a pubkey publishes, resolved
+/// (the profile's "bookshelves" section). Local only; `local` marks a
+/// shelf signed here that no relay has accepted yet.
+pub async fn bookshelves_handler(
+    State(engine): State<AppState>,
+    axum::extract::Query(query): axum::extract::Query<BookshelvesQuery>,
+) -> Result<Json<Value>, EngineError> {
+    let pubkey = match query.pubkey.as_deref().map(str::trim).filter(|p| !p.is_empty()) {
+        Some(p) => p.to_lowercase(),
+        None => engine.my_pubkey().ok_or_else(|| {
+            EngineError::NotFound("No identity — sign in to see your bookshelves".into())
+        })?,
+    };
+    let resolved = crate::bookshelf::BookshelfEngine::new(&engine)
+        .load_all(&pubkey)
+        .await?;
+    let tracker = local_pub_tracker(&engine).ok();
+    let coords: Vec<crate::publication::NAddr> = resolved
+        .iter()
+        .flat_map(|s| s.books.iter())
+        .filter(|b| b.publication.is_some())
+        .map(|b| b.reference.addr.clone())
+        .collect();
+    let containing = PublicationEngine::new(&engine)
+        .containing_publications(&coords)
+        .await
+        .unwrap_or_default();
+    let shelves: Vec<Value> = resolved
+        .iter()
+        .map(|s| {
+            let local = tracker
+                .as_ref()
+                .map(|t| t.is_local(&s.bookshelf.coordinate()))
+                .unwrap_or(false);
+            json!({
+                "bookshelf": s.bookshelf,
+                "event": s.event,
+                "local": local,
+                "books": shelved_rows(&s.books, tracker.as_ref(), &containing)
+            })
+        })
+        .collect();
+    Ok(Json(json!({ "pubkey": pubkey, "shelves": shelves })))
+}
+
+/// Body for `POST /api/v1/bookshelf/template`.
+#[derive(Debug, Deserialize)]
+pub struct BookshelfTemplateRequest {
+    /// `add` | `remove` | `create`.
+    pub action: String,
+    /// Which shelf (d-tag). Defaults to `my-book-collection`.
+    pub shelf: Option<String>,
+    /// Title for `create` (or to retitle on add/remove).
+    pub title: Option<String>,
+    /// `30040:<pubkey>:<d>` — the book to add/remove.
+    pub coordinate: Option<String>,
+    /// Relay hint written into the `a` tag on `add`.
+    pub relay_hint: Option<String>,
+}
+
+/// POST /api/v1/bookshelf/template — derive the next version of MY shelf
+/// (read-modify-republish on the addressable event): `add` a book,
+/// `remove` one, or `create` an empty named shelf. `add` on an absent
+/// shelf creates it implicitly. Returns an unsigned template; the caller
+/// signs it (engine key, NIP-07, NIP-55, …) and posts the signed event to
+/// `/bookshelf/save`. Mirrors `/spell/book/template`.
+pub async fn bookshelf_template_handler(
+    State(engine): State<AppState>,
+    Json(req): Json<BookshelfTemplateRequest>,
+) -> Result<Json<Value>, EngineError> {
+    use crate::bookshelf::{BookRef, Bookshelf, BOOKSHELF_D_TAG, KIND_BOOKSHELF, MAX_ITEMS};
+
+    let me = engine.my_pubkey().ok_or_else(|| {
+        EngineError::BadRequest("editing a bookshelf requires an active identity".into())
+    })?;
+    let title = req.title.as_deref().map(str::trim).filter(|t| !t.is_empty());
+    // Which shelf: an explicit d-tag, else for `create` the NIP-54 slug of
+    // the title (d-tag derivation stays engine-side), else the default.
+    let d = match req.shelf.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        Some(d) => d.to_string(),
+        None if req.action == "create" => {
+            let t = title.ok_or_else(|| {
+                EngineError::BadRequest("create needs a shelf name (title) or d-tag".into())
+            })?;
+            let slug = crate::nostrdown::normalize(t);
+            if slug.is_empty() {
+                return Err(EngineError::BadRequest(format!(
+                    "{t:?} does not slug to a usable d-tag"
+                )));
+            }
+            slug
+        }
+        None => BOOKSHELF_D_TAG.to_string(),
+    };
+
+    // Newest local version of my shelf — own shelves are local-first state.
+    let existing = crate::query::query_addressable(engine.ndb(), KIND_BOOKSHELF, &me, &d)?;
+    let created = existing.is_none();
+    let mut shelf = match &existing {
+        Some(ev) => Bookshelf::from_event(ev)?,
+        None => Bookshelf::empty(&me, &d),
+    };
+    if let Some(t) = title {
+        shelf.title = Some(t.to_string());
+    }
+
+    let coordinate = || -> Result<crate::publication::NAddr, EngineError> {
+        let c = req
+            .coordinate
+            .as_deref()
+            .ok_or_else(|| EngineError::BadRequest("this action requires a coordinate".into()))?;
+        let addr = crate::publication::NAddr::from_a_tag(c.trim())
+            .ok_or_else(|| EngineError::BadRequest(format!("not a coordinate: {c:?}")))?;
+        if addr.kind != crate::publication::KIND_PUBLICATION_INDEX {
+            return Err(EngineError::BadRequest(
+                "a bookshelf holds publication indexes (kind 30040) only".into(),
+            ));
+        }
+        Ok(crate::publication::NAddr::new(addr.kind, &addr.pubkey.to_lowercase(), &addr.d_tag))
+    };
+
+    match req.action.as_str() {
+        "create" => {
+            if !created {
+                return Err(EngineError::BadRequest(format!(
+                    "shelf {d:?} already exists — add to it instead"
+                )));
+            }
+        }
+        "add" => {
+            let addr = coordinate()?;
+            if shelf.books.iter().any(|b| b.addr == addr) {
+                return Err(EngineError::BadRequest("that book is already on this shelf".into()));
+            }
+            if shelf.books.len() + shelf.events.len() >= MAX_ITEMS {
+                return Err(EngineError::BadRequest(format!(
+                    "a shelf holds at most {MAX_ITEMS} items"
+                )));
+            }
+            // Event-id hint from the locally held index, when we have it;
+            // relay hint from the request, else the index's first
+            // provenance relay.
+            let held = engine
+                .get_addressable(addr.kind, &addr.pubkey, &addr.d_tag, FetchPolicy::LocalOnly)
+                .await
+                .ok()
+                .flatten();
+            let event_hint = held
+                .as_ref()
+                .and_then(|e| e.get("id").and_then(Value::as_str))
+                .map(str::to_string);
+            let relay_hint = req
+                .relay_hint
+                .as_deref()
+                .map(str::trim)
+                .filter(|r| !r.is_empty())
+                .map(crate::relay_url::normalize_relay_url)
+                .or_else(|| {
+                    held.as_ref()
+                        .and_then(|e| e.get("relays").and_then(Value::as_array))
+                        .and_then(|r| r.first())
+                        .and_then(Value::as_str)
+                        .map(str::to_string)
+                });
+            shelf.books.push(BookRef {
+                addr,
+                relay_hint,
+                event_hint,
+            });
+        }
+        "remove" => {
+            let addr = coordinate()?;
+            let before = shelf.books.len();
+            shelf.books.retain(|b| b.addr != addr);
+            if shelf.books.len() == before {
+                return Err(EngineError::BadRequest("that book is not on this shelf".into()));
+            }
+        }
+        other => {
+            return Err(EngineError::BadRequest(format!(
+                "unknown action {other:?} (expected add, remove, or create)"
+            )));
+        }
+    }
+
+    // Replaceable same-second race guard: strictly newer than the version
+    // we derived from.
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let created_at = std::cmp::max(now, shelf.created_at + 1);
+    let template = crate::signing::EventTemplate {
+        kind: KIND_BOOKSHELF as u32,
+        created_at: created_at as i64,
+        tags: shelf.to_tags(),
+        content: String::new(),
+        pubkey: Some(me),
+    };
+    shelf.created_at = created_at;
     Ok(Json(json!({
-        "pubkey": pubkey,
-        "shelf": shelf_d,
-        "shelves": loaded.shelves,
+        "template": template,
         "bookshelf": shelf,
-        "books": books
+        "created": created
+    })))
+}
+
+/// Body for `POST /api/v1/bookshelf/save`.
+#[derive(Debug, Deserialize)]
+pub struct BookshelfSaveRequest {
+    /// The signed kind-30045 event.
+    pub event: Value,
+    #[serde(default)]
+    pub broadcast: bool,
+    pub relays: Option<Vec<String>>,
+}
+
+/// POST /api/v1/bookshelf/save — ingest a signed shelf locally, optionally
+/// broadcast it, and track local-until-broadcast on its coordinate.
+/// Signing is the snapshot; broadcast is the separate step.
+pub async fn bookshelf_save_handler(
+    State(engine): State<AppState>,
+    Json(req): Json<BookshelfSaveRequest>,
+) -> Result<Json<Value>, EngineError> {
+    for field in ["id", "pubkey", "sig", "kind", "created_at", "tags", "content"] {
+        if req.event.get(field).is_none() {
+            return Err(EngineError::BadRequest(format!(
+                "signed event is missing {field:?}"
+            )));
+        }
+    }
+    let shelf = crate::bookshelf::Bookshelf::from_event(&req.event)?;
+    let coordinate = shelf.coordinate();
+    let event_json = serde_json::to_string(&req.event)?;
+    engine.ingest_event(&event_json)?;
+
+    let mut broadcast_results = None;
+    let mut accepted = false;
+    if req.broadcast {
+        let relays = req.relays.clone().unwrap_or_else(|| engine.publish_relays());
+        let results = crate::relay::publish_to_relays(&relays, &event_json).await;
+        accepted = results.iter().any(|r| r.success);
+        broadcast_results = Some(results);
+    }
+    if let Ok(tracker) = local_pub_tracker(&engine) {
+        if accepted {
+            let _ = tracker.mark_published(&coordinate);
+        } else {
+            let _ = tracker.mark_local(&coordinate);
+        }
+    }
+    Ok(Json(json!({
+        "ingested": true,
+        "coordinate": coordinate,
+        "bookshelf": shelf,
+        "local": !accepted,
+        "broadcast_results": broadcast_results
     })))
 }
 

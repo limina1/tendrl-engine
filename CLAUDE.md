@@ -218,6 +218,18 @@ sections and embeds new events on a 60-second interval when embeddings are enabl
   client-side, not Rust. The follow/mute/bookmark parsers (3/10000/10003/10006)
   remain dormant — no consumer UI yet; wire them when there is one, don't build
   UI-less plumbing.
+- **`bookshelf.rs`**: kind-30045 bookshelves (format from
+  `reference/bookshelf-app`): addressable, d-tag `my-book-collection` by
+  default plus named shelves under other d-tags, `a` tags →
+  `30040:pubkey:d` (+ relay hint, event-id hint), newest per d-tag wins.
+  Pure parser + `to_tags`; `BookshelfEngine::load` / `load_all` resolve
+  books against the store (a `fetch_always` is Confirm-gated and backfills
+  missing indexes). API: `GET /api/v1/bookshelf` (`?policy=&shelf=&pubkey=`),
+  `GET /bookshelf/all`, `POST /bookshelf/template` (add/remove/create →
+  unsigned template, engine slugs the d-tag) → sign → `POST /bookshelf/save`
+  (ingest, optional broadcast, local-until-broadcast on the coordinate).
+  Web: feed bookshelf mode, `EventViewModal` Shelve action, profile
+  Bookshelves tab.
 - **`spell.rs`**: NIP-A7 kind-777 "spells" — saved queries as events — plus the
   tendrl composition extension (spec: `nips/A7-composition.md`, beside the
   vendored `nips/A7.md`; design: `docs/zettel/idea-spells.org`): `param`
@@ -334,4 +346,5 @@ stored `whats-up` — no need to hand-normalize; quote values containing spaces.
 - **Nostr event kinds used**: 0 (metadata), 3 (contacts), 777 (spells — saved
   queries, NIP-A7 draft), 10000/10002/10003/10006/
   10007 (NIP-51/65 lists), 30002 (relay sets), 30023 (long-form), 30040 (publication
-  index), 30041 (publication section), 30817/30818 (wiki), 9802 (highlight).
+  index), 30041 (publication section), 30045 (bookshelf), 30817/30818 (wiki),
+  9802 (highlight).

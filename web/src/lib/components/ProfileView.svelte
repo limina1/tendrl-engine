@@ -1,6 +1,12 @@
 <script lang="ts">
 	import { untrack } from 'svelte';
-	import { isEventSigned, type NostrEvent, type PublicationSummary } from '$lib/types';
+	import {
+		isEventSigned,
+		type NostrEvent,
+		type PublicationSummary,
+		type ShelfView,
+		type BookshelfRow
+	} from '$lib/types';
 	import * as api from '$lib/api';
 	import type { Profile } from '$lib/api';
 	import { fetchFromRelaysWithPrompt } from '$lib/fetch/relay-fetch.svelte';
@@ -41,8 +47,8 @@
 		onback: () => void;
 	} = $props();
 
-	type Tab = 'publications' | 'articles' | 'wikis' | 'specs' | 'sections' | 'highlights' | 'comments' | 'spells';
-	const TAB_NAMES: Tab[] = ['publications', 'articles', 'wikis', 'specs', 'sections', 'highlights', 'comments', 'spells'];
+	type Tab = 'publications' | 'bookshelves' | 'articles' | 'wikis' | 'specs' | 'sections' | 'highlights' | 'comments' | 'spells';
+	const TAB_NAMES: Tab[] = ['publications', 'bookshelves', 'articles', 'wikis', 'specs', 'sections', 'highlights', 'comments', 'spells'];
 	let activeTab: Tab = $state('publications');
 
 	// Buffer-level place for Back history (idea-place-routing.org phase 1):
@@ -100,6 +106,50 @@
 	// authored spells, deduped by event id — with per-row provenance
 	// (author byline when foreign, book marker when curated).
 	let spellBooks = $state<api.SpellBookView[]>([]);
+	// Bookshelves (kind 30045): this author's shelves, each with its books
+	// resolved engine-side. Rendered as shelf blocks; the cursor walks the
+	// flattened rows, so each block carries its start offset.
+	let shelfViews = $state<ShelfView[]>([]);
+	const shelfBlocks = $derived.by(() => {
+		let start = 0;
+		return shelfViews.map((view) => {
+			const b = { view, start };
+			start += view.books.length;
+			return b;
+		});
+	});
+	const shelfRows = $derived(
+		shelfViews.flatMap((view) => view.books.map((row) => ({ view, row })))
+	);
+	const isOwnProfile = $derived(
+		!!app.identityStatus?.pubkey && pubkey === app.identityStatus.pubkey
+	);
+
+	function shelfLabel(v: ShelfView): string {
+		const b = v.bookshelf;
+		return b.title ?? (b.d_tag === 'my-book-collection' ? 'my books' : b.d_tag);
+	}
+
+	async function newShelf() {
+		const title = await promptText({
+			title: 'New bookshelf',
+			placeholder: 'Shelf name',
+			hint: 'A named kind-30045 shelf; the d-tag is derived from the name. Signed locally, broadcast when ready.',
+			confirmLabel: 'Create'
+		});
+		if (!title) return;
+		if (await app.createShelf(title)) await loadLocal(pubkey);
+	}
+
+	async function removeFromShelf(view: ShelfView, row: BookshelfRow) {
+		const coord = `${row.addr.kind}:${row.addr.pubkey}:${row.addr.d_tag}`;
+		if (await app.unshelveBook(coord, view.bookshelf.d_tag)) await loadLocal(pubkey);
+	}
+
+	async function broadcastShelf(view: ShelfView) {
+		await app.broadcastShelf(view.event);
+		await loadLocal(pubkey);
+	}
 	let spellResults = $state<api.SpellOutcome | null>(null);
 	// How the current results were produced — replayed with an `until`
 	// cursor by "load older" (the engine pages the spell's source stage).
@@ -218,7 +268,7 @@
 	}
 
 	async function loadLocal(pk: string) {
-		const [prof, pubResult, artResult, wikiResult, specResult, secResult, hlResult, comResult, spellResult, bookResult] =
+		const [prof, pubResult, artResult, wikiResult, specResult, secResult, hlResult, comResult, spellResult, bookResult, shelfResult] =
 			await Promise.all([
 				api.getProfile(pk),
 				api.queryEvents([{ kinds: [30040], authors: [pk], limit: tabLimits.publications }], 'local_only'),
@@ -229,7 +279,8 @@
 				api.queryEvents([{ kinds: [9802], authors: [pk], limit: tabLimits.highlights }], 'local_only'),
 				api.queryEvents([{ kinds: [1111], authors: [pk], limit: tabLimits.comments }], 'local_only'),
 				api.listSpells(pk, tabLimits.spells, 'local_only'),
-				api.getSpellBooks(pk, 'local_only')
+				api.getSpellBooks(pk, 'local_only'),
+				api.listBookshelves(pk).catch(() => ({ pubkey: pk, shelves: [] as ShelfView[] }))
 			]);
 		profile = prof.found ? prof : null;
 		// 30040 publications: same dedup, but kept as the existing
@@ -276,6 +327,7 @@
 		comments = (comResult.events as NostrEvent[]).sort((a, b) => b.created_at - a.created_at);
 		spells = spellResult.entries; // engine returns newest-first
 		spellBooks = bookResult.books;
+		shelfViews = shelfResult.shelves;
 	}
 
 	// Tab → which event kinds to pull. The top-bar Fetch button pulls
@@ -290,10 +342,12 @@
 		sections: [30041],
 		highlights: [9802],
 		comments: [1111],
-		spells: [777, 30777]
+		spells: [777, 30777],
+		bookshelves: [30045]
 	};
 	const TAB_LABEL: Record<Tab, string> = {
 		publications: 'publications',
+		bookshelves: 'bookshelves',
 		articles: 'articles',
 		wikis: 'wikis',
 		specs: 'specs',
@@ -314,6 +368,7 @@
 	const BACKFILL_PAGE = 50;
 	const TAB_BASE_LIMIT: Record<Tab, number> = {
 		publications: 500,
+		bookshelves: 100,
 		articles: 200,
 		wikis: 200,
 		specs: 200,
@@ -325,6 +380,7 @@
 	function freshTabFlags(): Record<Tab, boolean> {
 		return {
 			publications: false,
+			bookshelves: false,
 			articles: false,
 			wikis: false,
 			specs: false,
@@ -344,6 +400,9 @@
 
 	function listFor(tab: Tab): Array<{ created_at: number }> {
 		if (tab === 'publications') return publications;
+		if (tab === 'bookshelves') {
+			return shelfRows.map((r) => ({ created_at: r.row.missing ? 0 : r.row.created_at }));
+		}
 		if (tab === 'articles') return articles;
 		if (tab === 'wikis') return wikis;
 		if (tab === 'specs') return specs;
@@ -647,6 +706,9 @@
 		if (!item) return;
 		if (activeTab === 'publications') {
 			onopenpub?.(item as PublicationSummary);
+		} else if (activeTab === 'bookshelves') {
+			const r = shelfRows[cursor];
+			if (r && !r.row.missing) onopenpub?.(r.row);
 		} else if (activeTab === 'articles' || activeTab === 'wikis' || activeTab === 'specs') {
 			const x = item as { addr: { kind: number; pubkey: string; d_tag: string }; title: string | null };
 			onopenaddr?.(x.addr, x.title);
@@ -673,7 +735,10 @@
 		const list = activeList();
 		const item = list[cursor];
 		if (!item) return;
-		if (activeTab === 'spells') {
+		if (activeTab === 'bookshelves') {
+			const r = shelfRows[cursor];
+			if (r) app.openAddressableInModal(r.row.addr);
+		} else if (activeTab === 'spells') {
 			// The 777 event, or the cursored result while a feed is showing.
 			const event = spellResults
 				? (item as NostrEvent)
@@ -872,6 +937,7 @@
 		}}
 	>
 		{@render tabCell('publications', 'Publications', publications.length)}
+		{@render tabCell('bookshelves', 'Bookshelves', shelfViews.length)}
 		{@render tabCell('articles', 'Articles', articles.length)}
 		{@render tabCell('wikis', 'Wikis', wikis.length)}
 		{@render tabCell('specs', 'Specs', specs.length)}
@@ -921,6 +987,94 @@
 							{@render menuBtn(() => app.openAddressableInModal(pub_item.addr))}
 						</div>
 					</div>
+				{/each}
+			{/if}
+		{:else if activeTab === 'bookshelves'}
+			{#if isOwnProfile}
+				<div class="spell-results-head">
+					<span class="spell-results-label">
+						{shelfViews.length ? `${shelfViews.length} shel${shelfViews.length === 1 ? 'f' : 'ves'}` : 'no shelves yet'}
+					</span>
+					<button class="spell-back" onclick={newShelf} title="Create a named kind-30045 shelf (signed locally; broadcast when ready)">
+						+ New shelf
+					</button>
+				</div>
+			{/if}
+			{#if shelfViews.length === 0}
+				<div class="empty">No bookshelves</div>
+			{:else}
+				{#each shelfBlocks as blk (blk.view.bookshelf.d_tag)}
+					{@const view = blk.view}
+					<div class="shelf-head" title={`30045:${view.bookshelf.pubkey}:${view.bookshelf.d_tag}`}>
+						<span class="shelf-name">{shelfLabel(view)}</span>
+						<span class="shelf-meta">{view.books.length} book{view.books.length === 1 ? '' : 's'} · {formatTime(view.bookshelf.created_at)}</span>
+						{#if view.local}
+							<span class="shelf-local" title="Signed here — no relay has accepted this shelf yet">local</span>
+							{#if isOwnProfile}
+								<button class="spell-back" onclick={() => broadcastShelf(view)}>Broadcast shelf</button>
+							{/if}
+						{/if}
+					</div>
+					{#if view.books.length === 0}
+						<div class="empty empty--shelf">Nothing on this shelf</div>
+					{/if}
+					{#each view.books as row, j (`${row.addr.pubkey}:${row.addr.d_tag}`)}
+						{@const i = blk.start + j}
+						{#if row.missing}
+							<div class="item pub-item" data-cursor={i} class:item--cursor={i === cursor}>
+								<div class="item-main">
+									<span class="item-ref">not fetched</span>
+									<span class="item-title">{row.addr.d_tag}</span>
+									<p class="item-preview">by <ProfileName pubkey={row.addr.pubkey} /></p>
+								</div>
+								<div class="item-rail">
+									{#if isOwnProfile}
+										<button class="spell-bookmark" onclick={(e) => { e.stopPropagation(); removeFromShelf(view, row); }} onkeydown={(e) => e.stopPropagation()} title="Take this book off the shelf">remove</button>
+									{/if}
+									{@render menuBtn(() => app.openAddressableInModal(row.addr))}
+								</div>
+							</div>
+						{:else}
+							<!-- svelte-ignore a11y_no_static_element_interactions -->
+							<div
+								class="item pub-item"
+								class:item--cursor={i === cursor}
+								data-cursor={i}
+								onclick={() => { cursor = i; onopenpub?.(row); }}
+								onkeydown={(e) => { if (e.key === 'Enter') onopenpub?.(row); }}
+								onfocus={() => (cursor = i)}
+								role="button"
+								tabindex="0"
+							>
+								<div class="item-main">
+									<span class="item-title">{row.title ?? '[Untitled]'}</span>
+									{#if row.author_pubkey !== pubkey}
+										<span class="spell-byline">by <ProfileName pubkey={row.author_pubkey} /></span>
+									{/if}
+									{#if row.summary}
+										<p class="item-preview">{row.summary}</p>
+									{/if}
+									<span class="item-time">{formatTime(row.created_at)}</span>
+								</div>
+								<div class="item-rail">
+									<PoolStateBadges
+										item={app.findPoolItemByAddr(row.addr)}
+										onpillctx={() => app.pillActionByAddr(row.addr, 'context')}
+										onpillcmp={() => app.pillActionByAddr(row.addr, 'compose')}
+										onpilldrop={() => app.pillActionByAddr(row.addr, 'drop')}
+										signed={row.signed}
+										relays={row.relays}
+										forked={row.forked}
+									/>
+									<span class="item-meta">{row.section_count} sections</span>
+									{#if isOwnProfile}
+										<button class="spell-bookmark" onclick={(e) => { e.stopPropagation(); removeFromShelf(view, row); }} onkeydown={(e) => e.stopPropagation()} title="Take this book off the shelf">remove</button>
+									{/if}
+									{@render menuBtn(() => app.openAddressableInModal(row.addr))}
+								</div>
+							</div>
+						{/if}
+					{/each}
 				{/each}
 			{/if}
 		{:else if activeTab === 'articles'}
@@ -1508,6 +1662,28 @@
 	.bar-menu__item--danger:hover:not(:disabled) {
 		background: color-mix(in srgb, var(--state-error) 15%, transparent);
 	}
+
+	/* Bookshelf blocks: a head per shelf, its books as ordinary items. */
+	.shelf-head {
+		display: flex;
+		align-items: baseline;
+		gap: 8px;
+		padding: 8px 12px 4px;
+		border-bottom: 1px solid var(--panel-border);
+		font-size: var(--t-xs);
+	}
+	.shelf-name { font-family: var(--font-mono); font-weight: 600; color: var(--fg); }
+	.shelf-meta { color: var(--base5); }
+	.shelf-local {
+		margin-left: auto;
+		font-family: var(--font-mono);
+		font-size: var(--t-2xs);
+		padding: 0 6px;
+		border: 1px solid var(--base3);
+		border-radius: var(--r-sm);
+		color: var(--base6);
+	}
+	.empty--shelf { padding: 8px 12px; font-size: var(--t-xs); }
 
 	.tabs {
 		display: flex;

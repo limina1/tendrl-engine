@@ -28,8 +28,35 @@ seen on relays.
   the user switched mid-flight (the first composite load races the first
   pick otherwise). Picker labels carry no counts: the engine tallies every
   index a relay holds, nested/empty included, while the feed lists roots.
-- *Bookshelf* mode is a placeholder surface — the user's saved-books list
-  event is not wired yet; the mode exists so the switch does.
+- *Bookshelf* mode — the user's saved books as a Nostr event, wire format
+  from the reference Bookshelf app (=reference/bookshelf-app=): addressable
+  *kind 30045*, d-tag =my-book-collection=, empty content, one =a= tag per
+  book (=30040:pubkey:d=, relay hint, event-id hint), =e= tolerated,
+  =title=/=client= optional, newest wins. In the wild the same pubkey also
+  publishes *named shelves* under other d-tags (=nostr=,
+  =philosophy-and-theology=), so the engine takes every 30045 of the
+  author, newest per d-tag; =my-book-collection= is the default. Engine:
+  =src/bookshelf.rs= (pure lenient parser + =to_tags= round-trip, tested),
+  =BookshelfEngine::load= (=GET /api/v1/bookshelf?policy=&shelf=&pubkey==;
+  a =fetch_always= is Confirm-gated and then backfills every missing index
+  of the chosen shelf in one batched pull, relay hints added to the
+  approved set) and =load_all= (=/bookshelf/all=, the profile section).
+  Rows come back in the feed's =PublicationSummary= shape (builder shared
+  with the listing) or as =missing: true= bare references. Web: shelf
+  =<select>= (same listbox idiom as the relay picker, =+ new shelf…= last),
+  Sync, rows via the shared feed-row snippet, missing books listed below
+  with a Fetch, =remove= pill and a =broadcast= header button on my own
+  local shelves. Writes follow the spellbook model: =POST
+  /api/v1/bookshelf/template= (=add= / =remove= / =create=;
+  read-modify-republish on my newest local version, same-second race
+  guard, =create= slugs the title to a d-tag engine-side, =client: tendrl=)
+  → sign (=/identity/sign=, any signer) → =POST /api/v1/bookshelf/save=
+  (ingest; optional broadcast; =LocalPublicationTracker= on the
+  =30045:me:d= coordinate). Shared actions live in AppState
+  (=shelveBook= / =unshelveBook= / =createShelf= / =broadcastShelf=) and
+  are reached from three surfaces: the feed's bookshelf mode, the
+  =EventViewModal= *Shelve* action (=a s=; shelf picker + Add, on any
+  kind-30040 when signed in), and the profile's *Bookshelves* tab.
 - Publication cards with title, author, summary, and section count
   (=web/src/lib/wm/renderers/FeedBuffer.svelte=; data from
   =GET /api/v1/publications=). On a relay timeline the provenance pill
@@ -46,8 +73,10 @@ seen on relays.
   =work= slot of the WM shell (main content surface).
 
 * Gaps / open edges
-- Bookshelf has no data source yet (which list kind, whose event, how it
-  is fetched/refreshed).
+- Bookshelf writes are add/remove/create only — no reorder, no retitle
+  after creation, no shelf deletion (the reference app has none either;
+  NIP-09 on the coordinate would be the route).
+- =e= entries on a shelf are parsed but not resolved to rows.
 - No read/unread or reading-progress state on cards yet.
 - Feed is a flat list; no user-defined feed groupings or saved queries.
 

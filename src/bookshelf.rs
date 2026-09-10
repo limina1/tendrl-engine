@@ -82,6 +82,11 @@ pub struct Bookshelf {
     pub relays: Vec<String>,
 }
 
+/// `client` tag value tendrl writes on shelves it signs.
+pub const CLIENT_TAG: &str = "tendrl";
+/// The reference app's cap on `a`+`e` entries per shelf.
+pub const MAX_ITEMS: usize = 500;
+
 fn hex64(s: &str) -> bool {
     s.len() == 64 && s.bytes().all(|b| b.is_ascii_hexdigit())
 }
@@ -195,6 +200,61 @@ impl Bookshelf {
         })
     }
 
+    /// A shelf with nothing on it yet (the `create` template).
+    pub fn empty(pubkey: &str, d_tag: &str) -> Self {
+        Self {
+            pubkey: pubkey.to_lowercase(),
+            d_tag: d_tag.to_string(),
+            event_id: String::new(),
+            created_at: 0,
+            title: None,
+            client: None,
+            books: Vec::new(),
+            events: Vec::new(),
+            relays: Vec::new(),
+        }
+    }
+
+    /// `30045:<pubkey>:<d>`.
+    pub fn coordinate(&self) -> String {
+        format!("{KIND_BOOKSHELF}:{}:{}", self.pubkey, self.d_tag)
+    }
+
+    /// Tags in the reference app's on-wire order: `d`, then `a`/`e`
+    /// entries as held (new books append at the end), an optional `title`,
+    /// and `client` last. Blank hints are written as `""` so the 4th
+    /// element (event-id hint) keeps its slot, exactly as the app does.
+    pub fn to_tags(&self) -> Vec<Vec<String>> {
+        let mut tags = vec![vec!["d".to_string(), self.d_tag.clone()]];
+        for b in &self.books {
+            let mut t = vec![
+                "a".to_string(),
+                b.addr.to_a_tag(),
+                b.relay_hint.clone().unwrap_or_default(),
+            ];
+            if let Some(h) = &b.event_hint {
+                t.push(h.clone());
+            }
+            tags.push(t);
+        }
+        for e in &self.events {
+            let mut t = vec![
+                "e".to_string(),
+                e.id.clone(),
+                e.relay_hint.clone().unwrap_or_default(),
+            ];
+            if let Some(p) = &e.pubkey_hint {
+                t.push(p.clone());
+            }
+            tags.push(t);
+        }
+        if let Some(t) = &self.title {
+            tags.push(vec!["title".to_string(), t.clone()]);
+        }
+        tags.push(vec!["client".to_string(), CLIENT_TAG.to_string()]);
+        tags
+    }
+
     /// Parse every candidate and keep the newest per d-tag (created_at,
     /// then id — the reference app's tie-break). Ordered: the default shelf
     /// first, then the rest newest-first.
@@ -223,6 +283,14 @@ impl Bookshelf {
     /// The newest event for one shelf.
     pub fn newest(events: &[Value], d_tag: &str) -> Option<Self> {
         Self::shelves(events).into_iter().find(|s| s.d_tag == d_tag)
+    }
+
+    /// The raw event behind [`Self::newest`] (for re-broadcast).
+    pub fn newest_event<'e>(events: &'e [Value], d_tag: &str) -> Option<&'e Value> {
+        let want = Self::newest(events, d_tag)?;
+        events
+            .iter()
+            .find(|e| e.get("id").and_then(|i| i.as_str()) == Some(want.event_id.as_str()))
     }
 
     /// NIP-01 filter for every shelf a pubkey publishes (the reference app
@@ -266,6 +334,17 @@ pub struct LoadedBookshelf {
     pub shelves: Vec<ShelfSummary>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub bookshelf: Option<Bookshelf>,
+    /// Raw newest event of the resolved shelf — what a re-broadcast sends.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub event: Option<Value>,
+    pub books: Vec<ShelvedBook>,
+}
+
+/// Every shelf of a pubkey, each resolved (profile "bookshelves" section).
+#[derive(Debug, Clone, Serialize)]
+pub struct ResolvedShelf {
+    pub bookshelf: Bookshelf,
+    pub event: Value,
     pub books: Vec<ShelvedBook>,
 }
 
@@ -387,11 +466,40 @@ impl<'a> BookshelfEngine<'a> {
             Some(s) => self.resolve(s).await,
             None => Vec::new(),
         };
+        let event = Bookshelf::newest_event(&events, d_tag).cloned();
         Ok(LoadedBookshelf {
             shelves,
             bookshelf: shelf,
+            event,
             books,
         })
+    }
+
+    /// Every shelf a pubkey publishes, each with its books resolved
+    /// against the local store. Local reads only — the profile's
+    /// "bookshelves" section; a relay pull goes through [`Self::load`].
+    pub async fn load_all(&self, pubkey: &str) -> Result<Vec<ResolvedShelf>> {
+        let local = self
+            .engine
+            .get_events(
+                vec![Bookshelf::filter(pubkey)],
+                FetchPolicy::LocalOnly,
+                None,
+            )
+            .await?;
+        let mut out = Vec::new();
+        for shelf in Bookshelf::shelves(&local.events) {
+            let Some(event) = Bookshelf::newest_event(&local.events, &shelf.d_tag).cloned() else {
+                continue;
+            };
+            let books = self.resolve(&shelf).await;
+            out.push(ResolvedShelf {
+                bookshelf: shelf,
+                event,
+                books,
+            });
+        }
+        Ok(out)
     }
 
     /// Look each `a` entry up in the local store. Never touches relays.
@@ -544,6 +652,46 @@ mod tests {
         assert_eq!(s.books[1].relay_hint, None, "blank hint is absent");
         assert_eq!(s.events.len(), 1);
         assert_eq!(s.events[0].pubkey_hint.as_deref(), Some(pk('9').as_str()));
+    }
+
+    #[test]
+    fn to_tags_round_trips_in_wire_order() {
+        let mut shelf = Bookshelf::empty(&pk('a'), "nostr");
+        shelf.title = Some("Nostr".into());
+        shelf.books.push(BookRef {
+            addr: NAddr::new(30040, &pk('1'), "first"),
+            relay_hint: Some("wss://relay.example".into()),
+            event_hint: Some(pk('c')),
+        });
+        shelf.books.push(BookRef {
+            addr: NAddr::new(30040, &pk('2'), "second"),
+            relay_hint: None,
+            event_hint: None,
+        });
+        let tags = shelf.to_tags();
+        assert_eq!(tags[0], vec!["d", "nostr"]);
+        assert_eq!(
+            tags[1],
+            vec![
+                "a",
+                &format!("30040:{}:first", pk('1')),
+                "wss://relay.example",
+                &pk('c')
+            ]
+        );
+        assert_eq!(tags[2], vec!["a", &format!("30040:{}:second", pk('2')), ""]);
+        assert_eq!(tags[3], vec!["title", "Nostr"]);
+        assert_eq!(tags.last().unwrap(), &vec!["client", CLIENT_TAG]);
+
+        let ev = json!({
+            "id": pk('f'), "pubkey": pk('a'), "created_at": 5, "kind": KIND_BOOKSHELF,
+            "tags": tags, "content": "", "sig": "0".repeat(128)
+        });
+        let back = Bookshelf::from_event(&ev).unwrap();
+        assert_eq!(back.books, shelf.books);
+        assert_eq!(back.title.as_deref(), Some("Nostr"));
+        assert_eq!(back.client.as_deref(), Some(CLIENT_TAG));
+        assert_eq!(back.coordinate(), format!("30045:{}:nostr", pk('a')));
     }
 
     #[test]

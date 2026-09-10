@@ -1647,3 +1647,39 @@ GUI (headless chromium + the CDP driver pattern from the verify skill):
 pick a relay in =.timeline-select= (set =.value= + dispatch =change=),
 every row's provenance pill must name that relay; =BOOKSHELF= tab shows
 the placeholder; switching back keeps the picked relay.
+
+* Bookshelf — kind 30045 read + write (branch =feat/relay-feeds=)
+
+Format: =reference/bookshelf-app= (=BookshelfDirectoryRules.kt=). Engine
+=src/bookshelf.rs=; endpoints =GET /api/v1/bookshelf= (=?policy=&shelf=&pubkey==),
+=GET /api/v1/bookshelf/all=, =POST /api/v1/bookshelf/template=,
+=POST /api/v1/bookshelf/save=.
+
+#+begin_src bash
+cargo test --lib bookshelf                       # parser / to_tags round-trip / newest-per-shelf
+
+# scratch engine on :3131 (never the live :3030), network mode auto
+# read side against real shelves — watch-only login as a pubkey that has them:
+curl -s -X POST localhost:3131/api/v1/identity/login-npub -H 'content-type: application/json' \
+  -d '{"npub":"dd664d5e4016433a8cd69f005ae1480804351789b59de5af06276de65633d319"}'
+curl -s 'localhost:3131/api/v1/bookshelf?policy=fetch_always' | python3 -m json.tool | head -60   # shelves + resolved books
+curl -s 'localhost:3131/api/v1/bookshelf?shelf=nostr'                                             # a named shelf
+# real 30045s on the wire (note the named d-tags):
+nak req -k 30045 --limit 5 wss://thecitadel.nostr1.com < /dev/null
+
+# write side — throwaway engine key:
+NSEC=$(nak key generate </dev/null); NC=$(nak key encrypt "$NSEC" testpass </dev/null)
+curl -s -X POST localhost:3131/api/v1/identity/login  -H 'content-type: application/json' -d "{\"ncryptsec\":\"$NC\"}"
+curl -s -X POST localhost:3131/api/v1/identity/unlock -H 'content-type: application/json' -d '{"password":"testpass"}'
+# template → sign → save (create; then add a 30040 coordinate; remove; the refusals: duplicate create,
+# duplicate add, non-30040 coordinate):
+curl -s -X POST localhost:3131/api/v1/bookshelf/template -H 'content-type: application/json' -d '{"action":"create","title":"Test Shelf"}'
+#   → {"template":…}  →  POST /api/v1/identity/sign {"template":…}  →  POST /api/v1/bookshelf/save {"event":<signed>,"broadcast":false}
+curl -s localhost:3131/api/v1/bookshelf/all | python3 -m json.tool | head -40                    # local:true until broadcast
+#+end_src
+
+GUI (headless chromium + CDP): feed row =menu= → =Shelve= (=a s=) → picker
+lists my shelves + "+ new shelf…" → Add → toast "Shelved on …"; feed
+=BOOKSHELF= tab → pick the shelf → row has =remove=, header has =broadcast=;
+profile (own) → =Bookshelves= tab → shelf heads with =local= + "Broadcast
+shelf", "+ New shelf". Fetch counter must stay flat (bookshelf ≈3, all ≈1).

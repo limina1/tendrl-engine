@@ -312,6 +312,18 @@ export interface BookshelfResponse {
 	shelves: ShelfSummary[];
 	/** Null = no event known for that shelf. */
 	bookshelf: Bookshelf | null;
+	/** Raw newest 30045 of the resolved shelf — what a re-broadcast sends. */
+	event?: NostrEvent | null;
+	/** Signed here, not yet accepted by any relay (LocalPublicationTracker). */
+	local?: boolean;
+	books: BookshelfRow[];
+}
+
+/** One shelf with its books resolved (`GET /api/v1/bookshelf/all`). */
+export interface ShelfView {
+	bookshelf: Bookshelf;
+	event: NostrEvent;
+	local: boolean;
 	books: BookshelfRow[];
 }
 
