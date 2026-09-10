@@ -1,3 +1,7 @@
+## v0.12.0 — 2026-09-10
+
+- feat(git): NIP-34 repositories — profile tab, repository buffer, issues + threads
+
 ## v0.11.0 — 2026-09-10
 
 - docs(zettel): bookshelf feature note, relay-timelines decision, shelf-lifecycle idea
