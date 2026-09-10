@@ -1,0 +1,88 @@
+#+TITLE: Bookshelves (kind 30045)
+#+TYPE: feature
+#+STATUS: implemented
+#+DATE: 2026-09-10
+
+Saved books as a Nostr event: a shelf is a list of publication indexes
+the user has put aside, published under their own key. The format is the
+reference Bookshelf app's (=reference/bookshelf-app=,
+=BookshelfDirectoryRules.kt=) so shelves round-trip between tendrl and
+that app; tendrl reads *named* shelves too, which the app does not write
+but which already exist on the wire.
+
+* The event
+
+- Addressable *kind 30045*, empty content, newest =created_at= wins (tie:
+  lexicographic id). The reference app's only d-tag is
+  =my-book-collection=; the same pubkey also publishes named shelves
+  (=nostr=, =philosophy-and-theology=) — same layout, other d-tags. tendrl
+  lists every 30045 of an author, newest per d-tag, default shelf first.
+- One =a= tag per book: =["a", "30040:<pubkey>:<d>", "<relay hint | ''>",
+  "<30040 event id hint | absent>"]= — the 4th element is the app's
+  extension over NIP-51. =e= tags are tolerated on read. Optional =title=,
+  one =client= tag (the app requires =Bookshelf= on its own signing
+  round-trip only; tendrl writes =tendrl=, another client writes
+  =imwald=). Cap 500 items.
+- Read leniently, like the app's reader: unknown tags dropped, only
+  kind-30040 coordinates admitted, pubkey lowercased, dedup on the
+  coordinate, blank hint = absent.
+
+* What exists
+
+- Engine =src/bookshelf.rs=: pure parser (=Bookshelf::from_event=,
+  =shelves= newest-per-d-tag, =newest(d)=), =to_tags= in the app's wire
+  order (d, a…, e…, title, client — blank hints keep their slot; tested
+  round-trip). =BookshelfEngine::load(pubkey, d, policy)=: LocalOnly /
+  LocalFirst / FetchAlways; the fetch is Confirm-gated
+  (=begin_fetch_operation_with_summary=, "Bookshelf sync — <d>") and then
+  backfills every index the chosen shelf references that the store lacks
+  in one batched pull (one filter per author with all its d-tags; relay
+  hints added to the approved set). =load_all= resolves every shelf.
+- API: =GET /api/v1/bookshelf?policy=&shelf=&pubkey== → =shelves= (picker
+  rows), the resolved shelf, its raw =event=, =local=, and =books= — rows
+  in the feed's =PublicationSummary= shape (builder shared with the feed
+  listing, so pills/menu/containment behave identically) or =missing:
+  true= bare references. =GET /api/v1/bookshelf/all?pubkey== for profile
+  views. Kind label =bookshelf= in the inventory.
+- Writes follow [[file:feat-publishing.org][signing-is-the-snapshot]] and
+  the spellbook pattern ([[file:idea-spells.org][Spells]]): =POST
+  /api/v1/bookshelf/template= (=add= / =remove= a 30040 coordinate,
+  =create= an empty named shelf — the d-tag is the NIP-54 slug of the
+  title, derived engine-side; read-modify-republish on my newest local
+  version; same-second race guard; refuses duplicates, non-30040
+  coordinates, >500 items; event-id hint filled from the held index,
+  relay hint from the request or the index's first provenance relay) →
+  the caller signs (=/identity/sign=, any signer) → =POST
+  /api/v1/bookshelf/save= (ingest, optional broadcast,
+  =LocalPublicationTracker= on =30045:me:d= so the shelf shows =local=
+  until a relay accepts it).
+- Web — shared actions on AppState (=shelveBook= / =unshelveBook= /
+  =createShelf= / =broadcastShelf=), three surfaces:
+  1. [[file:feat-feed.org][Feed]] bookshelf mode: shelf =<select>= (=+ new
+     shelf…= last), Sync, rows via the feed-row snippet, missing books
+     listed below with Fetch, =remove= pill + =broadcast= header button on
+     my own local shelves.
+  2. =EventViewModal= *Shelve* (=a s=) on any kind-30040 when signed in:
+     picker of my shelves + "new shelf…", Add.
+  3. [[file:feat-profiles.org][Profile]] *Bookshelves* tab: shelf blocks
+     (title/d, count, date, =local= pill + *Broadcast shelf*), books as
+     items, =remove=, *+ New shelf* on my own profile.
+
+* Gaps / open edges
+
+See [[file:idea-bookshelf-lifecycle.org][Bookshelf lifecycle]]: no
+reorder, no retitle after creation, no deletion (NIP-09 on the
+coordinate), =e= entries parsed but not resolved, no "copy someone's
+shelf" merge, no per-book notes.
+
+* Verify
+
+=docs/commands.org= → "Bookshelf — kind 30045 read + write".
+
+* Related
+- [[file:index.org][Index]]
+- [[file:feat-feed.org][Feed]] — the bookshelf mode lives there
+- [[file:idea-reading-states.org][Reading states]] — a shelf is the
+  "later" list made portable
+- [[file:idea-feeds-as-indexes.org][Feeds as indexes]] — a shelf is a
+  curated list one step short of a 30040
