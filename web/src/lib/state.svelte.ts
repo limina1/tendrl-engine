@@ -202,7 +202,11 @@ function _createAppState() {
 	let feedTimeline: FeedTimeline = $state(null);
 	// The picker's rows — relays the local 30040s carry provenance from.
 	let feedRelays: FeedRelays | null = $state(null);
-	let feedRelaysLoading = $state(false);
+	// Plain boolean, not $state: an in-flight latch read+written by an async
+	// fn that FeedBuffer's mount $effect calls — as $state that read makes
+	// the effect depend on a value the same call writes → request storm
+	// (see project_effect_async_state_loop). Never rendered.
+	let feedRelaysLoading = false;
 	// Guards the one-time cold-cache auto-fetch in loadFeed() so an empty
 	// db doesn't re-pop the fetch-confirm modal on every loadFeed() call
 	// (FeedBuffer mount, search-clear, etc.). Plain boolean, not $state —
@@ -4581,7 +4585,6 @@ function _createAppState() {
 		get feedGeneral() { return feedGeneral; },
 		get feedTimeline() { return feedTimeline; },
 		get feedRelays() { return feedRelays; },
-		get feedRelaysLoading() { return feedRelaysLoading; },
 
 		// Search
 		get searchResults() { return searchResults; },
