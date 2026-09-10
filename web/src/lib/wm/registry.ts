@@ -14,6 +14,7 @@ import RelaysBuffer from './renderers/RelaysBuffer.svelte';
 import PublishProgressBuffer from './renderers/PublishProgressBuffer.svelte';
 import ProfileEditBuffer from './renderers/ProfileEditBuffer.svelte';
 import DiscussionViewBuffer from './renderers/DiscussionViewBuffer.svelte';
+import RepositoryBuffer from './renderers/RepositoryBuffer.svelte';
 import { BUFFER_KIND_META, type BufferKindMeta } from './tours';
 
 // Tour + class lookups live in the leaf `./tours` (no component imports) so a
@@ -49,6 +50,7 @@ const COMPONENTS: Record<string, Component<RendererProps>> = {
 	'publish-progress': PublishProgressBuffer,
 	'profile-edit': ProfileEditBuffer,
 	'discussion-view': DiscussionViewBuffer,
+	repository: RepositoryBuffer,
 	search: SearchBuffer
 };
 

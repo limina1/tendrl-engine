@@ -230,6 +230,24 @@ sections and embeds new events on a 60-second interval when embeddings are enabl
   (ingest, optional broadcast, local-until-broadcast on the coordinate).
   Web: feed bookshelf mode, `EventViewModal` Shelve action, profile
   Bookshelves tab.
+- **`git.rs`**: NIP-34 git (`nips/34.md`) — kind-30617 repository
+  announcements (name/description, multi-valued `web`/`clone`/`relays`/
+  `maintainers`, `r … euc`, `u` fork pointer, `t`), kind-30618 state
+  (`HEAD` + `refs/*`), kind-1621 issues (`a` → repo coordinate, `subject`,
+  `t` labels), kinds 1630–1633 status. Pure parsers + `issue_template` /
+  `status_template`; status resolution per spec (newest by the issue author
+  or a maintainer wins, default Open). `GitEngine::list` / `load` are
+  Confirm-gated like bookshelves (one modal: announcement + issues +
+  statuses + state, then comments under the found issues); `load` folds
+  status + NIP-22 comment counts onto each issue. API: `GET /api/v1/git/
+  repos` (`?pubkey=&policy=`), `GET /git/repo/:pubkey/:d_tag`, `POST /git/
+  issue` (+ `/preview`), `POST /git/status` (author or maintainer only).
+  Issue replies are ordinary NIP-22 comments via `/discussions/comment`
+  (`root.kind: 1621`); the comment handler unions the repo's `relays`
+  into the broadcast set for any NIP-34 root. Web: profile Repositories
+  tab → `repository:<pk>:<d>` buffer (`RepositoryBuffer.svelte`).
+  `query.rs` matches all-hex values of any tag filter (`#E`, `#q`) as
+  packed ids — nostrdb packs 64-hex tag values regardless of tag name.
 - **`spell.rs`**: NIP-A7 kind-777 "spells" — saved queries as events — plus the
   tendrl composition extension (spec: `nips/A7-composition.md`, beside the
   vendored `nips/A7.md`; design: `docs/zettel/idea-spells.org`): `param`
@@ -347,4 +365,5 @@ stored `whats-up` — no need to hand-normalize; quote values containing spaces.
   queries, NIP-A7 draft), 10000/10002/10003/10006/
   10007 (NIP-51/65 lists), 30002 (relay sets), 30023 (long-form), 30040 (publication
   index), 30041 (publication section), 30045 (bookshelf), 30817/30818 (wiki),
-  9802 (highlight).
+  9802 (highlight), 30617/30618 (git repository + state), 1621 (git issue),
+  1630–1633 (git status).

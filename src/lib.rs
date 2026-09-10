@@ -61,6 +61,7 @@ pub mod drafts;
 pub mod embedding;
 pub mod engine;
 pub mod error;
+pub mod git;
 pub mod identity;
 pub mod llm;
 pub mod network;

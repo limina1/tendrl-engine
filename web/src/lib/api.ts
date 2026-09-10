@@ -828,6 +828,144 @@ export function saveBookshelf(req: { event: unknown; broadcast: boolean; relays?
 	}>('/api/v1/bookshelf/save', { method: 'POST', body: JSON.stringify(req) });
 }
 
+// NIP-34 git: repository announcements (kind 30617), issues (1621), status
+// (1630–1633). Parsing, status resolution, and template building are all
+// engine-side (src/git.rs); the web only renders and collects input.
+// Comments on an issue are ordinary NIP-22 comments — use publishComment
+// with `root: { event_id, kind: 1621, pubkey }` and getDiscussionList with
+// `eventIds: [issue.id]`.
+
+export type GitIssueStatus = 'open' | 'resolved' | 'closed' | 'draft';
+
+export interface GitRepository {
+	pubkey: string;
+	d_tag: string;
+	event_id: string;
+	created_at: number;
+	name: string;
+	description?: string;
+	web: string[];
+	clone: string[];
+	relays: string[];
+	euc?: string;
+	/** Other recognised maintainers (the announcer is implied). */
+	maintainers: string[];
+	fork_of?: { target: string; relay_hint?: string; pubkey?: string };
+	hashtags: string[];
+	/** Relays the store saw the announcement on (empty = local only). */
+	seen_on: string[];
+}
+
+export interface GitRepositoryState {
+	pubkey: string;
+	d_tag: string;
+	event_id: string;
+	created_at: number;
+	head?: string;
+	refs: { name: string; commit: string }[];
+}
+
+export interface GitStatusEvent {
+	id: string;
+	pubkey: string;
+	created_at: number;
+	status: GitIssueStatus;
+	root: string;
+	content: string;
+}
+
+export interface GitIssue {
+	id: string;
+	pubkey: string;
+	created_at: number;
+	repos: string[];
+	subject?: string;
+	labels: string[];
+	content: string;
+	status: GitIssueStatus;
+	status_event?: GitStatusEvent;
+	comment_count: number;
+	last_activity: number;
+	seen_on: string[];
+}
+
+export interface LoadedRepository {
+	repository: GitRepository;
+	event: DiscussionEvent;
+	state?: GitRepositoryState;
+	issues: GitIssue[];
+	open_count: number;
+	fetched_from: string[];
+}
+
+/** Every repository a pubkey announces — the profile's repositories tab.
+ *  `fetch_always` is Confirm-gated; `local_first` only asks relays when the
+ *  store holds none. Defaults to the signed-in user. */
+export function listRepositories(
+	pubkey?: string,
+	policy: 'local_only' | 'local_first' | 'fetch_always' = 'local_only'
+) {
+	const q = pubkey ? `&pubkey=${encodeURIComponent(pubkey)}` : '';
+	return fetchJson<{ pubkey: string; repositories: GitRepository[] }>(
+		`/api/v1/git/repos?policy=${policy}${q}`
+	);
+}
+
+/** One repository with its issues (status folded in, comment counts) and
+ *  newest branch/tag state. 404 when the announcement isn't held and no
+ *  fetch happened. */
+export function getRepository(
+	pubkey: string,
+	dTag: string,
+	policy: 'local_only' | 'local_first' | 'fetch_always' = 'local_first'
+) {
+	return fetchJson<LoadedRepository>(
+		`/api/v1/git/repo/${encodeURIComponent(pubkey)}/${encodeURIComponent(dTag)}?policy=${policy}`
+	);
+}
+
+export interface GitIssueRequest {
+	/** `30617:<pubkey>:<d>` of the repository. */
+	repo: string;
+	subject: string;
+	content: string;
+	labels?: string[];
+	/** Broadcast override; default = publish relays ∪ the repo's relays. */
+	relays?: string[];
+}
+
+/** The unsigned kind-1621 template + relay set a `fileIssue` would use. */
+export function previewIssue(req: GitIssueRequest) {
+	return fetchJson<{
+		template: SignTemplateRequest['template'];
+		repository: GitRepository;
+		relays: string[];
+	}>('/api/v1/git/issue/preview', { method: 'POST', body: JSON.stringify(req) });
+}
+
+/** File an issue: engine builds the tags, signs with the active identity,
+ *  ingests locally, then broadcasts (Confirm-gated). */
+export function fileIssue(req: GitIssueRequest) {
+	return fetchJson<{ event: DiscussionEvent; broadcast: BroadcastSummary; issue: GitIssue }>(
+		'/api/v1/git/issue',
+		{ method: 'POST', body: JSON.stringify(req) }
+	);
+}
+
+/** Set an issue's status (kind 1630–1633). Refused unless the active
+ *  identity is the issue author or a repository maintainer. */
+export function setIssueStatus(req: {
+	issue_id: string;
+	status: GitIssueStatus;
+	content?: string;
+	relays?: string[];
+}) {
+	return fetchJson<{ event: DiscussionEvent; broadcast: BroadcastSummary; status: GitIssueStatus }>(
+		'/api/v1/git/status',
+		{ method: 'POST', body: JSON.stringify(req) }
+	);
+}
+
 /** Every relay a local publication index has been seen on — the feed's
  *  timeline picker rows. Engine-side scan of kind 30040 provenance. */
 export function listFeedRelays() {

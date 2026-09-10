@@ -139,9 +139,9 @@ impl Default for InventoryOptions {
 /// discovery so a sparsely-populated one is never missed. Keep in sync
 /// with the match below — `well_known_kinds_all_have_labels` enforces it.
 pub const WELL_KNOWN_KINDS: &[u32] = &[
-    0, 1, 3, 4, 5, 6, 7, 9, 16, 20, 777, 1040, 1063, 1111, 1222, 1244, 9021, 9735, 9802, 10000,
-    10002, 10003, 10006, 10007, 30000, 30002, 30023, 30040, 30041, 30078, 30617, 30618, 30817,
-    30818, 31234, 39701,
+    0, 1, 3, 4, 5, 6, 7, 9, 16, 20, 777, 1040, 1063, 1111, 1222, 1244, 1617, 1618, 1619, 1621,
+    1630, 1631, 1632, 1633, 9021, 9735, 9802, 10000, 10002, 10003, 10006, 10007, 30000, 30002,
+    30023, 30040, 30041, 30045, 30078, 30617, 30618, 30817, 30818, 31234, 39701,
 ];
 
 /// Human label for a kind, where one is well established.
@@ -167,6 +167,14 @@ pub fn kind_label(kind: u32) -> Option<&'static str> {
         1222 => "voice message",
         1244 => "voice reply",
         1040 => "OpenTimestamps",
+        1617 => "git patch",
+        1618 => "git pull request",
+        1619 => "git PR update",
+        1621 => "git issue",
+        1630 => "git status: open",
+        1631 => "git status: resolved",
+        1632 => "git status: closed",
+        1633 => "git status: draft",
         9021 => "join request",
         9735 => "zap receipt",
         9802 => "highlight",
