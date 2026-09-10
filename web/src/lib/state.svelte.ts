@@ -25,6 +25,10 @@ import type {
 	SearchResult,
 	ProfileResult,
 	PublicationSummary,
+	FeedRelays,
+	FeedTimeline,
+	BookshelfResponse,
+	ShelfSummary,
 	PublicationDetail,
 	LazySection,
 	ComposeState,
@@ -193,6 +197,31 @@ function _createAppState() {
 	// every listPublications call so the composed query (and its confirm
 	// intent) reflect it. Toggled live from the fetch-confirm modal.
 	let feedGeneral = $state(true);
+	// Which timeline the feed lists: a relay URL (one relay's publications,
+	// synced from that relay alone), 'local' (unpublished), or null for the
+	// composite. Chosen from FeedBuffer's relay picker; threaded into every
+	// listPublications call so a page/sync/load-more never mixes timelines.
+	let feedTimeline: FeedTimeline = $state(null);
+	// The picker's rows — relays the local 30040s carry provenance from.
+	let feedRelays: FeedRelays | null = $state(null);
+	// Plain boolean, not $state: an in-flight latch read+written by an async
+	// fn that FeedBuffer's mount $effect calls — as $state that read makes
+	// the effect depend on a value the same call writes → request storm
+	// (see project_effect_async_state_loop). Never rendered.
+	let feedRelaysLoading = false;
+	// --- Bookshelf (feed's second mode) ---
+	// null = not loaded yet; a response with bookshelf:null = no event known.
+	let bookshelf: BookshelfResponse | null = $state(null);
+	let bookshelfLoading = $state(false);
+	let bookshelfSyncing = $state(false);
+	// 'none' = no identity (404) — the UI shows a sign-in hint instead of an
+	// empty shelf. Set from the response path, never rendered as a spinner.
+	let bookshelfError: 'none' | 'unavailable' | null = $state(null);
+	// Which shelf (30045 d-tag) the bookshelf mode shows; null = the default
+	// `my-book-collection`. Threaded into every getBookshelf call.
+	let bookshelfShelf: string | null = $state(null);
+	// Plain re-entry latch (see feedRelaysLoading — never $state here).
+	let bookshelfInflight = false;
 	// Guards the one-time cold-cache auto-fetch in loadFeed() so an empty
 	// db doesn't re-pop the fetch-confirm modal on every loadFeed() call
 	// (FeedBuffer mount, search-clear, etc.). Plain boolean, not $state —
@@ -1146,8 +1175,14 @@ function _createAppState() {
 
 	async function loadFeed() {
 		feedLoading = true;
+		// Timeline at request time: if the user switches timelines while
+		// this is in flight, the response belongs to the old one and must
+		// not overwrite the new one's page (loadFeed has ~10 call sites,
+		// including initialize() racing the first picker change).
+		const forTimeline = feedTimeline;
 		try {
-			let resp = await api.listPublications(20, 'local_only', undefined, feedGeneral);
+			let resp = await api.listPublications(20, 'local_only', undefined, feedGeneral, forTimeline);
+			if (forTimeline !== feedTimeline) return;
 			// Cold-cache fallback: if local nostrdb has nothing (fresh
 			// install, post-purge, etc.), kick off ONE `fetch_always`
 			// pull so the user sees content without manually hitting
@@ -1203,16 +1238,189 @@ function _createAppState() {
 
 	async function handleFeedSync() {
 		feedSyncing = true;
+		const forTimeline = feedTimeline;
 		try {
-			const resp = await api.listPublications(20, 'fetch_always', undefined, feedGeneral);
+			const resp = await api.listPublications(20, 'fetch_always', undefined, feedGeneral, forTimeline);
+			// The fetch still landed in the store (a later load sees it);
+			// only the page swap is skipped when the timeline moved on.
+			if (forTimeline !== feedTimeline) return;
 			feed = resp.publications;
 			feedHasMore = resp.count >= 20;
 			api.prefetchProfiles([...new Set(resp.publications.map(p => p.author_pubkey))]);
+			// A sync can put a never-seen relay on the map (or move a local
+			// snapshot onto one) — refresh the picker's rows behind it.
+			void loadFeedRelays();
 		} catch {
 			// Relay fetch failed
 		} finally {
 			feedSyncing = false;
 		}
+	}
+
+	/** Refresh the relay-timeline picker rows. Cheap engine scan of the
+	 *  local 30040s; never touches relays. */
+	async function loadFeedRelays() {
+		if (feedRelaysLoading) return;
+		feedRelaysLoading = true;
+		try {
+			feedRelays = await api.listFeedRelays();
+		} catch {
+			// engine unavailable — keep whatever rows we had
+		} finally {
+			feedRelaysLoading = false;
+		}
+	}
+
+	/** Load the signed-in user's bookshelf from the local store. Called by
+	 *  FeedBuffer when its mode flips to bookshelf; write-only to reactive
+	 *  state after the await. */
+	async function loadBookshelf() {
+		if (bookshelfInflight) return;
+		bookshelfInflight = true;
+		bookshelfLoading = true;
+		const forShelf = bookshelfShelf;
+		try {
+			const resp = await api.getBookshelf('local_only', forShelf);
+			if (forShelf !== bookshelfShelf) return;
+			bookshelf = resp;
+			bookshelfError = null;
+			api.prefetchProfiles([
+				...new Set(resp.books.filter((b) => !b.missing).map((b) => (b as { author_pubkey: string }).author_pubkey))
+			]);
+		} catch (e) {
+			bookshelfError = e instanceof Error && /404|identity/i.test(e.message) ? 'none' : 'unavailable';
+		} finally {
+			bookshelfLoading = false;
+			bookshelfInflight = false;
+		}
+	}
+
+	/** Pull the bookshelf from the read relays (Confirm-gated) and backfill
+	 *  the indexes it references. */
+	async function handleBookshelfSync() {
+		if (bookshelfSyncing) return;
+		bookshelfSyncing = true;
+		const forShelf = bookshelfShelf;
+		try {
+			const resp = await api.getBookshelf('fetch_always', forShelf);
+			if (forShelf !== bookshelfShelf) return;
+			bookshelf = resp;
+			bookshelfError = null;
+			api.prefetchProfiles([
+				...new Set(resp.books.filter((b) => !b.missing).map((b) => (b as { author_pubkey: string }).author_pubkey))
+			]);
+			void loadFeedRelays();
+		} catch (e) {
+			bookshelfError = e instanceof Error && /404|identity/i.test(e.message) ? 'none' : 'unavailable';
+		} finally {
+			bookshelfSyncing = false;
+		}
+	}
+
+	// ----- Shelf edits: template → sign → save (signing is the snapshot;
+	// broadcast is the separate step, like publications and spellbooks).
+
+	/** My shelves (picker rows). Local read; empty when signed out. */
+	async function listMyShelves(): Promise<ShelfSummary[]> {
+		try {
+			const resp = await api.getBookshelf('local_only');
+			return resp.shelves;
+		} catch {
+			return [];
+		}
+	}
+
+	/** Put a publication on one of my shelves. `shelf` null = the default
+	 *  `my-book-collection`; an absent shelf is created implicitly. */
+	async function shelveBook(coordinate: string, shelf: string | null, relayHint?: string) {
+		try {
+			const t = await api.bookshelfTemplate({
+				action: 'add',
+				shelf,
+				coordinate,
+				relay_hint: relayHint
+			});
+			const { signed_event } = await api.signTemplate({ template: t.template });
+			await api.saveBookshelf({ event: signed_event, broadcast: false });
+			const name = t.bookshelf.title ?? (t.bookshelf.d_tag === 'my-book-collection' ? 'my books' : t.bookshelf.d_tag);
+			pushToast(
+				t.created ? `Shelf “${name}” created — broadcast it when ready` : `Shelved on “${name}”`,
+				'success'
+			);
+			if ((shelf ?? null) === bookshelfShelf) void loadBookshelf();
+			return true;
+		} catch (e) {
+			pushToast(api.errorMessage(e, 'Shelving failed'), 'error');
+			return false;
+		}
+	}
+
+	/** Take a publication off one of my shelves. */
+	async function unshelveBook(coordinate: string, shelf: string | null) {
+		try {
+			const t = await api.bookshelfTemplate({ action: 'remove', shelf, coordinate });
+			const { signed_event } = await api.signTemplate({ template: t.template });
+			await api.saveBookshelf({ event: signed_event, broadcast: false });
+			pushToast('Removed from shelf — broadcast the shelf when ready', 'success');
+			if ((shelf ?? null) === bookshelfShelf) void loadBookshelf();
+			return true;
+		} catch (e) {
+			pushToast(api.errorMessage(e, 'Removing failed'), 'error');
+			return false;
+		}
+	}
+
+	/** Create an empty named shelf from a title; the engine derives the
+	 *  30045 d-tag (NIP-54 slug). Resolves to the new d-tag, or null. */
+	async function createShelf(title: string): Promise<string | null> {
+		try {
+			const t = await api.bookshelfTemplate({ action: 'create', title });
+			const { signed_event } = await api.signTemplate({ template: t.template });
+			await api.saveBookshelf({ event: signed_event, broadcast: false });
+			pushToast(`Shelf “${title}” created — broadcast it when ready`, 'success');
+			return t.bookshelf.d_tag;
+		} catch (e) {
+			pushToast(api.errorMessage(e, 'Creating the shelf failed'), 'error');
+			return null;
+		}
+	}
+
+	/** Push a signed shelf to the publish relays. Clears its local pill on
+	 *  the first accept. */
+	async function broadcastShelf(event: unknown) {
+		try {
+			const res = await api.saveBookshelf({ event, broadcast: true });
+			const ok = res.broadcast_results?.filter((r) => r.success).length ?? 0;
+			pushToast(
+				`Shelf broadcast — accepted by ${ok} relay${ok === 1 ? '' : 's'}`,
+				ok > 0 ? 'success' : 'error'
+			);
+			void loadBookshelf();
+			return ok > 0;
+		} catch (e) {
+			pushToast(api.errorMessage(e, 'Broadcast failed'), 'error');
+			return false;
+		}
+	}
+
+	/** Show another shelf (a 30045 d-tag); reloads from the local store. */
+	async function selectBookshelfShelf(shelf: string | null) {
+		const next = shelf || null;
+		if (next === bookshelfShelf) return;
+		bookshelfShelf = next;
+		await loadBookshelf();
+	}
+
+	/** Switch the feed to another timeline and reload it from the local
+	 *  store. Same-timeline calls are a no-op so a picker re-render can't
+	 *  re-fire the load. */
+	async function selectFeedTimeline(timeline: FeedTimeline) {
+		const next = timeline || null;
+		if (next === feedTimeline) return;
+		feedTimeline = next;
+		feed = [];
+		feedHasMore = true;
+		await loadFeed();
 	}
 
 	// Flip the general-feed preference and re-run the sync so the composed
@@ -1226,10 +1434,13 @@ function _createAppState() {
 	async function handleFeedLoadMore() {
 		if (feedLoadingMore || !feedHasMore || feed.length === 0) return;
 		feedLoadingMore = true;
+		const forTimeline = feedTimeline;
 		try {
 			const oldest = Math.min(...feed.map(p => p.created_at));
 			const existing = new Set(feed.map(p => `${p.addr.pubkey}:${p.addr.d_tag}`));
 			const merge = (resp: { publications: PublicationSummary[] }): number => {
+				// Never splice an old timeline's page into the new one.
+				if (forTimeline !== feedTimeline) return 0;
 				const fresh = resp.publications.filter(
 					p => !existing.has(`${p.addr.pubkey}:${p.addr.d_tag}`)
 				);
@@ -1242,8 +1453,9 @@ function _createAppState() {
 			};
 
 			// Page the local store first — cheap, no relay round-trip.
-			const local = await api.listPublications(20, 'local_only', oldest, feedGeneral);
+			const local = await api.listPublications(20, 'local_only', oldest, feedGeneral, forTimeline);
 			merge(local);
+			if (forTimeline !== feedTimeline) return;
 			if (local.count >= 20) {
 				// More local rows remain at this depth; keep paging locally.
 				feedHasMore = true;
@@ -1255,8 +1467,9 @@ function _createAppState() {
 			// mode it raises the fetch-confirm modal and blocks until approved; in
 			// Auto mode it fetches straight away. The response carries the newly
 			// fetched events, so we merge them inline.
-			const remote = await api.listPublications(20, 'fetch_always', oldest, feedGeneral);
+			const remote = await api.listPublications(20, 'fetch_always', oldest, feedGeneral, forTimeline);
 			const added = merge(remote);
+			if (forTimeline !== feedTimeline) return;
 			// Keep "Load more" alive only if the backfill actually advanced us past
 			// the local floor; if the relays returned nothing new, we've caught up.
 			feedHasMore = added > 0;
@@ -4525,6 +4738,13 @@ function _createAppState() {
 		get feedLoadingMore() { return feedLoadingMore; },
 		get feedHasMore() { return feedHasMore; },
 		get feedGeneral() { return feedGeneral; },
+		get feedTimeline() { return feedTimeline; },
+		get feedRelays() { return feedRelays; },
+		get bookshelf() { return bookshelf; },
+		get bookshelfLoading() { return bookshelfLoading; },
+		get bookshelfSyncing() { return bookshelfSyncing; },
+		get bookshelfError() { return bookshelfError; },
+		get bookshelfShelf() { return bookshelfShelf; },
 
 		// Search
 		get searchResults() { return searchResults; },
@@ -4823,6 +5043,16 @@ function _createAppState() {
 		handleLoadSessionToChat,
 		handleFeedSync,
 		toggleFeedGeneral,
+		loadFeedRelays,
+		selectFeedTimeline,
+		loadBookshelf,
+		handleBookshelfSync,
+		selectBookshelfShelf,
+		listMyShelves,
+		shelveBook,
+		unshelveBook,
+		createShelf,
+		broadcastShelf,
 		handleFeedLoadMore,
 		loadFeed,
 		openPublication,

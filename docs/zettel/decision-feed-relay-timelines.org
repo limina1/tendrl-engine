@@ -1,0 +1,42 @@
+#+TITLE: Decision: The Feed Is Per-Relay Timelines, Not One Composite Stream
+#+TYPE: decision
+#+STATUS: current
+#+DATE: 2026-09-10
+
+* The decision
+
+The main page lists *one relay's publications at a time*. Every relay the
+local kind-30040s carry provenance from is its own timeline, picked from a
+select in the feed header; "all relays" (the old composite) and "local
+only" (signed here, never accepted) are the two non-relay entries. The
+feed's second mode is the [[file:feat-bookshelf.org][bookshelf]].
+
+* Why
+
+- Provenance is the feed's organizing fact already (the relay pill on every
+  row). A relay is a curatorial choice — thecitadel, theforest and
+  mercury-relay hold different libraries — and a composite stream hides
+  that choice behind a merge order nobody chose.
+- It keeps the composite reachable (default "all relays") without making it
+  the frame.
+
+* Consequences / how
+
+- Scoping is engine-side: =GET /api/v1/publications?relay=<url|local>= →
+  =RelayTimeline= in =publication.rs=, applied after dedup and *before*
+  the page limit, so a sparse relay still fills its page through the
+  continuation loop. Under =fetch_always= the relay is also the sole
+  fetch target ("Feed sync — <url>"). Rows for the picker:
+  =GET /api/v1/publications/relays= (=stats::relay_provenance=, distinct
+  coordinates per relay, not note versions).
+- The selected timeline lives in AppState because every listing call
+  carries it; feed responses discard themselves when the timeline changed
+  mid-flight (the first composite load raced the first pick).
+- Picker labels carry no counts: the engine tallies every index a relay
+  holds, nested and empty ones included, while the feed lists roots.
+- The provenance pill leads with the selected relay (display ordering).
+
+* Related
+- [[file:feat-feed.org][Feed]]
+- [[file:feat-relays.org][Relay sets]]
+- [[file:idea-event-badges.org][Event badges]] — provenance as annotation

@@ -265,6 +265,72 @@ export interface RelayCount {
 	count: number;
 }
 
+/** Relay provenance of the local publication indexes (kind 30040), from
+ *  `GET /api/v1/publications/relays`. Each row is one relay timeline the
+ *  feed can show; counts are distinct publication coordinates. `local` is
+ *  the number of coordinates with no relay provenance at all. */
+export interface FeedRelays {
+	kind: number;
+	relays: RelayCount[];
+	local: number;
+	total: number;
+}
+
+/** The user's bookshelf event (kind 30045, d-tag `my-book-collection`),
+ *  parsed engine-side (`bookshelf.rs`). */
+export interface Bookshelf {
+	pubkey: string;
+	d_tag: string;
+	event_id: string;
+	created_at: number;
+	title?: string;
+	client?: string;
+	books: { addr: NAddr; relay_hint?: string; event_hint?: string }[];
+	events: { id: string; relay_hint?: string; pubkey_hint?: string }[];
+	relays: string[];
+}
+
+/** One bookshelf row: a feed summary when the store holds the index, else
+ *  the bare reference with `missing: true`. */
+export type BookshelfRow =
+	| (PublicationSummary & { missing: false; relay_hint?: string | null })
+	| { addr: NAddr; relay_hint?: string | null; event_hint?: string | null; missing: true };
+
+/** One row of the shelf picker — every kind-30045 the pubkey publishes,
+ *  the default `my-book-collection` first. */
+export interface ShelfSummary {
+	d_tag: string;
+	title?: string;
+	created_at: number;
+	count: number;
+}
+
+export interface BookshelfResponse {
+	pubkey: string;
+	/** The shelf (d-tag) this response resolved. */
+	shelf: string;
+	shelves: ShelfSummary[];
+	/** Null = no event known for that shelf. */
+	bookshelf: Bookshelf | null;
+	/** Raw newest 30045 of the resolved shelf — what a re-broadcast sends. */
+	event?: NostrEvent | null;
+	/** Signed here, not yet accepted by any relay (LocalPublicationTracker). */
+	local?: boolean;
+	books: BookshelfRow[];
+}
+
+/** One shelf with its books resolved (`GET /api/v1/bookshelf/all`). */
+export interface ShelfView {
+	bookshelf: Bookshelf;
+	event: NostrEvent;
+	local: boolean;
+	books: BookshelfRow[];
+}
+
+/** Which timeline the feed lists. `null` = every root regardless of
+ *  provenance; `'local'` = unpublished only; otherwise a relay URL. */
+export type FeedTimeline = string | null;
+
 /** Aggregate picture of the local nostrdb — what's actually stored, by
  *  kind, by author, by relay, plus span and disk cost. Every tally is
  *  derived engine-side. */

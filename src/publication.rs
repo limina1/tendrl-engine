@@ -620,10 +620,50 @@ fn compute_republish_diff(
 }
 
 /// CPU-heavy publication dedup/filter/sort — runs in spawn_blocking
+/// Which timeline a feed listing is scoped to.
+///
+/// The feed is not one composite stream but one timeline per relay the
+/// local store has provenance from (plus the unpublished `local` one).
+/// Parsed once per request from the `relay` query parameter.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RelayTimeline {
+    /// No scoping — every root regardless of provenance.
+    All,
+    /// Roots with no relay provenance (`relay=local`).
+    Local,
+    /// Roots seen on this relay (normalized URL).
+    Relay(String),
+}
+
+impl RelayTimeline {
+    /// `None` / blank → `All`; the literal `local` → `Local`; anything else
+    /// is a relay URL, normalized (bare host → `wss://`, case-folded, default
+    /// port and trailing slash dropped) so it compares equal to provenance.
+    pub fn parse(relay: Option<&str>) -> Self {
+        match relay.map(str::trim) {
+            None | Some("") => Self::All,
+            Some("local") => Self::Local,
+            Some(url) => Self::Relay(crate::relay_url::normalize_relay_url(url)),
+        }
+    }
+
+    /// Does a publication with this provenance belong on the timeline?
+    pub fn admits(&self, relays: &[String]) -> bool {
+        match self {
+            Self::All => true,
+            Self::Local => relays.is_empty(),
+            Self::Relay(url) => relays
+                .iter()
+                .any(|r| crate::relay_url::normalize_relay_url(r) == *url),
+        }
+    }
+}
+
 fn process_root_publications(
     events: Vec<serde_json::Value>,
     ignore_list: crate::engine::IgnoreList,
     limit: usize,
+    timeline: &RelayTimeline,
 ) -> Vec<Publication> {
     use std::collections::{HashMap, HashSet};
 
@@ -705,7 +745,14 @@ fn process_root_publications(
         by_addr.len(), skipped_child, skipped_empty, skipped_dupe, skipped_err, skipped_ignored
     );
 
-    let mut roots: Vec<Publication> = by_addr.into_values().collect();
+    // Timeline scoping happens after dedup so the version the feed shows
+    // (the newest) is the one whose provenance decides, and before the
+    // truncation so a sparse relay still fills its page — the caller's
+    // continuation loop keeps paging the local store until it does.
+    let mut roots: Vec<Publication> = by_addr
+        .into_values()
+        .filter(|p| timeline.admits(&p.relays))
+        .collect();
     roots.sort_by(|a, b| b.created_at.cmp(&a.created_at).then_with(|| a.addr.d_tag.cmp(&b.addr.d_tag)));
     roots.truncate(limit);
     roots
@@ -1869,7 +1916,7 @@ impl<'a> PublicationEngine<'a> {
 
         // Same-title publications of mine, newest 30040 wins.
         let publications = self
-            .list_root_publications(FetchPolicy::LocalOnly, 50, None, false)
+            .list_root_publications(FetchPolicy::LocalOnly, 50, None, false, None)
             .await?;
         let Some(matched_pub) = publications
             .into_iter()
@@ -1945,8 +1992,14 @@ impl<'a> PublicationEngine<'a> {
         limit: usize,
         before: Option<u64>,
         general: bool,
+        relay: Option<&str>,
     ) -> Result<Vec<Publication>> {
         use serde_json::json;
+
+        // One relay timeline. `local` = no provenance; anything else is a
+        // relay URL, normalized once here so provenance comparison and the
+        // fetch target agree with what the picker was handed.
+        let timeline = RelayTimeline::parse(relay);
 
         // Scope to known authors to avoid processing thousands of foreign events.
         // nostrdb stores all versions of replaceable events, so we over-fetch and dedup.
@@ -2012,8 +2065,16 @@ impl<'a> PublicationEngine<'a> {
         // LocalOnly (returns the empty result we already have).
         let response = match policy {
             FetchPolicy::FetchAlways => {
-                let relays: Vec<String> = self.engine.relays();
-                let label = "Feed sync — list publications".to_string();
+                // A relay timeline syncs from its own relay only; the
+                // composite feed and the local timeline use the read set.
+                let relays: Vec<String> = match &timeline {
+                    RelayTimeline::Relay(url) => vec![url.clone()],
+                    _ => self.engine.relays(),
+                };
+                let label = match &timeline {
+                    RelayTimeline::Relay(url) => format!("Feed sync — {url}"),
+                    _ => "Feed sync — list publications".to_string(),
+                };
                 // Build a RequestSummary so the FetchConfirmModal can
                 // render the formal-language sentence + filters block +
                 // composition block instead of just a flat URL list.
@@ -2098,10 +2159,15 @@ impl<'a> PublicationEngine<'a> {
 
         // Offload CPU-heavy dedup/filter/sort to blocking threadpool
         // so the async runtime stays responsive
-        let run_filter = |ev: Vec<serde_json::Value>, ig: crate::engine::IgnoreList| async move {
-            tokio::task::spawn_blocking(move || process_root_publications(ev, ig, limit))
+        let run_filter = |ev: Vec<serde_json::Value>, ig: crate::engine::IgnoreList| {
+            let timeline = timeline.clone();
+            async move {
+                tokio::task::spawn_blocking(move || {
+                    process_root_publications(ev, ig, limit, &timeline)
+                })
                 .await
                 .map_err(|e| crate::error::EngineError::Database(format!("spawn_blocking: {e}")))
+            }
         };
         let mut roots = run_filter(events.clone(), ignore_list.clone()).await?;
 
@@ -3938,6 +4004,73 @@ fn build_block_index_event(
 mod tests {
     use super::*;
     use crate::publication::compose::{ComposeBlockState, SectionCompose};
+
+    /// A minimal signed-looking 30040 index with one section child and the
+    /// given relay provenance, as `note_to_json` would emit it.
+    fn index_with_relays(d_tag: &str, created_at: u64, relays: &[&str]) -> Value {
+        serde_json::json!({
+            "id": format!("{:0>64}", d_tag.len()),
+            "pubkey": "a".repeat(64),
+            "created_at": created_at,
+            "kind": KIND_PUBLICATION_INDEX,
+            "tags": [
+                ["d", d_tag],
+                ["title", d_tag],
+                ["a", format!("30041:{}:sec-{}", "a".repeat(64), d_tag)]
+            ],
+            "content": "",
+            "sig": "0".repeat(128),
+            "relays": relays
+        })
+    }
+
+    #[test]
+    fn relay_timeline_parse_normalizes_and_recognizes_local() {
+        assert_eq!(RelayTimeline::parse(None), RelayTimeline::All);
+        assert_eq!(RelayTimeline::parse(Some("  ")), RelayTimeline::All);
+        assert_eq!(RelayTimeline::parse(Some("local")), RelayTimeline::Local);
+        assert_eq!(
+            RelayTimeline::parse(Some("Relay.Damus.io/")),
+            RelayTimeline::Relay("wss://relay.damus.io".into())
+        );
+    }
+
+    #[test]
+    fn relay_timeline_scopes_roots_before_truncation() {
+        let events = vec![
+            index_with_relays("one", 30, &["wss://relay.damus.io"]),
+            index_with_relays("two", 20, &["wss://nos.lol", "wss://relay.damus.io/"]),
+            index_with_relays("three", 10, &[]),
+        ];
+        let ig = crate::engine::IgnoreList::default();
+
+        let all = process_root_publications(events.clone(), ig.clone(), 10, &RelayTimeline::All);
+        assert_eq!(all.len(), 3);
+
+        let damus = process_root_publications(
+            events.clone(),
+            ig.clone(),
+            10,
+            &RelayTimeline::parse(Some("relay.damus.io")),
+        );
+        let tags: Vec<&str> = damus.iter().map(|p| p.addr.d_tag.as_str()).collect();
+        assert_eq!(tags, vec!["one", "two"]);
+
+        // The limit applies AFTER scoping: a page of 1 on the nos.lol
+        // timeline is "two", not an empty page because "one" won the slot.
+        let nos = process_root_publications(
+            events.clone(),
+            ig.clone(),
+            1,
+            &RelayTimeline::parse(Some("wss://nos.lol")),
+        );
+        assert_eq!(nos.len(), 1);
+        assert_eq!(nos[0].addr.d_tag, "two");
+
+        let local = process_root_publications(events, ig, 10, &RelayTimeline::Local);
+        assert_eq!(local.len(), 1);
+        assert_eq!(local[0].addr.d_tag, "three");
+    }
 
     fn a_coords(index: &Value) -> Vec<String> {
         index["tags"]

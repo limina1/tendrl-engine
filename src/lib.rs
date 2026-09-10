@@ -51,6 +51,7 @@
 //! ```
 
 pub mod api;
+pub mod bookshelf;
 pub mod chat;
 pub mod claude_sessions;
 pub mod config;

@@ -1,0 +1,48 @@
+#+TITLE: Idea: bookshelf lifecycle — beyond add / remove / create
+#+TYPE: idea
+#+STATUS: brainstorm — captured 2026-09-10 while shipping the read/write core
+#+DATE: 2026-09-10
+
+* What exists, what doesn't
+
+[[file:feat-bookshelf.org][Bookshelves]] ship with the three edits the
+reference app has: add a book, remove a book, create a shelf. Everything
+else about a shelf's life is open:
+
+- *Reorder.* Tag order is the shelf order (new books append). The reader
+  has no move-up/down; the wire supports it for free.
+- *Retitle / describe.* =title= is accepted on every template call but no
+  surface offers it after creation; the format has no description/image
+  tag (the app forbids them — adding one breaks its strict signing check,
+  though not its reader).
+- *Delete a shelf.* The app never deletes (ADR "no tombstones"). For us
+  the route is a NIP-09 deletion request on the =30045:me:d= coordinate
+  plus the ignore-list treatment locally — the same shape as publication
+  deletion in =EventViewModal=.
+- *=e= entries.* Parsed, never resolved to rows. Resolve by id → if it is
+  a 30040, show it; else a bare "event" row.
+- *Copy someone's shelf.* On a foreign profile the Bookshelves tab is
+  read-only. "Add all to my shelf X" is one template call with N
+  coordinates — the merge rule is the app's (dedup on coordinate, never
+  delete).
+- *Per-book notes / reading state.* A shelf is the portable half of
+  [[file:idea-reading-states.org][reading states]] ("later"); inbox /
+  archive and progress stay local. Don't put reading behaviour on the
+  wire.
+- *Shelf → publication.* A shelf is one step short of a 30040 index of
+  30040s ([[file:idea-feeds-as-indexes.org][feeds as indexes]]). "Publish
+  this shelf as an index" is a compose-prefill, not a new kind.
+
+* Data / UX decisions to make first
+
+1. Is the default =my-book-collection= special in the UI (always first,
+   unnamed "my books") or just another shelf? Today: special.
+2. Do named shelves get a stable identity beyond the d-tag slug (a
+   =title= edit must not re-slug the d)? Today: d is fixed at creation.
+3. Broadcast policy: shelves are local until the user pushes them, like
+   everything else ([[file:feat-publishing.org][Publishing]]). Should a
+   shelf edit offer "broadcast now" inline? Today: separate button.
+
+* Related
+- [[file:feat-bookshelf.org][Bookshelves]]
+- [[file:feat-feed.org][Feed]]

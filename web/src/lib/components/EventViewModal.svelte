@@ -10,6 +10,8 @@
 	import { getActiveStore } from '$lib/wm/buffer-store.svelte';
 	import { runTour, consumeArmedTour } from '$lib/wm/discovery.svelte';
 	import { openMenuHelp } from '$lib/wm/menu-help.svelte';
+	import { promptText } from '$lib/wm/text-prompt.svelte';
+	import type { ShelfSummary } from '$lib/types';
 
 	let {
 		event,
@@ -367,6 +369,45 @@
 		commentOpen = !commentOpen;
 	}
 
+	// Shelve — put a publication index on one of my kind-30045 shelves.
+	// Opens a picker row (my shelves + "new shelf…"); the engine derives
+	// the next shelf version, we sign it, save local-first.
+	const DEFAULT_SHELF = 'my-book-collection';
+	const canShelve = $derived(n.kind === 30040 && !!dTag && !!app.identityStatus?.pubkey);
+	let shelveOpen = $state(false);
+	let myShelves = $state<ShelfSummary[]>([]);
+	let shelvePick = $state(DEFAULT_SHELF);
+	let shelving = $state(false);
+
+	async function onShelveAction() {
+		if (!canShelve) return;
+		shelveOpen = !shelveOpen;
+		if (shelveOpen) myShelves = await app.listMyShelves();
+	}
+
+	async function doShelve() {
+		if (!addrRef || shelving) return;
+		let target: string | null = shelvePick === DEFAULT_SHELF ? null : shelvePick;
+		if (shelvePick === '__new__') {
+			const title = await promptText({
+				title: 'New bookshelf',
+				placeholder: 'Shelf name',
+				hint: 'A named kind-30045 shelf; the d-tag is derived from the name.',
+				confirmLabel: 'Create'
+			});
+			if (!title) return;
+			const d = await app.createShelf(title);
+			if (!d) return;
+			target = d;
+			shelvePick = d;
+		}
+		shelving = true;
+		const hint = (event as { relays?: string[] }).relays?.[0];
+		const ok = await app.shelveBook(addrRef, target, hint);
+		shelving = false;
+		if (ok) shelveOpen = false;
+	}
+
 	let deleting = $state(false);
 	async function onDeleteAction() {
 		if (!isOwnEvent || deleting) return;
@@ -450,6 +491,9 @@
 			} else if (k === 'c') {
 				e.preventDefault();
 				onCommentAction();
+			} else if (k === 's' && canShelve) {
+				e.preventDefault();
+				void onShelveAction();
 			} else if (k === 'd' && isOwnEvent) {
 				e.preventDefault();
 				onDeleteAction();
@@ -894,6 +938,17 @@
 					<span class="evm__key">c</span>
 					<span class="evm__action-label">Comment</span>
 				</button>
+				{#if canShelve}
+					<button
+						class="evm__action"
+						class:evm__action--open={shelveOpen}
+						onclick={onShelveAction}
+						title="Put this publication on one of your bookshelves (kind 30045)"
+					>
+						<span class="evm__key">s</span>
+						<span class="evm__action-label">Shelve</span>
+					</button>
+				{/if}
 				{#if isOwnEvent}
 					<button
 						class="evm__action evm__action--danger"
@@ -906,6 +961,23 @@
 					</button>
 				{/if}
 			</div>
+			{#if shelveOpen}
+				<div class="evm__shelve">
+					<label class="evm__shelve-label" for="evm-shelf-pick">shelf</label>
+					<select id="evm-shelf-pick" class="evm__shelve-pick" bind:value={shelvePick}>
+						{#if !myShelves.some((s) => s.d_tag === DEFAULT_SHELF)}
+							<option value={DEFAULT_SHELF}>my books</option>
+						{/if}
+						{#each myShelves as sh (sh.d_tag)}
+							<option value={sh.d_tag}>{sh.d_tag === DEFAULT_SHELF ? 'my books' : (sh.title ?? sh.d_tag)} ({sh.count})</option>
+						{/each}
+						<option value="__new__">+ new shelf…</option>
+					</select>
+					<button class="evm__action evm__shelve-go" onclick={doShelve} disabled={shelving}>
+						<span class="evm__action-label">{shelving ? 'Shelving…' : shelvePick === '__new__' ? 'Create & add' : 'Add'}</span>
+					</button>
+				</div>
+			{/if}
 			{#if commentOpen}
 				<div class="evm__comment-box">
 					<ReplyBox
@@ -1372,6 +1444,26 @@
 		display: flex;
 		gap: 6px;
 	}
+	/* Shelve picker row — opens under the actions like the comment box. */
+	.evm__shelve {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		margin-top: 8px;
+	}
+	.evm__shelve-label { font-family: var(--font-mono); font-size: var(--t-3xs); color: var(--fg-muted); }
+	.evm__shelve-pick {
+		flex: 1;
+		min-width: 0;
+		font-family: var(--font-mono);
+		font-size: var(--t-xs);
+		padding: 3px 6px;
+		background: var(--panel-bg-soft);
+		border: 1px solid var(--border);
+		border-radius: var(--r-sm);
+		color: var(--fg);
+	}
+	.evm__shelve-go { flex: 0 0 auto; }
 	.evm__action {
 		flex: 1;
 		display: flex;

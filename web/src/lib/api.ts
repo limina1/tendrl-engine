@@ -1,4 +1,8 @@
 import type {
+	BookshelfResponse,
+	Bookshelf,
+	ShelfView,
+	FeedRelays,
 	ChatResponse,
 	SendMessageRequest,
 	EditBufferRequest,
@@ -759,16 +763,75 @@ export function deleteDraft(id: string): Promise<{ deleted: string }> {
 
 // Publications API
 
+/** List root publications. `relay` scopes the page to one relay timeline
+ *  (a URL, or `'local'` for unpublished roots); under `fetch_always` a relay
+ *  URL is also the sole fetch target. Null/undefined = the composite list. */
 export function listPublications(
 	limit = 20,
 	policy = 'local_only',
 	before?: number,
-	general = false
+	general = false,
+	relay?: string | null
 ) {
 	let url = `/api/v1/publications?limit=${limit}&policy=${policy}`;
 	if (before) url += `&before=${before}`;
 	if (general) url += `&general=true`;
+	if (relay) url += `&relay=${encodeURIComponent(relay)}`;
 	return fetchJson<{ publications: PublicationSummary[]; count: number }>(url);
+}
+
+/** The signed-in user's bookshelf (kind 30045). `fetch_always` pulls the
+ *  list from the read relays (Confirm-gated) and backfills missing indexes;
+ *  `local_only` never touches relays. 404 when there is no identity. */
+export function getBookshelf(
+	policy: 'local_only' | 'local_first' | 'fetch_always' = 'local_only',
+	shelf?: string | null
+) {
+	let url = `/api/v1/bookshelf?policy=${policy}`;
+	if (shelf) url += `&shelf=${encodeURIComponent(shelf)}`;
+	return fetchJson<BookshelfResponse>(url);
+}
+
+/** Every shelf a pubkey publishes, each resolved — the profile's
+ *  bookshelves section. Local only. Defaults to the signed-in user. */
+export function listBookshelves(pubkey?: string) {
+	const q = pubkey ? `?pubkey=${encodeURIComponent(pubkey)}` : '';
+	return fetchJson<{ pubkey: string; shelves: ShelfView[] }>(`/api/v1/bookshelf/all${q}`);
+}
+
+/** Derive the next version of MY shelf (read-modify-republish): add or
+ *  remove a book by coordinate, or create an empty named shelf. Returns
+ *  an unsigned template — sign it, then `saveBookshelf`. */
+export function bookshelfTemplate(req: {
+	action: 'add' | 'remove' | 'create';
+	shelf?: string | null;
+	title?: string;
+	coordinate?: string;
+	relay_hint?: string;
+}) {
+	return fetchJson<{
+		template: SignTemplateRequest['template'];
+		bookshelf: Bookshelf;
+		created: boolean;
+	}>('/api/v1/bookshelf/template', { method: 'POST', body: JSON.stringify(req) });
+}
+
+/** Ingest a signed shelf (local-first); `broadcast` pushes it to the
+ *  publish relays and clears the local pill on the first accept. */
+export function saveBookshelf(req: { event: unknown; broadcast: boolean; relays?: string[] }) {
+	return fetchJson<{
+		ingested: boolean;
+		coordinate: string;
+		bookshelf: Bookshelf;
+		local: boolean;
+		broadcast_results: { relay_url: string; success: boolean; message: string }[] | null;
+	}>('/api/v1/bookshelf/save', { method: 'POST', body: JSON.stringify(req) });
+}
+
+/** Every relay a local publication index has been seen on — the feed's
+ *  timeline picker rows. Engine-side scan of kind 30040 provenance. */
+export function listFeedRelays() {
+	return fetchJson<FeedRelays>('/api/v1/publications/relays');
 }
 
 /** Fetch a publication and its table of contents.

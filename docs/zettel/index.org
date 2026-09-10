@@ -37,7 +37,8 @@ exists (with code paths), gaps.
 - [[file:feat-identity.org][Identity & signing]] — NIP-49, keyring, NIP-07
 
 ** Reading
-- [[file:feat-feed.org][Feed]] — publication cards, provenance
+- [[file:feat-feed.org][Feed]] — per-relay timelines + bookshelf mode, provenance
+- [[file:feat-bookshelf.org][Bookshelves (kind 30045)]] — saved books as an event; read/write, named shelves, three surfaces
 - [[file:feat-reader.org][Reader]] — view modes, nested TOCs, highlights
 - [[file:feat-discussions.org][Discussions & highlights]] — 9802 anatomy, source families, both capture surfaces
 
@@ -60,6 +61,8 @@ exists (with code paths), gaps.
 - [[file:decision-nostrdown-parsing.org][Nostrdown parsing lives in Rust]]
 - [[file:decision-wikilinks-30818-only.org][Global wikilinks resolve to 30818 only]]
   — markup-agnostic grammar is data-layer, not display-layer
+- [[file:decision-feed-relay-timelines.org][The feed is per-relay timelines]]
+  — one relay at a time, scoped engine-side; composite stays reachable, not the frame
 - [[file:q-heading-anchors.org][Heading anchors dropped from the grammar]]
   — sub-section addressing belongs to the markup engine; make it a 30041 instead
 
@@ -125,6 +128,7 @@ path: [[file:conventions.org][conventions]].
 - [[file:idea-backlinks.org][Backlinks panel]] — derived reverse index; cheapest high-value join
 - [[file:idea-see-also.org][Semantic "See Also"]] — ambient relatedness + promote-to-ref
 - [[file:idea-reading-states.org][Reading states]] — inbox/later/archive triage
+- [[file:idea-bookshelf-lifecycle.org][Bookshelf lifecycle]] — reorder, retitle, delete, copy a shelf, =e= entries
 - [[file:idea-resurfacing.org][Resurfacing]] — deliberate review of the knowledge layer
 - [[file:idea-status-metadata.org][Status & confidence metadata]] — perpetual drafts made legible
 
