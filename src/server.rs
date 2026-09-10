@@ -149,6 +149,7 @@ fn fetch_reason_for_path(path: &str) -> Option<&'static str> {
         ("/api/v1/addressable/", "Fetching document"),
         ("/api/v1/publications", "Loading publication"),
         ("/api/v1/discussions/", "Loading discussions"),
+        ("/api/v1/git/", "Loading repository"),
         ("/api/v1/profile/", "Profile lookup"),
         ("/api/v1/profiles/fetch", "Profile lookup"),
         ("/api/v1/highlights/", "Resolving highlights"),
@@ -595,6 +596,11 @@ pub async fn start(opts: ServeOptions) -> anyhow::Result<RunningServer> {
         .route("/api/v1/bookshelf/all", get(api::bookshelves_handler))
         .route("/api/v1/bookshelf/template", post(api::bookshelf_template_handler))
         .route("/api/v1/bookshelf/save", post(api::bookshelf_save_handler))
+        .route("/api/v1/git/repos", get(api::git_repos_handler))
+        .route("/api/v1/git/repo/:pubkey/:d_tag", get(api::git_repo_handler))
+        .route("/api/v1/git/issue", post(api::git_issue_handler))
+        .route("/api/v1/git/issue/preview", post(api::git_issue_preview_handler))
+        .route("/api/v1/git/status", post(api::git_status_handler))
         .route(
             "/api/v1/publications/:pubkey/:d_tag",
             get(api::get_publication_handler),

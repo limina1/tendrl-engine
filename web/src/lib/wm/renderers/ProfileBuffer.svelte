@@ -53,6 +53,21 @@
 		});
 	}
 
+	function openRepo(repo: { pubkey: string; d_tag: string; name: string }) {
+		// A NIP-34 repository gets its own buffer — a profile-shaped page
+		// for the repo (announcement, issues, threads). The id carries the
+		// coordinate; the d-tag is the trailing segment so it may hold ':'.
+		store.openBuffer({
+			className: 'work',
+			buffer: {
+				id: `repository:${repo.pubkey}:${repo.d_tag}`,
+				kind: 'repository',
+				label: 'repo',
+				kicker: repo.name || repo.d_tag
+			}
+		});
+	}
+
 	function openComment(event: { id: string; content: string; kind?: number }) {
 		// A NIP-22 comment or NIP-84 highlight isn't a standalone reader
 		// destination — route it to the DiscussionViewBuffer, which resolves
@@ -79,6 +94,7 @@
 			onopenpub={openPub}
 			onopenaddr={openAddr}
 			oncomment={openComment}
+			onopenrepo={openRepo}
 			onback={() => store.killFocused()}
 		/>
 	{:else}

@@ -1683,3 +1683,55 @@ lists my shelves + "+ new shelf…" → Add → toast "Shelved on …"; feed
 =BOOKSHELF= tab → pick the shelf → row has =remove=, header has =broadcast=;
 profile (own) → =Bookshelves= tab → shelf heads with =local= + "Broadcast
 shelf", "+ New shelf". Fetch counter must stay flat (bookshelf ≈3, all ≈1).
+
+* NIP-34 git — repositories, issues, status (branch =feat/nip34-git=)
+
+Spec =nips/34.md=. Engine =src/git.rs= (pure parsers + templates +
+=GitEngine=); endpoints =GET /api/v1/git/repos= (=?pubkey=&policy==),
+=GET /api/v1/git/repo/:pubkey/:d_tag= (=?policy==), =POST /api/v1/git/issue=
+(+ =/preview=), =POST /api/v1/git/status=. Comments reuse
+=POST /api/v1/discussions/comment= with =root: {event_id, kind: 1621}= — the
+engine unions the repo's =relays= into the broadcast set for any NIP-34 root.
+Web: profile =Repositories= tab → =repository:<pk>:<d>= buffer
+(=RepositoryBuffer.svelte=: Issues / About, issue detail + thread + reply box,
+"+ New issue", resolve/close/reopen for author or maintainer).
+
+#+begin_src bash
+cargo test --lib git::                          # 11 tests: parsers, status rule, templates
+cargo test --lib query::                        # incl. the packed-id tag filter (#E) path
+
+# real fixtures (relay.ngit.dev is the canonical git relay; ngit = danconwaydev's repo)
+OWNER=a008def15796fba9a0d6fab04e8fd57089285d9fd505da5a83fe8aad57a3564d
+nak req -k 30617 -a $OWNER wss://relay.ngit.dev </dev/null > /tmp/repos.jsonl
+nak req -k 1621 -t a=30617:$OWNER:ngit -l 30 wss://relay.ngit.dev </dev/null > /tmp/issues.jsonl
+nak req -k 1630 -k 1631 -k 1632 -k 1633 -t a=30617:$OWNER:ngit -l 40 wss://relay.ngit.dev </dev/null > /tmp/status.jsonl
+nak req -k 1111 -t K=1621 -l 6 wss://relay.ngit.dev </dev/null > /tmp/comments.jsonl
+
+# scratch engine on :3131 (never the live :3030) — ingest, then read:
+cat /tmp/repos.jsonl /tmp/issues.jsonl /tmp/status.jsonl /tmp/comments.jsonl \
+  | curl -s -X POST localhost:3131/api/v1/ingest -H 'Content-Type: application/x-ndjson' --data-binary @-
+curl -s "localhost:3131/api/v1/git/repos?pubkey=$OWNER&policy=local_only" | python3 -m json.tool | head -40
+curl -s "localhost:3131/api/v1/git/repo/$OWNER/ngit?policy=local_only" \
+  | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["open_count"], len(d["issues"]), d["issues"][0]["status"])'
+curl -s "localhost:3131/api/v1/git/repo/$OWNER/ngit?policy=fetch_always"   # Confirm-gated; approve via fetch-confirm
+
+# write side — throwaway engine key (see the Bookshelf section for login/unlock); relays:[] = local only
+H='Content-Type: application/json'
+curl -s -X POST localhost:3131/api/v1/git/issue -H "$H" \
+  -d "{\"repo\":\"30617:$OWNER:ngit\",\"subject\":\"Test\",\"content\":\"body\",\"labels\":[\"test\"],\"relays\":[]}"
+#   → {"event","broadcast","issue"}; ISSUE=<event.id>
+curl -s -X POST localhost:3131/api/v1/discussions/comment -H "$H" \
+  -d "{\"root\":{\"event_id\":\"$ISSUE\",\"kind\":1621},\"content\":\"hi\",\"relays\":[]}"
+curl -s -X POST localhost:3131/api/v1/git/status -H "$H" -d "{\"issue_id\":\"$ISSUE\",\"status\":\"closed\",\"relays\":[]}"
+# refusals: status on someone else's issue → 401 auth_required; unknown repo → 404
+#+end_src
+
+GUI (headless chromium + CDP, fresh profile — a NIP-07 extension in the
+browser will attach the real identity, so keep GUI checks read-only):
+=globalThis.__tendrl_active_buffer_store__.openBuffer({className:'work',
+buffer:{id:'profile:<hex>',kind:'profile',label:'profile'}})= → =Repositories
+(N)= tab → row opens =repo (name)= buffer → =open/closed/all= chips, row →
+issue detail (status pill, labels, status note, body, thread, reply box) →
+=About= (web, clone + copy, maintainers, relays, euc, state). Note
+=BufferRenderer.svelte= is a hard-coded kind switch — a new buffer kind
+goes there AND in =wm/registry.ts= + =wm/tours.ts=.

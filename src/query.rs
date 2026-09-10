@@ -352,7 +352,31 @@ fn parse_filter(filter_json: &Value) -> Result<nostrdb::Filter> {
                             builder = builder.tags(tag_values.iter().copied(), 'd');
                         }
                         _ => {
-                            builder = builder.tags(tag_values.iter().copied(), tag_char);
+                            // nostrdb packs any 64-hex tag value into a
+                            // 32-byte id at ingest, whatever the tag name —
+                            // so `#E` / `#q` / `#K`-style filters whose
+                            // values are all event ids must be matched as
+                            // ids; a string element never hits them.
+                            let ids: Vec<[u8; 32]> = tag_values
+                                .iter()
+                                .filter_map(|v| {
+                                    let bytes = hex::decode(v).ok()?;
+                                    <[u8; 32]>::try_from(bytes.as_slice()).ok()
+                                })
+                                .collect();
+                            if !ids.is_empty() && ids.len() == tag_values.len() {
+                                builder.start_tag_field(tag_char).map_err(|e| {
+                                    EngineError::InvalidFilter(format!("tag field {tag_char}: {e:?}"))
+                                })?;
+                                for id in &ids {
+                                    builder.add_id_element(id).map_err(|e| {
+                                        EngineError::InvalidFilter(format!("tag id {tag_char}: {e:?}"))
+                                    })?;
+                                }
+                                builder.end_field();
+                            } else {
+                                builder = builder.tags(tag_values.iter().copied(), tag_char);
+                            }
                         }
                     }
                 }

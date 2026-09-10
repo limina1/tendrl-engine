@@ -27,6 +27,7 @@
 		onopenpub,
 		onopenaddr,
 		oncomment,
+		onopenrepo,
 		onback
 	}: {
 		pubkey: string;
@@ -44,11 +45,13 @@
 		 *  comment isn't a standalone reader destination, so the host routes
 		 *  it to a DiscussionViewBuffer that resolves the thread context. */
 		oncomment?: (event: NostrEvent) => void;
+		/** Open a NIP-34 repository (kind 30617) in its own buffer. */
+		onopenrepo?: (repo: api.GitRepository) => void;
 		onback: () => void;
 	} = $props();
 
-	type Tab = 'publications' | 'bookshelves' | 'articles' | 'wikis' | 'specs' | 'sections' | 'highlights' | 'comments' | 'spells';
-	const TAB_NAMES: Tab[] = ['publications', 'bookshelves', 'articles', 'wikis', 'specs', 'sections', 'highlights', 'comments', 'spells'];
+	type Tab = 'publications' | 'bookshelves' | 'articles' | 'wikis' | 'specs' | 'repositories' | 'sections' | 'highlights' | 'comments' | 'spells';
+	const TAB_NAMES: Tab[] = ['publications', 'bookshelves', 'articles', 'wikis', 'specs', 'repositories', 'sections', 'highlights', 'comments', 'spells'];
 	let activeTab: Tab = $state('publications');
 
 	// Buffer-level place for Back history (idea-place-routing.org phase 1):
@@ -93,6 +96,10 @@
 	// NIP specifications (kind 30817) — community-authored protocol specs.
 	// Addressable markdown documents, same shape as wikis.
 	let specs = $state<AddressableSummary[]>([]);
+	// NIP-34 repositories (kind 30617) this author announces — parsed
+	// engine-side (/api/v1/git/repos), newest per d-tag. Clicking one opens
+	// the repository buffer (issues + threads).
+	let repositories = $state<api.GitRepository[]>([]);
 	let sections = $state<NostrEvent[]>([]);
 	// NIP-84 highlights (kind 9802) this author has made on other content.
 	let highlights = $state<NostrEvent[]>([]);
@@ -268,7 +275,7 @@
 	}
 
 	async function loadLocal(pk: string) {
-		const [prof, pubResult, artResult, wikiResult, specResult, secResult, hlResult, comResult, spellResult, bookResult, shelfResult] =
+		const [prof, pubResult, artResult, wikiResult, specResult, secResult, hlResult, comResult, spellResult, bookResult, shelfResult, repoResult] =
 			await Promise.all([
 				api.getProfile(pk),
 				api.queryEvents([{ kinds: [30040], authors: [pk], limit: tabLimits.publications }], 'local_only'),
@@ -280,7 +287,8 @@
 				api.queryEvents([{ kinds: [1111], authors: [pk], limit: tabLimits.comments }], 'local_only'),
 				api.listSpells(pk, tabLimits.spells, 'local_only'),
 				api.getSpellBooks(pk, 'local_only'),
-				api.listBookshelves(pk).catch(() => ({ pubkey: pk, shelves: [] as ShelfView[] }))
+				api.listBookshelves(pk).catch(() => ({ pubkey: pk, shelves: [] as ShelfView[] })),
+				api.listRepositories(pk, 'local_only').catch(() => ({ pubkey: pk, repositories: [] as api.GitRepository[] }))
 			]);
 		profile = prof.found ? prof : null;
 		// 30040 publications: same dedup, but kept as the existing
@@ -328,6 +336,7 @@
 		spells = spellResult.entries; // engine returns newest-first
 		spellBooks = bookResult.books;
 		shelfViews = shelfResult.shelves;
+		repositories = repoResult.repositories;
 	}
 
 	// Tab → which event kinds to pull. The top-bar Fetch button pulls
@@ -339,6 +348,7 @@
 		articles: [30023],
 		wikis: [30818],
 		specs: [30817],
+		repositories: [30617],
 		sections: [30041],
 		highlights: [9802],
 		comments: [1111],
@@ -351,6 +361,7 @@
 		articles: 'articles',
 		wikis: 'wikis',
 		specs: 'specs',
+		repositories: 'repositories',
 		sections: 'sections',
 		highlights: 'highlights',
 		comments: 'comments',
@@ -372,6 +383,7 @@
 		articles: 200,
 		wikis: 200,
 		specs: 200,
+		repositories: 200,
 		sections: 200,
 		highlights: 200,
 		comments: 200,
@@ -384,6 +396,7 @@
 			articles: false,
 			wikis: false,
 			specs: false,
+			repositories: false,
 			sections: false,
 			highlights: false,
 			comments: false,
@@ -406,6 +419,7 @@
 		if (tab === 'articles') return articles;
 		if (tab === 'wikis') return wikis;
 		if (tab === 'specs') return specs;
+		if (tab === 'repositories') return repositories;
 		if (tab === 'sections') return sections;
 		if (tab === 'highlights') return highlights;
 		if (tab === 'spells') {
@@ -712,6 +726,8 @@
 		} else if (activeTab === 'articles' || activeTab === 'wikis' || activeTab === 'specs') {
 			const x = item as { addr: { kind: number; pubkey: string; d_tag: string }; title: string | null };
 			onopenaddr?.(x.addr, x.title);
+		} else if (activeTab === 'repositories') {
+			onopenrepo?.(item as api.GitRepository);
 		} else if (activeTab === 'sections') {
 			const sec = item as NostrEvent;
 			const dTag = getTag(sec, 'd') || '';
@@ -748,6 +764,9 @@
 			// Comments and highlights aren't addressable — feed the modal the
 			// raw event.
 			app.eventModalData = item as NostrEvent;
+		} else if (activeTab === 'repositories') {
+			const r = item as api.GitRepository;
+			app.openAddressableInModal({ kind: 30617, pubkey: r.pubkey, d_tag: r.d_tag });
 		} else if (activeTab === 'sections') {
 			const sec = item as NostrEvent;
 			const dTag = getTag(sec, 'd') || '';
@@ -941,6 +960,7 @@
 		{@render tabCell('articles', 'Articles', articles.length)}
 		{@render tabCell('wikis', 'Wikis', wikis.length)}
 		{@render tabCell('specs', 'Specs', specs.length)}
+		{@render tabCell('repositories', 'Repositories', repositories.length)}
 		{@render tabCell('sections', 'Sections', sections.length)}
 		{@render tabCell('highlights', 'Highlights', highlights.length)}
 		{@render tabCell('comments', 'Comments', comments.length)}
@@ -1111,6 +1131,45 @@
 							/>
 							<span class="item-meta">long-form</span>
 							{@render menuBtn(() => app.openAddressableInModal(art.addr))}
+						</div>
+					</div>
+				{/each}
+			{/if}
+		{:else if activeTab === 'repositories'}
+			{#if repositories.length === 0}
+				<div class="empty">No repositories</div>
+			{:else}
+				{#each repositories as repo, i (`${repo.pubkey}:${repo.d_tag}`)}
+					<!-- svelte-ignore a11y_no_static_element_interactions -->
+					<div
+						class="item pub-item"
+						class:item--cursor={i === cursor}
+						data-cursor={i}
+						onclick={() => { cursor = i; onopenrepo?.(repo); }}
+						onkeydown={(e) => { if (e.key === 'Enter') onopenrepo?.(repo); }}
+						onfocus={() => (cursor = i)}
+						role="button"
+						tabindex="0"
+					>
+						<div class="item-main">
+							<span class="item-ref">{repo.d_tag}{repo.fork_of ? ' · fork' : ''}</span>
+							<span class="item-title">{repo.name || repo.d_tag}</span>
+							{#if repo.description}
+								<p class="item-preview">{repo.description}</p>
+							{/if}
+							{#if repo.hashtags.length}
+								<p class="spell-topics">{repo.hashtags.map((t) => `#${t}`).join(' ')}</p>
+							{/if}
+							<span class="item-time">{formatTime(repo.created_at)}</span>
+						</div>
+						<div class="item-rail">
+							<PoolStateBadges
+								item={null}
+								signed={true}
+								relays={repo.seen_on}
+							/>
+							<span class="item-meta">{repo.clone.length} clone url{repo.clone.length === 1 ? '' : 's'}</span>
+							{@render menuBtn(() => app.openAddressableInModal({ kind: 30617, pubkey: repo.pubkey, d_tag: repo.d_tag }))}
 						</div>
 					</div>
 				{/each}

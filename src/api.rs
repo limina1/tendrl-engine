@@ -1484,6 +1484,256 @@ pub async fn bookshelf_save_handler(
     })))
 }
 
+// ─── NIP-34 git: repositories, issues, status ────────────────────────────
+
+#[derive(Debug, Deserialize)]
+pub struct GitReposQuery {
+    /// Defaults to the engine's own identity.
+    pub pubkey: Option<String>,
+    pub policy: Option<String>,
+}
+
+/// GET /api/v1/git/repos?pubkey=&policy= — every kind-30617 repository a
+/// pubkey announces (newest per `d` tag). The profile's "repositories"
+/// section. Default policy is local-first; `fetch_always` is Confirm-gated.
+pub async fn git_repos_handler(
+    State(engine): State<AppState>,
+    axum::extract::Query(query): axum::extract::Query<GitReposQuery>,
+) -> Result<Json<Value>, EngineError> {
+    let policy = match &query.policy {
+        Some(p) => p.parse()?,
+        None => FetchPolicy::default(),
+    };
+    let pubkey = match query.pubkey.as_deref().map(str::trim).filter(|p| !p.is_empty()) {
+        Some(p) => resolve_pubkey_input(p)?,
+        None => engine
+            .my_pubkey()
+            .ok_or_else(|| EngineError::NotFound("no identity configured".into()))?,
+    };
+    let repos = crate::git::GitEngine::new(&engine).list(&pubkey, policy).await?;
+    Ok(Json(json!({ "pubkey": pubkey, "repositories": repos })))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct GitRepoQuery {
+    pub policy: Option<String>,
+}
+
+/// GET /api/v1/git/repo/:pubkey/:d_tag?policy= — one repository with its
+/// issues (status folded in, comment counts) and newest state announcement.
+/// 404 when the store doesn't hold the announcement and no fetch happened.
+pub async fn git_repo_handler(
+    State(engine): State<AppState>,
+    Path((pubkey, d_tag)): Path<(String, String)>,
+    axum::extract::Query(query): axum::extract::Query<GitRepoQuery>,
+) -> Result<Json<crate::git::LoadedRepository>, EngineError> {
+    let policy = match &query.policy {
+        Some(p) => p.parse()?,
+        None => FetchPolicy::default(),
+    };
+    let pubkey = resolve_pubkey_input(&pubkey)?;
+    let loaded = crate::git::GitEngine::new(&engine)
+        .load(&pubkey, &d_tag, policy)
+        .await?;
+    Ok(Json(loaded))
+}
+
+/// Accept hex or an npub for a path/query pubkey.
+fn resolve_pubkey_input(input: &str) -> Result<String, EngineError> {
+    let input = input.trim();
+    if is_hex64(input) {
+        return Ok(input.to_lowercase());
+    }
+    if input.starts_with("npub1") {
+        return crate::identity::decode_npub(input)
+            .map_err(|e| EngineError::BadRequest(format!("bad npub: {e}")));
+    }
+    Err(EngineError::BadRequest(
+        "pubkey must be 64-char hex or an npub".into(),
+    ))
+}
+
+/// The store's newest announcement for a `30617:pubkey:d` coordinate.
+async fn git_repo_from_coordinate(
+    engine: &AppState,
+    coordinate: &str,
+) -> Result<crate::git::Repository, EngineError> {
+    let addr = NAddr::from_a_tag(coordinate.trim())
+        .filter(|a| a.kind == crate::git::KIND_REPOSITORY && is_hex64(&a.pubkey))
+        .ok_or_else(|| {
+            EngineError::BadRequest(format!(
+                "repo must be a 30617:<pubkey>:<d> coordinate, got {coordinate:?}"
+            ))
+        })?;
+    let events = engine
+        .get_events(
+            vec![crate::git::Repository::filter_one(&addr.pubkey, &addr.d_tag)],
+            FetchPolicy::LocalOnly,
+            None,
+        )
+        .await?
+        .events;
+    crate::git::Repository::newest(&events, &addr.pubkey, &addr.d_tag).ok_or_else(|| {
+        EngineError::NotFound(format!(
+            "repository {coordinate} is not in the store — open it first"
+        ))
+    })
+}
+
+/// Where a NIP-34 conversation event goes: the caller's override, else the
+/// engine's publish set unioned with the repository's own `relays` (the
+/// spec says issues and comments SHOULD reach those).
+fn git_broadcast_relays(
+    engine: &AppState,
+    override_relays: Option<Vec<String>>,
+    repo_relays: &[String],
+) -> Vec<String> {
+    if let Some(r) = override_relays {
+        return r;
+    }
+    let mut relays = engine.publish_relays();
+    for r in repo_relays {
+        if !relays.contains(r) {
+            relays.push(r.clone());
+        }
+    }
+    relays
+}
+
+#[derive(Debug, Deserialize)]
+pub struct GitIssueRequest {
+    /// `30617:<pubkey>:<d>` of the repository being filed against.
+    pub repo: String,
+    pub subject: String,
+    pub content: String,
+    #[serde(default)]
+    pub labels: Vec<String>,
+    /// Broadcast override; defaults to publish relays ∪ the repo's relays.
+    #[serde(default)]
+    pub relays: Option<Vec<String>>,
+}
+
+async fn git_issue_template_from_request(
+    engine: &AppState,
+    req: &GitIssueRequest,
+) -> Result<(crate::signing::EventTemplate, crate::git::Repository, Vec<String>), EngineError> {
+    if req.content.len() > MAX_DISCUSSION_CONTENT_BYTES {
+        return Err(EngineError::BadRequest(format!(
+            "issue body exceeds {MAX_DISCUSSION_CONTENT_BYTES} bytes"
+        )));
+    }
+    let repo = git_repo_from_coordinate(engine, &req.repo).await?;
+    let hint = repo
+        .relays
+        .first()
+        .cloned()
+        .unwrap_or_else(|| discussion_relay_hint(engine));
+    let template = crate::git::issue_template(
+        &repo,
+        &req.subject,
+        &req.content,
+        &req.labels,
+        &hint,
+        unix_now_i64(),
+    )?;
+    let relays = git_broadcast_relays(engine, req.relays.clone(), &repo.relays);
+    Ok((template, repo, relays))
+}
+
+/// POST /api/v1/git/issue/preview — the unsigned kind-1621 template and
+/// the relay set a publish would use. Shares the builder with the publish
+/// handler so the preview can't drift from what gets signed.
+pub async fn git_issue_preview_handler(
+    State(engine): State<AppState>,
+    Json(req): Json<GitIssueRequest>,
+) -> Result<Json<Value>, EngineError> {
+    let (template, repo, relays) = git_issue_template_from_request(&engine, &req).await?;
+    Ok(Json(json!({
+        "template": template,
+        "repository": repo,
+        "relays": relays
+    })))
+}
+
+/// POST /api/v1/git/issue — file an issue: sign (active identity), ingest
+/// locally, broadcast (Confirm-gated) to the publish relays plus the
+/// repository's own. Replies to the issue go through
+/// `/api/v1/discussions/comment` with `root: {event_id, kind: 1621}`.
+pub async fn git_issue_handler(
+    State(engine): State<AppState>,
+    Extension(signing): Extension<crate::signing::SigningController>,
+    Json(req): Json<GitIssueRequest>,
+) -> Result<Json<Value>, EngineError> {
+    let (template, _repo, relays) = git_issue_template_from_request(&engine, &req).await?;
+    let resp = sign_ingest_broadcast(&engine, &signing, template, Some(relays)).await?;
+    let issue = crate::git::Issue::from_event(&resp.event)?;
+    Ok(Json(json!({
+        "event": resp.event,
+        "broadcast": resp.broadcast,
+        "issue": issue
+    })))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct GitStatusRequest {
+    pub issue_id: String,
+    /// `open` | `resolved` | `closed` | `draft`.
+    pub status: String,
+    #[serde(default)]
+    pub content: String,
+    #[serde(default)]
+    pub relays: Option<Vec<String>>,
+}
+
+/// POST /api/v1/git/status — set an issue's status (kind 1630–1633). Only
+/// the issue author or a repository maintainer's status counts per spec,
+/// so anyone else is refused up front rather than publishing a no-op.
+pub async fn git_status_handler(
+    State(engine): State<AppState>,
+    Extension(signing): Extension<crate::signing::SigningController>,
+    Json(req): Json<GitStatusRequest>,
+) -> Result<Json<Value>, EngineError> {
+    if !is_hex64(&req.issue_id) {
+        return Err(EngineError::BadRequest("issue_id must be 64-char hex".into()));
+    }
+    let status: crate::git::IssueStatus = req.status.parse()?;
+    let me = require_active_pubkey(&signing).await?;
+    let git = crate::git::GitEngine::new(&engine);
+    let (issue, repo) = git
+        .issue(&req.issue_id)
+        .await?
+        .ok_or_else(|| EngineError::NotFound("issue is not in the store".into()))?;
+    let repo = repo.ok_or_else(|| {
+        EngineError::NotFound("the issue's repository is not in the store — open it first".into())
+    })?;
+    if issue.pubkey != me.to_lowercase() && !repo.is_maintainer(&me) {
+        return Err(EngineError::Auth(
+            "only the issue author or a repository maintainer can change its status".into(),
+        ));
+    }
+    let hint = repo
+        .relays
+        .first()
+        .cloned()
+        .unwrap_or_else(|| discussion_relay_hint(&engine));
+    let template = crate::git::status_template(
+        &repo,
+        &issue,
+        status,
+        &req.content,
+        &me,
+        &hint,
+        unix_now_i64(),
+    );
+    let relays = git_broadcast_relays(&engine, req.relays, &repo.relays);
+    let resp = sign_ingest_broadcast(&engine, &signing, template, Some(relays)).await?;
+    Ok(Json(json!({
+        "event": resp.event,
+        "broadcast": resp.broadcast,
+        "status": status
+    })))
+}
+
 /// GET /api/v1/publications/relays
 ///
 /// Every relay a local publication index (kind 30040) has been seen on,
@@ -3956,6 +4206,7 @@ fn describe_discussion_steps(
     for k in kinds {
         let name = match k {
             1111 => "comments",
+            1621 => "issues",
             9802 => "highlights",
             _ => "events",
         };
@@ -4208,6 +4459,13 @@ pub async fn discussions_list_handler(
         let mut by_e = make_base();
         by_e.insert("#e".to_string(), json!(event_ids));
         filters.push(Value::Object(by_e));
+
+        // NIP-22 nested replies carry only the thread root in uppercase
+        // `E`; their lowercase `e` is the parent comment. Without this a
+        // reply-to-a-reply never reaches the thread.
+        let mut by_upper = make_base();
+        by_upper.insert("#E".to_string(), json!(event_ids));
+        filters.push(Value::Object(by_upper));
     }
 
     // The confirm modal can override the relay set; otherwise use the
@@ -4881,7 +5139,35 @@ pub async fn discussion_comment_handler(
     )
     .map_err(EngineError::BadRequest)?;
 
-    let resp = sign_ingest_broadcast(&engine, &signing, template, req.relays).await?;
+    // NIP-34: a comment under an issue / patch / PR SHOULD also reach the
+    // repository's own relays. Resolved engine-side from the root's `a`
+    // tag (or, for a reply, the parent's `E` chain) — the client only
+    // knows the event id.
+    let relays = match req.relays {
+        Some(r) => Some(r),
+        None => {
+            let root_event = match &parent_ref {
+                Some(p) => crate::query::query_by_id(engine.ndb(), &p.event_id)?
+                    .or_else(|| p.event.clone()),
+                None => match req.root.as_ref().and_then(|r| r.event_id.as_deref()) {
+                    Some(id) => crate::query::query_by_id(engine.ndb(), id)?,
+                    None => None,
+                },
+            };
+            match root_event {
+                Some(ev) => {
+                    let repo_relays = crate::git::GitEngine::new(&engine)
+                        .conversation_relays(&ev)
+                        .await;
+                    (!repo_relays.is_empty())
+                        .then(|| git_broadcast_relays(&engine, None, &repo_relays))
+                }
+                None => None,
+            }
+        }
+    };
+
+    let resp = sign_ingest_broadcast(&engine, &signing, template, relays).await?;
     Ok(Json(resp))
 }
 
