@@ -1069,36 +1069,135 @@ pub async fn list_publications_handler(
     // Convert to summary format
     let summaries: Vec<Value> = publications
         .iter()
-        .map(|p| {
-            let local = tracker
-                .as_ref()
-                .map(|t| t.is_local(&p.addr.to_a_tag()))
-                .unwrap_or(false);
-            let contained_in = containing
-                .get(&p.addr.to_a_tag())
-                .cloned()
-                .unwrap_or_default();
-            json!({
-                "addr": p.addr,
-                "title": p.title,
-                "summary": p.summary,
-                "image": p.image,
-                "author_pubkey": p.author_pubkey,
-                "version": p.version,
-                "created_at": p.created_at,
-                "section_count": p.section_count(),
-                "relays": p.relays,
-                "signed": p.signed,
-                "forked": p.forked,
-                "local": local,
-                "contained_in": contained_in
-            })
-        })
+        .map(|p| publication_summary_json(p, tracker.as_ref(), &containing))
         .collect();
 
     Ok(Json(json!({
         "publications": summaries,
         "count": summaries.len()
+    })))
+}
+
+/// The feed-row shape of a publication (`PublicationSummary` on the web):
+/// header fields + provenance + the local/contained-in derivations. Shared
+/// by the feed listing and the bookshelf so both render the same row.
+fn publication_summary_json(
+    p: &crate::publication::Publication,
+    tracker: Option<&crate::drafts::LocalPublicationTracker>,
+    containing: &std::collections::HashMap<String, Vec<crate::publication::NAddr>>,
+) -> Value {
+    let a_tag = p.addr.to_a_tag();
+    let local = tracker.map(|t| t.is_local(&a_tag)).unwrap_or(false);
+    let contained_in = containing.get(&a_tag).cloned().unwrap_or_default();
+    json!({
+        "addr": p.addr,
+        "title": p.title,
+        "summary": p.summary,
+        "image": p.image,
+        "author_pubkey": p.author_pubkey,
+        "version": p.version,
+        "created_at": p.created_at,
+        "section_count": p.section_count(),
+        "relays": p.relays,
+        "signed": p.signed,
+        "forked": p.forked,
+        "local": local,
+        "contained_in": contained_in
+    })
+}
+
+/// Query for `GET /api/v1/bookshelf`.
+#[derive(Debug, Deserialize)]
+pub struct BookshelfQuery {
+    /// `local_only` (default) / `local_first` / `fetch_always` — the last
+    /// two are Confirm-gated and backfill missing indexes.
+    pub policy: Option<String>,
+    /// Whose bookshelf. Defaults to the signed-in user's.
+    pub pubkey: Option<String>,
+    /// Which shelf (the 30045 d-tag). Defaults to `my-book-collection`.
+    pub shelf: Option<String>,
+}
+
+/// GET /api/v1/bookshelf — the user's saved books (kind 30045, d-tag
+/// `my-book-collection`, see `bookshelf.rs`).
+///
+/// Response: `{ pubkey, shelf, shelves: [ShelfSummary], bookshelf:
+/// <Bookshelf> | null, books: [row] }`. `shelves` is every 30045 the pubkey
+/// publishes (named shelves included), `bookshelf` the one asked for. Each
+/// row is a `PublicationSummary` when the store holds the index, else the
+/// bare reference with `missing: true` so the UI can offer a fetch. A
+/// `null` bookshelf = no event known for that shelf.
+pub async fn bookshelf_handler(
+    State(engine): State<AppState>,
+    axum::extract::Query(query): axum::extract::Query<BookshelfQuery>,
+) -> Result<Json<Value>, EngineError> {
+    let policy = match &query.policy {
+        Some(p) => p.parse()?,
+        None => FetchPolicy::default(),
+    };
+    let pubkey = match query.pubkey.as_deref().map(str::trim).filter(|p| !p.is_empty()) {
+        Some(p) => p.to_lowercase(),
+        None => engine.my_pubkey().ok_or_else(|| {
+            EngineError::NotFound("No identity — sign in to see your bookshelf".into())
+        })?,
+    };
+
+    let shelf_d = query
+        .shelf
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or(crate::bookshelf::BOOKSHELF_D_TAG)
+        .to_string();
+    let loaded = crate::bookshelf::BookshelfEngine::new(&engine)
+        .load(&pubkey, &shelf_d, policy)
+        .await?;
+    let Some(shelf) = loaded.bookshelf else {
+        return Ok(Json(json!({
+            "pubkey": pubkey,
+            "shelf": shelf_d,
+            "shelves": loaded.shelves,
+            "bookshelf": null,
+            "books": []
+        })));
+    };
+    let shelved = loaded.books;
+
+    let tracker = local_pub_tracker(&engine).ok();
+    let coords: Vec<crate::publication::NAddr> = shelved
+        .iter()
+        .filter(|b| b.publication.is_some())
+        .map(|b| b.reference.addr.clone())
+        .collect();
+    let containing = PublicationEngine::new(&engine)
+        .containing_publications(&coords)
+        .await
+        .unwrap_or_default();
+
+    let books: Vec<Value> = shelved
+        .iter()
+        .map(|b| match &b.publication {
+            Some(p) => {
+                let mut row = publication_summary_json(p, tracker.as_ref(), &containing);
+                row["relay_hint"] = json!(b.reference.relay_hint);
+                row["missing"] = json!(false);
+                row
+            }
+            None => json!({
+                "addr": b.reference.addr,
+                "relay_hint": b.reference.relay_hint,
+                "event_hint": b.reference.event_hint,
+                "missing": true
+            }),
+        })
+        .collect();
+
+    Ok(Json(json!({
+        "pubkey": pubkey,
+        "shelf": shelf_d,
+        "shelves": loaded.shelves,
+        "bookshelf": shelf,
+        "books": books
     })))
 }
 

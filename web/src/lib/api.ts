@@ -1,4 +1,5 @@
 import type {
+	BookshelfResponse,
 	FeedRelays,
 	ChatResponse,
 	SendMessageRequest,
@@ -775,6 +776,18 @@ export function listPublications(
 	if (general) url += `&general=true`;
 	if (relay) url += `&relay=${encodeURIComponent(relay)}`;
 	return fetchJson<{ publications: PublicationSummary[]; count: number }>(url);
+}
+
+/** The signed-in user's bookshelf (kind 30045). `fetch_always` pulls the
+ *  list from the read relays (Confirm-gated) and backfills missing indexes;
+ *  `local_only` never touches relays. 404 when there is no identity. */
+export function getBookshelf(
+	policy: 'local_only' | 'local_first' | 'fetch_always' = 'local_only',
+	shelf?: string | null
+) {
+	let url = `/api/v1/bookshelf?policy=${policy}`;
+	if (shelf) url += `&shelf=${encodeURIComponent(shelf)}`;
+	return fetchJson<BookshelfResponse>(url);
 }
 
 /** Every relay a local publication index has been seen on — the feed's

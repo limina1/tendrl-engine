@@ -27,6 +27,7 @@ import type {
 	PublicationSummary,
 	FeedRelays,
 	FeedTimeline,
+	BookshelfResponse,
 	PublicationDetail,
 	LazySection,
 	ComposeState,
@@ -207,6 +208,19 @@ function _createAppState() {
 	// the effect depend on a value the same call writes → request storm
 	// (see project_effect_async_state_loop). Never rendered.
 	let feedRelaysLoading = false;
+	// --- Bookshelf (feed's second mode) ---
+	// null = not loaded yet; a response with bookshelf:null = no event known.
+	let bookshelf: BookshelfResponse | null = $state(null);
+	let bookshelfLoading = $state(false);
+	let bookshelfSyncing = $state(false);
+	// 'none' = no identity (404) — the UI shows a sign-in hint instead of an
+	// empty shelf. Set from the response path, never rendered as a spinner.
+	let bookshelfError: 'none' | 'unavailable' | null = $state(null);
+	// Which shelf (30045 d-tag) the bookshelf mode shows; null = the default
+	// `my-book-collection`. Threaded into every getBookshelf call.
+	let bookshelfShelf: string | null = $state(null);
+	// Plain re-entry latch (see feedRelaysLoading — never $state here).
+	let bookshelfInflight = false;
 	// Guards the one-time cold-cache auto-fetch in loadFeed() so an empty
 	// db doesn't re-pop the fetch-confirm modal on every loadFeed() call
 	// (FeedBuffer mount, search-clear, etc.). Plain boolean, not $state —
@@ -1254,6 +1268,60 @@ function _createAppState() {
 		} finally {
 			feedRelaysLoading = false;
 		}
+	}
+
+	/** Load the signed-in user's bookshelf from the local store. Called by
+	 *  FeedBuffer when its mode flips to bookshelf; write-only to reactive
+	 *  state after the await. */
+	async function loadBookshelf() {
+		if (bookshelfInflight) return;
+		bookshelfInflight = true;
+		bookshelfLoading = true;
+		const forShelf = bookshelfShelf;
+		try {
+			const resp = await api.getBookshelf('local_only', forShelf);
+			if (forShelf !== bookshelfShelf) return;
+			bookshelf = resp;
+			bookshelfError = null;
+			api.prefetchProfiles([
+				...new Set(resp.books.filter((b) => !b.missing).map((b) => (b as { author_pubkey: string }).author_pubkey))
+			]);
+		} catch (e) {
+			bookshelfError = e instanceof Error && /404|identity/i.test(e.message) ? 'none' : 'unavailable';
+		} finally {
+			bookshelfLoading = false;
+			bookshelfInflight = false;
+		}
+	}
+
+	/** Pull the bookshelf from the read relays (Confirm-gated) and backfill
+	 *  the indexes it references. */
+	async function handleBookshelfSync() {
+		if (bookshelfSyncing) return;
+		bookshelfSyncing = true;
+		const forShelf = bookshelfShelf;
+		try {
+			const resp = await api.getBookshelf('fetch_always', forShelf);
+			if (forShelf !== bookshelfShelf) return;
+			bookshelf = resp;
+			bookshelfError = null;
+			api.prefetchProfiles([
+				...new Set(resp.books.filter((b) => !b.missing).map((b) => (b as { author_pubkey: string }).author_pubkey))
+			]);
+			void loadFeedRelays();
+		} catch (e) {
+			bookshelfError = e instanceof Error && /404|identity/i.test(e.message) ? 'none' : 'unavailable';
+		} finally {
+			bookshelfSyncing = false;
+		}
+	}
+
+	/** Show another shelf (a 30045 d-tag); reloads from the local store. */
+	async function selectBookshelfShelf(shelf: string | null) {
+		const next = shelf || null;
+		if (next === bookshelfShelf) return;
+		bookshelfShelf = next;
+		await loadBookshelf();
 	}
 
 	/** Switch the feed to another timeline and reload it from the local
@@ -4585,6 +4653,11 @@ function _createAppState() {
 		get feedGeneral() { return feedGeneral; },
 		get feedTimeline() { return feedTimeline; },
 		get feedRelays() { return feedRelays; },
+		get bookshelf() { return bookshelf; },
+		get bookshelfLoading() { return bookshelfLoading; },
+		get bookshelfSyncing() { return bookshelfSyncing; },
+		get bookshelfError() { return bookshelfError; },
+		get bookshelfShelf() { return bookshelfShelf; },
 
 		// Search
 		get searchResults() { return searchResults; },
@@ -4885,6 +4958,9 @@ function _createAppState() {
 		toggleFeedGeneral,
 		loadFeedRelays,
 		selectFeedTimeline,
+		loadBookshelf,
+		handleBookshelfSync,
+		selectBookshelfShelf,
 		handleFeedLoadMore,
 		loadFeed,
 		openPublication,

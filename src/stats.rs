@@ -180,6 +180,7 @@ pub fn kind_label(kind: u32) -> Option<&'static str> {
         30023 => "long-form article",
         30040 => "publication index",
         30041 => "publication section",
+        30045 => "bookshelf",
         30078 => "app data",
         30617 => "repository",
         30618 => "repository state",

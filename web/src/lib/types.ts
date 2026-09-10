@@ -276,6 +276,45 @@ export interface FeedRelays {
 	total: number;
 }
 
+/** The user's bookshelf event (kind 30045, d-tag `my-book-collection`),
+ *  parsed engine-side (`bookshelf.rs`). */
+export interface Bookshelf {
+	pubkey: string;
+	d_tag: string;
+	event_id: string;
+	created_at: number;
+	title?: string;
+	client?: string;
+	books: { addr: NAddr; relay_hint?: string; event_hint?: string }[];
+	events: { id: string; relay_hint?: string; pubkey_hint?: string }[];
+	relays: string[];
+}
+
+/** One bookshelf row: a feed summary when the store holds the index, else
+ *  the bare reference with `missing: true`. */
+export type BookshelfRow =
+	| (PublicationSummary & { missing: false; relay_hint?: string | null })
+	| { addr: NAddr; relay_hint?: string | null; event_hint?: string | null; missing: true };
+
+/** One row of the shelf picker — every kind-30045 the pubkey publishes,
+ *  the default `my-book-collection` first. */
+export interface ShelfSummary {
+	d_tag: string;
+	title?: string;
+	created_at: number;
+	count: number;
+}
+
+export interface BookshelfResponse {
+	pubkey: string;
+	/** The shelf (d-tag) this response resolved. */
+	shelf: string;
+	shelves: ShelfSummary[];
+	/** Null = no event known for that shelf. */
+	bookshelf: Bookshelf | null;
+	books: BookshelfRow[];
+}
+
 /** Which timeline the feed lists. `null` = every root regardless of
  *  provenance; `'local'` = unpublished only; otherwise a relay URL. */
 export type FeedTimeline = string | null;
