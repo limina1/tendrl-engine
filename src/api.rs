@@ -1011,6 +1011,12 @@ pub struct PublicationsQuery {
     /// engine fetches broad regardless (there's no one to scope to).
     #[serde(default)]
     pub general: bool,
+    /// Restrict to one relay timeline: only roots whose index event carries
+    /// provenance from this relay (URL normalized). The sentinel `local`
+    /// selects roots with NO relay provenance (signed here, never accepted
+    /// by a relay). With `policy=fetch_always` a relay URL also becomes the
+    /// sole fetch target, so a timeline sync pulls from its own relay.
+    pub relay: Option<String>,
 }
 
 fn default_limit() -> usize {
@@ -1036,7 +1042,13 @@ pub async fn list_publications_handler(
 
     let pub_engine = PublicationEngine::new(&engine);
     let publications = pub_engine
-        .list_root_publications(policy, query.limit, query.before, query.general)
+        .list_root_publications(
+            policy,
+            query.limit,
+            query.before,
+            query.general,
+            query.relay.as_deref(),
+        )
         .await?;
 
     // "local" = a signed snapshot the user created that hasn't (successfully)
@@ -1088,6 +1100,22 @@ pub async fn list_publications_handler(
         "publications": summaries,
         "count": summaries.len()
     })))
+}
+
+/// GET /api/v1/publications/relays
+///
+/// Every relay a local publication index (kind 30040) has been seen on,
+/// with a distinct-coordinate count per relay plus the number of
+/// coordinates with no provenance at all. This is the feed's timeline
+/// picker: each row is one relay timeline (`?relay=<url>`), `local` is
+/// the unpublished one (`?relay=local`).
+pub async fn feed_relays_handler(
+    State(engine): State<AppState>,
+) -> Result<Json<Value>, EngineError> {
+    let prov = engine
+        .relay_provenance(crate::publication::KIND_PUBLICATION_INDEX as u32)
+        .await?;
+    Ok(Json(serde_json::to_value(prov)?))
 }
 
 /// Query parameters for policy override (shared by multiple handlers)
@@ -5059,7 +5087,7 @@ async fn find_published_publication(
     }
     let slug = ComposeState::generate_d_tag(title);
     let pubs = pub_engine
-        .list_root_publications(FetchPolicy::LocalOnly, 50, None, false)
+        .list_root_publications(FetchPolicy::LocalOnly, 50, None, false, None)
         .await?;
     let Some(m) = pubs
         .into_iter()

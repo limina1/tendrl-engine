@@ -1,4 +1,5 @@
 import type {
+	FeedRelays,
 	ChatResponse,
 	SendMessageRequest,
 	EditBufferRequest,
@@ -759,16 +760,27 @@ export function deleteDraft(id: string): Promise<{ deleted: string }> {
 
 // Publications API
 
+/** List root publications. `relay` scopes the page to one relay timeline
+ *  (a URL, or `'local'` for unpublished roots); under `fetch_always` a relay
+ *  URL is also the sole fetch target. Null/undefined = the composite list. */
 export function listPublications(
 	limit = 20,
 	policy = 'local_only',
 	before?: number,
-	general = false
+	general = false,
+	relay?: string | null
 ) {
 	let url = `/api/v1/publications?limit=${limit}&policy=${policy}`;
 	if (before) url += `&before=${before}`;
 	if (general) url += `&general=true`;
+	if (relay) url += `&relay=${encodeURIComponent(relay)}`;
 	return fetchJson<{ publications: PublicationSummary[]; count: number }>(url);
+}
+
+/** Every relay a local publication index has been seen on — the feed's
+ *  timeline picker rows. Engine-side scan of kind 30040 provenance. */
+export function listFeedRelays() {
+	return fetchJson<FeedRelays>('/api/v1/publications/relays');
 }
 
 /** Fetch a publication and its table of contents.

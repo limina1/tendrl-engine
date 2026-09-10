@@ -16,14 +16,99 @@
 	const app = getAppState();
 	const store = getActiveStore();
 
-	let cursor = $state(0);
+	/** The feed's two modes: per-relay timelines (one relay's publications
+	 *  at a time, picked from the relays the local store has provenance
+	 *  from) and the bookshelf (the user's saved-books list event — the
+	 *  data source lands later; the mode is here so the switch exists). */
+	type FeedMode = 'relays' | 'bookshelf';
+	type FeedViewState = { mode: FeedMode; cursor: number };
+
+	// View state (mode + cursor) is per-buffer and survives a buffer switch
+	// via store.bufferState; the selected timeline lives in AppState because
+	// every listPublications call has to carry it.
+	// svelte-ignore state_referenced_locally
+	const savedView = store.bufferState.get(buffer.id) as FeedViewState | undefined;
+
+	let mode = $state<FeedMode>(savedView?.mode ?? 'relays');
+	let cursor = $state(savedView?.cursor ?? 0);
 	let listEl: HTMLDivElement | undefined = $state();
+
+	$effect(() => {
+		return () => {
+			store.bufferState.set(buffer.id, { mode, cursor } satisfies FeedViewState);
+		};
+	});
 
 	$effect(() => {
 		untrack(() => {
 			app.loadFeed();
+			void app.loadFeedRelays();
 		});
 	});
+
+	/** Picker value ↔ timeline: the composite is the empty string (a
+	 *  `<select>` can't hold null), everything else passes through. */
+	const ALL = '';
+	const pickerValue = $derived(app.feedTimeline ?? ALL);
+
+	/** Rows for the picker, in the engine's order (most-indexed relay
+	 *  first). Labels carry no counts: the engine tallies every index a
+	 *  relay holds, nested and empty ones included, while the feed lists
+	 *  roots — the header's count is the honest number. The selected
+	 *  timeline is always present even when the scan no longer lists it
+	 *  (e.g. its last publication was ignored) so the select never goes
+	 *  blank. */
+	const pickerRows = $derived.by(() => {
+		const rows: { value: string; label: string }[] = [];
+		const rel = app.feedRelays;
+		rows.push({ value: ALL, label: 'all relays' });
+		if (rel && rel.local > 0) rows.push({ value: 'local', label: 'local only' });
+		for (const r of rel?.relays ?? []) {
+			rows.push({ value: r.relay, label: relayHost(r.relay) });
+		}
+		const cur = app.feedTimeline;
+		if (cur && !rows.some((r) => r.value === cur)) {
+			rows.push({ value: cur, label: cur === 'local' ? 'local only' : relayHost(cur) });
+		}
+		return rows;
+	});
+
+	/** `wss://relay.damus.io` → `relay.damus.io` for labels. */
+	function relayHost(url: string): string {
+		return url.replace(/^wss?:\/\//, '').replace(/\/$/, '');
+	}
+
+	const timelineLabel = $derived(
+		app.feedTimeline === null
+			? 'all relays'
+			: app.feedTimeline === 'local'
+				? 'local only'
+				: relayHost(app.feedTimeline)
+	);
+
+	/** On a relay timeline the provenance pill should name THAT relay, not
+	 *  whichever the engine listed first — so lead with it. Pure ordering
+	 *  for display; the set is unchanged. */
+	function relaysForPill(relays: string[]): string[] {
+		const cur = app.feedTimeline;
+		if (!cur || cur === 'local') return relays;
+		const host = relayHost(cur);
+		const i = relays.findIndex((r) => relayHost(r) === host);
+		if (i <= 0) return relays;
+		return [relays[i], ...relays.slice(0, i), ...relays.slice(i + 1)];
+	}
+
+	function onPickTimeline(e: Event) {
+		const v = (e.currentTarget as HTMLSelectElement).value;
+		cursor = 0;
+		void app.selectFeedTimeline(v === ALL ? null : v);
+	}
+
+	function setMode(m: FeedMode) {
+		if (m === mode) return;
+		mode = m;
+		cursor = 0;
+	}
 
 	$effect(() => {
 		// Clamp cursor when feed length changes.
@@ -103,6 +188,7 @@
 	}
 
 	function handleNav(action: NavAction): boolean {
+		if (mode !== 'relays') return false;
 		const total = app.feed.length;
 		if (total === 0) return false;
 		if (action === 'down') {
@@ -150,16 +236,61 @@
 </script>
 
 <div class="feed-wrap" data-tour="feed">
-	{#if app.feedLoading}
+	<div class="feed-header">
+		<div class="modes" role="tablist" aria-label="Feed mode">
+			<button
+				class="mode"
+				class:mode--active={mode === 'relays'}
+				role="tab"
+				aria-selected={mode === 'relays'}
+				onclick={() => setMode('relays')}
+			>relays</button>
+			<button
+				class="mode"
+				class:mode--active={mode === 'bookshelf'}
+				role="tab"
+				aria-selected={mode === 'bookshelf'}
+				onclick={() => setMode('bookshelf')}
+			>bookshelf</button>
+		</div>
+		{#if mode === 'relays'}
+			<!-- One timeline per relay the local store has provenance from.
+			     Native select: the rows are data, not actions, and it keeps
+			     the keyboard/mobile picker for free (see feat-ui-patterns,
+			     menu idioms — this is a listbox, not a fifth menu). -->
+			<select
+				class="timeline-select"
+				value={pickerValue}
+				onchange={onPickTimeline}
+				aria-label="Relay timeline"
+				title="Which relay's publications to list"
+			>
+				{#each pickerRows as row (row.value)}
+					<option value={row.value}>{row.label}</option>
+				{/each}
+			</select>
+			<span class="count">{app.feed.length}</span>
+			<button
+				class="sync"
+				onclick={app.handleFeedSync}
+				disabled={app.feedSyncing}
+				title={app.feedTimeline && app.feedTimeline !== 'local'
+					? `Fetch this timeline from ${relayHost(app.feedTimeline)}`
+					: 'Fetch publications from your read relays'}
+			>
+				{app.feedSyncing ? 'Syncing…' : 'Sync'}
+			</button>
+		{/if}
+	</div>
+	{#if mode === 'bookshelf'}
+		<div class="empty">
+			<p>Bookshelf</p>
+			<p class="hint">Your saved books will list here once the bookshelf event is wired.</p>
+		</div>
+	{:else if app.feedLoading}
 		<div class="empty"><p>Loading publications…</p></div>
 	{:else if app.feed.length > 0}
 		<div class="feed-list" bind:this={listEl}>
-			<div class="feed-header">
-				<span>Publications ({app.feed.length})</span>
-				<button class="sync" onclick={app.handleFeedSync} disabled={app.feedSyncing}>
-					{app.feedSyncing ? 'Syncing…' : 'Sync all'}
-				</button>
-			</div>
 			{#each app.feed as pub_item, i (`${pub_item.addr.pubkey}:${pub_item.addr.d_tag}`)}
 				<!-- svelte-ignore a11y_no_static_element_interactions -->
 				<div
@@ -214,7 +345,7 @@
 							onpillcmp={() => app.pillActionByAddr(pub_item.addr, 'compose')}
 							onpilldrop={() => app.pillActionByAddr(pub_item.addr, 'drop')}
 							signed={pub_item.signed}
-							relays={pub_item.relays}
+							relays={relaysForPill(pub_item.relays)}
 							local={pub_item.local}
 							forked={pub_item.forked}
 							containedIn={pub_item.contained_in?.length ?? 0}
@@ -244,10 +375,14 @@
 		</div>
 	{:else}
 		<div class="empty">
-			<p>No publications found locally.</p>
-			<button onclick={app.handleFeedSync} disabled={app.feedSyncing}>
-				{app.feedSyncing ? 'Syncing…' : 'Fetch from relays'}
-			</button>
+			<p>No publications from {timelineLabel} locally.</p>
+			{#if app.feedTimeline === 'local'}
+				<p class="hint">Signed snapshots that no relay has accepted yet list here.</p>
+			{:else}
+				<button onclick={app.handleFeedSync} disabled={app.feedSyncing}>
+					{app.feedSyncing ? 'Syncing…' : app.feedTimeline ? `Fetch from ${timelineLabel}` : 'Fetch from relays'}
+				</button>
+			{/if}
 		</div>
 	{/if}
 </div>
@@ -256,21 +391,49 @@
 	.feed-wrap { display: flex; flex-direction: column; height: 100%; min-height: 0; }
 	.feed-list { flex: 1; overflow-y: auto; }
 	.feed-header {
-		position: sticky;
-		top: 0;
-		z-index: 1;
+		flex-shrink: 0;
 		background: var(--panel-bg);
-		padding: 8px 12px;
+		padding: 6px 12px;
 		font-size: var(--t-xs);
-		font-weight: 600;
 		color: var(--base6);
-		text-transform: uppercase;
-		letter-spacing: 0.05em;
 		border-bottom: 1px solid var(--panel-border);
 		display: flex;
 		align-items: center;
-		justify-content: space-between;
+		gap: 8px;
+		flex-wrap: wrap;
 	}
+	/* relays | bookshelf — a two-tab segment in the mode-line pill idiom. */
+	.modes { display: inline-flex; border: 1px solid var(--base3); border-radius: var(--r-sm); overflow: hidden; }
+	.mode {
+		font-family: var(--font-mono);
+		font-size: var(--t-xs);
+		font-weight: 600;
+		text-transform: uppercase;
+		letter-spacing: 0.05em;
+		padding: 2px 8px;
+		background: transparent;
+		border: 0;
+		color: var(--base6);
+		cursor: pointer;
+	}
+	.mode + .mode { border-left: 1px solid var(--base3); }
+	.mode:hover { color: var(--fg); }
+	.mode--active { background: color-mix(in srgb, var(--id-yours) 22%, transparent); color: var(--fg); }
+	.timeline-select {
+		flex: 1;
+		min-width: 12ch;
+		max-width: 36ch;
+		font-family: var(--font-mono);
+		font-size: var(--t-xs);
+		padding: 2px 6px;
+		background: var(--panel-bg-soft);
+		border: 1px solid var(--base3);
+		border-radius: var(--r-sm);
+		color: var(--fg);
+		cursor: pointer;
+	}
+	.count { font-variant-numeric: tabular-nums; color: var(--base5); margin-left: auto; }
+	.hint { font-size: var(--t-xs); color: var(--base5); margin: 0; max-width: 40ch; text-align: center; }
 	.sync {
 		font-family: var(--font-mono);
 		font-size: var(--t-xs);

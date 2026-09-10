@@ -1919,6 +1919,16 @@ impl Engine {
     /// result is cached for `INVENTORY_TTL_SECS`. `refresh` forces a
     /// rescan; a cached snapshot taken with different options (notably
     /// without relay provenance) never answers a request that wants them.
+    /// Relay provenance of every local kind-`kind` coordinate — the
+    /// candidate per-relay timelines for the feed picker. Blocking scan
+    /// (holds the nostrdb read lock), so it runs on the blocking pool.
+    pub async fn relay_provenance(&self, kind: u32) -> Result<crate::stats::RelayProvenance> {
+        let ndb = self.ndb.clone();
+        tokio::task::spawn_blocking(move || crate::stats::relay_provenance(&ndb, kind))
+            .await
+            .map_err(|e| EngineError::Other(format!("provenance scan panicked: {e}")))?
+    }
+
     pub async fn inventory(
         &self,
         opts: crate::stats::InventoryOptions,

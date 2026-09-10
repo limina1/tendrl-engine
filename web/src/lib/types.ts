@@ -265,6 +265,21 @@ export interface RelayCount {
 	count: number;
 }
 
+/** Relay provenance of the local publication indexes (kind 30040), from
+ *  `GET /api/v1/publications/relays`. Each row is one relay timeline the
+ *  feed can show; counts are distinct publication coordinates. `local` is
+ *  the number of coordinates with no relay provenance at all. */
+export interface FeedRelays {
+	kind: number;
+	relays: RelayCount[];
+	local: number;
+	total: number;
+}
+
+/** Which timeline the feed lists. `null` = every root regardless of
+ *  provenance; `'local'` = unpublished only; otherwise a relay URL. */
+export type FeedTimeline = string | null;
+
 /** Aggregate picture of the local nostrdb — what's actually stored, by
  *  kind, by author, by relay, plus span and disk cost. Every tally is
  *  derived engine-side. */

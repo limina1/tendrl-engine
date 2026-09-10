@@ -8,9 +8,32 @@ with provenance so the user can tell at a glance what is local-only versus
 seen on relays.
 
 * What exists
+- *Two modes* (2026-09-10, =feat/relay-feeds=): =relays= and =bookshelf=,
+  a segmented switch in the feed header; the mode (and cursor) is
+  per-buffer view state in =store.bufferState=, the selected timeline is
+  AppState (=feedTimeline=) because every listing call carries it.
+- *Relay timelines* instead of one composite stream: every relay the
+  local kind-30040s carry provenance from is its own timeline, picked from
+  a native =<select>= in the header. Rows come from
+  =GET /api/v1/publications/relays= (engine scan of =note.relays()= per
+  coordinate, =stats::relay_provenance=); =all relays= (the old composite)
+  and =local only= (no provenance — signed here, never accepted) are the
+  two non-relay entries. Listing is scoped engine-side —
+  =GET /api/v1/publications?relay=<url|local>= → =RelayTimeline= in
+  =publication.rs=, applied after dedup and *before* the page limit so a
+  sparse relay still fills its page via the continuation loop. Under
+  =fetch_always= a relay URL is also the sole fetch target, so =Sync= on a
+  timeline pulls from its own relay (label: "Feed sync — <url>").
+  Responses carry the timeline they were requested for and are dropped if
+  the user switched mid-flight (the first composite load races the first
+  pick otherwise). Picker labels carry no counts: the engine tallies every
+  index a relay holds, nested/empty included, while the feed lists roots.
+- *Bookshelf* mode is a placeholder surface — the user's saved-books list
+  event is not wired yet; the mode exists so the switch does.
 - Publication cards with title, author, summary, and section count
   (=web/src/lib/wm/renderers/FeedBuffer.svelte=; data from
-  =GET /api/v1/publications=).
+  =GET /api/v1/publications=). On a relay timeline the provenance pill
+  leads with that relay (display ordering only).
 - Provenance badge: relay provenance via nostrdb =note.relays()=, plus a
   "local" pill driven by =LocalPublicationTracker= — shown until a relay
   accepts the broadcast.
@@ -23,6 +46,8 @@ seen on relays.
   =work= slot of the WM shell (main content surface).
 
 * Gaps / open edges
+- Bookshelf has no data source yet (which list kind, whose event, how it
+  is fetched/refreshed).
 - No read/unread or reading-progress state on cards yet.
 - Feed is a flat list; no user-defined feed groupings or saved queries.
 

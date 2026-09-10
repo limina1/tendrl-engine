@@ -25,6 +25,8 @@ import type {
 	SearchResult,
 	ProfileResult,
 	PublicationSummary,
+	FeedRelays,
+	FeedTimeline,
 	PublicationDetail,
 	LazySection,
 	ComposeState,
@@ -193,6 +195,14 @@ function _createAppState() {
 	// every listPublications call so the composed query (and its confirm
 	// intent) reflect it. Toggled live from the fetch-confirm modal.
 	let feedGeneral = $state(true);
+	// Which timeline the feed lists: a relay URL (one relay's publications,
+	// synced from that relay alone), 'local' (unpublished), or null for the
+	// composite. Chosen from FeedBuffer's relay picker; threaded into every
+	// listPublications call so a page/sync/load-more never mixes timelines.
+	let feedTimeline: FeedTimeline = $state(null);
+	// The picker's rows — relays the local 30040s carry provenance from.
+	let feedRelays: FeedRelays | null = $state(null);
+	let feedRelaysLoading = $state(false);
 	// Guards the one-time cold-cache auto-fetch in loadFeed() so an empty
 	// db doesn't re-pop the fetch-confirm modal on every loadFeed() call
 	// (FeedBuffer mount, search-clear, etc.). Plain boolean, not $state —
@@ -1146,8 +1156,14 @@ function _createAppState() {
 
 	async function loadFeed() {
 		feedLoading = true;
+		// Timeline at request time: if the user switches timelines while
+		// this is in flight, the response belongs to the old one and must
+		// not overwrite the new one's page (loadFeed has ~10 call sites,
+		// including initialize() racing the first picker change).
+		const forTimeline = feedTimeline;
 		try {
-			let resp = await api.listPublications(20, 'local_only', undefined, feedGeneral);
+			let resp = await api.listPublications(20, 'local_only', undefined, feedGeneral, forTimeline);
+			if (forTimeline !== feedTimeline) return;
 			// Cold-cache fallback: if local nostrdb has nothing (fresh
 			// install, post-purge, etc.), kick off ONE `fetch_always`
 			// pull so the user sees content without manually hitting
@@ -1203,16 +1219,49 @@ function _createAppState() {
 
 	async function handleFeedSync() {
 		feedSyncing = true;
+		const forTimeline = feedTimeline;
 		try {
-			const resp = await api.listPublications(20, 'fetch_always', undefined, feedGeneral);
+			const resp = await api.listPublications(20, 'fetch_always', undefined, feedGeneral, forTimeline);
+			// The fetch still landed in the store (a later load sees it);
+			// only the page swap is skipped when the timeline moved on.
+			if (forTimeline !== feedTimeline) return;
 			feed = resp.publications;
 			feedHasMore = resp.count >= 20;
 			api.prefetchProfiles([...new Set(resp.publications.map(p => p.author_pubkey))]);
+			// A sync can put a never-seen relay on the map (or move a local
+			// snapshot onto one) — refresh the picker's rows behind it.
+			void loadFeedRelays();
 		} catch {
 			// Relay fetch failed
 		} finally {
 			feedSyncing = false;
 		}
+	}
+
+	/** Refresh the relay-timeline picker rows. Cheap engine scan of the
+	 *  local 30040s; never touches relays. */
+	async function loadFeedRelays() {
+		if (feedRelaysLoading) return;
+		feedRelaysLoading = true;
+		try {
+			feedRelays = await api.listFeedRelays();
+		} catch {
+			// engine unavailable — keep whatever rows we had
+		} finally {
+			feedRelaysLoading = false;
+		}
+	}
+
+	/** Switch the feed to another timeline and reload it from the local
+	 *  store. Same-timeline calls are a no-op so a picker re-render can't
+	 *  re-fire the load. */
+	async function selectFeedTimeline(timeline: FeedTimeline) {
+		const next = timeline || null;
+		if (next === feedTimeline) return;
+		feedTimeline = next;
+		feed = [];
+		feedHasMore = true;
+		await loadFeed();
 	}
 
 	// Flip the general-feed preference and re-run the sync so the composed
@@ -1226,10 +1275,13 @@ function _createAppState() {
 	async function handleFeedLoadMore() {
 		if (feedLoadingMore || !feedHasMore || feed.length === 0) return;
 		feedLoadingMore = true;
+		const forTimeline = feedTimeline;
 		try {
 			const oldest = Math.min(...feed.map(p => p.created_at));
 			const existing = new Set(feed.map(p => `${p.addr.pubkey}:${p.addr.d_tag}`));
 			const merge = (resp: { publications: PublicationSummary[] }): number => {
+				// Never splice an old timeline's page into the new one.
+				if (forTimeline !== feedTimeline) return 0;
 				const fresh = resp.publications.filter(
 					p => !existing.has(`${p.addr.pubkey}:${p.addr.d_tag}`)
 				);
@@ -1242,8 +1294,9 @@ function _createAppState() {
 			};
 
 			// Page the local store first — cheap, no relay round-trip.
-			const local = await api.listPublications(20, 'local_only', oldest, feedGeneral);
+			const local = await api.listPublications(20, 'local_only', oldest, feedGeneral, forTimeline);
 			merge(local);
+			if (forTimeline !== feedTimeline) return;
 			if (local.count >= 20) {
 				// More local rows remain at this depth; keep paging locally.
 				feedHasMore = true;
@@ -1255,8 +1308,9 @@ function _createAppState() {
 			// mode it raises the fetch-confirm modal and blocks until approved; in
 			// Auto mode it fetches straight away. The response carries the newly
 			// fetched events, so we merge them inline.
-			const remote = await api.listPublications(20, 'fetch_always', oldest, feedGeneral);
+			const remote = await api.listPublications(20, 'fetch_always', oldest, feedGeneral, forTimeline);
 			const added = merge(remote);
+			if (forTimeline !== feedTimeline) return;
 			// Keep "Load more" alive only if the backfill actually advanced us past
 			// the local floor; if the relays returned nothing new, we've caught up.
 			feedHasMore = added > 0;
@@ -4525,6 +4579,9 @@ function _createAppState() {
 		get feedLoadingMore() { return feedLoadingMore; },
 		get feedHasMore() { return feedHasMore; },
 		get feedGeneral() { return feedGeneral; },
+		get feedTimeline() { return feedTimeline; },
+		get feedRelays() { return feedRelays; },
+		get feedRelaysLoading() { return feedRelaysLoading; },
 
 		// Search
 		get searchResults() { return searchResults; },
@@ -4823,6 +4880,8 @@ function _createAppState() {
 		handleLoadSessionToChat,
 		handleFeedSync,
 		toggleFeedGeneral,
+		loadFeedRelays,
+		selectFeedTimeline,
 		handleFeedLoadMore,
 		loadFeed,
 		openPublication,

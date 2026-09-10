@@ -514,3 +514,84 @@ mod tests {
         assert!(opts.top_relays > 0 && opts.top_relays <= 100);
     }
 }
+
+/// Relay provenance of one event kind, tallied per addressable coordinate.
+///
+/// Feeds the per-relay timeline picker: every relay a local kind-30040 has
+/// been seen on is a candidate timeline. Counts are distinct
+/// `pubkey:d-tag` coordinates (not note versions — nostrdb keeps every
+/// version of a replaceable event, and a re-fetched publication would
+/// otherwise count once per version). `local` counts coordinates with no
+/// relay provenance at all: signed here, never (observed) accepted by a
+/// relay.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RelayProvenance {
+    /// Kind that was scanned.
+    pub kind: u32,
+    /// Relays, distinct-coordinate count descending, then URL.
+    pub relays: Vec<RelayCount>,
+    /// Coordinates carrying no relay provenance.
+    pub local: usize,
+    /// Distinct coordinates scanned.
+    pub total: usize,
+}
+
+/// Scan every note of `kind` and group its relay provenance by coordinate.
+///
+/// Exact per-kind walk (see [`compute_inventory`] for why a limit-only
+/// scan is not). Takes the process-wide nostrdb read lock, so hand it to
+/// `spawn_blocking` from async code.
+pub fn relay_provenance(ndb: &nostrdb::Ndb, kind: u32) -> Result<RelayProvenance> {
+    use std::collections::HashSet;
+
+    // coordinate (pubkey ‖ d-tag) → relays the coordinate was seen on.
+    let mut by_coord: HashMap<([u8; 32], String), HashSet<String>> = HashMap::new();
+    {
+        let _guard = crate::query::ndb_query_lock();
+        let txn = nostrdb::Transaction::new(ndb)
+            .map_err(|e| crate::error::EngineError::Database(format!("txn: {:?}", e)))?;
+        let filter = nostrdb::FilterBuilder::new()
+            .kinds([kind as u64])
+            .limit(SCAN_LIMIT)
+            .build();
+        ndb.fold(&txn, &[filter], (), |_, note| {
+            let d_tag = note
+                .tags()
+                .into_iter()
+                .find(|t| t.get(0).and_then(|v| v.variant().str()) == Some("d"))
+                .and_then(|t| t.get(1).and_then(|v| v.variant().str().map(str::to_string)))
+                .unwrap_or_default();
+            let entry = by_coord.entry((*note.pubkey(), d_tag)).or_default();
+            for relay in note.relays(&txn) {
+                entry.insert(crate::relay_url::normalize_relay_url(relay));
+            }
+        })
+        .map_err(|e| {
+            crate::error::EngineError::Database(format!("kind {kind} provenance scan: {:?}", e))
+        })?;
+    }
+
+    let total = by_coord.len();
+    let mut local = 0usize;
+    let mut counts: HashMap<String, usize> = HashMap::new();
+    for relays in by_coord.into_values() {
+        if relays.is_empty() {
+            local += 1;
+        }
+        for r in relays {
+            *counts.entry(r).or_insert(0) += 1;
+        }
+    }
+    let mut relays: Vec<RelayCount> = counts
+        .into_iter()
+        .map(|(relay, count)| RelayCount { relay, count })
+        .collect();
+    relays.sort_by(|a, b| b.count.cmp(&a.count).then_with(|| a.relay.cmp(&b.relay)));
+
+    Ok(RelayProvenance {
+        kind,
+        relays,
+        local,
+        total,
+    })
+}

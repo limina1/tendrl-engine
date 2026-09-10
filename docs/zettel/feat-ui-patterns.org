@@ -125,7 +125,10 @@ ingested locally, so the yielding modal should treat deny as
 4. =ThemePicker= dropdown (=role="listbox"=, hover-preview with revert).
 No shared popover primitive; positioning and ARIA roles differ per menu.
 Prefer idioms 1–2 for new actions; a new dropdown means extending this
-divergence.
+divergence. A *data* picker (choose one of N values, not an action) is a
+native =<select>= — the feed's relay-timeline picker (=FeedBuffer=
+=.timeline-select=, 2026-09-10) — which stays outside this ledger: it
+brings its own keyboard/mobile behaviour and no positioning code.
 
 * Keyboard & selection conventions
 
