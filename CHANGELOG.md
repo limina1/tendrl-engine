@@ -1,3 +1,11 @@
+## v0.11.0 — 2026-09-10
+
+- docs(zettel): bookshelf feature note, relay-timelines decision, shelf-lifecycle idea
+- feat(bookshelf): named shelves, write path, profile tab, Shelve action
+- feat(bookshelf): read kind-30045 shelves into the feed's bookshelf mode
+- fix(feed): request storm from $state in-flight latch (display flashing)
+- feat(feed): relay timelines + bookshelf mode
+
 ## v0.10.0 — 2026-08-18
 
 - three columns
