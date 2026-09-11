@@ -224,7 +224,7 @@ export const TIPS: Record<string, TourTip> = {
 		key: 'reader-open',
 		anchor: 'reader-toolbar',
 		title: 'Reading a publication',
-		body: 'You opened the reader. The same publication renders three ways: `Outline` (the table of contents — sections in order), `Paginated` (one section at a time), and `Continuous` (the whole thing as one scroll). `h`/`l` cycles between them.',
+		body: 'You opened the reader. The same publication reads two ways: `paged` (one section at a time) and `scroll` (the whole thing as one column) — `h`/`l` switches. `§` opens the table of contents; on a nested publication, `tree` sets how deep the loader walks.',
 		placement: 'bottom',
 		next: 'reader-menu'
 	},
@@ -232,17 +232,17 @@ export const TIPS: Record<string, TourTip> = {
 		key: 'reader-menu',
 		anchor: 'reader-menu',
 		title: 'The raw event',
-		body: '`menu` opens the event tools for this publication — inspect the raw `30040` JSON, copy its `naddr`, or find everything that references it. The reader shows the document; this is the event underneath.',
+		body: '`M` opens the event menu for this publication — inspect the raw `30040` JSON, copy its `naddr`, see which relays hold it, or find everything that references it. The reader shows the document; this is the event underneath.',
 		placement: 'bottom',
 		next: 'reader-edit'
 	},
 	'reader-edit': {
 		key: 'reader-edit',
-		// Anchored to the always-visible `tools` caret — the Edit button
-		// itself lives inside the collapsed row it opens.
+		// Anchored to the always-visible `T` button — the Edit button itself
+		// lives inside the tools panel it opens.
 		anchor: 'reader-tools',
 		title: 'Edit in the composer',
-		body: '`tools` unfolds the action row: highlight mode, `Edit` (pulls the whole publication into the composer to revise it), ⟳ fetch, and the pool chips. Imported sections arrive *locked* (yellow once you claim one) — unlock just the ones you want to change, then sign a new snapshot. The composer has its own `W` tour.',
+		body: '`T` opens the tools panel: actions (highlight mode, comments, `edit` — pulls the whole publication into the composer to revise it — fetch, refresh threads), the pool chips, and the reading typography. Imported sections arrive *locked* (yellow once you claim one) — unlock just the ones you want to change, then sign a new snapshot. The composer has its own `W` tour.',
 		placement: 'bottom'
 	},
 

@@ -146,10 +146,11 @@
 		 *  set it — the marker only lives on 30040 index events). */
 		forked?: boolean;
 	};
-	// Default to outline. If the buffer carries `?highlight=<id>` the
-	// effect below switches to paginated so the highlight overlay is
-	// visible right away.
-	let viewMode = $state<ViewMode>('outline');
+	// Two reading modes — paged (one section per page) and scroll
+	// (continuous). The outline view is gone (2026-09-11): the § toc
+	// drawer is the outline. Default to paged; `?highlight=<id>` keeps
+	// paged so the highlight overlay is visible right away.
+	let viewMode = $state<ViewMode>('paginated');
 	let currentSection = $state(0);
 	let loading = $state(true);
 	// Secondary line under "Loading…" while a standalone event/addressable
@@ -459,27 +460,16 @@
 		return effectiveHighlightsForSection(addr).length;
 	}
 
-	// Outline expansion state: which sections have their inline comments
-	// thread or flat highlights list open. Keyed by index since the
-	// outline iterates pristineSections positionally.
-	let outlineCommentsOpen = $state<Record<number, boolean>>({});
-	let outlineHighlightsOpen = $state<Record<number, boolean>>({});
-
-	function toggleOutlineComments(i: number) {
-		outlineCommentsOpen[i] = !(outlineCommentsOpen[i] ?? false);
-	}
-	function toggleOutlineHighlights(i: number) {
-		outlineHighlightsOpen[i] = !(outlineHighlightsOpen[i] ?? false);
-	}
-
-	// Outline tree collapse: nested 30040 indexes are collapsible folders,
-	// keyed by addr. Collapsed by default — the reader expands deeper
-	// levels deliberately, by index or all at once.
+	// Nested 30040 indexes fold in the § toc drawer, keyed by addr.
+	// Collapsed by default — the reader expands deeper levels
+	// deliberately, by index or all at once (tree row).
 	let outlineExpanded = $state<Record<string, boolean>>({});
 	const nestedAddrKey = (a: { kind: number; pubkey: string; d_tag: string }) =>
 		`${a.kind}:${a.pubkey}:${a.d_tag}`;
 	const isNestedIndex = (s: LazySection) => s.addr?.kind === 30040;
 
+	// The § toc drawer is the outline now: nested indexes fold/unfold in
+	// it, and the tree row's expand/collapse drive the same state.
 	function toggleOutlineIndex(addr: { kind: number; pubkey: string; d_tag: string }) {
 		const k = nestedAddrKey(addr);
 		outlineExpanded = { ...outlineExpanded, [k]: !(outlineExpanded[k] ?? false) };
@@ -587,47 +577,12 @@
 	let summaryOpen = $state(true);
 
 	// ── Aux tools row ───────────────────────────────────────────────────
-	// The toolbar keeps only orientation chrome (§ toc, view modes, menu,
-	// nesting depth); the action cluster (hl / edit / ⟳ fetch / pool chips /
-	// graph / refresh discussions) collapses behind a `tools` caret so the
-	// article keeps the vertical space. Persisted globally — the choice
-	// survives buffer switches and sessions.
-	const AUX_TOOLS_KEY = 'tendrl:reader-tools-open';
-	let auxOpen = $state(
-		typeof localStorage !== 'undefined' && localStorage.getItem(AUX_TOOLS_KEY) === '1'
-	);
-	function toggleAux() {
-		auxOpen = !auxOpen;
-		try {
-			localStorage.setItem(AUX_TOOLS_KEY, auxOpen ? '1' : '0');
-		} catch {
-			// storage unavailable (private mode) — state stays session-local
-		}
-	}
-
-	// ── Reading typography row ──────────────────────────────────────────
-	// `Aa` drops a strip of reading knobs (face, size, column width, leading,
-	// justify). The prefs are global + per device (theme/reading.svelte.ts);
-	// only whether the strip is showing is buffer view state, persisted the
-	// same way the tools caret is.
-	const TYPE_ROW_KEY = 'tendrl:reader-type-open';
-	let typeOpen = $state(
-		typeof localStorage !== 'undefined' && localStorage.getItem(TYPE_ROW_KEY) === '1'
-	);
-	function toggleType() {
-		typeOpen = !typeOpen;
-		try {
-			localStorage.setItem(TYPE_ROW_KEY, typeOpen ? '1' : '0');
-		} catch {
-			// storage unavailable (private mode) — state stays session-local
-		}
-	}
-
-	// ── Mobile TOC drawer ───────────────────────────────────────────────
-	// Phone-shell affordance: paginated/continuous reading keeps a swipe-in
-	// left drawer of the outline (the desktop answer — flip to Outline view —
-	// costs your reading position). Rows reuse outlineVisible/outlineExpanded
-	// so the collapse state matches the outline view exactly.
+	// Strip chrome: § toc · paged|scroll · tree · T · M. `tree` drops the
+	// nesting row (load depth, expand/collapse, graph) for nested
+	// publications; `T` drops the tools panel (actions, pool, reading
+	// typography). Both are transient view state, not persisted.
+	let treeOpen = $state(false);
+	let toolsOpen = $state(false);
 	let tocOpen = $state(false);
 	// ContinuousView instance — its exported scrollToSection keeps a TOC
 	// jump in-place instead of flipping the view mode.
@@ -845,9 +800,7 @@
 	const sections = $derived<LazySection[]>(pristineSections);
 	// (Down here, not with the rest of the mobile-TOC block: TS flags a
 	// use-before-declaration on isDraftMode/sections up there, lazy or not.)
-	const showTocButton = $derived(
-		shell.mode === 'mobile' && viewMode !== 'outline' && !isDraftMode && sections.length > 0
-	);
+	const showTocButton = $derived(!isDraftMode && sections.length > 0);
 	const segments = $derived<ReturnType<typeof segmentSections>>([]);
 
 	async function load() {
@@ -1206,7 +1159,6 @@
 		visitLog = [...visitLog, crumb];
 		visitIndex = visitLog.length - 1;
 		currentSection = 0;
-		outlineCursor = 0;
 		load();
 	}
 
@@ -1215,10 +1167,10 @@
 		refocusTo(section.addr.pubkey, section.addr.d_tag, section.title ?? 'Nested publication');
 	}
 
-	/** Graph-panel node click: refocus onto the node and drop into outline. */
+	/** Graph-panel node click: refocus onto the node (paged view). */
 	function navigateGraph(addr: NAddr) {
 		graphOpen = false;
-		viewMode = 'outline';
+		viewMode = 'paginated';
 		refocusTo(
 			addr.pubkey,
 			addr.d_tag,
@@ -1291,7 +1243,6 @@
 		visitLog = [...visitLog, focusStack[index]];
 		visitIndex = visitLog.length - 1;
 		currentSection = 0;
-		outlineCursor = 0;
 		load();
 	}
 
@@ -1307,7 +1258,6 @@
 		const i = focusStack.findIndex((c) => focusKey(c.pubkey, c.d_tag) === key);
 		if (i >= 0) focusMarker = i;
 		currentSection = 0;
-		outlineCursor = 0;
 		load();
 	}
 	const canPrevLevel = $derived(visitIndex > 0);
@@ -1573,7 +1523,6 @@
 
 	function handleNavigate(index: number) {
 		currentSection = index;
-		outlineCursor = index;
 	}
 
 	// Place-history helpers (docs/zettel/idea-place-routing.org phase 1):
@@ -1601,7 +1550,7 @@
 			capture: () => ({ mode: viewMode, section: String(currentSection) }),
 			apply: (v) => {
 				const m = v.mode;
-				if (m === 'outline' || m === 'paginated' || m === 'continuous') viewMode = m;
+				if (m === 'paginated' || m === 'continuous') viewMode = m;
 				const idx = Number(v.section);
 				if (Number.isInteger(idx) && idx >= 0) {
 					handleNavigate(idx);
@@ -1861,60 +1810,9 @@
 		}
 	}
 
-	// Outline cursor — separate from paginated currentSection so the two
-	// don't fight: cursor is the selection in outline view, currentSection
-	// is the page in paginated view. Pressing Enter (or l/right) on a
-	// cursored outline entry switches to paginated mode at that index.
-	let outlineCursor = $state(0);
-	let outlineEl: HTMLDivElement | undefined = $state();
-	let contentWrap: HTMLDivElement | undefined = $state();
 
-	function clampCursor() {
-		const total = sections.length;
-		if (total === 0) outlineCursor = 0;
-		else if (outlineCursor >= total) outlineCursor = total - 1;
-		else if (outlineCursor < 0) outlineCursor = 0;
-	}
-
-	function scrollOutlineCursorIntoView() {
-		// The outline rows live inside `.outline-overlay`, which itself
-		// lives inside the scrollable `.content` (contentWrap). Manipulate
-		// scrollTop on the actual scroll ancestor.
-		if (!contentWrap || !outlineEl) return;
-		const row = outlineEl.querySelector<HTMLElement>(`[data-cursor="${outlineCursor}"]`);
-		if (!row) return;
-		const wrapRect = contentWrap.getBoundingClientRect();
-		const rowRect = row.getBoundingClientRect();
-		if (rowRect.top < wrapRect.top) {
-			contentWrap.scrollTop -= wrapRect.top - rowRect.top;
-		} else if (rowRect.bottom > wrapRect.bottom) {
-			contentWrap.scrollTop += rowRect.bottom - wrapRect.bottom;
-		}
-	}
-
-	function openCursorInPaginated() {
-		if (sections.length === 0) return;
-		const cur = sections[outlineCursor];
-		// A nested 30040 index: expand it in place when its subtree is
-		// loaded, so drilling the outline matches the chevron. Refocus
-		// only when the index hasn't been pulled into the tree yet.
-		if (cur && cur.addr.kind === 30040) {
-			if ((outlineChildInfo.get(outlineCursor)?.descendants ?? 0) > 0) {
-				toggleOutlineIndex(cur.addr);
-			} else {
-				refocus(cur);
-			}
-			return;
-		}
-		if (!isDraftMode) handleLoadSection(outlineCursor);
-		viewMode = 'paginated';
-		gotoSection(outlineCursor, 'teleport');
-	}
-
-	// View-mode order — left/right (h/l) cycles through these. Outline's
-	// l/→ is special: it drills into paginated and loads the cursored
-	// section. Otherwise l advances through the cycle, h reverses.
-	const VIEW_ORDER: ViewMode[] = ['outline', 'paginated', 'continuous'];
+	// View-mode order — left/right (h/l) toggles between the two.
+	const VIEW_ORDER: ViewMode[] = ['paginated', 'continuous'];
 
 	function cycleView(dir: 1 | -1) {
 		const i = VIEW_ORDER.indexOf(viewMode);
@@ -1924,49 +1822,6 @@
 
 	function handleNav(action: NavAction): boolean {
 		if (sections.length === 0) return false;
-		if (viewMode === 'outline') {
-			// j/k step over *visible* rows — entries hidden under a
-			// collapsed nested index are skipped.
-			if (action === 'down' || action === 'up') {
-				const vis = outlineVisible;
-				if (vis.length > 0) {
-					let pos = vis.findIndex((r) => r.index === outlineCursor);
-					if (pos < 0) pos = 0;
-					pos = Math.min(
-						vis.length - 1,
-						Math.max(0, pos + (action === 'down' ? 1 : -1))
-					);
-					outlineCursor = vis[pos].index;
-				}
-				queueMicrotask(scrollOutlineCursorIntoView);
-				return true;
-			}
-			if (action === 'top') {
-				outlineCursor = outlineVisible[0]?.index ?? 0;
-				queueMicrotask(scrollOutlineCursorIntoView);
-				return true;
-			}
-			if (action === 'bottom') {
-				outlineCursor = outlineVisible[outlineVisible.length - 1]?.index ?? 0;
-				queueMicrotask(scrollOutlineCursorIntoView);
-				return true;
-			}
-			if (action === 'select' || action === 'right') {
-				// Outline → paginated drills with the selected section.
-				openCursorInPaginated();
-				return true;
-			}
-			if (action === 'left') {
-				// Cycle backward: outline ← continuous.
-				cycleView(-1);
-				return true;
-			}
-			if (action === 'menu') {
-				openSectionJsonByIndex(outlineCursor);
-				return true;
-			}
-			return false;
-		}
 		if (viewMode === 'paginated') {
 			if (action === 'down') {
 				if (currentSection < sections.length - 1) gotoSection(currentSection + 1, 'traverse');
@@ -2038,26 +1893,8 @@
 		return () => untrack(() => store.unregisterNavHandler(id));
 	});
 
-	$effect(() => {
-		sections.length;
-		untrack(clampCursor);
-	});
-
-	// Collapsing a nested index can hide the cursored row. Snap the cursor
-	// back to the nearest visible ancestor (the collapsed index itself).
-	$effect(() => {
-		const vis = outlineVisible;
-		if (vis.length === 0) return;
-		untrack(() => {
-			if (vis.some((r) => r.index === outlineCursor)) return;
-			let snap = vis[0].index;
-			for (const r of vis) {
-				if (r.index <= outlineCursor) snap = r.index;
-				else break;
-			}
-			outlineCursor = snap;
-		});
-	});
+	// The scrollable content column (keyboard top/bottom in scroll view).
+	let contentWrap: HTMLDivElement | undefined = $state();
 </script>
 
 <!-- Swipe is supplementary — the § toc button is the accessible path. -->
@@ -2066,28 +1903,26 @@
 	<div class="toolbar" data-tour="reader-toolbar" style:display={note ? 'none' : undefined}>
 		{#if showTocButton}
 			<button
-				class="toc-btn"
+				class="tb-icon toc-btn"
 				class:active={tocOpen}
 				onclick={() => (tocOpen = !tocOpen)}
 				title="Table of contents (or swipe in from the left edge)"
 				aria-label="Open the table of contents"
-			>§ toc</button>
+			>§</button>
 		{/if}
-		<!-- Order matches the h/l drill axis: outline → paginated → continuous.
-		     l/→ cycles right, h/← cycles left. Outline's l/→ is special —
-		     it drills into paginated with the cursored section loaded. -->
-		<button
-			class:active={viewMode === 'outline'}
-			onclick={() => setView('outline')}>Outline</button
-		>
-		<button
-			class:active={viewMode === 'paginated'}
-			onclick={() => setView('paginated')}>Paginated</button
-		>
-		<button
-			class:active={viewMode === 'continuous'}
-			onclick={() => setView('continuous')}>Continuous</button
-		>
+		<!-- Two modes; h/l (←/→) toggles. -->
+		<span class="seg" role="group" aria-label="View mode">
+			<button
+				class:active={viewMode === 'paginated'}
+				onclick={() => setView('paginated')}
+				title="Paged — one section per page">paged</button
+			>
+			<button
+				class:active={viewMode === 'continuous'}
+				onclick={() => setView('continuous')}
+				title="Scroll — every section in one continuous column">scroll</button
+			>
+		</span>
 		{#if resolution.resolving}
 			<span
 				class="nd-resolving"
@@ -2098,180 +1933,208 @@
 				<span class="nd-resolving__label">{resolution.resolved}/{resolution.total} refs</span>
 			</span>
 		{/if}
+		<span class="sp"></span>
+		{#if parsedAddr?.kind === 30040 && rootLoaded && hasGraph}
+			<!-- Only nested publications have a tree to tune; a single-level
+			     one loads in one shot and shows no button. -->
+			<button
+				class="tb-icon"
+				class:active={treeOpen}
+				onclick={() => (treeOpen = !treeOpen)}
+				aria-expanded={treeOpen}
+				title="Tree — load depth, expand or collapse nested indexes, reference graph"
+			>tree</button>
+		{/if}
 		<button
-			class="json-btn"
+			class="tb-icon tb-letter"
+			class:active={toolsOpen}
+			data-tour="reader-tools"
+			onclick={() => (toolsOpen = !toolsOpen)}
+			aria-expanded={toolsOpen}
+			title="Tools — highlight mode, comments, edit, fetch, pool, reading typography"
+		>T</button>
+		<button
+			class="tb-icon tb-letter json-btn"
 			data-tour="reader-menu"
 			onclick={openPublicationJson}
 			disabled={!publication}
 			title="Open this publication's event menu (m)"
-		>menu</button>
-		{#if parsedAddr?.kind === 30040 && rootLoaded}
-			{#if hasGraph}
-				<!-- Nested: this index references child 30040 sub-publications.
-				     Show the NESTED tag + the depth knob (how many levels the
-				     loader walks); the graph button lives later, in the nav. -->
-				<span
-					class="level-hint level-hint--nested"
-					title="Nested publication — its index references child 30040 sub-publications. Set how many levels deep the loader walks below; the ⊞ graph button (in the nav) maps the structure."
-				>NESTED</span>
-				<span
-					class="depth-knob"
-					title="Levels of nested 30040 indexes the loader walks toward. The buttons stay live during loading; past depth {MAX_DEPTH} you refocus into a sub-publication."
-				>
-					<span class="depth-knob__label">depth</span>
-					<button
-						class="depth-knob__step"
-						onclick={() => setDepth(treeDepth - 1)}
-						disabled={treeDepth <= 1}
-						aria-label="Decrease depth"
-					>−</button>
-					<span class="depth-knob__val">{treeDepth}</span>
-					<button
-						class="depth-knob__step"
-						onclick={() => setDepth(treeDepth + 1)}
-						disabled={treeDepth >= MAX_DEPTH}
-						aria-label="Increase depth"
-					>+</button>
-				</span>
-			{:else}
-				<!-- Flat: the index references only 30041 sections. It loads in
-				     one shot — there's nothing for a depth control to walk, so
-				     drop it and just mark the level. -->
-				<span
-					class="level-hint level-hint--flat"
-					title="Single-level publication — its index references only 30041 sections, no nested sub-publications. The whole thing loads at once; there's no depth to set."
-				>SINGLE LEVEL</span>
-			{/if}
-		{/if}
-		{#if outlineIndexCount > 0 && viewMode !== 'paginated'}
-			<!-- Whole-tree expand/collapse — lives here (the depth row had the
-			     slack) instead of its own treebar row above the content. -->
-			<button
-				class="tree-all"
-				onclick={() => (viewMode === 'outline' ? expandAllOutline() : continuousView?.expandAll())}
-				title="Expand all {outlineIndexCount} nested indexes"
-			>+ all</button>
-			<button
-				class="tree-all"
-				onclick={() =>
-					viewMode === 'outline' ? collapseAllOutline() : continuousView?.collapseAll()}
-				title="Collapse all nested indexes"
-			>− all</button>
-		{/if}
-		<span class="sp"></span>
-		<button
-			class="aux-toggle type-toggle"
-			class:active={typeOpen}
-			onclick={toggleType}
-			aria-expanded={typeOpen}
-			title="Reading typography — font, size, column width, line spacing"
-		>Aa</button>
-		<button
-			class="aux-toggle"
-			data-tour="reader-tools"
-			onclick={toggleAux}
-			aria-expanded={auxOpen}
-			title="Tools — highlight mode, edit, fetch, pool actions, refresh discussions"
-		>{auxOpen ? '▾' : '▸'} tools</button>
+		>M</button>
 	</div>
-	{#if typeOpen}
-		<!-- Reading typography, adjusted while reading (that's the only place
-		     you can judge it). Same drawer posture as the tools row. -->
-		<div class="toolbar toolbar--aux toolbar--type">
-			<ReadingControls compact />
+	{#if treeOpen && hasGraph}
+		<div class="tree-row">
+			<span class="tree-row__cap">tree</span>
+			<span
+				class="depth-knob"
+				title="Load depth — levels of nested 30040 indexes the loader walks. Live during loading; past depth {MAX_DEPTH} you refocus into a sub-publication."
+			>
+				<button
+					class="depth-knob__step"
+					onclick={() => setDepth(treeDepth - 1)}
+					disabled={treeDepth <= 1}
+					aria-label="Decrease load depth"
+				>−</button>
+				<span class="depth-knob__val">depth {treeDepth}</span>
+				<button
+					class="depth-knob__step"
+					onclick={() => setDepth(treeDepth + 1)}
+					disabled={treeDepth >= MAX_DEPTH}
+					aria-label="Increase load depth"
+				>+</button>
+			</span>
+			{#if outlineIndexCount > 0}
+				<button
+					class="tree-all tree-all--long"
+					onclick={() => {
+						expandAllOutline();
+						continuousView?.expandAll();
+					}}
+					title="Expand all {outlineIndexCount} nested indexes — in the toc and the scroll view"
+				>expand<span class="long"> all</span></button>
+				<button
+					class="tree-all"
+					onclick={() => {
+						collapseAllOutline();
+						continuousView?.collapseAll();
+					}}
+					title="Collapse all nested indexes"
+				>collapse</button>
+			{/if}
+			<span class="sp"></span>
+			<button
+				class="tree-all"
+				class:active={graphOpen}
+				onclick={() => (graphOpen = !graphOpen)}
+				title="Toggle the publication reference graph"
+			>⊞ graph</button>
 		</div>
 	{/if}
-	{#if auxOpen}
-		<!-- The action cluster, off the critical reading path. Reuses the
-		     .toolbar class so the shared button styling applies. -->
-		<div class="toolbar toolbar--aux">
-			<button
-				class="hl-mode-pill"
-				class:hl-mode-pill--on={app.highlightMode}
-				disabled={!canSignNow}
-				onclick={() => app.toggleHighlightMode()}
-				title={canSignNow
-					? app.highlightMode
-						? 'Highlight mode is ON — select text to publish a highlight. Click to turn off.'
-						: 'Turn on highlight mode: select text in a section to publish a NIP-84 highlight'
-					: 'Sign in to highlight'}
-			>hl{app.highlightMode ? ' ●' : ''}</button>
-			{#if isDraftMode}
-				<span class="draft-pill" title="A draft of this publication is in progress">DRAFT</span>
-				<button
-					class="bulk"
-					onclick={unlockAllImported}
-					disabled={!anyLockable}
-					title="Unlock all imported sections (yellow — claimed for reorder/edit)"
-				>Unlock all</button>
-				<button
-					class="bulk"
-					onclick={lockAllUnlocked}
-					disabled={!anyUnlocked}
-					title="Re-lock unlocked sections that haven't been modified"
-				>Lock all</button>
-			{/if}
-			{#if viewMode === 'paginated'}
-				<button
-					class="edit"
-					onclick={editFocusedSection}
-					disabled={!publication}
-					title="Send focused section to composer">Edit §</button
-				>
-			{/if}
-			<button
-				class="edit"
-				data-tour="reader-edit"
-				onclick={editInComposer}
-				disabled={!publication}
-				title={isDraftMode ? 'Continue editing this draft' : 'Open this publication in the composer'}
-			>Edit</button>
-			<button
-				class="discussions-refresh"
-				onclick={refreshDiscussions}
-				disabled={discussionLoading || !publication}
-				title={app.networkStatus?.mode === 'auto'
-					? 'Pull new comments and highlights from relays'
-					: 'Offline — pull comments and highlights from relays anyway (manual override)'}
-			>
-				{discussionLoading ? '…' : 'Refresh discussions'}
-			</button>
+	{#if toolsOpen}
+		<!-- Tools panel: Actions · Pool · Reading. Nothing here is reached
+		     for mid-read, so it lives behind `T`. -->
+		<div class="tools-sheet" role="region" aria-label="Reader tools">
+			<div class="tools-sheet__sec">
+				<div class="tools-sheet__head">
+					<span class="cap">actions</span>
+					<span class="hint">change or refresh this publication</span>
+				</div>
+				<div class="tools-sheet__row">
+					<button
+						class="hl-mode-pill"
+						class:hl-mode-pill--on={app.highlightMode}
+						disabled={!canSignNow}
+						onclick={() => app.toggleHighlightMode()}
+						title={canSignNow
+							? app.highlightMode
+								? 'Highlight mode is ON — select text to publish a highlight. Click to turn off.'
+								: 'Turn on highlight mode: select text in a section to publish a NIP-84 highlight'
+							: 'Sign in to highlight'}
+					>highlight mode{app.highlightMode ? ' ●' : ''}</button>
+					<button
+						class:active={publicationThreadsOpen}
+						onclick={() => (publicationThreadsOpen = !publicationThreadsOpen)}
+						aria-expanded={publicationThreadsOpen}
+						disabled={!publication}
+						title="Comments on this publication — across the index and all sections"
+					>comments {discussionLoading ? '…' : totalDiscussion.comments}</button>
+					<button
+						class:active={drawerOpen}
+						onclick={() => (drawerOpen = !drawerOpen)}
+						aria-expanded={drawerOpen}
+						disabled={!publication}
+						title="Highlights drawer — grouped by author, click to scroll"
+					>highlights {discussionLoading ? '…' : totalDiscussion.highlights}</button>
+					{#if publication?.summary}
+						<button
+							class:active={summaryOpen}
+							onclick={() => (summaryOpen = !summaryOpen)}
+							aria-expanded={summaryOpen}
+							title={summaryOpen ? 'Hide the summary' : 'Show the summary'}
+						>summary</button>
+					{/if}
+				</div>
+				<div class="tools-sheet__row">
+					{#if isDraftMode}
+						<span class="draft-pill" title="A draft of this publication is in progress">DRAFT</span>
+						<button
+							class="bulk"
+							onclick={unlockAllImported}
+							disabled={!anyLockable}
+							title="Unlock all imported sections (yellow — claimed for reorder/edit)"
+						>Unlock all</button>
+						<button
+							class="bulk"
+							onclick={lockAllUnlocked}
+							disabled={!anyUnlocked}
+							title="Re-lock unlocked sections that haven't been modified"
+						>Lock all</button>
+					{/if}
+					<button
+						class="edit"
+						data-tour="reader-edit"
+						onclick={editInComposer}
+						disabled={!publication}
+						title={isDraftMode ? 'Continue editing this draft' : 'Open this publication in the composer'}
+					>edit</button>
+					{#if viewMode === 'paginated'}
+						<button
+							class="edit"
+							onclick={editFocusedSection}
+							disabled={!publication}
+							title="Send the focused section to the composer">edit §</button
+						>
+					{/if}
+					{#if publication?.addr.kind === 30040}
+						<button
+							class="title-fetch"
+							class:spin={backfillingAll}
+							onclick={backfillAll}
+							disabled={backfillingAll}
+							title="Fetch this publication's index + backfill all missing sections from relays"
+						>⟳ fetch from relays</button>
+					{/if}
+					<button
+						class="discussions-refresh"
+						onclick={refreshDiscussions}
+						disabled={discussionLoading || !publication}
+						title={app.networkStatus?.mode === 'auto'
+							? 'Pull new comments and highlights from relays'
+							: 'Confirm mode — pulling comments and highlights raises the fetch modal'}
+					>{discussionLoading ? '…' : 'refresh threads'}</button>
+				</div>
+			</div>
 			{#if publication}
 				{@const pubAddr = publication.addr}
-				{#if pubAddr.kind === 30040}
-					<button
-						class="title-fetch"
-						class:spin={backfillingAll}
-						onclick={backfillAll}
-						disabled={backfillingAll}
-						title="Fetch this publication's index + backfill all missing sections from relays"
-						aria-label="Fetch and backfill"
-					>⟳</button>
-				{/if}
-				<PoolStateBadges
-					item={app.findPoolItemByAddr(pubAddr)}
-					onpillctx={() => app.pillActionByAddr(pubAddr, 'context')}
-					onpillcmp={() => app.pillActionByAddr(pubAddr, 'compose')}
-					onpilldrop={() => app.pillActionByAddr(pubAddr, 'drop')}
-					signed={publication.signed}
-					relays={publication.relays}
-					forked={publication.forked}
-					containedIn={containedIn.length}
-					onpartof={findContainers}
-					orientation="horizontal"
-				/>
+				<div class="tools-sheet__sec">
+					<div class="tools-sheet__head">
+						<span class="cap">pool</span>
+						<span class="hint">where this publication sits in your working set — and where it was found</span>
+					</div>
+					<div class="tools-sheet__row">
+						<PoolStateBadges
+							item={app.findPoolItemByAddr(pubAddr)}
+							onpillctx={() => app.pillActionByAddr(pubAddr, 'context')}
+							onpillcmp={() => app.pillActionByAddr(pubAddr, 'compose')}
+							onpilldrop={() => app.pillActionByAddr(pubAddr, 'drop')}
+							signed={publication.signed}
+							relays={publication.relays}
+							forked={publication.forked}
+							containedIn={containedIn.length}
+							onpartof={findContainers}
+							orientation="horizontal"
+						/>
+					</div>
+				</div>
 			{/if}
-			{#if hasGraph}
-				<button
-					class="crumb-graph"
-					class:active={graphOpen}
-					onclick={() => (graphOpen = !graphOpen)}
-					title="Toggle the publication reference graph"
-				>⊞ graph</button>
-			{/if}
+			<div class="tools-sheet__sec">
+				<div class="tools-sheet__head">
+					<span class="cap">reading</span>
+					<span class="hint">faces &amp; measure — persists per device</span>
+				</div>
+				<ReadingControls compact />
+			</div>
 		</div>
 	{/if}
-
 	{#if loading}
 		<div class="empty">
 			<p>Loading…</p>
@@ -2334,34 +2197,7 @@
 				onclose={() => (graphOpen = false)}
 			/>
 		{/if}
-		<!-- Title row carries the comments/highlights disclosure as a compact
-		     chip — one row of chrome instead of two. The pill cluster
-		     (⟳ / provenance / context / compose) lives in the `tools` row. -->
 		{#if publication}
-			<div class="title">
-				{#if publication.title}
-					<span class="title__text">{publication.title}</span>
-				{/if}
-				{#if publication.summary}
-					<button
-						class="threads-chip summary-chip"
-						onclick={() => (summaryOpen = !summaryOpen)}
-						aria-expanded={summaryOpen}
-						title={summaryOpen ? 'Hide the summary' : 'Show the summary'}
-					>
-						<span class="ptr">{summaryOpen ? '▾' : '▸'}</span>summary
-					</button>
-				{/if}
-				<button
-					class="threads-chip"
-					onclick={() => (publicationThreadsOpen = !publicationThreadsOpen)}
-					aria-expanded={publicationThreadsOpen}
-					title="Comments & highlights on this publication — across the index and all sections"
-				>
-					<span class="ptr">{publicationThreadsOpen ? '▾' : '▸'}</span>
-					{#if discussionLoading}…{:else}cmt {totalDiscussion.comments} · hl {totalDiscussion.highlights}{/if}
-				</button>
-			</div>
 			{#if publication.summary && summaryOpen}
 				<p class="title-summary">{publication.summary}</p>
 			{/if}
@@ -2443,327 +2279,7 @@
 			</div>
 		{/if}
 		<div class="content" bind:this={contentWrap}>
-			{#if viewMode === 'outline'}
-				{#if isDraftMode}
-					<!-- Draft outline: lock/unlock per section, up/down reorder,
-					     remove on non-imported. Border colors derive from
-					     sectionState (green=imported, yellow=claimed,
-					     violet=forked, none=original). -->
-					<div class="outline-overlay" bind:this={outlineEl}>
-						{#each segments as seg, segIdx (segIdx + ':' + seg.indices.join(','))}
-							<div
-								class="segment"
-								class:segment--imported={seg.state === 'imported'}
-								class:segment--claimed={seg.state === 'claimed'}
-								class:segment--forked={seg.state === 'forked'}
-								class:segment--original={seg.state === 'original'}
-								class:segment--group={seg.indices.length > 1}
-							>
-								{#each seg.indices as i (i)}
-									{@const item = app.compose.sections[i]}
-									{@const st = stateAt(i)}
-									{@const isLast = seg.indices[seg.indices.length - 1] === i}
-									{@const isFirstInSeg = seg.indices[0] === i}
-									<div
-										class="entry"
-										class:entry--imported={st === 'imported'}
-										class:entry--claimed={st === 'claimed'}
-										class:entry--forked={st === 'forked'}
-										class:entry--original={st === 'original'}
-										class:entry--cursor={i === outlineCursor}
-										data-cursor={i}
-									>
-										<div class="rail" aria-hidden="true">
-											{#if seg.indices.length > 1}
-												<span class="rail-glyph"
-													>{isLast
-														? '└'
-														: isFirstInSeg
-															? '┌'
-															: '│'}</span
-												>
-											{/if}
-										</div>
-										{#if item && item.source_addr}
-											<button
-												class="lock"
-												class:lock--unlocked={st === 'claimed' ||
-													st === 'forked'}
-												onclick={() => toggleLockDraft(i)}
-												title={st === 'imported'
-													? 'Unlock — claim for reorder / fork'
-													: st === 'forked'
-														? 'Forked — re-lock blocked'
-														: 'Lock — restore as transcluded'}
-												disabled={st === 'forked'}
-											>{st === 'imported' ? '🔒' : '🔓'}</button>
-										{:else}
-											<span
-												class="lock lock--placeholder"
-												title="Original — no source to lock against">·</span
-											>
-										{/if}
-										<div class="entry-body">
-											<SectionCard
-												section={sections[i]}
-												preview
-												index={i + 1}
-												onclick={() => {
-													viewMode = 'paginated';
-													gotoSection(i, 'teleport');
-												}}
-												onviewjson={openSectionJsonBySection}
-											/>
-										</div>
-										<div class="row-actions">
-											{#if st !== 'imported'}
-												<button
-													class="row-btn"
-													onclick={() => moveSection(i, 'up')}
-													disabled={i === 0}
-													title="Move up"
-												>▲</button>
-												<button
-													class="row-btn"
-													onclick={() => moveSection(i, 'down')}
-													disabled={i === sections.length - 1}
-													title="Move down"
-												>▼</button>
-												<button
-													class="row-btn remove"
-													onclick={() => removeAt(i)}
-													title="Remove from draft"
-												>✕</button>
-											{:else if isFirstInSeg && seg.indices.length > 1}
-												<!-- Group reorder: imported runs move as a single
-												     unit. Anchor the up/down on the first row of
-												     each group. -->
-												<button
-													class="row-btn"
-													onclick={() => {
-														for (const idx of seg.indices) {
-															moveSection(idx, 'up');
-														}
-													}}
-													disabled={i === 0}
-													title="Move group up"
-												>▲▲</button>
-												<button
-													class="row-btn"
-													onclick={() => {
-														for (const idx of [...seg.indices].reverse()) {
-															moveSection(idx, 'down');
-														}
-													}}
-													disabled={
-														seg.indices[seg.indices.length - 1] ===
-														sections.length - 1
-													}
-													title="Move group down"
-												>▼▼</button>
-											{/if}
-										</div>
-									</div>
-								{/each}
-							</div>
-						{/each}
-						<p class="hint">
-							🔒 click to unlock. Unlocked sections (yellow) reorder atomically;
-							locked imports (green) move together. Forked (violet) sections
-							carry diverged content — go to compose to keep editing.
-						</p>
-					</div>
-				{:else}
-					<!-- Pristine outline: the depth-N tree as a collapsible
-					     hierarchy. 30041 sections render as section cards;
-					     nested 30040 indexes are collapsible folders — the
-					     caret expands children inline, `refocus` re-roots. -->
-					<div class="outline-overlay" bind:this={outlineEl}>
-						{#each outlineVisible as row (`${row.index}:${row.section.addr.pubkey}:${row.section.addr.d_tag}`)}
-							{@const section = row.section}
-							{@const i = row.index}
-							{#if section.addr.kind === 30040}
-								{@const info = outlineChildInfo.get(i)}
-								{@const direct = info?.direct ?? 0}
-								{@const loadable = (info?.descendants ?? 0) > 0}
-								{@const pending = loaderRunning && !loadable}
-								{@const open = outlineExpanded[nestedAddrKey(section.addr)] ?? false}
-								<!-- Nested publication index — a collapsible folder. -->
-								<div
-									class="entry entry--nested"
-									class:entry--cursor={i === outlineCursor}
-									data-cursor={i}
-									style="--depth:{section.depth ?? 0}"
-								>
-									<button
-										class="nested-row"
-										onclick={() =>
-											loadable ? toggleOutlineIndex(section.addr) : refocus(section)}
-										aria-expanded={loadable ? open : undefined}
-										title={loadable
-											? open
-												? 'Collapse this nested publication'
-												: 'Expand this nested publication'
-											: pending
-												? 'Loading this level…'
-												: 'Refocus the reader on this nested publication'}
-									>
-										<span
-											class="nested-caret"
-											class:spin={pending}
-											aria-hidden="true"
-											>{loadable ? (open ? '▾' : '▸') : pending ? '⟳' : '·'}</span
-										>
-										<span class="nested-icon" aria-hidden="true">⊞</span>
-										<span class="nested-title"
-											>{section.title || 'Nested publication'}</span
-										>
-										<PoolStateBadges
-											item={app.findPoolItemByAddr(section.addr)}
-											onpillctx={() => app.pillActionByAddr(section.addr, 'context')}
-											onpillcmp={() => app.pillActionByAddr(section.addr, 'compose')}
-											onpilldrop={() => app.pillActionByAddr(section.addr, 'drop')}
-											signed={section.signed}
-											relays={section.relays}
-											forked={section.forked}
-										/>
-										{#if loadable}
-											<span class="nested-count"
-												>{direct} {direct === 1 ? 'item' : 'items'}</span
-											>
-										{:else if pending}
-											<span class="nested-count nested-count--pending">loading…</span>
-										{:else}
-											<span class="nested-count nested-count--empty">not loaded</span>
-										{/if}
-									</button>
-									{#if !loadable}
-										<button
-											class="nested-fetch-btn"
-											class:spin={refetchingSection[i]}
-											onclick={() => refetchSection(i)}
-											disabled={refetchingSection[i]}
-											title="Fetch this nested index event from relays so its children become visible in place"
-											aria-label="Fetch nested index"
-										>⟳</button>
-									{/if}
-									<button
-										class="nested-refocus-btn"
-										onclick={() => refocus(section)}
-										title="Refocus the reader on this nested publication"
-										>refocus ⟳</button
-									>
-								</div>
-							{:else}
-								{@const disc = discussionFor(section.addr)}
-								{@const sectionHighlights = effectiveHighlightsForSection(section.addr)}
-								{@const highlightN = sectionHighlights.length}
-								{@const commentN = disc.comments}
-								{@const sectionThreads = threadsForSection(section.addr)}
-								{@const commentsOpen = outlineCommentsOpen[i] ?? false}
-								{@const highlightsOpen = outlineHighlightsOpen[i] ?? false}
-								<div
-									class="entry entry--pristine"
-									class:entry--cursor={i === outlineCursor}
-									data-cursor={i}
-									style="--depth:{section.depth ?? 0}"
-								>
-									{#if section.status !== 'loaded'}
-										<button
-											class="section-fetch"
-											class:spin={refetchingSection[i] || section.status === 'loading'}
-											onclick={(e) => {
-												e.stopPropagation();
-												refetchSection(i);
-											}}
-											disabled={refetchingSection[i] || section.status === 'loading'}
-											title="Fetch this section from relays"
-											aria-label="Fetch section"
-										>⟳</button>
-									{/if}
-									<button
-										class="lock"
-										onclick={() => ensureDraftThenToggle(i)}
-										title="Unlock to start a draft for reorder/fork">🔒</button
-									>
-									<div class="entry-body">
-										<SectionCard
-											{section}
-											preview
-											index={i + 1}
-											onclick={() => {
-												handleLoadSection(i);
-												viewMode = 'paginated';
-												gotoSection(i, 'teleport');
-											}}
-										/>
-									</div>
-									<div class="section-actions">
-									<PoolStateBadges
-										item={app.findPoolItemByAddr(section.addr)}
-										onpillctx={() => app.pillActionByAddr(section.addr, 'context')}
-										onpillcmp={() => app.pillActionByAddr(section.addr, 'compose')}
-										onpilldrop={() => app.pillActionByAddr(section.addr, 'drop')}
-										signed={section.signed}
-										relays={section.relays}
-									/>
-									{#if highlightN > 0}
-										<button
-											class="section-action section-action--highlights"
-											class:open={highlightsOpen}
-											onclick={(e) => {
-												e.stopPropagation();
-												toggleOutlineHighlights(i);
-											}}
-											title="{highlightsOpen ? 'Hide' : 'Show'} the {highlightN} highlight{highlightN === 1 ? '' : 's'} on this section"
-										>hl {highlightN}</button>
-									{/if}
-									{#if commentN > 0}
-										<button
-											class="section-action section-action--comments"
-											class:open={commentsOpen}
-											onclick={(e) => {
-												e.stopPropagation();
-												toggleOutlineComments(i);
-											}}
-											title="{commentsOpen ? 'Hide' : 'Show'} the {commentN} threaded comment{commentN === 1 ? '' : 's'} on this section"
-										>cmt {commentN}</button>
-									{/if}
-									<button
-										class="pill pill--menu"
-										onclick={(e) => {
-											e.stopPropagation();
-											openSectionJsonBySection(section);
-										}}
-										title="Open this section's event menu (m)"
-									>menu</button>
-								</div>
-							</div>
-							{#if highlightsOpen && highlightN > 0}
-								<div class="outline-detail outline-detail--highlights">
-									<HighlightList highlights={sectionHighlights} />
-								</div>
-							{/if}
-								{#if commentsOpen && sectionThreads.length > 0}
-									<div class="outline-detail outline-detail--comments">
-										<CommentThread
-											nodes={sectionThreads}
-											focusedEventId={parsedFocusCommentId}
-											replyable
-											onposted={refreshDiscussionsLocal}
-										/>
-										<ReplyBox
-											root={{ address: addrKey(section.addr) }}
-											placeholder="Comment on this section…"
-											onposted={refreshDiscussionsLocal}
-										/>
-									</div>
-								{/if}
-							{/if}
-						{/each}
-					</div>
-				{/if}
-			{:else if viewMode === 'continuous'}
+			{#if viewMode === 'continuous'}
 				<ContinuousView
 					bind:this={continuousView}
 					{sections}
@@ -2875,37 +2391,8 @@
 		.toolbar button {
 			min-height: 38px;
 		}
-		/* Row 2 must hold NESTED + knob + ±all + tools in 390px — the knob's
-		   "depth" word is redundant next to the NESTED chip; the ± buttons
-		   and titles carry it. */
-		.depth-knob__label {
-			display: none;
-		}
-		.toolbar .tree-all {
-			padding-left: 5px;
-			padding-right: 5px;
-		}
 	}
 
-	/* The collapsed action row (hl / edit / ⟳ / pool chips / graph /
-	   refresh) — same chrome family as the toolbar, one shade quieter so
-	   it reads as the toolbar's drawer, not a second toolbar. */
-	.toolbar--aux {
-		background: var(--panel-bg);
-	}
-	.toolbar .aux-toggle {
-		color: var(--fg-alt);
-	}
-	/* Reading-typography strip. Its controls bring their own chrome, so the
-	   row is just a quiet shelf — no toolbar button padding. */
-	.toolbar--type {
-		padding: 6px 8px;
-	}
-	.toolbar .type-toggle {
-		font-family: var(--font-serif);
-		font-size: var(--t-sm);
-		letter-spacing: 0.02em;
-	}
 
 	/* Mobile TOC drawer — same surface language as the shell's work-buffer
 	   drawer (fixed left panel + scrim) but one layer beneath it. */
@@ -3006,26 +2493,6 @@
 		border-color: var(--id-yours);
 	}
 	.toolbar .sp { flex: 1; }
-	.toolbar .draft-pill {
-		font-family: var(--font-mono);
-		font-size: var(--t-3xs);
-		font-weight: 700;
-		letter-spacing: 0.08em;
-		padding: 1px 6px;
-		border-radius: var(--r-sm);
-		background: color-mix(in srgb, var(--yellow) 22%, transparent);
-		color: var(--yellow);
-	}
-	.toolbar .bulk:disabled { opacity: 0.4; cursor: not-allowed; }
-	.toolbar .edit {
-		color: var(--id-draft);
-		border-color: var(--id-draft);
-	}
-	.toolbar .edit:hover:not(:disabled) {
-		background: var(--id-draft);
-		color: var(--bg);
-	}
-	.toolbar .edit:disabled { opacity: 0.5; cursor: not-allowed; }
 	/* JSON action — distinct from view-mode toggles so it doesn't read
 	   as a fourth view mode. Tinted with --id-yours like other modal /
 	   nav affordances. */
@@ -3039,35 +2506,6 @@
 		border-color: var(--id-yours);
 	}
 	.toolbar .json-btn:disabled { opacity: 0.5; cursor: not-allowed; }
-
-	.toolbar .hl-mode-pill {
-		font-family: var(--font-mono);
-		font-size: calc(var(--t-xs) - 1px);
-		color: var(--base5);
-		background: none;
-		border: 1px solid var(--panel-border);
-		border-radius: var(--r-sm);
-		padding: 2px 8px;
-		cursor: pointer;
-	}
-	.toolbar .hl-mode-pill:hover:not(:disabled) {
-		color: var(--fg);
-		border-color: var(--base5);
-	}
-	.toolbar .hl-mode-pill--on {
-		color: var(--id-yours);
-		border-color: var(--id-yours);
-	}
-	.toolbar .hl-mode-pill:disabled {
-		opacity: 0.5;
-		cursor: not-allowed;
-	}
-	.toolbar .discussions-refresh {
-		margin-left: 4px;
-		font-family: var(--font-mono);
-		font-size: var(--t-xs);
-	}
-	.toolbar .discussions-refresh:disabled { opacity: 0.5; cursor: not-allowed; }
 
 	/* Reference-resolution progress: a slim bar + count, shown only while
 	   references are still resolving (fetching not-local embeds, etc.). */
@@ -3193,105 +2631,6 @@
 		font-family: var(--font-mono);
 		color: var(--base5);
 	}
-
-	.section-actions {
-		display: flex;
-		gap: 4px;
-		align-items: center;
-		padding: 0 6px;
-		flex-shrink: 0;
-		align-self: center;
-	}
-	/* Discussion-count toggles — sized and tinted like the PoolStateBadges
-	   pills next to them so the cluster reads as one family, not a CTA
-	   strip. `hl n` / `cmt n`; the tooltip carries the full wording. */
-	.section-action {
-		font-family: var(--font-mono);
-		font-size: var(--t-3xs);
-		font-weight: 600;
-		padding: 0 6px;
-		border-radius: 3px;
-		border: none;
-		line-height: 1.4;
-		white-space: nowrap;
-		cursor: pointer;
-	}
-	.section-action:hover {
-		filter: brightness(1.2);
-	}
-	.section-action--highlights {
-		background: color-mix(in srgb, var(--state-online) 12%, transparent);
-		color: var(--state-online);
-	}
-	.section-action--highlights.open {
-		background: color-mix(in srgb, var(--state-online) 28%, transparent);
-	}
-	.section-action--comments {
-		background: color-mix(in srgb, var(--id-yours) 12%, transparent);
-		color: var(--id-yours);
-	}
-	.section-action--comments.open {
-		background: color-mix(in srgb, var(--id-yours) 28%, transparent);
-	}
-
-	.outline-detail {
-		margin-left: 22px;
-		margin-right: 6px;
-		margin-bottom: 6px;
-		padding: 6px 8px;
-		border-left: 2px solid var(--panel-border);
-	}
-	.outline-detail--highlights {
-		border-left-color: var(--state-online);
-	}
-	.outline-detail--comments {
-		border-left-color: var(--id-yours);
-	}
-
-	.title {
-		padding: 8px var(--s-3);
-		font-size: var(--t-md);
-		font-weight: 700;
-		border-bottom: 1px solid var(--panel-border);
-		flex-shrink: 0;
-		display: flex;
-		align-items: center;
-		flex-wrap: wrap;
-		gap: 8px;
-	}
-	/* Long publication titles wrap (this is the content surface — don't
-	   ellipsize) instead of forcing the badges out of the pane. */
-	.title__text {
-		flex: 1;
-		/* A long title keeps real line length — the chips wrap to their own
-		   row instead of squeezing it into a tall left column. */
-		min-width: min(100%, 24ch);
-		overflow-wrap: anywhere;
-	}
-	/* Comments/highlights disclosure — rides the title row instead of
-	   owning one. Same quiet mono family as the old pub-threads head. */
-	.threads-chip {
-		display: inline-flex;
-		align-items: center;
-		gap: 4px;
-		margin-left: auto;
-		background: transparent;
-		border: none;
-		padding: 4px 0 4px 8px;
-		font-family: var(--font-mono);
-		font-size: var(--t-2xs);
-		font-weight: 400;
-		color: var(--id-yours);
-		cursor: pointer;
-		white-space: nowrap;
-	}
-	.threads-chip:hover { color: var(--fg); }
-	.threads-chip .ptr { min-width: 1ch; }
-	/* With a summary chip present, it takes the auto margin and the cmt/hl
-	   chip sits flush beside it. */
-	.summary-chip { color: var(--fg-alt, var(--base5)); }
-	.summary-chip + .threads-chip { margin-left: 0; }
-	/* The summary drawer — open by default, closed from the title chip. */
 	.title-summary {
 		margin: 0;
 		padding: 4px var(--s-3) 8px;
@@ -3320,134 +2659,9 @@
 		color: var(--base5);
 	}
 
-	/* Outline-overlay layout (used by both draft and pristine modes). */
-	.outline-overlay {
-		padding: 8px;
-	}
-	.segment { margin-bottom: 6px; }
-	.segment--group.segment--imported {
-		border-left: 2px solid var(--green);
-		padding-left: 4px;
-	}
-	.entry {
-		display: grid;
-		grid-template-columns: 14px auto 1fr auto;
-		gap: 6px;
-		align-items: flex-start;
-		padding: 4px 6px;
-		border: 1px solid transparent;
-		border-radius: var(--r-sm);
-		margin-bottom: 2px;
-	}
-	.entry--pristine {
-		grid-template-columns: auto 1fr auto;
-	}
-	.entry--imported {
-		border-color: var(--green);
-		background: color-mix(in srgb, var(--green) 6%, transparent);
-	}
-	.entry--claimed {
-		border-color: var(--yellow);
-		background: color-mix(in srgb, var(--yellow) 7%, transparent);
-	}
-	.entry--forked {
-		border-color: var(--id-forked);
-		background: color-mix(in srgb, var(--id-forked) 8%, transparent);
-	}
-	.entry--original { /* no border on purpose */ }
-
-	/* Ranger-style outline cursor: bright bar + tinted background. Wins
-	   over the provenance-derived border so the cursor stays legible
-	   regardless of section state. */
-	.entry--cursor {
-		box-shadow: inset 4px 0 0 var(--id-yours);
-		background: color-mix(in srgb, var(--id-yours) 18%, transparent);
-	}
-
-	/* Depth-N indentation: each nesting level shifts the row right. The
-	   `--depth` custom property is set inline from the TOC entry. */
-	.entry--pristine,
-	.entry--nested {
-		margin-left: calc(var(--depth, 0) * 18px);
-	}
-
-	/* Nested 30040 index — a collapsible folder. The caret expands the
-	   subtree inline; `refocus` re-roots the reader on the sub-publication
-	   and pushes a breadcrumb. */
-	.entry--nested {
-		display: flex;
-		align-items: stretch;
-		gap: 6px;
-		padding: 2px 6px;
-	}
-	.nested-row {
-		display: flex;
-		align-items: center;
-		gap: 8px;
-		flex: 1;
-		min-width: 0;
-		padding: 6px 10px;
-		border: 1px dashed var(--base3);
-		border-radius: var(--r-sm);
-		background: color-mix(in srgb, var(--id-yours) 6%, transparent);
-		color: var(--base6);
-		cursor: pointer;
-		text-align: left;
-	}
-	.nested-row:hover {
-		border-color: var(--id-yours);
-		background: color-mix(in srgb, var(--id-yours) 13%, transparent);
-		color: var(--fg);
-	}
-	.nested-row[aria-expanded='true'] {
-		border-style: solid;
-		background: color-mix(in srgb, var(--id-yours) 11%, transparent);
-	}
-	.nested-caret {
-		min-width: 1ch;
-		color: var(--id-yours);
-		font-size: var(--t-3xs);
-	}
-	.nested-icon { color: var(--id-yours); font-size: var(--t-base); line-height: 1; }
-	.nested-title {
-		font-weight: 600;
-		font-size: var(--t-sm);
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
-	}
-	.nested-count {
-		margin-left: auto;
-		font-family: var(--font-mono);
-		font-size: var(--t-3xs);
-		color: var(--fg-muted);
-		white-space: nowrap;
-	}
-	.nested-count--empty { font-style: italic; }
-	.nested-count--pending { color: var(--id-yours); font-style: italic; }
-	.nested-refocus-btn {
-		background: none;
-		border: 1px dashed var(--base3);
-		border-radius: var(--r-sm);
-		color: var(--id-yours);
-		font-family: var(--font-mono);
-		font-size: var(--t-3xs);
-		text-transform: uppercase;
-		letter-spacing: 0.07em;
-		padding: 0 8px;
-		cursor: pointer;
-		white-space: nowrap;
-	}
-	.nested-refocus-btn:hover {
-		border-color: var(--id-yours);
-		background: color-mix(in srgb, var(--id-yours) 13%, transparent);
-	}
-
-	/* Per-section / per-nested-index fetch (radial arrow). Pairs with
-	 * .spin for the loading state — borrows the existing keyframe so a
-	 * pending fetch reads visually the same as a streaming tree node. */
-	.nested-fetch-btn,
-	.section-fetch,
+	/* Fetch-from-relays (radial arrow). Pairs with .spin for the loading
+	 * state — borrows the existing keyframe so a pending fetch reads
+	 * visually the same as a streaming tree node. */
 	.title-fetch {
 		background: none;
 		border: 1px solid var(--base3);
@@ -3466,20 +2680,15 @@
 		margin-left: 6px;
 		font-size: var(--t-sm);
 	}
-	.nested-fetch-btn:hover:not(:disabled),
-	.section-fetch:hover:not(:disabled),
 	.title-fetch:hover:not(:disabled) {
 		border-color: var(--id-yours);
 		background: color-mix(in srgb, var(--id-yours) 13%, transparent);
 	}
-	.nested-fetch-btn:disabled,
-	.section-fetch:disabled,
 	.title-fetch:disabled {
 		opacity: 0.6;
 		cursor: progress;
 	}
 
-	/* Outline tree controls — expand/collapse the whole hierarchy at once. */
 	/* Cross-publication breadcrumb trail. */
 	.crumbs {
 		display: flex;
@@ -3530,46 +2739,8 @@
 	}
 	.crumb-prev:hover:not(:disabled) { border-color: var(--id-yours); }
 	.crumb-prev:disabled { color: var(--base5); cursor: default; opacity: 0.5; }
-	.crumb-graph {
-		margin-left: auto;
-		font-family: var(--font-mono);
-		font-size: var(--t-xs);
-		padding: 1px 8px;
-		background: transparent;
-		border: 1px solid var(--panel-border);
-		border-radius: var(--r-sm);
-		color: var(--id-yours);
-		cursor: pointer;
-	}
-	.crumb-graph:hover { border-color: var(--id-yours); }
-	.crumb-graph.active {
-		background: color-mix(in srgb, var(--id-yours) 16%, transparent);
-		border-color: var(--id-yours);
-	}
 
-	/* Depth stepper in the toolbar. */
-	/* Flat/nested level tag sitting where the depth control used to live. */
-	.level-hint {
-		display: inline-flex;
-		align-items: center;
-		margin-left: 4px;
-		padding: 1px 6px;
-		border-radius: var(--r-md);
-		font-family: var(--font-mono);
-		font-size: var(--t-xs);
-		letter-spacing: 0.06em;
-		white-space: nowrap;
-	}
-	/* Flat = green, reads "self-contained, loaded whole". */
-	.level-hint--flat {
-		background: color-mix(in srgb, var(--state-online) 14%, transparent);
-		color: var(--state-online);
-	}
-	/* Nested = the structural purple, paired with the depth knob beside it. */
-	.level-hint--nested {
-		background: color-mix(in srgb, var(--id-imported) 14%, transparent);
-		color: var(--id-imported);
-	}
+	/* Depth stepper in the tree row. */
 	.depth-knob {
 		display: inline-flex;
 		align-items: center;
@@ -3579,7 +2750,6 @@
 		font-size: var(--t-xs);
 		color: var(--base5);
 	}
-	.depth-knob__label { text-transform: uppercase; letter-spacing: 0.06em; }
 	.depth-knob__val { min-width: 1ch; text-align: center; color: var(--base6); }
 	.depth-knob__step {
 		font-family: var(--font-mono);
@@ -3606,64 +2776,6 @@
 		}
 	}
 
-	.rail {
-		font-family: var(--font-mono);
-		color: var(--green);
-		font-size: var(--t-md);
-		line-height: 1;
-		padding-top: 6px;
-	}
-	.lock {
-		flex-shrink: 0;
-		background: transparent;
-		border: 1px solid var(--base3);
-		border-radius: var(--r-sm);
-		font-size: var(--t-sm);
-		padding: 0 6px;
-		cursor: pointer;
-		color: var(--base6);
-		align-self: flex-start;
-	}
-	.lock--unlocked {
-		border-color: var(--yellow);
-		color: var(--yellow);
-	}
-	.lock--placeholder { opacity: 0.3; cursor: default; }
-	.lock:hover:not(:disabled):not(.lock--placeholder) {
-		border-color: var(--id-yours);
-		color: var(--fg);
-	}
-	.lock:disabled { opacity: 0.6; cursor: not-allowed; }
-
-	.entry-body { min-width: 0; }
-
-	.row-actions {
-		display: flex;
-		flex-direction: column;
-		gap: 2px;
-		align-self: flex-start;
-	}
-	.row-btn {
-		background: transparent;
-		border: 1px solid var(--base3);
-		border-radius: var(--r-sm);
-		font-size: var(--t-2xs);
-		padding: 0 4px;
-		min-width: 22px;
-		cursor: pointer;
-		color: var(--base6);
-		font-family: var(--font-mono);
-	}
-	.row-btn:hover:not(:disabled) {
-		border-color: var(--id-yours);
-		color: var(--fg);
-	}
-	.row-btn:disabled { opacity: 0.35; cursor: not-allowed; }
-	.row-btn.remove:hover:not(:disabled) {
-		border-color: var(--red);
-		color: var(--red);
-	}
-
 	.hint {
 		padding: 12px;
 		font-size: var(--t-xs);
@@ -3671,5 +2783,134 @@
 		font-style: italic;
 		text-align: center;
 		margin: 0;
+	}
+	/* ── Strip chrome (2026-09-11): § · paged|scroll · tree · T · M ── */
+	.toolbar .seg {
+		display: inline-flex;
+		border: 1px solid var(--base3);
+		border-radius: var(--r-sm);
+		overflow: hidden;
+	}
+	.toolbar .seg button {
+		border: 0;
+		border-radius: 0;
+		border-right: 1px solid var(--base3);
+		min-width: 56px;
+	}
+	.toolbar .seg button:last-child { border-right: 0; }
+	.toolbar .tb-icon {
+		min-width: 40px;
+		padding: 2px 6px;
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+	}
+	.toolbar .tb-letter {
+		font-weight: 700;
+		font-size: var(--t-sm);
+		color: var(--base7);
+	}
+	.tree-row {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		padding: 4px var(--s-3) 6px;
+		border-bottom: 1px solid var(--panel-border);
+		background: var(--panel-bg);
+		flex-shrink: 0;
+	}
+	.tree-row__cap {
+		font-family: var(--font-mono);
+		font-size: 9px;
+		letter-spacing: 0.1em;
+		text-transform: uppercase;
+		color: var(--base5);
+		min-width: 34px;
+	}
+	.tree-row .tree-all {
+		font-family: var(--font-mono);
+		font-size: var(--t-xs);
+		padding: 2px 8px;
+		min-height: 34px;
+		background: transparent;
+		border: 1px solid var(--base3);
+		border-radius: var(--r-sm);
+		color: var(--base6);
+		cursor: pointer;
+	}
+	.tree-row .tree-all.active {
+		background: var(--id-yours);
+		color: var(--bg);
+		border-color: var(--id-yours);
+	}
+	.tree-row .sp { flex: 1; }
+	.tools-sheet {
+		display: flex;
+		flex-direction: column;
+		border-bottom: 1px solid var(--panel-border);
+		background: var(--panel-bg);
+		max-height: 60vh;
+		overflow: auto;
+		flex-shrink: 0;
+	}
+	.tools-sheet__sec {
+		display: flex;
+		flex-direction: column;
+		gap: 6px;
+		padding: 8px var(--s-3) 10px;
+		border-bottom: 1px solid var(--panel-border);
+	}
+	.tools-sheet__sec:last-child { border-bottom: 0; }
+	.tools-sheet__head {
+		display: flex;
+		align-items: baseline;
+		gap: 8px;
+		flex-wrap: wrap;
+	}
+	.tools-sheet__head .cap {
+		font-family: var(--font-mono);
+		font-size: 9px;
+		letter-spacing: 0.1em;
+		text-transform: uppercase;
+		color: var(--base5);
+	}
+	.tools-sheet__head .hint {
+		font-family: var(--font-sans);
+		font-size: var(--t-xs);
+		color: var(--base5);
+	}
+	.tools-sheet__row {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 6px;
+		align-items: center;
+	}
+	.tools-sheet__row button {
+		font-family: var(--font-mono);
+		font-size: var(--t-xs);
+		padding: 2px 8px;
+		min-height: 32px;
+		background: transparent;
+		border: 1px solid var(--base3);
+		border-radius: var(--r-sm);
+		color: var(--base6);
+		cursor: pointer;
+	}
+	.tools-sheet__row button:disabled { opacity: 0.5; cursor: not-allowed; }
+	.tools-sheet__row button.active,
+	.tools-sheet__row button.hl-mode-pill--on {
+		background: var(--id-yours);
+		color: var(--bg);
+		border-color: var(--id-yours);
+	}
+	.tools-sheet__row button.edit { color: var(--red); border-color: var(--red); }
+	.tree-row .depth-knob__val { white-space: nowrap; }
+	@media (max-width: 480px) {
+		.tools-sheet__row button,
+		.tree-row .tree-all,
+		.tree-row .depth-knob__step { min-height: 40px; }
+		/* 390 px: caption goes, "expand all" → "expand" (see .tree-all--long). */
+		.tree-row__cap { display: none; }
+		.tree-row .tree-all--long .long { display: none; }
 	}
 </style>

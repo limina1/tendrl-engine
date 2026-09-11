@@ -8,9 +8,23 @@ fed by an engine-side tree stream so ordering, dedup, and a-tag resolution
 never happen in the browser.
 
 * What exists
-- Three view modes cycled with =h= / =l=: outline (cursored TOC + provenance
-  borders), paginated (one section, prev/next bar), continuous (full doc,
-  page-scroll on =j= / =k=) — =web/src/lib/wm/renderers/ReaderBuffer.svelte=.
+- Two view modes toggled with =h= / =l=: paged (one section, prev/next
+  bar) and scroll (full doc, page-scroll on =j= / =k=) —
+  =web/src/lib/wm/renderers/ReaderBuffer.svelte=. The outline view was
+  removed 2026-09-11 (ngit issue c15f2b65 "tool buttons take up too much
+  vertical space"): the =§= toc drawer is the outline, on every shell.
+- Reader chrome (2026-09-11): one strip — =§= toc · =paged | scroll= ·
+  =tree= · =T= · =M=. =tree= (nested publications only) drops a row with
+  the load-depth stepper, expand all / collapse (toc drawer + scroll
+  view together) and the ⊞ graph. =T= drops the tools panel: *actions*
+  (highlight mode, comments, highlights drawer, summary, edit, edit §,
+  fetch from relays, refresh threads), *pool* (context / compose /
+  provenance pills), *reading* (=ReadingControls=). =M= is the event
+  menu. The publication title row (title · summary · cmt/hl chip) is
+  gone — the title lives in the text, provenance in =M=, the chips in
+  =T=. From ≈300 px of stacked rows on a phone to one 50 px strip.
+  Mockups: the "Reader Toolbar on Mobile" design canvas (Claude Code
+  artifact facbf79d…, Chosen page).
 - TOC via the SSE =stream_publication_tree= (=src/publication.rs=): the
   depth-N loader ships ordered =children= parent-before-child, so nested
   30040 sub-publications resolve engine-side.

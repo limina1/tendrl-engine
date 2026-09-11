@@ -306,6 +306,10 @@ historical), and the actual APK build is
 - [[file:fix-android-lifecycle.org][Lifecycle gaps]] — suspend gates
   only the 60 s loop (the B2/M2 SSE half is still open); debug-level
   logcat in release
+- +Reader tool buttons ate ≈300 px of the phone (ngit issue c15f2b65)+
+  (fixed 2026-09-11: one strip — § · paged|scroll · tree · T · M — with
+  the tree row and the tools panel on demand; see
+  [[file:feat-reader.org][Reader]] "Reader chrome")
 - +[[file:fix-android-exit-crash.org][Exit crash]] — Back/swipe-away
   ends in =exit()=, whose static-destructor pass aborts inside
   libonnxruntime; the 2–20 s crash dump freezes the process and any
