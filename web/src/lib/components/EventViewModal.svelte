@@ -27,7 +27,7 @@
 		insertMode?: EditorInsertMode;
 		onclose: () => void;
 		onspawnreader?: (pubkey: string, d_tag: string, label: string | null) => void;
-		onspawneventreader?: (eventId: string, label: string | null) => void;
+		onspawneventreader?: (eventId: string, label: string | null, kind?: number) => void;
 		onfindcontaining?: (kind: number, pubkey: string, d_tag: string) => void;
 		oninsert?: (event: NostrEvent | SearchResult, mode: EditorInsertMode) => void;
 	} = $props();
@@ -255,7 +255,7 @@
 		if (kind === 30040 && d) {
 			onspawnreader?.(pubkey, d, title);
 		} else {
-			onspawneventreader?.(id, title);
+			onspawneventreader?.(id, title, n.kind);
 		}
 	}
 

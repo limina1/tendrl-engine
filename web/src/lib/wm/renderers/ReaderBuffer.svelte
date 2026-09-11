@@ -6,6 +6,8 @@
 	import PaginatedView from '$lib/components/PaginatedView.svelte';
 	import FocusGraph, { type GraphNode } from '$lib/components/FocusGraph.svelte';
 	import SectionCard from '$lib/components/SectionCard.svelte';
+	import NoteView from '$lib/components/NoteView.svelte';
+	import type { NostrEvent } from '$lib/types';
 	import ProfileName from '$lib/components/ProfileName.svelte';
 	import PoolStateBadges from '$lib/components/PoolStateBadges.svelte';
 	import { getActiveStore, type NavAction } from '../buffer-store.svelte';
@@ -1324,6 +1326,17 @@
 		if (treeDepth > loadedDepth) runLoader();
 	}
 
+	// A short-form event opened by id (kind 1 note, 1111 comment, 9802
+	// highlight, 1621 issue, …) — anything that isn't a document kind —
+	// renders as its own NoteView card instead of being wrapped as a
+	// one-section publication (which dressed a note in the section
+	// template: "Section 1", pager, Edit §).
+	let note = $state<NostrEvent | null>(null);
+	const DOCUMENT_KINDS = new Set([30040, 30041, 30023, 30818, 30817]);
+	function isDocumentKind(kind: number): boolean {
+		return DOCUMENT_KINDS.has(kind);
+	}
+
 	// Standalone-event reader: a `reader:event:<id>` buffer renders one
 	// section, no TOC walk, and defaults to paginated view so the user
 	// reads exactly the event they searched for.
@@ -1336,6 +1349,7 @@
 	async function loadEvent(eventId: string) {
 		loading = true;
 		loadingStatus = null;
+		note = null;
 		try {
 			let resp = await api.getEvent(eventId, { policy: 'local_only' });
 			if (!resp.event) {
@@ -1347,6 +1361,12 @@
 				| null;
 			if (!ev) {
 				error = 'Event not found locally or on your relays.';
+				return;
+			}
+			if (!isDocumentKind(ev.kind ?? 0)) {
+				note = ev as NostrEvent;
+				publication = null;
+				pristineSections = [];
 				return;
 			}
 			const tags = ev.tags ?? [];
@@ -2043,7 +2063,7 @@
 <!-- Swipe is supplementary — the § toc button is the accessible path. -->
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div class="reader-wrap" ontouchstart={onReaderTouchStart} ontouchend={onReaderTouchEnd}>
-	<div class="toolbar" data-tour="reader-toolbar">
+	<div class="toolbar" data-tour="reader-toolbar" style:display={note ? 'none' : undefined}>
 		{#if showTocButton}
 			<button
 				class="toc-btn"
@@ -2261,6 +2281,10 @@
 		</div>
 	{:else if error}
 		<div class="empty"><p>Error: {error}</p></div>
+	{:else if note}
+		<div class="note-surface">
+			<NoteView event={note} onviewprofile={app.handleViewProfile} />
+		</div>
 	{:else if !publication}
 		<div class="empty"><p>No publication loaded</p></div>
 	{:else}

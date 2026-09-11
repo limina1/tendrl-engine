@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { kindLabel } from '$lib/search/search-config.svelte';
 	import '$lib/styles/tokens.css';
 	import '../app.css';
 	import { untrack } from 'svelte';
@@ -84,15 +85,20 @@
 		}
 	}
 
-	function spawnEventReader(eventId: string, label: string | null) {
+	function spawnEventReader(eventId: string, label: string | null, kind?: number) {
 		try {
 			const store = getActiveStore();
+			// The buffer label names what the reader will show: a 30041 is a
+			// section; a kind-1 note / 1111 comment / anything else opened by
+			// id renders as a NoteView card and wears its kind name instead.
+			const bufLabel =
+				kind === 30041 || kind === undefined ? 'section' : kindLabel(kind).toLowerCase();
 			store.openBuffer({
 				className: 'work',
 				buffer: {
 					id: `reader:event:${eventId}`,
 					kind: 'reader',
-					label: 'section',
+					label: bufLabel,
 					kicker: label ?? eventId.slice(0, 8)
 				}
 			});

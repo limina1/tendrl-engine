@@ -6,6 +6,7 @@
 	import CommentThread from '$lib/components/CommentThread.svelte';
 	import ReplyBox from '$lib/components/ReplyBox.svelte';
 	import PoolStateBadges from '$lib/components/PoolStateBadges.svelte';
+	import RichContent from '$lib/components/RichContent.svelte';
 	import { countThread, flattenThread, type ThreadNode } from '$lib/discussions/thread';
 	import { prefetchAuthors } from '$lib/discussions/authors.svelte';
 
@@ -522,7 +523,7 @@
 					</button>
 				{/if}
 			{:else}
-				<div class="dv-comment">{event.content}</div>
+				<div class="dv-comment"><RichContent content={event.content} /></div>
 			{/if}
 			{#if isComment || isHighlight}
 				<button class="dv-action" onclick={pullThread} disabled={threadLoading}>
@@ -720,7 +721,6 @@
 	.dv-comment {
 		padding: 8px 0;
 		color: var(--fg);
-		white-space: pre-wrap;
 		line-height: 1.55;
 	}
 

@@ -6,6 +6,7 @@
 	import { getAppState } from '$lib/state.svelte';
 	import { identityCanSign } from '$lib/identity/signer';
 	import ReplyBox from './ReplyBox.svelte';
+	import RichContent from './RichContent.svelte';
 
 	let {
 		nodes,
@@ -114,7 +115,7 @@
 				>reply</button>
 			{/if}
 		</div>
-		<div class="ct-body">{node.event.content}</div>
+		<div class="ct-body"><RichContent content={node.event.content} /></div>
 	</div>
 	{#if replyable && ctl.openId === node.event.id}
 		<ReplyBox
@@ -222,7 +223,6 @@
 		font-size: var(--t-xs);
 		color: var(--fg);
 		line-height: 1.5;
-		white-space: pre-wrap;
 		word-break: break-word;
 		padding-left: calc(1ch + 6px + 8px + 6px);
 	}

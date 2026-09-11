@@ -18,6 +18,20 @@ never happen in the browser.
   IntersectionObserver still covers very long publications).
 - Standalone-section reader: =reader:event:<id>= synthesizes a one-section
   publication from any event id, forced paginated.
+- Short-form events by id (2026-09-11, ngit issue 7aa84e75 "render
+  comments and threads like normal"): a =reader:event:<id>= whose kind
+  is not a document kind (30040/30041/30023/30818/30817) no longer gets
+  wrapped as a one-section publication — the section template dressed
+  a kind-1 note as "Section 1" with a pager and Edit §. It renders as
+  =NoteView.svelte=: the section card's column and reading face, a
+  kind label (=kindLabel=, "short note" / "comment" / "kind N") where
+  the section title was, author · time, the standard pool/provenance
+  pills + menu, a rich body (=RichContent=), and the NIP-22 thread
+  rooted at the event underneath (local store on mount, "Pull thread
+  from relays" Confirm-gated, reply box). The reader toolbar hides; the
+  buffer label is the kind name, not "section". Comment bodies in
+  =DiscussionViewBuffer= and =CommentThread= nodes went from pre-wrap
+  text to =RichContent= at the same time.
 - =Edit= / =Edit §= import the publication (or the cursored section) into
   the compose pool as default-locked blocks and open the composer.
 - Always pristine: a published 30040 shows the engine's view even if a draft
