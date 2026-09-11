@@ -1,3 +1,9 @@
+## v0.12.2 — 2026-09-11
+
+- feat(kasten): nanoid-pinned d-tags, direct relay publisher, NIP-19-aware MCP event lookup
+- fix(nostrdown): index the NIP-54-normalized d-tag as a {{ref:}} sibling handle
+- fix(event-menu): wrap the Actions row instead of overflowing the modal
+
 ## v0.12.1 — 2026-09-11
 
 - feat(reader): one-strip chrome — § · paged|scroll · tree · T · M
