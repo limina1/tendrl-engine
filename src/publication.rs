@@ -2537,6 +2537,10 @@ impl<'a> PublicationEngine<'a> {
                     .iter()
                     .map(|ds| {
                         let mut slugs = vec![ds.d_tag.clone()];
+                        let nd = crate::nostrdown::normalize(&ds.d_tag);
+                        if !nd.is_empty() && nd != ds.d_tag {
+                            slugs.push(nd);
+                        }
                         if let Some(t) = ds.title.as_deref().filter(|t| !t.is_empty()) {
                             push_title_slugs(&mut slugs, t);
                         }
@@ -3214,6 +3218,15 @@ pub struct ResolveItem {
 fn collect_sibling_entries(pubn: &Publication) -> Vec<SiblingEntry> {
     fn entry_for(addr: &NAddr, event: Option<&Value>) -> SiblingEntry {
         let mut slugs = vec![addr.d_tag.clone()];
+        // `{{ref:}}` targets arrive NIP-54-normalized (lowercased, `_` → `-`,
+        // trailing `-` trimmed), so a mixed-case nanoid d-tag never matches
+        // its literal form. Index the normalized d-tag as a handle too — the
+        // kasten root (`{{ref:<root d-tag>|Index}}`) and dangling/collision
+        // refs by d-tag depend on it.
+        let nd = crate::nostrdown::normalize(&addr.d_tag);
+        if !nd.is_empty() && nd != addr.d_tag {
+            slugs.push(nd);
+        }
         if let Some(ev) = event {
             if let Some(t) = first_tag_value(ev, "T").filter(|t| !t.is_empty()) {
                 slugs.push(t);
