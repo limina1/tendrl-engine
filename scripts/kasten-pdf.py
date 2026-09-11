@@ -52,12 +52,17 @@ def main():
     top = events[-1]
     top_d = tagmap(top)["d"][0]
     known = set(by_d)
+    by_handle = {}  # T slug -> d-tag (refs name siblings by T slug)
+    for d, e in by_d.items():
+        for t in tagmap(e).get("T", []):
+            by_handle.setdefault(t, d)
 
     def refs(text):
         def wiki(m):
             target, label = m.group(1), m.group(2) or m.group(1)
-            if target in known or target == top_d:
-                return f"<<{target},{label}>>"
+            d = target if (target in known or target == top_d) else by_handle.get(target)
+            if d:
+                return f"<<{d},{label}>>"
             return f"_{label}_"  # dangling: a TODO, not an error
         return MENTION.sub(args.mention_label, WIKI.sub(wiki, text))
 

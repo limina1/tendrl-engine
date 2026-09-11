@@ -318,11 +318,15 @@ against a real AI-seeded kasten; generic over any kasten that follows
 these conventions (.adoc notes + an index note).
 
 - =scripts/build-kasten-events.py <kasten>/= — the *build*. Parses
-  every note (header block → tags, d-tag = filename stem, so rebuilds
-  are idempotent on the same coordinates; =T= = the short-title slug,
-  the note's human topic handle), converts =link:x.adoc[…]= file
-  links into ={{ref:x|Title}}= nostrdown /sibling/ refs (+ =ref=
-  tags) — =ref:=, not =wiki:=, because the kasten is one publication
+  every note (header block → tags; d-tag = an opaque nanoid minted
+  once and pinned in =<kasten>/kasten-ids.json= — commit it — so
+  rebuilds are idempotent on the same coordinates and one author's
+  kastens never collide on a =mission= or =index=; =T= = the
+  short-title slug, the note's human handle, which sibling refs name),
+  converts =link:x.adoc[…]= / =[[x]]= / =[[file:x.org][…]]= file links
+  into ={{ref:<T-slug>|Title}}= nostrdown /sibling/ refs (+ =ref= tags
+  carrying the target d-tag; a link to an unwritten note reserves its
+  id) — =ref:=, not =wiki:=, because the kasten is one publication
   and sibling resolution matches d-tag / =T= / title, in the reader
   and the draft preview alike; links to unwritten notes stay dangling
   — TODOs that resolve when written. Derives the 30040 tree from the
@@ -341,6 +345,19 @@ these conventions (.adoc notes + an index note).
   =rename= (d-tag aliases), =drop_tags= (local-only header keys,
   e.g. =:file:=). Applies to the built events only — the files and
   the config itself still carry the private names.
+
+- =scripts/publish-kasten-events.py build/events.jsonl --sec <key>
+  wss://relay= — the *direct publish*, no tendrl needed: binds the
+  pubkey, signs through =nak= (nsec / ncryptsec / bunker; =--auth= for
+  NIP-42 relays), publishes leaves first and stops at the first
+  rejection; =--only <d-tag>= republishes just the note(s) and
+  index(es) that changed; =--dry-run= signs without sending. Writes
+  =build/published.jsonl= (re-ingestable) and prints the root naddr.
+  The build also accepts Markdown notes (YAML frontmatter, =[[x]]=,
+  =[label](x.md)=); a =[[Topic]]= naming no note stays a wiki ref
+  with a =w= tag. The whole workflow, prompts included, lives in its own
+  repository, =kasten-kit= (sibling checkout =../kasten-kit=; README =
+  the workflow) — the canonical home of the scripts and prompts.
 
 - =scripts/import-kasten-events.py build/events.jsonl= — the
   *import*, into a running tendrl engine. Two paths along the trust
@@ -379,6 +396,12 @@ these conventions (.adoc notes + an index note).
 All ship with this folder (originals live in the tendrl repo's
 =docs/= tree):
 
+- [[file:design-principles-published-kasten.org][design-principles-published-kasten]]
+- =../../kasten-kit/prompts/= — agent prompts (=kasten-write=,
+  =kasten-organize=): reshape an existing KB into a kasten post-hoc;
+  write, publish, and revise a kasten event by event
+  — what the published emergentgov round trip demonstrates, the
+  agent reading protocol, and the pipeline gaps it revealed
 - [[file:nostrdown.org][nostrdown spec]] — the reference layer the
   event mapping builds on
 - [[file:conventions.org][tendrl's own conventions]] +

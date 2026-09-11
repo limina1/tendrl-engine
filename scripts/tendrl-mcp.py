@@ -14,7 +14,7 @@ import traceback
 import urllib.request
 import urllib.error
 
-API = "http://localhost:3030"
+API = os.environ.get("TENDRL_API", "http://localhost:3030")
 # Knowledgebase root — resolve relative to script location
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.dirname(SCRIPT_DIR)
@@ -60,13 +60,19 @@ TOOLS = [
     },
     {
         "name": "tendrl_get_event",
-        "description": "Get a single Nostr event by its hex ID. Returns the full event JSON.",
+        "description": "Get a single Nostr event from tendrl's local nostrdb. Accepts a 64-hex event id or any NIP-19 entity (note1/nevent1/naddr1, optionally nostr:-prefixed). Defaults to local_only — no relay traffic unless policy says otherwise. Returns the full event JSON.",
         "inputSchema": {
             "type": "object",
             "properties": {
                 "event_id": {
                     "type": "string",
-                    "description": "Hex event ID"
+                    "description": "Hex event id, or note1…/nevent1…/naddr1… (nostr: prefix allowed)"
+                },
+                "policy": {
+                    "type": "string",
+                    "enum": ["local_only", "local_first", "fetch_always"],
+                    "description": "Fetch policy (default local_only). local_first / fetch_always may hit relays and are subject to the engine's Confirm mode.",
+                    "default": "local_only"
                 }
             },
             "required": ["event_id"]
@@ -300,8 +306,23 @@ def handle_tool_call(name, args):
         return f"{summary}\n\n" + "\n".join(lines) if lines else summary
 
     elif name == "tendrl_get_event":
-        result = api(f"/api/v1/events/{args['event_id']}")
-        return json.dumps(result, indent=2)
+        ident = args["event_id"].strip()
+        policy = args.get("policy", "local_only")
+        if ident.startswith("nostr:"):
+            ident = ident[len("nostr:"):]
+        if len(ident) == 64 and all(c in "0123456789abcdefABCDEF" for c in ident):
+            return json.dumps(api(f"/api/v1/events/{ident}?policy={policy}"), indent=2)
+        decoded = api("/api/v1/decode", "POST", {"input": ident})
+        if "error" in decoded:
+            return json.dumps(decoded)
+        kind = decoded.get("kind")
+        if kind in ("note", "nevent"):
+            return json.dumps(api(f"/api/v1/events/{decoded['event_id']}?policy={policy}"), indent=2)
+        if kind == "naddr":
+            return json.dumps(api(
+                f"/api/v1/addressable/{decoded['kind_int']}/{decoded['pubkey']}/{decoded['d_tag']}?policy={policy}"
+            ), indent=2)
+        return json.dumps({"error": f"{kind} is not an event pointer; use tendrl_get_profile for npub/nprofile"})
 
     elif name == "tendrl_list_publications":
         limit = args.get("limit", 20)

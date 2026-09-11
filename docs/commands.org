@@ -1813,3 +1813,23 @@ issue detail (status pill, labels, status note, body, thread, reply box) →
 =About= (web, clone + copy, maintainers, relays, euc, state). Note
 =BufferRenderer.svelte= is a hard-coded kind switch — a new buffer kind
 goes there AND in =wm/registry.ts= + =wm/tours.ts=.
+
+* Kasten: build docs/zettel into events and view it in tendrl
+
+The zettelkasten itself is a kasten (Org notes + =index.org=). Build it
+with the kasten-kit scripts (sibling repo =../kasten-kit=, canonical home
+of the pipeline; =scripts/= here carries engine-side copies), then either save it as a composer draft (no
+signing; review + sign in the UI with your NIP-07 extension) or sign it
+in-engine (needs the tendrl tab open so the extension is connected).
+
+#+begin_src sh
+python3 ../kasten-kit/scripts/build-kasten-events.py docs/zettel -o /tmp/zettel-build    # add --name <id> only for a deliberate human root d-tag
+python3 ../kasten-kit/scripts/import-kasten-events.py /tmp/zettel-build/draft.json --draft     # composer draft
+python3 ../kasten-kit/scripts/import-kasten-events.py /tmp/zettel-build/events.jsonl           # sign + ingest (signer connected)
+#+end_src
+
+Rebuilding lands on the same coordinates because every d-tag is a nanoid
+pinned in =docs/zettel/kasten-ids.json= — commit that file; re-running
+then replaces rather than forks. Sibling refs name notes by the =T= slug. Direct to a
+relay without tendrl: =scripts/publish-kasten-events.py= (see
+=../kasten-kit/README.md=).
