@@ -76,6 +76,14 @@ widening the spell's own bounds) and the outcome carries
 =local_first= with =until = oldest_source - 1= — the store pages until
 it runs dry, then the Confirm-gated relay fetch appears; an empty local
 result offers "Ask the relays" in place of the hidden footer.
+The result feed survives leaving the buffer (2026-09-11, ngit issue
+4ef45755): every buffer switch unmounts its renderer, so opening an
+event from the results and coming back used to land on the spellbook
+with a forced re-run. The profile view now parks =tab + results +
+run context + cursor= in =store.bufferState= on unmount and restores
+them on the next mount of the same profile; on mobile the run and the
+"← spellbook" button are Back-history teleports (=pushViewChange=), so
+Back walks event → results → spellbook.
 Spell references travel with their relays (2026-07-09): the builder's
 chain/stage fields accept =nevent= (and =note1=/hex; =nostr:= prefix
 ok) — an nevent's relay hints unpack onto the =in=/=stage= tags

@@ -52,7 +52,43 @@
 
 	type Tab = 'publications' | 'bookshelves' | 'articles' | 'wikis' | 'specs' | 'repositories' | 'sections' | 'highlights' | 'comments' | 'spells';
 	const TAB_NAMES: Tab[] = ['publications', 'bookshelves', 'articles', 'wikis', 'specs', 'repositories', 'sections', 'highlights', 'comments', 'spells'];
-	let activeTab: Tab = $state('publications');
+
+	// View state that must survive the buffer unmounting (every buffer
+	// switch unmounts its renderer — opening an event from a spell's
+	// result feed and coming back used to land on the spellbook with the
+	// results gone, forcing a re-run). Parked in store.bufferState under
+	// the owning buffer id, same pattern as the feed/repository buffers.
+	type SpellViewState = {
+		results: api.SpellOutcome;
+		runContext: { id: string; args: Record<string, string> };
+		exhausted: boolean;
+		cursor: number;
+	};
+	type ProfileViewState = { pubkey: string; tab: Tab; spell: SpellViewState | null };
+	// svelte-ignore state_referenced_locally
+	const savedView =
+		bufferId ? (store.bufferState.get(bufferId) as ProfileViewState | undefined) : undefined;
+	// Only honour a snapshot taken for this same profile.
+	// svelte-ignore state_referenced_locally
+	const restored = savedView && savedView.pubkey === pubkey ? savedView : undefined;
+	let activeTab: Tab = $state(restored?.tab ?? 'publications');
+	// The load effect resets the spell view on every profile switch; on a
+	// restoring mount the profile hasn't switched, so it must not.
+	let spellRestoredFor: string | null = restored?.spell ? restored.pubkey : null;
+
+	$effect(() => {
+		return () => {
+			if (!bufferId) return;
+			store.bufferState.set(bufferId, {
+				pubkey,
+				tab: activeTab,
+				spell:
+					spellResults && spellRunContext
+						? { results: spellResults, runContext: spellRunContext, exhausted: spellResultsExhausted, cursor }
+						: null
+			} satisfies ProfileViewState);
+		};
+	});
 
 	// Buffer-level place for Back history (idea-place-routing.org phase 1):
 	// a tab switch is a teleport, so mobile Back walks back through tabs.
@@ -66,10 +102,17 @@
 		const id = bufferId;
 		if (!id) return;
 		mobileNav.registerViewProvider(id, {
-			capture: () => ({ tab: activeTab }),
+			capture: () => ({ tab: activeTab, spell: spellRunContext?.id ?? '' }),
 			apply: (v) => {
 				const t = v.tab as Tab;
 				if (TAB_NAMES.includes(t)) activeTab = t;
+				// Back from a result feed to the spellbook. (The other way —
+				// results a Back can't recreate — leaves whatever is shown.)
+				if (!v.spell && spellResults) {
+					spellResults = null;
+					spellRunContext = null;
+					spellResultsExhausted = false;
+				}
 			}
 		});
 		return () => mobileNav.unregisterViewProvider(id);
@@ -157,11 +200,13 @@
 		await app.broadcastShelf(view.event);
 		await loadLocal(pubkey);
 	}
-	let spellResults = $state<api.SpellOutcome | null>(null);
+	let spellResults = $state<api.SpellOutcome | null>(restored?.spell?.results ?? null);
 	// How the current results were produced — replayed with an `until`
 	// cursor by "load older" (the engine pages the spell's source stage).
-	let spellRunContext = $state<{ id: string; args: Record<string, string> } | null>(null);
-	let spellResultsExhausted = $state(false);
+	let spellRunContext = $state<{ id: string; args: Record<string, string> } | null>(
+		restored?.spell?.runContext ?? null
+	);
+	let spellResultsExhausted = $state(restored?.spell?.exhausted ?? false);
 	let loadingNewer = $state(false);
 	let spellRunning = $state<string | null>(null);
 
@@ -659,6 +704,7 @@
 			spellRunContext = { id: entry.event.id, args };
 			spellResultsExhausted = false;
 			cursor = 0;
+			if (bufferId) mobileNav.pushViewChange(bufferId);
 			const label = outcome.name || entry.spell.name || 'spell';
 			app.pushToast(
 				outcome.cmd === 'COUNT'
@@ -719,9 +765,12 @@
 		comments = [];
 		spells = [];
 		spellBooks = [];
-		spellResults = null;
-		spellRunContext = null;
-		spellResultsExhausted = false;
+		if (pk !== spellRestoredFor) {
+			spellResults = null;
+			spellRunContext = null;
+			spellResultsExhausted = false;
+		}
+		spellRestoredFor = null;
 		spellStagesOpen = {};
 		spellStageCache = {};
 		tabLimits = { ...TAB_BASE_LIMIT };
@@ -735,7 +784,7 @@
 	// menu. Resets when the tab changes so the cursor doesn't point past
 	// the new list's end.
 
-	let cursor = $state(0);
+	let cursor = $state(restored?.spell?.cursor ?? 0);
 	let listEl: HTMLDivElement | undefined = $state();
 	let tabsEl: HTMLDivElement | undefined = $state();
 
@@ -1442,6 +1491,7 @@
 							spellRunContext = null;
 							spellResultsExhausted = false;
 							cursor = 0;
+							if (bufferId) mobileNav.pushViewChange(bufferId);
 						}}
 					>
 						← spellbook
