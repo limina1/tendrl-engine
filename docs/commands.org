@@ -1525,6 +1525,39 @@ adb install -r gen/android/app/build/outputs/apk/universal/debug/app-universal-d
 adb logcat --pid=$(adb shell pidof -s io.github.limina1.tendrl)
 #+end_src
 
+** Restart loop (app-lock repro / close-reopen health)
+
+Drives close → relaunch cycles over adb and classifies each boot from
+a fresh logcat. This is how the 2026-09-11 "app locks on restart"
+report was reproduced (=docs/zettel/fix-android-exit-crash.org=): Back
+→ =exit()= → FORTIFY abort in libonnxruntime → 2–20 s crash dump →
+relaunch swallowed. Pin =ANDROID_SERIAL= when the tablet shows up on
+two transports.
+
+#+begin_src bash
+export ANDROID_SERIAL=192.168.50.232:37111   # adb devices -l
+P=io.github.limina1.tendrl
+for i in $(seq 1 6); do
+  old=$(adb shell pidof -s $P)
+  adb shell input keyevent KEYCODE_BACK        # or: KEYCODE_HOME; adb shell am kill $P
+  sleep 0.5                                    # relaunch INSIDE the teardown window
+  adb logcat -c
+  adb shell monkey -p $P -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1
+  sleep 12
+  echo "run $i old=$old new=$(adb shell pidof -s $P) :: $(adb logcat -d -s tendrl libc RustStdoutStderr \
+    | grep -E -o 'FORTIFY[^(]*|Bound http|engine bound on|webview on the engine origin \(attempt [0-9]+\)|hard exit|panicked' \
+    | sort -u | tr '\n' '|')"
+done
+#+end_src
+
+Read it as: =new= empty → the launch was lost; =FORTIFY= → the old
+process crashed on exit; no =engine bound on= → boot hung before
+=server::start= returned; no =webview on the engine origin= → the
+splash → engine hand-off never landed. Healthy: every run has
+=hard exit= (from the previous close), a new pid, =engine bound on=
+and =webview on the engine origin=. For a native crash backtrace add
+=DEBUG= to the =-s= tag list.
+
 ** Release APK (signed)
 
 One script does the whole thing — env setup, SPA build, the two quirks

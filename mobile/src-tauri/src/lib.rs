@@ -199,13 +199,23 @@ pub fn run() {
                                 // silently and the splash never leaves. Retry
                                 // until the webview actually reports the
                                 // engine origin.
-                                let mut navigated = false;
-                                for attempt in 1..=50u32 {
+                                // Unbounded: there is no useful failure state
+                                // — the only thing that can go wrong is the
+                                // webview not existing yet, and the one
+                                // thing to do about that is try again. (A
+                                // capped loop used to give up after 10 s and
+                                // eval() an error the not-yet-existing webview
+                                // dropped too — splash forever, silently.)
+                                let mut attempt = 0u32;
+                                loop {
+                                    attempt += 1;
                                     if let Err(e) = window.navigate(target.clone()) {
                                         tracing::warn!("navigate attempt {attempt}: {e}");
                                     }
-                                    tokio::time::sleep(std::time::Duration::from_millis(200))
-                                        .await;
+                                    let wait = std::time::Duration::from_millis(
+                                        (200 * u64::from(attempt)).min(1000),
+                                    );
+                                    tokio::time::sleep(wait).await;
                                     if let Ok(current) = window.url() {
                                         if current.host_str() == target.host_str()
                                             && current.port() == target.port()
@@ -214,20 +224,19 @@ pub fn run() {
                                                 "webview on the engine origin \
                                                  (attempt {attempt})"
                                             );
-                                            navigated = true;
                                             break;
                                         }
                                     }
-                                }
-                                if !navigated {
-                                    tracing::error!(
-                                        "webview never reached the engine origin"
-                                    );
-                                    let _ = window.eval(
-                                        "document.getElementById('status').textContent = \
-                                         'Engine is up but the app failed to load — \
-                                          reopen the app.';",
-                                    );
+                                    if attempt % 10 == 0 {
+                                        tracing::warn!(
+                                            "webview not on the engine origin after \
+                                             {attempt} attempts — still retrying"
+                                        );
+                                        let _ = window.eval(
+                                            "document.getElementById('status').textContent = \
+                                             'engine is up — waiting for the web view…';",
+                                        );
+                                    }
                                 }
                             }
                             Err(e) => tracing::error!("engine URL failed to parse: {e}"),
@@ -253,6 +262,27 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building tendrl mobile host")
         .run(|app, event| {
+            // Activity destroyed (Back, swipe-away) → tao ends its loop with
+            // std::process::exit(). libc's exit() runs __cxa_finalize, which
+            // tears down libonnxruntime's statics while its intra-op worker
+            // threads are still alive → "FORTIFY: pthread_mutex_lock called on
+            // a destroyed mutex" → SIGABRT → crash_dump ptrace-freezes the
+            // process for 2–20 s while it writes the tombstone. A relaunch in
+            // that window is routed to the dying process by ActivityManager
+            // and is either lost (back to the launcher) or sits frozen on the
+            // starting window — the "app locks on restart" report. Skip the
+            // atexit/static-destructor pass entirely: everything persistent is
+            // already on disk (LMDB commits per txn, the HNSW index is saved
+            // after every sync batch, relays/config/drafts on write), and
+            // process::exit ran no Rust destructors either, so _exit loses
+            // nothing it wasn't losing already.
+            #[cfg(target_os = "android")]
+            if let tauri::RunEvent::Exit = &event {
+                tracing::info!("activity destroyed — hard exit (no atexit pass)");
+                // SAFETY: _exit only terminates the calling process; no
+                // memory or state is touched afterwards.
+                unsafe { libc::_exit(0) };
+            }
             // Mobile lifecycle → background-loop gate. Desktop-dev builds of
             // the host never see these variants (cfg(mobile)).
             #[cfg(target_os = "android")]

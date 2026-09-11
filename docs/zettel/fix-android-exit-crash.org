@@ -1,0 +1,94 @@
+#+TITLE: Fix: Android Exit Crash (app locks on restart)
+#+TYPE: fix
+#+STATUS: fixed
+#+DATE: 2026-09-11
+#+FIXED: 2026-09-11, fix/android-exit-crash
+
+* The issue (reported 2026-09-11, v0.12.0 — ngit issue 45c72911)
+
+"Sometimes the app gets stuck on loading. When it happens, all I can do
+is close out, open it again and rapidly tap the screen before it hits
+the loading screen."
+
+Reproduced on a Pixel Tablet (GrapheneOS, API 37, Vanadium WebView)
+with a Back-close / relaunch loop driven over adb (recipe in
+=docs/commands.org= → "Restart loop (app-lock repro)"). The mechanism,
+end to end:
+
+1. Closing the Activity (Back, swipe-away) empties Tauri's window map →
+   =ExitRequested= → =ControlFlow::Exit= → tao's Android =run()= ends in
+   =std::process::exit(0)=. *The process always exits on close; every
+   reopen is a cold boot.* (Home does not do this — the process stays.)
+2. libc =exit()= runs =__cxa_finalize= — the static destructors of every
+   loaded =.so= — while our threads are still running. libonnxruntime's
+   statics go down while one of its intra-op worker threads is alive:
+   =FORTIFY: pthread_mutex_lock called on a destroyed mutex= →
+   =SIGABRT= in =Thread-1= (backtrace: =libonnxruntime.so= ← =__cxa_finalize=
+   ← =exit=). Reproduced 5/5 closes.
+3. =crash_dump64= ptrace-attaches to write the tombstone, which
+   *freezes every thread* of the dying process. Measured teardown
+   after Back: 1.7 s to 22 s (the dump time varies with the process
+   size — hence "sometimes").
+4. A relaunch inside that window is routed by ActivityManager to the
+   dying process (it is still registered). Observed both outcomes:
+   the new =MainActivity= is "Displayed +196ms" into the frozen process
+   and then =Force finishing= when it dies (the frozen "loading"
+   screen), or the launch is simply lost and the user is back on the
+   launcher with no process. 3/3 relaunches within 1.5 s of Back were
+   lost. Nothing restarts the app afterwards.
+
+The "rapid tapping" folklore is the user re-launching until one tap
+lands after the crash dump has finished.
+
+Ruled out on the way: LMDB's Android build uses non-robust mutexes
+(=-DANDROID= → =MDB_USE_ROBUST 0=; the .so imports no
+=pthread_mutexattr_setrobust=), but the lock file's mutexes are
+re-initialised on every exclusive open, and the app is the store's
+only process, so a stale writer lock needs a live/zombie previous
+instance — which is exactly what the crash dump produces, but the boot
+never got that far in any observed run. The 50 × 200 ms navigate cap
+(=fix-android-boot-blocking=) was never hit (attempt 2 every time), but
+its give-up path eval()'d an error into a webview that could not exist
+yet — splash forever, silently — so it went too.
+
+* Fix
+
+- [X] =mobile/src-tauri/src/lib.rs=: on =tauri::RunEvent::Exit=
+  (Android only) call =libc::_exit(0)= — terminate without the
+  atexit/static-destructor pass. Nothing is lost that
+  =std::process::exit= was not already losing: it ran no Rust
+  destructors either, and everything persistent is written on the
+  way (LMDB commits per txn; the HNSW index is saved after every sync
+  batch; relays/config/drafts on write).
+- [X] Navigate retry made unbounded with a 200 ms → 1 s backoff and a
+  "waiting for the web view…" status after every 10 attempts, in
+  place of the capped loop and its undeliverable error.
+
+Not done (separate idea): keep the process alive across Activity
+destruction (=api.prevent_exit()=) so reopen is a warm resume instead
+of a cold boot. wry only re-creates a WebView for an Activity whose
+attributes it cached under the *same* activity id, so a fresh
+=MainActivity= in a surviving process would come up with no WebView
+at all; the host would have to create a new window itself. Worth it
+for reopen latency, but it is a lifecycle feature, not this bug —
+see [[file:fix-android-lifecycle.org][lifecycle gaps]].
+
+* Verification (2026-09-11, on-device, same tablet)
+
+Before (v0.12.0 release APK): 5/5 closes abort with the FORTIFY
+message; teardown 1.7–22 s; 3/3 relaunches within 1.5 s lost.
+After (this branch, same tablet): 4/4 closes log =hard exit= with no
+FORTIFY/SIGABRT; the process is gone within ~1 s of the finishing
+Back (adb polling included — the exit itself is immediate); 4/4
+relaunches fired right after the close boot to the engine origin
+(hand-off attempt 2–3). Note for the loop: the SPA's mobile shell
+consumes a Back when it has in-app history, so "close" sometimes
+needs two — the recipe repeats Back until the launcher is on top.
+
+* Related
+
+- [[file:fix-index.org][Fix index]] · [[file:index.org][Index]]
+- [[file:feat-mobile.org][Mobile & Android]]
+- [[file:fix-android-boot-blocking.org][Android boot blocking]] (the
+  splash-first boot + navigate hand-off this hardens)
+- [[file:fix-android-lifecycle.org][Android lifecycle gaps]]

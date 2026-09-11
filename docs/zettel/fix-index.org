@@ -75,6 +75,10 @@ stay as provenance. Source evaluation:
   (fixed 2026-08-12)
 - [ ] [[file:fix-android-lifecycle.org][Android lifecycle gaps]] (high) —
   suspend gates one loop; SSE/polls run on; debug logging in release
+- [X] [[file:fix-android-exit-crash.org][Android exit crash]] (critical)
+  — closing the Activity aborts inside libonnxruntime's static
+  destructors; the crash dump freezes the dying process and swallows
+  any relaunch ("app locks on restart") (fixed 2026-09-11)
 
 * Related
 

@@ -306,6 +306,12 @@ historical), and the actual APK build is
 - [[file:fix-android-lifecycle.org][Lifecycle gaps]] — suspend gates
   only the 60 s loop (the B2/M2 SSE half is still open); debug-level
   logcat in release
+- +[[file:fix-android-exit-crash.org][Exit crash]] — Back/swipe-away
+  ends in =exit()=, whose static-destructor pass aborts inside
+  libonnxruntime; the 2–20 s crash dump freezes the process and any
+  relaunch in that window is lost or stuck on the starting window+
+  (fixed 2026-09-11: =_exit= on =RunEvent::Exit=; every close is
+  still a process exit, so reopen stays a cold boot)
 - +[[file:fix-release-profile.org][Release profile]] — the 44 MB
   unstripped =.so=+ (fixed 2026-08-12: profiles landed in both
   workspace roots; the forced =cargo clean= left =build-android.sh=)

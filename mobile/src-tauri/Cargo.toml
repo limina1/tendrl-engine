@@ -54,3 +54,6 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # (tag "tendrl"), or the engine is undebuggable on-device.
 [target.'cfg(target_os = "android")'.dependencies]
 tracing-android = "0.2"
+# _exit on activity destroy — exit()'s atexit pass aborts inside
+# libonnxruntime (see the RunEvent::Exit handler in lib.rs).
+libc = "0.2"
