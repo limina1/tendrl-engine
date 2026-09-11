@@ -1558,6 +1558,27 @@ splash → engine hand-off never landed. Healthy: every run has
 and =webview on the engine origin=. For a native crash backtrace add
 =DEBUG= to the =-s= tag list.
 
+** Spell paging (local-first run, sync newer, load older)
+
+Against a scratch engine on =:3131= (see "Verifying" — fresh
+=data_dir=, embeddings off). Seed five signed notes at ts 1000…5000
+with =nak event -k 1 --ts N --sec <hex>= → =POST /api/v1/ingest=
+(=application/x-ndjson=), then run an inline spell through
+=/api/v1/spell/execute= with =policy=local_only=:
+
+#+begin_src bash
+SPELL='{"kind":777,"content":"","tags":[["cmd","REQ"],["k","1"],["limit","2"]]}'
+run() { curl -s -X POST localhost:3131/api/v1/spell/execute -H 'content-type: application/json' \
+  -d "{\"event\":$SPELL,\"policy\":\"local_only\"$1}" | jq -c '{count, ts:[.events[].created_at], oldest_source, newest_source}'; }
+run ''                       # {"count":2,"ts":[5000,4000],"oldest_source":4000,"newest_source":5000}
+run ',"until":3999'          # older page: [3000,2000]
+run ',"until":999'           # exhausted: count 0, cursors null
+run ',"since":5001'          # sync: nothing — ingest a ts-6000 note, then [6000]
+run ',"since":2001,"until":3999'   # window intersects: [3000]
+#+end_src
+
+Verified 2026-09-11 (feat/spell-local-first).
+
 ** Release APK (signed)
 
 One script does the whole thing — env setup, SPA build, the two quirks

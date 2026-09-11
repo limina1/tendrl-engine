@@ -1314,6 +1314,9 @@ export interface SpellOutcome {
 	/** Oldest created_at the source stage fetched — the load-older cursor
 	 * (re-run with until = oldest_source - 1); null when it fetched nothing. */
 	oldest_source: number | null;
+	/** Newest created_at the source stage fetched — the fetch-newer cursor
+	 * (re-run with since = newest_source + 1); null when it fetched nothing. */
+	newest_source: number | null;
 }
 
 export function executeSpell(req: {
@@ -1324,6 +1327,8 @@ export function executeSpell(req: {
 	mode_confirm?: boolean;
 	/** Page the source stage: only events at or before this timestamp. */
 	until?: number;
+	/** Page the source stage the other way: only events at or after this timestamp. */
+	since?: number;
 }) {
 	return fetchJson<SpellOutcome>('/api/v1/spell/execute', {
 		method: 'POST',

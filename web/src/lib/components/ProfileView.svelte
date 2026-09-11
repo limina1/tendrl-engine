@@ -162,6 +162,7 @@
 	// cursor by "load older" (the engine pages the spell's source stage).
 	let spellRunContext = $state<{ id: string; args: Record<string, string> } | null>(null);
 	let spellResultsExhausted = $state(false);
+	let loadingNewer = $state(false);
 	let spellRunning = $state<string | null>(null);
 
 	type SpellRow = {
@@ -434,14 +435,14 @@
 	}
 
 	// Page a spell's result feed: re-run the spell with `until` set to just
-	// before the source stage's oldest event, append what's new.
+	// before the source stage's oldest event, append what's new. This is
+	// the "ask for more" step — local_first reads the store and only fans
+	// out to relays (Confirm-gated) when the store runs short, so the
+	// first pages are instant and the modal appears once local is dry.
+	// With no cursor (the local run found nothing) it is a plain relay ask.
 	async function loadOlderSpellResults() {
 		const results = spellResults;
 		if (!results || !spellRunContext || results.cmd === 'COUNT' || loadingOlder) return;
-		if (results.oldest_source == null) {
-			spellResultsExhausted = true;
-			return;
-		}
 		loadingOlder = true;
 		try {
 			const older = await api.executeSpell({
@@ -449,7 +450,7 @@
 				args: spellRunContext.args,
 				policy: 'local_first',
 				mode_confirm: true,
-				until: results.oldest_source - 1
+				until: results.oldest_source == null ? undefined : results.oldest_source - 1
 			});
 			const seen = new Set(results.events.map((e) => e.id));
 			const fresh = older.events.filter((e) => !seen.has(e.id));
@@ -462,7 +463,8 @@
 				auxiliary: [...results.auxiliary, ...freshAux],
 				count: results.events.length + fresh.length,
 				provenance: { ...results.provenance, ...older.provenance },
-				oldest_source: older.oldest_source
+				oldest_source: older.oldest_source ?? results.oldest_source,
+				newest_source: maxCursor(results.newest_source, older.newest_source)
 			};
 			if (older.oldest_source == null) spellResultsExhausted = true;
 		} catch (e) {
@@ -470,6 +472,55 @@
 			app.pushToast(api.errorMessage(e, 'Load older failed'), 'error');
 		} finally {
 			loadingOlder = false;
+		}
+	}
+
+	function maxCursor(a: number | null, b: number | null): number | null {
+		if (a == null) return b;
+		if (b == null) return a;
+		return Math.max(a, b);
+	}
+
+	// Pull what arrived after the last run: re-run with `since` just past
+	// the source stage's newest event and prepend the fresh events. The
+	// same local-first/Confirm-gated contract as load older.
+	async function fetchNewerSpellResults() {
+		const results = spellResults;
+		if (!results || !spellRunContext || results.cmd === 'COUNT' || loadingNewer) return;
+		loadingNewer = true;
+		try {
+			const newer = await api.executeSpell({
+				id: spellRunContext.id,
+				args: spellRunContext.args,
+				policy: 'local_first',
+				mode_confirm: true,
+				since: results.newest_source == null ? undefined : results.newest_source + 1
+			});
+			const seen = new Set(results.events.map((e) => e.id));
+			const fresh = newer.events.filter((e) => !seen.has(e.id));
+			const auxSeen = new Set(results.auxiliary.map((e) => e.id));
+			const freshAux = newer.auxiliary.filter((e) => !auxSeen.has(e.id));
+			spellResults = {
+				...results,
+				events: [...fresh, ...results.events],
+				auxiliary: [...freshAux, ...results.auxiliary],
+				count: results.events.length + fresh.length,
+				provenance: { ...results.provenance, ...newer.provenance },
+				oldest_source: results.oldest_source ?? newer.oldest_source,
+				newest_source: maxCursor(results.newest_source, newer.newest_source)
+			};
+			if (fresh.length > 0) cursor = cursor + fresh.length;
+			app.pushToast(
+				fresh.length === 0
+					? 'No newer events'
+					: `${fresh.length} newer event${fresh.length === 1 ? '' : 's'} added to the top`,
+				fresh.length === 0 ? 'info' : 'success'
+			);
+		} catch (e) {
+			console.error('Spell fetch newer failed:', e);
+			app.pushToast(api.errorMessage(e, 'Fetch newer failed'), 'error');
+		} finally {
+			loadingNewer = false;
 		}
 	}
 
@@ -569,9 +620,11 @@
 
 	// ----- Running a spell -----
 	// Clicking a spellbook entry executes it: prompt for each declared
-	// argument (promptText — never window.prompt), run through the engine
-	// with mode_confirm so Confirm mode raises the fetch-intent modal, and
-	// show the result feed in place of the spellbook list.
+	// argument (promptText — never window.prompt), run it against the
+	// LOCAL store only — instant, no relay round-trip, no Confirm modal —
+	// and show the result feed in place of the spellbook list. Relays are
+	// asked from the feed itself: "Load older" at the end of the list and
+	// "fetch newer" in its head (both local_first + Confirm-gated).
 	async function runSpell(entry: api.SpellEntry) {
 		if (!entry.spell || entry.error) {
 			// Unparseable spell — the raw event is all there is to show.
@@ -599,8 +652,8 @@
 			const outcome = await api.executeSpell({
 				id: entry.event.id,
 				args,
-				policy: 'local_first',
-				mode_confirm: true
+				policy: 'local_only',
+				mode_confirm: false
 			});
 			spellResults = outcome;
 			spellRunContext = { id: entry.event.id, args };
@@ -609,9 +662,11 @@
 			const label = outcome.name || entry.spell.name || 'spell';
 			app.pushToast(
 				outcome.cmd === 'COUNT'
-					? `${label}: count ${outcome.count}`
-					: `${label}: ${outcome.count} event${outcome.count === 1 ? '' : 's'}`,
-				'success'
+					? `${label}: count ${outcome.count} (local)`
+					: outcome.count === 0
+						? `${label}: nothing local yet — "Load older" asks the relays`
+						: `${label}: ${outcome.count} local event${outcome.count === 1 ? '' : 's'}`,
+				outcome.count === 0 && outcome.cmd !== 'COUNT' ? 'info' : 'success'
 			);
 		} catch (e) {
 			console.error('Spell execution failed:', e);
@@ -1396,10 +1451,27 @@
 						{spellResults.cmd === 'COUNT' ? 'matched' : `event${spellResults.count === 1 ? '' : 's'}`}
 						{spellResults.auxiliary.length ? ` (+${spellResults.auxiliary.length} auxiliary)` : ''}
 					</span>
+					{#if spellResults.cmd !== 'COUNT'}
+						<button
+							class="spell-back spell-newer"
+							onclick={fetchNewerSpellResults}
+							disabled={loadingNewer}
+							title="Sync: ask the relays for events newer than the top of this list — added to the top"
+						>
+							{loadingNewer ? 'syncing…' : '↻ sync'}
+						</button>
+					{/if}
 				</div>
 				{#if spellResults.events.length === 0}
 					<div class="empty">
-						{spellResults.cmd === 'COUNT' ? `Count: ${spellResults.count}` : 'No events matched'}
+						{#if spellResults.cmd === 'COUNT'}
+							Count: {spellResults.count}
+						{:else}
+							Nothing in the local store matched.
+							<button class="spell-back" onclick={loadOlderSpellResults} disabled={loadingOlder}>
+								{loadingOlder ? 'asking…' : 'Ask the relays'}
+							</button>
+						{/if}
 					</div>
 				{:else}
 					{#each spellResults.events as ev, i (ev.id)}
@@ -1578,7 +1650,9 @@
 						? 'Loading…'
 						: olderExhausted
 							? 'No older events found'
-							: 'Load older'}
+							: activeTab === 'spells' && spellResults
+								? 'Load older (relays when local runs dry)'
+								: 'Load older'}
 				</button>
 			</div>
 		{/if}
@@ -1959,6 +2033,9 @@
 		border-bottom: 1px solid var(--border);
 		font-family: var(--font-mono);
 		font-size: var(--t-xs);
+	}
+	.spell-newer {
+		margin-left: auto;
 	}
 	.spell-back {
 		background: none;

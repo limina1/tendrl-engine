@@ -1351,6 +1351,45 @@ fn oldest_created_at(events: &[Value]) -> Option<u64> {
         .min()
 }
 
+fn newest_created_at(events: &[Value]) -> Option<u64> {
+    events
+        .iter()
+        .filter_map(|e| e.get("created_at").and_then(Value::as_u64))
+        .max()
+}
+
+/// Pagination window for the *source* stage of a run. Both bounds narrow,
+/// never widen, the spell's own `since`/`until`. The result feed walks
+/// older with `until = oldest_source - 1` and pulls what arrived after the
+/// last run with `since = newest_source + 1`; later pipeline/chain stages
+/// query referents, whose timestamps don't follow the source's paging, so
+/// the window never rides past stage 0.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct SpellPage {
+    pub until: Option<u64>,
+    pub since: Option<u64>,
+}
+
+/// Intersect a resolved NIP-01 filter with a page window: `until` can only
+/// move earlier, `since` only later, so paging never reaches outside what
+/// the spell itself asked for.
+fn apply_page(filter: &mut Value, page: SpellPage) {
+    if let Some(u) = page.until {
+        let effective = match filter.get("until").and_then(Value::as_u64) {
+            Some(own) => own.min(u),
+            None => u,
+        };
+        filter["until"] = json!(effective);
+    }
+    if let Some(s) = page.since {
+        let effective = match filter.get("since").and_then(Value::as_u64) {
+            Some(own) => own.max(s),
+            None => s,
+        };
+        filter["since"] = json!(effective);
+    }
+}
+
 fn unix_now() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -1398,6 +1437,9 @@ pub struct SpellOutcome {
     /// the "load older" cursor (re-run with `until = oldest_source - 1`).
     /// `None` when the source returned nothing.
     pub oldest_source: Option<u64>,
+    /// Newest `created_at` among the source stage's fetched events — the
+    /// "fetch newer" cursor (re-run with `since = newest_source + 1`).
+    pub newest_source: Option<u64>,
 }
 
 impl<'a> SpellEngine<'a> {
@@ -1423,14 +1465,14 @@ impl<'a> SpellEngine<'a> {
         args: &BTreeMap<String, String>,
         policy: FetchPolicy,
         mode_confirm: bool,
-        until: Option<u64>,
+        page: SpellPage,
     ) -> Result<SpellOutcome> {
         let event = self
             .engine
             .get_by_id(id, Self::definition_policy(policy))
             .await?
             .ok_or_else(|| EngineError::NotFound(format!("spell event {id} not found")))?;
-        self.execute_event(&event, args, policy, mode_confirm, until)
+        self.execute_event(&event, args, policy, mode_confirm, page)
             .await
     }
 
@@ -1440,9 +1482,9 @@ impl<'a> SpellEngine<'a> {
         args: &BTreeMap<String, String>,
         policy: FetchPolicy,
         mode_confirm: bool,
-        until: Option<u64>,
+        page: SpellPage,
     ) -> Result<SpellOutcome> {
-        self.execute_event_depth(event, args, policy, mode_confirm, until, 0)
+        self.execute_event_depth(event, args, policy, mode_confirm, page, 0)
             .await
     }
 
@@ -1455,7 +1497,7 @@ impl<'a> SpellEngine<'a> {
         args: &'b BTreeMap<String, String>,
         policy: FetchPolicy,
         mode_confirm: bool,
-        until: Option<u64>,
+        page: SpellPage,
         chain_depth: usize,
     ) -> std::pin::Pin<
         Box<dyn std::future::Future<Output = Result<SpellOutcome>> + Send + 'b>,
@@ -1499,7 +1541,7 @@ impl<'a> SpellEngine<'a> {
 
             let mut outcome = match spell.cmd {
                 SpellCmd::Pipe => {
-                    self.execute_pipeline(&spell, &merged_args, policy, mode_confirm, until)
+                    self.execute_pipeline(&spell, &merged_args, policy, mode_confirm, page)
                         .await?
                 }
                 _ if spell.input.is_some() => {
@@ -1508,13 +1550,13 @@ impl<'a> SpellEngine<'a> {
                         &merged_args,
                         policy,
                         mode_confirm,
-                        until,
+                        page,
                         chain_depth,
                     )
                     .await?
                 }
                 _ => {
-                    self.execute_single(&spell, &merged_args, policy, mode_confirm, until)
+                    self.execute_single(&spell, &merged_args, policy, mode_confirm, page)
                         .await?
                 }
             };
@@ -1536,7 +1578,7 @@ impl<'a> SpellEngine<'a> {
         args: &BTreeMap<String, String>,
         policy: FetchPolicy,
         mode_confirm: bool,
-        until: Option<u64>,
+        page: SpellPage,
         chain_depth: usize,
     ) -> Result<SpellOutcome> {
         if chain_depth >= MAX_CHAIN_DEPTH {
@@ -1560,7 +1602,7 @@ impl<'a> SpellEngine<'a> {
         // innermost spell; this spell's own filter queries referents,
         // whose timestamps don't follow the source's pagination.
         let upstream = self
-            .execute_event_depth(&input_event, args, policy, mode_confirm, until, chain_depth + 1)
+            .execute_event_depth(&input_event, args, policy, mode_confirm, page, chain_depth + 1)
             .await?;
 
         let (me, contacts) = self
@@ -1574,7 +1616,7 @@ impl<'a> SpellEngine<'a> {
             now: unix_now(),
         };
         let (fetched, truncated) = self
-            .run_filter(spell, &ctx, policy, mode_confirm, None)
+            .run_filter(spell, &ctx, policy, mode_confirm, SpellPage::default())
             .await?;
         let fetched_len = fetched.len();
 
@@ -1606,6 +1648,7 @@ impl<'a> SpellEngine<'a> {
             provenance,
             stages,
             oldest_source: upstream.oldest_source,
+            newest_source: upstream.newest_source,
         })
     }
 
@@ -1615,7 +1658,7 @@ impl<'a> SpellEngine<'a> {
         args: &BTreeMap<String, String>,
         policy: FetchPolicy,
         mode_confirm: bool,
-        until: Option<u64>,
+        page: SpellPage,
     ) -> Result<SpellOutcome> {
         if spell.references_input() {
             return Err(EngineError::BadRequest(
@@ -1635,7 +1678,7 @@ impl<'a> SpellEngine<'a> {
             now: unix_now(),
         };
         let (fetched, truncated) = self
-            .run_filter(spell, &ctx, policy, mode_confirm, until)
+            .run_filter(spell, &ctx, policy, mode_confirm, page)
             .await?;
         let report = StageReport {
             spell_id: spell.id.clone(),
@@ -1647,6 +1690,7 @@ impl<'a> SpellEngine<'a> {
         };
         let count = fetched.len();
         let oldest_source = oldest_created_at(&fetched);
+        let newest_source = newest_created_at(&fetched);
         let events = match spell.cmd {
             SpellCmd::Count => Vec::new(),
             _ => fetched,
@@ -1660,6 +1704,7 @@ impl<'a> SpellEngine<'a> {
             provenance: BTreeMap::new(),
             stages: vec![report],
             oldest_source,
+            newest_source,
         })
     }
 
@@ -1669,7 +1714,7 @@ impl<'a> SpellEngine<'a> {
         args: &BTreeMap<String, String>,
         policy: FetchPolicy,
         mode_confirm: bool,
-        until: Option<u64>,
+        page: SpellPage,
     ) -> Result<SpellOutcome> {
         // Load and parse every stage spell up front.
         let mut stages: Vec<(Spell, Option<Combinator>)> = Vec::new();
@@ -1720,6 +1765,7 @@ impl<'a> SpellEngine<'a> {
         let mut provenance: BTreeMap<String, Vec<String>> = BTreeMap::new();
         let mut reports: Vec<StageReport> = Vec::new();
         let mut oldest_source: Option<u64> = None;
+        let mut newest_source: Option<u64> = None;
 
         for (i, (spell, combinator)) in stages.iter().enumerate() {
             let ctx = ResolutionContext {
@@ -1731,13 +1777,14 @@ impl<'a> SpellEngine<'a> {
             };
             // `until` pages the source stage only — later stages query
             // referents, whose timestamps don't follow the pagination.
-            let stage_until = if i == 0 { until } else { None };
+            let stage_page = if i == 0 { page } else { SpellPage::default() };
             let (fetched, truncated) = self
-                .run_filter(spell, &ctx, policy, mode_confirm, stage_until)
+                .run_filter(spell, &ctx, policy, mode_confirm, stage_page)
                 .await?;
             let fetched_len = fetched.len();
             if i == 0 {
                 oldest_source = oldest_created_at(&fetched);
+                newest_source = newest_created_at(&fetched);
             }
 
             let combinator = if i == 0 {
@@ -1784,6 +1831,7 @@ impl<'a> SpellEngine<'a> {
             provenance,
             stages: reports,
             oldest_source,
+            newest_source,
         })
     }
 
@@ -1793,17 +1841,10 @@ impl<'a> SpellEngine<'a> {
         ctx: &ResolutionContext<'_>,
         policy: FetchPolicy,
         mode_confirm: bool,
-        until: Option<u64>,
+        page: SpellPage,
     ) -> Result<(Vec<Value>, bool)> {
         let mut resolved = spell.to_filter(ctx)?;
-        if let Some(u) = until {
-            // Pagination narrows, never widens, the spell's own bound.
-            let effective = match resolved.filter.get("until").and_then(Value::as_u64) {
-                Some(own) => own.min(u),
-                None => u,
-            };
-            resolved.filter["until"] = json!(effective);
-        }
+        apply_page(&mut resolved.filter, page);
         let override_relays: Option<Vec<String>> = if spell.relays.is_empty() {
             None
         } else {
@@ -1998,6 +2039,9 @@ pub struct SpellRequest {
     /// timestamp. The feed's "load older" passes `oldest_source - 1`
     /// from the previous outcome. Ignored by inspect.
     pub until: Option<u64>,
+    /// Page the source stage the other way: only events at or after this
+    /// unix timestamp. The feed's "fetch newer" passes `newest_source + 1`.
+    pub since: Option<u64>,
 }
 
 #[derive(Debug, Serialize)]
@@ -3063,15 +3107,19 @@ pub async fn execute_handler(
         None => FetchPolicy::default(),
     };
     let spells = SpellEngine::new(&engine);
+    let page = SpellPage {
+        until: req.until,
+        since: req.since,
+    };
     let mut outcome = match (&req.event, &req.id) {
         (Some(event), _) => {
             spells
-                .execute_event(event, &req.args, policy, req.mode_confirm, req.until)
+                .execute_event(event, &req.args, policy, req.mode_confirm, page)
                 .await?
         }
         (None, Some(id)) => {
             spells
-                .execute_by_id(id, &req.args, policy, req.mode_confirm, req.until)
+                .execute_by_id(id, &req.args, policy, req.mode_confirm, page)
                 .await?
         }
         (None, None) => {
@@ -3114,6 +3162,34 @@ mod tests {
             "content": content,
             "tags": tags,
         })
+    }
+
+    // -- paging -------------------------------------------------------------
+
+    #[test]
+    fn page_window_narrows_never_widens() {
+        // No own bounds: the page sets both.
+        let mut f = json!({"kinds": [1]});
+        apply_page(&mut f, SpellPage { until: Some(500), since: Some(100) });
+        assert_eq!(f["until"], json!(500));
+        assert_eq!(f["since"], json!(100));
+
+        // Own bounds tighter than the page: untouched.
+        let mut f = json!({"kinds": [1], "since": 200, "until": 400});
+        apply_page(&mut f, SpellPage { until: Some(500), since: Some(100) });
+        assert_eq!(f["until"], json!(400));
+        assert_eq!(f["since"], json!(200));
+
+        // Page tighter than own bounds: page wins (older walk / newer sync).
+        let mut f = json!({"kinds": [1], "since": 200, "until": 400});
+        apply_page(&mut f, SpellPage { until: Some(300), since: Some(250) });
+        assert_eq!(f["until"], json!(300));
+        assert_eq!(f["since"], json!(250));
+
+        // Default page is a no-op.
+        let mut f = json!({"kinds": [1], "since": 200});
+        apply_page(&mut f, SpellPage::default());
+        assert_eq!(f, json!({"kinds": [1], "since": 200}));
     }
 
     // -- time values --------------------------------------------------------
