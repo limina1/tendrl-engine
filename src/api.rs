@@ -91,6 +91,7 @@ async fn begin_single_fetch_gate(
     policy: FetchPolicy,
     label: String,
     steps: Vec<String>,
+    relays: Vec<String>,
 ) -> (FetchPolicy, Option<crate::network::FetchOperation>, bool) {
     if !confirm {
         return (policy, None, false);
@@ -100,7 +101,7 @@ async fn begin_single_fetch_gate(
             crate::network::FetchPattern::Event,
             label,
             steps,
-            engine.relay_config().all_urls(),
+            relays,
         )
         .await
     {
@@ -130,15 +131,26 @@ pub async fn get_event_handler(
         Some(p) => p.parse()?,
         None => FetchPolicy::LocalFirst,
     };
+    // Relay hints: a locally stored event that references this id (a
+    // comment's root/parent `E`/`e`, a quote's `q`) may name the relay it
+    // lives on — often the only place a foreign thread's root can be
+    // found. Hints join the proposed set (so the Confirm modal shows
+    // them) and, ungated, the fetch set.
+    let hints = engine.relay_hints_for_target(&event_id);
     let (policy, op, mode_confirm) = begin_single_fetch_gate(
         &engine,
         query.confirm.unwrap_or(false),
         policy,
         format!("Fetch event {}…", &event_id[..8]),
         vec![format!("Query the relays for event id {event_id}")],
+        crate::engine::union_relays(engine.relay_config().all_urls(), &hints),
     )
     .await;
-    let chosen: Option<Vec<String>> = op.as_ref().map(|o| o.relays().to_vec());
+    let chosen: Option<Vec<String>> = match &op {
+        Some(o) => Some(o.relays().to_vec()),
+        None if !hints.is_empty() => Some(crate::engine::union_relays(engine.relays(), &hints)),
+        None => None,
+    };
 
     let event = engine
         .get_by_id_with_options(&event_id, policy, chosen.as_deref(), mode_confirm)
@@ -197,6 +209,12 @@ pub async fn get_addressable_handler(
         Some(p) => p.parse()?,
         None => FetchPolicy::LocalFirst,
     };
+    // Same relay-hint treatment as the event endpoint, keyed by coordinate
+    // (`A`/`a` tags on locally stored comments/highlights/bookshelves).
+    let hints = engine.relay_hints_for_target(&format!(
+        "{}:{}:{}",
+        params.kind, params.pubkey, params.d_tag
+    ));
     let (policy, op, mode_confirm) = begin_single_fetch_gate(
         &engine,
         query.confirm.unwrap_or(false),
@@ -208,9 +226,14 @@ pub async fn get_addressable_handler(
             &params.pubkey[..8],
             params.d_tag
         )],
+        crate::engine::union_relays(engine.relay_config().all_urls(), &hints),
     )
     .await;
-    let chosen: Option<Vec<String>> = op.as_ref().map(|o| o.relays().to_vec());
+    let chosen: Option<Vec<String>> = match &op {
+        Some(o) => Some(o.relays().to_vec()),
+        None if !hints.is_empty() => Some(crate::engine::union_relays(engine.relays(), &hints)),
+        None => None,
+    };
 
     let event = engine
         .get_addressable_with_options(
@@ -858,6 +881,7 @@ pub async fn resolve_nostrdown_handler(
             "Look up unresolved [[wikilink]] / {{wiki:}} topics on the relays".to_string(),
             "Ingest matches; links flip to resolved".to_string(),
         ],
+        engine.relay_config().all_urls(),
     )
     .await;
     let chosen: Option<Vec<String>> = op.as_ref().map(|o| o.relays().to_vec());
@@ -4400,6 +4424,13 @@ pub async fn discussions_list_handler(
     // In Auto mode this returns at once; in Confirm mode it blocks for
     // the modal. Declined → fall back to a local-only read.
     let relays_vec = std::mem::take(&mut req.relays);
+    // Relay hints for the thread roots (see get_event_handler): a foreign
+    // note's comments live where the note lives, and the comment that led
+    // here names that relay in its `E`/`A` tag.
+    let mut hints: Vec<String> = Vec::new();
+    for target in event_ids.iter().chain(addresses.iter()) {
+        hints = crate::engine::union_relays(hints, &engine.relay_hints_for_target(target));
+    }
     let mut op: Option<crate::network::FetchOperation> = None;
     if req.mode_confirm {
         let label = if event_ids.is_empty() {
@@ -4407,11 +4438,14 @@ pub async fn discussions_list_handler(
         } else {
             "Pull comment thread".to_string()
         };
-        let proposed = if relays_vec.is_empty() {
-            engine.relay_config().all_urls()
-        } else {
-            relays_vec.clone()
-        };
+        let proposed = crate::engine::union_relays(
+            if relays_vec.is_empty() {
+                engine.relay_config().all_urls()
+            } else {
+                relays_vec.clone()
+            },
+            &hints,
+        );
         match engine
             .begin_fetch_operation(
                 crate::network::FetchPattern::Thread,
@@ -4472,6 +4506,9 @@ pub async fn discussions_list_handler(
     // request's relays (or the engine default, resolved inside the engine).
     let chosen_relays: Vec<String> = match &op {
         Some(o) => o.relays().to_vec(),
+        None if relays_vec.is_empty() && !hints.is_empty() => {
+            crate::engine::union_relays(engine.relays(), &hints)
+        }
         None => relays_vec.clone(),
     };
     let relays_opt: Option<&[String]> = if chosen_relays.is_empty() {

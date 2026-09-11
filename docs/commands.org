@@ -1558,6 +1558,30 @@ splash → engine hand-off never landed. Healthy: every run has
 and =webview on the engine origin=. For a native crash backtrace add
 =DEBUG= to the =-s= tag list.
 
+** Relay hints for a comment's root/parent
+
+Scratch engine on =:3132= with a relay set that holds NEITHER event
+(=initial_relays = ["wss://thecitadel.nostr1.com"]=), network mode
+=auto=. The comment (Amethyst, kind 1111 on a kind-1 root, =E=/=e=
+hinted at =wss://hbr.coracle.social/=) is
+=nevent1qqsqqqqqdykxpkurevhw4g447c0f65ap0vr8w8e4d69d2jgr4ppptasf9ha54=;
+grab it with =nak req -i <id> nos.lol > comment.json=.
+
+#+begin_src bash
+ROOT=00009970c87f222543f9507538cd6c5fd0c3a948afdddf33a28168c213051922
+PARENT=00000d44bf7bf05fa7afc381f605b4daf6e4f2aaf9aebbd4626352b9e346ae22
+curl -s -o /dev/null -w '%{http_code}\n' "localhost:3132/api/v1/events/$PARENT?policy=fetch_always"   # 404 — no hints yet
+curl -s -X POST localhost:3132/api/v1/ingest -H 'content-type: application/x-ndjson' --data-binary @comment.json
+curl -s -o /dev/null -w '%{http_code}\n' "localhost:3132/api/v1/events/$PARENT?policy=fetch_always"   # 200 — fetched via the E/e hint
+curl -s "localhost:3132/api/v1/events/$ROOT?policy=fetch_always" | jq '.event.kind'                 # 1
+curl -s -X POST localhost:3132/api/v1/discussions/list -H 'content-type: application/json' \
+  -d "{\"event_ids\":[\"$ROOT\"],\"kinds\":[1111],\"limit\":100,\"threaded\":true,\"policy\":\"fetch_always\"}" \
+  | jq '{count:(.events|length), threads:(.threads|length)}'                                        # 5 / 2
+grep 'hbr.coracle' engine.log   # "Fetched 1 events from wss://hbr.coracle.social … for id:0000…"
+#+end_src
+
+Verified 2026-09-11 (fix/comment-thread-lookup).
+
 ** Spell paging (local-first run, sync newer, load older)
 
 Against a scratch engine on =:3131= (see "Verifying" — fresh

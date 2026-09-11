@@ -2646,6 +2646,34 @@ impl Engine {
             .find(|e| e.get("id").and_then(|v| v.as_str()) == Some(event_id)))
     }
 
+    /// Relay hints for a target — every `ws(s)://` URL that locally stored
+    /// events attach to a reference to it: NIP-22 `E`/`e` and NIP-18 `q`
+    /// for an event id, `A`/`a` for a coordinate (`[name, target, relay,
+    /// …]`). Derived from the store on demand, no cache: the case that
+    /// matters is a comment the user is already reading whose root/parent
+    /// live on relays outside the configured set — the comment itself
+    /// says where. Callers union the hints into the fetch set.
+    pub fn relay_hints_for_target(&self, target: &str) -> Vec<String> {
+        let is_id = target.len() == 64 && target.bytes().all(|b| b.is_ascii_hexdigit());
+        let names: &[&str] = if is_id { &["e", "E", "q"] } else { &["a", "A"] };
+        let filters: Vec<Value> = names
+            .iter()
+            .map(|n| {
+                let mut f = serde_json::Map::new();
+                f.insert(format!("#{n}"), json!([target]));
+                f.insert("limit".into(), json!(50));
+                Value::Object(f)
+            })
+            .collect();
+        match self.query_local_only(&filters) {
+            Ok(resp) => relay_hints_in_events(&resp.events, names, target),
+            Err(e) => {
+                debug!("relay hint lookup for {target} failed: {e}");
+                Vec::new()
+            }
+        }
+    }
+
     /// Get an addressable event by kind, pubkey, and d-tag
     pub async fn get_addressable(
         &self,
@@ -3671,9 +3699,89 @@ impl Engine {
     }
 }
 
+
+/// Scan `[name, target, relay, …]` tags for relay URLs pointing at `target`.
+/// Only `ws://`/`wss://` values count (some clients write a pubkey or a
+/// marker in the relay slot); URLs are normalized and deduped, first
+/// occurrence wins.
+pub fn relay_hints_in_events(events: &[Value], names: &[&str], target: &str) -> Vec<String> {
+    let mut seen = std::collections::HashSet::new();
+    let mut out = Vec::new();
+    for ev in events {
+        let tags = ev.get("tags").and_then(Value::as_array);
+        for tag in tags.into_iter().flatten() {
+            let Some(arr) = tag.as_array() else { continue };
+            if arr.len() < 3 {
+                continue;
+            }
+            let name = arr[0].as_str().unwrap_or("");
+            if !names.contains(&name) || arr[1].as_str() != Some(target) {
+                continue;
+            }
+            let Some(relay) = arr[2].as_str() else { continue };
+            let relay = relay.trim();
+            if !(relay.starts_with("wss://") || relay.starts_with("ws://")) {
+                continue;
+            }
+            let url = crate::nip11::normalize_relay_url(relay);
+            if seen.insert(url.clone()) {
+                out.push(url);
+            }
+        }
+    }
+    out
+}
+
+/// `base` followed by every `extra` not already present (normalized
+/// comparison, original spelling of `base` kept).
+pub fn union_relays(base: Vec<String>, extra: &[String]) -> Vec<String> {
+    let mut seen: std::collections::HashSet<String> = base
+        .iter()
+        .map(|u| crate::nip11::normalize_relay_url(u))
+        .collect();
+    let mut out = base;
+    for u in extra {
+        if seen.insert(crate::nip11::normalize_relay_url(u)) {
+            out.push(u.clone());
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn relay_hints_come_from_referencing_tags_only() {
+        let root = "00".repeat(32);
+        let other = "11".repeat(32);
+        let comment = json!({
+            "kind": 1111,
+            "tags": [
+                ["E", root, "wss://hbr.coracle.social/", "97c7"],
+                ["K", "1"],
+                ["e", other, "wss://nos.lol/"],
+                ["p", "97c7", "wss://relay.damus.io/"],
+                ["e", root, "not-a-url"],
+                ["q", root, "wss://HBR.coracle.social"]
+            ]
+        });
+        let hints = relay_hints_in_events(&[comment], &["e", "E", "q"], &root);
+        assert_eq!(hints, vec!["wss://hbr.coracle.social".to_string()]);
+        let none = relay_hints_in_events(&[json!({"tags": []})], &["e"], &root);
+        assert!(none.is_empty());
+
+        let merged = union_relays(
+            vec!["wss://relay.damus.io".into()],
+            &["wss://relay.damus.io/".into(), "wss://hbr.coracle.social".into()],
+        );
+        assert_eq!(
+            merged,
+            vec!["wss://relay.damus.io".to_string(), "wss://hbr.coracle.social".to_string()]
+        );
+    }
+
     use tempfile::tempdir;
 
     #[test]

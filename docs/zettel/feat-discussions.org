@@ -143,6 +143,18 @@ acceptance.
 - Span resolution engine-side (=resolve_highlight_spans=); reader
   overlays via =RichContent.svelte= + =HighlightList= / =HighlightsDrawer=;
   =DiscussionViewBuffer= for single-event views, =CommentThread= trees.
+- Relay hints (2026-09-11, ngit issue 8318ce30 "comment thread can't
+  find parent or root events"): a foreign thread's root/parent usually
+  live on relays outside the configured set — and the comment being
+  read says where, in the relay slot of its =E=/=e= (and =q=, =A=/=a=)
+  tags. =Engine::relay_hints_for_target= derives those URLs on demand
+  from locally stored events that reference the target (nostrdb
+  =#e=/=#E=/=#q= / =#a=/=#A= filters, no cache); =/events/:id=,
+  =/addressable/…= and =/discussions/list= union them into the proposed
+  set (so the Confirm modal shows them) and into the ungated fetch set.
+  Verified against Amethyst's kind-1111 on a kind-1 root hinted at
+  hbr.coracle.social with a thecitadel-only relay config: parent 404 →
+  200 once the comment is in the store; thread pulled from the hint.
 
 * Gaps / open edges
 
