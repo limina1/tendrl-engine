@@ -1438,10 +1438,16 @@
 		text-overflow: ellipsis;
 		white-space: nowrap;
 	}
-	/* Actions fill the section as one horizontal row of equal-width
-	   buttons. The Pool config row (Phase B) sits below as a sibling. */
+	/* Actions fill the section as one row of buttons that wraps onto a
+	   second line when the set (read · find · insert · broadcast · comment ·
+	   shelve · delete — up to seven at once) outgrows the modal. Each button
+	   sizes to its label (`flex-basis: auto`, never shrinks below it) and
+	   grows to share the leftover space on its line, so a label never spills
+	   over its neighbour and a narrow window simply gets more rows. The Pool
+	   config row (Phase B) sits below as a sibling. */
 	.evm__actions {
 		display: flex;
+		flex-wrap: wrap;
 		gap: 6px;
 	}
 	/* Shelve picker row — opens under the actions like the comment box. */
@@ -1463,9 +1469,9 @@
 		border-radius: var(--r-sm);
 		color: var(--fg);
 	}
-	.evm__shelve-go { flex: 0 0 auto; }
+	.evm__action.evm__shelve-go { flex: 0 0 auto; }
 	.evm__action {
-		flex: 1;
+		flex: 1 1 auto;
 		display: flex;
 		align-items: center;
 		justify-content: center;
