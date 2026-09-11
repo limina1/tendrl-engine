@@ -1,3 +1,12 @@
+## v0.12.1 — 2026-09-11
+
+- feat(reader): one-strip chrome — § · paged|scroll · tree · T · M
+- feat(reader): NoteView — short-form events by id render as their own card, not a section
+- fix(discussions): follow relay hints when resolving a comment's root/parent
+- fix(spells): keep the result feed when leaving and returning to the profile buffer
+- feat(spells): local-first runs — sync newer at the head, load older at the foot
+- fix(android): _exit on activity destroy — exit()'s atexit pass aborted inside libonnxruntime
+
 ## v0.12.0 — 2026-09-10
 
 - feat(git): NIP-34 repositories — profile tab, repository buffer, issues + threads
