@@ -49,6 +49,50 @@
 	const resolution = new ResolutionTracker();
 	const store = getActiveStore();
 
+	// ── Reading place ───────────────────────────────────────────────────
+	// The renderer unmounts on every buffer switch, so everything below that
+	// isn't derivable from the events — where you were (mode, section, the
+	// refocus breadcrumbs), how deep the tree is loaded, and which nested
+	// indexes / drawers you opened — is parked in store.bufferState on
+	// teardown and re-seeded here on the next mount. Emacs save-place, per
+	// publication. Ephemeral view state, owned by the frontend by design.
+	type ReaderViewState = {
+		viewMode: ViewMode;
+		currentSection: number;
+		treeDepth: number;
+		focusStack: FocusCrumb[];
+		focusMarker: number;
+		visitLog: FocusCrumb[];
+		visitIndex: number;
+		outlineExpanded: Record<string, boolean>;
+		continuousExpanded: Record<string, boolean>;
+		summaryOpen: boolean;
+		publicationThreadsOpen: boolean;
+		treeOpen: boolean;
+		toolsOpen: boolean;
+	};
+	// svelte-ignore state_referenced_locally
+	const savedView = store.bufferState.get(buffer.id) as ReaderViewState | undefined;
+	$effect(() => {
+		return () => {
+			store.bufferState.set(buffer.id, {
+				viewMode,
+				currentSection,
+				treeDepth,
+				focusStack: $state.snapshot(focusStack),
+				focusMarker,
+				visitLog: $state.snapshot(visitLog),
+				visitIndex,
+				outlineExpanded: $state.snapshot(outlineExpanded),
+				continuousExpanded: $state.snapshot(continuousExpanded),
+				summaryOpen,
+				publicationThreadsOpen,
+				treeOpen,
+				toolsOpen
+			} satisfies ReaderViewState);
+		};
+	});
+
 	let publication = $state<PublicationDetail | null>(null);
 	let pristineSections = $state<LazySection[]>([]);
 
@@ -64,13 +108,13 @@
 	// an already-visited index just moves the marker. Crumbs past the marker
 	// are the loop tail, reachable ahead of the current focus.
 	type FocusCrumb = { pubkey: string; d_tag: string; title: string };
-	let focusStack = $state<FocusCrumb[]>([]);
-	let focusMarker = $state(0);
+	let focusStack = $state<FocusCrumb[]>(savedView?.focusStack ?? []);
+	let focusMarker = $state(savedView?.focusMarker ?? 0);
 	// `visitLog` is the *temporal* axis: every focus in entry order, revisits
 	// included. `Prev Level` steps `visitIndex` back through it. There is no
 	// Next — inward movement is the refocus action, not a forward step.
-	let visitLog = $state<FocusCrumb[]>([]);
-	let visitIndex = $state(0);
+	let visitLog = $state<FocusCrumb[]>(savedView?.visitLog ?? []);
+	let visitIndex = $state(savedView?.visitIndex ?? 0);
 	// The accumulated 30040 reference graph behind the graph panel. Every
 	// index event seen — across all focuses and depths — merges in here and
 	// is never dropped, so the panel shows the structure discovered so far
@@ -84,7 +128,7 @@
 	// `max_depth` counts the deepest fully-loaded level). Minimum 1: level 0
 	// (the focused index itself) is always loaded.
 	const MAX_DEPTH = 6;
-	let treeDepth = $state(2);
+	let treeDepth = $state(savedView?.treeDepth ?? 2);
 	// Depth the current focus's tree has actually been streamed to. Lowering
 	// `treeDepth` at or below this is a no-op — the deeper tree stays loaded
 	// and ready, so no re-stream and no counter reset.
@@ -150,8 +194,11 @@
 	// (continuous). The outline view is gone (2026-09-11): the § toc
 	// drawer is the outline. Default to paged; `?highlight=<id>` keeps
 	// paged so the highlight overlay is visible right away.
-	let viewMode = $state<ViewMode>('paginated');
-	let currentSection = $state(0);
+	let viewMode = $state<ViewMode>(savedView?.viewMode ?? 'paginated');
+	let currentSection = $state(savedView?.currentSection ?? 0);
+	// The continuous view's expanded-index set, lifted here (bind:expanded)
+	// so it survives with the rest of the reading place.
+	let continuousExpanded = $state<Record<string, boolean>>(savedView?.continuousExpanded ?? {});
 	let loading = $state(true);
 	// Secondary line under "Loading…" while a standalone event/addressable
 	// falls through the local cache to a relay round-trip.
@@ -380,7 +427,7 @@
 	// Threads are collapsed by default — same posture as the highlights
 	// drawer. The user expands the block they care about; routine reading
 	// isn't interrupted by walls of comments.
-	let publicationThreadsOpen = $state(false);
+	let publicationThreadsOpen = $state(savedView?.publicationThreadsOpen ?? false);
 	// Auto-open when the user arrives via ?focus_comment=<id> and the
 	// focused comment lives in the publication-level thread.
 	$effect(() => {
@@ -463,7 +510,7 @@
 	// Nested 30040 indexes fold in the § toc drawer, keyed by addr.
 	// Collapsed by default — the reader expands deeper levels
 	// deliberately, by index or all at once (tree row).
-	let outlineExpanded = $state<Record<string, boolean>>({});
+	let outlineExpanded = $state<Record<string, boolean>>(savedView?.outlineExpanded ?? {});
 	const nestedAddrKey = (a: { kind: number; pubkey: string; d_tag: string }) =>
 		`${a.kind}:${a.pubkey}:${a.d_tag}`;
 	const isNestedIndex = (s: LazySection) => s.addr?.kind === 30040;
@@ -574,15 +621,15 @@
 
 	// Summary drawer — a publication/article/wiki `summary` tag renders
 	// under the title, open by default, closable from the title-row chip.
-	let summaryOpen = $state(true);
+	let summaryOpen = $state(savedView?.summaryOpen ?? true);
 
 	// ── Aux tools row ───────────────────────────────────────────────────
 	// Strip chrome: § toc · paged|scroll · tree · T · M. `tree` drops the
 	// nesting row (load depth, expand/collapse, graph) for nested
 	// publications; `T` drops the tools panel (actions, pool, reading
-	// typography). Both are transient view state, not persisted.
-	let treeOpen = $state(false);
-	let toolsOpen = $state(false);
+	// typography). Both ride along in the saved reading place.
+	let treeOpen = $state(savedView?.treeOpen ?? false);
+	let toolsOpen = $state(savedView?.toolsOpen ?? false);
 	let tocOpen = $state(false);
 	// ContinuousView instance — its exported scrollToSection keeps a TOC
 	// jump in-place instead of flipping the view mode.
@@ -1350,7 +1397,6 @@
 					relays: ev.relays ?? []
 				}
 			];
-			viewMode = 'paginated';
 		} catch (e) {
 			error = api.errorMessage(e);
 		} finally {
@@ -1410,7 +1456,6 @@
 					relays: ev.relays ?? []
 				}
 			];
-			viewMode = 'paginated';
 		} catch (e) {
 			error = api.errorMessage(e);
 		} finally {
@@ -1428,17 +1473,41 @@
 	$effect(() => {
 		const id = buffer.id;
 		if (id === lastLoadedBufferId) return;
+		const mounting = lastLoadedBufferId === null;
 		lastLoadedBufferId = id;
 		// Switching the buffer to a different publication drops the refocus
-		// stack; load() re-seeds it from the new buffer address.
+		// stack; load() re-seeds it from the new buffer address. The mounting
+		// run keeps a restored stack so load() lands on the saved focus.
 		untrack(() => {
-			focusStack = [];
-			focusMarker = 0;
-			visitLog = [];
-			visitIndex = 0;
+			if (!(mounting && focusStack.length > 0)) {
+				focusStack = [];
+				focusMarker = 0;
+				visitLog = [];
+				visitIndex = 0;
+			}
 			focusGraph = {};
 			graphOpen = false;
 			load();
+		});
+	});
+
+	// Once a restored place has loaded: the saved section index may exceed
+	// the tree (the tree is re-streamed; a depth change or a relay miss can
+	// shrink it) — clamp it; and in scroll mode, scroll to it, since the
+	// continuous view only tracks position through explicit jumps.
+	let restorePending = !!savedView;
+	$effect(() => {
+		if (!restorePending) return;
+		const settled =
+			!loaderRunning && !loading && !!publication && pristineSections.length > 0;
+		if (!settled) return;
+		restorePending = false;
+		untrack(() => {
+			if (currentSection >= pristineSections.length) currentSection = 0;
+			if (viewMode === 'continuous') {
+				const idx = currentSection;
+				setTimeout(() => continuousView?.scrollToSection(idx), 60);
+			}
 		});
 	});
 
@@ -2282,6 +2351,7 @@
 			{#if viewMode === 'continuous'}
 				<ContinuousView
 					bind:this={continuousView}
+					bind:expanded={continuousExpanded}
 					{sections}
 					onrefocus={refocus}
 					publication={{

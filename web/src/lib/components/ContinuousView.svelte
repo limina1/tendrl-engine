@@ -28,7 +28,8 @@
 		focusedCommentId = null,
 		publicationAtag = undefined,
 		siblings = undefined,
-		resolution = undefined
+		resolution = undefined,
+		expanded = $bindable<Record<string, boolean>>({})
 	}: {
 		sections: LazySection[];
 		publication?: { title: string | null; summary: string | null } | null;
@@ -53,6 +54,10 @@
 		siblings?: { title?: string; d_tag: string }[] | undefined;
 		/** The reader's resolution-progress tracker (threaded, not context). */
 		resolution?: ResolutionTracker;
+		/** Which nested 30040 indexes are expanded, by addr key. Bindable so
+		 *  the reader can park it across a buffer switch (this component
+		 *  unmounts with its buffer) — view state, owned by the frontend. */
+		expanded?: Record<string, boolean>;
 	} = $props();
 
 	function addrKey(addr: { kind: number; pubkey: string; d_tag: string }): string {
@@ -266,13 +271,12 @@
 	// a flat dump of every leaf. Indices start collapsed, so the reader
 	// sees one level (the indices + their 30041 leaves) and expands deeper
 	// levels deliberately — by index, or all at once.
-	let expandedByAddr = $state<Record<string, boolean>>({});
 	function isExpanded(addr: { kind: number; pubkey: string; d_tag: string }): boolean {
-		return expandedByAddr[addrKey(addr)] ?? false;
+		return expanded[addrKey(addr)] ?? false;
 	}
 	function toggleIndex(addr: { kind: number; pubkey: string; d_tag: string }) {
 		const k = addrKey(addr);
-		expandedByAddr = { ...expandedByAddr, [k]: !(expandedByAddr[k] ?? false) };
+		expanded = { ...expanded, [k]: !(expanded[k] ?? false) };
 	}
 
 	const isIndex = (s: LazySection) => s.addr?.kind === 30040;
@@ -355,10 +359,10 @@
 		for (const s of sections) {
 			if (isIndex(s) && s.addr) next[addrKey(s.addr)] = true;
 		}
-		expandedByAddr = next;
+		expanded = next;
 	}
 	export function collapseAll() {
-		expandedByAddr = {};
+		expanded = {};
 	}
 
 	// Per-section thread toggles, keyed by addr string. Each section's
@@ -404,7 +408,7 @@
 	 *  Exported for the reader's mobile TOC drawer (bind:this). */
 	export function scrollToSection(idx: number) {
 		if (idx < 0 || idx >= sections.length) return;
-		const next = { ...expandedByAddr };
+		const next = { ...expanded };
 		let d = sections[idx].depth ?? 0;
 		for (let j = idx - 1; j >= 0 && d > 0; j--) {
 			const s = sections[j];
@@ -414,7 +418,7 @@
 				d = dj;
 			}
 		}
-		expandedByAddr = next;
+		expanded = next;
 		tick().then(() => {
 			containerEl
 				?.querySelector(`[data-section-index="${idx}"]`)
