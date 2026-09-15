@@ -73,6 +73,11 @@ export type ContentSegment = SegmentSource &
 				type: 'highlight';
 				text: string;
 				highlight: { id: string; pubkey: string; focused: boolean };
+				/** The runs *inside* the mark — plain text plus any nostrdown ref /
+				 *  token the highlight spans. A highlight is a decoration over the
+				 *  text, not a replacement of it, so a `[[wikilink]]` under a
+				 *  highlight stays a live link. Never contains another highlight. */
+				parts: ContentSegment[];
 		  }
 		| { type: 'ref'; ref: ResolvedRef }
 		/** A raw `{{ }}` token the engine hasn't resolved yet (resolution is async,
@@ -121,20 +126,26 @@ export function coordMatchesAddr(
 	return c.pubkey === addr.pubkey || c.pubkey === '' || addr.pubkey === '';
 }
 
-interface Overlay {
+type Overlay = {
 	start: number;
 	end: number;
 	/** Higher wins when two overlays start at the same offset. */
 	prio: number;
-	make: () => ContentSegment;
-}
+} & (
+	| { kind: 'atom'; make: () => ContentSegment }
+	| { kind: 'highlight'; span: HighlightSpan }
+);
 
 /**
  * Slice section `content` into plain/highlighted/reference runs, merging the
  * engine's resolved highlight `spans` and nostrdown `refs` (both UTF-16 offsets
- * into the same text) onto one non-overlapping segmentation. On overlap a
- * nostrdown ref wins (it replaces its `{{…}}` token entirely); a highlight that
- * would intersect an already-claimed run is dropped.
+ * into the same text) onto one segmentation. Refs and tokens are *atoms*:
+ * each replaces its `{{…}}` / `[[…]]` span entirely and never nests. A
+ * highlight is a *decoration*: its segment carries `parts` — the text runs and
+ * atoms it covers — so a wikilink under a highlight is still a link. A
+ * highlight that starts inside an atom begins after it; one that ends inside an
+ * atom extends to the atom's end (atoms don't split). Highlights don't nest:
+ * a highlight overlapping an already-emitted one is dropped.
  *
  * `focusedId` (typically the `?highlight=<id>` marker) flags its highlight's
  * segment so the renderer can add an emphasis ring.
@@ -152,6 +163,7 @@ export function buildSegments(
 	const overlays: Overlay[] = [];
 	for (const ref of refs) {
 		overlays.push({
+			kind: 'atom',
 			start: ref.start,
 			end: ref.end,
 			prio: 2,
@@ -164,6 +176,7 @@ export function buildSegments(
 	// the same UTF-16 unit refs use, so the merge below is uniform.
 	for (const t of tokens) {
 		overlays.push({
+			kind: 'atom',
 			start: t.start,
 			end: t.end,
 			prio: 0,
@@ -179,22 +192,8 @@ export function buildSegments(
 		});
 	}
 	for (const s of spans) {
-		overlays.push({
-			start: s.start,
-			end: s.end,
-			prio: 1,
-			make: () => ({
-				type: 'highlight',
-				text: content.slice(s.start, s.end),
-				highlight: {
-					id: s.id,
-					pubkey: s.pubkey,
-					focused: focusedLower !== null && s.id.toLowerCase() === focusedLower
-				},
-				srcStart: s.start,
-				srcEnd: s.end
-			})
-		});
+		if (s.end <= s.start) continue;
+		overlays.push({ kind: 'highlight', start: s.start, end: s.end, prio: 1, span: s });
 	}
 	// The no-overlay early-out sits AFTER the spans loop deliberately: it used
 	// to sit before it, which silently dropped highlight spans on any section
@@ -202,30 +201,74 @@ export function buildSegments(
 	if (overlays.length === 0)
 		return [{ type: 'text', text: content, srcStart: 0, srcEnd: content.length }];
 
-	// Earliest start first; on a tie the higher-priority overlay (ref) leads so
-	// it claims the run and the highlight is dropped on the overlap check.
-	overlays.sort((a, b) => a.start - b.start || b.prio - a.prio);
+	// Earliest start first. On a tie a highlight leads (it opens the mark and
+	// the atom at the same offset becomes its first part — a highlight that
+	// is exactly a wikilink still wraps it); between atoms the higher priority
+	// wins, so a resolved ref beats the raw token it replaces.
+	overlays.sort(
+		(a, b) =>
+			a.start - b.start ||
+			Number(b.kind === 'highlight') - Number(a.kind === 'highlight') ||
+			b.prio - a.prio
+	);
+
+	const text = (start: number, end: number): ContentSegment => ({
+		type: 'text',
+		text: content.slice(start, end),
+		srcStart: start,
+		srcEnd: end
+	});
 
 	const segments: ContentSegment[] = [];
 	let cursor = 0;
-	for (const o of overlays) {
-		if (o.start < cursor) continue; // overlaps an already-emitted run → drop
-		if (o.start > cursor)
-			segments.push({
-				type: 'text',
-				text: content.slice(cursor, o.start),
-				srcStart: cursor,
-				srcEnd: o.start
-			});
-		segments.push(o.make());
-		cursor = o.end;
-	}
-	if (cursor < content.length)
+	let i = 0;
+	while (i < overlays.length) {
+		const o = overlays[i];
+		if (o.kind === 'atom') {
+			i++;
+			if (o.start < cursor) continue; // inside an already-emitted run → drop
+			if (o.start > cursor) segments.push(text(cursor, o.start));
+			segments.push(o.make());
+			cursor = o.end;
+			continue;
+		}
+		// A highlight. Its mark starts where the text is still unclaimed (a
+		// highlight beginning inside an atom starts after it) and ends at its
+		// own end — or at the end of the last atom it reaches into.
+		const start = Math.max(o.start, cursor);
+		let end = o.end;
+		i++;
+		if (start >= end) continue; // wholly inside a claimed run (another highlight / atom) → drop
+		const parts: ContentSegment[] = [];
+		let pc = start;
+		while (i < overlays.length && overlays[i].start < end) {
+			const inner = overlays[i];
+			i++;
+			// A highlight overlapping this one is dropped — marks don't nest.
+			if (inner.kind !== 'atom') continue;
+			if (inner.start < pc) continue; // overlaps an atom already inside the mark
+			if (inner.start > pc) parts.push(text(pc, inner.start));
+			parts.push(inner.make());
+			pc = inner.end;
+			if (pc > end) end = pc; // the atom straddles the highlight's end — extend
+		}
+		if (pc < end) parts.push(text(pc, end));
+		if (start > cursor) segments.push(text(cursor, start));
+		const s = o.span;
 		segments.push({
-			type: 'text',
-			text: content.slice(cursor),
-			srcStart: cursor,
-			srcEnd: content.length
+			type: 'highlight',
+			text: content.slice(start, end),
+			parts,
+			highlight: {
+				id: s.id,
+				pubkey: s.pubkey,
+				focused: focusedLower !== null && s.id.toLowerCase() === focusedLower
+			},
+			srcStart: start,
+			srcEnd: end
 		});
+		cursor = end;
+	}
+	if (cursor < content.length) segments.push(text(cursor, content.length));
 	return segments;
 }
