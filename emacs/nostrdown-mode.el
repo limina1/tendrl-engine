@@ -41,7 +41,8 @@
 ;; Setup:
 ;;
 ;;   (require 'nostrdown-mode)
-;;   (global-nostrdown-mode 1)       ; org, markdown, adoc buffers
+;;   M-x nostrdown                   ; overlay this buffer now (C-u: off)
+;;   (global-nostrdown-mode 1)       ; or: always on in org, markdown, adoc buffers
 ;;
 ;; Keys (prefix `nostrdown-keymap-prefix', default C-c n):
 ;;   r  resolve now (local)      R  resolve online (relay backfill)
@@ -1097,6 +1098,22 @@ In the engine's Confirm mode the request waits for approval in the tendrl UI."
   (remove-from-invisibility-spec 'nostrdown)
   (nostrdown--clear-overlays)
   (setq nostrdown--refs nil nostrdown--status nil))
+
+;;;###autoload
+(defun nostrdown (&optional arg)
+  "Overlay the buffer's nostrdown references with their resolved events.
+Turns `nostrdown-mode' on (if needed) and resolves right away, blocking
+briefly for the engine so the overlays are there when the command returns.
+With a prefix ARG, turn the layer off instead."
+  (interactive "P")
+  (if arg
+      (progn (nostrdown-mode -1) (message "nostrdown: off"))
+    (unless nostrdown-mode (nostrdown-mode 1))
+    (when nostrdown--timer (cancel-timer nostrdown--timer) (setq nostrdown--timer nil))
+    (nostrdown-resolve-buffer-sync)
+    (message "nostrdown: %s references resolved via %s%s"
+             (or nostrdown--status "0/0") (nostrdown--backend)
+             (if (eq (nostrdown--backend) 'tendrl) (concat " at " nostrdown-engine-url) ""))))
 
 ;;;###autoload
 (define-minor-mode nostrdown-mode

@@ -62,6 +62,9 @@ wiki lookups.
 
 * Install
 
+=M-x nostrdown= turns the layer on in the current buffer and resolves at
+once (=C-u M-x nostrdown= turns it off). For always-on:
+
 #+begin_src emacs-lisp
 (add-to-list 'load-path "~/Documents/Programming/tendrl-engine/emacs")
 (require 'nostrdown-mode)
