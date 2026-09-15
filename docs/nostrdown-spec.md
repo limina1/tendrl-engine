@@ -31,40 +31,65 @@ A reference declares a *role* — what the author wants done with the event:
 | mention | `@` | a person, linked by handle |
 
 The syntax never decides *where* a reference may reach. Its **target form**
-does: a title-slug or d-tag is a handle, and handles are local to the document
-the reference lives in; a NIP-19 entity or a `kind:pubkey:d-tag` coordinate is
-a pointer, and a pointer may name any event anywhere. An author who wants to
-stay inside the document writes a handle; an author who wants to reach outside
-writes the address. The same prefix serves both — the reader's client decides
-only how to *present* the result (a sibling navigates in place; an outside
-event opens).
+does (defined under *Target forms* below): a handle is local to the document
+the reference lives in; a pointer — a NIP-19 entity or a `kind:pubkey:d-tag`
+coordinate — may name any event anywhere. An author who wants to stay inside
+the document writes a handle; an author who wants to reach outside writes the
+address. The same prefix serves both — the reader's client decides only how to
+*present* the result (a sibling navigates in place; an outside event opens).
 
 ## Grammar
 
 ```abnf
-reference = "{{" prefix ":" target [ "|" modifier ] "}}"
-mention   = "{{@" target [ "|" modifier ] "}}"   ; profile mention — target is an npub / nprofile (@name reserved)
-prefix    = "ref" / "wiki" / "embed" / "quote" / "slot" / "cite"
-target    = text     ; what is referenced
-modifier  = text     ; what is shown in place (label, excerpt, or render directive)
-text      = any characters up to the next "|" or "}}"
+reference  = "{{" prefix ":" target [ "|" modifier ] "}}"
+mention    = "{{@" target [ "|" modifier ] "}}"   ; profile mention — target is an npub / nprofile (@name reserved)
+prefix     = "ref" / "wiki" / "embed" / "quote" / "slot" / "cite"
+modifier   = text     ; what is shown in place (label, excerpt, or render directive)
+text       = any characters up to the next "|" or "}}"
+
+target     = pointer / handle                       ; classified in this order
+pointer    = entity / coordinate
+entity     = ["nostr:"] hrp "1" 1*ALNUM             ; a NIP-19 bech32 string
+hrp        = "naddr" / "nevent" / "note" / "nprofile" / "npub"
+coordinate = 1*DIGIT ":" 64HEXDIG ":" 1*text        ; kind ":" pubkey ":" d-tag (the d-tag may contain ":")
+handle     = 1*text                                 ; anything else — a title, slug, d-tag, or topic
 ```
 
-`target` is the only required part after the prefix. Its admissible form — a
-title-slug, a NIP-19 entity (optionally `nostr:`-prefixed), or a
-`kind:pubkey:d-tag` coordinate — is the same for every prefix; the grammar only
-locates where it ends, and the form chooses the scope (see *Roles, not scopes*).
+`target` is the only required part after the prefix and takes the same three
+forms under every prefix. The form is what carries the *scope* of a reference
+(see *Roles, not scopes*): the prefix says what to do with the event, the
+target form says which events are in reach.
+
+### Target forms
+
+| form | looks like | names | matched how | reach | tag it contributes |
+| ---- | ---------- | ----- | ----------- | ----- | ------------------ |
+| entity | `naddr1…`, `nevent1…`, `note1…`, `npub1…`, `nprofile1…`, optionally `nostr:`-prefixed | one event (or one profile) by address or id | decoded and matched verbatim | anywhere — an naddr is checked against the document's siblings first | `a` / `q` / `p` by entity type |
+| coordinate | `30041:‹64-hex pubkey›:‹d-tag›` | one addressable event | canonicalized to its naddr, then as an entity | anywhere, sibling-first | `a` |
+| handle | `The Ascent`, `the-ascent`, `sec-7h2x9`, `proof of work` | a section of *this* document (by title-slug, `T` tag, or d-tag) — or, under `wiki`, a topic | NIP-54 normalized, then looked up against the sibling index (or the `d` of a kind-30818 article) | the document (`ref`, `embed`, `slot`); the document, then 30818 (`wiki`) | the handle itself: `["ref", handle]` / `["w", topic]` |
+
+Classification is by form, not by prefix, and in a fixed order: a target that
+decodes as an entity is an entity; else one that parses as a coordinate is a
+coordinate; everything else is a handle. Only a handle is NIP-54 normalized —
+normalization strips colons and would mangle a coordinate into an unresolvable
+slug, so a client MUST classify before it normalizes. The `nostr:` prefix and
+the bech32 prefix are matched case-insensitively; a string that starts like an
+entity but carries a non-alphanumeric body is a handle, not an error.
+
+A handle can never reach outside the document (a global title match would make
+any same-named section by anyone a target); a pointer never needs the document
+at all. The one place both meet is an naddr that happens to address a sibling:
+it resolves as the sibling, so the reader navigates in place.
 
 Parsing rules:
 
 - Split on the *first* `:` only — colon-bearing targets (a coordinate, a
   `nostr:` URI) are preserved intact.
 - `|` is optional and splits once; it runs to the closing `}}` as free text.
-- A title-slug target is NIP-54 normalized (lowercased; spaces and separators
-  collapse to `-`; other punctuation dropped). Entities and coordinates are
-  matched verbatim — a `kind:pubkey:d-tag` coordinate is equivalent to its
-  `naddr` and is admissible wherever an entity is (a parser may canonicalize
-  the coordinate to that naddr internally; it is never slug-normalized).
+- A handle is NIP-54 normalized (lowercased; spaces and separators collapse
+  to `-`; other punctuation dropped). Entities and coordinates are matched
+  verbatim — a `kind:pubkey:d-tag` coordinate is equivalent to its `naddr`
+  (see *Target forms*).
 - Prefixes are written lowercase; matching is case-sensitive (`{{Ref:…}}` is
   literal text).
 - A token with an unknown prefix or a malformed body is left as literal text.
@@ -136,12 +161,10 @@ prefix). `{{wiki:topic}}` and `[[topic]]` are two ways to write the one referenc
 `ref` accepts all three target forms, and the form the author writes decides
 where the reference may reach — the syntax does not choose for them:
 
-- a *title-slug or d-tag* is a handle, and handles are document-local: it
-  matches a sibling by title-slug, `T` tag, or d-tag (both slug forms of each),
-  and stays unresolved otherwise. A global slug match is deliberately not
-  attempted — any same-titled section by anyone would become a target.
-- an *naddr, coordinate or nevent* is a pointer and needs no scope: it is
-  resolved sibling-first (an entity addressing a section or nested index of the
+- a *handle* is document-local: it matches a sibling by title-slug, `T` tag,
+  or d-tag (both slug forms of each), and stays unresolved otherwise.
+- a *pointer* (entity or coordinate) needs no scope: it is resolved
+  sibling-first (an naddr addressing a section or nested index of the
   containing document is an internal link, which a reader navigates in place),
   else as a direct link to the event it names, wherever it lives — the same
   resolution an entity wikilink gets, a not-yet-local event coming back
@@ -267,6 +290,10 @@ intent, and how each was resolved:
   target form (handle = local, pointer = anywhere, sibling-first). Entity refs
   now emit the pointer tag (`a` / `q` / `p`); `["ref", handle]` is reserved for
   the handle form, the only one that needs a resolution hint.
+- *The target forms were never defined.* Revision 1 wrote `target = text` and
+  described the forms in prose. Resolved: `target = pointer / handle` in the
+  grammar, with the classification order, what each form looks like, what it
+  names, its reach, and its tag, under *Target forms*.
 - *The modifier meant different things per prefix without saying so.*
   Resolved: the modifier is what shows in place. On an embed it folds the
   transclusion behind a label; no modifier means the whole event.
