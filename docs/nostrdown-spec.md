@@ -90,18 +90,30 @@ tag dictated by the target (an `embed` is `a` / `q` / `p` by entity type).
 
 | prefix  | example | resolves to | emitted tag |
 | ------- | ------- | ----------- | ----------- |
-| `ref`   | `{{ref:The Ascent}}` | a sibling section (or nested index) of the same publication — and *only* a sibling; a ref never leaves its document | `["ref", "the-ascent"]` |
-| `wiki`  | `{{wiki:proof of work}}` | a sibling of the containing document first; else kind 30818 by `d`; else 30040/41 by `T` title-slug | `["w", "proof-of-work"]` |
+| `ref`   | `{{ref:The Ascent}}` / `{{ref:naddr1…\|NIP-42}}` | a reference whose scope the *target form* sets: a title-slug or d-tag is a handle for a sibling section (or nested index) of the same publication; an naddr / coordinate / nevent is a pointer — sibling-first, else any event, anywhere | slug: `["ref", "the-ascent"]`; entity: the pointer tag for its target (`a` / `q` / `p`, as for `embed`) |
+| `wiki`  | `{{wiki:proof of work}}` | a sibling of the containing document first; else kind 30818 by `d` | `["w", "proof-of-work"]` |
 | `embed` | `{{embed:naddr1…}}` | transclude the event inline, as a card | by target type (below) |
 | `quote` | `{{quote:naddr1… \| And now, let me show in a figure…}}` | attributed blockquote; the excerpt is inline, the target resolves for attribution only | `["a", "30041:‹pk›:‹d›"]` `["p", "‹author›", "", "author"]` |
 | `slot`  | `{{slot:naddr1…}}` | an editor / compose-time operation: the referenced event (addressable 30040 / 30041) becomes a child node of the enclosing index — inclusion into the tree, not the prose. Conventionally written on its own line; renders as a preview card | `["a", "30041:‹pk›:‹d›"]` on the *30040 index* (nothing inline) |
 | `cite`  | `{{cite:smith-2024}}` *(reserved)* | a kind-30161 citation record | `["cite", "smith-2024", "30161:‹pk›:smith-2024"]` |
 
-`ref` accepts all three target forms, but resolution is always against the
-sibling index: a title-slug or d-tag matches by handle; an naddr / coordinate
-matches only if it addresses a sibling, and stays unresolved otherwise (point
-at arbitrary events with `embed` or an entity wikilink). The entity form's tag
-carries the sibling's d-tag: `["ref", "‹d-tag›"]`.
+`ref` accepts all three target forms, and the form the author writes decides
+where the reference may reach — the syntax does not choose for them:
+
+- a *title-slug or d-tag* is a handle, and handles are document-local: it
+  matches a sibling by title-slug, `T` tag, or d-tag (both slug forms of each),
+  and stays unresolved otherwise. A global slug match is deliberately not
+  attempted — any same-titled section by anyone would become a target.
+- an *naddr, coordinate or nevent* is a pointer and needs no scope: it is
+  resolved sibling-first (an entity addressing a section or nested index of the
+  containing document is an internal link, which a reader navigates in place),
+  else as a direct link to the event it names, wherever it lives — the same
+  resolution an entity wikilink gets, a not-yet-local event coming back
+  `pending` until fetched.
+
+A `ref` *links*; it never transcludes. `{{ref:naddr…|label}}` and
+`[[naddr…][label]]` are therefore two spellings of one reference; use `embed`
+for the event's content inline, `quote` for a passage of it.
 
 `embed` tag by target type — the same `{{embed:…}}` token, tagged according to the target:
 
@@ -199,7 +211,9 @@ endnote, blockquote) is decided downstream, in order of precedence:
 
 ## Status
 
-- *Shipped*: `ref` (sibling-only, all three target forms), `wiki` (`{{ }}` and
+- *Shipped*: `ref` (scope by target form — slug handles stay in the document,
+  entity / coordinate pointers resolve sibling-first, else anywhere; decided
+  2026-09-15, previously entity refs were sibling-only), `wiki` (`{{ }}` and
   `[[ ]]`, incl. entity/coordinate wikilinks as direct event links), `embed`
   (naddr / coordinate / nevent / note / npub / nprofile / sibling slug),
   `quote`, `slot`, `@` mention (npub / nprofile).

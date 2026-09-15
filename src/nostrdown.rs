@@ -13,8 +13,10 @@
 //!
 //! Only the three structural reference prefixes are recognised today:
 //!
-//! - `ref`   — an internal reference to a sibling section in the same
-//!             publication (sibling-only — a ref never leaves its document)
+//! - `ref`   — a reference whose *target form* sets its scope: a slug is a
+//!   handle for a sibling section of the same publication; an entity /
+//!   coordinate is a pointer, resolved sibling-first, else as a direct link
+//!   to any event
 //! - `wiki`  — a markup-agnostic wikilink (replaces NKBIP-01's `[[ ]]`, which
 //!             collides with Org-mode) resolving to a kind 30818 by normalized
 //!             `d` tag, else a 30040/30041 by its `T` title-slug tag
@@ -156,9 +158,9 @@ pub struct ResolvedRef {
     /// `true` when the target is a valid event address (`found`) but the event
     /// itself isn't in the local db yet — the renderer offers a relay fetch
     /// (auto in Auto mode, a click in Confirm mode). Cleared once the event is
-    /// fetched and the card is filled. Always `false` for `ref` (sibling-only:
-    /// it either matches the local sibling index or stays unresolved) and for
-    /// slug-target `wiki` (resolved against local sections/articles).
+    /// fetched and the card is filled. Always `false` for slug-target `ref`
+    /// and `wiki` (resolved against local siblings/articles); an entity `ref`
+    /// that is not a sibling rides the entity pipeline and can be pending.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub pending: bool,
     /// NIP-19 `naddr`/`nevent`/`note` to navigate to, when resolved.
@@ -568,8 +570,11 @@ pub fn parse(content: &str) -> Vec<NostrdownRef> {
 /// - `{{wiki:topic}}` / `[[topic]]` → `["w", topic]` (single-letter, relay-indexed
 ///   like `d`, so `{"#w":[topic]}` returns backlinks; topic only — author-agnostic
 ///   per NIP-54, no pinned version)
-/// - `{{ref:slug}}` → `["ref", slug]` (sibling handle); an naddr/coordinate ref
-///   emits `["ref", d_tag]` — still a sibling handle, refs never leave the
+/// - `{{ref:slug}}` → `["ref", slug]` (sibling handle); an entity/coordinate
+///   ref is a pointer and emits the tag for what it addresses (`a`/`q`/`p`)
+///   like an entity wikilink — the `ref` tag is reserved for the handle form,
+///   which is the only one that needs a resolution hint. Formerly (until
+///   2026-09-15) an naddr ref emitted `["ref", d_tag]`, refs never left the
 ///   containing publication
 /// - slug `{{embed:slug}}` → nothing (a sibling transclusion; the index's own
 ///   `a` tags already address the sibling — kept distinct from `ref`)
@@ -598,21 +603,12 @@ pub fn reference_tags(content: &str) -> Vec<Vec<String>> {
             // one tag, and the sibling is already addressed by the containing
             // index's own `a` tags. No inline tag.
             RefKind::Embed if !r.is_entity => {}
-            // An entity/coordinate ref is still a *sibling* handle (a ref never
-            // leaves the containing publication): only an naddr can address a
-            // sibling, and its d-tag is the handle the tag carries. Any other
-            // entity in ref position tags nothing (it won't resolve either).
-            RefKind::Ref => {
-                if let Ok(crate::nip19::Decoded::Naddr { d_tag, .. }) =
-                    crate::nip19::decode(&r.target)
-                {
-                    push(&mut out, &mut seen, vec!["ref".into(), d_tag]);
-                }
-            }
-            // Entity targets — `[[nevent…]]`, `{{embed:…}}` — emit the pointer
-            // tag for what they address (`a`/`q`/`p`), not a `w` handle tag
-            // wrapping a bech32 string.
-            RefKind::Wiki | RefKind::Embed => {
+            // Entity targets — `{{ref:naddr…}}`, `[[nevent…]]`, `{{embed:…}}` —
+            // emit the pointer tag for what they address (`a`/`q`/`p`), not a
+            // `w`/`ref` handle tag wrapping a bech32 string. An entity ref that
+            // happens to address a sibling needs no hint: the naddr is
+            // self-describing and the index's own `a` tags already list it.
+            RefKind::Wiki | RefKind::Embed | RefKind::Ref => {
                 let Ok(decoded) = crate::nip19::decode(&r.target) else {
                     continue;
                 };
@@ -1059,9 +1055,9 @@ mod tests {
 
     #[test]
     fn reference_tags_entity_ref_and_wikilink() {
-        // An entity ref is still a *sibling* handle — it emits `["ref", d_tag]`,
-        // never an `a` pointer (refs don't leave the publication). An entity
-        // wikilink is a general pointer and emits the tag for what it addresses.
+        // An entity ref is a pointer like an entity wikilink: both emit the tag
+        // for what they address (`a` / `q`), never a `ref` / `w` handle wrapping
+        // a bech32 string (the `ref` tag is the slug form's resolution hint).
         let pk = "ef".repeat(32);
         let id = "12".repeat(32);
         let naddr = crate::nip19::encode_naddr(30040, &pk, "idx-1", &[]).unwrap();
@@ -1070,13 +1066,13 @@ mod tests {
         let tags = reference_tags(&content);
 
         assert!(
-            tags.contains(&vec!["ref".to_string(), "idx-1".to_string()]),
-            "entity ref emits the sibling d-tag handle: {tags:?}"
+            tags.contains(&vec!["a".to_string(), format!("30040:{pk}:idx-1")]),
+            "entity ref emits the `a` pointer for what it addresses: {tags:?}"
         );
         assert!(tags.iter().any(|t| t[0] == "q" && t[1] == id));
         assert!(
-            !tags.iter().any(|t| t[0] == "w" || t[0] == "a"),
-            "no `w` handle for entity wikilinks, no `a` pointer for refs: {tags:?}"
+            !tags.iter().any(|t| t[0] == "w" || t[0] == "ref"),
+            "no `w` / `ref` handle tags for entity targets: {tags:?}"
         );
     }
 

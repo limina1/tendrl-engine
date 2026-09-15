@@ -26,6 +26,13 @@ Markdown/Org/AsciiDoc/plain content. Normative grammar:
   ([[file:decision-wikilinks-30818-only.org][decided 2026-08-12]] — the
   30040/30041 =T=-title-slug fallback is gone; sections cross-reference
   via =ref=/siblings, arbitrary events via =embed=).
+- Ref scope by target form (2026-09-15): a slug =ref= is a document-local
+  handle (siblings only, never a global match); an naddr / coordinate /
+  nevent =ref= is a pointer — sibling-first, else a direct link to any
+  event, like an entity wikilink (was: entity refs sibling-only, so a
+  labelled pointer to an outside event had no ={{ }}= spelling and the
+  kasten skill's table sent writers to a form that could not resolve).
+  Entity refs now emit =a=/=q=/=p=; the =ref= tag is the slug form's hint.
 - Tag emission on signing (=reference_tags()=): =w= (wiki), =ref=, =a=/=q=/=p=
   per reference kind — the substrate for [[file:idea-backlinks.org][backlinks]]
   and [[file:idea-event-badges.org][badges]].

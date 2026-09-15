@@ -2653,13 +2653,17 @@ impl<'a> PublicationEngine<'a> {
 
             match r.kind {
                 RefKind::Ref if r.is_entity => {
-                    // `{{ref:naddr…}}` / `{{ref:kind:pk:d}}` — a ref is a
-                    // *sibling* link only: the entity must address a section or
-                    // nested index of the containing document (or draft).
-                    // Anything else — a foreign naddr, an nevent — stays
-                    // unresolved; point at arbitrary events with `embed` or an
-                    // entity wikilink instead. Pubkey match is tolerant: draft
-                    // siblings carry none.
+                    // `{{ref:naddr…}}` / `{{ref:kind:pk:d}}` / `{{ref:nevent…}}`
+                    // — the *target form* sets the scope (decided 2026-09-15):
+                    // a slug is a handle inside the document, an entity is a
+                    // pointer that may go anywhere. Resolve sibling-first — an
+                    // naddr addressing a section or nested index of the
+                    // containing document (or draft) is an internal link the
+                    // reader navigates in place — else as a direct event link,
+                    // exactly like an entity wikilink (LocalOnly: a not-local
+                    // event comes back `pending`). Pubkey match is tolerant:
+                    // draft siblings carry none.
+                    let mut sibling = false;
                     if let Ok(crate::nip19::Decoded::Naddr {
                         kind_int,
                         pubkey,
@@ -2675,7 +2679,18 @@ impl<'a> PublicationEngine<'a> {
                                     || s.addr.pubkey == pubkey)
                         }) {
                             s.fill(&mut resolved, false, display_given);
+                            sibling = true;
                         }
+                    }
+                    if !sibling {
+                        self.fill_from_entity(
+                            &r.target,
+                            &mut resolved,
+                            false,
+                            display_given,
+                            FetchPolicy::LocalOnly,
+                        )
+                        .await;
                     }
                     truncate_entity_label(&mut resolved, display_given);
                 }
@@ -5497,37 +5512,56 @@ mod tests {
         );
     }
 
-    /// An entity ref that does NOT address a sibling of the containing document
-    /// stays unresolved — a ref never leaves its publication (use `embed` or an
-    /// entity wikilink for arbitrary events). The long bech32 label is still
-    /// truncated for inline rendering.
+    /// The target form sets a ref's scope (decided 2026-09-15): a slug is a
+    /// handle inside the document, an entity is a pointer that may leave it.
+    /// An entity ref that addresses no sibling resolves as a direct event link
+    /// (sibling-first, else entity) — local → filled, not local → `pending`,
+    /// nevent → `event_id`. A slug ref still never leaves the document.
     #[tokio::test]
-    async fn test_resolve_refs_entity_ref_sibling_only() {
+    async fn test_resolve_refs_entity_ref_scope_by_target() {
         let pk_owned = test_pubkey();
         let pk = pk_owned.as_str();
         // The referenced event exists locally — but there is no containing
         // publication, so it is nobody's sibling.
-        let (engine, _dir) =
-            engine_with_events(&[fixture_section(pk, "sec-7h2x9", "Chapter Three", "ch3 body")])
-                .await;
+        let section = fixture_section(pk, "sec-7h2x9", "Chapter Three", "ch3 body");
+        let event_id = section.get("id").unwrap().as_str().unwrap().to_string();
+        let (engine, _dir) = engine_with_events(&[section]).await;
         let pe = PublicationEngine::new(&engine);
 
         let naddr = crate::nip19::encode_naddr(30041, pk, "sec-7h2x9", &[]).unwrap();
+        let foreign = crate::nip19::encode_naddr(30818, pk, "nowhere", &[]).unwrap();
+        let nevent = crate::nip19::encode_nevent(&event_id, &[], Some(pk), Some(30041)).unwrap();
+        let content = format!(
+            "{{{{ref:{naddr}}}}} {{{{ref:{foreign}|elsewhere}}}} {{{{ref:{nevent}}}}} {{{{ref:chapter-three}}}}"
+        );
         let refs = pe
-            .resolve_refs(
-                &format!("{{{{ref:{naddr}}}}}"),
-                None,
-                None,
-                &[],
-                FetchPolicy::LocalOnly,
-            )
+            .resolve_refs(&content, None, None, &[], FetchPolicy::LocalOnly)
             .await;
-        assert_eq!(refs.len(), 1);
+        assert_eq!(refs.len(), 4);
+
         let r0 = &refs[0];
-        assert!(!r0.found, "a ref outside its publication does not resolve");
+        assert!(r0.found, "an entity ref outside any publication resolves as a link");
         assert!(!r0.pending);
-        assert!(r0.label.len() < 20, "bech32 label truncated: {}", r0.label);
-        assert!(r0.label.starts_with("naddr1") && r0.label.contains('…'));
+        assert_eq!(
+            r0.coord.as_deref(),
+            Some(format!("30041:{pk}:sec-7h2x9").as_str())
+        );
+        assert_eq!(r0.label, "Chapter Three", "title lifts into the label");
+        assert!(r0.content.is_none(), "a ref links; it doesn't transclude");
+
+        let r1 = &refs[1];
+        assert!(r1.found, "a valid address is found even when not local");
+        assert!(r1.pending, "…but pending until fetched");
+        assert_eq!(r1.label, "elsewhere", "explicit display wins");
+
+        let r2 = &refs[2];
+        assert!(r2.found, "an nevent ref resolves as a direct event link");
+        assert_eq!(r2.event_id.as_deref(), Some(event_id.as_str()));
+        assert!(r2.coord.is_none());
+
+        let r3 = &refs[3];
+        assert!(!r3.found, "a slug ref is a document handle: no sibling, no match");
+        assert!(!r3.pending);
     }
 
     /// Global wiki fallback semantics: 30818 matches by `d` (the topic IS the
