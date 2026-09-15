@@ -297,10 +297,11 @@ agent loop is just another caller of the gates that already exist.
 
 ### Relay AUTH (NIP-42) — whose key signs?
 
-> Status: NIP-42 is **not implemented** in the engine today (relay reads are
-> anonymous). This section is the design constraint for when it lands, because
-> a naive implementation makes assistant tool-call fetches fail on
-> auth-required relays.
+> Status: **implemented 2026-09-15** as designed here — `src/nip42.rs` +
+> `relay::RelayConn` + `signing::AuthSigner`, policy = the per-relay `auth`
+> opt-in set (`docs/nip42-relay-auth-plan.org`). Tool-call fetches inherit it
+> because they go through `Engine::tracked_fetch`. The rest of this section
+> is the constraint the implementation satisfies.
 
 The hazard: on a member-restricted (paid/private) relay, authenticating with
 the **assistant** key gets rejected — the assistant pubkey isn't an authorized

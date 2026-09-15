@@ -569,7 +569,13 @@ export type RelayStatusValue =
 	| { kind: 'error'; msg: string }
 	| { kind: 'timeout' }
 	| { kind: 'accepted' }
-	| { kind: 'rejected'; msg: string };
+	| { kind: 'rejected'; msg: string }
+	/** Relay demanded NIP-42 auth and the engine did not authenticate
+	 *  (relay not in the auth set / no signer / AUTH refused). Passive:
+	 *  the decision is the auth toggle on the relays screen. */
+	| { kind: 'auth_required'; msg: string }
+	/** This relay's socket authenticated (NIP-42) for the operation. */
+	| { kind: 'authenticated' };
 
 /** Structural NIP-01 filter (subset; all fields optional). */
 export interface NipFilter {

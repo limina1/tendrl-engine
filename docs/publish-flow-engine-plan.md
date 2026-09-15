@@ -130,8 +130,9 @@ Pending → Sending → Accepted             │
     after cap, terminal Rejected.
   - `pow:` → terminal Rejected (we don't mine PoW; user chooses to
     drop the relay or up the difficulty).
-  - `auth-required:` → terminal Rejected for now; future work pairs
-    with NIP-42 challenge handling.
+  - `auth-required:` → NIP-42 (shipped 2026-09-15): relay in the user's
+    `auth` set → AUTH + re-send on the same socket; otherwise terminal
+    `AuthRequired` status (`PublishResult.refusal`), no prompt.
   - `invalid:` / `blocked:` / `restricted:` → terminal Rejected.
   - unknown prefix → terminal Rejected, log the message verbatim.
 - **Timeout** on no `OK` within `OK_TIMEOUT` (10s by default). Retry

@@ -308,6 +308,55 @@ pub fn verify_signed_event(ev: &Value) -> Result<(), String> {
 }
 
 // ---------------------------------------------------------------------------
+// Relay-auth capability (NIP-42)
+// ---------------------------------------------------------------------------
+
+/// The one signing capability the relay client holds: produce a kind-22242
+/// NIP-42 auth event for a `(relay, challenge)` pair, and nothing else.
+///
+/// This is the explicit carve-out from "signing is the snapshot": an AUTH
+/// event is neither a db snapshot nor a broadcast — it is never stored,
+/// never ingested, and only ever proves the active identity to one relay
+/// for one connection. Holding this instead of a `dyn Signer` means the
+/// engine's fetch path cannot be talked into signing a note, a section,
+/// or anything publishable (`docs/ai-tools-architecture.md`, "Relay AUTH").
+///
+/// Whose key: always the *user's* active source through the
+/// `SigningController` (engine key, NIP-07, NIP-55, future NIP-46). The
+/// assistant identity is attribution only and never authenticates.
+#[derive(Clone)]
+pub struct AuthSigner {
+    inner: Arc<dyn Signer>,
+}
+
+impl AuthSigner {
+    pub fn new(inner: Arc<dyn Signer>) -> Self {
+        Self { inner }
+    }
+
+    /// Sign the NIP-42 auth event for `relay_url` / `challenge`. The
+    /// template's `created_at` is now; relays accept roughly ±10 minutes.
+    pub async fn sign_auth(
+        &self,
+        relay_url: &str,
+        challenge: &str,
+    ) -> Result<SignedEvent, SigningError> {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
+        let template = crate::nip42::auth_template(relay_url, challenge, None, now);
+        self.inner.sign(template).await
+    }
+}
+
+impl std::fmt::Debug for AuthSigner {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("AuthSigner")
+    }
+}
+
+// ---------------------------------------------------------------------------
 // External signer registry
 // ---------------------------------------------------------------------------
 

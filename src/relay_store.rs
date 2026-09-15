@@ -55,6 +55,14 @@ pub struct RelaySets {
     /// once per-event-kind routing lands. See [[project-relay-classes]].
     #[serde(default)]
     pub broadcast: Vec<String>,
+    /// Relays tendrl authenticates to (NIP-42) when they challenge.
+    /// Opt-in per relay: a relay outside this set has its `AUTH`
+    /// challenge ignored and its `auth-required` refusal recorded as
+    /// status — the user's pubkey is never revealed to a relay they did
+    /// not pick. Local-only like every set here; never published.
+    /// See `docs/nip42-relay-auth-plan.org`.
+    #[serde(default)]
+    pub auth: Vec<String>,
     /// Search-capable relays (NIP-50). Split into `default` (joined
     /// into every primary `~:` fan-out) and `fallback` (consulted only
     /// when default returns zero / errors / times out). When
@@ -258,6 +266,7 @@ impl RelaySets {
             fetch: normalized,
             publish,
             broadcast: Vec::new(),
+            auth: Vec::new(),
             search: DiscoveryClass {
                 default: normalize_dedup(&default_search),
                 fallback: Vec::new(),
@@ -369,6 +378,7 @@ impl RelaySets {
         self.fetch = normalize_dedup(&self.fetch);
         self.publish = normalize_dedup(&self.publish);
         self.broadcast = normalize_dedup(&self.broadcast);
+        self.auth = normalize_dedup(&self.auth);
         self.search.default = normalize_dedup(&self.search.default);
         self.search.fallback = normalize_dedup(&self.search.fallback);
         self.indexer.default = normalize_dedup(&self.indexer.default);
@@ -417,6 +427,7 @@ impl RelaySets {
         "fetch",
         "publish",
         "broadcast",
+        "auth",
         "search.default",
         "search.fallback",
         "indexer.default",
@@ -467,8 +478,8 @@ impl RelaySets {
     }
 
     /// Borrow the URL list for a set. Accepts both flat names
-    /// (`"general"`, `"fetch"`, `"publish"`, `"broadcast"`) and dotted
-    /// discovery-class names (`"search.default"`, `"search.fallback"`,
+    /// (`"general"`, `"fetch"`, `"publish"`, `"broadcast"`, `"auth"`) and
+    /// dotted discovery-class names (`"search.default"`, `"search.fallback"`,
     /// `"indexer.default"`, `"indexer.fallback"`). Returns `None` for
     /// unknown names so callers can ignore stray UI input rather
     /// than panic.
@@ -478,6 +489,7 @@ impl RelaySets {
             "fetch" => Some(&self.fetch),
             "publish" => Some(&self.publish),
             "broadcast" => Some(&self.broadcast),
+            "auth" => Some(&self.auth),
             "search.default" => Some(&self.search.default),
             "search.fallback" => Some(&self.search.fallback),
             "indexer.default" => Some(&self.indexer.default),
@@ -492,6 +504,7 @@ impl RelaySets {
             "fetch" => Ok(&mut self.fetch),
             "publish" => Ok(&mut self.publish),
             "broadcast" => Ok(&mut self.broadcast),
+            "auth" => Ok(&mut self.auth),
             "search.default" => Ok(&mut self.search.default),
             "search.fallback" => Ok(&mut self.search.fallback),
             "indexer.default" => Ok(&mut self.indexer.default),
@@ -788,6 +801,45 @@ mod tests {
         assert!(loaded.search.fallback.is_empty());
         assert_eq!(loaded.indexer.default, vec!["wss://purplepag.es".to_string()]);
         assert!(loaded.indexer.fallback.is_empty());
+    }
+
+    #[test]
+    fn auth_set_round_trips_and_survives_parking() {
+        // The NIP-42 opt-in set is an ordinary membership set: persisted,
+        // normalized, addressable by name, and kept across park/unpark.
+        let tmp = TempDir::new().unwrap();
+        let store = RelayStore::new(tmp.path()).unwrap();
+        let mut sets = RelaySets::default();
+
+        assert!(store.add(&mut sets, "auth", "wss://Members.Relay/").unwrap());
+        assert!(!store.add(&mut sets, "auth", "wss://Members.Relay/").unwrap());
+        let loaded = store.load().unwrap();
+        assert_eq!(loaded.auth, vec!["wss://members.relay".to_string()]);
+        assert_eq!(loaded.get("auth"), Some(&["wss://members.relay".to_string()][..]));
+
+        // Park: stripped from the set, membership recorded; unpark restores.
+        let mut sets = loaded;
+        store.add(&mut sets, "general", "wss://members.relay").unwrap();
+        assert!(sets.set_active("wss://members.relay", false));
+        assert!(sets.auth.is_empty());
+        let recorded = sets.inactive.get("wss://members.relay").unwrap();
+        assert!(recorded.contains(&"auth".to_string()));
+        assert!(recorded.contains(&"general".to_string()));
+        assert!(sets.set_active("wss://members.relay", true));
+        assert_eq!(sets.auth, vec!["wss://members.relay".to_string()]);
+
+        assert!(store.remove(&mut sets, "auth", "wss://members.relay").unwrap());
+        assert!(store.load().unwrap().auth.is_empty());
+    }
+
+    #[test]
+    fn legacy_file_without_auth_loads_empty_auth() {
+        let tmp = TempDir::new().unwrap();
+        let store = RelayStore::new(tmp.path()).unwrap();
+        std::fs::write(store.path(), r#"{"general":["wss://a"],"fetch":[],"publish":[]}"#).unwrap();
+        let loaded = store.load().unwrap();
+        assert!(loaded.auth.is_empty());
+        assert_eq!(loaded.general, vec!["wss://a".to_string()]);
     }
 
     #[test]

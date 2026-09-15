@@ -59,6 +59,13 @@
 				return { text: 'accepted', kind: 'success' };
 			case 'rejected':
 				return { text: `rejected: ${s.msg || '(no reason)'}`, kind: 'error' };
+			case 'auth_required':
+				// Passive by design: the relay wanted NIP-42 auth and this relay
+				// is not opted in (or no signer is loaded). Opt in with the
+				// auth toggle on the relays screen — nothing prompts here.
+				return { text: `auth required — not opted in (relays screen → auth)`, kind: 'info' };
+			case 'authenticated':
+				return { text: 'authenticated', kind: 'pending' };
 		}
 	}
 </script>

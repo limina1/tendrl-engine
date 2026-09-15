@@ -1,3 +1,11 @@
+## v0.13.0 — 2026-09-15
+
+- docs(nip42): plan, decision zettel, verify recipe, module map
+- feat(web): relay auth pill is real — NIP-42 opt-in, passive auth statuses
+- feat(nip42): relay auth — opt-in per relay, signed as the user, never prompted
+- feat(emacs): M-x nostrdown entry point — turn the layer on and resolve now
+- feat(emacs): nostrdown-mode — {{ }} reference layer over Org/Markdown/AsciiDoc
+
 ## v0.12.2 — 2026-09-11
 
 - feat(kasten): nanoid-pinned d-tags, direct relay publisher, NIP-19-aware MCP event lookup

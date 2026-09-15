@@ -1,0 +1,271 @@
+#+TITLE: NIP-42 Relay Authentication — Implementation Plan
+#+DATE: 2026-09-15
+#+STATUS: implemented (2026-09-15, branch feat/nip42-relay-auth)
+
+* Where we are
+
+tendrl has *no* NIP-42 support today. The state of play, verified against the
+tree on 2026-09-15:
+
+- =src/relay.rs= opens one WebSocket per operation. The fetch loop only
+  handles =EVENT= / =EOSE= / =NOTICE=; the publish loop only =OK= / =NOTICE=.
+  A relay's =["AUTH", challenge]= and =["CLOSED", sub, "auth-required: …"]=
+  frames fall into the =_ => {}= arm. Net effect: an auth-required relay
+  looks like an *empty* relay on read (idle timeout → zero events, no
+  error) and a *rejected* relay on publish (=OK false "auth-required: …"=
+  surfaced as =Rejected=).
+- The relays screen (=RelaysBuffer.svelte=) already has an =auth= pill per
+  row, explicitly cosmetic (=if (field === 'auth') return;=, hint text
+  "auth is cosmetic"), and renders NIP-11 =limitation.auth_required= as an
+  informational pill. The UI slot exists; nothing is behind it.
+- =docs/ai-tools-architecture.md= §"Relay AUTH (NIP-42)" already fixes the
+  design constraint: *authenticate as the user, never as the assistant*,
+  via a narrow kind-22242-only signing capability. This plan implements
+  that constraint.
+- =docs/publish-flow-engine-plan.md= (l.133) and
+  =web/src/lib/wm/publish-progress.svelte.ts= (l.225) both reserved
+  =auth-required:= as "terminal Rejected for now — pair with NIP-42 later".
+- Signing: =Signer= trait + =SigningController= (engine key, NIP-07,
+  NIP-55; NIP-46 slot). The controller is an *axum Extension* built in
+  =server.rs= *after* =Arc::new(engine)=; =Engine= itself only holds the
+  in-process =user_session= handle. The fetch path
+  (=Engine::tracked_fetch_with_options= → =relay::fetch_with_filters=)
+  therefore cannot reach an external signer today. That wiring gap is the
+  first real piece of work.
+- =nak serve --auth= / =--eager-auth= exist locally, so there is a hermetic
+  auth-demanding relay for verification without standing up strfry.
+
+* Protocol recap (NIP-42)
+
+- Relay → =["AUTH", <challenge>]= at any time: proactively on connect, or
+  after a REQ/EVENT it wants gated.
+- Relay refuses gated work with a machine-readable prefix:
+  =["CLOSED", <sub>, "auth-required: …"]= for REQ,
+  =["OK", <id>, false, "auth-required: …"]= for EVENT. After a successful
+  AUTH a relay may still refuse with =restricted: …= (authenticated but not
+  permitted) — that is terminal, never retried.
+- Client → =["AUTH", <event>]= where the event is kind =22242=, empty
+  content, tags =["relay", <url>]= and =["challenge", <challenge>]=,
+  =created_at= now (relays accept ~±10 min). It is ephemeral: never
+  stored, never rebroadcast, never ingested into nostrdb.
+- Relay → =["OK", <22242 id>, true|false, msg]=. On =true= the client
+  re-sends the original REQ (fresh sub id) / EVENT on the *same socket*.
+- Auth is *per connection*. With one socket per operation there is no
+  session to cache — every socket that hits a gated relay pays one
+  signature.
+
+* Design decisions
+
+** D1 — Whose key: the user's, through the SigningController
+Follows =ai-tools-architecture.md= verbatim. Engine key, NIP-07, NIP-55 and
+future NIP-46 all work through the one controller, so assistant tool-call
+fetches (=tools.rs::fetch_from_relays=) inherit auth for free because they
+already go through =Engine=. The assistant identity is attribution only and
+never signs an AUTH.
+
+** D2 — Narrow capability, not the whole controller
+Add =signing::AuthSigner=: a newtype over =Arc<dyn Signer>= exposing only
+=sign_auth(relay_url, challenge) -> SignedEvent=, which builds the 22242
+template internally. =Engine= holds =Option<Arc<AuthSigner>>=; it cannot
+sign anything else. This is the "third signing purpose" carve-out from
+"signing is the snapshot": AUTH produces no stored event and no broadcast,
+so it neither violates the publishing model nor needs the local-until-
+broadcast tracker. Document it as such where the model is stated
+(=CLAUDE.md= drafts paragraph, =project_publishing_philosophy=).
+
+The =["client","tendrl"]= tag that =SigningController::sign= stamps is
+harmless on a 22242 (extra tags are permitted); keep the single chokepoint
+rather than special-casing.
+
+** D3 — Policy: opt-in per relay, with a one-click upgrade on refusal
+Answering *any* challenge would reveal the user's pubkey to every relay that
+asks — including relays that challenge eagerly but serve public data
+anonymously. That is the wrong default for a deliberate-publishing client.
+So:
+
+- =RelaySets.auth: Vec<String>= — the set of relays tendrl will
+  authenticate to. Persisted in =relays.json= like =broadcast=; empty by
+  default; local-only state, never published (same rule as every other
+  relay set).
+- A relay *in* the set: answer =AUTH= eagerly (as soon as the challenge
+  arrives, before or after our REQ), then proceed.
+- A relay *not* in the set: ignore proactive challenges; if the relay then
+  refuses with =auth-required:=, do **not** sign — end the operation for
+  that relay with a new =RelayStatusValue::AuthRequired= status. That is
+  the whole reaction: a line in the activity log, no toast, no modal, no
+  retry button. The user decided per relay on the relays screen and is not
+  asked again mid-operation (owner's stated intent, 2026-09-15).
+- A relay *in* the set: authenticate silently. The only prompt the user can
+  ever see comes from an external signer that has not yet granted kind
+  22242 (a NIP-07 extension's own permission dialog); the engine cannot
+  suppress that, and Amber is covered by the NIP-55 auto-approve list.
+- No signer loaded / identity locked / signer declined → same
+  =AuthRequired= degrade; never an error that poisons a LocalFirst fetch
+  (the composed-fetch loop in =engine.rs= already treats per-relay outcomes
+  as status, not failure).
+- Confirm mode: the existing fetch/publish intent modal already gates the
+  operation; approving it consents to AUTH for the relays in the auth set.
+  No second modal. (Matches the ai-tools doc.)
+
+Alternative considered and rejected: a global "always authenticate"
+switch. Cheaper, but it silently de-anonymizes every read. Can be added
+later as a convenience on top of the set if the set proves tedious.
+
+** D4 — One socket per relay per operation, not per (relay × event)
+=publish_events_to_relays_with_progress= currently opens a socket per
+(relay × event) pair. With auth, a 60-section publication to one gated
+relay would trigger 60 signatures — 60 extension prompts under NIP-07.
+Refactor to one socket per relay per batch: send all EVENTs on it, match
+=OK=s by id, keep the existing cross-relay concurrency cap. This is also
+the first step toward the "planned persistent layer" the sub-id comment
+in =relay.rs= anticipates, without committing to it yet.
+
+** D5 — Signing wait is outside the fetch timers
+The fetch loop is 15 s total / 5 s idle; =ExternalSigner= allows 60 s for a
+browser/Amber prompt. On challenge the client awaits =sign_auth= under
+its own bound (reuse =SIGN_TIMEOUT=), then restarts the operation timers
+for the re-sent REQ. The =tracked_fetch= kill switch (=guard.cancelled()=)
+still covers the whole thing.
+
+* Phases
+
+Work on a =feat/nip42-relay-auth= branch; commit at each phase boundary.
+
+** Phase 0 — Pure protocol module (=src/nip42.rs=)                     :small:
+- =auth_template(relay_url, challenge, pubkey, now) -> EventTemplate=
+  (kind 22242, the two tags, empty content). Send the URL exactly as
+  connected (normalized via =relay_url::normalize_relay_url=).
+- =RelayMessage= enum parsing the inbound frames we care about:
+  =Auth{challenge}=, =Closed{sub, reason}=, =Ok{id, ok, msg}=,
+  =Event{sub, event}=, =Eose{sub}=, =Notice{msg}=, =Other=. Replaces the
+  ad-hoc =msg[0].as_str()= matching in both loops.
+- =RefusalKind::classify(msg) -> AuthRequired | Restricted | Other=
+  (prefix match per NIP-01 machine-readable prefixes).
+- Vendor =nips/42.md= next to the others.
+- Unit tests for all three. No IO.
+
+** Phase 1 — Signer plumbing                                            :small:
+- =signing::AuthSigner= (D2) + =Engine::set_auth_signer= /
+  =Engine::auth_signer()=.
+- =server.rs=: construct =SigningController= *before* =Arc::new(engine)=
+  (it only needs =user_session=, which is already wired by then), hand
+  =AuthSigner::new(controller.clone())= to the engine, keep the later
+  route/Extension wiring unchanged. Same for the Android host — it calls
+  =server::start=, so nothing extra.
+- =Engine::relay_auth() -> RelayAuth= — a small context struct
+  ={ signer: Option<Arc<AuthSigner>>, allowed: HashSet<String> }= built
+  from the auth set; passed by value into the relay functions.
+
+** Phase 2 — Relay client                                                :medium:
+- Extract a =RelayConn= helper in =relay.rs=: connect, =send=, =next_frame=
+  (typed via =nip42::RelayMessage=), and an =AuthState=
+  (=NotChallenged | Challenged{challenge} | Authenticated | Declined |
+  Failed{msg}=) with one method =handle_challenge(&RelayAuth)= that does
+  sign → send AUTH → await matching OK.
+- =fetch_with_filters(ndb, url, filters, auth: &RelayAuth)=:
+  - on =Auth= frame: store challenge; if URL ∈ allowed and signer present
+    → authenticate now.
+  - on =Closed= with =AuthRequired=: if we can authenticate (allowed +
+    signer + not yet tried) → authenticate, re-send REQ with a fresh sub
+    id, restart timers; else return =Err(EngineError::AuthRequired{url})=
+    (new variant) so the caller can map it to status.
+  - =Restricted= → =Err(EngineError::Relay(...))= with the relay's
+    message; never retried.
+  - Ignore proactive challenges for non-allowed relays (privacy, D3).
+- =publish_event= → =publish_batch(url, events, auth)= (D4): one socket,
+  stream EVENTs, collect OKs by id, same AUTH handling with re-send of
+  the refused event(s). =publish_to_relays= / =publish_events_to_relays*=
+  become thin wrappers so the seven call sites (=api.rs= ×5, =tools.rs=,
+  =spell.rs=) change only by passing =engine.relay_auth()=.
+- =PublishResult= gains =refusal: Option<RefusalKind>= so handlers can
+  distinguish auth-required from an ordinary rejection.
+- Hermetic tests with a mock relay (=tokio::net::TcpListener= +
+  =tokio_tungstenite::accept_async=, same pattern as
+  =connect_bounded_times_out_on_silent_peer=), scripted per scenario:
+  challenge-before-REQ (allowed → authenticates, serves), CLOSED
+  auth-required after REQ (allowed → re-REQ succeeds; not allowed →
+  =AuthRequired=), publish OK-false auth-required (allowed → re-EVENT
+  accepted), =restricted:= after auth (terminal), AUTH OK-false (fails
+  once, no loop), proactive challenge on a non-allowed relay (ignored,
+  public data still served). Use =InProcessSigner= with a throwaway key;
+  assert the 22242 carries the right =relay=/=challenge= tags and is not
+  in nostrdb afterwards.
+
+** Phase 3 — Policy and persistence                                     :small:
+- =RelaySets.auth= (serde default) + =RelaySets::get/get_mut= dispatch for
+  ="auth"= + the =inactive= bookkeeping records ="auth"= membership like
+  the other sets (parking a relay must not drop its auth opt-in).
+- =Engine::add_relay= / =remove_relay= already key on set name → no new
+  endpoint; =POST /api/v1/config/update= add/remove with =set: "auth"=
+  and the =GET /api/v1/config= relay payload exposes =auth=.
+- =reset_relays_to_defaults= clears it (it is local opt-in state).
+- Tests: round-trip through =relays.json=, park/unpark keeps membership.
+
+** Phase 4 — Surfacing                                                    :medium:
+- =network::RelayStatusValue= gains =AuthRequired { msg }= and
+  =Authenticated=. The fetch and publish operations emit them
+  (=engine.rs= composed-fetch loop maps the new =EngineError= variant;
+  =broadcast_handler= & friends map =refusal=). They ride the existing
+  =fetch-events= SSE stream — no new channel.
+- Web:
+  - =RelaysBuffer.svelte=: the =auth= pill becomes real
+    (=api.addRelay('auth', url)= / =removeRelay=), row hydrates from the
+    config payload, drop the "auth is cosmetic" hint. When NIP-11 says
+    =auth_required= and the relay is not opted in, show the pill in the
+    existing "suggested" style with a one-line nudge.
+  - Activity center / publish progress: render =AuthRequired= and
+    =Authenticated= as their own per-relay states in the existing relay
+    status rows. Passive only — no toast, no retry action (D3). The
+    relays screen is the single place the decision is made; the status
+    row's tooltip can say "relay requires auth — enable it on the relays
+    screen" so the cause is discoverable without being pushy.
+  - =nip55.ts=: add =22242= to the auto-approve kind list (rename
+    =NIP55_WRITE_KINDS= → =NIP55_SIGN_KINDS=, it now covers a non-write
+    kind). NIP-07 extensions have their own per-kind permission memory;
+    document that the first AUTH per relay prompts.
+- Settings copy: one sentence under Identity explaining that relay auth
+  signs an ephemeral kind-22242 proof with the active identity.
+
+** Phase 5 — Docs and kasten                                           :small:
+- =CLAUDE.md=: add =nip42.rs= to the module list; note =auth= in the
+  relay-sets paragraph and the "third signing purpose" carve-out.
+- =docs/ai-tools-architecture.md=: flip the status line from "not
+  implemented" to a pointer here.
+- =docs/publish-flow-engine-plan.md= l.133 and =publish-progress.svelte.ts=
+  l.225: retire the "for now" notes.
+- =docs/commands.org=: verify recipe —
+  =nak serve --auth --eager-auth= on a local port, add it to the read set
+  (once without auth opt-in → expect =AuthRequired=; once with → expect
+  events), plus a publish through the same relay. Also the memory rule:
+  keep the recipe in the org file, not in chat.
+- Zettel: =feat-relays.org= (auth set), =feat-identity.org= (AuthSigner),
+  =feat-network.org= (new status values), and a new
+  =decision-nip42-auth-as-user.org= recording D1/D3 and the rejected
+  global switch.
+
+* Order and size
+
+| Phase | Depends on | Size   | Verifiable by                          |
+|-------+------------+--------+----------------------------------------|
+| 0     | —          | small  | =cargo test nip42=                     |
+| 1     | 0          | small  | compiles; =auth_signer()= is =Some=    |
+| 2     | 0, 1       | medium | mock-relay tests; =nak serve --auth=   |
+| 3     | —          | small  | relay_store tests; =relays.json= diff  |
+| 4     | 2, 3       | medium | web: pill persists; retry affordance   |
+| 5     | all        | small  | docs review                            |
+
+Phases 0, 1 and 3 are independent and can land first as a no-behaviour-
+change base; 2 is the core; 4 is where the user sees it.
+
+* Open questions (non-blocking; defaults stated)
+
+1. Default for a relay whose NIP-11 says =auth_required=: still opt-in
+   (default), or auto-add to the auth set on first sight? Default:
+   opt-in; the nudge pill makes it one click.
+2. Should Confirm mode show *which* relays will authenticate in the
+   intent modal? Cheap to add (the modal already lists relays); default
+   yes, as a small "auth" tag on the row.
+3. Persistent connections: D4 stops at one-socket-per-relay-per-operation.
+   A pooled connection layer would amortize AUTH across operations but is
+   its own project (reconnect, sub-id multiplexing, mobile radio). Out of
+   scope here; note it in =fix-relay-connection-churn.org=.

@@ -2669,7 +2669,8 @@ pub async fn book_save_handler(
             .relays
             .clone()
             .unwrap_or_else(|| engine.publish_relays());
-        let results = crate::relay::publish_to_relays(&relays, &event_json).await;
+        let results =
+            crate::relay::publish_to_relays(&relays, &event_json, &engine.relay_auth()).await;
         accepted = results.iter().any(|r| r.success);
         broadcast_results = Some(results);
     }

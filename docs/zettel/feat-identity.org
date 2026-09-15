@@ -22,6 +22,12 @@ without knowing where the key lives.
   is typed but transport-less.
 - Web: ncryptsec entry modal; identity badge in the modeline
   (=web/src/lib/identity/=).
+- =AuthSigner= (=src/signing.rs=): the one capability the relay client
+  holds — it can sign *only* kind-22242 NIP-42 auth events, through the
+  =SigningController= so every source (engine key, NIP-07, NIP-55) is
+  covered and the assistant identity never authenticates. The third
+  signing purpose next to snapshot and broadcast: no stored event — 2026-09-15,
+  [[file:decision-nip42-auth-as-user.org][decision]].
 
 * Gaps / open edges
 - NIP-46 remote signing has types but no transport.

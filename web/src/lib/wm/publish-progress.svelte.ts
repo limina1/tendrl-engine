@@ -15,7 +15,16 @@
 // produces a representative cross-section of relay outcomes so the
 // renderer can be shaped against real-looking data without a key.
 
-export type RelayResult = 'pending' | 'sending' | 'accepted' | 'rejected' | 'timeout';
+export type RelayResult =
+	| 'pending'
+	| 'sending'
+	| 'accepted'
+	| 'rejected'
+	| 'timeout'
+	/** NIP-42: the relay wanted auth and this relay is not opted in
+	 *  (or no signer). Not a fault — the auth toggle on the relays
+	 *  screen is the decision. */
+	| 'auth_required';
 
 export interface PublishRelayStatus {
 	url: string;
@@ -222,7 +231,7 @@ export function mockProgress(): PublishProgressState {
 		mkSection('02', 'method', 'Method', 'We did the thing.', [
 			['accepted'],
 			['rejected', 'rate-limited: max 1 event per 2 minutes'],
-			['rejected', 'auth-required: relay requires NIP-42'],
+			['auth_required', 'auth-required: relay requires NIP-42 (not opted in)'],
 			['timeout', 'no OK after 10s']
 		]),
 		mkSection('03', 'results', 'Results', 'p < 0.05.', [
@@ -291,6 +300,7 @@ export function progressFromPublish(
 			success: boolean;
 			message: string | null;
 			event_id: string;
+			refusal?: 'auth_required' | 'restricted' | 'other';
 		}[];
 		events?: unknown[];
 	},
@@ -316,7 +326,11 @@ export function progressFromPublish(
 			return {
 				url,
 				isLocal: isLocalRelay(url),
-				state: hit.success ? 'accepted' : 'rejected',
+				state: hit.success
+					? 'accepted'
+					: hit.refusal === 'auth_required'
+						? 'auth_required'
+						: 'rejected',
 				message: hit.message ?? undefined
 			};
 		});

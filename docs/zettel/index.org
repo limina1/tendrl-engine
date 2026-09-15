@@ -60,6 +60,7 @@ exists (with code paths), gaps.
 
 - [[file:decision-nostrdown-parsing.org][Nostrdown parsing lives in Rust]]
 - [[file:decision-wikilinks-30818-only.org][Global wikilinks resolve to 30818 only]]
+- [[file:decision-nip42-auth-as-user.org][Relay auth (NIP-42): as the user, per relay, never prompted]]
   — markup-agnostic grammar is data-layer, not display-layer
 - [[file:decision-feed-relay-timelines.org][The feed is per-relay timelines]]
   — one relay at a time, scoped engine-side; composite stays reachable, not the frame

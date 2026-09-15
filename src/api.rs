@@ -19,6 +19,22 @@ use tracing::{debug, warn};
 /// Shared application state
 pub type AppState = Arc<Engine>;
 
+/// Per-(relay, event) status for the activity stream. A NIP-42
+/// `auth-required` refusal gets its own passive status (the user opts a
+/// relay in on the relays screen; nothing prompts here); any other
+/// rejection is `Rejected` with the relay's words.
+pub(crate) fn publish_result_status(r: &crate::relay::PublishResult) -> crate::network::RelayStatusValue {
+    use crate::network::RelayStatusValue;
+    if r.success {
+        return RelayStatusValue::Accepted;
+    }
+    let msg = r.message.clone().unwrap_or_default();
+    match r.refusal {
+        Some(crate::nip42::Refusal::AuthRequired) => RelayStatusValue::AuthRequired { msg },
+        _ => RelayStatusValue::Rejected { msg },
+    }
+}
+
 /// Query request body
 #[derive(Debug, Deserialize)]
 pub struct QueryRequest {
@@ -1488,7 +1504,8 @@ pub async fn bookshelf_save_handler(
     let mut accepted = false;
     if req.broadcast {
         let relays = req.relays.clone().unwrap_or_else(|| engine.publish_relays());
-        let results = crate::relay::publish_to_relays(&relays, &event_json).await;
+        let results =
+            crate::relay::publish_to_relays(&relays, &event_json, &engine.relay_auth()).await;
         accepted = results.iter().any(|r| r.success);
         broadcast_results = Some(results);
     }
@@ -3688,6 +3705,7 @@ pub async fn relay_config_handler(State(engine): State<AppState>) -> Json<Value>
         "publish": { "urls": rc.publish.urls, "kinds": rc.publish.kinds },
         "fetch": { "urls": rc.fetch.urls, "kinds": rc.fetch.kinds },
         "broadcast": { "urls": rc.broadcast.urls, "kinds": rc.broadcast.kinds },
+        "auth": { "urls": rc.auth.urls, "kinds": rc.auth.kinds },
         // Discovery classes split into default/fallback tiers. Add/remove
         // them through /config/update with the dotted set names
         // `search.default`, `search.fallback`, `indexer.default`,
@@ -4963,15 +4981,11 @@ async fn sign_ingest_broadcast(
                 for url in &chosen {
                     op.relay_status(url.clone(), crate::network::RelayStatusValue::Connecting);
                 }
-                let results = crate::relay::publish_to_relays(&chosen, &event_json).await;
+                let results =
+                    crate::relay::publish_to_relays(&chosen, &event_json, &engine.relay_auth())
+                        .await;
                 for r in &results {
-                    let status = if r.success {
-                        crate::network::RelayStatusValue::Accepted
-                    } else {
-                        crate::network::RelayStatusValue::Rejected {
-                            msg: r.message.clone().unwrap_or_default(),
-                        }
-                    };
+                    let status = publish_result_status(r);
                     op.relay_status(r.relay_url.clone(), status);
                     if r.success {
                         if let Err(e) = engine.record_event_relay(&event_json, &r.relay_url) {
@@ -5935,6 +5949,10 @@ pub struct BroadcastResult {
     /// Event this result is for, so the client can group results into a
     /// per-event × per-relay grid instead of a flat list.
     pub event_id: String,
+    /// NIP-42 classification of a rejection (`auth_required` /
+    /// `restricted`), when the relay's reason carried one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub refusal: Option<crate::nip42::Refusal>,
 }
 
 /// Map a signing error from the publish path to its HTTP error. Shared by
@@ -6076,18 +6094,13 @@ async fn finalize_publish(
             }
 
             let (_, _, results) =
-                crate::relay::publish_events_to_relays(&chosen, &event_jsons).await;
+                crate::relay::publish_events_to_relays(&chosen, &event_jsons, &engine.relay_auth())
+                    .await;
 
             // One Accepted/Rejected per (relay, event) — the UI's expanded
             // toast renders them grouped by relay.
             for r in &results {
-                let status = if r.success {
-                    crate::network::RelayStatusValue::Accepted
-                } else {
-                    crate::network::RelayStatusValue::Rejected {
-                        msg: r.message.clone().unwrap_or_default(),
-                    }
-                };
+                let status = publish_result_status(r);
                 op.relay_status(r.relay_url.clone(), status);
             }
             let successful_relays = results.iter().filter(|r| r.success).count();
@@ -6120,6 +6133,7 @@ async fn finalize_publish(
                         success: r.success,
                         message: r.message,
                         event_id: r.event_id,
+                        refusal: r.refusal,
                     })
                     .collect::<Vec<_>>(),
             )
@@ -6863,16 +6877,10 @@ pub async fn broadcast_publication_handler(
     for url in &chosen {
         op.relay_status(url.clone(), crate::network::RelayStatusValue::Connecting);
     }
-    let (_, _, results) = crate::relay::publish_events_to_relays(&chosen, &event_jsons).await;
+    let (_, _, results) =
+        crate::relay::publish_events_to_relays(&chosen, &event_jsons, &engine.relay_auth()).await;
     for r in &results {
-        let status = if r.success {
-            crate::network::RelayStatusValue::Accepted
-        } else {
-            crate::network::RelayStatusValue::Rejected {
-                msg: r.message.clone().unwrap_or_default(),
-            }
-        };
-        op.relay_status(r.relay_url.clone(), status);
+        op.relay_status(r.relay_url.clone(), publish_result_status(r));
     }
     let successful = results.iter().filter(|r| r.success).count();
     op.complete(successful);
@@ -6907,6 +6915,7 @@ pub async fn broadcast_publication_handler(
             success: r.success,
             message: r.message,
             event_id: r.event_id,
+            refusal: r.refusal,
         })
         .collect();
     Ok(Json(json!({
@@ -8599,16 +8608,11 @@ pub async fn broadcast_handler(
         op.relay_status(url.clone(), crate::network::RelayStatusValue::Connecting);
     }
 
-    let results = crate::relay::publish_to_relays(&chosen_relays, &event_json).await;
+    let results =
+        crate::relay::publish_to_relays(&chosen_relays, &event_json, &engine.relay_auth()).await;
 
     for r in &results {
-        let status = if r.success {
-            crate::network::RelayStatusValue::Accepted
-        } else {
-            crate::network::RelayStatusValue::Rejected {
-                msg: r.message.clone().unwrap_or_default(),
-            }
-        };
+        let status = publish_result_status(r);
         op.relay_status(r.relay_url.clone(), status);
         if r.success {
             if let Err(e) = engine.record_event_relay(&event_json, &r.relay_url) {

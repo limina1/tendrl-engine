@@ -82,6 +82,15 @@ approvals. Generalizable to any bulk enrichment (embeds, discussions).
 Any future fetch path (new transport, new caller) must preserve all three
 properties — route it through the choke point or replicate them.
 
+* NIP-42 on the fetch contract (2026-09-15)
+Every socket (=relay::RelayConn=) runs the AUTH state machine; the choke
+point above is unchanged, so attribution / observability / kill-switch all
+still hold. Two new per-relay statuses on the =fetch-events= stream:
+=auth_required= (relay wanted auth, tendrl did not authenticate — not opted
+in, no signer, or refused) and =authenticated=. =FetchRecord.authenticated=
+marks the activity log. Both are passive; the Confirm-mode intent approval
+already covers AUTH for opted-in relays, no second modal.
+
 * Gaps / open edges
 - No per-source or per-kind fetch policies — the mode is engine-global.
 - Performance (2026-08-12 audit): every relay fetch is a fresh

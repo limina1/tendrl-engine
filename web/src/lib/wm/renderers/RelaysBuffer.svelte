@@ -17,8 +17,10 @@
 	// Per docs/relay-classes-and-info-port.md, a relay row carries the
 	// role-agnostic shell (URL + runtime metadata + NIP-11 derived
 	// flags) while role membership (read/write) lives in role-specific
-	// list events. Auth here is a placeholder for the eventual
-	// blocked/auth-required taxonomy; toggles don't persist yet.
+	// list events. `auth` is the NIP-42 opt-in (engine `auth` set):
+	// the engine answers this relay's AUTH challenge as the active
+	// identity, silently; a relay without it has its challenge ignored
+	// and its auth-required refusal logged as status — never a prompt.
 	//
 	// `search` is a plain per-row toggle like read/write (backed by
 	// `search.default` — NIP-50 search fetches fan out across toggled
@@ -28,6 +30,7 @@
 		url: string;
 		read: boolean;
 		write: boolean;
+		/** NIP-42 opt-in: authenticate to this relay when it challenges. */
 		auth: boolean;
 		broadcast: boolean;
 		/** Member of the search class (NIP-50 fan-out). */
@@ -182,6 +185,7 @@
 			for (const url of cfg.fetch?.urls ?? []) ensure(url).read = true;
 			for (const url of cfg.publish?.urls ?? []) ensure(url).write = true;
 			for (const url of cfg.broadcast?.urls ?? []) ensure(url).broadcast = true;
+			for (const url of cfg.auth?.urls ?? []) ensure(url).auth = true;
 			// Claims are policy-independent, so a relay can appear here with
 			// no set membership at all — the resolution-only target. `ensure`
 			// gives it a row with every policy toggle off.
@@ -207,6 +211,7 @@
 					} else if (set === 'fetch') r.read = true;
 					else if (set === 'publish') r.write = true;
 					else if (set === 'broadcast') r.broadcast = true;
+					else if (set === 'auth') r.auth = true;
 					else if (set.startsWith('search.')) r.search = true;
 				}
 			}
@@ -304,12 +309,18 @@
 		const next = { ...row, [field]: !row[field] };
 		rows = rows.map((r) => (r.url === url ? next : r)); // optimistic
 
-		// `auth` has no config home yet — keep it cosmetic.
-		if (field === 'auth') return;
-
 		try {
 			if (field === 'broadcast') {
 				await (next.broadcast ? api.addRelay('broadcast', url) : api.removeRelay('broadcast', url));
+			} else if (field === 'auth') {
+				await (next.auth ? api.addRelay('auth', url) : api.removeRelay('auth', url));
+				app.pushToast(
+					next.auth
+						? `${shorten(url)}: will authenticate as you when it challenges`
+						: `${shorten(url)}: challenges ignored (not authenticating)`,
+					'success',
+					2500
+				);
 			} else if (field === 'search') {
 				if (next.search) {
 					await api.addRelay('search.default', url);
@@ -1502,7 +1513,7 @@
 	<div class="relays-header">
 		<div class="relays-header-title">
 			<span>Relay configuration</span>
-			<span class="relays-hint">read/write apply live and persist · auth is cosmetic</span>
+			<span class="relays-hint">read/write/auth apply live and persist</span>
 		</div>
 		<div class="relays-header-actions">
 			<button
@@ -1814,7 +1825,12 @@
 										<span class="pill pill--draft" title="Payment required">paid</span>
 									{/if}
 									{#if lim?.auth_required}
-										<span class="pill pill--imported" title="NIP-42 auth required">auth</span>
+										<span
+											class="pill pill--imported"
+											title={row.auth
+												? 'Relay requires NIP-42 auth — opted in, tendrl authenticates as you'
+												: 'Relay requires NIP-42 auth — not opted in: its challenges are ignored and gated requests are refused. Toggle auth to authenticate.'}
+										>{row.auth ? 'auth ✓' : 'auth?'}</span>
 									{/if}
 									{#if lim?.restricted_writes}
 										<span class="pill pill--diverged" title="Writes restricted">restricted</span>
@@ -1877,7 +1893,7 @@
 								class:toggle-pill--on={row.auth}
 								disabled={!row.active}
 								onclick={() => toggle(row.url, 'auth')}
-								title="Authenticate (NIP-42) when this relay challenges"
+								title="NIP-42: answer this relay's AUTH challenge as the active identity, without prompting. Off = ignore its challenges; the relay's auth-required refusals show as status only."
 							>auth</button>
 							<button
 								class="pill toggle-pill toggle-pill--search"

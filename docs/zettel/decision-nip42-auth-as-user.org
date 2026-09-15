@@ -1,0 +1,69 @@
+#+TITLE: Decision: Relay Auth (NIP-42) — As the User, Per Relay, Never Prompted
+#+TYPE: decision
+#+STATUS: current
+#+DATE: 2026-09-15
+
+* The decision
+
+1. *Whose key.* A NIP-42 =AUTH= is always signed by the *user's* active
+   identity source (engine ncryptsec, NIP-07, NIP-55, future NIP-46) via the
+   =SigningController=. The assistant identity is attribution for authored
+   content, never a relay credential. Assistant tool-call fetches therefore
+   authenticate exactly like a manual search — they are just callers of
+   =Engine::tracked_fetch=.
+2. *Narrow capability.* The relay client holds =signing::AuthSigner=, which
+   can emit kind 22242 and nothing else. The fetch path cannot be talked
+   into signing a note, section, or list. AUTH is the third signing purpose
+   next to "signing is the snapshot" and broadcast: it produces no stored
+   event, is never ingested, never rebroadcast.
+3. *Opt-in per relay, decided once, on the relays screen.* =relays.json=
+   gains an =auth= set. A relay in it is answered *silently* when it
+   challenges. A relay outside it has its challenge *ignored*; if it then
+   refuses with =auth-required:= the operation ends for that relay with a
+   passive =auth_required= status (activity toast row, publish grid cell) —
+   no toast, no modal, no "authenticate & retry" button. The user is never
+   asked mid-operation.
+4. *Confirm mode adds nothing.* Approving the fetch/publish intent is the
+   consent; AUTH for opted-in relays rides on it.
+
+* Why
+
+- Answering every challenge would reveal the user's pubkey to every relay
+  that asks, including relays that challenge eagerly but serve public data
+  anonymously. tendrl is a deliberate-publishing client; identity disclosure
+  is a decision, not a side effect.
+- A mid-operation prompt is the wrong place for that decision: it arrives
+  while the user is doing something else, with no context about the relay.
+  The relays screen has NIP-11 (=auth_required=), the relay's policy pages,
+  and the sync badges — that is where "do I trust this relay with my key?"
+  is answerable. The owner's stated intent (2026-09-15): the user should
+  not even see it.
+- The only prompt that can still appear is an external signer's own
+  permission dialog for kind 22242 (a NIP-07 extension's first encounter).
+  The engine cannot suppress it; Amber is covered by the NIP-55
+  auto-approve list.
+
+* Rejected
+
+- A global "always authenticate" switch — silently de-anonymizes every read.
+  Could be layered on the set later as a convenience if the per-relay toggle
+  proves tedious; not the default.
+- "Authenticate & retry" affordance on refusal — contradicts (3); it turns a
+  status into an interruption.
+
+* Consequences
+
+- One socket per relay per publish batch (=relay::publish_batch=) so a
+  batch costs one signature, not one per event (60 sections ≠ 60 prompts).
+- =EngineError::RelayAuthRequired= is a per-relay status, not a failure;
+  LocalFirst fetches keep their local results.
+- Pooled/persistent connections would amortize AUTH across operations;
+  out of scope, tracked in
+  [[file:fix-relay-connection-churn.org][fix-relay-connection-churn]].
+
+* Related
+- [[file:index.org][Index]]
+- [[file:feat-relays.org][Relay sets]]
+- [[file:feat-identity.org][Identity & signing]]
+- [[file:feat-network.org][Network]]
+- =docs/nip42-relay-auth-plan.org= — phases as executed
