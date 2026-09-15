@@ -29,7 +29,8 @@
 		publicationAtag = undefined,
 		siblings = undefined,
 		resolution = undefined,
-		expanded = $bindable<Record<string, boolean>>({})
+		expanded = $bindable<Record<string, boolean>>({}),
+		onscroll = undefined
 	}: {
 		sections: LazySection[];
 		publication?: { title: string | null; summary: string | null } | null;
@@ -58,6 +59,10 @@
 		 *  the reader can park it across a buffer switch (this component
 		 *  unmounts with its buffer) — view state, owned by the frontend. */
 		expanded?: Record<string, boolean>;
+		/** Reports the container's scroll offset on every scroll, so the
+		 *  reader can park the reading position across a buffer switch — a
+		 *  detached element reads scrollTop 0, so it must be tracked live. */
+		onscroll?: (top: number) => void;
 	} = $props();
 
 	function addrKey(addr: { kind: number; pubkey: string; d_tag: string }): string {
@@ -364,6 +369,10 @@
 	export function collapseAll() {
 		expanded = {};
 	}
+	/** Restore a parked scroll offset (see `onscroll`). */
+	export function scrollTo(top: number) {
+		if (containerEl) containerEl.scrollTop = top;
+	}
 
 	// Per-section thread toggles, keyed by addr string. Each section's
 	// thread block can be collapsed independently in the continuous
@@ -466,7 +475,12 @@
 <!-- `readingVars()` puts the reader's typography prefs (face, size, measure,
      leading) on the scroller; `.cv-column` is the measured column they define,
      centred in whatever width the pane happens to be. -->
-<div class="continuous-view" style={readingVars()} bind:this={containerEl}>
+<div
+	class="continuous-view"
+	style={readingVars()}
+	bind:this={containerEl}
+	onscroll={() => onscroll?.(containerEl?.scrollTop ?? 0)}
+>
 	<!-- No doc title or summary here — the reader's title row owns both
 	     (title rendered three times stacked on a phone; the summary now
 	     lives in the reader's collapsible summary drawer, every view).

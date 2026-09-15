@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { untrack } from 'svelte';
+	import { tick, untrack } from 'svelte';
 	import * as api from '$lib/api';
 	import { getAppState } from '$lib/state.svelte';
 	import ContinuousView from '$lib/components/ContinuousView.svelte';
@@ -70,7 +70,14 @@
 		publicationThreadsOpen: boolean;
 		treeOpen: boolean;
 		toolsOpen: boolean;
+		/** Pixel offsets of the two scrollers (the reader's content column and
+		 *  the scroll view's own container — whichever one actually scrolls in
+		 *  the current layout). Tracked live: a torn-down element reads 0. */
+		scroll: { content: number; continuous: number };
 	};
+	// Plain object, not $state — nothing renders from it; it is written on
+	// every scroll event and read once, in the teardown below.
+	const scrollTops = { content: 0, continuous: 0 };
 	// svelte-ignore state_referenced_locally
 	const savedView = store.bufferState.get(buffer.id) as ReaderViewState | undefined;
 	$effect(() => {
@@ -88,7 +95,8 @@
 				summaryOpen,
 				publicationThreadsOpen,
 				treeOpen,
-				toolsOpen
+				toolsOpen,
+				scroll: { ...scrollTops }
 			} satisfies ReaderViewState);
 		};
 	});
@@ -634,7 +642,12 @@
 	// ContinuousView instance — its exported scrollToSection keeps a TOC
 	// jump in-place instead of flipping the view mode.
 	let continuousView = $state<
-		| { scrollToSection: (i: number) => void; expandAll: () => void; collapseAll: () => void }
+		| {
+				scrollToSection: (i: number) => void;
+				expandAll: () => void;
+				collapseAll: () => void;
+				scrollTo: (top: number) => void;
+		  }
 		| undefined
 	>();
 	// Companion (preamble) sections — a 30041 sharing pubkey + d-tag with a
@@ -1493,8 +1506,12 @@
 
 	// Once a restored place has loaded: the saved section index may exceed
 	// the tree (the tree is re-streamed; a depth change or a relay miss can
-	// shrink it) — clamp it; and in scroll mode, scroll to it, since the
-	// continuous view only tracks position through explicit jumps.
+	// shrink it) — clamp it. In scroll mode, put the reading position back:
+	// the parked pixel offsets when there are any (the sections are cached
+	// as loaded, so the layout reproduces), else the saved section. The
+	// offsets are applied once the DOM has settled and again shortly after
+	// — embeds and resolved refs can still shift the layout — unless the
+	// user has scrolled in the meantime.
 	let restorePending = !!savedView;
 	$effect(() => {
 		if (!restorePending) return;
@@ -1504,7 +1521,30 @@
 		restorePending = false;
 		untrack(() => {
 			if (currentSection >= pristineSections.length) currentSection = 0;
-			if (viewMode === 'continuous') {
+			if (viewMode !== 'continuous') return;
+			const saved = savedView?.scroll;
+			if (saved && (saved.content > 0 || saved.continuous > 0)) {
+				let userScrolled = false;
+				const apply = () => {
+					if (userScrolled) return;
+					if (contentWrap) contentWrap.scrollTop = saved.content;
+					continuousView?.scrollTo(saved.continuous);
+					// Our own restore fires scroll events; note the position and
+					// treat any later divergence as the user's.
+					scrollTops.content = saved.content;
+					scrollTops.continuous = saved.continuous;
+				};
+				tick().then(() => {
+					requestAnimationFrame(apply);
+					setTimeout(() => {
+						const moved =
+							Math.abs(scrollTops.content - saved.content) > 2 ||
+							Math.abs(scrollTops.continuous - saved.continuous) > 2;
+						if (moved) userScrolled = true;
+						apply();
+					}, 350);
+				});
+			} else {
 				const idx = currentSection;
 				setTimeout(() => continuousView?.scrollToSection(idx), 60);
 			}
@@ -2347,11 +2387,16 @@
 				{/if}
 			</div>
 		{/if}
-		<div class="content" bind:this={contentWrap}>
+		<div
+			class="content"
+			bind:this={contentWrap}
+			onscroll={() => (scrollTops.content = contentWrap?.scrollTop ?? 0)}
+		>
 			{#if viewMode === 'continuous'}
 				<ContinuousView
 					bind:this={continuousView}
 					bind:expanded={continuousExpanded}
+					onscroll={(top) => (scrollTops.continuous = top)}
 					{sections}
 					onrefocus={refocus}
 					publication={{

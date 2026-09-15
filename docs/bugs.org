@@ -442,6 +442,15 @@ mounting run of the buffer-change effect keeps a restored focus stack, and
 leftover from the removed outline mode; the default is paginated anyway).
 Verified: paged section 2/4, and scroll + tree row + nested index expanded
 + depth 3, all restored after a feed round-trip (headless CDP, docs/commands.org).
+Follow-up (same day, user report: the open state came back but not the
+scroll position): the pixel offsets of both scrollers (the reader's
+=.content= column and the scroll view's own container — which one scrolls
+depends on the layout; on desktop it is the column) are tracked live via
+=onscroll= into a plain object (a detached element reads =scrollTop= 0,
+so teardown can't read it) and parked with the place; on return in
+scroll mode they are re-applied after the tree settles, once on the next
+frame and once ~350 ms later unless the user has scrolled meanwhile.
+Verified: offset 900 → feed → back → 900.
 
 *** FIXED — Save entry state when leaving                                    :bug:
 :PROPERTIES:

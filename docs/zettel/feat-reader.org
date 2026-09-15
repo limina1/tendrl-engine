@@ -65,7 +65,10 @@ never happen in the browser.
   the summary / comments / tree / tools toggles are parked in
   =store.bufferState= on unmount and re-seeded on mount — leaving for the
   feed and coming back lands where you were (Emacs save-place, per
-  publication; survives a killed buffer too). Rationale in
+  publication; survives a killed buffer too). In scroll mode the pixel
+  offset comes back as well: both scrollers report =onscroll= into a plain
+  tracker (a torn-down element reads 0) and the offsets are re-applied
+  once the tree settles, twice, unless the user scrolls first. Rationale in
   [[file:decision-buffer-state-homes.org][where buffer state lives]].
 
 * Gaps / open edges
