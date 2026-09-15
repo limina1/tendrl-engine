@@ -143,6 +143,18 @@ acceptance.
 - Span resolution engine-side (=resolve_highlight_spans=); reader
   overlays via =RichContent.svelte= + =HighlightList= / =HighlightsDrawer=;
   =DiscussionViewBuffer= for single-event views, =CommentThread= trees.
+- Overlay merge model (2026-09-15, ngit issue "highlight removes linking
+  capabilities"): on the one =RichContent= overlay, nostrdown refs and
+  unresolved tokens are *atoms* (each replaces its =[[…]]= / ={{…}}= span,
+  never nests) and a highlight is a *decoration* that wraps whatever it
+  covers — its segment carries =parts=, rendered inside the =<mark>=. A
+  highlight starting inside an atom starts after it; one ending inside
+  an atom extends to the atom's end; on a start tie the highlight leads
+  so a highlight that *is* a wikilink still wraps it. Highlights don't
+  nest (an overlapping one is dropped). Selection capture still resolves
+  the innermost =data-src-start= element, always a part. Before this,
+  the two were flat peers and a highlight beginning before a wikilink
+  swallowed it.
 - Relay hints (2026-09-11, ngit issue 8318ce30 "comment thread can't
   find parent or root events"): a foreign thread's root/parent usually
   live on relays outside the configured set — and the comment being

@@ -1,6 +1,6 @@
 #+TITLE: Fix: Reader Remount Cost
 #+TYPE: fix
-#+STATUS: open
+#+STATUS: in-progress — view-state half fixed 2026-09-15; the re-stream half open
 #+DATE: 2026-08-12
 
 * The issue (observed 2026-08-12, v0.8.2)
@@ -28,8 +28,16 @@ it can't lose (the composer already follows it).
 
 - [ ] Hoist the publication/focus cache to =AppState= keyed by
   publication addr (the =ndResolveCache= shows the pattern works)
-- [ ] Persist reader view state in =store.bufferState= (as the composer
-  does)
+- [X] Persist reader view state in =store.bufferState= (as the composer
+  does) — 2026-09-15, =bugs= branch (ngit issue "remember reading state
+  of publication / reader view"): =ReaderViewState= parks mode, section,
+  depth, the focus stack + visit log, both expansion sets and the
+  drawer/tools toggles on teardown; =ContinuousView='s expanded set
+  became =bind:expanded= so the reader owns it. Save-place semantics:
+  =bufferState= is not cleared on kill, so reopening a publication also
+  resumes. See [[file:decision-buffer-state-homes.org][where buffer state lives]].
+  The re-stream itself is untouched — the focus cache is still
+  component-local, so switch-back is *correct* now but not yet cheap.
 - [ ] Route the discussion refetch through =shouldNetworkFetch=
 - [ ] On switch-back with a warm cache: render immediately, run a
   cheap =local_only= freshness pass instead of a full re-stream

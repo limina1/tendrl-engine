@@ -14,6 +14,22 @@ the divergence ledger below is the consolidation worklist.
 
 * The blessed primitives (reach for these first)
 
+- *Buffer persistence, two homes* (2026-09-15) — buffer renderers unmount
+  on every switch, so anything a component holds that it can't lose has a
+  home outside it. *Structured view state* (mode, cursor, tab, expansion
+  sets, an unfiled form) → =store.bufferState= keyed by =buffer.id=: read
+  once on mount (=// svelte-ignore state_referenced_locally=), written
+  back in an =$effect= teardown, =$state.snapshot()= anything nested
+  (feed, composer, repository, search, profile-edit, reader all do this).
+  *Typed-but-unsent text* → =entryDrafts= in =web/src/lib/wm/entry-drafts.ts=,
+  a leaf =Map= keyed by *where the text was typed* (a reply's target id,
+  =chat=, =settings:ai-prompt=): =get= on mount, =set= in teardown,
+  =clear= when the text is actually sent — never on cancel, so a closed
+  reply box reopens with its draft. Both are session memory: never
+  persisted, never published. Secrets (ncryptsec, passwords) stay out.
+  Document state (compose pool, search results, chat) is =AppState=, as
+  before. Decision: [[file:decision-buffer-state-homes.org][where buffer
+  state lives]].
 - *Text prompt* — =promptText()= in =web/src/lib/wm/text-prompt.svelte.ts=;
   a single =<TextPromptModal />= in =+layout= renders whatever prompt is
   active (leaf state module + declarative renderer — the toast pattern; no
@@ -258,7 +274,9 @@ touched.
   diff-gated modal; network side effects → intent confirm.
 - Quick acknowledgment → =app.pushToast=; never a blocking dialog.
 - Relay URL input → =normalizeRelayUrl=, accept bare hostnames.
-- New text input → =data-entry=. New list → =j/k= cursor + =data-cursor=.
+- New text input → =data-entry=, and its unsent text parks in
+  =entryDrafts= (teardown save, clear on send). New list → =j/k= cursor +
+  =data-cursor=, and the cursor parks in =store.bufferState=.
 - New command → leader tree / M-x, not a bespoke hotkey.
 - New surface → =data-tour= anchor (+ discovery tip if it introduces a
   concept).
@@ -283,3 +301,4 @@ touched.
 - [[file:feat-search.org][Search]] — search-relay config surface
 - [[file:feat-appearance.org][Appearance]] — themes + walkthrough system
 - [[file:feat-compose.org][Compose]] — carries two of the native confirms
+- [[file:decision-buffer-state-homes.org][Where buffer state lives]] — the persistence rule

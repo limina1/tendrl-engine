@@ -69,6 +69,12 @@ sibling set, so "see the index" refs resolve too. Driven by the kasten
 pipeline (=docs/zettel-guide/=, =scripts/build-kasten-events.py=), whose
 imported publications are 3-tier trees with deterministic d-tags.
 
+- Refs under highlights (2026-09-15): the merged overlay treats refs as
+  atoms and NIP-84 highlights as decorations that wrap them — a
+  =[[wikilink]]= inside a highlighted run stays a live link. Details in
+  [[file:feat-discussions.org][Discussions & highlights]] (overlay merge
+  model).
+
 * Resolution pipeline overhaul (2026-08-11)
 
 Driven by a real Wikipedia-derived 30818 (100+ wikilinks per article), which

@@ -53,6 +53,8 @@ stay as provenance. Source evaluation:
   (fixed 2026-08-12)
 - [ ] [[file:fix-reader-remount-cost.org][Reader remount cost]] (high) —
   buffer switch-back re-streams the whole publication + relay refetch
+  (view-state loss half fixed 2026-09-15: the place is restored; the
+  re-stream and relay refetch remain)
 - [ ] [[file:fix-reader-render-hotpath.org][Reader render hot path]] (high) —
   O(G²) focusGraph clones, O(N²) deriveds, index-keyed each blocks, no
   virtualization

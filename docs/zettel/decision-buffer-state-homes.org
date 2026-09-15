@@ -1,0 +1,77 @@
+#+TITLE: Decision: where buffer state lives — three homes, save-place semantics
+#+TYPE: decision
+#+STATUS: current
+#+DATE: 2026-09-15
+
+* The decision
+
+A buffer renderer holds nothing it can't afford to lose. The WM unmounts
+every renderer on every buffer switch ([[file:feat-shell.org][WM shell]]),
+and that is kept — it is what makes the buffer list cheap and the slots
+composable. What a component would lose therefore has one of three homes,
+chosen by what kind of thing it is:
+
+1. *Document state* — what the user is working on, shared across surfaces
+   (compose pool, search results, chat, feed timeline selection) →
+   =AppState= (=web/src/lib/state.svelte.ts=). Already the rule
+   ([[file:feat-compose.org][compose]] set it).
+2. *Structured view state* — how a buffer is looking at its document
+   (view mode, section, cursor, tab, expansion sets, load depth, drawer
+   toggles, an unfiled form) → =store.bufferState=, a =Map<bufferId,
+   unknown>= on the frame's buffer store. Read once at mount, written in
+   the =$effect= teardown, nested values snapshotted.
+3. *Typed-but-unsent text* — a reply, a chat line, an issue body, an
+   edited prompt → =entryDrafts= (=web/src/lib/wm/entry-drafts.ts=), a
+   leaf =Map= keyed by *where the text was typed*, not by buffer: a reply
+   draft follows its target (parent id / root address) into whichever
+   surface shows that target next. Cleared only when the text is sent.
+
+All three are session memory in the browser: never written to disk,
+never published. Nothing here touches the deliberate-publishing model
+([[file:feat-publishing.org][publishing]]).
+
+* Save-place, not scratch
+
+=store.bufferState= is *not* cleared when a buffer is killed. Reopening
+the same publication later resumes where the reader left it — Emacs
+=save-place= semantics, per document, for the session. This was a choice
+(the map could be dropped on =killBuffer=): resuming is what a reader
+expects of a book, and the cost is a few hundred bytes per document
+visited. The same holds for the feed cursor and the search tab. If a
+"reopen fresh" affordance is ever wanted it is a command, not the
+default.
+
+* Why not one mechanism
+
+- =AppState= for view state would make every buffer's ephemeral detail
+  globally reactive and couple renderers to a central store; the
+  composer's earlier state-ownership rule already drew the line at
+  *document* state.
+- =bufferState= for typed text would key drafts by buffer, but the same
+  reply box appears in the reader, the discussion view, the note view,
+  the event modal and comment threads — the draft belongs to the reply
+  *target*, so it needs its own key space.
+- Browser =localStorage= would make drafts and places survive a reload,
+  but also makes them a persistence surface with lifecycle questions
+  (multi-tab, stale documents, secrets). Session memory is the smallest
+  thing that fixes the reported loss; promoting places to persisted
+  reading state is [[file:idea-reading-states.org][a separate idea]].
+
+* What this fixed (2026-09-15, =bugs= branch)
+
+- ngit issue "remember reading state of publication / reader view" —
+  [[file:feat-reader.org][reader]] place restored; the remount
+  *re-stream* is still [[file:fix-reader-remount-cost.org][open]].
+- ngit issue "save entry state when leaving" — reply boxes, chat,
+  new-issue form, search query / refs filter / tab / cursors, profile
+  editor form, settings prompt + npub box. Secrets deliberately excluded;
+  modals are not buffers.
+
+* Related
+
+- [[file:index.org][Index]]
+- [[file:feat-ui-patterns.org][UI patterns]] — the "buffer persistence, two homes" primitive
+- [[file:feat-shell.org][WM shell]] — the unmount-on-switch constraint
+- [[file:feat-reader.org][Reader]] · [[file:feat-search.org][Search]] · [[file:feat-discussions.org][Discussions]]
+- [[file:idea-place-routing.org][Place routing]] — the URL projection of the same place
+- [[file:idea-reading-states.org][Reading states]] — the persisted, cross-device version of "where I was"
