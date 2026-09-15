@@ -184,6 +184,20 @@ sections and embeds new events on a 60-second interval when embeddings are enabl
   knowing the key source (engine ncryptsec, NIP-07, future NIP-46).
 - **`nip11.rs`**: NIP-11 relay information document fetch + cache (process-wide,
   normalized URL keys, 1-hour TTL)
+- **`nip42.rs`**: NIP-42 relay auth, pure: the kind-22242 `auth_template`,
+  `RelayMessage` (typed parse of `AUTH`/`CLOSED`/`OK`/`EVENT`/`EOSE`/`NOTICE`)
+  and `Refusal::classify` (`auth-required:` / `restricted:`). The handshake
+  runs in `relay.rs` (`RelayConn`); policy is `Engine::relay_auth()` — the
+  user's per-relay **opt-in `auth` set** in `relays.json` plus
+  `signing::AuthSigner`, a capability that can sign *only* 22242 as the
+  **user's** active source (engine key / NIP-07 / NIP-55; never the
+  assistant). A relay in the set is answered silently; one outside it has
+  its challenge ignored and its refusal surfaced as
+  `RelayStatusValue::AuthRequired` / `PublishResult.refusal` — status only,
+  nothing prompts. AUTH is the third signing purpose next to snapshot and
+  broadcast: it produces no stored event. Publish opens one socket per
+  relay per batch so a batch costs one AUTH (`publish_batch`).
+  Plan/decisions: `docs/nip42-relay-auth-plan.org`.
 - **`nip19.rs`**: bech32 TLV decoders for `nevent`/`naddr`/`nprofile` (npub/nsec live
   in `identity.rs`); unified `decode()` returns a tagged enum for the API
 - **`nostrdown.rs`**: pure, IO-free tokenizer for the `{{ }}` inline-reference
@@ -356,7 +370,7 @@ stored `whats-up` — no need to hand-normalize; quote values containing spaces.
   NotFound, etc. `Result<T>` is aliased to `Result<T, EngineError>`.
 - **Relay sets**: The TOML config carries only `initial_relays` (a bootstrap seed
   list used **once** on first boot). The live working sets — `general` / `fetch` /
-  `publish` — live in `<data_dir>/relays.json`, mutated by `engine.add_relay` /
+  `publish` / `broadcast` / `auth` (NIP-42 opt-in) — live in `<data_dir>/relays.json`, mutated by `engine.add_relay` /
   `engine.remove_relay` and the `POST /api/v1/config/update` handler. The state
   file is **never** broadcast as a Nostr event (no auto-publishing kind 10002 /
   30002 from UI edits — see `project_publishing_philosophy`).

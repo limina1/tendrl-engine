@@ -60,6 +60,16 @@ edits are never auto-published as Nostr events.
   see [[file:feat-shell.org][WM shell]]), and set-delete's
   =window.confirm= is a two-step armed button — 2026-07-06.
 
+- NIP-42 relay auth — an =auth= set in =relays.json= (the relays screen's
+  =auth= pill, previously cosmetic). A relay in the set has its AUTH
+  challenge answered silently as the active identity; a relay outside it
+  has the challenge ignored and its =auth-required= refusal recorded as a
+  passive =auth_required= status in the activity toast / publish grid —
+  never a prompt. Publish opens one socket per relay per batch, so a
+  60-section publication costs one signature. NIP-11 =auth_required= shows
+  as =auth?= until opted in, =auth ✓= after — 2026-09-15, see
+  [[file:decision-nip42-auth-as-user.org][relay auth as the user, per relay]].
+
 * Gaps / open edges
 - Relays are classified by *function* but not by *what they carry*, so
   every retrieval fans out to the whole read set — spec'd out in
