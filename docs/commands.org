@@ -1902,3 +1902,11 @@ curl -s http://localhost:3030/api/v1/network/status | jq '.recent[0].authenticat
 Amber/NIP-55: kind 22242 is in the auto-approve list (=NIP55_WRITE_KINDS=);
 NIP-07 extensions prompt once per (extension policy) for kind 22242.
 
+
+* Emacs tendrl.el — fetch an event into a buffer (branch =feat/emacs-tendrl-client=)
+
+#+begin_src sh
+emacs -Q --batch -f batch-byte-compile emacs/tendrl.el; rm -f emacs/*.elc          # zero warnings
+emacs -Q --batch -L emacs -l tendrl -l nostrdown-mode -l emacs/tendrl-test.el      # engine on :3030 + nak; exit 0 = pass
+# interactive: M-x tendrl-local-fetch / tendrl-relay-fetch (C-u = via nak) / tendrl-event-json (j in the event buffer)
+#+end_src

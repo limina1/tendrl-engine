@@ -59,9 +59,19 @@
 (require 'url-http)
 (require 'subr-x)
 (require 'seq)
+(require 'tendrl)
 
-(defvar url-http-end-of-headers)
 (defvar nostrdown-mode)
+
+;; The engine client lives in tendrl.el; these names are kept for callers.
+(defvaralias 'nostrdown-engine-url 'tendrl-engine-url)
+(defvaralias 'nostrdown-nak-program 'tendrl-nak-program)
+(defvaralias 'nostrdown-request-timeout 'tendrl-request-timeout)
+(defvaralias 'nostrdown--engine-alive 'tendrl--engine-alive)
+(defalias 'nostrdown--request #'tendrl-request)
+(defalias 'nostrdown--engine-available-p #'tendrl-engine-available-p)
+(defalias 'nostrdown--nak-fetch #'tendrl-nak-fetch)
+(defalias 'nostrdown--event-title #'tendrl-event-title)
 
 ;;;; Customisation
 
@@ -70,23 +80,11 @@
   :group 'text
   :prefix "nostrdown-")
 
-(defcustom nostrdown-engine-url "http://localhost:3030"
-  "Base URL of a running tendrl engine."
-  :type 'string)
-
 (defcustom nostrdown-backend 'auto
   "Which resolver to use.
 `auto' uses the engine when it answers `/health' and falls back to
 `nak'; `tendrl' and `nak' force one backend."
   :type '(choice (const auto) (const tendrl) (const nak)))
-
-(defcustom nostrdown-nak-program "nak"
-  "The nak executable used by the fallback backend."
-  :type 'string)
-
-(defcustom nostrdown-request-timeout 8
-  "Seconds to wait for a synchronous engine request."
-  :type 'integer)
 
 (defcustom nostrdown-idle-delay 0.7
   "Idle seconds after an edit before the buffer is re-resolved."
@@ -195,79 +193,6 @@ are used (basename = d-tag).")
      (4 'nostrdown-display-face prepend t))))
 
 ;;;; Engine client
-
-(defvar nostrdown--engine-alive nil
-  "Cons of (TIME . ALIVE-P) from the last `/health' probe.")
-
-(defun nostrdown--url (path)
-  (concat (string-remove-suffix "/" nostrdown-engine-url) path))
-
-(defun nostrdown--parse-response ()
-  "Parse the JSON body of the `url-retrieve' buffer.  Return (STATUS . DATA)."
-  (goto-char (point-min))
-  (let ((status (and (re-search-forward "^HTTP/[0-9.]+ \\([0-9]+\\)" nil t)
-                     (string-to-number (match-string 1))))
-        (body-start (cond ((and (boundp 'url-http-end-of-headers)
-                                (markerp url-http-end-of-headers))
-                           (1+ (marker-position url-http-end-of-headers)))
-                          ((progn (goto-char (point-min))
-                                  (re-search-forward "^\r?$" nil t))
-                           (1+ (point))))))
-    (cons status
-          (when (and body-start (<= body-start (point-max)))
-            (condition-case nil
-                (json-parse-string
-                 (decode-coding-string
-                  (buffer-substring-no-properties body-start (point-max)) 'utf-8)
-                 :object-type 'alist :array-type 'list
-                 :null-object nil :false-object nil)
-              (error nil))))))
-
-(defun nostrdown--request (method path payload callback &optional sync)
-  "Send METHOD PATH with JSON PAYLOAD; call CALLBACK with (STATUS DATA).
-STATUS is nil when the engine did not answer.  With SYNC, block."
-  (let ((url-request-method method)
-        (url-request-extra-headers
-         (and payload '(("Content-Type" . "application/json"))))
-        (url-request-data
-         (and payload (encode-coding-string (json-serialize payload) 'utf-8)))
-        (url-show-status nil)
-        (url (nostrdown--url path)))
-    (if sync
-        (let ((buf (condition-case nil
-                       (url-retrieve-synchronously url t t nostrdown-request-timeout)
-                     (error nil))))
-          (if (not (buffer-live-p buf))
-              (funcall callback nil nil)
-            (unwind-protect
-                (let ((r (with-current-buffer buf (nostrdown--parse-response))))
-                  (funcall callback (car r) (cdr r)))
-              (kill-buffer buf))))
-      (condition-case nil
-          (url-retrieve
-           url
-           (lambda (status)
-             (let ((buf (current-buffer)))
-               (unwind-protect
-                   (if (plist-get status :error)
-                       (funcall callback nil nil)
-                     (let ((r (nostrdown--parse-response)))
-                       (funcall callback (car r) (cdr r))))
-                 (when (buffer-live-p buf) (kill-buffer buf)))))
-           nil t t)
-        (error (funcall callback nil nil))))))
-
-(defun nostrdown--engine-available-p ()
-  "Non-nil when the engine answered `/health' within the last 30 seconds."
-  (let ((now (float-time)))
-    (when (or (null nostrdown--engine-alive)
-              (> (- now (car nostrdown--engine-alive)) 30))
-      (let ((nostrdown-request-timeout 2) (alive nil))
-        (nostrdown--request "GET" "/health" nil
-                            (lambda (status _) (setq alive (eq status 200)))
-                            t)
-        (setq nostrdown--engine-alive (cons now alive))))
-    (cdr nostrdown--engine-alive)))
 
 (defun nostrdown--backend ()
   (pcase nostrdown-backend
@@ -657,45 +582,6 @@ Used for `help-echo' and `nostrdown-describe-at-point'."
                     out))))))
     (nreverse out)))
 
-(defun nostrdown--event-title (event)
-  "Title of a nak-fetched EVENT alist: `title' tag, or kind-0 name."
-  (let ((tags (alist-get 'tags event)))
-    (or (seq-some (lambda (tag) (and (equal (car tag) "title") (cadr tag))) tags)
-        (when (eql (alist-get 'kind event) 0)
-          (condition-case nil
-              (let ((m (json-parse-string (alist-get 'content event)
-                                          :object-type 'alist :null-object nil)))
-                (or (alist-get 'display_name m) (alist-get 'name m)))
-            (error nil))))))
-
-(defun nostrdown--nak-fetch (entity callback)
-  "Run `nak fetch ENTITY' asynchronously.
-CALLBACK receives the first event as an alist, or nil."
-  (let ((buf (generate-new-buffer " *nostrdown-nak*")))
-    (condition-case nil
-        ;; nak blocks on an open stdin: hand it EOF right away.
-        (process-send-eof
-         (make-process
-         :name "nostrdown-nak" :buffer buf :noquery t
-         :command (list nostrdown-nak-program "fetch" (string-remove-prefix "nostr:" entity))
-         :sentinel
-         (lambda (proc _event)
-           (unless (process-live-p proc)
-             (let ((event
-                    (with-current-buffer buf
-                      (goto-char (point-min))
-                      (when (re-search-forward "^{" nil t)
-                        (condition-case nil
-                            (json-parse-string
-                             (buffer-substring-no-properties
-                              (match-beginning 0) (line-end-position))
-                             :object-type 'alist :array-type 'list
-                             :null-object nil :false-object nil)
-                          (error nil))))))
-               (kill-buffer buf)
-               (funcall callback event))))))
-      (error (kill-buffer buf) (funcall callback nil)))))
-
 (defun nostrdown--resolve-nak ()
   "Resolve with the nak fallback: entities via `nak fetch', refs via siblings."
   (let* ((buf (current-buffer))
@@ -923,89 +809,24 @@ event in a buffer, show the profile, or offer a relay lookup."
     (if file (find-file file)
       (message "nostrdown: sibling `%s' — %s" d-tag (or (alist-get 'title ref) "no file here")))))
 
-(defun nostrdown--format-mode (event)
-  "Major mode for EVENT's content, from its format / m tags."
-  (let* ((tags (alist-get 'tags event))
-         (fmt (downcase
-               (or (seq-some (lambda (tg) (and (member (car tg) '("format" "m" "M")) (cadr tg)))
-                             tags)
-                   ""))))
-    (cond ((string-match-p "org" fmt) 'org-mode)
-          ((and (string-match-p "markdown\\|\\bmd\\b" fmt) (fboundp 'markdown-mode)) 'markdown-mode)
-          ((and (string-match-p "asciidoc\\|adoc" fmt) (fboundp 'adoc-mode)) 'adoc-mode)
-          ((and (derived-mode-p 'org-mode 'markdown-mode 'adoc-mode)) major-mode)
-          (t 'text-mode))))
-
-(defun nostrdown--show-event-buffer (event)
-  "Display EVENT (an alist) in a read-only buffer with nostrdown-mode on."
-  (let* ((tags (alist-get 'tags event))
-         (title (or (seq-some (lambda (tg) (and (equal (car tg) "title") (cadr tg))) tags)
-                    (format "kind %s" (alist-get 'kind event))))
-         (d (seq-some (lambda (tg) (and (equal (car tg) "d") (cadr tg))) tags))
-         (mode (nostrdown--format-mode event))
-         (buf (get-buffer-create (format "*nostrdown: %s*" title))))
-    (with-current-buffer buf
-      (let ((inhibit-read-only t))
-        (erase-buffer)
-        (insert (or (alist-get 'content event) ""))
-        (goto-char (point-min)))
-      (funcall mode)
-      (setq header-line-format
-            (format " %s · kind %s · %s… · %s" title (alist-get 'kind event)
-                    (substring (or (alist-get 'pubkey event) "????????") 0 8)
-                    (format-time-string "%Y-%m-%d" (or (alist-get 'created_at event) 0))))
-      (setq nostrdown-coord (and d (format "%s:%s:%s" (alist-get 'kind event)
-                                           (alist-get 'pubkey event) d)))
-      (setq nostrdown-author (alist-get 'pubkey event))
-      (setq nostrdown-siblings nil)
-      (view-mode 1)
-      (nostrdown-mode 1)
-      (nostrdown-resolve-buffer))
-    (pop-to-buffer buf)
-    buf))
-
 (defun nostrdown--show-addressable (kind pubkey d-tag)
-  (nostrdown--request
-   "GET" (format "/api/v1/addressable/%s/%s/%s?policy=local_first"
-                 kind pubkey (url-hexify-string d-tag))
-   nil
-   (lambda (status data)
-     (if (and (eq status 200) (alist-get 'event data))
-         (nostrdown--show-event-buffer (alist-get 'event data))
-       (message "nostrdown: could not load %s:%s:%s (%s)" kind pubkey d-tag status)))))
+  (tendrl-fetch-event (format "%s:%s:%s" kind pubkey d-tag) "local_first"
+                      (lambda (ev) (when ev (tendrl-show-event ev "local-first")))))
 
 (defun nostrdown--show-event (id)
-  (nostrdown--request
-   "GET" (format "/api/v1/events/%s?policy=local_first" id) nil
-   (lambda (status data)
-     (if (and (eq status 200) (or (alist-get 'event data) (alist-get 'id data)))
-         (nostrdown--show-event-buffer (or (alist-get 'event data) data))
-       (message "nostrdown: could not load event %s (%s)" id status)))))
+  (tendrl-fetch-event id "local_first"
+                      (lambda (ev) (when ev (tendrl-show-event ev "local-first" id)))))
 
 (defun nostrdown--show-profile (ref)
-  (let ((pk (or (alist-get 'author_pubkey ref) (alist-get 'target ref))))
-    (nostrdown--request
-     "GET" (format "/api/v1/profile/%s?policy=local_first" pk) nil
-     (lambda (status data)
-       (if (not (eq status 200))
-           (message "nostrdown: profile %s not loaded (%s)" pk status)
-         (with-current-buffer (get-buffer-create
-                               (format "*nostrdown: @%s*" (or (alist-get 'name data) pk)))
-           (let ((inhibit-read-only t))
-             (erase-buffer)
-             (dolist (k '(display_name name nip05 about picture pubkey))
-               (when-let* ((v (alist-get k data)))
-                 (insert (format "%-13s %s\n" (symbol-name k) v))))
-             (goto-char (point-min)))
-           (view-mode 1)
-           (pop-to-buffer (current-buffer))))))))
+  (tendrl-fetch-profile (or (alist-get 'author_pubkey ref) (alist-get 'target ref))
+                        "local_first"
+                        (lambda (p) (when p (tendrl-show-profile p "local-first")))))
 
 (defun nostrdown--nak-show (entity)
-  (nostrdown--nak-fetch
-   entity
-   (lambda (event)
-     (if event (nostrdown--show-event-buffer event)
-       (message "nostrdown: nak found nothing for %s" entity)))))
+  (tendrl-nak-fetch entity
+                    (lambda (event)
+                      (if event (tendrl-show-event event "nak" entity)
+                        (message "nostrdown: nak found nothing for %s" entity)))))
 
 (defun nostrdown-fetch-at-point ()
   "Pull the pending entity at point from the engine's search relays.

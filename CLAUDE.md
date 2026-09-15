@@ -354,9 +354,11 @@ stored `whats-up` — no need to hand-normalize; quote values containing spaces.
   The engine crate stays platform-agnostic: mobile builds use
   `--no-default-features --features embed-assets` (features gate
   embeddings/keyring/desktop).
-- `emacs/` — `nostrdown-mode.el`, a minor mode layering the `{{ }}` reference
-  syntax over Org/Markdown/AsciiDoc buffers via `POST /api/v1/nostrdown/resolve`
-  (nak fallback); live test in `emacs/nostrdown-mode-test.el`, usage in `emacs/README.org`
+- `emacs/` — `tendrl.el` (engine client: `tendrl-local-fetch` / `tendrl-relay-fetch`
+  open an event's content read-only, `tendrl-event-json` shows the raw event apart;
+  nak fallback) and `nostrdown-mode.el` (minor mode layering the `{{ }}` reference
+  syntax over Org/Markdown/AsciiDoc via `POST /api/v1/nostrdown/resolve`); live
+  tests `emacs/*-test.el`, usage in `emacs/README.org`
 - `config.example.toml` — reference config; copy to `config.toml`
 - `scripts/` — utility scripts (MCP server, publishing helpers)
 - `knowledgebase/` — local documents for import
