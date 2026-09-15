@@ -11,6 +11,19 @@ A wiki topic [[proof of work]], a mention {{@npub1…}}, a quote
 {{quote:naddr1… | And now, let me show in a figure…}}.
 #+end_example
 
+* Two files
+
+- =tendrl.el= — the engine client. =M-x tendrl-local-fetch= (nostrdb only),
+  =M-x tendrl-relay-fetch= (the relays through the engine; =C-u= goes through
+  =nak= directly) and =M-x tendrl-fetch= (local first) take an nevent, naddr,
+  note, 64-hex id or =kind:pubkey:d-tag= coordinate (default: the one at
+  point) and open the event's *content* read-only, rendered in the major mode
+  its =format= tag names. The raw event stays apart: =j= in that buffer (or
+  =M-x tendrl-event-json= anywhere) opens the pretty-printed JSON in its own
+  read-only buffer; =R= re-fetches from the relays, =w= copies the id, =q=
+  quits. An npub / nprofile opens the profile (=M-x tendrl-profile=).
+- =nostrdown-mode.el= — the reference layer described below, built on it.
+
 * What it does
 
 - *Instant syntax*: ={{prefix:target|display}}= tokens are font-locked as you
@@ -118,6 +131,7 @@ slug twin for directory siblings only.
 #+begin_src sh
 emacs -Q --batch -f batch-byte-compile emacs/nostrdown-mode.el   # no warnings
 emacs -Q --batch -L emacs -l nostrdown-mode -l emacs/nostrdown-mode-test.el
+emacs -Q --batch -L emacs -l tendrl -l nostrdown-mode -l emacs/tendrl-test.el
 #+end_src
 
 The test needs the engine on =:3030= with the example kasten

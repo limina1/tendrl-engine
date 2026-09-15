@@ -1855,6 +1855,15 @@ curl -s -X POST http://localhost:3030/api/v1/nostrdown/resolve -H 'content-type:
   -d '{"items":[{"key":"buffer","content":"{{ref:The Ascent}} [[Aesop]]","siblings":[{"title":"The Ascent","d_tag":"the-ascent"}]}],"policy":"local_only"}'
 #+end_src
 
+* Nostrdown ref scope by target form (branch =feat/nostrdown-ref-scope=)
+
+#+begin_src sh
+cargo test --lib resolve_refs -- --test-threads=4     # incl. test_resolve_refs_entity_ref_scope_by_target
+cargo test --lib reference_tags -- --test-threads=4   # entity refs emit a/q/p, slug refs emit ref
+# live: an entity ref outside any publication now resolves (found, pending if not local)
+curl -s -X POST http://localhost:3030/api/v1/nostrdown/resolve -H 'content-type: application/json' \
+  -d '{"items":[{"key":"b","content":"{{ref:30818:dd664d5e4016433a8cd69f005ae1480804e5e9a5b3aaf2c6d7cde73be1e9dcd5:nip-42|NIP-42}}"}],"policy":"local_only"}'
+#+end_src
 * NIP-42 relay auth (branch =feat/nip42-relay-auth=)
 
 Engine answers a relay's AUTH challenge only for relays in the =auth= set
@@ -1941,3 +1950,10 @@ gone while its pane is open — collapse it via the pane's =.pane__x=,
 found through =.pane__body--search= / =.pane__body--chat= →
 =closest('.pane')=). Set input values through the native value setter +
 =dispatchEvent(new Event('input'))=.
+* Emacs tendrl.el — fetch an event into a buffer (branch =feat/emacs-tendrl-client=)
+
+#+begin_src sh
+emacs -Q --batch -f batch-byte-compile emacs/tendrl.el; rm -f emacs/*.elc          # zero warnings
+emacs -Q --batch -L emacs -l tendrl -l nostrdown-mode -l emacs/tendrl-test.el      # engine on :3030 + nak; exit 0 = pass
+# interactive: M-x tendrl-local-fetch / tendrl-relay-fetch (C-u = via nak) / tendrl-event-json (j in the event buffer)
+#+end_src

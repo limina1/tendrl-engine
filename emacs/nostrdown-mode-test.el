@@ -102,8 +102,8 @@
     (goto-char (overlay-start o))
     (nostrdown-follow-at-point)
     (ndt-ok "follow opens the event buffer"
-            (ndt-wait (lambda () (get-buffer "*nostrdown: Index — example kasten*")) 5))
-    (when-let* ((b (get-buffer "*nostrdown: Index — example kasten*")))
+            (ndt-wait (lambda () (get-buffer "*tendrl: Index — example kasten*")) 5))
+    (when-let* ((b (get-buffer "*tendrl: Index — example kasten*")))
       (with-current-buffer b
         (ndt-ok "event buffer carries its coordinate" (stringp nostrdown-coord))))))
 

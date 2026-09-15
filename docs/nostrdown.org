@@ -23,12 +23,15 @@ were distilled from — read it for the /why/, those for the /what/.
   ={{ref|wiki|embed|quote:target|display}}=, NIP-54 slug normalization.
   Unknown prefixes (=cite=/=@=/=term=/=media=) degrade to literal text.
 - *Resolver* (=resolve_refs= → =POST /api/v1/nostrdown/resolve=):
-  - =ref:= → *sibling-only*: a section/nested index of the same publication,
-    by title-slug (the =T= tag — section d-tags are opaque nanoids, so the
-    human slug matches the normalized title) or literal d-tag; an
-    naddr/coordinate target resolves *iff it addresses a sibling* and stays
-    unresolved otherwise — a ref never leaves its document (use =embed:= or an
-    entity wikilink for arbitrary events).
+  - =ref:= → *scope by target form* (decided 2026-09-15; until then entity
+    refs were sibling-only): a title-slug / d-tag is a document-local handle,
+    matched against the siblings of the containing publication (the =T= tag,
+    both slug forms of the title, the literal and normalized d-tag — section
+    d-tags are opaque nanoids, so the human slug matches the title) and never
+    globally; an naddr / coordinate / nevent is a pointer, resolved
+    sibling-first (an internal link, navigated in place) else as a direct link
+    to any event (LocalOnly; not-local → =pending=). A ref links, never
+    transcludes — ={{ref:naddr|label}}= ≡ =[[naddr][label]]=.
   - =wiki:= / =[[wikilink]]= → *document-local first*: a topic naming a sibling
     section (draft or publication) resolves to that section; else the global
     lookup targets *kind-30818 wiki articles only*, by =d= — the topic *is*
