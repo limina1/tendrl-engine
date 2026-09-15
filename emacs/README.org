@@ -1,0 +1,121 @@
+#+TITLE: nostrdown-mode — the {{ }} reference layer in Emacs
+
+A minor mode that layers [[file:../docs/nostrdown-spec.md][nostrdown]] over
+Org, Markdown and AsciiDoc buffers. The host major mode keeps its own links,
+images and structure; =nostrdown-mode= adds the one thing they cannot express —
+pointers to Nostr events — and asks a running tendrl engine to resolve them.
+
+#+begin_example
+See {{ref:The Ascent}} and {{ref:the-return|going back}}, then {{embed:notes}}.
+A wiki topic [[proof of work]], a mention {{@npub1…}}, a quote
+{{quote:naddr1… | And now, let me show in a figure…}}.
+#+end_example
+
+* What it does
+
+- *Instant syntax*: ={{prefix:target|display}}= tokens are font-locked as you
+  type (chrome dimmed, prefix / target / display coloured).
+- *Engine resolution*: after =nostrdown-idle-delay= seconds of idle the whole
+  buffer goes to =POST /api/v1/nostrdown/resolve= (the engine owns the grammar,
+  NIP-54 normalisation, sibling lookup, kind-30818 wiki lookup, entity decoding
+  and transclusion). The answer is painted as overlays:
+  - resolved (link face) / unresolved (wave underline) / pending (entity known,
+    event not local yet)
+  - hover =help-echo= with title, summary, author, kind, coordinate
+  - =RET= / =mouse-1= / =C-c C-o= follow the reference
+  - =[[topic]]= wikilinks get the same overlay, but only when the engine claims
+    them — an Org =[[file:…]]= / =[[https://…]]= link is left to Org.
+- *Prettify* (=nostrdown-prettify=): =markup= hides the ={{ref:= … =}}= chrome
+  like =org-link-descriptive=; =label= replaces the token with the resolved
+  title. Point entering a token always reveals the raw text.
+- *Inline transclusion* (=nostrdown-inline-embeds=): =embed= / =quote= / =slot=
+  targets get a card under the token with the event's title, author and the
+  first lines of its content.
+- *Follow*: a =ref= to a directory sibling opens that file; a resolved
+  entity / coordinate opens the event in a =*nostrdown: <title>*= buffer (major
+  mode from its =format= tag, =nostrdown-mode= on, so refs inside it resolve
+  against their own publication); a mention shows the profile; an unresolved
+  wiki topic offers a relay lookup.
+- *Completion*: =completion-at-point= after ={{= (prefixes) and after
+  ={{ref:= / ={{embed:= / ={{wiki:= (sibling d-tags and titles).
+- *nak fallback*: with no engine answering =/health= (or
+  =nostrdown-backend= set to =nak=), entities are fetched with =nak fetch=,
+  =ref= targets resolve against directory siblings, wiki topics stay
+  unresolved.
+
+* Sibling context for ={{ref:}}=
+
+=ref= never leaves its document, so the mode needs to know the document's
+sections. In order of precedence:
+
+1. =nostrdown-siblings= — a file-local list of =(TITLE . D-TAG)=.
+2. =nostrdown-publication= — a =30040:<pubkey>:<d-tag>= coordinate or an naddr
+   (file-local, or a =#+NOSTRDOWN_PUBLICATION:= keyword near the top); the
+   engine loads that publication's tree as the sibling set.
+3. Otherwise *the other files in the buffer's directory*: basename = d-tag,
+   title from =#+TITLE:= / =# Heading= / === Heading= / front-matter =title:=.
+   This is exactly the shape of a kasten directory, so a kasten under
+   construction resolves before anything is published.
+
+=nostrdown-author= (or =#+NOSTRDOWN_AUTHOR:=) sets the preferred author for
+wiki lookups.
+
+* Install
+
+#+begin_src emacs-lisp
+(add-to-list 'load-path "~/Documents/Programming/tendrl-engine/emacs")
+(require 'nostrdown-mode)
+(global-nostrdown-mode 1)            ; org / markdown / gfm / adoc buffers
+#+end_src
+
+Doom:
+
+#+begin_src emacs-lisp
+;; packages.el
+(package! nostrdown-mode :recipe (:local-repo "~/Documents/Programming/tendrl-engine/emacs"))
+;; config.el
+(use-package! nostrdown-mode
+  :hook ((org-mode markdown-mode adoc-mode) . nostrdown-mode)
+  :custom (nostrdown-prettify 'markup))
+#+end_src
+
+* Keys (=C-c n=, see =nostrdown-keymap-prefix=)
+
+| key | command                          |                                              |
+|-----+----------------------------------+----------------------------------------------|
+| r   | =nostrdown-resolve-buffer=       | resolve now, local db only                   |
+| R   | =nostrdown-resolve-online=       | relay backfill for unresolved topics         |
+| f   | =nostrdown-follow-at-point=      | also =RET= / =mouse-1= on a reference        |
+| F   | =nostrdown-fetch-at-point=       | pull a pending entity from the search relays |
+| d   | =nostrdown-describe-at-point=    | what it resolved to                          |
+| n p | next / previous reference        |                                              |
+| i   | =nostrdown-insert-reference=     | prefix + target (siblings complete) + label  |
+| e   | =nostrdown-toggle-inline-embeds= |                                              |
+| l   | =nostrdown-cycle-prettify=       | off → markup → label                         |
+
+* Network policy
+
+The idle resolve uses =local_only=: it never touches a relay and never blocks
+on the engine's Confirm mode. =nostrdown-resolve-online= uses =local_first=
+without the confirm flag, so in Confirm mode it silently stays local (approve
+fetches in the tendrl UI); in Auto mode it backfills from the relays.
+=nostrdown-fetch-at-point= is the one call that waits for a Confirm-mode
+approval, because it is user-initiated on a single entity.
+
+* Boundary
+
+The elisp holds a display-only regexp for font-lock and point motion; every
+algorithmic decision (which =[[ ]]= is a wikilink, slug normalisation,
+sibling / wiki / entity resolution, transclusion) comes from the engine —
+the same split the web frontend follows. The nak fallback carries a minimal
+slug twin for directory siblings only.
+
+* Verify
+
+#+begin_src sh
+emacs -Q --batch -f batch-byte-compile emacs/nostrdown-mode.el   # no warnings
+emacs -Q --batch -L emacs -l nostrdown-mode -l emacs/nostrdown-mode-test.el
+#+end_src
+
+The test needs the engine on =:3030= with the example kasten
+(=30040:dc4cd086…:example=) local and =nak= on =PATH=.

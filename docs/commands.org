@@ -1833,3 +1833,24 @@ pinned in =docs/zettel/kasten-ids.json= — commit that file; re-running
 then replaces rather than forks. Sibling refs name notes by the =T= slug. Direct to a
 relay without tendrl: =scripts/publish-kasten-events.py= (see
 =../kasten-kit/README.md=).
+
+* Emacs nostrdown-mode (branch =feat/emacs-nostrdown-mode=)
+
+Minor mode in =emacs/nostrdown-mode.el= — see =emacs/README.org=.
+
+#+begin_src sh
+# byte-compile: expect zero warnings
+emacs -Q --batch -f batch-byte-compile emacs/nostrdown-mode.el; rm -f emacs/nostrdown-mode.elc
+
+# live checks (engine on :3030 with the example kasten local, nak on PATH); exit 0 = all pass
+emacs -Q --batch -L emacs -l nostrdown-mode -l emacs/nostrdown-mode-test.el
+
+# try it interactively on a kasten directory
+emacs -Q -L emacs -l nostrdown-mode --eval '(global-nostrdown-mode 1)' docs/zettel/index.org
+#+end_src
+
+Manual resolve of what the mode sends (the same request shape):
+#+begin_src sh
+curl -s -X POST http://localhost:3030/api/v1/nostrdown/resolve -H 'content-type: application/json' \
+  -d '{"items":[{"key":"buffer","content":"{{ref:The Ascent}} [[Aesop]]","siblings":[{"title":"The Ascent","d_tag":"the-ascent"}]}],"policy":"local_only"}'
+#+end_src
