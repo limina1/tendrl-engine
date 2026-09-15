@@ -737,7 +737,13 @@ export function broadcastPublication(
 	successful: number;
 	total: number;
 	event_count: number;
-	broadcast_results: { relay: string; success: boolean; message: string | null; event_id: string }[];
+	broadcast_results: {
+		relay: string;
+		success: boolean;
+		message: string | null;
+		event_id: string;
+		refusal?: RelayRefusal;
+	}[];
 }> {
 	return fetchJson(`/api/v1/publications/${pubkey}/${encodeURIComponent(dTag)}/broadcast`, {
 		method: 'POST',
@@ -1802,6 +1808,9 @@ export function getRelayConfig() {
 		publish: { urls: string[]; kinds: number[] };
 		fetch: { urls: string[]; kinds: number[] };
 		broadcast: { urls: string[]; kinds: number[] };
+		/** NIP-42 opt-in set: relays the engine authenticates to when
+		 *  challenged. Local-only, never published. */
+		auth: { urls: string[]; kinds: number[] };
 		search: DiscoveryClass;
 		indexer: DiscoveryClass;
 		exclusive: { search: boolean; indexer: boolean };
@@ -2424,8 +2433,18 @@ export function getDiscussionList(
 export interface BroadcastSummary {
 	successful: number;
 	total: number;
-	results: { relay_url: string; success: boolean; message?: string; event_id: string }[];
+	results: {
+		relay_url: string;
+		success: boolean;
+		message?: string;
+		event_id: string;
+		/** NIP-42 classification of a rejection, when the reason carried one. */
+		refusal?: RelayRefusal;
+	}[];
 }
+
+/** NIP-42 machine-readable rejection classes (`nip42::Refusal`). */
+export type RelayRefusal = 'auth_required' | 'restricted' | 'other';
 
 export interface DiscussionPublishResponse {
 	/** The signed event, already queryable locally. */

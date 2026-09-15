@@ -252,7 +252,9 @@ function _createAppState() {
 		| { kind: 'error'; msg: string }
 		| { kind: 'timeout' }
 		| { kind: 'accepted' }
-		| { kind: 'rejected'; msg: string };
+		| { kind: 'rejected'; msg: string }
+		| { kind: 'auth_required'; msg: string }
+		| { kind: 'authenticated' };
 	type ToastActivity = {
 		operation_id: string;
 		// Structured request summary from the engine's Intent event.

@@ -19,11 +19,13 @@ import type { EventTemplate, SignedEvent } from './signer';
  *  re-register on boot. Public data only — never key material. */
 const PERSIST_KEY = 'tendrl.nip55';
 
-/** The kinds tendrl writes; requested for auto-approval once, at connect
+/** The kinds tendrl signs; requested for auto-approval once, at connect
  *  time, so batch publishes sign silently via ContentResolver. The user can
  *  decline any of them in the signer app — everything still works, with
- *  prompts. */
-export const NIP55_WRITE_KINDS = [0, 30040, 30041, 30023, 30817, 30818, 9802, 777, 30777, 1111];
+ *  prompts. 22242 is the NIP-42 relay-auth event: the engine signs one per
+ *  connection to an opted-in relay, so without auto-approval every fetch
+ *  or publish there would raise a signer prompt. */
+export const NIP55_WRITE_KINDS = [0, 30040, 30041, 30023, 30817, 30818, 9802, 777, 30777, 1111, 22242];
 
 export interface Nip55SignerApp {
 	name: string;

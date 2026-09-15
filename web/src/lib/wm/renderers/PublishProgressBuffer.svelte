@@ -127,6 +127,8 @@
 				return 'dot--ok';
 			case 'rejected':
 				return 'dot--err';
+			case 'auth_required':
+				return 'dot--idle';
 			case 'timeout':
 				return 'dot--err';
 			case 'sending':
@@ -143,6 +145,8 @@
 				return 'accepted';
 			case 'rejected':
 				return 'rejected';
+			case 'auth_required':
+				return 'auth required (not opted in)';
 			case 'timeout':
 				return 'timeout';
 			case 'sending':
