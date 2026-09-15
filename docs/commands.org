@@ -1893,3 +1893,51 @@ curl -s http://localhost:3030/api/v1/network/status | jq '.recent[0].authenticat
 Amber/NIP-55: kind 22242 is in the auto-approve list (=NIP55_WRITE_KINDS=);
 NIP-07 extensions prompt once per (extension policy) for kind 22242.
 
+
+* ngit issues (NIP-34 tracker on relay.ngit.dev)
+
+The repo's issue tracker is on Nostr (=origin= is a =nostr://= remote; the
+announcement naddr is in =.git/config= under =[nostr] repo=). Mirrored as a
+dated snapshot in =docs/bugs.org=; the relay is the source of truth.
+
+#+begin_src sh
+  # all issues, every status, as JSON (default status filter is open only)
+  ngit -d issue list --status open,draft,closed,applied --json < /dev/null
+  # one issue with its body + comment thread
+  ngit -d issue view --comments <nevent> < /dev/null
+  # after a fix lands (signs as the maintainer — needs the key; run it yourself)
+  ngit issue resolved <nevent>
+#+end_src
+
+=-d= is non-interactive; =< /dev/null= keeps it from blocking on stdin (same
+gotcha as =nak=). The first line of =--json= output is a plain-text
+"updates: …" line — strip it before parsing.
+
+* Headless GUI verification (CDP)
+
+The =verify= skill's recipe. A ~60-line Node driver is enough (native
+WebSocket, Node ≥22): =eval= / =shot= / =click= / =type= / =key= over
+=chromium --headless=new --remote-debugging-port=9333=. What worked on
+2026-09-15 for the reader-state / entry-draft / highlight fixes:
+
+#+begin_src sh
+  # isolated engine on :3131 with a scratch data_dir, then auto mode + fixtures
+  ./target/debug/tendrl-engine -c /tmp/verify-config.toml --port 3131 &
+  curl -s -X POST localhost:3131/api/v1/network/mode -H 'content-type: application/json' -d '{"mode":"auto"}'
+  curl -s -X POST localhost:3131/api/v1/ingest -H 'content-type: application/x-ndjson' --data-binary @fixtures.jsonl
+  # fixtures: nak event -k 30041 -d <slug> -t title=… -c '…' --sec <hex> < /dev/null  (30040 with a=30041:<pk>:<slug>)
+  chromium --headless=new --remote-debugging-port=9333 --no-sandbox --user-data-dir=/tmp/cdp-profile http://localhost:3131/ &
+  # teardown — pgrep, not pkill -f: a pkill pattern matches the shell running it and kills your own script
+  pgrep -f "target/debug/[t]endrl-engine" | xargs -r kill
+#+end_src
+
+DOM handles: feed row = =.feed-list .row .title= (real mouse click); WORK
+tabs = =button.pane__tab-go= (=.click()= works); reader controls by button
+text (=Next=, =scroll=, =tree=, =T=, =+=, =comments N=); continuous-view
+index toggle = =.cv-index__main=; comment box = =.rb textarea=; search
+input = =input[placeholder*='exact']=; chat input = =.input-bar textarea=;
+rails = =.rail--research= / =.rail--chat= (real click; the rail element is
+gone while its pane is open — collapse it via the pane's =.pane__x=,
+found through =.pane__body--search= / =.pane__body--chat= →
+=closest('.pane')=). Set input values through the native value setter +
+=dispatchEvent(new Event('input'))=.

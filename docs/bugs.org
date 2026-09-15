@@ -399,3 +399,163 @@ and every test boots its own =Ndb= with 2 ingester threads, so a loaded
 machine can leave the ingest un-settled when the assertion queries. Fix
 candidates: fail loudly on the timeout instead of swallowing it, or
 poll-retry the query. Not a product bug.
+
+* ngit issues — snapshot 2026-09-15 (relay.ngit.dev, kind 1621 on the =tendrl= repo)
+:PROPERTIES:
+:source: =ngit issue list --status open,draft,closed,applied --json= (14 issues, 3 statuses, 1 comment)
+:repo: naddr1qqr8getwv3excq3qm3xdppkd0njmrqe2ma8a6ys39zvgp5k8u22mev8xsnqp4nh80srqxpqqqpmej2ngl2j
+:END:
+
+The NIP-34 issue tracker for this repo lives on Nostr, not here. This section
+mirrors it so mid-task fixes can be tied to the on-relay issue: cite the
+=nevent= in the fix commit, then =ngit issue resolved <nevent>= to close it
+upstream. Re-run the =ngit issue list= command above to refresh; it is the
+source of truth, this list is a snapshot. All issues are by the maintainer.
+
+** OPEN bugs
+
+*** App locks on restart                                          :spooky:bug:
+:PROPERTIES:
+:nevent: nevent1qqsyt3efz8exdxnr8edx7hxfl2t9hk9vwr0q7c9f6hl0a72d28mz6kcpz3mhxue69uhhyetvv9ujumn8d96zuer9wcds6arl
+:END:
+Sometimes the app gets stuck on loading; the only way out is to close, reopen
+and tap rapidly before the loading screen. (Android. Likely the tao 0.35
+lost-wake — see the patched =mobile/vendor/tao=; verify on a cold-start loop
+before resolving.)
+
+*** FIXED — remember reading state of publication / reader view              :bug:
+:PROPERTIES:
+:nevent: nevent1qqsfqsle5gg0scwdvac3e7zmy4jdj7htpfqrdhz58cex89ep4sl5nnspz3mhxue69uhhyetvv9ujumn8d96zuer9wchfvnqt
+:fixed: 2026-09-15, =bugs= branch
+:END:
+Navigating off the publication view and back reset it to paged + first
+event. *Why:* =BufferRenderer= unmounts the renderer on every switch and
+=ReaderBuffer= kept its whole reading place in component =$state=. *Fix:*
+the place — =viewMode=, =currentSection=, =treeDepth=, the refocus
+breadcrumbs (=focusStack=/=visitLog= + markers), the TOC-drawer and
+continuous-view expansion sets, and the summary/threads/tree/tools
+toggles — is parked in =store.bufferState= on =$effect= teardown and
+re-seeded on mount (=ReaderViewState=). The continuous view's
+=expandedByAddr= became a =bind:expanded= prop so the reader owns it. The
+mounting run of the buffer-change effect keeps a restored focus stack, and
+=loadEvent= / =loadAddressable= no longer force =paginated= (that was a
+leftover from the removed outline mode; the default is paginated anyway).
+Verified: paged section 2/4, and scroll + tree row + nested index expanded
++ depth 3, all restored after a feed round-trip (headless CDP, docs/commands.org).
+
+*** FIXED — Save entry state when leaving                                    :bug:
+:PROPERTIES:
+:nevent: nevent1qqs0jkflfq09tzy7nmhng47zvkcv79jftg2ygpcmlg9mrdug7np68pqpz3mhxue69uhhyetvv9ujumn8d96zuer9wcyuz5sw
+:fixed: 2026-09-15, =bugs= branch
+:END:
+Typed-but-unsent text died with its buffer. *Fix:* =web/src/lib/wm/
+entry-drafts.ts= — a leaf in-memory =Map= keyed by where the text was
+typed; components read it on mount, write it back in their =$effect=
+teardown, clear it when the text is actually sent. Wired: =ReplyBox=
+(keyed by reply target: parent id or root address/event — so every
+comment box, in the reader, discussion view, note view, event modal and
+comment threads), =ChatInput= (=draftKey=), the Settings system-prompt
+editor (dirty text re-applied over the engine's copy on reload) and npub
+box. Structured entry joined the existing =store.bufferState= pattern:
+=RepositoryBuffer='s new-issue form, =SearchBuffer='s typed query / Refs
+filter / tab / cursors, and =ProfileEditBuffer='s unsaved form (parked
+only when it differs from the hydrated kind 0; re-applied over the
+reload; forgotten on save). Not wired on purpose: the identity
+ncryptsec/password fields (secrets), and modals (they aren't buffers).
+Verified: reader comment box, search box and chat box each kept their
+text across a real unmount (buffer switch / collapse-to-rail + reopen).
+
+*** Running spells doesn't allow you to open the events/threads         :bug:
+:PROPERTIES:
+:nevent: nevent1qqsrfwglprcdwjea7duvx8qj5nffqx2t3yawwtm7yu32g40ld80e8ngpz3mhxue69uhhyetvv9ujumn8d96zuer9wcr49rrf
+:END:
+Probably overwritten by the kind 1/1111 component.
+
+*** Exiting an event retrieved from a spell should take me to the spell output :bug:
+:PROPERTIES:
+:nevent: nevent1qqsyaazh2kngmk8ngg2ns4xuxf6stteerz2wum5r0dyk0wtzfpmcy3qpz3mhxue69uhhyetvv9ujumn8d96zuer9wcr05ggy
+:END:
+It goes back to the spellbook, where the fetch has to be run again.
+
+*** FIXED — Highlight removes linking capabilities                          :bug:
+:PROPERTIES:
+:nevent: nevent1qqsgkz084wmppe5mw4yu7e0e98qg9phx0qa2qwqk7d3n0cfqkep7g6gpz3mhxue69uhhyetvv9ujumn8d96zuer9wcmv8s56
+:fixed: 2026-09-15, =bugs= branch
+:END:
+A literal highlight of "*Astronomy* is a [[natural science]] that studies"
+removed the link on =[[natural science]]=. *Why:* =buildSegments=
+(=web/src/lib/nostr/nostrdown.ts=) treated highlights and refs as peers on
+one flat, non-overlapping segmentation — whichever started first claimed
+the run and anything starting inside it was dropped, so a highlight that
+began before a wikilink swallowed it. *Fix:* refs/tokens are *atoms*
+(replace their span, never nest); a highlight is a *decoration* whose
+segment carries =parts= — the text runs and atoms it covers — and
+=RichContent= renders the =<mark>= *around* those parts (a snippet renders
+atoms at both levels). A highlight starting inside an atom starts after
+it; one ending inside an atom extends to the atom's end; at the same
+start offset the highlight leads so a highlight that *is* exactly a
+wikilink still wraps it. Highlights still don't nest (an overlapping one
+is dropped, as before). Selection capture is unaffected: it resolves the
+innermost =data-src-start= element, always one of the parts. Verified
+against the fixture sentence in the built SPA: the =<mark>= contains the
+live =button.nd-ref--wiki=.
+
+*** Render comments and threads like normal                  :improvement:bug:
+:PROPERTIES:
+:nevent: nevent1qqs842zwwhu5fu3qx5pgy3gjv8s5tylcjpqhrry6rn2ec3xy8sk0v8gpz3mhxue69uhhyetvv9ujumn8d96zuer9wc8za5l2
+:END:
+Uses the "section" template; render kind 1, 1111 and others appropriately.
+Comment (maintainer, 2026-09-12): "Can still be improved. Threads are clunky."
+
+** OPEN improvements
+
+*** preview events should let users edit metadata at the event and publication level :improvement:
+:PROPERTIES:
+:nevent: nevent1qqs8qkntux80wj6r0m69srsrktlgcgjzfje093apzld9ddkpqnjartgpz3mhxue69uhhyetvv9ujumn8d96zuer9wcdjrq3d
+:END:
+When editing a publication, "preview events" shows each event's JSON. Add an
+"add tag" entry per event plus an "add to all events" checkbox.
+
+*** Title / pills / menu take up too much horizontal space :layout:improvement:
+:PROPERTIES:
+:nevent: nevent1qqs2hr8ett35free2egh3et02legxzehsnujeq2et5p8wpat7xq737gpz3mhxue69uhhyetvv9ujumn8d96zuer9wcsw4q4f
+:END:
+Title, remote, context, compose and menu should stack like in the feed; the
+title gets squished by the other elements.
+
+*** Add wider variety of themes                                 :improvement:
+:PROPERTIES:
+:nevent: nevent1qqszdyddj6t343j0dd0vg4mvkjeu3zyjuefzkc3rfdv6q6tsym864ycpz3mhxue69uhhyetvv9ujumn8d96zuer9wcqzc5xr
+:END:
+"There's blue, blue, blue and brown."
+
+*** labels on nostr git should normalize to lower case
+:PROPERTIES:
+:nevent: nevent1qqsghpqxqw73lfy0plwst4kuzzgjye2yjt0k20p4psc3twk8cm38x7gpz3mhxue69uhhyetvv9ujumn8d96zuer9wcnz7f4w
+:END:
+Mobile keyboards auto-capitalize, so the tracker has both =bug= and =Bug=,
+=Improvement= / =improvement= / =Improvment=. Normalize labels to lower case
+(in =src/git.rs= label parsing / =issue_template=, and in the ngit tooling
+upstream).
+
+** APPLIED (already shipped)
+
+*** Tool buttons take up too much vertical space             :bug:improvement:
+:PROPERTIES:
+:nevent: nevent1qqsvzhetv4lg99d4sqjk3hurpdw8hcl9y6ytgv6h7gnxzkngdyhrzfspz3mhxue69uhhyetvv9ujumn8d96zuer9wchw32uj
+:END:
+Bad for mobile screens, and not informative.
+
+*** Comment thread can't find parent or root events                     :bug:
+:PROPERTIES:
+:nevent: nevent1qqsgxxxwxpyqmp9yc2lp3w99tfetfev9fj9gfq77mw96k9e4z4yqflspz3mhxue69uhhyetvv9ujumn8d96zuer9wczzwha7
+:END:
+"Event not found on relays" for a root fetch. Matches the FIXED entry above
+(root/parent fetch died with a raw 404 in Confirm mode).
+
+*** Spells should find local events first                       :improvement:
+:PROPERTIES:
+:nevent: nevent1qqsw7gj4zg6yvnqnwu6v85hr7uap2j9pd3pksul4unehhe7qysr9zrgpz3mhxue69uhhyetvv9ujumn8d96zuer9wclt3r0t
+:END:
+Use already-fetched events first, ask for more at the end of the list, add
+newer events at the top.
