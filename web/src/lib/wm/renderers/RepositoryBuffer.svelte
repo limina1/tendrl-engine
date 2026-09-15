@@ -31,7 +31,14 @@
 
 	type View = 'issues' | 'about' | 'issue' | 'new';
 	type Filter = 'open' | 'closed' | 'all';
-	type RepoViewState = { view: View; issueId: string | null; filter: Filter; cursor: number };
+	type RepoViewState = {
+		view: View;
+		issueId: string | null;
+		filter: Filter;
+		cursor: number;
+		/** The unfiled new-issue form — typed text survives a buffer switch. */
+		draft?: { subject: string; labels: string; body: string };
+	};
 
 	const coord = $derived(parseBufferId(buffer.id));
 	function parseBufferId(id: string): { pubkey: string; dTag: string } | null {
@@ -47,7 +54,13 @@
 	let cursor = $state(saved?.cursor ?? 0);
 	$effect(() => {
 		return () => {
-			store.bufferState.set(buffer.id, { view, issueId, filter, cursor } satisfies RepoViewState);
+			store.bufferState.set(buffer.id, {
+				view,
+				issueId,
+				filter,
+				cursor,
+				draft: { subject: newSubject, labels: newLabels, body: newBody }
+			} satisfies RepoViewState);
 		};
 	});
 
@@ -237,9 +250,9 @@
 	}
 
 	// ----- New issue -----
-	let newSubject = $state('');
-	let newLabels = $state('');
-	let newBody = $state('');
+	let newSubject = $state(saved?.draft?.subject ?? '');
+	let newLabels = $state(saved?.draft?.labels ?? '');
+	let newBody = $state(saved?.draft?.body ?? '');
 	let filing = $state(false);
 	let previewRelays = $state<string[] | null>(null);
 

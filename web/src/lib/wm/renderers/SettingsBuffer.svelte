@@ -19,6 +19,7 @@
 	import { trigger as triggerTip } from '$lib/wm/discovery.svelte';
 	import { discovery, rearmDiscovery, rearmFeatureTours, setWalkthroughEnabled } from '$lib/wm/discovery.svelte';
 	import * as api from '$lib/api';
+	import { entryDrafts } from '$lib/wm/entry-drafts';
 	import {
 		atScaleMax,
 		atScaleMin,
@@ -159,6 +160,12 @@
 	let aiPrompt = $state('');
 	let aiPromptPath = $state('');
 	let aiPromptDirty = $state(false);
+	// An edited-but-unsaved prompt survives a buffer switch: parked on
+	// teardown while dirty, re-applied over the engine's copy on reload.
+	const AI_PROMPT_DRAFT = 'settings:ai-prompt';
+	$effect(() => {
+		return () => entryDrafts.set(AI_PROMPT_DRAFT, aiPromptDirty ? aiPrompt : '');
+	});
 
 	async function loadAiPrompt() {
 		try {
@@ -166,6 +173,11 @@
 			aiPrompt = r.content;
 			aiPromptPath = r.path;
 			aiPromptDirty = false;
+			const draft = entryDrafts.get(AI_PROMPT_DRAFT);
+			if (draft && draft !== r.content) {
+				aiPrompt = draft;
+				aiPromptDirty = true;
+			}
 		} catch {
 			/* leave blank if unavailable */
 		}
@@ -176,6 +188,7 @@
 		try {
 			await api.saveAiPrompt(aiPrompt);
 			aiPromptDirty = false;
+			entryDrafts.clear(AI_PROMPT_DRAFT);
 			app.pushToast('System prompt saved', 'success', 2500);
 		} catch (e) {
 			app.pushToast(
@@ -264,13 +277,18 @@
 	let passwordInput = $state('');
 	// Watch-only (npub) login — the lightest way in, listed first: on a
 	// phone there's no NIP-07 extension and pasting an ncryptsec is heavy.
-	let npubInput = $state('');
+	// svelte-ignore state_referenced_locally
+	let npubInput = $state(entryDrafts.get('settings:npub'));
+	$effect(() => {
+		return () => entryDrafts.set('settings:npub', npubInput);
+	});
 
 	async function doNpubLogin() {
 		const v = npubInput.trim();
 		if (!v) return;
 		await app.handleIdentityNpubLogin(v);
 		npubInput = '';
+		entryDrafts.clear('settings:npub');
 	}
 
 	// NIP-55 signer apps (Amber) — Android host only. Enumerated in the

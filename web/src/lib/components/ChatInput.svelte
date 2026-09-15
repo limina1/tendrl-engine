@@ -1,8 +1,28 @@
 <script lang="ts">
-	let { onsend, disabled = false }: { onsend: (content: string) => void; disabled?: boolean } = $props();
+	import { untrack } from 'svelte';
+	import { entryDrafts } from '$lib/wm/entry-drafts';
 
-	let value = $state('');
+	let {
+		onsend,
+		disabled = false,
+		draftKey = 'chat'
+	}: {
+		onsend: (content: string) => void;
+		disabled?: boolean;
+		/** Where the unsent message is parked across a buffer switch. */
+		draftKey?: string;
+	} = $props();
+
+	// svelte-ignore state_referenced_locally
+	let value = $state(entryDrafts.get(draftKey));
 	let textarea: HTMLTextAreaElement | undefined = $state();
+	$effect(() => {
+		return () => entryDrafts.set(draftKey, value);
+	});
+	// A restored multi-line draft needs the box sized to it once mounted.
+	$effect(() => {
+		if (textarea) untrack(autoGrow);
+	});
 
 	function handleKeydown(e: KeyboardEvent) {
 		if (e.key === 'Enter' && !e.shiftKey) {
@@ -16,6 +36,7 @@
 		if (!trimmed || disabled) return;
 		onsend(trimmed);
 		value = '';
+		entryDrafts.clear(draftKey);
 		if (textarea) textarea.style.height = 'auto';
 	}
 

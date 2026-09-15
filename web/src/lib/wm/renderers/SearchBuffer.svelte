@@ -35,20 +35,46 @@
 	// structures being pulled into the pool.
 	type Tab = 'search' | 'refs' | 'import';
 	const TAB_ORDER: Tab[] = ['search', 'refs', 'import'];
-	let activeTab: Tab = $state('search');
+	// View state survives a buffer switch via store.bufferState (the
+	// renderer unmounts on every switch): the active tab, each tab's cursor,
+	// the typed-but-unsubmitted query and the Refs filter. Results live in
+	// AppState already.
+	type SearchViewState = {
+		tab: Tab;
+		searchCursor: number;
+		importCursor: number;
+		refsCursor: number;
+		searchValue: string;
+		refsQuery: string;
+	};
+	// svelte-ignore state_referenced_locally
+	const savedView = store.bufferState.get(buffer.id) as SearchViewState | undefined;
+	let activeTab: Tab = $state(savedView?.tab ?? 'search');
 
 	// Per-tab cursor — kept here so each tab remembers its position when
 	// the user h/l-cycles away and back.
-	let searchCursor = $state(0);
-	let importCursor = $state(0);
-	let refsCursor = $state(0);
+	let searchCursor = $state(savedView?.searchCursor ?? 0);
+	let importCursor = $state(savedView?.importCursor ?? 0);
+	let refsCursor = $state(savedView?.refsCursor ?? 0);
+	$effect(() => {
+		return () => {
+			store.bufferState.set(buffer.id, {
+				tab: activeTab,
+				searchCursor,
+				importCursor,
+				refsCursor,
+				searchValue,
+				refsQuery
+			} satisfies SearchViewState);
+		};
+	});
 
 	let listEl: HTMLDivElement | undefined = $state();
 
 	// Refs tab — a local case-insensitive substring filter over the held
 	// pool. Pure client-side, no engine round-trip. Persists across tab
 	// switches so the user can h/l away and come back to the same view.
-	let refsQuery = $state('');
+	let refsQuery = $state(savedView?.refsQuery ?? '');
 	const filteredHeld = $derived.by(() => {
 		const q = refsQuery.trim().toLowerCase();
 		if (!q) return app.heldEntries;
@@ -124,7 +150,7 @@
 	// The Search tab's input value — owned here so the Refs tab's
 	// "→ search" route can append a coordinate token to it from another
 	// tab without running the query.
-	let searchValue = $state('');
+	let searchValue = $state(savedView?.searchValue ?? '');
 
 	// Echo a programmatic search (app.searchFor — e.g. the feed "part of N"
 	// badge) into the input box. Keyed on the seed's nonce so re-running the

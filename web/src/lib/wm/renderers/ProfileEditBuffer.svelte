@@ -3,10 +3,12 @@
 	import * as api from '$lib/api';
 	import { signAndBroadcast, identityCanSign } from '$lib/identity/signer';
 	import type { Buffer } from '../types';
+	import { getActiveStore } from '../buffer-store.svelte';
 
-	let { buffer: _buffer }: { buffer: Buffer } = $props();
+	let { buffer }: { buffer: Buffer } = $props();
 
 	const app = getAppState();
+	const store = getActiveStore();
 
 	type Form = {
 		name: string;
@@ -32,6 +34,22 @@
 
 	let form = $state<Form>({ ...empty });
 	let unknownFields = $state<Record<string, unknown>>({});
+	// Unsaved edits survive a buffer switch: the form is parked in
+	// store.bufferState on teardown when it differs from what the kind 0
+	// hydrated, and re-applied over the reload on the next mount. A save
+	// (or an unchanged form) forgets it.
+	type ProfileEditState = { form: Form; pubkey: string };
+	let hydratedJson = JSON.stringify(empty);
+	$effect(() => {
+		return () => {
+			const snap = $state.snapshot(form);
+			if (activePubkey && JSON.stringify(snap) !== hydratedJson) {
+				store.bufferState.set(buffer.id, { form: snap, pubkey: activePubkey } satisfies ProfileEditState);
+			} else {
+				store.bufferState.delete(buffer.id);
+			}
+		};
+	});
 	let loading = $state(true);
 	let saving = $state(false);
 	let error = $state<string | null>(null);
@@ -105,6 +123,9 @@
 		}
 		form = next;
 		unknownFields = unknown;
+		hydratedJson = JSON.stringify(next);
+		const draft = store.bufferState.get(buffer.id) as ProfileEditState | undefined;
+		if (draft && draft.pubkey === activePubkey) form = { ...draft.form };
 	}
 
 	function buildContent(): string {
@@ -137,6 +158,8 @@
 				successCount: broadcast.successful
 			};
 			rawJson = template.content;
+			hydratedJson = JSON.stringify($state.snapshot(form));
+			store.bufferState.delete(buffer.id);
 		} catch (e) {
 			error = e instanceof Error ? e.message : String(e);
 		} finally {

@@ -11,6 +11,7 @@
 	import * as api from '$lib/api';
 	import { getAppState } from '$lib/state.svelte';
 	import { identityCanSign } from '$lib/identity/signer';
+	import { entryDrafts } from '$lib/wm/entry-drafts';
 
 	let {
 		root = undefined,
@@ -37,8 +38,20 @@
 	const app = getAppState();
 	const canSign = $derived(identityCanSign(app.identityStatus));
 
-	let text = $state('');
+	// The unsent draft survives a buffer switch (this component unmounts with
+	// its buffer): keyed by the reply target, restored on mount, saved on
+	// teardown, forgotten only once the comment is actually posted.
+	function draftKey(): string {
+		if (parent) return `reply:parent:${parent.id}`;
+		const r = root ?? {};
+		return `reply:root:${r.address ?? r.event_id ?? r.external ?? ''}`;
+	}
+	// svelte-ignore state_referenced_locally
+	let text = $state(entryDrafts.get(draftKey()));
 	let posting = $state(false);
+	$effect(() => {
+		return () => entryDrafts.set(draftKey(), text);
+	});
 
 	async function post() {
 		const content = text.trim();
@@ -51,6 +64,7 @@
 				content
 			});
 			text = '';
+			entryDrafts.clear(draftKey());
 			const { successful, total } = resp.broadcast;
 			if (total === 0) {
 				app.pushToast('Comment saved locally (no publish relays)', 'info');
