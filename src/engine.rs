@@ -241,6 +241,11 @@ pub struct Engine {
     user_session: Option<crate::signing::IdentityHandle>,
     /// Live assistant identity session — source of truth for `by:assistant`.
     assistant_session: Option<crate::signing::IdentityHandle>,
+    /// The narrow NIP-42 capability the relay client authenticates with
+    /// (kind 22242 only, as the *user*). `None` until `server::start`
+    /// wires the `SigningController`; relay auth degrades to "not
+    /// authenticated" without it.
+    auth_signer: Option<crate::signing::AuthSigner>,
     /// Optional embedding index for semantic search
     embedding: Option<Arc<RwLock<EmbeddingIndex>>>,
     /// Event kinds eligible for embedding. Seeded from
@@ -440,6 +445,7 @@ impl Engine {
             config_path: None,
             user_session: None,
             assistant_session: None,
+            auth_signer: None,
             embedding: None,
             embed_kinds: StdRwLock::new(crate::embedding::DEFAULT_EMBED_KINDS.to_vec()),
             auto_embed: std::sync::atomic::AtomicBool::new(true),
@@ -920,11 +926,7 @@ impl Engine {
                             stage_events.extend(events);
                         }
                         Err(e) => {
-                            op.relay_status(
-                                relay_url,
-                                *phase,
-                                RelayStatusValue::Error { msg: e.to_string() },
-                            );
+                            op.relay_status(relay_url, *phase, relay_error_status(e));
                         }
                     }
                 }
@@ -965,11 +967,7 @@ impl Engine {
                     all_events.extend(events);
                 }
                 Err(e) => {
-                    op.relay_status(
-                        relay_url,
-                        crate::network::Phase::Read,
-                        RelayStatusValue::Error { msg: e.to_string() },
-                    );
+                    op.relay_status(relay_url, crate::network::Phase::Read, relay_error_status(e));
                 }
             }
         }
@@ -1100,6 +1098,7 @@ impl Engine {
             fetch: rc.fetch.urls.clone(),
             publish: rc.publish.urls.clone(),
             broadcast: rc.broadcast.urls.clone(),
+            auth: rc.auth.urls.clone(),
             search: rc.search.clone(),
             indexer: rc.indexer.clone(),
             named: rc.named_sets.clone(),
@@ -1133,6 +1132,31 @@ impl Engine {
     /// Wire the live assistant identity session (set once at boot).
     pub fn set_assistant_session(&mut self, handle: crate::signing::IdentityHandle) {
         self.assistant_session = Some(handle);
+    }
+
+    /// Wire the NIP-42 auth capability (set once at boot, from the
+    /// `SigningController`, so external signers are covered too).
+    pub fn set_auth_signer(&mut self, signer: crate::signing::AuthSigner) {
+        self.auth_signer = Some(signer);
+    }
+
+    /// The relay-auth context for the next relay operation: the signer
+    /// plus the current opt-in set. Built per operation so a toggle on
+    /// the relays screen applies to the very next fetch/publish.
+    pub fn relay_auth(&self) -> crate::relay::RelayAuth {
+        let allowed = self
+            .relay_config
+            .read()
+            .unwrap()
+            .auth
+            .urls
+            .iter()
+            .map(|u| crate::relay_url::normalize_relay_url(u))
+            .collect();
+        crate::relay::RelayAuth {
+            signer: self.auth_signer.clone(),
+            allowed,
+        }
     }
 
     /// Live assistant pubkey, read from the assistant session. `None` until an
@@ -1458,6 +1482,9 @@ impl Engine {
             rc.fetch.urls = sets.fetch.clone();
             rc.publish.urls = sets.publish.clone();
             rc.broadcast.urls = sets.broadcast.clone();
+            // Auth opt-ins are local consent, not functional routing —
+            // a reset drops them like broadcast.
+            rc.auth.urls = sets.auth.clone();
             rc.search = sets.search.clone();
             rc.indexer = sets.indexer.clone();
             rc.exclusive = sets.exclusive.clone();
@@ -1667,17 +1694,21 @@ impl Engine {
         // switch: POST /network/fetch-kill cancels the guard's token and the
         // in-flight relay work is dropped. A killed fetch yields no events
         // (not an error) so LocalFirst callers just keep their local results.
+        let auth = self.relay_auth();
         let result = tokio::select! {
-            r = relay::fetch_with_filters(&self.ndb, relay_url, filters) => r,
+            r = relay::fetch_with_filters(&self.ndb, relay_url, filters, &auth) => r,
             _ = guard.cancelled() => {
                 guard.fail("killed".to_string());
                 return Ok(vec![]);
             }
         };
         match result {
-            Ok(events) => {
+            Ok(relay::FetchOutcome {
+                events,
+                authenticated,
+            }) => {
                 let count = events.len();
-                guard.complete(count);
+                guard.complete_with(count, authenticated);
                 // Every relay fetch ingests inline, so this is the single
                 // funnel that keeps the background loop's dirty sets fed.
                 self.note_ingest_batch(&events);
@@ -3746,6 +3777,19 @@ pub fn union_relays(base: Vec<String>, extra: &[String]) -> Vec<String> {
         }
     }
     out
+}
+
+/// Map a per-relay fetch error onto the status the activity stream shows.
+/// An `auth-required` refusal is a status of its own (the user decides on
+/// the relays screen; nothing prompts), everything else is `Error`.
+pub(crate) fn relay_error_status(e: EngineError) -> crate::network::RelayStatusValue {
+    use crate::network::RelayStatusValue;
+    match e {
+        EngineError::RelayAuthRequired { msg, .. } => RelayStatusValue::AuthRequired { msg },
+        other => RelayStatusValue::Error {
+            msg: other.to_string(),
+        },
+    }
 }
 
 #[cfg(test)]

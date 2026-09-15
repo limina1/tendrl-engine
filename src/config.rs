@@ -123,6 +123,13 @@ pub struct RelayConfig {
     /// lands. See `project-relay-classes` memory.
     #[serde(skip, default = "default_broadcast")]
     pub broadcast: RelaySet,
+    /// Relays tendrl will authenticate to (NIP-42) when they challenge.
+    /// Opt-in per relay and local-only: answering a challenge reveals
+    /// the user's pubkey to that relay, so a relay not in this set gets
+    /// its challenge ignored and its `auth-required` refusal recorded,
+    /// never signed. Filled at runtime from `relays.json`.
+    #[serde(skip, default = "default_auth")]
+    pub auth: RelaySet,
     /// NIP-50 search-capable relays. Two-tier: `default` joins (or
     /// replaces with `exclusive_search`) the primary `~:` fan-out;
     /// `fallback` is consulted only when the primary returns zero.
@@ -189,6 +196,13 @@ fn default_broadcast() -> RelaySet {
     }
 }
 
+fn default_auth() -> RelaySet {
+    RelaySet {
+        urls: Vec::new(),
+        kinds: vec![],
+    }
+}
+
 fn default_initial_relays() -> Vec<String> {
     crate::relay::DEFAULT_RELAYS
         .iter()
@@ -239,6 +253,7 @@ impl Default for RelayConfig {
             publish: default_publish(),
             fetch: default_fetch(),
             broadcast: default_broadcast(),
+            auth: default_auth(),
             search: crate::relay_store::DiscoveryClass::default(),
             indexer: crate::relay_store::DiscoveryClass::default(),
             exclusive: crate::relay_store::ExclusiveFlags::default(),
@@ -284,6 +299,7 @@ impl RelayConfig {
             "publish" => Some(&mut self.publish.urls),
             "fetch" => Some(&mut self.fetch.urls),
             "broadcast" => Some(&mut self.broadcast.urls),
+            "auth" => Some(&mut self.auth.urls),
             "search.default" => Some(&mut self.search.default),
             "search.fallback" => Some(&mut self.search.fallback),
             "indexer.default" => Some(&mut self.indexer.default),
@@ -300,6 +316,7 @@ impl RelayConfig {
         self.publish.urls = sets.publish.clone();
         self.fetch.urls = sets.fetch.clone();
         self.broadcast.urls = sets.broadcast.clone();
+        self.auth.urls = sets.auth.clone();
         self.search = sets.search.clone();
         self.indexer = sets.indexer.clone();
         self.exclusive = sets.exclusive.clone();

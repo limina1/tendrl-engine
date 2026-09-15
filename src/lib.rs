@@ -67,6 +67,7 @@ pub mod llm;
 pub mod network;
 pub mod nip11;
 pub mod nip19;
+pub mod nip42;
 pub mod nostrdown;
 pub mod publication;
 pub mod query;

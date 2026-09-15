@@ -271,6 +271,18 @@ pub async fn start(opts: ServeOptions) -> anyhow::Result<RunningServer> {
     engine.set_user_session(user_session.clone());
     engine.set_assistant_session(assistant_session.clone());
 
+    // SigningController owns the external-signer registry and routes
+    // signing through the active source. Constructed once, before the
+    // engine is frozen behind its Arc, because the relay client needs its
+    // narrow NIP-42 capability: relay AUTH signs as the *user*, whichever
+    // source (engine key / NIP-07 / NIP-55) is active — never as the
+    // assistant. Shared below across the sign / signer-register /
+    // signer-channel / sign-response handlers.
+    let signing_controller = crate::signing::SigningController::new(user_session.clone());
+    engine.set_auth_signer(crate::signing::AuthSigner::new(std::sync::Arc::new(
+        signing_controller.clone(),
+    )));
+
     // Resolve Claude Code sessions directory from cwd
     let cwd = std::env::current_dir().unwrap_or_default();
     let claude_dir = crate::claude_sessions::resolve_claude_dir(&cwd);
@@ -391,12 +403,6 @@ pub async fn start(opts: ServeOptions) -> anyhow::Result<RunningServer> {
             post(api::identity_use_source_handler),
         )
         .with_state(user_session.clone());
-
-    // SigningController owns the external-signer registry and routes
-    // signing through the active source. Constructed once and shared
-    // across the sign / signer-register / signer-channel / sign-response
-    // handlers.
-    let signing_controller = crate::signing::SigningController::new(user_session.clone());
 
     let signing_routes = Router::new()
         .route("/api/v1/identity/sign", post(api::identity_sign_handler))

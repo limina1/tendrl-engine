@@ -770,16 +770,14 @@ async fn publish(engine: &Arc<Engine>, input: Value) -> Result<Value> {
     for url in &chosen {
         op.relay_status(url.clone(), crate::network::RelayStatusValue::Connecting);
     }
-    let (accepted, rejected, results) =
-        crate::relay::publish_events_to_relays(&chosen, &[event_json.clone()]).await;
+    let (accepted, rejected, results) = crate::relay::publish_events_to_relays(
+        &chosen,
+        &[event_json.clone()],
+        &engine.relay_auth(),
+    )
+    .await;
     for r in &results {
-        let status = if r.success {
-            crate::network::RelayStatusValue::Accepted
-        } else {
-            crate::network::RelayStatusValue::Rejected {
-                msg: r.message.clone().unwrap_or_default(),
-            }
-        };
+        let status = crate::api::publish_result_status(r);
         op.relay_status(r.relay_url.clone(), status);
         if r.success {
             // Best-effort provenance — failure only delays the feed pill flip.

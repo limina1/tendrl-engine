@@ -120,6 +120,9 @@ pub struct FetchRecord {
     /// fetches whose call path never attached one.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
+    /// The socket authenticated to the relay (NIP-42) for this fetch.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub authenticated: bool,
 }
 
 /// An in-flight relay fetch — the live counterpart of [`FetchRecord`],
@@ -509,7 +512,12 @@ impl FetchGuard {
         self.token.cancelled().await
     }
 
-    pub fn complete(mut self, event_count: usize) {
+    pub fn complete(self, event_count: usize) {
+        self.complete_with(event_count, false)
+    }
+
+    /// `complete`, recording whether the socket authenticated (NIP-42).
+    pub fn complete_with(mut self, event_count: usize, authenticated: bool) {
         self.completed = true;
         self.activity.active_fetches.fetch_sub(1, Ordering::Relaxed);
         self.activity.remove_active(self.id);
@@ -524,6 +532,7 @@ impl FetchGuard {
             success: true,
             error: None,
             reason: self.reason.clone(),
+            authenticated,
         };
         self.activity.record(record);
     }
@@ -543,6 +552,7 @@ impl FetchGuard {
             success: false,
             error: Some(error),
             reason: self.reason.clone(),
+            authenticated: false,
         };
         self.activity.record(record);
     }
@@ -687,6 +697,13 @@ pub enum RelayStatusValue {
     Accepted,
     /// Publish path — relay sent `["OK", id, false, msg]`.
     Rejected { msg: String },
+    /// The relay demanded NIP-42 auth and tendrl did not authenticate:
+    /// the relay is not in the user's auth set, no signer is loaded, or
+    /// the relay refused the AUTH. Passive — the decision lives on the
+    /// relays screen, nothing prompts here.
+    AuthRequired { msg: String },
+    /// This relay's socket authenticated (NIP-42) for the operation.
+    Authenticated,
 }
 
 /// A subset of NIP-01 filter fields, expressed structurally so the UI

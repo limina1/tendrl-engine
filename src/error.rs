@@ -57,6 +57,13 @@ pub enum EngineError {
     #[error("Identity locked: {0}")]
     Locked(String),
 
+    /// A relay demanded NIP-42 auth and the engine did not authenticate —
+    /// the relay is not in the user's auth set, no signer is loaded, or
+    /// the signer refused. Per-relay and expected: callers surface it as
+    /// a status (`RelayStatusValue::AuthRequired`), not a failure.
+    #[error("Relay requires auth: {relay}: {msg}")]
+    RelayAuthRequired { relay: String, msg: String },
+
     /// Generic error wrapper
     #[error("{0}")]
     Other(String),
@@ -80,6 +87,11 @@ impl IntoResponse for EngineError {
         let (status, error_type, message) = match &self {
             EngineError::Database(msg) => (StatusCode::INTERNAL_SERVER_ERROR, "database_error", msg.clone()),
             EngineError::Relay(msg) => (StatusCode::BAD_GATEWAY, "relay_error", msg.clone()),
+            EngineError::RelayAuthRequired { relay, msg } => (
+                StatusCode::BAD_GATEWAY,
+                "relay_auth_required",
+                format!("{relay}: {msg}"),
+            ),
             EngineError::Serialization(err) => (StatusCode::BAD_REQUEST, "serialization_error", err.to_string()),
             EngineError::InvalidFilter(msg) => (StatusCode::BAD_REQUEST, "invalid_filter", msg.clone()),
             EngineError::NotFound(msg) => (StatusCode::NOT_FOUND, "not_found", msg.clone()),
