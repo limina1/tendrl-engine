@@ -1,0 +1,239 @@
+#+TITLE: Design principles of a published kasten — extracted from emergentgov
+#+TYPE: meta
+#+STATUS: REPORT
+#+DATE: 2026-09-04
+
+Extracted by pulling the published =emergentgov= publication back out of
+tendrl and reading it the way an agent would: root event first, then
+tags, then one section at a time. The question this answers is not
+"what does the kasten say" but "what makes a linked document like this
+navigable by tags and references instead of by reading it whole".
+The template it instantiates is [[file:zettel-template.org][zettel-template]];
+this note records what the /published artifact/ demonstrates, plus the
+gaps the round trip revealed.
+
+* What was pulled
+
+Root: =nevent1qqst5hn8a50q2nmhkw3vc0mka69wz0wpc9p2tdt5lgspgxq4vf392fsctrk6n=
+→ kind 30040, coordinate
+=30040:dc4cd086…7c06:emergentgov=, on spatia-arcana / thecitadel /
+theforest. The root event has empty content and 13 tags; the whole
+tree is 106 events.
+
+| Layer                         | Count | Content            |
+|-------------------------------+-------+--------------------|
+| kind 30040 indexes            |    18 | all empty          |
+| kind 30041 notes (typed)      |    73 | src/concept/claim/q/agent/syn/meta |
+| kind 30041 narrative + overviews |  15 | prose from the index note |
+| ={{ref:…}}= references        |  1087 | all sibling refs, all with display text |
+| distinct ref targets          |    79 | 6 dangling (syn-*, two concept-, one q-) |
+| =ref= tags (forward links)    |   931 |                    |
+| section content, total        | ~253K chars |             |
+
+A tag walk of the whole tree costs about 1K characters per event; a
+content read of the whole tree costs 250K. The design principles below
+are what make the 1K path sufficient most of the time.
+
+* Principles for writing one
+
+** Shape
+
+1. *One idea, one event.* Every zettel is one 30041 with one claim.
+   Notes run 1–3.5K characters; the largest are the =src-= notes
+   (≤7K) because they carry page-anchored claim lists. Nothing is long
+   enough that loading it is a decision.
+2. *The index organizes, the notes connect.* There is exactly one
+   map (the root 30040). It carries no prose of its own; every
+   grouping is a child 30040 whose only job is an ordered list of
+   =a= tags. Reorganizing the kasten is republishing one event.
+3. *Indexes are content-free; index prose becomes an overview
+   section.* All 18 30040s have empty content. Where the index note
+   had prose under a heading, the build emits a =<group>-overview=
+   30041 as the first child. An agent can therefore walk the tree by
+   tags alone and never miss text.
+4. *One long reading path, many short notes.* "The narrative" is a
+   sub-index of 11 short prose sections written as an essay; it is
+   "the thing most will read". Every load-bearing move in it links to
+   the zettel that backs it, so the essay is an entry document that
+   points into the kasten rather than reproducing it.
+5. *A catch-all for the unlisted.* Notes never linked from the index
+   are still published, under a final "Unindexed notes" 30040, so the
+   set of events and the set of notes are identical.
+
+** Metadata is the navigation layer
+
+6. *The header block is the tag list.* =:type:=, =:status:=,
+   =:date:=, =:author:=, =:agent:=, =:tags:=, =:cite:=, =:pages:=,
+   =:doi:=, =:isbn:= are emitted one-to-one as event tags. Nothing
+   an agent needs in order to decide whether to open a note lives
+   only in the content.
+7. *Type is visible in the link.* The d-tag prefix (=src-=,
+   =concept-=, =claim-=, =q-=, =agent-=, =syn-=) and the =type= tag
+   agree, so a reference tells you the epistemic kind of its target
+   before you fetch it: inventory, extraction, judgment, question,
+   provenance, speculation.
+8. *Status is a query, not a checklist.* =count:status= over the
+   author's 30041s returns the review queue directly:
+
+   | status  | count | meaning                              |
+   |---------+-------+--------------------------------------|
+   | drafted |    56 | machine-written, unverified          |
+   | current |    10 | meta and provenance notes            |
+   | open    |     7 | the =q-= notes                       |
+
+   Absorbing the mapping means driving =drafted= to zero. The same
+   filter works as a kind-777 spell, so the review queue is a
+   shareable object.
+9. *Forward links are tags too.* Every ={{ref:x}}= in a body also
+   emits =["ref", x]=. Backlinks are then one filter, no index
+   needed: =ref:claim-formation-observable= returns the 30 notes that
+   cite the hinge claim. This is what lets an agent expand outward
+   from any note without reading neighbours to find out whether they
+   are relevant.
+10. *Provenance is native.* Every note names its author and, for
+    machine-drafted notes, the session agent. One =agent-= note per
+    mapping session records the task, the sources read (with page
+    offsets), the notes written, and numbered "flags for the human".
+    The provenance layer is itself indexed and linked, so "why does
+    this note exist" is a hop, not archaeology.
+
+** Reference discipline
+
+11. *Name-first, bind at publish.* All 1087 refs are =ref:= sibling
+    refs by human slug (=claim-formation-observable=), never event
+    ids or naddrs. In this demo the d-tag was the filename stem.
+    /Superseded 2026-09-04:/ d-tags are now opaque nanoids pinned in
+    =kasten-ids.json= (a stem-as-d-tag collides across an author's
+    kastens, since a coordinate is only =kind:pubkey:d=); the =T= slug
+    is the handle sibling refs name. Rebuilds still land on the same
+    coordinates.
+12. *Every reference carries display text.* ={{ref:x|Title}}= is used
+    without exception. A reader (or an agent) who never dereferences
+    still gets the target's title inline; the reference is legible
+    unresolved. This is the single biggest reason the content reads
+    well at 1K-per-event granularity.
+13. *Every note ends with a Related list that includes the index.*
+    Rendered as an inline label, not a heading, so it rides with its
+    note instead of becoming a sibling section. The Related list is
+    the note's explicit neighbourhood; the =ref= tags are the same
+    list, queryable.
+14. *Dangling links are TODOs.* Six targets are unwritten
+    (=syn-what-to-measure=, =syn-interview-protocol=,
+    =syn-medical-commons-design=, =concept-club-goods=,
+    =concept-associational-commons=, =q-preservation-without-archives=).
+    They are labelled "(yours to write)" in the body and stay
+    unresolved on the wire. The speculation layer ships nearly empty
+    by design; filling it is the human's work.
+
+** Trust and citation
+
+15. *Division of labour follows note types.* The assistant authors
+    inventory (=src-=, =concept-=, =q-=) and drafts the =claim-=
+    notes from the human's own orientation documents; =syn-= is
+    reserved for the human. Type + author together tell you whose
+    judgment you are reading.
+16. *Pointers, never text.* Sources stay external. A =src-= note
+    carries =:cite:=, a printed/PDF page offset, and numbered claims
+    each with a page locator. Quotes are short except for named
+    "hinge quotes", which are given verbatim with dual locators
+    because the whole argument turns on them. Checking a drafted
+    note means following its locators, not re-reading the book.
+17. *Broadcast-clean at write time; redaction is a backstop.* A
+    colleague is a ={{@npub…}}= mention bound at import (8
+    occurrences), working artifacts are named by function ("the
+    literature map"), and the =:file:= key is dropped at build. The
+    build config's substitution list shows what the backstop still
+    had to catch.
+
+** Publishing shape
+
+18. *Dependency order, leaves first.* Events are emitted so every
+    referenced event exists before its referrer; the root comes last.
+    Signing in file order means every coordinate resolves at signing
+    time.
+19. *Signing is the snapshot; broadcast is separate.* The build
+    emits unsigned templates; import signs through the engine or
+    saves one composer draft for review-first; broadcast to the three
+    relays was a further explicit step.
+
+* Reading protocol for an agent
+
+The cheap path, using only the engine's search DSL and single-event
+fetches. Each step is bounded by tags, not content.
+
+1. *Resolve the entry point.* Decode the nevent/naddr; fetch the one
+   event. It is a 30040 with empty content: read its =title=, =T=,
+   =type=, and ordered =a= tags. Cost: ~1K.
+2. *Orient by the meta notes.* The first child is =about=; its =ref=
+   tags name =conventions=, =mission=, =literature-map=. Read those
+   three sections (they explain the type vocabulary, the status
+   lifecycle, and the corpus tiering). Cost: ~8K, and it tells you
+   how to read everything else.
+3. *Choose a branch from the index titles*, not by reading branches.
+   Child 30040 titles are the section names of the map; their =a=
+   tags list note d-tags whose prefixes already tell you the type.
+4. *Histogram before reading.* =k:30041 by:<pubkey> count:type= and
+   =count:status= give the shape of the kasten and the review queue
+   in one call each.
+5. *Read one note, then expand by tags.* Open the section; its =ref=
+   tags are its forward neighbourhood. =ref:<d-tag>= as a filter is
+   its backlink set. =type:question status:open= lists the tensions;
+   =t:<topic>= crosses the type boundary.
+6. *Follow provenance when a claim matters.* The =agent= tag names
+   the session; the =agent-<name>= note lists the sources read and
+   the flags raised. For a =src-= note, the page locators are the
+   verification path.
+7. *Never load the tree whole* unless the task is a full audit. The
+   MCP =tendrl_get_publication= currently returns all 89 sections'
+   content (~253K characters) even though its purpose is the table
+   of contents; see the gaps below.
+
+* What the round trip revealed (gaps)
+
+Things the published artifact shows that the template or pipeline
+should absorb. Ticked when fixed.
+
+- [ ] *=ref= is not a relay-indexable tag.* NIP-01 relays index
+  single-letter tags only; the template promises =["w", topic]= but
+  the build emits =["ref", d-tag]=. Backlinks by filter work inside
+  tendrl (verified) but not as a relay REQ. Emit a single-letter twin
+  (or switch to =w=) so principle 9 holds on the wire.
+- [ ] *=T= slugs truncate mid-word on long titles* and the short-title
+  split misses "Q: …" titles: =q-boundary-sybil= carries
+  =T: q-how-does-a-commons-reconstitute-boundaries-it-cannot-enfor=.
+  Derive =T= from the d-tag when the title has no " — " subtitle, or
+  cut at a word boundary.
+- [ ] *Two vocabularies for authorship.* =claim-= and =q-= notes use
+  =drafted-by:= while =src-=/=concept-= use =author:= + =agent:=.
+  Pick one; the =by:assistant= split the template describes depends
+  on it.
+- [ ] *Narrative and overview sections have no =status=, =author=, or
+  =t= tags* (15 of 88 notes carry only =type: meta=). The prose that
+  most people will read is the least queryable. The build should
+  inherit the index note's header block onto the sections it cuts
+  from it.
+- [ ] *The about section's title is generated* ("Index — … — about").
+  Give overview sections a =title= of their own or reuse the parent's.
+- [ ] *MCP has no tags-only publication read.* =tendrl_get_publication=
+  returns full content for every section; there is no way for an
+  agent to get the TOC (titles, coordinates, tags) without the text.
+  Add a =toc_only= / =depth= mode, and let =tendrl_get_event= return
+  tags without content. Without this, the reading protocol above
+  can only be done through the HTTP API.
+- [ ] *=count:= results carry every event id* in the bucket, which
+  makes a histogram over a large kasten as heavy as the result set.
+  A =count:= without ids (or with a cap) would make step 4 free.
+
+* Related
+
+- [[file:zettel-template.org][zettel-template]] — the portable
+  conventions this kasten instantiates
+- [[file:nostrdown.org][nostrdown spec]] — the ={{ref:}}= layer
+- [[file:idea-backlinks.org][idea-backlinks]] — the derived reverse
+  index that =ref:= filters approximate today
+- [[file:idea-spells.org][idea-spells]] — the review queue as a
+  kind-777 object
+- [[file:../emergentgov/conventions.adoc][emergentgov conventions]] and
+  [[file:../emergentgov/build/tree.txt][the build tree]] — the source
+  kasten and its event manifest
+- =scripts/build-kasten-events.py= — where the gaps above are fixed

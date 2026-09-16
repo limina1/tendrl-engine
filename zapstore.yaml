@@ -1,0 +1,12 @@
+repository: https://github.com/limina1/tendrl-engine
+description: 'A Nostr client prioritizing reading and navigating linked knowledge: Notes, books, wikis.'
+summary: Read, write and navigate knowledge on Nostr.
+tags:
+    - Nostr
+    - knowledge
+    - reading
+    - writing
+license: MIT
+website: https://github.com/limina1/tendrl-engine
+metadata_sources:
+    - github
