@@ -164,6 +164,12 @@ same set — which is exactly the intended "shared space."
    *signing* is wanted, that needs the `SigningController` threaded into the agent
    handler (it's an axum `Extension`, not on `Engine`) and a proper finalize path.
    Get the user's call before building it.
+   **Decided 2026-09-16:** the assistant signs with *its own* key via a named
+   `sign_as` source (never a `sign: bool` that inherits the active identity) —
+   `docs/zettel/decision-assistant-signs-own-key.org`; build plan in
+   `docs/insertions-plan.org` Phase 2. The context-pool decision under
+   "The context model" is superseded in half (set → engine, flags stay web):
+   `docs/zettel/decision-context-set-engine-owned.org`.
 2. **Context model — only snapshot + peek shipped.** The user liked all three
    models (snapshot, live-reference re-resolve, compact-handle-via-tools). We built
    snapshot + a peek/skim affordance. Optional future: a "live reference" mode that

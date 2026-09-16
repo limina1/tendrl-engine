@@ -1,0 +1,90 @@
+#+TITLE: Idea: insertions — reader-attached sections
+#+TYPE: idea
+#+STATUS: plan
+#+DATE: 2026-09-16
+
+* What it means
+
+NKBIP-01 assumes a book is constructed /a priori/: the 30040 index says
+what is in it. A physical book is not like that — it takes post-it
+notes, slips taped between pages, marginalia — matter that is /attached
+to a place/ without being /part of the structure/, and that an editor
+may later fold in. Highlights (9802) quote a place; comments (1111)
+discuss it; nothing yet /adds structured text/ at it.
+
+An *insertion* is a kind-30041 section carrying NIP-22's root/parent
+anchor tags (=A=/=K=/=P= for the publication, =a=/=k=/=p= for the section
+it attaches to) plus one new tag, =["insert", "before"|"after"]=, that
+turns a margin /annotation/ into a sequence /insertion/. Spec:
+[[file:../../nips/NKBIP-01-insertions.org][NKBIP-01 insertions extension]].
+
+The general thing this names: *a reader-curated collection that is not
+yet official structure*. The context pool, a saved chat, an
+assistant-synthesized zettel, a post-it — the code has treated each as
+its own ad-hoc mechanism. Insertions are the first one with a wire
+format.
+
+* Data
+
+- 30041 + =A=/=K=/=P= + =a=/=k=/=p= (+ optional =e= version pin, as 9802
+  does) + optional =insert=. All within NKBIP-01's "additional tags MAY
+  be included". No new kind.
+- Discovery: ={"kinds":[30041], "#A":[coordinate]}= — the comment
+  loader's filter shape; =A= is a coordinate, not 64-hex, so nostrdb
+  treats it as an ordinary tag.
+- Promotion: NKBIP-01 as written — the owner republishes the 30040 with
+  a new =a= tag (=auto-update= governs followers); anyone else publishes
+  a derivative index (=p= + =E=). The insertion event never changes.
+- Standalone notes (a kasten): root = the note; promotion = the note's
+  author refs it, or it enters a collection.
+
+* Representation (engine)
+
+- =src/publication/insertion.rs= — pure: parse anchor tags, emit them,
+  classify annotation vs insertion, compute promotion slot from
+  =insert= + the parent's index position.
+- =build_insertion_template= beside =build_highlight_template=
+  (=src/discussions.rs=): the same three-family shape — the anchor is
+  a =HighlightSource::Event=-like target, but the /content is new/.
+- =load_insertions(root)= as a pass parallel to the publication tree
+  loader; folds into the tree stream as pending nodes.
+- =promote(insertion, position)= → the new 30040 template (own) or a
+  derivative 30040 (foreign), through the existing publish path.
+- Assistant-authored: signed by the assistant slot
+  ([[file:decision-assistant-signs-own-key.org][decision]]); =by:assistant=
+  filters them.
+
+* UI/UX
+
+- Reader: pending insertions render in place (after/before their
+  parent, or in the margin for annotations), visibly distinct from
+  indexed sections — the "taped in" affordance. A curator action
+  /promote/ on one builds the new index and opens the publish flow.
+- The *zettel bubble*: from a focused section, "write more from this"
+  → engine assembles context (the section, siblings, resolved refs,
+  HNSW neighbours) → one =run_turn= with a structured-output schema
+  shaped like =ComposeState= → an insertion template signed by the
+  assistant → appears anchored, pending, in the reader. Review-first
+  variant lands in =DraftStore= instead.
+- Whose insertions load: own + assistant + explicit pubkeys. No WoT.
+
+* Open questions
+
+- Tag name =insert= — fine, or single-letter for relay indexing?
+  Position is never queried, so a word is the honest choice.
+- Do promoted insertions keep their anchor tags? Default yes — they
+  record that the section entered by insertion.
+- Several insertions at one position: =created_at= order, curator
+  resolves at promotion.
+- Span anchoring stays out — same problem as
+  [[file:idea-annotation-anchoring.org][annotation anchoring]].
+
+* Related
+- [[file:index.org][Index]]
+- [[file:../insertions-plan.org][Plan: insertions, context set & the assistant]]
+- [[file:feat-discussions.org][Discussions & highlights]] — the two siblings
+- [[file:feat-assistant.org][AI assistant]] — the zettel bubble's producer
+- [[file:decision-context-set-engine-owned.org][Decision: context set is engine-owned]]
+- [[file:decision-assistant-signs-own-key.org][Decision: the assistant signs with its own key]]
+- [[file:idea-annotation-anchoring.org][Annotation anchoring]]
+- [[file:idea-version-semantics.org][Version semantics]] — promotion is a republish

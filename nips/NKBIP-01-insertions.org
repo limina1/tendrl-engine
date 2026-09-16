@@ -1,0 +1,224 @@
+#+TITLE: NKBIP-01 Insertions Extension
+#+SUBTITLE: Reader-attached sections — post-its, marginalia, inserted pages
+#+STATUS: draft — optional — tendrl extension to NKBIP-01
+#+DATE: 2026-09-16
+
+This document is the /delta/ — what insertions add to the base spec
+([[file:nips/nkbip01.md][NKBIP-01]]). It changes nothing in the base: an
+insertion is a plain kind-30041 section carrying tags the base already
+permits ("Additional tags relevant to the specific content type MAY be
+included in both index and section events"). Clients that do not
+implement this extension see an ordinary section they simply never
+reach through an index.
+
+* Abstract
+
+NKBIP-01 publications are constructed /a priori/: a 30040 index lists
+its sections in order, and a section exists in the publication because
+the index says so. A physical book is not like that. It accumulates
+reader-supplied matter — post-it notes, slips taped between pages,
+marginalia — that is anchored to a place in the book without being part
+of the book's structure, and that a later editor may fold in.
+
+Nostr already has the two ends of this: highlights (NIP-84, kind 9802)
+/quote/ a place, comments (NIP-22, kind 1111) /discuss/ a place. This
+extension adds the third: an *insertion* is new, structured section
+text /attached to/ a place in a publication, by anyone, which the
+publication's curator can later promote into its structure by ordinary
+NKBIP-01 means.
+
+* Motivation
+
+Three needs, one mechanism:
+
+- *Reader-authored matter.* A reader wants to write a page that belongs
+  next to chapter 4 — a worked example, a rebuttal, a summary — without
+  owning the book and without it being a mere comment.
+- *Living documents.* A zettelkasten published as NKBIP-01 events has an
+  "officially in the structure" tier and needs an "attached, pending"
+  tier — notes written against existing notes that have not yet been
+  woven into any index.
+- *Machine-authored derivations.* An assistant asked to "write more
+  notes from this one" produces sections that belong /here/, signed by
+  its own key, that the human curates in later. An insertion is the
+  correct shape for that output: anchored, attributed, promotable — not
+  an orphan draft.
+
+* The insertion event
+
+An insertion is a *kind-30041 event* meeting every NKBIP-01 section
+requirement (=d=, =title=, displayable =content=), plus anchor tags in
+NIP-22's vocabulary:
+
+| tag                                   | req  | meaning                                                  |
+|---------------------------------------+------+----------------------------------------------------------|
+| =["A", "30040:<pk>:<d>", <relay>]=    | MUST | root scope — the publication this attaches to            |
+| =["K", "30040"]=                      | MUST | root kind                                                |
+| =["P", <root pubkey>, <relay>]=       | MUST | root author                                              |
+| =["a", "<kind>:<pk>:<d>", <relay>]=   | MUST | parent — the section (30041) or index (30040) it attaches to |
+| =["k", "30041"]= or =["k", "30040"]=  | MUST | parent kind                                              |
+| =["p", <parent pubkey>, <relay>]=     | MUST | parent author                                            |
+| =["e", <parent event id>, <relay>]=   | MAY  | pins the parent /version/ written against (as 9802 does) |
+| =["insert", "before" or "after"]=     | MAY  | position claim — see /Annotation vs insertion/           |
+
+Uppercase tags carry the root scope, lowercase the immediate parent,
+exactly as NIP-22 specifies for comments. A top-level attachment (to
+the index itself: front matter, an appendix) has parent = root, so =a=
+equals =A= and =k= is =30040= — again NIP-22's existing rule for
+top-level comments.
+
+The insertion's own =d= tag is opaque, as for any section; its title
+slug (=T=) is what nostrdown =ref:= resolution keys on, unchanged.
+
+* Annotation vs insertion
+
+The =insert= tag is the only new vocabulary, and it draws the one
+distinction that matters:
+
+- *Without* =insert=, the event is an *annotation*: attached to its
+  parent, no claim about sequence. A margin note. Clients render it
+  alongside the parent.
+- *With* =["insert", "after"]= (or =before=), the event is an
+  *insertion* proper: it claims a place in the reading order relative
+  to its parent's entry in the containing index. A slip between pages.
+  Clients MAY render it in sequence; a curator promoting it knows
+  where it goes without asking.
+
+When the parent is the index itself, =before= means "first child" and
+=after= means "last child".
+
+* Discovery
+
+Insertions are, by construction, not in the index. They are found the
+way comments are found — by root-scope filter:
+
+#+begin_src json
+{ "kinds": [30041], "#A": ["30040:<pk>:<d>"] }
+#+end_src
+
+optionally narrowed by =authors=. The =A= value is a coordinate, not a
+64-hex id, so this is an ordinary tag filter on every relay and in
+nostrdb.
+
+Which authors' insertions a client loads is *policy, not protocol*. A
+sensible default is the reader's own, their assistant's, and any
+pubkeys they have explicitly asked for; web-of-trust expansion is out
+of scope here.
+
+* Promotion
+
+Promotion makes an insertion part of the structure. It is *entirely
+NKBIP-01 as written* — this extension adds no promotion event:
+
+- *By the publication's author:* republish the 30040 with a new =a=
+  tag for the insertion's coordinate, placed per its =insert= hint (or
+  wherever the curator chooses for an annotation). The =auto-update=
+  tag already governs whether readers follow the new version.
+- *By anyone else:* publish a /derivative/ index — NKBIP-01's own
+  =p= + =E= to the original — that includes the insertion. The reader
+  who taped in the pages publishes their own edition of the book.
+
+The insertion event itself is *unchanged* by promotion. Its author's
+signature stands; its anchor tags MAY remain (they are then redundant
+for structure but record that this section entered the book by
+insertion — provenance worth keeping). A client rendering a
+publication SHOULD treat a section reached through the index as
+promoted, and an insertion found only through the =#A= pass as
+pending, and distinguish the two.
+
+Promotion never requires re-authoring. That is the reason this is a
+30041 and not a 1111: a comment would have to be rewritten as a
+section by the curator, which either breaks provenance (the curator's
+signature replaces the writer's) or duplicates the content.
+
+* Standalone notes
+
+A note that lives in no index (a zettel in a kasten) can still take
+insertions. Root = the note itself: =A= is =30041:<pk>:<d>=, =K= is
+=30041=, parent = root. Discovery and rendering are identical.
+Promotion in a kasten has two forms, both pre-existing: the note's
+author references the insertion (=ref:= / =[[ ]]= in their own text),
+or it enters a 30040 collection.
+
+* Relationship to comments and highlights
+
+| kind        | what it does to a place    | content is           | promotable?                |
+|-------------+----------------------------+----------------------+----------------------------|
+| 9802        | /quotes/ existing text     | the excerpt          | no — nothing to promote    |
+| 1111        | /discusses/ it             | conversational       | not without re-authoring   |
+| 30041+anchor| /adds/ structured text     | a section            | yes, by an =a= tag         |
+
+Three members of one family, all anchored with the same uppercase/
+lowercase scope vocabulary. A comment may root at an insertion; a
+highlight may quote one. Nothing new is needed for either.
+
+* Assistant-authored insertions
+
+An insertion signed by an assistant's own key is the intended output
+of "write more notes from this one". It is anchored (it knows where
+it belongs), attributed (the signature says who wrote it — queryable
+as =by:assistant=), and promotable (the human folds it in by
+republishing the index, or leaves it pending forever). No draft-review
+step is needed for provenance; review, where wanted, is a quality
+gate only.
+
+An assistant MUST NOT sign an insertion with the user's key. The
+distinction this extension makes visible — /attached/ vs /in the
+structure/ — is only trustworthy if the signature on the attached
+thing is honest.
+
+* Out of scope
+
+- *Span anchoring.* This extension anchors to a section, not to a
+  span within it. The =offset= / =context= tags tendrl uses on 9802s
+  could be carried on an insertion identically; the re-anchoring
+  problem across versions is the same one highlights have, and is
+  treated in [[file:../docs/zettel/idea-annotation-anchoring.org][annotation anchoring]].
+- *Deletion / retraction.* NIP-09 applies to an insertion as to any
+  event.
+- *Ordering among several insertions at the same position.* Clients
+  SHOULD order by =created_at=; curators resolve the rest at
+  promotion.
+
+* Worked example
+
+A reader adds a worked example after "The Farmer and the Snake":
+
+#+begin_src json
+{
+  "kind": 30041,
+  "pubkey": "<reader pk>",
+  "tags": [
+    ["d", "k3x9q2m7"],
+    ["title", "A modern reading of the Farmer and the Snake"],
+    ["A", "30040:<aesop pk>:aesop's-fables-by-aesop", "wss://thecitadel.nostr1.com"],
+    ["K", "30040"],
+    ["P", "<aesop pk>", "wss://thecitadel.nostr1.com"],
+    ["a", "30041:<aesop pk>:aesop's-fables-by-aesop-the-farmer-and-the-snake", "wss://thecitadel.nostr1.com"],
+    ["k", "30041"],
+    ["p", "<aesop pk>", "wss://thecitadel.nostr1.com"],
+    ["e", "<section event id>", "wss://thecitadel.nostr1.com"],
+    ["insert", "after"],
+    ["client", "tendrl"]
+  ],
+  "content": "The fable is usually read as a warning against misplaced pity. ..."
+}
+#+end_src
+
+Any NKBIP-01 reader that loads the fables index does not see this.
+One that implements this extension runs the =#A= pass, finds it,
+and renders it after the Farmer and the Snake, marked as inserted.
+Aesop (or the reader, as a derivative) republishes the index with
+=["a", "30041:<reader pk>:k3x9q2m7", …]= in that slot, and it is a
+chapter.
+
+* Client requirements (summary)
+
+- Writers MUST emit =A=/=K=/=P= and =a=/=k=/=p=; MUST NOT emit =insert=
+  with any value other than =before= / =after=.
+- Readers implementing this extension SHOULD run the =#A= discovery
+  pass when loading a publication and MUST distinguish pending
+  insertions from indexed sections in the rendering.
+- Curators promoting an insertion MUST do so by NKBIP-01 index
+  republication (own or derivative) and MUST NOT re-author the
+  insertion's content under their own key.

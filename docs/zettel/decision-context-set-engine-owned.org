@@ -1,0 +1,59 @@
+#+TITLE: Decision: The Context Set Is Engine-Owned
+#+TYPE: decision
+#+STATUS: current
+#+DATE: 2026-09-16
+
+* The decision
+
+The curated reference set the assistant works from — the items with a
+=source_addr= / =source_event_id=, their =content= and any edits, the
+original-snapshot fields used for divergence detection — is *owned by
+the engine* as a named, persisted, addressable object. The web keeps
+only what is genuinely view state: the routing flags (=in_context= /
+=in_compose= / =held=), origin, expansion, ordering in a panel.
+
+This *partially supersedes* the earlier call recorded in
+=docs/ai-assistant-status.md= ("the source of truth is the web's
+=ContextItem= pool"). The flags half of that reasoning stands; the set
+half is reversed. (User's call, 2026-09-16.)
+
+* Why
+
+- *Two owners today.* The web pool is source of truth, yet
+  =add_to_context= is an /engine/ tool — so the assistant cannot add to
+  context without a browser tab open to "fold in" its own proposal,
+  and =syncContext()= would clobber an engine-side write. One object,
+  two writers, one of them blind.
+- *The terminal path cannot see it.* The MCP =tendrl_get_context= tool
+  returns a /count/, because the engine only ever receives a flattened
+  ={title, context_content}= projection. An external agent (Claude
+  Code, Codex over MCP) — which is how a subscription harness reaches
+  tendrl without tendrl holding any credential — cannot read the set
+  the user curated.
+- *Not a unit.* The set cannot be named, saved, resumed, or handed
+  between surfaces; it lives and dies with a tab.
+- *The boundary rule.* A curated set of addressable references plus
+  derived/edited content /is/ structured data derived from events —
+  Rust's side. The flags are ephemeral interaction state — the web's.
+  The earlier decision conflated the two because one TS type
+  (=ContextItem=, =web/src/lib/types.ts=) holds both.
+
+* Shape (sketch — the plan owns detail)
+
+=ContextSet { id, name, entries: Vec<ContextEntry> }=, persisted under
+=<data_dir>/context/=; =ContextEntry= = source (addr | id | none) +
+content + edited flag + original snapshot. Endpoints under
+=/api/v1/context=. =chat.rs= reads the active set instead of receiving a
+push; =add_to_context= writes to it directly; the web subscribes and
+overlays its flags. =PUT /api/v1/chat/context= and =syncContext()= go.
+
+Observation, not requirement: a saved set is an ordered list of =a=
+references — structurally a 30040 without book-intent. A future
+"publish this context set as a collection" is one builder away.
+
+* Related
+- [[file:index.org][Index]]
+- [[file:feat-assistant.org][AI assistant]]
+- [[file:idea-insertions.org][Insertions]] — the same "curated, not yet official" object with a wire format
+- [[file:../insertions-plan.org][Plan]]
+- [[file:decision-assistant-signs-own-key.org][Decision: the assistant signs with its own key]]

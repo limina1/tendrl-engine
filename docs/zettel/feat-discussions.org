@@ -168,6 +168,20 @@ acceptance.
   hbr.coracle.social with a thecitadel-only relay config: parent 404 →
   200 once the comment is in the store; thread pulled from the hint.
 
+* The third member: insertions (spec'd, not built)
+
+Highlights /quote/ a place and comments /discuss/ it; an *insertion*
+/adds structured text/ at it — a kind-30041 section carrying the same
+uppercase/lowercase root/parent anchors (=A=/=K=/=P=, =a=/=k=/=p=) plus an
+optional =["insert", "before"|"after"]= that turns a margin annotation
+into a sequence insertion. Discovery is the comment loader's =#A=
+filter; promotion is plain NKBIP-01 index republication (own, or a
+derivative =p= + =E= index for a book you don't own) — the insertion
+event never changes, so provenance holds. That last property is why it
+is a 30041 and not a 1111: a comment can't be promoted without
+re-authoring. Spec: [[file:../../nips/NKBIP-01-insertions.org][NKBIP-01
+insertions extension]]; design: [[file:idea-insertions.org][insertions]].
+
 * Gaps / open edges
 
 - External-id highlights have no consumer surface yet — nothing lists
@@ -184,6 +198,7 @@ acceptance.
 - [[file:idea-external-source-highlights.org][External-source highlights → citations]]
 - [[file:idea-citations.org][Citations (kind 30161)]]
 - [[file:idea-annotation-anchoring.org][Annotation anchoring]]
+- [[file:idea-insertions.org][Insertions]] — the third member of the family
 - [[file:idea-event-badges.org][Event badges]]
 - [[file:feat-ui-patterns.org][UI patterns]] — wire preview, modal yield
 - [[file:feat-publishing.org][Publishing]] — signing-is-the-snapshot

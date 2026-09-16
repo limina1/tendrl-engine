@@ -1,0 +1,219 @@
+#+TITLE: Insertions, the Context Set & the Assistant — Design & Implementation Plan
+#+DATE: 2026-09-16
+#+STATUS: PLAN (branch design/insertions-context)
+
+Three pieces of work that share one root cause — /reader-curated
+collections that are not yet official structure/ — and therefore one
+plan. Each could ship alone; together they make the "write more notes
+from this one" loop coherent end to end, on both surfaces (in-app and
+external agent over MCP).
+
+* Where we are
+
+Verified against the tree on 2026-09-16:
+
+- *The in-app agent is built.* =src/tools.rs= has a 15-tool catalog
+  (=catalog()=, =dispatch()=, =ToolPolicy= / =ToolCategory=) including
+  =add_to_context=, =propose_section=, =edit_section=, =save_draft=,
+  =publish=; =chat_agent_handler= (=src/api.rs=, =POST /api/v1/chat/agent=,
+  SSE) runs the loop server-side. Design: =docs/ai-tools-architecture.md=;
+  status: =docs/ai-assistant-status.md=. Branch =ai-context-tools= holds
+  one unmerged docs commit (=5a84022=); the code is on master.
+- *The MCP server is a stale mirror.* =scripts/tendrl-mcp.py= (stdio,
+  =TENDRL_API= → =:3030=) hand-maintains its own 12-tool table and
+  dispatch. It lacks =save_draft=; its =tendrl_get_context= (≈l.408)
+  returns a /count string/, not the notes; its =tendrl_publish= forwards
+  a =sign= boolean (≈l.434). Two catalogs, drifted.
+- *Context is web-owned.* =web/src/lib/types.ts::ContextItem= (≈l.378)
+  holds both the set (=source_addr=, =content=, =original_*=) and the
+  flags (=in_context= / =in_compose= / =held=); =syncContext()= pushes a
+  ={title, context_content}= projection via =PUT /api/v1/chat/context=
+  into =chat.rs::injected_context=. The status doc records this as a
+  decision; [[file:zettel/decision-context-set-engine-owned.org][reversed
+  in half]] on 2026-09-16.
+- *Signing is a boolean.* =PublishRequest.sign: bool= (=src/api.rs=
+  ≈l.5898) signs as the /active/ identity. The assistant slot exists
+  (=identity.rs::store_last_assistant=, ≈l.603) but no publish path can
+  target it. Status doc open item 1 says "get the user's call" —
+  [[file:zettel/decision-assistant-signs-own-key.org][given]].
+- *NKBIP-01 is a priori.* Sections exist in a publication because the
+  30040 lists them. Reader-attached matter has no wire format; comments
+  and highlights are the nearest kinds and neither is promotable.
+  Spec drafted: [[file:../nips/NKBIP-01-insertions.org][NKBIP-01 insertions]].
+- *Subscription harnesses.* The status doc records that the OAuth /
+  claude.ai-login path was explored and dropped (API key only). MCP is
+  how a user's own Claude Code / Codex subscription reaches tendrl —
+  the external harness brings its credential; tendrl holds none. The
+  in-app path stays API-key.
+
+* Design decisions
+
+** D1 — One root cause, one object family
+The context set, an insertion, a saved chat and an assistant-synthesized
+zettel are all "curated, not official". Insertions get a wire format;
+the context set gets engine ownership; both land in the same store
+(=DraftStore= for review-first, signed-by-assistant for accumulate).
+
+** D2 — Flags web, set engine
+Per the [[file:zettel/decision-context-set-engine-owned.org][decision]].
+=ContextItem= splits: =ContextEntry= (engine, persisted) + a web overlay
+of flags keyed by entry id. =syncContext()= and =PUT /chat/context= are
+deleted, not deprecated.
+
+** D3 — Signing source is named, never inferred
+Per the [[file:zettel/decision-assistant-signs-own-key.org][decision]].
+=sign_as: "user" | "assistant"= replaces =sign: bool=. Agent tools pin
+=assistant=. The user-facing composer keeps =user= (its existing
+=SigningController= path — engine key / NIP-07 / NIP-55).
+
+** D4 — Insertions are 30041 + NIP-22 anchors, not a new kind
+Per the spec. Promotion is NKBIP-01 index republication; no promotion
+event. Section-level anchoring only; span anchoring deferred to
+[[file:zettel/idea-annotation-anchoring.org][annotation anchoring]].
+
+** D5 — One tool catalog; the engine speaks MCP
+=tools::catalog()= / =dispatch()= are the catalog. The engine exposes an
+MCP endpoint (Streamable HTTP) serving that catalog under =ToolPolicy=.
+=scripts/tendrl-mcp.py= is retired, or reduced to a stdio→HTTP shim
+with /no/ tool table of its own. Claude Code, Codex, and the in-app
+loop then call the same functions; =get_context= cannot be a stub
+because it is =add_to_context='s sibling in one file.
+
+** D6 — The zettel bubble is one call, not an agent
+Context assembled engine-side → one =run_turn= with a structured-output
+schema (=output_config.format=) shaped like =ComposeState= → an insertion
+template → signed by the assistant (or → =DraftStore=). No loop. Uses
+=ClaudeProvider= (API key); never shells to =claude -p= — multi-second
+startup on a popup.
+
+* Phases
+
+** Phase 0 — Spec and kasten (this pass)                                  :small:
+- [X] =nips/NKBIP-01-insertions.org= — delta spec, A7-composition shape
+- [X] =docs/zettel/idea-insertions.org= (STATUS plan)
+- [X] two decision zettels; =feat-assistant= / =feat-discussions= / index updated
+- [X] =docs/ai-assistant-status.md= open item 1 marked decided
+- [ ] user review of the spec's open questions (tag name, kept anchors)
+
+** Phase 1 — Context set, engine-owned                                    :medium:
+- [ ] =src/context.rs=: =ContextSet= / =ContextEntry=, JSON persistence
+      under =<data_dir>/context/=, one "active" set per session
+- [ ] =GET/PUT/DELETE /api/v1/context/:id=, =GET /api/v1/context= (list),
+      =POST /api/v1/context/:id/entries= (add by addr/id or literal)
+- [ ] =chat.rs::to_agent_messages= reads the active set; =injected_context=
+      becomes a view of it, not a copy
+- [ ] =tools::add_to_context= writes to the set directly (no proposal
+      round-trip); =get_context= added to the catalog, returns entries
+- [ ] web: =ContextItem= → =ContextEntry= + flag overlay
+      (=state.svelte.ts=); =ContextPanel= subscribes; =syncContext()= and
+      =PUT /chat/context= removed; one-shot migration of an existing
+      pool into a set on first load
+- [ ] MCP =tendrl_get_context= returns the entries (interim, until Phase 4)
+- [ ] tests: set round-trip; agent add → visible in panel without a
+      browser fold-in; =to_agent_messages= unchanged in shape
+
+** Phase 2 — Named signing source                                         :small:
+- [ ] =PublishRequest.sign: bool= → =sign_as: Option<SigningSource>=
+      (=User= | =Assistant=); =SigningController= resolves =Assistant= to
+      the keyring slot
+- [ ] thread the controller into =chat_agent_handler= (axum Extension →
+      handler arg; status-doc note)
+- [ ] =tools::publish= gains sign-capability pinned to =Assistant=;
+      category stays =Publish= (opt-in); MCP =tendrl_publish= drops =sign=
+- [ ] =finalize_publish= path for assistant-signed events: ingest,
+      local-until-broadcast, same as user events
+- [ ] tests: an agent publish can never carry the user's pubkey; a
+      user publish never the assistant's
+
+** Phase 3 — Insertions                                                    :medium:
+- [ ] =src/publication/insertion.rs= (pure): =InsertionAnchor= parse /
+      emit; =Placement::{Annotation, Before, After}=; promotion slot from
+      =insert= + parent index position
+- [ ] =build_insertion_template= (=src/discussions.rs= neighbour);
+      =POST /api/v1/insertions= + =/preview= (one builder, per the
+      wire-preview pattern)
+- [ ] =load_insertions(root)= — =#A= filter, author policy (own +
+      assistant + explicit); folded into =stream_publication_tree= as
+      pending nodes with placement
+- [ ] =promote=: own → new 30040 template with the =a= tag at the slot;
+      foreign → derivative 30040 (=p= + =E=); both through the existing
+      publish flow
+- [ ] =tools::propose_insertion= (ComposeWrite) and =promote_insertion=
+      (Publish)
+- [ ] reader: pending insertions render in place, distinct; /promote/
+      action; annotations in the margin drawer
+- [ ] search: insertions are 30041s — =has:A= / =A:<coord>= already work;
+      verify =count:A= buckets
+- [ ] tests: anchor round-trip; discovery filter shape; promotion slot
+      arithmetic; foreign promotion yields a derivative index
+
+** Phase 4 — One catalog: the engine speaks MCP                            :medium:
+- [ ] MCP Streamable-HTTP endpoint on the engine (=/mcp=), token-gated
+      like the mobile loopback; serves =tools::catalog()= filtered by
+      =ToolPolicy=; =dispatch()= behind it
+- [ ] Confirm-mode gating applies to MCP calls exactly as to in-app
+      calls (=fetch_from_relays= raises the same intent)
+- [ ] =scripts/tendrl-mcp.py= → retired, or a ~30-line stdio→HTTP shim;
+      =.mcp.json= / =claude mcp add --transport http=; =docs/commands.org=
+      recipe
+- [ ] nostrdb mutex under agent fan-out: measure parallel tool calls;
+      queue or bound if the read lock serializes badly
+
+** Phase 5 — The zettel bubble                                             :medium:
+- [ ] =POST /api/v1/derive/context= — engine assembles from an addr +
+      optional selection: the section, siblings, resolved refs, top-k
+      HNSW neighbours → =Vec<ContextEntry>=
+- [ ] =ClaudeProvider=: =output_config.format= support on =run_turn=
+      (structured outputs; model configurable — currently pinned to
+      Haiku 4.5 in =ClaudeProvider::new=)
+- [ ] =POST /api/v1/derive= — context + intent → one call → =ComposeState=
+      → insertion template(s) anchored at the source → =sign_as:
+      assistant= or =DraftStore= (per a request flag)
+- [ ] reader bubble: anchored overlay (reuse =RichContent= overlay
+      primitives), per-section accept / discard / open-in-composer;
+      generated output persisted /before/ render (buffers unmount on
+      switch); consult =feat-ui-patterns= — no browser dialogs
+- [ ] MCP parity: the same derive endpoint is a tool, so a terminal
+      agent can invoke it against a curated set
+
+** Phase 6 — Docs and kasten                                               :small:
+- [ ] =feat-assistant= → context set, MCP surface, signing: shipped
+- [ ] =feat-discussions= → insertions as the third member: shipped
+- [ ] =idea-insertions= STATUS → implemented; this doc → CURRENT or archive
+- [ ] =docs/ai-assistant-status.md= → superseded pointer or archive
+- [ ] =docs/commands.org= verify recipes (MCP over HTTP, insertion
+      round-trip with nak, =by:assistant= check)
+
+* Order and size
+
+0 → 1 → 2 → 3, then 4 ∥ 5, then 6. Phase 1 first because every later
+phase reads the set; Phase 2 before 3 because assistant-signed
+insertions are the point. Phases 4 and 5 are independent consumers of
+1–3. Roughly: 1 and 3 are the real work; 2 is plumbing with a sharp
+edge (the Extension threading); 4 depends on a Rust MCP transport
+choice; 5 is mostly UI once 1–3 exist.
+
+* Open questions (non-blocking; defaults stated)
+
+- =insert= tag name — default keep; single-letter only if position ever
+  needs relay-side querying (it does not).
+- Promoted insertions keep anchor tags — default yes (provenance).
+- MCP transport crate — evaluate =rmcp= vs a hand-rolled Streamable
+  HTTP handler on axum; default hand-rolled if the crate pulls a
+  runtime we do not already have.
+- Author policy for =load_insertions= — default own + assistant +
+  explicit pubkeys; UI to add a pubkey lives with the reader's
+  discussion filters.
+- Should a saved =ContextSet= be publishable as a 30040 collection —
+  out of scope; noted in the decision zettel.
+- Model for the bubble — make configurable; try Opus 5 on real
+  derivations before settling; latency vs synthesis quality is the
+  user's call.
+
+* Related
+- [[file:zettel/idea-insertions.org][Idea: insertions]]
+- [[file:zettel/decision-context-set-engine-owned.org][Decision: context set is engine-owned]]
+- [[file:zettel/decision-assistant-signs-own-key.org][Decision: the assistant signs with its own key]]
+- [[file:../nips/NKBIP-01-insertions.org][NKBIP-01 insertions extension]]
+- [[file:ai-tools-architecture.md][AI tools architecture]] / [[file:ai-assistant-status.md][status]]
+- [[file:nip42-relay-auth-plan.org][NIP-42 plan]] — the shape this plan follows

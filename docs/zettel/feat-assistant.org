@@ -6,16 +6,21 @@
 A writing assistant with server-side tool-calling over the Nostr corpus: the
 engine runs an agentic loop (Anthropic Messages API, API-key only) in which
 the model searches, reads, curates shared context, composes, fetches from
-relays, and (opt-in) publishes. Shipped per =docs/ai-assistant-status.md=;
-active work continues on branch =ai-context-tools=.
+relays, and (opt-in) publishes. Shipped per =docs/ai-assistant-status.md=.
+Next epoch planned on =design/insertions-context= —
+[[file:../insertions-plan.org][the plan]]: engine-owned context set, named
+signing source, insertions, the engine speaking MCP, the zettel bubble.
 
 * What exists
 - Typed chat fragments (system/user/assistant) with edit mode — collapse to a
   single delimited buffer, edit freely, re-parse on exit (=src/chat.rs=, pure
   state; =sanitize_tool_pairs= keeps tool_use/tool_result pairing valid).
-- Context injection: the web's =ContextItem= pool is the source of truth;
-  =PUT /api/v1/chat/context= pushes resolved notes into the system message
-  (=web/src/lib/components/ContextPanel.svelte=).
+- Context injection (current): the web's =ContextItem= pool is the source of
+  truth; =PUT /api/v1/chat/context= pushes resolved notes into the system
+  message (=web/src/lib/components/ContextPanel.svelte=). *Superseded in
+  half* by [[file:decision-context-set-engine-owned.org][the context-set
+  decision]] (2026-09-16): the set moves to the engine, the routing flags
+  stay web — unbuilt, Phase 1 of the plan.
 - =LLMProvider= trait (=src/llm.rs=): =ClaudeProvider= + =NoopProvider=;
   provider-neutral =ContentBlock= / =AgentMessage= / =run_turn()= types.
 - Agentic loop: =chat_agent_handler= (=src/api.rs=, =POST /api/v1/chat/agent=,
@@ -31,10 +36,24 @@ active work continues on branch =ai-context-tools=.
   API that the assistant cannot invoke as a tool is a gap to log here. The
   assistant should be able to publish, search, and manage knowledge in
   parallel with the user.
-- =publish= is broadcast-only (cannot sign); AI-authored signing is a pending
-  decision. Live-reference and compact-handle context modes unbuilt.
+- =publish= is broadcast-only (cannot sign). AI-authored signing is
+  *decided* — [[file:decision-assistant-signs-own-key.org][the assistant
+  signs with its own key]], via a named =sign_as= source replacing the
+  =sign= boolean — unbuilt, Phase 2 of the plan.
+- Two tool catalogs: =src/tools.rs= (15 tools, the real one) and
+  =scripts/tendrl-mcp.py= (12, hand-copied; =get_context= is a count-only
+  stub, =save_draft= missing). Plan Phase 4 makes the engine speak MCP
+  and retires the copy. This is also how a user's own Claude Code /
+  Codex subscription reaches tendrl — the external harness brings its
+  credential, tendrl holds none (the OAuth path was dropped; API key
+  only for the in-app loop).
+- Live-reference and compact-handle context modes unbuilt.
 
 * Related
 - [[file:index.org][Index]]
 - [[file:feat-search.org][Search]]
 - [[file:feat-compose.org][Compose]]
+- [[file:idea-insertions.org][Insertions]] — the assistant's natural output
+- [[file:decision-context-set-engine-owned.org][Decision: context set is engine-owned]]
+- [[file:decision-assistant-signs-own-key.org][Decision: the assistant signs with its own key]]
+- [[file:../insertions-plan.org][Plan: insertions, context set & the assistant]]

@@ -1,0 +1,58 @@
+#+TITLE: Decision: The Assistant Signs With Its Own Key
+#+TYPE: decision
+#+STATUS: current
+#+DATE: 2026-09-16
+
+* The decision
+
+Events the assistant authors — insertions, sections, anything it
+composes — are signed by the *assistant identity* (the dedicated
+keyring slot, =identity.rs::store_last_assistant=), never by the user's
+active identity. A publish request must therefore *name its signing
+source* (=sign_as: "assistant"=), because the current =sign: bool=
+(=PublishRequest=, =src/api.rs=) resolves to "whoever is active" and
+cannot express intent. Agent-facing tools (the in-engine =publish= tool,
+the MCP =tendrl_publish=) pin the assistant source and expose no way to
+choose the user's.
+
+This resolves the open item "AI-authored signing — decision pending"
+in =docs/ai-assistant-status.md=. (User's call, 2026-09-16.)
+
+* Why
+
+- *Provenance becomes a protocol property.* An assistant-signed event
+  is attributable forever, by anyone, without trusting tendrl's
+  bookkeeping — and =by:assistant= / =by:me= already exist in the search
+  syntax for exactly this. The draft-review gate stops being a
+  provenance mechanism and becomes a quality gate, which is weaker
+  and tunable per workflow.
+- *Impersonation is impossible by construction*, not by policy. With a
+  boolean, a session where the user happens to be the active identity
+  would let an agent publish under the user's pubkey silently.
+- *Consistent with the AUTH carve-out*, not in tension with it.
+  =AuthSigner= signs kind 22242 /as the user/ and nothing else, because
+  relay AUTH must be the user's. Composition is the opposite case: it
+  must /not/ be the user's. Different purpose, different key, each
+  narrow.
+- *It is what the two-identity design was built for.* The assistant
+  slot exists "so it can never" be confused with the user's, and
+  =by:assistant= scoping survives restart. The signing path just never
+  learned to use it.
+
+* Consequences
+
+- =SigningController= is an axum =Extension=, not on =Engine=; the agent
+  handler needs it threaded (already noted in the status doc).
+- =tendrl_publish='s =sign= parameter goes; a pinned assistant source
+  replaces it. =ToolPolicy= keeps =Publish= opt-in.
+- Assistant-authored insertions need no draft step for safety; the
+  =DraftStore= path remains for review-first workflows.
+
+* Related
+- [[file:index.org][Index]]
+- [[file:feat-assistant.org][AI assistant]]
+- [[file:feat-publishing.org][Publishing]] — signing-is-the-snapshot
+- [[file:decision-nip42-auth-as-user.org][Decision: NIP-42 AUTH as the user]] — the opposite narrow case, same principle
+- [[file:idea-insertions.org][Insertions]] — the natural assistant output
+- [[file:decision-context-set-engine-owned.org][Decision: context set is engine-owned]]
+- [[file:../insertions-plan.org][Plan]]
