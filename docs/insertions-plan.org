@@ -225,6 +225,10 @@ Recipe: =docs/commands.org= "Bunker (NIP-46)".
       the assistant keyring blob next to its ncryptsec; boot reconnects.
       Settings → Assistant identity → "Connect a bunker for the assistant".
       Timeouts sized for a phone approval (connect 120 s, sign 60 s).
+      *Verified live*: assistant paired with a =nak bunker=, =sign_as:
+      assistant= publish signed remotely (30040 + 30041 both via
+      =sign_event=), user slot untouched (=engine · none=, 401 on a user
+      sign), disconnect → engine.
 - [X] *Amber direct (NIP-55) for the assistant*: the generic
       signer-register / signer-channel / sign-response / use handlers are
       mounted under =/assistant-identity/= over the assistant controller;
