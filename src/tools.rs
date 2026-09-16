@@ -224,6 +224,12 @@ pub fn catalog() -> Vec<ToolDef> {
             category: ToolCategory::Publish,
             input_schema: schema_publish,
         },
+        ToolDef {
+            name: "sign_draft",
+            description: "Sign a saved draft AS THE ASSISTANT — its own key, never the user's — and store the signed events locally. This is a snapshot, not a broadcast: the publication appears in the feed marked local; sending it to relays is the separate `publish` step the user confirms. Give the `draft_id` returned by save_draft. Disabled by default.",
+            category: ToolCategory::Publish,
+            input_schema: schema_sign_draft,
+        },
     ]
 }
 
@@ -262,6 +268,7 @@ pub async fn dispatch(cx: &ToolCx, name: &str, input: Value) -> Result<Value> {
         "edit_section" => edit_section(engine, input).await,
         "save_draft" => save_draft(engine, input).await,
         "publish" => publish(engine, input).await,
+        "sign_draft" => sign_draft(cx, input).await,
         other => Err(EngineError::BadRequest(format!("unknown tool: {other}"))),
     }
 }
@@ -422,6 +429,16 @@ fn schema_remove_from_context() -> Value {
             "id": { "type": "string", "description": "Context entry id, as returned by get_context or add_to_context." }
         },
         "required": ["id"]
+    })
+}
+
+fn schema_sign_draft() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "draft_id": { "type": "string", "description": "Draft id from save_draft." }
+        },
+        "required": ["draft_id"]
     })
 }
 
@@ -855,6 +872,51 @@ async fn save_draft(engine: &Arc<Engine>, input: Value) -> Result<Value> {
         "draft_id": draft_id,
         "d_tag": compose.d_tag,
         "section_count": compose.sections.len(),
+    }))
+}
+
+/// Sign a saved draft with the assistant's own key and ingest the events
+/// (local-until-broadcast). Never the user's key: `Engine::assistant_signer`
+/// resolves the assistant session only. Decision D11.
+async fn sign_draft(cx: &ToolCx, input: Value) -> Result<Value> {
+    use crate::publication::compose::ComposeState;
+    let draft_id = require_str(&input, "draft_id")?;
+    let store = crate::drafts::DraftStore::new(cx.engine.data_dir())
+        .map_err(|e| EngineError::Other(format!("draft store: {e}")))?;
+    let draft = store
+        .load_draft(draft_id)
+        .map_err(|e| EngineError::NotFound(format!("draft {draft_id}: {e}")))?;
+    let mut compose: ComposeState = (&draft.compose_state).into();
+    let signer = cx
+        .engine
+        .assistant_signer()
+        .map_err(|e| EngineError::Auth(format!("the assistant cannot sign: {e}")))?;
+    let pubkey = signer.pubkey_hex().to_string();
+    let (pub_event, section_events) =
+        crate::publication::build_signed_publication_events_via_signer(
+            &mut compose,
+            &pubkey,
+            &signer,
+        )
+        .await
+        .map_err(|e| EngineError::Other(format!("sign: {e}")))?;
+    let resp = crate::api::finalize_publish(
+        &cx.engine,
+        Some(pub_event),
+        section_events,
+        false,
+        None,
+        true,
+    )
+    .await?;
+    let v = serde_json::to_value(resp.0)?;
+    Ok(json!({
+        "signed_as": "assistant",
+        "pubkey": pubkey,
+        "publication_id": v["publication_id"],
+        "section_ids": v["section_ids"],
+        "ingested": v["ingested"],
+        "note": "Signed and stored locally. Use `publish` with the publication_id to broadcast.",
     }))
 }
 

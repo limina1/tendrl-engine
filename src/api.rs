@@ -5893,14 +5893,74 @@ pub struct PublishRequest {
     /// republish so the 30040 replaces the existing one rather than forking.
     #[serde(default)]
     pub d_tag: Option<String>,
-    /// Whether to sign the events (requires secret key in engine)
+    /// `sign: true` is shorthand for `sign_as: "user"` — kept for callers
+    /// that predate `sign_as`.
     #[serde(default)]
     pub sign: bool,
+    /// Who signs: the user's active source or the assistant's own key.
+    /// Decision: docs/zettel/decision-assistant-signs-own-key.org.
+    #[serde(default)]
+    pub sign_as: Option<SignAs>,
     /// Whether to broadcast to relays after creating
     #[serde(default)]
     pub broadcast: bool,
     /// Specific relays to broadcast to (defaults to configured relays)
     pub relays: Option<Vec<String>>,
+}
+
+/// The named signing source of a publish. A boolean could not say *whose*
+/// key; this can, so an agent-authored event can never silently inherit
+/// the user's identity.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SignAs {
+    User,
+    Assistant,
+}
+
+/// `sign_as` wins; `sign: true` means the user; neither means "not a
+/// publish" (drafts go to /api/v1/drafts).
+fn effective_sign_as(sign: bool, sign_as: Option<SignAs>) -> Result<SignAs, EngineError> {
+    sign_as
+        .or(if sign { Some(SignAs::User) } else { None })
+        .ok_or_else(|| {
+            EngineError::BadRequest(
+                "Publishing writes a signed snapshot; save an unsigned working draft via POST /api/v1/drafts instead."
+                    .into(),
+            )
+        })
+}
+
+fn map_assistant_sign_error(e: crate::signing::SigningError) -> EngineError {
+    match e {
+        crate::signing::SigningError::NoIdentity => EngineError::Auth(
+            "No assistant identity — paste its key under Settings → Assistant".into(),
+        ),
+        crate::signing::SigningError::Locked => EngineError::Locked(
+            "Assistant identity is locked — unlock it under Settings → Assistant".into(),
+        ),
+        other => map_publish_sign_error(other),
+    }
+}
+
+/// Who signs a publish: the user's active source (the controller) or the
+/// assistant's in-process key. Returns the pubkey the templates must carry
+/// and the signer.
+async fn resolve_publish_signer(
+    engine: &AppState,
+    signing: &crate::signing::SigningController,
+    sign_as: SignAs,
+) -> Result<(String, Box<dyn crate::signing::Signer>), EngineError> {
+    match sign_as {
+        SignAs::User => Ok((
+            require_active_pubkey(signing).await?,
+            Box::new(signing.clone()),
+        )),
+        SignAs::Assistant => {
+            let signer = engine.assistant_signer().map_err(map_assistant_sign_error)?;
+            Ok((signer.pubkey_hex().to_string(), Box::new(signer)))
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -5991,7 +6051,7 @@ async fn require_active_pubkey(
 ///
 /// `pub_event` is the 30040 index when present; `None` is the *Notes* case —
 /// the 30041 section events are published standalone, with no index over them.
-async fn finalize_publish(
+pub(crate) async fn finalize_publish(
     engine: &AppState,
     pub_event: Option<Value>,
     section_events: Vec<Value>,
@@ -6198,13 +6258,8 @@ pub async fn publish_handler(
     // not the 30040/30041 section graph. `30040`/absent falls through to the
     // publication path below.
     if let Some(kind) = req.kind.filter(|k| *k != KIND_PUBLICATION_INDEX as u32) {
-        if !req.sign {
-            return Err(EngineError::BadRequest(
-                "Publishing writes a signed snapshot; save an unsigned working draft via POST /api/v1/drafts instead."
-                    .into(),
-            ));
-        }
-        let active_pubkey = require_active_pubkey(&signing).await?;
+        let sign_as = effective_sign_as(req.sign, req.sign_as)?;
+        let (active_pubkey, signer) = resolve_publish_signer(&engine, &signing, sign_as).await?;
         let tags: Vec<TagEntry> = req
             .tags
             .iter()
@@ -6221,12 +6276,12 @@ pub async fn publish_handler(
             &tags,
             req.d_tag.as_deref(),
             &active_pubkey,
-            &signing,
+            signer.as_ref(),
         )
         .await
         .map_err(map_publish_sign_error)?;
 
-        return finalize_publish(&engine, Some(event), vec![], req.broadcast, req.relays, req.sign)
+        return finalize_publish(&engine, Some(event), vec![], req.broadcast, req.relays, true)
             .await;
     }
 
@@ -6268,22 +6323,17 @@ pub async fn publish_handler(
     // Publishing writes a SIGNED snapshot to the db. Unsigned working drafts
     // are saved via POST /api/v1/drafts — we never ingest placeholder-sig
     // events. The signature is the snapshot; nostrdb keeps every version.
-    if !req.sign {
-        return Err(EngineError::BadRequest(
-            "Publishing writes a signed snapshot; save an unsigned working draft via POST /api/v1/drafts instead."
-                .into(),
-        ));
-    }
+    let sign_as = effective_sign_as(req.sign, req.sign_as)?;
 
     // Sign through the SigningController — engine in-process for the engine
     // source, or the registered external signer (NIP-07/NIP-46) over the SSE
     // back-channel. The handler is unaware of the source.
-    let active_pubkey = require_active_pubkey(&signing).await?;
+    let (active_pubkey, signer) = resolve_publish_signer(&engine, &signing, sign_as).await?;
     let (pub_event, section_events) =
         crate::publication::build_signed_publication_events_via_signer(
             &mut compose,
             &active_pubkey,
-            &signing,
+            signer.as_ref(),
         )
         .await
         .map_err(map_publish_sign_error)?;
@@ -6302,7 +6352,7 @@ pub async fn publish_handler(
             section_events,
             req.broadcast,
             req.relays,
-            req.sign,
+            true,
         )
         .await;
     }
@@ -6313,7 +6363,7 @@ pub async fn publish_handler(
         section_events,
         req.broadcast,
         req.relays,
-        req.sign,
+        true,
     )
     .await
 }
@@ -6519,8 +6569,11 @@ pub struct PublishBlocksRequest {
     /// `["e", ..., "fork"]`) pointing at this source publication.
     pub source_publication_addr: Option<NAddrPayload>,
     pub source_publication_event_id: Option<String>,
+    /// `sign: true` = `sign_as: "user"` (see `PublishRequest`).
     #[serde(default)]
     pub sign: bool,
+    #[serde(default)]
+    pub sign_as: Option<SignAs>,
     #[serde(default)]
     pub broadcast: bool,
     pub relays: Option<Vec<String>>,
@@ -6595,12 +6648,7 @@ pub async fn publish_blocks_handler(
 ) -> Result<impl IntoResponse, EngineError> {
     // Publishing writes a SIGNED snapshot; unsigned working drafts go to
     // POST /api/v1/drafts. No placeholder-sig events ever enter the db.
-    if !req.sign {
-        return Err(EngineError::BadRequest(
-            "Publishing writes a signed snapshot; save an unsigned working draft via POST /api/v1/drafts instead."
-                .into(),
-        ));
-    }
+    let sign_as = effective_sign_as(req.sign, req.sign_as)?;
 
     let mut state = compose_block_state_from_request(
         req.title,
@@ -6616,12 +6664,12 @@ pub async fn publish_blocks_handler(
     // signer (NIP-07 / NIP-46) over the SSE back-channel. (A prior version
     // inlined an engine-host-only secret chain, so NIP-07 users got unsigned
     // block events — fixed, see docs/bugs.org.)
-    let active_pubkey = require_active_pubkey(&signing).await?;
+    let (active_pubkey, signer) = resolve_publish_signer(&engine, &signing, sign_as).await?;
     let (pub_event, section_events) =
         crate::publication::build_signed_block_publication_events_via_signer(
             &mut state,
             &active_pubkey,
-            &signing,
+            signer.as_ref(),
         )
         .await
         .map_err(map_publish_sign_error)?;
@@ -6632,7 +6680,7 @@ pub async fn publish_blocks_handler(
         section_events,
         req.broadcast,
         req.relays,
-        req.sign,
+        true,
     )
     .await
 }
@@ -8533,11 +8581,16 @@ pub async fn identity_use_source_handler(
                 signer_id: Some(signer_id),
             }
         }
-        // "nip46" is intentionally unsupported — the Nip46 variant has no
-        // bunker transport, so it would register a non-functional signer.
-        // It falls through to the unknown-source error below. Re-add an
-        // arm here (and in IdentitySource::from_config_str) when NIP-46
-        // ships.
+        "nip46" => {
+            let signer_id = req.signer_id.ok_or_else(|| {
+                EngineError::BadRequest(
+                    "nip46 source requires a signer_id — connect a bunker first (POST /identity/bunker/connect)".into(),
+                )
+            })?;
+            IdentitySource::Nip46 {
+                signer_id: Some(signer_id),
+            }
+        }
         other => {
             return Err(EngineError::BadRequest(format!("unknown source: {other}")));
         }
@@ -8553,6 +8606,184 @@ pub async fn identity_use_source_handler(
         _ => session.set_source(new_source),
     }
     Ok(Json(session.status()))
+}
+
+// ---------------------------------------------------------------------------
+// NIP-46 bunker — the engine as a client of a remote signer (src/bunker.rs).
+// Plan D10. Persistence: the keyring's last-identity slot holds
+// {"uri", "client_secret"} under kind "nip46"; boot reconnects from it.
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Deserialize)]
+pub struct BunkerConnectRequest {
+    /// `bunker://<remote-pubkey>?relay=…&secret=…`
+    pub uri: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct BunkerConnectResponse {
+    pub signer_id: String,
+    pub source: &'static str,
+    /// The user's pubkey once the signer answered `get_public_key`; `None`
+    /// while an `auth_url` approval is pending (see `status.auth_url`).
+    pub pubkey: Option<String>,
+    pub status: crate::bunker::BunkerStatus,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct BunkerPersist {
+    uri: String,
+    client_secret: String,
+}
+
+fn persist_bunker(uri: &str, client_secret: &str) {
+    let blob = serde_json::to_string(&BunkerPersist {
+        uri: uri.to_string(),
+        client_secret: client_secret.to_string(),
+    })
+    .unwrap_or_default();
+    tokio::task::spawn_blocking(move || {
+        if let Err(e) = crate::identity::IdentityKeyring::new().store_last_identity("nip46", &blob) {
+            tracing::warn!("bunker: could not persist the pairing to the keyring: {e}");
+        }
+    });
+}
+
+/// Start (or reuse) a bunker for `uri`, run `connect`, and point the active
+/// source at it. On `auth_url` the pairing is kept and the source switched so
+/// a retry (same endpoint, same URI) completes it. Returns the signer id, the
+/// signer, and the connect outcome.
+async fn attach_bunker(
+    signing: &crate::signing::SigningController,
+    uri: crate::nip46::BunkerUri,
+    client_secret: Option<String>,
+) -> Result<
+    (
+        String,
+        crate::bunker::BunkerSigner,
+        Result<String, crate::signing::SigningError>,
+    ),
+    EngineError,
+> {
+    // Retry against a live pairing for the same remote instead of minting a
+    // second transport key (the signer may have just approved the first).
+    let existing = match signing.active_bunker().await {
+        Some(b) if b.uri().remote_pubkey == uri.remote_pubkey => signing
+            .current_source()
+            .signer_id()
+            .map(|id| (id.to_string(), b)),
+        _ => None,
+    };
+    let (id, signer) = match existing {
+        Some(x) => x,
+        None => {
+            let signer = crate::bunker::BunkerSigner::start_over_relays(uri, client_secret)
+                .map_err(map_publish_sign_error)?;
+            let id = signing.register_bunker(signer.clone()).await;
+            (id, signer)
+        }
+    };
+    let outcome = signer.connect().await;
+    match &outcome {
+        Ok(pubkey) => signing.set_source_with_pubkey(
+            crate::identity::IdentitySource::Nip46 {
+                signer_id: Some(id.clone()),
+            },
+            pubkey.clone(),
+        ),
+        Err(crate::signing::SigningError::AuthRequired(_)) => {
+            signing.set_source(crate::identity::IdentitySource::Nip46 {
+                signer_id: Some(id.clone()),
+            })
+        }
+        Err(_) => signing.drop_bunker(&id).await,
+    }
+    Ok((id, signer, outcome))
+}
+
+/// Boot path: reconnect the pairing saved in the keyring.
+pub async fn reconnect_saved_bunker(
+    signing: &crate::signing::SigningController,
+    saved_json: &str,
+) -> Result<String, String> {
+    let saved: BunkerPersist = serde_json::from_str(saved_json).map_err(|e| e.to_string())?;
+    let uri = crate::nip46::BunkerUri::parse(&saved.uri).map_err(|e| e.to_string())?;
+    let (_, _, outcome) = attach_bunker(signing, uri, Some(saved.client_secret))
+        .await
+        .map_err(|e| e.to_string())?;
+    outcome.map_err(|e| e.to_string())
+}
+
+/// POST /api/v1/identity/bunker/connect — pair with a remote signer.
+pub async fn identity_bunker_connect_handler(
+    State(signing): State<crate::signing::SigningController>,
+    Json(req): Json<BunkerConnectRequest>,
+) -> Result<Json<BunkerConnectResponse>, EngineError> {
+    let uri = crate::nip46::BunkerUri::parse(&req.uri)
+        .map_err(|e| EngineError::BadRequest(e.to_string()))?;
+    let (signer_id, signer, outcome) = attach_bunker(&signing, uri, None).await?;
+    let pubkey = match outcome {
+        Ok(pk) => Some(pk),
+        Err(crate::signing::SigningError::AuthRequired(_)) => None,
+        Err(e) => return Err(map_publish_sign_error(e)),
+    };
+    persist_bunker(req.uri.trim(), signer.client_secret());
+    Ok(Json(BunkerConnectResponse {
+        signer_id,
+        source: "nip46",
+        pubkey,
+        status: signer.status(),
+    }))
+}
+
+/// POST /api/v1/identity/bunker/reconnect — re-run `connect` on the active
+/// pairing (after an `auth_url` approval, or a relay hiccup). No body: the
+/// engine holds the URI.
+pub async fn identity_bunker_reconnect_handler(
+    State(signing): State<crate::signing::SigningController>,
+) -> Result<Json<BunkerConnectResponse>, EngineError> {
+    let live = signing
+        .active_bunker()
+        .await
+        .ok_or_else(|| EngineError::Auth("no bunker is the active source".into()))?;
+    let (signer_id, signer, outcome) = attach_bunker(&signing, live.uri().clone(), None).await?;
+    let pubkey = match outcome {
+        Ok(pk) => Some(pk),
+        Err(crate::signing::SigningError::AuthRequired(_)) => None,
+        Err(e) => return Err(map_publish_sign_error(e)),
+    };
+    Ok(Json(BunkerConnectResponse {
+        signer_id,
+        source: "nip46",
+        pubkey,
+        status: signer.status(),
+    }))
+}
+
+/// GET /api/v1/identity/bunker — status of the active bunker, if the active
+/// source is one.
+pub async fn identity_bunker_status_handler(
+    State(signing): State<crate::signing::SigningController>,
+) -> Json<Option<crate::bunker::BunkerStatus>> {
+    Json(signing.active_bunker().await.map(|b| b.status()))
+}
+
+/// POST /api/v1/identity/bunker/disconnect — drop the pairing (keyring too)
+/// and fall back to the engine source.
+pub async fn identity_bunker_disconnect_handler(
+    State(signing): State<crate::signing::SigningController>,
+) -> Result<Json<Value>, EngineError> {
+    if let crate::identity::IdentitySource::Nip46 { signer_id: Some(id) } = signing.current_source()
+    {
+        signing.drop_bunker(&id).await;
+    }
+    signing.set_source(crate::identity::IdentitySource::Engine);
+    tokio::task::spawn_blocking(|| {
+        if let Err(e) = crate::identity::IdentityKeyring::new().clear_last_identity() {
+            tracing::debug!("bunker: keyring clear: {e}");
+        }
+    });
+    Ok(Json(json!({ "disconnected": true, "source": "engine" })))
 }
 
 #[derive(Debug, Deserialize)]
@@ -9137,6 +9368,89 @@ mod chat_api_tests {
         let Json(resp) = chat_reset(State(state.clone())).await;
         assert_eq!(resp.fragment_count, 0);
         assert_eq!(resp.context_count, 1, "reset clears the chat, not the set");
+    }
+
+    /// The two keys must never cross: an assistant publish carries the
+    /// assistant's pubkey, a user publish the user's. Seeds both sessions
+    /// with distinct nsecs and drives `sign_draft` and the user resolver.
+    #[tokio::test]
+    async fn test_sign_as_assistant_and_user_never_cross() {
+        use crate::identity::{encode_nsec, IdentitySession};
+        const USER_SEC: &str = "0000000000000000000000000000000000000000000000000000000000000003";
+        const ASST_SEC: &str = "0000000000000000000000000000000000000000000000000000000000000004";
+
+        let dir = tempfile::tempdir().unwrap();
+        let mut engine = crate::engine::Engine::new(dir.path()).unwrap();
+        let user = Arc::new(Mutex::new(IdentitySession::new()));
+        let user_pk = user
+            .lock()
+            .unwrap()
+            .login_nsec(&encode_nsec(USER_SEC).unwrap())
+            .unwrap();
+        let asst = Arc::new(Mutex::new(IdentitySession::new()));
+        let asst_pk = asst
+            .lock()
+            .unwrap()
+            .login_nsec(&encode_nsec(ASST_SEC).unwrap())
+            .unwrap();
+        assert_ne!(user_pk, asst_pk);
+        engine.set_user_session(user.clone());
+        engine.set_assistant_session(asst);
+        let engine = Arc::new(engine);
+        std::mem::forget(dir);
+
+        // User path resolves the controller's active source.
+        let signing = crate::signing::SigningController::new(user);
+        let (pk, _) = resolve_publish_signer(&engine, &signing, SignAs::User)
+            .await
+            .unwrap();
+        assert_eq!(pk, user_pk);
+        // Assistant path resolves the assistant session — never the user.
+        let (pk, _) = resolve_publish_signer(&engine, &signing, SignAs::Assistant)
+            .await
+            .unwrap();
+        assert_eq!(pk, asst_pk);
+        assert_eq!(effective_sign_as(true, None).unwrap(), SignAs::User);
+        assert_eq!(
+            effective_sign_as(false, Some(SignAs::Assistant)).unwrap(),
+            SignAs::Assistant
+        );
+        assert!(effective_sign_as(false, None).is_err());
+
+        // The tool: save a draft, sign it as the assistant, check the events.
+        let cx = crate::tools::ToolCx {
+            engine: engine.clone(),
+            chat: Arc::new(Mutex::new(ChatState::new())),
+        };
+        let saved = crate::tools::dispatch(
+            &cx,
+            "save_draft",
+            json!({ "title": "Assistant notes", "sections": [{ "title": "One", "content": "written by the assistant" }] }),
+        )
+        .await
+        .unwrap();
+        let draft_id = saved["draft_id"].as_str().unwrap().to_string();
+        let out = crate::tools::dispatch(&cx, "sign_draft", json!({ "draft_id": draft_id }))
+            .await
+            .unwrap();
+        assert_eq!(out["signed_as"], "assistant");
+        assert_eq!(out["pubkey"], asst_pk);
+        assert_ne!(out["pubkey"], user_pk);
+        let pub_id = out["publication_id"].as_str().unwrap();
+        let stored = crate::query::query_by_id(engine.ndb(), pub_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(stored["pubkey"], asst_pk, "the stored 30040 is the assistant's");
+        assert_eq!(stored["kind"], 30040);
+    }
+
+    #[test]
+    fn test_nip46_is_a_config_source_now() {
+        use crate::identity::IdentitySource;
+        assert!(matches!(
+            IdentitySource::from_config_str("nip46"),
+            Some(IdentitySource::Nip46 { signer_id: None })
+        ));
     }
 
     #[tokio::test]

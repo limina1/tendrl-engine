@@ -32,11 +32,12 @@ signing source, insertions, the engine speaking MCP, the zettel bubble.
 - =LLMProvider= trait (=src/llm.rs=): =ClaudeProvider= + =NoopProvider=;
   provider-neutral =ContentBlock= / =AgentMessage= / =run_turn()= types.
 - Agentic loop: =chat_agent_handler= (=src/api.rs=, =POST /api/v1/chat/agent=,
-  SSE); tool catalog + dispatch in =src/tools.rs= (17 tools: search, read,
+  SSE); tool catalog + dispatch in =src/tools.rs= (18 tools: search, read,
   NKBIP-01 views, =fetch_from_relays=, =add_to_context= / =get_context= /
   =remove_from_context= — these write the engine-owned set directly through
   a =ToolCx= (engine + chat handle), no web fold-in — compose-write,
-  =publish=). =ToolPolicy= filters the catalog before the provider call —
+  =sign_draft= (signs a saved draft AS THE ASSISTANT, local-until-broadcast;
+  Publish category, opt-in), =publish= (broadcast by id)). =ToolPolicy= filters the catalog before the provider call —
   default is everything but publish; surfaced in the AI Tools settings tab.
 - Gating reuses the Confirm-mode modals; saved sessions (=src/sessions.rs=);
   editable =prompt.md= system prompt.
@@ -46,10 +47,12 @@ signing source, insertions, the engine speaking MCP, the zettel bubble.
   API that the assistant cannot invoke as a tool is a gap to log here. The
   assistant should be able to publish, search, and manage knowledge in
   parallel with the user.
-- =publish= is broadcast-only (cannot sign). AI-authored signing is
-  *decided* — [[file:decision-assistant-signs-own-key.org][the assistant
-  signs with its own key]], via a named =sign_as= source replacing the
-  =sign= boolean — unbuilt, Phase 2 of the plan.
+- AI-authored signing *shipped* (2026-09-16, plan Phase 2): =sign_draft=
+  signs with =Engine::assistant_signer()= (the assistant session — never
+  the user's key); =/api/v1/publish= takes =sign_as=; the MCP
+  =tendrl_publish= sends =sign_as: assistant= and cannot name the user.
+  Tested: an assistant publish carries the assistant's pubkey, a user
+  publish the user's. [[file:decision-assistant-signs-own-key.org][Decision]].
 - Two tool catalogs: =src/tools.rs= (17 tools, the real one) and
   =scripts/tendrl-mcp.py= (12, hand-copied; =tendrl_get_context= now returns
   the engine set's entries, =save_draft= still missing). Plan Phase 4 makes

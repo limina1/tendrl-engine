@@ -74,6 +74,10 @@ pub enum SigningError {
     Key(#[from] KeyParseError),
     #[error("template / signer mismatch: {0}")]
     Mismatch(String),
+    /// A remote (NIP-46) signer wants the user to approve in a browser first;
+    /// the payload is the URL to open. Retry after approval.
+    #[error("signer needs approval at {0}")]
+    AuthRequired(String),
 }
 
 /// What the caller wants signed. Mirrors NIP-07's `signEvent` input shape
@@ -562,6 +566,11 @@ impl Signer for ExternalSigner {
 pub struct SigningController {
     identity: IdentityHandle,
     registry: Registry,
+    /// Live NIP-46 bunker connections, keyed by signer id. A `Nip46` source
+    /// whose id is here signs through the bunker; otherwise it falls back
+    /// to the SSE registry (a browser-side NIP-46 signer, if one is ever
+    /// registered that way).
+    bunkers: Arc<RwLock<HashMap<String, crate::bunker::BunkerSigner>>>,
 }
 
 impl SigningController {
@@ -569,6 +578,37 @@ impl SigningController {
         Self {
             identity,
             registry: Arc::new(RwLock::new(HashMap::new())),
+            bunkers: Arc::new(RwLock::new(HashMap::new())),
+        }
+    }
+
+    pub fn set_source_with_pubkey(&self, source: IdentitySource, pubkey: String) {
+        self.identity
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .set_source_with_pubkey(source, pubkey);
+    }
+
+    /// Register a bunker connection; returns its signer id.
+    pub async fn register_bunker(&self, signer: crate::bunker::BunkerSigner) -> String {
+        let id = format!("bunker-{}", nanoid::nanoid!(8));
+        self.bunkers.write().await.insert(id.clone(), signer);
+        id
+    }
+
+    pub async fn bunker(&self, signer_id: &str) -> Option<crate::bunker::BunkerSigner> {
+        self.bunkers.read().await.get(signer_id).cloned()
+    }
+
+    pub async fn drop_bunker(&self, signer_id: &str) {
+        self.bunkers.write().await.remove(signer_id);
+    }
+
+    /// The bunker behind the active source, if the active source is one.
+    pub async fn active_bunker(&self) -> Option<crate::bunker::BunkerSigner> {
+        match self.current_source() {
+            IdentitySource::Nip46 { signer_id: Some(id) } => self.bunker(&id).await,
+            _ => None,
         }
     }
 
@@ -668,23 +708,37 @@ impl SigningController {
                 };
                 signer.sign(template).await
             }
-            IdentitySource::Nip07 { signer_id }
-            | IdentitySource::Nip46 { signer_id }
-            | IdentitySource::Nip55 { signer_id } => {
+            IdentitySource::Nip46 { signer_id } => {
                 let signer_id = signer_id.ok_or(SigningError::SignerNotConnected)?;
-                let registered = self
-                    .lookup_by_id(&signer_id)
-                    .await
-                    .ok_or(SigningError::SignerNotConnected)?;
-                let external = ExternalSigner {
-                    signer_id: registered.signer_id.clone(),
-                    pubkey_hex: registered.pubkey.clone(),
-                    caps: registered.caps.clone(),
-                    registry: self.registry.clone(),
-                };
-                external.sign(template).await
+                if let Some(bunker) = self.bunker(&signer_id).await {
+                    return bunker.sign(template).await;
+                }
+                self.sign_external(&signer_id, template).await
+            }
+            IdentitySource::Nip07 { signer_id } | IdentitySource::Nip55 { signer_id } => {
+                let signer_id = signer_id.ok_or(SigningError::SignerNotConnected)?;
+                self.sign_external(&signer_id, template).await
             }
         }
+    }
+
+    /// Route to a signer registered over the SSE back-channel (NIP-07 / NIP-55).
+    async fn sign_external(
+        &self,
+        signer_id: &str,
+        template: EventTemplate,
+    ) -> Result<SignedEvent, SigningError> {
+        let registered = self
+            .lookup_by_id(signer_id)
+            .await
+            .ok_or(SigningError::SignerNotConnected)?;
+        let external = ExternalSigner {
+            signer_id: registered.signer_id.clone(),
+            pubkey_hex: registered.pubkey.clone(),
+            caps: registered.caps.clone(),
+            registry: self.registry.clone(),
+        };
+        external.sign(template).await
     }
 }
 
@@ -722,9 +776,14 @@ impl SigningController {
                 .lock()
                 .ok()
                 .and_then(|s| s.pubkey().map(|p| p.to_string())),
-            IdentitySource::Nip07 { signer_id }
-            | IdentitySource::Nip46 { signer_id }
-            | IdentitySource::Nip55 { signer_id } => {
+            IdentitySource::Nip46 { signer_id } => {
+                let id = signer_id?;
+                if let Some(b) = self.bunker(&id).await {
+                    return b.user_pubkey();
+                }
+                self.registry.read().await.get(&id).map(|s| s.pubkey.clone())
+            }
+            IdentitySource::Nip07 { signer_id } | IdentitySource::Nip55 { signer_id } => {
                 let id = signer_id?;
                 self.registry.read().await.get(&id).map(|s| s.pubkey.clone())
             }

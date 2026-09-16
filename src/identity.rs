@@ -261,6 +261,18 @@ pub fn encode_npub(hex_pubkey: &str) -> Result<String, KeyParseError> {
         .map_err(|e| KeyParseError::Bech32(e.to_string()))
 }
 
+/// Encode a hex secret as `nsec1…` — the inverse of [`decode_nsec`]. Used by
+/// tests that seed a session; production never writes an nsec anywhere.
+pub fn encode_nsec(hex_secret: &str) -> Result<String, KeyParseError> {
+    use bech32::{Bech32, Hrp};
+    let bytes = hex::decode(hex_secret).map_err(|_| KeyParseError::InvalidHex)?;
+    if bytes.len() != 32 {
+        return Err(KeyParseError::InvalidLength);
+    }
+    let hrp = Hrp::parse("nsec").unwrap();
+    bech32::encode::<Bech32>(hrp, &bytes).map_err(|e| KeyParseError::Bech32(e.to_string()))
+}
+
 /// Decode an nsec to hex secret key
 pub fn decode_nsec(nsec: &str) -> Result<String, KeyParseError> {
     use bech32::Hrp;
@@ -722,15 +734,14 @@ impl IdentitySource {
     /// the web calls `/identity/use`. Returns `None` for unknown
     /// strings; caller should fall back to `IdentitySource::Engine`.
     ///
-    /// `nip46` is intentionally NOT parsed: the `Nip46` variant exists
-    /// but has no bunker transport, so selecting it could never produce
-    /// a working signer. Re-add the arm here (and in
-    /// `identity_use_source_handler`) if/when NIP-46 ships.
+    /// `nip46` = a saved bunker pairing: the keyring holds the URI and the
+    /// transport secret; boot reconnects and fills the signer id.
     pub fn from_config_str(s: &str) -> Option<Self> {
         match s {
             "engine" => Some(IdentitySource::Engine),
             "nip07" => Some(IdentitySource::Nip07 { signer_id: None }),
             "nip55" => Some(IdentitySource::Nip55 { signer_id: None }),
+            "nip46" => Some(IdentitySource::Nip46 { signer_id: None }),
             _ => None,
         }
     }
@@ -1120,7 +1131,10 @@ mod tests {
             Some(IdentitySource::Nip55 { signer_id: None })
         ));
         // nip46 has no transport yet — deliberately not parsed.
-        assert!(IdentitySource::from_config_str("nip46").is_none());
+        assert!(matches!(
+            IdentitySource::from_config_str("nip46"),
+            Some(IdentitySource::Nip46 { signer_id: None })
+        ));
         assert!(IdentitySource::from_config_str("bogus").is_none());
     }
 

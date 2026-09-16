@@ -1,0 +1,52 @@
+#+TITLE: Decision: Bunker (NIP-46) — the Engine Is the Client
+#+TYPE: decision
+#+STATUS: current
+#+DATE: 2026-09-16
+
+* The decision
+
+When the user's key lives in a remote signer (nsecbunker, Amber as a
+bunker, =nak bunker=), the *engine* speaks NIP-46 to it — not the
+browser. =src/bunker.rs= holds a =BunkerSigner= behind the existing
+=IdentitySource::Nip46= slot of the =SigningController=; the web only
+pastes the =bunker://= URI once and reads status. Requests are kind-24133
+events to the remote signer's pubkey over the URI's relays, NIP-44 v2
+encrypted (=src/nip44.rs=; no NIP-04 fallback); the protocol half is pure
+(=src/nip46.rs=). A transport keypair is minted per pairing and kept in
+the OS keyring with the URI, so a restart reconnects without re-pasting.
+(User's call, 2026-09-16; plan D10.)
+
+* Why
+
+- *One chokepoint, every purpose.* Because =SigningController= is the
+  seam every caller uses, a bunker-backed source covers publish,
+  comments, highlights — and NIP-42 relay AUTH — with no per-caller
+  work. A browser-side NIP-46 would have left the engine's own signing
+  (AUTH, MCP-driven flows) without a key.
+- *Local-first, headless-capable.* The engine runs without a browser
+  (Emacs client, MCP harness, the Android host). Signing must not
+  depend on a tab being open.
+- *Provenance stays cryptographic.* The bunker signs; the engine verifies
+  every returned event and refuses one whose pubkey differs from what
+  the signer announced — the same "never the wrong key" rule the
+  in-process signer enforces.
+- *Testable without a relay.* The transport is a trait; the full
+  connect / get_public_key / sign_event exchange runs in unit tests
+  against an in-memory responder, including the =auth_url= approval
+  dance. The live check is =nak bunker= on a public relay.
+
+* Consequences
+
+- =auth_url= surfaces as =SigningError::AuthRequired(url)= and in the
+  bunker status; the UI shows the link and a retry. Never a silent hang.
+- The keyring's last-identity slot now has a third kind, ="nip46"=
+  (=ncryptsec= / =npub= before it); =[identity] source = "nip46"= reconnects
+  on boot.
+- NIP-04-only bunkers are unsupported by design.
+
+* Related
+- [[file:index.org][Index]]
+- [[file:feat-identity.org][Identity & signing]]
+- [[file:decision-nip42-auth-as-user.org][Decision: NIP-42 AUTH as the user]] — rides the bunker unchanged
+- [[file:decision-assistant-signs-own-key.org][Decision: the assistant signs with its own key]] — the other half of Phase 2
+- [[file:../insertions-plan.org][Plan]] D10

@@ -32,6 +32,8 @@ import type {
 	PublicationDetail,
 	LazySection,
 	ComposeState,
+	BunkerConnectResponse,
+	BunkerStatus,
 	ContextEntry,
 	ContextItem,
 	ContextSet,
@@ -4375,6 +4377,8 @@ function _createAppState() {
 		loadDiscovery();
 		// The engine-owned context set outlives the tab — pull it on boot.
 		void refreshContext();
+		// A saved bunker pairing reconnects engine-side; show its status.
+		void refreshBunkerStatus();
 		// Engine version for the mode-line / Settings. Fire-and-forget — it's
 		// purely informational, so a failure just leaves the segment hidden.
 		api.getHealth().then((h) => { engineVersion = h.version; engineBranch = h.branch ?? null; }).catch(() => {});
@@ -4822,6 +4826,90 @@ function _createAppState() {
 		}
 	}
 
+	// NIP-46 bunker as the user's signing source. The engine does the
+	// pairing (and keeps the URI + transport key in the keyring); the web
+	// pastes the URI once and shows status.
+	let bunkerStatus: BunkerStatus | null = $state(null);
+
+	async function refreshBunkerStatus() {
+		try {
+			bunkerStatus = await api.bunkerStatus();
+		} catch {
+			bunkerStatus = null;
+		}
+	}
+
+	function applyBunkerResult(r: BunkerConnectResponse) {
+		bunkerStatus = r.status;
+		if (r.pubkey) {
+			myPubkey = r.pubkey;
+			resolveIdentityName(r.pubkey);
+			pushToast('Bunker connected — signing through your remote signer', 'success', 3000);
+		} else if (r.status.auth_url) {
+			pushToast(`Approve tendrl in your signer: ${r.status.auth_url}`, 'pending', 12000);
+		}
+	}
+
+	async function handleSelectBunkerSource(uri: string) {
+		identityError = null;
+		identityLoading = true;
+		try {
+			if (externalSignerTeardown) {
+				externalSignerTeardown();
+				externalSignerTeardown = null;
+			}
+			externalSignerPubkey = null;
+			const r = await api.bunkerConnect(uri.trim());
+			identityStatus = await api.getIdentity();
+			applyBunkerResult(r);
+			if (savedIdentitySource !== 'nip46') {
+				try {
+					await api.snapshotConfig({ identity_source: 'nip46' });
+					savedIdentitySource = 'nip46';
+				} catch (e) {
+					console.warn('[identity] failed to persist nip46 source:', e);
+				}
+			}
+		} catch (e) {
+			identityError = e instanceof Error ? e.message : String(e);
+			pushToast(`Bunker: ${identityError}`, 'error', 5000);
+		} finally {
+			identityLoading = false;
+		}
+	}
+
+	async function handleBunkerReconnect() {
+		identityLoading = true;
+		try {
+			const r = await api.bunkerReconnect();
+			identityStatus = await api.getIdentity();
+			applyBunkerResult(r);
+		} catch (e) {
+			pushToast(`Bunker: ${e instanceof Error ? e.message : String(e)}`, 'error', 5000);
+		} finally {
+			identityLoading = false;
+		}
+	}
+
+	async function handleBunkerDisconnect() {
+		try {
+			await api.bunkerDisconnect();
+			bunkerStatus = null;
+			identityStatus = await api.getIdentity();
+			if (savedIdentitySource === 'nip46') {
+				try {
+					await api.snapshotConfig({ identity_source: 'engine' });
+					savedIdentitySource = 'engine';
+				} catch {
+					/* best effort */
+				}
+			}
+			pushToast('Bunker disconnected', 'info', 2500);
+		} catch (e) {
+			pushToast(`Bunker: ${e instanceof Error ? e.message : String(e)}`, 'error', 5000);
+		}
+	}
+
 	async function handleSelectEngineSource() {
 		try {
 			if (externalSignerTeardown) {
@@ -4890,6 +4978,11 @@ function _createAppState() {
 		get contextEntries() { return contextEntries; },
 		get contextSet() { return contextSet; },
 		refreshContext,
+		get bunkerStatus() { return bunkerStatus; },
+		refreshBunkerStatus,
+		handleSelectBunkerSource,
+		handleBunkerReconnect,
+		handleBunkerDisconnect,
 		get composeSections() { return composeSections; },
 		get heldEntries() { return heldEntries; },
 		findPoolItem,

@@ -18,8 +18,20 @@ without knowing where the key lives.
 - Endpoints: =GET /api/v1/identity= (none / locked / unlocked),
   =/login=, =/lock=.
 - Pluggable =Signer= trait (=src/signing.rs=): =InProcessSigner= (engine
-  ncryptsec) today; NIP-07 (browser extension) is wired for the web; NIP-46
-  is typed but transport-less.
+  ncryptsec); NIP-07 (browser extension) and NIP-55 (Amber, Android) over
+  the SSE registry; *NIP-46 bunker* (2026-09-16) — the engine is the
+  client: =src/bunker.rs= (=BunkerSigner=, relay transport with reconnect),
+  =src/nip46.rs= (URI, request/response, 24133 envelope), =src/nip44.rs=
+  (v2 encryption, spec vectors). Endpoints =POST /api/v1/identity/bunker/
+  connect {uri}= · =/reconnect= · =/disconnect=, =GET /identity/bunker=;
+  the pairing (URI + transport key) persists in the keyring and
+  =[identity] source = "nip46"= reconnects on boot. Settings → Source →
+  "bunker (nip46)" pastes the URI; =auth_url= approvals show a link + retry.
+  [[file:decision-bunker-engine-is-the-client.org][Decision]].
+- Named signing source on publish (2026-09-16): =/api/v1/publish= takes
+  =sign_as: "user" | "assistant"= (=sign: true= = user); the assistant path
+  resolves =Engine::assistant_signer()= — its own session, never the user's.
+  [[file:decision-assistant-signs-own-key.org][Decision]].
 - Web: ncryptsec entry modal; identity badge in the modeline
   (=web/src/lib/identity/=).
 - =AuthSigner= (=src/signing.rs=): the one capability the relay client
@@ -30,7 +42,8 @@ without knowing where the key lives.
   [[file:decision-nip42-auth-as-user.org][decision]].
 
 * Gaps / open edges
-- NIP-46 remote signing has types but no transport.
+- NIP-46: =bunker://= only — the client-initiated =nostrconnect://= (QR)
+  flow is not implemented; NIP-04-only bunkers are unsupported by design.
 - NIP-49 decryption passes official test vectors but may hit edge cases with
   some external implementations (noted in =docs/features.org=).
 

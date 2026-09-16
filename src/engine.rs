@@ -1159,6 +1159,20 @@ impl Engine {
         }
     }
 
+    /// The assistant's own signer — the in-process key from its session.
+    /// `NoIdentity` when no assistant key was pasted; `Locked` when its
+    /// ncryptsec has not been unlocked. Never the user's key.
+    pub fn assistant_signer(
+        &self,
+    ) -> std::result::Result<crate::signing::InProcessSigner, crate::signing::SigningError> {
+        let handle = self
+            .assistant_session
+            .as_ref()
+            .ok_or(crate::signing::SigningError::NoIdentity)?;
+        let mut session = handle.lock().unwrap_or_else(|e| e.into_inner());
+        crate::signing::InProcessSigner::resolve(&mut session, None)
+    }
+
     /// Live assistant pubkey, read from the assistant session. `None` until an
     /// assistant identity is established.
     pub fn assistant_pubkey(&self) -> Option<String> {

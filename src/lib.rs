@@ -52,6 +52,7 @@
 
 pub mod api;
 pub mod bookshelf;
+pub mod bunker;
 pub mod chat;
 pub mod claude_sessions;
 pub mod config;
@@ -69,6 +70,8 @@ pub mod network;
 pub mod nip11;
 pub mod nip19;
 pub mod nip42;
+pub mod nip44;
+pub mod nip46;
 pub mod nostrdown;
 pub mod publication;
 pub mod query;

@@ -763,6 +763,24 @@ export type IdentityState = 'none' | 'watching' | 'locked' | 'unlocked';
 
 export type IdentitySourceKind = 'engine' | 'nip07' | 'nip46' | 'nip55';
 
+/** Status of the NIP-46 bunker behind the active `nip46` source (engine as
+ *  the remote signer's client — src/bunker.rs). */
+export interface BunkerStatus {
+	remote_pubkey: string;
+	relays: string[];
+	connected: boolean;
+	user_pubkey: string | null;
+	/** The signer wants the user to approve in a browser first. */
+	auth_url: string | null;
+}
+
+export interface BunkerConnectResponse {
+	signer_id: string;
+	source: 'nip46';
+	pubkey: string | null;
+	status: BunkerStatus;
+}
+
 export interface IdentityStatus {
 	state: IdentityState;
 	pubkey: string | null;

@@ -10,6 +10,7 @@
 	import { untrack } from 'svelte';
 	import { getAppState } from '$lib/state.svelte';
 	import { nip07, startNip07Watch } from '$lib/identity/nip07.svelte';
+	import { promptText } from '$lib/wm/text-prompt.svelte';
 	import {
 		detectNip55,
 		getSignerApps,
@@ -364,13 +365,22 @@
 	const currentState = $derived(app.identityStatus?.state ?? 'none');
 	const isAutoReconnecting = $derived(app.identityAutoReconnecting);
 
-	async function pickSource(source: 'engine' | 'nip07') {
+	async function pickSource(source: 'engine' | 'nip07' | 'nip46') {
 		if (source === 'engine') {
 			await app.handleSelectEngineSource();
 		} else if (source === 'nip07') {
 			await app.handleSelectNip07Source();
+		} else if (source === 'nip46') {
+			const uri = await promptText({
+				title: 'Connect a bunker (NIP-46)',
+				placeholder: 'bunker://<pubkey>?relay=wss://…&secret=…',
+				hint: 'Paste the URI your remote signer gave you (nsecbunker, Amber, nak bunker). The engine keeps the pairing in the OS keyring.',
+				confirmLabel: 'Connect'
+			});
+			if (uri && uri.trim()) await app.handleSelectBunkerSource(uri);
 		}
 	}
+	const bunker = $derived(app.bunkerStatus);
 
 	async function doLogin() {
 		const v = ncryptsecInput.trim();
@@ -841,8 +851,50 @@
 					/>
 					<span>nip07{nip07.available ? '' : ' (no extension)'}</span>
 				</label>
+				<label class="radio">
+					<input
+						type="radio"
+						name="identity-source"
+						value="nip46"
+						checked={currentSource === 'nip46'}
+						onchange={() => pickSource('nip46')}
+					/>
+					<span>bunker (nip46)</span>
+				</label>
 			</div>
 		</div>
+
+		{#if currentSource === 'nip46'}
+			<div class="settings-row">
+				<span class="settings-label">Bunker</span>
+				<div class="radio-group" style="flex-direction: column; align-items: flex-start; gap: 4px;">
+					{#if bunker}
+						<span class="settings-hint" style="margin: 0;">
+							{bunker.connected ? '● connected' : '○ connecting…'} · signer
+							{bunker.remote_pubkey.slice(0, 12)}… · {bunker.relays.join(', ')}
+							{#if bunker.user_pubkey}· signing as {bunker.user_pubkey.slice(0, 12)}…{/if}
+						</span>
+						{#if bunker.auth_url}
+							<span class="settings-hint" style="margin: 0;">
+								Approval needed:
+								<a href={bunker.auth_url} target="_blank" rel="noopener">open in your signer ↗</a>
+								then <button class="sel-btn" onclick={() => app.handleBunkerReconnect()}>retry</button>
+							</span>
+						{/if}
+					{:else}
+						<span class="settings-hint" style="margin: 0;">no pairing — choose bunker again to paste a URI</span>
+					{/if}
+					<span>
+						<button class="sel-btn" onclick={() => app.handleBunkerReconnect()}>reconnect</button>
+						<button class="sel-btn" onclick={() => app.handleBunkerDisconnect()}>disconnect</button>
+					</span>
+				</div>
+			</div>
+			<p class="settings-hint">
+				Your key stays in the remote signer; tendrl sends each event there to be signed
+				(NIP-44 encrypted, over the bunker's relays). Relay AUTH (NIP-42) goes the same way.
+			</p>
+		{/if}
 
 		{#if currentSource === 'engine' && (currentState === 'locked' || currentState === 'unlocked')}
 			<div class="settings-row">

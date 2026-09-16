@@ -1,4 +1,6 @@
 import type {
+	BunkerConnectResponse,
+	BunkerStatus,
 	BookshelfResponse,
 	Bookshelf,
 	ShelfView,
@@ -1505,6 +1507,29 @@ export interface UseSourceRequest {
 	/** External signer pubkey (hex). Pass when source is external
 	 *  (nip07/nip46/nip55) so /identity status surfaces a non-null pubkey. */
 	pubkey?: string;
+}
+
+// NIP-46 bunker — the engine pairs with a remote signer; the web only
+// pastes the URI and reads status.
+export function bunkerConnect(uri: string) {
+	return fetchJson<BunkerConnectResponse>('/api/v1/identity/bunker/connect', {
+		method: 'POST',
+		body: JSON.stringify({ uri })
+	});
+}
+
+export function bunkerReconnect() {
+	return fetchJson<BunkerConnectResponse>('/api/v1/identity/bunker/reconnect', { method: 'POST' });
+}
+
+export function bunkerStatus() {
+	return fetchJson<BunkerStatus | null>('/api/v1/identity/bunker');
+}
+
+export function bunkerDisconnect() {
+	return fetchJson<{ disconnected: boolean; source: string }>('/api/v1/identity/bunker/disconnect', {
+		method: 'POST'
+	});
 }
 
 export function useIdentitySource(req: UseSourceRequest) {

@@ -96,6 +96,12 @@ url = "2"
 keyring = { version = "3", optional = true }
 bech32 = "0.11"
 chacha20poly1305 = "0.10"
+# NIP-44 v2 (bunker transport encryption): raw ChaCha20 + HMAC + HKDF.
+chacha20 = "0.9"
+hmac = "0.12"
+hkdf = "0.12"
+base64 = "0.22"
+rand = "0.8"
 scrypt = "0.11"
 secp256k1 = { version = "0.29", features = ["global-context"] }
 unicode-normalization = "0.1"

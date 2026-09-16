@@ -157,7 +157,7 @@ impl AuthFailure {
 }
 
 /// One frame-read outcome.
-enum Frame {
+pub(crate) enum Frame {
     Msg(RelayMessage),
     Idle,
     Ended,
@@ -165,7 +165,7 @@ enum Frame {
 }
 
 /// A single relay socket with the NIP-42 state riding on it.
-struct RelayConn {
+pub(crate) struct RelayConn {
     ws: WsStream,
     /// URL as given by the caller (for logs / results).
     url: String,
@@ -186,7 +186,7 @@ struct RelayConn {
 }
 
 impl RelayConn {
-    async fn connect(url: &str, auth: RelayAuth) -> std::result::Result<Self, String> {
+    pub(crate) async fn connect(url: &str, auth: RelayAuth) -> std::result::Result<Self, String> {
         let ws = connect_bounded(url).await?;
         let normalized = crate::relay_url::normalize_relay_url(url);
         let tag_url = if normalized.is_empty() {
@@ -210,7 +210,7 @@ impl RelayConn {
         self.auth.permits(&self.tag_url)
     }
 
-    async fn send(&mut self, msg: Value) -> std::result::Result<(), String> {
+    pub(crate) async fn send(&mut self, msg: Value) -> std::result::Result<(), String> {
         self.ws
             .send(Message::Text(msg.to_string().into()))
             .await
@@ -220,7 +220,7 @@ impl RelayConn {
     /// Next parsed frame: anything queued during an AUTH wait first, then
     /// the socket (skipping non-text and unparsable frames), bounded by
     /// `idle`.
-    async fn next(&mut self, idle: Duration) -> Frame {
+    pub(crate) async fn next(&mut self, idle: Duration) -> Frame {
         if let Some(m) = self.pending.pop_front() {
             return Frame::Msg(m);
         }
@@ -315,7 +315,7 @@ impl RelayConn {
         )))
     }
 
-    async fn close(mut self) {
+    pub(crate) async fn close(mut self) {
         let _ = self.ws.close(None).await;
     }
 }

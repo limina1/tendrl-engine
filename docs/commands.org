@@ -2030,3 +2030,33 @@ pattern that also appears in your own script kills the script:
 the pill flips at once, the entry appears in the panel, and a page reload
 shows it still there (the set outlives the tab). Editing a note in the
 panel PATCHes after 400 ms; =Reset= restores the captured text.
+
+* Bunker (NIP-46) + named signing source — plan Phase 2 (branch =feat/sign-as-bunker=)
+
+The engine is the NIP-46 client (=src/bunker.rs=, decision
+=decision-bunker-engine-is-the-client=); publish takes =sign_as=.
+
+** Tests
+
+#+begin_src bash
+cargo test --lib -- --test-threads=4 nip44:: nip46:: bunker:: signing:: identity:: chat_api_tests::test_sign_as
+#+end_src
+
+** Live check with =nak bunker= (throwaway key, public relay)
+
+#+begin_src bash
+SEC=$(nak key generate); PK=$(nak key public "$SEC")
+nak bunker --sec "$SEC" -s tendrltest wss://nos.lol </dev/null > /tmp/nak-bunker.log 2>&1 &   # stdin closed — nak blocks on an open stdin
+URI=$(grep -o 'bunker://[^ "]*' /tmp/nak-bunker.log | head -1)
+B=localhost:3131/api/v1; J='Content-Type: application/json'                                    # scratch engine (verify skill)
+curl -s -X POST $B/identity/bunker/connect -H "$J" -d "{\"uri\":\"$URI\"}" | jq '{pubkey, auth_url:.status.auth_url}'   # pubkey == $PK
+curl -s $B/identity | jq '{source, state, pubkey}'                                             # nip46 · unlocked · $PK
+curl -s -X POST $B/publish -H "$J" -d '{"title":"Signed via bunker","sections":[{"title":"One","content":"remote","tags":[]}],"tags":[],"sign":true}' | jq '.events[0].pubkey'   # == $PK
+curl -s -X POST $B/publish -H "$J" -d '{"title":"x","sections":[{"title":"a","content":"b","tags":[]}],"tags":[],"sign_as":"assistant"}'   # 401 without an assistant key
+printf '[identity]\nsource = "nip46"\n' >> /tmp/verify-config-*.toml   # restart → log "Bunker: reconnected" (needs the OS keyring)
+curl -s -X POST $B/identity/bunker/disconnect
+#+end_src
+
+An =auth_url= reply (nsecbunker, Amber) comes back as =status.auth_url= with
+=pubkey: null=; approve in the signer, then =POST /identity/bunker/reconnect=
+(Settings shows the link and a retry button).

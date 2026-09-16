@@ -283,6 +283,34 @@ pub async fn start(opts: ServeOptions) -> anyhow::Result<RunningServer> {
         signing_controller.clone(),
     )));
 
+    // A saved bunker pairing reconnects on boot: the keyring holds the URI and
+    // the transport secret; the user's pubkey comes back from the signer.
+    if matches!(
+        signing_controller.current_source(),
+        crate::identity::IdentitySource::Nip46 { .. }
+    ) {
+        let controller = signing_controller.clone();
+        tokio::spawn(async move {
+            let saved = tokio::task::spawn_blocking(|| {
+                crate::identity::IdentityKeyring::new().get_last_identity().ok()
+            })
+            .await
+            .ok()
+            .flatten();
+            match saved {
+                Some((kind, data)) if kind == "nip46" => {
+                    match api::reconnect_saved_bunker(&controller, &data).await {
+                        Ok(pk) => info!("Bunker: reconnected, signing as {}…", &pk[..12.min(pk.len())]),
+                        Err(e) => tracing::warn!("Bunker: reconnect failed: {e}"),
+                    }
+                }
+                _ => tracing::warn!(
+                    "Bunker: [identity] source = nip46 but the keyring has no saved pairing"
+                ),
+            }
+        });
+    }
+
     // Resolve Claude Code sessions directory from cwd
     let cwd = std::env::current_dir().unwrap_or_default();
     let claude_dir = crate::claude_sessions::resolve_claude_dir(&cwd);
@@ -441,6 +469,22 @@ pub async fn start(opts: ServeOptions) -> anyhow::Result<RunningServer> {
         .route(
             "/api/v1/identity/sign-response",
             post(api::sign_response_handler),
+        )
+        .route(
+            "/api/v1/identity/bunker",
+            get(api::identity_bunker_status_handler),
+        )
+        .route(
+            "/api/v1/identity/bunker/connect",
+            post(api::identity_bunker_connect_handler),
+        )
+        .route(
+            "/api/v1/identity/bunker/disconnect",
+            post(api::identity_bunker_disconnect_handler),
+        )
+        .route(
+            "/api/v1/identity/bunker/reconnect",
+            post(api::identity_bunker_reconnect_handler),
         )
         .with_state(signing_controller.clone());
 

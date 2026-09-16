@@ -204,7 +204,7 @@ TOOLS = [
                 },
                 "sign": {
                     "type": "boolean",
-                    "description": "Sign the events with the engine's secret key (default false)",
+                    "description": "Sign the events as the ASSISTANT identity (its own key — never the user's); default false. The engine refuses if no assistant key is configured.",
                     "default": False
                 },
                 "broadcast": {
@@ -432,7 +432,7 @@ def handle_tool_call(name, args):
                 for s in args["sections"]
             ],
             "tags": args.get("tags", []),
-            "sign": args.get("sign", False),
+            "sign_as": "assistant" if args.get("sign") else None,
             "broadcast": args.get("broadcast", False),
         }
         if "relays" in args:
@@ -507,7 +507,7 @@ def handle_tool_call(name, args):
                 "title": title,
                 "sections": sections,
                 "tags": args.get("tags", []),
-                "sign": args.get("sign", False),
+                "sign_as": "assistant" if args.get("sign") else None,
                 "broadcast": args.get("broadcast", False),
             }
             result = api("/api/v1/publish", "POST", body, timeout=30)

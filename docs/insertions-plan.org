@@ -111,6 +111,30 @@ insertions fold into a 44 px row under their anchor and expand in place.
 Canvas: Directions page (Main carries the flat/sticky tweak; the phone
 board shows the folds).
 
+** D10 — Bunker (NIP-46): the engine is the client
+The user's key can live in a remote signer (nsecbunker, Amber-as-bunker,
+=nak bunker=). The engine speaks NIP-46 itself: a =BunkerSigner= behind the
+existing =IdentitySource::Nip46= slot — not the browser. Requests are
+kind-24133 events to the remote signer's pubkey over the URI's relays,
+NIP-44 v2 encrypted (=src/nip44.rs=, pure, from the =chacha20= / =hmac= /
+=hkdf= primitives already in the tree; no NIP-04 fallback). A fresh
+transport keypair is minted per connection and persisted in the OS
+keyring with the =bunker://= URI, so a restart reconnects without the user
+re-pasting. =auth_url= replies surface as a status the UI can open, never
+a silent hang. Because =SigningController= is the one chokepoint, NIP-42
+AUTH signs through the bunker too. The transport is a trait: unit tests
+run the full connect / get_public_key / sign_event exchange against an
+in-memory responder; the live check uses =nak bunker=.
+
+** D11 — The assistant's publish path
+=/api/v1/publish= takes =sign_as: "user" | "assistant"= (=sign: true= stays
+as the user shorthand). A new =sign_draft {draft_id}= tool signs a saved
+draft as the assistant and ingests it local-until-broadcast; the existing
+=publish= tool (broadcast by id, Confirm-gated) is unchanged, so "signing is
+the snapshot; broadcast is a separate step" holds for the assistant too.
+The MCP =tendrl_publish= mirror sends =sign_as: assistant= and can never
+name the user's key.
+
 ** D6 — The zettel bubble is one call, not an agent
 Context assembled engine-side → one =run_turn= with a structured-output
 schema (=output_config.format=) shaped like =ComposeState= → an insertion
@@ -157,18 +181,49 @@ panel × deletes in the engine) — recipe in =docs/commands.org= "Context set".
 - [ ] follow-up: a live subscription (SSE) instead of refresh-on-mount if
       the terminal→app loop turns out to need it mid-visit
 
-** Phase 2 — Named signing source                                         :small:
-- [ ] =PublishRequest.sign: bool= → =sign_as: Option<SigningSource>=
-      (=User= | =Assistant=); =SigningController= resolves =Assistant= to
-      the keyring slot
-- [ ] thread the controller into =chat_agent_handler= (axum Extension →
-      handler arg; status-doc note)
-- [ ] =tools::publish= gains sign-capability pinned to =Assistant=;
-      category stays =Publish= (opt-in); MCP =tendrl_publish= drops =sign=
-- [ ] =finalize_publish= path for assistant-signed events: ingest,
-      local-until-broadcast, same as user events
-- [ ] tests: an agent publish can never carry the user's pubkey; a
-      user publish never the assistant's
+** Phase 2 — Named signing source + bunker                              :medium:
+Built 2026-09-16 on =feat/sign-as-bunker= (off =feat/context-set=). D3, D10,
+D11. Verified: 565 lib tests (NIP-44 spec vector, NIP-46 envelope, bunker
+exchange incl. =auth_url= against an in-memory signer, sign_as never-cross),
+=pnpm check= clean, and *live*: a scratch engine paired with a real
+=nak bunker= over wss://nos.lol, =get_public_key= matched, a 30040 was signed
+remotely (nak's log shows the sign_event reply), 401 for =sign_as: assistant=
+without an assistant key, 400 for no signer, disconnect → engine source.
+Recipe: =docs/commands.org= "Bunker (NIP-46)".
+- [X] =src/nip44.rs= — v2 encrypt/decrypt, padding table, MAC, conversation
+      key; tests incl. the spec's conversation-key vector
+- [X] =src/nip46.rs= (pure) — =bunker://= URI parse, request/response JSON,
+      kind-24133 envelope, =auth_url=; tests
+- [X] =src/bunker.rs= — =BunkerTransport= trait; relay transport over
+      =RelayConn= (=pub(crate)=); =BunkerSigner: Signer= (connect →
+      get_public_key → sign_event, per-request timeout, one socket per
+      relay, reconnect with backoff, reply dedupe); tests against an
+      in-memory responder
+- [X] wiring: =SigningController= holds the bunker registry; =sign()= /
+      =active_pubkey()= Nip46 arm → bunker; =from_config_str("nip46")=;
+      =POST /identity/bunker/connect {uri}= · =/reconnect= · =/disconnect=,
+      =GET /identity/bunker=; keyring persistence (=last_identity("nip46",
+      …)=) + boot reconnect code path
+- [X] =sign_as: Option<SignAs>= on =PublishRequest= (+ blocks); assistant
+      source = =Engine::assistant_signer()=; =publish_handler= picks
+      =(pubkey, signer)= by source via =resolve_publish_signer=
+- [X] =tools::sign_draft= (Publish category, opt-in): draft → =ComposeState=
+      → assistant-signed events → ingest local-until-broadcast; catalog 18
+- [X] MCP =tendrl_publish= / =_document=: =sign_as: assistant=, never =sign=
+- [X] web: Settings → Source "bunker (nip46)" with a URI =promptText=;
+      status (connected · signer · relays · signing-as), =auth_url= link +
+      retry, reconnect, disconnect; =handleSelectBunkerSource= persists
+      =identity_source = nip46=
+- [X] tests: an agent publish never carries the user's pubkey; a user
+      publish never the assistant's; bunker round-trip; auth_url surfaced;
+      wrong secret; timeout
+- [X] verify: =nak bunker= live sign on a scratch engine
+- [ ] *open — boot reconnect did not verify*: after a restart with
+      =[identity] source = "nip46"= the keyring returned no saved pairing.
+      Cause under investigation (the =keyring= crate is pulled with no
+      platform backend feature — if that is the in-memory mock, nothing
+      persists across processes, the assistant identity included). The
+      reconnect code path itself runs (logged), only the read is empty.
 
 ** Phase 3 — Insertions                                                    :medium:
 - [ ] =src/publication/insertion.rs= (pure): =InsertionAnchor= parse /
