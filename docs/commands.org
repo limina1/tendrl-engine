@@ -2012,10 +2012,21 @@ printf '%s\n%s\n' \
 
 ** UI verification
 
-Open the chat pane (=.rail--chat=): the Context panel lists the engine
-entries (=.context-card= count = =GET /context= entry count); the chat
-buffer re-reads the set on every mount, so an entry added from the
-terminal appears on the next visit. Add from search (pill / =+ Context=):
+Headless (CDP) flow that worked 2026-09-16 — three gotchas the generic
+recipe misses: (1) a fresh data dir opens the *non-dismissable*
+=.nm-modal= — untick "✓ Run walkthrough", then click the button whose
+text starts with "Confirm"; (2) the first =.rail--chat= click right after
+the modal closes is swallowed — click, wait ~1 s, check
+=document.querySelector('.input-bar textarea')?.closest('.pane')=, click
+again if null; (3) the Context panel starts collapsed — its toggle is the
+button inside the chat pane whose text starts with "Context" (badge = the
+engine's entry count). Then =.context-card= count = =GET /context= entry
+count; the chat buffer re-reads the set on every mount, so an entry added
+from the terminal appears on the next visit (close the pane via its
+=.pane__x=, re-click the rail); the card's =.remove-btn= is an engine
+DELETE. Teardown the scratch engine by exact name + port — a =pgrep -f=
+pattern that also appears in your own script kills the script:
+=pgrep -a -x tendrl-engine | awk '/--port 3131/ {print $1}' | xargs -r kill=. Add from search (pill / =+ Context=):
 the pill flips at once, the entry appears in the panel, and a page reload
 shows it still there (the set outlives the tab). Editing a note in the
 panel PATCHes after 400 ms; =Reset= restores the captured text.
