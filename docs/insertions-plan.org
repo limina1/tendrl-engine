@@ -223,8 +223,11 @@ startup on a popup.
 
 ** Phase 5b — The annotations table                                       :medium:
 - [ ] buffer kind =annotations:<addr>= (tours.ts + registry.ts +
-      BufferRenderer if-chain, per the NIP-34 recipe); opens in a split
-      beside the reader; full-screen on mobile
+      BufferRenderer if-chain, per the NIP-34 recipe); the WM arranges it —
+      a split beside the reader on desktop, one buffer at a time on the
+      phone (reader / annotations / collective switched from the drawer);
+      the view switch (by section · by author · timeline · free) is the
+      buffer's own header on every shell
 - [ ] header = editable spell + =count:by= histogram chips (click adds/
       drops =by:=); layouts: by section · by author · timeline · free
 - [ ] layout in a =$derived= (=FocusGraph= idiom); cards via keyed
