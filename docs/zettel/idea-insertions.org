@@ -46,36 +46,39 @@ format.
 - =build_insertion_template= beside =build_highlight_template=
   (=src/discussions.rs=): the same three-family shape — the anchor is
   a =HighlightSource::Event=-like target, but the /content is new/.
-- =load_insertions(root)= as a pass parallel to the publication tree
-  loader; folds into the tree stream as pending nodes.
-- =promote(insertion, position)= → the new 30040 template (own) or a
-  derivative 30040 (foreign), through the existing publish path.
+- =load_insertions(root, authors)= — on demand, Confirm-gated, never a
+  pass inside the tree loader ([[file:decision-insertions-load-on-demand.org][decision]]);
+  returns each with its anchor so the reader can draw the pointer.
+- =fork_index(index, splice)= — the promotion /copy process/: every tag
+  copied verbatim, the insertion's =a= spliced at its slot; same =d= if
+  the logged-in author owns the index, else a new =d= + =p= + =E= to the
+  copied index. One template, the existing publish path.
 - Assistant-authored: signed by the assistant slot
   ([[file:decision-assistant-signs-own-key.org][decision]]); =by:assistant=
   filters them.
 
 * UI/UX
 
-- Reader: pending insertions render in place (after/before their
-  parent, or in the margin for annotations), visibly distinct from
-  indexed sections — the "taped in" affordance. A curator action
-  /promote/ on one builds the new index and opens the publish flow.
+- Reader: a *load annotations* action fetches them; each renders
+  /pointing at/ its anchor section — symbolic of a post-it stuck to the
+  page, not absorbed by it. The visual language is a design session,
+  not a retrofit. /Promote/ on one runs the fork process and opens the
+  publish flow on the copied index.
 - The *zettel bubble*: from a focused section, "write more from this"
   → engine assembles context (the section, siblings, resolved refs,
   HNSW neighbours) → one =run_turn= with a structured-output schema
   shaped like =ComposeState= → an insertion template signed by the
   assistant → appears anchored, pending, in the reader. Review-first
   variant lands in =DraftStore= instead.
-- Whose insertions load: own + assistant + explicit pubkeys. No WoT.
 
 * Open questions
 
-- Tag name =insert= — fine, or single-letter for relay indexing?
+- Tag name =insert= — fine, or single-letter for relay indexing? User decision: Yes
   Position is never queried, so a word is the honest choice.
 - Do promoted insertions keep their anchor tags? Default yes — they
-  record that the section entered by insertion.
+  record that the section entered by insertion. User response: They are 30041 authored events, they conform to the spec and can be inserted without dropping any tags
 - Several insertions at one position: =created_at= order, curator
-  resolves at promotion.
+  resolves at promotion. user: yes
 - Span anchoring stays out — same problem as
   [[file:idea-annotation-anchoring.org][annotation anchoring]].
 
@@ -86,5 +89,7 @@ format.
 - [[file:feat-assistant.org][AI assistant]] — the zettel bubble's producer
 - [[file:decision-context-set-engine-owned.org][Decision: context set is engine-owned]]
 - [[file:decision-assistant-signs-own-key.org][Decision: the assistant signs with its own key]]
+- [[file:decision-insertions-load-on-demand.org][Decision: load on demand, pointing at the anchor]]
+- [[file:feat-mcp.org][MCP surface]] — the terminal producer
 - [[file:idea-annotation-anchoring.org][Annotation anchoring]]
 - [[file:idea-version-semantics.org][Version semantics]] — promotion is a republish

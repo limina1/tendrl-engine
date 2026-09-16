@@ -1,0 +1,44 @@
+#+TITLE: Decision: Insertions Load On Demand, Pointing At Their Anchor
+#+TYPE: decision
+#+STATUS: current
+#+DATE: 2026-09-16
+
+* The decision
+
+Insertions and annotations are *never* loaded automatically with a
+publication. A reader action — "load annotations" — fetches them (the
+=#A= filter, Confirm-gated like any relay fetch) and each result is
+rendered /pointing at/ the section it anchors to: a post-it stuck to a
+page, visibly not a page. Promotion is a separate, explicit act: the
+logged-in author copies the publication with the insertion spliced in
+(see the spec's /Promotion/ section). (User's call, 2026-09-16.)
+
+* Why
+
+- *The index stays what it says.* Until the reader asks, a publication
+  is exactly its 30040. The "attached vs in the structure" distinction
+  the spec makes is only legible if the two never blend silently.
+- *No author policy needed.* "Whose insertions?" was an open question
+  because an automatic pass has to decide. An explicit load carries its
+  author filter per request (own + assistant by default, editable), so
+  there is no standing policy and no web-of-trust dependency.
+- *Consistent with Confirm mode.* A load is a fetch; it goes through
+  the same intent modal as every other relay read.
+- *The metaphor is the affordance.* A post-it is something you notice
+  stuck to the page, not something the page absorbed. Rendering the
+  pointer is the UI stating the protocol fact.
+
+* Consequences
+
+- =load_insertions(root, authors)= is an endpoint behind a button, not a
+  pass inside =stream_publication_tree=.
+- The reader needs a pointing/attached visual for loaded insertions —
+  a design session, not a retrofit ([[file:feat-ui-patterns.org][UI patterns]]).
+- Closes the author-policy question in the plan.
+
+* Related
+- [[file:index.org][Index]]
+- [[file:idea-insertions.org][Insertions]]
+- [[file:../../nips/NKBIP-01-insertions.org][NKBIP-01 insertions extension]]
+- [[file:feat-network.org][Network modes]] — Confirm gating
+- [[file:feat-ui-patterns.org][UI patterns]]

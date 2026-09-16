@@ -1,0 +1,51 @@
+#+TITLE: Idea: a context set as a publishable collection
+#+TYPE: idea
+#+STATUS: brainstorm
+#+DATE: 2026-09-16
+
+* What it means
+
+Once the context set is engine-owned
+([[file:decision-context-set-engine-owned.org][decision]]), a saved set
+is an ordered list of event references plus a few literal notes. That
+is structurally a 30040 with no book-intent — or, read the other way,
+a NIP-51 bookmark set (kind 30003). "Publish the reading list behind
+this synthesis" is one builder away, and it would make the provenance
+of an assistant-written insertion inspectable: here is exactly what it
+was looking at.
+
+* Data
+
+- Sourced entries (=source_addr= / =source_event_id=) → =a= / =e= tags
+  verbatim.
+- Literal entries (pasted text, an assistant-synthesized note with no
+  event) are the problem: a 30040 can only point. Options: mint a 30041
+  for each (they become real events — arguably right, they were
+  authored); drop them; or keep the collection as a draft until they
+  are minted.
+- Kind choice: 30040 says "this is a publication, read it in order";
+  30003 says "these are bookmarks". A context set is closer to the
+  latter in intent and the former in shape. Undecided.
+
+* Representation (engine)
+
+One builder =ContextSet → template= beside the publish builders; the
+existing sign → ingest → broadcast path. Nothing else.
+
+* UI/UX
+
+A "publish as collection" action on the context panel; the resulting
+event links from any insertion the assistant produced from that set.
+
+* Open questions
+
+- 30040 vs 30003 — decide when there is a consumer.
+- Literal entries — mint or drop.
+- Is this a bookshelf (30045)? No: shelves list 30040s; a context set
+  lists sections and events.
+
+* Related
+- [[file:index.org][Index]]
+- [[file:decision-context-set-engine-owned.org][Decision: context set is engine-owned]]
+- [[file:idea-insertions.org][Insertions]] — what the set produces
+- [[file:feat-bookshelf.org][Bookshelves]] — the neighbouring list kind

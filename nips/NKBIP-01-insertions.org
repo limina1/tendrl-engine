@@ -100,10 +100,12 @@ optionally narrowed by =authors=. The =A= value is a coordinate, not a
 64-hex id, so this is an ordinary tag filter on every relay and in
 nostrdb.
 
-Which authors' insertions a client loads is *policy, not protocol*. A
-sensible default is the reader's own, their assistant's, and any
-pubkeys they have explicitly asked for; web-of-trust expansion is out
-of scope here.
+Loading insertions is an *explicit reader action* ("load
+annotations"), not an automatic pass: a client runs this filter on
+request and renders each result /pointing at/ its anchor — attached to
+the page, visibly not part of it. Which authors to include is a filter
+on that request (the reader's own and their assistant's by default),
+not a standing policy; web-of-trust expansion is out of scope here.
 
 * Promotion
 
@@ -117,6 +119,22 @@ NKBIP-01 as written* — this extension adds no promotion event:
 - *By anyone else:* publish a /derivative/ index — NKBIP-01's own
   =p= + =E= to the original — that includes the insertion. The reader
   who taped in the pages publishes their own edition of the book.
+
+*The copy process.* Both forms are one operation, run by whoever is
+logged in, on any index (an original or itself a derivative):
+
+1. Load the index and copy *every tag verbatim* — =title=, =summary=,
+   =t=, =image=, =i=, =auto-update=, the =a= list, all of it.
+2. Splice the insertion's coordinate into the =a= list at the slot its
+   =insert= hint names (or where the curator places an annotation).
+3. If the logged-in author *is* the index's author: keep the =d= tag —
+   this is a new version of the same publication.
+   Otherwise: mint a new =d= under the logged-in author's key and add
+   =["p", <copied index's author>]= followed by =["E", <copied index's
+   event id>, <relay>, <its pubkey>]= per NKBIP-01's derivative rule.
+   =p=/=E= point at the *immediate* source, so a derivative of a
+   derivative stays walkable back to its origin.
+4. Sign and publish through the ordinary path.
 
 The insertion event itself is *unchanged* by promotion. Its author's
 signature stands; its anchor tags MAY remain (they are then redundant
@@ -216,9 +234,10 @@ chapter.
 
 - Writers MUST emit =A=/=K=/=P= and =a=/=k=/=p=; MUST NOT emit =insert=
   with any value other than =before= / =after=.
-- Readers implementing this extension SHOULD run the =#A= discovery
-  pass when loading a publication and MUST distinguish pending
-  insertions from indexed sections in the rendering.
+- Readers implementing this extension SHOULD offer the =#A= discovery
+  pass as an explicit action, MUST render a loaded insertion as
+  pointing at its anchor, and MUST distinguish pending insertions from
+  indexed sections in the rendering.
 - Curators promoting an insertion MUST do so by NKBIP-01 index
   republication (own or derivative) and MUST NOT re-author the
   insertion's content under their own key.

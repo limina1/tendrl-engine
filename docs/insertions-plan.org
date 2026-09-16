@@ -132,16 +132,21 @@ startup on a popup.
 - [ ] =build_insertion_template= (=src/discussions.rs= neighbour);
       =POST /api/v1/insertions= + =/preview= (one builder, per the
       wire-preview pattern)
-- [ ] =load_insertions(root)= — =#A= filter, author policy (own +
-      assistant + explicit); folded into =stream_publication_tree= as
-      pending nodes with placement
-- [ ] =promote=: own → new 30040 template with the =a= tag at the slot;
-      foreign → derivative 30040 (=p= + =E=); both through the existing
-      publish flow
+- [ ] =load_insertions(root, authors)= — =#A= filter, *on demand* behind
+      a reader action, Confirm-gated; never inside
+      =stream_publication_tree= ([[file:zettel/decision-insertions-load-on-demand.org][decision]]);
+      each result carries its anchor for the pointer
+- [ ] =fork_index(index, splice)= (pure): copy every tag verbatim, splice
+      the =a= at the slot; same =d= if the logged-in author owns the
+      index, else new =d= + =p= + =E= to the copied index (immediate
+      source). =POST /api/v1/publication/fork= + =/preview= → the existing
+      sign/publish path
 - [ ] =tools::propose_insertion= (ComposeWrite) and =promote_insertion=
       (Publish)
-- [ ] reader: pending insertions render in place, distinct; /promote/
-      action; annotations in the margin drawer
+- [ ] reader: *load annotations* action; loaded insertions render
+      pointing at their anchor (the post-it visual — design session
+      first, see [[file:zettel/feat-ui-patterns.org][UI patterns]]); /promote/
+      opens the fork flow
 - [ ] search: insertions are 30041s — =has:A= / =A:<coord>= already work;
       verify =count:A= buckets
 - [ ] tests: anchor round-trip; discovery filter shape; promotion slot
@@ -179,6 +184,7 @@ startup on a popup.
 ** Phase 6 — Docs and kasten                                               :small:
 - [ ] =feat-assistant= → context set, MCP surface, signing: shipped
 - [ ] =feat-discussions= → insertions as the third member: shipped
+- [ ] =feat-mcp= → engine speaks MCP: shipped; Python script retired
 - [ ] =idea-insertions= STATUS → implemented; this doc → CURRENT or archive
 - [ ] =docs/ai-assistant-status.md= → superseded pointer or archive
 - [ ] =docs/commands.org= verify recipes (MCP over HTTP, insertion
@@ -201,9 +207,6 @@ choice; 5 is mostly UI once 1–3 exist.
 - MCP transport crate — evaluate =rmcp= vs a hand-rolled Streamable
   HTTP handler on axum; default hand-rolled if the crate pulls a
   runtime we do not already have.
-- Author policy for =load_insertions= — default own + assistant +
-  explicit pubkeys; UI to add a pubkey lives with the reader's
-  discussion filters.
 - Should a saved =ContextSet= be publishable as a 30040 collection —
   out of scope; noted in the decision zettel.
 - Model for the bubble — make configurable; try Opus 5 on real
@@ -214,6 +217,9 @@ choice; 5 is mostly UI once 1–3 exist.
 - [[file:zettel/idea-insertions.org][Idea: insertions]]
 - [[file:zettel/decision-context-set-engine-owned.org][Decision: context set is engine-owned]]
 - [[file:zettel/decision-assistant-signs-own-key.org][Decision: the assistant signs with its own key]]
+- [[file:zettel/decision-insertions-load-on-demand.org][Decision: insertions load on demand]]
+- [[file:zettel/feat-mcp.org][MCP surface]]
+- [[file:zettel/idea-context-set-as-collection.org][Idea: context set as a collection]]
 - [[file:../nips/NKBIP-01-insertions.org][NKBIP-01 insertions extension]]
 - [[file:ai-tools-architecture.md][AI tools architecture]] / [[file:ai-assistant-status.md][status]]
 - [[file:nip42-relay-auth-plan.org][NIP-42 plan]] — the shape this plan follows

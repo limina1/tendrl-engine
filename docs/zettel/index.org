@@ -49,6 +49,7 @@ exists (with code paths), gaps.
 - [[file:feat-relays.org][Relay sets]] — general/fetch/publish, relays.json
 - [[file:feat-import.org][Document import]] — PDF/DOCX/EPUB/HTML → events, JSONL ingest/export
 - [[file:feat-assistant.org][LLM assistant]] — chat fragments, agentic tool-calling
+- [[file:feat-mcp.org][MCP surface]] — tendrl as tool server for an external harness; the subscription path
 - [[file:feat-shell.org][WM shell]] — buffers, slots, modal nav
 - [[file:feat-mobile.org][Mobile & Android]] — mobile shell (bottom bar,
   buffer drawer), Tauri 2 Android plan through release
@@ -62,6 +63,7 @@ exists (with code paths), gaps.
 - [[file:decision-wikilinks-30818-only.org][Global wikilinks resolve to 30818 only]]
 - [[file:decision-context-set-engine-owned.org][The context set is engine-owned]] — flags web, set engine; supersedes the web-pool call in half
 - [[file:decision-assistant-signs-own-key.org][The assistant signs with its own key]] — named =sign_as= source, never the user's
+- [[file:decision-insertions-load-on-demand.org][Insertions load on demand, pointing at their anchor]] — a button, not a pass; no author policy
 - [[file:decision-nip42-auth-as-user.org][Relay auth (NIP-42): as the user, per relay, never prompted]]
   — markup-agnostic grammar is data-layer, not display-layer
 - [[file:decision-feed-relay-timelines.org][The feed is per-relay timelines]]
@@ -145,6 +147,7 @@ path: [[file:conventions.org][conventions]].
 
 ** Reference manager
 - [[file:idea-citations.org][Citations (kind 30161)]] — spec'd, deferred; open issues noted
+- [[file:idea-context-set-as-collection.org][Context set as a collection]] — publish the reading list behind a synthesis; 30040 vs 30003
 - [[file:idea-external-source-highlights.org][External-source highlights → citations]] — isbn/doi 9802s as the evidence half
 - [[file:idea-citation-intents.org][Typed citation intents]] — supports/contradicts edges
 - [[file:idea-registry-metadata.org][Registry metadata resolution]] — DOI/ISBN → citable on import

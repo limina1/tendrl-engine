@@ -1,0 +1,55 @@
+#+TITLE: MCP Surface
+#+TYPE: feature
+#+STATUS: partial
+#+DATE: 2026-09-16
+
+tendrl as a tool server for an /external/ agent harness — Claude Code,
+Codex, anything speaking MCP. The harness brings its own credential and
+runs on the user's machine; tendrl holds no LLM key on this path. This
+is the only sanctioned way a user's claude.ai subscription reaches
+tendrl: Anthropic's Agent SDK terms disallow third-party apps offering
+claude.ai login or rate limits, so the in-app loop stays API-key
+([[file:feat-assistant.org][AI assistant]]) and the subscription path is
+"your harness calls tendrl", never "tendrl calls the model".
+
+* What exists
+
+- =scripts/tendrl-mcp.py= (stdio; =TENDRL_API=, default =:3030=; launched
+  by the harness via =scripts/tendrl-mcp.sh=). Twelve hand-written tools:
+  =tendrl_search=, =tendrl_get_event=, =tendrl_get_publication=,
+  =tendrl_read_sections=, =tendrl_list_publications=, =tendrl_get_profile=,
+  =tendrl_get_context=, =tendrl_get_chat=, =tendrl_publish=,
+  =tendrl_publish_document=, =tendrl_list_knowledgebase=,
+  =tendrl_read_knowledgebase=. Each is a thin HTTP call into the engine.
+
+* What is wrong with it
+
+- *It is a copy.* The engine already has the catalog of record —
+  =src/tools.rs= (=catalog()= / =dispatch()= / =ToolPolicy=, 15 tools). The
+  script re-declares a subset by hand and has drifted: no =save_draft=;
+  =tendrl_get_context= returns a /count string/, not the entries;
+  =tendrl_publish= forwards a =sign= boolean that inherits whichever
+  identity is active ([[file:decision-assistant-signs-own-key.org][decided
+  against]]).
+- Two dispatch tables means two places for gating, policy and
+  parity to go wrong.
+
+* Planned (Phase 4 of [[file:../insertions-plan.org][the plan]])
+
+The engine speaks MCP itself — a Streamable-HTTP endpoint serving
+=tools::catalog()= under =ToolPolicy=, token-gated like the mobile
+loopback, Confirm-mode gating applying exactly as in-app. The Python
+script is retired or reduced to a stdio→HTTP shim with no tool table
+of its own. Then Claude Code, Codex and the in-app loop call the same
+functions; =get_context= reads the engine-owned set
+([[file:decision-context-set-engine-owned.org][decision]]); a terminal
+agent can synthesize from context the user curated in the app and save
+the result as an insertion signed by the assistant.
+
+* Related
+- [[file:index.org][Index]]
+- [[file:feat-assistant.org][AI assistant]] — the in-app half; shares the catalog
+- [[file:idea-insertions.org][Insertions]] — the natural output of a terminal synthesis
+- [[file:decision-context-set-engine-owned.org][Decision: context set is engine-owned]]
+- [[file:decision-assistant-signs-own-key.org][Decision: the assistant signs with its own key]]
+- [[file:feat-network.org][Network modes]] — Confirm gating applies to MCP calls
