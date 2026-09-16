@@ -889,14 +889,17 @@ async fn sign_draft(cx: &ToolCx, input: Value) -> Result<Value> {
     let mut compose: ComposeState = (&draft.compose_state).into();
     let signer = cx
         .engine
-        .assistant_signer()
-        .map_err(|e| EngineError::Auth(format!("the assistant cannot sign: {e}")))?;
-    let pubkey = signer.pubkey_hex().to_string();
+        .assistant_signing()
+        .ok_or_else(|| EngineError::Auth("no assistant identity — set one in Settings".into()))?;
+    let pubkey = signer
+        .active_pubkey()
+        .await
+        .ok_or_else(|| EngineError::Auth("no assistant identity — set one in Settings".into()))?;
     let (pub_event, section_events) =
         crate::publication::build_signed_publication_events_via_signer(
             &mut compose,
             &pubkey,
-            &signer,
+            signer,
         )
         .await
         .map_err(|e| EngineError::Other(format!("sign: {e}")))?;

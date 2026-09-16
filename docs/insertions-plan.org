@@ -218,6 +218,24 @@ Recipe: =docs/commands.org= "Bunker (NIP-46)".
       publish never the assistant's; bunker round-trip; auth_url surfaced;
       wrong secret; timeout
 - [X] verify: =nak bunker= live sign on a scratch engine
+- [X] *bunker for any slot* (user's call, 2026-09-16): the assistant has its
+      own =SigningController= (engine key or bunker); =sign_as: assistant= and
+      =sign_draft= resolve through it; =POST /assistant-identity/bunker/
+      {connect,reconnect,disconnect}= + =GET …/bunker=; the pairing persists in
+      the assistant keyring blob next to its ncryptsec; boot reconnects.
+      Settings → Assistant identity → "Connect a bunker for the assistant".
+      Timeouts sized for a phone approval (connect 120 s, sign 60 s).
+- [X] *Amber direct (NIP-55) for the assistant*: the generic
+      signer-register / signer-channel / sign-response / use handlers are
+      mounted under =/assistant-identity/= over the assistant controller;
+      =registerNip55Signer(pkg, pubkey?, slot)= + a per-slot persistence
+      key; Settings shows "Use <app> for the assistant" on the Android host.
+      *Not exercised on a device from this session.*
+- [ ] follow-up: boot re-attach of the assistant's Amber pairing on the
+      phone (the user's path re-attaches from =persistedNip55()=; the
+      assistant's saved pairing is read by =persistedAssistantNip55()= but
+      nothing calls it yet — wire it in the mobile boot path and test on
+      device)
 - [ ] *open — boot reconnect did not verify*: after a restart with
       =[identity] source = "nip46"= the keyring returned no saved pairing.
       Cause under investigation (the =keyring= crate is pulled with no

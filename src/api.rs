@@ -5957,8 +5957,14 @@ async fn resolve_publish_signer(
             Box::new(signing.clone()),
         )),
         SignAs::Assistant => {
-            let signer = engine.assistant_signer().map_err(map_assistant_sign_error)?;
-            Ok((signer.pubkey_hex().to_string(), Box::new(signer)))
+            let ctl = engine
+                .assistant_signing()
+                .ok_or_else(|| map_assistant_sign_error(crate::signing::SigningError::NoIdentity))?;
+            let pubkey = ctl
+                .active_pubkey()
+                .await
+                .ok_or_else(|| map_assistant_sign_error(crate::signing::SigningError::NoIdentity))?;
+            Ok((pubkey, Box::new(ctl.clone())))
         }
     }
 }
@@ -8392,6 +8398,8 @@ pub async fn identity_logout_handler(
 pub struct AssistantIdentity {
     pub session: IdentityAppState,
     pub keyring_available: bool,
+    /// The assistant's own signing controller (engine key or bunker).
+    pub signing: crate::signing::SigningController,
 }
 
 #[derive(Debug, Deserialize)]
@@ -8406,11 +8414,25 @@ pub struct AssistantLoginRequest {
 /// ncryptsec, the encrypted key (so signing can be restored after unlock). A
 /// raw nsec is NEVER written here (ncryptsec-only at rest).
 #[derive(Debug, Default, Serialize, Deserialize)]
-struct AssistantPersist {
+pub struct AssistantPersist {
     #[serde(skip_serializing_if = "Option::is_none")]
-    pubkey: Option<String>,
+    pub pubkey: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    ncryptsec: Option<String>,
+    pub ncryptsec: Option<String>,
+    /// A bunker pairing for the assistant slot (URI + transport secret).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bunker: Option<BunkerPersist>,
+}
+
+/// Snapshot the assistant blob from the live session so a bunker write
+/// keeps the ncryptsec (and vice versa).
+fn assistant_persist_snapshot(asst: &AssistantIdentity, bunker: Option<BunkerPersist>) -> AssistantPersist {
+    let session = asst.session.lock().unwrap_or_else(|e| e.into_inner());
+    AssistantPersist {
+        pubkey: session.effective_pubkey(),
+        ncryptsec: session.ncryptsec(),
+        bunker,
+    }
 }
 
 /// Best-effort keyring write of the assistant blob. No-op when the keyring is
@@ -8465,6 +8487,7 @@ pub async fn assistant_identity_login_handler(
             &AssistantPersist {
                 pubkey: Some(pubkey),
                 ncryptsec: None,
+                bunker: None,
             },
         );
     } else if key.starts_with("ncryptsec1") {
@@ -8480,6 +8503,7 @@ pub async fn assistant_identity_login_handler(
             &AssistantPersist {
                 pubkey: None,
                 ncryptsec: Some(key.to_string()),
+                bunker: None,
             },
         );
     } else {
@@ -8511,6 +8535,7 @@ pub async fn assistant_identity_unlock_handler(
                 &AssistantPersist {
                     pubkey: Some(pubkey),
                     ncryptsec,
+                    bunker: None,
                 },
             );
             Ok(Json(assistant_status_json(&asst)))
@@ -8630,10 +8655,10 @@ pub struct BunkerConnectResponse {
     pub status: crate::bunker::BunkerStatus,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-struct BunkerPersist {
-    uri: String,
-    client_secret: String,
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BunkerPersist {
+    pub uri: String,
+    pub client_secret: String,
 }
 
 fn persist_bunker(uri: &str, client_secret: &str) {
@@ -8784,6 +8809,101 @@ pub async fn identity_bunker_disconnect_handler(
         }
     });
     Ok(Json(json!({ "disconnected": true, "source": "engine" })))
+}
+
+// ---- the assistant slot: same mechanism, its own controller + persistence ----
+
+fn bunker_connect_response(
+    signer_id: String,
+    signer: &crate::bunker::BunkerSigner,
+    outcome: Result<String, crate::signing::SigningError>,
+) -> Result<Json<BunkerConnectResponse>, EngineError> {
+    let pubkey = match outcome {
+        Ok(pk) => Some(pk),
+        Err(crate::signing::SigningError::AuthRequired(_)) => None,
+        Err(e) => return Err(map_publish_sign_error(e)),
+    };
+    Ok(Json(BunkerConnectResponse {
+        signer_id,
+        source: "nip46",
+        pubkey,
+        status: signer.status(),
+    }))
+}
+
+/// POST /api/v1/assistant-identity/bunker/connect — pair the ASSISTANT with
+/// a remote signer (e.g. an Amber account). The pairing is persisted in the
+/// assistant keyring blob next to its ncryptsec, if any.
+pub async fn assistant_bunker_connect_handler(
+    State(asst): State<AssistantIdentity>,
+    Json(req): Json<BunkerConnectRequest>,
+) -> Result<Json<BunkerConnectResponse>, EngineError> {
+    let uri = crate::nip46::BunkerUri::parse(&req.uri)
+        .map_err(|e| EngineError::BadRequest(e.to_string()))?;
+    let (id, signer, outcome) = attach_bunker(&asst.signing, uri, None).await?;
+    let blob = assistant_persist_snapshot(
+        &asst,
+        Some(BunkerPersist {
+            uri: req.uri.trim().to_string(),
+            client_secret: signer.client_secret().to_string(),
+        }),
+    );
+    persist_assistant(&asst, &blob);
+    bunker_connect_response(id, &signer, outcome)
+}
+
+/// POST /api/v1/assistant-identity/bunker/reconnect
+pub async fn assistant_bunker_reconnect_handler(
+    State(asst): State<AssistantIdentity>,
+) -> Result<Json<BunkerConnectResponse>, EngineError> {
+    let live = asst
+        .signing
+        .active_bunker()
+        .await
+        .ok_or_else(|| EngineError::Auth("the assistant has no bunker pairing".into()))?;
+    let (id, signer, outcome) = attach_bunker(&asst.signing, live.uri().clone(), None).await?;
+    bunker_connect_response(id, &signer, outcome)
+}
+
+/// GET /api/v1/assistant-identity/bunker
+pub async fn assistant_bunker_status_handler(
+    State(asst): State<AssistantIdentity>,
+) -> Json<Option<crate::bunker::BunkerStatus>> {
+    Json(asst.signing.active_bunker().await.map(|b| b.status()))
+}
+
+/// POST /api/v1/assistant-identity/bunker/disconnect — back to the
+/// assistant's engine key (if any); the pairing leaves the keyring blob.
+pub async fn assistant_bunker_disconnect_handler(
+    State(asst): State<AssistantIdentity>,
+) -> Result<Json<IdentityStatusResponse>, EngineError> {
+    if let crate::identity::IdentitySource::Nip46 { signer_id: Some(id) } =
+        asst.signing.current_source()
+    {
+        asst.signing.drop_bunker(&id).await;
+    }
+    asst.signing.set_source(crate::identity::IdentitySource::Engine);
+    let blob = assistant_persist_snapshot(&asst, None);
+    persist_assistant(&asst, &blob);
+    Ok(Json(assistant_status_json(&asst)))
+}
+
+/// Boot: reconnect the assistant's saved bunker pairing, if the blob has one.
+pub fn restore_assistant_bunker(asst: &AssistantIdentity, blob_json: &str) {
+    let Ok(p) = serde_json::from_str::<AssistantPersist>(blob_json) else {
+        return;
+    };
+    let Some(b) = p.bunker else {
+        return;
+    };
+    let signing = asst.signing.clone();
+    let json = serde_json::to_string(&b).unwrap_or_default();
+    tokio::spawn(async move {
+        match reconnect_saved_bunker(&signing, &json).await {
+            Ok(pk) => tracing::info!("Assistant bunker: reconnected, signing as {}…", &pk[..12.min(pk.len())]),
+            Err(e) => tracing::warn!("Assistant bunker: reconnect failed: {e}"),
+        }
+    });
 }
 
 #[derive(Debug, Deserialize)]
@@ -9395,7 +9515,8 @@ mod chat_api_tests {
             .unwrap();
         assert_ne!(user_pk, asst_pk);
         engine.set_user_session(user.clone());
-        engine.set_assistant_session(asst);
+        engine.set_assistant_session(asst.clone());
+        engine.set_assistant_signing(crate::signing::SigningController::new(asst));
         let engine = Arc::new(engine);
         std::mem::forget(dir);
 

@@ -4587,6 +4587,7 @@ function _createAppState() {
 		try {
 			assistantStatus = await api.getAssistantIdentity();
 			assistantPubkey = assistantStatus.pubkey;
+			void refreshAssistantBunkerStatus();
 		} catch {}
 	}
 
@@ -4910,6 +4911,94 @@ function _createAppState() {
 		}
 	}
 
+	// The assistant's own bunker (Amber account B, nsecbunker, nak) — its
+	// controller, never the user's.
+	let assistantBunkerStatus: BunkerStatus | null = $state(null);
+
+	async function refreshAssistantBunkerStatus() {
+		try {
+			assistantBunkerStatus = await api.assistantBunkerStatus();
+		} catch {
+			assistantBunkerStatus = null;
+		}
+	}
+
+	function applyAssistantBunkerResult(r: BunkerConnectResponse) {
+		assistantBunkerStatus = r.status;
+		if (r.pubkey) {
+			assistantPubkey = r.pubkey;
+			pushToast('Assistant bunker connected — the agent signs through your remote signer', 'success', 3000);
+		} else if (r.status.auth_url) {
+			pushToast(`Approve the assistant in your signer: ${r.status.auth_url}`, 'pending', 12000);
+		}
+	}
+
+	async function handleAssistantBunkerConnect(uri: string) {
+		assistantError = null;
+		assistantLoading = true;
+		try {
+			const r = await api.assistantBunkerConnect(uri.trim());
+			assistantStatus = await api.getAssistantIdentity();
+			applyAssistantBunkerResult(r);
+		} catch (e) {
+			assistantError = e instanceof Error ? e.message : String(e);
+			pushToast(`Assistant bunker: ${assistantError}`, 'error', 5000);
+		} finally {
+			assistantLoading = false;
+		}
+	}
+
+	async function handleAssistantBunkerReconnect() {
+		assistantLoading = true;
+		try {
+			const r = await api.assistantBunkerReconnect();
+			assistantStatus = await api.getAssistantIdentity();
+			applyAssistantBunkerResult(r);
+		} catch (e) {
+			pushToast(`Assistant bunker: ${e instanceof Error ? e.message : String(e)}`, 'error', 5000);
+		} finally {
+			assistantLoading = false;
+		}
+	}
+
+	async function handleAssistantBunkerDisconnect() {
+		try {
+			assistantStatus = await api.assistantBunkerDisconnect();
+			assistantBunkerStatus = null;
+			assistantPubkey = assistantStatus.pubkey;
+			pushToast('Assistant bunker disconnected', 'info', 2500);
+		} catch (e) {
+			pushToast(`Assistant bunker: ${e instanceof Error ? e.message : String(e)}`, 'error', 5000);
+		}
+	}
+
+	// Amber (NIP-55) as the ASSISTANT's signer — a second Amber account,
+	// direct intents, no relay round trip. Android host only. Not exercised
+	// on a device from this session: the mount is generic, the glue is the
+	// user path with a slot parameter.
+	let assistantSignerTeardown: (() => void) | null = null;
+
+	async function handleSelectAssistantNip55Source(packageName: string, prefetchedPubkey?: string) {
+		assistantError = null;
+		assistantLoading = true;
+		try {
+			const { registerNip55Signer } = await import('$lib/identity/nip55');
+			if (assistantSignerTeardown) {
+				assistantSignerTeardown();
+				assistantSignerTeardown = null;
+			}
+			assistantSignerTeardown = await registerNip55Signer(packageName, prefetchedPubkey, 'assistant');
+			assistantStatus = await api.getAssistantIdentity();
+			assistantPubkey = assistantStatus.pubkey;
+			pushToast('Assistant signs through the signer app', 'success', 3000);
+		} catch (e: unknown) {
+			assistantError = e instanceof Error ? e.message : String(e);
+			pushToast(`Assistant signer: ${assistantError}`, 'error', 5000);
+		} finally {
+			assistantLoading = false;
+		}
+	}
+
 	async function handleSelectEngineSource() {
 		try {
 			if (externalSignerTeardown) {
@@ -4983,6 +5072,12 @@ function _createAppState() {
 		handleSelectBunkerSource,
 		handleBunkerReconnect,
 		handleBunkerDisconnect,
+		get assistantBunkerStatus() { return assistantBunkerStatus; },
+		refreshAssistantBunkerStatus,
+		handleAssistantBunkerConnect,
+		handleAssistantBunkerReconnect,
+		handleAssistantBunkerDisconnect,
+		handleSelectAssistantNip55Source,
 		get composeSections() { return composeSections; },
 		get heldEntries() { return heldEntries; },
 		findPoolItem,

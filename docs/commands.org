@@ -2060,3 +2060,17 @@ curl -s -X POST $B/identity/bunker/disconnect
 An =auth_url= reply (nsecbunker, Amber) comes back as =status.auth_url= with
 =pubkey: null=; approve in the signer, then =POST /identity/bunker/reconnect=
 (Settings shows the link and a retry button).
+
+** The assistant's own bunker (same shapes under =/assistant-identity/=)
+
+#+begin_src bash
+curl -s -X POST $B/assistant-identity/bunker/connect -H "$J" -d "{\"uri\":\"$URI\"}" | jq '{pubkey, connected:.status.connected}'
+curl -s $B/assistant-identity | jq '{source, state, pubkey}'                                  # nip46 · unlocked
+curl -s -X POST $B/publish -H "$J" -d '{"title":"By the agent","sections":[{"title":"a","content":"b","tags":[]}],"tags":[],"sign_as":"assistant"}' | jq '.events[0].pubkey'   # the bunker's key, never the user's
+curl -s -X POST $B/assistant-identity/bunker/disconnect | jq '{source, state}'
+#+end_src
+
+Amber on the phone: Settings → Assistant identity → "Use Amber for the
+assistant" registers a NIP-55 signer for the assistant slot
+(=/assistant-identity/signer-register= · =signer-channel= · =sign-response=).
+Device check pending — see the plan's follow-up.

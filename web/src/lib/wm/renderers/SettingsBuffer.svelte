@@ -381,6 +381,18 @@
 		}
 	}
 	const bunker = $derived(app.bunkerStatus);
+	const assistantBunker = $derived(app.assistantBunkerStatus);
+	const assistantSource = $derived(app.assistantStatus?.source ?? 'engine');
+
+	async function connectAssistantBunker() {
+		const uri = await promptText({
+			title: 'Connect a bunker for the assistant (NIP-46)',
+			placeholder: 'bunker://<pubkey>?relay=wss://…&secret=…',
+			hint: 'The agent signs with this account — e.g. a second Amber account, or an nsecbunker key. Never your main key.',
+			confirmLabel: 'Connect'
+		});
+		if (uri && uri.trim()) await app.handleAssistantBunkerConnect(uri);
+	}
 
 	async function doLogin() {
 		const v = ncryptsecInput.trim();
@@ -1148,6 +1160,54 @@
 				</div>
 			</div>
 		{/if}
+
+		<!-- The assistant's signer can be remote: a bunker (any shell) — the
+		     agent's key lives in Amber / nsecbunker, the engine is the NIP-46
+		     client. Independent of the user's source above. -->
+		<div class="settings-row settings-row--stack">
+			<span class="settings-label">Assistant signer</span>
+			{#if assistantSource === 'nip46' && assistantBunker}
+				<span class="settings-hint" style="margin: 0;">
+					{assistantBunker.connected ? '● bunker connected' : '○ bunker connecting…'} · signer
+					{assistantBunker.remote_pubkey.slice(0, 12)}… · {assistantBunker.relays.join(', ')}
+					{#if assistantBunker.user_pubkey}· signing as {assistantBunker.user_pubkey.slice(0, 12)}…{/if}
+				</span>
+				{#if assistantBunker.auth_url}
+					<span class="settings-hint" style="margin: 0;">
+						Approval needed:
+						<a href={assistantBunker.auth_url} target="_blank" rel="noopener">open in your signer ↗</a>
+						then <button class="sel-btn" onclick={() => app.handleAssistantBunkerReconnect()}>retry</button>
+					</span>
+				{/if}
+				<div class="action-row">
+					<button class="settings-action" onclick={() => app.handleAssistantBunkerReconnect()}>Reconnect</button>
+					<button class="settings-action settings-action--danger" onclick={() => app.handleAssistantBunkerDisconnect()}>Disconnect bunker</button>
+				</div>
+			{:else}
+				{#if assistantSource === 'nip55'}
+					<span class="settings-hint" style="margin: 0;">● signing through the signer app</span>
+				{/if}
+				<div class="action-row">
+					<button class="settings-action" onclick={connectAssistantBunker} disabled={app.assistantLoading}>
+						Connect a bunker for the assistant
+					</button>
+					{#each signerApps as signerApp (signerApp.packageName)}
+						<button
+							class="settings-action"
+							onclick={() => app.handleSelectAssistantNip55Source(signerApp.packageName)}
+							disabled={app.assistantLoading}
+						>
+							Use {signerApp.name} for the assistant
+						</button>
+					{/each}
+				</div>
+				<span class="settings-hint">
+					Keep the agent's key in Amber (as a second account) or an nsecbunker and let the
+					engine sign through it — on desktop and on the phone alike. An engine-side
+					nsec/ncryptsec above is the alternative, not a requirement.
+				</span>
+			{/if}
+		</div>
 		{#if app.assistantError}
 			<p class="settings-error">{app.assistantError}</p>
 		{/if}

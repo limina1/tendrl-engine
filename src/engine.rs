@@ -241,6 +241,9 @@ pub struct Engine {
     user_session: Option<crate::signing::IdentityHandle>,
     /// Live assistant identity session — source of truth for `by:assistant`.
     assistant_session: Option<crate::signing::IdentityHandle>,
+    /// The assistant's signing controller — engine key or a bunker, over the
+    /// assistant session. Never the user's controller.
+    assistant_signing: Option<crate::signing::SigningController>,
     /// The narrow NIP-42 capability the relay client authenticates with
     /// (kind 22242 only, as the *user*). `None` until `server::start`
     /// wires the `SigningController`; relay auth degrades to "not
@@ -445,6 +448,7 @@ impl Engine {
             config_path: None,
             user_session: None,
             assistant_session: None,
+            assistant_signing: None,
             auth_signer: None,
             embedding: None,
             embed_kinds: StdRwLock::new(crate::embedding::DEFAULT_EMBED_KINDS.to_vec()),
@@ -1159,18 +1163,15 @@ impl Engine {
         }
     }
 
-    /// The assistant's own signer — the in-process key from its session.
-    /// `NoIdentity` when no assistant key was pasted; `Locked` when its
-    /// ncryptsec has not been unlocked. Never the user's key.
-    pub fn assistant_signer(
-        &self,
-    ) -> std::result::Result<crate::signing::InProcessSigner, crate::signing::SigningError> {
-        let handle = self
-            .assistant_session
-            .as_ref()
-            .ok_or(crate::signing::SigningError::NoIdentity)?;
-        let mut session = handle.lock().unwrap_or_else(|e| e.into_inner());
-        crate::signing::InProcessSigner::resolve(&mut session, None)
+    pub fn set_assistant_signing(&mut self, controller: crate::signing::SigningController) {
+        self.assistant_signing = Some(controller);
+    }
+
+    /// The assistant's signing controller: its own session's engine key, or
+    /// a bunker (Amber, nsecbunker) paired to the assistant slot. Never the
+    /// user's controller. `None` until the server wires it.
+    pub fn assistant_signing(&self) -> Option<&crate::signing::SigningController> {
+        self.assistant_signing.as_ref()
     }
 
     /// Live assistant pubkey, read from the assistant session. `None` until an

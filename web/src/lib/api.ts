@@ -1494,8 +1494,15 @@ export interface SignerRegisterResponse {
 	token: string;
 }
 
-export function registerSigner(req: SignerRegisterRequest) {
-	return fetchJson<SignerRegisterResponse>('/api/v1/identity/signer-register', {
+/** Which identity an external signer serves. The assistant slot mounts the
+ *  same endpoints under /assistant-identity over its own controller. */
+export type IdentitySlot = 'user' | 'assistant';
+export function identityBase(slot: IdentitySlot = 'user'): string {
+	return slot === 'assistant' ? '/api/v1/assistant-identity' : '/api/v1/identity';
+}
+
+export function registerSigner(req: SignerRegisterRequest, slot: IdentitySlot = 'user') {
+	return fetchJson<SignerRegisterResponse>(`${identityBase(slot)}/signer-register`, {
 		method: 'POST',
 		body: JSON.stringify(req)
 	});
@@ -1526,14 +1533,37 @@ export function bunkerStatus() {
 	return fetchJson<BunkerStatus | null>('/api/v1/identity/bunker');
 }
 
+// The assistant slot: same shapes, its own controller (Amber account B,
+// nsecbunker…). Never the user's key.
+export function assistantBunkerConnect(uri: string) {
+	return fetchJson<BunkerConnectResponse>('/api/v1/assistant-identity/bunker/connect', {
+		method: 'POST',
+		body: JSON.stringify({ uri })
+	});
+}
+
+export function assistantBunkerReconnect() {
+	return fetchJson<BunkerConnectResponse>('/api/v1/assistant-identity/bunker/reconnect', {
+		method: 'POST'
+	});
+}
+
+export function assistantBunkerStatus() {
+	return fetchJson<BunkerStatus | null>('/api/v1/assistant-identity/bunker');
+}
+
+export function assistantBunkerDisconnect() {
+	return fetchJson<IdentityStatus>('/api/v1/assistant-identity/bunker/disconnect', { method: 'POST' });
+}
+
 export function bunkerDisconnect() {
 	return fetchJson<{ disconnected: boolean; source: string }>('/api/v1/identity/bunker/disconnect', {
 		method: 'POST'
 	});
 }
 
-export function useIdentitySource(req: UseSourceRequest) {
-	return fetchJson<IdentityStatus>('/api/v1/identity/use', {
+export function useIdentitySource(req: UseSourceRequest, slot: IdentitySlot = 'user') {
+	return fetchJson<IdentityStatus>(`${identityBase(slot)}/use`, {
 		method: 'POST',
 		body: JSON.stringify(req)
 	});
@@ -1567,8 +1597,8 @@ export interface SignResponseRequest {
 	error?: string;
 }
 
-export function postSignResponse(req: SignResponseRequest) {
-	return fetchJson<{ resolved: boolean }>('/api/v1/identity/sign-response', {
+export function postSignResponse(req: SignResponseRequest, slot: IdentitySlot = 'user') {
+	return fetchJson<{ resolved: boolean }>(`${identityBase(slot)}/sign-response`, {
 		method: 'POST',
 		body: JSON.stringify(req)
 	});

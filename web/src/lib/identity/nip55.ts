@@ -70,6 +70,28 @@ export async function getSignerApps(): Promise<Nip55SignerApp[]> {
 	return res.apps ?? [];
 }
 
+function persistKeyFor(slot: api.IdentitySlot): string {
+	return slot === 'assistant' ? `${PERSIST_KEY}:assistant` : PERSIST_KEY;
+}
+
+/** The assistant slot's saved Amber pairing, if any. */
+export function persistedAssistantNip55(): Nip55Persisted | null {
+	try {
+		const raw = localStorage.getItem(persistKeyFor('assistant'));
+		return raw ? (JSON.parse(raw) as Nip55Persisted) : null;
+	} catch {
+		return null;
+	}
+}
+
+export function clearPersistedAssistantNip55(): void {
+	try {
+		localStorage.removeItem(persistKeyFor('assistant'));
+	} catch {
+		/* ignore */
+	}
+}
+
 export function persistedNip55(): Nip55Persisted | null {
 	if (typeof localStorage === 'undefined') return null;
 	try {
@@ -142,7 +164,8 @@ export async function fetchSignerPubkey(packageName: string): Promise<string> {
  */
 export async function registerNip55Signer(
 	packageName: string,
-	prefetchedPubkey?: string
+	prefetchedPubkey?: string,
+	slot: api.IdentitySlot = 'user'
 ): Promise<() => void> {
 	const pubkey = prefetchedPubkey ?? (await fetchSignerPubkey(packageName));
 
@@ -156,22 +179,25 @@ export async function registerNip55Signer(
 		.encode({ kind: 'npub', pubkey })
 		.catch(() => pubkey);
 
-	const reg = await api.registerSigner({
-		kind: 'nip55',
-		pubkey,
-		capabilities: {
-			sign_event: true,
-			nip04_encrypt: false,
-			nip04_decrypt: false,
-			nip44_encrypt: false,
-			nip44_decrypt: false,
-			auto_approve_kinds: NIP55_WRITE_KINDS
-		}
-	});
+	const reg = await api.registerSigner(
+		{
+			kind: 'nip55',
+			pubkey,
+			capabilities: {
+				sign_event: true,
+				nip04_encrypt: false,
+				nip04_decrypt: false,
+				nip44_encrypt: false,
+				nip44_decrypt: false,
+				auto_approve_kinds: NIP55_WRITE_KINDS
+			}
+		},
+		slot
+	);
 
-	await api.useIdentitySource({ source: 'nip55', signer_id: reg.signer_id, pubkey });
+	await api.useIdentitySource({ source: 'nip55', signer_id: reg.signer_id, pubkey }, slot);
 
-	const url = `/api/v1/identity/signer-channel?token=${encodeURIComponent(reg.token)}`;
+	const url = `${api.identityBase(slot)}/signer-channel?token=${encodeURIComponent(reg.token)}`;
 	const es = new EventSource(url);
 
 	es.onmessage = async (msg) => {
@@ -202,17 +228,23 @@ export async function registerNip55Signer(
 				} else {
 					throw new Error('signer app returned neither event nor signature');
 				}
-				await api.postSignResponse({
-					signer_id: reg.signer_id,
-					req_id: data.req_id,
-					signed_event: signed
-				});
+				await api.postSignResponse(
+					{
+						signer_id: reg.signer_id,
+						req_id: data.req_id,
+						signed_event: signed
+					},
+					slot
+				);
 			} catch (err) {
-				await api.postSignResponse({
-					signer_id: reg.signer_id,
-					req_id: data.req_id,
-					error: err instanceof Error ? err.message : String(err)
-				});
+				await api.postSignResponse(
+					{
+						signer_id: reg.signer_id,
+						req_id: data.req_id,
+						error: err instanceof Error ? err.message : String(err)
+					},
+					slot
+				);
 			}
 		} catch (e) {
 			console.warn('[NIP-55 signer] failed to handle SSE message', e);
@@ -224,7 +256,9 @@ export async function registerNip55Signer(
 	};
 
 	try {
-		localStorage.setItem(PERSIST_KEY, JSON.stringify({ packageName, pubkey }));
+		// The assistant slot persists under its own key so the user's boot
+		// re-attach never picks up the agent's account (and vice versa).
+		localStorage.setItem(persistKeyFor(slot), JSON.stringify({ packageName, pubkey }));
 	} catch {
 		/* storage unavailable — boot re-attach just won't be silent */
 	}
@@ -233,6 +267,6 @@ export async function registerNip55Signer(
 		es.close();
 		// Best-effort source revert; engine drops the registration on
 		// channel close anyway via the stale-sweep path.
-		api.useIdentitySource({ source: 'engine' }).catch(() => {});
+		api.useIdentitySource({ source: 'engine' }, slot).catch(() => {});
 	};
 }

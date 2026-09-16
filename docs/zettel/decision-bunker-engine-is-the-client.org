@@ -35,6 +35,16 @@ the OS keyring with the URI, so a restart reconnects without re-pasting.
   against an in-memory responder, including the =auth_url= approval
   dance. The live check is =nak bunker= on a public relay.
 
+* Any slot, any transport (2026-09-16, user's call)
+
+The mechanism is per-*controller*, not per-user: the assistant has its own
+=SigningController= over its session, so the agent's key can live in Amber
+(a second account) or an nsecbunker too — bunker (NIP-46, over relays) on
+desktop, direct NIP-55 intents on the phone, the same generic
+signer-register / channel / sign-response handlers mounted under
+=/assistant-identity/=. One signer app can hold every npub; each identity
+slot pairs with the account it should sign as, and nothing crosses.
+
 * Consequences
 
 - =auth_url= surfaces as =SigningError::AuthRequired(url)= and in the

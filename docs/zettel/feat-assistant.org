@@ -53,6 +53,11 @@ signing source, insertions, the engine speaking MCP, the zettel bubble.
   =tendrl_publish= sends =sign_as: assistant= and cannot name the user.
   Tested: an assistant publish carries the assistant's pubkey, a user
   publish the user's. [[file:decision-assistant-signs-own-key.org][Decision]].
+  The assistant has its own =SigningController=: an engine-side key *or* a
+  bunker (=/assistant-identity/bunker/…=, e.g. a second Amber account, an
+  nsecbunker key) — and on the Android host direct Amber (NIP-55) through
+  the same handlers mounted under =/assistant-identity/= (device test
+  pending). [[file:decision-bunker-engine-is-the-client.org][Decision]].
 - Two tool catalogs: =src/tools.rs= (17 tools, the real one) and
   =scripts/tendrl-mcp.py= (12, hand-copied; =tendrl_get_context= now returns
   the engine set's entries, =save_draft= still missing). Plan Phase 4 makes

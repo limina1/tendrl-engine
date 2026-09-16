@@ -58,12 +58,15 @@ pub struct RunningServer {
 /// hinted so `by:assistant` scopes before unlock); a pubkey-only blob (from a
 /// session-only nsec) restores scoping but not signing — re-paste the nsec to
 /// sign again.
-fn restore_assistant_identity(session: &api::IdentityAppState, keyring_available: bool) {
+fn restore_assistant_identity(
+    session: &api::IdentityAppState,
+    keyring_available: bool,
+) -> Option<String> {
     if !keyring_available {
-        return;
+        return None;
     }
     let Ok(blob) = crate::identity::IdentityKeyring::new().get_last_assistant() else {
-        return;
+        return None;
     };
     #[derive(serde::Deserialize)]
     struct Persist {
@@ -71,7 +74,7 @@ fn restore_assistant_identity(session: &api::IdentityAppState, keyring_available
         ncryptsec: Option<String>,
     }
     let Ok(p) = serde_json::from_str::<Persist>(&blob) else {
-        return;
+        return None;
     };
     let mut s = session.lock().unwrap();
     if let Some(nc) = p.ncryptsec.as_deref() {
@@ -80,13 +83,14 @@ fn restore_assistant_identity(session: &api::IdentityAppState, keyring_available
                 s.set_pubkey_hint(pk);
             }
             info!("Restored assistant identity (locked) from keyring");
-            return;
+            return Some(blob);
         }
     }
     if let Some(pk) = p.pubkey {
         s.set_pubkey_hint(pk);
         info!("Restored assistant pubkey (scope-only) from keyring");
     }
+    Some(blob)
 }
 
 /// Bind the listener FIRST, then build the engine and every router and
@@ -259,17 +263,32 @@ pub async fn start(opts: ServeOptions) -> anyhow::Result<RunningServer> {
         );
     }
     let assistant_session: api::IdentityAppState = Arc::new(Mutex::new(IdentitySession::new()));
-    {
+    let assistant_blob = {
         let session = assistant_session.clone();
         tokio::task::spawn_blocking(move || {
             restore_assistant_identity(&session, keyring_available)
         })
         .await
-        .ok();
-    }
+        .ok()
+        .flatten()
+    };
 
     engine.set_user_session(user_session.clone());
     engine.set_assistant_session(assistant_session.clone());
+    // The assistant signs through its own controller — its session's engine
+    // key, or a bunker paired to the assistant slot. Never the user's.
+    let assistant_signing = crate::signing::SigningController::new(assistant_session.clone());
+    engine.set_assistant_signing(assistant_signing.clone());
+    if let Some(blob) = assistant_blob.as_deref() {
+        api::restore_assistant_bunker(
+            &api::AssistantIdentity {
+                session: assistant_session.clone(),
+                keyring_available,
+                signing: assistant_signing.clone(),
+            },
+            blob,
+        );
+    }
 
     // SigningController owns the external-signer registry and routes
     // signing through the active source. Constructed once, before the
@@ -426,6 +445,31 @@ pub async fn start(opts: ServeOptions) -> anyhow::Result<RunningServer> {
         .route("/api/v1/chat/load", put(api::chat_load_fragments))
         .with_state(chat_state);
 
+    // The assistant slot accepts the same direct external signers as the user
+    // (NIP-55 Amber on the phone, NIP-07): identical handlers, its own
+    // controller + session. Amber can hold both keys — account A signs as the
+    // user, account B as the assistant — each through its own chokepoint.
+    let assistant_signer_routes = Router::new()
+        .route(
+            "/api/v1/assistant-identity/signer-register",
+            post(api::signer_register_handler),
+        )
+        .route(
+            "/api/v1/assistant-identity/signer-channel",
+            get(api::signer_channel_handler),
+        )
+        .route(
+            "/api/v1/assistant-identity/sign-response",
+            post(api::sign_response_handler),
+        )
+        .with_state(assistant_signing.clone());
+    let assistant_source_routes = Router::new()
+        .route(
+            "/api/v1/assistant-identity/use",
+            post(api::identity_use_source_handler),
+        )
+        .with_state(assistant_session.clone());
+
     // Identity routes operate on the user session created above (boot source +
     // auto-lock timeout already applied). The session source honors
     // `[identity] source` so a nip07 user reattaches without the modeline
@@ -509,9 +553,26 @@ pub async fn start(opts: ServeOptions) -> anyhow::Result<RunningServer> {
             "/api/v1/assistant-identity/logout",
             post(api::assistant_identity_logout_handler),
         )
+        .route(
+            "/api/v1/assistant-identity/bunker",
+            get(api::assistant_bunker_status_handler),
+        )
+        .route(
+            "/api/v1/assistant-identity/bunker/connect",
+            post(api::assistant_bunker_connect_handler),
+        )
+        .route(
+            "/api/v1/assistant-identity/bunker/reconnect",
+            post(api::assistant_bunker_reconnect_handler),
+        )
+        .route(
+            "/api/v1/assistant-identity/bunker/disconnect",
+            post(api::assistant_bunker_disconnect_handler),
+        )
         .with_state(api::AssistantIdentity {
             session: assistant_session.clone(),
             keyring_available,
+            signing: assistant_signing.clone(),
         });
 
     // Config endpoint — only the data dir now. Identity pubkeys come from the
@@ -745,6 +806,8 @@ pub async fn start(opts: ServeOptions) -> anyhow::Result<RunningServer> {
         .merge(chat_routes)
         .merge(identity_routes)
         .merge(signing_routes)
+        .merge(assistant_signer_routes)
+        .merge(assistant_source_routes)
         .merge(assistant_routes)
         // Serve the embedded SPA for everything that is not an API route.
         .fallback(static_assets::static_handler)

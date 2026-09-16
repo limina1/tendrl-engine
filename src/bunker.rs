@@ -27,8 +27,12 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::sync::{broadcast, mpsc, oneshot};
 
-/// Per-request wait for the signer's reply.
-pub const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+/// Per-request wait for the signer's reply. Amber prompts on the phone for
+/// each signature until "always allow", so this is a human-scale wait.
+pub const REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
+/// `connect` / `get_public_key` wait: the first pairing needs the user to
+/// find the phone and approve.
+pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(120);
 
 /// How a signer reaches its remote: `run` owns the connection(s) for the
 /// signer's lifetime, forwarding every event from `outgoing` and pushing
@@ -177,12 +181,15 @@ impl BunkerSigner {
             self.inner.uri.secret.as_deref(),
             None,
         );
-        match self.request(req).await? {
+        match self.request_with_timeout(req, CONNECT_TIMEOUT).await? {
             Outcome::Result(_) => {}
             Outcome::AuthUrl(url) => return Err(SigningError::AuthRequired(url)),
             Outcome::Error(e) => return Err(SigningError::External(format!("connect: {e}"))),
         }
-        let pubkey = match self.request(Request::get_public_key()).await? {
+        let pubkey = match self
+            .request_with_timeout(Request::get_public_key(), CONNECT_TIMEOUT)
+            .await?
+        {
             Outcome::Result(pk) => pk,
             Outcome::AuthUrl(url) => return Err(SigningError::AuthRequired(url)),
             Outcome::Error(e) => {
@@ -198,8 +205,17 @@ impl BunkerSigner {
         Ok(pubkey)
     }
 
-    /// Send one request and wait for its reply.
+    /// Send one request and wait for its reply (the default per-request wait).
     async fn request(&self, req: Request) -> Result<Outcome, SigningError> {
+        let wait = Duration::from_millis(self.inner.timeout_ms.load(Ordering::Relaxed));
+        self.request_with_timeout(req, wait).await
+    }
+
+    async fn request_with_timeout(
+        &self,
+        req: Request,
+        wait: Duration,
+    ) -> Result<Outcome, SigningError> {
         let envelope =
             nip46::request_envelope(&self.inner.conv, &self.inner.uri.remote_pubkey, &req)
                 .map_err(|e| SigningError::External(e.to_string()))?;
@@ -226,7 +242,10 @@ impl BunkerSigner {
             self.inner.pending.lock().unwrap().remove(&req.id);
             return Err(SigningError::SignerNotConnected);
         }
-        let wait = Duration::from_millis(self.inner.timeout_ms.load(Ordering::Relaxed));
+        // Tests shorten the wait through `set_timeout`; honour it here too.
+        let wait = wait.min(Duration::from_millis(
+            self.inner.timeout_ms.load(Ordering::Relaxed),
+        ));
         let reply = match tokio::time::timeout(wait, rx).await {
             Ok(Ok(r)) => r,
             Ok(Err(_)) => return Err(SigningError::SignerNotConnected),
