@@ -150,7 +150,7 @@ TOOLS = [
     },
     {
         "name": "tendrl_get_context",
-        "description": "Get the chat's injected context notes. These are search results or documents the user has sent to the chat as reference material.",
+        "description": "Read the shared context set — the reference notes the user curated in tendrl (title, content, source, who added it). Synthesize from these; save results with tendrl_publish_document or as a draft.",
         "inputSchema": {
             "type": "object",
             "properties": {}
@@ -406,14 +406,15 @@ def handle_tool_call(name, args):
         return info + "\n\n" + "\n---\n".join(lines) if lines else info
 
     elif name == "tendrl_get_context":
-        chat = api("/api/v1/chat")
-        if "error" in chat:
-            return json.dumps(chat)
-        # The context is embedded in the chat response
-        ctx_count = chat.get("context_count", 0)
-        if ctx_count == 0:
-            return "No context notes injected"
-        return f"{ctx_count} context notes (visible in chat system messages)"
+        # The engine-owned context set — what the user curated in the app.
+        # Interim: Phase 4 has the engine serve its own tool catalog over MCP.
+        ctx = api("/api/v1/context")
+        if "error" in ctx:
+            return json.dumps(ctx)
+        entries = ctx.get("entries", [])
+        if not entries:
+            return "The context set is empty."
+        return json.dumps({"count": len(entries), "entries": entries}, indent=2)
 
     elif name == "tendrl_get_profile":
         result = api(f"/api/v1/profile/{args['pubkey']}")

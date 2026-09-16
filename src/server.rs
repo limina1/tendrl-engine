@@ -333,6 +333,16 @@ pub async fn start(opts: ServeOptions) -> anyhow::Result<RunningServer> {
     // shows it on load and the agent uses it through the normal message path.
     let mut initial_chat = ChatState::new();
     initial_chat.system_prompt = api::read_system_prompt(&prompt_path);
+    // The engine-owned context set survives a restart:
+    // <data_dir>/context/active.json (src/context.rs).
+    match crate::context::ContextStore::new(state.data_dir()).and_then(|s| s.load_active()) {
+        Ok(Some(set)) => {
+            info!("Context set: restored {} entries", set.len());
+            initial_chat.context = set;
+        }
+        Ok(None) => {}
+        Err(e) => tracing::warn!("Context set: could not restore the active set: {e}"),
+    }
     let chat_state = api::ChatAppState {
         chat: Arc::new(Mutex::new(initial_chat)),
         provider: llm::provider_from_config(&config.ai),
@@ -368,9 +378,23 @@ pub async fn start(opts: ServeOptions) -> anyhow::Result<RunningServer> {
         )
         .route("/api/v1/chat/system", post(api::chat_set_system))
         .route(
-            "/api/v1/chat/context",
-            post(api::chat_inject_context).put(api::chat_replace_context),
+            "/api/v1/context",
+            get(api::context_get).delete(api::context_clear),
         )
+        .route("/api/v1/context/entries", post(api::context_entry_add))
+        .route(
+            "/api/v1/context/entries/:id",
+            axum::routing::patch(api::context_entry_patch).delete(api::context_entry_delete),
+        )
+        .route(
+            "/api/v1/context/sets",
+            get(api::context_sets_list).post(api::context_sets_save),
+        )
+        .route(
+            "/api/v1/context/sets/:id",
+            axum::routing::delete(api::context_sets_delete),
+        )
+        .route("/api/v1/context/sets/:id/load", post(api::context_sets_load))
         .route("/api/v1/chat/load", put(api::chat_load_fragments))
         .with_state(chat_state);
 

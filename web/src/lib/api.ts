@@ -7,7 +7,10 @@ import type {
 	SendMessageRequest,
 	EditBufferRequest,
 	SystemPromptRequest,
-	InjectContextRequest,
+	AddContextEntryRequest,
+	ContextSet,
+	ContextSetSummary,
+	PatchContextEntryRequest,
 	PublicationSummary,
 	PublicationDetail,
 	TocEntry,
@@ -218,9 +221,47 @@ export function setSystemPrompt(prompt: string): Promise<ChatResponse> {
 	return fetchJson<ChatResponse>(`${CHAT}/system`, { method: 'POST', body: JSON.stringify(body) });
 }
 
-export function replaceContext(notes: { title: string; content: string }[]): Promise<ChatResponse> {
-	const body: InjectContextRequest = { notes };
-	return fetchJson<ChatResponse>(`${CHAT}/context`, { method: 'PUT', body: JSON.stringify(body) });
+// Engine-owned context set (src/context.rs). Every mutation answers with the
+// whole set, so callers assign the response and re-mirror the pool.
+const CONTEXT = '/api/v1/context';
+
+export function getContext(): Promise<ContextSet> {
+	return fetchJson<ContextSet>(CONTEXT);
+}
+
+export function clearContext(): Promise<ContextSet> {
+	return fetchJson<ContextSet>(CONTEXT, { method: 'DELETE' });
+}
+
+export function addContextEntry(req: AddContextEntryRequest): Promise<ContextSet> {
+	return fetchJson<ContextSet>(`${CONTEXT}/entries`, { method: 'POST', body: JSON.stringify(req) });
+}
+
+export function patchContextEntry(id: string, req: PatchContextEntryRequest): Promise<ContextSet> {
+	return fetchJson<ContextSet>(`${CONTEXT}/entries/${encodeURIComponent(id)}`, {
+		method: 'PATCH',
+		body: JSON.stringify(req)
+	});
+}
+
+export function deleteContextEntry(id: string): Promise<ContextSet> {
+	return fetchJson<ContextSet>(`${CONTEXT}/entries/${encodeURIComponent(id)}`, { method: 'DELETE' });
+}
+
+export function listContextSets(): Promise<ContextSetSummary[]> {
+	return fetchJson<ContextSetSummary[]>(`${CONTEXT}/sets`);
+}
+
+export function saveContextSet(name: string): Promise<ContextSetSummary> {
+	return fetchJson<ContextSetSummary>(`${CONTEXT}/sets`, { method: 'POST', body: JSON.stringify({ name }) });
+}
+
+export function loadContextSet(id: string): Promise<ContextSet> {
+	return fetchJson<ContextSet>(`${CONTEXT}/sets/${encodeURIComponent(id)}/load`, { method: 'POST' });
+}
+
+export function deleteContextSet(id: string): Promise<{ deleted: string }> {
+	return fetchJson<{ deleted: string }>(`${CONTEXT}/sets/${encodeURIComponent(id)}`, { method: 'DELETE' });
 }
 
 // NIP-19 encode

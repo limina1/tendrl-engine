@@ -21,6 +21,32 @@ use serde_json::{json, Value};
 use std::collections::HashSet;
 use std::sync::Arc;
 
+use crate::chat::ChatState;
+use crate::context::{ContextEntry, ContextOrigin, ContextSource, ContextStore};
+use std::sync::Mutex;
+
+/// What a tool needs to run: the engine for reads, and the chat handle so the
+/// context tools mutate the engine-owned set directly (no proposal round-trip
+/// through the web). Phase 4's MCP endpoint builds the same value, so both
+/// harnesses go through one `dispatch`.
+#[derive(Clone)]
+pub struct ToolCx {
+    pub engine: Arc<Engine>,
+    pub chat: Arc<Mutex<ChatState>>,
+}
+
+impl ToolCx {
+    /// Persist the active set after a mutation. A failed write is logged, not
+    /// fatal — the in-memory set is already updated and the next write retries.
+    fn persist_context(&self, chat: &ChatState) {
+        if let Err(e) = ContextStore::new(self.engine.data_dir())
+            .and_then(|s| s.save_active(&chat.context))
+        {
+            tracing::warn!("context set: persist failed: {e}");
+        }
+    }
+}
+
 /// Permission/gating class for a tool.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -163,6 +189,18 @@ pub fn catalog() -> Vec<ToolDef> {
             input_schema: schema_add_to_context,
         },
         ToolDef {
+            name: "get_context",
+            description: "List what is in the shared context set right now — each entry's id, title, source, who added it, and a snippet. The full text of every entry is already in your system message; pass `full: true` only when you need the exact current content of entries you are about to edit or remove.",
+            category: ToolCategory::Context,
+            input_schema: schema_get_context,
+        },
+        ToolDef {
+            name: "remove_from_context",
+            description: "Drop an entry from the shared context set by its `id` (from get_context). The user sees it leave their Context panel.",
+            category: ToolCategory::Context,
+            input_schema: schema_remove_from_context,
+        },
+        ToolDef {
             name: "propose_section",
             description: "Draft a new publication section and offer it to the user's composer. Call this when the user asks you to write, draft, or outline a section. The section is added to the composer for the user to review/edit — it is NOT published.",
             category: ToolCategory::ComposeWrite,
@@ -204,7 +242,8 @@ pub fn definitions(policy: &ToolPolicy) -> Vec<ToolDefinition> {
 }
 
 /// Execute a tool by name. Returns the JSON the model sees as a tool result.
-pub async fn dispatch(engine: &Arc<Engine>, name: &str, input: Value) -> Result<Value> {
+pub async fn dispatch(cx: &ToolCx, name: &str, input: Value) -> Result<Value> {
+    let engine = &cx.engine;
     match name {
         "search_events" => search_events(engine, input).await,
         "semantic_search" => semantic_search(engine, input).await,
@@ -216,7 +255,9 @@ pub async fn dispatch(engine: &Arc<Engine>, name: &str, input: Value) -> Result<
         "view_publication_tree" => view_publication_tree(engine, input).await,
         "list_section_versions" => list_section_versions(engine, input).await,
         "fetch_from_relays" => fetch_from_relays(engine, input).await,
-        "add_to_context" => add_to_context(engine, input).await,
+        "add_to_context" => add_to_context(cx, input).await,
+        "get_context" => get_context(cx, input).await,
+        "remove_from_context" => remove_from_context(cx, input).await,
         "propose_section" => propose_section(input).await,
         "edit_section" => edit_section(engine, input).await,
         "save_draft" => save_draft(engine, input).await,
@@ -362,6 +403,25 @@ fn schema_add_to_context() -> Value {
             "title": { "type": "string", "description": "Title for the context item. Required when giving raw content; optional override otherwise." },
             "content": { "type": "string", "description": "Raw content to capture as an idea (use instead of id/addr)." }
         }
+    })
+}
+
+fn schema_get_context() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "full": { "type": "boolean", "description": "Include each entry's full current content (default false: snippet only)." }
+        }
+    })
+}
+
+fn schema_remove_from_context() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "id": { "type": "string", "description": "Context entry id, as returned by get_context or add_to_context." }
+        },
+        "required": ["id"]
     })
 }
 
@@ -572,11 +632,19 @@ async fn fetch_from_relays(engine: &Arc<Engine>, input: Value) -> Result<Value> 
 /// "idea". Like the compose tools, this only *emits* a structured context item;
 /// the web folds it into its pool and syncs it to the engine (boundary rule:
 /// Rust derives the item from events, the web owns the working-set view state).
-async fn add_to_context(engine: &Arc<Engine>, input: Value) -> Result<Value> {
+/// Resolve a context request — `{id}` | `{addr}` | `{title?, content}` — into
+/// an entry with title, content, tags and (for events) the captured version.
+/// Shared by the `add_to_context` tool and `POST /api/v1/context/entries`, so
+/// a user pill and an assistant call produce identical entries.
+pub async fn resolve_context_entry(
+    engine: &Arc<Engine>,
+    input: &Value,
+    origin: ContextOrigin,
+) -> Result<ContextEntry> {
     let title_override = input.get("title").and_then(Value::as_str);
 
     // Resolve the source: addressable coordinate, then event id, then raw idea.
-    let (source_addr, source_id, resolved_title, content) =
+    let (source, resolved_title, content, tags) =
         if let Some(addr_str) = input.get("addr").and_then(Value::as_str) {
             let addr = parse_address(addr_str)?;
             let ev = engine
@@ -586,19 +654,30 @@ async fn add_to_context(engine: &Arc<Engine>, input: Value) -> Result<Value> {
                     EngineError::NotFound(format!("no local event for address {addr_str}"))
                 })?;
             let (title, body) = event_title_content(&ev);
-            (Some(addr), None, title, body)
+            let source = ContextSource::Addr {
+                kind: addr.kind,
+                pubkey: addr.pubkey,
+                d_tag: addr.d_tag,
+                event_id: ev.get("id").and_then(Value::as_str).map(str::to_string),
+            };
+            (source, title, body, event_tags(&ev))
         } else if let Some(id) = input.get("id").and_then(Value::as_str) {
             let ev = engine
                 .get_by_id(id, FetchPolicy::LocalOnly)
                 .await?
                 .ok_or_else(|| EngineError::NotFound(format!("no local event with id {id}")))?;
             let (title, body) = event_title_content(&ev);
-            (None, Some(id.to_string()), title, body)
+            (
+                ContextSource::Event { id: id.to_string() },
+                title,
+                body,
+                event_tags(&ev),
+            )
         } else if let Some(raw) = input.get("content").and_then(Value::as_str) {
-            (None, None, None, raw.to_string())
+            (ContextSource::Literal, None, raw.to_string(), Vec::new())
         } else {
             return Err(EngineError::BadRequest(
-                "add_to_context: provide one of 'id', 'addr', or 'content'".into(),
+                "provide one of 'id', 'addr', or 'content'".into(),
             ));
         };
 
@@ -608,20 +687,80 @@ async fn add_to_context(engine: &Arc<Engine>, input: Value) -> Result<Value> {
         .filter(|t| !t.trim().is_empty())
         .unwrap_or_else(|| truncate(content.trim(), 48));
 
-    // `source_addr` matches the web `NAddr` shape ({kind, pubkey, d_tag}) so the
-    // pool can dedupe an item the user may have added from search.
+    Ok(ContextEntry::new(source, title, content, tags, origin))
+}
+
+fn event_tags(ev: &Value) -> Vec<Vec<String>> {
+    ev.get("tags")
+        .and_then(Value::as_array)
+        .map(|ts| {
+            ts.iter()
+                .filter_map(Value::as_array)
+                .map(|t| t.iter().filter_map(Value::as_str).map(str::to_string).collect())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Pull a reference into the shared context set. Writes the engine-owned set
+/// directly and persists it; the web just re-reads. Returns a compact handle
+/// (`added: false` means the source was already there).
+async fn add_to_context(cx: &ToolCx, input: Value) -> Result<Value> {
+    let entry = resolve_context_entry(&cx.engine, &input, ContextOrigin::Assistant).await?;
+    let title = entry.title.clone();
+    let snippet = truncate(entry.content.trim(), 200);
+    let (id, added, count) = {
+        let mut chat = cx.chat.lock().unwrap();
+        let (id, added) = chat.context.add(entry);
+        if added {
+            cx.persist_context(&chat);
+        }
+        (id, added, chat.context.len())
+    };
     Ok(json!({
         "type": "context",
+        "id": id,
+        "added": added,
         "title": title,
-        "content": content,
-        "snippet": truncate(content.trim(), 200),
-        "source_event_id": source_id,
-        "source_addr": source_addr.map(|a| json!({
-            "kind": a.kind,
-            "pubkey": a.pubkey,
-            "d_tag": a.d_tag,
-        })),
+        "snippet": snippet,
+        "count": count,
     }))
+}
+
+/// Compact handles for every entry in the set; `full: true` adds content.
+async fn get_context(cx: &ToolCx, input: Value) -> Result<Value> {
+    let full = input.get("full").and_then(Value::as_bool).unwrap_or(false);
+    let chat = cx.chat.lock().unwrap();
+    let entries: Vec<Value> = chat
+        .context
+        .entries
+        .iter()
+        .map(|e| {
+            let mut v = json!({
+                "id": e.id,
+                "title": e.title,
+                "source": e.source,
+                "origin": e.origin,
+                "modified": e.modified(),
+                "snippet": truncate(e.content.trim(), 200),
+            });
+            if full {
+                v["content"] = json!(e.content);
+            }
+            v
+        })
+        .collect();
+    Ok(json!({ "count": entries.len(), "entries": entries }))
+}
+
+async fn remove_from_context(cx: &ToolCx, input: Value) -> Result<Value> {
+    let id = require_str(&input, "id")?;
+    let mut chat = cx.chat.lock().unwrap();
+    let removed = chat.context.remove(id);
+    if removed {
+        cx.persist_context(&chat);
+    }
+    Ok(json!({ "removed": removed, "count": chat.context.len() }))
 }
 
 /// Propose a new section. Pure structuring of the model's draft — the web

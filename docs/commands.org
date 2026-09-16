@@ -1957,3 +1957,65 @@ emacs -Q --batch -f batch-byte-compile emacs/tendrl.el; rm -f emacs/*.elc       
 emacs -Q --batch -L emacs -l tendrl -l nostrdown-mode -l emacs/tendrl-test.el      # engine on :3030 + nak; exit 0 = pass
 # interactive: M-x tendrl-local-fetch / tendrl-relay-fetch (C-u = via nak) / tendrl-event-json (j in the event buffer)
 #+end_src
+
+* Context set (engine-owned) — plan Phase 1 (branch =feat/context-set=)
+
+The reference set the assistant reads from lives in the engine
+(=src/context.rs=): =ChatState.context=, persisted at
+=<data_dir>/context/active.json= + named snapshots in =context/sets/=. The
+web mirrors membership onto its pool (=refreshContext()=); the Context
+panel renders the engine entries. Decision:
+=docs/zettel/decision-context-set-engine-owned.org=.
+
+** Typecheck + tests
+
+#+begin_src bash
+cargo test --lib -- --test-threads=4 context:: chat:: chat_api_tests:: tools::   # 41+ tests
+cargo clippy --lib
+pnpm -C web check                                                            # 0 errors
+#+end_src
+
+** API round-trip (scratch engine on :3131 — see the verify skill for the config)
+
+#+begin_src bash
+B=localhost:3131/api/v1; J='Content-Type: application/json'
+curl -s $B/context | jq '{id, n: (.entries|length)}'                                  # {"id":"active","n":0}
+curl -s -X POST $B/context/entries -H "$J" -d '{"title":"Style Guide","content":"Use short sentences."}' | jq '.entries[0] | {id,origin,source}'
+curl -s -X POST $B/context/entries -H "$J" -d '{"addr":"30041:<pubkey>:<d-tag>"}'     # from the local store; same-source adds dedupe
+ID=$(curl -s $B/context | jq -r '.entries[0].id')
+curl -s -X PATCH  $B/context/entries/$ID -H "$J" -d '{"content":"Edited."}' | jq '.entries[0] | (.content != .original)'   # true
+curl -s -X PATCH  $B/context/entries/$ID -H "$J" -d '{"reset":true}'      | jq '.entries[0] | (.content != .original)'   # false
+curl -s -X DELETE $B/chat | jq '.context_count'                                       # a chat reset keeps the set
+curl -s -X POST $B/context/sets -H "$J" -d '{"name":"reading list"}' | jq '{id,entry_count}'
+curl -s $B/context/sets | jq length
+curl -s -X POST $B/context/sets/<set-id>/load | jq '.entries|length'                  # snapshot → active set
+curl -s -X DELETE $B/context/entries/$ID | jq '.entries|length'
+ls <data_dir>/context/ <data_dir>/context/sets/                                       # active.json, <set-id>.json
+#+end_src
+
+Restart the engine and =GET /context= again — the set comes back (boot
+restores =active.json=; =server.rs= logs "Context set: restored N entries").
+
+** Assistant tools write the set directly
+
+=add_to_context= / =get_context= / =remove_from_context= run through
+=tools::ToolCx= (engine + chat handle) and persist; the web only re-reads.
+Covered by =api::chat_api_tests::test_context_tools_write_the_set_directly=.
+The MCP mirror reads the same set:
+
+#+begin_src bash
+printf '%s\n%s\n' \
+  '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"t","version":"0"}}}' \
+  '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"tendrl_get_context","arguments":{}}}' \
+  | TENDRL_API=http://localhost:3131 python3 scripts/tendrl-mcp.py | grep '"id": *2'
+#+end_src
+
+** UI verification
+
+Open the chat pane (=.rail--chat=): the Context panel lists the engine
+entries (=.context-card= count = =GET /context= entry count); the chat
+buffer re-reads the set on every mount, so an entry added from the
+terminal appears on the next visit. Add from search (pill / =+ Context=):
+the pill flips at once, the entry appears in the panel, and a page reload
+shows it still there (the set outlives the tab). Editing a note in the
+panel PATCHes after 400 ms; =Reset= restores the captured text.

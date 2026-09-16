@@ -15,17 +15,27 @@ signing source, insertions, the engine speaking MCP, the zettel bubble.
 - Typed chat fragments (system/user/assistant) with edit mode — collapse to a
   single delimited buffer, edit freely, re-parse on exit (=src/chat.rs=, pure
   state; =sanitize_tool_pairs= keeps tool_use/tool_result pairing valid).
-- Context injection (current): the web's =ContextItem= pool is the source of
-  truth; =PUT /api/v1/chat/context= pushes resolved notes into the system
-  message (=web/src/lib/components/ContextPanel.svelte=). *Superseded in
-  half* by [[file:decision-context-set-engine-owned.org][the context-set
-  decision]] (2026-09-16): the set moves to the engine, the routing flags
-  stay web — unbuilt, Phase 1 of the plan.
+- Context set, engine-owned (2026-09-16, plan Phase 1): =src/context.rs= —
+  =ContextSet= / =ContextEntry= (source: event | addr | literal; content +
+  captured =original=; tags; origin user/assistant/chat/import), persisted
+  at =<data_dir>/context/active.json= (survives a restart; a chat reset keeps
+  it) plus named snapshots under =context/sets/=. API =/api/v1/context=
+  (GET · DELETE), =/context/entries= (POST by id/addr/literal — same
+  resolver as the tool), =/context/entries/:id= (PATCH edit/reset · DELETE),
+  =/context/sets= (list/save/load/delete). =ChatState.context= is the one
+  owner; =to_agent_messages= renders it. The web keeps only routing flags:
+  =ContextPanel= renders the engine entries through =entryAsItem()= with
+  =in_compose= / =held= overlaid from the linked pool item, and every
+  membership change is an engine call followed by =refreshContext()=, which
+  re-mirrors =in_context= onto the pool. Decision:
+  [[file:decision-context-set-engine-owned.org][context set is engine-owned]].
 - =LLMProvider= trait (=src/llm.rs=): =ClaudeProvider= + =NoopProvider=;
   provider-neutral =ContentBlock= / =AgentMessage= / =run_turn()= types.
 - Agentic loop: =chat_agent_handler= (=src/api.rs=, =POST /api/v1/chat/agent=,
-  SSE); tool catalog + dispatch in =src/tools.rs= (15 tools: search, read,
-  NKBIP-01 views, =fetch_from_relays=, =add_to_context=, compose-write,
+  SSE); tool catalog + dispatch in =src/tools.rs= (17 tools: search, read,
+  NKBIP-01 views, =fetch_from_relays=, =add_to_context= / =get_context= /
+  =remove_from_context= — these write the engine-owned set directly through
+  a =ToolCx= (engine + chat handle), no web fold-in — compose-write,
   =publish=). =ToolPolicy= filters the catalog before the provider call —
   default is everything but publish; surfaced in the AI Tools settings tab.
 - Gating reuses the Confirm-mode modals; saved sessions (=src/sessions.rs=);
@@ -40,10 +50,10 @@ signing source, insertions, the engine speaking MCP, the zettel bubble.
   *decided* — [[file:decision-assistant-signs-own-key.org][the assistant
   signs with its own key]], via a named =sign_as= source replacing the
   =sign= boolean — unbuilt, Phase 2 of the plan.
-- Two tool catalogs: =src/tools.rs= (15 tools, the real one) and
-  =scripts/tendrl-mcp.py= (12, hand-copied; =get_context= is a count-only
-  stub, =save_draft= missing). Plan Phase 4 makes the engine speak MCP
-  and retires the copy. This is also how a user's own Claude Code /
+- Two tool catalogs: =src/tools.rs= (17 tools, the real one) and
+  =scripts/tendrl-mcp.py= (12, hand-copied; =tendrl_get_context= now returns
+  the engine set's entries, =save_draft= still missing). Plan Phase 4 makes
+  the engine speak MCP and retires the copy. This is also how a user's own Claude Code /
   Codex subscription reaches tendrl — the external harness brings its
   credential, tendrl holds none (the OAuth path was dropped; API key
   only for the in-app loop).

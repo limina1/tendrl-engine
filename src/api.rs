@@ -7454,7 +7454,7 @@ fn build_chat_response(state: &ChatState) -> ChatResponse {
             None
         },
         system_prompt: state.system_prompt.clone(),
-        context_count: state.injected_context.len(),
+        context_count: state.context.len(),
         generating: state.generating,
     }
 }
@@ -7477,19 +7477,6 @@ pub struct SystemPromptRequest {
     pub prompt: String,
 }
 
-/// A context note to inject
-#[derive(Debug, Deserialize)]
-pub struct NoteRequest {
-    pub title: String,
-    pub content: String,
-}
-
-/// Request to inject context notes
-#[derive(Debug, Deserialize)]
-pub struct InjectContextRequest {
-    pub notes: Vec<NoteRequest>,
-}
-
 /// GET /api/v1/chat — get current conversation state. The system prompt is
 /// refreshed from prompt.md so the UI always reflects the file (and survives a
 /// reset / on-disk edit).
@@ -7502,7 +7489,11 @@ pub async fn chat_get(State(state): State<ChatAppState>) -> Json<ChatResponse> {
 /// DELETE /api/v1/chat — reset conversation (keeps the prompt.md system prompt).
 pub async fn chat_reset(State(state): State<ChatAppState>) -> Json<ChatResponse> {
     let mut chat = state.chat.lock().unwrap();
+    // A chat reset clears the conversation, not the reference set — the
+    // context set is engine-owned and outlives any one conversation.
+    let context = std::mem::take(&mut chat.context);
     *chat = ChatState::new();
+    chat.context = context;
     chat.system_prompt = read_system_prompt(&state.system_prompt_path);
     Json(build_chat_response(&chat))
 }
@@ -7541,11 +7532,12 @@ pub async fn session_save(
             })
             .collect::<Vec<_>>();
         let ctx = chat
-            .injected_context
+            .context
+            .entries
             .iter()
-            .map(|n| crate::sessions::SavedNote {
-                title: n.title.clone(),
-                content: n.content.clone(),
+            .map(|e| crate::sessions::SavedNote {
+                title: e.title.clone(),
+                content: e.content.clone(),
             })
             .collect::<Vec<_>>();
         (frags, ctx)
@@ -7622,6 +7614,11 @@ pub async fn session_load(
                 })
                 .collect(),
         );
+    }
+    // The loaded session's notes are now the active set — persist them so a
+    // restart restores this session's context, not the previous one's.
+    if let Err(e) = persist_context(&state, &chat) {
+        tracing::warn!("context set: persist after session load failed: {e}");
     }
     chat.system_prompt = read_system_prompt(&state.system_prompt_path);
     Ok(Json(build_chat_response(&chat)))
@@ -7718,6 +7715,12 @@ pub async fn chat_agent_handler(
             crate::tools::definitions(&policy)
         };
 
+        // Tools run against the engine and write the context set directly.
+        let cx = crate::tools::ToolCx {
+            engine: state.engine.clone(),
+            chat: state.chat.clone(),
+        };
+
         let started = tokio::time::Instant::now();
         let budget = std::time::Duration::from_secs(600);
         let mut turn: usize = 0;
@@ -7788,7 +7791,7 @@ pub async fn chat_agent_handler(
             let mut results: Vec<ContentBlock> = Vec::new();
             for (id, name, input) in tool_uses {
                 let (content, is_error) =
-                    match crate::tools::dispatch(&state.engine, &name, input).await {
+                    match crate::tools::dispatch(&cx, &name, input).await {
                         Ok(v) => (v.to_string(), false),
                         Err(e) => (json!({ "error": e.to_string() }).to_string(), true),
                     };
@@ -8061,43 +8064,153 @@ pub async fn chat_set_system(
     Json(build_chat_response(&chat))
 }
 
-/// POST /api/v1/chat/context — inject context notes
-pub async fn chat_inject_context(
-    State(state): State<ChatAppState>,
-    Json(req): Json<InjectContextRequest>,
-) -> Json<ChatResponse> {
-    let mut chat = state.chat.lock().unwrap();
-    let notes: Vec<InjectedNote> = req
-        .notes
-        .into_iter()
-        .map(|n| InjectedNote {
-            addr: None,
-            title: n.title,
-            content: n.content,
-        })
-        .collect();
-    chat.inject_context(notes);
-    Json(build_chat_response(&chat))
+// ---------------------------------------------------------------------------
+// Context set endpoints — the engine-owned reference set (src/context.rs).
+// Every mutation persists <data_dir>/context/active.json and answers with the
+// whole set, so the web's one response shape is "the set".
+// ---------------------------------------------------------------------------
+
+fn context_store(
+    state: &ChatAppState,
+) -> std::result::Result<crate::context::ContextStore, EngineError> {
+    crate::context::ContextStore::new(state.engine.data_dir())
 }
 
-/// PUT /api/v1/chat/context — clear and replace all context notes
-pub async fn chat_replace_context(
+fn persist_context(state: &ChatAppState, chat: &ChatState) -> std::result::Result<(), EngineError> {
+    context_store(state)?.save_active(&chat.context)
+}
+
+/// GET /api/v1/context — the active set.
+pub async fn context_get(State(state): State<ChatAppState>) -> Json<crate::context::ContextSet> {
+    Json(state.chat.lock().unwrap().context.clone())
+}
+
+/// DELETE /api/v1/context — empty the active set.
+pub async fn context_clear(
     State(state): State<ChatAppState>,
-    Json(req): Json<InjectContextRequest>,
-) -> Json<ChatResponse> {
+) -> std::result::Result<Json<crate::context::ContextSet>, EngineError> {
     let mut chat = state.chat.lock().unwrap();
-    chat.clear_context();
-    let notes: Vec<InjectedNote> = req
-        .notes
-        .into_iter()
-        .map(|n| InjectedNote {
-            addr: None,
-            title: n.title,
-            content: n.content,
-        })
-        .collect();
-    chat.inject_context(notes);
-    Json(build_chat_response(&chat))
+    chat.context.clear();
+    persist_context(&state, &chat)?;
+    Ok(Json(chat.context.clone()))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AddContextEntryRequest {
+    /// 64-hex event id.
+    pub id: Option<String>,
+    /// naddr1… or kind:pubkey:d_tag.
+    pub addr: Option<String>,
+    pub title: Option<String>,
+    /// Literal text (when neither `id` nor `addr` is given).
+    pub content: Option<String>,
+    /// Who is adding — defaults to `user`.
+    pub origin: Option<crate::context::ContextOrigin>,
+}
+
+/// POST /api/v1/context/entries — add by event id, coordinate, or literal.
+/// Same resolver as the assistant's `add_to_context` tool.
+pub async fn context_entry_add(
+    State(state): State<ChatAppState>,
+    Json(req): Json<AddContextEntryRequest>,
+) -> std::result::Result<Json<crate::context::ContextSet>, EngineError> {
+    let origin = req.origin.unwrap_or(crate::context::ContextOrigin::User);
+    let input = json!({
+        "id": req.id,
+        "addr": req.addr,
+        "title": req.title,
+        "content": req.content,
+    });
+    let entry = crate::tools::resolve_context_entry(&state.engine, &input, origin).await?;
+    let mut chat = state.chat.lock().unwrap();
+    chat.context.add(entry);
+    persist_context(&state, &chat)?;
+    Ok(Json(chat.context.clone()))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct PatchContextEntryRequest {
+    pub title: Option<String>,
+    pub content: Option<String>,
+    /// Restore the captured snapshot instead of applying title/content.
+    #[serde(default)]
+    pub reset: bool,
+}
+
+/// PATCH /api/v1/context/entries/:id — edit in place, or reset.
+pub async fn context_entry_patch(
+    State(state): State<ChatAppState>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+    Json(req): Json<PatchContextEntryRequest>,
+) -> std::result::Result<Json<crate::context::ContextSet>, EngineError> {
+    let mut chat = state.chat.lock().unwrap();
+    let ok = if req.reset {
+        chat.context.reset(&id)
+    } else {
+        chat.context.update(&id, req.title, req.content)
+    };
+    if !ok {
+        return Err(EngineError::NotFound(format!("context entry {id} not found")));
+    }
+    persist_context(&state, &chat)?;
+    Ok(Json(chat.context.clone()))
+}
+
+/// DELETE /api/v1/context/entries/:id
+pub async fn context_entry_delete(
+    State(state): State<ChatAppState>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+) -> std::result::Result<Json<crate::context::ContextSet>, EngineError> {
+    let mut chat = state.chat.lock().unwrap();
+    if !chat.context.remove(&id) {
+        return Err(EngineError::NotFound(format!("context entry {id} not found")));
+    }
+    persist_context(&state, &chat)?;
+    Ok(Json(chat.context.clone()))
+}
+
+/// GET /api/v1/context/sets — named snapshots, newest first.
+pub async fn context_sets_list(
+    State(state): State<ChatAppState>,
+) -> std::result::Result<Json<Vec<crate::context::ContextSetSummary>>, EngineError> {
+    Ok(Json(context_store(&state)?.list_sets()?))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SaveContextSetRequest {
+    pub name: String,
+}
+
+/// POST /api/v1/context/sets — snapshot the active set under a name.
+pub async fn context_sets_save(
+    State(state): State<ChatAppState>,
+    Json(req): Json<SaveContextSetRequest>,
+) -> std::result::Result<Json<crate::context::ContextSetSummary>, EngineError> {
+    let chat = state.chat.lock().unwrap();
+    Ok(Json(context_store(&state)?.save_set(&chat.context, &req.name)?))
+}
+
+/// POST /api/v1/context/sets/:id/load — the snapshot's entries become the
+/// active set (replacing what was there).
+pub async fn context_sets_load(
+    State(state): State<ChatAppState>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+) -> std::result::Result<Json<crate::context::ContextSet>, EngineError> {
+    let set = context_store(&state)?.load_set(&id)?;
+    let mut chat = state.chat.lock().unwrap();
+    chat.context.entries = set.entries;
+    chat.context.updated_at = set.updated_at;
+    persist_context(&state, &chat)?;
+    Ok(Json(chat.context.clone()))
+}
+
+/// DELETE /api/v1/context/sets/:id
+pub async fn context_sets_delete(
+    State(state): State<ChatAppState>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+) -> std::result::Result<Json<Value>, EngineError> {
+    context_store(&state)?.delete_set(&id)?;
+    Ok(Json(json!({ "deleted": id })))
 }
 
 // ---------------------------------------------------------------------------
@@ -8940,47 +9053,162 @@ mod chat_api_tests {
         );
     }
 
-    #[tokio::test]
-    async fn test_chat_api_inject_context() {
-        let state = make_state();
-        let req = InjectContextRequest {
-            notes: vec![NoteRequest {
-                title: "Test Note".into(),
-                content: "Some context".into(),
-            }],
-        };
-        let Json(resp) = chat_inject_context(State(state), Json(req)).await;
-        assert_eq!(resp.context_count, 1);
+    fn literal(title: &str, content: &str) -> AddContextEntryRequest {
+        AddContextEntryRequest {
+            id: None,
+            addr: None,
+            title: Some(title.into()),
+            content: Some(content.into()),
+            origin: None,
+        }
+    }
+
+    fn patch(title: Option<&str>, content: Option<&str>, reset: bool) -> PatchContextEntryRequest {
+        PatchContextEntryRequest {
+            title: title.map(str::to_string),
+            content: content.map(str::to_string),
+            reset,
+        }
     }
 
     #[tokio::test]
-    async fn test_chat_api_replace_context() {
+    async fn test_context_api_add_patch_delete_clear_persists() {
+        use crate::context::ContextOrigin;
         let state = make_state();
 
-        // Inject initial context
-        let req = InjectContextRequest {
-            notes: vec![
-                NoteRequest {
-                    title: "A".into(),
-                    content: "aaa".into(),
-                },
-                NoteRequest {
-                    title: "B".into(),
-                    content: "bbb".into(),
-                },
-            ],
-        };
-        let Json(resp) = chat_inject_context(State(state.clone()), Json(req)).await;
-        assert_eq!(resp.context_count, 2);
+        let Json(set) = context_entry_add(State(state.clone()), Json(literal("Idea", "a thought")))
+            .await
+            .unwrap();
+        assert_eq!(set.len(), 1);
+        assert_eq!(set.entries[0].origin, ContextOrigin::User);
+        let id = set.entries[0].id.clone();
 
-        // Replace with single note
-        let req = InjectContextRequest {
-            notes: vec![NoteRequest {
-                title: "C".into(),
-                content: "ccc".into(),
-            }],
-        };
-        let Json(resp) = chat_replace_context(State(state), Json(req)).await;
+        // The chat response reflects the set.
+        let Json(resp) = chat_get(State(state.clone())).await;
         assert_eq!(resp.context_count, 1);
+
+        let Json(set) = context_entry_patch(
+            State(state.clone()),
+            axum::extract::Path(id.clone()),
+            Json(patch(None, Some("edited"), false)),
+        )
+        .await
+        .unwrap();
+        assert!(set.entries[0].modified());
+        let Json(set) = context_entry_patch(
+            State(state.clone()),
+            axum::extract::Path(id.clone()),
+            Json(patch(None, None, true)),
+        )
+        .await
+        .unwrap();
+        assert!(!set.entries[0].modified());
+        assert!(context_entry_patch(
+            State(state.clone()),
+            axum::extract::Path("nope".into()),
+            Json(patch(Some("t"), None, false)),
+        )
+        .await
+        .is_err());
+
+        // Persisted: a fresh store on the same data dir sees it.
+        let store = crate::context::ContextStore::new(state.engine.data_dir()).unwrap();
+        assert_eq!(store.load_active().unwrap().unwrap().len(), 1);
+
+        let Json(set) = context_entry_delete(State(state.clone()), axum::extract::Path(id))
+            .await
+            .unwrap();
+        assert!(set.is_empty());
+        let _ = context_entry_add(State(state.clone()), Json(literal("x", "y")))
+            .await
+            .unwrap();
+        let Json(set) = context_clear(State(state.clone())).await.unwrap();
+        assert!(set.is_empty());
+        assert_eq!(store.load_active().unwrap().unwrap().len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_chat_reset_keeps_the_context_set() {
+        let state = make_state();
+        let _ = context_entry_add(State(state.clone()), Json(literal("keep", "me")))
+            .await
+            .unwrap();
+        state.chat.lock().unwrap().push_user("hello".into());
+        let Json(resp) = chat_reset(State(state.clone())).await;
+        assert_eq!(resp.fragment_count, 0);
+        assert_eq!(resp.context_count, 1, "reset clears the chat, not the set");
+    }
+
+    #[tokio::test]
+    async fn test_context_sets_round_trip() {
+        let state = make_state();
+        let _ = context_entry_add(State(state.clone()), Json(literal("one", "1")))
+            .await
+            .unwrap();
+        let Json(sum) = context_sets_save(
+            State(state.clone()),
+            Json(SaveContextSetRequest {
+                name: "reading".into(),
+            }),
+        )
+        .await
+        .unwrap();
+        let Json(list) = context_sets_list(State(state.clone())).await.unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].id, sum.id);
+        assert_eq!(list[0].entry_count, 1);
+        let _ = context_clear(State(state.clone())).await.unwrap();
+        let Json(set) = context_sets_load(State(state.clone()), axum::extract::Path(sum.id.clone()))
+            .await
+            .unwrap();
+        assert_eq!(set.len(), 1);
+        let _ = context_sets_delete(State(state.clone()), axum::extract::Path(sum.id.clone()))
+            .await
+            .unwrap();
+        assert!(context_sets_load(State(state), axum::extract::Path(sum.id))
+            .await
+            .is_err());
+    }
+
+    #[tokio::test]
+    async fn test_context_tools_write_the_set_directly() {
+        use crate::context::ContextOrigin;
+        let state = make_state();
+        let cx = crate::tools::ToolCx {
+            engine: state.engine.clone(),
+            chat: state.chat.clone(),
+        };
+        let v = crate::tools::dispatch(
+            &cx,
+            "add_to_context",
+            json!({ "title": "Idea", "content": "from the model" }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(v["type"], "context");
+        assert_eq!(v["added"], true);
+        {
+            let chat = state.chat.lock().unwrap();
+            assert_eq!(chat.context.len(), 1);
+            assert_eq!(chat.context.entries[0].origin, ContextOrigin::Assistant);
+        }
+        // Persisted without any web round-trip.
+        let store = crate::context::ContextStore::new(state.engine.data_dir()).unwrap();
+        assert_eq!(store.load_active().unwrap().unwrap().len(), 1);
+
+        let g = crate::tools::dispatch(&cx, "get_context", json!({})).await.unwrap();
+        assert_eq!(g["count"], 1);
+        assert!(g["entries"][0].get("content").is_none());
+        let g = crate::tools::dispatch(&cx, "get_context", json!({ "full": true }))
+            .await
+            .unwrap();
+        assert_eq!(g["entries"][0]["content"], "from the model");
+        let id = g["entries"][0]["id"].as_str().unwrap().to_string();
+
+        let r = crate::tools::dispatch(&cx, "remove_from_context", json!({ "id": id }))
+            .await
+            .unwrap();
+        assert_eq!(r["removed"], true);
+        assert!(state.chat.lock().unwrap().context.is_empty());
     }
 }

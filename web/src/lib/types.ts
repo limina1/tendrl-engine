@@ -33,8 +33,57 @@ export interface NoteRequest {
 	content: string;
 }
 
-export interface InjectContextRequest {
-	notes: NoteRequest[];
+// ---- Engine-owned context set (src/context.rs) ----
+// The set is the source of truth for what the model reads; the pool's
+// `in_context` flag mirrors it. Decision: decision-context-set-engine-owned.
+
+export type ContextSource =
+	| { type: 'event'; id: string }
+	| { type: 'addr'; kind: number; pubkey: string; d_tag: string; event_id?: string }
+	| { type: 'literal' };
+
+export type ContextOrigin = 'user' | 'assistant' | 'chat' | 'import';
+
+export interface ContextEntry {
+	id: string;
+	source: ContextSource;
+	title: string;
+	/** What the model sees — editable in place. */
+	content: string;
+	/** Snapshot at capture time; `content !== original` is "modified". */
+	original: string;
+	/** Raw event tags when sourced from an event. */
+	tags: string[][];
+	origin: ContextOrigin;
+	added_at: number;
+}
+
+export interface ContextSet {
+	id: string;
+	name?: string;
+	entries: ContextEntry[];
+	updated_at: number;
+}
+
+export interface ContextSetSummary {
+	id: string;
+	name: string;
+	entry_count: number;
+	updated_at: number;
+}
+
+export interface AddContextEntryRequest {
+	id?: string;
+	addr?: string;
+	title?: string;
+	content?: string;
+	origin?: ContextOrigin;
+}
+
+export interface PatchContextEntryRequest {
+	title?: string;
+	content?: string;
+	reset?: boolean;
 }
 
 export interface NAddr {
@@ -411,6 +460,11 @@ export interface ContextItem {
 	 *  the index, rather than authored content. Carried to the publish request
 	 *  as `slot`; the engine emits an `a`-tag and mints no 30041. */
 	slot?: string;
+	/** Id of the engine context entry this item mirrors, when it is in
+	 *  context. Set by refreshContext(); the bridge for literal items (chat
+	 *  fragments, profiles, import pages) that have no event source to
+	 *  match on. */
+	context_entry_id?: string;
 	/** Pinned d-tag for the 30041 this section emits. Set when a draft is
 	 *  resumed (or seeded by an importer that pre-mints coordinates) so
 	 *  save/publish replace the same addressable event instead of minting a

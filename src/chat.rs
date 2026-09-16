@@ -78,7 +78,9 @@ pub struct ChatState {
     pub edit_cursor: (usize, usize),
     pub generating: bool,
     pub system_prompt: Option<String>,
-    pub injected_context: Vec<InjectedNote>,
+    /// The engine-owned reference set the model reads from. Source of truth;
+    /// the web renders it and the agent's tools write to it directly.
+    pub context: crate::context::ContextSet,
     next_id: usize,
 }
 
@@ -96,7 +98,7 @@ impl ChatState {
             edit_cursor: (0, 0),
             generating: false,
             system_prompt: None,
-            injected_context: Vec::new(),
+            context: crate::context::ContextSet::active(),
             next_id: 0,
         }
     }
@@ -201,11 +203,12 @@ impl ChatState {
         if let Some(ref prompt) = self.system_prompt {
             messages.push(AgentMessage::System(prompt.clone()));
         }
-        if !self.injected_context.is_empty() {
+        if !self.context.is_empty() {
             let context_str: Vec<String> = self
-                .injected_context
+                .context
+                .entries
                 .iter()
-                .map(|note| format!("# {}\n{}", note.title, note.content))
+                .map(|e| format!("# {}\n{}", e.title, e.content))
                 .collect();
             messages.push(AgentMessage::System(format!(
                 "Reference context:\n\n{}",
@@ -251,11 +254,12 @@ impl ChatState {
         }
 
         // Injected context as a system message
-        if !self.injected_context.is_empty() {
+        if !self.context.is_empty() {
             let context_str: Vec<String> = self
-                .injected_context
+                .context
+                .entries
                 .iter()
-                .map(|note| format!("# {}\n{}", note.title, note.content))
+                .map(|e| format!("# {}\n{}", e.title, e.content))
                 .collect();
             messages.push(LLMMessage {
                 role: ChatRole::System,
@@ -292,17 +296,40 @@ impl ChatState {
 
     // --- Context management ---
 
+    /// Add notes to the set. Kept as the convenience the session loader and
+    /// tests use; an `addr` becomes an addressable source, otherwise the note
+    /// is a literal. Duplicated sources are not added twice.
     pub fn inject_context(&mut self, notes: Vec<InjectedNote>) {
-        self.injected_context.extend(notes);
+        use crate::context::{ContextEntry, ContextOrigin, ContextSource};
+        for n in notes {
+            let source = match n.addr {
+                Some(a) => ContextSource::Addr {
+                    kind: a.kind,
+                    pubkey: a.pubkey,
+                    d_tag: a.d_tag,
+                    event_id: None,
+                },
+                None => ContextSource::Literal,
+            };
+            self.context.add(ContextEntry::new(
+                source,
+                n.title,
+                n.content,
+                Vec::new(),
+                ContextOrigin::User,
+            ));
+        }
     }
 
     pub fn clear_context(&mut self) {
-        self.injected_context.clear();
+        self.context.clear();
     }
 
+    /// Remove by position (the set is ordered). By-id removal is
+    /// `context.remove(id)`.
     pub fn remove_context(&mut self, idx: usize) {
-        if idx < self.injected_context.len() {
-            self.injected_context.remove(idx);
+        if idx < self.context.entries.len() {
+            self.context.entries.remove(idx);
         }
     }
 
@@ -610,7 +637,7 @@ mod tests {
         assert!(!state.edit_mode);
         assert!(!state.generating);
         assert!(state.system_prompt.is_none());
-        assert!(state.injected_context.is_empty());
+        assert!(state.context.is_empty());
     }
 
     #[test]
@@ -706,14 +733,14 @@ mod tests {
                 content: "bbb".into(),
             },
         ]);
-        assert_eq!(state.injected_context.len(), 2);
+        assert_eq!(state.context.len(), 2);
 
         state.remove_context(0);
-        assert_eq!(state.injected_context.len(), 1);
-        assert_eq!(state.injected_context[0].title, "B");
+        assert_eq!(state.context.len(), 1);
+        assert_eq!(state.context.entries[0].title, "B");
 
         state.clear_context();
-        assert!(state.injected_context.is_empty());
+        assert!(state.context.is_empty());
     }
 
     #[test]

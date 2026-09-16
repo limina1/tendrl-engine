@@ -32,7 +32,10 @@ import type {
 	PublicationDetail,
 	LazySection,
 	ComposeState,
+	ContextEntry,
 	ContextItem,
+	ContextSet,
+	ContextSource,
 	Fragment,
 	ClaudeSessionBlock,
 	TagEntry,
@@ -131,7 +134,13 @@ function _createAppState() {
 
 	// --- Unified item pool ---
 	let items: ContextItem[] = $state([]);
-	const contextEntries = $derived(items.filter((i) => i.in_context));
+	// The engine-owned context set (src/context.rs) — the source of truth for
+	// what the model reads. The pool's `in_context` flag is a mirror of it,
+	// kept in step by refreshContext(); the Context panel renders the set
+	// itself through entryAsItem(), with the pool's routing flags overlaid.
+	// Decision: docs/zettel/decision-context-set-engine-owned.org.
+	let contextSet: ContextSet = $state({ id: 'active', entries: [], updated_at: 0 });
+	const contextEntries = $derived(contextSet.entries.map(entryAsItem));
 	const composeSections = $derived(items.filter((i) => i.in_compose));
 	const chatFragmentItems = $derived(
 		new Map(
@@ -821,6 +830,111 @@ function _createAppState() {
 		items = items.filter((e) => e.in_context || e.in_compose || e.held);
 	}
 
+	// ----- Pool ⇄ engine context set bridge -----
+
+	/** The engine-side identity of a pool item, or null for a literal
+	 *  (chat fragment, profile note, import page). */
+	function sourceOfItem(i: ContextItem): ContextSource | null {
+		if (i.source_addr) {
+			return { type: 'addr', kind: i.source_addr.kind, pubkey: i.source_addr.pubkey, d_tag: i.source_addr.d_tag };
+		}
+		if (i.source_event_id && /^[0-9a-f]{64}$/.test(i.source_event_id)) {
+			return { type: 'event', id: i.source_event_id };
+		}
+		return null;
+	}
+
+	/** Mirrors ContextSource::same_as in src/context.rs. */
+	function sameSource(a: ContextSource, b: ContextSource): boolean {
+		if (a.type === 'event' && b.type === 'event') return a.id === b.id;
+		if (a.type === 'addr' && b.type === 'addr') {
+			return a.kind === b.kind && a.pubkey === b.pubkey && a.d_tag === b.d_tag;
+		}
+		if (a.type === 'event' && b.type === 'addr') return !!b.event_id && a.id === b.event_id;
+		if (a.type === 'addr' && b.type === 'event') return !!a.event_id && a.event_id === b.id;
+		return false;
+	}
+
+	function poolItemForSource(src: ContextSource): ContextItem | null {
+		if (src.type === 'literal') return null;
+		return (
+			items.find((i) => {
+				const si = sourceOfItem(i);
+				return !!si && sameSource(si, src);
+			}) ?? null
+		);
+	}
+
+	/** The engine entry a pool item mirrors, in a given set. Literal items
+	 *  match by the bridge id refreshContext() stamped on them. */
+	function entryForItemIn(set: ContextSet, i: ContextItem): ContextEntry | null {
+		if (i.context_entry_id) {
+			const byId = set.entries.find((e) => e.id === i.context_entry_id);
+			if (byId) return byId;
+		}
+		const src = sourceOfItem(i);
+		if (!src) return null;
+		return set.entries.find((e) => sameSource(e.source, src)) ?? null;
+	}
+
+	/** Render an engine entry in the pool's item shape — the Context panel
+	 *  and ItemBadge read ContextItem — with the pool's routing flags
+	 *  (in_compose / held / readonly) overlaid from the linked item, if any.
+	 *  The id is the ENTRY id: panel callbacks address the engine. */
+	function entryAsItem(e: ContextEntry): ContextItem {
+		const linked = e.source.type === 'literal' ? null : poolItemForSource(e.source);
+		return {
+			id: e.id,
+			title: e.title,
+			content: e.content,
+			context_content: e.content,
+			original_content: e.original,
+			original_title: e.title,
+			original_tags: [],
+			tags: e.tags.map((t) => ({ name: t[0] ?? '', value: t.slice(1).join(', ') })),
+			source_event_id:
+				e.source.type === 'event' ? e.source.id : e.source.type === 'addr' ? e.source.event_id : undefined,
+			source_addr:
+				e.source.type === 'addr'
+					? { kind: e.source.kind, pubkey: e.source.pubkey, d_tag: e.source.d_tag }
+					: null,
+			modified: e.content !== e.original,
+			in_context: true,
+			in_compose: linked?.in_compose ?? false,
+			held: linked?.held ?? false,
+			origin:
+				e.origin === 'import'
+					? 'import'
+					: e.origin === 'chat' || (e.origin === 'assistant' && e.source.type === 'literal')
+						? 'chat'
+						: 'search',
+			readonly: linked?.readonly ?? false,
+			context_entry_id: e.id
+		};
+	}
+
+	/** Pool fields for routing an engine entry into the composer. */
+	function fieldsFromEntryItem(item: ContextItem) {
+		return {
+			title: item.title,
+			content: item.context_content,
+			tags: item.tags,
+			source_event_id: item.source_event_id,
+			source_addr: item.source_addr,
+			original_content: item.original_content,
+			origin: item.origin
+		};
+	}
+
+	/** Resolve an id that may be an entry id (from the Context panel) or a
+	 *  pool id (from anywhere else) to the pool item it concerns. */
+	function poolItemForId(id: string): ContextItem | null {
+		const direct = items.find((e) => e.id === id);
+		if (direct) return direct;
+		const entry = contextSet.entries.find((e) => e.id === id);
+		return entry ? poolItemForSource(entry.source) : null;
+	}
+
 	// Derived view: held items only — SearchPanel's Refs tab reads this.
 	// An item with any of in_context / in_compose / held set survives gc();
 	// held marks the "in the pool but not yet routed" state explicitly.
@@ -920,23 +1034,26 @@ function _createAppState() {
 	 *  doesn't exist yet, it's created with that flag set. If toggling off
 	 *  leaves the item with no flags, gc() prunes it.
 	 *
-	 *  For 'context', we also trigger syncContext() so the chat panel reflects
-	 *  the new membership the same way the +context button does. */
+	 *  For 'context', the engine set is updated (setContextMembership) and
+	 *  re-mirrored, so the chat panel reflects the new membership. */
 	function togglePoolMembership(input: NostrEvent | SearchResult, kind: 'context' | 'compose' | 'held') {
 		const existing = findPoolItem(input);
 		if (!existing) {
 			addToPool(eventToPoolFields(input), { [kind]: true });
-			if (kind === 'context') syncContext();
+			if (kind === 'context') {
+				const added = findPoolItem(input);
+				if (added) void setContextMembership(added, true);
+			}
 			return;
 		}
 		const flagKey = kind === 'context' ? 'in_context' : kind === 'compose' ? 'in_compose' : 'held';
 		if (existing[flagKey]) {
 			items = items.map((e) => (e.id === existing.id ? { ...e, [flagKey]: false } : e));
 			gc();
-			if (kind === 'context') syncContext();
+			if (kind === 'context') void setContextMembership(existing, false);
 		} else {
 			addToPool(eventToPoolFields(input), { [kind]: true });
-			if (kind === 'context') syncContext();
+			if (kind === 'context') void setContextMembership(existing, true);
 		}
 	}
 
@@ -954,9 +1071,8 @@ function _createAppState() {
 			e.id === existing.id ? { ...e, in_context: false, in_compose: false, held: false } : e
 		);
 		gc();
-		// If the dropped item had been syncing into context, the chat
-		// panel needs to forget it.
-		if (existing.in_context) syncContext();
+		// If the dropped item was in context, the engine set forgets it too.
+		if (existing.in_context) void setContextMembership(existing, false);
 	}
 
 	/** Convenience: enter the pool with no routing intent (held only). */
@@ -978,18 +1094,17 @@ function _createAppState() {
 
 	/** Toggle in_context on a pool item by id. Pills on the search/refs
 	 *  rows are state indicators that double as toggle buttons — click
-	 *  to flip. syncContext always fires so the chat panel reflects the
-	 *  new shape. The item's stored content is what gets sent; if it
-	 *  came in as a truncated SearchResult preview, that's what the LLM
-	 *  sees. (Full-content fetch on toggle is a follow-up.) */
+	 *  to flip. The engine set is updated and re-mirrored; the engine
+	 *  resolves the event's full content itself, so a truncated preview in
+	 *  the pool never reaches the model. */
 	function routeHeldToContext(itemId: string) {
 		const target = items.find((e) => e.id === itemId);
 		if (!target) return;
+		// Optimistic flip for the pill; refreshContext() settles it (and gc's).
 		items = items.map((e) =>
 			e.id === itemId ? { ...e, in_context: !e.in_context } : e
 		);
-		gc();
-		syncContext();
+		void setContextMembership(target, !target.in_context);
 	}
 
 	/** Toggle in_compose on a pool item by id. The composer's reactive
@@ -1066,7 +1181,10 @@ function _createAppState() {
 				},
 				{ [kind]: true }
 			);
-			if (kind === 'context') syncContext();
+			if (kind === 'context') {
+				const added = findPoolItemByAddr(addr);
+				if (added) void setContextMembership(added, true);
+			}
 		} catch (e) {
 			console.error('pillActionByAddr failed', e);
 		}
@@ -1102,7 +1220,10 @@ function _createAppState() {
 				},
 				{ [kind]: true }
 			);
-			if (kind === 'context') syncContext();
+			if (kind === 'context') {
+				const added = findPoolItemByEventId(eventId);
+				if (added) void setContextMembership(added, true);
+			}
 		} catch (e) {
 			console.error('pillActionByEventId failed', e);
 		}
@@ -1111,7 +1232,7 @@ function _createAppState() {
 	/** Drop a pool item entirely — clears every membership and gc()s it
 	 *  out. Keyed by the ContextItem's own UUID so refs-row drop buttons
 	 *  don't need to reconstruct a NostrEvent input. If the item was in
-	 *  context, syncContext() so the chat panel forgets it too. */
+	 *  context, the engine set forgets it too. */
 	function dropPoolItem(itemId: string) {
 		const target = items.find((e) => e.id === itemId);
 		if (!target) return;
@@ -1119,7 +1240,7 @@ function _createAppState() {
 			e.id === itemId ? { ...e, in_context: false, in_compose: false, held: false } : e
 		);
 		gc();
-		if (target.in_context) syncContext();
+		if (target.in_context) void setContextMembership(target, false);
 	}
 
 	function addToPool(
@@ -1160,17 +1281,64 @@ function _createAppState() {
 		}
 	}
 
-	// ===================== Context sync =====================
+	// ===================== Context set =====================
 
-	async function syncContext() {
-		const ctx = items.filter((e) => e.in_context);
+	/** Pull the engine's set and mirror membership onto the pool: an item is
+	 *  in context iff the set holds its source (or its bridge id). Items left
+	 *  with no flag are pruned. */
+	async function refreshContext() {
+		let set: ContextSet;
 		try {
-			chat = await api.replaceContext(
-				ctx.map((e) => ({ title: e.title, content: e.context_content }))
-			);
+			set = await api.getContext();
 		} catch {
-			// silent
+			return; // engine unreachable — keep what we have
 		}
+		contextSet = set;
+		items = items.map((i) => {
+			const e = entryForItemIn(set, i);
+			return { ...i, in_context: !!e, context_entry_id: e?.id };
+		});
+		gc();
+	}
+
+	/** Add or remove a pool item's source in the engine set, then re-mirror.
+	 *  Events go up by id/coordinate (the engine resolves title/content/tags
+	 *  from the store); anything it can't resolve — and every literal — goes
+	 *  up as text so nothing the user routed is silently dropped. */
+	async function setContextMembership(item: ContextItem, on: boolean, refresh = true) {
+		try {
+			if (on) {
+				const src = sourceOfItem(item);
+				const origin = item.origin === 'import' ? 'import' : item.origin === 'chat' ? 'chat' : 'user';
+				const literal = () =>
+					api.addContextEntry({ title: item.title, content: item.context_content || item.content, origin });
+				if (src?.type === 'addr') {
+					await api
+						.addContextEntry({ addr: `${src.kind}:${src.pubkey}:${src.d_tag}` })
+						.catch(literal);
+				} else if (src?.type === 'event') {
+					await api.addContextEntry({ id: src.id }).catch(literal);
+				} else {
+					await literal();
+				}
+			} else {
+				const e = entryForItemIn(contextSet, item);
+				if (e) await api.deleteContextEntry(e.id);
+			}
+		} catch (err) {
+			console.error('context set update failed', err);
+		}
+		if (refresh) await refreshContext();
+	}
+
+	/** Debounced in-place edits: the panel calls onupdate per keystroke. */
+	const contextPatchTimers: Record<string, ReturnType<typeof setTimeout>> = {};
+	function patchContextEntryLater(id: string, title: string, content: string) {
+		if (contextPatchTimers[id]) clearTimeout(contextPatchTimers[id]);
+		contextPatchTimers[id] = setTimeout(() => {
+			delete contextPatchTimers[id];
+			api.patchContextEntry(id, { title, content }).catch((err) => console.error('context patch failed', err));
+		}, 400);
 	}
 
 	// ===================== Feed =====================
@@ -1638,26 +1806,13 @@ function _createAppState() {
 		} catch {
 			return;
 		}
-		if (name === 'add_to_context') {
-			// The assistant pulled an event/idea into the shared context. Fold
-			// it into the pool (same path as a user "Add to context") and sync
-			// to the engine so it persists for the rest of the conversation.
-			const title = (parsed.title as string) || 'Untitled';
-			const content = (parsed.content as string) ?? '';
-			addToPool(
-				{
-					title,
-					content,
-					tags: [],
-					source_event_id: (parsed.source_event_id as string) || undefined,
-					source_addr: (parsed.source_addr as NAddr | null) ?? null,
-					original_content: content,
-					origin: 'search'
-				},
-				{ context: true }
-			);
-			syncContext();
-			pushToast(`Added “${title}” to context`, 'success', 3000);
+		if (name === 'add_to_context' || name === 'remove_from_context') {
+			// The assistant wrote the engine-owned set directly; just re-read
+			// it so the panel and the pool's pills follow.
+			void refreshContext();
+			if (name === 'add_to_context' && parsed.added !== false) {
+				pushToast(`Added “${(parsed.title as string) || 'Untitled'}” to context`, 'success', 3000);
+			}
 		} else if (name === 'propose_section' || name === 'edit_section') {
 			const title = (parsed.title as string) || 'Untitled section';
 			const content = (parsed.content as string) ?? '';
@@ -1747,33 +1902,36 @@ function _createAppState() {
 
 	// ===================== Item handlers =====================
 
+	// The Context panel renders engine entries (entryAsItem), so these ids
+	// are entry ids and every edit is an engine call; the pool is re-mirrored.
 	function handleUpdateContextItem(id: string, title: string, contextContent: string) {
-		items = items.map((e) =>
-			e.id === id ? { ...e, title, context_content: contextContent } : e
-		);
-		syncContext();
+		contextSet = {
+			...contextSet,
+			entries: contextSet.entries.map((e) => (e.id === id ? { ...e, title, content: contextContent } : e))
+		};
+		patchContextEntryLater(id, title, contextContent);
 	}
 
 	function handleResetContextItem(id: string) {
-		items = items.map((e) =>
-			e.id === id ? { ...e, context_content: e.original_content } : e
-		);
-		syncContext();
+		api.patchContextEntry(id, { reset: true })
+			.then((set) => (contextSet = set))
+			.catch((err) => console.error('context reset failed', err));
 	}
 
 	function handleRemoveFromContext(id: string) {
-		items = items.map((e) =>
-			e.id === id ? { ...e, in_context: false } : e
-		);
-		gc();
-		syncContext();
+		contextSet = { ...contextSet, entries: contextSet.entries.filter((e) => e.id !== id) };
+		api.deleteContextEntry(id)
+			.catch((err) => console.error('context remove failed', err))
+			.finally(() => void refreshContext());
 	}
 
-	function handleDeleteFromContext(deleteItems: ContextItem[]) {
+	async function handleDeleteFromContext(deleteItems: ContextItem[]) {
 		const ids = new Set(deleteItems.map((i) => i.id));
-		items = items.map((e) => (ids.has(e.id) ? { ...e, in_context: false } : e));
-		gc();
-		syncContext();
+		contextSet = { ...contextSet, entries: contextSet.entries.filter((e) => !ids.has(e.id)) };
+		for (const id of ids) {
+			await api.deleteContextEntry(id).catch((err) => console.error('context remove failed', err));
+		}
+		await refreshContext();
 	}
 
 	function handleDeleteFromCompose(deleteItems: ContextItem[]) {
@@ -1782,20 +1940,24 @@ function _createAppState() {
 		gc();
 	}
 
-	function handleDeletePermanent(deleteItems: ContextItem[]) {
-		const ids = new Set(deleteItems.map((i) => i.id));
-		items = items.filter((e) => !ids.has(e.id));
-		syncContext();
+	/** "Delete everywhere": out of the engine set and out of the pool. */
+	async function handleDeletePermanent(deleteItems: ContextItem[]) {
+		const poolIds = new Set(
+			deleteItems.map((i) => poolItemForId(i.id)?.id).filter((x): x is string => !!x)
+		);
+		items = items.filter((e) => !poolIds.has(e.id));
+		const entryIds = deleteItems.map((i) => i.id).filter((id) => contextSet.entries.some((e) => e.id === id));
+		for (const id of entryIds) {
+			await api.deleteContextEntry(id).catch((err) => console.error('context remove failed', err));
+		}
+		await refreshContext();
 	}
 
+	/** Route context entries into the composer: a pool item per entry
+	 *  (deduped by source), carrying the entry's current text. Membership in
+	 *  the engine set is unchanged. */
 	function handleContextToCompose(checkedItems: ContextItem[]) {
-		const ids = new Set(checkedItems.map((i) => i.id));
-		items = items.map((e) =>
-			ids.has(e.id)
-				? { ...e, in_compose: true, in_context: true, content: e.context_content, modified: e.context_content !== e.original_content }
-				: e
-		);
-		syncContext();
+		for (const item of checkedItems) addToPool(fieldsFromEntryItem(item), { compose: true });
 		if (docMode !== 'compose') navigateToCompose();
 	}
 
@@ -1813,7 +1975,10 @@ function _createAppState() {
 				? { ...e, in_context: true, in_compose: true, context_content: e.content }
 				: e
 		);
-		syncContext();
+		void (async () => {
+			for (const item of items.filter((e) => ids.has(e.id))) await setContextMembership(item, true, false);
+			await refreshContext();
+		})();
 	}
 
 	function handleSendItemToChat(id: string) {
@@ -1826,16 +1991,21 @@ function _createAppState() {
 				? { ...e, in_context: true, in_compose: true, context_content: e.content }
 				: e
 		);
-		syncContext();
+		const sent = items.find((e) => e.id === id);
+		if (sent) void setContextMembership(sent, true);
 	}
 
 	function handleSendItemToCompose(id: string) {
-		items = items.map((e) =>
-			e.id === id
-				? { ...e, in_context: true, in_compose: true, content: e.context_content, modified: e.context_content !== e.original_content }
-				: e
-		);
-		syncContext();
+		const entry = contextEntries.find((e) => e.id === id);
+		if (entry) {
+			addToPool(fieldsFromEntryItem(entry), { compose: true });
+		} else {
+			items = items.map((e) =>
+				e.id === id
+					? { ...e, in_compose: true, content: e.context_content, modified: e.context_content !== e.original_content }
+					: e
+			);
+		}
 		if (docMode !== 'compose') navigateToCompose();
 	}
 
@@ -1864,20 +2034,31 @@ function _createAppState() {
 			}
 			return { ...e, readonly: false };
 		});
-		syncContext();
+		const item = items.find((e) => e.id === id);
+		const entry =
+			contextSet.entries.find((e) => e.id === id) ?? (item ? entryForItemIn(contextSet, item) : null);
+		if (entry) handleResetContextItem(entry.id);
 	}
 
+	/** Copy text across the context ⇄ compose boundary. The context side is
+	 *  the engine entry; the compose side is the linked pool item. */
 	function handleCrossPanelCopy(id: string, fromPanel: string) {
-		items = items.map((e) => {
-			if (e.id !== id) return e;
-			if (fromPanel === 'compose') {
-				return { ...e, context_content: e.content, readonly: false };
-			} else if (fromPanel === 'context') {
-				return { ...e, content: e.context_content, modified: e.context_content !== e.original_content, readonly: false };
-			}
-			return e;
-		});
-		syncContext();
+		if (fromPanel === 'compose') {
+			const item = items.find((e) => e.id === id);
+			const entry = item ? entryForItemIn(contextSet, item) : null;
+			if (!item || !entry) return;
+			handleUpdateContextItem(entry.id, item.title, item.content);
+			items = items.map((e) => (e.id === id ? { ...e, readonly: false } : e));
+		} else if (fromPanel === 'context') {
+			const entry = contextSet.entries.find((e) => e.id === id);
+			const linked = entry ? poolItemForSource(entry.source) : null;
+			if (!entry || !linked) return;
+			items = items.map((e) =>
+				e.id === linked.id
+					? { ...e, content: entry.content, modified: entry.content !== e.original_content, readonly: false }
+					: e
+			);
+		}
 	}
 
 	function handleChatFragmentsToCompose(fragments: Fragment[]) {
@@ -2523,8 +2704,8 @@ function _createAppState() {
 				items = [...items, { ...section, in_context: false, in_compose: true }];
 			}
 		}
-
-		syncContext();
+		// Context text is preserved above (context_content carried over), so
+		// the engine set is untouched by a composer merge.
 	}
 
 	// ===================== Search history =====================
@@ -2963,7 +3144,8 @@ function _createAppState() {
 	async function handleAddToContext(result: SearchResult) {
 		const content = await fetchEventContent(result);
 		addToPool(resultFields(result, content), { context: true });
-		syncContext();
+		const item = findPoolItem(result);
+		if (item) await setContextMembership(item, true);
 	}
 
 	// Capture a kind-0 profile as a context note. Profiles aren't addressable
@@ -2985,7 +3167,8 @@ function _createAppState() {
 			},
 			{ context: true }
 		);
-		syncContext();
+		const item = findPoolItemByEventId(`profile:${pk}`);
+		if (item) void setContextMembership(item, true);
 		pushToast(`Added ${name} to context`, 'success', 2500);
 	}
 
@@ -3124,8 +3307,10 @@ function _createAppState() {
 		for (const r of results) {
 			const content = await fetchEventContent(r);
 			addToPool(resultFields(r, content), { context: true });
+			const item = findPoolItem(r);
+			if (item) await setContextMembership(item, true, false);
 		}
-		syncContext();
+		await refreshContext();
 	}
 
 	async function handleAddManyToCompose(results: SearchResult[]) {
@@ -3492,7 +3677,14 @@ function _createAppState() {
 				{ context: true }
 			);
 		}
-		syncContext();
+		void (async () => {
+			for (const s of sections) {
+				if (!s.content || !s.addr) continue;
+				const item = findPoolItemByAddr(s.addr);
+				if (item) await setContextMembership(item, true, false);
+			}
+			await refreshContext();
+		})();
 	}
 
 	async function handleDocPublish() {
@@ -3814,7 +4006,9 @@ function _createAppState() {
 			original_content: page.content,
 			origin: 'import' as const
 		}, { context: true });
-		syncContext();
+		// Import pages are literals: the page text itself goes up.
+		const item = items.find((e) => e.origin === 'import' && e.in_context && e.content === page.content);
+		if (item) void setContextMembership(item, true);
 	}
 
 	function handleImportPageToCompose(page: ImportPage) {
@@ -3941,6 +4135,7 @@ function _createAppState() {
 		chatLoading = true;
 		try {
 			chat = await api.loadChatSession(id);
+			await refreshContext(); // the session's notes are now the active set
 			loadedSessionId = null; // a tendrl session, not a Claude Code transcript
 			activeSessionId = id; // re-saves overwrite this session
 			sessionsExpanded = false;
@@ -4178,6 +4373,8 @@ function _createAppState() {
 	async function initialize() {
 		loadSearchConfig();
 		loadDiscovery();
+		// The engine-owned context set outlives the tab — pull it on boot.
+		void refreshContext();
 		// Engine version for the mode-line / Settings. Fire-and-forget — it's
 		// purely informational, so a failure just leaves the segment hidden.
 		api.getHealth().then((h) => { engineVersion = h.version; engineBranch = h.branch ?? null; }).catch(() => {});
@@ -4691,6 +4888,8 @@ function _createAppState() {
 		// Items
 		get items() { return items; },
 		get contextEntries() { return contextEntries; },
+		get contextSet() { return contextSet; },
+		refreshContext,
 		get composeSections() { return composeSections; },
 		get heldEntries() { return heldEntries; },
 		findPoolItem,

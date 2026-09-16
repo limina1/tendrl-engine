@@ -70,8 +70,8 @@ cd web && node_modules/.bin/svelte-kit sync && node_modules/.bin/svelte-check --
 - **Gating reuses what exists.** Relay fetches and publishes gate themselves
   through the engine's pre-existing Confirm-mode flows (FetchConfirmModal /
   PublishConfirmModal) — no new approval machinery.
-- **The context model is the web's `ContextItem` pool**, not engine state — see
-  below.
+- **The context set is engine-owned** (`src/context.rs`, since 2026-09-16); the
+  web pool mirrors membership — see below.
 
 ### Key files
 | Concern | File |
@@ -113,25 +113,38 @@ cd web && node_modules/.bin/svelte-kit sync && node_modules/.bin/svelte-check --
 
 ## The context model (most important mental model)
 
-"Context" = the working set of reference notes handed to the model as a system
-message (`ChatState.injected_context`, rendered in `to_agent_messages`). But the
-**source of truth is the web's `ContextItem` pool**, not the engine.
+**Revised 2026-09-16 (plan Phase 1 — `docs/insertions-plan.org`):** "Context" is
+the engine-owned set `ChatState.context: ContextSet` (`src/context.rs`), rendered
+into the system message by `to_agent_messages`. It is **the source of truth**,
+persisted at `<data_dir>/context/active.json` (restored on boot; a chat reset
+keeps it; loading a saved session replaces it and persists that). The web owns
+only routing flags. Decision: `docs/zettel/decision-context-set-engine-owned.org`
+(supersedes the web-pool call this section used to record).
 
-- The web holds one unified `items[]` pool with flags `in_context` / `in_compose`
-  / `held` and an `origin` (`chat`/`search`/`compose`/`import`). `ContextPanel`
-  shows `in_context` items; `syncContext()` pushes `{title, context_content}` of
-  those items to the engine via `PUT /api/v1/chat/context` (`replaceContext`).
-- This split is correct per the boundary rule: routing/edit/expansion state is
-  view state (web); the engine just receives the resolved notes.
+- Entries carry a `source` (event id | coordinate | literal), `content` (what the
+  model sees, editable), the captured `original`, raw `tags`, and an `origin`
+  (user / assistant / chat / import). Same-source entries dedupe.
+- API: `GET|DELETE /api/v1/context`, `POST /context/entries` (id / addr / literal
+  — the same resolver the `add_to_context` tool uses), `PATCH|DELETE
+  /context/entries/:id` (edit or `reset: true`), and named snapshots under
+  `/context/sets`.
+- The web's `items[]` pool still holds `in_context` / `in_compose` / `held`, but
+  `in_context` is a **mirror**: `refreshContext()` pulls the set and marks each
+  item by source (or by the `context_entry_id` bridge for literals). `ContextPanel`
+  renders the engine entries via `entryAsItem()` with the pool's flags overlaid;
+  its callbacks address **entry ids** and are engine calls (debounced PATCH for
+  typing). `syncContext()` / `PUT /chat/context` are gone.
 
 **Entry points into context (all already wired):**
 - **Search results, reader / publication-tree sections, event detail** — the
   unified `PoolStateBadges` pill / `togglePoolMembership` / `pillActionByAddr`,
   which call `syncContext()` on context toggles.
 - **Profile detail** — the "+ Context" button (added this session).
-- **The AI** — the `add_to_context` tool. The agent *emits a proposal*; the web's
-  `applyToolResult` folds it into the pool and syncs. The agent never writes
-  engine context directly (which `syncContext` would clobber).
+- **The AI** — the `add_to_context` / `remove_from_context` / `get_context`
+  tools write the engine set directly through `tools::ToolCx` (engine + chat
+  handle) and persist it; the web's `applyToolResult` just calls
+  `refreshContext()`. An external harness over MCP reads the same set
+  (`tendrl_get_context`).
 
 So a context item can be added by the user *or* the assistant, and both see the
 same set — which is exactly the intended "shared space."

@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { onMount, untrack } from 'svelte';
 	import { getAppState } from '$lib/state.svelte';
 	import ChatPanel from '$lib/components/ChatPanel.svelte';
 	import type { Buffer } from '../types';
@@ -13,6 +13,13 @@
 	// the first message.
 	onMount(() => {
 		app.refreshChat();
+	});
+
+	// Fresh on every visit: the engine-owned context set can change while this
+	// buffer is unmounted (a terminal agent over MCP, another tab). Buffers
+	// unmount on every switch, so mount is the natural re-read point.
+	$effect(() => {
+		untrack(() => void app.refreshContext());
 	});
 </script>
 

@@ -42,7 +42,10 @@ Every response looks like this:
 | ~POST~   | ~/api/v1/chat/edit~    | Enter edit mode (get formatted buffer) |
 | ~PUT~    | ~/api/v1/chat/edit~    | Submit modified buffer, exit edit    |
 | ~POST~   | ~/api/v1/chat/system~  | Set system prompt                    |
-| ~POST~   | ~/api/v1/chat/context~ | Inject context notes                 |
+| ~GET~    | ~/api/v1/context~      | The engine-owned context set         |
+| ~POST~   | ~/api/v1/context/entries~ | Add a note (event id, coordinate, or text) |
+| ~PATCH~  | ~/api/v1/context/entries/:id~ | Edit in place, or ~reset~     |
+| ~DELETE~ | ~/api/v1/context/entries/:id~ | Remove                        |
 
 * Walkthrough: Full Round-Trip
 
@@ -153,16 +156,24 @@ curl -s -X POST http://localhost:3030/api/v1/chat/system \
 The system prompt appears in ~system_prompt~ and will be included when
 messages are sent to the LLM (visible via ~to_llm_messages()~ internally).
 
-** Inject context notes
+** Add a context note
+
+The context set is engine-owned (~src/context.rs~) and persisted under
+~<data_dir>/context/~; every mutation answers with the whole set.
 
 #+begin_src sh
-curl -s -X POST http://localhost:3030/api/v1/chat/context \
+curl -s -X POST http://localhost:3030/api/v1/context/entries \
   -H "Content-Type: application/json" \
-  -d '{"notes": [{"title": "Style Guide", "content": "Use short sentences. Prefer active voice."}]}' | jq '.context_count'
+  -d '{"title": "Style Guide", "content": "Use short sentences. Prefer active voice."}' | jq '.entries | length'
+curl -s http://localhost:3030/api/v1/chat | jq '.context_count'
 #+end_src
 
-Returns ~1~. Context notes are injected as a system message before the
-conversation fragments when building the LLM message list.
+Both return ~1~. An entry may also be added by ~{"id": "<64-hex>"}~ or
+~{"addr": "kind:pubkey:d_tag"}~ — the engine resolves title, content and
+tags from the local store, exactly as the assistant's ~add_to_context~
+tool does. Entries are injected as a system message before the
+conversation fragments when building the LLM message list; a chat reset
+(~DELETE /api/v1/chat~) keeps the set.
 
 ** Send with system + context active
 

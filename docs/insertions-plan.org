@@ -125,24 +125,37 @@ startup on a popup.
 - [X] =docs/zettel/idea-insertions.org= (STATUS plan)
 - [X] two decision zettels; =feat-assistant= / =feat-discussions= / index updated
 - [X] =docs/ai-assistant-status.md= open item 1 marked decided
-- [ ] user review of the spec's open questions (tag name, kept anchors)
+- [X] user review of the spec's open questions — resolved on the canvas (D9)
 
 ** Phase 1 — Context set, engine-owned                                    :medium:
-- [ ] =src/context.rs=: =ContextSet= / =ContextEntry=, JSON persistence
-      under =<data_dir>/context/=, one "active" set per session
-- [ ] =GET/PUT/DELETE /api/v1/context/:id=, =GET /api/v1/context= (list),
-      =POST /api/v1/context/:id/entries= (add by addr/id or literal)
-- [ ] =chat.rs::to_agent_messages= reads the active set; =injected_context=
-      becomes a view of it, not a copy
-- [ ] =tools::add_to_context= writes to the set directly (no proposal
-      round-trip); =get_context= added to the catalog, returns entries
-- [ ] web: =ContextItem= → =ContextEntry= + flag overlay
-      (=state.svelte.ts=); =ContextPanel= subscribes; =syncContext()= and
-      =PUT /chat/context= removed; one-shot migration of an existing
-      pool into a set on first load
-- [ ] MCP =tendrl_get_context= returns the entries (interim, until Phase 4)
-- [ ] tests: set round-trip; agent add → visible in panel without a
-      browser fold-in; =to_agent_messages= unchanged in shape
+Built 2026-09-16 on =feat/context-set= (worktree). Verified: 550 lib tests,
+=pnpm check= clean, API round-trip + restart persistence on a scratch engine,
+headless GUI drive (panel mirrors the set, revisit picks up an external add,
+panel × deletes in the engine) — recipe in =docs/commands.org= "Context set".
+- [X] =src/context.rs=: =ContextSet= / =ContextEntry= (source event | addr |
+      literal, content + captured original, tags, origin), =ContextStore= —
+      =<data_dir>/context/active.json= + =sets/<id>.json=, tmp+rename writes
+- [X] =GET|DELETE /api/v1/context=, =POST /context/entries= (id / addr /
+      literal — same resolver as the tool), =PATCH|DELETE /context/entries/:id=
+      (edit / =reset=), =/context/sets= list · save · load · delete
+- [X] =ChatState.context= is the one owner; =to_agent_messages= renders it;
+      boot restores =active.json=; a chat reset keeps the set; a session load
+      replaces and persists it
+- [X] =tools::ToolCx= (engine + chat handle) → =add_to_context= writes the set
+      directly and persists; =get_context= (+ =full=) and =remove_from_context=
+      added to the catalog (17 tools)
+- [X] web: =ContextItem.in_context= is a mirror; =ContextPanel= renders engine
+      entries via =entryAsItem()= with pool flags overlaid; every membership
+      change is an engine call + =refreshContext()=; =syncContext()= and
+      =PUT /chat/context= deleted; the chat buffer re-reads on mount (an MCP
+      write shows on the next visit); boot pulls the set (no client-side
+      migration needed — the pool was never persisted)
+- [X] MCP =tendrl_get_context= returns the entries (interim, until Phase 4)
+- [X] tests: set add/dedupe/update/reset/remove, store round-trip, API
+      add/patch/delete/clear + persistence, named sets, tool writes, reset
+      keeps the set
+- [ ] follow-up: a live subscription (SSE) instead of refresh-on-mount if
+      the terminal→app loop turns out to need it mid-visit
 
 ** Phase 2 — Named signing source                                         :small:
 - [ ] =PublishRequest.sign: bool= → =sign_as: Option<SigningSource>=

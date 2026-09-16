@@ -41,7 +41,7 @@ The web UI passes the policy as a query param or JSON field.
 | Publication load + sections     | ~LocalFirst~    | Hardcoded in load_publication      |
 | Section versions                | ~FetchAlways~   | Always checks relays for versions  |
 | Sections metadata               | ~LocalOnly~     | Cheap local-only scan              |
-| ~POST /api/v1/chat/context~     | ~LocalFirst~    | Caller can override                |
+| ~POST /api/v1/context/entries~  | ~LocalOnly~     | Resolves from the local store; an event it can't find is refused (the web falls back to sending the text) |
 
 ** What the web UI actually sends
 

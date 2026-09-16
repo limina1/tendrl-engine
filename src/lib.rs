@@ -55,6 +55,7 @@ pub mod bookshelf;
 pub mod chat;
 pub mod claude_sessions;
 pub mod config;
+pub mod context;
 pub mod discussions;
 pub mod document;
 pub mod drafts;
