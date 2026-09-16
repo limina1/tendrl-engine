@@ -255,7 +255,7 @@
 		if (kind === 30040 && d) {
 			onspawnreader?.(pubkey, d, title);
 		} else {
-			onspawneventreader?.(id, title, n.kind);
+			onspawneventreader?.(id, title, kind);
 		}
 	}
 
