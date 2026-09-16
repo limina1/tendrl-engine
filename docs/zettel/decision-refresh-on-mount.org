@@ -1,0 +1,43 @@
+#+TITLE: Decision: Buffers Re-read Shared Engine State on Mount
+#+TYPE: decision
+#+STATUS: current
+#+DATE: 2026-09-16
+
+* The decision
+
+When a buffer renders state the engine owns and other writers can change
+while the buffer is not on screen — the context set today; annotations,
+drafts, a spell's results tomorrow — the buffer *re-reads it on mount*
+rather than subscribing to a live feed. First instance: the chat buffer
+pulls =GET /api/v1/context= in a mount-time =$effect= (=ChatBuffer.svelte=,
+Phase 1 of [[file:../insertions-plan.org][the plan]]).
+
+* Why
+
+- *Buffers unmount on every switch* ([[file:decision-buffer-state-homes.org][where
+  buffer state lives]]). Mount is therefore a natural, frequent, user-driven
+  moment: coming back to the chat /is/ asking "what is the set now?".
+- *The other writers are slow-moving.* A terminal agent over MCP or a
+  second tab writes at human cadence; a stale view for the few seconds
+  until the next visit costs nothing, and the local writer's own
+  mutations already refresh immediately.
+- *No new transport.* An SSE per shared object is machinery the WM model
+  does not need yet; the existing =fetch-events= stream is for network
+  intents, not data. Re-read-on-mount is one line per buffer and cannot
+  leak subscriptions.
+- *Boundary-clean.* The engine stays the owner; the web holds no cache
+  it must invalidate — it holds a snapshot it knows is as old as the
+  mount.
+
+* When to revisit
+
+If a flow needs the change /mid-visit/ — the user watching the panel
+while an agent fills it — add a subscription for that object then. The
+plan's Phase 1 carries this as its one open follow-up.
+
+* Related
+- [[file:index.org][Index]]
+- [[file:decision-context-set-engine-owned.org][Decision: context set is engine-owned]] — the first shared object
+- [[file:decision-buffer-state-homes.org][Decision: where buffer state lives]]
+- [[file:feat-assistant.org][AI assistant]]
+- [[file:project_effect_async_state_loop.org][$effect + async state]] — why the read is untracked

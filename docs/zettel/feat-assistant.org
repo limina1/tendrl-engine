@@ -66,5 +66,6 @@ signing source, insertions, the engine speaking MCP, the zettel bubble.
 - [[file:feat-mcp.org][MCP surface]] — the external-harness half; shares the catalog
 - [[file:idea-insertions.org][Insertions]] — the assistant's natural output
 - [[file:decision-context-set-engine-owned.org][Decision: context set is engine-owned]]
+- [[file:decision-refresh-on-mount.org][Decision: buffers re-read shared state on mount]]
 - [[file:decision-assistant-signs-own-key.org][Decision: the assistant signs with its own key]]
 - [[file:../insertions-plan.org][Plan: insertions, context set & the assistant]]
