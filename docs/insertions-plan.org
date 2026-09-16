@@ -87,8 +87,10 @@ client computes layout in a =$derived= (the =FocusGraph= idiom) and renders
 cards with a keyed ={#each}= — Svelte's own data-join. No d3 by default;
 =d3-force= alone (pure math, same =$derived=) only if free clustering is
 wanted. Drag pins a card; positions are view state in =store.bufferState=,
-never published. The table is a buffer kind (=annotations:<addr>=): a split
-beside the reader, full-screen on the phone. Canvas: Table page.
+never published. The table is *one* buffer kind (=annotations:<addr>=) with
+its own views — by section · by author · timeline · free; beside the reader
+or filling the window is the WM's split state, like any two buffers, not a
+mode of the table. Canvas: Table page (the same buffer in two arrangements).
 
 ** D8 — "Create annotation" is one form with three doors
 Section =⋮=, the =M= menu (anchored to the index = front matter), and a
