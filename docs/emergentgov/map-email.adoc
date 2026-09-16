@@ -1,0 +1,55 @@
+:title: Map of Jayme's source email — how the corpus is tiered
+:type: meta
+:status: current
+:date: 2026-08-04
+:author: assistant
+:tags: corpus, organization, jayme
+
+The organizational logic of `sources/email.md` (from Jayme): three
+tiers, each with a distinct *function* in building the paper. The tier
+tells you what to take from a source — theory, form, or arguments.
+
+== Tier 1 — Background / theory
+
+"Useful as background/theory, and for describing the self-governance
+of NOSTR as an institutional problem." These supply the analytical
+vocabulary; the problem statement is written in their terms.
+
+- link:src-ostroms-cybernetics.adoc[src-ostroms-cybernetics] — self-governance through information feedback
+- link:src-ideas-artifacts-facilities.adoc[src-ideas-artifacts-facilities] — information as a common-pool resource
+- link:src-iad-guide.adoc[src-iad-guide] — the IAD framework, practical guide
+- link:src-ostrom-irc-iad.adoc[src-ostrom-irc-iad] — Ostrom's own assessment of IAD (Theories of the Policy Process ch. 2)
+- link:src-digging-deeper.adoc[src-digging-deeper] — "Doing Institutional Analysis: Digging Deeper than Markets and Hierarchies" (the `doi: 10.1007/978-3-031-50810-3_5 ++` item; the `++` marks Jayme's emphasis)
+
+== Tier 2 — Format models
+
+"Both relevant in content and present an institutional theory + case
+study in a format that will be familiar to political economy /
+institutional analysis journals." Read for *shape* as much as content:
+how theory → case → contribution is staged for these venues.
+
+- link:src-polycentric-blockchain-orders.adoc[src-polycentric-blockchain-orders]
+- link:src-exchange-theory-web3.adoc[src-exchange-theory-web3] (Allen, Kyklos 2023)
+- link:src-blockchain-knowledge-commons.adoc[src-blockchain-knowledge-commons]
+
+== Tier 3 — Related questions, arguments, references
+
+"Trying to address related or similar questions and likely contain
+useful arguments and references." Mine for arguments and citations,
+not templates.
+
+- link:src-digital-constitutionalism.adoc[src-digital-constitutionalism] — Eric Alston, whom Jayme names as "the person in the Ostrom space doing the most work on Blockchain"
+- link:src-governing-knowledge-commons.adoc[src-governing-knowledge-commons] — the GKC book (framework chapter only); its Fuster Morell chapter is mapped separately: link:src-fuster-morell-occ.adoc[src-fuster-morell-occ]
+- link:src-open-content-governance.adoc[src-open-content-governance] — Schroeder & Wagner, control and guiding mechanisms
+- link:src-modular-politics.adoc[src-modular-politics] — a governance layer for online communities
+
+== Not in the email, but in the corpus
+
+- UKAC chapters (link:src-ukac-overview.adoc[src-ukac-overview]) — the Hess & Ostrom hinge quotes live in link:src-analyzing-knowledge-commons.adoc[src-analyzing-knowledge-commons]
+- The project's own articulation: `sources/presentation.tex`, `sources/orientation.md` → the `claim-*` notes
+- Early formulations (medschlr, medical IAD, NOSTRIADREAD.adoc) — architectural background for the *other* paper; deliberately unmapped here (see link:mission.adoc[mission] on the two-paper separation)
+
+== Related
+
+- link:index.adoc[index]
+- link:mission.adoc[mission]

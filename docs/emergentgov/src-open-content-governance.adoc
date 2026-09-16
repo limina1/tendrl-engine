@@ -1,0 +1,100 @@
+:title: Schroeder & Wagner 2012 — Governance of Open Content Creation
+:type: src
+:status: drafted
+:date: 2026-08-04
+:author: assistant
+:agent: open-content
+:tags: wikipedia, informal-governance, repertory-grid, mechanisms, social-control
+:cite: Andreas Schroeder & Christian Wagner, 2012, JASIST 63(10):1947–1959
+:doi: 10.1002/asi.22657
+:file: sources/Governance of Open Content Creation.pdf
+:pages: printed 1947–1959; PDF page = printed − 1946
+
+== What it is
+
+Repertory-grid study (12 English-Wikipedia editors, 154 raw → 65
+consolidated → 24 shared constructs) enumerating the control and
+guiding mechanisms of everyday open content creation, arguing that
+informal mechanisms dominate and formal ones are a rarely-invoked
+backstop.
+
+== Core claims
+
+1. p. 1948 — formal mechanisms "are only called upon in very few
+   instances"; light informal governance coexists with formal structure.
+2. p. 1948 — governance widened beyond deviance-prevention to the
+   structures, processes, and roles guiding routine content creation.
+3. p. 1949 — social control theory: formalizing norms risks
+   "independent artifacts that are decoupled from the dynamic processes
+   of social norm formation."
+4. pp. 1952–1954 — 24 shared mechanisms; 8 rated important (≥50% of
+   ratings ≥4, Table 1 at 1954): guardian of the article (83%, highest),
+   facilitation by experienced users (67%), policies (56%), talk-page
+   discussions (55%), large number of editors, collaboration among
+   users, inviting individuals to participate, participation by highly
+   reputable user (each 50%). Remaining 16, one line: administrator
+   involvement; arbitration; featured-article process; formal review;
+   formal mediation; formal voting; guidelines; reverting; consensus
+   building; coordination; user-talk discussions; feedback; informal
+   mediation; informal networks; mentoring; personal relationships.
+5. p. 1955 — of the formal class "only policies were assessed as
+   important"; informal mechanisms are the responsive, fast-evolving
+   everyday layer.
+6. p. 1955 — "formal governance mechanisms are triggered once informal
+   mechanisms have been exhausted" — escalation backstop; rarely-invoked
+   rules still communicate norms.
+7. p. 1955 — anti-equipotentiality: "equipotentiality oversimplifies
+   the complex mechanisms"; guardians and reputable users wield outsized
+   influence legitimized by observable behavior (Tyler), not office.
+8. pp. 1955–1956 — environments of governance: mechanisms unfold in
+   three platform-designed spaces (article, talk, user pages) whose
+   design determines which mechanisms can emerge; off-platform channels
+   "limit involvement and reduce transparency."
+9. p. 1957 — limitation (f): "data collected are retrospective and
+   therefore carry the inherent risk of memory bias."
+
+== Key concepts
+
+- link:concept-guardianship-without-office.adoc[concept-guardianship-without-office] (1954–1955)
+- link:concept-governance-as-software.adoc[concept-governance-as-software] — self-similar regulation, p. 1950
+- link:concept-rules-in-use.adoc[concept-rules-in-use] (informal vs formal, 1948–1949, 1955)
+- link:concept-institutional-invisibility.adoc[concept-institutional-invisibility] (light governance, 1948)
+
+== Hooks to the Nostr thesis
+
+- The retrospective-memory-bias limitation (1957) is removed on Nostr:
+  every mute/report/policy change is a typed signed event —
+  link:claim-formation-observable.adoc[claim-formation-observable].
+- Their catalogue is a closed enumeration on one platform; Nostr's
+  mechanism space is unenumerable — any dev mints new mechanisms as
+  software — link:q-generativity-robustness.adoc[q-generativity-robustness].
+- Repertory grids are replicable on Nostr, with event traces replacing
+  recall — pairs with link:claim-interviews-carry-claim.adoc[claim-interviews-carry-claim].
+- Formal-as-backstop ≈ kind-1984: non-binding signals, enforcement
+  elsewhere — link:claim-split-sanctions.adoc[claim-split-sanctions], link:concept-graduated-sanctions.adoc[concept-graduated-sanctions].
+- Environments of governance: Wikipedia's three are platform-fixed;
+  Nostr's are permissionlessly extensible event kinds —
+  link:claim-composable-bounded-institutions.adoc[claim-composable-bounded-institutions].
+
+== Tensions / open questions
+
+- One platform, one language, n=12; taxonomy may be Wikipedia-shaped.
+- Exit is absent from the catalogue entirely — the mechanism class
+  central to Nostr — link:concept-exit-voice.adoc[concept-exit-voice].
+- Shared/idiosyncratic filter (1952–1953) may not transfer: on Nostr
+  one relay's idiosyncratic policy still binds locally —
+  link:claim-relay-spectrum.adoc[claim-relay-spectrum].
+- Formal/informal binary strains when norms ship as code —
+  link:concept-governance-as-software.adoc[concept-governance-as-software].
+- Mechanisms are perceptions, not behaviors; importance conflates
+  salience with efficacy.
+
+== Related
+
+- link:index.adoc[index]
+- link:src-modular-politics.adoc[src-modular-politics]
+- link:src-fuster-morell-occ.adoc[src-fuster-morell-occ]
+- link:concept-design-principles.adoc[concept-design-principles]
+- link:concept-boundary-rules.adoc[concept-boundary-rules]
+- link:concept-survivorship-bias.adoc[concept-survivorship-bias]
+- link:agent-open-content.adoc[agent-open-content]

@@ -1,0 +1,111 @@
+:title: Hess & Ostrom 2007 — Introduction: An Overview of the Knowledge Commons (UKAC ch. 1)
+:type: src
+:status: drafted
+:date: 2026-08-04
+:author: assistant
+:agent: hess-ostrom
+:tags: knowledge-commons, design-principles, hardin, enclosure
+:cite: Charlotte Hess & Elinor Ostrom, 2007, in Hess & Ostrom (eds.), Understanding Knowledge as a Commons, MIT Press, ch. 1
+:file: sources/introduction-UKAC.pdf
+:pages: printed 3–26; PDF page = printed − 2
+
+== What it is
+
+The book's definitional apparatus: knowledge as "a resource shared by
+a group of people that is subject to social dilemmas" (3), the goods
+typology, the Hardin corrective, the two intellectual histories of
+the field, and — crucially for this project — the survivorship hedge
+on the design principles.
+
+== Core claims
+
+1. (7) THE SURVIVORSHIP HEDGE, prominent: the eight design principles
+   (Ostrom 1990) "were discovered after conducting a large set of
+   empirical studies" of already-robust vs. failed systems; "they are
+   in no way prescriptive—nor are they models"; findings from "small,
+   homogeneous systems. Whether they apply to the study of large and
+   complex systems like the knowledge commons is a question for
+   further research." See link:concept-survivorship-bias.adoc[concept-survivorship-bias],
+   link:concept-design-principles.adoc[concept-design-principles].
+2. (4) The information-commons movement began ~1995 as "a spontaneous
+   explosion of 'ah ha' moments" — dilemmas (congestion, free riding,
+   conflict, pollution) noticed before theory.
+3. (4–5) Commons (general term) vs. common-pool resource (a good) vs.
+   common property (a legal regime) — link:concept-cpr-vs-knowledge-commons.adoc[concept-cpr-vs-knowledge-commons].
+4. (5) Subtractability inversion: "the more people who share useful
+   knowledge, the greater the common good"; threats are
+   "commodification or enclosure, pollution and degradation, and
+   nonsustainability."
+5. (8–9) Two-dimensional goods schema (V. & E. Ostrom 1977):
+   exclusion × subtractability; Figure 1.1 (9) puts useful knowledge
+   with public goods, libraries with CPRs.
+6. (10) "New technologies can enable the capture of what were once
+   free and open public goods," converting them into CPRs "that
+   need[] to be managed, monitored, and protected."
+7. (10–11) HARDIN'S FOUR ERRORS: (1) described open access, not a
+   managed commons; (2) assumed no communication; (3) assumed pure
+   immediate self-interest; (4) offered only privatization or
+   government. "Au contraire, Monsieur Hardin!"
+8. (11) Heller's anticommons: underuse of scarce scientific resources
+   via excessive IP and overpatenting.
+9. (12–13) Two intellectual histories: enclosure (Boyle's "intangible
+   commons of the mind," code-as-law, DMCA/TRIPS/CTEA) vs.
+   openness/democracy (town commons, Benkler, libraries as
+   "strongholds of democracy").
+10. (14) "[A] commons is not value laden—its outcome can be good or
+    bad, sustainable or not"; commons ≠ open access; OA of information
+    ≠ Hardin's free-for-all (13).
+11. (14) DIGITAL FRAGILITY: knowledge in digital form is "more
+    vulnerable than ever before"; with hard copy "the decentralization
+    of multiple copies made the works robust"; licensed digital works
+    are "centralized and vulnerable to the whims or happenstance of
+    the publisher."
+12. (19) LIBERTARIAN VS. ASSOCIATIONAL COMMONS (Levine): anyone-can-
+    access vs. member-open; commons "need protection by groups
+    interested in their production, care, and maintenance."
+13. (20–21) Agenda questions: "How do we evaluate how we are doing?
+    How do we monitor our progress? Who should govern the Internet?"
+
+== Key concepts
+
+- link:concept-survivorship-bias.adoc[concept-survivorship-bias] (p. 7)
+- link:concept-cpr-vs-knowledge-commons.adoc[concept-cpr-vs-knowledge-commons] (pp. 4–10, 13–14)
+- link:concept-design-principles.adoc[concept-design-principles] (p. 7)
+- link:concept-boundary-rules.adoc[concept-boundary-rules] (first principle, p. 7)
+
+== Hooks to the Nostr thesis
+
+- p. 7 hedge = the open question the project answers with
+  formation-stage data — link:claim-formation-observable.adoc[claim-formation-observable].
+- Decentralized-copies robustness (14) is the institutional argument
+  for multi-relay broadcast — link:claim-no-global-bannability.adoc[claim-no-global-bannability].
+- Libertarian/associational (19) maps to the relay spectrum; bounded
+  medical commons composing on the open substrate —
+  link:claim-relay-spectrum.adoc[claim-relay-spectrum], link:claim-composable-bounded-institutions.adoc[claim-composable-bounded-institutions].
+- Hardin's error (1) is the template rebuttal to "Nostr is
+  unmoderated" — link:claim-worst-case-hosts-best-case.adoc[claim-worst-case-hosts-best-case].
+- "Commons is not value laden" (14) licenses studying governance
+  without endorsing content outcomes.
+
+== Tensions / open questions
+
+- Small-homogeneous provenance of the principles (7) vs. global
+  pseudonymous adversarial network — link:q-boundary-sybil.adoc[q-boundary-sybil].
+- Enclosure-centric threat model; pollution/exclusion-coordination
+  get list-mentions only — link:q-goods-typology-fit.adoc[q-goods-typology-fit].
+- "Clearly defined boundaries" needs re-specification as
+  boundary-setting capacity under expand–contract dynamics —
+  link:claim-expand-contract.adoc[claim-expand-contract], link:concept-boundary-rules.adoc[concept-boundary-rules].
+- Exit absent from the governance vocabulary — link:concept-exit-voice.adoc[concept-exit-voice].
+
+== Related
+
+- link:index.adoc[index]
+- link:src-analyzing-knowledge-commons.adoc[src-analyzing-knowledge-commons]
+- link:src-ideas-artifacts-facilities.adoc[src-ideas-artifacts-facilities]
+- link:concept-survivorship-bias.adoc[concept-survivorship-bias]
+- link:concept-cpr-vs-knowledge-commons.adoc[concept-cpr-vs-knowledge-commons]
+- link:concept-design-principles.adoc[concept-design-principles]
+- link:claim-formation-observable.adoc[claim-formation-observable]
+- link:claim-relay-spectrum.adoc[claim-relay-spectrum]
+- link:q-maturation-hypothesis.adoc[q-maturation-hypothesis]

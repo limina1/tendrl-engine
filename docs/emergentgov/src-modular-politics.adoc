@@ -1,0 +1,104 @@
+:title: Schneider et al. 2021 — Modular Politics: Toward a Governance Layer for Online Communities
+:type: src
+:status: drafted
+:date: 2026-08-04
+:author: assistant
+:agent: open-content
+:tags: governance-layer, open-standard, iad, cscw, modularity, implicit-feudalism
+:cite: Nathan Schneider, Primavera De Filippi, Seth Frey, Joshua Z. Tan & Amy X. Zhang, 2021, Proc. ACM HCI 5, CSCW1, art. 16
+:doi: 10.1145/3449090
+:file: sources/Modular Politics.pdf
+:pages: printed 16:1–16:26; PDF page = printed page (identical)
+
+== What it is
+
+A conceptual proposal (explicitly "a prologue," no prototype) for a
+composable governance layer for online communities, grounded in
+Ostrom's IAD, with an ontology (Platform/Instance/Org/Module/Entity/
+Monitor/Permission) and an open-standard implementation strategy.
+First author is Schneider (not Zhang/Frey); PolicyKit appears nowhere
+in the paper — do not cite it to this source.
+
+== Core claims
+
+1. 16:1 — governance tools are "remarkably impoverished, typically
+   relying on assigning unchecked power to admins and moderators."
+2. 16:2 — "Monarchic or oligarchic practices emerge in online networks
+   more easily and frequently than liberal or democratic ones."
+3. 16:2 — four design goals: Modularity, Expressiveness, Portability,
+   Interoperability.
+4. 16:2, 16:15–16:16 — chosen strategy (over cloud API and DLT): "the
+   most flexible strategy would be to define an open standard...
+   implemented through a variety of open-source software libraries."
+5. 16:4 — decentralized/federated platforms "favor 'exit' over
+   'voice'" (Hirschman).
+6. 16:5–16:7 — IAD chosen for its empiricism toward not-yet-theorized
+   forms; communities formalize action situations threaded "across
+   polycentric networks" (16:7).
+7. 16:10–16:11 — Monitors: read-only composable evaluators of
+   governance data, e.g. cross-instance censorship comparisons.
+8. 16:11 — "all permissions... derive from those that the platform
+   administrators specify at the level of the Instance."
+9. 16:16–16:17 — digital-juries use case: flag → jury → removal as one
+   binding platform pipeline.
+10. 16:18 — computational governance data enables "new and more useful
+    taxonomies of governance practices."
+11. 16:19–16:20 — limitations: expressible space undefined; false
+    universalism risk; software insufficient without a "civic sphere"
+    ("the confluence of tools, culture, and context").
+
+== Key concepts
+
+- link:concept-implicit-feudalism.adoc[concept-implicit-feudalism] (16:1–16:2, ref [121])
+- link:concept-governance-as-software.adoc[concept-governance-as-software] (Modules, 16:9–16:10; standard, 16:15)
+- link:concept-iad-framework.adoc[concept-iad-framework], link:concept-action-arena.adoc[concept-action-arena], link:concept-polycentricity.adoc[concept-polycentricity] (16:5–16:7)
+- link:concept-exit-voice.adoc[concept-exit-voice] (16:4)
+
+== Hooks to the Nostr thesis
+
+- CENTRAL: Nostr is a de-facto realization of their chosen strategy —
+  an open standard (NIPs) implemented by independent libraries, clients,
+  relays — but grown, not designed as a governance layer; governance
+  accreted as NIPs (kind-1984 reports, mute lists, NIP-65). The thing
+  they wanted, grown instead of designed. Yet Nostr breaks their
+  ontology: no Platform/Instance root (contra 16:11 permissions
+  derivation), permissions polycentric all the way down, and
+  interoperability default-on where theirs is consent-gated
+  (16:11–16:12) — link:claim-no-global-bannability.adoc[claim-no-global-bannability], link:concept-polycentricity.adoc[concept-polycentricity].
+- Design-goals audit: modularity ` event kinds; expressiveness ` any
+  kind mintable; portability = signed events readable everywhere;
+  interoperability = protocol-native — link:claim-multiplicity-stack.adoc[claim-multiplicity-stack].
+- Monitors (16:10–16:11) exist today as WoT scorers, kind-1984
+  dashboards, relay-policy trackers — link:claim-formation-observable.adoc[claim-formation-observable].
+- Digital juries decoupled: on Nostr flag, judgment, and enforcement
+  are separate uncoordinated actors — link:claim-split-sanctions.adoc[claim-split-sanctions],
+  link:q-decoupled-vs-unitary-sanctions.adoc[q-decoupled-vs-unitary-sanctions].
+- Exit-over-voice (16:4): Nostr makes exit near-frictionless (portable
+  keys and graph), turning exit into operator discipline —
+  link:q-does-competition-improve-governance.adoc[q-does-competition-improve-governance], link:concept-interjurisdictional-competition.adoc[concept-interjurisdictional-competition].
+- Civic-sphere caveat (16:20): event streams miss the GitHub/Telegram
+  culture layer — pairs with Schroeder's off-platform worry (1956).
+
+== Tensions / open questions
+
+- Aspiration, not spec: no benchmarks to borrow; strengthens the
+  "unplanned fulfillment" framing but proves nothing empirical.
+- Top-down residue (16:8, 16:11) sits closer to platform-hosted
+  governance than Nostr's operator-less substrate.
+- DLT rejected for expressiveness costs (16:15); Nostr is the unnamed
+  third path: open standard + cryptographic identity, no ledger.
+- No adversarial model (spam, sybils) — exactly where Nostr's record
+  is richest — link:q-boundary-sybil.adoc[q-boundary-sybil].
+- Ostrom nesting assumes containment (16:9); Nostr's bounded
+  institutions overlap and cross-cut —
+  link:claim-composable-bounded-institutions.adoc[claim-composable-bounded-institutions].
+
+== Related
+
+- link:index.adoc[index]
+- link:src-open-content-governance.adoc[src-open-content-governance]
+- link:src-digital-constitutionalism.adoc[src-digital-constitutionalism]
+- link:concept-guardianship-without-office.adoc[concept-guardianship-without-office]
+- link:concept-adaptive-governance.adoc[concept-adaptive-governance]
+- link:concept-requisite-variety.adoc[concept-requisite-variety]
+- link:agent-open-content.adoc[agent-open-content]

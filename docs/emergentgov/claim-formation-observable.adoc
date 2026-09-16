@@ -1,0 +1,38 @@
+:title: Formation is observable for the first time
+:type: claim
+:status: drafted
+:drafted-by: assistant
+:tags: hinge, survivorship, formation, empirics
+
+The hinge of the whole program. Ostrom's eight design principles were
+read off commons that had *already survived* — survivorship-filtered.
+Formation itself was never observed; the field reverse-engineers rules
+from successful institutions after the fact. Nostr is the first commons
+you can *watch govern itself into existence*: every report (kind 1984),
+mute, follow-edit, and relay-policy change is a signed, timestamped,
+typed event.
+
+This answers Hess & Ostrom on their own terms — two verbatim quotes
+(locators in link:src-analyzing-knowledge-commons.adoc[src-analyzing-knowledge-commons]):
+
+1. The limitation: "Thus far we (all of us!) have mainly been at the
+   'look what is happening!' stage."
+2. The prerequisite: "After more efforts succeed and others fail, we
+   will be able to better understand what makes various knowledge
+   commons work." — principles can only be extracted by watching
+   commons succeed *and fail*.
+
+So the claim is not "look, a cool decentralized platform" (the named
+failure mode) — it is the empirical condition their own conclusion
+calls for. Watching in real time also means the *failures* are in the
+record, which the survivorship-filtered method structurally lacked.
+
+== Related
+
+- link:index.adoc[index]
+- link:src-analyzing-knowledge-commons.adoc[src-analyzing-knowledge-commons]
+- link:concept-survivorship-bias.adoc[concept-survivorship-bias]
+- link:concept-design-principles.adoc[concept-design-principles]
+- link:claim-no-global-bannability.adoc[claim-no-global-bannability]
+- link:claim-interviews-carry-claim.adoc[claim-interviews-carry-claim]
+- link:syn-what-to-measure.adoc[syn-what-to-measure] (yours to write)

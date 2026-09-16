@@ -1,0 +1,120 @@
+:title: Murtazashvili, Murtazashvili, Weiss & Madison 2022 — Blockchain Networks as Knowledge Commons
+:type: src
+:status: drafted
+:date: 2026-08-04
+:author: assistant
+:agent: blockchain-tier2
+:tags: gkc, knowledge-commons, nested-commons, boundaries, tier2
+:cite: Ilia Murtazashvili, Jennifer Brick Murtazashvili, Martin B. H. Weiss & Michael J. Madison, 2022, "Blockchain Networks as Knowledge Commons," International Journal of the Commons 16(1): 108–119
+:doi: 10.5334/ijc.1146
+:file: sources/tier2 - Blockchain Networks asKnowledge Commons.pdf
+:pages: journal 108–119
+
+== What it is
+
+The GKC framework applied to blockchains: networks that "uniquely
+combine features of governments, firms, and commons" (109) ARE
+knowledge commons. Category-fit argument (community, dilemmas,
+resources, boundaries, property), Bitcoin walked through the GKC
+question-battery, comparative research agenda. The closest structural
+model for the Nostr paper.
+
+== Core claims
+
+1. Blockchain networks "represent knowledge commons governance,"
+   pooling and managing distributed information (108–109).
+2. "Commons are distinguished from non-commons by the
+   institutionalization of sharing of resources among community
+   members" (109). Knowledge commons ≠ open to the public; compatible
+   with private ownership (110).
+3. "[O]penness and its possible benefits are matters of empirical
+   study rather than only premises to be assumed" (113).
+4. "It is therefore too simplistic always to refer to 'the
+   community' engaged in blockchain governance" (111); network
+   attributes are "characteristically 'bottom-up' results of
+   collective activity" (112).
+5. Provisional dilemma inventory: object identity/integrity,
+   spillovers, stagnation, information overload in distributed
+   anonymous systems (112).
+6. Nested micro-commons: "each layer should be considered both part
+   of a macro system... and potentially a micro knowledge commons
+   layer in itself" (113).
+7. "'[B]oundaries' of property are almost always porous"; boundaries
+   do not define the commons (114). NFT value "may derive from the
+   character of the community and its governance" (114).
+8. "Superior governance": external law is nested, not outside; "the
+   divide between external and internal rules is often less
+   important than the interaction" (115).
+9. Governance "is disciplined by the fact that users can stay and
+   participate or can exit"; added exit options "create
+   opportunities for voice (A. Berg & Berg, 2020)" (116).
+10. Dispute resolution ends in consensus-or-fork (block-size/BCH,
+    DAO/ETC); developer/miner power concentration is a concern
+    (116–117).
+
+== As a format model
+
+Framework-application template, the classic IJC/GKC genre: (1) claim
+the object is a commons; (2) restate the framework as a numbered
+question-battery; (3) argue category fit dimension by dimension;
+(4) walk ONE case through the framework's steps in order (each §4.x =
+one cluster: dilemma → internal rules → legal context →
+insider/outsider interactions → dispute resolution); (5) comparative
+agenda. A Nostr paper keeping GKC as its spine copies this skeleton,
+with the twist that every step is observable as typed events.
+
+== Hooks to the Nostr thesis
+
+- TRANSFERS (foundational): institutionalized sharing of a pooled
+  information resource fits Nostr BETTER than Bitcoin — signed events
+  replicated across relays, no token wrapper; radicalize their claim
+  (link:concept-cpr-vs-knowledge-commons.adoc[concept-cpr-vs-knowledge-commons]).
+- TRANSFERS: the pooling acts (publish, replicate, report, mute,
+  follow) are themselves signed typed events — the GKC battery gets
+  the data pipeline the authors lack; they call for empirical work
+  (117), Nostr supplies instrumentation — link:claim-formation-observable.adoc[claim-formation-observable].
+- TRANSFERS: porous boundaries (114) → per-relay, overlapping,
+  continuously renegotiated membership — link:claim-expand-contract.adoc[claim-expand-contract],
+  link:claim-relay-spectrum.adoc[claim-relay-spectrum], link:concept-boundary-rules.adoc[concept-boundary-rules].
+- TRANSFERS: nested micro-commons (113) = bounded institutions on the
+  open substrate — link:claim-composable-bounded-institutions.adoc[claim-composable-bounded-institutions].
+- BREAKS: dilemma inventory anchored in consensus/mining (112, 115);
+  Nostr has no consensus — integrity is per-event, the contested pool
+  is availability/discoverability (spam, exclusion coordination),
+  extending their overload/spillover hypotheses.
+- INVERTS: exit still ends in traumatic forks, voice in informal
+  debate (116–117); Nostr decomposes it — exit per-relay and cheap,
+  voice a typed event, sanction decoupled (link:claim-split-sanctions.adoc[claim-split-sanctions]);
+  their Berg & Berg line (116) is the citation bridge —
+  link:concept-exit-voice.adoc[concept-exit-voice].
+- TRANSFERS: "superior governance" (115) frames state law, app
+  stores, DNS/hosting pressure as nested, not external; key-based
+  property in identity/event stream coexists with commons governance
+  (114 analogue).
+
+== Tensions / open questions
+
+- §4's "empirical study" is a literature synthesis; the promised
+  program (117) is unexecuted — the opening for a Nostr paper.
+- Dilemma inventory admittedly hypothetical, never tested (112).
+- Unresolved whether token property strengthens or dilutes commons
+  character (§3.6) — link:q-goods-typology-fit.adoc[q-goods-typology-fit].
+- Heterogeneity flagged (111) yet Bitcoin narrated as dev/miner/user
+  blocs — link:q-boundary-sybil.adoc[q-boundary-sybil].
+- Sits in Allen et al.'s "romantic" camp while sharing an author with
+  Source 1 — link:concept-tier2-triangle.adoc[concept-tier2-triangle].
+
+== Related
+
+- link:index.adoc[index]
+- link:concept-tier2-triangle.adoc[concept-tier2-triangle]
+- link:src-polycentric-blockchain-orders.adoc[src-polycentric-blockchain-orders]
+- link:src-exchange-theory-web3.adoc[src-exchange-theory-web3]
+- link:src-governing-knowledge-commons.adoc[src-governing-knowledge-commons]
+- link:concept-gkc-framework.adoc[concept-gkc-framework]
+- link:concept-iad-framework.adoc[concept-iad-framework]
+- link:concept-rules-in-use.adoc[concept-rules-in-use]
+- link:concept-polycentricity.adoc[concept-polycentricity]
+- link:claim-no-global-bannability.adoc[claim-no-global-bannability]
+- link:claim-multiplicity-stack.adoc[claim-multiplicity-stack]
+- link:agent-blockchain-tier2.adoc[agent-blockchain-tier2]

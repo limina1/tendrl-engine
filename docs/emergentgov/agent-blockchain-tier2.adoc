@@ -1,0 +1,75 @@
+:title: Agent session — blockchain-tier2 (tier-2 blockchain-governance papers)
+:type: agent
+:status: current
+:date: 2026-08-04
+:author: assistant
+:agent: blockchain-tier2
+:tags: provenance, session, tier2
+
+== Task
+
+Write src- notes for the three tier-2 blockchain-governance papers
+(relevant in content AND as format models for political-economy
+journals, hence the dedicated "As a format model" sections) plus three
+cross-cutting concept notes. index.adoc left untouched (orchestrator
+maintains it).
+
+== Sources
+
+This session did NOT read the PDFs directly. It recovered the
+page-anchored structured notes of a prior reading agent (task output
+ad35f34908719ec85, JSONL tail extraction) that had read all three in
+full, and drafted from those notes. Quotes and locators are therefore
+second-hand; checking these src- notes means going back to the PDFs.
+
+- Alston, Law, Murtazashvili & Weiss 2022, JOIE 18(5):707–723
+  (sources/tier2-Blockchain networks as constitutional and
+  competitive polycentric orders.pdf).
+- Allen, Berg, Lane, MacDonald & Potts 2023, Kyklos 76(4):659–675
+  (sources/tier2 - Kyklos - 2023 - Allen - The exchange theory of
+  web3 governance.pdf).
+- Murtazashvili, Murtazashvili, Weiss & Madison 2022, IJC 16(1):
+  108–119 (sources/tier2 - Blockchain Networks asKnowledge
+  Commons.pdf).
+
+== Files written
+
+- link:src-polycentric-blockchain-orders.adoc[src-polycentric-blockchain-orders]
+- link:src-exchange-theory-web3.adoc[src-exchange-theory-web3]
+- link:src-blockchain-knowledge-commons.adoc[src-blockchain-knowledge-commons]
+- link:concept-exit-voice.adoc[concept-exit-voice]
+- link:concept-interjurisdictional-competition.adoc[concept-interjurisdictional-competition]
+- link:concept-tier2-triangle.adoc[concept-tier2-triangle]
+- agent-blockchain-tier2 (this note)
+
+== Flags for the human
+
+1. Provenance caveat above: all quotes/locators inherited from the
+   reader agent's notes, unverified against the PDFs in this session.
+2. Berg & Berg 2020 "Exit, Voice, and Forking" is load-bearing in all
+   three papers and absent from the corpus — acquisition target
+   (also Alston 2020; De Filippi & Loveluck 2016; Aligica & Tarko
+   2012).
+3. Positioning decision needed: Allen et al. class Ostrom/IAD/GKC
+   work — including a companion piece by Source 3's authors — as the
+   "romantic" camp (661). The drafted answer (commons framework as
+   descriptive instrument for observed emergent order) is in
+   link:src-exchange-theory-web3.adoc[src-exchange-theory-web3] and link:concept-tier2-triangle.adoc[concept-tier2-triangle]; Andrew
+   should decide how hard to lean into reconciling the paradigms.
+4. Recurring analytic gap Nostr fills: all three papers rest on the
+   same two retrospective war stories (block-size/BCH, DAO/ETC) and
+   none executes its promised empirical program.
+5. Token-free strain: each paper's incentive machinery runs on
+   price/stake; the Nostr translation (reputation/attention/
+   replication) is asserted in the hooks but needs its own argument —
+   the mechanism-mapping table in link:concept-tier2-triangle.adoc[concept-tier2-triangle] is the
+   proposed vehicle.
+6. Coined slug: concept-tier2-triangle (plus concept-exit-voice and
+   concept-interjurisdictional-competition, both previously dangling).
+
+== Related
+
+- link:index.adoc[index]
+- link:conventions.adoc[conventions]
+- link:mission.adoc[mission]
+- link:map-email.adoc[map-email]

@@ -1,0 +1,25 @@
+:title: Q: The maturation hypothesis (flagged conjecture)
+:type: question
+:status: open
+:tags: conjecture, maturation, long-horizon
+
+A longer-horizon *conjecture the design is built to test* — always
+marked as such, and kept distinct from the observable oscillation of
+link:claim-expand-contract.adoc[claim-expand-contract] (standing
+discipline: say which is which first).
+
+The conjecture: as the stack matures, contraction depth shrinks and
+re-expansion speeds up, until the loop effectively disappears — Nostr
+as invisible protocol, the way HTTPS became invisible infrastructure.
+
+What would count as evidence: a time series of shock episodes with
+measurable contraction depth and recovery time; falsified if depth and
+recovery don't trend, or if mature sub-networks still contract as hard
+as young ones.
+
+== Related
+
+- link:index.adoc[index]
+- link:claim-expand-contract.adoc[claim-expand-contract]
+- link:q-generativity-robustness.adoc[q-generativity-robustness]
+- link:concept-adaptive-governance.adoc[concept-adaptive-governance]

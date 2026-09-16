@@ -1,0 +1,37 @@
+:title: No global bannability — the adversarial premise
+:type: claim
+:status: drafted
+:drafted-by: assistant
+:tags: boundary, adversarial, premise
+
+Nostr may be the most adversarial social environment that exists: no
+global authority, no one can be removed from the network, any relay
+can admit anyone. Bad actors are filtered *locally*, never banned
+*globally*. The definable "who belongs" boundary behind every commons
+Ostrom studied (design principle 1) *structurally cannot exist* here.
+
+And yet the community holds — it coheres, sustains discourse, and
+people who have seen the worst of it stay. The research question in
+one line: **how is there quality discourse at all?** Every other claim
+note is a sub-answer.
+
+Why the premise matters doubly:
+
+- *Analytically*, it is the case the framework never reached — the
+  worst-case configuration (see
+  link:claim-worst-case-hosts-best-case.adoc[claim-worst-case-hosts-best-case]).
+- *Normatively*, non-bannability is what makes the composed bounded
+  institutions valuable: a gate-kept community can be write-gated on
+  its own relay while its ideas stay freely readable and commentable
+  everywhere else — no one is ever excluded from the *conversation*,
+  only from a *venue* (see
+  link:claim-composable-bounded-institutions.adoc[claim-composable-bounded-institutions]).
+
+== Related
+
+- link:index.adoc[index]
+- link:concept-boundary-rules.adoc[concept-boundary-rules]
+- link:concept-design-principles.adoc[concept-design-principles]
+- link:claim-relay-spectrum.adoc[claim-relay-spectrum]
+- link:claim-multiplicity-stack.adoc[claim-multiplicity-stack]
+- link:q-boundary-sybil.adoc[q-boundary-sybil]

@@ -1,0 +1,96 @@
+:title: Cox & Swarthout — EconPort: creating and maintaining a knowledge commons (UKAC ch. 12)
+:type: src
+:status: drafted
+:date: 2026-08-04
+:author: assistant
+:agent: ukac-survey
+:tags: incentives, sustainability, associational-commons, case-study
+:cite: Cox, J. C., & Swarthout, J. T. (2007), in Hess & Ostrom (eds.), Understanding Knowledge as a Commons, MIT Press, ch. 12
+:isbn: 9780262083577
+:file: sources/CreatingAndMaintainingAKnowledgeCommons-UKAC.pdf
+:pages: printed 333-347 = PDF 1-15 (offset +332)
+
+== What it is
+
+Case study of EconPort, an open-access digital library + online
+experimental-economics laboratory, analyzed as "a case study of the
+effectiveness of incentives for creation, maintenance, and
+utilization" of a knowledge commons (p. 334). The book's most concrete
+micro-institutional account of one bounded knowledge facility.
+
+== Core claims
+
+1. Pre-Internet, the LAN-bound lab was self-limiting but stable: "The
+   very local nature of the public-good elements of the resource made
+   it relatively easy to solve the free-rider problem" (p. 337) —
+   boundedness itself did the institutional work.
+2. Demand side: EconPort is a "local public good" globally consumable
+   — usable only by coordinated communities who can convene
+   simultaneous participants (p. 341).
+3. Supply side: it is an associational, not libertarian, commons:
+   "Open-source software is a supply-side example of a libertarian
+   commons ... In contrast, the supply side of a digital library such
+   as EconPort is ... associational" (p. 341, citing Levine).
+4. Sustainability tracks whether stewards use the resource in their
+   own work: economists (users) have unconditional continuing
+   interest; the AI Lab (funded builders) has none post-grant
+   (pp. 342-344).
+5. Outsiders don't contribute despite open APIs, plausibly "fearing
+   that their work would become disassociated from their identities"
+   or that the site will die (p. 344) — attribution and
+   institutional-longevity fears gate contribution.
+6. Fallback: collect _pointers_ with classification metadata rather
+   than hosting content (pp. 344-345) — index, don't ingest.
+7. When the university defunded it, the creators relocated and took
+   the commons with them to Georgia State; "universities are not
+   always willing to allocate sufficient funds" even for highly rated
+   commons (p. 346).
+
+== Key concepts
+
+Local public good; insider/outsider incentive asymmetry;
+steward-as-user sustainability condition; pointer-collection vs
+hosting; grant-cycle fragility.
+
+== Hooks to the Nostr thesis
+
+- The chapter is nearly an allegory of the medical-relay motif in
+  link:claim-composable-bounded-institutions.adoc[claim-composable-bounded-institutions]: a write-gated facility
+  (insider-produced experiment software) whose outputs are globally
+  readable, run by the community that needs it.
+- Claim 1 → link:concept-boundary-rules.adoc[concept-boundary-rules]: shrinking the boundary dissolves
+  the free-rider problem; widening it re-creates commons dilemmas.
+  Relay allowlists are the same dial.
+- Claim 5 is evidence for attribution as a contribution precondition
+  — Nostr events are signed and portable, so identity can never be
+  disassociated from content and no single site's death orphans it:
+  the protocol dissolves both stated fears. Feeds
+  link:claim-formation-observable.adoc[claim-formation-observable] (incentive design is legible in the
+  event stream).
+- Claim 6 anticipates the relay/index architecture: point, classify,
+  relay — don't centrally host.
+- Claim 7 is exit-based discipline inverted: the _stewards_ exited the
+  host institution and the commons survived by portability — cf.
+  link:concept-exit-voice.adoc[concept-exit-voice],
+  link:concept-interjurisdictional-competition.adoc[concept-interjurisdictional-competition],
+  link:q-does-competition-improve-governance.adoc[q-does-competition-improve-governance].
+
+== Tensions / open questions
+
+- Sustainability here depends on a durable employer-subsidized
+  steward; Nostr relays lack tenure — is steward-as-user (claim 4)
+  enough to keep hobbyist relays alive, or does the multiplicity stack
+  (link:claim-multiplicity-stack.adoc[claim-multiplicity-stack]) make any single relay's death cheap?
+- EconPort's community never materialized as contributors (one-way
+  commons). What distinguishes commons that recruit co-producers from
+  those that stay staff-fed?
+
+== Related
+
+- link:index.adoc[index]
+- link:concept-associational-commons.adoc[concept-associational-commons]
+- link:concept-ideas-artifacts-facilities.adoc[concept-ideas-artifacts-facilities]
+- link:concept-cpr-vs-knowledge-commons.adoc[concept-cpr-vs-knowledge-commons]
+- link:concept-gkc-framework.adoc[concept-gkc-framework]
+- link:src-collective-action-ukac.adoc[src-collective-action-ukac]
+- link:src-ukac-overview.adoc[src-ukac-overview]

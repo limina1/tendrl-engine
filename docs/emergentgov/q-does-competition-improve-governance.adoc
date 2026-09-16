@@ -1,0 +1,30 @@
+:title: Q: Does interjurisdictional competition yield better governance?
+:type: question
+:status: open
+:drafted-by: assistant
+:tags: competition, exit, open-question
+
+The open question deliberately left open (a puzzle, not a checkmark).
+Exit-based discipline of relay operators is the mechanism; whether the
+competition it creates yields *better governance* depends on the
+surrounding institutions (the caution from the corporate-charter
+literature — Bratton & McCahery — that competition does not guarantee
+better outcomes). Here the surrounding institutions are the rest of
+the stack.
+
+Complications from the sources: exit disciplines only when the
+governed are informed — rational ignorance produces governance
+specialists disciplined by exit threat alone
+(link:src-polycentric-blockchain-orders.adoc[src-polycentric-blockchain-orders],
+p. 720); voluntary-entry settings substitute perceived legitimacy for
+enforcement (link:src-digging-deeper.adoc[src-digging-deeper],
+p. 88); and Nostr is the limiting case of near-zero exit cost, where
+the discipline operates continuously — does the limit behave
+differently in kind?
+
+== Related
+
+- link:index.adoc[index]
+- link:concept-interjurisdictional-competition.adoc[concept-interjurisdictional-competition]
+- link:concept-exit-voice.adoc[concept-exit-voice]
+- link:claim-relay-spectrum.adoc[claim-relay-spectrum]

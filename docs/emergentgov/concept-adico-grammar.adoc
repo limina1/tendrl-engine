@@ -1,0 +1,55 @@
+:title: ADICO grammar of institutions — and the missing Or Else of kind-1984
+:type: concept
+:status: drafted
+:date: 2026-08-04
+:author: assistant
+:agent: iad-core
+:tags: adico, norms, rules, sanctions, kind-1984
+
+== The idea
+
+Crawford and Ostrom's grammar parses institutional statements into
+Attributes (whom it applies to), Deontic (may/must/must not), aIm (the
+action/outcome), Conditions, and Or Else — the actor "given the
+responsibility of imposing sanctions" (McGinnis pp. 13–14). Strategies
+` AIC; norms ` ADIC; rules = full ADICO (p. 14). Norms carry no Or
+Else: they are enforced through socialization and internalized delta
+parameters, effective only "if a norm is widely shared" (p. 14).
+Following Commons, every right in a rule implies a correlative duty on
+a designated enforcer (p. 14) — the O slot is where enforcement is
+institutionally located. Cf. Ostrom 2007, p. 23 (rules "predictably
+enforced... by agents responsible for monitoring conduct and for
+imposing sanctions").
+
+== The Nostr engagement
+
+A kind-1984 report is an ADIC statement: it names an attribute-bearer
+(the reported pubkey), a deontic charge, an aim, conditions — and no Or
+Else. By the grammar it is a norm, not a rule. Yet it gets enforced,
+because uncoordinated third parties (relay operators, client filters,
+label subscribers) each supply their own O according to their own
+payoff rules: the Or Else component is crowdsourced rather than
+assigned. This is the grammatical statement of decoupled sanctions —
+the reporter's act is a costly, public, non-binding signal; enforcement
+is a separate actor's separate decision (link:claim-split-sanctions.adoc[claim-split-sanctions],
+link:q-decoupled-vs-unitary-sanctions.adoc[q-decoupled-vs-unitary-sanctions]). It also strains the grammar's own
+sociology: McGinnis says O-less statements work only where a community
+shares the norm; Nostr enforcement instead rides heterogeneous private
+incentives of operators — a mechanism ADICO doesn't anticipate.
+
+== Sources
+
+- McGinnis, pp. 13–15 (§14: ADICO, delta parameter, Commons point,
+  norms/socialization, later revisions incl. oBject).
+- Ostrom 2007, p. 23 (rules vs norms by enforcement locus).
+
+== Related
+
+- link:index.adoc[index]
+- link:src-iad-guide.adoc[src-iad-guide]
+- link:src-ostrom-irc-iad.adoc[src-ostrom-irc-iad]
+- link:concept-graduated-sanctions.adoc[concept-graduated-sanctions]
+- link:concept-rule-types.adoc[concept-rule-types]
+- link:concept-rules-in-use.adoc[concept-rules-in-use]
+- link:claim-no-global-bannability.adoc[claim-no-global-bannability]
+- link:claim-formation-observable.adoc[claim-formation-observable]

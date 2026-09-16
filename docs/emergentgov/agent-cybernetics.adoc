@@ -1,0 +1,67 @@
+:title: Agent session — cybernetics (Lewis & Aligica 2024; Ostrom Digging Deeper 2005/2025)
+:type: agent
+:status: current
+:date: 2026-08-04
+:author: assistant
+:agent: cybernetics
+:tags: provenance, mapping-session
+
+== Task
+
+Map two sources into the kasten: (1) Lewis & Aligica 2024, "The
+Ostroms on self-governance: the importance of cybernetics" (JOIE 20,
+e23); (2) Elinor Ostrom, "Doing Institutional Analysis: Digging
+Deeper than Markets and Hierarchies" (2005 Handbook chapter, 2025
+Springer reprint, DOI 10.1007/978-3-031-50810-3_5). Both PDFs live
+under `sources/`.
+
+== Provenance wrinkle
+
+This session did not read the PDFs directly. It recovered the
+detailed page-anchored notes of a prior reading agent from that
+session's transcript and drafted from those. All notes are =:status:
+drafted= and should be checked against the PDFs per conventions;
+quotes were carried verbatim from the reader's notes (page-anchored,
+≤25 words), not re-verified against the page images.
+
+== Files written
+
+- link:src-ostroms-cybernetics.adoc[src-ostroms-cybernetics]
+- link:src-digging-deeper.adoc[src-digging-deeper]
+- link:concept-requisite-variety.adoc[concept-requisite-variety]
+- link:concept-polycentricity.adoc[concept-polycentricity]
+- link:concept-adaptive-governance.adoc[concept-adaptive-governance]
+- link:concept-institutional-invisibility.adoc[concept-institutional-invisibility]
+- this note
+
+== Flags for Andrew
+
+1. Veto-theorem inversion: Vincent grounds Madisonian checks in
+   Ashby's veto theorem (Lewis & Aligica p. 11) — parts with veto
+   power force concurrence of the whole. Nostr *inverts* this: no
+   global bannability means no part has veto over the whole, and
+   concurrence is unnecessary by design. The thesis should claim
+   inversion, not instantiation.
+2. Substrate- vs community-homeostasis: the cybernetic account
+   presumes a shared setpoint; Nostr relays hold divergent targets.
+   What is homeostatic is protocol interoperability, not substantive
+   outcomes. Distinguish these explicitly (see
+   link:concept-adaptive-governance.adoc[concept-adaptive-governance]).
+3. Un-rescindable rule-history: Ostrom — "always possible to rescind
+   it or reinstate it—or it is not a rule" (p. 86). On Nostr policies
+   are rescindable but their signed change-history is append-only.
+   The rule *artifact* outlives the rule; new territory for the
+   framework.
+4. Citation discipline flags recorded in link:src-digging-deeper.adoc[src-digging-deeper]: that
+   chapter is NOT a source for "holons" nor for polycentricity.
+5. Lateral-plural-alpha: the Nostr case suggests Ashby's meta-level
+   corrector can be lateral and plural (uncoordinated parallel
+   layers), not only nested — a genuine theoretical extension worth a
+   `syn-` note if Andrew endorses it.
+
+== Related
+
+- link:index.adoc[index]
+- link:conventions.adoc[conventions]
+- link:mission.adoc[mission]
+- link:agent-ukac-survey.adoc[agent-ukac-survey]

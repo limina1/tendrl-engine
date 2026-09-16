@@ -1,0 +1,63 @@
+:title: Agent session — alston-gkc (tier-3 sources: Alston, Fuster Morell, GKC volume)
+:type: agent
+:status: current
+:date: 2026-08-04
+:author: assistant
+:agent: alston-gkc
+:tags: provenance, mapping-session
+
+== Task
+
+Phase 1: page-anchored extraction of three tier-3 sources. Phase 2:
+write src- notes for each, plus concept notes for the GKC framework,
+infrastructure provision, and dynamic fidelity. Did not touch index.adoc
+(orchestrator-maintained).
+
+== Sources read
+
+- sources/tier-3 Digital Constitutionalism Constraining Authority in
+  Network-Coordinated Digital Orders.pdf — Alston working paper, read
+  in full (24 PDF pp., no printed pagination).
+- sources/ssrn_id2842586_code2596965.pdf — Fuster Morell, GKC 2014
+  chapter, SSRN preprint, read in full (preprint pp. 1–46).
+- sources/tier-3-GoverningKnowledgeCommons.pdf — front matter/TOC and
+  ch. 1 only (PDF 1–41), per instruction not to read the whole book.
+
+== Notes written
+
+- link:src-digital-constitutionalism.adoc[src-digital-constitutionalism]
+- link:src-fuster-morell-occ.adoc[src-fuster-morell-occ]
+- link:src-governing-knowledge-commons.adoc[src-governing-knowledge-commons]
+- link:concept-gkc-framework.adoc[concept-gkc-framework]
+- link:concept-infrastructure-provision.adoc[concept-infrastructure-provision]
+- link:concept-dynamic-fidelity.adoc[concept-dynamic-fidelity]
+- this note.
+
+== Flags for the human
+
+1. FILE-IDENTITY DISCREPANCY (foremost): tier-3-GoverningKnowledgeCommons.pdf
+   is actually Frischmann, Madison & Sanfilippo (eds.), Governing Smart
+   Cities as Knowledge Commons (Cambridge UP 2023, doi
+   10.1017/9781108938532), not the 2014 Frischmann/Madison/Strandburg
+   OUP volume named in the project email. Ch. 1 still delivers the
+   mature GKC framework (Table 1.1, printed 19–20 / PDF 32–33; offset
+   printed+13). Acquire for citation: the 2014 volume's framework
+   chapter and MFS 2010, Cornell L. Rev. 95:657.
+2. Alston flags but does not resolve the Sybil/identity gap in
+   pseudonymous commons governance (his pp. 9–10) — feeds
+   link:q-boundary-sybil.adoc[q-boundary-sybil] directly.
+3. Fuster Morell explicitly does not analyze action situations (her
+   pp. 33, 36): her chapter is a static comparative snapshot, i.e. the
+   anti-model of the project's real-time-observation claim — useful as
+   contrast for link:claim-formation-observable.adoc[claim-formation-observable].
+4. Fuster Morell quotes are anchored to SSRN preprint pagination, which
+   differs from the published OUP chapter; re-anchor before citing.
+5. Alston is an unpublished working paper whose key empirics rest on
+   his own forthcoming work (Alston & Byerly 2026); verify before
+   load-bearing use.
+
+== Related
+
+- link:index.adoc[index]
+- link:conventions.adoc[conventions]
+- link:map-email.adoc[map-email]

@@ -1,0 +1,30 @@
+{
+  "mentions": ["Andrew", "andrew"],
+  "rename": {"map-email": "literature-map"},
+  "drop_tags": ["file"],
+  "substitutions": [
+    ["Map of Jayme's source email", "Literature map"],
+    ["\\s*\\(Jayme's email\\)", ""],
+    ["\\(`sources/email\\.md`\\)\\s*", ""],
+    ["`sources/email\\.md`", "the literature map"],
+    ["Jayme's source email", "the literature map"],
+    ["whom Jayme names as", "named in the literature map as"],
+    ["\\s*\\(from Jayme\\)", ""],
+    ["marks Jayme's emphasis", "marks its emphasis"],
+    ["the project email", "the literature map"],
+    ["Not in the email", "Not in the original map"],
+    ["\\bthe email's\\b", "the map's"],
+    ["\\bJayme's\\b", "the map's"],
+    ["\\bJayme\\b", "a colleague"],
+    ["\\bjayme\\b", ""],
+    ["\\bmap-email\\b", "literature-map"],
+    ["`sources/presentation\\.tex` and\\s+`sources/orientation\\.md`", "the project's orientation documents"],
+    ["`sources/presentation\\.tex`, `sources/orientation\\.md`", "the project's orientation documents"],
+    ["`sources/presentation\\.tex`", "the project presentation"],
+    ["`sources/orientation\\.md`", "the project orientation note"],
+    ["`sources/`", "the local source folder"],
+    ["sources/[^`()\\n]*\\n\\s+[^`()\\n]*?\\.(?:pdf|tex|md|txt)", "a local source copy"],
+    ["sources/[^`()\\n]*?\\.(?:pdf|tex|md|txt)", "a local source copy"],
+    ["\\bscratchpad\\b", "local"]
+  ]
+}

@@ -1,0 +1,128 @@
+:title: Ostrom & Hess 2007 — A Framework for Analyzing the Knowledge Commons (UKAC ch. 3)
+:type: src
+:status: drafted
+:author: assistant
+:agent: hess-ostrom
+:tags: iad, knowledge-commons, adaptive-governance, hinge-quotes
+:cite: Elinor Ostrom & Charlotte Hess, 2007, in Hess & Ostrom (eds.), Understanding Knowledge as a Commons, MIT Press, ch. 3
+:file: sources/AnalyzingKnowledgeCommons-UKAC.pdf
+:pages: printed 41–81; PDF page = printed − 40
+
+== What it is
+
+The IAD framework operationalized for knowledge commons: biophysical
+characteristics become ideas/artifacts/facilities, community becomes
+users/providers/policymakers, rules-in-use at three levels; worked
+example is a university digital repository. Ends by stating the
+field's epistemic limit — the hinge this project's pitch turns on.
+
+== The hinge quotes
+
+Quote A — printed p. 60 / PDF p. 20, "Outcomes" section, verbatim:
+"Most of the outcomes that have been written about in the newly
+emerging knowledge-commons literature are either types of enclosures
+of information that used to be open or the creation of new digital
+commons that provide better access to information. Writers tend to
+point to outcomes that they like or dislike, but few have gone into
+in-depth analysis. Thus far we (all of us!) have mainly been at the
+'look what is happening!' stage."
+
+Quote B — printed p. 68 / PDF p. 28, chapter Conclusion, verbatim:
+"Over time, it will be possible to extract design principles for
+robust, long-enduring knowledge commons. After more efforts succeed
+and others fail, we will be able to better understand what makes
+various knowledge commons work and how we can better work toward
+robust and sustainable resources."
+
+"Being Prepared for Change" — named subsection, printed p. 68 / PDF
+p. 28 (fifth adaptive-governance requirement, list introduced p. 66),
+verbatim: "Institutions must be designed to allow for adaptation
+because some current understanding is likely to be wrong, the
+required scale of organization can shift, and biophysical and social
+systems change. Fixed rules are likely to fail because they place too
+much confidence in the current state of knowledge, while systems that
+guard against the low-probability, high-consequence possibilities and
+allow for change may be suboptimal in the short run but prove wiser
+in the long run."
+
+Together: Ostrom herself says analysis is stuck at spectatorship (A)
+and understanding must wait for a success/failure record (B) — the
+survivorship filter conceded in advance. Nostr converts waiting into
+watching — link:claim-formation-observable.adoc[claim-formation-observable]; the change-preparedness
+passage grounds link:claim-expand-contract.adoc[claim-expand-contract].
+
+== Core claims
+
+1. (41–42) IAD is a diagnostic tool for repeated rule-guided
+   interaction; handles dynamic rule-formation, the hard and
+   important case for knowledge. See link:concept-iad-framework.adoc[concept-iad-framework].
+2. (42) Institutions = rules "understood and used by a community,"
+   not what is written — link:concept-rules-in-use.adoc[concept-rules-in-use].
+3. (46–48) Knowledge's biophysical layer = ideas/artifacts/facilities
+   (Figure 3.2, p. 46); ideas "a pure public good and, therefore,
+   nonrivalrous" (48) — link:concept-ideas-artifacts-facilities.adoc[concept-ideas-artifacts-facilities].
+4. (49) Surprise of digital commons: "high degree of cooperation and
+   coordination achieved by apparently disparate individuals" without
+   face-to-face contact, despite homogeneity being the usual predictor.
+5. (50) Rules analyzed at operational _ collective-choice _
+   constitutional levels — link:concept-rule-levels.adoc[concept-rule-levels].
+6. (51) Rules "hard to 'see,' as with protocols, standards, and
+   computer code"; "technological inversion" when tech contradicts
+   missions or rights; DMCA vs. fair use; DRM as private governance —
+   link:concept-institutional-invisibility.adoc[concept-institutional-invisibility].
+7. (51–52) Rule-making is often unselfconscious: teams adopt "a new
+   rule... without ever self-consciously recognizing" the arena switch
+   from operational to collective choice.
+8. (52–53) Seven property rights for digital commons — adds
+   contribution and removal to Schlager–Ostrom's five —
+   link:concept-property-rights-bundles.adoc[concept-property-rights-bundles].
+9. (55) Repository decision-making is "polycentric — ... decentralized,
+   alternative areas of authority" — link:concept-polycentricity.adoc[concept-polycentricity].
+10. (58) Perverse outcome is underuse; outside users are not free
+    riders — "they enhance the quality of the resource by using it."
+11. (61) Table 3.1 pairs outcomes: enclosure↔access, pollution↔quality
+    control, noncompliance↔participation, withdrawal↔preservation.
+12. (62–66) Six evaluative criteria: scientific knowledge growth,
+    sustainability/preservation, participation, efficiency, fiscal
+    equivalence, redistributional equity.
+13. (66–68) Five adaptive-governance requirements (Dietz/Ostrom/Stern
+    2003): information, conflict, compliance ("modest sanctions on
+    first offenders," monitors "must be seen as effective and
+    legitimate," 67), infrastructure, prepared-for-change —
+    link:concept-adaptive-governance.adoc[concept-adaptive-governance], link:concept-graduated-sanctions.adoc[concept-graduated-sanctions].
+
+== Hooks to the Nostr thesis
+
+- Hinge quotes: the pitch's warrant (above).
+- Unselfconscious rule-making (51–52) becomes loggable on Nostr:
+  policy changes, NIP PRs, mute-list edits are published artifacts.
+- Invisible rules (51) inverted: NIPs make the rule layer the visible,
+  versioned layer — link:concept-governance-as-software.adoc[concept-governance-as-software].
+- Legitimacy-of-sanctioners claim (67) testable per relay; exit via
+  relay-list edits is the legitimacy meter — link:concept-exit-voice.adoc[concept-exit-voice],
+  link:claim-split-sanctions.adoc[claim-split-sanctions], link:q-decoupled-vs-unitary-sanctions.adoc[q-decoupled-vs-unitary-sanctions].
+- Being-prepared-for-change ↔ relay spectrum as institutional
+  portfolio — link:claim-relay-spectrum.adoc[claim-relay-spectrum], link:claim-expand-contract.adoc[claim-expand-contract].
+
+== Tensions / open questions
+
+- Rules require "at least a minimal sanctioning ability" (50);
+  kind-1984 reports decouple signal from sanction — strains the
+  link:concept-adico-grammar.adoc[concept-adico-grammar].
+- Exemplar arena is chartered and bounded; Nostr's constitutional
+  level is protocol + rough consensus, no charter.
+- Note 2 (68): left-side variables only "temporarily" exogenous, with
+  feedback loops in fast systems — on Nostr the footnote is the main
+  case (see link:agent-hess-ostrom.adoc[agent-hess-ostrom]).
+
+== Related
+
+- link:index.adoc[index]
+- link:src-ideas-artifacts-facilities.adoc[src-ideas-artifacts-facilities]
+- link:src-ukac-introduction.adoc[src-ukac-introduction]
+- link:concept-survivorship-bias.adoc[concept-survivorship-bias]
+- link:concept-iad-framework.adoc[concept-iad-framework]
+- link:concept-action-arena.adoc[concept-action-arena]
+- link:concept-adaptive-governance.adoc[concept-adaptive-governance]
+- link:claim-formation-observable.adoc[claim-formation-observable]
+- link:claim-expand-contract.adoc[claim-expand-contract]

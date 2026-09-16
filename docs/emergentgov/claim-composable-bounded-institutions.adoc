@@ -1,0 +1,45 @@
+:title: Bounded institutions compose on the open substrate
+:type: claim
+:status: drafted
+:drafted-by: assistant
+:tags: composition, medical-commons, gatekeeping, quality-control
+
+The mechanism behind the closer, with the medical knowledge commons as
+its standing instance. The two properties that normally trade off are
+held simultaneously:
+
+- *Institutional quality control as a centralized function.* A
+  gate-kept community (e.g. a medical knowledge commons) runs its own
+  relay as a bounded institution — curation, membership, maintenance,
+  strict write policy. On its own relay, outsiders read but do not
+  write ("read-only on their relay").
+- *No global excludability.* The same signed events are freely
+  readable and commentable on every other relay. Globally, no one can
+  be excluded from the *conversation* — only from a *venue*. The
+  community's ideas circulate and take comment everywhere; the
+  community's canonical surface stays curated.
+
+So the decentralized non-bannability is not in tension with
+institutional quality control: it is what makes the gated institution
+safe to build (its members were never at risk of losing the commons)
+and honest to run (its claims are contestable outside its gate).
+This is why the medical-commons application matters to the governance
+paper at all — it is what gets *built* once the substrate is proven —
+while remaining the other paper's subject (see
+link:mission.adoc[mission] on the two-paper separation).
+
+Theory anchors: associational commons on a libertarian substrate
+(link:concept-associational-commons.adoc[concept-associational-commons]);
+boundary rules as composable overlays on default conditions
+(link:concept-boundary-rules.adoc[concept-boundary-rules]);
+infrastructure provision disaggregated across plural providers
+(link:concept-infrastructure-provision.adoc[concept-infrastructure-provision]).
+
+== Related
+
+- link:index.adoc[index]
+- link:claim-worst-case-hosts-best-case.adoc[claim-worst-case-hosts-best-case]
+- link:claim-relay-spectrum.adoc[claim-relay-spectrum]
+- link:claim-no-global-bannability.adoc[claim-no-global-bannability]
+- link:concept-property-rights-bundles.adoc[concept-property-rights-bundles]
+- link:syn-medical-commons-design.adoc[syn-medical-commons-design] (yours to write)

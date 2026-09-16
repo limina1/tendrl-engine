@@ -1,0 +1,65 @@
+:title: Exit, voice, and forking — and the Nostr inversion
+:type: concept
+:status: drafted
+:date: 2026-08-04
+:author: assistant
+:agent: blockchain-tier2
+:tags: exit, voice, forking, hirschman, discipline
+
+== The idea
+
+All three tier-2 papers run Hirschman's exit/voice machinery through
+blockchain, with forking as the crypto-native fusion of the two: exit
+that takes the institution's code with you. Alston et al. make the
+fork the constitutional escape valve — "the threat of a new competitor
+is a strong governing force" (715) — while ordinary users, lacking
+voice, "can only influence governance by exiting" (716). Allen et al.
+recast forking from last resort to standing mechanism, the "calculus
+of consent motivating exit" amplified by composability (663).
+Murtazashvili et al. supply the synthesis line: Bitcoin's governance
+"is disciplined by the fact that users can stay and participate or
+can exit," and added exit options "create opportunities for voice"
+(116). That last clause, and its shared load-bearing cite — Berg &
+Berg 2020, "Exit, Voice, and Forking," common to all three papers —
+is the citation bridge for the Nostr argument that exit REGENERATES
+jurisdictions rather than merely leaving them.
+
+== The Nostr engagement
+
+Nostr is the limiting case that inverts the setup. In the blockchain
+versions exit is costly (ledger network effects, 716) and forking is
+rare and traumatic — two canonical war stories, block-size/BCH and
+DAO/ETC. On Nostr keys and follow lists are portable, so exit cost
+approaches zero; discipline operates continuously rather than
+episodically, and "forking" degenerates into everyday relay choice or
+relay founding — leaving can mean starting a jurisdiction
+(link:claim-relay-spectrum.adoc[claim-relay-spectrum], link:claim-expand-contract.adoc[claim-expand-contract]). Voice also gains
+what the blockchain papers lack: a typed, signed channel (kind-1984
+reports, mutes) below the threshold of exit, with sanctions decoupled
+from both (link:claim-split-sanctions.adoc[claim-split-sanctions]). Strain: if exit is nearly free
+and continuous, does Hirschman's loyalty term vanish — and with it the
+pressure that makes voice worth exercising at all?
+(link:q-does-competition-improve-governance.adoc[q-does-competition-improve-governance]).
+
+== Sources
+
+- Alston, Law, Murtazashvili & Weiss 2022, pp. 709, 715–716
+  (link:src-polycentric-blockchain-orders.adoc[src-polycentric-blockchain-orders]).
+- Allen et al. 2023, p. 663 (link:src-exchange-theory-web3.adoc[src-exchange-theory-web3]).
+- Murtazashvili et al. 2022, p. 116
+  (link:src-blockchain-knowledge-commons.adoc[src-blockchain-knowledge-commons]).
+- Berg & Berg 2020, "Exit, Voice, and Forking" — shared cite, not yet
+  in the kasten; acquisition target.
+
+== Related
+
+- link:index.adoc[index]
+- link:concept-interjurisdictional-competition.adoc[concept-interjurisdictional-competition]
+- link:concept-tier2-triangle.adoc[concept-tier2-triangle]
+- link:concept-boundary-rules.adoc[concept-boundary-rules]
+- link:concept-adaptive-governance.adoc[concept-adaptive-governance]
+- link:claim-no-global-bannability.adoc[claim-no-global-bannability]
+- link:claim-formation-observable.adoc[claim-formation-observable]
+- link:claim-composable-bounded-institutions.adoc[claim-composable-bounded-institutions]
+- link:q-decoupled-vs-unitary-sanctions.adoc[q-decoupled-vs-unitary-sanctions]
+- link:q-maturation-hypothesis.adoc[q-maturation-hypothesis]

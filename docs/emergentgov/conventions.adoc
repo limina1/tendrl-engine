@@ -1,0 +1,71 @@
+:title: Conventions — emergentgov kasten
+:type: meta
+:status: current
+:date: 2026-08-04
+
+Instantiated from the portable template in
+link:../zettel-guide/zettel-template.org[zettel-guide], AI-seeded
+corpus-mapping variant. The invariant skeleton applies unchanged: flat
+folder, one idea per note, one index, typed filenames, header blocks,
+Related lists, dangling links are TODOs, tick don't delete.
+
+== Knob 1: note types (this kasten)
+
+- `src-`     :: external source (one per paper/chapter). Claims carry
+  page locators and ≤25-word quotes — pointers, never text (fair-use
+  citation only; the corpus never enters the kasten).
+- `concept-` :: an idea extracted _across_ sources (inventory).
+- `claim-`   :: a settled judgment of the project — Andrew's thesis
+  beats as articulated in `sources/presentation.tex` and
+  `sources/orientation.md`. Drafted by the assistant from those
+  documents; the judgment is Andrew's.
+- `syn-`     :: Andrew's own synthesis/speculation. RESERVED FOR THE
+  HUMAN — the AI seeds these only as dangling links.
+- `q-`       :: open question; where sources disagree or the Nostr
+  case strains the theory.
+- `agent-`   :: provenance note for an AI mapping session — which
+  agent, what task, what sources it read, what notes it wrote.
+- meta       :: `index`, `conventions`, `mission`, `map-email` (the
+  organizational map of Jayme's source email).
+
+== Knob 2: status vocabulary
+
+Lifecycle of certainty for an AI-seeded mapping:
+
+`drafted` (machine-written, unverified) → `checked` (read against the
+source) → `working` (in active use for the paper) → `fluent`; plus
+`stale` (needs review) and `abandoned` (kept as provenance).
+Meta docs are `current`. Grep `:status: drafted` for the review queue —
+absorbing the mapping means emptying it.
+
+== Provenance
+
+Every note carries `:author:` — `assistant` (with `:agent:` naming the
+session agent) or `andrew`. Checking a drafted note means following its
+citations, not re-reading the source.
+
+== Header block (every note)
+
+ :title: <title>
+ :type: src | concept | claim | syn | question | agent | meta
+ :status: <knob 2>
+ :date: <last substantive revision>
+ :author: assistant | andrew
+ :agent: <agent-name, when author is assistant>
+ :tags: <comma, separated>
+
+`src-` notes add: `:cite:` (authors, year, venue), `:doi:` or `:isbn:`
+when known, `:file:` (path under `sources/`), `:pages:` (printed-page
+range and PDF offset if they differ).
+
+== Unit of work (rule 6)
+
+One reading/mapping session = update the kasten before the session
+ends: the notes it produced, their index entries, and the session's
+`agent-` note, in the same sitting.
+
+== Related
+
+- link:index.adoc[index]
+- link:mission.adoc[mission]
+- link:../zettel-guide/zettel-template.org[portable template (zettel-guide)]

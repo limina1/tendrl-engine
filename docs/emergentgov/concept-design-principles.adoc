@@ -1,0 +1,59 @@
+:title: The eight CPR design principles — "good practices," survivorship-framed
+:type: concept
+:status: drafted
+:date: 2026-08-04
+:author: assistant
+:agent: iad-core
+:tags: design-principles, robustness, survivorship
+
+== The idea
+
+Ostrom 1990's eight design principles, as enumerated by McGinnis
+(pp. 19–20): (1) clearly defined boundaries (biophysical and social);
+(2) congruence between appropriation/provision rules and local
+conditions; (3) collective-choice participation by most affected;
+(4) monitors accountable to (or drawn from) appropriators;
+(5) graduated sanctions; (6) low-cost dispute resolution; (7) minimal
+recognition by higher authorities of rights to self-organize;
+(8) nested enterprises. McGinnis hedges the epistemics himself: they
+are "perhaps better described as good practices" — "characteristics...
+that have been observed to be regularly associated with the long-term
+sustainability" of CPR systems, not all needed in all circumstances
+(p. 19). Ostrom 2007 describes them as distilled from "robust,
+self-organized institutions for achieving sustainable resource use of
+very long periods of time" (p. 48) — i.e., read off institutions that
+had already survived. Cox et al. later disaggregate several (McGinnis
+p. 20).
+
+== The Nostr engagement
+
+The survivorship framing is the thesis's foil: the principles are
+correlates recovered from winners, and the method cannot watch
+formation — see link:concept-survivorship-bias.adoc[concept-survivorship-bias] and
+link:claim-formation-observable.adoc[claim-formation-observable]. Against the list: principles 1 and 5 are
+the two Nostr visibly disassembles (elastic per-relay boundaries,
+link:concept-boundary-rules.adoc[concept-boundary-rules]; decoupled emergent sanctions,
+link:concept-graduated-sanctions.adoc[concept-graduated-sanctions]). Principle 7 is satisfied vacuously —
+there is no higher authority to grant recognition; censorship
+resistance substitutes. Principle 8 (nested enterprises) is arguably
+what bounded institutions composing on the open substrate look like —
+link:claim-composable-bounded-institutions.adoc[claim-composable-bounded-institutions]. Whether principles are
+predictive for relays observed mid-formation is a testable question —
+link:q-maturation-hypothesis.adoc[q-maturation-hypothesis].
+
+== Sources
+
+- McGinnis, pp. 19–20 (§17, incl. hedge and Cox et al. note).
+- Ostrom 2007, p. 48 (origin in Governing the Commons; not enumerated
+  in the chapter).
+
+== Related
+
+- link:index.adoc[index]
+- link:src-iad-guide.adoc[src-iad-guide]
+- link:src-ostrom-irc-iad.adoc[src-ostrom-irc-iad]
+- link:concept-rule-levels.adoc[concept-rule-levels]
+- link:concept-polycentricity.adoc[concept-polycentricity]
+- link:concept-adaptive-governance.adoc[concept-adaptive-governance]
+- link:claim-expand-contract.adoc[claim-expand-contract]
+- link:q-generativity-robustness.adoc[q-generativity-robustness]

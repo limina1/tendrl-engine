@@ -1,0 +1,57 @@
+:title: The IAD framework — framework/theory/model, exogenous variables, diagram logic
+:type: concept
+:status: drafted
+:date: 2026-08-04
+:author: assistant
+:agent: iad-core
+:tags: iad, metatheory, exogenous-variables
+
+== The idea
+
+IAD sits at the most general of three levels of specificity. A
+_framework_ identifies the universal elements any relevant theory must
+address and supplies a metatheoretical language for comparing theories;
+a _theory_ makes working assumptions about which elements matter; a
+_model_ fixes precise parameters (Ostrom 2007, pp. 25–26; McGinnis
+p. 4). Many theories fit one framework, many models fit one theory.
+
+The diagram logic (Ostrom 2007, Fig. 2.1 p. 27; McGinnis pp. 7–8,
+Fig. 1 p. 27): three clusters of exogenous variables — (1) rules-in-use,
+(2) biophysical/material conditions ("attributes of states of the
+world"), (3) attributes of the community — jointly structure an action
+arena, which generates patterns of interaction and outcomes, which are
+assessed by evaluative criteria and feed back on every component. The
+three clusters combine configurally, not additively (Ostrom pp. 24–25):
+working rules alone are never a sufficient explanation (p. 37).
+McGinnis adds that the whole is a system of nested, "nearly
+decomposable" action situations (p. 8).
+
+== The Nostr engagement
+
+The thesis uses IAD as the diagnostic grid but inverts its epistemics:
+IAD was built because institutions are invisible and must be elicited;
+on Nostr the exogenous-variable cluster "rules-in-use" is materialized
+as signed events and machine-readable relay policy, so the framework's
+categories can be populated by observation rather than interview
+(link:claim-formation-observable.adoc[claim-formation-observable], link:claim-interviews-carry-claim.adoc[claim-interviews-carry-claim]).
+Biophysical conditions map to protocol/code constraints
+(link:concept-governance-as-software.adoc[concept-governance-as-software]); community attributes are the
+strained cluster — pseudonymous, open-entry, no shared culture.
+
+== Sources
+
+- Ostrom 2007, pp. 25–28 (framework/theory/model, Fig. 2.1), 35–43
+  (three exogenous clusters), 24–25 (configural).
+- McGinnis, pp. 4 (2.2), 7–8 (§5), Fig. 1 p. 27.
+
+== Related
+
+- link:index.adoc[index]
+- link:src-ostrom-irc-iad.adoc[src-ostrom-irc-iad]
+- link:src-iad-guide.adoc[src-iad-guide]
+- link:concept-action-arena.adoc[concept-action-arena]
+- link:concept-rules-in-use.adoc[concept-rules-in-use]
+- link:concept-rule-levels.adoc[concept-rule-levels]
+- link:concept-institutional-invisibility.adoc[concept-institutional-invisibility]
+- link:concept-gkc-framework.adoc[concept-gkc-framework]
+- link:concept-adaptive-governance.adoc[concept-adaptive-governance]

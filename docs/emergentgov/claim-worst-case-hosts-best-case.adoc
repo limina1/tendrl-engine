@@ -1,0 +1,38 @@
+:title: The worst case hosts the best case
+:type: claim
+:status: drafted
+:drafted-by: assistant
+:tags: closer, composition, institutional-economics
+
+The closer — the "so what" for institutional economics. If governance
+works *here* — the most adversarial configuration, no enforceable
+boundary, no global solution — then it composes with any centralized
+graduated-sanction regime built on top of it.
+
+A medical commons, a town relay, or a curated scientific archive is a
+bounded institution: a centralized sanction regime. Because they all
+still speak the same base events (kind 0, kind 1), each composes onto
+the open substrate *without leaving it*; the institution becomes one
+more freely composable filter in the stack. The bounded jurisdiction
+runs *on* the open one — they are not rivals. Showing that the most
+permissive substrate can *carry* strict institutional governance is
+the result that matters to the field.
+
+We are not claiming to bound the system: we sample its most
+adversarial corner, show governance survives there, then show any
+bounded regime can sit on top. Precedents in the sources: Lido
+becoming a governance power without the substrate's rules changing
+(link:src-exchange-theory-web3.adoc[src-exchange-theory-web3]);
+nested micro-commons inside a macro commons
+(link:src-blockchain-knowledge-commons.adoc[src-blockchain-knowledge-commons]);
+Ashby's S+alpha second-order structure
+(link:concept-adaptive-governance.adoc[concept-adaptive-governance]).
+
+== Related
+
+- link:index.adoc[index]
+- link:claim-composable-bounded-institutions.adoc[claim-composable-bounded-institutions]
+- link:claim-no-global-bannability.adoc[claim-no-global-bannability]
+- link:concept-associational-commons.adoc[concept-associational-commons]
+- link:concept-interjurisdictional-competition.adoc[concept-interjurisdictional-competition]
+- link:concept-tier2-triangle.adoc[concept-tier2-triangle]

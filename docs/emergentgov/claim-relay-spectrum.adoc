@@ -1,0 +1,42 @@
+:title: The relay spectrum — three poles, not two
+:type: claim
+:status: drafted
+:date: 2026-08-04
+:tags: spectrum, boundary, relays, composition
+
+A user is a pubkey that signs events. Relays sit on a spectrum of how
+strongly they enforce a boundary — and it has *three* positions, not
+two (an earlier dipole framing was corrected on purpose):
+
+1. *Allowlist floor* — a bounded institution; membership set once;
+   always available. Ostrom's set-once-boundary world.
+2. *Curated-but-interoperable middle* — relays that curate yet still
+   speak the base events (kind 0 / kind 1), so a user gets a community
+   *without leaving the commons*. The genuinely novel structural
+   point: a **composition** story, not just a sorting story.
+3. *Open pool* — "the Nostr community"; no membership boundary, so
+   exclusion is solved some other way.
+
+The floor always works, and that is what makes the openness above it
+rational (credible commitment / option value). The open-maximalist
+pole holds the floor open on principle.
+
+This is interjurisdictional competition in plain terms: operators bear
+real cost to keep good users; a user can leave any relay without
+losing identity or follows; no user ever gets a vote, and the freedom
+to leave is what keeps operators honest. One difference from a fixed
+set of states: leaving can mean *starting* a new relay, so the set of
+jurisdictions keeps regenerating. Whether that competition yields
+better governance is an open question, not a checkmark —
+link:q-does-competition-improve-governance.adoc[q-does-competition-improve-governance].
+
+== Related
+
+- link:index.adoc[index]
+- link:concept-boundary-rules.adoc[concept-boundary-rules]
+- link:concept-interjurisdictional-competition.adoc[concept-interjurisdictional-competition]
+- link:concept-exit-voice.adoc[concept-exit-voice]
+- link:concept-associational-commons.adoc[concept-associational-commons]
+- link:concept-infrastructure-provision.adoc[concept-infrastructure-provision]
+- link:claim-no-global-bannability.adoc[claim-no-global-bannability]
+- link:claim-composable-bounded-institutions.adoc[claim-composable-bounded-institutions]

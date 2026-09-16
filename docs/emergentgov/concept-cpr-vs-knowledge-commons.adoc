@@ -1,0 +1,61 @@
+:title: CPR theory vs. knowledge commons — goods typology and its inversions
+:type: concept
+:status: drafted
+:date: 2026-08-04
+:author: assistant
+:agent: hess-ostrom
+:tags: goods-typology, subtractability, enclosure, pollution
+
+== The idea
+
+Goods classify on two independent axes: cost of exclusion ×
+subtractability of use (V. & E. Ostrom 1977; Hess & Ostrom 2003,
+pp. 119–120, Figure 1; UKAC Intro pp. 8–9, Figure 1.1). CPRs =
+difficult exclusion + high subtractability. Three confusions to keep
+apart (2003, pp. 118–123): the good (common-pool resource) vs. the
+regime (common property) vs. no-regime (open access, res nullius);
+and commons ≠ open access ≠ public domain (Intro pp. 13–14 — "a
+commons is not value laden").
+
+Knowledge inverts the CPR premise: ideas are nonsubtractive — "the
+more people who share useful knowledge, the greater the common good"
+(Intro p. 5) — so the classic appropriation dilemma weakens.
+Knowledge-commons dilemmas are instead *pollution* (spam, no quality
+control), *underuse/underprovision* (empty repositories,
+anticommons — 2003 p. 128; UKAC ch. 3 p. 58, Table 3.1 p. 61), and
+*enclosure*. The pivotal dynamic: "New technologies can enable the
+capture of what were once free and open public goods," converting
+them into CPRs needing management, monitoring, protection (Intro
+p. 10). Sources: link:src-ideas-artifacts-facilities.adoc[src-ideas-artifacts-facilities],
+link:src-ukac-introduction.adoc[src-ukac-introduction], link:src-analyzing-knowledge-commons.adoc[src-analyzing-knowledge-commons].
+
+== Where Nostr sits awkwardly
+
+Nostr straddles the typology's rows: events (artifacts) are
+nonsubtractive and concurrently usable — public-good-like; but relay
+storage, bandwidth, and human attention are subtractive — CPR-like.
+So the network runs both dilemma families at once: pollution/spam is
+appropriation of the subtractive layer through over-contribution to
+the nonsubtractive layer. Exclusion cost is also layered: cheap per
+relay (allowlists, filters), effectively infinite at the pool level
+(no global bannability). The typology needs a per-layer application —
+one classification per element of
+link:concept-ideas-artifacts-facilities.adoc[concept-ideas-artifacts-facilities] — rather than one for "Nostr."
+This is the core of link:q-goods-typology-fit.adoc[q-goods-typology-fit]; the capture dynamic (Intro
+p. 10) is observable live as spam pressure converts open relays into
+managed ones — link:claim-formation-observable.adoc[claim-formation-observable],
+link:claim-expand-contract.adoc[claim-expand-contract].
+
+== Related
+
+- link:index.adoc[index]
+- link:src-ideas-artifacts-facilities.adoc[src-ideas-artifacts-facilities]
+- link:src-ukac-introduction.adoc[src-ukac-introduction]
+- link:src-analyzing-knowledge-commons.adoc[src-analyzing-knowledge-commons]
+- link:concept-ideas-artifacts-facilities.adoc[concept-ideas-artifacts-facilities]
+- link:concept-property-rights-bundles.adoc[concept-property-rights-bundles]
+- link:concept-boundary-rules.adoc[concept-boundary-rules]
+- link:claim-relay-spectrum.adoc[claim-relay-spectrum]
+- link:claim-no-global-bannability.adoc[claim-no-global-bannability]
+- link:q-goods-typology-fit.adoc[q-goods-typology-fit]
+- link:q-boundary-sybil.adoc[q-boundary-sybil]

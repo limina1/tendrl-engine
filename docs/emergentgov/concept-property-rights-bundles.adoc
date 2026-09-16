@@ -1,0 +1,60 @@
+:title: Property rights as bundles — five rights, seven for knowledge commons
+:type: concept
+:status: drafted
+:date: 2026-08-04
+:author: assistant
+:agent: hess-ostrom
+:tags: property-rights, relays, deletion, positions
+
+== The idea
+
+Property is not one right but a bundle. Schlager & Ostrom (1992) give
+five: access, extraction (withdrawal), management, exclusion,
+alienation; positions stack them — authorized entrant → authorized
+user → claimant → proprietor (all but alienation) → full owner (Hess
+& Ostrom 2003, pp. 124–127 — link:src-ideas-artifacts-facilities.adoc[src-ideas-artifacts-facilities]). Key
+findings: flow rights and system rights are frequently held by
+different actors (126); proprietors sustain resources as well as
+owners (126); "no set of property rights work equivalently in all
+types of settings" (127). For digital knowledge commons the 2007
+chapter extends the bundle to seven, adding *contribution* (right to
+add content) and *removal* (right to remove one's artifacts) (UKAC
+ch. 3, pp. 52–53 — link:src-analyzing-knowledge-commons.adoc[src-analyzing-knowledge-commons]).
+
+== The Nostr mapping
+
+Per relay: access ` read policy; contribution ` write policy (the
+right Hess & Ostrom had to invent for knowledge commons is Nostr's
+central lever); extraction ` REQ/fetch; removal ` kind-5 deletion
+requests; management/participation = operator config + NIP process;
+exclusion ` allowlists, bans, filters; alienation ` selling the
+relay. Relay operators are *proprietors*; users on open relays are
+authorized users/claimants; pubkeys are effectively non-alienable
+(identity can't be sold with its web of trust intact). The
+flow-vs-system rights split (126) is exactly authorship decoupled
+from hosting.
+
+The schema needs an extra column the sources lack: *enforceable by
+whom, at what scope*. Removal is honored per-facility but advisory
+at the pool level; exclusion is absolute per relay, impossible
+globally — link:claim-no-global-bannability.adoc[claim-no-global-bannability]. Redundant multi-layer
+exclusion by uncoordinated proprietors is bundle-holding gone
+polycentric — link:concept-polycentricity.adoc[concept-polycentricity], link:claim-multiplicity-stack.adoc[claim-multiplicity-stack] —
+and the "no bundle works everywhere" finding (127) predicts the
+relay spectrum rather than a single optimal relay policy —
+link:claim-relay-spectrum.adoc[claim-relay-spectrum].
+
+== Related
+
+- link:index.adoc[index]
+- link:src-ideas-artifacts-facilities.adoc[src-ideas-artifacts-facilities]
+- link:src-analyzing-knowledge-commons.adoc[src-analyzing-knowledge-commons]
+- link:concept-ideas-artifacts-facilities.adoc[concept-ideas-artifacts-facilities]
+- link:concept-cpr-vs-knowledge-commons.adoc[concept-cpr-vs-knowledge-commons]
+- link:concept-rule-types.adoc[concept-rule-types]
+- link:concept-boundary-rules.adoc[concept-boundary-rules]
+- link:concept-exit-voice.adoc[concept-exit-voice]
+- link:claim-no-global-bannability.adoc[claim-no-global-bannability]
+- link:claim-relay-spectrum.adoc[claim-relay-spectrum]
+- link:claim-split-sanctions.adoc[claim-split-sanctions]
+- link:q-decoupled-vs-unitary-sanctions.adoc[q-decoupled-vs-unitary-sanctions]

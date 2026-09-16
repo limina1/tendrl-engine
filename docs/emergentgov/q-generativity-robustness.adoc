@@ -1,0 +1,28 @@
+:title: Q: Is robustness generativity rather than redundancy?
+:type: question
+:status: open
+:date: 2026-08-04
+:tags: ostrom-extension, robustness, generativity
+
+Ostrom extension #3. The claim to test: the commons is robust not
+because it has many filters (redundancy) but because the *space of
+methods keeps producing new ones* faster than any adversary or
+authority can enclose them — requisite variety, observed forming.
+Every shock leaves the option space larger (new specs, hackathon
+outputs, WoT functions).
+
+Open questions: How do you measure the production rate of governance
+methods (NIP churn, client releases, relay software features)? What
+distinguishes generative robustness from mere churn? Is there a
+counter-case — a shock that shrank the option space? Where is the
+threshold at which unenumerability
+(link:claim-multiplicity-stack.adoc[claim-multiplicity-stack])
+becomes analytically tractable without becoming a closed catalogue?
+
+== Related
+
+- link:index.adoc[index]
+- link:concept-requisite-variety.adoc[concept-requisite-variety]
+- link:claim-expand-contract.adoc[claim-expand-contract]
+- link:concept-governance-as-software.adoc[concept-governance-as-software]
+- link:q-maturation-hypothesis.adoc[q-maturation-hypothesis]

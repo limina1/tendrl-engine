@@ -1,0 +1,103 @@
+:title: McGinnis 2010/2011 — A Simple Guide to the IAD Framework and Ostrom Workshop Language
+:type: src
+:status: drafted
+:date: 2026-08-04
+:author: assistant
+:agent: iad-core
+:tags: iad, glossary, polycentricity, adico, design-principles
+:cite: Michael D. McGinnis, 2010 (rev. Nov 1) / 2011, "An Introduction to IAD and the Language of the Ostrom Workshop: A Simple Guide to a Complex Framework...", Indiana Univ. Research Paper No. 2011-02-01, SSRN 1762685
+:file: sources/iad_guide.pdf
+:pages: printed pp. 1–28; PDF page = printed page + 1 (PDF p.1 is title page)
+
+== What it is
+
+A glossary-style map of the entire Bloomington School vocabulary: IAD
+core components, plus the adjacent frameworks the Ostrom chapter only
+gestures at — polycentricity, ADICO grammar of institutions, property
+rights bundles, local public economies, design principles, SES,
+behavioral rational choice, and Vincent Ostrom's political theory.
+
+== Core claims
+
+1. p. 4 — "design" is a misleading D in IAD (presumes unbiased advice);
+   development and diagnosis (finding "missing institutions") are apt.
+2. pp. 5–6 — "governance determines who can do what to whom, and on
+   whose authority"; can be "power with," not "power over."
+3. pp. 6–7 — polycentricity: overlapping jurisdictions whose authorities
+   "interact to determine the conditions" governing each other;
+   multi-level/-type/-sectoral/-functional.
+4. p. 7 — network-governance advocates err by "presuming that successful
+   adaptations will emerge automatically from complex systems dynamics."
+5. p. 7 — Ostrom 2010 recommends abandoning the arena/situation
+   distinction; the action situation is the "black box."
+6. p. 8 — action situations are nested and only "nearly decomposable";
+   stability vs resilience vs robustness distinguished; robustness is
+   the criterion for human-designed systems (p. 13).
+7. p. 9 — level-shifting strategy: move an ill-served question to an
+   adjacent arena; "also known as forum-shopping."
+8. p. 10 — default conditions = institution-free baseline: "any player
+   can retain any outcome that the player can physically obtain and
+   defend."
+9. pp. 11–12 — tragedy of the commons only in ungoverned open access;
+   "drama of the commons" is the accurate phrase; a good's type varies
+   by institutional setting.
+10. pp. 13–14 — ADICO: strategies AIC, norms AIC+D, rules full ADICO;
+    the Or Else names the actor "given the responsibility of imposing
+    sanctions"; norms rest on socialization instead.
+11. pp. 15–16 — property rights decompose (access, withdrawal,
+    management, exclusion, alienation) into position-defining bundles;
+    CPRs are not automatically common property.
+12. pp. 17–19 — local public economies: provision ≠ production; "many
+    units in a public economy monitor the activities of other units";
+    coordination without a single center; citizen choice/voice/exit.
+13. p. 19 — design principles "perhaps better described as good
+    practices": observed correlates of long-term sustainability.
+14. p. 22 — cooperation factors include known reputations, "capacity to
+    enter or exit from a group," communication, sanctioning capability.
+
+== Key concepts
+
+- link:concept-iad-framework.adoc[concept-iad-framework] (pp. 4, 7–8, Fig. 1 p. 27)
+- link:concept-action-arena.adoc[concept-action-arena] (pp. 9–10, incl. default conditions)
+- link:concept-rule-types.adoc[concept-rule-types] (pp. 9–10; "boundary rules" naming)
+- link:concept-rule-levels.adoc[concept-rule-levels] (pp. 8–9, incl. meta-constitutional, forum-shopping)
+- link:concept-adico-grammar.adoc[concept-adico-grammar] (pp. 13–15)
+- link:concept-design-principles.adoc[concept-design-principles] (pp. 19–20)
+- link:concept-polycentricity.adoc[concept-polycentricity] (pp. 6–7); link:concept-requisite-variety.adoc[concept-requisite-variety]
+  (institutional diversity, p. 5); link:concept-rules-in-use.adoc[concept-rules-in-use] (p. 12);
+  community attributes p. 12; evaluative criteria p. 13; SES pp. 20–21.
+
+== Hooks to the Nostr thesis
+
+- ADICO with no Or Else: a kind-1984 report is norm-shaped; enforcement
+  is crowdsourced — link:claim-split-sanctions.adoc[claim-split-sanctions], link:concept-adico-grammar.adoc[concept-adico-grammar].
+- Default conditions ≈ the open relay pool; gated relays are boundary
+  overlays that never delete the defaults — link:claim-composable-bounded-institutions.adoc[claim-composable-bounded-institutions].
+- Citizen exit + forum-shopping = relay-hopping — link:concept-exit-voice.adoc[concept-exit-voice],
+  link:concept-interjurisdictional-competition.adoc[concept-interjurisdictional-competition].
+- Distributed specialist monitoring (p. 18) = label providers, WoT
+  scorers, report bots — link:claim-multiplicity-stack.adoc[claim-multiplicity-stack].
+- Microsituational cooperation variables (p. 22) are measurable in the
+  wild on Nostr — link:claim-formation-observable.adoc[claim-formation-observable].
+
+== Tensions / open questions
+
+- Polycentricity requires inter-authority interaction; relay operators
+  mostly don't interact — protocol substitutes for negotiation
+  (link:concept-polycentricity.adoc[concept-polycentricity], link:concept-governance-as-software.adoc[concept-governance-as-software]).
+- Norms enforced only where widely shared (p. 14); Nostr enforcement
+  rides operators' private incentives instead — link:q-decoupled-vs-unitary-sanctions.adoc[q-decoupled-vs-unitary-sanctions].
+- Design principle 7 (recognition by higher authorities) has no referent
+  on Nostr; principle 1 and 5 are the ones Nostr disassembles.
+- Robustness of what unit — relay, relay set, or protocol? —
+  link:q-generativity-robustness.adoc[q-generativity-robustness], link:claim-expand-contract.adoc[claim-expand-contract].
+
+== Related
+
+- link:index.adoc[index]
+- link:src-ostrom-irc-iad.adoc[src-ostrom-irc-iad]
+- link:concept-boundary-rules.adoc[concept-boundary-rules]
+- link:concept-graduated-sanctions.adoc[concept-graduated-sanctions]
+- link:concept-cpr-vs-knowledge-commons.adoc[concept-cpr-vs-knowledge-commons]
+- link:q-goods-typology-fit.adoc[q-goods-typology-fit]
+- link:q-boundary-sybil.adoc[q-boundary-sybil]

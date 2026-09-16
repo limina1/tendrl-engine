@@ -1,0 +1,63 @@
+:title: Agent session — open-content (open content governance + modular politics)
+:type: agent
+:status: current
+:date: 2026-08-04
+:author: assistant
+:agent: open-content
+:tags: provenance, session
+
+== Task
+
+Write src- and concept- zettels for the two "open content /
+governance layer" sources per the orchestrator's assignment. This
+session did not re-read the PDFs: it recovered the detailed
+page-anchored notes of a prior reading agent from that session's
+transcript and drafted from them. index.adoc left untouched
+(orchestrator maintains it).
+
+== Sources covered
+
+- Schroeder & Wagner 2012, "Governance of Open Content Creation,"
+  JASIST 63(10):1947–1959, doi:10.1002/asi.22657.
+  sources/Governance of Open Content Creation.pdf
+- Schneider, De Filippi, Frey, Tan & Zhang 2021, "Modular Politics,"
+  Proc. ACM HCI 5, CSCW1, art. 16, doi:10.1145/3449090.
+  sources/Modular Politics.pdf
+
+== Files written
+
+- link:src-open-content-governance.adoc[src-open-content-governance]
+- link:src-modular-politics.adoc[src-modular-politics]
+- link:concept-governance-as-software.adoc[concept-governance-as-software]
+- link:concept-implicit-feudalism.adoc[concept-implicit-feudalism]
+- link:concept-guardianship-without-office.adoc[concept-guardianship-without-office]
+- agent-open-content (this note)
+
+== Flags for the human
+
+1. Observability loss from off-platform coordination: both sources
+   converge on it — Schroeder's off-platform channels "limit
+   involvement and reduce transparency" (1956); Modular Politics'
+   civic-sphere caveat (16:20). The GitHub/Telegram layer where NIP
+   debates and relay-op decisions happen is the civic sphere the
+   Nostr event stream misses. The formation-observable claim needs
+   this stated as a scope condition, not discovered as a rebuttal.
+2. Shared/idiosyncratic filter may not transfer: Schroeder discards
+   constructs not shared across editors (1952–1953). On Nostr an
+   idiosyncratic mechanism (one relay's odd policy) still binds its
+   subscribers; a Nostr replication should keep, not discard, the
+   idiosyncratic tail.
+3. Corrections carried into the notes: Modular Politics' first author
+   is Schneider (not Zhang/Frey as an earlier memo guessed), and
+   PolicyKit appears nowhere in that paper — cite PolicyKit
+   separately if needed.
+4. Provenance caveat: quotes were spot-carried from the prior
+   reader's notes, not re-verified against the PDFs in this session;
+   checking these two src- notes means following locators into the
+   PDFs (printed = PDF + 1946 for Schroeder; identical for Schneider).
+
+== Related
+
+- link:index.adoc[index]
+- link:conventions.adoc[conventions]
+- link:mission.adoc[mission]

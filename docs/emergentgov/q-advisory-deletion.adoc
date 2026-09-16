@@ -1,0 +1,36 @@
+:title: Q: Removal rights when deletion is advisory
+:type: question
+:status: open
+:date: 2026-08-04
+:author: assistant
+:agent: orchestrator
+:tags: deletion, property-rights, immutability
+
+Surfaced independently in three readings. Hess & Ostrom added
+*removal* to the property-rights bundle for knowledge commons
+(UKAC ch. 3, pp. 52–53) and treated author withdrawal as a defect
+("fugitive" artifacts, 2003 p. 144). Nostr inverts the failure mode:
+broadcast-to-N-relays makes artifacts effectively irrevocable
+(kind-5 deletion is advisory), which *solves* the fugitive-archive
+problem and *creates* a right-to-be-forgotten strain. Meanwhile
+Ostrom's own definitional test — "it is always possible to rescind it
+or reinstate it—or it is not a rule"
+(link:src-digging-deeper.adoc[src-digging-deeper], p. 86) — meets a
+substrate where the *history* of rule changes is itself immutable:
+policy is rescindable, the record of it is not.
+
+Open: does the rights schema need an "effectively enforceable by
+whom" column (link:concept-property-rights-bundles.adoc[concept-property-rights-bundles])?
+Is advisory deletion a governance signal like kind-1984 (honored
+per-relay, decoupled enforcement —
+link:claim-split-sanctions.adoc[claim-split-sanctions])? What does
+a medical knowledge commons do about retraction, where correction
+without erasure is a safety requirement
+(link:claim-composable-bounded-institutions.adoc[claim-composable-bounded-institutions])?
+
+== Related
+
+- link:index.adoc[index]
+- link:concept-property-rights-bundles.adoc[concept-property-rights-bundles]
+- link:concept-ideas-artifacts-facilities.adoc[concept-ideas-artifacts-facilities]
+- link:q-preservation-without-archives.adoc[q-preservation-without-archives]

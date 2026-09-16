@@ -1,0 +1,63 @@
+:title: Ideas _ artifacts _ facilities — the three-way resource decomposition
+:type: concept
+:status: drafted
+:date: 2026-08-04
+:author: assistant
+:agent: hess-ostrom
+:tags: resource-characteristics, relays, events, withdrawal
+
+== The idea
+
+For natural-resource CPRs the working distinction is resource system
+vs. resource units (fishery vs. fish). Hess & Ostrom argue that for
+knowledge this "two-way distinction is not as useful as a three-way
+distinction": *facilities* store artifacts and make them available (a
+resource system with membership rules, conduct rules, guards,
+maintenance costs); *artifacts* are "discreet, observable, nameable
+representation[s] of an idea" — the physical flow units of a
+facility, sequential-use when physical, concurrent-use when digital;
+*ideas* are the nonphysical flow units contained in artifacts, pure
+public goods, nonrivalrous. Sources: Hess & Ostrom 2003, pp. 128–134
+(Figure 2, p. 129) — link:src-ideas-artifacts-facilities.adoc[src-ideas-artifacts-facilities]; imported as
+the IAD's biophysical layer in UKAC ch. 3, pp. 46–48 (Figure 3.2) —
+link:src-analyzing-knowledge-commons.adoc[src-analyzing-knowledge-commons].
+
+The 2003 article adds a dynamic corollary: when artifacts are
+licensed rather than sold, they centralize and become "fugitive" —
+"the publishers have the right of withdrawal" (2003, 134); Lynch's
+Alexandria warning (137) and self-archiving's submit/unsubmit problem
+(144) are both withdrawal-rights pathologies. The era's remedy was
+LOCKSS: deliberate decentralized copying (137).
+
+== The Nostr mapping
+
+Facilities ↔ relays (the 129–130 facility definition is a relay spec:
+storage, availability, legitimate-user rules, conduct rules, guards).
+Artifacts ↔ signed events — with cryptographic nameability (event
+ids, signatures, typed kinds) exceeding anything the schema imagined;
+OAI's "record" (2003, 141) is the nearest ancestor. Ideas ↔ the
+discourse layer: threads, memes, the medical knowledge carried by
+bounded communities on the substrate.
+
+Nostr inverts the withdrawal asymmetry: broadcast to N facilities
+means no actor holds withdrawal rights over the pool —
+LOCKSS-by-default, and the mechanism behind
+link:claim-no-global-bannability.adoc[claim-no-global-bannability]. Deletion (kind-5) is advisory, so the
+"fugitive artifact" problem disappears and its mirror image appears:
+effectively irrevocable artifacts and a right-to-be-forgotten strain.
+The removal right the 2007 chapter added for knowledge commons
+becomes per-facility and unenforceable at the pool level — see
+link:concept-property-rights-bundles.adoc[concept-property-rights-bundles].
+
+== Related
+
+- link:index.adoc[index]
+- link:src-ideas-artifacts-facilities.adoc[src-ideas-artifacts-facilities]
+- link:src-analyzing-knowledge-commons.adoc[src-analyzing-knowledge-commons]
+- link:concept-cpr-vs-knowledge-commons.adoc[concept-cpr-vs-knowledge-commons]
+- link:concept-property-rights-bundles.adoc[concept-property-rights-bundles]
+- link:concept-iad-framework.adoc[concept-iad-framework]
+- link:claim-no-global-bannability.adoc[claim-no-global-bannability]
+- link:claim-multiplicity-stack.adoc[claim-multiplicity-stack]
+- link:claim-relay-spectrum.adoc[claim-relay-spectrum]
+- link:q-goods-typology-fit.adoc[q-goods-typology-fit]

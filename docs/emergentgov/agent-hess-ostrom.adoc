@@ -1,0 +1,71 @@
+:title: Agent session — hess-ostrom (Hess/Ostrom knowledge-commons trio)
+:type: agent
+:status: current
+:date: 2026-08-04
+:author: assistant
+:agent: hess-ostrom
+:tags: provenance, mapping-session
+
+== Task
+
+Phase-2 mapping agent. Read the three foundational Hess/Ostrom
+knowledge-commons texts in full, extract page-anchored claims, verify
+the two hinge quotes verbatim with printed and PDF page numbers, and
+write the assigned src-/concept- notes.
+
+== Sources read (full text)
+
+- Hess & Ostrom 2003, "Ideas, Artifacts, and Facilities," Law &
+  Contemp. Probs. 66:111–145. PDF offset: printed − 109.
+- Ostrom & Hess 2007, UKAC ch. 3 "A Framework for Analyzing the
+  Knowledge Commons," pp. 41–81. PDF offset: printed − 40.
+  Hinge quotes verified: p. 60/PDF 20 ("look what is happening!");
+  p. 68/PDF 28 ("After more efforts succeed and others fail");
+  "Being Prepared for Change" subsection p. 68/PDF 28.
+- Hess & Ostrom 2007, UKAC ch. 1 "Introduction," pp. 3–26. PDF
+  offset: printed − 2. Survivorship hedge verified at p. 7.
+
+== Files written
+
+- link:src-ideas-artifacts-facilities.adoc[src-ideas-artifacts-facilities]
+- link:src-analyzing-knowledge-commons.adoc[src-analyzing-knowledge-commons] (carries the hinge quotes)
+- link:src-ukac-introduction.adoc[src-ukac-introduction]
+- link:concept-ideas-artifacts-facilities.adoc[concept-ideas-artifacts-facilities]
+- link:concept-cpr-vs-knowledge-commons.adoc[concept-cpr-vs-knowledge-commons]
+- link:concept-property-rights-bundles.adoc[concept-property-rights-bundles]
+- link:concept-survivorship-bias.adoc[concept-survivorship-bias]
+- this note. index.adoc untouched per instruction.
+
+== Flags for the human
+
+1. Exit is absent from the framework's governance vocabulary — all
+   levers are voice-shaped (rule modification, participation).
+   Exit-based relay discipline needs Hirschman/Tiebout imported via
+   link:concept-exit-voice.adoc[concept-exit-voice] / link:concept-interjurisdictional-competition.adoc[concept-interjurisdictional-competition].
+2. "Clearly defined boundaries" (Intro p. 7) should be re-specified
+   as boundary-setting *capacity* under expand–contract dynamics;
+   Nostr boundaries are plural, per-facility, and fluid.
+3. UKAC ch. 3 note 2 (p. 68): left-side IAD variables are only
+   "temporarily" exogenous, feedback loops matter in fast systems.
+   On Nostr that footnote is the main case — rules reshape the
+   facility set within weeks. Worth making explicit when adapting
+   link:concept-iad-framework.adoc[concept-iad-framework].
+4. Rules definitionally require "minimal sanctioning ability" (ch. 3
+   p. 50); kind-1984's decoupled sanctions strain the ADICO "or
+   else" — feed link:q-decoupled-vs-unitary-sanctions.adoc[q-decoupled-vs-unitary-sanctions].
+5. Removal/deletion: the 2007 removal right is advisory on Nostr;
+   the fugitive-artifact problem (2003 p. 144) inverts into a
+   right-to-be-forgotten strain. No assigned q- note covers this;
+   consider coining one.
+6. Survivorship caveat recorded in link:concept-survivorship-bias.adoc[concept-survivorship-bias]:
+   observing formation ≠ representativeness; archive Nostr's own
+   failures deliberately or the bias recurs one level up.
+
+== Related
+
+- link:index.adoc[index]
+- link:conventions.adoc[conventions]
+- link:mission.adoc[mission]
+- link:src-analyzing-knowledge-commons.adoc[src-analyzing-knowledge-commons]
+- link:concept-survivorship-bias.adoc[concept-survivorship-bias]
+- link:claim-formation-observable.adoc[claim-formation-observable]

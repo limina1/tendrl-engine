@@ -1,0 +1,41 @@
+:title: Expand–contract — the boundary is a muscle
+:type: claim
+:status: drafted
+:drafted-by: assistant
+:tags: boundary, adaptation, shock, temporal
+
+How it holds over time. The boundary is not a setting fixed once; it
+is a muscle that contracts under threat and relaxes under safety:
+
+Open → shock (spam / malicious influx) → contract (retreat to
+whitelist / WoT floor) → adapt "in the between" (the stack retunes,
+devs ship) → re-expand.
+
+Neither pole is the answer: the open pool is exposed; the hard
+whitelist is safe but defeats the *purpose* of joining a commons.
+Governance is the retuning between them — and the option space
+*grows* with each shock (every new spec, hackathon output, WoT
+function is one more method the space did not have before). The
+always-working floor is what licenses the experimentation above it.
+
+This is Ostrom's own "Being Prepared for Change" (UKAC ch. 3, p. 68:
+fixed rules over-trust current knowledge; adaptive systems suboptimal
+short-run, wiser long-run) *instantiated and observable* — not an
+ecological metaphor imported onto her framework. Locator and verbatim
+text in
+link:src-analyzing-knowledge-commons.adoc[src-analyzing-knowledge-commons].
+
+Standing discipline #3: keep the *observable oscillation* distinct
+from the longer-horizon *maturation conjecture*
+(link:q-maturation-hypothesis.adoc[q-maturation-hypothesis]) — say
+which is which first.
+
+== Related
+
+- link:index.adoc[index]
+- link:concept-adaptive-governance.adoc[concept-adaptive-governance]
+- link:concept-boundary-rules.adoc[concept-boundary-rules]
+- link:concept-requisite-variety.adoc[concept-requisite-variety]
+- link:claim-relay-spectrum.adoc[claim-relay-spectrum]
+- link:q-maturation-hypothesis.adoc[q-maturation-hypothesis]
+- link:q-generativity-robustness.adoc[q-generativity-robustness]

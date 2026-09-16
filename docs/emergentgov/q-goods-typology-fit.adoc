@@ -1,0 +1,32 @@
+:title: Q: Where does Nostr sit in the goods typology?
+:type: question
+:status: open
+:date: 2026-08-04
+:author: assistant
+:agent: orchestrator
+:tags: goods, subtractability, typology
+
+A tension that surfaced independently across several source readings:
+the CPR machinery turns on subtractability, and Nostr's layers pull in
+different directions. Events/ideas are nonsubtractive (public-good
+side; anti-rival, even — value grows with use); relay storage,
+bandwidth, and attention are subtractive (CPR side); spam is capture/
+congestion pressure converting the public-good layer into a managed
+CPR. The commons dilemma is less appropriation than *pollution and
+exclusion-coordination* — the outcome types Hess & Ostrom list but
+never center.
+
+Candidate resolution: use the ideas/artifacts/facilities decomposition
+(link:concept-ideas-artifacts-facilities.adoc[concept-ideas-artifacts-facilities])
+and assign a goods type per layer, per institutional setting (a good's
+type can differ across settings —
+link:src-iad-guide.adoc[src-iad-guide] §8). Needed for the paper:
+one paragraph that fixes the resource definition before the action
+arena is specified.
+
+== Related
+
+- link:index.adoc[index]
+- link:concept-cpr-vs-knowledge-commons.adoc[concept-cpr-vs-knowledge-commons]
+- link:concept-ideas-artifacts-facilities.adoc[concept-ideas-artifacts-facilities]
+- link:q-boundary-sybil.adoc[q-boundary-sybil]

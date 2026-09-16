@@ -1,0 +1,112 @@
+:title: Frischmann, Madison & Sanfilippo (eds.) 2023 — Governing Smart Cities as Knowledge Commons [file misidentified as the 2014 GKC volume]
+:type: src
+:status: drafted
+:date: 2026-08-04
+:author: assistant
+:agent: alston-gkc
+:tags: gkc, framework, smart-cities, action-arena, file-identity
+:cite: Brett M. Frischmann, Michael J. Madison & Madelyn Rose Sanfilippo (eds.), 2023, Governing Smart Cities as Knowledge Commons, Cambridge UP. Ch. 1: Madison, Sanfilippo & Frischmann, "Smart Cities and Knowledge Commons", pp. 6–28
+:doi: 10.1017/9781108938532
+:file: sources/tier-3-GoverningKnowledgeCommons.pdf
+:pages: 333 PDF pages; PDF page ` printed page + 13; ch. 1 ` printed 6–28 ` PDF 19–41; Table 1.1 printed 19–20 ` PDF 32–33
+
+== What it is
+
+FILE-IDENTITY CORRECTION: despite the filename and the project email,
+this PDF is NOT Frischmann/Madison/Strandburg, Governing Knowledge
+Commons (OUP 2014). It is the 2023 Cambridge smart-cities volume in the
+same series. Its ch. 1 is the mature statement of the GKC research
+framework (Figure 1.1 reproduces Madison/Frischmann/Strandburg 2010;
+Table 1.1 adapts Sanfilippo/Frischmann/Strandburg 2018), so it serves
+as the framework source. ACQUISITION TARGETS for citation: the 2014 OUP
+volume (its framework ch. 1) and MFS 2010, "Constructing Commons in the
+Cultural Environment," Cornell L. Rev. 95:657. Only ch. 1 + front
+matter read; other chapters unread.
+
+== TOC (printed page / PDF page)
+
+Introduction — Sanfilippo, Madison, Frischmann (1/14). 1. Smart Cities
+and Knowledge Commons — Madison, Sanfilippo, Frischmann (6/19).
+Part I: 2. Spatial Data Privacy — Sun & Whittington (29/42);
+3. Open Governments, Open Data — Raymond & Kouper (58/71).
+Part II: 4. Community Land Trusts — Chyi & Wu (83/96); 5. Philadelphia —
+Frischmann & Tonkovich (112/125); 6. Postindustrial Pittsburgh — Madison
+(157/170). Part III: 7. Walt Disney World — Sanfilippo &
+Shvartzshnaider (223/236); 8. Sidewalk Toronto — Artyushina (248/261);
+9. Thurii to Quayside — Whitt (267/280). Part IV: 10. Beyond Design
+Principles — Sanfilippo & Frischmann (295/308); Conclusion (309/322).
+
+== Core claims (ch. 1 only; printed pages)
+
+1. p. 7 — thesis: smart-city knowledge/data "require governance,
+   especially governance of data-focused intelligence and
+   intelligence-enabled control."
+2. p. 13 — "intelligence lies in and through the data, rather than in
+   and through the people"; data representing people demand governance.
+3. p. 15 — knowledge commons = institutions for community governance of
+   shared knowledge resources; commons is a governance mode, not a good
+   type; "institutionalized sharing" is the distinguishing mark.
+4. pp. 15–16 — vs Ostrom's CPR premise: relevant social dilemmas are "a
+   question for research in a specific context, rather than a premise to
+   be assumed"; commons governance can itself create new obstacles.
+5. p. 17 (Fig. 1.1) — action arenas as core unit; feedback loop: outputs
+   are community-defined resources that re-enter as inputs, justifying
+   community-level (not user-level) analysis.
+6. p. 17 — arena calibration: too broad = no fixed exogenous elements;
+   too narrow = no meaningful patterns.
+7. p. 18 — evaluation against internally defined goals; no external
+   normative yardstick; legitimacy and appropriateness of information
+   flows as candidate criteria.
+8. pp. 20–21 — key themes: recursive community constitution; dilemmas
+   identified first; non-knowledge resources matter; assessment turns on
+   participation pragmatics incl. "possibilities for exit."
+9. Table 1.1 (pp. 19–20) — four question-clusters: background
+   environment _ attributes _ governance / patterns & outcomes.
+
+== Key concepts
+
+- link:concept-gkc-framework.adoc[concept-gkc-framework] (pp. 14–21, Fig. 1.1, Table 1.1)
+- link:concept-iad-framework.adoc[concept-iad-framework], link:concept-action-arena.adoc[concept-action-arena] (p. 17)
+- link:concept-cpr-vs-knowledge-commons.adoc[concept-cpr-vs-knowledge-commons] (pp. 15–16); link:concept-polycentricity.adoc[concept-polycentricity] (pp. 20–21)
+
+== Hooks to the Nostr thesis
+
+- Table 1.1 as ready-made coding instrument for Nostr events —
+  link:claim-formation-observable.adoc[claim-formation-observable], link:concept-rules-in-use.adoc[concept-rules-in-use].
+- Recursive theme literalized: governance events ARE the
+  community-constituting data — link:claim-multiplicity-stack.adoc[claim-multiplicity-stack].
+- Nested/polycentric commons = bounded institutions on the open
+  substrate — link:claim-composable-bounded-institutions.adoc[claim-composable-bounded-institutions], link:claim-relay-spectrum.adoc[claim-relay-spectrum].
+- Ch. 10's "Beyond Design Principles" parallels the thesis's move past
+  reverse-engineered principles — link:concept-design-principles.adoc[concept-design-principles],
+  link:concept-survivorship-bias.adoc[concept-survivorship-bias].
+
+== Chapters shortlisted for later extraction
+
+1. Ch. 10 (printed 295–308 / PDF 308–321) — editors' own move past
+   Ostrom's design principles; highest relevance.
+2. Ch. 8 Sidewalk Toronto (248–266 / 261–279) — corporate provider vs
+   commons; failure case mirroring the corporate pole of the relay
+   spectrum.
+3. Ch. 3 open data (58–82 / 71–95) — digital-commons framing of
+   default-open resources.
+4. Ch. 9 Whitt (267–294 / 280–307) — digital fiduciaries/data trusts as
+   intermediary institutions; optional.
+
+== Tensions / open questions
+
+- Framework deliberately withholds normative criteria (p. 18); the
+  thesis's evaluative claims need their own yardstick.
+- Community-level unit of analysis strains on Nostr's overlapping
+  publics — link:q-boundary-sybil.adoc[q-boundary-sybil], link:q-goods-typology-fit.adoc[q-goods-typology-fit].
+- Smart-city chapters assume a municipal governor at the center; Nostr
+  has none — link:claim-no-global-bannability.adoc[claim-no-global-bannability].
+
+== Related
+
+- link:index.adoc[index]
+- link:src-fuster-morell-occ.adoc[src-fuster-morell-occ] (a chapter of the actual 2014 volume)
+- link:src-digital-constitutionalism.adoc[src-digital-constitutionalism]
+- link:agent-alston-gkc.adoc[agent-alston-gkc]
+- link:concept-exit-voice.adoc[concept-exit-voice]
+- link:concept-ideas-artifacts-facilities.adoc[concept-ideas-artifacts-facilities]

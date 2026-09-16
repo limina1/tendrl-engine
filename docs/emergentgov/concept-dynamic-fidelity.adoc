@@ -1,0 +1,66 @@
+:title: Dynamic fidelity — distributed update authority + auditability as credible commitment
+:type: concept
+:status: drafted
+:date: 2026-08-04
+:author: assistant
+:agent: alston-gkc
+:tags: credible-commitment, entrenchment, auditability, constitutionalism
+
+== The idea
+
+Alston's coinage: when authority to change a protocol is mechanically
+distributed among independent actor classes (validators, developers,
+users, complementors), protocol-level commitments become credibly
+entrenched — emergent checks and balances analogous to constitutional
+separation of powers (pp. 1, 12–14). The mechanism is North & Weingast's
+Glorious Revolution logic: credibility rests on architectural
+separation, not good intentions; centralized-platform users remain
+"pre-Glorious Revolution lenders" (p. 13). Auditability reinforces it:
+publicly legible rules plus an auditable application history let
+participants detect deviations, while entrenchment prevents deviations
+being imposed — jointly collapsing Ostrom's monitoring costs
+(pp. 17–18). Contrast class: procedural constraint (platform policies,
+appeals) inside centralized discretion, suited to context-specific rule
+application; architectural constraint suits credible commitment
+(pp. 5–6). For expressive/associative protocols, only a narrow core
+needs entrenchment — "permissionless access, pseudonymous
+participation, and non-discretionary execution" — with flexibility
+elsewhere (p. 20). Costs: entrenchment protects unjust rules equally,
+and de facto power can relocate to adjacent microstructure layers even
+when core rules stay distributed (pp. 15–17).
+
+== The Nostr case
+
+Nostr fits the expressive-protocol specification almost exactly: the
+entrenched core is the identity/portability layer (keys, signatures,
+event formats — hence no global bannability), while the relay-policy
+layer is maximally flexible and discretionary (procedural constraint,
+relay by relay). But Nostr lacks Alston's entrenchment engine — no
+consensus mechanism, no staked validators. What entrenches the core is
+implementation plurality: many independent clients and relays plus the
+NIP process, i.e. his complementor-veto logic without validators.
+Whether that is durable is open (link:q-generativity-robustness.adoc[q-generativity-robustness]); and his
+microstructure caveat transfers as concentration in big relays, default
+clients, and discovery services.
+
+== Sources
+
+- link:src-digital-constitutionalism.adoc[src-digital-constitutionalism] (pp. 1, 5–6, 12–18, 20)
+- North & Weingast 1989; Hart 1961 secondary rules; Tsebelis veto
+  players — via Alston's citations, not read directly.
+
+== Related
+
+- link:index.adoc[index]
+- link:concept-gkc-framework.adoc[concept-gkc-framework]
+- link:concept-polycentricity.adoc[concept-polycentricity]
+- link:concept-rule-levels.adoc[concept-rule-levels]
+- link:concept-exit-voice.adoc[concept-exit-voice]
+- link:concept-governance-as-software.adoc[concept-governance-as-software]
+- link:concept-adaptive-governance.adoc[concept-adaptive-governance]
+- link:claim-no-global-bannability.adoc[claim-no-global-bannability]
+- link:claim-formation-observable.adoc[claim-formation-observable]
+- link:claim-split-sanctions.adoc[claim-split-sanctions]
+- link:claim-worst-case-hosts-best-case.adoc[claim-worst-case-hosts-best-case]
+- link:q-maturation-hypothesis.adoc[q-maturation-hypothesis]
+- link:q-does-competition-improve-governance.adoc[q-does-competition-improve-governance]

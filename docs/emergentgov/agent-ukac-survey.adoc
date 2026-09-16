@@ -1,0 +1,62 @@
+:title: Agent session — ukac-survey (unassigned UKAC chapters)
+:type: agent
+:status: current
+:date: 2026-08-04
+:author: assistant
+:agent: ukac-survey
+:tags: provenance, ukac
+
+== Task
+
+Survey the eleven unassigned UKAC chapter PDFs in `sources/` (chapters
+1 and 3 belong to other agents), deep-read the 2-4 most
+thesis-relevant, and map them into this kasten.
+
+== Sources read
+
+- Skimmed (first 2 pages each): Bollier ch2, Kranich ch4, Boyle ch5,
+  Suber ch7, Ghosh ch8, Lougee ch11, glossary.
+- Read fully: Schweik ch10 (FOSS), Levine ch9 (collective action),
+  Cox & Swarthout ch12 (EconPort), Waters ch6 (preservation).
+
+== Notes created
+
+- link:src-foss-science-ukac.adoc[src-foss-science-ukac]
+- link:src-collective-action-ukac.adoc[src-collective-action-ukac]
+- link:src-econport-ukac.adoc[src-econport-ukac]
+- link:src-preserving-ukac.adoc[src-preserving-ukac]
+- link:src-ukac-overview.adoc[src-ukac-overview] (chapter map with skip rationale)
+- this note
+
+Coined slugs (dangling, deliberate): `concept-associational-commons`
+(Levine's libertarian/associational distinction — arguably the single
+most load-bearing import for the thesis), `concept-club-goods`
+(Waters/Buchanan — exclusion reintroduced to fund preservation),
+`q-preservation-without-archives` (does uncoordinated multi-relay
+redundancy actually preserve, or decay like link rot?).
+
+== Flags for the human
+
+1. `index.adoc` did not exist when this session ran (parallel agents);
+   the new notes link to it as a dangling TODO. Someone must create
+   the index and add entries for the six notes above.
+2. Levine p. 254 ("no successful historical example of a commons that
+   arose under conditions of total individual freedom") is the
+   strongest _counter-claim_ to the thesis found in this book — worth
+   confronting head-on in the paper rather than around.
+3. Waters' vanishing-act/O'Donnell material (pp. 154-155) is a gift
+   for motivating signed-immutable events; also raises the correction-
+   without-erasure governance problem the paper should not dodge.
+4. Page offsets: all four chapter PDFs start at the chapter's first
+   printed page (offsets +276, +246, +332, +144 respectively; noted in
+   each src- header).
+5. Boyle ch5 was skipped, but his "boundaries ought to be very wide"
+   design principle (p. 125) could deserve a one-line citation when
+   arguing the open-substrate side of the relay spectrum.
+
+== Related
+
+- link:index.adoc[index]
+- link:conventions.adoc[conventions]
+- link:mission.adoc[mission]
+- link:src-ukac-overview.adoc[src-ukac-overview]

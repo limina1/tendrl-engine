@@ -1,0 +1,549 @@
+:title: Index — emergent governance on Nostr
+:type: meta
+:status: current
+:date: 2026-08-04
+
+The single map of this kasten. It organizes; the notes connect. Rules:
+link:conventions.adoc[conventions]. Purpose and standing
+distinctions: link:mission.adoc[mission]. How the corpus is tiered:
+link:map-email.adoc[map-email].
+
+Everything below the meta layer is `:status: drafted` (machine-written,
+unverified). Your traversal promotes notes: drafted → checked →
+working → fluent. `grep ':status: drafted'` is the review queue; the
+mapping is absorbed when it is empty.
+
+== The narrative
+
+This is the working narrative of the program — the essay most will
+read and the thing to refine. Everything after it is the
+organizational map it draws on; every load-bearing move links to the
+zettel that backs it.
+
+=== The question
+
+Nostr is, plausibly, the most adversarial social landscape that
+exists. A user is nothing but a public key that signs events. There
+is no global authority; any relay can admit anyone; an actor filtered
+off one relay reappears on the next. In institutional terms the open
+network runs close to what the IAD tradition calls *default
+conditions* — the institution-free baseline in which anyone may act
+and anyone may keep whatever they can obtain and defend
+(link:concept-action-arena.adoc[action arena]). The first design
+principle, the clearly defined boundary that stood behind every
+commons in _Governing the Commons_, structurally
+link:claim-no-global-bannability.adoc[cannot exist here]: bad
+actors are filtered *locally*, never banned *globally*
+(link:concept-design-principles.adoc[design principles]).
+
+The usual reading stops there: no boundary, no membership, no
+enforcement — an unmanaged free-for-all. But that reading repeats the
+first of Hardin's errors as Hess and Ostrom catalogued them —
+conflating open access with a managed commons
+(link:src-ukac-introduction.adoc[UKAC introduction]). The
+empirical fact is that the commons holds. It coheres, it sustains
+discourse, and the people who have seen the worst of it stay. One
+question therefore organizes everything that follows: *how is there
+quality discourse at all?*
+
+=== The founders' limit, and the inversion
+
+The founders of knowledge-commons research named their own limit. In
+2007, surveying the new literature, Hess and Ostrom observed that
+writers point at outcomes they like or dislike but rarely analyze in
+depth: "Thus far we (all of us!) have mainly been at the 'look what
+is happening!' stage." Their conclusion made the dependency explicit:
+only "after more efforts succeed and others fail" would the field
+understand what makes knowledge commons work
+(link:src-analyzing-knowledge-commons.adoc[the hinge quotes],
+verbatim with locators). Read together, the two passages are
+survivorship logic stated in advance. The eight design principles
+were read off commons that had *already endured*; they are, in the
+editors' own words, "in no way prescriptive," findings from small,
+homogeneous systems whose application to large complex commons was
+left as an open question
+(link:concept-survivorship-bias.adoc[survivorship bias]).
+Formation — the stage where rules are being made rather than already
+working — was never observable.
+
+Beneath that limit sits the deepest methodological obstacle Ostrom
+ever named: institutions are *invisible*. They are shared concepts in
+participants' heads; the rules-in-use that actually govern conduct
+may exist in no written document and may even contradict the
+rules-in-form on paper, so the analyst must dig them out with
+fieldwork, site by site
+(link:concept-institutional-invisibility.adoc[institutional invisibility],
+link:concept-rules-in-use.adoc[rules-in-use]).
+
+Nostr inverts both problems at once. Governance action arrives as
+typed, signed, timestamped events: a report is a kind-1984 event, a
+mute list is an event, a follow graph is an event, a relay's policy
+is a published document, a protocol change is a versioned NIP. The
+distinction between rules-in-form and rules-in-use — which the field
+could only elicit retrospectively, through interviews about "how X is
+done here" — becomes *measurable*: a relay's stated policy against
+its observed accept/reject behavior. Even the moment Hess and Ostrom
+describe where a working group adopts a new rule "without ever
+self-consciously recognizing" it — the quiet drift from operational
+action into collective choice
+(link:concept-rule-levels.adoc[rule levels]) — is here, more often
+than anywhere else, a published artifact. For the first time a
+commons can be
+link:claim-formation-observable.adoc[watched governing itself into existence].
+The working title converts the founders' exclamation into the method:
+looking at what is happening becomes analysis when what is happening
+arrives as institutional statements on the wire.
+
+=== The object: a framework for formation
+
+Ostrom was careful to distinguish frameworks, theories, and models: a
+framework supplies the universal elements and the metatheoretical
+language; theories and models make assumptions within it
+(link:concept-iad-framework.adoc[IAD framework]). What this work
+proposes is a framework — but its object is *emergent governance
+itself*, not another resource domain
+(link:syn-emergent-governance-framework.adoc[the synthesis note]).
+The distinction from the knowledge commons should be drawn precisely,
+because it is the paper's claim to a contribution rather than an
+application. IAD analyzes an action arena structured by exogenous
+variables — rules-in-use, attributes of the community, the
+biophysical and technical world — and holds those variables fixed at
+the time of analysis; the fixing is a footnote, an acknowledged
+convenience. The GKC school loosened it for constructed commons,
+adding the feedback loop by which a community's outputs become its
+own inputs (link:concept-gkc-framework.adoc[GKC framework]). This
+framework takes the remaining step: it makes the feedback loop the
+object. Formation is what happens when action situations generate
+their own future rules — when participants drift or deliberately
+shift from operational play into collective choice and occasionally
+into constitutional revision
+(link:concept-rule-levels.adoc[rule levels]). Ostrom's theory
+treats that level-shift as the elementary act of self-governance;
+here it becomes the elementary *observable*. On Nostr the exogeneity
+footnote is untenable in the most productive way: rules reshape the
+facility set within weeks, so the "held constant" clause fails, and
+what fails it is exactly the phenomenon under study.
+
+The unit of analysis is therefore the *formation episode*, sitting
+earlier in time than the institution — the analog of the action
+arena, one level before rules settle. An episode has an anatomy. It
+opens with a *shock*: an exogenous disturbance the current rule
+configuration cannot absorb — a spam wave, a coordinated malicious
+influx. A *response portfolio* follows: uncoordinated actors across
+the stack deploy existing exclusion methods and mint new ones,
+a-priori guesses and a-posteriori attestations alike
+(link:claim-multiplicity-stack.adoc[multiplicity]). *Adaptation*
+registers at every level of rules at once — operational (mutes,
+filters, policy toggles), collective-choice (relay policy revisions,
+client defaults), sometimes constitutional (a NIP). And the episode
+closes in *settlement* — the cycle converges, the boundary
+re-expands — or in *failure*: a relay dies, a community disperses, a
+method is abandoned. Both endings are data. The failures are
+precisely what the survivorship-filtered record never contained, and
+they must be archived deliberately, or the bias the framework escapes
+at the field level quietly recurs at the archive level
+(link:concept-survivorship-bias.adoc[survivorship bias]). The
+link:claim-expand-contract.adoc[expand–contract] cycle is the
+prototype episode; in IAD terms, an episode is a linked chain of
+action situations whose principal outputs are rules.
+
+The architectural section — the breakdown of emergent governance
+itself, as distinct from any one substrate — asks what must be true
+of a system for formation episodes to be observable at all. Four
+conditions. First, actions must be *typed, public, signed, and
+timestamped*: institutional statements with a wire format, codable
+into the grammar of institutions rather than reconstructed from
+recollection. Second, identity must be *portable and separable from
+venue*, so that exit is legible rather than silent, and boundary
+events are attributable — the observer can tell who left, who was
+filtered, and who merely moved. Third, policy and enforcement must be
+*separately visible*, so that rules-in-form and rules-in-use can be
+compared directly — a stated relay policy against its observed
+accept/reject behavior — instead of elicited after the fact
+(link:concept-rules-in-use.adoc[rules-in-use]). Fourth, the record
+must *persist*: on Nostr effectively irrevocably, so the history of
+rule changes — including the reversed and abandoned ones — is part of
+the archive rather than of survivors' memories
+(link:q-advisory-deletion.adoc[advisory deletion] is the cost of
+this same property). Graded against these conditions, git
+repositories, wikis, and DAOs are partial observatories; Nostr is,
+so far, the maximal one. That grading is what makes the framework
+portable rather than a platform study — it tells other researchers
+where else it applies and at what resolution — and it bounds the
+claim honestly: whatever coordination happens off-substrate, in the
+repositories and group chats, stays off-trace (the civic-sphere
+caveat of link:src-modular-politics.adoc[Modular Politics]), which
+is why the trace locates and the interviews carry.
+
+The evaluative layer then replaces criteria that presuppose an
+existing institution. The 2007 criteria — sustainability, efficiency,
+equity, preservation — all ask how a standing commons is doing; a
+forming one cannot yet be scored on them. Formation-stage criteria
+ask instead: is *boundary-setting capacity* developing — after each
+shock, can actors still reconstitute a boundary, at falling cost
+(link:q-boundary-sybil.adoc[boundary / Sybil])? Are *sanction
+signals acquiring legitimacy* — do non-binding reports move behavior,
+do filters adopt them, do exits follow them
+(link:q-decoupled-vs-unitary-sanctions.adoc[decoupled vs unitary])?
+Is the *shock cycle converging* — contraction depth shrinking,
+recovery accelerating — or thrashing
+(link:q-maturation-hypothesis.adoc[maturation])? And is the
+*option space still growing* — generativity as the working definition
+of robustness
+(link:q-generativity-robustness.adoc[generativity])? Each
+criterion pairs with an open question in the map below; together they
+are the framework's answer to "evaluated against what?" for an
+institution that does not yet exist.
+
+The reusable instrument that carries all of this is a coding table
+from event kinds to institutional statements: kind 1984 as a norm
+whose or-else is crowdsourced, a mute list as an operational boundary
+act, a relay policy document as a collective-choice output, a NIP as
+constitutional text (link:concept-adico-grammar.adoc[ADICO grammar]).
+The table is what lets someone apply the framework to their own
+substrate instead of reading a Nostr case study — the difference
+between a framework paper and a field report.
+
+The commons school's own trajectory legitimates the whole move. Its
+mature statement defines commons as a *mode of governance* —
+institutionalized sharing of resources among members of a community —
+rather than a type of good, insists that the relevant social dilemmas
+are an empirical question rather than an assumed tragedy, and has
+begun, literally, to write "beyond design principles"
+(link:concept-gkc-framework.adoc[GKC framework],
+link:src-governing-knowledge-commons.adoc[Governing Knowledge Commons]).
+The knowledge commons is not discarded in any of this; it is
+*placed*. It becomes the resource type of the demonstration case —
+the setting in which formation is watched — rather than the object of
+the theory, which is what keeps the paper out of the commons-advocacy
+corner its critics call romantic
+(link:src-exchange-theory-web3.adoc[the exchange theory's jab])
+and makes its contribution an instrument rather than an endorsement.
+
+=== A spectrum instead of a wall
+
+In the vocabulary Hess and Ostrom built for information commons, a
+relay is a *facility*: it stores artifacts and makes them available,
+with membership rules, conduct rules, and real maintenance costs. The
+signed events it stores are the *artifacts* — discrete, observable,
+nameable representations, here with cryptographic identity — and the
+discourse they carry is the *idea* layer, nonrivalrous and enriched
+rather than depleted by use
+(link:concept-ideas-artifacts-facilities.adoc[ideas _ artifacts _ facilities]).
+Every relay operator holds what the property-rights literature calls
+a proprietor's bundle: management and exclusion over the facility —
+but no alienation over anyone's identity, because keys and follow
+graphs leave with the user
+(link:concept-property-rights-bundles.adoc[property-rights bundles]).
+
+Boundary rules therefore do not disappear on Nostr; they multiply,
+localize, and become elastic
+(link:concept-boundary-rules.adoc[boundary rules]). Relays sit on
+link:claim-relay-spectrum.adoc[a spectrum with three poles, not two].
+At one end, the hard allowlist floor: a bounded institution,
+membership set once — the set-once-boundary world the CPR literature
+knows. At the other, the open pool, where exclusion must be solved
+some other way. The structural novelty is the middle: curated relays
+that still speak the base event kinds, so a user joins a real
+community *without leaving the commons*. In Levine's terms, these are
+associational commons composing on a libertarian one
+(link:src-collective-action-ukac.adoc[Levine]) — and the
+composition is the point, not the sorting. Fuster Morell showed that
+in online creation communities, infrastructure provision is the
+governance dimension that silently determines the others, and that
+communities are empowered against providers exactly insofar as the
+platform is forkable. Nostr disaggregates that dimension itself:
+provision is plural and substitutable, so her cross-case typology of
+provision models reappears as live market structure inside one system
+(link:concept-infrastructure-provision.adoc[infrastructure provision]).
+
+=== Multiplicity, and why the list is never finished
+
+Exclusion is not solved once. The same function is solved at every
+layer at once, by independent actors who never coordinate: internet
+infrastructure, relay policy, named specs, client-side web-of-trust
+the user chooses — open at both ends, with developers guessing
+threats in advance and users adding quality after the fact
+(link:claim-multiplicity-stack.adoc[multiplicity across the stack]).
+The catalogue is deliberately left unfinished: new methods ship
+faster than they could be enumerated, and *the unenumerability is the
+finding*. This discipline has an exact Ostrom ancestry: she counted
+27+ boundary rules in use across common-pool resources and concluded
+that "no analyst can perform a complete analysis" of their
+combinations (link:src-digging-deeper.adoc[Digging Deeper],
+pp. 90–91). Ashby's law of requisite variety supplies the theory: a
+governance system must command at least as much variety as the
+disturbances it regulates, and the Ostroms read the very diversity of
+rules-in-use across their cases as that variety at work
+(link:concept-requisite-variety.adoc[requisite variety]). The
+proliferation of filtering methods is therefore functional, not
+fragmentation.
+
+This order is polycentric — many formally independent centers of
+decision — but strained in an instructive way: classical
+polycentricity expects the centers to interact, negotiate, and check
+one another, while Nostr's centers mostly never meet. The protocol
+itself substitutes for negotiated coordination: redundancy without
+meetings (link:concept-polycentricity.adoc[polycentricity]). And
+authority inside it takes the form Schroeder and Wagner found
+dominant on Wikipedia — guardianship without office, influence
+legitimized by observable behavior and reputation rather than
+position (link:concept-guardianship-without-office.adoc[guardianship without office])
+— except that here the observable behavior is signed, so the power
+gradient itself is data.
+
+=== Sanctions come apart
+
+Ostrom's fifth design principle — graduated sanctions — assumed a
+*unitary* arrangement: the institution that monitors is
+institutionally linked to the one that sanctions and enforces
+(link:concept-graduated-sanctions.adoc[graduated sanctions]).
+Nostr splits the bundle. A kind-1984 report is a costly, typed,
+public, *non-binding* signal; a different actor — a relay filtering
+on it, a client scoring it into a web of trust, a user ignoring it —
+decides what it means
+(link:claim-split-sanctions.adoc[split sanctions]). In the grammar
+of institutions, a rule is a statement whose "or else" names the
+agent responsible for sanctioning; a norm is the same statement
+without one. The report is grammatically a norm that nonetheless gets
+enforced — because the *or-else is crowdsourced* across many
+potential enforcers with their own private incentives
+(link:concept-adico-grammar.adoc[ADICO grammar]).
+
+This reframes two standing results. The lab finding that externally
+imposed sanctions crowd out self-organized ones has no purchase here:
+there is no external sanctioner to do the crowding. And the
+compliance requirement — that monitors and sanctioners must be seen
+as legitimate "or rule evasion will overwhelm the governance system" —
+becomes testable per relay, with exit as the legitimacy meter. One
+anomaly is already in hand: reports from high-centrality accounts
+appear to move relay filters while peripheral reports do not.
+Whether decoupled sanctioning governs better or worse than unitary
+enforcement — and under what conditions a non-binding signal gets
+enforced at all — is the most self-contained publishable question in
+the program
+(link:q-decoupled-vs-unitary-sanctions.adoc[decoupled vs unitary]).
+
+=== How it holds over time
+
+The boundary is not a setting fixed once; it is a muscle. Open →
+shock (a spam or malicious influx) → contract (retreat toward the
+whitelist or web-of-trust floor) → adapt in the between (the stack
+retunes, developers ship) → re-expand
+(link:claim-expand-contract.adoc[expand–contract]). Neither pole
+is the answer — the open pool is exposed, the hard whitelist defeats
+the purpose of joining a commons — so governance *is* the retuning
+between them, and the always-available floor is what licenses the
+experimentation above it: a credible commitment that failure never
+costs the commons itself. Each pass through the cycle leaves the
+option space larger — a new spec, a hackathon output, another
+web-of-trust function the space did not have before.
+
+This is not an ecological metaphor imported onto Ostrom's framework;
+it is her own adaptive-management principle instantiated. "Being
+Prepared for Change" argues that fixed rules fail because they place
+too much confidence in the current state of knowledge, and that
+systems allowing change are "suboptimal in the short run but wiser in
+the long run" (verbatim, with locator, in
+link:src-analyzing-knowledge-commons.adoc[the framework chapter]).
+In cybernetic terms — the terms the Ostroms themselves worked in —
+the cycle is a feedback loop with the meta-level correction Ashby
+showed self-organization requires, except that on Nostr the
+correcting level is lateral and plural rather than singular
+(link:concept-adaptive-governance.adoc[adaptive governance]). One
+discipline governs this whole section: the observable oscillation is
+one thing; the *maturation conjecture* — that contractions grow
+shallower and recoveries faster until the loop disappears the way
+HTTPS disappeared into infrastructure — is a longer-horizon
+hypothesis the design is built to test, and it is always flagged as
+such (link:q-maturation-hypothesis.adoc[maturation hypothesis]).
+
+=== How we know
+
+Method follows the phenomenon. The event trace can *locate* an
+adaptation in time and sometimes catch its speed — a bonus, never the
+load-bearing evidence — because much of the redundancy (relay
+software, infrastructure choices, client web-of-trust internals,
+interop specs) never appears in public events at all. The interviews
+carry the claim
+(link:claim-interviews-carry-claim.adoc[interviews carry the claim]).
+What is being established is a community *disposition*: people orient
+to an open problem with no global solution and keep adapting anyway.
+The signal question — why are people who have seen the worst of Nostr
+still here, rather than retreating permanently to a safe single-relay
+community? — has its answer in the staying itself. Refusing the
+global solution is the finding, not a gap. Two rules keep this
+honest: "everyone adapts" never stands alone without a named instance
+(a spec after a specific wave, an operator who tightened then
+loosened), and the trace's limits are stated, not hidden — the
+elicitation methods of the open-content literature are replicable
+here *minus* their retrospective memory bias, since the mechanisms
+leave typed traces
+(link:src-open-content-governance.adoc[Schroeder & Wagner]).
+
+=== The closer: the worst case hosts the best case
+
+If governance works *here* — the most adversarial configuration, no
+enforceable boundary, no global solution — then it composes with any
+centralized graduated-sanction regime built on top of it
+(link:claim-worst-case-hosts-best-case.adoc[the worst case hosts the best case]).
+A medical knowledge commons, a town relay, a curated scientific
+archive: each is a bounded institution, a centralized sanction
+regime — and because each still speaks the base event kinds, it
+composes onto the open substrate without leaving it, one more filter
+in the stack
+(link:claim-composable-bounded-institutions.adoc[composable bounded institutions]).
+The medical commons is the standing instance: write-gated on its own
+relay, its canonical surface curated by an institution that does
+quality control and maintenance as centralized functions — while the
+same signed events remain freely readable and commentable everywhere
+else. No one is excluded from the conversation, only from a venue.
+
+This is also the honest answer to the sharpest counter-claim in the
+source base — Levine's observation that no successful commons ever
+arose from total individual freedom
+(link:src-collective-action-ukac.adoc[Levine]). Correct: and none
+needs to. The governance lives in the bounded institutions; the open
+substrate is what carries them, keeps exit near-free, and keeps their
+claims contestable outside their gates. Operators are disciplined by
+leaving rather than voting — interjurisdictional competition in which
+the set of jurisdictions regenerates, because leaving can mean
+*starting* a relay
+(link:concept-exit-voice.adoc[exit / voice],
+link:concept-interjurisdictional-competition.adoc[interjurisdictional competition]).
+What the substrate credibly commits to — in Alston's terms, the
+architectural entrenchment of permissionless access, pseudonymous
+identity, and portability — is precisely the set of affordances that
+keeps the bounded regimes honest
+(link:concept-dynamic-fidelity.adoc[dynamic fidelity]). Whether
+this competition yields *better* governance is deliberately left
+open: a puzzle, not a checkmark
+(link:q-does-competition-improve-governance.adoc[does competition improve governance?]).
+
+=== The conversation it enters
+
+The institutional literature on protocol governance is already a live
+argument among three framings — blockchain as knowledge commons,
+governance as entrepreneurial exchange, protocols as constitutional
+polycentric orders — conducted, on the empirical side, over the same
+two retrospective war stories, the block-size fork and the DAO hack
+(link:concept-tier2-triangle.adoc[the tier-2 triangle]). The HCI
+literature, meanwhile, asked for exactly this: Modular Politics
+specified an open-standard governance layer — modular, expressive,
+portable, interoperable — and Nostr grew one instead of designing it,
+with no platform root left at the top
+(link:src-modular-politics.adoc[Modular Politics]). The
+contribution of this work to both conversations is the same: the
+instrument they are missing — continuous, typed, real-time data on
+governance *forming*, failures included — and the framework for
+reading it.
+
+== The thesis — claims (presentation/ orientation)
+
+One question and its sub-answers; the order is the argument.
+
+- link:claim-no-global-bannability.adoc[No global bannability] — the adversarial premise; the question: how is there quality discourse at all?
+- link:claim-formation-observable.adoc[Formation is observable] — the hinge: survivorship-filtered principles vs watching a commons govern itself into existence
+- link:claim-relay-spectrum.adoc[The relay spectrum] — three poles; composition, not sorting
+- link:claim-multiplicity-stack.adoc[Multiplicity across the stack] — exclusion solved at every layer; unenumerability is the finding
+- link:claim-split-sanctions.adoc[Split sanctions] — signal decoupled from enforcement; the cleanest novelty
+- link:claim-expand-contract.adoc[Expand–contract] — the boundary as muscle; "Being Prepared for Change" instantiated
+- link:claim-interviews-carry-claim.adoc[Interviews carry the claim] — the methodological inversion; that they stay is the signal
+- link:claim-worst-case-hosts-best-case.adoc[The worst case hosts the best case] — the closer for institutional economics
+- link:claim-composable-bounded-institutions.adoc[Composable bounded institutions] — the medical-commons mechanism: venue-excludable, conversation-inexcludable
+
+== Open questions
+
+The three Ostrom extensions (a co-author's to choose among), plus
+questions the mapping surfaced.
+
+- link:q-boundary-sybil.adoc[Boundary / Sybil] — reconstituting boundaries that cannot be enforced
+- link:q-decoupled-vs-unitary-sanctions.adoc[Decoupled vs unitary sanctions] — better or worse?
+- link:q-generativity-robustness.adoc[Robustness through generativity] — variety production, observed forming
+- link:q-maturation-hypothesis.adoc[Maturation hypothesis] — flagged long-horizon conjecture, kept distinct from the observable oscillation
+- link:q-does-competition-improve-governance.adoc[Does competition improve governance?] — the deliberately open checkmark
+- link:q-goods-typology-fit.adoc[Goods-typology fit] — nonsubtractive events on subtractive facilities
+- link:q-advisory-deletion.adoc[Advisory deletion] — removal rights on an irrevocable substrate
+- `q-preservation-without-archives` — coined by the UKAC survey, unwritten (dangling TODO)
+
+== Concepts — extracted across sources
+
+=== IAD and the grammar of rules
+- link:concept-iad-framework.adoc[IAD framework] — framework/theory/model; exogenous variables
+- link:concept-action-arena.adoc[Action arena] — situation + actors; seven components; default conditions
+- link:concept-rules-in-use.adoc[Rules-in-use] — vs rules-in-form
+- link:concept-rule-levels.adoc[Rule levels] — operational _ collective-choice _ constitutional; level-shifting
+- link:concept-rule-types.adoc[Rule types] — the seven; boundary/entry-exit naming
+- link:concept-adico-grammar.adoc[ADICO grammar] — norms lack "Or Else"; Nostr crowdsources the O
+- link:concept-boundary-rules.adoc[Boundary rules] — entry/exit; the relay-spectrum mapping
+- link:concept-graduated-sanctions.adoc[Graduated sanctions] — principle 5, the unitary nexus Nostr splits
+- link:concept-design-principles.adoc[Design principles] — the eight, as "good practices"
+- link:concept-institutional-invisibility.adoc[Institutional invisibility] — the obstacle Nostr inverts (rules-in-use with a wire format)
+
+=== Knowledge commons
+- link:concept-ideas-artifacts-facilities.adoc[Ideas _ artifacts _ facilities] — ideas ↔ discourse, artifacts ↔ events, facilities ↔ relays
+- link:concept-cpr-vs-knowledge-commons.adoc[CPR vs knowledge commons] — subtractability inversion; pollution over appropriation
+- link:concept-property-rights-bundles.adoc[Property-rights bundles] — five → seven rights; contribution and removal
+- link:concept-gkc-framework.adoc[GKC framework] — modified IAD; Table 1.1 as coding instrument
+- link:concept-survivorship-bias.adoc[Survivorship bias] — the founders' own hedge; behind the hinge
+- `concept-associational-commons`, `concept-club-goods` — coined by the UKAC survey, unwritten (dangling TODOs)
+
+=== Dynamics and cybernetics
+- link:concept-requisite-variety.adoc[Requisite variety] — Ashby's law; rule diversity as variety
+- link:concept-polycentricity.adoc[Polycentricity] — with the Nostr strain (uncoordinated redundancy) and citation discipline
+- link:concept-adaptive-governance.adoc[Adaptive governance] — feedback, Ashby's alpha, level-shifting; lateral-plural alpha
+
+=== Competition, exit, constitution
+- link:concept-exit-voice.adoc[Exit _ voice _ forking] — the Nostr limiting case: near-zero exit cost
+- link:concept-interjurisdictional-competition.adoc[Interjurisdictional competition] — markets for governance; the informedness conditional
+- link:concept-dynamic-fidelity.adoc[Dynamic fidelity] — Alston: architectural vs procedural constraint; credible commitment
+- link:concept-tier2-triangle.adoc[Tier-2 triangle] — commons _ exchange _ constitutional framings, and the synthesis position
+
+=== Governance as software
+- link:concept-governance-as-software.adoc[Governance as software] — mechanisms that ship; self-similar regulation
+- link:concept-implicit-feudalism.adoc[Implicit feudalism] — abolished at the root, fractal per-relay
+- link:concept-guardianship-without-office.adoc[Guardianship without office] — authority from observable behavior, not position
+
+== Sources
+
+=== Tier 1 — background / theory (Jayme's email)
+- link:src-ostrom-irc-iad.adoc[Ostrom 2007, Institutional Rational Choice / IAD]
+- link:src-iad-guide.adoc[McGinnis, IAD guide]
+- link:src-ostroms-cybernetics.adoc[Lewis & Aligica 2024, Ostroms & cybernetics]
+- link:src-ideas-artifacts-facilities.adoc[Hess & Ostrom 2003, Information as CPR]
+- link:src-digging-deeper.adoc[Ostrom 2005/2025, Digging Deeper] — the email's `++` item
+
+=== Tier 2 — format models (Jayme's email)
+- link:src-polycentric-blockchain-orders.adoc[Alston et al. 2022, polycentric orders]
+- link:src-exchange-theory-web3.adoc[Allen et al. 2023, exchange theory of web3]
+- link:src-blockchain-knowledge-commons.adoc[Murtazashvili et al. 2022, blockchain as knowledge commons] — closest structural model
+
+=== Tier 3 — related arguments (Jayme's email)
+- link:src-digital-constitutionalism.adoc[Alston, digital constitutionalism]
+- link:src-governing-knowledge-commons.adoc[Governing (Smart Cities as) Knowledge Commons] — file-identity correction inside
+- link:src-fuster-morell-occ.adoc[Fuster Morell, online creation communities]
+- link:src-open-content-governance.adoc[Schroeder & Wagner 2012, open content governance]
+- link:src-modular-politics.adoc[Schneider et al. 2021, Modular Politics]
+
+=== UKAC (Hess & Ostrom, eds., 2007)
+- link:src-ukac-overview.adoc[Chapter map] — what was mapped, what was skipped and why
+- link:src-ukac-introduction.adoc[ch. 1 Introduction] — survivorship hedge, Hardin's four errors
+- link:src-analyzing-knowledge-commons.adoc[ch. 3 Analyzing] — *the hinge quotes*, verbatim with locators
+- link:src-collective-action-ukac.adoc[ch. 9 Levine] — libertarian vs associational commons; the sharpest counter-claim
+- link:src-foss-science-ukac.adoc[ch. 10 Schweik] — FOSS governance trajectories
+- link:src-econport-ukac.adoc[ch. 12 EconPort] — boundary width as institutional dial
+- link:src-preserving-ukac.adoc[ch. 6 Waters] — LOCKSS; preservation without archives
+
+== The speculation layer — yours to own
+
+Seeded only where you have spoken; the rest are dangling links
+(conventions: filling them is the studying).
+
+- link:syn-emergent-governance-framework.adoc[Emergent-governance framework] — the object shift and title move, captured 2026-08-04; drafted from your words, yours to refine
+- `syn-what-to-measure` — what to specify before scaling collection
+- `syn-interview-protocol` — the "why do they stay" instrument
+- `syn-medical-commons-design` — the bounded institution, once the substrate is proven
+
+== Agent provenance
+
+- link:agent-iad-core.adoc[iad-core] · link:agent-cybernetics.adoc[cybernetics] · link:agent-hess-ostrom.adoc[hess-ostrom] · link:agent-blockchain-tier2.adoc[blockchain-tier2] · link:agent-alston-gkc.adoc[alston-gkc] · link:agent-open-content.adoc[open-content] · link:agent-ukac-survey.adoc[ukac-survey]

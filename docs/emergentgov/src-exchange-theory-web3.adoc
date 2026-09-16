@@ -1,0 +1,115 @@
+:title: Allen, Berg, Lane, MacDonald & Potts 2023 — The exchange theory of web3 governance
+:type: src
+:status: drafted
+:date: 2026-08-04
+:author: assistant
+:agent: blockchain-tier2
+:tags: public-choice, exchange-paradigm, romantic-view, composability, tier2
+:cite: Darcy W. E. Allen, Chris Berg, Aaron M. Lane, Trent MacDonald & Jason Potts, 2023, "The exchange theory of web3 governance," Kyklos 76(4): 659–675
+:doi: 10.1111/kykl.12345
+:file: sources/tier2 - Kyklos - 2023 - Allen - The exchange theory of web3 governance.pdf
+:pages: journal 659–675
+
+== What it is
+
+Buchanan's "politics without romance" transposed to web3: the
+"romantic view" (community voting, town halls, public-spirited
+consensus) obscures governance as "an entrepreneurial process of
+bargaining and exchange" under uncertainty (659–661). Three cases —
+Curve Wars vote markets, Lido, Metagovernance Project — plus a
+robustness / anti-Nirvana-fallacy payoff section.
+
+== Core claims
+
+1. No general theory of web3 governance; the field is "mostly an
+   experimental science" (660).
+2. Public-interest deliberation "only serves to obscure the
+   underlying structure of complex exchanges at play" (662).
+3. CAUTION: Ostrom/IAD/GKC-style DAO analysis is filed in the
+   romantic camp — such analyses "draw heavily on Ostrom's (1990)
+   'governing the commons' model" (661), citing the Bodon et al.
+   companion of Source 3's authors.
+4. Forking is a standing constitutional mechanism: the "calculus of
+   consent motivating exit," amplified by composability (663).
+5. Governance exists because of "contractual incompleteness (in
+   social and smart contracts)"; governance innovation is itself
+   value creation via entrepreneurial discovery (663–664). Vote
+   trading/quadratic/bond voting can be Pareto-improving
+   intensity revelation (664).
+6. Pseudonymity and composability are the two infrastructure
+   features driving governance adaptation (665).
+7. Curve Wars: layered vote markets "injected more local knowledge
+   into the collective governance process" (665–667).
+8. Lido became a dominant Ethereum-governance stakeholder "even
+   though the formal institutions of the underlying protocol have
+   not changed" (667–668). Metagov: orgs that "lower the transaction
+   costs of political bargaining and exchange" (668–669).
+9. Layering "pushes in the direction of further polycentricity and
+   robustness"; reading governance innovation as attack vectors is
+   "the 'Nirvana fallacy' (Demsetz, 1967) applied to blockchain
+   governance" (669).
+10. Anti-design conclusion: limits to ex ante design; beware
+    "designed simplistic governance systems over more complex
+    emergent governance systems" (670).
+
+== As a format model
+
+Paradigm-contrast template: (1) name and genealogize the incumbent
+frame ("romantic"); (2) install the rival (exchange); (3) definitions
+separating object levels (governance of/by); (4) mechanism section on
+what only the new frame predicts; (5) three short cases, each
+captioned visible-only-through-the-new-lens; (6) normative robustness
+payoff; (7) implications + research program. Imitable: pose designed
+platform moderation / design-principle retrodiction as incumbent,
+observed emergent exchange of moderation signals on Nostr as rival,
+then three mini-cases (report cascade, relay policy change, bounded
+medical commons).
+
+== Hooks to the Nostr thesis
+
+- TRANSFERS: emergent permissionless discovery as the object of
+  study; "build them and empirically observe what happens" (660) —
+  methods quote for link:claim-formation-observable.adoc[claim-formation-observable].
+- TRANSFERS: Lido logic — power composed on an unchanged substrate
+  (667) — template for link:claim-composable-bounded-institutions.adoc[claim-composable-bounded-institutions].
+- TRANSFERS: Metagov → shared moderation infrastructure (label
+  services, blocklists, relay-software defaults) (668–669).
+- BREAKS: the exchange runs through priced, transferable governance
+  tokens (664–667); Nostr has none — coordination is reputational/
+  attention-based. Nostr tests whether the exchange view needs prices
+  or only entrepreneurial layering.
+- TRANSFERS: intensity revelation without prices — cheap non-binding
+  kind-1984 reports aggregated by independent enforcers —
+  link:claim-split-sanctions.adoc[claim-split-sanctions].
+- TRANSFERS: anti-Nirvana-fallacy move (669) against "Nostr
+  moderation is broken vs platform enforcement" —
+  link:claim-worst-case-hosts-best-case.adoc[claim-worst-case-hosts-best-case].
+- INVERTS: positioning. Our project is GKC-derived, i.e. their
+  "romantic" camp (661) — answer with the descriptive-instrument
+  move: commons frameworks MEASURE observed emergent order, they
+  don't prescribe designed consensus; the paper reconciles the
+  paradigms — link:concept-tier2-triangle.adoc[concept-tier2-triangle].
+
+== Tensions / open questions
+
+- Cases are web-source narratives, not systematic data — our
+  event-data advantage.
+- Tautology risk: any outcome redescribable as discovered value; no
+  falsification criterion.
+- Plutocracy answered only by asserted layering-robustness (669) —
+  link:q-does-competition-improve-governance.adoc[q-does-competition-improve-governance].
+- Celebrates the Lido concentration Source 1 treats as risk; admits
+  poor DAO voter engagement (665) yet stays optimistic.
+
+== Related
+
+- link:index.adoc[index]
+- link:concept-tier2-triangle.adoc[concept-tier2-triangle]
+- link:src-polycentric-blockchain-orders.adoc[src-polycentric-blockchain-orders]
+- link:src-blockchain-knowledge-commons.adoc[src-blockchain-knowledge-commons]
+- link:concept-exit-voice.adoc[concept-exit-voice]
+- link:concept-gkc-framework.adoc[concept-gkc-framework]
+- link:concept-governance-as-software.adoc[concept-governance-as-software]
+- link:concept-adaptive-governance.adoc[concept-adaptive-governance]
+- link:q-boundary-sybil.adoc[q-boundary-sybil] (their pseudonymity/Sybil caveat, 665)
+- link:agent-blockchain-tier2.adoc[agent-blockchain-tier2]

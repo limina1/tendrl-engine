@@ -1,0 +1,69 @@
+:title: The tier-2 triangle — commons, exchange, and constitutional-competition framings
+:type: concept
+:status: drafted
+:date: 2026-08-04
+:author: assistant
+:agent: blockchain-tier2
+:tags: positioning, paradigms, synthesis, tier2
+
+== The idea
+
+The three tier-2 papers frame the same object three ways: blockchain
+governance as knowledge commons (Murtazashvili/Murtazashvili/Weiss/
+Madison — GKC question-battery, institutionalized sharing), as
+public-choice exchange (Allen/Berg/Lane/MacDonald/Potts — bargaining
+under uncertainty, governance innovation as value creation), and as
+constitutional-plus-competitive polycentric order (Alston/Law/
+Murtazashvili/Weiss — internal constitutional politics disciplined by
+external market competition). This is a live IN-FAMILY debate, not
+three silos: Ilia Murtazashvili co-authors the commons and the
+constitutional papers; Allen et al. explicitly file the
+Ostrom/IAD/GKC line — citing the Bodon et al. companion of Source 3's
+authors — in the "romantic" camp (661), while all three share
+polycentricity vocabulary and load-bearing cites (Berg & Berg 2020;
+Alston 2020; De Filippi & Loveluck 2016; Ostrom; Aligica & Tarko).
+Writing into this triangle means entering an ongoing conversation,
+not choosing a school.
+
+== The Nostr synthesis
+
+The Nostr paper can take one leg from each: GKC as descriptive spine
+(Source 3's framework-walk skeleton), competition-and-exit as the
+disciplining mechanism (Source 1's internal/external scaffold), and
+permissionless entrepreneurial layering as the dynamic (Source 2's
+Lido/Metagov logic) — answering the "romantic" jab with the
+descriptive-instrument move: commons frameworks measure observed
+emergent order, they don't prescribe designed consensus
+(link:src-exchange-theory-web3.adoc[src-exchange-theory-web3]). Two devices fall out. First, a
+mechanism-mapping table: for each mechanism in the three papers
+(fork, token vote, miner consensus, exit threat, nested commons…),
+mark whether it TRANSFERS, INVERTS, or VANISHES on Nostr — every
+vanishing entry is price/stake coordination replaced by
+reputation/attention/replication. Second, the evidence contrast: all
+three papers lean on the field's same two war stories (block-size/BCH
+and DAO/ETC — retrospective, rare, chain-level), whereas Nostr yields
+continuous, typed, signed governance events
+(link:claim-formation-observable.adoc[claim-formation-observable]). The triangle's shared blind spot —
+no systematic event data, promised empirics unexecuted — is exactly
+the opening.
+
+== Sources
+
+- link:src-blockchain-knowledge-commons.adoc[src-blockchain-knowledge-commons] (commons leg; 108–119).
+- link:src-exchange-theory-web3.adoc[src-exchange-theory-web3] (exchange leg; romantic jab at 661).
+- link:src-polycentric-blockchain-orders.adoc[src-polycentric-blockchain-orders] (constitutional-competition
+  leg; 707–723).
+
+== Related
+
+- link:index.adoc[index]
+- link:concept-exit-voice.adoc[concept-exit-voice]
+- link:concept-interjurisdictional-competition.adoc[concept-interjurisdictional-competition]
+- link:concept-gkc-framework.adoc[concept-gkc-framework]
+- link:concept-polycentricity.adoc[concept-polycentricity]
+- link:concept-governance-as-software.adoc[concept-governance-as-software]
+- link:concept-dynamic-fidelity.adoc[concept-dynamic-fidelity]
+- link:claim-split-sanctions.adoc[claim-split-sanctions]
+- link:claim-composable-bounded-institutions.adoc[claim-composable-bounded-institutions]
+- link:q-goods-typology-fit.adoc[q-goods-typology-fit]
+- link:agent-blockchain-tier2.adoc[agent-blockchain-tier2]

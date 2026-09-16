@@ -1,0 +1,59 @@
+:title: Survivorship bias in commons theory — formation was never observable
+:type: concept
+:status: drafted
+:date: 2026-08-04
+:author: assistant
+:agent: hess-ostrom
+:tags: epistemology, design-principles, formation, hinge
+
+== The idea
+
+The design principles were harvested from the survivors. The founders
+say so themselves: the eight principles "were discovered after
+conducting a large set of empirical studies" comparing already-robust
+with already-failed systems; "they are in no way prescriptive—nor are
+they models"; they come from "small, homogeneous systems," and
+whether they apply to knowledge commons "is a question for further
+research" (UKAC Intro p. 7 — link:src-ukac-introduction.adoc[src-ukac-introduction]). The method is
+retrospective by construction: you identify what robust institutions
+have in common only after robustness and failure have sorted the
+sample. Formation — the rule-by-rule assembly of an institution — was
+never in the data.
+
+For knowledge commons the founders concede the limit twice more, in
+the hinge quotes (UKAC ch. 3, p. 60 "look what is happening!" stage;
+p. 68 "After more efforts succeed and others fail, we will be able to
+better understand what makes various knowledge commons work" — full
+verbatim text and PDF locators in
+link:src-analyzing-knowledge-commons.adoc[src-analyzing-knowledge-commons]). Analysis in 2007 was spectatorship
+plus a promissory note: wait for a mortality record, then induce.
+
+== Why Nostr breaks the limit
+
+This concept is the theoretical backbone of
+link:claim-formation-observable.adoc[claim-formation-observable]. On Nostr the formation process emits its
+own archive: every report (kind-1984), mute list, follow, relay
+policy change, and NIP is a signed, timestamped, typed event. The
+success/failure record Ostrom said we must wait for accrues in public
+and in real time, including the failures — dead relays, abandoned
+NIPs, collapsed communities — which retrospective sampling
+systematically loses. The maturation question is whether principles
+induced from formation-stage data converge on the retrospective
+eight or amend them — link:q-maturation-hypothesis.adoc[q-maturation-hypothesis],
+link:concept-design-principles.adoc[concept-design-principles]. Caveat to carry: observability of
+formation does not guarantee representativeness — Nostr is one
+substrate, and its own survivors will be overdocumented relative to
+its failures unless failure events are archived deliberately.
+
+== Related
+
+- link:index.adoc[index]
+- link:src-ukac-introduction.adoc[src-ukac-introduction]
+- link:src-analyzing-knowledge-commons.adoc[src-analyzing-knowledge-commons]
+- link:concept-design-principles.adoc[concept-design-principles]
+- link:concept-adaptive-governance.adoc[concept-adaptive-governance]
+- link:concept-institutional-invisibility.adoc[concept-institutional-invisibility]
+- link:concept-gkc-framework.adoc[concept-gkc-framework]
+- link:claim-formation-observable.adoc[claim-formation-observable]
+- link:claim-interviews-carry-claim.adoc[claim-interviews-carry-claim]
+- link:q-maturation-hypothesis.adoc[q-maturation-hypothesis]

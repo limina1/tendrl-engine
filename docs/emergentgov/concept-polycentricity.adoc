@@ -1,0 +1,58 @@
+:title: Polycentricity
+:type: concept
+:status: drafted
+:date: 2026-08-04
+:author: assistant
+:agent: cybernetics
+:tags: polycentricity, self-correction, overlapping-jurisdictions
+
+== The idea
+
+Many formally independent decision centres with overlapping
+jurisdictions, taking each other into account, under an overarching
+system of rules. Its payoff is built-in self-correction: polycentric
+systems are "more likely than monocentric systems to provide
+incentives leading to self-organized, self-corrective institutional
+change" (Ostrom 1998, in Lewis & Aligica 2024, p. 3). Competition
+among overlapping providers generates error-correcting negative
+feedback as an unintended consequence (p. 4); Lewis & Aligica recast
+the whole architecture cybernetically as "countervailing controls
+based on multi-level feedback systems" whose capacity for
+self-governance is an emergent property (pp. 10–11). Overlap also
+carries information: what worked in one unit transmits to others, and
+larger systems back up failing small ones (fn. 14, p. 11).
+
+Citation discipline: cite Lewis & Aligica 2024 (pp. 3–4, 10–11),
+McGinnis's guide (pp. 6–7), or Vincent Ostrom directly. Do NOT cite
+Digging Deeper — that chapter never treats polycentricity by name;
+its nearest passage is one paragraph on producer competition (Ostrom
+2005/2025, p. 96).
+
+== The Nostr strain
+
+Nostr is polycentric in structure — thousands of relay operators,
+client authors, list curators, no centre — but classical
+polycentricity assumes the centres *interact*: negotiation,
+contracting, mutual adjustment among authorities. Relay operators
+mostly never coordinate; the protocol itself is the coordination
+medium, replacing negotiated interaction with typed-event
+interoperability (link:concept-governance-as-software.adoc[concept-governance-as-software]). And the
+redundancy is uncoordinated: many actors independently solve the same
+exclusion problem in parallel layers, which is polycentric
+self-correction without the inter-centre bargaining the theory
+presumes (link:claim-multiplicity-stack.adoc[claim-multiplicity-stack]). Whether protocol-mediated
+mutual adjustment still yields the self-corrective dividend is an
+open question — link:q-does-competition-improve-governance.adoc[q-does-competition-improve-governance].
+
+== Related
+
+- link:index.adoc[index]
+- link:src-ostroms-cybernetics.adoc[src-ostroms-cybernetics]
+- link:src-iad-guide.adoc[src-iad-guide]
+- link:concept-adaptive-governance.adoc[concept-adaptive-governance]
+- link:concept-requisite-variety.adoc[concept-requisite-variety]
+- link:concept-interjurisdictional-competition.adoc[concept-interjurisdictional-competition]
+- link:concept-exit-voice.adoc[concept-exit-voice]
+- link:claim-relay-spectrum.adoc[claim-relay-spectrum]
+- link:claim-no-global-bannability.adoc[claim-no-global-bannability]
+- link:claim-composable-bounded-institutions.adoc[claim-composable-bounded-institutions]

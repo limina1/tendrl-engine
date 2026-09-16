@@ -1,0 +1,56 @@
+:title: Rules-in-use vs rules-in-form — the invisibility problem
+:type: concept
+:status: drafted
+:date: 2026-08-04
+:author: assistant
+:agent: iad-core
+:tags: rules-in-use, working-rules, invisibility, method
+
+== The idea
+
+Institutions are shared concepts living "in the minds of the
+participants" — invisible (Ostrom 2007, p. 23). So institutional
+analysis targets _rules-in-use_, not _rules-in-form_: "the dos and
+don'ts that one learns on the ground that may not exist in any written
+document," which may even contradict the written rules (p. 23).
+Working rules are "the set of rules to which participants would make
+reference if asked to explain and justify their actions" (p. 36).
+McGinnis's shorthand: formal rules ("rules-on-paper") vs the repertoire
+of strategies, norms, and rules actually used (p. 12).
+
+The methodological cost is high: rules-in-use aren't in documents,
+aren't survey-able, often aren't conceptualized as rules by
+participants; eliciting them means fieldwork — asking "how X is done
+here and why Y is not done here" (p. 23) via "nonthreatening,
+context-specific questions" over time at a site (p. 39; IFRI protocols,
+n. 5 pp. 53–54).
+
+== The Nostr engagement
+
+This is the load-bearing methodological hook for the whole project. On
+Nostr a large share of rules-in-use are enacted as signed, timestamped,
+typed events — mutes, reports, follows, relay policy docs, allowlist
+changes — so the rules-in-use/rules-in-form gap becomes directly
+measurable (compare a relay's posted policy with its observed
+accept/reject behavior). Ostrom's ethnographic elicitation problem is
+replaced by a log-reading problem: link:claim-formation-observable.adoc[claim-formation-observable],
+link:claim-interviews-carry-claim.adoc[claim-interviews-carry-claim], link:concept-institutional-invisibility.adoc[concept-institutional-invisibility].
+Residual invisibility remains (operator intentions, out-of-band norms
+in group chats) — the gap the interviews still have to carry.
+
+== Sources
+
+- Ostrom 2007, pp. 23 (invisibility, definition), 36–37 (working rules,
+  rules not self-enforcing), 39 (field elicitation), 53–54 n. 5.
+- McGinnis, p. 12 (§9).
+
+== Related
+
+- link:index.adoc[index]
+- link:src-ostrom-irc-iad.adoc[src-ostrom-irc-iad]
+- link:src-iad-guide.adoc[src-iad-guide]
+- link:concept-iad-framework.adoc[concept-iad-framework]
+- link:concept-rule-types.adoc[concept-rule-types]
+- link:concept-adico-grammar.adoc[concept-adico-grammar]
+- link:concept-governance-as-software.adoc[concept-governance-as-software]
+- link:concept-survivorship-bias.adoc[concept-survivorship-bias]

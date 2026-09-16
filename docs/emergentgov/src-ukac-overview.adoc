@@ -1,0 +1,60 @@
+:title: Understanding Knowledge as a Commons (Hess & Ostrom, eds., 2007) — chapter map
+:type: src
+:status: drafted
+:date: 2026-08-04
+:author: assistant
+:agent: ukac-survey
+:tags: ukac, map, book
+:cite: Hess, C., & Ostrom, E., eds. (2007), Understanding Knowledge as a Commons: From Theory to Practice, MIT Press
+:isbn: 9780262083577
+:file: sources/ (per-chapter PDFs, *-UKAC.pdf)
+
+== What it is
+
+Coverage map for the whole volume: which chapters this kasten has
+mapped as src- notes, which are assigned to other agents, and which
+were deliberately skipped after a 2-page skim. UKAC is the founding
+book of knowledge-commons analysis — the IAD framework carried from
+CPRs to information.
+
+== Chapter list
+
+[%header,cols="1,3,6,6"]
+|===
+|ch |author(s) |one line |status
+|1 |Hess & Ostrom |Introduction: knowledge commons overview, goods types |other agent (introduction-UKAC)
+|2 |Bollier |Survey/advocacy: the spreading commons vocabulary |SKIPPED — paradigm evangelism, no institutional mechanism
+|3 |Ostrom & Hess |IAD framework adapted to the knowledge commons |other agent (AnalyzingKnowledgeCommons-UKAC)
+|4 |Kranich |Enclosure of scholarly resources; counter-strategies |SKIPPED — library-policy advocacy; enclosure theme better covered by ch. 6 mapping
+|5 |Boyle |"Mertonianism unbound": open access beyond academy |SKIPPED — speculative essay; its one thesis-adjacent beat (commons boundaries "ought to be very wide," p. 125) noted here
+|6 |Waters |Preservation as CPR problem; LOCKSS, club goods |mapped → link:src-preserving-ukac.adoc[src-preserving-ukac]
+|7 |Suber |What open access is; economics of removing barriers |SKIPPED — definitional OA primer, thin on governance
+|8 |Ghosh |Is IP constrictive, facilitating, or irrelevant? |SKIPPED — IP-law theory (means-vs-ends); remote from relay-level governance
+|9 |Levine |Libertarian vs associational commons; civic identity |mapped → link:src-collective-action-ukac.adoc[src-collective-action-ukac]
+|10 |Schweik |FOSS governance via IAD; extending Copyleft to science |mapped → link:src-foss-science-ukac.adoc[src-foss-science-ukac]
+|11 |Lougee |Libraries' shifting roles in scholarly communication |SKIPPED — library-role archetypes, stakeholder survey
+|12 |Cox & Swarthout |EconPort case: incentives to create/maintain a commons |mapped → link:src-econport-ukac.adoc[src-econport-ukac]
+|— |Glossary |Definitions (all keyed to ch. 3) |skimmed as reference; note "associational commons" entry
+|===
+
+== Selection rationale
+
+The four mapped chapters are the ones that analyze /governance
+mechanisms of digitally-native commons/ (Schweik), supply the
+libertarian/associational distinction the thesis is built on (Levine),
+give a micro-institutional case of a bounded knowledge facility on an
+open network (EconPort), and treat redundancy/persistence as an
+institutional problem (Waters). The skipped chapters are advocacy,
+legal theory, or stakeholder surveys whose thesis-relevant content is
+duplicated more sharply elsewhere in the corpus.
+
+== Related
+
+- link:index.adoc[index]
+- link:src-foss-science-ukac.adoc[src-foss-science-ukac]
+- link:src-collective-action-ukac.adoc[src-collective-action-ukac]
+- link:src-econport-ukac.adoc[src-econport-ukac]
+- link:src-preserving-ukac.adoc[src-preserving-ukac]
+- link:concept-iad-framework.adoc[concept-iad-framework]
+- link:concept-cpr-vs-knowledge-commons.adoc[concept-cpr-vs-knowledge-commons]
+- link:agent-ukac-survey.adoc[agent-ukac-survey]

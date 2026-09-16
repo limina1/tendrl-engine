@@ -1,0 +1,68 @@
+:title: Interjurisdictional competition — competition as external governance
+:type: concept
+:status: drafted
+:date: 2026-08-04
+:author: assistant
+:agent: blockchain-tier2
+:tags: competition, markets-for-governance, rational-ignorance, relays
+
+== The idea
+
+Alston et al.'s external-force half: governance providers are
+themselves governed by the market they compete in. "Software platforms
+compete for users and, as a result, indirectly govern one another"
+(715); rival networks differentiate on quality AND on governance
+features themselves — consensus mechanisms as "competing sets of
+governance choices" (717–720). The market beats the electoral channel
+because each user consumes the product of their own choice rather than
+the majority's (715–716). The claimed payoff is a market for
+governance: institutional competition for voluntary support "may yield
+more efficient institutions" (720). But the claim is CONDITIONAL:
+it needs informed governed parties and supportive surrounding
+institutions; under rational political ignorance, most users don't
+monitor rules, leaving a small class of governance specialists
+(core devs, miners) disciplined mainly by the aggregate exit threat
+(720). Murtazashvili et al. echo the mechanism — altcoin entry and
+user exit discipline Bitcoin (116) — and Allen et al. supply its
+dynamic version: permissionless entry into governance provision as
+entrepreneurial discovery (663–664).
+
+== The Nostr engagement
+
+Relay competition is this concept at high frequency and low stakes:
+relay operators and client devs are Nostr's governance specialists,
+users are rationally ignorant of relay policy, and the discipline is
+exit — but with near-zero switching costs and, crucially, a
+REGENERATING set of jurisdictions: exit routinely founds new relays
+rather than only reallocating share among incumbents
+(link:concept-exit-voice.adoc[concept-exit-voice], link:claim-relay-spectrum.adoc[claim-relay-spectrum]). Strains: (a) the
+informed-user condition is even less satisfied on Nostr, yet every
+policy change and defection is a logged typed event, so whether
+competition actually improves governance becomes empirically testable
+rather than assumed (link:claim-formation-observable.adoc[claim-formation-observable],
+link:q-does-competition-improve-governance.adoc[q-does-competition-improve-governance]); (b) with no token revenue,
+what operators compete FOR (attention, reputation, subscription fees,
+ideology) is itself an open variable; (c) multihoming — users on many
+relays at once — blurs the "jurisdiction" unit that the
+interjurisdictional frame presumes (link:claim-multiplicity-stack.adoc[claim-multiplicity-stack]).
+
+== Sources
+
+- Alston, Law, Murtazashvili & Weiss 2022, pp. 715–720
+  (link:src-polycentric-blockchain-orders.adoc[src-polycentric-blockchain-orders]).
+- Murtazashvili et al. 2022, p. 116
+  (link:src-blockchain-knowledge-commons.adoc[src-blockchain-knowledge-commons]).
+- Allen et al. 2023, pp. 663–665 (link:src-exchange-theory-web3.adoc[src-exchange-theory-web3]).
+
+== Related
+
+- link:index.adoc[index]
+- link:concept-exit-voice.adoc[concept-exit-voice]
+- link:concept-tier2-triangle.adoc[concept-tier2-triangle]
+- link:concept-polycentricity.adoc[concept-polycentricity]
+- link:concept-requisite-variety.adoc[concept-requisite-variety]
+- link:concept-survivorship-bias.adoc[concept-survivorship-bias]
+- link:claim-expand-contract.adoc[claim-expand-contract]
+- link:claim-worst-case-hosts-best-case.adoc[claim-worst-case-hosts-best-case]
+- link:q-maturation-hypothesis.adoc[q-maturation-hypothesis]
+- link:q-generativity-robustness.adoc[q-generativity-robustness]
