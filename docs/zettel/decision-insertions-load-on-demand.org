@@ -30,8 +30,11 @@ logged-in author copies the publication with the insertion spliced in
 
 * Consequences
 
-- =load_insertions(root, authors)= is an endpoint behind a button, not a
-  pass inside =stream_publication_tree=.
+- =load_insertions= is an endpoint behind a button, not a pass inside
+  =stream_publication_tree= — and its input is a /spell/ (=A:<root>
+  k:30041= plus the modal's author filter), so the collective table's
+  joins ("3 of 14 authors", by section, by time) are the same mechanism
+  with a different query, never a client-side filter over everything.
 - The reader needs a pointing/attached visual for loaded insertions —
   a design session, not a retrofit ([[file:feat-ui-patterns.org][UI patterns]]).
 - Closes the author-policy question in the plan.

@@ -59,6 +59,19 @@ format.
 
 * UI/UX
 
+- *Create annotation*: one form, three doors — a section's =⋮=, the =M=
+  menu (anchored to the index), a /note/ variant of the highlight capture
+  card. Title, body + format, and one choice: attach · insert before ·
+  insert after. Anchor tags engine-emitted; wire preview from
+  =/insertions/preview=. Signs as you. (Canvas: Flow board 0.)
+- *The table*: a buffer kind =annotations:<addr>= in a split beside the
+  reader — index cards on a table. The join is a spell (=A:<index>
+  k:30041 by:… count:by=), so "3 of 14 authors" is a =count:= histogram
+  and a saved layout is a saved spell; the client lays out in a
+  =$derived= and renders with keyed ={#each}= (the =FocusGraph= idiom, no
+  d3 by default). Drag pins; positions are view state in =bufferState=.
+  A card is a compact handle; expand opens the 30041 in
+  =reader:event:<id>=. (Canvas: Table page.)
 - Reader: a *load annotations* action fetches them; each renders
   /pointing at/ its anchor section — symbolic of a post-it stuck to the
   page, not absorbed by it. The visual language is a design session,
@@ -73,6 +86,8 @@ format.
 
 * Open questions
 
+- Table layouts: by section · by author · timeline · free; =d3-force= only
+  if free clustering earns it on a real 100-card set.
 - Tag name =insert= — fine, or single-letter for relay indexing? User decision: Yes
   Position is never queried, so a word is the honest choice.
 - Do promoted insertions keep their anchor tags? Default yes — they

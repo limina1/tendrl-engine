@@ -79,6 +79,26 @@ with /no/ tool table of its own. Claude Code, Codex, and the in-app
 loop then call the same functions; =get_context= cannot be a stub
 because it is =add_to_context='s sibling in one file.
 
+** D7 — The annotations table: engine joins, client lays out
+"3 of 100 users annotating" is a /query/, so the join is engine-side: the
+table's header is a spell (=A:<index> k:30041 by:… count:by=), the author
+histogram is a =count:= bucket, and a saved layout is a saved spell. The
+client computes layout in a =$derived= (the =FocusGraph= idiom) and renders
+cards with a keyed ={#each}= — Svelte's own data-join. No d3 by default;
+=d3-force= alone (pure math, same =$derived=) only if free clustering is
+wanted. Drag pins a card; positions are view state in =store.bufferState=,
+never published. The table is a buffer kind (=annotations:<addr>=): a split
+beside the reader, full-screen on the phone. Canvas: Table page.
+
+** D8 — "Create annotation" is one form with three doors
+Section =⋮=, the =M= menu (anchored to the index = front matter), and a
+/note/ variant of the highlight capture card (the selection travels as
+=context=). The form is the 30041 MUST-haves — title, body, format — plus
+one choice: /attach · insert before · insert after/. Anchor tags are
+emitted by the engine; the wire preview comes from =/insertions/preview=
+sharing the publish builder. Signs as the user; the assistant's derive
+fills the same form under its own key. Canvas: Flow board 0.
+
 ** D6 — The zettel bubble is one call, not an agent
 Context assembled engine-side → one =run_turn= with a structured-output
 schema (=output_config.format=) shaped like =ComposeState= → an insertion
@@ -143,6 +163,13 @@ startup on a popup.
       sign/publish path
 - [ ] =tools::propose_insertion= (ComposeWrite) and =promote_insertion=
       (Publish)
+- [ ] =InsertionComposerModal= (clone =HighlightComposerModal=: modal-yield,
+      wire preview): anchor chips, placement seg, title, body + format,
+      optional context; doors = section =⋮=, =M= menu, capture-card /note/
+      variant; "open in composer" hands an anchored compose item over
+- [ ] =load_insertions= takes a spell, not just =(root, authors)= — the
+      reader's "load annotations" is the fixed spell =A:<root> k:30041=
+      with the author filter from the intent modal
 - [ ] reader: *load annotations* action; loaded insertions render
       pointing at their anchor (the post-it visual — design session
       first, see [[file:zettel/feat-ui-patterns.org][UI patterns]]); /promote/
@@ -181,6 +208,21 @@ startup on a popup.
 - [ ] MCP parity: the same derive endpoint is a tool, so a terminal
       agent can invoke it against a curated set
 
+** Phase 5b — The annotations table                                       :medium:
+- [ ] buffer kind =annotations:<addr>= (tours.ts + registry.ts +
+      BufferRenderer if-chain, per the NIP-34 recipe); opens in a split
+      beside the reader; full-screen on mobile
+- [ ] header = editable spell + =count:by= histogram chips (click adds/
+      drops =by:=); layouts: by section · by author · timeline · free
+- [ ] layout in a =$derived= (=FocusGraph= idiom); cards via keyed
+      ={#each}=; =use:draggable= pointer action pins a card; positions +
+      layout mode + cursor in =store.bufferState=, written on teardown
+- [ ] card = compact handle (title, first lines, anchor chip → scrolls
+      the reader; hover a section → its cards light); expand = open the
+      30041 in =reader:event:<id>=
+- [ ] =j=/=k= cursor, =data-cursor=, =data-tour=; no lifecycle hooks
+- [ ] decide =d3-force= only after a real 100-card set is on screen
+
 ** Phase 6 — Docs and kasten                                               :small:
 - [ ] =feat-assistant= → context set, MCP surface, signing: shipped
 - [ ] =feat-discussions= → insertions as the third member: shipped
@@ -192,7 +234,7 @@ startup on a popup.
 
 * Order and size
 
-0 → 1 → 2 → 3, then 4 ∥ 5, then 6. Phase 1 first because every later
+0 → 1 → 2 → 3, then 4 ∥ 5 ∥ 5b, then 6. Phase 1 first because every later
 phase reads the set; Phase 2 before 3 because assistant-signed
 insertions are the point. Phases 4 and 5 are independent consumers of
 1–3. Roughly: 1 and 3 are the real work; 2 is plumbing with a sharp
@@ -209,6 +251,8 @@ choice; 5 is mostly UI once 1–3 exist.
   runtime we do not already have.
 - Should a saved =ContextSet= be publishable as a 30040 collection —
   out of scope; noted in the decision zettel.
+- Table pan/zoom — none at first (scrollable table); =d3-zoom= or
+  =panzoom= later if a 100-card table needs it.
 - Model for the bubble — make configurable; try Opus 5 on real
   derivations before settling; latency vs synthesis quality is the
   user's call.
