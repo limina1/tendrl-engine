@@ -74,9 +74,11 @@ format.
   =reader:event:<id>=. (Canvas: Table page.)
 - Reader: a *load annotations* action fetches them; each renders
   /pointing at/ its anchor section — symbolic of a post-it stuck to the
-  page, not absorbed by it. The visual language is a design session,
-  not a retrofit. /Promote/ on one runs the fork process and opens the
-  publish flow on the copied index.
+  page, not absorbed by it. Resolved on the canvas (2026-09-16): one
+  structure (a flat margin card with a left =--id-local= bar), a /sticky/
+  skin as an Appearance preference, and on narrow screens the notes fold
+  into a row under their anchor and expand in place. /Promote/ on one
+  runs the fork process and opens the publish flow on the copied index.
 - The *zettel bubble*: from a focused section, "write more from this"
   → engine assembles context (the section, siblings, resolved refs,
   HNSW neighbours) → one =run_turn= with a structured-output schema

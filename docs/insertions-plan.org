@@ -99,6 +99,16 @@ emitted by the engine; the wire preview comes from =/insertions/preview=
 sharing the publish builder. Signs as the user; the assistant's derive
 fills the same form under its own key. Canvas: Flow board 0.
 
+** D9 — One structure, two skins, one narrow layout
+The post-it treatment resolved on the canvas (2026-09-16): *B* (flat
+margin card, left identity bar in =--id-local= yellow) is the structure;
+*A* (tinted, taped, tilted) is a /skin/ on the same structure — a Settings
+→ Appearance preference, not a fork; *C* is the narrow layout: below the
+measure that leaves no gutter, attached notes and not-yet-subsumed
+insertions fold into a 44 px row under their anchor and expand in place.
+Canvas: Directions page (Main carries the flat/sticky tweak; the phone
+board shows the folds).
+
 ** D6 — The zettel bubble is one call, not an agent
 Context assembled engine-side → one =run_turn= with a structured-output
 schema (=output_config.format=) shaped like =ComposeState= → an insertion
@@ -170,10 +180,11 @@ startup on a popup.
 - [ ] =load_insertions= takes a spell, not just =(root, authors)= — the
       reader's "load annotations" is the fixed spell =A:<root> k:30041=
       with the author filter from the intent modal
-- [ ] reader: *load annotations* action; loaded insertions render
-      pointing at their anchor (the post-it visual — design session
-      first, see [[file:zettel/feat-ui-patterns.org][UI patterns]]); /promote/
-      opens the fork flow
+- [ ] reader: *load annotations* action; loaded insertions render as
+      margin cards pointing at their anchor (D9: B structure; =sticky=
+      skin behind an Appearance preference); below the no-gutter measure
+      they fold into 44 px rows under the anchor (C); /promote/ opens the
+      fork flow
 - [ ] search: insertions are 30041s — =has:A= / =A:<coord>= already work;
       verify =count:A= buckets
 - [ ] tests: anchor round-trip; discovery filter shape; promotion slot
