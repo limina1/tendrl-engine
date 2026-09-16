@@ -240,12 +240,15 @@ Recipe: =docs/commands.org= "Bunker (NIP-46)".
       assistant's saved pairing is read by =persistedAssistantNip55()= but
       nothing calls it yet — wire it in the mobile boot path and test on
       device)
-- [ ] *open — boot reconnect did not verify*: after a restart with
-      =[identity] source = "nip46"= the keyring returned no saved pairing.
-      Cause under investigation (the =keyring= crate is pulled with no
-      platform backend feature — if that is the in-memory mock, nothing
-      persists across processes, the assistant identity included). The
-      reconnect code path itself runs (logged), only the read is empty.
+- [X] *boot reconnect did not verify* — explained: the =keyring= crate is
+      pulled with no platform backend feature, so on Linux it is the
+      in-memory mock and nothing persists across processes (the assistant
+      ncryptsec included). Decision 2026-09-16: *no backend* — nsec-in-engine
+      signing is being phased out in favour of signers; pairings move to a
+      data-dir state file instead
+      ([[file:zettel/decision-no-keyring-backend.org][decision]]).
+- [ ] follow-up: persist =BunkerPersist= + the assistant pubkey in
+      =<data_dir>/= (not the keyring) so boot reconnect works everywhere
 
 ** Phase 3 — Insertions                                                    :medium:
 - [ ] =src/publication/insertion.rs= (pure): =InsertionAnchor= parse /

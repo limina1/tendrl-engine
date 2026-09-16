@@ -1,0 +1,54 @@
+#+TITLE: Decision: No OS Keyring Backend — nsec Signing Is on Its Way Out
+#+TYPE: decision
+#+STATUS: current
+#+DATE: 2026-09-16
+
+* The decision
+
+The =keyring= crate stays as it is: pulled with *no* platform backend
+feature, which on Linux resolves to the crate's in-memory mock. Nothing
+the engine "stores in the OS keyring" survives a process restart — the
+user's ncryptsec, the assistant's ncryptsec, a saved bunker pairing.
+We do not enable =async-secret-service= / =apple-native= /
+=windows-native=. (User's call, 2026-09-16.)
+
+The reason is direction, not cost: *in-engine nsec signing is being
+phased out*. The key belongs in a signer — the browser extension
+(NIP-07) for the user's main identity, Amber (NIP-55 on the phone,
+NIP-46 bunker over relays on the desktop) for the agents. Wiring a real
+Secret Service backend would harden a path we intend to remove.
+
+* Why
+
+- *One signer, every npub.* The Phase 2 outcome is that any slot (user
+  or assistant) can sign through any transport, and one Amber holds all
+  the accounts. Once that is the normal path, an ncryptsec in the engine
+  is a second copy of a secret that already has a home.
+- *Persistence moves with the key.* What a restart needs to remember is
+  the /pairing/ — which source, which bunker URI, which client secret —
+  not the key. That is small enough to live in the data dir like
+  =relays.json= does, and it is no secret worth a keyring if the bunker
+  side can revoke it. Follow-up: move =BunkerPersist= and the assistant's
+  =pubkey= out of the keyring into a plain state file so boot reconnect
+  works on every platform without a backend.
+- *Android already lives without it.* The mobile build compiles with
+  =--no-default-features=; NIP-55 pairings persist in the SPA's storage.
+  Desktop converging on the same shape means one persistence story.
+
+* Consequences
+
+- The plan's "boot reconnect did not verify" item is explained, not
+  fixed: the read is empty because the mock forgets. Reconnect-on-boot
+  becomes a Phase 3 side task once pairings live in the data dir.
+- =identity.rs::store_last_assistant= and friends keep compiling; they
+  are effectively session-scoped until the state-file move.
+- The =[identity] source = "nip46"= config + a saved pairing is the
+  intended desktop default for agents; ncryptsec entry stays as the
+  fallback until the phase-out lands.
+
+* Related
+- [[file:index.org][Index]]
+- [[file:feat-identity.org][Identity]]
+- [[file:decision-bunker-engine-is-the-client.org][Bunker: the engine is the client]]
+- [[file:decision-assistant-signs-own-key.org][The assistant signs with its own key]]
+- [[file:../insertions-plan.org][Plan]]
