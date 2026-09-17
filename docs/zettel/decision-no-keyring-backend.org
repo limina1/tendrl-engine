@@ -1,9 +1,28 @@
 #+TITLE: Decision: No OS Keyring Backend — nsec Signing Is on Its Way Out
 #+TYPE: decision
-#+STATUS: current
+#+STATUS: superseded
 #+DATE: 2026-09-16
 
-* The decision
+* Superseded 2026-09-17
+
+Reversed by the user ("you can keep the keyring — that was a mistake on my
+end, keep it so it persists"). The =keyring= crate now pulls a real
+platform backend: Secret Service over D-Bus on Linux
+(=sync-secret-service= + =crypto-rust=, pure-Rust crypto, no OpenSSL;
+gnome-keyring / KDE ksecretd / KeePassXC all serve it), =apple-native= on
+macOS, =windows-native= on Windows. Entries live under service
+=nostr-engine=. What persists across a restart: the user's ncryptsec, the
+assistant's ncryptsec + pubkey, and a bunker pairing (URI + transport
+secret) for either slot — boot reconnects the bunker
+(=server.rs::restore_assistant_identity=, the =nip46= last-identity
+branch). The portable release build compiles libdbus in
+(=--features keyring-vendored=) so the binary keeps no
+=libdbus-1.so.3= dependency. Android still builds without the feature.
+The direction below (signers over in-engine nsecs) still stands; only
+the persistence conclusion was wrong: a pairing that forgets itself on
+every restart made the bunker unusable in practice.
+
+* The decision (as taken 2026-09-16)
 
 The =keyring= crate stays as it is: pulled with *no* platform backend
 feature, which on Linux resolves to the crate's in-memory mock. Nothing

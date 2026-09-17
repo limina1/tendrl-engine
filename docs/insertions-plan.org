@@ -247,6 +247,11 @@ Recipe: =docs/commands.org= "Bunker (NIP-46)".
       signing is being phased out in favour of signers; pairings move to a
       data-dir state file instead
       ([[file:zettel/decision-no-keyring-backend.org][decision]]).
+      *Reversed 2026-09-17* (user): the backend is in — Secret Service on
+      Linux (+ apple/windows native), =keyring-vendored= for the portable
+      build; boot reconnect of an assistant bunker verified on a scratch
+      engine (pairing restored from the OS keyring, "Assistant bunker:
+      reconnected" in the boot log).
 - [ ] follow-up: persist =BunkerPersist= + the assistant pubkey in
       =<data_dir>/= (not the keyring) so boot reconnect works everywhere
 
