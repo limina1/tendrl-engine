@@ -151,9 +151,16 @@ export const DEFAULT_VIEW: AnnotationsViewState = {
 /** Reading-order rows from the reader's addr-keyed publication tree. The
  *  input shape is whatever `ReaderBuffer` already accumulates from
  *  `stream_publication_tree`; Track C adapts it. */
-export declare function flattenToc(
-	tree: { addr: { kind: number; pubkey: string; d_tag: string }; title: string; depth: number }[]
-): Section[];
+export function flattenToc(
+	tree: { addr: { kind: number; pubkey: string; d_tag: string }; title: string | null; depth: number }[]
+): Section[] {
+	return tree.map((row, i) => ({
+		coordinate: `${row.addr.kind}:${row.addr.pubkey}:${row.addr.d_tag}`,
+		title: (row.title ?? '').trim() || row.addr.d_tag,
+		depth: row.depth,
+		n: i + 1
+	}));
+}
 
 /** Flatten loaded insertions (notes only — `role === 'request'` are drawn
  *  from `requests`) and the merged request list into cards. */
@@ -216,14 +223,144 @@ function excerpt(s: string, chars: number): string {
  *  transient is NOT an input — the buffer moves the DOM node during a drag
  *  and commits to `pins` on release, so the derived layout never re-runs
  *  mid-drag. `width` is the table viewport width for packing. */
-export declare function layoutCards(
+export function layoutCards(
 	cards: TableCard[],
 	sections: Section[],
 	mode: LayoutMode,
 	view: Pick<AnnotationsViewState, 'expanded' | 'pins'>,
 	width: number,
 	authorLabel?: (pubkey: string) => string
-): LayoutResult;
+): LayoutResult {
+	const { W, WS, WX, H, HS, HX, GAP, PAD, LANE_HEAD, AXIS } = SIZES;
+	const small = mode === 'timeline' || mode === 'collective';
+	const cardW = (c: TableCard) => (view.expanded === c.id ? WX : small ? WS : W);
+	const cardH = (c: TableCard) => (view.expanded === c.id ? HX : small ? HS : H);
+	const label = (pk: string) => (pk ? (authorLabel?.(pk) ?? pk.slice(0, 8) + '…') : 'unsigned');
+	const lanes: Lane[] = [];
+	const placed: Placed[] = [];
+	const ticks: Tick[] = [];
+	let y = 0;
+	let cvWidth = Math.max(0, width);
+
+	const secIndex = new Map<string, number>();
+	sections.forEach((s, i) => secIndex.set(s.coordinate, i));
+	const secOf = (c: TableCard) => secIndex.get(c.parent) ?? -1;
+	const byTime = (a: TableCard, b: TableCard) => a.createdAt - b.createdAt;
+	const inLane = (a: TableCard, b: TableCard) => ord(a) - ord(b) || byTime(a, b);
+	const bySection = (a: TableCard, b: TableCard) => secOf(a) - secOf(b) || byTime(a, b);
+
+	// Lane packing: left-to-right in as many columns as fit, then down.
+	const pack = (key: string, lab: string, list: TableCard[], parent?: string) => {
+		const cols = Math.max(1, Math.floor((cvWidth - 2 * PAD + GAP) / (W + GAP)));
+		const lane: Lane = { key, label: `${lab} · ${list.length}`, y, h: 0, parent };
+		lanes.push(lane);
+		let maxY = y + LANE_HEAD;
+		list.forEach((c, k) => {
+			const x = PAD + (k % cols) * (W + GAP);
+			const cy = y + LANE_HEAD + Math.floor(k / cols) * (H + GAP);
+			placed.push({ card: c, x, y: cy, w: cardW(c), h: cardH(c), lane: key });
+			maxY = Math.max(maxY, cy + cardH(c));
+		});
+		lane.h = list.length ? maxY - y + GAP : LANE_HEAD + 6;
+		y += lane.h;
+	};
+
+	// Authors by descending count among the cards (the bars' order), ties
+	// by first appearance.
+	const authorOrder = () => {
+		const counts = new Map<string, number>();
+		for (const c of cards) counts.set(c.author, (counts.get(c.author) ?? 0) + 1);
+		return [...counts.entries()].sort((a, b) => b[1] - a[1]).map(([pk]) => pk);
+	};
+
+	if (mode === 'section' || mode === 'free') {
+		const rootCards = cards.filter((c) => secOf(c) < 0).sort(inLane);
+		if (rootCards.length) pack('root', '§ · whole publication', rootCards, rootCards[0].parent);
+		sections.forEach((s, i) => {
+			pack(`sec:${s.coordinate}`, `§${s.n} ${s.title}`, cards.filter((c) => secOf(c) === i).sort(inLane), s.coordinate);
+		});
+	} else if (mode === 'author') {
+		for (const pk of authorOrder()) {
+			pack(`by:${pk}`, label(pk), cards.filter((c) => c.author === pk).sort(bySection));
+		}
+	} else if (mode === 'timeline') {
+		const sorted = [...cards].sort(byTime);
+		if (sorted.length) {
+			const tMin = sorted[0].createdAt - 3600;
+			const tMax = sorted[sorted.length - 1].createdAt + 3600;
+			cvWidth = Math.max(cvWidth, sorted.length * 70);
+			const span = Math.max(1, tMax - tMin);
+			const usable = Math.max(0, cvWidth - WS - 2 * PAD);
+			const xOf = (t: number) => PAD + ((t - tMin) / span) * usable;
+			const rows: number[] = []; // right edge per row
+			for (const c of sorted) {
+				const x = xOf(c.createdAt);
+				let r = rows.findIndex((edge) => edge + GAP <= x);
+				if (r < 0) {
+					r = rows.length;
+					rows.push(0);
+				}
+				rows[r] = x + cardW(c);
+				placed.push({ card: c, x, y: PAD + 22 + r * (HS + GAP), w: cardW(c), h: cardH(c), lane: 'time' });
+			}
+			y = PAD + 22 + rows.length * (HS + GAP) + PAD;
+			const days = Math.max(1, Math.round(span / 86400));
+			const step = span / days;
+			for (let d = 0; d <= days; d++) {
+				ticks.push({ x: xOf(tMin + d * step), label: d === days ? 'now' : `-${days - d}d` });
+			}
+		}
+	} else if (mode === 'collective') {
+		// Columns = sections along the axis; a leading column holds cards
+		// anchored to the root itself when there are any.
+		const lead = cards.some((c) => secOf(c) < 0) ? 1 : 0;
+		const colX = (i: number) => AXIS + (i + lead) * (WS + GAP);
+		cvWidth = Math.max(cvWidth, AXIS + (sections.length + lead) * (WS + GAP) + PAD);
+		y = 22;
+		for (const pk of authorOrder()) {
+			const mine = cards.filter((c) => c.author === pk);
+			const lane: Lane = { key: `by:${pk}`, label: `${label(pk)} · ${mine.length}`, y, h: 0 };
+			lanes.push(lane);
+			let maxY = y + LANE_HEAD;
+			const cell = (list: TableCard[], cx: number) => {
+				list.sort(byTime).forEach((c, k) => {
+					const cy = y + LANE_HEAD + k * 22;
+					placed.push({ card: c, x: cx, y: cy, w: cardW(c), h: cardH(c), lane: lane.key });
+					maxY = Math.max(maxY, cy + cardH(c));
+				});
+			};
+			if (lead) cell(mine.filter((c) => secOf(c) < 0), AXIS);
+			sections.forEach((_, i) => cell(mine.filter((c) => secOf(c) === i), colX(i)));
+			lane.h = maxY - y + GAP;
+			y += lane.h;
+		}
+		if (lead) ticks.push({ x: AXIS, label: '§' });
+		sections.forEach((s, i) => ticks.push({ x: colX(i), label: `§${s.n}` }));
+	}
+
+	if (mode === 'free') {
+		for (const p of placed) {
+			const pin = view.pins[p.card.id];
+			if (pin) {
+				p.x = pin.x;
+				p.y = pin.y;
+				p.pinned = true;
+			}
+		}
+	}
+	// Expanded cards and pins may reach past the packed bounds.
+	for (const p of placed) {
+		y = Math.max(y, p.y + p.h + PAD);
+		cvWidth = Math.max(cvWidth, p.x + p.w + PAD);
+	}
+	return { mode, lanes, placed, ticks, width: cvWidth, height: Math.max(y, 200) };
+}
+
+/** Sort key within a section lane: requests, before, attached, after. */
+function ord(c: TableCard): number {
+	if (c.kind === 'request') return -1;
+	return c.placement === 'before' ? 0 : c.placement === 'annotation' ? 1 : 2;
+}
 
 /** The table's query as the search DSL: `A:<root> k:30041 [by:…] [since:…]
  *  count:by count:a` — what the wand saves as a spell. Mirrors the engine's
