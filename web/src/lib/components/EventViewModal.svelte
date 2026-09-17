@@ -369,6 +369,50 @@
 		commentOpen = !commentOpen;
 	}
 
+	// Annotate — open the insertion composer anchored here (NKBIP-01
+	// insertions). A 30040 is its own root; a 30041 roots at the publication
+	// the reader had open (app.eventModalRoot), else at a containing index
+	// found by the lookup above, else at itself (a standalone note).
+	const canAnnotate = $derived((n.kind === 30040 || n.kind === 30041) && !!addrRef);
+	function onAnnotateAction() {
+		if (!canAnnotate || !addrRef) return;
+		if (n.kind === 30040) {
+			app.insertionComposer = { root: addrRef, rootTitle: n.title ?? null };
+		} else {
+			const hint = app.eventModalRoot;
+			// Several versions of one index are one root — dedupe by coordinate.
+			const seen = new Set<string>();
+			const roots: { coord: string; title: string | null }[] = [];
+			for (const c of containingIndexes) {
+				const coord = `30040:${c.pubkey}:${c.d_tag}`;
+				if (seen.has(coord)) continue;
+				seen.add(coord);
+				roots.push({ coord, title: c.title || null });
+			}
+			let root: string;
+			let rootTitle: string | null;
+			if (hint && hint.coord !== addrRef) {
+				root = hint.coord;
+				rootTitle = hint.title;
+			} else if (roots.length > 0) {
+				root = roots[0].coord;
+				rootTitle = roots[0].title;
+			} else {
+				root = addrRef;
+				rootTitle = n.title ?? null;
+			}
+			app.insertionComposer = {
+				root,
+				rootTitle,
+				roots: roots.length > 1 ? roots : undefined,
+				parent: addrRef,
+				parentTitle: n.title ?? null,
+				parentEventId: n.id
+			};
+		}
+		onclose();
+	}
+
 	// Shelve — put a publication index on one of my kind-30045 shelves.
 	// Opens a picker row (my shelves + "new shelf…"); the engine derives
 	// the next shelf version, we sign it, save local-first.
@@ -491,6 +535,9 @@
 			} else if (k === 'c') {
 				e.preventDefault();
 				onCommentAction();
+			} else if (k === 'n' && canAnnotate) {
+				e.preventDefault();
+				onAnnotateAction();
 			} else if (k === 's' && canShelve) {
 				e.preventDefault();
 				void onShelveAction();
@@ -938,6 +985,18 @@
 					<span class="evm__key">c</span>
 					<span class="evm__action-label">Comment</span>
 				</button>
+				{#if canAnnotate}
+					<button
+						class="evm__action"
+						onclick={onAnnotateAction}
+						title={n.kind === 30040
+							? 'Attach a note to this publication — front matter, an appendix, or a margin note (NKBIP-01 insertion)'
+							: 'Attach a note to this section — a post-it, or a page inserted before/after it (NKBIP-01 insertion)'}
+					>
+						<span class="evm__key">n</span>
+						<span class="evm__action-label">Annotate</span>
+					</button>
+				{/if}
 				{#if canShelve}
 					<button
 						class="evm__action"

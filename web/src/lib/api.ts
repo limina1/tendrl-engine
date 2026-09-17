@@ -2638,3 +2638,158 @@ export function deleteDiscussion(req: { event_id: string; reason?: string; relay
 		body: JSON.stringify(req)
 	});
 }
+
+// ---------------------------------------------------------------------------
+// NKBIP-01 insertions (nips/NKBIP-01-insertions.org): reader-attached
+// kind-30041 sections anchored with NIP-22's root/parent vocabulary. All
+// derivation (anchor tags, promotion slot, the index copy) is engine-side;
+// the web only names places and renders what comes back.
+
+export type InsertionPlacement = 'annotation' | 'before' | 'after';
+
+export interface InsertionAnchor {
+	root: string;
+	root_kind: number;
+	root_pubkey: string;
+	parent: string;
+	parent_kind: number;
+	parent_pubkey: string;
+	parent_event_id?: string;
+	placement: InsertionPlacement;
+}
+
+export interface LoadedInsertion {
+	event: NostrEvent;
+	coordinate: string;
+	anchor: InsertionAnchor;
+}
+
+export interface InsertionsLoadResponse {
+	insertions: LoadedInsertion[];
+	source: { local_count: number; relay_count: number };
+	refreshed_at: number;
+	/** The same query in the search DSL (`A:<root> k:30041 by:…`). */
+	query: string;
+}
+
+/** The `#A` discovery pass — an explicit reader action, Confirm-gated when
+ *  `modeConfirm` is set (the fetch modal names the root and the author
+ *  filter). `local_only` never touches a relay. */
+export function loadInsertions(req: {
+	root: string;
+	authors?: string[];
+	policy?: 'local_only' | 'local_first' | 'fetch_always';
+	relays?: string[];
+	limit?: number;
+	modeConfirm?: boolean;
+}) {
+	return fetchJson<InsertionsLoadResponse>('/api/v1/insertions/load', {
+		method: 'POST',
+		body: JSON.stringify({
+			root: req.root,
+			authors: req.authors ?? [],
+			policy: req.policy,
+			relays: req.relays ?? [],
+			limit: req.limit,
+			mode_confirm: req.modeConfirm ?? false
+		})
+	});
+}
+
+export interface InsertionRequest {
+	anchor: {
+		root: string;
+		parent?: string;
+		parent_event_id?: string;
+		placement?: 'attach' | 'before' | 'after';
+	};
+	title: string;
+	content: string;
+	format?: 'markdown' | 'org' | 'asciidoc' | 'plain';
+	context?: string;
+	tags?: string[][];
+	sign_as?: 'user' | 'assistant';
+	broadcast?: boolean;
+	relays?: string[];
+}
+
+export interface InsertionPublishResponse extends PublishResponse {
+	event: NostrEvent;
+	coordinate: string;
+	anchor: InsertionAnchor;
+	signed_as: 'user' | 'assistant';
+}
+
+export function publishInsertion(req: InsertionRequest) {
+	return fetchJson<InsertionPublishResponse>('/api/v1/insertions', {
+		method: 'POST',
+		body: JSON.stringify(req)
+	});
+}
+
+/** The exact unsigned kind-30041 the publish path would sign — same engine
+ *  builder, client tag stamped, pubkey filled for the named source. */
+export function previewInsertion(req: InsertionRequest): Promise<{
+	event: { kind: number; created_at: number; tags: string[][]; content: string; pubkey?: string };
+	anchor: InsertionAnchor;
+	sign_as: 'user' | 'assistant';
+}> {
+	return fetchJson('/api/v1/insertions/preview', {
+		method: 'POST',
+		body: JSON.stringify(req)
+	});
+}
+
+export interface ForkRequest {
+	/** The index to copy: `30040:pubkey:d`. */
+	index: string;
+	/** The section to splice in: its coordinate or 64-hex id. */
+	insertion: string;
+	/** Override the slot the `insert` hint suggests. */
+	slot?: number;
+	sign_as?: 'user' | 'assistant';
+	broadcast?: boolean;
+	relays?: string[];
+	policy?: 'local_only' | 'local_first' | 'fetch_always';
+}
+
+export interface ForkPreview {
+	event: { kind: number; created_at: number; tags: string[][]; content: string; pubkey?: string };
+	index_id: string;
+	index_pubkey: string;
+	insertion: string;
+	/** false = a new version of your own index (same d); true = a derivative
+	 *  under your key with `p` + `E` to the copied index. */
+	derivative: boolean;
+	d_tag: string;
+	slot: number;
+	after?: string;
+	copied_tags: number;
+	sign_as: 'user' | 'assistant';
+	signer_pubkey?: string;
+}
+
+/** Promotion, unsigned: the copy process the publish would sign. */
+export function previewFork(req: ForkRequest) {
+	return fetchJson<ForkPreview>('/api/v1/publication/fork/preview', {
+		method: 'POST',
+		body: JSON.stringify(req)
+	});
+}
+
+export interface ForkPublishResponse extends PublishResponse {
+	index: NostrEvent;
+	coordinate: string;
+	derivative: boolean;
+	slot: number;
+	signed_as: 'user' | 'assistant';
+}
+
+/** Promotion: republish the index with the insertion spliced in (own index →
+ *  new version; anyone else's → derivative). The insertion is untouched. */
+export function forkPublication(req: ForkRequest) {
+	return fetchJson<ForkPublishResponse>('/api/v1/publication/fork', {
+		method: 'POST',
+		body: JSON.stringify(req)
+	});
+}

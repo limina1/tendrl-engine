@@ -70,6 +70,10 @@
 		publicationThreadsOpen: boolean;
 		treeOpen: boolean;
 		toolsOpen: boolean;
+		/** The reader asked for this publication's annotations once — a
+		 *  remount re-reads them from the local store (no relay pull). */
+		insertionsLoaded: boolean;
+		insertionsScope: 'mine' | 'anyone';
 		/** Pixel offsets of the two scrollers (the reader's content column and
 		 *  the scroll view's own container — whichever one actually scrolls in
 		 *  the current layout). Tracked live: a torn-down element reads 0. */
@@ -96,6 +100,8 @@
 				publicationThreadsOpen,
 				treeOpen,
 				toolsOpen,
+				insertionsLoaded,
+				insertionsScope,
 				scroll: { ...scrollTops }
 			} satisfies ReaderViewState);
 		};
@@ -311,6 +317,113 @@
 	function refreshDiscussionsLocal() {
 		void loadDiscussionCounts('local_only');
 	}
+
+	// --- NKBIP-01 insertions: loaded on demand, pointing at their anchor ---
+	// Never part of the tree stream (decision-insertions-load-on-demand):
+	// "load annotations" runs the engine's #A pass (Confirm-gated when it
+	// reaches relays); each result carries its anchor so the views can hang
+	// it under the right section. A note whose coordinate is already in the
+	// index has been promoted — it renders as a section, not a card.
+	let insertions = $state<api.LoadedInsertion[]>([]);
+	let insertionsLoaded = $state<boolean>(savedView?.insertionsLoaded ?? false);
+	let insertionsScope = $state<'mine' | 'anyone'>(savedView?.insertionsScope ?? 'mine');
+	let insertionsLoading = $state(false);
+	let insertionsQuery = $state<string | null>(null);
+	const insertionsByParent = $derived.by(() => {
+		const indexed = new Set(pristineSections.map((x) => addrKey(x.addr)));
+		const m: Record<string, api.LoadedInsertion[]> = {};
+		for (const i of insertions) {
+			if (indexed.has(i.coordinate)) continue;
+			(m[i.anchor.parent] ??= []).push(i);
+		}
+		return m;
+	});
+	const pendingInsertionCount = $derived(
+		Object.values(insertionsByParent).reduce((n, l) => n + l.length, 0)
+	);
+	function insertionsForSection(addr: { kind: number; pubkey: string; d_tag: string }) {
+		return insertionsByParent[addrKey(addr)] ?? [];
+	}
+	const rootInsertions = $derived.by(() => {
+		if (!publication) return { before: [], after: [] };
+		const tops = insertionsByParent[addrKey(publication.addr)] ?? [];
+		return {
+			before: tops.filter((i) => i.anchor.placement === 'before'),
+			after: tops.filter((i) => i.anchor.placement !== 'before')
+		};
+	});
+	// "mine" = the user's key + the assistant's, resolved at call time; an
+	// empty list means anyone (the engine takes it as no author filter).
+	async function insertionAuthors(): Promise<string[]> {
+		if (insertionsScope === 'anyone') return [];
+		const out: string[] = [];
+		const me = app.identityStatus?.pubkey;
+		if (me) out.push(me);
+		try {
+			const a = await api.getAssistantIdentity();
+			if (a?.pubkey && !out.includes(a.pubkey)) out.push(a.pubkey);
+		} catch {
+			// No assistant identity — the user's own notes only.
+		}
+		return out;
+	}
+	async function loadInsertionsNow(policy: 'local_only' | 'fetch_always') {
+		if (!publication || insertionsLoading) return;
+		insertionsLoading = true;
+		try {
+			const resp = await api.loadInsertions({
+				root: addrKey(publication.addr),
+				authors: await insertionAuthors(),
+				policy,
+				modeConfirm: policy !== 'local_only'
+			});
+			insertions = resp.insertions;
+			insertionsQuery = resp.query;
+			insertionsLoaded = true;
+			const authors = new Set(resp.insertions.map((i) => i.event.pubkey));
+			if (authors.size > 0) prefetchAuthors([...authors]);
+		} catch (e) {
+			app.pushToast(api.errorMessage(e, 'Loading annotations failed'), 'error', 5000);
+		} finally {
+			insertionsLoading = false;
+		}
+	}
+	function hideInsertions() {
+		insertions = [];
+		insertionsLoaded = false;
+		insertionsQuery = null;
+	}
+	function openInsertionReader(ins: api.LoadedInsertion) {
+		const title = ins.event.tags.find((t) => t[0] === 'title')?.[1] ?? null;
+		store.openBuffer({
+			className: 'work',
+			buffer: {
+				id: `reader:event:${ins.event.id}`,
+				kind: 'reader',
+				label: 'section',
+				kicker: title ?? ins.event.id.slice(0, 8)
+			}
+		});
+	}
+	function onInsertionPromoted(resp: api.ForkPublishResponse) {
+		// The owner's promotion is a new version of this very index — reload
+		// so the note renders as a section. A derivative is another
+		// publication; it shows up in the feed under your key.
+		if (resp.derivative || !publication) return;
+		// load() restores a seen focus from focusCache without re-streaming;
+		// the index just changed, so evict it first.
+		focusCache.delete(focusKey(publication.addr.pubkey, publication.addr.d_tag));
+		void load();
+	}
+	// An insertion published from the composer lands in the local store;
+	// re-read if this reader is showing annotations.
+	$effect(() => {
+		void app.insertionsVersion;
+		if (!insertionsLoaded) return;
+		untrack(() => {
+			void loadInsertionsNow('local_only');
+		});
+	});
 
 	const canSignNow = $derived(identityCanSign(app.identityStatus));
 
@@ -1569,6 +1682,9 @@
 		discussionLoadedKey = key;
 		untrack(async () => {
 			await loadDiscussionCounts('local_only');
+			if (insertionsLoaded && insertions.length === 0) {
+				await loadInsertionsNow('local_only');
+			}
 			if (app.networkStatus?.mode === 'auto') {
 				refreshDiscussions();
 			}
@@ -1738,18 +1854,29 @@
 	// link opens the corresponding section event. All three resolve via
 	// the addressable coordinate, so they handle replaceable updates the
 	// same way (newest event for that (kind, pubkey, d) wins).
+	// The event menu's Annotate needs to know which publication it was
+	// opened from — a section can sit in several indexes.
+	function hintModalRoot() {
+		app.eventModalRoot = publication
+			? { coord: addrKey(publication.addr), title: publication.title }
+			: null;
+	}
+
 	function openPublicationJson() {
 		if (!publication) return;
+		hintModalRoot();
 		app.openAddressableInModal(publication.addr);
 	}
 
 	function openSectionJsonByIndex(index: number) {
 		const s = pristineSections[index];
 		if (!s) return;
+		hintModalRoot();
 		app.openAddressableInModal(s.addr);
 	}
 
 	function openSectionJsonBySection(s: { addr: { kind: number; pubkey: string; d_tag: string } }) {
+		hintModalRoot();
 		app.openAddressableInModal(s.addr);
 	}
 
@@ -2153,6 +2280,29 @@
 						disabled={!publication}
 						title="Highlights drawer — grouped by author, click to scroll"
 					>highlights {discussionLoading ? '…' : totalDiscussion.highlights}</button>
+					<button
+						class:active={insertionsLoaded}
+						onclick={() => loadInsertionsNow('fetch_always')}
+						disabled={!publication || insertionsLoading}
+						title={insertionsLoaded
+							? `Loaded ${pendingInsertionCount} attached note(s) — click to pull again from relays${insertionsQuery ? ` (${insertionsQuery})` : ''}`
+							: 'Load annotations — notes and inserted pages attached to this publication by ' +
+								(insertionsScope === 'mine' ? 'you and your assistant' : 'anyone') +
+								'. Pulled on demand; never part of the index.'}
+					>{insertionsLoading ? '…' : insertionsLoaded ? `annotations ${pendingInsertionCount}` : 'load annotations'}</button>
+					<button
+						class="ins-scope"
+						onclick={() => (insertionsScope = insertionsScope === 'mine' ? 'anyone' : 'mine')}
+						disabled={insertionsLoading}
+						title="Whose annotations the next load asks for: yours + your assistant's, or anyone's"
+					>{insertionsScope === 'mine' ? 'mine' : 'anyone'}</button>
+					{#if insertionsLoaded}
+						<button
+							class="ins-scope"
+							onclick={hideInsertions}
+							title="Hide the loaded annotations (they stay in the local store)"
+						>hide</button>
+					{/if}
 					{#if publication?.summary}
 						<button
 							class:active={summaryOpen}
@@ -2410,6 +2560,10 @@
 					focusedHighlightId={parsedHighlightId}
 					threadsFor={threadsForSection}
 					focusedCommentId={parsedFocusCommentId}
+					insertionsFor={insertionsLoaded ? insertionsForSection : null}
+					rootInsertions={insertionsLoaded ? rootInsertions : null}
+					onopeninsertion={openInsertionReader}
+					oninsertionpromoted={onInsertionPromoted}
 					{resolution}
 				/>
 			{:else}
@@ -2424,6 +2578,10 @@
 					focusedHighlightId={parsedHighlightId}
 					threadsFor={threadsForSection}
 					focusedCommentId={parsedFocusCommentId}
+					insertionsFor={insertionsLoaded ? insertionsForSection : null}
+					rootInsertions={insertionsLoaded ? rootInsertions : null}
+					onopeninsertion={openInsertionReader}
+					oninsertionpromoted={onInsertionPromoted}
 					publicationAtag={`${publication.addr.kind}:${publication.addr.pubkey}:${publication.addr.d_tag}`}
 					{resolution}
 				/>
@@ -3027,5 +3185,9 @@
 		/* 390 px: caption goes, "expand all" → "expand" (see .tree-all--long). */
 		.tree-row__cap { display: none; }
 		.tree-row .tree-all--long .long { display: none; }
+	}
+	.ins-scope {
+		font-size: calc(var(--t-xs) - 2px);
+		opacity: 0.8;
 	}
 </style>

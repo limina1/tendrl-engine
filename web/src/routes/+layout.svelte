@@ -20,6 +20,7 @@
 	import TextPromptModal from '$lib/components/TextPromptModal.svelte';
 	import FetchActivityModal from '$lib/components/FetchActivityModal.svelte';
 	import HighlightComposerModal from '$lib/components/HighlightComposerModal.svelte';
+	import InsertionComposerModal from '$lib/components/InsertionComposerModal.svelte';
 	// fetch-events self-starts the SSE subscription at module scope; we
 	// only need confirmState here to render the modal.
 	import { confirmState } from '$lib/network/fetch-events.svelte';
@@ -172,7 +173,10 @@
 	<EventViewModal
 		event={app.eventModalData}
 		insertMode={app.editorInsertMode}
-		onclose={() => (app.eventModalData = null)}
+		onclose={() => {
+			app.eventModalData = null;
+			app.eventModalRoot = null;
+		}}
 		onspawnreader={spawnReader}
 		onspawneventreader={spawnEventReader}
 		oninsert={onInsert}
@@ -216,6 +220,10 @@
 
 {#if app.highlightComposer}
 	<HighlightComposerModal />
+{/if}
+
+{#if app.insertionComposer}
+	<InsertionComposerModal />
 {/if}
 
 <ComparePublishModal />

@@ -1,9 +1,11 @@
 <script lang="ts">
+	import * as api from '$lib/api';
 	import type { LazySection } from '$lib/types';
 	import { threadContainsId, type ThreadNode } from '$lib/discussions/thread';
 	import type { Highlight } from '$lib/discussions/highlights';
 	import { getAppState } from '$lib/state.svelte';
 	import SectionCard from './SectionCard.svelte';
+	import InsertionCard from './InsertionCard.svelte';
 	import { coordMatchesAddr } from '$lib/nostr/nostrdown';
 	import type { ResolutionTracker } from '$lib/nostr/resolution-progress.svelte';
 	import { readingVars } from '$lib/theme/reading.svelte';
@@ -23,6 +25,10 @@
 		focusedHighlightId = null,
 		threadsFor = null,
 		focusedCommentId = null,
+		insertionsFor = null,
+		rootInsertions = null,
+		onopeninsertion = undefined,
+		oninsertionpromoted = undefined,
 		publicationAtag = undefined,
 		siblings = undefined,
 		resolution = undefined
@@ -46,6 +52,12 @@
 		 *  render beneath it. Pass null to suppress inline threads. */
 		threadsFor?: ((addr: { kind: number; pubkey: string; d_tag: string }) => ThreadNode[]) | null;
 		focusedCommentId?: string | null;
+		/** Lookup: section addr → loaded NKBIP-01 insertions anchored to it. */
+		insertionsFor?: ((addr: { kind: number; pubkey: string; d_tag: string }) => api.LoadedInsertion[]) | null;
+		/** Insertions anchored to the index itself: shown on the first / last page. */
+		rootInsertions?: { before: api.LoadedInsertion[]; after: api.LoadedInsertion[] } | null;
+		onopeninsertion?: ((ins: api.LoadedInsertion) => void) | undefined;
+		oninsertionpromoted?: ((resp: api.ForkPublishResponse) => void) | undefined;
 		/** Containing publication coordinate ("30040:pubkey:dtag") — context for
 		 *  resolving nostrdown `{{ref:…}}` sibling references. */
 		publicationAtag?: string | undefined;
@@ -166,6 +178,21 @@
 				{resolution}
 				onopenlocal={openLocalSection}
 			/>
+			{#if currentSection === 0}
+				{#each rootInsertions?.before ?? [] as ins (ins.coordinate)}
+					<InsertionCard insertion={ins} onopen={onopeninsertion} onpromoted={oninsertionpromoted} />
+				{/each}
+			{/if}
+			{#if insertionsFor}
+				{#each insertionsFor(section.addr) as ins (ins.coordinate)}
+					<InsertionCard insertion={ins} onopen={onopeninsertion} onpromoted={oninsertionpromoted} />
+				{/each}
+			{/if}
+			{#if currentSection === sections.length - 1}
+				{#each rootInsertions?.after ?? [] as ins (ins.coordinate)}
+					<InsertionCard insertion={ins} onopen={onopeninsertion} onpromoted={oninsertionpromoted} />
+				{/each}
+			{/if}
 			{#if threads.length > 0}
 				<div class="paginated-threads">
 					<button

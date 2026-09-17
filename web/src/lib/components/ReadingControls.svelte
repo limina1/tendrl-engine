@@ -18,6 +18,7 @@
 		setReadingCustomFont,
 		setReadingFont,
 		setReadingJustify,
+		setReadingNotes,
 		stepReadingLeading,
 		stepReadingMeasure,
 		stepReadingSize,
@@ -49,7 +50,8 @@
 			reading.size === READING_DEFAULTS.size &&
 			reading.measure === READING_DEFAULTS.measure &&
 			reading.leading === READING_DEFAULTS.leading &&
-			reading.justify === READING_DEFAULTS.justify
+			reading.justify === READING_DEFAULTS.justify &&
+			reading.notes === READING_DEFAULTS.notes
 	);
 </script>
 
@@ -135,6 +137,15 @@
 			class:on={reading.justify}
 			onclick={() => setReadingJustify(!reading.justify)}
 		>{compact ? (reading.justify ? 'justified' : 'ragged') : reading.justify ? 'on' : 'off'}</button>
+	</div>
+
+	<div class="rc-group" title="How loaded annotations dress: a flat margin card, or a post-it sticky. Same structure either way.">
+		{#if !compact}<span class="rc-label">Notes</span>{/if}
+		<button
+			class="rc-toggle"
+			class:on={reading.notes === 'sticky'}
+			onclick={() => setReadingNotes(reading.notes === 'sticky' ? 'card' : 'sticky')}
+		>{reading.notes === 'sticky' ? 'sticky' : 'card'}</button>
 	</div>
 
 	<button class="rc-reset" onclick={resetReading} disabled={isDefault} title="Back to the shipped reading defaults"

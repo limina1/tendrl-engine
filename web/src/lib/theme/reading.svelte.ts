@@ -60,7 +60,12 @@ export type ReadingPrefs = {
 	measure: number;
 	leading: number;
 	justify: boolean;
+	/** How loaded annotations render beside the text: a flat margin card or
+	 *  the post-it "sticky" skin (same structure, different dress). */
+	notes: NotesSkin;
 };
+
+export type NotesSkin = 'card' | 'sticky';
 
 export const READING_DEFAULTS: ReadingPrefs = {
 	font: 'serif',
@@ -68,7 +73,8 @@ export const READING_DEFAULTS: ReadingPrefs = {
 	size: 0,
 	measure: 68,
 	leading: 1.6,
-	justify: false
+	justify: false,
+	notes: 'card'
 };
 
 const clamp = (n: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, n));
@@ -98,7 +104,8 @@ function normalize(p: Partial<ReadingPrefs> | null | undefined): ReadingPrefs {
 		measure,
 		leading:
 			typeof p.leading === 'number' ? clamp(p.leading, LEADING_MIN, LEADING_MAX) : d.leading,
-		justify: !!p.justify
+		justify: !!p.justify,
+		notes: p.notes === 'sticky' ? 'sticky' : 'card'
 	};
 }
 
@@ -161,6 +168,11 @@ export function stepReadingLeading(delta: number) {
 	// Round through hundredths — 0.05 steps accumulate float dust otherwise.
 	const next = Math.round((reading.leading + delta * LEADING_STEP) * 100) / 100;
 	reading.leading = clamp(next, LEADING_MIN, LEADING_MAX);
+	persist();
+}
+
+export function setReadingNotes(skin: NotesSkin) {
+	reading.notes = skin === 'sticky' ? 'sticky' : 'card';
 	persist();
 }
 

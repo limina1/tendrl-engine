@@ -106,6 +106,23 @@ export type ModalNavEntry =
 
 let _app: ReturnType<typeof _createAppState> | null = null;
 
+/** Payload that opens the insertion composer. */
+export type InsertionComposerOpen = {
+	/** Publication coordinate (30040:pk:d) — or a standalone note's own
+	 *  30041 coordinate when it lives in no index. */
+	root: string;
+	rootTitle?: string | null;
+	/** Section coordinate; absent = attach to the index itself. */
+	parent?: string;
+	parentTitle?: string | null;
+	parentEventId?: string;
+	/** Alternative roots when the door found several containing indexes. */
+	roots?: { coord: string; title: string | null }[];
+	placement?: 'attach' | 'before' | 'after';
+	/** Selection excerpt → the `context` tag. */
+	context?: string;
+};
+
 export function createAppState() {
 	if (_app) return _app;
 	_app = _createAppState();
@@ -493,6 +510,24 @@ function _createAppState() {
 	// memory only (buffer renderers unmount on switch; modals unmount on
 	// close — durable text lives in the store, not the component).
 	let highlightDraft: { source: string; text: string; annotation: string; context: string } | null = $state(null);
+
+	// --- Insertion composer (NKBIP-01 insertions) ---
+	// Opened from the event menu's Annotate action (a section's ⋮, the M
+	// menu) or a capture card; rendered by InsertionComposerModal in +layout.
+	// `root` is the publication coordinate; `parent` the section (omit = the
+	// index itself). `roots` offers a choice when the door had several
+	// containing publications to pick from.
+	let insertionComposer: InsertionComposerOpen | null = $state(null);
+	// The composer's unpublished draft (title/body/placement) — same memory
+	// discipline as the highlighter: written on close, cleared by publish.
+	let insertionDraft: { title: string; content: string; format: string; placement: string } | null = $state(null);
+	// The publication a reader had open when it launched the event menu —
+	// lets Annotate on a section know its root without a containing-index
+	// lookup. Set by ReaderBuffer before opening, cleared with the modal.
+	let eventModalRoot: { coord: string; title: string | null } | null = $state(null);
+	// Bumped after an insertion publishes so an open reader re-reads its
+	// loaded annotations (local store — no relay round trip).
+	let insertionsVersion = $state(0);
 
 	// Republish diff prompt: set when Publish detects a same-title
 	// publication. ComparePublishModal renders the diff and calls
@@ -5163,6 +5198,16 @@ function _createAppState() {
 		set highlightComposer(v: { text?: string; source?: string } | null) { highlightComposer = v; },
 		get highlightDraft() { return highlightDraft; },
 		set highlightDraft(v: { source: string; text: string; annotation: string; context: string } | null) { highlightDraft = v; },
+
+		// Insertion composer
+		get insertionComposer() { return insertionComposer; },
+		set insertionComposer(v: InsertionComposerOpen | null) { insertionComposer = v; },
+		get insertionDraft() { return insertionDraft; },
+		set insertionDraft(v: { title: string; content: string; format: string; placement: string } | null) { insertionDraft = v; },
+		get eventModalRoot() { return eventModalRoot; },
+		set eventModalRoot(v: { coord: string; title: string | null } | null) { eventModalRoot = v; },
+		get insertionsVersion() { return insertionsVersion; },
+		bumpInsertions() { insertionsVersion += 1; },
 
 		// Profile
 		get profilePubkey() { return profilePubkey; },

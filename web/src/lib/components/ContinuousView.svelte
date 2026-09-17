@@ -7,6 +7,7 @@
 	import CommentThread from './CommentThread.svelte';
 	import PoolStateBadges from './PoolStateBadges.svelte';
 	import RichContent from './RichContent.svelte';
+	import InsertionCard from './InsertionCard.svelte';
 	import { threadContainsId, type ThreadNode } from '$lib/discussions/thread';
 	import { type Highlight, type HighlightSpan } from '$lib/discussions/highlights';
 	import { coordMatchesAddr, type ResolvedRef, type ParsedToken } from '$lib/nostr/nostrdown';
@@ -26,6 +27,10 @@
 		focusedHighlightId = null,
 		threadsFor = null,
 		focusedCommentId = null,
+		insertionsFor = null,
+		rootInsertions = null,
+		onopeninsertion = undefined,
+		oninsertionpromoted = undefined,
 		publicationAtag = undefined,
 		siblings = undefined,
 		resolution = undefined,
@@ -46,6 +51,13 @@
 		/** Lookup: section addr → thread tree. Pass null to suppress. */
 		threadsFor?: ((addr: { kind: number; pubkey: string; d_tag: string }) => ThreadNode[]) | null;
 		focusedCommentId?: string | null;
+		/** Lookup: section addr → loaded NKBIP-01 insertions anchored to it
+		 *  (rendered as margin cards under the section). Null = none loaded. */
+		insertionsFor?: ((addr: { kind: number; pubkey: string; d_tag: string }) => api.LoadedInsertion[]) | null;
+		/** Insertions anchored to the index itself: front matter / appendix. */
+		rootInsertions?: { before: api.LoadedInsertion[]; after: api.LoadedInsertion[] } | null;
+		onopeninsertion?: ((ins: api.LoadedInsertion) => void) | undefined;
+		oninsertionpromoted?: ((resp: api.ForkPublishResponse) => void) | undefined;
 		/** Containing publication coordinate ("30040:pubkey:dtag") — context for
 		 *  resolving nostrdown `{{ref:…}}` sibling references. */
 		publicationAtag?: string | undefined;
@@ -487,6 +499,9 @@
 	     Expand/collapse-all moved to the reader's depth toolbar row. -->
 
 	<div class="cv-column">
+	{#each rootInsertions?.before ?? [] as ins (ins.coordinate)}
+		<InsertionCard insertion={ins} onopen={onopeninsertion} onpromoted={oninsertionpromoted} />
+	{/each}
 	{#each visibleRows as row, ri (`${row.index}:${row.section.addr?.pubkey ?? ''}:${row.section.addr?.d_tag ?? ''}`)}
 		{@const section = row.section}
 		{@const i = row.index}
@@ -578,6 +593,12 @@
 				{:else}
 					<div class="skeleton pending"></div>
 				{/if}
+				{#if insertionsFor && section.addr}
+					{@const attached = insertionsFor(section.addr)}
+					{#each attached as ins (ins.coordinate)}
+						<InsertionCard insertion={ins} onopen={onopeninsertion} onpromoted={oninsertionpromoted} />
+					{/each}
+				{/if}
 				{#if threadsFor && section.addr}
 					{@const t = threadsFor(section.addr)}
 					{#if t.length > 0}
@@ -603,6 +624,9 @@
 			     or every index would be followed by a stray rule. -->
 			<hr class="section-divider" />
 		{/if}
+	{/each}
+	{#each rootInsertions?.after ?? [] as ins (ins.coordinate)}
+		<InsertionCard insertion={ins} onopen={onopeninsertion} onpromoted={oninsertionpromoted} />
 	{/each}
 	{#if sections.length === 0}
 		<p class="empty">No sections loaded</p>
