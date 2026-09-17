@@ -1,7 +1,9 @@
 <script lang="ts">
 	// A request ("ask for notes") shown on the page it was asked about — the
-	// question sitting where the answer will land. Unsigned and signed alike
-	// (a signed one also appears as a comment in the section's thread).
+	// question sitting where the answer will land. Unsigned records and
+	// signed requests alike (a signed one is a kind-30041 annotation on the
+	// section with a `coordinate`; the notes that answer it point back with
+	// `request`, and the engine derives "answered" from those pointers).
 	// Open: the ask, its scope hints, the excerpt. Answered: the summary and
 	// the written notes, one click each.
 	import * as api from '$lib/api';
@@ -21,6 +23,9 @@
 	const app = getAppState();
 	const r = $derived(request);
 	const answered = $derived(r.status === 'answered');
+	/** A local record (`rq_…`) can be deleted or reopened; a request read
+	 *  off its signed event alone (`ev_…`) has no record to change. */
+	const isRecord = $derived(r.id.startsWith('rq_'));
 	let expanded = $state(false);
 	let busy = $state(false);
 
@@ -107,7 +112,7 @@
 	<button class="rqc__head" onclick={() => (expanded = !expanded)} aria-expanded={expanded}>
 		<span class="rqc__cap">{answered ? '✓ answered' : '? ask'}</span>
 		<span class="rqc__task">{r.title ? `${r.title} — ` : ''}{r.task}</span>
-		<span class="rqc__meta">{r.event_id ? 'signed · ' : ''}{relTime(r.created_at)}</span>
+		<span class="rqc__meta">{r.coordinate ? 'signed · ' : ''}{relTime(r.created_at)}</span>
 		<span class="rqc__ptr" aria-hidden="true">{expanded ? '▾' : '▸'}</span>
 	</button>
 	{#if expanded}
@@ -137,17 +142,22 @@
 				{/if}
 			{:else}
 				<div class="rqc__line rqc__line--muted">
-					{r.event_id
-						? 'Signed as a mention — waiting for the assistant\'s reply.'
+					{r.coordinate
+						? 'Signed as an annotation — answered by the first note that points at it.'
 						: 'Local record — say "check tendrl requests" in your agent to have it answered.'}
 				</div>
 			{/if}
 			<div class="rqc__actions">
-				{#if answered}
+				{#if answered && isRecord}
 					<button class="rqc__mini" onclick={reopen} disabled={busy}>reopen</button>
 				{/if}
+				{#if r.coordinate}
+					<button class="rqc__mini" onclick={() => openCoordinate(r.coordinate!)} title="The signed request — JSON, comment, broadcast, pool">menu</button>
+				{/if}
 				<span class="rqc__spacer"></span>
-				<button class="rqc__mini" onclick={remove} disabled={busy} title="Delete the local record">delete</button>
+				{#if isRecord}
+					<button class="rqc__mini" onclick={remove} disabled={busy} title={r.coordinate ? 'Delete the local record — the signed annotation stays' : 'Delete the local record'}>delete</button>
+				{/if}
 			</div>
 		</div>
 	{/if}

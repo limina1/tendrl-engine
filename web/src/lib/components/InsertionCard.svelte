@@ -7,6 +7,10 @@
 	// the anchor and expands in place (Direction C). Promotion runs here: a
 	// preview from `/publication/fork/preview` explains what the copy is
 	// (new version vs derivative), then one armed button publishes it.
+	// A loaded 30041 whose `role` is `request` (a signed annotation request)
+	// renders nothing here — RequestCard draws it from the merged request
+	// list. A note that answers a request (`request` set) wears an
+	// "↳ answers" chip that opens the request.
 	import * as api from '$lib/api';
 	import RichContent from './RichContent.svelte';
 	import { getAppState } from '$lib/state.svelte';
@@ -99,6 +103,35 @@
 		return new Date(ts * 1000).toLocaleDateString();
 	}
 
+	// The request this note answers: its title from the local store, so the
+	// chip reads "answers: <ask>" rather than a d-tag. Engine derived the
+	// pointer (`insertion.request`); the card only looks the title up.
+	let requestTitle = $state<string | null>(null);
+	$effect(() => {
+		const coord = insertion.request;
+		requestTitle = null;
+		if (!coord) return;
+		const [k, pk, ...d] = coord.split(':');
+		let cancelled = false;
+		api.queryEvents([{ kinds: [Number(k)], authors: [pk], '#d': [d.join(':')] }], 'local_only')
+			.then((resp) => {
+				if (cancelled) return;
+				const evs = (resp.events ?? []) as { created_at: number; tags: string[][] }[];
+				evs.sort((a, b) => b.created_at - a.created_at);
+				requestTitle = evs[0]?.tags.find((x) => x[0] === 'title')?.[1] ?? null;
+			})
+			.catch(() => {});
+		return () => {
+			cancelled = true;
+		};
+	});
+	function openRequest() {
+		const coord = insertion.request;
+		if (!coord) return;
+		const [k, pk, ...d] = coord.split(':');
+		app.openAddressableInModal({ kind: Number(k), pubkey: pk, d_tag: d.join(':') });
+	}
+
 	// Fold (narrow layout only — CSS decides when the row shows). Local
 	// state unless the reader binds it.
 	let expanded = $state(false);
@@ -164,6 +197,7 @@
 	}
 </script>
 
+{#if insertion.role !== 'request'}
 <div
 	class="icard icard--{reading.notes}"
 	class:icard--open={isOpen}
@@ -199,6 +233,9 @@
 			<span class="icard__pill icard__pill--att">
 				{anchor.placement === 'annotation' ? 'attached' : 'inserted · pending'}
 			</span>
+			{#if insertion.request}
+				<button class="icard__act icard__act--answers" onclick={openRequest} title="Written for this request — {insertion.request}">↳ answers {requestTitle ?? 'a request'}</button>
+			{/if}
 			{#if styleCoord}
 				<button class="icard__act" onclick={() => app.handleSearch(`style:${styleCoord}`, { scopeToMe: false })} title="Written in this style — click for everything in it ({styleCoord})">✎ {styleTitle(styleCoord) ?? 'style'}</button>
 			{/if}
@@ -264,6 +301,7 @@
 		{/if}
 	</div>
 </div>
+{/if}
 
 <style>
 	/* Direction B — flat margin card, a left identity bar in the "local /
@@ -362,6 +400,14 @@
 		padding: 2px 8px;
 		min-height: 26px;
 		cursor: pointer;
+	}
+	.icard__act--answers {
+		color: var(--id-remote);
+		border-style: dashed;
+		max-width: 22ch;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
 	}
 	.icard__act:hover:not(:disabled) {
 		color: var(--fg);

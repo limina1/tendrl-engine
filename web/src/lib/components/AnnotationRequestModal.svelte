@@ -3,8 +3,9 @@
 	// local record by default (nothing signed, nothing on the wire) that an
 	// answering agent reads through the `list_requests` tool — the user's own
 	// Claude Code over MCP, at their prompt; tendrl never calls the model on
-	// their behalf. Optionally the request is also signed as a kind-1111
-	// mention of the assistant, and optionally broadcast. The same window
+	// their behalf. Optionally the request is also signed by the user as a
+	// kind-30041 annotation on the section (the answers point back at it),
+	// and optionally broadcast. The same window
 	// lists the requests already made on this place and how they were
 	// answered, with the written notes one click away.
 	import * as api from '$lib/api';
@@ -138,8 +139,8 @@
 			app.pushToast(
 				sign
 					? broadcast
-						? 'Request signed and sent as a mention'
-						: 'Request signed as a local mention'
+						? 'Request signed as an annotation and sent'
+						: 'Request signed as a local annotation'
 					: 'Request saved — ask your agent to check tendrl requests',
 				'success'
 			);
@@ -295,12 +296,12 @@
 		{/if}
 
 		<div class="rq-sign">
-			<label class="rq-check" title={canSign ? 'Also sign the request as a kind-1111 comment on the section that mentions the assistant' : 'Sign in to sign the request — unsigned requests work without an identity'}>
+			<label class="rq-check" title={canSign ? 'Sign the request as a kind-30041 annotation on the section — the notes that answer it point at it' : 'Sign in to sign the request — unsigned requests work without an identity'}>
 				<input type="checkbox" bind:checked={sign} disabled={posting || !canSign} />
-				sign as a mention (kind 1111)
+				sign as an annotation (kind 30041)
 			</label>
 			{#if sign}
-				<label class="rq-check" title="Send the mention to your publish relays — for an agent that reads relays rather than this engine">
+				<label class="rq-check" title="Send the annotation to your publish relays — for an agent that reads relays rather than this engine">
 					<input type="checkbox" bind:checked={broadcast} disabled={posting} />
 					also broadcast
 				</label>
@@ -308,7 +309,7 @@
 		</div>
 		<div class="rq-help">
 			{#if sign}
-				Signed by you; the reply lands under it as a comment. {broadcast ? 'Sent to relays.' : 'Stays local.'}
+				Signed by you, the same shape as the notes that will answer it; each answer points back at it. {broadcast ? 'Sent to relays.' : 'Stays local.'}
 			{:else}
 				Local record only — nothing signed. Your agent reads it with <code>list_requests</code> over MCP.
 			{/if}

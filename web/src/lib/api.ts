@@ -2679,6 +2679,11 @@ export interface LoadedInsertion {
 	event: NostrEvent;
 	coordinate: string;
 	anchor: InsertionAnchor;
+	/** What the 30041 is: a note, or a signed annotation request asking
+	 *  for notes (`t: annotation-request`). Derived engine-side. */
+	role: 'note' | 'request';
+	/** The request coordinate this note answers (`request` tag), when any. */
+	request?: string;
 }
 
 export interface InsertionsLoadResponse {
@@ -2725,6 +2730,8 @@ export interface InsertionRequest {
 	format?: 'markdown' | 'org' | 'asciidoc' | 'plain';
 	context?: string;
 	tags?: string[][];
+	/** Coordinate of the annotation request (30041:pk:d) this note answers. */
+	request?: string;
 	sign_as?: 'user' | 'assistant';
 	broadcast?: boolean;
 	relays?: string[];
@@ -2813,13 +2820,15 @@ export function forkPublication(req: ForkRequest) {
 
 // ---------------------------------------------------------------------------
 // Annotation requests — "ask for notes about this place". Local records the
-// user's own agent reads over MCP (list_requests); optionally signed as a
-// kind-1111 mention of the assistant. tendrl never runs the model for these.
+// user's own agent reads over MCP (list_requests); optionally signed by the
+// user as a kind-30041 annotation on the section — the same shape as the
+// notes that answer it, which point back with a `request` tag. The list
+// merges records and signed requests; answered is derived from those
+// pointers. tendrl never runs the model for these.
 
 export interface AnnotationRequestAnswer {
 	summary: string;
 	coordinates: string[];
-	reply_event_id?: string;
 	answered_at: number;
 	by?: string;
 }
@@ -2838,8 +2847,10 @@ export interface AnnotationRequest {
 	created_at: number;
 	status: 'open' | 'answered';
 	answer?: AnnotationRequestAnswer;
+	/** The signed annotation's id and `30041:pk:d` coordinate, when signed.
+	 *  Requests with no local record (`ev_…` ids) come from the event alone. */
 	event_id?: string;
-	assistant_pubkey?: string;
+	coordinate?: string;
 	/** Style event coordinate (30078:pk:d) and its title when asked. */
 	style?: string;
 	style_title?: string;
