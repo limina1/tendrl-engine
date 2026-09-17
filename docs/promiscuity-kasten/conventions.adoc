@@ -52,6 +52,8 @@ source in words.
 machine-drafted notes; `cite` / `doi` on source notes; `request` on
 the mission note carries the coordinate of the annotation request
 this kasten answers; `a` and `r` (repeatable) carry the links.
+The build adds `m`, the MIME type, to every event: `text/asciidoc` on
+a note, `application/json` on an index.
 
 *Related:*
 
