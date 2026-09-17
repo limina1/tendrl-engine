@@ -33,6 +33,9 @@ pub const REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
 /// `connect` / `get_public_key` wait: the first pairing needs the user to
 /// find the phone and approve.
 pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(120);
+/// How long a request waits for *any* relay socket before giving up with
+/// "no relay reachable" instead of sitting out the full request timeout.
+pub const RELAY_GRACE: Duration = Duration::from_secs(10);
 
 /// How a signer reaches its remote: `run` owns the connection(s) for the
 /// signer's lifetime, forwarding every event from `outgoing` and pushing
@@ -242,16 +245,40 @@ impl BunkerSigner {
             self.inner.pending.lock().unwrap().remove(&req.id);
             return Err(SigningError::SignerNotConnected);
         }
+        tracing::info!(
+            "bunker: {} request {} queued for {} relay(s)",
+            req.method,
+            req.id,
+            self.inner.uri.relays.len()
+        );
         // Tests shorten the wait through `set_timeout`; honour it here too.
         let wait = wait.min(Duration::from_millis(
             self.inner.timeout_ms.load(Ordering::Relaxed),
         ));
-        let reply = match tokio::time::timeout(wait, rx).await {
-            Ok(Ok(r)) => r,
-            Ok(Err(_)) => return Err(SigningError::SignerNotConnected),
-            Err(_) => {
+        // Two ways to stop waiting early: the signer answers, or no relay
+        // socket comes up at all within RELAY_GRACE — then the request has
+        // nowhere to go and the caller should hear that, not a 2-minute
+        // silence. (The transport keeps the request queued; a late socket
+        // still sends it, but its reply finds no waiter.)
+        let grace = RELAY_GRACE.min(wait);
+        let unreachable = unreachable_after(self.inner.connected.clone(), grace);
+        tokio::pin!(unreachable);
+        let reply = tokio::select! {
+            r = tokio::time::timeout(wait, rx) => match r {
+                Ok(Ok(r)) => r,
+                Ok(Err(_)) => return Err(SigningError::SignerNotConnected),
+                Err(_) => {
+                    self.inner.pending.lock().unwrap().remove(&req.id);
+                    return Err(SigningError::Timeout);
+                }
+            },
+            _ = &mut unreachable => {
                 self.inner.pending.lock().unwrap().remove(&req.id);
-                return Err(SigningError::Timeout);
+                return Err(SigningError::External(format!(
+                    "no bunker relay reachable within {}s: {}",
+                    grace.as_secs(),
+                    self.inner.uri.relays.join(", ")
+                )));
             }
         };
         let outcome = reply.outcome();
@@ -349,6 +376,21 @@ impl Signer for BunkerSigner {
     }
 }
 
+/// Resolves once `grace` passes with `connected` still false; never resolves
+/// after a socket has come up (the request timeout takes over from there).
+async fn unreachable_after(connected: Arc<AtomicBool>, grace: Duration) {
+    let start = tokio::time::Instant::now();
+    loop {
+        if connected.load(Ordering::Relaxed) {
+            std::future::pending::<()>().await;
+        }
+        if start.elapsed() >= grace {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+}
+
 fn now_secs() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -393,8 +435,16 @@ impl BunkerTransport for RelayTransport {
     ) {
         let live = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let mut tasks = Vec::new();
+        let mut feeds = Vec::new();
         for url in self.relays.clone() {
-            let rx = outgoing.resubscribe();
+            // Each relay loop reads its own unbounded queue, fed from the
+            // ONE broadcast receiver that existed before any request was
+            // sent. A `resubscribe()` here would start at the channel's
+            // tail and miss the `connect` the signer sends the instant it
+            // starts — the race that left Amber waiting for a request the
+            // engine had already "sent".
+            let (tx, rx) = mpsc::unbounded_channel();
+            feeds.push(tx);
             let incoming = incoming.clone();
             let connected = connected.clone();
             let live = live.clone();
@@ -404,8 +454,27 @@ impl BunkerTransport for RelayTransport {
                 url, remote, client, rx, incoming, connected, live,
             )));
         }
+        fan_out(outgoing, feeds).await;
         for t in tasks {
             let _ = t.await;
+        }
+    }
+}
+
+/// Copy every outgoing request to each relay's queue. Ends when the signer
+/// drops its sender (closing every feed, which ends the relay loops).
+async fn fan_out(mut outgoing: broadcast::Receiver<Value>, feeds: Vec<mpsc::UnboundedSender<Value>>) {
+    loop {
+        match outgoing.recv().await {
+            Ok(event) => {
+                for tx in &feeds {
+                    let _ = tx.send(event.clone());
+                }
+            }
+            Err(broadcast::error::RecvError::Lagged(n)) => {
+                tracing::warn!("bunker: outgoing queue lagged, {n} request(s) dropped");
+            }
+            Err(broadcast::error::RecvError::Closed) => return,
         }
     }
 }
@@ -414,7 +483,7 @@ async fn relay_loop(
     url: String,
     remote_pubkey: String,
     client_pubkey: String,
-    mut outgoing: broadcast::Receiver<Value>,
+    mut outgoing: mpsc::UnboundedReceiver<Value>,
     incoming: mpsc::UnboundedSender<Value>,
     connected: Arc<AtomicBool>,
     live: Arc<std::sync::atomic::AtomicUsize>,
@@ -425,7 +494,7 @@ async fn relay_loop(
         let mut conn = match RelayConn::connect(&url, RelayAuth::none()).await {
             Ok(c) => c,
             Err(e) => {
-                tracing::debug!("bunker: {url}: connect failed: {e}; retry in {backoff:?}");
+                tracing::warn!("bunker: {url}: connect failed: {e}; retry in {backoff:?}");
                 tokio::time::sleep(backoff).await;
                 backoff = (backoff * 2).min(Duration::from_secs(30));
                 continue;
@@ -448,13 +517,16 @@ async fn relay_loop(
         while alive {
             tokio::select! {
                 out = outgoing.recv() => match out {
-                    Ok(event) => {
+                    Some(event) => {
+                        let id = event.get("id").and_then(Value::as_str).unwrap_or("?").to_string();
                         if conn.send(json!(["EVENT", event])).await.is_err() {
+                            tracing::warn!("bunker: {url}: socket write failed sending {id}; reconnecting");
                             alive = false;
+                        } else {
+                            tracing::debug!("bunker: {url}: sent request event {id}");
                         }
                     }
-                    Err(broadcast::error::RecvError::Lagged(_)) => {}
-                    Err(broadcast::error::RecvError::Closed) => {
+                    None => {
                         conn.close().await;
                         if live.fetch_sub(1, Ordering::Relaxed) == 1 {
                             connected.store(false, Ordering::Relaxed);
@@ -466,6 +538,20 @@ async fn relay_loop(
                     Frame::Msg(crate::nip42::RelayMessage::Event { event, .. }) => {
                         let _ = incoming.send(event);
                     }
+                    Frame::Msg(crate::nip42::RelayMessage::Ok { id, accepted, message }) => {
+                        if accepted {
+                            tracing::info!("bunker: {url}: relay accepted request {}", &id[..12.min(id.len())]);
+                        } else {
+                            tracing::warn!("bunker: {url}: relay REJECTED request {}: {message}", &id[..12.min(id.len())]);
+                        }
+                    }
+                    Frame::Msg(crate::nip42::RelayMessage::Notice { message }) => {
+                        tracing::warn!("bunker: {url}: NOTICE {message}");
+                    }
+                    Frame::Msg(crate::nip42::RelayMessage::Closed { reason, .. }) => {
+                        tracing::warn!("bunker: {url}: subscription closed: {reason}; reconnecting");
+                        alive = false;
+                    }
                     Frame::Msg(_) | Frame::Idle => {}
                     Frame::Ended | Frame::Error(_) => alive = false,
                 },
@@ -474,7 +560,7 @@ async fn relay_loop(
         if live.fetch_sub(1, Ordering::Relaxed) == 1 {
             connected.store(false, Ordering::Relaxed);
         }
-        tracing::debug!("bunker: {url}: socket ended; reconnecting");
+        tracing::warn!("bunker: {url}: socket ended; reconnecting");
     }
 }
 
@@ -486,6 +572,62 @@ async fn relay_loop(
 mod tests {
     use super::*;
     use crate::nip44::pubkey_for_secret;
+
+    /// The race behind "subscribed to the relay, Amber never notified": a
+    /// request sent before the relay task started reading. The fan-out
+    /// reads from the receiver that existed at channel creation, so the
+    /// early request still reaches every relay queue.
+    #[tokio::test]
+    async fn fan_out_delivers_requests_sent_before_the_transport_ran() {
+        let (tx, rx) = broadcast::channel::<Value>(8);
+        tx.send(json!({"id": "early"})).unwrap();
+        // The relay task "starts" only now — after the send.
+        let (a_tx, mut a_rx) = mpsc::unbounded_channel();
+        let (b_tx, mut b_rx) = mpsc::unbounded_channel();
+        let task = tokio::spawn(fan_out(rx, vec![a_tx, b_tx]));
+        tx.send(json!({"id": "late"})).unwrap();
+        assert_eq!(a_rx.recv().await.unwrap()["id"], "early");
+        assert_eq!(a_rx.recv().await.unwrap()["id"], "late");
+        assert_eq!(b_rx.recv().await.unwrap()["id"], "early");
+        assert_eq!(b_rx.recv().await.unwrap()["id"], "late");
+        drop(tx);
+        task.await.unwrap();
+        assert!(a_rx.recv().await.is_none());
+    }
+
+    /// A transport that never brings a socket up: the request fails with
+    /// "no bunker relay reachable" after the grace, not after the full
+    /// request timeout.
+    struct DeadTransport;
+    #[async_trait]
+    impl BunkerTransport for DeadTransport {
+        async fn run(
+            self: Box<Self>,
+            mut outgoing: broadcast::Receiver<Value>,
+            _incoming: mpsc::UnboundedSender<Value>,
+            _connected: Arc<AtomicBool>,
+        ) {
+            while outgoing.recv().await.is_ok() {}
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn unreachable_relays_fail_fast() {
+        let uri = BunkerUri::parse(&format!(
+            "bunker://{}?relay=wss://dead.example&secret={SECRET}",
+            pubkey_for_secret(REMOTE_SEC).unwrap()
+        ))
+        .unwrap();
+        let signer = BunkerSigner::start(uri, None, Box::new(DeadTransport)).unwrap();
+        let started = tokio::time::Instant::now();
+        let err = signer.connect().await.unwrap_err();
+        assert!(started.elapsed() < CONNECT_TIMEOUT, "gave up before the connect timeout");
+        assert!(started.elapsed() >= RELAY_GRACE);
+        match err {
+            SigningError::External(m) => assert!(m.contains("no bunker relay reachable") && m.contains("wss://dead.example"), "{m}"),
+            other => panic!("unexpected error: {other:?}"),
+        }
+    }
 
     const REMOTE_SEC: &str = "0000000000000000000000000000000000000000000000000000000000000002";
     /// The key the bunker signs *as* — deliberately not the remote signer's
