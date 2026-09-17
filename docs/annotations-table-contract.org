@@ -32,7 +32,7 @@ and stops counting request-30041s as pending notes.
 | B     | =ReaderBuffer.svelte=; =ContinuousView.svelte= / =PaginatedView.svelte= (hot anchor, margin gutter); =InsertionCard.svelte= (author colour); =RequestCard.svelte= (badge, author colour); =SettingsBuffer.svelte= (Reading → notes layout); =+page.svelte= =openAnnotationsTable= body (split on desktop) |
 | C     | =AnnotationsBuffer.svelte= (replaces the stub); new =components/annotations/*= (=AnnotationsSpell=, =AnnotationsTable=, =AnnotationCard=); =table-model.ts= bodies of =flattenToc= / =layoutCards= |
 | D     | =components/annotations/AnnotationsList.svelte= (mobile); =mobile-nav= view provider; drawer entry             |
-| E     | =docs/insertions-plan.org=, =docs/zettel/feat-insertions.org=, =docs/commands.org=; CDP harness =scratchpad/cdp/annotations-table.mjs= |
+| E     | =docs/insertions-plan.org=, =docs/zettel/feat-insertions.org=, =docs/commands.org=; CDP harness =scripts/verify/annotations-table.mjs= |
 
 C and D both render inside =AnnotationsBuffer.svelte=: C owns that file
 and mounts =AnnotationsList= behind =mobileNav.isMobile= (or the shell
