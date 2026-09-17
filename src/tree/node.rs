@@ -42,7 +42,10 @@ pub enum ContentMode {
 }
 
 impl ContentMode {
-    /// Detect content mode from event tags
+    /// Detect content mode from event tags: tendrl's `format` tag first,
+    /// then the single-letter `m` MIME-type tag (NIP-94's media type, which
+    /// other NKBIP-01 writers put on sections: `text/markdown`, `text/org`,
+    /// `text/asciidoc`, `text/plain`).
     pub fn from_tags(tags: &[Vec<String>]) -> Self {
         for tag in tags {
             if tag.len() >= 2 && tag[0] == "format" {
@@ -54,7 +57,37 @@ impl ContentMode {
                 };
             }
         }
+        for tag in tags {
+            if tag.len() >= 2 && tag[0] == "m" {
+                if let Some(mode) = Self::from_mime(&tag[1]) {
+                    return mode;
+                }
+            }
+        }
         ContentMode::Markdown
+    }
+
+    /// The mode a MIME type names, if it is one of ours.
+    pub fn from_mime(mime: &str) -> Option<Self> {
+        let m = mime.trim().to_ascii_lowercase();
+        let m = m.split(';').next().unwrap_or("").trim();
+        match m {
+            "text/markdown" | "text/x-markdown" => Some(ContentMode::Markdown),
+            "text/org" | "text/x-org" => Some(ContentMode::OrgMode),
+            "text/asciidoc" | "text/x-asciidoc" => Some(ContentMode::AsciiDoc),
+            "text/plain" => Some(ContentMode::PlainText),
+            _ => None,
+        }
+    }
+
+    /// The MIME type to write as the `m` tag.
+    pub fn mime(self) -> &'static str {
+        match self {
+            ContentMode::Markdown => "text/markdown",
+            ContentMode::OrgMode => "text/org",
+            ContentMode::AsciiDoc => "text/asciidoc",
+            ContentMode::PlainText => "text/plain",
+        }
     }
 
     /// File extension for this content mode
@@ -397,5 +430,20 @@ mod tests {
 
         let empty_tags: Vec<Vec<String>> = vec![];
         assert_eq!(ContentMode::from_tags(&empty_tags), ContentMode::Markdown);
+    }
+
+    #[test]
+    fn m_tag_is_read_when_format_is_absent_and_format_wins() {
+        let m_only = vec![vec!["m".to_string(), "text/org".to_string()]];
+        assert_eq!(ContentMode::from_tags(&m_only), ContentMode::OrgMode);
+        let params = vec![vec!["m".to_string(), "text/asciidoc; charset=utf-8".to_string()]];
+        assert_eq!(ContentMode::from_tags(&params), ContentMode::AsciiDoc);
+        let both = vec![
+            vec!["m".to_string(), "text/plain".to_string()],
+            vec!["format".to_string(), "org".to_string()],
+        ];
+        assert_eq!(ContentMode::from_tags(&both), ContentMode::OrgMode, "format is tendrl's own and wins");
+        assert_eq!(ContentMode::from_mime("image/png"), None);
+        assert_eq!(ContentMode::OrgMode.mime(), "text/org");
     }
 }

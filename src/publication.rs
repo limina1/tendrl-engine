@@ -3519,6 +3519,12 @@ pub async fn build_signed_publication_events_via_signer(
         let n_tags = ComposeState::author_n_tags(&custom_tags);
         tags.extend(custom_tags);
         tags.extend(n_tags);
+        // The `m` MIME tag, from `format` when the author set one (Markdown
+        // otherwise) — a single-letter tag any client can filter on.
+        if !tags.iter().any(|t| t.first().map(String::as_str) == Some("m")) {
+            let mode = crate::tree::node::ContentMode::from_tags(&tags);
+            tags.push(vec!["m".to_string(), mode.mime().to_string()]);
+        }
 
         let template = EventTemplate {
             kind: KIND_PUBLICATION_SECTION as u32,

@@ -289,12 +289,19 @@ pub fn build_insertion_template(
         ],
     ];
     tags.extend(anchor.to_tags(relay_hint));
+    // Content type twice: tendrl's `format` (only when not the default) and
+    // the single-letter `m` MIME tag every reader can key on.
+    let mode = crate::tree::node::ContentMode::from_tags(&[vec![
+        "format".to_string(),
+        format.unwrap_or("markdown").trim().to_ascii_lowercase(),
+    ]]);
     if let Some(f) = format.map(str::trim).filter(|f| !f.is_empty()) {
         let f = f.to_ascii_lowercase();
         if f != "markdown" && f != "md" {
             tags.push(vec!["format".to_string(), f]);
         }
     }
+    tags.push(vec!["m".to_string(), mode.mime().to_string()]);
     for t in extra_tags {
         if t.len() >= 2 && !t[0].is_empty() {
             tags.push(t.clone());
@@ -570,12 +577,14 @@ mod tests {
         assert_eq!(t.tags[2], vec!["T", "a-modern-reading"]);
         assert!(t.tags.iter().any(|x| x[0] == "insert" && x[1] == "before"));
         assert!(t.tags.iter().any(|x| x[0] == "format" && x[1] == "org"));
+        assert!(t.tags.iter().any(|x| x[0] == "m" && x[1] == "text/org"));
         assert!(t.tags.iter().any(|x| x[0] == "context"));
         assert!(build_insertion_template(&a, "", "body", None, &[], None, "", 0).is_err());
         assert!(build_insertion_template(&a, "t", "  ", None, &[], None, "", 0).is_err());
-        // Markdown is the default mode — no format tag.
+        // Markdown is the default mode — no format tag, but the MIME tag.
         let md = build_insertion_template(&a, "t", "b", Some("markdown"), &[], None, "", 0).unwrap();
         assert!(md.tags.iter().all(|x| x[0] != "format"));
+        assert!(md.tags.iter().any(|x| x[0] == "m" && x[1] == "text/markdown"));
         // A given d-tag is a new version of an existing note.
         let v2 = build_insertion_template(&a, "t", "b", None, &[], Some("k3x9"), "", 0).unwrap();
         assert_eq!(v2.tags[0], vec!["d", "k3x9"]);
