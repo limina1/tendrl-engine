@@ -4,21 +4,29 @@
 //! the section, like an insertion's), a task in the user's words, a scope
 //! hint and an optional selection. It is a *local record first*
 //! (`<data_dir>/requests/<id>.json`): unsigned, nothing on the wire, so it
-//! never needs an identity. Optionally it is also signed as a kind-1111
-//! comment on the section that `p`-mentions the assistant — the literal
-//! "mention to you" — and optionally broadcast.
+//! never needs an identity. Optionally it is also signed — as a kind-30041
+//! annotation on the section, the same shape as the notes that will answer
+//! it, carrying `t: annotation-request` plus its metadata (`scope`,
+//! `output`, `style`, `context`) — and optionally broadcast. The user signs
+//! it; no assistant identity is involved at ask time.
+//!
+//! An answer is an ordinary insertion anchored to the same parent that
+//! points back with `["request", <request coordinate>]`. A signed request is
+//! answered iff a local 30041 carries that pointer — derived from the store,
+//! not recorded.
 //!
 //! Nothing here drives an agent. Whoever answers (the user's own Claude Code
 //! over MCP, the in-app loop, a human) *reads* open requests through
-//! `list_requests`, writes insertions, and closes the request with
-//! `answer_request`. tendrl publishes the question; it never calls the model
-//! on the user's subscription (`docs/zettel/decision-requests-are-events.org`).
+//! `list_requests`, writes insertions with `request` set, and closes the
+//! record with `answer_request`. tendrl publishes the question; it never
+//! calls the model on the user's subscription
+//! (`docs/zettel/decision-requests-are-events.org`).
 
-use crate::discussions::{
-    build_comment_template, root_scope_from_parent, CommentScope, DiscussionTarget, ParentComment,
-};
 use crate::error::{EngineError, Result};
-use crate::publication::insertion::coord_parts;
+use crate::publication::insertion::{
+    build_insertion_template, coord_parts, event_coordinate, event_tags, InsertionAnchor,
+    Placement,
+};
 use crate::signing::EventTemplate;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -42,9 +50,6 @@ pub struct RequestAnswer {
     /// (`30040:…`) when there is one.
     #[serde(default)]
     pub coordinates: Vec<String>,
-    /// The assistant's kind-1111 reply, when the request was a signed mention.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub reply_event_id: Option<String>,
     pub answered_at: i64,
     /// Who answered (pubkey when known — the assistant's, usually).
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -82,12 +87,12 @@ pub struct AnnotationRequest {
     pub status: RequestStatus,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub answer: Option<RequestAnswer>,
-    /// The signed kind-1111 mention, when the user chose to sign it.
+    /// The signed kind-30041 annotation's event id, when the user signed it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub event_id: Option<String>,
-    /// Who the mention addressed.
+    /// Its `30041:pk:d` coordinate — what answers point at with `request`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub assistant_pubkey: Option<String>,
+    pub coordinate: Option<String>,
     /// The writing style to answer in: a style event's coordinate
     /// (`30078:pk:d`, see `api::styles`) and its title at request time.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -137,7 +142,7 @@ impl AnnotationRequest {
             status: RequestStatus::Open,
             answer: None,
             event_id: None,
-            assistant_pubkey: None,
+            coordinate: None,
             style: None,
             style_title: None,
         })
@@ -166,103 +171,128 @@ impl AnnotationRequest {
         self.answer = Some(answer);
     }
 
-    /// The request as a kind-1111 comment on the section (NIP-22 root =
-    /// the section, like the reader's own comments) that mentions the
-    /// assistant. Marker `t` tag so a casual "@assistant" in a thread is
-    /// never mistaken for a task. Discovery: `k:1111 p:<assistant>
-    /// t:annotation-request`.
-    pub fn to_template(
-        &self,
-        assistant_pubkey: &str,
-        relay_hint: &str,
-        created_at: i64,
-    ) -> std::result::Result<EventTemplate, String> {
-        let (kind, pubkey, _) = coord_parts(&self.parent).ok_or("bad parent coordinate")?;
-        let target = DiscussionTarget {
-            address: Some(self.parent.clone()),
-            event_id: self.parent_event_id.clone(),
-            kind,
-            pubkey: pubkey.to_string(),
-        };
-        let mut content = String::new();
-        if let Some(t) = &self.title {
-            content.push_str(t.trim());
-            content.push_str("\n\n");
+    /// The title the signed annotation carries (NKBIP-01 needs one): the
+    /// user's suggested title, else the first line of the ask, clipped.
+    pub fn effective_title(&self) -> String {
+        if let Some(t) = self.title.as_deref().map(str::trim).filter(|t| !t.is_empty()) {
+            return t.to_string();
         }
-        content.push_str(&self.task);
-        if let Some(ctx) = self.context.as_deref().map(str::trim).filter(|c| !c.is_empty()) {
-            content.push_str("\n\n> ");
-            content.push_str(ctx);
+        let line = self.task.lines().next().unwrap_or("").trim();
+        if line.is_empty() {
+            return "Request".into();
         }
-        let mut t = build_comment_template(
-            &CommentScope::Event(target),
-            None,
-            &content,
-            relay_hint,
-            created_at,
+        let mut out: String = line.chars().take(72).collect();
+        if line.chars().count() > 72 {
+            out.push('…');
+        }
+        out
+    }
+
+    /// The request as a kind-30041 annotation on the section — the same
+    /// anchor shape as the notes that will answer it — with the marker `t`
+    /// so a note is never mistaken for a task, and its metadata as tags.
+    /// Discovery: `k:30041 t:annotation-request`.
+    pub fn to_template(&self, relay_hint: &str, created_at: i64) -> std::result::Result<EventTemplate, String> {
+        let anchor = InsertionAnchor::new(
+            &self.root,
+            &self.parent,
+            self.parent_event_id.clone(),
+            Placement::Annotation,
         )?;
-        let mut p_tag = vec!["p".to_string(), assistant_pubkey.to_string()];
-        if !relay_hint.is_empty() {
-            p_tag.push(relay_hint.to_string());
-        }
-        t.tags.push(p_tag);
-        t.tags.push(vec!["t".to_string(), REQUEST_TAG.to_string()]);
-        t.tags.push(vec!["request".to_string(), self.id.clone()]);
-        if let Some(title) = &self.title {
-            t.tags.push(vec!["title".to_string(), title.clone()]);
-        }
+        let mut extra: Vec<Vec<String>> = vec![vec!["t".to_string(), REQUEST_TAG.to_string()]];
         if !self.scope.is_empty() {
-            t.tags.push(vec!["scope".to_string(), self.scope.join(",")]);
+            extra.push(vec!["scope".to_string(), self.scope.join(",")]);
+        }
+        extra.push(vec!["output".to_string(), self.output.clone()]);
+        if let Some(ctx) = self.context.as_deref().map(str::trim).filter(|c| !c.is_empty()) {
+            extra.push(vec!["context".to_string(), ctx.to_string()]);
         }
         if let Some(style) = &self.style {
-            t.tags.push(vec!["style".to_string(), style.clone()]);
+            extra.push(vec!["style".to_string(), style.clone()]);
         }
-        Ok(t)
+        build_insertion_template(
+            &anchor,
+            &self.effective_title(),
+            &self.task,
+            None,
+            &extra,
+            None,
+            relay_hint,
+            created_at,
+        )
+    }
+
+    /// Read a signed request back off its kind-30041 event. `None` for
+    /// anything that is not a request annotation (wrong kind, no marker,
+    /// no anchor). The id is derived from the event id so the same event
+    /// always reads to the same record.
+    pub fn from_event(ev: &Value) -> Option<Self> {
+        if !is_request_event(ev) {
+            return None;
+        }
+        let anchor = InsertionAnchor::from_event(ev)?;
+        let event_id = ev.get("id").and_then(Value::as_str)?.to_string();
+        let coordinate = event_coordinate(ev)?;
+        let tags = event_tags(ev);
+        let tag = |name: &str| -> Option<String> {
+            tags.iter()
+                .find(|t| t.first().map(String::as_str) == Some(name))
+                .and_then(|t| t.get(1).cloned())
+                .filter(|v| !v.trim().is_empty())
+        };
+        let task = ev.get("content").and_then(Value::as_str).unwrap_or("").trim().to_string();
+        let title = tag("title");
+        let mut req = Self {
+            id: format!("ev_{}", &event_id[..event_id.len().min(12)]),
+            root: anchor.root,
+            parent: anchor.parent,
+            parent_event_id: anchor.parent_event_id,
+            parent_title: None,
+            // A title that merely repeats the clipped ask is the derived one.
+            title: None,
+            task,
+            scope: Vec::new(),
+            context: tag("context"),
+            output: tag("output").unwrap_or_else(default_output),
+            created_at: ev.get("created_at").and_then(Value::as_i64).unwrap_or(0),
+            status: RequestStatus::Open,
+            answer: None,
+            event_id: Some(event_id),
+            coordinate: Some(coordinate),
+            style: tag("style"),
+            style_title: None,
+        };
+        if let Some(t) = title {
+            if t != req.effective_title() {
+                req.title = Some(t);
+            }
+        }
+        if let Some(s) = tag("scope") {
+            req = req.with_scope(&s.split(',').map(str::to_string).collect::<Vec<_>>());
+        } else {
+            req.scope = vec!["section".into()];
+        }
+        Some(req)
     }
 }
 
-/// The assistant's reply that closes a signed request: a kind-1111 reply to
-/// the mention, `q`-tagging every coordinate it wrote (NIP-18 quotes take
-/// addresses). The reader threads it under the request.
-pub fn build_answer_template(
-    request_event: &Value,
-    summary: &str,
-    coordinates: &[String],
-    relay_hint: &str,
-    created_at: i64,
-) -> std::result::Result<EventTemplate, String> {
-    let root = root_scope_from_parent(request_event)?;
-    let parent = ParentComment {
-        event_id: request_event
-            .get("id")
-            .and_then(Value::as_str)
-            .ok_or("request event has no id")?
-            .to_string(),
-        kind: 1111,
-        pubkey: request_event
-            .get("pubkey")
-            .and_then(Value::as_str)
-            .unwrap_or("")
-            .to_string(),
-    };
-    let mut content = summary.trim().to_string();
-    if !coordinates.is_empty() {
-        content.push_str("\n\n");
-        for c in coordinates {
-            content.push_str(c);
-            content.push('\n');
-        }
-    }
-    let mut t = build_comment_template(&root, Some(&parent), content.trim_end(), relay_hint, created_at)?;
-    for c in coordinates {
-        let mut q = vec!["q".to_string(), c.clone()];
-        if !relay_hint.is_empty() {
-            q.push(relay_hint.to_string());
-        }
-        t.tags.push(q);
-    }
-    t.tags.push(vec!["t".to_string(), "annotation-answer".to_string()]);
-    Ok(t)
+/// Is this event a signed request: a kind-30041 with the request marker?
+pub fn is_request_event(ev: &Value) -> bool {
+    ev.get("kind").and_then(Value::as_u64) == Some(30041)
+        && event_tags(ev)
+            .iter()
+            .any(|t| t.first().map(String::as_str) == Some("t") && t.get(1).map(String::as_str) == Some(REQUEST_TAG))
+}
+
+/// The request an insertion answers: its `request` tag, when the value is
+/// a kind-30041 coordinate. Anything else (a stray tag, an old record id)
+/// is not a pointer.
+pub fn request_pointer(ev: &Value) -> Option<String> {
+    event_tags(ev)
+        .into_iter()
+        .find(|t| t.first().map(String::as_str) == Some("request"))
+        .and_then(|t| t.get(1).cloned())
+        .filter(|v| matches!(coord_parts(v), Some((30041, _, d)) if !d.is_empty()))
 }
 
 /// `<data_dir>/requests/<id>.json`, one file per request.
@@ -394,44 +424,75 @@ mod tests {
     }
 
     #[test]
-    fn template_is_a_1111_mention_on_the_section() {
+    fn template_is_a_30041_annotation_with_request_tags() {
         let mut r = AnnotationRequest::new(&root(), Some(&sec()), "compare with the wolf", 1).unwrap();
         r.parent_event_id = Some(EID.into());
         r.title = Some("Trust without leverage".into());
         r.context = Some("a sufficient recompense".into());
         r.scope = vec!["section".into(), "web".into()];
-        let t = r.to_template(ASST, "wss://r", 5).unwrap();
-        assert_eq!(t.kind, 1111);
+        r.style = Some(format!("30078:{PK}:drift"));
+        let t = r.to_template("wss://r", 5).unwrap();
+        assert_eq!(t.kind, 30041, "a request is an annotation, not a comment");
         let tag = |n: &str| t.tags.iter().filter(|x| x[0] == n).cloned().collect::<Vec<_>>();
-        assert_eq!(tag("A")[0][1], sec(), "root scope is the section, like reader comments");
+        assert_eq!(tag("A")[0][1], root(), "roots at the publication like any insertion");
         assert_eq!(tag("a")[0][1], sec());
         assert_eq!(tag("e")[0][1], EID);
-        assert!(tag("p").iter().any(|p| p[1] == ASST), "mentions the assistant");
-        assert!(tag("p").iter().any(|p| p[1] == PK), "and keeps the parent author");
+        assert!(tag("insert").is_empty(), "an annotation claims no position");
+        assert!(tag("p").iter().all(|p| p[1] == PK), "only the parent author — no assistant mention");
         assert!(tag("t").iter().any(|x| x[1] == REQUEST_TAG));
-        assert_eq!(tag("request")[0][1], r.id);
+        assert_eq!(tag("title")[0][1], "Trust without leverage");
         assert_eq!(tag("scope")[0][1], "section,web");
-        assert!(t.content.starts_with("Trust without leverage\n\ncompare with the wolf"));
-        assert!(t.content.ends_with("> a sufficient recompense"));
+        assert_eq!(tag("output")[0][1], "notes");
+        assert_eq!(tag("context")[0][1], "a sufficient recompense");
+        assert_eq!(tag("style")[0][1], format!("30078:{PK}:drift"));
+        assert_eq!(tag("m")[0][1], "text/markdown");
+        assert!(tag("request").is_empty(), "the request itself carries no pointer");
+        assert_eq!(t.content, "compare with the wolf");
+        // No user title → the first line of the ask, clipped.
+        let mut untitled = AnnotationRequest::new(&root(), None, &"long ".repeat(30), 1).unwrap();
+        untitled.task = format!("{}\nsecond line", "x".repeat(100));
+        let title = untitled.effective_title();
+        assert_eq!(title.chars().count(), 73);
+        assert!(title.ends_with('…'));
+        assert_eq!(untitled.to_template("", 1).unwrap().tags[1][1], title);
     }
 
     #[test]
-    fn answer_template_replies_and_quotes_the_written_notes() {
-        let request_event = json!({
-            "id": EID, "kind": 1111, "pubkey": PK,
-            "tags": [["A", sec()], ["K", "30041"], ["P", PK], ["a", sec()], ["k", "30041"], ["p", PK], ["p", ASST], ["t", REQUEST_TAG]],
-            "content": "explain"
+    fn a_request_event_reads_back_and_answers_point_at_it() {
+        let mut r = AnnotationRequest::new(&root(), Some(&sec()), "explain the moral", 7).unwrap();
+        r.parent_event_id = Some(EID.into());
+        r.scope = vec!["siblings".into()];
+        r.context = Some("the fox".into());
+        let t = r.to_template("", 7).unwrap();
+        let mut ev = json!({
+            "id": EID, "kind": 30041, "pubkey": PK, "created_at": 7,
+            "content": t.content, "tags": t.tags,
         });
-        let coords = vec![format!("30041:{ASST}:n1"), format!("30040:{ASST}:bundle")];
-        let t = build_answer_template(&request_event, "Wrote two notes.", &coords, "", 9).unwrap();
-        assert_eq!(t.kind, 1111);
-        let tag = |n: &str| t.tags.iter().filter(|x| x[0] == n).cloned().collect::<Vec<_>>();
-        assert_eq!(tag("A")[0][1], sec(), "root chased from the request");
-        assert_eq!(tag("e")[0][1], EID, "parent is the request");
-        assert_eq!(tag("k")[0][1], "1111");
-        assert_eq!(tag("q").len(), 2);
-        assert!(t.content.contains("30040:"));
-        assert!(tag("t").iter().any(|x| x[1] == "annotation-answer"));
+        assert!(is_request_event(&ev));
+        let back = AnnotationRequest::from_event(&ev).expect("reads back");
+        assert_eq!(back.id, format!("ev_{}", &EID[..12]));
+        assert_eq!(back.root, root());
+        assert_eq!(back.parent, sec());
+        assert_eq!(back.parent_event_id.as_deref(), Some(EID));
+        assert_eq!(back.task, "explain the moral");
+        assert_eq!(back.title, None, "a derived title does not read back as the user's");
+        assert_eq!(back.scope, vec!["siblings"]);
+        assert_eq!(back.context.as_deref(), Some("the fox"));
+        assert_eq!(back.output, "notes");
+        assert_eq!(back.event_id.as_deref(), Some(EID));
+        assert_eq!(back.coordinate.as_deref(), Some(format!("30041:{PK}:{}", t.tags[0][1]).as_str()));
+        assert_eq!(back.status, RequestStatus::Open);
+        // A plain note is not a request, even with an anchor.
+        ev["tags"].as_array_mut().unwrap().retain(|t| t[0] != "t");
+        assert!(!is_request_event(&ev));
+        assert!(AnnotationRequest::from_event(&ev).is_none());
+        // An answer points at the request's coordinate; a stray value is not a pointer.
+        let coord = back.coordinate.clone().unwrap();
+        let answer = json!({"kind": 30041, "pubkey": ASST, "tags": [["d", "n1"], ["request", coord]]});
+        assert_eq!(request_pointer(&answer).as_deref(), Some(coord.as_str()));
+        let stray = json!({"kind": 30041, "pubkey": ASST, "tags": [["d", "n1"], ["request", "rq_abc"]]});
+        assert_eq!(request_pointer(&stray), None);
+        assert_eq!(request_pointer(&json!({"kind": 30041, "tags": [["d", "n"]]})), None);
     }
 
     #[test]
@@ -452,7 +513,6 @@ mod tests {
         loaded.answer(RequestAnswer {
             summary: "done".into(),
             coordinates: vec![format!("30041:{ASST}:n1")],
-            reply_event_id: None,
             answered_at: 10,
             by: Some(ASST.into()),
         });

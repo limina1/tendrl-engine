@@ -1,23 +1,26 @@
 //! Annotation requests over HTTP — `/api/v1/annotations/requests*`.
 //!
-//! Create (local record; optionally signed as a kind-1111 mention of the
-//! assistant, optionally broadcast), list, delete, answer. The answer path
-//! is what an agent calls through the `answer_request` tool; the web uses it
-//! to mark a request done by hand.
+//! Create (local record; optionally signed by the user as a kind-30041
+//! annotation on the section, optionally broadcast), list, delete, answer.
+//! `list` merges two sources: the local records and every signed request
+//! annotation in the store (`k:30041 t:annotation-request`), and derives
+//! *answered* from the notes that point back at a request with a `request`
+//! tag. The answer endpoint closes a record by hand (or from the
+//! `answer_request` tool) — a signed request needs no such call; the note
+//! that answers it is the answer.
 
 use super::{AppState, SignAs};
 use crate::engine::FetchPolicy;
 use crate::error::EngineError;
-use crate::publication::insertion::coord_parts;
-use crate::requests::{
-    build_answer_template, AnnotationRequest, RequestAnswer, RequestStatus, RequestStore,
-};
+use crate::publication::insertion::{coord_parts, event_coordinate};
+use crate::requests::{request_pointer, AnnotationRequest, RequestAnswer, RequestStatus, RequestStore, REQUEST_TAG};
 use axum::{
     extract::{Path, Query, State},
     Extension, Json,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use std::collections::{HashMap, HashSet};
 
 #[derive(Debug, Deserialize)]
 pub struct CreateRequest {
@@ -41,12 +44,12 @@ pub struct CreateRequest {
     /// Coordinate of a style event (`30078:pk:d`) the answer should follow.
     #[serde(default)]
     pub style: Option<String>,
-    /// Also sign it as a kind-1111 mention of the assistant (needs your
-    /// identity and an assistant identity). Default false — local record.
+    /// Also sign it as a kind-30041 annotation on the section, as you (needs
+    /// your identity). Default false — local record only.
     #[serde(default)]
     pub sign: bool,
-    /// With `sign`: also send the mention to the publish relays. Default
-    /// false — the mention stays in the local store.
+    /// With `sign`: also send the annotation to the publish relays. Default
+    /// false — it stays in the local store.
     #[serde(default)]
     pub broadcast: bool,
     #[serde(default)]
@@ -57,16 +60,9 @@ pub struct CreateRequest {
 pub struct RequestResponse {
     #[serde(flatten)]
     pub request: AnnotationRequest,
-    /// The signed mention, when `sign` was set.
+    /// The signed annotation, when `sign` was set.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub event: Option<Value>,
-}
-
-async fn assistant_pubkey(engine: &AppState) -> Option<String> {
-    match engine.assistant_signing() {
-        Some(ctl) => ctl.active_pubkey().await,
-        None => None,
-    }
 }
 
 /// POST /api/v1/annotations/requests
@@ -98,7 +94,6 @@ pub async fn create_handler(
             }
         }
     }
-    r.assistant_pubkey = assistant_pubkey(&engine).await;
     if let Some(coord) = req.style.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
         let style = super::styles::get_style(&engine, coord)
             .await?
@@ -109,28 +104,28 @@ pub async fn create_handler(
 
     let mut event = None;
     if req.sign {
-        let asst = r.assistant_pubkey.clone().ok_or_else(|| {
-            EngineError::BadRequest(
-                "signing a request mentions the assistant — set an assistant identity first, or leave it unsigned".into(),
-            )
-        })?;
+        // The user signs the ask; the same path an insertion takes.
+        let (pubkey, signer) = super::resolve_publish_signer(&engine, &signing, SignAs::User).await?;
         let relay_hint = super::discussion_relay_hint(&engine);
-        let template = r
-            .to_template(&asst, &relay_hint, now)
-            .map_err(EngineError::BadRequest)?;
-        // Local by default: an empty relay override means "no broadcast".
-        let relays = if req.broadcast {
-            req.relays.clone()
-        } else {
-            Some(Vec::new())
-        };
-        let resp = super::sign_ingest_broadcast(&engine, &signing, template, relays).await?;
-        r.event_id = resp
-            .event
-            .get("id")
-            .and_then(Value::as_str)
-            .map(str::to_string);
-        event = Some(resp.event);
+        let mut template = r.to_template(&relay_hint, now).map_err(EngineError::BadRequest)?;
+        template.pubkey = Some(pubkey);
+        let signed = signer
+            .sign(template)
+            .await
+            .map_err(super::map_publish_sign_error)?;
+        // Local by default; `broadcast` sends it to the publish relays.
+        let _ = super::finalize_publish(
+            &engine,
+            None,
+            vec![signed.clone()],
+            req.broadcast,
+            req.relays.clone(),
+            true,
+        )
+        .await?;
+        r.event_id = signed.get("id").and_then(Value::as_str).map(str::to_string);
+        r.coordinate = event_coordinate(&signed);
+        event = Some(signed);
     }
 
     RequestStore::new(engine.data_dir())?.save(&r)?;
@@ -158,7 +153,112 @@ fn parse_status(s: Option<&str>) -> Result<Option<RequestStatus>, EngineError> {
     }
 }
 
-/// Shared by the endpoint and the `list_requests` tool.
+/// Newest version per coordinate of a batch of addressable events.
+fn newest_per_coordinate(events: Vec<Value>) -> Vec<Value> {
+    let mut newest: HashMap<String, Value> = HashMap::new();
+    for ev in events {
+        let Some(coord) = event_coordinate(&ev) else {
+            continue;
+        };
+        let ts = ev.get("created_at").and_then(Value::as_i64).unwrap_or(0);
+        let replace = newest
+            .get(&coord)
+            .map(|old| old.get("created_at").and_then(Value::as_i64).unwrap_or(0) < ts)
+            .unwrap_or(true);
+        if replace {
+            newest.insert(coord, ev);
+        }
+    }
+    newest.into_values().collect()
+}
+
+/// Signed requests in the local store, as records. `root` narrows the scan.
+fn signed_requests(engine: &AppState, root: Option<&str>) -> Result<Vec<AnnotationRequest>, EngineError> {
+    let mut filter = json!({ "kinds": [30041], "#t": [REQUEST_TAG], "limit": 500 });
+    if let Some(root) = root {
+        filter["#A"] = json!([root]);
+    }
+    let events = crate::query::query_local(engine.ndb(), &[filter])?;
+    Ok(newest_per_coordinate(events)
+        .iter()
+        .filter_map(AnnotationRequest::from_event)
+        .collect())
+}
+
+/// Mark every request that a local note points at as answered. A request
+/// is answered iff a 30041 anchored to its root carries
+/// `["request", <its coordinate>]`; a record's own answer (from
+/// `answer_request`) is kept when it has one.
+fn derive_answers(engine: &AppState, requests: &mut [AnnotationRequest]) -> Result<(), EngineError> {
+    let coords: HashSet<&str> = requests.iter().filter_map(|r| r.coordinate.as_deref()).collect();
+    if coords.is_empty() {
+        return Ok(());
+    }
+    let roots: HashSet<&str> = requests
+        .iter()
+        .filter(|r| r.coordinate.is_some())
+        .map(|r| r.root.as_str())
+        .collect();
+    // request coordinate → (answer coordinates, newest answer time, its author)
+    let mut answers: HashMap<String, (Vec<String>, i64, Option<String>)> = HashMap::new();
+    for root in roots {
+        let filter = json!({ "kinds": [30041], "#A": [root], "limit": 1000 });
+        let events = crate::query::query_local(engine.ndb(), &[filter])?;
+        for ev in newest_per_coordinate(events) {
+            let Some(target) = request_pointer(&ev) else {
+                continue;
+            };
+            if !coords.contains(target.as_str()) {
+                continue;
+            }
+            let Some(coord) = event_coordinate(&ev) else {
+                continue;
+            };
+            let ts = ev.get("created_at").and_then(Value::as_i64).unwrap_or(0);
+            let by = ev.get("pubkey").and_then(Value::as_str).map(str::to_string);
+            let entry = answers.entry(target).or_insert_with(|| (Vec::new(), 0, None));
+            entry.0.push(coord);
+            if ts >= entry.1 {
+                entry.1 = ts;
+                entry.2 = by;
+            }
+        }
+    }
+    for r in requests.iter_mut() {
+        let Some(coord) = r.coordinate.as_deref() else {
+            continue;
+        };
+        let Some((coords, ts, by)) = answers.get(coord) else {
+            continue;
+        };
+        let mut coords = coords.clone();
+        coords.sort();
+        match r.answer.as_mut() {
+            Some(a) => {
+                for c in coords {
+                    if !a.coordinates.contains(&c) {
+                        a.coordinates.push(c);
+                    }
+                }
+            }
+            None => {
+                let n = coords.len();
+                r.answer = Some(RequestAnswer {
+                    summary: format!("{n} note{} point{} at this request", if n == 1 { "" } else { "s" }, if n == 1 { "s" } else { "" }),
+                    coordinates: coords,
+                    answered_at: *ts,
+                    by: by.clone(),
+                });
+            }
+        }
+        r.status = RequestStatus::Answered;
+    }
+    Ok(())
+}
+
+/// Shared by the endpoint and the `list_requests` tool: local records plus
+/// signed request annotations in the store, answered derived from the
+/// notes that point at them, newest first.
 pub(crate) fn list_requests(
     engine: &AppState,
     root: Option<&str>,
@@ -166,7 +266,42 @@ pub(crate) fn list_requests(
     status: Option<&str>,
 ) -> Result<Vec<AnnotationRequest>, EngineError> {
     let status = parse_status(status)?;
-    RequestStore::new(engine.data_dir())?.query(root, parent, status)
+    let mut out = RequestStore::new(engine.data_dir())?.query(root, parent, None)?;
+    let known: HashSet<String> = out.iter().filter_map(|r| r.coordinate.clone()).collect();
+    for r in signed_requests(engine, root)? {
+        // A record that signed this event already stands for it.
+        if r.coordinate.as_deref().map(|c| known.contains(c)).unwrap_or(false) {
+            continue;
+        }
+        if parent.map(|p| r.parent == p).unwrap_or(true) {
+            out.push(r);
+        }
+    }
+    derive_answers(engine, &mut out)?;
+    if let Some(s) = status {
+        out.retain(|r| r.status == s);
+    }
+    out.sort_by(|a, b| b.created_at.cmp(&a.created_at).then(b.id.cmp(&a.id)));
+    Ok(out)
+}
+
+/// One request by id: a record (`rq_…`) or a signed request annotation
+/// (`ev_…`), answered derived either way.
+pub(crate) fn get_request(engine: &AppState, id: &str) -> Result<AnnotationRequest, EngineError> {
+    let mut one = if id.starts_with("rq_") {
+        vec![RequestStore::new(engine.data_dir())?.load(id)?]
+    } else {
+        signed_requests(engine, None)?
+            .into_iter()
+            .filter(|r| r.id == id)
+            .take(1)
+            .collect::<Vec<_>>()
+    };
+    if one.is_empty() {
+        return Err(EngineError::NotFound(format!("request {id}")));
+    }
+    derive_answers(engine, &mut one)?;
+    Ok(one.remove(0))
 }
 
 /// A request as the agent sees it: the record plus the style's text, so it
@@ -204,11 +339,11 @@ pub async fn get_handler(
     State(engine): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<AnnotationRequest>, EngineError> {
-    Ok(Json(RequestStore::new(engine.data_dir())?.load(&id)?))
+    Ok(Json(get_request(&engine, &id)?))
 }
 
 /// DELETE /api/v1/annotations/requests/:id — the local record only; a signed
-/// mention stays an event (NIP-09 it from its menu if you want it gone).
+/// request stays an event (NIP-09 it from its menu if you want it gone).
 pub async fn delete_handler(
     State(engine): State<AppState>,
     Path(id): Path<String>,
@@ -232,26 +367,27 @@ pub struct AnswerRequest {
     pub summary: String,
     #[serde(default)]
     pub coordinates: Vec<String>,
-    /// When the request was a signed mention, also reply to it as the
-    /// assistant (kind 1111, local). Default true.
-    #[serde(default = "default_true")]
-    pub sign_reply: bool,
-    /// Who is answering. `assistant` (default) signs the reply with the
-    /// assistant's key; `user` marks it answered by hand, no reply event.
+    /// Who is answering. `assistant` (default) records the assistant's
+    /// pubkey; `user` marks it answered by hand. No event is signed here —
+    /// the notes that answer a signed request point at it themselves.
     #[serde(default)]
     pub sign_as: Option<SignAs>,
 }
 
-fn default_true() -> bool {
-    true
-}
-
-/// Shared by the endpoint and the `answer_request` tool.
+/// Shared by the endpoint and the `answer_request` tool. Closes a local
+/// record; a signed request with no record (`ev_…`) is closed by the notes
+/// that point at it, not by this call.
 pub(crate) async fn answer_request(
     engine: &AppState,
     id: &str,
     req: AnswerRequest,
 ) -> Result<AnnotationRequest, EngineError> {
+    if !id.starts_with("rq_") {
+        return Err(EngineError::BadRequest(
+            "a signed request is answered by the notes that point at it — write them with `request` set to its coordinate"
+                .into(),
+        ));
+    }
     let store = RequestStore::new(engine.data_dir())?;
     let mut r = store.load(id)?;
     let summary = req.summary.trim().to_string();
@@ -274,50 +410,12 @@ pub(crate) async fn answer_request(
     let mut answer = RequestAnswer {
         summary,
         coordinates,
-        reply_event_id: None,
         answered_at: now,
         by: None,
     };
     if sign_as == SignAs::Assistant {
         if let Some(ctl) = engine.assistant_signing() {
             answer.by = ctl.active_pubkey().await;
-            // Close the thread on the wire too when the request was signed.
-            if req.sign_reply {
-                if let Some(req_id) = r.event_id.as_deref() {
-                    if let Some(request_event) = crate::query::query_by_id(engine.ndb(), req_id)? {
-                        if let Some(pubkey) = answer.by.clone() {
-                            let relay_hint = super::discussion_relay_hint(engine);
-                            let mut template = build_answer_template(
-                                &request_event,
-                                &answer.summary,
-                                &answer.coordinates,
-                                &relay_hint,
-                                now,
-                            )
-                            .map_err(EngineError::BadRequest)?;
-                            template.pubkey = Some(pubkey);
-                            let signed = ctl
-                                .sign(template)
-                                .await
-                                .map_err(super::map_assistant_sign_error)?;
-                            let resp = super::finalize_publish(
-                                engine,
-                                None,
-                                vec![signed.clone()],
-                                false,
-                                None,
-                                true,
-                            )
-                            .await?;
-                            let _ = resp;
-                            answer.reply_event_id = signed
-                                .get("id")
-                                .and_then(Value::as_str)
-                                .map(str::to_string);
-                        }
-                    }
-                }
-            }
         }
     }
     r.answer(answer);

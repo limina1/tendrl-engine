@@ -53,6 +53,9 @@ pub struct InsertionBody {
     /// Coordinate of an earlier note by the same signer to replace — the
     /// new event reuses its `d`, so it is a new version, not a second note.
     pub replace: Option<String>,
+    /// Coordinate of the annotation request (`30041:pk:d`, a signed
+    /// `t: annotation-request`) this note answers — `["request", …]` tag.
+    pub request: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -140,6 +143,18 @@ pub(crate) async fn insertion_template(
     let mut extra: Vec<Vec<String>> = Vec::new();
     if let Some(ctx) = body.context.as_deref().map(str::trim).filter(|c| !c.is_empty()) {
         extra.push(vec!["context".to_string(), ctx.to_string()]);
+    }
+    if let Some(req) = body.request.as_deref().map(str::trim).filter(|r| !r.is_empty()) {
+        match coord_parts(req) {
+            Some((30041, _, d)) if !d.is_empty() => {
+                extra.push(vec!["request".to_string(), req.to_string()]);
+            }
+            _ => {
+                return Err(EngineError::BadRequest(format!(
+                    "request must be the 30041 coordinate of a signed annotation request, got `{req}`"
+                )))
+            }
+        }
     }
     extra.extend(body.tags.iter().cloned());
     let relay_hint = super::discussion_relay_hint(engine);
@@ -282,13 +297,27 @@ pub struct InsertionsLoadRequest {
     pub mode_confirm: bool,
 }
 
+/// What a loaded 30041 is to the reader: a note, or a signed annotation
+/// request (`t: annotation-request`) asking for notes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum InsertionRole {
+    Note,
+    Request,
+}
+
 /// One loaded insertion: the section event plus its parsed anchor, so the
-/// reader can draw the pointer without re-deriving tags.
+/// reader can draw the pointer without re-deriving tags — and its role plus
+/// the request it answers, derived here so no client reads tags.
 #[derive(Debug, Serialize)]
 pub struct LoadedInsertion {
     pub event: Value,
     pub coordinate: String,
     pub anchor: InsertionAnchor,
+    pub role: InsertionRole,
+    /// The request coordinate this note answers (`request` tag), when any.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub request: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -451,10 +480,18 @@ pub(crate) async fn load_insertions(
             if anchor.root != root {
                 return None;
             }
+            let role = if crate::requests::is_request_event(&event) {
+                InsertionRole::Request
+            } else {
+                InsertionRole::Note
+            };
+            let request = crate::requests::request_pointer(&event);
             Some(LoadedInsertion {
                 event,
                 coordinate,
                 anchor,
+                role,
+                request,
             })
         })
         .collect();

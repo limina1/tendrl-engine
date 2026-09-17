@@ -263,7 +263,7 @@ pub fn catalog() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "list_requests",
-            description: "List the user's annotation requests — tasks they wrote in the reader against a place in a publication (\"write notes about this section\", \"compare with…\"). Each has an anchor (root publication + parent section), the task, scope hints (section / siblings / publication / neighbours / relays / web), an optional selected excerpt, and whether it is open or answered. Start here when asked to check requests. Answer one by reading the anchor (view_publication / get_addressable / get_context), researching per its scope, writing notes with propose_insertion anchored to the same parent, then answer_request.",
+            description: "List the user's annotation requests — tasks they wrote in the reader against a place in a publication (\"write notes about this section\", \"compare with…\"). Each has an anchor (root publication + parent section), the task, scope hints (section / siblings / publication / neighbours / relays / web), an optional selected excerpt, and whether it is open or answered. Two sources are merged: local records (rq_…) and requests the user signed as kind-30041 annotations (`coordinate` set; ev_… when there is no record). A signed request counts as answered as soon as a local note points at it with `request`. Start here when asked to check requests. Answer one by reading the anchor (view_publication / get_addressable / get_context), researching per its scope, writing notes with propose_insertion anchored to the same parent — passing the request's `coordinate` as `request` on EVERY note — then answer_request for a record.",
             category: ToolCategory::Read,
             input_schema: schema_list_requests,
         },
@@ -275,7 +275,7 @@ pub fn catalog() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "answer_request",
-            description: "Close an annotation request: record a short summary and the coordinates of the notes you wrote (30041:pk:d — and the 30040 bundle when you made a kasten). When the request was signed as a mention, this also posts the assistant's kind-1111 reply under it (local). Call it once per request, after propose_insertion has stored the notes.",
+            description: "Close an annotation request RECORD (rq_…): a short summary and the coordinates of the notes you wrote (30041:pk:d — and the 30040 bundle when you made a kasten). No event is signed: the notes that answer a signed request point at it themselves (`request` on propose_insertion), and a request with no record (ev_…) is closed by those notes alone. Call it once per record, after propose_insertion has stored the notes.",
             category: ToolCategory::ComposeWrite,
             input_schema: schema_answer_request,
         },
@@ -527,6 +527,7 @@ fn schema_propose_insertion() -> Value {
             "format": { "type": "string", "enum": ["markdown", "org", "asciidoc", "plain"], "description": "Content mode. Default markdown." },
             "context": { "type": "string", "description": "Optional excerpt of the parent this note responds to." },
             "replace": { "type": "string", "description": "Coordinate (30041:pk:d) of YOUR earlier note to replace — the new event reuses its d-tag, so it is a new version, not a second note." },
+            "request": { "type": "string", "description": "The `coordinate` of the annotation request this note answers (30041:pk:d, from list_requests). Pass it on every note written for a request — it is what marks the request answered and lets the reader thread the note under it." },
             "style": { "type": "string", "description": "Coordinate of the style event (30078:pk:d) this note follows — copy it from the request's `style`. Stamped as a `style` tag so everything written in that style is one search." }
         },
         "required": ["root", "title", "content"]
@@ -551,7 +552,7 @@ fn schema_answer_request() -> Value {
     json!({
         "type": "object",
         "properties": {
-            "request_id": { "type": "string", "description": "The request id (rq_…) from list_requests." },
+            "request_id": { "type": "string", "description": "The request record id (rq_…) from list_requests. An ev_… request has no record — it is answered by notes carrying `request`." },
             "summary": { "type": "string", "description": "One paragraph: what you wrote and where it came from." },
             "coordinates": { "type": "array", "items": { "type": "string" }, "description": "Coordinates of the notes you stored (from propose_insertion / promote_insertion)." }
         },
@@ -1147,6 +1148,7 @@ async fn propose_insertion(cx: &ToolCx, input: Value) -> Result<Value> {
             .map(|c| vec![vec!["style".to_string(), c.to_string()]])
             .unwrap_or_default(),
         replace: input.get("replace").and_then(Value::as_str).map(String::from),
+        request: input.get("request").and_then(Value::as_str).map(String::from),
     };
     let (mut template, resolved) =
         crate::api::insertions::insertion_template(&cx.engine, &anchor, &body).await?;
@@ -1167,6 +1169,7 @@ async fn propose_insertion(cx: &ToolCx, input: Value) -> Result<Value> {
         "id": signed.get("id"),
         "coordinate": coordinate,
         "anchor": resolved,
+        "request": body.request,
         "ingested": v["ingested"],
         "note": "Attached and stored locally — not in the index. `publish` broadcasts it; promote_insertion (or the reader's promote) folds it into the structure.",
     }))
@@ -1225,7 +1228,7 @@ async fn list_requests(engine: &Arc<Engine>, input: Value) -> Result<Value> {
     Ok(json!({
         "count": requests.len(),
         "requests": requests,
-        "note": "Answer one with propose_insertion (anchored to its parent, root = its root; pass its `style` so the notes carry it, and follow `style_instructions`) then answer_request.",
+        "note": "Answer one with propose_insertion (anchored to its parent, root = its root; pass its `coordinate` as `request` on every note so it is marked answered, pass its `style` so the notes carry it, and follow `style_instructions`) then answer_request for an rq_… record.",
     }))
 }
 
@@ -1250,7 +1253,6 @@ async fn answer_request(engine: &Arc<Engine>, input: Value) -> Result<Value> {
         crate::api::requests::AnswerRequest {
             summary,
             coordinates,
-            sign_reply: true,
             sign_as: Some(crate::api::SignAs::Assistant),
         },
     )

@@ -9782,7 +9782,8 @@ mod chat_api_tests {
         let dir = tempfile::tempdir().unwrap();
         let mut engine = crate::engine::Engine::new(dir.path()).unwrap();
         let user = Arc::new(Mutex::new(IdentitySession::new()));
-        user.lock()
+        let user_pk = user
+            .lock()
             .unwrap()
             .login_nsec(&encode_nsec(USER_SEC).unwrap())
             .unwrap();
@@ -9820,23 +9821,24 @@ mod chat_api_tests {
         let root = crate::publication::insertion::event_coordinate(&index).unwrap();
         let section = crate::publication::insertion::index_children(&index)[0].clone();
 
-        // Unsigned request (the default).
+        // Unsigned request (the default): a local record, no event, no
+        // assistant identity involved.
         let Json(created) = insertions_req_create(&engine, &signing, json!({
             "root": root, "parent": section, "task": "derive it two ways", "scope": ["section", "web"], "output": "kasten"
         }))
         .await;
         assert_eq!(created.request.status, RequestStatus::Open);
         assert!(created.request.event_id.is_none(), "unsigned: no event");
+        assert!(created.request.coordinate.is_none());
         assert!(created.request.parent_event_id.is_some(), "parent version pinned from the store");
         assert_eq!(created.request.scope, vec!["section", "web"]);
         assert_eq!(created.request.output, "kasten");
-        assert_eq!(created.request.assistant_pubkey.as_deref(), Some(asst_pk.as_str()));
 
         let listed = crate::tools::dispatch(&cx, "list_requests", json!({ "root": root })).await.unwrap();
         assert_eq!(listed["count"], 1);
         assert_eq!(listed["requests"][0]["id"], created.request.id);
 
-        // The assistant writes a note and closes it.
+        // The assistant writes a note and closes the record by hand.
         let note = crate::tools::dispatch(
             &cx,
             "propose_insertion",
@@ -9854,38 +9856,145 @@ mod chat_api_tests {
         assert_eq!(answered["status"], "answered");
         assert_eq!(answered["answer"]["coordinates"][0], note["coordinate"]);
         assert_eq!(answered["answer"]["by"], asst_pk);
-        assert!(answered["answer"].get("reply_event_id").is_none(), "nothing to reply to");
+        assert!(answered["answer"].get("reply_event_id").is_none(), "no reply event exists any more");
         let open = crate::tools::dispatch(&cx, "list_requests", json!({})).await.unwrap();
         assert_eq!(open["count"], 0, "answered requests leave the open list");
 
-        // Signed request: a 1111 mention of the assistant, kept local.
+        // Signed request: a kind-30041 annotation on the section, signed by
+        // the USER, kept local — the same shape as the notes that answer it.
         let Json(signed) = insertions_req_create(&engine, &signing, json!({
-            "root": root, "parent": section, "task": "history of the method", "sign": true
+            "root": root, "parent": section, "task": "history of the method", "context": "y = Xb", "sign": true
         }))
         .await;
         let ev = signed.event.expect("signed event");
-        assert_eq!(ev["kind"], 1111);
+        assert_eq!(ev["kind"], 30041);
+        assert_eq!(ev["pubkey"], user_pk, "the user signs the ask");
         let tags = crate::publication::insertion::event_tags(&ev);
-        assert!(tags.iter().any(|t| t[0] == "p" && t[1] == asst_pk), "mentions the assistant");
+        // The only `p` is the anchor's parent author (the index was signed
+        // by the assistant tool here) — no separate assistant mention.
+        assert_eq!(tags.iter().filter(|t| t[0] == "p").count(), 1, "no assistant mention");
+        assert!(tags.iter().any(|t| t[0] == "p" && t[1] == index["pubkey"]));
         assert!(tags.iter().any(|t| t[0] == "t" && t[1] == REQUEST_TAG));
-        assert!(tags.iter().any(|t| t[0] == "A" && t[1] == section), "rooted at the section like reader comments");
+        assert!(tags.iter().any(|t| t[0] == "A" && t[1] == root), "rooted at the publication like any insertion");
+        assert!(tags.iter().any(|t| t[0] == "a" && t[1] == section), "anchored to the section");
+        assert!(tags.iter().any(|t| t[0] == "output" && t[1] == "notes"));
+        assert!(tags.iter().any(|t| t[0] == "context" && t[1] == "y = Xb"));
+        assert!(tags.iter().any(|t| t[0] == "m" && t[1] == "text/markdown"));
+        assert!(tags.iter().any(|t| t[0] == "title" && t[1] == "history of the method"), "title derived from the ask");
         assert_eq!(signed.request.event_id.as_deref(), ev["id"].as_str());
+        let coord = signed.request.coordinate.clone().expect("a signed request has a coordinate");
+        assert_eq!(coord, crate::publication::insertion::event_coordinate(&ev).unwrap());
         assert!(crate::query::query_by_id(engine.ndb(), ev["id"].as_str().unwrap()).unwrap().is_some());
 
-        let answered = crate::tools::dispatch(
-            &cx,
-            "answer_request",
-            json!({ "request_id": signed.request.id, "summary": "Gauss, Legendre.", "coordinates": [] }),
+        // The reader sees it among the insertions as a request, not a note.
+        let loaded = insertions::load_insertions(
+            &engine,
+            serde_json::from_value(json!({ "root": root, "policy": "local_only" })).unwrap(),
         )
         .await
         .unwrap();
-        let reply_id = answered["answer"]["reply_event_id"].as_str().expect("reply posted");
-        let reply = crate::query::query_by_id(engine.ndb(), reply_id).unwrap().unwrap();
-        assert_eq!(reply["kind"], 1111);
-        assert_eq!(reply["pubkey"], asst_pk, "the reply is the assistant's");
-        let rtags = crate::publication::insertion::event_tags(&reply);
-        assert!(rtags.iter().any(|t| t[0] == "e" && t[1] == ev["id"].as_str().unwrap()), "threaded under the request");
-        assert!(rtags.iter().any(|t| t[0] == "A" && t[1] == section));
+        let req_item = loaded
+            .insertions
+            .iter()
+            .find(|i| i.coordinate == coord)
+            .expect("the request loads with the insertions");
+        assert_eq!(req_item.role, insertions::InsertionRole::Request);
+        assert!(req_item.request.is_none());
+        let note_item = loaded
+            .insertions
+            .iter()
+            .find(|i| i.coordinate == note["coordinate"])
+            .unwrap();
+        assert_eq!(note_item.role, insertions::InsertionRole::Note);
+        assert!(note_item.request.is_none(), "a note written for no request points nowhere");
+
+        // Open until a note points at it; the record and the event are one
+        // entry in the list (deduped by coordinate).
+        let open = crate::tools::dispatch(&cx, "list_requests", json!({ "root": root })).await.unwrap();
+        assert_eq!(open["count"], 1);
+        assert_eq!(open["requests"][0]["id"], signed.request.id);
+        assert_eq!(open["requests"][0]["coordinate"], coord);
+
+        // `request` must be a 30041 coordinate.
+        let bad = crate::tools::dispatch(
+            &cx,
+            "propose_insertion",
+            json!({ "root": root, "parent": section, "title": "x", "content": "y", "request": signed.request.id }),
+        )
+        .await;
+        assert!(bad.is_err(), "a record id is not a request pointer");
+
+        // The answer: an ordinary insertion that points at the request.
+        let answer_note = crate::tools::dispatch(
+            &cx,
+            "propose_insertion",
+            json!({ "root": root, "parent": section, "title": "Gauss and Legendre", "content": "1805, 1809.", "request": coord }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(answer_note["request"], coord);
+        let answer_ev = crate::query::query_by_id(engine.ndb(), answer_note["id"].as_str().unwrap())
+            .unwrap()
+            .unwrap();
+        let atags = crate::publication::insertion::event_tags(&answer_ev);
+        assert!(atags.iter().any(|t| t[0] == "request" && t[1] == coord), "the note carries the pointer");
+        let loaded = insertions::load_insertions(
+            &engine,
+            serde_json::from_value(json!({ "root": root, "policy": "local_only" })).unwrap(),
+        )
+        .await
+        .unwrap();
+        let ans_item = loaded
+            .insertions
+            .iter()
+            .find(|i| i.coordinate == answer_note["coordinate"])
+            .unwrap();
+        assert_eq!(ans_item.role, insertions::InsertionRole::Note);
+        assert_eq!(ans_item.request.as_deref(), Some(coord.as_str()), "engine derives the pointer");
+
+        // Answered is derived from the pointer — no answer_request needed.
+        let open = crate::tools::dispatch(&cx, "list_requests", json!({ "root": root })).await.unwrap();
+        assert_eq!(open["count"], 0, "a pointed-at request is answered");
+        let all = crate::tools::dispatch(&cx, "list_requests", json!({ "root": root, "status": "all" })).await.unwrap();
+        assert_eq!(all["count"], 2);
+        let derived = all["requests"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["id"] == signed.request.id)
+            .unwrap();
+        assert_eq!(derived["status"], "answered");
+        assert_eq!(derived["answer"]["coordinates"][0], answer_note["coordinate"]);
+        assert_eq!(derived["answer"]["by"], asst_pk);
+        let got = insertions_req::get_request(&engine, &signed.request.id).unwrap();
+        assert_eq!(got.status, RequestStatus::Answered);
+
+        // A signed request with no record (the record deleted, or one that
+        // arrived from a relay) still lists, from the event alone.
+        let store = crate::requests::RequestStore::new(engine.data_dir()).unwrap();
+        store.delete(&signed.request.id).unwrap();
+        let all = crate::tools::dispatch(&cx, "list_requests", json!({ "root": root, "status": "all" })).await.unwrap();
+        assert_eq!(all["count"], 2, "the event stands in for the record");
+        let from_event = all["requests"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["coordinate"] == coord)
+            .expect("listed from the event");
+        assert!(from_event["id"].as_str().unwrap().starts_with("ev_"));
+        assert_eq!(from_event["task"], "history of the method");
+        assert_eq!(from_event["context"], "y = Xb");
+        assert_eq!(from_event["status"], "answered");
+        assert_eq!(from_event["parent"], section);
+        let ev_id = from_event["id"].as_str().unwrap().to_string();
+        assert!(insertions_req::get_request(&engine, &ev_id).is_ok());
+        let closed = crate::tools::dispatch(
+            &cx,
+            "answer_request",
+            json!({ "request_id": ev_id, "summary": "x" }),
+        )
+        .await;
+        assert!(closed.is_err(), "no record to close — the notes are the answer");
     }
 
     async fn insertions_req_create(
