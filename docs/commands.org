@@ -2274,3 +2274,10 @@ curl -s -X POST $B/api/v1/annotations/requests -H "$J" -d "{\"root\":\"$ROOT\",\
 curl -s -X POST $B/mcp -H "$J" -H "$A" -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"list_requests","arguments":{}}}' | jq -c '.result.structuredContent.requests[0]|{style, style_instructions:(.style_instructions|.[0:40])}'
 curl -s -X POST $B/api/v1/search -H "$J" -d "{\"query\":\"style:$STY\",\"policy\":\"local_only\"}" | jq '.count'   # every note written in it
 #+end_src
+
+** Live store stream
+
+#+begin_src bash
+curl -sN localhost:3131/api/v1/store/events &                      # {"type":"ingested",kind,id,coordinate,roots,addrs} / {"type":"request",id,root,parent,status}
+# write a note over MCP from another shell → the open reader shows the card without a click (≈0.5 s); CDP check in scratchpad cdp/live-check.mjs
+#+end_src

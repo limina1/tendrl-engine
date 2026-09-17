@@ -80,6 +80,20 @@ with =propose_insertion= and closes it with =answer_request=; the window
 lists earlier requests here with their answers and opens the written
 notes. [[file:decision-requests-are-events.org][Decision]].
 
+* Live
+
+The engine announces its own store on =GET /api/v1/store/events= (SSE,
+=src/store_events.rs=): an =ingested= handle per event that lands in
+nostrdb (kind, id, coordinate, the =A= roots and =a= parents) and a
+=request= handle per request-record change. The reader subscribes
+(=web/src/lib/store-events.svelte.ts=) and, when a handle concerns its
+publication — anchored to it or a section of it, a request on it, a new
+version of one of its own events — re-reads that slice from the local
+store after a 300 ms debounce; the ask window re-lists its requests the
+same way. A note the agent writes over MCP is on the page within about
+half a second. Local only: nothing here opens a relay; live *relay*
+subscriptions are a separate step.
+
 * Styles
 
 A *writing style* is how the user wants notes written, saved as an event
