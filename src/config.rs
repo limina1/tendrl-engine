@@ -460,6 +460,11 @@ pub struct AiConfig {
     /// "everything but publish" policy. Persisted by the AI Tools settings tab.
     #[serde(default)]
     pub enabled_tools: Option<Vec<String>>,
+    /// The catalog as it was when `enabled_tools` was last saved. A tool
+    /// that is not in this list was added by a later build and gets its
+    /// default enablement instead of being silently frozen out.
+    #[serde(default)]
+    pub known_tools: Option<Vec<String>>,
     /// Path to a Markdown file prepended to the agent's system prompt, re-read
     /// each turn so edits apply live. Relative paths resolve against the config
     /// file's directory. Defaults to `prompt.md`.
@@ -484,6 +489,7 @@ impl Default for AiConfig {
             model: default_ai_model(),
             max_tool_turns: default_max_tool_turns(),
             enabled_tools: None,
+            known_tools: None,
             system_prompt_path: None,
         }
     }

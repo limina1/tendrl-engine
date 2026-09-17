@@ -100,6 +100,25 @@ impl ToolPolicy {
     }
 }
 
+impl ToolPolicy {
+    /// Restore a saved allowlist without freezing the catalog: a tool the
+    /// saved list never knew about (`known` lacks it — added by a later
+    /// build) gets the default policy's answer for its category, while every
+    /// tool the user did see keeps exactly the saved on/off.
+    pub fn from_saved(enabled: &[String], known: Option<&[String]>) -> Self {
+        let mut policy = Self::from_enabled(enabled.iter().cloned());
+        if let Some(known) = known {
+            let default = Self::default();
+            for t in catalog() {
+                if !known.iter().any(|k| k == t.name) && default.enabled.contains(t.name) {
+                    policy.enabled.insert(t.name.to_string());
+                }
+            }
+        }
+        policy
+    }
+}
+
 impl Default for ToolPolicy {
     /// "Everything but publish": all Read/Search/Network/ComposeWrite tools
     /// enabled; Publish tools opt-in.
@@ -243,6 +262,18 @@ pub fn catalog() -> Vec<ToolDef> {
             input_schema: schema_propose_insertion,
         },
         ToolDef {
+            name: "list_requests",
+            description: "List the user's annotation requests — tasks they wrote in the reader against a place in a publication (\"write notes about this section\", \"compare with…\"). Each has an anchor (root publication + parent section), the task, scope hints (section / siblings / publication / neighbours / relays / web), an optional selected excerpt, and whether it is open or answered. Start here when asked to check requests. Answer one by reading the anchor (view_publication / get_addressable / get_context), researching per its scope, writing notes with propose_insertion anchored to the same parent, then answer_request.",
+            category: ToolCategory::Read,
+            input_schema: schema_list_requests,
+        },
+        ToolDef {
+            name: "answer_request",
+            description: "Close an annotation request: record a short summary and the coordinates of the notes you wrote (30041:pk:d — and the 30040 bundle when you made a kasten). When the request was signed as a mention, this also posts the assistant's kind-1111 reply under it (local). Call it once per request, after propose_insertion has stored the notes.",
+            category: ToolCategory::ComposeWrite,
+            input_schema: schema_answer_request,
+        },
+        ToolDef {
             name: "promote_insertion",
             description: "Fold an insertion into a publication's structure by republishing its index with the note's coordinate spliced in — NKBIP-01's own copy process, signed AS THE ASSISTANT. If the assistant authored the index this is a new version (same d-tag); otherwise it is a DERIVATIVE index under the assistant's key (p + E to the original). The insertion event itself is never re-authored. Kept local; broadcast is the separate `publish` step. Disabled by default.",
             category: ToolCategory::Publish,
@@ -290,6 +321,8 @@ pub async fn dispatch(cx: &ToolCx, name: &str, input: Value) -> Result<Value> {
         "list_insertions" => list_insertions(engine, input).await,
         "propose_insertion" => propose_insertion(cx, input).await,
         "promote_insertion" => promote_insertion(cx, input).await,
+        "list_requests" => list_requests(engine, input).await,
+        "answer_request" => answer_request(engine, input).await,
         other => Err(EngineError::BadRequest(format!("unknown tool: {other}"))),
     }
 }
@@ -488,6 +521,28 @@ fn schema_propose_insertion() -> Value {
             "context": { "type": "string", "description": "Optional excerpt of the parent this note responds to." }
         },
         "required": ["root", "title", "content"]
+    })
+}
+
+fn schema_list_requests() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "root": { "type": "string", "description": "Optional publication coordinate to restrict to." },
+            "status": { "type": "string", "enum": ["open", "answered", "all"], "description": "Default open." }
+        }
+    })
+}
+
+fn schema_answer_request() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "request_id": { "type": "string", "description": "The request id (rq_…) from list_requests." },
+            "summary": { "type": "string", "description": "One paragraph: what you wrote and where it came from." },
+            "coordinates": { "type": "array", "items": { "type": "string" }, "description": "Coordinates of the notes you stored (from propose_insertion / promote_insertion)." }
+        },
+        "required": ["request_id", "summary"]
     })
 }
 
@@ -1139,6 +1194,41 @@ async fn promote_insertion(cx: &ToolCx, input: Value) -> Result<Value> {
     }))
 }
 
+/// The user's annotation requests (local records).
+async fn list_requests(engine: &Arc<Engine>, input: Value) -> Result<Value> {
+    let root = input.get("root").and_then(Value::as_str);
+    let status = input.get("status").and_then(Value::as_str).unwrap_or("open");
+    let list = crate::api::requests::list_requests(engine, root, None, Some(status))?;
+    Ok(json!({
+        "count": list.len(),
+        "requests": list,
+        "note": "Answer one with propose_insertion (anchored to its parent, root = its root) then answer_request.",
+    }))
+}
+
+/// Close a request with a summary and the written coordinates.
+async fn answer_request(engine: &Arc<Engine>, input: Value) -> Result<Value> {
+    let id = require_str(&input, "request_id")?.to_string();
+    let summary = require_str(&input, "summary")?.to_string();
+    let coordinates: Vec<String> = input
+        .get("coordinates")
+        .and_then(Value::as_array)
+        .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+        .unwrap_or_default();
+    let r = crate::api::requests::answer_request(
+        engine,
+        &id,
+        crate::api::requests::AnswerRequest {
+            summary,
+            coordinates,
+            sign_reply: true,
+            sign_as: Some(crate::api::SignAs::Assistant),
+        },
+    )
+    .await?;
+    Ok(serde_json::to_value(r)?)
+}
+
 /// Broadcast an already-signed local event to relays — the deliberate
 /// "broadcast" step, decoupled from signing (which stays a user action). Gated
 /// through `begin_publish_operation` (PublishConfirmModal in Confirm mode). On
@@ -1346,6 +1436,30 @@ fn parse_address(input: &str) -> Result<NAddr> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn saved_allowlist_does_not_freeze_out_new_tools() {
+        // The user saved a list before `list_requests` existed and had
+        // turned `semantic_search` off deliberately.
+        let known: Vec<String> = catalog()
+            .iter()
+            .map(|t| t.name.to_string())
+            .filter(|n| n != "list_requests" && n != "answer_request")
+            .collect();
+        let enabled: Vec<String> = known
+            .iter()
+            .filter(|n| *n != "semantic_search" && !n.starts_with("publish"))
+            .cloned()
+            .collect();
+        let p = ToolPolicy::from_saved(&enabled, Some(&known));
+        assert!(!p.enabled.contains("semantic_search"), "an explicit off stays off");
+        assert!(p.enabled.contains("list_requests"), "a tool the list never saw gets its default");
+        assert!(p.enabled.contains("answer_request"));
+        assert!(!p.enabled.contains("publish"), "Publish-category defaults stay off");
+        // No known list (older config): behaves exactly like from_enabled.
+        let q = ToolPolicy::from_saved(&enabled, None);
+        assert!(!q.enabled.contains("list_requests"));
+    }
 
     #[test]
     fn catalog_is_nonempty_and_schemas_are_objects() {

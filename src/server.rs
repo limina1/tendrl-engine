@@ -365,8 +365,8 @@ pub async fn start(opts: ServeOptions) -> anyhow::Result<RunningServer> {
         .allow_headers(Any);
 
     // Chat state + LLM provider
-    let ai_policy = match config.ai.enabled_tools.clone() {
-        Some(names) => tools::ToolPolicy::from_enabled(names),
+    let ai_policy = match config.ai.enabled_tools.as_deref() {
+        Some(names) => tools::ToolPolicy::from_saved(names, config.ai.known_tools.as_deref()),
         None => tools::ToolPolicy::default(),
     };
     let prompt_path = api::resolve_prompt_path(
@@ -840,6 +840,22 @@ pub async fn start(opts: ServeOptions) -> anyhow::Result<RunningServer> {
         .route(
             "/api/v1/publication/fork/preview",
             post(api::insertions::fork_preview_handler),
+        )
+        .route(
+            "/api/v1/annotations/requests",
+            get(api::requests::list_handler).post(api::requests::create_handler),
+        )
+        .route(
+            "/api/v1/annotations/requests/:id",
+            get(api::requests::get_handler).delete(api::requests::delete_handler),
+        )
+        .route(
+            "/api/v1/annotations/requests/:id/answer",
+            post(api::requests::answer_handler),
+        )
+        .route(
+            "/api/v1/annotations/requests/:id/reopen",
+            post(api::requests::reopen_handler),
         )
         .route("/api/v1/spell/inspect", post(spell::inspect_handler))
         .route("/api/v1/spell/execute", post(spell::execute_handler))

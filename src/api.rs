@@ -320,6 +320,7 @@ fn git_branch() -> Option<String> {
 
 use crate::nip19;
 pub mod insertions;
+pub mod requests;
 
 /// POST /api/v1/decode body.
 #[derive(Debug, Deserialize)]
@@ -8055,6 +8056,13 @@ fn persist_ai_config(
             .map(|n| toml::Value::String(n.clone()))
             .collect();
         ai_tbl.insert("enabled_tools".into(), toml::Value::Array(arr));
+        // Remember which tools this allowlist was chosen against, so a tool
+        // added by a later build is not silently frozen out at boot.
+        let known: Vec<toml::Value> = crate::tools::catalog()
+            .iter()
+            .map(|t| toml::Value::String(t.name.to_string()))
+            .collect();
+        ai_tbl.insert("known_tools".into(), toml::Value::Array(known));
     }
     doc.insert("ai".into(), toml::Value::Table(ai_tbl));
     std::fs::write(
@@ -9725,6 +9733,138 @@ mod chat_api_tests {
             vec![first.clone(), ins_coord.clone(), children[1].clone()]
         );
     }
+
+    /// Requests end to end: an unsigned record → listed open → answered by the
+    /// assistant tool (coordinates recorded, no reply event since nothing was
+    /// signed); a signed request → a kind-1111 mention of the assistant in the
+    /// store → the answer posts the assistant's reply under it.
+    #[tokio::test]
+    async fn test_annotation_requests_unsigned_and_signed() {
+        use crate::identity::{encode_nsec, IdentitySession};
+        use crate::requests::{RequestStatus, REQUEST_TAG};
+        const USER_SEC: &str = "0000000000000000000000000000000000000000000000000000000000000007";
+        const ASST_SEC: &str = "0000000000000000000000000000000000000000000000000000000000000008";
+
+        let dir = tempfile::tempdir().unwrap();
+        let mut engine = crate::engine::Engine::new(dir.path()).unwrap();
+        let user = Arc::new(Mutex::new(IdentitySession::new()));
+        user.lock()
+            .unwrap()
+            .login_nsec(&encode_nsec(USER_SEC).unwrap())
+            .unwrap();
+        let asst = Arc::new(Mutex::new(IdentitySession::new()));
+        let asst_pk = asst
+            .lock()
+            .unwrap()
+            .login_nsec(&encode_nsec(ASST_SEC).unwrap())
+            .unwrap();
+        engine.set_user_session(user.clone());
+        engine.set_assistant_session(asst.clone());
+        engine.set_assistant_signing(crate::signing::SigningController::new(asst));
+        let engine = Arc::new(engine);
+        std::mem::forget(dir);
+        let signing = crate::signing::SigningController::new(user);
+        let cx = crate::tools::ToolCx {
+            engine: engine.clone(),
+            chat: Arc::new(Mutex::new(ChatState::new())),
+        };
+
+        // A publication to anchor to.
+        let saved = crate::tools::dispatch(
+            &cx,
+            "save_draft",
+            json!({ "title": "Data science overviews", "sections": [{ "title": "Linear regression", "content": "y = Xb" }] }),
+        )
+        .await
+        .unwrap();
+        let out = crate::tools::dispatch(&cx, "sign_draft", json!({ "draft_id": saved["draft_id"] }))
+            .await
+            .unwrap();
+        let index = crate::query::query_by_id(engine.ndb(), out["publication_id"].as_str().unwrap())
+            .unwrap()
+            .unwrap();
+        let root = crate::publication::insertion::event_coordinate(&index).unwrap();
+        let section = crate::publication::insertion::index_children(&index)[0].clone();
+
+        // Unsigned request (the default).
+        let Json(created) = insertions_req_create(&engine, &signing, json!({
+            "root": root, "parent": section, "task": "derive it two ways", "scope": ["section", "web"], "output": "kasten"
+        }))
+        .await;
+        assert_eq!(created.request.status, RequestStatus::Open);
+        assert!(created.request.event_id.is_none(), "unsigned: no event");
+        assert!(created.request.parent_event_id.is_some(), "parent version pinned from the store");
+        assert_eq!(created.request.scope, vec!["section", "web"]);
+        assert_eq!(created.request.output, "kasten");
+        assert_eq!(created.request.assistant_pubkey.as_deref(), Some(asst_pk.as_str()));
+
+        let listed = crate::tools::dispatch(&cx, "list_requests", json!({ "root": root })).await.unwrap();
+        assert_eq!(listed["count"], 1);
+        assert_eq!(listed["requests"][0]["id"], created.request.id);
+
+        // The assistant writes a note and closes it.
+        let note = crate::tools::dispatch(
+            &cx,
+            "propose_insertion",
+            json!({ "root": root, "parent": section, "placement": "after", "title": "Closed form", "content": "b = (X'X)^-1 X'y" }),
+        )
+        .await
+        .unwrap();
+        let answered = crate::tools::dispatch(
+            &cx,
+            "answer_request",
+            json!({ "request_id": created.request.id, "summary": "One note, closed form.", "coordinates": [note["coordinate"]] }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(answered["status"], "answered");
+        assert_eq!(answered["answer"]["coordinates"][0], note["coordinate"]);
+        assert_eq!(answered["answer"]["by"], asst_pk);
+        assert!(answered["answer"].get("reply_event_id").is_none(), "nothing to reply to");
+        let open = crate::tools::dispatch(&cx, "list_requests", json!({})).await.unwrap();
+        assert_eq!(open["count"], 0, "answered requests leave the open list");
+
+        // Signed request: a 1111 mention of the assistant, kept local.
+        let Json(signed) = insertions_req_create(&engine, &signing, json!({
+            "root": root, "parent": section, "task": "history of the method", "sign": true
+        }))
+        .await;
+        let ev = signed.event.expect("signed event");
+        assert_eq!(ev["kind"], 1111);
+        let tags = crate::publication::insertion::event_tags(&ev);
+        assert!(tags.iter().any(|t| t[0] == "p" && t[1] == asst_pk), "mentions the assistant");
+        assert!(tags.iter().any(|t| t[0] == "t" && t[1] == REQUEST_TAG));
+        assert!(tags.iter().any(|t| t[0] == "A" && t[1] == section), "rooted at the section like reader comments");
+        assert_eq!(signed.request.event_id.as_deref(), ev["id"].as_str());
+        assert!(crate::query::query_by_id(engine.ndb(), ev["id"].as_str().unwrap()).unwrap().is_some());
+
+        let answered = crate::tools::dispatch(
+            &cx,
+            "answer_request",
+            json!({ "request_id": signed.request.id, "summary": "Gauss, Legendre.", "coordinates": [] }),
+        )
+        .await
+        .unwrap();
+        let reply_id = answered["answer"]["reply_event_id"].as_str().expect("reply posted");
+        let reply = crate::query::query_by_id(engine.ndb(), reply_id).unwrap().unwrap();
+        assert_eq!(reply["kind"], 1111);
+        assert_eq!(reply["pubkey"], asst_pk, "the reply is the assistant's");
+        let rtags = crate::publication::insertion::event_tags(&reply);
+        assert!(rtags.iter().any(|t| t[0] == "e" && t[1] == ev["id"].as_str().unwrap()), "threaded under the request");
+        assert!(rtags.iter().any(|t| t[0] == "A" && t[1] == section));
+    }
+
+    async fn insertions_req_create(
+        engine: &AppState,
+        signing: &crate::signing::SigningController,
+        body: Value,
+    ) -> Json<insertions_req::RequestResponse> {
+        let req: insertions_req::CreateRequest = serde_json::from_value(body).unwrap();
+        insertions_req::create_handler(State(engine.clone()), Extension(signing.clone()), Json(req))
+            .await
+            .unwrap()
+    }
+    use super::requests as insertions_req;
 
     #[test]
     fn test_nip46_is_a_config_source_now() {
