@@ -6,6 +6,7 @@
 	import { getAppState } from '$lib/state.svelte';
 	import SectionCard from './SectionCard.svelte';
 	import InsertionCard from './InsertionCard.svelte';
+	import RequestCard from './RequestCard.svelte';
 	import { coordMatchesAddr } from '$lib/nostr/nostrdown';
 	import type { ResolutionTracker } from '$lib/nostr/resolution-progress.svelte';
 	import { readingVars } from '$lib/theme/reading.svelte';
@@ -29,6 +30,9 @@
 		rootInsertions = null,
 		onopeninsertion = undefined,
 		oninsertionpromoted = undefined,
+		requestsFor = null,
+		rootRequests = null,
+		onrequestschanged = undefined,
 		publicationAtag = undefined,
 		siblings = undefined,
 		resolution = undefined
@@ -58,6 +62,11 @@
 		rootInsertions?: { before: api.LoadedInsertion[]; after: api.LoadedInsertion[] } | null;
 		onopeninsertion?: ((ins: api.LoadedInsertion) => void) | undefined;
 		oninsertionpromoted?: ((resp: api.ForkPublishResponse) => void) | undefined;
+		/** Lookup: section addr → annotation requests asked on it. */
+		requestsFor?: ((addr: { kind: number; pubkey: string; d_tag: string }) => api.AnnotationRequest[]) | null;
+		/** Requests on the publication itself — shown on the first page. */
+		rootRequests?: api.AnnotationRequest[] | null;
+		onrequestschanged?: (() => void) | undefined;
 		/** Containing publication coordinate ("30040:pubkey:dtag") — context for
 		 *  resolving nostrdown `{{ref:…}}` sibling references. */
 		publicationAtag?: string | undefined;
@@ -179,8 +188,16 @@
 				onopenlocal={openLocalSection}
 			/>
 			{#if currentSection === 0}
+				{#each rootRequests ?? [] as rq (rq.id)}
+					<RequestCard request={rq} onchanged={onrequestschanged} />
+				{/each}
 				{#each rootInsertions?.before ?? [] as ins (ins.coordinate)}
 					<InsertionCard insertion={ins} onopen={onopeninsertion} onpromoted={oninsertionpromoted} />
+				{/each}
+			{/if}
+			{#if requestsFor}
+				{#each requestsFor(section.addr) as rq (rq.id)}
+					<RequestCard request={rq} onchanged={onrequestschanged} />
 				{/each}
 			{/if}
 			{#if insertionsFor}

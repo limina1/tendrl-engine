@@ -8,6 +8,7 @@
 	import PoolStateBadges from './PoolStateBadges.svelte';
 	import RichContent from './RichContent.svelte';
 	import InsertionCard from './InsertionCard.svelte';
+	import RequestCard from './RequestCard.svelte';
 	import { threadContainsId, type ThreadNode } from '$lib/discussions/thread';
 	import { type Highlight, type HighlightSpan } from '$lib/discussions/highlights';
 	import { coordMatchesAddr, type ResolvedRef, type ParsedToken } from '$lib/nostr/nostrdown';
@@ -31,6 +32,9 @@
 		rootInsertions = null,
 		onopeninsertion = undefined,
 		oninsertionpromoted = undefined,
+		requestsFor = null,
+		rootRequests = null,
+		onrequestschanged = undefined,
 		publicationAtag = undefined,
 		siblings = undefined,
 		resolution = undefined,
@@ -58,6 +62,12 @@
 		rootInsertions?: { before: api.LoadedInsertion[]; after: api.LoadedInsertion[] } | null;
 		onopeninsertion?: ((ins: api.LoadedInsertion) => void) | undefined;
 		oninsertionpromoted?: ((resp: api.ForkPublishResponse) => void) | undefined;
+		/** Lookup: section addr → annotation requests asked on it (the question
+		 *  sitting where the answer lands). Null = none. */
+		requestsFor?: ((addr: { kind: number; pubkey: string; d_tag: string }) => api.AnnotationRequest[]) | null;
+		/** Requests on the publication itself — shown at the top. */
+		rootRequests?: api.AnnotationRequest[] | null;
+		onrequestschanged?: (() => void) | undefined;
 		/** Containing publication coordinate ("30040:pubkey:dtag") — context for
 		 *  resolving nostrdown `{{ref:…}}` sibling references. */
 		publicationAtag?: string | undefined;
@@ -499,6 +509,9 @@
 	     Expand/collapse-all moved to the reader's depth toolbar row. -->
 
 	<div class="cv-column">
+	{#each rootRequests ?? [] as rq (rq.id)}
+		<RequestCard request={rq} onchanged={onrequestschanged} />
+	{/each}
 	{#each rootInsertions?.before ?? [] as ins (ins.coordinate)}
 		<InsertionCard insertion={ins} onopen={onopeninsertion} onpromoted={oninsertionpromoted} />
 	{/each}
@@ -592,6 +605,12 @@
 					<p class="section-error">{section.error ?? 'Failed to load'}</p>
 				{:else}
 					<div class="skeleton pending"></div>
+				{/if}
+				{#if requestsFor && section.addr}
+					{@const asks = requestsFor(section.addr)}
+					{#each asks as rq (rq.id)}
+						<RequestCard request={rq} onchanged={onrequestschanged} />
+					{/each}
 				{/if}
 				{#if insertionsFor && section.addr}
 					{@const attached = insertionsFor(section.addr)}

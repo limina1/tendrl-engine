@@ -2810,3 +2810,84 @@ export function forkPublication(req: ForkRequest) {
 		body: JSON.stringify(req)
 	});
 }
+
+// ---------------------------------------------------------------------------
+// Annotation requests — "ask for notes about this place". Local records the
+// user's own agent reads over MCP (list_requests); optionally signed as a
+// kind-1111 mention of the assistant. tendrl never runs the model for these.
+
+export interface AnnotationRequestAnswer {
+	summary: string;
+	coordinates: string[];
+	reply_event_id?: string;
+	answered_at: number;
+	by?: string;
+}
+
+export interface AnnotationRequest {
+	id: string;
+	root: string;
+	parent: string;
+	parent_event_id?: string;
+	parent_title?: string;
+	title?: string;
+	task: string;
+	scope: string[];
+	context?: string;
+	output: 'notes' | 'kasten';
+	created_at: number;
+	status: 'open' | 'answered';
+	answer?: AnnotationRequestAnswer;
+	event_id?: string;
+	assistant_pubkey?: string;
+}
+
+export function createRequest(req: {
+	root: string;
+	parent?: string;
+	parent_event_id?: string;
+	parent_title?: string;
+	title?: string;
+	task: string;
+	scope?: string[];
+	context?: string;
+	output?: 'notes' | 'kasten';
+	sign?: boolean;
+	broadcast?: boolean;
+	relays?: string[];
+}) {
+	return fetchJson<AnnotationRequest & { event?: NostrEvent }>('/api/v1/annotations/requests', {
+		method: 'POST',
+		body: JSON.stringify(req)
+	});
+}
+
+export function listRequests(q: { root?: string; parent?: string; status?: 'open' | 'answered' | 'all' } = {}) {
+	const p = new URLSearchParams();
+	if (q.root) p.set('root', q.root);
+	if (q.parent) p.set('parent', q.parent);
+	if (q.status) p.set('status', q.status);
+	const qs = p.toString();
+	return fetchJson<{ requests: AnnotationRequest[]; open: number; count: number }>(
+		`/api/v1/annotations/requests${qs ? `?${qs}` : ''}`
+	);
+}
+
+export function deleteRequest(id: string) {
+	return fetchJson<{ deleted: string }>(`/api/v1/annotations/requests/${encodeURIComponent(id)}`, {
+		method: 'DELETE'
+	});
+}
+
+export function answerRequest(id: string, body: { summary: string; coordinates?: string[]; sign_as?: 'user' | 'assistant' }) {
+	return fetchJson<AnnotationRequest>(`/api/v1/annotations/requests/${encodeURIComponent(id)}/answer`, {
+		method: 'POST',
+		body: JSON.stringify(body)
+	});
+}
+
+export function reopenRequest(id: string) {
+	return fetchJson<AnnotationRequest>(`/api/v1/annotations/requests/${encodeURIComponent(id)}/reopen`, {
+		method: 'POST'
+	});
+}

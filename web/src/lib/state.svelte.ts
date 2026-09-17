@@ -106,6 +106,20 @@ export type ModalNavEntry =
 
 let _app: ReturnType<typeof _createAppState> | null = null;
 
+/** Payload that opens the "ask for notes" window. Same anchor shape as the
+ *  insertion composer: root = publication, parent = section (absent = the
+ *  index itself). */
+export type AnnotationRequestOpen = {
+	root: string;
+	rootTitle?: string | null;
+	parent?: string;
+	parentTitle?: string | null;
+	parentEventId?: string;
+	roots?: { coord: string; title: string | null }[];
+	/** Selection excerpt the ask is about. */
+	context?: string;
+};
+
 /** Payload that opens the insertion composer. */
 export type InsertionComposerOpen = {
 	/** Publication coordinate (30040:pk:d) — or a standalone note's own
@@ -528,6 +542,14 @@ function _createAppState() {
 	// Bumped after an insertion publishes so an open reader re-reads its
 	// loaded annotations (local store — no relay round trip).
 	let insertionsVersion = $state(0);
+
+	// --- Annotate mode + the request window ---
+	// Like highlight mode, but the selection (or an event's menu) opens the
+	// "ask for notes" window instead of a highlight card. No identity needed:
+	// a request is a local record first (src/requests.rs).
+	let annotateMode = $state(false);
+	let annotationRequest: AnnotationRequestOpen | null = $state(null);
+	let requestsVersion = $state(0);
 
 	// Republish diff prompt: set when Publish detects a same-title
 	// publication. ComparePublishModal renders the diff and calls
@@ -5208,6 +5230,15 @@ function _createAppState() {
 		set eventModalRoot(v: { coord: string; title: string | null } | null) { eventModalRoot = v; },
 		get insertionsVersion() { return insertionsVersion; },
 		bumpInsertions() { insertionsVersion += 1; },
+
+		// Annotate mode
+		get annotateMode() { return annotateMode; },
+		toggleAnnotateMode() { annotateMode = !annotateMode; },
+		setAnnotateMode(on: boolean) { annotateMode = on; },
+		get annotationRequest() { return annotationRequest; },
+		set annotationRequest(v: AnnotationRequestOpen | null) { annotationRequest = v; },
+		get requestsVersion() { return requestsVersion; },
+		bumpRequests() { requestsVersion += 1; },
 
 		// Profile
 		get profilePubkey() { return profilePubkey; },

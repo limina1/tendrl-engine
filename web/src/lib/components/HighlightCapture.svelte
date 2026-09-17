@@ -32,17 +32,46 @@
 
 	let {
 		getContent,
-		onposted = undefined
+		onposted = undefined,
+		root = undefined
 	}: {
 		/** Resolve a section address to its raw source content (and optionally
 		 *  the exact event id the host rendered, as the offset pin — omit and
 		 *  the engine pins its local latest). */
 		getContent: (addr: string) => { content: string; eventId?: string } | null;
 		onposted?: () => void;
+		/** The containing publication coordinate — annotate mode's requests
+		 *  root there. Absent (a standalone note) = the section is its own root. */
+		root?: string | undefined;
 	} = $props();
+
 
 	const app = getAppState();
 	const canSign = $derived(identityCanSign(app.identityStatus));
+
+	// Annotate mode reuses this capture surface: the same selection resolves
+	// to the same section slice, but the card offers "ask" (open the request
+	// window with the excerpt as context) instead of a highlight. Highlight
+	// mode wins when both are on; annotate mode needs no identity.
+	const askMode = $derived(app.annotateMode && !app.highlightMode);
+	function ask() {
+		if (!pending) return;
+		const excerpt = text.trim() || pending.text;
+		// The section's rendered title, for the window's header.
+		const sel = `[data-section-addr="${pending.addr.replace(/"/g, '\\"')}"]`;
+		const parentTitle =
+			document.querySelector(`${sel} .section-title__text, ${sel} .section-title`)?.textContent?.trim() ||
+			null;
+		app.annotationRequest = {
+			root: root ?? pending.addr,
+			parent: pending.addr,
+			parentTitle,
+			parentEventId: pending.eventId,
+			context: excerpt
+		};
+		window.getSelection()?.removeAllRanges();
+		dismiss();
+	}
 	const mobile = $derived(shell.mode === 'mobile');
 
 	type Pending = {
@@ -239,7 +268,8 @@
 	}
 
 	function wantsCapture(): boolean {
-		if (!app.highlightMode || !canSign || posting) return false;
+		const highlighting = app.highlightMode && canSign;
+		if ((!highlighting && !app.annotateMode) || posting) return false;
 		// A capture the user has engaged with holds; an untouched one is
 		// replaced by further selection (mobile handle-dragging) — unless
 		// we're out collecting context for it.
@@ -330,9 +360,9 @@
 		}
 	}
 
-	// Leaving highlight mode drops any half-finished capture.
+	// Leaving both modes drops any half-finished capture.
 	$effect(() => {
-		if (!app.highlightMode) dismiss();
+		if (!app.highlightMode && !app.annotateMode) dismiss();
 	});
 </script>
 
@@ -348,7 +378,7 @@
 		class="hc-popover"
 		class:hc-popover--mobile={mobile}
 		role="dialog"
-		aria-label="Publish highlight"
+		aria-label={askMode ? 'Ask for notes about this passage' : 'Publish highlight'}
 		onfocusin={() => (touched = true)}
 	>
 		<textarea
@@ -356,8 +386,17 @@
 			rows={mobile ? 4 : 3}
 			bind:value={text}
 			disabled={posting}
-			aria-label="Highlighted text (editable)"
+			aria-label={askMode ? 'Selected passage (editable)' : 'Highlighted text (editable)'}
 		></textarea>
+		{#if askMode}
+			<div class="hc-note">annotate mode — this passage becomes the request's context</div>
+			<div class="hc-foot">
+				<span class="hc-hint">{text.trim().length} chars</span>
+				<span class="hc-spacer"></span>
+				<button class="hc-btn" onclick={dismiss}>Cancel</button>
+				<button class="hc-btn hc-btn--post" onclick={ask} disabled={text.trim().length < 3}>ask for notes →</button>
+			</div>
+		{:else}
 		{#if edited}
 			<div class="hc-note">edited — will publish without a position pin</div>
 		{/if}
@@ -407,6 +446,7 @@
 				{posting ? 'Publishing…' : 'Highlight'}
 			</button>
 		</div>
+		{/if}
 	</div>
 {/if}
 

@@ -425,6 +425,39 @@
 		});
 	});
 
+	// --- Annotation requests: the question sits where the answer lands ---
+	// Local records (no relay, no confirm): read on mount and whenever the
+	// window or a card changes one. Rendered under the anchor section in
+	// both views, unsigned or signed alike.
+	let requests = $state<api.AnnotationRequest[]>([]);
+	const requestsByParent = $derived.by(() => {
+		const m: Record<string, api.AnnotationRequest[]> = {};
+		for (const r of requests) (m[r.parent] ??= []).push(r);
+		return m;
+	});
+	function requestsForSection(addr: { kind: number; pubkey: string; d_tag: string }) {
+		return requestsByParent[addrKey(addr)] ?? [];
+	}
+	const rootRequests = $derived(
+		publication ? (requestsByParent[addrKey(publication.addr)] ?? []) : []
+	);
+	async function loadRequests() {
+		if (!publication) return;
+		try {
+			const resp = await api.listRequests({ root: addrKey(publication.addr) });
+			requests = resp.requests;
+		} catch {
+			requests = [];
+		}
+	}
+	$effect(() => {
+		void app.requestsVersion;
+		if (!publication) return;
+		untrack(() => {
+			void loadRequests();
+		});
+	});
+
 	const canSignNow = $derived(identityCanSign(app.identityStatus));
 
 	// Source content for highlight capture, by section address. No event-id
@@ -2267,6 +2300,14 @@
 							: 'Sign in to highlight'}
 					>highlight mode{app.highlightMode ? ' ●' : ''}</button>
 					<button
+						class="hl-mode-pill"
+						class:hl-mode-pill--on={app.annotateMode}
+						onclick={() => app.toggleAnnotateMode()}
+						title={app.annotateMode
+							? 'Annotate mode is ON — select a passage to ask for notes about it. Click to turn off.'
+							: 'Turn on annotate mode: select a passage to ask your agent for notes about it (a local request; no identity needed)'}
+					>annotate mode{app.annotateMode ? ' ●' : ''}</button>
+					<button
 						class:active={publicationThreadsOpen}
 						onclick={() => (publicationThreadsOpen = !publicationThreadsOpen)}
 						aria-expanded={publicationThreadsOpen}
@@ -2474,7 +2515,11 @@
 				{/if}
 			</div>
 		{/if}
-		<HighlightCapture getContent={highlightContentFor} onposted={refreshDiscussionsLocal} />
+		<HighlightCapture
+			getContent={highlightContentFor}
+			onposted={refreshDiscussionsLocal}
+			root={publication ? addrKey(publication.addr) : undefined}
+		/>
 		{#if publication && publicationThreadsOpen}
 			<!-- Discussion body — opened by the title row's chip; everything
 			     (scan summary, threads, reply box) lives behind that caret. -->
@@ -2564,6 +2609,9 @@
 					rootInsertions={insertionsLoaded ? rootInsertions : null}
 					onopeninsertion={openInsertionReader}
 					oninsertionpromoted={onInsertionPromoted}
+					requestsFor={requestsForSection}
+					{rootRequests}
+					onrequestschanged={loadRequests}
 					{resolution}
 				/>
 			{:else}
@@ -2582,6 +2630,9 @@
 					rootInsertions={insertionsLoaded ? rootInsertions : null}
 					onopeninsertion={openInsertionReader}
 					oninsertionpromoted={onInsertionPromoted}
+					requestsFor={requestsForSection}
+					{rootRequests}
+					onrequestschanged={loadRequests}
 					publicationAtag={`${publication.addr.kind}:${publication.addr.pubkey}:${publication.addr.d_tag}`}
 					{resolution}
 				/>

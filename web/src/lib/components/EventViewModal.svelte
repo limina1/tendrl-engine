@@ -374,42 +374,63 @@
 	// the reader had open (app.eventModalRoot), else at a containing index
 	// found by the lookup above, else at itself (a standalone note).
 	const canAnnotate = $derived((n.kind === 30040 || n.kind === 30041) && !!addrRef);
-	function onAnnotateAction() {
-		if (!canAnnotate || !addrRef) return;
-		if (n.kind === 30040) {
-			app.insertionComposer = { root: addrRef, rootTitle: n.title ?? null };
-		} else {
-			const hint = app.eventModalRoot;
-			// Several versions of one index are one root — dedupe by coordinate.
-			const seen = new Set<string>();
-			const roots: { coord: string; title: string | null }[] = [];
-			for (const c of containingIndexes) {
-				const coord = `30040:${c.pubkey}:${c.d_tag}`;
-				if (seen.has(coord)) continue;
-				seen.add(coord);
-				roots.push({ coord, title: c.title || null });
-			}
-			let root: string;
-			let rootTitle: string | null;
-			if (hint && hint.coord !== addrRef) {
-				root = hint.coord;
-				rootTitle = hint.title;
-			} else if (roots.length > 0) {
-				root = roots[0].coord;
-				rootTitle = roots[0].title;
-			} else {
-				root = addrRef;
-				rootTitle = n.title ?? null;
-			}
-			app.insertionComposer = {
-				root,
-				rootTitle,
-				roots: roots.length > 1 ? roots : undefined,
-				parent: addrRef,
-				parentTitle: n.title ?? null,
-				parentEventId: n.id
-			};
+	/** Where a note about this event belongs: a 30040 is its own root; a
+	 *  30041 roots at the publication the reader had open (app.eventModalRoot),
+	 *  else a containing index found by the lookup above, else itself (a
+	 *  standalone note). Shared by Annotate and Ask. */
+	function resolveAnchor(): {
+		root: string;
+		rootTitle: string | null;
+		roots?: { coord: string; title: string | null }[];
+		parent?: string;
+		parentTitle?: string | null;
+		parentEventId?: string;
+	} | null {
+		if (!canAnnotate || !addrRef) return null;
+		if (n.kind === 30040) return { root: addrRef, rootTitle: n.title ?? null };
+		const hint = app.eventModalRoot;
+		// Several versions of one index are one root — dedupe by coordinate.
+		const seen = new Set<string>();
+		const roots: { coord: string; title: string | null }[] = [];
+		for (const c of containingIndexes) {
+			const coord = `30040:${c.pubkey}:${c.d_tag}`;
+			if (seen.has(coord)) continue;
+			seen.add(coord);
+			roots.push({ coord, title: c.title || null });
 		}
+		let root: string;
+		let rootTitle: string | null;
+		if (hint && hint.coord !== addrRef) {
+			root = hint.coord;
+			rootTitle = hint.title;
+		} else if (roots.length > 0) {
+			root = roots[0].coord;
+			rootTitle = roots[0].title;
+		} else {
+			root = addrRef;
+			rootTitle = n.title ?? null;
+		}
+		return {
+			root,
+			rootTitle,
+			roots: roots.length > 1 ? roots : undefined,
+			parent: addrRef,
+			parentTitle: n.title ?? null,
+			parentEventId: n.id
+		};
+	}
+	function onAnnotateAction() {
+		const a = resolveAnchor();
+		if (!a) return;
+		app.insertionComposer = a;
+		onclose();
+	}
+	// Ask — open the "ask for notes" window on this place (a local request
+	// the user's agent answers; nothing is signed unless they choose to).
+	function onAskAction() {
+		const a = resolveAnchor();
+		if (!a) return;
+		app.annotationRequest = a;
 		onclose();
 	}
 
@@ -538,6 +559,9 @@
 			} else if (k === 'n' && canAnnotate) {
 				e.preventDefault();
 				onAnnotateAction();
+			} else if (k === 'q' && canAnnotate) {
+				e.preventDefault();
+				onAskAction();
 			} else if (k === 's' && canShelve) {
 				e.preventDefault();
 				void onShelveAction();
@@ -995,6 +1019,14 @@
 					>
 						<span class="evm__key">n</span>
 						<span class="evm__action-label">Annotate</span>
+					</button>
+					<button
+						class="evm__action"
+						onclick={onAskAction}
+						title="Ask your agent for notes about this place — a local request it answers over MCP with attached notes"
+					>
+						<span class="evm__key">q</span>
+						<span class="evm__action-label">Ask</span>
 					</button>
 				{/if}
 				{#if canShelve}
