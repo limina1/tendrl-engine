@@ -319,6 +319,7 @@ fn git_branch() -> Option<String> {
 // ============================================================================
 
 use crate::nip19;
+pub mod insertions;
 
 /// POST /api/v1/decode body.
 #[derive(Debug, Deserialize)]
@@ -9563,6 +9564,166 @@ mod chat_api_tests {
             .unwrap();
         assert_eq!(stored["pubkey"], asst_pk, "the stored 30040 is the assistant's");
         assert_eq!(stored["kind"], 30040);
+    }
+
+    /// Insertions end to end: the assistant attaches a note after a section
+    /// of its own publication, the `#A` pass finds it with its anchor, the
+    /// owner's promotion is a new version (same `d`), a stranger's is a
+    /// derivative (`p` + `E`). Local store only — no relays.
+    #[tokio::test]
+    async fn test_insertion_propose_load_and_promote() {
+        use crate::identity::{encode_nsec, IdentitySession};
+        use crate::publication::insertion::{index_children, InsertionAnchor, Placement};
+        const USER_SEC: &str = "0000000000000000000000000000000000000000000000000000000000000005";
+        const ASST_SEC: &str = "0000000000000000000000000000000000000000000000000000000000000006";
+
+        let dir = tempfile::tempdir().unwrap();
+        let mut engine = crate::engine::Engine::new(dir.path()).unwrap();
+        let user = Arc::new(Mutex::new(IdentitySession::new()));
+        let user_pk = user
+            .lock()
+            .unwrap()
+            .login_nsec(&encode_nsec(USER_SEC).unwrap())
+            .unwrap();
+        let asst = Arc::new(Mutex::new(IdentitySession::new()));
+        let asst_pk = asst
+            .lock()
+            .unwrap()
+            .login_nsec(&encode_nsec(ASST_SEC).unwrap())
+            .unwrap();
+        engine.set_user_session(user.clone());
+        engine.set_assistant_session(asst.clone());
+        engine.set_assistant_signing(crate::signing::SigningController::new(asst));
+        let engine = Arc::new(engine);
+        std::mem::forget(dir);
+        let cx = crate::tools::ToolCx {
+            engine: engine.clone(),
+            chat: Arc::new(Mutex::new(ChatState::new())),
+        };
+
+        // A two-section publication authored by the assistant.
+        let saved = crate::tools::dispatch(
+            &cx,
+            "save_draft",
+            json!({ "title": "Fables", "sections": [
+                { "title": "The Farmer and the Snake", "content": "one" },
+                { "title": "The Wolf and the Crane", "content": "two" }
+            ] }),
+        )
+        .await
+        .unwrap();
+        let out = crate::tools::dispatch(
+            &cx,
+            "sign_draft",
+            json!({ "draft_id": saved["draft_id"] }),
+        )
+        .await
+        .unwrap();
+        let index = crate::query::query_by_id(engine.ndb(), out["publication_id"].as_str().unwrap())
+            .unwrap()
+            .unwrap();
+        let root = crate::publication::insertion::event_coordinate(&index).unwrap();
+        let children = index_children(&index);
+        assert_eq!(children.len(), 2);
+        let first = children[0].clone();
+
+        // Attach a note after §1, as the assistant.
+        let prop = crate::tools::dispatch(
+            &cx,
+            "propose_insertion",
+            json!({ "root": root, "parent": first, "placement": "after",
+                    "title": "A modern reading", "content": "The fable is narrower…",
+                    "format": "org", "context": "I am rightly served" }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(prop["signed_as"], "assistant");
+        assert_eq!(prop["ingested"], true);
+        let ins_coord = prop["coordinate"].as_str().unwrap().to_string();
+        let stored = crate::query::query_by_id(engine.ndb(), prop["id"].as_str().unwrap())
+            .unwrap()
+            .unwrap();
+        assert_eq!(stored["kind"], 30041);
+        assert_eq!(stored["pubkey"], asst_pk);
+        let anchor = InsertionAnchor::from_event(&stored).expect("anchor tags");
+        assert_eq!(anchor.root, root);
+        assert_eq!(anchor.parent, first);
+        assert_eq!(anchor.placement, Placement::After);
+        assert!(anchor.parent_event_id.is_some(), "pinned from the local store");
+        let tags = crate::publication::insertion::event_tags(&stored);
+        assert!(tags.iter().any(|t| t[0] == "format" && t[1] == "org"));
+        assert!(tags.iter().any(|t| t[0] == "context"));
+        assert!(tags.iter().any(|t| t[0] == "K" && t[1] == "30040"));
+        assert!(tags.iter().any(|t| t[0] == "k" && t[1] == "30041"));
+
+        // A bad placement is refused before anything is signed.
+        let bad = crate::tools::dispatch(
+            &cx,
+            "propose_insertion",
+            json!({ "root": root, "placement": "sideways", "title": "x", "content": "y" }),
+        )
+        .await;
+        assert!(bad.is_err());
+
+        // The #A pass finds it — nostrdb tag filter on `A`, anchor attached.
+        let listed = crate::tools::dispatch(
+            &cx,
+            "list_insertions",
+            json!({ "root": root, "policy": "local_only" }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(listed["count"], 1);
+        assert_eq!(listed["insertions"][0]["coordinate"], ins_coord);
+        assert_eq!(listed["insertions"][0]["parent"], first);
+        assert_eq!(listed["insertions"][0]["placement"], "after");
+        assert_eq!(listed["query"], format!("A:{root} k:30041"));
+        // Author filter excludes the user.
+        let none = crate::tools::dispatch(
+            &cx,
+            "list_insertions",
+            json!({ "root": root, "policy": "local_only", "authors": [user_pk] }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(none["count"], 0);
+
+        // Stranger promotion (the user): a derivative with p + E — computed
+        // against the original index, before the owner republishes it.
+        let req = insertions::ForkRequest {
+            index: root.clone(),
+            insertion: ins_coord.clone(),
+            slot: None,
+            sign_as: Some(SignAs::User),
+            broadcast: false,
+            relays: None,
+            policy: None,
+        };
+        let fork = insertions::fork_template(&engine, &req, &user_pk).await.unwrap();
+        assert!(fork.derivative);
+        assert_ne!(fork.d_tag, root.rsplit(':').next().unwrap());
+        assert!(fork.event.tags.iter().any(|t| t[0] == "p" && t[1] == asst_pk));
+        assert!(fork.event.tags.iter().any(|t| t[0] == "E" && t[3] == asst_pk));
+        assert_eq!(fork.copied_tags, crate::publication::insertion::event_tags(&index).len());
+
+        // Owner promotion: same d, spliced right after §1.
+        let promoted = crate::tools::dispatch(
+            &cx,
+            "promote_insertion",
+            json!({ "index": root, "insertion": ins_coord }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(promoted["derivative"], false);
+        assert_eq!(promoted["slot"], 1);
+        assert_eq!(promoted["coordinate"], root, "a new version of the same index");
+        let new_index = crate::query::query_by_id(engine.ndb(), promoted["id"].as_str().unwrap())
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            index_children(&new_index),
+            vec![first.clone(), ins_coord.clone(), children[1].clone()]
+        );
     }
 
     #[test]

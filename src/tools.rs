@@ -230,6 +230,24 @@ pub fn catalog() -> Vec<ToolDef> {
             category: ToolCategory::Publish,
             input_schema: schema_sign_draft,
         },
+        ToolDef {
+            name: "list_insertions",
+            description: "List the NKBIP-01 insertions attached to a publication — reader-written or assistant-written kind-30041 sections anchored to it (post-its, inserted pages) that are NOT in its index. Give the root coordinate (30040:pubkey:d). Returns each note's coordinate, title, author, its parent section and placement (attach / before / after). policy=local_only reads the store; local_first / fetch_always may pull from relays (Confirm-gated).",
+            category: ToolCategory::Network,
+            input_schema: schema_list_insertions,
+        },
+        ToolDef {
+            name: "propose_insertion",
+            description: "Write a new note ATTACHED to a place in a publication, signed AS THE ASSISTANT with its own key (never the user's) and kept local. This is the right shape for 'write more notes from this section': the note is a kind-30041 section anchored to the section (or the index) you name, with an optional position claim (before / after) the curator can promote it into. It does NOT change the publication — the human folds it in later via promote_insertion or the reader. Sending it to relays is the separate `publish` step.",
+            category: ToolCategory::ComposeWrite,
+            input_schema: schema_propose_insertion,
+        },
+        ToolDef {
+            name: "promote_insertion",
+            description: "Fold an insertion into a publication's structure by republishing its index with the note's coordinate spliced in — NKBIP-01's own copy process, signed AS THE ASSISTANT. If the assistant authored the index this is a new version (same d-tag); otherwise it is a DERIVATIVE index under the assistant's key (p + E to the original). The insertion event itself is never re-authored. Kept local; broadcast is the separate `publish` step. Disabled by default.",
+            category: ToolCategory::Publish,
+            input_schema: schema_promote_insertion,
+        },
     ]
 }
 
@@ -269,6 +287,9 @@ pub async fn dispatch(cx: &ToolCx, name: &str, input: Value) -> Result<Value> {
         "save_draft" => save_draft(engine, input).await,
         "publish" => publish(engine, input).await,
         "sign_draft" => sign_draft(cx, input).await,
+        "list_insertions" => list_insertions(engine, input).await,
+        "propose_insertion" => propose_insertion(cx, input).await,
+        "promote_insertion" => promote_insertion(cx, input).await,
         other => Err(EngineError::BadRequest(format!("unknown tool: {other}"))),
     }
 }
@@ -439,6 +460,46 @@ fn schema_sign_draft() -> Value {
             "draft_id": { "type": "string", "description": "Draft id from save_draft." }
         },
         "required": ["draft_id"]
+    })
+}
+
+fn schema_list_insertions() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "root": { "type": "string", "description": "Publication coordinate, 30040:pubkey:d (or a standalone note's 30041:pubkey:d)." },
+            "authors": { "type": "array", "items": { "type": "string" }, "description": "Optional 64-hex pubkeys to restrict to." },
+            "policy": { "type": "string", "enum": ["local_only", "local_first", "fetch_always"], "description": "Default local_first." }
+        },
+        "required": ["root"]
+    })
+}
+
+fn schema_propose_insertion() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "root": { "type": "string", "description": "The publication this note belongs to: 30040:pubkey:d." },
+            "parent": { "type": "string", "description": "The section (30041:pubkey:d) or index it attaches to. Omit = the index itself (front matter / appendix)." },
+            "placement": { "type": "string", "enum": ["attach", "before", "after"], "description": "attach (default) = a margin note with no place in the reading order; before/after = claims a slot next to the parent." },
+            "title": { "type": "string", "description": "Section title (required by NKBIP-01)." },
+            "content": { "type": "string", "description": "Section body." },
+            "format": { "type": "string", "enum": ["markdown", "org", "asciidoc", "plain"], "description": "Content mode. Default markdown." },
+            "context": { "type": "string", "description": "Optional excerpt of the parent this note responds to." }
+        },
+        "required": ["root", "title", "content"]
+    })
+}
+
+fn schema_promote_insertion() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "index": { "type": "string", "description": "The index to copy: 30040:pubkey:d." },
+            "insertion": { "type": "string", "description": "The note to splice in: its 30041:pubkey:d coordinate or 64-hex id." },
+            "slot": { "type": "integer", "description": "Override the position (0-based, in the index's a-list). Default: what the note's placement claims." }
+        },
+        "required": ["index", "insertion"]
     })
 }
 
@@ -920,6 +981,161 @@ async fn sign_draft(cx: &ToolCx, input: Value) -> Result<Value> {
         "section_ids": v["section_ids"],
         "ingested": v["ingested"],
         "note": "Signed and stored locally. Use `publish` with the publication_id to broadcast.",
+    }))
+}
+
+/// The assistant's own signer + pubkey, or a clear "set one up" error.
+async fn assistant_signer(
+    engine: &Arc<Engine>,
+) -> Result<(String, crate::signing::SigningController)> {
+    let signer = engine
+        .assistant_signing()
+        .ok_or_else(|| EngineError::Auth("no assistant identity — set one in Settings".into()))?;
+    let pubkey = signer
+        .active_pubkey()
+        .await
+        .ok_or_else(|| EngineError::Auth("no assistant identity — set one in Settings".into()))?;
+    Ok((pubkey, signer.clone()))
+}
+
+/// The `#A` discovery pass as a tool — compact handles.
+async fn list_insertions(engine: &Arc<Engine>, input: Value) -> Result<Value> {
+    let root = require_str(&input, "root")?.to_string();
+    let authors: Vec<String> = input
+        .get("authors")
+        .and_then(Value::as_array)
+        .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+        .unwrap_or_default();
+    let policy = input
+        .get("policy")
+        .and_then(Value::as_str)
+        .unwrap_or("local_first")
+        .to_string();
+    let resp = crate::api::insertions::load_insertions(
+        engine,
+        crate::api::insertions::InsertionsLoadRequest {
+            root,
+            authors,
+            policy: Some(policy),
+            ..Default::default()
+        },
+    )
+    .await?;
+    let items: Vec<Value> = resp
+        .insertions
+        .iter()
+        .map(|i| {
+            let ev = &i.event;
+            let title = ev
+                .get("tags")
+                .and_then(Value::as_array)
+                .and_then(|tags| {
+                    tags.iter().find_map(|t| {
+                        let a = t.as_array()?;
+                        (a.first()?.as_str()? == "title").then(|| a.get(1)?.as_str().map(String::from))?
+                    })
+                })
+                .unwrap_or_default();
+            let content = ev.get("content").and_then(Value::as_str).unwrap_or("");
+            let snippet: String = content.chars().take(160).collect();
+            json!({
+                "coordinate": i.coordinate,
+                "id": ev.get("id"),
+                "title": title,
+                "author": ev.get("pubkey"),
+                "created_at": ev.get("created_at"),
+                "parent": i.anchor.parent,
+                "top_level": i.anchor.is_top_level(),
+                "placement": i.anchor.placement,
+                "snippet": snippet,
+            })
+        })
+        .collect();
+    Ok(json!({
+        "root": input.get("root"),
+        "count": items.len(),
+        "insertions": items,
+        "query": resp.query,
+        "source": resp.source,
+    }))
+}
+
+/// Write an anchored note as the assistant — local snapshot, no broadcast.
+async fn propose_insertion(cx: &ToolCx, input: Value) -> Result<Value> {
+    let anchor = crate::api::insertions::AnchorRequest {
+        root: require_str(&input, "root")?.to_string(),
+        parent: input.get("parent").and_then(Value::as_str).map(String::from),
+        parent_event_id: None,
+        placement: input.get("placement").and_then(Value::as_str).map(String::from),
+    };
+    let body = crate::api::insertions::InsertionBody {
+        title: require_str(&input, "title")?.to_string(),
+        content: require_str(&input, "content")?.to_string(),
+        format: input.get("format").and_then(Value::as_str).map(String::from),
+        context: input.get("context").and_then(Value::as_str).map(String::from),
+        tags: Vec::new(),
+    };
+    let (mut template, resolved) =
+        crate::api::insertions::insertion_template(&cx.engine, &anchor, &body).await?;
+    let (pubkey, signer) = assistant_signer(&cx.engine).await?;
+    template.pubkey = Some(pubkey.clone());
+    let signed = signer
+        .sign(template)
+        .await
+        .map_err(|e| EngineError::Other(format!("sign: {e}")))?;
+    let coordinate = crate::publication::insertion::event_coordinate(&signed).unwrap_or_default();
+    let resp = crate::api::finalize_publish(&cx.engine, None, vec![signed.clone()], false, None, true)
+        .await?;
+    let v = serde_json::to_value(resp.0)?;
+    Ok(json!({
+        "signed_as": "assistant",
+        "pubkey": pubkey,
+        "id": signed.get("id"),
+        "coordinate": coordinate,
+        "anchor": resolved,
+        "ingested": v["ingested"],
+        "note": "Attached and stored locally — not in the index. `publish` broadcasts it; promote_insertion (or the reader's promote) folds it into the structure.",
+    }))
+}
+
+/// Republish an index with an insertion spliced in, as the assistant.
+async fn promote_insertion(cx: &ToolCx, input: Value) -> Result<Value> {
+    let req = crate::api::insertions::ForkRequest {
+        index: require_str(&input, "index")?.to_string(),
+        insertion: require_str(&input, "insertion")?.to_string(),
+        slot: input.get("slot").and_then(Value::as_u64).map(|s| s as usize),
+        sign_as: Some(crate::api::SignAs::Assistant),
+        broadcast: false,
+        relays: None,
+        policy: None,
+    };
+    let (pubkey, signer) = assistant_signer(&cx.engine).await?;
+    let preview = crate::api::insertions::fork_template(&cx.engine, &req, &pubkey).await?;
+    let mut template = preview.event;
+    template.pubkey = Some(pubkey.clone());
+    let signed = signer
+        .sign(template)
+        .await
+        .map_err(|e| EngineError::Other(format!("sign: {e}")))?;
+    let coordinate = crate::publication::insertion::event_coordinate(&signed).unwrap_or_default();
+    let resp = crate::api::finalize_publish(&cx.engine, Some(signed.clone()), vec![], false, None, true)
+        .await?;
+    let v = serde_json::to_value(resp.0)?;
+    Ok(json!({
+        "signed_as": "assistant",
+        "pubkey": pubkey,
+        "id": signed.get("id"),
+        "coordinate": coordinate,
+        "derivative": preview.derivative,
+        "slot": preview.slot,
+        "after": preview.after,
+        "copied_tags": preview.copied_tags,
+        "ingested": v["ingested"],
+        "note": if preview.derivative {
+            "A derivative index under the assistant's key (p + E name the original). Local until `publish`."
+        } else {
+            "A new version of the assistant's own index. Local until `publish`."
+        },
     }))
 }
 

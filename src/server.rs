@@ -792,6 +792,26 @@ pub async fn start(opts: ServeOptions) -> anyhow::Result<RunningServer> {
             "/api/v1/discussions/delete",
             post(api::discussion_delete_handler),
         )
+        .route(
+            "/api/v1/insertions",
+            post(api::insertions::insertion_publish_handler),
+        )
+        .route(
+            "/api/v1/insertions/preview",
+            post(api::insertions::insertion_preview_handler),
+        )
+        .route(
+            "/api/v1/insertions/load",
+            post(api::insertions::insertions_load_handler),
+        )
+        .route(
+            "/api/v1/publication/fork",
+            post(api::insertions::fork_publish_handler),
+        )
+        .route(
+            "/api/v1/publication/fork/preview",
+            post(api::insertions::fork_preview_handler),
+        )
         .route("/api/v1/spell/inspect", post(spell::inspect_handler))
         .route("/api/v1/spell/execute", post(spell::execute_handler))
         .route("/api/v1/spell/list", post(spell::list_handler))
