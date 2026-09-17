@@ -11,9 +11,9 @@ use super::{AppState, PublishResponse, SignAs};
 use crate::engine::FetchPolicy;
 use crate::error::EngineError;
 use crate::publication::insertion::{
-    bind_placeholder_pubkey, build_insertion_template, coord_parts, event_coordinate, event_tags,
-    fork_index, index_children, is_bundle, promotion_slot, stamp_bundle_root, InsertionAnchor,
-    Placement,
+    bind_placeholder_pubkey, build_insertion_template, coord_parts, ensure_mime_tag,
+    event_coordinate, event_tags, fork_index, index_children, is_bundle, promotion_slot,
+    stamp_bundle_root, InsertionAnchor, Placement,
 };
 use crate::search::TagValueCount;
 use crate::signing::EventTemplate;
@@ -395,6 +395,7 @@ pub(crate) async fn bundle_templates(
             return Err(EngineError::BadRequest(format!("bundle event {i} has no d tag")));
         }
         bind_placeholder_pubkey(&mut tags, &mut content, pubkey);
+        ensure_mime_tag(kind as u32, &mut tags);
         if i == last {
             stamp_bundle_root(&mut tags, &resolved, &extra, &relay_hint);
         }

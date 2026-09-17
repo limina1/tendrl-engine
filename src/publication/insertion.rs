@@ -332,6 +332,21 @@ pub fn stamp_bundle_root(
     }
 }
 
+/// Every NKBIP-01 event carries `m`, its MIME type: a note its markup's
+/// text type (from the `format` tag; markdown when unsaid), an index
+/// `application/json`. Fills it in when the builder left it out.
+pub fn ensure_mime_tag(kind: u32, tags: &mut Vec<Vec<String>>) {
+    if tags.iter().any(|t| t.first().map(String::as_str) == Some("m") && t.len() >= 2) {
+        return;
+    }
+    let mime = if kind == 30040 {
+        "application/json".to_string()
+    } else {
+        crate::tree::node::ContentMode::from_tags(tags).mime().to_string()
+    };
+    tags.push(vec!["m".to_string(), mime]);
+}
+
 /// The kasten build emits `__PUBKEY__` wherever the signing key belongs
 /// (child `a` coordinates, mentions); bind it before signing.
 pub const PUBKEY_PLACEHOLDER: &str = "__PUBKEY__";
@@ -619,6 +634,23 @@ mod tests {
         let plain = serde_json::json!({"kind": 30040, "tags": [["d", "x"], ["a", "30041:p:n"]]});
         assert!(!is_bundle(&plain));
         assert!(InsertionAnchor::from_event(&plain).is_none());
+    }
+
+    #[test]
+    fn ensure_mime_tag_fills_from_format_or_kind() {
+        use super::*;
+        let mut note = vec![vec!["d".to_string(), "n".to_string()], vec!["format".to_string(), "asciidoc".to_string()]];
+        ensure_mime_tag(30041, &mut note);
+        assert_eq!(note.last().unwrap(), &vec!["m".to_string(), "text/asciidoc".to_string()]);
+        let mut bare = vec![vec!["d".to_string(), "n".to_string()]];
+        ensure_mime_tag(30041, &mut bare);
+        assert_eq!(bare.last().unwrap()[1], "text/markdown");
+        let mut index = vec![vec!["d".to_string(), "i".to_string()]];
+        ensure_mime_tag(30040, &mut index);
+        assert_eq!(index.last().unwrap()[1], "application/json");
+        let mut kept = vec![vec!["m".to_string(), "text/org".to_string()]];
+        ensure_mime_tag(30041, &mut kept);
+        assert_eq!(kept.len(), 1, "an existing m tag is left alone");
     }
 
     #[test]
