@@ -721,18 +721,35 @@
 			}
 			return { kind: 'addr-nonindex', addr: value };
 		}
-		if (key === 'd') return { kind: 'search', query: `d:${value}` };
-		if (key === 't') return { kind: 'search', query: `t:${value}` };
-		// Generic tag filter — both single-char (NIP-01 short tags) and
-		// multi-char names (author, client, imeta, alt, …) are accepted by
-		// the parser (src/search.rs:506). The value must be whitespace-free
-		// and not start with `/`; otherwise fall through to a plain chip.
+		if (key === 'd') return { kind: 'search', query: `d:${quoteTagValue(value)}` };
+		if (key === 't') return { kind: 'search', query: `t:${quoteTagValue(value)}` };
+		// Generic tag filter — both single-char (NIP-01 short tags: `T`, `d`,
+		// `L`, …) and multi-char names (author, client, imeta, alt, …) are
+		// accepted by the parser (src/search.rs:506); single-letter names
+		// filter at the NIP-01 layer, longer ones post-filter the local
+		// store. A value with spaces is quoted (`T:"What's Up?"`); a
+		// paragraph-length value (summary, alt) stays a plain chip.
 		const validName = /^[A-Za-z][A-Za-z0-9_]*$/.test(key);
-		const validValue = !value.startsWith('/') && /^[^\s]+$/.test(value);
+		const validValue = !value.startsWith('/') && value.length <= 120;
 		if (validName && validValue) {
-			return { kind: 'search', query: `${key}:${value}` };
+			return { kind: 'search', query: `${key}:${quoteTagValue(value)}` };
 		}
 		return { kind: 'none' };
+	}
+
+	/** Search-DSL spelling of a tag value: bare when it has no whitespace or
+	 *  quotes, double-quoted otherwise. */
+	function quoteTagValue(value: string): string {
+		if (/^[^\s"]+$/.test(value)) return value;
+		return `"${value.replace(/"/g, '\\"')}"`;
+	}
+
+	/** Chip label: opaque ids (the nanoid `d`, 64-hex refs) and long values
+	 *  are shortened; the full value stays in the tooltip and the search. */
+	function chipLabel(key: string, value: string): string {
+		if (key === 'd') return value.length > 10 ? `${value.slice(0, 6)}…` : value;
+		if (isHex64(value)) return `${value.slice(0, 8)}…`;
+		return value.length > 40 ? `${value.slice(0, 38)}…` : value;
 	}
 
 	async function onTagClick(tag: string[]) {
@@ -786,9 +803,13 @@
 
 	// Tags shown in the chip block — exclude the title tag (already in the
 	// header) and the d tag (rendered as the addr identifier above).
-	const tagChips = $derived(
-		n.tags.filter((t) => t[0] !== 'title' && t[0] !== 'd')
-	);
+	// `title` is the header; `d` leads the row as a button — searching it
+	// finds every version of this addressable event (and anything that
+	// reuses the identifier).
+	const tagChips = $derived([
+		...n.tags.filter((t) => t[0] === 'd'),
+		...n.tags.filter((t) => t[0] !== 'title' && t[0] !== 'd')
+	]);
 
 	// ===== Found on =====
 	// Relays this event has been seen on / broadcast to. The modal can't
@@ -1252,10 +1273,10 @@
 								<button
 									class="evm__chip evm__chip--{tag[0]} evm__chip--clickable"
 									onclick={() => onTagClick(tag)}
-									title="{tag[0]}: {tag[1] ?? ''}"
+									title="{tag[0]}: {tag[1] ?? ''} — search {action.kind === 'search' ? action.query : 'for it'}"
 								>
 									<span class="evm__chip-key">{tag[0]}</span>
-									<span class="evm__chip-val">{tag[1] ?? ''}</span>
+									<span class="evm__chip-val">{chipLabel(tag[0], tag[1] ?? '')}</span>
 								</button>
 							{:else}
 								<span
@@ -1263,7 +1284,7 @@
 									title="{tag[0]}: {tag[1] ?? ''}"
 								>
 									<span class="evm__chip-key">{tag[0]}</span>
-									<span class="evm__chip-val">{tag[1] ?? ''}</span>
+									<span class="evm__chip-val">{chipLabel(tag[0], tag[1] ?? '')}</span>
 								</span>
 							{/if}
 						{/each}
