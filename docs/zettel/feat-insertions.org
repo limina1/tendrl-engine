@@ -69,6 +69,17 @@ the idea and its resolved questions: [[file:idea-insertions.org][insertions]].
 - *Search*: insertions are 30041s — =A:<coord> k:30041=, =has:A=, =count:A=
   all work unchanged (verified 2026-09-16).
 
+* Asking for them
+
+Annotate mode (Tools → *annotate mode*, no identity needed) turns a
+selection into a *request* — a local record with the anchor, the task,
+scope hints and the excerpt; the event menu's *Ask* (=q=) does the same
+from a click. Optionally signed as a kind-1111 mention of the assistant
+and broadcast; local by default. The user's own agent answers over MCP
+with =propose_insertion= and closes it with =answer_request=; the window
+lists earlier requests here with their answers and opens the written
+notes. [[file:decision-requests-are-events.org][Decision]].
+
 * Not yet
 - "open in composer" hand-off from the composer modal (an anchored compose
   item) and the capture-card /note/ variant door.

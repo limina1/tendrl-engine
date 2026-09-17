@@ -1,0 +1,56 @@
+#+TITLE: Decision: Annotation Requests Are Records the User's Agent Reads — Never a Harness
+#+TYPE: decision
+#+STATUS: current
+#+DATE: 2026-09-17
+
+* The decision
+
+"Ask for notes about this place" does not make tendrl drive a model. A
+request is a *record*: a local file (=<data_dir>/requests/=) with the
+anchor (publication + section, like an insertion), the task, scope
+hints, an optional excerpt — unsigned by default, so it needs no
+identity. Optionally the user signs it as a kind-1111 comment on the
+section that =p=-mentions the assistant (a literal mention), and
+optionally broadcasts it; *local is the default*. Whoever answers reads
+open requests through =list_requests= over MCP, writes assistant-signed
+insertions, and closes the request with =answer_request= — which also
+posts the assistant's 1111 reply when the request was signed.
+
+No queue tendrl pushes into, no stream a session must hold open, no
+process that wakes Claude Code. The user types "check tendrl requests"
+in their own harness; the =/tendrl-requests= skill
+(=docs/skills/tendrl-requests/=) is the loop. (User's call, 2026-09-17.)
+
+* Why
+
+- *The line is who initiates.* An app that wakes a Claude Code session
+  and hands it work is using the subscription as its backend — the
+  thing the Agent SDK terms disallow and the thing the user is being
+  careful about. An app that writes a note the user later tells their
+  agent to read is a filesystem and a protocol. Same result, honest
+  shape.
+- *Async by nature.* Reading, thinking of the question, and getting the
+  answer are hours apart anyway. Nothing is lost by not being live.
+- *It composes with Nostr.* A signed request is an ordinary comment
+  thread: the reader shows it, the reply closes it, anyone's client can
+  see the ask and the answer. Unsigned stays private.
+- *The in-app loop keeps the same input.* When it answers requests
+  later (API key, the user's own cost), it reads the same records —
+  one shape, two answerers.
+
+* Consequences
+
+- The zettel bubble (plan Phase 5) is /requests + insertions/, not a
+  derive endpoint that calls the model. An engine-side answerer is a
+  later, optional step with the same contract.
+- Annotate mode is a second capture toggle beside highlight mode; the
+  event menu's *Ask* (=q=) is the click door.
+- =answer_request= records coordinates; the reader renders them as
+  pending cards through the ordinary =load annotations= pass.
+
+* Related
+- [[file:index.org][Index]]
+- [[file:feat-mcp.org][MCP surface]] — where the agent reads
+- [[file:feat-insertions.org][Insertions]] — what the answer is made of
+- [[file:decision-assistant-signs-own-key.org][The assistant signs with its own key]]
+- [[file:../insertions-plan.org][Plan]]

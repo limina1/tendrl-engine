@@ -2214,3 +2214,50 @@ before bounding anything:
 #+begin_src bash
 seq 1 16 | ( time xargs -P 16 -I{} curl -s -o /dev/null -w '%{http_code} %{time_total}\n' -X POST $B/mcp -H "$J" -H "$A" -d '{"jsonrpc":"2.0","id":{},"method":"tools/call","params":{"name":"search_events","arguments":{"query":"k:30041","limit":50}}}' ) 2>&1 | sort | uniq -c
 #+end_src
+
+* Annotation requests + annotate mode (plan Phase 5, branch =feat/zettel-bubble=)
+
+=src/requests.rs=, =src/api/requests.rs=; decision
+=docs/zettel/decision-requests-are-events.org=; the answering loop is the
+=/tendrl-requests= skill (=docs/skills/tendrl-requests/SKILL.md=, symlinked
+into =.claude/skills/= on this machine).
+
+** Tests
+
+#+begin_src bash
+cargo test --lib requests::                                    # record, mention template, reply template, store
+cargo test --lib test_annotation_requests_unsigned_and_signed  # unsigned → answered; signed → 1111 mention + assistant reply
+#+end_src
+
+** API + MCP round-trip (scratch engine on =:3131=)
+
+#+begin_src bash
+B=localhost:3131; J='Content-Type: application/json'; TOK=$(curl -s $B/api/v1/mcp | jq -r .token); A="Authorization: Bearer $TOK"
+# unsigned (default) — needs no identity; the parent version is pinned from the store
+RQ=$(curl -s -X POST $B/api/v1/annotations/requests -H "$J" -d "{\"root\":\"$ROOT\",\"parent\":\"$S1\",\"task\":\"derive the moral two ways\",\"scope\":[\"section\",\"web\"],\"output\":\"kasten\"}"); echo "$RQ" | jq -c '{id,status,scope,output}'
+# signed: a kind-1111 on the section, p-mentioning the assistant, t:annotation-request — local unless "broadcast":true
+curl -s -X POST $B/api/v1/annotations/requests -H "$J" -d "{\"root\":\"$ROOT\",\"parent\":\"$S1\",\"task\":\"history\",\"sign\":true}" | jq -c '{event_kind:.event.kind, p:[.event.tags[]|select(.[0]=="p")|.[1][0:8]]}'
+curl -s "$B/api/v1/annotations/requests?root=$ROOT&status=open" | jq -c '{count, open}'
+# what the agent does (here by hand over /mcp): list → write → close
+curl -s -X POST $B/mcp -H "$J" -H "$A" -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"list_requests","arguments":{}}}' | jq -c '.result.structuredContent|{count, tasks:[.requests[].task]}'
+NOTE=$(curl -s -X POST $B/mcp -H "$J" -H "$A" -d "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/call\",\"params\":{\"name\":\"propose_insertion\",\"arguments\":{\"root\":\"$ROOT\",\"parent\":\"$S1\",\"placement\":\"after\",\"title\":\"Two readings\",\"content\":\"…\"}}}" | jq -r .result.structuredContent.coordinate)
+curl -s -X POST $B/mcp -H "$J" -H "$A" -d "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"tools/call\",\"params\":{\"name\":\"answer_request\",\"arguments\":{\"request_id\":\"$(echo $RQ | jq -r .id)\",\"summary\":\"One note.\",\"coordinates\":[\"$NOTE\"]}}}" | jq -c '.result.structuredContent|{status, by:(.answer.by|.[0:8]), reply:.answer.reply_event_id}'
+# answering a SIGNED request also posts the assistant's 1111 reply (e → the mention), kept local
+#+end_src
+
+Gotcha (fixed 2026-09-17): an =enabled_tools= allowlist saved by Settings →
+AI tools used to freeze the catalog — tools added in a later build came up
+disabled (=-32602 not enabled= over MCP). The config now also records
+=known_tools=; a catalog tool the saved list never saw gets its default.
+
+** UI
+
+Tools → *annotate mode* (no identity needed; highlight mode wins when both
+are on) → select a passage → the capture card reads "annotate mode — this
+passage becomes the request's context" with *ask for notes →* → the window
+(=.rq-modal=): anchor chips, the ask, optional title, scope chips, notes |
+kasten, the excerpt, *sign as a mention* (+ *also broadcast*), earlier
+requests here with their answers (coordinates open the notes). The event
+menu's *q Ask* is the click door. CDP: select via a =Range= over a text node
+inside =.continuous-section= then dispatch a =mouseReleased=; the popover's
+=aria-label= flips to "Ask for notes about this passage".

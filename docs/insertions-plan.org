@@ -314,22 +314,35 @@ Recipe: =docs/commands.org= "Bunker (NIP-46)".
       [[file:commands.org][commands.org]] ("MCP").
       Zettel: [[file:zettel/feat-mcp.org][feat-mcp]].
 
-** Phase 5 — The zettel bubble                                             :medium:
-- [ ] =POST /api/v1/derive/context= — engine assembles from an addr +
-      optional selection: the section, siblings, resolved refs, top-k
-      HNSW neighbours → =Vec<ContextEntry>=
-- [ ] =ClaudeProvider=: =output_config.format= support on =run_turn=
-      (structured outputs; model configurable — currently pinned to
-      Haiku 4.5 in =ClaudeProvider::new=)
-- [ ] =POST /api/v1/derive= — context + intent → one call → =ComposeState=
-      → insertion template(s) anchored at the source → =sign_as:
-      assistant= or =DraftStore= (per a request flag)
-- [ ] reader bubble: anchored overlay (reuse =RichContent= overlay
-      primitives), per-section accept / discard / open-in-composer;
-      generated output persisted /before/ render (buffers unmount on
-      switch); consult =feat-ui-patterns= — no browser dialogs
-- [ ] MCP parity: the same derive endpoint is a tool, so a terminal
-      agent can invoke it against a curated set
+** Phase 5 — The zettel bubble: requests + answers                         :medium:
+Reshaped 2026-09-17 ([[file:zettel/decision-requests-are-events.org][decision]]):
+tendrl never calls the model for this. A request is a local record the
+user's own agent reads over MCP; the answer is insertions.
+- [X] =src/requests.rs= — =AnnotationRequest= (anchor, task, scope hints,
+      excerpt, output notes|kasten, status), =RequestStore=
+      (=<data_dir>/requests/=), the kind-1111 mention template (=p= the
+      assistant, =t annotation-request=) and the assistant's reply template
+      (=q= tags for every coordinate written)
+- [X] =POST/GET /api/v1/annotations/requests=, =/:id= (get/delete),
+      =/:id/answer=, =/:id/reopen=; =sign= (default false) + =broadcast=
+      (default false)
+- [X] tools =list_requests= (Read) · =answer_request= (ComposeWrite; posts
+      the 1111 reply when the request was signed)
+- [X] annotate mode — second capture toggle beside highlight mode, no
+      identity needed; the selection opens =AnnotationRequestModal= (task,
+      title, scope chips, notes|kasten, sign / broadcast checkboxes, earlier
+      requests here with their answers → open the written notes); the event
+      menu's *Ask* (=q=) is the click door
+- [X] =/tendrl-requests= skill (=docs/skills/tendrl-requests/SKILL.md=,
+      symlinked into =.claude/skills/=) — the read → research → write →
+      close loop for Claude Code
+- [ ] in-app answerer (API key): the same records, the chat loop as the
+      worker, streamed progress — optional, later
+- [ ] =ClaudeProvider=: =output_config.format= (structured outputs) if the
+      in-app answerer wants a =ComposeState= in one shot
+- [ ] anchored bundle indexes: spec clause "insertion sets" + widen the
+      load filter to =kinds [30041, 30040]= so a kasten answer is found as a
+      packet, not only its pages
 
 ** Phase 5b — The annotations table                                       :medium:
 - [ ] buffer kind =annotations:<addr>= (tours.ts + registry.ts +

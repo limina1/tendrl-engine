@@ -45,6 +45,16 @@ JSON-RPC =-32602=. Results carry =structuredContent= next to the text.
   =save_draft= + =sign_draft=. The =publish= / =promote_insertion= /
   =sign_draft= trio stays off until switched on in Settings.
 
+* Answering requests
+
+Annotate mode's "ask for notes" writes a local request record; the
+=/tendrl-requests= skill (=docs/skills/tendrl-requests/=) is the loop a
+Claude Code session runs when the user says "check tendrl requests":
+=list_requests= → read the anchor (=get_addressable=, =view_publication=,
+=semantic_search=, =get_context=; web search is the harness's own) →
+=propose_insertion= per note → =answer_request=. tendrl never initiates
+([[file:decision-requests-are-events.org][decision]]).
+
 * Verified
 
 Live on a scratch engine (recipe: [[file:../commands.org][commands.org]],
