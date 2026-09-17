@@ -1,4 +1,5 @@
 import type {
+	TagValueCount,
 	BunkerConnectResponse,
 	BunkerStatus,
 	BookshelfResponse,
@@ -2686,12 +2687,25 @@ export interface LoadedInsertion {
 	request?: string;
 }
 
+/** Histograms over the whole root, computed engine-side BEFORE the author
+ *  filter is applied (the table's author bars show every author even while
+ *  one is selected). `by_author` values are hex pubkeys with the kind-0
+ *  display name in `label`; `by_parent` values are parent coordinates.
+ *  Notes only — request-30041s are not counted. */
+export interface InsertionCounts {
+	by_author: TagValueCount[];
+	by_parent: TagValueCount[];
+	total: number;
+}
+
 export interface InsertionsLoadResponse {
 	insertions: LoadedInsertion[];
 	source: { local_count: number; relay_count: number };
 	refreshed_at: number;
 	/** The same query in the search DSL (`A:<root> k:30041 by:…`). */
 	query: string;
+	/** Present when the request asked for `counts`. */
+	counts?: InsertionCounts;
 }
 
 /** The `#A` discovery pass — an explicit reader action, Confirm-gated when
@@ -2704,6 +2718,10 @@ export function loadInsertions(req: {
 	relays?: string[];
 	limit?: number;
 	modeConfirm?: boolean;
+	/** NIP-01 `since` (unix seconds) — the table's time filter. */
+	since?: number;
+	/** Ask for the root-wide histograms (`counts` on the response). */
+	counts?: boolean;
 }) {
 	return fetchJson<InsertionsLoadResponse>('/api/v1/insertions/load', {
 		method: 'POST',
@@ -2713,7 +2731,9 @@ export function loadInsertions(req: {
 			policy: req.policy,
 			relays: req.relays ?? [],
 			limit: req.limit,
-			mode_confirm: req.modeConfirm ?? false
+			mode_confirm: req.modeConfirm ?? false,
+			since: req.since,
+			counts: req.counts ?? false
 		})
 	});
 }

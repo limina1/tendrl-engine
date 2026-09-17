@@ -36,6 +36,8 @@ export type LeaderContext = {
 	openSettings: () => void;
 	openProfileEdit: () => void;
 	openCompose: () => void;
+	/** Open the annotations table for the focused reader (Track B arms it). */
+	openAnnotationsTable: () => void;
 };
 
 export function buildLeaderRoot(ctx: LeaderContext): SubPrefix {
@@ -60,7 +62,8 @@ export function buildLeaderRoot(ctx: LeaderContext): SubPrefix {
 							c: { type: 'leaf', desc: 'compose', commandId: 'tendrl-open-compose', category: 'Compose', kind: 'client', run: () => ctx.openCompose() },
 							// Same commandId as SPC s s — the two chords are aliases;
 							// desc/category match so listLeaderBindings merges the rows.
-							s: { type: 'leaf', desc: 'open settings', commandId: 'tendrl-open-settings', category: 'Configuration', kind: 'client', run: () => ctx.openSettings() }
+							s: { type: 'leaf', desc: 'open settings', commandId: 'tendrl-open-settings', category: 'Configuration', kind: 'client', run: () => ctx.openSettings() },
+							a: { type: 'leaf', desc: 'annotations table', commandId: 'tendrl-annotations-table', category: 'View', kind: 'client', run: () => ctx.openAnnotationsTable() }
 						}
 					}
 				}
@@ -258,7 +261,8 @@ function buildNoopRoot(): SubPrefix {
 		closeFocusedWindow: noop,
 		openSettings: noop,
 		openProfileEdit: noop,
-		openCompose: noop
+		openCompose: noop,
+		openAnnotationsTable: noop
 	});
 }
 

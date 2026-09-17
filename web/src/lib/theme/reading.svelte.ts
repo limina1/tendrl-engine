@@ -63,9 +63,15 @@ export type ReadingPrefs = {
 	/** How loaded annotations render beside the text: a flat margin card or
 	 *  the post-it "sticky" skin (same structure, different dress). */
 	notes: NotesSkin;
+	/** Where notes sit on a wide pane (D9): in a right gutter beside their
+	 *  anchor (`margin`) or under it (`inline`). Below the measure that
+	 *  leaves no gutter — and while the pane is split — margin falls back
+	 *  to inline; on the phone notes fold either way. */
+	notesLayout: NotesLayout;
 };
 
 export type NotesSkin = 'card' | 'sticky';
+export type NotesLayout = 'margin' | 'inline';
 
 export const READING_DEFAULTS: ReadingPrefs = {
 	font: 'serif',
@@ -74,7 +80,8 @@ export const READING_DEFAULTS: ReadingPrefs = {
 	measure: 68,
 	leading: 1.6,
 	justify: false,
-	notes: 'card'
+	notes: 'card',
+	notesLayout: 'margin'
 };
 
 const clamp = (n: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, n));
@@ -105,7 +112,8 @@ function normalize(p: Partial<ReadingPrefs> | null | undefined): ReadingPrefs {
 		leading:
 			typeof p.leading === 'number' ? clamp(p.leading, LEADING_MIN, LEADING_MAX) : d.leading,
 		justify: !!p.justify,
-		notes: p.notes === 'sticky' ? 'sticky' : 'card'
+		notes: p.notes === 'sticky' ? 'sticky' : 'card',
+		notesLayout: p.notesLayout === 'inline' ? 'inline' : 'margin'
 	};
 }
 
@@ -173,6 +181,11 @@ export function stepReadingLeading(delta: number) {
 
 export function setReadingNotes(skin: NotesSkin) {
 	reading.notes = skin === 'sticky' ? 'sticky' : 'card';
+	persist();
+}
+
+export function setReadingNotesLayout(layout: NotesLayout) {
+	reading.notesLayout = layout === 'inline' ? 'inline' : 'margin';
 	persist();
 }
 

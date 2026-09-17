@@ -1,0 +1,169 @@
+#+TITLE: Annotations table — the Track 0 contract
+#+DATE: 2026-09-17
+
+Frozen from the approved prototype (Artifact =7RNhEzyQ7nQW5NkBwH2MA5=,
+version 2; working file =scratchpad/insertions-ux/annotations-workflow.html=
+in the session that built it). Five tracks build against this in parallel
+worktrees; no two tracks edit the same file. Anything here is settled;
+anything not here is the owning track's call, recorded in its commit.
+
+* What ships (one paragraph)
+
+Tools → *table N* on a reader opens the annotations table for that
+publication: on desktop it *splits the pane* (reader | table,
+=store.splitFocused=), on mobile it is the focused work buffer, listed in
+the ☰ drawer. One buffer kind =annotations:<root>=, five layouts (by
+section · by author · timeline · free · collective), a spell input with a
+wand, author bars that filter and rewrite the spell, requests on the table
+as cards with a badge, hover lights the reader section, the =§n= chip
+scrolls the reader, =j=/=k=/=Enter=, drag-to-pin in free layout. Colour is
+per author with the highlight recipe (=discussions/colors.ts=,
+=pubkeyToColor=): card rail, author dot, anchor chip, histogram bar. The
+reader gains a *notes: margin | inline* Reading preference (D9: margin on
+a wide pane, inline while split or below the measure, folds on the phone)
+and stops counting request-30041s as pending notes.
+
+* Files each track owns
+
+| Track | Owns                                                                                                           |
+|-------+----------------------------------------------------------------------------------------------------------------|
+| 0     | this file; =api.ts= types; =state.svelte.ts= hooks; =theme/reading.svelte.ts= =notesLayout=; =table-model.ts=; =actions/draggable.ts=; WM registration (=tours.ts=, =registry.ts=, =BufferRenderer.svelte=, stub =AnnotationsBuffer.svelte=); =commands.ts= + =leader.ts= entry; =+page.svelte= command arm (openBuffer form) |
+| A     | =src/api/insertions.rs= (=counts=, =since=); =src/engine.rs= =label_author_buckets= visibility; tests           |
+| B     | =ReaderBuffer.svelte=; =ContinuousView.svelte= / =PaginatedView.svelte= (hot anchor, margin gutter); =InsertionCard.svelte= (author colour); =RequestCard.svelte= (badge, author colour); =SettingsBuffer.svelte= (Reading → notes layout); =+page.svelte= =openAnnotationsTable= body (split on desktop) |
+| C     | =AnnotationsBuffer.svelte= (replaces the stub); new =components/annotations/*= (=AnnotationsSpell=, =AnnotationsTable=, =AnnotationCard=); =table-model.ts= bodies of =flattenToc= / =layoutCards= |
+| D     | =components/annotations/AnnotationsList.svelte= (mobile); =mobile-nav= view provider; drawer entry             |
+| E     | =docs/insertions-plan.org=, =docs/zettel/feat-insertions.org=, =docs/commands.org=; CDP harness =scratchpad/cdp/annotations-table.mjs= |
+
+C and D both render inside =AnnotationsBuffer.svelte=: C owns that file
+and mounts =AnnotationsList= behind =mobileNav.isMobile= (or the shell
+flag the mobile shell already exposes); D delivers the list as a
+self-contained component taking =cards=, =layout=, =sections=, =view= and
+the same callbacks.
+
+* Engine API (Track A)
+
+=POST /api/v1/insertions/load= body gains:
+
+- =since: Option<i64>= — NIP-01 since on the =#A= pass.
+- =counts: bool= — when true, the =#A= pass runs *without* the author
+  filter, histograms are computed over the whole root, then =retain= by
+  author. Response gains =counts: { by_author, by_parent, total }= of
+  =TagValueCount= (=by_author= values are hex pubkeys, =label= = kind-0
+  display name via =label_author_buckets=; =by_parent= values are parent
+  coordinates). Notes only: =role == Request= excluded from counts.
+- Confirm-mode intent text when =counts= is set and authors are given:
+  "any author (table)" — the modal must say the fetch is broader than
+  the filter.
+
+Pure =insertion_counts(&[LoadedInsertion]) -> InsertionCounts= with a
+unit test; one assertion added to =test_insertion_propose_load_and_promote=.
+
+* App state hooks (Track 0, consumed by B and C)
+
+- =app.readerJump: { root, addr, nonce } | null=; =app.requestReaderJump(root, addr)=.
+  The reader keeps a module-scope =appliedJumpNonce=; an =$effect= on
+  =app.readerJump= that matches its root and a new nonce calls
+  =gotoSection(i, 'teleport')= and scrolls the section into view.
+- =app.hoverAnchor: { root, addr, count } | null=; =app.setHoverAnchor(v)=
+  (no write when unchanged). The reader passes =hotAddr= down to the
+  section views → =class:anchor-hot= + an =.anchor-tip= "N cards →".
+- =reading.notesLayout: 'margin' | 'inline'=, =setReadingNotesLayout=.
+
+* DOM contract
+
+Class names are the harness's selectors (Track E) and the walkthrough's
+anchors; keep them verbatim. Modifiers are plain classes on the same
+element.
+
+** Reader (Track B)
+
+- =.tools-sheet__row button.ins-table= — "table N" (N = notes, not
+  requests); =new= badge for its first 3 openings via discovery.
+- =.section.anchor-hot= on the lit section; =.anchor-tip= inside it.
+- =.rd-content.notes-margin= when the margin layout is active
+  (=reading.notesLayout === 'margin'= && pane wide enough && not split);
+  the section then lays out as =grid: minmax(0, measure) 280px=, notes in
+  =.section__side=. Otherwise notes render inline under the section as
+  today. Phone: folds as today.
+- =.icard= keeps =icard--card= / =icard--sticky=; gains
+  =style="--au: <pubkeyToColor>"= and an =.icard__dot=. The left rail is
+  =3px solid var(--au)=.
+- =.rcard= (RequestCard): same rail/dot treatment; =.badge= "? request" /
+  =.badge.answered= "✓ request · answered". No dashed borders.
+
+** Table buffer (Tracks C + D)
+
+- =.abuf= root, =data-root=.
+- =.spell= row: =.spell__input= (the DSL; editable; =Enter= applies via
+  =parseSpell=, a foreign root is refused with a toast), =.spell__wand=
+  (opens the existing =SpellComposerModal= with the text), chips
+  =.chip--by=, =.chip--sec=, =.chip--since= (click cycles all · 7d · 30d),
+  =.lay button[data-mode]= (=section= | =author= | =timeline= | =free= |
+  =collective=; =free= hidden on mobile).
+- =.hist= row: =.bar[data-pk]= per author from =authorBars=, =.bar.on=
+  when selected, inline =--au= colour, =i= fill width = share of total,
+  =.bar__n= count. Click toggles =by=; the spell input re-renders from
+  =buildSpell=.
+- =.atable= scroll container; =.cv= canvas sized =width × height= from
+  =LayoutResult=; =.lane[data-lane]= with =.lane__lab=; =.lane.hot= when
+  its parent matches =hoverAnchor=; =.tick= (timeline) and =.axis=
+  (collective) marks.
+- =.acard[data-cursor][data-id]= absolutely placed at =left/top= from
+  =Placed=; modifiers =.m= (small: timeline/collective), =.x= (expanded),
+  =.cur= (cursor ring), =.pinned= (free layout pin glyph), =.dragging=;
+  inline =--au=. Children: =.acard__h= (=.acard__anchor= "→ §n" chip,
+  =.badge= for requests / the placement word for notes, =.acard__by= with
+  =.acard__dot=), =.acard__t= title, =.acard__b= excerpt (masked), =.acard__f=
+  (=.acard__style= "✎ …", "↳ answer" chip when =request=, =.acard__open=
+  "open as section ▸" / "collapse ▴").
+- =.legend= one line: mode hint + "colour = author, as in highlights" +
+  card count.
+- Mobile (=AnnotationsList=): =.vseg button[data-mode]= (no =free=),
+  =.mspell= (collapsed spell text + wand), =.mhist= (bars), =.alist= with
+  =.grp= headers from lanes and =.acard.m= rows; tapping a row's
+  =.acard__anchor= switches to the reader buffer and jumps.
+
+** Keys (desktop, table focused)
+
+=j=/=k= move the cursor across =placed= in layout order; =Enter= toggles
+expand; =←=/=→= switch mode; =m= cycles mode; =Esc= clears expand. A
+=nav= handler registered the way =RepositoryBuffer= does (=NavAction=).
+
+* Layout rules (Track C, =layoutCards=)
+
+- *section*: one lane per TOC row in reading order, plus a leading
+  "whole publication" lane when any card anchors to the root; cards
+  packed left-to-right in =floor((width - 2·PAD + GAP) / (W + GAP))=
+  columns, order = requests, before, attached, after, then by time.
+  Empty lanes collapse to =LANE_HEAD + 6=.
+- *author*: one lane per author by descending count (=authorBars=
+  order), cards by section then time.
+- *timeline*: x by =createdAt= across =[min - 1h, max + 1h]=, greedy row
+  assignment (first row whose right edge + GAP ≤ x), day ticks, =.m=
+  cards; width grows with card count (≥ 70 px per card).
+- *free*: the section layout as the base; =pins[id]= overrides x/y;
+  height/width grow to contain pins.
+- *collective*: rows = authors, columns = sections at =AXIS + n·(WS + GAP)=,
+  a stack per cell offset 22 px; =.axis= "§n" marks along the top.
+- Expanded card: =WX × HX=, z-index above siblings, no re-pack.
+- The drag transient is never an input to =layoutCards=.
+
+* View state
+
+=AnnotationsViewState= (=table-model.ts=) read once from
+=store.bufferState= on mount, written on =$effect= teardown. Loaders use
+a plain =book= object (effect-loop discipline —
+=project_effect_async_state_loop=): effects depend on version counters
+(=app.insertionsVersion=, =app.requestsVersion=) and never read state the
+loader writes. Live updates through =onStoreEvent= + =concernsRoot=,
+debounced, callback not effect.
+
+* Verification (Track E)
+
+CDP harness on a scratch engine =:3131= with =nak= fixtures (3 sections,
+5 notes by 2 keys, 1 signed request): the split opens; lane and card
+counts per mode; an author bar filters and rewrites the spell; a drag
+pins and survives a buffer switch; an MCP =propose_insertion= appears
+live; hovering lights the section; the =§n= chip scrolls the reader.
+Mobile 390×844: =.vseg=, =.grp= rows, the drawer entry, a row's anchor
+returns to the reader. Teardown by exact process name + port.

@@ -543,6 +543,15 @@ function _createAppState() {
 	// loaded annotations (local store — no relay round trip).
 	let insertionsVersion = $state(0);
 
+	// --- Annotations table ↔ reader hooks (docs/annotations-table-contract.org) ---
+	// A card's anchor chip asks the reader showing `root` to scroll to
+	// `addr`. The nonce makes a repeat of the same jump observable; the
+	// reader remembers the nonce it last applied (module-scope, not state).
+	let readerJump: { root: string; addr: string; nonce: number } | null = $state(null);
+	// Hovering a table card lights its anchor section in the reader
+	// (`.anchor-hot` + the "N cards →" tip). null clears.
+	let hoverAnchor: { root: string; addr: string; count: number } | null = $state(null);
+
 	// --- Annotate mode + the request window ---
 	// Like highlight mode, but the selection (or an event's menu) opens the
 	// "ask for notes" window instead of a highlight card. No identity needed:
@@ -5230,6 +5239,18 @@ function _createAppState() {
 		set eventModalRoot(v: { coord: string; title: string | null } | null) { eventModalRoot = v; },
 		get insertionsVersion() { return insertionsVersion; },
 		bumpInsertions() { insertionsVersion += 1; },
+
+		// Annotations table ↔ reader
+		get readerJump() { return readerJump; },
+		requestReaderJump(root: string, addr: string) {
+			readerJump = { root, addr, nonce: (readerJump?.nonce ?? 0) + 1 };
+		},
+		get hoverAnchor() { return hoverAnchor; },
+		setHoverAnchor(v: { root: string; addr: string; count: number } | null) {
+			// Same target → no write (a hover effect re-firing must not churn).
+			if (v && hoverAnchor && v.root === hoverAnchor.root && v.addr === hoverAnchor.addr && v.count === hoverAnchor.count) return;
+			hoverAnchor = v;
+		},
 
 		// Annotate mode
 		get annotateMode() { return annotateMode; },

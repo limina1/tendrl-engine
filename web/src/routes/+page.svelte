@@ -18,6 +18,7 @@
 		type LeaderNode,
 		type SubPrefix
 	} from '$lib/wm/leader';
+	import { annotationsBufferId, rootFromReaderId } from '$lib/components/annotations/table-model';
 	import { commands, commandInShell } from '$lib/wm/commands';
 	import {
 		effectiveKeybinding,
@@ -724,6 +725,11 @@
 			closeMinibuffer();
 			return;
 		}
+		if (cmd.id === 'tendrl-annotations-table') {
+			openAnnotationsTable();
+			closeMinibuffer();
+			return;
+		}
 		if (cmd.id === 'tendrl-highlight-mode') {
 			app.toggleHighlightMode();
 			app.pushToast(
@@ -1080,7 +1086,30 @@
 					kicker: 'kind:0'
 				}
 			}),
-		openCompose
+		openCompose,
+		openAnnotationsTable
+		});
+	}
+
+	// Annotations table for the focused reader (docs/annotations-table-contract.org).
+	// Track 0 wiring: resolves the root from the focused reader buffer's id and
+	// opens the table buffer. Track B refines desktop into a split beside the
+	// reader (store.splitFocused) and keeps openBuffer for the mobile shell.
+	function openAnnotationsTable() {
+		const fb = focusedBuffer;
+		const root = fb?.kind === 'reader' ? rootFromReaderId(fb.id) : null;
+		if (!root) {
+			app.pushToast('Open a publication in a reader first', 'info');
+			return;
+		}
+		store.openBuffer({
+			className: 'work',
+			buffer: {
+				id: annotationsBufferId(root),
+				kind: 'annotations',
+				label: 'annotations',
+				kicker: fb?.label ?? 'table'
+			}
 		});
 	}
 

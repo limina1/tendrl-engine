@@ -56,6 +56,7 @@ export const BUFFER_KIND_META: BufferKindMeta[] = [
 	{ kind: 'profile-edit', className: 'work', defaultLabel: 'profile' },
 	{ kind: 'discussion-view', className: 'work', defaultLabel: 'discussion' },
 	{ kind: 'repository', className: 'work', defaultLabel: 'repo' },
+	{ kind: 'annotations', className: 'work', defaultLabel: 'annotations' },
 	{ kind: 'search', className: 'research', defaultLabel: 'search', tour: 'search-tour-intro' }
 ];
 
