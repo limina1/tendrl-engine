@@ -1,0 +1,116 @@
+#+TITLE: Annotations table — every note on a publication, on one surface
+#+TYPE: feature
+#+STATUS: plan
+#+DATE: 2026-09-17
+
+Plan Phase 5b. One buffer beside the reader that shows *all* the
+annotations on a publication at once — the notes people attached, the
+requests still waiting for an answer — arranged five ways, filtered by a
+query, coloured by author. The reader shows notes /at their place/; the
+table shows /who wrote what, where, when/. Frozen design:
+[[file:../annotations-table-contract.org][the Track 0 contract]]
+(2026-09-17); approved prototype:
+[[https://claude.ai/artifact/7RNhEzyQ7nQW5NkBwH2MA5][artifact 7RNhEzyQ7nQW5NkBwH2MA5]]
+(version 2). Five tracks build it in parallel worktrees; the plan
+tracks them by checkbox ([[file:../insertions-plan.org][plan]] § Phase 5b).
+
+* What it is
+
+- *One buffer kind*, =annotations:<root>= (=30040:<pk>:<d>=), opened from
+  the reader's Tools sheet (*table N*, N = notes, not requests) or
+  =SPC b o a=. On desktop it *splits the pane* — reader | table
+  (=store.splitFocused=) — so the two stay in view together; on the phone
+  it is the focused work buffer, listed in the ☰ drawer, and the
+  reader is one tap away. Beside the reader or filling the window is the
+  WM's split state, like any two buffers — not a mode of the table.
+- *Five layouts*, switched from the buffer's own header (=←=/=→=, =m=):
+  - /by section/ — one lane per TOC row in reading order (plus a "whole
+    publication" lane for front matter / appendix notes); cards packed
+    left to right: requests, then before · attached · after, then by time
+  - /by author/ — one lane per author, most notes first
+  - /timeline/ — x by =created_at=, day ticks, small cards, greedy rows
+  - /free/ — the section layout as the base; drag a card to *pin* it
+    where you want it (desktop only)
+  - /collective/ — a grid: rows = authors, columns = sections; a stack
+    per cell — "who has written where" in one glance
+- *Colour is per author*, the highlight recipe (=discussions/colors.ts=,
+  =pubkeyToColor=): the card's left rail, its author dot, the =§n= anchor
+  chip, the histogram bar — the same hue the author has on their
+  highlights and comments, so a person reads the same across surfaces.
+- *Requests are cards too*: a signed kind-30041 request
+  ([[file:decision-requests-are-events.org][decision]]) sits on the table
+  with a "? request" badge, "✓ request · answered" once a note points at
+  it; an unsigned local record shows under an /unsigned/ bar. A note
+  that answers wears an "↳ answer" chip. Requests are *not* counted in
+  the author histogram or in *table N* — they are asks, not notes.
+- *The spell is the query.* The header is an editable search-DSL line
+  (=A:<root> k:30041 [by:…] [since:…] count:by count:a=) with a wand:
+  the author bars (=count:by= buckets) toggle =by:= and rewrite the
+  line; =Enter= on a hand-edited line re-parses it (a foreign root is
+  refused); the wand hands the text to the existing spell composer, so
+  a saved table view is a saved spell
+  ([[file:idea-spells.org][spells]]) — no table-specific store.
+- *Cards are handles*: =§n= chip → the reader teleports to the section;
+  hover → the section lights in the reader (=.anchor-hot=, "N cards →");
+  =Enter= expands in place (RichContent), "open as section ▸" opens the
+  30041 in an event reader. =j=/=k= walk the cards in layout order.
+- *Pins are view state*, never published: layout mode, selected
+  authors, since, cursor, expansion and pin positions live in
+  =store.bufferState= (=AnnotationsViewState=), read once on mount and
+  written on teardown ([[file:decision-buffer-state-homes.org][where
+  buffer state lives]]). A drag survives a buffer switch; nothing about
+  the arrangement ever becomes an event.
+- *The reader gains a preference* (D9 in the plan): Reading → notes
+  *margin | inline*. Margin puts the cards in a 280 px gutter beside the
+  measure on a wide pane; inline (the default while split, or below the
+  measure) keeps them under their section as today; the phone folds
+  them into 44 px rows as before.
+
+* The boundary
+
+Engine-side (Rust, =src/api/insertions.rs=): which 30041s anchor to the
+root, their anchors, roles and request pointers — the =#A= pass of
+=POST /api/v1/insertions/load= — plus, for the table, =since= (a NIP-01
+bound on the pass) and =counts= (the pass runs *without* the author
+filter, computes =by_author= / =by_parent= / =total= histograms over the
+whole root, then =retain=s by author — so the bars show every author even
+while one is selected; =by_author= buckets are labelled with the kind-0
+name by =label_author_buckets=, the same labelling =count:by= uses in
+search). In Confirm mode the intent text says "any author (table)" so
+the modal is honest about the broader fetch.
+
+Web-side (=components/annotations/table-model.ts=, pure; the buffer and
+its cards): *layout* — =flattenToc= (reading-order rows off the reader's
+tree), =layoutCards= (mode → lanes + placed cards, a =$derived=, the
+=FocusGraph= idiom; the drag transient is never an input), =buildSpell= /
+=parseSpell= (the DSL round trip), =authorBars= (histogram → bars). Cards
+are a keyed ={#each}= — Svelte's own data join; no d3 by default,
+=d3-force= only if free clustering earns it after a real 100-card set.
+The mobile list (=AnnotationsList=) reuses the same cards and lanes as
+grouped rows.
+
+Cross-buffer hooks (=state.svelte.ts=): =app.readerJump= (a nonce the
+reader applies once) and =app.hoverAnchor= (root + addr + count) — the
+table writes, the reader reads; live updates arrive through the store
+stream ([[file:feat-insertions.org][insertions]] § Live) with
+=concernsRoot=, debounced, as a callback and not an effect.
+
+* Verification
+
+=scripts/verify/annotations-table.mjs= — a CDP harness against a scratch
+engine on =:3131= with =nak= fixtures (3 sections · 5 notes by 2 keys · 1
+signed request): the split opens; lane/card counts per layout; an author
+bar rewrites the spell; a drag pins; hover lights the section; the =§n=
+chip scrolls the reader; 390×844 shows the list. Recipe: =docs/commands.org=
+"Annotations table — verify".
+
+* Related
+- [[file:index.org][Index]]
+- [[file:feat-insertions.org][Insertions]] — the notes on the table; § Table
+- [[file:decision-requests-are-events.org][Requests are records, never a harness]] — the badged cards
+- [[file:feat-discussions.org][Discussions & highlights]] — the colour recipe
+- [[file:idea-spells.org][Spells]] — a saved view is a saved spell
+- [[file:feat-shell.org][WM shell]] — splits; [[file:feat-mobile.org][Mobile]] — the drawer
+- [[file:decision-buffer-state-homes.org][Where buffer state lives]] — pins in =bufferState=
+- [[file:../annotations-table-contract.org][The Track 0 contract]] — DOM contract, layout rules, files per track
+- [[file:../insertions-plan.org][Plan]] § Phase 5b, § Open follow-ups

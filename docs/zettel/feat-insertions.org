@@ -116,12 +116,32 @@ annotation carries =["style", <coord>]=), =list_requests= hands the agent the te
 tag search the card's ✎ pill and the request card's style line run
 (=style:<coord>=). Tools: =list_styles=; =propose_insertion= takes =style=.
 
+* Table
+
+Every note and request on a publication, on one surface beside the
+reader: the *annotations table*
+([[file:feat-annotations-table.org][feat-annotations-table]], plan Phase
+5b, design frozen 2026-09-17 in the Track 0 contract). One buffer kind
+=annotations:<root>=, opened from Tools → *table N* (a split on desktop,
+its own view on the phone); five layouts — by section · by author ·
+timeline · free · collective; the header is the same search DSL
+=insertions/load= already returns as =query= (=A:<root> k:30041 …=), so
+the table /is/ the spell this pass runs, with =count:by= author bars
+that filter it. Cards take the author's highlight colour; a request is a
+card with a badge; hover lights the section here, the =§n= chip scrolls
+it. For the table the load pass grows =since= and =counts= (root-wide
+histograms computed before the author filter, requests excluded) — the
+engine still owns which notes belong to the root and who wrote them; the
+web only arranges them.
+
 * Not yet
 - "open in composer" hand-off from the composer modal (an anchored compose
   item) and the capture-card /note/ variant door.
 - =/insertions/load= returns the DSL but does not /take/ a spell yet; the
-  annotations table (Phase 5b) is where that lands.
+  table rebuilds its request from the parsed spell (=parseSpell=) instead.
 - Span anchoring ([[file:idea-annotation-anchoring.org][annotation anchoring]]).
+- The rest: [[file:../insertions-plan.org][plan]] § Open follow-ups
+  (live relay subscriptions, bundle indexes, cross-publication refs, …).
 
 * Related
 - [[file:index.org][Index]]
@@ -129,6 +149,8 @@ tag search the card's ✎ pill and the request card's style line run
 - [[file:feat-discussions.org][Discussions & highlights]] — the two siblings
 - [[file:feat-reader.org][Reader]]
 - [[file:feat-assistant.org][AI assistant]] — =propose_insertion= is the zettel bubble's output shape
+- [[file:feat-annotations-table.org][Annotations table]] — every note on one surface; the load pass's =counts=
+- [[file:decision-requests-are-events.org][Decision: requests are records, never a harness]] — the 30041 request + the =request= pointer
 - [[file:decision-insertions-load-on-demand.org][Decision: load on demand]]
 - [[file:decision-assistant-signs-own-key.org][Decision: the assistant signs with its own key]]
 - [[file:../insertions-plan.org][Plan]]

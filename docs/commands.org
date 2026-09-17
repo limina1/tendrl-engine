@@ -2301,3 +2301,98 @@ curl -s -X POST $B/api/v1/search -H "$J" -d "{\"query\":\"style:$STY\",\"policy\
 curl -sN localhost:3131/api/v1/store/events &                      # {"type":"ingested",kind,id,coordinate,roots,addrs} / {"type":"request",id,root,parent,status}
 # write a note over MCP from another shell → the open reader shows the card without a click (≈0.5 s); CDP check in scratchpad cdp/live-check.mjs
 #+end_src
+
+* Annotations table — verify (plan Phase 5b, branches =feat/annotations-table= + =feat/annot-track-{a..e}=)
+
+Contract =docs/annotations-table-contract.org=; zettel
+=docs/zettel/feat-annotations-table.org=; harness
+=scripts/verify/annotations-table.mjs= (Node ≥22, no deps — the CDP driver
+pattern from the verify skill: fetch =/json=, =Runtime.evaluate=,
+=Page.captureScreenshot=, =Input.dispatchMouseEvent=, a device-metrics
+override that *persists across scripts* on the same page). Ran 2026-09-17
+against the Track E worktree (Track 0 stub only): the four reader/search
+checks pass, the eight table checks report FAIL until Tracks A–D merge.
+
+** Build + scratch engine on =:3131= (fresh data dir; never the live =:3030=)
+
+#+begin_src bash
+pnpm -C web build && cargo build                       # the SPA embeds at compile time
+cat > /tmp/verify-annot.toml <<'EOF'
+timeout_ms = 8000
+initial_relays = ["wss://relay.damus.io", "wss://nos.lol"]
+[embedding]
+enabled = false
+[database]
+data_dir = "/tmp/verify-annot-data"
+EOF
+rm -rf /tmp/verify-annot-data
+./target/debug/tendrl-engine -c /tmp/verify-annot.toml --port 3131 > /tmp/verify-annot-engine.log 2>&1 &
+sleep 4; curl -s localhost:3131/health
+B=localhost:3131/api/v1; J='Content-Type: application/json'
+curl -s -X POST $B/network/mode -H "$J" -d '{"mode":"auto"}'
+#+end_src
+
+** Seed: 3 sections · 5 notes by 2 keys · 1 signed request
+
+The publication comes from =nak= (stdin closed — =nak= blocks on an open
+stdin) and goes in as ndjson; the notes and the request use the same
+endpoint calls as the Insertions / Annotation-requests recipes above.
+
+#+begin_src bash
+# two keys: the user (ncryptsec login + unlock) and the assistant (plain nsec)
+USEC=$(nak key generate); ASEC=$(nak key generate); UPK=$(nak key public $USEC); APK=$(nak key public $ASEC)
+curl -s -X POST $B/identity/login  -H "$J" -d "{\"ncryptsec\":\"$(nak key encrypt $USEC pw)\"}"; curl -s -X POST $B/identity/unlock -H "$J" -d '{"password":"pw"}'
+curl -s -X POST $B/assistant-identity/login -H "$J" -d "{\"key\":\"$(nak encode nsec $ASEC)\"}"
+# 3 sections + the index
+D=annot-$(date +%s); FX=/tmp/verify-annot.jsonl; : > $FX
+for n in 1 2 3; do nak event -k 30041 -d $D-s$n -t title="Section $n" -t m=text/markdown -c "Body of section $n. The quick brown fox jumps over the lazy dog, paragraph after paragraph, so the page is tall enough to scroll." --sec $USEC < /dev/null >> $FX; done
+nak event -k 30040 -d $D -t title="Annotated Fables" -t a="30041:$UPK:$D-s1" -t a="30041:$UPK:$D-s2" -t a="30041:$UPK:$D-s3" --sec $USEC < /dev/null >> $FX
+curl -s -X POST $B/ingest -H 'Content-Type: application/x-ndjson' --data-binary @$FX          # ingested: 4
+ROOT=30040:$UPK:$D; S1=30041:$UPK:$D-s1; S2=30041:$UPK:$D-s2; S3=30041:$UPK:$D-s3; IDX=$(tail -1 $FX | jq -r .id)
+# 5 notes, kept local: user ×3 (attach §1 · after §2 · front matter), assistant ×2 (attach §3 · attach §2 answering the request)
+ins() { curl -s -X POST $B/insertions -H "$J" -d "$1" | jq -r .coordinate; }
+N1=$(ins "{\"anchor\":{\"root\":\"$ROOT\",\"parent\":\"$S1\"},\"title\":\"On section one\",\"content\":\"A reader's note on the first section.\",\"broadcast\":false}")
+N2=$(ins "{\"anchor\":{\"root\":\"$ROOT\",\"parent\":\"$S2\",\"placement\":\"after\"},\"title\":\"A modern reading\",\"content\":\"Belongs in the reading order after two.\",\"format\":\"org\",\"broadcast\":false}")
+N3=$(ins "{\"anchor\":{\"root\":\"$ROOT\",\"placement\":\"before\"},\"title\":\"Preface\",\"content\":\"Front matter for the whole publication.\",\"broadcast\":false}")
+N4=$(ins "{\"anchor\":{\"root\":\"$ROOT\",\"parent\":\"$S3\"},\"title\":\"Margin note\",\"content\":\"The assistant's aside on three.\",\"sign_as\":\"assistant\",\"broadcast\":false}")
+# 1 signed request on §2 by the user (a kind-30041 annotation, t: annotation-request) …
+SG=$(curl -s -X POST $B/annotations/requests -H "$J" -d "{\"root\":\"$ROOT\",\"parent\":\"$S2\",\"task\":\"history of the moral\",\"context\":\"a sufficient recompense\",\"sign\":true}"); RC=$(echo "$SG" | jq -r .coordinate)
+# … answered by the assistant's second note (the `request` pointer flips it to answered)
+N5=$(ins "{\"anchor\":{\"root\":\"$ROOT\",\"parent\":\"$S2\"},\"title\":\"Gauss and Legendre\",\"content\":\"1805, 1809.\",\"sign_as\":\"assistant\",\"request\":\"$RC\",\"broadcast\":false}")
+# what the engine says before the GUI
+curl -s -X POST $B/insertions/load -H "$J" -d "{\"root\":\"$ROOT\",\"policy\":\"local_only\"}" | jq -c '{n:(.insertions|length), roles:[.insertions[].role], query}'   # 6 · 5×note + request · A:<root> k:30041
+curl -s -X POST $B/insertions/load -H "$J" -d "{\"root\":\"$ROOT\",\"policy\":\"local_only\",\"counts\":true}" | jq -c '.counts'   # Track A: by_author 2 buckets (3 + 2), by_parent, total 5 — requests excluded
+curl -s -X POST $B/insertions/load -H "$J" -d "{\"root\":\"$ROOT\",\"policy\":\"local_only\",\"counts\":true,\"authors\":[\"$APK\"]}" | jq -c '{n:(.insertions|length), by:(.counts.by_author|length)}'   # Track A: 2 items, still 2 bars
+curl -s "$B/annotations/requests?root=$ROOT&status=all" | jq -c '.requests[]|{id, status}'   # answered (derived from the pointer)
+#+end_src
+
+** The harness (headless chromium on =:9333=)
+
+#+begin_src bash
+chromium --headless=new --remote-debugging-port=9333 --no-sandbox --user-data-dir=/tmp/cdp-annot-profile about:blank > /tmp/cdp-annot.log 2>&1 &
+sleep 3
+node scripts/verify/annotations-table.mjs --root "$ROOT" --search "id:$IDX" --expect-cards 6 --out /tmp/annot-shots
+# PASS/FAIL per check, exit 1 on any FAIL; screenshots numbered in --out. Checks, in order:
+#   app-open · search-result · reader-open · reader-sections          (the driver: first-run modals, search → event menu → Read publication, scroll view)
+#   table-button · table-split                                        (Tools → .ins-table → .pane__body--reader AND .pane__body--annotations .abuf[data-root])
+#   layout-modes · layout-{section,author,timeline,free,collective}   (.lane / .acard counts; --expect-cards pins the card count)
+#   author-bar · author-bar-off                                       (.hist .bar[data-pk] click → .spell__input contains by: → click again clears it)
+#   drag-pin                                                          (free layout, first .acard dragged 80×60 via Input.dispatchMouseEvent → .acard.pinned)
+#   hover-anchor                                                      (mouseMoved over a card → .section.anchor-hot in the reader pane)
+#   anchor-scroll                                                     (reader topped, the highest §n chip clicked → the reader scroller's scrollTop changed)
+#   mobile-list · mobile-no-free                                      (390×844 mobile override → .vseg[data-mode] without free, .alist .grp rows; metrics reset after)
+# --keep-mobile leaves the 390×844 override in place (it persists across scripts on the page); --port / --cdp / --search / --root / $PORT / $ROOT override the defaults.
+#+end_src
+
+Not scripted (the contract's remaining live checks, by hand after merge):
+a pin surviving a buffer switch (=SPC b b= away and back → =.acard.pinned=
+still there), an MCP =propose_insertion= appearing on the open table
+without a click (the store stream, as in "Live store stream" above), the
+☰ drawer entry on the phone and a row's =§n= returning to the reader.
+
+** Teardown (exact process name + port — never =pkill -f= with the pattern in the same shell)
+
+#+begin_src bash
+pgrep -a -x tendrl-engine | awk '/--port 3131/ {print $1}' | xargs -r kill
+pgrep -a -x chromium | awk '/remote-debugging-port=9333/ {print $1}' | xargs -r kill
+#+end_src

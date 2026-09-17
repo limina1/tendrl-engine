@@ -60,8 +60,16 @@ in their own harness; the =/tendrl-requests= skill
   note's =request= tag is the durable link: the card wears an "↳ answers"
   chip that opens the request, and the request card lists the notes that
   point at it whether or not a record was ever closed.
-- The annotations table (plan Phase 2) can group by request with the same
-  pointer — no request-specific store to join.
+- The annotations table (plan Phase 5b,
+  [[file:feat-annotations-table.org][feat-annotations-table]]) draws a
+  request as a card with a badge — "? request", "✓ request · answered"
+  once a note points at it — and the answering note wears an "↳ answer"
+  chip, all from the same pointer; no request-specific store to join.
+  Requests are asks, not notes: the table's author histogram
+  (=insertions/load= =counts=) and the reader's *table N* count exclude
+  =role: request=, and the reader no longer counts a request-30041 as a
+  pending note. An unsigned record has no author and files under an
+  /unsigned/ bar.
 
 * Related
 - [[file:index.org][Index]]
