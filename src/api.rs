@@ -9719,7 +9719,7 @@ mod chat_api_tests {
         assert_eq!(listed["insertions"][0]["coordinate"], ins_coord);
         assert_eq!(listed["insertions"][0]["parent"], first);
         assert_eq!(listed["insertions"][0]["placement"], "after");
-        assert_eq!(listed["query"], format!("A:{root} k:30041"));
+        assert_eq!(listed["query"], format!("A:{root} k:30040 k:30041"));
         // The table's load: counts see the whole root even when the author
         // filter would hide everything; `insertions` is narrowed after.
         let counted = insertions::load_insertions(

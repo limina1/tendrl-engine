@@ -186,7 +186,7 @@ fn signed_requests(engine: &AppState, root: Option<&str>) -> Result<Vec<Annotati
 }
 
 /// Mark every request that a local note points at as answered. A request
-/// is answered iff a 30041 anchored to its root carries
+/// is answered iff a 30041 — or a bundle's root 30040 — anchored to its root carries
 /// `["request", <its coordinate>]`; a record's own answer (from
 /// `answer_request`) is kept when it has one.
 fn derive_answers(engine: &AppState, requests: &mut [AnnotationRequest]) -> Result<(), EngineError> {
@@ -202,7 +202,8 @@ fn derive_answers(engine: &AppState, requests: &mut [AnnotationRequest]) -> Resu
     // request coordinate → (answer coordinates, newest answer time, its author)
     let mut answers: HashMap<String, (Vec<String>, i64, Option<String>)> = HashMap::new();
     for root in roots {
-        let filter = json!({ "kinds": [30041], "#A": [root], "limit": 1000 });
+        // A note (30041) or a bundle root (30040 — a whole kasten) may answer.
+        let filter = json!({ "kinds": [30040, 30041], "#A": [root], "limit": 1000 });
         let events = crate::query::query_local(engine.ndb(), &[filter])?;
         for ev in newest_per_coordinate(events) {
             let Some(target) = request_pointer(&ev) else {

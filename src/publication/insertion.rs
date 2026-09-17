@@ -184,10 +184,69 @@ impl InsertionAnchor {
     /// Read an anchor off a kind-30041 event. Other kinds are never
     /// insertions, whatever tags they carry.
     pub fn from_event(ev: &Value) -> Option<Self> {
-        if ev.get("kind").and_then(Value::as_u64) != Some(30041) {
-            return None;
+        match ev.get("kind").and_then(Value::as_u64) {
+            Some(30041) => Self::from_tags(&event_tags(ev)),
+            Some(30040) => Self::bundle_from_tags(&event_tags(ev)),
+            _ => None,
         }
-        Self::from_tags(&event_tags(ev))
+    }
+
+    /// The anchor of a *bundle*: a kind-30040 insertion. A bundle carries
+    /// only the uppercase set (`A` / `K` / `P`, plus `e` for the root's
+    /// event id) because its lowercase `a` tags are its CHILDREN — the
+    /// NKBIP-01 index it is. Its parent is therefore always the root: a
+    /// bundle attaches to the publication as a whole, never to a section.
+    pub fn bundle_from_tags(tags: &[Vec<String>]) -> Option<Self> {
+        let value = |name: &str| -> Option<&str> {
+            tags.iter()
+                .find(|t| t.first().map(String::as_str) == Some(name))
+                .and_then(|t| t.get(1))
+                .map(String::as_str)
+        };
+        let root = value("A")?;
+        let (rk, rpk, _) = coord_parts(root)?;
+        let root_kind = value("K").and_then(|k| k.parse().ok()).unwrap_or(rk);
+        let root_pubkey = value("P").unwrap_or(rpk).to_string();
+        let parent_event_id = value("e")
+            .filter(|e| e.len() == 64 && e.bytes().all(|b| b.is_ascii_hexdigit()))
+            .map(str::to_string);
+        Some(Self {
+            root: root.to_string(),
+            root_kind,
+            root_pubkey: root_pubkey.clone(),
+            parent: root.to_string(),
+            parent_kind: root_kind,
+            parent_pubkey: root_pubkey,
+            parent_event_id,
+            placement: Placement::Annotation,
+        })
+    }
+
+    /// The tags a bundle root carries for its anchor: the uppercase set and
+    /// the root's event id. No lowercase `a` — that namespace is the
+    /// bundle's children.
+    pub fn bundle_tags(&self, relay_hint: &str) -> Vec<Vec<String>> {
+        let with_relay = |name: &str, value: &str| -> Vec<String> {
+            if relay_hint.is_empty() {
+                vec![name.to_string(), value.to_string()]
+            } else {
+                vec![name.to_string(), value.to_string(), relay_hint.to_string()]
+            }
+        };
+        let mut tags = vec![
+            with_relay("A", &self.root),
+            vec!["K".to_string(), self.root_kind.to_string()],
+            with_relay("P", &self.root_pubkey),
+        ];
+        if let Some(id) = &self.parent_event_id {
+            tags.push(vec![
+                "e".to_string(),
+                id.clone(),
+                relay_hint.to_string(),
+                self.root_pubkey.clone(),
+            ]);
+        }
+        tags
     }
 
     /// The anchor tags, spec order: root scope (uppercase), parent scope
@@ -243,6 +302,53 @@ pub fn event_tags(ev: &Value) -> Vec<Vec<String>> {
 }
 
 /// The `kind:pubkey:d` coordinate of an addressable event.
+/// Is this event a bundle: a kind-30040 carrying an insertion anchor (`A`).
+pub fn is_bundle(ev: &Value) -> bool {
+    ev.get("kind").and_then(Value::as_u64) == Some(30040)
+        && event_tags(ev).iter().any(|t| t.first().map(String::as_str) == Some("A") && t.len() >= 2)
+}
+
+/// Make an unsigned NKBIP-01 index the root of a bundle: drop any anchor or
+/// request tags it already carries, then add this anchor's uppercase set and
+/// the `extra` rows (`request`, `context`, link tags). Its `a` children and
+/// everything else stay as the builder emitted them.
+pub fn stamp_bundle_root(
+    tags: &mut Vec<Vec<String>>,
+    anchor: &InsertionAnchor,
+    extra: &[Vec<String>],
+    relay_hint: &str,
+) {
+    tags.retain(|t| {
+        !matches!(
+            t.first().map(String::as_str),
+            Some("A" | "K" | "P" | "e" | "insert" | "request" | "context")
+        )
+    });
+    tags.extend(anchor.bundle_tags(relay_hint));
+    for t in extra {
+        if t.len() >= 2 && !t[0].is_empty() {
+            tags.push(t.clone());
+        }
+    }
+}
+
+/// The kasten build emits `__PUBKEY__` wherever the signing key belongs
+/// (child `a` coordinates, mentions); bind it before signing.
+pub const PUBKEY_PLACEHOLDER: &str = "__PUBKEY__";
+
+pub fn bind_placeholder_pubkey(tags: &mut [Vec<String>], content: &mut String, pubkey: &str) {
+    for row in tags.iter_mut() {
+        for cell in row.iter_mut() {
+            if cell.contains(PUBKEY_PLACEHOLDER) {
+                *cell = cell.replace(PUBKEY_PLACEHOLDER, pubkey);
+            }
+        }
+    }
+    if content.contains(PUBKEY_PLACEHOLDER) {
+        *content = content.replace(PUBKEY_PLACEHOLDER, pubkey);
+    }
+}
+
 pub fn event_coordinate(ev: &Value) -> Option<String> {
     let kind = ev.get("kind").and_then(Value::as_u64)?;
     let pubkey = ev.get("pubkey").and_then(Value::as_str)?;
@@ -485,6 +591,51 @@ pub fn fork_index(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn bundle_anchor_parent_is_root_and_children_untouched() {
+        use super::*;
+        let root = format!("30040:{}:book", "a".repeat(64));
+        let ev = serde_json::json!({"kind": 30040, "pubkey": "b".repeat(64), "tags": [
+            ["d", "kasten"], ["A", root, "wss://r"], ["K", "30040"], ["P", "a".repeat(64)],
+            ["a", format!("30041:{}:n1", "b".repeat(64))], ["a", format!("30041:{}:n2", "b".repeat(64))],
+            ["request", format!("30041:{}:rq", "a".repeat(64))]
+        ]});
+        assert!(is_bundle(&ev));
+        let anchor = InsertionAnchor::from_event(&ev).expect("bundle anchor");
+        assert_eq!(anchor.root, root);
+        assert_eq!(anchor.parent, root, "a bundle attaches to the whole publication");
+        assert!(anchor.is_top_level());
+        assert_eq!(index_children(&ev).len(), 2, "the a tags stay children");
+        // a plain index without `A` is not a bundle and has no anchor
+        let plain = serde_json::json!({"kind": 30040, "tags": [["d", "x"], ["a", "30041:p:n"]]});
+        assert!(!is_bundle(&plain));
+        assert!(InsertionAnchor::from_event(&plain).is_none());
+    }
+
+    #[test]
+    fn stamp_bundle_root_replaces_anchor_and_keeps_children() {
+        use super::*;
+        let root = format!("30040:{}:book", "a".repeat(64));
+        let anchor = InsertionAnchor::top_level(&root, Placement::Annotation).unwrap();
+        let mut tags = vec![
+            vec!["d".into(), "kasten".into()],
+            vec!["A".into(), "30040:old:x".into()],
+            vec!["a".into(), "30041:__PUBKEY__:n1".into()],
+            vec!["request".into(), "stale".into()],
+        ];
+        let extra = vec![vec!["request".into(), format!("30041:{}:rq", "a".repeat(64))]];
+        stamp_bundle_root(&mut tags, &anchor, &extra, "wss://r");
+        let names: Vec<&str> = tags.iter().map(|t| t[0].as_str()).collect();
+        assert_eq!(names, vec!["d", "a", "A", "K", "P", "request"]);
+        assert_eq!(tags[2][1], root);
+        assert_eq!(tags[5][1], extra[0][1]);
+        assert!(tags.iter().all(|t| t[0] != "insert"));
+        let mut content = String::from("by {{@__PUBKEY__}}");
+        bind_placeholder_pubkey(&mut tags, &mut content, &"b".repeat(64));
+        assert_eq!(tags[1][1], format!("30041:{}:n1", "b".repeat(64)));
+        assert_eq!(content, format!("by {{{{@{}}}}}", "b".repeat(64)));
+    }
+
     use super::*;
     use serde_json::json;
 

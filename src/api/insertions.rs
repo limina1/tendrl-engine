@@ -11,8 +11,9 @@ use super::{AppState, PublishResponse, SignAs};
 use crate::engine::FetchPolicy;
 use crate::error::EngineError;
 use crate::publication::insertion::{
-    build_insertion_template, coord_parts, event_coordinate, fork_index, index_children,
-    promotion_slot, InsertionAnchor, Placement,
+    bind_placeholder_pubkey, build_insertion_template, coord_parts, event_coordinate, event_tags,
+    fork_index, index_children, is_bundle, promotion_slot, stamp_bundle_root, InsertionAnchor,
+    Placement,
 };
 use crate::search::TagValueCount;
 use crate::signing::EventTemplate;
@@ -145,17 +146,8 @@ pub(crate) async fn insertion_template(
     if let Some(ctx) = body.context.as_deref().map(str::trim).filter(|c| !c.is_empty()) {
         extra.push(vec!["context".to_string(), ctx.to_string()]);
     }
-    if let Some(req) = body.request.as_deref().map(str::trim).filter(|r| !r.is_empty()) {
-        match coord_parts(req) {
-            Some((30041, _, d)) if !d.is_empty() => {
-                extra.push(vec!["request".to_string(), req.to_string()]);
-            }
-            _ => {
-                return Err(EngineError::BadRequest(format!(
-                    "request must be the 30041 coordinate of a signed annotation request, got `{req}`"
-                )))
-            }
-        }
+    if let Some(t) = request_tag(body.request.as_deref())? {
+        extra.push(t);
     }
     extra.extend(body.tags.iter().cloned());
     let relay_hint = super::discussion_relay_hint(engine);
@@ -280,6 +272,200 @@ pub async fn insertion_preview_handler(
     Ok(Json(json!({ "event": template, "anchor": anchor, "sign_as": sign_as })))
 }
 
+/// The `["request", <coord>]` row for an answer, validated: the value must
+/// be the 30041 coordinate of a signed annotation request.
+pub(crate) fn request_tag(request: Option<&str>) -> Result<Option<Vec<String>>, EngineError> {
+    let Some(req) = request.map(str::trim).filter(|r| !r.is_empty()) else {
+        return Ok(None);
+    };
+    match coord_parts(req) {
+        Some((30041, _, d)) if !d.is_empty() => Ok(Some(vec!["request".to_string(), req.to_string()])),
+        _ => Err(EngineError::BadRequest(format!(
+            "request must be the 30041 coordinate of a signed annotation request, got `{req}`"
+        ))),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// POST /api/v1/insertions/bundle  ·  /preview
+//
+// A bundle is a whole NKBIP-01 tree — a kasten — delivered as ONE insertion:
+// the caller sends the unsigned events a kasten build emits (leaves first,
+// the root 30040 last, `__PUBKEY__` where the signing key goes); the engine
+// binds the key, stamps the root with the anchor (uppercase set only — its
+// `a` tags are its children) and the request pointer, signs every event in
+// order with the named key, and stores them. The response to a request whose
+// `output` is `kasten` is the single root coordinate, not one note per event.
+
+#[derive(Debug, Deserialize, Default)]
+#[serde(default)]
+pub struct BundleRequest {
+    /// Only `root` (and an optional `parent_event_id`) is read: a bundle
+    /// attaches to the publication as a whole.
+    pub anchor: AnchorRequest,
+    /// Unsigned NKBIP-01 events, dependency order (leaves first), root last.
+    pub events: Vec<Value>,
+    /// Coordinate of the annotation request this bundle answers.
+    pub request: Option<String>,
+    /// Optional excerpt of the publication the bundle responds to.
+    pub context: Option<String>,
+    /// Extra rows for the root (link tags and the like).
+    pub tags: Vec<Vec<String>>,
+    pub sign_as: Option<SignAs>,
+    pub broadcast: bool,
+    pub relays: Option<Vec<String>>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct BundlePublishResponse {
+    /// The signed root 30040.
+    pub root: Value,
+    pub coordinate: String,
+    /// Every coordinate stored, in signing order (root last).
+    pub coordinates: Vec<String>,
+    pub count: usize,
+    pub anchor: InsertionAnchor,
+    pub signed_as: SignAs,
+    #[serde(flatten)]
+    pub publish: PublishResponse,
+}
+
+/// The exact templates the bundle path signs, in order.
+pub(crate) async fn bundle_templates(
+    engine: &AppState,
+    req: &BundleRequest,
+    pubkey: &str,
+) -> Result<(Vec<EventTemplate>, InsertionAnchor), EngineError> {
+    let root = req.anchor.root.trim();
+    match coord_parts(root) {
+        Some((30040, _, d)) if !d.is_empty() => {}
+        _ => {
+            return Err(EngineError::BadRequest(format!(
+                "a bundle roots at a 30040 publication coordinate, got `{root}`"
+            )))
+        }
+    }
+    let resolved = resolve_anchor(
+        engine,
+        &AnchorRequest {
+            root: root.to_string(),
+            parent: None,
+            parent_event_id: req.anchor.parent_event_id.clone(),
+            placement: Some("attach".to_string()),
+        },
+    )
+    .await?;
+    if req.events.is_empty() {
+        return Err(EngineError::BadRequest("a bundle needs at least its root event".into()));
+    }
+    let last = req.events.len() - 1;
+    let mut extra: Vec<Vec<String>> = Vec::new();
+    if let Some(t) = request_tag(req.request.as_deref())? {
+        extra.push(t);
+    }
+    if let Some(ctx) = req.context.as_deref().map(str::trim).filter(|c| !c.is_empty()) {
+        extra.push(vec!["context".to_string(), ctx.to_string()]);
+    }
+    extra.extend(req.tags.iter().cloned());
+    let relay_hint = super::discussion_relay_hint(engine);
+    let now = super::unix_now_i64();
+    let mut templates = Vec::with_capacity(req.events.len());
+    for (i, ev) in req.events.iter().enumerate() {
+        let kind = ev.get("kind").and_then(Value::as_u64).unwrap_or(0);
+        if !matches!(kind, 30040 | 30041) {
+            return Err(EngineError::BadRequest(format!(
+                "bundle event {i} has kind {kind}; only NKBIP-01 30040 / 30041 events belong in a bundle"
+            )));
+        }
+        if i == last && kind != 30040 {
+            return Err(EngineError::BadRequest(
+                "the last bundle event must be its kind-30040 root".into(),
+            ));
+        }
+        let mut tags = event_tags(ev);
+        let mut content = ev
+            .get("content")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string();
+        if !tags
+            .iter()
+            .any(|t| t.first().map(String::as_str) == Some("d") && t.len() >= 2 && !t[1].is_empty())
+        {
+            return Err(EngineError::BadRequest(format!("bundle event {i} has no d tag")));
+        }
+        bind_placeholder_pubkey(&mut tags, &mut content, pubkey);
+        if i == last {
+            stamp_bundle_root(&mut tags, &resolved, &extra, &relay_hint);
+        }
+        templates.push(EventTemplate {
+            kind: kind as u32,
+            created_at: now,
+            tags,
+            content,
+            pubkey: Some(pubkey.to_string()),
+        });
+    }
+    Ok((templates, resolved))
+}
+
+/// Store an already-signed bundle in one publish pass, so the whole tree
+/// lands together (signing happens at the caller: the HTTP path signs with
+/// the resolved publish signer, the tool path with the assistant's controller).
+pub(crate) async fn store_bundle(
+    engine: &AppState,
+    signed: Vec<Value>,
+    broadcast: bool,
+    relays: Option<Vec<String>>,
+) -> Result<PublishResponse, EngineError> {
+    Ok(super::finalize_publish(engine, None, signed, broadcast, relays, true)
+        .await?
+        .0)
+}
+
+pub async fn bundle_publish_handler(
+    State(engine): State<AppState>,
+    Extension(signing): Extension<crate::signing::SigningController>,
+    Json(req): Json<BundleRequest>,
+) -> Result<Json<BundlePublishResponse>, EngineError> {
+    let sign_as = req.sign_as.unwrap_or(SignAs::User);
+    let (pubkey, signer) = super::resolve_publish_signer(&engine, &signing, sign_as).await?;
+    let (templates, anchor) = bundle_templates(&engine, &req, &pubkey).await?;
+    let mut signed = Vec::with_capacity(templates.len());
+    for t in templates {
+        signed.push(signer.sign(t).await.map_err(super::map_publish_sign_error)?);
+    }
+    let publish = store_bundle(&engine, signed.clone(), req.broadcast, req.relays.clone()).await?;
+    let coordinates: Vec<String> = signed.iter().filter_map(event_coordinate).collect();
+    let root = signed.last().cloned().unwrap_or(Value::Null);
+    let coordinate = event_coordinate(&root).unwrap_or_default();
+    Ok(Json(BundlePublishResponse {
+        root,
+        count: coordinates.len(),
+        coordinate,
+        coordinates,
+        anchor,
+        signed_as: sign_as,
+        publish,
+    }))
+}
+
+pub async fn bundle_preview_handler(
+    State(engine): State<AppState>,
+    Extension(signing): Extension<crate::signing::SigningController>,
+    Json(req): Json<BundleRequest>,
+) -> Result<Json<Value>, EngineError> {
+    let sign_as = req.sign_as.unwrap_or(SignAs::User);
+    let pubkey = preview_pubkey(&engine, &signing, sign_as)
+        .await
+        .unwrap_or_else(|| crate::publication::insertion::PUBKEY_PLACEHOLDER.to_string());
+    let (mut templates, anchor) = bundle_templates(&engine, &req, &pubkey).await?;
+    for t in templates.iter_mut() {
+        crate::signing::ensure_client_tag(&mut t.tags);
+    }
+    Ok(Json(json!({ "events": templates, "count": templates.len(), "anchor": anchor, "sign_as": sign_as })))
+}
+
 // ---------------------------------------------------------------------------
 // POST /api/v1/insertions/load
 
@@ -311,6 +497,9 @@ pub struct InsertionsLoadRequest {
 pub enum InsertionRole {
     Note,
     Request,
+    /// A kind-30040 insertion: a whole NKBIP-01 tree (a kasten) attached to
+    /// the publication; its `a` tags are its children.
+    Bundle,
 }
 
 /// One loaded insertion: the section event plus its parsed anchor, so the
@@ -325,6 +514,9 @@ pub struct LoadedInsertion {
     /// The request coordinate this note answers (`request` tag), when any.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub request: Option<String>,
+    /// A bundle's children (its `a` coordinates, in order); empty otherwise.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub children: Vec<String>,
 }
 
 /// Histograms over every note on a root (requests excluded), for the
@@ -355,7 +547,7 @@ pub struct InsertionsLoadResponse {
 
 /// The search-DSL spelling of a load request.
 pub(crate) fn insertions_query_dsl(root: &str, authors: &[String], since: Option<i64>) -> String {
-    let mut q = format!("A:{root} k:30041");
+    let mut q = format!("A:{root} k:30040 k:30041");
     for a in authors {
         q.push_str(" by:");
         q.push_str(a);
@@ -375,7 +567,7 @@ pub(crate) fn insertion_counts(insertions: &[LoadedInsertion]) -> InsertionCount
     let mut by_author: BTreeMap<&str, Vec<String>> = BTreeMap::new();
     let mut by_parent: BTreeMap<&str, Vec<String>> = BTreeMap::new();
     let mut total = 0usize;
-    for ins in insertions.iter().filter(|i| i.role == InsertionRole::Note) {
+    for ins in insertions.iter().filter(|i| i.role != InsertionRole::Request) {
         total += 1;
         let id = ins
             .event
@@ -557,18 +749,26 @@ pub(crate) async fn load_insertions(
             if anchor.root != root {
                 return None;
             }
-            let role = if crate::requests::is_request_event(&event) {
+            let role = if is_bundle(&event) {
+                InsertionRole::Bundle
+            } else if crate::requests::is_request_event(&event) {
                 InsertionRole::Request
             } else {
                 InsertionRole::Note
             };
             let request = crate::requests::request_pointer(&event);
+            let children = if role == InsertionRole::Bundle {
+                index_children(&event)
+            } else {
+                Vec::new()
+            };
             Some(LoadedInsertion {
                 event,
                 coordinate,
                 anchor,
                 role,
                 request,
+                children,
             })
         })
         .collect();
@@ -824,6 +1024,7 @@ mod tests {
             },
             role,
             request: None,
+            children: Vec::new(),
         }
     }
 
@@ -886,10 +1087,10 @@ mod tests {
     #[test]
     fn insertions_query_dsl_renders_since() {
         let a = "a".repeat(64);
-        assert_eq!(insertions_query_dsl("30040:p:d", &[], None), "A:30040:p:d k:30041");
+        assert_eq!(insertions_query_dsl("30040:p:d", &[], None), "A:30040:p:d k:30040 k:30041");
         assert_eq!(
             insertions_query_dsl("30040:p:d", std::slice::from_ref(&a), Some(1_700_000_000)),
-            format!("A:30040:p:d k:30041 by:{a} since:1700000000")
+            format!("A:30040:p:d k:30040 k:30041 by:{a} since:1700000000")
         );
     }
 }

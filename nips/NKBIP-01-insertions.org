@@ -158,6 +158,30 @@ Promotion in a kasten has two forms, both pre-existing: the note's
 author references the insertion (=ref:= / =[[ ]]= in their own text),
 or it enters a 30040 collection.
 
+* Bundles: a whole kasten as one insertion
+
+When what is written against a publication is itself an NKBIP-01
+tree — a kasten of notes with its own index — the insertion is the
+tree's *root 30040*, not its notes. A bundle:
+
+- is a kind-30040 event whose =a= tags are its children, exactly as
+  any NKBIP-01 index;
+- carries only the *uppercase* anchor set: =A= (the publication
+  coordinate), =K= (=30040=), =P= (its author), and optionally =e=
+  (the publication index's event id). It carries no lowercase =a= /
+  =k= / =p= / =insert= — that namespace is its children, and a bundle
+  attaches to the publication as a whole, never to one section;
+- may carry =["request", <coordinate>]= when it answers an annotation
+  request whose =output= is =kasten=: the single root is the answer.
+
+Its notes are ordinary NKBIP-01 events signed by the same key. They
+carry no anchor and point at nothing — membership comes from the
+bundle. Discovery is =#A= over kinds 30040 and 30041 together; a
+reader shows a bundle as one card ("a kasten of N entries") that opens
+as a publication. Promotion is NKBIP-01 nesting: the curator adds the
+bundle's coordinate as an =a= in their own index, and the bundle
+becomes a sub-chapter without any event being re-authored.
+
 * Relationship to comments and highlights
 
 | kind        | what it does to a place    | content is           | promotable?                |

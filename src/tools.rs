@@ -251,7 +251,7 @@ pub fn catalog() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "list_insertions",
-            description: "List the NKBIP-01 insertions attached to a publication — reader-written or assistant-written kind-30041 sections anchored to it (post-its, inserted pages) that are NOT in its index. Give the root coordinate (30040:pubkey:d). Returns each note's coordinate, title, author, its parent section and placement (attach / before / after). policy=local_only reads the store; local_first / fetch_always may pull from relays (Confirm-gated).",
+            description: "List the NKBIP-01 insertions attached to a publication — reader-written or assistant-written kind-30041 sections anchored to it (post-its, inserted pages) that are NOT in its index, and kind-30040 bundles (a whole kasten attached to the publication; `children` lists its notes). Give the root coordinate (30040:pubkey:d). Returns each note's coordinate, title, author, its parent section and placement (attach / before / after). policy=local_only reads the store; local_first / fetch_always may pull from relays (Confirm-gated).",
             category: ToolCategory::Network,
             input_schema: schema_list_insertions,
         },
@@ -260,6 +260,12 @@ pub fn catalog() -> Vec<ToolDef> {
             description: "Write a new note ATTACHED to a place in a publication, signed AS THE ASSISTANT with its own key (never the user's) and kept local. This is the right shape for 'write more notes from this section': the note is a kind-30041 section anchored to the section (or the index) you name, with an optional position claim (before / after) the curator can promote it into. It does NOT change the publication — the human folds it in later via promote_insertion or the reader. Sending it to relays is the separate `publish` step.",
             category: ToolCategory::ComposeWrite,
             input_schema: schema_propose_insertion,
+        },
+        ToolDef {
+            name: "propose_bundle",
+            description: "Deliver a whole kasten as ONE insertion, signed AS THE ASSISTANT and kept local: give the unsigned NKBIP-01 events of a kasten build (leaves first, root 30040 last) and the publication's root coordinate. The engine binds the key, stamps the ROOT with the anchor and the `request` pointer, signs every event in order and stores them. This is the shape for a request whose `output` is `kasten`: the answer is the single root 30040 that contains the whole thing — its notes carry no anchor and point at nothing; the root points at the publication. Use propose_insertion for loose notes.",
+            category: ToolCategory::ComposeWrite,
+            input_schema: schema_propose_bundle,
         },
         ToolDef {
             name: "list_requests",
@@ -326,6 +332,7 @@ pub async fn dispatch(cx: &ToolCx, name: &str, input: Value) -> Result<Value> {
         "sign_draft" => sign_draft(cx, input).await,
         "list_insertions" => list_insertions(engine, input).await,
         "propose_insertion" => propose_insertion(cx, input).await,
+        "propose_bundle" => propose_bundle(cx, input).await,
         "promote_insertion" => promote_insertion(cx, input).await,
         "list_requests" => list_requests(engine, input).await,
         "list_styles" => list_styles(engine, input).await,
@@ -528,9 +535,25 @@ fn schema_propose_insertion() -> Value {
             "context": { "type": "string", "description": "Optional excerpt of the parent this note responds to." },
             "replace": { "type": "string", "description": "Coordinate (30041:pk:d) of YOUR earlier note to replace — the new event reuses its d-tag, so it is a new version, not a second note." },
             "request": { "type": "string", "description": "The `coordinate` of the annotation request this note answers (30041:pk:d, from list_requests). Pass it on every note written for a request — it is what marks the request answered and lets the reader thread the note under it." },
-            "style": { "type": "string", "description": "Coordinate of the style event (30078:pk:d) this note follows — copy it from the request's `style`. Stamped as a `style` tag so everything written in that style is one search." }
+            "style": { "type": "string", "description": "Coordinate of the style event (30078:pk:d) this note follows — copy it from the request's `style`. Stamped as a `style` tag so everything written in that style is one search." },
+            "links": { "type": "array", "items": { "type": "string" }, "description": "Web URLs the note cites, one `r` tag each — the note's outbound links live in its tags, so a tag-walking reader lists them without parsing the prose." },
+            "tags": { "type": "array", "items": { "type": "array", "items": { "type": "string" } }, "description": "Extra tag rows, e.g. [[\"a\", \"30041:pk:d\"]] for a cited coordinate. Anchor, d, title and request rows are set by the engine and cannot be overridden here." }
         },
         "required": ["root", "title", "content"]
+    })
+}
+
+fn schema_propose_bundle() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "root": { "type": "string", "description": "The publication the bundle answers or annotates: 30040:pubkey:d. A bundle attaches to the whole publication, never to one section." },
+            "events": { "type": "array", "items": { "type": "object" }, "description": "The unsigned NKBIP-01 events of the kasten in dependency order — leaves first, the root 30040 LAST — exactly as a kasten build emits them (`__PUBKEY__` where the signing key goes). Each needs a `d` tag; kinds 30040 / 30041 only." },
+            "request": { "type": "string", "description": "The `coordinate` of the annotation request this bundle answers (30041:pk:d, from list_requests). Goes on the ROOT only — the single 30040 is the answer." },
+            "context": { "type": "string", "description": "Optional excerpt of the publication the bundle responds to." },
+            "tags": { "type": "array", "items": { "type": "array", "items": { "type": "string" } }, "description": "Extra rows for the root, e.g. link tags." }
+        },
+        "required": ["root", "events"]
     })
 }
 
@@ -1130,6 +1153,83 @@ async fn list_insertions(engine: &Arc<Engine>, input: Value) -> Result<Value> {
 }
 
 /// Write an anchored note as the assistant — local snapshot, no broadcast.
+/// `links` (URLs → `r` rows) and `tags` (explicit rows) from a tool input.
+/// Rows that would collide with what the engine sets are dropped.
+fn link_tags(input: &Value) -> Vec<Vec<String>> {
+    const RESERVED: &[&str] = &["d", "title", "T", "A", "K", "P", "a", "k", "p", "e", "insert", "request", "m", "format"];
+    let mut out: Vec<Vec<String>> = Vec::new();
+    if let Some(links) = input.get("links").and_then(Value::as_array) {
+        for l in links.iter().filter_map(Value::as_str) {
+            let l = l.trim();
+            if l.starts_with("http://") || l.starts_with("https://") {
+                out.push(vec!["r".to_string(), l.to_string()]);
+            }
+        }
+    }
+    if let Some(rows) = input.get("tags").and_then(Value::as_array) {
+        for row in rows.iter().filter_map(Value::as_array) {
+            let cells: Vec<String> = row.iter().filter_map(Value::as_str).map(str::to_string).collect();
+            if cells.len() >= 2 && !cells[0].is_empty() && !RESERVED.contains(&cells[0].as_str()) {
+                out.push(cells);
+            }
+        }
+    }
+    out
+}
+
+/// A whole kasten as ONE insertion: sign every event of a built tree as the
+/// assistant and attach its root 30040 to the publication.
+async fn propose_bundle(cx: &ToolCx, input: Value) -> Result<Value> {
+    let events: Vec<Value> = input
+        .get("events")
+        .and_then(Value::as_array)
+        .cloned()
+        .ok_or_else(|| EngineError::BadRequest("propose_bundle: `events` (array of unsigned events, root last) is required".into()))?;
+    let req = crate::api::insertions::BundleRequest {
+        anchor: crate::api::insertions::AnchorRequest {
+            root: require_str(&input, "root")?.to_string(),
+            ..Default::default()
+        },
+        events,
+        request: input.get("request").and_then(Value::as_str).map(String::from),
+        context: input.get("context").and_then(Value::as_str).map(String::from),
+        tags: link_tags(&input),
+        sign_as: None,
+        broadcast: false,
+        relays: None,
+    };
+    let (pubkey, signer) = assistant_signer(&cx.engine).await?;
+    let (templates, resolved) = crate::api::insertions::bundle_templates(&cx.engine, &req, &pubkey).await?;
+    let mut signed = Vec::with_capacity(templates.len());
+    for t in templates {
+        signed.push(
+            signer
+                .sign(t)
+                .await
+                .map_err(|e| EngineError::Other(format!("sign: {e}")))?,
+        );
+    }
+    let publish = crate::api::insertions::store_bundle(&cx.engine, signed.clone(), false, None).await?;
+    let coordinates: Vec<String> = signed
+        .iter()
+        .filter_map(crate::publication::insertion::event_coordinate)
+        .collect();
+    let root = signed.last().cloned().unwrap_or(Value::Null);
+    let v = serde_json::to_value(publish)?;
+    Ok(json!({
+        "signed_as": "assistant",
+        "pubkey": pubkey,
+        "id": root.get("id"),
+        "coordinate": crate::publication::insertion::event_coordinate(&root),
+        "coordinates": coordinates,
+        "count": signed.len(),
+        "anchor": resolved,
+        "request": req.request,
+        "ingested": v["ingested"],
+        "note": "Stored locally as one bundle: the root 30040 is the insertion (anchored to the publication, carrying `request`); its notes are plain NKBIP-01 events under it. `publish` broadcasts; the curator promotes the root as a sub-index.",
+    }))
+}
+
 async fn propose_insertion(cx: &ToolCx, input: Value) -> Result<Value> {
     let anchor = crate::api::insertions::AnchorRequest {
         root: require_str(&input, "root")?.to_string(),
@@ -1142,11 +1242,15 @@ async fn propose_insertion(cx: &ToolCx, input: Value) -> Result<Value> {
         content: require_str(&input, "content")?.to_string(),
         format: input.get("format").and_then(Value::as_str).map(String::from),
         context: input.get("context").and_then(Value::as_str).map(String::from),
-        tags: input
-            .get("style")
-            .and_then(Value::as_str)
-            .map(|c| vec![vec!["style".to_string(), c.to_string()]])
-            .unwrap_or_default(),
+        tags: {
+            let mut tags: Vec<Vec<String>> = input
+                .get("style")
+                .and_then(Value::as_str)
+                .map(|c| vec![vec!["style".to_string(), c.to_string()]])
+                .unwrap_or_default();
+            tags.extend(link_tags(&input));
+            tags
+        },
         replace: input.get("replace").and_then(Value::as_str).map(String::from),
         request: input.get("request").and_then(Value::as_str).map(String::from),
     };
@@ -1228,7 +1332,7 @@ async fn list_requests(engine: &Arc<Engine>, input: Value) -> Result<Value> {
     Ok(json!({
         "count": requests.len(),
         "requests": requests,
-        "note": "Answer one with propose_insertion (anchored to its parent, root = its root; pass its `coordinate` as `request` on every note so it is marked answered, pass its `style` so the notes carry it, and follow `style_instructions`) then answer_request for an rq_… record.",
+        "note": "Answer one with propose_insertion (anchored to its parent, root = its root; pass its `coordinate` as `request` on every note so it is marked answered, pass its `style` so the notes carry it, and follow `style_instructions`) then answer_request for an rq_… record. When `output` is `kasten`, build the notes as a kasten and deliver it with ONE propose_bundle (root = its root, `request` on the bundle) — the single 30040 is the answer, not one note per event.",
     }))
 }
 

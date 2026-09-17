@@ -47,13 +47,20 @@ jq -r .claude_mcp_add` prints the registration line).
      many notes you write. Cite: nostrdown `{{ref:…}}` for
      siblings, `nostr:naddr…` / `nostr:nevent…` for other events, plain
      URLs for the web, and say in the text where each claim came from.
-     `output: kasten` → several notes, then `save_draft` + `sign_draft` for
-     an index over them (title = the request's title) so it can be promoted
-     as a sub-chapter.
+     `output: kasten` → do NOT write one anchored note per idea. Write the
+     notes as a kasten on disk (the `kasten` skill: one idea per note,
+     native links, one index), build it (`build-kasten-events.py`), and
+     deliver the built `events.jsonl` with ONE `propose_bundle` (`root` =
+     the request's `root`, `request` = its `coordinate`, `events` = the
+     unsigned events in file order, root last). The single root 30040 is
+     the answer — anchored to the whole publication, `request` on it — and
+     the notes hang under it as plain NKBIP-01 events with no anchor. Put
+     every outbound link in tags (`:a:` / `:r:` header lines in the notes;
+     `links` / `tags` on `propose_insertion` for loose notes).
    - **Close.** For a record (`rq_…`): `answer_request` with `request_id`,
      a one-paragraph `summary` (what you wrote, what you read, what you
-     could not find) and `coordinates` — every `30041:…` you stored and
-     the `30040:…` bundle if any. This is what the reader shows next to
+     could not find) and `coordinates` — every `30041:…` you stored, or
+     for a kasten just the bundle's `30040:…` root. This is what the reader shows next to
      the request. An `ev_…` request has no record to close — the notes
      that point at it are its answer; skip `answer_request` for it.
 3. Report to the user: per request, the note titles and where they are

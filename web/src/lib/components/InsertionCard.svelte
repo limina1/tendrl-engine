@@ -228,9 +228,20 @@
 		{#if contextTag}
 			<blockquote class="icard__context">{contextTag}</blockquote>
 		{/if}
+		{#if insertion.role === 'bundle'}
+			<div class="icard__text icard__bundle">
+				A kasten of {insertion.children?.length ?? 0} entries, attached to the whole publication.
+				<button
+					class="icard__act"
+					onclick={() => app.openAddressableInModal({ kind: 30040, pubkey: ev.pubkey, d_tag: insertion.coordinate.split(':').slice(2).join(':') })}
+					title="Open the bundle as a publication"
+				>open kasten</button>
+			</div>
+		{:else}
 		<div class="icard__text">
 			<RichContent content={ev.content} refs={ndRefs} tokens={ndTokens} />
 		</div>
+		{/if}
 		<div class="icard__actions">
 			<span class="icard__pill icard__pill--att">
 				{anchor.placement === 'annotation' ? 'attached' : 'inserted · pending'}
@@ -246,7 +257,7 @@
 			{/if}
 			<button
 				class="icard__act"
-				onclick={() => app.openAddressableInModal({ kind: 30041, pubkey: ev.pubkey, d_tag: insertion.coordinate.split(':').slice(2).join(':') })}
+				onclick={() => app.openAddressableInModal({ kind: insertion.role === 'bundle' ? 30040 : 30041, pubkey: ev.pubkey, d_tag: insertion.coordinate.split(':').slice(2).join(':') })}
 				title="Event menu — JSON, comment, broadcast, pool"
 			>menu</button>
 			<span class="icard__spacer"></span>

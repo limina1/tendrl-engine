@@ -2682,9 +2682,12 @@ export interface LoadedInsertion {
 	anchor: InsertionAnchor;
 	/** What the 30041 is: a note, or a signed annotation request asking
 	 *  for notes (`t: annotation-request`). Derived engine-side. */
-	role: 'note' | 'request';
+	role: 'note' | 'request' | 'bundle';
 	/** The request coordinate this note answers (`request` tag), when any. */
 	request?: string;
+	/** A bundle's children (its `a` coordinates, in order) — a kind-30040
+	 *  insertion is a whole kasten attached to the publication. */
+	children?: string[];
 }
 
 /** Histograms over the whole root, computed engine-side BEFORE the author

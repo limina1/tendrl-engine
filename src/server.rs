@@ -830,6 +830,14 @@ pub async fn start(opts: ServeOptions) -> anyhow::Result<RunningServer> {
             post(api::insertions::insertion_preview_handler),
         )
         .route(
+            "/api/v1/insertions/bundle",
+            post(api::insertions::bundle_publish_handler),
+        )
+        .route(
+            "/api/v1/insertions/bundle/preview",
+            post(api::insertions::bundle_preview_handler),
+        )
+        .route(
             "/api/v1/insertions/load",
             post(api::insertions::insertions_load_handler),
         )
