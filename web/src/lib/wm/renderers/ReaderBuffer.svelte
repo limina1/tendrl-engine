@@ -329,6 +329,12 @@
 	let insertionsScope = $state<'mine' | 'anyone'>(savedView?.insertionsScope ?? 'mine');
 	let insertionsLoading = $state(false);
 	let insertionsQuery = $state<string | null>(null);
+	// Plain (non-reactive) bookkeeping for the loaders. The effects that
+	// trigger a load must never read state the load writes — an async
+	// loader called from an effect that also tracks its outputs re-fires on
+	// every write and floods the engine (the 2026-09 query-flood lesson;
+	// reproduced here as hundreds of /insertions/load calls per second).
+	const insBook = { inflight: false, loaded: savedView?.insertionsLoaded ?? false };
 	const insertionsByParent = $derived.by(() => {
 		const indexed = new Set(pristineSections.map((x) => addrKey(x.addr)));
 		const m: Record<string, api.LoadedInsertion[]> = {};
@@ -374,7 +380,8 @@
 		return out;
 	}
 	async function loadInsertionsNow(policy: 'local_only' | 'fetch_always') {
-		if (!publication || insertionsLoading) return;
+		if (!publication || insBook.inflight) return;
+		insBook.inflight = true;
 		insertionsLoading = true;
 		try {
 			const resp = await api.loadInsertions({
@@ -385,17 +392,20 @@
 			});
 			insertions = resp.insertions;
 			insertionsQuery = resp.query;
+			insBook.loaded = true;
 			insertionsLoaded = true;
 			const authors = new Set(resp.insertions.map((i) => i.event.pubkey));
 			if (authors.size > 0) prefetchAuthors([...authors]);
 		} catch (e) {
 			app.pushToast(api.errorMessage(e, 'Loading annotations failed'), 'error', 5000);
 		} finally {
+			insBook.inflight = false;
 			insertionsLoading = false;
 		}
 	}
 	function hideInsertions() {
 		insertions = [];
+		insBook.loaded = false;
 		insertionsLoaded = false;
 		insertionsQuery = null;
 	}
@@ -425,9 +435,8 @@
 	// re-read if this reader is showing annotations.
 	$effect(() => {
 		void app.insertionsVersion;
-		if (!insertionsLoaded) return;
 		untrack(() => {
-			void loadInsertionsNow('local_only');
+			if (insBook.loaded) void loadInsertionsNow('local_only');
 		});
 	});
 
@@ -458,15 +467,16 @@
 		// An answered request is an ask the user made and someone fulfilled:
 		// its notes are wanted here, so read them from the local store (no
 		// relay, no confirm) when the reader is not already showing notes.
-		if (!insertionsLoaded && requests.some((r) => r.status === 'answered')) {
+		if (!insBook.loaded && requests.some((r) => r.status === 'answered')) {
 			void loadInsertionsNow('local_only');
 		}
 	}
+	// Re-read when the window or a card changed a request. The first read
+	// happens in the once-per-focus hydrate below, next to discussions.
 	$effect(() => {
 		void app.requestsVersion;
-		if (!publication) return;
 		untrack(() => {
-			void loadRequests();
+			if (publication) void loadRequests();
 		});
 	});
 
@@ -1727,9 +1737,10 @@
 		discussionLoadedKey = key;
 		untrack(async () => {
 			await loadDiscussionCounts('local_only');
-			if (insertionsLoaded && insertions.length === 0) {
+			if (insBook.loaded && insertions.length === 0) {
 				await loadInsertionsNow('local_only');
 			}
+			await loadRequests();
 			if (app.networkStatus?.mode === 'auto') {
 				refreshDiscussions();
 			}
@@ -1891,6 +1902,9 @@
 			console.warn('[ReaderBuffer] backfill failed', e);
 		} finally {
 			backfillingAll = false;
+			// The same pull brings the attached notes: the #A pass over relays
+			// (Confirm-gated in Confirm mode), then a local re-read shows them.
+			void loadInsertionsNow('fetch_always');
 		}
 	}
 
@@ -2335,14 +2349,14 @@
 					>highlights {discussionLoading ? '…' : totalDiscussion.highlights}</button>
 					<button
 						class:active={insertionsLoaded}
-						onclick={() => loadInsertionsNow('fetch_always')}
+						onclick={() => loadInsertionsNow('local_only')}
 						disabled={!publication || insertionsLoading}
 						title={insertionsLoaded
-							? `Loaded ${pendingInsertionCount} attached note(s) — click to pull again from relays${insertionsQuery ? ` (${insertionsQuery})` : ''}`
-							: 'Load annotations — notes and inserted pages attached to this publication by ' +
+							? `Showing ${pendingInsertionCount} attached note(s) from the local store — click to re-read${insertionsQuery ? ` (${insertionsQuery})` : ''}. "fetch from relays" pulls new ones.`
+							: 'Show annotations — notes and inserted pages attached to this publication by ' +
 								(insertionsScope === 'mine' ? 'you and your assistant' : 'anyone') +
-								'. Pulled on demand; never part of the index.'}
-					>{insertionsLoading ? '…' : insertionsLoaded ? `annotations ${pendingInsertionCount}` : 'load annotations'}</button>
+								', from the local store. "fetch from relays" pulls new ones; never part of the index.'}
+					>{insertionsLoading ? '…' : insertionsLoaded ? `annotations ${pendingInsertionCount}` : 'show annotations'}</button>
 					<button
 						class="ins-scope"
 						onclick={() => (insertionsScope = insertionsScope === 'mine' ? 'anyone' : 'mine')}
@@ -2402,7 +2416,7 @@
 							class:spin={backfillingAll}
 							onclick={backfillAll}
 							disabled={backfillingAll}
-							title="Fetch this publication's index + backfill all missing sections from relays"
+							title="Fetch this publication's index + backfill all missing sections from relays, then pull its annotations ({insertionsScope}) and comments"
 						>⟳ fetch from relays</button>
 					{/if}
 					<button
