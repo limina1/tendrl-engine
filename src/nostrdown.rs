@@ -582,6 +582,58 @@ pub fn parse(content: &str) -> Vec<NostrdownRef> {
 /// - `{{embed:nevent/note}}` → `["q", id, relay?, pubkey?]` (NIP-18 quote)
 /// - `{{embed:npub/nprofile}}` → `["p", pubkey, relay?]`
 ///
+/// Every `http://` / `https://` URL in `content`, in order of first
+/// appearance, deduplicated, with trailing sentence punctuation and a
+/// closing bracket that the prose (not the URL) owns stripped. Markdown
+/// `[text](url)` and `<url>` forms are covered because the URL itself is
+/// scanned, not the markup around it. Pure.
+pub fn web_urls(content: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let bytes = content.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        let rest = &content[i..];
+        let start = match (rest.starts_with("https://"), rest.starts_with("http://")) {
+            (true, _) | (_, true) => i,
+            _ => {
+                i += content[i..].chars().next().map(char::len_utf8).unwrap_or(1);
+                continue;
+            }
+        };
+        // The URL runs to whitespace or a delimiter that cannot be part of it.
+        let mut end = start;
+        for (off, ch) in content[start..].char_indices() {
+            if ch.is_whitespace() || matches!(ch, '<' | '>' | '"' | '\'' | '`' | '{' | '}' | '|' | '^') {
+                break;
+            }
+            end = start + off + ch.len_utf8();
+        }
+        let mut url = &content[start..end];
+        // Strip what the sentence owns: trailing `.,;:!?` and an unbalanced
+        // closing `)` / `]` (a Wikipedia-style `(x)` inside the path stays).
+        loop {
+            let trimmed = url.trim_end_matches(|c: char| matches!(c, '.' | ',' | ';' | ':' | '!' | '?' | '*'));
+            let trimmed = if trimmed.ends_with(')') && trimmed.matches('(').count() < trimmed.matches(')').count() {
+                &trimmed[..trimmed.len() - 1]
+            } else if trimmed.ends_with(']') && trimmed.matches('[').count() < trimmed.matches(']').count() {
+                &trimmed[..trimmed.len() - 1]
+            } else {
+                trimmed
+            };
+            if trimmed.len() == url.len() {
+                break;
+            }
+            url = trimmed;
+        }
+        // A bare scheme with nothing after it is not a link.
+        if url.len() > "https://".len() && !out.iter().any(|u| u == url) {
+            out.push(url.to_string());
+        }
+        i = end.max(start + 1);
+    }
+    out
+}
+
 /// Deduplicated on (tag-name, value). Pure — NIP-19 decoding is IO-free.
 pub fn reference_tags(content: &str) -> Vec<Vec<String>> {
     use crate::nip19::Decoded;
@@ -594,6 +646,13 @@ pub fn reference_tags(content: &str) -> Vec<Vec<String>> {
             out.push(tag);
         }
     };
+    // Outward links first: every http(s) URL in the text becomes an `r` tag
+    // (NIP-01's reference tag, indexable, what clients render as a link
+    // row). Agent-written notes cite the web this way; the tag is what makes
+    // the citation visible without parsing prose.
+    for url in web_urls(content) {
+        push(&mut out, &mut seen, vec!["r".into(), url]);
+    }
     for r in parse(content) {
         match r.kind {
             RefKind::Wiki if !r.is_entity => push(&mut out, &mut seen, vec!["w".into(), r.target]),
@@ -737,6 +796,28 @@ pub fn reference_tags(content: &str) -> Vec<Vec<String>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn web_urls_scans_prose_and_markdown() {
+        let text = "See https://en.wikipedia.org/wiki/Normalization_(statistics). Also [the paper](https://arxiv.org/abs/1502.03167), <http://example.org/a?b=1&c=2>, and https://arxiv.org/abs/1502.03167 again; plus (https://docs.rs/nostr).";
+        assert_eq!(
+            web_urls(text),
+            vec![
+                "https://en.wikipedia.org/wiki/Normalization_(statistics)",
+                "https://arxiv.org/abs/1502.03167",
+                "http://example.org/a?b=1&c=2",
+                "https://docs.rs/nostr",
+            ]
+        );
+        assert!(web_urls("nothing here, https:// alone is not a link").is_empty());
+    }
+
+    #[test]
+    fn reference_tags_emit_r_for_web_urls() {
+        let tags = reference_tags("Read https://example.org/x and {{wiki:normalization}}.");
+        assert!(tags.contains(&vec!["r".to_string(), "https://example.org/x".to_string()]));
+        assert!(tags.contains(&vec!["w".to_string(), "normalization".to_string()]));
+    }
 
     fn one(content: &str) -> NostrdownRef {
         let refs = parse(content);

@@ -7,6 +7,7 @@
 	import { getAppState } from '$lib/state.svelte';
 	import { registerResolveView } from '$lib/nostr/resolve-status.svelte';
 	import RichContent from './RichContent.svelte';
+	import EventLinks from './EventLinks.svelte';
 
 	const app = getAppState();
 
@@ -221,6 +222,7 @@
 			muted={preview}
 			{onopenlocal}
 		/>
+		<EventLinks links={section.links ?? []} />
 	{:else if status === 'loading'}
 		<div class="skeleton"></div>
 	{:else if status === 'error'}

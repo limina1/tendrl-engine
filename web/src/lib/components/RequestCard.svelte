@@ -9,21 +9,26 @@
 	import * as api from '$lib/api';
 	import { getAppState } from '$lib/state.svelte';
 	import RichContent from './RichContent.svelte';
+	import InsertionCard from './InsertionCard.svelte';
 	import type { ResolvedRef, ParsedToken } from '$lib/nostr/nostrdown';
 	import { getAuthorDisplayName } from '$lib/discussions/authors.svelte';
 	import { pubkeyToColor } from '$lib/discussions/colors';
 
 	let {
 		request,
-		onchanged = undefined
-	}: {
+		onchanged = undefined, answers = [], onopen = undefined, onpromoted = undefined }: {
 		request: api.AnnotationRequest;
 		/** Deleted or reopened — the reader re-reads the store. */
 		onchanged?: (() => void) | undefined;
+		/** The notes written for this request: they fold with the card. */
+		answers?: api.LoadedInsertion[];
+		onopen?: ((ins: api.LoadedInsertion) => void) | undefined;
+		onpromoted?: ((resp: api.ForkPublishResponse) => void) | undefined;
 	} = $props();
 
 	const app = getAppState();
 	const r = $derived(request);
+	const notes = $derived(answers ?? []);
 	const answered = $derived(r.status === 'answered');
 	/** A local record (`rq_…`) can be deleted or reopened; a request read
 	 *  off its signed event alone (`ev_…`) has no record to change. */
@@ -41,7 +46,9 @@
 	const who = $derived(
 		!authorPubkey || mine || !r.coordinate ? 'you' : getAuthorDisplayName(authorPubkey)
 	);
-	let expanded = $state(false);
+	// Starts open: the ask and what was written for it read as one; the
+	// head folds both away.
+	let expanded = $state(true);
 	let busy = $state(false);
 
 	// The answer's summary is nostrdown too (the agent cites sections and
@@ -134,6 +141,9 @@
 		<span class="badge" class:answered>{answered ? '✓ request · answered' : '? request'}</span>
 		<span class="rcard__task">{r.title ? `${r.title} — ` : ''}{r.task}</span>
 		<span class="rcard__by"><span class="rcard__dot" aria-hidden="true"></span>{who}</span>
+		{#if notes.length > 0}
+			<span class="rcard__count" title="{notes.length} note(s) written for this request — fold with the card">{notes.length} {notes.length === 1 ? 'note' : 'notes'}</span>
+		{/if}
 		<span class="rcard__meta">{r.coordinate ? 'signed · ' : ''}{relTime(r.created_at)}</span>
 		<span class="rcard__ptr" aria-hidden="true">{expanded ? '▾' : '▸'}</span>
 	</button>
@@ -182,6 +192,15 @@
 				{/if}
 			</div>
 		</div>
+		{#if notes.length > 0}
+			<!-- What was written for the ask, folded with it: a request and
+			     its answers read as one thing, and hide as one thing. -->
+			<div class="rcard__answers" role="group" aria-label="Notes written for this request">
+				{#each notes as ins (ins.coordinate)}
+					<InsertionCard insertion={ins} {onopen} {onpromoted} />
+				{/each}
+			</div>
+		{/if}
 	{/if}
 </div>
 
@@ -323,5 +342,25 @@
 	.rcard__mini:hover:not(:disabled) {
 		color: var(--fg);
 		border-color: var(--base5);
+	}
+	.rcard__count {
+		font-family: var(--font-mono);
+		font-size: var(--t-3xs);
+		color: var(--base6);
+		border: 1px solid var(--panel-border);
+		border-radius: 3px;
+		padding: 0 6px;
+		white-space: nowrap;
+	}
+	.rcard__answers {
+		display: flex;
+		flex-direction: column;
+		gap: var(--s-1);
+		padding: 0 var(--s-2) var(--s-2) var(--s-3);
+		border-top: 1px dashed var(--panel-border);
+		margin-top: 2px;
+	}
+	.rcard__answers :global(.icard) {
+		margin: var(--s-1) 0 0;
 	}
 </style>

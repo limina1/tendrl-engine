@@ -202,6 +202,9 @@ export type PubLoadEvent =
 			 *  pill in the reader outline + paginated/continuous header. */
 			relays?: string[];
 			signed?: boolean;
+			/** Outward web links — the leaf's `r` tags that are http(s) URLs,
+			 *  derived engine-side. */
+			links?: string[];
 	  }
 	| { type: 'error'; addr: NAddr; depth: number; message: string }
 	| { type: 'done'; total: number };
@@ -236,6 +239,9 @@ export interface LazySection {
 	 *  can leave it undefined; PoolStateBadges suppresses the pill on
 	 *  undefined. */
 	signed?: boolean;
+	/** Outward web links (the event's http(s) `r` tags), rendered as a
+	 *  link row under the section. */
+	links?: string[];
 	/** NIP-54 fork marker — only meaningful for nested 30040 entries
 	 *  (sections never carry it). Drives the `fork` pill on the
 	 *  outline's nested-publication rows. */

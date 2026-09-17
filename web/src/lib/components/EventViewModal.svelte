@@ -690,7 +690,9 @@
 		| { kind: 'event'; eventId: string }
 		| { kind: 'reader'; pubkey: string; d_tag: string; label: string | null }
 		| { kind: 'addr-nonindex'; addr: string }
-		| { kind: 'search'; query: string };
+		| { kind: 'search'; query: string }
+		/** An `r` tag holding a web URL — opens outward, never a filter. */
+		| { kind: 'link'; url: string };
 
 	function tagAction(tag: string[]): TagAction {
 		if (!Array.isArray(tag) || tag.length < 1) return { kind: 'none' };
@@ -721,6 +723,8 @@
 			}
 			return { kind: 'addr-nonindex', addr: value };
 		}
+		// An `r` tag holding a web URL is an outward link, not a filter.
+		if (key === 'r' && /^https?:\/\//i.test(value)) return { kind: 'link', url: value };
 		if (key === 'd') return { kind: 'search', query: `d:${quoteTagValue(value)}` };
 		if (key === 't') return { kind: 'search', query: `t:${quoteTagValue(value)}` };
 		// Generic tag filter — both single-char (NIP-01 short tags: `T`, `d`,
@@ -760,6 +764,10 @@
 			pushBreadcrumb();
 			pendingNavTarget = action.eventId;
 			app.getEventForModal(action.eventId);
+			return;
+		}
+		if (action.kind === 'link') {
+			window.open(action.url, '_blank', 'noopener,noreferrer');
 			return;
 		}
 		if (action.kind === 'reader') {
@@ -1273,7 +1281,7 @@
 								<button
 									class="evm__chip evm__chip--{tag[0]} evm__chip--clickable"
 									onclick={() => onTagClick(tag)}
-									title="{tag[0]}: {tag[1] ?? ''} — search {action.kind === 'search' ? action.query : 'for it'}"
+									title="{tag[0]}: {tag[1] ?? ''} — {action.kind === 'link' ? `open ${action.url}` : `search ${action.kind === 'search' ? action.query : 'for it'}`}"
 								>
 									<span class="evm__chip-key">{tag[0]}</span>
 									<span class="evm__chip-val">{chipLabel(tag[0], tag[1] ?? '')}</span>

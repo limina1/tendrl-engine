@@ -13,6 +13,7 @@
 	// "↳ answers" chip that opens the request.
 	import * as api from '$lib/api';
 	import RichContent from './RichContent.svelte';
+	import EventLinks from './EventLinks.svelte';
 	import { getAppState } from '$lib/state.svelte';
 	import { getAuthorDisplayName } from '$lib/discussions/authors.svelte';
 	import { identityCanSign } from '$lib/identity/signer';
@@ -230,6 +231,7 @@
 		{/if}
 		<div class="icard__text">
 			<RichContent content={ev.content} refs={ndRefs} tokens={ndTokens} />
+					<EventLinks tags={ev.tags} compact />
 		</div>
 		<div class="icard__actions">
 			<span class="icard__pill icard__pill--att">

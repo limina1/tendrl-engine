@@ -307,6 +307,15 @@ pub fn build_insertion_template(
             tags.push(t.clone());
         }
     }
+    // What the note references, as tags — `r` for every web URL in the
+    // text, `w`/`ref`/`a`/`q`/`p` for nostrdown — the same emission a
+    // published section gets, so a reader can render the note's outward
+    // links without parsing prose. Caller-supplied tags win on duplicates.
+    for t in crate::nostrdown::reference_tags(content) {
+        if !tags.iter().any(|x| x[0] == t[0] && x.get(1) == t.get(1)) {
+            tags.push(t);
+        }
+    }
     Ok(EventTemplate {
         kind: 30041,
         created_at,
@@ -588,6 +597,33 @@ mod tests {
         // A given d-tag is a new version of an existing note.
         let v2 = build_insertion_template(&a, "t", "b", None, &[], Some("k3x9"), "", 0).unwrap();
         assert_eq!(v2.tags[0], vec!["d", "k3x9"]);
+    }
+
+    #[test]
+    fn template_carries_r_tags_for_web_urls_in_content() {
+        let anchor = InsertionAnchor {
+            root: "30040:".to_string() + &"a".repeat(64) + ":root",
+            root_kind: 30040,
+            root_pubkey: "a".repeat(64),
+            parent: "30041:".to_string() + &"a".repeat(64) + ":s1",
+            parent_kind: 30041,
+            parent_pubkey: "a".repeat(64),
+            parent_event_id: None,
+            placement: Placement::Annotation,
+        };
+        let t = build_insertion_template(
+            &anchor,
+            "Sources",
+            "Two: https://arxiv.org/abs/1502.03167 and https://en.wikipedia.org/wiki/Feature_scaling.",
+            None,
+            &[vec!["r".to_string(), "https://arxiv.org/abs/1502.03167".to_string()]],
+            None,
+            "",
+            0,
+        )
+        .unwrap();
+        let rs: Vec<&str> = t.tags.iter().filter(|x| x[0] == "r").map(|x| x[1].as_str()).collect();
+        assert_eq!(rs, vec!["https://arxiv.org/abs/1502.03167", "https://en.wikipedia.org/wiki/Feature_scaling"]);
     }
 
     #[test]

@@ -7,6 +7,7 @@
 	import SectionCard from './SectionCard.svelte';
 	import InsertionCard from './InsertionCard.svelte';
 	import RequestCard from './RequestCard.svelte';
+	import { groupAnswers } from './request-group';
 	import { coordMatchesAddr } from '$lib/nostr/nostrdown';
 	import type { ResolutionTracker } from '$lib/nostr/resolution-progress.svelte';
 	import { readingVars } from '$lib/theme/reading.svelte';
@@ -230,11 +231,12 @@
 					/>
 				</div>
 				{#if pageRequests.length > 0 || pageInsertions.length > 0}
+					{@const groups = groupAnswers(pageRequests, pageInsertions)}
 					<div class="section__side">
 						{#each pageRequests as rq (rq.id)}
-							<RequestCard request={rq} onchanged={onrequestschanged} />
+							<RequestCard request={rq} onchanged={onrequestschanged} answers={groups.answers.get(rq.id) ?? []} onopen={onopeninsertion} onpromoted={oninsertionpromoted} />
 						{/each}
-						{#each pageInsertions as ins (ins.coordinate)}
+						{#each groups.rest as ins (ins.coordinate)}
 							<InsertionCard insertion={ins} onopen={onopeninsertion} onpromoted={oninsertionpromoted} />
 						{/each}
 					</div>

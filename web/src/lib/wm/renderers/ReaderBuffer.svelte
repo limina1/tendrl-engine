@@ -210,6 +210,8 @@
 		parentKey?: string;
 		status: 'pending' | 'loaded' | 'error';
 		error?: string;
+		/** Outward web links (http(s) `r` tags), engine-derived per leaf. */
+		links?: string[];
 		/** Provenance pulled from the matching PubLoadEvent. Stays undefined
 		 *  for stub children (the index event named them but their own
 		 *  Leaf/Index hasn't streamed yet) — PoolStateBadges suppresses the
@@ -1277,6 +1279,7 @@
 					error: n.error,
 					relays: n.relays,
 					signed: n.signed,
+					links: n.links,
 					forked: n.forked
 				});
 				if (ancestors.has(key)) return; // cycle — node shown, subtree cut
@@ -1395,7 +1398,8 @@
 					content: ev.content,
 					status: 'loaded',
 					relays: ev.relays ?? [],
-					signed: ev.signed ?? true
+					signed: ev.signed ?? true,
+					links: ev.links ?? []
 				});
 				inHorizon.add(k);
 				resolvedCount++;
