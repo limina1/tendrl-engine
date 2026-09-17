@@ -41,6 +41,8 @@ exists (with code paths), gaps.
 - [[file:feat-bookshelf.org][Bookshelves (kind 30045)]] — saved books as an event; read/write, named shelves, three surfaces
 - [[file:feat-reader.org][Reader]] — view modes, nested TOCs, highlights
 - [[file:feat-discussions.org][Discussions & highlights]] — 9802 anatomy, source families, both capture surfaces
+- [[file:feat-insertions.org][Insertions]] — reader-attached 30041s with NIP-22 anchors; requests as 30041s the answers point at
+- [[file:feat-annotations-table.org][Annotations table]] — every note on a publication on one surface: five layouts, spell header, author colour (plan; five tracks in flight)
 
 ** Substrate
 - [[file:feat-engine-substrate.org][Engine substrate]] — nostrdb + the
@@ -135,7 +137,8 @@ Branch =design/insertions-context=. Plan: [[file:../insertions-plan.org][inserti
 Spec: [[file:../../nips/NKBIP-01-insertions.org][NKBIP-01 insertions extension]].
 
 - [[file:idea-insertions.org][Insertions]] — reader-attached 30041s with NIP-22 anchors; promotable by index republication; the zettel bubble's output
-- [[file:feat-insertions.org][Insertions]] — built: anchor core, =/insertions*= + =/publication/fork*=, three tools, reader cards + composer (2026-09-16)
+- [[file:feat-insertions.org][Insertions]] — built: anchor core, =/insertions*= + =/publication/fork*=, three tools, reader cards + composer (2026-09-16); requests as 30041s the answers point at (2026-09-17)
+- [[file:feat-annotations-table.org][Annotations table]] — Phase 5b: contract frozen 2026-09-17 ([[file:../annotations-table-contract.org][contract]]), Tracks A–E building in parallel worktrees
 
 * Ideas — captured, not scheduled
 

@@ -1,6 +1,6 @@
 #+TITLE: Insertions, the Context Set & the Assistant — Design & Implementation Plan
 #+DATE: 2026-09-16
-#+STATUS: PLAN (branch design/insertions-context)
+#+STATUS: PLAN (branch design/insertions-context; Phase 5b on feat/annotations-table + feat/annot-track-{a..e})
 
 Three pieces of work that share one root cause — /reader-curated
 collections that are not yet official structure/ — and therefore one
@@ -91,6 +91,9 @@ never published. The table is *one* buffer kind (=annotations:<addr>=) with
 its own views — by section · by author · timeline · free; beside the reader
 or filling the window is the WM's split state, like any two buffers, not a
 mode of the table. Canvas: Table page (the same buffer in two arrangements).
+Frozen 2026-09-17 as [[file:annotations-table-contract.org][the Track 0
+contract]] (adds the /collective/ layout, the split-on-open, requests as
+badged cards, the D9 margin | inline preference); see Phase 5b.
 
 ** D8 — "Create annotation" is one form with three doors
 Section =⋮=, the =M= menu (anchored to the index = front matter), and a
@@ -317,17 +320,43 @@ Recipe: =docs/commands.org= "Bunker (NIP-46)".
 ** Phase 5 — The zettel bubble: requests + answers                         :medium:
 Reshaped 2026-09-17 ([[file:zettel/decision-requests-are-events.org][decision]]):
 tendrl never calls the model for this. A request is a local record the
-user's own agent reads over MCP; the answer is insertions.
+user's own agent reads over MCP; the answer is insertions. *Superseded
+2026-09-17* (branch =feat/requests-30041=, commits =4fef9b9= · =b38be9b= ·
+=925c217=): the first cut signed a request as a kind-1111 mention of the
+assistant and closed it with a 1111 reply — dropped. A signed request is
+now a *kind-30041 annotation on the section by the user* (the same shape
+as the notes that answer it), and an answer is an ordinary insertion that
+carries =["request", <request coordinate>]=; a signed request is /answered
+iff/ a local 30041 points at it — derived on every read, never recorded.
 - [X] =src/requests.rs= — =AnnotationRequest= (anchor, task, scope hints,
       excerpt, output notes|kasten, status), =RequestStore=
-      (=<data_dir>/requests/=), the kind-1111 mention template (=p= the
-      assistant, =t annotation-request=) and the assistant's reply template
-      (=q= tags for every coordinate written)
+      (=<data_dir>/requests/=)
+- [X] ~the kind-1111 mention template (=p= the assistant, =t
+      annotation-request=) and the assistant's reply template~ —
+      *superseded 2026-09-17*: the signed request is built by
+      =build_insertion_template= (=A=/=a=/=e= anchor, =m=, =t:
+      annotation-request=, =scope= / =output= / =context= / =style= tags),
+      signed as the user via =resolve_publish_signer(SignAs::User)=,
+      ingested through =finalize_publish= — local by default; no reply
+      event, no assistant identity needed at ask time
 - [X] =POST/GET /api/v1/annotations/requests=, =/:id= (get/delete),
       =/:id/answer=, =/:id/reopen=; =sign= (default false) + =broadcast=
-      (default false)
-- [X] tools =list_requests= (Read) · =answer_request= (ComposeWrite; posts
-      the 1111 reply when the request was signed)
+      (default false); a record keeps =event_id= and gains =coordinate=
+- [X] =InsertionBody.request= (validated as a 30041 coordinate) on
+      =POST /insertions= and =propose_insertion=; =insertions/load= items
+      carry =role: note | request= and =request= (the pointer), derived
+      engine-side so no client reads tags
+- [X] =list_requests= merges records (=rq_…=) with the store's =k:30041
+      t:annotation-request= events (=ev_…= when no record; deduped by
+      coordinate) and derives =answered= from the pointers; =get_request=
+      likewise; =answer_request= closes *records only*
+- [X] tools =list_requests= (Read) · =answer_request= (ComposeWrite) — ~posts
+      the 1111 reply when the request was signed~ (superseded: no reply)
+- [X] web: =LoadedInsertion.role= / =.request=; =InsertionCard= renders
+      nothing for =role=request= and wears an "↳ answers <title>" chip when
+      the note carries a pointer; =RequestCard= keys /signed/ off
+      =coordinate=, opens the signed 30041, delete/reopen only for records;
+      =AnnotationRequestModal= says "sign as an annotation (kind 30041)"
 - [X] annotate mode — second capture toggle beside highlight mode, no
       identity needed; the selection opens =AnnotationRequestModal= (task,
       title, scope chips, notes|kasten, sign / broadcast checkboxes, earlier
@@ -335,36 +364,150 @@ user's own agent reads over MCP; the answer is insertions.
       menu's *Ask* (=q=) is the click door
 - [X] =/tendrl-requests= skill (=docs/skills/tendrl-requests/SKILL.md=,
       symlinked into =.claude/skills/=) — the read → research → write →
-      close loop for Claude Code
+      close loop for Claude Code; passes the request's =coordinate= as
+      =request= on every =propose_insertion=; skips =answer_request= for
+      =ev_…= requests
 - [X] writing *styles* as events (kind 30078, =t: tendrl-style=): picker +
-      inline create in the ask window, =style= on the request / mention /
-      every answered note, =list_styles= tool, =style:<coord>= search from
-      the cards ([[file:zettel/feat-insertions.org][feat-insertions]] § Styles)
+      inline create in the ask window, =style= on the request / signed
+      request / every answered note, =list_styles= tool, =style:<coord>=
+      search from the cards ([[file:zettel/feat-insertions.org][feat-insertions]] § Styles)
+- [X] tests: =requests::= (record, 30041 request template, read-back,
+      answer pointer, store); =test_annotation_requests_unsigned_and_signed=
+      (unsigned → answered by hand; signed 30041 → load =role=request= →
+      note with =request= → answered derived; =ev_…= from the event alone)
+- [X] docs: decision zettel amended, feat-insertions § Asking for them,
+      =commands.org= recipe on =:3132= with the role / pointer /
+      derived-answered checks (=925c217=)
 - [ ] in-app answerer (API key): the same records, the chat loop as the
-      worker, streamed progress — optional, later
+      worker, streamed progress — optional, later (→ Open follow-ups)
 - [ ] =ClaudeProvider=: =output_config.format= (structured outputs) if the
       in-app answerer wants a =ComposeState= in one shot
 - [ ] anchored bundle indexes: spec clause "insertion sets" + widen the
       load filter to =kinds [30041, 30040]= so a kasten answer is found as a
-      packet, not only its pages
+      packet, not only its pages (→ Open follow-ups)
 
 ** Phase 5b — The annotations table                                       :medium:
-- [ ] buffer kind =annotations:<addr>= (tours.ts + registry.ts +
-      BufferRenderer if-chain, per the NIP-34 recipe); the WM arranges it —
-      a split beside the reader on desktop, one buffer at a time on the
-      phone (reader / annotations / collective switched from the drawer);
-      the view switch (by section · by author · timeline · free) is the
-      buffer's own header on every shell
-- [ ] header = editable spell + =count:by= histogram chips (click adds/
-      drops =by:=); layouts: by section · by author · timeline · free
-- [ ] layout in a =$derived= (=FocusGraph= idiom); cards via keyed
-      ={#each}=; =use:draggable= pointer action pins a card; positions +
-      layout mode + cursor in =store.bufferState=, written on teardown
-- [ ] card = compact handle (title, first lines, anchor chip → scrolls
-      the reader; hover a section → its cards light); expand = open the
-      30041 in =reader:event:<id>=
-- [ ] =j=/=k= cursor, =data-cursor=, =data-tour=; no lifecycle hooks
+Design frozen 2026-09-17 in [[file:annotations-table-contract.org][the
+Track 0 contract]] from the approved prototype (artifact
+=7RNhEzyQ7nQW5NkBwH2MA5=, v2); zettel
+[[file:zettel/feat-annotations-table.org][feat-annotations-table]]. Five
+tracks build against it in parallel worktrees (=feat/annot-track-{a..e}=
+off =feat/annotations-table=); no two tracks edit the same file. The
+sketch that preceded the contract (D7 above) stands; where they differ
+the contract wins — five layouts, not four (collective added), a split
+beside the reader rather than a plain open, requests as badged cards.
+
+*Track 0 — contracts* (shipped =039aa1a=, branch =feat/annotations-table=)
+- [X] =docs/annotations-table-contract.org= — what ships, files per track,
+      engine API, app-state hooks, DOM contract, layout rules, view state
+- [X] =api.ts=: =InsertionCounts= (=by_author= / =by_parent= / =total=),
+      =LoadInsertionsRequest.since= / =.counts=, =LoadInsertionsResponse.counts=
+- [X] =state.svelte.ts=: =app.readerJump= + =requestReaderJump(root, addr)=
+      (nonce), =app.hoverAnchor= + =setHoverAnchor(v)= (no write when unchanged)
+- [X] =theme/reading.svelte.ts=: =reading.notesLayout: 'margin' | 'inline'=,
+      =setReadingNotesLayout=
+- [X] =components/annotations/table-model.ts= (pure): ids, =Section=,
+      =TableCard=, =Lane= / =Placed= / =Tick= / =LayoutResult=, =SIZES=,
+      =AnnotationsViewState= + =DEFAULT_VIEW=; =buildCards= / =buildSpell= /
+      =parseSpell= / =authorBars= implemented; =flattenToc= / =layoutCards=
+      declared for Track C
+- [X] =actions/draggable.ts= (pointer action); WM registration — =tours.ts=
+      (=annotations=, work class), =registry.ts=, =BufferRenderer= if-chain,
+      stub =AnnotationsBuffer.svelte= (=.abuf[data-root]= + a read-only
+      =.spell__input=); =tendrl-annotations-table= command, =SPC b o a=,
+      the =+page.svelte= =openAnnotationsTable= arm (=openBuffer= form)
+
+*Track A — engine* (=src/api/insertions.rs=, =src/engine.rs=)
+- [ ] =POST /insertions/load= gains =since: Option<i64>= (NIP-01 since on
+      the =#A= pass) and =counts: bool= — the pass runs *without* the author
+      filter when set, histograms over the whole root, then =retain= by author
+- [ ] response =counts: { by_author, by_parent, total }= of =TagValueCount=;
+      =by_author= labelled with the kind-0 name via =label_author_buckets=
+      (visibility widened); =by_parent= values are parent coordinates;
+      notes only — =role == Request= excluded
+- [ ] Confirm-mode intent text "any author (table)" when =counts= is set
+      and authors are given
+- [ ] pure =insertion_counts(&[LoadedInsertion]) -> InsertionCounts= + unit
+      test; one assertion added to =test_insertion_propose_load_and_promote=
+
+*Track B — reader* (=ReaderBuffer=, the section views, the cards, Settings, =+page.svelte=)
+- [ ] Tools sheet: =.tools-sheet__row button.ins-table= "table N" (N = notes,
+      not requests); =new= badge for its first 3 openings via discovery
+- [ ] =openAnnotationsTable= body: split beside the reader on desktop
+      (=store.splitFocused=), =openBuffer= on the mobile shell
+- [ ] =app.readerJump= applied once per nonce (=appliedJumpNonce=) →
+      =gotoSection(i, 'teleport')= + scroll into view; =app.hoverAnchor= →
+      =hotAddr= down to the section views → =.section.anchor-hot= with an
+      =.anchor-tip= "N cards →"
+- [ ] notes layout: =.rd-content.notes-margin= when =reading.notesLayout ===
+      'margin'= && pane wide enough && not split — section as =grid:
+      minmax(0, measure) 280px=, notes in =.section__side=; otherwise inline
+      as today; the phone folds as today; Settings → Reading → *notes:
+      margin | inline*
+- [ ] =InsertionCard=: =style="--au: <pubkeyToColor>"=, =.icard__dot=, the
+      left rail =3px solid var(--au)=; =RequestCard=: same rail/dot,
+      =.badge= "? request" / =.badge.answered= "✓ request · answered", no
+      dashed borders; the reader stops counting request-30041s as pending
+      notes
+
+*Track C — the table* (=AnnotationsBuffer.svelte=, =components/annotations/*=, =table-model.ts= bodies)
+- [ ] =AnnotationsBuffer= replaces the stub: loads via a plain =book= object
+      (effect-loop discipline), effects keyed on =app.insertionsVersion= /
+      =app.requestsVersion=, live updates through =onStoreEvent= +
+      =concernsRoot= debounced; view state read once from =store.bufferState=,
+      written on =$effect= teardown; no lifecycle hooks
+- [ ] =AnnotationsSpell=: =.spell__input= (editable; =Enter= → =parseSpell=,
+      foreign root refused with a toast), =.spell__wand= → =SpellComposerModal=,
+      chips =.chip--by= / =.chip--sec= / =.chip--since= (all · 7d · 30d),
+      =.lay button[data-mode]= ×5; =.hist .bar[data-pk]= from =authorBars=
+      (=.on=, inline =--au=, fill = share of total, =.bar__n=) — click toggles
+      =by:= and re-renders the spell from =buildSpell=
+- [ ] =AnnotationsTable=: =.atable= scroll container, =.cv= canvas sized from
+      =LayoutResult=, =.lane[data-lane]= + =.lane__lab= (=.lane.hot= on
+      =hoverAnchor=), =.tick= / =.axis= marks, =.legend=
+- [ ] =AnnotationCard=: =.acard[data-cursor][data-id]= at =left/top=, modifiers
+      =.m= / =.x= / =.cur= / =.pinned= / =.dragging=, inline =--au=; =.acard__h=
+      (=.acard__anchor= "→ §n", =.badge= or the placement word, =.acard__by= +
+      =.acard__dot=), =.acard__t=, =.acard__b= (masked), =.acard__f=
+      (=.acard__style= "✎ …", "↳ answer" chip, =.acard__open=)
+- [ ] =flattenToc= + =layoutCards= per the contract's layout rules (section ·
+      author · timeline · free · collective; expanded =WX × HX= above
+      siblings, no re-pack; pins only in free; the drag transient never an
+      input)
+- [ ] keys with the table focused: =j=/=k= cursor, =Enter= expand, =←=/=→= and
+      =m= mode, =Esc= clears expand — a =nav= handler the way
+      =RepositoryBuffer= registers one (=NavAction=)
+- [ ] mounts =AnnotationsList= behind =mobileNav.isMobile= (or the shell flag)
+
+*Track D — mobile* (=components/annotations/AnnotationsList.svelte=, mobile-nav, drawer)
+- [ ] =AnnotationsList= — self-contained: takes =cards=, =layout=, =sections=,
+      =view= and the same callbacks; =.vseg button[data-mode]= (no =free=),
+      =.mspell= (collapsed spell text + wand), =.mhist= bars, =.alist= with
+      =.grp= headers from lanes and =.acard.m= rows
+- [ ] tapping a row's =.acard__anchor= switches to the reader buffer and jumps
+- [ ] mobile-nav view provider + the ☰ drawer entry for =annotations:<root>=
+
+*Track E — docs + harness* (this file, the zettels, =commands.org=, =scripts/verify/=)
+- [X] this plan: Phase 5 on the 30041 model, Phase 5b per track, Open follow-ups
+- [X] =docs/zettel/feat-annotations-table.org= (linked from the index and
+      feat-insertions § Table); decision-requests-are-events amended for the
+      table's use of the pointer
+- [X] =docs/commands.org= "Annotations table — verify": build, scratch engine
+      on =:3131=, =nak= + endpoint seeding (3 sections · 5 notes by 2 keys · 1
+      signed request), the harness, teardown
+- [X] =scripts/verify/annotations-table.mjs= — CDP harness (Node ≥22, no
+      deps): first-run modals, reader open, Tools → table, the split, per-mode
+      lane/card counts, author bar → spell, drag → pin, hover → =.anchor-hot=,
+      =§n= → reader scroll, 390×844 → =.vseg= + =.alist .grp=; PASS/FAIL per
+      check, non-zero exit on any FAIL, screenshots to =--out=
+- [ ] run the harness end to end after Tracks A–D merge (today it proves the
+      driver — reader + search steps — and reports the table steps as FAIL)
+
+*After merge*
+- [ ] harness green on the merged branch; an MCP =propose_insertion= appears
+      live on the table (the contract's live check — not scripted yet)
 - [ ] decide =d3-force= only after a real 100-card set is on screen
+      (→ Open follow-ups)
 
 ** Phase 6 — Docs and kasten                                               :small:
 - [ ] =feat-assistant= → context set, MCP surface, signing: shipped
@@ -400,7 +543,59 @@ choice; 5 is mostly UI once 1–3 exist.
   derivations before settling; latency vs synthesis quality is the
   user's call.
 
+* Open follow-ups
+
+Deferred deliberately; each is a checkbox so it is ticked, not deleted,
+when it ships.
+
+- [ ] *Data-dir persistence for the assistant identity and bunker
+      pairings.* The =keyring= crate has no platform backend, so on Linux it
+      is the in-memory mock: every restart drops the assistant ncryptsec, the
+      user's and the assistant's =BunkerPersist=, and the assistant's Amber
+      pairing (Phase 2 follow-ups). Persist them under =<data_dir>/= per
+      [[file:zettel/decision-no-keyring-backend.org][the decision]] and make
+      boot reconnect real everywhere.
+- [ ] *Anchored-bundle-index spec clause.* =nips/NKBIP-01-insertions.org=
+      needs an "insertion sets" clause — a 30040 that carries the same
+      anchor tags as its pages — and =insertions/load= widens to =kinds
+      [30041, 30040]= so a kasten written in answer to a request is found
+      as a packet, not only as its pages (Phase 5).
+- [ ] *An in-app answerer.* The same request records, the chat loop as the
+      worker (API key, the user's own cost), streamed progress; optionally
+      =ClaudeProvider= structured outputs (=output_config.format=) for a
+      =ComposeState= in one shot. Same contract as the MCP loop — one
+      shape, two answerers ([[file:zettel/decision-requests-are-events.org][decision]]).
+- [ ] *Live relay subscriptions.* The store stream is local only (Phase 3,
+      § Live): a note ingested from a relay shows up, but nothing holds a
+      relay REQ open. A subscription per open publication — or per table —
+      is the step after; Confirm-gated like any fetch.
+- [ ] *Section d-tag reuse on republish.* A promoted insertion keeps its
+      minted =d=; a republished section from the composer mints a new one.
+      Decide when a rewrite of a note is a new version (same =d=) versus a
+      new note, and let the composer's "open in composer" hand-off keep the
+      coordinate.
+- [ ] *Cross-publication refs.* A note anchored to one publication that
+      cites a section of another (nostrdown ={{ref:}}= is sibling-only;
+      =naddr= works but resolves cold). The table could show the "cited
+      from elsewhere" edge; the reader could resolve a foreign =ref= by
+      coordinate.
+- [ ] *Collective grid refinements.* Row/column ordering (by count vs
+      reading order), cell stacks past ~5 cards, a per-cell count instead of
+      a stack when dense, sticky axis labels while scrolling.
+- [ ] *=d3-force= after a 100-card set.* Free layout is the section
+      layout plus pins today; only a real 100-card table on screen decides
+      whether force clustering (pure math in the same =$derived=) earns its
+      bytes.
+- [ ] *The store stream emits =request= when a pointer note is ingested.*
+      Today an ingested note with a =request= tag arrives as =ingested= only;
+      the request card learns it was answered on the next re-read of the
+      request list. Emit a =request= handle (root, parent, the coordinate,
+      =status: answered=) from the ingest path so the badge flips without
+      the list round trip.
+
 * Related
+- [[file:annotations-table-contract.org][Annotations table — the Track 0 contract]]
+- [[file:zettel/feat-annotations-table.org][Annotations table]] — the feature zettel
 - [[file:zettel/idea-insertions.org][Idea: insertions]]
 - [[file:zettel/decision-context-set-engine-owned.org][Decision: context set is engine-owned]]
 - [[file:zettel/decision-assistant-signs-own-key.org][Decision: the assistant signs with its own key]]
