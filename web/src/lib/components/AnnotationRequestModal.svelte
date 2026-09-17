@@ -11,6 +11,7 @@
 	import { getAppState } from '$lib/state.svelte';
 	import { identityCanSign } from '$lib/identity/signer';
 	import { confirmState } from '$lib/network/fetch-events.svelte';
+	import { stylesList, refreshStyles } from '$lib/styles.svelte';
 
 	const app = getAppState();
 	const canSign = $derived(identityCanSign(app.identityStatus));
@@ -38,6 +39,37 @@
 	let sign = $state(false);
 	let broadcast = $state(false);
 	let posting = $state(false);
+
+	// Writing style: one of the local style events, or a new one written
+	// here (signed by you when you can sign, else by the assistant — a style
+	// is an event either way, so it travels with the knowledge base).
+	let style = $state<string>('');
+	let newStyleOpen = $state(false);
+	let newStyleTitle = $state('');
+	let newStyleText = $state('');
+	let savingStyle = $state(false);
+	void refreshStyles();
+	async function saveStyle() {
+		if (savingStyle || !newStyleTitle.trim() || !newStyleText.trim()) return;
+		savingStyle = true;
+		try {
+			const s = await api.createStyle({
+				title: newStyleTitle.trim(),
+				content: newStyleText.trim(),
+				sign_as: canSign ? 'user' : 'assistant'
+			});
+			await refreshStyles();
+			style = s.coordinate;
+			newStyleOpen = false;
+			newStyleTitle = '';
+			newStyleText = '';
+			app.pushToast(`Style "${s.title}" saved`, 'success');
+		} catch (e) {
+			app.pushToast(api.errorMessage(e, 'Saving the style failed'), 'error', 5000);
+		} finally {
+			savingStyle = false;
+		}
+	}
 	const yielding = $derived(posting && confirmState.intent?.type === 'publish_intent');
 	const canPost = $derived(!posting && !!root && task.trim().length > 0 && (!sign || canSign));
 
@@ -92,6 +124,7 @@
 				scope,
 				context: context.trim() || undefined,
 				output,
+				style: style || undefined,
 				sign,
 				broadcast: sign && broadcast
 			});
@@ -222,6 +255,32 @@
 			<button class="rq-seg__opt" class:on={output === 'notes'} role="radio" aria-checked={output === 'notes'} onclick={() => (output = 'notes')} disabled={posting} title="Loose notes attached to the place">notes</button>
 			<button class="rq-seg__opt" class:on={output === 'kasten'} role="radio" aria-checked={output === 'kasten'} onclick={() => (output = 'kasten')} disabled={posting} title="Several notes plus an index grouping them — promotable as a sub-chapter">kasten</button>
 		</div>
+
+		<div class="rq-label">style <span class="rq-label__sub">· how the notes should be written</span></div>
+		<div class="rq-style">
+			<select class="rq-select" bind:value={style} disabled={posting}>
+				<option value="">— none —</option>
+				{#each stylesList() as s (s.coordinate)}
+					<option value={s.coordinate}>{s.title}</option>
+				{/each}
+			</select>
+			<button class="rq-mini" onclick={() => (newStyleOpen = !newStyleOpen)} disabled={posting}>{newStyleOpen ? 'cancel' : '+ new style'}</button>
+		</div>
+		{#if style}
+			{@const chosen = stylesList().find((s) => s.coordinate === style)}
+			{#if chosen}
+				<div class="rq-style-preview">{chosen.content}</div>
+			{/if}
+		{/if}
+		{#if newStyleOpen}
+			<input class="rq-input" data-entry placeholder="Style name — e.g. Equations and code, built up" bind:value={newStyleTitle} disabled={savingStyle} />
+			<textarea class="rq-input rq-style-text" data-entry placeholder="How to write: what to lead with, what to cite, what to leave out. The answering agent reads this verbatim." bind:value={newStyleText} disabled={savingStyle}></textarea>
+			<div class="rq-style">
+				<span class="rq-help">signed {canSign ? 'by you' : 'by the assistant (sign in to sign it yourself)'} · local</span>
+				<span class="rq-spacer"></span>
+				<button class="rq-btn" onclick={saveStyle} disabled={savingStyle || !newStyleTitle.trim() || !newStyleText.trim()}>{savingStyle ? 'saving…' : 'save style'}</button>
+			</div>
+		{/if}
 
 		{#if context.trim()}
 			<label class="rq-label" for="rq-context">from your selection</label>
@@ -451,6 +510,35 @@
 	.rq-seg__opt.on {
 		background: var(--id-remote);
 		color: var(--bg);
+	}
+	.rq-style {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+	}
+	.rq-select {
+		flex: 1;
+		font-family: var(--font-sans);
+		font-size: var(--t-xs);
+		color: var(--fg);
+		background: var(--bg-surface);
+		border: 1px solid var(--panel-border);
+		border-radius: var(--r-sm);
+		padding: 4px 8px;
+		min-height: 30px;
+	}
+	.rq-style-preview {
+		font-size: calc(var(--t-xs) - 1px);
+		color: var(--fg-muted);
+		border-left: 2px solid var(--panel-border);
+		padding: 2px 8px;
+		max-height: 96px;
+		overflow: auto;
+		white-space: pre-wrap;
+	}
+	.rq-style-text {
+		min-height: 88px;
+		resize: vertical;
 	}
 	.rq-sign {
 		display: flex;

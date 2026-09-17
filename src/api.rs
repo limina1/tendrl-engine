@@ -321,6 +321,7 @@ fn git_branch() -> Option<String> {
 use crate::nip19;
 pub mod insertions;
 pub mod requests;
+pub mod styles;
 
 /// POST /api/v1/decode body.
 #[derive(Debug, Deserialize)]

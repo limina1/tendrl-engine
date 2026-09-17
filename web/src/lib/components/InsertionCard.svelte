@@ -14,6 +14,7 @@
 	import { identityCanSign } from '$lib/identity/signer';
 	import { reading } from '$lib/theme/reading.svelte';
 	import type { ResolvedRef, ParsedToken } from '$lib/nostr/nostrdown';
+	import { styleTitle } from '$lib/styles.svelte';
 
 	let {
 		insertion,
@@ -35,6 +36,7 @@
 	const anchor = $derived(insertion.anchor);
 	const title = $derived(ev.tags.find((t) => t[0] === 'title')?.[1] ?? '');
 	const contextTag = $derived(ev.tags.find((t) => t[0] === 'context')?.[1] ?? null);
+	const styleCoord = $derived(ev.tags.find((t) => t[0] === 'style')?.[1] ?? null);
 	const mine = $derived(!!app.identityStatus?.pubkey && ev.pubkey === app.identityStatus.pubkey);
 	const who = $derived(mine ? 'you' : getAuthorDisplayName(ev.pubkey));
 	const placementLabel = $derived(
@@ -197,6 +199,9 @@
 			<span class="icard__pill icard__pill--att">
 				{anchor.placement === 'annotation' ? 'attached' : 'inserted · pending'}
 			</span>
+			{#if styleCoord}
+				<button class="icard__act" onclick={() => app.handleSearch(`style:${styleCoord}`, { scopeToMe: false })} title="Written in this style — click for everything in it ({styleCoord})">✎ {styleTitle(styleCoord) ?? 'style'}</button>
+			{/if}
 			{#if onopen}
 				<button class="icard__act" onclick={() => onopen?.(insertion)} title="Open this section in its own reader buffer">open</button>
 			{/if}

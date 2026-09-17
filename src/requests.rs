@@ -88,6 +88,12 @@ pub struct AnnotationRequest {
     /// Who the mention addressed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub assistant_pubkey: Option<String>,
+    /// The writing style to answer in: a style event's coordinate
+    /// (`30078:pk:d`, see `api::styles`) and its title at request time.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub style: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub style_title: Option<String>,
 }
 
 fn default_output() -> String {
@@ -132,6 +138,8 @@ impl AnnotationRequest {
             answer: None,
             event_id: None,
             assistant_pubkey: None,
+            style: None,
+            style_title: None,
         })
     }
 
@@ -205,6 +213,9 @@ impl AnnotationRequest {
         }
         if !self.scope.is_empty() {
             t.tags.push(vec!["scope".to_string(), self.scope.join(",")]);
+        }
+        if let Some(style) = &self.style {
+            t.tags.push(vec!["style".to_string(), style.clone()]);
         }
         Ok(t)
     }

@@ -115,6 +115,12 @@
 			{#if r.scope.length > 0}
 				<div class="rqc__line"><span class="rqc__k">scope</span> {r.scope.join(' · ')} · {r.output}</div>
 			{/if}
+			{#if r.style}
+				<div class="rqc__line">
+					<span class="rqc__k">style</span>
+					<button class="rqc__mini" onclick={() => app.handleSearch(`style:${r.style}`, { scopeToMe: false })} title="Everything written in this style — {r.style}">{r.style_title ?? r.style.split(':').slice(2).join(':')}</button>
+				</div>
+			{/if}
 			{#if r.context}
 				<blockquote class="rqc__context">{r.context}</blockquote>
 			{/if}

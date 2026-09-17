@@ -268,6 +268,12 @@ pub fn catalog() -> Vec<ToolDef> {
             input_schema: schema_list_requests,
         },
         ToolDef {
+            name: "list_styles",
+            description: "List the user's saved writing styles — how they want notes written (e.g. \"equations first, then the same step as code\"; \"an annotated reading guide\"). Each has a coordinate, a title and the instructions. A request names one by coordinate; follow its instructions when answering and pass the coordinate as `style` to propose_insertion.",
+            category: ToolCategory::Read,
+            input_schema: schema_list_styles,
+        },
+        ToolDef {
             name: "answer_request",
             description: "Close an annotation request: record a short summary and the coordinates of the notes you wrote (30041:pk:d — and the 30040 bundle when you made a kasten). When the request was signed as a mention, this also posts the assistant's kind-1111 reply under it (local). Call it once per request, after propose_insertion has stored the notes.",
             category: ToolCategory::ComposeWrite,
@@ -322,6 +328,7 @@ pub async fn dispatch(cx: &ToolCx, name: &str, input: Value) -> Result<Value> {
         "propose_insertion" => propose_insertion(cx, input).await,
         "promote_insertion" => promote_insertion(cx, input).await,
         "list_requests" => list_requests(engine, input).await,
+        "list_styles" => list_styles(engine, input).await,
         "answer_request" => answer_request(engine, input).await,
         other => Err(EngineError::BadRequest(format!("unknown tool: {other}"))),
     }
@@ -519,7 +526,8 @@ fn schema_propose_insertion() -> Value {
             "content": { "type": "string", "description": "Section body." },
             "format": { "type": "string", "enum": ["markdown", "org", "asciidoc", "plain"], "description": "Content mode. Default markdown." },
             "context": { "type": "string", "description": "Optional excerpt of the parent this note responds to." },
-            "replace": { "type": "string", "description": "Coordinate (30041:pk:d) of YOUR earlier note to replace — the new event reuses its d-tag, so it is a new version, not a second note." }
+            "replace": { "type": "string", "description": "Coordinate (30041:pk:d) of YOUR earlier note to replace — the new event reuses its d-tag, so it is a new version, not a second note." },
+            "style": { "type": "string", "description": "Coordinate of the style event (30078:pk:d) this note follows — copy it from the request's `style`. Stamped as a `style` tag so everything written in that style is one search." }
         },
         "required": ["root", "title", "content"]
     })
@@ -533,6 +541,10 @@ fn schema_list_requests() -> Value {
             "status": { "type": "string", "enum": ["open", "answered", "all"], "description": "Default open." }
         }
     })
+}
+
+fn schema_list_styles() -> Value {
+    json!({ "type": "object", "properties": {} })
 }
 
 fn schema_answer_request() -> Value {
@@ -1129,7 +1141,11 @@ async fn propose_insertion(cx: &ToolCx, input: Value) -> Result<Value> {
         content: require_str(&input, "content")?.to_string(),
         format: input.get("format").and_then(Value::as_str).map(String::from),
         context: input.get("context").and_then(Value::as_str).map(String::from),
-        tags: Vec::new(),
+        tags: input
+            .get("style")
+            .and_then(Value::as_str)
+            .map(|c| vec![vec!["style".to_string(), c.to_string()]])
+            .unwrap_or_default(),
         replace: input.get("replace").and_then(Value::as_str).map(String::from),
     };
     let (mut template, resolved) =
@@ -1202,11 +1218,21 @@ async fn list_requests(engine: &Arc<Engine>, input: Value) -> Result<Value> {
     let root = input.get("root").and_then(Value::as_str);
     let status = input.get("status").and_then(Value::as_str).unwrap_or("open");
     let list = crate::api::requests::list_requests(engine, root, None, Some(status))?;
+    let mut requests = Vec::with_capacity(list.len());
+    for r in list {
+        requests.push(crate::api::requests::request_with_style(engine, r).await);
+    }
     Ok(json!({
-        "count": list.len(),
-        "requests": list,
-        "note": "Answer one with propose_insertion (anchored to its parent, root = its root) then answer_request.",
+        "count": requests.len(),
+        "requests": requests,
+        "note": "Answer one with propose_insertion (anchored to its parent, root = its root; pass its `style` so the notes carry it, and follow `style_instructions`) then answer_request.",
     }))
+}
+
+/// The saved writing styles (local style events).
+async fn list_styles(engine: &Arc<Engine>, _input: Value) -> Result<Value> {
+    let styles = crate::api::styles::list_styles(engine).await?;
+    Ok(json!({ "count": styles.len(), "styles": styles }))
 }
 
 /// Close a request with a summary and the written coordinates.

@@ -857,6 +857,10 @@ pub async fn start(opts: ServeOptions) -> anyhow::Result<RunningServer> {
             "/api/v1/annotations/requests/:id/reopen",
             post(api::requests::reopen_handler),
         )
+        .route(
+            "/api/v1/styles",
+            get(api::styles::list_handler).post(api::styles::create_handler),
+        )
         .route("/api/v1/spell/inspect", post(spell::inspect_handler))
         .route("/api/v1/spell/execute", post(spell::execute_handler))
         .route("/api/v1/spell/list", post(spell::list_handler))

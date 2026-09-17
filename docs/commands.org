@@ -2261,3 +2261,16 @@ requests here with their answers (coordinates open the notes). The event
 menu's *q Ask* is the click door. CDP: select via a =Range= over a text node
 inside =.continuous-section= then dispatch a =mouseReleased=; the popover's
 =aria-label= flips to "Ask for notes about this passage".
+
+** Styles (writing styles as kind-30078 events)
+
+#+begin_src bash
+B=localhost:3131; J='Content-Type: application/json'
+curl -s -X POST $B/api/v1/styles -H "$J" -d '{"title":"Equations and code, built up","content":"Each section: the formula first, then the same step as code, then one paragraph of meaning.","sign_as":"assistant"}' | jq -c '{coordinate, title}'
+curl -s $B/api/v1/styles | jq -c '{count, titles:[.styles[].title]}'
+# a request that names it; the agent sees the text as style_instructions; answered notes carry ["style", coord]
+STY=$(curl -s $B/api/v1/styles | jq -r '.styles[0].coordinate')
+curl -s -X POST $B/api/v1/annotations/requests -H "$J" -d "{\"root\":\"$ROOT\",\"parent\":\"$S1\",\"task\":\"derive it\",\"style\":\"$STY\"}" | jq -c '{style, style_title}'
+curl -s -X POST $B/mcp -H "$J" -H "$A" -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"list_requests","arguments":{}}}' | jq -c '.result.structuredContent.requests[0]|{style, style_instructions:(.style_instructions|.[0:40])}'
+curl -s -X POST $B/api/v1/search -H "$J" -d "{\"query\":\"style:$STY\",\"policy\":\"local_only\"}" | jq '.count'   # every note written in it
+#+end_src

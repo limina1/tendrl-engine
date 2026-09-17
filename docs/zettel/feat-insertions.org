@@ -80,6 +80,21 @@ with =propose_insertion= and closes it with =answer_request=; the window
 lists earlier requests here with their answers and opens the written
 notes. [[file:decision-requests-are-events.org][Decision]].
 
+* Styles
+
+A *writing style* is how the user wants notes written, saved as an event
+so it travels with the knowledge base: kind 30078 (NIP-78 app data,
+addressable), =t: tendrl-style=, a =title=, the instructions as content;
+signed by the user or the assistant, local unless broadcast
+(=POST/GET /api/v1/styles=, =src/api/styles.rs=). The ask window lists the
+local styles, previews the chosen one, and can write a new one inline.
+A request records the style (=style= + =style_title=; the signed mention
+carries =["style", <coord>]=), =list_requests= hands the agent the text as
+=style_instructions=, and every note written in answer carries the same
+=["style", <coord>]= tag — so "everything written in this style" is the
+tag search the card's ✎ pill and the request card's style line run
+(=style:<coord>=). Tools: =list_styles=; =propose_insertion= takes =style=.
+
 * Not yet
 - "open in composer" hand-off from the composer modal (an anchored compose
   item) and the capture-card /note/ variant door.

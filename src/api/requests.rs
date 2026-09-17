@@ -38,6 +38,9 @@ pub struct CreateRequest {
     /// `notes` (default) or `kasten`.
     #[serde(default)]
     pub output: Option<String>,
+    /// Coordinate of a style event (`30078:pk:d`) the answer should follow.
+    #[serde(default)]
+    pub style: Option<String>,
     /// Also sign it as a kind-1111 mention of the assistant (needs your
     /// identity and an assistant identity). Default false — local record.
     #[serde(default)]
@@ -96,6 +99,13 @@ pub async fn create_handler(
         }
     }
     r.assistant_pubkey = assistant_pubkey(&engine).await;
+    if let Some(coord) = req.style.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        let style = super::styles::get_style(&engine, coord)
+            .await?
+            .ok_or_else(|| EngineError::NotFound(format!("style {coord} is not in the local store")))?;
+        r.style = Some(style.coordinate);
+        r.style_title = Some(style.title);
+    }
 
     let mut event = None;
     if req.sign {
@@ -156,6 +166,18 @@ pub(crate) fn list_requests(
 ) -> Result<Vec<AnnotationRequest>, EngineError> {
     let status = parse_status(status)?;
     RequestStore::new(engine.data_dir())?.query(root, parent, status)
+}
+
+/// A request as the agent sees it: the record plus the style's text, so it
+/// need not fetch the style event itself.
+pub(crate) async fn request_with_style(engine: &AppState, r: AnnotationRequest) -> Value {
+    let mut v = serde_json::to_value(&r).unwrap_or(Value::Null);
+    if let Some(coord) = &r.style {
+        if let Ok(Some(style)) = super::styles::get_style(engine, coord).await {
+            v["style_instructions"] = json!(style.content);
+        }
+    }
+    v
 }
 
 /// GET /api/v1/annotations/requests?root=&parent=&status=

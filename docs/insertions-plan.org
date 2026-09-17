@@ -336,6 +336,10 @@ user's own agent reads over MCP; the answer is insertions.
 - [X] =/tendrl-requests= skill (=docs/skills/tendrl-requests/SKILL.md=,
       symlinked into =.claude/skills/=) — the read → research → write →
       close loop for Claude Code
+- [X] writing *styles* as events (kind 30078, =t: tendrl-style=): picker +
+      inline create in the ask window, =style= on the request / mention /
+      every answered note, =list_styles= tool, =style:<coord>= search from
+      the cards ([[file:zettel/feat-insertions.org][feat-insertions]] § Styles)
 - [ ] in-app answerer (API key): the same records, the chat loop as the
       worker, streamed progress — optional, later
 - [ ] =ClaudeProvider=: =output_config.format= (structured outputs) if the

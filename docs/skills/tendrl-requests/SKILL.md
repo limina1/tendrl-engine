@@ -19,6 +19,12 @@ jq -r .claude_mcp_add` prints the registration line).
 1. `list_requests` (status `open`). If the user named a publication, pass
    its coordinate as `root`. Nothing open → say so and stop.
 2. For each request, in order:
+   - **Follow the style.** When the request carries `style` (a coordinate) and
+     `style_instructions` (its text), those instructions govern how the notes
+     are written: what to lead with, what to cite, what to leave out. Read
+     them before anything else; `list_styles` shows every saved style if you
+     need the full set. Pass the coordinate as `style` to every
+     `propose_insertion` so the notes are tagged with it.
    - **Read the anchor.** `get_addressable` on `parent` (kind, pubkey, d
      from the coordinate). `scope` says how far to go: `siblings` /
      `publication` → `view_publication` / `view_publication_tree` on `root`;

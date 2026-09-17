@@ -2840,6 +2840,34 @@ export interface AnnotationRequest {
 	answer?: AnnotationRequestAnswer;
 	event_id?: string;
 	assistant_pubkey?: string;
+	/** Style event coordinate (30078:pk:d) and its title when asked. */
+	style?: string;
+	style_title?: string;
+}
+
+/** A saved writing style: a local kind-30078 event tagged `tendrl-style`. */
+export interface WritingStyle {
+	coordinate: string;
+	d_tag: string;
+	pubkey: string;
+	title: string;
+	content: string;
+	created_at: number;
+	event_id: string;
+}
+
+export function listStyles() {
+	return fetchJson<{ styles: WritingStyle[]; count: number }>('/api/v1/styles');
+}
+
+export function createStyle(req: {
+	title: string;
+	content: string;
+	replace?: string;
+	sign_as?: 'user' | 'assistant';
+	broadcast?: boolean;
+}) {
+	return fetchJson<WritingStyle>('/api/v1/styles', { method: 'POST', body: JSON.stringify(req) });
 }
 
 export function createRequest(req: {
@@ -2852,6 +2880,7 @@ export function createRequest(req: {
 	scope?: string[];
 	context?: string;
 	output?: 'notes' | 'kasten';
+	style?: string;
 	sign?: boolean;
 	broadcast?: boolean;
 	relays?: string[];
