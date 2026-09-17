@@ -1,0 +1,73 @@
+:title: Q: How does quality emerge without gatekeeping? — the essay's claim as the kasten's organizing question
+:type: question
+:status: open
+:date: 2026-09-17
+:author: assistant
+:agent: promiscuity-annotate
+:tags: quality, sanctions, split-sanctions, adico, natural-selection-of-ideas
+
+== The question
+
+The coda claims: "Quality emerges not through gatekeeping but through
+the natural selection of ideas that prove useful for further
+thinking" ({{ref:30041:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:aktaotwp-coda-the-streaming-edge-of-thought|Coda: The Streaming Edge of Thought}}). The emergent-governance kasten opens on
+the same claim as a puzzle rather than an answer: given that Nostr is
+"plausibly, the most adversarial social landscape that exists," the
+one question that organizes everything is *how is there quality
+discourse at all?* ({{ref:30041:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:emergentgov-the-question|The question}}). The essay asserts
+what the kasten sets out to explain.
+
+== What the kasten already offers
+
+The knowledge-commons literature replaces appropriation with
+pollution and underprovision as the dilemmas of a nonsubtractive
+resource (link:concept-idea-layer-nonsubtractive.adoc[idea layer]).
+Its classical answer is Ostrom's fifth design principle, graduated
+sanctions, which assumed a *unitary* arrangement: the institution
+that monitors is linked to the one that sanctions
+({{ref:30041:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:concept-graduated-sanctions|graduated sanctions}}). The kasten's finding is
+that Nostr splits the bundle: a kind-1984 report is a costly,
+public, *non-binding* signal, and a different actor — a relay, a
+client's web-of-trust scorer, a reader — decides what it means. In
+the grammar of institutions the report is a norm with no named
+"or-else" that nonetheless gets enforced, because the or-else is
+crowdsourced across many potential enforcers
+({{ref:30041:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:claim-split-sanctions|split sanctions}};
+{{ref:30041:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:concept-adico-grammar|adico grammar}}). The author's earlier paper laid
+out the five-level ladder — follow lists, mutes, reports, relay
+policy, network exclusion ({{ref:30040:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:governing-the-decentralized-commons|Governing the Decentralized Commons}}).
+
+That *is* a mechanism for "natural selection of ideas" without a
+gatekeeper: selection pressure is real but decoupled from any office.
+The essay's "peer review happens continuously through the
+participation of anyone competent to engage" is split sanctioning
+described from the idea layer.
+
+== What stays open
+
+- *Selection signals for ideas, not conduct.* The kasten's coding
+  table maps kinds to institutional statements for governance
+  (reports, mutes, policies, NIPs). The essay needs the positive
+  half: which events select an idea *up*? Highlights (kind 9802),
+  citations (`a` and `q` tags), forks of an index, bookshelf
+  inclusion (kind 30045), insertions and their promotion. A table of
+  those is the coding instrument for anarchistic knowledge.
+- *Legitimacy.* The kasten's anomaly — reports from high-centrality
+  accounts move relay filters while peripheral reports do not — has
+  an idea-layer twin the essay would dislike: do highlights from
+  central accounts select ideas more than peripheral ones? If so,
+  "guardianship without office" is still guardianship
+  ({{ref:30041:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:concept-guardianship-without-office|guardianship without office}}).
+- *Decoupled vs unitary.* Whether decoupled sanctioning governs
+  better than unitary enforcement is, in the kasten's words, "the
+  most self-contained publishable question in the program"
+  ({{ref:30041:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:q-decoupled-vs-unitary-sanctions|Q: decoupled vs unitary sanctions}}). For the essay it is
+  the difference between its optimism and a finding.
+
+*Related:*
+
+- link:index.adoc[index]
+- link:concept-idea-layer-nonsubtractive.adoc[concept-idea-layer-nonsubtractive]
+- link:claim-conversation-is-an-action-arena.adoc[claim-conversation-is-an-action-arena]
+- link:q-survivorship-of-withered-branches.adoc[q-survivorship-of-withered-branches]
+- link:concept-epistemological-anarchism.adoc[concept-epistemological-anarchism]

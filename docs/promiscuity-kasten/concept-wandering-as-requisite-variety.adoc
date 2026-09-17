@@ -1,0 +1,71 @@
+:title: Intellectual wandering is requisite variety — Ashby's law for a knower
+:type: concept
+:status: drafted
+:date: 2026-09-17
+:author: assistant
+:agent: promiscuity-annotate
+:tags: requisite-variety, ashby, cybernetics, wandering, generativity
+
+== The idea
+
+Ashby's law of requisite variety: a regulator can only absorb the
+disturbances it has moves to match — "there must exist as much variety
+in the strategies available as there is variety in the conditions
+that obtain." Vincent Ostrom took the law directly from Ashby at
+Stanford in 1955–56 and called Ashby's theory of adaptive behaviour
+"a basic foundation of my own work"; Elinor restated it in 1995 for
+governance systems (Lewis & Aligica 2024, pp. 5–7;
+{{ref:30041:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:src-ostroms-cybernetics|Lewis & Aligica 2024 — the Ostroms' cybernetics}};
+{{ref:30041:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:concept-requisite-variety|requisite variety}}).
+
+The essay's second subsection, "The Fertility of Intellectual
+Wandering," is Ashby's law stated for a single mind. "The world itself
+is interconnected in ways that our institutional divisions obscure"
+— the environment's variety does not respect disciplinary lines. A
+mind confined to one department has fewer moves than the world has
+disturbances; the person "who notices similarities between jazz
+improvisation and software debugging isn't being distracted — they're
+discovering patterns that more focused minds might miss." Wandering
+is the regulator acquiring variety.
+
+== The parallel discipline
+
+The emergent-governance kasten makes a methodological choice from the
+same law: its catalogue of exclusion methods is "deliberately left
+unfinished," because a complete catalogue "would be evidence the
+system had *stopped* matching its environment." Ostrom herself
+counted 27+ boundary rules in use and concluded that "no analyst can
+perform a complete analysis" of their combinations (_Digging Deeper_,
+pp. 90–91; {{ref:30041:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:src-digging-deeper|Ostrom — Digging Deeper}}). The essay reaches the same
+place from the other side: "anarchistic knowledge" is knowledge that
+refuses to be enumerated by its institutions, and the refusal is
+functional, not undisciplined.
+
+This gives the essay a sharper defence than it offers itself. The
+academic mind "would call this undisciplined"; the reply is not that
+discipline is bad but that a knower with less variety than its world
+cannot regulate it. Requisite variety turns "the anarchistic mind
+recognizes it as intelligence in its natural state" from an
+assertion into a theorem with a named author.
+
+== Where it strains
+
+Ashby's regulator is one system with many moves; the essay's wanderer
+is one mind. But the emergent-governance kasten notes that Nostr's
+variety is distributed across *uncoordinated actors* — variety of
+regulators, not just of moves. The essay's third section, "The
+Ecology of Conversation," is where its subject shifts from the
+wandering mind to the wandering conversation, and that is where the
+Nostr case actually lives. The open question the kasten keeps —
+whether robustness is generativity rather than redundancy
+({{ref:30041:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:q-generativity-robustness|Q: generativity robustness}}) — is the essay's "positive
+feedback loops that generate increasing abundance" put in a testable
+form.
+
+*Related:*
+
+- link:index.adoc[index]
+- link:concept-facilitated-promiscuity.adoc[concept-facilitated-promiscuity]
+- link:concept-epistemological-anarchism.adoc[concept-epistemological-anarchism]
+- link:claim-conversation-is-an-action-arena.adoc[claim-conversation-is-an-action-arena]
+- link:q-survivorship-of-withered-branches.adoc[q-survivorship-of-withered-branches]

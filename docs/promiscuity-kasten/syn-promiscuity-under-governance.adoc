@@ -1,0 +1,76 @@
+:title: Promiscuity under governance — the essay and the kasten are one argument seen from two layers
+:type: syn
+:status: drafted
+:date: 2026-09-17
+:author: assistant
+:agent: promiscuity-annotate
+:tags: synthesis, idea-layer, facility-layer, polycentricity, formation
+
+== The synthesis
+
+_Anarchistic Knowledge_ ({{ref:30040:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:anarchistic-knowledge-the-art-of-thinking-without-permission|Anarchistic Knowledge}}) and the
+emergent-governance kasten ({{ref:30040:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:emergentgov|emergent governance on Nostr}}) describe the same
+system from different layers of Hess and Ostrom's decomposition.
+
+The essay is a phenomenology of the *idea layer*: nonsubtractive,
+promiscuous, escaping every container, belonging to conversations
+rather than persons, alive only while it moves. Its examples are
+right, its ethics (generosity, incompleteness, courage) follow from
+nonsubtractability, and its worry — stasis, enclosure — is the
+knowledge-commons school's capture dynamic.
+
+The kasten is an institutional analysis of the *facility layer*:
+relays as facilities on a spectrum from allowlist floor to open
+pool, boundary rules that multiply and localize, sanctions that come
+apart, a boundary that expands and contracts under shock, and —
+uniquely on Nostr — all of it observable as signed events while it
+forms.
+
+Put together, "anarchistic knowledge" acquires a definition it did
+not have: *knowledge whose facilities are polycentric, composable,
+cheap to exit, and boundary-elastic, sitting on an open pool where
+new facilities form in public.* That is not knowledge without
+institutions. It is knowledge with the institutional shape the
+kasten found on Nostr and the essay found in the history of
+cybernetics — bounded scenes composed on a commons.
+
+== What each corrects in the other
+
+The kasten corrects the essay in three places. It supplies the
+*shock* that drives the enclosure–release pulse and the *floor* that
+makes experimentation safe
+(link:claim-enclosure-release-is-expand-contract.adoc[expand–contract]).
+It turns "quality emerges without gatekeeping" from an assertion into
+a mechanism, split sanctioning, and then into an open question
+(link:q-quality-without-gatekeeping.adoc[quality]). And it insists
+that the withered branches be archived, or the essay's optimism is a
+survivorship artifact
+(link:q-survivorship-of-withered-branches.adoc[survivorship]).
+
+The essay corrects the kasten in two. It reminds the kasten that
+polycentricity's centres *can* meet — Macy and Santa Fe were rooms —
+and that protocol-mediated non-meeting is one point on a spectrum of
+scenes, not the whole of it
+(link:concept-facilitated-promiscuity.adoc[facilitated promiscuity]).
+And its deep-time framing — libraries as slow glaciers, thought as
+lightning — asks whether the kasten's maturation hypothesis is about
+one timescale of a loop that never closes.
+
+== The move that ties them
+
+The Ostroms took requisite variety and the hierarchy of feedback from
+Ashby, who sat in the Macy circle the essay names as its first
+example of unauthorized intersection
+(link:concept-wandering-as-requisite-variety.adoc[requisite variety]).
+The framework used to read Nostr was itself born of the promiscuity
+the essay describes. That is the anchor the request asked for: not
+an external theory laid over the essay, but the essay's own example
+returning as the theory of its own conditions.
+
+*Related:*
+
+- link:index.adoc[index]
+- link:mission.adoc[mission]
+- link:map-tiling.adoc[map-tiling]
+- link:claim-anarchistic-is-not-open-access.adoc[claim-anarchistic-is-not-open-access]
+- link:concept-signed-promiscuity.adoc[concept-signed-promiscuity]

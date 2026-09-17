@@ -1,0 +1,87 @@
+:title: Bisociation, scenius, peer production, commoning — the literature behind cross-pollination
+:type: src
+:status: drafted
+:date: 2026-09-17
+:author: assistant
+:agent: promiscuity-annotate
+:tags: koestler, eno, scenius, benkler, bollier, polanyi, hayek, creativity
+:cite: Koestler 1964; Polanyi 1962; Hayek 1945; Benkler 2002; Kelly 2008; Bollier & Helfrich 2019
+
+Five bodies of work the essay's opening section draws on without
+naming. Each is given with what it adds and where it sits relative to
+Ostrom.
+
+== Koestler — bisociation (The Act of Creation, 1964)
+
+Creative acts share one pattern, *bisociation*: an element from one
+"matrix of thought" is perceived simultaneously in a second,
+previously unrelated matrix. Humour, discovery and art are the same
+operation at different emotional pitches. The essay's "poetry
+infiltrates physics when you need metaphors" and "jazz improvisation
+and software debugging" are bisociations. Koestler also notes that
+when two matrices have ripened, multiple simultaneous discoveries
+follow — the essay's "ideas arrive like uninvited guests" at a
+population level.
+
+== Polanyi — the republic of science (Minerva, 1962); Hayek — dispersed knowledge (AER, 1945)
+
+[[Michael Polanyi]]: science coordinates by *mutual adjustment* of
+independent initiatives, a spontaneous order no authority could plan
+without destroying. Hayek supplied the premise that the relevant
+knowledge is dispersed and local. Both are direct ancestors of the
+Ostroms' polycentricity — many centres, mutual adjustment, an
+overarching rule set — and of the essay's "collective intelligence"
+(link:concept-epistemological-anarchism.adoc[epistemological anarchism]).
+
+== Eno and Kelly — scenius (Kevin Kelly, "Scenius, or Communal Genius," 2008)
+
+Brian Eno's coinage: "the intelligence and the intuition of a whole
+cultural scene … the communal form of the concept of the genius."
+Kelly's essay lists what nurtures it — mutual appreciation that
+applauds risky moves, rapid exchange of tools and techniques, network
+effects of success, local tolerance for the novelties. That list is
+a set of *rules-in-use* for a bounded scene on an open commons, which
+is why the Macy and Santa Fe episodes read as scenius
+(link:concept-facilitated-promiscuity.adoc[facilitated promiscuity]).
+The author's own wiki transcript uses the term for the economy at
+scale (link:src-authors-adjacent-publications.adoc[adjacent publications]).
+
+== Benkler — commons-based peer production ("Coase's Penguin," Yale Law Journal 112, 2002)
+
+A third mode of production beside markets and firms, with
+"systematic advantages" when the object is information and the
+capital is widely distributed. The essay's "open source projects
+that demonstrate new forms of collaborative creation" and "wikis that
+show how collective editing can produce higher quality content" are
+Benkler's examples; his explanation (modularity, granularity, cheap
+integration) is the mechanism the essay's "lower barriers to
+participation … make contributions visible" gestures at.
+
+== Bollier & Helfrich — commoning (Free, Fair, and Alive, 2019)
+
+Commons as a *verb*: not a resource but "dynamic, living social
+processes." This is the essay's register — "knowledge is most alive
+when it's most free" — inside the commons literature, and it is the
+wing the exchange-theory critics call romantic. The
+emergent-governance kasten deliberately keeps out of that corner by
+making its contribution an observing instrument rather than an
+endorsement
+({{ref:30041:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:syn-emergent-governance-framework|the synthesis: a framework for emergent governance}}).
+The essay, if it wants to be read alongside the kasten, has the same
+choice to make.
+
+== Where to read
+
+- Kelly: https://kk.org/thetechnium/scenius-or-comm/
+- Benkler: https://web.law.duke.edu/pd/papers/Coase's_Penguin.pdf
+- Bollier & Helfrich: https://freefairandalive.org/
+- Koestler: _The Act of Creation_ (Hutchinson, 1964); Polanyi:
+  _Minerva_ 1(1), 1962; Hayek: _American Economic Review_ 35(4), 1945.
+
+*Related:*
+
+- link:index.adoc[index]
+- link:concept-facilitated-promiscuity.adoc[concept-facilitated-promiscuity]
+- link:concept-epistemological-anarchism.adoc[concept-epistemological-anarchism]
+- link:src-feyerabend-against-method.adoc[src-feyerabend-against-method]
+- link:src-hess-ostrom-2007.adoc[src-hess-ostrom-2007]

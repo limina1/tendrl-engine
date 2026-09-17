@@ -1,0 +1,77 @@
+:title: The author's adjacent publications — GTDC, Understanding Knowledge, the Framework Bridge, the scenius transcript
+:type: src
+:status: drafted
+:date: 2026-09-17
+:author: assistant
+:agent: promiscuity-annotate
+:tags: nostr, publications, polycentric, rhizome, deterritorialization, scenius
+
+Four other events under the same key bear directly on the anchor
+section. They are the local context the request's `publication` and
+`relays` scopes point at.
+
+== Governing the Decentralized Commons
+
+{{ref:30040:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:governing-the-decentralized-commons|Governing the Decentralized Commons}} — the author's earlier paper (the preface calls
+it "largely written by AI for the purpose of a research program" and
+released with "personal refinements"): "the first application of
+institutional analysis to a censorship-resistant social protocol."
+Maps IAD components to Nostr observables, and reads Ostrom's fifth
+design principle into a five-level graduated-sanctions hierarchy —
+follow lists (kind 3) as implicit endorsement, mutes, reports (kind
+1984), relay policy, network exclusion. Notes the interplay of rule
+levels: users dissatisfied with relay policy "can establish their
+own relays, essentially exercising constitutional rights to
+self-organize and exit." The emergent-governance kasten is this
+paper's successor, with the unitary-sanctions assumption dropped
+(link:q-quality-without-gatekeeping.adoc[quality]).
+
+== Understanding Knowledge
+
+{{ref:30040:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:understanding-knowledge|Understanding Knowledge}} — the Alexandria essay. Its material cause is the
+*semantically closed unit* (a note that carries its own meaning) and
+Herbert Simon's near-decomposability; its formal cause is the
+*rhizome* after Deleuze and Guattari — non-hierarchy, multiplicity,
+asignifying rupture, cartography ({{ref:30041:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:ii-formal-cause-the-structure-and-organization-of-knowledge|II. Formal Cause}}); its final
+cause names NKBIP-01 and NKBIP-02 as the affordances for a
+rhizome-shaped knowledge base ({{ref:30041:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:iv-final-cause-the-purpose-of-knowledge-and-knowledge-ecosystems|IV. Final Cause}}). The essay's
+closing note — "You don't have ideas, ideas have you. They enter your
+head through interactions and observations of the world" — is the
+seed of the anchor section's first sentence, "Ideas arrive like
+uninvited guests." Hess and Ostrom's *artifact* is the semantically
+closed unit given a signature.
+
+== Thinking Through Emergence: A Framework Bridge
+
+{{ref:30040:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:thinking-through-emergence-a-framework-bridge|Thinking Through Emergence}} — the source of the essay's closing vocabulary,
+"the endless territorialization and deterritorialization of
+understanding" (Part II, {{ref:30041:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:thinking-through-emergence-a-framework-bridge-part-ii-territories-and-deterritorializations|Part II: Territories and Deterritorializations}}), and of its
+process ontology ("Everything flows"). It also contains the James C.
+Scott case study that the scenius transcript below leans on. The
+emergent-governance kasten's formation episode is a
+deterritorialization–reterritorialization cycle written in
+institutional terms
+(link:claim-enclosure-release-is-expand-contract.adoc[expand–contract]).
+
+== From 99% Junk to Scenius at Scale (DWeb 2026 transcript)
+
+{{ref:30818:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:from-99-junk-to-scenius-at-scale-why-the-future-of-work-is-an-economy-of-play-dweb-2026|From 99% Junk to Scenius at Scale}} — a kind-30818 wiki page transcribing a talk
+on major evolutionary transitions and the economy as a collective
+intelligence. Its central complaint is legibility: large coordination
+systems "coarse grain the information they're gathering," so "most
+of what people do in industrial and modern economies is illegible to
+those economies," and funding "overindexes on legible signals" until
+attention gathers "in very narrow regions of the space of all
+possible ideas." That is the essay's "institutional capture" as a
+scaling pathology, and its remedy — scenius, a scene's communal
+intelligence — is the essay's "ecology of conversation"
+(link:concept-facilitated-promiscuity.adoc[facilitated promiscuity]).
+The transcript's Santa Fe Institute references connect it to the
+essay's complexity-theory example.
+
+*Related:*
+
+- link:index.adoc[index]
+- link:src-emergentgov-kasten.adoc[src-emergentgov-kasten]
+- link:concept-signed-promiscuity.adoc[concept-signed-promiscuity]
+- link:src-creativity-and-commoning-literature.adoc[src-creativity-and-commoning-literature]

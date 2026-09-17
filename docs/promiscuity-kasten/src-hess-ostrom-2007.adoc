@@ -1,0 +1,62 @@
+:title: Hess & Ostrom 2003/2007 — information as a common-pool resource, and Understanding Knowledge as a Commons
+:type: src
+:status: drafted
+:date: 2026-09-17
+:author: assistant
+:agent: promiscuity-annotate
+:tags: hess-ostrom, knowledge-commons, ideas-artifacts-facilities, enclosure
+:cite: Charlotte Hess & Elinor Ostrom, "Ideas, Artifacts, and Facilities: Information as a Common-Pool Resource," Law and Contemporary Problems 66 (2003), pp. 111–145; Hess & Ostrom (eds.), Understanding Knowledge as a Commons: From Theory to Practice, MIT Press, 2007
+
+== What they are
+
+The founding texts of the knowledge-commons school, by [[Elinor
+Ostrom]] and the librarian-scholar Charlotte Hess. The 2003 article
+introduces the three-way decomposition — *ideas*, *artifacts*,
+*facilities* — in place of the natural-resource pair (resource
+system / resource units), and reads the digital library through the
+property-rights bundle. The 2007 volume collects the field's first
+survey, with the editors' introduction and their chapter 3, "A
+Framework for Analyzing the Knowledge Commons," which imports the
+decomposition as the IAD's biophysical layer. The 2007 introduction
+contains the "look what is happening!" passage the
+emergent-governance kasten treats as the founders' stated limit.
+
+== Claims this annotation uses
+
+- Ideas are nonrivalrous; "the more people who share useful
+  knowledge, the greater the common good" (2007 intro, p. 5)
+  → link:concept-idea-layer-nonsubtractive.adoc[the idea layer].
+- Commons ≠ open access ≠ public domain; "a commons is not value
+  laden" (2007 intro, pp. 13–14)
+  → link:claim-anarchistic-is-not-open-access.adoc[not open access].
+- Enclosure: "New technologies can enable the capture of what were
+  once free and open public goods" (2007 intro, p. 10) → the
+  essay's _Institutional Capture_ section.
+- Withdrawal rights: licensed artifacts are "fugitive," publishers
+  "have the right of withdrawal" (2003, p. 134); the remedy was
+  LOCKSS → link:concept-signed-promiscuity.adoc[signed promiscuity].
+- "Being Prepared for Change": fixed rules place "too much
+  confidence in the current state of knowledge"; systems allowing
+  change are "suboptimal in the short run but wiser in the long run"
+  (2007 ch. 3) → link:claim-enclosure-release-is-expand-contract.adoc[expand–contract].
+
+The emergent-governance kasten holds the verbatim quotes with
+locators in
+{{ref:30041:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:src-analyzing-knowledge-commons|its chapter-3 source note}},
+{{ref:30041:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:src-ukac-introduction|its introduction note}}
+and
+{{ref:30041:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:src-ideas-artifacts-facilities|its 2003 article note}};
+this note does not duplicate them.
+
+== Where to read
+
+MIT Press page: https://mitpress.mit.edu/9780262516037/understanding-knowledge-as-a-commons/
+(the volume is also archived open-access, e.g. on eScholarship).
+The 2003 article is open at Duke's _Law and Contemporary Problems_.
+
+*Related:*
+
+- link:index.adoc[index]
+- link:src-emergentgov-kasten.adoc[src-emergentgov-kasten]
+- link:concept-idea-layer-nonsubtractive.adoc[concept-idea-layer-nonsubtractive]
+- link:src-creativity-and-commoning-literature.adoc[src-creativity-and-commoning-literature]

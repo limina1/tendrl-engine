@@ -1,0 +1,60 @@
+:title: Feyerabend 1975 — Against Method: Outline of an Anarchistic Theory of Knowledge
+:type: src
+:status: drafted
+:date: 2026-09-17
+:author: assistant
+:agent: promiscuity-annotate
+:tags: feyerabend, philosophy-of-science, anything-goes, proliferation
+:cite: Paul Feyerabend, Against Method: Outline of an Anarchistic Theory of Knowledge, London: New Left Books, 1975 (rev. 1988, 1993; 4th ed. Verso 2010)
+
+== What it is
+
+[[Paul Feyerabend]]'s best-known book, and the closest named
+ancestor of the essay's title. Its thesis is *epistemological
+anarchism*: there is no such thing as a single scientific method;
+every methodological rule, however plausible, has been violated at
+some point where the violation was necessary for progress; and the
+only rule that survives every historical case is "anything goes."
+Feyerabend was explicit that "anything goes" is not his
+recommendation but the exasperated summary a rationalist is forced
+to, once the history is honestly read.
+
+== What it argues
+
+- *Proliferation.* Keep many incompatible theories in play, because
+  facts that refute a dominant theory often become visible only from
+  inside a rival one. The counterpart in the essay is
+  cross-pollination as "default mode"
+  (link:concept-wandering-as-requisite-variety.adoc[requisite variety]).
+- *Counterinduction.* Deliberately introduce hypotheses that
+  contradict well-confirmed theories or established facts.
+- *The Galileo case.* Galileo won not by method but by rhetoric,
+  propaganda, and "epistemological tricks"; the Copernican view was
+  initially less supported by the evidence than the Aristotelian.
+- *Against expert authority.* Science is one tradition among many
+  and should be separated from the state as religion was — the book's
+  most political move, and the one the essay's "thinking without
+  permission" inherits.
+
+== How to read it against the essay and the kasten
+
+Feyerabend describes the idea layer of *science* — a commons with
+strong boundary rules and unitary sanctions. The essay generalizes
+him to knowledge under default conditions. Ostrom is needed for the
+generalization because Feyerabend never asked how a knowledge
+community holds quality without method; he argued only that method
+was not what held it. The emergent-governance kasten's decoupled,
+crowdsourced sanctioning is a candidate answer he did not have
+(link:concept-epistemological-anarchism.adoc[epistemological anarchism]).
+
+== Where to read
+
+Stanford Encyclopedia of Philosophy, "Paul Feyerabend"
+(https://plato.stanford.edu/entries/feyerabend/), sections on
+_Against Method_ and epistemological anarchism.
+
+*Related:*
+
+- link:index.adoc[index]
+- link:concept-epistemological-anarchism.adoc[concept-epistemological-anarchism]
+- link:src-creativity-and-commoning-literature.adoc[src-creativity-and-commoning-literature]

@@ -1,0 +1,52 @@
+:title: Conventions — types, statuses, and how links are written
+:type: meta
+:status: current
+:date: 2026-09-17
+:author: assistant
+:tags: conventions, kasten
+
+== Note types (filename prefix = `type` key)
+
+- `concept-` — an idea from the commons or governance literature,
+  read against the essay.
+- `claim-` — a specific correspondence asserted between the essay and
+  the emergent-governance kasten; falsifiable by reading both.
+- `q-` — an open question the correspondence raises; `status: open`.
+- `src-` — a source note: what a text is, what it says, where it can
+  be read; includes the author's own adjacent publications.
+- `syn-` — the synthesis the notes build toward.
+- `map-` — an organizing overlay (the section-by-section tiling).
+- `agent-` — provenance of a machine session.
+
+== Status vocabulary
+
+`drafted` (machine-written, unverified) → `checked` (read against the
+source by a person) → `working` → `fluent`. Meta notes are `current`;
+questions are `open`. Nothing here was promoted past `drafted` by the
+session that wrote it.
+
+== Links
+
+Everything is nostrdown. Sibling notes use native AsciiDoc `link:`
+references to a sibling's file stem, which the kasten build compiles
+to `{{ref:slug|display}}`. Events outside this kasten — the essay's
+sections, the emergent-governance notes, the author's other
+publications — are hand-written nostrdown references by coordinate,
+`{{ref:kind:pubkey:d-tag|display}}`, which the resolver canonicalizes
+to an naddr. Emergent-governance notes are cited by their coordinate
+stems (`concept-polycentricity`, `claim-expand-contract`, …) where
+the stem is the d-tag of the published note. Topics with a wiki page
+are `[[wikilinks]]`, which publish as `w` tags. Web sources are plain
+URLs.
+
+== Header keys
+
+`title`, `type`, `status`, `date`, `author`, `tags`; `agent` on
+machine-drafted notes; `cite` / `doi` on source notes; `request` on
+the mission note carries the coordinate of the annotation request
+this kasten answers.
+
+*Related:*
+
+- link:index.adoc[index]
+- link:mission.adoc[mission]

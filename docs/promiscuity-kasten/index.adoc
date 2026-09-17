@@ -1,0 +1,57 @@
+:title: Index — promiscuity, governed
+:type: meta
+:status: current
+:date: 2026-09-17
+:author: assistant
+:tags: index, anarchistic-knowledge, ostrom, emergent-governance
+
+The map of this kasten: an answer to one annotation request on
+{{ref:30041:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:aktaotwp-the-natural-promiscuity-of-understanding|The Natural Promiscuity of Understanding}}, tiling the essay
+{{ref:30040:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:anarchistic-knowledge-the-art-of-thinking-without-permission|Anarchistic Knowledge}} with Ostrom's knowledge-commons work and the
+author's emergent-governance kasten {{ref:30040:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:emergentgov|emergent governance on Nostr}}. Purpose and
+thesis: link:mission.adoc[mission]. Rules: link:conventions.adoc[conventions].
+The section-by-section overlay: link:map-tiling.adoc[map-tiling].
+Everything below the meta layer is `status: drafted`.
+
+== Orientation
+
+- link:mission.adoc[Mission — what this kasten answers]
+- link:conventions.adoc[Conventions — types, statuses, and how links are written]
+- link:map-tiling.adoc[Tiling map — the essay section by section]
+
+== Concepts — the commons vocabulary read against the essay
+
+- link:concept-idea-layer-nonsubtractive.adoc[The idea layer is nonsubtractive — promiscuity is the economics of ideas]
+- link:concept-disciplines-as-boundary-rules.adoc[Disciplines are boundary rules — and the relay spectrum is the same dial]
+- link:concept-wandering-as-requisite-variety.adoc[Intellectual wandering is requisite variety]
+- link:concept-facilitated-promiscuity.adoc[Facilitated promiscuity — the essay's examples were bounded institutions on an open commons]
+- link:concept-epistemological-anarchism.adoc[Epistemological anarchism — the lineage of "without permission"]
+- link:concept-signed-promiscuity.adoc[Signed promiscuity — attribution without ownership]
+
+== Claims — where the essay and the kasten coincide
+
+- link:claim-enclosure-release-is-expand-contract.adoc[The enclosure–release rhythm is the expand–contract cycle]
+- link:claim-conversation-is-an-action-arena.adoc[The ecology of conversation is an action arena]
+- link:claim-anarchistic-is-not-open-access.adoc[Anarchistic knowledge is a commons, not open access]
+
+== Open questions
+
+- link:q-quality-without-gatekeeping.adoc[Q: How does quality emerge without gatekeeping?]
+- link:q-survivorship-of-withered-branches.adoc[Q: Do the withered branches get archived?]
+
+== Synthesis
+
+- link:syn-promiscuity-under-governance.adoc[Promiscuity under governance — one argument seen from two layers]
+
+== Sources
+
+- link:src-emergentgov-kasten.adoc[The emergent-governance kasten — the notes this annotation leans on]
+- link:src-authors-adjacent-publications.adoc[The author's adjacent publications]
+- link:src-hess-ostrom-2007.adoc[Hess & Ostrom 2003/2007]
+- link:src-feyerabend-against-method.adoc[Feyerabend 1975 — Against Method]
+- link:src-macy-and-santa-fe.adoc[The Macy Conferences and the Santa Fe Institute]
+- link:src-creativity-and-commoning-literature.adoc[Bisociation, scenius, peer production, commoning]
+
+== Provenance
+
+- link:agent-promiscuity-annotate.adoc[Agent session — promiscuity-annotate]

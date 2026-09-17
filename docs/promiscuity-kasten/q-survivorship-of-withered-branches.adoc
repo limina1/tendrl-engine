@@ -1,0 +1,65 @@
+:title: Q: Do the withered branches get archived? — survivorship bias in the anarchistic record
+:type: question
+:status: open
+:date: 2026-09-17
+:author: assistant
+:agent: promiscuity-annotate
+:tags: survivorship-bias, failure, archive, persistence
+
+== The question
+
+The coda is honest: "Most branches wither. Noise often drowns
+signal." But the essay's evidence for cross-pollination is entirely
+drawn from branches that flowered — cybernetics, complexity theory,
+the jazz-and-debugging insight that turned out to be a pattern. The
+Hess–Ostrom founders' limit applies to the essay as much as to the
+commons literature: the eight design principles "were read off
+commons that had already endured"; the field understood success
+because only successes were visible
+({{ref:30041:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:concept-survivorship-bias|survivorship bias}};
+{{ref:30041:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:src-analyzing-knowledge-commons|Hess & Ostrom 2007, ch. 3 — analyzing knowledge commons}}). How many "unauthorized
+intersections" produced nothing, and would we know?
+
+== Why Nostr changes the answer
+
+The emergent-governance kasten's fourth observability condition is
+persistence: "the history of rule changes — including the reversed
+and abandoned ones — is part of the archive rather than of survivors'
+memories," and failures "must be archived deliberately, or the bias
+the framework escapes at the field level quietly recurs at the
+archive level" ({{ref:30041:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:syn-emergent-governance-framework|the synthesis: a framework for emergent governance}}).
+
+For anarchistic knowledge this is the essay's own proposal read back
+as method. The streaming coda imagines "a thousand analyses" of one
+data stream, "some withering immediately, others flowering." On a
+signed, persistent substrate the withered analyses do not vanish;
+they remain addressable events, and the fork that went nowhere is as
+retrievable as the one that became the field. The essay's version
+control example — "systems that track the evolution of ideas rather
+than just final products" — is precisely a survivorship-bias
+corrective, and it is stronger on Nostr than in git because
+deletion is advisory ({{ref:30041:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:q-advisory-deletion|Q: advisory deletion}}).
+
+== What stays open
+
+- Does anyone *read* the withered branches? Persistence makes the
+  record complete; it does not make the archive consulted. What is
+  the retrieval practice — a spell, a bookshelf of dead ends, a
+  "failed forks" index — that makes negative results part of the
+  commons rather than sediment?
+- Is the essay's celebration of wandering itself a survivorship
+  artifact? The fair test: a set of cross-disciplinary ventures
+  chosen *before* their outcome (a cohort of Macy-style meetings, or
+  of Nostr relays founded in one quarter), followed forward.
+- The essay's "positive feedback loops that generate increasing
+  abundance" is the kasten's generativity criterion
+  ({{ref:30041:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:q-generativity-robustness|Q: generativity robustness}}) — and both need the
+  counter-case: a shock that *shrank* the option space.
+
+*Related:*
+
+- link:index.adoc[index]
+- link:concept-signed-promiscuity.adoc[concept-signed-promiscuity]
+- link:claim-enclosure-release-is-expand-contract.adoc[claim-enclosure-release-is-expand-contract]
+- link:concept-wandering-as-requisite-variety.adoc[concept-wandering-as-requisite-variety]
+- link:q-quality-without-gatekeeping.adoc[q-quality-without-gatekeeping]

@@ -1,0 +1,41 @@
+:title: Mission — what this kasten answers
+:type: meta
+:status: current
+:date: 2026-09-17
+:author: assistant
+:tags: mission, annotation, ostrom, emergent-governance
+:request: 30041:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:9RX0HL2LWi0O_mUegBphW
+
+This kasten is an answer to one annotation request, signed on the
+section *The Natural Promiscuity of Understanding*
+({{ref:30041:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:aktaotwp-the-natural-promiscuity-of-understanding|The Natural Promiscuity of Understanding}}) of the essay _Anarchistic Knowledge: The
+Art of Thinking Without Permission_ ({{ref:30040:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:anarchistic-knowledge-the-art-of-thinking-without-permission|Anarchistic Knowledge}}). The request
+asked for research that ties the essay to Ostrom's work on governing
+digital and knowledge commons and to the author's own kasten on
+emergent governance on Nostr ({{ref:30040:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:emergentgov|emergent governance on Nostr}}), and to "tile up this
+work with relevant information, links and ideas."
+
+The tiling has one thesis. The essay describes the *idea layer* of a
+knowledge commons — the layer that Hess and Ostrom call nonrivalrous
+and "enriched rather than depleted by use." Ostrom's institutional
+work describes the *facility layer* — the departments, journals,
+relays and communities that store ideas, admit people, and sanction
+conduct. The essay's "anarchistic knowledge" is not knowledge without
+institutions; it is knowledge whose institutions are plural,
+composable, and boundary-elastic, sitting on an open pool. That is
+exactly the shape the emergent-governance kasten finds on Nostr, so
+the two bodies of work are one argument seen from two layers.
+
+Each note here takes one move in the essay, names the Ostrom or
+emergent-governance idea it instantiates, cites the source, and says
+where the fit strains. The link:map-tiling.adoc[tiling map] lays the
+notes over the essay section by section. Everything below the meta
+layer is `status: drafted` — machine-written and unverified until the
+author reads it against the sources.
+
+*Related:*
+
+- link:index.adoc[index]
+- link:conventions.adoc[conventions]
+- link:map-tiling.adoc[map-tiling]
+- link:syn-promiscuity-under-governance.adoc[syn-promiscuity-under-governance]

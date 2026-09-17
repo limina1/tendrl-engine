@@ -1,0 +1,118 @@
+:title: Tiling map — the essay section by section, with the notes and kasten ideas laid over it
+:type: map
+:status: drafted
+:date: 2026-09-17
+:author: assistant
+:agent: promiscuity-annotate
+:tags: map, tiling, anarchistic-knowledge, emergent-governance
+
+The request asked to "tile up this work with relevant information,
+links and ideas." This map is the tiling: each section of
+{{ref:30040:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:anarchistic-knowledge-the-art-of-thinking-without-permission|Anarchistic Knowledge}}, the notes here that bear on it, and the
+emergent-governance ideas it instantiates.
+
+== 1. The Natural Promiscuity of Understanding (the anchor)
+
+{{ref:30041:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:aktaotwp-the-natural-promiscuity-of-understanding|The Natural Promiscuity of Understanding}} — Ideas as uninvited guests;
+cross-pollination as default mode; the fertility of wandering.
+Tiles: link:concept-idea-layer-nonsubtractive.adoc[idea layer]
+(nonsubtractability), link:concept-wandering-as-requisite-variety.adoc[requisite variety]
+(Ashby, via the Ostroms),
+link:concept-facilitated-promiscuity.adoc[facilitated promiscuity]
+(Macy, Santa Fe — bounded scenes on an open commons),
+link:concept-epistemological-anarchism.adoc[epistemological anarchism]
+(Feyerabend, Polanyi). Kasten: requisite variety, polycentricity,
+composable bounded institutions.
+
+== 2. Institutional Capture and Knowledge Enclosure
+
+{{ref:30041:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:aktaotwp-institutional-capture-and-knowledge-enclosure|Institutional Capture and Knowledge Enclosure}} — Departments as pressure chambers; the
+rhythm of forming and dissolving; the challenge of completion.
+Tiles: link:concept-disciplines-as-boundary-rules.adoc[boundary rules],
+link:claim-enclosure-release-is-expand-contract.adoc[expand–contract].
+Kasten: boundary rules, the relay spectrum, the enclosure dynamic
+(Hess & Ostrom's capture of open public goods).
+
+== 3. The Persistent Escape of Knowledge
+
+{{ref:30041:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:aktaotwp-the-persistent-escape-of-knowledge|The Persistent Escape of Knowledge}} — Underground networks; emergence at the
+margins; "differently intellectual."
+Tiles: link:claim-anarchistic-is-not-open-access.adoc[not open access]
+(the qualifiers are rules), link:concept-signed-promiscuity.adoc[signed promiscuity]
+(no withdrawal rights over the pool). Kasten: no global bannability,
+rules-in-use, guardianship without office.
+
+== 4. The Ecology of Conversation
+
+{{ref:30041:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:aktaotwp-the-ecology-of-conversation|The Ecology of Conversation}} — Knowledge belonging to the conversation;
+collective intelligence; the art of thinking together.
+Tiles: link:claim-conversation-is-an-action-arena.adoc[action arena]
+(rules are the other output). Kasten: action arena, rule levels,
+formation is observable, institutional invisibility inverted.
+
+== 5. Digital Possibilities and New Commons
+
+{{ref:30041:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:aktaotwp-digital-possibilities-and-new-commons|Digital Possibilities and New Commons}} — Version control and wikis; the pulse between
+enclosure and release; Nostr as a base for unenclosable commons.
+Tiles: link:claim-enclosure-release-is-expand-contract.adoc[expand–contract],
+link:concept-idea-layer-nonsubtractive.adoc[idea layer] (relays as
+facilities, events as artifacts),
+link:src-hess-ostrom-2007.adoc[Hess & Ostrom]. Kasten: ideas /
+artifacts / facilities, adaptive governance, infrastructure
+provision.
+
+== 6. The Courage of Incomplete Thinking
+
+{{ref:30041:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:aktaotwp-the-courage-of-incomplete-thinking|The Courage of Incomplete Thinking}} — Productive uncertainty; intellectual
+generosity; positive feedback loops of abundance.
+Tiles: link:q-survivorship-of-withered-branches.adoc[survivorship]
+(the withered branches must be archived),
+link:src-creativity-and-commoning-literature.adoc[commoning].
+Kasten: generativity as robustness; the persistence condition.
+
+== 7. Expanding Dimensions of Knowledge Freedom
+
+{{ref:30041:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:aktaotwp-expanding-dimensions-of-knowledge-freedom|Expanding Dimensions of Knowledge Freedom}} — Complementary alternatives; the commons as
+prefigurative political strategy.
+Tiles: link:claim-anarchistic-is-not-open-access.adoc[not open access]
+(design principle 7, the right to organize, exercised by building).
+Kasten: bounded institutions compose on the open substrate; exit,
+voice and forking.
+
+== 8. Practical Experiments in Knowledge Freedom
+
+{{ref:30041:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:aktaotwp-practical-experiments-in-knowledge-freedom|Practical Experiments in Knowledge Freedom}} — Designing for emergence; what successful
+experiments share.
+Tiles: link:src-creativity-and-commoning-literature.adoc[Benkler]
+(the four shared characteristics are peer-production conditions),
+link:concept-disciplines-as-boundary-rules.adoc[boundary rules]
+("loose enough … coherent enough" is a boundary dial). Kasten:
+governance as software, multiplicity across the stack.
+
+== 9. Future Possibilities
+
+{{ref:30041:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:aktaotwp-future-possibilities|Future Possibilities}} — Practices over institutions; living systems of
+knowledge; "not naive — based on careful observation."
+Tiles: link:syn-promiscuity-under-governance.adoc[synthesis]. Kasten:
+the whole programme is the "careful observation" the section asks
+for, with Nostr as the place it can be done.
+
+== 10. Coda: The Streaming Edge of Thought
+
+{{ref:30041:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:aktaotwp-coda-the-streaming-edge-of-thought|Coda: The Streaming Edge of Thought}} — Authorship dissolves; you can't copyright a
+river; quality by natural selection of ideas; most branches wither;
+porosity between knowledge spaces; deep time and light speed.
+Tiles: link:concept-signed-promiscuity.adoc[signed promiscuity]
+(attribution without ownership),
+link:q-quality-without-gatekeeping.adoc[quality] (split sanctions as
+the mechanism, then the open question),
+link:q-survivorship-of-withered-branches.adoc[survivorship],
+link:claim-enclosure-release-is-expand-contract.adoc[expand–contract]
+(the maturation hypothesis vs deep time). Kasten: split sanctions,
+the ADICO or-else, advisory deletion, the maturation hypothesis.
+
+*Related:*
+
+- link:index.adoc[index]
+- link:mission.adoc[mission]
+- link:syn-promiscuity-under-governance.adoc[syn-promiscuity-under-governance]

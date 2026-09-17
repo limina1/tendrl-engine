@@ -1,0 +1,80 @@
+:title: Facilitated promiscuity — the essay's own examples were bounded institutions on an open commons
+:type: concept
+:status: drafted
+:date: 2026-09-17
+:author: assistant
+:agent: promiscuity-annotate
+:tags: macy-conferences, santa-fe-institute, scenius, polycentricity, composable-institutions
+
+== The idea
+
+The essay's two examples of "unauthorized intersections" — cybernetics
+emerging "from conversations between biologists, engineers, and
+mathematicians who weren't supposed to be talking to each other," and
+complexity theory developing "when physicists started thinking like
+ecologists and economists began borrowing from biology" — are
+historically accurate and instructively *not* anarchic in
+organization. Both were facilitated.
+
+Cybernetics took shape at the Macy Conferences, ten meetings in New
+York between 1946 and 1953, sponsored by a foundation, co-organized
+by Warren McCulloch and Frank Fremont-Smith, with an invited and
+roughly stable core (Wiener, von Neumann, Bateson, Mead, Pitts,
+Rosenblueth) and a standing title: "Circular Causal and Feedback
+Mechanisms in Biological and Social Systems"
+(link:src-macy-and-santa-fe.adoc[source note]). Complexity theory's
+institutional home was the Santa Fe Institute, founded in 1984 by Los
+Alamos physicists precisely "as an alternative to the increasing
+specialization" they saw; the physicists-meet-economists moment the
+essay describes was a specific September 1987 workshop convened by
+Anderson, Arrow and Pines, whose proceedings became _The Economy as
+an Evolving Complex System_.
+
+In both cases the promiscuity was real — the disciplines did not
+authorize it — but it was hosted by a *bounded institution composed
+on the open commons of science*: a venue with a membership rule, a
+conduct rule ("circular causality" as the admission ticket), a
+patron paying the maintenance cost, and free exit back into one's
+home field. That is the curated middle of the relay spectrum
+({{ref:30041:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:claim-relay-spectrum|relay spectrum}};
+{{ref:30041:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:claim-composable-bounded-institutions|composable bounded institutions}}), and it is the
+form Brian Eno named *scenius* — "the intelligence and intuition of a
+whole cultural scene," communal rather than individual genius
+(link:src-creativity-and-commoning-literature.adoc[source note]).
+
+== The loop back to Ostrom
+
+One further fact makes this note load-bearing for the whole kasten.
+Ross Ashby attended the Macy circle, and it was Ashby whom Vincent
+Ostrom met at Stanford in 1955–56 and from whom the Ostroms took
+requisite variety, the hierarchy of feedback, and the rationale for
+levels of rules (Lewis & Aligica 2024;
+{{ref:30041:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:src-ostroms-cybernetics|Lewis & Aligica 2024 — the Ostroms' cybernetics}}). The institutional-analysis
+framework the author uses to read Nostr is itself a product of the
+cross-pollination episode the essay cites. The essay's example
+proves the essay's thesis and *also* produced the theory that
+governs this annotation.
+
+== Where it strains
+
+Polycentricity in the Ostroms' sense expects the centres to interact
+and check one another; the emergent-governance kasten notes that
+Nostr's centres "mostly never meet," with the protocol substituting
+for negotiated coordination
+({{ref:30041:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:concept-polycentricity|polycentricity}}). Macy and Santa Fe were the
+opposite: rooms where the centres met face to face. The essay's
+streaming coda — thought that moves "at the speed of connection
+itself" — is the Nostr limit; the historical examples are the
+slow-glacier limit it also names. Authority inside such scenes takes
+the form the kasten calls guardianship without office — McCulloch and
+Gell-Mann led by observable contribution, not position
+({{ref:30041:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:concept-guardianship-without-office|guardianship without office}}).
+
+*Related:*
+
+- link:index.adoc[index]
+- link:src-macy-and-santa-fe.adoc[src-macy-and-santa-fe]
+- link:concept-disciplines-as-boundary-rules.adoc[concept-disciplines-as-boundary-rules]
+- link:concept-wandering-as-requisite-variety.adoc[concept-wandering-as-requisite-variety]
+- link:claim-conversation-is-an-action-arena.adoc[claim-conversation-is-an-action-arena]
+- link:src-creativity-and-commoning-literature.adoc[src-creativity-and-commoning-literature]

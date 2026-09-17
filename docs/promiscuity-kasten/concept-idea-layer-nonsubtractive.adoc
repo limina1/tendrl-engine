@@ -1,0 +1,63 @@
+:title: The idea layer is nonsubtractive — promiscuity is the economics of ideas
+:type: concept
+:status: drafted
+:date: 2026-09-17
+:author: assistant
+:agent: promiscuity-annotate
+:tags: ideas-artifacts-facilities, nonsubtractability, knowledge-commons, pollution
+
+== The idea
+
+Hess and Ostrom split a knowledge commons into three resource types:
+*facilities* store artifacts and make them available (with membership
+rules, conduct rules, and maintenance costs); *artifacts* are
+"discreet, observable, nameable representation[s] of an idea"; and
+*ideas* are the nonphysical flow units contained in artifacts, pure
+public goods, nonrivalrous ("Ideas, Artifacts, and Facilities,"
+_Law and Contemporary Problems_ 66, 2003, pp. 128–134; carried into
+_Understanding Knowledge as a Commons_, 2007, ch. 3). The premise the
+whole knowledge-commons school rests on: "the more people who share
+useful knowledge, the greater the common good."
+
+The essay's opening section is a description of that idea layer from
+the inside. "When knowledge flows freely, it doesn't respect the
+borders we've drawn around subjects" — that is nonsubtractability as
+lived experience. Biology "bleeding" into architecture costs biology
+nothing. The essay's word for it, *promiscuity*, is a stronger claim
+than nonrivalry: ideas are not merely undiminished by sharing, they
+actively seek unauthorized partners.
+
+== Where it strains
+
+The knowledge-commons literature replaces the appropriation dilemma
+with two others — *pollution* (spam, no quality control) and
+*underprovision* — and one dynamic, enclosure: "New technologies can
+enable the capture of what were once free and open public goods"
+(Hess & Ostrom 2007, intro p. 10). The emergent-governance kasten
+notes that Nostr runs both dilemma families at once because events
+are nonsubtractive while relay storage and human attention are
+subtractive ({{ref:30041:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:concept-cpr-vs-knowledge-commons|cpr vs knowledge commons}}). Read back
+onto the essay: promiscuity is free at the idea layer and *costly at
+the facility layer*. A mind that follows every tangent pays in
+attention; a department that admits every cross-pollination pays in
+coherence. The essay's later admission that "most branches wither"
+and "noise often drowns signal" is the pollution dilemma arriving
+where the opening section had only celebrated flow.
+
+The three-way decomposition also gives the essay's Nostr paragraph
+its precise form: relays are facilities, signed events are artifacts
+with cryptographic nameability, and the discourse is the idea layer
+({{ref:30041:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:concept-ideas-artifacts-facilities|ideas artifacts facilities}}). The essay's hope
+that Nostr can host commons "that can't be enclosed or controlled by
+any single entity" is Hess and Ostrom's withdrawal-rights argument
+inverted: broadcast to many facilities means no actor holds
+withdrawal rights over the pool.
+
+*Related:*
+
+- link:index.adoc[index]
+- link:src-hess-ostrom-2007.adoc[src-hess-ostrom-2007]
+- link:concept-disciplines-as-boundary-rules.adoc[concept-disciplines-as-boundary-rules]
+- link:concept-signed-promiscuity.adoc[concept-signed-promiscuity]
+- link:q-quality-without-gatekeeping.adoc[q-quality-without-gatekeeping]
+- link:claim-anarchistic-is-not-open-access.adoc[claim-anarchistic-is-not-open-access]

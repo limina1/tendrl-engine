@@ -1,0 +1,62 @@
+:title: Disciplines are boundary rules — and the relay spectrum is the same dial
+:type: concept
+:status: drafted
+:date: 2026-09-17
+:author: assistant
+:agent: promiscuity-annotate
+:tags: boundary-rules, design-principles, relay-spectrum, disciplines
+
+== The idea
+
+Ostrom's first design principle is the clearly defined boundary, and
+her rule typology names the mechanism: *boundary rules* "specify how
+participants enter or leave positions" — residency, credential,
+permit, fee, lottery (McGinnis's IAD guide, p. 10; Ostrom 2007,
+pp. 38–39; {{ref:30041:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:concept-boundary-rules|boundary rules}}). The essay's
+"institutional boundaries that separate fields" are boundary rules
+for a knowledge facility: the department admits by credential, the
+journal by review, the tenure track by conformity to "established
+patterns of thought." The essay does not deny that these boundaries
+do work — "certain insights only emerge under specific pressures" —
+it objects that they also "block the natural tendency of ideas to
+cross-fertilize."
+
+The emergent-governance kasten's finding is that on Nostr boundary
+rules "do not disappear; they multiply, localize, and become
+elastic." Relays sit on a spectrum with three poles: the hard
+allowlist floor, the open pool, and in the middle the curated relay
+that "still speak[s] the base event kinds, so a user joins a real
+community without leaving the commons"
+({{ref:30041:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:claim-relay-spectrum|relay spectrum}};
+{{ref:30041:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:claim-composable-bounded-institutions|composable bounded institutions}}).
+
+== The mapping
+
+Lay the spectrum over the essay's landscape of knowledge spaces:
+
+- *Allowlist floor* ↔ the department, the credentialed journal: a
+  bounded institution, membership set by rule, high-pressure, high
+  coherence. The essay's "pressure chamber."
+- *Open pool* ↔ the essay's "underground networks of understanding":
+  the mechanic, the bartender, the gardener — thinking under what the
+  IAD tradition calls default conditions, no entry rule at all.
+- *Curated middle* ↔ "interdisciplinary ventures," hackerspaces, the
+  online forum that "puzzle[s] through problems together": bounded
+  enough to sustain discourse, still speaking the common language.
+
+The essay's own answer — knowledge "forming into departments then
+dissolving into interdisciplinary ventures" — is the spectrum
+traversed in time. What Nostr adds, and what the essay's Nostr
+paragraph gestures at without the vocabulary, is that the poles
+*compose*: a person can be inside the allowlisted community and the
+open pool at once, with one identity, because keys and follow graphs
+leave with the user ({{ref:30041:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:concept-exit-voice|exit voice}}). Academia has
+no equivalent: exit from a department is exit from its facility.
+
+*Related:*
+
+- link:index.adoc[index]
+- link:concept-idea-layer-nonsubtractive.adoc[concept-idea-layer-nonsubtractive]
+- link:claim-enclosure-release-is-expand-contract.adoc[claim-enclosure-release-is-expand-contract]
+- link:concept-facilitated-promiscuity.adoc[concept-facilitated-promiscuity]
+- link:claim-anarchistic-is-not-open-access.adoc[claim-anarchistic-is-not-open-access]

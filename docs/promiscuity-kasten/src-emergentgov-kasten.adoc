@@ -1,0 +1,86 @@
+:title: The emergent-governance kasten — the notes this annotation leans on
+:type: src
+:status: drafted
+:date: 2026-09-17
+:author: assistant
+:agent: promiscuity-annotate
+:tags: emergent-governance, kasten, nostr, ostrom, reading-list
+:cite: liminal, "Index — emergent governance on Nostr", kind-30040 kasten, 2026-08-04, 88 notes in 9 sections
+
+== What it is
+
+The author's own kasten ({{ref:30040:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:emergentgov|emergent governance on Nostr}}): a framework for
+*emergent governance itself* — institutional formation as an
+observable process — with Nostr as the demonstration case. Its
+narrative ({{ref:30040:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:emergentgov-the-narrative|The narrative}}) runs: the question (how is there
+quality discourse on the most adversarial substrate that exists);
+the founders' limit and its inversion (Hess and Ostrom's "look what
+is happening!" becomes method when what is happening arrives as
+signed events); the object (a formation episode: shock → response
+portfolio → adaptation → settlement or failure); a spectrum instead
+of a wall; multiplicity; sanctions come apart; how it holds over
+time; how we know. Notes are cited here by their published
+coordinate stems.
+
+== Notes this annotation uses, by role
+
+*Resource decomposition.* Ideas / artifacts / facilities
+({{ref:30041:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:concept-ideas-artifacts-facilities|ideas artifacts facilities}}); CPR theory vs
+knowledge commons and the pollution dilemma
+({{ref:30041:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:concept-cpr-vs-knowledge-commons|cpr vs knowledge commons}}); the goods-typology
+fit question ({{ref:30041:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:q-goods-typology-fit|Q: goods typology fit}}).
+
+*Boundaries.* Boundary rules and the relay spectrum
+({{ref:30041:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:concept-boundary-rules|boundary rules}}; {{ref:30041:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:claim-relay-spectrum|relay spectrum}});
+bounded institutions compose on the open substrate
+({{ref:30041:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:claim-composable-bounded-institutions|composable bounded institutions}}); no global
+bannability ({{ref:30041:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:claim-no-global-bannability|no global bannability}}); exit, voice
+and forking ({{ref:30041:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:concept-exit-voice|exit voice}}).
+
+*Variety and polycentricity.* Requisite variety
+({{ref:30041:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:concept-requisite-variety|requisite variety}}); polycentricity and its
+Nostr strain ({{ref:30041:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:concept-polycentricity|polycentricity}}); guardianship
+without office ({{ref:30041:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:concept-guardianship-without-office|guardianship without office}});
+governance as software ({{ref:30041:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:concept-governance-as-software|governance as software}});
+multiplicity across the stack ({{ref:30041:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:claim-multiplicity-stack|multiplicity stack}}).
+
+*Dynamics.* Expand–contract, the boundary as a muscle
+({{ref:30041:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:claim-expand-contract|expand contract}}); adaptive governance as
+feedback architecture ({{ref:30041:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:concept-adaptive-governance|adaptive governance}});
+the maturation hypothesis ({{ref:30041:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:q-maturation-hypothesis|Q: maturation hypothesis}});
+generativity as robustness ({{ref:30041:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:q-generativity-robustness|Q: generativity robustness}}).
+
+*Sanctions and quality.* Graduated sanctions
+({{ref:30041:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:concept-graduated-sanctions|graduated sanctions}}); split sanctions
+({{ref:30041:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:claim-split-sanctions|split sanctions}}); the ADICO grammar and the
+crowdsourced or-else ({{ref:30041:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:concept-adico-grammar|adico grammar}}); decoupled
+vs unitary ({{ref:30041:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:q-decoupled-vs-unitary-sanctions|Q: decoupled vs unitary sanctions}}).
+
+*Observability and method.* The action arena
+({{ref:30041:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:concept-action-arena|action arena}}); rule levels
+({{ref:30041:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:concept-rule-levels|rule levels}}); institutional invisibility and
+its inversion ({{ref:30041:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:concept-institutional-invisibility|institutional invisibility}});
+rules-in-use ({{ref:30041:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:concept-rules-in-use|rules in use}}); formation is
+observable ({{ref:30041:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:claim-formation-observable|formation observable}}); survivorship
+bias ({{ref:30041:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:concept-survivorship-bias|survivorship bias}}); advisory deletion
+({{ref:30041:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:q-advisory-deletion|Q: advisory deletion}}); the synthesis note
+({{ref:30041:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:syn-emergent-governance-framework|the synthesis: a framework for emergent governance}}).
+
+*Sources inside the kasten.* Hess & Ostrom 2007 ch. 3
+({{ref:30041:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:src-analyzing-knowledge-commons|Hess & Ostrom 2007, ch. 3 — analyzing knowledge commons}}); the UKAC introduction
+({{ref:30041:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:src-ukac-introduction|Understanding Knowledge as a Commons — introduction}}); Ostrom's _Digging Deeper_
+({{ref:30041:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:src-digging-deeper|Ostrom — Digging Deeper}}); Lewis & Aligica on the Ostroms'
+cybernetics ({{ref:30041:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:src-ostroms-cybernetics|Lewis & Aligica 2024 — the Ostroms' cybernetics}}); the GKC framework
+({{ref:30041:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:concept-gkc-framework|gkc framework}}).
+
+== Provenance note
+
+At the time of writing these notes were found in the local store and
+not yet seen on a relay; the coordinates are stable regardless, and
+resolve wherever the kasten is broadcast.
+
+*Related:*
+
+- link:index.adoc[index]
+- link:src-authors-adjacent-publications.adoc[src-authors-adjacent-publications]
+- link:syn-promiscuity-under-governance.adoc[syn-promiscuity-under-governance]

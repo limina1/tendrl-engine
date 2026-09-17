@@ -1,0 +1,69 @@
+:title: Epistemological anarchism — the lineage of "without permission"
+:type: concept
+:status: drafted
+:date: 2026-09-17
+:author: assistant
+:agent: promiscuity-annotate
+:tags: feyerabend, polanyi, hayek, anything-goes, spontaneous-order
+
+== The idea
+
+The essay's title phrase has a named ancestor. Paul Feyerabend's
+_Against Method_ (1975) carries the subtitle _Outline of an
+Anarchistic Theory of Knowledge_, and its thesis — that there is no
+single scientific method, that every methodological rule has been
+productively violated at some decisive moment, and that the only
+principle that survives every case is "anything goes" — is the
+essay's "intelligence in its natural state" made into an argument
+from the history of science (link:src-feyerabend-against-method.adoc[source note]).
+Feyerabend's Galileo used rhetoric, propaganda and "epistemological
+tricks"; the essay's anarchistic mind wanders and cross-pollinates.
+Both hold that the productive move was the unauthorized one.
+
+The essay's insistence that anarchistic knowledge "is not
+anti-intellectual — it's differently intellectual" is also
+Feyerabend's own qualification: epistemological anarchism was never
+a claim that nothing is known, only that no rule set determines in
+advance how knowing must proceed. And Feyerabend's *proliferation*
+principle — keep many incompatible theories alive because each
+exposes facts the others hide — is requisite variety for a science
+(link:concept-wandering-as-requisite-variety.adoc[requisite variety]).
+
+== The moderate cousins
+
+Two less anarchic relatives fill in the mechanism the essay only
+asserts. Michael Polanyi's "The Republic of Science" (_Minerva_,
+1962) argued that science is a spontaneous order: independent
+researchers coordinate by *mutual adjustment*, each fitting their
+work to what the others have found, with no central plan and no
+authority able to direct the whole. Hayek's "The Use of Knowledge in
+Society" (_AER_ 35, 1945) supplied the premise — the knowledge that
+matters is dispersed, local, and unavailable to any centre. Polanyi's
+republic is the essay's "collective intelligence" with an economics
+attached, and it is the direct ancestor of the Ostroms'
+polycentricity: many formally independent centres, taking each other
+into account, under an overarching set of rules
+({{ref:30041:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:concept-polycentricity|polycentricity}}).
+
+== Where the essay goes further, and Ostrom pulls it back
+
+Feyerabend and Polanyi are describing science, a commons with strong
+boundary rules and unitary sanctions (peer review, retraction,
+reputation). The essay extends the argument to the mechanic, the
+gardener and the bartender — knowledge under default conditions,
+with no boundary rule at all. That extension is where Ostrom is
+needed rather than Feyerabend: the commons school's mature statement
+defines a commons as a *mode of governance*, institutionalized
+sharing among members of a community, not as an absence of rules
+({{ref:30041:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:concept-gkc-framework|gkc framework}}). "Anything goes" is a claim
+about method, not about facilities. The essay is right that
+knowledge escapes; the emergent-governance kasten is what explains
+how the escaped knowledge still has quality discourse at all.
+
+*Related:*
+
+- link:index.adoc[index]
+- link:src-feyerabend-against-method.adoc[src-feyerabend-against-method]
+- link:claim-anarchistic-is-not-open-access.adoc[claim-anarchistic-is-not-open-access]
+- link:concept-wandering-as-requisite-variety.adoc[concept-wandering-as-requisite-variety]
+- link:q-quality-without-gatekeeping.adoc[q-quality-without-gatekeeping]

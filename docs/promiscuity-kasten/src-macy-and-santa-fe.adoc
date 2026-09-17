@@ -1,0 +1,74 @@
+:title: The Macy Conferences and the Santa Fe Institute — the essay's two examples, checked
+:type: src
+:status: drafted
+:date: 2026-09-17
+:author: assistant
+:agent: promiscuity-annotate
+:tags: cybernetics, macy-conferences, santa-fe-institute, complexity, history-of-science
+:cite: Claus Pias (ed.), Cybernetics: The Macy Conferences 1946–1953. The Complete Transactions, Diaphanes, 2016; Philip W. Anderson, Kenneth J. Arrow & David Pines (eds.), The Economy as an Evolving Complex System, Addison-Wesley, 1988
+
+== Cybernetics: the Macy Conferences, 1946–1953
+
+Ten meetings in New York under the Josiah Macy Jr. Foundation, whose
+programme aimed at interdisciplinary approaches to the social,
+behavioural and medical sciences. Co-organized by the
+neuropsychiatrist Warren McCulloch and the foundation's medical
+director Frank Fremont-Smith. The heading was "Cybernetics: Circular
+Causal and Feedback Mechanisms in Biological and Social Systems," and
+the invited core mixed mathematics (Wiener, von Neumann, Pitts),
+engineering, neurophysiology (McCulloch, Rosenblueth), anthropology
+(Bateson, Mead), psychology, psychiatry, linguistics and sociology.
+Ross Ashby attended in the early 1950s. The transactions were the
+first place "information" and "feedback" were worked into one theory
+"equally applicable to living beings and machines, economic and
+cognitive processes." Historians of science call it one of the first
+organized approaches to transdisciplinarity.
+
+The essay's sentence — "biologists, engineers, and mathematicians
+who weren't supposed to be talking to each other" — is accurate on
+the disciplines and understates the organization: a patron, a
+convenor, a stable membership, a theme. [[Cybernetics]] was
+promiscuous in content and bounded in form
+(link:concept-facilitated-promiscuity.adoc[facilitated promiscuity]).
+
+== Complexity: the Santa Fe Institute, 1984, and the 1987 workshop
+
+Founded in 1984 by George Cowan with Murray Gell-Mann, David Pines,
+Philip Anderson, Nick Metropolis and others from Los Alamos, with the
+stated purpose of countering "the increasing specialization the
+founders observed in science" by synthesis across disciplines. The
+essay's "physicists started thinking like ecologists and economists
+began borrowing from biology" has a precise date: the September 1987
+workshop "Evolutionary Paths of the Global Economy," convened by the
+physicists Anderson and Pines with the economist Kenneth Arrow, which
+brought economists together with physical and biological scientists.
+Its proceedings, _The Economy as an Evolving Complex System_ (1988),
+include W. Brian Arthur's "Self-Reinforcing Mechanisms in Economics,"
+and the workshop seeded the Institute's first research programme.
+[[Complex system]] science as a field dates from that composition.
+
+== The link to the Ostroms
+
+Lewis & Aligica (2024) document that Vincent Ostrom absorbed
+Ashby's requisite variety and hierarchy of feedback at Stanford in
+1955–56, and that the three levels of rules are "an expression of
+the underlying logic of the very phenomenon of self-organization"
+per cybernetics
+({{ref:30041:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:src-ostroms-cybernetics|Lewis & Aligica 2024 — the Ostroms' cybernetics}}).
+So the framework behind the emergent-governance kasten descends from
+the first of the essay's two examples.
+
+== Where to read
+
+- Oxford Research Encyclopedia of Psychology, "The Macy Conferences
+  on Cybernetics: Reinstantiating the Mind."
+- Santa Fe Institute, https://www.santafe.edu/ ; Wolfram, "My Part in
+  an Origin Story: The Launching of the Santa Fe Institute" (2019).
+- Routledge page for the 1988 proceedings.
+
+*Related:*
+
+- link:index.adoc[index]
+- link:concept-facilitated-promiscuity.adoc[concept-facilitated-promiscuity]
+- link:concept-wandering-as-requisite-variety.adoc[concept-wandering-as-requisite-variety]
+- link:src-creativity-and-commoning-literature.adoc[src-creativity-and-commoning-literature]

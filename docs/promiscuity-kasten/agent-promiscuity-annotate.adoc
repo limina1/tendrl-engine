@@ -1,0 +1,71 @@
+:title: Agent session — promiscuity-annotate (answering the annotation request on the anchor section)
+:type: agent
+:status: drafted
+:date: 2026-09-17
+:author: assistant
+:agent: promiscuity-annotate
+:tags: provenance, session
+
+== Task
+
+Answer the annotation request signed on _The Natural Promiscuity of
+Understanding_ (request coordinate
+`30041:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:9RX0HL2LWi0O_mUegBphW`,
+scope publication + relays + web, output kasten): research Ostrom's
+work on governing knowledge commons and the author's
+emergent-governance kasten, and tile the essay with links and ideas.
+
+== What was read
+
+- The request event and its anchor section; all ten sections of the
+  essay.
+- The emergent-governance kasten: the full narrative, the notes on
+  ideas/artifacts/facilities, CPR vs knowledge commons, requisite
+  variety, polycentricity, exit/voice, governance as software,
+  boundary rules, generativity, the synthesis note, and the Lewis &
+  Aligica source note.
+- The author's _Governing the Decentralized Commons_ (all sections),
+  _Understanding Knowledge_ (all sections), the table of contents of
+  _Thinking Through Emergence_, and the opening of the DWeb 2026
+  scenius transcript on the author's wiki.
+- Web: SEP on Feyerabend; MIT Press and reviews for Hess & Ostrom
+  2007; the Macy Conferences (Oxford Research Encyclopedia, the Pias
+  transactions); the Santa Fe Institute and the 1987 workshop
+  proceedings; Kelly on scenius; Benkler; Bollier & Helfrich; the GKC
+  framework.
+- Relays: full-text search for Ostrom / knowledge commons /
+  Feyerabend on the connected relays returned one kind-1 aside on
+  Hayek and Ostrom and a handful of unrelated long-form posts;
+  nothing worth citing. The wiki (kind 30818) pages for Michael
+  Polanyi, Anarchism and Complex system exist locally and are linked
+  as wikilinks.
+
+== What was written
+
+Twenty-three notes: two meta, six concept, three claim, two question,
+six source, one synthesis, one map, this provenance note, and the
+index. All body notes enter at `drafted`.
+
+== What the author should check
+
+- The Macy participation of Ashby (early 1950s) and the exact
+  wording of the Kelly scenius list — both from secondary sources.
+- Page locators for Hess & Ostrom are copied from the
+  emergent-governance kasten's source notes, not re-verified against
+  the PDF.
+- Whether the essay's own qualifiers are read fairly in
+  link:claim-anarchistic-is-not-open-access.adoc[not open access] —
+  the note leans on them hard.
+- The two disagreements flagged as testable: maturation vs deep time
+  (link:claim-enclosure-release-is-expand-contract.adoc[expand–contract])
+  and centrality effects on idea selection
+  (link:q-quality-without-gatekeeping.adoc[quality]).
+
+== What could not be placed
+
+Nothing; every note has a section in the index.
+
+*Related:*
+
+- link:index.adoc[index]
+- link:mission.adoc[mission]

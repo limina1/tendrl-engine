@@ -1,0 +1,71 @@
+:title: Signed promiscuity — attribution without ownership
+:type: concept
+:status: drafted
+:date: 2026-09-17
+:author: assistant
+:agent: promiscuity-annotate
+:tags: property-rights, attribution, authorship, withdrawal-rights, insertions
+
+== The idea
+
+The essay's coda pushes anarchistic knowledge to a limit where
+"authorship dissolves": "You can't copyright a river. You can't
+patent the moment when two currents converge." Nostr, which the
+essay names as the base for an unenclosable commons, does the
+opposite with every drop — each event is signed, timestamped, and
+nameable by hash. The apparent contradiction dissolves once
+*attribution* and *ownership* are separated, and the
+property-rights literature the Ostroms used is the instrument for
+separating them.
+
+Schlager and Ostrom's bundle distinguishes access, withdrawal,
+management, exclusion, and alienation. The emergent-governance
+kasten reads Nostr through it: a relay operator holds a proprietor's
+bundle over the facility (management and exclusion) but "no
+alienation over anyone's identity, because keys and follow graphs
+leave with the user" ({{ref:30041:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:concept-property-rights-bundles|property rights bundles}}).
+And no one holds *withdrawal* over the pool — deletion is advisory,
+broadcast to many facilities is LOCKSS by default, so the "fugitive
+artifact" Hess and Ostrom worried about in 2003 cannot occur
+({{ref:30041:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:concept-ideas-artifacts-facilities|ideas artifacts facilities}}).
+
+So a signature on Nostr confers attribution and nothing else. It
+does not let the author withdraw the idea, does not let them exclude
+a reader, does not let them stop a fork. This is exactly the
+condition the coda asks for: "every thought carries traces of its
+entire history," and "the reader's response becomes as important as
+the author's original insight." Signed promiscuity is provenance
+without enclosure — a river whose drops know where they came from.
+
+== The essay's own instance
+
+NKBIP-01 publications, the format this essay is published in, make
+the point structurally. An index is a list of pointers to sections
+any of which may be by another author; a section can appear in many
+indexes; a fork is a new index under a new key that re-points at the
+same signed sections. This note is itself an *insertion*: signed by
+an assistant's key, anchored to the author's section, carrying a
+pointer to the author's request, promotable into the essay by the
+author and never re-authored. The essay wanted "interfaces that
+allow multiple people to contribute to ongoing streams of thought
+without requiring final consensus or closure." Anchored, attributed,
+promotable notes are one such interface, and they only work because
+attribution was kept while ownership was dropped.
+
+== Where it strains
+
+Attribution has a cost the essay does not weigh: the signed record
+is effectively irrevocable, and the right to be forgotten strains
+against it ({{ref:30041:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:q-advisory-deletion|Q: advisory deletion}}). The streaming
+researcher whose "original hypothesis becomes unrecognizable" also
+cannot retract the recognizable version. Anarchistic knowledge on a
+signed substrate is more honest about lineage than the essay's river
+and less forgiving than it.
+
+*Related:*
+
+- link:index.adoc[index]
+- link:concept-idea-layer-nonsubtractive.adoc[concept-idea-layer-nonsubtractive]
+- link:claim-conversation-is-an-action-arena.adoc[claim-conversation-is-an-action-arena]
+- link:q-survivorship-of-withered-branches.adoc[q-survivorship-of-withered-branches]
+- link:syn-promiscuity-under-governance.adoc[syn-promiscuity-under-governance]
