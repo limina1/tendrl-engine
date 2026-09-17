@@ -217,6 +217,26 @@
 		}
 	}
 
+	// MCP: the same catalog over /mcp for an external harness. Loaded with
+	// the AI settings; the copy button hands over the `claude mcp add` line.
+	let mcpInfo = $state<api.McpInfo | null>(null);
+	async function loadMcpInfo() {
+		try {
+			mcpInfo = await api.getMcpInfo();
+		} catch {
+			mcpInfo = null; // [mcp] enabled = false, or an older engine
+		}
+	}
+	async function copyMcpAdd() {
+		if (!mcpInfo) return;
+		try {
+			await navigator.clipboard.writeText(mcpInfo.claude_mcp_add);
+			app.pushToast('Copied the claude mcp add command', 'success');
+		} catch {
+			app.pushToast('Clipboard unavailable — the command is shown below', 'error', 4000);
+		}
+	}
+
 	function toggleAiTool(name: string, enabled: boolean) {
 		if (!aiSettings) return;
 		const names = aiSettings.tools
@@ -266,6 +286,7 @@
 			app.refreshIdentity();
 			captureSavedBaseline();
 			loadAiSettings();
+			void loadMcpInfo();
 			loadAiPrompt();
 			// Fresh embedding status so the Embeddings section reflects live health
 			// + index counts, not the last 30s-poll tick.
@@ -1472,6 +1493,27 @@
 				Tool changes apply immediately to the next message. <code>publish</code>-category tools
 				are off by default and broadcast signed events when enabled.
 			</p>
+
+			<div class="settings-subtitle">MCP — the same tools for your own agent</div>
+			{#if mcpInfo}
+				<p class="settings-hint">
+					Claude Code, Codex or any MCP harness can call this engine directly, with its own
+					credential. Same catalog, same switches as above; relay fetches and broadcasts
+					still pause for your confirmation here. Serving at <code>{mcpInfo.url}</code>
+					{#if mcpInfo.token_path}
+						(token in <code>{mcpInfo.token_path}</code>)
+					{/if}
+					— {mcpInfo.enabled_tools.length} tools enabled.
+				</p>
+				<div class="settings-row">
+					<code class="mcp-cmd" title={mcpInfo.claude_mcp_add}>{mcpInfo.claude_mcp_add}</code>
+					<button class="settings-action" onclick={copyMcpAdd}>Copy</button>
+				</div>
+			{:else}
+				<p class="settings-hint">
+					MCP is off (<code>[mcp] enabled = false</code>) or this engine predates it.
+				</p>
+			{/if}
 		{/if}
 		</div>
 	</details>
@@ -2505,5 +2547,19 @@
 		font-size: var(--t-2xs);
 		color: var(--id-forked);
 		flex-shrink: 0;
+	}
+	.mcp-cmd {
+		flex: 1;
+		min-width: 0;
+		font-family: var(--font-mono);
+		font-size: calc(var(--t-xs) - 2px);
+		color: var(--fg-muted);
+		background: var(--bg-surface);
+		border: 1px solid var(--panel-border);
+		border-radius: var(--r-sm);
+		padding: 4px 8px;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
 	}
 </style>

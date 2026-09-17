@@ -99,6 +99,23 @@ export interface AiSettingsUpdate {
 	model?: string;
 }
 
+/** How an external harness reaches the engine's MCP endpoint (`/mcp`). The
+ *  token rides along: the desktop API is unauthenticated, so this reveals
+ *  nothing a local caller could not already do. */
+export interface McpInfo {
+	url: string;
+	token: string;
+	token_path: string | null;
+	protocol_versions: string[];
+	enabled_tools: string[];
+	/** The one-liner that registers this engine in Claude Code. */
+	claude_mcp_add: string;
+}
+
+export function getMcpInfo(): Promise<McpInfo> {
+	return fetchJson<McpInfo>('/api/v1/mcp');
+}
+
 export function getAiSettings(): Promise<AiSettings> {
 	return fetchJson<AiSettings>('/api/v1/ai/settings');
 }

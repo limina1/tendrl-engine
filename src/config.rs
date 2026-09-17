@@ -489,6 +489,32 @@ impl Default for AiConfig {
     }
 }
 
+/// MCP transport settings (`/mcp`, Streamable HTTP) — the engine as a tool
+/// server for an external harness (Claude Code, Codex).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct McpConfig {
+    /// Serve `/mcp` at all. Default true.
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// Bearer token a harness must present. `None` ⇒ one is minted once
+    /// into `<data_dir>/mcp-token` (0600) and reused on every boot.
+    #[serde(default)]
+    pub token: Option<String>,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+impl Default for McpConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            token: None,
+        }
+    }
+}
+
 /// Main configuration struct
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Config {
@@ -513,6 +539,9 @@ pub struct Config {
     /// Network mode settings
     #[serde(default)]
     pub network: NetworkConfig,
+    /// MCP transport (`/mcp`)
+    #[serde(default)]
+    pub mcp: McpConfig,
     /// Editor UI defaults (line numbers, vim mode, insert behaviour)
     #[serde(default)]
     pub editor: EditorConfig,

@@ -399,6 +399,35 @@ pub async fn start(opts: ServeOptions) -> anyhow::Result<RunningServer> {
         system_prompt_path: prompt_path,
     };
 
+    // The engine speaks MCP: same catalog, same live policy, token-gated.
+    let mcp_routes = if config.mcp.enabled {
+        match crate::mcp::load_or_mint_token(state.data_dir(), config.mcp.token.as_deref()) {
+            Ok((token, token_path)) => {
+                let auth = Arc::new(crate::mcp::McpAuth {
+                    token,
+                    loopback: loopback_token.clone(),
+                    token_path: token_path.clone(),
+                    url: format!("http://127.0.0.1:{}/mcp", config.server.port),
+                });
+                info!(
+                    "MCP: {} (token {})",
+                    auth.url,
+                    token_path
+                        .as_ref()
+                        .map(|p| format!("in {}", p.display()))
+                        .unwrap_or_else(|| "from config".into())
+                );
+                Some(crate::mcp::routes(chat_state.clone(), auth))
+            }
+            Err(e) => {
+                tracing::warn!("MCP: not served — could not read or mint the token: {e}");
+                None
+            }
+        }
+    } else {
+        None
+    };
+
     let chat_routes = Router::new()
         .route("/api/v1/chat", get(api::chat_get).delete(api::chat_reset))
         .route("/api/v1/chat/message", post(api::chat_send))
@@ -824,6 +853,7 @@ pub async fn start(opts: ServeOptions) -> anyhow::Result<RunningServer> {
         .route("/api/v1/spell/book/save", post(spell::book_save_handler))
         .with_state(state.clone())
         .merge(chat_routes)
+        .merge(mcp_routes.unwrap_or_default())
         .merge(identity_routes)
         .merge(signing_routes)
         .merge(assistant_signer_routes)

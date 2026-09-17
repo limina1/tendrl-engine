@@ -106,3 +106,13 @@ dimensions = 384
 # reservation — harmless on desktop). The Android host caps this at 4096;
 # if a store ever outgrows the cap, ingest fails with MDB_MAP_FULL — raise it.
 # mapsize_mb = 4096
+
+# MCP — the engine as a tool server for an external harness (Claude Code,
+# Codex). Streamable HTTP on http://127.0.0.1:<port>/mcp, the same tool
+# catalog and the same enablement as the in-app assistant (Settings → AI
+# tools). `GET /api/v1/mcp` prints the ready-made `claude mcp add` line.
+# [mcp]
+# enabled = true
+# Bearer token a harness must present. Unset = minted once into
+# <data_dir>/mcp-token (0600) and reused on every boot.
+# token = ""

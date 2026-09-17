@@ -72,6 +72,7 @@ pub mod nip19;
 pub mod nip42;
 pub mod nip44;
 pub mod nip46;
+pub mod mcp;
 pub mod nostrdown;
 pub mod publication;
 pub mod query;
