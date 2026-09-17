@@ -14,6 +14,7 @@ use crate::publication::insertion::{
     build_insertion_template, coord_parts, event_coordinate, fork_index, index_children,
     promotion_slot, InsertionAnchor, Placement,
 };
+use crate::search::TagValueCount;
 use crate::signing::EventTemplate;
 use axum::{extract::State, Extension, Json};
 use serde::{Deserialize, Serialize};
@@ -293,8 +294,14 @@ pub struct InsertionsLoadRequest {
     pub policy: Option<String>,
     pub relays: Vec<String>,
     pub limit: Option<usize>,
+    /// NIP-01 `since` on the `#A` pass.
     pub since: Option<i64>,
     pub mode_confirm: bool,
+    /// Histograms for the annotations table. When set, the `#A` pass runs
+    /// *without* the author filter, `counts` is computed over the whole
+    /// root, and only then are `insertions` narrowed to `authors` — so the
+    /// table's facets show what the filter hides.
+    pub counts: bool,
 }
 
 /// What a loaded 30041 is to the reader: a note, or a signed annotation
@@ -320,24 +327,86 @@ pub struct LoadedInsertion {
     pub request: Option<String>,
 }
 
+/// Histograms over every note on a root (requests excluded), for the
+/// annotations table's facets. Computed engine-side, before the author
+/// filter narrows `insertions`, so a facet can show what the filter hides.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct InsertionCounts {
+    /// Buckets keyed by hex pubkey; `label` is the kind-0 display name.
+    pub by_author: Vec<TagValueCount>,
+    /// Buckets keyed by parent coordinate (`anchor.parent`).
+    pub by_parent: Vec<TagValueCount>,
+    /// Notes on the root (the sum of either histogram).
+    pub total: usize,
+}
+
 #[derive(Debug, Serialize)]
 pub struct InsertionsLoadResponse {
     pub insertions: Vec<LoadedInsertion>,
     pub source: crate::engine::QuerySource,
     pub refreshed_at: i64,
     /// The same query in the search DSL — what the annotations table runs
-    /// as a spell (`A:<root> k:30041 by:…`).
+    /// as a spell (`A:<root> k:30041 by:… since:…`).
     pub query: String,
+    /// Present iff the request asked for `counts`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub counts: Option<InsertionCounts>,
 }
 
 /// The search-DSL spelling of a load request.
-pub(crate) fn insertions_query_dsl(root: &str, authors: &[String]) -> String {
+pub(crate) fn insertions_query_dsl(root: &str, authors: &[String], since: Option<i64>) -> String {
     let mut q = format!("A:{root} k:30041");
     for a in authors {
         q.push_str(" by:");
         q.push_str(a);
     }
+    if let Some(s) = since {
+        q.push_str(" since:");
+        q.push_str(&s.to_string());
+    }
     q
+}
+
+/// Tally notes (never requests) by author pubkey and by parent coordinate.
+/// Pure: `label` is left for the engine to fill (`label_author_buckets`).
+/// Buckets sort by count descending, then by value, so the order is stable.
+pub(crate) fn insertion_counts(insertions: &[LoadedInsertion]) -> InsertionCounts {
+    use std::collections::BTreeMap;
+    let mut by_author: BTreeMap<&str, Vec<String>> = BTreeMap::new();
+    let mut by_parent: BTreeMap<&str, Vec<String>> = BTreeMap::new();
+    let mut total = 0usize;
+    for ins in insertions.iter().filter(|i| i.role == InsertionRole::Note) {
+        total += 1;
+        let id = ins
+            .event
+            .get("id")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string();
+        let author = ins.event.get("pubkey").and_then(Value::as_str).unwrap_or_default();
+        by_author.entry(author).or_default().push(id.clone());
+        by_parent.entry(ins.anchor.parent.as_str()).or_default().push(id);
+    }
+    fn buckets(map: BTreeMap<&str, Vec<String>>) -> Vec<TagValueCount> {
+        let mut out: Vec<TagValueCount> = map
+            .into_iter()
+            .map(|(value, event_ids)| TagValueCount {
+                value: value.to_string(),
+                count: event_ids.len(),
+                event_ids,
+                label: None,
+            })
+            .collect();
+        // The map already yields values in order; a stable sort keeps that
+        // as the tiebreak under count-descending.
+        out.sort_by_key(|b| std::cmp::Reverse(b.count));
+        out
+    }
+    InsertionCounts {
+        by_author: buckets(by_author),
+        by_parent: buckets(by_parent),
+        total,
+    }
 }
 
 /// Run the `#A` pass and shape the result. Shared by the endpoint and the
@@ -383,8 +452,15 @@ pub(crate) async fn load_insertions(
             },
             &hints,
         );
+        // With `counts` the pass is broader than the filter: say so, so
+        // the modal is honest about what actually leaves the machine.
         let who = if authors.is_empty() {
             "any author".to_string()
+        } else if req.counts {
+            format!(
+                "any author (table) — narrowed to {} author(s) after counting",
+                authors.len()
+            )
         } else {
             format!("{} author(s)", authors.len())
         };
@@ -413,7 +489,8 @@ pub(crate) async fn load_insertions(
     filter.insert("kinds".into(), json!([30041]));
     filter.insert("#A".into(), json!([root]));
     filter.insert("limit".into(), json!(limit));
-    if !authors.is_empty() {
+    // Counting sees the whole root; the author filter is applied after.
+    if !authors.is_empty() && !req.counts {
         filter.insert("authors".into(), json!(authors));
     }
     if let Some(s) = req.since {
@@ -502,11 +579,29 @@ pub(crate) async fn load_insertions(
         o.complete(insertions.len());
     }
 
+    // Histograms over the whole root, then narrow to the requested authors.
+    let counts = if req.counts {
+        let mut c = insertion_counts(&insertions);
+        engine.label_author_buckets(&mut c.by_author);
+        if !authors.is_empty() {
+            insertions.retain(|i| {
+                i.event
+                    .get("pubkey")
+                    .and_then(Value::as_str)
+                    .is_some_and(|pk| authors.iter().any(|a| a == pk))
+            });
+        }
+        Some(c)
+    } else {
+        None
+    };
+
     Ok(InsertionsLoadResponse {
         insertions,
         source: response.source,
         refreshed_at: now,
-        query: insertions_query_dsl(&root, &authors),
+        query: insertions_query_dsl(&root, &authors, req.since),
+        counts,
     })
 }
 
@@ -705,4 +800,96 @@ pub async fn fork_publish_handler(
         signed_as: sign_as,
         publish,
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn loaded(id: &str, pubkey: &str, root: &str, parent: &str, role: InsertionRole) -> LoadedInsertion {
+        // Fixture coordinates use short pubkeys; only `anchor.parent` is read.
+        let parent_pubkey = parent.split(':').nth(1).unwrap_or_default();
+        LoadedInsertion {
+            event: json!({ "id": id, "pubkey": pubkey, "kind": 30041, "created_at": 1 }),
+            coordinate: format!("30041:{pubkey}:{id}"),
+            anchor: InsertionAnchor {
+                root: root.to_string(),
+                root_kind: 30040,
+                root_pubkey: "r".repeat(64),
+                parent: parent.to_string(),
+                parent_kind: 30041,
+                parent_pubkey: parent_pubkey.to_string(),
+                parent_event_id: None,
+                placement: Placement::default(),
+            },
+            role,
+            request: None,
+        }
+    }
+
+    #[test]
+    fn insertion_counts_by_author_and_parent_notes_only() {
+        let root = "30040:rr:book";
+        let p1 = "30041:rr:one";
+        let p2 = "30041:rr:two";
+        let alice = "a".repeat(64);
+        let bob = "b".repeat(64);
+        let items = vec![
+            loaded("n1", &alice, root, p1, InsertionRole::Note),
+            loaded("n2", &alice, root, p2, InsertionRole::Note),
+            loaded("n3", &bob, root, p1, InsertionRole::Note),
+            // A request is not a note: excluded from every bucket.
+            loaded("q1", &bob, root, p2, InsertionRole::Request),
+        ];
+        let c = insertion_counts(&items);
+        assert_eq!(c.total, 3);
+        // Count desc, then value: alice (2) before bob (1).
+        assert_eq!(c.by_author.len(), 2);
+        assert_eq!(c.by_author[0].value, alice);
+        assert_eq!(c.by_author[0].count, 2);
+        assert_eq!(c.by_author[0].event_ids, vec!["n1", "n2"]);
+        assert_eq!(c.by_author[1].value, bob);
+        assert_eq!(c.by_author[1].count, 1);
+        assert!(c.by_author.iter().all(|b| b.label.is_none()), "labels are the engine's to fill");
+        // Parents: `one` (2) before `two` (1) — the request on `two` is not counted.
+        assert_eq!(c.by_parent.len(), 2);
+        assert_eq!(c.by_parent[0].value, p1);
+        assert_eq!(c.by_parent[0].count, 2);
+        assert_eq!(c.by_parent[1].value, p2);
+        assert_eq!(c.by_parent[1].count, 1);
+        assert_eq!(c.by_parent[1].event_ids, vec!["n2"]);
+        assert_eq!(c.by_author.iter().map(|b| b.count).sum::<usize>(), c.total);
+    }
+
+    #[test]
+    fn insertion_counts_ties_sort_by_value() {
+        let root = "30040:rr:book";
+        let z = "z".repeat(64);
+        let a = "a".repeat(64);
+        let items = vec![
+            loaded("n1", &z, root, "30041:rr:b", InsertionRole::Note),
+            loaded("n2", &a, root, "30041:rr:a", InsertionRole::Note),
+        ];
+        let c = insertion_counts(&items);
+        assert_eq!(
+            c.by_author.iter().map(|b| b.value.as_str()).collect::<Vec<_>>(),
+            vec![a.as_str(), z.as_str()]
+        );
+        assert_eq!(
+            c.by_parent.iter().map(|b| b.value.as_str()).collect::<Vec<_>>(),
+            vec!["30041:rr:a", "30041:rr:b"]
+        );
+        assert!(insertion_counts(&[]).by_author.is_empty());
+        assert_eq!(insertion_counts(&[]).total, 0);
+    }
+
+    #[test]
+    fn insertions_query_dsl_renders_since() {
+        let a = "a".repeat(64);
+        assert_eq!(insertions_query_dsl("30040:p:d", &[], None), "A:30040:p:d k:30041");
+        assert_eq!(
+            insertions_query_dsl("30040:p:d", std::slice::from_ref(&a), Some(1_700_000_000)),
+            format!("A:30040:p:d k:30041 by:{a} since:1700000000")
+        );
+    }
 }
