@@ -2396,3 +2396,27 @@ without a click (the store stream, as in "Live store stream" above), the
 pgrep -a -x tendrl-engine | awk '/--port 3131/ {print $1}' | xargs -r kill
 pgrep -a -x chromium | awk '/remote-debugging-port=9333/ {print $1}' | xargs -r kill
 #+end_src
+
+* Kasten bundle delivery (answer a request whose output is kasten)
+
+One insertion for the whole kasten: the root 30040, anchored to the
+publication, carries the request pointer; the notes hang under it.
+
+#+begin_src sh
+# preview (nothing signed), then deliver as the assistant and close the record
+scripts/verify/deliver-kasten-bundle.py docs/promiscuity-kasten/build/events.jsonl \
+  --root 30040:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:anarchistic-knowledge-the-art-of-thinking-without-permission \
+  --request 30041:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:9RX0HL2LWi0O_mUegBphW \
+  --preview
+scripts/verify/deliver-kasten-bundle.py docs/promiscuity-kasten/build/events.jsonl \
+  --root 30040:…:anarchistic-knowledge-the-art-of-thinking-without-permission \
+  --request 30041:…:9RX0HL2LWi0O_mUegBphW --record rq_cg9BpRWf6j
+# what the reader sees: one card, role "bundle", with its children
+curl -s -X POST localhost:3030/api/v1/insertions/load -H 'content-type: application/json' \
+  -d '{"root":"30040:…:anarchistic-knowledge-the-art-of-thinking-without-permission","policy":"local_only"}' \
+  | python3 -c 'import sys,json; [print(i["role"], i["coordinate"], len(i.get("children",[]))) for i in json.load(sys.stdin)["insertions"]]'
+#+end_src
+
+Re-pinning: to have a rebuilt kasten supersede notes already stored under
+the assistant key, set the note's d-tag in =kasten-ids.json= to the
+stored coordinate's d-tag before building (same coordinate, newer event).
