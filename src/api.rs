@@ -9720,6 +9720,26 @@ mod chat_api_tests {
         assert_eq!(listed["insertions"][0]["parent"], first);
         assert_eq!(listed["insertions"][0]["placement"], "after");
         assert_eq!(listed["query"], format!("A:{root} k:30041"));
+        // The table's load: counts see the whole root even when the author
+        // filter would hide everything; `insertions` is narrowed after.
+        let counted = insertions::load_insertions(
+            &engine,
+            serde_json::from_value(json!({
+                "root": root, "policy": "local_only", "authors": [user_pk], "counts": true
+            }))
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+        let counts = counted.counts.as_ref().expect("counts requested");
+        assert_eq!(counts.total, 1);
+        assert_eq!(counts.by_author.len(), 1);
+        assert_eq!(counts.by_author[0].value, asst_pk);
+        assert_eq!(counts.by_author[0].count, 1);
+        assert_eq!(counts.by_parent.len(), 1);
+        assert_eq!(counts.by_parent[0].value, first);
+        assert!(counted.insertions.is_empty(), "the filter still applies to the rows");
+        assert_eq!(counted.query, format!("A:{root} k:30041 by:{user_pk}"));
         // Author filter excludes the user.
         let none = crate::tools::dispatch(
             &cx,

@@ -1949,7 +1949,7 @@ impl Engine {
     ///
     /// Author resolution is engine-side by the same rule that puts kind-0
     /// parsing here (the web renders the name it is given).
-    fn label_author_buckets(&self, buckets: &mut [search::TagValueCount]) {
+    pub(crate) fn label_author_buckets(&self, buckets: &mut [search::TagValueCount]) {
         let keys: Vec<[u8; 32]> = buckets
             .iter()
             .map(|b| query::parse_hex_pubkey(&b.value).unwrap_or([0u8; 32]))
