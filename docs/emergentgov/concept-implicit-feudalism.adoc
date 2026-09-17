@@ -1,0 +1,49 @@
+:title: Implicit feudalism
+:type: concept
+:status: drafted
+:date: 2026-08-04
+:author: assistant
+:agent: open-content
+:tags: admin-power, defaults, moderation, platform-design
+
+== The idea
+
+Schneider's critique of the default political architecture of online
+community software: platforms assign "unchecked power to admins and
+moderators" (Modular Politics 16:1, via ref [121], Schneider's
+"Admins, Mods, and Benevolent Dictators for Life"). Because
+alternatives are costly and must be built outside the platform,
+"monarchic or oligarchic practices emerge in online networks more
+easily and frequently than liberal or democratic ones" (16:2). The
+feudalism is implicit: nobody legislates autocracy, the feature-set
+does — juries, parties, term limits simply are not shipped.
+
+The Nostr twist: the feudal root is abolished globally — no admin
+anywhere can ban a keypair from the network — yet feudalism reappears
+fractally at the relay level, where each operator is absolute lord of
+their allowlist. Micro-feudal domains, disciplined by frictionless
+exit rather than by voice, compose into a whole that is not feudal:
+no lord of lords. This sharpens Schneider's own concession that
+pliable governance tools "can allow the implementation of oppressive
+regimes" (16:2) — on Nostr the oppression is bounded by the domain,
+and the domain is bounded by exit.
+
+Open question: is fractal feudalism a stable equilibrium or a
+transitional phase — do relay-level lords accrete network-level power
+through scale (Damus, Primal) despite the flat protocol?
+
+== Sources
+
+- link:src-modular-politics.adoc[src-modular-politics] — 16:1–16:2, 16:17–16:18 (BDFL case), ref [121]
+
+== Related
+
+- link:index.adoc[index]
+- link:claim-no-global-bannability.adoc[claim-no-global-bannability]
+- link:claim-relay-spectrum.adoc[claim-relay-spectrum]
+- link:concept-polycentricity.adoc[concept-polycentricity]
+- link:concept-exit-voice.adoc[concept-exit-voice]
+- link:concept-interjurisdictional-competition.adoc[concept-interjurisdictional-competition]
+- link:concept-guardianship-without-office.adoc[concept-guardianship-without-office]
+- link:q-does-competition-improve-governance.adoc[q-does-competition-improve-governance]
+- link:claim-worst-case-hosts-best-case.adoc[claim-worst-case-hosts-best-case]

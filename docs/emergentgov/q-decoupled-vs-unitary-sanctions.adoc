@@ -1,0 +1,32 @@
+:title: Q: Does decoupled sanctioning govern better or worse than unitary?
+:type: question
+:status: open
+:date: 2026-08-04
+:tags: ostrom-extension, sanctions
+
+Ostrom extension #2 — the most self-contained publishable question,
+native to institutional economics, co-designable. Graduated sanctions
+in the CPR literature are unitary (monitor and sanctioner
+institutionally linked); Nostr severs signal (kind-1984 report,
+public, costly, non-binding) from enforcement (relay, client, user —
+each optional, uncoordinated).
+
+Sub-questions: Under what conditions does a non-binding signal get
+enforced at all (enforcer incentives)? Is emergent aggregate
+gradualism (many small independent enforcements) functionally
+equivalent to designed graduated sanctions? Does decoupling avoid the
+crowding-out of self-imposed sanctions that external enforcement
+causes (link:src-ostrom-irc-iad.adoc[src-ostrom-irc-iad], p. 48)?
+Concrete anomaly in hand: high-centrality reporters appear to trigger
+relay filtering; peripheral reporters do not — legitimacy of the
+monitor as the binding variable
+(link:src-analyzing-knowledge-commons.adoc[src-analyzing-knowledge-commons],
+p. 67).
+
+== Related
+
+- link:index.adoc[index]
+- link:claim-split-sanctions.adoc[claim-split-sanctions]
+- link:concept-graduated-sanctions.adoc[concept-graduated-sanctions]
+- link:concept-adico-grammar.adoc[concept-adico-grammar]
+- link:concept-guardianship-without-office.adoc[concept-guardianship-without-office]

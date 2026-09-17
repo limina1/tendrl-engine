@@ -1,0 +1,51 @@
+:title: Guardianship without office
+:type: concept
+:status: drafted
+:date: 2026-08-04
+:author: assistant
+:agent: open-content
+:tags: legitimacy, reputation, informal-authority, equipotentiality
+
+== The idea
+
+Self-appointed guardians whose authority rests on observable behavior
+and reputation, not on any office. Schroeder & Wagner's strongest
+finding: "individuals acting as guardian of article" was rated
+important by 83% — the highest of all 24 mechanisms (Table 1,
+p. 1954) — despite guardians holding no formal role. Their authority
+is legitimized the way Tyler describes: peers accept influence from
+those whose visible conduct earns it (p. 1955). This grounds their
+anti-equipotentiality conclusion: "equipotentiality oversimplifies
+the complex mechanisms that control and guide the creation of open
+content" (1955) — flat access does not make flat power.
+
+On Nostr the pattern recurs under a maximally flat protocol: no
+protocol role distinguishes any keypair, yet power gradients are
+steep — accounts with large follow counts steer norms, prolific
+client devs decide which mechanisms exist by shipping them, and
+big-relay operators guard de facto public squares. The Nostr
+advantage for study: the observable behavior that legitimizes a
+guardian is cryptographically observable — signed, typed, and
+complete — so guardianship can be measured rather than recalled.
+
+Strain: Wikipedia's guardians guard a shared singular artifact (the
+article); Nostr guardians guard views — a mute list or relay policy
+binds only its subscribers. Guardianship without office becomes
+guardianship without a unique object, redundant and uncoordinated
+across actors.
+
+== Sources
+
+- link:src-open-content-governance.adoc[src-open-content-governance] — pp. 1954–1955
+- link:src-modular-politics.adoc[src-modular-politics] — 16:1–16:2 (the office-holding contrast case)
+
+== Related
+
+- link:index.adoc[index]
+- link:concept-implicit-feudalism.adoc[concept-implicit-feudalism]
+- link:concept-institutional-invisibility.adoc[concept-institutional-invisibility]
+- link:concept-boundary-rules.adoc[concept-boundary-rules]
+- link:claim-multiplicity-stack.adoc[claim-multiplicity-stack]
+- link:claim-split-sanctions.adoc[claim-split-sanctions]
+- link:claim-formation-observable.adoc[claim-formation-observable]
+- link:q-maturation-hypothesis.adoc[q-maturation-hypothesis]

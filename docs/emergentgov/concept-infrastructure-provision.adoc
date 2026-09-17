@@ -1,0 +1,62 @@
+:title: Infrastructure provision as the dominant (non-neutral) governance dimension
+:type: concept
+:status: drafted
+:date: 2026-08-04
+:author: assistant
+:agent: alston-gkc
+:tags: infrastructure, provision, forkability, relays, provider-models
+
+== The idea
+
+Fuster Morell's central finding: of the eight governance dimensions of
+online creation communities, infrastructure provision is the one that
+determines several of the others — platform design, license, formal
+policies, sometimes mission and conflict decisions (pp. 30–31) — and it
+is not neutral (pp. 40–41). Provision varies on two axes: community
+involvement in the provider body (open↔closed) and community autonomy
+from the platform (net-enabler: copyleft+FLOSS, forkable ↔ black box:
+proprietary), yielding four models — corporate (Flickr), mission
+enterprise (Wikihow), representational foundation (Wikipedia), assembly
+self-provision (Openesf) (pp. 27–30). Forkability is the master power
+variable: a community that can replicate the platform and leave is free
+from its provider (pp. 25–26). Empirical tradeoff: black-box dependency
+grows community size but depresses collaboration; net-enabler autonomy
+enables complex collaboration but smaller communities; no model gets
+both (pp. 33–35).
+
+== The Nostr case
+
+Nostr disaggregates the dimension itself: infrastructure provision is
+plural and substitutable (many relays per user, identity and social
+graph portable), so no provider controls design, rules, or conflict
+resolution for the commons as a whole. Fuster Morell's cross-case
+typology becomes live market structure inside one system — corporate,
+enterprise, foundation, and assembly-style relays coexist on the same
+substrate (link:claim-relay-spectrum.adoc[claim-relay-spectrum]), and "forking" is continuous,
+per-user relay exit rather than a rare community schism. Her tradeoff
+result becomes a testable prediction: open-pool relays should show
+Flickr-like scale with thin collaboration, gate-kept bounded relays
+(e.g. a write-gated medical knowledge relay) foundation/assembly-like
+intensive collaboration — and composition on one substrate may evade
+her "no model combines both."
+
+== Sources
+
+- link:src-fuster-morell-occ.adoc[src-fuster-morell-occ] (pp. 25–35, 40–41)
+- link:src-digital-constitutionalism.adoc[src-digital-constitutionalism] (layer where governors sit, pp. 1–2)
+- Frischmann 2012, Infrastructure (cited at her p. 27) — dangling.
+
+== Related
+
+- link:index.adoc[index]
+- link:concept-gkc-framework.adoc[concept-gkc-framework]
+- link:concept-exit-voice.adoc[concept-exit-voice]
+- link:concept-interjurisdictional-competition.adoc[concept-interjurisdictional-competition]
+- link:concept-governance-as-software.adoc[concept-governance-as-software]
+- link:concept-ideas-artifacts-facilities.adoc[concept-ideas-artifacts-facilities]
+- link:claim-relay-spectrum.adoc[claim-relay-spectrum]
+- link:claim-multiplicity-stack.adoc[claim-multiplicity-stack]
+- link:claim-no-global-bannability.adoc[claim-no-global-bannability]
+- link:claim-composable-bounded-institutions.adoc[claim-composable-bounded-institutions]
+- link:q-does-competition-improve-governance.adoc[q-does-competition-improve-governance]
+- link:q-decoupled-vs-unitary-sanctions.adoc[q-decoupled-vs-unitary-sanctions]

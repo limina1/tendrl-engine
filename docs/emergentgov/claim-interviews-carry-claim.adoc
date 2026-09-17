@@ -1,0 +1,41 @@
+:title: Interviews carry the claim; the trace locates
+:type: claim
+:status: drafted
+:date: 2026-08-04
+:tags: method, interviews, traces, inversion
+
+A deliberate methodological inversion from an earlier draft — respect
+it. The event trace can *locate* an adaptation in time, sometimes
+catch its speed: a bonus, not load-bearing. Much of the redundancy
+(relay software, infrastructure, client web-of-trust, interop specs)
+never appears in public events at all.
+
+The interviews are primary because what is being established is a
+*community disposition*: people orient to an open problem with no
+global solution and keep adapting anyway — observable only through
+lived testimony plus realized outputs. The signal question: why are
+people who have seen the worst of Nostr still here? Why not retreat
+permanently to the safe one-relay community? **That they stay is the
+evidence the adaptive space is winning.** Refusing the global solution
+is the finding, not a gap.
+
+Standing discipline #2: "everyone adapts" never stands alone without a
+NAMED INSTANCE — a spec that emerged after a specific wave, a
+hackathon entry against a named threat, an operator who tightened then
+loosened. The instance keeps it falsifiable.
+
+Supporting methods precedent: Schroeder & Wagner's repertory-grid
+elicitation is replicable on Nostr, minus their retrospective
+memory-bias limitation
+(link:src-open-content-governance.adoc[src-open-content-governance]);
+the civic-sphere caveat (GitHub/Telegram coordination the event stream
+misses) is the honest bound on trace observability
+(link:src-modular-politics.adoc[src-modular-politics]).
+
+== Related
+
+- link:index.adoc[index]
+- link:claim-formation-observable.adoc[claim-formation-observable]
+- link:claim-expand-contract.adoc[claim-expand-contract]
+- link:concept-institutional-invisibility.adoc[concept-institutional-invisibility]
+- link:syn-interview-protocol.adoc[syn-interview-protocol] (yours to write)

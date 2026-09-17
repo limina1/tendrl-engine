@@ -1,0 +1,101 @@
+:title: Fuster Morell 2014 — Governance of Online Creation Communities for the Building of Digital Commons (IAD view)
+:type: src
+:status: drafted
+:date: 2026-08-04
+:author: assistant
+:agent: alston-gkc
+:tags: occ, iad, infrastructure, forkability, digital-commons, wikipedia, flickr
+:cite: Mayo Fuster Morell, 2014, in Frischmann, Madison & Strandburg (eds.), Governing Knowledge Commons, Oxford UP; read as SSRN preprint 2842586
+:file: sources/ssrn_id2842586_code2596965.pdf
+:pages: preprint pp. 1–46 (≈ PDF pages); NB pagination differs from the published OUP chapter — re-anchor quotes before citing the book
+
+== What it is
+
+An IAD-based analysis of online creation communities (OCCs) — 50-case
+statistical sample plus four case studies (Wikipedia, Wikihow, Flickr,
+Openesf) — arguing that infrastructure provision, ignored by prior
+governance literature, is the dominant and non-neutral governance
+dimension of digital commons.
+
+== Core claims
+
+1. p. 1 — OCCs: "communities of individuals that mainly interact via a
+   platform of online participation, with the goal of building and
+   sharing a common-pool resource."
+2. p. 11 — eight governance dimensions: mission; social norms; platform
+   design ("where regulation is embedded in the code"); self-management
+   of contributions; formal rules; license; decision-making/conflict
+   resolution; infrastructure provision.
+3. pp. 30–31 — infrastructure provision determines several of the other
+   dimensions (design, license, formal policies, sometimes mission and
+   conflict decisions); only self-management escapes provider control.
+4. pp. 27–30 — two axes: open vs closed community involvement in the
+   provider body; net-enabler (copyleft+FLOSS, forkable) vs black box
+   (proprietary). Four models: corporate (Flickr), mission enterprise
+   (Wikihow), representational foundation (Wikipedia), assembly (Openesf).
+5. pp. 25–26 — "Forkability empowers the community with respect to the
+   infrastructure provider"; 68.1% free content licenses, 78% free
+   software in the 50-case sample.
+6. pp. 18–23 — participation self-allocated, 90/9/1 power law; OCCs are
+   anti-rival — "the value of the outcome of OCCs increases when more
+   people use them"; free riding is not a dilemma.
+7. pp. 15, 17 — openness and transparency embedded in code (80% open
+   registration; 88% publicly readable communications); public process
+   enables coordination "without a predefined plan or a gatekeeper."
+8. pp. 33–35 — tradeoff: black-box dependency grows size but hurts
+   collaboration; net-enabler autonomy favors complex collaboration but
+   smaller size; "none of the models combine a large community size
+   with collaborativeness."
+9. pp. 35–36 — vs Ostrom's design principles: "higher self-governance
+   favors collaboration, but not a high level of participation."
+10. pp. 37–38 — IAD amendment: contra Schweik & English, "rules embedded
+    in the code govern the interaction as much as other rules" — code is
+    governance, not a resource attribute.
+11. pp. 39–41 — stricter digital-commons definition contra Benkler: open
+    access alone is insufficient; add "a governance design that
+    maintains community control over the collaborative process."
+    Flickr fails the test; for-profit Wikihow can pass.
+
+== Key concepts
+
+- link:concept-infrastructure-provision.adoc[concept-infrastructure-provision] (pp. 27–33, 40–41)
+- link:concept-iad-framework.adoc[concept-iad-framework] (pp. 5, 33, 36–39); link:concept-rules-in-use.adoc[concept-rules-in-use] (p. 11)
+- link:concept-governance-as-software.adoc[concept-governance-as-software] (pp. 14–18, 37–38)
+- link:concept-cpr-vs-knowledge-commons.adoc[concept-cpr-vs-knowledge-commons] (pp. 6, 20–21, anti-rivalry)
+- link:concept-exit-voice.adoc[concept-exit-voice] (forkability, pp. 25–26)
+
+== Hooks to the Nostr thesis
+
+- Nostr disaggregates dimension (viii) itself: plural substitutable
+  relays mean no single provider controls design/rules/conflict for the
+  commons — link:concept-infrastructure-provision.adoc[concept-infrastructure-provision], link:claim-no-global-bannability.adoc[claim-no-global-bannability].
+- Her four provision models become live market structure inside one
+  system — link:claim-relay-spectrum.adoc[claim-relay-spectrum], link:claim-multiplicity-stack.adoc[claim-multiplicity-stack].
+- Forkability-as-power generalizes: identity+graph portability makes
+  forking continuous and per-user — link:concept-interjurisdictional-competition.adoc[concept-interjurisdictional-competition].
+- Size-vs-collaborativeness tradeoff = testable prediction across the
+  relay spectrum; bounded relays on an open substrate may evade it —
+  link:claim-composable-bounded-institutions.adoc[claim-composable-bounded-institutions], link:q-does-competition-improve-governance.adoc[q-does-competition-improve-governance].
+- Her commons test (community control over means of production) gives a
+  criterion for arguing Nostr is a commons proper —
+  link:q-goods-typology-fit.adoc[q-goods-typology-fit].
+
+== Tensions / open questions
+
+- Assumes one provider per community; Nostr's many-providers-per-user
+  breaks her unit of analysis — link:claim-expand-contract.adoc[claim-expand-contract].
+- Action situations explicitly not analyzed (pp. 33, 36): static
+  comparative snapshot, the anti-model of link:claim-formation-observable.adoc[claim-formation-observable] —
+  link:concept-action-arena.adoc[concept-action-arena].
+- No machinery for boundaries/exclusion dynamics (p. 8) — link:concept-boundary-rules.adoc[concept-boundary-rules], link:q-boundary-sybil.adoc[q-boundary-sybil].
+- "The community" is ill-defined on Nostr (overlapping publics): whose
+  control counts? — link:q-decoupled-vs-unitary-sanctions.adoc[q-decoupled-vs-unitary-sanctions].
+
+== Related
+
+- link:index.adoc[index]
+- link:src-governing-knowledge-commons.adoc[src-governing-knowledge-commons]
+- link:src-digital-constitutionalism.adoc[src-digital-constitutionalism]
+- link:concept-gkc-framework.adoc[concept-gkc-framework]
+- link:concept-design-principles.adoc[concept-design-principles]
+- link:concept-property-rights-bundles.adoc[concept-property-rights-bundles]

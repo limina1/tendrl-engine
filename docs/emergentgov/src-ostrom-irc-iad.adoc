@@ -1,0 +1,98 @@
+:title: Ostrom 2007 — Institutional Rational Choice: An Assessment of the IAD Framework
+:type: src
+:status: drafted
+:date: 2026-08-04
+:author: assistant
+:agent: iad-core
+:tags: iad, ostrom, cpr, rules, action-arena
+:cite: Elinor Ostrom, 2007, "Institutional Rational Choice: An Assessment of the Institutional Analysis and Development Framework," ch. 2 in P. A. Sabatier (ed.), Theories of the Policy Process, 2nd ed., Westview Press
+:file: sources/ (text extraction in scratchpad: ostrom-irc-iad-chapter.txt)
+:pages: printed book pp. 21–64 (main text 21–53; notes 53–54; refs 54–64); locators below are printed pages
+
+== What it is
+
+Ostrom's own mature summary of the IAD framework: the challenges of
+studying institutions, the framework/theory/model distinction, the
+action arena and its seven-element action situation, the three exogenous
+variable clusters (rules-in-use, biophysical world, community), the
+seven rule types, three-plus levels of rules, evaluative criteria, and a
+survey of empirical applications (police services, CPR databases, IFRI).
+
+== Core claims
+
+1. p. 23 — institutions are shared concepts (rules, norms, strategies),
+   not organizations; and they are invisible: study rules-in-use, "the
+   dos and don'ts that one learns on the ground."
+2. pp. 24–25 — rules are configural, not additive: one rule's effect
+   depends on which other rules are in force.
+3. pp. 25–26 — frameworks identify universal elements; theories make
+   working assumptions; models fix parameters. Many theories per
+   framework, many models per theory.
+4. pp. 28–29 — action arena = action situation (7 variable clusters) +
+   actors (4 clusters).
+5. pp. 30–31 — Homo economicus is substitutable; for CPR settings assume
+   fallible learners, "intendedly rational but only limitedly so."
+6. p. 32 — open access predicts "a race to use up the resource" — unless
+   appropriators share access to collective-choice arenas.
+7. p. 33 — "agreement about the legitimacy of boundaries and reliable
+   monitoring" beats formal ownership as predictor of cooperation.
+8. p. 33 — level shifts pass unnoticed in ordinary interaction (the
+   boss–employee "change the way we do X" example).
+9. p. 37 — "[R]ules are not self-formulating, self-determining, or
+   self-enforcing"; rules inherit language's ambiguity.
+10. p. 38 — classify rules by their impact on action-situation elements:
+    exactly seven types.
+11. pp. 44–45 — all rules nest in deeper rules governing their change;
+    deeper rules are costlier to change, stabilizing expectations.
+12. p. 44 — under-studied: "rule-ordered competition among two or more
+    potential producers of public goods and services."
+13. p. 48 — externally imposed sanction systems "crowd the benefits of a
+    self-imposed set of sanctions"; measured responses stabilize
+    agreements without external enforcers.
+14. p. 50 — user-monitors outperform hired guards; no statistical
+    difference between protected parks and non-parks (Hayes and Ostrom).
+
+== Key concepts
+
+- link:concept-iad-framework.adoc[concept-iad-framework] (pp. 25–28, 35–43)
+- link:concept-action-arena.adoc[concept-action-arena] (pp. 27–30)
+- link:concept-rules-in-use.adoc[concept-rules-in-use] (pp. 23, 36–39)
+- link:concept-rule-types.adoc[concept-rule-types] (pp. 38–39)
+- link:concept-rule-levels.adoc[concept-rule-levels] (pp. 44–46)
+- link:concept-graduated-sanctions.adoc[concept-graduated-sanctions] (payoff-rule questions p. 39)
+- Evaluative criteria pp. 33–35; goods attributes pp. 40–43; community
+  attributes p. 43; design principles mentioned only in passing p. 48.
+
+== Hooks to the Nostr thesis
+
+- Institutional invisibility (p. 23) is the problem Nostr dissolves:
+  rules-in-use become signed typed events — link:claim-formation-observable.adoc[claim-formation-observable].
+- Payoff-rule questions "who is responsible for sanctioning... how
+  reliably" (p. 39) get a decoupled answer on Nostr — link:claim-split-sanctions.adoc[claim-split-sanctions].
+- Rule-ordered producer competition (p. 44) = relay competition —
+  link:concept-interjurisdictional-competition.adoc[concept-interjurisdictional-competition].
+- Configural rules (pp. 24–25) ground link:claim-multiplicity-stack.adoc[claim-multiplicity-stack].
+- Boundary legitimacy + local monitoring over ownership form (pp. 33,
+  48, 50) argues for local filtering over global bans — link:claim-no-global-bannability.adoc[claim-no-global-bannability].
+
+== Tensions / open questions
+
+- Design principles distilled from long-surviving institutions (p. 48):
+  textual support for link:concept-survivorship-bias.adoc[concept-survivorship-bias].
+- Community attributes (p. 43) predict rule formation; Nostr's
+  pseudonymous open-entry community strains that causal story.
+- Subtractability-centric CPR theory vs Nostr's nonsubtractive content —
+  link:q-goods-typology-fit.adoc[q-goods-typology-fit], link:concept-cpr-vs-knowledge-commons.adoc[concept-cpr-vs-knowledge-commons].
+- Escape-from-tragedy condition is collective-choice access (p. 32); on
+  Nostr exit substitutes for voice — link:concept-exit-voice.adoc[concept-exit-voice].
+
+== Related
+
+- link:index.adoc[index]
+- link:src-iad-guide.adoc[src-iad-guide]
+- link:concept-adico-grammar.adoc[concept-adico-grammar]
+- link:concept-boundary-rules.adoc[concept-boundary-rules]
+- link:concept-design-principles.adoc[concept-design-principles]
+- link:concept-institutional-invisibility.adoc[concept-institutional-invisibility]
+- link:concept-gkc-framework.adoc[concept-gkc-framework]
+- link:q-decoupled-vs-unitary-sanctions.adoc[q-decoupled-vs-unitary-sanctions]

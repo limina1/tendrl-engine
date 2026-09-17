@@ -1,0 +1,98 @@
+:title: Waters — Preserving the knowledge commons (UKAC ch. 6)
+:type: src
+:status: drafted
+:date: 2026-08-04
+:author: assistant
+:agent: ukac-survey
+:tags: preservation, redundancy, trust, club-goods, archives
+:cite: Waters, D. J. (2007), in Hess & Ostrom (eds.), Understanding Knowledge as a Commons, MIT Press, ch. 6
+:isbn: 9780262083577
+:file: sources/PreservingKnowledgeCommons-UKAC.pdf
+:pages: printed 145-167 = PDF 1-23 (offset +144)
+
+== What it is
+
+Frames digital preservation (of e-journals) as a common-pool-resource
+problem: scholarly communities are "fabrics of trust" held together by
+checkable references, and nobody has private incentive to keep the
+referents alive. Surveys who could archive (producer, consumer,
+third-party) and lands on community-based, club-good solutions
+(Portico, LOCKSS).
+
+== Core claims
+
+1. "The links work, the trust endures, and the commons nourishes the
+   intellectual life only when the reader is able to check the
+   reference at the other end" (pp. 146-147).
+2. "Access is not equivalent to preservation" (p. 149): open access
+   encourages use today but motivates no one to preserve for tomorrow.
+3. Preservation defeats the insurance/exclusion logic: if I archive
+   and you don't, you still benefit — free riding is near-total, so
+   markets underprovide it (p. 150).
+4. Hardin's pessimism is empirically unwarranted: "groups of people
+   with a common interest in a shared resource will devise and agree
+   on community-based mechanisms" for preservation (p. 151).
+5. Producer archives are structurally untrustworthy: Elsevier's
+   "vanishing act" removed 35+ articles; online custody invites quiet
+   retraction — "Are there pieces of articles that I would quietly
+   change if I could? Well, interesting thought, sure" (O'Donnell,
+   qtd. p. 155).
+6. LOCKSS ("Lots Of Copies Keeps Stuff Safe"): distributed caches
+   "checking each other to see whether files are damaged or lost and
+   repairing any damage," removing single points of failure (p. 157).
+7. Community archives face a two-sided-market bootstrap (publishers
+   won't join without libraries, and vice versa) and solve free riding
+   by organizing as clubs whose good is guaranteed future access
+   (pp. 158-159).
+
+== Key concepts
+
+Fabrics of trust; access vs preservation; producer/consumer/archive
+role separation (five organizational models); vanishing-act problem;
+redundant peer-auditing caches; preservation as club good; two-sided
+market; dark archives and trigger events.
+
+== Hooks to the Nostr thesis
+
+- Claim 6 is the LOCKSS principle Nostr implements natively: an event
+  broadcast to N relays is its own distributed archive — direct
+  ancestry for link:claim-multiplicity-stack.adoc[claim-multiplicity-stack] and the redundancy half of
+  link:claim-no-global-bannability.adoc[claim-no-global-bannability] (no single point of deletion, not
+  just of exclusion).
+- Claim 5 (custodian can quietly rewrite the record) is exactly what
+  signed events foreclose: kind-5 deletion is advisory, edits are
+  detectable, provenance is cryptographic. The "vanishing act" becomes
+  observable rather than silent — feeds
+  link:claim-formation-observable.adoc[claim-formation-observable].
+- Role separation (claim 7's producer/consumer/archive) maps onto the
+  decoupling motif of link:claim-split-sanctions.adoc[claim-split-sanctions]: on Nostr the author,
+  the relay (custodian), and the reporting/muting public are
+  independent actors whose interests never fully align.
+- Claims 2-3 name a gap in relay economics: relays serve _access_;
+  nothing in the protocol pays for _preservation_. Club-good archival
+  relays (paid, member-gated retention guarantees) would be a
+  predictable institutional response — a bounded institution per
+  link:claim-composable-bounded-institutions.adoc[claim-composable-bounded-institutions].
+
+== Tensions / open questions
+
+- LOCKSS caches audit and _repair_ each other under one protocol
+  charter; Nostr relays are uncoordinated and free to drop anything —
+  redundancy without mutual obligation. Is emergent replication
+  durable, or does it decay like link rot? →
+  link:q-preservation-without-archives.adoc[q-preservation-without-archives]
+- Waters' club solution reintroduces exclusion to fund a public good;
+  on Nostr this collides with the ethos of open relays — a boundary
+  question for link:q-boundary-sybil.adoc[q-boundary-sybil] adjacent economics.
+- Retraction has legitimate uses (error, plagiarism, dangerous data);
+  an unerasable commons must govern _correction_ without erasure.
+
+== Related
+
+- link:index.adoc[index]
+- link:concept-club-goods.adoc[concept-club-goods]
+- link:concept-cpr-vs-knowledge-commons.adoc[concept-cpr-vs-knowledge-commons]
+- link:concept-polycentricity.adoc[concept-polycentricity]
+- link:concept-graduated-sanctions.adoc[concept-graduated-sanctions]
+- link:q-decoupled-vs-unitary-sanctions.adoc[q-decoupled-vs-unitary-sanctions]
+- link:src-ukac-overview.adoc[src-ukac-overview]

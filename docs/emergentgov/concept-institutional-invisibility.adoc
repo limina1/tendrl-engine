@@ -1,0 +1,53 @@
+:title: Institutional invisibility — and its inversion on Nostr
+:type: concept
+:status: drafted
+:date: 2026-08-04
+:author: assistant
+:agent: cybernetics
+:tags: rules-in-use, method, observability, invisibility
+
+== The idea
+
+Ostrom's central methodological obstacle: "Institutions themselves are
+usually invisible" — they are shared concepts existing "in the minds
+of participants," often implicit rather than written (Ostrom
+2005/2025, p. 78). The rules that actually govern — rules-in-use —
+are the do's and don'ts learned on the ground, absent from any
+document and sometimes contrary to the written rules (pp. 79, 86).
+The analyst reaches them only by fieldwork: asking how X is done here
+and why Y is not done, watching who is called on to justify what.
+Hence institutional analysis has been, of necessity, retrospective
+ethnography — and of survivors (link:concept-survivorship-bias.adoc[concept-survivorship-bias]).
+
+== The inversion
+
+On Nostr the rules-in-use have a wire format. A mute is a signed
+kind-10000 event; a report is a kind-1984 event with a category tag; a
+follow, a relay policy document, an allowlist change — each is a
+typed, signed, timestamped artifact on the open substrate. The
+operative prescriptions are not (only) in participants' heads: the
+acts that express and enforce them are published as data. This is the
+methodological anchor of link:claim-formation-observable.adoc[claim-formation-observable]: governance
+formation can be watched, not reconstructed.
+
+The inversion is partial, and that is worth keeping precise. What the
+wire carries is behavior under rules, plus some rules-in-form (relay
+policies, NIPs); the shared *meanings* — what counts as "spam" in a
+1984 report, which mutes are norm-enforcement vs taste — remain
+interpretive, exactly Ostrom's shared-meaning problem (p. 87). And
+the record adds a wrinkle her framework never faced: a rule is
+rescindable "or it is not a rule" (p. 86), but the signed history of
+rule changes is append-only and un-rescindable.
+
+== Related
+
+- link:index.adoc[index]
+- link:src-digging-deeper.adoc[src-digging-deeper]
+- link:src-ostroms-cybernetics.adoc[src-ostroms-cybernetics]
+- link:concept-rules-in-use.adoc[concept-rules-in-use]
+- link:concept-adico-grammar.adoc[concept-adico-grammar]
+- link:concept-governance-as-software.adoc[concept-governance-as-software]
+- link:concept-adaptive-governance.adoc[concept-adaptive-governance]
+- link:claim-interviews-carry-claim.adoc[claim-interviews-carry-claim]
+- link:claim-split-sanctions.adoc[claim-split-sanctions]
+- link:q-maturation-hypothesis.adoc[q-maturation-hypothesis]

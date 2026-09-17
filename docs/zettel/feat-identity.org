@@ -12,12 +12,15 @@ without knowing where the key lives.
   ncryptsec — NIP-49 encrypted secret (scrypt + XChaCha20-Poly1305), the
   default flow. Password decrypts in memory only.
 - OS keyring stores the *encrypted* blob (never the plaintext key); optional
-  session restoration on startup. *Caveat (2026-09-16):* the =keyring=
-  crate ships with no platform backend feature, so on Linux this is the
-  in-memory mock — nothing persists across restarts. Deliberately left so:
-  nsec-in-engine signing is on its way out
-  ([[file:decision-no-keyring-backend.org][decision]]); pairings will move
-  to a data-dir state file.
+  session restoration on startup. *Backend (2026-09-17):* a real
+  platform backend is compiled in — Secret Service over D-Bus on Linux
+  (=sync-secret-service= + =crypto-rust=; gnome-keyring, KDE ksecretd or
+  KeePassXC serve it), =apple-native=, =windows-native=; entries under
+  service =nostr-engine=. The user's ncryptsec, the assistant's identity
+  and either slot's bunker pairing survive a restart; the portable build
+  vendors libdbus (=--features keyring-vendored=). The 2026-09-16 "no
+  backend" call was reversed — see
+  [[file:decision-no-keyring-backend.org][the superseded decision]].
 - Idle-lock timer: the signer auto-locks after configurable inactivity;
   auto-signing while unlocked means publish flows don't re-prompt mid-session.
 - Endpoints: =GET /api/v1/identity= (none / locked / unlocked),

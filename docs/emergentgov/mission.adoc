@@ -1,0 +1,47 @@
+:title: Mission — what this kasten is for
+:type: meta
+:status: current
+:date: 2026-08-04
+:author: assistant
+
+This kasten maps the sources and ideas of the *emergent governance on
+Nostr* research program: institutional analysis (Ostrom, IAD, knowledge
+commons) applied to a commons that can be *watched governing itself
+into existence* — every report, mute, follow, and relay-policy change a
+signed, timestamped, typed event — instead of reverse-engineering rules
+from institutions that already succeeded. Ostrom's design principles
+were survivorship-filtered; formation was never observable. On Nostr it
+is. That inversion is the center of gravity; everything here connects
+to it.
+
+The corpus is centered on link:map-email.adoc[Jayme's source email]
+(`sources/email.md`) — background theory, format-model papers, and
+related work — plus the project's own articulation of the thesis
+(`sources/presentation.tex`, `sources/orientation.md`) and selected
+chapters of _Understanding Knowledge as a Commons_ (UKAC).
+
+Standing distinctions this kasten must not blur:
+
+- *Two papers, kept separate.* The commons-governance paper (Ostrom is
+  the _message_) is this kasten's subject. The public-health / medical
+  knowledge commons paper (Ostrom is the _method_) enters only as the
+  bounded institution that composes onto the open substrate once the
+  substrate is proven — globally readable and commentable, write-gated
+  on its own relay, excludable nowhere.
+- *Observation in real time, not autopsy.* The empirical claim is
+  about watching formation, not classifying outcomes ("look what is
+  happening!" is the failure mode the founders themselves named).
+- *The unenumerable space.* Filtering/exclusion methods are samples
+  from an open, self-renewing space; cataloguing "the N mechanisms"
+  reintroduces the taxonomy trap.
+
+What this kasten is not: a summary of whole books (sources stay
+external; notes carry citations, not text), a draft of either paper,
+or a pitch script (that lives in `sources/orientation.md`).
+
+== Related
+
+- link:index.adoc[index]
+- link:conventions.adoc[conventions]
+- link:map-email.adoc[map-email]
+- link:claim-formation-observable.adoc[claim-formation-observable]

@@ -1,0 +1,29 @@
+:title: Q: How does a commons reconstitute boundaries it cannot enforce?
+:type: question
+:status: open
+:drafted-by: assistant
+:tags: ostrom-extension, boundary, sybil
+
+Ostrom extension #1. Design principle 1 assumes a
+definable "who belongs" boundary; on Nostr identity-layer enforcement
+is impossible (free pseudonymous keys, unlimited entry). Yet
+boundaries exist — redundantly: the Sybil that beats the social layer
+hits the relay filter; the one that beats the filter scores ~0 in a
+client web of trust; different users run different combinations, so
+there is *no single global boundary to defeat*.
+
+Open questions: Is redundant, heterogeneous boundary-reconstitution a
+stable substitute for enforceable membership? What does "clearly
+defined boundaries" mean when the principle must be re-specified as
+*boundary-setting capacity* rather than a boundary
+(link:src-ukac-introduction.adoc[src-ukac-introduction])? Where
+does IAD put a participant who cannot be excluded from the situation
+at all (link:agent-iad-core.adoc[agent-iad-core] flag)?
+
+== Related
+
+- link:index.adoc[index]
+- link:concept-boundary-rules.adoc[concept-boundary-rules]
+- link:claim-no-global-bannability.adoc[claim-no-global-bannability]
+- link:claim-multiplicity-stack.adoc[claim-multiplicity-stack]
+- link:q-generativity-robustness.adoc[q-generativity-robustness]

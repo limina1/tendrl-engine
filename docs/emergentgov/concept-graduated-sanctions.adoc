@@ -1,0 +1,57 @@
+:title: Graduated sanctions — the unitary monitor–sanctioner nexus
+:type: concept
+:status: drafted
+:date: 2026-08-04
+:author: assistant
+:agent: iad-core
+:tags: sanctions, monitoring, payoff-rules, design-principle-5
+
+== The idea
+
+Design principle 5: "graduated sanctions are applied to rule violators
+(in increasing levels of intensity)" (McGinnis p. 19), paired with
+principle 4 — monitors accountable to, or identical with, the
+appropriators. In IAD's machinery sanctions live in the payoff rules,
+whose diagnostic questions presume a located enforcer: "How is
+conformance to rules monitored? Who is responsible for sanctioning
+nonconformers? How reliably are sanctions imposed?" (Ostrom 2007,
+p. 39). The classic findings assume this monitor–sanctioner nexus is
+internal and unitary: user-monitors outperform hired guards (p. 50);
+externally imposed sanction systems "crowd the benefits of a
+self-imposed set of sanctions"; boundedly rational users deploy
+"measured responses" — graduation — to stabilize agreements with no
+external enforcer (p. 48).
+
+== The Nostr engagement
+
+Nostr splits the nexus. Monitoring is a public, competitive activity
+(reports, labels, WoT scores — cf. McGinnis p. 18, many units monitor
+other units); sanctioning is a separate, private decision by whoever
+runs a relay or client. A kind-1984 report is costly and public but
+binds no one — a norm-shaped statement without an Or Else
+(link:concept-adico-grammar.adoc[concept-adico-grammar]). Graduation is therefore not designed but
+emergent-in-aggregate: a violator loses one relay, then several, then
+most clients' defaults — intensity rises with the number of independent
+enforcers persuaded, not with a sanction ladder any single institution
+maintains. Whether this emergent graduation reproduces the
+error-tolerance benefits Ostrom attributes to designed graduation is
+the open question: link:q-decoupled-vs-unitary-sanctions.adoc[q-decoupled-vs-unitary-sanctions],
+link:claim-split-sanctions.adoc[claim-split-sanctions]. The crowding-out finding (p. 48) doubles as
+an argument against re-centralizing moderation on top of Nostr.
+
+== Sources
+
+- Ostrom 2007, pp. 39 (payoff-rule questions), 48 (crowding out,
+  measured responses), 50 (user monitoring).
+- McGinnis, pp. 19 (17.1.4–17.1.5), 18 (16.2.6, 16.2.9.1), 5 (2.4.9).
+
+== Related
+
+- link:index.adoc[index]
+- link:src-ostrom-irc-iad.adoc[src-ostrom-irc-iad]
+- link:src-iad-guide.adoc[src-iad-guide]
+- link:concept-design-principles.adoc[concept-design-principles]
+- link:concept-rule-types.adoc[concept-rule-types]
+- link:claim-no-global-bannability.adoc[claim-no-global-bannability]
+- link:claim-multiplicity-stack.adoc[claim-multiplicity-stack]
+- link:q-boundary-sybil.adoc[q-boundary-sybil]

@@ -1,0 +1,53 @@
+:title: Governance as software
+:type: concept
+:status: drafted
+:date: 2026-08-04
+:author: assistant
+:agent: open-content
+:tags: code-as-rules, mechanisms, composability, self-similarity
+
+== The idea
+
+Governance mechanisms shipped as code by independent developers, so
+that the rule layer is made of the same stuff as the resource it
+regulates. Schroeder & Wagner report the self-similar precedent:
+Wikipedia's "development of a regulatory framework is based on the
+same patterns as the resource that is to be regulated" (p. 1950,
+citing Aaltonen & Lanzara) — policies are wiki pages, editable like
+articles. Modular Politics generalizes it prescriptively: governance
+as composable Modules with editable Policies and transparent source
+(16:9–16:10), distributed via an open standard plus independent
+open-source libraries (16:15–16:16). Fuster Morell supplies the IAD
+amendment: "rules embedded in the code govern the interaction as much
+as other rules" (preprint pp. 37–38).
+
+On Nostr the concept is realized without a platform author: mute
+lists, kind-1984 reports, relay allowlists, NIP-65 relay hints, spam
+filters, and WoT scorers are governance mechanisms any dev can ship,
+and each is itself signed events or open-source services on the same
+substrate as the speech it governs. The mechanism space grows by
+shipping — no committee enumerates it — which is why Schroeder's
+closed 24-item catalogue cannot close on Nostr.
+
+The strain: Schroeder's formal/informal binary (1948–1949, 1955)
+presupposes that norms are soft and rules are hard. When a norm ships
+as code — a mute list is informal in origin, formal in execution —
+the binary breaks; classification should track who can change the
+mechanism and at what cost, not its degree of writtenness.
+
+== Sources
+
+- link:src-open-content-governance.adoc[src-open-content-governance] — p. 1950 (self-similarity); 1955 (binary)
+- link:src-modular-politics.adoc[src-modular-politics] — 16:9–16:10, 16:15–16:16
+- link:src-fuster-morell-occ.adoc[src-fuster-morell-occ] — pp. 14–18, 37–38
+
+== Related
+
+- link:index.adoc[index]
+- link:concept-rules-in-use.adoc[concept-rules-in-use]
+- link:concept-rule-types.adoc[concept-rule-types]
+- link:concept-requisite-variety.adoc[concept-requisite-variety]
+- link:concept-adaptive-governance.adoc[concept-adaptive-governance]
+- link:claim-composable-bounded-institutions.adoc[claim-composable-bounded-institutions]
+- link:claim-multiplicity-stack.adoc[claim-multiplicity-stack]
+- link:q-generativity-robustness.adoc[q-generativity-robustness]

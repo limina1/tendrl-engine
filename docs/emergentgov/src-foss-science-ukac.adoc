@@ -1,0 +1,91 @@
+:title: Schweik — FOSS as a framework for commons in science (UKAC ch. 10)
+:type: src
+:status: drafted
+:date: 2026-08-04
+:author: assistant
+:agent: ukac-survey
+:tags: foss, licensing, rules-in-use, governance-as-software, iad
+:cite: Schweik, C. M. (2007), in Hess & Ostrom (eds.), Understanding Knowledge as a Commons, MIT Press, ch. 10
+:isbn: 9780262083577
+:file: sources/FOSS-AndCommonsInScience-UKAC.pdf
+:pages: printed 277-309 = PDF 1-33 (offset +276)
+
+== What it is
+
+Applies the IAD framework to FOSS projects as common-property regimes
+and asks whether the FOSS paradigm (Copyleft licensing + Internet
+collaboration infrastructure) can be transplanted to science generally
+("open content"). The one UKAC chapter that analyzes governance of
+digitally-native, self-organizing commons — closest ancestor to
+analyzing Nostr.
+
+== Core claims
+
+1. FOSS inverts the classic CPR problem: collective action to _create_
+   a public good, not to prevent overappropriation (p. 279).
+2. The licensing innovation is institutional, not legal abolition: "It
+   is not a question of choosing between the two extremes of full
+   copyright ... or no copyright at all" (p. 283) — authors unbundle
+   and selectively relinquish rights.
+3. Rules-in-use are partly executed by infrastructure: "the CVS system
+   actually articulates some of the project's operational rules and
+   enforces them" (p. 287).
+4. Unlike journals, FOSS shares the whole process — full history,
+   rollback, attribution tracking — not just final results (p. 288).
+5. Governance forms vary widely: benevolent dictator + lieutenants
+   (Linux), elected nine-member team (FreeBSD), consensus; "an ongoing
+   experiment ... imperfect mix of leadership, informal coordination
+   mechanisms, implicit and explicit norms" (Weber, qtd. pp. 283-284).
+6. Projects follow a trajectory: initiation → "going-open" → high
+   growth _ stabilization _ death; high growth is rare, most projects
+   are tiny (pp. 280-281).
+7. Contributor motives: technological need, sociopolitical movement,
+   economic signaling/human capital; attribution norms are what make
+   signaling work (pp. 284-285, 295).
+
+== Key concepts
+
+Copyleft as rules-in-use; viral licensing; version control as rule
+enforcement; three-stage commons trajectory; modularity as physical
+attribute enabling parallel contribution; benevolent-dictator vs
+elected-committee governance; attribution as incentive substrate.
+
+== Hooks to the Nostr thesis
+
+- Claim 3 is the sharpest precedent for
+  link:concept-governance-as-software.adoc[concept-governance-as-software]: relay policy code, NIP-42 auth,
+  and mute-list plugins are CVS-write-authority writ large.
+- The initiation→going-open→mature trajectory is a testable template
+  for link:q-maturation-hypothesis.adoc[q-maturation-hypothesis] and gives
+  link:claim-formation-observable.adoc[claim-formation-observable] a comparative baseline — except FOSS
+  history had to be reconstructed; Nostr's is a signed event stream.
+- License variation (50+ OSI licenses from one GPL parent) parallels
+  link:claim-relay-spectrum.adoc[claim-relay-spectrum]: a family of institutional variants on one
+  substrate, chosen per-project/per-relay.
+- Attribution-as-incentive (claims 4, 7) maps to Nostr's signed,
+  pubkey-attributed events: the signaling economy is native.
+- Forking under viral licenses = exit with the resource; cf.
+  link:concept-exit-voice.adoc[concept-exit-voice] and exit-based operator discipline.
+
+== Tensions / open questions
+
+- Schweik treats governance design as deliberate and per-project;
+  Nostr's exclusion is redundant and _uncoordinated_ across layers —
+  who is the "lead developer" of the open pool? (cf.
+  link:q-decoupled-vs-unitary-sanctions.adoc[q-decoupled-vs-unitary-sanctions])
+- FOSS boundaries are commit-access boundaries (writable core, open
+  periphery) — structurally the write-gated/readable-everywhere
+  pattern of link:claim-composable-bounded-institutions.adoc[claim-composable-bounded-institutions], but Schweik never
+  theorizes it as such.
+- His financing worry (volunteer fragility, foundation/firm capture)
+  transfers directly to relay economics.
+
+== Related
+
+- link:index.adoc[index]
+- link:concept-iad-framework.adoc[concept-iad-framework]
+- link:concept-rules-in-use.adoc[concept-rules-in-use]
+- link:concept-action-arena.adoc[concept-action-arena]
+- link:concept-boundary-rules.adoc[concept-boundary-rules]
+- link:concept-cpr-vs-knowledge-commons.adoc[concept-cpr-vs-knowledge-commons]
+- link:src-ukac-overview.adoc[src-ukac-overview]

@@ -1,0 +1,96 @@
+:title: Levine — Collective action, civic engagement, and the knowledge commons (UKAC ch. 9)
+:type: src
+:status: drafted
+:date: 2026-08-04
+:author: assistant
+:agent: ukac-survey
+:tags: associational-commons, collective-action, boundary, civic
+:cite: Levine, P. (2007), in Hess & Ostrom (eds.), Understanding Knowledge as a Commons, MIT Press, ch. 9
+:isbn: 9780262083577
+:file: sources/CollectiveActionCivicEngagement-UKAC.pdf
+:pages: printed 247-275 = PDF 1-29 (offset +246)
+
+== What it is
+
+Argues the _process_ of creating public knowledge is itself a good
+(builds social capital and civic identity), and — the analytically
+load-bearing move — distinguishes the *libertarian commons* (open to
+all by default) from the *associational commons* (a good stewarded by
+an organized group). Case: the Prince George's Information Commons,
+youth-built local knowledge.
+
+== Core claims
+
+1. "An associational commons exists when some good is controlled by a
+   group" that sees itself as steward of a public good, vs a
+   libertarian commons of de facto/de jure open access (pp. 250-251).
+2. Associational commons beat libertarian ones on four counts: they
+   can defend themselves; they are potentially democratic; they can
+   articulate values; they can proselytize/reproduce their norms in
+   the next generation (pp. 251-254).
+3. "I can think of no successful historical example of a commons that
+   arose under conditions of total individual freedom—or as a gift of
+   nature" (p. 254).
+4. A libertarian commons "is difficult to regulate even if the vast
+   majority of participants feel ... that particular rules should be
+   imposed" (p. 253) — popular, legitimate rules remain unenforceable.
+5. The Internet "was born as a libertarian commons, but today it badly
+   needs organized defenders" against enclosure, spam, and pollution
+   (p. 252).
+6. Founders admit holding the constitutional- and collective-choice
+   rules while intending "to cede control to a democratic
+   organization"; operational rules already consensual (p. 255) — an
+   explicit rule-level handoff plan.
+7. Civic identity — internalized norms of trust, reciprocity, long
+   horizons — forms in adolescence and must be deliberately taught;
+   commons rest on it (pp. 253-256).
+
+== Key concepts
+
+Libertarian vs associational commons; selective incentives; commons as
+norm-reproduction machine; local/geographic rooting of associations;
+"public work" (citizens co-produce public goods outside market and
+state).
+
+== Hooks to the Nostr thesis
+
+- Levine's dichotomy IS the thesis skeleton: Nostr's open pool is the
+  libertarian commons; relays, curated communities, and the write-gated
+  medical relay are associational commons _composed on top of it_ —
+  direct scaffolding for link:claim-composable-bounded-institutions.adoc[claim-composable-bounded-institutions] and
+  link:claim-relay-spectrum.adoc[claim-relay-spectrum].
+- Claim 4 names exactly why the base layer can't sanction (no global
+  rule imposition) — grounding for link:claim-no-global-bannability.adoc[claim-no-global-bannability] and
+  link:claim-split-sanctions.adoc[claim-split-sanctions]: enforcement migrates into associations.
+- Claim 6 is a live specimen of rule-level dynamics
+  (link:concept-rule-levels.adoc[concept-rule-levels]) and of founder-to-community handoff — compare
+  relay operators ceding moderation to community mute lists;
+  link:claim-expand-contract.adoc[claim-expand-contract].
+- Claim 2's "an association can defend itself" ≈ allowlist relays
+  litigating their boundary via policy, while the pool stays open —
+  redundant multi-layer exclusion by uncoordinated stewards.
+
+== Tensions / open questions
+
+- Claim 3 read strongly would predict Nostr fails — no commons from
+  pure freedom. The thesis's rejoinder: the substrate is not the
+  commons; commons form associationally _on_ it. If the observed
+  governance all lives in bounded sub-institutions, Levine is
+  confirmed, not refuted. Worth testing against
+  link:q-generativity-robustness.adoc[q-generativity-robustness].
+- Levine wants face-to-face, local roots for durable associations;
+  Nostr communities are mostly delocalized pseudonyms — does civic
+  identity form there? (cf. link:q-boundary-sybil.adoc[q-boundary-sybil])
+- His norm-reproduction argument implies commons need generational
+  onboarding; what is Nostr's mechanism for teaching newcomers the
+  rules-in-use?
+
+== Related
+
+- link:index.adoc[index]
+- link:concept-associational-commons.adoc[concept-associational-commons]
+- link:concept-boundary-rules.adoc[concept-boundary-rules]
+- link:concept-ideas-artifacts-facilities.adoc[concept-ideas-artifacts-facilities]
+- link:concept-adaptive-governance.adoc[concept-adaptive-governance]
+- link:claim-worst-case-hosts-best-case.adoc[claim-worst-case-hosts-best-case]
+- link:src-ukac-overview.adoc[src-ukac-overview]

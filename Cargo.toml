@@ -1,6 +1,6 @@
 [package]
 name = "nostr-engine"
-version = "0.13.4"
+version = "0.14.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 description = "Standalone local Nostr backend with HTTP API - query nostrdb and fetch from relays"
@@ -36,6 +36,9 @@ embeddings-dynamic = ["dep:fastembed", "dep:usearch", "fastembed/ort-load-dynami
 # OS keyring persistence (assistant identity). No Secret Service on Android —
 # the stub degrades to session-only, which consumers already handle.
 keyring = ["dep:keyring"]
+# Portable release builds: compile libdbus from the crate's vendored source so
+# the binary has no libdbus-1.so.3 runtime dependency (scripts/build-portable.sh).
+keyring-vendored = ["keyring", "keyring?/vendored"]
 # Browser-open on launch; the binary is desktop-only.
 desktop = ["dep:webbrowser"]
 # Bake web/build/ into the binary even in debug profiles (rust-embed otherwise
@@ -93,6 +96,11 @@ nanoid = "0.4"
 url = "2"
 
 # Identity/key management
+# The crate is backend-less by default (an in-memory mock that forgets on
+# exit); the platform backends below make the entries persist. Linux talks to
+# the Secret Service (gnome-keyring / KDE ksecretd / KeePassXC) over D-Bus with
+# a pure-Rust crypto stack — no OpenSSL. Reversed 2026-09-17 (user): the
+# 2026-09-16 "no backend" decision was a mistake; pairings must survive restarts.
 keyring = { version = "3", optional = true }
 bech32 = "0.11"
 chacha20poly1305 = "0.10"
@@ -148,3 +156,12 @@ tower = { version = "0.5", features = ["util"] }
 lto = "fat"
 codegen-units = 1
 strip = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+keyring = { version = "3", optional = true, features = ["sync-secret-service", "crypto-rust"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+keyring = { version = "3", optional = true, features = ["apple-native"] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+keyring = { version = "3", optional = true, features = ["windows-native"] }

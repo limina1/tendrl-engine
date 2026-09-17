@@ -1,0 +1,58 @@
+:title: Levels of rules — operational, collective-choice, constitutional, meta; nesting and level-shifting
+:type: concept
+:status: drafted
+:date: 2026-08-04
+:author: assistant
+:agent: iad-core
+:tags: rule-levels, nesting, forum-shopping, constitutional-choice
+
+== The idea
+
+Rules nest: _operational_ rules govern day-to-day action;
+_collective-choice_ rules determine who may change operational rules
+and how; _constitutional-choice_ rules determine who crafts
+collective-choice rules; a rarely analyzed _metaconstitutional_ level
+(cultural constraints on what counts as legitimate) underlies all
+(Ostrom 2007, pp. 44–45; McGinnis pp. 8–9). Two consequences: changes
+at one level occur within a "fixed" deeper level, and deeper rules are
+costlier to change, which stabilizes expectations (Ostrom p. 44).
+Collective-choice activity = prescribing, invoking, monitoring,
+applying, enforcing rules (p. 46). Level shifts happen inside ordinary
+interaction without notice — the boss/employee "change the way we do X"
+example (p. 33). McGinnis adds the _level-shifting strategy_: actors
+ill-served in one arena move the question to an adjacent level,
+"also known as forum-shopping" (p. 9).
+
+== The Nostr engagement
+
+Mapping: operational = posting, muting, reporting, filtering;
+collective-choice = relay policy changes, client defaults, allowlist
+edits, NIP adoption by implementations; constitutional = the NIP
+process and protocol core; metaconstitutional ≈ cryptography and
+key-ownership norms, changeable in principle but treated as fixed
+(link:concept-governance-as-software.adoc[concept-governance-as-software]). Nostr's distinctive property: all
+three levels emit the same observable substance (events, commits,
+config), so level shifts that Ostrom says pass unnoticed leave a
+timestamped trail — link:claim-formation-observable.adoc[claim-formation-observable]. Forum-shopping is
+institutionalized as costless relay exit: link:concept-exit-voice.adoc[concept-exit-voice],
+link:concept-interjurisdictional-competition.adoc[concept-interjurisdictional-competition]. Note the strain: most users
+never touch a relay's collective-choice arena (Ostrom's p. 32 condition
+for escaping open-access tragedy), yet governance still works —
+link:q-does-competition-improve-governance.adoc[q-does-competition-improve-governance].
+
+== Sources
+
+- Ostrom 2007, pp. 44–46 (levels, Figs. 2.2–2.3), 33 (unnoticed shift),
+  24 (challenge 5), 32 (collective-choice access).
+- McGinnis, pp. 8–9 (§6 incl. 6.4 meta, 6.5 level-shifting).
+
+== Related
+
+- link:index.adoc[index]
+- link:src-ostrom-irc-iad.adoc[src-ostrom-irc-iad]
+- link:src-iad-guide.adoc[src-iad-guide]
+- link:concept-iad-framework.adoc[concept-iad-framework]
+- link:concept-rule-types.adoc[concept-rule-types]
+- link:concept-polycentricity.adoc[concept-polycentricity]
+- link:claim-relay-spectrum.adoc[claim-relay-spectrum]
+- link:q-maturation-hypothesis.adoc[q-maturation-hypothesis]

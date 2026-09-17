@@ -1,0 +1,58 @@
+:title: Look what is happening! — a framework for emergent governance itself
+:type: syn
+:status: drafted
+:date: 2026-08-04
+:drafted-by: assistant
+:tags: synthesis, framework, title, formation
+
+The synthesis this kasten was building toward, captured from the
+2026-08-04 exchange. The paper's object shifts: not "Nostr as a
+knowledge commons" but *emergent governance itself* — a framework for
+analyzing institutional formation as an observable process — with
+Nostr as the demonstration case that shows how to analyze the data.
+The knowledge commons demotes to the resource type of the case.
+
+Three architectural pieces make it a framework, not a case study:
+
+1. *A unit of analysis earlier than the institution.* The formation
+   episode — shock → uncoordinated responses → adaptation →
+   settlement or failure. The
+   link:claim-expand-contract.adoc[expand–contract] cycle is the
+   prototype; it is the action arena's analog, one level earlier in
+   time.
+2. *Observability conditions* — the architectural breakdown, and what
+   generalizes. A substrate makes formation observable when actions
+   are typed, public, signed, and timestamped; identity is portable
+   so exit is legible; policy and enforcement are separately visible.
+   Nostr satisfies all maximally; git repos, wikis, DAOs partially.
+   This section doubles as the replication recipe and the honest
+   bound (the civic-sphere caveat:
+   link:src-modular-politics.adoc[src-modular-politics]).
+3. *Formation-stage evaluative criteria*, replacing criteria that
+   presuppose an existing institution: is boundary-setting capacity
+   developing; are sanction signals acquiring legitimacy (do exits
+   follow them); is the shock cycle converging or thrashing. Plus
+   the reusable instrument: an event-kind → institutional-statement
+   coding table via
+   link:concept-adico-grammar.adoc[concept-adico-grammar] with the
+   crowdsourced "or else".
+
+Two risks, both answered inside the kasten: "Nostr is idiosyncratic"
+meets the worst-case logic
+(link:claim-worst-case-hosts-best-case.adoc[claim-worst-case-hosts-best-case])
+and the observability conditions; and the framework wrapper must not
+dissolve the concrete spine — the question and its sub-answers stay
+the skeleton. The object shift also sidesteps the "romantic camp" jab
+(link:src-exchange-theory-web3.adoc[src-exchange-theory-web3]):
+this is not commons design advocacy, it is the instrument that
+observes any of it.
+
+== Related
+
+- link:index.adoc[index]
+- link:claim-formation-observable.adoc[claim-formation-observable]
+- link:concept-survivorship-bias.adoc[concept-survivorship-bias]
+- link:concept-institutional-invisibility.adoc[concept-institutional-invisibility]
+- link:concept-tier2-triangle.adoc[concept-tier2-triangle]
+- link:q-generativity-robustness.adoc[q-generativity-robustness]
+- link:syn-what-to-measure.adoc[syn-what-to-measure] (yours to write)

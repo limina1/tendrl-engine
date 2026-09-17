@@ -1,0 +1,68 @@
+:title: The GKC research framework (knowledge commons as modified IAD)
+:type: concept
+:status: drafted
+:date: 2026-08-04
+:author: assistant
+:agent: alston-gkc
+:tags: gkc, iad, framework, methodology
+
+== The idea
+
+The Governing Knowledge Commons (GKC) framework adapts Ostrom's IAD for
+constructed knowledge resources. Core apparatus (Frischmann/Madison/
+Sanfilippo 2023 ch. 1, Fig. 1.1 p. 17, Table 1.1 pp. 19–20): action
+arenas take resource characteristics, community attributes, and
+rules-in-use as inputs; interactions yield patterns and outcomes that
+feed back into all three. Case studies are structured by four
+question-clusters — background environment (legal/cultural context,
+default resource status, overlapping domains, dilemmas); attributes
+(pooled resources, shared infrastructure, members/roles, degrees of
+openness, goals, history); governance (action arenas, legal structures,
+membership rules, sanctions, conflict resolution, informal norms,
+legitimacy, impacted non-members); patterns & outcomes (benefits,
+costs/externalities, perceived legitimacy).
+
+Seven departures from Ostrom's original IAD: (1) resources are
+constructed and community-defined — outputs loop back as inputs;
+(2) social dilemmas are an empirical question, not assumed overuse
+tragedies; (3) openness/membership is a spectrum, not a boundary
+condition; (4) evaluation is against internally defined community
+goals, not resource sustainability; (5) commons = a governance mode
+decoupled from good-type; (6) explicit nesting, polycentricity, and
+exit possibilities; (7) knowledge spans the data–information–
+knowledge–wisdom hierarchy and coexists with non-knowledge resources.
+(All: 2023 ch. 1 pp. 15–21.) Fuster Morell (pp. 37–39) pushes two
+amendments from inside the tradition: code-embedded rules belong in
+governance, and outcome analysis must be retained.
+
+== The Nostr case
+
+Table 1.1 is a ready-made coding instrument: every cluster has a
+directly observable event-level correlate (default status = public
+signed events; membership rules ` relay allowlists/AUTH; sanctions `
+kind-1984 + mutes + relay bans; impacted-groups-with-no-say = users
+filtered by uncoordinated third parties). The main strain is the
+framework's community-level unit of analysis: Nostr's overlapping
+publics and per-user filtering make "the community" plural and fuzzy,
+so arena calibration (2023 p. 17) becomes the hard methodological step.
+
+== Sources
+
+- link:src-governing-knowledge-commons.adoc[src-governing-knowledge-commons] (2023 ch. 1, pp. 14–21)
+- link:src-fuster-morell-occ.adoc[src-fuster-morell-occ] (amendments, pp. 37–39)
+- Dangling for acquisition: MFS 2010 Cornell L. Rev. 95:657; the 2014
+  OUP framework chapter.
+
+== Related
+
+- link:index.adoc[index]
+- link:concept-iad-framework.adoc[concept-iad-framework]
+- link:concept-action-arena.adoc[concept-action-arena]
+- link:concept-rules-in-use.adoc[concept-rules-in-use]
+- link:concept-cpr-vs-knowledge-commons.adoc[concept-cpr-vs-knowledge-commons]
+- link:concept-design-principles.adoc[concept-design-principles]
+- link:concept-polycentricity.adoc[concept-polycentricity]
+- link:concept-infrastructure-provision.adoc[concept-infrastructure-provision]
+- link:claim-formation-observable.adoc[claim-formation-observable]
+- link:q-boundary-sybil.adoc[q-boundary-sybil]
+- link:q-goods-typology-fit.adoc[q-goods-typology-fit]

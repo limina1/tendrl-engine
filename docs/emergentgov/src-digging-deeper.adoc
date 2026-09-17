@@ -1,0 +1,109 @@
+:title: Ostrom 2005/2025 — Doing Institutional Analysis: Digging Deeper than Markets and Hierarchies
+:type: src
+:status: drafted
+:date: 2026-08-04
+:author: assistant
+:agent: cybernetics
+:tags: iad, rules-in-use, rule-types, boundary-rules, levels-of-analysis
+:cite: Elinor Ostrom, 2005 (reprinted 2025), "Doing Institutional Analysis: Digging Deeper than Markets and Hierarchies", ch. 5 in Ménard & Shirley (eds.), Handbook of New Institutional Economics, 2nd ed., Springer, pp. 73–102 (open access, CC-BY)
+:doi: 10.1007/978-3-031-50810-3_5
+:file: sources/Doing Institutional Analysis DiggingDeeper than Markets and Hierarchies.pdf
+:pages: printed pp. 73–102 ` PDF pp. 1–30 (printed ` PDF + 72)
+
+== What it is
+
+Elinor Ostrom's canonical statement of the IAD method: universal
+components of all markets and hierarchies; the action situation as
+dependent variable; seven rule types; nested levels of analysis.
+VERIFICATION: the 2025 Springer chapter is the 2005 first-edition
+classic reprinted unchanged (front-page note confirms the posthumous
+reprint) — cite as Ostrom 2005/2025. FLAGS: this chapter does NOT use
+"holons" (that is Understanding Institutional Diversity ch. 1) and
+does NOT treat polycentricity by name (nearest: producer competition,
+one paragraph, p. 96) — do not cite it for either.
+
+== Core claims
+
+1. p. 78 — "Institutions themselves are usually invisible": shared
+   concepts "in the minds of participants," often implicit, unwritten.
+2. pp. 79, 86 — rules _ norms _ strategies distinguished; rules are
+   enforced "in a predictable way by agents responsible for
+   monitoring conduct and for imposing sanctions"; rules-in-use "may
+   actually be contrary to" the rules-in-form of written documents.
+3. p. 80 — rule effects are configural, non-additive: one rule's
+   impact "is not independent of the configuration of other rules."
+4. pp. 82–84, 88–89 — action arena = situation (seven variable
+   clusters) + actors; digging deeper, the situation becomes the
+   dependent variable, structured by rules-in-use, biophysical world,
+   and community, with seven rule types matched one-to-one to the
+   seven situation components.
+5. pp. 90–91 — THE CENTERPIECE: "At least 27 different boundary rules
+   are in use in different locations in the management of common-pool
+   resources"; and "The set of identified rules is large enough that
+   no analyst can perform a complete analysis of the structure of
+   resulting situations"; next frontier = how rules combine.
+6. p. 90 — boundary-rule changes determine whether a market is
+   "competitive, oligopolistic, or monopolistic."
+7. p. 87 — "rules are not self-formulating, self-determining, or
+   self-enforcing" (Ostrom 1980); unpunished cheating cascades.
+8. p. 88 — where participants freely enter and leave, rules persist
+   only via a shared sense that they are appropriate — legitimacy
+   substitutes for enforcement in voluntary settings.
+9. p. 86 — "it is always possible to rescind it or reinstate it—or
+   it is not a rule."
+10. p. 96 — "All rules are nested in another set of rules... similar
+    to the nesting of computer languages"; deeper-level change is
+    harder and costlier, stabilizing expectations; four levels
+    (operational → meta-constitutional), Fig. 5.3 p. 97.
+11. pp. 92–95 — excludability × subtractability goods typology;
+    community attributes (shared norms, homogeneity, multiplex ties)
+    ease rule-devising.
+12. p. 99 — changed rule configurations create "new and unanalyzed
+    situations" demanding fresh analysis of how participants view,
+    monitor, and enforce the new rules.
+
+== Key concepts
+
+- link:concept-rules-in-use.adoc[concept-rules-in-use] (pp. 79, 86–87); link:concept-institutional-invisibility.adoc[concept-institutional-invisibility] (p. 78)
+- link:concept-action-arena.adoc[concept-action-arena] (pp. 82–84); link:concept-iad-framework.adoc[concept-iad-framework] (pp. 80–84)
+- link:concept-rule-types.adoc[concept-rule-types] (pp. 88–89); link:concept-boundary-rules.adoc[concept-boundary-rules] (pp. 90–91)
+- link:concept-rule-levels.adoc[concept-rule-levels] (pp. 96–98); link:concept-adico-grammar.adoc[concept-adico-grammar] (cited only, p. 79)
+- link:concept-cpr-vs-knowledge-commons.adoc[concept-cpr-vs-knowledge-commons] (pp. 92–94); link:concept-requisite-variety.adoc[concept-requisite-variety] (pp. 90–91)
+
+== Hooks to the Nostr thesis
+
+- The 27+ boundary rules / "no analyst" passage (pp. 90–91) is the
+  direct ancestor of "unenumerability is the finding": Nostr's
+  exclusion-method space is the same open-endedness, machine-readable
+  and self-renewing — link:claim-multiplicity-stack.adoc[claim-multiplicity-stack], link:concept-requisite-variety.adoc[concept-requisite-variety].
+- Invisibility inverted (p. 78): on Nostr rules-in-use have a wire
+  format — link:concept-institutional-invisibility.adoc[concept-institutional-invisibility], link:claim-formation-observable.adoc[claim-formation-observable].
+- Boundary rules set market structure (p. 90) ↔ relay spectrum —
+  link:claim-relay-spectrum.adoc[claim-relay-spectrum], link:claim-expand-contract.adoc[claim-expand-contract].
+- Voluntary-entry legitimacy (p. 88) grounds exit-discipline and the
+  viability of non-binding reports — link:concept-exit-voice.adoc[concept-exit-voice], link:claim-split-sanctions.adoc[claim-split-sanctions].
+- Computer-language nesting (p. 96) is nearly literal: NIPs → relay
+  policy → moderation events — link:concept-governance-as-software.adoc[concept-governance-as-software].
+- p. 99 prescribes exactly the study the project performs — but Ostrom
+  could only do it retrospectively — link:concept-survivorship-bias.adoc[concept-survivorship-bias].
+
+== Tensions / open questions
+
+- Monitor and sanctioner are one agent here (p. 79); kind-1984 splits
+  them — link:q-decoupled-vs-unitary-sanctions.adoc[q-decoupled-vs-unitary-sanctions].
+- Community-attribute prerequisites (p. 95) look unfavorable for
+  pseudonymous Nostr, yet governance emerges — link:q-boundary-sybil.adoc[q-boundary-sybil], link:q-maturation-hypothesis.adoc[q-maturation-hypothesis].
+- Goods typology fits pollution/inclusion problems awkwardly —
+  link:q-goods-typology-fit.adoc[q-goods-typology-fit], link:concept-gkc-framework.adoc[concept-gkc-framework].
+- "Always possible to rescind" (p. 86) vs un-rescindable signed
+  rule-history: policies are rescindable, their record is not.
+
+== Related
+
+- link:index.adoc[index]
+- link:src-ostroms-cybernetics.adoc[src-ostroms-cybernetics]
+- link:src-iad-guide.adoc[src-iad-guide]
+- link:src-ostrom-irc-iad.adoc[src-ostrom-irc-iad]
+- link:concept-design-principles.adoc[concept-design-principles]
+- link:concept-graduated-sanctions.adoc[concept-graduated-sanctions]
+- link:concept-interjurisdictional-competition.adoc[concept-interjurisdictional-competition]

@@ -1,0 +1,56 @@
+:title: Boundary (entry and exit) rules — and the relay spectrum
+:type: concept
+:status: drafted
+:date: 2026-08-04
+:author: assistant
+:agent: iad-core
+:tags: boundary-rules, entry-exit, relays, membership
+
+== The idea
+
+Boundary rules "specify how participants enter or leave... positions"
+(McGinnis p. 10); Ostrom's chapter calls them entry and exit rules:
+they set "the number of participants, their attributes and resources,
+whether they can enter freely, and the conditions they face for
+leaving" (2007, p. 38). Her CPR battery lists the observed variety:
+residency, ascriptive group, lottery, permit, asset ownership, entry
+fee or initiation, forfeit-on-migration (pp. 38–39). Clear boundaries
+are design principle 1 (McGinnis p. 19), and empirically it is
+_agreement about the legitimacy of boundaries_, plus reliable
+monitoring — not ownership form — that predicts cooperation (Ostrom
+p. 33). The capacity to enter or exit a group is itself a cooperation
+booster in the experimental literature (McGinnis p. 22).
+
+== The Nostr engagement
+
+The relay spectrum is a boundary-rule dial: open pool (default
+conditions — no boundary rule), paid relays (entry fee), WoT relays
+(attribute test via follows), allowlist/gated relays (permit),
+single-team relays (ascriptive) — link:claim-relay-spectrum.adoc[claim-relay-spectrum]. Because each
+relay sets boundary rules only for itself, boundaries exist everywhere
+locally and nowhere globally: link:claim-no-global-bannability.adoc[claim-no-global-bannability]. The
+"boundary as a muscle" motif — expand under growth, contract under
+spam/attack, re-expand — is repeated re-parameterization of one rule
+type, cheap because relay-level, and fully logged
+(link:claim-expand-contract.adoc[claim-expand-contract], link:claim-formation-observable.adoc[claim-formation-observable]). Strains:
+pseudonymous keys make attribute-based boundaries sybil-vulnerable
+(link:q-boundary-sybil.adoc[q-boundary-sybil]), and exit rules are vacuous — no one can be made
+to forfeit an identity. Wider field inventory of boundary-rule variety:
+link:src-digging-deeper.adoc[src-digging-deeper].
+
+== Sources
+
+- Ostrom 2007, pp. 38–39 (definition, CPR questions), 33 (boundary
+  legitimacy), 40–41 (excludability).
+- McGinnis, pp. 10 (7.2.2), 19 (17.1.1), 22 (19.3.5).
+
+== Related
+
+- link:index.adoc[index]
+- link:src-ostrom-irc-iad.adoc[src-ostrom-irc-iad]
+- link:src-iad-guide.adoc[src-iad-guide]
+- link:concept-rule-types.adoc[concept-rule-types]
+- link:concept-design-principles.adoc[concept-design-principles]
+- link:concept-exit-voice.adoc[concept-exit-voice]
+- link:claim-composable-bounded-institutions.adoc[claim-composable-bounded-institutions]
+- link:claim-multiplicity-stack.adoc[claim-multiplicity-stack]

@@ -1,0 +1,98 @@
+:title: Lewis & Aligica 2024 — The Ostroms on self-governance: the importance of cybernetics
+:type: src
+:status: drafted
+:date: 2026-08-04
+:author: assistant
+:agent: cybernetics
+:tags: cybernetics, feedback, requisite-variety, polycentricity, self-governance
+:cite: Paul Lewis & Paul Dragos Aligica, 2024, "The Ostroms on self-governance: the importance of cybernetics", Journal of Institutional Economics 20, e23, pp. 1–17 (open access, CC-BY)
+:doi: 10.1017/S1744137424000079
+:file: sources/the-ostroms-on-self-governance-the-importance-of-cybernetics.pdf
+:pages: printed pp. 1–17 = PDF pp. 1–17 (no offset)
+
+== What it is
+
+Intellectual history arguing that the Ostroms' theory of
+self-governance was built on cybernetics — control via feedback —
+absorbed chiefly from Ross Ashby (Vincent knew him at Stanford,
+1955–56). Supplies the mechanism-language behind polycentricity,
+requisite variety, and the three levels of rules.
+
+== Core claims
+
+1. pp. 1–2 — Ashby gave the Ostroms three things: requisite variety;
+   the necessity of a *hierarchy* of feedback mechanisms for
+   self-organization; and the rationale for Buchanan & Tullock's
+   levels-of-rules distinction.
+2. p. 3 — polycentric systems are "more likely than monocentric
+   systems to provide incentives leading to self-organized,
+   self-corrective institutional change" (Ostrom 1998).
+3. p. 4 — self-governed systems are complex adaptive systems adapting
+   "by changing the rules dynamically on the basis of experience";
+   competition among overlapping providers yields error-correcting
+   negative feedback as an unintended consequence.
+4. p. 6 — Vincent: "Ashby's theory of adaptive behaviour is today a
+   basic foundation of my own work."
+5. pp. 6–7 — Elinor 1995: a governance system regulating complex
+   systems "must have as much variety in the actions that it can
+   take" as the regulated system; the cross-case diversity of
+   rules-in-use in Governing the Commons instantiates the law.
+6. pp. 7–8 — homeostatic model: circular causality + tendency toward
+   stability + information flows linking them; negative feedback is
+   error-correcting, positive feedback is runaway.
+7. pp. 9–10 — the Ashby challenge: no first-order machine can switch
+   itself from error-aggravating to error-mitigating feedback; a
+   meta-level variable "alpha" is required — "the part can be
+   self-organizing within the whole S + α" (p. 9); hence compounded
+   hierarchies of feedback, Hofstadter strange loops (p. 10).
+8. p. 10 — the three rule levels are "an expression of the underlying
+   logic of the very phenomenon of self-organization" per cybernetics,
+   not mere induction from federalism.
+9. p. 11 — Vincent restates Madison's checks as "the general veto
+   theorem formulated by W. Ross Ashby in Design for a Brain";
+   fn. 14: overlapping units transmit what worked; larger systems back
+   up failing small ones.
+10. pp. 12–13 — level-shifting (using collective-choice rules to
+    change operational rules) *is* the negative-feedback / alpha
+    mechanism in IAD terms; fn. 19: those who cannot level-shift are
+    "stuck in a single-tier world."
+
+== Key concepts
+
+- link:concept-requisite-variety.adoc[concept-requisite-variety] (pp. 5–7)
+- link:concept-polycentricity.adoc[concept-polycentricity] (pp. 3–4, 10–11: countervailing controls as multi-level feedback)
+- link:concept-adaptive-governance.adoc[concept-adaptive-governance] (pp. 7–10: feedback, homeostasis, alpha, second-order cybernetics)
+- link:concept-rule-levels.adoc[concept-rule-levels] (fn. 12 p. 8; pp. 12–13 level-shifting as feedback)
+- link:concept-ideas-artifacts-facilities.adoc[concept-ideas-artifacts-facilities] (fn. 18 pp. 12–13: rules as artifacts, artisanship)
+
+== Hooks to the Nostr thesis
+
+- Kind-1984 reports as pure cybernetic signal: information input closed
+  by a *different* actor — link:claim-split-sanctions.adoc[claim-split-sanctions]; Nostr wires the
+  loop observably, event by event — link:claim-formation-observable.adoc[claim-formation-observable].
+- Exit among overlapping relay providers = the paper's error-correcting
+  competition (p. 4) — link:concept-interjurisdictional-competition.adoc[concept-interjurisdictional-competition], link:concept-exit-voice.adoc[concept-exit-voice].
+- Gated-but-interoperable relays as S + α structures — link:claim-composable-bounded-institutions.adoc[claim-composable-bounded-institutions], link:claim-relay-spectrum.adoc[claim-relay-spectrum].
+- "Stuck in a single-tier world" (fn. 19) is the centralized-platform
+  contrast case — link:claim-no-global-bannability.adoc[claim-no-global-bannability].
+
+== Tensions / open questions
+
+- The paper's alpha is vertical; Nostr's uncoordinated multi-layer
+  exclusion is lateral and plural — link:concept-adaptive-governance.adoc[concept-adaptive-governance],
+  link:claim-multiplicity-stack.adoc[claim-multiplicity-stack].
+- Homeostasis presumes a shared setpoint; Nostr has none —
+  substrate- vs community-homeostasis, see link:q-generativity-robustness.adoc[q-generativity-robustness].
+- Veto theorem inverted: on Nostr no part has veto over the whole —
+  link:q-decoupled-vs-unitary-sanctions.adoc[q-decoupled-vs-unitary-sanctions].
+- Mechanism-language without observational method — Nostr is the
+  observatory the cybernetic account never had — link:concept-survivorship-bias.adoc[concept-survivorship-bias].
+
+== Related
+
+- link:index.adoc[index]
+- link:src-digging-deeper.adoc[src-digging-deeper]
+- link:src-iad-guide.adoc[src-iad-guide]
+- link:concept-iad-framework.adoc[concept-iad-framework]
+- link:claim-expand-contract.adoc[claim-expand-contract]
+- link:q-does-competition-improve-governance.adoc[q-does-competition-improve-governance]

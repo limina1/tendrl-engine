@@ -1,0 +1,101 @@
+:title: Alston, Law, Murtazashvili & Weiss 2022 — Blockchain networks as constitutional and competitive polycentric orders
+:type: src
+:status: drafted
+:date: 2026-08-04
+:author: assistant
+:agent: blockchain-tier2
+:tags: polycentricity, constitutional-political-economy, competition, forking, tier2
+:cite: Eric Alston, Wilson Law, Ilia Murtazashvili & Martin Weiss, 2022, "Blockchain networks as constitutional and competitive polycentric orders," Journal of Institutional Economics 18(5): 707–723
+:doi: 10.1017/S174413742100093X
+:file: sources/tier2-Blockchain networks as constitutional and competitive polycentric orders.pdf
+:pages: journal 707–723
+
+== What it is
+
+Corrective to the static "trustless machine" view: protocols evolve
+under INTERNAL forces (constitutional political economy — design,
+power concentrations, collective choice) and EXTERNAL forces
+(industrial-organization competition among rival networks, plus
+states). Evidence: two crisis episodes (block-size/BCH, DAO/ETH-ETC),
+a power-law commit chart, a comparative table of rival chains.
+
+== Core claims
+
+1. The received view is "overly static"; protocols "evolve in response
+   to users' threat to exit" and polycentric forces (707).
+2. Protocols are constitutions: they define network citizenship,
+   "determine exit costs and enumerate the participants' powers"
+   (708, 711).
+3. Protocol change is constitutional and redistributive: block size
+   was "a seemingly technical choice [with] significant redistributive
+   implications" (712–713).
+4. "Protocols cannot amend themselves and adjudicate unanticipated
+   conflicts," so "the burden of governance falls on humans and
+   usually only a few humans" (713).
+5. Developer influence is power-law concentrated (Fig. 1, 714) but
+   checked: miners/users must adopt changes; consensus is a
+   coordination-game equilibrium; forking is the escape valve — "the
+   threat of a new competitor is a strong governing force" (714–715).
+6. Competition is external governance: platforms "compete for users
+   and, as a result, indirectly govern one another" (715); market
+   foot-voting beats electoral majorities (715–716); ordinary "users
+   can only influence governance by exiting" (716).
+7. Markets for governance may yield more efficient institutions —
+   conditional on informed users; under rational ignorance a small
+   class of governance specialists is disciplined by exit threat (720).
+
+== As a format model
+
+Corrective-to-static-view template: (1) concede and survey received
+institutional praise; (2) mechanism primer for the institutionalist
+reader; (3) internal-governance theory via two named crises;
+(4) external-governance theory via a comparative table;
+(5) polycentric reframing + open research margins. The
+internal/external two-force scaffold is the signature, directly
+imitable move: Nostr internal = NIP process + per-relay policy;
+external = relay/client competition and rival protocols.
+
+== Hooks to the Nostr thesis
+
+- TRANSFERS: internal/external scaffold as organizing frame.
+- INVERTS: exit costs — network effects make exit costly (716);
+  portable keys/follow lists push Nostr's toward zero; episodic exit
+  threat becomes continuous discipline (link:concept-exit-voice.adoc[concept-exit-voice]).
+- BREAKS: forking as rare traumatic chain split (712–713); no chain,
+  so it degenerates into everyday relay choice/founding —
+  link:claim-relay-spectrum.adoc[claim-relay-spectrum], link:claim-expand-contract.adoc[claim-expand-contract].
+- BREAKS: no global-consensus requirement — NIPs adopted piecemeal;
+  their soft-fork easy case (714–715) generalized protocol-wide.
+- TRANSFERS: concentrated maintainer influence checked by
+  non-adoption (713–715); governance specialists under rational
+  ignorance (720) = relay operators/client devs —
+  link:concept-interjurisdictional-competition.adoc[concept-interjurisdictional-competition].
+- BREAKS: redistributive token stakes vanish (no token/miners/
+  treasury); conflict shifts to attention/moderation/interop; their
+  fn17 intrinsic-motivation fallback (714) becomes load-bearing.
+- TRANSFERS: claim 4 (713) as quotable bridge to the human governance
+  layer of reports/mutes/policies — link:claim-formation-observable.adoc[claim-formation-observable].
+
+== Tensions / open questions
+
+- Polycentricity asserted, not operationalized — no design-principle
+  audit (link:concept-polycentricity.adoc[concept-polycentricity], link:concept-design-principles.adoc[concept-design-principles]).
+- No user-voice mechanism short of exit (716); kind-1984 fills this
+  gap — link:claim-split-sanctions.adoc[claim-split-sanctions].
+- Two episodes + a table; no systematic event data. State/legal force
+  named but bracketed (715 fn21).
+- Exit disciplines only informed users (720); ignorance problem
+  raised, not resolved — link:q-does-competition-improve-governance.adoc[q-does-competition-improve-governance].
+
+== Related
+
+- link:index.adoc[index]
+- link:concept-tier2-triangle.adoc[concept-tier2-triangle]
+- link:src-exchange-theory-web3.adoc[src-exchange-theory-web3]
+- link:src-blockchain-knowledge-commons.adoc[src-blockchain-knowledge-commons]
+- link:concept-exit-voice.adoc[concept-exit-voice]
+- link:concept-interjurisdictional-competition.adoc[concept-interjurisdictional-competition]
+- link:concept-governance-as-software.adoc[concept-governance-as-software]
+- link:claim-no-global-bannability.adoc[claim-no-global-bannability]
+- link:q-decoupled-vs-unitary-sanctions.adoc[q-decoupled-vs-unitary-sanctions]
+- link:agent-blockchain-tier2.adoc[agent-blockchain-tier2]

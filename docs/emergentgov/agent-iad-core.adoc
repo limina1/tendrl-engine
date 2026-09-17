@@ -1,0 +1,71 @@
+:title: Agent session — iad-core (IAD foundations mapping)
+:type: agent
+:status: current
+:author: assistant
+:agent: iad-core
+:tags: provenance, session
+
+== Task
+
+Read the two foundational IAD sources in full, extract page-anchored
+notes, then write src- and concept- zettels for the IAD core
+vocabulary per the orchestrator's Phase 2 assignment. index.adoc left
+untouched (orchestrator maintains it).
+
+== Sources read
+
+- Ostrom 2007, "Institutional Rational Choice: An Assessment of the IAD
+  Framework," Sabatier (ed.), Theories of the Policy Process, 2nd ed.,
+  pp. 21–64. Full text (scratchpad extraction
+  ostrom-irc-iad-chapter; printed-page locators).
+- McGinnis 2010/2011, "An Introduction to IAD and the Language of the
+  Ostrom Workshop," sources/iad_guide.pdf. Full text via pdftotext;
+  printed pp. 1–28, PDF page = printed + 1.
+
+== Files written
+
+- link:src-ostrom-irc-iad.adoc[src-ostrom-irc-iad]
+- link:src-iad-guide.adoc[src-iad-guide]
+- link:concept-iad-framework.adoc[concept-iad-framework]
+- link:concept-action-arena.adoc[concept-action-arena]
+- link:concept-rules-in-use.adoc[concept-rules-in-use]
+- link:concept-rule-levels.adoc[concept-rule-levels]
+- link:concept-rule-types.adoc[concept-rule-types]
+- link:concept-adico-grammar.adoc[concept-adico-grammar]
+- link:concept-boundary-rules.adoc[concept-boundary-rules]
+- link:concept-graduated-sanctions.adoc[concept-graduated-sanctions]
+- link:concept-design-principles.adoc[concept-design-principles]
+- agent-iad-core (this note)
+
+== Flags for the human
+
+1. No clean IAD slot for no-global-bannability: boundary/entry-exit
+   rules always bound a specific situation; nothing in either source
+   models a substrate on which exclusion is possible everywhere locally
+   and impossible globally. Best available scaffold: McGinnis's default
+   conditions (p. 10) as the un-repealable baseline.
+2. Community-attributes strain: both sources make shared norms,
+   homogeneity, and multiplex ties (Ostrom p. 43; McGinnis p. 12) the
+   soil of rule formation; Nostr's pseudonymous open-entry population
+   lacks these yet forms rules anyway. Needs explicit treatment.
+3. Polycentricity definition (McGinnis p. 6) requires authorities that
+   _interact_ to set each other's conditions; relay operators mostly
+   don't. Either extend the concept (protocol as coordination medium)
+   or coin a distinct term. Left in link:concept-polycentricity.adoc[concept-polycentricity] (dangling).
+4. ADICO finding worth foregrounding: kind-1984 is a norm (ADIC), not a
+   rule — the Or Else is crowdsourced. See link:concept-adico-grammar.adoc[concept-adico-grammar].
+5. McGinnis's own "good practices" hedge (p. 19) plus Ostrom's p. 48
+   phrasing give direct textual support for the survivorship-bias
+   argument — no need to overclaim it.
+6. Design principle 7 (recognition by higher authorities) has no Nostr
+   referent; principle 8 (nested enterprises) may be the composability
+   motif's closest ancestor.
+7. Verbatim quotes were kept ≤25 words; all Ostrom locators are printed
+   book pages, all McGinnis locators are printed guide pages (add 1 for
+   PDF page).
+
+== Related
+
+- link:index.adoc[index]
+- link:conventions.adoc[conventions]
+- link:mission.adoc[mission]

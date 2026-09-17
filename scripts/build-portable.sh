@@ -88,7 +88,8 @@ docker run --rm -t \
     printf "char __libc_single_threaded __attribute__((weak)) = 0;\n" > /tmp/glibc_compat.c
     gcc -c -O2 -fPIC /tmp/glibc_compat.c -o /tmp/glibc_compat.o
     export RUSTFLAGS="${RUSTFLAGS:-} -Clink-arg=/tmp/glibc_compat.o"
-    cargo build --release
+    # keyring-vendored: libdbus compiled in (Secret Service client) — no libdbus-1.so.3 at runtime
+    cargo build --release --features keyring-vendored
     chown -R "${HOST_UID}:${HOST_GID}" "/src/'"${TARGET_SUBDIR}"'"
   '
 

@@ -1,0 +1,64 @@
+:title: The seven rule types — classified by impact on the action situation
+:type: concept
+:status: drafted
+:date: 2026-08-04
+:author: assistant
+:agent: iad-core
+:tags: rule-classification, boundary, payoff, configural
+
+== The idea
+
+Against "endless cataloging of rules," Ostrom classifies rules by which
+element of the action situation they affect (2007, pp. 37–38). Seven
+types (Ostrom p. 38; McGinnis pp. 9–10): _position_ rules create
+positions; _boundary_ rules — Ostrom's chapter calls them "entry and
+exit rules" — set who enters and leaves positions and on what terms;
+_authority_ (Ostrom: "choice") rules assign action sets to positions;
+_aggregation_ rules set how actions combine into outcomes (control);
+_scope_ rules delimit reachable outcomes; _information_ rules set what
+each position may know or must disclose; _payoff_ rules assign costs,
+benefits, and sanctions. The naming difference between the two sources
+(entry-and-exit vs boundary; authority vs choice) is cosmetic; the
+mapping to the seven situation elements is identical. The set operates
+as a configuration: one rule's effect depends on the others in force
+(Ostrom pp. 24–25, 38).
+
+Ostrom's CPR question battery (pp. 38–39) operationalizes each type;
+payoff rules carry the sanctioning questions ("Who is responsible for
+sanctioning nonconformers? How reliably...?" p. 39) —
+see link:concept-graduated-sanctions.adoc[concept-graduated-sanctions].
+
+For the fuller enumeration of boundary-rule variety observed in field
+settings (the 27+ boundary rules and the combinatorial-intractability
+point), see link:src-digging-deeper.adoc[src-digging-deeper] — not covered by this session's
+sources.
+
+== The Nostr engagement
+
+Every layer of the Nostr stack instantiates the same seven-type grid
+independently: a relay has boundary rules (allowlist/payment/open),
+information rules (what it serves to whom), payoff rules (rejection,
+deletion, banning from the relay); a client has its own; a label
+provider its own. Exclusion being "solved redundantly at every layer by
+uncoordinated actors" is, in IAD terms, many parallel rule
+configurations over one shared substrate — link:claim-multiplicity-stack.adoc[claim-multiplicity-stack],
+link:claim-relay-spectrum.adoc[claim-relay-spectrum]. The configural point cuts both ways: no single
+relay's rules can be evaluated in isolation, which is why global
+bannability fails structurally — link:claim-no-global-bannability.adoc[claim-no-global-bannability].
+
+== Sources
+
+- Ostrom 2007, pp. 37–39 (classification, definitions, CPR questions).
+- McGinnis, pp. 9–10 (7.2, boundary-rule naming).
+
+== Related
+
+- link:index.adoc[index]
+- link:src-ostrom-irc-iad.adoc[src-ostrom-irc-iad]
+- link:src-iad-guide.adoc[src-iad-guide]
+- link:src-digging-deeper.adoc[src-digging-deeper]
+- link:concept-action-arena.adoc[concept-action-arena]
+- link:concept-boundary-rules.adoc[concept-boundary-rules]
+- link:concept-graduated-sanctions.adoc[concept-graduated-sanctions]
+- link:concept-adico-grammar.adoc[concept-adico-grammar]
+- link:concept-requisite-variety.adoc[concept-requisite-variety]

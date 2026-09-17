@@ -1,0 +1,105 @@
+:title: Hess & Ostrom 2003 — Ideas, Artifacts, and Facilities
+:type: src
+:status: drafted
+:date: 2026-08-04
+:author: assistant
+:agent: hess-ostrom
+:tags: cpr, knowledge-commons, property-rights, enclosure
+:cite: Charlotte Hess & Elinor Ostrom, 2003, "Ideas, Artifacts, and Facilities: Information as a Common-Pool Resource," Law and Contemporary Problems 66(1/2), 111–145
+:file: sources/Ideas Artifacts and Facilities Information as a Common-Pool Resource.pdf
+:pages: printed 111–145; PDF page = printed − 109 (JSTOR cover is PDF p.1)
+
+== What it is
+
+The founding transfer of CPR theory to information, from the Duke
+Public Domain conference (2001). Introduces the three-way
+ideas/artifacts/facilities resource decomposition that the 2007 UKAC
+framework chapter later imports as the "biophysical characteristics"
+of knowledge (link:src-analyzing-knowledge-commons.adoc[src-analyzing-knowledge-commons]).
+
+== Core claims
+
+1. (112) Enclosure via law–technology conflict: "Information that used
+   to be 'free' is now increasingly being privatized, monitored,
+   encrypted, and restricted."
+2. (113) "[C]ollective action and new institutional design play as
+   large a part in the shaping of scholarly information as do legal
+   restrictions and market forces."
+3. (116–118) Hardin/Gordon/Scott theory is valid only as a special
+   case (open access, no communication); organizing rules is itself a
+   second-level dilemma, monitoring/sanctioning a third-level one.
+4. (119–120) Goods classify on two axes, subtractability × cost of
+   exclusion (Figure 1, p. 120); "common-property resource" conflates
+   good with regime — see link:concept-cpr-vs-knowledge-commons.adoc[concept-cpr-vs-knowledge-commons].
+5. (121) Facilities can be constructed CPRs: "mainframe computers and
+   the Internet"; Internet flow units are "data packets or the
+   computer files (information artifacts)" depending on layer studied.
+6. (121–123) Open access ≠ common property; nationalizing de facto
+   commons produced de facto open access — state control "less
+   effective and efficient than control by those directly affected."
+7. (124–127) Property = bundles of five rights (access, extraction,
+   management, exclusion, alienation) held by positions from entrant
+   to owner; "no set of property rights work equivalently in all
+   types of settings" (127). See link:concept-property-rights-bundles.adoc[concept-property-rights-bundles].
+8. (129–130) The namesake move: replace system/units with a three-way
+   artifact/facility/ideas distinction (Figure 2, p. 129). See
+   link:concept-ideas-artifacts-facilities.adoc[concept-ideas-artifacts-facilities].
+9. (134) Licensing replaces sale → centralization → "less stable and
+   more 'fugitive' artifacts, in that the publishers have the right
+   of withdrawal." Lynch's Alexandria warning (137); LOCKSS as the
+   decentralized-copies remedy (137).
+10. (138) "[I]n the digital world, where no access is possible except
+    by copying, complete control of copying would mean control of
+    access as well" (quoting The Digital Dilemma).
+11. (139–143) Counter-movement: arXiv (free, unrefereed, readers
+    judge quality, 139); OAI interoperability standards where the
+    artifact is a "record" (141); self-archiving authors participate
+    "independently of governments and markets, in an international
+    epistemic community" (143).
+12. (143–144) Trusted Digital Repository attributes are explicitly
+    called "design principles" for sustaining information as a CPR.
+13. (144–145) "Governments, market forces, publishers, and traditional
+    academic libraries can influence, but are not able to stop, the
+    international movement of distributed information"; scholars shift
+    from "passive appropriator" to "active provider."
+
+== Key concepts
+
+- link:concept-ideas-artifacts-facilities.adoc[concept-ideas-artifacts-facilities] (pp. 128–134)
+- link:concept-cpr-vs-knowledge-commons.adoc[concept-cpr-vs-knowledge-commons] (pp. 114–123)
+- link:concept-property-rights-bundles.adoc[concept-property-rights-bundles] (pp. 124–127)
+- link:concept-design-principles.adoc[concept-design-principles] (TDR adaptation, p. 144)
+
+== Hooks to the Nostr thesis
+
+- Facility definition (129–130) reads as a relay spec: storage,
+  membership rules, conduct rules, guards, maintenance.
+- Right-of-withdrawal asymmetry (134, 144) inverted by multi-relay
+  broadcast: LOCKSS-by-default — link:claim-no-global-bannability.adoc[claim-no-global-bannability].
+- Flow rights vs. system rights held by different actors (126) =
+  authorship decoupled from hosting.
+- OAI records / low-barrier standards (141, 145) ≈ NIPs and typed
+  event kinds — link:claim-composable-bounded-institutions.adoc[claim-composable-bounded-institutions].
+- arXiv's reader-side quality judgment (139) prefigures decoupled,
+  non-binding moderation signals — link:claim-split-sanctions.adoc[claim-split-sanctions].
+
+== Tensions / open questions
+
+- Threat model is enclosure; over-contribution (spam/pollution) and
+  coordinated exclusion barely appear — link:q-goods-typology-fit.adoc[q-goods-typology-fit].
+- Contributors assumed benign; no adversarial analysis — link:q-boundary-sybil.adoc[q-boundary-sybil].
+- Removal rights treated as defect (fugitive archives, 144); Nostr
+  makes artifacts effectively irrevocable, trading the fugitive
+  problem for a right-to-be-forgotten strain.
+
+== Related
+
+- link:index.adoc[index]
+- link:src-analyzing-knowledge-commons.adoc[src-analyzing-knowledge-commons]
+- link:src-ukac-introduction.adoc[src-ukac-introduction]
+- link:concept-ideas-artifacts-facilities.adoc[concept-ideas-artifacts-facilities]
+- link:concept-property-rights-bundles.adoc[concept-property-rights-bundles]
+- link:concept-cpr-vs-knowledge-commons.adoc[concept-cpr-vs-knowledge-commons]
+- link:concept-iad-framework.adoc[concept-iad-framework]
+- link:claim-no-global-bannability.adoc[claim-no-global-bannability]
+- link:claim-multiplicity-stack.adoc[claim-multiplicity-stack]

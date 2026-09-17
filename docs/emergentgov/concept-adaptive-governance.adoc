@@ -1,0 +1,62 @@
+:title: Adaptive governance as feedback architecture
+:type: concept
+:status: drafted
+:agent: cybernetics
+:tags: cybernetics, feedback, homeostasis, second-order, level-shifting
+
+== The idea
+
+The cybernetic reading of governance: a system acts on information
+input and feeds its own action back into subsequent behavior. The
+homeostatic model has three elements — circular causality, tendency
+toward stability, and information flows linking them (Lewis & Aligica
+2024, p. 8). Negative feedback is error-correcting; positive feedback
+is runaway. Ashby's challenge (the autopilot, pp. 9–10): no
+first-order machine can switch itself from error-aggravating to
+error-mitigating feedback; a meta-level variable alpha is needed —
+"the part can be self-organizing within the whole S + α" (p. 9).
+Self-governance therefore requires compounded hierarchies of feedback
+mechanisms — second-order cybernetics, strange loops (p. 10).
+
+In IAD terms the alpha is the higher rule level: dissatisfied actors
+level-shift, using collective-choice rules to change operational rules
+— rule change *is* the negative feedback (pp. 12–13). This is why the
+three levels of rules are "an expression of the underlying logic of
+the very phenomenon of self-organization" (p. 10), and why deep-level
+change being harder and costlier (Ostrom 2005/2025, p. 96) stabilizes
+the loop rather than obstructing it.
+
+== Sources
+
+- link:src-ostroms-cybernetics.adoc[src-ostroms-cybernetics] pp. 7–13 (feedback, alpha, level-shifting)
+- link:src-digging-deeper.adoc[src-digging-deeper] pp. 82, 96–99 (outcome feedback; nesting; new-situation analysis)
+- link:src-iad-guide.adoc[src-iad-guide] p. 9 (level-shifting as forum-shopping)
+
+== The Nostr case
+
+Expand–contract boundary dynamics are homeostasis in the wild: a spam
+wave hits, boundary rules tighten, pressure passes, they relax — and
+every correction is a signed, timestamped event, so the loop's wiring
+is observable rather than inferred (link:claim-expand-contract.adoc[claim-expand-contract],
+link:claim-formation-observable.adoc[claim-formation-observable]). The strain: Ashby's alpha is nested
+*above* its loop, but Nostr's exclusion layers (client mute, relay
+policy, WoT score, curated list) are parallel and uncoordinated —
+each acts as alpha for failures of the others without standing over
+them. The Nostr case suggests a lateral, plural alpha: redundant
+peer-level correctors substituting for a meta-level, an extension
+second-order cybernetics does not contemplate. And with no shared
+setpoint across relays, what is held homeostatic is the substrate
+(protocol interoperability), not community outcomes — distinguish
+substrate-homeostasis from community-homeostasis.
+
+== Related
+
+- link:index.adoc[index]
+- link:concept-requisite-variety.adoc[concept-requisite-variety]
+- link:concept-polycentricity.adoc[concept-polycentricity]
+- link:concept-rule-levels.adoc[concept-rule-levels]
+- link:concept-institutional-invisibility.adoc[concept-institutional-invisibility]
+- link:claim-multiplicity-stack.adoc[claim-multiplicity-stack]
+- link:claim-split-sanctions.adoc[claim-split-sanctions]
+- link:q-generativity-robustness.adoc[q-generativity-robustness]
+- link:q-maturation-hypothesis.adoc[q-maturation-hypothesis]

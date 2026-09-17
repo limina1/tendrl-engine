@@ -1,0 +1,99 @@
+:title: Alston (working paper) — Digital Constitutionalism: Constraining Authority in Network-Coordinated Digital Orders
+:type: src
+:status: drafted
+:date: 2026-08-04
+:author: assistant
+:agent: alston-gkc
+:tags: constitutionalism, blockchain, exit, entrenchment, auditability, polycentricity
+:cite: Eric Alston, working paper (n.d.; cites Alston & Byerly 2026), "Digital Constitutionalism: Constraining Authority in Network-Coordinated Digital Orders", unpublished, Univ. of Wyoming College of Law
+:file: sources/tier-3 Digital Constitutionalism Constraining Authority in Network-Coordinated Digital Orders.pdf
+:pages: no printed pagination; locators are PDF pp. 1–24 (refs pp. 21–24)
+
+== What it is
+
+A literature-synthesizing argument that constraining authority in
+protocol-coordinated orders requires constitutional thinking, plus a
+positive thesis: "dynamic fidelity" — distributed protocol-update
+authority produces emergent checks and balances that make protocol
+commitments more credible than under concentrated authority.
+
+== Core claims
+
+1. p. 1 — dynamic fidelity: distribution of update authority among
+   "independent classes of actors (validators, developers, users, and
+   complementors) produces emergent checks and balances."
+2. pp. 1–2 — governance doesn't disappear digitally; it "migrates to
+   actors and layers"; constraint depends on ability to contest or exit
+   "the actual governor(s) exercising control at the relevant layer."
+3. p. 2 — blockchains as epistemic windfall: governance conflicts
+   "provide a high-frequency laboratory for studying institutional
+   evolution."
+4. pp. 3–4 — code-governance is incomplete under non-ergodic action;
+   norms are essential complements to protocolized institutions.
+5. pp. 5–6 — typology: platforms constrain via procedural mechanisms
+   inside centralized discretion; distributed networks via architectural
+   mechanisms; each fits different coordination problems.
+6. pp. 8–9 — four governance levels: by protocol, subsidiary
+   (off-chain), competitive (exit), superior (state law); IAD's three
+   rule levels mapped onto blockchain layers (p. 8).
+7. p. 9 — protocol automates commons functions: "monitoring,
+   sanctioning, and rule enforcement through protocol" (slashing as
+   graduated sanctions); pseudonymity removes traditional social
+   enforcement infrastructure (pp. 9–10).
+8. pp. 11–12 — forking = constitutional exit with a "narrow feasibility
+   window": complementor veto players (Circle/Tether at the Merge) make
+   mature-network schisms nonviable; threat still disciplines.
+9. pp. 12–14 — North & Weingast analogy: centralized-platform users are
+   "always in the position of the pre-Glorious Revolution English lender."
+10. pp. 17–18 — entrenchment + auditability mutually reinforce; Ostrom's
+    monitoring costs "are substantially reduced when the rules and their
+    application are legible by default."
+11. p. 20 — expressive protocols need entrenchment only of
+    "permissionless access, pseudonymous participation, and
+    non-discretionary execution," flexibility elsewhere.
+12. pp. 15–17 — caveats: entrenchment protects unjust rules equally;
+    de facto power relocates to microstructure layers (builders/relays,
+    Heimbach et al 2023) even when core rules stay distributed.
+
+== Key concepts
+
+- link:concept-dynamic-fidelity.adoc[concept-dynamic-fidelity] (pp. 12–18)
+- link:concept-polycentricity.adoc[concept-polycentricity] (pp. 8–10); link:concept-rule-levels.adoc[concept-rule-levels] (p. 8)
+- link:concept-exit-voice.adoc[concept-exit-voice], link:concept-interjurisdictional-competition.adoc[concept-interjurisdictional-competition] (pp. 7, 11–12)
+- link:concept-graduated-sanctions.adoc[concept-graduated-sanctions] (p. 9); link:concept-governance-as-software.adoc[concept-governance-as-software] (pp. 3–4)
+
+== Hooks to the Nostr thesis
+
+- The "high-frequency laboratory" (p. 2) warrants link:claim-formation-observable.adoc[claim-formation-observable];
+  Nostr extends it from fork conflicts to everyday moderation events.
+- No consensus mechanism on Nostr — so what entrenches protocol
+  commitments? Candidate: implementation plurality (clients/relays) +
+  NIP process = his complementor logic without validators —
+  link:concept-dynamic-fidelity.adoc[concept-dynamic-fidelity], link:q-generativity-robustness.adoc[q-generativity-robustness].
+- Exit costs deliberately collapsed at the relay layer (identity + graph
+  portable), keeping exit-discipline cheap at scale, contra pp. 5,
+  11–12 — link:claim-no-global-bannability.adoc[claim-no-global-bannability], link:claim-relay-spectrum.adoc[claim-relay-spectrum].
+- Kind-1984 as norm-shaped signal with distributed enforcement fits his
+  norms/institutions complement — link:claim-split-sanctions.adoc[claim-split-sanctions].
+- Resistance to state coercion via no single pressure point (p. 17) —
+  but his Heimbach caveat transfers: big relays/default clients as
+  adjacent-layer power — link:claim-multiplicity-stack.adoc[claim-multiplicity-stack], link:q-does-competition-improve-governance.adoc[q-does-competition-improve-governance].
+
+== Tensions / open questions
+
+- Blockchain-centric: token incentives do his entrenchment work; Nostr
+  entrenchment is unexplained by his mechanism — link:q-maturation-hypothesis.adoc[q-maturation-hypothesis].
+- Sybil/identity gap flagged (pp. 9–10) but unresolved — link:q-boundary-sybil.adoc[q-boundary-sybil].
+- Content moderation assumed centralized-procedural; Nostr's non-binding
+  decentralized report layer is outside his typology —
+  link:q-decoupled-vs-unitary-sanctions.adoc[q-decoupled-vs-unitary-sanctions].
+- Working paper; key empirics rest on the author's own forthcoming work.
+
+== Related
+
+- link:index.adoc[index]
+- link:src-governing-knowledge-commons.adoc[src-governing-knowledge-commons]
+- link:src-fuster-morell-occ.adoc[src-fuster-morell-occ]
+- link:concept-iad-framework.adoc[concept-iad-framework]
+- link:concept-design-principles.adoc[concept-design-principles]
+- link:claim-worst-case-hosts-best-case.adoc[claim-worst-case-hosts-best-case]

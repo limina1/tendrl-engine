@@ -2273,6 +2273,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "hkdf"
+version = "0.12.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7b5f8eb2ad728638ea2c7d47a21db23b7b58a72ed6a38256b8a1849f15fbbdf7"
+dependencies = [
+ "hmac",
+]
+
+[[package]]
 name = "hmac"
 version = "0.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3448,24 +3457,29 @@ checksum = "0676bb32a98c1a483ce53e500a81ad9c3d5b3f7c920c28c24e9cb0980d0b5bc8"
 
 [[package]]
 name = "nostr-engine"
-version = "0.13.4"
+version = "0.14.0"
 dependencies = [
  "anyhow",
  "async-stream",
  "async-trait",
  "axum",
+ "base64 0.22.1",
  "bech32",
+ "chacha20 0.9.1",
  "chacha20poly1305",
  "clap",
  "epub",
  "fastembed",
  "futures",
  "hex",
+ "hkdf",
+ "hmac",
  "html2text",
  "nanoid",
  "nostrdb",
  "pdf-extract",
  "quick-xml 0.40.1",
+ "rand 0.8.7",
  "reqwest 0.12.28",
  "rust-embed",
  "scrypt",
@@ -5876,7 +5890,7 @@ dependencies = [
 
 [[package]]
 name = "tendrl-mobile"
-version = "0.13.4"
+version = "0.14.0"
 dependencies = [
  "anyhow",
  "getrandom 0.3.4",

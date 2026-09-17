@@ -1,0 +1,36 @@
+:title: Split sanctions — signal and enforcement decoupled
+:type: claim
+:status: drafted
+:drafted-by: assistant
+:tags: sanctions, kind-1984, decoupling, novelty
+
+The cleanest novelty for institutional economics. Ostrom's graduated
+sanctions (design principle 5) were *unitary*: whoever sanctions also
+enforces. Nostr splits them. A report (kind 1984) is a costly, typed,
+public, **non-binding** signal — and a *different* actor decides what
+it means: a relay filters on it, a client scores it into a web of
+trust, a user ignores it.
+
+In ADICO terms the report is an institutional statement with no "Or
+Else" of its own; the O is crowdsourced by uncoordinated enforcers
+(link:concept-adico-grammar.adoc[concept-adico-grammar]). In
+cybernetic terms the signal is the information flow and someone else
+closes the loop
+(link:concept-adaptive-governance.adoc[concept-adaptive-governance]).
+Whether decoupling governs better or worse than unitary enforcement is
+the open, publishable question:
+link:q-decoupled-vs-unitary-sanctions.adoc[q-decoupled-vs-unitary-sanctions].
+
+Kept-ready concrete observation: high-centrality reporters appear to
+trigger relay filtering while peripheral ones do not — makes the
+thread concrete without overselling the data.
+
+== Related
+
+- link:index.adoc[index]
+- link:concept-graduated-sanctions.adoc[concept-graduated-sanctions]
+- link:concept-adico-grammar.adoc[concept-adico-grammar]
+- link:concept-guardianship-without-office.adoc[concept-guardianship-without-office]
+- link:claim-multiplicity-stack.adoc[claim-multiplicity-stack]
+- link:claim-formation-observable.adoc[claim-formation-observable]
+- link:q-decoupled-vs-unitary-sanctions.adoc[q-decoupled-vs-unitary-sanctions]

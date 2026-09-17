@@ -1,0 +1,39 @@
+:title: Multiplicity — exclusion solved at every layer at once
+:type: claim
+:status: drafted
+:date: 2026-08-04
+:drafted-by: assistant
+:tags: filtering, stack, redundancy, unenumerability
+
+Exclusion is not solved once. The same function is solved at every
+layer at once, by independent actors who never coordinate: internet
+infrastructure (DNS, CDN) → relay filtering → named specs → client
+web-of-trust the user picks. The space is open at both ends:
+
+- *a-priori*: a developer guesses a threat in advance — e.g. a client
+  auto-filtering anyone with 5 reports from your follow list.
+- *a-posteriori*: a user adds quality after the fact — "I vouch for
+  this person" attestations.
+
+Standing discipline #1: name three or four methods as *samples from an
+open space*, then refuse to finish the list — new ones ship faster
+than anyone could catalogue them. **The unenumerability is the
+finding, not a gap.** Enumerating "the N mechanisms" reintroduces the
+taxonomy trap (contrast the closed 24-mechanism catalogue in
+link:src-open-content-governance.adoc[src-open-content-governance]).
+Ostrom's own 27+ boundary rules and "no analyst can perform a complete
+analysis" (link:src-digging-deeper.adoc[src-digging-deeper],
+pp. 90–91) is the direct ancestor of this discipline; requisite
+variety is its theory
+(link:concept-requisite-variety.adoc[concept-requisite-variety]).
+
+== Related
+
+- link:index.adoc[index]
+- link:concept-requisite-variety.adoc[concept-requisite-variety]
+- link:concept-polycentricity.adoc[concept-polycentricity]
+- link:concept-governance-as-software.adoc[concept-governance-as-software]
+- link:claim-split-sanctions.adoc[claim-split-sanctions]
+- link:claim-no-global-bannability.adoc[claim-no-global-bannability]
+- link:q-generativity-robustness.adoc[q-generativity-robustness]
+- link:q-boundary-sybil.adoc[q-boundary-sybil]

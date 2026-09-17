@@ -1,3 +1,40 @@
+## v0.14.0 — 2026-09-16
+
+- docs(kasten): decision — no OS keyring backend, nsec signing to be phased out
+- docs(plan): assistant-slot bunker verified live against nak bunker
+- feat(signing): bunker + Amber for the assistant slot — any identity, any transport
+- feat(signing): NIP-46 bunker as a signing source + named sign_as — plan Phase 2
+- docs(kasten): decision — buffers re-read shared engine state on mount
+- docs(commands): headless GUI-drive gotchas for the context-set check
+- feat(context): engine-owned context set — plan Phase 1
+- docs(plan): 5b — annotations buffer on the phone: one at a time, view switch in-header
+- docs(plan): D7 — the annotations table is one buffer with views; arrangement is the WM's
+- docs(plan): D9 — post-it treatment resolved: B structure, A skin, C narrow layout
+- docs(plan): annotations table (D7) + create-annotation form (D8); load takes a spell
+- docs(kasten): feat-mcp, context-set-as-collection, load-on-demand; promotion = copy the index
+- fix(modal): read the event kind before onclose() nulls the prop
+- docs: insertions spec, engine-owned context set, assistant signing — design pass
+- fix(reader): restore the scroll position in scroll mode, not just the section
+- chore: bump version to 0.13.4
+- chore: bump version to 0.13.3
+- chore: bump version to 0.13.2
+- chore: bump version to 0.13.1
+- docs(kasten): where buffer state lives — decision zettel, reader/discussions/ui-patterns updates
+- feat(emacs): tendrl.el — fetch an event into a read-only buffer, raw JSON kept apart
+- docs: mirror the ngit issue tracker in bugs.org; ngit + headless-CDP recipes
+- fix(web): typed-but-unsent text survives a buffer switch
+- fix(reader): remember the reading place across buffer switches
+- fix(web): a highlight over a wikilink keeps the link
+- docs(nostrdown): formalize target forms — pointer / handle in the grammar, classification order, reach and tag per form
+- docs(nostrdown): spec revision 2 — roles not scopes, the modifier rule, revision notes
+- chore(release): v0.13.0 — NIP-42 relay auth
+- docs(nip42): plan, decision zettel, verify recipe, module map
+- feat(web): relay auth pill is real — NIP-42 opt-in, passive auth statuses
+- feat(nip42): relay auth — opt-in per relay, signed as the user, never prompted
+- feat(nostrdown): ref scope follows the target form — entity refs may leave the document
+- feat(emacs): M-x nostrdown entry point — turn the layer on and resolve now
+- feat(emacs): nostrdown-mode — {{ }} reference layer over Org/Markdown/AsciiDoc
+
 ## v0.13.0 — 2026-09-15
 
 - docs(nip42): plan, decision zettel, verify recipe, module map
