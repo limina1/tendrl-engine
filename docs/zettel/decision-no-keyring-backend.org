@@ -11,7 +11,10 @@ platform backend: Secret Service over D-Bus on Linux
 (=sync-secret-service= + =crypto-rust=, pure-Rust crypto, no OpenSSL;
 gnome-keyring / KDE ksecretd / KeePassXC all serve it), =apple-native= on
 macOS, =windows-native= on Windows. Entries live under service
-=nostr-engine=. What persists across a restart: the user's ncryptsec, the
+=nostr-engine:<8 hex of sha256(data dir)>= — scoped per data directory
+(=identity::set_keyring_namespace= at boot), because two engines on one
+machine (the live one and a scratch verify run) sharing one slot
+overwrote each other's assistant pairing on 2026-09-17. What persists across a restart: the user's ncryptsec, the
 assistant's ncryptsec + pubkey, and a bunker pairing (URI + transport
 secret) for either slot — boot reconnects the bunker
 (=server.rs::restore_assistant_identity=, the =nip46= last-identity
