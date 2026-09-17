@@ -1,7 +1,17 @@
+<script module lang="ts">
+	// The nonce of the last table→reader jump this module applied
+	// (docs/annotations-table-contract.org). Module scope on purpose: a
+	// reader that remounts after a buffer switch must not replay a jump it
+	// already made, and a jump is never state — nothing renders from it.
+	let appliedJumpNonce = 0;
+</script>
+
 <script lang="ts">
 	import { tick, untrack } from 'svelte';
 	import * as api from '$lib/api';
 	import { getAppState } from '$lib/state.svelte';
+	import { annotationsBufferId } from '$lib/components/annotations/table-model';
+	import { reading, readingVars, setReadingNotesLayout } from '$lib/theme/reading.svelte';
 	import ContinuousView from '$lib/components/ContinuousView.svelte';
 	import PaginatedView from '$lib/components/PaginatedView.svelte';
 	import FocusGraph, { type GraphNode } from '$lib/components/FocusGraph.svelte';
@@ -341,6 +351,9 @@
 		const m: Record<string, api.LoadedInsertion[]> = {};
 		for (const i of insertions) {
 			if (indexed.has(i.coordinate)) continue;
+			// A signed annotation request is a 30041 too, but it is drawn by
+			// RequestCard from the merged request list — never a pending note.
+			if (i.role === 'request') continue;
 			(m[i.anchor.parent] ??= []).push(i);
 		}
 		return m;
@@ -2230,6 +2243,106 @@
 
 	// The scrollable content column (keyboard top/bottom in scroll view).
 	let contentWrap: HTMLDivElement | undefined = $state();
+
+	// --- Annotations table ↔ this reader (docs/annotations-table-contract.org) ---
+	// The root the table is keyed on is the publication this reader shows —
+	// the same coordinate its notes are loaded against (`A:<root>`), so a
+	// refocus into a nested index tables that index.
+	const tableRoot = $derived(publication ? addrKey(publication.addr) : null);
+	const tableNoteCount = $derived(insertionsLoaded ? pendingInsertionCount : null);
+
+	type TreeNode = { type: 'leaf'; buffer: Buffer } | { type: 'split'; children: TreeNode[] };
+	function leafPathOf(tree: TreeNode, id: string, prefix: number[] = []): number[] | null {
+		if (tree.type === 'leaf') return tree.buffer.id === id ? prefix : null;
+		for (let i = 0; i < tree.children.length; i++) {
+			const p = leafPathOf(tree.children[i], id, [...prefix, i]);
+			if (p) return p;
+		}
+		return null;
+	}
+	// Desktop: split THIS reader's window (reader | table) — or focus the
+	// table when it is already a window in the same slot. Mobile: the table
+	// is the focused work buffer, listed in the drawer. The buffer is
+	// registered in `openBuffers` either way so the switcher and kill paths
+	// see it (splitFocused only edits the tree).
+	function openTable() {
+		const root = tableRoot;
+		if (!root) {
+			app.pushToast('Open a publication in a reader first', 'info');
+			return;
+		}
+		const buf: Buffer = {
+			id: annotationsBufferId(root),
+			kind: 'annotations',
+			label: 'annotations',
+			kicker: publication?.title || buffer.kicker || 'table'
+		};
+		if (shell.mode === 'mobile') {
+			store.openBuffer({ className: 'work', buffer: buf });
+			return;
+		}
+		if (!store.openBuffers.some((b) => b.buffer.id === buf.id)) {
+			store.openBuffers = [...store.openBuffers, { className: 'work', buffer: buf }];
+		}
+		// Put focus on this reader's own window first so the split lands
+		// beside it, not beside whatever pane happened to be focused.
+		for (const pos of Object.keys(store.slotTrees) as (keyof typeof store.slotTrees)[]) {
+			const tree = store.slotTrees[pos] as TreeNode | undefined;
+			if (!tree) continue;
+			const here = leafPathOf(tree, buffer.id);
+			if (!here) continue;
+			const there = leafPathOf(tree, buf.id);
+			store.focusedLeafPath = { ...store.focusedLeafPath, [pos]: there ?? here };
+			store.focusSlot(pos);
+			if (there) {
+				store.flash(pos);
+				return;
+			}
+			break;
+		}
+		store.splitFocused(buf, 'h');
+	}
+
+	// A table card's `§n` chip asked this reader to show its anchor. The
+	// effect tracks the jump and the section count (a jump can arrive
+	// before the tree has streamed — on mobile the reader remounts on the
+	// switch); everything else is read untracked, and nothing here starts a
+	// loader. The root coordinate means the top of the document.
+	$effect(() => {
+		const jump = app.readerJump;
+		const ready = sections.length > 0;
+		untrack(() => {
+			if (!jump || !ready || jump.nonce <= appliedJumpNonce) return;
+			if (!tableRoot || jump.root !== tableRoot) return;
+			appliedJumpNonce = jump.nonce;
+			const i = jump.addr === tableRoot ? 0 : sections.findIndex((s) => addrKey(s.addr) === jump.addr);
+			if (i < 0) return;
+			gotoSection(i, 'teleport');
+			if (viewMode === 'continuous') {
+				tick().then(() => {
+					if (jump.addr === tableRoot) continuousView?.scrollTo(0);
+					else continuousView?.scrollToSection(i);
+				});
+			} else if (contentWrap) {
+				contentWrap.scrollTop = 0;
+			}
+		});
+	});
+
+	// Hovering a table card lights its anchor section here.
+	const hotAddr = $derived(
+		app.hoverAnchor && tableRoot && app.hoverAnchor.root === tableRoot ? app.hoverAnchor : null
+	);
+
+	// D9 — notes beside the text (margin) only when the pane has room for the
+	// measure plus a 280 px gutter; a split pane or a narrow window falls
+	// back to inline, the phone folds either way. The measure is set in `ch`
+	// of the reading face, so a hidden probe resolves it to pixels.
+	let contentWidth = $state(0);
+	let measurePx = $state(0);
+	const notesMargin = $derived(
+		reading.notesLayout === 'margin' && measurePx > 0 && contentWidth >= measurePx + 320
+	);
 </script>
 
 <!-- Swipe is supplementary — the § toc button is the accessible path. -->
@@ -2398,6 +2511,14 @@
 								', from the local store. "fetch from relays" pulls new ones; never part of the index.'}
 					>{insertionsLoading ? '…' : insertionsLoaded ? `annotations ${pendingInsertionCount}` : 'show annotations'}</button>
 					<button
+						class="ins-table"
+						onclick={openTable}
+						disabled={!publication}
+						title={shell.mode === 'mobile'
+							? 'Open the annotations table for this publication — by section, by author, timeline, collective'
+							: 'Open the annotations table beside this reader — by section, by author, timeline, free, collective'}
+					>{tableNoteCount === null ? 'table' : `table ${tableNoteCount}`}</button>
+					<button
 						class="ins-scope"
 						onclick={() => (insertionsScope = insertionsScope === 'mine' ? 'anyone' : 'mine')}
 						disabled={insertionsLoading}
@@ -2498,6 +2619,12 @@
 					<span class="hint">faces &amp; measure — persists per device</span>
 				</div>
 				<ReadingControls compact />
+				<button
+					class="notes-layout"
+					class:on={reading.notesLayout === 'margin'}
+					onclick={() => setReadingNotesLayout(reading.notesLayout === 'margin' ? 'inline' : 'margin')}
+					title="Where loaded notes sit: beside the text in the margin (when the pane has room — a split pane or narrow window falls back to inline), or inline under their section"
+				>notes: {reading.notesLayout}</button>
 			</div>
 		</div>
 	{/if}
@@ -2649,10 +2776,15 @@
 			</div>
 		{/if}
 		<div
-			class="content"
+			class="content rd-content"
+			class:notes-margin={notesMargin}
 			bind:this={contentWrap}
+			bind:clientWidth={contentWidth}
 			onscroll={() => (scrollTops.content = contentWrap?.scrollTop ?? 0)}
 		>
+			<!-- Resolves the reading measure (`ch` of the reading face) to
+			     pixels for the margin-layout gate. Zero height, out of flow. -->
+			<span class="rd-measure-probe" style={readingVars()} bind:clientWidth={measurePx} aria-hidden="true"></span>
 			{#if viewMode === 'continuous'}
 				<ContinuousView
 					bind:this={continuousView}
@@ -2678,6 +2810,8 @@
 					requestsFor={requestsForSection}
 					{rootRequests}
 					onrequestschanged={loadRequests}
+					{hotAddr}
+					{notesMargin}
 					{resolution}
 				/>
 			{:else}
@@ -2699,6 +2833,8 @@
 					requestsFor={requestsForSection}
 					{rootRequests}
 					onrequestschanged={loadRequests}
+					{hotAddr}
+					{notesMargin}
 					publicationAtag={`${publication.addr.kind}:${publication.addr.pubkey}:${publication.addr.d_tag}`}
 					{resolution}
 				/>
@@ -3032,7 +3168,37 @@
 		flex-shrink: 0;
 		white-space: pre-wrap;
 	}
-	.content { flex: 1; overflow: auto; min-height: 0; }
+	.content { flex: 1; overflow: auto; min-height: 0; position: relative; }
+	/* The measure probe: `width: var(--rd-measure)` in the reading face and
+	   size, so its clientWidth is the measure in pixels. */
+	.rd-measure-probe {
+		display: block;
+		position: absolute;
+		top: 0;
+		left: 0;
+		height: 0;
+		width: var(--rd-measure, 0);
+		font-family: var(--rd-font, var(--font-sans));
+		font-size: var(--rd-size, var(--t-base));
+		visibility: hidden;
+		pointer-events: none;
+	}
+	/* notes: margin | inline — sits with the reading strip, styled like its toggles. */
+	.notes-layout {
+		background: none;
+		border: 1px solid var(--border);
+		border-radius: var(--r-sm, 3px);
+		color: var(--fg-muted);
+		font-family: var(--font-mono);
+		font-size: var(--t-3xs);
+		padding: 3px 8px;
+		cursor: pointer;
+	}
+	.notes-layout.on {
+		border-color: var(--id-yours);
+		color: var(--id-yours);
+		background: color-mix(in srgb, var(--id-yours) 12%, transparent);
+	}
 	.empty {
 		flex: 1;
 		display: flex;

@@ -19,6 +19,7 @@
 	import { reading } from '$lib/theme/reading.svelte';
 	import type { ResolvedRef, ParsedToken } from '$lib/nostr/nostrdown';
 	import { styleTitle } from '$lib/styles.svelte';
+	import { pubkeyToColor } from '$lib/discussions/colors';
 
 	let {
 		insertion,
@@ -203,12 +204,13 @@
 	class:icard--open={isOpen}
 	class:icard--insert={anchor.placement !== 'annotation'}
 	data-insertion={insertion.coordinate}
+	style="--au: {pubkeyToColor(ev.pubkey)}"
 >
 	<!-- Narrow-layout fold row: one 44 px line under the anchor. -->
 	<button class="icard__fold" onclick={toggle} aria-expanded={isOpen}>
 		<span class="icard__fold-cap">{placementLabel}</span>
 		<span class="icard__fold-title">{title || 'untitled'}</span>
-		<span class="icard__fold-by">{who} · {ago}</span>
+		<span class="icard__fold-by"><span class="icard__dot" aria-hidden="true"></span>{who} · {ago}</span>
 		<span class="icard__fold-ptr" aria-hidden="true">{isOpen ? '▾' : '▸'}</span>
 	</button>
 
@@ -218,7 +220,7 @@
 		{/if}
 		<div class="icard__who">
 			<span class="icard__cap">{placementLabel}</span>
-			<span class="icard__by">{who} · {ago} · pending</span>
+			<span class="icard__by"><span class="icard__dot" aria-hidden="true"></span>{who} · {ago} · pending</span>
 		</div>
 		{#if title}
 			<h4 class="icard__title">{title}</h4>
@@ -304,15 +306,17 @@
 {/if}
 
 <style>
-	/* Direction B — flat margin card, a left identity bar in the "local /
-	   not synced" hue: attached, pending, not part of the index. */
+	/* Direction B — flat margin card. The left rail is the author's colour
+	   (`--au`, the highlight recipe — the same hue the annotations table
+	   gives this author); the "local / not synced" hue stays on the
+	   pending pill and the promote action. */
 	.icard {
 		--ic-accent: var(--id-local);
 		position: relative;
 		margin: 8px 0 6px;
 		background: var(--bg-surface);
 		border: 1px solid var(--panel-border);
-		border-left: 2px solid var(--ic-accent);
+		border-left: 3px solid var(--au, var(--ic-accent));
 		border-radius: var(--r-sm, 3px);
 		font-family: var(--font-sans);
 		font-size: var(--t-xs);
@@ -345,9 +349,21 @@
 		color: var(--ic-accent);
 	}
 	.icard__by {
+		display: inline-flex;
+		align-items: center;
+		gap: 5px;
 		font-family: var(--font-mono);
 		font-size: calc(var(--t-xs) - 2px);
 		color: var(--base5);
+	}
+	/* Author dot — colour = author, as in highlights and on the table. */
+	.icard__dot {
+		display: inline-block;
+		flex: none;
+		width: 7px;
+		height: 7px;
+		border-radius: 50%;
+		background: var(--au, var(--ic-accent));
 	}
 	.icard__title {
 		margin: 0 0 6px;
@@ -468,9 +484,9 @@
 
 	/* --- sticky skin: same structure, dressed as a post-it --------------- */
 	.icard--sticky {
-		background: color-mix(in srgb, var(--id-local) 18%, var(--bg-surface));
-		border-color: color-mix(in srgb, var(--id-local) 35%, transparent);
-		border-left-width: 1px;
+		background: color-mix(in srgb, var(--au, var(--id-local)) 14%, transparent);
+		border-color: transparent;
+		border-left: 3px solid var(--au, var(--id-local));
 		border-radius: 2px;
 		box-shadow: 1px 2px 6px rgba(0, 0, 0, 0.18);
 		transform: rotate(-0.4deg);
@@ -525,6 +541,9 @@
 			font-weight: 600;
 		}
 		.icard__fold-by {
+			display: inline-flex;
+			align-items: center;
+			gap: 5px;
 			font-family: var(--font-mono);
 			font-size: calc(var(--t-xs) - 3px);
 			color: var(--base5);

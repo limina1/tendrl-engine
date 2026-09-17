@@ -10,6 +10,8 @@
 	import { getAppState } from '$lib/state.svelte';
 	import RichContent from './RichContent.svelte';
 	import type { ResolvedRef, ParsedToken } from '$lib/nostr/nostrdown';
+	import { getAuthorDisplayName } from '$lib/discussions/authors.svelte';
+	import { pubkeyToColor } from '$lib/discussions/colors';
 
 	let {
 		request,
@@ -26,6 +28,19 @@
 	/** A local record (`rq_…`) can be deleted or reopened; a request read
 	 *  off its signed event alone (`ev_…`) has no record to change. */
 	const isRecord = $derived(r.id.startsWith('rq_'));
+	// Whose ask this is: a signed request carries its signer in the
+	// coordinate; an unsigned local record is the user's own, coloured with
+	// their key when one is known. `--au` is the highlight recipe, the hue
+	// the annotations table gives the same author.
+	const authorPubkey = $derived.by(() => {
+		if (r.coordinate) return r.coordinate.split(':')[1] ?? null;
+		return app.identityStatus?.pubkey ?? app.myPubkey ?? null;
+	});
+	const au = $derived(authorPubkey ? pubkeyToColor(authorPubkey) : 'var(--base5)');
+	const mine = $derived(!!app.identityStatus?.pubkey && authorPubkey === app.identityStatus.pubkey);
+	const who = $derived(
+		!authorPubkey || mine || !r.coordinate ? 'you' : getAuthorDisplayName(authorPubkey)
+	);
 	let expanded = $state(false);
 	let busy = $state(false);
 
@@ -108,55 +123,62 @@
 	}
 </script>
 
-<div class="rqc" class:rqc--answered={answered} class:rqc--open={expanded} data-request={r.id}>
-	<button class="rqc__head" onclick={() => (expanded = !expanded)} aria-expanded={expanded}>
-		<span class="rqc__cap">{answered ? '✓ answered' : '? ask'}</span>
-		<span class="rqc__task">{r.title ? `${r.title} — ` : ''}{r.task}</span>
-		<span class="rqc__meta">{r.coordinate ? 'signed · ' : ''}{relTime(r.created_at)}</span>
-		<span class="rqc__ptr" aria-hidden="true">{expanded ? '▾' : '▸'}</span>
+<div
+	class="rcard"
+	class:rcard--answered={answered}
+	class:rcard--open={expanded}
+	data-request={r.id}
+	style="--au: {au}"
+>
+	<button class="rcard__head" onclick={() => (expanded = !expanded)} aria-expanded={expanded}>
+		<span class="badge" class:answered>{answered ? '✓ request · answered' : '? request'}</span>
+		<span class="rcard__task">{r.title ? `${r.title} — ` : ''}{r.task}</span>
+		<span class="rcard__by"><span class="rcard__dot" aria-hidden="true"></span>{who}</span>
+		<span class="rcard__meta">{r.coordinate ? 'signed · ' : ''}{relTime(r.created_at)}</span>
+		<span class="rcard__ptr" aria-hidden="true">{expanded ? '▾' : '▸'}</span>
 	</button>
 	{#if expanded}
-		<div class="rqc__body">
+		<div class="rcard__body">
 			{#if r.scope.length > 0}
-				<div class="rqc__line"><span class="rqc__k">scope</span> {r.scope.join(' · ')} · {r.output}</div>
+				<div class="rcard__line"><span class="rcard__k">scope</span> {r.scope.join(' · ')} · {r.output}</div>
 			{/if}
 			{#if r.style}
-				<div class="rqc__line">
-					<span class="rqc__k">style</span>
-					<button class="rqc__mini" onclick={() => app.handleSearch(`style:${r.style}`, { scopeToMe: false })} title="Everything written in this style — {r.style}">{r.style_title ?? r.style.split(':').slice(2).join(':')}</button>
+				<div class="rcard__line">
+					<span class="rcard__k">style</span>
+					<button class="rcard__mini" onclick={() => app.handleSearch(`style:${r.style}`, { scopeToMe: false })} title="Everything written in this style — {r.style}">{r.style_title ?? r.style.split(':').slice(2).join(':')}</button>
 				</div>
 			{/if}
 			{#if r.context}
-				<blockquote class="rqc__context">{r.context}</blockquote>
+				<blockquote class="rcard__context">{r.context}</blockquote>
 			{/if}
 			{#if r.answer}
-				<div class="rqc__answer">
+				<div class="rcard__answer">
 					<RichContent content={r.answer.summary} refs={ndRefs} tokens={ndTokens} />
 				</div>
 				{#if r.answer.coordinates.length > 0}
-					<div class="rqc__coords">
+					<div class="rcard__coords">
 						{#each r.answer.coordinates as c (c)}
-							<button class="rqc__mini" onclick={() => openCoordinate(c)} title={c}>{c.startsWith('30040') ? '⊞' : '§'} {titles[c] ?? c.split(':').slice(2).join(':')}</button>
+							<button class="rcard__mini" onclick={() => openCoordinate(c)} title={c}>{c.startsWith('30040') ? '⊞' : '§'} {titles[c] ?? c.split(':').slice(2).join(':')}</button>
 						{/each}
 					</div>
 				{/if}
 			{:else}
-				<div class="rqc__line rqc__line--muted">
+				<div class="rcard__line rcard__line--muted">
 					{r.coordinate
 						? 'Signed as an annotation — answered by the first note that points at it.'
 						: 'Local record — say "check tendrl requests" in your agent to have it answered.'}
 				</div>
 			{/if}
-			<div class="rqc__actions">
+			<div class="rcard__actions">
 				{#if answered && isRecord}
-					<button class="rqc__mini" onclick={reopen} disabled={busy}>reopen</button>
+					<button class="rcard__mini" onclick={reopen} disabled={busy}>reopen</button>
 				{/if}
 				{#if r.coordinate}
-					<button class="rqc__mini" onclick={() => openCoordinate(r.coordinate!)} title="The signed request — JSON, comment, broadcast, pool">menu</button>
+					<button class="rcard__mini" onclick={() => openCoordinate(r.coordinate!)} title="The signed request — JSON, comment, broadcast, pool">menu</button>
 				{/if}
-				<span class="rqc__spacer"></span>
+				<span class="rcard__spacer"></span>
 				{#if isRecord}
-					<button class="rqc__mini" onclick={remove} disabled={busy} title={r.coordinate ? 'Delete the local record — the signed annotation stays' : 'Delete the local record'}>delete</button>
+					<button class="rcard__mini" onclick={remove} disabled={busy} title={r.coordinate ? 'Delete the local record — the signed annotation stays' : 'Delete the local record'}>delete</button>
 				{/if}
 			</div>
 		</div>
@@ -164,21 +186,59 @@
 </div>
 
 <style>
-	.rqc {
+	/* A request looks like any other card — author rail, author dot — and
+	   the badge says what it is. No dashed borders. */
+	.rcard {
 		--rq-accent: var(--id-remote);
-		margin: 6px 0;
-		border: 1px dashed var(--panel-border);
-		border-left: 2px solid var(--rq-accent);
+		margin: 8px 0 6px;
+		border: 1px solid var(--panel-border);
+		border-left: 3px solid var(--au, var(--rq-accent));
 		border-radius: var(--r-sm, 3px);
 		font-family: var(--font-sans);
 		font-size: var(--t-xs);
-		background: transparent;
+		background: var(--bg-surface);
 	}
-	.rqc--answered {
+	.rcard--answered {
 		--rq-accent: var(--id-yours);
-		border-style: solid;
 	}
-	.rqc__head {
+	.badge {
+		font-family: var(--font-mono);
+		font-size: calc(var(--t-xs) - 3px);
+		font-weight: 600;
+		line-height: 1.2;
+		letter-spacing: 0.08em;
+		text-transform: uppercase;
+		color: var(--id-remote);
+		border: 1px solid color-mix(in srgb, var(--id-remote) 50%, transparent);
+		border-radius: 3px;
+		padding: 1px 6px;
+		white-space: nowrap;
+	}
+	.badge.answered {
+		color: var(--id-yours);
+		border-color: color-mix(in srgb, var(--id-yours) 50%, transparent);
+	}
+	.rcard__by {
+		display: inline-flex;
+		align-items: center;
+		gap: 5px;
+		font-family: var(--font-mono);
+		font-size: calc(var(--t-xs) - 3px);
+		color: var(--base5);
+		white-space: nowrap;
+		max-width: 14ch;
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+	.rcard__dot {
+		display: inline-block;
+		flex: none;
+		width: 7px;
+		height: 7px;
+		border-radius: 50%;
+		background: var(--au, var(--rq-accent));
+	}
+	.rcard__head {
 		display: flex;
 		align-items: center;
 		gap: 8px;
@@ -192,44 +252,36 @@
 		text-align: left;
 		cursor: pointer;
 	}
-	.rqc__cap {
-		font-family: var(--font-mono);
-		font-size: calc(var(--t-xs) - 3px);
-		letter-spacing: 0.08em;
-		text-transform: uppercase;
-		color: var(--rq-accent);
-		white-space: nowrap;
-	}
-	.rqc__task {
+	.rcard__task {
 		flex: 1;
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
 		color: var(--fg-muted);
 	}
-	.rqc__meta,
-	.rqc__ptr {
+	.rcard__meta,
+	.rcard__ptr {
 		font-family: var(--font-mono);
 		font-size: calc(var(--t-xs) - 3px);
 		color: var(--base5);
 		white-space: nowrap;
 	}
-	.rqc__body {
+	.rcard__body {
 		padding: 2px 10px 8px;
 		border-top: 1px solid var(--panel-border);
 		display: flex;
 		flex-direction: column;
 		gap: 4px;
 	}
-	.rqc__line {
+	.rcard__line {
 		color: var(--fg-muted);
 	}
-	.rqc__line--muted {
+	.rcard__line--muted {
 		color: var(--base5);
 		font-family: var(--font-mono);
 		font-size: calc(var(--t-xs) - 2px);
 	}
-	.rqc__k {
+	.rcard__k {
 		font-family: var(--font-mono);
 		font-size: calc(var(--t-xs) - 3px);
 		letter-spacing: 0.08em;
@@ -237,27 +289,27 @@
 		color: var(--base5);
 		margin-right: 4px;
 	}
-	.rqc__context {
+	.rcard__context {
 		margin: 0;
 		padding: 2px 8px;
 		border-left: 2px solid var(--panel-border);
 		color: var(--fg-muted);
 		font-style: italic;
 	}
-	.rqc__answer {
+	.rcard__answer {
 		color: var(--fg);
 	}
-	.rqc__coords,
-	.rqc__actions {
+	.rcard__coords,
+	.rcard__actions {
 		display: flex;
 		flex-wrap: wrap;
 		gap: 4px;
 		align-items: center;
 	}
-	.rqc__spacer {
+	.rcard__spacer {
 		flex: 1;
 	}
-	.rqc__mini {
+	.rcard__mini {
 		font-family: var(--font-mono);
 		font-size: calc(var(--t-xs) - 3px);
 		color: var(--base6);
@@ -268,7 +320,7 @@
 		min-height: 22px;
 		cursor: pointer;
 	}
-	.rqc__mini:hover:not(:disabled) {
+	.rcard__mini:hover:not(:disabled) {
 		color: var(--fg);
 		border-color: var(--base5);
 	}
