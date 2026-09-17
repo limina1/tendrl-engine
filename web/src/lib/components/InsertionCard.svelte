@@ -13,6 +13,7 @@
 	import { getAuthorDisplayName } from '$lib/discussions/authors.svelte';
 	import { identityCanSign } from '$lib/identity/signer';
 	import { reading } from '$lib/theme/reading.svelte';
+	import type { ResolvedRef, ParsedToken } from '$lib/nostr/nostrdown';
 
 	let {
 		insertion,
@@ -52,6 +53,40 @@
 	const ownsRoot = $derived(
 		!!app.identityStatus?.pubkey && anchor.root_pubkey === app.identityStatus.pubkey
 	);
+
+	// Nostrdown in the note — `{{ref:slug}}` to the publication's sections —
+	// resolves against the anchor's root, the same way a section resolves
+	// against its containing index. Parsed and resolved engine-side; the
+	// card only renders the spans.
+	let ndRefs = $state<ResolvedRef[]>([]);
+	let ndTokens = $state<ParsedToken[]>([]);
+	$effect(() => {
+		const text = ev.content;
+		const root = anchor.root;
+		const author = ev.pubkey;
+		const key = insertion.coordinate;
+		if (!text) {
+			ndRefs = [];
+			ndTokens = [];
+			return;
+		}
+		let cancelled = false;
+		api.parseNostrdown([{ key, content: text }])
+			.then((m) => {
+				if (!cancelled) ndTokens = m[key] ?? [];
+			})
+			.catch(() => {});
+		api.resolveNostrdownProgressive(
+			[{ key, content: text, publication: root, author }],
+			(m) => {
+				if (!cancelled) ndRefs = m[key] ?? [];
+			},
+			{ fetch: false }
+		).catch(() => {});
+		return () => {
+			cancelled = true;
+		};
+	});
 
 	function relTime(ts: number): string {
 		const s = Math.max(0, Math.floor(Date.now() / 1000 - ts));
@@ -156,7 +191,7 @@
 			<blockquote class="icard__context">{contextTag}</blockquote>
 		{/if}
 		<div class="icard__text">
-			<RichContent content={ev.content} />
+			<RichContent content={ev.content} refs={ndRefs} tokens={ndTokens} />
 		</div>
 		<div class="icard__actions">
 			<span class="icard__pill icard__pill--att">

@@ -518,7 +518,8 @@ fn schema_propose_insertion() -> Value {
             "title": { "type": "string", "description": "Section title (required by NKBIP-01)." },
             "content": { "type": "string", "description": "Section body." },
             "format": { "type": "string", "enum": ["markdown", "org", "asciidoc", "plain"], "description": "Content mode. Default markdown." },
-            "context": { "type": "string", "description": "Optional excerpt of the parent this note responds to." }
+            "context": { "type": "string", "description": "Optional excerpt of the parent this note responds to." },
+            "replace": { "type": "string", "description": "Coordinate (30041:pk:d) of YOUR earlier note to replace — the new event reuses its d-tag, so it is a new version, not a second note." }
         },
         "required": ["root", "title", "content"]
     })
@@ -1129,10 +1130,12 @@ async fn propose_insertion(cx: &ToolCx, input: Value) -> Result<Value> {
         format: input.get("format").and_then(Value::as_str).map(String::from),
         context: input.get("context").and_then(Value::as_str).map(String::from),
         tags: Vec::new(),
+        replace: input.get("replace").and_then(Value::as_str).map(String::from),
     };
     let (mut template, resolved) =
         crate::api::insertions::insertion_template(&cx.engine, &anchor, &body).await?;
     let (pubkey, signer) = assistant_signer(&cx.engine).await?;
+    crate::api::insertions::check_replace_owner(&body, &pubkey)?;
     template.pubkey = Some(pubkey.clone());
     let signed = signer
         .sign(template)

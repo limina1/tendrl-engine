@@ -6,6 +6,8 @@
 	// the written notes, one click each.
 	import * as api from '$lib/api';
 	import { getAppState } from '$lib/state.svelte';
+	import RichContent from './RichContent.svelte';
+	import type { ResolvedRef, ParsedToken } from '$lib/nostr/nostrdown';
 
 	let {
 		request,
@@ -21,6 +23,48 @@
 	const answered = $derived(r.status === 'answered');
 	let expanded = $state(false);
 	let busy = $state(false);
+
+	// The answer's summary is nostrdown too (the agent cites sections and
+	// notes by `{{ref:…}}`); resolve it against the request's root. Titles
+	// for the written notes come from the local store, keyed on the `T`
+	// tag's display twin, so a card never shows a raw d-tag.
+	let ndRefs = $state<ResolvedRef[]>([]);
+	let ndTokens = $state<ParsedToken[]>([]);
+	let titles = $state<Record<string, string>>({});
+	$effect(() => {
+		if (!expanded || !r.answer) return;
+		const text = r.answer.summary;
+		const key = r.id;
+		let cancelled = false;
+		api.parseNostrdown([{ key, content: text }])
+			.then((m) => {
+				if (!cancelled) ndTokens = m[key] ?? [];
+			})
+			.catch(() => {});
+		api.resolveNostrdownProgressive(
+			[{ key, content: text, publication: r.root, author: r.answer.by }],
+			(m) => {
+				if (!cancelled) ndRefs = m[key] ?? [];
+			},
+			{ fetch: false }
+		).catch(() => {});
+		for (const c of r.answer.coordinates) {
+			if (titles[c]) continue;
+			const [k, pk, ...d] = c.split(':');
+			api.queryEvents([{ kinds: [Number(k)], authors: [pk], '#d': [d.join(':')] }], 'local_only')
+				.then((resp) => {
+					if (cancelled) return;
+					const evs = (resp.events ?? []) as { created_at: number; tags: string[][] }[];
+					evs.sort((a, b) => b.created_at - a.created_at);
+					const t = evs[0]?.tags.find((x) => x[0] === 'title')?.[1];
+					if (t) titles = { ...titles, [c]: t };
+				})
+				.catch(() => {});
+		}
+		return () => {
+			cancelled = true;
+		};
+	});
 
 	function relTime(ts: number): string {
 		const s = Math.max(0, Math.floor(Date.now() / 1000 - ts));
@@ -75,11 +119,13 @@
 				<blockquote class="rqc__context">{r.context}</blockquote>
 			{/if}
 			{#if r.answer}
-				<div class="rqc__answer">{r.answer.summary}</div>
+				<div class="rqc__answer">
+					<RichContent content={r.answer.summary} refs={ndRefs} tokens={ndTokens} />
+				</div>
 				{#if r.answer.coordinates.length > 0}
 					<div class="rqc__coords">
 						{#each r.answer.coordinates as c (c)}
-							<button class="rqc__mini" onclick={() => openCoordinate(c)} title={c}>{c.startsWith('30040') ? '⊞' : '§'} {c.split(':').slice(2).join(':')}</button>
+							<button class="rqc__mini" onclick={() => openCoordinate(c)} title={c}>{c.startsWith('30040') ? '⊞' : '§'} {titles[c] ?? c.split(':').slice(2).join(':')}</button>
 						{/each}
 					</div>
 				{/if}

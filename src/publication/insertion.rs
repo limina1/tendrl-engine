@@ -257,13 +257,15 @@ pub fn event_coordinate(ev: &Value) -> Option<String> {
 /// requirement (`d`, `title`, content) plus the anchor tags; `format` is the
 /// content mode the composer already uses (`markdown` is the default and is
 /// not tagged); `extra_tags` rides through verbatim (a `context` excerpt,
-/// topic `t`s…). The caller sets `pubkey`.
+/// topic `t`s…). `d_tag` reuses an existing coordinate — a new *version* of
+/// the author's own note — instead of minting one. The caller sets `pubkey`.
 pub fn build_insertion_template(
     anchor: &InsertionAnchor,
     title: &str,
     content: &str,
     format: Option<&str>,
     extra_tags: &[Vec<String>],
+    d_tag: Option<&str>,
     relay_hint: &str,
     created_at: i64,
 ) -> Result<EventTemplate, String> {
@@ -274,8 +276,12 @@ pub fn build_insertion_template(
     if content.trim().is_empty() {
         return Err("an insertion needs content".into());
     }
+    let d = match d_tag.map(str::trim).filter(|d| !d.is_empty()) {
+        Some(d) => d.to_string(),
+        None => crate::publication::mint_d_tag(),
+    };
     let mut tags: Vec<Vec<String>> = vec![
-        vec!["d".to_string(), crate::publication::mint_d_tag()],
+        vec!["d".to_string(), d],
         vec!["title".to_string(), title.to_string()],
         vec![
             "T".to_string(),
@@ -552,6 +558,7 @@ mod tests {
             "body",
             Some("org"),
             &[vec!["context".into(), "…excerpt…".into()]],
+            None,
             "",
             1_700_000_000,
         )
@@ -564,11 +571,14 @@ mod tests {
         assert!(t.tags.iter().any(|x| x[0] == "insert" && x[1] == "before"));
         assert!(t.tags.iter().any(|x| x[0] == "format" && x[1] == "org"));
         assert!(t.tags.iter().any(|x| x[0] == "context"));
-        assert!(build_insertion_template(&a, "", "body", None, &[], "", 0).is_err());
-        assert!(build_insertion_template(&a, "t", "  ", None, &[], "", 0).is_err());
+        assert!(build_insertion_template(&a, "", "body", None, &[], None, "", 0).is_err());
+        assert!(build_insertion_template(&a, "t", "  ", None, &[], None, "", 0).is_err());
         // Markdown is the default mode — no format tag.
-        let md = build_insertion_template(&a, "t", "b", Some("markdown"), &[], "", 0).unwrap();
+        let md = build_insertion_template(&a, "t", "b", Some("markdown"), &[], None, "", 0).unwrap();
         assert!(md.tags.iter().all(|x| x[0] != "format"));
+        // A given d-tag is a new version of an existing note.
+        let v2 = build_insertion_template(&a, "t", "b", None, &[], Some("k3x9"), "", 0).unwrap();
+        assert_eq!(v2.tags[0], vec!["d", "k3x9"]);
     }
 
     #[test]

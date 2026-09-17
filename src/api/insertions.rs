@@ -50,6 +50,9 @@ pub struct InsertionBody {
     pub context: Option<String>,
     /// Extra tags, verbatim (`[["t","fable"]]`).
     pub tags: Vec<Vec<String>>,
+    /// Coordinate of an earlier note by the same signer to replace — the
+    /// new event reuses its `d`, so it is a new version, not a second note.
+    pub replace: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -140,17 +143,45 @@ pub(crate) async fn insertion_template(
     }
     extra.extend(body.tags.iter().cloned());
     let relay_hint = super::discussion_relay_hint(engine);
+    let reuse_d = match body.replace.as_deref().map(str::trim).filter(|r| !r.is_empty()) {
+        Some(coord) => {
+            let (k, _, d) = coord_parts(coord).ok_or_else(|| {
+                EngineError::BadRequest(format!("replace must be a 30041 coordinate, got `{coord}`"))
+            })?;
+            if k != 30041 {
+                return Err(EngineError::BadRequest("replace must name a 30041".into()));
+            }
+            Some(d.to_string())
+        }
+        None => None,
+    };
     let template = build_insertion_template(
         &resolved,
         &body.title,
         &body.content,
         body.format.as_deref(),
         &extra,
+        reuse_d.as_deref(),
         &relay_hint,
         super::unix_now_i64(),
     )
     .map_err(EngineError::BadRequest)?;
     Ok((template, resolved))
+}
+
+/// A `replace` may only overwrite the signer's own note — the coordinate's
+/// pubkey must be the key about to sign.
+pub(crate) fn check_replace_owner(body: &InsertionBody, signer_pubkey: &str) -> Result<(), EngineError> {
+    if let Some(coord) = body.replace.as_deref().map(str::trim).filter(|r| !r.is_empty()) {
+        if let Some((_, pk, _)) = coord_parts(coord) {
+            if pk != signer_pubkey {
+                return Err(EngineError::BadRequest(
+                    "replace names a note by another key — only your own note can get a new version".into(),
+                ));
+            }
+        }
+    }
+    Ok(())
 }
 
 /// The pubkey a preview is stamped with, for the named source — `None`
@@ -193,6 +224,7 @@ pub async fn insertion_publish_handler(
     let sign_as = req.sign_as.unwrap_or(SignAs::User);
     let (mut template, anchor) = insertion_template(&engine, &req.anchor, &req.body).await?;
     let (pubkey, signer) = super::resolve_publish_signer(&engine, &signing, sign_as).await?;
+    check_replace_owner(&req.body, &pubkey)?;
     template.pubkey = Some(pubkey);
     let signed = signer
         .sign(template)
