@@ -204,11 +204,13 @@ if (!hasFree) {
 } else {
 	await clickJs(`document.querySelector('.lay button[data-mode="free"]')`);
 	await sleep(700);
-	const r = await rectOf(`document.querySelector('.abuf .acard')`);
+	// Press on the title row: the header's left edge is the → §n chip, which the
+	// drag action ignores by contract (button, .acard__anchor, .acard__open).
+	const r = await rectOf(`document.querySelector('.abuf .acard .acard__t')`);
 	if (!r) skip('drag-pin', 'no .acard in free layout');
 	else {
 		const before = await ev(`(()=>{const c=document.querySelector('.abuf .acard'); return {id:c.dataset.id, left:c.offsetLeft, top:c.offsetTop}})()`);
-		const sx = r.x - r.w / 2 + 12, sy = r.y - r.h / 2 + 10; // the header, not the anchor chip
+		const sx = r.x, sy = r.y;
 		await mouse('mouseMoved', sx, sy, { button: 'none' });
 		await mouse('mousePressed', sx, sy);
 		for (let i = 1; i <= 8; i++) await mouse('mouseMoved', sx + (80 * i) / 8, sy + (60 * i) / 8, { buttons: 1 });
@@ -222,9 +224,10 @@ if (!hasFree) {
 	await sleep(500);
 }
 
-// -- 7. hover a card → its section lights in the reader.
+// -- 7. hover a card → its section lights in the reader. A front-matter card
+// anchors to the root, which no section matches — pick one with a §n chip.
 {
-	const r = await rectOf(`document.querySelector('.abuf .acard')`);
+	const r = await rectOf(`[...document.querySelectorAll('.abuf .acard')].find((c) => /§\\d/.test(c.querySelector('.acard__anchor')?.textContent ?? ''))`);
 	if (!r) skip('hover-anchor', 'no .acard');
 	else {
 		await mouse('mouseMoved', r.x, r.y, { button: 'none' });

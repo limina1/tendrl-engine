@@ -297,8 +297,10 @@
 	}
 	.section .anchor-tip {
 		position: absolute;
-		right: 16px;
-		top: 12px;
+		left: 0;
+		top: -14px;
+		padding: 0 4px;
+		background: var(--bg);
 		font-family: var(--font-mono);
 		font-size: var(--t-3xs);
 		font-weight: 600;
