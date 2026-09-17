@@ -74,11 +74,18 @@ the idea and its resolved questions: [[file:idea-insertions.org][insertions]].
 Annotate mode (Tools → *annotate mode*, no identity needed) turns a
 selection into a *request* — a local record with the anchor, the task,
 scope hints and the excerpt; the event menu's *Ask* (=q=) does the same
-from a click. Optionally signed as a kind-1111 mention of the assistant
-and broadcast; local by default. The user's own agent answers over MCP
-with =propose_insertion= and closes it with =answer_request=; the window
-lists earlier requests here with their answers and opens the written
-notes. [[file:decision-requests-are-events.org][Decision]].
+from a click. Optionally signed by the user as a kind-30041 annotation
+on the section (=t: annotation-request=, anchored like any insertion) and
+broadcast; local by default. The user's own agent answers over MCP with
+=propose_insertion= — each note carries =["request", <coordinate>]=, which
+is what marks a signed request answered (=list_requests= merges records
+and signed requests and derives the status from those pointers) — and
+closes a record with =answer_request=. =insertions/load= tags each item
+=role: note | request= and =request= (the pointer) so the reader never
+reads tags: the request renders as a request card, the answering note
+wears an "↳ answers" chip. The window lists earlier requests here with
+their answers and opens the written notes.
+[[file:decision-requests-are-events.org][Decision]].
 
 * Live
 
@@ -102,8 +109,8 @@ addressable), =t: tendrl-style=, a =title=, the instructions as content;
 signed by the user or the assistant, local unless broadcast
 (=POST/GET /api/v1/styles=, =src/api/styles.rs=). The ask window lists the
 local styles, previews the chosen one, and can write a new one inline.
-A request records the style (=style= + =style_title=; the signed mention
-carries =["style", <coord>]=), =list_requests= hands the agent the text as
+A request records the style (=style= + =style_title=; the signed request
+annotation carries =["style", <coord>]=), =list_requests= hands the agent the text as
 =style_instructions=, and every note written in answer carries the same
 =["style", <coord>]= tag — so "everything written in this style" is the
 tag search the card's ✎ pill and the request card's style line run

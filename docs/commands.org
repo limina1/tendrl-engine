@@ -2225,24 +2225,41 @@ into =.claude/skills/= on this machine).
 ** Tests
 
 #+begin_src bash
-cargo test --lib requests::                                    # record, mention template, reply template, store
-cargo test --lib test_annotation_requests_unsigned_and_signed  # unsigned → answered; signed → 1111 mention + assistant reply
+cargo test --lib requests::                                    # record, 30041 request template, read-back, answer pointer, store
+cargo test --lib test_annotation_requests_unsigned_and_signed  # unsigned → answered by hand; signed 30041 → load role=request → note with `request` → answered derived; ev_… from the event alone
 #+end_src
 
-** API + MCP round-trip (scratch engine on =:3131=)
+** API + MCP round-trip (scratch engine on =:3132=, fresh data dir)
+
+A signed request is a kind-30041 annotation on the section, signed by the
+*user* (=t: annotation-request=, =scope= / =output= / =context= / =style=
+tags, anchored =A=/=a=/=e= like any insertion). An answer is an ordinary
+insertion carrying =["request", <request coordinate>]=; a signed request
+is *answered iff* a local 30041 points at it — derived, not recorded.
 
 #+begin_src bash
-B=localhost:3131; J='Content-Type: application/json'; TOK=$(curl -s $B/api/v1/mcp | jq -r .token); A="Authorization: Bearer $TOK"
+B=localhost:3132; J='Content-Type: application/json'; TOK=$(curl -s $B/api/v1/mcp | jq -r .token); A="Authorization: Bearer $TOK"
+# user identity for signing: nak key encrypt <hex> pw → ncryptsec, then unlock
+curl -s -X POST $B/api/v1/identity/unlock -H "$J" -d '{"ncryptsec":"'"$NCRYPT"'","password":"pw"}' | jq -c '{pubkey:(.pubkey|.[0:8]), unlocked}'
 # unsigned (default) — needs no identity; the parent version is pinned from the store
 RQ=$(curl -s -X POST $B/api/v1/annotations/requests -H "$J" -d "{\"root\":\"$ROOT\",\"parent\":\"$S1\",\"task\":\"derive the moral two ways\",\"scope\":[\"section\",\"web\"],\"output\":\"kasten\"}"); echo "$RQ" | jq -c '{id,status,scope,output}'
-# signed: a kind-1111 on the section, p-mentioning the assistant, t:annotation-request — local unless "broadcast":true
-curl -s -X POST $B/api/v1/annotations/requests -H "$J" -d "{\"root\":\"$ROOT\",\"parent\":\"$S1\",\"task\":\"history\",\"sign\":true}" | jq -c '{event_kind:.event.kind, p:[.event.tags[]|select(.[0]=="p")|.[1][0:8]]}'
-curl -s "$B/api/v1/annotations/requests?root=$ROOT&status=open" | jq -c '{count, open}'
-# what the agent does (here by hand over /mcp): list → write → close
-curl -s -X POST $B/mcp -H "$J" -H "$A" -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"list_requests","arguments":{}}}' | jq -c '.result.structuredContent|{count, tasks:[.requests[].task]}'
-NOTE=$(curl -s -X POST $B/mcp -H "$J" -H "$A" -d "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/call\",\"params\":{\"name\":\"propose_insertion\",\"arguments\":{\"root\":\"$ROOT\",\"parent\":\"$S1\",\"placement\":\"after\",\"title\":\"Two readings\",\"content\":\"…\"}}}" | jq -r .result.structuredContent.coordinate)
-curl -s -X POST $B/mcp -H "$J" -H "$A" -d "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"tools/call\",\"params\":{\"name\":\"answer_request\",\"arguments\":{\"request_id\":\"$(echo $RQ | jq -r .id)\",\"summary\":\"One note.\",\"coordinates\":[\"$NOTE\"]}}}" | jq -c '.result.structuredContent|{status, by:(.answer.by|.[0:8]), reply:.answer.reply_event_id}'
-# answering a SIGNED request also posts the assistant's 1111 reply (e → the mention), kept local
+# signed: a 30041 annotation on the section by the user — local unless "broadcast":true; the record gains `coordinate`
+SG=$(curl -s -X POST $B/api/v1/annotations/requests -H "$J" -d "{\"root\":\"$ROOT\",\"parent\":\"$S1\",\"task\":\"history of the moral\",\"context\":\"a sufficient recompense\",\"sign\":true}"); echo "$SG" | jq -c '{id, coordinate, kind:.event.kind, t:[.event.tags[]|select(.[0]=="t")|.[1]], A:[.event.tags[]|select(.[0]=="A")|.[1][0:12]], output:[.event.tags[]|select(.[0]=="output")|.[1]]}'
+RC=$(echo "$SG" | jq -r .coordinate)
+# the reader's load pass tags it role=request (no client tag reading)
+curl -s -X POST $B/api/v1/insertions/load -H "$J" -d "{\"root\":\"$ROOT\",\"policy\":\"local_only\"}" | jq -c '.insertions[]|{role, request, title:(.event.tags[]|select(.[0]=="title")|.[1])}'
+curl -s "$B/api/v1/annotations/requests?root=$ROOT&status=open" | jq -c '{count, open, ids:[.requests[].id]}'
+# what the agent does (here by hand over /mcp): list → write WITH `request` → (close the record)
+curl -s -X POST $B/mcp -H "$J" -H "$A" -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"list_requests","arguments":{}}}' | jq -c '.result.structuredContent|{count, requests:[.requests[]|{id, coordinate, task}]}'
+NOTE=$(curl -s -X POST $B/mcp -H "$J" -H "$A" -d "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/call\",\"params\":{\"name\":\"propose_insertion\",\"arguments\":{\"root\":\"$ROOT\",\"parent\":\"$S1\",\"title\":\"Gauss and Legendre\",\"content\":\"1805, 1809.\",\"request\":\"$RC\"}}}" | jq -r .result.structuredContent.coordinate)
+# answered flips from the pointer alone; the note loads with request = the request coordinate
+curl -s "$B/api/v1/annotations/requests?root=$ROOT&status=all" | jq -c '.requests[]|{id, status, coords:(.answer.coordinates // [])}'
+curl -s -X POST $B/api/v1/insertions/load -H "$J" -d "{\"root\":\"$ROOT\",\"policy\":\"local_only\"}" | jq -c '.insertions[]|select(.request)|{role, request:(.request|.[0:20])}'
+# the unsigned record is still closed by hand (no event is signed here)
+curl -s -X POST $B/mcp -H "$J" -H "$A" -d "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"tools/call\",\"params\":{\"name\":\"answer_request\",\"arguments\":{\"request_id\":\"$(echo $RQ | jq -r .id)\",\"summary\":\"One note.\",\"coordinates\":[\"$NOTE\"]}}}" | jq -c '.result.structuredContent|{status, by:(.answer.by|.[0:8])}'
+# delete the record behind the signed one — it still lists, from the event alone (ev_… id)
+curl -s -X DELETE $B/api/v1/annotations/requests/$(echo "$SG" | jq -r .id) | jq -c .
+curl -s "$B/api/v1/annotations/requests?root=$ROOT&status=all" | jq -c '.requests[]|{id, status, coordinate:(.coordinate // null|tostring|.[0:20])}'
 #+end_src
 
 Gotcha (fixed 2026-09-17): an =enabled_tools= allowlist saved by Settings →
@@ -2256,8 +2273,11 @@ Tools → *annotate mode* (no identity needed; highlight mode wins when both
 are on) → select a passage → the capture card reads "annotate mode — this
 passage becomes the request's context" with *ask for notes →* → the window
 (=.rq-modal=): anchor chips, the ask, optional title, scope chips, notes |
-kasten, the excerpt, *sign as a mention* (+ *also broadcast*), earlier
-requests here with their answers (coordinates open the notes). The event
+kasten, the excerpt, *sign as an annotation (kind 30041)* (+ *also
+broadcast*), earlier requests here with their answers (coordinates open
+the notes). On the page a request renders as a request card (*menu* opens
+the signed 30041; *delete* / *reopen* only for a record); a note written
+for it wears an "↳ answers …" chip that opens the request. The event
 menu's *q Ask* is the click door. CDP: select via a =Range= over a text node
 inside =.continuous-section= then dispatch a =mouseReleased=; the popover's
 =aria-label= flips to "Ask for notes about this passage".

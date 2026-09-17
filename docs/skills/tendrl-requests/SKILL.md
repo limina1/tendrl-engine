@@ -1,15 +1,19 @@
 ---
 name: tendrl-requests
-description: Answer the user's open tendrl annotation requests — read each request's anchor through the tendrl MCP, research per its scope (your own web search when asked), write the notes as assistant-signed insertions, and close the request. Use when the user says "check tendrl requests", "answer my annotations", or invokes /tendrl-requests.
+description: Answer the user's open tendrl annotation requests — read each request's anchor through the tendrl MCP, research per its scope (your own web search when asked), write the notes as assistant-signed insertions that point back at the request, and close the record. Use when the user says "check tendrl requests", "answer my annotations", or invokes /tendrl-requests.
 ---
 
 # Answering tendrl annotation requests
 
 The user wrote requests in tendrl's reader (annotate mode → "ask for notes")
 against places in their publications. Each is a local record the engine
-serves over MCP; nothing runs until *they* ask you to look. You are the
-assistant identity: everything you write is signed with the assistant's own
-key, never theirs, and stays local until they broadcast it.
+serves over MCP, and optionally a kind-30041 annotation the user signed on
+the section (then it has a `coordinate`); nothing runs until *they* ask you
+to look. You are the assistant identity: everything you write is signed
+with the assistant's own key, never theirs, and stays local until they
+broadcast it. A note answers a request by carrying `["request", <its
+coordinate>]` — that tag is what marks a signed request answered and lets
+the reader thread the note under it. There is no reply event.
 
 Needs the `tendrl` MCP server connected (`curl -s localhost:3030/api/v1/mcp |
 jq -r .claude_mcp_add` prints the registration line).
@@ -17,7 +21,9 @@ jq -r .claude_mcp_add` prints the registration line).
 ## The loop
 
 1. `list_requests` (status `open`). If the user named a publication, pass
-   its coordinate as `root`. Nothing open → say so and stop.
+   its coordinate as `root`. Nothing open → say so and stop. Two kinds
+   come back: records (`rq_…` ids) and requests read off the user's
+   signed annotation alone (`ev_…` ids, always with a `coordinate`).
 2. For each request, in order:
    - **Follow the style.** When the request carries `style` (a coordinate) and
      `style_instructions` (its text), those instructions govern how the notes
@@ -35,16 +41,21 @@ jq -r .claude_mcp_add` prints the registration line).
    - **Write.** One `propose_insertion` per note: `root` and `parent` from
      the request, `placement` `attach` for commentary or `after` for a page
      that belongs in the reading order, `title` (use the request's `title`
-     when given), `content` in Markdown. Cite: nostrdown `{{ref:…}}` for
+     when given), `content` in Markdown — and **`request`: the request's
+     `coordinate`, on every note**, whenever the request has one. That
+     pointer is the answer; without it a signed request stays open however
+     many notes you write. Cite: nostrdown `{{ref:…}}` for
      siblings, `nostr:naddr…` / `nostr:nevent…` for other events, plain
      URLs for the web, and say in the text where each claim came from.
      `output: kasten` → several notes, then `save_draft` + `sign_draft` for
      an index over them (title = the request's title) so it can be promoted
      as a sub-chapter.
-   - **Close.** `answer_request` with `request_id`, a one-paragraph
-     `summary` (what you wrote, what you read, what you could not find) and
-     `coordinates` — every `30041:…` you stored and the `30040:…` bundle if
-     any. This is what the reader shows next to the request.
+   - **Close.** For a record (`rq_…`): `answer_request` with `request_id`,
+     a one-paragraph `summary` (what you wrote, what you read, what you
+     could not find) and `coordinates` — every `30041:…` you stored and
+     the `30040:…` bundle if any. This is what the reader shows next to
+     the request. An `ev_…` request has no record to close — the notes
+     that point at it are its answer; skip `answer_request` for it.
 3. Report to the user: per request, the note titles and where they are
    attached. Never claim anything was published or broadcast.
 

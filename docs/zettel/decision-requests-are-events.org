@@ -9,12 +9,20 @@
 request is a *record*: a local file (=<data_dir>/requests/=) with the
 anchor (publication + section, like an insertion), the task, scope
 hints, an optional excerpt — unsigned by default, so it needs no
-identity. Optionally the user signs it as a kind-1111 comment on the
-section that =p=-mentions the assistant (a literal mention), and
-optionally broadcasts it; *local is the default*. Whoever answers reads
-open requests through =list_requests= over MCP, writes assistant-signed
-insertions, and closes the request with =answer_request= — which also
-posts the assistant's 1111 reply when the request was signed.
+identity. Optionally the user signs it as a *kind-30041 annotation on the
+section* — the same shape as the notes that will answer it, anchored the
+same way (=A=/=a=/=e=), marked =t: annotation-request= and carrying its
+metadata as tags (=scope=, =output=, =context=, =style=) — and optionally
+broadcasts it; *local is the default*. Whoever answers reads open
+requests through =list_requests= over MCP, writes assistant-signed
+insertions that carry =["request", <request coordinate>]=, and closes a
+record with =answer_request=. A signed request is *answered iff* a local
+30041 points at it — derived from the store on every read, never
+recorded; no reply event, no assistant identity needed at ask time.
+(Amended 2026-09-17: the first cut signed the request as a kind-1111
+mention of the assistant with a 1111 reply closing it; the user's call
+was that the ask should be the same kind of thing as the answer, and the
+answer should point at the ask.)
 
 No queue tendrl pushes into, no stream a session must hold open, no
 process that wakes Claude Code. The user types "check tendrl requests"
@@ -31,9 +39,11 @@ in their own harness; the =/tendrl-requests= skill
   shape.
 - *Async by nature.* Reading, thinking of the question, and getting the
   answer are hours apart anyway. Nothing is lost by not being live.
-- *It composes with Nostr.* A signed request is an ordinary comment
-  thread: the reader shows it, the reply closes it, anyone's client can
-  see the ask and the answer. Unsigned stays private.
+- *It composes with Nostr.* A signed request is an ordinary annotation:
+  the reader loads it with the notes (=insertions/load= tags it
+  =role: request=), the answers point at it, anyone's NKBIP-01 client
+  sees the ask beside the section and the notes beside the ask. Unsigned
+  stays private.
 - *The in-app loop keeps the same input.* When it answers requests
   later (API key, the user's own cost), it reads the same records —
   one shape, two answerers.
@@ -45,8 +55,13 @@ in their own harness; the =/tendrl-requests= skill
   later, optional step with the same contract.
 - Annotate mode is a second capture toggle beside highlight mode; the
   event menu's *Ask* (=q=) is the click door.
-- =answer_request= records coordinates; the reader renders them as
-  pending cards through the ordinary =load annotations= pass.
+- =answer_request= records coordinates for a record; the reader renders
+  them as pending cards through the ordinary =load annotations= pass. A
+  note's =request= tag is the durable link: the card wears an "↳ answers"
+  chip that opens the request, and the request card lists the notes that
+  point at it whether or not a record was ever closed.
+- The annotations table (plan Phase 2) can group by request with the same
+  pointer — no request-specific store to join.
 
 * Related
 - [[file:index.org][Index]]
