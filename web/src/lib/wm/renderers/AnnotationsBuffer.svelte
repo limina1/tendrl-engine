@@ -92,6 +92,7 @@
 	let pubTitle = $state<string | null>(null);
 	let notes = $state<api.LoadedInsertion[]>([]);
 	let counts = $state<api.InsertionCounts | undefined>(undefined);
+	let countsLocal = $state(false);
 	let requests = $state<api.AnnotationRequest[]>([]);
 	let loading = $state(true);
 	let error = $state<string | null>(null);
@@ -120,6 +121,25 @@
 			loading = false;
 		}
 	}
+	function fallbackCounts(list: api.LoadedInsertion[]): api.InsertionCounts {
+		const by = new Map<string, string[]>();
+		const parent = new Map<string, string[]>();
+		let total = 0;
+		for (const i of list) {
+			if (i.role === 'request') continue;
+			total += 1;
+			(by.get(i.event.pubkey) ?? by.set(i.event.pubkey, []).get(i.event.pubkey)!).push(i.event.id);
+			(parent.get(i.anchor.parent) ?? parent.set(i.anchor.parent, []).get(i.anchor.parent)!).push(i.event.id);
+		}
+		const bucket = (m: Map<string, string[]>, label: boolean) =>
+			[...m.entries()].map(([value, ids]) => ({
+				value,
+				count: ids.length,
+				event_ids: ids,
+				...(label ? { label: getAuthorDisplayName(value) } : {})
+			}));
+		return { by_author: bucket(by, true), by_parent: bucket(parent, false), total };
+	}
 	function sinceTs(days: number | null): number | undefined {
 		return days == null ? undefined : Math.floor(Date.now() / 1000) - days * 86400;
 	}
@@ -132,7 +152,11 @@
 		try {
 			const resp = await api.loadInsertions({ root: r, policy: 'local_only', counts: true, since });
 			notes = resp.insertions;
-			counts = resp.counts;
+			// The histograms are engine-side (Track A). An engine without them
+			// (pre-merge) gets a same-shape fallback over the loaded notes so
+			// the bars still render; labels resolve through the authors cache.
+			countsLocal = !resp.counts;
+			counts = resp.counts ?? fallbackCounts(resp.insertions);
 			const authors = new Set(resp.insertions.map((i) => i.event.pubkey));
 			if (authors.size) prefetchAuthors([...authors]);
 		} catch (e) {
@@ -218,9 +242,16 @@
 		);
 	});
 	const unsignedRequests = $derived(requests.filter((r) => !r.coordinate).length);
-	const bars = $derived(authorBars(counts, unsignedRequests));
+	const bars = $derived(
+		authorBars(counts, unsignedRequests).map((b) =>
+			countsLocal && b.pubkey ? { ...b, label: getAuthorDisplayName(b.pubkey) } : b
+		)
+	);
 	const spellText = $derived(root ? buildSpell(root, view) : '');
-	const secWith = $derived(new Set(cards.map((c) => c.parent)).size);
+	const secWith = $derived.by(() => {
+		const withCards = new Set(cards.map((c) => c.parent));
+		return sections.filter((s) => withCards.has(s.coordinate)).length;
+	});
 	const countByParent = $derived.by(() => {
 		const m = new Map<string, number>();
 		for (const c of cards) m.set(c.parent, (m.get(c.parent) ?? 0) + 1);

@@ -71,6 +71,22 @@
 		section ? `Scroll the reader to §${section.n} ${section.title}` : 'Scroll the reader to the top'
 	);
 
+	// A second click on the card within the double-click window releases a
+	// pin. Detected here rather than via `dblclick`: under the drag action's
+	// pointer capture the browser's own double-click does not always fire
+	// (the drag's swallowed click after a move also resets the count).
+	let lastClick = 0;
+	function onclick() {
+		const now = performance.now();
+		if (now - lastClick < 350) {
+			lastClick = 0;
+			onunpin?.();
+			return;
+		}
+		lastClick = now;
+		onselect();
+	}
+
 	function rel(ts: number): string {
 		const s = Math.max(0, Math.floor(Date.now() / 1000) - ts);
 		if (s < 60) return 'now';
@@ -96,9 +112,8 @@
 	style:--au={au}
 	style:--au-soft={auSoft}
 	use:draggable={drag}
-	onclick={onselect}
+	onclick={onclick}
 	onkeydown={(e) => e.key === 'Enter' && e.target === e.currentTarget && onselect()}
-	ondblclick={() => onunpin?.()}
 	onmouseenter={() => onhover(true)}
 	onmouseleave={() => onhover(false)}
 >
@@ -157,9 +172,11 @@
 		cursor: default;
 		user-select: none;
 	}
-	.acard.m { width: 150px; }
+	.acard.m { width: 150px; max-height: 64px; overflow: hidden; }
+	.acard.m .acard__t { white-space: nowrap; }
 	.acard.x { width: 330px; z-index: 5; }
 	.acard.cur { outline: 2px solid var(--blue); outline-offset: 1px; }
+	.acard.pinned { z-index: 3; }
 	.acard.pinned::after {
 		content: '';
 		position: absolute;
@@ -180,7 +197,10 @@
 		font: var(--t-3xs) / 1.2 var(--font-mono);
 		margin-bottom: 3px;
 		color: var(--base5);
+		white-space: nowrap;
+		overflow: hidden;
 	}
+	.acard__cap { flex: none; }
 	.acard__anchor {
 		border: 0;
 		border-radius: 0;
