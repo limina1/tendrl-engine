@@ -1102,15 +1102,43 @@
 			app.pushToast('Open a publication in a reader first', 'info');
 			return;
 		}
-		store.openBuffer({
-			className: 'work',
-			buffer: {
-				id: annotationsBufferId(root),
-				kind: 'annotations',
-				label: 'annotations',
-				kicker: fb?.label ?? 'table'
+		const buf = {
+			id: annotationsBufferId(root),
+			kind: 'annotations',
+			label: 'annotations',
+			kicker: fb?.kicker || fb?.label || 'table'
+		};
+		// Mobile: the table is the focused work buffer, listed in the drawer.
+		if (shell.mode === 'mobile') {
+			store.openBuffer({ className: 'work', buffer: buf });
+			return;
+		}
+		// Desktop: split the focused reader's window (reader | table). The
+		// buffer is registered in openBuffers so the switcher and kill paths
+		// see it — splitFocused only edits the tree. If the table is already
+		// a window in this slot, focus it instead of splitting again.
+		if (!store.openBuffers.some((b) => b.buffer.id === buf.id)) {
+			store.openBuffers = [...store.openBuffers, { className: 'work', buffer: buf }];
+		}
+		const pos = store.focusedSlot;
+		const tree = store.slotTrees[pos];
+		type Node = { type: 'leaf'; buffer: { id: string } } | { type: 'split'; children: Node[] };
+		const pathOf = (n: Node, prefix: number[] = []): number[] | null => {
+			if (n.type === 'leaf') return n.buffer.id === buf.id ? prefix : null;
+			for (let i = 0; i < n.children.length; i++) {
+				const p = pathOf(n.children[i], [...prefix, i]);
+				if (p) return p;
 			}
-		});
+			return null;
+		};
+		const there = tree ? pathOf(tree as Node) : null;
+		if (there) {
+			store.focusedLeafPath = { ...store.focusedLeafPath, [pos]: there };
+			store.flash(pos);
+			return;
+		}
+		// 'v' is the side-by-side split here (`.split--v` = row; 'h' stacks).
+		store.splitFocused(buf, 'v');
 	}
 
 	function openLeader() {

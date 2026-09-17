@@ -38,6 +38,8 @@
 		publicationAtag = undefined,
 		siblings = undefined,
 		resolution = undefined,
+		hotAddr = null,
+		notesMargin = false,
 		expanded = $bindable<Record<string, boolean>>({}),
 		onscroll = undefined
 	}: {
@@ -77,6 +79,13 @@
 		siblings?: { title?: string; d_tag: string }[] | undefined;
 		/** The reader's resolution-progress tracker (threaded, not context). */
 		resolution?: ResolutionTracker;
+		/** The annotations table's hovered card anchor — the matching section
+		 *  lights up (`.anchor-hot`) with a "N cards →" tip. */
+		hotAddr?: { root: string; addr: string; count: number } | null;
+		/** D9: lay each section out as text | notes (a 280 px gutter beside the
+		 *  measure) instead of notes under the text. The reader decides from
+		 *  the preference and the pane width. */
+		notesMargin?: boolean;
 		/** Which nested 30040 indexes are expanded, by addr key. Bindable so
 		 *  the reader can park it across a buffer switch (this component
 		 *  unmounts with its buffer) — view state, owned by the frontend. */
@@ -90,6 +99,8 @@
 	function addrKey(addr: { kind: number; pubkey: string; d_tag: string }): string {
 		return `${addr.kind}:${addr.pubkey}:${addr.d_tag}`;
 	}
+	const isHot = (addr: { kind: number; pubkey: string; d_tag: string } | undefined) =>
+		!!hotAddr && !!addr && addrKey(addr) === hotAddr.addr;
 
 	// Highlight spans per section, resolved engine-side in one batched round
 	// trip (POST /highlights/resolve) for every loaded section that has
@@ -499,6 +510,7 @@
      centred in whatever width the pane happens to be. -->
 <div
 	class="continuous-view"
+	class:notes-margin={notesMargin}
 	style={readingVars()}
 	bind:this={containerEl}
 	onscroll={() => onscroll?.(containerEl?.scrollTop ?? 0)}
@@ -555,12 +567,20 @@
 				{/if}
 			</div>
 		{:else}
+			{@const asks = requestsFor && section.addr ? requestsFor(section.addr) : []}
+			{@const attached = insertionsFor && section.addr ? insertionsFor(section.addr) : []}
+			{@const hot = isHot(section.addr)}
 			<div
-				class="continuous-section"
+				class="continuous-section section"
+				class:anchor-hot={hot}
 				style="--depth:{section.depth ?? 0}"
 				data-section-index={i}
 				data-section-addr={section.addr ? `${section.addr.kind}:${section.addr.pubkey}:${section.addr.d_tag}` : undefined}
 			>
+				{#if hot}
+					<span class="anchor-tip">{hotAddr?.count ?? 0} {hotAddr?.count === 1 ? 'card' : 'cards'} →</span>
+				{/if}
+				<div class="section__main">
 				{#if !isCompanion(section) && (section.title || onviewjson)}
 					<h3 class="section-title">
 						<span class="section-title__text">{section.title ?? ''}</span>
@@ -606,17 +626,19 @@
 				{:else}
 					<div class="skeleton pending"></div>
 				{/if}
-				{#if requestsFor && section.addr}
-					{@const asks = requestsFor(section.addr)}
-					{#each asks as rq (rq.id)}
-						<RequestCard request={rq} onchanged={onrequestschanged} />
-					{/each}
-				{/if}
-				{#if insertionsFor && section.addr}
-					{@const attached = insertionsFor(section.addr)}
-					{#each attached as ins (ins.coordinate)}
-						<InsertionCard insertion={ins} onopen={onopeninsertion} onpromoted={oninsertionpromoted} />
-					{/each}
+				</div>
+				<!-- The section's notes: requests first, then the attached
+				     cards. Inline they follow the text; in the margin layout
+				     the same block is the gutter column beside it. -->
+				{#if asks.length > 0 || attached.length > 0}
+					<div class="section__side">
+						{#each asks as rq (rq.id)}
+							<RequestCard request={rq} onchanged={onrequestschanged} />
+						{/each}
+						{#each attached as ins (ins.coordinate)}
+							<InsertionCard insertion={ins} onopen={onopeninsertion} onpromoted={oninsertionpromoted} />
+						{/each}
+					</div>
 				{/if}
 				{#if threadsFor && section.addr}
 					{@const t = threadsFor(section.addr)}
@@ -685,11 +707,80 @@
 	}
 
 	.continuous-section {
+		position: relative;
 		padding: 8px 0 14px;
 		padding-left: calc(var(--depth, 0) * 18px);
 		/* Room above a section jumped to via the TOC / a nostrdown ref, so its
 		   heading doesn't land flush against the toolbar. */
 		scroll-margin-top: 12px;
+	}
+	/* Lit from the annotations table: a hovered card's anchor section. The
+	   rail is the "local / not synced" hue the cards wear; the tip sits in
+	   the top-right corner in mono caps. */
+	.section.anchor-hot {
+		box-shadow: -3px 0 0 0 var(--id-local);
+		padding-left: calc(var(--depth, 0) * 18px + 10px);
+	}
+	.section .anchor-tip {
+		position: absolute;
+		right: 0;
+		top: 10px;
+		font-family: var(--font-mono);
+		font-size: var(--t-3xs);
+		font-weight: 600;
+		line-height: 1.2;
+		letter-spacing: 0.08em;
+		text-transform: uppercase;
+		color: var(--id-local);
+		pointer-events: none;
+	}
+
+	/* --- D9: notes in the margin. The column widens by the gutter and each
+	   section becomes text | notes; the rail at the gutter's left edge is
+	   dashed, solid + lit while the section is hot. Inline (the default
+	   below the width gate) is the plain flow above: side under main. --- */
+	.notes-margin .cv-column {
+		max-width: calc(var(--rd-measure, 0px) + 308px);
+	}
+	.notes-margin .section {
+		display: grid;
+		grid-template-columns: minmax(0, var(--rd-measure, 1fr)) 280px;
+		column-gap: 28px;
+		align-items: start;
+	}
+	.notes-margin .section > .section__main,
+	.notes-margin .section > .cv-threads {
+		grid-column: 1;
+		min-width: 0;
+	}
+	.notes-margin .section > .section__side {
+		grid-column: 2;
+		grid-row: 1 / span 2;
+		position: relative;
+		display: flex;
+		flex-direction: column;
+		gap: 8px;
+		padding-top: 2px;
+	}
+	.notes-margin .section__side::before {
+		content: '';
+		position: absolute;
+		left: -14px;
+		top: 6px;
+		bottom: 6px;
+		border-left: 1px dashed var(--border);
+	}
+	.notes-margin .section.anchor-hot .section__side::before {
+		border-left-color: var(--id-local);
+		border-left-style: solid;
+	}
+	.notes-margin .section__side :global(.icard),
+	.notes-margin .section__side :global(.rcard) {
+		margin: 0;
+	}
+	.notes-margin .section__side :global(.icard__text) {
+		font-size: var(--t-xs);
+		line-height: 1.45;
 	}
 
 	/* Inline nested-publication node — a collapsible folder. The caret

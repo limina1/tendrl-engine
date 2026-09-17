@@ -35,7 +35,9 @@
 		onrequestschanged = undefined,
 		publicationAtag = undefined,
 		siblings = undefined,
-		resolution = undefined
+		resolution = undefined,
+		hotAddr = null,
+		notesMargin = false
 	}: {
 		sections: LazySection[];
 		currentSection?: number;
@@ -75,10 +77,39 @@
 		siblings?: { title?: string; d_tag: string }[] | undefined;
 		/** The reader's resolution-progress tracker (threaded, not context). */
 		resolution?: ResolutionTracker;
+		/** The annotations table's hovered card anchor — the page lights up
+		 *  (`.anchor-hot`) with a "N cards →" tip when it is that section. */
+		hotAddr?: { root: string; addr: string; count: number } | null;
+		/** D9: text | notes beside each other (a 280 px gutter past the
+		 *  measure) instead of notes under the page. The reader decides. */
+		notesMargin?: boolean;
 	} = $props();
 
 	const section = $derived(sections[currentSection]);
 	const total = $derived(sections.length);
+	const hot = $derived(
+		!!hotAddr &&
+			!!section &&
+			`${section.addr.kind}:${section.addr.pubkey}:${section.addr.d_tag}` === hotAddr.addr
+	);
+	// Every card this page carries: the publication's own requests and
+	// front matter on the first page, the appendix on the last, and the
+	// section's own requests + notes in between.
+	const pageRequests = $derived.by(() => {
+		if (!section) return [] as api.AnnotationRequest[];
+		const out: api.AnnotationRequest[] = [];
+		if (currentSection === 0 && rootRequests) out.push(...rootRequests);
+		if (requestsFor) out.push(...requestsFor(section.addr));
+		return out;
+	});
+	const pageInsertions = $derived.by(() => {
+		if (!section) return [] as api.LoadedInsertion[];
+		const out: api.LoadedInsertion[] = [];
+		if (currentSection === 0 && rootInsertions) out.push(...rootInsertions.before);
+		if (insertionsFor) out.push(...insertionsFor(section.addr));
+		if (currentSection === sections.length - 1 && rootInsertions) out.push(...rootInsertions.after);
+		return out;
+	});
 	const threads = $derived(threadsFor && section ? threadsFor(section.addr) : []);
 	const highlights = $derived(highlightsFor && section ? highlightsFor(section.addr) : []);
 
@@ -178,38 +209,37 @@
 				<span class="nested-page__hint">Nested publication — refocus ⟳</span>
 			</button>
 		{:else if section}
-			<SectionCard
-				{section}
-				{highlights}
-				{focusedHighlightId}
-				{publicationAtag}
-				{siblings}
-				{resolution}
-				onopenlocal={openLocalSection}
-			/>
-			{#if currentSection === 0}
-				{#each rootRequests ?? [] as rq (rq.id)}
-					<RequestCard request={rq} onchanged={onrequestschanged} />
-				{/each}
-				{#each rootInsertions?.before ?? [] as ins (ins.coordinate)}
-					<InsertionCard insertion={ins} onopen={onopeninsertion} onpromoted={oninsertionpromoted} />
-				{/each}
-			{/if}
-			{#if requestsFor}
-				{#each requestsFor(section.addr) as rq (rq.id)}
-					<RequestCard request={rq} onchanged={onrequestschanged} />
-				{/each}
-			{/if}
-			{#if insertionsFor}
-				{#each insertionsFor(section.addr) as ins (ins.coordinate)}
-					<InsertionCard insertion={ins} onopen={onopeninsertion} onpromoted={oninsertionpromoted} />
-				{/each}
-			{/if}
-			{#if currentSection === sections.length - 1}
-				{#each rootInsertions?.after ?? [] as ins (ins.coordinate)}
-					<InsertionCard insertion={ins} onopen={onopeninsertion} onpromoted={oninsertionpromoted} />
-				{/each}
-			{/if}
+			<div
+				class="section pv-section"
+				class:anchor-hot={hot}
+				class:notes-margin={notesMargin}
+				data-section-addr={`${section.addr.kind}:${section.addr.pubkey}:${section.addr.d_tag}`}
+			>
+				{#if hot}
+					<span class="anchor-tip">{hotAddr?.count ?? 0} {hotAddr?.count === 1 ? 'card' : 'cards'} →</span>
+				{/if}
+				<div class="section__main">
+					<SectionCard
+						{section}
+						{highlights}
+						{focusedHighlightId}
+						{publicationAtag}
+						{siblings}
+						{resolution}
+						onopenlocal={openLocalSection}
+					/>
+				</div>
+				{#if pageRequests.length > 0 || pageInsertions.length > 0}
+					<div class="section__side">
+						{#each pageRequests as rq (rq.id)}
+							<RequestCard request={rq} onchanged={onrequestschanged} />
+						{/each}
+						{#each pageInsertions as ins (ins.coordinate)}
+							<InsertionCard insertion={ins} onopen={onopeninsertion} onpromoted={oninsertionpromoted} />
+						{/each}
+					</div>
+				{/if}
+			</div>
 			{#if threads.length > 0}
 				<div class="paginated-threads">
 					<button
@@ -250,6 +280,75 @@
 	.paginated-content {
 		flex: 1;
 		overflow-y: auto;
+	}
+	/* The page: SectionCard centres itself in the measure; the cards under
+	   it (inline) share that column. Lit from the annotations table the same
+	   way a scroll-view section is. */
+	.pv-section {
+		position: relative;
+		max-width: var(--rd-measure, none);
+		margin-inline: auto;
+	}
+	.pv-section > .section__side {
+		padding: 0 16px 12px;
+	}
+	.section.anchor-hot {
+		box-shadow: -3px 0 0 0 var(--id-local);
+	}
+	.section .anchor-tip {
+		position: absolute;
+		right: 16px;
+		top: 12px;
+		font-family: var(--font-mono);
+		font-size: var(--t-3xs);
+		font-weight: 600;
+		line-height: 1.2;
+		letter-spacing: 0.08em;
+		text-transform: uppercase;
+		color: var(--id-local);
+		pointer-events: none;
+		z-index: 1;
+	}
+	/* D9: text | notes. The page widens by the gutter; the card keeps the
+	   measure in column 1, the notes stack in column 2 with a dashed rail. */
+	.pv-section.notes-margin {
+		max-width: calc(var(--rd-measure, 0px) + 308px);
+		display: grid;
+		grid-template-columns: minmax(0, var(--rd-measure, 1fr)) 280px;
+		column-gap: 28px;
+		align-items: start;
+	}
+	.pv-section.notes-margin > .section__main {
+		grid-column: 1;
+		min-width: 0;
+	}
+	.pv-section.notes-margin > .section__side {
+		grid-column: 2;
+		position: relative;
+		display: flex;
+		flex-direction: column;
+		gap: 8px;
+		padding: 14px 0 0;
+	}
+	.pv-section.notes-margin > .section__side::before {
+		content: '';
+		position: absolute;
+		left: -14px;
+		top: 18px;
+		bottom: 6px;
+		border-left: 1px dashed var(--border);
+	}
+	.pv-section.notes-margin.anchor-hot > .section__side::before {
+		border-left-color: var(--id-local);
+		border-left-style: solid;
+	}
+	.pv-section.notes-margin .section__side :global(.icard),
+	.pv-section.notes-margin .section__side :global(.rcard) {
+		margin: 0;
+	}
+	.pv-section.notes-margin .section__side :global(.icard__text) {
+		font-size: var(--t-xs);
+		line-height: 1.45;
 	}
 
 	.paginated-nav {
