@@ -9,6 +9,8 @@
 	import RichContent from './RichContent.svelte';
 	import InsertionCard from './InsertionCard.svelte';
 	import RequestCard from './RequestCard.svelte';
+	import EventLinks from './EventLinks.svelte';
+	import { groupAnswers } from './request-group';
 	import { threadContainsId, type ThreadNode } from '$lib/discussions/thread';
 	import { type Highlight, type HighlightSpan } from '$lib/discussions/highlights';
 	import { coordMatchesAddr, type ResolvedRef, type ParsedToken } from '$lib/nostr/nostrdown';
@@ -503,6 +505,8 @@
 
 		return () => observer.disconnect();
 	});
+	// Root-level (front-matter) requests with their answers folded in.
+	const rootGroups = $derived(groupAnswers(rootRequests ?? [], rootInsertions?.before ?? []));
 </script>
 
 <!-- `readingVars()` puts the reader's typography prefs (face, size, measure,
@@ -522,9 +526,9 @@
 
 	<div class="cv-column">
 	{#each rootRequests ?? [] as rq (rq.id)}
-		<RequestCard request={rq} onchanged={onrequestschanged} />
+		<RequestCard request={rq} onchanged={onrequestschanged} answers={rootGroups.answers.get(rq.id) ?? []} onopen={onopeninsertion} onpromoted={oninsertionpromoted} />
 	{/each}
-	{#each rootInsertions?.before ?? [] as ins (ins.coordinate)}
+	{#each rootGroups.rest as ins (ins.coordinate)}
 		<InsertionCard insertion={ins} onopen={onopeninsertion} onpromoted={oninsertionpromoted} />
 	{/each}
 	{#each visibleRows as row, ri (`${row.index}:${row.section.addr?.pubkey ?? ''}:${row.section.addr?.d_tag ?? ''}`)}
@@ -619,6 +623,7 @@
 							onopenlocal={openLocalSection}
 						/>
 					{/if}
+					<EventLinks links={section.links ?? []} />
 				{:else if section.status === 'loading'}
 					<div class="skeleton"></div>
 				{:else if section.status === 'error'}
@@ -631,11 +636,12 @@
 				     cards. Inline they follow the text; in the margin layout
 				     the same block is the gutter column beside it. -->
 				{#if asks.length > 0 || attached.length > 0}
+					{@const groups = groupAnswers(asks, attached)}
 					<div class="section__side">
 						{#each asks as rq (rq.id)}
-							<RequestCard request={rq} onchanged={onrequestschanged} />
+							<RequestCard request={rq} onchanged={onrequestschanged} answers={groups.answers.get(rq.id) ?? []} onopen={onopeninsertion} onpromoted={oninsertionpromoted} />
 						{/each}
-						{#each attached as ins (ins.coordinate)}
+						{#each groups.rest as ins (ins.coordinate)}
 							<InsertionCard insertion={ins} onopen={onopeninsertion} onpromoted={oninsertionpromoted} />
 						{/each}
 					</div>

@@ -197,6 +197,8 @@ pub async fn start(opts: ServeOptions) -> anyhow::Result<RunningServer> {
 
     info!("Starting nostr-engine v{}", env!("CARGO_PKG_VERSION"));
     info!("Data directory: {}", config.database.data_dir);
+    // Keyring entries are scoped to this data dir (see identity.rs).
+    crate::identity::set_keyring_namespace(&config.database.data_dir);
 
     // Bind FIRST — before the engine (and its LMDB environment) exists
     // and before any background task is spawned. A taken port must fail

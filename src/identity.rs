@@ -487,11 +487,39 @@ pub struct IdentityKeyring {
     service: String,
 }
 
+/// The keyring service name is scoped to the engine's data directory, set
+/// once at boot. Two engines on one machine (the live one and a scratch
+/// verify run, or two data dirs) would otherwise share one slot and
+/// overwrite each other's identities and bunker pairings — that happened.
+static KEYRING_NAMESPACE: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
+/// Called once by the server boot with the configured data dir. Later calls
+/// are ignored; tests never call it and keep the bare service name.
+pub fn set_keyring_namespace(data_dir: &str) {
+    let canon = std::fs::canonicalize(data_dir)
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|_| data_dir.to_string());
+    let _ = KEYRING_NAMESPACE.set(canon);
+}
+
+/// `nostr-engine:<8 hex of sha256(data dir)>`, or the bare `nostr-engine`
+/// before boot names a namespace.
+pub fn keyring_service_name() -> String {
+    use sha2::{Digest, Sha256};
+    match KEYRING_NAMESPACE.get() {
+        Some(ns) => {
+            let digest = Sha256::digest(ns.as_bytes());
+            format!("nostr-engine:{}", hex::encode(&digest[..4]))
+        }
+        None => "nostr-engine".to_string(),
+    }
+}
+
 impl IdentityKeyring {
-    /// Create a new keyring wrapper
+    /// Create a new keyring wrapper, scoped to this engine's data dir.
     pub fn new() -> Self {
         IdentityKeyring {
-            service: "nostr-engine".to_string(),
+            service: keyring_service_name(),
         }
     }
 }

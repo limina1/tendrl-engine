@@ -10,6 +10,7 @@
 	import { getAuthorDisplayName } from '$lib/discussions/authors.svelte';
 	import { styleTitle } from '$lib/styles.svelte';
 	import RichContent from '$lib/components/RichContent.svelte';
+	import EventLinks from '$lib/components/EventLinks.svelte';
 	import { draggable, type DraggableOptions } from '$lib/actions/draggable';
 
 	let {
@@ -131,6 +132,7 @@
 		<div class="acard__b acard__b--full">
 			{#if card.note}
 				<RichContent content={card.note.event.content} muted />
+				{#if card.note}<EventLinks tags={card.note.event.tags} compact />{/if}
 			{:else if card.req}
 				<p class="acard__task">{card.req.task}</p>
 				<p class="acard__meta">scope: {card.req.scope.join(' · ') || 'section'} · {card.req.output}</p>

@@ -73,6 +73,7 @@ fn leaf_pub_event(addr: NAddr, depth: usize, leaf: &Value) -> PubLoadEvent {
         .and_then(|v| v.as_str())
         .map(|s| !s.is_empty() && !s.chars().all(|c| c == '0'))
         .unwrap_or(false);
+    let links = event_web_links(leaf);
     PubLoadEvent::Leaf {
         addr,
         depth,
@@ -80,7 +81,29 @@ fn leaf_pub_event(addr: NAddr, depth: usize, leaf: &Value) -> PubLoadEvent {
         content,
         relays,
         signed,
+        links,
     }
+}
+
+/// The `r` tags of an event that are web URLs, in order, deduplicated.
+pub fn event_web_links(event: &Value) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    if let Some(tags) = event.get("tags").and_then(|v| v.as_array()) {
+        for t in tags {
+            let Some(t) = t.as_array() else { continue };
+            if t.first().and_then(|v| v.as_str()) != Some("r") {
+                continue;
+            }
+            let Some(url) = t.get(1).and_then(|v| v.as_str()) else { continue };
+            let lower = url.to_ascii_lowercase();
+            if (lower.starts_with("https://") || lower.starts_with("http://"))
+                && !out.iter().any(|u| u == url)
+            {
+                out.push(url.to_string());
+            }
+        }
+    }
+    out
 }
 
 fn addr_filters(addrs: &[NAddr]) -> Vec<Value> {
@@ -883,6 +906,11 @@ pub enum PubLoadEvent {
         relays: Vec<String>,
         #[serde(default = "default_true")]
         signed: bool,
+        /// The leaf's outward web links: every `r` tag holding an http(s)
+        /// URL, in tag order, deduplicated. Derived here so the reader
+        /// renders a link row without reading tags.
+        #[serde(default)]
+        links: Vec<String>,
     },
     /// A node (index or leaf) failed to resolve. Counted toward `N` so the
     /// client's `i/N` still terminates cleanly.
@@ -3524,6 +3552,15 @@ pub async fn build_signed_publication_events_via_signer(
         if !tags.iter().any(|t| t.first().map(String::as_str) == Some("m")) {
             let mode = crate::tree::node::ContentMode::from_tags(&tags);
             tags.push(vec!["m".to_string(), mode.mime().to_string()]);
+        }
+        // What the section references, as tags: `r` for every web URL in
+        // the text, `w`/`ref`/`a`/`q`/`p` for nostrdown — the same emission
+        // the in-process builders make (`build_section_event_internal`,
+        // `tree_emit`). Author-supplied tags win on duplicates.
+        for t in crate::nostrdown::reference_tags(&section_content) {
+            if !tags.iter().any(|x| x[0] == t[0] && x.get(1) == t.get(1)) {
+                tags.push(t);
+            }
         }
 
         let template = EventTemplate {
