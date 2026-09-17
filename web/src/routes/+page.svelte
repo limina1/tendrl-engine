@@ -1137,7 +1137,8 @@
 			store.flash(pos);
 			return;
 		}
-		store.splitFocused(buf, 'h');
+		// 'v' is the side-by-side split here (`.split--v` = row; 'h' stacks).
+		store.splitFocused(buf, 'v');
 	}
 
 	function openLeader() {

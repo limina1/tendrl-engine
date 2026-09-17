@@ -95,27 +95,32 @@
 	const scrollTops = { content: 0, continuous: 0 };
 	// svelte-ignore state_referenced_locally
 	const savedView = store.bufferState.get(buffer.id) as ReaderViewState | undefined;
+	// Park the view state. Runs on teardown — and explicitly before a split
+	// (`openTable`), because replacing this leaf with a split node mounts
+	// the new reader instance before the old one tears down, so the
+	// teardown save would land after the remount had already read it.
+	function saveView() {
+		store.bufferState.set(buffer.id, {
+			viewMode,
+			currentSection,
+			treeDepth,
+			focusStack: $state.snapshot(focusStack),
+			focusMarker,
+			visitLog: $state.snapshot(visitLog),
+			visitIndex,
+			outlineExpanded: $state.snapshot(outlineExpanded),
+			continuousExpanded: $state.snapshot(continuousExpanded),
+			summaryOpen,
+			publicationThreadsOpen,
+			treeOpen,
+			toolsOpen,
+			insertionsLoaded,
+			insertionsScope,
+			scroll: { ...scrollTops }
+		} satisfies ReaderViewState);
+	}
 	$effect(() => {
-		return () => {
-			store.bufferState.set(buffer.id, {
-				viewMode,
-				currentSection,
-				treeDepth,
-				focusStack: $state.snapshot(focusStack),
-				focusMarker,
-				visitLog: $state.snapshot(visitLog),
-				visitIndex,
-				outlineExpanded: $state.snapshot(outlineExpanded),
-				continuousExpanded: $state.snapshot(continuousExpanded),
-				summaryOpen,
-				publicationThreadsOpen,
-				treeOpen,
-				toolsOpen,
-				insertionsLoaded,
-				insertionsScope,
-				scroll: { ...scrollTops }
-			} satisfies ReaderViewState);
-		};
+		return () => saveView();
 	});
 
 	let publication = $state<PublicationDetail | null>(null);
@@ -2300,7 +2305,11 @@
 			}
 			break;
 		}
-		store.splitFocused(buf, 'h');
+		// 'v' is the side-by-side split in this WM (`.split--v` = row; 'h'
+		// stacks): reader | table. The split remounts this reader — park its
+		// view first so it comes back in the same mode with its notes shown.
+		saveView();
+		store.splitFocused(buf, 'v');
 	}
 
 	// A table card's `§n` chip asked this reader to show its anchor. The
@@ -2618,6 +2627,7 @@
 					<span class="cap">reading</span>
 					<span class="hint">faces &amp; measure — persists per device</span>
 				</div>
+				<div class="tools-sheet__row">
 				<ReadingControls compact />
 				<button
 					class="notes-layout"
@@ -2625,6 +2635,7 @@
 					onclick={() => setReadingNotesLayout(reading.notesLayout === 'margin' ? 'inline' : 'margin')}
 					title="Where loaded notes sit: beside the text in the margin (when the pane has room — a split pane or narrow window falls back to inline), or inline under their section"
 				>notes: {reading.notesLayout}</button>
+				</div>
 			</div>
 		</div>
 	{/if}
@@ -3184,7 +3195,8 @@
 		pointer-events: none;
 	}
 	/* notes: margin | inline — sits with the reading strip, styled like its toggles. */
-	.notes-layout {
+	.tools-sheet__row button.notes-layout {
+		flex: 0 0 auto;
 		background: none;
 		border: 1px solid var(--border);
 		border-radius: var(--r-sm, 3px);
@@ -3192,9 +3204,10 @@
 		font-family: var(--font-mono);
 		font-size: var(--t-3xs);
 		padding: 3px 8px;
+		min-height: 0;
 		cursor: pointer;
 	}
-	.notes-layout.on {
+	.tools-sheet__row button.notes-layout.on {
 		border-color: var(--id-yours);
 		color: var(--id-yours);
 		background: color-mix(in srgb, var(--id-yours) 12%, transparent);
