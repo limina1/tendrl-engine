@@ -72,7 +72,7 @@ signing source, insertions, the engine speaking MCP, the zettel bubble.
 - [[file:feat-search.org][Search]]
 - [[file:feat-compose.org][Compose]]
 - [[file:feat-mcp.org][MCP surface]] — the external-harness half; shares the catalog
-- [[file:idea-insertions.org][Insertions]] — the assistant's natural output
+- [[file:feat-insertions.org][Insertions]] — the assistant's natural output: =list_insertions= · =propose_insertion= (ComposeWrite, assistant-signed, local) · =promote_insertion= (Publish) shipped 2026-09-16
 - [[file:decision-context-set-engine-owned.org][Decision: context set is engine-owned]]
 - [[file:decision-refresh-on-mount.org][Decision: buffers re-read shared state on mount]]
 - [[file:decision-assistant-signs-own-key.org][Decision: the assistant signs with its own key]]

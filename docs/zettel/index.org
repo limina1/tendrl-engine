@@ -134,6 +134,7 @@ Branch =design/insertions-context=. Plan: [[file:../insertions-plan.org][inserti
 Spec: [[file:../../nips/NKBIP-01-insertions.org][NKBIP-01 insertions extension]].
 
 - [[file:idea-insertions.org][Insertions]] — reader-attached 30041s with NIP-22 anchors; promotable by index republication; the zettel bubble's output
+- [[file:feat-insertions.org][Insertions]] — built: anchor core, =/insertions*= + =/publication/fork*=, three tools, reader cards + composer (2026-09-16)
 
 * Ideas — captured, not scheduled
 

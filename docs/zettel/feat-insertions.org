@@ -1,0 +1,87 @@
+#+TITLE: Insertions — reader-attached sections
+#+TYPE: feature
+#+STATUS: implemented
+#+DATE: 2026-09-16
+
+The third member of the annotation family, built (plan Phase 3, branch
+=feat/insertions=). Highlights /quote/ a place, comments /discuss/ it, an
+*insertion* /adds structured text/ at it: a kind-30041 section carrying
+NIP-22's root/parent anchors (=A=/=K=/=P= for the publication, =a=/=k=/=p=
+for the section, optional =e= version pin) plus =["insert", "before"|"after"]=
+when it claims a place in the reading order. Spec:
+[[file:../../nips/NKBIP-01-insertions.org][NKBIP-01 insertions extension]];
+the idea and its resolved questions: [[file:idea-insertions.org][insertions]].
+
+* What exists
+
+- *Pure core* =src/publication/insertion.rs=: =InsertionAnchor= (parse off
+  tags — lenient: kinds/pubkeys fall back to the coordinates — and emit in
+  spec order), =Placement= (=attach= · =before= · =after=; a bad =insert=
+  value degrades to an annotation), =build_insertion_template= (=d= nanoid,
+  =title= + =T=, anchor tags, =format= for non-Markdown, extra tags such as
+  =context=), =promotion_slot= (before/after the parent's entry; root
+  =before= = front matter, =after= = appendix; an annotation suggests
+  right-after), =fork_index= — the spec's /copy process/: every tag
+  verbatim, the =a= spliced at the slot; same =d= when the signer owns the
+  index, else a minted =d= + =p= + =E= to the copied index (existing =E=
+  dropped so a derivative of a derivative points one hop back). Refuses a
+  coordinate already in the index.
+- *API* =src/api/insertions.rs=: =POST /api/v1/insertions= (+ =/preview=) —
+  =anchor {root, parent?, parent_event_id?, placement?}= + title/content/
+  format/context/tags, =sign_as= (user default · assistant), =broadcast=
+  (default true; false = sign and keep local). The parent version is pinned
+  from the local store when the caller does not name one. =POST
+  /insertions/load= — the =#A= pass: =root=, =authors=, =policy=, =relays=,
+  =mode_confirm=; Confirm-gated like a discussions pull; newest version per
+  coordinate; muted authors dropped; a result whose =A= is not the requested
+  root is discarded; each carries its parsed anchor; the response also
+  spells the same query in the search DSL (=A:<root> k:30041 by:…=) for the
+  annotations table. =POST /publication/fork= (+ =/preview=) — promotion:
+  =index=, =insertion= (coordinate or id), optional =slot= override,
+  =sign_as=. The preview says =derivative=, =slot=, =after=, =copied_tags=
+  and the signer it was computed for.
+- *Tools* (=tools.rs=, catalog 21): =list_insertions= (Network), =propose_
+  insertion= (ComposeWrite — signed as the assistant, local until
+  =publish=), =promote_insertion= (Publish, off by default — a new version of
+  the assistant's own index or a derivative under its key).
+- *Reader*: Tools → *load annotations* (scope toggle =mine= = you + your
+  assistant · =anyone=; =hide=) runs the pass on demand — never with the
+  tree stream ([[file:decision-insertions-load-on-demand.org][decision]]).
+  Each result renders as an =InsertionCard= under its anchor section (both
+  views; front matter / appendix on the index itself) — Direction B: a flat
+  margin card with a left =--id-local= bar, =sticky= skin behind Appearance
+  → Notes (=reading.notes=), and below 768 px it folds to a 44 px row that
+  expands in place (Direction C). A note whose coordinate is already in the
+  index is /promoted/ and renders as a section, not a card. =promote= on a
+  card previews the copy (new version vs derivative, slot, tags copied) and
+  publishes on one armed button; the owner's promotion reloads the reader.
+  A load survives a buffer switch (=insertionsLoaded= in =bufferState= →
+  local re-read on remount).
+- *Composer* =InsertionComposerModal=: one form behind the event menu's
+  *Annotate* (=n=) on any 30040/30041 — a section's ⋮ / =menu=, the =M= menu
+  (= the index: front matter / appendix / a note on the whole), or a
+  search result's menu. Anchor chips are read-only (root from the reader
+  that opened the menu, else a containing index — a select when there are
+  several — else the note itself: a standalone zettel is its own root);
+  placement seg; title; body + format; optional context; wire preview from
+  =/insertions/preview=; *sign · keep local* or *sign · broadcast*. Signs
+  as you. Draft memory on close, cleared by publish.
+- *Search*: insertions are 30041s — =A:<coord> k:30041=, =has:A=, =count:A=
+  all work unchanged (verified 2026-09-16).
+
+* Not yet
+- "open in composer" hand-off from the composer modal (an anchored compose
+  item) and the capture-card /note/ variant door.
+- =/insertions/load= returns the DSL but does not /take/ a spell yet; the
+  annotations table (Phase 5b) is where that lands.
+- Span anchoring ([[file:idea-annotation-anchoring.org][annotation anchoring]]).
+
+* Related
+- [[file:index.org][Index]]
+- [[file:idea-insertions.org][Idea: insertions]] — the design and resolved questions
+- [[file:feat-discussions.org][Discussions & highlights]] — the two siblings
+- [[file:feat-reader.org][Reader]]
+- [[file:feat-assistant.org][AI assistant]] — =propose_insertion= is the zettel bubble's output shape
+- [[file:decision-insertions-load-on-demand.org][Decision: load on demand]]
+- [[file:decision-assistant-signs-own-key.org][Decision: the assistant signs with its own key]]
+- [[file:../insertions-plan.org][Plan]]

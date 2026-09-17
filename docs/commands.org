@@ -2074,3 +2074,78 @@ Amber on the phone: Settings → Assistant identity → "Use Amber for the
 assistant" registers a NIP-55 signer for the assistant slot
 (=/assistant-identity/signer-register= · =signer-channel= · =sign-response=).
 Device check pending — see the plan's follow-up.
+
+* Insertions (NKBIP-01) — plan Phase 3 (branch =feat/insertions=)
+
+Spec =nips/NKBIP-01-insertions.org=; zettel =docs/zettel/feat-insertions.org=.
+
+** Tests
+
+#+begin_src bash
+cargo test --lib publication::insertion                          # anchor round-trip, slot arithmetic, fork (owner / derivative / hop-back)
+cargo test --lib test_insertion_propose_load_and_promote         # tools end to end against a temp engine
+pnpm -C web check
+#+end_src
+
+** API round-trip (scratch engine on =:3131=, throwaway keys)
+
+The user login wants an =ncryptsec=; =nak key encrypt <hex> <pw>= makes one.
+The assistant login takes a plain =nsec=.
+
+#+begin_src bash
+B=localhost:3131/api/v1; J='Content-Type: application/json'
+curl -s -X POST $B/network/mode -H "$J" -d '{"mode":"auto"}'
+USEC=$(nak key generate); ASEC=$(nak key generate); UPK=$(nak key public $USEC); APK=$(nak key public $ASEC)
+curl -s -X POST $B/identity/login  -H "$J" -d "{\"ncryptsec\":\"$(nak key encrypt $USEC pw)\"}"; curl -s -X POST $B/identity/unlock -H "$J" -d '{"password":"pw"}'
+curl -s -X POST $B/assistant-identity/login -H "$J" -d "{\"key\":\"$(nak encode nsec $ASEC)\"}"
+PUB=$(curl -s -X POST $B/publish -H "$J" -d '{"title":"Fables","sections":[{"title":"One","content":"a","tags":[]},{"title":"Two","content":"b","tags":[]}],"tags":[],"sign":true,"broadcast":false}')
+IDX=$(echo "$PUB" | jq -r '.events[0]'); ROOT="30040:$UPK:$(echo "$IDX" | jq -r '.tags[]|select(.[0]=="d")|.[1]')"
+S1=$(echo "$IDX" | jq -r '[.tags[]|select(.[0]=="a")|.[1]][0]'); S2=$(echo "$IDX" | jq -r '[.tags[]|select(.[0]=="a")|.[1]][1]')
+# preview = the exact template; pinned = the parent version came from the local store
+curl -s -X POST $B/insertions/preview -H "$J" -d "{\"anchor\":{\"root\":\"$ROOT\",\"parent\":\"$S1\",\"placement\":\"after\"},\"title\":\"A modern reading\",\"content\":\"…\",\"format\":\"org\",\"context\":\"rightly served\"}" \
+  | jq -c '{tags:[.event.tags[]|.[0]], placement:.anchor.placement, pinned:(.anchor.parent_event_id!=null)}'
+# sign as the user (kept local) · as the assistant (attach to §2) · front matter (parent omitted, placement before)
+I1=$(curl -s -X POST $B/insertions -H "$J" -d "{\"anchor\":{\"root\":\"$ROOT\",\"parent\":\"$S1\",\"placement\":\"after\"},\"title\":\"A modern reading\",\"content\":\"…\",\"broadcast\":false}" | jq -r .coordinate)
+curl -s -X POST $B/insertions -H "$J" -d "{\"anchor\":{\"root\":\"$ROOT\",\"parent\":\"$S2\"},\"title\":\"Margin note\",\"content\":\"…\",\"sign_as\":\"assistant\",\"broadcast\":false}" | jq -c '{signed_as, pk:.event.pubkey[0:8]}'   # a359… ≠ user
+curl -s -X POST $B/insertions -H "$J" -d "{\"anchor\":{\"root\":\"$ROOT\",\"placement\":\"before\"},\"title\":\"Preface\",\"content\":\"…\",\"broadcast\":false}" | jq -c '{top:(.anchor.parent==.anchor.root)}'
+# the #A pass (local); author filter; the DSL twin
+curl -s -X POST $B/insertions/load -H "$J" -d "{\"root\":\"$ROOT\",\"policy\":\"local_only\"}" | jq -c '{n:(.insertions|length), query, where:[.insertions[]|.anchor.placement]}'   # 3 · after/annotation/before
+curl -s -X POST $B/insertions/load -H "$J" -d "{\"root\":\"$ROOT\",\"policy\":\"local_only\",\"authors\":[\"$APK\"]}" | jq '.insertions|length'                                     # 1
+curl -s -X POST $B/search -H "$J" -d "{\"query\":\"A:$ROOT k:30041\",\"policy\":\"local_only\"}" | jq '.results|length'                                                            # 3
+curl -s -X POST $B/search -H "$J" -d '{"query":"k:30041 has:A count:A","policy":"local_only"}' | jq -c '.tag_counts.A[]|{value:.value[0:14],count}'
+# promotion: owner = new version (same coordinate, note at slot 1); stranger = derivative (p + E, new d); a second promote of the same note is refused
+curl -s -X POST $B/publication/fork/preview -H "$J" -d "{\"index\":\"$ROOT\",\"insertion\":\"$I1\",\"sign_as\":\"assistant\"}" | jq -c '{derivative, slot, pE:[.event.tags[]|select(.[0]=="p" or .[0]=="E")|.[0]]}'
+curl -s -X POST $B/publication/fork -H "$J" -d "{\"index\":\"$ROOT\",\"insertion\":\"$I1\",\"broadcast\":false}" | jq -c '{derivative, slot, ingested}'
+curl -s "$B/publications/$UPK/${ROOT##*:}" | jq -c '{section_count, toc:[.toc[]|.title]}'   # One · A modern reading · Two
+curl -s -X POST $B/publication/fork/preview -H "$J" -d "{\"index\":\"$ROOT\",\"insertion\":\"$I1\"}"   # {"error":…"already in the index"}
+#+end_src
+
+Mind the shell: a jq program with =\"= inside a double-quoted =-d= body is
+fine, but a jq /filter/ needs single quotes — =select(.[0]=="a")= not
+=select(.[0]==\"a\")=.
+
+** UI verification (headless chromium + CDP, see the verify skill)
+
+- A search result's click opens the *event menu*, not the reader — click
+  its "Read publication" action (=[role=dialog] button= matching
+  /Read publication/); "n Annotate" is in that same menu for any
+  30040/30041.
+- The reader opens *paged*; click the =scroll= seg button to see every
+  card at once. Tools (=button[title^="Tools"]=) → the button whose text
+  is "load annotations"; the scope toggle beside it reads =mine= /
+  =anyone= (the assistant's notes need =anyone= unless the assistant
+  identity is set on this engine). Cards = =.icard=; =.icard__cap= is the
+  placement word, =.icard__title= the title.
+- Section menu = =.continuous-section .section-menu= → =.evm__action=
+  matching /Annotate/ → =.ins-modal=; fill =#ins-title= / =#ins-body= via
+  the native value setter + =input= event; =.ins-seg__opt= by text picks
+  placement; =.ins-json-toggle= → =.ins-json= is the engine preview;
+  =.ins-btn= matching /keep local/ signs. The card list re-reads itself
+  (=app.bumpInsertions()=) — poll =.icard= count.
+- =Emulation.setDeviceMetricsOverride= *persists across scripts on the
+  same page*; clear it (or set 1280×900, =mobile:false=) before a desktop
+  capture. Under 768 px a card is its fold row (=.icard__fold=) and the
+  body — with =promote= — is =display:none= until tapped: a CDP click on a
+  hidden element lands nowhere (=out.promote= true, no preview).
+- Skin: Tools → Reading → the =.rc-toggle= reading =card= / =sticky=;
+  the card's class flips to =icard--sticky=.

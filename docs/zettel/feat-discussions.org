@@ -168,7 +168,7 @@ acceptance.
   hbr.coracle.social with a thecitadel-only relay config: parent 404 →
   200 once the comment is in the store; thread pulled from the hint.
 
-* The third member: insertions (spec'd, not built)
+* The third member: insertions (built 2026-09-16 — [[file:feat-insertions.org][feat-insertions]])
 
 Highlights /quote/ a place and comments /discuss/ it; an *insertion*
 /adds structured text/ at it — a kind-30041 section carrying the same
@@ -198,7 +198,7 @@ insertions extension]]; design: [[file:idea-insertions.org][insertions]].
 - [[file:idea-external-source-highlights.org][External-source highlights → citations]]
 - [[file:idea-citations.org][Citations (kind 30161)]]
 - [[file:idea-annotation-anchoring.org][Annotation anchoring]]
-- [[file:idea-insertions.org][Insertions]] — the third member of the family
+- [[file:feat-insertions.org][Insertions]] — the third member of the family (built); idea: [[file:idea-insertions.org][insertions]]
 - [[file:idea-event-badges.org][Event badges]]
 - [[file:feat-ui-patterns.org][UI patterns]] — wire preview, modal yield
 - [[file:feat-publishing.org][Publishing]] — signing-is-the-snapshot

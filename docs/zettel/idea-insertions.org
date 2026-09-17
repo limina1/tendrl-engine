@@ -1,6 +1,6 @@
 #+TITLE: Idea: insertions — reader-attached sections
 #+TYPE: idea
-#+STATUS: plan
+#+STATUS: implemented — see feat-insertions
 #+DATE: 2026-09-16
 
 * What it means
@@ -101,6 +101,7 @@ format.
 
 * Related
 - [[file:index.org][Index]]
+- [[file:feat-insertions.org][Feature: insertions]] — what shipped
 - [[file:../insertions-plan.org][Plan: insertions, context set & the assistant]]
 - [[file:feat-discussions.org][Discussions & highlights]] — the two siblings
 - [[file:feat-assistant.org][AI assistant]] — the zettel bubble's producer

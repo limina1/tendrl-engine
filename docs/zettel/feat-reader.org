@@ -71,6 +71,13 @@ never happen in the browser.
   once the tree settles, twice, unless the user scrolls first. Rationale in
   [[file:decision-buffer-state-homes.org][where buffer state lives]].
 
+- Annotations (2026-09-16, [[file:feat-insertions.org][insertions]]): Tools →
+  *load annotations* runs the =#A= pass on demand; loaded notes render as
+  margin cards under their anchor section in both views (front matter /
+  appendix on the index), fold to a row under 768 px, take the =sticky=
+  skin from Appearance → Notes, and carry =promote=. The event menu's
+  *Annotate* (=n=) opens the composer anchored to the section or the index.
+
 * Gaps / open edges
 - Nested-publication packed cards, drill-in with breadcrumbs, and parent
   navigation are Phase 3 roadmap (=docs/wm-shell.md=).
@@ -98,4 +105,5 @@ never happen in the browser.
 - [[file:idea-event-badges.org][Event badges]]
 - [[file:decision-buffer-state-homes.org][Where buffer state lives]]
 - [[file:feat-discussions.org][Discussions]]
+- [[file:feat-insertions.org][Insertions]] — annotations in the margin
 - [[file:tool-collatz-fixture.org][Collatz graph fixture]] — test data for the graph panel

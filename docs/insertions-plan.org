@@ -251,39 +251,49 @@ Recipe: =docs/commands.org= "Bunker (NIP-46)".
       =<data_dir>/= (not the keyring) so boot reconnect works everywhere
 
 ** Phase 3 — Insertions                                                    :medium:
-- [ ] =src/publication/insertion.rs= (pure): =InsertionAnchor= parse /
+- [X] =src/publication/insertion.rs= (pure): =InsertionAnchor= parse /
       emit; =Placement::{Annotation, Before, After}=; promotion slot from
       =insert= + parent index position
-- [ ] =build_insertion_template= (=src/discussions.rs= neighbour);
+- [X] =build_insertion_template= (lives in =insertion.rs=, not =discussions.rs=) (=src/discussions.rs= neighbour);
       =POST /api/v1/insertions= + =/preview= (one builder, per the
       wire-preview pattern)
-- [ ] =load_insertions(root, authors)= — =#A= filter, *on demand* behind
+- [X] =load_insertions(root, authors)= — =#A= filter, *on demand* behind
       a reader action, Confirm-gated; never inside
       =stream_publication_tree= ([[file:zettel/decision-insertions-load-on-demand.org][decision]]);
       each result carries its anchor for the pointer
-- [ ] =fork_index(index, splice)= (pure): copy every tag verbatim, splice
+- [X] =fork_index(index, splice)= (pure): copy every tag verbatim, splice
       the =a= at the slot; same =d= if the logged-in author owns the
       index, else new =d= + =p= + =E= to the copied index (immediate
       source). =POST /api/v1/publication/fork= + =/preview= → the existing
       sign/publish path
-- [ ] =tools::propose_insertion= (ComposeWrite) and =promote_insertion=
+- [X] =tools::propose_insertion= (ComposeWrite) and =promote_insertion=
       (Publish)
-- [ ] =InsertionComposerModal= (clone =HighlightComposerModal=: modal-yield,
+- [X] =InsertionComposerModal= (clone =HighlightComposerModal=: modal-yield,
       wire preview): anchor chips, placement seg, title, body + format,
       optional context; doors = section =⋮=, =M= menu, capture-card /note/
       variant; "open in composer" hands an anchored compose item over
-- [ ] =load_insertions= takes a spell, not just =(root, authors)= — the
+- [ ] =load_insertions= takes a spell (the endpoint /returns/ the DSL of what it ran; taking one is Phase 5b work), not just =(root, authors)= — the
       reader's "load annotations" is the fixed spell =A:<root> k:30041=
       with the author filter from the intent modal
-- [ ] reader: *load annotations* action; loaded insertions render as
+- [X] reader: *load annotations* action; loaded insertions render as
       margin cards pointing at their anchor (D9: B structure; =sticky=
       skin behind an Appearance preference); below the no-gutter measure
       they fold into 44 px rows under the anchor (C); /promote/ opens the
       fork flow
-- [ ] search: insertions are 30041s — =has:A= / =A:<coord>= already work;
+- [X] search: insertions are 30041s — =has:A= / =A:<coord>= already work;
       verify =count:A= buckets
-- [ ] tests: anchor round-trip; discovery filter shape; promotion slot
+- [X] tests: anchor round-trip; discovery filter shape; promotion slot
       arithmetic; foreign promotion yields a derivative index
+- [X] *built 2026-09-16* (=feat/insertions=): engine round trip + tools
+      covered by =api::chat_api_tests::test_insertion_propose_load_and_promote=
+      and =publication::insertion::tests=; live on =:3131= (owner republish
+      lands the note in the TOC at its slot; duplicate refused; a stranger's
+      fork is a derivative with =p= + =E=; =count:A= buckets); GUI: load →
+      cards under their anchors, section menu → Annotate → composer → sign ·
+      keep local → card appears, sticky skin, 400 px fold. Recipe in
+      [[file:commands.org][commands.org]] ("Insertions"). Left open: "open in
+      composer" hand-off, the capture-card /note/ door.
+      Zettel: [[file:zettel/feat-insertions.org][feat-insertions]].
 
 ** Phase 4 — One catalog: the engine speaks MCP                            :medium:
 - [ ] MCP Streamable-HTTP endpoint on the engine (=/mcp=), token-gated
