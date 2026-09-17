@@ -49,7 +49,7 @@ exists (with code paths), gaps.
 - [[file:feat-relays.org][Relay sets]] — general/fetch/publish, relays.json
 - [[file:feat-import.org][Document import]] — PDF/DOCX/EPUB/HTML → events, JSONL ingest/export
 - [[file:feat-assistant.org][LLM assistant]] — chat fragments, agentic tool-calling
-- [[file:feat-mcp.org][MCP surface]] — tendrl as tool server for an external harness; the subscription path
+- [[file:feat-mcp.org][MCP surface]] — the engine speaks MCP (=/mcp=, Streamable HTTP, one catalog under the live tool policy; 2026-09-17)
 - [[file:feat-shell.org][WM shell]] — buffers, slots, modal nav
 - [[file:feat-mobile.org][Mobile & Android]] — mobile shell (bottom bar,
   buffer drawer), Tauri 2 Android plan through release

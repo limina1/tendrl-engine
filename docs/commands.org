@@ -2149,3 +2149,68 @@ fine, but a jq /filter/ needs single quotes — =select(.[0]=="a")= not
   hidden element lands nowhere (=out.promote= true, no preview).
 - Skin: Tools → Reading → the =.rc-toggle= reading =card= / =sticky=;
   the card's class flips to =icard--sticky=.
+
+* MCP — the engine speaks MCP (plan Phase 4, branch =feat/engine-mcp=)
+
+=src/mcp.rs=; zettel =docs/zettel/feat-mcp.org=. Streamable HTTP on
+=/mcp=, stateless; the token is minted into =<data_dir>/mcp-token=.
+
+** Register in Claude Code (the live engine on =:3030=)
+
+#+begin_src bash
+curl -s localhost:3030/api/v1/mcp | jq -r .claude_mcp_add      # prints the exact line; or copy it from Settings → AI tools
+# → claude mcp add --transport http tendrl http://127.0.0.1:3030/mcp --header "Authorization: Bearer <token>"
+claude mcp list                                                 # tendrl … ✓ connected
+#+end_src
+
+Stdio-only harness: keep =.mcp.json= as is — =scripts/tendrl-mcp.py= is a
+shim that fetches the token from =/api/v1/mcp= and relays each line
+(=TENDRL_MCP_URL= / =TENDRL_MCP_TOKEN= override).
+
+** Tests
+
+#+begin_src bash
+cargo test --lib mcp::          # protocol (initialize / notifications / errors), policy filter, in-band tool errors, token mint, auth
+#+end_src
+
+** Protocol round-trip (scratch engine on =:3131=)
+
+#+begin_src bash
+B=localhost:3131; J='Content-Type: application/json'
+TOK=$(curl -s $B/api/v1/mcp | jq -r .token); A="Authorization: Bearer $TOK"
+curl -s -o /dev/null -w '%{http_code}\n' -X POST $B/mcp -H "$J" -d '{"jsonrpc":"2.0","id":1,"method":"ping"}'                       # 401 without the token
+curl -s -X POST $B/mcp -H "$J" -H "$A" -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"curl","version":"0"}}}' | jq -c '.result|{protocolVersion, s:.serverInfo.name}'
+curl -s -o /dev/null -w '%{http_code}\n' -X POST $B/mcp -H "$J" -H "$A" -d '{"jsonrpc":"2.0","method":"notifications/initialized"}'   # 202
+curl -s -o /dev/null -w '%{http_code}\n' $B/mcp -H "$A"                                                                            # 405 (no server stream)
+curl -s -X POST $B/mcp -H "$J" -H "$A" -d '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' | jq -c '[.result.tools[].name]'         # 18 = catalog minus publish-category
+# the list follows Settings → AI tools live (POST /api/v1/ai/settings {"enabled_tools":[…]}); a disabled tool is -32602
+curl -s -X POST $B/mcp -H "$J" -H "$A" -d '{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"add_to_context","arguments":{"title":"From MCP","content":"…"}}}' | jq -c '.result|{isError, keys:(.structuredContent|keys)}'
+curl -s $B/api/v1/context | jq -c '[.entries[]|{title,origin}]'                                                                     # the app's Context panel shows it
+printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"get_context","arguments":{}}}' | TENDRL_MCP_URL=http://localhost:3131/mcp python3 scripts/tendrl-mcp.py   # the shim
+#+end_src
+
+Note =POST /api/v1/ai/settings {"enabled_tools": null}= means "no
+change", not "reset" — send the full list to restore.
+
+** Confirm mode gates an MCP call exactly like an in-app one
+
+#+begin_src bash
+curl -s -X POST $B/api/v1/network/mode -H "$J" -d '{"mode":"confirm"}'
+curl -sN $B/api/v1/network/fetch-events > sse.log &
+curl -s -X POST $B/mcp -H "$J" -H "$A" -d '{"jsonrpc":"2.0","id":8,"method":"tools/call","params":{"name":"fetch_from_relays","arguments":{"query":"k:30040 limit:1"}}}' &   # blocks
+grep -o 'op-[a-z0-9-]*' sse.log | head -1          # the intent ("AI relay search: k:30040 limit:1") — the app shows the modal
+curl -s -X POST $B/api/v1/network/fetch-confirm -H "$J" -d '{"operation_id":"<op>","approved":false}'
+# the blocked call returns {"approved":false,"note":"The user declined the relay fetch; use local results instead."}
+#+end_src
+
+** Fan-out (nostrdb mutex under parallel tool calls)
+
+16 concurrent =search_events= over =/mcp= against a small local store
+(2026-09-17): every call 200, slowest 8 ms, whole batch 25 ms wall vs a
+3 ms single call — the process-wide nostrdb read lock serializes but
+does not queue visibly at this size. Re-measure on a 40k-note store
+before bounding anything:
+
+#+begin_src bash
+seq 1 16 | ( time xargs -P 16 -I{} curl -s -o /dev/null -w '%{http_code} %{time_total}\n' -X POST $B/mcp -H "$J" -H "$A" -d '{"jsonrpc":"2.0","id":{},"method":"tools/call","params":{"name":"search_events","arguments":{"query":"k:30041","limit":50}}}' ) 2>&1 | sort | uniq -c
+#+end_src

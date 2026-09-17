@@ -1,6 +1,6 @@
 #+TITLE: MCP Surface
 #+TYPE: feature
-#+STATUS: partial
+#+STATUS: implemented
 #+DATE: 2026-09-16
 
 tendrl as a tool server for an /external/ agent harness — Claude Code,
@@ -12,44 +12,53 @@ claude.ai login or rate limits, so the in-app loop stays API-key
 ([[file:feat-assistant.org][AI assistant]]) and the subscription path is
 "your harness calls tendrl", never "tendrl calls the model".
 
-* What exists
+* What exists (2026-09-17, plan Phase 4 — branch =feat/engine-mcp=)
 
-- =scripts/tendrl-mcp.py= (stdio; =TENDRL_API=, default =:3030=; launched
-  by the harness via =scripts/tendrl-mcp.sh=). Twelve hand-written tools:
-  =tendrl_search=, =tendrl_get_event=, =tendrl_get_publication=,
-  =tendrl_read_sections=, =tendrl_list_publications=, =tendrl_get_profile=,
-  =tendrl_get_context=, =tendrl_get_chat=, =tendrl_publish=,
-  =tendrl_publish_document=, =tendrl_list_knowledgebase=,
-  =tendrl_read_knowledgebase=. Each is a thin HTTP call into the engine.
+The engine speaks MCP itself: =src/mcp.rs= serves *Streamable HTTP* on
+=http://127.0.0.1:<port>/mcp= (spec 2025-06-18 / 2025-03-26 / 2024-11-05;
+stateless — JSON responses, =202= for notifications, =405= on =GET=, no
+session id). =tools/list= is =tools::definitions()= under the *same live*
+=ToolPolicy= the chat pane uses (Settings → AI tools), =tools/call= is
+=tools::dispatch()= with the same =ToolCx= (engine + the engine-owned
+context set) — one catalog, 21 tools, no second table. A tool failure
+comes back in-band (=isError=); an unknown or disabled tool is a
+JSON-RPC =-32602=. Results carry =structuredContent= next to the text.
 
-* What is wrong with it
+- *Auth*: bearer token — =[mcp] token= in config, else minted once into
+  =<data_dir>/mcp-token= (0600) and reused every boot; the Android host's
+  loopback token also passes. =GET /api/v1/mcp= returns the URL, token,
+  enabled tools and the ready-made =claude mcp add --transport http …=
+  line (the desktop API is unauthenticated, so this reveals nothing new).
+  Settings → AI tools shows the same with a Copy button. =[mcp] enabled =
+  false= turns the endpoint off.
+- *Confirm mode applies unchanged*: a =fetch_from_relays= or a broadcast
+  from an MCP call raises the same intent modal in the app — the gating
+  lives in the engine, below the transport.
+- =scripts/tendrl-mcp.py= is now a ~50-line *stdio → HTTP shim* with no
+  tool table (=TENDRL_MCP_URL=, =TENDRL_MCP_TOKEN=; the token is fetched
+  from =/api/v1/mcp= when unset) for harnesses that only launch stdio
+  servers. =.mcp.json= keeps pointing at it, so the checked-in config
+  stays portable; the direct HTTP registration is one command away.
+- What a terminal agent sees: =get_context= (the set curated in the app),
+  =search_events= / =semantic_search=, publication readers, and the
+  assistant-signed writers — =propose_insertion= (attached, pending),
+  =save_draft= + =sign_draft=. The =publish= / =promote_insertion= /
+  =sign_draft= trio stays off until switched on in Settings.
 
-- *It is a copy.* The engine already has the catalog of record —
-  =src/tools.rs= (=catalog()= / =dispatch()= / =ToolPolicy=, 15 tools). The
-  script re-declares a subset by hand and has drifted: no =save_draft=;
-  =tendrl_get_context= returns a /count string/, not the entries;
-  =tendrl_publish= forwards a =sign= boolean that inherits whichever
-  identity is active ([[file:decision-assistant-signs-own-key.org][decided
-  against]]).
-- Two dispatch tables means two places for gating, policy and
-  parity to go wrong.
+* Verified
 
-* Planned (Phase 4 of [[file:../insertions-plan.org][the plan]])
-
-The engine speaks MCP itself — a Streamable-HTTP endpoint serving
-=tools::catalog()= under =ToolPolicy=, token-gated like the mobile
-loopback, Confirm-mode gating applying exactly as in-app. The Python
-script is retired or reduced to a stdio→HTTP shim with no tool table
-of its own. Then Claude Code, Codex and the in-app loop call the same
-functions; =get_context= reads the engine-owned set
-([[file:decision-context-set-engine-owned.org][decision]]); a terminal
-agent can synthesize from context the user curated in the app and save
-the result as an insertion signed by the assistant.
+Live on a scratch engine (recipe: [[file:../commands.org][commands.org]],
+"MCP"): initialize echoes the client's protocol version; =tools/list=
+follows a Settings toggle without restart; =tools/call add_to_context= →
+the app's Context panel shows the entry; an unauthenticated POST is
+=401=; the shim relays a full initialize / list / call session over
+stdin. Parallel =tools/call= fan-out measured — see the recipe for the
+numbers and the nostrdb-mutex note.
 
 * Related
 - [[file:index.org][Index]]
 - [[file:feat-assistant.org][AI assistant]] — the in-app half; shares the catalog
-- [[file:idea-insertions.org][Insertions]] — the natural output of a terminal synthesis
+- [[file:feat-insertions.org][Insertions]] — the natural output of a terminal synthesis (=propose_insertion=)
 - [[file:decision-context-set-engine-owned.org][Decision: context set is engine-owned]]
 - [[file:decision-assistant-signs-own-key.org][Decision: the assistant signs with its own key]]
 - [[file:feat-network.org][Network modes]] — Confirm gating applies to MCP calls

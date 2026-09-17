@@ -58,13 +58,13 @@ signing source, insertions, the engine speaking MCP, the zettel bubble.
   nsecbunker key) — and on the Android host direct Amber (NIP-55) through
   the same handlers mounted under =/assistant-identity/= (device test
   pending). [[file:decision-bunker-engine-is-the-client.org][Decision]].
-- Two tool catalogs: =src/tools.rs= (17 tools, the real one) and
-  =scripts/tendrl-mcp.py= (12, hand-copied; =tendrl_get_context= now returns
-  the engine set's entries, =save_draft= still missing). Plan Phase 4 makes
-  the engine speak MCP and retires the copy. This is also how a user's own Claude Code /
-  Codex subscription reaches tendrl — the external harness brings its
-  credential, tendrl holds none (the OAuth path was dropped; API key
-  only for the in-app loop).
+- One tool catalog: =src/tools.rs= (21 tools) serves both the in-app
+  loop and, since 2026-09-17, the engine's own MCP endpoint (=/mcp=,
+  [[file:feat-mcp.org][feat-mcp]]) under the same live policy;
+  =scripts/tendrl-mcp.py= is a stdio shim with no tool table. This is how
+  a user's own Claude Code / Codex subscription reaches tendrl — the
+  external harness brings its credential, tendrl holds none (the OAuth
+  path was dropped; API key only for the in-app loop).
 - Live-reference and compact-handle context modes unbuilt.
 
 * Related

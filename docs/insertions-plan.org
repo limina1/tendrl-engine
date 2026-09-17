@@ -296,16 +296,23 @@ Recipe: =docs/commands.org= "Bunker (NIP-46)".
       Zettel: [[file:zettel/feat-insertions.org][feat-insertions]].
 
 ** Phase 4 — One catalog: the engine speaks MCP                            :medium:
-- [ ] MCP Streamable-HTTP endpoint on the engine (=/mcp=), token-gated
+- [X] MCP Streamable-HTTP endpoint on the engine (=/mcp=), token-gated
       like the mobile loopback; serves =tools::catalog()= filtered by
       =ToolPolicy=; =dispatch()= behind it
-- [ ] Confirm-mode gating applies to MCP calls exactly as to in-app
+- [X] Confirm-mode gating applies to MCP calls exactly as to in-app
       calls (=fetch_from_relays= raises the same intent)
-- [ ] =scripts/tendrl-mcp.py= → retired, or a ~30-line stdio→HTTP shim;
+- [X] =scripts/tendrl-mcp.py= → retired, or a ~30-line stdio→HTTP shim;
       =.mcp.json= / =claude mcp add --transport http=; =docs/commands.org=
       recipe
-- [ ] nostrdb mutex under agent fan-out: measure parallel tool calls;
+- [X] nostrdb mutex under agent fan-out: measure parallel tool calls;
       queue or bound if the read lock serializes badly
+- [X] *built 2026-09-17* (=feat/engine-mcp=): =src/mcp.rs= (=/mcp= +
+      =GET /api/v1/mcp=), =[mcp]= config (=enabled=, =token=), Settings → AI
+      tools shows the =claude mcp add= line with Copy; the Python script is
+      a stdio→HTTP shim. Tests =mcp::tests= (protocol, policy filter,
+      in-band errors, token mint, auth). Recipe in
+      [[file:commands.org][commands.org]] ("MCP").
+      Zettel: [[file:zettel/feat-mcp.org][feat-mcp]].
 
 ** Phase 5 — The zettel bubble                                             :medium:
 - [ ] =POST /api/v1/derive/context= — engine assembles from an addr +
