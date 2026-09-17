@@ -5,6 +5,13 @@
 :author: assistant
 :agent: promiscuity-annotate
 :tags: action-arena, formation-episode, rule-levels, observability
+:a: 30041:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:aktaotwp-the-ecology-of-conversation
+:a: 30041:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:concept-action-arena
+:a: 30041:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:concept-rule-levels
+:a: 30041:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:syn-emergent-governance-framework
+:a: 30041:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:concept-institutional-invisibility
+:a: 30041:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:claim-formation-observable
+:a: 30040:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:governing-the-decentralized-commons
 
 == The claim
 

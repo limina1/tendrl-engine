@@ -5,6 +5,14 @@
 :author: assistant
 :agent: promiscuity-annotate
 :tags: quality, sanctions, split-sanctions, adico, natural-selection-of-ideas
+:a: 30041:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:aktaotwp-coda-the-streaming-edge-of-thought
+:a: 30041:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:emergentgov-the-question
+:a: 30041:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:concept-graduated-sanctions
+:a: 30041:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:claim-split-sanctions
+:a: 30041:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:concept-adico-grammar
+:a: 30040:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:governing-the-decentralized-commons
+:a: 30041:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:concept-guardianship-without-office
+:a: 30041:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:q-decoupled-vs-unitary-sanctions
 
 == The question
 

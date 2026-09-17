@@ -5,6 +5,14 @@
 :author: assistant
 :agent: promiscuity-annotate
 :tags: commons-vs-open-access, mode-of-governance, prefigurative, default-conditions
+:a: 30041:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:concept-cpr-vs-knowledge-commons
+:a: 30041:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:concept-gkc-framework
+:a: 30041:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:aktaotwp-the-persistent-escape-of-knowledge
+:a: 30041:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:aktaotwp-expanding-dimensions-of-knowledge-freedom
+:a: 30041:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:aktaotwp-practical-experiments-in-knowledge-freedom
+:a: 30041:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:aktaotwp-future-possibilities
+:a: 30041:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:emergentgov-the-question
+:a: 30041:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:concept-rules-in-use
 
 == The claim
 

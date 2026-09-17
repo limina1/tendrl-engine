@@ -36,15 +36,22 @@ publications — are hand-written nostrdown references by coordinate,
 to an naddr. Emergent-governance notes are cited by their coordinate
 stems (`concept-polycentricity`, `claim-expand-contract`, …) where
 the stem is the d-tag of the published note. Topics with a wiki page
-are `[[wikilinks]]`, which publish as `w` tags. Web sources are plain
-URLs.
+are `[[wikilinks]]`, which publish as `w` tags.
+
+Every outbound link is also an event tag, so a tag-walking renderer
+can list a note's links without parsing the prose: each coordinate
+cited in the body is mirrored as an `a` tag (`:a:` header line), each
+web source is an `r` tag (`:r:` header line) and appears nowhere in
+the prose, and sibling links publish as `ref` tags (d-tags). The
+header lines are the source of truth for links; the prose names the
+source in words.
 
 == Header keys
 
 `title`, `type`, `status`, `date`, `author`, `tags`; `agent` on
 machine-drafted notes; `cite` / `doi` on source notes; `request` on
 the mission note carries the coordinate of the annotation request
-this kasten answers.
+this kasten answers; `a` and `r` (repeatable) carry the links.
 
 *Related:*
 

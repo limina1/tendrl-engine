@@ -5,6 +5,11 @@
 :author: assistant
 :agent: promiscuity-annotate
 :tags: macy-conferences, santa-fe-institute, scenius, polycentricity, composable-institutions
+:a: 30041:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:claim-relay-spectrum
+:a: 30041:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:claim-composable-bounded-institutions
+:a: 30041:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:src-ostroms-cybernetics
+:a: 30041:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:concept-polycentricity
+:a: 30041:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:concept-guardianship-without-office
 
 == The idea
 

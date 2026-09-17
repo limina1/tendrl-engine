@@ -6,6 +6,13 @@
 :agent: promiscuity-annotate
 :tags: cybernetics, macy-conferences, santa-fe-institute, complexity, history-of-science
 :cite: Claus Pias (ed.), Cybernetics: The Macy Conferences 1946–1953. The Complete Transactions, Diaphanes, 2016; Philip W. Anderson, Kenneth J. Arrow & David Pines (eds.), The Economy as an Evolving Complex System, Addison-Wesley, 1988
+:a: 30041:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:src-ostroms-cybernetics
+:r: https://academic.oup.com/edited-volume/62246/chapter-abstract/550966038
+:r: https://www.lespressesdureel.com/EN/ouvrage.php?id=5713&menu=0
+:r: https://www.santafe.edu/
+:r: https://writings.stephenwolfram.com/2019/06/my-part-in-an-origin-story-the-launching-of-the-santa-fe-institute/
+:r: https://www.routledge.com/The-Economy-As-An-Evolving-Complex-System/Anderson-Arrow-Pines/p/book/9780201156850
+:r: https://doi.org/10.1017/S1744137424000079
 
 == Cybernetics: the Macy Conferences, 1946–1953
 
@@ -60,11 +67,13 @@ the first of the essay's two examples.
 
 == Where to read
 
-- Oxford Research Encyclopedia of Psychology, "The Macy Conferences
-  on Cybernetics: Reinstantiating the Mind."
-- Santa Fe Institute, https://www.santafe.edu/ ; Wolfram, "My Part in
-  an Origin Story: The Launching of the Santa Fe Institute" (2019).
-- Routledge page for the 1988 proceedings.
+The URLs are this note's `r` tags, in order: the Oxford Research
+Encyclopedia of Psychology chapter "The Macy Conferences on
+Cybernetics: Reinstantiating the Mind"; the publisher page for the
+Pias edition of the complete Macy transactions; the Santa Fe
+Institute; Stephen Wolfram's 2019 account of the Institute's
+launch; the Routledge page for the 1988 workshop proceedings; and
+the DOI of Lewis & Aligica 2024 (open access).
 
 *Related:*
 

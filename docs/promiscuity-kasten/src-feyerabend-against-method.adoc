@@ -6,6 +6,8 @@
 :agent: promiscuity-annotate
 :tags: feyerabend, philosophy-of-science, anything-goes, proliferation
 :cite: Paul Feyerabend, Against Method: Outline of an Anarchistic Theory of Knowledge, London: New Left Books, 1975 (rev. 1988, 1993; 4th ed. Verso 2010)
+:r: https://plato.stanford.edu/entries/feyerabend/
+:r: https://en.wikipedia.org/wiki/Against_Method
 
 == What it is
 
@@ -49,9 +51,10 @@ crowdsourced sanctioning is a candidate answer he did not have
 
 == Where to read
 
-Stanford Encyclopedia of Philosophy, "Paul Feyerabend"
-(https://plato.stanford.edu/entries/feyerabend/), sections on
-_Against Method_ and epistemological anarchism.
+The URLs are this note's `r` tags, in order: the Stanford
+Encyclopedia of Philosophy entry "Paul Feyerabend" (sections on
+_Against Method_ and epistemological anarchism), and the Wikipedia
+article on the book.
 
 *Related:*
 

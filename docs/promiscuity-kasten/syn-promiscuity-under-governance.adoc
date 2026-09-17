@@ -5,6 +5,8 @@
 :author: assistant
 :agent: promiscuity-annotate
 :tags: synthesis, idea-layer, facility-layer, polycentricity, formation
+:a: 30040:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:anarchistic-knowledge-the-art-of-thinking-without-permission
+:a: 30040:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:emergentgov
 
 == The synthesis
 

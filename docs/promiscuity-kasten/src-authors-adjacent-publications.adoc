@@ -5,6 +5,13 @@
 :author: assistant
 :agent: promiscuity-annotate
 :tags: nostr, publications, polycentric, rhizome, deterritorialization, scenius
+:a: 30040:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:governing-the-decentralized-commons
+:a: 30040:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:understanding-knowledge
+:a: 30041:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:ii-formal-cause-the-structure-and-organization-of-knowledge
+:a: 30041:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:iv-final-cause-the-purpose-of-knowledge-and-knowledge-ecosystems
+:a: 30040:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:thinking-through-emergence-a-framework-bridge
+:a: 30041:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:thinking-through-emergence-a-framework-bridge-part-ii-territories-and-deterritorializations
+:a: 30818:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:from-99-junk-to-scenius-at-scale-why-the-future-of-work-is-an-economy-of-play-dweb-2026
 
 Four other events under the same key bear directly on the anchor
 section. They are the local context the request's `publication` and

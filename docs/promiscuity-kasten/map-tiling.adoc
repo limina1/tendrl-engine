@@ -5,6 +5,17 @@
 :author: assistant
 :agent: promiscuity-annotate
 :tags: map, tiling, anarchistic-knowledge, emergent-governance
+:a: 30040:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:anarchistic-knowledge-the-art-of-thinking-without-permission
+:a: 30041:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:aktaotwp-the-natural-promiscuity-of-understanding
+:a: 30041:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:aktaotwp-institutional-capture-and-knowledge-enclosure
+:a: 30041:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:aktaotwp-the-persistent-escape-of-knowledge
+:a: 30041:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:aktaotwp-the-ecology-of-conversation
+:a: 30041:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:aktaotwp-digital-possibilities-and-new-commons
+:a: 30041:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:aktaotwp-the-courage-of-incomplete-thinking
+:a: 30041:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:aktaotwp-expanding-dimensions-of-knowledge-freedom
+:a: 30041:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:aktaotwp-practical-experiments-in-knowledge-freedom
+:a: 30041:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:aktaotwp-future-possibilities
+:a: 30041:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:aktaotwp-coda-the-streaming-edge-of-thought
 
 The request asked to "tile up this work with relevant information,
 links and ideas." This map is the tiling: each section of

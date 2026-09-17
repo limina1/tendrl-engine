@@ -6,6 +6,12 @@
 :agent: promiscuity-annotate
 :tags: koestler, eno, scenius, benkler, bollier, polanyi, hayek, creativity
 :cite: Koestler 1964; Polanyi 1962; Hayek 1945; Benkler 2002; Kelly 2008; Bollier & Helfrich 2019
+:a: 30041:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:syn-emergent-governance-framework
+:r: https://en.wikipedia.org/wiki/The_Act_of_Creation
+:r: https://www.themarginalian.org/2013/05/20/arthur-koestler-creativity-bisociation/
+:r: https://kk.org/thetechnium/scenius-or-comm/
+:r: https://web.law.duke.edu/pd/papers/Coase's_Penguin.pdf
+:r: https://freefairandalive.org/
 
 Five bodies of work the essay's opening section draws on without
 naming. Each is given with what it adds and where it sits relative to
@@ -72,11 +78,13 @@ choice to make.
 
 == Where to read
 
-- Kelly: https://kk.org/thetechnium/scenius-or-comm/
-- Benkler: https://web.law.duke.edu/pd/papers/Coase's_Penguin.pdf
-- Bollier & Helfrich: https://freefairandalive.org/
-- Koestler: _The Act of Creation_ (Hutchinson, 1964); Polanyi:
-  _Minerva_ 1(1), 1962; Hayek: _American Economic Review_ 35(4), 1945.
+The URLs are this note's `r` tags, in order: the Wikipedia article
+on _The Act of Creation_; The Marginalian's summary of bisociation;
+Kelly's "Scenius, or Communal Genius" on The Technium; Benkler's
+"Coase's Penguin" at Duke's public-domain paper archive; and the
+_Free, Fair, and Alive_ book site. Koestler: Hutchinson, 1964.
+Polanyi: _Minerva_ 1(1), 1962. Hayek: _American Economic Review_
+35(4), 1945.
 
 *Related:*
 

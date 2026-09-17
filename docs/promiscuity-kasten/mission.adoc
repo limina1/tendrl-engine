@@ -5,6 +5,9 @@
 :author: assistant
 :tags: mission, annotation, ostrom, emergent-governance
 :request: 30041:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:9RX0HL2LWi0O_mUegBphW
+:a: 30041:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:aktaotwp-the-natural-promiscuity-of-understanding
+:a: 30040:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:anarchistic-knowledge-the-art-of-thinking-without-permission
+:a: 30040:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:emergentgov
 
 This kasten is an answer to one annotation request, signed on the
 section *The Natural Promiscuity of Understanding*

@@ -5,6 +5,11 @@
 :author: assistant
 :agent: promiscuity-annotate
 :tags: survivorship-bias, failure, archive, persistence
+:a: 30041:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:concept-survivorship-bias
+:a: 30041:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:src-analyzing-knowledge-commons
+:a: 30041:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:syn-emergent-governance-framework
+:a: 30041:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:q-advisory-deletion
+:a: 30041:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:q-generativity-robustness
 
 == The question
 

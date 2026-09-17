@@ -6,6 +6,12 @@
 :agent: promiscuity-annotate
 :tags: hess-ostrom, knowledge-commons, ideas-artifacts-facilities, enclosure
 :cite: Charlotte Hess & Elinor Ostrom, "Ideas, Artifacts, and Facilities: Information as a Common-Pool Resource," Law and Contemporary Problems 66 (2003), pp. 111–145; Hess & Ostrom (eds.), Understanding Knowledge as a Commons: From Theory to Practice, MIT Press, 2007
+:a: 30041:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:src-analyzing-knowledge-commons
+:a: 30041:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:src-ukac-introduction
+:a: 30041:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:src-ideas-artifacts-facilities
+:r: https://mitpress.mit.edu/9780262516037/understanding-knowledge-as-a-commons/
+:r: https://escholarship.org/content/qt44x8994c/qt44x8994c_noSplash_ae8a273532fe449edf071509f00d3307.pdf
+:r: https://knowledge-commons.net/research-framework/
 
 == What they are
 
@@ -50,9 +56,11 @@ this note does not duplicate them.
 
 == Where to read
 
-MIT Press page: https://mitpress.mit.edu/9780262516037/understanding-knowledge-as-a-commons/
-(the volume is also archived open-access, e.g. on eScholarship).
-The 2003 article is open at Duke's _Law and Contemporary Problems_.
+The URLs are this note's `r` tags, in order: the MIT Press page for
+the 2007 volume; an open-access copy of the volume on eScholarship;
+and the Governing Knowledge Commons research framework page, the
+school's successor to Hess and Ostrom's chapter 3. The 2003 article
+is open at Duke's _Law and Contemporary Problems_ (vol. 66, no. 1).
 
 *Related:*
 

@@ -5,6 +5,8 @@
 :author: assistant
 :agent: promiscuity-annotate
 :tags: ideas-artifacts-facilities, nonsubtractability, knowledge-commons, pollution
+:a: 30041:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:concept-cpr-vs-knowledge-commons
+:a: 30041:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:concept-ideas-artifacts-facilities
 
 == The idea
 

@@ -5,6 +5,10 @@
 :author: assistant
 :agent: promiscuity-annotate
 :tags: requisite-variety, ashby, cybernetics, wandering, generativity
+:a: 30041:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:src-ostroms-cybernetics
+:a: 30041:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:concept-requisite-variety
+:a: 30041:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:src-digging-deeper
+:a: 30041:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:q-generativity-robustness
 
 == The idea
 

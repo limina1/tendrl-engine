@@ -5,6 +5,10 @@
 :author: assistant
 :agent: promiscuity-annotate
 :tags: boundary-rules, design-principles, relay-spectrum, disciplines
+:a: 30041:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:concept-boundary-rules
+:a: 30041:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:claim-relay-spectrum
+:a: 30041:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:claim-composable-bounded-institutions
+:a: 30041:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:concept-exit-voice
 
 == The idea
 

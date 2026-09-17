@@ -5,6 +5,9 @@
 :author: assistant
 :agent: promiscuity-annotate
 :tags: feyerabend, polanyi, hayek, anything-goes, spontaneous-order
+:a: 30041:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:concept-polycentricity
+:a: 30041:dc4cd086cd7ce5b1832adf4fdd1211289880d2c7e295bcb0e684c01acee77c06:concept-gkc-framework
+:r: https://plato.stanford.edu/entries/feyerabend/
 
 == The idea
 
