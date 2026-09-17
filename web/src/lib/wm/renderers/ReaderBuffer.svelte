@@ -352,8 +352,10 @@
 			after: tops.filter((i) => i.anchor.placement !== 'before')
 		};
 	});
-	// "mine" = the user's key + the assistant's, resolved at call time; an
-	// empty list means anyone (the engine takes it as no author filter).
+	// "mine" = the user's key + the assistant's, resolved at call time, plus
+	// whoever answered a request on this publication (the answerer's key is
+	// recorded on the answer, so the notes stay reachable after the assistant
+	// identity changes or a restart drops it). An empty list means anyone.
 	async function insertionAuthors(): Promise<string[]> {
 		if (insertionsScope === 'anyone') return [];
 		const out: string[] = [];
@@ -364,6 +366,10 @@
 			if (a?.pubkey && !out.includes(a.pubkey)) out.push(a.pubkey);
 		} catch {
 			// No assistant identity — the user's own notes only.
+		}
+		for (const r of requests) {
+			const by = r.answer?.by;
+			if (by && !out.includes(by)) out.push(by);
 		}
 		return out;
 	}
@@ -448,6 +454,12 @@
 			requests = resp.requests;
 		} catch {
 			requests = [];
+		}
+		// An answered request is an ask the user made and someone fulfilled:
+		// its notes are wanted here, so read them from the local store (no
+		// relay, no confirm) when the reader is not already showing notes.
+		if (!insertionsLoaded && requests.some((r) => r.status === 'answered')) {
+			void loadInsertionsNow('local_only');
 		}
 	}
 	$effect(() => {

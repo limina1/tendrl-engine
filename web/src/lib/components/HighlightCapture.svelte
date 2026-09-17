@@ -59,9 +59,10 @@
 		const excerpt = text.trim() || pending.text;
 		// The section's rendered title, for the window's header.
 		const sel = `[data-section-addr="${pending.addr.replace(/"/g, '\\"')}"]`;
+		// `.section-title__text` only — the heading row also holds the pool
+		// pills and the menu button, which are not part of the title.
 		const parentTitle =
-			document.querySelector(`${sel} .section-title__text, ${sel} .section-title`)?.textContent?.trim() ||
-			null;
+			document.querySelector(`${sel} .section-title__text`)?.textContent?.trim() || null;
 		app.annotationRequest = {
 			root: root ?? pending.addr,
 			parent: pending.addr,
