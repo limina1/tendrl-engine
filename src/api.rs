@@ -9739,7 +9739,7 @@ mod chat_api_tests {
         assert_eq!(counts.by_parent.len(), 1);
         assert_eq!(counts.by_parent[0].value, first);
         assert!(counted.insertions.is_empty(), "the filter still applies to the rows");
-        assert_eq!(counted.query, format!("A:{root} k:30041 by:{user_pk}"));
+        assert_eq!(counted.query, format!("A:{root} k:30040 k:30041 by:{user_pk}"));
         // Author filter excludes the user.
         let none = crate::tools::dispatch(
             &cx,
