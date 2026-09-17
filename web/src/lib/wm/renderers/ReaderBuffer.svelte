@@ -11,6 +11,7 @@
 	import ProfileName from '$lib/components/ProfileName.svelte';
 	import PoolStateBadges from '$lib/components/PoolStateBadges.svelte';
 	import { getActiveStore, type NavAction } from '../buffer-store.svelte';
+	import { onStoreEvent, concernsRoot, type StoreEvent } from '$lib/store-events.svelte';
 	import { shell } from '../shell.svelte';
 	import { mobileNav } from '../mobile-nav.svelte';
 	import { ResolutionTracker } from '$lib/nostr/resolution-progress.svelte';
@@ -479,6 +480,45 @@
 			if (publication) void loadRequests();
 		});
 	});
+
+	// Live: the engine's store stream names what just landed. When a handle
+	// concerns this publication (anchored to it or to one of its sections, a
+	// request on it, a new version of one of its own events), re-read the
+	// affected slice from the local store after a short debounce. The
+	// listener is an event callback, not an effect, so the loaders' writes
+	// cannot re-trigger it (the query-flood lesson); the effect below only
+	// installs and removes it.
+	const liveTimers: Record<string, ReturnType<typeof setTimeout> | undefined> = {};
+	function liveDebounce(key: string, fn: () => void) {
+		clearTimeout(liveTimers[key]);
+		liveTimers[key] = setTimeout(fn, 300);
+	}
+	function onLiveStoreEvent(ev: StoreEvent) {
+		if (!publication) return;
+		const root = addrKey(publication.addr);
+		const mine =
+			concernsRoot(ev, root) ||
+			(ev.type === 'ingested' &&
+				pristineSections.some((s) => ev.addrs.includes(addrKey(s.addr)) || ev.coordinate === addrKey(s.addr)));
+		if (!mine) return;
+		if (ev.type === 'request') {
+			liveDebounce('requests', () => void loadRequests());
+			return;
+		}
+		if (ev.kind === 30041 || ev.kind === 30040) {
+			if (insBook.loaded) liveDebounce('insertions', () => void loadInsertionsNow('local_only'));
+			// A new version of one of the publication's own events: re-stream
+			// the tree so the page shows it (the focus cache would hide it).
+			if (ev.coordinate === root) {
+				focusCache.delete(focusKey(publication.addr.pubkey, publication.addr.d_tag));
+				liveDebounce('tree', () => void load());
+			}
+		}
+		if (ev.kind === 1111 || ev.kind === 9802) {
+			liveDebounce('discussions', () => refreshDiscussionsLocal());
+		}
+	}
+	$effect(() => onStoreEvent(onLiveStoreEvent));
 
 	const canSignNow = $derived(identityCanSign(app.identityStatus));
 

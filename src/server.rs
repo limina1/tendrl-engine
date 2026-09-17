@@ -857,6 +857,7 @@ pub async fn start(opts: ServeOptions) -> anyhow::Result<RunningServer> {
             "/api/v1/annotations/requests/:id/reopen",
             post(api::requests::reopen_handler),
         )
+        .route("/api/v1/store/events", get(api::store_events_handler))
         .route(
             "/api/v1/styles",
             get(api::styles::list_handler).post(api::styles::create_handler),

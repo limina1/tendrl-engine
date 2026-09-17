@@ -134,6 +134,7 @@ pub async fn create_handler(
     }
 
     RequestStore::new(engine.data_dir())?.save(&r)?;
+    emit_request(&engine, &r);
     Ok(Json(RequestResponse { request: r, event }))
 }
 
@@ -212,7 +213,17 @@ pub async fn delete_handler(
     State(engine): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<Value>, EngineError> {
-    RequestStore::new(engine.data_dir())?.delete(&id)?;
+    let store = RequestStore::new(engine.data_dir())?;
+    let gone = store.load(&id).ok();
+    store.delete(&id)?;
+    if let Some(r) = gone {
+        engine.emit_store_event(crate::store_events::StoreEvent::Request {
+            id: r.id,
+            root: r.root,
+            parent: r.parent,
+            status: "deleted".into(),
+        });
+    }
     Ok(Json(json!({ "deleted": id })))
 }
 
@@ -311,7 +322,21 @@ pub(crate) async fn answer_request(
     }
     r.answer(answer);
     store.save(&r)?;
+    emit_request(engine, &r);
     Ok(r)
+}
+
+/// Announce a request-record change on the store stream.
+fn emit_request(engine: &AppState, r: &AnnotationRequest) {
+    engine.emit_store_event(crate::store_events::StoreEvent::Request {
+        id: r.id.clone(),
+        root: r.root.clone(),
+        parent: r.parent.clone(),
+        status: match r.status {
+            RequestStatus::Open => "open".into(),
+            RequestStatus::Answered => "answered".into(),
+        },
+    });
 }
 
 /// POST /api/v1/annotations/requests/:id/answer
@@ -333,5 +358,6 @@ pub async fn reopen_handler(
     r.status = RequestStatus::Open;
     r.answer = None;
     store.save(&r)?;
+    emit_request(&engine, &r);
     Ok(Json(r))
 }

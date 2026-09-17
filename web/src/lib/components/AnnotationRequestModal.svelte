@@ -12,6 +12,7 @@
 	import { identityCanSign } from '$lib/identity/signer';
 	import { confirmState } from '$lib/network/fetch-events.svelte';
 	import { stylesList, refreshStyles } from '$lib/styles.svelte';
+	import { onStoreEvent } from '$lib/store-events.svelte';
 
 	const app = getAppState();
 	const canSign = $derived(identityCanSign(app.identityStatus));
@@ -89,6 +90,12 @@
 		}
 	}
 	void loadExisting();
+	// Answers and new asks on this place show up while the window is open.
+	$effect(() =>
+		onStoreEvent((ev) => {
+			if (ev.type === 'request' && ev.root === root) void loadExisting();
+		})
+	);
 
 	function short(coord: string): string {
 		const [k, pk, ...d] = coord.split(':');

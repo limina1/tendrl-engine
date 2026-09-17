@@ -3099,6 +3099,39 @@ pub async fn reset_mode_choice_handler(
     Ok(Json(json!({ "mode_chosen": false })))
 }
 
+/// GET /api/v1/store/events — the local store's change stream (SSE): an
+/// `ingested` handle per event that lands in nostrdb, a `request` handle per
+/// annotation-request change. The reader re-reads a root when a handle
+/// names it. Nothing here reaches a relay.
+pub async fn store_events_handler(State(engine): State<AppState>) -> axum::response::Response {
+    use axum::response::sse::{Event as SseHttpEvent, KeepAlive, Sse};
+    use axum::response::IntoResponse;
+    use futures::stream::StreamExt;
+    use tokio::sync::broadcast::error::RecvError;
+
+    let rx = engine.subscribe_store_events();
+    let stream = futures::stream::unfold(rx, |mut rx| async move {
+        loop {
+            match rx.recv().await {
+                Ok(ev) => {
+                    let payload = serde_json::to_string(&ev).unwrap_or_default();
+                    return Some((Ok::<SseHttpEvent, std::convert::Infallible>(SseHttpEvent::default().data(payload)), rx));
+                }
+                Err(RecvError::Lagged(_)) => continue,
+                Err(RecvError::Closed) => return None,
+            }
+        }
+    });
+    let mut resp = Sse::new(stream.boxed())
+        .keep_alive(KeepAlive::default())
+        .into_response();
+    resp.headers_mut().insert(
+        axum::http::header::CACHE_CONTROL,
+        axum::http::HeaderValue::from_static("no-cache, no-transform"),
+    );
+    resp
+}
+
 /// GET /api/v1/network/fetch-events
 ///
 /// Long-lived SSE stream of fetch-operation events (`intent`,

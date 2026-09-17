@@ -270,6 +270,9 @@ pub struct Engine {
     claude_sessions_dir: Option<std::path::PathBuf>,
     /// Network activity tracker (mode + fetch log)
     network: Arc<NetworkActivity>,
+    /// The local store's change stream (`store_events.rs`): every ingest
+    /// and every request-record change, for the reader's live re-reads.
+    store_events: tokio::sync::broadcast::Sender<crate::store_events::StoreEvent>,
     /// NIP-11 relay information cache (process-wide, 1h TTL)
     nip11_cache: crate::nip11::Nip11Cache,
     /// Last local-DB inventory snapshot + the options that produced it.
@@ -462,6 +465,7 @@ impl Engine {
             // pre-config default must be Confirm so a fresh / zero-config / parse-
             // failed boot never auto-fetches (matches config.rs's default_network_mode).
             network: Arc::new(NetworkActivity::new(NetworkMode::Confirm)),
+            store_events: tokio::sync::broadcast::channel(512).0,
             nip11_cache: crate::nip11::Nip11Cache::new(),
             inventory_cache: std::sync::Mutex::new(None),
             known_kinds: std::sync::Mutex::new(None),
@@ -2790,8 +2794,23 @@ impl Engine {
         debug!("Ingest succeeded");
         if let Ok(ev) = serde_json::from_str::<Value>(event_json) {
             self.note_ingest_batch(std::slice::from_ref(&ev));
+            if let Some(handle) = crate::store_events::StoreEvent::ingested(&ev) {
+                self.emit_store_event(handle);
+            }
         }
         Ok(())
+    }
+
+    /// Subscribe to the local store's change stream.
+    pub fn subscribe_store_events(
+        &self,
+    ) -> tokio::sync::broadcast::Receiver<crate::store_events::StoreEvent> {
+        self.store_events.subscribe()
+    }
+
+    /// Announce a change on the store stream (no listeners = no-op).
+    pub fn emit_store_event(&self, ev: crate::store_events::StoreEvent) {
+        let _ = self.store_events.send(ev);
     }
 
     /// Record that `event_json` (a raw signed event object `{...}`) has been
