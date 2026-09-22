@@ -9551,6 +9551,69 @@ mod chat_api_tests {
         assert_eq!(v["found"], false);
     }
 
+    /// Broadcasting is gated the same way: `publish` (and the broadcast half
+    /// of `publish_publication` / `sign_draft`) opens a publish operation →
+    /// PublishIntent → PublishConfirmModal in Confirm mode; a decline comes
+    /// back as published:false and nothing reaches a relay.
+    #[tokio::test]
+    async fn test_ai_broadcast_raises_a_publish_intent() {
+        use crate::network::{ConfirmDecision, FetchEvent};
+        use crate::tools::{dispatch, ToolCx};
+        let state = make_state();
+        assert!(!state.engine.is_auto());
+        let ev = crate::engine::build_test_event(1, "ai broadcast gate probe", vec![], 1_700_000_002);
+        let id = serde_json::from_str::<Value>(&ev).unwrap()["id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        state.engine.ingest_event(&ev).unwrap();
+        for _ in 0..100 {
+            if state
+                .engine
+                .get_by_id(&id, crate::engine::FetchPolicy::LocalOnly)
+                .await
+                .unwrap()
+                .is_some()
+            {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(30)).await;
+        }
+        let mut rx = state.engine.subscribe_fetch_events();
+        let cx = ToolCx {
+            engine: state.engine.clone(),
+            chat: state.chat.clone(),
+        };
+        let id2 = id.clone();
+        let task = tokio::spawn(async move {
+            dispatch(&cx, "publish", json!({ "ids": [id2] })).await
+        });
+        let (op_id, label) = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            loop {
+                if let Ok(FetchEvent::PublishIntent { operation_id, label, .. }) = rx.recv().await {
+                    break (operation_id, label);
+                }
+            }
+        })
+        .await
+        .expect("a PublishIntent within 5s");
+        assert!(label.contains("AI broadcast"), "{label}");
+        assert!(
+            state
+                .engine
+                .network()
+                .resolve_confirm(ConfirmDecision {
+                    operation_id: op_id,
+                    approved: false,
+                    relays: None,
+                })
+                .await
+        );
+        let v = task.await.unwrap().unwrap();
+        assert_eq!(v["published"], false);
+        assert!(v["note"].as_str().unwrap().contains("declined"));
+    }
+
     #[tokio::test]
     async fn test_chat_api_get_empty() {
         let state = make_state();

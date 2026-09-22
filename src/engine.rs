@@ -3807,6 +3807,47 @@ pub(crate) fn relay_error_status(e: EngineError) -> crate::network::RelayStatusV
     }
 }
 
+/// Test helper (crate-wide): a real signed event with the given kind,
+/// content, tags and timestamp, as JSON.
+#[cfg(test)]
+pub(crate) fn build_test_event(kind: u64, content: &str, tags: Vec<Vec<&str>>, created_at: u64) -> String {
+    use secp256k1::{PublicKey, Secp256k1, SecretKey};
+    use sha2::{Digest, Sha256};
+
+    let secret_hex = "e698fdd6e2e780b7d9800266bfc02d56630835856a0146969cc984bb21b068c6";
+    let secret_bytes = hex::decode(secret_hex).unwrap();
+    let secp = Secp256k1::new();
+    let secret_key = SecretKey::from_slice(&secret_bytes).unwrap();
+    let public_key = PublicKey::from_secret_key(&secp, &secret_key);
+    let pubkey = hex::encode(&public_key.serialize()[1..33]);
+
+    let tags_json: Vec<Vec<String>> = tags
+        .iter()
+        .map(|t| t.iter().map(|s| s.to_string()).collect())
+        .collect();
+
+    let serial = serde_json::json!([0, pubkey, created_at, kind, tags_json, content]);
+    let serial_str = serde_json::to_string(&serial).unwrap();
+
+    let mut hasher = Sha256::new();
+    hasher.update(serial_str.as_bytes());
+    let hash = hasher.finalize();
+    let id_hex = hex::encode(&hash);
+
+    let sig = crate::identity::sign_event_hash(&id_hex, secret_hex).unwrap();
+
+    serde_json::to_string(&serde_json::json!({
+        "id": id_hex,
+        "pubkey": pubkey,
+        "created_at": created_at,
+        "kind": kind,
+        "tags": tags_json,
+        "content": content,
+        "sig": sig
+    }))
+    .unwrap()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -4140,44 +4181,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&test_dir);
     }
 
-    /// Helper: build a signed event with given kind, content, tags
-    fn build_test_event(kind: u64, content: &str, tags: Vec<Vec<&str>>, created_at: u64) -> String {
-        use secp256k1::{PublicKey, Secp256k1, SecretKey};
-        use sha2::{Digest, Sha256};
-
-        let secret_hex = "e698fdd6e2e780b7d9800266bfc02d56630835856a0146969cc984bb21b068c6";
-        let secret_bytes = hex::decode(secret_hex).unwrap();
-        let secp = Secp256k1::new();
-        let secret_key = SecretKey::from_slice(&secret_bytes).unwrap();
-        let public_key = PublicKey::from_secret_key(&secp, &secret_key);
-        let pubkey = hex::encode(&public_key.serialize()[1..33]);
-
-        let tags_json: Vec<Vec<String>> = tags
-            .iter()
-            .map(|t| t.iter().map(|s| s.to_string()).collect())
-            .collect();
-
-        let serial = serde_json::json!([0, pubkey, created_at, kind, tags_json, content]);
-        let serial_str = serde_json::to_string(&serial).unwrap();
-
-        let mut hasher = Sha256::new();
-        hasher.update(serial_str.as_bytes());
-        let hash = hasher.finalize();
-        let id_hex = hex::encode(&hash);
-
-        let sig = crate::identity::sign_event_hash(&id_hex, secret_hex).unwrap();
-
-        serde_json::to_string(&serde_json::json!({
-            "id": id_hex,
-            "pubkey": pubkey,
-            "created_at": created_at,
-            "kind": kind,
-            "tags": tags_json,
-            "content": content,
-            "sig": sig
-        }))
-        .unwrap()
-    }
+    use super::build_test_event;
 
     /// Helper: ingest events and wait for processing
     async fn ingest_and_wait(engine: &Engine, events: &[String]) {
