@@ -1,3 +1,7 @@
+## v0.15.1 — 2026-09-22
+
+- feat(wm): tendrl-open-chat — SPC c / SPC b o a / M-x opens the assistant chat on both shells
+
 ## v0.15.0 — 2026-09-22
 
 - docs(zettel): agent services feature note, two decisions, web-tools idea; index + mobile/assistant notes updated
