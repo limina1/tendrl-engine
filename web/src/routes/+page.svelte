@@ -764,6 +764,11 @@
 			closeMinibuffer();
 			return;
 		}
+		if (cmd.id === 'tendrl-open-chat') {
+			openChat();
+			closeMinibuffer();
+			return;
+		}
 		if (cmd.id === 'tendrl-open-settings') {
 			store.openBuffer({
 				className: 'work',
@@ -1089,6 +1094,7 @@
 		toggleNetworkMode,
 		openSplitPicker,
 		closeFocusedWindow,
+		openChat,
 		openSettings: () =>
 			store.openBuffer({
 				className: 'work',
@@ -1310,6 +1316,14 @@
 		});
 	}
 
+	// Open the chat. selectBuffer() expands a rail/hidden chat slot into a
+	// window and focuses it (desktop); on mobile focusing the chat slot is
+	// what switches the bottom bar to the chat panel. One command, both
+	// shells — SPC c / SPC b o a / M-x tendrl-open-chat.
+	function openChat() {
+		store.openBuffer({ className: 'chat', buffer: chatBuf });
+	}
+
 	// Modeline wiki-resolution pill: progress display + the "resolve
 	// everything here" button. In Confirm mode the click raises ONE fetch
 	// intent for every unresolved wiki link on screen; in Auto it forces a
@@ -1422,8 +1436,7 @@
 			savedChats={app.savedSessions.length}
 			activeChatTitle={app.savedSessions.find((s) => s.id === app.activeSessionId)?.title ?? null}
 			onOpenSavedChats={() => {
-				const pos = store.findSlotForClass('chat');
-				if (pos) store.focusSlot(pos);
+				openChat();
 				app.openSavedChats();
 			}}
 			searchRows={app.searchHistory.map((e) => ({

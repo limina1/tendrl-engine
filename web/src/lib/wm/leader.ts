@@ -36,6 +36,9 @@ export type LeaderContext = {
 	openSettings: () => void;
 	openProfileEdit: () => void;
 	openCompose: () => void;
+	/** Focus the chat: expands the chat rail into a window on desktop,
+	 *  switches to the chat panel on mobile. */
+	openChat: () => void;
 };
 
 export function buildLeaderRoot(ctx: LeaderContext): SubPrefix {
@@ -58,6 +61,8 @@ export function buildLeaderRoot(ctx: LeaderContext): SubPrefix {
 						desc: 'open',
 						children: {
 							c: { type: 'leaf', desc: 'compose', commandId: 'tendrl-open-compose', category: 'Compose', kind: 'client', run: () => ctx.openCompose() },
+							// Alias of SPC c — same commandId so the bindings list merges them.
+							a: { type: 'leaf', desc: 'assistant chat', commandId: 'tendrl-open-chat', category: 'Buffer', kind: 'client', run: () => ctx.openChat() },
 							// Same commandId as SPC s s — the two chords are aliases;
 							// desc/category match so listLeaderBindings merges the rows.
 							s: { type: 'leaf', desc: 'open settings', commandId: 'tendrl-open-settings', category: 'Configuration', kind: 'client', run: () => ctx.openSettings() }
@@ -65,6 +70,7 @@ export function buildLeaderRoot(ctx: LeaderContext): SubPrefix {
 					}
 				}
 			},
+			c: { type: 'leaf', desc: 'chat (assistant)', commandId: 'tendrl-open-chat', category: 'Buffer', kind: 'client', run: () => ctx.openChat() },
 			w: {
 				type: 'prefix',
 				desc: 'window',
@@ -258,7 +264,8 @@ function buildNoopRoot(): SubPrefix {
 		closeFocusedWindow: noop,
 		openSettings: noop,
 		openProfileEdit: noop,
-		openCompose: noop
+		openCompose: noop,
+		openChat: noop
 	});
 }
 
