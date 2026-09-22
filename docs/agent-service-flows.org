@@ -384,7 +384,41 @@ is a glance away.
   the next agent turn uses it. No restart.
 - The *model* picker lists the provider's =/v1/models= filtered to chat
   models, showing price (=$/1M in= for ppq, =sat/1k tokens= for routstr)
-  next to each id. The routstr *node* picker reopens S4 step 1 with the
+  next to each id.
+  - *ppq* advertises =supported_parameters= per model, so the picker
+    shows only models that list =tools=; the rest are hidden.
+  - *routstr* nodes advertise no capability data at all (checked on
+    three nodes, 516 entries, 2026-09-22), so the picker cannot filter.
+    It opens with a standing note above the list and marks each model
+    with what tendrl has learned:
+
+    #+begin_example
+     ‹ routstr · model                    Hana Gateway
+     ─────────────────────────────────────────
+     ⓘ The assistant works by calling tools, not
+       just chatting. This node doesn't say which
+       of its models can do that. Pick one you
+       know supports tool calling — Claude, GPT,
+       Gemini, GLM, DeepSeek and Qwen families
+       usually do; small or older chat models
+       often don't.
+
+     ● claude-fable-5          1.16 sat/1k  ✓ tools ok
+       claude-sonnet-4-6       0.35 sat/1k  · untested
+       gemini-3-6-flash        0.05 sat/1k  ✓ tools ok
+       mimo-v2.6-pro           0.45 sat/1k  ✗ no tool calls
+       llama-3.3-8b            0.01 sat/1k  · untested
+    #+end_example
+
+    =✓ / ✗= come from a one-shot *self-test* the engine runs the first
+    time a model is selected on a node: one tiny request with a single
+    trivial tool, a few sats, result remembered per node + model in
+    =providers.json=. Picking an *untested* model runs the test before
+    the first real turn and shows the outcome as a toast; a =✗= model
+    can still be selected (the user may know better) but the card shows
+    a warn pill *no tool calls* and the assistant will explain rather
+    than fail silently. A curated allowlist of known-good families sorts
+    to the top. The routstr *node* picker reopens S4 step 1 with the
   current node marked; switching node with a balance on the old one
   warns that the balance stays on the old node (a key is per node) and
   offers *Withdraw first*.
@@ -478,7 +512,8 @@ active selection, so there is one place that owns the choice.
 * Implementation slices once confirmed
 
 - [ ] engine: =src/providers.rs= store + ppq/routstr clients + =ProviderState= view
-- [ ] engine: =OpenAiCompatProvider= in =llm.rs=; agent loop reads the store per turn
+- [ ] engine: =OpenAiCompatProvider= in =llm.rs= (arguments parsed from the JSON string; parallel calls; =role: tool= results); agent loop reads the store per turn
+- [ ] engine: tool-call self-test per node+model (routstr) + =supported_parameters= filter (ppq); results in =providers.json=
 - [ ] engine: =/api/v1/providers/*= routes; discovery Confirm-gated; funding intent
 - [ ] web: =AgentServicesModal= (mounted in =+layout=, =app.agentServicesModal= driven, yields to intents) with S1–S5
 - [ ] web: drawer collapsible "agent services" section (rows, active dot, + row, "add one" empty row); Settings → AI Tools mirror
