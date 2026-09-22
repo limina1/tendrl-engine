@@ -1,0 +1,412 @@
+#+TITLE: Agent service — signup, storage, and the Agent screen (mockup)
+#+DATE: 2026-09-22
+#+BRANCH: feat/paid-providers
+#+STATUS: proposal — confirm before implementing
+
+Mobile-first mockup of the "agent service" flow: how a user gets a paid
+model provider (ppq.ai or a routstr node) from nothing to working, where
+the access tokens live so they survive an app restart, and what tapping
+*agent* in the main menu shows once accounts exist. Built on the shapes
+verified in [[file:paid-providers.org][paid-providers.org]]. Nothing here
+is implemented; the questions at the end are what I need answered.
+
+* Storage: where the tokens live
+
+*Decision proposed: the engine owns them, in =<data_dir>/providers.json=.*
+
+- On Android the engine runs in-process inside the Tauri host, and
+  =data_dir= is the app's private storage — sandboxed per app by the OS,
+  wiped on uninstall, backed up only if the user's backup policy says
+  so. That is the right home for an =sk-= key. It also survives a
+  WebView storage reset, which browser =localStorage= would not.
+- The engine, not the WebView, calls ppq / routstr on every agent turn,
+  so the credential must be readable by Rust. Putting it in the browser
+  would mean shipping it back to the engine on every request: wrong side
+  of the frontend/backend boundary and one more place it can leak.
+- Desktop: same file, mode 0600. The OS keyring is available there and
+  the assistant identity already uses it; the key could go in the
+  keyring with the non-secret part in the file. Proposed: file on both
+  platforms first (one code path, one recovery story), keyring as a
+  later hardening. (Question 1.)
+- Never a Nostr event, never in TOML, never in =relays.json=.
+
+What is stored:
+
+#+begin_src json
+{
+  "active": { "provider": "ppq", "model": "claude-sonnet-5" },
+  "ppq":     { "credit_id": "3a16…", "api_key": "sk-…", "created_at": 1790086895,
+               "model": "claude-sonnet-5",
+               "balance": { "usd": 0.0, "fetched_at": 1790086900 } },
+  "routstr": { "node": { "url": "https://routstr.eduvietkieu.com", "name": "Hana Gateway",
+                         "npub": "npub1…", "version": "0.4.7", "mints": ["https://mint.minibits.cash/Bitcoin"] },
+               "api_key": "sk-…", "created_at": 1790087000,
+               "model": "claude-fable-5",
+               "balance": { "msat": 0, "reserved": 0, "total_spent": 0, "fetched_at": 1790087010 } }
+}
+#+end_src
+
+The API never returns =api_key= in full — a redacted form
+(=sk-aJv…(25)=) plus a one-shot *reveal* endpoint for copying it out.
+
+* Entry point: the drawer
+
+The mobile drawer's *status* hub gets one more row, between =identity=
+and =embeddings=. The pill is the state:
+
+#+begin_example
+ status
+ ─────────────────────────────
+ settings                    ›
+ ● network            confirm
+ relays                      ›
+ identity          npub1…k3f
+ agent             not set up ›      ← nothing configured (dim pill)
+ agent          ppq · $0.42   ›      ← configured, active provider + balance
+ agent    routstr · 1,240 sat ›
+ agent        ppq · low  ▲    ›      ← below the per-turn ceiling (warn pill)
+ agent       ppq · offline    ›      ← last balance fetch failed
+ embeddings                  ›
+ wiki links               3/7
+ ⇅ activity                  ›
+#+end_example
+
+Tapping the row opens the *agent* buffer (a =work= buffer; on desktop it
+is also reachable through the buffer switcher and a link from
+Settings → AI Tools). The pill is read from =GET /api/v1/providers=,
+refreshed when the drawer opens and after every agent turn.
+
+* State machine
+
+#+begin_example
+                ┌──────────────┐
+   no accounts  │  UNDEFINED   │  agent row → Signup screen (both cards)
+                └──────┬───────┘
+        ppq created ───┤─── routstr key created
+                       ▼
+                ┌──────────────┐
+                │  CONFIGURED  │  agent row → Agent screen (accounts, switch, fund)
+                └──────┬───────┘
+                       │ per provider:   unfunded → funded → low → offline
+                       │ "forget" on the last account → UNDEFINED
+#+end_example
+
+A provider card is *unfunded* when its balance is 0, *low* when it is
+under =max_turn_cost=, *offline* when the last balance call failed
+(the key is kept; the pill says so).
+
+* Screens
+
+All at phone width. =[ ]= is a button, =( )= a radio, =▾= a picker,
+=⧉= copy, =⟳= refresh. Toasts (=app.pushToast=) acknowledge copies and
+saves; destructive actions are *armed buttons* (tap once to arm, again
+to fire), never browser dialogs — per =feat-ui-patterns.org=.
+
+** S1 — Signup (UNDEFINED)
+
+#+begin_example
+ ‹ agent
+ ─────────────────────────────────────────
+ Give the assistant a model to run on.
+ Both options pay per use; no subscription.
+ You can set up both and switch any time.
+
+ ┌ ppq.ai ───────────────────────────────┐
+ │ One account, 370+ models, web search  │
+ │ built in. Fund with Lightning or NWC. │
+ │ Balance in USD.                       │
+ │                                       │
+ │ [ Create account ]                    │
+ └───────────────────────────────────────┘
+
+ ┌ routstr ──────────────────────────────┐
+ │ No account. Pick a node on the Nostr  │
+ │ network, pay with Cashu ecash. Balance│
+ │ in sats, withdrawable any time.       │
+ │                                       │
+ │ [ Find nodes ]                        │
+ └───────────────────────────────────────┘
+
+ Already have a key?  [ Paste an existing key ]
+#+end_example
+
+"Paste an existing key" takes a ppq =sk-= key (+ credit id) or a
+routstr =sk-= key + node URL, for people who signed up elsewhere.
+(Question 2.)
+
+** S2 — ppq: create account
+
+One tap. =POST /accounts/create= takes under a second.
+
+#+begin_example
+ ┌ ppq.ai ───────────────────────────────┐
+ │ ● creating account…                   │
+ └───────────────────────────────────────┘
+
+ ┌ ppq.ai ────────────────────── created ┐
+ │ credit id   3a165eb3-…-6450cf12df04 ⧉ │
+ │ api key     sk-aJv…            ⧉ 👁   │
+ │                                       │
+ │ ⚠ Save the credit id somewhere safe.  │
+ │   It is the only way to recover this  │
+ │   account if the app data is lost.    │
+ │                                       │
+ │ balance     $0.00                     │
+ │                                       │
+ │ [ Fund now ]          [ Later ]       │
+ └───────────────────────────────────────┘
+#+end_example
+
+Both =⧉= copy via clipboard + toast. =👁= is the one-shot reveal. On
+"Later" the card collapses to the configured state (S5) with an
+*unfunded* pill; the assistant can't run until there is balance, and
+a turn attempted in that state raises the S6 intent.
+
+** S3 — ppq: fund
+
+#+begin_example
+ ‹ fund ppq.ai
+ ─────────────────────────────────────────
+ amount   ( 500 sat ) ( 2,000 sat ) ( 10,000 sat ) ( other… )
+          ≈ $0.51       ≈ $2.05        ≈ $10.25
+
+ [ Create invoice ]
+
+ ┌───────────────────────────────────────┐
+ │           ▄▄▄▄▄ ▄ ▄▄ ▄▄▄▄▄            │
+ │           █   █ ▄██▄ █   █            │
+ │           █▄▄▄█ █ ▄▄ █▄▄▄█   (QR)     │
+ │           ▄▄▄▄▄ ▄ ▄▄ ▄ ▄ ▄            │
+ │                                       │
+ │ lnbc20u1p4t9r…                    ⧉   │
+ │ [ Open in wallet ]  (lightning: link) │
+ │                                       │
+ │ ● waiting for payment · expires 14:32 │
+ └───────────────────────────────────────┘
+
+ or: [ Connect a wallet (NWC) ]  — refills itself below $5
+#+end_example
+
+The engine polls =GET /topup/status/{id}= every 3 s while this screen is
+open, and once more when the app returns to the foreground. On
+=status != "New"= the card flips to *paid · balance $2.05* and a toast
+fires. On expiry: *expired — [ New invoice ]*. Amount chips are in sats
+because the invoice is sats; the USD estimate comes from the ppq
+response (=amount_due= vs =amount=). Minimum 100 sats. (Question 3 on
+NWC.)
+
+** S4 — routstr: find a node, paste a token
+
+Step 1, discovery. The engine REQs kind 38421 on the routstr relays,
+probes each https node's =/v1/info= and =/v1/models= concurrently
+(5 s cap), and ranks: healthy first, then has-a-Claude-class-model,
+then latency.
+
+#+begin_example
+ ‹ routstr · pick a node
+ ─────────────────────────────────────────
+ ● found 16 nodes, 5 answering          ⟳
+ show: ( answering ) ( all )
+
+ ┌ Hana Gateway ────────────────── 0.6 s ┐
+ │ 32 models · claude-fable-5 · v0.4.7   │
+ │ mints: minibits                       │
+ │ routstr.eduvietkieu.com    npub1…q4   │
+ └───────────────────────────────────────┘
+ ┌ GitHappens2Routstr ──────────── 1.3 s ┐
+ │ 118 models · v0.4.7                   │
+ │ mints: cubabitcoin, minibits          │
+ └───────────────────────────────────────┘
+ ┌ Omochi Node ─────────────────── 1.8 s ┐
+ │ 366 models · v0.4.5                   │
+ │ mints: minibits, cubabitcoin, otrta   │
+ └───────────────────────────────────────┘
+ ┌ Blazelight Node 1 ───────────── 3.2 s ┐
+ │ 108 models · v0.4.3                   │
+ └───────────────────────────────────────┘
+
+ [ Enter a node URL by hand ]
+#+end_example
+
+Tap a node → step 2. Cashu is the only way in (no Lightning on any live
+node), so the screen says exactly that and shows which mints this node
+takes.
+
+#+begin_example
+ ‹ routstr · Hana Gateway
+ ─────────────────────────────────────────
+ This node accepts ecash from:
+   • mint.minibits.cash/Bitcoin
+ Send a token from a wallet that uses one
+ of these mints (Minibits, Nutstash, cashu.me).
+
+ ┌───────────────────────────────────────┐
+ │ cashuBo2FteCJodHRwczovL21pbnQubWluaWJ │
+ │ pdHMuY2FzaC9CaXRjb2luIiwidW5pdCI6…    │
+ └───────────────────────────────────────┘
+ [ Paste from clipboard ]
+
+ amount in token   1,000 sat · mint ok   ← parsed client-side before sending
+
+ [ Create key with this token ]
+#+end_example
+
+=GET /v1/balance/create?initial_balance_token=… = → key. The engine then
+calls =/v1/balance/info= and the card lands in the configured state:
+
+#+begin_example
+ ┌ routstr ─────────────────────── ready ┐
+ │ node      Hana Gateway   v0.4.7       │
+ │ key       sk-9f2…              ⧉ 👁   │
+ │ balance   1,000 sat  (0 reserved)     │
+ │ [ Done ]                              │
+ └───────────────────────────────────────┘
+#+end_example
+
+Failure modes shown inline, not as toasts: *token already spent*, *mint
+not accepted by this node* (with the list again), *node unreachable —
+pick another*.
+
+** S5 — Agent screen (CONFIGURED)
+
+What "agent" opens once at least one account exists.
+
+#+begin_example
+ ‹ agent
+ ─────────────────────────────────────────
+ running on   ppq.ai · claude-sonnet-5
+ last turn    $0.012 · 3 tool calls · 41 s
+
+ ┌ (●) ppq.ai ─────────────── $0.42 ⟳ ┐
+ │ model      claude-sonnet-5        ▾ │
+ │ web search built in                 │
+ │ credit id  3a165eb3-…          ⧉    │
+ │ api key    sk-aJv…             ⧉ 👁 │
+ │ spent      $1.58 all time · $0.20 today │
+ │                                     │
+ │ [ Fund ]   [ Spend history ]        │
+ │ [ Forget this account ]  (armed)    │
+ └─────────────────────────────────────┘
+
+ ┌ ( ) routstr ────────── 1,240 sat ⟳ ┐
+ │ node       Hana Gateway  v0.4.7   ▾ │
+ │ model      claude-fable-5         ▾ │
+ │ mints      minibits                 │
+ │ key        sk-9f2…             ⧉ 👁 │
+ │ reserved   0 sat · spent 760 sat    │
+ │                                     │
+ │ [ Top up ]  [ Withdraw ]  [ History ] │
+ │ [ Forget this key ]      (armed)    │
+ └─────────────────────────────────────┘
+
+ ceiling per turn   $0.25 ▾   (a turn that would exceed it asks first)
+
+ [ + Set up the other one ]   ← only when one side is missing
+#+end_example
+
+- The radio picks the *active* provider; the model picker under it
+  picks the model. Switching is one write (=POST /providers/select=);
+  the next agent turn uses it. No restart.
+- The *model* picker lists the provider's =/v1/models= filtered to chat
+  models, showing price (=$/1M in= for ppq, =sat/1k tokens= for routstr)
+  next to each id. The routstr *node* picker reopens S4 step 1 with the
+  current node marked; switching node with a balance on the old one
+  warns that the balance stays on the old node (a key is per node) and
+  offers *Withdraw first*.
+- =⟳= on a card refetches that balance; the pill in the drawer follows.
+- *Withdraw* (routstr) calls refund, shows the returned Cashu token once
+  in a copy box with "paste this into your wallet now — it is not stored",
+  and marks the card *unfunded*. Armed.
+- *Forget* removes the account from the store after the second tap. For
+  routstr with a balance, the button is disabled until withdrawn; for ppq
+  it warns that only the credit id can get the account back.
+- *Spend history* opens the provider ledger (ppq =queries/history=,
+  routstr =balance/history=) as a plain list.
+
+** S6 — Mid-chat: not enough balance
+
+When a turn starts and the active balance is below =max_turn_cost=, the
+engine emits a *funding intent* on the existing fetch-events stream, and
+the same modal family that handles fetch/publish confirmation shows:
+
+#+begin_example
+ ┌ the assistant needs funds ─────────────┐
+ │ ppq.ai balance $0.03 · ceiling $0.25    │
+ │                                         │
+ │ [ Fund ppq.ai ]  → S3, then resumes     │
+ │ [ Switch to routstr (1,240 sat) ]       │
+ │ [ Run anyway ]  (ceiling ignored once)  │
+ │ [ Cancel ]                              │
+ └─────────────────────────────────────────┘
+#+end_example
+
+The chat turn stays queued until the intent resolves, like a
+Confirm-mode fetch.
+
+** S7 — Desktop
+
+Same buffer, opened from the buffer switcher or a "Provider accounts ›"
+link at the top of Settings → AI Tools. The existing AI Tools =provider=
+/ =model= fields become read-only mirrors of the active selection with
+that link, so there is one place that owns the choice.
+
+* API surface behind the screens
+
+| Screen | Call |
+|--------+------|
+| drawer pill, S5 | =GET /api/v1/providers= → =ProviderState= (redacted keys, cached balances, active) |
+| S2 | =POST /api/v1/providers/ppq/setup= → creates account, stores it, returns state |
+| S1 paste | =POST /api/v1/providers/ppq/adopt {api_key, credit_id}= · =POST /providers/routstr/adopt {node_url, api_key}= |
+| S3 | =POST /providers/ppq/fund {amount_sats}= → ={invoice_id, bolt11, expires_at}= · =GET /providers/ppq/fund/:id= → status (server polls provider) · =POST /providers/ppq/nwc {nwc_url, threshold_usd, topup_usd}= |
+| S4 step 1 | =POST /providers/routstr/discover= → ranked =[NodeRef + health]= (Confirm-gated like any relay fetch) |
+| S4 step 2 | =POST /providers/routstr/create {node_url, cashu_token}= → key + balance |
+| S5 | =POST /providers/select {provider, model}= · =GET /providers/:p/models= · =POST /providers/:p/refresh= · =POST /providers/routstr/topup {cashu_token}= · =POST /providers/routstr/refund= → token (once) · =GET /providers/:p/ledger= · =POST /providers/:p/reveal= → full key (once) · =DELETE /providers/:p= |
+| S6 | funding intent on the =fetch-events= SSE stream; =POST /providers/intent/:id {action}= |
+| every turn | the agent loop reads =active= from the store and builds the provider on the fly (=OpenAiCompatProvider=), so a switch needs no restart |
+
+* Rules applied from =feat-ui-patterns.org=
+
+- No =window.prompt= / =confirm=: paste fields are inline textareas,
+  forget/withdraw are armed buttons.
+- Toasts for copy / saved / paid; inline errors for anything the user
+  must fix on that screen.
+- The drawer row is a *pill-as-action* (status you can tap), matching
+  network / identity.
+- Buffer view state (which step of S4 you are on, a half-pasted token)
+  lives in =store.bufferState= / =entryDrafts=, never persisted; account
+  state lives in the engine.
+- Async affordances always show what a tap does now (creating…, waiting
+  for payment · 14:32, refreshing).
+
+* Questions to confirm
+
+1. *Storage.* File under =data_dir= on both platforms, 0600, keyring later —
+   or keyring-first on desktop from day one?
+2. *"Paste an existing key"* on the signup screen — wanted in v1, or
+   create-only?
+3. *NWC auto top-up* on the ppq fund screen in v1, or invoice-only first?
+   (NWC needs the user to have an NWC-capable wallet; Alby Hub / Coinos /
+   Primal wallet do.)
+4. *Active provider semantics.* One active at a time with a radio (as
+   drawn), or let the S6 modal offer failover automatically when the
+   active one is unfunded?
+5. *Per-turn ceiling.* Global (one value, unit-converted) as drawn, or
+   per provider?
+6. *routstr node switch.* Keep one key per node as drawn (balances don't
+   travel), or hold several routstr keys at once and show them as
+   separate cards?
+7. *Mobile QR.* Render the invoice QR in the WebView (a small pure-JS
+   encoder) — fine — or rely on "Open in wallet" alone?
+8. *Drawer placement.* Row between identity and embeddings, or up next
+   to identity as the two "who/what runs this" rows?
+
+* Implementation slices once confirmed
+
+- [ ] engine: =src/providers.rs= store + ppq/routstr clients + =ProviderState= view
+- [ ] engine: =OpenAiCompatProvider= in =llm.rs=; agent loop reads the store per turn
+- [ ] engine: =/api/v1/providers/*= routes; discovery Confirm-gated; funding intent
+- [ ] web: =agent= buffer kind (tours.ts + registry.ts + BufferRenderer) with S1–S5
+- [ ] web: drawer row + pill; Settings → AI Tools link + read-only mirror
+- [ ] web: S6 funding intent in the confirm-modal family
+- [ ] verify on device with a funded ppq account and one routstr token; recipe in =docs/commands.org=
+- [ ] zettel: =feat-paid-providers.org=, decision "engine owns provider credentials", update =feat-assistant.org= / =feat-mobile-shell.org=
