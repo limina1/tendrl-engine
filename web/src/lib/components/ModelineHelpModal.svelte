@@ -51,6 +51,7 @@
 				<div class="mh-group">Status &amp; toggles</div>
 				{@render row('relays', 'relay configuration · read/write · NIP-11')}
 				{@render row('🔍 N', 'search history — click to replay a past query')}
+				{@render row('● ppq.ai · $0.42', 'agent services — what the assistant runs on and its balance; click to switch, fund or manage (\'agent · add\' = none set up)')}
 				{@render row('auto / confirm', 'fetch mode — click to flip; right-click for relays')}
 				{@render row('embeddings', 'index health — click for status / reindex')}
 				{@render row('identity', 'your login — click for profile (or to unlock)')}

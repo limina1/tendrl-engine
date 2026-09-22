@@ -30,6 +30,7 @@
 	import MobileShell from '$lib/wm/MobileShell.svelte';
 	import PaneTabs from '$lib/wm/PaneTabs.svelte';
 	import ActivityCenter from '$lib/wm/ActivityCenter.svelte';
+	import { serviceRows, activeRow } from '$lib/services';
 	import { shell, type ShellPref } from '$lib/wm/shell.svelte';
 	import { stepTextScale, textScalePx } from '$lib/theme/text-scale.svelte';
 	import { readingSizePx, stepReadingSize } from '$lib/theme/reading.svelte';
@@ -378,6 +379,29 @@
 	// the standalone 5 s poll that used to run here was a duplicate, and it
 	// wasn't document.hidden-gated. A fast local poll runs ONLY while the
 	// popover is open (visible by definition) so the fetch list stays live.
+	// Agent services pill (desktop twin of the drawer's "agent services"
+	// section): the pill reads the active service + balance; its popover lists
+	// every service with the same dot-to-switch / open-to-manage rows.
+	let agentOpen = $state(false);
+	let agentWrapEl: HTMLElement | null = $state(null);
+	const svcRows = $derived(serviceRows(app.providersState));
+	const svcActive = $derived(activeRow(app.providersState));
+	$effect(() => {
+		if (!agentOpen) return;
+		void app.refreshProviders();
+		function onDocMouseDown(e: MouseEvent) {
+			if (!agentWrapEl) return;
+			if (e.target instanceof Node && agentWrapEl.contains(e.target)) return;
+			agentOpen = false;
+		}
+		document.addEventListener('mousedown', onDocMouseDown);
+		return () => document.removeEventListener('mousedown', onDocMouseDown);
+	});
+	function openAgentServices(view: 'signup' | 'manage', focus?: import('$lib/api').ProviderKind) {
+		agentOpen = false;
+		app.agentServicesModal = { view, focus };
+	}
+
 	let activityOpen = $state(false);
 	let actWrapEl: HTMLElement | null = $state(null);
 	let fastAct = $state<import('$lib/types').NetworkStatus | null>(null);
@@ -1095,7 +1119,7 @@
 	// history, the W/? affordances — keep their own clicks, so ignore anything
 	// that lands on a button/link/input or inside the history popover wrap.
 	function onModelineClick(e: MouseEvent) {
-		if ((e.target as HTMLElement).closest('button, a, input, .hs-pill-wrap, .act-pill-wrap')) return;
+		if ((e.target as HTMLElement).closest('button, a, input, .hs-pill-wrap, .act-pill-wrap, .agent-pill-wrap')) return;
 		if (leaderOpen) prefixPath = [];
 		else openLeader();
 	}
@@ -1617,6 +1641,77 @@
 									</button>
 								{/each}
 							</div>
+						</div>
+					{/if}
+				</span>
+			{/if}
+			{#if app.providersState}
+				<span class="agent-pill-wrap" bind:this={agentWrapEl} data-tour="ml-agent">
+					{#if svcActive}
+						<button
+							class="pill pill--btn {svcActive.pillClass}"
+							onclick={() => (agentOpen = !agentOpen)}
+							title={`Agent services — the assistant runs on ${svcActive.label} (${svcActive.detail}) · click to switch, fund or manage`}
+							aria-label="Agent services"
+						>
+							<span class="agent-dot" aria-hidden="true">●</span>
+							{svcActive.label} · {svcActive.pillLabel}
+						</button>
+					{:else if svcRows.length}
+						<button
+							class="pill pill--btn pill--ghost"
+							onclick={() => (agentOpen = !agentOpen)}
+							title="Agent services — none active · click to pick one"
+							aria-label="Agent services"
+						>agent · none active</button>
+					{:else}
+						<button
+							class="pill pill--connect"
+							onclick={() => openAgentServices('signup')}
+							title="The assistant has no model yet — set up ppq.ai or a routstr node"
+							aria-label="Add an agent service"
+						>agent · add</button>
+					{/if}
+					{#if agentOpen}
+						<div class="agent-popover" role="dialog" aria-label="Agent services">
+							<div class="agent-popover__head">agent services</div>
+							{#each svcRows as r (r.kind)}
+								<div class="agent-row">
+									<button
+										class="agent-row__dot"
+										class:agent-row__dot--active={r.active}
+										onclick={() => app.selectService(r.kind)}
+										disabled={r.active}
+										title={r.active ? `The assistant runs on ${r.label}` : `Run the assistant on ${r.label}`}
+										aria-label={r.active ? `${r.label} is the active service` : `Make ${r.label} the active service`}
+										>{r.active ? '●' : '○'}</button
+									>
+									<button
+										class="agent-row__open"
+										onclick={() => openAgentServices('manage', r.kind)}
+										title={`${r.label} — ${r.detail} · open`}
+									>
+										<span class="agent-row__label">{r.label}</span>
+										<span class="agent-row__detail">{r.detail}</span>
+										<span class="pill {r.pillClass}">{r.pillLabel}</span>
+										<span class="agent-row__go" aria-hidden="true">›</span>
+									</button>
+								</div>
+							{/each}
+							{#if !(app.providersState.ppq && app.providersState.routstr)}
+								<button class="agent-row agent-row--add" onclick={() => openAgentServices('signup')}>
+									<span class="agent-row__plus" aria-hidden="true">+</span>
+									<span class="agent-row__label">add a service</span>
+									<span class="agent-row__go" aria-hidden="true">›</span>
+								</button>
+							{/if}
+							{#if app.providersState.last_turn}
+								{@const t = app.providersState.last_turn}
+								<div class="agent-popover__foot">
+									last turn · {t.model} · {t.cost != null ? (t.unit === 'usd' ? `$${t.cost.toFixed(3)}` : `${Math.round(t.cost)} sat`) : '—'}
+									· {t.tool_calls} tool call{t.tool_calls === 1 ? '' : 's'}
+								</div>
+							{/if}
 						</div>
 					{/if}
 				</span>
@@ -2682,6 +2777,108 @@
 	}
 	@media (prefers-reduced-motion: reduce) {
 		.pill--act-live .act-ind { animation: none; }
+	}
+	/* Agent services pill + popover (twin of the drawer section). */
+	.agent-pill-wrap {
+		position: relative;
+		display: inline-flex;
+	}
+	.agent-dot {
+		font-size: 0.8em;
+	}
+	.agent-popover {
+		position: absolute;
+		bottom: calc(100% + 6px);
+		right: 0;
+		z-index: 120;
+		min-width: 320px;
+		max-width: 460px;
+		background: var(--panel-bg);
+		border: 1px solid var(--panel-border);
+		border-radius: var(--r-md);
+		box-shadow: var(--shadow-md);
+		font-family: var(--font-mono);
+		font-size: var(--t-xs);
+		padding: 6px 0;
+		text-align: left;
+	}
+	.agent-popover__head,
+	.agent-popover__foot {
+		padding: 4px 10px;
+		color: var(--fg-alt);
+		font-size: var(--t-2xs);
+	}
+	.agent-popover__head {
+		text-transform: uppercase;
+		letter-spacing: 0.08em;
+	}
+	.agent-popover__foot {
+		border-top: 1px solid var(--panel-border);
+		margin-top: 4px;
+	}
+	.agent-row {
+		display: flex;
+		align-items: center;
+		gap: 4px;
+		padding: 0 6px;
+	}
+	.agent-row__dot,
+	.agent-row__open,
+	.agent-row--add {
+		border: none;
+		background: none;
+		color: var(--fg);
+		font: inherit;
+		cursor: pointer;
+		text-align: left;
+	}
+	.agent-row__dot {
+		width: 28px;
+		min-height: 32px;
+		color: var(--fg-alt);
+	}
+	.agent-row__dot--active {
+		color: var(--state-online);
+		cursor: default;
+	}
+	.agent-row__open {
+		flex: 1;
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		min-height: 32px;
+		padding: 0 4px;
+		border-radius: var(--r-sm);
+	}
+	.agent-row__open:hover,
+	.agent-row--add:hover {
+		background: color-mix(in srgb, var(--id-yours) 8%, transparent);
+	}
+	.agent-row__label {
+		color: var(--base7);
+	}
+	.agent-row__detail {
+		flex: 1;
+		color: var(--fg-alt);
+		font-size: var(--t-2xs);
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+	.agent-row__go {
+		color: var(--fg-alt);
+	}
+	.agent-row--add {
+		width: calc(100% - 12px);
+		margin: 0 6px;
+		min-height: 32px;
+		padding: 0 4px 0 6px;
+		gap: 8px;
+		border-radius: var(--r-sm);
+	}
+	.agent-row__plus {
+		color: var(--id-yours);
+		width: 18px;
 	}
 	.act-popover {
 		position: absolute;
