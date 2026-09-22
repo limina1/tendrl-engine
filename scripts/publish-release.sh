@@ -1,7 +1,13 @@
 #!/usr/bin/env bash
-# Publish a tagged version as a GitHub release: push the v<version> tag and
-# create the release with the matching CHANGELOG.md section as its notes and
-# the portable tarball (from scripts/build-portable.sh) as its asset.
+# Publish a tagged version: push the v<version> tag to BOTH remotes — `github`
+# (where the release + assets live; zapstore reads the latest GitHub release)
+# and `origin` (the Nostr repo over ngit — its push signs with your bunker) —
+# then create the GitHub release with the matching CHANGELOG.md section as its
+# notes and the portable tarball + Android APK as its assets.
+#
+# GitHub is pushed first because `gh release create` needs the tag there. The
+# ngit push comes second and is best-effort: if the bunker isn't reachable the
+# release still goes out and the script tells you to re-push the tag to origin.
 #
 # Fits the existing release workflow AFTER the build + release commit:
 #   scripts/build-portable.sh --bump patch   # bump + changelog + tarball
@@ -98,8 +104,18 @@ fi
 
 $create_tag && { git tag "$tag"; echo "==> Tagged HEAD as ${tag}"; }
 
-echo "==> Pushing ${tag} to origin…"
-git push origin "refs/tags/${tag}"
+# GitHub first — the release below needs the tag there. Then the Nostr repo
+# (origin, over ngit; signs with the bunker), best-effort so a signer hiccup
+# doesn't block the release; the note at the end says what to redo.
+nostr_push_ok=true
+if git remote get-url github >/dev/null 2>&1; then
+  echo "==> Pushing ${tag} to github…"
+  git push github "refs/tags/${tag}"
+fi
+if git remote get-url origin >/dev/null 2>&1; then
+  echo "==> Pushing ${tag} to origin (Nostr / ngit)…"
+  git push origin "refs/tags/${tag}" || nostr_push_ok=false
+fi
 
 echo "==> Creating GitHub release ${tag}…"
 args=("$tag" --title "tendrl-engine ${tag}" --notes-file -)
@@ -107,8 +123,13 @@ $no_asset || args+=("$tarball")
 [[ -n "$apk" ]] && args+=("$apk")
 printf '%s\n' "$notes" | gh release create "${args[@]}"
 
+$nostr_push_ok || echo "WARNING: the tag did not reach origin (Nostr) — when the bunker is up: git push origin refs/tags/${tag}"
+
 # The tag makes its commits reachable, but if no pushed branch contains it the
 # repo's branch view still looks behind — remind rather than push silently.
-if [[ -z "$(git branch -r --contains "$tag" 2>/dev/null)" ]]; then
-  echo "NOTE: no remote branch contains ${tag} yet — push your branch too (e.g. git push origin master)."
-fi
+for r in github origin; do
+  git remote get-url "$r" >/dev/null 2>&1 || continue
+  if [[ -z "$(git branch -r --contains "$tag" 2>/dev/null | grep "^ *${r}/")" ]]; then
+    echo "NOTE: no ${r} branch contains ${tag} yet — push your branch too: git push ${r} master"
+  fi
+done

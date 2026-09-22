@@ -1678,7 +1678,10 @@ git add Cargo.toml Cargo.lock CHANGELOG.md mobile/src-tauri && git commit -m "v$
 #    tag, creates the release: CHANGELOG section = notes, portable tarball =
 #    asset, plus target/android/tendrl-<version>-arm64.apk when it exists):
 scripts/publish-release.sh --dry-run          # preview first
-scripts/publish-release.sh
+scripts/publish-release.sh                    # pushes the tag to github AND origin (Nostr/ngit, bunker-signed),
+                                              # then the GitHub release (tarball + APK); zapstore (`zsp publish`)
+                                              # reads the LATEST GitHub release, so it sees the new version after this
+git push github master && git push origin master   # branches, so neither repo looks behind
 
 # 4. Push the branch too (the tag alone leaves the branch view behind):
 git push origin master
